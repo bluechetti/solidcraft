@@ -190,7 +190,7 @@ fn session_with_a_symmetric_scan(tag: &str) -> (Session, String, impl Fn(Vec3) -
 }
 
 /// Find Symmetry finds one of the block's two mirror planes and keeps it as a construction plane;
-/// a guide along X = 30 finds that one.
+/// a guide along X = 30 finds that one, kept as a second plane.
 #[test]
 fn find_symmetry_keeps_the_mirror_plane_as_a_construction_plane() {
     let (mut s, _, place) = session_with_a_symmetric_scan("symmetry");
@@ -207,6 +207,11 @@ fn find_symmetry_keeps_the_mirror_plane_as_a_construction_plane() {
     let truth = place(Vec3::X) - place(Vec3::ZERO);
     assert!((Vec3::new(normal[0], normal[1], normal[2]).dot(truth)).abs() > 1.0 - 1e-6, "the X = 30 plane: {reply}");
     assert!(reply.get("plane").is_none(), "not kept");
+
+    // Kept, the guide's plane is a second construction plane beside the first.
+    let reply = run(&mut s, "scan.symmetry", json!({"guide": guide}));
+    assert!(reply["plane"]["feature"].is_u64(), "kept: {reply}");
+    assert!(s.doc.features.iter().any(|f| f.name == "Symmetry Plane 2"), "a second plane, named apart");
 }
 
 /// Squared to its mirror plane, the block lies evenly either side of X = 0; one undo puts it back.

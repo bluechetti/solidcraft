@@ -90,7 +90,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("mirror")
         .contract(&SYMMETRY_CONTRACT)
         .output(output_schema_for::<ScanSymmetryResult>)
-        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z] (the way you looked, default [0,0,1])}: a line along the rough mirror plane, to find that one; keep?: bool (default true: kept as the construction plane `Symmetry Plane`, to sketch on); a scan that is no mirror image is refused → body, mirror: {point, normal, rms, coverage, symmetric}, plane (the construction plane)"),
+        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z] (the way you looked, default [0,0,1])}: a line along the rough mirror plane, to find that one; keep?: bool (default true: kept as a construction plane `Symmetry Plane`, `Symmetry Plane 2`, …, to sketch on); a scan that is no mirror image is refused → body, mirror: {point, normal, rms, coverage, symmetric}, plane (the construction plane)"),
     CommandSpec::new("scan.square_to_symmetry", "Square to Symmetry", crate::checked!("scan.square_to_symmetry", square_to_symmetry))
         .at("SCAN", "ALIGN")
         .icon("c_symmetry")
@@ -319,7 +319,13 @@ fn find_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
         let maker =
             super::find_command("construct.plane.three_points").ok_or_else(|| EngineError::UnknownCommand("construct.plane.three_points".into()))?;
         let at = |q: Vec3| json!({"point": [q.x, q.y, q.z]});
-        Some(maker.run_nested(s, &json!({"a": at(a), "b": at(b), "c": at(c), "name": "Symmetry Plane"}))?)
+        // Found again (another guide, another scan), the plane is kept beside the last one.
+        let taken = |n: &str| s.doc.features.iter().any(|f| f.name == n);
+        let name = std::iter::once("Symmetry Plane".to_owned())
+            .chain((2..).map(|i| format!("Symmetry Plane {i}")))
+            .find(|n| !taken(n))
+            .unwrap_or_else(|| "Symmetry Plane".into());
+        Some(maker.run_nested(s, &json!({"a": at(a), "b": at(b), "c": at(c), "name": name}))?)
     } else {
         None
     };
