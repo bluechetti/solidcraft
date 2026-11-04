@@ -123,6 +123,7 @@ mod tests {
             "scan.fit_plane",
             "scan.fit_cylinder",
             "scan.deviation",
+            "scan.fit_sphere",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {

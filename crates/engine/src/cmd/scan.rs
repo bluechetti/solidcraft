@@ -18,7 +18,8 @@ use super::CommandSpec;
 use crate::params::{bad, str_};
 use crate::schema::scan::{
     ScanBase, ScanBasesParams, ScanBasesResult, ScanDeviationParams, ScanDeviationResult, ScanFitParams, ScanFitResult, ScanFittedCylinder,
-    ScanFittedPlane, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
+    ScanFittedPlane, ScanFittedSphere, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams,
+    ScanSymmetryResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -64,7 +65,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("align")
         .contract(&STAND_CONTRACT)
         .output(output_schema_for::<ScanPlaceResult>)
-        .params("body?: mesh body (default: the selected mesh body, else the design's only one); base?: index into scan.bases (default 0, the steadiest); point?: [x,y,z] on the scan (grow the flat face there and stand on it; a curved wall is refused) → body, moved, base, feature (the Move)"),
+        .params("body?: mesh body (default: the selected mesh body, else the design's only one); point?: [x,y,z] on the scan (grow the flat face there and stand on it; a curved wall is refused; default: the point picked on the scan); base?: index into scan.bases; with neither, the steadiest base, or pressed again the next one → body, moved, base, base_index, base_count, feature (the Move)"),
     CommandSpec::new("scan.rest_on_grid", "Rest on Grid", crate::checked!("scan.rest_on_grid", rest_on_grid))
         .at("SCAN", "ALIGN")
         .icon("move")
@@ -107,6 +108,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
         .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: mm (default 0.15 % of the scan's size); keep?: bool (default true: kept as a construction axis) → body, cylinder: {point, axis, radius, diameter, length}, triangles, area, rms, max, feature"),
+    CommandSpec::new("scan.fit_sphere", "Fit Sphere", crate::checked!("scan.fit_sphere", fit_sphere))
+        .at("SCAN", "FIT")
+        .icon("sphere")
+        .contract(&FIT_CONTRACT)
+        .output(output_schema_for::<ScanFitResult>)
+        .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: length (default 0.15 % of the scan's size); keep?: bool (default true: its centre kept as a construction point) → body, sphere: {center, radius, diameter}, triangles, area, rms, max, feature"),
     CommandSpec::new("scan.deviation", "Scan Deviation", crate::checked!("scan.deviation", deviation))
         .at("SCAN", "CHECK")
         .icon("curvature_map")
@@ -145,7 +152,7 @@ fn mesh(s: &Session, p: &Value, cmd: &str) -> Result<Mesh> {
     let name = match named {
         Some(name) => name,
         None => {
-            let selected: Vec<&str> = s
+            let mut selected: Vec<&str> = s
                 .selection
                 .iter()
                 .filter_map(|x| match x {
@@ -154,6 +161,9 @@ fn mesh(s: &Session, p: &Value, cmd: &str) -> Result<Mesh> {
                 })
                 .filter(|name| state.body(name).is_some_and(|b| b.body.is_mesh()))
                 .collect();
+            // Several points picked on one scan are one scan.
+            selected.sort_unstable();
+            selected.dedup();
             let meshes: Vec<&str> = state.bodies.iter().filter(|b| b.body.is_mesh()).map(|b| b.name.as_str()).collect();
             match (selected.as_slice(), meshes.as_slice()) {
                 ([one], _) | ([], [one]) => (*one).to_owned(),
@@ -199,7 +209,16 @@ fn base_reply(b: &Base) -> ScanBase {
 }
 
 fn place_reply(body: String, base: Option<&Base>, feature: Option<Value>) -> Result<Value> {
-    let reply = ScanPlaceResult { body, moved: feature.is_some(), base: base.map(base_reply), mirror: None, feature, param_warnings: Vec::new() };
+    let reply = ScanPlaceResult {
+        body,
+        moved: feature.is_some(),
+        base: base.map(base_reply),
+        base_index: None,
+        base_count: None,
+        mirror: None,
+        feature,
+        param_warnings: Vec::new(),
+    };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -232,6 +251,32 @@ fn guide(p: &Value, cmd: &str) -> Result<Option<Guide>> {
     Ok(Some(Guide { from, to, toward: point("toward", false)?.unwrap_or(Vec3::Z) }))
 }
 
+/// A guide from two points picked on the scan: the line between them, seen square to the scan's
+/// surface there (the plane through a line drawn along the middle of a part stands up from it).
+fn picked_guide(s: &Session, mesh: &Mesh) -> Option<Guide> {
+    let picks: Vec<Vec3> = s
+        .selection
+        .iter()
+        .filter_map(|x| match x {
+            Sel::Face { body, point, .. } | Sel::Edge { body, point, .. } if *body == mesh.body => Some(*point),
+            _ => None,
+        })
+        .collect();
+    let (&from, &to) = (picks.first()?, picks.last()?);
+    if from.dist(to) < 1e-6 {
+        return None;
+    }
+    let scan = mesh.scan();
+    let normal_at = |p: Vec3| {
+        let [a, b, c] = scan.corners(base::nearest_triangle(&scan, p)?)?;
+        (b - a).cross(c - a).normalized()
+    };
+    let (n1, n2) = (normal_at(from)?, normal_at(to)?);
+    // Either winding: the two normals are made to agree before they are averaged.
+    let toward = (n1 + if n1.dot(n2) < 0.0 { -n2 } else { n2 }).normalized()?;
+    Some(Guide { from, to, toward })
+}
+
 /// The scan's mirror plane, near `guide` when one is given; refused when the scan is no mirror image.
 fn mirror_of(mesh: &Mesh, guide: Option<&Guide>, cmd: &str) -> Result<Mirror> {
     let scan = mesh.scan();
@@ -257,6 +302,7 @@ fn find_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     let guide = guide(p, cmd)?;
     let keep = crate::params::bool_(p, "keep").unwrap_or(true);
     let mesh = mesh(s, p, cmd)?;
+    let guide = guide.or_else(|| picked_guide(s, &mesh));
     let found = mirror_of(&mesh, guide.as_ref(), cmd)?;
     let plane = if keep {
         // Three points of the plane, a quarter of the scan apart, make an ordinary construction plane.
@@ -278,6 +324,7 @@ fn square_to_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.square_to_symmetry";
     let guide = guide(p, cmd)?;
     let mesh = mesh(s, p, cmd)?;
+    let guide = guide.or_else(|| picked_guide(s, &mesh));
     let found = mirror_of(&mesh, guide.as_ref(), cmd)?;
     let by = symmetry::square_to(&found).ok_or_else(|| bad(cmd, "the mirror plane has no direction"))?;
     let feature = move_by(s, &mesh, &by)?;
@@ -285,6 +332,8 @@ fn square_to_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
         body: mesh.body,
         moved: feature.is_some(),
         base: None,
+        base_index: None,
+        base_count: None,
         mirror: Some(mirror_reply(&found)),
         feature,
         param_warnings: Vec::new(),
@@ -307,28 +356,53 @@ fn stand_on_base(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let index = match p.get("base").filter(|v| !v.is_null()) {
-        Some(v) => v.as_u64().ok_or_else(|| bad(cmd, "`base` must be a whole number from 0"))?,
-        None => 0,
+        Some(v) => Some(v.as_u64().ok_or_else(|| bad(cmd, "`base` must be a whole number from 0"))?),
+        None => None,
     };
     let mesh = mesh(s, p, cmd)?;
     let scan = mesh.scan();
-    let chosen = match point {
+    // A point given or picked on the scan grows the face there; else a base by number, or the
+    // next one after the base the scan was last stood on by pressing again.
+    let point = point.or_else(|| if index.is_none() { picked_point(s, &mesh.body) } else { None });
+    let (chosen, numbered) = match point {
         Some(point) => {
             let seed = base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
-            base::grow(&scan, seed).map_err(|e| bad(cmd, e.to_string()))?
+            (base::grow(&scan, seed).map_err(|e| bad(cmd, e.to_string()))?, None)
         }
         None => {
             let found = base::bases(&scan);
             let count = found.len();
-            usize::try_from(index)
-                .ok()
-                .and_then(|i| found.get(i).copied())
-                .ok_or_else(|| bad(cmd, format!("`base` must be below {count}, the number of bases found")))?
+            let i = match index {
+                Some(i) => usize::try_from(i).unwrap_or(usize::MAX),
+                // The next base while the scan still stands on the last one (nothing has moved it).
+                None => match &s.scan_base_cycle {
+                    Some((body, last)) if *body == mesh.body && count > 0 && stands_on(&scan, found.get(*last), mesh.reach()) => (last + 1) % count,
+                    _ => 0,
+                },
+            };
+            let base = found.get(i).copied().ok_or_else(|| bad(cmd, format!("`base` must be below {count}, the number of bases found")))?;
+            (base, Some((i, count)))
         }
     };
     let stand = place::stand(&scan, chosen.normal, chosen.anchor).ok_or_else(|| bad(cmd, "that base has no direction to stand on"))?;
     let feature = move_by(s, &mesh, &stand)?;
-    place_reply(mesh.body, Some(&chosen), feature)
+    s.scan_base_cycle = numbered.map(|(i, _)| (mesh.body.clone(), i));
+    let reply = ScanPlaceResult {
+        body: mesh.body,
+        moved: feature.is_some(),
+        base: Some(base_reply(&chosen)),
+        base_index: numbered.map(|(i, _)| i),
+        base_count: numbered.map(|(_, n)| n),
+        mirror: None,
+        feature,
+        param_warnings: Vec::new(),
+    };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// Whether the scan already stands on `base`: standing it there would not move it.
+fn stands_on(scan: &Scan, base: Option<&Base>, reach: f64) -> bool {
+    base.and_then(|b| place::stand(scan, b.normal, b.anchor)).is_some_and(|m| m.is_negligible(NEGLIGIBLE, reach))
 }
 
 /// A placing move: `how` gives the move for the scan, or `None` with the reason in `refusal`.
@@ -494,6 +568,10 @@ fn fit_cylinder(s: &mut Session, p: &Value) -> Result<Value> {
     fit_shape(s, p, "scan.fit_cylinder", Kind::Cylinder)
 }
 
+fn fit_sphere(s: &mut Session, p: &Value) -> Result<Value> {
+    fit_shape(s, p, "scan.fit_sphere", Kind::Sphere)
+}
+
 fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value> {
     let point = match p.get("point").filter(|v| !v.is_null()) {
         Some(v) => Some(crate::params::vec3(v).ok_or_else(|| bad(cmd, "`point` must be a point [x, y, z] of numbers"))?),
@@ -517,17 +595,25 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
     let fitted = fit::fit(&scan, seed, kind, tolerance).map_err(|e| bad(cmd, e.to_string()))?;
     let feature = if keep { Some(keep_shape(s, &fitted, mesh.scan().extent())?) } else { None };
     let at = |v: Vec3| [v.x, v.y, v.z];
-    let (plane, cylinder) = match fitted.shape {
-        Shape::Plane { normal, .. } => (Some(ScanFittedPlane { point: at(fitted.middle), normal: at(normal) }), None),
-        Shape::Cylinder { axis, radius, .. } => (
-            None,
-            Some(ScanFittedCylinder { point: at(fitted.middle), axis: at(axis), radius, diameter: 2.0 * radius, length: 2.0 * fitted.half_length }),
-        ),
-    };
+    let (mut plane, mut cylinder, mut sphere) = (None, None, None);
+    match fitted.shape {
+        Shape::Plane { normal, .. } => plane = Some(ScanFittedPlane { point: at(fitted.middle), normal: at(normal) }),
+        Shape::Cylinder { axis, radius, .. } => {
+            cylinder = Some(ScanFittedCylinder {
+                point: at(fitted.middle),
+                axis: at(axis),
+                radius,
+                diameter: 2.0 * radius,
+                length: 2.0 * fitted.half_length,
+            })
+        }
+        Shape::Sphere { center, radius } => sphere = Some(ScanFittedSphere { center: at(center), radius, diameter: 2.0 * radius }),
+    }
     let reply = ScanFitResult {
         body: mesh.body,
         plane,
         cylinder,
+        sphere,
         triangles: fitted.triangles.len(),
         area: fitted.area,
         rms: fitted.rms,
@@ -539,7 +625,7 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
 }
 
 /// Keeps a fitted shape as an ordinary construction feature: a plane through three of its points,
-/// or an axis through two.
+/// an axis through two, or a sphere's centre as a point.
 fn keep_shape(s: &mut Session, fitted: &Fitted, extent: f64) -> Result<Value> {
     let at = |q: Vec3| json!({"point": [q.x, q.y, q.z]});
     let run = |s: &mut Session, id: &str, p: Value| -> Result<Value> {
@@ -553,6 +639,7 @@ fn keep_shape(s: &mut Session, fitted: &Fitted, extent: f64) -> Result<Value> {
             let m = fitted.middle;
             run(s, "construct.plane.three_points", json!({"a": at(m), "b": at(m + u * reach), "c": at(m + v * reach)}))
         }
+        Shape::Sphere { center, .. } => run(s, "construct.point.vertex", json!({"point": at(center)})),
         Shape::Cylinder { axis, .. } => {
             let half = fitted.half_length.max(reach / 2.0);
             run(s, "construct.axis.two_points", json!({"a": at(fitted.middle - axis * half), "b": at(fitted.middle + axis * half)}))

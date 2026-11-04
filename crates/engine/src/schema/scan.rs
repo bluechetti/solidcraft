@@ -36,11 +36,12 @@ pub struct ScanStandParams {
     /// The mesh body. Default: the selected mesh body, else the design's only mesh body.
     #[serde(default)]
     pub body: Option<String>,
-    /// Which of `scan.bases`'s bases, from 0. Default: 0, the steadiest. Ignored with `point`.
+    /// Which of `scan.bases`'s bases, from 0. Default: the steadiest, or, when the scan was last
+    /// stood on a base this way and nothing has changed since, the next one. Ignored with `point`.
     #[serde(default)]
     pub base: Option<u32>,
     /// A point on the scan, in mm: the flat face around it is grown and the scan stands on it.
-    /// A point on a curved wall is refused.
+    /// A point on a curved wall is refused. Default: the point picked on the scan, if any.
     #[serde(default)]
     pub point: Option<Point3>,
 }
@@ -69,7 +70,8 @@ pub struct ScanSymmetryParams {
     /// The mesh body. Default: the selected mesh body, else the design's only mesh body.
     #[serde(default)]
     pub body: Option<String>,
-    /// A line along the rough mirror plane, to find that plane rather than the best one.
+    /// A line along the rough mirror plane, to find that plane rather than the best one. Default:
+    /// the line between the first and last points picked on the scan, if there are two.
     #[serde(default)]
     pub guide: Option<ScanGuide>,
     /// Keep the plane as a construction plane. Default: true; false only reports it.
@@ -86,7 +88,8 @@ pub struct ScanSquareParams {
     /// The mesh body. Default: the selected mesh body, else the design's only mesh body.
     #[serde(default)]
     pub body: Option<String>,
-    /// A line along the rough mirror plane, to find that plane rather than the best one.
+    /// A line along the rough mirror plane, to find that plane rather than the best one. Default:
+    /// the line between the first and last points picked on the scan, if there are two.
     #[serde(default)]
     pub guide: Option<ScanGuide>,
 }
@@ -168,7 +171,17 @@ pub struct ScanFittedCylinder {
     pub length: f64,
 }
 
-/// What `scan.fit_plane` and `scan.fit_cylinder` return.
+/// A fitted sphere.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanFittedSphere {
+    /// Its centre, in mm.
+    pub center: [f64; 3],
+    /// The radius and the diameter, in mm.
+    pub radius: f64,
+    pub diameter: f64,
+}
+
+/// What `scan.fit_plane`, `scan.fit_cylinder` and `scan.fit_sphere` return.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanFitResult {
     /// The mesh body.
@@ -179,14 +192,17 @@ pub struct ScanFitResult {
     /// The cylinder fitted (`scan.fit_cylinder`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cylinder: Option<ScanFittedCylinder>,
+    /// The sphere fitted (`scan.fit_sphere`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sphere: Option<ScanFittedSphere>,
     /// How many triangles the region holds, and its area in mm².
     pub triangles: usize,
     pub area: f64,
     /// The region's points' distance from the shape: root mean square and largest, in mm.
     pub rms: f64,
     pub max: f64,
-    /// The construction plane or axis that keeps it, as the construction command replies, unless
-    /// `keep` was false.
+    /// The construction plane, axis or point that keeps it, as the construction command replies,
+    /// unless `keep` was false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<FeatureResult>")]
     pub feature: Option<Value>,
@@ -301,6 +317,12 @@ pub struct ScanPlaceResult {
     /// The base it stands on (`scan.stand_on_base` only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<ScanBase>,
+    /// Which of `scan.bases`'s bases it is, and how many there are, when it was chosen by number
+    /// or by pressing again (not for a face grown from a point).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_index: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_count: Option<usize>,
     /// The mirror plane it was squared to, before the move (`scan.square_to_symmetry` only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mirror: Option<ScanMirror>,

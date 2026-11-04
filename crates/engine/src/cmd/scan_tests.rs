@@ -71,8 +71,9 @@ fn a_scan_stands_on_its_steadiest_base_in_one_undo_step() {
     let (lo, hi) = bounds(&s, &body);
     assert!(lo.z.abs() < STL && (hi.z - 10.0).abs() < STL, "flat on the grid: {lo:?} {hi:?}");
 
-    // Standing it there again, or resting it on the grid, does nothing.
-    let again = run(&mut s, "scan.stand_on_base", json!({"body": body}));
+    // Standing it on that base again, or resting it on the grid, does nothing (pressed with no
+    // base named, it would go on to the next base).
+    let again = run(&mut s, "scan.stand_on_base", json!({"body": body, "base": 0}));
     assert_eq!(again["moved"], false, "{again}");
     assert_eq!(run(&mut s, "scan.rest_on_grid", json!({}))["moved"], false);
 
@@ -335,4 +336,83 @@ fn scan_deviation_measures_the_scan_against_the_model() {
     assert!(s.scan_deviation.is_none());
     let err = s.execute("scan.deviation", &json!({"tolerance": 1, "limit": 0.5})).unwrap_err().to_string();
     assert!(err.contains("more than"), "{err}");
+}
+
+/// Pressed again and again, Stand on Base goes through the bases one by one and round; a face
+/// picked on the scan is stood on instead.
+#[test]
+fn stand_on_base_cycles_and_stands_on_a_picked_face() {
+    let (mut s, body) = session_with_a_scan("cycle");
+    let first = run(&mut s, "scan.stand_on_base", json!({}));
+    assert_eq!(first["base_index"], 0, "{first}");
+    let count = first["base_count"].as_u64().unwrap();
+    assert!(count >= 3, "{first}");
+    let second = run(&mut s, "scan.stand_on_base", json!({}));
+    assert_eq!((second["base_index"].as_u64(), second["moved"].as_bool()), (Some(1), Some(true)), "{second}");
+    for _ in 2..count {
+        run(&mut s, "scan.stand_on_base", json!({}));
+    }
+    assert_eq!(run(&mut s, "scan.stand_on_base", json!({}))["base_index"], 0, "round again");
+
+    // Lying flat (base 0, a broad face down), the slab's end is picked and stood on: 80 high.
+    run(&mut s, "scan.quick_align", json!({}));
+    run(&mut s, "select.set", json!({"items": [{"type": "face", "body": body, "point": [40, 0, 0]}]}));
+    let picked = run(&mut s, "scan.stand_on_base", json!({}));
+    assert_eq!(picked["base"]["kind"], "grown", "{picked}");
+    assert!(picked.get("base_index").is_none());
+    let (lo, hi) = bounds(&s, &body);
+    assert!(lo.z.abs() < STL && (hi.z - 80.0).abs() < STL, "on its end: {lo:?} {hi:?}");
+}
+
+/// Two points picked along X = 30 guide Find Symmetry to that plane of the L block.
+#[test]
+fn two_picks_guide_find_symmetry() {
+    let (mut s, body, place) = session_with_a_symmetric_scan("picked-guide");
+    let on = |p: Vec3| {
+        let q = place(p);
+        json!({"type": "face", "body": body, "point": [q.x, q.y, q.z]})
+    };
+    run(&mut s, "select.set", json!({"items": [on(Vec3::new(31.0, 2.0, 25.0)), on(Vec3::new(31.0, 18.0, 25.0))]}));
+    let reply = run(&mut s, "scan.symmetry", json!({"keep": false}));
+    let n = reply["mirror"]["normal"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect::<Vec<_>>();
+    let truth = place(Vec3::X) - place(Vec3::ZERO);
+    assert!(Vec3::new(n[0], n[1], n[2]).dot(truth).abs() > 1.0 - 1e-6, "the X = 30 plane: {reply}");
+}
+
+/// Fit Sphere on a scanned ball keeps its centre as a construction point and reports Ø 24.
+#[test]
+fn fit_sphere_keeps_the_centre() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-ball-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let (rings, sides) = (24u32, 48u32);
+    let at = |i: u32, k: u32| {
+        let polar = std::f64::consts::PI * f64::from(i) / f64::from(rings);
+        let a = std::f64::consts::TAU * f64::from(k % sides) / f64::from(sides);
+        Vec3::new(5.0 + 12.0 * polar.sin() * a.cos(), -3.0 + 12.0 * polar.sin() * a.sin(), 20.0 + 12.0 * polar.cos())
+    };
+    let mut stl = String::from("solid b\n");
+    for i in 0..rings {
+        for k in 0..sides {
+            for t in [[at(i, k), at(i, k + 1), at(i + 1, k + 1)], [at(i, k), at(i + 1, k + 1), at(i + 1, k)]] {
+                stl += "facet normal 0 0 0\nouter loop\n";
+                for p in t {
+                    stl += &format!("vertex {} {} {}\n", p.x, p.y, p.z);
+                }
+                stl += "endloop\nendfacet\n";
+            }
+        }
+    }
+    let path = dir.join("ball.stl");
+    std::fs::write(&path, stl + "endsolid b\n").unwrap();
+    let mut s = Session::default();
+    run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    let reply = run(&mut s, "scan.fit_sphere", json!({"point": [17, -3, 20]}));
+    let c = &reply["sphere"]["center"];
+    assert!((reply["sphere"]["diameter"].as_f64().unwrap() - 24.0).abs() < 0.1, "{reply}");
+    assert!(
+        (c[0].as_f64().unwrap() - 5.0).abs() < 0.05 && (c[1].as_f64().unwrap() + 3.0).abs() < 0.05 && (c[2].as_f64().unwrap() - 20.0).abs() < 0.05,
+        "{reply}"
+    );
+    assert!(reply["feature"]["feature"].is_u64(), "kept: {reply}");
 }

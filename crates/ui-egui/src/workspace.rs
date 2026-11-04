@@ -341,7 +341,7 @@ pub const SECTIONS: &[Section] = &[
         promoted: 4,
         ids: &["scan.stand_on_base", "scan.symmetry", "scan.square_to_symmetry", "scan.rest_on_grid", "scan.quick_align", "scan.center"],
     },
-    Section { tab: "SCAN", panel: "FIT", promoted: 3, ids: &["scan.fit_plane", "scan.fit_cylinder", "mesh.convert"] },
+    Section { tab: "SCAN", panel: "FIT", promoted: 4, ids: &["scan.fit_plane", "scan.fit_cylinder", "scan.fit_sphere", "mesh.convert"] },
     Section { tab: "SCAN", panel: "SKETCH", promoted: 2, ids: &["sketch.create", "sketch.fit_curves_to_section"] },
     Section { tab: "SCAN", panel: "CHECK", promoted: 3, ids: &["scan.deviation", "inspect.section", "inspect.compare"] },
 ];

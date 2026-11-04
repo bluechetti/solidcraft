@@ -588,6 +588,10 @@ pub struct Session {
     /// The scan deviation map `scan.deviation` last measured, for the viewport to colour. View
     /// state: not part of the design and not an undo step.
     pub scan_deviation: Option<std::sync::Arc<cmd::scan::DeviationMap>>,
+    /// The base `scan.stand_on_base` last stood a scan on by number: the scan and which base it
+    /// was. Pressed again with nothing picked while the scan still stands there, it goes on to the
+    /// next. View state: not part of the design.
+    pub scan_base_cycle: Option<(String, usize)>,
     /// The faces Isocurve Analysis shows the isoparametric curves of, for the viewport to draw
     /// ([`Session::isocurve_lines`]). View state: not part of the design and not an undo step.
     pub isocurves: Vec<IsoPick>,
@@ -849,6 +853,7 @@ impl Session {
             analysis: None,
             continuity: Vec::new(),
             scan_deviation: None,
+            scan_base_cycle: None,
             isocurves: Vec::new(),
             comb: None,
             status_order: Vec::new(),
@@ -1929,6 +1934,7 @@ impl Session {
             analysis: None,
             continuity: Vec::new(),
             scan_deviation: None,
+            scan_base_cycle: None,
             isocurves: Vec::new(),
             comb: None,
             status_order: Vec::new(),

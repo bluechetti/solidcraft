@@ -95,6 +95,8 @@ fn replies_match_the_output_schema() {
     let on = run("scan.bases", json!({}))["bases"][0]["anchor"].clone();
     check(output_schema_for::<ScanFitResult>(), &run("scan.fit_plane", json!({"point": on})));
     check(output_schema_for::<ScanFitResult>(), &run("scan.fit_plane", json!({"point": on, "keep": false, "tolerance": "0.5 mm"})));
+    check(output_schema_for::<ScanPlaceResult>(), &run("scan.stand_on_base", json!({})));
+    check(output_schema_for::<ScanPlaceResult>(), &run("scan.stand_on_base", json!({})));
     // Against a box where the block was made, before any of the moves above.
     run("solid.box", json!({"body_name": "Model", "operation": "new", "length": 30, "width": 20, "height": 10}));
     check(output_schema_for::<ScanDeviationResult>(), &run("scan.deviation", json!({"body": "Model", "limit": 100})));

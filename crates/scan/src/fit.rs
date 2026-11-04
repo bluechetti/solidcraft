@@ -19,6 +19,8 @@ pub enum Shape {
     Plane { point: Vec3, normal: Vec3 },
     /// A cylinder about the line through `point` along the unit `axis`.
     Cylinder { point: Vec3, axis: Vec3, radius: f64 },
+    /// A sphere about `center`.
+    Sphere { center: Vec3, radius: f64 },
 }
 
 impl Shape {
@@ -30,6 +32,7 @@ impl Shape {
                 let v = p - point;
                 (v - axis * v.dot(axis)).len() - radius
             }
+            Shape::Sphere { center, radius } => p.dist(center) - radius,
         }
     }
 
@@ -41,6 +44,7 @@ impl Shape {
                 let v = p - point;
                 (v - axis * v.dot(axis)).normalized()
             }
+            Shape::Sphere { center, .. } => (p - center).normalized(),
         }
     }
 }
@@ -50,6 +54,7 @@ impl Shape {
 pub enum Kind {
     Plane,
     Cylinder,
+    Sphere,
 }
 
 /// A shape fitted to a region of the scan, and how well it fits.
@@ -111,7 +116,7 @@ pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Resu
     // On a coarse mesh the reach widens until the patch holds enough triangles to fit.
     let mut reach = match kind {
         Kind::Plane => 0.01 * extent,
-        Kind::Cylinder => 0.03 * extent,
+        Kind::Cylinder | Kind::Sphere => 0.03 * extent,
     };
     let near = |reach: f64| connected(scan, &neighbours, seed, |t| scan.corners(t).is_some_and(|[a, b, c]| ((a + b + c) / 3.0).dist(pick) <= reach));
     let mut start = near(reach);
@@ -151,7 +156,7 @@ pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Resu
 /// `reach` across: a flat face, curved only by noise. Asked while the region grows too, so that a
 /// flat face is refused before the region spreads over it.
 fn flat_cylinder(scan: &Scan, region: &[usize], shape: &Shape, reach: f64) -> bool {
-    let Shape::Cylinder { radius, .. } = *shape else { return false };
+    let (Shape::Cylinder { radius, .. } | Shape::Sphere { radius, .. }) = *shape else { return false };
     let mut corners = region.iter().filter_map(|&t| scan.corners(t)).flatten();
     let Some(first) = corners.next() else { return false };
     let (lo, hi) = corners.fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p)));
@@ -243,11 +248,13 @@ fn solve(scan: &Scan, region: &[usize], kind: Kind) -> Option<Shape> {
     let shape = match kind {
         Kind::Plane => plane(&s)?,
         Kind::Cylinder => cylinder(&s)?,
+        Kind::Sphere => sphere(&s)?,
     };
     // Back from about the region's middle.
     Some(match shape {
         Shape::Plane { point, normal } => Shape::Plane { point: point + s.origin, normal },
         Shape::Cylinder { point, axis, radius } => Shape::Cylinder { point: point + s.origin, axis, radius },
+        Shape::Sphere { center, radius } => Shape::Sphere { center: center + s.origin, radius },
     })
 }
 
@@ -320,7 +327,7 @@ fn cylinder(s: &Samples) -> Option<Shape> {
             for (a, row) in damped.iter_mut().enumerate() {
                 row[a] += lambda * row[a].max(1e-12);
             }
-            let Some(step) = solve5(damped, g.map(|x| -x)) else { break };
+            let Some(step) = solve_linear(damped, g.map(|x| -x)) else { break };
             let next_axis = (axis + e1 * step[0] + e2 * step[1]).normalized()?;
             let next_point = point + e1 * step[2] + e2 * step[3];
             let next_radius = (radius + step[4]).max(1e-12);
@@ -343,6 +350,69 @@ fn cylinder(s: &Samples) -> Option<Shape> {
     (radius.is_finite() && radius > 0.0).then_some(Shape::Cylinder { point, axis, radius })
 }
 
+/// The sphere of least squares: the algebraic sphere through the points (`|p|² + d·p + e = 0`,
+/// linear), then its centre and radius settled together by damped Gauss–Newton steps on the
+/// points' distances.
+fn sphere(s: &Samples) -> Option<Shape> {
+    let (mut a, mut b) = ([[0.0f64; 4]; 4], [0.0f64; 4]);
+    for &(p, w) in &s.points {
+        let row = [p.x, p.y, p.z, 1.0];
+        let rhs = -p.len2();
+        for i in 0..4 {
+            b[i] += w * row[i] * rhs;
+            for j in 0..4 {
+                a[i][j] += w * row[i] * row[j];
+            }
+        }
+    }
+    let d = solve_linear(a, b)?;
+    let mut center = Vec3::new(-d[0] / 2.0, -d[1] / 2.0, -d[2] / 2.0);
+    let squared = center.len2() - d[3];
+    if !(squared.is_finite() && squared > 0.0) {
+        return None;
+    }
+    let mut radius = squared.sqrt();
+    let residual = |c: Vec3, r: f64| s.points.iter().map(|&(p, w)| w * (p.dist(c) - r).powi(2)).sum::<f64>();
+    let mut cost = residual(center, radius);
+    let mut lambda = 1e-3;
+    for _ in 0..60 {
+        let (mut h, mut g) = ([[0.0f64; 4]; 4], [0.0f64; 4]);
+        for &(p, w) in &s.points {
+            let Some(n) = (p - center).normalized() else { continue };
+            let j = [-n.x, -n.y, -n.z, -1.0];
+            let r = p.dist(center) - radius;
+            for a in 0..4 {
+                g[a] += w * r * j[a];
+                for b in 0..4 {
+                    h[a][b] += w * j[a] * j[b];
+                }
+            }
+        }
+        let mut accepted = false;
+        for _ in 0..10 {
+            let mut damped = h;
+            for (a, row) in damped.iter_mut().enumerate() {
+                row[a] += lambda * row[a].max(1e-12);
+            }
+            let Some(step) = solve_linear(damped, g.map(|x| -x)) else { break };
+            let (next_center, next_radius) = (center + Vec3::new(step[0], step[1], step[2]), (radius + step[3]).max(1e-12));
+            let next_cost = residual(next_center, next_radius);
+            if next_cost.is_finite() && next_cost <= cost {
+                let gain = cost - next_cost;
+                (center, radius, cost) = (next_center, next_radius, next_cost);
+                lambda = (lambda * 0.3).max(1e-12);
+                accepted = gain > 1e-15 * cost.max(1e-300);
+                break;
+            }
+            lambda *= 10.0;
+        }
+        if !accepted {
+            break;
+        }
+    }
+    (radius.is_finite() && radius > 0.0).then_some(Shape::Sphere { center, radius })
+}
+
 /// The circle that best fits weighted points on a plane (Kåsa's): its centre and radius.
 fn kasa(points: impl Iterator<Item = ([f64; 2], f64)>) -> Option<([f64; 2], f64)> {
     let (mut a, mut b) = ([[0.0f64; 3]; 3], [0.0f64; 3]);
@@ -362,10 +432,10 @@ fn kasa(points: impl Iterator<Item = ([f64; 2], f64)>) -> Option<([f64; 2], f64)
     (squared.is_finite() && squared > 0.0).then(|| (centre, squared.sqrt()))
 }
 
-/// The 5 × 5 system `a x = b` by Gaussian elimination with partial pivoting; `None` if singular.
-fn solve5(mut a: [[f64; 5]; 5], mut b: [f64; 5]) -> Option<[f64; 5]> {
-    for col in 0..5 {
-        let pivot = (col..5).max_by(|&i, &j| a[i][col].abs().total_cmp(&a[j][col].abs()))?;
+/// The `N` × `N` system `a x = b` by Gaussian elimination with partial pivoting; `None` if singular.
+fn solve_linear<const N: usize>(mut a: [[f64; N]; N], mut b: [f64; N]) -> Option<[f64; N]> {
+    for col in 0..N {
+        let pivot = (col..N).max_by(|&i, &j| a[i][col].abs().total_cmp(&a[j][col].abs()))?;
         if !(a[pivot][col].abs() > 1e-300) {
             return None;
         }
@@ -380,9 +450,9 @@ fn solve5(mut a: [[f64; 5]; 5], mut b: [f64; 5]) -> Option<[f64; 5]> {
             *rhs -= f * pivot_b;
         }
     }
-    let mut x = [0.0; 5];
-    for row in (0..5).rev() {
-        let sum: f64 = (row + 1..5).map(|k| a[row][k] * x[k]).sum();
+    let mut x = [0.0; N];
+    for row in (0..N).rev() {
+        let sum: f64 = (row + 1..N).map(|k| a[row][k] * x[k]).sum();
         x[row] = (b[row] - sum) / a[row][row];
     }
     x.iter().all(|v| v.is_finite()).then_some(x)
@@ -416,6 +486,7 @@ fn summarize(scan: &Scan, triangles: Vec<usize>, shape: Shape) -> Result<Fitted,
     let (middle, half_length) = match shape {
         Shape::Plane { point, normal } => (centre - normal * (centre - point).dot(normal), 0.0),
         Shape::Cylinder { point, axis, .. } => (point + axis * ((along.0 + along.1) / 2.0), (along.1 - along.0) / 2.0),
+        Shape::Sphere { center, .. } => (center, 0.0),
     };
     Ok(Fitted { shape, triangles, area, rms: (squares / count as f64).sqrt(), max, middle, half_length })
 }
@@ -455,6 +526,43 @@ mod tests {
     }
 
     use crate::place::Rigid;
+
+    /// A ball R 12, half of it scanned, turned and moved anywhere: its centre and radius are found;
+    /// a pick on a flat face is no sphere.
+    #[test]
+    fn a_sphere_fits_the_ball_picked() {
+        let (rings, sides) = (24u32, 48u32);
+        let mut positions = Vec::new();
+        for i in 0..=rings {
+            let polar = std::f64::consts::FRAC_PI_2 * f64::from(i) / f64::from(rings);
+            for k in 0..sides {
+                let a = std::f64::consts::TAU * f64::from(k) / f64::from(sides);
+                positions.push(Vec3::new(12.0 * polar.sin() * a.cos(), 12.0 * polar.sin() * a.sin(), 12.0 * polar.cos()));
+            }
+        }
+        let mut triangles = Vec::new();
+        for i in 0..rings {
+            for k in 0..sides {
+                let (a, b) = (i * sides + k, i * sides + (k + 1) % sides);
+                triangles.push([a, b, b + sides]);
+                triangles.push([a, b + sides, a + sides]);
+            }
+        }
+        let axis = Vec3::new(0.5, 0.1, -0.3).normalized().unwrap();
+        let moved = turned(&positions, axis, 0.9, Vec3::new(40.0, -10.0, 7.0));
+        let scan = Scan::new(&moved, &triangles);
+        let seed = nearest_triangle(&scan, moved[(rings / 2 * sides) as usize]).unwrap();
+        let fitted = fit(&scan, seed, Kind::Sphere, None).unwrap();
+        let Shape::Sphere { center, radius } = fitted.shape else { panic!() };
+        assert!((radius - 12.0).abs() < 0.05, "{radius}");
+        assert!(center.dist(Vec3::new(40.0, -10.0, 7.0)) < 0.05, "{center:?}");
+
+        let (positions, triangles, turn) = plate_with_boss(0.02);
+        let scan = Scan::new(&positions, &triangles);
+        let place = |p: Vec3| turn.turned(p) + Vec3::new(-20.0, 55.0, 12.0);
+        let seed = nearest_triangle(&scan, place(Vec3::new(8.0, 8.0, 8.0))).unwrap();
+        assert_eq!(fit(&scan, seed, Kind::Sphere, None), Err(FitError::NoFit));
+    }
 
     /// A shaft R 150 × 40 long, picked on its wall: its first patch looks nearly flat, but it is
     /// found, not refused as a flat face.
