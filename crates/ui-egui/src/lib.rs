@@ -49,6 +49,7 @@ pub mod dialogs_part_size;
 pub mod dialogs_parts;
 pub mod dialogs_plastic;
 pub mod dialogs_save_mesh;
+pub(crate) mod dialogs_scan;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
 pub mod dialogs_sweep;

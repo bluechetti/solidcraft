@@ -400,6 +400,55 @@ fn stand_on_base(s: &mut Session, p: &Value) -> Result<Value> {
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
+/// What the Stand on Base dialog shows before it stands the scan: the base and the scan's points to
+/// mark on it (where the part would touch the ground, or the face grown from the pick).
+#[derive(Clone, Debug)]
+pub struct BasePreview {
+    pub body: String,
+    pub base: ScanBase,
+    /// Which of the scan's bases it is, when it is not a face grown from a pick.
+    pub index: Option<usize>,
+    /// How many bases the scan has.
+    pub count: usize,
+    pub marked: Vec<[f32; 3]>,
+}
+
+/// The base `scan.stand_on_base` would stand the scan `body` on (the dialog's preview): the face
+/// grown from `point` when there is one, else base number `index` (wrapped round the bases).
+pub fn base_preview(s: &Session, body: Option<&str>, point: Option<Vec3>, index: usize) -> Result<BasePreview> {
+    let cmd = "scan.stand_on_base";
+    let mesh = mesh(s, &json!({ "body": body }), cmd)?;
+    let scan = mesh.scan();
+    let found = base::bases(&scan);
+    let count = found.len();
+    let (chosen, index, triangles) = match point {
+        Some(point) => {
+            let seed = base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
+            let (grown, triangles) = base::grow_face(&scan, seed).map_err(|e| bad(cmd, e.to_string()))?;
+            (grown, None, triangles)
+        }
+        None => {
+            let i = if count == 0 { 0 } else { index % count };
+            let chosen = *found.get(i).ok_or_else(|| bad(cmd, "the scan has no base to stand on"))?;
+            (chosen, Some(i), base::touching(&scan, &chosen))
+        }
+    };
+    // Each point once, however many of its triangles are marked.
+    let mut seen = vec![false; mesh.positions.len()];
+    let mut marked = Vec::new();
+    for &t in &triangles {
+        for &v in mesh.triangles.get(t).into_iter().flatten() {
+            if let (Some(slot), Some(p)) = (seen.get_mut(v as usize), mesh.positions.get(v as usize))
+                && !*slot
+            {
+                *slot = true;
+                marked.push([p.x as f32, p.y as f32, p.z as f32]);
+            }
+        }
+    }
+    Ok(BasePreview { body: mesh.body, base: base_reply(&chosen), index, count, marked })
+}
+
 /// Whether the scan already stands on `base`: standing it there would not move it.
 fn stands_on(scan: &Scan, base: Option<&Base>, reach: f64) -> bool {
     base.and_then(|b| place::stand(scan, b.normal, b.anchor)).is_some_and(|m| m.is_negligible(NEGLIGIBLE, reach))

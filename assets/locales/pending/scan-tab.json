@@ -37,7 +37,16 @@
     "ui.scan_deviation_summary": "{rms} rms · {within} within ± {tolerance}",
     "help.scan.deviation": "Colours the scan by how far it is from the model built from it: within the tolerance, above it or below it. Use it to check a model against the part it was made from; press it again to take the colours away.",
     "cmd.scan_fit_sphere": "Fit Sphere",
-    "help.scan.fit_sphere": "Fits a sphere to the ball-shaped area around the point picked on the scan and keeps its centre as a construction point, with its diameter. Use it for ball ends, domes and spherical seats."
+    "help.scan.fit_sphere": "Fits a sphere to the ball-shaped area around the point picked on the scan and keeps its centre as a construction point, with its diameter. Use it for ball ends, domes and spherical seats.",
+    "ui.scan_base": "Base",
+    "ui.scan_base_number": "Base",
+    "ui.scan_base_kind": "Stands on",
+    "ui.scan_base_flat": "A flat face",
+    "ui.scan_base_resting": "Where it rests",
+    "ui.scan_base_axis": "Along its own axes",
+    "ui.scan_base_grown": "The face clicked",
+    "ui.scan_base_tips": "Tips over at",
+    "ui.scan_base_hint": "The marked part touches the ground. Click a face on the scan to stand it there instead."
   },
   "de": {
     "ALIGN": "AUSRICHTEN",
@@ -77,7 +86,16 @@
     "ui.scan_deviation_summary": "{rms} RMS · {within} innerhalb ± {tolerance}",
     "help.scan.deviation": "Färbt den Scan danach, wie weit er vom daraus gebauten Modell entfernt ist: innerhalb der Toleranz, darüber oder darunter. Verwenden Sie es, um ein Modell mit dem Teil zu vergleichen, aus dem es entstand; erneut drücken entfernt die Farben.",
     "cmd.scan_fit_sphere": "Kugel einpassen",
-    "help.scan.fit_sphere": "Passt eine Kugel an den kugelförmigen Bereich um den auf dem Scan gewählten Punkt an und behält ihren Mittelpunkt als Konstruktionspunkt, mit ihrem Durchmesser. Verwenden Sie es für Kugelenden, Kuppeln und Kugelsitze."
+    "help.scan.fit_sphere": "Passt eine Kugel an den kugelförmigen Bereich um den auf dem Scan gewählten Punkt an und behält ihren Mittelpunkt als Konstruktionspunkt, mit ihrem Durchmesser. Verwenden Sie es für Kugelenden, Kuppeln und Kugelsitze.",
+    "ui.scan_base": "Auflage",
+    "ui.scan_base_number": "Auflage",
+    "ui.scan_base_kind": "Steht auf",
+    "ui.scan_base_flat": "Einer ebenen Fläche",
+    "ui.scan_base_resting": "Wo es liegen bleibt",
+    "ui.scan_base_axis": "Entlang seiner Achsen",
+    "ui.scan_base_grown": "Der angeklickten Fläche",
+    "ui.scan_base_tips": "Kippt bei",
+    "ui.scan_base_hint": "Der markierte Teil berührt den Boden. Klicken Sie eine Fläche auf dem Scan an, um ihn stattdessen darauf zu stellen."
   },
   "ja": {
     "ALIGN": "位置合わせ",
@@ -117,7 +135,16 @@
     "ui.scan_deviation_summary": "RMS {rms} · ± {tolerance} 以内 {within}",
     "help.scan.deviation": "スキャンを、そこから作ったモデルからの距離で色分けします（公差内、上、下）。モデルを元の部品と照合するときに使います。もう一度押すと色が消えます。",
     "cmd.scan_fit_sphere": "球をフィット",
-    "help.scan.fit_sphere": "スキャン上で選んだ点の周りの球状の部分に球をフィットし、その中心を直径とともに構築点として残します。球状の端、ドーム、球面座に使います。"
+    "help.scan.fit_sphere": "スキャン上で選んだ点の周りの球状の部分に球をフィットし、その中心を直径とともに構築点として残します。球状の端、ドーム、球面座に使います。",
+    "ui.scan_base": "接地面",
+    "ui.scan_base_number": "接地面",
+    "ui.scan_base_kind": "接地",
+    "ui.scan_base_flat": "平らな面",
+    "ui.scan_base_resting": "静止する姿勢",
+    "ui.scan_base_axis": "自身の軸に沿って",
+    "ui.scan_base_grown": "クリックした面",
+    "ui.scan_base_tips": "倒れる角度",
+    "ui.scan_base_hint": "マークされた部分が地面に接します。代わりにそこへ立てるには、スキャン上の面をクリックします。"
   },
   "ko": {
     "ALIGN": "정렬",
@@ -157,7 +184,16 @@
     "ui.scan_deviation_summary": "RMS {rms} · ± {tolerance} 이내 {within}",
     "help.scan.deviation": "스캔을 거기서 만든 모델과의 거리에 따라 공차 이내, 위, 아래로 색칠합니다. 모델을 원래 부품과 비교할 때 사용하세요. 다시 누르면 색이 사라집니다.",
     "cmd.scan_fit_sphere": "구 피팅",
-    "help.scan.fit_sphere": "스캔에서 고른 점 주변의 공 모양 부분에 구를 맞추고 그 중심을 지름과 함께 구성 점으로 남깁니다. 공 모양 끝, 돔, 구면 시트에 사용하세요."
+    "help.scan.fit_sphere": "스캔에서 고른 점 주변의 공 모양 부분에 구를 맞추고 그 중심을 지름과 함께 구성 점으로 남깁니다. 공 모양 끝, 돔, 구면 시트에 사용하세요.",
+    "ui.scan_base": "받침면",
+    "ui.scan_base_number": "받침면",
+    "ui.scan_base_kind": "닿는 곳",
+    "ui.scan_base_flat": "평평한 면",
+    "ui.scan_base_resting": "놓였을 때 머무는 자세",
+    "ui.scan_base_axis": "자체 축을 따라",
+    "ui.scan_base_grown": "클릭한 면",
+    "ui.scan_base_tips": "넘어지는 기울기",
+    "ui.scan_base_hint": "표시된 부분이 바닥에 닿습니다. 대신 그 위에 세우려면 스캔의 면을 클릭하세요."
   },
   "zh": {
     "ALIGN": "对齐",
@@ -197,7 +233,16 @@
     "ui.scan_deviation_summary": "RMS {rms} · ± {tolerance} 以内 {within}",
     "help.scan.deviation": "按扫描与由其构建的模型之间的距离为扫描着色：公差以内、高于或低于模型。用于将模型与原始零件对照检查；再次按下可取消着色。",
     "cmd.scan_fit_sphere": "拟合球体",
-    "help.scan.fit_sphere": "对扫描上所选点周围的球形区域拟合一个球体，并将其球心连同直径保留为构造点。用于球头、圆顶和球面座。"
+    "help.scan.fit_sphere": "对扫描上所选点周围的球形区域拟合一个球体，并将其球心连同直径保留为构造点。用于球头、圆顶和球面座。",
+    "ui.scan_base": "支撑面",
+    "ui.scan_base_number": "支撑面",
+    "ui.scan_base_kind": "立于",
+    "ui.scan_base_flat": "一个平面",
+    "ui.scan_base_resting": "静止姿态",
+    "ui.scan_base_axis": "沿其自身轴线",
+    "ui.scan_base_grown": "所点击的面",
+    "ui.scan_base_tips": "倾倒角度",
+    "ui.scan_base_hint": "标记的部分接触地面。点击扫描上的某个面可改为立于该面。"
   },
   "ar": {
     "ALIGN": "محاذاة",
@@ -237,7 +282,16 @@
     "ui.scan_deviation_summary": "{rms} جذر متوسط المربعات · {within} ضمن ± {tolerance}",
     "help.scan.deviation": "يلوّن المسح حسب بعده عن النموذج المبني منه: ضمن التفاوت أو فوقه أو تحته. استخدمه لفحص نموذج مقابل الجزء الذي صُنع منه؛ اضغطه مجددًا لإزالة الألوان.",
     "cmd.scan_fit_sphere": "ملاءمة كرة",
-    "help.scan.fit_sphere": "يلائم كرة مع المنطقة الكروية حول النقطة المختارة على المسح ويحتفظ بمركزها كنقطة إنشائية مع قطرها. استخدمه للأطراف الكروية والقباب والمقاعد الكروية."
+    "help.scan.fit_sphere": "يلائم كرة مع المنطقة الكروية حول النقطة المختارة على المسح ويحتفظ بمركزها كنقطة إنشائية مع قطرها. استخدمه للأطراف الكروية والقباب والمقاعد الكروية.",
+    "ui.scan_base": "القاعدة",
+    "ui.scan_base_number": "القاعدة",
+    "ui.scan_base_kind": "يقف على",
+    "ui.scan_base_flat": "وجه مستوٍ",
+    "ui.scan_base_resting": "حيث يستقر",
+    "ui.scan_base_axis": "على امتداد محاوره",
+    "ui.scan_base_grown": "الوجه الذي نُقر",
+    "ui.scan_base_tips": "ينقلب عند",
+    "ui.scan_base_hint": "الجزء المعلَّم يلمس الأرض. انقر وجهًا على المسح لإيقافه عليه بدلًا من ذلك."
   },
   "he": {
     "ALIGN": "יישור",
@@ -277,7 +331,16 @@
     "ui.scan_deviation_summary": "{rms} RMS · {within} בתוך ± {tolerance}",
     "help.scan.deviation": "צובע את הסריקה לפי מרחקה מהמודל שנבנה ממנה: בתוך הטולרנס, מעליו או מתחתיו. השתמשו בזה כדי לבדוק מודל מול החלק שממנו נבנה; לחיצה נוספת מסירה את הצבעים.",
     "cmd.scan_fit_sphere": "התאמת כדור",
-    "help.scan.fit_sphere": "מתאים כדור לאזור הכדורי סביב הנקודה שנבחרה בסריקה ושומר את מרכזו כנקודת בנייה, עם הקוטר שלו. השתמשו בזה לקצוות כדוריים, כיפות ומושבים כדוריים."
+    "help.scan.fit_sphere": "מתאים כדור לאזור הכדורי סביב הנקודה שנבחרה בסריקה ושומר את מרכזו כנקודת בנייה, עם הקוטר שלו. השתמשו בזה לקצוות כדוריים, כיפות ומושבים כדוריים.",
+    "ui.scan_base": "בסיס",
+    "ui.scan_base_number": "בסיס",
+    "ui.scan_base_kind": "עומד על",
+    "ui.scan_base_flat": "פאה שטוחה",
+    "ui.scan_base_resting": "היכן שהוא נח",
+    "ui.scan_base_axis": "לאורך הצירים שלו",
+    "ui.scan_base_grown": "הפאה שנלחצה",
+    "ui.scan_base_tips": "מתהפך ב-",
+    "ui.scan_base_hint": "החלק המסומן נוגע בקרקע. לחצו על פאה בסריקה כדי להעמיד אותה עליה במקום."
   },
   "vi": {
     "ALIGN": "CĂN CHỈNH",
@@ -317,7 +380,16 @@
     "ui.scan_deviation_summary": "RMS {rms} · {within} trong ± {tolerance}",
     "help.scan.deviation": "Tô màu bản quét theo khoảng cách tới mô hình dựng từ nó: trong dung sai, cao hơn hoặc thấp hơn. Dùng để kiểm tra mô hình với chi tiết gốc; nhấn lại để bỏ màu.",
     "cmd.scan_fit_sphere": "Khớp hình cầu",
-    "help.scan.fit_sphere": "Khớp một hình cầu với vùng hình cầu quanh điểm đã chọn trên bản quét và giữ tâm của nó làm điểm dựng, kèm đường kính. Dùng cho đầu cầu, mái vòm và ổ cầu."
+    "help.scan.fit_sphere": "Khớp một hình cầu với vùng hình cầu quanh điểm đã chọn trên bản quét và giữ tâm của nó làm điểm dựng, kèm đường kính. Dùng cho đầu cầu, mái vòm và ổ cầu.",
+    "ui.scan_base": "Mặt đỡ",
+    "ui.scan_base_number": "Mặt đỡ",
+    "ui.scan_base_kind": "Đứng trên",
+    "ui.scan_base_flat": "Một mặt phẳng",
+    "ui.scan_base_resting": "Tư thế nằm yên",
+    "ui.scan_base_axis": "Theo các trục của nó",
+    "ui.scan_base_grown": "Mặt đã nhấp",
+    "ui.scan_base_tips": "Đổ ở góc",
+    "ui.scan_base_hint": "Phần được đánh dấu chạm đất. Nhấp vào một mặt trên bản quét để đặt nó lên mặt đó."
   },
   "en-GB": {
     "cmd.scan_center": "Centre on Origin",

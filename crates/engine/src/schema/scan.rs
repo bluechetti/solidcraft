@@ -275,7 +275,7 @@ pub struct ScanDeviationResult {
 }
 
 /// A way a scan could stand.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct ScanBase {
     /// `flat` (a broad flat face), `resting` (a pose it rests in on several places), `axis` (lying
     /// along its own axes) or `grown` (a face grown from a point).

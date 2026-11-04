@@ -185,7 +185,8 @@ fn flat_faces(scan: &Scan, points: &[Vec3], extent: f64) -> (Vec<Base>, Vec3) {
             {
                 anchor = outline_middle + n * (farthest - outline_middle.dot(n));
             }
-            Some(Base { kind: BaseKind::Flat, normal: n, anchor, area: support, share: support / total, tip: 0.0, rms: 0.0 })
+            // A large scan is read every `step` triangles: the area is the sample's, scaled back up.
+            Some(Base { kind: BaseKind::Flat, normal: n, anchor, area: support * step as f64, share: support / total, tip: 0.0, rms: 0.0 })
         })
         .collect();
     found.sort_by(|a, b| b.area.total_cmp(&a.area));
@@ -393,6 +394,15 @@ fn axis_bases(samples: &[Vec3], centroid: Vec3, extent: f64) -> Vec<Base> {
     out
 }
 
+/// The triangles that would touch the ground standing on `base`: those wholly within a little of
+/// its ground plane, to show where the part rests.
+pub fn touching(scan: &Scan, base: &Base) -> Vec<usize> {
+    let reach = 2.0 * touch_tolerance(scan.extent());
+    let Some(n) = base.normal.normalized() else { return Vec::new() };
+    let ground = base.anchor.dot(n);
+    (0..scan.triangle_count()).filter(|&t| scan.corners(t).is_some_and(|c| c.iter().all(|p| ground - p.dot(n) <= reach))).collect()
+}
+
 /// Why a face could not be grown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GrowError {
@@ -484,6 +494,11 @@ pub fn nearest_triangle(scan: &Scan, point: Vec3) -> Option<usize> {
 /// once more from the seed against the final plane. Its outward side is away from the rest of the
 /// scan, and its anchor is on the plane through its outermost point, under its middle.
 pub fn grow(scan: &Scan, seed: usize) -> Result<Base, GrowError> {
+    grow_face(scan, seed).map(|(base, _)| base)
+}
+
+/// [`grow`], with the face's triangles (the seed first), to show which face it is.
+pub fn grow_face(scan: &Scan, seed: usize) -> Result<(Base, Vec<usize>), GrowError> {
     let seed_corners = scan.corners(seed).ok_or(GrowError::NotOnTheScan)?;
     let [a, b, c] = seed_corners;
     let seed_normal = (b - a).cross(c - a).normalized().ok_or(GrowError::NotOnTheScan)?;
@@ -571,7 +586,7 @@ pub fn grow(scan: &Scan, seed: usize) -> Result<Base, GrowError> {
     let anchor = middle + outward * (outermost - middle.dot(outward));
     let total: f64 = (0..scan.triangle_count()).filter_map(|t| scan.corners(t)).map(|[a, b, c]| (b - a).cross(c - a).len() / 2.0).sum();
     let share = if total > 0.0 { area / total } else { 0.0 };
-    Ok(Base { kind: BaseKind::Grown, normal: outward, anchor, area, share, tip: 0.0, rms: plane.spread.sqrt() })
+    Ok((Base { kind: BaseKind::Grown, normal: outward, anchor, area, share, tip: 0.0, rms: plane.spread.sqrt() }, triangles))
 }
 
 /// The triangles across each edge: found through each position's triangles (one flat list,
@@ -637,6 +652,37 @@ mod tests {
     use super::*;
     use crate::place::stand_on;
     use crate::test_meshes::{cuboid, fine_cuboid, turned};
+
+    /// Standing on a slab's broad face, the triangles of that face touch the ground and nothing else does.
+    #[test]
+    fn the_triangles_touching_the_ground_are_the_base_face() {
+        let (positions, triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(80.0, 50.0, 10.0), 4);
+        let scan = Scan::new(&positions, &triangles);
+        let found = bases(&scan);
+        let touching = touching(&scan, &found[0]);
+        assert_eq!(touching.len(), 2 * 4 * 4, "the one face's triangles");
+        let normal = found[0].normal;
+        assert!(
+            touching
+                .iter()
+                .all(|&t| scan.corners(t).is_some_and(|[a, b, c]| (b - a).cross(c - a).normalized().is_some_and(|m| m.dot(normal).abs() > 0.999)))
+        );
+        let seed = touching[0];
+        let (grown, faces) = grow_face(&scan, seed).unwrap();
+        assert_eq!(faces.len(), 32);
+        assert!(grown.normal.dot(normal) > 0.999);
+    }
+
+    /// A scan of more than 100 000 triangles is read a sample at a time: a face's area is still
+    /// the whole face's.
+    #[test]
+    fn a_large_scans_face_area_is_the_whole_faces() {
+        let (positions, triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(80.0, 50.0, 10.0), 130);
+        assert!(triangles.len() >= 200_000, "read every second triangle");
+        let found = bases(&Scan::new(&positions, &triangles));
+        let flat = found.iter().find(|b| b.kind == BaseKind::Flat).unwrap();
+        assert!((flat.area - 4000.0).abs() < 0.02 * 4000.0, "{}", flat.area);
+    }
 
     /// A slab 80 × 50 × 10: its broad faces come first, each a flat face, and standing on the first
     /// puts a broad face down on the grid. Turned anywhere first, the answer is the same.

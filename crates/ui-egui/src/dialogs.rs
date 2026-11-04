@@ -399,6 +399,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             Plastic(crate::dialogs_plastic::Pl),
             /// Frame members (`dialogs_frame`).
             Frame(crate::dialogs_frame::Member),
+            ScanBase(crate::dialogs_scan::StandBase),
             /// Appearance (`dialogs_appearance`).
             Appearance(crate::dialogs_appearance::Ap),
             /// Contact sets, motion studies, exploded views, configurations (`dialogs_motion`).
@@ -1102,6 +1103,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_view_dxf::start(app, id))
                     .or_else(|| crate::dialogs_plastic::start(app, id))
                     .or_else(|| crate::dialogs_frame::start(app, id))
+                    .or_else(|| crate::dialogs_scan::start(app, id))
                     .or_else(|| crate::dialogs_appearance::start(app, id))
                     .or_else(|| crate::dialogs_motion::start(app, id))
                     .or_else(|| crate::dialogs_parts::start(app, id))
@@ -2560,6 +2562,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::InsertDrawing(p) => crate::dialogs_insert_drawing::title(p),
         Kind::Plastic(k) => k.title(),
         Kind::Frame(_) => "FRAME MEMBER",
+        Kind::ScanBase(_) => "STAND ON BASE",
         Kind::Appearance(_) => "APPEARANCE",
         Kind::Motion(k) => k.title(),
         Kind::Part(_) => "INSERT PART",
@@ -5588,6 +5591,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::InsertDrawing(p) => return crate::dialogs_insert_drawing::commands(p),
         Kind::Plastic(k) => return crate::dialogs_plastic::commands(app, k, &d.inputs, &d.extra),
         Kind::Frame(k) => return crate::dialogs_frame::commands(app, k, &d.inputs, &d.extra),
+        Kind::ScanBase(k) => return crate::dialogs_scan::commands(k, &d.inputs),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),
         Kind::Part(k) => return crate::dialogs_parts::commands(app, k, &d.inputs),

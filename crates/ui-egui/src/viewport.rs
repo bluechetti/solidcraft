@@ -4637,7 +4637,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             back: proj.cam.back().to_f32(),
             size_px,
             images: crate::ref_images::gpu_images(app),
-            clouds: crate::point_clouds::gpu_clouds(app, ui.ctx()).into_iter().chain(crate::scan_deviation::gpu_cloud(app)).collect(),
+            clouds: crate::point_clouds::gpu_clouds(app, ui.ctx())
+                .into_iter()
+                .chain(crate::scan_deviation::gpu_cloud(app))
+                .chain(crate::dialogs_scan::gpu_marks(app))
+                .collect(),
             analysis: analysis_uniform(app),
             analysis_colors: crate::gpu::analysis_colors(&t.analysis),
             access: crate::access::map(app),
