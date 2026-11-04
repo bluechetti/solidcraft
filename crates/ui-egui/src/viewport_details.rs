@@ -282,7 +282,10 @@ pub(crate) fn legacy_description(app: &SolveApp) -> Details {
 /// Compatibility placement uses the same description and renderer, never a second painter.
 pub(crate) fn legacy_legends(app: &SolveApp, ui: &mut egui::Ui, viewport: egui::Rect) {
     let mut descriptions = Vec::new();
-    if !app.preferences.viewport_analysis_status {
+    // The scan deviation map has no status item of its own: its key shows in the corner whenever
+    // it is on and no surface analysis has the corner.
+    let deviation_only = app.session.analysis.is_none() && crate::scan_deviation::shown(app);
+    if !app.preferences.viewport_analysis_status || deviation_only {
         descriptions.push(("analysis:legend", legacy_description(app)));
     }
     if (!app.preferences.viewport_analysis_status || !app.preferences.viewport_status_details) && !app.session.continuity.is_empty() {

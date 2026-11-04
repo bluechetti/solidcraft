@@ -17,8 +17,8 @@ use solidcraft_scan::symmetry::{self, Guide, Mirror};
 use super::CommandSpec;
 use crate::params::{bad, str_};
 use crate::schema::scan::{
-    ScanBase, ScanBasesParams, ScanBasesResult, ScanFitParams, ScanFitResult, ScanFittedCylinder, ScanFittedPlane, ScanMirror, ScanPlaceParams,
-    ScanPlaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
+    ScanBase, ScanBasesParams, ScanBasesResult, ScanDeviationParams, ScanDeviationResult, ScanFitParams, ScanFitResult, ScanFittedCylinder,
+    ScanFittedPlane, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -30,6 +30,7 @@ const STAND_CONTRACT: TypedContract<ScanStandParams> = TypedContract::new();
 const SYMMETRY_CONTRACT: TypedContract<ScanSymmetryParams> = TypedContract::new();
 const SQUARE_CONTRACT: TypedContract<ScanSquareParams> = TypedContract::new();
 const FIT_CONTRACT: TypedContract<ScanFitParams> = TypedContract::new();
+const DEVIATION_CONTRACT: TypedContract<ScanDeviationParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     planned!("scan.repair", "Repair Mesh", "8615")
@@ -106,10 +107,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
         .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: mm (default 0.15 % of the scan's size); keep?: bool (default true: kept as a construction axis) → body, cylinder: {point, axis, radius, diameter, length}, triangles, area, rms, max, feature"),
-    planned!("scan.deviation", "Scan Deviation", "8615")
+    CommandSpec::new("scan.deviation", "Scan Deviation", crate::checked!("scan.deviation", deviation))
         .at("SCAN", "CHECK")
         .icon("curvature_map")
-        .params("planned: scan: mesh body name; body: the solid or surface built from it; tolerance?: mm (default 0.1); limit?: mm (default 0.5) → rms, mean, max_above, max_below, within"),
+        .noundo()
+        .contract(&DEVIATION_CONTRACT)
+        .output(output_schema_for::<ScanDeviationResult>)
+        .params("scan?: mesh body (default: the selected or only one); body?: the model (default: the selected or only solid or surface body); tolerance?: length (default 0.1 mm); limit?: length (default 0.5 mm); show?: bool (false takes the map away): colours the scan by its distance from the model in the viewport, a view and not an undo step → shown, scan, body, rms, mean, max_above, max_below, within, measured, unmatched, tolerance, limit"),
 ];
 
 /// A move smaller than this (mm, at the scan's reach) leaves the scan where it is.
@@ -345,6 +349,133 @@ fn center(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn quick_align(s: &mut Session, p: &Value) -> Result<Value> {
     place_by(s, p, "scan.quick_align", place::quick_align, "the scan is too round to have a longest direction to lay along X")
+}
+
+/// A scan's deviation from a model, measured by `scan.deviation`, for the viewport to colour:
+/// one value per position of the scan's mesh (see [`solidcraft_scan::deviation::Deviation`]).
+/// It stands for the design as it was at `revision`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeviationMap {
+    pub scan: String,
+    pub body: String,
+    pub revision: u64,
+    pub values: Vec<f32>,
+    pub tolerance: f64,
+    pub limit: f64,
+    pub rms: f64,
+    pub within: f64,
+}
+
+impl DeviationMap {
+    /// Whether it still stands for the design: nothing has changed since it was measured.
+    pub fn current(&self, s: &Session) -> bool {
+        self.revision == s.revision
+    }
+
+    /// Where a point's value sits on the colour scale, -1 to 1 (0 within the tolerance); `None` for
+    /// a point the model leaves out.
+    pub fn scale(&self, value: f32) -> Option<f64> {
+        solidcraft_scan::deviation::scale(value, self.tolerance, self.limit)
+    }
+}
+
+/// A length parameter in mm, or `default`; above 0.
+fn length(s: &Session, p: &Value, key: &str, default: f64, cmd: &str) -> Result<f64> {
+    let Some(e) = crate::params::expr(p, key) else { return Ok(default) };
+    let v = s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("{key}: {e}")))?;
+    if !(v.is_finite() && v > 0.0) {
+        return Err(bad(cmd, format!("`{key}` must be a length above 0")));
+    }
+    Ok(v)
+}
+
+fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.deviation";
+    let reply = |r: ScanDeviationResult| serde_json::to_value(r).map_err(|e| EngineError::Other(e.to_string()));
+    let empty = ScanDeviationResult {
+        shown: false,
+        scan: None,
+        body: None,
+        rms: None,
+        mean: None,
+        max_above: None,
+        max_below: None,
+        within: None,
+        measured: None,
+        unmatched: None,
+        tolerance: None,
+        limit: None,
+        param_warnings: Vec::new(),
+    };
+    if crate::params::bool_(p, "show") == Some(false) {
+        s.scan_deviation = None;
+        return reply(empty);
+    }
+    let tolerance = length(s, p, "tolerance", 0.1, cmd)?;
+    let limit = length(s, p, "limit", 0.5, cmd)?;
+    if !(limit > tolerance) {
+        return Err(bad(cmd, "`limit` must be more than `tolerance`"));
+    }
+    let scan_name = str_(p, "scan").filter(|b| !b.trim().is_empty()).map(str::to_owned);
+    let mesh = mesh(s, &json!({ "body": scan_name }), cmd)?;
+    let state = s.model.state();
+    let model_name = match str_(p, "body").filter(|b| !b.trim().is_empty()) {
+        Some(name) => name.to_owned(),
+        None => {
+            let solid = |name: &str| state.body(name).is_some_and(|b| !b.body.is_mesh());
+            let selected: Vec<&str> = s
+                .selection
+                .iter()
+                .filter_map(|x| match x {
+                    Sel::Body { name } | Sel::Face { body: name, .. } | Sel::Edge { body: name, .. } => Some(name.as_str()),
+                    _ => None,
+                })
+                .filter(|n| solid(n))
+                .collect();
+            let all: Vec<&str> = state.bodies.iter().filter(|b| !b.body.is_mesh()).map(|b| b.name.as_str()).collect();
+            match (selected.as_slice(), all.as_slice()) {
+                ([one], _) | ([], [one]) => (*one).to_owned(),
+                ([], []) => return Err(bad(cmd, "the design has no model to measure the scan against: build one first")),
+                _ => return Err(bad(cmd, "select the model (a solid or surface body) to measure the scan against")),
+            }
+        }
+    };
+    let model = state.body(&model_name).ok_or_else(|| bad(cmd, format!("no body `{model_name}`")))?;
+    if model.body.is_mesh() {
+        return Err(bad(cmd, format!("`{model_name}` is a mesh: measure the scan against a solid or surface body")));
+    }
+    // Meshed within a quarter of the tolerance, as Compare Bodies does, so the mesh agrees with
+    // the surface well within what is measured.
+    let surface = model.body.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance / 4.0)).map_err(|e| bad(cmd, format!("`{model_name}`: {e}")))?;
+    let d = solidcraft_scan::deviation::measure(&mesh.positions, &surface, tolerance, 4.0 * limit);
+    if d.measured == 0 {
+        return Err(bad(cmd, format!("the scan is nowhere near `{model_name}`: no point is within {:.3} mm of it", 4.0 * limit)));
+    }
+    s.scan_deviation = Some(std::sync::Arc::new(DeviationMap {
+        scan: mesh.body.clone(),
+        body: model_name.clone(),
+        revision: s.revision,
+        values: d.values,
+        tolerance,
+        limit,
+        rms: d.rms,
+        within: d.within,
+    }));
+    reply(ScanDeviationResult {
+        shown: true,
+        scan: Some(mesh.body),
+        body: Some(model_name),
+        rms: Some(d.rms),
+        mean: Some(d.mean),
+        max_above: Some(d.max_above),
+        max_below: Some(d.max_below),
+        within: Some(d.within),
+        measured: Some(d.measured),
+        unmatched: Some(d.unmatched),
+        tolerance: Some(tolerance),
+        limit: Some(limit),
+        ..empty
+    })
 }
 
 /// The point picked on the scan `body`: a picked face or edge of it.

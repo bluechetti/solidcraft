@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
 
 use super::{
-    ScanBasesParams, ScanBasesResult, ScanFitParams, ScanFitResult, ScanPlaceParams, ScanPlaceResult, ScanSquareParams, ScanStandParams,
-    ScanSymmetryParams, ScanSymmetryResult,
+    ScanBasesParams, ScanBasesResult, ScanDeviationParams, ScanDeviationResult, ScanFitParams, ScanFitResult, ScanPlaceParams, ScanPlaceResult,
+    ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
 };
 use crate::Session;
 use crate::schema::tests::{assert_keys, assert_strict_keeps_todays_errors, conforms};
@@ -16,6 +16,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanSymmetryParams>(), &["body", "guide", "keep"]);
     assert_keys(input_schema_for::<ScanSquareParams>(), &["body", "guide"]);
     assert_keys(input_schema_for::<ScanFitParams>(), &["body", "keep", "point", "tolerance"]);
+    assert_keys(input_schema_for::<ScanDeviationParams>(), &["body", "limit", "scan", "show", "tolerance"]);
 }
 
 #[test]
@@ -94,4 +95,8 @@ fn replies_match_the_output_schema() {
     let on = run("scan.bases", json!({}))["bases"][0]["anchor"].clone();
     check(output_schema_for::<ScanFitResult>(), &run("scan.fit_plane", json!({"point": on})));
     check(output_schema_for::<ScanFitResult>(), &run("scan.fit_plane", json!({"point": on, "keep": false, "tolerance": "0.5 mm"})));
+    // Against a box where the block was made, before any of the moves above.
+    run("solid.box", json!({"body_name": "Model", "operation": "new", "length": 30, "width": 20, "height": 10}));
+    check(output_schema_for::<ScanDeviationResult>(), &run("scan.deviation", json!({"body": "Model", "limit": 100})));
+    check(output_schema_for::<ScanDeviationResult>(), &run("scan.deviation", json!({"show": false})));
 }

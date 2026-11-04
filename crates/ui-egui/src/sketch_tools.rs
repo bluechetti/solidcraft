@@ -272,6 +272,11 @@ fn marks(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
 /// Commands that start with a step of their own: Canvas and Decal ask for the image first,
 /// Edit Canvas opens the canvas panel. False when the command should not go on.
 pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
+    // Scan Deviation's button takes the map away again while it is shown.
+    if id == "scan.deviation" && crate::scan_deviation::shown(app) {
+        let _ = app.run(id, json!({"show": false}));
+        return false;
+    }
     if id == "inspect.section" && app.preferences.viewport_section_status && app.session.section.is_some() {
         let _ = app.run(id, json!({"clear":true}));
         return false;

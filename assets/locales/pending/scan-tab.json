@@ -33,7 +33,9 @@
     "help.scan.symmetry": "Finds the plane the scan is a mirror image about and keeps it as a construction plane. Use it to sketch on the middle of a symmetric part; draw a guide along the plane to pick one of several.",
     "help.scan.square_to_symmetry": "Turns the scan so its mirror plane is the origin's YZ plane. Use it to model a symmetric part about the origin and mirror features across it.",
     "help.scan.fit_plane": "Fits a plane to the flat face around the point picked on the scan and keeps it as a construction plane. Use it to sketch on a scanned face.",
-    "help.scan.fit_cylinder": "Fits a cylinder to the round wall around the point picked on the scan and keeps its axis as a construction axis, with its diameter. Use it for holes, bosses and shafts."
+    "help.scan.fit_cylinder": "Fits a cylinder to the round wall around the point picked on the scan and keeps its axis as a construction axis, with its diameter. Use it for holes, bosses and shafts.",
+    "ui.scan_deviation_summary": "{rms} rms · {within} within ± {tolerance}",
+    "help.scan.deviation": "Colours the scan by how far it is from the model built from it: within the tolerance, above it or below it. Use it to check a model against the part it was made from; press it again to take the colours away."
   },
   "de": {
     "ALIGN": "AUSRICHTEN",
@@ -69,7 +71,9 @@
     "help.scan.symmetry": "Findet die Ebene, zu der der Scan spiegelsymmetrisch ist, und behält sie als Konstruktionsebene. Verwenden Sie es, um in der Mitte eines symmetrischen Teils zu skizzieren; zeichnen Sie eine Führungslinie entlang der Ebene, um eine von mehreren zu wählen.",
     "help.scan.square_to_symmetry": "Dreht den Scan so, dass seine Spiegelebene die YZ-Ebene des Ursprungs ist. Verwenden Sie es, um ein symmetrisches Teil um den Ursprung zu modellieren und Features daran zu spiegeln.",
     "help.scan.fit_plane": "Passt eine Ebene an die ebene Fläche um den auf dem Scan gewählten Punkt an und behält sie als Konstruktionsebene. Verwenden Sie es, um auf einer gescannten Fläche zu skizzieren.",
-    "help.scan.fit_cylinder": "Passt einen Zylinder an die runde Wand um den auf dem Scan gewählten Punkt an und behält seine Achse als Konstruktionsachse, mit seinem Durchmesser. Verwenden Sie es für Bohrungen, Zapfen und Wellen."
+    "help.scan.fit_cylinder": "Passt einen Zylinder an die runde Wand um den auf dem Scan gewählten Punkt an und behält seine Achse als Konstruktionsachse, mit seinem Durchmesser. Verwenden Sie es für Bohrungen, Zapfen und Wellen.",
+    "ui.scan_deviation_summary": "{rms} RMS · {within} innerhalb ± {tolerance}",
+    "help.scan.deviation": "Färbt den Scan danach, wie weit er vom daraus gebauten Modell entfernt ist: innerhalb der Toleranz, darüber oder darunter. Verwenden Sie es, um ein Modell mit dem Teil zu vergleichen, aus dem es entstand; erneut drücken entfernt die Farben."
   },
   "ja": {
     "ALIGN": "位置合わせ",
@@ -105,7 +109,9 @@
     "help.scan.symmetry": "スキャンが鏡像になっている面を見つけ、構築平面として残します。対称な部品の中央にスケッチするときに使います。複数ある場合は面に沿ってガイドを描いて選びます。",
     "help.scan.square_to_symmetry": "スキャンを回して、その対称面を原点の YZ 平面に合わせます。対称な部品を原点を中心にモデリングし、フィーチャーをミラーするときに使います。",
     "help.scan.fit_plane": "スキャン上で選んだ点の周りの平らな面に平面をフィットし、構築平面として残します。スキャンした面にスケッチするときに使います。",
-    "help.scan.fit_cylinder": "スキャン上で選んだ点の周りの丸い壁に円柱をフィットし、その軸を直径とともに構築軸として残します。穴、ボス、軸に使います。"
+    "help.scan.fit_cylinder": "スキャン上で選んだ点の周りの丸い壁に円柱をフィットし、その軸を直径とともに構築軸として残します。穴、ボス、軸に使います。",
+    "ui.scan_deviation_summary": "RMS {rms} · ± {tolerance} 以内 {within}",
+    "help.scan.deviation": "スキャンを、そこから作ったモデルからの距離で色分けします（公差内、上、下）。モデルを元の部品と照合するときに使います。もう一度押すと色が消えます。"
   },
   "ko": {
     "ALIGN": "정렬",
@@ -141,7 +147,9 @@
     "help.scan.symmetry": "스캔이 거울상을 이루는 평면을 찾아 구성 평면으로 남깁니다. 대칭 부품의 가운데에 스케치할 때 사용하세요. 여러 개라면 평면을 따라 가이드를 그려 하나를 고르세요.",
     "help.scan.square_to_symmetry": "스캔을 돌려 대칭면이 원점의 YZ 평면이 되게 합니다. 대칭 부품을 원점 기준으로 모델링하고 피처를 대칭 복사할 때 사용하세요.",
     "help.scan.fit_plane": "스캔에서 고른 점 주변의 평평한 면에 평면을 맞추고 구성 평면으로 남깁니다. 스캔한 면 위에 스케치할 때 사용하세요.",
-    "help.scan.fit_cylinder": "스캔에서 고른 점 주변의 둥근 벽에 원통을 맞추고 그 축을 지름과 함께 구성 축으로 남깁니다. 구멍, 보스, 축에 사용하세요."
+    "help.scan.fit_cylinder": "스캔에서 고른 점 주변의 둥근 벽에 원통을 맞추고 그 축을 지름과 함께 구성 축으로 남깁니다. 구멍, 보스, 축에 사용하세요.",
+    "ui.scan_deviation_summary": "RMS {rms} · ± {tolerance} 이내 {within}",
+    "help.scan.deviation": "스캔을 거기서 만든 모델과의 거리에 따라 공차 이내, 위, 아래로 색칠합니다. 모델을 원래 부품과 비교할 때 사용하세요. 다시 누르면 색이 사라집니다."
   },
   "zh": {
     "ALIGN": "对齐",
@@ -177,7 +185,9 @@
     "help.scan.symmetry": "找出扫描呈镜像对称的平面，并将其保留为构造平面。用于在对称零件的中间绘制草图；若有多个，可沿平面画一条引导线来选择。",
     "help.scan.square_to_symmetry": "旋转扫描，使其对称面成为原点的 YZ 平面。用于围绕原点为对称零件建模并镜像特征。",
     "help.scan.fit_plane": "对扫描上所选点周围的平面区域拟合一个平面，并将其保留为构造平面。用于在扫描的面上绘制草图。",
-    "help.scan.fit_cylinder": "对扫描上所选点周围的圆壁拟合一个圆柱，并将其轴线连同直径保留为构造轴。用于孔、凸台和轴。"
+    "help.scan.fit_cylinder": "对扫描上所选点周围的圆壁拟合一个圆柱，并将其轴线连同直径保留为构造轴。用于孔、凸台和轴。",
+    "ui.scan_deviation_summary": "RMS {rms} · ± {tolerance} 以内 {within}",
+    "help.scan.deviation": "按扫描与由其构建的模型之间的距离为扫描着色：公差以内、高于或低于模型。用于将模型与原始零件对照检查；再次按下可取消着色。"
   },
   "ar": {
     "ALIGN": "محاذاة",
@@ -213,7 +223,9 @@
     "help.scan.symmetry": "يجد المستوى الذي يكون المسح صورة مرآة حوله ويحتفظ به كمستوى إنشائي. استخدمه للرسم في منتصف جزء متناظر؛ ارسم خطًا إرشاديًا على امتداد المستوى لاختيار واحد من عدة مستويات.",
     "help.scan.square_to_symmetry": "يدير المسح بحيث يصبح مستوى تناظره هو المستوى YZ للأصل. استخدمه لنمذجة جزء متناظر حول الأصل وعكس الميزات عبره.",
     "help.scan.fit_plane": "يلائم مستوى مع الوجه المستوي حول النقطة المختارة على المسح ويحتفظ به كمستوى إنشائي. استخدمه للرسم على وجه ممسوح.",
-    "help.scan.fit_cylinder": "يلائم أسطوانة مع الجدار الدائري حول النقطة المختارة على المسح ويحتفظ بمحورها كمحور إنشائي مع قطرها. استخدمه للثقوب والنتوءات والأعمدة."
+    "help.scan.fit_cylinder": "يلائم أسطوانة مع الجدار الدائري حول النقطة المختارة على المسح ويحتفظ بمحورها كمحور إنشائي مع قطرها. استخدمه للثقوب والنتوءات والأعمدة.",
+    "ui.scan_deviation_summary": "{rms} جذر متوسط المربعات · {within} ضمن ± {tolerance}",
+    "help.scan.deviation": "يلوّن المسح حسب بعده عن النموذج المبني منه: ضمن التفاوت أو فوقه أو تحته. استخدمه لفحص نموذج مقابل الجزء الذي صُنع منه؛ اضغطه مجددًا لإزالة الألوان."
   },
   "he": {
     "ALIGN": "יישור",
@@ -249,7 +261,9 @@
     "help.scan.symmetry": "מוצא את המישור שהסריקה היא תמונת ראי סביבו ושומר אותו כמישור בנייה. השתמשו בזה כדי לשרטט באמצע חלק סימטרי; שרטטו קו מנחה לאורך המישור כדי לבחור אחד מכמה.",
     "help.scan.square_to_symmetry": "מסובב את הסריקה כך שמישור הסימטריה שלה יהיה מישור YZ של הראשית. השתמשו בזה כדי למדל חלק סימטרי סביב הראשית ולשקף פיצ'רים לאורכו.",
     "help.scan.fit_plane": "מתאים מישור לפאה השטוחה סביב הנקודה שנבחרה בסריקה ושומר אותו כמישור בנייה. השתמשו בזה כדי לשרטט על פאה סרוקה.",
-    "help.scan.fit_cylinder": "מתאים גליל לדופן העגולה סביב הנקודה שנבחרה בסריקה ושומר את צירו כציר בנייה, עם הקוטר שלו. השתמשו בזה לחורים, בליטות וצירים."
+    "help.scan.fit_cylinder": "מתאים גליל לדופן העגולה סביב הנקודה שנבחרה בסריקה ושומר את צירו כציר בנייה, עם הקוטר שלו. השתמשו בזה לחורים, בליטות וצירים.",
+    "ui.scan_deviation_summary": "{rms} RMS · {within} בתוך ± {tolerance}",
+    "help.scan.deviation": "צובע את הסריקה לפי מרחקה מהמודל שנבנה ממנה: בתוך הטולרנס, מעליו או מתחתיו. השתמשו בזה כדי לבדוק מודל מול החלק שממנו נבנה; לחיצה נוספת מסירה את הצבעים."
   },
   "vi": {
     "ALIGN": "CĂN CHỈNH",
@@ -285,7 +299,9 @@
     "help.scan.symmetry": "Tìm mặt phẳng mà bản quét đối xứng gương qua đó và giữ lại làm mặt phẳng dựng. Dùng để phác thảo ở giữa một chi tiết đối xứng; vẽ một đường dẫn dọc mặt phẳng để chọn một trong nhiều mặt.",
     "help.scan.square_to_symmetry": "Xoay bản quét để mặt đối xứng của nó trùng với mặt phẳng YZ của gốc tọa độ. Dùng để dựng mô hình chi tiết đối xứng quanh gốc và lấy đối xứng các đặc trưng qua nó.",
     "help.scan.fit_plane": "Khớp một mặt phẳng với mặt phẳng quanh điểm đã chọn trên bản quét và giữ lại làm mặt phẳng dựng. Dùng để phác thảo trên một mặt đã quét.",
-    "help.scan.fit_cylinder": "Khớp một hình trụ với thành tròn quanh điểm đã chọn trên bản quét và giữ trục của nó làm trục dựng, kèm đường kính. Dùng cho lỗ, gờ nổi và trục."
+    "help.scan.fit_cylinder": "Khớp một hình trụ với thành tròn quanh điểm đã chọn trên bản quét và giữ trục của nó làm trục dựng, kèm đường kính. Dùng cho lỗ, gờ nổi và trục.",
+    "ui.scan_deviation_summary": "RMS {rms} · {within} trong ± {tolerance}",
+    "help.scan.deviation": "Tô màu bản quét theo khoảng cách tới mô hình dựng từ nó: trong dung sai, cao hơn hoặc thấp hơn. Dùng để kiểm tra mô hình với chi tiết gốc; nhấn lại để bỏ màu."
   },
   "en-GB": {
     "cmd.scan_center": "Centre on Origin",

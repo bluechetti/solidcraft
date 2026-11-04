@@ -235,6 +235,7 @@ mod rule_editor;
 #[cfg(test)]
 mod rule_editor_tests;
 pub mod save_job;
+pub(crate) mod scan_deviation;
 pub mod scan_workspace;
 pub mod scenario;
 pub(crate) mod scene_palette;

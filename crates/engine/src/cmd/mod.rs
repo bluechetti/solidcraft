@@ -81,7 +81,7 @@ mod metadata;
 pub(crate) mod motion;
 mod parts;
 mod point_cloud;
-mod scan;
+pub mod scan;
 mod script;
 mod section;
 pub mod settings;

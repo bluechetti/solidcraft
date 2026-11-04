@@ -5,6 +5,7 @@
 //!
 //! - [`base`]: the ways a scan could stand on the ground (its broad flat faces, the poses it would
 //!   rest in, its own axes) and a flat face grown from a clicked triangle.
+//! - [`deviation`]: how far the scan is from the model built from it.
 //! - [`fit`]: a plane or a cylinder fitted to the part of the scan round a picked point.
 //! - [`place`]: rigid moves that stand a scan on a base, rest it on the grid, centre it over the
 //!   origin or lay it along its own axes.
@@ -12,6 +13,7 @@
 //!   along it, and the move that squares the scan to it.
 
 pub mod base;
+pub mod deviation;
 pub mod fit;
 mod hull;
 pub mod place;

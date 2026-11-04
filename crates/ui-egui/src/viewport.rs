@@ -3181,7 +3181,10 @@ pub(crate) fn analysis_legend_data(app: &SolveApp) -> Option<AnalysisLegend> {
                 (col(a.curvature[2]), format!("{} ≤ {}", tr("Radius"), crate::prefs::show_mm(app, radius, 1)), false),
             ],
         ),
-        _ => return None,
+        _ => match crate::scan_deviation::legend(app) {
+            Some((summary, rows)) => (tr("Scan Deviation"), Some(summary), rows),
+            None => return None,
+        },
     };
     Some((title, along, rows))
 }
@@ -4634,7 +4637,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             back: proj.cam.back().to_f32(),
             size_px,
             images: crate::ref_images::gpu_images(app),
-            clouds: crate::point_clouds::gpu_clouds(app, ui.ctx()),
+            clouds: crate::point_clouds::gpu_clouds(app, ui.ctx()).into_iter().chain(crate::scan_deviation::gpu_cloud(app)).collect(),
             analysis: analysis_uniform(app),
             analysis_colors: crate::gpu::analysis_colors(&t.analysis),
             access: crate::access::map(app),

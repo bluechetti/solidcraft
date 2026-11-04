@@ -195,6 +195,69 @@ pub struct ScanFitResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Measure how far a scan is from the model built from it and colour the scan by it in the
+/// viewport: within the tolerance one colour, above and below it two others, deepening to the
+/// limit. A view, not a change to the design: no undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanDeviationParams {
+    /// The scan (mesh body). Default: the selected mesh body, else the design's only mesh body.
+    #[serde(default)]
+    pub scan: Option<String>,
+    /// The model it is measured against (a solid or surface body). Default: the selected one, else
+    /// the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// How far off still counts as on the model, a length above 0. Default: 0.1 mm.
+    #[serde(default)]
+    pub tolerance: Option<LengthExpr>,
+    /// Where the colours stop deepening, a length above the tolerance. Default: 0.5 mm. Points
+    /// more than four times as far count as parts of the scan the model leaves out.
+    #[serde(default)]
+    pub limit: Option<LengthExpr>,
+    /// False takes the map away again. Default: true.
+    #[serde(default)]
+    pub show: Option<bool>,
+}
+
+/// What `scan.deviation` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanDeviationResult {
+    /// Whether the map is shown now.
+    pub shown: bool,
+    /// The scan and the model measured (when shown).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    /// Over the points within reach, in mm: root mean square, mean, and the largest above (outside
+    /// the model) and below (inside it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mean: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_above: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_below: Option<f64>,
+    /// The share of the points within reach that are within the tolerance, 0 to 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within: Option<f64>,
+    /// How many scan points were measured, and how many were too far from the model to count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measured: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unmatched: Option<usize>,
+    /// The tolerance and the limit used, in mm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<f64>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// A way a scan could stand.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanBase {

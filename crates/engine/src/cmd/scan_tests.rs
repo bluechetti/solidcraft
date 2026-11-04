@@ -303,3 +303,36 @@ fn a_fit_uses_the_pick_and_refuses_a_wrong_shape() {
     let err = s.execute("scan.fit_cylinder", &json!({"point": [8, 8, 8]})).unwrap_err().to_string();
     assert!(err.contains("not that shape"), "{err}");
 }
+
+/// The plate scan measured against a box built to the plate alone: the plate's points are on it,
+/// the boss's are too far to count; the map stands until the design changes, and `show: false`
+/// takes it away.
+#[test]
+fn scan_deviation_measures_the_scan_against_the_model() {
+    let (mut s, _) = session_with_a_plate_and_boss("deviation");
+    let err = s.execute("scan.deviation", &json!({})).unwrap_err().to_string();
+    assert!(err.contains("no model"), "{err}");
+    run(&mut s, "solid.box", json!({"body_name": "Plate", "operation": "new", "length": 60, "width": 40, "height": 8}));
+    let reply = run(&mut s, "scan.deviation", json!({}));
+    assert_eq!((reply["shown"].as_bool(), reply["body"].as_str()), (Some(true), Some("Plate")), "{reply}");
+    // The plate's points lie on it; the boss's lowest ring, 1.25 mm up, is within reach and above
+    // the model, which has no boss, and the rest of the boss is too far to count.
+    assert!(reply["within"].as_f64().unwrap() > 0.95 && reply["max_below"].as_f64().unwrap().abs() < STL, "{reply}");
+    assert!((reply["max_above"].as_f64().unwrap() - 1.25).abs() < STL, "{reply}");
+    assert!(reply["unmatched"].as_u64().unwrap() > 0, "the boss is not in the model: {reply}");
+    let map = s.scan_deviation.clone().unwrap();
+    assert!(map.current(&s), "the map stands for the design as it is");
+
+    // The model drawn a millimetre short: the plate's top is 1 mm above it.
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "solid.box", json!({"body_name": "Plate", "operation": "new", "length": 60, "width": 40, "height": 7}));
+    assert!(!map.current(&s), "a change makes the old map stale");
+    let reply = run(&mut s, "scan.deviation", json!({"tolerance": "0.05 mm", "limit": 2}));
+    assert!(reply["mean"].as_f64().unwrap() > 0.5, "the top a millimetre above: {reply}");
+    assert!(reply["within"].as_f64().unwrap() < 0.9, "{reply}");
+
+    assert_eq!(run(&mut s, "scan.deviation", json!({"show": false}))["shown"], false);
+    assert!(s.scan_deviation.is_none());
+    let err = s.execute("scan.deviation", &json!({"tolerance": 1, "limit": 0.5})).unwrap_err().to_string();
+    assert!(err.contains("more than"), "{err}");
+}

@@ -585,6 +585,9 @@ pub struct Session {
     /// The seams `inspect.continuity` last measured, for the viewport to shade. View state: not
     /// part of the design and not an undo step.
     pub continuity: Vec<ContinuitySeam>,
+    /// The scan deviation map `scan.deviation` last measured, for the viewport to colour. View
+    /// state: not part of the design and not an undo step.
+    pub scan_deviation: Option<std::sync::Arc<cmd::scan::DeviationMap>>,
     /// The faces Isocurve Analysis shows the isoparametric curves of, for the viewport to draw
     /// ([`Session::isocurve_lines`]). View state: not part of the design and not an undo step.
     pub isocurves: Vec<IsoPick>,
@@ -845,6 +848,7 @@ impl Session {
             colored_components: None,
             analysis: None,
             continuity: Vec::new(),
+            scan_deviation: None,
             isocurves: Vec::new(),
             comb: None,
             status_order: Vec::new(),
@@ -1924,6 +1928,7 @@ impl Session {
             colored_components: None,
             analysis: None,
             continuity: Vec::new(),
+            scan_deviation: None,
             isocurves: Vec::new(),
             comb: None,
             status_order: Vec::new(),
