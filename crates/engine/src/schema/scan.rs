@@ -274,6 +274,51 @@ pub struct ScanDeviationResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Fit a smooth surface to the part of a scan round a point on it and keep it as a surface body
+/// (an imported B-spline surface, one undo step). An area that wraps round is refused.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanFitSurfaceParams {
+    /// The mesh body. Default: the body of the point picked on a scan, else the selected mesh body,
+    /// else the design's only mesh body.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// A point on the scan, in mm, the middle of the area to fit. Default: the point picked on it.
+    #[serde(default)]
+    pub point: Option<Point3>,
+    /// How far from the point the area reaches, a length above 0. Default: a tenth of the scan's
+    /// size.
+    #[serde(default)]
+    pub radius: Option<LengthExpr>,
+    /// Control points each way, 4 to 30. Default: 8. More follow finer shape.
+    #[serde(default)]
+    pub controls: Option<u32>,
+    /// How smooth against how close, 0 to 1. Default: 0.1.
+    #[serde(default)]
+    pub smoothing: Option<f64>,
+}
+
+/// What `scan.fit_surface` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanFitSurfaceResult {
+    /// The scan.
+    pub body: String,
+    /// The surface body made.
+    pub surface: String,
+    /// The scan's points' distance from the surface: root mean square and largest, in mm.
+    pub rms: f64,
+    pub max: f64,
+    /// How many scan points it was fitted to, and its control points each way.
+    pub points: usize,
+    pub controls: usize,
+    /// The feature that keeps it, as a feature command replies.
+    #[schemars(with = "FeatureResult")]
+    pub feature: Value,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// A way a scan could stand.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct ScanBase {

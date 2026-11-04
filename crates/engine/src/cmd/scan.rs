@@ -17,9 +17,9 @@ use solidcraft_scan::symmetry::{self, Guide, Mirror};
 use super::CommandSpec;
 use crate::params::{bad, str_};
 use crate::schema::scan::{
-    ScanBase, ScanBasesParams, ScanBasesResult, ScanDeviationParams, ScanDeviationResult, ScanFitParams, ScanFitResult, ScanFittedCylinder,
-    ScanFittedPlane, ScanFittedSphere, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams,
-    ScanSymmetryResult,
+    ScanBase, ScanBasesParams, ScanBasesResult, ScanDeviationParams, ScanDeviationResult, ScanFitParams, ScanFitResult, ScanFitSurfaceParams,
+    ScanFitSurfaceResult, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanSquareParams,
+    ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -32,6 +32,7 @@ const SYMMETRY_CONTRACT: TypedContract<ScanSymmetryParams> = TypedContract::new(
 const SQUARE_CONTRACT: TypedContract<ScanSquareParams> = TypedContract::new();
 const FIT_CONTRACT: TypedContract<ScanFitParams> = TypedContract::new();
 const DEVIATION_CONTRACT: TypedContract<ScanDeviationParams> = TypedContract::new();
+const SURFACE_CONTRACT: TypedContract<ScanFitSurfaceParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     planned!("scan.repair", "Repair Mesh", "8615")
@@ -114,6 +115,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
         .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: length (default 0.15 % of the scan's size); keep?: bool (default true: its centre kept as a construction point) → body, sphere: {center, radius, diameter}, triangles, area, rms, max, feature"),
+    CommandSpec::new("scan.fit_surface", "Fit Surface", crate::checked!("scan.fit_surface", fit_surface))
+        .at("SCAN", "FREEFORM")
+        .icon("surface")
+        .contract(&SURFACE_CONTRACT)
+        .output(output_schema_for::<ScanFitSurfaceResult>)
+        .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan, the middle of the area (default: the point picked on it); radius?: length (default a tenth of the scan's size); controls?: 4…30 control points each way (default 8); smoothing?: 0…1 (default 0.1): a smooth B-spline surface over the area, kept as a surface body (one undo step); an area that wraps round is refused → body, surface, rms, max, points, controls, feature"),
     CommandSpec::new("scan.deviation", "Scan Deviation", crate::checked!("scan.deviation", deviation))
         .at("SCAN", "CHECK")
         .icon("curvature_map")
@@ -599,6 +606,53 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         limit: Some(limit),
         ..empty
     })
+}
+
+fn fit_surface(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.fit_surface";
+    let point = match p.get("point").filter(|v| !v.is_null()) {
+        Some(v) => Some(crate::params::vec3(v).ok_or_else(|| bad(cmd, "`point` must be a point [x, y, z] of numbers"))?),
+        None => None,
+    };
+    let controls = match p.get("controls").filter(|v| !v.is_null()) {
+        Some(v) => v.as_u64().filter(|n| (4..=30).contains(n)).ok_or_else(|| bad(cmd, "`controls` must be a whole number from 4 to 30"))? as usize,
+        None => 8,
+    };
+    let smoothing = match p.get("smoothing").filter(|v| !v.is_null()) {
+        Some(v) => v.as_f64().filter(|x| (0.0..=1.0).contains(x)).ok_or_else(|| bad(cmd, "`smoothing` must be a number from 0 to 1"))?,
+        None => 0.1,
+    };
+    let mesh = mesh(s, p, cmd)?;
+    let scan = mesh.scan();
+    let radius = length(s, p, "radius", (scan.extent() / 10.0).max(1e-3), cmd)?;
+    let point =
+        point.or_else(|| picked_point(s, &mesh.body)).ok_or_else(|| bad(cmd, "pick a point on the scan first, in the middle of the area to fit"))?;
+    let seed = base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
+    let fitted = solidcraft_scan::surface::fit_surface(&scan, seed, radius, controls, smoothing).map_err(|e| bad(cmd, e.to_string()))?;
+    // The surface as a sheet, kept as STEP in an Import feature: the design reopens anywhere.
+    let ts = solidcraft_geom::tspline::TSpline::from_nurbs(&fitted.surface).map_err(|e| bad(cmd, format!("the surface: {e}")))?;
+    let sheet = solidcraft_kernel::tspline_sheet(&ts).map_err(|e| bad(cmd, format!("the surface: {e}")))?;
+    let step = solidcraft_kernel::step_export(&[&sheet], "SolidCraft").map_err(|e| bad(cmd, format!("the surface: {e}")))?;
+    let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    let name = (1..).map(|i| format!("Surface{i}")).find(|n| !taken.contains(n)).unwrap_or_else(|| "Surface".into());
+    let kind = solidcraft_doc::FeatureKind::Import {
+        file: format!("{} (fitted surface)", mesh.body),
+        step: step.into(),
+        components: Vec::new(),
+        skip: Vec::new(),
+    };
+    let feature = super::features::add_feature(s, &json!({ "body_name": name, "name": "Fit Surface" }), kind)?;
+    let reply = ScanFitSurfaceResult {
+        body: mesh.body,
+        surface: name,
+        rms: fitted.rms,
+        max: fitted.max,
+        points: fitted.points,
+        controls,
+        feature,
+        param_warnings: Vec::new(),
+    };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
 /// The point picked on the scan `body`: a picked face or edge of it.

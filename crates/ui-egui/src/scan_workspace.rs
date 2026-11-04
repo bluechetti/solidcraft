@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn the_scan_tab_shows_its_layout_with_planned_tools_greyed() {
         let specs = solidcraft_engine::command_specs();
-        assert_eq!(crate::workspace::panels("SCAN"), ["INSERT", "CLEAN", "ALIGN", "FIT", "SKETCH", "CHECK"]);
+        assert_eq!(crate::workspace::panels("SCAN"), ["INSERT", "CLEAN", "ALIGN", "FIT", "FREEFORM", "SKETCH", "CHECK"]);
         let mut h = crate::scenario::Harness::new();
         super::enter(&mut h.app, true).unwrap();
         h.frames(2);
@@ -124,6 +124,7 @@ mod tests {
             "scan.fit_cylinder",
             "scan.deviation",
             "scan.fit_sphere",
+            "scan.fit_surface",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {

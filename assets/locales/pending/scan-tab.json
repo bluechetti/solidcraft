@@ -46,7 +46,10 @@
     "ui.scan_base_axis": "Along its own axes",
     "ui.scan_base_grown": "The face clicked",
     "ui.scan_base_tips": "Tips over at",
-    "ui.scan_base_hint": "The marked part touches the ground. Click a face on the scan to stand it there instead."
+    "ui.scan_base_hint": "The marked part touches the ground. Click a face on the scan to stand it there instead.",
+    "FREEFORM": "FREEFORM",
+    "cmd.scan_fit_surface": "Fit Surface",
+    "help.scan.fit_surface": "Fits a smooth surface to the area of the scan around the point picked on it and keeps it as a surface body. Use it for curved, freeform areas that no plane, cylinder or sphere describes."
   },
   "de": {
     "ALIGN": "AUSRICHTEN",
@@ -95,7 +98,10 @@
     "ui.scan_base_axis": "Entlang seiner Achsen",
     "ui.scan_base_grown": "Der angeklickten Fläche",
     "ui.scan_base_tips": "Kippt bei",
-    "ui.scan_base_hint": "Der markierte Teil berührt den Boden. Klicken Sie eine Fläche auf dem Scan an, um ihn stattdessen darauf zu stellen."
+    "ui.scan_base_hint": "Der markierte Teil berührt den Boden. Klicken Sie eine Fläche auf dem Scan an, um ihn stattdessen darauf zu stellen.",
+    "FREEFORM": "FREIFORM",
+    "cmd.scan_fit_surface": "Fläche einpassen",
+    "help.scan.fit_surface": "Passt eine glatte Fläche an den Bereich des Scans um den gewählten Punkt an und behält sie als Flächenkörper. Verwenden Sie es für gekrümmte Freiformbereiche, die keine Ebene, kein Zylinder und keine Kugel beschreibt."
   },
   "ja": {
     "ALIGN": "位置合わせ",
@@ -144,7 +150,10 @@
     "ui.scan_base_axis": "自身の軸に沿って",
     "ui.scan_base_grown": "クリックした面",
     "ui.scan_base_tips": "倒れる角度",
-    "ui.scan_base_hint": "マークされた部分が地面に接します。代わりにそこへ立てるには、スキャン上の面をクリックします。"
+    "ui.scan_base_hint": "マークされた部分が地面に接します。代わりにそこへ立てるには、スキャン上の面をクリックします。",
+    "FREEFORM": "フリーフォーム",
+    "cmd.scan_fit_surface": "サーフェスをフィット",
+    "help.scan.fit_surface": "スキャン上で選んだ点の周りの部分に滑らかなサーフェスをフィットし、サーフェスボディとして残します。平面・円柱・球で表せない曲がった自由形状の部分に使います。"
   },
   "ko": {
     "ALIGN": "정렬",
@@ -193,7 +202,10 @@
     "ui.scan_base_axis": "자체 축을 따라",
     "ui.scan_base_grown": "클릭한 면",
     "ui.scan_base_tips": "넘어지는 기울기",
-    "ui.scan_base_hint": "표시된 부분이 바닥에 닿습니다. 대신 그 위에 세우려면 스캔의 면을 클릭하세요."
+    "ui.scan_base_hint": "표시된 부분이 바닥에 닿습니다. 대신 그 위에 세우려면 스캔의 면을 클릭하세요.",
+    "FREEFORM": "자유 곡면",
+    "cmd.scan_fit_surface": "곡면 피팅",
+    "help.scan.fit_surface": "스캔에서 고른 점 주변 영역에 매끄러운 곡면을 맞추고 곡면 바디로 남깁니다. 평면, 원통, 구로 나타낼 수 없는 휘어진 자유 곡면 부분에 사용하세요."
   },
   "zh": {
     "ALIGN": "对齐",
@@ -242,7 +254,10 @@
     "ui.scan_base_axis": "沿其自身轴线",
     "ui.scan_base_grown": "所点击的面",
     "ui.scan_base_tips": "倾倒角度",
-    "ui.scan_base_hint": "标记的部分接触地面。点击扫描上的某个面可改为立于该面。"
+    "ui.scan_base_hint": "标记的部分接触地面。点击扫描上的某个面可改为立于该面。",
+    "FREEFORM": "自由曲面",
+    "cmd.scan_fit_surface": "拟合曲面",
+    "help.scan.fit_surface": "对扫描上所选点周围的区域拟合一个光滑曲面，并保留为曲面体。用于平面、圆柱或球体无法描述的弯曲自由形状区域。"
   },
   "ar": {
     "ALIGN": "محاذاة",
@@ -291,7 +306,10 @@
     "ui.scan_base_axis": "على امتداد محاوره",
     "ui.scan_base_grown": "الوجه الذي نُقر",
     "ui.scan_base_tips": "ينقلب عند",
-    "ui.scan_base_hint": "الجزء المعلَّم يلمس الأرض. انقر وجهًا على المسح لإيقافه عليه بدلًا من ذلك."
+    "ui.scan_base_hint": "الجزء المعلَّم يلمس الأرض. انقر وجهًا على المسح لإيقافه عليه بدلًا من ذلك.",
+    "FREEFORM": "شكل حر",
+    "cmd.scan_fit_surface": "ملاءمة سطح",
+    "help.scan.fit_surface": "يلائم سطحًا أملس مع منطقة المسح حول النقطة المختارة ويحتفظ به كجسم سطحي. استخدمه للمناطق المنحنية الحرة التي لا يصفها مستوى أو أسطوانة أو كرة."
   },
   "he": {
     "ALIGN": "יישור",
@@ -340,7 +358,10 @@
     "ui.scan_base_axis": "לאורך הצירים שלו",
     "ui.scan_base_grown": "הפאה שנלחצה",
     "ui.scan_base_tips": "מתהפך ב-",
-    "ui.scan_base_hint": "החלק המסומן נוגע בקרקע. לחצו על פאה בסריקה כדי להעמיד אותה עליה במקום."
+    "ui.scan_base_hint": "החלק המסומן נוגע בקרקע. לחצו על פאה בסריקה כדי להעמיד אותה עליה במקום.",
+    "FREEFORM": "צורה חופשית",
+    "cmd.scan_fit_surface": "התאמת משטח",
+    "help.scan.fit_surface": "מתאים משטח חלק לאזור הסריקה סביב הנקודה שנבחרה ושומר אותו כגוף משטח. השתמשו בזה לאזורים מעוקלים בצורה חופשית שאין מישור, גליל או כדור שמתאר אותם."
   },
   "vi": {
     "ALIGN": "CĂN CHỈNH",
@@ -389,7 +410,10 @@
     "ui.scan_base_axis": "Theo các trục của nó",
     "ui.scan_base_grown": "Mặt đã nhấp",
     "ui.scan_base_tips": "Đổ ở góc",
-    "ui.scan_base_hint": "Phần được đánh dấu chạm đất. Nhấp vào một mặt trên bản quét để đặt nó lên mặt đó."
+    "ui.scan_base_hint": "Phần được đánh dấu chạm đất. Nhấp vào một mặt trên bản quét để đặt nó lên mặt đó.",
+    "FREEFORM": "TỰ DO",
+    "cmd.scan_fit_surface": "Khớp bề mặt",
+    "help.scan.fit_surface": "Khớp một bề mặt trơn với vùng bản quét quanh điểm đã chọn và giữ lại làm thân bề mặt. Dùng cho các vùng cong tự do mà mặt phẳng, hình trụ hay hình cầu không mô tả được."
   },
   "en-GB": {
     "cmd.scan_center": "Centre on Origin",

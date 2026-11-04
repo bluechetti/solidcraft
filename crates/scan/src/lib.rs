@@ -9,6 +9,7 @@
 //! - [`fit`]: a plane or a cylinder fitted to the part of the scan round a picked point.
 //! - [`place`]: rigid moves that stand a scan on a base, rest it on the grid, centre it over the
 //!   origin or lay it along its own axes.
+//! - [`surface`]: a smooth B-spline surface fitted to the part of the scan round a picked point.
 //! - [`symmetry`]: the plane a scan is a mirror image about, found by itself or near a line drawn
 //!   along it, and the move that squares the scan to it.
 
@@ -17,6 +18,7 @@ pub mod deviation;
 pub mod fit;
 mod hull;
 pub mod place;
+pub mod surface;
 pub mod symmetry;
 
 use solidcore_record::Vec3;

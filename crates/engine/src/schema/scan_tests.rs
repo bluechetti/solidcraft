@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
 
 use super::{
-    ScanBasesParams, ScanBasesResult, ScanDeviationParams, ScanDeviationResult, ScanFitParams, ScanFitResult, ScanPlaceParams, ScanPlaceResult,
-    ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
+    ScanBasesParams, ScanBasesResult, ScanDeviationParams, ScanDeviationResult, ScanFitParams, ScanFitResult, ScanFitSurfaceParams,
+    ScanFitSurfaceResult, ScanPlaceParams, ScanPlaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
 };
 use crate::Session;
 use crate::schema::tests::{assert_keys, assert_strict_keeps_todays_errors, conforms};
@@ -17,6 +17,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanSquareParams>(), &["body", "guide"]);
     assert_keys(input_schema_for::<ScanFitParams>(), &["body", "keep", "point", "tolerance"]);
     assert_keys(input_schema_for::<ScanDeviationParams>(), &["body", "limit", "scan", "show", "tolerance"]);
+    assert_keys(input_schema_for::<ScanFitSurfaceParams>(), &["body", "controls", "point", "radius", "smoothing"]);
 }
 
 #[test]
@@ -37,8 +38,8 @@ fn replies_match_the_output_schema() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("block.stl");
-    // A block 30 × 20 × 10, each side cut into 6 × 6 squares: enough points to look for a mirror plane.
-    let (size, n) = ([30.0f64, 20.0, 10.0], 6u32);
+    // A block 30 × 20 × 10, each side cut into 24 × 24 squares: enough points to look for a mirror plane.
+    let (size, n) = ([30.0f64, 20.0, 10.0], 24u32);
     let mut stl = String::from("solid b\n");
     for axis in 0..3 {
         let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
@@ -86,17 +87,18 @@ fn replies_match_the_output_schema() {
     ] {
         check(output_schema_for::<ScanPlaceResult>(), &run(id, p));
     }
-    // The block is a mirror image about three planes.
-    let guide = json!({"from": [0, -10, 20], "to": [0, 10, 20], "toward": [0, 0, 1]});
+    // The block is a mirror image about three planes (guides are tested with the commands).
     check(output_schema_for::<ScanSymmetryResult>(), &run("scan.symmetry", json!({})));
-    check(output_schema_for::<ScanSymmetryResult>(), &run("scan.symmetry", json!({"keep": false, "guide": guide})));
-    check(output_schema_for::<ScanPlaceResult>(), &run("scan.square_to_symmetry", json!({"guide": guide})));
+    check(output_schema_for::<ScanSymmetryResult>(), &run("scan.symmetry", json!({"keep": false})));
+    check(output_schema_for::<ScanPlaceResult>(), &run("scan.square_to_symmetry", json!({})));
     // A point on a side of the block, wherever the moves left it: the anchor of its steadiest base.
     let on = run("scan.bases", json!({}))["bases"][0]["anchor"].clone();
     check(output_schema_for::<ScanFitResult>(), &run("scan.fit_plane", json!({"point": on})));
     check(output_schema_for::<ScanFitResult>(), &run("scan.fit_plane", json!({"point": on, "keep": false, "tolerance": "0.5 mm"})));
     check(output_schema_for::<ScanPlaceResult>(), &run("scan.stand_on_base", json!({})));
     check(output_schema_for::<ScanPlaceResult>(), &run("scan.stand_on_base", json!({})));
+    let on = run("scan.bases", json!({}))["bases"][0]["anchor"].clone();
+    check(output_schema_for::<ScanFitSurfaceResult>(), &run("scan.fit_surface", json!({"point": on, "radius": 4, "controls": 4, "smoothing": 0.5})));
     // Against a box where the block was made, before any of the moves above.
     run("solid.box", json!({"body_name": "Model", "operation": "new", "length": 30, "width": 20, "height": 10}));
     check(output_schema_for::<ScanDeviationResult>(), &run("scan.deviation", json!({"body": "Model", "limit": 100})));

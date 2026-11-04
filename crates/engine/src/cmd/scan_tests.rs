@@ -416,3 +416,56 @@ fn fit_sphere_keeps_the_centre() {
     );
     assert!(reply["feature"]["feature"].is_u64(), "kept: {reply}");
 }
+
+/// A NURBS surface made into a sheet, written as STEP and kept as an Import feature comes back as
+/// one open surface body through the design's own STEP reader (the route fitted surfaces take).
+#[test]
+fn a_nurbs_surface_round_trips_through_an_import_feature() {
+    use solidcraft_geom::bspline::NurbsSurface;
+    let n = 5;
+    let knots: Vec<f64> = [0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0].to_vec();
+    let points: Vec<Vec3> = (0..n * n)
+        .map(|k| {
+            let (i, j) = (k % n, k / n);
+            let (x, y) = (f64::from(i as u32) * 10.0, f64::from(j as u32) * 10.0);
+            Vec3::new(x, y, 0.02 * (x - 20.0) * (y - 20.0))
+        })
+        .collect();
+    let surface = NurbsSurface::new([3, 3], [knots.clone(), knots], &points, &vec![1.0; n * n]).unwrap();
+    let ts = solidcraft_geom::tspline::TSpline::from_nurbs(&surface).unwrap();
+    let sheet = solidcraft_kernel::tspline_sheet(&ts).unwrap();
+    let step = solidcraft_kernel::step_export(&[&sheet], "SolidCraft").unwrap();
+    let mut s = Session::default();
+    let reply = super::super::features::add_feature(
+        &mut s,
+        &json!({"body_name": "Fitted"}),
+        solidcraft_doc::FeatureKind::Import { file: "fitted surface".into(), step: step.into(), components: Vec::new(), skip: Vec::new() },
+    )
+    .unwrap();
+    let state = s.model.state();
+    let bodies: Vec<_> = state.bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(bodies.len(), 1, "{reply} {bodies:?}");
+    let body = &state.bodies[0];
+    assert!(!body.body.is_mesh());
+    eprintln!("{reply}");
+}
+
+/// Fit Surface on the plate's top keeps a surface body over it, close to the scan; one undo takes
+/// it away; a tube's wall is refused.
+#[test]
+fn fit_surface_keeps_a_surface_body() {
+    let (mut s, _) = session_with_a_plate_and_boss("fit-surface");
+    let reply = run(&mut s, "scan.fit_surface", json!({"point": [12, 12, 8], "radius": 8, "controls": 6}));
+    assert_eq!(reply["surface"], "Surface1", "{reply}");
+    assert!(reply["rms"].as_f64().unwrap() < 0.01, "{reply}");
+    let state = s.model.state();
+    let surface = state.body("Surface1").expect("the surface body");
+    assert!(!surface.body.is_mesh());
+    drop(state);
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.model.state().body("Surface1").is_none(), "one undo step");
+    let err = s.execute("scan.fit_surface", &json!({"point": [40, 20, 15], "radius": 30})).unwrap_err().to_string();
+    assert!(err.contains("wraps round"), "{err}");
+    let err = s.execute("scan.fit_surface", &json!({"point": [12, 12, 8], "controls": 2})).unwrap_err().to_string();
+    assert!(err.contains("4 to 30"), "{err}");
+}

@@ -143,6 +143,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.fit_cylinder",
     "scan.fit_plane",
     "scan.fit_sphere",
+    "scan.fit_surface",
     "scan.quick_align",
     "scan.rest_on_grid",
     "scan.square_to_symmetry",
