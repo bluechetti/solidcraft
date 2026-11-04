@@ -3,7 +3,7 @@
 //! face clicked on the scan is grown from the click and marked instead. OK stands the scan on it.
 //!
 //! The marks are the scan's points drawn as dots in the 3D pass through the point-cloud path, in
-//! the highlight colour, built again only when the choice changes.
+//! the analysis yellow, built again only when the choice changes.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -83,8 +83,9 @@ fn refresh(app: &SolveApp, k: &mut StandBase, inputs: &[SelInput]) {
         return;
     }
     let result = base_preview(&app.session, pick.map(|(b, _)| b), pick.map(|(_, p)| p), k.index).map_err(|e| e.to_string()).map(|found| {
-        let colour = crate::theme::Tokens::get().accent;
-        let rgb = [colour.r(), colour.g(), colour.b()];
+        // Yellow, the analysis colours' middle one: the accent blue is what a whole selected body
+        // turns, so a base marked in it could not be told apart.
+        let rgb = crate::theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
         let mut dots = Vec::with_capacity(found.marked.len() * solidcraft_gpu::view::DOT_SIZE);
         for at in &found.marked {
             cloud_dot(&mut dots, &Dot { at: *at, rgb, ..Dot::default() });
