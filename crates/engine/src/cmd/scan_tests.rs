@@ -511,3 +511,41 @@ fn fit_surface_keeps_a_surface_body() {
     let err = s.execute("scan.fit_surface", &json!({"point": [12, 12, 8], "controls": 2})).unwrap_err().to_string();
     assert!(err.contains("4 to 30"), "{err}");
 }
+
+/// A control point of a fitted surface raised 2 mm moves the surface off the plate; refitting the
+/// ring round it with that point held brings the rest nearer; refitting all but nothing held puts
+/// it back on the scan. Each edit is one undo step and the surface keeps its name.
+#[test]
+fn edit_surface_moves_control_points_and_refits_to_the_scan() {
+    let (mut s, _) = session_with_a_plate_and_boss("edit-surface");
+    run(&mut s, "scan.fit_surface", json!({"point": [12, 12, 8], "radius": 8, "controls": 6}));
+    let start = super::surface::editable(&s, None, "test").unwrap();
+    assert_eq!(start.surface.count(), [6, 6]);
+    let net = solidcraft_scan::surface_edit::points(&start.surface);
+    let up = net[2 * 6 + 2] + Vec3::new(0.0, 0.0, 2.0);
+    let raised = run(&mut s, "scan.edit_surface", json!({"moves": [{"point": [2, 2], "to": [up.x, up.y, up.z]}]}));
+    assert_eq!((raised["surface"].as_str(), raised["moved"].as_u64(), raised["refitted"].as_u64()), (Some("Surface1"), Some(1), Some(0)), "{raised}");
+    let off = raised["rms"].as_f64().unwrap();
+    assert!(off > 0.05, "off the plate: {raised}");
+    let edited = super::surface::editable(&s, Some("Surface1"), "test").unwrap();
+    assert!(solidcraft_scan::surface_edit::points(&edited.surface)[2 * 6 + 2].dist(up) < 1e-9, "the point is where it was put");
+
+    // The ring round it follows the scan, the point held where it was put.
+    let around = run(&mut s, "scan.edit_surface", json!({"hold": [[2, 2]], "refit": "around"}));
+    assert!(around["refitted"].as_u64().unwrap() > 8 && around["rms"].as_f64().unwrap() < off, "{around}");
+    // Everything refitted: back on the plate.
+    let all = run(&mut s, "scan.edit_surface", json!({"refit": "all"}));
+    assert!(all["rms"].as_f64().unwrap() < 0.02, "{all}");
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "edit.undo", json!({}));
+    let back = super::surface::editable(&s, None, "test").unwrap();
+    assert!(solidcraft_scan::surface_edit::points(&back.surface)[2 * 6 + 2].dist(up) < 1e-9, "two undos: as raised");
+
+    let refused = s.execute("scan.edit_surface", &json!({})).unwrap_err().to_string();
+    assert!(refused.contains("nothing to change"), "{refused}");
+    let refused = s.execute("scan.edit_surface", &json!({"moves": [{"point": [6, 0], "to": [0, 0, 0]}]})).unwrap_err().to_string();
+    assert!(refused.contains("outside the net"), "{refused}");
+    let body = s.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
+    let refused = s.execute("scan.edit_surface", &json!({"surface": body, "refit": "all"})).unwrap_err().to_string();
+    assert!(refused.contains("not a surface"), "{refused}");
+}

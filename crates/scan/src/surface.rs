@@ -250,7 +250,7 @@ fn basis_row(knots: &[f64], n: usize, s: f64, t: f64) -> Option<([usize; 16], [f
 
 /// The symmetric positive definite system `m x = rhs` (`k` × `k`, row by row) by Cholesky; `None`
 /// when it is not positive definite.
-fn cholesky_solve(m: &mut [f64], rhs: &[f64], k: usize) -> Option<Vec<f64>> {
+pub(crate) fn cholesky_solve(m: &mut [f64], rhs: &[f64], k: usize) -> Option<Vec<f64>> {
     for j in 0..k {
         let mut d = m[j * k + j];
         for p in 0..j {

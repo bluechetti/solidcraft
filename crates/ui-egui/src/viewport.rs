@@ -5210,9 +5210,27 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::dialogs_scan::guide_end(app, &proj);
         }
     }
+    // Edit Surface: a primary drag from a control point's handle moves the point.
+    if crate::dialogs_scan_surface::editing(app) && !held && primary_nav.is_none() && mode.is_none() {
+        if resp.drag_started_by(egui::PointerButton::Primary)
+            && let Some(a) = ui.input(|i| i.pointer.press_origin()).filter(|a| rect.contains(*a))
+        {
+            crate::dialogs_scan_surface::grab(app, &proj, a);
+        }
+        if crate::dialogs_scan_surface::holds_pointer(app)
+            && resp.dragged_by(egui::PointerButton::Primary)
+            && let Some(p) = hover
+        {
+            crate::dialogs_scan_surface::drag_to(app, &proj, p);
+        }
+        if resp.drag_stopped() || !primary_down {
+            crate::dialogs_scan_surface::release(app);
+        }
+    }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
         && !crate::dialogs_scan::drawing_guide(app)
+        && !crate::dialogs_scan_surface::holds_pointer(app)
         && !held
         && primary_nav.is_none()
         && mode.is_none()
@@ -5258,6 +5276,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::browser_canvas::paint_marks(app, &painter, &proj);
     crate::point_clouds::show(app, &painter, &proj);
     crate::dialogs_scan::draw(app, &painter, &proj);
+    crate::dialogs_scan_surface::draw(app, &painter, &proj);
     crate::dialogs_assembly::origins(app, &painter, &proj);
     if !crate::joint_handles::visible(app) {
         crate::dialogs_assembly::joint_glyphs(app, &painter, &proj);

@@ -63,7 +63,7 @@ The Scan workspace (scan to CAD, #8615; Workspace › Scan, or `ui.workspace` wi
 | SCAN | CLEAN | **`scan.repair`**, **`scan.fill_holes`**, **`scan.reduce`**, **`scan.remesh`**, `scan.mesh_from_points` |
 | SCAN | ALIGN | **`scan.stand_on_base`**, **`scan.symmetry`**, **`scan.square_to_symmetry`**, **`scan.rest_on_grid`**, `scan.complete_by_mirroring`, `scan.quick_align`, `scan.center` |
 | SCAN | FIT | **`scan.fit_plane`**, **`scan.fit_cylinder`**, **`scan.fit_sphere`**, **`mesh.convert`** |
-| SCAN | FREEFORM | **`scan.fit_surface`** |
+| SCAN | FREEFORM | **`scan.fit_surface`**, **`scan.edit_surface`** |
 | SCAN | SKETCH | **`sketch.create`**, **`sketch.fit_curves_to_section`** |
 | SCAN | CHECK | **`scan.deviation`**, **`inspect.section`**, **`inspect.compare`** |
 | SKETCH | CONFIGURE | **`parameters.change`**, **`config.table`**, `config.configure` |

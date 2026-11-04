@@ -378,6 +378,74 @@ pub struct ScanFitSurfaceResult {
     pub param_warnings: Vec<String>,
 }
 
+/// One control point of a surface moved: its place in the net and where it goes.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanControlMove {
+    /// The control point, `[u, v]`: its column along u and row along v, from 0.
+    pub point: [u32; 2],
+    /// Where it goes, in mm.
+    pub to: Point3,
+}
+
+/// Edit a surface Fit Surface made by its control points: move some, and fit those round them, or
+/// all the others, to the scan again with the moved ones held. One undo step; the surface keeps
+/// its name.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanEditSurfaceParams {
+    /// The surface body. Default: the selected one, else the design's only one.
+    #[serde(default)]
+    pub surface: Option<String>,
+    /// The whole control net, u fastest (as many points as the surface has).
+    #[serde(default)]
+    pub points: Option<Vec<Point3>>,
+    /// Control points moved.
+    #[serde(default)]
+    pub moves: Option<Vec<ScanControlMove>>,
+    /// Control points kept where they are when refitting, besides those moved.
+    #[serde(default)]
+    pub hold: Option<Vec<[u32; 2]>>,
+    /// Which control points are fitted to the scan again: `none`, `around` (the ring of two round
+    /// each point moved or held) or `all` (every point not moved or held). Default: none.
+    #[serde(default)]
+    pub refit: Option<String>,
+    /// The scan to refit to. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub scan: Option<String>,
+    /// How far a scan point may be from the surface to count as under it. Default: a tenth of the
+    /// control net's size, at least 1 mm.
+    #[serde(default)]
+    pub reach: Option<LengthExpr>,
+}
+
+/// What `scan.edit_surface` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanEditSurfaceResult {
+    /// The surface body.
+    pub surface: String,
+    /// Its control points along u and v.
+    pub controls: [usize; 2],
+    /// How many control points were moved and how many fitted to the scan again.
+    pub moved: usize,
+    pub refitted: usize,
+    /// The scan measured against, the scan points under the surface, and their distance from it
+    /// (root mean square and largest, mm); absent with no scan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    /// The Import feature that keeps the surface.
+    pub feature: u64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// A way a scan could stand.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct ScanBase {

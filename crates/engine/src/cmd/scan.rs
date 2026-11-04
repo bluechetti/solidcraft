@@ -17,9 +17,10 @@ use solidcraft_scan::symmetry::{self, Guide, Mirror};
 use super::CommandSpec;
 use crate::params::{bad, str_};
 use crate::schema::scan::{
-    ScanBase, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCompleteResult, ScanDeviationParams, ScanDeviationResult, ScanFitParams,
-    ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanMirror, ScanPlaceParams,
-    ScanPlaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
+    ScanBase, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCompleteResult, ScanDeviationParams, ScanDeviationResult,
+    ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCylinder,
+    ScanFittedPlane, ScanFittedSphere, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams,
+    ScanSymmetryResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -34,6 +35,7 @@ const FIT_CONTRACT: TypedContract<ScanFitParams> = TypedContract::new();
 const DEVIATION_CONTRACT: TypedContract<ScanDeviationParams> = TypedContract::new();
 const SURFACE_CONTRACT: TypedContract<ScanFitSurfaceParams> = TypedContract::new();
 const COMPLETE_CONTRACT: TypedContract<ScanCompleteParams> = TypedContract::new();
+const EDIT_SURFACE_CONTRACT: TypedContract<ScanEditSurfaceParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     planned!("scan.repair", "Repair Mesh", "8615")
@@ -128,6 +130,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&SURFACE_CONTRACT)
         .output(output_schema_for::<ScanFitSurfaceResult>)
         .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan, the middle of the area (default: the point picked on it); radius?: length (default a tenth of the scan's size); controls?: 4…30 control points each way (default 8); smoothing?: 0…1 (default 0.1): a smooth B-spline surface over the area, kept as a surface body (one undo step); an area that wraps round is refused → body, surface, rms, max, points, controls, feature"),
+    CommandSpec::new("scan.edit_surface", "Edit Surface", crate::checked!("scan.edit_surface", surface::edit_surface))
+        .at("SCAN", "FREEFORM")
+        .icon("surface_patch")
+        .contract(&EDIT_SURFACE_CONTRACT)
+        .output(output_schema_for::<ScanEditSurfaceResult>)
+        .params("surface?: the surface body (default: the selected or only one Fit Surface made); points?: the whole control net [[x,y,z], …], u fastest; moves?: [{point: [u, v], to: [x,y,z]}]; hold?: [[u, v], …] points kept where they are when refitting (besides those moved); refit?: none|around|all (default none: the ring of two round each point moved or held, or every point not moved or held, fitted to the scan again); scan?: mesh body to refit to (default the selected or only one); reach?: length a scan point may be from the surface to count as under it (default a tenth of the net's size, at least 1 mm): one undo step → surface, controls [u, v], moved, refitted, scan, points, rms, max, feature"),
     CommandSpec::new("scan.deviation", "Scan Deviation", crate::checked!("scan.deviation", deviation))
         .at("SCAN", "CHECK")
         .icon("curvature_map")
@@ -859,6 +867,9 @@ fn keep_shape(s: &mut Session, fitted: &Fitted, extent: f64) -> Result<Value> {
         }
     }
 }
+
+#[path = "scan_surface.rs"]
+pub mod surface;
 
 #[cfg(test)]
 #[path = "scan_tests.rs"]
