@@ -11,11 +11,14 @@ use std::sync::Arc;
 use serde_json::{Map, Value, json};
 use solidcore_record::Vec3;
 use solidcraft_engine::Sel;
-use solidcraft_engine::cmd::scan::{BasePreview, base_preview};
+use solidcraft_engine::cmd::scan::{BasePreview, base_preview, scan_box, symmetry_preview};
+use solidcraft_engine::schema::scan::ScanMirror;
 use solidcraft_gpu::view::{CloudStyle, ColorMode, Dot, GpuCloud, cloud_dot};
 
+use solidcraft_engine::geom::prelude::*;
+
 use crate::SolveApp;
-use crate::dialogs::{Kind, form_row};
+use crate::dialogs::{Kind, check, form_row};
 use crate::selection::{FACES, SelInput};
 use crate::ui_kit::{self, choice_row};
 
@@ -58,9 +61,16 @@ struct Preview {
     dots: Arc<Vec<u8>>,
 }
 
-/// The dialog for Stand on Base.
+/// The dialogs for Stand on Base, and for Find Symmetry and Square Up (one dialog, its OK set to
+/// keep the plane or to square the scan to it).
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
-    (id == "scan.stand_on_base").then(|| (Kind::ScanBase(StandBase::default()), vec![SelInput::new("Face", FACES, false)]))
+    match id {
+        "scan.stand_on_base" => Some((Kind::ScanBase(StandBase::default()), vec![SelInput::new("Face", FACES, false)])),
+        "scan.symmetry" | "scan.square_to_symmetry" => {
+            Some((Kind::ScanSymmetry(Symmetry { square: usize::from(id == "scan.square_to_symmetry"), ..Symmetry::default() }), Vec::new()))
+        }
+        _ => None,
+    }
 }
 
 fn tr(text: &str) -> &str {
@@ -163,11 +173,199 @@ pub(crate) fn gpu_marks(app: &SolveApp) -> Option<GpuCloud> {
     })
 }
 
+/// The Symmetry dialog (Find Symmetry, Square Up): the mirror plane found is drawn as a sheet over
+/// the scan, clipped to the scan's box. With "Draw a guide" on, the next drag in the view draws a
+/// line along where the plane runs (free, in the air, its ends at the depth of the scan's middle):
+/// the plane through it and the way it was seen from is searched near, as SurfaceCraft's Sketch
+/// Guide does, and the view is for turning again. OK keeps the plane or squares the scan to it.
+#[derive(Clone, Debug, Default)]
+pub struct Symmetry {
+    /// What OK does: 0 keeps the plane, 1 makes it X = 0.
+    pub square: usize,
+    /// The next drag in the view draws a guide.
+    pub drawing: bool,
+    /// The guide drawn: from, to, and the way it was seen from (scan toward the eye).
+    guide: Option<[Vec3; 3]>,
+    /// A guide being dragged, on the screen.
+    dragging: Option<(egui::Pos2, egui::Pos2)>,
+    found: Option<Found>,
+}
+
+#[derive(Clone, Debug)]
+struct Found {
+    key: (Option<[[u64; 3]; 3]>, u64),
+    body: Option<(String, Vec3, Vec3)>,
+    mirror: Result<ScanMirror, String>,
+}
+
+fn bits(v: Vec3) -> [u64; 3] {
+    [v.x.to_bits(), v.y.to_bits(), v.z.to_bits()]
+}
+
+/// Search again when the guide or the design has changed.
+fn search(app: &SolveApp, k: &mut Symmetry) {
+    let key = (k.guide.map(|g| g.map(bits)), app.session.revision);
+    if k.found.as_ref().is_some_and(|f| f.key == key) {
+        return;
+    }
+    let body = scan_box(&app.session, None).ok();
+    let mirror = symmetry_preview(&app.session, body.as_ref().map(|b| b.0.as_str()), k.guide).map_err(|e| e.to_string());
+    k.found = Some(Found { key, body, mirror });
+}
+
+/// The Symmetry dialog's rows.
+pub fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Symmetry) -> bool {
+    search(app, k);
+    let ids = |id: &'static str| crate::i18n::tr(id);
+    if let Some(found) = &k.found {
+        match &found.mirror {
+            Err(why) => {
+                ui_kit::text(ui, why, ui_kit::Text::Report("scan_symmetry_error", true));
+            }
+            Ok(m) => {
+                let matched = format!("{:.0} %", 100.0 * m.coverage);
+                form_row(ui, ids("ui.scan_symmetry_matched"), |ui| ui_kit::text(ui, &matched, ui_kit::Text::Cell));
+                let off = crate::prefs::show_mm(app, m.rms, 1);
+                form_row(ui, ids("ui.scan_symmetry_off"), |ui| ui_kit::text(ui, &off, ui_kit::Text::Cell));
+                let verdict = if m.symmetric { ids("ui.scan_symmetry_yes") } else { ids("ui.scan_symmetry_no") };
+                ui_kit::text(ui, verdict, ui_kit::Text::Hint("scan_symmetry_verdict"));
+            }
+        }
+    }
+    form_row(ui, ids("ui.scan_symmetry_draw"), |ui| check(ui, &mut k.drawing));
+    if k.guide.is_some() {
+        let mut keep = true;
+        form_row(ui, ids("ui.scan_symmetry_guide"), |ui| check(ui, &mut keep));
+        if !keep {
+            k.guide = None;
+        }
+    }
+    let labels = [ids("ui.scan_symmetry_keep"), ids("ui.scan_symmetry_square")];
+    choice_row(ui, ids("ui.scan_symmetry_on_ok"), "scan_symmetry_on_ok", &mut k.square, &labels);
+    ui_kit::text(ui, ids("ui.scan_symmetry_hint"), ui_kit::Text::Hint("scan_symmetry_hint"));
+    false
+}
+
+/// What OK runs: keep the plane found, or square the scan to it, near the guide drawn.
+pub fn symmetry_commands(k: &Symmetry) -> Result<Vec<(String, Value)>, String> {
+    let found = k.found.as_ref().ok_or("still looking for the plane")?;
+    found.mirror.as_ref().map_err(Clone::clone)?;
+    let mut params = Map::new();
+    if let Some((body, _, _)) = &found.body {
+        params.insert("body".into(), json!(body));
+    }
+    if let Some([from, to, toward]) = k.guide {
+        params.insert("guide".into(), json!({"from": [from.x, from.y, from.z], "to": [to.x, to.y, to.z], "toward": [toward.x, toward.y, toward.z]}));
+    }
+    let id = if k.square == 1 { "scan.square_to_symmetry" } else { "scan.symmetry" };
+    Ok(vec![(id.into(), Value::Object(params))])
+}
+
+fn symmetry_dialog(app: &mut SolveApp) -> Option<&mut Symmetry> {
+    match app.dialog.as_mut().map(|d| &mut d.kind) {
+        Some(Kind::ScanSymmetry(k)) => Some(k),
+        _ => None,
+    }
+}
+
+/// Whether the next primary drag in the view draws a guide (it does not select or move).
+pub(crate) fn drawing_guide(app: &SolveApp) -> bool {
+    matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanSymmetry(k)) if k.drawing || k.dragging.is_some())
+}
+
+/// A guide's drag: begun at `at`, now at `to` on the screen.
+pub(crate) fn guide_drag(app: &mut SolveApp, at: egui::Pos2, to: egui::Pos2) {
+    if let Some(k) = symmetry_dialog(app) {
+        k.dragging = Some((at, to));
+    }
+}
+
+/// The drag let go: its ends are put at the depth of the scan's middle, seen the way the view
+/// looks, and the plane is searched near the one through them.
+pub(crate) fn guide_end(app: &mut SolveApp, proj: &crate::viewport::Proj) {
+    let toward = proj.cam.back();
+    let Some(k) = symmetry_dialog(app) else { return };
+    let Some((a, b)) = k.dragging.take() else { return };
+    k.drawing = false;
+    let Some(middle) = k.found.as_ref().and_then(|f| f.body.as_ref()).map(|(_, lo, hi)| (*lo + *hi) / 2.0) else { return };
+    let at_depth = |p: egui::Pos2| {
+        let (o, d) = proj.ray(p);
+        let den = d.dot(toward);
+        (den.abs() > 1e-12).then(|| o + d * ((middle - o).dot(toward) / den))
+    };
+    if a.distance(b) < 4.0 {
+        return;
+    }
+    if let (Some(from), Some(to)) = (at_depth(a), at_depth(b)) {
+        k.guide = Some([from, to, toward]);
+    }
+}
+
+/// The plane's sheet over the scan, and the guide while it is dragged or once drawn.
+pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
+    let Some(Kind::ScanSymmetry(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
+    let t = crate::theme::Tokens::get();
+    let [r, g, b] = t.analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
+    let (fill, line) = (egui::Color32::from_rgba_unmultiplied(r, g, b, 60), egui::Color32::from_rgb(r, g, b));
+    if let Some(found) = &k.found
+        && let (Ok(m), Some((_, lo, hi))) = (&found.mirror, &found.body)
+    {
+        let corners: Option<Vec<egui::Pos2>> =
+            sheet(Vec3::from(m.point), Vec3::from(m.normal), *lo, *hi).iter().map(|p| proj.to_screen(*p)).collect();
+        if let Some(corners) = corners.filter(|c| c.len() >= 3) {
+            let stroke = egui::Stroke::new(1.5, line);
+            if m.symmetric {
+                painter.extend(crate::viewport::projected_polygon(&corners, fill, stroke));
+            } else {
+                painter.extend(crate::viewport::projected_polygon(&corners, fill, egui::Stroke::NONE));
+                let mut closed = corners.clone();
+                closed.extend(corners.first().copied());
+                painter.extend(crate::viewport::dashed_line(&closed, proj.rect, stroke, 8.0, 6.0));
+            }
+        }
+    }
+    let guide_stroke = egui::Stroke::new(2.0, line);
+    if let Some((a, b)) = k.dragging {
+        painter.extend(crate::viewport::dashed_line(&[a, b], proj.rect, guide_stroke, 10.0, 6.0));
+    } else if let Some([from, to, _]) = k.guide
+        && let (Some(a), Some(b)) = (proj.to_screen(from), proj.to_screen(to))
+    {
+        painter.extend(crate::viewport::dashed_line(&[a, b], proj.rect, guide_stroke, 10.0, 6.0));
+    }
+}
+
+/// Where the plane through `point` square to `normal` cuts the box `lo`..`hi`, a little larger:
+/// its corners in order round it.
+fn sheet(point: Vec3, normal: Vec3, lo: Vec3, hi: Vec3) -> Vec<Vec3> {
+    let corner =
+        |i: usize| Vec3::new(if i & 1 == 0 { lo.x } else { hi.x }, if i & 2 == 0 { lo.y } else { hi.y }, if i & 4 == 0 { lo.z } else { hi.z });
+    let edges = [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)];
+    let side = |p: Vec3| (p - point).dot(normal);
+    let mut cut: Vec<Vec3> = edges
+        .iter()
+        .filter_map(|&(a, b)| {
+            let (pa, pb) = (corner(a), corner(b));
+            let (da, db) = (side(pa), side(pb));
+            ((da <= 0.0) != (db <= 0.0) && (da - db).abs() > 1e-12).then(|| pa + (pb - pa) * (da / (da - db)))
+        })
+        .collect();
+    if cut.len() < 3 {
+        return Vec::new();
+    }
+    let middle = cut.iter().fold(Vec3::ZERO, |s, p| s + *p) / cut.len() as f64;
+    let Some(u) = (cut[0] - middle).normalized() else { return Vec::new() };
+    let v = normal.cross(u);
+    cut.sort_by(|a, b| {
+        let angle = |p: &Vec3| (*p - middle).dot(v).atan2((*p - middle).dot(u));
+        angle(a).total_cmp(&angle(b))
+    });
+    cut.into_iter().map(|p| middle + (p - middle) * 1.08).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
     use solidcore_record::Vec3;
-    use solidcraft_engine::geom::prelude::*;
 
     use super::*;
 
@@ -246,5 +444,73 @@ mod tests {
         assert!(h.app.dialog.is_none() && gpu_marks(&h.app).is_none());
         let (lo, hi) = bounds(&h);
         assert!(lo.z.abs() < 1e-4 && (hi.z - 80.0).abs() < 1e-4, "standing on its end: {lo:?} {hi:?}");
+    }
+
+    /// An STL of boxes, each side cut into `n` × `n` squares.
+    fn boxes_stl(boxes: &[([f64; 3], [f64; 3])], n: u32) -> String {
+        let mut stl = String::from("solid b\n");
+        for (lo, hi) in boxes {
+            for axis in 0..3 {
+                let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+                for high in [false, true] {
+                    let at = |i: u32, j: u32| {
+                        let mut c = *lo;
+                        if high {
+                            c[axis] = hi[axis];
+                        }
+                        c[u] = lo[u] + (hi[u] - lo[u]) * f64::from(i) / f64::from(n);
+                        c[v] = lo[v] + (hi[v] - lo[v]) * f64::from(j) / f64::from(n);
+                        c
+                    };
+                    for i in 0..n {
+                        for j in 0..n {
+                            for tri in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                                stl += "facet normal 0 0 0\nouter loop\n";
+                                for [x, y, z] in tri {
+                                    stl += &format!("vertex {x} {y} {z}\n");
+                                }
+                                stl += "endloop\nendfacet\n";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        stl + "endsolid b\n"
+    }
+
+    /// Symmetry opens on the plane it finds by itself; with Draw a guide on, a line dragged across
+    /// the top view along X = 31 finds the plane X = 30 near it; OK keeps it as a construction plane.
+    #[test]
+    fn a_guide_dragged_in_the_view_finds_the_plane_along_it() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("l.stl");
+        std::fs::write(&path, boxes_stl(&[([0.0, 0.0, 0.0], [60.0, 20.0, 10.0]), ([20.0, 0.0, 10.0], [40.0, 20.0, 25.0])], 12)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.symmetry");
+        h.frames(3);
+        let normal = |h: &crate::scenario::Harness| match h.app.dialog.as_ref().map(|d| &d.kind) {
+            Some(Kind::ScanSymmetry(k)) => k.found.as_ref().and_then(|f| f.mirror.as_ref().ok()).map(|m| (Vec3::from(m.normal), m.symmetric)),
+            _ => None,
+        };
+        let (_, symmetric) = normal(&h).expect("a plane found by itself");
+        assert!(symmetric);
+
+        // Draw a guide on (the dialog's own check box).
+        if let Some(Kind::ScanSymmetry(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.drawing = true;
+        }
+        assert!(drawing_guide(&h.app), "the next drag draws a guide");
+        h.step(&json!({"drag": [{"world": [31.0, -8.0, 12.5]}, {"world": [31.0, 28.0, 12.5]}], "steps": 6})).unwrap();
+        h.frames(3);
+        assert!(!drawing_guide(&h.app), "one drag, then the view is for turning again");
+        let (n, symmetric) = normal(&h).unwrap();
+        assert!(symmetric && n.x.abs() > 1.0 - 1e-6, "the plane X = 30: {n:?}");
+
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none());
+        assert!(h.app.session.doc.features.iter().any(|f| f.name == "Symmetry Plane"), "kept as a construction plane");
     }
 }

@@ -407,6 +407,28 @@ fn stand_on_base(s: &mut Session, p: &Value) -> Result<Value> {
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
+/// The scan's name and the box round its points: where a guide drawn in the view is put (at the
+/// depth of its middle) and how big the plane's sheet is drawn.
+pub fn scan_box(s: &Session, body: Option<&str>) -> Result<(String, Vec3, Vec3)> {
+    let mesh = mesh(s, &json!({ "body": body }), "scan.symmetry")?;
+    let (lo, hi) = mesh.scan().bounds().ok_or_else(|| bad("scan.symmetry", "the scan has no points"))?;
+    Ok((mesh.body, lo, hi))
+}
+
+/// What the Symmetry dialog shows: the mirror plane found (near `guide`, a line from, to and the
+/// way it was seen from, when one is drawn) and how well the scan matches itself in it. A scan
+/// that is no mirror image is shown as such, not refused.
+pub fn symmetry_preview(s: &Session, body: Option<&str>, guide: Option<[Vec3; 3]>) -> Result<ScanMirror> {
+    let cmd = "scan.symmetry";
+    let mesh = mesh(s, &json!({ "body": body }), cmd)?;
+    let scan = mesh.scan();
+    let found = match guide {
+        Some([from, to, toward]) => symmetry::find_guided(&scan, &Guide { from, to, toward }),
+        None => symmetry::find(&scan),
+    };
+    found.map(|m| mirror_reply(&m)).ok_or_else(|| bad(cmd, "no plane found: draw a guide with some length, not end-on"))
+}
+
 /// What the Stand on Base dialog shows before it stands the scan: the base and the scan's points to
 /// mark on it (where the part would touch the ground, or the face grown from the pick).
 #[derive(Clone, Debug)]

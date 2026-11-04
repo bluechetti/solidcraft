@@ -95,7 +95,7 @@ pub struct ScanSquareParams {
 }
 
 /// A scan's mirror plane and how well the scan matches its reflection in it.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct ScanMirror {
     /// A point of the plane over the middle of the scan, in mm.
     pub point: [f64; 3],

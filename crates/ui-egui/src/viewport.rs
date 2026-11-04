@@ -5196,8 +5196,22 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if resp.drag_stopped() || !primary_down {
         crate::drag_extrude::end(app);
     }
+    // Symmetry's guide: with "Draw a guide" on, a primary drag draws the line along the mirror
+    // plane instead of selecting.
+    if crate::dialogs_scan::drawing_guide(app) && !held && primary_nav.is_none() && mode.is_none() {
+        if resp.dragged_by(egui::PointerButton::Primary)
+            && let (Some(a), Some(p)) = (ui.input(|i| i.pointer.press_origin()), hover)
+            && rect.contains(a)
+        {
+            crate::dialogs_scan::guide_drag(app, a, p);
+        }
+        if resp.drag_stopped() {
+            crate::dialogs_scan::guide_end(app, &proj);
+        }
+    }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
+        && !crate::dialogs_scan::drawing_guide(app)
         && !held
         && primary_nav.is_none()
         && mode.is_none()
@@ -5242,6 +5256,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::ref_images::show(app, ui, &painter, &proj);
     crate::browser_canvas::paint_marks(app, &painter, &proj);
     crate::point_clouds::show(app, &painter, &proj);
+    crate::dialogs_scan::draw(app, &painter, &proj);
     crate::dialogs_assembly::origins(app, &painter, &proj);
     if !crate::joint_handles::visible(app) {
         crate::dialogs_assembly::joint_glyphs(app, &painter, &proj);

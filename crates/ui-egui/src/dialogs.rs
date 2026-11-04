@@ -400,6 +400,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             /// Frame members (`dialogs_frame`).
             Frame(crate::dialogs_frame::Member),
             ScanBase(crate::dialogs_scan::StandBase),
+            ScanSymmetry(crate::dialogs_scan::Symmetry),
             /// Appearance (`dialogs_appearance`).
             Appearance(crate::dialogs_appearance::Ap),
             /// Contact sets, motion studies, exploded views, configurations (`dialogs_motion`).
@@ -2563,6 +2564,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::Plastic(k) => k.title(),
         Kind::Frame(_) => "FRAME MEMBER",
         Kind::ScanBase(_) => "STAND ON BASE",
+        Kind::ScanSymmetry(_) => "SYMMETRY",
         Kind::Appearance(_) => "APPEARANCE",
         Kind::Motion(k) => k.title(),
         Kind::Part(_) => "INSERT PART",
@@ -5592,6 +5594,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::Plastic(k) => return crate::dialogs_plastic::commands(app, k, &d.inputs, &d.extra),
         Kind::Frame(k) => return crate::dialogs_frame::commands(app, k, &d.inputs, &d.extra),
         Kind::ScanBase(k) => return crate::dialogs_scan::commands(k, &d.inputs),
+        Kind::ScanSymmetry(k) => return crate::dialogs_scan::symmetry_commands(k),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),
         Kind::Part(k) => return crate::dialogs_parts::commands(app, k, &d.inputs),
