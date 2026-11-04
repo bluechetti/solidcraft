@@ -78,9 +78,12 @@
     "ui.scan_edit_distance": "From the scan",
     "ui.scan_edit_distance_value": "{rms} rms · {max} max",
     "ui.scan_edit_reset": "Reset Points",
-    "ui.scan_edit_hint": "Drag a handle to move its point. Moved points are yellow; OK keeps the surface as edited.",
+    "ui.scan_edit_hint": "Drag a handle to move its point, or click one to type where it goes. Moved points are yellow; OK keeps the surface as edited.",
     "ui.scan_edit_no_scan": "There is no scan under the surface to snap or refit to.",
-    "ui.scan_edit_nothing": "Drag a control point first."
+    "ui.scan_edit_nothing": "Drag a control point first.",
+    "ui.scan_edit_point": "Point",
+    "ui.scan_edit_along": "Along normal",
+    "ui.scan_edit_move": "Move Along Normal"
   },
   "de": {
     "ALIGN": "AUSRICHTEN",
@@ -161,9 +164,12 @@
     "ui.scan_edit_distance": "Abstand zum Scan",
     "ui.scan_edit_distance_value": "{rms} RMS · {max} max.",
     "ui.scan_edit_reset": "Punkte zurücksetzen",
-    "ui.scan_edit_hint": "Ziehen Sie einen Griff, um seinen Punkt zu verschieben. Verschobene Punkte sind gelb; OK behält die bearbeitete Fläche.",
+    "ui.scan_edit_hint": "Ziehen Sie einen Griff, um seinen Punkt zu verschieben, oder klicken Sie einen an, um seine Lage einzugeben. Verschobene Punkte sind gelb; OK behält die bearbeitete Fläche.",
     "ui.scan_edit_no_scan": "Unter der Fläche liegt kein Scan zum Fangen oder Anpassen.",
-    "ui.scan_edit_nothing": "Ziehen Sie zuerst einen Kontrollpunkt."
+    "ui.scan_edit_nothing": "Ziehen Sie zuerst einen Kontrollpunkt.",
+    "ui.scan_edit_point": "Punkt",
+    "ui.scan_edit_along": "Entlang der Normalen",
+    "ui.scan_edit_move": "Entlang der Normalen verschieben"
   },
   "ja": {
     "ALIGN": "位置合わせ",
@@ -244,9 +250,12 @@
     "ui.scan_edit_distance": "スキャンからの距離",
     "ui.scan_edit_distance_value": "{rms} RMS · 最大 {max}",
     "ui.scan_edit_reset": "点をリセット",
-    "ui.scan_edit_hint": "ハンドルをドラッグして点を動かします。移動した点は黄色です。OK で編集したサーフェスを残します。",
+    "ui.scan_edit_hint": "ハンドルをドラッグして点を動かすか、クリックして位置を入力します。移動した点は黄色です。OK で編集したサーフェスを残します。",
     "ui.scan_edit_no_scan": "サーフェスの下にスナップや再フィットに使うスキャンがありません。",
-    "ui.scan_edit_nothing": "先に制御点をドラッグしてください。"
+    "ui.scan_edit_nothing": "先に制御点をドラッグしてください。",
+    "ui.scan_edit_point": "点",
+    "ui.scan_edit_along": "法線方向",
+    "ui.scan_edit_move": "法線方向に移動"
   },
   "ko": {
     "ALIGN": "정렬",
@@ -327,9 +336,12 @@
     "ui.scan_edit_distance": "스캔과의 거리",
     "ui.scan_edit_distance_value": "{rms} RMS · 최대 {max}",
     "ui.scan_edit_reset": "점 초기화",
-    "ui.scan_edit_hint": "핸들을 끌어 점을 옮기세요. 옮긴 점은 노란색입니다. 확인을 누르면 편집한 곡면을 유지합니다.",
+    "ui.scan_edit_hint": "핸들을 끌어 점을 옮기거나, 클릭해 위치를 입력하세요. 옮긴 점은 노란색입니다. 확인을 누르면 편집한 곡면을 유지합니다.",
     "ui.scan_edit_no_scan": "곡면 아래에 스냅하거나 다시 맞출 스캔이 없습니다.",
-    "ui.scan_edit_nothing": "먼저 제어점을 끄세요."
+    "ui.scan_edit_nothing": "먼저 제어점을 끄세요.",
+    "ui.scan_edit_point": "점",
+    "ui.scan_edit_along": "법선 방향",
+    "ui.scan_edit_move": "법선 방향으로 이동"
   },
   "zh": {
     "ALIGN": "对齐",
@@ -410,9 +422,12 @@
     "ui.scan_edit_distance": "与扫描的距离",
     "ui.scan_edit_distance_value": "{rms} RMS · 最大 {max}",
     "ui.scan_edit_reset": "重置点",
-    "ui.scan_edit_hint": "拖动手柄以移动其点。已移动的点为黄色；确定保留编辑后的曲面。",
+    "ui.scan_edit_hint": "拖动手柄以移动其点，或单击手柄以输入其位置。已移动的点为黄色；确定保留编辑后的曲面。",
     "ui.scan_edit_no_scan": "曲面下方没有可吸附或重新拟合的扫描。",
-    "ui.scan_edit_nothing": "请先拖动一个控制点。"
+    "ui.scan_edit_nothing": "请先拖动一个控制点。",
+    "ui.scan_edit_point": "点",
+    "ui.scan_edit_along": "沿法线",
+    "ui.scan_edit_move": "沿法线移动"
   },
   "ar": {
     "ALIGN": "محاذاة",
@@ -493,9 +508,12 @@
     "ui.scan_edit_distance": "البعد عن المسح",
     "ui.scan_edit_distance_value": "{rms} RMS · الأقصى {max}",
     "ui.scan_edit_reset": "إعادة تعيين النقاط",
-    "ui.scan_edit_hint": "اسحب مقبضًا لتحريك نقطته. النقاط المنقولة صفراء؛ موافق يحتفظ بالسطح كما حُرّر.",
+    "ui.scan_edit_hint": "اسحب مقبضًا لتحريك نقطته، أو انقر عليه لكتابة موضعها. النقاط المنقولة صفراء؛ موافق يحتفظ بالسطح كما حُرّر.",
     "ui.scan_edit_no_scan": "لا يوجد مسح تحت السطح للالتقاط إليه أو إعادة الملاءمة.",
-    "ui.scan_edit_nothing": "اسحب نقطة تحكم أولًا."
+    "ui.scan_edit_nothing": "اسحب نقطة تحكم أولًا.",
+    "ui.scan_edit_point": "النقطة",
+    "ui.scan_edit_along": "على امتداد العمودي",
+    "ui.scan_edit_move": "التحريك على امتداد العمودي"
   },
   "he": {
     "ALIGN": "יישור",
@@ -576,9 +594,12 @@
     "ui.scan_edit_distance": "מרחק מהסריקה",
     "ui.scan_edit_distance_value": "{rms} RMS · מקס׳ {max}",
     "ui.scan_edit_reset": "איפוס נקודות",
-    "ui.scan_edit_hint": "גררו ידית כדי להזיז את הנקודה שלה. נקודות שהוזזו צהובות; אישור שומר את המשטח כפי שנערך.",
+    "ui.scan_edit_hint": "גררו ידית כדי להזיז את הנקודה שלה, או לחצו עליה כדי להקליד את מיקומה. נקודות שהוזזו צהובות; אישור שומר את המשטח כפי שנערך.",
     "ui.scan_edit_no_scan": "אין סריקה מתחת למשטח להצמדה או להתאמה מחדש.",
-    "ui.scan_edit_nothing": "גררו תחילה נקודת בקרה."
+    "ui.scan_edit_nothing": "גררו תחילה נקודת בקרה.",
+    "ui.scan_edit_point": "נקודה",
+    "ui.scan_edit_along": "לאורך הנורמל",
+    "ui.scan_edit_move": "הזזה לאורך הנורמל"
   },
   "vi": {
     "ALIGN": "CĂN CHỈNH",
@@ -659,9 +680,12 @@
     "ui.scan_edit_distance": "Cách bản quét",
     "ui.scan_edit_distance_value": "{rms} RMS · tối đa {max}",
     "ui.scan_edit_reset": "Đặt lại điểm",
-    "ui.scan_edit_hint": "Kéo một tay nắm để dời điểm của nó. Điểm đã dời có màu vàng; OK giữ mặt như đã sửa.",
+    "ui.scan_edit_hint": "Kéo một tay nắm để dời điểm của nó, hoặc bấm vào để nhập vị trí. Điểm đã dời có màu vàng; OK giữ mặt như đã sửa.",
     "ui.scan_edit_no_scan": "Không có bản quét dưới mặt để bám hoặc khớp lại.",
-    "ui.scan_edit_nothing": "Hãy kéo một điểm điều khiển trước."
+    "ui.scan_edit_nothing": "Hãy kéo một điểm điều khiển trước.",
+    "ui.scan_edit_point": "Điểm",
+    "ui.scan_edit_along": "Theo pháp tuyến",
+    "ui.scan_edit_move": "Dời theo pháp tuyến"
   },
   "en-GB": {
     "cmd.scan_center": "Centre on Origin",

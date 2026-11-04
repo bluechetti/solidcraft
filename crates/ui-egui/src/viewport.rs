@@ -5226,6 +5226,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         if resp.drag_stopped() || !primary_down {
             crate::dialogs_scan_surface::release(app);
         }
+        if resp.clicked()
+            && let Some(p) = resp.interact_pointer_pos()
+        {
+            crate::dialogs_scan_surface::choose(app, &proj, p);
+        }
     }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()

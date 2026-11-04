@@ -378,14 +378,19 @@ pub struct ScanFitSurfaceResult {
     pub param_warnings: Vec<String>,
 }
 
-/// One control point of a surface moved: its place in the net and where it goes.
+/// One control point of a surface moved: its place in the net and where it goes (one of `to` or
+/// `along`).
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ScanControlMove {
     /// The control point, `[u, v]`: its column along u and row along v, from 0.
     pub point: [u32; 2],
     /// Where it goes, in mm.
-    pub to: Point3,
+    #[serde(default)]
+    pub to: Option<Point3>,
+    /// How far it goes along the way the surface faces there (negative the other way).
+    #[serde(default)]
+    pub along: Option<LengthExpr>,
 }
 
 /// Edit a surface Fit Surface made by its control points: move some, and fit those round them, or

@@ -46,6 +46,14 @@ impl Rigid {
         self.turned(p) + self.translation
     }
 
+    /// The move that undoes this one.
+    pub fn inverse(&self) -> Rigid {
+        let r = self.rotation;
+        let rotation = [[r[0][0], r[1][0], r[2][0]], [r[0][1], r[1][1], r[2][1]], [r[0][2], r[1][2], r[2][2]]];
+        let back = Rigid { rotation, translation: Vec3::ZERO };
+        Rigid { rotation, translation: -back.turned(self.translation) }
+    }
+
     /// The same turn about the point `pivot` instead of the origin: `pivot` stays where it is.
     fn about(self, pivot: Vec3) -> Self {
         Rigid { translation: pivot - self.turned(pivot), ..self }

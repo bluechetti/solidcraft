@@ -55,6 +55,8 @@ pub struct EditSurface {
     /// The scan's distance from the surface shown: root mean square and largest.
     fit: Option<(f64, f64)>,
     chosen: Option<usize>,
+    /// How far Move takes the chosen point along the way the surface faces, in mm.
+    pub along: f64,
     drag: Option<Drag>,
 }
 
@@ -70,6 +72,7 @@ impl Default for EditSurface {
             shown_net: Vec::new(),
             fit: None,
             chosen: None,
+            along: 1.0,
             drag: None,
         }
     }
@@ -95,20 +98,31 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::S
     (id == "scan.edit_surface").then(|| (Kind::ScanEditSurface(EditSurface::default()), Vec::new()))
 }
 
-/// Load the surface and the scan under it when the dialog opens, or again when the design has
-/// changed under it (an undo, say); what was moved is dropped then.
+/// Load the surface and the scan under it when the dialog opens, or again when the surface has
+/// changed under it (an undo, say); what was moved is dropped then. A change elsewhere (a click
+/// that selects, another body) keeps the edits.
 fn load(app: &SolveApp, k: &mut EditSurface) {
-    let current = matches!(&k.loaded, Some(Ok(l)) if l.revision == app.session.revision) || matches!(&k.loaded, Some(Err(_)));
-    if current {
-        return;
+    let revision = app.session.revision;
+    match &mut k.loaded {
+        Some(Ok(l)) if l.revision == revision => return,
+        Some(Err(_)) => return,
+        _ => {}
     }
     let cmd = "scan.edit_surface";
-    let loaded = edit::editable(&app.session, None, cmd).map_err(|e| e.to_string()).map(|target| {
+    let found = edit::editable(&app.session, None, cmd).map_err(|e| e.to_string());
+    if let (Some(Ok(l)), Ok(target)) = (&mut k.loaded, &found)
+        && l.target.feature == target.feature
+        && l.target.surface == target.surface
+    {
+        l.revision = revision;
+        return;
+    }
+    let loaded = found.map(|target| {
         let reach = edit::default_reach(&target.surface);
         let covered = edit::covered(&app.session, None, &target.surface, reach, cmd).ok().filter(|c| !c.points.is_empty());
         let all = covered.as_ref().map(|c| c.points.as_slice()).unwrap_or_default();
         let sample = Arc::new(all.iter().step_by(all.len() / PREVIEW_POINTS + 1).copied().collect());
-        Loaded { target, covered, sample, revision: app.session.revision }
+        Loaded { target, covered, sample, revision }
     });
     let surface = loaded.as_ref().ok().map(|l| l.target.surface.clone());
     k.loaded = Some(loaded);
@@ -195,8 +209,46 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         k.chosen = None;
         show(k, l.target.surface.clone(), false);
     }
+    // The point chosen (clicked or last dragged): where it goes, typed, or a distance along the
+    // way the surface faces.
+    if let Some(i) = k.chosen.filter(|i| *i < k.net.len()) {
+        let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+        let which = format!("[{}, {}]", i % nu, i / nu);
+        form_row(ui, tr("ui.scan_edit_point"), |ui| ui_kit::text(ui, &which, ui_kit::Text::Cell));
+        let p = k.net[i];
+        let mut xyz = [p.x, p.y, p.z];
+        let mut typed = false;
+        for (axis, v) in ["X", "Y", "Z"].into_iter().zip(&mut xyz) {
+            form_row(ui, axis, |ui| {
+                let r = ui_kit::length_field(ui, v, &units, decimals);
+                typed |= r.changed();
+                r
+            });
+        }
+        if typed {
+            move_to(k, i, Vec3::new(xyz[0], xyz[1], xyz[2]));
+        }
+        form_row(ui, tr("ui.scan_edit_along"), |ui| ui_kit::length_field(ui, &mut k.along, &units, decimals));
+        if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_move"), ui_kit::Button::Normal)).clicked()
+            && let Some(n) = k.shown.as_ref().and_then(|s| edit::normal_at(s, i))
+        {
+            let to = k.net[i] + n * k.along;
+            move_to(k, i, to);
+        }
+    }
     ui_kit::text(ui, tr("ui.scan_edit_hint"), ui_kit::Text::Hint("scan_edit_hint"));
     false
+}
+
+/// Point `index` put at `to`, as a drag let go there would: refitted as Refit says, and kept.
+fn move_to(k: &mut EditSurface, index: usize, to: Vec3) {
+    if let Some(surface) = preview(k, index, to) {
+        show(k, surface, false);
+        k.net = k.shown_net.clone();
+        if let Some(m) = k.moved.get_mut(index) {
+            *m = true;
+        }
+    }
 }
 
 /// What OK runs: the net as edited.
@@ -226,17 +278,30 @@ pub(crate) fn holds_pointer(app: &SolveApp) -> bool {
     matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanEditSurface(k)) if k.drag.is_some())
 }
 
-/// A primary press at `at`: takes the handle under it, if any.
-pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) -> bool {
-    let Some(k) = dialog(app) else { return false };
-    let nearest = k
-        .shown_net
+/// The handle under `at` on the screen, if any.
+fn handle_at(k: &EditSurface, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<usize> {
+    k.shown_net
         .iter()
         .enumerate()
         .filter_map(|(i, p)| proj.to_screen(*p).map(|s| (i, s.distance(at))))
         .filter(|(_, d)| *d <= GRAB)
-        .min_by(|a, b| a.1.total_cmp(&b.1));
-    let Some((index, _)) = nearest else { return false };
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
+/// A click at `at`: chooses the handle under it, to type where its point goes.
+pub(crate) fn choose(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
+    if let Some(k) = dialog(app)
+        && let Some(index) = handle_at(k, proj, at)
+    {
+        k.chosen = Some(index);
+    }
+}
+
+/// A primary press at `at`: takes the handle under it, if any.
+pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) -> bool {
+    let Some(k) = dialog(app) else { return false };
+    let Some(index) = handle_at(k, proj, at) else { return false };
     // A drag starts from the net as shown (a refit the last drag made is kept).
     k.net = k.shown_net.clone();
     k.drag = Some(Drag { index, from: k.net[index] });
@@ -393,17 +458,31 @@ mod tests {
         let (from, to) = (start[k], start[k] + Vec3::new(0.0, 0.0, 6.0));
         h.step(&json!({"drag": [{"world": [from.x, from.y, from.z]}, {"world": [to.x, to.y, to.z]}], "steps": 6})).unwrap();
         h.frames(2);
-        let after = kind(&h);
+        let after = kind(&h).clone();
         assert!(after.drag.is_none() && after.moved[k], "moved by hand");
         assert!(after.net[k].z - from.z > 4.0, "followed the pointer up: {:?} → {:?}", from, after.net[k]);
         let ring = (0..36).filter(|&i| i != k && after.net[i].dist(start[i]) > 1e-6).count();
         assert!(ring > 0, "the ring round it refitted as it moved");
         assert!(after.fit.is_some_and(|f| f.0 > fit.0), "farther from the scan now");
-        let edited = after.net.clone();
 
+        // Clicked, a handle is chosen; Move takes its point 1 mm along the way the surface faces.
+        let j = 3 * 6 + 3;
+        let other = h.app.dialog.as_ref().map(|_| kind(&h).net[j]).unwrap();
+        h.step(&json!({"click": {"world": [other.x, other.y, other.z]}})).unwrap();
+        h.frames(2);
+        assert_eq!(kind(&h).chosen, Some(j), "chosen by a click");
+        if let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.refit = 0;
+            let n = k.shown.as_ref().and_then(|s| edit::normal_at(s, j)).unwrap();
+            move_to(k, j, k.net[j] + n * k.along);
+            assert!(k.moved[j] && (k.net[j] - other).dot(n) > 0.999, "1 mm along the normal");
+        }
+        let edited = kind(&h).net.clone();
+
+        h.frames(2);
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
-        assert!(h.app.dialog.is_none());
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
         let kept = edit::editable(&h.app.session, Some("Surface1"), "test").unwrap();
         let net = edit::control_points(&kept.surface);
         assert!(net.iter().zip(&edited).all(|(a, b)| a.dist(*b) < 1e-6), "the net as edited, kept");

@@ -549,3 +549,26 @@ fn edit_surface_moves_control_points_and_refits_to_the_scan() {
     let refused = s.execute("scan.edit_surface", &json!({"surface": body, "refit": "all"})).unwrap_err().to_string();
     assert!(refused.contains("not a surface"), "{refused}");
 }
+
+/// A fitted surface turned and moved by a later Move is still edited where it now lies: a point
+/// raised 2 mm along the surface's normal ends up 2 mm off as the design shows it, the Move still
+/// applied after the edit; a reshaped surface is refused.
+#[test]
+fn edit_surface_works_where_a_later_move_put_the_surface() {
+    let (mut s, _) = session_with_a_plate_and_boss("edit-moved-surface");
+    run(&mut s, "scan.fit_surface", json!({"point": [12, 12, 8], "radius": 8, "controls": 6}));
+    run(&mut s, "solid.move", json!({"bodies": ["Surface1"], "translate": [5, -3, 20], "axis": [0, 1, 0], "angle": "30 deg"}));
+    let moved = super::surface::editable(&s, Some("Surface1"), "test").unwrap();
+    assert!(moved.placed.is_some(), "known to be moved");
+    let k = 2 * 6 + 3;
+    let (before, normal) =
+        (solidcraft_scan::surface_edit::points(&moved.surface)[k], solidcraft_scan::surface_edit::normal_at(&moved.surface, k).unwrap());
+    let features = s.doc.features.len();
+    run(&mut s, "scan.edit_surface", json!({"surface": "Surface1", "moves": [{"point": [3, 2], "along": "2 mm"}]}));
+    assert_eq!(s.doc.features.len(), features, "the import edited in place, the Move kept");
+    let after = super::surface::editable(&s, Some("Surface1"), "test").unwrap();
+    let now = solidcraft_scan::surface_edit::points(&after.surface)[k];
+    assert!(now.dist(before + normal * 2.0) < 1e-6, "2 mm along the normal where it lies: {before:?} → {now:?}");
+    let refused = s.execute("scan.edit_surface", &json!({"moves": [{"point": [3, 2]}]})).unwrap_err().to_string();
+    assert!(refused.contains("one of `to`"), "{refused}");
+}

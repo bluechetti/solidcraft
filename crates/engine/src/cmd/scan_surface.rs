@@ -10,6 +10,7 @@ use solidcore_record::Vec3;
 use solidcore_record::brep as b;
 use solidcraft_geom::Vec3Geom as _;
 use solidcraft_geom::bspline::{HPoint, NurbsSurface};
+use solidcraft_scan::place::Rigid;
 use solidcraft_scan::surface_edit;
 
 use super::{length, mesh};
@@ -28,6 +29,9 @@ pub struct EditableSurface {
     pub body: String,
     pub feature: u64,
     pub surface: NurbsSurface,
+    /// How later features have moved it since it was imported, if they have: an edit is written
+    /// back moved the other way, so they move it to where it was edited.
+    pub placed: Option<Rigid>,
 }
 
 /// The surface's one face as a NURBS surface, `None` for anything else.
@@ -54,22 +58,36 @@ fn nurbs_of(record: &b::Brep) -> Option<NurbsSurface> {
 }
 
 /// The surface body named, or the selected one, or the design's only one: a body of one B-spline
-/// face, kept as it was imported (nothing later has changed it).
+/// face, as it was imported or only moved since (nothing later has reshaped it).
 pub fn editable(s: &Session, name: Option<&str>, cmd: &str) -> Result<EditableSurface> {
     let state = s.model.state();
     let usable = |name: &str| -> Option<EditableSurface> {
         let body = state.body(name).filter(|b| !b.body.is_mesh())?;
-        let feature = s.doc.features.iter().find(|f| f.id == body.feature)?;
+        let is_import = |f: &&solidcraft_doc::Feature| matches!(f.kind, solidcraft_doc::FeatureKind::Import { .. });
+        // The feature that made it, or, once a later feature has moved it, the import that named it.
+        let feature = s
+            .doc
+            .features
+            .iter()
+            .find(|f| f.id == body.feature)
+            .filter(is_import)
+            .or_else(|| s.doc.features.iter().filter(is_import).rfind(|f| f.body_names.iter().any(|n| n == name)))?;
         let solidcraft_doc::FeatureKind::Import { step, .. } = &feature.kind else { return None };
-        if state.bodies.iter().filter(|b| b.feature == body.feature).count() != 1 {
-            return None;
-        }
         let surface = nurbs_of(&solidcraft_kernel::brep_record(&body.body).ok()?)?;
-        // As imported: the file's own surface is this one, so writing it back changes nothing else.
+        // The file's own surface is this one, or this one moved: writing it back changes nothing else.
         let imported = solidcraft_kernel::step_import_shared(step).ok()?;
         let [only] = imported.bodies.as_slice() else { return None };
         let original = nurbs_of(&solidcraft_kernel::brep_record(&only.body).ok()?)?;
-        (original == surface).then(|| EditableSurface { body: name.to_owned(), feature: feature.id, surface })
+        let placed = if original == surface {
+            None
+        } else {
+            let (from, to) = (surface_edit::points(&original), surface_edit::points(&surface));
+            let by = surface_edit::placement(&from, &to, original.count())?;
+            // Only moved: the same knots and weights, its points where the move puts them.
+            (surface_edit::with_points(&original, &to).as_ref() == Some(&surface)).then_some(())?;
+            Some(by)
+        };
+        Some(EditableSurface { body: name.to_owned(), feature: feature.id, surface, placed })
     };
     let named = name.filter(|n| !n.trim().is_empty());
     if let Some(name) = named {
@@ -80,7 +98,7 @@ pub fn editable(s: &Session, name: Option<&str>, cmd: &str) -> Result<EditableSu
             bad(
                 cmd,
                 format!(
-                    "`{name}` is not a surface whose control points can be edited: one B-spline face, as Fit Surface makes it, not changed since"
+                    "`{name}` is not a surface whose control points can be edited: one B-spline face, as Fit Surface makes it, not reshaped since"
                 ),
             )
         });
@@ -129,6 +147,17 @@ pub fn covered(s: &Session, scan: Option<&str>, surface: &NurbsSurface, reach: f
 
 /// Writes `surface` back into the Import feature that keeps the surface: one undo step.
 fn write_back(s: &mut Session, target: &EditableSurface, surface: &NurbsSurface, cmd: &str) -> Result<()> {
+    // Moved by later features: written where it was before they moved it.
+    let unmoved;
+    let surface = match &target.placed {
+        Some(by) => {
+            let back = by.inverse();
+            let net: Vec<Vec3> = surface_edit::points(surface).iter().map(|p| back.apply(*p)).collect();
+            unmoved = surface_edit::with_points(surface, &net).ok_or_else(|| bad(cmd, "the surface's place could not be undone"))?;
+            &unmoved
+        }
+        None => surface,
+    };
     let ts = solidcraft_geom::tspline::TSpline::from_nurbs(surface).map_err(|e| bad(cmd, format!("the surface: {e}")))?;
     let sheet = solidcraft_kernel::tspline_sheet(&ts).map_err(|e| bad(cmd, format!("the surface: {e}")))?;
     let step = solidcraft_kernel::step_export(&[&sheet], "SolidCraft").map_err(|e| bad(cmd, format!("the surface: {e}")))?;
@@ -174,11 +203,24 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Moves of single points.
     if let Some(moves) = p.get("moves").filter(|v| !v.is_null()) {
-        let moves = moves.as_array().ok_or_else(|| bad(cmd, "`moves` must be a list of {point: [u, v], to: [x, y, z]}"))?;
+        let moves = moves.as_array().ok_or_else(|| bad(cmd, "`moves` must be a list of {point: [u, v], to: [x, y, z]} or {point, along}"))?;
         for (k, m) in moves.iter().enumerate() {
             let at = index(m.get("point").unwrap_or(&Value::Null), count, cmd, &format!("moves[{k}].point"))?;
-            let to =
-                m.get("to").and_then(crate::params::vec3).ok_or_else(|| bad(cmd, format!("`moves[{k}].to` must be a point [x, y, z] of numbers")))?;
+            let to = match (m.get("to").filter(|v| !v.is_null()), m.get("along").filter(|v| !v.is_null())) {
+                (Some(to), None) => {
+                    crate::params::vec3(to).ok_or_else(|| bad(cmd, format!("`moves[{k}].to` must be a point [x, y, z] of numbers")))?
+                }
+                (None, Some(_)) => {
+                    let e = crate::params::expr(m, "along").ok_or_else(|| bad(cmd, format!("`moves[{k}].along` must be a length")))?;
+                    let d = s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("moves[{k}].along: {e}")))?;
+                    if !d.is_finite() {
+                        return Err(bad(cmd, format!("`moves[{k}].along` must be a finite length")));
+                    }
+                    let n = surface_edit::normal_at(&target.surface, at).ok_or_else(|| bad(cmd, "the surface has no direction at that point"))?;
+                    net[at] + n * d
+                }
+                _ => return Err(bad(cmd, format!("`moves[{k}]` needs one of `to` (a point) or `along` (a length along the surface's normal)"))),
+            };
             net[at] = to;
             moved[at] = true;
         }
@@ -255,4 +297,4 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// The surface maths a dialog previews an edit with, as the command does it.
-pub use solidcraft_scan::surface_edit::{around, distance, points as control_points, refit, with_points};
+pub use solidcraft_scan::surface_edit::{around, distance, normal_at, points as control_points, refit, with_points};
