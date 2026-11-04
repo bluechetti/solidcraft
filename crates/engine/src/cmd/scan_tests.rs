@@ -165,6 +165,12 @@ fn fine_box(lo: Vec3, hi: Vec3, n: u32) -> Vec<[Vec3; 3]> {
 /// A session with an L-shaped block scanned at an angle: a slab 60 × 20 × 10 with a 20 × 20 × 15
 /// block on the middle of it, a mirror image about X = 30 and about Y = 10 as made.
 fn session_with_a_symmetric_scan(tag: &str) -> (Session, String, impl Fn(Vec3) -> Vec3) {
+    session_with_part_of_the_block(tag, |_| true)
+}
+
+/// The L-shaped block of [`session_with_a_symmetric_scan`], with only the triangles (as made) that
+/// `keep` keeps: a scan that missed some of it.
+fn session_with_part_of_the_block(tag: &str, keep: impl Fn(&[Vec3; 3]) -> bool) -> (Session, String, impl Fn(Vec3) -> Vec3) {
     let dir = std::env::temp_dir().join(format!("solidcraft-scan-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -172,8 +178,10 @@ fn session_with_a_symmetric_scan(tag: &str) -> (Session, String, impl Fn(Vec3) -
     let (s, c) = 0.6f64.sin_cos();
     let place = move |p: Vec3| p * c + axis.cross(p) * s + axis * (axis.dot(p) * (1.0 - c)) + Vec3::new(50.0, 10.0, 5.0);
     let mut stl = String::from("solid l\n");
-    for t in
-        fine_box(Vec3::ZERO, Vec3::new(60.0, 20.0, 10.0), 12).into_iter().chain(fine_box(Vec3::new(20.0, 0.0, 10.0), Vec3::new(40.0, 20.0, 25.0), 8))
+    for t in fine_box(Vec3::ZERO, Vec3::new(60.0, 20.0, 10.0), 12)
+        .into_iter()
+        .chain(fine_box(Vec3::new(20.0, 0.0, 10.0), Vec3::new(40.0, 20.0, 25.0), 8))
+        .filter(|t| keep(t))
     {
         stl += "facet normal 0 0 0\nouter loop\n";
         for p in t.map(place) {
@@ -212,6 +220,35 @@ fn find_symmetry_keeps_the_mirror_plane_as_a_construction_plane() {
     let reply = run(&mut s, "scan.symmetry", json!({"guide": guide}));
     assert!(reply["plane"]["feature"].is_u64(), "kept: {reply}");
     assert!(s.doc.features.iter().any(|f| f.name == "Symmetry Plane 2"), "a second plane, named apart");
+}
+
+/// A scan that missed the block's end beyond X = 45 gets that end back from the other side, as an
+/// amber mesh body of its own, in one undo step; the whole block is missing nothing.
+#[test]
+fn complete_by_mirroring_adds_what_the_scan_missed() {
+    let (mut s, body, place) = session_with_part_of_the_block("mirror-fill", |t| t.iter().any(|p| p.x < 45.0));
+    let (point, normal) = (place(Vec3::new(30.0, 10.0, 10.0)), place(Vec3::X) - place(Vec3::ZERO));
+    let plane = json!({"point": [point.x, point.y, point.z], "normal": [normal.x, normal.y, normal.z]});
+    let before = s.doc.features.len();
+    let reply = run(&mut s, "scan.complete_by_mirroring", json!({"plane": plane}));
+    assert_eq!(reply["body"], body.as_str());
+    let fill = reply["fill"].as_str().unwrap().to_owned();
+    assert_eq!(fill, format!("{body} Mirror Fill"));
+    assert!(reply["triangles"].as_u64().unwrap() > 50 && reply["joined"].as_u64().unwrap() > 0, "{reply}");
+    let state = s.model.state();
+    let (positions, _) = state.body(&fill).and_then(|b| b.body.triangle_mesh()).expect("the fill is a mesh body");
+    // Every point of the fill, as the block was made, is on the missing end.
+    let back = |p: Vec3| (p - point).dot(normal) + 30.0;
+    assert!(positions.iter().all(|p| back(*p) > 44.0 - STL), "only the missing end");
+    assert!(positions.iter().any(|p| (back(*p) - 60.0).abs() < 1e-3), "out to the block's end");
+    drop(state);
+    assert_eq!(s.doc.features.len(), before + 1, "one feature");
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.model.state().body(&fill).is_none(), "one undo takes it away");
+
+    let (mut whole, _, _) = session_with_a_symmetric_scan("mirror-whole");
+    let refused = whole.execute("scan.complete_by_mirroring", &json!({"plane": plane})).unwrap_err().to_string();
+    assert!(refused.contains("nothing is missing"), "{refused}");
 }
 
 /// Squared to its mirror plane, the block lies evenly either side of X = 0; one undo puts it back.

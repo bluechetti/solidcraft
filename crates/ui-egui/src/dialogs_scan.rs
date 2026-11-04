@@ -3,7 +3,8 @@
 //! face clicked on the scan is grown from the click and marked instead. OK stands the scan on it.
 //!
 //! The marks are the scan's points drawn as dots in the 3D pass through the point-cloud path, in
-//! the analysis yellow, built again only when the choice changes.
+//! the analysis yellow, built again only when the choice changes. Symmetry's colouring by mismatch
+//! goes the same way.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -11,7 +12,7 @@ use std::sync::Arc;
 use serde_json::{Map, Value, json};
 use solidcore_record::Vec3;
 use solidcraft_engine::Sel;
-use solidcraft_engine::cmd::scan::{BasePreview, base_preview, scan_box, symmetry_preview};
+use solidcraft_engine::cmd::scan::{BasePreview, base_preview, mismatch_preview, scan_box, symmetry_preview};
 use solidcraft_engine::schema::scan::ScanMirror;
 use solidcraft_gpu::view::{CloudStyle, ColorMode, Dot, GpuCloud, cloud_dot};
 
@@ -22,8 +23,10 @@ use crate::dialogs::{Kind, check, form_row};
 use crate::selection::{FACES, SelInput};
 use crate::ui_kit::{self, choice_row};
 
-/// The marks' id among the clouds the viewport draws (the deviation map is `u64::MAX - 1`).
+/// The marks' id among the clouds the viewport draws (the deviation map is `u64::MAX - 1`), and
+/// Symmetry's colouring by mismatch.
 const CLOUD_ID: u64 = u64::MAX - 2;
+const MISMATCH_ID: u64 = u64::MAX - 3;
 
 /// A mark's size on screen, in pixels.
 const DOT_PIXELS: f32 = 3.0;
@@ -66,8 +69,14 @@ struct Preview {
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     match id {
         "scan.stand_on_base" => Some((Kind::ScanBase(StandBase::default()), vec![SelInput::new("Face", FACES, false)])),
-        "scan.symmetry" | "scan.square_to_symmetry" => {
-            Some((Kind::ScanSymmetry(Symmetry { square: usize::from(id == "scan.square_to_symmetry"), ..Symmetry::default() }), Vec::new()))
+        "scan.symmetry" | "scan.square_to_symmetry" | "scan.complete_by_mirroring" => {
+            let square = match id {
+                "scan.square_to_symmetry" => SQUARE,
+                "scan.complete_by_mirroring" => COMPLETE,
+                _ => KEEP,
+            };
+            // Completing is a guess that the two sides are alike: the colouring shows whether they are.
+            Some((Kind::ScanSymmetry(Symmetry { square, colour: square == COMPLETE, ..Symmetry::default() }), Vec::new()))
         }
         _ => None,
     }
@@ -180,8 +189,11 @@ pub(crate) fn gpu_marks(app: &SolveApp) -> Option<GpuCloud> {
 /// Guide does, and the view is for turning again. OK keeps the plane or squares the scan to it.
 #[derive(Clone, Debug, Default)]
 pub struct Symmetry {
-    /// What OK does: 0 keeps the plane, 1 makes it X = 0.
+    /// What OK does: [`KEEP`] the plane, [`SQUARE`] (make it X = 0) or [`COMPLETE`] by mirroring.
     pub square: usize,
+    /// The scan is coloured by how far each point's reflection lands from it.
+    pub colour: bool,
+    colouring: Option<Colouring>,
     /// The next drag in the view draws a guide.
     pub drawing: bool,
     /// The guide drawn: from, to, and the way it was seen from (scan toward the eye).
@@ -202,6 +214,27 @@ fn bits(v: Vec3) -> [u64; 3] {
     [v.x.to_bits(), v.y.to_bits(), v.z.to_bits()]
 }
 
+/// What Symmetry's OK does: keep the plane, make it X = 0, or complete the scan by mirroring.
+pub const KEEP: usize = 0;
+pub const SQUARE: usize = 1;
+pub const COMPLETE: usize = 2;
+
+/// The command Symmetry's OK runs.
+pub fn symmetry_command(k: &Symmetry) -> &'static str {
+    match k.square {
+        SQUARE => "scan.square_to_symmetry",
+        COMPLETE => "scan.complete_by_mirroring",
+        _ => "scan.symmetry",
+    }
+}
+
+/// The scan coloured by how far each point's reflection lands from it, and what for.
+#[derive(Clone, Debug)]
+struct Colouring {
+    key: ([u64; 3], [u64; 3], u64),
+    result: Result<(f64, u64, Arc<Vec<u8>>), String>,
+}
+
 /// Search again when the guide or the design has changed.
 fn search(app: &SolveApp, k: &mut Symmetry) {
     let key = (k.guide.map(|g| g.map(bits)), app.session.revision);
@@ -211,6 +244,45 @@ fn search(app: &SolveApp, k: &mut Symmetry) {
     let body = scan_box(&app.session, None).ok();
     let mirror = symmetry_preview(&app.session, body.as_ref().map(|b| b.0.as_str()), k.guide).map_err(|e| e.to_string());
     k.found = Some(Found { key, body, mirror });
+}
+
+/// Colour the scan again when the plane or the design has changed (and the colouring is on).
+fn colour(app: &SolveApp, k: &mut Symmetry) {
+    let Some(found) = k.found.as_ref().filter(|_| k.colour) else { return };
+    let Ok(m) = &found.mirror else { return };
+    let key = (bits(Vec3::from(m.point)), bits(Vec3::from(m.normal)), app.session.revision);
+    if k.colouring.as_ref().is_some_and(|c| c.key == key) {
+        return;
+    }
+    let body = found.body.as_ref().map(|b| b.0.as_str());
+    let result = mismatch_preview(&app.session, body, Vec3::from(m.point), Vec3::from(m.normal)).map_err(|e| e.to_string()).and_then(|(name, mm)| {
+        let state = app.session.model.state();
+        let (positions, _) = state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or("the scan is gone")?;
+        let [good, bad] = mismatch_colours();
+        let mut dots = Vec::with_capacity(positions.len() * solidcraft_gpu::view::DOT_SIZE);
+        for (p, &v) in positions.iter().zip(&mm.values) {
+            if !v.is_finite() {
+                continue;
+            }
+            let t = (f64::from(v) / mm.limit).clamp(0.0, 1.0);
+            let rgb = std::array::from_fn(|i| (f64::from(good[i]) + (f64::from(bad[i]) - f64::from(good[i])) * t).round() as u8);
+            cloud_dot(&mut dots, &Dot { at: [p.x as f32, p.y as f32, p.z as f32], value: v, rgb, ..Dot::default() });
+        }
+        let version = VERSION.with(|v| {
+            v.set(v.get() + 1);
+            v.get()
+        });
+        Ok((mm.limit, version, Arc::new(dots)))
+    });
+    k.colouring = Some(Colouring { key, result });
+}
+
+/// The ends of the mismatch colouring: where a reflection lands on the scan, and a few noise widths
+/// off or more (the draft analysis's good and bad colours, which follow the colour vision setting).
+fn mismatch_colours() -> [[u8; 3]; 2] {
+    let a = crate::theme::Tokens::get().analysis;
+    let byte = |c: [f32; 3]| c.map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
+    [byte(a.draft[0]), byte(a.draft[2])]
 }
 
 /// The Symmetry dialog's rows.
@@ -232,6 +304,21 @@ pub fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Symmetry) -> boo
             }
         }
     }
+    form_row(ui, ids("ui.scan_symmetry_colour"), |ui| check(ui, &mut k.colour));
+    colour(app, k);
+    if k.colour
+        && let Some(c) = &k.colouring
+    {
+        match &c.result {
+            Ok((limit, _, _)) => {
+                let key = crate::i18n::format("ui.scan_symmetry_colour_key", &[("limit", &crate::prefs::show_mm(app, *limit, 2))]);
+                ui_kit::text(ui, &key, ui_kit::Text::Hint("scan_symmetry_colour_key"));
+            }
+            Err(why) => {
+                ui_kit::text(ui, why, ui_kit::Text::Report("scan_symmetry_colour_error", true));
+            }
+        }
+    }
     form_row(ui, ids("ui.scan_symmetry_draw"), |ui| check(ui, &mut k.drawing));
     if k.guide.is_some() {
         let mut keep = true;
@@ -240,25 +327,42 @@ pub fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Symmetry) -> boo
             k.guide = None;
         }
     }
-    let labels = [ids("ui.scan_symmetry_keep"), ids("ui.scan_symmetry_square")];
+    let labels = [ids("ui.scan_symmetry_keep"), ids("ui.scan_symmetry_square"), ids("ui.scan_symmetry_complete")];
     choice_row(ui, ids("ui.scan_symmetry_on_ok"), "scan_symmetry_on_ok", &mut k.square, &labels);
+    if k.square == COMPLETE {
+        ui_kit::text(ui, ids("ui.scan_symmetry_complete_hint"), ui_kit::Text::Hint("scan_symmetry_complete_hint"));
+    }
     ui_kit::text(ui, ids("ui.scan_symmetry_hint"), ui_kit::Text::Hint("scan_symmetry_hint"));
     false
 }
 
-/// What OK runs: keep the plane found, or square the scan to it, near the guide drawn.
+/// What OK runs: keep the plane found, square the scan to it (near the guide drawn), or complete
+/// the scan by mirroring it in the very plane shown.
 pub fn symmetry_commands(k: &Symmetry) -> Result<Vec<(String, Value)>, String> {
     let found = k.found.as_ref().ok_or("still looking for the plane")?;
-    found.mirror.as_ref().map_err(Clone::clone)?;
+    let mirror = found.mirror.as_ref().map_err(Clone::clone)?;
     let mut params = Map::new();
     if let Some((body, _, _)) = &found.body {
         params.insert("body".into(), json!(body));
     }
-    if let Some([from, to, toward]) = k.guide {
+    if k.square == COMPLETE {
+        params.insert("plane".into(), json!({"point": mirror.point, "normal": mirror.normal}));
+    } else if let Some([from, to, toward]) = k.guide {
         params.insert("guide".into(), json!({"from": [from.x, from.y, from.z], "to": [to.x, to.y, to.z], "toward": [toward.x, toward.y, toward.z]}));
     }
-    let id = if k.square == 1 { "scan.square_to_symmetry" } else { "scan.symmetry" };
-    Ok(vec![(id.into(), Value::Object(params))])
+    Ok(vec![(symmetry_command(k).into(), Value::Object(params))])
+}
+
+/// Symmetry's colouring by mismatch for the GPU viewport while the dialog shows it.
+pub(crate) fn gpu_mismatch(app: &SolveApp) -> Option<GpuCloud> {
+    let Some(Kind::ScanSymmetry(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    let (_, version, dots) = k.colouring.as_ref().filter(|_| k.colour)?.result.as_ref().ok()?;
+    Some(GpuCloud {
+        id: MISMATCH_ID,
+        version: *version,
+        dots: dots.clone(),
+        style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: DOT_PIXELS },
+    })
 }
 
 fn symmetry_dialog(app: &mut SolveApp) -> Option<&mut Symmetry> {
@@ -448,6 +552,11 @@ mod tests {
 
     /// An STL of boxes, each side cut into `n` × `n` squares.
     fn boxes_stl(boxes: &[([f64; 3], [f64; 3])], n: u32) -> String {
+        boxes_stl_keeping(boxes, n, |_| true)
+    }
+
+    /// [`boxes_stl`] with only the triangles `keep` keeps: a scan that missed some of it.
+    fn boxes_stl_keeping(boxes: &[([f64; 3], [f64; 3])], n: u32, keep: impl Fn(&[[f64; 3]; 3]) -> bool) -> String {
         let mut stl = String::from("solid b\n");
         for (lo, hi) in boxes {
             for axis in 0..3 {
@@ -465,6 +574,9 @@ mod tests {
                     for i in 0..n {
                         for j in 0..n {
                             for tri in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                                if !keep(&tri) {
+                                    continue;
+                                }
                                 stl += "facet normal 0 0 0\nouter loop\n";
                                 for [x, y, z] in tri {
                                     stl += &format!("vertex {x} {y} {z}\n");
@@ -512,5 +624,32 @@ mod tests {
         h.settle();
         assert!(h.app.dialog.is_none());
         assert!(h.app.session.doc.features.iter().any(|f| f.name == "Symmetry Plane"), "kept as a construction plane");
+    }
+
+    /// Complete by Mirroring opens Symmetry with the scan coloured by mismatch, on the plane it finds
+    /// by itself; the corner the scan missed (X beyond 45, Y beyond 12) lands on nothing, and OK adds
+    /// it back from the other side as a body of its own.
+    #[test]
+    fn complete_by_mirroring_colours_the_mismatch_and_adds_what_was_missed() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("l.stl");
+        let boxes = [([0.0, 0.0, 0.0], [60.0, 20.0, 10.0]), ([20.0, 0.0, 10.0], [40.0, 20.0, 25.0])];
+        std::fs::write(&path, boxes_stl_keeping(&boxes, 12, |t| t.iter().any(|p| p[0] < 45.0 || p[1] < 12.0))).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.start("scan.complete_by_mirroring");
+        if let Some(Kind::ScanSymmetry(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            assert_eq!((k.square, k.colour), (COMPLETE, true), "on OK it completes, the mismatch shown");
+        }
+        h.frames(3);
+        let cloud = gpu_mismatch(&h.app).expect("the scan coloured by mismatch");
+        assert!(!cloud.dots.is_empty());
+
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none() && gpu_mismatch(&h.app).is_none());
+        let state = h.app.session.model.state();
+        let fill = state.bodies.iter().find(|b| b.name.ends_with("Mirror Fill")).expect("the fill, a body of its own");
+        let (positions, _) = fill.body.triangle_mesh().expect("a mesh");
+        assert!(!positions.is_empty() && positions.iter().all(|p| p.x > 44.0 && p.y > 11.0), "only the corner the scan missed");
     }
 }

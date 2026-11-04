@@ -59,7 +59,14 @@
     "ui.scan_symmetry_on_ok": "On OK",
     "ui.scan_symmetry_keep": "Keep the plane",
     "ui.scan_symmetry_square": "Make it X = 0",
-    "ui.scan_symmetry_hint": "With Draw a guide on, drag a line across the view along where the mirror plane runs; the plane is found near it."
+    "ui.scan_symmetry_hint": "With Draw a guide on, drag a line across the view along where the mirror plane runs; the plane is found near it.",
+    "cmd.scan_complete_by_mirroring": "Complete by Mirroring",
+    "help.scan.complete_by_mirroring": "Adds the scan's reflection in its mirror plane where the scan has nothing, as an amber body of its own. Use it on a part scanned from one side; color by mismatch first to see that the two sides are alike.",
+    "ui.ribbon_mirror_fill": "Mirror Fill",
+    "ui.scan_symmetry_colour": "Color by mismatch",
+    "ui.scan_symmetry_colour_key": "Colors the scan by how far each point's reflection lands from it: green on the scan, red {limit} or more off.",
+    "ui.scan_symmetry_complete": "Complete by mirroring",
+    "ui.scan_symmetry_complete_hint": "Adds the scan's reflection where the scan has nothing, as an amber body of its own: a guess that the two sides are alike."
   },
   "de": {
     "ALIGN": "AUSRICHTEN",
@@ -121,7 +128,14 @@
     "ui.scan_symmetry_on_ok": "Bei OK",
     "ui.scan_symmetry_keep": "Ebene behalten",
     "ui.scan_symmetry_square": "Zu X = 0 machen",
-    "ui.scan_symmetry_hint": "Mit „Führungslinie zeichnen“ ziehen Sie eine Linie quer über die Ansicht, dort wo die Spiegelebene verläuft; die Ebene wird in ihrer Nähe gesucht."
+    "ui.scan_symmetry_hint": "Mit „Führungslinie zeichnen“ ziehen Sie eine Linie quer über die Ansicht, dort wo die Spiegelebene verläuft; die Ebene wird in ihrer Nähe gesucht.",
+    "cmd.scan_complete_by_mirroring": "Durch Spiegeln ergänzen",
+    "help.scan.complete_by_mirroring": "Fügt die Spiegelung des Scans an seiner Spiegelebene dort hinzu, wo der Scan nichts hat, als eigenen bernsteinfarbenen Körper. Verwenden Sie es bei einem von einer Seite gescannten Teil; färben Sie vorher nach Abweichung, um zu sehen, ob beide Seiten gleich sind.",
+    "ui.ribbon_mirror_fill": "Spiegelfüllung",
+    "ui.scan_symmetry_colour": "Nach Abweichung färben",
+    "ui.scan_symmetry_colour_key": "Färbt den Scan danach, wie weit die Spiegelung jedes Punkts vom Scan entfernt landet: grün auf dem Scan, rot ab {limit}.",
+    "ui.scan_symmetry_complete": "Durch Spiegeln ergänzen",
+    "ui.scan_symmetry_complete_hint": "Fügt die Spiegelung des Scans dort hinzu, wo der Scan nichts hat, als eigenen bernsteinfarbenen Körper: eine Annahme, dass beide Seiten gleich sind."
   },
   "ja": {
     "ALIGN": "位置合わせ",
@@ -183,7 +197,14 @@
     "ui.scan_symmetry_on_ok": "OK で",
     "ui.scan_symmetry_keep": "面を残す",
     "ui.scan_symmetry_square": "X = 0 にする",
-    "ui.scan_symmetry_hint": "「ガイドを描く」をオンにして、対称面が通る位置に沿ってビューを横切る線をドラッグします。その近くで面を探します。"
+    "ui.scan_symmetry_hint": "「ガイドを描く」をオンにして、対称面が通る位置に沿ってビューを横切る線をドラッグします。その近くで面を探します。",
+    "cmd.scan_complete_by_mirroring": "ミラーで補完",
+    "help.scan.complete_by_mirroring": "スキャンに何もない場所に、対称面で反転したスキャンを独立した琥珀色のボディとして追加します。片側からスキャンした部品に使います。先に不一致で色分けして、両側が同じか確認してください。",
+    "ui.ribbon_mirror_fill": "ミラー補完",
+    "ui.scan_symmetry_colour": "不一致で色分け",
+    "ui.scan_symmetry_colour_key": "各点の鏡像がスキャンからどれだけ離れるかでスキャンを色分けします。スキャン上は緑、{limit} 以上離れると赤。",
+    "ui.scan_symmetry_complete": "ミラーで補完",
+    "ui.scan_symmetry_complete_hint": "スキャンに何もない場所に鏡像を独立した琥珀色のボディとして追加します。両側が同じという推測です。"
   },
   "ko": {
     "ALIGN": "정렬",
@@ -245,7 +266,14 @@
     "ui.scan_symmetry_on_ok": "확인 시",
     "ui.scan_symmetry_keep": "평면 유지",
     "ui.scan_symmetry_square": "X = 0으로 만들기",
-    "ui.scan_symmetry_hint": "가이드 그리기를 켜고 대칭면이 지나는 곳을 따라 화면을 가로지르는 선을 끌어 그리세요. 그 근처에서 평면을 찾습니다."
+    "ui.scan_symmetry_hint": "가이드 그리기를 켜고 대칭면이 지나는 곳을 따라 화면을 가로지르는 선을 끌어 그리세요. 그 근처에서 평면을 찾습니다.",
+    "cmd.scan_complete_by_mirroring": "미러로 채우기",
+    "help.scan.complete_by_mirroring": "스캔에 아무것도 없는 곳에 대칭면에 비친 스캔을 별도의 호박색 바디로 추가합니다. 한쪽에서 스캔한 부품에 사용하세요. 먼저 불일치로 색칠해 양쪽이 같은지 확인하세요.",
+    "ui.ribbon_mirror_fill": "미러 채우기",
+    "ui.scan_symmetry_colour": "불일치로 색칠",
+    "ui.scan_symmetry_colour_key": "각 점의 반사가 스캔에서 얼마나 떨어지는지로 스캔을 색칠합니다. 스캔 위는 녹색, {limit} 이상은 빨간색.",
+    "ui.scan_symmetry_complete": "미러로 채우기",
+    "ui.scan_symmetry_complete_hint": "스캔에 아무것도 없는 곳에 반사를 별도의 호박색 바디로 추가합니다. 양쪽이 같다는 추정입니다."
   },
   "zh": {
     "ALIGN": "对齐",
@@ -307,7 +335,14 @@
     "ui.scan_symmetry_on_ok": "确定时",
     "ui.scan_symmetry_keep": "保留平面",
     "ui.scan_symmetry_square": "设为 X = 0",
-    "ui.scan_symmetry_hint": "打开“画引导线”后，沿镜像平面所在位置在视图上拖出一条线；将在其附近寻找平面。"
+    "ui.scan_symmetry_hint": "打开“画引导线”后，沿镜像平面所在位置在视图上拖出一条线；将在其附近寻找平面。",
+    "cmd.scan_complete_by_mirroring": "镜像补全",
+    "help.scan.complete_by_mirroring": "在扫描缺失处添加扫描关于其镜像平面的反射，作为单独的琥珀色实体。用于从一侧扫描的零件；先按偏差着色，确认两侧相同。",
+    "ui.ribbon_mirror_fill": "镜像填充",
+    "ui.scan_symmetry_colour": "按偏差着色",
+    "ui.scan_symmetry_colour_key": "按每个点的镜像离扫描多远给扫描着色：在扫描上为绿色，偏离 {limit} 或更多为红色。",
+    "ui.scan_symmetry_complete": "镜像补全",
+    "ui.scan_symmetry_complete_hint": "在扫描缺失处添加其镜像，作为单独的琥珀色实体：假定两侧相同。"
   },
   "ar": {
     "ALIGN": "محاذاة",
@@ -369,7 +404,14 @@
     "ui.scan_symmetry_on_ok": "عند موافق",
     "ui.scan_symmetry_keep": "الاحتفاظ بالمستوى",
     "ui.scan_symmetry_square": "جعله X = 0",
-    "ui.scan_symmetry_hint": "مع تفعيل رسم خط إرشادي، اسحب خطًا عبر العرض حيث يمر مستوى المرآة؛ يُبحث عن المستوى قربه."
+    "ui.scan_symmetry_hint": "مع تفعيل رسم خط إرشادي، اسحب خطًا عبر العرض حيث يمر مستوى المرآة؛ يُبحث عن المستوى قربه.",
+    "cmd.scan_complete_by_mirroring": "الإكمال بالانعكاس",
+    "help.scan.complete_by_mirroring": "يضيف انعكاس المسح في مستوى المرآة حيث لا يوجد في المسح شيء، كجسم كهرماني مستقل. استخدمه لجزء مُسح من جهة واحدة؛ لوّن حسب عدم التطابق أولًا لترى أن الجانبين متشابهان.",
+    "ui.ribbon_mirror_fill": "تعبئة بالانعكاس",
+    "ui.scan_symmetry_colour": "تلوين حسب عدم التطابق",
+    "ui.scan_symmetry_colour_key": "يلوّن المسح بحسب بُعد انعكاس كل نقطة عنه: أخضر على المسح، وأحمر عند {limit} أو أكثر.",
+    "ui.scan_symmetry_complete": "الإكمال بالانعكاس",
+    "ui.scan_symmetry_complete_hint": "يضيف انعكاس المسح حيث لا يوجد فيه شيء، كجسم كهرماني مستقل: تخمين بأن الجانبين متشابهان."
   },
   "he": {
     "ALIGN": "יישור",
@@ -431,7 +473,14 @@
     "ui.scan_symmetry_on_ok": "באישור",
     "ui.scan_symmetry_keep": "שמירת המישור",
     "ui.scan_symmetry_square": "הפיכה ל-X = 0",
-    "ui.scan_symmetry_hint": "כששרטוט קו מנחה פעיל, גררו קו לרוחב התצוגה היכן שמישור הראי עובר; המישור יימצא בקרבתו."
+    "ui.scan_symmetry_hint": "כששרטוט קו מנחה פעיל, גררו קו לרוחב התצוגה היכן שמישור הראי עובר; המישור יימצא בקרבתו.",
+    "cmd.scan_complete_by_mirroring": "השלמה בשיקוף",
+    "help.scan.complete_by_mirroring": "מוסיפה את השתקפות הסריקה במישור הראי שלה היכן שאין בסריקה דבר, כגוף ענבר נפרד. השתמשו בה לחלק שנסרק מצד אחד; צבעו לפי אי-התאמה תחילה כדי לראות ששני הצדדים זהים.",
+    "ui.ribbon_mirror_fill": "מילוי בשיקוף",
+    "ui.scan_symmetry_colour": "צביעה לפי אי-התאמה",
+    "ui.scan_symmetry_colour_key": "צובעת את הסריקה לפי המרחק שבו נוחתת השתקפות כל נקודה ממנה: ירוק על הסריקה, אדום ב-{limit} ומעלה.",
+    "ui.scan_symmetry_complete": "השלמה בשיקוף",
+    "ui.scan_symmetry_complete_hint": "מוסיפה את השתקפות הסריקה היכן שאין בה דבר, כגוף ענבר נפרד: הנחה ששני הצדדים זהים."
   },
   "vi": {
     "ALIGN": "CĂN CHỈNH",
@@ -493,10 +542,20 @@
     "ui.scan_symmetry_on_ok": "Khi OK",
     "ui.scan_symmetry_keep": "Giữ mặt phẳng",
     "ui.scan_symmetry_square": "Đặt thành X = 0",
-    "ui.scan_symmetry_hint": "Khi bật Vẽ đường dẫn, kéo một đường ngang qua khung nhìn dọc theo nơi mặt phẳng gương đi qua; mặt phẳng sẽ được tìm gần đó."
+    "ui.scan_symmetry_hint": "Khi bật Vẽ đường dẫn, kéo một đường ngang qua khung nhìn dọc theo nơi mặt phẳng gương đi qua; mặt phẳng sẽ được tìm gần đó.",
+    "cmd.scan_complete_by_mirroring": "Hoàn thiện bằng đối xứng",
+    "help.scan.complete_by_mirroring": "Thêm ảnh phản chiếu của bản quét qua mặt phẳng gương vào chỗ bản quét không có gì, thành một thân màu hổ phách riêng. Dùng cho chi tiết quét từ một phía; tô màu theo độ lệch trước để thấy hai bên giống nhau.",
+    "ui.ribbon_mirror_fill": "Lấp đối xứng",
+    "ui.scan_symmetry_colour": "Tô màu theo độ lệch",
+    "ui.scan_symmetry_colour_key": "Tô bản quét theo khoảng cách ảnh phản chiếu của mỗi điểm rơi cách bản quét: xanh lá trên bản quét, đỏ khi lệch {limit} trở lên.",
+    "ui.scan_symmetry_complete": "Hoàn thiện bằng đối xứng",
+    "ui.scan_symmetry_complete_hint": "Thêm ảnh phản chiếu vào chỗ bản quét không có gì, thành một thân màu hổ phách riêng: giả định hai bên giống nhau."
   },
   "en-GB": {
     "cmd.scan_center": "Centre on Origin",
-    "help.scan.center": "Slides the scan sideways until the middle of its box is over the origin, keeping its height. Use it to bring a scan to the middle of the design."
+    "help.scan.center": "Slides the scan sideways until the middle of its box is over the origin, keeping its height. Use it to bring a scan to the middle of the design.",
+    "ui.scan_symmetry_colour": "Colour by mismatch",
+    "ui.scan_symmetry_colour_key": "Colours the scan by how far each point's reflection lands from it: green on the scan, red {limit} or more off.",
+    "help.scan.complete_by_mirroring": "Adds the scan's reflection in its mirror plane where the scan has nothing, as an amber body of its own. Use it on a part scanned from one side; colour by mismatch first to see that the two sides are alike."
   }
 }

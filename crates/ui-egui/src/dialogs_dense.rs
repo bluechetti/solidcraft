@@ -81,7 +81,7 @@ pub(super) fn command(kind: &Kind) -> Option<&'static str> {
         },
         Kind::Frame(_) => Some("frame.member"),
         Kind::ScanBase(_) => Some("scan.stand_on_base"),
-        Kind::ScanSymmetry(k) => Some(if k.square == 1 { "scan.square_to_symmetry" } else { "scan.symmetry" }),
+        Kind::ScanSymmetry(k) => Some(crate::dialogs_scan::symmetry_command(k)),
         Kind::Plastic(k) => match k {
             crate::dialogs_plastic::Pl::SnapFit { .. } => Some("plastic.snap_fit"),
             crate::dialogs_plastic::Pl::Assign { .. } => Some("plastic.assign_rule"),

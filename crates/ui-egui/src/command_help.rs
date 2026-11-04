@@ -139,6 +139,7 @@ pub const DOCUMENTED: &[&str] = &[
     "plastic.snap_fit",
     "pointcloud.insert",
     "scan.center",
+    "scan.complete_by_mirroring",
     "scan.deviation",
     "scan.fit_cylinder",
     "scan.fit_plane",

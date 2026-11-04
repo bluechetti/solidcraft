@@ -62,7 +62,7 @@ pub struct ScanGuide {
 }
 
 /// Find the plane a scan is a mirror image about and keep it as a construction plane, named
-/// `Symmetry Plane`, to sketch on. A scan that is not a mirror image is refused, with how much of
+/// `Symmetry Plane` (`Symmetry Plane 2`, … when that is taken), to sketch on. A scan that is not a mirror image is refused, with how much of
 /// it matched.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -92,6 +92,65 @@ pub struct ScanSquareParams {
     /// the line between the first and last points picked on the scan, if there are two.
     #[serde(default)]
     pub guide: Option<ScanGuide>,
+}
+
+/// A mirror plane given by a point and the way it faces.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanPlane {
+    /// A point of the plane, in mm.
+    pub point: Point3,
+    /// The way the plane faces (either way; need not be unit length).
+    pub normal: Point3,
+}
+
+/// Complete a scan by its mirror image: the scan reflected in its mirror plane, and the reflected
+/// triangles kept where the scan has nothing, as a mesh body of their own beside the scan (amber,
+/// named `<scan> Mirror Fill`). It is a guess that the two sides are alike. One undo step, kept as
+/// a mesh import. A scan missing nothing on either side is refused.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanCompleteParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only mesh body.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The mirror plane to reflect in. Default: the one found near `guide`, else the best one found.
+    /// A scan seen from one side matches little of itself, so this plane is used however little.
+    #[serde(default)]
+    pub plane: Option<ScanPlane>,
+    /// A line along the rough mirror plane, to find that plane rather than the best one. Ignored
+    /// with `plane`. Default: the line between the first and last points picked on the scan.
+    #[serde(default)]
+    pub guide: Option<ScanGuide>,
+    /// How far from the scan a reflected triangle must lie to count as missing from it. Default:
+    /// one and a half typical edges of the scan, or three times the plane's mismatch if more.
+    #[serde(default)]
+    pub reach: Option<LengthExpr>,
+}
+
+/// What `scan.complete_by_mirroring` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanCompleteResult {
+    /// The scan.
+    pub body: String,
+    /// The mesh body added: the reflected triangles where the scan had nothing.
+    pub fill: String,
+    /// The plane reflected in, and how well the scan matches itself in it.
+    pub mirror: ScanMirror,
+    /// Separate pieces added, their triangles and area (mm²).
+    pub pieces: usize,
+    pub triangles: usize,
+    pub area: f64,
+    /// Corners of the pieces put on a vertex of the scan, so they meet it.
+    pub joined: usize,
+    /// The reach used, in mm.
+    pub reach: f64,
+    /// The feature that keeps it, as a feature command replies.
+    #[schemars(with = "FeatureResult")]
+    pub feature: Value,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
 }
 
 /// A scan's mirror plane and how well the scan matches its reflection in it.

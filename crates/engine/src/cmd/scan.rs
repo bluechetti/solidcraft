@@ -17,9 +17,9 @@ use solidcraft_scan::symmetry::{self, Guide, Mirror};
 use super::CommandSpec;
 use crate::params::{bad, str_};
 use crate::schema::scan::{
-    ScanBase, ScanBasesParams, ScanBasesResult, ScanDeviationParams, ScanDeviationResult, ScanFitParams, ScanFitResult, ScanFitSurfaceParams,
-    ScanFitSurfaceResult, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanSquareParams,
-    ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
+    ScanBase, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCompleteResult, ScanDeviationParams, ScanDeviationResult, ScanFitParams,
+    ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanMirror, ScanPlaceParams,
+    ScanPlaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -33,6 +33,7 @@ const SQUARE_CONTRACT: TypedContract<ScanSquareParams> = TypedContract::new();
 const FIT_CONTRACT: TypedContract<ScanFitParams> = TypedContract::new();
 const DEVIATION_CONTRACT: TypedContract<ScanDeviationParams> = TypedContract::new();
 const SURFACE_CONTRACT: TypedContract<ScanFitSurfaceParams> = TypedContract::new();
+const COMPLETE_CONTRACT: TypedContract<ScanCompleteParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     planned!("scan.repair", "Repair Mesh", "8615")
@@ -97,6 +98,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&SQUARE_CONTRACT)
         .output(output_schema_for::<ScanPlaceResult>)
         .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z]}: the smallest turn that lays its mirror plane along YZ, then sideways to X = 0, so the origin's YZ plane is the mirror plane; a scan that is no mirror image is refused → body, moved, mirror, feature (the Move)"),
+    CommandSpec::new("scan.complete_by_mirroring", "Complete by Mirroring", crate::checked!("scan.complete_by_mirroring", complete_by_mirroring))
+        .at("SCAN", "ALIGN")
+        .icon("mirror")
+        .contract(&COMPLETE_CONTRACT)
+        .output(output_schema_for::<ScanCompleteResult>)
+        .params("body?: mesh body (default: the selected mesh body, else the design's only one); plane?: {point, normal: [x,y,z]} to reflect in (default: found near guide, else the best found; a one-sided scan is not refused for matching little); guide?: {from, to, toward?}; reach?: length a reflected triangle must lie from the scan to count as missing (default 1.5 typical edges or 3 × the plane's mismatch): the reflected triangles where the scan has nothing, as an amber mesh body `<scan> Mirror Fill` beside it (one undo step); a scan missing nothing is refused → body, fill, mirror, pieces, triangles, area, joined, reach, feature"),
     CommandSpec::new("scan.fit_plane", "Fit Plane", crate::checked!("scan.fit_plane", fit_plane))
         .at("SCAN", "FIT")
         .icon("plane")
@@ -433,6 +440,81 @@ pub fn symmetry_preview(s: &Session, body: Option<&str>, guide: Option<[Vec3; 3]
         None => symmetry::find(&scan),
     };
     found.map(|m| mirror_reply(&m)).ok_or_else(|| bad(cmd, "no plane found: draw a guide with some length, not end-on"))
+}
+
+/// How far each point of the scan lands from the scan when reflected in the plane through `point`
+/// square to `normal`, for the Symmetry dialog's colouring: one value per position of the scan's
+/// mesh (NaN for one no triangle uses) and where the colours end.
+pub fn mismatch_preview(s: &Session, body: Option<&str>, point: Vec3, normal: Vec3) -> Result<(String, solidcraft_scan::symmetry::Mismatch)> {
+    let cmd = "scan.symmetry";
+    let mesh = mesh(s, &json!({ "body": body }), cmd)?;
+    let plane = symmetry::measure(&mesh.scan(), point, normal).ok_or_else(|| bad(cmd, "the scan is too small to measure against its reflection"))?;
+    Ok((mesh.body.clone(), symmetry::mismatch(&mesh.scan(), &plane)))
+}
+
+/// The colour the mirror fill is drawn in: amber, an unscanned patch, as a hole fill would be.
+const FILL_COLOR: [f32; 3] = [0.95, 0.62, 0.15];
+
+fn complete_by_mirroring(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.complete_by_mirroring";
+    let guide = guide(p, cmd)?;
+    let given = match p.get("plane").filter(|v| !v.is_null()) {
+        Some(v) => {
+            let at = |key: &str| {
+                v.get(key).and_then(crate::params::vec3).ok_or_else(|| bad(cmd, format!("`plane.{key}` must be a point [x, y, z] of numbers")))
+            };
+            Some((at("point")?, at("normal")?))
+        }
+        None => None,
+    };
+    let mesh = mesh(s, p, cmd)?;
+    let scan = mesh.scan();
+    let reach = match crate::params::expr(p, "reach") {
+        Some(_) => Some(length(s, p, "reach", 1.0, cmd)?),
+        None => None,
+    };
+    let plane = match given {
+        Some((point, normal)) => {
+            symmetry::measure(&scan, point, normal).ok_or_else(|| bad(cmd, "the plane has no direction, or the scan is too small"))?
+        }
+        None => {
+            let guide = guide.or_else(|| picked_guide(s, &mesh));
+            match guide {
+                Some(g) => {
+                    symmetry::find_guided(&scan, &g).ok_or_else(|| bad(cmd, "the guide marks no plane: draw a line with some length, not end-on"))?
+                }
+                None => symmetry::find(&scan).ok_or_else(|| bad(cmd, "the scan is too small to look for a mirror plane"))?,
+            }
+        }
+    };
+    let fill = solidcraft_scan::mirror_fill::complete(&scan, &plane, reach)
+        .ok_or_else(|| bad(cmd, "nothing is missing: every reflected triangle lands on the scan (a smaller reach finds smaller gaps)"))?;
+    let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    let name = std::iter::once(format!("{} Mirror Fill", mesh.body))
+        .chain((2..).map(|i| format!("{} Mirror Fill {i}", mesh.body)))
+        .find(|n| !taken.contains(n))
+        .unwrap_or_else(|| "Mirror Fill".into());
+    let data = solidcraft_doc::MeshData {
+        name: name.clone(),
+        positions: fill.positions.iter().flat_map(|q| [q.x, q.y, q.z]).collect::<Vec<f64>>().into(),
+        triangles: fill.triangles.iter().flatten().copied().collect::<Vec<u32>>().into(),
+        color: Some(FILL_COLOR),
+    };
+    let kind = solidcraft_doc::FeatureKind::MeshImport { file: format!("{} (mirror fill)", mesh.body), meshes: vec![data] };
+    let feature = super::features::add_feature(s, &json!({ "body_name": name, "name": "Complete by Mirroring" }), kind)?;
+    let reply = ScanCompleteResult {
+        body: mesh.body,
+        fill: name,
+        mirror: mirror_reply(&plane),
+        pieces: fill.pieces,
+        triangles: fill.triangles.len(),
+        area: fill.area,
+        joined: fill.joined,
+        reach: fill.reach,
+        feature,
+        param_warnings: Vec::new(),
+    };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
 /// What the Stand on Base dialog shows before it stands the scan: the base and the scan's points to

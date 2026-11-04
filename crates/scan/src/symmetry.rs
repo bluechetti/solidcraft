@@ -500,6 +500,65 @@ fn polish(plane: &Mirror, scene: &Scene, iterations: usize) -> Mirror {
     if polished.score() <= plane.score() { polished } else { *plane }
 }
 
+/// How well the scan matches itself in the plane through `point` square to `normal`, without
+/// moving the plane: a plane given rather than found. `None` for a scan too small to measure or a
+/// plane with no direction.
+pub fn measure(scan: &Scan, point: Vec3, normal: Vec3) -> Option<Mirror> {
+    let normal = normal.normalized()?;
+    point.is_finite().then_some(())?;
+    Some(assess(normal, point, &scene(scan)?))
+}
+
+/// How far each point's reflection lands from the scan, for colouring the scan by where its two
+/// sides differ.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mismatch {
+    /// One per position: the distance (mm) from its reflection to the nearest point of the scan,
+    /// at most `reach`; NaN for a position no triangle uses.
+    pub values: Vec<f32>,
+    /// Where the colours should end: a few noise widths.
+    pub limit: f64,
+    /// The farthest a reflection is looked for; one that lands on nothing reads this.
+    pub reach: f64,
+}
+
+/// The most points the mismatch looks reflections up among; a larger scan is thinned evenly.
+const MISMATCH_LIMIT: usize = 300_000;
+
+/// How far each point of the scan lands from the scan when reflected in `mirror`'s plane.
+pub fn mismatch(scan: &Scan, mirror: &Mirror) -> Mismatch {
+    let mut used = vec![false; scan.positions.len()];
+    for t in 0..scan.triangle_count() {
+        if scan.corners(t).is_some()
+            && let Some(tri) = scan.triangles.get(t)
+        {
+            for &v in tri {
+                if let Some(u) = used.get_mut(v as usize) {
+                    *u = true;
+                }
+            }
+        }
+    }
+    let members: Vec<Vec3> = scan.positions.iter().zip(&used).filter(|(_, u)| **u).map(|(p, _)| *p).collect();
+    let points = thinned(&members, MISMATCH_LIMIT);
+    let factor = if points.is_empty() { 1.0 } else { (members.len() as f64 / points.len() as f64).sqrt() };
+    let table = Table::new(points, 2.5 * mirror.spacing.max(1e-9) * factor);
+    let reach = 3.0 * table.cell;
+    let values = scan
+        .positions
+        .iter()
+        .zip(&used)
+        .map(|(p, u)| {
+            if !u {
+                return f32::NAN;
+            }
+            let m = mirror.reflect(*p);
+            table.nearest(m, reach).map_or(reach, |q| q.dist(m)) as f32
+        })
+        .collect();
+    Mismatch { values, limit: (3.0 * mirror.rms).max(3.0 * mirror.spacing).max(1e-6), reach }
+}
+
 /// The 3 × 3 system `a x = b` by Cramer's rule, `None` if it is (nearly) singular.
 pub(crate) fn solve3(a: &[[f64; 3]; 3], b: [f64; 3]) -> Option<[f64; 3]> {
     let det = |m: &[[f64; 3]; 3]| {
@@ -605,6 +664,22 @@ mod tests {
         let (lo, hi) = placed.iter().fold((placed[0], placed[0]), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
         assert!((lo.x + hi.x).abs() < 1e-3 && hi.x > 5.0, "{lo:?} {hi:?}");
         assert!(by.turned(mirror.normal).x.abs() > 1.0 - 1e-12, "the plane's normal along X");
+    }
+
+    /// About its mirror plane the block lands on itself everywhere; about a plane off to one side,
+    /// the far end of the block lands on nothing and reads the reach.
+    #[test]
+    fn the_mismatch_shows_where_the_two_sides_differ() {
+        let (positions, triangles) = l_block();
+        let scan = Scan::new(&positions, &triangles);
+        let mirror = find_guided(&scan, &Guide { from: Vec3::new(30.0, -5.0, 30.0), to: Vec3::new(30.0, 25.0, 30.0), toward: Vec3::Z }).unwrap();
+        let on = mismatch(&scan, &mirror);
+        assert_eq!(on.values.len(), positions.len());
+        assert!(on.values.iter().all(|v| f64::from(*v) < 1e-3), "every point lands on the scan");
+        let off = mismatch(&scan, &Mirror { point: Vec3::new(45.0, 10.0, 10.0), normal: Vec3::X, ..mirror });
+        let far = positions.iter().zip(&off.values).filter(|(p, v)| p.x < 5.0 && f64::from(**v) >= off.limit).count();
+        let near_end = positions.iter().filter(|p| p.x < 5.0).count();
+        assert_eq!(far, near_end, "the end beyond the reflection's reach differs");
     }
 
     #[test]

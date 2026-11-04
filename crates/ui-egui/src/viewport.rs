@@ -4641,6 +4641,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 .into_iter()
                 .chain(crate::scan_deviation::gpu_cloud(app))
                 .chain(crate::dialogs_scan::gpu_marks(app))
+                .chain(crate::dialogs_scan::gpu_mismatch(app))
                 .collect(),
             analysis: analysis_uniform(app),
             analysis_colors: crate::gpu::analysis_colors(&t.analysis),
