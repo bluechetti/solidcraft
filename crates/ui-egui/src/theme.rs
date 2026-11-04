@@ -51,6 +51,7 @@ pub(crate) const TAB_NAMES: &[&str] = &[
     "FORM",
     "SHEET METAL",
     "WELDMENTS",
+    "SCAN",
     "ASSEMBLE",
     "INSERT",
     "INSPECT",
@@ -641,7 +642,8 @@ impl TabAccent {
         let (color, ink, soft) = match tab {
             "SKETCH" => (t.sketch_accent, t.sketch_ink, t.sketch_soft),
             "SURFACE" => (t.surface_fill, t.surface_ink, t.surface_soft),
-            "MESH" => (t.mesh_fill, t.mesh_ink, t.mesh_soft),
+            // A scan is a mesh or a point cloud: the Scan tab wears the mesh colours.
+            "MESH" | "SCAN" => (t.mesh_fill, t.mesh_ink, t.mesh_soft),
             "FORM" => (t.form_fill, t.form_tab_ink, t.form_soft),
             "SHEET METAL" => (t.sheet_fill, t.sheet_ink, t.sheet_soft),
             "RENDER" | "RENDER APPEARANCE" | "RENDER SCENE" | "RENDER CAMERA" => (t.render_fill, t.render_ink, t.render_soft),
@@ -1937,6 +1939,7 @@ mod tests {
                     ("SKETCH", t.sketch_accent, t.sketch_ink, t.sketch_soft),
                     ("SURFACE", t.surface_fill, t.surface_ink, t.surface_soft),
                     ("MESH", t.mesh_fill, t.mesh_ink, t.mesh_soft),
+                    ("SCAN", t.mesh_fill, t.mesh_ink, t.mesh_soft),
                     ("FORM", t.form_fill, t.form_tab_ink, t.form_soft),
                     ("SHEET METAL", t.sheet_fill, t.sheet_ink, t.sheet_soft),
                     ("RENDER", t.render_fill, t.render_ink, t.render_soft),

@@ -368,6 +368,7 @@ pub(crate) fn workspace_menu(ui: &mut egui::Ui, items: &[Item], key_row: Option<
             for (k, item) in items.iter().enumerate() {
                 let (slug, description, tabs) = match item.label.as_str() {
                     "Design" => ("design", "ui.workspace_design_description", Some("ui.workspace_design_tabs")),
+                    "Scan" => ("scan", "ui.workspace_scan_description", Some("ui.workspace_scan_tabs")),
                     "Render" => ("render", "ui.workspace_render_description", Some("ui.workspace_render_tabs")),
                     "Animation" => ("animation", "ui.workspace_animation_description", None),
                     "Simulation" => ("simulation", "ui.workspace_simulation_description", None),
@@ -379,6 +380,8 @@ pub(crate) fn workspace_menu(ui: &mut egui::Ui, items: &[Item], key_row: Option<
                 let current = item.shortcut == "current";
                 let (accent, soft) = if !planned && slug == "render" {
                     (t.render_fill, t.render_soft)
+                } else if !planned && slug == "scan" {
+                    (t.mesh_fill, t.mesh_soft)
                 } else {
                     let accent = if planned { t.text_dim } else { t.accent };
                     (accent, t.panel.lerp_to_gamma(accent, 0.10))

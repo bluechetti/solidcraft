@@ -81,6 +81,7 @@ mod metadata;
 pub(crate) mod motion;
 mod parts;
 mod point_cloud;
+mod scan;
 mod script;
 mod section;
 pub mod settings;
@@ -333,6 +334,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(features::COMMANDS.iter());
     v.extend(features_more::COMMANDS.iter());
     v.extend(mesh::COMMANDS.iter());
+    v.extend(scan::COMMANDS.iter());
     v.extend(construct::COMMANDS.iter());
     v.extend(sheet::COMMANDS.iter());
     v.extend(plastic::COMMANDS.iter());

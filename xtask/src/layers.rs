@@ -50,6 +50,8 @@ pub const TABLE: &[(&str, Class)] = &[
     // STEP (ISO 10303) exchange structure and geometry, no modelling backend
     ("step", Class::Layer(1)),
     ("kernel", Class::Layer(1)),
+    // scan to CAD: placing and fitting scanned meshes (geometry only, no modelling backend)
+    ("scan", Class::Layer(1)),
     ("render", Class::Layer(1)),
     ("doc", Class::Layer(2)),
     ("io", Class::Layer(3)),

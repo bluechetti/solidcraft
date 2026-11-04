@@ -4170,6 +4170,7 @@ dependencies = [
  "solidcraft-kernel",
  "solidcraft-profile",
  "solidcraft-render",
+ "solidcraft-scan",
  "solidcraft-sketch",
  "thiserror 2.0.21",
  "toml_edit",
@@ -4285,6 +4286,14 @@ dependencies = [
  "solidcraft-geom",
  "web-time",
  "weezl",
+]
+
+[[package]]
+name = "solidcraft-scan"
+version = "0.40.0-rc.2"
+dependencies = [
+ "solidcore-record",
+ "solidcraft-geom",
 ]
 
 [[package]]

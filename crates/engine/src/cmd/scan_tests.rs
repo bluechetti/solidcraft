@@ -1,0 +1,305 @@
+use serde_json::{Value, json};
+use solidcore_record::Vec3;
+use solidcraft_geom::Vec3Geom as _;
+
+use crate::Session;
+
+fn run(s: &mut Session, id: &str, p: Value) -> Value {
+    s.execute(id, &p).unwrap_or_else(|e| panic!("{id} {p}: {e}"))
+}
+
+/// An ASCII STL of the box `size`, turned by `angle` radians about the unit `axis` through the
+/// origin and then moved by `shift`, as a scan arrives lying any way at all.
+fn box_stl(size: Vec3, axis: Vec3, angle: f64, shift: Vec3) -> String {
+    let (s, c) = angle.sin_cos();
+    let place = |p: Vec3| p * c + axis.cross(p) * s + axis * (axis.dot(p) * (1.0 - c)) + shift;
+    let corner = |i: usize| {
+        place(Vec3::new(if i & 1 == 0 { 0.0 } else { size.x }, if i & 2 == 0 { 0.0 } else { size.y }, if i & 4 == 0 { 0.0 } else { size.z }))
+    };
+    let faces = [[0, 2, 1], [1, 2, 3], [4, 5, 6], [5, 7, 6], [0, 1, 4], [1, 5, 4], [2, 6, 3], [3, 6, 7], [0, 4, 2], [2, 4, 6], [1, 3, 5], [3, 7, 5]];
+    let mut stl = String::from("solid scan\n");
+    for f in faces {
+        stl += "facet normal 0 0 0\nouter loop\n";
+        for i in f {
+            let p = corner(i);
+            stl += &format!("vertex {} {} {}\n", p.x, p.y, p.z);
+        }
+        stl += "endloop\nendfacet\n";
+    }
+    stl + "endsolid scan\n"
+}
+
+/// A session with one scan in it: a slab 80 × 50 × 10 lying tilted and away from the origin.
+fn session_with_a_scan(tag: &str) -> (Session, String) {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("slab.stl");
+    let axis = Vec3::new(0.6, -0.3, 0.74).normalized().unwrap();
+    std::fs::write(&path, box_stl(Vec3::new(80.0, 50.0, 10.0), axis, 1.2, Vec3::new(40.0, -25.0, 60.0))).unwrap();
+    let mut s = Session::default();
+    run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    let body = s.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
+    (s, body)
+}
+
+/// STL keeps single-precision coordinates, so a scan read from one is exact to about 1e-5 mm.
+const STL: f64 = 1e-4;
+
+/// The box round the body's points.
+fn bounds(s: &Session, body: &str) -> (Vec3, Vec3) {
+    let state = s.model.state();
+    let (positions, _) = state.body(body).and_then(|b| b.body.triangle_mesh()).unwrap();
+    positions.iter().fold((Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)))
+}
+
+/// Standing a tilted slab on its steadiest base lays it flat on the grid, one broad face down; one
+/// undo puts it back as it came.
+#[test]
+fn a_scan_stands_on_its_steadiest_base_in_one_undo_step() {
+    let (mut s, body) = session_with_a_scan("stand");
+    let before = bounds(&s, &body);
+    let found = run(&mut s, "scan.bases", json!({}));
+    assert_eq!(found["body"], body);
+    let first = &found["bases"][0];
+    assert_eq!(first["kind"], "flat", "{found}");
+    assert!((first["area"].as_f64().unwrap() - 4000.0).abs() < 1.0, "a broad face first: {first}");
+
+    let reply = run(&mut s, "scan.stand_on_base", json!({}));
+    assert_eq!(reply["moved"], true, "{reply}");
+    assert!(reply["feature"]["feature"].is_u64(), "kept as a Move feature: {reply}");
+    let (lo, hi) = bounds(&s, &body);
+    assert!(lo.z.abs() < STL && (hi.z - 10.0).abs() < STL, "flat on the grid: {lo:?} {hi:?}");
+
+    // Standing it there again, or resting it on the grid, does nothing.
+    let again = run(&mut s, "scan.stand_on_base", json!({"body": body}));
+    assert_eq!(again["moved"], false, "{again}");
+    assert_eq!(run(&mut s, "scan.rest_on_grid", json!({}))["moved"], false);
+
+    run(&mut s, "edit.undo", json!({}));
+    let (lo, hi) = bounds(&s, &body);
+    assert!((lo - before.0).len() < 1e-9 && (hi - before.1).len() < 1e-9, "one undo puts it back");
+}
+
+/// A point on the slab's narrow end grows that face and stands the slab on it, 50 × 10 down.
+#[test]
+fn a_scan_stands_on_the_face_picked_on_it() {
+    let (mut s, body) = session_with_a_scan("pick");
+    run(&mut s, "scan.quick_align", json!({}));
+    // Laid along its axes about the origin: 80 along X, so its end at X = 40 is a face.
+    let reply = run(&mut s, "scan.stand_on_base", json!({"point": [40.0, 0.0, 0.0]}));
+    assert_eq!(reply["base"]["kind"], "grown", "{reply}");
+    let (lo, hi) = bounds(&s, &body);
+    assert!(lo.z.abs() < STL && (hi.z - 80.0).abs() < STL, "standing on its end: {lo:?} {hi:?}");
+}
+
+/// Quick align lays the slab along X, Y and Z about the origin; rest and centre then move only
+/// what they say.
+#[test]
+fn quick_align_rest_and_centre_place_the_scan() {
+    let (mut s, body) = session_with_a_scan("place");
+    run(&mut s, "scan.quick_align", json!({}));
+    let (lo, hi) = bounds(&s, &body);
+    assert!(((hi - lo) - Vec3::new(80.0, 50.0, 10.0)).len() < STL, "{:?}", hi - lo);
+    assert!(((lo + hi) / 2.0).len() < STL, "about the origin");
+
+    let rest = run(&mut s, "scan.rest_on_grid", json!({}));
+    assert_eq!(rest["moved"], true);
+    let (lo, _) = bounds(&s, &body);
+    assert!(lo.z.abs() < STL);
+    run(&mut s, "solid.move", json!({"bodies": [body], "translate": [30, -20, 0]}));
+    run(&mut s, "scan.center", json!({}));
+    let (lo, hi) = bounds(&s, &body);
+    let middle = (lo + hi) / 2.0;
+    assert!(middle.x.abs() < STL && middle.y.abs() < STL && lo.z.abs() < STL, "centred, its height kept: {middle:?}");
+}
+
+/// Without a scan, or with a solid named, the commands say what is wrong; the tools not built
+/// yet refuse.
+#[test]
+fn scan_commands_refuse_what_is_not_a_scan() {
+    let mut s = Session::default();
+    let err = s.execute("scan.rest_on_grid", &json!({})).unwrap_err().to_string();
+    assert!(err.contains("no scan"), "{err}");
+    run(&mut s, "solid.box", json!({"body_name": "Block", "operation": "new", "length": 10, "width": 10, "height": 10}));
+    let err = s.execute("scan.bases", &json!({"body": "Block"})).unwrap_err().to_string();
+    assert!(err.contains("not a scan"), "{err}");
+    let err = s.execute("scan.stand_on_base", &json!({"body": "Nothing"})).unwrap_err().to_string();
+    assert!(err.contains("no body"), "{err}");
+    assert!(s.execute("scan.fit_plane", &json!({})).is_err(), "planned tools refuse");
+
+    let (mut s, _) = session_with_a_scan("refuse");
+    let err = s.execute("scan.stand_on_base", &json!({"base": 99})).unwrap_err().to_string();
+    assert!(err.contains("must be below"), "{err}");
+}
+
+/// The triangles of the box from `lo` to `hi`, each side cut into `n` × `n` squares.
+fn fine_box(lo: Vec3, hi: Vec3, n: u32) -> Vec<[Vec3; 3]> {
+    let mut out = Vec::new();
+    let size = hi - lo;
+    let (s, l) = ([size.x, size.y, size.z], [lo.x, lo.y, lo.z]);
+    for axis in 0..3 {
+        let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+        for high in [false, true] {
+            let at = |i: u32, j: u32| {
+                let mut c = l;
+                if high {
+                    c[axis] += s[axis];
+                }
+                c[u] += s[u] * f64::from(i) / f64::from(n);
+                c[v] += s[v] * f64::from(j) / f64::from(n);
+                Vec3::new(c[0], c[1], c[2])
+            };
+            for i in 0..n {
+                for j in 0..n {
+                    out.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+                    out.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A session with an L-shaped block scanned at an angle: a slab 60 × 20 × 10 with a 20 × 20 × 15
+/// block on the middle of it, a mirror image about X = 30 and about Y = 10 as made.
+fn session_with_a_symmetric_scan(tag: &str) -> (Session, String, impl Fn(Vec3) -> Vec3) {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let axis = Vec3::new(0.3, 0.2, 1.0).normalized().unwrap();
+    let (s, c) = 0.6f64.sin_cos();
+    let place = move |p: Vec3| p * c + axis.cross(p) * s + axis * (axis.dot(p) * (1.0 - c)) + Vec3::new(50.0, 10.0, 5.0);
+    let mut stl = String::from("solid l\n");
+    for t in
+        fine_box(Vec3::ZERO, Vec3::new(60.0, 20.0, 10.0), 12).into_iter().chain(fine_box(Vec3::new(20.0, 0.0, 10.0), Vec3::new(40.0, 20.0, 25.0), 8))
+    {
+        stl += "facet normal 0 0 0\nouter loop\n";
+        for p in t.map(place) {
+            stl += &format!("vertex {} {} {}\n", p.x, p.y, p.z);
+        }
+        stl += "endloop\nendfacet\n";
+    }
+    let path = dir.join("l.stl");
+    std::fs::write(&path, stl + "endsolid l\n").unwrap();
+    let mut s = Session::default();
+    run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    let body = s.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
+    (s, body, place)
+}
+
+/// Find Symmetry finds one of the block's two mirror planes and keeps it as a construction plane;
+/// a guide along X = 30 finds that one.
+#[test]
+fn find_symmetry_keeps_the_mirror_plane_as_a_construction_plane() {
+    let (mut s, _, place) = session_with_a_symmetric_scan("symmetry");
+    let reply = run(&mut s, "scan.symmetry", json!({}));
+    assert_eq!(reply["mirror"]["symmetric"], true, "{reply}");
+    assert!(reply["plane"]["feature"].is_u64(), "kept: {reply}");
+    assert!(s.doc.features.iter().any(|f| f.name == "Symmetry Plane"), "a construction plane named for it");
+
+    // A guide drawn from above along the plane X = 30 as the block now lies.
+    let guide = json!({"from": [place(Vec3::new(31.0, -5.0, 30.0)).x, place(Vec3::new(31.0, -5.0, 30.0)).y, 60.0],
+        "to": [place(Vec3::new(31.0, 25.0, 30.0)).x, place(Vec3::new(31.0, 25.0, 30.0)).y, 60.0]});
+    let reply = run(&mut s, "scan.symmetry", json!({"guide": guide, "keep": false}));
+    let normal = reply["mirror"]["normal"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect::<Vec<_>>();
+    let truth = place(Vec3::X) - place(Vec3::ZERO);
+    assert!((Vec3::new(normal[0], normal[1], normal[2]).dot(truth)).abs() > 1.0 - 1e-6, "the X = 30 plane: {reply}");
+    assert!(reply.get("plane").is_none(), "not kept");
+}
+
+/// Squared to its mirror plane, the block lies evenly either side of X = 0; one undo puts it back.
+#[test]
+fn square_to_symmetry_puts_the_mirror_plane_on_yz() {
+    let (mut s, body, _) = session_with_a_symmetric_scan("square");
+    let before = bounds(&s, &body);
+    let reply = run(&mut s, "scan.square_to_symmetry", json!({}));
+    assert_eq!(reply["moved"], true, "{reply}");
+    let (lo, hi) = bounds(&s, &body);
+    assert!((lo.x + hi.x).abs() < STL * 10.0 && hi.x > 5.0, "evenly either side of X = 0: {lo:?} {hi:?}");
+    assert_eq!(run(&mut s, "scan.square_to_symmetry", json!({}))["moved"], false, "already square");
+    run(&mut s, "edit.undo", json!({}));
+    let (lo, hi) = bounds(&s, &body);
+    assert!((lo - before.0).len() < 1e-9 && (hi - before.1).len() < 1e-9);
+}
+
+/// A guide with no length, or with an end missing, is refused before anything is searched.
+#[test]
+fn a_guide_needs_two_ends_apart() {
+    let (mut s, _) = session_with_a_scan("guide");
+    let err = s.execute("scan.symmetry", &json!({"guide": {"from": [0, 0, 0], "to": [0, 0, 0]}})).unwrap_err().to_string();
+    assert!(err.contains("marks no plane"), "{err}");
+    let err = s.execute("scan.symmetry", &json!({"guide": {"from": [0, 0, 0]}})).unwrap_err().to_string();
+    assert!(err.contains("`guide.to` is required"), "{err}");
+}
+
+/// A session with a plate 60 × 40 × 8 scanned with a round boss Ø 20 × 15 standing on its middle.
+fn session_with_a_plate_and_boss(tag: &str) -> (Session, String) {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut triangles = fine_box(Vec3::ZERO, Vec3::new(60.0, 40.0, 8.0), 20);
+    let sides = 96;
+    let ring = |k: u32, z: f64| {
+        let a = std::f64::consts::TAU * f64::from(k % sides) / f64::from(sides);
+        Vec3::new(30.0 + 10.0 * a.cos(), 20.0 + 10.0 * a.sin(), z)
+    };
+    for k in 0..sides {
+        for j in 0..12 {
+            let (z0, z1) = (8.0 + 15.0 * f64::from(j) / 12.0, 8.0 + 15.0 * f64::from(j + 1) / 12.0);
+            triangles.push([ring(k, z0), ring(k + 1, z0), ring(k + 1, z1)]);
+            triangles.push([ring(k, z0), ring(k + 1, z1), ring(k, z1)]);
+        }
+    }
+    let mut stl = String::from("solid p\n");
+    for t in triangles {
+        stl += "facet normal 0 0 0\nouter loop\n";
+        for p in t {
+            stl += &format!("vertex {} {} {}\n", p.x, p.y, p.z);
+        }
+        stl += "endloop\nendfacet\n";
+    }
+    let path = dir.join("plate.stl");
+    std::fs::write(&path, stl + "endsolid p\n").unwrap();
+    let mut s = Session::default();
+    run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    let body = s.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
+    (s, body)
+}
+
+/// Fit Plane on the plate's top keeps a construction plane at Z = 8; Fit Cylinder on the boss keeps
+/// an axis through its middle and reports Ø 20.
+#[test]
+fn fitted_shapes_are_kept_as_construction_features() {
+    let (mut s, _) = session_with_a_plate_and_boss("fit");
+    let plane = run(&mut s, "scan.fit_plane", json!({"point": [8, 8, 8]}));
+    let normal = &plane["plane"]["normal"];
+    assert!(normal[2].as_f64().unwrap().abs() > 1.0 - 1e-6, "{plane}");
+    assert!((plane["plane"]["point"][2].as_f64().unwrap() - 8.0).abs() < STL, "{plane}");
+    assert!((plane["area"].as_f64().unwrap() - 2400.0).abs() < 1.0, "the whole top: {plane}");
+    assert!(plane["feature"]["feature"].is_u64(), "kept: {plane}");
+
+    let boss = run(&mut s, "scan.fit_cylinder", json!({"point": [40, 20, 15]}));
+    let c = &boss["cylinder"];
+    assert!((c["diameter"].as_f64().unwrap() - 20.0).abs() < 0.02, "{boss}");
+    assert!((c["point"][0].as_f64().unwrap() - 30.0).abs() < 1e-3 && (c["point"][1].as_f64().unwrap() - 20.0).abs() < 1e-3, "{boss}");
+    assert!((c["length"].as_f64().unwrap() - 15.0).abs() < 0.01, "{boss}");
+    assert!(boss["feature"]["feature"].is_u64(), "kept: {boss}");
+    let kept = |id: &Value| s.doc.features.iter().any(|f| Some(f.id) == id.as_u64());
+    assert!(kept(&plane["feature"]["feature"]) && kept(&boss["feature"]["feature"]), "both in the history");
+}
+
+/// Without a `point`, the fit grows from the point picked on the scan; a cylinder on a flat face
+/// and a fit with nothing picked are refused.
+#[test]
+fn a_fit_uses_the_pick_and_refuses_a_wrong_shape() {
+    let (mut s, body) = session_with_a_plate_and_boss("pick-fit");
+    let err = s.execute("scan.fit_plane", &json!({})).unwrap_err().to_string();
+    assert!(err.contains("pick a point on the scan"), "{err}");
+    run(&mut s, "select.set", json!({"items": [{"type": "face", "body": body, "point": [8, 30, 8]}]}));
+    let reply = run(&mut s, "scan.fit_plane", json!({"keep": false}));
+    assert!(reply["plane"]["normal"][2].as_f64().unwrap().abs() > 1.0 - 1e-6, "{reply}");
+    assert!(reply.get("feature").is_none());
+    let err = s.execute("scan.fit_cylinder", &json!({"point": [8, 8, 8]})).unwrap_err().to_string();
+    assert!(err.contains("not that shape"), "{err}");
+}

@@ -324,6 +324,26 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "WELDMENTS", panel: "SKETCH", promoted: 1, ids: &["sketch.create"] },
     Section { tab: "WELDMENTS", panel: "CREATE", promoted: 1, ids: &["frame.member"] },
     Section { tab: "WELDMENTS", panel: "CONFIGURE", promoted: 2, ids: CONFIGURE },
+    // The Scan workspace's own tab. Scan to CAD (#8615), in the order the work goes: bring the scan in, clean it, square it up,
+    // fit native geometry to it, sketch on that, then check the result against the scan. The
+    // tools not built yet are greyed with their reason; the working ones are shared with their
+    // home tabs.
+    Section { tab: "SCAN", panel: "INSERT", promoted: 2, ids: &["file.insert_mesh", "pointcloud.insert"] },
+    Section {
+        tab: "SCAN",
+        panel: "CLEAN",
+        promoted: 4,
+        ids: &["scan.repair", "scan.fill_holes", "scan.reduce", "scan.remesh", "scan.mesh_from_points"],
+    },
+    Section {
+        tab: "SCAN",
+        panel: "ALIGN",
+        promoted: 4,
+        ids: &["scan.stand_on_base", "scan.symmetry", "scan.square_to_symmetry", "scan.rest_on_grid", "scan.quick_align", "scan.center"],
+    },
+    Section { tab: "SCAN", panel: "FIT", promoted: 3, ids: &["scan.fit_plane", "scan.fit_cylinder", "mesh.convert"] },
+    Section { tab: "SCAN", panel: "SKETCH", promoted: 2, ids: &["sketch.create", "sketch.fit_curves_to_section"] },
+    Section { tab: "SCAN", panel: "CHECK", promoted: 3, ids: &["scan.deviation", "inspect.section", "inspect.compare"] },
 ];
 
 // Migration data only: Render commands remain registered, but have no live ribbon sections.
@@ -418,6 +438,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("document.units", "Units"),
     ("inspect.accessibility", "Access"),
     ("inspect.center_of_mass", "Mass Center"),
+    ("inspect.compare", "Compare"),
     ("inspect.curvature_comb", "Curv. Comb"),
     ("inspect.curvature_map", "Curvature"),
     ("inspect.draft", "Draft"),
@@ -437,6 +458,11 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("plastic.manage_rules", "Plastic Rules"),
     ("pointcloud.insert", "Point Clouds"),
     ("render.scene", "Scene"),
+    ("scan.center", "Center"),
+    ("scan.deviation", "Deviation"),
+    ("scan.square_to_symmetry", "Square Up"),
+    ("scan.stand_on_base", "Stand on Base"),
+    ("scan.symmetry", "Symmetry"),
     ("sheet.export_bend_table", "Bend Table"),
     ("sheet.export_dxf", "Export DXF"),
     ("sheet.flat_pattern", "Flat Pattern"),
@@ -449,6 +475,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("sketch.construction_line", "X-Lines"),
     ("sketch.create", "New Sketch"),
     ("sketch.dimension", "Dimension"),
+    ("sketch.fit_curves_to_section", "Fit Curves"),
     ("sketch.finish", "Finish Sketch"),
     ("sketch.inspect", "Sketch Report"),
     ("sketch.pattern.circular", "Circular"),
@@ -669,6 +696,13 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
     if crate::render_workspace::active(app) {
         return Vec::new();
     }
+    if crate::scan_workspace::active(app) {
+        let mut tabs = crate::scan_workspace::TABS.to_vec();
+        if app.session.active_sketch.is_some() {
+            tabs.push("SKETCH");
+        }
+        return tabs;
+    }
     let mut tabs: Vec<_> = TABS.iter().copied().filter(|tab| tab_turned_on(app, tab)).collect();
     if app.preferences.sketch_tab_always {
         // Right after MODEL, whether a sketch is open or not (#7904).
@@ -684,6 +718,9 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
 /// Where the ribbon goes when the selected tab is not in the row: Model, or the first tab shown
 /// while Model is hidden; none when every tab is hidden.
 fn home_tab(app: &crate::SolveApp) -> &'static str {
+    if crate::scan_workspace::active(app) {
+        return crate::scan_workspace::HOME;
+    }
     let tabs = visible_tabs(app);
     if tabs.contains(&"MODEL") { "MODEL" } else { tabs.first().copied().unwrap_or_default() }
 }
@@ -730,6 +767,9 @@ pub fn sync_context(app: &mut crate::SolveApp) {
         } else if let Some(back) = back.as_deref().filter(|t| *t != "SKETCH" && visible_tabs(app).contains(t)) {
             // Finishing a sketch goes back to the tab it came from (#3250).
             visible_tabs(app).into_iter().find(|t| t == &back).unwrap_or_else(|| home_tab(app))
+        } else if crate::scan_workspace::active(app) {
+            // Sheet Metal and Weldments are design tabs: picking such a body here stays put.
+            visible_tabs(app).into_iter().find(|t| *t == app.ui.tab).unwrap_or_else(|| home_tab(app))
         } else if context.as_deref().is_some_and(|c| c.starts_with("frame:")) {
             "WELDMENTS"
         } else if context.is_some() {

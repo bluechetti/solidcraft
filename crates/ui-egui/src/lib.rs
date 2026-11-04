@@ -235,6 +235,7 @@ mod rule_editor;
 #[cfg(test)]
 mod rule_editor_tests;
 pub mod save_job;
+pub mod scan_workspace;
 pub mod scenario;
 pub(crate) mod scene_palette;
 pub mod select_other;
@@ -348,6 +349,9 @@ pub struct UiState {
     /// Not saved: it only lives while a sketch is open.
     #[serde(skip)]
     pub sketch_return_tab: Option<String>,
+    /// The Scan workspace (scan to CAD, #8615) is open: the ribbon shows its tabs instead of the
+    /// design tabs. The Render workspace is told by its tab alone.
+    pub scan_workspace: bool,
     /// Last contextual body/sketch, only used to select on entry.
     #[serde(skip)]
     pub ribbon_context: Option<String>,
@@ -410,6 +414,7 @@ impl Default for UiState {
             tab: "MODEL".into(),
             ribbon_context: None,
             sketch_return_tab: None,
+            scan_workspace: false,
             show_browser: true,
             show_timeline: true,
             show_grid: true,

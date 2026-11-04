@@ -6,6 +6,8 @@ Shown by default, in order: MODEL, SURFACE, ASSEMBLE, INSERT, INSPECT, MANAGE, V
 
 SKETCH appears during sketch editing; with Preferences › Interface › **Keep the Sketch tab shown** (`sketch_tab_always`, #7904) it stays right after MODEL all the time, and outside a sketch the tools in its CREATE and REFERENCE sections open Create Sketch first and then start in the new sketch. Hidden tabs stay hidden when creating features, opening designs, selecting bodies or undoing changes. When shown, SHEET METAL takes the contextual style and selects itself when the selected body (or the last body of the active component) has evaluated sheet-metal data. When shown, WELDMENTS selects itself when that body is a frame member, keeping the ordinary tab look (sheet metal comes first). Entering a context selects its tab; the other tabs remain available. RENDER belongs to the Render workspace.
 
+The Scan workspace (scan to CAD, #8615; Workspace › Scan, or `ui.workspace` with `scan`) shows SCAN and VIEW instead of the design tabs, on the same design, history and selection. SCAN holds the work in its order: insert, clean, align, fit, sketch, check. Its `scan.*` tools are planned commands, greyed with their reason until each is built; the rest are shared with their home tabs. A sketch started there opens SKETCH and finishing it returns to SCAN; picking a sheet-metal body or frame member does not leave the workspace.
+
 **Bold command ids are default promoted buttons.** Every listed command remains in the section menu. Saved user pins can add buttons, as before.
 
 | Tab | Section | Command ids, in menu order |
@@ -57,6 +59,12 @@ SKETCH appears during sketch editing; with Preferences › Interface › **Keep 
 | WELDMENTS | SKETCH | **`sketch.create`** |
 | WELDMENTS | CREATE | **`frame.member`** |
 | WELDMENTS | CONFIGURE | **`parameters.change`**, **`config.table`**, `config.configure` |
+| SCAN | INSERT | **`file.insert_mesh`**, **`pointcloud.insert`** |
+| SCAN | CLEAN | **`scan.repair`**, **`scan.fill_holes`**, **`scan.reduce`**, **`scan.remesh`**, `scan.mesh_from_points` |
+| SCAN | ALIGN | **`scan.stand_on_base`**, **`scan.symmetry`**, **`scan.square_to_symmetry`**, **`scan.rest_on_grid`**, `scan.quick_align`, `scan.center` |
+| SCAN | FIT | **`scan.fit_plane`**, **`scan.fit_cylinder`**, **`mesh.convert`** |
+| SCAN | SKETCH | **`sketch.create`**, **`sketch.fit_curves_to_section`** |
+| SCAN | CHECK | **`scan.deviation`**, **`inspect.section`**, **`inspect.compare`** |
 | SKETCH | CONFIGURE | **`parameters.change`**, **`config.table`**, `config.configure` |
 | RENDER | SCENE | **`render.scene`** |
 | RENDER | IMAGE | **`render.start`** |

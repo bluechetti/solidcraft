@@ -1565,7 +1565,11 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         painter.rect_filled(
             Rect::from_min_size(ws.left_top() + vec2(accent_inset, 0.0), vec2((ws.width() - 2.0 * accent_inset).max(0.0), t.space_3)),
             egui::CornerRadius { nw: 0, ne: 0, sw: if floating { t.radius_sm / 2 } else { 0 }, se: if floating { t.radius_sm / 2 } else { 0 } },
-            if crate::render_workspace::active(app) { crate::theme::TabAccent::current(ui.ctx()).color } else { t.accent },
+            if crate::render_workspace::active(app) || crate::scan_workspace::active(app) {
+                crate::theme::TabAccent::current(ui.ctx()).color
+            } else {
+                t.accent
+            },
         );
         if !floating {
             t.secondary_line(&painter, [ws.right_top(), ws.right_bottom()], t.border);
@@ -1574,7 +1578,8 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
         if render {
             crate::ui_kit::StageBar::workspace(ui, ws, "ws_render", app.tr("ui.render"), app.tr("ui.ribbon_workspace"));
         } else {
-            let workspace_icon = if render { "ws_render" } else { "ws_design" };
+            let scan = crate::scan_workspace::active(app);
+            let workspace_icon = if scan { "mesh_body" } else { "ws_design" };
             icons::paint_icon(
                 &painter,
                 Rect::from_center_size(pos2(ws.center().x, ws.top() + if labels { 39.0 } else { 25.0 }), vec2(30.0, 30.0)),
@@ -1584,7 +1589,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             ribbon_text(
                 ui,
                 pos2(ws.center().x, ws.top() + if labels { 69.0 } else { 50.0 }),
-                app.tr(if render { "ui.render" } else { "ui.design" }),
+                app.tr(if scan { "ui.tab_scan" } else { "ui.design" }),
                 t.font_button,
                 t.text,
                 true,
