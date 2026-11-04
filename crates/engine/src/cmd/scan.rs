@@ -17,10 +17,10 @@ use solidcraft_scan::symmetry::{self, Guide, Mirror};
 use super::CommandSpec;
 use crate::params::{bad, str_};
 use crate::schema::scan::{
-    ScanBase, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCompleteResult, ScanDeviationParams, ScanDeviationResult,
-    ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCylinder,
-    ScanFittedPlane, ScanFittedSphere, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams,
-    ScanSymmetryResult,
+    ScanBase, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams,
+    ScanDeviationResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult,
+    ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanSquareParams, ScanStandParams,
+    ScanSymmetryParams, ScanSymmetryResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -36,6 +36,7 @@ const DEVIATION_CONTRACT: TypedContract<ScanDeviationParams> = TypedContract::ne
 const SURFACE_CONTRACT: TypedContract<ScanFitSurfaceParams> = TypedContract::new();
 const COMPLETE_CONTRACT: TypedContract<ScanCompleteParams> = TypedContract::new();
 const EDIT_SURFACE_CONTRACT: TypedContract<ScanEditSurfaceParams> = TypedContract::new();
+const CURVE_CONTRACT: TypedContract<ScanCurveParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     planned!("scan.repair", "Repair Mesh", "8615")
@@ -136,6 +137,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&EDIT_SURFACE_CONTRACT)
         .output(output_schema_for::<ScanEditSurfaceResult>)
         .params("surface?: the surface body (default: the selected or only one Fit Surface made; moved since is fine, reshaped is refused); points?: the whole control net [[x,y,z], …], u fastest; moves?: [{point: [u, v], to: [x,y,z] | along: length along the surface's normal}]; hold?: [[u, v], …] points kept where they are when refitting (besides those moved); refit?: none|around|all (default none: the ring of two round each point moved or held, or every point not moved or held, fitted to the scan again); scan?: mesh body to refit to (default the selected or only one); reach?: length a scan point may be from the surface to count as under it (default a tenth of the net's size, at least 1 mm): one undo step → surface, controls [u, v], moved, refitted, scan, points, rms, max, feature"),
+    CommandSpec::new("scan.curve_on_scan", "Curve on Scan", crate::checked!("scan.curve_on_scan", curve::curve_on_scan))
+        .at("SCAN", "SKETCH")
+        .icon("spline")
+        .contract(&CURVE_CONTRACT)
+        .output(output_schema_for::<ScanCurveResult>)
+        .params("body?: mesh body (default: the selected or only one); points: [[x,y,z], …] clicked along the scan, in order (2 or more, 3 for closed); closed?: bool; tolerance?: length the curve may stray from the line laid on the scan (default 0.02 mm); sketch?: id|name of a 3D sketch (default: the 3D sketch being edited, else `Scan Curves`, made the first time): the smooth line through the points laid on the scan, kept as a 3D sketch spline through the fewest points within the tolerance (one undo step); a line across a hole is refused, naming the span → body, curve, sketch, closed, points, fit_points, length, max, off_scan"),
     CommandSpec::new("scan.deviation", "Scan Deviation", crate::checked!("scan.deviation", deviation))
         .at("SCAN", "CHECK")
         .icon("curvature_map")
@@ -169,6 +176,15 @@ impl Mesh {
 /// The mesh body a scan command works on: `body`, else the one selected mesh body, else the
 /// design's only mesh body.
 fn mesh(s: &Session, p: &Value, cmd: &str) -> Result<Mesh> {
+    let name = mesh_name(s, p, cmd)?;
+    let state = s.model.state();
+    let body = state.body(&name).ok_or_else(|| bad(cmd, format!("no body `{name}`")))?;
+    let (positions, triangles) = body.body.triangle_mesh().ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+    Ok(Mesh { body: name, positions: positions.to_vec(), triangles: triangles.to_vec() })
+}
+
+/// The name of the mesh body [`mesh`] would take, without copying its triangles.
+fn mesh_name(s: &Session, p: &Value, cmd: &str) -> Result<String> {
     let state = s.model.state();
     let named = str_(p, "body").filter(|b| !b.trim().is_empty()).map(str::to_owned);
     let name = match named {
@@ -195,9 +211,7 @@ fn mesh(s: &Session, p: &Value, cmd: &str) -> Result<Mesh> {
             }
         }
     };
-    let body = state.body(&name).ok_or_else(|| bad(cmd, format!("no body `{name}`")))?;
-    let (positions, triangles) = body.body.triangle_mesh().ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
-    Ok(Mesh { body: name, positions: positions.to_vec(), triangles: triangles.to_vec() })
+    Ok(name)
 }
 
 /// Move the scan by `by` as one Move feature; `None` when the move is negligible.
@@ -867,6 +881,9 @@ fn keep_shape(s: &mut Session, fitted: &Fitted, extent: f64) -> Result<Value> {
         }
     }
 }
+
+#[path = "scan_curve.rs"]
+pub mod curve;
 
 #[path = "scan_surface.rs"]
 pub mod surface;

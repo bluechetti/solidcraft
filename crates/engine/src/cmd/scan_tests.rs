@@ -572,3 +572,30 @@ fn edit_surface_works_where_a_later_move_put_the_surface() {
     let refused = s.execute("scan.edit_surface", &json!({"moves": [{"point": [3, 2]}]})).unwrap_err().to_string();
     assert!(refused.contains("one of `to`"), "{refused}");
 }
+
+/// A curve clicked half way round the plate's boss is kept as a 3D spline in a new `Scan Curves`
+/// 3D sketch, close to the scan; a closed one round it goes in the same sketch; each is one undo
+/// step.
+#[test]
+fn curve_on_scan_keeps_a_3d_spline_in_scan_curves() {
+    let (mut s, _) = session_with_a_plate_and_boss("curve-on-scan");
+    let open = run(&mut s, "scan.curve_on_scan", json!({"points": [[40, 20, 15], [30, 30, 15], [20, 20, 15]]}));
+    assert_eq!(open["closed"], false, "{open}");
+    assert!(open["max"].as_f64().unwrap() <= 0.02 && open["off_scan"].as_f64().unwrap() < 0.05, "{open}");
+    assert!(open["fit_points"].as_u64().unwrap() >= 3, "{open}");
+    assert!((open["length"].as_f64().unwrap() - std::f64::consts::PI * 10.0).abs() < 0.5, "half way round: {open}");
+    let sketch = s.doc.features.iter().find(|f| f.name == super::curve::SKETCH_NAME).map(|f| f.id).expect("Scan Curves made");
+    assert!(s.active_sketch.is_none(), "the sketch is finished again");
+    let wires = |s: &Session| super::super::sketch_store::read(&s.doc, sketch).map(|sk| sk.wires.len()).unwrap_or(0);
+    assert_eq!(wires(&s), 1);
+
+    let closed = run(&mut s, "scan.curve_on_scan", json!({"points": [[40, 20, 12], [25, 28.66, 12], [25, 11.34, 12]], "closed": true}));
+    assert_eq!(closed["closed"], true, "{closed}");
+    assert_eq!(closed["sketch"], json!(sketch), "the same sketch");
+    assert_eq!(wires(&s), 2);
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(wires(&s), 1, "one undo step");
+
+    let refused = s.execute("scan.curve_on_scan", &json!({"points": [[40, 20, 15]]})).unwrap_err().to_string();
+    assert!(refused.contains("at least two points"), "{refused}");
+}

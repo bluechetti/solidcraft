@@ -127,6 +127,7 @@ mod tests {
             "scan.fit_surface",
             "scan.complete_by_mirroring",
             "scan.edit_surface",
+            "scan.curve_on_scan",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {

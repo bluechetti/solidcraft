@@ -451,6 +451,51 @@ pub struct ScanEditSurfaceResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Draw a curve on a scan through points clicked along it: the smooth line through them laid on
+/// the scan, kept as a 3D sketch spline through the fewest points within the tolerance. One undo
+/// step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanCurveParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The points clicked along the scan, in order, in mm (2 or more; 3 or more closed).
+    pub points: Vec<Point3>,
+    /// Close the curve back to its first point. Default: false.
+    #[serde(default)]
+    pub closed: Option<bool>,
+    /// How far the curve may stray from the line laid on the scan. Default: 0.02 mm.
+    #[serde(default)]
+    pub tolerance: Option<LengthExpr>,
+    /// The 3D sketch to draw it in, by id or name. Default: the 3D sketch being edited, else the
+    /// design's `Scan Curves`, made the first time.
+    #[serde(default)]
+    pub sketch: Option<Value>,
+}
+
+/// What `scan.curve_on_scan` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanCurveResult {
+    /// The scan.
+    pub body: String,
+    /// The 3D curve made, and the sketch it is in (id or name).
+    pub curve: String,
+    pub sketch: Value,
+    pub closed: bool,
+    /// The points clicked (on the scan) and the fit points kept.
+    pub points: usize,
+    pub fit_points: usize,
+    /// The length of the line on the scan, in mm.
+    pub length: f64,
+    /// The farthest the curve strays from the line on the scan, and from the scan itself, in mm.
+    pub max: f64,
+    pub off_scan: f64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// A way a scan could stand.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct ScanBase {

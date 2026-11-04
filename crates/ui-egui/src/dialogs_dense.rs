@@ -83,6 +83,7 @@ pub(super) fn command(kind: &Kind) -> Option<&'static str> {
         Kind::ScanBase(_) => Some("scan.stand_on_base"),
         Kind::ScanSymmetry(k) => Some(crate::dialogs_scan::symmetry_command(k)),
         Kind::ScanEditSurface(_) => Some("scan.edit_surface"),
+        Kind::ScanCurve(_) => Some("scan.curve_on_scan"),
         Kind::Plastic(k) => match k {
             crate::dialogs_plastic::Pl::SnapFit { .. } => Some("plastic.snap_fit"),
             crate::dialogs_plastic::Pl::Assign { .. } => Some("plastic.assign_rule"),
@@ -1073,6 +1074,7 @@ fn additional_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> boo
         Kind::ScanBase(k) => enter |= crate::dialogs_scan::rows(app, ui, k, &d.inputs),
         Kind::ScanSymmetry(k) => enter |= crate::dialogs_scan::symmetry_rows(app, ui, k),
         Kind::ScanEditSurface(k) => enter |= crate::dialogs_scan_surface::rows(app, ui, k),
+        Kind::ScanCurve(k) => enter |= crate::dialogs_scan_curve::rows(app, ui, k),
         Kind::Assembly(k) => enter |= crate::dialogs_assembly::rows(app, ui, k, &mut d.inputs, &mut d.active),
         Kind::Measure { result, show, .. } => measure_rows(app, ui, result.as_ref(), show),
         Kind::Section { offset, flip, hatch } => {

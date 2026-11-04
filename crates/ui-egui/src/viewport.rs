@@ -5232,6 +5232,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::dialogs_scan_surface::choose(app, &proj, p);
         }
     }
+    // Curve on Scan: a click on the scan adds a point (on the first one, closes the curve).
+    if crate::dialogs_scan_curve::drawing(app)
+        && resp.clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        crate::dialogs_scan_curve::click(app, &proj, p);
+    }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
         && !crate::dialogs_scan::drawing_guide(app)
@@ -5282,6 +5289,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::point_clouds::show(app, &painter, &proj);
     crate::dialogs_scan::draw(app, &painter, &proj);
     crate::dialogs_scan_surface::draw(app, &painter, &proj);
+    crate::dialogs_scan_curve::draw(app, &painter, &proj);
     crate::dialogs_assembly::origins(app, &painter, &proj);
     if !crate::joint_handles::visible(app) {
         crate::dialogs_assembly::joint_glyphs(app, &painter, &proj);
