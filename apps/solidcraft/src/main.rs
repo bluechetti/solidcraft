@@ -1301,10 +1301,14 @@ fn wgpu_options(cpu: bool, preference: Option<&str>) -> eframe::egui_wgpu::WgpuC
         let adapter = graphics().and_then(|v| v.get("adapter").and_then(serde_json::Value::as_str).map(str::to_string));
         startup::configure_adapter(setup, cpu, environment, adapter);
         // A float depth buffer with a stencil, wherever the adapter has it (see `FLOAT_DEPTH_BITS`).
+        // Buffers as large as the adapter takes: a scan's shared vertices and indices outgrow
+        // the default 256 MiB from about 22 million triangles, and are then drawn unshared, at
+        // three times the size and built again on the window thread.
         let base = setup.device_descriptor.clone();
         setup.device_descriptor = std::sync::Arc::new(move |adapter| {
             let mut d = base(adapter);
             d.required_features |= adapter.features() & startup::FLOAT_DEPTH_STENCIL;
+            d.required_limits.max_buffer_size = d.required_limits.max_buffer_size.max(adapter.limits().max_buffer_size);
             d
         });
     }
