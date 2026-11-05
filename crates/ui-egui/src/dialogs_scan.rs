@@ -311,7 +311,7 @@ pub fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Symmetry) -> boo
     {
         match &c.result {
             Ok((limit, _, _)) => {
-                let key = crate::i18n::format("ui.scan_symmetry_colour_key", &[("limit", &crate::prefs::show_mm(app, *limit, 2))]);
+                let key = crate::i18n::format("ui.scan_symmetry_colour_key", &[("limit", &crate::prefs::show_mm(app, *limit, 1))]);
                 ui_kit::text(ui, &key, ui_kit::Text::Hint("scan_symmetry_colour_key"));
             }
             Err(why) => {

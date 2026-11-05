@@ -304,8 +304,8 @@ pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs:
                 "ui.scan_wrap_found",
                 &[
                     ("net", &format!("{nu} × {nv}")),
-                    ("radius", &crate::prefs::show_mm(app, w.cylinder.radius, 2)),
-                    ("off", &crate::prefs::show_mm(app, w.off, 2)),
+                    ("radius", &crate::prefs::show_mm(app, w.cylinder.radius, 1)),
+                    ("off", &crate::prefs::show_mm(app, w.off, 1)),
                     ("rms", &crate::prefs::show_mm(app, w.made.rms, 1)),
                 ],
             );
@@ -422,7 +422,7 @@ pub fn merge_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut MergeSurfaces, inpu
             let widest = made.seams.iter().map(|m| m.gap).fold(0.0, f64::max);
             let note = crate::i18n::format(
                 "ui.scan_merge_found",
-                &[("seams", &made.seams.len().to_string()), ("surfaces", &names.len().to_string()), ("gap", &crate::prefs::show_mm(app, widest, 2))],
+                &[("seams", &made.seams.len().to_string()), ("surfaces", &names.len().to_string()), ("gap", &crate::prefs::show_mm(app, widest, 1))],
             );
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_merge_found"));
         }
@@ -461,6 +461,20 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// The text painted in a frame of the whole window, the dialog's notes among it.
+    fn painted_text(h: &mut crate::scenario::Harness) -> Vec<String> {
+        // The harness clock goes on (a hair) so egui's input history never sees time go backwards.
+        let time = h.ctx.input(|i| i.time) + 1e-4;
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))),
+            time: Some(time),
+            ..Default::default()
+        };
+        let mut output = h.ctx.run_ui(raw, |ui| h.app.ui(ui));
+        output.textures_delta.clear();
+        output.shapes.iter().filter_map(|s| if let egui::Shape::Text(t) = &s.shape { Some(t.galley.text().to_string()) } else { None }).collect()
+    }
 
     /// A dome scanned as a grid, `n` squares a side over 60 mm, as an STL.
     fn dome_stl(n: u32) -> String {
@@ -558,6 +572,9 @@ mod tests {
             panic!("wrapped: {:?}", k.shown.as_ref().map(|s| s.result.as_ref().err()))
         };
         assert!((w.cylinder.radius - 20.0).abs() < 0.2 && w.made.rms < 0.1, "{:?} {}", w.cylinder, w.made.rms);
+        // The radius, how far off the part is and the rms are lengths, not areas or volumes.
+        let found = painted_text(&mut h).into_iter().find(|t| t.contains("cylinder of radius")).expect("the note on the net found");
+        assert!(found.contains(" mm") && !found.contains('²') && !found.contains('³'), "{found}");
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
         assert!(h.app.session.model.state().body("FreeForm1").is_some(), "kept");
