@@ -686,3 +686,21 @@ fn fill_holes_closes_a_hole_in_a_plate() {
     let refused = closed.execute("scan.fill_holes", &json!({})).unwrap_err().to_string();
     assert!(refused.contains("it is closed"), "{refused}");
 }
+
+/// A finely cut box reduced to a tenth keeps its shape, one undo step; asking for more than it has
+/// is refused.
+#[test]
+fn reduce_keeps_a_fine_box_its_shape() {
+    let (mut s, body) = session_with_triangles("reduce", &fine_box(Vec3::ZERO, Vec3::new(30.0, 20.0, 10.0), 12));
+    let reply = run(&mut s, "scan.reduce", json!({"ratio": 0.1}));
+    assert_eq!(reply["before"], 1728, "{reply}");
+    assert!(reply["triangles"].as_u64().unwrap() <= 173 && reply["stopped"] == "target", "{reply}");
+    let (lo, hi) = bounds(&s, &body);
+    assert!(lo.dist(Vec3::ZERO) < STL && hi.dist(Vec3::new(30.0, 20.0, 10.0)) < STL, "the box kept: {lo:?} {hi:?}");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.model.state().body(&body).and_then(|b| b.body.triangle_mesh()).map(|(_, t)| t.len()), Some(1728), "one undo step");
+    let refused = s.execute("scan.reduce", &json!({"triangles": 5000})).unwrap_err().to_string();
+    assert!(refused.contains("already"), "{refused}");
+    let refused = s.execute("scan.reduce", &json!({"ratio": 0.5, "triangles": 10})).unwrap_err().to_string();
+    assert!(refused.contains("not both"), "{refused}");
+}

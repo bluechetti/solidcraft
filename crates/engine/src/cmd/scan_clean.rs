@@ -13,9 +13,9 @@ use solidcraft_scan::holes::{self, Survey};
 use solidcraft_scan::pieces::{self, Pieces};
 use solidcraft_scan::place::Rigid;
 
-use super::mesh_name;
+use super::{length, mesh_name};
 use crate::params::bad;
-use crate::schema::scan::{ScanFloatingResult, ScanHolesResult};
+use crate::schema::scan::{ScanFloatingResult, ScanHolesResult, ScanReduceResult};
 use crate::{EngineError, Result, Session};
 
 /// The default share of the largest piece below which a piece floats.
@@ -229,6 +229,64 @@ pub(super) fn fill_holes(s: &mut Session, p: &Value) -> Result<Value> {
         larger: holes - within,
         added_triangles: done.added_triangles,
         unfillable_edges: found.unfillable_edges,
+        feature,
+        param_warnings: Vec::new(),
+    };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+pub(super) fn reduce(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.reduce";
+    let ratio = match p.get("ratio").filter(|v| !v.is_null()) {
+        Some(v) => Some(v.as_f64().filter(|x| *x > 0.0 && *x <= 1.0).ok_or_else(|| bad(cmd, "`ratio` must be a share above 0 and at most 1"))?),
+        None => None,
+    };
+    let count = match p.get("triangles").filter(|v| !v.is_null()) {
+        Some(v) => Some(v.as_u64().filter(|n| *n >= 1).ok_or_else(|| bad(cmd, "`triangles` must be a whole number from 1"))? as usize),
+        None => None,
+    };
+    if ratio.is_some() && count.is_some() {
+        return Err(bad(cmd, "give `ratio` or `triangles`, not both"));
+    }
+    let max_error = match crate::params::expr(p, "max_error") {
+        Some(_) => length(s, p, "max_error", 1.0, cmd)?,
+        None => 0.0,
+    };
+    let keep_rim = crate::params::bool_(p, "keep_rim").unwrap_or(true);
+    let name = mesh_name(s, p, cmd)?;
+    let done = {
+        let state = s.model.state();
+        let (positions, triangles) = state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, "the scan is gone"))?;
+        let before = triangles.len();
+        // The count to keep (at least one), or none when only the error was asked for; half by default.
+        let target = match (ratio, count) {
+            (Some(r), _) => ((r * before as f64).round() as usize).max(1),
+            (_, Some(n)) => n,
+            _ if max_error > 0.0 => 0,
+            _ => (before / 2).max(1),
+        };
+        if target >= before && max_error == 0.0 {
+            return Err(bad(cmd, format!("the scan has {before} triangles already: ask for fewer")));
+        }
+        let settings = solidcraft_scan::reduce::Settings { target, max_error, keep_rim };
+        (
+            before,
+            solidcraft_scan::reduce::reduce(&Scan::new(positions, triangles), settings)
+                .ok_or_else(|| bad(cmd, "the scan has no triangles to reduce"))?,
+        )
+    };
+    let (before, reduced) = done;
+    if reduced.collapses == 0 {
+        return Err(bad(cmd, "nothing could be collapsed within the error allowed"));
+    }
+    let feature = replace_mesh(s, &name, &reduced.positions, &reduced.triangles, cmd)?;
+    let reply = ScanReduceResult {
+        body: name,
+        before,
+        triangles: reduced.triangles.len(),
+        collapses: reduced.collapses,
+        stopped: reduced.stopped.name().into(),
+        largest_error: reduced.largest_error,
         feature,
         param_warnings: Vec::new(),
     };

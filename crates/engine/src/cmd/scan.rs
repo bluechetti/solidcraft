@@ -20,7 +20,7 @@ use crate::schema::scan::{
     ScanBase, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams,
     ScanDeviationResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult,
     ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFloatingParams, ScanFloatingResult, ScanHolesParams, ScanHolesResult, ScanMirror,
-    ScanPlaceParams, ScanPlaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
+    ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -39,6 +39,7 @@ const EDIT_SURFACE_CONTRACT: TypedContract<ScanEditSurfaceParams> = TypedContrac
 const CURVE_CONTRACT: TypedContract<ScanCurveParams> = TypedContract::new();
 const FLOATING_CONTRACT: TypedContract<ScanFloatingParams> = TypedContract::new();
 const HOLES_CONTRACT: TypedContract<ScanHolesParams> = TypedContract::new();
+const REDUCE_CONTRACT: TypedContract<ScanReduceParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     planned!("scan.repair", "Repair Mesh", "8615")
@@ -51,10 +52,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&HOLES_CONTRACT)
         .output(output_schema_for::<ScanHolesResult>)
         .params("body?: mesh body (default: the selected or only one); max_edges?: the largest hole to close, in edges round it (3…5000, default 300); fair?: bool (default true: each patch carries the surface's shape across; false leaves it flat): the holes closed with patches as fine as the scan round them (each piece's outer rim is not a hole), the scan written back in its Insert Mesh feature (one undo step) → body, holes, filled, failed, larger, added_triangles, unfillable_edges, feature"),
-    planned!("scan.reduce", "Reduce Mesh", "8615")
+    CommandSpec::new("scan.reduce", "Reduce Mesh", crate::checked!("scan.reduce", clean::reduce))
         .at("SCAN", "CLEAN")
         .icon("scale")
-        .params("planned: body: mesh body name; ratio?: share of triangles kept (0…1) or triangles?: count; max_error?: mm → triangles, mean_error, max_error"),
+        .contract(&REDUCE_CONTRACT)
+        .output(output_schema_for::<ScanReduceResult>)
+        .params("body?: mesh body (default: the selected or only one); ratio?: share of the triangles to keep (0…1) or triangles?: how many to keep (default: half); max_error?: length a collapse may move the surface by, root mean square (stops first if reached); keep_rim?: bool (default true: the scan's open edges stay where they are): edges collapsed cheapest first (quadric errors), never folding the surface, the scan written back in its Insert Mesh feature (one undo step) → body, before, triangles, collapses, stopped (target|error|no_more_collapses), largest_error, feature"),
     planned!("scan.remesh", "Remesh", "8615")
         .at("SCAN", "CLEAN")
         .icon("grid")
@@ -191,6 +194,12 @@ fn mesh(s: &Session, p: &Value, cmd: &str) -> Result<Mesh> {
     let body = state.body(&name).ok_or_else(|| bad(cmd, format!("no body `{name}`")))?;
     let (positions, triangles) = body.body.triangle_mesh().ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
     Ok(Mesh { body: name, positions: positions.to_vec(), triangles: triangles.to_vec() })
+}
+
+/// The scan a scan command would work on with no `body` given (`body`, else the selected or only
+/// mesh body), for a dialog to say which and how big.
+pub fn mesh_body_name(s: &Session, body: Option<&str>, cmd: &str) -> Result<String> {
+    mesh_name(s, &json!({ "body": body }), cmd)
 }
 
 /// The name of the mesh body [`mesh`] would take, without copying its triangles.

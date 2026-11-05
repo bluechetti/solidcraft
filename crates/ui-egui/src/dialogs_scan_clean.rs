@@ -6,6 +6,9 @@
 //! Fill Holes (`scan.fill_holes`): the scan's holes are found once and outlined over the picture,
 //! those it would close in the accent colour and those larger than the limit dimmed; OK closes
 //! them, one undo step.
+//!
+//! Reduce Mesh (`scan.reduce`): how much of the scan to keep (and the count it means), the most a
+//! collapse may move the surface, and whether the rim stays put; OK reduces it, one undo step.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -62,6 +65,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::S
     match id {
         "scan.remove_floating" => Some((Kind::ScanFloating(Floating::default()), Vec::new())),
         "scan.fill_holes" => Some((Kind::ScanHoles(Holes::default()), Vec::new())),
+        "scan.reduce" => Some((Kind::ScanReduce(Reduce::default()), Vec::new())),
         _ => None,
     }
 }
@@ -249,6 +253,67 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     }
 }
 
+/// The Reduce Mesh dialog's values.
+#[derive(Clone, Debug)]
+pub struct Reduce {
+    /// The share of the triangles to keep, in percent.
+    pub percent: f64,
+    /// The most a collapse may move the surface, in mm; 0 for no such limit.
+    pub max_error: f64,
+    pub keep_rim: bool,
+    /// The scan and its triangles, for the count the share means.
+    scan: Option<(u64, Result<(String, usize), String>)>,
+}
+
+impl Default for Reduce {
+    fn default() -> Self {
+        Reduce { percent: 50.0, max_error: 0.0, keep_rim: true, scan: None }
+    }
+}
+
+/// The Reduce Mesh dialog's rows.
+pub fn reduce_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reduce) -> bool {
+    if k.scan.as_ref().is_none_or(|(revision, _)| *revision != app.session.revision) {
+        let found = solidcraft_engine::cmd::scan::mesh_body_name(&app.session, None, "scan.reduce").map_err(|e| e.to_string()).and_then(|name| {
+            let count = app.session.model.state().body(&name).and_then(|b| b.body.triangle_mesh()).map(|(_, t)| t.len()).ok_or("the scan is gone")?;
+            Ok((name, count))
+        });
+        k.scan = Some((app.session.revision, found));
+    }
+    let tr = crate::i18n::tr;
+    let format = |v: f64| format!("{v:.0} %");
+    form_row(ui, tr("ui.scan_reduce_keep"), |ui| {
+        ui_kit::slider(ui, &mut k.percent, 1.0..=99.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
+    });
+    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+    form_row(ui, tr("ui.scan_reduce_error"), |ui| ui_kit::length_field(ui, &mut k.max_error, &units, decimals.max(3)));
+    k.max_error = k.max_error.clamp(0.0, 100.0);
+    form_row(ui, tr("ui.scan_reduce_rim"), |ui| check(ui, &mut k.keep_rim));
+    match k.scan.as_ref().map(|(_, r)| r) {
+        Some(Ok((_, count))) => {
+            let kept = ((k.percent / 100.0) * *count as f64).round() as usize;
+            let note = crate::i18n::format("ui.scan_reduce_count", &[("now", &count.to_string()), ("kept", &kept.to_string())]);
+            ui_kit::text(ui, &note, ui_kit::Text::Note("scan_reduce_count"));
+        }
+        Some(Err(why)) => {
+            ui_kit::text(ui, why, ui_kit::Text::Report("scan_reduce_error", true));
+        }
+        None => {}
+    }
+    ui_kit::text(ui, tr("ui.scan_reduce_hint"), ui_kit::Text::Hint("scan_reduce_hint"));
+    false
+}
+
+/// What OK runs: the scan reduced.
+pub fn reduce_commands(k: &Reduce) -> Result<Vec<(String, Value)>, String> {
+    let (body, _) = k.scan.as_ref().ok_or("still reading the scan")?.1.as_ref().map_err(Clone::clone)?;
+    let mut p = json!({"body": body, "ratio": (k.percent / 100.0).clamp(0.01, 0.99), "keep_rim": k.keep_rim});
+    if k.max_error > 0.0 {
+        p["max_error"] = json!(format!("{} mm", k.max_error));
+    }
+    Ok(vec![("scan.reduce".into(), p)])
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -342,5 +407,27 @@ mod tests {
         let state = h.app.session.model.state();
         let (_, triangles) = state.bodies.iter().find(|b| b.body.is_mesh()).and_then(|b| b.body.triangle_mesh()).unwrap();
         assert!(triangles.len() > 192, "patched: {}", triangles.len());
+    }
+
+    /// A finely cut block reduced to a tenth through the dialog keeps its shape.
+    #[test]
+    fn the_dialog_reduces_a_block() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("block.stl");
+        std::fs::write(&path, format!("solid b\n{}endsolid b\n", box_facets([0.0; 3], [30.0, 20.0, 10.0], 12))).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.start("scan.reduce");
+        h.frames(2);
+        if let Some(Kind::ScanReduce(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.percent = 10.0;
+        }
+        h.frames(1);
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        let state = h.app.session.model.state();
+        let (positions, triangles) = state.bodies.iter().find(|b| b.body.is_mesh()).and_then(|b| b.body.triangle_mesh()).unwrap();
+        assert!(triangles.len() <= 173, "a tenth of 1728: {}", triangles.len());
+        assert!(positions.iter().all(|p| p.x >= -1e-4 && p.x <= 30.0 + 1e-4 && p.z <= 10.0 + 1e-4), "the block's shape");
     }
 }

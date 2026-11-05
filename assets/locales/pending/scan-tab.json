@@ -108,7 +108,13 @@
     "ui.scan_holes_fair": "Fair the patches",
     "ui.scan_holes_found": "{within} of {holes} holes will be closed ({unfillable} open edges in no simple ring are left).",
     "ui.scan_holes_hint": "Holes outlined brightly will be closed; dimmed ones are larger than the limit. Fair the patches carries the surface's curve across each hole.",
-    "ui.scan_holes_none": "No hole is that small: raise the largest hole."
+    "ui.scan_holes_none": "No hole is that small: raise the largest hole.",
+    "help.scan.reduce": "Gives the scan fewer triangles, collapsing the edges whose loss moves the surface least first, never folding it. Use it on a dense scan to make fitting, sketching and saving faster.",
+    "ui.scan_reduce_keep": "Keep",
+    "ui.scan_reduce_error": "Most error (0: none)",
+    "ui.scan_reduce_rim": "Keep the rim",
+    "ui.scan_reduce_count": "{now} triangles now; about {kept} kept.",
+    "ui.scan_reduce_hint": "Flat areas lose triangles first, detailed ones last. With a most error set, it stops sooner if a collapse would move the surface farther than that."
   },
   "de": {
     "ALIGN": "AUSRICHTEN",
@@ -219,7 +225,13 @@
     "ui.scan_holes_fair": "Flicken glätten",
     "ui.scan_holes_found": "{within} von {holes} Löchern werden geschlossen ({unfillable} offene Kanten in keinem einfachen Ring bleiben).",
     "ui.scan_holes_hint": "Hell umrandete Löcher werden geschlossen; abgeblendete sind größer als die Grenze. „Flicken glätten“ führt die Krümmung der Fläche über jedes Loch.",
-    "ui.scan_holes_none": "Kein Loch ist so klein: Erhöhen Sie das größte Loch."
+    "ui.scan_holes_none": "Kein Loch ist so klein: Erhöhen Sie das größte Loch.",
+    "help.scan.reduce": "Gibt dem Scan weniger Dreiecke: Zuerst werden die Kanten zusammengezogen, deren Wegfall die Fläche am wenigsten bewegt, ohne sie zu falten. Verwenden Sie es bei einem dichten Scan, damit Anpassen, Skizzieren und Speichern schneller gehen.",
+    "ui.scan_reduce_keep": "Behalten",
+    "ui.scan_reduce_error": "Größter Fehler (0: keiner)",
+    "ui.scan_reduce_rim": "Rand behalten",
+    "ui.scan_reduce_count": "Jetzt {now} Dreiecke; etwa {kept} bleiben.",
+    "ui.scan_reduce_hint": "Ebene Bereiche verlieren zuerst Dreiecke, detailreiche zuletzt. Mit einem größten Fehler endet es früher, wenn ein Zusammenziehen die Fläche weiter bewegen würde."
   },
   "ja": {
     "ALIGN": "位置合わせ",
@@ -330,7 +342,13 @@
     "ui.scan_holes_fair": "パッチを滑らかにする",
     "ui.scan_holes_found": "{holes} 個中 {within} 個の穴を閉じます(単純なリングに属さない開いたエッジ {unfillable} 本は残ります)。",
     "ui.scan_holes_hint": "明るく囲まれた穴を閉じます。淡い穴は上限より大きい穴です。「パッチを滑らかにする」で曲面の曲がりを穴の向こうへつなぎます。",
-    "ui.scan_holes_none": "その大きさ以下の穴はありません。最大の穴を大きくしてください。"
+    "ui.scan_holes_none": "その大きさ以下の穴はありません。最大の穴を大きくしてください。",
+    "help.scan.reduce": "スキャンの三角形を減らします。面の動きが最も小さい辺から順につぶし、面を折り返しません。密なスキャンで使うと、フィット、スケッチ、保存が速くなります。",
+    "ui.scan_reduce_keep": "残す割合",
+    "ui.scan_reduce_error": "最大誤差(0: なし)",
+    "ui.scan_reduce_rim": "外周を保つ",
+    "ui.scan_reduce_count": "現在 {now} 三角形、約 {kept} を残します。",
+    "ui.scan_reduce_hint": "平らな所から先に三角形が減り、細かい所は最後です。最大誤差を設定すると、それより面が動く場合は早めに止まります。"
   },
   "ko": {
     "ALIGN": "정렬",
@@ -441,7 +459,13 @@
     "ui.scan_holes_fair": "패치 매끄럽게",
     "ui.scan_holes_found": "구멍 {holes}개 중 {within}개를 닫습니다(단순 고리에 속하지 않은 열린 모서리 {unfillable}개는 남습니다).",
     "ui.scan_holes_hint": "밝게 표시된 구멍을 닫습니다. 흐린 구멍은 한도보다 큽니다. 패치 매끄럽게는 곡면의 휨을 구멍 너머로 이어 줍니다.",
-    "ui.scan_holes_none": "그만큼 작은 구멍이 없습니다: 가장 큰 구멍을 늘리세요."
+    "ui.scan_holes_none": "그만큼 작은 구멍이 없습니다: 가장 큰 구멍을 늘리세요.",
+    "help.scan.reduce": "스캔의 삼각형을 줄입니다. 곡면을 가장 적게 움직이는 모서리부터 접고, 곡면을 겹치게 하지 않습니다. 촘촘한 스캔에 사용하면 맞춤, 스케치, 저장이 빨라집니다.",
+    "ui.scan_reduce_keep": "유지",
+    "ui.scan_reduce_error": "최대 오차(0: 없음)",
+    "ui.scan_reduce_rim": "가장자리 유지",
+    "ui.scan_reduce_count": "현재 삼각형 {now}개; 약 {kept}개 유지.",
+    "ui.scan_reduce_hint": "평평한 곳의 삼각형이 먼저 줄고 세밀한 곳은 마지막입니다. 최대 오차를 정하면 그보다 곡면을 더 움직이게 될 때 더 일찍 멈춥니다."
   },
   "zh": {
     "ALIGN": "对齐",
@@ -552,7 +576,13 @@
     "ui.scan_holes_fair": "平滑补片",
     "ui.scan_holes_found": "将封闭 {holes} 个孔中的 {within} 个(不属于简单环的 {unfillable} 条开放边保留)。",
     "ui.scan_holes_hint": "亮色轮廓的孔将被封闭；暗色的孔大于上限。平滑补片使曲面的弯曲延续过每个孔。",
-    "ui.scan_holes_none": "没有这么小的孔：请增大最大孔。"
+    "ui.scan_holes_none": "没有这么小的孔：请增大最大孔。",
+    "help.scan.reduce": "减少扫描的三角形：先折叠对曲面影响最小的边，绝不使曲面翻折。用于密集扫描，使拟合、草图和保存更快。",
+    "ui.scan_reduce_keep": "保留",
+    "ui.scan_reduce_error": "最大误差(0:无)",
+    "ui.scan_reduce_rim": "保留边缘",
+    "ui.scan_reduce_count": "当前 {now} 个三角形；约保留 {kept} 个。",
+    "ui.scan_reduce_hint": "平坦区域先减少三角形，细节区域最后。设置最大误差后，若折叠会使曲面移动超过该值则提前停止。"
   },
   "ar": {
     "ALIGN": "محاذاة",
@@ -663,7 +693,13 @@
     "ui.scan_holes_fair": "تنعيم الرقع",
     "ui.scan_holes_found": "سيُغلق {within} من {holes} ثقوب (تبقى {unfillable} حافة مفتوحة ليست في حلقة بسيطة).",
     "ui.scan_holes_hint": "الثقوب المحاطة بلون ساطع ستُغلق؛ الباهتة أكبر من الحد. تنعيم الرقع يمدّ انحناء السطح عبر كل ثقب.",
-    "ui.scan_holes_none": "لا يوجد ثقب بهذا الصغر: ارفع أكبر ثقب."
+    "ui.scan_holes_none": "لا يوجد ثقب بهذا الصغر: ارفع أكبر ثقب.",
+    "help.scan.reduce": "يقلل مثلثات المسح، فيطوي أولًا الحواف التي يحرّك فقدها السطح أقل، دون أن يطوي السطح. استخدمه على مسح كثيف لتسريع الملاءمة والرسم والحفظ.",
+    "ui.scan_reduce_keep": "الإبقاء",
+    "ui.scan_reduce_error": "أقصى خطأ (0: بلا)",
+    "ui.scan_reduce_rim": "الإبقاء على الحافة",
+    "ui.scan_reduce_count": "الآن {now} مثلثًا؛ يبقى نحو {kept}.",
+    "ui.scan_reduce_hint": "تفقد المناطق المسطحة مثلثاتها أولًا والمفصّلة أخيرًا. مع تحديد أقصى خطأ يتوقف أبكر إذا كان الطي سيحرك السطح أبعد من ذلك."
   },
   "he": {
     "ALIGN": "יישור",
@@ -774,7 +810,13 @@
     "ui.scan_holes_fair": "החלקת הטלאים",
     "ui.scan_holes_found": "ייסגרו {within} מתוך {holes} חורים (נשארים {unfillable} קצוות פתוחים שאינם בטבעת פשוטה).",
     "ui.scan_holes_hint": "חורים במתאר בהיר ייסגרו; המעומעמים גדולים מהגבול. החלקת הטלאים ממשיכה את עקמומיות המשטח מעבר לכל חור.",
-    "ui.scan_holes_none": "אין חור קטן כל כך: הגדילו את החור הגדול ביותר."
+    "ui.scan_holes_none": "אין חור קטן כל כך: הגדילו את החור הגדול ביותר.",
+    "help.scan.reduce": "מקטינה את מספר המשולשים בסריקה: מכווצת תחילה את הקצוות שאובדנם מזיז את המשטח הכי מעט, בלי לקפל אותו. השתמשו בה בסריקה צפופה כדי שהתאמה, שרטוט ושמירה יהיו מהירים יותר.",
+    "ui.scan_reduce_keep": "שמירה",
+    "ui.scan_reduce_error": "שגיאה מרבית (0: ללא)",
+    "ui.scan_reduce_rim": "שמירת השפה",
+    "ui.scan_reduce_count": "כעת {now} משולשים; יישמרו כ-{kept}.",
+    "ui.scan_reduce_hint": "אזורים שטוחים מאבדים משולשים ראשונים, מפורטים אחרונים. עם שגיאה מרבית היא נעצרת מוקדם יותר אם כיווץ יזיז את המשטח מעבר לכך."
   },
   "vi": {
     "ALIGN": "CĂN CHỈNH",
@@ -885,7 +927,13 @@
     "ui.scan_holes_fair": "Làm trơn miếng vá",
     "ui.scan_holes_found": "Sẽ lấp {within} trên {holes} lỗ (giữ lại {unfillable} cạnh hở không thuộc vòng đơn nào).",
     "ui.scan_holes_hint": "Các lỗ viền sáng sẽ được lấp; lỗ mờ lớn hơn giới hạn. Làm trơn miếng vá nối độ cong của mặt qua mỗi lỗ.",
-    "ui.scan_holes_none": "Không có lỗ nào nhỏ như vậy: hãy tăng lỗ lớn nhất."
+    "ui.scan_holes_none": "Không có lỗ nào nhỏ như vậy: hãy tăng lỗ lớn nhất.",
+    "help.scan.reduce": "Giảm số tam giác của bản quét: gộp trước các cạnh mà mất chúng làm mặt dịch ít nhất, không bao giờ gập mặt. Dùng cho bản quét dày để khớp, phác thảo và lưu nhanh hơn.",
+    "ui.scan_reduce_keep": "Giữ lại",
+    "ui.scan_reduce_error": "Sai số tối đa (0: không)",
+    "ui.scan_reduce_rim": "Giữ mép",
+    "ui.scan_reduce_count": "Hiện có {now} tam giác; giữ khoảng {kept}.",
+    "ui.scan_reduce_hint": "Vùng phẳng mất tam giác trước, vùng chi tiết sau cùng. Khi đặt sai số tối đa, nó dừng sớm hơn nếu một lần gộp làm mặt dịch xa hơn thế."
   },
   "en-GB": {
     "cmd.scan_center": "Centre on Origin",

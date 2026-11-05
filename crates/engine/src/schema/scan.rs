@@ -567,6 +567,51 @@ pub struct ScanHolesResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Reduce a scan's triangles: edges collapsed cheapest first, where a collapse costs how far it
+/// moves the surface (quadric errors), never folding it. The scan is written back in its Insert
+/// Mesh feature; one undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanReduceParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The share of the triangles to keep, above 0 and at most 1. Default: 0.5 (unless `triangles`
+    /// or `max_error` is given).
+    #[serde(default)]
+    pub ratio: Option<f64>,
+    /// How many triangles to keep. Instead of `ratio`.
+    #[serde(default)]
+    pub triangles: Option<u64>,
+    /// The most a collapse may move the surface, root mean square: it stops first if this is
+    /// reached.
+    #[serde(default)]
+    pub max_error: Option<LengthExpr>,
+    /// Keep the scan's open edges where they are. Default: true.
+    #[serde(default)]
+    pub keep_rim: Option<bool>,
+}
+
+/// What `scan.reduce` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanReduceResult {
+    /// The scan.
+    pub body: String,
+    /// Its triangles before and after.
+    pub before: usize,
+    pub triangles: usize,
+    pub collapses: usize,
+    /// What ended it: `target` (the count asked for), `error` (`max_error`) or `no_more_collapses`.
+    pub stopped: String,
+    /// The largest error of any collapse made, root mean square, in mm.
+    pub largest_error: f64,
+    /// The Insert Mesh feature the scan was written back into.
+    pub feature: u64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// A way a scan could stand.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct ScanBase {

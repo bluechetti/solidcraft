@@ -1,0 +1,611 @@
+//! Fewer triangles for a scan (SurfaceCraft's reducer): edges collapsed cheapest first, where a
+//! collapse costs the squared distance of the new point from the planes of the faces that met at
+//! the two it replaces (Garland and Heckbert's quadric errors), weighted by those faces' area.
+//!
+//! A collapse is refused where it would fold the surface (the link condition), turn a face over or
+//! make it a sliver, pinch the rim, or touch an edge of three or more faces. With the rim kept, a
+//! point on it never moves and a collapse across it is made dear. The candidates sit in a heap of
+//! four children a node; a collapse leaves its point's old entries behind, which are dropped as
+//! they come up and purged in bulk once there are many.
+
+use solidcore_record::Vec3;
+use solidcraft_geom::prelude::*;
+
+use crate::{Scan, welded};
+
+/// How far to reduce.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Settings {
+    /// Stop at this many triangles or fewer (0: no such limit).
+    pub target: usize,
+    /// Stop before a collapse whose error (root mean square distance, mm) would pass this (0: none).
+    pub max_error: f64,
+    /// Keep the scan's open edges where they are.
+    pub keep_rim: bool,
+}
+
+/// Which limit ended a reduction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stopped {
+    Target,
+    Error,
+    /// Nothing more could be collapsed.
+    Done,
+}
+
+impl Stopped {
+    pub fn name(self) -> &'static str {
+        match self {
+            Stopped::Target => "target",
+            Stopped::Error => "error",
+            Stopped::Done => "no_more_collapses",
+        }
+    }
+}
+
+/// A reduced scan and how it came about.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Reduced {
+    pub positions: Vec<Vec3>,
+    pub triangles: Vec<[u32; 3]>,
+    pub collapses: usize,
+    pub stopped: Stopped,
+    /// The largest error (root mean square, mm) of any collapse made.
+    pub largest_error: f64,
+}
+
+/// Reduces the scan. `None` when it has no triangles or neither limit is set.
+pub fn reduce(scan: &Scan, settings: Settings) -> Option<Reduced> {
+    if scan.triangle_count() == 0 || (settings.target == 0 && !(settings.max_error > 0.0)) {
+        return None;
+    }
+    let mut r = Reducer::new(scan, settings);
+    if r.tris.is_empty() {
+        return None;
+    }
+    Some(r.run())
+}
+
+/// The sum of squared distances from some planes, as a quadratic form in (x, y, z, 1): a symmetric
+/// 4 × 4 matrix, ten numbers.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Quadric([f64; 10]);
+
+impl Quadric {
+    /// The plane through points p with n·p + o = 0 (n unit), scaled by `w`.
+    fn plane(n: Vec3, o: f64, w: f64) -> Self {
+        Quadric([
+            w * n.x * n.x,
+            w * n.x * n.y,
+            w * n.x * n.z,
+            w * n.x * o,
+            w * n.y * n.y,
+            w * n.y * n.z,
+            w * n.y * o,
+            w * n.z * n.z,
+            w * n.z * o,
+            w * o * o,
+        ])
+    }
+
+    fn plus(self, other: Quadric) -> Quadric {
+        Quadric(std::array::from_fn(|k| self.0[k] + other.0[k]))
+    }
+
+    fn value(&self, v: Vec3) -> f64 {
+        let [a, b, c, d, e, f, g, h, i, j] = self.0;
+        let (x, y, z) = (v.x, v.y, v.z);
+        (a * x * x + 2.0 * b * x * y + 2.0 * c * x * z + 2.0 * d * x + e * y * y + 2.0 * f * y * z + 2.0 * g * y + h * z * z + 2.0 * i * z + j)
+            .max(0.0)
+    }
+
+    /// Where the sum is least, when all three directions are well enough determined.
+    fn least(&self) -> Option<Vec3> {
+        let [a, b, c, d, e, f, g, h, i, _] = self.0;
+        let m = [[a, b, c], [b, e, f], [c, f, h]];
+        let trace = a + e + h;
+        let det = a * (e * h - f * f) - b * (b * h - f * c) + c * (b * f - e * c);
+        if !(trace > 0.0 && det.abs() > 1e-9 * (trace / 3.0).powi(3)) {
+            return None;
+        }
+        let [x, y, z] = crate::symmetry::solve3(&m, [-d, -g, -i])?;
+        let p = Vec3::new(x, y, z);
+        p.is_finite().then_some(p)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Entry {
+    cost: f64,
+    a: u32,
+    b: u32,
+    version_a: u32,
+    version_b: u32,
+}
+
+/// Children of a node of the heap.
+const ARITY: usize = 4;
+/// The heap is purged of stale entries once this share of its size has come up stale.
+const PURGE_SHARE: usize = 16;
+
+struct Reducer {
+    settings: Settings,
+    pos: Vec<Vec3>,
+    quadric: Vec<Quadric>,
+    weight: Vec<f64>,
+    tris: Vec<[u32; 3]>,
+    alive: Vec<bool>,
+    incident: Vec<Vec<u32>>,
+    version: Vec<u32>,
+    rim: Vec<bool>,
+    locked: Vec<bool>,
+    mark: Vec<u32>,
+    mark2: Vec<u32>,
+    stamp: u32,
+    stamp2: u32,
+    heap: Vec<Entry>,
+    alive_count: usize,
+}
+
+fn key(x: u32, y: u32) -> u64 {
+    (u64::from(x.min(y)) << 32) | u64::from(x.max(y))
+}
+
+fn has(t: [u32; 3], v: u32) -> bool {
+    t.contains(&v)
+}
+
+impl Reducer {
+    fn new(scan: &Scan, settings: Settings) -> Self {
+        // Points at one place are one point, so a seam the file wrote is not an open edge.
+        let weld = welded(scan.positions);
+        let mut id = vec![u32::MAX; scan.positions.len()];
+        let mut pos = Vec::new();
+        for (v, &rep) in weld.iter().enumerate() {
+            if rep as usize == v {
+                id[v] = pos.len() as u32;
+                pos.push(scan.positions[v]);
+            }
+        }
+        let mut incident = vec![Vec::new(); pos.len()];
+        let mut tris = Vec::with_capacity(scan.triangle_count());
+        for (t, tri) in scan.triangles.iter().enumerate() {
+            if scan.corners(t).is_none() {
+                continue;
+            }
+            let [a, b, c] = tri.map(|i| id[weld[i as usize] as usize]);
+            // A triangle that is a line or a point once points are merged is none.
+            if a == b || b == c || c == a {
+                continue;
+            }
+            let k = tris.len() as u32;
+            tris.push([a, b, c]);
+            for v in [a, b, c] {
+                incident[v as usize].push(k);
+            }
+        }
+        let (n, count) = (pos.len(), tris.len());
+        Reducer {
+            settings,
+            pos,
+            quadric: vec![Quadric::default(); n],
+            weight: vec![0.0; n],
+            alive: vec![true; count],
+            tris,
+            incident,
+            version: vec![0; n],
+            rim: vec![false; n],
+            locked: vec![false; n],
+            mark: vec![0; n],
+            mark2: vec![0; n],
+            stamp: 0,
+            stamp2: 0,
+            heap: Vec::new(),
+            alive_count: count,
+        }
+    }
+
+    /// Each face's plane, weighted by its area, into its corners; and which edges have one face (the
+    /// rim) or more than two (locked), by sorting every face's edges.
+    fn prepare(&mut self) {
+        let mut edges: Vec<(u64, u32)> = Vec::with_capacity(self.tris.len() * 3);
+        for (t, &v) in self.tris.iter().enumerate() {
+            let [p0, p1, p2] = v.map(|i| self.pos[i as usize]);
+            let cross = (p1 - p0).cross(p2 - p0);
+            let twice = cross.len();
+            if twice > 0.0 && twice.is_finite() {
+                let n = cross / twice;
+                let plane = Quadric::plane(n, -n.dot(p0), twice / 2.0);
+                for c in v {
+                    self.quadric[c as usize] = self.quadric[c as usize].plus(plane);
+                    self.weight[c as usize] += twice / 6.0;
+                }
+            }
+            for (corner, (x, y)) in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])].into_iter().enumerate() {
+                edges.push((key(x, y), (3 * t + corner) as u32));
+            }
+        }
+        edges.sort_unstable();
+        let mut open = vec![false; self.tris.len() * 3];
+        let mut start = 0;
+        while start < edges.len() {
+            let end = start + edges[start..].iter().take_while(|e| e.0 == edges[start].0).count();
+            let (a, b) = ((edges[start].0 >> 32) as usize, (edges[start].0 & 0xFFFF_FFFF) as usize);
+            match end - start {
+                1 => {
+                    open[edges[start].1 as usize] = true;
+                    self.rim[a] = true;
+                    self.rim[b] = true;
+                }
+                2 => {}
+                // Three or more faces: not a surface there, and not to be touched.
+                _ => {
+                    self.locked[a] = true;
+                    self.locked[b] = true;
+                }
+            }
+            start = end;
+        }
+        if !self.settings.keep_rim {
+            return;
+        }
+        // A rim cut across is dear: a plane through each open edge, square to its face, weighted by
+        // the edge's length.
+        for (t, &v) in self.tris.iter().enumerate() {
+            let [p0, p1, p2] = v.map(|i| self.pos[i as usize]);
+            let Some(n) = (p1 - p0).cross(p2 - p0).normalized() else { continue };
+            for (corner, (x, y)) in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])].into_iter().enumerate() {
+                if !open[3 * t + corner] {
+                    continue;
+                }
+                let (a, b) = (self.pos[x as usize], self.pos[y as usize]);
+                let length = a.dist(b);
+                let Some(unit) = ((b - a) / length.max(1e-300)).cross(n).normalized().filter(|_| length > 0.0) else { continue };
+                let penalty = Quadric::plane(unit, -unit.dot(a), 100.0 * length * length);
+                for c in [x, y] {
+                    self.quadric[c as usize] = self.quadric[c as usize].plus(penalty);
+                }
+            }
+        }
+    }
+
+    fn less(l: &Entry, r: &Entry) -> bool {
+        (l.cost, l.a, l.b) < (r.cost, r.a, r.b)
+    }
+
+    fn push(&mut self, entry: Entry) {
+        self.heap.push(entry);
+        let mut child = self.heap.len() - 1;
+        while child > 0 {
+            let parent = (child - 1) / ARITY;
+            if !Self::less(&self.heap[child], &self.heap[parent]) {
+                break;
+            }
+            self.heap.swap(child, parent);
+            child = parent;
+        }
+    }
+
+    fn sift_down(&mut self, mut parent: usize) {
+        let count = self.heap.len();
+        loop {
+            let first = ARITY * parent + 1;
+            if first >= count {
+                break;
+            }
+            let mut smallest = first;
+            for child in first + 1..(first + ARITY).min(count) {
+                if Self::less(&self.heap[child], &self.heap[smallest]) {
+                    smallest = child;
+                }
+            }
+            if !Self::less(&self.heap[smallest], &self.heap[parent]) {
+                break;
+            }
+            self.heap.swap(parent, smallest);
+            parent = smallest;
+        }
+    }
+
+    fn pop(&mut self) -> Option<Entry> {
+        let top = *self.heap.first()?;
+        let last = self.heap.pop()?;
+        if !self.heap.is_empty() {
+            self.heap[0] = last;
+            self.sift_down(0);
+        }
+        Some(top)
+    }
+
+    /// Whether an entry is still its edge's cost: once either end has changed it never will be.
+    fn live(&self, e: &Entry) -> bool {
+        self.version[e.a as usize] == e.version_a && self.version[e.b as usize] == e.version_b
+    }
+
+    /// The stale entries dropped at once and the heap made again (Floyd's).
+    fn purge(&mut self) {
+        let version = &self.version;
+        self.heap.retain(|e| version[e.a as usize] == e.version_a && version[e.b as usize] == e.version_b);
+        if self.heap.len() > 1 {
+            for start in (0..=(self.heap.len() - 2) / ARITY).rev() {
+                self.sift_down(start);
+            }
+        }
+    }
+
+    /// What collapsing edge (a, b) costs, where the point goes and which end it keeps; `None` when
+    /// it may not be collapsed.
+    fn candidate(&self, a: u32, b: u32) -> Option<(f64, Vec3, u32)> {
+        let (ia, ib) = (a as usize, b as usize);
+        if self.locked[ia] || self.locked[ib] {
+            return None;
+        }
+        let q = self.quadric[ia].plus(self.quadric[ib]);
+        let w = (self.weight[ia] + self.weight[ib]).max(1e-300);
+        let (pa, pb) = (self.pos[ia], self.pos[ib]);
+        let (position, keeps) = match (self.rim[ia], self.rim[ib]) {
+            // Both on the rim: along it only (checked by the caller), at the better end.
+            (true, true) if self.settings.keep_rim => {
+                if q.value(pa) <= q.value(pb) {
+                    (pa, a)
+                } else {
+                    (pb, b)
+                }
+            }
+            (true, true) => ((pa + pb) / 2.0, a),
+            (true, false) => (pa, a),
+            (false, true) => (pb, b),
+            (false, false) => match q.least() {
+                // Never far from the edge: an ill-conditioned answer can be anywhere.
+                Some(best) if best.dist((pa + pb) / 2.0) <= 2.0 * pa.dist(pb) + 1e-12 => (best, a),
+                Some(_) => ((pa + pb) / 2.0, a),
+                None => {
+                    let best = [pa, (pa + pb) / 2.0, pb].into_iter().min_by(|x, y| q.value(*x).total_cmp(&q.value(*y))).unwrap_or(pa);
+                    (best, a)
+                }
+            },
+        };
+        Some((q.value(position) / w, position, keeps))
+    }
+
+    fn run(&mut self) -> Reduced {
+        self.prepare();
+        // Every edge once, at its cost.
+        self.heap.reserve(self.tris.len() * 3 / 2);
+        for v in 0..self.pos.len() {
+            self.stamp = self.stamp.wrapping_add(1);
+            for slot in 0..self.incident[v].len() {
+                let tri = self.tris[self.incident[v][slot] as usize];
+                for other in tri {
+                    if other as usize > v && self.mark[other as usize] != self.stamp {
+                        self.mark[other as usize] = self.stamp;
+                        if let Some((cost, _, _)) = self.candidate(v as u32, other) {
+                            self.push(Entry { cost, a: v as u32, b: other, version_a: self.version[v], version_b: self.version[other as usize] });
+                        }
+                    }
+                }
+            }
+        }
+        let target = self.settings.target;
+        let limit = if self.settings.max_error > 0.0 { self.settings.max_error * self.settings.max_error } else { f64::INFINITY };
+        let (mut collapses, mut largest, mut stopped, mut stale) = (0, 0.0f64, Stopped::Done, 0usize);
+        while let Some(entry) = self.pop() {
+            if stale > self.heap.len() / PURGE_SHARE {
+                self.purge();
+                stale = 0;
+            }
+            if target > 0 && self.alive_count <= target {
+                stopped = Stopped::Target;
+                break;
+            }
+            if !self.live(&entry) {
+                stale += 1;
+                continue;
+            }
+            if entry.cost > limit {
+                stopped = Stopped::Error;
+                break;
+            }
+            if self.collapse(entry) {
+                collapses += 1;
+                largest = largest.max(entry.cost.sqrt());
+            }
+        }
+        if stopped == Stopped::Done && target > 0 && self.alive_count <= target {
+            stopped = Stopped::Target;
+        }
+        self.finish(collapses, stopped, largest)
+    }
+
+    /// Collapses the entry's edge if it may be.
+    fn collapse(&mut self, entry: Entry) -> bool {
+        let (a, b) = (entry.a, entry.b);
+        let (ia, ib) = (a as usize, b as usize);
+        let shared = self.incident[ia].iter().filter(|&&t| self.alive[t as usize] && has(self.tris[t as usize], b)).count();
+        if !(1..=2).contains(&shared) {
+            return false;
+        }
+        // Two rim points joined by an edge that is not the rim: collapsing it would pinch.
+        if self.rim[ia] && self.rim[ib] && shared != 1 {
+            return false;
+        }
+        let Some((_, p, keep)) = self.candidate(a, b) else { return false };
+        let gone = if keep == a { b } else { a };
+        let (ik, ig) = (keep as usize, gone as usize);
+        // The link condition: the two may share no neighbours but those opposite the edge.
+        self.stamp = self.stamp.wrapping_add(1);
+        for &t in &self.incident[ik] {
+            if self.alive[t as usize] {
+                for other in self.tris[t as usize] {
+                    if other != keep {
+                        self.mark[other as usize] = self.stamp;
+                    }
+                }
+            }
+        }
+        self.stamp2 = self.stamp2.wrapping_add(1);
+        let mut common = 0;
+        for &t in &self.incident[ig] {
+            if !self.alive[t as usize] {
+                continue;
+            }
+            for other in self.tris[t as usize] {
+                let o = other as usize;
+                if other != gone && other != keep && self.mark[o] == self.stamp && self.mark2[o] != self.stamp2 {
+                    self.mark2[o] = self.stamp2;
+                    common += 1;
+                }
+            }
+        }
+        if common != shared {
+            return false;
+        }
+        // No face may turn over, or become a sliver, at the new place.
+        for vertex in [ik, ig] {
+            for &t in &self.incident[vertex] {
+                if !self.alive[t as usize] {
+                    continue;
+                }
+                let tri = self.tris[t as usize];
+                if has(tri, keep) && has(tri, gone) {
+                    continue;
+                }
+                let before = tri.map(|i| self.pos[i as usize]);
+                let after = tri.map(|i| if i == keep || i == gone { p } else { self.pos[i as usize] });
+                let nb = (before[1] - before[0]).cross(before[2] - before[0]);
+                let na = (after[1] - after[0]).cross(after[2] - after[0]);
+                let (lb, la) = (nb.len(), na.len());
+                if la == 0.0 || la <= 1e-14 * lb {
+                    return false;
+                }
+                if lb > 0.0 && (nb / lb).dot(na / la) < 0.2 {
+                    return false;
+                }
+            }
+        }
+        // `gone` becomes `keep`, at `p`.
+        for slot in 0..self.incident[ig].len() {
+            let t = self.incident[ig][slot];
+            if !self.alive[t as usize] {
+                continue;
+            }
+            let tri = self.tris[t as usize];
+            if has(tri, keep) {
+                self.alive[t as usize] = false;
+                self.alive_count -= 1;
+                continue;
+            }
+            self.tris[t as usize] = tri.map(|c| if c == gone { keep } else { c });
+            self.incident[ik].push(t);
+        }
+        self.incident[ig] = Vec::new();
+        let alive = &self.alive;
+        self.incident[ik].retain(|&t| alive[t as usize]);
+        for slot in 0..self.incident[ik].len() {
+            let tri = self.tris[self.incident[ik][slot] as usize];
+            for other in tri {
+                if other != keep {
+                    let alive = &self.alive;
+                    self.incident[other as usize].retain(|&t| alive[t as usize]);
+                }
+            }
+        }
+        self.pos[ik] = p;
+        self.quadric[ik] = self.quadric[ia].plus(self.quadric[ib]);
+        self.weight[ik] = self.weight[ia] + self.weight[ib];
+        self.rim[ik] = self.rim[ia] || self.rim[ib];
+        self.locked[ik] = self.locked[ia] || self.locked[ib];
+        self.version[ik] = self.version[ik].wrapping_add(1);
+        self.version[ig] = u32::MAX;
+        // The merged point's edges have new costs.
+        self.stamp = self.stamp.wrapping_add(1);
+        for slot in 0..self.incident[ik].len() {
+            let tri = self.tris[self.incident[ik][slot] as usize];
+            for other in tri {
+                if other != keep && self.mark[other as usize] != self.stamp {
+                    self.mark[other as usize] = self.stamp;
+                    let (lo, hi) = (keep.min(other), keep.max(other));
+                    if let Some((cost, _, _)) = self.candidate(lo, hi) {
+                        self.push(Entry { cost, a: lo, b: hi, version_a: self.version[lo as usize], version_b: self.version[hi as usize] });
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    fn finish(&self, collapses: usize, stopped: Stopped, largest_error: f64) -> Reduced {
+        let mut remap = vec![u32::MAX; self.pos.len()];
+        let mut positions = Vec::new();
+        let mut triangles = Vec::with_capacity(self.alive_count);
+        for (t, tri) in self.tris.iter().enumerate() {
+            if !self.alive[t] {
+                continue;
+            }
+            triangles.push(tri.map(|c| {
+                if remap[c as usize] == u32::MAX {
+                    remap[c as usize] = positions.len() as u32;
+                    positions.push(self.pos[c as usize]);
+                }
+                remap[c as usize]
+            }));
+        }
+        Reduced { positions, triangles, collapses, stopped, largest_error }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_meshes::fine_cuboid;
+
+    /// A finely cut box reduces to its twelve triangles' worth without moving a corner: flat faces
+    /// cost nothing to collapse, and the box stays the box.
+    #[test]
+    fn a_fine_box_reduces_to_a_coarse_one() {
+        let (positions, triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(30.0, 20.0, 10.0), 10);
+        let scan = Scan::new(&positions, &triangles);
+        let done = reduce(&scan, Settings { target: 100, max_error: 0.0, keep_rim: true }).unwrap();
+        assert!(done.triangles.len() <= 100 && done.stopped == Stopped::Target, "{} {:?}", done.triangles.len(), done.stopped);
+        assert!(done.largest_error < 1e-6, "flat collapses: {}", done.largest_error);
+        let (lo, hi) = done.positions.iter().fold((done.positions[0], done.positions[0]), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+        assert!(lo.dist(Vec3::ZERO) < 1e-9 && hi.dist(Vec3::new(30.0, 20.0, 10.0)) < 1e-9, "the box's corners kept: {lo:?} {hi:?}");
+        // Every point still on the box's surface.
+        let on = |p: &Vec3| [p.x, p.y, p.z].iter().zip([30.0, 20.0, 10.0]).any(|(c, s)| c.abs() < 1e-9 || (c - s).abs() < 1e-9);
+        assert!(done.positions.iter().all(on));
+    }
+
+    /// A curved surface stops where the error allows; a limit that allows nothing collapses nothing
+    /// that bends.
+    #[test]
+    fn the_error_limit_stops_a_curved_surface() {
+        let n = 40u32;
+        let mut positions = Vec::new();
+        for j in 0..=n {
+            for i in 0..=n {
+                let (x, y) = (f64::from(i), f64::from(j));
+                positions.push(Vec3::new(x, y, 0.02 * ((x - 20.0).powi(2) + (y - 20.0).powi(2))));
+            }
+        }
+        let mut triangles = Vec::new();
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * (n + 1) + i;
+                triangles.push([k, k + 1, k + n + 2]);
+                triangles.push([k, k + n + 2, k + n + 1]);
+            }
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let loose = reduce(&scan, Settings { target: 0, max_error: 0.1, keep_rim: true }).unwrap();
+        let tight = reduce(&scan, Settings { target: 0, max_error: 0.02, keep_rim: true }).unwrap();
+        assert_eq!((loose.stopped, tight.stopped), (Stopped::Error, Stopped::Error));
+        assert!(
+            loose.triangles.len() < tight.triangles.len() && tight.triangles.len() < triangles.len(),
+            "{} {}",
+            loose.triangles.len(),
+            tight.triangles.len()
+        );
+        assert!(loose.largest_error <= 0.1 && tight.largest_error <= 0.02);
+        assert!(reduce(&scan, Settings { target: 0, max_error: 0.0, keep_rim: true }).is_none(), "no limit");
+    }
+}
