@@ -5664,7 +5664,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanSplit(k) => return crate::dialogs_scan_split::commands(app, k, &d.inputs),
         Kind::ScanAlignPairs(k) => return crate::dialogs_scan_align::commands(k, &d.inputs),
         Kind::ScanFillet(k) => return crate::dialogs_scan_fillet::commands(k, &d.inputs),
-        Kind::ScanFlatten(k) => return crate::dialogs_scan_flatten::commands(k, &d.inputs),
+        Kind::ScanFlatten(k) => return crate::dialogs_scan_flatten::commands(app, k, &d.inputs),
         Kind::ScanFloating(k) => return crate::dialogs_scan_clean::commands(k),
         Kind::ScanHoles(k) => return crate::dialogs_scan_clean::holes_commands(k),
         Kind::ScanReduce(k) => return crate::dialogs_scan_clean::reduce_commands(k),

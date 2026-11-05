@@ -1,5 +1,5 @@
 //! Flatten (`scan.flatten`): click the part of the scan to unroll (the piece there, or only as far
-//! as the radius round the click); the region is marked on the scan and the pattern drawn where
+//! as the radius round the click), or select it first; the region is marked on the scan and the pattern drawn where
 //! it will lie, beside the scan on XY, with how far it is from the scan (its area, each edge's
 //! stretch, triangles turned over) before OK sketches its outline.
 
@@ -67,8 +67,12 @@ fn tr(id: &'static str) -> &'static str {
 }
 
 /// What `scan.flatten` is sent.
-fn params(k: &Flatten, inputs: &[SelInput]) -> Option<Value> {
-    let Some(Sel::Face { body, point, .. }) = items(inputs, 0).first() else { return None };
+fn params(app: &SolveApp, k: &Flatten, inputs: &[SelInput]) -> Option<Value> {
+    let Some(Sel::Face { body, point, .. }) = items(inputs, 0).first() else {
+        // Nothing clicked: what is selected on the scan, if anything.
+        let sel = solidcraft_engine::cmd::scan::select::selected(&app.session).filter(|k| k.count > 0)?;
+        return Some(json!({"body": sel.scan, "relax": k.relax}));
+    };
     let mut p = json!({"body": body, "point": [point.x, point.y, point.z], "relax": k.relax});
     if k.radius > 0.0 {
         p["radius"] = json!(k.radius);
@@ -78,7 +82,7 @@ fn params(k: &Flatten, inputs: &[SelInput]) -> Option<Value> {
 
 /// Flatten again when the click, the values or the design have changed.
 fn look(app: &SolveApp, k: &mut Flatten, inputs: &[SelInput]) {
-    let Some(p) = params(k, inputs) else {
+    let Some(p) = params(app, k, inputs) else {
         k.shown = None;
         return;
     };
@@ -146,8 +150,8 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Flatten, inputs: &[SelInp
 }
 
 /// What OK runs.
-pub fn commands(k: &Flatten, inputs: &[SelInput]) -> Result<Vec<(String, Value)>, String> {
-    let p = params(k, inputs).ok_or_else(|| tr("ui.scan_flatten_hint").to_owned())?;
+pub fn commands(app: &SolveApp, k: &Flatten, inputs: &[SelInput]) -> Result<Vec<(String, Value)>, String> {
+    let p = params(app, k, inputs).ok_or_else(|| tr("ui.scan_flatten_hint").to_owned())?;
     k.shown.as_ref().ok_or("still flattening")?.result.as_ref().map_err(Clone::clone)?;
     Ok(vec![("scan.flatten".into(), p)])
 }

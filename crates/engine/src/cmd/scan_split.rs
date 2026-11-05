@@ -31,7 +31,7 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.split", "Split Me
     .icon("split_body")
     .contract(&SPLIT_CONTRACT)
     .output(output_schema_for::<ScanSplitResult>)
-    .params("body?: the scan (default: the selected or only one); one cutter: plane: XY|XZ|YZ|plane name|{origin, normal} | shape: {kind: plane|cylinder|sphere|cone|torus, then at: [x,y,z] on the scan (fitted there, as the Fit tools fit it) or point|center|apex, normal|axis, radius, half_angle (deg), major, minor} | cutter: a body (solid, surface or another scan) | curve: {sketch, curve} or {points, closed?} (a 3D curve on the scan, carried square to its own plane) | sketch: id|name (its closed outlines, or one open curve, square to its plane); keep?: both (default: the scan keeps the positive side, in front, outside or left, and a new scan `<scan> <side>` the other) | front | back | curves (the crossing kept as 3D sketch curves in `Split Curves`, the scan untouched); envelope?: thickness (two cuts half of it either side, the slab between a scan of its own with both, taken off with one side); offset?: length (a curve's cut reaches only this far from it, a sketch's only this far either side of its plane; default 0: right through); facing?: [x,y,z] (only triangles facing that way are cut): one undo step; a cut that misses the scan, or only slits it, is refused → body, cutter, keep, sides, triangles, made [{body, side, triangles, feature}], crossed, length, runs, closed_runs, chord_error, carried_on, sketch?, curves?, feature?")];
+    .params("body?: the scan (default: the selected or only one); one cutter: plane: XY|XZ|YZ|plane name|{origin, normal} | shape: {kind: plane|cylinder|sphere|cone|torus, then at: [x,y,z] on the scan (fitted there, as the Fit tools fit it) or point|center|apex, normal|axis, radius, half_angle (deg), major, minor} | cutter: a body (solid, surface or another scan) | curve: {sketch, curve} or {points, closed?} (a 3D curve on the scan, carried square to its own plane) | sketch: id|name (its closed outlines, or one open curve, square to its plane) | selection: true (parted along the edge of what is selected on the scan; with both, the selection becomes a scan of its own); keep?: both (default: the scan keeps the positive side, in front, outside or left, and a new scan `<scan> <side>` the other) | front | back | curves (the crossing kept as 3D sketch curves in `Split Curves`, the scan untouched); envelope?: thickness (two cuts half of it either side, the slab between a scan of its own with both, taken off with one side); offset?: length (a curve's cut reaches only this far from it, a sketch's only this far either side of its plane; default 0: right through); facing?: [x,y,z] (only triangles facing that way are cut): one undo step; a cut that misses the scan, or only slits it, is refused → body, cutter, keep, sides, triangles, made [{body, side, triangles, feature}], crossed, length, runs, closed_runs, chord_error, carried_on, sketch?, curves?, feature?")];
 
 fn reply<T: serde::Serialize>(r: T) -> Result<Value> {
     serde_json::to_value(r).map_err(|e| EngineError::Other(e.to_string()))
@@ -66,8 +66,8 @@ impl Keep {
     pub fn parse(keep: Option<&str>, cmd: &str) -> Result<Keep> {
         Ok(match keep.unwrap_or("both") {
             "both" => Keep::Both,
-            "front" | "in_front" | "outside" | "left" => Keep::Side(1),
-            "back" | "behind" | "inside" | "right" => Keep::Side(-1),
+            "front" | "in_front" | "outside" | "left" | "rest" => Keep::Side(1),
+            "back" | "behind" | "inside" | "right" | "selected" => Keep::Side(-1),
             "curves" => Keep::Curves,
             other => return Err(bad(cmd, format!("`keep` is both, front, back or curves, not `{other}`"))),
         })
@@ -312,6 +312,18 @@ fn open_chain(sk: &solidcraft_sketch::Sketch, cmd: &str) -> Result<Vec<Vec2>> {
 
 /// What `p` would do to the scan, before anything changes.
 pub fn plan(s: &Session, p: &Value, cmd: &str) -> Result<Planned> {
+    if crate::params::bool_(p, "selection") == Some(true) {
+        // Parted along the edge of what is selected on the scan.
+        let sel =
+            super::select::selected(s).filter(|k| k.count > 0).ok_or_else(|| bad(cmd, "nothing is selected on a scan: select part of it first"))?;
+        let on = mesh(s, &json!({ "body": sel.scan }), cmd)?;
+        let others = ["plane", "shape", "cutter", "curve", "sketch"].into_iter().filter(|k| p.get(*k).is_some_and(|v| !v.is_null())).count();
+        if others > 0 {
+            return Err(bad(cmd, "give one cutter: the selection, or another"));
+        }
+        let cut = split::by_triangles(&on.scan(), &sel.selected).map_err(|e| bad(cmd, e.to_string()))?;
+        return Ok(Planned { body: on.body, cutter: "selection".into(), sides: Sides::SelectedRest, cut });
+    }
     let on = mesh(s, p, cmd)?;
     let (cutter, name) = cutter(s, p, &on, cmd)?;
     let envelope = length_or_zero(s, p, "envelope", cmd)?;

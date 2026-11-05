@@ -206,3 +206,27 @@ fn bad_cutters_are_refused_with_the_reason() {
         assert!(e.contains(why), "{p}: {e}");
     }
 }
+
+/// The box's top selected: parted along its edge, both kept, the top is a scan of its own.
+#[test]
+fn what_is_selected_is_parted_into_a_scan_of_its_own() {
+    let mut s = Session::default();
+    let body = scan(&mut s);
+    let tops: Vec<usize> = {
+        let state = s.model.state();
+        let (p, t) = state.body(&body).and_then(|b| b.body.triangle_mesh()).unwrap();
+        t.iter().enumerate().filter(|(_, tri)| tri.iter().all(|&v| (p[v as usize].z - 20.0).abs() < 1e-6)).map(|(i, _)| i).collect()
+    };
+    run(&mut s, "scan.select", json!({"body": body, "triangles": tops}));
+    let r = run(&mut s, "scan.split", json!({"selection": true}));
+    assert_eq!(r["cutter"], "selection");
+    assert_eq!(r["sides"], json!(["selected", "rest"]));
+    assert_eq!((r["runs"].as_u64(), r["closed_runs"].as_u64()), (Some(1), Some(1)), "{r}");
+    let top = r["made"][0]["body"].as_str().unwrap().to_owned();
+    assert_eq!(top, format!("{body} Selected"));
+    assert!(mesh_of(&s, &top).0.iter().all(|q| (q.z - 20.0).abs() < 1e-6));
+    assert!(
+        !mesh_of(&s, &body).0.iter().any(|q| (q.z - 20.0).abs() < 1e-6 && q.x > 1.0 && q.x < 39.0 && q.y > 1.0 && q.y < 29.0),
+        "the top left the scan"
+    );
+}

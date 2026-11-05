@@ -89,3 +89,16 @@ fn a_roll_needs_a_pattern() {
     let e = s.execute("scan.roll_onto_scan", &json!({})).unwrap_err().to_string();
     assert!(e.contains("no flat pattern") || e.contains("no scan"), "{e}");
 }
+
+/// With part of the scan selected, Flatten unrolls that part, and remembers it by its triangles.
+#[test]
+fn what_is_selected_is_flattened() {
+    let mut s = Session::default();
+    let scan = bent_scan(&mut s);
+    let half: Vec<usize> = (0..1200).collect();
+    run(&mut s, "scan.select", json!({"body": scan, "triangles": half}));
+    let r = run(&mut s, "scan.flatten", json!({}));
+    assert_eq!(r["triangles"], 1200, "{r}");
+    let memo = &s.scan_flats.last().unwrap().1;
+    assert_eq!(memo["triangles"].as_array().map(Vec::len), Some(1200));
+}

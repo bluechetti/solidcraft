@@ -33,6 +33,10 @@ pub struct ScanSplitParams {
     /// A sketch (id or name) whose closed outlines, or one open curve, cut square to its plane.
     #[serde(default)]
     pub sketch: Option<Value>,
+    /// Part the scan along the edge of what is selected on it (with both, the selection becomes
+    /// a scan of its own).
+    #[serde(default)]
+    pub selection: Option<bool>,
     /// What to keep: both (the default: the scan keeps the cutter's positive side, in front,
     /// outside or left, and a new scan the other), front, back, or curves (the crossing kept as 3D
     /// sketch curves, the scan untouched). The sides' own names (in_front, behind, outside, inside,
@@ -106,7 +110,7 @@ mod tests {
     fn schemas_and_the_key_check_agree() {
         assert_keys(
             input_schema_for::<ScanSplitParams>(),
-            &["body", "curve", "cutter", "envelope", "facing", "keep", "offset", "plane", "shape", "sketch"],
+            &["body", "curve", "cutter", "envelope", "facing", "keep", "offset", "plane", "selection", "shape", "sketch"],
         );
     }
 }

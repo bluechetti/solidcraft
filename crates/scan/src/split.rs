@@ -41,6 +41,8 @@ pub enum Sides {
     InsideOutside,
     /// An open curve: to its right and to its left, seen from the way the scan faces.
     RightLeft,
+    /// Triangles chosen: the selected and the rest.
+    SelectedRest,
 }
 
 impl Sides {
@@ -50,6 +52,7 @@ impl Sides {
             Sides::BehindInFront => ("behind", "in_front"),
             Sides::InsideOutside => ("inside", "outside"),
             Sides::RightLeft => ("right", "left"),
+            Sides::SelectedRest => ("selected", "rest"),
         }
     }
 }
@@ -408,6 +411,55 @@ pub fn split(scan: &Scan, cutter: Cutter, envelope: f64, facing: Option<Vec3>) -
         return Err(SplitError::Misses);
     }
     Ok(made)
+}
+
+/// The scan parted along the edge of the triangles `inside` (one flag a triangle): those are the
+/// negative side, the rest the positive; no triangle is clipped. The edge between them is the cut.
+pub fn by_triangles(scan: &Scan, inside: &[bool]) -> Result<Cut, SplitError> {
+    if scan.triangles.is_empty() {
+        return Err(SplitError::Empty);
+    }
+    let side: Vec<i8> = (0..scan.triangles.len()).map(|t| if inside.get(t).copied().unwrap_or(false) { -1 } else { 1 }).collect();
+    let rep = welded(scan.positions);
+    let key = |a: u32, b: u32| {
+        let (ra, rb) = (rep[a as usize], rep[b as usize]);
+        (ra.min(rb), ra.max(rb))
+    };
+    // An edge with a triangle on each side is the cut.
+    let mut first: HashMap<(u32, u32), (usize, u32, u32)> = HashMap::with_capacity(scan.triangles.len() * 2);
+    let mut segments = Vec::new();
+    for (t, tri) in scan.triangles.iter().enumerate() {
+        if tri.iter().any(|&v| v as usize >= scan.positions.len()) {
+            continue;
+        }
+        for k in 0..3 {
+            let (a, b) = (tri[k], tri[(k + 1) % 3]);
+            match first.get(&key(a, b)) {
+                Some(&(other, _, _)) if side[other] != side[t] => segments.push([scan.positions[a as usize], scan.positions[b as usize]]),
+                Some(_) => {}
+                None => {
+                    first.insert(key(a, b), (t, a, b));
+                }
+            }
+        }
+    }
+    if side.iter().all(|&s| s == side[0]) || segments.is_empty() {
+        return Err(SplitError::Misses);
+    }
+    let length = segments.iter().map(|s| s[0].dist(s[1])).sum();
+    Ok(Cut {
+        positions: scan.positions.to_vec(),
+        triangles: scan.triangles.to_vec(),
+        side,
+        origin: (0..scan.triangles.len() as u32).collect(),
+        crossed: 0,
+        added: 0,
+        segments,
+        length,
+        chord_error: 0.0,
+        slit: false,
+        carried_on: false,
+    })
 }
 
 /// The scan clipped along `cutter`, every triangle on one side or the other.
@@ -1021,5 +1073,18 @@ mod tests {
         let tube = Shape::Cylinder { point: Vec3::new(20.0, 15.0, 0.0), axis: Vec3::Z, radius: 6.0 };
         let cut = split(&Scan::new(&p, &t), Cutter::shape(tube), 0.0, Some(Vec3::Z)).unwrap();
         assert_eq!(cut.runs().len(), 1, "the top, not the bottom");
+    }
+
+    #[test]
+    fn triangles_chosen_part_along_their_edge() {
+        let (p, t) = block();
+        // The top's triangles.
+        let top: Vec<bool> = t.iter().map(|tri| tri.iter().all(|&v| (p[v as usize].z - 20.0).abs() < 1e-9)).collect();
+        let cut = by_triangles(&Scan::new(&p, &t), &top).unwrap();
+        assert_eq!(cut.count(-1), top.iter().filter(|x| **x).count());
+        let runs = cut.runs();
+        assert_eq!((runs.len(), runs[0].1), (1, true), "one ring round the top");
+        assert!((cut.length - 140.0).abs() < 1e-9);
+        assert_eq!(by_triangles(&Scan::new(&p, &t), &vec![false; t.len()]).err(), Some(SplitError::Misses));
     }
 }

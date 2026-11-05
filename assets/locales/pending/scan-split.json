@@ -23,8 +23,10 @@
     "ui.scan_split_found": "{negative}: {below} · {positive}: {above} triangles · {runs} cuts, {length} mm",
     "ui.scan_split_slab": "Slab: {triangles} triangles, kept as a scan of its own",
     "ui.scan_split_carried_on": "The cutter stops short of the scan: the cut carries on past its side to finish.",
-    "ui.scan_split_hint": "Pick what cuts the scan: a plane or flat face, a body or another scan, a 3D curve or a sketch, or click the scan to fit a shape there.",
-    "ui.scan_split_cutter": "Cutter"
+    "ui.scan_split_hint": "Pick what cuts the scan: a plane or flat face, a body or another scan, a 3D curve or a sketch, or click the scan to fit a shape there; with nothing picked, what is selected on the scan is parted from the rest.",
+    "ui.scan_split_cutter": "Cutter",
+    "ui.scan_split_selected": "Selected",
+    "ui.scan_split_rest": "Rest"
   },
   "de": {
     "cmd.scan_split": "Netz teilen",
@@ -50,8 +52,10 @@
     "ui.scan_split_found": "{negative}: {below} · {positive}: {above} Dreiecke · {runs} Schnitte, {length} mm",
     "ui.scan_split_slab": "Scheibe: {triangles} Dreiecke, als eigener Scan behalten",
     "ui.scan_split_carried_on": "Das Schnittwerkzeug endet vor dem Scan: der Schnitt läuft über seinen Rand hinaus weiter.",
-    "ui.scan_split_hint": "Wählen Sie, was den Scan schneidet: eine Ebene oder ebene Fläche, einen Körper oder anderen Scan, eine 3D-Kurve oder Skizze, oder klicken Sie auf den Scan, um dort eine Form einzupassen.",
-    "ui.scan_split_cutter": "Schnittwerkzeug"
+    "ui.scan_split_hint": "Wählen Sie, was den Scan schneidet: eine Ebene oder ebene Fläche, einen Körper oder anderen Scan, eine 3D-Kurve oder Skizze, oder klicken Sie auf den Scan, um dort eine Form einzupassen. Ist nichts gewählt, wird das auf dem Scan Ausgewählte vom Rest getrennt.",
+    "ui.scan_split_cutter": "Schnittwerkzeug",
+    "ui.scan_split_selected": "Ausgewählt",
+    "ui.scan_split_rest": "Rest"
   },
   "ja": {
     "cmd.scan_split": "メッシュを分割",
@@ -77,8 +81,10 @@
     "ui.scan_split_found": "{negative}: {below} · {positive}: {above} 三角形 · 切断 {runs} 本、{length} mm",
     "ui.scan_split_slab": "板: {triangles} 三角形、別のスキャンとして保持",
     "ui.scan_split_carried_on": "カッターはスキャンの手前で終わっています: 切断はその端を越えて延長されます。",
-    "ui.scan_split_hint": "スキャンを切るものを選びます: 平面か平らな面、ボディか別のスキャン、3D 曲線かスケッチ。またはスキャンをクリックしてそこに形状をフィットさせます。",
-    "ui.scan_split_cutter": "カッター"
+    "ui.scan_split_hint": "スキャンを切るものを選びます: 平面か平らな面、ボディか別のスキャン、3D 曲線かスケッチ。またはスキャンをクリックしてそこに形状をフィットさせます。 何も選ばなければ、スキャン上の選択部分を残りから分けます。",
+    "ui.scan_split_cutter": "カッター",
+    "ui.scan_split_selected": "選択部分",
+    "ui.scan_split_rest": "残り"
   },
   "ko": {
     "cmd.scan_split": "메시 분할",
@@ -104,8 +110,10 @@
     "ui.scan_split_found": "{negative}: {below} · {positive}: {above} 삼각형 · 절단 {runs}개, {length} mm",
     "ui.scan_split_slab": "판: 삼각형 {triangles}개, 별도의 스캔으로 유지",
     "ui.scan_split_carried_on": "커터가 스캔에 못 미칩니다: 절단이 그 끝을 지나 이어집니다.",
-    "ui.scan_split_hint": "스캔을 자를 것을 고르세요: 평면이나 평평한 면, 바디나 다른 스캔, 3D 곡선이나 스케치. 또는 스캔을 클릭해 그곳에 형상을 맞추세요.",
-    "ui.scan_split_cutter": "커터"
+    "ui.scan_split_hint": "스캔을 자를 것을 고르세요: 평면이나 평평한 면, 바디나 다른 스캔, 3D 곡선이나 스케치. 또는 스캔을 클릭해 그곳에 형상을 맞추세요. 아무것도 고르지 않으면 스캔에서 선택한 부분을 나머지와 나눕니다.",
+    "ui.scan_split_cutter": "커터",
+    "ui.scan_split_selected": "선택한 부분",
+    "ui.scan_split_rest": "나머지"
   },
   "zh": {
     "cmd.scan_split": "拆分网格",
@@ -131,8 +139,10 @@
     "ui.scan_split_found": "{negative}:{below} · {positive}:{above} 个三角形 · {runs} 条切线，{length} mm",
     "ui.scan_split_slab": "薄片：{triangles} 个三角形，保留为单独的扫描",
     "ui.scan_split_carried_on": "切割工具未到达扫描：切口越过其边缘继续完成。",
-    "ui.scan_split_hint": "选择切开扫描的对象：平面或平面面、实体或另一个扫描、3D 曲线或草图，或点击扫描在该处拟合一个形状。",
-    "ui.scan_split_cutter": "切割工具"
+    "ui.scan_split_hint": "选择切开扫描的对象：平面或平面面、实体或另一个扫描、3D 曲线或草图，或点击扫描在该处拟合一个形状。 若未选取任何对象，则把扫描上选中的部分与其余部分分开。",
+    "ui.scan_split_cutter": "切割工具",
+    "ui.scan_split_selected": "选中部分",
+    "ui.scan_split_rest": "其余部分"
   },
   "ar": {
     "cmd.scan_split": "تقسيم الشبكة",
@@ -158,8 +168,10 @@
     "ui.scan_split_found": "{negative}: {below} · {positive}: {above} مثلث · {runs} قطع، {length} مم",
     "ui.scan_split_slab": "الشريحة: {triangles} مثلث، محفوظة كمسح مستقل",
     "ui.scan_split_carried_on": "أداة القطع تتوقف قبل المسح: يستمر القطع بعد حافتها حتى يكتمل.",
-    "ui.scan_split_hint": "اختر ما يقطع المسح: مستوى أو وجهًا مستويًا، جسمًا أو مسحًا آخر، منحنى ثلاثي الأبعاد أو رسمًا، أو انقر على المسح لملاءمة شكل هناك.",
-    "ui.scan_split_cutter": "أداة القطع"
+    "ui.scan_split_hint": "اختر ما يقطع المسح: مستوى أو وجهًا مستويًا، جسمًا أو مسحًا آخر، منحنى ثلاثي الأبعاد أو رسمًا، أو انقر على المسح لملاءمة شكل هناك. إن لم تختر شيئًا، يُفصل المحدد على المسح عن الباقي.",
+    "ui.scan_split_cutter": "أداة القطع",
+    "ui.scan_split_selected": "المحدد",
+    "ui.scan_split_rest": "الباقي"
   },
   "he": {
     "cmd.scan_split": "פיצול רשת",
@@ -185,8 +197,10 @@
     "ui.scan_split_found": "{negative}: {below} · {positive}: {above} משולשים · {runs} חיתוכים, {length} מ״מ",
     "ui.scan_split_slab": "פרוסה: {triangles} משולשים, נשמרת כסריקה נפרדת",
     "ui.scan_split_carried_on": "כלי החיתוך נגמר לפני הסריקה: החיתוך ממשיך מעבר לקצהו עד הסוף.",
-    "ui.scan_split_hint": "בחרו מה חותך את הסריקה: מישור או פרצוף ישר, גוף או סריקה אחרת, עקומה תלת־ממדית או סקיצה, או לחצו על הסריקה כדי להתאים שם צורה.",
-    "ui.scan_split_cutter": "כלי חיתוך"
+    "ui.scan_split_hint": "בחרו מה חותך את הסריקה: מישור או פרצוף ישר, גוף או סריקה אחרת, עקומה תלת־ממדית או סקיצה, או לחצו על הסריקה כדי להתאים שם צורה. אם לא נבחר דבר, הנבחר על הסריקה מופרד מהשאר.",
+    "ui.scan_split_cutter": "כלי חיתוך",
+    "ui.scan_split_selected": "הנבחר",
+    "ui.scan_split_rest": "השאר"
   },
   "vi": {
     "cmd.scan_split": "Tách lưới",
@@ -212,7 +226,9 @@
     "ui.scan_split_found": "{negative}: {below} · {positive}: {above} tam giác · {runs} vết cắt, {length} mm",
     "ui.scan_split_slab": "Lát: {triangles} tam giác, giữ thành bản quét riêng",
     "ui.scan_split_carried_on": "Dụng cụ cắt dừng trước bản quét: vết cắt tiếp tục qua mép của nó để hoàn tất.",
-    "ui.scan_split_hint": "Chọn thứ cắt bản quét: mặt phẳng hoặc mặt phẳng của khối, khối hoặc bản quét khác, đường cong 3D hoặc bản phác, hoặc nhấp vào bản quét để khớp một hình ở đó.",
-    "ui.scan_split_cutter": "Dụng cụ cắt"
+    "ui.scan_split_hint": "Chọn thứ cắt bản quét: mặt phẳng hoặc mặt phẳng của khối, khối hoặc bản quét khác, đường cong 3D hoặc bản phác, hoặc nhấp vào bản quét để khớp một hình ở đó. Nếu không chọn gì, phần đã chọn trên bản quét được tách khỏi phần còn lại.",
+    "ui.scan_split_cutter": "Dụng cụ cắt",
+    "ui.scan_split_selected": "Phần đã chọn",
+    "ui.scan_split_rest": "Phần còn lại"
   }
 }

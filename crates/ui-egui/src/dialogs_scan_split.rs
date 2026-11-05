@@ -3,7 +3,8 @@
 //! and choose what to keep: both sides (the other a scan of its own), one side, or only the
 //! crossing as 3D sketch curves. The cut is worked out before anything changes: the crossing is
 //! drawn over the picture, the side that becomes a new scan, or goes, is marked on the scan, and
-//! the dialog says how much is on each side; an envelope's slab is marked in its own colour.
+//! the dialog says how much is on each side; an envelope's slab is marked in its own colour. With
+//! nothing picked, what is selected on the scan is parted from the rest along its edge.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -79,10 +80,14 @@ fn on_scan(app: &SolveApp, inputs: &[SelInput]) -> bool {
 
 /// The cutter picked, as `scan.split` takes it.
 fn cutter(app: &SolveApp, k: &SplitMesh, inputs: &[SelInput]) -> Option<Value> {
-    let scan = target(app)?;
     let s = &app.session;
+    // Nothing picked: what is selected on the scan, if anything.
+    let Some(first) = items(inputs, 0).first() else {
+        return solidcraft_engine::cmd::scan::select::selected(s).filter(|k| k.count > 0).map(|_| json!({"selection": true}));
+    };
+    let scan = target(app)?;
     let sketch_is_3d = |id: u64| s.model.state().sketch(id).is_some_and(|sk| sk.sketch.view.three_d);
-    Some(match items(inputs, 0).first()? {
+    Some(match first {
         Sel::Plane { name } => json!({"plane": name}),
         Sel::Face { body, point, .. } if *body == scan => {
             json!({"shape": {"kind": KINDS[k.kind.min(KINDS.len() - 1)], "at": [point.x, point.y, point.z]}})
@@ -103,7 +108,9 @@ fn cutter(app: &SolveApp, k: &SplitMesh, inputs: &[SelInput]) -> Option<Value> {
 /// What OK sends, from the choices.
 fn params(app: &SolveApp, k: &SplitMesh, inputs: &[SelInput]) -> Option<Value> {
     let mut p = cutter(app, k, inputs)?;
-    p["body"] = json!(target(app)?);
+    if p.get("selection").is_none() {
+        p["body"] = json!(target(app)?);
+    }
     p["keep"] = json!(["both", "front", "back", "curves"][k.keep.min(3)]);
     if k.envelope > 0.0 && k.keep != 3 {
         p["envelope"] = json!(format!("{} mm", k.envelope));
@@ -196,6 +203,8 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SplitMesh, inputs: &[SelI
             "outside" => "ui.scan_split_outside",
             "right" => "ui.scan_split_right",
             "left" => "ui.scan_split_left",
+            "selected" => "ui.scan_split_selected",
+            "rest" => "ui.scan_split_rest",
             _ => "ui.scan_split_in_front",
         })
     };

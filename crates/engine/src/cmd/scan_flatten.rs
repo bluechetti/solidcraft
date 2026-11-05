@@ -41,7 +41,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("flat")
         .contract(&FLATTEN_CONTRACT)
         .output(output_schema_for::<ScanFlattenResult>)
-        .params("body?: the scan (default: the picked, selected or only one); point?: [x,y,z] on it (default: the point picked; the region is the piece of the scan there); radius?: length (the region only as far as this round the point); triangles?: [indices of the scan's triangles] (the region, instead of point and radius); relax?: bool (default true: relaxed toward keeping each edge's length after the angle-keeping map); tolerance?: length (default 0.05 mm: how far the outline's lines and arcs may stray from the region's edge); name?: the sketch's (default `Flat Pattern`): the region unrolled onto the XY plane beside the scan, its outline sketched, one undo step; a region that closes round on itself is refused (cut it with Split Mesh) → body, sketch, triangles, loops, lines, arcs, circles, area, flat_area, worst_area, strain_rms, strain_max, flipped, relaxed, settled, shift"),
+        .params("body?: the scan (default: the picked, selected or only one); point?: [x,y,z] on it (default: what is selected on the scan, else the point picked; the region is the piece of the scan there); radius?: length (the region only as far as this round the point); triangles?: [indices of the scan's triangles] (the region, instead of point and radius); relax?: bool (default true: relaxed toward keeping each edge's length after the angle-keeping map); tolerance?: length (default 0.05 mm: how far the outline's lines and arcs may stray from the region's edge); name?: the sketch's (default `Flat Pattern`): the region unrolled onto the XY plane beside the scan, its outline sketched, one undo step; a region that closes round on itself is refused (cut it with Split Mesh) → body, sketch, triangles, loops, lines, arcs, circles, area, flat_area, worst_area, strain_rms, strain_max, flipped, relaxed, settled, shift"),
     CommandSpec::new("scan.roll_onto_scan", "Roll onto Scan", crate::checked!("scan.roll_onto_scan", roll_onto_scan))
         .at("SCAN", "SKETCH")
         .icon("spline")
@@ -85,7 +85,13 @@ fn region(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<Vec<usize>> {
     }
     let point = match p.get("point").filter(|v| !v.is_null()) {
         Some(v) => crate::params::vec3(v).ok_or_else(|| bad(cmd, "`point` must be [x, y, z]"))?,
-        None => picked_on(s, &on.body).ok_or_else(|| bad(cmd, "pick the part of the scan to flatten, or give `point` or `triangles`"))?,
+        None => {
+            // What is selected on the scan, else the point picked on it.
+            if let Some(sel) = super::select::selected(s).filter(|k| k.scan == on.body && k.count > 0) {
+                return Ok(sel.selected.iter().enumerate().filter(|(_, on)| **on).map(|(t, _)| t).collect());
+            }
+            picked_on(s, &on.body).ok_or_else(|| bad(cmd, "select or pick the part of the scan to flatten, or give `point` or `triangles`"))?
+        }
     };
     let scan = on.scan();
     let seed = solidcraft_scan::base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
@@ -100,7 +106,8 @@ fn region(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<Vec<usize>> {
 /// The pattern `p` asks for: the scan, its region flattened, and the shift that lays it on XY
 /// beside the scan (its box's corner a tenth of the scan's size past the scan's along X).
 pub fn flattened(s: &Session, p: &Value, cmd: &str) -> Result<(String, Flat, Vec2)> {
-    let on = mesh(s, &json!({ "body": str_(p, "body") }), cmd)?;
+    let body = str_(p, "body").map(str::to_owned).or_else(|| super::select::selected(s).map(|k| k.scan.clone()));
+    let on = mesh(s, &json!({ "body": body }), cmd)?;
     let triangles = region(s, p, &on, cmd)?;
     let flat = flatten::flatten(&on.scan(), &triangles, bool_(p, "relax").unwrap_or(true)).map_err(|e| bad(cmd, e.to_string()))?;
     let (lo, hi) = on.scan().bounds().ok_or_else(|| bad(cmd, "the scan has no points"))?;
@@ -151,11 +158,19 @@ fn flatten_scan(s: &mut Session, p: &Value) -> Result<Value> {
             memo.insert((*key).into(), v.clone());
         }
     }
-    if !memo.contains_key("point")
-        && !memo.contains_key("triangles")
-        && let Some(q) = picked_on(s, &body)
-    {
-        memo.insert("point".into(), json!([q.x, q.y, q.z]));
+    if !memo.contains_key("point") && !memo.contains_key("triangles") {
+        // The selection may change: the region is kept as its triangles.
+        match super::select::selected(s).filter(|k| k.scan == body && k.count > 0) {
+            Some(sel) => {
+                let list: Vec<usize> = sel.selected.iter().enumerate().filter(|(_, on)| **on).map(|(t, _)| t).collect();
+                memo.insert("triangles".into(), json!(list));
+            }
+            None => {
+                if let Some(q) = picked_on(s, &body) {
+                    memo.insert("point".into(), json!([q.x, q.y, q.z]));
+                }
+            }
+        }
     }
     s.scan_flats.retain(|(id, _)| *id != sketch);
     s.scan_flats.push((sketch, Value::Object(memo)));

@@ -15,7 +15,8 @@ pub struct ScanFlattenParams {
     /// The scan. Default: the picked, selected or only one.
     #[serde(default)]
     pub body: Option<String>,
-    /// A point on the scan: the region is the piece of the scan there. Default: the point picked.
+    /// A point on the scan: the region is the piece of the scan there. Default: what is selected
+    /// on the scan, else the point picked.
     #[serde(default)]
     pub point: Option<Point3>,
     /// The region only as far as this round the point, in mm. Default: the whole piece.
