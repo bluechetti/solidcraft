@@ -85,6 +85,7 @@ pub const SKIPPED_FUNCTIONS: &[(&str, &str)] = &[
     ("crates/doc/src/eval.rs:ModelState::warm_meshes", "display meshes made ahead"),
     ("crates/doc/src/eval.rs:mesh_bodies", "mesh bodies: a mesh import's triangles"),
     ("crates/doc/src/eval.rs:mesh_stand_in", "mesh bodies: a mesh import's fingerprint"),
+    ("crates/doc/src/model_cache.rs:has_legacy_names", "mesh bodies: a mesh import's triangles left out of a search for names"),
     ("crates/engine/src/cmd/file.rs:saved_preview", "the preview picture saved in a design"),
     ("crates/kernel/src/body.rs:Body::classify_point", "mesh bodies: its mesh-body branch (a B-rep is classified by SMLib)"),
     ("crates/kernel/src/body.rs:Body::mesh_untimed", "the mesher: a body's tessellation"),

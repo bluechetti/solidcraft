@@ -458,6 +458,12 @@ fn a_scan_is_fingerprinted_by_a_digest_of_its_triangles() {
     model.evaluate(&doc);
     assert_ne!(model.results[0].fingerprint, before);
     assert_eq!(model.last_recomputed, 1);
+
+    // Saving its model reads the feature for names saved before format 14 without the triangles,
+    // and still finds one there.
+    assert!(!super::model_cache::has_legacy_names(&doc) && model.saved(&doc).is_some());
+    doc.feature_mut(id).unwrap().face_names = vec![format!("{}scan:face:0", crate::naming::LEGACY_MARK)];
+    assert!(super::model_cache::has_legacy_names(&doc));
 }
 
 /// Pinning body names fingerprints the timeline again only from the first renamed feature on

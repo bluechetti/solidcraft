@@ -66,6 +66,66 @@ pub fn levels(positions: &[Vec3], triangles: &[[u32; 3]], targets: &[usize]) -> 
 }
 
 /// [`levels`], in pieces of about `piece` triangles on up to `workers` threads.
+/// A coarse copy of a mesh for a small picture: the vertices in each cube of side `cell` merged
+/// into one at their mean, and the triangles left with two corners in one cube dropped (vertex
+/// clustering, Rossignac and Borrel, "Multi-resolution 3D approximations for rendering complex
+/// scenes", 1993). One pass, so a scan of tens of millions of triangles that a picture shows a
+/// few hundred pixels across is drawn from about as many triangles as it covers cubes, not its
+/// own. Each triangle kept comes with the index of the first one it stands for (for its face's
+/// colour). Triangles with an index out of range or a point not finite are left out.
+pub fn clustered(positions: &[Vec3], triangles: &[[u32; 3]], cell: f64) -> (Vec<Vec3>, Vec<[u32; 3]>, Vec<u32>) {
+    let mut out = (Vec::new(), Vec::new(), Vec::new());
+    if !(cell.is_finite() && cell > 0.0) {
+        return out;
+    }
+    let mut cells: std::collections::HashMap<[u64; 3], u32, std::hash::BuildHasherDefault<BitsHasher>> = Default::default();
+    let mut sums: Vec<(Vec3, f64)> = Vec::new();
+    // Each vertex's cube's place in `sums` (u32::MAX: a point not finite).
+    let at: Vec<u32> = positions
+        .iter()
+        .map(|p| {
+            if !p.is_finite() {
+                return u32::MAX;
+            }
+            let key = [p.x, p.y, p.z].map(|v| ((v / cell).floor() as i64).cast_unsigned());
+            let next = u32::try_from(sums.len()).unwrap_or(u32::MAX);
+            let i = *cells.entry(key).or_insert(next);
+            if i == next {
+                sums.push((Vec3::ZERO, 0.0));
+            }
+            if let Some((sum, n)) = sums.get_mut(i as usize) {
+                *sum += *p;
+                *n += 1.0;
+            }
+            i
+        })
+        .collect();
+    drop(cells);
+    let mut seen: std::collections::HashSet<[u32; 3], std::hash::BuildHasherDefault<BitsHasher>> = Default::default();
+    let corner = |i: u32| at.get(i as usize).copied().filter(|i| *i != u32::MAX);
+    for (k, t) in triangles.iter().enumerate() {
+        let (Some(a), Some(b), Some(c)) = (corner(t[0]), corner(t[1]), corner(t[2])) else { continue };
+        if a == b || b == c || c == a {
+            continue;
+        }
+        // The same three cubes in any turn are one triangle.
+        let start = if a < b && a < c {
+            0
+        } else if b < c {
+            1
+        } else {
+            2
+        };
+        let turned = [[a, b, c], [b, c, a], [c, a, b]][start];
+        if seen.insert(turned) {
+            out.1.push([a, b, c]);
+            out.2.push(u32::try_from(k).unwrap_or(u32::MAX));
+        }
+    }
+    out.0 = sums.into_iter().map(|(sum, n)| sum * (1.0 / n.max(1.0))).collect();
+    out
+}
+
 fn levels_in_pieces(positions: &[Vec3], triangles: &[[u32; 3]], targets: &[usize], piece: usize, workers: usize) -> Vec<Level> {
     if triangles.is_empty() || triangles.len() > MAX_TRIANGLES {
         return Vec::new();
@@ -289,6 +349,9 @@ impl std::hash::Hasher for BitsHasher {
     }
     fn write_u64(&mut self, x: u64) {
         self.0 = (self.0.rotate_left(5) ^ x).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+    fn write_u32(&mut self, x: u32) {
+        self.write_u64(u64::from(x));
     }
 }
 

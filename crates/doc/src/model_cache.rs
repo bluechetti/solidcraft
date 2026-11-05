@@ -48,11 +48,23 @@ fn bad(what: &str) -> DocError {
 }
 
 /// A design holding a face or edge name saved before format 14 (marked
-/// [`crate::naming::LEGACY_MARK`]): it saves without a model.
-fn has_legacy_names(doc: &Document) -> bool {
+/// [`crate::naming::LEGACY_MARK`]): it saves without a model. A mesh import is read without its
+/// triangles, which hold no names: a scan's 42 million coordinates written out as text took
+/// seconds and gigabytes on every save.
+pub(super) fn has_legacy_names(doc: &Document) -> bool {
     let mark = format!("\"{}", crate::naming::LEGACY_MARK);
     doc.features.iter().any(|f| match &f.kind {
         FeatureKind::Import { .. } => f.face_names.iter().any(|n| n.starts_with(crate::naming::LEGACY_MARK)),
+        FeatureKind::MeshImport { .. } => {
+            let mut bare = f.clone();
+            if let FeatureKind::MeshImport { meshes, .. } = &mut bare.kind {
+                for m in meshes.iter_mut() {
+                    m.positions = Arc::from([]);
+                    m.triangles = Arc::from([]);
+                }
+            }
+            serde_json::to_string(&bare).is_ok_and(|j| j.contains(&mark))
+        }
         _ => serde_json::to_string(f).is_ok_and(|j| j.contains(&mark)),
     })
 }

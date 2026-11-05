@@ -1539,6 +1539,43 @@ mod tests {
         assert_eq!(states(one.0 + one.1 - 1), None);
     }
 
+    /// A scan too large for the room the cache has is not encoded: a 28-million-triangle one
+    /// took 10 s and 3 GB to encode and check on every save, then was left out. The states that
+    /// hold it are not kept, as when it is encoded and found too large; the final state, which
+    /// does not, is.
+    #[test]
+    fn a_scan_too_large_for_the_model_cache_leaves_out_only_the_states_that_hold_it() {
+        use solidcore_record::Vec3;
+        let document = b"{}";
+        let size = |m: &solidcraft_doc::SavedModel| {
+            let (manifest, payload) = native_cache::encode_model(m, document, usize::MAX).unwrap();
+            manifest.len() + payload.len()
+        };
+        let mut model = timeline_model();
+        let space = size(&model);
+        // A grid of 160 x 160 squares (1.2 MB as the cache keeps it) for one of the second
+        // feature's own bodies.
+        let n = 160u32;
+        let positions: Vec<Vec3> = (0..=n).flat_map(|j| (0..=n).map(move |i| Vec3::new(f64::from(i), f64::from(j), 0.))).collect();
+        let at = |i: u32, j: u32| j * (n + 1) + i;
+        let triangles: Vec<[u32; 3]> = (0..n)
+            .flat_map(|j| (0..n).flat_map(move |i| [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]]))
+            .collect();
+        model.bodies[16] = solidcraft_kernel::mesh_body(&positions, &triangles).unwrap();
+        assert!(positions.len() * 24 > space);
+        let (manifest, payload) = native_cache::encode_model(&model, document, space).unwrap();
+        assert!(manifest.len() + payload.len() <= space);
+        let states = kept_states(&serde_json::from_slice::<Value>(&manifest).unwrap()["model"]);
+        assert!(!states[1] && states[3], "{states:?}");
+        // The same scan in every state leaves no state to keep: no cache, and the save goes on.
+        let scan = model.bodies[16].clone();
+        model.bodies.iter_mut().for_each(|b| *b = scan.clone());
+        assert!(native_cache::encode_model(&model, document, space).is_err());
+        // With room for it, it is kept, once.
+        let (manifest, _) = native_cache::encode_model(&model, document, usize::MAX).unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&manifest).unwrap()["slices"].as_array().unwrap().len(), 1);
+    }
+
     /// A model whose bodies are all one part stores it once: its records, not its bodies, fill the
     /// room. When those of every state do not fit, the final state is still kept if it fits.
     #[test]

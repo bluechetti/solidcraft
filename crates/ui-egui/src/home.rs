@@ -15,6 +15,8 @@ use crate::ui_kit::{self, FileView, RecoveryMessage};
 /// Recent designs kept.
 pub const MAX_RECENT: usize = 12;
 const THUMB: [usize; 2] = solidcraft_engine::io::THUMBNAIL_SIZE;
+/// Most triangles a body is drawn from in a Home picture as they are ([`thumbnail`]).
+const PICTURE_TRIANGLES: usize = 1_000_000;
 const SAMPLE_PICTURES: [&[u8]; 6] = [
     include_bytes!("../../../assets/samples/exports/0.png"),
     include_bytes!("../../../assets/samples/exports/1.png"),
@@ -140,7 +142,27 @@ pub fn thumbnail(s: &Session) -> Option<egui::ColorImage> {
     cam.fit(&b);
     // Fill the card: the fit leaves room for a whole window's margins.
     cam.distance *= 0.7;
-    let scene = solidcraft_engine::view::scene(s, &cam).ok()?;
+    let mut scene = solidcraft_engine::view::scene(s, &cam).ok()?;
+    // A scan of millions of triangles is drawn from one clustered to cubes a fraction of a pixel
+    // across: the picture is the same, without the gigabytes of corners its own would take.
+    let cell = b.diagonal() / 1000.0;
+    for m in scene.meshes.iter_mut().filter(|m| m.mesh.triangles.len() > PICTURE_TRIANGLES) {
+        let (positions, triangles, from) = solidcraft_engine::geom::simplify::clustered(&m.mesh.positions, &m.mesh.triangles, cell);
+        let tri_face = from.iter().map(|k| m.mesh.tri_face.get(*k as usize).copied().unwrap_or(0)).collect();
+        let source = &m.mesh;
+        m.mesh = std::sync::Arc::new(solidcraft_engine::geom::Mesh {
+            positions,
+            triangles,
+            tri_face,
+            normals: Vec::new(),
+            edges: source.edges.clone(),
+            display_only_edges: source.display_only_edges,
+            seams: source.seams.clone(),
+            smooth_edges: source.smooth_edges.clone(),
+            sharp_edges: source.sharp_edges.clone(),
+            edge_faces: source.edge_faces.clone(),
+        });
+    }
     // Drawn on the GPU by the renderer the app installs; none (a browser): no picture.
     let picture = solidcraft_engine::capture::rgba(&scene, &cam, THUMB[0] as u32, THUMB[1] as u32).ok()?;
     Some(egui::ColorImage::from_rgba_unmultiplied(THUMB, &picture.rgba))

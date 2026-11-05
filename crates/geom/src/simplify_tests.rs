@@ -171,6 +171,37 @@ fn every_triangle_is_in_one_piece() {
     assert!(order.iter().copied().eq(0..10_000));
 }
 
+/// A fine sphere clustered for a small picture comes down to about as many triangles as cubes
+/// it crosses, every vertex within a cube of the surface, wound as it was, each triangle naming
+/// the one it came from; nothing that is not a mesh panics or invents triangles.
+#[test]
+fn a_mesh_clustered_for_a_picture_keeps_its_shape_in_far_fewer_triangles() {
+    let (pos, tris) = sphere(10.0, 200);
+    let cell = 1.0;
+    let (points, kept, from) = clustered(&pos, &tris, cell);
+    assert!(kept.len() < tris.len() / 20 && kept.len() > 500, "{} of {}", kept.len(), tris.len());
+    assert_eq!(from.len(), kept.len());
+    let level = Level { positions: points.clone(), triangles: kept.clone(), error: 0.0 };
+    let ball = 4.0 / 3.0 * std::f64::consts::PI * 1000.0;
+    assert!((volume(&level) - ball).abs() < ball * 0.05, "{} against {ball}", volume(&level));
+    for p in &points {
+        assert!((p.len() - 10.0).abs() < cell * 3f64.sqrt(), "{p:?}");
+    }
+    for (t, k) in kept.iter().zip(&from) {
+        let [a, b, c] = t.map(|i| points[i as usize]);
+        let [x, y, z] = tris[*k as usize].map(|i| pos[i as usize]);
+        assert!((b - a).cross(c - a).dot((y - x).cross(z - x)) >= 0.0, "turned over");
+    }
+    // A vertex not finite, a corner out of range, no room for cubes: left out, no panic.
+    let mut bad = pos.clone();
+    bad[0] = Vec3::new(f64::NAN, 0.0, 0.0);
+    let (_, fewer, _) = clustered(&bad, &[[0, 1, 2], [3, 4, 99], [3, 4, 5]], cell);
+    assert!(fewer.len() <= 1);
+    for cell in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert!(clustered(&pos, &tris, cell).1.is_empty());
+    }
+}
+
 /// Timing, not a check (`SOLIDCRAFT_BENCH_STL=part.stl cargo test --release -p solidcraft-geom
 /// --lib simplify_timing -- --ignored --nocapture`): the levels of a binary STL.
 #[test]
