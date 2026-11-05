@@ -9,8 +9,10 @@
 //! - [`curve`]: a curve drawn on the scan through points clicked on it, kept as a 3D sketch spline.
 //! - [`deviation`]: how far the scan is from the model built from it.
 //! - [`fit`]: a plane or a cylinder fitted to the part of the scan round a picked point.
+//! - [`free_form`]: a Free Form: a net over four corners clicked on the scan, fitted to it.
 //! - [`holes`]: the holes in a scan and the smooth patches that close them.
 //! - [`mirror_fill`]: a scan completed by its mirror image where it has nothing.
+//! - [`net`]: a Free Form's net changed as a whole: split, copied out at an edge, doubled, creased.
 //! - [`pieces`]: the pieces of a scan, and those small enough to float.
 //! - [`place`]: rigid moves that stand a scan on a base, rest it on the grid, centre it over the
 //!   origin or lay it along its own axes.
@@ -28,9 +30,12 @@ pub mod chain;
 pub mod curve;
 pub mod deviation;
 pub mod fit;
+pub mod free_form;
 pub mod holes;
 mod hull;
+pub mod merge;
 pub mod mirror_fill;
+pub mod net;
 pub mod pieces;
 pub mod place;
 pub mod reduce;
@@ -39,6 +44,7 @@ pub mod section;
 pub mod surface;
 pub mod surface_edit;
 pub mod symmetry;
+pub mod wrap;
 
 use std::collections::HashMap;
 

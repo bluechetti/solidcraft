@@ -758,3 +758,111 @@ fn a_plane_given_is_kept_however_little_matches() {
     let squared = run(&mut s, "scan.square_to_symmetry", json!({"plane": plane}));
     assert_eq!(squared["moved"], true, "{squared}");
 }
+
+/// A scan of a dome, `z = 8 − 0.004 r²` over 60 × 60, `n` squares a side.
+fn dome_triangles(n: u32) -> Vec<[Vec3; 3]> {
+    let at = |i: u32, j: u32| {
+        let (x, y) = (60.0 * f64::from(i) / f64::from(n), 60.0 * f64::from(j) / f64::from(n));
+        Vec3::new(x, y, 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2)))
+    };
+    let mut out = Vec::new();
+    for i in 0..n {
+        for j in 0..n {
+            out.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+            out.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+        }
+    }
+    out
+}
+
+/// New Free Form over a dome: a surface of its own lying on the scan, the one Edit Surface opens
+/// on; Edit Net changes its net, each one undo step; Edit Surface takes a whole net.
+#[test]
+fn free_form_makes_a_surface_on_the_scan_and_its_net_changes() {
+    let (mut s, _) = session_with_triangles("free-form", &dome_triangles(40));
+    let corners = json!([[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]]);
+    let made = run(&mut s, "scan.free_form", json!({"corners": corners, "count": 5}));
+    assert_eq!((made["surface"].as_str(), made["controls"].as_array().map(Vec::len)), (Some("FreeForm1"), Some(2)), "{made}");
+    assert!(made["rms"].as_f64().unwrap() < 0.05 && made["met"] == made["places"], "{made}");
+    let start = super::surface::editable(&s, None, "test").unwrap();
+    assert_eq!((start.body.as_str(), start.surface.count()), ("FreeForm1", [5, 5]), "the one made last is edited");
+
+    let refined = run(&mut s, "scan.edit_net", json!({"op": "refine"}));
+    assert_eq!(refined["controls"], json!([7, 7]), "{refined}");
+    let split = run(&mut s, "scan.edit_net", json!({"op": "split", "line": {"row": 2}}));
+    assert_eq!((split["controls"].clone(), split["line"].clone()), (json!([7, 8]), json!({"row": 3})), "{split}");
+    let creased = run(&mut s, "scan.edit_net", json!({"op": "crease", "line": {"column": 3}}));
+    assert_eq!(creased["creases"], json!([{"column": 3}]), "{creased}");
+    let out = run(&mut s, "scan.edit_net", json!({"op": "extend", "line": {"column": 6}, "distance": "5 mm"}));
+    assert_eq!((out["controls"].clone(), out["line"].clone()), (json!([8, 8]), json!({"column": 7})), "{out}");
+    let refused = s.execute("scan.edit_net", &json!({"op": "crease", "line": {"column": 1}})).unwrap_err().to_string();
+    assert!(refused.contains("three lines"), "{refused}");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(super::surface::editable(&s, None, "test").unwrap().surface.count(), [7, 8], "one undo step each");
+
+    // A whole net sent back as it is.
+    let now = super::surface::editable(&s, None, "test").unwrap().surface;
+    let points: Vec<[f64; 3]> = solidcraft_scan::surface_edit::points(&now).iter().map(|p| [p.x, p.y, p.z + 1.0]).collect();
+    let net = json!({"count": [7, 8], "knots": [now.knots()[0].clone(), now.knots()[1].clone()], "points": points});
+    run(&mut s, "scan.edit_surface", json!({"net": net}));
+    let raised = super::surface::editable(&s, None, "test").unwrap().surface;
+    assert!((raised.eval(0.5, 0.5).unwrap().z - now.eval(0.5, 0.5).unwrap().z - 1.0).abs() < 1e-6, "raised 1 mm");
+    let refused = s.execute("scan.free_form", &json!({"corners": [[0, 0, 0], [1, 0, 0]]})).unwrap_err().to_string();
+    assert!(refused.contains("four points"), "{refused}");
+}
+
+/// A quarter turn of a tube of radius 10 along Z, 40 long, as triangles.
+fn tube_triangles() -> Vec<[Vec3; 3]> {
+    let (rings, segments) = (20u32, 48u32);
+    let at = |r: u32, k: u32| {
+        let a = std::f64::consts::FRAC_PI_2 * f64::from(k) / f64::from(segments);
+        Vec3::new(10.0 * a.cos(), 10.0 * a.sin(), 40.0 * f64::from(r) / f64::from(rings))
+    };
+    let mut out = Vec::new();
+    for r in 0..rings {
+        for k in 0..segments {
+            out.push([at(r, k), at(r, k + 1), at(r + 1, k + 1)]);
+            out.push([at(r, k), at(r + 1, k + 1), at(r + 1, k)]);
+        }
+    }
+    out
+}
+
+/// Wrap Surface lays a net on a tube round the point given, fitted to it, kept as a Free Form;
+/// the world's Z is the same cylinder, X refuses; one undo step.
+#[test]
+fn wrap_surface_wraps_a_net_on_a_tube() {
+    let (mut s, _) = session_with_triangles("wrap", &tube_triangles());
+    let point = json!([10.0 * 0.7f64.cos(), 10.0 * 0.7f64.sin(), 20.0]);
+    let made = run(&mut s, "scan.wrap_surface", json!({"point": point, "reach": "60 mm"}));
+    assert_eq!((made["surface"].as_str(), made["controls"].clone()), (Some("FreeForm1"), json!([8, 20])), "{made}");
+    assert!((made["radius"].as_f64().unwrap() - 10.0).abs() < 0.05 && made["rms"].as_f64().unwrap() < 0.05, "{made}");
+    let about_z = run(&mut s, "scan.wrap_surface", json!({"point": point, "reach": "60 mm", "axis": "z", "details": "low"}));
+    assert_eq!(about_z["surface"].as_str(), Some("FreeForm2"), "{about_z}");
+    assert!((about_z["radius"].as_f64().unwrap() - 10.0).abs() < 0.05 && about_z["controls"][0] == 4, "{about_z}");
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.model.state().body("FreeForm2").is_none() && s.model.state().body("FreeForm1").is_some(), "one undo step");
+    let refused = s.execute("scan.wrap_surface", &json!({"point": point, "details": "huge"})).unwrap_err().to_string();
+    assert!(refused.contains("low, medium or fine"), "{refused}");
+}
+
+/// Two Free Forms clicked side by side on a dome, a little apart and of other sizes, are merged:
+/// their sides made one and sewn into one body of two faces; one undo step puts them back.
+#[test]
+fn merge_surfaces_sews_free_forms_side_by_side() {
+    let (mut s, _) = session_with_triangles("merge", &dome_triangles(40));
+    run(&mut s, "scan.free_form", json!({"corners": [[10, 10, 0], [30, 10, 0], [30, 50, 0], [10, 50, 0]], "count": 4}));
+    run(&mut s, "scan.free_form", json!({"corners": [[30.5, 10, 0], [50, 10, 0], [50, 50, 0], [30.5, 50, 0]], "count": 6}));
+    let refused = s.execute("scan.merge_surfaces", &json!({"surfaces": ["FreeForm1", "FreeForm2"], "gap": "0.1 mm"})).unwrap_err().to_string();
+    assert!(refused.contains("within the gap"), "{refused}");
+    let merged = run(&mut s, "scan.merge_surfaces", json!({}));
+    assert_eq!((merged["seams"].as_u64(), merged["body"].as_str()), (Some(1), Some("FreeForm1")), "{merged}");
+    {
+        let state = s.model.state();
+        let body = state.body("FreeForm1").expect("the sewn body");
+        assert_eq!(solidcraft_kernel::brep_record(&body.body).unwrap().faces.len(), 2, "two faces in one body");
+        assert!(state.body("FreeForm2").is_none(), "sewn into the first");
+    }
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.model.state().body("FreeForm2").is_some(), "one undo step");
+}

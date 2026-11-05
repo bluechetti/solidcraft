@@ -350,7 +350,12 @@ pub const SECTIONS: &[Section] = &[
         ],
     },
     Section { tab: "SCAN", panel: "FIT", promoted: 4, ids: &["scan.fit_plane", "scan.fit_cylinder", "scan.fit_sphere", "mesh.convert"] },
-    Section { tab: "SCAN", panel: "FREEFORM", promoted: 2, ids: &["scan.fit_surface", "scan.edit_surface"] },
+    Section {
+        tab: "SCAN",
+        panel: "FREEFORM",
+        promoted: 4,
+        ids: &["scan.fit_surface", "scan.free_form", "scan.wrap_surface", "scan.edit_surface", "scan.merge_surfaces", "surface.trim"],
+    },
     Section {
         tab: "SCAN",
         panel: "SKETCH",
@@ -476,6 +481,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("scan.complete_by_mirroring", "Mirror Fill"),
     ("scan.curve_on_scan", "Scan Curve"),
     ("scan.deviation", "Deviation"),
+    ("scan.free_form", "Free Form"),
     ("scan.remove_floating", "Floating"),
     ("scan.section_sketch", "Section"),
     ("scan.square_to_symmetry", "Square Up"),

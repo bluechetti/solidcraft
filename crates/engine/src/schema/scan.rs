@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::features::FeatureResult;
-use super::types::{LengthExpr, Point3};
+use super::types::{AngleExpr, LengthExpr, Point3};
 
 /// The ways a scan could stand on the ground, steadiest first: its broad flat faces and the poses
 /// it would rest in, then lying along its own axes. Reads only; `scan.stand_on_base` stands it on
@@ -427,10 +427,224 @@ pub struct ScanEditSurfaceParams {
     /// The scan to refit to. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub scan: Option<String>,
+    /// A whole new net, its shape changed (more or fewer points, other knots): given alone.
+    #[serde(default)]
+    pub net: Option<ScanNet>,
     /// How far a scan point may be from the surface to count as under it. Default: a tenth of the
     /// control net's size, at least 1 mm.
     #[serde(default)]
     pub reach: Option<LengthExpr>,
+}
+
+/// Make a Free Form: a cubic net over four corners clicked round its first face, fitted to the scan
+/// under it, kept as a surface body of its own. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanFreeFormParams {
+    /// The four corners, in order round the face, in mm.
+    pub corners: Vec<Point3>,
+    /// off (flat over the corners), follow (fitted to the scan, the default) or overall (fitted, the
+    /// places far off it left out, so it spans openings, dents and ribs).
+    #[serde(default)]
+    pub fit: Option<String>,
+    /// The net's points each way, 4 to 12. Default: 4.
+    #[serde(default)]
+    pub count: Option<u32>,
+    /// How much the net keeps from bending to the scan, 0 to 1. Default: 0.
+    #[serde(default)]
+    pub stiffness: Option<f64>,
+    /// The snap distance: the scan is met no farther than this from the face.
+    #[serde(default)]
+    pub reach: Option<LengthExpr>,
+    /// The scan. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+/// What `scan.free_form` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanFreeFormResult {
+    /// The scan fitted to (absent when not fitted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    /// The surface body made, and its points each way.
+    pub surface: String,
+    pub controls: [usize; 2],
+    /// The places fitted to, those met on the scan, and those kept.
+    pub places: usize,
+    pub met: usize,
+    pub kept: usize,
+    /// How far the kept places inside are from the face, root mean square, in mm.
+    pub rms: f64,
+    /// The feature that keeps it, as a feature command replies.
+    #[schemars(with = "FeatureResult")]
+    pub feature: Value,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// Wrap a Free Form on a tube-like part of the scan: a cylinder fitted to the part round a point
+/// on it, a net of rectangles laid on the cylinder over the part's reach and fitted to the scan,
+/// kept as a surface body of its own. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanWrapSurfaceParams {
+    /// A point on the part, in mm. Default: the point picked on the scan.
+    #[serde(default)]
+    pub point: Option<Point3>,
+    /// How far round the point the part reaches. Default: a fifth of the scan's size.
+    #[serde(default)]
+    pub reach: Option<LengthExpr>,
+    /// The cylinder's axis: fitted (to the part, the default), x, y or z (the world's, its line and
+    /// radius fitted across the part).
+    #[serde(default)]
+    pub axis: Option<String>,
+    /// How many points the net has the shorter way: low (4), medium (8, the default) or fine (14).
+    #[serde(default)]
+    pub details: Option<String>,
+    /// How far round the cylinder the net goes, about the middle of the part. Default: the part's
+    /// own reach.
+    #[serde(default)]
+    pub arc: Option<AngleExpr>,
+    /// How much the net keeps from bending to the scan, 0 to 1. Default: 0.
+    #[serde(default)]
+    pub stiffness: Option<f64>,
+    /// The scan. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+/// What `scan.wrap_surface` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanWrapSurfaceResult {
+    /// The scan wrapped on.
+    pub body: String,
+    /// The surface body made, and its points each way.
+    pub surface: String,
+    pub controls: [usize; 2],
+    /// The cylinder the net was laid on: a point of its axis, the axis, the radius (mm).
+    pub point: [f64; 3],
+    pub axis: [f64; 3],
+    pub radius: f64,
+    /// How far the part is from the cylinder on average, in mm.
+    pub off: f64,
+    /// The places fitted to, and those met on the scan.
+    pub places: usize,
+    pub met: usize,
+    /// How far the places are from the face, root mean square, in mm.
+    pub rms: f64,
+    /// The feature that keeps it, as a feature command replies.
+    #[schemars(with = "FeatureResult")]
+    pub feature: Value,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// Merge Free Forms whose sides run along each other: the sides within the gap made one curve (the
+/// nets' knots matched, the corners and points put half way between), then the surfaces sewn into
+/// one body. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanMergeSurfacesParams {
+    /// The surface bodies. Default: the selected ones, else every surface Fit Surface, New Free
+    /// Form or Wrap Surface made.
+    #[serde(default)]
+    pub surfaces: Option<Vec<String>>,
+    /// How far apart two sides may be, on average, to be made one. Default: a tenth of the
+    /// shortest side.
+    #[serde(default)]
+    pub gap: Option<LengthExpr>,
+    /// Sew the surfaces into one body (a solid when they close). Default: true.
+    #[serde(default)]
+    pub stitch: Option<bool>,
+}
+
+/// What `scan.merge_surfaces` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanMergeSurfacesResult {
+    /// The surfaces merged.
+    pub surfaces: Vec<String>,
+    /// How many pairs of sides were made one, and the widest gap closed, in mm.
+    pub seams: usize,
+    pub gap: f64,
+    /// The body sewn from them, when sewn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    /// The Stitch feature that sews them, as a feature command replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<FeatureResult>")]
+    pub feature: Option<Value>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// A whole control net: its points each way, its knots each way, and its points (u fastest).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanNet {
+    pub count: [u32; 2],
+    pub knots: [Vec<f64>; 2],
+    pub points: Vec<Point3>,
+    /// The degree each way. Default: 3 and 3.
+    #[serde(default)]
+    pub degree: Option<[u32; 2]>,
+}
+
+/// A line of a net's points: a row (one `v` index, all along u) or a column (one `u` index).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanNetLine {
+    #[serde(default)]
+    pub row: Option<u32>,
+    #[serde(default)]
+    pub column: Option<u32>,
+}
+
+/// Change a surface's net as a whole (SurfaceCraft's net tools): `refine` doubles its points (in
+/// u, v or both), `split` puts a line between `line` and its neighbour, `duplicate` copies `line`
+/// beside itself (to drag the copy out), `remove` takes it away, `crease` makes it sharp (the
+/// surface runs along it) and `uncrease` smooth again, `extend` copies a side `distance` out along
+/// the surface's tangent. Refine and split leave the surface as it was. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanEditNetParams {
+    /// The surface body. Default: the selected one, else the one made last.
+    #[serde(default)]
+    pub surface: Option<String>,
+    /// refine, split, duplicate, remove, crease, uncrease or extend.
+    pub op: String,
+    /// The line the change is at (all but refine).
+    #[serde(default)]
+    pub line: Option<ScanNetLine>,
+    /// duplicate: the copy after the line (default) or before it.
+    #[serde(default)]
+    pub after: Option<bool>,
+    /// extend: how far out. Default: 10 mm.
+    #[serde(default)]
+    pub distance: Option<LengthExpr>,
+    /// refine: in u, v or both (default).
+    #[serde(default)]
+    pub r#in: Option<String>,
+}
+
+/// What `scan.edit_net` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanEditNetResult {
+    pub surface: String,
+    /// The net's points each way now.
+    pub controls: [usize; 2],
+    /// The line made (split, duplicate, extend) or changed (crease, uncrease).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<Value>,
+    /// The lines that are creases.
+    pub creases: Vec<Value>,
+    pub feature: u64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
 }
 
 /// What `scan.edit_surface` returns.

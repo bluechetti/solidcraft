@@ -10,12 +10,14 @@ use solidcore_record::Vec3;
 use solidcore_record::brep as b;
 use solidcraft_geom::Vec3Geom as _;
 use solidcraft_geom::bspline::{HPoint, NurbsSurface};
+use solidcraft_scan::net;
+pub use solidcraft_scan::net::{Line, NetError};
 use solidcraft_scan::place::Rigid;
 use solidcraft_scan::surface_edit;
 
 use super::{length, mesh};
 use crate::params::{bad, str_};
-use crate::schema::scan::ScanEditSurfaceResult;
+use crate::schema::scan::{ScanEditNetResult, ScanEditSurfaceResult};
 use crate::{EngineError, Result, Sel, Session};
 
 /// The most scan points a refit uses: enough to pin a net of 30 × 30, few enough to refit as a
@@ -114,12 +116,9 @@ pub fn editable(s: &Session, name: Option<&str>, cmd: &str) -> Result<EditableSu
     if let Some(found) = selected.iter().find_map(|n| usable(n)) {
         return Ok(found);
     }
+    // With none chosen, the one made last (a Free Form just made is the one to edit).
     let all: Vec<EditableSurface> = state.bodies.iter().filter_map(|b| usable(&b.name)).collect();
-    match all.as_slice() {
-        [one] => Ok(one.clone()),
-        [] => Err(bad(cmd, "the design has no surface to edit: fit one with Fit Surface")),
-        _ => Err(bad(cmd, "select the surface to edit")),
-    }
+    all.into_iter().max_by_key(|e| e.feature).ok_or_else(|| bad(cmd, "the design has no surface to edit: make one with Fit Surface or New Free Form"))
 }
 
 /// The scan points under a surface, for refitting and for how far it is from the scan.
@@ -145,8 +144,26 @@ pub fn covered(s: &Session, scan: Option<&str>, surface: &NurbsSurface, reach: f
     Ok(Covered { scan: mesh.body, points: Arc::new(points) })
 }
 
+/// The surface as STEP text: one face, the whole of it (its knots may be uneven or repeated).
+pub fn surface_step(surface: &NurbsSurface, cmd: &str) -> Result<String> {
+    let sheet = solidcraft_kernel::nurbs_sheet(surface).map_err(|e| bad(cmd, format!("the surface: {e}")))?;
+    solidcraft_kernel::step_export(&[&sheet], "SolidCraft").map_err(|e| bad(cmd, format!("the surface: {e}")))
+}
+
+/// Keeps `surface` as a surface body of its own, named `<base>1`, `<base>2`, … (the first free),
+/// in an Import feature called `feature`, whose file reads `file`: one undo step, and a design
+/// that opens anywhere. The body's name and the feature's reply.
+pub fn keep_surface(s: &mut Session, surface: &NurbsSurface, base: &str, feature: &str, file: &str, cmd: &str) -> Result<(String, Value)> {
+    let step = surface_step(surface, cmd)?;
+    let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    let name = (1..).map(|i| format!("{base}{i}")).find(|n| !taken.contains(n)).unwrap_or_else(|| base.into());
+    let kind = solidcraft_doc::FeatureKind::Import { file: file.into(), step: step.into(), components: Vec::new(), skip: Vec::new() };
+    let reply = super::super::features::add_feature(s, &json!({ "body_name": name, "name": feature }), kind)?;
+    Ok((name, reply))
+}
+
 /// Writes `surface` back into the Import feature that keeps the surface: one undo step.
-fn write_back(s: &mut Session, target: &EditableSurface, surface: &NurbsSurface, cmd: &str) -> Result<()> {
+pub(super) fn write_back(s: &mut Session, target: &EditableSurface, surface: &NurbsSurface, cmd: &str) -> Result<()> {
     // Moved by later features: written where it was before they moved it.
     let unmoved;
     let surface = match &target.placed {
@@ -158,9 +175,7 @@ fn write_back(s: &mut Session, target: &EditableSurface, surface: &NurbsSurface,
         }
         None => surface,
     };
-    let ts = solidcraft_geom::tspline::TSpline::from_nurbs(surface).map_err(|e| bad(cmd, format!("the surface: {e}")))?;
-    let sheet = solidcraft_kernel::tspline_sheet(&ts).map_err(|e| bad(cmd, format!("the surface: {e}")))?;
-    let step = solidcraft_kernel::step_export(&[&sheet], "SolidCraft").map_err(|e| bad(cmd, format!("the surface: {e}")))?;
+    let step = surface_step(surface, cmd)?;
     let feature = s.doc_mut().feature_mut(target.feature).ok_or_else(|| bad(cmd, "the surface's feature is gone"))?;
     if let solidcraft_doc::FeatureKind::Import { step: kept, .. } = &mut feature.kind {
         *kept = step.into();
@@ -183,9 +198,59 @@ fn index(v: &Value, count: [usize; 2], cmd: &str, what: &str) -> Result<usize> {
     Ok(j * count[0] + i)
 }
 
+/// A whole net as `{count: [u, v], knots: [[…], […]], points: [[x, y, z], …], degree?: [u, v]}`
+/// (u fastest), as a dialog that changed the net's shape sends it.
+fn net_param(v: &Value, cmd: &str) -> Result<NurbsSurface> {
+    let pair = |key: &str| -> Option<[usize; 2]> {
+        let a = v.get(key)?.as_array()?;
+        let n = |k: usize| a.get(k).and_then(Value::as_u64).and_then(|x| usize::try_from(x).ok());
+        (a.len() == 2).then_some([n(0)?, n(1)?])
+    };
+    let count = pair("count").ok_or_else(|| bad(cmd, "`net.count` must be [u, v], whole numbers"))?;
+    let degree = match v.get("degree").filter(|d| !d.is_null()) {
+        Some(_) => pair("degree").ok_or_else(|| bad(cmd, "`net.degree` must be [u, v], whole numbers"))?,
+        None => [3, 3],
+    };
+    let knots_of = |k: usize| -> Option<Vec<f64>> { v.get("knots")?.get(k)?.as_array()?.iter().map(Value::as_f64).collect() };
+    let knots = [knots_of(0), knots_of(1)];
+    let [Some(ku), Some(kv)] = knots else { return Err(bad(cmd, "`net.knots` must be two lists of numbers")) };
+    let points: Vec<Vec3> = v
+        .get("points")
+        .and_then(Value::as_array)
+        .ok_or_else(|| bad(cmd, "`net.points` must list the control points [x, y, z], u fastest"))?
+        .iter()
+        .map(|q| crate::params::vec3(q).ok_or_else(|| bad(cmd, "a point of `net.points` must be [x, y, z] of numbers")))
+        .collect::<Result<_>>()?;
+    if count[0].saturating_mul(count[1]) != points.len() || count.iter().any(|c| *c > solidcraft_scan::net::MOST) {
+        return Err(bad(cmd, "`net.points` must hold count[0] × count[1] points (at most 48 each way)"));
+    }
+    NurbsSurface::new(degree, [ku, kv], &points, &vec![1.0; points.len()]).map_err(|e| bad(cmd, format!("`net`: {e}")))
+}
+
 pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.edit_surface";
     let target = editable(s, str_(p, "surface"), cmd)?;
+    // A whole new net: the surface as it is sent, nothing else done to it.
+    if let Some(v) = p.get("net").filter(|v| !v.is_null()) {
+        if ["points", "moves", "hold"].iter().any(|k| p.get(*k).is_some_and(|v| !v.is_null())) || str_(p, "refit").is_some_and(|r| r != "none") {
+            return Err(bad(cmd, "`net` replaces the whole net: give it alone, without points, moves, hold or a refit"));
+        }
+        let made = net_param(v, cmd)?;
+        write_back(s, &target, &made, cmd)?;
+        let reply = ScanEditSurfaceResult {
+            surface: target.body,
+            controls: made.count(),
+            moved: 0,
+            refitted: 0,
+            scan: None,
+            points: None,
+            rms: None,
+            max: None,
+            feature: target.feature,
+            param_warnings: Vec::new(),
+        };
+        return serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()));
+    }
     let count = target.surface.count();
     let mut net = surface_edit::points(&target.surface);
     let mut moved = vec![false; net.len()];
@@ -298,3 +363,101 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// The surface maths a dialog previews an edit with, as the command does it.
 pub use solidcraft_scan::surface_edit::{around, distance, normal_at, points as control_points, refit, with_points};
+
+/// A line of a net from `{row: j}` or `{column: i}`.
+fn line_param(v: &Value, cmd: &str) -> Result<Line> {
+    let n = |key: &str| v.get(key).filter(|x| !x.is_null()).map(|x| x.as_u64().and_then(|n| usize::try_from(n).ok()));
+    match (n("row"), n("column")) {
+        (Some(Some(j)), None) => Ok(Line::Row(j)),
+        (None, Some(Some(i))) => Ok(Line::Column(i)),
+        _ => Err(bad(cmd, "`line` must be {row: j} or {column: i}, a whole number from 0")),
+    }
+}
+
+/// A line as a reply: `{row: j}` or `{column: i}`.
+pub fn line_reply(line: Line) -> Value {
+    match line {
+        Line::Row(j) => json!({ "row": j }),
+        Line::Column(i) => json!({ "column": i }),
+    }
+}
+
+pub(super) fn edit_net(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.edit_net";
+    let op = str_(p, "op").ok_or_else(|| bad(cmd, "`op` must be refine, split, duplicate, remove, crease, uncrease or extend"))?;
+    let line = match p.get("line").filter(|v| !v.is_null()) {
+        Some(v) => Some(line_param(v, cmd)?),
+        None => None,
+    };
+    let need = |l: Option<Line>| l.ok_or_else(|| bad(cmd, format!("`{op}` needs `line`: {{row: j}} or {{column: i}}")));
+    let target = editable(s, str_(p, "surface"), cmd)?;
+    let fail = |e: solidcraft_scan::net::NetError| bad(cmd, e.to_string());
+    let (made, new_line) = match op {
+        "refine" => {
+            let (u, v) = match str_(p, "in").unwrap_or("both") {
+                "u" => (true, false),
+                "v" => (false, true),
+                "both" => (true, true),
+                other => return Err(bad(cmd, format!("`in` must be u, v or both, not `{other}`"))),
+            };
+            (net::refine(&target.surface, u, v).map_err(fail)?, None)
+        }
+        "split" => {
+            let (m, l) = net::split(&target.surface, need(line)?).map_err(fail)?;
+            (m, Some(l))
+        }
+        "duplicate" => {
+            let after = crate::params::bool_(p, "after").unwrap_or(true);
+            let (m, l) = net::duplicate(&target.surface, need(line)?, after).map_err(fail)?;
+            (m, Some(l))
+        }
+        "remove" => (net::remove(&target.surface, need(line)?).map_err(fail)?, None),
+        "crease" => (net::crease(&target.surface, need(line)?).map_err(fail)?, line),
+        "uncrease" => (net::uncrease(&target.surface, need(line)?).map_err(fail)?, line),
+        "extend" => {
+            let distance = length(s, p, "distance", 10.0, cmd)?;
+            let (m, l) = net::extend(&target.surface, need(line)?, distance).map_err(fail)?;
+            (m, Some(l))
+        }
+        other => return Err(bad(cmd, format!("`op` must be refine, split, duplicate, remove, crease, uncrease or extend, not `{other}`"))),
+    };
+    write_back(s, &target, &made, cmd)?;
+    let reply = ScanEditNetResult {
+        surface: target.body,
+        controls: made.count(),
+        line: new_line.map(line_reply),
+        creases: net::creases(&made).into_iter().map(line_reply).collect(),
+        feature: target.feature,
+        param_warnings: Vec::new(),
+    };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// The net tools, as the dialog applies them to its own net (the same as `scan.edit_net`).
+pub fn split_line(s: &NurbsSurface, line: Line) -> std::result::Result<(NurbsSurface, Line), NetError> {
+    net::split(s, line)
+}
+
+pub fn duplicate_line(s: &NurbsSurface, line: Line, after: bool) -> std::result::Result<(NurbsSurface, Line), NetError> {
+    net::duplicate(s, line, after)
+}
+
+pub fn remove_line(s: &NurbsSurface, line: Line) -> std::result::Result<NurbsSurface, NetError> {
+    net::remove(s, line)
+}
+
+pub fn crease_line(s: &NurbsSurface, line: Line) -> std::result::Result<NurbsSurface, NetError> {
+    net::crease(s, line)
+}
+
+pub fn uncrease_line(s: &NurbsSurface, line: Line) -> std::result::Result<NurbsSurface, NetError> {
+    net::uncrease(s, line)
+}
+
+pub fn refine_net(s: &NurbsSurface) -> std::result::Result<NurbsSurface, NetError> {
+    net::refine(s, true, true)
+}
+
+pub fn creases(s: &NurbsSurface) -> Vec<Line> {
+    net::creases(s)
+}

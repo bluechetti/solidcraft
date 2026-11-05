@@ -15,12 +15,12 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
-use solidcraft_engine::cmd::scan::surface::{self as edit, Covered, EditableSurface};
+use solidcraft_engine::cmd::scan::surface::{self as edit, Covered, EditableSurface, Line};
 use solidcraft_engine::geom::bspline::NurbsSurface;
 use solidcraft_engine::geom::prelude::*;
 
 use crate::SolveApp;
-use crate::dialogs::{Kind, check, form_row};
+use crate::dialogs::{Kind, form_row};
 use crate::ui_kit::{self, choice_row};
 
 /// What a drag refits (0 nothing): the ring round the point dragged, or every point not moved by
@@ -46,11 +46,23 @@ const SAMPLES: usize = 40;
 /// The Edit Surface dialog's values.
 #[derive(Clone, Debug)]
 pub struct EditSurface {
-    /// A dragged point goes onto the scan under the pointer.
-    pub snap: bool,
+    /// Where a dragged point goes: free in the plane of the screen ([`SNAP_OFF`]), onto the scan
+    /// under the pointer ([`SNAP_POINTER`]) or onto the scan's nearest place ([`SNAP_NEAREST`]).
+    pub snap: usize,
+    /// The scan is met no farther than this from where a point is dragged (mm; 0, no limit), so a
+    /// point dragged over an opening stays where it is put.
+    pub snap_reach: f64,
+    /// The net's shape as edited (its points each way and knots: Split, Increase Resolution, an
+    /// edge copied out), and whether it differs from the surface's own.
+    base: Option<Box<NurbsSurface>>,
+    reshaped: bool,
+    /// The row or column chosen: a drag of one of its points moves it all, and the net tools act on it.
+    line: Option<Line>,
+    /// Why the last net tool did nothing.
+    note: Option<String>,
     /// What a drag refits: 0 nothing, [`REFIT_AROUND`] or [`REFIT_ALL`].
     pub refit: usize,
-    loaded: Option<Result<Loaded, String>>,
+    loaded: Option<Result<Box<Loaded>, String>>,
     /// The net as edited so far, and the points moved by hand.
     net: Vec<Vec3>,
     moved: Vec<bool>,
@@ -68,7 +80,12 @@ pub struct EditSurface {
 impl Default for EditSurface {
     fn default() -> Self {
         EditSurface {
-            snap: false,
+            snap: SNAP_OFF,
+            snap_reach: 0.0,
+            base: None,
+            reshaped: false,
+            line: None,
+            note: None,
             refit: REFIT_AROUND,
             loaded: None,
             net: Vec::new(),
@@ -92,12 +109,19 @@ struct Loaded {
     revision: u64,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct Drag {
     index: usize,
     /// Where the point was when the drag began: the depth it keeps.
     from: Vec3,
+    /// The points that go with it (its line, when one is chosen and holds it), and where each was.
+    with: Vec<(usize, Vec3)>,
 }
+
+/// Where a dragged point goes.
+pub const SNAP_OFF: usize = 0;
+pub const SNAP_POINTER: usize = 1;
+pub const SNAP_NEAREST: usize = 2;
 
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
     match id {
@@ -237,7 +261,7 @@ pub(crate) fn gpu_fit_marks(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuC
 }
 
 /// Lines across `surface`, `LINES` each way, over the picture.
-fn draw_lines(painter: &egui::Painter, proj: &crate::viewport::Proj, surface: &NurbsSurface, stroke: egui::Stroke) {
+pub(crate) fn draw_lines(painter: &egui::Painter, proj: &crate::viewport::Proj, surface: &NurbsSurface, stroke: egui::Stroke) {
     let [[u0, u1], [v0, v1]] = surface.domain();
     let at = |i: usize, n: usize, a: f64, b: f64| a + (b - a) * i as f64 / n as f64;
     for along_u in [true, false] {
@@ -280,21 +304,50 @@ fn load(app: &SolveApp, k: &mut EditSurface) {
         let covered = edit::covered(&app.session, None, &target.surface, reach, cmd).ok().filter(|c| !c.points.is_empty());
         let all = covered.as_ref().map(|c| c.points.as_slice()).unwrap_or_default();
         let sample = Arc::new(all.iter().step_by(all.len() / PREVIEW_POINTS + 1).copied().collect());
-        Loaded { target, covered, sample, revision }
+        Box::new(Loaded { target, covered, sample, revision })
     });
     let surface = loaded.as_ref().ok().map(|l| l.target.surface.clone());
     k.loaded = Some(loaded);
     if let Some(surface) = surface {
-        k.net = edit::control_points(&surface);
-        k.moved = vec![false; k.net.len()];
-        k.chosen = None;
-        k.drag = None;
-        show(k, surface, false);
+        reset_to(k, surface);
     }
 }
 
+/// The dialog started again from `surface`: nothing moved, nothing chosen.
+fn reset_to(k: &mut EditSurface, surface: NurbsSurface) {
+    k.net = edit::control_points(&surface);
+    k.moved = vec![false; k.net.len()];
+    k.chosen = None;
+    k.line = None;
+    k.drag = None;
+    k.reshaped = false;
+    k.base = Some(Box::new(surface.clone()));
+    show(k, surface, false);
+}
+
+/// The net's shape as edited.
+fn base(k: &EditSurface) -> Option<&NurbsSurface> {
+    k.base.as_deref().or_else(|| loaded(k).map(|l| &l.target.surface))
+}
+
+/// The net changed as a whole by `change` (a net tool), what was moved kept moved where it still is;
+/// `then` the line to choose after.
+fn reshape(k: &mut EditSurface, change: impl FnOnce(&NurbsSurface) -> Result<(NurbsSurface, Option<Line>), edit::NetError>) -> Result<(), String> {
+    let current = k.shown.clone().or_else(|| base(k).cloned()).ok_or("no surface")?;
+    let (made, then) = change(&current).map_err(|e| e.to_string())?;
+    let moved_at: Vec<Vec3> = k.net.iter().zip(&k.moved).filter(|(_, m)| **m).map(|(p, _)| *p).collect();
+    k.net = edit::control_points(&made);
+    k.moved = k.net.iter().map(|p| moved_at.iter().any(|q| q.dist(*p) < 1e-9)).collect();
+    k.base = Some(Box::new(made.clone()));
+    k.reshaped = true;
+    k.line = then;
+    k.chosen = then.and_then(|l| l.points(made.count()).first().copied());
+    show(k, made, false);
+    Ok(())
+}
+
 fn loaded(k: &EditSurface) -> Option<&Loaded> {
-    k.loaded.as_ref()?.as_ref().ok()
+    k.loaded.as_ref()?.as_deref().ok()
 }
 
 /// Show `surface`, with how far the scan is from it (measured on the sample while `dragging`).
@@ -307,19 +360,29 @@ fn show(k: &mut EditSurface, surface: NurbsSurface, dragging: bool) {
     k.shown = Some(surface);
 }
 
-/// The surface with point `index` at `to`, and, as Refit says, the points round it or all those not
-/// moved by hand fitted to the scan again with it held.
-fn preview(k: &EditSurface, index: usize, to: Vec3) -> Option<NurbsSurface> {
+/// The surface with the points `moves` put where they go, and, as Refit says, the points round
+/// them or all those not moved by hand fitted to the scan again with them held.
+fn preview(k: &EditSurface, moves: &[(usize, Vec3)]) -> Option<NurbsSurface> {
     let l = loaded(k)?;
     let mut net = k.net.clone();
-    *net.get_mut(index)? = to;
     let mut moved = k.moved.clone();
-    moved[index] = true;
-    let surface = edit::with_points(&l.target.surface, &net)?;
+    for &(index, to) in moves {
+        *net.get_mut(index)? = to;
+        moved[index] = true;
+    }
+    let surface = edit::with_points(base(k)?, &net)?;
     let points = l.sample.as_slice();
     let count = surface.count();
     let held: Vec<bool> = match k.refit {
-        REFIT_AROUND => edit::around(count, index % count[0], index / count[0], RING).iter().zip(&moved).map(|(near, m)| !near || *m).collect(),
+        REFIT_AROUND => {
+            let mut near = vec![false; net.len()];
+            for &(index, _) in moves {
+                for (n, r) in edit::around(count, index % count[0], index / count[0], RING).into_iter().enumerate() {
+                    near[n] |= r;
+                }
+            }
+            near.iter().zip(&moved).map(|(near, m)| !near || *m).collect()
+        }
         REFIT_ALL => moved,
         _ => return Some(surface),
     };
@@ -341,11 +404,17 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         Some(Ok(l)) => l.clone(),
         None => return false,
     };
-    let [nu, nv] = l.target.surface.count();
+    let [nu, nv] = base(k).map_or(l.target.surface.count(), NurbsSurface::count);
     let name = format!("{} ({nu} × {nv})", l.target.body);
     form_row(ui, crate::i18n::tr_label("Surface"), |ui| ui_kit::text(ui, &name, ui_kit::Text::Cell));
     if l.covered.is_some() {
-        form_row(ui, tr("ui.scan_edit_snap"), |ui| check(ui, &mut k.snap));
+        let snaps = [tr("ui.scan_edit_snap_off"), tr("ui.scan_edit_snap_pointer"), tr("ui.scan_edit_snap_nearest")];
+        choice_row(ui, tr("ui.scan_edit_snap"), "scan_edit_snap", &mut k.snap, &snaps);
+        if k.snap != SNAP_OFF {
+            let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+            form_row(ui, tr("ui.scan_edit_snap_reach"), |ui| ui_kit::length_field(ui, &mut k.snap_reach, &units, decimals));
+            k.snap_reach = k.snap_reach.max(0.0);
+        }
         let labels = [tr("ui.scan_edit_refit_off"), tr("ui.scan_edit_refit_around"), tr("ui.scan_edit_refit_all")];
         choice_row(ui, tr("ui.scan_edit_refit"), "scan_edit_refit", &mut k.refit, &labels);
     } else {
@@ -360,13 +429,11 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         );
         form_row(ui, tr("ui.scan_edit_distance"), |ui| ui_kit::text(ui, &fit, ui_kit::Text::Cell));
     }
-    let edited = k.moved.iter().any(|m| *m);
+    let edited = k.moved.iter().any(|m| *m) || k.reshaped;
     if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_reset"), ui_kit::Button::Enabled(edited))).clicked() {
-        k.net = edit::control_points(&l.target.surface);
-        k.moved = vec![false; k.net.len()];
-        k.chosen = None;
-        show(k, l.target.surface.clone(), false);
+        reset_to(k, l.target.surface.clone());
     }
+    net_tools(ui, k, [nu, nv]);
     // The point chosen (clicked or last dragged): where it goes, typed, or a distance along the
     // way the surface faces.
     if let Some(i) = k.chosen.filter(|i| *i < k.net.len()) {
@@ -398,9 +465,72 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
     false
 }
 
+/// The net tools (SurfaceCraft's, after QuickSurface's), on the line chosen: choose the row or
+/// column of the point chosen; split it, copy it beside itself, take it away, crease it or make it
+/// smooth; and double the net's points. Each changes the dialog's net; OK keeps it.
+fn net_tools(ui: &mut egui::Ui, k: &mut EditSurface, count: [usize; 2]) {
+    let mut outcome: Option<Result<(), String>> = None;
+    if let Some(i) = k.chosen.filter(|i| *i < count[0] * count[1]) {
+        let (row, column) = (Line::Row(i / count[0]), Line::Column(i % count[0]));
+        ui_kit::row(ui, tr("ui.scan_edit_choose"), |ui| {
+            ui.horizontal(|ui| {
+                if ui_kit::button(ui, tr("ui.scan_edit_row"), if k.line == Some(row) { ui_kit::Button::SmallSelected } else { ui_kit::Button::Small })
+                    .clicked()
+                {
+                    k.line = if k.line == Some(row) { None } else { Some(row) };
+                }
+                if ui_kit::button(
+                    ui,
+                    tr("ui.scan_edit_column"),
+                    if k.line == Some(column) { ui_kit::Button::SmallSelected } else { ui_kit::Button::Small },
+                )
+                .clicked()
+                {
+                    k.line = if k.line == Some(column) { None } else { Some(column) };
+                }
+            })
+            .response
+        });
+    }
+    if let Some(line) = k.line {
+        let creased = base(k).is_some_and(|b| solidcraft_engine::cmd::scan::surface::creases(b).contains(&line));
+        ui_kit::row(ui, tr("ui.scan_edit_line"), |ui| {
+            ui.horizontal(|ui| {
+                if ui_kit::button(ui, tr("ui.scan_edit_split"), ui_kit::Button::Small).clicked() {
+                    outcome = Some(reshape(k, |s| edit::split_line(s, line).map(|(m, l)| (m, Some(l)))));
+                }
+                if ui_kit::button(ui, tr("ui.scan_edit_copy"), ui_kit::Button::Small).clicked() {
+                    outcome = Some(reshape(k, |s| edit::duplicate_line(s, line, true).map(|(m, l)| (m, Some(l)))));
+                }
+                if ui_kit::button(ui, tr("ui.scan_edit_remove"), ui_kit::Button::Small).clicked() {
+                    outcome = Some(reshape(k, |s| edit::remove_line(s, line).map(|m| (m, None))));
+                }
+                let crease = if creased { tr("ui.scan_edit_smooth") } else { tr("ui.scan_edit_crease") };
+                if ui_kit::button(ui, crease, ui_kit::Button::Small).clicked() {
+                    outcome = Some(reshape(k, |s| {
+                        if creased { edit::uncrease_line(s, line) } else { edit::crease_line(s, line) }.map(|m| (m, Some(line)))
+                    }));
+                }
+            })
+            .response
+        });
+    }
+    if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_refine"), ui_kit::Button::Normal)).clicked() {
+        outcome = Some(reshape(k, |s| edit::refine_net(s).map(|m| (m, None))));
+    }
+    if let Some(Err(why)) = outcome {
+        k.note = Some(why);
+    } else if outcome.is_some() {
+        k.note = None;
+    }
+    if let Some(note) = &k.note {
+        ui_kit::text(ui, note, ui_kit::Text::Report("scan_edit_note", true));
+    }
+}
+
 /// Point `index` put at `to`, as a drag let go there would: refitted as Refit says, and kept.
 fn move_to(k: &mut EditSurface, index: usize, to: Vec3) {
-    if let Some(surface) = preview(k, index, to) {
+    if let Some(surface) = preview(k, &[(index, to)]) {
         show(k, surface, false);
         k.net = k.shown_net.clone();
         if let Some(m) = k.moved.get_mut(index) {
@@ -412,11 +542,18 @@ fn move_to(k: &mut EditSurface, index: usize, to: Vec3) {
 /// What OK runs: the net as edited.
 pub fn commands(k: &EditSurface) -> Result<Vec<(String, Value)>, String> {
     let l = k.loaded.as_ref().ok_or("still loading the surface")?.as_ref().map_err(Clone::clone)?;
-    if !k.moved.iter().any(|m| *m) {
+    if !k.moved.iter().any(|m| *m) && !k.reshaped {
         return Err(crate::i18n::tr("ui.scan_edit_nothing").into());
     }
     let points: Vec<[f64; 3]> = k.net.iter().map(|p| [p.x, p.y, p.z]).collect();
-    Ok(vec![("scan.edit_surface".into(), json!({"surface": l.target.body, "points": points}))])
+    match base(k).filter(|_| k.reshaped) {
+        // The net's shape changed: the whole of it.
+        Some(b) => {
+            let net = json!({"count": b.count(), "knots": [b.knots()[0].clone(), b.knots()[1].clone()], "degree": b.degree(), "points": points});
+            Ok(vec![("scan.edit_surface".into(), json!({"surface": l.target.body, "net": net}))])
+        }
+        None => Ok(vec![("scan.edit_surface".into(), json!({"surface": l.target.body, "points": points}))]),
+    }
 }
 
 fn dialog(app: &mut SolveApp) -> Option<&mut EditSurface> {
@@ -456,39 +593,97 @@ pub(crate) fn choose(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui:
     }
 }
 
-/// A primary press at `at`: takes the handle under it, if any.
-pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) -> bool {
+/// A primary press at `at`: takes the handle under it, if any. With `copy` (Alt held) a point on
+/// an edge of the net has its edge copied beside itself first and the copy taken, to drag the
+/// surface out (QuickSurface's Alt-drag).
+pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, copy: bool) -> bool {
     let Some(k) = dialog(app) else { return false };
-    let Some(index) = handle_at(k, proj, at) else { return false };
+    let Some(mut index) = handle_at(k, proj, at) else { return false };
     // A drag starts from the net as shown (a refit the last drag made is kept).
     k.net = k.shown_net.clone();
-    k.drag = Some(Drag { index, from: k.net[index] });
+    if copy && let Some(count) = base(k).map(NurbsSurface::count) {
+        let (i, j) = (index % count[0], index / count[0]);
+        let (row_edge, column_edge) = (j == 0 || j + 1 == count[1], i == 0 || i + 1 == count[0]);
+        let edge = match (k.line, row_edge, column_edge) {
+            (Some(l), _, _) if l.points(count).contains(&index) && matches!(l, Line::Row(r) if r == 0 || r + 1 == count[1]) => Some(l),
+            (Some(l), _, _) if l.points(count).contains(&index) && matches!(l, Line::Column(c) if c == 0 || c + 1 == count[0]) => Some(l),
+            (_, true, false) => Some(Line::Row(j)),
+            (_, false, true) => Some(Line::Column(i)),
+            _ => None,
+        };
+        if let Some(edge) = edge {
+            let after = match edge {
+                Line::Row(r) => r + 1 == count[1],
+                Line::Column(c) => c + 1 == count[0],
+            };
+            if reshape(k, |s| edit::duplicate_line(s, edge, after).map(|(m, l)| (m, Some(l)))).is_ok()
+                && let (Some(line), Some(count)) = (k.line, base(k).map(NurbsSurface::count))
+            {
+                // The same place along the copy.
+                let along = match edge {
+                    Line::Row(_) => i,
+                    Line::Column(_) => j,
+                };
+                index = line.points(count).get(along).copied().unwrap_or(index);
+            }
+        }
+    }
+    let count = base(k).map(NurbsSurface::count);
+    let with: Vec<(usize, Vec3)> = match (k.line, count) {
+        (Some(l), Some(c)) if l.points(c).contains(&index) => l.points(c).into_iter().filter_map(|p| k.net.get(p).map(|q| (p, *q))).collect(),
+        _ => vec![(index, k.net[index])],
+    };
+    k.drag = Some(Drag { index, from: k.net[index], with });
     k.chosen = Some(index);
     true
 }
 
 /// The handle dragged to `to` on the screen.
 pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, to: egui::Pos2) {
-    let Some((drag, snap, scan)) = dialog(app).and_then(|k| Some((k.drag?, k.snap, loaded(k)?.covered.as_ref().map(|c| c.scan.clone())))) else {
+    let Some((drag, snap, reach, scan)) =
+        dialog(app).and_then(|k| Some((k.drag.clone()?, k.snap, k.snap_reach, loaded(k)?.covered.as_ref().map(|c| c.scan.clone()))))
+    else {
         return;
     };
-    // Onto the scan under the pointer, or in the plane of the screen through where the point was.
-    let on_scan = if snap && let Some(scan) = scan {
+    let reach = if reach > 0.0 { reach } else { f64::INFINITY };
+    // In the plane of the screen through where the point was.
+    let in_plane = {
+        let (o, d) = proj.ray(to);
+        let n = proj.cam.back();
+        let den = d.dot(n);
+        (den.abs() > 1e-12).then(|| o + d * ((drag.from - o).dot(n) / den))
+    };
+    // Onto the scan under the pointer, when snapping so and there is scan there within reach.
+    let under = if snap == SNAP_POINTER
+        && let Some(scan) = &scan
+    {
         crate::viewport::pick_cached(app, proj, to).into_iter().find_map(|h| match h {
-            crate::viewport::Hit::Face { body, point, .. } if body == scan => Some(point),
+            crate::viewport::Hit::Face { body, point, .. } if body == *scan => Some(point),
             _ => None,
         })
     } else {
         None
     };
-    let place = on_scan.or_else(|| {
-        let (o, d) = proj.ray(to);
-        let n = proj.cam.back();
-        let den = d.dot(n);
-        (den.abs() > 1e-12).then(|| o + d * ((drag.from - o).dot(n) / den))
-    });
+    let Some(place) = under.filter(|p| in_plane.is_none_or(|q| p.dist(q) <= reach)).or(in_plane) else { return };
+    let delta = place - drag.from;
+    // Each point that goes moved as the one dragged; snapping to the nearest place puts each on the
+    // scan's nearest place to where it would go, within reach.
+    let nearest = (snap == SNAP_NEAREST)
+        .then(|| scan.as_deref().and_then(|b| solidcraft_engine::cmd::scan::curve::projector(&app.session, Some(b), "scan.edit_surface").ok()));
+    let moves: Vec<(usize, Vec3)> = drag
+        .with
+        .iter()
+        .map(|&(i, from)| {
+            let to = if i == drag.index && under.is_some() { place } else { from + delta };
+            let to = match nearest.as_ref().and_then(|n| n.as_ref()) {
+                Some((_, on)) => on.nearest(to).filter(|(_, d)| *d <= reach).map_or(to, |(q, _)| q),
+                None => to,
+            };
+            (i, to)
+        })
+        .collect();
     let Some(k) = dialog(app) else { return };
-    if let Some(surface) = place.and_then(|p| preview(k, drag.index, p)) {
+    if let Some(surface) = preview(k, &moves) {
         show(k, surface, true);
     }
 }
@@ -499,7 +694,11 @@ pub(crate) fn release(app: &mut SolveApp) {
     let Some(drag) = k.drag.take() else { return };
     if k.shown_net.len() == k.net.len() && k.shown_net.get(drag.index) != k.net.get(drag.index) {
         k.net = k.shown_net.clone();
-        k.moved[drag.index] = true;
+        for (i, _) in &drag.with {
+            if let Some(m) = k.moved.get_mut(*i) {
+                *m = true;
+            }
+        }
     }
     // Measured again on every covered point, as the command will.
     if let Some(surface) = k.shown.clone() {
@@ -536,8 +735,11 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     let moved_fill = egui::Color32::from_rgb(r, g, b);
     for (i, s) in screen.iter().enumerate() {
         let Some(s) = s else { continue };
+        let on_line = k.line.zip(k.shown.as_ref().map(NurbsSurface::count)).is_some_and(|(l, c)| l.points(c).contains(&i));
         let fill = if k.chosen == Some(i) {
             t.accent
+        } else if on_line {
+            t.accent_soft
         } else if k.moved.get(i).copied().unwrap_or(false) {
             moved_fill
         } else {

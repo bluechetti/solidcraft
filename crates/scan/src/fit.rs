@@ -152,6 +152,19 @@ pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Resu
     summarize(scan, region, shape)
 }
 
+/// The triangles reached from `seed` across edges whose middles are within `reach` of `at`: the
+/// part of the scan round a point.
+pub fn around(scan: &Scan, seed: usize, at: Vec3, reach: f64) -> Vec<usize> {
+    let neighbours = edge_neighbours(scan);
+    connected(scan, &neighbours, seed, |t| scan.corners(t).is_some_and(|[a, b, c]| ((a + b + c) / 3.0).dist(at) <= reach))
+}
+
+/// The shape of `kind` fitted to all of the triangles `region`, `None` when they have too little
+/// to fit or are not that shape.
+pub fn shape_of(scan: &Scan, region: &[usize], kind: Kind) -> Option<Shape> {
+    solve(scan, region, kind)
+}
+
 /// Whether `shape` is a "cylinder" far wider than the region it was fitted to, a region at least
 /// `reach` across: a flat face, curved only by noise. Asked while the region grows too, so that a
 /// flat face is refused before the region spreads over it.
@@ -414,7 +427,7 @@ fn sphere(s: &Samples) -> Option<Shape> {
 }
 
 /// The circle that best fits weighted points on a plane (Kåsa's): its centre and radius.
-fn kasa(points: impl Iterator<Item = ([f64; 2], f64)>) -> Option<([f64; 2], f64)> {
+pub(crate) fn kasa(points: impl Iterator<Item = ([f64; 2], f64)>) -> Option<([f64; 2], f64)> {
     let (mut a, mut b) = ([[0.0f64; 3]; 3], [0.0f64; 3]);
     for ([x, y], w) in points {
         let row = [x, y, 1.0];

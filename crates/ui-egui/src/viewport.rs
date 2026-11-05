@@ -5217,7 +5217,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         if resp.drag_started_by(egui::PointerButton::Primary)
             && let Some(a) = ui.input(|i| i.pointer.press_origin()).filter(|a| rect.contains(*a))
         {
-            crate::dialogs_scan_surface::grab(app, &proj, a);
+            crate::dialogs_scan_surface::grab(app, &proj, a, mods.alt);
         }
         if crate::dialogs_scan_surface::holds_pointer(app)
             && resp.dragged_by(egui::PointerButton::Primary)
@@ -5240,6 +5240,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         && let Some(p) = resp.interact_pointer_pos()
     {
         crate::dialogs_scan_curve::click(app, &proj, p);
+    }
+    // New Free Form: a click puts the next corner on what is under it.
+    if crate::dialogs_scan_free_form::drawing(app)
+        && resp.clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        crate::dialogs_scan_free_form::click(app, &proj, p);
     }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
@@ -5292,6 +5299,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::dialogs_scan::draw(app, &painter, &proj);
     crate::dialogs_scan_surface::draw(app, &painter, &proj);
     crate::dialogs_scan_curve::draw(app, &painter, &proj);
+    crate::dialogs_scan_free_form::draw(app, &painter, &proj);
     crate::dialogs_scan_clean::draw(app, &painter, &proj);
     crate::dialogs_scan_section::draw(app, &painter, &proj);
     crate::dialogs_assembly::origins(app, &painter, &proj);

@@ -238,7 +238,7 @@ fn within(scan: &Scan, neighbours: &EdgeNeighbours, seed: usize, pick: Vec3, rad
 }
 
 /// A clamped, uniform cubic knot vector on 0..1 for `n` control points.
-fn clamped_knots(n: usize) -> Vec<f64> {
+pub(crate) fn clamped_knots(n: usize) -> Vec<f64> {
     let inner = n - DEGREE;
     let mut knots = vec![0.0; DEGREE + 1];
     knots.extend((1..inner).map(|i| i as f64 / inner as f64));

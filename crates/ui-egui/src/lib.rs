@@ -52,6 +52,7 @@ pub mod dialogs_save_mesh;
 pub(crate) mod dialogs_scan;
 pub(crate) mod dialogs_scan_clean;
 pub(crate) mod dialogs_scan_curve;
+pub(crate) mod dialogs_scan_free_form;
 pub(crate) mod dialogs_scan_section;
 pub(crate) mod dialogs_scan_surface;
 pub mod dialogs_sheet;

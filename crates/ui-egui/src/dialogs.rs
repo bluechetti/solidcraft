@@ -404,6 +404,9 @@ crate::dialog_descriptor::dialog_descriptors! {
             ScanEditSurface(crate::dialogs_scan_surface::EditSurface),
             ScanFitSurface(crate::dialogs_scan_surface::FitSurface),
             ScanCurve(crate::dialogs_scan_curve::CurveOnScan),
+            ScanFreeForm(crate::dialogs_scan_free_form::NewFreeForm),
+            ScanWrapSurface(crate::dialogs_scan_free_form::WrapSurface),
+            ScanMergeSurfaces(crate::dialogs_scan_free_form::MergeSurfaces),
             ScanFloating(crate::dialogs_scan_clean::Floating),
             ScanHoles(crate::dialogs_scan_clean::Holes),
             ScanReduce(crate::dialogs_scan_clean::Reduce),
@@ -1114,6 +1117,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_scan::start(app, id))
                     .or_else(|| crate::dialogs_scan_surface::start(app, id))
                     .or_else(|| crate::dialogs_scan_curve::start(app, id))
+                    .or_else(|| crate::dialogs_scan_free_form::start(app, id))
                     .or_else(|| crate::dialogs_scan_clean::start(app, id))
                     .or_else(|| crate::dialogs_scan_section::start(app, id))
                     .or_else(|| crate::dialogs_appearance::start(app, id))
@@ -2579,6 +2583,9 @@ fn title(k: &Kind) -> &'static str {
         Kind::ScanEditSurface(_) => "EDIT SURFACE",
         Kind::ScanFitSurface(_) => "FIT SURFACE",
         Kind::ScanCurve(_) => "CURVE ON SCAN",
+        Kind::ScanFreeForm(_) => "NEW FREE FORM",
+        Kind::ScanWrapSurface(_) => "WRAP SURFACE",
+        Kind::ScanMergeSurfaces(_) => "MERGE SURFACES",
         Kind::ScanFloating(_) => "FLOATING PIECES",
         Kind::ScanHoles(_) => "FILL HOLES",
         Kind::ScanReduce(_) => "REDUCE MESH",
@@ -4077,6 +4084,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         d.refused = None;
         d.repeat_after_apply = false;
         let _ = app.session.execute("select.clear", &json!({}));
+    }
+    // A new free form opens Edit Surface on it, to shape it.
+    if applied && !apply_again && matches!(d.kind, Kind::ScanFreeForm(_) | Kind::ScanWrapSurface(_)) {
+        then_start = Some("scan.edit_surface");
     }
     // Cancel while computing: the result goes (its worker runs on to its end).
     if cancel && !applied {
@@ -5616,6 +5627,9 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanEditSurface(k) => return crate::dialogs_scan_surface::commands(k),
         Kind::ScanFitSurface(k) => return crate::dialogs_scan_surface::fit_commands(k, &d.inputs),
         Kind::ScanCurve(k) => return crate::dialogs_scan_curve::commands(k),
+        Kind::ScanFreeForm(k) => return crate::dialogs_scan_free_form::commands(k),
+        Kind::ScanWrapSurface(k) => return crate::dialogs_scan_free_form::wrap_commands(k, &d.inputs),
+        Kind::ScanMergeSurfaces(k) => return crate::dialogs_scan_free_form::merge_commands(k),
         Kind::ScanFloating(k) => return crate::dialogs_scan_clean::commands(k),
         Kind::ScanHoles(k) => return crate::dialogs_scan_clean::holes_commands(k),
         Kind::ScanReduce(k) => return crate::dialogs_scan_clean::reduce_commands(k),

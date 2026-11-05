@@ -17,14 +17,14 @@ use crate::{Scan, thinned};
 
 /// A surface's basis at a parameter: the control points it depends on (index `j·nu + i`) and each
 /// one's rational basis value and its derivatives along u and v.
-struct Basis {
-    cols: Vec<usize>,
-    value: Vec<f64>,
-    du: Vec<f64>,
-    dv: Vec<f64>,
+pub(crate) struct Basis {
+    pub(crate) cols: Vec<usize>,
+    pub(crate) value: Vec<f64>,
+    pub(crate) du: Vec<f64>,
+    pub(crate) dv: Vec<f64>,
 }
 
-fn basis(surface: &NurbsSurface, u: f64, v: f64) -> Option<Basis> {
+pub(crate) fn basis(surface: &NurbsSurface, u: f64, v: f64) -> Option<Basis> {
     let [pu, pv] = surface.degree();
     let [nu, nv] = surface.count();
     let [ku, kv] = surface.knots();
@@ -72,7 +72,7 @@ pub fn with_points(surface: &NurbsSurface, points: &[Vec3]) -> Option<NurbsSurfa
 }
 
 /// The point, and its derivatives along u and v, at `(u, v)`.
-fn frame(surface: &NurbsSurface, net: &[Vec3], u: f64, v: f64) -> Option<(Vec3, Vec3, Vec3)> {
+pub(crate) fn frame(surface: &NurbsSurface, net: &[Vec3], u: f64, v: f64) -> Option<(Vec3, Vec3, Vec3)> {
     let b = basis(surface, u, v)?;
     let (mut s, mut su, mut sv) = (Vec3::ZERO, Vec3::ZERO, Vec3::ZERO);
     for (k, &c) in b.cols.iter().enumerate() {
@@ -98,7 +98,7 @@ pub struct Foot {
 const GUESSES: usize = 10;
 
 /// Starting guesses for feet: the surface sampled on a grid.
-fn samples(surface: &NurbsSurface, net: &[Vec3]) -> Vec<(f64, f64, Vec3)> {
+pub(crate) fn samples(surface: &NurbsSurface, net: &[Vec3]) -> Vec<(f64, f64, Vec3)> {
     let [[u0, u1], [v0, v1]] = surface.domain();
     let mut out = Vec::with_capacity(GUESSES * GUESSES);
     for j in 0..GUESSES {
@@ -114,7 +114,7 @@ fn samples(surface: &NurbsSurface, net: &[Vec3]) -> Vec<(f64, f64, Vec3)> {
 
 /// The foot of `p` on the surface, from `(u, v)`: Gauss–Newton steps on the distance, held to the
 /// domain.
-fn foot_from(surface: &NurbsSurface, net: &[Vec3], p: Vec3, mut u: f64, mut v: f64) -> Option<Foot> {
+pub(crate) fn foot_from(surface: &NurbsSurface, net: &[Vec3], p: Vec3, mut u: f64, mut v: f64) -> Option<Foot> {
     let [[u0, u1], [v0, v1]] = surface.domain();
     let tiny = 1e-9 * ((u1 - u0) + (v1 - v0));
     let mut at = frame(surface, net, u, v)?;
