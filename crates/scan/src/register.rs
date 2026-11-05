@@ -12,8 +12,8 @@ use solidcore_record::Vec3;
 use solidcraft_geom::compare::{TriangleTree, closest_on_triangle};
 use solidcraft_geom::prelude::*;
 
-use crate::Scan;
 use crate::place::Rigid;
+use crate::{Scan, par};
 
 /// How a scan is laid onto a reference.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -181,7 +181,8 @@ fn every(points: &[Vec3], limit: usize) -> Vec<Vec3> {
 /// The rms of the nearest distances from `points`, moved, to `reference`, the worst `ignored`
 /// share left out.
 fn trimmed_rms(points: &[Vec3], moved: &Rigid, reference: &Surface, ignored: f64) -> f64 {
-    let mut distances: Vec<f64> = points.iter().filter_map(|p| reference.nearest(moved.apply(*p)).map(|h| h.distance)).collect();
+    let mut distances: Vec<f64> =
+        par::map(points.len(), |i| reference.nearest(moved.apply(points[i])).map(|h| h.distance)).into_iter().flatten().collect();
     if distances.is_empty() {
         return f64::INFINITY;
     }
@@ -193,37 +194,38 @@ fn trimmed_rms(points: &[Vec3], moved: &Rigid, reference: &Surface, ignored: f64
 /// Each point, moved, paired with the nearest point of `reference`, measured along the
 /// reference's direction there (along the gap itself at an edge or a corner).
 fn pairs_to(points: &[Vec3], moved: &Rigid, reference: &Surface) -> Vec<Pair> {
-    points
-        .iter()
-        .filter_map(|&s| {
-            let p = moved.apply(s);
-            let hit = reference.nearest(p)?;
-            let mut normal = hit.normal?;
-            let delta = p - hit.point;
-            if hit.distance > 1e-10 * reference.diagonal && delta.dot(normal).abs() < (1.0 - 1e-6) * hit.distance {
-                normal = delta / hit.distance;
-            }
-            Some(Pair { point: p, target: hit.point, normal, distance: hit.distance, weight: 1.0 })
-        })
-        .collect()
+    par::map(points.len(), |i| {
+        let p = moved.apply(points[i]);
+        let hit = reference.nearest(p)?;
+        let mut normal = hit.normal?;
+        let delta = p - hit.point;
+        if hit.distance > 1e-10 * reference.diagonal && delta.dot(normal).abs() < (1.0 - 1e-6) * hit.distance {
+            normal = delta / hit.distance;
+        }
+        Some(Pair { point: p, target: hit.point, normal, distance: hit.distance, weight: 1.0 })
+    })
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// Each of the reference's points paired with the nearest point of the moving scan, moved.
 fn pairs_from(targets: &[Vec3], moved: &Rigid, moving: &Surface) -> Vec<Pair> {
     let back = moved.inverse();
-    targets
-        .iter()
-        .filter_map(|&target| {
-            let hit = moving.nearest(back.apply(target))?;
-            let point = moved.apply(hit.point);
-            let mut normal = moved.turned(hit.normal?);
-            let delta = point - target;
-            if hit.distance > 1e-10 * moving.diagonal && delta.dot(normal).abs() < (1.0 - 1e-6) * hit.distance {
-                normal = delta / delta.len();
-            }
-            Some(Pair { point, target, normal, distance: hit.distance, weight: 1.0 })
-        })
-        .collect()
+    par::map(targets.len(), |i| {
+        let target = targets[i];
+        let hit = moving.nearest(back.apply(target))?;
+        let point = moved.apply(hit.point);
+        let mut normal = moved.turned(hit.normal?);
+        let delta = point - target;
+        if hit.distance > 1e-10 * moving.diagonal && delta.dot(normal).abs() < (1.0 - 1e-6) * hit.distance {
+            normal = delta / delta.len();
+        }
+        Some(Pair { point, target, normal, distance: hit.distance, weight: 1.0 })
+    })
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// The finite pairs, nearest first: the worst `ignored` share left out, those past the median and
@@ -609,15 +611,13 @@ fn describe(points: &[Vec3], surface: &Surface, spacing: f64) -> Vec<[f32; LENGT
 
 /// For each of `from`, the one of `to` most like it.
 fn most_alike(from: &[[f32; LENGTH]], to: &[[f32; LENGTH]]) -> Vec<usize> {
-    from.iter()
-        .map(|f| {
-            to.iter()
-                .enumerate()
-                .map(|(j, t)| (f.iter().zip(t).map(|(x, y)| (x - y) * (x - y)).sum::<f32>(), j))
-                .fold((f32::INFINITY, 0), |best, c| if c.0 < best.0 { c } else { best })
-                .1
-        })
-        .collect()
+    par::map(from.len(), |i| {
+        to.iter()
+            .enumerate()
+            .map(|(j, t)| (from[i].iter().zip(t).map(|(x, y)| (x - y) * (x - y)).sum::<f32>(), j))
+            .fold((f32::INFINITY, 0), |best, c| if c.0 < best.0 { c } else { best })
+            .1
+    })
 }
 
 /// A small fast generator, seeded, so the same scans give the same starts.
