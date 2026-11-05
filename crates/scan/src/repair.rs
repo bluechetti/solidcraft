@@ -70,6 +70,7 @@ pub fn repair(scan: &Scan, crossings: bool) -> Repaired {
             duplicates += 1;
         }
     }
+    drop(seen);
 
     // Edges three or more faces meet along: keep the pair that runs the edge opposite ways (the
     // winding agrees) and bends least between them, else the pair that bends least.
@@ -79,7 +80,7 @@ pub fn repair(scan: &Scan, crossings: bool) -> Repaired {
             edges.push((pair(a, b), t as u32));
         }
     }
-    edges.sort_unstable();
+    crate::par::sort_unstable(&mut edges);
     let normal = |tri: &[u32; 3]| (at(tri[1]) - at(tri[0])).cross(at(tri[2]) - at(tri[0])).normalized().unwrap_or(Vec3::ZERO);
     let runs = |tri: &[u32; 3], a: u32, b: u32| (0..3).any(|k| tri[k] == a && tri[(k + 1) % 3] == b);
     let mut non_manifold = 0;
@@ -113,13 +114,14 @@ pub fn repair(scan: &Scan, crossings: bool) -> Repaired {
     }
 
     // Slivers: flip the longest side with the face across it, when that gives two proper faces
-    // and no edge twice.
-    let mut owners: HashMap<u64, Vec<usize>> = HashMap::new();
-    for (t, tri) in tris.iter().enumerate().filter(|(t, _)| alive[*t]) {
-        for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
-            owners.entry(pair(a, b)).or_default().push(t);
-        }
-    }
+    // and no edge twice. The faces along a side are read from the sorted sides (those still
+    // there), and from the sides flips have made: a map of each side's faces took gigabytes
+    // for a scan of millions of triangles.
+    let mut made: HashMap<u64, [usize; 2]> = HashMap::new();
+    let along = |key: u64, alive: &[bool]| -> Vec<usize> {
+        let from = edges.partition_point(|e| e.0 < key);
+        edges[from..].iter().take_while(|e| e.0 == key).map(|e| e.1 as usize).filter(|&t| alive[t]).collect()
+    };
     let area = |tri: &[u32; 3]| (at(tri[1]) - at(tri[0])).cross(at(tri[2]) - at(tri[0])).len() / 2.0;
     let mut slivers = 0;
     let mut touched = vec![false; tris.len()];
@@ -134,14 +136,15 @@ pub fn repair(scan: &Scan, crossings: bool) -> Repaired {
         if !(area(&tri) < SLIVER * longest * longest) {
             continue;
         }
-        let Some(across) = owners.get(&pair(a, b)).filter(|o| o.len() == 2).and_then(|o| o.iter().copied().find(|&u| u != t)) else { continue };
+        let owners = made.get(&pair(a, b)).map_or_else(|| along(pair(a, b), &alive), |o| o.to_vec());
+        let Some(across) = Some(owners).filter(|o| o.len() == 2).and_then(|o| o.iter().copied().find(|&u| u != t)) else { continue };
         if !alive[across] || touched[across] {
             continue;
         }
         // The far point of the face across, which runs the side b to a.
         let other = tris[across];
         let Some(&d) = other.iter().find(|&&v| v != a && v != b) else { continue };
-        if c == d || owners.contains_key(&pair(c, d)) || !runs(&other, b, a) {
+        if c == d || made.contains_key(&pair(c, d)) || !along(pair(c, d), &alive).is_empty() || !runs(&other, b, a) {
             continue;
         }
         let (first, second) = ([c, a, d], [d, b, c]);
@@ -153,9 +156,10 @@ pub fn repair(scan: &Scan, crossings: bool) -> Repaired {
         tris[across] = second;
         touched[t] = true;
         touched[across] = true;
-        owners.insert(pair(c, d), vec![t, across]);
+        made.insert(pair(c, d), [t, across]);
         slivers += 1;
     }
+    drop((made, edges));
 
     // Faces that pass through others: both of each pair go, and the ring round them.
     let (mut pairs, mut gone) = (0, Vec::new());
@@ -164,18 +168,22 @@ pub fn repair(scan: &Scan, crossings: bool) -> Repaired {
         let found = crossing_faces(scan.positions, &tris, &live);
         pairs = found.1;
         if !found.0.is_empty() {
-            let mut by_edge: HashMap<u64, Vec<usize>> = HashMap::new();
-            for &t in &live {
-                let tri = tris[t];
-                for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
-                    by_edge.entry(pair(a, b)).or_default().push(t);
-                }
-            }
+            // The faces along each side, as sorted sides (a map of lists took gigabytes).
+            let mut sides: Vec<(u64, u32)> = live
+                .iter()
+                .flat_map(|&t| {
+                    let tri = tris[t];
+                    [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])].map(|(a, b)| (pair(a, b), t as u32))
+                })
+                .collect();
+            crate::par::sort_unstable(&mut sides);
             let mut take: HashSet<usize> = found.0.iter().copied().collect();
             for &t in &found.0 {
                 let tri = tris[t];
                 for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
-                    take.extend(by_edge.get(&pair(a, b)).into_iter().flatten().copied());
+                    let key = pair(a, b);
+                    let from = sides.partition_point(|e| e.0 < key);
+                    take.extend(sides[from..].iter().take_while(|e| e.0 == key).map(|e| e.1 as usize));
                 }
             }
             gone = take.into_iter().filter(|&t| alive[t]).collect();
@@ -252,40 +260,81 @@ fn crossing_faces(positions: &[Vec3], tris: &[[u32; 3]], live: &[usize]) -> (Vec
             }
         }
     }
-    entries.sort_unstable();
+    crate::par::sort_unstable(&mut entries);
     let overlap = |i: usize, j: usize| {
         let ((a0, a1), (b0, b1)) = (boxes[i], boxes[j]);
         a0.x <= b1.x && a0.y <= b1.y && a0.z <= b1.z && b0.x <= a1.x && b0.y <= a1.y && b0.z <= a1.z
     };
-    let mut hit = vec![false; live.len()];
-    let mut pairs = 0;
-    let mut test = |i: usize, j: usize, hit: &mut Vec<bool>| {
-        if overlap(i, j) && faces_cross(tris[live[i]], tris[live[j]], positions) {
-            pairs += 1;
-            hit[i] = true;
-            hit[j] = true;
-        }
-    };
+    let crossing = |i: usize, j: usize| overlap(i, j) && faces_cross(tris[live[i]], tris[live[j]], positions);
+    // Each cell's faces tried against each other, the cells in runs side by side on the threads:
+    // each run gives the faces it found crossing (both of each pair) and how many pairs.
+    let mut cells = Vec::new();
     let mut start = 0;
     while start < entries.len() {
         let end = start + entries[start..].iter().take_while(|e| e.0 == entries[start].0).count();
-        for x in start..end {
-            for y in x + 1..end {
-                let (i, j) = (entries[x].1 as usize, entries[y].1 as usize);
-                // A pair sharing several cells is tested in one: where both boxes begin.
-                if pack(cell_of(boxes[i].0.max(boxes[j].0))) == entries[start].0 {
-                    test(i, j, &mut hit);
+        cells.push((start, end));
+        start = end;
+    }
+    let run = cells.len().div_ceil(1024).max(1);
+    let found = crate::par::map(cells.len().div_ceil(run), |r| {
+        let (mut hits, mut pairs) = (Vec::new(), 0usize);
+        for &(start, end) in cells.iter().skip(r * run).take(run) {
+            for x in start..end {
+                for y in x + 1..end {
+                    let (i, j) = (entries[x].1 as usize, entries[y].1 as usize);
+                    // A pair sharing several cells is tested in one: where both boxes begin.
+                    if pack(cell_of(boxes[i].0.max(boxes[j].0))) == entries[start].0 && crossing(i, j) {
+                        pairs += 1;
+                        hits.extend([i as u32, j as u32]);
+                    }
                 }
             }
         }
-        start = end;
-    }
-    // Faces too large for the grid are tried against every other.
+        (hits, pairs)
+    });
+    // Faces too large for the grid are tried against every face whose box meets theirs: those
+    // in the cells their box covers (each is in every cell its own box covers), else, when that
+    // is more cells than there are faces, against every face; and against each other, each pair
+    // once. Asking whether each face was a large one, for each large one, went through all of
+    // them every time: minutes for a scan of millions of faces with a few thousand large ones.
+    let mut is_big = vec![false; live.len()];
     for &b in &big {
-        for i in 0..live.len() {
-            if i != b as usize && (!big.contains(&(i as u32)) || i > b as usize) {
-                test(b as usize, i, &mut hit);
+        is_big[b as usize] = true;
+    }
+    let found_big = crate::par::map(big.len(), |n| {
+        let b = big[n] as usize;
+        let (mut hits, mut pairs) = (Vec::new(), 0usize);
+        let mut try_one = |i: usize| {
+            if crossing(b, i) {
+                pairs += 1;
+                hits.extend([b as u32, i as u32]);
             }
+        };
+        let (lo, hi) = (cell_of(boxes[b].0), cell_of(boxes[b].1));
+        let columns = (hi[0] - lo[0] + 1).saturating_mul(hi[1] - lo[1] + 1);
+        if columns.saturating_mul(64) < live.len() as u64 {
+            let mut near: Vec<u32> = Vec::new();
+            for x in lo[0]..=hi[0] {
+                for y in lo[1]..=hi[1] {
+                    let from = entries.partition_point(|e| e.0 < pack([x, y, lo[2]]));
+                    near.extend(entries[from..].iter().take_while(|e| e.0 <= pack([x, y, hi[2]])).map(|e| e.1));
+                }
+            }
+            near.sort_unstable();
+            near.dedup();
+            near.into_iter().for_each(|i| try_one(i as usize));
+        } else {
+            (0..live.len()).filter(|&i| !is_big[i]).for_each(&mut try_one);
+        }
+        big.iter().map(|&c| c as usize).filter(|&c| c > b).for_each(&mut try_one);
+        (hits, pairs)
+    });
+    let mut hit = vec![false; live.len()];
+    let mut pairs = 0;
+    for (hits, n) in found.into_iter().chain(found_big) {
+        pairs += n;
+        for i in hits {
+            hit[i as usize] = true;
         }
     }
     ((0..live.len()).filter(|&i| hit[i]).map(|i| live[i]).collect(), pairs)
@@ -298,11 +347,22 @@ const INSIDE: f64 = 1e-7;
 /// neighbours; faces sharing a corner can cross only through their edges away from it. Faces
 /// lying in one plane are not found.
 fn faces_cross(a: [u32; 3], b: [u32; 3], positions: &[Vec3]) -> bool {
-    let shared: Vec<(usize, usize)> = (0..3).flat_map(|i| (0..3).map(move |j| (i, j))).filter(|&(i, j)| a[i] == b[j]).collect();
+    // The corners they share, counted, and the last one (no list made: this runs for every
+    // pair of faces near each other).
+    let (mut count, mut corner) = (0, (0usize, 0usize));
+    for (i, x) in a.iter().enumerate() {
+        for (j, y) in b.iter().enumerate() {
+            if x == y {
+                count += 1;
+                corner = (i, j);
+            }
+        }
+    }
     let (pa, pb) = (a.map(|v| positions[v as usize]), b.map(|v| positions[v as usize]));
-    match shared.as_slice() {
-        [] => (0..3).any(|k| segment_crosses(pa[k], pa[(k + 1) % 3], pb)) || (0..3).any(|k| segment_crosses(pb[k], pb[(k + 1) % 3], pa)),
-        [(i, j)] => segment_crosses(pa[(i + 1) % 3], pa[(i + 2) % 3], pb) || segment_crosses(pb[(j + 1) % 3], pb[(j + 2) % 3], pa),
+    let (i, j) = corner;
+    match count {
+        0 => (0..3).any(|k| segment_crosses(pa[k], pa[(k + 1) % 3], pb)) || (0..3).any(|k| segment_crosses(pb[k], pb[(k + 1) % 3], pa)),
+        1 => segment_crosses(pa[(i + 1) % 3], pa[(i + 2) % 3], pb) || segment_crosses(pb[(j + 1) % 3], pb[(j + 2) % 3], pa),
         _ => false,
     }
 }
@@ -413,5 +473,55 @@ mod tests {
         let tris: Vec<[u32; 3]> = fixed.triangles.iter().map(|t| t.map(|v| weld[v as usize])).collect();
         assert_eq!(crossing_faces(&fixed.positions, &tris, &live).1, 0, "nothing crosses after");
         assert!(fixed.refilled >= 1, "the hole the crossing left is closed");
+    }
+
+    /// The faces found crossing, among them faces too large for the grid (needles through the
+    /// sheet, found through the cells they cover; a wide slanted face, tried against every face;
+    /// large faces through each other), are those a test of every pair finds, as many pairs.
+    #[test]
+    fn large_faces_cross_what_every_pair_tested_finds() {
+        let n = 30u32;
+        let mut positions: Vec<Vec3> = (0..=n).flat_map(|j| (0..=n).map(move |i| Vec3::new(f64::from(i), f64::from(j), 0.0))).collect();
+        let mut tris: Vec<[u32; 3]> = Vec::new();
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * (n + 1) + i;
+                tris.push([k, k + 1, k + n + 2]);
+                tris.push([k, k + n + 2, k + n + 1]);
+            }
+        }
+        let mut add = |ps: [Vec3; 3]| {
+            let base = positions.len() as u32;
+            positions.extend(ps);
+            tris.push([base, base + 1, base + 2]);
+        };
+        for (x, y) in [(3.3, 4.6), (12.7, 20.2), (25.1, 7.9)] {
+            add([Vec3::new(x, y, -60.0), Vec3::new(x + 0.3, y, 60.0), Vec3::new(x, y + 0.3, 60.0)]);
+        }
+        add([Vec3::new(-2.0, -2.0, -1.0), Vec3::new(32.0, 5.0, 1.0), Vec3::new(5.0, 32.0, 0.5)]);
+        add([Vec3::new(3.0, 4.0, 5.0), Vec3::new(3.6, 4.0, 5.0), Vec3::new(3.3, 5.2, 5.0)]);
+        add([Vec3::new(12.0, 20.0, -8.0), Vec3::new(14.0, 21.0, -8.0), Vec3::new(13.0, 19.0, -8.0)]);
+        let live: Vec<usize> = (0..tris.len()).collect();
+        let (found, pairs) = crossing_faces(&positions, &tris, &live);
+        let boxes: Vec<(Vec3, Vec3)> =
+            tris.iter().map(|t| t.map(|v| positions[v as usize])).map(|[a, b, c]| (a.min(b).min(c), a.max(b).max(c))).collect();
+        let overlap = |i: usize, j: usize| {
+            let ((a0, a1), (b0, b1)) = (boxes[i], boxes[j]);
+            a0.x <= b1.x && a0.y <= b1.y && a0.z <= b1.z && b0.x <= a1.x && b0.y <= a1.y && b0.z <= a1.z
+        };
+        let (mut hit, mut every) = (vec![false; tris.len()], 0);
+        for i in 0..tris.len() {
+            for j in i + 1..tris.len() {
+                if overlap(i, j) && faces_cross(tris[i], tris[j], &positions) {
+                    every += 1;
+                    hit[i] = true;
+                    hit[j] = true;
+                }
+            }
+        }
+        let want: Vec<usize> = (0..tris.len()).filter(|&i| hit[i]).collect();
+        let large = (tris.len() - 6..tris.len()).filter(|&i| hit[i]).count();
+        assert!(large >= 4 && every > 10, "the large faces cross: {large} of them, {every} pairs");
+        assert_eq!((found, pairs), (want, every));
     }
 }
