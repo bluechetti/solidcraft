@@ -114,7 +114,8 @@
     "ui.scan_reduce_error": "Most error (0: none)",
     "ui.scan_reduce_rim": "Keep the rim",
     "ui.scan_reduce_count": "{now} triangles now; about {kept} kept.",
-    "ui.scan_reduce_hint": "Flat areas lose triangles first, detailed ones last. With a most error set, it stops sooner if a collapse would move the surface farther than that."
+    "ui.scan_reduce_hint": "Flat areas lose triangles first, detailed ones last. With a most error set, it stops sooner if a collapse would move the surface farther than that.",
+    "help.scan.repair": "Puts the scan's triangles right: copies of a triangle taken off, an edge three or more faces meet along left with the two that continue each other best, slivers flipped away. Use it on a scan that fitting or filling refuses."
   },
   "de": {
     "ALIGN": "AUSRICHTEN",
@@ -231,7 +232,8 @@
     "ui.scan_reduce_error": "Größter Fehler (0: keiner)",
     "ui.scan_reduce_rim": "Rand behalten",
     "ui.scan_reduce_count": "Jetzt {now} Dreiecke; etwa {kept} bleiben.",
-    "ui.scan_reduce_hint": "Ebene Bereiche verlieren zuerst Dreiecke, detailreiche zuletzt. Mit einem größten Fehler endet es früher, wenn ein Zusammenziehen die Fläche weiter bewegen würde."
+    "ui.scan_reduce_hint": "Ebene Bereiche verlieren zuerst Dreiecke, detailreiche zuletzt. Mit einem größten Fehler endet es früher, wenn ein Zusammenziehen die Fläche weiter bewegen würde.",
+    "help.scan.repair": "Bringt die Dreiecke des Scans in Ordnung: Kopien eines Dreiecks werden entfernt, an einer Kante mit drei oder mehr Flächen bleiben die zwei, die sich am besten fortsetzen, und Splitterdreiecke werden weggeklappt. Verwenden Sie es bei einem Scan, den Anpassen oder Füllen ablehnt."
   },
   "ja": {
     "ALIGN": "位置合わせ",
@@ -348,7 +350,8 @@
     "ui.scan_reduce_error": "最大誤差(0: なし)",
     "ui.scan_reduce_rim": "外周を保つ",
     "ui.scan_reduce_count": "現在 {now} 三角形、約 {kept} を残します。",
-    "ui.scan_reduce_hint": "平らな所から先に三角形が減り、細かい所は最後です。最大誤差を設定すると、それより面が動く場合は早めに止まります。"
+    "ui.scan_reduce_hint": "平らな所から先に三角形が減り、細かい所は最後です。最大誤差を設定すると、それより面が動く場合は早めに止まります。",
+    "help.scan.repair": "スキャンの三角形を整えます。三角形の重複を取り除き、3 面以上が接するエッジでは最もよくつながる 2 面を残し、細長い三角形を反転で解消します。フィットや穴埋めが拒否するスキャンに使います。"
   },
   "ko": {
     "ALIGN": "정렬",
@@ -465,7 +468,8 @@
     "ui.scan_reduce_error": "최대 오차(0: 없음)",
     "ui.scan_reduce_rim": "가장자리 유지",
     "ui.scan_reduce_count": "현재 삼각형 {now}개; 약 {kept}개 유지.",
-    "ui.scan_reduce_hint": "평평한 곳의 삼각형이 먼저 줄고 세밀한 곳은 마지막입니다. 최대 오차를 정하면 그보다 곡면을 더 움직이게 될 때 더 일찍 멈춥니다."
+    "ui.scan_reduce_hint": "평평한 곳의 삼각형이 먼저 줄고 세밀한 곳은 마지막입니다. 최대 오차를 정하면 그보다 곡면을 더 움직이게 될 때 더 일찍 멈춥니다.",
+    "help.scan.repair": "스캔의 삼각형을 바로잡습니다: 중복 삼각형을 없애고, 세 면 이상이 만나는 모서리에서는 가장 잘 이어지는 두 면을 남기며, 가는 삼각형은 뒤집어 없앱니다. 맞춤이나 채우기가 거부하는 스캔에 사용하세요."
   },
   "zh": {
     "ALIGN": "对齐",
@@ -582,7 +586,8 @@
     "ui.scan_reduce_error": "最大误差(0:无)",
     "ui.scan_reduce_rim": "保留边缘",
     "ui.scan_reduce_count": "当前 {now} 个三角形；约保留 {kept} 个。",
-    "ui.scan_reduce_hint": "平坦区域先减少三角形，细节区域最后。设置最大误差后，若折叠会使曲面移动超过该值则提前停止。"
+    "ui.scan_reduce_hint": "平坦区域先减少三角形，细节区域最后。设置最大误差后，若折叠会使曲面移动超过该值则提前停止。",
+    "help.scan.repair": "修正扫描的三角形：移除重复三角形；三个或更多面相交的边只保留衔接最好的两个面；翻转消除细长三角形。用于拟合或补洞被拒绝的扫描。"
   },
   "ar": {
     "ALIGN": "محاذاة",
@@ -699,7 +704,8 @@
     "ui.scan_reduce_error": "أقصى خطأ (0: بلا)",
     "ui.scan_reduce_rim": "الإبقاء على الحافة",
     "ui.scan_reduce_count": "الآن {now} مثلثًا؛ يبقى نحو {kept}.",
-    "ui.scan_reduce_hint": "تفقد المناطق المسطحة مثلثاتها أولًا والمفصّلة أخيرًا. مع تحديد أقصى خطأ يتوقف أبكر إذا كان الطي سيحرك السطح أبعد من ذلك."
+    "ui.scan_reduce_hint": "تفقد المناطق المسطحة مثلثاتها أولًا والمفصّلة أخيرًا. مع تحديد أقصى خطأ يتوقف أبكر إذا كان الطي سيحرك السطح أبعد من ذلك.",
+    "help.scan.repair": "يصلح مثلثات المسح: تُزال نسخ المثلث، وعند حافة تلتقي فيها ثلاثة وجوه أو أكثر يبقى الوجهان الأكثر اتصالًا، وتُقلب الشظايا. استخدمه على مسح ترفضه الملاءمة أو التعبئة."
   },
   "he": {
     "ALIGN": "יישור",
@@ -816,7 +822,8 @@
     "ui.scan_reduce_error": "שגיאה מרבית (0: ללא)",
     "ui.scan_reduce_rim": "שמירת השפה",
     "ui.scan_reduce_count": "כעת {now} משולשים; יישמרו כ-{kept}.",
-    "ui.scan_reduce_hint": "אזורים שטוחים מאבדים משולשים ראשונים, מפורטים אחרונים. עם שגיאה מרבית היא נעצרת מוקדם יותר אם כיווץ יזיז את המשטח מעבר לכך."
+    "ui.scan_reduce_hint": "אזורים שטוחים מאבדים משולשים ראשונים, מפורטים אחרונים. עם שגיאה מרבית היא נעצרת מוקדם יותר אם כיווץ יזיז את המשטח מעבר לכך.",
+    "help.scan.repair": "מתקנת את משולשי הסריקה: עותקים של משולש מוסרים, בקצה שבו נפגשים שלושה פרצופים או יותר נשארים השניים שממשיכים זה את זה הכי טוב, ורסיסים מתהפכים החוצה. השתמשו בה בסריקה שהתאמה או מילוי דוחים."
   },
   "vi": {
     "ALIGN": "CĂN CHỈNH",
@@ -933,7 +940,8 @@
     "ui.scan_reduce_error": "Sai số tối đa (0: không)",
     "ui.scan_reduce_rim": "Giữ mép",
     "ui.scan_reduce_count": "Hiện có {now} tam giác; giữ khoảng {kept}.",
-    "ui.scan_reduce_hint": "Vùng phẳng mất tam giác trước, vùng chi tiết sau cùng. Khi đặt sai số tối đa, nó dừng sớm hơn nếu một lần gộp làm mặt dịch xa hơn thế."
+    "ui.scan_reduce_hint": "Vùng phẳng mất tam giác trước, vùng chi tiết sau cùng. Khi đặt sai số tối đa, nó dừng sớm hơn nếu một lần gộp làm mặt dịch xa hơn thế.",
+    "help.scan.repair": "Sửa các tam giác của bản quét: bỏ bản sao của tam giác, ở cạnh có ba mặt trở lên chỉ giữ hai mặt nối tiếp nhau tốt nhất, lật bỏ tam giác dẹt. Dùng cho bản quét mà khớp hoặc lấp lỗ từ chối."
   },
   "en-GB": {
     "cmd.scan_center": "Centre on Origin",

@@ -20,7 +20,8 @@ use crate::schema::scan::{
     ScanBase, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams,
     ScanDeviationResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult,
     ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFloatingParams, ScanFloatingResult, ScanHolesParams, ScanHolesResult, ScanMirror,
-    ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
+    ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams, ScanRepairResult, ScanSquareParams, ScanStandParams,
+    ScanSymmetryParams, ScanSymmetryResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -40,12 +41,15 @@ const CURVE_CONTRACT: TypedContract<ScanCurveParams> = TypedContract::new();
 const FLOATING_CONTRACT: TypedContract<ScanFloatingParams> = TypedContract::new();
 const HOLES_CONTRACT: TypedContract<ScanHolesParams> = TypedContract::new();
 const REDUCE_CONTRACT: TypedContract<ScanReduceParams> = TypedContract::new();
+const REPAIR_CONTRACT: TypedContract<ScanRepairParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
-    planned!("scan.repair", "Repair Mesh", "8615")
+    CommandSpec::new("scan.repair", "Repair Mesh", crate::checked!("scan.repair", clean::repair))
         .at("SCAN", "CLEAN")
         .icon("mesh_body")
-        .params("planned: body: mesh body name (fixes flipped normals, non-manifold edges, slivers and duplicate triangles) → repaired counts"),
+        .contract(&REPAIR_CONTRACT)
+        .output(output_schema_for::<ScanRepairResult>)
+        .params("body?: mesh body (default: the selected or only one): copies of a triangle taken off, an edge three or more faces meet along left with the two that continue each other best, slivers flipped away (equal points, collapsed triangles and the winding are put right when a scan is built); the scan written back in its Insert Mesh feature (one undo step); a scan that needs none is told so → body, duplicates, non_manifold, slivers, triangles, feature"),
     CommandSpec::new("scan.fill_holes", "Fill Holes", crate::checked!("scan.fill_holes", clean::fill_holes))
         .at("SCAN", "CLEAN")
         .icon("surface_patch")

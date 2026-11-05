@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use super::{
     ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCurveParams, ScanDeviationParams, ScanDeviationResult, ScanEditSurfaceParams,
     ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFloatingParams, ScanHolesParams, ScanPlaceParams, ScanPlaceResult,
-    ScanReduceParams, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
+    ScanReduceParams, ScanRepairParams, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
 };
 use crate::Session;
 use crate::schema::tests::{assert_keys, assert_strict_keeps_todays_errors, conforms};
@@ -22,6 +22,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanCompleteParams>(), &["body", "guide", "plane", "reach"]);
     assert_keys(input_schema_for::<ScanFloatingParams>(), &["below", "body"]);
     assert_keys(input_schema_for::<ScanHolesParams>(), &["body", "fair", "max_edges"]);
+    assert_keys(input_schema_for::<ScanRepairParams>(), &["body"]);
     assert_keys(input_schema_for::<ScanReduceParams>(), &["body", "keep_rim", "max_error", "ratio", "triangles"]);
     assert_keys(input_schema_for::<ScanCurveParams>(), &["body", "closed", "points", "sketch", "tolerance"]);
     assert_keys(input_schema_for::<ScanEditSurfaceParams>(), &["hold", "moves", "points", "reach", "refit", "scan", "surface"]);

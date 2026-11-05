@@ -14,6 +14,7 @@
 //! - [`place`]: rigid moves that stand a scan on a base, rest it on the grid, centre it over the
 //!   origin or lay it along its own axes.
 //! - [`reduce`]: fewer triangles for a scan, cheapest collapses first (quadric errors).
+//! - [`repair`]: copies, edges of three or more faces and slivers put right.
 //! - [`surface`]: a smooth B-spline surface fitted to the part of the scan round a picked point.
 //! - [`surface_edit`]: a surface's control points moved and the rest fitted to the scan again.
 //! - [`symmetry`]: the plane a scan is a mirror image about, found by itself or near a line drawn
@@ -30,6 +31,7 @@ pub mod mirror_fill;
 pub mod pieces;
 pub mod place;
 pub mod reduce;
+pub mod repair;
 pub mod surface;
 pub mod surface_edit;
 pub mod symmetry;

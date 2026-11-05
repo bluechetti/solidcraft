@@ -612,6 +612,35 @@ pub struct ScanReduceResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Repair a scan's triangles: copies of a triangle taken off, an edge three or more faces meet
+/// along left with the two that continue each other best, slivers flipped away. The scan is
+/// written back in its Insert Mesh feature; one undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanRepairParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+/// What `scan.repair` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanRepairResult {
+    /// The scan.
+    pub body: String,
+    /// Copies taken off, faces taken off edges of three or more, slivers put right.
+    pub duplicates: usize,
+    pub non_manifold: usize,
+    pub slivers: usize,
+    /// The triangles the scan has now.
+    pub triangles: usize,
+    /// The Insert Mesh feature the scan was written back into.
+    pub feature: u64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// A way a scan could stand.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct ScanBase {

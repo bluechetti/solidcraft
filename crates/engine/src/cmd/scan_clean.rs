@@ -15,7 +15,7 @@ use solidcraft_scan::place::Rigid;
 
 use super::{length, mesh_name};
 use crate::params::bad;
-use crate::schema::scan::{ScanFloatingResult, ScanHolesResult, ScanReduceResult};
+use crate::schema::scan::{ScanFloatingResult, ScanHolesResult, ScanReduceResult, ScanRepairResult};
 use crate::{EngineError, Result, Session};
 
 /// The default share of the largest piece below which a piece floats.
@@ -287,6 +287,30 @@ pub(super) fn reduce(s: &mut Session, p: &Value) -> Result<Value> {
         collapses: reduced.collapses,
         stopped: reduced.stopped.name().into(),
         largest_error: reduced.largest_error,
+        feature,
+        param_warnings: Vec::new(),
+    };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+pub(super) fn repair(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.repair";
+    let name = mesh_name(s, p, cmd)?;
+    let fixed = {
+        let state = s.model.state();
+        let (positions, triangles) = state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, "the scan is gone"))?;
+        solidcraft_scan::repair::repair(&Scan::new(positions, triangles))
+    };
+    if !fixed.changed() {
+        return Err(bad(cmd, "the scan needs no repair: no copied triangles, no edge of three or more faces, no slivers"));
+    }
+    let feature = replace_mesh(s, &name, &fixed.positions, &fixed.triangles, cmd)?;
+    let reply = ScanRepairResult {
+        body: name,
+        duplicates: fixed.duplicates,
+        non_manifold: fixed.non_manifold,
+        slivers: fixed.slivers,
+        triangles: fixed.triangles.len(),
         feature,
         param_warnings: Vec::new(),
     };

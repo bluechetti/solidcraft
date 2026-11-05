@@ -704,3 +704,20 @@ fn reduce_keeps_a_fine_box_its_shape() {
     let refused = s.execute("scan.reduce", &json!({"ratio": 0.5, "triangles": 10})).unwrap_err().to_string();
     assert!(refused.contains("not both"), "{refused}");
 }
+
+/// A box with a copied triangle: Repair takes the copy off, one undo step; then the box needs none.
+#[test]
+fn repair_takes_a_copied_triangle_off() {
+    let mut triangles = fine_box(Vec3::ZERO, Vec3::new(10.0, 10.0, 10.0), 4);
+    let copy = triangles[5];
+    triangles.push([copy[1], copy[2], copy[0]]);
+    let (mut s, body) = session_with_triangles("repair", &triangles);
+    let count = |s: &Session| s.model.state().body(&body).and_then(|b| b.body.triangle_mesh()).map_or(0, |(_, t)| t.len());
+    let before = count(&s);
+    let reply = run(&mut s, "scan.repair", json!({}));
+    assert_eq!((reply["duplicates"].as_u64(), reply["triangles"].as_u64()), (Some(1), Some(before as u64 - 1)), "{reply}");
+    let refused = s.execute("scan.repair", &json!({})).unwrap_err().to_string();
+    assert!(refused.contains("needs no repair"), "{refused}");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(count(&s), before, "one undo step");
+}

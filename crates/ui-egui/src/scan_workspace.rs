@@ -131,6 +131,7 @@ mod tests {
             "scan.remove_floating",
             "scan.fill_holes",
             "scan.reduce",
+            "scan.repair",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {

@@ -151,6 +151,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.quick_align",
     "scan.reduce",
     "scan.remove_floating",
+    "scan.repair",
     "scan.rest_on_grid",
     "scan.square_to_symmetry",
     "scan.stand_on_base",
