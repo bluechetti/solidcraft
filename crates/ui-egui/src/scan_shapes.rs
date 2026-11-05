@@ -14,7 +14,7 @@ use solidcraft_gpu::view::{CloudStyle, ColorMode, Dot, GpuCloud, cloud_dot};
 use crate::SolveApp;
 
 /// The regions' id among the clouds the viewport draws: beside the deviation map's.
-const CLOUD_ID: u64 = u64::MAX - 2;
+const CLOUD_ID: u64 = u64::MAX - 6;
 
 /// A dot's size on screen, in pixels.
 const DOT_PIXELS: f32 = 3.0;

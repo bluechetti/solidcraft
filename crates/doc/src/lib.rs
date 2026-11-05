@@ -77,6 +77,7 @@ pub mod render_optics;
 pub mod render_resources;
 pub mod render_settings;
 pub mod render_surface;
+pub mod scan_selection;
 pub mod sheet;
 pub mod sketch_equation;
 pub mod text_params;

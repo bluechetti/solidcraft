@@ -86,7 +86,7 @@ fn run(s: &mut Session, id: &str, p: Value) -> Result<Value> {
 /// Opens the sketch the curve goes in for drawing: the one named, the 3D sketch being edited, the
 /// design's `Scan Curves`, or a new `Scan Curves`. Its id, and whether it was opened here (to
 /// finish it again after).
-fn open_sketch(s: &mut Session, p: &Value, cmd: &str) -> Result<(u64, bool)> {
+pub(super) fn open_sketch(s: &mut Session, p: &Value, cmd: &str) -> Result<(u64, bool)> {
     let three_d = |s: &Session, id: u64| super::super::sketch_store::read(&s.doc, id).is_ok_and(|sk| sk.view.three_d);
     let named = match p.get("sketch").filter(|v| !v.is_null()) {
         Some(_) => Some(super::super::sketch_store::target(s, p, cmd)?),

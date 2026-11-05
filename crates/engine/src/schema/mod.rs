@@ -85,6 +85,7 @@ pub mod scan_align;
 pub mod scan_fillet;
 pub mod scan_mesh;
 pub mod scan_reconstruct;
+pub mod scan_select;
 pub mod scan_split;
 pub mod section;
 pub mod sheet;

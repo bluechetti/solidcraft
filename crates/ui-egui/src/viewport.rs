@@ -4644,6 +4644,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 .into_iter()
                 .chain(crate::scan_deviation::gpu_cloud(app))
                 .chain(crate::scan_shapes::gpu_cloud(app))
+                .chain(crate::scan_selection::gpu_cloud(app))
                 .chain(crate::dialogs_scan::gpu_marks(app))
                 .chain(crate::dialogs_scan::gpu_mismatch(app))
                 .chain(crate::dialogs_scan_clean::gpu_marks(app))
@@ -5261,6 +5262,26 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::dialogs_scan_curve::stroke_end(app, &proj);
         }
     }
+    // Select on Scan: clicks and drags on the scan select with the dialog's tool.
+    if crate::dialogs_scan_select::active(app) {
+        crate::dialogs_scan_select::tick(app, &proj);
+        if resp.clicked()
+            && let Some(p) = resp.interact_pointer_pos()
+        {
+            crate::dialogs_scan_select::click(app, &proj, p);
+        }
+        if !held && primary_nav.is_none() && mode.is_none() {
+            if resp.dragged_by(egui::PointerButton::Primary)
+                && let (Some(a), Some(p)) = (ui.input(|i| i.pointer.press_origin()), hover)
+                && rect.contains(a)
+            {
+                crate::dialogs_scan_select::drag_to(app, &proj, a, p);
+            }
+            if resp.drag_stopped() {
+                crate::dialogs_scan_select::drag_end(app);
+            }
+        }
+    }
     // Sections Along Curve: a click on a 3D curve is the curve the sections follow.
     if crate::dialogs_scan_sections::choosing(app)
         && resp.clicked()
@@ -5279,6 +5300,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if app.tool.is_none()
         && !crate::dialogs_scan::drawing_guide(app)
         && !crate::dialogs_scan_curve::drawing(app)
+        && !crate::dialogs_scan_select::active(app)
         && !crate::dialogs_scan_surface::holds_pointer(app)
         && !held
         && primary_nav.is_none()
@@ -5334,6 +5356,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::dialogs_scan_clean::draw(app, &painter, &proj);
     crate::dialogs_scan_section::draw(app, &painter, &proj);
     crate::dialogs_scan_sections::draw(app, &painter, &proj);
+    crate::dialogs_scan_select::draw(app, &painter, &proj, hover);
+    crate::dialogs_scan_edge::draw(app, &painter, &proj);
     crate::dialogs_assembly::origins(app, &painter, &proj);
     if !crate::joint_handles::visible(app) {
         crate::dialogs_assembly::joint_glyphs(app, &painter, &proj);

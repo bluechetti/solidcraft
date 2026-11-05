@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn the_scan_tab_shows_its_layout_with_planned_tools_greyed() {
         let specs = solidcraft_engine::command_specs();
-        assert_eq!(crate::workspace::panels("SCAN"), ["INSERT", "CLEAN", "ALIGN", "FIT", "RECONSTRUCT", "FREEFORM", "SKETCH", "CHECK"]);
+        assert_eq!(crate::workspace::panels("SCAN"), ["INSERT", "CLEAN", "ALIGN", "FIT", "RECONSTRUCT", "FREEFORM", "SKETCH", "SELECT", "CHECK"]);
         let mut h = crate::scenario::Harness::new();
         super::enter(&mut h.app, true).unwrap();
         h.frames(2);
@@ -151,6 +151,11 @@ mod tests {
             "scan.remesh",
             "scan.denoise",
             "scan.sections_along_curve",
+            "scan.select",
+            "scan.select_inside_curve",
+            "scan.keep_selection",
+            "scan.delete_selection",
+            "scan.curve_from_selection",
             "scan.split",
             "scan.align_all",
             "scan.align_pairs",

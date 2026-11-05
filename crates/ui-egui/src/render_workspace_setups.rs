@@ -327,6 +327,7 @@ pub(super) fn same_model_source(app: &SolveApp, document: &std::sync::Weak<solid
         favorites,
         canvases,
         point_clouds,
+        scan_selections,
         param_comments,
         materials,
         print_faces,

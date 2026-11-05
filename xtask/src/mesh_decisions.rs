@@ -36,6 +36,7 @@ const MODEL_BODY_CRATES: &[&str] = &["crates/doc", "crates/engine"];
 pub const SKIPPED_MODULES: &[(&str, &str)] = &[
     ("crates/doc/src/display_quality.rs", "the viewport's display quality levels"),
     ("crates/doc/src/placed_mesh.rs", "the display meshes and plans of bodies and placed parts"),
+    ("crates/doc/src/scan_selection.rs", "mesh bodies: a selection of a scan's triangles kept in the design"),
     ("crates/engine/src/cmd/file_thumbnail.rs", "a design's thumbnail picture"),
     ("crates/engine/src/cmd/mesh.rs", "mesh bodies: repair, decimate and inspect imported meshes"),
     ("crates/engine/src/cmd/render", "rendered pictures"),
@@ -46,6 +47,7 @@ pub const SKIPPED_MODULES: &[(&str, &str)] = &[
     ("crates/engine/src/cmd/scan_clean.rs", "mesh bodies: a scan's own triangles cleaned and written back"),
     ("crates/engine/src/cmd/scan_mesh.rs", "mesh bodies: a scan's mesh laid onto another, remeshed, smoothed or made from points"),
     ("crates/engine/src/cmd/scan_reconstruct.rs", "mesh bodies: a scan cut into the shapes it is, and what Reconstruct reads off them"),
+    ("crates/engine/src/cmd/scan_select.rs", "mesh bodies: part of a scan's triangles selected, kept, and its outline laid on the scan"),
     ("crates/engine/src/cmd/scan_split.rs", "mesh bodies: a scan cut by a plane, a shape, another body or scan, a curve or a sketch"),
     ("crates/engine/src/cmd/silhouette.rs", "a picture's view-aligned silhouette of the display meshes"),
     ("crates/engine/src/cmd/surface_analysis.rs", "view analyses: zebra, draft and curvature shading of the display mesh"),

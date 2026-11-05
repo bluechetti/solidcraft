@@ -67,6 +67,7 @@ pub mod remesh;
 pub mod repair;
 pub mod section;
 pub mod segment;
+pub mod selection;
 pub mod split;
 pub mod surface;
 pub mod surface_edit;

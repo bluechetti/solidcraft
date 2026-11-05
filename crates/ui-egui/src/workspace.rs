@@ -385,9 +385,23 @@ pub const SECTIONS: &[Section] = &[
         tab: "SCAN",
         panel: "SKETCH",
         promoted: 3,
-        ids: &["sketch.create", "scan.section_sketch", "scan.curve_on_scan", "scan.sections_along_curve", "sketch.fit_curves_to_section"],
+        ids: &[
+            "sketch.create",
+            "scan.section_sketch",
+            "scan.curve_on_scan",
+            "scan.sections_along_curve",
+            "scan.curve_from_selection",
+            "sketch.fit_curves_to_section",
+        ],
     },
-    Section { tab: "SCAN", panel: "CHECK", promoted: 3, ids: &["scan.deviation", "inspect.section", "inspect.compare"] },
+    // Part of a scan chosen for the tools that work on part of one, and kept by name.
+    Section {
+        tab: "SCAN",
+        panel: "SELECT",
+        promoted: 1,
+        ids: &["scan.select", "scan.select_inside_curve", "scan.keep_selection", "scan.delete_selection"],
+    },
+    Section { tab: "SCAN", panel: "CHECK", promoted: 1, ids: &["scan.deviation", "inspect.section", "inspect.compare"] },
 ];
 
 // Migration data only: Render commands remain registered, but have no live ribbon sections.
@@ -510,6 +524,8 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("scan.reconstruct", "Rebuild"),
     ("scan.remove_floating", "Floating"),
     ("scan.section_sketch", "Section"),
+    ("scan.select", "Select"),
+    ("scan.select_inside_curve", "Inside Curve"),
     ("scan.square_to_symmetry", "Square Up"),
     ("scan.stand_on_base", "Stand on Base"),
     ("scan.symmetry", "Symmetry"),

@@ -592,6 +592,9 @@ pub struct Session {
     /// viewport to colour and Reconstruct's tools to build from. View state: not part of the
     /// design and not an undo step.
     pub scan_shapes: Option<std::sync::Arc<cmd::scan::reconstruct::ScanShapes>>,
+    /// What is selected on a scan (`scan.select`), for the scan tools that work on part of one.
+    /// View state: not part of the design and not an undo step (`scan.keep_selection` keeps it).
+    pub scan_selection: Option<std::sync::Arc<cmd::scan::select::ScanSelected>>,
     /// The base `scan.stand_on_base` last stood a scan on by number: the scan and which base it
     /// was. Pressed again with nothing picked while the scan still stands there, it goes on to the
     /// next. View state: not part of the design.
@@ -858,6 +861,7 @@ impl Session {
             continuity: Vec::new(),
             scan_deviation: None,
             scan_shapes: None,
+            scan_selection: None,
             scan_base_cycle: None,
             isocurves: Vec::new(),
             comb: None,
@@ -1940,6 +1944,7 @@ impl Session {
             continuity: Vec::new(),
             scan_deviation: None,
             scan_shapes: None,
+            scan_selection: self.scan_selection.clone(),
             scan_base_cycle: None,
             isocurves: Vec::new(),
             comb: None,
@@ -2429,6 +2434,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         favorites,
         canvases,
         point_clouds,
+        scan_selections,
         param_comments,
         materials,
         print_faces,
@@ -2465,6 +2471,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         && *favorites == b.favorites
         && *canvases == b.canvases
         && *point_clouds == b.point_clouds
+        && *scan_selections == b.scan_selections
         && *param_comments == b.param_comments
         && *materials == b.materials
         && *print_faces == b.print_faces

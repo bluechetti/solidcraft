@@ -1027,6 +1027,9 @@ pub mod reconstruct;
 #[path = "scan_section.rs"]
 pub mod section;
 
+#[path = "scan_select.rs"]
+pub mod select;
+
 #[path = "scan_slice.rs"]
 pub mod slice;
 
