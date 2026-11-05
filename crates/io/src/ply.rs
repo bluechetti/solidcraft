@@ -19,9 +19,9 @@ const MAX_ELEMENTS: usize = 64;
 const MAX_PROPERTIES: usize = 256;
 /// Most indices in one face.
 const MAX_FACE: usize = 1024;
-/// Most vertices and triangles of a mesh read from one file (as OBJ).
-const MAX_MESH_VERTICES: usize = 20_000_000;
-const MAX_TRIANGLES: usize = 20_000_000;
+/// Most vertices and triangles of a mesh read from one file: as many as a mesh body holds.
+const MAX_MESH_VERTICES: usize = solidcraft_kernel::MAX_VERTICES;
+const MAX_TRIANGLES: usize = solidcraft_kernel::MAX_TRIANGLES;
 /// Most cells of a range grid: each gives at most two triangles.
 const MAX_GRID_CELLS: usize = MAX_TRIANGLES / 2;
 /// A range grid's cell that saw nothing.
@@ -715,6 +715,24 @@ mod tests {
         assert_eq!((v.len(), n, colored), (2, 2, false));
         assert_eq!(v[1], ([4.0, 5.0, 6.0], None));
         assert!(read_ply_mesh(points.as_bytes(), "x").is_err(), "a point cloud is not a mesh");
+    }
+
+    /// A scan as large as Stanford's Lucy (14M vertices, 28M triangles) is not refused for its
+    /// counts, only a file claiming more than a mesh body holds; a header claiming what the file
+    /// cannot hold allocates nothing for it.
+    #[test]
+    fn a_28_million_triangle_scan_is_not_refused_for_its_size() {
+        let header = |vertices: u64, faces: u64| {
+            format!(
+                "ply\nformat binary_little_endian 1.0\nelement vertex {vertices}\nproperty float x\nproperty float y\nproperty float z\n\
+                 element face {faces}\nproperty list uchar int vertex_indices\nend_header\n"
+            )
+        };
+        let lucy = read_ply_mesh(header(14_027_872, 28_055_742).as_bytes(), "Lucy").unwrap_err().to_string();
+        assert!(!lucy.contains("more than"), "{lucy}");
+        let over = solidcraft_kernel::MAX_VERTICES as u64 + 1;
+        let refused = read_ply_mesh(header(over, 1).as_bytes(), "Huge").unwrap_err().to_string();
+        assert!(refused.contains(&format!("more than {} vertices", solidcraft_kernel::MAX_VERTICES)), "{refused}");
     }
 
     /// A raw scan as Stanford writes them: `cols` x `rows` cells, a cell at column c and row r

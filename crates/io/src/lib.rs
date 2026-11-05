@@ -979,8 +979,8 @@ pub fn read_stl(bytes: &[u8]) -> Result<Vec<[[f32; 3]; 3]>> {
     Ok(tris)
 }
 
-/// Most triangles we read from one STL file.
-pub const MAX_STL_TRIANGLES: usize = 20_000_000;
+/// Most triangles we read from one STL file: as many as a mesh body holds.
+pub const MAX_STL_TRIANGLES: usize = solidcraft_kernel::MAX_TRIANGLES;
 
 #[cfg(test)]
 mod tests {

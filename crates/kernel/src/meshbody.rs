@@ -10,8 +10,12 @@ use solidcraft_geom::Mesh;
 use crate::body::Body;
 use crate::{KernelError, Result};
 
-/// Most triangles in one mesh body.
-pub const MAX_TRIANGLES: usize = 20_000_000;
+/// Most triangles in one mesh body, and most vertices a mesh file may give one: far above any
+/// scan's (a 28-million-triangle statue takes about 10 GB to work with) and well within the
+/// `u32` indices of its triangles. What keeps the memory a file can ask for in check is the
+/// largest file read (`--max-file-size`), which the readers never allocate past.
+pub const MAX_TRIANGLES: usize = 250_000_000;
+pub const MAX_VERTICES: usize = 250_000_000;
 
 /// Indexed triangles with shared vertices, wound counter-clockwise seen from outside.
 #[derive(Clone, Debug, Default)]
