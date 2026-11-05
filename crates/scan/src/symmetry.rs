@@ -189,7 +189,17 @@ struct Scene {
     middle: Vec3,
     size: f64,
     spacing: f64,
+    /// The vertices where the surface turns sharply (edges, rims, corners): what says where a plane
+    /// is when most of a part is flat and lands on itself however the plane slides along it.
+    features: Vec<Vec3>,
 }
+
+/// A vertex is on an edge when a triangle round it faces more than this far (cosine, about 30°)
+/// from the way the surface faces there.
+const EDGE_TURN: f64 = 0.87;
+
+/// The most edge points the plane is settled on.
+const FEATURE_LIMIT: usize = 20_000;
 
 /// `None` for fewer than 50 vertices in use, or no area.
 fn scene(scan: &Scan) -> Option<Scene> {
@@ -219,6 +229,32 @@ fn scene(scan: &Scan) -> Option<Scene> {
     }
     let vertices: Vec<Vec3> = members.iter().filter_map(|&i| scan.positions.get(i).copied()).collect();
     let normals: Vec<Vec3> = members.iter().map(|&i| sums[i].normalized().unwrap_or(Vec3::Z)).collect();
+    // How far the triangles round each point turn from the way the surface faces there, points at
+    // one place counted as one (a file may write each face's corners apart).
+    let weld = crate::welded(scan.positions);
+    let mut joined = vec![Vec3::ZERO; n];
+    for (i, &rep) in weld.iter().enumerate() {
+        joined[rep as usize] += sums[i];
+    }
+    let mut least = vec![1.0f64; n];
+    for (t, tri) in scan.triangles.iter().enumerate() {
+        let Some([a, b, c]) = scan.corners(t) else { continue };
+        let Some(face) = (b - a).cross(c - a).normalized() else { continue };
+        for &v in tri {
+            let rep = weld[v as usize] as usize;
+            if let Some(normal) = joined[rep].normalized() {
+                least[rep] = least[rep].min(face.dot(normal));
+            }
+        }
+    }
+    let features: Vec<Vec3> = thinned(
+        &members
+            .iter()
+            .filter(|&&i| weld[i] as usize == i && least[i] < EDGE_TURN)
+            .filter_map(|&i| scan.positions.get(i).copied())
+            .collect::<Vec<_>>(),
+        FEATURE_LIMIT,
+    );
     let centroid = centroid / area;
     let (lo, hi) = vertices.iter().fold((vertices[0], vertices[0]), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
     let size = (hi - lo).len();
@@ -226,7 +262,7 @@ fn scene(scan: &Scan) -> Option<Scene> {
     let factor = if vertices.len() > TABLE_LIMIT { (vertices.len() as f64 / TABLE_LIMIT as f64).sqrt() } else { 1.0 };
     let table = Table::new(thinned(&vertices, TABLE_LIMIT), 2.5 * spacing * factor);
     let samples = thinned(&vertices, SAMPLE_LIMIT);
-    Some(Scene { vertices, normals, samples, table, centroid, middle: (lo + hi) / 2.0, size, spacing })
+    Some(Scene { vertices, normals, samples, table, centroid, middle: (lo + hi) / 2.0, size, spacing, features })
 }
 
 /// The best mirror plane of the scan, `None` for a scan too small to search.
@@ -262,6 +298,16 @@ pub fn find(scan: &Scan) -> Option<Mirror> {
             assess(normal, point, &scene)
         })
         .min_by(|a, b| a.score().total_cmp(&b.score()))?;
+    let (normal, point) = match Edges::new(&scene) {
+        Some(e) => {
+            let (n, p, _) = e.settle(best.normal, best.point, Stage::Coarse, &scene);
+            let (n, p, _) = e.settle(n, p, Stage::Fine, &scene);
+            (n, p)
+        }
+        None => (best.normal, best.point),
+    };
+    let settled = assess(normal, point, &scene);
+    let best = if settled.score() <= best.score() * 1.05 { settled } else { best };
     Some(polish(&best, &scene, 12))
 }
 
@@ -319,14 +365,26 @@ pub fn find_guided(scan: &Scan, guide: &Guide) -> Option<Mirror> {
             starts.push((t, p));
         }
     }
+    // Each start settled where the scan's edges land on its edges, coarsely; the best of them
+    // finished on the scan's own spacing.
+    let edges = Edges::new(&scene);
     let (normal, point, _) = starts
         .iter()
         .map(|&(n, p)| {
             let (n, p) = refine(n, p, &probes, &coarse, 0.5 * coarse.cell, scene.size, 5);
-            (n, p, rough(n, p, &coarse, 3.0 * coarse.cell))
+            match &edges {
+                Some(e) => e.settle(n, p, Stage::Coarse, &scene),
+                None => (n, p, rough(n, p, &coarse, 3.0 * coarse.cell)),
+            }
         })
         .min_by(|a, b| a.2.total_cmp(&b.2))?;
-    let (normal, point) = refine(normal, point, &finer, &scene.table, 2.0 * scene.spacing, scene.size, 8);
+    let (normal, point) = match &edges {
+        Some(e) => {
+            let (n, p, _) = e.settle(normal, point, Stage::Fine, &scene);
+            (n, p)
+        }
+        None => refine(normal, point, &finer, &scene.table, 2.0 * scene.spacing, scene.size, 8),
+    };
     Some(polish(&assess(normal, point, &scene), &scene, 12))
 }
 
@@ -395,6 +453,96 @@ fn refine(start: Vec3, start_point: Vec3, samples: &[Vec3], table: &Table, exclu
         }
     }
     (normal, point)
+}
+
+/// How far, on the whole, the probes' reflections land from the points of `table`, each counted at
+/// most `reach` (one that lands on nothing counts `reach`). Capped, a part on one side only (a
+/// handle, a fixture) counts the same wherever the plane is, so it does not pull the plane, while
+/// the ends and corners that land on nothing at a wrong place still count against it.
+fn edge_mismatch(normal: Vec3, point: Vec3, probes: &[Vec3], table: &Table, reach: f64) -> f64 {
+    let total: f64 = probes
+        .iter()
+        .map(|p| {
+            let m = reflect(*p, normal, point);
+            table.nearest(m, reach).map_or(reach, |q| q.dist(m))
+        })
+        .sum();
+    total / probes.len().max(1) as f64
+}
+
+/// How far a settle searches and how finely.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    Coarse,
+    Fine,
+}
+
+/// The scan's edge points looked up at two scales, to settle planes on.
+struct Edges {
+    coarse: Table,
+    fine: Table,
+    few: Vec<Vec3>,
+    many: Vec<Vec3>,
+}
+
+impl Edges {
+    /// `None` when the scan has too few edges to place a plane by.
+    fn new(scene: &Scene) -> Option<Edges> {
+        (scene.features.len() >= 30).then(|| Edges {
+            coarse: Table::new(thinned(&scene.features, 4_000), (scene.size / 60.0).max(2.0 * scene.spacing)),
+            fine: Table::new(scene.features.clone(), 2.0 * scene.spacing),
+            few: thinned(&scene.features, 600),
+            many: thinned(&scene.features, 2_500),
+        })
+    }
+
+    /// The plane settled where the scan's edges land on its edges: a pattern search on its two
+    /// turns and its place, and how far the edges then land on the whole. On a part of broad flat
+    /// faces the faces land on themselves however the plane is turned or slid along them, so the
+    /// edges, rims and corners are what place it; each counts at most a reach, so a part on one
+    /// side only does not pull it.
+    fn settle(&self, normal: Vec3, point: Vec3, stage: Stage, scene: &Scene) -> (Vec3, Vec3, f64) {
+        let (table, probes, angle, offset, done) = match stage {
+            Stage::Coarse => (&self.coarse, &self.few, 4.0f64.to_radians(), scene.size / 30.0, (0.05f64.to_radians(), scene.spacing / 4.0)),
+            Stage::Fine => (&self.fine, &self.many, 0.5f64.to_radians(), scene.size / 200.0, (0.002f64.to_radians(), scene.spacing / 200.0)),
+        };
+        let reach = 3.0 * table.cell;
+        let cost = |n: Vec3, p: Vec3| edge_mismatch(n, p, probes, table, reach);
+        let (mut n, mut p) = (normal, point);
+        let (mut step_a, mut step_d) = (angle, offset);
+        let mut best = cost(n, p);
+        for _ in 0..400 {
+            let (e1, e2) = crate::in_plane(n);
+            let tries = [
+                ((n + e1 * step_a.tan()).normalized(), p),
+                ((n - e1 * step_a.tan()).normalized(), p),
+                ((n + e2 * step_a.tan()).normalized(), p),
+                ((n - e2 * step_a.tan()).normalized(), p),
+                (Some(n), p + n * step_d),
+                (Some(n), p - n * step_d),
+            ];
+            let found = tries
+                .into_iter()
+                .filter_map(|(tn, tp)| tn.map(|tn| (tn, tp, cost(tn, tp))))
+                .min_by(|a, b| a.2.total_cmp(&b.2))
+                .filter(|t| t.2 < best - 1e-12);
+            match found {
+                Some((tn, tp, c)) => {
+                    n = tn;
+                    p = tp;
+                    best = c;
+                }
+                None => {
+                    step_a /= 2.0;
+                    step_d /= 2.0;
+                    if step_a < done.0 && step_d < done.1 {
+                        break;
+                    }
+                }
+            }
+        }
+        (n, p, best)
+    }
 }
 
 /// How well the scan matches itself in the plane through `point` square to `normal`.
@@ -680,6 +828,35 @@ mod tests {
         let far = positions.iter().zip(&off.values).filter(|(p, v)| p.x < 5.0 && f64::from(**v) >= off.limit).count();
         let near_end = positions.iter().filter(|p| p.x < 5.0).count();
         assert_eq!(far, near_end, "the end beyond the reflection's reach differs");
+    }
+
+    /// A long thin plate with a tab on each end (a mirror image about X = 100) and a handle on one
+    /// end only. Mirrored, the plate lands on itself wherever the plane is turned or slid along it,
+    /// so only its ends, edges and tabs say where the plane is, and the handle matches nothing: a
+    /// guide drawn 8° and 15 mm off still finds X = 100.
+    #[test]
+    fn a_handle_on_one_end_does_not_pull_a_guided_plane() {
+        let mut positions = Vec::new();
+        let mut triangles = Vec::new();
+        for (lo, hi, n) in [
+            (Vec3::new(0.0, 0.0, 0.0), Vec3::new(200.0, 80.0, 4.0), 24),
+            (Vec3::new(5.0, 30.0, 4.0), Vec3::new(20.0, 50.0, 14.0), 6),
+            (Vec3::new(180.0, 30.0, 4.0), Vec3::new(195.0, 50.0, 14.0), 6),
+            (Vec3::new(200.0, 25.0, 0.0), Vec3::new(260.0, 55.0, 4.0), 12),
+        ] {
+            let (p, t) = fine_cuboid(lo, hi, n);
+            let base = positions.len() as u32;
+            positions.extend(p);
+            triangles.extend(t.iter().map(|tri| tri.map(|i| i + base)));
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let tilt = 8.0f64.to_radians();
+        let c = Vec3::new(115.0, 40.0, 30.0);
+        let along = Vec3::new(tilt.sin(), tilt.cos(), 0.0);
+        let guide = Guide { from: c - along * 50.0, to: c + along * 50.0, toward: Vec3::Z };
+        let mirror = find_guided(&scan, &guide).unwrap();
+        let (a, o) = plane_error(&mirror, Vec3::X, Vec3::new(100.0, 40.0, 2.0));
+        assert!(a < 0.05_f64.to_radians() && o < 0.05, "off by {}° and {o} mm: {mirror:?}", a.to_degrees());
     }
 
     #[test]
