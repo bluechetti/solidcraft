@@ -47,7 +47,17 @@ fn max_part() -> usize {
 fn max_expanded() -> usize {
     max_step_part().saturating_add(max_design())
 }
+/// A mesh blob as saved before compact mesh blobs: the magic, the position and corner counts
+/// (u64 each), the positions (f64) and the corners (u32). Still read.
 const MESH_MAGIC: &[u8; 8] = b"SCMESH01";
+/// A mesh blob as saved now (format change `compact-mesh-blobs`): the magic, the counts, 1 when the
+/// positions are written as f32 (every one is exactly one, as a scan's from an STL or PLY file
+/// are) or 0 for f64, the positions, and each triangle corner as the zigzag LEB128 of its
+/// difference from the corner before. Lucy's 28 million triangles: 674 MB as the old blob, 294 MB
+/// as this, deflated 262 MB and 207 MB.
+const COMPACT_MESH_MAGIC: &[u8; 8] = b"SCMESH02";
+/// Most bytes a corner takes: its difference from the one before lies within ±2^32.
+const MAX_CORNER_BYTES: usize = 5;
 const POINTS_MAGIC: &[u8; 8] = b"SCPNTS01";
 const MAX_PREVIEW_BYTES: usize = 8 << 20;
 const MAX_PREVIEW_TRIANGLES: usize = 100_000;
@@ -389,34 +399,70 @@ fn validate_mesh(mesh: &MeshData) -> Result<()> {
     Ok(())
 }
 
-/// Encoded blob length, or `None` when it would pass the mesh part limit or overflow.
-fn mesh_encoded_len(positions: usize, triangles: usize) -> Option<usize> {
-    positions
-        .checked_mul(8)
-        .and_then(|v| triangles.checked_mul(4).and_then(|t| v.checked_add(t)))
-        .and_then(|v| v.checked_add(24))
-        .filter(|&n| n <= max_mesh_part())
+/// A compact blob's length, from its positions' count and width and its corners' bytes, or `None`
+/// when it would pass the mesh part limit or overflow.
+fn mesh_blob_len(positions: usize, width: usize, corner_bytes: usize) -> Option<usize> {
+    positions.checked_mul(width).and_then(|p| p.checked_add(corner_bytes)).and_then(|n| n.checked_add(25)).filter(|&n| n <= max_mesh_part())
+}
+
+fn zigzag(d: i64) -> u64 {
+    ((d << 1) ^ (d >> 63)) as u64
+}
+
+fn unzigzag(z: u64) -> i64 {
+    ((z >> 1) as i64) ^ -((z & 1) as i64)
+}
+
+fn varint_len(mut z: u64) -> usize {
+    let mut n = 1;
+    while z >= 0x80 {
+        z >>= 7;
+        n += 1;
+    }
+    n
+}
+
+/// Each corner's difference from the one before, zigzagged.
+fn corner_steps(triangles: &[u32]) -> impl Iterator<Item = u64> + '_ {
+    triangles.iter().scan(0i64, |before, &i| {
+        let d = i64::from(i) - *before;
+        *before = i64::from(i);
+        Some(zigzag(d))
+    })
 }
 
 fn encode_mesh(mesh: &MeshData) -> Result<Vec<u8>> {
-    let size = mesh_encoded_len(mesh.positions.len(), mesh.triangles.len()).ok_or_else(|| invalid("mesh too large"))?;
     validate_mesh(mesh)?;
+    let narrow = mesh.positions.iter().all(|v| f64::from(*v as f32).to_bits() == v.to_bits());
+    let width = if narrow { 4 } else { 8 };
+    let corner_bytes = corner_steps(&mesh.triangles).map(varint_len).sum();
+    let size = mesh_blob_len(mesh.positions.len(), width, corner_bytes).ok_or_else(|| invalid("mesh too large"))?;
     let mut bytes = Vec::new();
     bytes.try_reserve_exact(size).map_err(|_| invalid("could not reserve mesh blob"))?;
-    bytes.extend_from_slice(MESH_MAGIC);
+    bytes.extend_from_slice(COMPACT_MESH_MAGIC);
     bytes.extend_from_slice(&(mesh.positions.len() as u64).to_le_bytes());
     bytes.extend_from_slice(&(mesh.triangles.len() as u64).to_le_bytes());
+    bytes.push(u8::from(narrow));
     for value in mesh.positions.iter() {
-        bytes.extend_from_slice(&value.to_le_bytes());
+        if narrow {
+            bytes.extend_from_slice(&(*value as f32).to_le_bytes());
+        } else {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
     }
-    for value in mesh.triangles.iter() {
-        bytes.extend_from_slice(&value.to_le_bytes());
+    for mut z in corner_steps(&mesh.triangles) {
+        while z >= 0x80 {
+            bytes.push((z as u8 & 0x7f) | 0x80);
+            z >>= 7;
+        }
+        bytes.push(z as u8);
     }
     Ok(bytes)
 }
 
 fn decode_mesh(bytes: &[u8], mesh: &mut MeshData) -> Result<()> {
-    if bytes.get(..8) != Some(MESH_MAGIC.as_slice()) {
+    let magic = bytes.get(..8);
+    if magic != Some(MESH_MAGIC.as_slice()) && magic != Some(COMPACT_MESH_MAGIC.as_slice()) {
         return Err(invalid("unsupported mesh blob version"));
     }
     let count = |range: std::ops::Range<usize>| -> Result<usize> {
@@ -425,15 +471,62 @@ fn decode_mesh(bytes: &[u8], mesh: &mut MeshData) -> Result<()> {
     };
     let positions = count(8..16)?;
     let triangles = count(16..24)?;
-    let middle = positions.checked_mul(8).and_then(|n| n.checked_add(24)).ok_or_else(|| invalid("mesh size overflow"))?;
-    let total = triangles.checked_mul(4).and_then(|n| n.checked_add(middle)).ok_or_else(|| invalid("mesh size overflow"))?;
-    if total != bytes.len() || !positions.is_multiple_of(3) || !triangles.is_multiple_of(3) {
+    if !positions.is_multiple_of(3) || !triangles.is_multiple_of(3) {
         return Err(invalid("invalid mesh blob lengths"));
     }
-    mesh.positions =
-        bytes.get(24..middle).ok_or_else(|| invalid("truncated mesh"))?.as_chunks::<8>().0.iter().map(|&v| f64::from_le_bytes(v)).collect();
-    mesh.triangles =
-        bytes.get(middle..).ok_or_else(|| invalid("truncated mesh"))?.as_chunks::<4>().0.iter().map(|&v| u32::from_le_bytes(v)).collect();
+    if magic == Some(MESH_MAGIC.as_slice()) {
+        let middle = positions.checked_mul(8).and_then(|n| n.checked_add(24)).ok_or_else(|| invalid("mesh size overflow"))?;
+        let total = triangles.checked_mul(4).and_then(|n| n.checked_add(middle)).ok_or_else(|| invalid("mesh size overflow"))?;
+        if total != bytes.len() {
+            return Err(invalid("invalid mesh blob lengths"));
+        }
+        mesh.positions =
+            bytes.get(24..middle).ok_or_else(|| invalid("truncated mesh"))?.as_chunks::<8>().0.iter().map(|&v| f64::from_le_bytes(v)).collect();
+        mesh.triangles =
+            bytes.get(middle..).ok_or_else(|| invalid("truncated mesh"))?.as_chunks::<4>().0.iter().map(|&v| u32::from_le_bytes(v)).collect();
+        return validate_mesh(mesh);
+    }
+    let width = match bytes.get(24) {
+        Some(1) => 4,
+        Some(0) => 8,
+        _ => return Err(invalid("invalid mesh blob")),
+    };
+    let middle = positions.checked_mul(width).and_then(|n| n.checked_add(25)).ok_or_else(|| invalid("mesh size overflow"))?;
+    let values = bytes.get(25..middle).ok_or_else(|| invalid("truncated mesh"))?;
+    mesh.positions = if width == 4 {
+        values.as_chunks::<4>().0.iter().map(|&v| f64::from(f32::from_le_bytes(v))).collect()
+    } else {
+        values.as_chunks::<8>().0.iter().map(|&v| f64::from_le_bytes(v)).collect()
+    };
+    // Every corner takes a byte at least: no more are made than the blob could hold.
+    let rest = bytes.get(middle..).ok_or_else(|| invalid("truncated mesh"))?;
+    if triangles > rest.len() {
+        return Err(invalid("truncated mesh"));
+    }
+    let mut corners = Vec::with_capacity(triangles);
+    let (mut at, mut before) = (0usize, 0i64);
+    for _ in 0..triangles {
+        let mut z = 0u64;
+        let mut shift = 0;
+        loop {
+            let byte = *rest.get(at).ok_or_else(|| invalid("truncated mesh"))?;
+            at += 1;
+            z |= u64::from(byte & 0x7f) << shift;
+            if byte < 0x80 {
+                break;
+            }
+            shift += 7;
+            if shift >= 7 * MAX_CORNER_BYTES as u32 {
+                return Err(invalid("invalid mesh corner"));
+            }
+        }
+        before = before.checked_add(unzigzag(z)).ok_or_else(|| invalid("invalid mesh corner"))?;
+        corners.push(u32::try_from(before).map_err(|_| invalid("invalid mesh corner"))?);
+    }
+    if at != rest.len() {
+        return Err(invalid("invalid mesh blob lengths"));
+    }
+    mesh.triangles = corners.into();
     validate_mesh(mesh)
 }
 
@@ -1843,19 +1936,68 @@ mod tests {
             bytes[offset..offset + 8].copy_from_slice(&u64::MAX.to_le_bytes());
             assert!(decode_mesh(&bytes, &mut mesh()).is_err());
         }
+        // The test mesh's positions are not all f32: written as f64, from byte 25.
+        assert_eq!(valid[24], 0);
         let mut bytes = valid.clone();
-        bytes[24..32].copy_from_slice(&f64::NAN.to_le_bytes());
+        bytes[25..33].copy_from_slice(&f64::NAN.to_le_bytes());
         assert!(decode_mesh(&bytes, &mut mesh()).is_err());
+        // A corner that never ends, one past the vertices, one past u32, and a width not 0 or 1.
         let mut bytes = valid.clone();
         let offset = bytes.len() - 4;
         bytes[offset..].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(decode_mesh(&bytes, &mut mesh()).is_err());
+        let corners = valid.len() - 3;
+        for last in [[0, 2, 4], [0, 2, 0xFF]] {
+            let mut bytes = valid.clone();
+            bytes[corners..].copy_from_slice(&last);
+            assert!(decode_mesh(&bytes, &mut mesh()).is_err(), "{last:?}");
+        }
+        let mut bytes = valid.clone();
+        bytes[24] = 2;
         assert!(decode_mesh(&bytes, &mut mesh()).is_err());
         for length in 0..valid.len() {
             assert!(decode_mesh(&valid[..length], &mut mesh()).is_err());
         }
         let mut bytes = valid;
-        bytes[7] = b'2';
+        bytes[7] = b'3';
         assert!(decode_mesh(&bytes, &mut mesh()).is_err());
+    }
+
+    /// A mesh saves its positions as f32 when every one is exactly one (a scan's are), else as
+    /// f64, and its corners as steps from the one before; every coordinate and corner comes back.
+    /// A design saved before (`SCMESH01`) still opens.
+    #[test]
+    fn mesh_blobs_are_compact_and_exact_and_old_ones_open() {
+        let n = 3000u32;
+        let positions: Vec<f64> = (0..n).flat_map(|i| [f64::from(i) * 0.5, f64::from(i % 7), -0.0]).collect();
+        let triangles: Vec<u32> = (0..n - 2).flat_map(|i| [i, i + 1, i + 2]).collect();
+        let scan = MeshData { name: "Scan".into(), positions: positions.into(), triangles: triangles.into(), color: None };
+        let blob = encode_mesh(&scan).unwrap();
+        assert_eq!((&blob[..8], blob[24]), (COMPACT_MESH_MAGIC.as_slice(), 1));
+        assert!(blob.len() < 25 + scan.positions.len() * 4 + scan.triangles.len() * 2, "{} bytes", blob.len());
+        let mut back = mesh();
+        decode_mesh(&blob, &mut back).unwrap();
+        assert!(back.positions.iter().zip(scan.positions.iter()).all(|(a, b)| a.to_bits() == b.to_bits()));
+        assert_eq!(back.triangles, scan.triangles);
+        // Not all f32: f64, bit for bit.
+        let precise = mesh();
+        let blob = encode_mesh(&precise).unwrap();
+        assert_eq!(blob[24], 0);
+        let same = |a: &MeshData, b: &MeshData| {
+            a.positions.iter().map(|v| v.to_bits()).eq(b.positions.iter().map(|v| v.to_bits())) && a.triangles == b.triangles
+        };
+        let mut back = scan.clone();
+        decode_mesh(&blob, &mut back).unwrap();
+        assert!(same(&back, &precise));
+        // The old blob: the magic, the counts, f64 positions, u32 corners.
+        let mut old = MESH_MAGIC.to_vec();
+        old.extend_from_slice(&(precise.positions.len() as u64).to_le_bytes());
+        old.extend_from_slice(&(precise.triangles.len() as u64).to_le_bytes());
+        old.extend(precise.positions.iter().flat_map(|v| v.to_le_bytes()));
+        old.extend(precise.triangles.iter().flat_map(|v| v.to_le_bytes()));
+        let mut back = scan;
+        decode_mesh(&old, &mut back).unwrap();
+        assert!(same(&back, &precise));
     }
 
     #[test]
@@ -1963,18 +2105,12 @@ mod tests {
     /// fail to save (`mesh too large`) before compression was considered.
     #[test]
     fn mesh_larger_than_the_file_saves_compressed_and_reopens() {
-        let positions: Arc<[f64]> = Arc::from([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
-        let overhead = 24 + positions.len() * 8;
-        let min_indices = (crate::MAX_DESIGN_BYTES - overhead) / 4 + 1;
-        let indices = min_indices.div_ceil(3) * 3;
-        let encoded = overhead + indices * 4;
+        // Positions no f32 holds exactly, kept as f64: one triangle and enough of them.
+        let values = (crate::MAX_DESIGN_BYTES / 8 + 1).div_ceil(3) * 3;
+        let positions: Arc<[f64]> = (0..values).map(|i| [0.1, 0.2, 0.3][i % 3] * (1 + i % 2) as f64).collect();
+        let encoded = 25 + values * 8 + 3;
         assert!(encoded > crate::MAX_DESIGN_BYTES && encoded <= max_mesh_part(), "encoded {encoded}");
-        let mesh = MeshData {
-            name: "Large".into(),
-            positions: Arc::clone(&positions),
-            triangles: (0..indices).map(|i| (i % 3) as u32).collect(),
-            color: None,
-        };
+        let mesh = MeshData { name: "Large".into(), positions: Arc::clone(&positions), triangles: Arc::from([0, 1, 2]), color: None };
         let mut doc = Document::new("Large mesh");
         doc.add_feature(FeatureKind::MeshImport { file: "large.stl".into(), meshes: vec![mesh] }, None).unwrap();
         for compression in [DesignCompression::Fast, DesignCompression::Compact] {
@@ -1996,15 +2132,14 @@ mod tests {
 
     #[test]
     fn mesh_over_the_expanded_cap_is_too_large_before_it_is_encoded() {
-        assert_eq!(mesh_encoded_len(0, 0), Some(24));
-        let at_cap = (max_mesh_part() - 24) / 4;
-        assert_eq!(mesh_encoded_len(0, at_cap), Some(max_mesh_part()));
-        assert!(mesh_encoded_len(0, at_cap + 1).is_none());
-        let indices = (max_mesh_part() / 4 + 3).div_ceil(3) * 3;
-        assert!(mesh_encoded_len(0, indices).is_none());
-        assert!(mesh_encoded_len(usize::MAX, 0).is_none());
-        assert!(mesh_encoded_len(0, usize::MAX).is_none());
-        assert!(mesh_encoded_len(usize::MAX, usize::MAX).is_none());
+        assert_eq!(mesh_blob_len(0, 4, 0), Some(25));
+        let at_cap = (max_mesh_part() - 25) / 8;
+        assert_eq!(mesh_blob_len(at_cap, 8, (max_mesh_part() - 25) % 8), Some(max_mesh_part()));
+        assert!(mesh_blob_len(at_cap + 1, 8, 0).is_none());
+        assert!(mesh_blob_len(0, 4, max_mesh_part()).is_none());
+        assert!(mesh_blob_len(usize::MAX, 8, 0).is_none());
+        assert!(mesh_blob_len(0, 4, usize::MAX).is_none());
+        assert!(mesh_blob_len(usize::MAX, 8, usize::MAX).is_none());
     }
 
     #[test]
