@@ -10,6 +10,7 @@ use solidcore_record::Vec3;
 use solidcore_record::brep as b;
 use solidcraft_geom::Vec3Geom as _;
 use solidcraft_geom::bspline::{HPoint, NurbsSurface};
+pub use solidcraft_scan::merge::Side;
 use solidcraft_scan::net;
 pub use solidcraft_scan::net::{Line, NetError};
 use solidcraft_scan::place::Rigid;
@@ -162,20 +163,38 @@ pub fn keep_surface(s: &mut Session, surface: &NurbsSurface, base: &str, feature
     Ok((name, reply))
 }
 
-/// Writes `surface` back into the Import feature that keeps the surface: one undo step.
-pub(super) fn write_back(s: &mut Session, target: &EditableSurface, surface: &NurbsSurface, cmd: &str) -> Result<()> {
-    // Moved by later features: written where it was before they moved it.
-    let unmoved;
-    let surface = match &target.placed {
+/// `surface` where it was before later features moved the surface, as an edit is written back.
+fn unmoved(target: &EditableSurface, surface: &NurbsSurface, cmd: &str) -> Result<NurbsSurface> {
+    match &target.placed {
         Some(by) => {
             let back = by.inverse();
             let net: Vec<Vec3> = surface_edit::points(surface).iter().map(|p| back.apply(*p)).collect();
-            unmoved = surface_edit::with_points(surface, &net).ok_or_else(|| bad(cmd, "the surface's place could not be undone"))?;
-            &unmoved
+            surface_edit::with_points(surface, &net).ok_or_else(|| bad(cmd, "the surface's place could not be undone"))
         }
-        None => surface,
-    };
-    let step = surface_step(surface, cmd)?;
+        None => Ok(surface.clone()),
+    }
+}
+
+/// Writes `surface` back into the Import feature that keeps the surface: one undo step.
+pub(super) fn write_back(s: &mut Session, target: &EditableSurface, surface: &NurbsSurface, cmd: &str) -> Result<()> {
+    let step = surface_step(&unmoved(target, surface, cmd)?, cmd)?;
+    write_step(s, target, step, cmd)
+}
+
+/// Writes `surface`, closed round on its own seam (its side `side` and the one across are one
+/// curve), back into the Import feature that keeps it: sewn as two halves, so that each seam is
+/// between two faces, one body.
+pub(super) fn write_closed(s: &mut Session, target: &EditableSurface, surface: &NurbsSurface, side: Side, cmd: &str) -> Result<()> {
+    let (a, b) = solidcraft_scan::merge::halves(&unmoved(target, surface, cmd)?, 1 - side.along()).map_err(|e| bad(cmd, e.to_string()))?;
+    let sheet = |half: &NurbsSurface| solidcraft_kernel::nurbs_sheet(half).map_err(|e| bad(cmd, format!("the surface: {e}")));
+    let (a, b) = (sheet(&a)?, sheet(&b)?);
+    let sewn = solidcraft_kernel::stitch(&[&a, &b], 0.0).map_err(|e| bad(cmd, format!("the seam could not be sewn: {e}")))?;
+    let step = solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| bad(cmd, format!("the surface: {e}")))?;
+    write_step(s, target, step, cmd)
+}
+
+/// Writes `step` into the Import feature that keeps the surface, and works the design out again.
+fn write_step(s: &mut Session, target: &EditableSurface, step: String, cmd: &str) -> Result<()> {
     let feature = s.doc_mut().feature_mut(target.feature).ok_or_else(|| bad(cmd, "the surface's feature is gone"))?;
     if let solidcraft_doc::FeatureKind::Import { step: kept, .. } = &mut feature.kind {
         *kept = step.into();

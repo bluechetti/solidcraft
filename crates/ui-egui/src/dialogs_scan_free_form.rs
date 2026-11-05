@@ -399,7 +399,7 @@ fn merge(app: &SolveApp, k: &mut MergeSurfaces, inputs: &[crate::selection::SelI
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         return;
     }
-    let named = (names.len() >= 2).then_some(names.as_slice());
+    let named = (!names.is_empty()).then_some(names.as_slice());
     let result = free_form::merged(&app.session, named, (k.gap > 0.0).then_some(k.gap)).map_err(|e| e.to_string()).map(|(targets, made, gap)| {
         if !(k.gap > 0.0) {
             k.gap = gap;

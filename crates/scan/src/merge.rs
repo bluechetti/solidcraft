@@ -3,7 +3,8 @@
 //! net that runs along a side of another net within the gap is matched to it: their knots are made
 //! the same (each net refined by the other's knots, its surface exactly as it was), the corners
 //! that meet are put at their middle, and the two sides' points are put half way between, so the
-//! two sides are one curve.
+//! two sides are one curve. A net's own opposite sides meet too: a net wrapped the whole way round
+//! a part, open at its seam, is closed there the same way.
 
 use solidcore_record::Vec3;
 use solidcraft_geom::bspline::{Dir, NurbsSurface};
@@ -21,11 +22,11 @@ pub enum Side {
     LastColumn,
 }
 
-const SIDES: [Side; 4] = [Side::FirstRow, Side::LastRow, Side::FirstColumn, Side::LastColumn];
+pub const SIDES: [Side; 4] = [Side::FirstRow, Side::LastRow, Side::FirstColumn, Side::LastColumn];
 
 impl Side {
     /// The way the side runs: 0 along u (a row), 1 along v (a column).
-    fn along(self) -> usize {
+    pub fn along(self) -> usize {
         match self {
             Side::FirstRow | Side::LastRow => 0,
             Side::FirstColumn | Side::LastColumn => 1,
@@ -40,6 +41,22 @@ impl Side {
             Side::FirstColumn => (0..nv).map(|j| j * nu).collect(),
             Side::LastColumn => (0..nv).map(|j| j * nu + nu - 1).collect(),
         }
+    }
+
+    /// The side across the net from it.
+    fn opposite(self) -> Side {
+        match self {
+            Side::FirstRow => Side::LastRow,
+            Side::LastRow => Side::FirstRow,
+            Side::FirstColumn => Side::LastColumn,
+            Side::LastColumn => Side::FirstColumn,
+        }
+    }
+
+    /// How long the side of `s` is, along it.
+    pub fn length(self, s: &NurbsSurface) -> f64 {
+        let at: Vec<Vec3> = (0..=SAMPLES * 4).filter_map(|k| self.at(s, k as f64 / (SAMPLES * 4) as f64)).collect();
+        at.windows(2).map(|w| w[0].dist(w[1])).sum()
     }
 
     /// The point of the side of `s` at `t`, 0 to 1 along it.
@@ -114,13 +131,17 @@ fn apart(a: &NurbsSurface, sa: Side, b: &NurbsSurface, sb: Side, reversed: bool)
 }
 
 /// The sides of `surfaces` that run along each other within `gap`, each side in one seam at most,
-/// nearest first.
+/// nearest first: sides of two nets, or a net's opposite sides (its seam).
 pub fn seams(surfaces: &[NurbsSurface], gap: f64) -> Vec<Seam> {
     let mut all = Vec::new();
     for a in 0..surfaces.len() {
-        for b in a + 1..surfaces.len() {
+        for b in a..surfaces.len() {
             for a_side in SIDES {
                 for b_side in SIDES {
+                    // A net meets itself only across: its first row with its last, or column.
+                    if a == b && (b_side != a_side.opposite() || matches!(a_side, Side::LastRow | Side::LastColumn)) {
+                        continue;
+                    }
                     for reversed in [false, true] {
                         if let Some(d) = apart(&surfaces[a], a_side, &surfaces[b], b_side, reversed).filter(|d| *d <= gap) {
                             all.push(Seam { a, a_side, b, b_side, reversed, gap: d });
@@ -203,6 +224,19 @@ pub fn merge(surfaces: &[NurbsSurface], gap: f64) -> Result<Merged, MergeError> 
         let mut changed = false;
         for seam in &seams {
             let (da, db) = (seam.a_side.along(), seam.b_side.along());
+            if seam.a == seam.b {
+                // A seam of one net: its knots that way made the same both ways round.
+                let (k, turned) = (unit_knots(&nets[seam.a], da, false), unit_knots(&nets[seam.a], da, seam.reversed));
+                for x in missing(&k, &turned) {
+                    let at = own_knot(&nets[seam.a], da, false, x);
+                    nets[seam.a] = nets[seam.a].insert_knot(dir(da), at).map_err(|_| MergeError::Failed)?;
+                    changed = true;
+                }
+                if nets[seam.a].count().iter().any(|n| *n > MOST) {
+                    return Err(MergeError::TooMany);
+                }
+                continue;
+            }
             let ka = unit_knots(&nets[seam.a], da, false);
             let kb = unit_knots(&nets[seam.b], db, seam.reversed);
             for x in missing(&ka, &kb) {
@@ -271,6 +305,51 @@ pub fn merge(surfaces: &[NurbsSurface], gap: f64) -> Result<Merged, MergeError> 
     Ok(Merged { surfaces, seams })
 }
 
+/// The net cut in two across the middle of its knots the way `d` runs (0 u, 1 v): a knot put
+/// there until the surface passes through a line of the net's points, which both halves keep, so
+/// they meet exactly and together are the surface as it was. A net closed round on its own seam
+/// is sewn as two such halves, each seam then between two faces.
+pub fn halves(s: &NurbsSurface, d: usize) -> Result<(NurbsSurface, NurbsSurface), MergeError> {
+    if !cubic(s) || d > 1 {
+        return Err(MergeError::NotCubic);
+    }
+    let p = s.degree()[d];
+    let knots = &s.knots()[d];
+    let (lo, hi) = (knots.get(p).copied().unwrap_or(0.0), knots.get(knots.len().saturating_sub(p + 1)).copied().unwrap_or(1.0));
+    let mid = 0.5 * (lo + hi);
+    let had = knots.iter().filter(|k| (**k - mid).abs() <= SAME_KNOT * (hi - lo).abs().max(1.0)).count();
+    let mut cut = s.clone();
+    for _ in had..p {
+        cut = cut.insert_knot(dir(d), mid).map_err(|_| MergeError::Failed)?;
+    }
+    let k = cut.knots()[d].clone();
+    // The surface passes through point `first - 1` that way, where the middle's knots begin.
+    let first = k.iter().position(|x| (*x - mid).abs() <= SAME_KNOT * (hi - lo).abs().max(1.0)).ok_or(MergeError::Failed)?;
+    let shared = first.checked_sub(1).ok_or(MergeError::Failed)?;
+    let [nu, nv] = cut.count();
+    let n = if d == 0 { nu } else { nv };
+    if shared < p || shared + p >= n {
+        return Err(MergeError::Failed);
+    }
+    let net = points(&cut);
+    let part = |range: std::ops::Range<usize>| -> Vec<Vec3> {
+        if d == 0 {
+            (0..nv).flat_map(|j| range.clone().map(move |i| j * nu + i)).map(|i| net[i]).collect()
+        } else {
+            range.flat_map(|j| (0..nu).map(move |i| j * nu + i)).map(|i| net[i]).collect()
+        }
+    };
+    let low_knots: Vec<f64> = k[..first].iter().copied().chain(std::iter::repeat_n(mid, p + 1)).collect();
+    let high_knots: Vec<f64> = std::iter::repeat_n(mid, p + 1).chain(k[first + p..].iter().copied()).collect();
+    let (low, high) = (part(0..shared + 1), part(shared..n));
+    let other = cut.knots()[1 - d].clone();
+    let make = |own: Vec<f64>, pts: &[Vec3]| {
+        let knots = if d == 0 { [own, other.clone()] } else { [other.clone(), own] };
+        NurbsSurface::new(cut.degree(), knots, pts, &vec![1.0; pts.len()]).map_err(|_| MergeError::Failed)
+    };
+    Ok((make(low_knots, &low)?, make(high_knots, &high)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,6 +406,49 @@ mod tests {
         for seam in &merged.seams {
             let w = worst(&merged.surfaces[seam.a], seam.a_side, &merged.surfaces[seam.b], seam.b_side, seam.reversed);
             assert!(w < 1e-9, "{seam:?}: {w}");
+        }
+    }
+
+    /// A net bent nearly the whole way round a cylinder, open at a narrow seam: its first and last
+    /// columns are made one.
+    #[test]
+    fn a_net_wrapped_round_closes_its_own_seam() {
+        let (nu, nv) = (8usize, 5usize);
+        let mut net = Vec::new();
+        for j in 0..nv {
+            for i in 0..nu {
+                let a = -3.1 + 6.2 * i as f64 / (nu - 1) as f64;
+                net.push(Vec3::new(10.0 * a.cos(), 10.0 * a.sin(), 10.0 * j as f64));
+            }
+        }
+        let wrapped = crate::free_form::net_surface(&net, [nu, nv]).unwrap();
+        let merged = merge(std::slice::from_ref(&wrapped), 2.0).unwrap();
+        let [seam] = merged.seams.as_slice() else { panic!("{:?}", merged.seams) };
+        assert_eq!((seam.a, seam.b, seam.a_side, seam.b_side), (0, 0, Side::FirstColumn, Side::LastColumn));
+        let closed = &merged.surfaces[0];
+        assert!(worst(closed, Side::FirstColumn, closed, Side::LastColumn, false) < 1e-9, "the seam is one curve");
+        // Too narrow a gap finds no seam.
+        assert_eq!(merge(&[wrapped], 0.1), Err(MergeError::NoSeam));
+    }
+
+    /// The two halves are the surface: each place on it is on one half, and they share their
+    /// middle line exactly.
+    #[test]
+    fn halves_are_the_surface_cut_in_two() {
+        let c = [Vec3::new(0.0, 0.0, 0.0), Vec3::new(30.0, 0.0, 4.0), Vec3::new(30.0, 20.0, 0.0), Vec3::new(0.0, 20.0, 2.0)];
+        let mut net = net_over(c, 6);
+        net[14].z += 3.0;
+        let s = surface(&net, 6).unwrap();
+        for d in [0, 1] {
+            let (low, high) = halves(&s, d).unwrap();
+            let (lo_side, hi_side) = if d == 0 { (Side::LastColumn, Side::FirstColumn) } else { (Side::LastRow, Side::FirstRow) };
+            assert!(worst(&low, lo_side, &high, hi_side, false) < 1e-12, "they meet");
+            for k in 0..=10 {
+                let t = f64::from(k) / 10.0;
+                let whole = if d == 0 { s.eval(0.25, t).unwrap() } else { s.eval(t, 0.25).unwrap() };
+                let half = if d == 0 { low.eval(0.25, t).unwrap() } else { low.eval(t, 0.25).unwrap() };
+                assert!(whole.dist(half) < 1e-9, "{d}: {whole:?} {half:?}");
+            }
         }
     }
 }

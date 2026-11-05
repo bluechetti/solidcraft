@@ -811,11 +811,11 @@ fn free_form_makes_a_surface_on_the_scan_and_its_net_changes() {
     assert!(refused.contains("four points"), "{refused}");
 }
 
-/// A quarter turn of a tube of radius 10 along Z, 40 long, as triangles.
-fn tube_triangles() -> Vec<[Vec3; 3]> {
+/// `turn` radians round a tube of radius 10 along Z, 40 long, as triangles.
+fn tube_triangles(turn: f64) -> Vec<[Vec3; 3]> {
     let (rings, segments) = (20u32, 48u32);
     let at = |r: u32, k: u32| {
-        let a = std::f64::consts::FRAC_PI_2 * f64::from(k) / f64::from(segments);
+        let a = turn * f64::from(k) / f64::from(segments);
         Vec3::new(10.0 * a.cos(), 10.0 * a.sin(), 40.0 * f64::from(r) / f64::from(rings))
     };
     let mut out = Vec::new();
@@ -832,7 +832,7 @@ fn tube_triangles() -> Vec<[Vec3; 3]> {
 /// the world's Z is the same cylinder, X refuses; one undo step.
 #[test]
 fn wrap_surface_wraps_a_net_on_a_tube() {
-    let (mut s, _) = session_with_triangles("wrap", &tube_triangles());
+    let (mut s, _) = session_with_triangles("wrap", &tube_triangles(std::f64::consts::FRAC_PI_2));
     let point = json!([10.0 * 0.7f64.cos(), 10.0 * 0.7f64.sin(), 20.0]);
     let made = run(&mut s, "scan.wrap_surface", json!({"point": point, "reach": "60 mm"}));
     assert_eq!((made["surface"].as_str(), made["controls"].clone()), (Some("FreeForm1"), json!([8, 20])), "{made}");
@@ -904,4 +904,21 @@ fn slice_surface_caps_a_tube_into_a_solid() {
         json!({"surface": "FreeForm1", "plane": {"origin": [10, 10, 10], "normal": [1, 0, 0]}, "keep": [15, 10, 10], "cap": false}),
     );
     assert_eq!((open["caps"].as_u64(), open["solid"].as_bool()), (Some(0), Some(false)), "{open}");
+}
+
+/// A whole tube wrapped is open at a seam; Merge closes it, and the tube sliced at both ends with
+/// caps is a solid of the tube's volume.
+#[test]
+fn a_whole_wrap_merged_and_sliced_at_both_ends_is_a_solid() {
+    let (mut s, _) = session_with_triangles("wrap-whole", &tube_triangles(std::f64::consts::TAU));
+    let made = run(&mut s, "scan.wrap_surface", json!({"point": [10, 0, 20], "reach": "60 mm"}));
+    assert_eq!(made["surface"].as_str(), Some("FreeForm1"), "{made}");
+    let merged = run(&mut s, "scan.merge_surfaces", json!({}));
+    assert_eq!((merged["seams"].as_u64(), merged["body"].as_str()), (Some(1), Some("FreeForm1")), "{merged}");
+    run(&mut s, "scan.slice_surface", json!({"plane": {"origin": [0, 0, 35], "normal": [0, 0, 1]}, "keep": "back"}));
+    let closed = run(&mut s, "scan.slice_surface", json!({"plane": {"origin": [0, 0, 5], "normal": [0, 0, 1]}}));
+    assert_eq!(closed["solid"].as_bool(), Some(true), "{closed}");
+    let volume = s.model.state().body("FreeForm1").and_then(|b| b.body.volume_at(1e-3)).unwrap_or(0.0);
+    let expected = std::f64::consts::PI * 100.0 * 30.0;
+    assert!((volume - expected).abs() < 0.02 * expected, "{volume} against {expected}");
 }

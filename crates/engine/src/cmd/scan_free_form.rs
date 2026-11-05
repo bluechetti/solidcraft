@@ -7,7 +7,6 @@
 use serde_json::Value;
 use solidcore_record::Vec3;
 use solidcraft_geom::bspline::NurbsSurface;
-use solidcraft_geom::prelude::*;
 use solidcraft_scan::free_form;
 pub use solidcraft_scan::free_form::Fitting;
 pub use solidcraft_scan::merge::{Merged, Seam};
@@ -212,8 +211,8 @@ pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
-/// The surfaces Merge works on: those named, else the selected ones (two or more), else every
-/// surface in the design whose net can be edited.
+/// The surfaces Merge works on: those named, else the selected ones, else every surface in the
+/// design whose net can be edited. One alone is merged with itself: a wrap closed at its seam.
 pub fn merge_candidates(s: &Session, names: Option<&[String]>, cmd: &str) -> Result<Vec<super::surface::EditableSurface>> {
     if let Some(names) = names {
         let mut seen: Vec<&str> = Vec::new();
@@ -236,26 +235,19 @@ pub fn merge_candidates(s: &Session, names: Option<&[String]>, cmd: &str) -> Res
         }
     }
     let chosen: Vec<_> = selected.iter().filter_map(|n| super::surface::editable(s, Some(n), cmd).ok()).collect();
-    if chosen.len() >= 2 {
+    if !chosen.is_empty() {
         return Ok(chosen);
     }
     let names: Vec<String> = s.model.state().bodies.iter().filter(|b| !b.body.is_mesh()).map(|b| b.name.clone()).collect();
     Ok(names.iter().filter_map(|n| super::surface::editable(s, Some(n), cmd).ok()).collect())
 }
 
-/// The gap a merge closes when none is given: a tenth of the shortest side of the nets.
+/// The gap a merge closes when none is given: a tenth of the shortest side of the nets, measured
+/// along it (a net wrapped round a part has corners close across its seam).
 pub fn default_gap(surfaces: &[NurbsSurface]) -> f64 {
-    let side = |s: &NurbsSurface| {
-        let net = solidcraft_scan::surface_edit::points(s);
-        let [nu, nv] = s.count();
-        let corner = |i: usize, j: usize| net.get(j * nu + i).copied();
-        match (corner(0, 0), corner(nu.saturating_sub(1), 0), corner(nu.saturating_sub(1), nv.saturating_sub(1)), corner(0, nv.saturating_sub(1))) {
-            (Some(a), Some(b), Some(c), Some(d)) => a.dist(b).min(b.dist(c)).min(c.dist(d)).min(d.dist(a)),
-            _ => f64::INFINITY,
-        }
-    };
-    let shortest = surfaces.iter().map(side).fold(f64::INFINITY, f64::min);
-    if shortest.is_finite() && shortest > 0.0 { 0.1 * shortest } else { 1.0 }
+    let shortest =
+        surfaces.iter().flat_map(|s| solidcraft_scan::merge::SIDES.map(|side| side.length(s))).filter(|l| *l > 0.0).fold(f64::INFINITY, f64::min);
+    if shortest.is_finite() { 0.1 * shortest } else { 1.0 }
 }
 
 /// The surfaces as Merge would make them meet, within `gap` (default [`default_gap`]), and the
@@ -263,8 +255,8 @@ pub fn default_gap(surfaces: &[NurbsSurface]) -> f64 {
 pub fn merged(s: &Session, names: Option<&[String]>, gap: Option<f64>) -> Result<(Vec<super::surface::EditableSurface>, Merged, f64)> {
     let cmd = "scan.merge_surfaces";
     let targets = merge_candidates(s, names, cmd)?;
-    if targets.len() < 2 {
-        return Err(bad(cmd, "choose two or more surfaces to merge, made by Fit Surface, New Free Form or Wrap Surface"));
+    if targets.is_empty() {
+        return Err(bad(cmd, "the design has no surface to merge: make them with New Free Form, Wrap Surface or Fit Surface"));
     }
     let surfaces: Vec<NurbsSurface> = targets.iter().map(|t| t.surface.clone()).collect();
     let gap = gap.unwrap_or_else(|| default_gap(&surfaces));
@@ -294,20 +286,19 @@ pub(super) fn merge_surfaces(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let stitch = crate::params::bool_(p, "stitch").unwrap_or(true);
     let (targets, made, _) = merged(s, names.as_deref(), gap)?;
-    for (target, surface) in targets.iter().zip(&made.surfaces) {
-        if &target.surface != surface {
-            super::surface::write_back(s, target, surface, cmd)?;
+    for (i, (target, surface)) in targets.iter().zip(&made.surfaces).enumerate() {
+        // A net closed round on its own seam is sewn there as it is written back.
+        match made.seams.iter().find(|m| m.a == i && m.b == i).filter(|_| stitch) {
+            Some(seam) => super::surface::write_closed(s, target, surface, seam.a_side, cmd)?,
+            None if &target.surface != surface => super::surface::write_back(s, target, surface, cmd)?,
+            None => {}
         }
     }
     let bodies: Vec<String> = targets.iter().map(|t| t.body.clone()).collect();
-    let feature = if stitch {
-        let reply = super::super::find_command("surface.stitch")
-            .ok_or_else(|| EngineError::UnknownCommand("surface.stitch".into()))?
-            .run_nested(s, &serde_json::json!({ "bodies": bodies }))?;
-        Some(reply)
-    } else {
-        None
+    let run = |s: &mut Session, id: &str, p: Value| -> Result<Value> {
+        super::super::find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?.run_nested(s, &p)
     };
+    let feature = if stitch && bodies.len() > 1 { Some(run(s, "surface.stitch", serde_json::json!({ "bodies": bodies }))?) } else { None };
     let reply = ScanMergeSurfacesResult {
         body: stitch.then(|| bodies[0].clone()),
         surfaces: bodies,
