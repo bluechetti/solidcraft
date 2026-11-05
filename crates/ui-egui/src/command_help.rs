@@ -155,6 +155,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.fit_torus",
     "scan.free_form",
     "scan.merge_surfaces",
+    "scan.mesh_from_points",
     "scan.pattern_it",
     "scan.quick_align",
     "scan.reconstruct",

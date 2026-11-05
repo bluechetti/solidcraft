@@ -16,6 +16,8 @@
 //! - [`pieces`]: the pieces of a scan, and those small enough to float.
 //! - [`place`]: rigid moves that stand a scan on a base, rest it on the grid, centre it over the
 //!   origin or lay it along its own axes.
+//! - [`poisson`]: a surface made from a point cloud by screened Poisson reconstruction, trimmed
+//!   where the points are sparse.
 //! - [`profile`]: the profiles Reconstruct sketches, read off the faces fitted: a prism's from its
 //!   walls, a turned part's from its faces held to the axis.
 //! - [`reconstruct`]: what Reconstruct reads off Find All's shapes: prisms, a turned part,
@@ -43,8 +45,10 @@ mod hull;
 pub mod merge;
 pub mod mirror_fill;
 pub mod net;
+mod par;
 pub mod pieces;
 pub mod place;
+pub mod poisson;
 pub mod profile;
 pub mod reconstruct;
 pub mod reduce;

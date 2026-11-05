@@ -1,23 +1,35 @@
 //! Tools on a scan's mesh as a whole (#8615), after SurfaceCraft's: `scan.register` lays one scan
-//! onto another, a second pass onto the first, and keeps the move as an ordinary Move of it.
+//! onto another, a second pass onto the first, and keeps the move as an ordinary Move of it;
+//! `scan.mesh_from_points` makes a mesh body from a point cloud (screened Poisson).
 
 use serde_json::{Value, json};
+use solidcore_record::Vec3;
+use solidcraft_scan::poisson;
 use solidcraft_scan::register::{self, Settings};
 
 use super::{CommandSpec, Mesh, mesh, move_by};
 use crate::params::{bad, bool_, num, str_};
-use crate::schema::scan_mesh::{ScanRegisterParams, ScanRegisterResult};
+use crate::schema::scan_mesh::{ScanMeshFromPointsParams, ScanMeshFromPointsResult, ScanRegisterParams, ScanRegisterResult};
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
 
 const REGISTER_CONTRACT: TypedContract<ScanRegisterParams> = TypedContract::new();
+const FROM_POINTS_CONTRACT: TypedContract<ScanMeshFromPointsParams> = TypedContract::new();
 
-pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.register", "Align to Scan", crate::checked!("scan.register", register_scan))
+pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec::new("scan.mesh_from_points", "Mesh from Points", crate::checked!("scan.mesh_from_points", mesh_from_points))
+        .at("SCAN", "CLEAN")
+        .icon("dots")
+        .contract(&FROM_POINTS_CONTRACT)
+        .output(output_schema_for::<ScanMeshFromPointsResult>)
+        .params("cloud?: point cloud id or name (default: the only one); depth?: 5–10 (the finest grid is 2^depth cells across; default: about the points' spacing); trim?: 0–1 (default 0.3: where the points are sparse the surface stops; 0 keeps it closed); name?: the body's name: a mesh body made from the points by screened Poisson reconstruction (their normals estimated and turned to agree where the cloud states none), one undo step → body, triangles, vertices, depth, trim, points, points_used, estimated_normals, cell, spacing, trimmed, rms, p95, max, feature"),
+    CommandSpec::new("scan.register", "Align to Scan", crate::checked!("scan.register", register_scan))
     .at("SCAN", "ALIGN")
     .icon("align")
     .contract(&REGISTER_CONTRACT)
     .output(output_schema_for::<ScanRegisterResult>)
-    .params("body?: the scan to move (default: the selected mesh body, else with two scans the one inserted last); to?: the scan to lay it on (default: the other, when there are two); search?: bool (default true: from the ways their principal axes and matched surface features lie on each other too, not only from where it lies); ignored?: share 0–0.6 (default 0.2: how much of it may have nothing under it): laid on the other by point-to-plane ICP both ways, trimmed and robust, one undo step kept as a Move → body, to, moved, rms_before, rms_after, matched, start, converged, rival?, feature")];
+    .params("body?: the scan to move (default: the selected mesh body, else with two scans the one inserted last); to?: the scan to lay it on (default: the other, when there are two); search?: bool (default true: from the ways their principal axes and matched surface features lie on each other too, not only from where it lies); ignored?: share 0–0.6 (default 0.2: how much of it may have nothing under it): laid on the other by point-to-plane ICP both ways, trimmed and robust, one undo step kept as a Move → body, to, moved, rms_before, rms_after, matched, start, converged, rival?, feature"),
+];
 
 fn reply<T: serde::Serialize>(r: T) -> Result<Value> {
     serde_json::to_value(r).map_err(|e| EngineError::Other(e.to_string()))
@@ -84,6 +96,103 @@ pub(super) fn register_scan(s: &mut Session, p: &Value) -> Result<Value> {
         start: found.start.to_string(),
         converged: found.converged,
         rival: found.rival,
+        feature,
+        param_warnings: Vec::new(),
+    })
+}
+
+/// The cloud `p` names (or the only one): its name, its points in the design, and the normals it
+/// states, turned with it.
+pub(super) fn cloud_points(s: &Session, p: &Value, cmd: &str) -> Result<(String, Vec<Vec3>, Option<Vec<Vec3>>)> {
+    let clouds = &s.doc.point_clouds;
+    let cloud = match p.get("cloud").filter(|v| !v.is_null()) {
+        Some(Value::Number(n)) => clouds.iter().find(|c| c.id.to_string() == n.to_string()),
+        Some(Value::String(x)) => clouds.iter().find(|c| c.id.to_string() == *x || c.name == *x),
+        Some(_) => return Err(bad(cmd, "`cloud` must be an id or a name")),
+        None => match clouds.as_slice() {
+            [one] => Some(one),
+            [] => return Err(bad(cmd, "the design has no point cloud: insert one with Point Clouds")),
+            _ => return Err(bad(cmd, "name the point cloud with `cloud`")),
+        },
+    };
+    let cloud = cloud.ok_or_else(|| bad(cmd, "no such point cloud"))?;
+    let points: Vec<Vec3> = (0..cloud.len()).filter_map(|i| cloud.world_point(i)).collect();
+    // Normals the file states, turned with the cloud.
+    let column = |name: &str| cloud.complex.column(name).map(|c| c.values.0.clone());
+    let normals = match (column("nx"), column("ny"), column("nz")) {
+        (Some(x), Some(y), Some(z)) if x.len() == cloud.len() && y.len() == cloud.len() && z.len() == cloud.len() => {
+            let at = |v: Vec3| solidcraft_doc::apply_point(&cloud.transform, v);
+            let base = at(cloud.origin);
+            Some(
+                (0..cloud.len())
+                    .map(|i| at(cloud.origin + Vec3::new(f64::from(x[i]), f64::from(y[i]), f64::from(z[i]))) - base)
+                    .map(|n| solidcraft_geom::Vec3Geom::normalized(n).unwrap_or(Vec3::ZERO))
+                    .collect(),
+            )
+        }
+        _ => None,
+    };
+    Ok((cloud.name.clone(), points, normals))
+}
+
+pub(super) fn mesh_from_points(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.mesh_from_points";
+    let (cloud, points, normals) = cloud_points(s, p, cmd)?;
+    if points.len() < 16 {
+        return Err(bad(cmd, format!("`{cloud}` has too few points to make a surface of")));
+    }
+    let trim = num(p, "trim").unwrap_or(poisson::DEFAULT_TRIM);
+    if !(0.0..=1.0).contains(&trim) {
+        return Err(bad(cmd, "`trim` is a share from 0 to 1"));
+    }
+    let depth = match p.get("depth").filter(|v| !v.is_null()) {
+        Some(v) => {
+            let d = v
+                .as_u64()
+                .filter(|d| (u64::from(poisson::LEAST_DEPTH)..=u64::from(poisson::MOST_DEPTH)).contains(d))
+                .ok_or_else(|| bad(cmd, "`depth` is a whole number from 5 to 10"))?;
+            d as u32
+        }
+        None => {
+            let (lo, hi) = points
+                .iter()
+                .fold((points[0], points[0]), |(lo, hi), q| (solidcraft_geom::Vec3Geom::min(lo, *q), solidcraft_geom::Vec3Geom::max(hi, *q)));
+            let d = hi - lo;
+            poisson::Settings::suggested(d.x.max(d.y).max(d.z), poisson::typical_spacing(&points)).depth
+        }
+    };
+    let made = poisson::reconstruct(&points, normals.as_deref(), &poisson::Settings { depth, trim }).map_err(|e| bad(cmd, e.to_string()))?;
+    let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    let name = match str_(p, "name").filter(|n| !n.trim().is_empty()) {
+        Some(n) => n.to_owned(),
+        None => std::iter::once(format!("{cloud} Mesh"))
+            .chain((2..).map(|i| format!("{cloud} Mesh {i}")))
+            .find(|n| !taken.contains(n))
+            .unwrap_or_else(|| "Mesh".into()),
+    };
+    let data = solidcraft_doc::MeshData {
+        name: name.clone(),
+        positions: made.positions.iter().flat_map(|q| [q.x, q.y, q.z]).collect::<Vec<f64>>().into(),
+        triangles: made.triangles.iter().flatten().copied().collect::<Vec<u32>>().into(),
+        color: None,
+    };
+    let kind = solidcraft_doc::FeatureKind::MeshImport { file: format!("{cloud} (mesh from points)"), meshes: vec![data] };
+    let feature = super::super::features::add_feature(s, &json!({ "body_name": name, "name": "Mesh from Points" }), kind)?;
+    reply(ScanMeshFromPointsResult {
+        body: name,
+        triangles: made.triangles.len(),
+        vertices: made.positions.len(),
+        depth: made.settings.depth,
+        trim: made.settings.trim,
+        points: made.points,
+        points_used: made.points_used,
+        estimated_normals: made.estimated_normals,
+        cell: made.cell,
+        spacing: made.spacing,
+        trimmed: made.trimmed,
+        rms: made.distances.rms,
+        p95: made.distances.p95,
+        max: made.distances.max,
         feature,
         param_warnings: Vec::new(),
     })

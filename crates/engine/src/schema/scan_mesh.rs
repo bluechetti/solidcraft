@@ -58,6 +58,56 @@ pub struct ScanRegisterResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Make a mesh body from a point cloud: screened Poisson reconstruction, trimmed where the points
+/// are sparse. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanMeshFromPointsParams {
+    /// The point cloud, by id or name. Default: the design's only one.
+    #[serde(default)]
+    pub cloud: Option<Value>,
+    /// The detail: the finest grid is 2^depth cells across the cloud, 5 to 10. Default: the depth
+    /// whose cells are about as wide as the points are apart.
+    #[serde(default)]
+    pub depth: Option<u32>,
+    /// Where the points are sparse the surface stops: vertices covered less than this, 0 to 1, go
+    /// (0 keeps the closed surface). Default: 0.3.
+    #[serde(default)]
+    pub trim: Option<f64>,
+    /// The new body's name. Default: the cloud's, with " Mesh".
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// What `scan.mesh_from_points` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanMeshFromPointsResult {
+    /// The mesh body made, its triangles and vertices.
+    pub body: String,
+    pub triangles: usize,
+    pub vertices: usize,
+    /// The detail and the trim used.
+    pub depth: u32,
+    pub trim: f64,
+    /// The cloud's points, and those solved from after thinning to half a cell; whether their
+    /// normals were estimated (the cloud stated none).
+    pub points: usize,
+    pub points_used: usize,
+    pub estimated_normals: bool,
+    /// The finest cell, the points' typical spacing, and the triangles the trim took away.
+    pub cell: f64,
+    pub spacing: f64,
+    pub trimmed: usize,
+    /// How far the points are from the surface: root mean square, 95th percentile, largest, mm.
+    pub rms: f64,
+    pub p95: f64,
+    pub max: f64,
+    /// The feature, as `feature.add` replies.
+    pub feature: Value,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 #[cfg(test)]
 #[path = "scan_mesh_tests.rs"]
 mod tests;

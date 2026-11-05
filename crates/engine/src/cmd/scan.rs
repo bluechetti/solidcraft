@@ -80,10 +80,6 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&FLOATING_CONTRACT)
         .output(output_schema_for::<ScanFloatingResult>)
         .params("body?: mesh body (default: the selected or only one); below?: share of the largest piece's triangles (0…0.5, default 0.02; never fewer than 2): the pieces of the scan (triangles joined through their corners) smaller than that taken off, the scan written back in its Insert Mesh feature (one undo step) → body, pieces, removed, removed_triangles, triangles, feature"),
-    planned!("scan.mesh_from_points", "Mesh from Points", "8615")
-        .at("SCAN", "CLEAN")
-        .icon("dots")
-        .params("planned: cloud: point cloud id or name; depth?: detail (5…12, default 8); name? → body"),
     CommandSpec::new("scan.bases", "Scan Bases", crate::checked!("scan.bases", bases))
         .icon("list")
         .noundo()

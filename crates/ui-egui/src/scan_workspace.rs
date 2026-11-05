@@ -147,6 +147,7 @@ mod tests {
             "scan.cut_it",
             "scan.pattern_it",
             "scan.register",
+            "scan.mesh_from_points",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {
