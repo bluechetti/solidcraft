@@ -1,0 +1,90 @@
+{
+  "en": {
+    "cmd.scan_flatten": "Flatten",
+    "help.scan.flatten": "Unrolls part of the scan onto the plane beside it, keeping its angles and area as well as they can be kept and relaxed toward keeping each edge's length, and sketches the pattern's outline. It says how far the pattern is from the scan: its area, each edge's stretch, triangles turned over.",
+    "cmd.scan_roll_onto_scan": "Roll onto Scan",
+    "help.scan.roll_onto_scan": "Carries the curves of a sketch drawn on a flat pattern back onto the scan through the triangles they lie over, as 3D sketch curves. Draw on the pattern Flatten made, then roll.",
+    "ui.scan_flatten_radius": "Radius (0: Whole Piece)",
+    "ui.scan_flatten_relax": "Keep Edge Lengths",
+    "ui.scan_flatten_found": "{triangles} triangles, {area} mm² · area {change} % · edges stretch {rms} % rms, {max} % most",
+    "ui.scan_flatten_flipped": "{flipped} triangles turned over: the region folds too much to lie flat; take less of it.",
+    "ui.scan_flatten_hint": "Click the part of the scan to flatten."
+  },
+  "de": {
+    "cmd.scan_flatten": "Abwickeln",
+    "help.scan.flatten": "Wickelt einen Teil des Scans auf die Ebene daneben ab, Winkel und Fläche so gut wie möglich erhalten und auf die Länge jeder Kante hin entspannt, und skizziert den Umriss des Musters. Es sagt, wie weit das Muster vom Scan abweicht: Fläche, Dehnung jeder Kante, umgeklappte Dreiecke.",
+    "cmd.scan_roll_onto_scan": "Auf Scan aufrollen",
+    "help.scan.roll_onto_scan": "Trägt die Kurven einer auf ein Abwicklungsmuster gezeichneten Skizze über die darunterliegenden Dreiecke auf den Scan zurück, als 3D-Skizzenkurven. Zeichnen Sie auf das Muster von Abwickeln und rollen Sie dann auf.",
+    "ui.scan_flatten_radius": "Radius (0: ganzes Stück)",
+    "ui.scan_flatten_relax": "Kantenlängen erhalten",
+    "ui.scan_flatten_found": "{triangles} Dreiecke, {area} mm² · Fläche {change} % · Kantendehnung {rms} % RMS, höchstens {max} %",
+    "ui.scan_flatten_flipped": "{flipped} Dreiecke umgeklappt: der Bereich faltet sich zu stark, um flach zu liegen; nehmen Sie weniger davon.",
+    "ui.scan_flatten_hint": "Klicken Sie auf den abzuwickelnden Teil des Scans."
+  },
+  "ja": {
+    "cmd.scan_flatten": "展開",
+    "help.scan.flatten": "スキャンの一部を横の平面に展開します。角度と面積をできるだけ保ち、各エッジの長さを保つよう緩和して、パターンの輪郭をスケッチします。パターンとスキャンの差 (面積、各エッジの伸び、裏返った三角形) を示します。",
+    "cmd.scan_roll_onto_scan": "スキャンに巻き戻す",
+    "help.scan.roll_onto_scan": "展開パターン上に描いたスケッチの曲線を、その下の三角形を通してスキャン上に戻し、3D スケッチ曲線にします。展開で作ったパターンに描いてから巻き戻します。",
+    "ui.scan_flatten_radius": "半径 (0: 全体)",
+    "ui.scan_flatten_relax": "エッジ長を保つ",
+    "ui.scan_flatten_found": "{triangles} 三角形、{area} mm² · 面積 {change} % · エッジの伸び rms {rms} %、最大 {max} %",
+    "ui.scan_flatten_flipped": "{flipped} 個の三角形が裏返りました: 領域が曲がりすぎて平らになりません。範囲を小さくしてください。",
+    "ui.scan_flatten_hint": "展開するスキャンの部分をクリックします。"
+  },
+  "ko": {
+    "cmd.scan_flatten": "펼치기",
+    "help.scan.flatten": "스캔의 일부를 옆 평면에 펼칩니다. 각도와 넓이를 최대한 지키고 모서리 길이를 지키도록 완화한 뒤 패턴의 윤곽을 스케치합니다. 패턴이 스캔과 얼마나 다른지(넓이, 모서리 늘어남, 뒤집힌 삼각형) 알려 줍니다.",
+    "cmd.scan_roll_onto_scan": "스캔에 감기",
+    "help.scan.roll_onto_scan": "펼친 패턴 위에 그린 스케치의 곡선을 그 아래 삼각형을 통해 스캔 위로 되돌려 3D 스케치 곡선으로 만듭니다. 펼치기로 만든 패턴 위에 그린 다음 감으세요.",
+    "ui.scan_flatten_radius": "반지름 (0: 전체 조각)",
+    "ui.scan_flatten_relax": "모서리 길이 유지",
+    "ui.scan_flatten_found": "삼각형 {triangles}개, {area} mm² · 넓이 {change} % · 모서리 늘어남 rms {rms} %, 최대 {max} %",
+    "ui.scan_flatten_flipped": "삼각형 {flipped}개가 뒤집혔습니다: 영역이 너무 휘어 평평하게 펼 수 없습니다. 더 작게 잡으세요.",
+    "ui.scan_flatten_hint": "펼칠 스캔 부분을 클릭하세요."
+  },
+  "zh": {
+    "cmd.scan_flatten": "展平",
+    "help.scan.flatten": "把扫描的一部分展开到旁边的平面上，尽量保持角度和面积，并松弛以保持每条边的长度，然后草绘图样的轮廓。它会说明图样与扫描相差多少：面积、每条边的拉伸、翻转的三角形。",
+    "cmd.scan_roll_onto_scan": "卷回扫描",
+    "help.scan.roll_onto_scan": "把画在展平图样上的草图曲线，经过其下方的三角形带回扫描上，成为 3D 草图曲线。先在展平生成的图样上绘制，再卷回。",
+    "ui.scan_flatten_radius": "半径（0：整块）",
+    "ui.scan_flatten_relax": "保持边长",
+    "ui.scan_flatten_found": "{triangles} 个三角形，{area} mm² · 面积 {change} % · 边拉伸均方根 {rms} %，最大 {max} %",
+    "ui.scan_flatten_flipped": "{flipped} 个三角形翻转：该区域弯曲太大无法摊平，请取小一些。",
+    "ui.scan_flatten_hint": "点击要展平的扫描部分。"
+  },
+  "ar": {
+    "cmd.scan_flatten": "تسطيح",
+    "help.scan.flatten": "يفرد جزءًا من المسح على المستوى المجاور، محافظًا على زواياه ومساحته قدر الإمكان ومُرخِيًا نحو الحفاظ على طول كل حافة، ويرسم حدود النمط. ويبيّن مدى بُعد النمط عن المسح: مساحته، وتمدد كل حافة، والمثلثات المقلوبة.",
+    "cmd.scan_roll_onto_scan": "لفّ على المسح",
+    "help.scan.roll_onto_scan": "يعيد منحنيات رسم مرسوم على نمط مُسطّح إلى المسح عبر المثلثات التي تقع فوقها، كمنحنيات رسم ثلاثية الأبعاد. ارسم على النمط الذي صنعه التسطيح، ثم لفّ.",
+    "ui.scan_flatten_radius": "نصف القطر (0: القطعة كلها)",
+    "ui.scan_flatten_relax": "الحفاظ على أطوال الحواف",
+    "ui.scan_flatten_found": "{triangles} مثلث، {area} مم² · المساحة {change} % · تمدد الحواف {rms} % جذر متوسط المربعات، {max} % أقصى",
+    "ui.scan_flatten_flipped": "انقلب {flipped} مثلث: المنطقة منحنية أكثر من أن تُسطّح؛ خذ منها أقل.",
+    "ui.scan_flatten_hint": "انقر الجزء المراد تسطيحه من المسح."
+  },
+  "he": {
+    "cmd.scan_flatten": "שיטוח",
+    "help.scan.flatten": "פורשת חלק מהסריקה על המישור שלצידה, שומרת על זוויותיו ושטחו ככל האפשר ומרפה לעבר שמירת אורך כל קצה, ומשרטטת את קו המתאר של התבנית. היא אומרת כמה התבנית רחוקה מהסריקה: שטחה, מתיחת כל קצה, משולשים שהתהפכו.",
+    "cmd.scan_roll_onto_scan": "גלגול על הסריקה",
+    "help.scan.roll_onto_scan": "מחזירה את העקומות של סקיצה שצוירה על תבנית שטוחה אל הסריקה דרך המשולשים שמתחתן, כעקומות סקיצה תלת־ממדיות. ציירו על התבנית שהשיטוח יצר, ואז גלגלו.",
+    "ui.scan_flatten_radius": "רדיוס (0: כל החלק)",
+    "ui.scan_flatten_relax": "שמירה על אורכי קצוות",
+    "ui.scan_flatten_found": "{triangles} משולשים, {area} מ״מ² · שטח {change} % · מתיחת קצוות {rms} % ממוצע ריבועי, {max} % לכל היותר",
+    "ui.scan_flatten_flipped": "{flipped} משולשים התהפכו: האזור מתקפל מכדי לשכב שטוח; קחו ממנו פחות.",
+    "ui.scan_flatten_hint": "לחצו על החלק בסריקה שיש לשטח."
+  },
+  "vi": {
+    "cmd.scan_flatten": "Trải phẳng",
+    "help.scan.flatten": "Trải một phần bản quét lên mặt phẳng bên cạnh, giữ góc và diện tích tốt nhất có thể và nới cho mỗi cạnh giữ độ dài, rồi phác đường bao của mẫu. Nó cho biết mẫu khác bản quét bao nhiêu: diện tích, độ giãn của mỗi cạnh, tam giác bị lật.",
+    "cmd.scan_roll_onto_scan": "Cuộn lên bản quét",
+    "help.scan.roll_onto_scan": "Đưa các đường cong của bản phác vẽ trên mẫu trải phẳng trở lại bản quét qua các tam giác nằm dưới chúng, thành đường cong phác thảo 3D. Vẽ lên mẫu do Trải phẳng tạo, rồi cuộn.",
+    "ui.scan_flatten_radius": "Bán kính (0: cả mảnh)",
+    "ui.scan_flatten_relax": "Giữ độ dài cạnh",
+    "ui.scan_flatten_found": "{triangles} tam giác, {area} mm² · diện tích {change} % · cạnh giãn {rms} % rms, nhiều nhất {max} %",
+    "ui.scan_flatten_flipped": "{flipped} tam giác bị lật: vùng này cong quá nên không trải phẳng được; hãy lấy ít hơn.",
+    "ui.scan_flatten_hint": "Nhấp vào phần bản quét cần trải phẳng."
+  }
+}

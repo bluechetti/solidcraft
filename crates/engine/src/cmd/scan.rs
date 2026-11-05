@@ -1015,6 +1015,9 @@ pub mod curve;
 #[path = "scan_fillet.rs"]
 pub mod fillet;
 
+#[path = "scan_flatten.rs"]
+pub mod flatten;
+
 #[path = "scan_free_form.rs"]
 pub mod free_form;
 

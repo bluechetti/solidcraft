@@ -392,6 +392,8 @@ pub const SECTIONS: &[Section] = &[
             "scan.sections_along_curve",
             "scan.curve_from_selection",
             "sketch.fit_curves_to_section",
+            "scan.flatten",
+            "scan.roll_onto_scan",
         ],
     },
     // Part of a scan chosen for the tools that work on part of one, and kept by name.

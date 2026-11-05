@@ -45,11 +45,11 @@ fn run(s: &mut Session, id: &str, p: Value) -> Result<Value> {
 
 /// What was added to the sketch.
 #[derive(Default)]
-struct Added {
-    lines: usize,
-    arcs: usize,
-    circles: usize,
-    tangents: usize,
+pub(super) struct Added {
+    pub(super) lines: usize,
+    pub(super) arcs: usize,
+    pub(super) circles: usize,
+    pub(super) tangents: usize,
 }
 
 /// One closed or open chain added to the sketch, its ends shared and its smooth joins tangent.
@@ -107,7 +107,7 @@ fn add_chain(sk: &mut Sketch, pieces: &[Piece], closed: bool, added: &mut Added)
 }
 
 /// The outlines of a cut, each closed or not, drawn into the sketch.
-fn draw(sk: &mut Sketch, outlines: &[(Outline, bool)], added: &mut Added) -> Result<()> {
+pub(super) fn draw(sk: &mut Sketch, outlines: &[(Outline, bool)], added: &mut Added) -> Result<()> {
     for (outline, closed) in outlines {
         match outline {
             Outline::Circle { center, radius } => {

@@ -13,6 +13,7 @@
 //! - [`deviation`]: how far the scan is from the model built from it.
 //! - [`fillet`]: a fillet's radius measured from the scan near a model's edges.
 //! - [`fit`]: a plane or a cylinder fitted to the part of the scan round a picked point.
+//! - [`flatten`]: part of a scan unrolled onto a plane, and points of the pattern lifted back.
 //! - [`free_form`]: a Free Form: a net over four corners clicked on the scan, fitted to it.
 //! - [`holes`]: the holes in a scan and the smooth patches that close them.
 //! - [`mirror_fill`]: a scan completed by its mirror image where it has nothing.
@@ -49,6 +50,7 @@ pub mod denoise;
 pub mod deviation;
 pub mod fillet;
 pub mod fit;
+pub mod flatten;
 pub mod free_form;
 pub mod holes;
 mod hull;

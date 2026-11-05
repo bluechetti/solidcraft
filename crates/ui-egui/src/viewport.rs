@@ -4649,6 +4649,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 .chain(crate::dialogs_scan::gpu_mismatch(app))
                 .chain(crate::dialogs_scan_clean::gpu_marks(app))
                 .chain(crate::dialogs_scan_split::gpu_marks(app))
+                .chain(crate::dialogs_scan_flatten::gpu_marks(app))
                 .chain(crate::dialogs_scan_surface::gpu_fit_marks(app))
                 .collect(),
             analysis: analysis_uniform(app),
@@ -5353,6 +5354,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::dialogs_scan_slice::draw(app, &painter, &proj);
     crate::dialogs_scan_split::draw(app, &painter, &proj);
     crate::dialogs_scan_align::draw(app, &painter, &proj);
+    crate::dialogs_scan_flatten::draw(app, &painter, &proj);
     crate::dialogs_scan_clean::draw(app, &painter, &proj);
     crate::dialogs_scan_section::draw(app, &painter, &proj);
     crate::dialogs_scan_sections::draw(app, &painter, &proj);
