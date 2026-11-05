@@ -62,8 +62,9 @@ pub struct ScanGuide {
 }
 
 /// Find the plane a scan is a mirror image about and keep it as a construction plane, named
-/// `Symmetry Plane` (`Symmetry Plane 2`, … when that is taken), to sketch on. A scan that is not a mirror image is refused, with how much of
-/// it matched.
+/// `Symmetry Plane` (`Symmetry Plane 2`, … when that is taken), to sketch on. A plane given, or the
+/// one near a guide, is kept however much of the scan matches it (the reply says how much); the
+/// best plane found unasked is refused when the scan is no mirror image about it.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ScanSymmetryParams {
@@ -74,6 +75,9 @@ pub struct ScanSymmetryParams {
     /// the line between the first and last points picked on the scan, if there are two.
     #[serde(default)]
     pub guide: Option<ScanGuide>,
+    /// The mirror plane itself, to use as it is (the plane a dialog shows). Instead of `guide`.
+    #[serde(default)]
+    pub plane: Option<ScanPlane>,
     /// Keep the plane as a construction plane. Default: true; false only reports it.
     #[serde(default)]
     pub keep: Option<bool>,
@@ -81,7 +85,9 @@ pub struct ScanSymmetryParams {
 
 /// Square a scan to its mirror plane: the smallest turn that lays the plane along the YZ plane,
 /// then sideways until it is X = 0, so the origin's YZ plane is the mirror plane to sketch on. One
-/// undo step, kept as a Move feature. A scan that is not a mirror image is refused.
+/// undo step, kept as a Move feature. A plane given, or the one near a guide, is used however much
+/// of the scan matches it; the best plane found unasked is refused when the scan is no mirror image
+/// about it.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ScanSquareParams {
@@ -92,6 +98,9 @@ pub struct ScanSquareParams {
     /// the line between the first and last points picked on the scan, if there are two.
     #[serde(default)]
     pub guide: Option<ScanGuide>,
+    /// The mirror plane itself, to use as it is (the plane a dialog shows). Instead of `guide`.
+    #[serde(default)]
+    pub plane: Option<ScanPlane>,
 }
 
 /// A mirror plane given by a point and the way it faces.

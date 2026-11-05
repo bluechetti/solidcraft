@@ -742,3 +742,18 @@ fn section_sketch_fits_the_cut_with_lines_and_circles() {
     assert!(refused.contains("does not cut"), "{refused}");
     assert!(s.active_sketch.is_none(), "a refused cut leaves no sketch open");
 }
+
+/// A plane given is the one asked for: kept however little of the scan matches it, the reply
+/// saying how much; the best plane found unasked is still refused when it matches poorly.
+#[test]
+fn a_plane_given_is_kept_however_little_matches() {
+    let (mut s, _, place) = session_with_a_symmetric_scan("symmetry-given");
+    // A plane well off the block's middle (X = 20 as made): little of it matches.
+    let (point, normal) = (place(Vec3::new(20.0, 10.0, 10.0)), place(Vec3::X) - place(Vec3::ZERO));
+    let plane = json!({"point": [point.x, point.y, point.z], "normal": [normal.x, normal.y, normal.z]});
+    let kept = run(&mut s, "scan.symmetry", json!({"plane": plane}));
+    assert_eq!(kept["mirror"]["symmetric"], false, "{kept}");
+    assert!(kept["plane"]["feature"].is_u64(), "kept anyway: {kept}");
+    let squared = run(&mut s, "scan.square_to_symmetry", json!({"plane": plane}));
+    assert_eq!(squared["moved"], true, "{squared}");
+}

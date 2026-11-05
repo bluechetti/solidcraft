@@ -336,8 +336,8 @@ pub fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Symmetry) -> boo
     false
 }
 
-/// What OK runs: keep the plane found, square the scan to it (near the guide drawn), or complete
-/// the scan by mirroring it in the very plane shown.
+/// What OK runs: keep the plane shown, square the scan to it, or complete the scan by mirroring
+/// it in it: the very plane shown, however much of the scan matches it.
 pub fn symmetry_commands(k: &Symmetry) -> Result<Vec<(String, Value)>, String> {
     let found = k.found.as_ref().ok_or("still looking for the plane")?;
     let mirror = found.mirror.as_ref().map_err(Clone::clone)?;
@@ -345,11 +345,8 @@ pub fn symmetry_commands(k: &Symmetry) -> Result<Vec<(String, Value)>, String> {
     if let Some((body, _, _)) = &found.body {
         params.insert("body".into(), json!(body));
     }
-    if k.square == COMPLETE {
-        params.insert("plane".into(), json!({"point": mirror.point, "normal": mirror.normal}));
-    } else if let Some([from, to, toward]) = k.guide {
-        params.insert("guide".into(), json!({"from": [from.x, from.y, from.z], "to": [to.x, to.y, to.z], "toward": [toward.x, toward.y, toward.z]}));
-    }
+    // The plane shown is the one OK uses, however much of the scan matches it.
+    params.insert("plane".into(), json!({"point": mirror.point, "normal": mirror.normal}));
     Ok(vec![(symmetry_command(k).into(), Value::Object(params))])
 }
 

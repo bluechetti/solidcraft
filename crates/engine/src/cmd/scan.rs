@@ -112,13 +112,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("mirror")
         .contract(&SYMMETRY_CONTRACT)
         .output(output_schema_for::<ScanSymmetryResult>)
-        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z] (the way you looked, default [0,0,1])}: a line along the rough mirror plane, to find that one; keep?: bool (default true: kept as a construction plane `Symmetry Plane`, `Symmetry Plane 2`, …, to sketch on); a scan that is no mirror image is refused → body, mirror: {point, normal, rms, coverage, symmetric}, plane (the construction plane)"),
+        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z] (the way you looked, default [0,0,1])}: a line along the rough mirror plane, to find that one; plane?: {point, normal: [x,y,z]} to keep as it is; keep?: bool (default true: kept as a construction plane `Symmetry Plane`, `Symmetry Plane 2`, …, to sketch on); a plane given or guided to is used however much matches, the best one found unasked is refused when the scan is no mirror image about it → body, mirror: {point, normal, rms, coverage, symmetric}, plane (the construction plane)"),
     CommandSpec::new("scan.square_to_symmetry", "Square to Symmetry", crate::checked!("scan.square_to_symmetry", square_to_symmetry))
         .at("SCAN", "ALIGN")
         .icon("c_symmetry")
         .contract(&SQUARE_CONTRACT)
         .output(output_schema_for::<ScanPlaceResult>)
-        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z]}: the smallest turn that lays its mirror plane along YZ, then sideways to X = 0, so the origin's YZ plane is the mirror plane; a scan that is no mirror image is refused → body, moved, mirror, feature (the Move)"),
+        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z]}; plane?: {point, normal}: the smallest turn that lays the mirror plane along YZ, then sideways to X = 0, so the origin's YZ plane is the mirror plane; a plane given or guided to is used however much matches, the best one found unasked is refused when the scan is no mirror image about it → body, moved, mirror, feature (the Move)"),
     CommandSpec::new("scan.complete_by_mirroring", "Complete by Mirroring", crate::checked!("scan.complete_by_mirroring", complete_by_mirroring))
         .at("SCAN", "ALIGN")
         .icon("mirror")
@@ -343,18 +343,32 @@ fn picked_guide(s: &Session, mesh: &Mesh) -> Option<Guide> {
     Some(Guide { from, to, toward })
 }
 
-/// The scan's mirror plane, near `guide` when one is given; refused when the scan is no mirror image.
-fn mirror_of(mesh: &Mesh, guide: Option<&Guide>, cmd: &str) -> Result<Mirror> {
+/// A plane given as `plane: {point, normal}`, if any.
+fn plane_param(p: &Value, cmd: &str) -> Result<Option<(Vec3, Vec3)>> {
+    let Some(v) = p.get("plane").filter(|v| !v.is_null()) else { return Ok(None) };
+    let at =
+        |key: &str| v.get(key).and_then(crate::params::vec3).ok_or_else(|| bad(cmd, format!("`plane.{key}` must be a point [x, y, z] of numbers")));
+    Ok(Some((at("point")?, at("normal")?)))
+}
+
+/// The mirror plane a command works with: the plane given, else the one near the guide drawn (or
+/// the two points picked), else the best one found. A plane given or guided to is the one asked
+/// for, so it is taken however little of the scan matches it (the reply says how much); the best
+/// one found unasked is refused when the scan is no mirror image about it and `refuse` says so.
+fn chosen_mirror(s: &Session, mesh: &Mesh, p: &Value, cmd: &str, refuse: bool) -> Result<Mirror> {
     let scan = mesh.scan();
-    let found = match guide {
-        Some(g) => symmetry::find_guided(&scan, g).ok_or_else(|| bad(cmd, "the guide marks no plane: draw a line with some length, not end-on"))?,
-        None => symmetry::find(&scan).ok_or_else(|| bad(cmd, "the scan is too small to look for a mirror plane"))?,
-    };
-    if !found.is_symmetric() {
+    if let Some((point, normal)) = plane_param(p, cmd)? {
+        return symmetry::measure(&scan, point, normal).ok_or_else(|| bad(cmd, "the plane has no direction, or the scan is too small"));
+    }
+    if let Some(g) = guide(p, cmd)?.or_else(|| picked_guide(s, mesh)) {
+        return symmetry::find_guided(&scan, &g).ok_or_else(|| bad(cmd, "the guide marks no plane: draw a line with some length, not end-on"));
+    }
+    let found = symmetry::find(&scan).ok_or_else(|| bad(cmd, "the scan is too small to look for a mirror plane"))?;
+    if refuse && !found.is_symmetric() {
         return Err(bad(
             cmd,
             format!(
-                "the scan is not a mirror image: only {:.0} % of it matches its reflection (typically {:.2} mm off); draw a guide along the plane to look near it",
+                "the scan is not a mirror image about the best plane found: only {:.0} % of it matches its reflection (typically {:.2} mm off); give the plane, or draw a guide along it, to use it anyway",
                 100.0 * found.coverage,
                 found.rms
             ),
@@ -365,11 +379,12 @@ fn mirror_of(mesh: &Mesh, guide: Option<&Guide>, cmd: &str) -> Result<Mirror> {
 
 fn find_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.symmetry";
-    let guide = guide(p, cmd)?;
+    // The parameters first, so a malformed call is told so before anything else.
+    guide(p, cmd)?;
+    plane_param(p, cmd)?;
     let keep = crate::params::bool_(p, "keep").unwrap_or(true);
     let mesh = mesh(s, p, cmd)?;
-    let guide = guide.or_else(|| picked_guide(s, &mesh));
-    let found = mirror_of(&mesh, guide.as_ref(), cmd)?;
+    let found = chosen_mirror(s, &mesh, p, cmd, true)?;
     let plane = if keep {
         // Three points of the plane, a quarter of the scan apart, make an ordinary construction plane.
         let (u, v) = found.normal.any_perp().normalized().map(|u| (u, found.normal.cross(u))).unwrap_or((Vec3::X, Vec3::Y));
@@ -394,10 +409,11 @@ fn find_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn square_to_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.square_to_symmetry";
-    let guide = guide(p, cmd)?;
+    // The parameters first, so a malformed call is told so before anything else.
+    guide(p, cmd)?;
+    plane_param(p, cmd)?;
     let mesh = mesh(s, p, cmd)?;
-    let guide = guide.or_else(|| picked_guide(s, &mesh));
-    let found = mirror_of(&mesh, guide.as_ref(), cmd)?;
+    let found = chosen_mirror(s, &mesh, p, cmd, true)?;
     let by = symmetry::square_to(&found).ok_or_else(|| bad(cmd, "the mirror plane has no direction"))?;
     let feature = move_by(s, &mesh, &by)?;
     let reply = ScanPlaceResult {
@@ -509,36 +525,17 @@ const FILL_COLOR: [f32; 3] = [0.95, 0.62, 0.15];
 
 fn complete_by_mirroring(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.complete_by_mirroring";
-    let guide = guide(p, cmd)?;
-    let given = match p.get("plane").filter(|v| !v.is_null()) {
-        Some(v) => {
-            let at = |key: &str| {
-                v.get(key).and_then(crate::params::vec3).ok_or_else(|| bad(cmd, format!("`plane.{key}` must be a point [x, y, z] of numbers")))
-            };
-            Some((at("point")?, at("normal")?))
-        }
-        None => None,
-    };
+    // The parameters first, so a malformed call is told so before anything else.
+    guide(p, cmd)?;
+    plane_param(p, cmd)?;
     let mesh = mesh(s, p, cmd)?;
     let scan = mesh.scan();
     let reach = match crate::params::expr(p, "reach") {
         Some(_) => Some(length(s, p, "reach", 1.0, cmd)?),
         None => None,
     };
-    let plane = match given {
-        Some((point, normal)) => {
-            symmetry::measure(&scan, point, normal).ok_or_else(|| bad(cmd, "the plane has no direction, or the scan is too small"))?
-        }
-        None => {
-            let guide = guide.or_else(|| picked_guide(s, &mesh));
-            match guide {
-                Some(g) => {
-                    symmetry::find_guided(&scan, &g).ok_or_else(|| bad(cmd, "the guide marks no plane: draw a line with some length, not end-on"))?
-                }
-                None => symmetry::find(&scan).ok_or_else(|| bad(cmd, "the scan is too small to look for a mirror plane"))?,
-            }
-        }
-    };
+    // A scan seen from one side matches little of itself: the plane is used however little.
+    let plane = chosen_mirror(s, &mesh, p, cmd, false)?;
     let fill = solidcraft_scan::mirror_fill::complete(&scan, &plane, reach)
         .ok_or_else(|| bad(cmd, "nothing is missing: every reflected triangle lands on the scan (a smaller reach finds smaller gaps)"))?;
     let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
