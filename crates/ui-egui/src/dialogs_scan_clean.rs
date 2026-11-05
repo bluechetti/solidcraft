@@ -373,6 +373,45 @@ mod tests {
         assert!(positions.iter().all(|p| p.x <= 30.0), "the speck is gone");
     }
 
+    /// Taking the speck off is computed beside the window, as a feature's OK is: a real scan's
+    /// millions of triangles took a minute on the window thread. The dialog stays, saying it is
+    /// computing, nothing changes until the result is in, and then it is applied.
+    #[test]
+    fn taking_the_speck_off_is_computed_beside_the_window() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("specked.stl");
+        let stl =
+            format!("solid s\n{}{}endsolid s\n", box_facets([0.0; 3], [30.0, 20.0, 10.0], 12), box_facets([50.0, 0.0, 0.0], [51.0, 1.0, 1.0], 1));
+        std::fs::write(&path, stl).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.apply_off_thread = Some(std::time::Duration::ZERO);
+        let (finish, gate) = std::sync::mpsc::channel();
+        h.app.apply_gate = Some(std::sync::Arc::new(std::sync::Mutex::new(gate)));
+        h.app.start("scan.remove_floating");
+        h.frames(2);
+        let before = h.app.session.doc.clone();
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        assert!(h.app.applying.is_some(), "computing beside the window");
+        h.frames(2);
+        assert!(std::sync::Arc::ptr_eq(&before, &h.app.session.doc) && h.app.dialog.is_some(), "nothing applied while it computes");
+        finish.send(()).unwrap();
+        for _ in 0..500 {
+            if h.app.applying.is_none() {
+                break;
+            }
+            h.frames(1);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        h.frames(1);
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        let state = h.app.session.model.state();
+        let (positions, _) = state.bodies.iter().find(|b| b.body.is_mesh()).and_then(|b| b.body.triangle_mesh()).unwrap();
+        assert!(positions.iter().all(|p| p.x <= 30.0), "the speck is gone");
+        // One undo step, as on the window thread.
+        h.app.run("edit.undo", json!({})).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&before, &h.app.session.doc));
+    }
+
     /// A plate with a square hole: the dialog finds the hole, and OK closes it.
     #[test]
     fn the_hole_is_found_and_closed() {

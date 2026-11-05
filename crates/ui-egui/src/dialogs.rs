@@ -682,7 +682,7 @@ fn display_quality(app: &SolveApp) -> solidcraft_engine::doc::display_quality::D
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn begin_applying(app: &SolveApp, d: &Dialog) -> Option<Applying> {
     let wait = app.apply_off_thread?;
-    if !d.previews() && d.editing.is_none() {
+    if !d.previews() && d.editing.is_none() && !d.works_on_the_scan() {
         return None;
     }
     let computation = DialogComputation::new(app, d).ok()?;
@@ -1360,6 +1360,35 @@ impl Dialog {
     }
 
     /// Does this dialog make a feature that can be previewed live?
+    /// A scan tool whose OK works through the whole scan (a scan of millions of triangles takes
+    /// seconds to a minute: smoothing it, filling its holes, cutting it, fitting to it): its OK
+    /// is computed beside the window like a feature that previews, the dialog saying so, though
+    /// it shows no preview. Not the tools that pick on the scan as they go (selecting, drawing a
+    /// curve, editing a surface, aligning by pairs, a curve from the selection).
+    pub fn works_on_the_scan(&self) -> bool {
+        matches!(
+            self.kind,
+            Kind::ScanBase(_)
+                | Kind::ScanSymmetry(_)
+                | Kind::ScanFitSurface(_)
+                | Kind::ScanFreeForm(_)
+                | Kind::ScanWrapSurface(_)
+                | Kind::ScanMergeSurfaces(_)
+                | Kind::ScanSliceSurface(_)
+                | Kind::ScanSplit(_)
+                | Kind::ScanFillet(_)
+                | Kind::ScanFlatten(_)
+                | Kind::ScanFitPatches(_)
+                | Kind::ScanFloating(_)
+                | Kind::ScanHoles(_)
+                | Kind::ScanReduce(_)
+                | Kind::ScanSection(_)
+                | Kind::ScanSections(_)
+                | Kind::ScanDenoise(_)
+                | Kind::ScanReconstruct(_)
+        )
+    }
+
     pub fn previews(&self) -> bool {
         match &self.kind {
             Kind::Assembly(k) => return k.previews(),
