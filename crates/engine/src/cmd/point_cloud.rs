@@ -447,6 +447,26 @@ mod tests {
     }
 
     #[test]
+    fn a_scan_with_normals_saves_and_opens_with_them() {
+        let d = dir("normals");
+        let mut b = b"ply\nformat binary_little_endian 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nproperty float nx\nproperty float ny\nproperty float nz\nend_header\n".to_vec();
+        for p in [[0.0f32, 0.0, 0.0, 0.0, 0.0, 1.0], [5.0, 0.0, 0.0, 0.0, 0.0, 1.0], [0.0, 5.0, 0.0, 0.0, 0.0, 1.0]] {
+            for v in p {
+                b.extend(v.to_le_bytes());
+            }
+        }
+        let path = d.join("normals.ply");
+        std::fs::write(&path, b).unwrap();
+        let mut s = Session::default();
+        s.execute("pointcloud.insert", &json!({"path": path.to_string_lossy()})).unwrap();
+        assert!(s.doc.point_clouds[0].complex.column("nz").is_some());
+        let file = solidcraft_io::write_design_container(&s.doc).unwrap();
+        let opened = solidcraft_io::read_design(&file).unwrap();
+        assert_eq!(opened.point_clouds[0].complex.column("nz").map(|c| c.values.0.len()), Some(3), "the normals come back with the points");
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    #[test]
     fn a_large_scan_is_thinned_and_centred() {
         let d = dir("thin");
         let points: Vec<[f32; 3]> = (0..100).map(|i| [i as f32, 1000.0, 50.0 + (i % 2) as f32]).collect();
