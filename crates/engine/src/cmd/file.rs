@@ -227,7 +227,9 @@ fn created_bodies(s: &Session, feature: u64) -> Vec<String> {
 /// in metres with Y up, so unless `y_up` is false its component is turned to Z up (#1505).
 fn add_mesh(s: &mut Session, path: &str, name: Option<&str>, y_up: Option<bool>, units: Option<(&str, f64)>) -> Result<Value> {
     let err = |e: solidcraft_io::IoError| EngineError::Other(format!("{path}: {e}"));
-    let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_3MF_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    // An import file: `--max-file-size` and the preference raise its limit, as a STEP file's (a
+    // large scan is gigabytes), and the refusal says by how much and how.
+    let bytes = solidcraft_io::limits::read(path, solidcraft_io::limits::Kind::Step).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let gltf = solidcraft_io::is_gltf_path(path);
     let (mf, plan, looks) = if gltf {
         let dir = std::path::Path::new(path).parent().map(std::path::Path::to_path_buf).unwrap_or_default();

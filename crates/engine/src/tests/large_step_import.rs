@@ -144,6 +144,10 @@ fn raised_file_limits_let_larger_step_and_design_files_be_read() {
         let error = s.execute("doc.open", &json!({"path": path})).unwrap_err().to_string();
         assert!(error.contains("too large") && error.contains("Largest file to open") && error.contains("--max-file-size"), "{error}");
     }
+    // A mesh file (a scan) is an import file too: the same limit, raised the same ways.
+    let scan = sparse("big.stl", 512 * MB + 1);
+    let error = s.execute("file.insert_mesh", &json!({"path": scan})).unwrap_err().to_string();
+    assert!(error.contains("too large") && error.contains("--max-file-size"), "{error}");
     // The preference raises both limits; the design is now read (and refused only for not being one).
     limits::set_preferred(FileLimits { step: GB, design: GB }).unwrap();
     assert_eq!((limits::max_step_bytes(), limits::max_design_bytes()), (1 << 30, 1 << 30));

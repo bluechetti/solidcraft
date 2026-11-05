@@ -319,9 +319,9 @@ pub fn mesh_import_feature(bytes: &[u8], file: &str) -> Result<MeshFeature> {
         g.flatten();
         return Ok(g.feature);
     }
-    if bytes.len() > MAX_3MF_BYTES {
-        return Err(IoError::Invalid(format!("mesh file too large ({} MB)", bytes.len() >> 20)));
-    }
+    // The import limit in force (`--max-file-size` and the preference raise it); a 3MF's own
+    // archive keeps its fixed one.
+    limits::check(limits::Kind::Step, u64::try_from(bytes.len()).unwrap_or(u64::MAX)).map_err(IoError::Invalid)?;
     let path = std::path::Path::new(file);
     let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "Mesh".into());
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
