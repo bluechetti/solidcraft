@@ -247,6 +247,8 @@ fn add_mesh(s: &mut Session, path: &str, name: Option<&str>, y_up: Option<bool>,
         }
         (mf, None, Vec::new())
     };
+    // Read: the file's bytes (a scan's are gigabytes) go before the design is worked out.
+    drop(bytes);
     let fname = name.filter(|n| !n.trim().is_empty()).unwrap_or(&mf.name).to_string();
     let cname = import::component_name(path, name);
     let tree = match &plan {

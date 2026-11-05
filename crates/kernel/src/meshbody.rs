@@ -47,13 +47,7 @@ impl TriMesh {
 
     /// Distinct undirected triangle sides.
     pub(crate) fn edge_count(&self) -> usize {
-        let mut set = std::collections::HashSet::new();
-        for t in &self.triangles {
-            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
-                set.insert((a.min(b), a.max(b)));
-            }
-        }
-        set.len()
+        sorted_sides(&self.triangles).chunk_by(|x, y| (x.0, x.1) == (y.0, y.1)).count()
     }
 
     /// Signed volume ×6.
@@ -69,38 +63,57 @@ impl TriMesh {
 /// A mesh body from triangles (`positions` in mm). Coincident vertices are merged, degenerate
 /// triangles dropped, and a closed mesh with inward winding is turned outward.
 pub fn mesh_body(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<Body> {
-    let _span = solidcraft_profile::span("kernel", "mesh_body");
-    if triangles.len() > MAX_TRIANGLES {
-        return Err(KernelError::Invalid(format!("mesh with {} triangles (limit {MAX_TRIANGLES})", triangles.len())));
+    body_from(positions.iter().copied(), positions.len(), triangles)
+}
+
+/// [`mesh_body`] from positions held flat, x, y, z for each (as a design keeps a mesh import),
+/// without a copy of them or of the triangles.
+pub fn mesh_body_flat(positions: &[f64], triangles: &[[u32; 3]]) -> Result<Body> {
+    let (points, rest) = positions.as_chunks::<3>();
+    if !rest.is_empty() {
+        return Err(KernelError::Invalid("mesh positions are not whole points".into()));
     }
-    if positions.iter().any(|p| !(p.is_finite() && p.x.abs() < 1e9 && p.y.abs() < 1e9 && p.z.abs() < 1e9)) {
-        return Err(KernelError::Invalid("mesh with non-finite or huge coordinates".into()));
-    }
-    // Merge vertices that are exactly equal (bit pattern of the coordinates).
-    let mut map: HashMap<[u64; 3], u32> = HashMap::new();
-    let mut remap: Vec<u32> = Vec::with_capacity(positions.len());
-    let mut out = TriMesh::default();
-    for p in positions {
-        let key = [(p.x + 0.0).to_bits(), (p.y + 0.0).to_bits(), (p.z + 0.0).to_bits()];
-        let next = u32::try_from(out.positions.len()).map_err(|_| KernelError::Invalid("too many vertices".into()))?;
-        let i = *map.entry(key).or_insert_with(|| {
-            out.positions.push(*p);
-            next
-        });
-        remap.push(i);
-    }
+    body_from(points.iter().map(|c| Vec3::new(c[0], c[1], c[2])), points.len(), triangles)
+}
+
+/// What [`mesh_body`] refuses, checked without building the body: too many triangles, a
+/// coordinate that is not finite or is huge, a corner that names no vertex, or no triangle with
+/// three different corners. An import checks a file with it; the body is built once, when the
+/// design is worked out.
+pub fn check_mesh(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<()> {
+    check_counts_and_points(positions.iter().copied(), triangles)?;
+    let mut any = false;
     for t in triangles {
-        let (Some(&a), Some(&b), Some(&c)) = (remap.get(t[0] as usize), remap.get(t[1] as usize), remap.get(t[2] as usize)) else {
-            return Err(KernelError::Invalid("mesh triangle refers to a missing vertex".into()));
+        let (Some(a), Some(b), Some(c)) = (positions.get(t[0] as usize), positions.get(t[1] as usize), positions.get(t[2] as usize)) else {
+            return Err(missing_vertex());
         };
-        if a == b || b == c || c == a {
-            continue;
-        }
-        out.triangles.push([a, b, c]);
+        // Different corners after the exact merge: different coordinates, bit for bit.
+        let (a, b, c) = (bits(*a), bits(*b), bits(*c));
+        any |= a != b && b != c && c != a;
     }
-    if out.triangles.is_empty() {
-        return Err(KernelError::Invalid("mesh has no triangles".into()));
+    if !any {
+        return Err(no_triangles());
     }
+    Ok(())
+}
+
+/// Exactly coincident vertices merged, first come first: the positions kept and every triangle's
+/// corners in them (a degenerate triangle too). A design keeps an imported mesh welded so (an STL
+/// file gives every triangle its own three corners); [`mesh_body`] merges the same way, so the
+/// body is the same either way.
+pub fn weld_exact(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<(Vec<Vec3>, Vec<[u32; 3]>)> {
+    weld(positions.iter().copied(), positions.len(), triangles)
+}
+
+fn body_from(positions: impl Iterator<Item = Vec3> + Clone, count: usize, triangles: &[[u32; 3]]) -> Result<Body> {
+    let _span = solidcraft_profile::span("kernel", "mesh_body");
+    check_counts_and_points(positions.clone(), triangles)?;
+    let (positions, mut triangles) = weld(positions, count, triangles)?;
+    triangles.retain(|t| t[0] != t[1] && t[1] != t[2] && t[2] != t[0]);
+    if triangles.is_empty() {
+        return Err(no_triangles());
+    }
+    let mut out = TriMesh { positions, triangles };
     unify_winding(&mut out);
     if out.volume6() < 0.0 && is_closed(&out) {
         for t in &mut out.triangles {
@@ -110,57 +123,136 @@ pub fn mesh_body(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<Body> {
     Ok(Body::of_mesh(out))
 }
 
+fn check_counts_and_points(mut positions: impl Iterator<Item = Vec3>, triangles: &[[u32; 3]]) -> Result<()> {
+    if triangles.len() > MAX_TRIANGLES {
+        return Err(KernelError::Invalid(format!("mesh with {} triangles (limit {MAX_TRIANGLES})", triangles.len())));
+    }
+    if positions.any(|p| !(p.is_finite() && p.x.abs() < 1e9 && p.y.abs() < 1e9 && p.z.abs() < 1e9)) {
+        return Err(KernelError::Invalid("mesh with non-finite or huge coordinates".into()));
+    }
+    Ok(())
+}
+
+fn missing_vertex() -> KernelError {
+    KernelError::Invalid("mesh triangle refers to a missing vertex".into())
+}
+
+fn no_triangles() -> KernelError {
+    KernelError::Invalid("mesh has no triangles".into())
+}
+
+/// A vertex's coordinates bit for bit, -0 as 0: the key exactly coincident vertices share.
+fn bits(p: Vec3) -> [u64; 3] {
+    [(p.x + 0.0).to_bits(), (p.y + 0.0).to_bits(), (p.z + 0.0).to_bits()]
+}
+
+/// [`weld_exact`] of `count` positions.
+fn weld(positions: impl Iterator<Item = Vec3>, count: usize, triangles: &[[u32; 3]]) -> Result<(Vec<Vec3>, Vec<[u32; 3]>)> {
+    let mut map: HashMap<[u64; 3], u32> = HashMap::new();
+    let mut remap: Vec<u32> = Vec::with_capacity(count);
+    let mut kept = Vec::new();
+    for p in positions {
+        let next = u32::try_from(kept.len()).map_err(|_| KernelError::Invalid("too many vertices".into()))?;
+        let i = *map.entry(bits(p)).or_insert_with(|| {
+            kept.push(p);
+            next
+        });
+        remap.push(i);
+    }
+    drop(map);
+    let corner = |i: u32| remap.get(i as usize).copied().ok_or_else(missing_vertex);
+    let triangles = triangles.iter().map(|t| Ok([corner(t[0])?, corner(t[1])?, corner(t[2])?])).collect::<Result<Vec<_>>>()?;
+    Ok((kept, triangles))
+}
+
+/// The top bit of a side's place in [`sorted_sides`]: set when the side runs from its lower end.
+/// The place itself, `3 * triangle + k`, stays below it (`3 * MAX_TRIANGLES < 2^31`).
+const FROM_LOWER: u32 = 1 << 31;
+
+/// Every side of every triangle by its ends, lower first, with where it is (`3 * triangle + k`,
+/// side `k` running from corner `k` to the next, with [`FROM_LOWER`] when it runs from the lower
+/// end); sorted, so the sides that triangles share lie next to one another. A sort of 12 bytes a
+/// side rather than a map of the triangles at each side, whose small lists took gigabytes for a
+/// 28-million-triangle scan.
+fn sorted_sides(triangles: &[[u32; 3]]) -> Vec<(u32, u32, u32)> {
+    let mut sides = Vec::with_capacity(triangles.len().saturating_mul(3));
+    for (i, t) in triangles.iter().enumerate() {
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            if let Ok(at) = u32::try_from(3 * i + k)
+                && at < FROM_LOWER
+            {
+                sides.push((a.min(b), a.max(b), if a < b { at | FROM_LOWER } else { at }));
+            }
+        }
+    }
+    crate::par::sort_unstable(&mut sides);
+    sides
+}
+
 /// Wind every connected piece one way: a triangle that runs a side in the same direction as
 /// its neighbour is turned over (files with stray inverted facets). Sides shared by more than
 /// two triangles are left alone.
 fn unify_winding(m: &mut TriMesh) {
-    let mut sides: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
-    for (i, t) in m.triangles.iter().enumerate() {
-        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
-            sides.entry((a.min(b), a.max(b))).or_default().push(i);
+    let n = m.triangles.len();
+    // The side across each side: the other triangle's, where exactly two triangles share it.
+    let mut across = vec![u32::MAX; n.saturating_mul(3)];
+    for group in sorted_sides(&m.triangles).chunk_by(|x, y| (x.0, x.1) == (y.0, y.1)) {
+        if let [(_, _, s), (_, _, r)] = group {
+            let (s, r) = (s & !FROM_LOWER, r & !FROM_LOWER);
+            if let Some(x) = across.get_mut(s as usize) {
+                *x = r;
+            }
+            if let Some(x) = across.get_mut(r as usize) {
+                *x = s;
+            }
         }
     }
-    let runs = |t: &[u32; 3], a: u32, b: u32| [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])].contains(&(a, b));
-    let mut done = vec![false; m.triangles.len()];
-    for start in 0..m.triangles.len() {
-        if done[start] {
+    // Each piece walked from its first triangle, which keeps its winding: a neighbour that runs
+    // the side they share the way the triangle it was reached from runs it is turned over. The
+    // turns are kept aside and made at the end, so `across` still names the file's sides.
+    let side = |t: &[u32; 3], k: usize| (t[k], t[(k + 1) % 3]);
+    let mut turned = vec![false; n];
+    let mut done = vec![false; n];
+    for start in 0..n {
+        if done.get(start).copied().unwrap_or(true) {
             continue;
         }
-        done[start] = true;
+        if let Some(d) = done.get_mut(start) {
+            *d = true;
+        }
         let mut stack = vec![start];
         while let Some(i) = stack.pop() {
-            let Some(t) = m.triangles.get(i).copied() else { continue };
-            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
-                let Some(list) = sides.get(&(a.min(b), a.max(b))) else { continue };
-                if list.len() != 2 {
+            let (Some(t), Some(&flip)) = (m.triangles.get(i).copied(), turned.get(i)) else { continue };
+            // The sides in the order the triangle runs them as it is now.
+            let order = if flip { [2, 1, 0] } else { [0, 1, 2] };
+            for k in order {
+                let Some(&s) = across.get(3 * i + k) else { continue };
+                let (j, kj) = (s as usize / 3, s as usize % 3);
+                if s == u32::MAX || done.get(j).copied().unwrap_or(true) {
                     continue;
                 }
-                for &j in list {
-                    if j == i || done[j] {
-                        continue;
-                    }
-                    done[j] = true;
-                    if let Some(u) = m.triangles.get_mut(j)
-                        && runs(u, a, b)
-                    {
-                        u.swap(1, 2);
-                    }
-                    stack.push(j);
+                let Some(u) = m.triangles.get(j) else { continue };
+                if let Some(d) = done.get_mut(j) {
+                    *d = true;
                 }
+                if let Some(x) = turned.get_mut(j) {
+                    *x = flip ^ (side(&t, k) == side(u, kj));
+                }
+                stack.push(j);
             }
+        }
+    }
+    for (t, turn) in m.triangles.iter_mut().zip(turned) {
+        if turn {
+            t.swap(1, 2);
         }
     }
 }
 
 /// Every triangle side is shared by exactly two triangles in opposite directions.
 pub(crate) fn is_closed(m: &TriMesh) -> bool {
-    let mut count: HashMap<(u32, u32), i32> = HashMap::new();
-    for t in &m.triangles {
-        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
-            *count.entry((a, b)).or_default() += 1;
-        }
-    }
-    count.iter().all(|(&(a, b), &n)| n == 1 && count.get(&(b, a)) == Some(&1))
+    sorted_sides(&m.triangles).chunk_by(|x, y| (x.0, x.1) == (y.0, y.1)).all(|g| matches!(g, [(_, _, p), (_, _, q)] if (p ^ q) & FROM_LOWER != 0))
 }
 
 impl Body {
@@ -197,5 +289,121 @@ impl Body {
         placed.splits = self.splits.clone();
         placed.regularization_protected = self.regularization_protected;
         Some(placed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The walk [`unify_winding`] replaced (a map from each side to its triangles), kept to check
+    /// that the sorted sides turn the same triangles.
+    fn unify_winding_by_map(m: &mut TriMesh) {
+        let mut sides: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+        for (i, t) in m.triangles.iter().enumerate() {
+            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                sides.entry((a.min(b), a.max(b))).or_default().push(i);
+            }
+        }
+        let runs = |t: &[u32; 3], a: u32, b: u32| [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])].contains(&(a, b));
+        let mut done = vec![false; m.triangles.len()];
+        for start in 0..m.triangles.len() {
+            if done[start] {
+                continue;
+            }
+            done[start] = true;
+            let mut stack = vec![start];
+            while let Some(i) = stack.pop() {
+                let t = m.triangles[i];
+                for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                    let list = &sides[&(a.min(b), a.max(b))];
+                    if list.len() != 2 {
+                        continue;
+                    }
+                    for &j in list {
+                        if j == i || done[j] {
+                            continue;
+                        }
+                        done[j] = true;
+                        if runs(&m.triangles[j], a, b) {
+                            m.triangles[j].swap(1, 2);
+                        }
+                        stack.push(j);
+                    }
+                }
+            }
+        }
+    }
+
+    /// A band of `n` squares round and `rows` along, two triangles each; closed round into a tube,
+    /// or with a half twist into a Möbius strip. Triangles picked by `flip` are turned over.
+    fn band(n: u32, rows: u32, twist: bool, flip: impl Fn(usize) -> bool) -> TriMesh {
+        let positions = (0..=rows).flat_map(|j| (0..n).map(move |i| Vec3::new(f64::from(i), f64::from(j), f64::from(i * j % 7)))).collect();
+        let at = |i: u32, j: u32| if i == n { if twist { (rows - j) * n } else { j * n } } else { j * n + i };
+        let mut triangles: Vec<[u32; 3]> = (0..rows)
+            .flat_map(|j| (0..n).flat_map(move |i| [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]]))
+            .collect();
+        for (k, t) in triangles.iter_mut().enumerate() {
+            if flip(k) {
+                t.swap(1, 2);
+            }
+        }
+        TriMesh { positions, triangles }
+    }
+
+    #[test]
+    fn sorted_sides_turn_the_triangles_the_map_did() {
+        let stray = |k: usize| k % 7 == 3 || k.is_multiple_of(11);
+        let mut fin = band(12, 6, false, stray);
+        // A fin on one side: shared by three triangles, it is left alone.
+        let extra = u32::try_from(fin.positions.len()).unwrap();
+        fin.positions.push(Vec3::new(0.5, 0.5, 9.0));
+        let [a, b, _] = fin.triangles[0];
+        fin.triangles.push([a, b, extra]);
+        for mesh in [band(12, 6, false, stray), band(9, 4, true, stray), band(9, 5, true, |_| false), fin] {
+            let (mut sorted, mut mapped) = (mesh.clone(), mesh);
+            unify_winding(&mut sorted);
+            unify_winding_by_map(&mut mapped);
+            assert_eq!(sorted.triangles, mapped.triangles);
+        }
+        // A tube is open at its ends, however it is wound; its sides are counted once each: 12
+        // round each of its 7 rings, and 12 along and 12 across each of its 6 rows.
+        let mut tube = band(12, 6, false, stray);
+        unify_winding(&mut tube);
+        assert!(!is_closed(&tube));
+        assert_eq!(tube.edge_count(), 12 * 7 + 2 * 12 * 6);
+    }
+
+    /// `check_mesh` refuses what building the body refuses, with the same words, without
+    /// building it; positions held flat, or welded first, make the same body.
+    #[test]
+    fn a_mesh_is_checked_as_it_is_built_and_built_the_same_from_any_form() {
+        let square = [Vec3::ZERO, Vec3::X, Vec3::new(1.0, 1.0, 0.0), Vec3::Y];
+        let twin = [Vec3::ZERO, Vec3::new(-0.0, 0.0, 0.0), Vec3::X];
+        let cases: [(&[Vec3], &[[u32; 3]]); 6] = [
+            (&square, &[[0, 1, 2], [0, 2, 3]]),
+            (&square, &[[0, 1, 9]]),
+            (&[Vec3::new(f64::NAN, 0.0, 0.0), Vec3::X, Vec3::Y], &[[0, 1, 2]]),
+            (&[Vec3::new(2e9, 0.0, 0.0), Vec3::X, Vec3::Y], &[[0, 1, 2]]),
+            (&square, &[[0, 0, 1]]),
+            // -0 and 0 are one vertex: the triangle has two corners alike.
+            (&twin, &[[0, 1, 2]]),
+        ];
+        for (positions, triangles) in cases {
+            let built = mesh_body(positions, triangles).map(|_| ()).map_err(|e| e.to_string());
+            let checked = check_mesh(positions, triangles).map_err(|e| e.to_string());
+            assert_eq!(checked, built, "{positions:?} {triangles:?}");
+        }
+        // Every triangle with its own corners, as an STL gives them.
+        let corners: Vec<Vec3> = [[0, 1, 2], [0, 2, 3]].iter().flat_map(|t: &[usize; 3]| t.map(|i| square[i])).collect();
+        let separate = [[0, 1, 2], [3, 4, 5]];
+        let (welded, triangles) = weld_exact(&corners, &separate).unwrap();
+        assert_eq!((welded.len(), triangles.as_slice()), (4, [[0, 1, 2], [0, 2, 3]].as_slice()));
+        let flat: Vec<f64> = corners.iter().flat_map(|p| [p.x, p.y, p.z]).collect();
+        let body = |b: Body| b.triangle_mesh().map(|(p, t)| (p.to_vec(), t.to_vec()));
+        let want = body(mesh_body(&corners, &separate).unwrap());
+        assert_eq!(body(mesh_body(&welded, &triangles).unwrap()), want);
+        assert_eq!(body(mesh_body_flat(&flat, &separate).unwrap()), want);
+        assert!(mesh_body_flat(&flat[1..], &separate).is_err(), "not whole points");
     }
 }

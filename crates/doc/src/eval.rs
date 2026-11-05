@@ -7763,9 +7763,9 @@ fn moved_copy(source: &ModelBody, copy: Body, instance: usize) -> Traced {
 fn mesh_bodies(meshes: &[crate::MeshData]) -> Result<Vec<(String, Body)>> {
     let mut out = Vec::with_capacity(meshes.len());
     for m in meshes {
-        let positions: Vec<Vec3> = m.positions.as_chunks::<3>().0.iter().map(|c| Vec3::new(c[0], c[1], c[2])).collect();
-        let triangles: Vec<[u32; 3]> = m.triangles.as_chunks::<3>().0.to_vec();
-        let b = kernel::mesh_body(&positions, &triangles).map_err(|e| DocError::Invalid(format!("mesh `{}`: {e}", m.name)))?;
+        // Straight from the arrays the design holds (a scan's are hundreds of megabytes).
+        let b =
+            kernel::mesh_body_flat(&m.positions, m.triangles.as_chunks::<3>().0).map_err(|e| DocError::Invalid(format!("mesh `{}`: {e}", m.name)))?;
         out.push((m.name.clone(), b.with_color(m.color)));
     }
     Ok(out)

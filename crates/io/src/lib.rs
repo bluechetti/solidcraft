@@ -349,28 +349,29 @@ pub fn mesh_import_feature(bytes: &[u8], file: &str) -> Result<MeshFeature> {
     } else {
         read_3mf(bytes)?
     };
-    // Check every mesh now, so the command fails rather than the timeline.
-    let mut meshes = Vec::with_capacity(objects.len());
-    for o in &objects {
-        solidcraft_kernel::mesh_body(&o.positions, &o.triangles).map_err(|e| IoError::Invalid(format!("mesh `{}`: {e}", o.name)))?;
-        meshes.push(solidcraft_doc::MeshData {
-            name: o.name.clone(),
-            positions: o.positions.iter().flat_map(|p| [p.x, p.y, p.z]).collect(),
-            triangles: o.triangles.iter().flatten().copied().collect(),
-            color: o.color,
-        });
-    }
     let name = match objects.as_slice() {
         [only] if !only.name.trim().is_empty() => only.name.clone(),
         _ => stem,
     };
+    let body_names = objects.iter().map(|o| o.name.clone()).collect();
+    // Check every mesh now, so the command fails rather than the timeline (the body itself is
+    // built once, as the design is worked out), and keep it welded: an STL gives every triangle
+    // its own three corners, three times the positions the body has. Each file object is let go
+    // as its mesh is made.
+    let mut meshes = Vec::with_capacity(objects.len());
+    for o in objects {
+        let invalid = |e: solidcraft_kernel::KernelError| IoError::Invalid(format!("mesh `{}`: {e}", o.name));
+        solidcraft_kernel::check_mesh(&o.positions, &o.triangles).map_err(invalid)?;
+        let (positions, triangles) = solidcraft_kernel::weld_exact(&o.positions, &o.triangles).map_err(invalid)?;
+        meshes.push(solidcraft_doc::MeshData {
+            name: o.name,
+            positions: positions.iter().flat_map(|p| [p.x, p.y, p.z]).collect(),
+            triangles: triangles.iter().flatten().copied().collect(),
+            color: o.color,
+        });
+    }
     let file_name = path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| file.to_string());
-    Ok(MeshFeature {
-        name,
-        body_names: objects.iter().map(|o| o.name.clone()).collect(),
-        kind: solidcraft_doc::FeatureKind::MeshImport { file: file_name, meshes },
-        warnings,
-    })
+    Ok(MeshFeature { name, body_names, kind: solidcraft_doc::FeatureKind::MeshImport { file: file_name, meshes }, warnings })
 }
 
 /// Export formats.

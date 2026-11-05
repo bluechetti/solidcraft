@@ -54,6 +54,28 @@ pub(crate) fn map<T: Sync, R: Send>(what: &'static str, items: &[T], parallel: b
     items.iter().map(one).collect()
 }
 
+/// The fewest items worth sorting on the worker pool.
+#[cfg(not(target_arch = "wasm32"))]
+const PARALLEL_SORT: usize = 1 << 16;
+
+/// `items` sorted (not stably): on the worker pool when there are enough of them, else (and in
+/// the browser build) on the calling thread.
+pub(crate) fn sort_unstable<T: Ord + Send>(items: &mut [T]) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if items.len() >= PARALLEL_SORT {
+        use rayon::prelude::*;
+        if rayon::current_thread_index().is_some() {
+            items.par_sort_unstable();
+            return;
+        }
+        if let Some(pool) = pool() {
+            pool.install(|| items.par_sort_unstable());
+            return;
+        }
+    }
+    items.sort_unstable();
+}
+
 /// Run `f` on every item, spread over plain threads (one per core, at most `max_threads`),
 /// each pulling the next item; on the calling thread in the browser build or when threads
 /// cannot be started. Each call runs under [`crate::guard`] (a panic is that item's loss).
