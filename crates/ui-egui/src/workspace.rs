@@ -379,7 +379,15 @@ pub const SECTIONS: &[Section] = &[
         tab: "SCAN",
         panel: "FREEFORM",
         promoted: 4,
-        ids: &["scan.fit_surface", "scan.free_form", "scan.wrap_surface", "scan.edit_surface", "scan.merge_surfaces", "scan.slice_surface"],
+        ids: &[
+            "scan.fit_surface",
+            "scan.free_form",
+            "scan.wrap_surface",
+            "scan.edit_surface",
+            "scan.merge_surfaces",
+            "scan.slice_surface",
+            "scan.fit_patches",
+        ],
     },
     Section {
         tab: "SCAN",

@@ -247,7 +247,7 @@ pub(crate) fn clamped_knots(n: usize) -> Vec<f64> {
 }
 
 /// The 16 control points a point (s, t) depends on and their weights Nᵢ(s) Nⱼ(t).
-fn basis_row(knots: &[f64], n: usize, s: f64, t: f64) -> Option<([usize; 16], [f64; 16])> {
+pub(crate) fn basis_row(knots: &[f64], n: usize, s: f64, t: f64) -> Option<([usize; 16], [f64; 16])> {
     // The index of the first function alive at the parameter, and each one's value (element 0).
     let (fu, bu) = basis_derivatives(knots, DEGREE, n, s, 0)?;
     let (fv, bv) = basis_derivatives(knots, DEGREE, n, t, 0)?;

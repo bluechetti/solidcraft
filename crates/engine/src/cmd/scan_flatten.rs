@@ -67,7 +67,7 @@ fn picked_on(s: &Session, body: &str) -> Option<Vec3> {
 }
 
 /// The region of the scan `p` names: its triangles.
-fn region(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<Vec<usize>> {
+pub(super) fn region(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<Vec<usize>> {
     if let Some(list) = p.get("triangles").filter(|v| !v.is_null()) {
         let list = list.as_array().ok_or_else(|| bad(cmd, "`triangles` must list the scan's triangle numbers"))?;
         let mut out: Vec<usize> = list

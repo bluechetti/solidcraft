@@ -5355,6 +5355,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::dialogs_scan_split::draw(app, &painter, &proj);
     crate::dialogs_scan_align::draw(app, &painter, &proj);
     crate::dialogs_scan_flatten::draw(app, &painter, &proj);
+    crate::dialogs_scan_patches::draw(app, &painter, &proj);
     crate::dialogs_scan_clean::draw(app, &painter, &proj);
     crate::dialogs_scan_section::draw(app, &painter, &proj);
     crate::dialogs_scan_sections::draw(app, &painter, &proj);

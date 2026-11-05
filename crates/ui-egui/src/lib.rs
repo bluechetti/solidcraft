@@ -58,6 +58,7 @@ pub(crate) mod dialogs_scan_edge;
 pub(crate) mod dialogs_scan_fillet;
 pub(crate) mod dialogs_scan_flatten;
 pub(crate) mod dialogs_scan_free_form;
+pub(crate) mod dialogs_scan_patches;
 pub(crate) mod dialogs_scan_reconstruct;
 pub(crate) mod dialogs_scan_section;
 pub(crate) mod dialogs_scan_sections;

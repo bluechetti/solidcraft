@@ -1024,6 +1024,9 @@ pub mod free_form;
 #[path = "scan_mesh.rs"]
 pub mod mesh;
 
+#[path = "scan_patches.rs"]
+pub mod patches;
+
 #[path = "scan_reconstruct.rs"]
 pub mod reconstruct;
 
