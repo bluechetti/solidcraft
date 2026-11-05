@@ -57,10 +57,11 @@ const ACCURACY: f64 = solidcraft_smlib::MEASURE_ACCURACY;
 pub fn measure(b: &Body) -> Result<BodyMeasure> {
     let _span = solidcraft_profile::span("kernel", "measure");
     if let Some((pos, tris)) = b.triangle_mesh() {
-        // Exact for a mesh body; topology counts are facets, sides and vertices.
-        let m = b.mesh(&crate::MeshTolerance::chord(1.0))?;
+        // Exact for a mesh body; topology counts are facets, sides and vertices. Measured on the
+        // triangles the body keeps, not a copy of them.
+        let m = b.display_mesh().ok_or_else(|| crate::KernelError::Invalid("a mesh body without its mesh".into()))?;
         let mm = m.measure();
-        let edges = b.mesh.as_ref().map(|m| m.edge_count()).unwrap_or(0);
+        let edges = crate::meshbody::edge_count(tris);
         let merged =
             TopoCounts { faces: tris.len(), edges, vertices: pos.len(), face_types: [("mesh".to_string(), tris.len())].into_iter().collect() };
         return Ok(BodyMeasure {

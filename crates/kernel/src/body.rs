@@ -34,7 +34,7 @@ pub struct Body {
     /// clones because they share the record.
     pub(crate) volume: Option<std::sync::Arc<std::sync::Mutex<Option<(u64, f64)>>>>,
     /// Set for mesh bodies (`record` is then empty).
-    pub(crate) mesh: Option<std::sync::Arc<crate::meshbody::TriMesh>>,
+    pub(crate) mesh: Option<std::sync::Arc<Mesh>>,
     /// Display colour (linear RGB 0..1) from an imported file; operations drop it.
     pub(crate) color: Option<[f32; 3]>,
     /// Opacity and face colours for export (set by the document; operations drop it).
@@ -484,7 +484,7 @@ impl SurfaceKind {
 
 impl Body {
     /// A body with `record` and nothing else set.
-    fn bare(record: Brep, mesh: Option<std::sync::Arc<crate::meshbody::TriMesh>>) -> Body {
+    fn bare(record: Brep, mesh: Option<std::sync::Arc<Mesh>>) -> Body {
         let size = span_of(&record);
         Body {
             record: std::sync::Arc::new(record),
@@ -531,7 +531,7 @@ impl Body {
 
     /// A mesh body of `mesh`.
     pub(crate) fn of_mesh(mesh: crate::meshbody::TriMesh) -> Body {
-        Body::bare(empty_record(), Some(std::sync::Arc::new(mesh)))
+        Body::bare(empty_record(), Some(std::sync::Arc::new(mesh.into_kept())))
     }
 
     /// The body's record: faces, edges and vertices in the body's own order. Empty for a mesh body.
@@ -1090,7 +1090,7 @@ impl Body {
     /// makes a kept timeline snapshot expensive, so it dominates the estimate.
     pub fn retained_bytes(&self) -> usize {
         if let Some(m) = &self.mesh {
-            return m.positions.len() * 24 + m.triangles.len() * 12;
+            return m.positions.len() * 24 + m.triangles.len() * 16 + m.edges.iter().map(|e| e.len() * 24).sum::<usize>();
         }
         let uses: usize = self.record.faces.iter().flat_map(|f| &f.loops).map(|l| if let Loop::Edges { edges } = l { edges.len() } else { 1 }).sum();
         self.record.faces.len() * 2048 + uses * (512 + 96)
@@ -1108,8 +1108,14 @@ impl Body {
     }
 
     fn mesh_untimed(&self, t: &MeshTolerance) -> Result<Mesh> {
-        if let Some(m) = &self.mesh {
-            return Ok(m.to_mesh());
+        if let Some(shown) = self.display_mesh() {
+            // A copy, as every mesh asked for is: without the outlines, as before they were kept.
+            return Ok(Mesh {
+                positions: shown.positions.clone(),
+                triangles: shown.triangles.clone(),
+                tri_face: shown.tri_face.clone(),
+                ..Mesh::default()
+            });
         }
         // A placed copy shows its original's mesh, moved: the part is meshed once for every copy.
         if let Some((shared, m)) = self.display_of.as_deref() {
@@ -1374,8 +1380,7 @@ impl Body {
         if !(p.x.is_finite() && p.y.is_finite() && p.z.is_finite()) {
             return Err(KernelError::Invalid(format!("point classification: the point {p:?} is not finite")));
         }
-        if let Some(m) = &self.mesh {
-            let mesh = m.to_mesh();
+        if let Some(mesh) = self.display_mesh() {
             let near = mesh
                 .triangles
                 .iter()
@@ -1413,8 +1418,8 @@ impl Body {
     /// What is wrong with the body as a solid: face shells that aren't closed, faces that don't
     /// mesh, a volume that isn't positive. Empty when it is sound.
     pub fn validity(&self) -> Vec<String> {
-        if let Some(m) = &self.mesh {
-            return if crate::meshbody::is_closed(m) { Vec::new() } else { vec!["the mesh is not closed".into()] };
+        if self.is_mesh() {
+            return if self.is_closed_mesh() { Vec::new() } else { vec!["the mesh is not closed".into()] };
         }
         let mut out = Vec::new();
         for (i, shell) in self.record.shells.iter().enumerate() {

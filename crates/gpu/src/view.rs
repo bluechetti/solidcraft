@@ -304,10 +304,13 @@ pub const SHARED_SIZE: usize = 24;
 /// vertex once rather than once per triangle corner.
 #[derive(Default)]
 pub struct SharedTris {
-    /// [`SHARED_SIZE`] bytes per vertex, in the part's own frame.
-    pub vertices: Vec<u8>,
-    /// Three per triangle.
-    pub indices: Vec<u32>,
+    /// [`SHARED_SIZE`] bytes per vertex, in the part's own frame (none when `mesh` has them).
+    vertices: Vec<u8>,
+    /// Three per triangle (none when `mesh` has them).
+    indices: Vec<u32>,
+    /// A flat mesh whose vertices and triangles these are as they stand ([`SharedTris::of`]):
+    /// a scan's, held once and turned into the GPU's bytes only while they are uploaded.
+    mesh: Option<Arc<solidcraft_geom::Mesh>>,
     /// Every triangle is flat (its corners share one normal, as an STL's facets do): vertices
     /// are shared by position alone, and each fragment takes its triangle's own normal.
     pub flat: bool,
@@ -321,7 +324,7 @@ impl SharedTris {
     /// alone when every triangle is flat.
     pub fn new(mesh: &solidcraft_geom::Mesh) -> SharedTris {
         if mesh.is_flat() {
-            return SharedTris::of_flat(mesh);
+            return SharedTris::flat_of(&mesh.positions, &mesh.triangles);
         }
         let corner = |i: u32| Some((mesh.positions.get(i as usize)?.to_f32(), mesh.normals.get(i as usize)?.to_f32()));
         let bits = |v: [f32; 3]| v.map(|x| (x + 0.0).to_bits());
@@ -349,23 +352,20 @@ impl SharedTris {
             }
         }
         out.vertices.shrink_to_fit();
-        let mut lo = [f32::INFINITY; 3];
-        let mut hi = [f32::NEG_INFINITY; 3];
-        for v in 0..out.vertices.len() / SHARED_SIZE {
-            let (p, _) = out.vertex(v as u32);
-            for k in 0..3 {
-                lo[k] = lo[k].min(p[k]);
-                hi[k] = hi[k].max(p[k]);
-            }
-        }
-        out.bounds = [lo, hi];
+        out.bounds = bounds_of((0..out.vertex_count()).map(|v| out.vertex(v as u32).0));
         out
     }
 
-    /// A flat mesh's triangles ([`solidcraft_geom::Mesh::is_flat`]: a mesh body's): its
-    /// vertices already shared, each fragment lit with its triangle's own normal.
-    fn of_flat(mesh: &solidcraft_geom::Mesh) -> SharedTris {
-        SharedTris::flat_of(&mesh.positions, &mesh.triangles)
+    /// [`SharedTris::new`] of a mesh held in an `Arc`: a flat one ([`solidcraft_geom::Mesh::is_flat`],
+    /// a mesh body's, its vertices already shared) is kept as it is, not copied, and turned into
+    /// the GPU's bytes only while it is uploaded. A scan's copy here was as large as its own.
+    pub fn of(mesh: &Arc<solidcraft_geom::Mesh>) -> SharedTris {
+        let n = mesh.positions.len();
+        let whole = u32::try_from(n).is_ok() && mesh.triangles.iter().flatten().all(|i| (*i as usize) < n);
+        if !(mesh.is_flat() && whole) {
+            return SharedTris::new(mesh);
+        }
+        SharedTris { mesh: Some(mesh.clone()), flat: true, bounds: bounds_of(mesh.positions.iter().map(|p| p.to_f32())), ..Default::default() }
     }
 
     /// A simplified copy of a mesh ([`solidcraft_geom::simplify::Level`]): its vertices already
@@ -377,28 +377,40 @@ impl SharedTris {
     /// Triangles lit flat over `positions`, shared as they are; a triangle with a corner out of
     /// range is left out.
     fn flat_of(positions: &[Vec3], triangles: &[[u32; 3]]) -> SharedTris {
-        let mut out = SharedTris { flat: true, ..Default::default() };
-        out.vertices.reserve_exact(positions.len() * SHARED_SIZE);
-        let mut lo = [f32::INFINITY; 3];
-        let mut hi = [f32::NEG_INFINITY; 3];
-        for p in positions {
-            let p = p.to_f32();
-            for k in 0..3 {
-                lo[k] = lo[k].min(p[k]);
-                hi[k] = hi[k].max(p[k]);
-            }
-            for v in p.iter().chain(&[0.0f32; 3]) {
-                out.vertices.extend_from_slice(&v.to_le_bytes());
-            }
-        }
         let n = u32::try_from(positions.len()).unwrap_or(u32::MAX);
-        out.indices = triangles.iter().filter(|t| t.iter().all(|i| *i < n)).flatten().copied().collect();
-        out.bounds = [lo, hi];
-        out
+        SharedTris {
+            vertices: flat_vertices(positions),
+            indices: triangles.iter().filter(|t| t.iter().all(|i| *i < n)).flatten().copied().collect(),
+            flat: true,
+            bounds: bounds_of(positions.iter().map(|p| p.to_f32())),
+            mesh: None,
+        }
+    }
+
+    /// How many vertices.
+    pub fn vertex_count(&self) -> usize {
+        self.mesh.as_ref().map_or(self.vertices.len() / SHARED_SIZE, |m| m.positions.len())
+    }
+
+    /// The vertex indices, three per triangle.
+    pub fn indices(&self) -> &[u32] {
+        self.mesh.as_ref().map_or(&self.indices, |m| m.triangles.as_flattened())
+    }
+
+    /// The vertices as the GPU takes them, [`SHARED_SIZE`] bytes each: made for the upload when
+    /// they are a mesh's.
+    fn vertex_bytes(&self) -> std::borrow::Cow<'_, [u8]> {
+        match &self.mesh {
+            Some(m) => std::borrow::Cow::Owned(flat_vertices(&m.positions)),
+            None => std::borrow::Cow::Borrowed(&self.vertices),
+        }
     }
 
     /// Vertex `i`: position and normal.
     fn vertex(&self, i: u32) -> ([f32; 3], [f32; 3]) {
+        if let Some(m) = &self.mesh {
+            return (m.positions.get(i as usize).map_or([0.0; 3], |p| p.to_f32()), [0.0; 3]);
+        }
         let at = i as usize * SHARED_SIZE;
         let f = |k: usize| self.vertices.get(at + 4 * k..at + 4 * k + 4).and_then(|x| x.try_into().ok()).map_or(0.0, f32::from_le_bytes);
         ([f(0), f(1), f(2)], [f(3), f(4), f(5)])
@@ -407,7 +419,7 @@ impl SharedTris {
     /// Each triangle's corners (position, and the normal they are lit with: a flat triangle's
     /// own), in the part's frame.
     pub fn corners(&self) -> impl Iterator<Item = [([f32; 3], [f32; 3]); 3]> + '_ {
-        self.indices.as_chunks::<3>().0.iter().map(move |t| {
+        self.indices().as_chunks::<3>().0.iter().map(move |t| {
             let c = t.map(|i| self.vertex(i));
             if !self.flat {
                 return c;
@@ -424,7 +436,7 @@ impl SharedTris {
     /// The triangles unshared ([`SHARED_SIZE`] bytes per corner, three per triangle): for a mesh
     /// too large for one buffer.
     fn unshared(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.indices.len() * SHARED_SIZE);
+        let mut out = Vec::with_capacity(self.indices().len() * SHARED_SIZE);
         for t in self.corners() {
             for (p, n) in t {
                 for v in p.iter().chain(&n) {
@@ -434,6 +446,31 @@ impl SharedTris {
         }
         out
     }
+}
+
+/// Flat-lit vertices as the GPU takes them: each position, and a zero normal (the fragment takes
+/// its triangle's), [`SHARED_SIZE`] bytes.
+fn flat_vertices(positions: &[Vec3]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(positions.len() * SHARED_SIZE);
+    for p in positions {
+        for v in p.to_f32().iter().chain(&[0.0f32; 3]) {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    out
+}
+
+/// The box (min, max) around `points`.
+fn bounds_of(points: impl Iterator<Item = [f32; 3]>) -> [[f32; 3]; 2] {
+    let mut lo = [f32::INFINITY; 3];
+    let mut hi = [f32::NEG_INFINITY; 3];
+    for p in points {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    [lo, hi]
 }
 
 /// How an [`InstancedMesh`]'s placements are drawn: opaque, or see-through (their colour's alpha)
@@ -1227,19 +1264,20 @@ enum SharedGpu {
 impl SharedGpu {
     fn new(device: &wgpu::Device, tris: &SharedTris) -> Option<SharedGpu> {
         let limit = device.limits().max_buffer_size;
-        let index_bytes = (tris.indices.len() * 4) as u64;
-        if tris.vertices.is_empty() || tris.indices.is_empty() {
+        let index_bytes = (tris.indices().len() * 4) as u64;
+        if tris.vertex_count() == 0 || tris.indices().is_empty() {
             return None;
         }
-        if tris.vertices.len() as u64 > limit || index_bytes > limit {
+        if (tris.vertex_count() * SHARED_SIZE) as u64 > limit || index_bytes > limit {
             return upload(device, "sc_instanced_unshared", &tris.unshared(), SHARED_SIZE).map(SharedGpu::Unshared);
         }
         let buffer = |label: &str, contents: &[u8], usage: wgpu::BufferUsages| buffer_init(device, label, contents, usage);
-        let indices: Vec<u8> = tris.indices.iter().flat_map(|i| i.to_le_bytes()).collect();
+        let vertices = buffer("sc_instanced_vertices", &tris.vertex_bytes(), wgpu::BufferUsages::VERTEX)?;
+        let indices: Vec<u8> = tris.indices().iter().flat_map(|i| i.to_le_bytes()).collect();
         Some(SharedGpu::Indexed {
-            vertices: buffer("sc_instanced_vertices", &tris.vertices, wgpu::BufferUsages::VERTEX)?,
+            vertices,
             indices: buffer("sc_instanced_indices", &indices, wgpu::BufferUsages::INDEX)?,
-            count: u32::try_from(tris.indices.len()).unwrap_or(u32::MAX),
+            count: u32::try_from(tris.indices().len()).unwrap_or(u32::MAX),
         })
     }
 }
@@ -1881,7 +1919,7 @@ impl Batches {
                     Some(t) => t,
                     None => match SharedGpu::new(device, tris) {
                         Some(g) => {
-                            self.uploads.geometry += (tris.vertices.len() + tris.indices.len() * 4) as u64;
+                            self.uploads.geometry += (tris.vertex_count() * SHARED_SIZE + tris.indices().len() * 4) as u64;
                             (tris.clone(), Arc::new(g))
                         }
                         None => continue,
@@ -4374,8 +4412,8 @@ mod tests {
         }
         let shared = SharedTris::new(&flat);
         assert!(shared.flat);
-        assert_eq!(shared.vertices.len() / SHARED_SIZE, 4, "the diagonal's ends are shared");
-        assert_eq!(shared.indices.len(), 6);
+        assert_eq!(shared.vertex_count(), 4, "the diagonal's ends are shared");
+        assert_eq!(shared.indices().len(), 6);
         let corners: Vec<_> = shared.corners().flatten().collect();
         for (k, (q, n)) in corners.iter().enumerate() {
             assert_eq!(*q, flat.positions[k].to_f32());
@@ -4386,22 +4424,35 @@ mod tests {
         smooth.normals = vec![Vec3::Z, Vec3::Z, Vec3::new(0.0, 0.6, 0.8), Vec3::Z, Vec3::X, Vec3::new(0.0, 0.6, 0.8)];
         let shared = SharedTris::new(&smooth);
         assert!(!shared.flat);
-        assert_eq!(shared.vertices.len() / SHARED_SIZE, 5, "corner 0 differs in normal only");
+        assert_eq!(shared.vertex_count(), 5, "corner 0 differs in normal only");
         let back: Vec<_> = shared.corners().flatten().map(|(_, n)| n).collect();
         assert_eq!(back, smooth.normals.iter().map(|n| n.to_f32()).collect::<Vec<_>>());
         // Indices past the vertices: the triangle is left out, nothing panics.
         smooth.triangles.push([0, 1, 99]);
-        assert_eq!(SharedTris::new(&smooth).indices.len(), 6);
+        assert_eq!(SharedTris::new(&smooth).indices().len(), 6);
         // A flat mesh (a mesh body's: corners shared already, no normals) is taken as it is, and
         // draws the corners the split one did.
         let mut kept = Mesh { positions: p.to_vec(), triangles: vec![[0, 1, 2], [0, 2, 3]], tri_face: vec![0; 2], ..Default::default() };
         let shared = SharedTris::new(&kept);
         assert!(shared.flat);
-        assert_eq!((shared.vertices.len() / SHARED_SIZE, shared.indices.as_slice()), (4, [0, 1, 2, 0, 2, 3].as_slice()));
+        assert_eq!((shared.vertex_count(), shared.indices()), (4, [0, 1, 2, 0, 2, 3].as_slice()));
         assert_eq!(shared.corners().collect::<Vec<_>>(), SharedTris::new(&flat).corners().collect::<Vec<_>>());
         assert_eq!(shared.bounds, [[0.0; 3], [1.0, 1.0, 0.0]]);
+        // Held in an `Arc`, it is not copied at all: its bytes are made only for the upload, the
+        // same bytes.
+        let held = std::sync::Arc::new(kept.clone());
+        let lent = SharedTris::of(&held);
+        assert!(lent.vertices.is_empty() && lent.indices.is_empty() && lent.flat);
+        assert!(std::ptr::eq(lent.indices().as_ptr(), held.triangles.as_flattened().as_ptr()));
+        assert_eq!((lent.vertex_count(), lent.bounds), (4, shared.bounds));
+        assert_eq!(lent.vertex_bytes().as_ref(), shared.vertices.as_slice());
+        assert_eq!(lent.corners().collect::<Vec<_>>(), shared.corners().collect::<Vec<_>>());
+        assert_eq!(lent.unshared(), shared.unshared());
         kept.triangles.push([0, 1, 99]);
-        assert_eq!(SharedTris::new(&kept).indices.len(), 6);
+        assert_eq!(SharedTris::new(&kept).indices().len(), 6);
+        // One with a corner out of range is copied without that triangle.
+        let bad = SharedTris::of(&std::sync::Arc::new(kept));
+        assert_eq!((bad.indices().len(), bad.vertices.len() / SHARED_SIZE), (6, 4));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

@@ -1106,7 +1106,7 @@ pub(crate) fn warm_shared_tris(mesh: &std::sync::Arc<solidcraft_engine::geom::Me
     if mesh.triangles.len() < INSTANCE_ALONE || WARMED.lock().map_or(true, |w| w.iter().any(|(m, _)| std::sync::Arc::ptr_eq(m, mesh))) {
         return;
     }
-    let tris = std::sync::Arc::new(crate::gpu::SharedTris::new(mesh));
+    let tris = std::sync::Arc::new(crate::gpu::SharedTris::of(mesh));
     if let Ok(mut warmed) = WARMED.lock() {
         if warmed.len() >= MAX_WARMED {
             warmed.remove(0);
@@ -1416,7 +1416,7 @@ impl Instances {
                     None => (
                         match self.kept.get(&key).filter(|(k, _)| std::sync::Arc::ptr_eq(k, &mesh)) {
                             Some((_, t)) => t.clone(),
-                            None => taken_shared_tris(&mesh).unwrap_or_else(|| std::sync::Arc::new(crate::gpu::SharedTris::new(&mesh))),
+                            None => taken_shared_tris(&mesh).unwrap_or_else(|| std::sync::Arc::new(crate::gpu::SharedTris::of(&mesh))),
                         },
                         // A large mesh's levels of detail, once made (until then, drawn in full).
                         self.lods.levels(&mesh).map(|l| l.as_ref().clone()).unwrap_or_default(),
@@ -8483,8 +8483,8 @@ mod tests {
         assert_eq!(scene.instanced[0].count(), 3, "a placement per occurrence");
         let shared = &scene.instanced[0].tris;
         assert_eq!(shared.flat, flat, "{part:?}");
-        let corners = shared.indices.len();
-        let vertices = shared.vertices.len() / crate::gpu::SHARED_SIZE;
+        let corners = shared.indices().len();
+        let vertices = shared.vertex_count();
         assert!(vertices * 2 < corners, "{part:?}: {vertices} vertices shared by {corners} corners");
         assert!(scene.blocks.iter().all(|b| b.bytes.vertices.is_empty()), "no body's triangles built where it stands");
         let moved = st.bodies.iter().filter(|b| b.cached_mesh().is_some()).count();
@@ -8671,7 +8671,7 @@ mod tests {
         eprintln!(
             "levels of detail made in {:.1} s: {:?}",
             t.elapsed().as_secs_f64(),
-            lod.instanced.iter().map(|m| m.levels.iter().map(|(t, e)| (t.indices.len() / 3, *e)).collect::<Vec<_>>()).collect::<Vec<_>>()
+            lod.instanced.iter().map(|m| m.levels.iter().map(|(t, e)| (t.indices().len() / 3, *e)).collect::<Vec<_>>()).collect::<Vec<_>>()
         );
         // `SOLIDCRAFT_BENCH_PNG=dir`: the view drawn from each placement's own triangles, in full
         // as instances, and from the levels (`SOLIDCRAFT_BENCH_PNG_ONLY=1`: then stop).
@@ -8815,7 +8815,7 @@ mod tests {
         assert!(mesh.triangles.len() >= INSTANCE_ALONE);
         warm_shared_tris(&mesh);
         let warmed = WARMED.lock().unwrap().iter().find(|(m, _)| std::sync::Arc::ptr_eq(m, &mesh)).map(|(_, t)| t.clone()).unwrap();
-        assert_eq!(warmed.vertices.len() / crate::gpu::SHARED_SIZE, 161 * 161, "the grid's corners shared");
+        assert_eq!(warmed.vertex_count(), 161 * 161, "the grid's corners shared");
         let scene = build_scene(&app);
         assert_eq!(scene.instanced.len(), 1, "a large mesh alone is drawn from shared vertices");
         assert!(std::sync::Arc::ptr_eq(&scene.instanced[0].tris, &warmed), "the ones made ahead");

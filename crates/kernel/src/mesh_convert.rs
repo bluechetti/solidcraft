@@ -78,7 +78,7 @@ pub fn convert_prismatic_mesh(body: &Body, tolerance: f64) -> Result<Body> {
     })
 }
 
-fn weld(mesh: &crate::meshbody::TriMesh, tolerance: f64) -> Result<Body> {
+fn weld(mesh: &solidcraft_geom::Mesh, tolerance: f64) -> Result<Body> {
     if mesh.triangles.len() > MAX_TRIANGLES {
         return Err(over_budget(mesh.triangles.len()));
     }
@@ -163,7 +163,7 @@ fn weld(mesh: &crate::meshbody::TriMesh, tolerance: f64) -> Result<Body> {
     crate::mesh_body(&kept_positions, &triangles)
 }
 
-fn extrusion(mesh: &crate::meshbody::TriMesh, axis: Vec3, tolerance: f64) -> Result<Option<Body>> {
+fn extrusion(mesh: &solidcraft_geom::Mesh, axis: Vec3, tolerance: f64) -> Result<Option<Body>> {
     let (lo, hi) = mesh.positions.iter().map(|p| p.dot(axis)).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), h| (lo.min(h), hi.max(h)));
     let height = hi - lo;
     let bounds = mesh.positions.iter().fold(solidcraft_geom::Aabb3::EMPTY, |mut b, p| {
@@ -318,7 +318,7 @@ fn extrusion(mesh: &crate::meshbody::TriMesh, axis: Vec3, tolerance: f64) -> Res
         return Err(invalid("reconstructed solid did not pass validity checks"));
     }
     let perimeter: f64 = loops.iter().flat_map(|lp| &lp.segs).map(|s| s.length()).sum();
-    let original = mesh.to_mesh().measure().volume;
+    let original = mesh.measure().volume;
     let rebuilt = crate::measure(&body)?.volume;
     if !original.is_finite() || original <= 0. || (rebuilt - original).abs() > perimeter * height * tolerance + epsilon * bounds.size().len().powi(2)
     {
@@ -501,7 +501,7 @@ mod tests {
         let sphere = crate::sphere(Vec3::ZERO, 10.).unwrap();
         assert!(convert_prismatic_mesh(&mesh_of(&sphere), 0.05).is_err());
         for coordinate in [f64::NAN, f64::INFINITY, f64::MAX, 1e30] {
-            let mesh = crate::meshbody::TriMesh { positions: vec![Vec3::new(coordinate, 0., 0.)], triangles: vec![] };
+            let mesh = solidcraft_geom::Mesh { positions: vec![Vec3::new(coordinate, 0., 0.)], ..Default::default() };
             assert!(weld(&mesh, 0.05).is_err());
         }
     }
@@ -541,7 +541,7 @@ mod tests {
         let err = convert_prismatic_mesh(&body, 0.05).unwrap_err().to_string();
         assert!(err.contains("50001 triangles") && err.contains("50000"), "{err}");
         assert!(err.contains("constant-section") && err.contains("freeform"), "{err}");
-        let mesh = crate::meshbody::TriMesh { positions: vec![Vec3::ZERO; MAX_TRIANGLES * 3 + 1], triangles: vec![] };
+        let mesh = solidcraft_geom::Mesh { positions: vec![Vec3::ZERO; MAX_TRIANGLES * 3 + 1], ..Default::default() };
         let err = weld(&mesh, 0.05).unwrap_err().to_string();
         assert!(err.contains("150001 vertices") && err.contains("150000"), "{err}");
     }
