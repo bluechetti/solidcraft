@@ -160,3 +160,69 @@ fn two_passes_are_fused_into_one_scan() {
     assert!(reply["uncovered"].as_f64().unwrap() < 0.01, "{reply}");
     assert!(!after_triangles.is_empty());
 }
+
+/// A box 30 × 20 × 10 as a scan would mesh it: each face a grid of squares `n` across, two
+/// triangles each, wound outward.
+fn grid_box(n: u32) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+    let size = [30.0, 20.0, 10.0];
+    let (mut positions, mut triangles) = (Vec::new(), Vec::new());
+    for (axis, high) in [(0, false), (0, true), (1, false), (1, true), (2, false), (2, true)] {
+        let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+        let base = positions.len() as u32;
+        for j in 0..=n {
+            for i in 0..=n {
+                let mut p = [0.0; 3];
+                p[axis] = if high { size[axis] } else { 0.0 };
+                p[u] = size[u] * f64::from(i) / f64::from(n);
+                p[v] = size[v] * f64::from(j) / f64::from(n);
+                positions.push(Vec3::new(p[0], p[1], p[2]));
+            }
+        }
+        for j in 0..n {
+            for i in 0..n {
+                let k = base + j * (n + 1) + i;
+                let (a, b, c, d) = (k, k + 1, k + n + 2, k + n + 1);
+                if high {
+                    triangles.extend([[a, b, c], [a, c, d]]);
+                } else {
+                    triangles.extend([[a, c, b], [a, d, c]]);
+                }
+            }
+        }
+    }
+    (positions, triangles)
+}
+
+/// The box scanned with noise along its faces (0.05 mm on 0.6 mm triangles): Denoise smooths it
+/// at the strength it suggests, in one undo step; the box with no noise is refused.
+#[test]
+fn a_noisy_scan_is_denoised_and_a_clean_one_left_alone() {
+    let (positions, triangles) = grid_box(50);
+    let mut s = Session::default();
+    let clean = insert(&mut s, &positions, &triangles, "clean");
+    let refused = s.execute("scan.denoise", &json!({"body": clean})).unwrap_err().to_string();
+    assert!(refused.contains("as smooth as it can be read"), "{refused}");
+    // Each place moved alike (its copies on the box's edges too), along the face it lies on.
+    let noisy: Vec<Vec3> = positions
+        .iter()
+        .map(|p| {
+            let h = ((p.x * 12.9898 + p.y * 78.233 + p.z * 37.719).sin() * 43_758.545).fract() - 0.5;
+            let on = |v: f64, s: f64| v.abs() < 1e-9 || (v - s).abs() < 1e-9;
+            let n = if on(p.x, 30.0) {
+                Vec3::X
+            } else if on(p.y, 20.0) {
+                Vec3::Y
+            } else {
+                Vec3::Z
+            };
+            *p + n * (0.1 * h)
+        })
+        .collect();
+    let scan = insert(&mut s, &noisy, &triangles, "noisy");
+    let (before, _) = mesh_of(&s, &scan);
+    let reply = run(&mut s, "scan.denoise", json!({"body": scan}));
+    assert!(reply["strength"].as_f64().unwrap() > 0.0, "{reply}");
+    assert!(reply["roughness"].as_f64().unwrap() < 0.6 * reply["noise"].as_f64().unwrap(), "{reply}");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(mesh_of(&s, &scan).0, before);
+}

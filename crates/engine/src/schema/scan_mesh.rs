@@ -154,6 +154,39 @@ pub struct ScanRemeshResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Smooth a scan's noise away, its sharp edges kept, at the strength that leaves the least error
+/// (or the one given); written back into the scan, one undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanDenoiseParams {
+    /// The scan. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// How hard, in passes of the filter, 0 to 8 (fractions blend between passes). Default: the
+    /// strength the scan's own noise and shrinkage suggest.
+    #[serde(default)]
+    pub strength: Option<f64>,
+}
+
+/// What `scan.denoise` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanDenoiseResult {
+    pub body: String,
+    /// The strength used and the one suggested, in passes.
+    pub strength: f64,
+    pub suggested: f64,
+    /// The scan's roughness before and after, in mm.
+    pub noise: f64,
+    pub roughness: f64,
+    /// How far its vertices moved: root mean square and largest, in mm.
+    pub rms_moved: f64,
+    pub max_moved: f64,
+    /// The scan's feature, changed.
+    pub feature: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 #[cfg(test)]
 #[path = "scan_mesh_tests.rs"]
 mod tests;

@@ -142,6 +142,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.complete_by_mirroring",
     "scan.curve_on_scan",
     "scan.cut_it",
+    "scan.denoise",
     "scan.deviation",
     "scan.edit_surface",
     "scan.extrude_it",

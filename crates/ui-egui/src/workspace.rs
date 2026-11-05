@@ -333,7 +333,7 @@ pub const SECTIONS: &[Section] = &[
         tab: "SCAN",
         panel: "CLEAN",
         promoted: 4,
-        ids: &["scan.repair", "scan.fill_holes", "scan.remove_floating", "scan.reduce", "scan.remesh", "scan.mesh_from_points"],
+        ids: &["scan.repair", "scan.fill_holes", "scan.remove_floating", "scan.reduce", "scan.denoise", "scan.remesh", "scan.mesh_from_points"],
     },
     Section {
         tab: "SCAN",

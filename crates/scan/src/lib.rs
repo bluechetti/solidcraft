@@ -7,6 +7,8 @@
 //!   rest in, its own axes) and a flat face grown from a clicked triangle.
 //! - [`chain`]: a run of a section as lines and arcs, each fitted to its points (the chain fitter).
 //! - [`curve`]: a curve drawn on the scan through points clicked on it, kept as a 3D sketch spline.
+//! - [`denoise`]: a scan's noise smoothed away, its sharp edges kept, at the strength that leaves
+//!   least error.
 //! - [`deviation`]: how far the scan is from the model built from it.
 //! - [`fit`]: a plane or a cylinder fitted to the part of the scan round a picked point.
 //! - [`free_form`]: a Free Form: a net over four corners clicked on the scan, fitted to it.
@@ -39,6 +41,7 @@
 pub mod base;
 pub mod chain;
 pub mod curve;
+pub mod denoise;
 pub mod deviation;
 pub mod fit;
 pub mod free_form;

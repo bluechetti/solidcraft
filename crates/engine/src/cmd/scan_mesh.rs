@@ -1,17 +1,19 @@
 //! Tools on a scan's mesh as a whole (#8615), after SurfaceCraft's: `scan.register` lays one scan
 //! onto another, a second pass onto the first, and keeps the move as an ordinary Move of it;
 //! `scan.mesh_from_points` makes a mesh body from a point cloud (screened Poisson); `scan.remesh`
-//! makes a scan again as one even surface, fusing other passes into it.
+//! makes a scan again as one even surface, fusing other passes into it; `scan.denoise` smooths a
+//! scan's noise away, its sharp edges kept.
 
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
 use solidcraft_scan::register::{self, Settings};
-use solidcraft_scan::{Scan, poisson, remesh};
+use solidcraft_scan::{Scan, denoise, poisson, remesh};
 
 use super::{CommandSpec, Mesh, mesh, move_by};
 use crate::params::{bad, bool_, num, str_};
 use crate::schema::scan_mesh::{
-    ScanMeshFromPointsParams, ScanMeshFromPointsResult, ScanRegisterParams, ScanRegisterResult, ScanRemeshParams, ScanRemeshResult,
+    ScanDenoiseParams, ScanDenoiseResult, ScanMeshFromPointsParams, ScanMeshFromPointsResult, ScanRegisterParams, ScanRegisterResult,
+    ScanRemeshParams, ScanRemeshResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -19,6 +21,7 @@ use crate::{EngineError, Result, Sel, Session};
 const REGISTER_CONTRACT: TypedContract<ScanRegisterParams> = TypedContract::new();
 const FROM_POINTS_CONTRACT: TypedContract<ScanMeshFromPointsParams> = TypedContract::new();
 const REMESH_CONTRACT: TypedContract<ScanRemeshParams> = TypedContract::new();
+const DENOISE_CONTRACT: TypedContract<ScanDenoiseParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("scan.mesh_from_points", "Mesh from Points", crate::checked!("scan.mesh_from_points", mesh_from_points))
@@ -27,6 +30,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&FROM_POINTS_CONTRACT)
         .output(output_schema_for::<ScanMeshFromPointsResult>)
         .params("cloud?: point cloud id or name (default: the only one); depth?: 5–10 (the finest grid is 2^depth cells across; default: about the points' spacing); trim?: 0–1 (default 0.3: where the points are sparse the surface stops; 0 keeps it closed); name?: the body's name: a mesh body made from the points by screened Poisson reconstruction (their normals estimated and turned to agree where the cloud states none), one undo step → body, triangles, vertices, depth, trim, points, points_used, estimated_normals, cell, spacing, trimmed, rms, p95, max, feature"),
+    CommandSpec::new("scan.denoise", "Denoise", crate::checked!("scan.denoise", denoise_scan))
+        .at("SCAN", "CLEAN")
+        .icon("c_smooth")
+        .contract(&DENOISE_CONTRACT)
+        .output(output_schema_for::<ScanDenoiseResult>)
+        .params("body?: the scan (default: the selected or only one); strength?: passes 0–8 (default: the strength its noise and shrinkage suggest, refused when smoothing would not lower its error): the faces' normals filtered bilaterally (faces across a sharp edge barely mix) and the vertices moved square to them, the open rim kept put, written back into the scan, one undo step → body, strength, suggested, noise, roughness, rms_moved, max_moved, feature"),
     CommandSpec::new("scan.remesh", "Remesh", crate::checked!("scan.remesh", remesh_scan))
         .at("SCAN", "CLEAN")
         .icon("grid")
@@ -149,6 +158,37 @@ pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
         scan_rms: made.scan_rms,
         scan_p95: made.scan_p95,
         uncovered: made.uncovered,
+        feature,
+        param_warnings: Vec::new(),
+    })
+}
+
+pub(super) fn denoise_scan(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.denoise";
+    let scan = mesh(s, p, cmd)?;
+    let strength = num(p, "strength");
+    if strength.is_some_and(|k| !(0.0..=denoise::MOST_PASSES as f64).contains(&k)) {
+        return Err(bad(cmd, "`strength` is a number of passes from 0 to 8"));
+    }
+    let done = denoise::denoise(&scan.scan(), strength).ok_or_else(|| bad(cmd, "the scan has no triangles to smooth"))?;
+    if !(done.strength > 0.0) {
+        return Err(bad(
+            cmd,
+            format!(
+                "smoothing would not lower the scan's error: it is as smooth as it can be read (noise {:.4} mm); give a `strength` to smooth it anyway",
+                done.noise
+            ),
+        ));
+    }
+    let feature = super::clean::replace_mesh(s, &scan.body, &done.positions, &scan.triangles, cmd)?;
+    reply(ScanDenoiseResult {
+        body: scan.body.clone(),
+        strength: done.strength,
+        suggested: done.suggested,
+        noise: done.noise,
+        roughness: done.roughness,
+        rms_moved: done.rms_moved,
+        max_moved: done.max_moved,
         feature,
         param_warnings: Vec::new(),
     })
