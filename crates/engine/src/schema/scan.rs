@@ -28,8 +28,8 @@ pub struct ScanPlaceParams {
     pub body: Option<String>,
 }
 
-/// Stand a scan on a base: the smallest turn that puts the base face down, then onto the grid
-/// (Z = 0). One undo step, kept as a Move feature.
+/// Stand a scan on a base: the smallest turn that puts the base face down, then the base flat on
+/// the grid (Z = 0) with its middle over the origin. One undo step, kept as a Move feature.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ScanStandParams {

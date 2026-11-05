@@ -418,7 +418,7 @@ fn stand_on_base(s: &mut Session, p: &Value) -> Result<Value> {
                 Some(i) => usize::try_from(i).unwrap_or(usize::MAX),
                 // The next base while the scan still stands on the last one (nothing has moved it).
                 None => match &s.scan_base_cycle {
-                    Some((body, last)) if *body == mesh.body && count > 0 && stands_on(&scan, found.get(*last), mesh.reach()) => (last + 1) % count,
+                    Some((body, last)) if *body == mesh.body && count > 0 && stands_on(found.get(*last), mesh.reach()) => (last + 1) % count,
                     _ => 0,
                 },
             };
@@ -426,7 +426,7 @@ fn stand_on_base(s: &mut Session, p: &Value) -> Result<Value> {
             (base, Some((i, count)))
         }
     };
-    let stand = place::stand(&scan, chosen.normal, chosen.anchor).ok_or_else(|| bad(cmd, "that base has no direction to stand on"))?;
+    let stand = place::stand(chosen.normal, chosen.anchor).ok_or_else(|| bad(cmd, "that base has no direction to stand on"))?;
     let feature = move_by(s, &mesh, &stand)?;
     s.scan_base_cycle = numbered.map(|(i, _)| (mesh.body.clone(), i));
     let reply = ScanPlaceResult {
@@ -589,8 +589,8 @@ pub fn base_preview(s: &Session, body: Option<&str>, point: Option<Vec3>, index:
 }
 
 /// Whether the scan already stands on `base`: standing it there would not move it.
-fn stands_on(scan: &Scan, base: Option<&Base>, reach: f64) -> bool {
-    base.and_then(|b| place::stand(scan, b.normal, b.anchor)).is_some_and(|m| m.is_negligible(NEGLIGIBLE, reach))
+fn stands_on(base: Option<&Base>, reach: f64) -> bool {
+    base.and_then(|b| place::stand(b.normal, b.anchor)).is_some_and(|m| m.is_negligible(NEGLIGIBLE, reach))
 }
 
 /// A placing move: `how` gives the move for the scan, or `None` with the reason in `refusal`.

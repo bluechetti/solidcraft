@@ -122,15 +122,14 @@ pub fn stand_on(normal: Vec3, anchor: Vec3) -> Option<Rigid> {
     Some(stand)
 }
 
-/// Stands `scan` on a base as [`stand_on`] does, then up or down until its lowest point is on the
-/// grid: a part standing on a face rests on whatever reaches lowest, a noisy point below the face
-/// too, so nothing is left under the grid and standing it there again does nothing.
-pub fn stand(scan: &Scan, normal: Vec3, anchor: Vec3) -> Option<Rigid> {
+/// Stands the scan on a base as [`stand_on`] does, then sideways until the middle of the base is
+/// over the origin: the face lies flat on the grid's plane at the origin, even when some of the
+/// part reaches lower (a face picked part way up), and standing it there again does nothing.
+pub fn stand(normal: Vec3, anchor: Vec3) -> Option<Rigid> {
     let mut stand = stand_on(normal, anchor)?;
-    let lowest = scan.points().map(|p| stand.apply(p).z).fold(f64::INFINITY, f64::min);
-    if lowest.is_finite() {
-        stand.translation.z -= lowest;
-    }
+    let middle = stand.apply(anchor);
+    stand.translation.x -= middle.x;
+    stand.translation.y -= middle.y;
     Some(stand)
 }
 

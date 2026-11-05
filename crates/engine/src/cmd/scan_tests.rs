@@ -406,6 +406,23 @@ fn stand_on_base_cycles_and_stands_on_a_picked_face() {
     assert!(lo.z.abs() < STL && (hi.z - 80.0).abs() < STL, "on its end: {lo:?} {hi:?}");
 }
 
+/// A face picked part way up the L block (the raised part's side at X = 40) lies flat on the grid
+/// with its middle over the origin, though the rest of the block reaches 20 below it.
+#[test]
+fn a_face_picked_part_way_up_lies_on_the_grid_at_the_origin() {
+    let (mut s, body, place) = session_with_a_symmetric_scan("stand-step");
+    let at = place(Vec3::new(40.0, 10.0, 17.5));
+    let reply = run(&mut s, "scan.stand_on_base", json!({"point": [at.x, at.y, at.z]}));
+    assert_eq!((reply["base"]["kind"].as_str(), reply["moved"].as_bool()), (Some("grown"), Some(true)), "{reply}");
+    let (lo, hi) = bounds(&s, &body);
+    assert!((lo.z + 20.0).abs() < STL && (hi.z - 40.0).abs() < STL, "the face on the grid, the block below and above: {lo:?} {hi:?}");
+    // Picked again at the origin, it is the same face, its middle there, and nothing moves.
+    let again = run(&mut s, "scan.stand_on_base", json!({"point": [0.0, 0.0, 0.0]}));
+    let anchor: Vec<f64> = again["base"]["anchor"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    assert!(anchor.iter().all(|c| c.abs() < 1e-3) && (again["base"]["area"].as_f64().unwrap() - 300.0).abs() < 0.01, "{again}");
+    assert_eq!(again["moved"], false, "standing it there again does nothing: {again}");
+}
+
 /// Two points picked along X = 30 guide Find Symmetry to that plane of the L block.
 #[test]
 fn two_picks_guide_find_symmetry() {
