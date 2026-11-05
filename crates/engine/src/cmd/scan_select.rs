@@ -174,7 +174,8 @@ pub fn topology(s: &Session, body: &str, cmd: &str) -> Result<Arc<Topology>> {
         *cache = Some((held, key, t.clone()));
         return Ok(t);
     }
-    let built = Arc::new(Topology::with_tree(&Scan::new(positions, triangles), scan_tree(&mesh)));
+    let tree = scan_tree(&mesh);
+    let built = Arc::new(Topology::over(mesh, tree));
     *cache = Some((held, key, built.clone()));
     Ok(built)
 }
@@ -225,7 +226,7 @@ fn set(s: &mut Session, scan: &str, flags: Vec<bool>, cmd: &str) -> Result<Value
     drop(state);
     let topology = topology(s, scan, cmd)?;
     let count = flags.iter().filter(|f| **f).count();
-    let area = flags.iter().zip(&topology.areas).filter(|(f, _)| **f).map(|(_, a)| *a).sum();
+    let area = flags.iter().enumerate().filter(|(_, f)| **f).map(|(t, _)| topology.area(t)).sum();
     let before = selected(s).filter(|k| k.scan == scan);
     let changed = before.as_ref().is_none_or(|k| *k.selected != flags);
     s.scan_selection =

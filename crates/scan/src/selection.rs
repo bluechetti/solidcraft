@@ -36,24 +36,25 @@ pub struct View {
 /// The scan's triangles as selections read them.
 pub struct Topology {
     tree: std::sync::Arc<TriangleTree>,
-    /// Each triangle's welded corners.
-    corners: Vec<[u32; 3]>,
+    /// The scan's points and triangles, shared with its body.
+    mesh: std::sync::Arc<solidcraft_geom::Mesh>,
+    /// Each triangle's welded corners, when welding changed any ([`Topology::corners`]).
+    welded: Option<Vec<[u32; 3]>>,
     /// The triangle across each edge (corner k to corner k + 1), or [`NONE`].
     across: Vec<[u32; 3]>,
     /// The triangles round each welded corner, packed.
     fan_start: Vec<u32>,
     fan: Vec<u32>,
-    pub middles: Vec<Vec3>,
-    pub areas: Vec<f64>,
-    /// Each triangle's normal smoothed over the triangles round its corners.
-    smooth: Vec<Vec3>,
+    /// Each welded corner's normal: the triangles' round it, each by its area (for
+    /// [`Topology::smooth`]).
+    vertex_normals: Vec<Vec3>,
     /// The scan's typical triangle side, in mm.
     pub edge: f64,
 }
 
 impl std::fmt::Debug for Topology {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Topology").field("triangles", &self.corners.len()).field("edge", &self.edge).finish()
+        f.debug_struct("Topology").field("triangles", &self.corners().len()).field("edge", &self.edge).finish()
     }
 }
 
@@ -176,17 +177,38 @@ fn inside_polygon(q: [f64; 2], ring: &[[f64; 2]]) -> bool {
     odd
 }
 
+/// A triangle's middle, its unit normal (none: zero) and its area, from its corners as the scan
+/// gives them (none for one with a corner out of range: all zero).
+fn face_of(scan: &Scan, t: usize) -> (Vec3, Vec3, f64) {
+    let Some([a, b, c]) = scan.corners(t) else { return (Vec3::ZERO, Vec3::ZERO, 0.0) };
+    let cross = (b - a).cross(c - a);
+    ((a + b + c) / 3.0, cross.normalized().unwrap_or(Vec3::ZERO), cross.len() / 2.0)
+}
+
 impl Topology {
     pub fn new(scan: &Scan) -> Topology {
-        Topology::with_tree(scan, std::sync::Arc::new(TriangleTree::of(scan.positions, scan.triangles)))
+        let mesh = std::sync::Arc::new(solidcraft_geom::Mesh {
+            positions: scan.positions.to_vec(),
+            triangles: scan.triangles.to_vec(),
+            ..Default::default()
+        });
+        let tree = std::sync::Arc::new(TriangleTree::over(mesh.clone()));
+        Topology::over(mesh, tree)
     }
 
-    /// [`Topology::new`] with the scan's triangle tree built already (shared with Curve on Scan's
-    /// projector: a scan's tree is as large as the scan).
-    pub fn with_tree(scan: &Scan, tree: std::sync::Arc<TriangleTree>) -> Topology {
+    /// [`Topology::new`] of the scan `mesh` (shared with its body, not copied), with its triangle
+    /// tree built already (shared with Curve on Scan's projector). A triangle's middle, area and
+    /// smoothed normal are worked out from the mesh when asked for, not kept: for a scan of 28
+    /// million triangles they took 2.2 GB, its welded corners (the scan's own triangles, when
+    /// welding changed none) 336 MB more.
+    pub fn over(mesh: std::sync::Arc<solidcraft_geom::Mesh>, tree: std::sync::Arc<TriangleTree>) -> Topology {
+        let scan = Scan::new(&mesh.positions, &mesh.triangles);
         let weld = welded(scan.positions);
         let count = scan.triangle_count();
-        let corners: Vec<[u32; 3]> = (0..count).map(|t| scan.triangles[t].map(|v| weld.get(v as usize).copied().unwrap_or(v))).collect();
+        let welded_corners: Option<Vec<[u32; 3]>> = (!weld.iter().enumerate().all(|(i, &w)| w as usize == i))
+            .then(|| (0..count).map(|t| scan.triangles[t].map(|v| weld.get(v as usize).copied().unwrap_or(v))).collect());
+        drop(weld);
+        let corners: &[[u32; 3]] = welded_corners.as_deref().unwrap_or(scan.triangles);
         // Each edge, sorted by its corners, says the two triangles it joins.
         let mut edges: Vec<(u64, u32, u8)> = Vec::with_capacity(3 * count);
         for (t, c) in corners.iter().enumerate() {
@@ -240,31 +262,48 @@ impl Topology {
             }
         }
         drop(fill);
-        let faces: Vec<(Vec3, Vec3, f64)> = par::map(count, |t| {
-            let Some([a, b, c]) = scan.corners(t) else { return (Vec3::ZERO, Vec3::ZERO, 0.0) };
-            let cross = (b - a).cross(c - a);
-            ((a + b + c) / 3.0, cross.normalized().unwrap_or(Vec3::ZERO), cross.len() / 2.0)
+        let edge = crate::mirror_fill::typical_edge(&scan);
+        let mut topology = Topology { tree, mesh: mesh.clone(), welded: None, across, fan_start, fan, vertex_normals: Vec::new(), edge };
+        topology.vertex_normals = par::map(vertices, |v| {
+            topology.fan_of(v as u32).iter().fold(Vec3::ZERO, |s, &f| {
+                let (_, normal, area) = face_of(&scan, f as usize);
+                s + normal * area
+            })
         });
-        let (middles, normals, areas) =
-            faces.into_iter().fold((Vec::with_capacity(count), Vec::with_capacity(count), Vec::with_capacity(count)), |mut acc, f| {
-                acc.0.push(f.0);
-                acc.1.push(f.1);
-                acc.2.push(f.2);
-                acc
-            });
-        let mut topology =
-            Topology { tree, corners, across, fan_start, fan, middles, areas, smooth: Vec::new(), edge: crate::mirror_fill::typical_edge(scan) };
-        // The triangles' own normals are needed only for the smoothed ones (a scan's took 672 MB
-        // kept for nothing).
-        let vertex_normal = |v: u32| topology.fan_of(v).iter().fold(Vec3::ZERO, |s, &f| s + normals[f as usize] * topology.areas[f as usize]);
-        topology.smooth =
-            par::map(count, |t| topology.corners[t].iter().fold(Vec3::ZERO, |s, &v| s + vertex_normal(v)).normalized().unwrap_or(normals[t]));
-        drop(normals);
+        topology.welded = welded_corners;
         topology
     }
 
     pub fn triangle_count(&self) -> usize {
-        self.corners.len()
+        self.corners().len()
+    }
+
+    /// Each triangle's welded corners: the scan's own triangles when welding changed none.
+    fn corners(&self) -> &[[u32; 3]] {
+        self.welded.as_deref().unwrap_or(&self.mesh.triangles)
+    }
+
+    /// The scan as the topology was built over it.
+    fn scan(&self) -> Scan<'_> {
+        Scan::new(&self.mesh.positions, &self.mesh.triangles)
+    }
+
+    /// Triangle `t`'s middle (zero for one with a corner out of range).
+    pub fn middle(&self, t: usize) -> Vec3 {
+        face_of(&self.scan(), t).0
+    }
+
+    /// Triangle `t`'s area (zero for one with a corner out of range).
+    pub fn area(&self, t: usize) -> f64 {
+        face_of(&self.scan(), t).2
+    }
+
+    /// Triangle `t`'s normal smoothed over the triangles round its corners (its own where they
+    /// cancel out), as it was kept before it was worked out when asked for.
+    fn smooth(&self, t: usize) -> Option<Vec3> {
+        let corners = self.corners().get(t)?;
+        let sum = corners.iter().fold(Vec3::ZERO, |s, &v| s + self.vertex_normals.get(v as usize).copied().unwrap_or(Vec3::ZERO));
+        Some(sum.normalized().unwrap_or_else(|| face_of(&self.scan(), t).1))
     }
 
     fn fan_of(&self, v: u32) -> &[u32] {
@@ -292,7 +331,7 @@ impl Topology {
     /// The triangles reached across edges from `seeds` that `keep` keeps (each seed only if it
     /// keeps it too).
     fn flood(&self, seeds: impl IntoIterator<Item = usize>, keep: impl Fn(usize, usize) -> bool) -> Vec<bool> {
-        let mut taken = vec![false; self.corners.len()];
+        let mut taken = vec![false; self.corners().len()];
         let mut queue: Vec<usize> = Vec::new();
         for s in seeds {
             if s < taken.len() && !taken[s] {
@@ -315,9 +354,9 @@ impl Topology {
     /// reached across the scan from the triangle under it (so a brush on one wall does not take
     /// the wall behind it).
     pub fn brush(&self, centre: Vec3, radius: f64) -> Vec<bool> {
-        let Some((seed, _)) = self.nearest(centre) else { return vec![false; self.corners.len()] };
+        let Some((seed, _)) = self.nearest(centre) else { return vec![false; self.corners().len()] };
         let r2 = radius * radius;
-        self.flood([seed], |_, n| (self.middles[n] - centre).len2() <= r2)
+        self.flood([seed], |_, n| (self.middle(n) - centre).len2() <= r2)
     }
 
     /// The region round triangle `seed`: grown across edges while the scan faces within `angle`
@@ -326,8 +365,8 @@ impl Topology {
     /// rounds and edges turn away; on a curved one, the part that faces about the same way.
     pub fn region(&self, seed: usize, angle: f64) -> Vec<bool> {
         let cos = angle.cos();
-        let Some(&facing) = self.smooth.get(seed) else { return vec![false; self.corners.len()] };
-        let mut taken = self.flood([seed], |_, n| facing.dot(self.smooth[n]) >= cos);
+        let Some(facing) = self.smooth(seed) else { return vec![false; self.corners().len()] };
+        let mut taken = self.flood([seed], |_, n| self.smooth(n).is_some_and(|s| facing.dot(s) >= cos));
         // A triangle the noise turned, closed in by the region, is part of it.
         let holes: Vec<usize> = (0..taken.len()).filter(|&t| !taken[t] && self.across[t].iter().all(|&n| n != NONE && taken[n as usize])).collect();
         for t in holes {
@@ -340,7 +379,7 @@ impl Topology {
     /// middles inside the polygon on the picture, and (unless `through`) not hidden behind other
     /// triangles of the scan there.
     pub fn seen_inside(&self, scan: &Scan, ring: &[Vec3], view: &View, through: bool) -> Vec<bool> {
-        let mut taken = vec![false; self.corners.len()];
+        let mut taken = vec![false; self.corners().len()];
         let Some(d) = view.direction.normalized() else { return taken };
         let Some(u) = d.cross(if d.x.abs() < 0.9 { Vec3::X } else { Vec3::Y }).normalized() else { return taken };
         let v = d.cross(u);
@@ -394,8 +433,8 @@ impl Topology {
             }
         }
         // The middles inside the polygon, on the picture, and how deep they are.
-        let projected: Vec<Option<([f64; 2], f64)>> = par::map(self.corners.len(), |t| {
-            let mid = picture(self.middles[t])?;
+        let projected: Vec<Option<([f64; 2], f64)>> = par::map(self.corners().len(), |t| {
+            let mid = picture(self.middle(t))?;
             mask[at(mid.0)?].then_some(mid)
         });
         if through {
@@ -407,8 +446,8 @@ impl Topology {
         // The nearest depth in each cell: every triangle's cells (those whose middles it covers,
         // and the one its middle is in), so nothing behind the scan's near side shows.
         let mut depth = vec![f64::INFINITY; w * h];
-        for t in 0..self.corners.len() {
-            let Some((mid, dm)) = picture(self.middles[t]) else { continue };
+        for t in 0..self.corners().len() {
+            let Some((mid, dm)) = picture(self.middle(t)) else { continue };
             if let Some(i) = at(mid) {
                 depth[i] = depth[i].min(dm);
             }
@@ -462,7 +501,7 @@ impl Topology {
             // The corners where selected and unselected triangles meet: a ring is the triangles
             // round them on the side that changes.
             let mut on = vec![0u8; self.fan_start.len().saturating_sub(1)];
-            for (t, c) in self.corners.iter().enumerate() {
+            for (t, c) in self.corners().iter().enumerate() {
                 let bit = if selected.get(t).copied().unwrap_or(false) { 1 } else { 2 };
                 for &v in c {
                     if let Some(o) = on.get_mut(v as usize) {
@@ -471,7 +510,7 @@ impl Topology {
                 }
             }
             let mut changed = false;
-            for (t, c) in self.corners.iter().enumerate() {
+            for (t, c) in self.corners().iter().enumerate() {
                 if selected.get(t).copied().unwrap_or(false) != grow && c.iter().any(|&v| on.get(v as usize) == Some(&3)) {
                     selected[t] = grow;
                     changed = true;
@@ -489,7 +528,7 @@ impl Topology {
         let on = |t: u32| t != NONE && selected.get(t as usize).copied().unwrap_or(false);
         // Each outline edge from corner a to corner b, as the selected triangle winds it.
         let mut edges: Vec<(u32, u32)> = Vec::new();
-        for (t, c) in self.corners.iter().enumerate() {
+        for (t, c) in self.corners().iter().enumerate() {
             if !selected.get(t).copied().unwrap_or(false) {
                 continue;
             }
@@ -588,7 +627,7 @@ impl Topology {
         let polygon: Vec<[f64; 2]> = ring.iter().map(|p| flat(*p)).collect();
         // The triangles under the curve, from places a third of a triangle side apart.
         let step = (self.edge / 3.0).max(length / 200_000.0);
-        let mut under = vec![false; self.corners.len()];
+        let mut under = vec![false; self.corners().len()];
         for w in curve.windows(2) {
             let parts = (w[0].dist(w[1]) / step).ceil().max(1.0) as usize;
             for k in 0..parts {
@@ -599,8 +638,8 @@ impl Topology {
                 }
             }
         }
-        let inside = |t: usize| inside_polygon(flat(self.middles[t]), &polygon);
-        let seeds: Vec<usize> = (0..self.corners.len())
+        let inside = |t: usize| inside_polygon(flat(self.middle(t)), &polygon);
+        let seeds: Vec<usize> = (0..self.corners().len())
             .filter(|&t| under[t])
             .flat_map(|t| self.neighbours(t).collect::<Vec<_>>())
             .filter(|&n| !under[n] && inside(n))
@@ -654,14 +693,14 @@ mod tests {
         assert!(count(&brushed) > 10);
         for (t, on) in brushed.iter().enumerate() {
             if *on {
-                let m = topology.middles[t];
+                let m = topology.middle(t);
                 assert!(m.z > 10.0 - 1e-9 && m.dist(Vec3::new(15.0, 10.0, 10.0)) <= 4.0, "on the top, within the brush: {m:?}");
             }
         }
         let top = topology.region(topology.nearest(Vec3::new(15.0, 10.0, 10.0)).unwrap().0, 30f64.to_radians());
-        let on_top = (0..topology.triangle_count()).filter(|&t| topology.middles[t].z > 10.0 - 1e-9).count();
+        let on_top = (0..topology.triangle_count()).filter(|&t| topology.middle(t).z > 10.0 - 1e-9).count();
         assert_eq!(count(&top), on_top, "the whole top and nothing else");
-        assert!((0..topology.triangle_count()).all(|t| !top[t] || topology.middles[t].z > 10.0 - 1e-9));
+        assert!((0..topology.triangle_count()).all(|t| !top[t] || topology.middle(t).z > 10.0 - 1e-9));
         let mut changed = brushed.clone();
         topology.rings(&mut changed, 2);
         assert!(count(&changed) > count(&brushed));
@@ -686,19 +725,19 @@ mod tests {
         let down = View { direction: -Vec3::Z, eye: None };
         let round = [Vec3::new(-5.0, -5.0, 20.0), Vec3::new(35.0, -5.0, 20.0), Vec3::new(35.0, 25.0, 20.0), Vec3::new(-5.0, 25.0, 20.0)];
         let seen = topology.seen_inside(&scan, &round, &down, false);
-        let bottom = (0..topology.triangle_count()).filter(|&t| seen[t] && topology.middles[t].z < 1e-9).count();
-        let top = (0..topology.triangle_count()).filter(|&t| topology.middles[t].z > 10.0 - 1e-9).count();
+        let bottom = (0..topology.triangle_count()).filter(|&t| seen[t] && topology.middle(t).z < 1e-9).count();
+        let top = (0..topology.triangle_count()).filter(|&t| topology.middle(t).z > 10.0 - 1e-9).count();
         assert_eq!(bottom, 0, "the bottom is hidden");
-        assert_eq!((0..topology.triangle_count()).filter(|&t| seen[t] && topology.middles[t].z > 10.0 - 1e-9).count(), top, "all the top is seen");
+        assert_eq!((0..topology.triangle_count()).filter(|&t| seen[t] && topology.middle(t).z > 10.0 - 1e-9).count(), top, "all the top is seen");
         let through = topology.seen_inside(&scan, &round, &down, true);
         assert_eq!(count(&through), topology.triangle_count(), "through the scan, all of it");
         let half = [Vec3::new(-5.0, -5.0, 20.0), Vec3::new(15.0, -5.0, 20.0), Vec3::new(15.0, 25.0, 20.0), Vec3::new(-5.0, 25.0, 20.0)];
         let left = topology.seen_inside(&scan, &half, &down, false);
-        assert!((0..topology.triangle_count()).all(|t| !left[t] || topology.middles[t].x < 15.0 + 1e-9), "only the left half");
+        assert!((0..topology.triangle_count()).all(|t| !left[t] || topology.middle(t).x < 15.0 + 1e-9), "only the left half");
         // From an eye above, the same.
         let eye = View { direction: -Vec3::Z, eye: Some(Vec3::new(15.0, 10.0, 200.0)) };
         let seen = topology.seen_inside(&scan, &round, &eye, false);
-        assert_eq!((0..topology.triangle_count()).filter(|&t| seen[t] && topology.middles[t].z < 1e-9).count(), 0, "in perspective too");
+        assert_eq!((0..topology.triangle_count()).filter(|&t| seen[t] && topology.middle(t).z < 1e-9).count(), 0, "in perspective too");
     }
 
     /// A ragged round selection on a ball (its triangles within 40° of an axis leaning 30° from
@@ -712,7 +751,7 @@ mod tests {
         let topology = Topology::new(&scan);
         let axis = Vec3::new(30f64.to_radians().sin(), 0.0, 30f64.to_radians().cos());
         let from_axis = |p: Vec3| (p.dot(axis) / p.len()).clamp(-1.0, 1.0).acos().to_degrees();
-        let cap: Vec<bool> = topology.middles.iter().map(|m| from_axis(*m) < 40.0).collect();
+        let cap: Vec<bool> = (0..topology.triangle_count()).map(|t| from_axis(topology.middle(t)) < 40.0).collect();
         let (lines, left) = topology.edge_lines(&scan, &cap, false, 2.0 * topology.edge, 1.0).unwrap();
         assert_eq!((lines.len(), left), (1, 0));
         // How far a place is from the 40° circle, along the ball.
@@ -723,7 +762,7 @@ mod tests {
         assert!(smooth < 0.4, "the curve is within 0.4 mm of the circle: {smooth} (ragged {ragged})");
         assert!(lines[0].iter().all(|p| (p.len() - 20.0).abs() < 0.05), "on the ball");
         assert!(lines[0].first().zip(lines[0].last()).is_some_and(|(a, b)| a == b), "closed");
-        let band: Vec<bool> = topology.middles.iter().map(|m| (30.0..60.0).contains(&polar(*m))).collect();
+        let band: Vec<bool> = (0..topology.triangle_count()).map(|t| (30.0..60.0).contains(&polar(topology.middle(t)))).collect();
         let (lines, _) = topology.edge_lines(&scan, &band, true, 2.0 * topology.edge, 1.0).unwrap();
         assert_eq!(lines.len(), 2, "the band's two edges");
         assert_eq!(topology.edge_lines(&scan, &vec![true; cap.len()], false, 1.0, 1.0), Err(EdgeProblem::NoEdge), "all of a closed ball");
@@ -744,8 +783,8 @@ mod tests {
             })
             .collect();
         let inside = topology.inside_curve(&circle, 1.0).unwrap();
-        for (t, m) in topology.middles.iter().enumerate() {
-            let a = polar(*m);
+        for (t, m) in (0..topology.triangle_count()).map(|t| (t, topology.middle(t))) {
+            let a = polar(m);
             if a < 36.0 {
                 assert!(inside[t], "inside the cap at {a}°");
             }
