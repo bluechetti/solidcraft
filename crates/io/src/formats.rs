@@ -125,6 +125,16 @@ const UP_Y: OptionSpec = OptionSpec {
     kind: OptionKind::Choice { choices: &[("y", "The file has Y up"), ("z", "Keep the file's axes (Z up)")], default: 0 },
 };
 
+/// The length unit of a mesh file that doesn't state one (STL, OBJ; see `file.insert_mesh`).
+const MESH_UNITS: OptionSpec = OptionSpec {
+    param: "units",
+    label: "Units",
+    kind: OptionKind::Choice {
+        choices: &[("mm", "Millimetres"), ("cm", "Centimetres"), ("m", "Metres"), ("in", "Inches"), ("ft", "Feet")],
+        default: 0,
+    },
+};
+
 /// What imported bodies are named after (see [`crate::StepNames`]).
 const STEP_NAMES: OptionSpec = OptionSpec {
     param: "names",
@@ -222,7 +232,7 @@ pub static FORMATS: &[FormatSpec] = &[
         label: "STL",
         extensions: &["stl"],
         role: Role::Artifact,
-        import: Some(ImportSpec { target: ImportTarget::Mesh, options: &[], native_only: false }),
+        import: Some(ImportSpec { target: ImportTarget::Mesh, options: &[MESH_UNITS], native_only: false }),
         export: Some(ExportSpec { command: "file.export", format: None, options: &[STL_ENCODING], scope: ExportScope::Bodies, lossless: false }),
     },
     FormatSpec {
@@ -246,7 +256,7 @@ pub static FORMATS: &[FormatSpec] = &[
         label: "OBJ",
         extensions: &["obj"],
         role: Role::Artifact,
-        import: Some(ImportSpec { target: ImportTarget::Mesh, options: &[], native_only: false }),
+        import: Some(ImportSpec { target: ImportTarget::Mesh, options: &[MESH_UNITS], native_only: false }),
         export: Some(ExportSpec { command: "file.export", format: None, options: &[], scope: ExportScope::Bodies, lossless: false }),
     },
     FormatSpec {

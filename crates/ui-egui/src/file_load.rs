@@ -61,6 +61,9 @@ pub struct Request {
     pub design: Option<String>,
     /// The chat turn that requested the load. It must still be current when the file lands.
     pub(crate) chat_turn: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// Insert Mesh was asked for: a PLY file comes in as a mesh (its faces, or a range scan's
+    /// grid), not as a point cloud.
+    pub mesh: bool,
 }
 
 impl Request {
@@ -74,6 +77,7 @@ impl Request {
             allow_hosts: Vec::new(),
             design: None,
             chat_turn: None,
+            mesh: false,
         }
     }
     fn insert(&self) -> bool {
@@ -88,6 +92,7 @@ impl Request {
     fn command(&self) -> (&'static str, Value) {
         match &self.kind {
             Kind::Open => ("doc.open", self.params()),
+            Kind::Insert if self.mesh && solidcraft_engine::io::is_ply_path(&self.path) => ("file.insert_mesh", self.params()),
             Kind::Insert if solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", self.params()),
             Kind::Insert if solidcraft_engine::io::is_point_cloud_path(&self.path) => ("pointcloud.insert", self.params()),
             Kind::Insert => (insert_command(&self.path), self.params()),
@@ -286,7 +291,7 @@ pub fn begin_request(app: &mut SolveApp, request: Request) -> Result<(), String>
         }
         let r = match &request.kind {
             Kind::Insert => {
-                app.insert_path(&request.path);
+                app.insert_path_by(&request.path, request.command().0);
                 Ok(Value::Null)
             }
             Kind::Open => {
@@ -413,6 +418,7 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
         allow_hosts: Vec::new(),
         design: None,
         chat_turn: req.chat_turn,
+        mesh: command == Some("file.insert_mesh"),
     };
     let _ = begin_request(app, request);
     None
@@ -1501,6 +1507,38 @@ mod tests {
             h.app.insert_path(&path);
             assert_eq!(h.app.session.doc.sketch(new_id).unwrap().curves.len(), 4);
         }
+    }
+
+    /// Insert Mesh reads a PLY file as a mesh; inserted any other way it is a point cloud.
+    #[test]
+    fn insert_mesh_takes_a_ply_file_as_a_mesh() {
+        let mut request = Request::new("pass.PLY", Kind::Insert);
+        assert_eq!(request.command().0, "pointcloud.insert");
+        request.mesh = true;
+        request.options = json!({"units": "m"}).as_object().unwrap().clone();
+        assert_eq!(request.command(), ("file.insert_mesh", json!({"path": "pass.PLY", "units": "m"})));
+        // Other files go as before.
+        for (path, command) in [("part.step", "file.insert_step"), ("part.stl", "file.insert_mesh"), ("scan.xyz", "pointcloud.insert")] {
+            assert_eq!(Request::new(path, Kind::Insert).command().0, command, "{path}");
+        }
+        // The Scan tab's Insert Mesh, on a raw range scan.
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("pass.ply").to_string_lossy().into_owned();
+        std::fs::write(
+            &path,
+            "ply\nformat ascii 1.0\nobj_info num_cols 2\nobj_info num_rows 2\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\n\
+             element range_grid 4\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 -1 0\n1 -1 0\n1 0\n1 1\n1 2\n1 3\n",
+        )
+        .unwrap();
+        h.app.insert_mesh_path_async(&path);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while h.app.file_load.busy() && std::time::Instant::now() < deadline {
+            h.frames(1);
+            std::thread::yield_now();
+        }
+        assert!(!h.app.file_load.busy());
+        assert!(h.app.session.doc.point_clouds.is_empty(), "a mesh, not a point cloud: {:?}", h.app.status);
+        assert_eq!(h.app.session.model.state().bodies.len(), 1, "{:?}", h.app.status);
     }
 
     #[test]

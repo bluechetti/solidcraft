@@ -29,7 +29,7 @@ pub use native_cad::{NATIVE_CAD_EXTS, is_native_cad_path, native_cad_to_step};
 pub mod paper;
 mod ply;
 mod ply_complex;
-pub use ply::{ply_counts, read_ply_mesh};
+pub use ply::{has_range_grid, ply_counts, read_ply_mesh};
 mod point_cloud;
 pub use point_cloud::{CloudFile, DEFAULT_MAX_POINTS, MAX_POINT_CLOUD_BYTES, is_ply_path, is_point_cloud_path, read_point_cloud};
 pub mod safe_write;
@@ -286,6 +286,26 @@ pub struct MeshFeature {
     pub kind: solidcraft_doc::FeatureKind,
     pub body_names: Vec<String>,
     pub warnings: Vec<String>,
+}
+
+impl MeshFeature {
+    /// Its meshes' points scaled by `k`, the file's length unit in millimetres (1000 for a scan in
+    /// metres). Refused when a point would land farther out than a mesh body may reach.
+    pub fn scale(&mut self, k: f64) -> Result<()> {
+        if k == 1.0 {
+            return Ok(());
+        }
+        let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = &mut self.kind else { return Ok(()) };
+        let max = solidcraft_doc::point_cloud::MAX_COORD;
+        // A fresh import is the only holder of its points: they are scaled where they are.
+        for v in meshes.iter_mut().flat_map(|m| std::sync::Arc::make_mut(&mut m.positions).iter_mut()) {
+            *v *= k;
+            if !(v.is_finite() && v.abs() < max) {
+                return Err(IoError::Invalid(format!("in that unit the mesh reaches farther than {max} mm from the origin")));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Read 3MF, STL, OBJ, PLY or glTF bytes (the format from `file`'s extension) into a MeshImport

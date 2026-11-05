@@ -1869,10 +1869,11 @@ impl SolveApp {
             return;
         }
         if matches!(id, "file.insert_step" | "file.insert_mesh" | "pointcloud.insert") {
-            self.pick_open(|app, path| {
-                if let Some(path) = path {
-                    app.insert_path_async(&path);
-                }
+            let mesh = id == "file.insert_mesh";
+            self.pick_open(move |app, path| match path {
+                Some(path) if mesh => app.insert_mesh_path_async(&path),
+                Some(path) => app.insert_path_async(&path),
+                None => {}
             });
             return;
         }
@@ -2497,9 +2498,21 @@ impl SolveApp {
         file_load::begin(self, path, true);
     }
 
+    /// Insert a file as Insert Mesh does: a PLY file comes in as a mesh, not as a point cloud.
+    pub fn insert_mesh_path_async(&mut self, path: &str) {
+        let mut request = file_load::Request::new(path, file_load::Kind::Insert);
+        request.mesh = true;
+        let _ = file_load::begin_request(self, request);
+    }
+
     /// Insert CAD bodies, meshes or sketch drawing geometry into the current design.
     pub fn insert_path(&mut self, path: &str) {
         let cmd = if solidcraft_engine::io::is_point_cloud_path(path) { "pointcloud.insert" } else { file_load::insert_command(path) };
+        self.insert_path_by(path, cmd);
+    }
+
+    /// Insert a file with this command (one of the insert commands).
+    pub(crate) fn insert_path_by(&mut self, path: &str, cmd: &str) {
         let before: Vec<String> = crate::open_meshing::session_world(&self.session).bodies.iter().map(|b| b.name.clone()).collect();
         if let Ok(r) = self.run(cmd, json!({ "path": path })) {
             self.fit_view();

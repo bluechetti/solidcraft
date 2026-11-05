@@ -27,7 +27,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("→ clouds: [{cloud, name, file, points, source_points, units, visible, point_size, color_by (file, single, height or a property's name), color, colored, properties: [{name, integer, span, names}], filters, color_range (the ramp's now, exact over what the filters keep), height_range (the ramp's own range or the automatic one by height), height_auto, bounds: [[x,y,z], [x,y,z]] in the design, matrix}]"),
 ];
 
-fn units_of(p: &Value, cmd: &str) -> Result<Option<(&'static str, f64)>> {
+pub(super) fn units_of(p: &Value, cmd: &str) -> Result<Option<(&'static str, f64)>> {
     match p.get("units") {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(u)) => UNITS
@@ -211,6 +211,8 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
         && faces > 0
     {
         warnings.push(format!("the file also has {faces} faces: Insert Mesh (file.insert_mesh) reads it as a mesh"));
+    } else if solidcraft_io::is_ply_path(path) && solidcraft_io::has_range_grid(&bytes) {
+        warnings.push("the file is a range scan: Insert Mesh (file.insert_mesh) makes a mesh from its grid".into());
     }
     drop(bytes);
     let file = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
