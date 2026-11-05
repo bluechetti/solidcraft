@@ -1263,7 +1263,33 @@ fn feature_json(f: &Feature, steps: &StepDigests) -> String {
         }
         return serde_json::to_string(&g).unwrap_or_default();
     }
+    // A scan's arrays (millions of numbers) stand in by their digest, as a STEP text does: the
+    // text was hundreds of megabytes, hashed again on every evaluation of any edit.
+    if let FeatureKind::MeshImport { .. } = &f.kind {
+        let mut g = f.clone();
+        if let FeatureKind::MeshImport { meshes, .. } = &mut g.kind {
+            meshes.iter_mut().for_each(mesh_stand_in);
+        }
+        return serde_json::to_string(&g).unwrap_or_default();
+    }
     serde_json::to_string(f).unwrap_or_default()
+}
+
+/// `m` with its positions and triangles stood in for by their digest (bit for bit) and counts,
+/// in its name: what a mesh import is fingerprinted by.
+fn mesh_stand_in(m: &mut crate::MeshData) {
+    #[cfg(test)]
+    cost_tests::count(|c| c.digested += 1);
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for v in m.positions.iter() {
+        h.write_u64(v.to_bits());
+    }
+    for i in m.triangles.iter() {
+        h.write_u32(*i);
+    }
+    m.name = format!("{}#{:016x}:{}:{}", m.name, h.finish(), m.positions.len(), m.triangles.len());
+    m.positions = Arc::from([]);
+    m.triangles = Arc::from([]);
 }
 
 /// Store in `stored` the solution `solved` holds for it: the positions, the circle and ellipse
