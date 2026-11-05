@@ -54,7 +54,7 @@ impl TriMesh {
 /// A mesh body from triangles (`positions` in mm). Coincident vertices are merged, degenerate
 /// triangles dropped, and a closed mesh with inward winding is turned outward.
 pub fn mesh_body(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<Body> {
-    body_from(positions.iter().copied(), positions.len(), triangles)
+    body_from(|i| positions.get(i).copied().unwrap_or(Vec3::ZERO), positions.len(), triangles)
 }
 
 /// [`mesh_body`] from positions held flat, x, y, z for each (as a design keeps a mesh import),
@@ -64,7 +64,7 @@ pub fn mesh_body_flat(positions: &[f64], triangles: &[[u32; 3]]) -> Result<Body>
     if !rest.is_empty() {
         return Err(KernelError::Invalid("mesh positions are not whole points".into()));
     }
-    body_from(points.iter().map(|c| Vec3::new(c[0], c[1], c[2])), points.len(), triangles)
+    body_from(|i| points.get(i).map_or(Vec3::ZERO, |c| Vec3::new(c[0], c[1], c[2])), points.len(), triangles)
 }
 
 /// What [`mesh_body`] refuses, checked without building the body: too many triangles, a
@@ -93,13 +93,14 @@ pub fn check_mesh(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<()> {
 /// file gives every triangle its own three corners); [`mesh_body`] merges the same way, so the
 /// body is the same either way.
 pub fn weld_exact(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<(Vec<Vec3>, Vec<[u32; 3]>)> {
-    weld(positions.iter().copied(), positions.len(), triangles)
+    weld(|i| positions.get(i).copied().unwrap_or(Vec3::ZERO), positions.len(), triangles)
 }
 
-fn body_from(positions: impl Iterator<Item = Vec3> + Clone, count: usize, triangles: &[[u32; 3]]) -> Result<Body> {
+/// The body of `count` points (`point(i)` the `i`th) and `triangles`.
+fn body_from(point: impl Fn(usize) -> Vec3 + Sync, count: usize, triangles: &[[u32; 3]]) -> Result<Body> {
     let _span = solidcraft_profile::span("kernel", "mesh_body");
-    check_counts_and_points(positions.clone(), triangles)?;
-    let (positions, mut triangles) = weld(positions, count, triangles)?;
+    check_counts_and_points((0..count).map(&point), triangles)?;
+    let (positions, mut triangles) = weld(point, count, triangles)?;
     triangles.retain(|t| t[0] != t[1] && t[1] != t[2] && t[2] != t[0]);
     if triangles.is_empty() {
         return Err(no_triangles());
@@ -137,24 +138,73 @@ fn bits(p: Vec3) -> [u64; 3] {
     [(p.x + 0.0).to_bits(), (p.y + 0.0).to_bits(), (p.z + 0.0).to_bits()]
 }
 
-/// [`weld_exact`] of `count` positions.
-fn weld(positions: impl Iterator<Item = Vec3>, count: usize, triangles: &[[u32; 3]]) -> Result<(Vec<Vec3>, Vec<[u32; 3]>)> {
-    let mut map: HashMap<[u64; 3], u32> = HashMap::new();
-    let mut remap: Vec<u32> = Vec::with_capacity(count);
-    let mut kept = Vec::new();
-    for p in positions {
-        let next = u32::try_from(kept.len()).map_err(|_| KernelError::Invalid("too many vertices".into()))?;
-        let i = *map.entry(bits(p)).or_insert_with(|| {
-            kept.push(p);
-            next
-        });
-        remap.push(i);
+/// [`weld_exact`] of `count` points (`point(i)` the `i`th): each point's first copy kept, in
+/// order, and every triangle's corners in the points kept. The points are shared among threads
+/// by their hash, each finding the copies among its own (a scan's 14 million points took over a
+/// second in one table); a stored scan, already welded, has none, and its points are kept as
+/// they are. Each point's slot says the point it copies, then where that one is kept.
+fn weld(point: impl Fn(usize) -> Vec3 + Sync, count: usize, triangles: &[[u32; 3]]) -> Result<(Vec<Vec3>, Vec<[u32; 3]>)> {
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
+    if u32::try_from(count).is_err() {
+        return Err(KernelError::Invalid("too many vertices".into()));
     }
-    drop(map);
-    let corner = |i: u32| remap.get(i as usize).copied().ok_or_else(missing_vertex);
+    let first: Vec<AtomicU32> = (0..count as u32).map(AtomicU32::new).collect();
+    let copied = AtomicBool::new(false);
+    let shard_of = |p: Vec3| {
+        let [x, y, z] = bits(p);
+        (x ^ y.rotate_left(21) ^ z.rotate_left(42)).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 59
+    };
+    let find = |&shard: &u64| {
+        let mut seen: HashMap<[u64; 3], u32> = HashMap::new();
+        for i in 0..count {
+            let p = point(i);
+            if shard_of(p) != shard {
+                continue;
+            }
+            let at = *seen.entry(bits(p)).or_insert(i as u32);
+            if at as usize != i {
+                if let Some(slot) = first.get(i) {
+                    slot.store(at, Relaxed);
+                }
+                copied.store(true, Relaxed);
+            }
+        }
+    };
+    let shards: Vec<u64> = (0..WELD_SHARDS).collect();
+    for (shard, done) in shards.iter().zip(crate::par::map("mesh weld", &shards, true, |s| {
+        find(s);
+        Ok(())
+    })) {
+        if done.is_err() {
+            find(shard);
+        }
+    }
+    if !copied.load(Relaxed) {
+        let n = count as u32;
+        let triangles =
+            triangles.iter().map(|t| if t.iter().all(|&i| i < n) { Ok(*t) } else { Err(missing_vertex()) }).collect::<Result<Vec<_>>>()?;
+        return Ok(((0..count).map(&point).collect(), triangles));
+    }
+    // Each point's slot to where its first copy is kept (an earlier point's slot already says).
+    let mut kept = Vec::new();
+    for (i, slot) in first.iter().enumerate() {
+        let at = slot.load(Relaxed) as usize;
+        let place = if at == i {
+            kept.push(point(i));
+            (kept.len() - 1) as u32
+        } else {
+            first.get(at).map_or(0, |s| s.load(Relaxed))
+        };
+        slot.store(place, Relaxed);
+    }
+    let corner = |i: u32| first.get(i as usize).map(|s| s.load(Relaxed)).ok_or_else(missing_vertex);
     let triangles = triangles.iter().map(|t| Ok([corner(t[0])?, corner(t[1])?, corner(t[2])?])).collect::<Result<Vec<_>>>()?;
     Ok((kept, triangles))
 }
+
+/// How many threads' shares [`weld`] cuts the points into (a power of two: the top bits of the
+/// hash pick the share).
+const WELD_SHARDS: u64 = 32;
 
 /// The top bit of a side's place in [`sorted_sides`]: set when the side runs from its lower end.
 /// The place itself, `3 * triangle + k`, stays below it (`3 * MAX_TRIANGLES < 2^31`).
@@ -245,40 +295,73 @@ fn unify_winding(m: &mut TriMesh) {
 /// creases of at least 30 degrees, unless the creases are a scan's noise ([`noise_creases`]).
 /// Worked out once, when the body is made ([`TriMesh::into_kept`]).
 pub(crate) fn outlines(positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Vec<Vec3>> {
+    outlines_in(positions, triangles, OUTLINE_PIECE)
+}
+
+/// [`outlines`], the work cut into pieces of `piece` triangles or sides.
+fn outlines_in(positions: &[Vec3], triangles: &[[u32; 3]], piece: usize) -> Vec<Vec<Vec3>> {
+    let piece = piece.max(1);
     let normal = |index: usize| {
         let t = triangles.get(index)?;
         let (a, b, c) = (positions.get(t[0] as usize)?, positions.get(t[1] as usize)?, positions.get(t[2] as usize)?);
         (*b - *a).cross(*c - *a).normalized()
     };
+    // Which triangles have an area, worked out on the pool (a scan's tens of millions).
+    let pieces: Vec<std::ops::Range<usize>> = (0..triangles.len()).step_by(piece).map(|s| s..(s + piece).min(triangles.len())).collect();
+    let flat = |r: &std::ops::Range<usize>| -> Vec<bool> { r.clone().map(|i| normal(i).is_some()).collect() };
+    let made = crate::par::map("mesh outlines", &pieces, true, |r| Ok(flat(r)));
+    let has_area: Vec<bool> = pieces.iter().zip(made).flat_map(|(r, m)| m.unwrap_or_else(|_| flat(r))).collect();
     // One compact record per side, sorted for deterministic output, instead of a map of
     // separately allocated adjacency lists. Mesh imports already cap the triangle count.
     let mut sides = Vec::with_capacity(triangles.len().saturating_mul(3));
-    for (i, t) in triangles.iter().enumerate() {
+    for ((i, t), area) in triangles.iter().enumerate().zip(&has_area) {
         let Ok(triangle) = u32::try_from(i) else { continue };
-        if normal(i).is_some() {
+        if *area {
             for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
                 sides.push((a.min(b), a.max(b), triangle));
             }
         }
     }
+    drop(has_area);
     crate::par::sort_unstable(&mut sides);
     let cos = 30f64.to_radians().cos();
-    // Each outline side, in the sorted order, and whether it is a crease.
-    let mut outline = Vec::new();
-    for side in sides.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
-        let Some(&(a, b, _)) = side.first() else { continue };
-        let (visible, crease) = match side {
-            [(_, _, i), (_, _, j)] => (normal(*i as usize).zip(normal(*j as usize)).is_some_and(|(n, m)| n.dot(m) <= cos), true),
-            _ => (true, false),
-        };
-        if visible && positions.get(a as usize).is_some() && positions.get(b as usize).is_some() {
-            outline.push((a, b, crease));
+    // Each outline side, in the sorted order, and whether it is a crease: runs of whole sides
+    // tried on the pool, joined in order.
+    let mut runs: Vec<&[(u32, u32, u32)]> = Vec::new();
+    let mut rest = sides.as_slice();
+    while !rest.is_empty() {
+        let mut end = rest.len().min(piece);
+        while end < rest.len() && rest.get(end - 1).map(|s| (s.0, s.1)) == rest.get(end).map(|s| (s.0, s.1)) {
+            end += 1;
         }
+        let (run, after) = rest.split_at(end);
+        runs.push(run);
+        rest = after;
     }
+    let outlined = |run: &&[(u32, u32, u32)]| -> Vec<(u32, u32, bool)> {
+        let mut outline = Vec::new();
+        for side in run.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
+            let Some(&(a, b, _)) = side.first() else { continue };
+            let (visible, crease) = match side {
+                [(_, _, i), (_, _, j)] => (normal(*i as usize).zip(normal(*j as usize)).is_some_and(|(n, m)| n.dot(m) <= cos), true),
+                _ => (true, false),
+            };
+            if visible && positions.get(a as usize).is_some() && positions.get(b as usize).is_some() {
+                outline.push((a, b, crease));
+            }
+        }
+        outline
+    };
+    let made = crate::par::map("mesh outlines", &runs, true, |run| Ok(outlined(run)));
+    let outline: Vec<(u32, u32, bool)> = runs.iter().zip(made).flat_map(|(run, m)| m.unwrap_or_else(|_| outlined(run))).collect();
+    drop(sides);
     let noise = noise_creases(positions.len(), &outline);
     let edges: Vec<(u32, u32)> = outline.iter().filter(|s| !(noise && s.2)).map(|&(a, b, _)| (a, b)).collect();
     straight_runs(positions, &edges)
 }
+
+/// Triangles (or sides) one task of [`outlines`] works through on the pool.
+const OUTLINE_PIECE: usize = 1 << 18;
 
 /// The least creases a mesh has before they can be taken for noise: a small mesh keeps them all.
 const NOISE_CREASES: usize = 100;
@@ -484,6 +567,47 @@ mod tests {
         }
     }
 
+    /// The weld [`weld`] replaced (one table, every point in turn), kept to check that the
+    /// shared-out one keeps the same points and gives the same corners.
+    fn weld_in_one_table(positions: &[Vec3], triangles: &[[u32; 3]]) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        let mut map: HashMap<[u64; 3], u32> = HashMap::new();
+        let (mut remap, mut kept) = (Vec::new(), Vec::new());
+        for p in positions {
+            let next = kept.len() as u32;
+            let i = *map.entry(bits(*p)).or_insert_with(|| {
+                kept.push(*p);
+                next
+            });
+            remap.push(i);
+        }
+        (kept, triangles.iter().map(|t| t.map(|i| remap[i as usize])).collect())
+    }
+
+    /// Points with many copies (-0 and 0 among them), and none: the shared-out weld keeps the
+    /// first copy of each in order and gives each triangle the corners one table gives it.
+    #[test]
+    fn the_weld_shared_among_threads_is_the_weld_in_one_table() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let distinct: Vec<Vec3> =
+            (0..5000).map(|i| Vec3::new(f64::from(i % 17) - 8.0, f64::from(i / 17 % 13) * 0.5, f64::from(i / 221) * -0.25)).collect();
+        let mut positions: Vec<Vec3> = (0..60_000).map(|_| distinct[next(5000) as usize]).collect();
+        positions.extend([Vec3::new(0.0, 0.0, 0.0), Vec3::new(-0.0, 0.0, -0.0)]);
+        let triangles: Vec<[u32; 3]> = (0..40_000).map(|_| [0, 0, 0].map(|_| next(positions.len() as u64) as u32)).collect();
+        let shared = weld(|i| positions[i], positions.len(), &triangles).unwrap();
+        assert_eq!(shared, weld_in_one_table(&positions, &triangles));
+        assert!(shared.0.len() <= 5001);
+        // Welded already: kept as they are.
+        let (kept, corners) = (shared.0.clone(), shared.1.clone());
+        assert_eq!(weld(|i| kept[i], kept.len(), &corners).unwrap(), (kept.clone(), corners.clone()));
+        assert!(weld(|i| kept[i], kept.len(), &[[0, 1, kept.len() as u32]]).is_err(), "a corner past the points");
+    }
+
     /// A band of `n` squares round and `rows` along, two triangles each; closed round into a tube,
     /// or with a half twist into a Möbius strip. Triangles picked by `flip` are turned over.
     fn band(n: u32, rows: u32, twist: bool, flip: impl Fn(usize) -> bool) -> TriMesh {
@@ -600,6 +724,19 @@ mod tests {
         assert!(edges.iter().any(|e| e == &[Vec3::ZERO, Vec3::X, Vec3::X * 2.] || e == &[Vec3::X * 2., Vec3::X, Vec3::ZERO]), "{edges:?}");
         // Bad indices and zero-area facets do not invent outlines or panic.
         assert!(outlines(&[Vec3::ZERO, Vec3::X, Vec3::X * 2.], &[[0, 1, 99], [0, 1, 2]]).is_empty());
+    }
+
+    /// Outlines worked out in pieces are those worked out at once, whatever the pieces: a folded
+    /// sheet's creases and open edge, cut into pieces of a few sides.
+    #[test]
+    fn outlines_in_pieces_are_the_outlines_at_once() {
+        let zigzag = |i: u32, j: u32| f64::from(if (i / 5).is_multiple_of(2) { i % 5 } else { 5 - i % 5 }) + f64::from(j % 3) * 0.01;
+        let (p, t) = grid(40, zigzag);
+        let whole = outlines_in(&p, &t, usize::MAX);
+        assert!(whole.len() > 4, "{}", whole.len());
+        for piece in [1, 2, 7, 64, 1000] {
+            assert_eq!(outlines_in(&p, &t, piece), whole, "pieces of {piece}");
+        }
     }
 
     /// A grid of `n` × `n` unit squares, its height at each node `z(i, j)`.
