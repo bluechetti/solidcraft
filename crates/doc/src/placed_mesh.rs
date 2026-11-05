@@ -188,8 +188,9 @@ pub(super) fn reference_mesh(body: &Body, mesh: &OnceLock<Arc<Mesh>>, tolerance:
 }
 
 /// Display lines for an imported triangle mesh: open boundaries, non-manifold sides and
-/// creases of at least 30 degrees. The shared vertex indices come from the existing mesh body;
-/// the geometry, winding and triangle topology are left to the importer.
+/// creases of at least 30 degrees, unless the creases are a scan's noise ([`noise_creases`]).
+/// The shared vertex indices come from the existing mesh body; the geometry, winding and
+/// triangle topology are left to the importer.
 fn mesh_outlines(positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Vec<Vec3>> {
     let normal = |index: usize| {
         let t = triangles.get(index)?;
@@ -209,18 +210,48 @@ fn mesh_outlines(positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Vec<Vec3>> {
     }
     sides.sort_unstable();
     let cos = 30f64.to_radians().cos();
-    let mut edges = Vec::new();
+    // Each outline side, in the sorted order, and whether it is a crease.
+    let mut outline = Vec::new();
     for side in sides.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
         let Some(&(a, b, _)) = side.first() else { continue };
-        let visible = match side {
-            [(_, _, i), (_, _, j)] => normal(*i as usize).zip(normal(*j as usize)).is_some_and(|(n, m)| n.dot(m) <= cos),
-            _ => true,
+        let (visible, crease) = match side {
+            [(_, _, i), (_, _, j)] => (normal(*i as usize).zip(normal(*j as usize)).is_some_and(|(n, m)| n.dot(m) <= cos), true),
+            _ => (true, false),
         };
         if visible && positions.get(a as usize).is_some() && positions.get(b as usize).is_some() {
-            edges.push((a, b));
+            outline.push((a, b, crease));
         }
     }
+    let noise = noise_creases(positions.len(), &outline);
+    let edges: Vec<(u32, u32)> = outline.iter().filter(|s| !(noise && s.2)).map(|&(a, b, _)| (a, b)).collect();
     straight_runs(positions, &edges)
+}
+
+/// The least creases a mesh has before they can be taken for noise: a small mesh keeps them all.
+const NOISE_CREASES: usize = 100;
+
+/// Whether a mesh's creases are a scan's noise, not its edges: more than a tenth of them end
+/// where no other outline meets. A part's creases run on into one another, round its faces, and
+/// end at its corners or open edges (2% at most end loose in the CAD meshes measured, none in a
+/// box or a faceted cylinder); a scan's noise is short creases scattered over it (16 to 58% end
+/// loose in the scans measured), drawn as a speckle that hides its shape. `outline` is each
+/// outline side with whether it is a crease; `vertices` is the mesh's count.
+fn noise_creases(vertices: usize, outline: &[(u32, u32, bool)]) -> bool {
+    let creases = outline.iter().filter(|s| s.2).count();
+    if creases < NOISE_CREASES {
+        return false;
+    }
+    let mut meets = vec![0u8; vertices];
+    for &(a, b, _) in outline {
+        for v in [a, b] {
+            if let Some(m) = meets.get_mut(v as usize) {
+                *m = m.saturating_add(1);
+            }
+        }
+    }
+    let alone = |v: u32| meets.get(v as usize).is_some_and(|m| *m == 1);
+    let loose = outline.iter().filter(|&&(a, b, crease)| crease && (alone(a) || alone(b))).count();
+    loose * 10 > creases
 }
 
 /// The outline sides `sides` (vertex index pairs) as polylines: sides that run on straight
@@ -328,6 +359,42 @@ mod tests {
         assert!(edges.iter().any(|e| e == &[Vec3::ZERO, Vec3::X, Vec3::X * 2.] || e == &[Vec3::X * 2., Vec3::X, Vec3::ZERO]), "{edges:?}");
         // Bad indices and zero-area facets do not invent outlines or panic.
         assert!(mesh_outlines(&[Vec3::ZERO, Vec3::X, Vec3::X * 2.], &[[0, 1, 99], [0, 1, 2]]).is_empty());
+    }
+
+    /// A grid of `n` × `n` unit squares, its height at each node `z(i, j)`.
+    fn grid(n: u32, z: impl Fn(u32, u32) -> f64) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        let positions = (0..=n).flat_map(|j| (0..=n).map(move |i| (i, j))).map(|(i, j)| Vec3::new(f64::from(i), f64::from(j), z(i, j))).collect();
+        let at = |i: u32, j: u32| j * (n + 1) + i;
+        let triangles = (0..n)
+            .flat_map(|j| (0..n).flat_map(move |i| [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]]))
+            .collect();
+        (positions, triangles)
+    }
+
+    /// A scan's noise, short creases scattered over it, draws no lines (a speckle that hides its
+    /// shape): only its open boundary. A part's creases, folds that run right across it, all stay.
+    #[test]
+    fn a_scans_noise_creases_are_not_outlines() {
+        let n = 40;
+        // Heights within ±0.25 of a unit grid: 418 short creases, three in four ending loose.
+        let bumpy = |i: u32, j: u32| 0.5 * (f64::from((i.wrapping_mul(73_856_093) ^ j.wrapping_mul(19_349_663)) % 1000) / 1000.0 - 0.5);
+        let (p, t) = grid(n, bumpy);
+        let edges = mesh_outlines(&p, &t);
+        let border = |q: &Vec3| q.x == 0.0 || q.y == 0.0 || q.x == f64::from(n) || q.y == f64::from(n);
+        assert!(
+            !edges.is_empty() && edges.iter().flatten().all(border),
+            "only the open boundary: {:?}",
+            edges.iter().find(|e| !e.iter().all(border))
+        );
+        // Folded up and down every 8 squares: four folds right across, 160 crease sides.
+        let zigzag = |i: u32, _: u32| f64::from(if (i / 8).is_multiple_of(2) { i % 8 } else { 8 - i % 8 });
+        let (p, t) = grid(n, zigzag);
+        let edges = mesh_outlines(&p, &t);
+        for x in [8.0, 16.0, 24.0, 32.0] {
+            let across =
+                |e: &Vec<Vec3>| e.iter().all(|q| q.x == x) && e.first().zip(e.last()).is_some_and(|(a, b)| (a.y - b.y).abs() == f64::from(n));
+            assert!(edges.iter().any(across), "the fold at x = {x}");
+        }
     }
 
     #[test]
