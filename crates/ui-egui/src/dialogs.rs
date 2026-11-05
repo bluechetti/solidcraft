@@ -403,6 +403,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             ScanSymmetry(crate::dialogs_scan::Symmetry),
             ScanEditSurface(crate::dialogs_scan_surface::EditSurface),
             ScanCurve(crate::dialogs_scan_curve::CurveOnScan),
+            ScanFloating(crate::dialogs_scan_clean::Floating),
             /// Appearance (`dialogs_appearance`).
             Appearance(crate::dialogs_appearance::Ap),
             /// Contact sets, motion studies, exploded views, configurations (`dialogs_motion`).
@@ -1109,6 +1110,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_scan::start(app, id))
                     .or_else(|| crate::dialogs_scan_surface::start(app, id))
                     .or_else(|| crate::dialogs_scan_curve::start(app, id))
+                    .or_else(|| crate::dialogs_scan_clean::start(app, id))
                     .or_else(|| crate::dialogs_appearance::start(app, id))
                     .or_else(|| crate::dialogs_motion::start(app, id))
                     .or_else(|| crate::dialogs_parts::start(app, id))
@@ -2571,6 +2573,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::ScanSymmetry(_) => "SYMMETRY",
         Kind::ScanEditSurface(_) => "EDIT SURFACE",
         Kind::ScanCurve(_) => "CURVE ON SCAN",
+        Kind::ScanFloating(_) => "FLOATING PIECES",
         Kind::Appearance(_) => "APPEARANCE",
         Kind::Motion(k) => k.title(),
         Kind::Part(_) => "INSERT PART",
@@ -5603,6 +5606,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanSymmetry(k) => return crate::dialogs_scan::symmetry_commands(k),
         Kind::ScanEditSurface(k) => return crate::dialogs_scan_surface::commands(k),
         Kind::ScanCurve(k) => return crate::dialogs_scan_curve::commands(k),
+        Kind::ScanFloating(k) => return crate::dialogs_scan_clean::commands(k),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),
         Kind::Part(k) => return crate::dialogs_parts::commands(app, k, &d.inputs),

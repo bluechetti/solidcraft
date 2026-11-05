@@ -95,7 +95,14 @@
     "ui.scan_curve_fit_value": "{points} points, within {max}",
     "ui.scan_curve_hint": "Click points along the scan in order; click the first again to close the curve. OK keeps it in the 3D sketch Scan Curves.",
     "ui.scan_curve_need": "Click at least two points on the scan.",
-    "ui.ribbon_scan_curve": "Scan Curve"
+    "ui.ribbon_scan_curve": "Scan Curve",
+    "cmd.scan_remove_floating": "Remove Floating Pieces",
+    "help.scan.remove_floating": "Takes off the scan's specks and scraps not joined to the part (dust, a fixture, a reflection): every piece far smaller than the largest. Use it before fitting, so stray points don't pull a fit.",
+    "ui.ribbon_floating": "Floating",
+    "ui.scan_floating_below": "Floating below",
+    "ui.scan_floating_found": "{floating} of {pieces} pieces float: {triangles} triangles, marked on the scan.",
+    "ui.scan_floating_hint": "A piece with fewer triangles than this share of the largest floats. OK takes the marked pieces off.",
+    "ui.scan_floating_none": "No piece floats: lower the share, or there is nothing to take off."
   },
   "de": {
     "ALIGN": "AUSRICHTEN",
@@ -193,7 +200,14 @@
     "ui.scan_curve_fit_value": "{points} Punkte, innerhalb {max}",
     "ui.scan_curve_hint": "Klicken Sie Punkte der Reihe nach entlang des Scans; klicken Sie den ersten erneut, um die Kurve zu schließen. OK behält sie in der 3D-Skizze „Scan Curves“.",
     "ui.scan_curve_need": "Klicken Sie mindestens zwei Punkte auf dem Scan.",
-    "ui.ribbon_scan_curve": "Scan-Kurve"
+    "ui.ribbon_scan_curve": "Scan-Kurve",
+    "cmd.scan_remove_floating": "Schwebende Teile entfernen",
+    "help.scan.remove_floating": "Entfernt Splitter und Fetzen des Scans, die nicht mit dem Teil verbunden sind (Staub, eine Halterung, eine Spiegelung): jedes Stück, das weit kleiner als das größte ist. Verwenden Sie es vor dem Anpassen, damit verirrte Punkte keine Anpassung verziehen.",
+    "ui.ribbon_floating": "Schwebend",
+    "ui.scan_floating_below": "Schwebend unter",
+    "ui.scan_floating_found": "{floating} von {pieces} Stücken schweben: {triangles} Dreiecke, auf dem Scan markiert.",
+    "ui.scan_floating_hint": "Ein Stück mit weniger Dreiecken als dieser Anteil des größten schwebt. OK entfernt die markierten Stücke.",
+    "ui.scan_floating_none": "Kein Stück schwebt: Verringern Sie den Anteil, oder es gibt nichts zu entfernen."
   },
   "ja": {
     "ALIGN": "位置合わせ",
@@ -291,7 +305,14 @@
     "ui.scan_curve_fit_value": "{points} 点、{max} 以内",
     "ui.scan_curve_hint": "スキャンに沿って順に点をクリックします。最初の点をもう一度クリックすると閉じます。OK で 3D スケッチ Scan Curves に残します。",
     "ui.scan_curve_need": "スキャン上で少なくとも 2 点をクリックしてください。",
-    "ui.ribbon_scan_curve": "スキャン曲線"
+    "ui.ribbon_scan_curve": "スキャン曲線",
+    "cmd.scan_remove_floating": "浮いた断片を削除",
+    "help.scan.remove_floating": "部品につながっていないスキャンの小片(ほこり、治具、反射)を取り除きます。最大の断片よりはるかに小さい断片すべてです。フィットの前に使うと、余計な点がフィットを引っ張りません。",
+    "ui.ribbon_floating": "浮遊",
+    "ui.scan_floating_below": "浮遊とする上限",
+    "ui.scan_floating_found": "{pieces} 個中 {floating} 個の断片が浮いています: {triangles} 三角形、スキャン上に表示。",
+    "ui.scan_floating_hint": "最大の断片に対してこの割合より三角形が少ない断片は浮いているとみなします。OK で表示された断片を削除します。",
+    "ui.scan_floating_none": "浮いた断片はありません。割合を下げるか、取り除くものはありません。"
   },
   "ko": {
     "ALIGN": "정렬",
@@ -389,7 +410,14 @@
     "ui.scan_curve_fit_value": "점 {points}개, {max} 이내",
     "ui.scan_curve_hint": "스캔을 따라 순서대로 점을 클릭하세요. 첫 점을 다시 클릭하면 곡선이 닫힙니다. 확인을 누르면 3D 스케치 Scan Curves에 유지합니다.",
     "ui.scan_curve_need": "스캔 위에서 점을 두 개 이상 클릭하세요.",
-    "ui.ribbon_scan_curve": "스캔 곡선"
+    "ui.ribbon_scan_curve": "스캔 곡선",
+    "cmd.scan_remove_floating": "떠 있는 조각 제거",
+    "help.scan.remove_floating": "부품에 붙어 있지 않은 스캔의 부스러기(먼지, 고정구, 반사)를 제거합니다: 가장 큰 조각보다 훨씬 작은 모든 조각입니다. 맞춤 전에 사용하면 엉뚱한 점이 맞춤을 끌어당기지 않습니다.",
+    "ui.ribbon_floating": "떠 있음",
+    "ui.scan_floating_below": "떠 있음 기준",
+    "ui.scan_floating_found": "조각 {pieces}개 중 {floating}개가 떠 있습니다: 삼각형 {triangles}개, 스캔에 표시됨.",
+    "ui.scan_floating_hint": "가장 큰 조각 대비 이 비율보다 삼각형이 적은 조각은 떠 있는 것으로 봅니다. 확인을 누르면 표시된 조각을 제거합니다.",
+    "ui.scan_floating_none": "떠 있는 조각이 없습니다: 비율을 낮추거나, 제거할 것이 없습니다."
   },
   "zh": {
     "ALIGN": "对齐",
@@ -487,7 +515,14 @@
     "ui.scan_curve_fit_value": "{points} 个点，偏差在 {max} 内",
     "ui.scan_curve_hint": "沿扫描依次单击点；再次单击第一个点可闭合曲线。确定后保存在 3D 草图 Scan Curves 中。",
     "ui.scan_curve_need": "请在扫描上至少单击两个点。",
-    "ui.ribbon_scan_curve": "扫描曲线"
+    "ui.ribbon_scan_curve": "扫描曲线",
+    "cmd.scan_remove_floating": "移除漂浮碎片",
+    "help.scan.remove_floating": "移除扫描中未连接到零件的碎屑(灰尘、夹具、反光):所有远小于最大碎片的碎片。在拟合前使用，以免杂点影响拟合。",
+    "ui.ribbon_floating": "漂浮",
+    "ui.scan_floating_below": "漂浮阈值",
+    "ui.scan_floating_found": "{pieces} 个碎片中有 {floating} 个漂浮:{triangles} 个三角形，已在扫描上标出。",
+    "ui.scan_floating_hint": "三角形数少于最大碎片此比例的碎片视为漂浮。确定后移除标出的碎片。",
+    "ui.scan_floating_none": "没有漂浮的碎片:降低比例，或没有可移除的内容。"
   },
   "ar": {
     "ALIGN": "محاذاة",
@@ -585,7 +620,14 @@
     "ui.scan_curve_fit_value": "{points} نقاط، ضمن {max}",
     "ui.scan_curve_hint": "انقر النقاط على امتداد المسح بالترتيب؛ انقر الأولى مجددًا لإغلاق المنحنى. موافق يحتفظ به في الرسم ثلاثي الأبعاد Scan Curves.",
     "ui.scan_curve_need": "انقر نقطتين على الأقل على المسح.",
-    "ui.ribbon_scan_curve": "منحنى المسح"
+    "ui.ribbon_scan_curve": "منحنى المسح",
+    "cmd.scan_remove_floating": "إزالة القطع العائمة",
+    "help.scan.remove_floating": "يزيل من المسح الفتات والقصاصات غير المتصلة بالقطعة (غبار، مثبّت، انعكاس): كل قطعة أصغر بكثير من الكبرى. استخدمه قبل الملاءمة كي لا تشدّ النقاط الشاردة الملاءمة.",
+    "ui.ribbon_floating": "عائمة",
+    "ui.scan_floating_below": "عائمة تحت",
+    "ui.scan_floating_found": "{floating} من {pieces} قطع عائمة: {triangles} مثلثًا، معلّمة على المسح.",
+    "ui.scan_floating_hint": "القطعة ذات مثلثات أقل من هذه النسبة من الكبرى تُعد عائمة. موافق يزيل القطع المعلّمة.",
+    "ui.scan_floating_none": "لا توجد قطع عائمة: اخفض النسبة، أو لا شيء لإزالته."
   },
   "he": {
     "ALIGN": "יישור",
@@ -683,7 +725,14 @@
     "ui.scan_curve_fit_value": "{points} נקודות, בתוך {max}",
     "ui.scan_curve_hint": "לחצו על נקודות לאורך הסריקה לפי הסדר; לחצו שוב על הראשונה כדי לסגור את העקומה. אישור שומר אותה בסקיצה התלת-ממדית Scan Curves.",
     "ui.scan_curve_need": "לחצו לפחות על שתי נקודות על הסריקה.",
-    "ui.ribbon_scan_curve": "עקומת סריקה"
+    "ui.ribbon_scan_curve": "עקומת סריקה",
+    "cmd.scan_remove_floating": "הסרת חלקים צפים",
+    "help.scan.remove_floating": "מסירה מהסריקה פירורים ושאריות שאינם מחוברים לחלק (אבק, מתקן, השתקפות): כל חלק קטן בהרבה מהגדול ביותר. השתמשו בה לפני התאמה, כדי שנקודות תועות לא ימשכו את ההתאמה.",
+    "ui.ribbon_floating": "צפים",
+    "ui.scan_floating_below": "צף מתחת ל",
+    "ui.scan_floating_found": "{floating} מתוך {pieces} חלקים צפים: {triangles} משולשים, מסומנים על הסריקה.",
+    "ui.scan_floating_hint": "חלק עם פחות משולשים מחלק זה של הגדול ביותר נחשב צף. אישור מסיר את החלקים המסומנים.",
+    "ui.scan_floating_none": "אין חלקים צפים: הקטינו את החלק, או שאין מה להסיר."
   },
   "vi": {
     "ALIGN": "CĂN CHỈNH",
@@ -781,7 +830,14 @@
     "ui.scan_curve_fit_value": "{points} điểm, trong {max}",
     "ui.scan_curve_hint": "Bấm các điểm dọc theo bản quét theo thứ tự; bấm lại điểm đầu để khép đường cong. OK giữ nó trong phác thảo 3D Scan Curves.",
     "ui.scan_curve_need": "Hãy bấm ít nhất hai điểm trên bản quét.",
-    "ui.ribbon_scan_curve": "Đường cong quét"
+    "ui.ribbon_scan_curve": "Đường cong quét",
+    "cmd.scan_remove_floating": "Xóa mảnh trôi nổi",
+    "help.scan.remove_floating": "Bỏ các vụn và mảnh của bản quét không dính với chi tiết (bụi, đồ gá, phản xạ): mọi mảnh nhỏ hơn hẳn mảnh lớn nhất. Dùng trước khi khớp để điểm lạc không kéo lệch.",
+    "ui.ribbon_floating": "Trôi nổi",
+    "ui.scan_floating_below": "Trôi nổi dưới",
+    "ui.scan_floating_found": "{floating} trên {pieces} mảnh trôi nổi: {triangles} tam giác, đã đánh dấu trên bản quét.",
+    "ui.scan_floating_hint": "Mảnh có ít tam giác hơn tỷ lệ này so với mảnh lớn nhất được coi là trôi nổi. OK bỏ các mảnh đã đánh dấu.",
+    "ui.scan_floating_none": "Không có mảnh trôi nổi: giảm tỷ lệ, hoặc không có gì để bỏ."
   },
   "en-GB": {
     "cmd.scan_center": "Centre on Origin",

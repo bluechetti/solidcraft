@@ -333,7 +333,7 @@ pub const SECTIONS: &[Section] = &[
         tab: "SCAN",
         panel: "CLEAN",
         promoted: 4,
-        ids: &["scan.repair", "scan.fill_holes", "scan.reduce", "scan.remesh", "scan.mesh_from_points"],
+        ids: &["scan.repair", "scan.fill_holes", "scan.remove_floating", "scan.reduce", "scan.remesh", "scan.mesh_from_points"],
     },
     Section {
         tab: "SCAN",
@@ -471,6 +471,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("scan.complete_by_mirroring", "Mirror Fill"),
     ("scan.curve_on_scan", "Scan Curve"),
     ("scan.deviation", "Deviation"),
+    ("scan.remove_floating", "Floating"),
     ("scan.square_to_symmetry", "Square Up"),
     ("scan.stand_on_base", "Stand on Base"),
     ("scan.symmetry", "Symmetry"),

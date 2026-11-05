@@ -9,6 +9,7 @@
 //! - [`deviation`]: how far the scan is from the model built from it.
 //! - [`fit`]: a plane or a cylinder fitted to the part of the scan round a picked point.
 //! - [`mirror_fill`]: a scan completed by its mirror image where it has nothing.
+//! - [`pieces`]: the pieces of a scan, and those small enough to float.
 //! - [`place`]: rigid moves that stand a scan on a base, rest it on the grid, centre it over the
 //!   origin or lay it along its own axes.
 //! - [`surface`]: a smooth B-spline surface fitted to the part of the scan round a picked point.
@@ -23,10 +24,13 @@ pub mod deviation;
 pub mod fit;
 mod hull;
 pub mod mirror_fill;
+pub mod pieces;
 pub mod place;
 pub mod surface;
 pub mod surface_edit;
 pub mod symmetry;
+
+use std::collections::HashMap;
 
 use solidcore_record::Vec3;
 use solidcraft_geom::prelude::*;
@@ -100,6 +104,48 @@ pub(crate) fn surface_centre(scan: &Scan) -> Option<Vec3> {
         }
     }
     (total > 0.0).then(|| weighted / total)
+}
+
+/// Each position's representative: the first position at the same place.
+pub(crate) fn welded(positions: &[Vec3]) -> Vec<u32> {
+    let mut first: HashMap<[u64; 3], u32> = HashMap::with_capacity(positions.len());
+    positions
+        .iter()
+        .enumerate()
+        .map(|(i, p)| *first.entry([(p.x + 0.0).to_bits(), (p.y + 0.0).to_bits(), (p.z + 0.0).to_bits()]).or_insert(i as u32))
+        .collect()
+}
+
+/// Sets of vertices joined by the triangles between them.
+pub(crate) struct UnionFind {
+    parent: Vec<usize>,
+}
+
+impl UnionFind {
+    pub(crate) fn new(n: usize) -> Self {
+        UnionFind { parent: (0..n).collect() }
+    }
+
+    pub(crate) fn find(&mut self, mut i: usize) -> usize {
+        while let Some(&p) = self.parent.get(i) {
+            if p == i {
+                break;
+            }
+            let grand = self.parent.get(p).copied().unwrap_or(p);
+            self.parent[i] = grand;
+            i = p;
+        }
+        i
+    }
+
+    pub(crate) fn join(&mut self, a: usize, b: usize) {
+        let (a, b) = (self.find(a), self.find(b));
+        if a != b
+            && let Some(slot) = self.parent.get_mut(a)
+        {
+            *slot = b;
+        }
+    }
 }
 
 #[cfg(test)]

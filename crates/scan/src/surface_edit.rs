@@ -338,30 +338,11 @@ pub fn normal_at(surface: &NurbsSurface, index: usize) -> Option<Vec3> {
 }
 
 /// The rigid move that takes the net `from` onto the net `to` (`count` across, u fastest), if
-/// there is one: worked out from three corners and checked on every point. A surface moved by a
+/// there is one. A surface moved by a
 /// later feature has its imported net moved so.
 pub fn placement(from: &[Vec3], to: &[Vec3], count: [usize; 2]) -> Option<Rigid> {
-    let [nu, nv] = count;
-    if from.len() != nu * nv || to.len() != from.len() || nu < 2 || nv < 2 {
-        return None;
-    }
-    let corners = [0, nu - 1, nu * (nv - 1)];
-    let frame = |net: &[Vec3]| -> Option<(Vec3, [Vec3; 3])> {
-        let [a, b, c] = corners.map(|i| net[i]);
-        let e1 = (b - a).normalized()?;
-        let e2 = ((c - a) - e1 * (c - a).dot(e1)).normalized()?;
-        Some((a, [e1, e2, e1.cross(e2)]))
-    };
-    let ((a, f), (a2, g)) = (frame(from)?, frame(to)?);
-    // R = G Fᵀ: the frame of `from` turned onto the frame of `to`.
-    let row = |i: usize| {
-        let pick = |v: Vec3| [v.x, v.y, v.z][i];
-        [0, 1, 2].map(|j| (0..3).map(|k| pick(g[k]) * [f[k].x, f[k].y, f[k].z][j]).sum::<f64>())
-    };
-    let turn = Rigid { rotation: [row(0), row(1), row(2)], translation: Vec3::ZERO };
-    let moved = Rigid { translation: a2 - turn.turned(a), ..turn };
-    let size = from.iter().map(|p| p.dist(a)).fold(1.0, f64::max);
-    from.iter().zip(to).all(|(p, q)| moved.apply(*p).dist(*q) <= 1e-7 * size).then_some(moved)
+    (from.len() == count[0] * count[1]).then_some(())?;
+    Rigid::between(from, to)
 }
 
 /// The control points within `ring` steps (each way) of `(i, j)` on a net `count` across.

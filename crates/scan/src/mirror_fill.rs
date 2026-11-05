@@ -18,8 +18,8 @@ use solidcraft_geom::Mesh;
 use solidcraft_geom::compare::{TriangleTree, closest_on_triangle};
 use solidcraft_geom::prelude::*;
 
-use crate::Scan;
 use crate::symmetry::Mirror;
+use crate::{Scan, UnionFind, welded};
 
 /// What completing a scan by its mirror image made: the added piece as a mesh of its own.
 #[derive(Clone, Debug, PartialEq)]
@@ -247,48 +247,6 @@ pub fn complete(scan: &Scan, mirror: &Mirror, reach: Option<f64>) -> Option<Mirr
     pieces.sort_unstable();
     pieces.dedup();
     Some(MirrorFill { positions, triangles, pieces: pieces.len(), area, joined, reach })
-}
-
-/// Each position's representative: the first position at the same place.
-fn welded(positions: &[Vec3]) -> Vec<u32> {
-    let mut first: HashMap<[u64; 3], u32> = HashMap::with_capacity(positions.len());
-    positions
-        .iter()
-        .enumerate()
-        .map(|(i, p)| *first.entry([(p.x + 0.0).to_bits(), (p.y + 0.0).to_bits(), (p.z + 0.0).to_bits()]).or_insert(i as u32))
-        .collect()
-}
-
-/// Sets of vertices joined by the triangles between them.
-struct UnionFind {
-    parent: Vec<usize>,
-}
-
-impl UnionFind {
-    fn new(n: usize) -> Self {
-        UnionFind { parent: (0..n).collect() }
-    }
-
-    fn find(&mut self, mut i: usize) -> usize {
-        while let Some(&p) = self.parent.get(i) {
-            if p == i {
-                break;
-            }
-            let grand = self.parent.get(p).copied().unwrap_or(p);
-            self.parent[i] = grand;
-            i = p;
-        }
-        i
-    }
-
-    fn join(&mut self, a: usize, b: usize) {
-        let (a, b) = (self.find(a), self.find(b));
-        if a != b
-            && let Some(slot) = self.parent.get_mut(a)
-        {
-            *slot = b;
-        }
-    }
 }
 
 #[cfg(test)]

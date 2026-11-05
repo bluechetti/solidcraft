@@ -60,7 +60,7 @@ The Scan workspace (scan to CAD, #8615; Workspace › Scan, or `ui.workspace` wi
 | WELDMENTS | CREATE | **`frame.member`** |
 | WELDMENTS | CONFIGURE | **`parameters.change`**, **`config.table`**, `config.configure` |
 | SCAN | INSERT | **`file.insert_mesh`**, **`pointcloud.insert`** |
-| SCAN | CLEAN | **`scan.repair`**, **`scan.fill_holes`**, **`scan.reduce`**, **`scan.remesh`**, `scan.mesh_from_points` |
+| SCAN | CLEAN | **`scan.repair`**, **`scan.fill_holes`**, **`scan.remove_floating`**, **`scan.reduce`**, `scan.remesh`, `scan.mesh_from_points` |
 | SCAN | ALIGN | **`scan.stand_on_base`**, **`scan.symmetry`**, **`scan.square_to_symmetry`**, **`scan.rest_on_grid`**, `scan.complete_by_mirroring`, `scan.quick_align`, `scan.center` |
 | SCAN | FIT | **`scan.fit_plane`**, **`scan.fit_cylinder`**, **`scan.fit_sphere`**, **`mesh.convert`** |
 | SCAN | FREEFORM | **`scan.fit_surface`**, **`scan.edit_surface`** |

@@ -19,8 +19,8 @@ use crate::params::{bad, str_};
 use crate::schema::scan::{
     ScanBase, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams,
     ScanDeviationResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult,
-    ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanSquareParams, ScanStandParams,
-    ScanSymmetryParams, ScanSymmetryResult,
+    ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFloatingParams, ScanFloatingResult, ScanMirror, ScanPlaceParams, ScanPlaceResult,
+    ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -37,6 +37,7 @@ const SURFACE_CONTRACT: TypedContract<ScanFitSurfaceParams> = TypedContract::new
 const COMPLETE_CONTRACT: TypedContract<ScanCompleteParams> = TypedContract::new();
 const EDIT_SURFACE_CONTRACT: TypedContract<ScanEditSurfaceParams> = TypedContract::new();
 const CURVE_CONTRACT: TypedContract<ScanCurveParams> = TypedContract::new();
+const FLOATING_CONTRACT: TypedContract<ScanFloatingParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     planned!("scan.repair", "Repair Mesh", "8615")
@@ -55,6 +56,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SCAN", "CLEAN")
         .icon("grid")
         .params("planned: body: mesh body name; edge_length?: mm (default from the scan's spacing) → triangles, deviation"),
+    CommandSpec::new("scan.remove_floating", "Remove Floating Pieces", crate::checked!("scan.remove_floating", clean::remove_floating))
+        .at("SCAN", "CLEAN")
+        .icon("delete")
+        .contract(&FLOATING_CONTRACT)
+        .output(output_schema_for::<ScanFloatingResult>)
+        .params("body?: mesh body (default: the selected or only one); below?: share of the largest piece's triangles (0…0.5, default 0.02; never fewer than 2): the pieces of the scan (triangles joined through their corners) smaller than that taken off, the scan written back in its Insert Mesh feature (one undo step) → body, pieces, removed, removed_triangles, triangles, feature"),
     planned!("scan.mesh_from_points", "Mesh from Points", "8615")
         .at("SCAN", "CLEAN")
         .icon("dots")
@@ -881,6 +888,9 @@ fn keep_shape(s: &mut Session, fitted: &Fitted, extent: f64) -> Result<Value> {
         }
     }
 }
+
+#[path = "scan_clean.rs"]
+pub mod clean;
 
 #[path = "scan_curve.rs"]
 pub mod curve;

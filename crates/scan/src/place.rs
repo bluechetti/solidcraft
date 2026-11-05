@@ -46,6 +46,35 @@ impl Rigid {
         self.turned(p) + self.translation
     }
 
+    /// The rigid move that takes the points `from` onto `to` (the same points, in order), if there
+    /// is one: worked out from three of them well apart and checked on every point.
+    pub fn between(from: &[Vec3], to: &[Vec3]) -> Option<Rigid> {
+        if from.len() != to.len() || from.len() < 3 {
+            return None;
+        }
+        let a = 0;
+        let b = (0..from.len()).max_by(|&i, &j| from[i].dist(from[a]).total_cmp(&from[j].dist(from[a])))?;
+        let c = (0..from.len()).max_by(|&i, &j| {
+            let area = |k: usize| (from[b] - from[a]).cross(from[k] - from[a]).len();
+            area(i).total_cmp(&area(j))
+        })?;
+        let frame = |net: &[Vec3]| -> Option<[Vec3; 3]> {
+            let e1 = (net[b] - net[a]).normalized()?;
+            let e2 = ((net[c] - net[a]) - e1 * (net[c] - net[a]).dot(e1)).normalized()?;
+            Some([e1, e2, e1.cross(e2)])
+        };
+        let (f, g) = (frame(from)?, frame(to)?);
+        // R = G Fᵀ: the frame of `from` turned onto the frame of `to`.
+        let row = |i: usize| {
+            let pick = |v: Vec3| [v.x, v.y, v.z][i];
+            [0, 1, 2].map(|j| (0..3).map(|k| pick(g[k]) * [f[k].x, f[k].y, f[k].z][j]).sum::<f64>())
+        };
+        let turn = Rigid { rotation: [row(0), row(1), row(2)], translation: Vec3::ZERO };
+        let moved = Rigid { translation: to[a] - turn.turned(from[a]), ..turn };
+        let size = from.iter().map(|p| p.dist(from[a])).fold(1.0, f64::max);
+        from.iter().zip(to).all(|(p, q)| moved.apply(*p).dist(*q) <= 1e-7 * size).then_some(moved)
+    }
+
     /// The move that undoes this one.
     pub fn inverse(&self) -> Rigid {
         let r = self.rotation;

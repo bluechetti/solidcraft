@@ -616,3 +616,43 @@ fn curve_on_scan_keeps_a_3d_spline_in_scan_curves() {
     let refused = s.execute("scan.curve_on_scan", &json!({"points": [[40, 20, 15]]})).unwrap_err().to_string();
     assert!(refused.contains("at least two points"), "{refused}");
 }
+
+/// A session with one scan made of `triangles`.
+fn session_with_triangles(tag: &str, triangles: &[[Vec3; 3]]) -> (Session, String) {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut stl = String::from("solid t\n");
+    for t in triangles {
+        stl += "facet normal 0 0 0\nouter loop\n";
+        for p in t {
+            stl += &format!("vertex {} {} {}\n", p.x, p.y, p.z);
+        }
+        stl += "endloop\nendfacet\n";
+    }
+    let path = dir.join("scan.stl");
+    std::fs::write(&path, stl + "endsolid t\n").unwrap();
+    let mut s = Session::default();
+    run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    let body = s.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
+    (s, body)
+}
+
+/// A block with a speck beside it, lifted off the grid by Rest on Grid's opposite: the speck is
+/// taken off, the block stays where the Move put it, and one undo brings the speck back.
+#[test]
+fn remove_floating_takes_the_speck_off_where_the_scan_lies() {
+    let mut triangles = fine_box(Vec3::new(0.0, 0.0, 5.0), Vec3::new(30.0, 20.0, 15.0), 12);
+    let block = triangles.len();
+    triangles.extend(fine_box(Vec3::new(50.0, 0.0, 5.0), Vec3::new(51.0, 1.0, 6.0), 1));
+    let (mut s, body) = session_with_triangles("floating", &triangles);
+    run(&mut s, "scan.rest_on_grid", json!({}));
+    let reply = run(&mut s, "scan.remove_floating", json!({}));
+    assert_eq!((reply["pieces"].as_u64(), reply["removed"].as_u64(), reply["triangles"].as_u64()), (Some(2), Some(1), Some(block as u64)), "{reply}");
+    let (lo, hi) = bounds(&s, &body);
+    assert!(lo.z.abs() < STL && (hi.z - 10.0).abs() < STL && hi.x < 30.0 + STL, "the block, resting on the grid: {lo:?} {hi:?}");
+    run(&mut s, "edit.undo", json!({}));
+    assert!((bounds(&s, &body).1.x - 51.0).abs() < STL, "one undo brings the speck back");
+    let refused = s.execute("scan.remove_floating", &json!({"below": 0.0})).unwrap_err().to_string();
+    assert!(refused.contains("no piece floats"), "{refused}");
+}

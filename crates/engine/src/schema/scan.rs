@@ -496,6 +496,38 @@ pub struct ScanCurveResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Take the floating pieces off a scan: the pieces (triangles joined through their corners) far
+/// smaller than the largest. The scan is written back in its Insert Mesh feature; one undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanFloatingParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// A piece with fewer triangles than this share of the largest piece's floats (and never one
+    /// of fewer than two). 0 to 0.5; default 0.02.
+    #[serde(default)]
+    pub below: Option<f64>,
+}
+
+/// What `scan.remove_floating` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanFloatingResult {
+    /// The scan.
+    pub body: String,
+    /// The pieces found, and those taken off with their triangles.
+    pub pieces: usize,
+    pub removed: usize,
+    pub removed_triangles: usize,
+    /// The triangles the scan has left.
+    pub triangles: usize,
+    /// The Insert Mesh feature the scan was written back into.
+    pub feature: u64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// A way a scan could stand.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct ScanBase {
