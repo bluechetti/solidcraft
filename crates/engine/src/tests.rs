@@ -2150,6 +2150,59 @@ fn a_mesh_in_metres_or_inches_comes_in_at_its_size() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A mesh read in millimetres whose file was in metres (or inches) is scaled to its own unit in
+/// place by `mesh.units`, as long as nothing follows it in the timeline.
+#[test]
+fn mesh_units_reads_an_import_again_in_its_files_unit() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-mesh-units-again-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = |name: &str| dir.join(name).to_string_lossy().to_string();
+    // Two triangles making a square 0.01 on a side, as an OBJ (read in double precision).
+    std::fs::write(path("square.obj"), "v 0 0 0\nv 0.01 0 0\nv 0.01 0.01 0\nv 0 0.01 0\nf 1 2 3\nf 1 3 4\n").unwrap();
+    let area = |s: &mut Session, body: &str| {
+        let m = run(s, "inspect.measure", json!({}));
+        m["bodies"].as_array().unwrap().iter().find(|b| b["name"] == body).unwrap()["area_mm2"].as_f64().unwrap()
+    };
+    let mut s = Session::default();
+    run(&mut s, "file.insert_mesh", json!({"path": path("square.obj")}));
+    assert!(rel(area(&mut s, "square"), 1e-4) < 1e-9);
+    let r = run(&mut s, "mesh.units", json!({"units": "m"}));
+    assert_eq!((r["scale"].as_f64(), r["units"].as_str(), r["from"].as_str()), (Some(1000.0), Some("m"), Some("mm")), "{r}");
+    assert_eq!(r["bodies"], json!(["square"]));
+    assert!(rel(area(&mut s, "square"), 100.0) < 1e-9, "{}", area(&mut s, "square"));
+    // One undo step back to as it was read.
+    run(&mut s, "edit.undo", json!({}));
+    assert!(rel(area(&mut s, "square"), 1e-4) < 1e-9);
+    // By its body, from metres to inches (25.4 / 1000).
+    run(&mut s, "file.insert_mesh", json!({"path": path("square.obj"), "units": "m"}));
+    let r = run(&mut s, "mesh.units", json!({"units": "in", "from": "m", "body": "square (2)"}));
+    assert!(rel(r["scale"].as_f64().unwrap(), 0.0254) < 1e-12, "{r}");
+    assert!(rel(area(&mut s, "square (2)"), 100.0 * 0.0254 * 0.0254) < 1e-9, "{}", area(&mut s, "square (2)"));
+    // Refused, leaving the design as it was: a feature after the import, a body no import made, a
+    // unit it doesn't know, or one that takes a point out of reach.
+    run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "body_name": "Block"}));
+    let before = s.doc.clone();
+    for p in [
+        json!({"units": "m", "body": "square"}),
+        json!({"units": "m", "body": "Block"}),
+        json!({"units": "m", "body": "Nothing"}),
+        json!({"units": "furlong"}),
+        json!({}),
+    ] {
+        assert!(s.execute("mesh.units", &p).is_err(), "{p}");
+    }
+    let e = s.execute("mesh.units", &json!({"units": "m", "body": "square"})).unwrap_err().to_string();
+    assert!(e.contains("follows"), "{e}");
+    assert_eq!(*s.doc, *before);
+    let mut far = Session::default();
+    std::fs::write(path("far.obj"), "v 0 0 0\nv 900000000 0 0\nv 0 1 0\nf 1 2 3\n").unwrap();
+    run(&mut far, "file.insert_mesh", json!({"path": path("far.obj")}));
+    let before = far.doc.clone();
+    assert!(far.execute("mesh.units", &json!({"units": "m"})).unwrap_err().to_string().contains("farther"));
+    assert_eq!(*far.doc, *before);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn holes_at_sketch_points_threads_and_components() {
     let mut s = Session::default();

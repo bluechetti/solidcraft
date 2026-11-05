@@ -130,6 +130,7 @@ mod measurement_ui_tests;
 #[cfg(test)]
 mod menu_tests;
 pub(crate) mod mesh_lod;
+pub mod mesh_units;
 pub mod messages;
 pub(crate) mod motion;
 pub mod occurrence_drag;
@@ -709,6 +710,8 @@ pub struct SolveApp {
     /// When the note was first drawn (the window's clock), or since the pointer was last on it; it
     /// goes after `stand_up::NOTE_SECONDS`.
     pub stand_up_note_since: Option<f64>,
+    /// A mesh file just in that came in tiny, offered to be read in metres or inches (`mesh_units`).
+    pub mesh_units: Option<mesh_units::Offer>,
     /// The anti-aliasing sample counts the scene colour/depth formats support (empty without a GPU).
     pub msaa_supported: Vec<u32>,
     /// The startup check selected 1x; Graphics explains the workaround.
@@ -905,6 +908,7 @@ impl SolveApp {
             stand_up_assembly: false,
             stand_up_note: false,
             stand_up_note_since: None,
+            mesh_units: None,
             msaa_supported: Vec::new(),
             msaa_compatibility: false,
             graphics_fallback: None,
@@ -2481,6 +2485,7 @@ impl SolveApp {
             self.cam.set_view(StandardView::Iso);
             self.fit_view();
             stand_up::offer(self, path, &[], Some(&r));
+            mesh_units::offer(self, path, Some(&r), false);
         }
     }
 
@@ -2522,6 +2527,7 @@ impl SolveApp {
         if let Ok(r) = self.run(cmd, json!({ "path": path })) {
             self.fit_view();
             stand_up::offer(self, path, &before, Some(&r));
+            mesh_units::offer(self, path, Some(&r), false);
             if let Some(summary) = timeline::import_status(self, &r) {
                 self.set_status(summary, false);
             } else if let Some(w) = r["warnings"].as_array().filter(|w| !w.is_empty()) {

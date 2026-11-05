@@ -1383,6 +1383,9 @@ preference_settings! {
     /// How the offer is made for a file whose header names no program known to save Y up: a note
     /// over the view (the default), the dialog, or nothing (#7717).
     stand_up_unknown: StandUpUnknown = StandUpUnknown::default(), PAGE_DESIGN;
+    /// After an STL, OBJ or PLY mesh comes in under `mesh_units::TINY_MM` across, offer to read it
+    /// in metres or inches (`mesh_units`). Off: it stays as it came in, as before.
+    offer_mesh_units: bool = true, PAGE_DESIGN => check_id("prefs.offer_mesh_units");
     /// Extrude: with a profile picked, a face, vertex or parallel plane picked off its plane
     /// switches the extent to To Object (off: picks only add profiles, as before). A click into the
     /// Profiles box makes the next picks profiles again.

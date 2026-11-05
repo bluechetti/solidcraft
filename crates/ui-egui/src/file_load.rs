@@ -1095,6 +1095,10 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                 if (request.kind == Kind::Open || request.insert()) && !request.options.contains_key("up") {
                     crate::stand_up::offer(app, &request.path, &running.before, Some(&made.result));
                 }
+                // A caller that gave the file's units has it at its size: no offer to read it in others.
+                if request.kind == Kind::Open || request.insert() {
+                    crate::mesh_units::offer(app, &request.path, Some(&made.result), request.options.contains_key("units"));
+                }
                 crate::frame_watch::step(app, "stand-up offer");
                 let warnings = made.result.get("warnings").and_then(Value::as_array);
                 if let Kind::Recover { .. } = request.kind {

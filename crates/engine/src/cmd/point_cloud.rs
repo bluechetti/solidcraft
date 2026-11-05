@@ -28,14 +28,19 @@ pub static COMMANDS: &[CommandSpec] = &[
 ];
 
 pub(super) fn units_of(p: &Value, cmd: &str) -> Result<Option<(&'static str, f64)>> {
-    match p.get("units") {
+    unit_of(p, "units", cmd)
+}
+
+/// A length unit, mm, cm, m, in or ft (any case), and its millimetres, from the parameter `key`.
+pub(super) fn unit_of(p: &Value, key: &str, cmd: &str) -> Result<Option<(&'static str, f64)>> {
+    match p.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(u)) => UNITS
             .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case(u))
             .map(|(name, k)| Some((*name, *k)))
-            .ok_or_else(|| bad(cmd, format!("`units` must be one of mm, cm, m, in, ft (not `{u}`)"))),
-        Some(_) => Err(bad(cmd, "`units` must be one of mm, cm, m, in, ft")),
+            .ok_or_else(|| bad(cmd, format!("`{key}` must be one of mm, cm, m, in, ft (not `{u}`)"))),
+        Some(_) => Err(bad(cmd, format!("`{key}` must be one of mm, cm, m, in, ft"))),
     }
 }
 

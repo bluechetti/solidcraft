@@ -5520,6 +5520,7 @@ pub(crate) fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Re
         && app.agent_computing().is_none()
         && crate::space_mouse_offer::offerable(app).is_none()
         && !crate::stand_up::note_pending(app)
+        && !crate::mesh_units::note_pending(app)
     {
         return Vec::new();
     }
@@ -5563,6 +5564,34 @@ pub(crate) fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Re
                 crate::stand_up::note_act(app, index);
             } else if toast.closed {
                 crate::stand_up::leave(app);
+            }
+        }
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+    }
+    // The note offering to read a mesh that came in tiny in metres or inches (`mesh_units`).
+    if let Some(text) = crate::mesh_units::note_due(app, ui.ctx()) {
+        let labels = crate::mesh_units::note_labels();
+        let kinds = [ToastKind::Primary, ToastKind::Secondary, ToastKind::Dismiss];
+        let actions: Vec<(&str, ToastKind)> = labels.iter().map(|(label, _)| label.as_str()).zip(kinds).collect();
+        let extras = ToastExtras {
+            close: Some(crate::mesh_units::NOTE_CLOSE),
+            countdown: Some((crate::mesh_units::note_left(app, ui.ctx()), crate::mesh_units::NOTE_SECONDS)),
+            ..Default::default()
+        };
+        if let Some(toast) = paint_toast_ext(ui, free, text, ToastLead::Dot(false), &actions, extras) {
+            let r = toast.rect;
+            crate::scenario::publish_rect("toast:mesh_units", r);
+            for (handle, button) in crate::mesh_units::NOTE_HANDLES.iter().zip(&toast.buttons) {
+                crate::scenario::publish_handle(handle, button.center());
+            }
+            obstacles.push(r);
+            free.max.y = r.top() - t.space_8;
+            shown.push(r);
+            crate::mesh_units::note_keep(app, ui.ctx(), r);
+            if let Some(index) = toast.clicked {
+                crate::mesh_units::note_act(app, index);
+            } else if toast.closed {
+                crate::mesh_units::leave(app);
             }
         }
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
