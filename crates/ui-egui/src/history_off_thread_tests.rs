@@ -1173,3 +1173,41 @@ fn a_body_renamed_in_the_browser_keeps_the_pattern_after_it() {
     assert!(kept, "no feature computed again");
     assert_eq!(h.app.session.visibility.locked_bodies, ["Plate"]);
 }
+
+/// Repair, run from the ribbon with no dialog, works through the whole scan (half a minute for
+/// 28 million triangles): it is computed whole beside the window, the design as it was until it
+/// is in, then taken as one undo step, its work not done again.
+#[test]
+fn repair_from_the_ribbon_is_computed_beside_the_window() {
+    let mut h = Harness::new();
+    h.app.home.open = false;
+    // A strip of two squares with a copy of one of its triangles: Repair takes the copy off.
+    let facet = |p: [[f64; 3]; 3]| {
+        format!(
+            "facet normal 0 0 1\nouter loop\n{}endloop\nendfacet\n",
+            p.iter().map(|[x, y, z]| format!("vertex {x} {y} {z}\n")).collect::<String>()
+        )
+    };
+    let tris = [
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
+        [[0.0, 0.0, 0.0], [1.0, 1.0, 0.0], [0.0, 1.0, 0.0]],
+        [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.0, 0.0]],
+        [[1.0, 0.0, 0.0], [2.0, 1.0, 0.0], [1.0, 1.0, 0.0]],
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
+    ];
+    let path = h.dir.join("copied.stl");
+    std::fs::write(&path, format!("solid s\n{}endsolid s\n", tris.iter().map(|t| facet(*t)).collect::<String>())).unwrap();
+    h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+    let triangles =
+        |h: &Harness| h.app.session.model.state().bodies.iter().find(|b| b.body.is_mesh()).and_then(|b| b.body.triangle_mesh()).map(|(_, t)| t.len());
+    assert_eq!(triangles(&h), Some(5));
+    let before = h.app.session.doc.clone();
+    h.app.apply_off_thread = Some(Duration::ZERO);
+    h.app.start("scan.repair");
+    assert!(h.app.computing_since().is_some(), "computing");
+    assert!(std::sync::Arc::ptr_eq(&before, &h.app.session.doc), "the design is as it was while it computes");
+    until_settled(&mut h);
+    assert_eq!(triangles(&h), Some(4), "the copy is gone");
+    h.app.run("edit.undo", json!({})).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&before, &h.app.session.doc), "one undo step");
+}

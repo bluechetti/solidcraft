@@ -2108,6 +2108,13 @@ impl SolveApp {
             dialogs_part_size::needs_a_part(self);
             return;
         }
+        // A scan tool that works through the whole scan, with no dialog: beside the window.
+        if deferred::computed_whole(id) {
+            if let Err(why) = self.run_heavy(id, json!({})) {
+                self.set_status(why, true);
+            }
+            return;
+        }
         let _ = self.run(id, json!({}));
     }
 
