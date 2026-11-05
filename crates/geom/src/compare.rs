@@ -304,10 +304,19 @@ fn subtree_here(tris: &[[Vec3; 3]], centres: &[Vec3], order: &mut [u32], lo: usi
 /// the triangles a line can cross.
 pub struct TriangleTree {
     /// The mesh's triangles with finite corners, in tree order.
-    tris: Vec<[Vec3; 3]>,
+    tris: Corners,
     /// Each one's index in the mesh.
     ids: Vec<u32>,
     nodes: Vec<Node>,
+}
+
+/// Where a [`TriangleTree`]'s triangles' corners are read from.
+enum Corners {
+    /// Its own copy, in tree order.
+    Own(Vec<[Vec3; 3]>),
+    /// The mesh it was built over, shared ([`TriangleTree::over`]): each triangle by its index
+    /// in the mesh.
+    Shared(std::sync::Arc<Mesh>),
 }
 
 #[derive(Clone, Copy)]
@@ -344,23 +353,40 @@ impl TriangleTree {
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(16);
         let levels = usize::BITS - threads.leading_zeros() - 1;
         let nodes = subtree(&tris, &centres, &mut order, 0, levels);
+        drop(centres);
         let tris_in_order = order.iter().filter_map(|&i| tris.get(i as usize).copied()).collect();
         let ids_in_order = order.iter().filter_map(|&i| ids.get(i as usize).copied()).collect();
-        TriangleTree { tris: tris_in_order, ids: ids_in_order, nodes }
+        TriangleTree { tris: Corners::Own(tris_in_order), ids: ids_in_order, nodes }
+    }
+
+    /// [`TriangleTree::of`] `mesh`'s triangles, reading their corners from `mesh` itself rather
+    /// than a copy of its own: a scan's copy was 72 bytes a triangle (2 GB for 28 million), held
+    /// as long as the tree. The same tree, found the same way.
+    pub fn over(mesh: std::sync::Arc<Mesh>) -> TriangleTree {
+        let TriangleTree { ids, nodes, .. } = TriangleTree::of(&mesh.positions, &mesh.triangles);
+        TriangleTree { tris: Corners::Shared(mesh), ids, nodes }
+    }
+
+    /// The corners of the triangle at place `k` in the tree.
+    fn tri(&self, k: usize) -> Option<[Vec3; 3]> {
+        match &self.tris {
+            Corners::Own(tris) => tris.get(k).copied(),
+            Corners::Shared(mesh) => mesh.tri(mesh.triangles.get(*self.ids.get(k)? as usize)?),
+        }
     }
 
     pub fn len(&self) -> usize {
-        self.tris.len()
+        self.ids.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.tris.is_empty()
+        self.ids.is_empty()
     }
 
     /// The distance from `p` to the nearest point of the surface, and the index in the mesh of
     /// the triangle it lies on (`None` for an empty mesh or a point that isn't finite).
     pub fn nearest(&self, p: Vec3) -> Option<(f64, u32)> {
-        if !p.is_finite() || self.tris.is_empty() {
+        if !p.is_finite() || self.ids.is_empty() {
             return None;
         }
         let (mut best2, mut hit) = (f64::INFINITY, None);
@@ -373,7 +399,7 @@ impl TriangleTree {
             }
             if node.leaf {
                 for k in node.a..node.b {
-                    let Some([a, b, c]) = self.tris.get(k as usize).copied() else { continue };
+                    let Some([a, b, c]) = self.tri(k as usize) else { continue };
                     let d2 = (closest_on_triangle(p, a, b, c) - p).len2();
                     if d2 < best2 {
                         best2 = d2;
@@ -400,14 +426,14 @@ impl TriangleTree {
     /// than `axis`: the triangles a line along `axis` through `bx` can cross.
     fn column(&self, bx: &Aabb3, axis: usize) -> Vec<usize> {
         let mut out = Vec::new();
-        let mut stack: Vec<u32> = if self.tris.is_empty() { Vec::new() } else { vec![0] };
+        let mut stack: Vec<u32> = if self.ids.is_empty() { Vec::new() } else { vec![0] };
         while let Some(ni) = stack.pop() {
             let Some(node) = self.nodes.get(ni as usize) else { continue };
             if !boxes_meet(&node.bbox, bx, axis) {
                 continue;
             }
             if node.leaf {
-                out.extend((node.a..node.b).map(|k| k as usize).filter(|&k| self.tris.get(k).is_some_and(|t| boxes_meet(&box_of(t), bx, axis))));
+                out.extend((node.a..node.b).map(|k| k as usize).filter(|&k| self.tri(k).is_some_and(|t| boxes_meet(&box_of(&t), bx, axis))));
             } else {
                 stack.push(node.a);
                 stack.push(node.b);
@@ -788,14 +814,14 @@ fn region_volume(trees: [&TriangleTree; 2], bx: &Aabb3, side: Side, max_lines: u
     let mut work = 0usize;
     for (m, tree) in trees.iter().enumerate() {
         for ti in tree.column(bx, k) {
-            let Some(t) = tree.tris.get(ti) else { continue };
+            let Some(t) = tree.tri(ti) else { continue };
             let nk = comp((t[1] - t[0]).cross(t[2] - t[0]), k);
             if nk == 0.0 || !nk.is_finite() {
                 continue;
             }
             // Lines run towards +axis: they enter where the outward normal points against them.
             let sign: i8 = if nk < 0.0 { 1 } else { -1 };
-            let tb = box_of(t);
+            let tb = box_of(&t);
             let (Some((i0, i1)), Some((j0, j1))) = (
                 span(comp(tb.min, ku), comp(tb.max, ku), u0, du, LINE_OFFSET[0], nu),
                 span(comp(tb.min, kv), comp(tb.max, kv), v0, dv, LINE_OFFSET[1], nv),

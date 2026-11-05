@@ -35,43 +35,46 @@ pub fn default_tolerance(scan: &Scan) -> f64 {
 
 /// The scan, for the nearest place of it to a point.
 pub struct Projector {
-    tree: TriangleTree,
-    positions: Vec<Vec3>,
-    triangles: Vec<[u32; 3]>,
+    tree: std::sync::Arc<TriangleTree>,
+    /// The scan's points and triangles, shared with what holds them ([`Projector::sharing`]).
+    mesh: std::sync::Arc<Mesh>,
     /// The side of the equilateral triangle of the scan's mean triangle area.
     pub edge: f64,
 }
 
 impl std::fmt::Debug for Projector {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Projector").field("triangles", &self.triangles.len()).field("edge", &self.edge).finish()
+        f.debug_struct("Projector").field("triangles", &self.mesh.triangles.len()).field("edge", &self.edge).finish()
     }
 }
 
 impl Projector {
     pub fn new(scan: &Scan) -> Projector {
         let mesh = Mesh { positions: scan.positions.to_vec(), triangles: scan.triangles.to_vec(), ..Mesh::default() };
-        Projector {
-            tree: TriangleTree::new(&mesh),
-            positions: mesh.positions,
-            triangles: mesh.triangles,
-            edge: crate::mirror_fill::typical_edge(scan),
-        }
+        let tree = std::sync::Arc::new(TriangleTree::of(&mesh.positions, &mesh.triangles));
+        Projector::sharing(std::sync::Arc::new(mesh), tree)
+    }
+
+    /// A projector onto `mesh` (its points and triangles), with `tree` built over them, both
+    /// shared, not copied: a scan's tree is as large as the scan, and Select reads the same one.
+    pub fn sharing(mesh: std::sync::Arc<Mesh>, tree: std::sync::Arc<TriangleTree>) -> Projector {
+        let edge = crate::mirror_fill::typical_edge(&Scan::new(&mesh.positions, &mesh.triangles));
+        Projector { tree, mesh, edge }
     }
 
     /// The nearest place of the scan to `p` and how far it is.
     pub fn nearest(&self, p: Vec3) -> Option<(Vec3, f64)> {
         let (d, t) = self.tree.nearest(p)?;
-        let tri = self.triangles.get(t as usize)?;
-        let at = |i: u32| self.positions.get(i as usize).copied();
+        let tri = self.mesh.triangles.get(t as usize)?;
+        let at = |i: u32| self.mesh.positions.get(i as usize).copied();
         Some((closest_on_triangle(p, at(tri[0])?, at(tri[1])?, at(tri[2])?), d))
     }
 
     /// The way the scan faces at its nearest place to `p`: that triangle's unit normal.
     pub fn normal(&self, p: Vec3) -> Option<Vec3> {
         let (_, t) = self.tree.nearest(p)?;
-        let tri = self.triangles.get(t as usize)?;
-        let at = |i: u32| self.positions.get(i as usize).copied();
+        let tri = self.mesh.triangles.get(t as usize)?;
+        let at = |i: u32| self.mesh.positions.get(i as usize).copied();
         let (a, b, c) = (at(tri[0])?, at(tri[1])?, at(tri[2])?);
         (b - a).cross(c - a).normalized()
     }

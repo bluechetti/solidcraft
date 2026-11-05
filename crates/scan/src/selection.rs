@@ -35,7 +35,7 @@ pub struct View {
 
 /// The scan's triangles as selections read them.
 pub struct Topology {
-    tree: TriangleTree,
+    tree: std::sync::Arc<TriangleTree>,
     /// Each triangle's welded corners.
     corners: Vec<[u32; 3]>,
     /// The triangle across each edge (corner k to corner k + 1), or [`NONE`].
@@ -44,7 +44,6 @@ pub struct Topology {
     fan_start: Vec<u32>,
     fan: Vec<u32>,
     pub middles: Vec<Vec3>,
-    pub normals: Vec<Vec3>,
     pub areas: Vec<f64>,
     /// Each triangle's normal smoothed over the triangles round its corners.
     smooth: Vec<Vec3>,
@@ -179,6 +178,12 @@ fn inside_polygon(q: [f64; 2], ring: &[[f64; 2]]) -> bool {
 
 impl Topology {
     pub fn new(scan: &Scan) -> Topology {
+        Topology::with_tree(scan, std::sync::Arc::new(TriangleTree::of(scan.positions, scan.triangles)))
+    }
+
+    /// [`Topology::new`] with the scan's triangle tree built already (shared with Curve on Scan's
+    /// projector: a scan's tree is as large as the scan).
+    pub fn with_tree(scan: &Scan, tree: std::sync::Arc<TriangleTree>) -> Topology {
         let weld = welded(scan.positions);
         let count = scan.triangle_count();
         let corners: Vec<[u32; 3]> = (0..count).map(|t| scan.triangles[t].map(|v| weld.get(v as usize).copied().unwrap_or(v))).collect();
@@ -247,23 +252,14 @@ impl Topology {
                 acc.2.push(f.2);
                 acc
             });
-        let mut topology = Topology {
-            tree: TriangleTree::of(scan.positions, scan.triangles),
-            corners,
-            across,
-            fan_start,
-            fan,
-            middles,
-            normals,
-            areas,
-            smooth: Vec::new(),
-            edge: crate::mirror_fill::typical_edge(scan),
-        };
-        let vertex_normal =
-            |v: u32| topology.fan_of(v).iter().fold(Vec3::ZERO, |s, &f| s + topology.normals[f as usize] * topology.areas[f as usize]);
-        topology.smooth = par::map(count, |t| {
-            topology.corners[t].iter().fold(Vec3::ZERO, |s, &v| s + vertex_normal(v)).normalized().unwrap_or(topology.normals[t])
-        });
+        let mut topology =
+            Topology { tree, corners, across, fan_start, fan, middles, areas, smooth: Vec::new(), edge: crate::mirror_fill::typical_edge(scan) };
+        // The triangles' own normals are needed only for the smoothed ones (a scan's took 672 MB
+        // kept for nothing).
+        let vertex_normal = |v: u32| topology.fan_of(v).iter().fold(Vec3::ZERO, |s, &f| s + normals[f as usize] * topology.areas[f as usize]);
+        topology.smooth =
+            par::map(count, |t| topology.corners[t].iter().fold(Vec3::ZERO, |s, &v| s + vertex_normal(v)).normalized().unwrap_or(normals[t]));
+        drop(normals);
         topology
     }
 

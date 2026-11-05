@@ -54,6 +54,38 @@ fn the_tree_finds_the_nearest_point_as_a_search_of_every_triangle_does() {
     assert!(TriangleTree::new(&Mesh::default()).nearest(Vec3::ZERO).is_none());
 }
 
+/// A tree reading its corners from the mesh it was built over finds what one with its own copy
+/// finds: the same nearest triangle, as far, for any point.
+#[test]
+fn a_tree_over_a_shared_mesh_finds_what_its_own_copy_finds() {
+    let mut seed = 0x1234_5678_9abc_def1u64;
+    let mut rnd = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let mut mesh = Mesh::default();
+    for _ in 0..3000 {
+        let c = Vec3::new(rnd() * 100.0, rnd() * 50.0, rnd() * 20.0);
+        let base = mesh.positions.len() as u32;
+        for _ in 0..3 {
+            mesh.positions.push(c + Vec3::new(rnd() * 6.0 - 3.0, rnd() * 6.0 - 3.0, rnd() * 6.0 - 3.0));
+        }
+        mesh.triangles.push([base, base + 1, base + 2]);
+    }
+    mesh.positions.push(Vec3::new(f64::NAN, 0.0, 0.0));
+    let n = mesh.positions.len() as u32;
+    mesh.triangles.push([0, 1, n - 1]);
+    let own = TriangleTree::new(&mesh);
+    let shared = TriangleTree::over(std::sync::Arc::new(mesh));
+    assert_eq!((shared.len(), own.len()), (3000, 3000), "the triangle with a corner not finite left out");
+    for _ in 0..500 {
+        let p = Vec3::new(rnd() * 140.0 - 20.0, rnd() * 90.0 - 20.0, rnd() * 60.0 - 20.0);
+        assert_eq!(shared.nearest(p), own.nearest(p), "{p:?}");
+    }
+}
+
 /// A large mesh's tree, its halves split on threads of their own, is the tree one thread makes:
 /// its triangles in the same order, as many nodes, and the same nearest triangle for any point.
 #[test]
@@ -82,7 +114,7 @@ fn a_tree_split_on_threads_is_the_tree_one_thread_makes() {
         let tris: Vec<[Vec3; 3]> = triangles.iter().map(|t| t.map(|i| positions[i as usize])).collect();
         let mut order: Vec<u32> = (0..triangles.len() as u32).collect();
         tree.nodes = subtree_here(&tris, &centres, &mut order, 0);
-        tree.tris = order.iter().map(|&i| tris[i as usize]).collect();
+        tree.tris = Corners::Own(order.iter().map(|&i| tris[i as usize]).collect());
         tree.ids = order;
         tree
     };

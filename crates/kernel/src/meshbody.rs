@@ -484,6 +484,12 @@ impl Body {
     pub fn triangle_mesh(&self) -> Option<(&[Vec3], &[[u32; 3]])> {
         self.mesh.as_ref().map(|m| (m.positions.as_slice(), m.triangles.as_slice()))
     }
+
+    /// The mesh a mesh body keeps, shared, not copied: [`Body::triangle_mesh`]'s points and
+    /// triangles, for what holds on to them (a scan tool's prebuilt structures).
+    pub fn kept_mesh(&self) -> Option<std::sync::Arc<Mesh>> {
+        self.mesh.clone()
+    }
     /// Does a mesh body enclose a volume (every side shared by two triangles)?
     pub fn is_closed_mesh(&self) -> bool {
         self.mesh.as_ref().is_some_and(|m| is_closed(&m.triangles))

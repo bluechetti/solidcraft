@@ -40,9 +40,8 @@ static PROJECTOR: Mutex<Option<Cached>> = Mutex::new(None);
 pub fn projector(s: &Session, body: Option<&str>, cmd: &str) -> Result<(String, Arc<Projector>)> {
     let state = s.model.state();
     let name = mesh_name(s, &json!({ "body": body }), cmd)?;
-    let (positions, triangles) =
-        state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
-    let key = (positions.as_ptr() as usize, positions.len());
+    let mesh = state.body(&name).and_then(|b| b.body.kept_mesh()).ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+    let key = (mesh.positions.as_ptr() as usize, mesh.positions.len());
     if let Ok(cached) = PROJECTOR.lock()
         && let Some((n, ptr, len, p)) = cached.as_ref()
         && *n == name
@@ -50,7 +49,9 @@ pub fn projector(s: &Session, body: Option<&str>, cmd: &str) -> Result<(String, 
     {
         return Ok((name, p.clone()));
     }
-    let built = Arc::new(Projector::new(&solidcraft_scan::Scan::new(positions, triangles)));
+    // The scan's own points and triangles and the tree Select shares: nothing copied.
+    let tree = super::select::scan_tree(&mesh);
+    let built = Arc::new(Projector::sharing(mesh, tree));
     if let Ok(mut cached) = PROJECTOR.lock() {
         *cached = Some((name.clone(), key.0, key.1, built.clone()));
     }

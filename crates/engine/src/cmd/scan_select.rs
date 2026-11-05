@@ -135,10 +135,34 @@ fn mesh_key(positions: &[Vec3], triangles: &[[u32; 3]]) -> u64 {
     h
 }
 
+/// The last scan's triangle tree, and the storage of the points and triangles it was built over:
+/// Select's topology and Curve on Scan's projector share it (a scan's tree is as large as the
+/// scan, and each built its own).
+#[allow(clippy::type_complexity)]
+static TREE: Mutex<Option<([usize; 4], Arc<solidcraft_geom::compare::TriangleTree>)>> = Mutex::new(None);
+
+/// The triangle tree over a scan's `mesh` (as its body keeps it), built once while the mesh is
+/// the same, reading its corners from the mesh rather than a copy of its own.
+pub fn scan_tree(mesh: &Arc<solidcraft_geom::Mesh>) -> Arc<solidcraft_geom::compare::TriangleTree> {
+    let (positions, triangles) = (&mesh.positions, &mesh.triangles);
+    let held = [positions.as_ptr() as usize, positions.len(), triangles.as_ptr() as usize, triangles.len()];
+    if let Ok(cache) = TREE.lock()
+        && let Some((_, tree)) = cache.as_ref().filter(|(h, _)| *h == held)
+    {
+        return tree.clone();
+    }
+    let built = Arc::new(solidcraft_geom::compare::TriangleTree::over(mesh.clone()));
+    if let Ok(mut cache) = TREE.lock() {
+        *cache = Some((held, built.clone()));
+    }
+    built
+}
+
 /// The topology of the scan `body`, built once while the scan is as it was.
 pub fn topology(s: &Session, body: &str, cmd: &str) -> Result<Arc<Topology>> {
     let state = s.model.state();
-    let (positions, triangles) = state.body(body).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{body}` is not a scan")))?;
+    let mesh = state.body(body).and_then(|b| b.body.kept_mesh()).ok_or_else(|| bad(cmd, format!("`{body}` is not a scan")))?;
+    let (positions, triangles) = (mesh.positions.as_slice(), mesh.triangles.as_slice());
     let held = [positions.as_ptr() as usize, positions.len(), triangles.as_ptr() as usize, triangles.len()];
     let mut cache = TOPOLOGY.lock().map_err(|_| EngineError::Other("the scan's topology is unavailable".into()))?;
     if let Some((_, _, t)) = cache.as_ref().filter(|(h, ..)| *h == held) {
@@ -150,7 +174,7 @@ pub fn topology(s: &Session, body: &str, cmd: &str) -> Result<Arc<Topology>> {
         *cache = Some((held, key, t.clone()));
         return Ok(t);
     }
-    let built = Arc::new(Topology::new(&Scan::new(positions, triangles)));
+    let built = Arc::new(Topology::with_tree(&Scan::new(positions, triangles), scan_tree(&mesh)));
     *cache = Some((held, key, built.clone()));
     Ok(built)
 }
