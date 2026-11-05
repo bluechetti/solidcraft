@@ -204,6 +204,102 @@ fn boxes_meet(a: &Aabb3, b: &Aabb3, skip: usize) -> bool {
 /// Triangles in a leaf of [`TriangleTree`], at most (unless they all share a centre).
 const LEAF: usize = 4;
 
+/// Fewest triangles a [`TriangleTree`] splits on another thread.
+const SPLIT_BESIDE: usize = 100_000;
+
+/// The box round `order`'s triangles, the box round their centres, and the axis that is
+/// longest across the centres.
+fn boxes_of(tris: &[[Vec3; 3]], centres: &[Vec3], order: &[u32]) -> (Aabb3, Aabb3, usize) {
+    let (mut bbox, mut cb) = (Aabb3::EMPTY, Aabb3::EMPTY);
+    for &i in order {
+        if let (Some(t), Some(c)) = (tris.get(i as usize), centres.get(i as usize)) {
+            bbox = bbox.union(&box_of(t));
+            cb.add(*c);
+        }
+    }
+    let size = cb.size();
+    let axis = if size.x >= size.y && size.x >= size.z {
+        0
+    } else if size.y >= size.z {
+        1
+    } else {
+        2
+    };
+    (bbox, cb, axis)
+}
+
+/// `order` (the triangles from `lo` in the tree's order) at its median along `axis`: the first
+/// half before it, the rest after.
+fn split_at_median(centres: &[Vec3], order: &mut [u32], axis: usize) -> usize {
+    let mid = order.len() / 2;
+    order.select_nth_unstable_by(mid, |x, y| {
+        let c = |i: &u32| centres.get(*i as usize).map_or(0.0, |c| comp(*c, axis));
+        c(x).total_cmp(&c(y))
+    });
+    mid
+}
+
+/// The tree over `order`, the triangles from `lo` in the tree's order, its root first, its two
+/// halves split on threads of their own for `levels` more levels. Each range is split as one
+/// thread splits it, so the triangles end in the same order and the tree has the same shape.
+fn subtree(tris: &[[Vec3; 3]], centres: &[Vec3], order: &mut [u32], lo: usize, levels: u32) -> Vec<Node> {
+    if levels == 0 || order.len() < SPLIT_BESIDE {
+        return subtree_here(tris, centres, order, lo);
+    }
+    let (bbox, cb, axis) = boxes_of(tris, centres, order);
+    let n = order.len();
+    if n <= LEAF || comp(cb.size(), axis) <= 0.0 {
+        return vec![Node { bbox, a: lo as u32, b: (lo + n) as u32, leaf: true }];
+    }
+    let mid = split_at_median(centres, order, axis);
+    let (left, right) = order.split_at_mut(mid);
+    let (ln, rn) = std::thread::scope(|scope| {
+        let beside = std::thread::Builder::new().name("triangle-tree".into()).spawn_scoped(scope, || subtree(tris, centres, left, lo, levels - 1));
+        let rn = subtree(tris, centres, right, lo + mid, levels - 1);
+        match beside {
+            Ok(h) => (h.join().ok(), rn),
+            Err(_) => (None, rn),
+        }
+    });
+    // No thread to split it on (the browser), or one that stopped: split here.
+    let ln = ln.unwrap_or_else(|| subtree_here(tris, centres, left, lo));
+    let mut nodes = Vec::with_capacity(1 + ln.len() + rn.len());
+    let shift =
+        |offset: usize| move |node: Node| if node.leaf { node } else { Node { a: node.a + offset as u32, b: node.b + offset as u32, ..node } };
+    nodes.push(Node { bbox, a: 1, b: (1 + ln.len()) as u32, leaf: false });
+    let left_len = ln.len();
+    nodes.extend(ln.into_iter().map(shift(1)));
+    nodes.extend(rn.into_iter().map(shift(1 + left_len)));
+    nodes
+}
+
+/// [`subtree`] on this thread alone.
+fn subtree_here(tris: &[[Vec3; 3]], centres: &[Vec3], order: &mut [u32], lo: usize) -> Vec<Node> {
+    let n = order.len();
+    let empty = Node { bbox: Aabb3::EMPTY, a: 0, b: 0, leaf: true };
+    let mut nodes = vec![empty];
+    let mut work = vec![(0usize, 0usize, n)];
+    while let Some((ni, from, to)) = work.pop() {
+        let Some(range) = order.get_mut(from..to) else { continue };
+        let (bbox, cb, axis) = boxes_of(tris, centres, range);
+        let node = if to - from <= LEAF || comp(cb.size(), axis) <= 0.0 {
+            Node { bbox, a: (lo + from) as u32, b: (lo + to) as u32, leaf: true }
+        } else {
+            let mid = split_at_median(centres, range, axis);
+            let (left, right) = (nodes.len(), nodes.len() + 1);
+            nodes.push(empty);
+            nodes.push(empty);
+            work.push((left, from, from + mid));
+            work.push((right, from + mid, to));
+            Node { bbox, a: left as u32, b: right as u32, leaf: false }
+        };
+        if let Some(slot) = nodes.get_mut(ni) {
+            *slot = node;
+        }
+    }
+    nodes
+}
+
 /// A bounding-volume hierarchy over a mesh's triangles: the nearest point of the surface, and
 /// the triangles a line can cross.
 pub struct TriangleTree {
@@ -225,10 +321,18 @@ struct Node {
 
 impl TriangleTree {
     pub fn new(mesh: &Mesh) -> TriangleTree {
-        let mut tris = Vec::with_capacity(mesh.triangles.len());
-        let mut ids = Vec::with_capacity(mesh.triangles.len());
-        for (i, t) in mesh.triangles.iter().enumerate() {
-            if let (Some(tri), Ok(i)) = (mesh.tri(t), u32::try_from(i))
+        TriangleTree::of(&mesh.positions, &mesh.triangles)
+    }
+
+    /// [`TriangleTree::new`] of triangles over `positions`, without a mesh made to hold them. A
+    /// large mesh's halves are split side by side, a few levels down: the same tree as split one
+    /// after the other (a scan of 28 million triangles took 14 s on one thread).
+    pub fn of(positions: &[Vec3], triangles: &[[u32; 3]]) -> TriangleTree {
+        let mut tris = Vec::with_capacity(triangles.len());
+        let mut ids = Vec::with_capacity(triangles.len());
+        let tri = |t: &[u32; 3]| Some([*positions.get(t[0] as usize)?, *positions.get(t[1] as usize)?, *positions.get(t[2] as usize)?]);
+        for (i, t) in triangles.iter().enumerate() {
+            if let (Some(tri), Ok(i)) = (tri(t), u32::try_from(i))
                 && tri.iter().all(|p| p.is_finite())
             {
                 tris.push(tri);
@@ -237,46 +341,9 @@ impl TriangleTree {
         }
         let centres: Vec<Vec3> = tris.iter().map(|t| (t[0] + t[1] + t[2]) / 3.0).collect();
         let mut order: Vec<u32> = (0..u32::try_from(tris.len()).unwrap_or(u32::MAX)).collect();
-        let n = order.len();
-        let empty = Node { bbox: Aabb3::EMPTY, a: 0, b: 0, leaf: true };
-        let mut nodes = vec![empty];
-        let mut work = vec![(0usize, 0usize, n)];
-        while let Some((ni, lo, hi)) = work.pop() {
-            let Some(range) = order.get_mut(lo..hi) else { continue };
-            let (mut bbox, mut cb) = (Aabb3::EMPTY, Aabb3::EMPTY);
-            for &i in range.iter() {
-                if let (Some(t), Some(c)) = (tris.get(i as usize), centres.get(i as usize)) {
-                    bbox = bbox.union(&box_of(t));
-                    cb.add(*c);
-                }
-            }
-            let size = cb.size();
-            let axis = if size.x >= size.y && size.x >= size.z {
-                0
-            } else if size.y >= size.z {
-                1
-            } else {
-                2
-            };
-            let node = if hi - lo <= LEAF || comp(size, axis) <= 0.0 {
-                Node { bbox, a: lo as u32, b: hi as u32, leaf: true }
-            } else {
-                let mid = (hi - lo) / 2;
-                range.select_nth_unstable_by(mid, |x, y| {
-                    let c = |i: &u32| centres.get(*i as usize).map_or(0.0, |c| comp(*c, axis));
-                    c(x).total_cmp(&c(y))
-                });
-                let (left, right) = (nodes.len(), nodes.len() + 1);
-                nodes.push(empty);
-                nodes.push(empty);
-                work.push((left, lo, lo + mid));
-                work.push((right, lo + mid, hi));
-                Node { bbox, a: left as u32, b: right as u32, leaf: false }
-            };
-            if let Some(slot) = nodes.get_mut(ni) {
-                *slot = node;
-            }
-        }
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(16);
+        let levels = usize::BITS - threads.leading_zeros() - 1;
+        let nodes = subtree(&tris, &centres, &mut order, 0, levels);
         let tris_in_order = order.iter().filter_map(|&i| tris.get(i as usize).copied()).collect();
         let ids_in_order = order.iter().filter_map(|&i| ids.get(i as usize).copied()).collect();
         TriangleTree { tris: tris_in_order, ids: ids_in_order, nodes }

@@ -54,6 +54,54 @@ fn the_tree_finds_the_nearest_point_as_a_search_of_every_triangle_does() {
     assert!(TriangleTree::new(&Mesh::default()).nearest(Vec3::ZERO).is_none());
 }
 
+/// A large mesh's tree, its halves split on threads of their own, is the tree one thread makes:
+/// its triangles in the same order, as many nodes, and the same nearest triangle for any point.
+#[test]
+fn a_tree_split_on_threads_is_the_tree_one_thread_makes() {
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut rnd = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let (mut positions, mut triangles) = (Vec::new(), Vec::new());
+    for _ in 0..(SPLIT_BESIDE * 3) {
+        let c = Vec3::new(rnd() * 1000.0, rnd() * 500.0, rnd() * 200.0);
+        let base = positions.len() as u32;
+        for _ in 0..3 {
+            positions.push(c + Vec3::new(rnd() * 6.0 - 3.0, rnd() * 6.0 - 3.0, rnd() * 6.0 - 3.0));
+        }
+        triangles.push([base, base + 1, base + 2]);
+    }
+    let split = TriangleTree::of(&positions, &triangles);
+    let one = {
+        let mut tree = TriangleTree::of(&positions[..3], &triangles[..1]);
+        let centres: Vec<Vec3> =
+            triangles.iter().map(|t| (positions[t[0] as usize] + positions[t[1] as usize] + positions[t[2] as usize]) / 3.0).collect();
+        let tris: Vec<[Vec3; 3]> = triangles.iter().map(|t| t.map(|i| positions[i as usize])).collect();
+        let mut order: Vec<u32> = (0..triangles.len() as u32).collect();
+        tree.nodes = subtree_here(&tris, &centres, &mut order, 0);
+        tree.tris = order.iter().map(|&i| tris[i as usize]).collect();
+        tree.ids = order;
+        tree
+    };
+    let deeper = {
+        let mut order: Vec<u32> = (0..triangles.len() as u32).collect();
+        let centres: Vec<Vec3> =
+            triangles.iter().map(|t| (positions[t[0] as usize] + positions[t[1] as usize] + positions[t[2] as usize]) / 3.0).collect();
+        let tris: Vec<[Vec3; 3]> = triangles.iter().map(|t| t.map(|i| positions[i as usize])).collect();
+        (subtree(&tris, &centres, &mut order, 0, 3), order)
+    };
+    assert_eq!(split.ids, one.ids, "the same order");
+    assert_eq!((split.nodes.len(), deeper.0.len()), (one.nodes.len(), one.nodes.len()));
+    assert_eq!(deeper.1, one.ids);
+    for _ in 0..500 {
+        let p = Vec3::new(rnd() * 1100.0 - 50.0, rnd() * 600.0 - 50.0, rnd() * 300.0 - 50.0);
+        assert_eq!(split.nearest(p), one.nearest(p), "{p:?}");
+    }
+}
+
 #[test]
 fn a_mesh_and_its_copy_are_identical() {
     let a = cuboid(Vec3::ZERO, Vec3::new(40.0, 30.0, 10.0));

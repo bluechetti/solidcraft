@@ -9,7 +9,6 @@
 //! the nearest triangle to a place. A selection is one flag a triangle.
 
 use solidcore_record::Vec3;
-use solidcraft_geom::Mesh;
 use solidcraft_geom::compare::{TriangleTree, closest_on_triangle};
 use solidcraft_geom::prelude::*;
 
@@ -193,7 +192,7 @@ impl Topology {
                 edges.push((pair(c[k as usize], c[(k as usize + 1) % 3]), t as u32, k));
             }
         }
-        edges.sort_unstable();
+        par::sort_unstable(&mut edges);
         let mut across = vec![[NONE; 3]; count];
         let mut i = 0;
         while i < edges.len() {
@@ -211,22 +210,31 @@ impl Topology {
             }
             i = j;
         }
-        let mut fans: Vec<Vec<u32>> = vec![Vec::new(); scan.positions.len()];
+        // The triangles at each vertex, in order, laid out one vertex after another: counted,
+        // then placed (a list for each vertex was millions of allocations).
+        let vertices = scan.positions.len();
+        let mut fan_start = vec![0u32; vertices + 1];
+        for &v in corners.iter().flatten() {
+            if let Some(n) = fan_start.get_mut(v as usize + 1) {
+                *n += 1;
+            }
+        }
+        for v in 0..vertices {
+            fan_start[v + 1] += fan_start[v];
+        }
+        let mut fill: Vec<u32> = fan_start[..vertices].to_vec();
+        let mut fan = vec![0u32; fan_start[vertices] as usize];
         for (t, c) in corners.iter().enumerate() {
             for &v in c {
-                if let Some(f) = fans.get_mut(v as usize) {
-                    f.push(t as u32);
+                if let Some(at) = fill.get_mut(v as usize) {
+                    if let Some(slot) = fan.get_mut(*at as usize) {
+                        *slot = t as u32;
+                    }
+                    *at += 1;
                 }
             }
         }
-        let mut fan_start = Vec::with_capacity(fans.len() + 1);
-        let mut fan = Vec::with_capacity(3 * count);
-        fan_start.push(0);
-        for f in &fans {
-            fan.extend_from_slice(f);
-            fan_start.push(fan.len() as u32);
-        }
-        drop(fans);
+        drop(fill);
         let faces: Vec<(Vec3, Vec3, f64)> = par::map(count, |t| {
             let Some([a, b, c]) = scan.corners(t) else { return (Vec3::ZERO, Vec3::ZERO, 0.0) };
             let cross = (b - a).cross(c - a);
@@ -240,7 +248,7 @@ impl Topology {
                 acc
             });
         let mut topology = Topology {
-            tree: TriangleTree::new(&Mesh { positions: scan.positions.to_vec(), triangles: scan.triangles.to_vec(), ..Mesh::default() }),
+            tree: TriangleTree::of(scan.positions, scan.triangles),
             corners,
             across,
             fan_start,
