@@ -5245,6 +5245,25 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     {
         crate::dialogs_scan_curve::click(app, &proj, p);
     }
+    // Curve on Scan: a primary drag begun on the scan draws a stroke, added as points let go.
+    if crate::dialogs_scan_curve::drawing(app) && !held && primary_nav.is_none() && mode.is_none() {
+        if resp.dragged_by(egui::PointerButton::Primary)
+            && let (Some(a), Some(p)) = (ui.input(|i| i.pointer.press_origin()), hover)
+            && rect.contains(a)
+        {
+            crate::dialogs_scan_curve::stroke_to(app, &proj, a, p);
+        }
+        if resp.drag_stopped() || !primary_down {
+            crate::dialogs_scan_curve::stroke_end(app, &proj);
+        }
+    }
+    // Sections Along Curve: a click on a 3D curve is the curve the sections follow.
+    if crate::dialogs_scan_sections::choosing(app)
+        && resp.clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        crate::dialogs_scan_sections::click(app, &proj, p);
+    }
     // New Free Form: a click puts the next corner on what is under it.
     if crate::dialogs_scan_free_form::drawing(app)
         && resp.clicked()
@@ -5255,6 +5274,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
         && !crate::dialogs_scan::drawing_guide(app)
+        && !crate::dialogs_scan_curve::drawing(app)
         && !crate::dialogs_scan_surface::holds_pointer(app)
         && !held
         && primary_nav.is_none()
@@ -5307,6 +5327,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::dialogs_scan_slice::draw(app, &painter, &proj);
     crate::dialogs_scan_clean::draw(app, &painter, &proj);
     crate::dialogs_scan_section::draw(app, &painter, &proj);
+    crate::dialogs_scan_sections::draw(app, &painter, &proj);
     crate::dialogs_assembly::origins(app, &painter, &proj);
     if !crate::joint_handles::visible(app) {
         crate::dialogs_assembly::joint_glyphs(app, &painter, &proj);

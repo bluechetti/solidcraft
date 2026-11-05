@@ -965,6 +965,57 @@ pub struct ScanSectionResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Sections along a curve: the scan cut by planes square to a curve of a 3D sketch at even steps
+/// along it (end to end of an open curve, round a closed one), each kept as a sketch on its plane
+/// of lines, arcs and circles fitted to the cut, as Section to Sketch draws. The planes turn with
+/// the curve and never about it, so the sections loft in order without twisting. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanSectionsAlongParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The 3D sketch the curve is in, by id or name. Default: the design's last `Scan Curves`.
+    #[serde(default)]
+    pub sketch: Option<Value>,
+    /// The curves the sections follow, end to end in order. Default: the sketch's last curve.
+    #[serde(default)]
+    pub curves: Option<Vec<String>>,
+    /// How many sections, 1–60. Default: 8.
+    #[serde(default)]
+    pub count: Option<u32>,
+    /// Keep every loop each plane cuts. Default: false, the loop round the curve with the loops
+    /// inside it (a pipe's bore), or the loop nearest it.
+    #[serde(default)]
+    pub every: Option<bool>,
+    /// How far a piece may stray from the cut's points. Default: 0.1 mm.
+    #[serde(default)]
+    pub tolerance: Option<LengthExpr>,
+}
+
+/// What `scan.sections_along_curve` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanSectionsAlongResult {
+    /// The scan, and the sketches made, one a section, in order along the curve.
+    pub body: String,
+    pub sketches: Vec<u64>,
+    /// The planes that cut nothing kept near the curve.
+    pub missed: usize,
+    /// The outlines drawn, and the lines, arcs and circles they are.
+    pub outlines: usize,
+    pub lines: usize,
+    pub arcs: usize,
+    pub circles: usize,
+    /// Joins held tangent.
+    pub tangents: usize,
+    /// How long the curve is, and the tolerance used, in mm.
+    pub length: f64,
+    pub tolerance: f64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// A way a scan could stand.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct ScanBase {

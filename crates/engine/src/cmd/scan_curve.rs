@@ -51,8 +51,13 @@ pub fn projector(s: &Session, body: Option<&str>, cmd: &str) -> Result<(String, 
 
 /// How far from the scan a clicked point may be: a hundredth of the scan's size, at least five of
 /// its triangles.
+/// How big the scan `body` is: the diagonal of its bounds, in mm (0 for no scan).
+pub fn size(s: &Session, body: &str) -> f64 {
+    s.model.state().body(body).and_then(|b| b.body.triangle_mesh()).map_or(0.0, |(p, t)| solidcraft_scan::Scan::new(p, t).extent())
+}
+
 fn pick_reach(on: &Projector, s: &Session, body: &str) -> f64 {
-    let size = s.model.state().body(body).and_then(|b| b.body.triangle_mesh()).map_or(0.0, |(p, t)| solidcraft_scan::Scan::new(p, t).extent());
+    let size = size(s, body);
     (size / 100.0).max(5.0 * on.edge).max(1e-3)
 }
 

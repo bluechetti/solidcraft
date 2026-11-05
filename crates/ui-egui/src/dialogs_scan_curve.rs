@@ -1,7 +1,10 @@
 //! Curve on Scan (`scan.curve_on_scan`): click points along the scan, in order, and the smooth line
 //! through them is laid on the scan and drawn as the curve will follow it. Clicking the first point
-//! again (or Closed) closes it; Remove Last Point takes the last back. OK keeps it as a 3D sketch
-//! spline within the tolerance of the scan, as SurfaceCraft's Draw Curve on Scan does.
+//! again (or Closed) closes it; Remove Last Point takes the last back. A drag begun on the scan
+//! draws a stroke instead: let go, it is followed along the scan, cut where it leaves the scan or
+//! jumps to another layer, and its longest run, boiled down to the fewest points that still trace
+//! it, is added as points (SurfaceCraft's stroke). OK keeps it as a 3D sketch spline within the
+//! tolerance of the scan, as SurfaceCraft's Draw Curve on Scan does.
 
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
@@ -18,6 +21,20 @@ const CLOSE: f32 = 10.0;
 /// A clicked point's dot, in pixels across.
 const DOT: f32 = 6.0;
 
+/// How far, in pixels, a stroke may stand off a straight line on the screen before it gets a
+/// point there.
+const STROKE_TOLERANCE: f32 = 2.5;
+
+/// How long a drag has to be, in pixels, to be a stroke and not a click that moved a little.
+const MINIMUM_STROKE: f32 = 8.0;
+
+/// How far apart, in pixels, a stroke is looked at for where it is on the scan.
+const SAMPLE_STEP: f32 = 4.0;
+
+/// How many times deeper than sideways the scan may go between two neighbouring samples of a
+/// stroke before they are on different layers of it.
+const LAYER_JUMP: f64 = 6.0;
+
 /// The Curve on Scan dialog's values.
 #[derive(Clone, Debug)]
 pub struct CurveOnScan {
@@ -28,11 +45,13 @@ pub struct CurveOnScan {
     /// How far the curve may stray from the line on the scan, in mm.
     pub tolerance: f64,
     shown: Option<Shown>,
+    /// The stroke being drawn, on the screen, until the button is let go.
+    stroke: Vec<egui::Pos2>,
 }
 
 impl Default for CurveOnScan {
     fn default() -> Self {
-        CurveOnScan { scan: None, picks: Vec::new(), closed: false, tolerance: engine_curve::TOLERANCE, shown: None }
+        CurveOnScan { scan: None, picks: Vec::new(), closed: false, tolerance: engine_curve::TOLERANCE, shown: None, stroke: Vec::new() }
     }
 }
 
@@ -93,7 +112,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut CurveOnScan) -> bool {
             let length = crate::prefs::show_mm(app, *length, 1);
             form_row(ui, tr("ui.scan_curve_length"), |ui| ui_kit::text(ui, &length, ui_kit::Text::Cell));
             let fitted =
-                crate::i18n::format("ui.scan_curve_fit_value", &[("points", &fit.len().to_string()), ("max", &crate::prefs::show_mm(app, *max, 3))]);
+                crate::i18n::format("ui.scan_curve_fit_value", &[("points", &fit.len().to_string()), ("max", &crate::prefs::show_mm(app, *max, 1))]);
             form_row(ui, tr("ui.scan_curve_fit"), |ui| ui_kit::text(ui, &fitted, ui_kit::Text::Cell));
         }
         Some(Err(why)) => {
@@ -126,17 +145,28 @@ pub(crate) fn drawing(app: &SolveApp) -> bool {
     matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanCurve(_)))
 }
 
-/// A click at `at`: on the first point (with three or more) it closes the curve, else on the scan
-/// it adds a point there.
-pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
+/// The scan under `at` on the screen, and the point of it there.
+fn scan_at(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<(String, Vec3)> {
     let hit = crate::viewport::pick_cached(app, proj, at).into_iter().find_map(|h| match h {
         crate::viewport::Hit::Face { body, point, .. } => Some((body, point)),
         _ => None,
     });
     let state = app.session.model.state();
-    let hit = hit.filter(|(body, _)| state.body(body).is_some_and(|b| b.body.is_mesh()));
-    drop(state);
-    let Some(Kind::ScanCurve(k)) = app.dialog.as_mut().map(|d| &mut d.kind) else { return };
+    hit.filter(|(body, _)| state.body(body).is_some_and(|b| b.body.is_mesh()))
+}
+
+fn dialog(app: &mut SolveApp) -> Option<&mut CurveOnScan> {
+    match app.dialog.as_mut().map(|d| &mut d.kind) {
+        Some(Kind::ScanCurve(k)) => Some(k),
+        _ => None,
+    }
+}
+
+/// A click at `at`: on the first point (with three or more) it closes the curve, else on the scan
+/// it adds a point there.
+pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
+    let hit = scan_at(app, proj, at);
+    let Some(k) = dialog(app) else { return };
     let on_first = k.picks.first().and_then(|p| proj.to_screen(*p)).is_some_and(|s| s.distance(at) <= CLOSE);
     if on_first && k.picks.len() >= 3 {
         k.closed = true;
@@ -151,6 +181,120 @@ pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::
     k.picks.push(point);
 }
 
+/// A primary drag begun at `at`, now at `to`: a stroke when it began on the scan.
+pub(crate) fn stroke_to(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, to: egui::Pos2) {
+    if dialog(app).is_some_and(|k| k.stroke.is_empty()) {
+        let on = scan_at(app, proj, at);
+        let Some(k) = dialog(app) else { return };
+        match on {
+            Some((body, _)) if k.scan.as_ref().is_none_or(|s| *s == body) => k.stroke.push(at),
+            _ => return,
+        }
+    }
+    let Some(k) = dialog(app) else { return };
+    if k.stroke.last().is_some_and(|last| last.distance(to) >= 2.0) {
+        k.stroke.push(to);
+    }
+}
+
+/// The indices of the points to keep: the ends, and every point standing off the straight line
+/// between the ones kept either side of it by more than `tolerance` (Douglas–Peucker).
+fn simplified(points: &[egui::Pos2], tolerance: f32) -> Vec<usize> {
+    if points.len() <= 2 {
+        return (0..points.len()).collect();
+    }
+    let off = |p: egui::Pos2, a: egui::Pos2, b: egui::Pos2| {
+        let ab = b - a;
+        let t = if ab.length_sq() > 0.0 { ((p - a).dot(ab) / ab.length_sq()).clamp(0.0, 1.0) } else { 0.0 };
+        p.distance(a + ab * t)
+    };
+    let mut keep = vec![false; points.len()];
+    keep[0] = true;
+    keep[points.len() - 1] = true;
+    let mut spans = vec![(0, points.len() - 1)];
+    while let Some((lo, hi)) = spans.pop() {
+        let worst = (lo + 1..hi).map(|k| (k, off(points[k], points[lo], points[hi]))).max_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((k, d)) = worst
+            && d > tolerance
+        {
+            keep[k] = true;
+            spans.push((lo, k));
+            spans.push((k, hi));
+        }
+    }
+    (0..points.len()).filter(|&k| keep[k]).collect()
+}
+
+/// The stroke let go: followed a few pixels at a time to see where it is on the scan, cut where it
+/// leaves the scan or the scan under it jumps to another layer, and its longest run boiled down to
+/// the fewest points that trace it and added to the curve. Ended near the first point (with three
+/// or more), it closes the curve. A click or a stroke never on the scan adds nothing.
+pub(crate) fn stroke_end(app: &mut SolveApp, proj: &crate::viewport::Proj) {
+    let Some(raw) = dialog(app).map(|k| std::mem::take(&mut k.stroke)) else { return };
+    let travelled: f32 = raw.windows(2).map(|w| w[0].distance(w[1])).sum();
+    if raw.len() < 2 || travelled < MINIMUM_STROKE {
+        return;
+    }
+    let mut samples = vec![raw[0]];
+    for &p in &raw[1..] {
+        if samples.last().is_some_and(|last| p.distance(*last) >= SAMPLE_STEP) {
+            samples.push(p);
+        }
+    }
+    if samples.last() != raw.last()
+        && let Some(last) = raw.last()
+    {
+        samples.push(*last);
+    }
+    let toward = proj.cam.back();
+    let mut runs: Vec<Vec<(egui::Pos2, String, Vec3)>> = Vec::new();
+    let mut current: Vec<(egui::Pos2, String, Vec3)> = Vec::new();
+    let mut size = 0.0f64;
+    for at in samples {
+        let Some((body, point)) = scan_at(app, proj, at) else {
+            runs.push(std::mem::take(&mut current));
+            continue;
+        };
+        if size == 0.0 {
+            size = engine_curve::size(&app.session, &body);
+        }
+        if let Some((_, last_body, last)) = current.last() {
+            let step = point - *last;
+            let depth = step.dot(toward).abs();
+            let across = (step - toward * step.dot(toward)).len();
+            // Sideways it moved about a sample; far deeper than that, it is another layer.
+            if *last_body != body || (depth > LAYER_JUMP * across.max(1e-9) && depth > 0.01 * size) {
+                runs.push(std::mem::take(&mut current));
+            }
+        }
+        current.push((at, body, point));
+    }
+    runs.push(current);
+    let Some(run) = runs.into_iter().filter(|r| r.len() >= 2).max_by_key(Vec::len) else { return };
+    let screen: Vec<egui::Pos2> = run.iter().map(|(p, _, _)| *p).collect();
+    let Some(k) = dialog(app) else { return };
+    let body = run[0].1.clone();
+    if k.scan.as_ref().is_some_and(|s| *s != body) {
+        return;
+    }
+    k.scan = Some(body);
+    for i in simplified(&screen, STROKE_TOLERANCE) {
+        let point = run[i].2;
+        if k.picks.last().is_none_or(|p| (*p - point).len() > 1e-6) {
+            k.picks.push(point);
+        }
+    }
+    // Ended on the first point, the curve closes there.
+    let first = k.picks.first().and_then(|p| proj.to_screen(*p));
+    if k.picks.len() >= 4
+        && let (Some(first), Some(end)) = (first, screen.last())
+        && first.distance(*end) <= CLOSE
+    {
+        k.picks.pop();
+        k.closed = true;
+    }
+}
+
 /// The line on the scan and the points clicked, over the picture.
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanCurve(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
@@ -161,6 +305,9 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         for p in fit.iter().filter_map(|p| proj.to_screen(*p)) {
             painter.circle_filled(p, DOT / 3.0, t.sketch_accent);
         }
+    }
+    if k.stroke.len() >= 2 {
+        painter.add(egui::Shape::line(k.stroke.clone(), egui::Stroke::new(2.0, t.accent)));
     }
     for (i, p) in k.picks.iter().enumerate() {
         let Some(s) = proj.to_screen(*p) else { continue };
@@ -235,5 +382,40 @@ mod tests {
         assert!(h.app.session.doc.features.iter().any(|f| f.name == engine_curve::SKETCH_NAME), "kept in Scan Curves");
         h.app.run("edit.undo", json!({})).unwrap();
         assert!(!h.app.session.doc.features.iter().any(|f| f.name == engine_curve::SKETCH_NAME), "one undo step");
+    }
+
+    /// A stroke dragged along the top of a tube is followed on the scan and boiled down to a few
+    /// points on it; a straight stroke is its two ends, a bent one keeps its bend. A drag begun
+    /// off the scan draws nothing.
+    #[test]
+    fn a_stroke_dragged_on_the_scan_adds_its_points() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("tube.stl");
+        std::fs::write(&path, tube_stl(64)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.curve_on_scan");
+        h.frames(2);
+        let on = |x: f64, y: f64| json!({"world": [x, y, (400.0 - x * x).sqrt()]});
+        // Off the scan: nothing.
+        h.step(&json!({"drag": [{"world": [60.0, 8.0, 0.0]}, {"world": [60.0, 32.0, 0.0]}], "steps": 12})).unwrap();
+        h.frames(2);
+        assert!(kind(&h).picks.is_empty(), "a stroke begun off the scan adds nothing");
+        // Straight along the tube: its two ends.
+        h.step(&json!({"drag": [on(0.0, 4.0), on(0.0, 36.0)], "steps": 24})).unwrap();
+        h.frames(2);
+        let k = kind(&h);
+        assert_eq!(k.picks.len(), 2, "a straight stroke is its ends: {:?}", k.picks);
+        assert!(k.picks.iter().all(|p| ((p.x * p.x + p.z * p.z).sqrt() - 20.0).abs() < 0.05), "on the tube: {:?}", k.picks);
+        if let Some(Kind::ScanCurve(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.picks.clear();
+        }
+        // Bent: across, then along.
+        h.step(&json!({"drag": [on(-14.0, 6.0), on(0.0, 6.0), on(0.0, 34.0)], "steps": 24})).unwrap();
+        h.frames(2);
+        let k = kind(&h);
+        assert_eq!(k.picks.len(), 3, "the bend is kept: {:?}", k.picks);
+        assert!((k.picks[1].x.abs() < 1.5) && (k.picks[1].y - 6.0).abs() < 1.5, "at the bend: {:?}", k.picks[1]);
+        assert!(matches!(k.shown.as_ref().map(|s| &s.result), Some(Ok(_))), "the line is laid: {:?}", k.shown);
     }
 }

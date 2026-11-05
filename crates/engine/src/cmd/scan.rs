@@ -22,8 +22,8 @@ use crate::schema::scan::{
     ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFittedTorus,
     ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult, ScanMergeSurfacesParams,
     ScanMergeSurfacesResult, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams, ScanRepairResult,
-    ScanSectionParams, ScanSectionResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams,
-    ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
+    ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult,
+    ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -50,6 +50,7 @@ const HOLES_CONTRACT: TypedContract<ScanHolesParams> = TypedContract::new();
 const REDUCE_CONTRACT: TypedContract<ScanReduceParams> = TypedContract::new();
 const REPAIR_CONTRACT: TypedContract<ScanRepairParams> = TypedContract::new();
 const SECTION_CONTRACT: TypedContract<ScanSectionParams> = TypedContract::new();
+const SECTIONS_ALONG_CONTRACT: TypedContract<ScanSectionsAlongParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("scan.repair", "Repair Mesh", crate::checked!("scan.repair", clean::repair))
@@ -178,6 +179,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&SECTION_CONTRACT)
         .output(output_schema_for::<ScanSectionResult>)
         .params("body?: mesh body (default: the selected or only one); plane?: as sketch.create's (default XY; used when no sketch is being edited, else that sketch's plane); offset?: length; tolerance?: how far a piece may stray from the cut (default 0.1 mm): where the plane cuts the scan, as lines, arcs and circles each fitted to its points (the noise averaged, not traced), end to end, smooth joins tangent, in the sketch being edited or a new sketch `Section` (one undo step) → body, sketch, outlines, lines, arcs, circles, tangents, tolerance"),
+    CommandSpec::new("scan.sections_along_curve", "Sections Along Curve", crate::checked!("scan.sections_along_curve", section::sections_along_curve))
+        .at("SCAN", "SKETCH")
+        .icon("loft")
+        .contract(&SECTIONS_ALONG_CONTRACT)
+        .output(output_schema_for::<ScanSectionsAlongResult>)
+        .params("body?: mesh body (default: the selected or only one); sketch?: id|name of the 3D sketch holding the curve (default: the last `Scan Curves`); curves?: [ids end to end in order] (default: its last curve); count?: 1…60 sections (default 8: end to end of an open curve, round a closed one); every?: bool (default false: the loop round the curve with the loops inside it, or the one nearest it); tolerance?: how far a piece may stray from the cut (default 0.1 mm): planes square to the curve at even steps cut the scan, each section a sketch `Curve Section n` on its plane of lines, arcs and circles fitted to the cut, the planes turned with the curve and never about it so they loft in order (one undo step); a plane that cuts nothing near the curve is counted, not refused → body, sketches, missed, outlines, lines, arcs, circles, tangents, length, tolerance"),
     CommandSpec::new("scan.free_form", "New Free Form", crate::checked!("scan.free_form", free_form::new_free_form))
         .at("SCAN", "FREEFORM")
         .icon("surface_patch")

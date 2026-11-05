@@ -168,6 +168,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.rest_on_grid",
     "scan.revolve_it",
     "scan.section_sketch",
+    "scan.sections_along_curve",
     "scan.slice_surface",
     "scan.square_to_symmetry",
     "scan.stand_on_base",

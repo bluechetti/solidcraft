@@ -1,0 +1,98 @@
+{
+  "en": {
+    "cmd.scan_sections_along_curve": "Sections Along Curve",
+    "help.scan.sections_along_curve": "Cuts the scan with planes square to a 3D curve at even steps along it and sketches each section as lines, arcs and circles fitted to the cut: one sketch a section, in order along the curve, ready to loft. The planes turn with the curve and never twist about it.",
+    "ui.scan_sections_count": "Sections",
+    "ui.scan_sections_every": "Every loop",
+    "ui.scan_sections_found": "{sections} sections: {lines} lines, {arcs} arcs, {circles} circles.",
+    "ui.scan_sections_hint": "Click a 3D curve to follow it. OK keeps each section as a sketch on its plane, in order along the curve.",
+    "ui.scan_sections_last_curve": "The last curve drawn on the scan",
+    "ui.scan_sections_missed": "{missed} planes cut nothing near the curve.",
+    "ui.scan_sections_nothing": "No plane square to the curve cuts the scan near it: draw the curve on the scan, or through the middle of the part.",
+    "ui.scan_sections_path": "Curve"
+  },
+  "de": {
+    "cmd.scan_sections_along_curve": "Schnitte entlang Kurve",
+    "help.scan.sections_along_curve": "Schneidet den Scan mit Ebenen senkrecht zu einer 3D-Kurve in gleichen Schritten entlang der Kurve und skizziert jeden Schnitt als an den Schnitt angepasste Linien, Bögen und Kreise: eine Skizze je Schnitt, der Reihe nach entlang der Kurve, bereit zum Erhebungskörper. Die Ebenen drehen sich mit der Kurve und verdrehen sich nie um sie.",
+    "ui.scan_sections_count": "Schnitte",
+    "ui.scan_sections_every": "Jede Schleife",
+    "ui.scan_sections_found": "{sections} Schnitte: {lines} Linien, {arcs} Bögen, {circles} Kreise.",
+    "ui.scan_sections_hint": "Klicken Sie eine 3D-Kurve an, um ihr zu folgen. OK behält jeden Schnitt als Skizze auf seiner Ebene, der Reihe nach entlang der Kurve.",
+    "ui.scan_sections_last_curve": "Die zuletzt auf dem Scan gezeichnete Kurve",
+    "ui.scan_sections_missed": "{missed} Ebenen schneiden nichts nahe der Kurve.",
+    "ui.scan_sections_nothing": "Keine Ebene senkrecht zur Kurve schneidet den Scan in ihrer Nähe: Zeichnen Sie die Kurve auf dem Scan oder durch die Mitte des Teils.",
+    "ui.scan_sections_path": "Kurve"
+  },
+  "ja": {
+    "cmd.scan_sections_along_curve": "曲線に沿った断面",
+    "help.scan.sections_along_curve": "3D 曲線に沿って等間隔に、曲線に直交する平面でスキャンを切り、各断面を断面に当てはめた線分・円弧・円としてスケッチします。断面ごとに 1 つのスケッチを曲線に沿った順に作り、そのままロフトできます。平面は曲線とともに向きを変え、曲線のまわりにねじれることはありません。",
+    "ui.scan_sections_count": "断面数",
+    "ui.scan_sections_every": "すべてのループ",
+    "ui.scan_sections_found": "断面 {sections} 個: 線分 {lines}、円弧 {arcs}、円 {circles}。",
+    "ui.scan_sections_hint": "3D 曲線をクリックするとその曲線に沿います。OK で各断面をその平面上のスケッチとして、曲線に沿った順に残します。",
+    "ui.scan_sections_last_curve": "スキャン上に最後に描いた曲線",
+    "ui.scan_sections_missed": "{missed} 個の平面が曲線の近くで何も切りません。",
+    "ui.scan_sections_nothing": "曲線に直交する平面が曲線の近くでスキャンを切りません。曲線をスキャン上か部品の中心に通して描いてください。",
+    "ui.scan_sections_path": "曲線"
+  },
+  "ko": {
+    "cmd.scan_sections_along_curve": "곡선을 따른 단면",
+    "help.scan.sections_along_curve": "3D 곡선을 따라 같은 간격으로 곡선에 수직인 평면으로 스캔을 자르고, 각 단면을 단면에 맞춘 선, 호, 원으로 스케치합니다. 단면마다 스케치 하나를 곡선을 따라 순서대로 만들어 바로 로프트할 수 있습니다. 평면은 곡선과 함께 돌며 곡선을 중심으로 비틀리지 않습니다.",
+    "ui.scan_sections_count": "단면 수",
+    "ui.scan_sections_every": "모든 루프",
+    "ui.scan_sections_found": "단면 {sections}개: 선 {lines}, 호 {arcs}, 원 {circles}.",
+    "ui.scan_sections_hint": "따라갈 3D 곡선을 클릭하세요. 확인을 누르면 각 단면을 그 평면의 스케치로 곡선을 따라 순서대로 유지합니다.",
+    "ui.scan_sections_last_curve": "스캔에 마지막으로 그린 곡선",
+    "ui.scan_sections_missed": "평면 {missed}개가 곡선 근처에서 아무것도 자르지 않습니다.",
+    "ui.scan_sections_nothing": "곡선에 수직인 평면이 곡선 근처에서 스캔을 자르지 않습니다. 곡선을 스캔 위나 부품 가운데를 지나게 그리세요.",
+    "ui.scan_sections_path": "곡선"
+  },
+  "zh": {
+    "cmd.scan_sections_along_curve": "沿曲线截面",
+    "help.scan.sections_along_curve": "沿 3D 曲线按等间距用垂直于曲线的平面切割扫描，并将每个截面草绘为拟合截面的直线、圆弧和圆：每个截面一个草图，沿曲线依次排列，可直接放样。平面随曲线转动，绝不绕曲线扭转。",
+    "ui.scan_sections_count": "截面数",
+    "ui.scan_sections_every": "所有环",
+    "ui.scan_sections_found": "{sections} 个截面：{lines} 条直线、{arcs} 段圆弧、{circles} 个圆。",
+    "ui.scan_sections_hint": "单击要沿循的 3D 曲线。确定后将每个截面保存为其平面上的草图，沿曲线依次排列。",
+    "ui.scan_sections_last_curve": "在扫描上最后绘制的曲线",
+    "ui.scan_sections_missed": "{missed} 个平面在曲线附近未切到任何内容。",
+    "ui.scan_sections_nothing": "没有垂直于曲线的平面在曲线附近切到扫描：请在扫描上或穿过零件中部绘制曲线。",
+    "ui.scan_sections_path": "曲线"
+  },
+  "ar": {
+    "cmd.scan_sections_along_curve": "مقاطع على امتداد منحنى",
+    "help.scan.sections_along_curve": "يقطع المسح بمستويات متعامدة على منحنى ثلاثي الأبعاد بخطوات متساوية على امتداده ويرسم كل مقطع خطوطًا وأقواسًا ودوائر مطابقة للقطع: رسم لكل مقطع، بالترتيب على امتداد المنحنى، جاهزة للتشكيل الانتقالي. تدور المستويات مع المنحنى ولا تلتف حوله أبدًا.",
+    "ui.scan_sections_count": "المقاطع",
+    "ui.scan_sections_every": "كل حلقة",
+    "ui.scan_sections_found": "{sections} مقاطع: {lines} خطوط، {arcs} أقواس، {circles} دوائر.",
+    "ui.scan_sections_hint": "انقر منحنى ثلاثي الأبعاد لاتباعه. موافق يحتفظ بكل مقطع رسمًا على مستواه، بالترتيب على امتداد المنحنى.",
+    "ui.scan_sections_last_curve": "آخر منحنى رُسم على المسح",
+    "ui.scan_sections_missed": "{missed} مستويات لا تقطع شيئًا قرب المنحنى.",
+    "ui.scan_sections_nothing": "لا يقطع أي مستوى متعامد على المنحنى المسحَ قربه: ارسم المنحنى على المسح أو عبر منتصف القطعة.",
+    "ui.scan_sections_path": "المنحنى"
+  },
+  "he": {
+    "cmd.scan_sections_along_curve": "חתכים לאורך עקומה",
+    "help.scan.sections_along_curve": "חותך את הסריקה במישורים הניצבים לעקומה תלת-ממדית בצעדים שווים לאורכה ומשרטט כל חתך כקווים, קשתות ומעגלים המותאמים לחתך: סקיצה לכל חתך, לפי הסדר לאורך העקומה, מוכנות ללופט. המישורים מסתובבים עם העקומה ולעולם אינם מתפתלים סביבה.",
+    "ui.scan_sections_count": "חתכים",
+    "ui.scan_sections_every": "כל לולאה",
+    "ui.scan_sections_found": "{sections} חתכים: {lines} קווים, {arcs} קשתות, {circles} מעגלים.",
+    "ui.scan_sections_hint": "לחצו על עקומה תלת-ממדית כדי לעקוב אחריה. אישור שומר כל חתך כסקיצה על המישור שלו, לפי הסדר לאורך העקומה.",
+    "ui.scan_sections_last_curve": "העקומה האחרונה שצוירה על הסריקה",
+    "ui.scan_sections_missed": "{missed} מישורים אינם חותכים דבר ליד העקומה.",
+    "ui.scan_sections_nothing": "אף מישור הניצב לעקומה אינו חותך את הסריקה לידה: ציירו את העקומה על הסריקה או דרך אמצע החלק.",
+    "ui.scan_sections_path": "עקומה"
+  },
+  "vi": {
+    "cmd.scan_sections_along_curve": "Mặt cắt dọc đường cong",
+    "help.scan.sections_along_curve": "Cắt bản quét bằng các mặt phẳng vuông góc với một đường cong 3D theo các bước đều dọc theo nó và phác thảo mỗi mặt cắt thành các đoạn thẳng, cung và đường tròn khớp với vết cắt: mỗi mặt cắt một phác thảo, theo thứ tự dọc đường cong, sẵn sàng để loft. Các mặt phẳng xoay theo đường cong và không bao giờ xoắn quanh nó.",
+    "ui.scan_sections_count": "Số mặt cắt",
+    "ui.scan_sections_every": "Mọi vòng",
+    "ui.scan_sections_found": "{sections} mặt cắt: {lines} đoạn thẳng, {arcs} cung, {circles} đường tròn.",
+    "ui.scan_sections_hint": "Bấm một đường cong 3D để đi theo nó. OK giữ mỗi mặt cắt thành một phác thảo trên mặt phẳng của nó, theo thứ tự dọc đường cong.",
+    "ui.scan_sections_last_curve": "Đường cong vẽ trên bản quét gần nhất",
+    "ui.scan_sections_missed": "{missed} mặt phẳng không cắt gì gần đường cong.",
+    "ui.scan_sections_nothing": "Không mặt phẳng nào vuông góc với đường cong cắt bản quét gần nó: hãy vẽ đường cong trên bản quét hoặc xuyên qua giữa chi tiết.",
+    "ui.scan_sections_path": "Đường cong"
+  }
+}

@@ -4,7 +4,8 @@ use super::{
     ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCurveParams, ScanDeviationParams, ScanDeviationResult, ScanEditNetParams,
     ScanEditSurfaceParams, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFloatingParams, ScanFreeFormParams,
     ScanHolesParams, ScanMergeSurfacesParams, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanRepairParams, ScanSectionParams,
-    ScanSliceSurfaceParams, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams,
+    ScanSectionsAlongParams, ScanSliceSurfaceParams, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
+    ScanWrapSurfaceParams,
 };
 use crate::Session;
 use crate::schema::tests::{assert_keys, assert_strict_keeps_todays_errors, conforms};
@@ -30,6 +31,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanHolesParams>(), &["body", "fair", "max_edges"]);
     assert_keys(input_schema_for::<ScanRepairParams>(), &["body"]);
     assert_keys(input_schema_for::<ScanSectionParams>(), &["body", "offset", "plane", "tolerance"]);
+    assert_keys(input_schema_for::<ScanSectionsAlongParams>(), &["body", "count", "curves", "every", "sketch", "tolerance"]);
     assert_keys(input_schema_for::<ScanReduceParams>(), &["body", "keep_rim", "max_error", "ratio", "triangles"]);
     assert_keys(input_schema_for::<ScanCurveParams>(), &["body", "closed", "points", "sketch", "tolerance"]);
     assert_keys(input_schema_for::<ScanEditSurfaceParams>(), &["hold", "moves", "net", "points", "reach", "refit", "scan", "surface"]);

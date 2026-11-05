@@ -744,6 +744,66 @@ fn section_sketch_fits_the_cut_with_lines_and_circles() {
     assert!(s.active_sketch.is_none(), "a refused cut leaves no sketch open");
 }
 
+/// A ring (torus) about Z: its core a circle of radius 30, its tube of radius 5.
+fn ring_triangles() -> Vec<[Vec3; 3]> {
+    let (around, across) = (96u32, 32u32);
+    let at = |i: u32, j: u32| {
+        let (a, b) =
+            (std::f64::consts::TAU * f64::from(i % around) / f64::from(around), std::f64::consts::TAU * f64::from(j % across) / f64::from(across));
+        let r = 30.0 + 5.0 * b.cos();
+        Vec3::new(r * a.cos(), r * a.sin(), 5.0 * b.sin())
+    };
+    let mut out = Vec::new();
+    for i in 0..around {
+        for j in 0..across {
+            out.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+            out.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+        }
+    }
+    out
+}
+
+/// Sections Along Curve round a curve drawn over the top of a ring: eight sketches, each the
+/// tube's circle (radius 5, round the core) on a plane through the ring's axis, in one undo
+/// step; asked for every loop, the far side of the ring is cut too.
+#[test]
+fn sections_along_a_curve_over_a_ring_are_its_tube() {
+    let (mut s, _) = session_with_triangles("sections-along", &ring_triangles());
+    let over: Vec<[f64; 3]> = (0..6)
+        .map(|k| {
+            let a = std::f64::consts::TAU * f64::from(k) / 6.0;
+            [30.0 * a.cos(), 30.0 * a.sin(), 5.0]
+        })
+        .collect();
+    run(&mut s, "scan.curve_on_scan", json!({"points": over, "closed": true}));
+    let before = s.doc.features.len();
+    let made = run(&mut s, "scan.sections_along_curve", json!({}));
+    let sketches: Vec<u64> = made["sketches"].as_array().unwrap().iter().filter_map(Value::as_u64).collect();
+    assert_eq!((sketches.len(), made["missed"].as_u64()), (8, Some(0)), "round the closed curve: {made}");
+    assert!((made["length"].as_f64().unwrap() - std::f64::consts::TAU * 30.0).abs() < 3.0, "about the ring: {made}");
+    for id in &sketches {
+        let state = s.model.state();
+        let ss = state.sketch(*id).unwrap();
+        let plane = ss.plane;
+        let normal = plane.x.cross(plane.y);
+        assert!(normal.z.abs() < 0.02, "the plane holds the ring's axis: {normal:?}");
+        let Some(solidcraft_sketch::CurveKind::Circle { r, c }) = ss.sketch.curves.first().map(|k| &k.kind) else {
+            panic!("a circle: {:?}", ss.sketch.curves.first())
+        };
+        assert!((r - 5.0).abs() < 0.1, "the tube's radius: {r}");
+        let q = ss.sketch.points[*c].pos;
+        let centre = plane.origin + plane.x * q.x + plane.y * q.y;
+        assert!(((centre.x.hypot(centre.y)) - 30.0).abs() < 0.2 && centre.z.abs() < 0.2, "round the core: {centre:?}");
+    }
+    assert!(s.doc.features.iter().any(|f| f.name == "Curve Section 8"));
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.features.len(), before, "one undo step");
+    let every = run(&mut s, "scan.sections_along_curve", json!({"every": true, "count": 2}));
+    assert_eq!(every["outlines"].as_u64(), Some(4), "each plane cuts both sides of the ring: {every}");
+    let refused = s.execute("scan.sections_along_curve", &json!({"count": 0})).unwrap_err().to_string();
+    assert!(refused.contains("1 to 60"), "{refused}");
+}
+
 /// A plane given is the one asked for: kept however little of the scan matches it, the reply
 /// saying how much; the best plane found unasked is still refused when it matches poorly.
 #[test]

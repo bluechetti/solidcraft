@@ -150,6 +150,7 @@ mod tests {
             "scan.mesh_from_points",
             "scan.remesh",
             "scan.denoise",
+            "scan.sections_along_curve",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {

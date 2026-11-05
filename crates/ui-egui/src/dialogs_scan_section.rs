@@ -84,20 +84,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SectionSketch) -> bool {
             ui_kit::text(ui, tr("ui.scan_section_nothing"), ui_kit::Text::Report("scan_section_nothing", true));
         }
         Some(Ok((_, _, outlines))) => {
-            let (mut lines, mut arcs, mut circles) = (0, 0, 0);
-            for o in outlines {
-                match o {
-                    Outline::Circle { .. } => circles += 1,
-                    Outline::Chain(pieces) => {
-                        for p in pieces {
-                            match p {
-                                Piece::Line { .. } => lines += 1,
-                                Piece::Arc { .. } => arcs += 1,
-                            }
-                        }
-                    }
-                }
-            }
+            let (lines, arcs, circles) = counts(outlines);
             let note = crate::i18n::format(
                 "ui.scan_section_found",
                 &[
@@ -148,6 +135,12 @@ fn along(piece: &Piece) -> Vec<Vec2> {
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanSection(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let Some(Ok((_, plane, outlines))) = k.shown.as_ref().map(|s| &s.result) else { return };
+    paint(painter, proj, plane, outlines);
+}
+
+/// Outlines fitted in `plane` drawn over the picture as they will be sketched: lines in the
+/// sketch colour, arcs and circles in the accent, the joints as dots.
+pub(crate) fn paint(painter: &egui::Painter, proj: &crate::viewport::Proj, plane: &Plane, outlines: &[Outline]) {
     let t = crate::theme::Tokens::get();
     let screen = |p: Vec2| proj.to_screen(plane.to_world(p));
     let line = |points: Vec<Vec2>, colour: egui::Color32| {
@@ -174,6 +167,25 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
             }
         }
     }
+}
+
+/// How many lines, arcs and circles the outlines are.
+pub(crate) fn counts(outlines: &[Outline]) -> (usize, usize, usize) {
+    let (mut lines, mut arcs, mut circles) = (0, 0, 0);
+    for o in outlines {
+        match o {
+            Outline::Circle { .. } => circles += 1,
+            Outline::Chain(pieces) => {
+                for p in pieces {
+                    match p {
+                        Piece::Line { .. } => lines += 1,
+                        Piece::Arc { .. } => arcs += 1,
+                    }
+                }
+            }
+        }
+    }
+    (lines, arcs, circles)
 }
 
 #[cfg(test)]

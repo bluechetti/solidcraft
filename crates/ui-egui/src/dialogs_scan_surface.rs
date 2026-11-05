@@ -218,8 +218,8 @@ pub fn fit_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitSurface, inputs: &
                 "ui.scan_fit_found",
                 &[
                     ("points", &found.points.to_string()),
-                    ("rms", &crate::prefs::show_mm(app, found.rms, 3)),
-                    ("max", &crate::prefs::show_mm(app, found.max, 3)),
+                    ("rms", &crate::prefs::show_mm(app, found.rms, 1)),
+                    ("max", &crate::prefs::show_mm(app, found.max, 1)),
                 ],
             );
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_fit_found"));
@@ -425,7 +425,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
     if let Some((rms, max)) = k.fit {
         let fit = crate::i18n::format(
             "ui.scan_edit_distance_value",
-            &[("rms", &crate::prefs::show_mm(app, rms, 3)), ("max", &crate::prefs::show_mm(app, max, 3))],
+            &[("rms", &crate::prefs::show_mm(app, rms, 1)), ("max", &crate::prefs::show_mm(app, max, 1))],
         );
         form_row(ui, tr("ui.scan_edit_distance"), |ui| ui_kit::text(ui, &fit, ui_kit::Text::Cell));
     }

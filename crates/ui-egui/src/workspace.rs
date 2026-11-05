@@ -373,7 +373,7 @@ pub const SECTIONS: &[Section] = &[
         tab: "SCAN",
         panel: "SKETCH",
         promoted: 3,
-        ids: &["sketch.create", "scan.section_sketch", "scan.curve_on_scan", "sketch.fit_curves_to_section"],
+        ids: &["sketch.create", "scan.section_sketch", "scan.curve_on_scan", "scan.sections_along_curve", "sketch.fit_curves_to_section"],
     },
     Section { tab: "SCAN", panel: "CHECK", promoted: 3, ids: &["scan.deviation", "inspect.section", "inspect.compare"] },
 ];

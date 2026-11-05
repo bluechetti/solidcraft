@@ -147,7 +147,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
         Some(Ok(made)) if made.scan.is_some() => {
             let note = crate::i18n::format(
                 "ui.scan_free_form_found",
-                &[("met", &made.met.to_string()), ("places", &made.places.to_string()), ("rms", &crate::prefs::show_mm(app, made.rms, 3))],
+                &[("met", &made.met.to_string()), ("places", &made.places.to_string()), ("rms", &crate::prefs::show_mm(app, made.rms, 1))],
             );
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_free_form_found"));
         }
@@ -306,7 +306,7 @@ pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs:
                     ("net", &format!("{nu} × {nv}")),
                     ("radius", &crate::prefs::show_mm(app, w.cylinder.radius, 2)),
                     ("off", &crate::prefs::show_mm(app, w.off, 2)),
-                    ("rms", &crate::prefs::show_mm(app, w.made.rms, 3)),
+                    ("rms", &crate::prefs::show_mm(app, w.made.rms, 1)),
                 ],
             );
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_wrap_found"));
