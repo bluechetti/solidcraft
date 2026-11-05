@@ -296,13 +296,17 @@ pub(super) fn reduce(s: &mut Session, p: &Value) -> Result<Value> {
 pub(super) fn repair(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.repair";
     let name = mesh_name(s, p, cmd)?;
+    let crossings = crate::params::bool_(p, "crossings").unwrap_or(true);
     let fixed = {
         let state = s.model.state();
         let (positions, triangles) = state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, "the scan is gone"))?;
-        solidcraft_scan::repair::repair(&Scan::new(positions, triangles))
+        solidcraft_scan::repair::repair(&Scan::new(positions, triangles), crossings)
     };
     if !fixed.changed() {
-        return Err(bad(cmd, "the scan needs no repair: no copied triangles, no edge of three or more faces, no slivers"));
+        return Err(bad(
+            cmd,
+            "the scan needs no repair: no copied triangles, no edge of three or more faces, no slivers, no faces passing through others",
+        ));
     }
     let feature = replace_mesh(s, &name, &fixed.positions, &fixed.triangles, cmd)?;
     let reply = ScanRepairResult {
@@ -310,6 +314,9 @@ pub(super) fn repair(s: &mut Session, p: &Value) -> Result<Value> {
         duplicates: fixed.duplicates,
         non_manifold: fixed.non_manifold,
         slivers: fixed.slivers,
+        crossings: fixed.crossings,
+        crossing_faces: fixed.crossing_faces,
+        refilled: fixed.refilled,
         triangles: fixed.triangles.len(),
         feature,
         param_warnings: Vec::new(),

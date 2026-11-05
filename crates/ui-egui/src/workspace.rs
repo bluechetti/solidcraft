@@ -333,7 +333,16 @@ pub const SECTIONS: &[Section] = &[
         tab: "SCAN",
         panel: "CLEAN",
         promoted: 4,
-        ids: &["scan.repair", "scan.fill_holes", "scan.remove_floating", "scan.reduce", "scan.denoise", "scan.remesh", "scan.mesh_from_points"],
+        ids: &[
+            "scan.repair",
+            "scan.fill_holes",
+            "scan.remove_floating",
+            "scan.reduce",
+            "scan.denoise",
+            "scan.remesh",
+            "scan.mesh_from_points",
+            "scan.split",
+        ],
     },
     Section {
         tab: "SCAN",
@@ -348,6 +357,9 @@ pub const SECTIONS: &[Section] = &[
             "scan.quick_align",
             "scan.center",
             "scan.register",
+            "scan.align_all",
+            "scan.align_pairs",
+            "scan.align_to_model",
         ],
     },
     Section {

@@ -905,6 +905,10 @@ pub struct ScanRepairParams {
     /// The mesh body. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// Take off faces that pass through others they share no edge with, and the ring round them,
+    /// and close the holes left with smooth patches. Default: true.
+    #[serde(default)]
+    pub crossings: Option<bool>,
 }
 
 /// What `scan.repair` returns.
@@ -916,6 +920,11 @@ pub struct ScanRepairResult {
     pub duplicates: usize,
     pub non_manifold: usize,
     pub slivers: usize,
+    /// Pairs of faces found passing through each other, the faces taken off for them (with the
+    /// ring round them) and the holes that left closed again.
+    pub crossings: usize,
+    pub crossing_faces: usize,
+    pub refilled: usize,
     /// The triangles the scan has now.
     pub triangles: usize,
     /// The Insert Mesh feature the scan was written back into.

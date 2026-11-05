@@ -109,7 +109,7 @@ impl Rigid {
 }
 
 /// A scan as the fit reads it: its nearest points and its triangles' directions.
-struct Surface<'a> {
+pub(crate) struct Surface<'a> {
     scan: Scan<'a>,
     tree: TriangleTree,
     diagonal: f64,
@@ -117,19 +117,19 @@ struct Surface<'a> {
 
 /// The nearest point of a surface to a point.
 #[derive(Clone, Copy)]
-struct Hit {
-    point: Vec3,
-    distance: f64,
-    normal: Option<Vec3>,
+pub(crate) struct Hit {
+    pub(crate) point: Vec3,
+    pub(crate) distance: f64,
+    pub(crate) normal: Option<Vec3>,
 }
 
 impl<'a> Surface<'a> {
-    fn new(scan: Scan<'a>) -> Self {
+    pub(crate) fn new(scan: Scan<'a>) -> Self {
         let mesh = solidcraft_geom::Mesh { positions: scan.positions.to_vec(), triangles: scan.triangles.to_vec(), ..Default::default() };
         Surface { tree: TriangleTree::new(&mesh), diagonal: scan.extent().max(1e-9), scan }
     }
 
-    fn nearest(&self, p: Vec3) -> Option<Hit> {
+    pub(crate) fn nearest(&self, p: Vec3) -> Option<Hit> {
         let (distance, t) = self.tree.nearest(p)?;
         let [a, b, c] = self.scan.corners(t as usize)?;
         Some(Hit { point: closest_on_triangle(p, a, b, c), distance, normal: (b - a).cross(c - a).normalized() })
@@ -180,7 +180,7 @@ fn every(points: &[Vec3], limit: usize) -> Vec<Vec3> {
 
 /// The rms of the nearest distances from `points`, moved, to `reference`, the worst `ignored`
 /// share left out.
-fn trimmed_rms(points: &[Vec3], moved: &Rigid, reference: &Surface, ignored: f64) -> f64 {
+pub(crate) fn trimmed_rms(points: &[Vec3], moved: &Rigid, reference: &Surface, ignored: f64) -> f64 {
     let mut distances: Vec<f64> =
         par::map(points.len(), |i| reference.nearest(moved.apply(points[i])).map(|h| h.distance)).into_iter().flatten().collect();
     if distances.is_empty() {

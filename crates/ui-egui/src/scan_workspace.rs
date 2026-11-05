@@ -151,6 +151,10 @@ mod tests {
             "scan.remesh",
             "scan.denoise",
             "scan.sections_along_curve",
+            "scan.split",
+            "scan.align_all",
+            "scan.align_pairs",
+            "scan.align_to_model",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {

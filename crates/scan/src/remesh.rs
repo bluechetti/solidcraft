@@ -549,7 +549,7 @@ pub fn remesh(sources: &[Scan], settings: &Settings) -> Result<Remeshed, RemeshE
     let (out_positions, out_triangles) = if is_manifold(&out_triangles) {
         (out_positions, out_triangles)
     } else {
-        let mended = crate::repair::repair(&Scan::new(&out_positions, &out_triangles));
+        let mended = crate::repair::repair(&Scan::new(&out_positions, &out_triangles), false);
         (mended.positions, mended.triangles)
     };
     let (new_rms, new_max, scan_rms, scan_p95, uncovered) = measure(&out_positions, &out_triangles, &prepared, cell);

@@ -3,6 +3,7 @@
 //! commands hand it a mesh body's triangles and turn its answers into ordinary features (a move is
 //! a Move). Ported from SurfaceCraft, the same author's scan-to-CAD app.
 //!
+//! - [`align`]: scans aligned by points picked in pairs, and several passes of one part at once.
 //! - [`base`]: the ways a scan could stand on the ground (its broad flat faces, the poses it would
 //!   rest in, its own axes) and a flat face grown from a clicked triangle.
 //! - [`chain`]: a run of a section as lines and arcs, each fitted to its points (the chain fitter).
@@ -32,12 +33,14 @@
 //! - [`repair`]: copies, edges of three or more faces and slivers put right.
 //! - [`section`]: where a plane cuts the scan, as runs of points in the plane.
 //! - [`segment`]: Find All: the scan cut into regions, each a simple shape or freeform.
+//! - [`split`]: Split Mesh: a scan cut by a plane, a shape, a body, a curve or a sketch.
 //! - [`surface`]: a smooth B-spline surface fitted to the part of the scan round a picked point.
 //! - [`surface_edit`]: a surface's control points moved and the rest fitted to the scan again.
 //! - [`symmetry`]: the plane a scan is a mirror image about, found by itself or near a line drawn
 //!   along it, how far each point's reflection lands from the scan, and the move that squares
 //!   the scan to it.
 
+pub mod align;
 pub mod base;
 pub mod chain;
 pub mod curve;
@@ -62,6 +65,7 @@ pub mod remesh;
 pub mod repair;
 pub mod section;
 pub mod segment;
+pub mod split;
 pub mod surface;
 pub mod surface_edit;
 pub mod symmetry;

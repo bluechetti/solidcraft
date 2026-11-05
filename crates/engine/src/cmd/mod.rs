@@ -336,7 +336,9 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(mesh::COMMANDS.iter());
     v.extend(scan::COMMANDS.iter());
     v.extend(scan::mesh::COMMANDS.iter());
+    v.extend(scan::align::COMMANDS.iter());
     v.extend(scan::reconstruct::COMMANDS.iter());
+    v.extend(scan::split::COMMANDS.iter());
     v.extend(construct::COMMANDS.iter());
     v.extend(sheet::COMMANDS.iter());
     v.extend(plastic::COMMANDS.iter());

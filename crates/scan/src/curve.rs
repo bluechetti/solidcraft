@@ -54,6 +54,15 @@ impl Projector {
         let at = |i: u32| self.positions.get(i as usize).copied();
         Some((closest_on_triangle(p, at(tri[0])?, at(tri[1])?, at(tri[2])?), d))
     }
+
+    /// The way the scan faces at its nearest place to `p`: that triangle's unit normal.
+    pub fn normal(&self, p: Vec3) -> Option<Vec3> {
+        let (_, t) = self.tree.nearest(p)?;
+        let tri = self.triangles.get(t as usize)?;
+        let at = |i: u32| self.positions.get(i as usize).copied();
+        let (a, b, c) = (at(tri[0])?, at(tri[1])?, at(tri[2])?);
+        (b - a).cross(c - a).normalized()
+    }
 }
 
 /// Why a curve could not be drawn on the scan.

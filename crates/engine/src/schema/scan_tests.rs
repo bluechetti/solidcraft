@@ -29,7 +29,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanMergeSurfacesParams>(), &["gap", "stitch", "surfaces"]);
     assert_keys(input_schema_for::<ScanSliceSurfaceParams>(), &["cap", "keep", "plane", "surface"]);
     assert_keys(input_schema_for::<ScanHolesParams>(), &["body", "fair", "max_edges"]);
-    assert_keys(input_schema_for::<ScanRepairParams>(), &["body"]);
+    assert_keys(input_schema_for::<ScanRepairParams>(), &["body", "crossings"]);
     assert_keys(input_schema_for::<ScanSectionParams>(), &["body", "offset", "plane", "tolerance"]);
     assert_keys(input_schema_for::<ScanSectionsAlongParams>(), &["body", "count", "curves", "every", "sketch", "tolerance"]);
     assert_keys(input_schema_for::<ScanReduceParams>(), &["body", "keep_rim", "max_error", "ratio", "triangles"]);
