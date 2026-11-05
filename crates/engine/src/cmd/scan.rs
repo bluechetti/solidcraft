@@ -19,11 +19,11 @@ use crate::params::{bad, str_};
 use crate::schema::scan::{
     ScanBase, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams,
     ScanDeviationResult, ScanEditNetParams, ScanEditNetResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitParams, ScanFitResult,
-    ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFloatingParams, ScanFloatingResult,
-    ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror,
-    ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult,
-    ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams,
-    ScanWrapSurfaceResult,
+    ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFittedTorus,
+    ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult, ScanMergeSurfacesParams,
+    ScanMergeSurfacesResult, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams, ScanRepairResult,
+    ScanSectionParams, ScanSectionResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams,
+    ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -150,6 +150,18 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
         .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: length (default 0.15 % of the scan's size); keep?: bool (default true: its centre kept as a construction point) → body, sphere: {center, radius, diameter}, triangles, area, rms, max, feature"),
+    CommandSpec::new("scan.fit_cone", "Fit Cone", crate::checked!("scan.fit_cone", fit_cone))
+        .at("SCAN", "FIT")
+        .icon("cone")
+        .contract(&FIT_CONTRACT)
+        .output(output_schema_for::<ScanFitResult>)
+        .params("point?: [x,y,z] on the scan (default: the point picked on it); body?: mesh body (default: the picked one, else the selected or only one); tolerance?: length (how far a triangle may be from the cone and still be on it; default 0.15% of the scan's size); keep?: bool (default true): a cone fitted to the slanted round wall round the point (a chamfer, a countersink, a drafted boss), kept as a construction axis along it → cone {apex, axis, half_angle}, triangles, area, rms, max, feature"),
+    CommandSpec::new("scan.fit_torus", "Fit Torus", crate::checked!("scan.fit_torus", fit_torus))
+        .at("SCAN", "FIT")
+        .icon("torus")
+        .contract(&FIT_CONTRACT)
+        .output(output_schema_for::<ScanFitResult>)
+        .params("point?: [x,y,z] on the scan (default: the point picked on it); body?: mesh body (default: the picked one, else the selected or only one); tolerance?: length (default 0.15% of the scan's size); keep?: bool (default true): a torus fitted to the round round the point (a fillet along a circular edge), kept as a construction axis through its centre → torus {center, axis, major, minor}, triangles, area, rms, max, feature"),
     CommandSpec::new("scan.fit_surface", "Fit Surface", crate::checked!("scan.fit_surface", fit_surface))
         .at("SCAN", "FREEFORM")
         .icon("surface")
@@ -901,6 +913,14 @@ fn fit_sphere(s: &mut Session, p: &Value) -> Result<Value> {
     fit_shape(s, p, "scan.fit_sphere", Kind::Sphere)
 }
 
+fn fit_cone(s: &mut Session, p: &Value) -> Result<Value> {
+    fit_shape(s, p, "scan.fit_cone", Kind::Cone)
+}
+
+fn fit_torus(s: &mut Session, p: &Value) -> Result<Value> {
+    fit_shape(s, p, "scan.fit_torus", Kind::Torus)
+}
+
 fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value> {
     let point = match p.get("point").filter(|v| !v.is_null()) {
         Some(v) => Some(crate::params::vec3(v).ok_or_else(|| bad(cmd, "`point` must be a point [x, y, z] of numbers"))?),
@@ -924,7 +944,7 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
     let fitted = fit::fit(&scan, seed, kind, tolerance).map_err(|e| bad(cmd, e.to_string()))?;
     let feature = if keep { Some(keep_shape(s, &fitted, mesh.scan().extent())?) } else { None };
     let at = |v: Vec3| [v.x, v.y, v.z];
-    let (mut plane, mut cylinder, mut sphere) = (None, None, None);
+    let (mut plane, mut cylinder, mut sphere, mut cone, mut torus) = (None, None, None, None, None);
     match fitted.shape {
         Shape::Plane { normal, .. } => plane = Some(ScanFittedPlane { point: at(fitted.middle), normal: at(normal) }),
         Shape::Cylinder { axis, radius, .. } => {
@@ -937,12 +957,16 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
             })
         }
         Shape::Sphere { center, radius } => sphere = Some(ScanFittedSphere { center: at(center), radius, diameter: 2.0 * radius }),
+        Shape::Cone { apex, axis, half_angle } => cone = Some(ScanFittedCone { apex: at(apex), axis: at(axis), half_angle: half_angle.to_degrees() }),
+        Shape::Torus { center, axis, major, minor } => torus = Some(ScanFittedTorus { center: at(center), axis: at(axis), major, minor }),
     }
     let reply = ScanFitResult {
         body: mesh.body,
         plane,
         cylinder,
         sphere,
+        cone,
+        torus,
         triangles: fitted.triangles.len(),
         area: fitted.area,
         rms: fitted.rms,
@@ -969,9 +993,13 @@ fn keep_shape(s: &mut Session, fitted: &Fitted, extent: f64) -> Result<Value> {
             run(s, "construct.plane.three_points", json!({"a": at(m), "b": at(m + u * reach), "c": at(m + v * reach)}))
         }
         Shape::Sphere { center, .. } => run(s, "construct.point.vertex", json!({"point": at(center)})),
-        Shape::Cylinder { axis, .. } => {
+        Shape::Cylinder { axis, .. } | Shape::Cone { axis, .. } => {
             let half = fitted.half_length.max(reach / 2.0);
             run(s, "construct.axis.two_points", json!({"a": at(fitted.middle - axis * half), "b": at(fitted.middle + axis * half)}))
+        }
+        Shape::Torus { center, axis, .. } => {
+            let half = reach / 2.0;
+            run(s, "construct.axis.two_points", json!({"a": at(center - axis * half), "b": at(center + axis * half)}))
         }
     }
 }
@@ -984,6 +1012,9 @@ pub mod curve;
 
 #[path = "scan_free_form.rs"]
 pub mod free_form;
+
+#[path = "scan_reconstruct.rs"]
+pub mod reconstruct;
 
 #[path = "scan_section.rs"]
 pub mod section;

@@ -277,6 +277,15 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
         let _ = app.run(id, json!({"show": false}));
         return false;
     }
+    // Find All's button takes its colouring away again while it is shown.
+    if id == "scan.find_all" && crate::scan_shapes::shown(app) {
+        let _ = app.run(id, json!({"show": false}));
+        return false;
+    }
+    // Reconstruct reads the scan before its dialog lists what to build.
+    if id == "scan.reconstruct" && !crate::dialogs_scan_reconstruct::read_first(app) {
+        return false;
+    }
     if id == "inspect.section" && app.preferences.viewport_section_status && app.session.section.is_some() {
         let _ = app.run(id, json!({"clear":true}));
         return false;

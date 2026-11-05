@@ -349,7 +349,19 @@ pub const SECTIONS: &[Section] = &[
             "scan.center",
         ],
     },
-    Section { tab: "SCAN", panel: "FIT", promoted: 4, ids: &["scan.fit_plane", "scan.fit_cylinder", "scan.fit_sphere", "mesh.convert"] },
+    Section {
+        tab: "SCAN",
+        panel: "FIT",
+        promoted: 4,
+        ids: &["scan.fit_plane", "scan.fit_cylinder", "scan.fit_sphere", "mesh.convert", "scan.fit_cone", "scan.fit_torus"],
+    },
+    // Find All and Reconstruct: the scan read as the shapes it is, and built back from them.
+    Section {
+        tab: "SCAN",
+        panel: "RECONSTRUCT",
+        promoted: 2,
+        ids: &["scan.find_all", "scan.reconstruct", "scan.extrude_it", "scan.revolve_it", "scan.cut_it", "scan.pattern_it"],
+    },
     Section {
         tab: "SCAN",
         panel: "FREEFORM",
@@ -482,6 +494,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("scan.curve_on_scan", "Scan Curve"),
     ("scan.deviation", "Deviation"),
     ("scan.free_form", "Free Form"),
+    ("scan.reconstruct", "Rebuild"),
     ("scan.remove_floating", "Floating"),
     ("scan.section_sketch", "Section"),
     ("scan.square_to_symmetry", "Square Up"),

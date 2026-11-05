@@ -3183,7 +3183,10 @@ pub(crate) fn analysis_legend_data(app: &SolveApp) -> Option<AnalysisLegend> {
         ),
         _ => match crate::scan_deviation::legend(app) {
             Some((summary, rows)) => (tr("Scan Deviation"), Some(summary), rows),
-            None => return None,
+            None => match crate::scan_shapes::legend(app) {
+                Some((summary, rows)) => (tr("cmd.scan_find_all"), Some(summary), rows),
+                None => return None,
+            },
         },
     };
     Some((title, along, rows))
@@ -4640,6 +4643,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             clouds: crate::point_clouds::gpu_clouds(app, ui.ctx())
                 .into_iter()
                 .chain(crate::scan_deviation::gpu_cloud(app))
+                .chain(crate::scan_shapes::gpu_cloud(app))
                 .chain(crate::dialogs_scan::gpu_marks(app))
                 .chain(crate::dialogs_scan::gpu_mismatch(app))
                 .chain(crate::dialogs_scan_clean::gpu_marks(app))

@@ -16,9 +16,14 @@
 //! - [`pieces`]: the pieces of a scan, and those small enough to float.
 //! - [`place`]: rigid moves that stand a scan on a base, rest it on the grid, centre it over the
 //!   origin or lay it along its own axes.
+//! - [`profile`]: the profiles Reconstruct sketches, read off the faces fitted: a prism's from its
+//!   walls, a turned part's from its faces held to the axis.
+//! - [`reconstruct`]: what Reconstruct reads off Find All's shapes: prisms, a turned part,
+//!   repeats and round holes.
 //! - [`reduce`]: fewer triangles for a scan, cheapest collapses first (quadric errors).
 //! - [`repair`]: copies, edges of three or more faces and slivers put right.
 //! - [`section`]: where a plane cuts the scan, as runs of points in the plane.
+//! - [`segment`]: Find All: the scan cut into regions, each a simple shape or freeform.
 //! - [`surface`]: a smooth B-spline surface fitted to the part of the scan round a picked point.
 //! - [`surface_edit`]: a surface's control points moved and the rest fitted to the scan again.
 //! - [`symmetry`]: the plane a scan is a mirror image about, found by itself or near a line drawn
@@ -38,9 +43,12 @@ pub mod mirror_fill;
 pub mod net;
 pub mod pieces;
 pub mod place;
+pub mod profile;
+pub mod reconstruct;
 pub mod reduce;
 pub mod repair;
 pub mod section;
+pub mod segment;
 pub mod surface;
 pub mod surface_edit;
 pub mod symmetry;
@@ -215,6 +223,102 @@ pub(crate) mod test_meshes {
             }
         }
         (positions, triangles)
+    }
+
+    /// A part turned about Z: each point of `profile` (height, radius), in order, a ring of
+    /// `sides` points round the axis, a point on the axis one pole, and the rings joined in order
+    /// (the last to the first when `closed`). Wound outward for a profile that runs
+    /// counter-clockwise in (height, radius).
+    pub fn revolved(profile: &[[f64; 2]], sides: u32, closed: bool) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        let mut positions = Vec::new();
+        // Each profile point's first position, and whether it is a pole.
+        let mut rings = Vec::new();
+        for &[z, r] in profile {
+            rings.push((positions.len() as u32, r <= 1e-12));
+            if r <= 1e-12 {
+                positions.push(Vec3::new(0.0, 0.0, z));
+            } else {
+                for k in 0..sides {
+                    let a = std::f64::consts::TAU * f64::from(k) / f64::from(sides);
+                    positions.push(Vec3::new(r * a.cos(), r * a.sin(), z));
+                }
+            }
+        }
+        let at = |(base, pole): (u32, bool), k: u32| if pole { base } else { base + k % sides };
+        let mut triangles = Vec::new();
+        let pairs = if closed { rings.len() } else { rings.len().saturating_sub(1) };
+        for i in 0..pairs {
+            let (a, b) = (rings[i], rings[(i + 1) % rings.len()]);
+            for k in 0..sides {
+                let (a0, a1, b0, b1) = (at(a, k), at(a, k + 1), at(b, k), at(b, k + 1));
+                if !a.1 {
+                    triangles.push([a0, a1, b1]);
+                }
+                if !b.1 {
+                    triangles.push([a0, b1, b0]);
+                }
+            }
+        }
+        (positions, triangles)
+    }
+
+    /// A prism: the closed counter-clockwise `outline` (in X and Y) from z `low` to `high`, its
+    /// walls cut into `rows` along it and its ends fanned from their middles, wound outward.
+    pub fn extruded(outline: &[[f64; 2]], low: f64, high: f64, rows: u32) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        let n = outline.len() as u32;
+        let mut positions = Vec::new();
+        for j in 0..=rows {
+            let z = low + (high - low) * f64::from(j) / f64::from(rows);
+            positions.extend(outline.iter().map(|&[x, y]| Vec3::new(x, y, z)));
+        }
+        let mut triangles = Vec::new();
+        for j in 0..rows {
+            for k in 0..n {
+                let (a, b) = (j * n + k, j * n + (k + 1) % n);
+                triangles.push([a, b, b + n]);
+                triangles.push([a, b + n, a + n]);
+            }
+        }
+        let middle = outline.iter().fold([0.0, 0.0], |s, p| [s[0] + p[0], s[1] + p[1]]);
+        let middle = [middle[0] / f64::from(n), middle[1] / f64::from(n)];
+        for (z, top) in [(low, false), (high, true)] {
+            let centre = positions.len() as u32;
+            positions.push(Vec3::new(middle[0], middle[1], z));
+            let ring = if top { rows * n } else { 0 };
+            for k in 0..n {
+                let (a, b) = (ring + k, ring + (k + 1) % n);
+                triangles.push(if top { [centre, a, b] } else { [centre, b, a] });
+            }
+        }
+        (positions, triangles)
+    }
+
+    /// A rounded rectangle from (0, 0) to (`w`, `h`), corners of radius `r`, counter-clockwise,
+    /// its sides cut every `step` or so.
+    pub fn rounded_rectangle(w: f64, h: f64, r: f64, step: f64) -> Vec<[f64; 2]> {
+        let mut points = Vec::new();
+        let corners = [
+            ([w - r, r], -std::f64::consts::FRAC_PI_2),
+            ([w - r, h - r], 0.0),
+            ([r, h - r], std::f64::consts::FRAC_PI_2),
+            ([r, r], std::f64::consts::PI),
+        ];
+        let sides = [([r, 0.0], [w - r, 0.0]), ([w, r], [w, h - r]), ([w - r, h], [r, h]), ([0.0, h - r], [0.0, r])];
+        for (([cx, cy], start), (from, to)) in corners.iter().zip(sides) {
+            let length = (to[0] - from[0]).hypot(to[1] - from[1]);
+            let cuts = ((length / step).ceil() as u32).max(1);
+            points.extend(steps(from, to, cuts).into_iter().take(cuts as usize));
+            for i in 0..24 {
+                let a = start + std::f64::consts::FRAC_PI_2 * f64::from(i) / 24.0;
+                points.push([cx + r * a.cos(), cy + r * a.sin()]);
+            }
+        }
+        points
+    }
+
+    /// Points `from` to `to` in `n` steps (`n + 1` points, both ends).
+    pub fn steps(from: [f64; 2], to: [f64; 2], n: u32) -> Vec<[f64; 2]> {
+        (0..=n).map(|i| f64::from(i) / f64::from(n)).map(|t| [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]).collect()
     }
 
     /// `positions` turned by `angle` radians about the unit `axis` through the origin, then moved.

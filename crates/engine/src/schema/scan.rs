@@ -249,7 +249,29 @@ pub struct ScanFittedSphere {
     pub diameter: f64,
 }
 
-/// What `scan.fit_plane`, `scan.fit_cylinder` and `scan.fit_sphere` return.
+/// A cone fitted to the scan.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanFittedCone {
+    /// Its apex, and its axis (unit) from the apex the way it widens.
+    pub apex: [f64; 3],
+    pub axis: [f64; 3],
+    /// Its half-angle, in degrees.
+    pub half_angle: f64,
+}
+
+/// A torus fitted to the scan.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanFittedTorus {
+    /// Its centre, and its axis (unit).
+    pub center: [f64; 3],
+    pub axis: [f64; 3],
+    /// The radius of its middle circle and of its tube, in mm.
+    pub major: f64,
+    pub minor: f64,
+}
+
+/// What `scan.fit_plane`, `scan.fit_cylinder`, `scan.fit_sphere`, `scan.fit_cone` and
+/// `scan.fit_torus` return.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanFitResult {
     /// The mesh body.
@@ -263,6 +285,12 @@ pub struct ScanFitResult {
     /// The sphere fitted (`scan.fit_sphere`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sphere: Option<ScanFittedSphere>,
+    /// The cone fitted (`scan.fit_cone`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cone: Option<ScanFittedCone>,
+    /// The torus fitted (`scan.fit_torus`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub torus: Option<ScanFittedTorus>,
     /// How many triangles the region holds, and its area in mm².
     pub triangles: usize,
     pub area: f64,

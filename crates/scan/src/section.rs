@@ -14,6 +14,9 @@ use crate::{Scan, welded};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Run {
     pub points: Vec<Vec2>,
+    /// For each point, a triangle of the scan the run passes through there (the one it comes in
+    /// by, for the first point the one it leaves by): what part of the scan the point is on.
+    pub triangles: Vec<usize>,
     /// It comes back round to where it began (the first point is not repeated).
     pub closed: bool,
 }
@@ -37,7 +40,7 @@ pub fn section(scan: &Scan, plane: &Plane) -> Vec<Run> {
     };
     // Each crossed edge, where it is crossed, and the (at most two) edges joined to it by a triangle.
     let mut at: HashMap<u64, Vec3> = HashMap::new();
-    let mut joined: HashMap<u64, Vec<u64>> = HashMap::new();
+    let mut joined: HashMap<u64, Vec<(u64, usize)>> = HashMap::new();
     for t in 0..scan.triangle_count() {
         if scan.corners(t).is_none() {
             continue;
@@ -51,8 +54,8 @@ pub fn section(scan: &Scan, plane: &Plane) -> Vec<Run> {
         let (k1, k2) = (pair(p1, q1), pair(p2, q2));
         at.entry(k1).or_insert_with(|| crossing(p1.min(q1), p1.max(q1)));
         at.entry(k2).or_insert_with(|| crossing(p2.min(q2), p2.max(q2)));
-        joined.entry(k1).or_default().push(k2);
-        joined.entry(k2).or_default().push(k1);
+        joined.entry(k1).or_default().push((k2, t));
+        joined.entry(k2).or_default().push((k1, t));
     }
     // Walk the joins: from an end (an edge with one join) first, so open runs come out whole,
     // then round what is left, which closes.
@@ -66,23 +69,23 @@ pub fn section(scan: &Scan, plane: &Plane) -> Vec<Run> {
         if used.get(&first).copied().unwrap_or(false) {
             continue;
         }
-        let mut keys = vec![first];
+        let mut keys = vec![(first, joined.get(&first).and_then(|j| j.first()).map_or(0, |j| j.1))];
         used.insert(first, true);
         let mut current = first;
         let closed = loop {
-            let next = joined.get(&current).and_then(|j| j.iter().copied().find(|k| !used.get(k).copied().unwrap_or(false)));
+            let next = joined.get(&current).and_then(|j| j.iter().copied().find(|(k, _)| !used.get(k).copied().unwrap_or(false)));
             match next {
-                Some(k) => {
+                Some((k, t)) => {
                     used.insert(k, true);
-                    keys.push(k);
+                    keys.push((k, t));
                     current = k;
                 }
-                None => break keys.len() > 2 && joined.get(&current).is_some_and(|j| j.contains(&first)),
+                None => break keys.len() > 2 && joined.get(&current).is_some_and(|j| j.iter().any(|(k, _)| *k == first)),
             }
         };
-        let points: Vec<Vec2> = keys.iter().filter_map(|k| at.get(k)).map(|p| plane.to_local(*p)).collect();
+        let (points, triangles): (Vec<Vec2>, Vec<usize>) = keys.iter().filter_map(|(k, t)| at.get(k).map(|p| (plane.to_local(*p), *t))).unzip();
         if points.len() >= 2 {
-            runs.push(Run { points, closed });
+            runs.push(Run { points, triangles, closed });
         }
     }
     let length = |r: &Run| r.points.windows(2).map(|w| w[0].dist(w[1])).sum::<f64>();

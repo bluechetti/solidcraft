@@ -1,10 +1,10 @@
-//! A plane or a cylinder fitted to the part of a scan around a picked point. The region starts as
+//! A plane, cylinder, sphere, cone or torus fitted to the part of a scan around a picked point. The region starts as
 //! the triangles near the pick, the shape is fitted to it, and the region then grows across edges
 //! to every connected triangle that lies on the shape (within the tolerance, and facing as the
 //! shape does there), the shape fitted again each time the region doubles. Growing against the
 //! shape rather than across gentle edges keeps a noisy scan's region whole.
 
-use std::f64::consts::PI;
+use std::f64::consts::{FRAC_PI_2, PI};
 
 use solidcore_record::Vec3;
 use solidcraft_geom::prelude::*;
@@ -21,6 +21,12 @@ pub enum Shape {
     Cylinder { point: Vec3, axis: Vec3, radius: f64 },
     /// A sphere about `center`.
     Sphere { center: Vec3, radius: f64 },
+    /// A cone from `apex` along the unit `axis`, the way its radius grows, `half_angle` radians
+    /// wide (between 0 and a right angle).
+    Cone { apex: Vec3, axis: Vec3, half_angle: f64 },
+    /// A torus about the unit `axis` through `center`: a tube of radius `minor` round the circle of
+    /// radius `major` (a chamfer's round, a fillet along a circular edge).
+    Torus { center: Vec3, axis: Vec3, major: f64, minor: f64 },
 }
 
 impl Shape {
@@ -33,11 +39,21 @@ impl Shape {
                 (v - axis * v.dot(axis)).len() - radius
             }
             Shape::Sphere { center, radius } => p.dist(center) - radius,
+            Shape::Cone { apex, axis, half_angle } => {
+                let v = p - apex;
+                let t = v.dot(axis);
+                (v - axis * t).len() * half_angle.cos() - t * half_angle.sin()
+            }
+            Shape::Torus { center, axis, major, minor } => {
+                let v = p - center;
+                let t = v.dot(axis);
+                ((v - axis * t).len() - major).hypot(t) - minor
+            }
         }
     }
 
     /// The shape's direction at `p` (either way).
-    fn normal_at(&self, p: Vec3) -> Option<Vec3> {
+    pub fn normal_at(&self, p: Vec3) -> Option<Vec3> {
         match *self {
             Shape::Plane { normal, .. } => Some(normal),
             Shape::Cylinder { point, axis, .. } => {
@@ -45,6 +61,50 @@ impl Shape {
                 (v - axis * v.dot(axis)).normalized()
             }
             Shape::Sphere { center, .. } => (p - center).normalized(),
+            Shape::Cone { apex, axis, half_angle } => {
+                let v = p - apex;
+                let out = (v - axis * v.dot(axis)).normalized()?;
+                (out * half_angle.cos() - axis * half_angle.sin()).normalized()
+            }
+            Shape::Torus { center, axis, major, .. } => {
+                let v = p - center;
+                let t = v.dot(axis);
+                let out = (v - axis * t).normalized()?;
+                (out * ((v - axis * t).len() - major) + axis * t).normalized()
+            }
+        }
+    }
+
+    /// Which kind of shape it is.
+    pub fn kind(&self) -> Kind {
+        match self {
+            Shape::Plane { .. } => Kind::Plane,
+            Shape::Cylinder { .. } => Kind::Cylinder,
+            Shape::Sphere { .. } => Kind::Sphere,
+            Shape::Cone { .. } => Kind::Cone,
+            Shape::Torus { .. } => Kind::Torus,
+        }
+    }
+
+    /// The shape moved by `shift`.
+    pub fn moved(self, shift: Vec3) -> Shape {
+        match self {
+            Shape::Plane { point, normal } => Shape::Plane { point: point + shift, normal },
+            Shape::Cylinder { point, axis, radius } => Shape::Cylinder { point: point + shift, axis, radius },
+            Shape::Sphere { center, radius } => Shape::Sphere { center: center + shift, radius },
+            Shape::Cone { apex, axis, half_angle } => Shape::Cone { apex: apex + shift, axis, half_angle },
+            Shape::Torus { center, axis, major, minor } => Shape::Torus { center: center + shift, axis, major, minor },
+        }
+    }
+
+    /// The round shape's axis, a point on it and its unit direction (a cylinder's, cone's or
+    /// torus's), `None` for a plane or a sphere.
+    pub fn axis(&self) -> Option<(Vec3, Vec3)> {
+        match *self {
+            Shape::Cylinder { point, axis, .. } => Some((point, axis)),
+            Shape::Cone { apex, axis, .. } => Some((apex, axis)),
+            Shape::Torus { center, axis, .. } => Some((center, axis)),
+            Shape::Plane { .. } | Shape::Sphere { .. } => None,
         }
     }
 }
@@ -55,6 +115,8 @@ pub enum Kind {
     Plane,
     Cylinder,
     Sphere,
+    Cone,
+    Torus,
 }
 
 /// A shape fitted to a region of the scan, and how well it fits.
@@ -70,7 +132,8 @@ pub struct Fitted {
     pub max: f64,
     /// The region's middle, on the shape: where to put what is made from it.
     pub middle: Vec3,
-    /// How far the region reaches along a cylinder's axis, from `middle` either way (0 for a plane).
+    /// How far the region reaches along a cylinder's or a cone's axis, from `middle` either way (0
+    /// for the other shapes).
     pub half_length: f64,
 }
 
@@ -87,7 +150,9 @@ impl std::fmt::Display for FitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             FitError::NotOnTheScan => "pick a point on the scan",
-            FitError::NoFit => "the scan there is not that shape: pick the middle of a flat face for a plane, of a round wall for a cylinder",
+            FitError::NoFit => {
+                "the scan there is not that shape: pick the middle of a flat face for a plane, of a round wall for a cylinder, of a slanted round wall for a cone, of a round along a circular edge for a torus"
+            }
         })
     }
 }
@@ -116,7 +181,7 @@ pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Resu
     // On a coarse mesh the reach widens until the patch holds enough triangles to fit.
     let mut reach = match kind {
         Kind::Plane => 0.01 * extent,
-        Kind::Cylinder | Kind::Sphere => 0.03 * extent,
+        Kind::Cylinder | Kind::Sphere | Kind::Cone | Kind::Torus => 0.03 * extent,
     };
     let near = |reach: f64| connected(scan, &neighbours, seed, |t| scan.corners(t).is_some_and(|[a, b, c]| ((a + b + c) / 3.0).dist(pick) <= reach));
     let mut start = near(reach);
@@ -125,23 +190,24 @@ pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Resu
         start = near(reach);
     }
     let mut shape = solve(scan, &start, kind).ok_or(FitError::NoFit)?;
-    // Grow against the shape, fitting again each time the region doubles, then once more against
-    // the final shape.
+    let rules = |region: &[usize], shape: &Shape| Growth { tolerance, lean: MAX_LEAN, bend: Some(bend_slack(scan, &neighbours, region, shape)) };
+    // Grow against the shape, fitting again while the region grows by a tenth, then once more
+    // against the final shape; the turn allowed is read again from each fit.
     let mut region = start;
-    for _ in 0..12 {
+    for _ in 0..24 {
         // Early only once the region is wide enough to tell: a small patch of a wide shaft looks flat too.
         if flat_cylinder(scan, &region, &shape, 0.1 * extent) {
             return Err(FitError::NoFit);
         }
-        let grown = grow(scan, &neighbours, seed, &shape, tolerance);
-        let doubled = grown.len() >= 2 * region.len();
+        let grown = grow_by(scan, &neighbours, &[seed], &shape, &rules(&region, &shape), None);
+        let more = grown.len() * 10 >= region.len() * 11;
         region = grown;
         shape = solve(scan, &region, kind).unwrap_or(shape);
-        if !doubled {
+        if !more {
             break;
         }
     }
-    let region = grow(scan, &neighbours, seed, &shape, tolerance);
+    let region = grow_by(scan, &neighbours, &[seed], &shape, &rules(&region, &shape), None);
     let shape = solve(scan, &region, kind).unwrap_or(shape);
     if region.len() < 3 {
         return Err(FitError::NoFit);
@@ -165,11 +231,96 @@ pub fn shape_of(scan: &Scan, region: &[usize], kind: Kind) -> Option<Shape> {
     solve(scan, region, kind)
 }
 
+/// [`shape_of`] on an even sample of about `limit` of the region's points: faster on a large
+/// region, as close where the region is the shape.
+pub fn shape_of_sampled(scan: &Scan, region: &[usize], kind: Kind, limit: usize) -> Option<Shape> {
+    solve_with(scan, region, kind, limit.max(16))
+}
+
+/// `shape` fitted again to the region (about `limit` of its points), settling from where it is
+/// rather than starting afresh: for a region that has grown a little round the shape fitted to
+/// it before. A plane is fitted afresh, which is as quick.
+pub fn refined(scan: &Scan, region: &[usize], shape: &Shape, limit: usize) -> Option<Shape> {
+    let s = samples(scan, region, limit.max(16))?;
+    let local = shape.moved(-s.origin);
+    let settled = match local {
+        Shape::Plane { .. } => plane(&s)?,
+        Shape::Cylinder { point, axis, radius } => {
+            let (state, _) = settle(&s, CylinderState::new(point, axis, radius), cylinder_row, cylinder_step);
+            Shape::Cylinder { point: state.point - state.axis * state.point.dot(state.axis), axis: state.axis, radius: state.radius }
+        }
+        Shape::Sphere { center, radius } => {
+            let (state, _) = settle(&s, (center, radius), sphere_row, sphere_step);
+            Shape::Sphere { center: state.0, radius: state.1 }
+        }
+        Shape::Cone { apex, axis, half_angle } => {
+            let (c, _) = settle(&s, ConeState::new(apex, axis, half_angle), cone_row, cone_step);
+            Shape::Cone { apex: c.apex, axis: c.axis, half_angle: c.half_angle }
+        }
+        Shape::Torus { center, axis, major, minor } => {
+            let (t, _) = settle(&s, TorusState::new(center, axis, major, minor), torus_row, torus_step);
+            Shape::Torus { center: t.center, axis: t.axis, major: t.major, minor: t.minor }
+        }
+    };
+    Some(settled.moved(s.origin))
+}
+
+/// A cylinder's numbers as they settle for [`refined`].
+#[derive(Clone, Copy)]
+struct CylinderState {
+    point: Vec3,
+    axis: Vec3,
+    radius: f64,
+    e1: Vec3,
+    e2: Vec3,
+}
+
+impl CylinderState {
+    fn new(point: Vec3, axis: Vec3, radius: f64) -> Self {
+        let (e1, e2) = in_plane(axis);
+        CylinderState { point, axis, radius, e1, e2 }
+    }
+}
+
+fn cylinder_row(c: &CylinderState, p: Vec3) -> (f64, [f64; 5]) {
+    let d = p - c.point;
+    let t = d.dot(c.axis);
+    let side = d - c.axis * t;
+    let Some(n) = side.normalized() else { return (-c.radius, [0.0, 0.0, 0.0, 0.0, -1.0]) };
+    (side.len() - c.radius, [-t * n.dot(c.e1), -t * n.dot(c.e2), -n.dot(c.e1), -n.dot(c.e2), -1.0])
+}
+
+fn cylinder_step(c: &CylinderState, step: &[f64; 5]) -> Option<CylinderState> {
+    let axis = (c.axis + c.e1 * step[0] + c.e2 * step[1]).normalized()?;
+    Some(CylinderState::new(c.point + c.e1 * step[2] + c.e2 * step[3], axis, (c.radius + step[4]).max(1e-12)))
+}
+
+fn sphere_row(c: &(Vec3, f64), p: Vec3) -> (f64, [f64; 4]) {
+    match (p - c.0).normalized() {
+        Some(n) => (p.dist(c.0) - c.1, [-n.x, -n.y, -n.z, -1.0]),
+        None => (-c.1, [0.0, 0.0, 0.0, -1.0]),
+    }
+}
+
+fn sphere_step(c: &(Vec3, f64), step: &[f64; 4]) -> Option<(Vec3, f64)> {
+    Some((c.0 + Vec3::new(step[0], step[1], step[2]), (c.1 + step[3]).max(1e-12)))
+}
+
 /// Whether `shape` is a "cylinder" far wider than the region it was fitted to, a region at least
 /// `reach` across: a flat face, curved only by noise. Asked while the region grows too, so that a
-/// flat face is refused before the region spreads over it.
+/// flat face is refused before the region spreads over it. A cone or a torus as wide is as flat.
 fn flat_cylinder(scan: &Scan, region: &[usize], shape: &Shape, reach: f64) -> bool {
-    let (Shape::Cylinder { radius, .. } | Shape::Sphere { radius, .. }) = *shape else { return false };
+    let radius = match *shape {
+        Shape::Cylinder { radius, .. } | Shape::Sphere { radius, .. } => radius,
+        Shape::Torus { minor, .. } => minor,
+        // A cone's curve across it at the region: its radius there over the cosine.
+        Shape::Cone { apex, axis, half_angle } => {
+            let Some(at) = region.first().and_then(|&t| scan.corners(t)) else { return false };
+            let v = at[0] - apex;
+            (v - axis * v.dot(axis)).len() / half_angle.cos().max(1e-9)
+        }
+        Shape::Plane { .. } => return false,
+    };
     let mut corners = region.iter().filter_map(|&t| scan.corners(t)).flatten();
     let Some(first) = corners.next() else { return false };
     let (lo, hi) = corners.fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p)));
@@ -198,22 +349,105 @@ fn connected(scan: &Scan, neighbours: &EdgeNeighbours, seed: usize, keep: impl F
     found
 }
 
-/// The connected triangles from `seed` that lie on `shape`: their middle within `tolerance` of it
-/// and their direction within [`MAX_LEAN`] of its direction there.
-fn grow(scan: &Scan, neighbours: &EdgeNeighbours, seed: usize, shape: &Shape, tolerance: f64) -> Vec<usize> {
-    let cos = MAX_LEAN.cos();
-    connected(scan, neighbours, seed, |t| {
-        let Some([a, b, c]) = scan.corners(t) else { return false };
+/// What a triangle must do to be on a shape as a region grows over it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Growth {
+    /// How far (mm) each of its corners may be from the shape.
+    pub tolerance: f64,
+    /// How far (radians) its direction may lean from the shape's there.
+    pub lean: f64,
+    /// How far (radians) the turn from the triangle it is reached from to it may differ from the
+    /// shape's turn between them: a neighbour that runs on in tangency but bends otherwise (the
+    /// shaft past a round, the face beyond a fillet) is not on it. `None` asks nothing of the turn.
+    pub bend: Option<f64>,
+}
+
+/// The connected triangles from `seeds` (each of them taken, on the shape or not) that lie on
+/// `shape` by `rules`, and only those `open` allows when it is given.
+pub(crate) fn grow_by(scan: &Scan, neighbours: &EdgeNeighbours, seeds: &[usize], shape: &Shape, rules: &Growth, open: Option<&[bool]>) -> Vec<usize> {
+    let cos = rules.lean.cos();
+    let tolerance = rules.tolerance;
+    let on = |t: usize| -> Option<(Vec3, Option<Vec3>)> {
+        let [a, b, c] = scan.corners(t)?;
+        if ![a, b, c].iter().all(|p| shape.distance(*p).abs() <= tolerance) {
+            return None;
+        }
         let middle = (a + b + c) / 3.0;
-        if !(shape.distance(middle).abs() <= tolerance) {
-            return false;
-        }
-        match ((b - a).cross(c - a).normalized(), shape.normal_at(middle)) {
-            (Some(n), Some(m)) => n.dot(m).abs() >= cos,
+        let own = (b - a).cross(c - a).normalized();
+        match (own, shape.normal_at(middle)) {
+            (Some(n), Some(m)) if n.dot(m).abs() < cos => None,
             // A sliver with no direction is judged by where it is alone.
-            _ => true,
+            _ => Some((middle, own)),
         }
-    })
+    };
+    let mut seen = vec![false; scan.triangle_count()];
+    let mut found = Vec::new();
+    for &seed in seeds {
+        if let Some(s) = seen.get_mut(seed).filter(|s| !**s) {
+            *s = true;
+            found.push(seed);
+        }
+    }
+    let mut head = 0;
+    while let Some(&t) = found.get(head) {
+        head += 1;
+        let here = scan.corners(t).map(|[a, b, c]| ((a + b + c) / 3.0, (b - a).cross(c - a).normalized()));
+        for n in neighbours.of(scan, t) {
+            if seen.get(n).is_none_or(|s| *s) || open.is_some_and(|o| !o.get(n).copied().unwrap_or(false)) {
+                continue;
+            }
+            let Some((there, own)) = on(n) else { continue };
+            if let (Some(slack), Some((from, Some(a))), Some(b)) = (rules.bend, here, own)
+                && let Some(off) = bend_off(shape, from, a, there, b)
+                && off > slack
+            {
+                continue;
+            }
+            seen[n] = true;
+            found.push(n);
+        }
+    }
+    found
+}
+
+/// How far the turn between two triangles (at `from` facing `a`, at `to` facing `b`, either way)
+/// differs from the shape's turn between those places, in radians.
+fn bend_off(shape: &Shape, from: Vec3, a: Vec3, to: Vec3, b: Vec3) -> Option<f64> {
+    let turn = |u: Vec3, v: Vec3| u.dot(v).abs().min(1.0).acos();
+    Some((turn(a, b) - turn(shape.normal_at(from)?, shape.normal_at(to)?)).abs())
+}
+
+/// The slack the turn between neighbours is allowed on `shape`, from how far it is off in
+/// `region` (fitted to it): half as much again as the most it is off between nearly every pair
+/// (the 995th in a thousand: a faceted mesh turns at its facets' edges, a few pairs in many), and
+/// at least 2°.
+pub(crate) fn bend_slack(scan: &Scan, neighbours: &EdgeNeighbours, region: &[usize], shape: &Shape) -> f64 {
+    let mut inside = vec![false; scan.triangle_count()];
+    for &t in region {
+        if let Some(slot) = inside.get_mut(t) {
+            *slot = true;
+        }
+    }
+    let place = |t: usize| scan.corners(t).and_then(|[a, b, c]| Some(((a + b + c) / 3.0, (b - a).cross(c - a).normalized()?)));
+    let mut offs = Vec::new();
+    for &t in region {
+        let Some((from, a)) = place(t) else { continue };
+        for n in neighbours.of(scan, t).filter(|&n| n > t && inside.get(n).copied().unwrap_or(false)) {
+            if let Some(off) = place(n).and_then(|(to, b)| bend_off(shape, from, a, to, b)) {
+                offs.push(off);
+            }
+        }
+    }
+    (1.5 * high_share(&mut offs, 0.995)).max(2f64.to_radians())
+}
+
+/// The value `share` of the way up `values` (0 for none), reordering them.
+pub(crate) fn high_share(values: &mut [f64], share: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let k = ((values.len() - 1) as f64 * share.clamp(0.0, 1.0)).round() as usize;
+    *values.select_nth_unstable_by(k, f64::total_cmp).1
 }
 
 /// The region's vertices (each corner of each triangle, weighted by a third of its area) about
@@ -221,10 +455,14 @@ fn grow(scan: &Scan, neighbours: &EdgeNeighbours, seed: usize, shape: &Shape, to
 struct Samples {
     origin: Vec3,
     points: Vec<(Vec3, f64)>,
+    /// Each point's triangle's unit normal, in the order of `points`.
+    directions: Vec<Vec3>,
     normals: [[f64; 3]; 3],
+    /// The region's size, the diagonal of its box.
+    size: f64,
 }
 
-fn samples(scan: &Scan, region: &[usize]) -> Option<Samples> {
+fn samples(scan: &Scan, region: &[usize], limit: usize) -> Option<Samples> {
     let mut points = Vec::with_capacity(region.len() * 3);
     let mut normals = [[0.0f64; 3]; 3];
     let (mut total, mut sum) = (0.0, Vec3::ZERO);
@@ -236,7 +474,7 @@ fn samples(scan: &Scan, region: &[usize]) -> Option<Samples> {
         total += area;
         sum += (a + b + c) * (area / 3.0);
         for p in [a, b, c] {
-            points.push((p, area / 3.0));
+            points.push((p, area / 3.0, n));
         }
         let n = [n.x, n.y, n.z];
         for (row, ni) in normals.iter_mut().zip(n) {
@@ -250,25 +488,35 @@ fn samples(scan: &Scan, region: &[usize]) -> Option<Samples> {
     }
     let origin = sum / total;
     // An even sample of a large region fits as well and far faster.
-    let points = crate::thinned(&points, SOLVE_LIMIT);
-    let weight: f64 = points.iter().map(|(_, w)| w).sum();
-    Some(Samples { origin, points: points.into_iter().map(|(p, w)| (p - origin, w / weight)).collect(), normals })
+    let points = crate::thinned(&points, limit);
+    let weight: f64 = points.iter().map(|(_, w, _)| w).sum();
+    let (lo, hi) = points.iter().fold((points[0].0, points[0].0), |(lo, hi), (p, _, _)| (lo.min(*p), hi.max(*p)));
+    Some(Samples {
+        origin,
+        directions: points.iter().map(|(_, _, n)| *n).collect(),
+        points: points.into_iter().map(|(p, w, _)| (p - origin, w / weight)).collect(),
+        normals,
+        size: (hi - lo).len(),
+    })
 }
 
 /// The shape of `kind` fitted to the region, `None` when it has too little to fit or does not fit.
 fn solve(scan: &Scan, region: &[usize], kind: Kind) -> Option<Shape> {
-    let s = samples(scan, region)?;
+    solve_with(scan, region, kind, SOLVE_LIMIT)
+}
+
+/// [`solve`] on at most about `limit` of the region's points.
+fn solve_with(scan: &Scan, region: &[usize], kind: Kind, limit: usize) -> Option<Shape> {
+    let s = samples(scan, region, limit)?;
     let shape = match kind {
         Kind::Plane => plane(&s)?,
         Kind::Cylinder => cylinder(&s)?,
         Kind::Sphere => sphere(&s)?,
+        Kind::Cone => cone(&s)?,
+        Kind::Torus => torus(&s)?,
     };
     // Back from about the region's middle.
-    Some(match shape {
-        Shape::Plane { point, normal } => Shape::Plane { point: point + s.origin, normal },
-        Shape::Cylinder { point, axis, radius } => Shape::Cylinder { point: point + s.origin, axis, radius },
-        Shape::Sphere { center, radius } => Shape::Sphere { center: center + s.origin, radius },
-    })
+    Some(shape.moved(s.origin))
 }
 
 /// The plane of least squares: through the middle, square to the way the points spread least.
@@ -426,6 +674,335 @@ fn sphere(s: &Samples) -> Option<Shape> {
     (radius.is_finite() && radius > 0.0).then_some(Shape::Sphere { center, radius })
 }
 
+/// Damped Gauss–Newton (Levenberg–Marquardt) on the samples' distances from a shape of `N`
+/// numbers: `row` gives a point's distance from the shape and its derivatives by the numbers,
+/// `step` the shape changed by a step of them (`None` where that leaves no shape). Where it
+/// settles, and the weighted mean square distance there.
+fn settle<S: Copy, const N: usize>(
+    s: &Samples,
+    start: S,
+    row: impl Fn(&S, Vec3) -> (f64, [f64; N]),
+    step: impl Fn(&S, &[f64; N]) -> Option<S>,
+) -> (S, f64) {
+    let cost = |state: &S| -> f64 {
+        s.points
+            .iter()
+            .map(|&(p, w)| {
+                let r = row(state, p).0;
+                w * r * r
+            })
+            .sum()
+    };
+    let (mut state, mut now) = (start, cost(&start));
+    let mut lambda = 1e-3;
+    for _ in 0..60 {
+        let (mut h, mut g) = ([[0.0f64; N]; N], [0.0f64; N]);
+        for &(p, w) in &s.points {
+            let (r, j) = row(&state, p);
+            if !(r.is_finite() && j.iter().all(|x| x.is_finite())) {
+                continue;
+            }
+            for a in 0..N {
+                g[a] += w * r * j[a];
+                for b in 0..N {
+                    h[a][b] += w * j[a] * j[b];
+                }
+            }
+        }
+        let mut accepted = false;
+        for _ in 0..10 {
+            let mut damped = h;
+            for (a, row) in damped.iter_mut().enumerate() {
+                row[a] += lambda * row[a].max(1e-12);
+            }
+            let Some(change) = solve_linear(damped, g.map(|x| -x)) else { break };
+            let Some(next) = step(&state, &change) else {
+                lambda *= 10.0;
+                continue;
+            };
+            let next_cost = cost(&next);
+            if next_cost.is_finite() && next_cost <= now {
+                let gain = now - next_cost;
+                (state, now) = (next, next_cost);
+                lambda = (lambda * 0.3).max(1e-12);
+                accepted = gain > 1e-15 * now.max(1e-300);
+                break;
+            }
+            lambda *= 10.0;
+        }
+        if !accepted {
+            break;
+        }
+    }
+    (state, now)
+}
+
+/// A cone's numbers as they settle: its apex, its axis with two directions square to it (along
+/// which the axis tips) and its half-angle.
+#[derive(Clone, Copy)]
+struct ConeState {
+    apex: Vec3,
+    axis: Vec3,
+    half_angle: f64,
+    e1: Vec3,
+    e2: Vec3,
+}
+
+impl ConeState {
+    fn new(apex: Vec3, axis: Vec3, half_angle: f64) -> Self {
+        let (e1, e2) = in_plane(axis);
+        ConeState { apex, axis, half_angle, e1, e2 }
+    }
+}
+
+/// The direction square to the circle the normals' tips make on the unit sphere: a cone's normals
+/// all lean the same way from its axis, so their tips lie in a plane square to it.
+fn circle_of_normals(s: &Samples) -> Option<Vec3> {
+    let mean = s.directions.iter().fold(Vec3::ZERO, |sum, n| sum + *n) / s.directions.len().max(1) as f64;
+    let mut spread = [[0.0f64; 3]; 3];
+    for n in &s.directions {
+        let d = *n - mean;
+        let d = [d.x, d.y, d.z];
+        for (row, di) in spread.iter_mut().zip(d) {
+            for (cell, dj) in row.iter_mut().zip(d) {
+                *cell += di * dj;
+            }
+        }
+    }
+    let (_, axes) = solidcraft_geom::inertia::principal(&spread, 0.0)?;
+    axes[0].normalized()
+}
+
+/// The cone of least squares: from each likely axis (square to the normals' spread, as a narrow
+/// cone's; along it, as a wide one's; square to the circle of the normals' tips) the radius read
+/// against the height along it is a line, whose slope is the half-angle and whose zero the apex;
+/// all six numbers then settle together, and the closest is kept.
+fn cone(s: &Samples) -> Option<Shape> {
+    let (_, axes) = solidcraft_geom::inertia::principal(&s.normals, 0.0)?;
+    let mut best: Option<(ConeState, f64)> = None;
+    for axis in [Some(axes[0]), Some(axes[2]), circle_of_normals(s)].into_iter().flatten() {
+        let Some(start) = axis.normalized().and_then(|axis| cone_start(s, axis)) else { continue };
+        let (state, cost) = settle(s, start, cone_row, cone_step);
+        if cost.is_finite() && best.is_none_or(|b| cost < b.1) {
+            best = Some((state, cost));
+        }
+    }
+    let (c, _) = best?;
+    (c.half_angle > 0.0 && c.half_angle < FRAC_PI_2 && c.apex.is_finite()).then_some(Shape::Cone {
+        apex: c.apex,
+        axis: c.axis,
+        half_angle: c.half_angle,
+    })
+}
+
+/// A cone about `axis` through the circle the points make looking along it, from the line of
+/// their radius against their height; `None` when the radius does not grow (a cylinder) or the
+/// apex lies far off.
+fn cone_start(s: &Samples, axis: Vec3) -> Option<ConeState> {
+    let (u, v) = in_plane(axis);
+    let (centre, _) = kasa(s.points.iter().map(|&(p, w)| ([p.dot(u), p.dot(v)], w)))?;
+    let point = u * centre[0] + v * centre[1];
+    let (mut sw, mut st, mut sr, mut stt, mut str) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for &(p, w) in &s.points {
+        let d = p - point;
+        let t = d.dot(axis);
+        let rho = (d - axis * t).len();
+        sw += w;
+        st += w * t;
+        sr += w * rho;
+        stt += w * t * t;
+        str += w * t * rho;
+    }
+    let denominator = sw * stt - st * st;
+    if !(denominator > 0.0) {
+        return None;
+    }
+    let slope = (sw * str - st * sr) / denominator;
+    let offset = (sr - slope * st) / sw;
+    // The axis turned the way the radius grows.
+    let (axis, slope) = if slope < 0.0 { (-axis, -slope) } else { (axis, slope) };
+    if !(slope > (0.2f64).to_radians().tan()) {
+        return None;
+    }
+    let apex_t = -offset / slope;
+    (apex_t.abs() < 1e4 * s.size.max(1e-9)).then(|| ConeState::new(point + axis * apex_t, axis, slope.atan().min(FRAC_PI_2 - 1e-3)))
+}
+
+fn cone_row(c: &ConeState, p: Vec3) -> (f64, [f64; 6]) {
+    let v = p - c.apex;
+    let t = v.dot(c.axis);
+    let w = v - c.axis * t;
+    let rho = w.len();
+    let (sin, cos) = c.half_angle.sin_cos();
+    let mut j = [0.0; 6];
+    let to_apex = match w.normalized() {
+        Some(n) => {
+            j[0] = -cos * t * n.dot(c.e1) - sin * v.dot(c.e1);
+            j[1] = -cos * t * n.dot(c.e2) - sin * v.dot(c.e2);
+            -(n * cos - c.axis * sin)
+        }
+        None => {
+            j[0] = -sin * v.dot(c.e1);
+            j[1] = -sin * v.dot(c.e2);
+            c.axis * sin
+        }
+    };
+    (j[2], j[3], j[4]) = (to_apex.x, to_apex.y, to_apex.z);
+    j[5] = -rho * sin - t * cos;
+    (rho * cos - t * sin, j)
+}
+
+fn cone_step(c: &ConeState, step: &[f64; 6]) -> Option<ConeState> {
+    let axis = (c.axis + c.e1 * step[0] + c.e2 * step[1]).normalized()?;
+    let angle = (c.half_angle + step[5]).clamp(1e-3, FRAC_PI_2 - 1e-3);
+    Some(ConeState::new(c.apex + Vec3::new(step[2], step[3], step[4]), axis, angle))
+}
+
+/// A torus's numbers as they settle.
+#[derive(Clone, Copy)]
+struct TorusState {
+    center: Vec3,
+    axis: Vec3,
+    major: f64,
+    minor: f64,
+    e1: Vec3,
+    e2: Vec3,
+}
+
+impl TorusState {
+    fn new(center: Vec3, axis: Vec3, major: f64, minor: f64) -> Self {
+        let (e1, e2) = in_plane(axis);
+        TorusState { center, axis, major, minor, e1, e2 }
+    }
+}
+
+/// The torus of least squares. For a tube radius tried (and each way the normals may point), the
+/// points stepped back along their normals by it lie on the tube's middle circle: the radius whose
+/// stepped points lie closest to a circle in space starts the solve (a sweep of 41 radii, then a
+/// golden-section search between the best one's neighbours), and all seven numbers then settle.
+fn torus(s: &Samples) -> Option<Shape> {
+    let every = (s.points.len() / 2_000).max(1);
+    let used: Vec<usize> = (0..s.points.len()).step_by(every).collect();
+    if !(used.len() >= 8 && s.size > 0.0) {
+        return None;
+    }
+    let weights: Vec<f64> = used.iter().map(|&i| s.points[i].1).collect();
+    let circle = |minor: f64, sign: f64| -> Option<(TorusState, f64)> {
+        let points: Vec<Vec3> = used.iter().map(|&i| s.points[i].0 - s.directions[i] * (sign * minor)).collect();
+        let (center, axis, major, mean_square) = circle_in_space(&points, &weights)?;
+        Some((TorusState::new(center, axis, major, minor), mean_square))
+    };
+    let mut best: Option<(TorusState, f64)> = None;
+    for sign in [1.0, -1.0] {
+        let (low, high) = ((s.size / 100.0).ln(), (3.0 * s.size).ln());
+        let steps = 40;
+        let width = (high - low) / f64::from(steps);
+        let swept = (0..=steps)
+            .filter_map(|k| {
+                let r = low + width * f64::from(k);
+                circle(r.exp(), sign).filter(|c| c.1.is_finite()).map(|c| (r, c.1))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        let Some((at, _)) = swept else { continue };
+        let (mut a, mut b) = (at - width, at + width);
+        let golden = (5.0f64.sqrt() - 1.0) / 2.0;
+        let cost = |x: f64| circle(x.exp(), sign).map_or(f64::INFINITY, |c| c.1);
+        let (mut c, mut d) = (b - golden * (b - a), a + golden * (b - a));
+        let (mut fc, mut fd) = (cost(c), cost(d));
+        for _ in 0..24 {
+            if fc < fd {
+                (b, d, fd) = (d, c, fc);
+                c = b - golden * (b - a);
+                fc = cost(c);
+            } else {
+                (a, c, fc) = (c, d, fd);
+                d = a + golden * (b - a);
+                fd = cost(d);
+            }
+        }
+        let Some((start, _)) = circle(((a + b) / 2.0).exp(), sign) else { continue };
+        if !(start.major < 1e4 * s.size && start.center.len() < 1e4 * s.size) {
+            continue;
+        }
+        let (state, cost) = settle(s, start, torus_row, torus_step);
+        if cost.is_finite() && best.is_none_or(|b| cost < b.1) {
+            best = Some((state, cost));
+        }
+    }
+    let (t, _) = best?;
+    (t.minor > 0.0 && t.major.is_finite() && t.center.is_finite()).then_some(Shape::Torus {
+        center: t.center,
+        axis: t.axis,
+        major: t.major,
+        minor: t.minor,
+    })
+}
+
+/// The plane weighted points spread in and the circle in it (Kåsa's): its centre, its unit axis,
+/// its radius, and the points' weighted mean square distance from it. `None` for points in one
+/// place or along a line.
+fn circle_in_space(points: &[Vec3], weights: &[f64]) -> Option<(Vec3, Vec3, f64, f64)> {
+    let total: f64 = weights.iter().sum();
+    if !(total > 0.0) {
+        return None;
+    }
+    let middle = points.iter().zip(weights).fold(Vec3::ZERO, |sum, (p, w)| sum + *p * *w) / total;
+    let mut spread = [[0.0f64; 3]; 3];
+    for (p, w) in points.iter().zip(weights) {
+        let d = *p - middle;
+        let d = [d.x, d.y, d.z];
+        for (row, di) in spread.iter_mut().zip(d) {
+            for (cell, dj) in row.iter_mut().zip(d) {
+                *cell += w * di * dj;
+            }
+        }
+    }
+    let (values, axes) = solidcraft_geom::inertia::principal(&spread, 0.0)?;
+    if !(values[2] > 0.0 && values[1] > 1e-9 * values[2]) {
+        return None;
+    }
+    let axis = axes[0].normalized()?;
+    let (u, v) = in_plane(axis);
+    let (c, radius) = kasa(points.iter().zip(weights).map(|(p, w)| ([(*p - middle).dot(u), (*p - middle).dot(v)], *w)))?;
+    let center = middle + u * c[0] + v * c[1];
+    let square: f64 = points
+        .iter()
+        .zip(weights)
+        .map(|(p, w)| {
+            let d = *p - center;
+            let t = d.dot(axis);
+            let off = (d - axis * t).len() - radius;
+            w * (off * off + t * t)
+        })
+        .sum();
+    Some((center, axis, radius, square / total))
+}
+
+fn torus_row(c: &TorusState, p: Vec3) -> (f64, [f64; 7]) {
+    let v = p - c.center;
+    let t = v.dot(c.axis);
+    let w = v - c.axis * t;
+    let rho = w.len();
+    let n = w.normalized().unwrap_or(c.e1);
+    let q = rho - c.major;
+    let tube = q.hypot(t);
+    let mut j = [0.0; 7];
+    if tube > 1e-300 {
+        let m = (n * q + c.axis * t) / tube;
+        j[0] = (-q * t * n.dot(c.e1) + t * v.dot(c.e1)) / tube;
+        j[1] = (-q * t * n.dot(c.e2) + t * v.dot(c.e2)) / tube;
+        (j[2], j[3], j[4]) = (-m.x, -m.y, -m.z);
+        j[5] = -q / tube;
+    }
+    j[6] = -1.0;
+    (tube - c.minor, j)
+}
+
+fn torus_step(c: &TorusState, step: &[f64; 7]) -> Option<TorusState> {
+    let axis = (c.axis + c.e1 * step[0] + c.e2 * step[1]).normalized()?;
+    Some(TorusState::new(c.center + Vec3::new(step[2], step[3], step[4]), axis, (c.major + step[5]).max(0.0), (c.minor + step[6]).max(1e-12)))
+}
+
 /// The circle that best fits weighted points on a plane (Kåsa's): its centre and radius.
 pub(crate) fn kasa(points: impl Iterator<Item = ([f64; 2], f64)>) -> Option<([f64; 2], f64)> {
     let (mut a, mut b) = ([[0.0f64; 3]; 3], [0.0f64; 3]);
@@ -486,8 +1063,8 @@ fn summarize(scan: &Scan, triangles: Vec<usize>, shape: Shape) -> Result<Fitted,
             squares += d * d;
             count += 1;
             max = max.max(d.abs());
-            if let Shape::Cylinder { point, axis, .. } = shape {
-                let s = (p - point).dot(axis);
+            if let Shape::Cylinder { point: from, axis, .. } | Shape::Cone { apex: from, axis, .. } = shape {
+                let s = (p - from).dot(axis);
                 along = (along.0.min(s), along.1.max(s));
             }
         }
@@ -496,10 +1073,15 @@ fn summarize(scan: &Scan, triangles: Vec<usize>, shape: Shape) -> Result<Fitted,
         return Err(FitError::NoFit);
     }
     let centre = sum / area;
+    let cone_along = along;
     let (middle, half_length) = match shape {
         Shape::Plane { point, normal } => (centre - normal * (centre - point).dot(normal), 0.0),
         Shape::Cylinder { point, axis, .. } => (point + axis * ((along.0 + along.1) / 2.0), (along.1 - along.0) / 2.0),
-        Shape::Sphere { center, .. } => (center, 0.0),
+        Shape::Sphere { center, .. } | Shape::Torus { center, .. } => (center, 0.0),
+        Shape::Cone { apex, axis, .. } => {
+            let (lo, hi) = cone_along;
+            (apex + axis * ((lo + hi) / 2.0), (hi - lo) / 2.0)
+        }
     };
     Ok(Fitted { shape, triangles, area, rms: (squares / count as f64).sqrt(), max, middle, half_length })
 }
@@ -602,6 +1184,62 @@ mod tests {
         let fitted = fit(&scan, seed, Kind::Cylinder, None).unwrap();
         let Shape::Cylinder { radius, axis, .. } = fitted.shape else { panic!() };
         assert!((radius - 150.0).abs() < 0.01 && axis.z.abs() > 1.0 - 1e-9, "{radius} {axis:?}");
+    }
+
+    /// A turned part, turned and moved anywhere: a shaft R 20 from 0 to 20, a 45° chamfer of 5 to
+    /// a face at 25, the other end rounded R 4 into a face at 0.
+    fn turned_part() -> (Vec<Vec3>, Vec<[u32; 3]>, Rigid, Vec3) {
+        use crate::test_meshes::{revolved, steps};
+        let mut profile = vec![[-4.0, 0.0]];
+        profile.extend(steps([-4.0, 1.0], [-4.0, 15.0], 14));
+        // The round about (0, 16), R 4, from the face at −4 to the shaft.
+        profile.extend((0..=16).map(|i| f64::from(i) / 16.0 * std::f64::consts::FRAC_PI_2).map(|a| [-4.0 * a.cos(), 16.0 + 4.0 * a.sin()]));
+        profile.extend(steps([0.0, 20.0], [20.0, 20.0], 40).into_iter().skip(1));
+        profile.extend(steps([20.0, 20.0], [25.0, 15.0], 12).into_iter().skip(1));
+        profile.extend(steps([25.0, 15.0], [25.0, 1.0], 14).into_iter().skip(1));
+        profile.push([25.0, 0.0]);
+        let (positions, triangles) = revolved(&profile, 120, false);
+        let axis = Vec3::new(0.3, 0.5, 0.8).normalized().unwrap();
+        let shift = Vec3::new(14.0, -6.0, 30.0);
+        (turned(&positions, axis, 1.1, shift), triangles, Rigid::turn(axis, 1.1), shift)
+    }
+
+    #[test]
+    fn a_cone_fits_the_chamfer_picked() {
+        let (positions, triangles, turn, shift) = turned_part();
+        let scan = Scan::new(&positions, &triangles);
+        let place = |p: Vec3| turn.turned(p) + shift;
+        let seed = nearest_triangle(&scan, place(Vec3::new(17.5, 0.0, 22.5))).unwrap();
+        let fitted = fit(&scan, seed, Kind::Cone, None).unwrap();
+        let Shape::Cone { apex, axis, half_angle } = fitted.shape else { panic!() };
+        // The chamfer's radius shrinks along +Z: its apex at z 40, on the axis.
+        assert!((half_angle.to_degrees() - 45.0).abs() < 0.2, "{}", half_angle.to_degrees());
+        assert!(apex.dist(place(Vec3::new(0.0, 0.0, 40.0))) < 0.2, "{apex:?}");
+        assert!(axis.dot(turn.turned(-Vec3::Z)) > 1.0 - 1e-5, "{axis:?}");
+        assert!(fitted.rms < 0.05, "{}", fitted.rms);
+    }
+
+    #[test]
+    fn a_torus_fits_the_round_picked() {
+        let (positions, triangles, turn, shift) = turned_part();
+        let scan = Scan::new(&positions, &triangles);
+        let place = |p: Vec3| turn.turned(p) + shift;
+        let a = std::f64::consts::FRAC_PI_4;
+        let seed = nearest_triangle(&scan, place(Vec3::new(16.0 + 4.0 * a.sin(), 0.0, -4.0 * a.cos()))).unwrap();
+        // The round runs into the shaft and the face in tangency, and a pick's region takes a
+        // strip or two of each (Find All takes the shaft and the face first).
+        let fitted = fit(&scan, seed, Kind::Torus, None).unwrap();
+        let Shape::Torus { center, axis, major, minor } = fitted.shape else { panic!() };
+        assert!((minor - 4.0).abs() < 0.2, "{minor}");
+        assert!((major - 16.0).abs() < 0.2, "{major}");
+        assert!(center.dist(place(Vec3::ZERO)) < 0.2, "{center:?}");
+        // On the round's own triangles alone it is exact.
+        let true_round = Shape::Torus { center: place(Vec3::ZERO), axis: turn.turned(Vec3::Z), major: 16.0, minor: 4.0 };
+        let own: Vec<usize> =
+            fitted.triangles.iter().copied().filter(|&t| scan.corners(t).unwrap().iter().all(|p| true_round.distance(*p).abs() < 1e-6)).collect();
+        let Some(Shape::Torus { major, minor, .. }) = shape_of(&scan, &own, Kind::Torus) else { panic!() };
+        assert!((minor - 4.0).abs() < 1e-6 && (major - 16.0).abs() < 1e-6, "{major} {minor}");
+        assert!(axis.dot(turn.turned(Vec3::Z)).abs() > 1.0 - 1e-5, "{axis:?}");
     }
 
     #[test]
