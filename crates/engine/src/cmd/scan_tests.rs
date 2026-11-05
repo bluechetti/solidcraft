@@ -721,3 +721,24 @@ fn repair_takes_a_copied_triangle_off() {
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(count(&s), before, "one undo step");
 }
+
+/// Section to Sketch on the plate and boss: cut through the boss it is one circle of the boss's
+/// radius, in a new `Section` sketch; cut through the plate, the plate's four sides as four lines;
+/// a plane above the part cuts nothing.
+#[test]
+fn section_sketch_fits_the_cut_with_lines_and_circles() {
+    let (mut s, _) = session_with_a_plate_and_boss("section-sketch");
+    let boss = run(&mut s, "scan.section_sketch", json!({"plane": "XY", "offset": "15 mm"}));
+    assert_eq!((boss["circles"].as_u64(), boss["lines"].as_u64(), boss["arcs"].as_u64()), (Some(1), Some(0), Some(0)), "{boss}");
+    let id = boss["sketch"].as_u64().unwrap();
+    assert!(s.active_sketch.is_none(), "the new sketch is finished");
+    let sk = super::super::sketch_store::read(&s.doc, id).unwrap();
+    let Some(solidcraft_sketch::CurveKind::Circle { r, .. }) = sk.curves.first().map(|c| &c.kind) else { panic!("a circle") };
+    assert!((r - 10.0).abs() < 0.05, "the boss's radius: {r}");
+
+    let plate = run(&mut s, "scan.section_sketch", json!({"plane": "XY", "offset": "4 mm"}));
+    assert_eq!((plate["lines"].as_u64(), plate["arcs"].as_u64(), plate["outlines"].as_u64()), (Some(4), Some(0), Some(1)), "{plate}");
+    let refused = s.execute("scan.section_sketch", &json!({"plane": "XY", "offset": "80 mm"})).unwrap_err().to_string();
+    assert!(refused.contains("does not cut"), "{refused}");
+    assert!(s.active_sketch.is_none(), "a refused cut leaves no sketch open");
+}

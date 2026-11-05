@@ -115,7 +115,17 @@
     "ui.scan_reduce_rim": "Keep the rim",
     "ui.scan_reduce_count": "{now} triangles now; about {kept} kept.",
     "ui.scan_reduce_hint": "Flat areas lose triangles first, detailed ones last. With a most error set, it stops sooner if a collapse would move the surface farther than that.",
-    "help.scan.repair": "Puts the scan's triangles right: copies of a triangle taken off, an edge three or more faces meet along left with the two that continue each other best, slivers flipped away. Use it on a scan that fitting or filling refuses."
+    "help.scan.repair": "Puts the scan's triangles right: copies of a triangle taken off, an edge three or more faces meet along left with the two that continue each other best, slivers flipped away. Use it on a scan that fitting or filling refuses.",
+    "cmd.scan_section_sketch": "Section to Sketch",
+    "help.scan.section_sketch": "Sketches where a plane cuts the scan as lines, arcs and circles fitted to the cut, its noise averaged out, smooth joins held tangent. Use it to start a part from a scan: dimension the sketch and extrude it.",
+    "ui.ribbon_section": "Section",
+    "ui.scan_section_in_sketch": "The cut is the plane of the sketch being edited.",
+    "ui.scan_section_plane": "Plane",
+    "ui.scan_section_offset": "Offset",
+    "ui.scan_section_tolerance": "Tolerance",
+    "ui.scan_section_found": "{outlines} outlines: {lines} lines, {arcs} arcs, {circles} circles.",
+    "ui.scan_section_nothing": "The plane does not cut the scan here.",
+    "ui.scan_section_hint": "Lines and arcs are drawn over the scan as they will be sketched; a smaller tolerance follows the cut more closely with more pieces."
   },
   "de": {
     "ALIGN": "AUSRICHTEN",
@@ -233,7 +243,17 @@
     "ui.scan_reduce_rim": "Rand behalten",
     "ui.scan_reduce_count": "Jetzt {now} Dreiecke; etwa {kept} bleiben.",
     "ui.scan_reduce_hint": "Ebene Bereiche verlieren zuerst Dreiecke, detailreiche zuletzt. Mit einem größten Fehler endet es früher, wenn ein Zusammenziehen die Fläche weiter bewegen würde.",
-    "help.scan.repair": "Bringt die Dreiecke des Scans in Ordnung: Kopien eines Dreiecks werden entfernt, an einer Kante mit drei oder mehr Flächen bleiben die zwei, die sich am besten fortsetzen, und Splitterdreiecke werden weggeklappt. Verwenden Sie es bei einem Scan, den Anpassen oder Füllen ablehnt."
+    "help.scan.repair": "Bringt die Dreiecke des Scans in Ordnung: Kopien eines Dreiecks werden entfernt, an einer Kante mit drei oder mehr Flächen bleiben die zwei, die sich am besten fortsetzen, und Splitterdreiecke werden weggeklappt. Verwenden Sie es bei einem Scan, den Anpassen oder Füllen ablehnt.",
+    "cmd.scan_section_sketch": "Schnitt zu Skizze",
+    "help.scan.section_sketch": "Skizziert, wo eine Ebene den Scan schneidet, als Linien, Bögen und Kreise, die an den Schnitt angepasst sind; das Rauschen wird gemittelt, glatte Übergänge bleiben tangential. Verwenden Sie es, um ein Teil aus einem Scan zu beginnen: Skizze bemaßen und extrudieren.",
+    "ui.ribbon_section": "Schnitt",
+    "ui.scan_section_in_sketch": "Der Schnitt ist die Ebene der bearbeiteten Skizze.",
+    "ui.scan_section_plane": "Ebene",
+    "ui.scan_section_offset": "Versatz",
+    "ui.scan_section_tolerance": "Toleranz",
+    "ui.scan_section_found": "{outlines} Umrisse: {lines} Linien, {arcs} Bögen, {circles} Kreise.",
+    "ui.scan_section_nothing": "Die Ebene schneidet den Scan hier nicht.",
+    "ui.scan_section_hint": "Linien und Bögen werden so über dem Scan gezeichnet, wie sie skizziert werden; eine kleinere Toleranz folgt dem Schnitt genauer mit mehr Stücken."
   },
   "ja": {
     "ALIGN": "位置合わせ",
@@ -351,7 +371,17 @@
     "ui.scan_reduce_rim": "外周を保つ",
     "ui.scan_reduce_count": "現在 {now} 三角形、約 {kept} を残します。",
     "ui.scan_reduce_hint": "平らな所から先に三角形が減り、細かい所は最後です。最大誤差を設定すると、それより面が動く場合は早めに止まります。",
-    "help.scan.repair": "スキャンの三角形を整えます。三角形の重複を取り除き、3 面以上が接するエッジでは最もよくつながる 2 面を残し、細長い三角形を反転で解消します。フィットや穴埋めが拒否するスキャンに使います。"
+    "help.scan.repair": "スキャンの三角形を整えます。三角形の重複を取り除き、3 面以上が接するエッジでは最もよくつながる 2 面を残し、細長い三角形を反転で解消します。フィットや穴埋めが拒否するスキャンに使います。",
+    "cmd.scan_section_sketch": "断面をスケッチに",
+    "help.scan.section_sketch": "平面がスキャンを切る位置を、断面に合わせた線分・円弧・円としてスケッチします。ノイズは平均化され、滑らかなつなぎは接線拘束されます。スキャンから部品を始めるのに使います: スケッチに寸法を付けて押し出します。",
+    "ui.ribbon_section": "断面",
+    "ui.scan_section_in_sketch": "断面は編集中のスケッチの平面です。",
+    "ui.scan_section_plane": "平面",
+    "ui.scan_section_offset": "オフセット",
+    "ui.scan_section_tolerance": "許容差",
+    "ui.scan_section_found": "輪郭 {outlines} 個: 線分 {lines}、円弧 {arcs}、円 {circles}。",
+    "ui.scan_section_nothing": "平面はここでスキャンを切りません。",
+    "ui.scan_section_hint": "スケッチされる線分と円弧がスキャン上に表示されます。許容差を小さくすると、より多くの要素で断面により近く沿います。"
   },
   "ko": {
     "ALIGN": "정렬",
@@ -469,7 +499,17 @@
     "ui.scan_reduce_rim": "가장자리 유지",
     "ui.scan_reduce_count": "현재 삼각형 {now}개; 약 {kept}개 유지.",
     "ui.scan_reduce_hint": "평평한 곳의 삼각형이 먼저 줄고 세밀한 곳은 마지막입니다. 최대 오차를 정하면 그보다 곡면을 더 움직이게 될 때 더 일찍 멈춥니다.",
-    "help.scan.repair": "스캔의 삼각형을 바로잡습니다: 중복 삼각형을 없애고, 세 면 이상이 만나는 모서리에서는 가장 잘 이어지는 두 면을 남기며, 가는 삼각형은 뒤집어 없앱니다. 맞춤이나 채우기가 거부하는 스캔에 사용하세요."
+    "help.scan.repair": "스캔의 삼각형을 바로잡습니다: 중복 삼각형을 없애고, 세 면 이상이 만나는 모서리에서는 가장 잘 이어지는 두 면을 남기며, 가는 삼각형은 뒤집어 없앱니다. 맞춤이나 채우기가 거부하는 스캔에 사용하세요.",
+    "cmd.scan_section_sketch": "단면을 스케치로",
+    "help.scan.section_sketch": "평면이 스캔을 자르는 곳을 단면에 맞춘 선, 호, 원으로 스케치합니다. 노이즈는 평균되고 매끄러운 연결은 접선으로 유지됩니다. 스캔에서 부품을 시작할 때 사용하세요: 스케치에 치수를 넣고 돌출하세요.",
+    "ui.ribbon_section": "단면",
+    "ui.scan_section_in_sketch": "단면은 편집 중인 스케치의 평면입니다.",
+    "ui.scan_section_plane": "평면",
+    "ui.scan_section_offset": "오프셋",
+    "ui.scan_section_tolerance": "허용 오차",
+    "ui.scan_section_found": "윤곽 {outlines}개: 선 {lines}, 호 {arcs}, 원 {circles}.",
+    "ui.scan_section_nothing": "평면이 여기서 스캔을 자르지 않습니다.",
+    "ui.scan_section_hint": "스케치될 선과 호가 스캔 위에 그려집니다. 허용 오차가 작을수록 더 많은 조각으로 단면을 더 가깝게 따릅니다."
   },
   "zh": {
     "ALIGN": "对齐",
@@ -587,7 +627,17 @@
     "ui.scan_reduce_rim": "保留边缘",
     "ui.scan_reduce_count": "当前 {now} 个三角形；约保留 {kept} 个。",
     "ui.scan_reduce_hint": "平坦区域先减少三角形，细节区域最后。设置最大误差后，若折叠会使曲面移动超过该值则提前停止。",
-    "help.scan.repair": "修正扫描的三角形：移除重复三角形；三个或更多面相交的边只保留衔接最好的两个面；翻转消除细长三角形。用于拟合或补洞被拒绝的扫描。"
+    "help.scan.repair": "修正扫描的三角形：移除重复三角形；三个或更多面相交的边只保留衔接最好的两个面；翻转消除细长三角形。用于拟合或补洞被拒绝的扫描。",
+    "cmd.scan_section_sketch": "截面转草图",
+    "help.scan.section_sketch": "将平面与扫描的截交处绘制为拟合截面的直线、圆弧和圆，平均掉噪声，平滑连接保持相切。用于从扫描开始建模：为草图标注尺寸并拉伸。",
+    "ui.ribbon_section": "截面",
+    "ui.scan_section_in_sketch": "截面为正在编辑的草图的平面。",
+    "ui.scan_section_plane": "平面",
+    "ui.scan_section_offset": "偏移",
+    "ui.scan_section_tolerance": "容差",
+    "ui.scan_section_found": "{outlines} 个轮廓：{lines} 条直线、{arcs} 段圆弧、{circles} 个圆。",
+    "ui.scan_section_nothing": "平面在此处未切到扫描。",
+    "ui.scan_section_hint": "将要绘制的直线和圆弧显示在扫描上；容差越小，用越多的段越贴近截面。"
   },
   "ar": {
     "ALIGN": "محاذاة",
@@ -705,7 +755,17 @@
     "ui.scan_reduce_rim": "الإبقاء على الحافة",
     "ui.scan_reduce_count": "الآن {now} مثلثًا؛ يبقى نحو {kept}.",
     "ui.scan_reduce_hint": "تفقد المناطق المسطحة مثلثاتها أولًا والمفصّلة أخيرًا. مع تحديد أقصى خطأ يتوقف أبكر إذا كان الطي سيحرك السطح أبعد من ذلك.",
-    "help.scan.repair": "يصلح مثلثات المسح: تُزال نسخ المثلث، وعند حافة تلتقي فيها ثلاثة وجوه أو أكثر يبقى الوجهان الأكثر اتصالًا، وتُقلب الشظايا. استخدمه على مسح ترفضه الملاءمة أو التعبئة."
+    "help.scan.repair": "يصلح مثلثات المسح: تُزال نسخ المثلث، وعند حافة تلتقي فيها ثلاثة وجوه أو أكثر يبقى الوجهان الأكثر اتصالًا، وتُقلب الشظايا. استخدمه على مسح ترفضه الملاءمة أو التعبئة.",
+    "cmd.scan_section_sketch": "المقطع إلى رسم",
+    "help.scan.section_sketch": "يرسم موضع قطع مستوى للمسح كخطوط وأقواس ودوائر مُلاءمة للمقطع، مع توسيط الضجيج وإبقاء الوصلات الملساء مماسّة. استخدمه لبدء قطعة من مسح: ضع أبعاد الرسم ثم ابثقه.",
+    "ui.ribbon_section": "مقطع",
+    "ui.scan_section_in_sketch": "المقطع هو مستوى الرسم قيد التحرير.",
+    "ui.scan_section_plane": "المستوى",
+    "ui.scan_section_offset": "الإزاحة",
+    "ui.scan_section_tolerance": "التفاوت",
+    "ui.scan_section_found": "{outlines} محيطات: {lines} خطوط، {arcs} أقواس، {circles} دوائر.",
+    "ui.scan_section_nothing": "المستوى لا يقطع المسح هنا.",
+    "ui.scan_section_hint": "تُرسم الخطوط والأقواس فوق المسح كما ستُرسم؛ التفاوت الأصغر يتبع المقطع عن قرب بقطع أكثر."
   },
   "he": {
     "ALIGN": "יישור",
@@ -823,7 +883,17 @@
     "ui.scan_reduce_rim": "שמירת השפה",
     "ui.scan_reduce_count": "כעת {now} משולשים; יישמרו כ-{kept}.",
     "ui.scan_reduce_hint": "אזורים שטוחים מאבדים משולשים ראשונים, מפורטים אחרונים. עם שגיאה מרבית היא נעצרת מוקדם יותר אם כיווץ יזיז את המשטח מעבר לכך.",
-    "help.scan.repair": "מתקנת את משולשי הסריקה: עותקים של משולש מוסרים, בקצה שבו נפגשים שלושה פרצופים או יותר נשארים השניים שממשיכים זה את זה הכי טוב, ורסיסים מתהפכים החוצה. השתמשו בה בסריקה שהתאמה או מילוי דוחים."
+    "help.scan.repair": "מתקנת את משולשי הסריקה: עותקים של משולש מוסרים, בקצה שבו נפגשים שלושה פרצופים או יותר נשארים השניים שממשיכים זה את זה הכי טוב, ורסיסים מתהפכים החוצה. השתמשו בה בסריקה שהתאמה או מילוי דוחים.",
+    "cmd.scan_section_sketch": "חתך לסקיצה",
+    "help.scan.section_sketch": "משרטטת היכן שמישור חותך את הסריקה כקווים, קשתות ומעגלים המותאמים לחתך; הרעש ממוצע, וחיבורים חלקים נשארים משיקים. השתמשו בה כדי להתחיל חלק מסריקה: הוסיפו מידות לסקיצה ובצעו שליפה.",
+    "ui.ribbon_section": "חתך",
+    "ui.scan_section_in_sketch": "החתך הוא מישור הסקיצה הנערכת.",
+    "ui.scan_section_plane": "מישור",
+    "ui.scan_section_offset": "היסט",
+    "ui.scan_section_tolerance": "סבולת",
+    "ui.scan_section_found": "{outlines} קווי מתאר: {lines} קווים, {arcs} קשתות, {circles} מעגלים.",
+    "ui.scan_section_nothing": "המישור אינו חותך כאן את הסריקה.",
+    "ui.scan_section_hint": "הקווים והקשתות מצוירים מעל הסריקה כפי שישורטטו; סבולת קטנה יותר עוקבת אחר החתך מקרוב יותר עם יותר חלקים."
   },
   "vi": {
     "ALIGN": "CĂN CHỈNH",
@@ -941,7 +1011,17 @@
     "ui.scan_reduce_rim": "Giữ mép",
     "ui.scan_reduce_count": "Hiện có {now} tam giác; giữ khoảng {kept}.",
     "ui.scan_reduce_hint": "Vùng phẳng mất tam giác trước, vùng chi tiết sau cùng. Khi đặt sai số tối đa, nó dừng sớm hơn nếu một lần gộp làm mặt dịch xa hơn thế.",
-    "help.scan.repair": "Sửa các tam giác của bản quét: bỏ bản sao của tam giác, ở cạnh có ba mặt trở lên chỉ giữ hai mặt nối tiếp nhau tốt nhất, lật bỏ tam giác dẹt. Dùng cho bản quét mà khớp hoặc lấp lỗ từ chối."
+    "help.scan.repair": "Sửa các tam giác của bản quét: bỏ bản sao của tam giác, ở cạnh có ba mặt trở lên chỉ giữ hai mặt nối tiếp nhau tốt nhất, lật bỏ tam giác dẹt. Dùng cho bản quét mà khớp hoặc lấp lỗ từ chối.",
+    "cmd.scan_section_sketch": "Mặt cắt thành phác thảo",
+    "help.scan.section_sketch": "Phác thảo chỗ một mặt phẳng cắt bản quét thành đoạn thẳng, cung và đường tròn khớp với mặt cắt, nhiễu được lấy trung bình, chỗ nối trơn giữ tiếp tuyến. Dùng để bắt đầu chi tiết từ bản quét: ghi kích thước phác thảo rồi đùn.",
+    "ui.ribbon_section": "Mặt cắt",
+    "ui.scan_section_in_sketch": "Mặt cắt là mặt phẳng của phác thảo đang sửa.",
+    "ui.scan_section_plane": "Mặt phẳng",
+    "ui.scan_section_offset": "Độ lệch",
+    "ui.scan_section_tolerance": "Dung sai",
+    "ui.scan_section_found": "{outlines} đường bao: {lines} đoạn thẳng, {arcs} cung, {circles} đường tròn.",
+    "ui.scan_section_nothing": "Mặt phẳng không cắt bản quét ở đây.",
+    "ui.scan_section_hint": "Đoạn thẳng và cung được vẽ trên bản quét như sẽ được phác thảo; dung sai nhỏ hơn bám mặt cắt sát hơn với nhiều đoạn hơn."
   },
   "en-GB": {
     "cmd.scan_center": "Centre on Origin",

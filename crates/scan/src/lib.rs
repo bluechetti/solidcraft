@@ -5,6 +5,7 @@
 //!
 //! - [`base`]: the ways a scan could stand on the ground (its broad flat faces, the poses it would
 //!   rest in, its own axes) and a flat face grown from a clicked triangle.
+//! - [`chain`]: a run of a section as lines and arcs, each fitted to its points (the chain fitter).
 //! - [`curve`]: a curve drawn on the scan through points clicked on it, kept as a 3D sketch spline.
 //! - [`deviation`]: how far the scan is from the model built from it.
 //! - [`fit`]: a plane or a cylinder fitted to the part of the scan round a picked point.
@@ -15,6 +16,7 @@
 //!   origin or lay it along its own axes.
 //! - [`reduce`]: fewer triangles for a scan, cheapest collapses first (quadric errors).
 //! - [`repair`]: copies, edges of three or more faces and slivers put right.
+//! - [`section`]: where a plane cuts the scan, as runs of points in the plane.
 //! - [`surface`]: a smooth B-spline surface fitted to the part of the scan round a picked point.
 //! - [`surface_edit`]: a surface's control points moved and the rest fitted to the scan again.
 //! - [`symmetry`]: the plane a scan is a mirror image about, found by itself or near a line drawn
@@ -22,6 +24,7 @@
 //!   the scan to it.
 
 pub mod base;
+pub mod chain;
 pub mod curve;
 pub mod deviation;
 pub mod fit;
@@ -32,6 +35,7 @@ pub mod pieces;
 pub mod place;
 pub mod reduce;
 pub mod repair;
+pub mod section;
 pub mod surface;
 pub mod surface_edit;
 pub mod symmetry;

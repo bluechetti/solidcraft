@@ -64,7 +64,7 @@ The Scan workspace (scan to CAD, #8615; Workspace › Scan, or `ui.workspace` wi
 | SCAN | ALIGN | **`scan.stand_on_base`**, **`scan.symmetry`**, **`scan.square_to_symmetry`**, **`scan.rest_on_grid`**, `scan.complete_by_mirroring`, `scan.quick_align`, `scan.center` |
 | SCAN | FIT | **`scan.fit_plane`**, **`scan.fit_cylinder`**, **`scan.fit_sphere`**, **`mesh.convert`** |
 | SCAN | FREEFORM | **`scan.fit_surface`**, **`scan.edit_surface`** |
-| SCAN | SKETCH | **`sketch.create`**, **`scan.curve_on_scan`**, **`sketch.fit_curves_to_section`** |
+| SCAN | SKETCH | **`sketch.create`**, **`scan.section_sketch`**, **`scan.curve_on_scan`**, `sketch.fit_curves_to_section` |
 | SCAN | CHECK | **`scan.deviation`**, **`inspect.section`**, **`inspect.compare`** |
 | SKETCH | CONFIGURE | **`parameters.change`**, **`config.table`**, `config.configure` |
 | RENDER | SCENE | **`render.scene`** |

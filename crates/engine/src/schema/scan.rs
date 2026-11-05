@@ -641,6 +641,46 @@ pub struct ScanRepairResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Sketch where a plane cuts a scan: lines, arcs and circles each fitted to the cut's points (the
+/// scan's noise averaged, not traced), end to end, smooth joins held tangent. In the sketch being
+/// edited, or a new sketch on `plane`. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanSectionParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The plane, as `sketch.create` takes it, when no sketch is being edited. Default: XY.
+    #[serde(default)]
+    pub plane: Option<Value>,
+    /// How far along its normal to move the plane, as `sketch.create` takes it.
+    #[serde(default)]
+    pub offset: Option<LengthExpr>,
+    /// How far a piece may stray from the cut's points. Default: 0.1 mm.
+    #[serde(default)]
+    pub tolerance: Option<LengthExpr>,
+}
+
+/// What `scan.section_sketch` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanSectionResult {
+    /// The scan, and the sketch drawn in.
+    pub body: String,
+    pub sketch: u64,
+    /// The outlines of the cut drawn, and the lines, arcs and circles they are.
+    pub outlines: usize,
+    pub lines: usize,
+    pub arcs: usize,
+    pub circles: usize,
+    /// Joins held tangent.
+    pub tangents: usize,
+    /// The tolerance used, in mm.
+    pub tolerance: f64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// A way a scan could stand.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct ScanBase {
