@@ -155,6 +155,7 @@ mod tests {
             "scan.align_all",
             "scan.align_pairs",
             "scan.align_to_model",
+            "scan.fillet",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {

@@ -410,6 +410,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             ScanSliceSurface(crate::dialogs_scan_slice::SliceSurface),
             ScanSplit(crate::dialogs_scan_split::SplitMesh),
             ScanAlignPairs(crate::dialogs_scan_align::AlignPairs),
+            ScanFillet(crate::dialogs_scan_fillet::FilletScan),
             ScanFloating(crate::dialogs_scan_clean::Floating),
             ScanHoles(crate::dialogs_scan_clean::Holes),
             ScanReduce(crate::dialogs_scan_clean::Reduce),
@@ -1131,6 +1132,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_scan_slice::start(app, id))
                     .or_else(|| crate::dialogs_scan_split::start(app, id))
                     .or_else(|| crate::dialogs_scan_align::start(app, id))
+                    .or_else(|| crate::dialogs_scan_fillet::start(app, id))
                     .or_else(|| crate::dialogs_scan_reconstruct::start(app, id))
                     .or_else(|| crate::dialogs_appearance::start(app, id))
                     .or_else(|| crate::dialogs_motion::start(app, id))
@@ -2601,6 +2603,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::ScanSliceSurface(_) => "SLICE SURFACE",
         Kind::ScanSplit(_) => "SPLIT MESH",
         Kind::ScanAlignPairs(_) => "ALIGN BY POINTS",
+        Kind::ScanFillet(_) => "FILLET FROM SCAN",
         Kind::ScanFloating(_) => "FLOATING PIECES",
         Kind::ScanHoles(_) => "FILL HOLES",
         Kind::ScanReduce(_) => "REDUCE MESH",
@@ -5651,6 +5654,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanSliceSurface(k) => return crate::dialogs_scan_slice::commands(app, k, &d.inputs),
         Kind::ScanSplit(k) => return crate::dialogs_scan_split::commands(app, k, &d.inputs),
         Kind::ScanAlignPairs(k) => return crate::dialogs_scan_align::commands(k, &d.inputs),
+        Kind::ScanFillet(k) => return crate::dialogs_scan_fillet::commands(k, &d.inputs),
         Kind::ScanFloating(k) => return crate::dialogs_scan_clean::commands(k),
         Kind::ScanHoles(k) => return crate::dialogs_scan_clean::holes_commands(k),
         Kind::ScanReduce(k) => return crate::dialogs_scan_clean::reduce_commands(k),

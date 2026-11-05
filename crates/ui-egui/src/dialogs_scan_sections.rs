@@ -90,12 +90,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SectionsAlong) -> bool {
                 let (lines, arcs, circles) = crate::dialogs_scan_section::counts(&owned);
                 let note = crate::i18n::format(
                     "ui.scan_sections_found",
-                    &[
-                        ("sections", &cut.to_string()),
-                        ("lines", &lines.to_string()),
-                        ("arcs", &arcs.to_string()),
-                        ("circles", &circles.to_string()),
-                    ],
+                    &[("sections", &cut.to_string()), ("lines", &lines.to_string()), ("arcs", &arcs.to_string()), ("circles", &circles.to_string())],
                 );
                 ui_kit::text(ui, &note, ui_kit::Text::Note("scan_sections_found"));
                 let missed = sections.len() - cut;
@@ -172,8 +167,10 @@ mod tests {
     fn ring_stl() -> String {
         let (around, across) = (96u32, 32u32);
         let at = |i: u32, j: u32| {
-            let (a, b) =
-                (std::f64::consts::TAU * f64::from(i % around) / f64::from(around), std::f64::consts::TAU * f64::from(j % across) / f64::from(across));
+            let (a, b) = (
+                std::f64::consts::TAU * f64::from(i % around) / f64::from(around),
+                std::f64::consts::TAU * f64::from(j % across) / f64::from(across),
+            );
             let r = 30.0 + 5.0 * b.cos();
             [r * a.cos(), r * a.sin(), 5.0 * b.sin()]
         };

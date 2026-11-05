@@ -11,6 +11,7 @@
 //! - [`denoise`]: a scan's noise smoothed away, its sharp edges kept, at the strength that leaves
 //!   least error.
 //! - [`deviation`]: how far the scan is from the model built from it.
+//! - [`fillet`]: a fillet's radius measured from the scan near a model's edges.
 //! - [`fit`]: a plane or a cylinder fitted to the part of the scan round a picked point.
 //! - [`free_form`]: a Free Form: a net over four corners clicked on the scan, fitted to it.
 //! - [`holes`]: the holes in a scan and the smooth patches that close them.
@@ -46,6 +47,7 @@ pub mod chain;
 pub mod curve;
 pub mod denoise;
 pub mod deviation;
+pub mod fillet;
 pub mod fit;
 pub mod free_form;
 pub mod holes;
@@ -155,6 +157,36 @@ pub(crate) fn welded(positions: &[Vec3]) -> Vec<u32> {
         .enumerate()
         .map(|(i, p)| *first.entry([(p.x + 0.0).to_bits(), (p.y + 0.0).to_bits(), (p.z + 0.0).to_bits()]).or_insert(i as u32))
         .collect()
+}
+
+/// `a · x = b` by Gaussian elimination with partial pivoting; `None` when singular.
+pub(crate) fn solve_dense(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
+    let n = b.len();
+    for col in 0..n {
+        let pivot = (col..n).max_by(|&i, &j| a[i][col].abs().total_cmp(&a[j][col].abs()))?;
+        if !(a[pivot][col].abs() > 1e-300) {
+            return None;
+        }
+        a.swap(col, pivot);
+        b.swap(col, pivot);
+        let (top, below) = a.split_at_mut(col + 1);
+        let pivot_row = &top[col];
+        for (offset, row) in below.iter_mut().enumerate() {
+            let f = row[col] / pivot_row[col];
+            if f != 0.0 {
+                for (cell, &p) in row.iter_mut().zip(pivot_row.iter()).skip(col) {
+                    *cell -= f * p;
+                }
+                b[col + 1 + offset] -= f * b[col];
+            }
+        }
+    }
+    let mut x = vec![0.0; n];
+    for row in (0..n).rev() {
+        let s: f64 = (row + 1..n).map(|k| a[row][k] * x[k]).sum();
+        x[row] = (b[row] - s) / a[row][row];
+    }
+    x.iter().all(|v| v.is_finite()).then_some(x)
 }
 
 /// Sets of vertices joined by the triangles between them.

@@ -198,7 +198,14 @@ mod tests {
         };
         let mut triangles: Vec<[[f64; 3]; 3]> = Vec::new();
         // Each face a grid: `a` and `b` its two directions, `c` the axis across it at `at`.
-        for (a, b, c, at, flip) in [(0, 1, 2, 0.0, true), (0, 1, 2, size[2], false), (0, 2, 1, 0.0, false), (0, 2, 1, size[1], true), (1, 2, 0, 0.0, true), (1, 2, 0, size[0], false)] {
+        for (a, b, c, at, flip) in [
+            (0, 1, 2, 0.0, true),
+            (0, 1, 2, size[2], false),
+            (0, 2, 1, 0.0, false),
+            (0, 2, 1, size[1], true),
+            (1, 2, 0, 0.0, true),
+            (1, 2, 0, size[0], false),
+        ] {
             let point = |i: u32, j: u32| {
                 let mut p = [0.0; 3];
                 p[a] = size[a] * f64::from(i) / f64::from(n);

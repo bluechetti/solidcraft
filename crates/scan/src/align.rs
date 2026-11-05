@@ -405,7 +405,7 @@ fn pose_graph(n: usize, free: &[usize], edges: &[(usize, usize, Rigid, f64)], ce
                 for (i, row) in system.iter_mut().enumerate() {
                     row[i] += damping * normal[i][i].max(1e-9) + 1e-12;
                 }
-                let Some(step) = solve(system, gradient.iter().map(|g| -g).collect()) else {
+                let Some(step) = crate::solve_dense(system, gradient.iter().map(|g| -g).collect()) else {
                     damping *= 10.0;
                     continue;
                 };
@@ -426,36 +426,6 @@ fn pose_graph(n: usize, free: &[usize], edges: &[(usize, usize, Rigid, f64)], ce
         }
     }
     (moves_of(&x), rounds)
-}
-
-/// `a · x = b` by Gaussian elimination with partial pivoting; `None` when singular.
-fn solve(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
-    let n = b.len();
-    for col in 0..n {
-        let pivot = (col..n).max_by(|&i, &j| a[i][col].abs().total_cmp(&a[j][col].abs()))?;
-        if !(a[pivot][col].abs() > 1e-300) {
-            return None;
-        }
-        a.swap(col, pivot);
-        b.swap(col, pivot);
-        let (top, below) = a.split_at_mut(col + 1);
-        let pivot_row = &top[col];
-        for (offset, row) in below.iter_mut().enumerate() {
-            let f = row[col] / pivot_row[col];
-            if f != 0.0 {
-                for (cell, &p) in row.iter_mut().zip(pivot_row.iter()).skip(col) {
-                    *cell -= f * p;
-                }
-                b[col + 1 + offset] -= f * b[col];
-            }
-        }
-    }
-    let mut x = vec![0.0; n];
-    for row in (0..n).rev() {
-        let s: f64 = (row + 1..n).map(|k| a[row][k] * x[k]).sum();
-        x[row] = (b[row] - s) / a[row][row];
-    }
-    x.iter().all(|v| v.is_finite()).then_some(x)
 }
 
 /// Which of `points` lie within `reach` of a surface, by index.
