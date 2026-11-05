@@ -84,7 +84,8 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EdgeCurve) -> bool {
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok((_, lines, skipped))) => {
             let max = lines.iter().map(|l| l.2).fold(0.0, f64::max);
-            let note = crate::i18n::format("ui.scan_edge_found", &[("curves", &lines.len().to_string()), ("max", &crate::prefs::show_mm(app, max, 1))]);
+            let note =
+                crate::i18n::format("ui.scan_edge_found", &[("curves", &lines.len().to_string()), ("max", &crate::prefs::show_mm(app, max, 1))]);
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_edge_found"));
             if *skipped > 0 {
                 let note = crate::i18n::format("ui.scan_edge_skipped", &[("skipped", &skipped.to_string())]);

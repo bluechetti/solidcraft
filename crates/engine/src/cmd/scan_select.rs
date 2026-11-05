@@ -204,7 +204,8 @@ fn set(s: &mut Session, scan: &str, flags: Vec<bool>, cmd: &str) -> Result<Value
     let area = flags.iter().zip(&topology.areas).filter(|(f, _)| **f).map(|(_, a)| *a).sum();
     let before = selected(s).filter(|k| k.scan == scan);
     let changed = before.as_ref().is_none_or(|k| *k.selected != flags);
-    s.scan_selection = (count > 0).then(|| Arc::new(ScanSelected { scan: scan.to_owned(), selected: Arc::new(flags), count, area, key, held: Mutex::new(held) }));
+    s.scan_selection =
+        (count > 0).then(|| Arc::new(ScanSelected { scan: scan.to_owned(), selected: Arc::new(flags), count, area, key, held: Mutex::new(held) }));
     let changed = changed && !(before.is_none() && count == 0);
     let reply = ScanSelectResult { body: scan.to_owned(), triangles: count, area, of, changed, param_warnings: Vec::new() };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
@@ -243,14 +244,18 @@ pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
     let mode = mode(p, cmd)?;
     let topology = topology(s, &scan, cmd)?;
     let count = topology.triangle_count();
-    let current = || selected(s).filter(|k| k.scan == scan && k.selected.len() == count).map(|k| (*k.selected).clone()).unwrap_or_else(|| vec![false; count]);
+    let current =
+        || selected(s).filter(|k| k.scan == scan && k.selected.len() == count).map(|k| (*k.selected).clone()).unwrap_or_else(|| vec![false; count]);
     let v = &p[way];
     let flags = match way {
         "all" => vec![true; count],
         "none" => vec![false; count],
         "invert" => current().into_iter().map(|f| !f).collect(),
         "grow" | "shrink" => {
-            let rings = v.as_u64().filter(|n| (1..=MOST_RINGS).contains(n)).ok_or_else(|| bad(cmd, format!("`{way}` is a number of rings, 1 to {MOST_RINGS}")))?;
+            let rings = v
+                .as_u64()
+                .filter(|n| (1..=MOST_RINGS).contains(n))
+                .ok_or_else(|| bad(cmd, format!("`{way}` is a number of rings, 1 to {MOST_RINGS}")))?;
             let mut flags = current();
             topology.rings(&mut flags, if way == "grow" { rings as i32 } else { -(rings as i32) });
             flags
@@ -283,7 +288,8 @@ pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                     let through = bool_(v, "through").unwrap_or(false);
                     let state = s.model.state();
-                    let (positions, triangles) = state.body(&scan).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
+                    let (positions, triangles) =
+                        state.body(&scan).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
                     topology.seen_inside(&Scan::new(positions, triangles), &ring, &View { direction, eye }, through)
                 }
                 "region" => {
@@ -298,12 +304,16 @@ pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
                 "shape" => shape_flags(s, &scan, v, &topology, cmd)?,
                 "saved" => {
                     let name = v.as_str().ok_or_else(|| bad(cmd, "`saved` is the name of a kept selection"))?;
-                    let kept = s.doc.scan_selections.iter().find(|k| k.name == name).ok_or_else(|| bad(cmd, format!("no kept selection `{name}`")))?;
+                    let kept =
+                        s.doc.scan_selections.iter().find(|k| k.name == name).ok_or_else(|| bad(cmd, format!("no kept selection `{name}`")))?;
                     if kept.body != scan {
                         return Err(bad(cmd, format!("`{name}` is of `{}`, not `{scan}`", kept.body)));
                     }
                     if kept.triangles as usize != count {
-                        return Err(bad(cmd, format!("`{scan}` has other triangles than when `{name}` was kept: its triangles are made again (Remesh, Reduce)")));
+                        return Err(bad(
+                            cmd,
+                            format!("`{scan}` has other triangles than when `{name}` was kept: its triangles are made again (Remesh, Reduce)"),
+                        ));
                     }
                     kept.flags()
                 }
@@ -311,7 +321,10 @@ pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
                     let list = v.as_array().ok_or_else(|| bad(cmd, "`triangles` must list triangle numbers"))?;
                     let mut found = vec![false; count];
                     for t in list {
-                        let t = t.as_u64().filter(|t| (*t as usize) < count).ok_or_else(|| bad(cmd, format!("the scan's triangles are numbered 0 to {}", count.saturating_sub(1))))?;
+                        let t = t
+                            .as_u64()
+                            .filter(|t| (*t as usize) < count)
+                            .ok_or_else(|| bad(cmd, format!("the scan's triangles are numbered 0 to {}", count.saturating_sub(1))))?;
                         found[t as usize] = true;
                     }
                     found
@@ -325,7 +338,11 @@ pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// The triangles of a shape Find All found on `scan`: by its number, or the one under `{point}`.
 fn shape_flags(s: &Session, scan: &str, v: &Value, topology: &Topology, cmd: &str) -> Result<Vec<bool>> {
-    let shapes = s.scan_shapes.clone().filter(|k| k.scan == scan && k.current(s)).ok_or_else(|| bad(cmd, "run Find All on the scan first: its shapes are what `shape` names"))?;
+    let shapes = s
+        .scan_shapes
+        .clone()
+        .filter(|k| k.scan == scan && k.current(s))
+        .ok_or_else(|| bad(cmd, "run Find All on the scan first: its shapes are what `shape` names"))?;
     let region = match v {
         Value::Number(n) => {
             let k = n.as_u64().ok_or_else(|| bad(cmd, "`shape` is a shape's number"))? as usize;
@@ -399,7 +416,8 @@ pub fn edge_preview(s: &Session, every: bool, smooth: Option<f64>, tolerance: f6
     let reach = super::curve::size(s, &k.scan) / 100.0 + 3.0 * topology.edge;
     let state = s.model.state();
     let (positions, triangles) = state.body(&k.scan).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
-    let (lines, skipped) = topology.edge_lines(&Scan::new(positions, triangles), &k.selected, every, width, reach).map_err(|e| bad(cmd, e.to_string()))?;
+    let (lines, skipped) =
+        topology.edge_lines(&Scan::new(positions, triangles), &k.selected, every, width, reach).map_err(|e| bad(cmd, e.to_string()))?;
     let fitted = lines
         .into_iter()
         .map(|path| {

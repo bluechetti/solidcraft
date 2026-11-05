@@ -19,8 +19,14 @@ use crate::dialogs::{Kind, check, form_row};
 use crate::ui_kit::{self, choice_row};
 
 /// The tools, in the order the dialog offers them.
-const TOOLS: [&str; 6] =
-    ["ui.scan_select_brush", "ui.scan_select_polygon", "ui.scan_select_lasso", "ui.scan_select_region", "ui.scan_select_shape", "ui.scan_select_inside"];
+const TOOLS: [&str; 6] = [
+    "ui.scan_select_brush",
+    "ui.scan_select_polygon",
+    "ui.scan_select_lasso",
+    "ui.scan_select_region",
+    "ui.scan_select_shape",
+    "ui.scan_select_inside",
+];
 const BRUSH: usize = 0;
 const POLYGON: usize = 1;
 const LASSO: usize = 2;
@@ -154,7 +160,11 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect) -> bool {
     }
     let ask = |k: &mut ScanSelect, p: Value| k.asked = Some(("scan.select".into(), p));
     for line in [
-        &[("ui.scan_select_all", json!({"all": true})), ("ui.scan_select_none", json!({"none": true})), ("ui.scan_select_invert", json!({"invert": true}))][..],
+        &[
+            ("ui.scan_select_all", json!({"all": true})),
+            ("ui.scan_select_none", json!({"none": true})),
+            ("ui.scan_select_invert", json!({"invert": true})),
+        ][..],
         &[("ui.scan_select_grow", json!({"grow": 1})), ("ui.scan_select_shrink", json!({"shrink": 1}))][..],
     ] {
         ui_kit::row(ui, "", |ui| {

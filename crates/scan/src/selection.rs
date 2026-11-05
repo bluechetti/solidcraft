@@ -232,12 +232,13 @@ impl Topology {
             let cross = (b - a).cross(c - a);
             ((a + b + c) / 3.0, cross.normalized().unwrap_or(Vec3::ZERO), cross.len() / 2.0)
         });
-        let (middles, normals, areas) = faces.into_iter().fold((Vec::with_capacity(count), Vec::with_capacity(count), Vec::with_capacity(count)), |mut acc, f| {
-            acc.0.push(f.0);
-            acc.1.push(f.1);
-            acc.2.push(f.2);
-            acc
-        });
+        let (middles, normals, areas) =
+            faces.into_iter().fold((Vec::with_capacity(count), Vec::with_capacity(count), Vec::with_capacity(count)), |mut acc, f| {
+                acc.0.push(f.0);
+                acc.1.push(f.1);
+                acc.2.push(f.2);
+                acc
+            });
         let mut topology = Topology {
             tree: TriangleTree::new(&Mesh { positions: scan.positions.to_vec(), triangles: scan.triangles.to_vec(), ..Mesh::default() }),
             corners,
@@ -250,7 +251,8 @@ impl Topology {
             smooth: Vec::new(),
             edge: crate::mirror_fill::typical_edge(scan),
         };
-        let vertex_normal = |v: u32| topology.fan_of(v).iter().fold(Vec3::ZERO, |s, &f| s + topology.normals[f as usize] * topology.areas[f as usize]);
+        let vertex_normal =
+            |v: u32| topology.fan_of(v).iter().fold(Vec3::ZERO, |s, &f| s + topology.normals[f as usize] * topology.areas[f as usize]);
         topology.smooth = par::map(count, |t| {
             topology.corners[t].iter().fold(Vec3::ZERO, |s, &v| s + vertex_normal(v)).normalized().unwrap_or(topology.normals[t])
         });
@@ -262,7 +264,8 @@ impl Topology {
     }
 
     fn fan_of(&self, v: u32) -> &[u32] {
-        let (a, b) = (self.fan_start.get(v as usize).copied().unwrap_or(0) as usize, self.fan_start.get(v as usize + 1).copied().unwrap_or(0) as usize);
+        let (a, b) =
+            (self.fan_start.get(v as usize).copied().unwrap_or(0) as usize, self.fan_start.get(v as usize + 1).copied().unwrap_or(0) as usize);
         self.fan.get(a..b).unwrap_or_default()
     }
 
@@ -378,7 +381,8 @@ impl Topology {
             xs.sort_by(f64::total_cmp);
             for pair in xs.chunks(2) {
                 if let [x0, x1] = *pair {
-                    let (c0, c1) = (((x0 - lo[0]) / cell - 0.5).ceil().max(0.0) as usize, (((x1 - lo[0]) / cell - 0.5).floor().max(-1.0) + 1.0) as usize);
+                    let (c0, c1) =
+                        (((x0 - lo[0]) / cell - 0.5).ceil().max(0.0) as usize, (((x1 - lo[0]) / cell - 0.5).floor().max(-1.0) + 1.0) as usize);
                     for c in c0..c1.min(w) {
                         mask[row * w + c] = true;
                     }
@@ -592,7 +596,11 @@ impl Topology {
             }
         }
         let inside = |t: usize| inside_polygon(flat(self.middles[t]), &polygon);
-        let seeds: Vec<usize> = (0..self.corners.len()).filter(|&t| under[t]).flat_map(|t| self.neighbours(t).collect::<Vec<_>>()).filter(|&n| !under[n] && inside(n)).collect();
+        let seeds: Vec<usize> = (0..self.corners.len())
+            .filter(|&t| under[t])
+            .flat_map(|t| self.neighbours(t).collect::<Vec<_>>())
+            .filter(|&n| !under[n] && inside(n))
+            .collect();
         let mut taken = self.flood(seeds, |_, n| !under[n]);
         for t in 0..taken.len() {
             if under[t] && inside(t) {
