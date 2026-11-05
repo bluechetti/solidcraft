@@ -62,6 +62,9 @@ pub struct EditSurface {
     note: Option<String>,
     /// What a drag refits: 0 nothing, [`REFIT_AROUND`] or [`REFIT_ALL`].
     pub refit: usize,
+    /// The surface body to edit, when it was named (opened from the history); else the selected
+    /// one, or the one made last.
+    target: Option<String>,
     loaded: Option<Result<Box<Loaded>, String>>,
     /// The net as edited so far, and the points moved by hand.
     net: Vec<Vec3>,
@@ -87,6 +90,7 @@ impl Default for EditSurface {
             line: None,
             note: None,
             refit: REFIT_AROUND,
+            target: None,
             loaded: None,
             net: Vec::new(),
             moved: Vec::new(),
@@ -291,7 +295,7 @@ fn load(app: &SolveApp, k: &mut EditSurface) {
         _ => {}
     }
     let cmd = "scan.edit_surface";
-    let found = edit::editable(&app.session, None, cmd).map_err(|e| e.to_string());
+    let found = edit::editable(&app.session, k.target.as_deref(), cmd).map_err(|e| e.to_string());
     if let (Some(Ok(l)), Ok(target)) = (&mut k.loaded, &found)
         && l.target.feature == target.feature
         && l.target.surface == target.surface
@@ -563,6 +567,31 @@ fn dialog(app: &mut SolveApp) -> Option<&mut EditSurface> {
     }
 }
 
+/// A surface that Fit Surface, New Free Form or Wrap Surface made, edited from the history
+/// (double-clicked, or Edit Feature): Edit Surface opens on it where it is. Its edits are written
+/// into that feature, so the design is not rolled back to before it as other features are. False
+/// when the feature is not such a surface (or is rolled back), to be edited the usual way.
+pub(crate) fn edit_from_history(app: &mut SolveApp, feature: u64) -> bool {
+    let Some(f) = app.session.doc.feature(feature) else { return false };
+    if !matches!(f.kind, solidcraft_engine::doc::FeatureKind::Import { .. }) {
+        return false;
+    }
+    let mut names = f.body_names.clone();
+    names.extend(app.session.model.state().bodies.iter().filter(|b| b.feature == feature).map(|b| b.name.clone()));
+    let Some(target) = names.iter().find_map(|n| edit::editable(&app.session, Some(n), "scan.edit_surface").ok().filter(|t| t.feature == feature))
+    else {
+        return false;
+    };
+    // Selected as well, so a dialog that opens a frame later (while the history computes) takes it too.
+    let _ = app.run("select.set", json!({ "items": [{ "type": "body", "name": target.body }] }));
+    app.start("scan.edit_surface");
+    if let Some(k) = dialog(app) {
+        k.target = Some(target.body);
+        k.loaded = None;
+    }
+    true
+}
+
 /// Whether the dialog shows handles (the next primary press on one takes it).
 pub(crate) fn editing(app: &SolveApp) -> bool {
     matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanEditSurface(k)) if loaded(k).is_some())
@@ -784,6 +813,32 @@ mod tests {
             Some(Kind::ScanEditSurface(k)) => k,
             _ => panic!("the Edit Surface dialog"),
         }
+    }
+
+    /// Editing a fitted surface from the history (a double-click) opens Edit Surface on that one,
+    /// not on the one made last, and leaves the design where it is; other features edit as ever.
+    #[test]
+    fn a_surface_edited_from_the_history_opens_edit_surface_on_it() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.fit_surface", json!({"point": [20, 20, 7], "radius": 12, "controls": 5})).unwrap();
+        h.app.run("scan.fit_surface", json!({"point": [40, 40, 7], "radius": 12, "controls": 5})).unwrap();
+        h.app.run("select.clear", json!({})).unwrap();
+        let first = h.app.session.doc.features.iter().find(|f| f.name == "Fit Surface").map(|f| f.id).unwrap();
+        let marker = h.app.session.doc.marker;
+        h.app.edit_feature(first);
+        h.frames(3);
+        let target = loaded(kind(&h)).map(|l| l.target.clone()).expect("the surface loaded");
+        assert_eq!((target.body.as_str(), target.feature), ("Surface1", first), "the surface double-clicked, not the one made last");
+        assert_eq!(h.app.session.doc.marker, marker, "nothing rolled back");
+        assert!(editing(&h.app), "its handles shown");
+        // The scan's own feature is not a surface: it does not open Edit Surface.
+        let scan = h.app.session.doc.features.iter().find(|f| matches!(f.kind, solidcraft_engine::doc::FeatureKind::MeshImport { .. })).unwrap().id;
+        h.app.edit_feature(scan);
+        h.frames(2);
+        assert!(!matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanEditSurface(_))));
     }
 
     /// A handle of a fitted surface dragged up through the viewport's own input moves its point and

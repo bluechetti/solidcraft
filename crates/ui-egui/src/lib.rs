@@ -2155,6 +2155,10 @@ impl SolveApp {
             self.edit_sketch(id);
             return;
         }
+        // A surface made on a scan opens Edit Surface on it, without rolling the design back.
+        if self.session.active_sketch.is_none() && dialogs_scan_surface::edit_from_history(self, id) {
+            return;
+        }
         let Some(idx) = self.session.doc.feature_index(id) else { return };
         let marker = self.finish_sketch_for_edit();
         self.tool = None;
