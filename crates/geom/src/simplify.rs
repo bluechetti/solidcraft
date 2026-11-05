@@ -13,6 +13,13 @@
 //! [`levels`] simplifies once, keeping a copy of the mesh each time it reaches the next target
 //! triangle count, with its error measured: how far its vertices and the centres of its triangles
 //! lie from the original surface, at most.
+//!
+//! A scan of millions of triangles is simplified in pieces instead, side by side on several
+//! threads, so neither its time nor its memory grows with the whole of it: each level is cut from
+//! the one before into pieces of about [`PIECE`] triangles, each piece simplified with its open
+//! sides held still (so the pieces still meet exactly), and the pieces joined again where they
+//! meet. The next level is cut elsewhere, so the sides held still in one are simplified in the
+//! next.
 
 use crate::prelude::*;
 use std::cmp::Ordering;
@@ -20,8 +27,14 @@ use std::collections::BinaryHeap;
 
 use solidcore_record::Vec3;
 
-/// Most triangles [`levels`] simplifies (more: no levels).
-pub const MAX_TRIANGLES: usize = 50_000_000;
+/// Most triangles [`levels`] simplifies (more: no levels), as many as a mesh body holds.
+pub const MAX_TRIANGLES: usize = 250_000_000;
+
+/// Most triangles simplified as one piece: a mesh of more than twice as many is simplified in
+/// pieces of about this many (memory and time per piece, not per scan).
+const PIECE: usize = 250_000;
+/// Most threads that simplify pieces side by side (each holds its piece's working copy).
+const MAX_WORKERS: usize = 16;
 
 /// How much more an open boundary's planes count than a face's.
 const BOUNDARY_WEIGHT: f64 = 10.0;
@@ -43,11 +56,50 @@ pub struct Level {
 /// by then are returned, but none that is not at least a fifth smaller than the one before it.
 /// Triangles with an index out of range or a point not finite are left out; an empty or oversized
 /// mesh ([`MAX_TRIANGLES`]) has no levels.
+///
+/// A mesh of more than twice [`PIECE`] triangles is simplified in pieces (see the module's
+/// notes); each level's error then adds the error of the level it was made from, to stay an
+/// upper bound.
 pub fn levels(positions: &[Vec3], triangles: &[[u32; 3]], targets: &[usize]) -> Vec<Level> {
+    let workers = std::thread::available_parallelism().map_or(1, usize::from).min(MAX_WORKERS);
+    levels_in_pieces(positions, triangles, targets, PIECE, workers)
+}
+
+/// [`levels`], in pieces of about `piece` triangles on up to `workers` threads.
+fn levels_in_pieces(positions: &[Vec3], triangles: &[[u32; 3]], targets: &[usize], piece: usize, workers: usize) -> Vec<Level> {
     if triangles.is_empty() || triangles.len() > MAX_TRIANGLES {
         return Vec::new();
     }
-    let Some(mut m) = Collapser::new(positions, triangles) else { return Vec::new() };
+    if triangles.len() <= 2 * piece.max(1) {
+        return whole(positions, triangles, targets);
+    }
+    let mut out: Vec<Level> = Vec::new();
+    let mut previous = triangles.len();
+    for (k, &target) in targets.iter().enumerate() {
+        if target >= previous {
+            continue;
+        }
+        let (from_positions, from_triangles) = match out.last() {
+            Some(l) => (l.positions.as_slice(), l.triangles.as_slice()),
+            None => (positions, triangles),
+        };
+        let keep = target as f64 / from_triangles.len().max(1) as f64;
+        // Every other level cut a third of the way through, not half: its cuts fall elsewhere.
+        let cut = if k % 2 == 0 { 0.5 } else { 1.0 / 3.0 };
+        let Some(mut level) = in_pieces(from_positions, from_triangles, keep, piece, workers, cut) else { break };
+        if level.triangles.len() * 5 > previous * 4 {
+            break;
+        }
+        previous = level.triangles.len();
+        level.error += out.last().map_or(0.0, |l| l.error);
+        out.push(level);
+    }
+    out
+}
+
+/// The levels of a mesh simplified as one piece.
+fn whole(positions: &[Vec3], triangles: &[[u32; 3]], targets: &[usize]) -> Vec<Level> {
+    let Some(mut m) = Collapser::new(positions, triangles, false) else { return Vec::new() };
     let original = Surface::new(&m.pos, &m.tris);
     let mut out: Vec<Level> = Vec::new();
     let mut previous = m.live_triangles;
@@ -60,7 +112,7 @@ pub fn levels(positions: &[Vec3], triangles: &[[u32; 3]], targets: &[usize]) -> 
             break;
         }
         previous = m.live_triangles;
-        let (mut level, seeds) = m.level();
+        let (mut level, seeds, _) = m.level();
         // Never less than a coarser level's own error.
         level.error = original.deviation(&level, &seeds).max(out.last().map_or(0.0, |l| l.error));
         out.push(level);
@@ -269,6 +321,8 @@ struct Collapser {
     around: Vec<Vec<u32>>,
     /// An original triangle at each vertex (where it came from), to start a search near it.
     seed: Vec<u32>,
+    /// Vertices held still: on a piece's open sides, where it meets the pieces round it.
+    locked: Vec<bool>,
     /// Lists a collapse reuses.
     scratch: Scratch,
     heap: BinaryHeap<Candidate>,
@@ -276,7 +330,8 @@ struct Collapser {
 }
 
 impl Collapser {
-    fn new(positions: &[Vec3], triangles: &[[u32; 3]]) -> Option<Collapser> {
+    /// The mesh ready to simplify; with `hold_open`, the vertices on its open sides held still.
+    fn new(positions: &[Vec3], triangles: &[[u32; 3]], hold_open: bool) -> Option<Collapser> {
         // Weld corners at the same position.
         let mut index: std::collections::HashMap<[u64; 3], u32, std::hash::BuildHasherDefault<BitsHasher>> =
             std::collections::HashMap::with_capacity_and_hasher(positions.len() / 2, Default::default());
@@ -332,12 +387,20 @@ impl Collapser {
         // Open boundaries (sides of one triangle only): a plane across each, weighted, so the
         // boundary keeps its place.
         sides.sort_unstable();
+        let mut locked = vec![false; n];
         let mut k = 0;
         while k < sides.len() {
             let (a, b, t) = sides[k];
             let mut e = k + 1;
             while e < sides.len() && sides[e].0 == a && sides[e].1 == b {
                 e += 1;
+            }
+            if e - k == 1 && hold_open {
+                for i in [a, b] {
+                    if let Some(l) = locked.get_mut(i as usize) {
+                        *l = true;
+                    }
+                }
             }
             if e - k == 1
                 && let (Some(pa), Some(pb), Some(tri)) = (pos.get(a as usize), pos.get(b as usize), tris.get(t as usize))
@@ -367,6 +430,7 @@ impl Collapser {
             tris,
             around,
             seed,
+            locked,
             scratch: Scratch::default(),
             live_triangles,
         };
@@ -393,6 +457,10 @@ impl Collapser {
     }
 
     fn offer(&mut self, u: u32, v: u32) {
+        let held = |i: u32| self.locked.get(i as usize).copied().unwrap_or(true);
+        if held(u) || held(v) {
+            return;
+        }
         let Some((_, cost)) = self.target(u, v) else { return };
         let stamps = (self.stamp.get(u as usize).copied().unwrap_or(0), self.stamp.get(v as usize).copied().unwrap_or(0));
         self.heap.push(Candidate { cost, u, v, stamps });
@@ -521,11 +589,13 @@ impl Collapser {
         self.scratch.nu = around;
     }
 
-    /// The mesh as it is now, and an original triangle each of its vertices came from.
-    fn level(&self) -> (Level, Vec<u32>) {
+    /// The mesh as it is now, an original triangle each of its vertices came from, and which of
+    /// them are held still.
+    fn level(&self) -> (Level, Vec<u32>, Vec<bool>) {
         let mut index: Vec<Option<u32>> = vec![None; self.pos.len()];
         let mut out = Level::default();
         let mut seeds = Vec::new();
+        let mut held = Vec::new();
         out.triangles.reserve(self.live_triangles);
         for (t, alive) in self.tris.iter().zip(&self.tri_alive) {
             if !alive {
@@ -538,13 +608,151 @@ impl Collapser {
                     let p = self.pos.get(i as usize).copied().unwrap_or_default();
                     out.positions.push(Vec3::new(p[0], p[1], p[2]));
                     seeds.push(self.seed.get(i as usize).copied().unwrap_or(0));
+                    held.push(self.locked.get(i as usize).copied().unwrap_or(false));
                     u32::try_from(out.positions.len() - 1).unwrap_or(u32::MAX)
                 });
             }
             out.triangles.push(tri);
         }
-        (out, seeds)
+        (out, seeds, held)
     }
+}
+
+/// The next level of a mesh too large for one piece: `keep` of its triangles, simplified piece by
+/// piece on up to `workers` threads and joined where the pieces meet. `None` when no piece could be
+/// simplified.
+fn in_pieces(positions: &[Vec3], triangles: &[[u32; 3]], keep: f64, piece: usize, workers: usize, cut: f64) -> Option<Level> {
+    let centre = |t: &[u32; 3]| {
+        let mut c = [0.0f32; 3];
+        for i in t {
+            let p = positions.get(*i as usize).copied().unwrap_or(Vec3::ZERO);
+            c[0] += p.x as f32 / 3.0;
+            c[1] += p.y as f32 / 3.0;
+            c[2] += p.z as f32 / 3.0;
+        }
+        c
+    };
+    let centres: Vec<[f32; 3]> = triangles.iter().map(centre).collect();
+    let mut order: Vec<u32> = (0..u32::try_from(triangles.len()).ok()?).collect();
+    // Small enough for one piece: simplified whole, its open sides free as ever.
+    let ranges = if triangles.len() <= 2 * piece.max(1) {
+        std::iter::once(0..order.len()).collect()
+    } else {
+        cut_into_pieces(&centres, &mut order, piece, cut)
+    };
+    let hold = ranges.len() > 1;
+    drop(centres);
+    let simplify = |r: &std::ops::Range<usize>| -> Option<(Level, Vec<bool>)> {
+        let mine = order.get(r.clone())?;
+        let mut corners = Vec::with_capacity(mine.len() * 3);
+        let mut local = Vec::with_capacity(mine.len());
+        for &t in mine {
+            let tri = triangles.get(t as usize)?;
+            let k = u32::try_from(corners.len()).ok()?;
+            corners.extend(tri.map(|i| positions.get(i as usize).copied().unwrap_or(Vec3::new(f64::NAN, 0.0, 0.0))));
+            local.push([k, k + 1, k + 2]);
+        }
+        let mut m = Collapser::new(&corners, &local, hold)?;
+        drop((corners, local));
+        let original = Surface::new(&m.pos, &m.tris);
+        m.collapse_to((m.live_triangles as f64 * keep).ceil() as usize);
+        let (mut level, seeds, held) = m.level();
+        drop(m);
+        level.error = original.deviation(&level, &seeds);
+        Some((level, held))
+    };
+    let made = each_on_threads(&ranges, workers, simplify);
+    let mut out = Level::default();
+    // Held vertices meet their twins in the pieces round them at the same place: one vertex.
+    let mut seam: std::collections::HashMap<[u64; 3], u32, std::hash::BuildHasherDefault<BitsHasher>> = Default::default();
+    let mut any = false;
+    for (level, held) in made.into_iter().flatten() {
+        any = true;
+        out.error = out.error.max(level.error);
+        let mut index = Vec::with_capacity(level.positions.len());
+        for (p, h) in level.positions.iter().zip(held) {
+            let next = u32::try_from(out.positions.len()).ok()?;
+            let mut add = || {
+                out.positions.push(*p);
+                next
+            };
+            index.push(if h {
+                *seam.entry([(p.x + 0.0).to_bits(), (p.y + 0.0).to_bits(), (p.z + 0.0).to_bits()]).or_insert_with(add)
+            } else {
+                add()
+            });
+        }
+        out.triangles.extend(
+            level.triangles.iter().filter_map(|t| Some([*index.get(t[0] as usize)?, *index.get(t[1] as usize)?, *index.get(t[2] as usize)?])),
+        );
+    }
+    any.then_some(out)
+}
+
+/// The triangles (`order`, indices into `centres`) cut into pieces of at most `piece` (ranges of
+/// `order`): the longest side of a piece's centres' box cut `cut` of the way through them, until
+/// every piece is small enough.
+fn cut_into_pieces(centres: &[[f32; 3]], order: &mut [u32], piece: usize, cut: f64) -> Vec<std::ops::Range<usize>> {
+    let at = |i: u32, axis: usize| centres.get(i as usize).map_or(0.0, |c| c[axis]);
+    let mut done = Vec::new();
+    let mut todo = Vec::new();
+    todo.push(0..order.len());
+    while let Some(r) = todo.pop() {
+        let Some(part) = order.get_mut(r.clone()) else { continue };
+        if part.len() <= piece.max(1) {
+            done.push(r);
+            continue;
+        }
+        let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+        for &i in part.iter() {
+            for k in 0..3 {
+                lo[k] = lo[k].min(at(i, k));
+                hi[k] = hi[k].max(at(i, k));
+            }
+        }
+        let axis = (0..3).max_by(|&a, &b| (hi[a] - lo[a]).total_cmp(&(hi[b] - lo[b]))).unwrap_or(0);
+        let mid = ((part.len() as f64 * cut) as usize).clamp(1, part.len() - 1);
+        part.select_nth_unstable_by(mid, |&a, &b| at(a, axis).total_cmp(&at(b, axis)).then(a.cmp(&b)));
+        todo.push(r.start + mid..r.end);
+        todo.push(r.start..r.start + mid);
+    }
+    done.sort_by_key(|r| r.start);
+    done
+}
+
+/// `f` over `items` on up to `workers` threads, each taking the next item, results in item order
+/// (`None` where a thread could not start or `f` gave none); on the calling thread where threads
+/// cannot start (the browser).
+fn each_on_threads<T: Sync, R: Send>(items: &[T], workers: usize, f: impl Fn(&T) -> Option<R> + Sync) -> Vec<Option<R>> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let next = AtomicUsize::new(0);
+    let work = || {
+        let mut done = Vec::new();
+        loop {
+            let i = next.fetch_add(1, Ordering::Relaxed);
+            let Some(item) = items.get(i) else { break };
+            done.push((i, f(item)));
+        }
+        done
+    };
+    let mut out: Vec<Option<R>> = std::iter::repeat_with(|| None).take(items.len()).collect();
+    std::thread::scope(|scope| {
+        let helpers: Vec<_> = (1..workers.min(items.len()))
+            .filter_map(|k| std::thread::Builder::new().name(format!("mesh-lod-{k}")).spawn_scoped(scope, work).ok())
+            .collect();
+        let mut all = work();
+        for h in helpers {
+            if let Ok(done) = h.join() {
+                all.extend(done);
+            }
+        }
+        for (i, r) in all {
+            if let Some(slot) = out.get_mut(i) {
+                *slot = r;
+            }
+        }
+    });
+    out
 }
 
 #[cfg(test)]
