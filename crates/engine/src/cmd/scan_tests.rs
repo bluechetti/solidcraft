@@ -656,3 +656,33 @@ fn remove_floating_takes_the_speck_off_where_the_scan_lies() {
     let refused = s.execute("scan.remove_floating", &json!({"below": 0.0})).unwrap_err().to_string();
     assert!(refused.contains("no piece floats"), "{refused}");
 }
+
+/// A plate with a square hole: Fill Holes closes it flat (the plate's rim is left open), one undo
+/// step; a closed box has no holes.
+#[test]
+fn fill_holes_closes_a_hole_in_a_plate() {
+    let mut triangles = Vec::new();
+    for y in 0..10 {
+        for x in 0..10 {
+            if (4..=5).contains(&x) && (4..=5).contains(&y) {
+                continue;
+            }
+            let p = |i: i32, j: i32| Vec3::new(f64::from(x + i), f64::from(y + j), 0.0);
+            triangles.push([p(0, 0), p(1, 0), p(1, 1)]);
+            triangles.push([p(0, 0), p(1, 1), p(0, 1)]);
+        }
+    }
+    let (mut s, body) = session_with_triangles("fill-holes", &triangles);
+    let reply = run(&mut s, "scan.fill_holes", json!({}));
+    assert_eq!((reply["holes"].as_u64(), reply["filled"].as_u64(), reply["failed"].as_u64()), (Some(1), Some(1), Some(0)), "{reply}");
+    let count = |s: &Session| s.model.state().body(&body).and_then(|b| b.body.triangle_mesh()).map_or(0, |(_, t)| t.len());
+    assert_eq!(count(&s), 192 + reply["added_triangles"].as_u64().unwrap() as usize);
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(count(&s), 192, "one undo step");
+    let refused = s.execute("scan.fill_holes", &json!({"max_edges": 4})).unwrap_err().to_string();
+    assert!(refused.contains("the smallest has 8"), "{refused}");
+
+    let (mut closed, _) = session_with_triangles("fill-closed", &fine_box(Vec3::ZERO, Vec3::new(10.0, 10.0, 10.0), 4));
+    let refused = closed.execute("scan.fill_holes", &json!({})).unwrap_err().to_string();
+    assert!(refused.contains("it is closed"), "{refused}");
+}

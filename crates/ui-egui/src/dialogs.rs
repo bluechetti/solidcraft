@@ -404,6 +404,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             ScanEditSurface(crate::dialogs_scan_surface::EditSurface),
             ScanCurve(crate::dialogs_scan_curve::CurveOnScan),
             ScanFloating(crate::dialogs_scan_clean::Floating),
+            ScanHoles(crate::dialogs_scan_clean::Holes),
             /// Appearance (`dialogs_appearance`).
             Appearance(crate::dialogs_appearance::Ap),
             /// Contact sets, motion studies, exploded views, configurations (`dialogs_motion`).
@@ -2574,6 +2575,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::ScanEditSurface(_) => "EDIT SURFACE",
         Kind::ScanCurve(_) => "CURVE ON SCAN",
         Kind::ScanFloating(_) => "FLOATING PIECES",
+        Kind::ScanHoles(_) => "FILL HOLES",
         Kind::Appearance(_) => "APPEARANCE",
         Kind::Motion(k) => k.title(),
         Kind::Part(_) => "INSERT PART",
@@ -5607,6 +5609,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanEditSurface(k) => return crate::dialogs_scan_surface::commands(k),
         Kind::ScanCurve(k) => return crate::dialogs_scan_curve::commands(k),
         Kind::ScanFloating(k) => return crate::dialogs_scan_clean::commands(k),
+        Kind::ScanHoles(k) => return crate::dialogs_scan_clean::holes_commands(k),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),
         Kind::Part(k) => return crate::dialogs_parts::commands(app, k, &d.inputs),

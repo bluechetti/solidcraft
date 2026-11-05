@@ -9,12 +9,13 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
 use solidcraft_scan::Scan;
+use solidcraft_scan::holes::{self, Survey};
 use solidcraft_scan::pieces::{self, Pieces};
 use solidcraft_scan::place::Rigid;
 
 use super::mesh_name;
 use crate::params::bad;
-use crate::schema::scan::ScanFloatingResult;
+use crate::schema::scan::{ScanFloatingResult, ScanHolesResult};
 use crate::{EngineError, Result, Session};
 
 /// The default share of the largest piece below which a piece floats.
@@ -44,16 +45,10 @@ pub fn replace_mesh(s: &mut Session, body: &str, positions: &[Vec3], triangles: 
     let (feature, k) =
         source(s, body).ok_or_else(|| bad(cmd, format!("`{body}` is not a scan brought in by Insert Mesh, so it cannot be changed here")))?;
     let now: Vec<Vec3> = s.model.state().body(body).and_then(|b| b.body.triangle_mesh()).map(|(p, _)| p.to_vec()).unwrap_or_default();
-    // The stored mesh as the kernel builds the body from it (equal points welded, in order).
+    // The stored points as the kernel builds the body from them: equal points (to the bit) welded,
+    // the first of each kept, in order.
     let kept: Vec<Vec3> = match s.doc.feature(feature).map(|f| &f.kind) {
-        Some(solidcraft_doc::FeatureKind::MeshImport { meshes, .. }) => meshes
-            .get(k)
-            .and_then(|m| {
-                let points: Vec<Vec3> = m.positions.as_chunks::<3>().0.iter().map(|c| Vec3::new(c[0], c[1], c[2])).collect();
-                let built = solidcraft_kernel::mesh_body(&points, m.triangles.as_chunks::<3>().0).ok()?;
-                built.triangle_mesh().map(|(p, _)| p.to_vec())
-            })
-            .unwrap_or_default(),
+        Some(solidcraft_doc::FeatureKind::MeshImport { meshes, .. }) => meshes.get(k).map(|m| welded_points(&m.positions)).unwrap_or_default(),
         _ => Vec::new(),
     };
     // Where the scan lies now against where it was brought in: the same, or moved rigidly.
@@ -80,6 +75,18 @@ pub fn replace_mesh(s: &mut Session, body: &str, positions: &[Vec3], triangles: 
         Some(e) => Err(EngineError::Other(e)),
         None => Ok(feature),
     }
+}
+
+/// Flat x, y, z coordinates as points, equal ones (to the bit) kept once, first first: the points
+/// of the body the kernel builds from them (`kernel::mesh_body`), without building it.
+fn welded_points(flat: &[f64]) -> Vec<Vec3> {
+    let mut seen: std::collections::HashSet<[u64; 3]> = std::collections::HashSet::with_capacity(flat.len() / 3);
+    flat.as_chunks::<3>()
+        .0
+        .iter()
+        .filter(|c| seen.insert([(c[0] + 0.0).to_bits(), (c[1] + 0.0).to_bits(), (c[2] + 0.0).to_bits()]))
+        .map(|c| Vec3::new(c[0], c[1], c[2]))
+        .collect()
 }
 
 /// The pieces last found: for which scan (its name and where its points are held) and the pieces.
@@ -138,6 +145,90 @@ pub(super) fn remove_floating(s: &mut Session, p: &Value) -> Result<Value> {
         removed,
         removed_triangles: gone,
         triangles: triangles.len(),
+        feature,
+        param_warnings: Vec::new(),
+    };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// The default largest hole Fill Holes closes, in edges round it.
+pub const MAX_EDGES: usize = 300;
+
+/// The rings last surveyed: for which scan (its name and where its points are held) and the survey.
+type CachedSurvey = (String, usize, usize, Arc<Survey>);
+static SURVEY: std::sync::Mutex<Option<CachedSurvey>> = std::sync::Mutex::new(None);
+
+/// The holes and rims of the scan `body` (or the selected or only one): surveyed once per scan and
+/// kept while the scan is unchanged.
+pub fn holes_of(s: &Session, body: Option<&str>, cmd: &str) -> Result<(String, Arc<Survey>)> {
+    let name = mesh_name(s, &json!({ "body": body }), cmd)?;
+    let state = s.model.state();
+    let (positions, triangles) =
+        state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+    let key = (positions.as_ptr() as usize, positions.len());
+    if let Ok(cached) = SURVEY.lock()
+        && let Some((n, ptr, len, found)) = cached.as_ref()
+        && *n == name
+        && (*ptr, *len) == key
+    {
+        return Ok((name, found.clone()));
+    }
+    let found = Arc::new(holes::survey(&Scan::new(positions, triangles)));
+    if let Ok(mut cached) = SURVEY.lock() {
+        *cached = Some((name.clone(), key.0, key.1, found.clone()));
+    }
+    Ok((name, found))
+}
+
+pub(super) fn fill_holes(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.fill_holes";
+    let limit = match p.get("max_edges").filter(|v| !v.is_null()) {
+        Some(v) => {
+            v.as_u64().filter(|n| (3..=5000).contains(n)).ok_or_else(|| bad(cmd, "`max_edges` must be a whole number from 3 to 5000"))? as usize
+        }
+        None => MAX_EDGES,
+    };
+    let fair = crate::params::bool_(p, "fair").unwrap_or(true);
+    let (name, found) = holes_of(s, crate::params::str_(p, "body"), cmd)?;
+    let holes = found.rings.iter().filter(|r| !r.rim).count();
+    let within = found.holes(limit).count();
+    if within == 0 {
+        return Err(bad(
+            cmd,
+            if holes == 0 {
+                let pinched = if found.unfillable_edges > 0 {
+                    format!(" ({} open edges pinch or dead-end, so they make no ring to close)", found.unfillable_edges)
+                } else {
+                    String::new()
+                };
+                match found.rings.len() {
+                    0 if found.unfillable_edges == 0 => "the scan has no holes: it is closed".to_owned(),
+                    0 => format!("the scan has no holes to close{pinched}"),
+                    _ => format!("the scan has no holes to close: its only open ring is its outer rim{pinched}"),
+                }
+            } else {
+                format!(
+                    "no hole has {limit} edges or fewer: the smallest has {}",
+                    found.rings.iter().filter(|r| !r.rim).map(|r| r.points.len()).min().unwrap_or(0)
+                )
+            },
+        ));
+    }
+    let done = {
+        let state = s.model.state();
+        let (positions, triangles) = state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, "the scan is gone"))?;
+        holes::fill(&Scan::new(positions, triangles), &found, limit, fair)
+    }
+    .ok_or_else(|| bad(cmd, "no hole could be closed: each ring folds or crosses the scan"))?;
+    let feature = replace_mesh(s, &name, &done.positions, &done.triangles, cmd)?;
+    let reply = ScanHolesResult {
+        body: name,
+        holes,
+        filled: done.filled,
+        failed: done.failed,
+        larger: holes - within,
+        added_triangles: done.added_triangles,
+        unfillable_edges: found.unfillable_edges,
         feature,
         param_warnings: Vec::new(),
     };

@@ -2,6 +2,10 @@
 //! found once, and the slider says how small a piece must be, against the largest, to float; the
 //! pieces that would go are marked on the scan (through the point-cloud path, in the analysis
 //! colours' bad colour) and counted. OK takes them off, one undo step.
+//!
+//! Fill Holes (`scan.fill_holes`): the scan's holes are found once and outlined over the picture,
+//! those it would close in the accent colour and those larger than the limit dimmed; OK closes
+//! them, one undo step.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -11,7 +15,7 @@ use solidcraft_engine::cmd::scan::clean;
 use solidcraft_gpu::view::{CloudStyle, ColorMode, Dot, GpuCloud, cloud_dot};
 
 use crate::SolveApp;
-use crate::dialogs::{Kind, form_row};
+use crate::dialogs::{Kind, check, form_row};
 use crate::ui_kit;
 
 /// The marks' id among the clouds the viewport draws.
@@ -55,7 +59,11 @@ struct Marked {
 }
 
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
-    (id == "scan.remove_floating").then(|| (Kind::ScanFloating(Floating::default()), Vec::new()))
+    match id {
+        "scan.remove_floating" => Some((Kind::ScanFloating(Floating::default()), Vec::new())),
+        "scan.fill_holes" => Some((Kind::ScanHoles(Holes::default()), Vec::new())),
+        _ => None,
+    }
 }
 
 impl Floating {
@@ -152,6 +160,95 @@ pub(crate) fn gpu_marks(app: &SolveApp) -> Option<GpuCloud> {
     })
 }
 
+/// The Fill Holes dialog's values.
+#[derive(Clone, Debug)]
+pub struct Holes {
+    /// The largest hole to close, in edges round it.
+    pub max_edges: usize,
+    /// Each patch shaped to carry the surface across.
+    pub fair: bool,
+    found: Option<FoundHoles>,
+}
+
+impl Default for Holes {
+    fn default() -> Self {
+        Holes { max_edges: clean::MAX_EDGES, fair: true, found: None }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FoundHoles {
+    revision: u64,
+    /// The scan, and each hole's outline (closed) with how many edges it has; or why not.
+    result: Result<(String, Vec<(Vec<solidcore_record::Vec3>, usize)>, usize), String>,
+}
+
+/// Find the holes again when the design has changed.
+fn find_holes(app: &SolveApp, k: &mut Holes) {
+    if k.found.as_ref().is_some_and(|f| f.revision == app.session.revision) {
+        return;
+    }
+    let result = clean::holes_of(&app.session, None, "scan.fill_holes").map_err(|e| e.to_string()).and_then(|(body, found)| {
+        let state = app.session.model.state();
+        let (positions, _) = state.body(&body).and_then(|b| b.body.triangle_mesh()).ok_or("the scan is gone")?;
+        let outlines = found
+            .rings
+            .iter()
+            .filter(|r| !r.rim)
+            .map(|r| (r.points.iter().filter_map(|&i| positions.get(i as usize).copied()).collect(), r.points.len()))
+            .collect();
+        Ok((body, outlines, found.unfillable_edges))
+    });
+    k.found = Some(FoundHoles { revision: app.session.revision, result });
+}
+
+/// The Fill Holes dialog's rows.
+pub fn holes_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Holes) -> bool {
+    find_holes(app, k);
+    form_row(ui, crate::i18n::tr("ui.scan_holes_max"), |ui| ui_kit::number_field(ui, &mut k.max_edges, 3..=5000, 1.0, ""));
+    form_row(ui, crate::i18n::tr("ui.scan_holes_fair"), |ui| check(ui, &mut k.fair));
+    match k.found.as_ref().map(|f| &f.result) {
+        Some(Ok((_, outlines, unfillable))) => {
+            let within = outlines.iter().filter(|(_, n)| *n <= k.max_edges).count();
+            let found = crate::i18n::format(
+                "ui.scan_holes_found",
+                &[("within", &within.to_string()), ("holes", &outlines.len().to_string()), ("unfillable", &unfillable.to_string())],
+            );
+            ui_kit::text(ui, &found, ui_kit::Text::Note("scan_holes_found"));
+        }
+        Some(Err(why)) => {
+            ui_kit::text(ui, why, ui_kit::Text::Report("scan_holes_error", true));
+        }
+        None => {}
+    }
+    ui_kit::text(ui, crate::i18n::tr("ui.scan_holes_hint"), ui_kit::Text::Hint("scan_holes_hint"));
+    false
+}
+
+/// What OK runs: the holes within the limit closed.
+pub fn holes_commands(k: &Holes) -> Result<Vec<(String, Value)>, String> {
+    let (body, outlines, _) = k.found.as_ref().ok_or("still finding the holes")?.result.as_ref().map_err(Clone::clone)?;
+    if !outlines.iter().any(|(_, n)| *n <= k.max_edges) {
+        return Err(crate::i18n::tr("ui.scan_holes_none").into());
+    }
+    Ok(vec![("scan.fill_holes".into(), json!({"body": body, "max_edges": k.max_edges, "fair": k.fair}))])
+}
+
+/// The holes outlined over the picture while the dialog is open.
+pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
+    let Some(Kind::ScanHoles(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
+    let Some(Ok((_, outlines, _))) = k.found.as_ref().map(|f| &f.result) else { return };
+    let t = crate::theme::Tokens::get();
+    for (outline, edges) in outlines {
+        let stroke = if *edges <= k.max_edges { egui::Stroke::new(2.0, t.accent) } else { egui::Stroke::new(1.0, t.text_dim) };
+        let mut line: Vec<egui::Pos2> = outline.iter().filter_map(|p| proj.to_screen(*p)).collect();
+        if line.len() == outline.len() && line.len() > 1 {
+            line.push(line[0]);
+            painter.add(egui::Shape::line(line, stroke));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -209,5 +306,41 @@ mod tests {
         let state = h.app.session.model.state();
         let (positions, _) = state.bodies.iter().find(|b| b.body.is_mesh()).and_then(|b| b.body.triangle_mesh()).unwrap();
         assert!(positions.iter().all(|p| p.x <= 30.0), "the speck is gone");
+    }
+
+    /// A plate with a square hole: the dialog finds the hole, and OK closes it.
+    #[test]
+    fn the_hole_is_found_and_closed() {
+        let mut h = crate::scenario::Harness::new();
+        let mut stl = String::from("solid p\n");
+        for y in 0..10 {
+            for x in 0..10 {
+                if (4..=5).contains(&x) && (4..=5).contains(&y) {
+                    continue;
+                }
+                let p = |i: i32, j: i32| [x + i, y + j, 0];
+                for tri in [[p(0, 0), p(1, 0), p(1, 1)], [p(0, 0), p(1, 1), p(0, 1)]] {
+                    stl += "facet normal 0 0 0\nouter loop\n";
+                    for [a, b, c] in tri {
+                        stl += &format!("vertex {a} {b} {c}\n");
+                    }
+                    stl += "endloop\nendfacet\n";
+                }
+            }
+        }
+        let path = h.dir.join("plate.stl");
+        std::fs::write(&path, stl + "endsolid p\n").unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.start("scan.fill_holes");
+        h.frames(2);
+        let Some(Kind::ScanHoles(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the Fill Holes dialog") };
+        let Some(Ok((_, outlines, _))) = k.found.as_ref().map(|f| &f.result) else { panic!("holes found") };
+        assert_eq!(outlines.iter().map(|(_, n)| *n).collect::<Vec<_>>(), vec![8], "the hole, not the rim");
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        let state = h.app.session.model.state();
+        let (_, triangles) = state.bodies.iter().find(|b| b.body.is_mesh()).and_then(|b| b.body.triangle_mesh()).unwrap();
+        assert!(triangles.len() > 192, "patched: {}", triangles.len());
     }
 }

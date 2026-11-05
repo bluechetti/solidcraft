@@ -528,6 +528,45 @@ pub struct ScanFloatingResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Close the holes in a scan with smooth patches (Liepa 2003): each hole's ring triangulated,
+/// refined to the size of the scan's triangles round it, and faired to carry the surface across.
+/// Each piece's outer rim is not a hole. The scan is written back in its Insert Mesh feature; one
+/// undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanHolesParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The largest hole to close, in edges round it. 3 to 5000; default 300.
+    #[serde(default)]
+    pub max_edges: Option<u32>,
+    /// Shape each patch to carry the surface's curve across. Default: true; false leaves it flat.
+    #[serde(default)]
+    pub fair: Option<bool>,
+}
+
+/// What `scan.fill_holes` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanHolesResult {
+    /// The scan.
+    pub body: String,
+    /// The holes found; those closed, those within the limit that could not be, and those larger.
+    pub holes: usize,
+    pub filled: usize,
+    pub failed: usize,
+    pub larger: usize,
+    /// The triangles the patches added.
+    pub added_triangles: usize,
+    /// Open edges in no simple ring (a pinch, a dead end), left alone.
+    pub unfillable_edges: usize,
+    /// The Insert Mesh feature the scan was written back into.
+    pub feature: u64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// A way a scan could stand.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct ScanBase {

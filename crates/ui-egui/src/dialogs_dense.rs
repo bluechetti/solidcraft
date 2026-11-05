@@ -85,6 +85,7 @@ pub(super) fn command(kind: &Kind) -> Option<&'static str> {
         Kind::ScanEditSurface(_) => Some("scan.edit_surface"),
         Kind::ScanCurve(_) => Some("scan.curve_on_scan"),
         Kind::ScanFloating(_) => Some("scan.remove_floating"),
+        Kind::ScanHoles(_) => Some("scan.fill_holes"),
         Kind::Plastic(k) => match k {
             crate::dialogs_plastic::Pl::SnapFit { .. } => Some("plastic.snap_fit"),
             crate::dialogs_plastic::Pl::Assign { .. } => Some("plastic.assign_rule"),
@@ -1077,6 +1078,7 @@ fn additional_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> boo
         Kind::ScanEditSurface(k) => enter |= crate::dialogs_scan_surface::rows(app, ui, k),
         Kind::ScanCurve(k) => enter |= crate::dialogs_scan_curve::rows(app, ui, k),
         Kind::ScanFloating(k) => enter |= crate::dialogs_scan_clean::rows(app, ui, k),
+        Kind::ScanHoles(k) => enter |= crate::dialogs_scan_clean::holes_rows(app, ui, k),
         Kind::Assembly(k) => enter |= crate::dialogs_assembly::rows(app, ui, k, &mut d.inputs, &mut d.active),
         Kind::Measure { result, show, .. } => measure_rows(app, ui, result.as_ref(), show),
         Kind::Section { offset, flip, hatch } => {

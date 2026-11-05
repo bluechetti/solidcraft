@@ -19,8 +19,8 @@ use crate::params::{bad, str_};
 use crate::schema::scan::{
     ScanBase, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams,
     ScanDeviationResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult,
-    ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFloatingParams, ScanFloatingResult, ScanMirror, ScanPlaceParams, ScanPlaceResult,
-    ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
+    ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFloatingParams, ScanFloatingResult, ScanHolesParams, ScanHolesResult, ScanMirror,
+    ScanPlaceParams, ScanPlaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -38,16 +38,19 @@ const COMPLETE_CONTRACT: TypedContract<ScanCompleteParams> = TypedContract::new(
 const EDIT_SURFACE_CONTRACT: TypedContract<ScanEditSurfaceParams> = TypedContract::new();
 const CURVE_CONTRACT: TypedContract<ScanCurveParams> = TypedContract::new();
 const FLOATING_CONTRACT: TypedContract<ScanFloatingParams> = TypedContract::new();
+const HOLES_CONTRACT: TypedContract<ScanHolesParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     planned!("scan.repair", "Repair Mesh", "8615")
         .at("SCAN", "CLEAN")
         .icon("mesh_body")
         .params("planned: body: mesh body name (fixes flipped normals, non-manifold edges, slivers and duplicate triangles) → repaired counts"),
-    planned!("scan.fill_holes", "Fill Holes", "8615")
+    CommandSpec::new("scan.fill_holes", "Fill Holes", crate::checked!("scan.fill_holes", clean::fill_holes))
         .at("SCAN", "CLEAN")
         .icon("surface_patch")
-        .params("planned: body: mesh body name; max_edges?: largest hole to fill, in boundary edges (default 300); fair?: bool (default true) → filled, left_open"),
+        .contract(&HOLES_CONTRACT)
+        .output(output_schema_for::<ScanHolesResult>)
+        .params("body?: mesh body (default: the selected or only one); max_edges?: the largest hole to close, in edges round it (3…5000, default 300); fair?: bool (default true: each patch carries the surface's shape across; false leaves it flat): the holes closed with patches as fine as the scan round them (each piece's outer rim is not a hole), the scan written back in its Insert Mesh feature (one undo step) → body, holes, filled, failed, larger, added_triangles, unfillable_edges, feature"),
     planned!("scan.reduce", "Reduce Mesh", "8615")
         .at("SCAN", "CLEAN")
         .icon("scale")
