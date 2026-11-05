@@ -814,6 +814,48 @@ fn fit_surface(s: &mut Session, p: &Value) -> Result<Value> {
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
+/// What Fit Surface would make, for its dialog: the surface, how close it comes, and the scan's
+/// points it was fitted to, to mark.
+#[derive(Clone, Debug)]
+pub struct SurfacePreview {
+    pub body: String,
+    pub surface: solidcraft_geom::bspline::NurbsSurface,
+    pub radius: f64,
+    pub rms: f64,
+    pub max: f64,
+    pub points: usize,
+    pub marked: Vec<[f32; 3]>,
+}
+
+/// The default radius of the area Fit Surface fits: a tenth of the scan's size.
+pub fn default_surface_radius(s: &Session, body: Option<&str>) -> Result<f64> {
+    let mesh = mesh(s, &json!({ "body": body }), "scan.fit_surface")?;
+    Ok((mesh.scan().extent() / 10.0).max(1e-3))
+}
+
+/// The surface `scan.fit_surface` would fit round `point` on the scan `body`.
+pub fn surface_preview(s: &Session, body: Option<&str>, point: Vec3, radius: f64, controls: usize, smoothing: f64) -> Result<SurfacePreview> {
+    let cmd = "scan.fit_surface";
+    let mesh = mesh(s, &json!({ "body": body }), cmd)?;
+    let scan = mesh.scan();
+    let seed = base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
+    let fitted = solidcraft_scan::surface::fit_surface(&scan, seed, radius, controls.clamp(4, 30), smoothing.clamp(0.0, 1.0))
+        .map_err(|e| bad(cmd, e.to_string()))?;
+    let mut seen = vec![false; mesh.positions.len()];
+    let mut marked = Vec::new();
+    for &t in &fitted.region {
+        for &v in mesh.triangles.get(t).into_iter().flatten() {
+            if let (Some(slot), Some(p)) = (seen.get_mut(v as usize), mesh.positions.get(v as usize))
+                && !*slot
+            {
+                *slot = true;
+                marked.push([p.x as f32, p.y as f32, p.z as f32]);
+            }
+        }
+    }
+    Ok(SurfacePreview { body: mesh.body, surface: fitted.surface, radius, rms: fitted.rms, max: fitted.max, points: fitted.points, marked })
+}
+
 /// The point picked on the scan `body`: a picked face or edge of it.
 fn picked_point(s: &Session, body: &str) -> Option<Vec3> {
     s.selection.iter().rev().find_map(|x| match x {

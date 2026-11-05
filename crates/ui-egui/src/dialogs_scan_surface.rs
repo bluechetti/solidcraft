@@ -1,3 +1,8 @@
+//! Fit Surface (`scan.fit_surface`): click the scan where the surface goes; the area round the
+//! click is marked on the scan and the surface fitted to it drawn over the picture as lines across
+//! it, with how close it comes, as the radius, the control points and the smoothing change. OK
+//! keeps it.
+//!
 //! Edit Surface (`scan.edit_surface`): the control net of a surface Fit Surface made is drawn over
 //! the view with a handle at each point. A handle dragged moves its point in the plane of the
 //! screen (keeping its depth along the view), or, with Snap to scan on, onto the scan under the
@@ -95,7 +100,160 @@ struct Drag {
 }
 
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
-    (id == "scan.edit_surface").then(|| (Kind::ScanEditSurface(EditSurface::default()), Vec::new()))
+    match id {
+        "scan.edit_surface" => Some((Kind::ScanEditSurface(EditSurface::default()), Vec::new())),
+        "scan.fit_surface" => {
+            Some((Kind::ScanFitSurface(FitSurface::default()), vec![crate::selection::SelInput::new("Point", crate::selection::FACES, false)]))
+        }
+        _ => None,
+    }
+}
+
+/// The marks' id among the clouds the viewport draws.
+const FIT_CLOUD_ID: u64 = u64::MAX - 5;
+
+thread_local! {
+    static FIT_VERSION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The Fit Surface dialog's values (the point clicked is its selection input).
+#[derive(Clone, Debug)]
+pub struct FitSurface {
+    /// The radius of the area round the point, in mm; 0 until the scan's own default is known.
+    pub radius: f64,
+    pub controls: usize,
+    pub smoothing: f64,
+    shown: Option<FitShown>,
+}
+
+impl Default for FitSurface {
+    fn default() -> Self {
+        FitSurface { radius: 0.0, controls: 8, smoothing: 0.1, shown: None }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct FitShown {
+    key: ([u64; 3], u64, usize, u64, u64),
+    result: Result<(solidcraft_engine::cmd::scan::SurfacePreview, u64, Arc<Vec<u8>>), String>,
+}
+
+/// The point clicked on a scan: its scan and the place.
+fn clicked(inputs: &[crate::selection::SelInput]) -> Option<(String, Vec3)> {
+    crate::selection::items(inputs, 0).iter().find_map(|s| match s {
+        solidcraft_engine::Sel::Face { body, point, .. } => Some((body.clone(), *point)),
+        _ => None,
+    })
+}
+
+/// Fit again when the point, the settings or the design have changed.
+fn fit(app: &SolveApp, k: &mut FitSurface, inputs: &[crate::selection::SelInput]) {
+    let Some((body, point)) = clicked(inputs) else {
+        k.shown = None;
+        return;
+    };
+    if !(k.radius > 0.0) {
+        k.radius = solidcraft_engine::cmd::scan::default_surface_radius(&app.session, Some(&body)).unwrap_or(10.0);
+    }
+    let key =
+        ([point.x.to_bits(), point.y.to_bits(), point.z.to_bits()], k.radius.to_bits(), k.controls, k.smoothing.to_bits(), app.session.revision);
+    if k.shown.as_ref().is_some_and(|s| s.key == key) {
+        return;
+    }
+    let result = solidcraft_engine::cmd::scan::surface_preview(&app.session, Some(&body), point, k.radius, k.controls, k.smoothing)
+        .map_err(|e| e.to_string())
+        .map(|found| {
+            let rgb = crate::theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
+            let mut dots = Vec::with_capacity(found.marked.len() * solidcraft_gpu::view::DOT_SIZE);
+            for at in &found.marked {
+                solidcraft_gpu::view::cloud_dot(&mut dots, &solidcraft_gpu::view::Dot { at: *at, rgb, ..solidcraft_gpu::view::Dot::default() });
+            }
+            let version = FIT_VERSION.with(|v| {
+                v.set(v.get() + 1);
+                v.get()
+            });
+            (found, version, Arc::new(dots))
+        });
+    k.shown = Some(FitShown { key, result });
+}
+
+/// The Fit Surface dialog's rows (after the point input).
+pub fn fit_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitSurface, inputs: &[crate::selection::SelInput]) -> bool {
+    fit(app, k, inputs);
+    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+    form_row(ui, tr("ui.scan_fit_radius"), |ui| ui_kit::length_field(ui, &mut k.radius, &units, decimals));
+    k.radius = k.radius.max(0.0);
+    form_row(ui, tr("ui.scan_fit_controls"), |ui| ui_kit::number_field(ui, &mut k.controls, 4..=30, 0.2, ""));
+    let format = |v: f64| format!("{v:.2}");
+    form_row(ui, tr("ui.scan_fit_smoothing"), |ui| {
+        ui_kit::slider(ui, &mut k.smoothing, 0.0..=1.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
+    });
+    match k.shown.as_ref().map(|s| &s.result) {
+        Some(Ok((found, _, _))) => {
+            let note = crate::i18n::format(
+                "ui.scan_fit_found",
+                &[
+                    ("points", &found.points.to_string()),
+                    ("rms", &crate::prefs::show_mm(app, found.rms, 3)),
+                    ("max", &crate::prefs::show_mm(app, found.max, 3)),
+                ],
+            );
+            ui_kit::text(ui, &note, ui_kit::Text::Note("scan_fit_found"));
+        }
+        Some(Err(why)) => {
+            ui_kit::text(ui, why, ui_kit::Text::Report("scan_fit_error", true));
+        }
+        None => {}
+    }
+    ui_kit::text(ui, tr("ui.scan_fit_hint"), ui_kit::Text::Hint("scan_fit_hint"));
+    false
+}
+
+/// What OK runs: the surface fitted round the point clicked.
+pub fn fit_commands(k: &FitSurface, inputs: &[crate::selection::SelInput]) -> Result<Vec<(String, Value)>, String> {
+    let (body, point) = clicked(inputs).ok_or_else(|| tr("ui.scan_fit_hint").to_owned())?;
+    k.shown.as_ref().ok_or("still fitting")?.result.as_ref().map_err(Clone::clone)?;
+    Ok(vec![(
+        "scan.fit_surface".into(),
+        json!({"body": body, "point": [point.x, point.y, point.z], "radius": format!("{} mm", k.radius), "controls": k.controls, "smoothing": k.smoothing}),
+    )])
+}
+
+/// The area fitted to, marked on the scan while the dialog is open.
+pub(crate) fn gpu_fit_marks(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuCloud> {
+    let Some(Kind::ScanFitSurface(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    let (_, version, dots) = k.shown.as_ref()?.result.as_ref().ok()?;
+    Some(solidcraft_gpu::view::GpuCloud {
+        id: FIT_CLOUD_ID,
+        version: *version,
+        dots: dots.clone(),
+        style: solidcraft_gpu::view::CloudStyle {
+            mode: solidcraft_gpu::view::ColorMode::Own,
+            range: [0.0, 1.0],
+            filters: Default::default(),
+            point_size: 3.0,
+        },
+    })
+}
+
+/// Lines across `surface`, `LINES` each way, over the picture.
+fn draw_lines(painter: &egui::Painter, proj: &crate::viewport::Proj, surface: &NurbsSurface, stroke: egui::Stroke) {
+    let [[u0, u1], [v0, v1]] = surface.domain();
+    let at = |i: usize, n: usize, a: f64, b: f64| a + (b - a) * i as f64 / n as f64;
+    for along_u in [true, false] {
+        for i in 0..=LINES {
+            let curve: Option<Vec<egui::Pos2>> = (0..=SAMPLES)
+                .map(|j| {
+                    let (u, v) =
+                        if along_u { (at(j, SAMPLES, u0, u1), at(i, LINES, v0, v1)) } else { (at(i, LINES, u0, u1), at(j, SAMPLES, v0, v1)) };
+                    surface.eval(u, v).ok().and_then(|p| proj.to_screen(p))
+                })
+                .collect();
+            if let Some(curve) = curve {
+                painter.add(egui::Shape::line(curve, stroke));
+            }
+        }
+    }
 }
 
 /// Load the surface and the scan under it when the dialog opens, or again when the surface has
@@ -351,26 +509,16 @@ pub(crate) fn release(app: &mut SolveApp) {
 
 /// The surface shown, its control net and the handles, over the picture.
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
+    let t = crate::theme::Tokens::get();
+    if let Some(Kind::ScanFitSurface(k)) = app.dialog.as_ref().map(|d| &d.kind)
+        && let Some(Ok((found, _, _))) = k.shown.as_ref().map(|s| &s.result)
+    {
+        draw_lines(painter, proj, &found.surface, egui::Stroke::new(1.5, t.surface_accent));
+        return;
+    }
     let Some(Kind::ScanEditSurface(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let Some(surface) = &k.shown else { return };
-    let t = crate::theme::Tokens::get();
-    let [[u0, u1], [v0, v1]] = surface.domain();
-    let line = egui::Stroke::new(1.5, t.surface_accent);
-    let at = |i: usize, n: usize, a: f64, b: f64| a + (b - a) * i as f64 / n as f64;
-    for along_u in [true, false] {
-        for i in 0..=LINES {
-            let curve: Option<Vec<egui::Pos2>> = (0..=SAMPLES)
-                .map(|j| {
-                    let (u, v) =
-                        if along_u { (at(j, SAMPLES, u0, u1), at(i, LINES, v0, v1)) } else { (at(i, LINES, u0, u1), at(j, SAMPLES, v0, v1)) };
-                    surface.eval(u, v).ok().and_then(|p| proj.to_screen(p))
-                })
-                .collect();
-            if let Some(curve) = curve {
-                painter.add(egui::Shape::line(curve, line));
-            }
-        }
-    }
+    draw_lines(painter, proj, surface, egui::Stroke::new(1.5, t.surface_accent));
     let [nu, nv] = surface.count();
     let screen: Vec<Option<egui::Pos2>> = k.shown_net.iter().map(|p| proj.to_screen(*p)).collect();
     let net = egui::Stroke::new(1.0, t.text.gamma_multiply(0.45));
@@ -489,5 +637,41 @@ mod tests {
         h.app.run("edit.undo", json!({})).unwrap();
         let undone = edit::editable(&h.app.session, Some("Surface1"), "test").unwrap();
         assert!(edit::control_points(&undone.surface)[k].dist(from) < 1e-6, "one undo puts it back");
+    }
+
+    /// Fit Surface opens a dialog: a click on the dome marks the area round it and fits the
+    /// surface, a smaller radius fits a smaller area, and OK keeps it.
+    #[test]
+    fn fit_surface_fits_round_the_point_clicked() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.fit_surface");
+        h.frames(2);
+        let top = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+        h.step(&json!({"click": {"world": [30.0, 30.0, top(30.0, 30.0)]}})).unwrap();
+        h.frames(2);
+        let marks = gpu_fit_marks(&h.app).expect("the area marked");
+        let count = |h: &crate::scenario::Harness| match h.app.dialog.as_ref().map(|d| &d.kind) {
+            Some(Kind::ScanFitSurface(k)) => k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).map(|(f, _, _)| (f.points, f.rms)),
+            _ => None,
+        };
+        let (wide, rms) = count(&h).expect("fitted");
+        assert!(rms < 0.05, "close to the dome: {rms}");
+        if let Some(Kind::ScanFitSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            assert!(k.radius > 0.0, "the scan's own radius to start with");
+            k.radius /= 2.0;
+            k.controls = 4;
+        }
+        h.frames(2);
+        let (narrow, _) = count(&h).unwrap();
+        assert!(narrow < wide, "a smaller radius, a smaller area: {narrow} < {wide}");
+        assert_ne!(gpu_fit_marks(&h.app).unwrap().version, marks.version, "marked again");
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        assert!(h.app.session.model.state().body("Surface1").is_some(), "kept");
     }
 }

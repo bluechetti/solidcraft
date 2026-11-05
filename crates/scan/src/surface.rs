@@ -53,7 +53,8 @@ impl std::fmt::Display for SurfaceError {
     }
 }
 
-/// Fits a surface to the connected part of the scan within `radius` of triangle `seed`'s middle,
+/// Fits a surface to the connected part of the scan within `radius` of triangle `seed`'s middle
+/// that faces about the way the surface does there (it stops where the surface turns away),
 /// with `controls` × `controls` control points (4 to 30). `smoothing` (0 to 1) weighs how smooth
 /// the surface is against how closely it follows the points.
 pub fn fit_surface(scan: &Scan, seed: usize, radius: f64, controls: usize, smoothing: f64) -> Result<SurfaceFit, SurfaceError> {
@@ -62,7 +63,12 @@ pub fn fit_surface(scan: &Scan, seed: usize, radius: f64, controls: usize, smoot
     let seed_normal = (b - a).cross(c - a).normalized().ok_or(SurfaceError::NotOnTheScan)?;
     let n = controls.clamp(DEGREE + 1, 30);
     let neighbours = edge_neighbours(scan);
-    let region = within(scan, &neighbours, seed, pick, radius);
+    // The way the surface faces round the pick: the triangles a tenth of the radius round it,
+    // area-weighted, so one noisy triangle does not set it.
+    let near = within(scan, &neighbours, seed, pick, radius / 10.0, None);
+    let around = near.iter().filter_map(|&t| scan.corners(t)).fold(Vec3::ZERO, |sum, [a, b, c]| sum + (b - a).cross(c - a));
+    let facing = around.normalized().unwrap_or(seed_normal);
+    let region = within(scan, &neighbours, seed, pick, radius, Some(facing));
 
     // The region's points (each position once) and its facing: each triangle's normal turned to
     // agree with the seed's, weighted by area.
@@ -201,8 +207,14 @@ pub fn fit_surface(scan: &Scan, seed: usize, radius: f64, controls: usize, smoot
     Ok(SurfaceFit { surface, region, rms, max, points: rows.len() })
 }
 
-/// The connected triangles from `seed` whose middle is within `radius` of `pick`.
-fn within(scan: &Scan, neighbours: &EdgeNeighbours, seed: usize, pick: Vec3, radius: f64) -> Vec<usize> {
+/// The cosine of the most a triangle may face away from the way the surface faces at the pick and
+/// still be grown into: past it the surface has turned (round an edge, onto a plate's far side).
+const MOST_TURN: f64 = 0.34; // about 70°
+
+/// The connected triangles from `seed` whose middle is within `radius` of `pick`, and, with
+/// `facing`, that face within about 70° of it: the area stops where the surface turns away, so on a
+/// thin plate it keeps to the face picked instead of running round the edge onto the other.
+fn within(scan: &Scan, neighbours: &EdgeNeighbours, seed: usize, pick: Vec3, radius: f64, facing: Option<Vec3>) -> Vec<usize> {
     let mut seen = vec![false; scan.triangle_count()];
     let mut found = Vec::new();
     if let Some(s) = seen.get_mut(seed) {
@@ -215,7 +227,8 @@ fn within(scan: &Scan, neighbours: &EdgeNeighbours, seed: usize, pick: Vec3, rad
         for nb in neighbours.of(scan, t) {
             if seen.get(nb).is_some_and(|s| !s) {
                 seen[nb] = true;
-                if scan.corners(nb).is_some_and(|[a, b, c]| ((a + b + c) / 3.0).dist(pick) <= radius) {
+                let faces = |[a, b, c]: [Vec3; 3]| facing.is_none_or(|f| (b - a).cross(c - a).normalized().is_some_and(|n| n.dot(f) > MOST_TURN));
+                if scan.corners(nb).is_some_and(|[a, b, c]| ((a + b + c) / 3.0).dist(pick) <= radius && faces([a, b, c])) {
                     found.push(nb);
                 }
             }
@@ -340,9 +353,22 @@ mod tests {
         assert!(close.rms < smooth.rms && smooth.max < 0.5, "{} {} {}", close.rms, smooth.rms, smooth.max);
     }
 
-    /// A tube wraps round: no one surface over a plane can be it.
+    /// On a thin plate the area grown from a pick on its top keeps to the top, however large the
+    /// radius: it does not run round the edge onto the underside.
     #[test]
-    fn an_area_that_wraps_round_is_refused() {
+    fn on_a_thin_plate_the_area_keeps_to_the_face_picked() {
+        let (positions, triangles) = crate::test_meshes::fine_cuboid(Vec3::ZERO, Vec3::new(60.0, 40.0, 2.0), 20);
+        let scan = Scan::new(&positions, &triangles);
+        let seed = nearest_triangle(&scan, Vec3::new(30.0, 20.0, 2.0)).unwrap();
+        let fit = fit_surface(&scan, seed, 100.0, 8, 0.1).unwrap();
+        assert!(fit.rms < 1e-6 && fit.max < 1e-6, "the flat top: {} {}", fit.rms, fit.max);
+        let [[u0, u1], [v0, v1]] = fit.surface.domain();
+        assert!((fit.surface.eval((u0 + u1) / 2.0, (v0 + v1) / 2.0).unwrap().z - 2.0).abs() < 1e-6, "on the top");
+    }
+
+    /// On a tube the area keeps to the side facing the pick instead of wrapping round it.
+    #[test]
+    fn on_a_tube_the_area_keeps_to_one_side() {
         let (sides, rows) = (48u32, 10u32);
         let mut positions = Vec::new();
         for k in 0..sides {
@@ -360,7 +386,15 @@ mod tests {
             }
         }
         let scan = Scan::new(&positions, &triangles);
-        assert_eq!(fit_surface(&scan, 0, 100.0, 6, 0.1).unwrap_err(), SurfaceError::Wraps);
+        // The area keeps to the side of the tube facing the pick, which one surface can be.
+        let fit = fit_surface(&scan, 0, 100.0, 6, 0.1).unwrap();
+        let [a, b, c] = scan.corners(0).unwrap();
+        let facing = (b - a).cross(c - a).normalized().unwrap();
+        assert!(
+            fit.region.iter().all(|&t| scan.corners(t).is_some_and(|[a, b, c]| (b - a).cross(c - a).normalized().unwrap().dot(facing) > 0.2)),
+            "one side"
+        );
+        assert!(fit.region.len() < triangles.len() / 2 && fit.rms < 0.2, "{} of {}, rms {}", fit.region.len(), triangles.len(), fit.rms);
         assert_eq!(fit_surface(&scan, 99_999, 100.0, 6, 0.1).unwrap_err(), SurfaceError::NotOnTheScan);
     }
 }

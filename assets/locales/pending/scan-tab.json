@@ -125,7 +125,12 @@
     "ui.scan_section_tolerance": "Tolerance",
     "ui.scan_section_found": "{outlines} outlines: {lines} lines, {arcs} arcs, {circles} circles.",
     "ui.scan_section_nothing": "The plane does not cut the scan here.",
-    "ui.scan_section_hint": "Lines and arcs are drawn over the scan as they will be sketched; a smaller tolerance follows the cut more closely with more pieces."
+    "ui.scan_section_hint": "Lines and arcs are drawn over the scan as they will be sketched; a smaller tolerance follows the cut more closely with more pieces.",
+    "ui.scan_fit_radius": "Radius",
+    "ui.scan_fit_controls": "Control points",
+    "ui.scan_fit_smoothing": "Smoothing",
+    "ui.scan_fit_found": "Fitted to {points} points: {rms} rms, {max} at most.",
+    "ui.scan_fit_hint": "Click the scan in the middle of the area to fit. The area stops where the surface turns away; it is marked on the scan."
   },
   "de": {
     "ALIGN": "AUSRICHTEN",
@@ -253,7 +258,12 @@
     "ui.scan_section_tolerance": "Toleranz",
     "ui.scan_section_found": "{outlines} Umrisse: {lines} Linien, {arcs} Bögen, {circles} Kreise.",
     "ui.scan_section_nothing": "Die Ebene schneidet den Scan hier nicht.",
-    "ui.scan_section_hint": "Linien und Bögen werden so über dem Scan gezeichnet, wie sie skizziert werden; eine kleinere Toleranz folgt dem Schnitt genauer mit mehr Stücken."
+    "ui.scan_section_hint": "Linien und Bögen werden so über dem Scan gezeichnet, wie sie skizziert werden; eine kleinere Toleranz folgt dem Schnitt genauer mit mehr Stücken.",
+    "ui.scan_fit_radius": "Radius",
+    "ui.scan_fit_controls": "Kontrollpunkte",
+    "ui.scan_fit_smoothing": "Glättung",
+    "ui.scan_fit_found": "An {points} Punkte angepasst: {rms} RMS, höchstens {max}.",
+    "ui.scan_fit_hint": "Klicken Sie auf den Scan in der Mitte des anzupassenden Bereichs. Der Bereich endet, wo sich die Fläche abwendet; er ist auf dem Scan markiert."
   },
   "ja": {
     "ALIGN": "位置合わせ",
@@ -381,7 +391,12 @@
     "ui.scan_section_tolerance": "許容差",
     "ui.scan_section_found": "輪郭 {outlines} 個: 線分 {lines}、円弧 {arcs}、円 {circles}。",
     "ui.scan_section_nothing": "平面はここでスキャンを切りません。",
-    "ui.scan_section_hint": "スケッチされる線分と円弧がスキャン上に表示されます。許容差を小さくすると、より多くの要素で断面により近く沿います。"
+    "ui.scan_section_hint": "スケッチされる線分と円弧がスキャン上に表示されます。許容差を小さくすると、より多くの要素で断面により近く沿います。",
+    "ui.scan_fit_radius": "半径",
+    "ui.scan_fit_controls": "制御点",
+    "ui.scan_fit_smoothing": "スムージング",
+    "ui.scan_fit_found": "{points} 点にフィット: {rms} RMS、最大 {max}。",
+    "ui.scan_fit_hint": "フィットする領域の中央でスキャンをクリックします。領域は面が向きを変える所で止まり、スキャン上に表示されます。"
   },
   "ko": {
     "ALIGN": "정렬",
@@ -509,7 +524,12 @@
     "ui.scan_section_tolerance": "허용 오차",
     "ui.scan_section_found": "윤곽 {outlines}개: 선 {lines}, 호 {arcs}, 원 {circles}.",
     "ui.scan_section_nothing": "평면이 여기서 스캔을 자르지 않습니다.",
-    "ui.scan_section_hint": "스케치될 선과 호가 스캔 위에 그려집니다. 허용 오차가 작을수록 더 많은 조각으로 단면을 더 가깝게 따릅니다."
+    "ui.scan_section_hint": "스케치될 선과 호가 스캔 위에 그려집니다. 허용 오차가 작을수록 더 많은 조각으로 단면을 더 가깝게 따릅니다.",
+    "ui.scan_fit_radius": "반지름",
+    "ui.scan_fit_controls": "제어점",
+    "ui.scan_fit_smoothing": "스무딩",
+    "ui.scan_fit_found": "점 {points}개에 맞춤: {rms} RMS, 최대 {max}.",
+    "ui.scan_fit_hint": "맞출 영역의 가운데에서 스캔을 클릭하세요. 영역은 곡면이 돌아서는 곳에서 멈추며 스캔에 표시됩니다."
   },
   "zh": {
     "ALIGN": "对齐",
@@ -637,7 +657,12 @@
     "ui.scan_section_tolerance": "容差",
     "ui.scan_section_found": "{outlines} 个轮廓：{lines} 条直线、{arcs} 段圆弧、{circles} 个圆。",
     "ui.scan_section_nothing": "平面在此处未切到扫描。",
-    "ui.scan_section_hint": "将要绘制的直线和圆弧显示在扫描上；容差越小，用越多的段越贴近截面。"
+    "ui.scan_section_hint": "将要绘制的直线和圆弧显示在扫描上；容差越小，用越多的段越贴近截面。",
+    "ui.scan_fit_radius": "半径",
+    "ui.scan_fit_controls": "控制点",
+    "ui.scan_fit_smoothing": "平滑",
+    "ui.scan_fit_found": "拟合到 {points} 个点：{rms} RMS，最大 {max}。",
+    "ui.scan_fit_hint": "在要拟合区域的中间单击扫描。区域在曲面转向处停止，并在扫描上标出。"
   },
   "ar": {
     "ALIGN": "محاذاة",
@@ -765,7 +790,12 @@
     "ui.scan_section_tolerance": "التفاوت",
     "ui.scan_section_found": "{outlines} محيطات: {lines} خطوط، {arcs} أقواس، {circles} دوائر.",
     "ui.scan_section_nothing": "المستوى لا يقطع المسح هنا.",
-    "ui.scan_section_hint": "تُرسم الخطوط والأقواس فوق المسح كما ستُرسم؛ التفاوت الأصغر يتبع المقطع عن قرب بقطع أكثر."
+    "ui.scan_section_hint": "تُرسم الخطوط والأقواس فوق المسح كما ستُرسم؛ التفاوت الأصغر يتبع المقطع عن قرب بقطع أكثر.",
+    "ui.scan_fit_radius": "نصف القطر",
+    "ui.scan_fit_controls": "نقاط التحكم",
+    "ui.scan_fit_smoothing": "التنعيم",
+    "ui.scan_fit_found": "مُلاءم مع {points} نقطة: {rms} RMS، بحد أقصى {max}.",
+    "ui.scan_fit_hint": "انقر على المسح في وسط المنطقة المراد ملاءمتها. تتوقف المنطقة حيث ينعطف السطح، وهي معلّمة على المسح."
   },
   "he": {
     "ALIGN": "יישור",
@@ -893,7 +923,12 @@
     "ui.scan_section_tolerance": "סבולת",
     "ui.scan_section_found": "{outlines} קווי מתאר: {lines} קווים, {arcs} קשתות, {circles} מעגלים.",
     "ui.scan_section_nothing": "המישור אינו חותך כאן את הסריקה.",
-    "ui.scan_section_hint": "הקווים והקשתות מצוירים מעל הסריקה כפי שישורטטו; סבולת קטנה יותר עוקבת אחר החתך מקרוב יותר עם יותר חלקים."
+    "ui.scan_section_hint": "הקווים והקשתות מצוירים מעל הסריקה כפי שישורטטו; סבולת קטנה יותר עוקבת אחר החתך מקרוב יותר עם יותר חלקים.",
+    "ui.scan_fit_radius": "רדיוס",
+    "ui.scan_fit_controls": "נקודות בקרה",
+    "ui.scan_fit_smoothing": "החלקה",
+    "ui.scan_fit_found": "הותאם ל-{points} נקודות: {rms} RMS, לכל היותר {max}.",
+    "ui.scan_fit_hint": "לחצו על הסריקה באמצע האזור להתאמה. האזור נעצר היכן שהמשטח פונה הצידה; הוא מסומן על הסריקה."
   },
   "vi": {
     "ALIGN": "CĂN CHỈNH",
@@ -1021,7 +1056,12 @@
     "ui.scan_section_tolerance": "Dung sai",
     "ui.scan_section_found": "{outlines} đường bao: {lines} đoạn thẳng, {arcs} cung, {circles} đường tròn.",
     "ui.scan_section_nothing": "Mặt phẳng không cắt bản quét ở đây.",
-    "ui.scan_section_hint": "Đoạn thẳng và cung được vẽ trên bản quét như sẽ được phác thảo; dung sai nhỏ hơn bám mặt cắt sát hơn với nhiều đoạn hơn."
+    "ui.scan_section_hint": "Đoạn thẳng và cung được vẽ trên bản quét như sẽ được phác thảo; dung sai nhỏ hơn bám mặt cắt sát hơn với nhiều đoạn hơn.",
+    "ui.scan_fit_radius": "Bán kính",
+    "ui.scan_fit_controls": "Điểm điều khiển",
+    "ui.scan_fit_smoothing": "Làm trơn",
+    "ui.scan_fit_found": "Khớp với {points} điểm: {rms} RMS, tối đa {max}.",
+    "ui.scan_fit_hint": "Bấm vào bản quét ở giữa vùng cần khớp. Vùng dừng ở chỗ mặt quay đi; nó được đánh dấu trên bản quét."
   },
   "en-GB": {
     "cmd.scan_center": "Centre on Origin",

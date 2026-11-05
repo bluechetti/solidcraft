@@ -510,7 +510,7 @@ fn a_nurbs_surface_round_trips_through_an_import_feature() {
 }
 
 /// Fit Surface on the plate's top keeps a surface body over it, close to the scan; one undo takes
-/// it away; a tube's wall is refused.
+/// it away; on the boss's wall it keeps to the side picked.
 #[test]
 fn fit_surface_keeps_a_surface_body() {
     let (mut s, _) = session_with_a_plate_and_boss("fit-surface");
@@ -523,8 +523,9 @@ fn fit_surface_keeps_a_surface_body() {
     drop(state);
     run(&mut s, "edit.undo", json!({}));
     assert!(s.model.state().body("Surface1").is_none(), "one undo step");
-    let err = s.execute("scan.fit_surface", &json!({"point": [40, 20, 15], "radius": 30})).unwrap_err().to_string();
-    assert!(err.contains("wraps round"), "{err}");
+    // On the boss's wall the area keeps to the side picked rather than wrapping round it.
+    let wall = run(&mut s, "scan.fit_surface", json!({"point": [40, 20, 15], "radius": 30}));
+    assert!(wall["rms"].as_f64().unwrap() < 0.1, "{wall}");
     let err = s.execute("scan.fit_surface", &json!({"point": [12, 12, 8], "controls": 2})).unwrap_err().to_string();
     assert!(err.contains("4 to 30"), "{err}");
 }
