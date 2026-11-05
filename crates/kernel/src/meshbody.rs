@@ -25,24 +25,35 @@ pub struct TriMesh {
 }
 
 impl TriMesh {
-    /// Display/measure mesh: corners split per triangle so normals stay flat.
+    /// Display/measure mesh: the triangles in order, sharing their corners, each lit flat
+    /// ([`Mesh::is_flat`]: no normals). Splitting the corners so each could carry its
+    /// triangle's normal made a scan's mesh six times the size (4.5 GB for 28 million
+    /// triangles). A vertex no triangle uses (one only a dropped degenerate triangle had) is
+    /// left out, so the mesh's box is its triangles'.
     pub(crate) fn to_mesh(&self) -> Mesh {
-        let mut out = Mesh::default();
-        out.positions.reserve(self.triangles.len() * 3);
-        for t in &self.triangles {
-            let (Some(a), Some(b), Some(c)) =
-                (self.positions.get(t[0] as usize), self.positions.get(t[1] as usize), self.positions.get(t[2] as usize))
-            else {
-                continue;
-            };
-            let n = (*b - *a).cross(*c - *a).normalized().unwrap_or(Vec3::Z);
-            let base = u32::try_from(out.positions.len()).unwrap_or(u32::MAX);
-            out.positions.extend([*a, *b, *c]);
-            out.normals.extend([n, n, n]);
-            out.triangles.push([base, base.saturating_add(1), base.saturating_add(2)]);
-            out.tri_face.push(0);
+        let n = self.positions.len();
+        let triangles: Vec<[u32; 3]> = self.triangles.iter().filter(|t| t.iter().all(|&i| (i as usize) < n)).copied().collect();
+        let mut used = vec![false; n];
+        for &i in triangles.iter().flatten() {
+            if let Some(u) = used.get_mut(i as usize) {
+                *u = true;
+            }
         }
-        out
+        let (positions, triangles) = if used.iter().all(|u| *u) {
+            (self.positions.clone(), triangles)
+        } else {
+            let mut at = vec![u32::MAX; n];
+            let mut positions = Vec::new();
+            for ((p, u), a) in self.positions.iter().zip(&used).zip(&mut at) {
+                if *u {
+                    *a = u32::try_from(positions.len()).unwrap_or(u32::MAX);
+                    positions.push(*p);
+                }
+            }
+            let triangles = triangles.into_iter().map(|t| t.map(|i| at.get(i as usize).copied().unwrap_or(u32::MAX))).collect();
+            (positions, triangles)
+        };
+        Mesh { tri_face: vec![0; triangles.len()], positions, triangles, ..Mesh::default() }
     }
 
     /// Distinct undirected triangle sides.
@@ -405,5 +416,38 @@ mod tests {
         assert_eq!(body(mesh_body(&welded, &triangles).unwrap()), want);
         assert_eq!(body(mesh_body_flat(&flat, &separate).unwrap()), want);
         assert!(mesh_body_flat(&flat[1..], &separate).is_err(), "not whole points");
+    }
+
+    /// A mesh body's display mesh keeps its triangles' shared corners and no normals, each
+    /// triangle lit flat: a scan's mesh is not six times the size of its vertices. Given a
+    /// corner of its own per triangle, it is the mesh it was when every corner was split, and
+    /// a vertex only a dropped triangle had is not in it.
+    #[test]
+    fn a_mesh_bodys_display_mesh_shares_its_corners_and_lights_each_triangle_flat() {
+        // A tetrahedron, as an STL gives it (every triangle its own corners), with a needle
+        // triangle whose third corner no other triangle has.
+        let v = [Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::Z, Vec3::new(5.0, 5.0, 5.0)];
+        let faces = [[0usize, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2], [0, 0, 4]];
+        let corners: Vec<Vec3> = faces.iter().flat_map(|t| t.map(|i| v[i])).collect();
+        let separate: Vec<[u32; 3]> = (0..faces.len() as u32).map(|k| [3 * k, 3 * k + 1, 3 * k + 2]).collect();
+        let body = mesh_body(&corners, &separate).unwrap();
+        let mesh = body.mesh(&crate::MeshTolerance::chord(0.1)).unwrap();
+        assert!(mesh.is_flat());
+        assert_eq!((mesh.positions.len(), mesh.triangles.len(), mesh.tri_face.len()), (4, 4, 4), "the needle's far corner is gone");
+        assert!(mesh.bounds().max.x <= 1.0);
+        let (positions, triangles) = body.triangle_mesh().unwrap();
+        let split = mesh.with_normals();
+        assert_eq!((split.positions.len(), split.normals.len(), split.triangles.len()), (12, 12, 4));
+        for (k, t) in triangles.iter().enumerate() {
+            let [a, b, c] = t.map(|i| positions[i as usize]);
+            let n = (b - a).cross(c - a).normalized().unwrap();
+            assert_eq!(split.tri(&split.triangles[k]).unwrap(), [a, b, c]);
+            assert_eq!(mesh.tri(&mesh.triangles[k]).unwrap(), [a, b, c]);
+            assert_eq!(split.corner_normals(&split.triangles[k]).unwrap(), [n; 3]);
+            assert_eq!(mesh.corner_normals(&mesh.triangles[k]).unwrap(), [n; 3]);
+            assert!(n.dot((a + b + c) / 3.0 - Vec3::new(0.25, 0.25, 0.25)) > 0.0, "lit from outside");
+        }
+        assert!((mesh.measure().volume - 1.0 / 6.0).abs() < 1e-12);
+        assert!(body.classify_point(Vec3::new(0.1, 0.1, 0.1)).is_ok_and(|c| c == crate::PointClass::Inside));
     }
 }

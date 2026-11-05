@@ -407,8 +407,8 @@ fn cylinder_extent(mesh: &Mesh, face: u32, axis: UnitVec3, ap: Vec3, r: f64) -> 
         if *f != face {
             continue;
         }
-        for k in t {
-            let (Some(q), Some(n)) = (mesh.positions.get(*k as usize), mesh.normals.get(*k as usize)) else { continue };
+        let (Some(corners), Some(normals)) = (mesh.tri(t), mesh.corner_normals(t)) else { continue };
+        for (q, n) in corners.iter().zip(normals) {
             let s = (*q - ap).dot(axis);
             lo = lo.min(s);
             hi = hi.max(s);

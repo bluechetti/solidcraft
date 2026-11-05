@@ -295,9 +295,7 @@ impl Projection {
     fn project(&self, body: &crate::ProductMesh, triangle: usize, look: Option<&FaceAppearance>) -> Result<Option<Triangle>> {
         let mesh = &body.mesh;
         let indices = mesh.triangles.get(triangle).ok_or_else(|| invalid("missing product triangle"))?;
-        let vertices = indices.map(|i| mesh.positions.get(i as usize).copied());
-        let normals = indices.map(|i| mesh.normals.get(i as usize).copied());
-        let ([Some(a), Some(b), Some(c)], [Some(na), Some(nb), Some(nc)]) = (vertices, normals) else {
+        let (Some([a, b, c]), Some([na, nb, nc])) = (mesh.tri(indices), mesh.corner_normals(indices)) else {
             return Err(invalid("invalid triangle index or missing normal"));
         };
         let world = [a, b, c];

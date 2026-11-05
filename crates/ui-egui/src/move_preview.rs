@@ -113,12 +113,8 @@ impl MovePreview {
             draw(&mut scene, mesh, &m, colors, &mut bounds);
             if !copy && colors.cut_tint {
                 // Where the body was, as the scratch-design preview shows a body moved away.
-                for t in &mesh.triangles {
-                    for k in t {
-                        if let (Some(p), Some(n)) = (mesh.positions.get(*k as usize), mesh.normals.get(*k as usize)) {
-                            scene.ghost_tri(p.to_f32(), n.to_f32(), removed);
-                        }
-                    }
+                for (p, n) in mesh.lit_corners().flatten() {
+                    scene.ghost_tri(p.to_f32(), n.to_f32(), removed);
                 }
             }
         }
@@ -140,15 +136,10 @@ impl MovePreview {
 /// edges.
 fn draw(scene: &mut GpuScene, mesh: &Mesh, m: &Mat, colors: Colors, bounds: &mut Aabb3) {
     let added = scene.color(if colors.tint_new { colors.added } else { colors.body });
-    for t in &mesh.triangles {
-        for k in t {
-            let i = *k as usize;
-            if let (Some(p), Some(n)) = (mesh.positions.get(i), mesh.normals.get(i)) {
-                let p = apply_point(m, *p);
-                bounds.add(p);
-                scene.tri(p.to_f32(), apply_vector(m, *n).to_f32(), added);
-            }
-        }
+    for (p, n) in mesh.lit_corners().flatten() {
+        let p = apply_point(m, p);
+        bounds.add(p);
+        scene.tri(p.to_f32(), apply_vector(m, n).to_f32(), added);
     }
     let edge = scene.color(colors.edge);
     for (ei, e) in mesh.edges.iter().enumerate() {

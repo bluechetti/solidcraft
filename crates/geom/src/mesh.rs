@@ -97,6 +97,8 @@ impl Extend<Vec3> for Aabb3 {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Mesh {
     pub positions: Vec<Vec3>,
+    /// One per position, or none: every triangle lit flat with its own normal
+    /// ([`Mesh::is_flat`]).
     pub normals: Vec<Vec3>,
     /// Triangles as vertex index triples (counter-clockwise seen from outside).
     pub triangles: Vec<[u32; 3]>,
@@ -121,6 +123,12 @@ pub struct Mesh {
     /// Per edge: the B-rep faces it bounds (one or two).
     #[serde(default)]
     pub edge_faces: Vec<Vec<u32>>,
+}
+
+/// The normal a flat triangle with corners `a`, `b`, `c` is lit with: its plane's, of unit
+/// length, facing where the corners turn counter-clockwise; +Z for one with no area.
+pub fn flat_normal(a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
+    (b - a).cross(c - a).normalized().unwrap_or(Vec3::Z)
 }
 
 /// A triangle with its bounding box, as [`find_close_pair`] takes them.
@@ -477,8 +485,9 @@ impl Mesh {
                 .iter()
                 .zip(&self.tri_face)
                 .filter(|(_, tf)| **tf == f)
-                .flat_map(|(t, _)| t.iter().copied())
-                .filter_map(|v| Some((self.positions.get(v as usize)?.dist(q), *self.normals.get(v as usize)?)))
+                .filter_map(|(t, _)| Some((self.tri(t)?, self.corner_normals(t)?)))
+                .flat_map(|(p, n)| p.into_iter().zip(n))
+                .map(|(p, n)| (p.dist(q), n))
                 .min_by(|x, y| x.0.total_cmp(&y.0))
                 .and_then(|(_, n)| n.normalized())
         };
@@ -568,6 +577,61 @@ impl Mesh {
         Some([*self.positions.get(t[0] as usize)?, *self.positions.get(t[1] as usize)?, *self.positions.get(t[2] as usize)?])
     }
 
+    /// Every triangle is lit flat, with its own normal: the mesh has no normals, and its
+    /// triangles share their corners (a mesh body's, as a scan's millions of triangles are kept),
+    /// so a corner has no normal of its own. [`Mesh::corner_normals`] reads either kind.
+    pub fn is_flat(&self) -> bool {
+        self.normals.is_empty() && !self.triangles.is_empty()
+    }
+
+    /// The normals triangle `t`'s corners are lit with: the vertices' own, or in a flat mesh
+    /// ([`Mesh::is_flat`]) each the triangle's ([`flat_normal`]). `None` when a corner is out of
+    /// range.
+    pub fn corner_normals(&self, t: &[u32; 3]) -> Option<[Vec3; 3]> {
+        if self.normals.is_empty() {
+            let [a, b, c] = self.tri(t)?;
+            return Some([flat_normal(a, b, c); 3]);
+        }
+        Some([*self.normals.get(t[0] as usize)?, *self.normals.get(t[1] as usize)?, *self.normals.get(t[2] as usize)?])
+    }
+
+    /// Each triangle's corners with the normals they are lit with ([`Mesh::corner_normals`]),
+    /// in order; a triangle with a corner out of range is left out.
+    pub fn lit_corners(&self) -> impl Iterator<Item = [(Vec3, Vec3); 3]> + '_ {
+        self.triangles.iter().filter_map(|t| {
+            let ([a, b, c], [na, nb, nc]) = (self.tri(t)?, self.corner_normals(t)?);
+            Some([(a, na), (b, nb), (c, nc)])
+        })
+    }
+
+    /// This mesh with a normal for every vertex: itself, or a flat one ([`Mesh::is_flat`]) with
+    /// each triangle given three corners of its own lit with its normal, in the triangles' order
+    /// (a triangle with a corner out of range left out). For a reader that takes normals by
+    /// vertex; it costs a large mesh several times its memory, so a viewport reads
+    /// [`Mesh::corner_normals`] instead.
+    pub fn with_normals(&self) -> std::borrow::Cow<'_, Mesh> {
+        if !self.is_flat() {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut out = Mesh { edges: self.edges.clone(), display_only_edges: self.display_only_edges, ..Mesh::default() };
+        out.seams.clone_from(&self.seams);
+        out.smooth_edges.clone_from(&self.smooth_edges);
+        out.sharp_edges.clone_from(&self.sharp_edges);
+        out.edge_faces.clone_from(&self.edge_faces);
+        out.positions.reserve_exact(self.triangles.len() * 3);
+        out.normals.reserve_exact(self.triangles.len() * 3);
+        out.triangles.reserve_exact(self.triangles.len());
+        for (i, t) in self.triangles.iter().enumerate() {
+            let Some([a, b, c]) = self.tri(t) else { continue };
+            let base = u32::try_from(out.positions.len()).unwrap_or(u32::MAX);
+            out.positions.extend([a, b, c]);
+            out.normals.extend([flat_normal(a, b, c); 3]);
+            out.triangles.push([base, base.saturating_add(1), base.saturating_add(2)]);
+            out.tri_face.extend(self.tri_face.get(i));
+        }
+        std::borrow::Cow::Owned(out)
+    }
+
     pub fn bounds(&self) -> Aabb3 {
         let mut b = Aabb3::EMPTY;
         for p in &self.positions {
@@ -591,8 +655,14 @@ impl Mesh {
         MeshMeasure { volume, area, centroid }
     }
 
-    /// Append another mesh (face ids offset by `face_offset`).
+    /// Append another mesh (face ids offset by `face_offset`). A flat mesh ([`Mesh::is_flat`])
+    /// and one with normals make one with normals: the flat one's corners each get its own.
     pub fn append(&mut self, o: &Mesh, face_offset: u32) {
+        if self.is_flat() && !o.normals.is_empty() {
+            *self = self.with_normals().into_owned();
+        }
+        let flat_into_lit = o.is_flat() && !self.normals.is_empty();
+        let o = if flat_into_lit { o.with_normals() } else { std::borrow::Cow::Borrowed(o) };
         let base = u32::try_from(self.positions.len()).unwrap_or(u32::MAX);
         self.positions.extend_from_slice(&o.positions);
         self.normals.extend_from_slice(&o.normals);

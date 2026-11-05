@@ -320,6 +320,9 @@ impl SharedTris {
     /// `mesh`'s triangles with their vertices shared: by position and normal, or by position
     /// alone when every triangle is flat.
     pub fn new(mesh: &solidcraft_geom::Mesh) -> SharedTris {
+        if mesh.is_flat() {
+            return SharedTris::of_flat(mesh);
+        }
         let corner = |i: u32| Some((mesh.positions.get(i as usize)?.to_f32(), mesh.normals.get(i as usize)?.to_f32()));
         let bits = |v: [f32; 3]| v.map(|x| (x + 0.0).to_bits());
         let flat = mesh.triangles.iter().all(|t| {
@@ -359,14 +362,26 @@ impl SharedTris {
         out
     }
 
+    /// A flat mesh's triangles ([`solidcraft_geom::Mesh::is_flat`]: a mesh body's): its
+    /// vertices already shared, each fragment lit with its triangle's own normal.
+    fn of_flat(mesh: &solidcraft_geom::Mesh) -> SharedTris {
+        SharedTris::flat_of(&mesh.positions, &mesh.triangles)
+    }
+
     /// A simplified copy of a mesh ([`solidcraft_geom::simplify::Level`]): its vertices already
     /// shared, its triangles lit flat (each fragment with its triangle's own normal).
     pub fn from_level(level: &solidcraft_geom::simplify::Level) -> SharedTris {
+        SharedTris::flat_of(&level.positions, &level.triangles)
+    }
+
+    /// Triangles lit flat over `positions`, shared as they are; a triangle with a corner out of
+    /// range is left out.
+    fn flat_of(positions: &[Vec3], triangles: &[[u32; 3]]) -> SharedTris {
         let mut out = SharedTris { flat: true, ..Default::default() };
-        out.vertices.reserve_exact(level.positions.len() * SHARED_SIZE);
+        out.vertices.reserve_exact(positions.len() * SHARED_SIZE);
         let mut lo = [f32::INFINITY; 3];
         let mut hi = [f32::NEG_INFINITY; 3];
-        for p in &level.positions {
+        for p in positions {
             let p = p.to_f32();
             for k in 0..3 {
                 lo[k] = lo[k].min(p[k]);
@@ -376,8 +391,8 @@ impl SharedTris {
                 out.vertices.extend_from_slice(&v.to_le_bytes());
             }
         }
-        let n = u32::try_from(level.positions.len()).unwrap_or(u32::MAX);
-        out.indices = level.triangles.iter().filter(|t| t.iter().all(|i| *i < n)).flatten().copied().collect();
+        let n = u32::try_from(positions.len()).unwrap_or(u32::MAX);
+        out.indices = triangles.iter().filter(|t| t.iter().all(|i| *i < n)).flatten().copied().collect();
         out.bounds = [lo, hi];
         out
     }
@@ -4377,6 +4392,16 @@ mod tests {
         // Indices past the vertices: the triangle is left out, nothing panics.
         smooth.triangles.push([0, 1, 99]);
         assert_eq!(SharedTris::new(&smooth).indices.len(), 6);
+        // A flat mesh (a mesh body's: corners shared already, no normals) is taken as it is, and
+        // draws the corners the split one did.
+        let mut kept = Mesh { positions: p.to_vec(), triangles: vec![[0, 1, 2], [0, 2, 3]], tri_face: vec![0; 2], ..Default::default() };
+        let shared = SharedTris::new(&kept);
+        assert!(shared.flat);
+        assert_eq!((shared.vertices.len() / SHARED_SIZE, shared.indices.as_slice()), (4, [0, 1, 2, 0, 2, 3].as_slice()));
+        assert_eq!(shared.corners().collect::<Vec<_>>(), SharedTris::new(&flat).corners().collect::<Vec<_>>());
+        assert_eq!(shared.bounds, [[0.0; 3], [1.0, 1.0, 0.0]]);
+        kept.triangles.push([0, 1, 99]);
+        assert_eq!(SharedTris::new(&kept).indices.len(), 6);
     }
 
     #[cfg(not(target_arch = "wasm32"))]

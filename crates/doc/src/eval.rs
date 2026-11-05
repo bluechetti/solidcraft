@@ -6663,8 +6663,9 @@ pub fn tangent_face_chain(b: &ModelBody, picks: &[Vec3]) -> Vec<(usize, Vec3)> {
             .iter()
             .zip(&m.tri_face)
             .filter(|(_, tf)| **tf == f)
-            .flat_map(|(t, _)| t.iter().copied())
-            .filter_map(|i| Some((m.positions.get(i as usize)?.dist(q), *m.normals.get(i as usize)?)))
+            .filter_map(|(t, _)| Some((m.tri(t)?, m.corner_normals(t)?)))
+            .flat_map(|(p, n)| p.into_iter().zip(n))
+            .map(|(p, n)| (p.dist(q), n))
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .and_then(|(_, n)| n.normalized())
     };

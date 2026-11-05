@@ -1423,8 +1423,9 @@ fn surface_facing(m: &Mesh, t: &[u32; 3], flat: Vec3) -> Vec3 {
     /// Least cosine between a corner's normal and the triangle's: about 26 degrees.
     const AGREES: f64 = 0.9;
     let mut sum = Vec3::ZERO;
-    for i in t {
-        match m.normals.get(*i as usize).and_then(|v| v.normalized()) {
+    let Some(corners) = m.corner_normals(t) else { return flat };
+    for n in corners {
+        match n.normalized() {
             Some(v) if v.dot(flat) >= AGREES => sum += v,
             _ => return flat,
         }
@@ -1640,8 +1641,8 @@ fn section_segments(plane: &Plane, m: &Mesh, face: Option<u32>) -> (Vec<(Vec2, V
         }
     };
     for (t, f) in m.triangles.iter().zip(&m.tri_face) {
-        for k in t {
-            let (Some(p), Some(n)) = (m.positions.get(*k as usize), m.normals.get(*k as usize)) else { continue };
+        let lit = m.tri(t).zip(m.corner_normals(t));
+        for (p, n) in lit.iter().flat_map(|(corners, lit)| corners.iter().zip(lit)) {
             let Some(n) = n.normalized() else { continue };
             normals.entry(key(*p)).and_modify(|e| merge(e, n)).or_insert(Some(n));
             face_normals.entry((*f, key(*p))).and_modify(|e| merge(e, n)).or_insert(Some(n));

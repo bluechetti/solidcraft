@@ -1179,7 +1179,9 @@ impl BodyDraw {
             // runs without touching the vertices (see `reindex_block`).
             for (ti, t) in m.triangles.iter().enumerate() {
                 let [a, b, c] = t.map(corner);
-                out.triangle([a.0, b.0, c.0], [a.1, b.1, c.1], color(ti), class(ti));
+                // A flat mesh's (a mesh body's) corners take their triangle's own normal.
+                let [na, nb, nc] = if m.is_flat() { m.corner_normals(t).map_or([[0.0; 3]; 3], |n| n.map(|n| n.to_f32())) } else { [a.1, b.1, c.1] };
+                out.triangle([a.0, b.0, c.0], [na, nb, nc], color(ti), class(ti));
             }
         }
         let at = |p: Vec3| self.place.as_ref().map_or(p, |m| solidcraft_engine::doc::apply_point(m, p)).to_f32();
@@ -3453,11 +3455,9 @@ fn mesh_tris(sc: &mut GpuScene, m: &solidcraft_engine::geom::Mesh, col: [u8; 4],
         if !takes(*f) {
             continue;
         }
-        for k in t {
-            let i = *k as usize;
-            if let (Some(p), Some(n)) = (m.positions.get(i), m.normals.get(i)) {
-                sc.tri(p.to_f32(), if lit { n.to_f32() } else { [0.0; 3] }, col);
-            }
+        let (Some(corners), Some(normals)) = (m.tri(t), m.corner_normals(t)) else { continue };
+        for (p, n) in corners.iter().zip(normals) {
+            sc.tri(p.to_f32(), if lit { n.to_f32() } else { [0.0; 3] }, col);
         }
     }
 }
@@ -3506,11 +3506,14 @@ fn edge_normals(m: &solidcraft_engine::geom::Mesh, e: &[Vec3]) -> Vec<[[f32; 3];
     let tol = m.bounds().diagonal().max(1.0) * 1e-7;
     let key = |p: Vec3| ((p.x / tol).round() as i64, (p.y / tol).round() as i64, (p.z / tol).round() as i64);
     let mut at: std::collections::HashMap<(i64, i64, i64), Vec<Vec3>> = e.iter().map(|p| (key(*p), Vec::new())).collect();
-    for (p, n) in m.positions.iter().zip(&m.normals) {
-        if let Some(list) = at.get_mut(&key(*p))
+    // A flat mesh (a mesh body's) has its normals by triangle, so its corners are walked.
+    let corners: Box<dyn Iterator<Item = (Vec3, Vec3)>> =
+        if m.is_flat() { Box::new(m.lit_corners().flatten()) } else { Box::new(m.positions.iter().copied().zip(m.normals.iter().copied())) };
+    for (p, n) in corners {
+        if let Some(list) = at.get_mut(&key(p))
             && list.len() < 8
         {
-            list.push(*n);
+            list.push(n);
         }
     }
     e.windows(2)
@@ -8493,8 +8496,8 @@ mod tests {
         let mut expected: Vec<[f32; 6]> = Vec::new();
         for b in &st.bodies {
             let m = b.mesh();
-            for i in m.triangles.iter().flatten().map(|i| *i as usize) {
-                let (p, n) = (m.positions[i].to_f32(), m.normals[i].to_f32());
+            for (p, n) in m.lit_corners().flatten() {
+                let (p, n) = (p.to_f32(), n.to_f32());
                 expected.push([p[0], p[1], p[2], n[0], n[1], n[2]]);
             }
         }

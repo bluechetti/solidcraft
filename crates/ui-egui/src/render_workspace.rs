@@ -1981,9 +1981,10 @@ fn gpu_scene_with_budget(scene: &ProductScene, budget: u64) -> Result<(u64, GpuS
             if opacity <= 0.0 {
                 continue;
             }
-            let vertices = triangle.map(|i| {
-                let p = body.mesh.positions.get(i as usize)?.to_f32();
-                let n = *body.mesh.normals.get(i as usize)?;
+            let normals = body.mesh.corner_normals(triangle);
+            let vertices = [0usize, 1, 2].map(|k| {
+                let p = body.mesh.positions.get(*triangle.get(k)? as usize)?.to_f32();
+                let n = *normals.as_ref()?.get(k)?;
                 let n = if surface.is_some() { solidcraft_engine::render::surface::unit_direction(n).ok()? } else { n }.to_f32();
                 p.into_iter().chain(n).all(f32::is_finite).then_some((p, n))
             });

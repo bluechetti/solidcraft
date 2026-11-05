@@ -628,12 +628,10 @@ fn mesh_text(mesh: &Mesh, vbase: usize, nbase: usize) -> (String, usize, usize) 
 /// The normals at the corners `at` of a welded piece of triangle `t` of `mesh` (the whole
 /// triangle, or a piece of it split where another face's vertex lies on a side): a corner
 /// within `eps` of one of `t`'s own corners takes that corner's normal; a point a side was split
-/// at takes the normal between the side's ends. `None` when the mesh has no normals there.
+/// at takes the normal between the side's ends (a flat mesh's: its triangle's own). `None` when
+/// the mesh has no normals there.
 fn corner_normals(mesh: &Mesh, t: [u32; 3], at: [Vec3; 3], eps: f64) -> Option<[Vec3; 3]> {
-    let p = t.map(|i| mesh.positions.get(i as usize).copied());
-    let n = t.map(|i| mesh.normals.get(i as usize).copied());
-    let ([Some(p0), Some(p1), Some(p2)], [Some(n0), Some(n1), Some(n2)]) = (p, n) else { return None };
-    let (p, n) = ([p0, p1, p2], [n0, n1, n2]);
+    let (p, n) = (mesh.tri(&t)?, mesh.corner_normals(&t)?);
     Some(at.map(|q| p.iter().zip(n).find(|(c, _)| c.dist(q) <= eps).map_or_else(|| normal_at(p, n, q), |(_, n)| n)))
 }
 

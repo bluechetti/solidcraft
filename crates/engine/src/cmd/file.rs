@@ -722,10 +722,17 @@ fn saved_preview(s: &Session) -> Option<solidcraft_io::DesignPreview> {
     let mut triangles = 0usize;
     for body in &world.bodies {
         let mesh = body.cached_mesh()?;
+        triangles = triangles.saturating_add(mesh.triangles.len());
+        if triangles > 100_000 {
+            return None;
+        }
+        // A mesh body's triangles share their corners and are each drawn flat: given corners of
+        // their own, the picture (which takes each vertex's normal from the triangles at it)
+        // shows them flat too.
+        let mesh = mesh.with_normals();
         bytes =
             bytes.saturating_add(mesh.positions.len().saturating_mul(24)).saturating_add(mesh.triangles.len().saturating_mul(12)).saturating_add(24);
-        triangles = triangles.saturating_add(mesh.triangles.len());
-        if bytes > 8 << 20 || triangles > 100_000 {
+        if bytes > 8 << 20 {
             return None;
         }
         preview.meshes.push(solidcraft_doc::MeshData {

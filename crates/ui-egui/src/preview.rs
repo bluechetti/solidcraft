@@ -597,17 +597,12 @@ fn build_tool(before: &ModelState, after: &ModelState, c: Colors, op: &str) -> B
     let edge = if op == "cut" { sc.color([c.removed[0], c.removed[1], c.removed[2], 255]) } else { sc.color(c.edge) };
     for a in after.bodies.iter().filter(|a| before.body(&a.name).is_none()) {
         let m = a.mesh();
-        for t in &m.triangles {
-            for k in t {
-                let i = *k as usize;
-                if let (Some(p), Some(n)) = (m.positions.get(i), m.normals.get(i)) {
-                    match op {
-                        "cut" if !c.cut_tint => {}
-                        "cut" => sc.xray_tri(p.to_f32(), n.to_f32(), removed),
-                        "intersect" => sc.xray_tri(p.to_f32(), n.to_f32(), intersect),
-                        _ => sc.tri(p.to_f32(), n.to_f32(), added),
-                    }
-                }
+        for (p, n) in m.lit_corners().flatten() {
+            match op {
+                "cut" if !c.cut_tint => {}
+                "cut" => sc.xray_tri(p.to_f32(), n.to_f32(), removed),
+                "intersect" => sc.xray_tri(p.to_f32(), n.to_f32(), intersect),
+                _ => sc.tri(p.to_f32(), n.to_f32(), added),
             }
         }
         for (ei, e) in m.edges.iter().enumerate() {
@@ -723,13 +718,11 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
             let new = new_face.get(*f as usize).copied().unwrap_or(false);
             let col = if new && c.tint_new { added_color } else { kept };
             let through = cut && new;
-            for k in t {
-                let i = *k as usize;
-                if let (Some(p), Some(n)) = (am.positions.get(i), am.normals.get(i)) {
-                    sc.tri(p.to_f32(), n.to_f32(), col);
-                    if through {
-                        sc.xray_tri(p.to_f32(), n.to_f32(), removed);
-                    }
+            let (Some(corners), Some(normals)) = (am.tri(t), am.corner_normals(t)) else { continue };
+            for (p, n) in corners.iter().zip(normals) {
+                sc.tri(p.to_f32(), n.to_f32(), col);
+                if through {
+                    sc.xray_tri(p.to_f32(), n.to_f32(), removed);
                 }
             }
         }
@@ -762,11 +755,9 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
                 if kept.as_ref().is_some_and(|k| on_surface(k, corners)) {
                     continue;
                 }
-                for k in t {
-                    let i = *k as usize;
-                    if let (Some(p), Some(n)) = (m.positions.get(i), m.normals.get(i)) {
-                        sc.ghost_tri(p.to_f32(), n.to_f32(), removed);
-                    }
+                let Some(normals) = m.corner_normals(t) else { continue };
+                for (p, n) in corners.iter().zip(normals) {
+                    sc.ghost_tri(p.to_f32(), n.to_f32(), removed);
                 }
             }
         }
