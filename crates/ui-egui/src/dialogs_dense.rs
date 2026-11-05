@@ -94,6 +94,7 @@ pub(super) fn command(kind: &Kind) -> Option<&'static str> {
         Kind::ScanReduce(_) => Some("scan.reduce"),
         Kind::ScanSection(_) => Some("scan.section_sketch"),
         Kind::ScanSections(_) => Some("scan.sections_along_curve"),
+        Kind::ScanDenoise(_) => Some("scan.denoise"),
         Kind::ScanReconstruct(_) => Some("scan.reconstruct"),
         Kind::Plastic(k) => match k {
             crate::dialogs_plastic::Pl::SnapFit { .. } => Some("plastic.snap_fit"),
@@ -1096,6 +1097,7 @@ fn additional_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> boo
         Kind::ScanReduce(k) => enter |= crate::dialogs_scan_clean::reduce_rows(app, ui, k),
         Kind::ScanSection(k) => enter |= crate::dialogs_scan_section::rows(app, ui, k),
         Kind::ScanSections(k) => enter |= crate::dialogs_scan_sections::rows(app, ui, k),
+        Kind::ScanDenoise(k) => enter |= crate::dialogs_scan_denoise::rows(app, ui, k),
         Kind::ScanReconstruct(k) => enter |= crate::dialogs_scan_reconstruct::rows(app, ui, k),
         Kind::Assembly(k) => enter |= crate::dialogs_assembly::rows(app, ui, k, &mut d.inputs, &mut d.active),
         Kind::Measure { result, show, .. } => measure_rows(app, ui, result.as_ref(), show),

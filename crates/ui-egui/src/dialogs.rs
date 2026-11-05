@@ -413,6 +413,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             ScanReduce(crate::dialogs_scan_clean::Reduce),
             ScanSection(crate::dialogs_scan_section::SectionSketch),
             ScanSections(crate::dialogs_scan_sections::SectionsAlong),
+            ScanDenoise(crate::dialogs_scan_denoise::Denoise),
             ScanReconstruct(crate::dialogs_scan_reconstruct::Reconstruct),
             /// Appearance (`dialogs_appearance`).
             Appearance(crate::dialogs_appearance::Ap),
@@ -1124,6 +1125,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_scan_clean::start(app, id))
                     .or_else(|| crate::dialogs_scan_section::start(app, id))
                     .or_else(|| crate::dialogs_scan_sections::start(app, id))
+                    .or_else(|| crate::dialogs_scan_denoise::start(app, id))
                     .or_else(|| crate::dialogs_scan_slice::start(app, id))
                     .or_else(|| crate::dialogs_scan_reconstruct::start(app, id))
                     .or_else(|| crate::dialogs_appearance::start(app, id))
@@ -2598,6 +2600,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::ScanReduce(_) => "REDUCE MESH",
         Kind::ScanSection(_) => "SECTION TO SKETCH",
         Kind::ScanSections(_) => "SECTIONS ALONG CURVE",
+        Kind::ScanDenoise(_) => "DENOISE",
         Kind::ScanReconstruct(_) => "RECONSTRUCT",
         Kind::Appearance(_) => "APPEARANCE",
         Kind::Motion(k) => k.title(),
@@ -5645,6 +5648,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanReduce(k) => return crate::dialogs_scan_clean::reduce_commands(k),
         Kind::ScanSection(k) => return crate::dialogs_scan_section::commands(app, k),
         Kind::ScanSections(k) => return crate::dialogs_scan_sections::commands(k),
+        Kind::ScanDenoise(k) => return crate::dialogs_scan_denoise::commands(k),
         Kind::ScanReconstruct(k) => return crate::dialogs_scan_reconstruct::commands(app, k),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),

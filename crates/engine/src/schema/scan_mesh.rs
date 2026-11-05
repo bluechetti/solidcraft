@@ -172,9 +172,10 @@ pub struct ScanDenoiseParams {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanDenoiseResult {
     pub body: String,
-    /// The strength used and the one suggested, in passes.
+    /// The strength used, and the one the scan suggests when no strength was given, in passes.
     pub strength: f64,
-    pub suggested: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested: Option<f64>,
     /// The scan's roughness before and after, in mm.
     pub noise: f64,
     pub roughness: f64,

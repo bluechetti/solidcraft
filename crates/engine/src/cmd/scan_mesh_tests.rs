@@ -202,6 +202,8 @@ fn a_noisy_scan_is_denoised_and_a_clean_one_left_alone() {
     let clean = insert(&mut s, &positions, &triangles, "clean");
     let refused = s.execute("scan.denoise", &json!({"body": clean})).unwrap_err().to_string();
     assert!(refused.contains("as smooth as it can be read"), "{refused}");
+    let refused = s.execute("scan.denoise", &json!({"body": clean, "strength": 0})).unwrap_err().to_string();
+    assert!(refused.contains("smooths nothing"), "{refused}");
     // Each place moved alike (its copies on the box's edges too), along the face it lies on.
     let noisy: Vec<Vec3> = positions
         .iter()
@@ -221,7 +223,7 @@ fn a_noisy_scan_is_denoised_and_a_clean_one_left_alone() {
     let scan = insert(&mut s, &noisy, &triangles, "noisy");
     let (before, _) = mesh_of(&s, &scan);
     let reply = run(&mut s, "scan.denoise", json!({"body": scan}));
-    assert!(reply["strength"].as_f64().unwrap() > 0.0, "{reply}");
+    assert!(reply["strength"].as_f64().unwrap() > 0.0 && reply["strength"] == reply["suggested"], "{reply}");
     assert!(reply["roughness"].as_f64().unwrap() < 0.6 * reply["noise"].as_f64().unwrap(), "{reply}");
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(mesh_of(&s, &scan).0, before);

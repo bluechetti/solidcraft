@@ -17,6 +17,7 @@ use crate::schema::scan_mesh::{
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
+pub use solidcraft_scan::denoise::{MOST_PASSES, Stage, Study};
 
 const REGISTER_CONTRACT: TypedContract<ScanRegisterParams> = TypedContract::new();
 const FROM_POINTS_CONTRACT: TypedContract<ScanMeshFromPointsParams> = TypedContract::new();
@@ -35,7 +36,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("c_smooth")
         .contract(&DENOISE_CONTRACT)
         .output(output_schema_for::<ScanDenoiseResult>)
-        .params("body?: the scan (default: the selected or only one); strength?: passes 0–8 (default: the strength its noise and shrinkage suggest, refused when smoothing would not lower its error): the faces' normals filtered bilaterally (faces across a sharp edge barely mix) and the vertices moved square to them, the open rim kept put, written back into the scan, one undo step → body, strength, suggested, noise, roughness, rms_moved, max_moved, feature"),
+        .params("body?: the scan (default: the selected or only one); strength?: passes 0.05–8 (default: the strength its noise and shrinkage suggest, refused when smoothing would not lower its error): the faces' normals filtered bilaterally (faces across a sharp edge barely mix) and the vertices moved square to them, the open rim kept put, written back into the scan, one undo step → body, strength, suggested, noise, roughness, rms_moved, max_moved, feature"),
     CommandSpec::new("scan.remesh", "Remesh", crate::checked!("scan.remesh", remesh_scan))
         .at("SCAN", "CLEAN")
         .icon("grid")
@@ -163,6 +164,18 @@ pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// The scan Denoise would smooth (`body`, else the selected or only one): its name and a copy of
+/// its mesh, for a dialog to study off the window thread.
+pub fn denoise_mesh(s: &Session, body: Option<&str>) -> Result<(String, Vec<Vec3>, Vec<[u32; 3]>)> {
+    let m = mesh(s, &json!({ "body": body }), "scan.denoise")?;
+    Ok((m.body, m.positions, m.triangles))
+}
+
+/// What smoothing would do for a mesh: each pass measured, and the strength suggested.
+pub fn denoise_study(positions: &[Vec3], triangles: &[[u32; 3]]) -> Option<Study> {
+    denoise::study(&Scan::new(positions, triangles))
+}
+
 pub(super) fn denoise_scan(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.denoise";
     let scan = mesh(s, p, cmd)?;
@@ -171,6 +184,9 @@ pub(super) fn denoise_scan(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "`strength` is a number of passes from 0 to 8"));
     }
     let done = denoise::denoise(&scan.scan(), strength).ok_or_else(|| bad(cmd, "the scan has no triangles to smooth"))?;
+    if !(done.strength > 0.0) && strength.is_some() {
+        return Err(bad(cmd, "a `strength` of 0 smooths nothing: give 0.05 to 8 passes"));
+    }
     if !(done.strength > 0.0) {
         return Err(bad(
             cmd,

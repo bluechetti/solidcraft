@@ -32,9 +32,10 @@ const MAD_TO_SIGMA: f64 = 1.4826;
 pub struct Denoised {
     /// The smoothed positions, one per position of the scan.
     pub positions: Vec<Vec3>,
-    /// The strength used, in passes (fractions blend between whole passes), and the one suggested.
+    /// The strength used, in passes (fractions blend between whole passes), and the one the
+    /// study suggested when it was asked for the strength.
     pub strength: f64,
-    pub suggested: f64,
+    pub suggested: Option<f64>,
     /// The roughness before and after, in mm.
     pub noise: f64,
     pub roughness: f64,
@@ -217,38 +218,108 @@ fn typical_edge(scan: &Scan) -> f64 {
     crate::remesh::typical_edge(scan)
 }
 
-/// `scan` smoothed at `strength` passes, or at the strength the study suggests.
-pub fn denoise(scan: &Scan, strength: Option<f64>) -> Option<Denoised> {
-    let mesh = Mesh::new(scan);
-    if mesh.triangles.is_empty() {
-        return None;
+/// The roughness and the movement after a number of passes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stage {
+    /// The roughness left, in mm.
+    pub roughness: f64,
+    /// How far the vertices have moved: root mean square and largest, in mm.
+    pub rms_moved: f64,
+    pub max_moved: f64,
+}
+
+/// What smoothing would do for a scan: the roughness and movement after each whole pass, from 0
+/// to [`MOST_PASSES`], and the strength suggested (0: the scan is as smooth as it can be read).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Study {
+    pub stages: Vec<Stage>,
+    pub suggested: f64,
+    /// The roughness before (the noise), and the typical edge, in mm.
+    pub noise: f64,
+    pub typical_edge: f64,
+}
+
+impl Study {
+    /// The roughness and movement at `strength` passes, blended between the whole passes either
+    /// side (an estimate between them; smoothing at it measures it exactly).
+    pub fn at(&self, strength: f64) -> Stage {
+        let s = strength.clamp(0.0, (self.stages.len() - 1) as f64);
+        let lo = (s.floor() as usize).min(self.stages.len().saturating_sub(2));
+        let f = s - lo as f64;
+        let (a, b) = (self.stages[lo], self.stages[(lo + 1).min(self.stages.len() - 1)]);
+        let mix = |x: f64, y: f64| x * (1.0 - f) + y * f;
+        Stage { roughness: mix(a.roughness, b.roughness), rms_moved: mix(a.rms_moved, b.rms_moved), max_moved: mix(a.max_moved, b.max_moved) }
     }
-    let edge = typical_edge(scan);
-    let original: Vec<Vec3> =
-        scan.positions.iter().enumerate().map(|(v, p)| scan.positions.get(mesh.weld[v] as usize).copied().unwrap_or(*p)).collect();
-    let moved = |p: &[Vec3]| -> (f64, f64) {
+}
+
+/// The scan's mesh and its first positions, to run passes on.
+struct Run {
+    mesh: Mesh,
+    original: Vec<Vec3>,
+    edge: f64,
+}
+
+impl Run {
+    fn new(scan: &Scan) -> Option<Run> {
+        let mesh = Mesh::new(scan);
+        if mesh.triangles.is_empty() {
+            return None;
+        }
+        let original = scan.positions.iter().enumerate().map(|(v, p)| scan.positions.get(mesh.weld[v] as usize).copied().unwrap_or(*p)).collect();
+        Some(Run { mesh, original, edge: typical_edge(scan) })
+    }
+
+    /// How far `p` stands from the first positions: root mean square and largest.
+    fn moved(&self, p: &[Vec3]) -> (f64, f64) {
         let (mut squares, mut most, mut count) = (0.0, 0.0f64, 0usize);
-        for v in (0..p.len()).filter(|&v| mesh.weld[v] as usize == v) {
-            let d = p[v].dist(original[v]);
+        for v in (0..p.len()).filter(|&v| self.mesh.weld[v] as usize == v) {
+            let d = p[v].dist(self.original[v]);
             squares += d * d;
             most = most.max(d);
             count += 1;
         }
         ((squares / count.max(1) as f64).sqrt(), most)
-    };
-    // The study: the roughness left and the distance moved after each pass.
-    let mut stages = vec![original.clone()];
-    let mut rough = vec![mesh.roughness(&original)];
-    let mut deviation = vec![0.0];
+    }
+
+    fn stage(&self, p: &[Vec3]) -> Stage {
+        let (rms_moved, max_moved) = self.moved(p);
+        Stage { roughness: self.mesh.roughness(p), rms_moved, max_moved }
+    }
+
+    /// The positions at `strength` passes: as many whole passes as it reaches, the last two
+    /// blended, every position following its weld.
+    fn smoothed(&self, strength: f64) -> Option<Vec<Vec3>> {
+        let whole = strength.ceil() as usize;
+        let (mut before, mut after) = (self.original.clone(), self.original.clone());
+        for _ in 0..whole {
+            before = after;
+            after = self.mesh.pass(&before, self.edge);
+        }
+        let f = if whole == 0 { 0.0 } else { strength - (whole - 1) as f64 };
+        (0..self.original.len())
+            .map(|v| {
+                let w = self.mesh.weld[v] as usize;
+                let (a, b) = (before.get(w).copied()?, after.get(w).copied()?);
+                Some(a + (b - a) * f)
+            })
+            .collect()
+    }
+}
+
+/// The study: every pass up to [`MOST_PASSES`] run and measured, and the strength suggested. The
+/// error a strength leaves is modelled as the roughness and the shrinkage together, the
+/// shrinkage being the steady growth of the movement over the last passes, once the noise is gone.
+pub fn study(scan: &Scan) -> Option<Study> {
+    let run = Run::new(scan)?;
+    let mut stages = vec![run.stage(&run.original)];
+    let mut at = run.original.clone();
     for _ in 0..MOST_PASSES {
-        let next = mesh.pass(stages.last()?, edge);
-        rough.push(mesh.roughness(&next));
-        deviation.push(moved(&next).0);
-        stages.push(next);
+        at = run.mesh.pass(&at, run.edge);
+        stages.push(run.stage(&at));
     }
     let tail = MOST_PASSES / 2;
-    let shrinkage = ((deviation[MOST_PASSES] - deviation[tail]) / (MOST_PASSES - tail) as f64).max(0.0);
-    let error: Vec<f64> = (0..=MOST_PASSES).map(|k| rough[k].hypot(k as f64 * shrinkage)).collect();
+    let shrinkage = ((stages[MOST_PASSES].rms_moved - stages[tail].rms_moved) / (MOST_PASSES - tail) as f64).max(0.0);
+    let error: Vec<f64> = (0..=MOST_PASSES).map(|k| stages[k].roughness.hypot(k as f64 * shrinkage)).collect();
     let blend = |values: &[f64], s: f64| {
         let lo = (s.floor() as usize).min(MOST_PASSES - 1);
         let f = s - lo as f64;
@@ -264,26 +335,31 @@ pub fn denoise(scan: &Scan, strength: Option<f64>) -> Option<Denoised> {
         s += 0.05;
     }
     let suggested = if best_value <= (1.0 - REQUIRED_IMPROVEMENT) * error[0] { (best * 20.0).round() / 20.0 } else { 0.0 };
-    let strength = strength.unwrap_or(suggested).clamp(0.0, MOST_PASSES as f64);
-    let lo = (strength.floor() as usize).min(MOST_PASSES - 1);
-    let f = strength - lo as f64;
-    let positions: Vec<Vec3> = (0..original.len())
-        .map(|v| {
-            let w = mesh.weld[v] as usize;
-            let (a, b) = (stages[lo][w], stages[lo + 1][w]);
-            a + (b - a) * f
-        })
-        .collect();
-    let (rms_moved, max_moved) = moved(&positions);
+    Some(Study { noise: stages[0].roughness, stages, suggested, typical_edge: run.edge })
+}
+
+/// `scan` smoothed at `strength` passes, or at the strength the study suggests (which runs the
+/// study first). Given a strength, only the passes it reaches are run.
+pub fn denoise(scan: &Scan, strength: Option<f64>) -> Option<Denoised> {
+    let (strength, suggested) = match strength {
+        Some(k) => (k.clamp(0.0, MOST_PASSES as f64), None),
+        None => {
+            let found = study(scan)?;
+            (found.suggested, Some(found.suggested))
+        }
+    };
+    let run = Run::new(scan)?;
+    let positions = run.smoothed(strength)?;
+    let measured = run.stage(&positions);
     Some(Denoised {
-        roughness: mesh.roughness(&positions),
-        noise: rough[0],
+        roughness: measured.roughness,
+        noise: run.mesh.roughness(&run.original),
         positions,
         strength,
         suggested,
-        rms_moved,
-        max_moved,
-        typical_edge: edge,
+        rms_moved: measured.rms_moved,
+        max_moved: measured.max_moved,
+        typical_edge: run.edge,
     })
 }
 
@@ -331,7 +407,7 @@ mod tests {
         }
         let scan = Scan::new(&positions, &triangles);
         let done = denoise(&scan, None).unwrap();
-        assert!(done.suggested > 0.0, "smoothing helps a noisy scan: {done:?}");
+        assert!(done.suggested.is_some_and(|k| k > 0.0), "smoothing helps a noisy scan: {done:?}");
         assert!(done.roughness < 0.5 * done.noise, "{} from {}", done.roughness, done.noise);
         let rms = |ps: &[Vec3]| (ps.iter().map(|p| off_box(*p, size).powi(2)).sum::<f64>() / ps.len() as f64).sqrt();
         assert!(rms(&done.positions) < 0.7 * rms(&positions), "{} from {}", rms(&done.positions), rms(&positions));
@@ -348,7 +424,45 @@ mod tests {
     fn a_clean_scan_is_left_alone() {
         let (positions, triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(30.0, 20.0, 10.0), 10);
         let done = denoise(&Scan::new(&positions, &triangles), None).unwrap();
-        assert_eq!(done.suggested, 0.0);
+        assert_eq!(done.suggested, Some(0.0));
         assert!(done.max_moved < 1e-9, "{}", done.max_moved);
+    }
+
+    /// The study measures every pass: the roughness falls and the movement grows; at a whole pass
+    /// it reads what smoothing at that strength measures, and a strength given runs only the
+    /// passes it reaches, the same as the study's.
+    #[test]
+    fn the_study_reads_each_pass_as_smoothing_measures_it() {
+        let size = Vec3::new(30.0, 20.0, 10.0);
+        let (mut positions, triangles) = fine_cuboid(Vec3::ZERO, size, 24);
+        let welds = welded(&positions);
+        for (i, p) in positions.iter_mut().enumerate() {
+            let k = welds[i] as usize;
+            let n = if p.x.min(size.x - p.x) < 1e-9 {
+                Vec3::X
+            } else if p.y.min(size.y - p.y) < 1e-9 {
+                Vec3::Y
+            } else {
+                Vec3::Z
+            };
+            *p += n * (0.06 * noise(k));
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let found = study(&scan).unwrap();
+        assert_eq!(found.stages.len(), MOST_PASSES + 1);
+        assert_eq!(found.stages[0].rms_moved, 0.0);
+        assert!(found.stages[1].roughness < found.stages[0].roughness && found.stages[2].rms_moved > found.stages[1].rms_moved, "{found:?}");
+        for k in [1.0, 2.0, 3.5] {
+            let done = denoise(&scan, Some(k)).unwrap();
+            assert_eq!(done.suggested, None);
+            let read = found.at(k);
+            if k.fract() == 0.0 {
+                assert!((read.roughness - done.roughness).abs() < 1e-12 && (read.rms_moved - done.rms_moved).abs() < 1e-12, "{k}: {read:?} {done:?}");
+            } else {
+                assert!((read.rms_moved - done.rms_moved).abs() < 0.2 * done.rms_moved, "an estimate between passes: {read:?} {done:?}");
+            }
+        }
+        assert_eq!(found.at(0.0), found.stages[0]);
+        assert_eq!(found.at(99.0), found.stages[MOST_PASSES]);
     }
 }
