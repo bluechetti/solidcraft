@@ -42,7 +42,8 @@ pub struct CurveOnScan {
     scan: Option<String>,
     picks: Vec<Vec3>,
     pub closed: bool,
-    /// How far the curve may stray from the line on the scan, in mm.
+    /// How far the curve may stray from the line on the scan, in mm; 0 until the scan's own default
+    /// is known (as fine as its triangles).
     pub tolerance: f64,
     shown: Option<Shown>,
     /// The stroke being drawn, on the screen, until the button is let go.
@@ -51,7 +52,7 @@ pub struct CurveOnScan {
 
 impl Default for CurveOnScan {
     fn default() -> Self {
-        CurveOnScan { scan: None, picks: Vec::new(), closed: false, tolerance: engine_curve::TOLERANCE, shown: None, stroke: Vec::new() }
+        CurveOnScan { scan: None, picks: Vec::new(), closed: false, tolerance: 0.0, shown: None, stroke: Vec::new() }
     }
 }
 
@@ -76,8 +77,15 @@ fn bits(v: Vec3) -> [u64; 3] {
 
 /// Lay the line again when the points, the closing, the tolerance or the design have changed.
 fn lay(app: &SolveApp, k: &mut CurveOnScan) {
+    // The scan's own tolerance, once there is one scan to take it from (the selected or only one,
+    // or the one clicked).
+    if !(k.tolerance > 0.0)
+        && let Ok(tolerance) = engine_curve::default_tolerance(&app.session, k.scan.as_deref())
+    {
+        k.tolerance = tolerance;
+    }
     let key = (k.picks.iter().map(|p| bits(*p)).collect(), k.closed, k.tolerance.to_bits(), app.session.revision);
-    if k.shown.as_ref().is_some_and(|s| s.key == key) || k.picks.len() < 2 {
+    if k.shown.as_ref().is_some_and(|s| s.key == key) || k.picks.len() < 2 || !(k.tolerance > 0.0) {
         if k.picks.len() < 2 {
             k.shown = None;
         }
@@ -100,7 +108,8 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut CurveOnScan) -> bool {
     form_row(ui, tr("ui.scan_curve_closed"), |ui| check(ui, &mut k.closed));
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
     form_row(ui, tr("ui.scan_curve_within"), |ui| ui_kit::length_field(ui, &mut k.tolerance, &units, decimals.max(3)));
-    k.tolerance = k.tolerance.clamp(1e-4, 10.0);
+    // 0 (or less) goes back to the scan's own.
+    k.tolerance = if k.tolerance > 0.0 { k.tolerance.clamp(1e-4, 10.0) } else { 0.0 };
     if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_curve_undo_point"), ui_kit::Button::Enabled(!k.picks.is_empty()))).clicked() {
         k.picks.pop();
         if k.picks.len() < 3 {
@@ -133,7 +142,10 @@ pub fn commands(k: &CurveOnScan) -> Result<Vec<(String, Value)>, String> {
         return Err(why.clone());
     }
     let points: Vec<[f64; 3]> = k.picks.iter().map(|p| [p.x, p.y, p.z]).collect();
-    let mut p = json!({"points": points, "closed": k.closed, "tolerance": format!("{} mm", k.tolerance)});
+    let mut p = json!({"points": points, "closed": k.closed});
+    if k.tolerance > 0.0 {
+        p["tolerance"] = json!(format!("{} mm", k.tolerance));
+    }
     if let Some(scan) = &k.scan {
         p["body"] = json!(scan);
     }
@@ -371,10 +383,12 @@ mod tests {
         }
         let k = kind(&h);
         assert_eq!(k.picks.len(), 3, "three points on the scan");
+        assert!(h.app.session.selection.is_empty(), "the points select nothing: {:?}", h.app.session.selection);
         assert!(k.picks.iter().all(|p| ((p.x * p.x + p.z * p.z).sqrt() - 20.0).abs() < 0.05), "on the tube: {:?}", k.picks);
         let Some(Ok((line, _, max, _))) = k.shown.as_ref().map(|s| s.result.clone()) else { panic!("the line on the scan: {:?}", k.shown) };
         assert!(line.iter().all(|p| ((p.x * p.x + p.z * p.z).sqrt() - 20.0).abs() < 0.05), "the line lies on the tube");
-        assert!(max <= engine_curve::TOLERANCE);
+        // Within the scan's own tolerance, as fine as its triangles.
+        assert!(k.tolerance > 0.0 && max <= k.tolerance, "{max} within {}", k.tolerance);
 
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();

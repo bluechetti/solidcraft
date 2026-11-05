@@ -172,7 +172,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("spline")
         .contract(&CURVE_CONTRACT)
         .output(output_schema_for::<ScanCurveResult>)
-        .params("body?: mesh body (default: the selected or only one); points: [[x,y,z], …] clicked along the scan, in order (2 or more, 3 for closed); closed?: bool; tolerance?: length the curve may stray from the line laid on the scan (default 0.02 mm); sketch?: id|name of a 3D sketch (default: the 3D sketch being edited, else `Scan Curves`, made the first time): the smooth line through the points laid on the scan, kept as a 3D sketch spline through the fewest points within the tolerance (one undo step); a line across a hole is refused, naming the span → body, curve, sketch, closed, points, fit_points, length, max, off_scan"),
+        .params("body?: mesh body (default: the selected or only one); points: [[x,y,z], …] clicked along the scan, in order (2 or more, 3 for closed); closed?: bool; tolerance?: length the curve may stray from the line laid on the scan (default: the scan's typical triangle side, at most 0.1% of its size); sketch?: id|name of a 3D sketch (default: the 3D sketch being edited, else `Scan Curves`, made the first time): the smooth line through the points laid on the scan, kept as a 3D sketch spline through the fewest points within the tolerance (one undo step); a line across a hole is refused, naming the span → body, curve, sketch, closed, points, fit_points, length, max, off_scan"),
     CommandSpec::new("scan.section_sketch", "Section to Sketch", crate::checked!("scan.section_sketch", section::section_sketch))
         .at("SCAN", "SKETCH")
         .icon("fit_section")

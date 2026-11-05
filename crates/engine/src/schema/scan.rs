@@ -749,7 +749,8 @@ pub struct ScanCurveParams {
     /// Close the curve back to its first point. Default: false.
     #[serde(default)]
     pub closed: Option<bool>,
-    /// How far the curve may stray from the line laid on the scan. Default: 0.02 mm.
+    /// How far the curve may stray from the line laid on the scan. Default: the scan's typical
+    /// triangle side, at most 0.1% of its size.
     #[serde(default)]
     pub tolerance: Option<LengthExpr>,
     /// The 3D sketch to draw it in, by id or name. Default: the 3D sketch being edited, else the

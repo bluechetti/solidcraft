@@ -597,9 +597,11 @@ fn edit_surface_works_where_a_later_move_put_the_surface() {
 #[test]
 fn curve_on_scan_keeps_a_3d_spline_in_scan_curves() {
     let (mut s, _) = session_with_a_plate_and_boss("curve-on-scan");
+    // The scan's own tolerance: as fine as its triangles, no coarser than a thousandth of its size.
+    let tolerance = super::curve::default_tolerance(&s, None).unwrap();
     let open = run(&mut s, "scan.curve_on_scan", json!({"points": [[40, 20, 15], [30, 30, 15], [20, 20, 15]]}));
     assert_eq!(open["closed"], false, "{open}");
-    assert!(open["max"].as_f64().unwrap() <= 0.02 && open["off_scan"].as_f64().unwrap() < 0.05, "{open}");
+    assert!(open["max"].as_f64().unwrap() <= tolerance && open["off_scan"].as_f64().unwrap() <= 2.0 * tolerance, "within {tolerance}: {open}");
     assert!(open["fit_points"].as_u64().unwrap() >= 3, "{open}");
     assert!((open["length"].as_f64().unwrap() - std::f64::consts::PI * 10.0).abs() < 0.5, "half way round: {open}");
     let sketch = s.doc.features.iter().find(|f| f.name == super::curve::SKETCH_NAME).map(|f| f.id).expect("Scan Curves made");

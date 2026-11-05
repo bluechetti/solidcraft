@@ -21,6 +21,18 @@ const PATH_LIMIT: usize = 20_000;
 /// The most fit points a curve keeps (a 3D sketch spline's own limit).
 pub const MAX_FIT: usize = 500;
 
+/// The least default tolerance, in mm.
+const LEAST_TOLERANCE: f64 = 1e-3;
+
+/// How far a curve may stray from the line laid on `scan` when no tolerance is given: the side of
+/// its typical triangle, no more than a thousandth of its size. The line follows the scan's noise,
+/// which is about as fine as its triangles: a tighter tolerance only keeps more points tracing it
+/// (on a 2.7M-triangle laser scan, 26 to 142 points for a 30 mm curve at 0.02 mm, 4 to 12 at its
+/// 0.14 mm triangles). The cap keeps a coarse mesh of a smooth part close to it.
+pub fn default_tolerance(scan: &Scan) -> f64 {
+    crate::mirror_fill::typical_edge(scan).min(scan.extent() / 1000.0).max(LEAST_TOLERANCE)
+}
+
 /// The scan, for the nearest place of it to a point.
 pub struct Projector {
     tree: TriangleTree,
@@ -245,6 +257,30 @@ mod tests {
             }
         }
         (positions, triangles)
+    }
+
+    /// A flat strip of `w` × `h` squares of side `side`, two triangles each.
+    fn strip(w: u32, h: u32, side: f64) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        let positions = (0..=h).flat_map(|j| (0..=w).map(move |i| Vec3::new(side * f64::from(i), side * f64::from(j), 0.0))).collect();
+        let at = |i: u32, j: u32| j * (w + 1) + i;
+        let triangles = (0..h)
+            .flat_map(|j| (0..w).flat_map(move |i| [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]]))
+            .collect();
+        (positions, triangles)
+    }
+
+    /// The default tolerance is as fine as the scan's triangles, no coarser than a thousandth of
+    /// its size.
+    #[test]
+    fn the_default_tolerance_follows_the_triangles_up_to_a_thousandth_of_the_size() {
+        // 2 m long in 1 mm squares: its triangles' side (that of an equilateral one of the same area).
+        let (p, t) = strip(2000, 1, 1.0);
+        let fine = default_tolerance(&Scan::new(&p, &t));
+        assert!((fine - (2.0 / 3.0f64.sqrt()).sqrt()).abs() < 1e-9, "{fine}");
+        // One 10 mm square: a thousandth of its diagonal.
+        let (p, t) = strip(1, 1, 10.0);
+        let coarse = default_tolerance(&Scan::new(&p, &t));
+        assert!((coarse - 200.0f64.sqrt() / 1000.0).abs() < 1e-9, "{coarse}");
     }
 
     /// Two points half way round a cylinder: the line between them bends round the cylinder (it is

@@ -19,8 +19,16 @@ use crate::{EngineError, Result, Session};
 /// The 3D sketch the curves go in when none is being edited.
 pub const SKETCH_NAME: &str = "Scan Curves";
 
-/// The default tolerance: how far the curve may stray from the line laid on the scan.
-pub const TOLERANCE: f64 = 0.02;
+/// The default tolerance for the scan `body` (or the selected or only one): how far the curve may
+/// stray from the line laid on it, as fine as its triangles (see [`curve::default_tolerance`]).
+pub fn default_tolerance(s: &Session, body: Option<&str>) -> Result<f64> {
+    let cmd = "scan.curve_on_scan";
+    let state = s.model.state();
+    let name = mesh_name(s, &json!({ "body": body }), cmd)?;
+    let (positions, triangles) =
+        state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+    Ok(curve::default_tolerance(&solidcraft_scan::Scan::new(positions, triangles)))
+}
 
 /// The projector last built: for which scan (its name and where its points are held, which
 /// changes whenever the scan does) and the projector.
@@ -123,8 +131,11 @@ pub(super) fn curve_on_scan(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, format!("at most {} points", curve::MAX_FIT)));
     }
     let closed = crate::params::bool_(p, "closed").unwrap_or(false);
-    let tolerance = length(s, p, "tolerance", TOLERANCE, cmd)?;
     let body = crate::params::str_(p, "body").map(str::to_owned);
+    let tolerance = match crate::params::expr(p, "tolerance") {
+        Some(_) => length(s, p, "tolerance", 0.0, cmd)?,
+        None => default_tolerance(s, body.as_deref())?,
+    };
     let (name, laid, fitted) = preview(s, body.as_deref(), &picks, closed, tolerance)?;
     let on = projector(s, Some(&name), cmd)?.1;
     let (sketch, opened) = open_sketch(s, p, cmd)?;
