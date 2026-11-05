@@ -70,10 +70,6 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&REDUCE_CONTRACT)
         .output(output_schema_for::<ScanReduceResult>)
         .params("body?: mesh body (default: the selected or only one); ratio?: share of the triangles to keep (0…1) or triangles?: how many to keep (default: half); max_error?: length a collapse may move the surface by, root mean square (stops first if reached); keep_rim?: bool (default true: the scan's open edges stay where they are): edges collapsed cheapest first (quadric errors), never folding the surface, the scan written back in its Insert Mesh feature (one undo step) → body, before, triangles, collapses, stopped (target|error|no_more_collapses), largest_error, feature"),
-    planned!("scan.remesh", "Remesh", "8615")
-        .at("SCAN", "CLEAN")
-        .icon("grid")
-        .params("planned: body: mesh body name; edge_length?: mm (default from the scan's spacing) → triangles, deviation"),
     CommandSpec::new("scan.remove_floating", "Remove Floating Pieces", crate::checked!("scan.remove_floating", clean::remove_floating))
         .at("SCAN", "CLEAN")
         .icon("delete")

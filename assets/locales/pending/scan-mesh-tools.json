@@ -2,41 +2,49 @@
   "en": {
     "cmd.scan_register": "Align to Scan",
     "help.scan.register": "Lays the selected scan onto the other, a second pass onto the first, wherever it lies: point-to-plane fitting both ways from the ways their principal axes and matched surface features line up, and kept as a Move of the scan.",
-    "help.scan.mesh_from_points": "Makes a mesh body from a point cloud by screened Poisson reconstruction: the points' normals (estimated and turned to agree where the cloud states none) make the surface, and the trim stops it where the points are sparse rather than closing it over what was never scanned."
+    "help.scan.mesh_from_points": "Makes a mesh body from a point cloud by screened Poisson reconstruction: the points' normals (estimated and turned to agree where the cloud states none) make the surface, and the trim stops it where the points are sparse rather than closing it over what was never scanned.",
+    "help.scan.remesh": "Makes the scan again as one even surface at the cell asked for, its noise averaged out; other passes laid on it with Align to Scan are fused in, so two passes become one scan. Sharp keeps the part's edges and corners sharp."
   },
   "de": {
     "cmd.scan_register": "An Scan ausrichten",
     "help.scan.register": "Legt den gewählten Scan auf den anderen, einen zweiten Durchgang auf den ersten, wie er auch liegt: Punkt-zu-Ebene-Einpassen in beide Richtungen, ausgehend von den Lagen ihrer Hauptachsen und passender Oberflächenmerkmale, behalten als Verschieben des Scans.",
-    "help.scan.mesh_from_points": "Erzeugt einen Netzkörper aus einer Punktwolke durch abgeschirmte Poisson-Rekonstruktion: die Normalen der Punkte (geschätzt und abgestimmt, wo die Wolke keine angibt) ergeben die Fläche, und der Beschnitt beendet sie, wo die Punkte spärlich sind, statt sie über nie Gescanntes zu schließen."
+    "help.scan.mesh_from_points": "Erzeugt einen Netzkörper aus einer Punktwolke durch abgeschirmte Poisson-Rekonstruktion: die Normalen der Punkte (geschätzt und abgestimmt, wo die Wolke keine angibt) ergeben die Fläche, und der Beschnitt beendet sie, wo die Punkte spärlich sind, statt sie über nie Gescanntes zu schließen.",
+    "help.scan.remesh": "Erzeugt den Scan neu als eine gleichmäßige Fläche mit der gewünschten Zellgröße, sein Rauschen gemittelt; weitere mit An Scan ausrichten aufgelegte Durchgänge werden eingeschmolzen, sodass zwei Durchgänge ein Scan werden. Scharf hält die Kanten und Ecken des Teils scharf."
   },
   "ja": {
     "cmd.scan_register": "スキャンに位置合わせ",
     "help.scan.register": "選んだスキャンをもう一方に重ねます（2回目のパスを1回目に）。どの向きにあっても、主軸と一致する表面特徴の並びから双方向の点‐平面フィットを行い、スキャンの移動として残します。",
-    "help.scan.mesh_from_points": "スクリーンド・ポアソン再構成で点群からメッシュボディを作ります。点の法線（点群に無い場合は推定してそろえます）から面を作り、点がまばらな所ではトリムで面を止め、スキャンされていない所を閉じません。"
+    "help.scan.mesh_from_points": "スクリーンド・ポアソン再構成で点群からメッシュボディを作ります。点の法線（点群に無い場合は推定してそろえます）から面を作り、点がまばらな所ではトリムで面を止め、スキャンされていない所を閉じません。",
+    "help.scan.remesh": "スキャンを指定したセルで均一な一つの面として作り直し、ノイズを平均します。スキャンに位置合わせで重ねた他のパスも融合し、2回のパスが1つのスキャンになります。シャープにすると部品のエッジと角を鋭く保ちます。"
   },
   "ko": {
     "cmd.scan_register": "스캔에 정렬",
     "help.scan.register": "고른 스캔을 다른 스캔 위에 놓습니다(두 번째 패스를 첫 번째에). 어떻게 놓여 있든 주축과 일치하는 표면 특징의 배치에서 시작해 양방향 점-평면 맞춤을 하고 스캔의 이동으로 남깁니다.",
-    "help.scan.mesh_from_points": "스크린드 포아송 재구성으로 점군에서 메시 바디를 만듭니다. 점의 법선(점군에 없으면 추정해 맞춤)으로 면을 만들고, 점이 드문 곳에서는 트림으로 면을 멈춰 스캔되지 않은 곳을 덮지 않습니다."
+    "help.scan.mesh_from_points": "스크린드 포아송 재구성으로 점군에서 메시 바디를 만듭니다. 점의 법선(점군에 없으면 추정해 맞춤)으로 면을 만들고, 점이 드문 곳에서는 트림으로 면을 멈춰 스캔되지 않은 곳을 덮지 않습니다.",
+    "help.scan.remesh": "스캔을 지정한 셀 크기의 고른 하나의 면으로 다시 만들고 노이즈를 평균합니다. 스캔에 정렬로 겹친 다른 패스도 합쳐 두 패스가 하나의 스캔이 됩니다. 날카롭게를 켜면 부품의 모서리와 꼭짓점을 날카롭게 유지합니다."
   },
   "zh": {
     "cmd.scan_register": "对齐到扫描",
     "help.scan.register": "把所选扫描贴合到另一个扫描上（第二遍贴到第一遍），无论其位置如何：从两者主轴和匹配表面特征的对应方式出发，双向点到面拟合，并作为扫描的移动保留。",
-    "help.scan.mesh_from_points": "通过屏蔽泊松重建从点云生成网格实体：由点的法线（点云未给出时进行估计并统一朝向）构成曲面，并在点稀疏处修剪，而不是把从未扫描过的地方封闭起来。"
+    "help.scan.mesh_from_points": "通过屏蔽泊松重建从点云生成网格实体：由点的法线（点云未给出时进行估计并统一朝向）构成曲面，并在点稀疏处修剪，而不是把从未扫描过的地方封闭起来。",
+    "help.scan.remesh": "按指定的网格尺寸把扫描重新生成一个均匀曲面，平均掉噪声；用对齐到扫描贴合上的其他扫描遍也会融合进来，两遍扫描合为一个。锐利选项保持零件的边和角锐利。"
   },
   "ar": {
     "cmd.scan_register": "محاذاة مع مسح",
     "help.scan.register": "يضع المسح المحدد على الآخر، تمريرة ثانية على الأولى، أينما كان: ملاءمة نقطة إلى مستوٍ في الاتجاهين بدءًا من كيفية تطابق محاورهما الرئيسية وسمات السطح المتطابقة، وتُحفظ كتحريك للمسح.",
-    "help.scan.mesh_from_points": "يصنع جسمًا شبكيًا من سحابة نقاط بإعادة بناء بواسون المحجوبة: تصنع متجهات النقاط العمودية (المقدّرة والمتّسقة حيث لا تذكرها السحابة) السطح، ويوقفه القص حيث تتناثر النقاط بدل إغلاقه فوق ما لم يُمسح."
+    "help.scan.mesh_from_points": "يصنع جسمًا شبكيًا من سحابة نقاط بإعادة بناء بواسون المحجوبة: تصنع متجهات النقاط العمودية (المقدّرة والمتّسقة حيث لا تذكرها السحابة) السطح، ويوقفه القص حيث تتناثر النقاط بدل إغلاقه فوق ما لم يُمسح.",
+    "help.scan.remesh": "يصنع المسح من جديد سطحًا واحدًا متساويًا بالخلية المطلوبة ويُسوّي ضجيجه؛ وتُدمج فيه تمريرات أخرى وُضعت عليه بمحاذاة مع مسح، فتصبح تمريرتان مسحًا واحدًا. الحاد يُبقي حواف القطعة وزواياها حادة."
   },
   "he": {
     "cmd.scan_register": "יישור לסריקה",
     "help.scan.register": "מניח את הסריקה שנבחרה על האחרת, מעבר שני על הראשון, היכן שהיא נמצאת: התאמת נקודה-למישור בשני הכיוונים מכיווני הצירים הראשיים ומאפייני פני שטח תואמים, ונשמר כהזזה של הסריקה.",
-    "help.scan.mesh_from_points": "יוצר גוף רשת מענן נקודות בשחזור פואסון ממוסך: הנורמלים של הנקודות (מוערכים ומתואמים היכן שהענן אינו מציין אותם) יוצרים את המשטח, והגזירה עוצרת אותו היכן שהנקודות דלילות במקום לסגור אותו מעל מה שלא נסרק."
+    "help.scan.mesh_from_points": "יוצר גוף רשת מענן נקודות בשחזור פואסון ממוסך: הנורמלים של הנקודות (מוערכים ומתואמים היכן שהענן אינו מציין אותם) יוצרים את המשטח, והגזירה עוצרת אותו היכן שהנקודות דלילות במקום לסגור אותו מעל מה שלא נסרק.",
+    "help.scan.remesh": "יוצר את הסריקה מחדש כמשטח אחיד אחד בגודל התא המבוקש, הרעש שלה ממוצע; מעברים נוספים שהונחו עליה ביישור לסריקה מותכים לתוכה, כך ששני מעברים הופכים לסריקה אחת. חד שומר על הקצוות והפינות של החלק חדים."
   },
   "vi": {
     "cmd.scan_register": "Căn theo bản quét",
     "help.scan.register": "Đặt bản quét đã chọn lên bản kia, lượt quét thứ hai lên lượt đầu, dù nó nằm ở đâu: khớp điểm-mặt phẳng hai chiều, bắt đầu từ cách các trục chính và các đặc trưng bề mặt khớp nhau thẳng hàng, và giữ lại như một phép di chuyển bản quét.",
-    "help.scan.mesh_from_points": "Tạo một thân lưới từ đám mây điểm bằng tái dựng Poisson có che chắn: pháp tuyến của các điểm (ước lượng và thống nhất hướng khi đám mây không có) tạo nên bề mặt, và phép cắt dừng bề mặt nơi điểm thưa thay vì đóng kín lên chỗ chưa từng được quét."
+    "help.scan.mesh_from_points": "Tạo một thân lưới từ đám mây điểm bằng tái dựng Poisson có che chắn: pháp tuyến của các điểm (ước lượng và thống nhất hướng khi đám mây không có) tạo nên bề mặt, và phép cắt dừng bề mặt nơi điểm thưa thay vì đóng kín lên chỗ chưa từng được quét.",
+    "help.scan.remesh": "Tạo lại bản quét thành một bề mặt đều theo ô đã chọn, khử trung bình nhiễu; các lượt quét khác đã đặt lên bằng Căn theo bản quét được hợp nhất vào, để hai lượt thành một bản quét. Sắc nét giữ các cạnh và góc của chi tiết sắc nét."
   }
 }

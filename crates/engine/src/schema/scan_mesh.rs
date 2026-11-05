@@ -108,6 +108,52 @@ pub struct ScanMeshFromPointsResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Make a scan again as one even surface, with other passes of the part fused into it when they
+/// are given; written back into the scan, one undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanRemeshParams {
+    /// The scan. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Other passes of the part, laid on it (Align to Scan), fused in.
+    #[serde(default)]
+    pub with: Option<Vec<String>>,
+    /// The grid's cell, about the new edge length. Default: the scan's own typical edge.
+    #[serde(default)]
+    pub cell: Option<super::types::LengthExpr>,
+    /// Keep sharp edges and corners sharp (each vertex where the planes of its cell meet). Default:
+    /// false.
+    #[serde(default)]
+    pub sharp: Option<bool>,
+}
+
+/// What `scan.remesh` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanRemeshResult {
+    /// The scan written back, and the passes fused into it.
+    pub body: String,
+    pub with: Vec<String>,
+    /// Its triangles before and after, and its vertices after.
+    pub before: usize,
+    pub triangles: usize,
+    pub vertices: usize,
+    /// The cell and whether edges were kept sharp.
+    pub cell: f64,
+    pub sharp: bool,
+    /// The new vertices' distance from the scans (rms, largest) and the scans' from the new surface
+    /// (rms, 95th percentile), in mm; the share of the scans more than two cells from it.
+    pub new_rms: f64,
+    pub new_max: f64,
+    pub scan_rms: f64,
+    pub scan_p95: f64,
+    pub uncovered: f64,
+    /// The scan's feature, changed.
+    pub feature: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 #[cfg(test)]
 #[path = "scan_mesh_tests.rs"]
 mod tests;

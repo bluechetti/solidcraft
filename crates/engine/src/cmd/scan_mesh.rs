@@ -1,20 +1,24 @@
 //! Tools on a scan's mesh as a whole (#8615), after SurfaceCraft's: `scan.register` lays one scan
 //! onto another, a second pass onto the first, and keeps the move as an ordinary Move of it;
-//! `scan.mesh_from_points` makes a mesh body from a point cloud (screened Poisson).
+//! `scan.mesh_from_points` makes a mesh body from a point cloud (screened Poisson); `scan.remesh`
+//! makes a scan again as one even surface, fusing other passes into it.
 
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
-use solidcraft_scan::poisson;
 use solidcraft_scan::register::{self, Settings};
+use solidcraft_scan::{Scan, poisson, remesh};
 
 use super::{CommandSpec, Mesh, mesh, move_by};
 use crate::params::{bad, bool_, num, str_};
-use crate::schema::scan_mesh::{ScanMeshFromPointsParams, ScanMeshFromPointsResult, ScanRegisterParams, ScanRegisterResult};
+use crate::schema::scan_mesh::{
+    ScanMeshFromPointsParams, ScanMeshFromPointsResult, ScanRegisterParams, ScanRegisterResult, ScanRemeshParams, ScanRemeshResult,
+};
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
 
 const REGISTER_CONTRACT: TypedContract<ScanRegisterParams> = TypedContract::new();
 const FROM_POINTS_CONTRACT: TypedContract<ScanMeshFromPointsParams> = TypedContract::new();
+const REMESH_CONTRACT: TypedContract<ScanRemeshParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("scan.mesh_from_points", "Mesh from Points", crate::checked!("scan.mesh_from_points", mesh_from_points))
@@ -23,6 +27,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&FROM_POINTS_CONTRACT)
         .output(output_schema_for::<ScanMeshFromPointsResult>)
         .params("cloud?: point cloud id or name (default: the only one); depth?: 5–10 (the finest grid is 2^depth cells across; default: about the points' spacing); trim?: 0–1 (default 0.3: where the points are sparse the surface stops; 0 keeps it closed); name?: the body's name: a mesh body made from the points by screened Poisson reconstruction (their normals estimated and turned to agree where the cloud states none), one undo step → body, triangles, vertices, depth, trim, points, points_used, estimated_normals, cell, spacing, trimmed, rms, p95, max, feature"),
+    CommandSpec::new("scan.remesh", "Remesh", crate::checked!("scan.remesh", remesh_scan))
+        .at("SCAN", "CLEAN")
+        .icon("grid")
+        .contract(&REMESH_CONTRACT)
+        .output(output_schema_for::<ScanRemeshResult>)
+        .params("body?: the scan (default: the selected or only one); with?: [other passes, laid on it] fused in; cell?: length (default the scan's typical edge: the new mesh's edge); sharp?: bool (default false: each vertex where the planes of its cell meet, so sharp edges and corners stay sharp): the scan made again as one even surface from the signed distances of the scans in a narrow band of a grid (overlaps averaged), written back into it, one undo step → body, with, before, triangles, vertices, cell, sharp, new_rms, new_max, scan_rms, scan_p95, uncovered, feature"),
     CommandSpec::new("scan.register", "Align to Scan", crate::checked!("scan.register", register_scan))
     .at("SCAN", "ALIGN")
     .icon("align")
@@ -96,6 +106,49 @@ pub(super) fn register_scan(s: &mut Session, p: &Value) -> Result<Value> {
         start: found.start.to_string(),
         converged: found.converged,
         rival: found.rival,
+        feature,
+        param_warnings: Vec::new(),
+    })
+}
+
+pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.remesh";
+    let scan = mesh(s, p, cmd)?;
+    let with = crate::params::string_list_or_default(p, "with");
+    let mut passes = Vec::with_capacity(with.len());
+    for name in &with {
+        if *name == scan.body {
+            return Err(bad(cmd, "`with` names the scan itself"));
+        }
+        passes.push(mesh(s, &json!({ "body": name }), cmd)?);
+    }
+    let cell = match crate::params::expr(p, "cell") {
+        Some(_) => super::length(s, p, "cell", 1.0, cmd)?,
+        None => {
+            let edge = remesh::typical_edge(&scan.scan());
+            if !(edge > 0.0) {
+                return Err(bad(cmd, "the scan has no edges to remesh"));
+            }
+            edge
+        }
+    };
+    let sharp = bool_(p, "sharp").unwrap_or(false);
+    let sources: Vec<Scan> = std::iter::once(scan.scan()).chain(passes.iter().map(Mesh::scan)).collect();
+    let made = remesh::remesh(&sources, &remesh::Settings { cell, sharp }).map_err(|e| bad(cmd, e.to_string()))?;
+    let feature = super::clean::replace_mesh(s, &scan.body, &made.positions, &made.triangles, cmd)?;
+    reply(ScanRemeshResult {
+        body: scan.body.clone(),
+        with,
+        before: scan.triangles.len(),
+        triangles: made.triangles.len(),
+        vertices: made.positions.len(),
+        cell,
+        sharp,
+        new_rms: made.new_rms,
+        new_max: made.new_max,
+        scan_rms: made.scan_rms,
+        scan_p95: made.scan_p95,
+        uncovered: made.uncovered,
         feature,
         param_warnings: Vec::new(),
     })

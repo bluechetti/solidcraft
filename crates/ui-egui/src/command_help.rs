@@ -161,6 +161,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.reconstruct",
     "scan.reduce",
     "scan.register",
+    "scan.remesh",
     "scan.remove_floating",
     "scan.repair",
     "scan.rest_on_grid",

@@ -112,3 +112,51 @@ fn align_to_scan_says_which_scans_it_needs() {
     let shares = s.execute("scan.register", &json!({"to": "nothing", "ignored": 0.9})).unwrap_err().to_string();
     assert!(shares.contains("`ignored`"), "{shares}");
 }
+
+fn mesh_of(s: &Session, body: &str) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+    s.model.state().body(body).and_then(|b| b.body.triangle_mesh()).map(|(p, t)| (p.to_vec(), t.to_vec())).unwrap()
+}
+
+fn volume(positions: &[Vec3], triangles: &[[u32; 3]]) -> f64 {
+    triangles.iter().map(|t| positions[t[0] as usize].dot(positions[t[1] as usize].cross(positions[t[2] as usize])) / 6.0).sum()
+}
+
+/// The block with its boss remeshed at a millimetre, sharp: written back into the scan, its volume
+/// kept; one undo puts the scan back.
+#[test]
+fn a_scan_is_remeshed_in_place_keeping_its_shape() {
+    let (positions, triangles) = part_mesh();
+    let mut s = Session::default();
+    let scan = insert(&mut s, &positions, &triangles, "block");
+    let (before, before_triangles) = mesh_of(&s, &scan);
+    let expected = volume(&before, &before_triangles);
+    let reply = run(&mut s, "scan.remesh", json!({"cell": "1 mm", "sharp": true}));
+    assert_eq!(reply["body"], scan);
+    let (after, after_triangles) = mesh_of(&s, &scan);
+    assert_eq!(after_triangles.len(), reply["triangles"].as_u64().unwrap() as usize);
+    assert!(after_triangles.len() < before_triangles.len(), "{} from {}", after_triangles.len(), before_triangles.len());
+    let v = volume(&after, &after_triangles);
+    assert!((v - expected).abs() < 0.01 * expected, "{v} against {expected}");
+    assert!(reply["scan_rms"].as_f64().unwrap() < 0.1 && reply["uncovered"].as_f64().unwrap() < 0.01, "{reply}");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(mesh_of(&s, &scan).1.len(), before_triangles.len());
+}
+
+/// Two passes of the block, each of part of it and laid where they belong, fused into the first.
+#[test]
+fn two_passes_are_fused_into_one_scan() {
+    let (positions, triangles) = part_mesh();
+    let half = |keep: &dyn Fn(Vec3) -> bool| triangles.iter().copied().filter(|t| t.iter().all(|&v| keep(positions[v as usize]))).collect::<Vec<_>>();
+    let (left, right) = (half(&|p| p.x <= 36.0), half(&|p| p.x >= 24.0));
+    let mut s = Session::default();
+    let first = insert(&mut s, &positions, &left, "left");
+    let second = insert(&mut s, &positions, &right, "right");
+    let reply = run(&mut s, "scan.remesh", json!({"body": first, "with": [second], "cell": "1 mm", "sharp": true}));
+    assert_eq!(reply["with"][0], second);
+    let (after, after_triangles) = mesh_of(&s, &first);
+    let lo = after.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let hi = after.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+    assert!(lo < 0.5 && hi > 59.5, "the whole block in the one scan: {lo} to {hi}");
+    assert!(reply["uncovered"].as_f64().unwrap() < 0.01, "{reply}");
+    assert!(!after_triangles.is_empty());
+}
