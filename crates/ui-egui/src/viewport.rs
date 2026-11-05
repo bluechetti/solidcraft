@@ -4862,6 +4862,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         if resp.clicked() && !held && !reference_pick && !joint_handle_pointer && !app.viewport.draw_drag_handled {
             if crate::browser_canvas::click(app, &proj, p) {
                 // Calibrate Canvas: the click sets Point A or B on the image (#9108).
+            } else if takes_scan_clicks(app) {
+                // A Scan dialog placing points on the scan: its own handler below takes the click,
+                // which selects nothing (a selected scan turns blue over the dialog's preview).
             } else if app.tool.is_some() {
                 crate::tools::on_click(app, &proj, p, mods.shift);
             } else if app.dialog.as_ref().is_some_and(|d| d.wants_picks()) {
@@ -6260,6 +6263,15 @@ pub(crate) fn measurement_selection(s: &solidcraft_engine::Session, sel: &Sel) -
         _ => {}
     }
     representative
+}
+
+/// Whether a Scan dialog takes clicks in the view as its own: Curve on Scan's points, New Free
+/// Form's corners, Edit Surface's handles, the curve Sections Along Curve follows.
+fn takes_scan_clicks(app: &SolveApp) -> bool {
+    crate::dialogs_scan_curve::drawing(app)
+        || crate::dialogs_scan_free_form::drawing(app)
+        || crate::dialogs_scan_surface::editing(app)
+        || crate::dialogs_scan_sections::choosing(app)
 }
 
 /// What a box selects: sketch entities while sketching, otherwise what the open

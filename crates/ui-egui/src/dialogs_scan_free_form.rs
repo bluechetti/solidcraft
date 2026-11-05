@@ -525,6 +525,8 @@ mod tests {
             panic!("the dialog: {:?}", h.app.dialog.as_ref().map(|d| format!("{:?}", d.kind).chars().take(80).collect::<String>()))
         };
         assert_eq!(k.clicks.len(), 4, "four corners on the scan");
+        // The corners select nothing: a selected scan turns blue over the net's preview.
+        assert!(h.app.session.selection.is_empty(), "{:?}", h.app.session.selection);
         let Some(Ok(made)) = k.shown.as_ref().map(|s| s.result.clone()) else { panic!("fitted: {:?}", k.shown) };
         assert!(made.rms < 0.05, "close to the dome: {}", made.rms);
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
