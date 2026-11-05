@@ -156,6 +156,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.repair",
     "scan.rest_on_grid",
     "scan.section_sketch",
+    "scan.slice_surface",
     "scan.square_to_symmetry",
     "scan.stand_on_base",
     "scan.symmetry",

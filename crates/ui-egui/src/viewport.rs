@@ -5300,6 +5300,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::dialogs_scan_surface::draw(app, &painter, &proj);
     crate::dialogs_scan_curve::draw(app, &painter, &proj);
     crate::dialogs_scan_free_form::draw(app, &painter, &proj);
+    crate::dialogs_scan_slice::draw(app, &painter, &proj);
     crate::dialogs_scan_clean::draw(app, &painter, &proj);
     crate::dialogs_scan_section::draw(app, &painter, &proj);
     crate::dialogs_assembly::origins(app, &painter, &proj);

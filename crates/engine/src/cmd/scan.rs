@@ -22,7 +22,8 @@ use crate::schema::scan::{
     ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFloatingParams, ScanFloatingResult,
     ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror,
     ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult,
-    ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
+    ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams,
+    ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -42,6 +43,7 @@ const CURVE_CONTRACT: TypedContract<ScanCurveParams> = TypedContract::new();
 const EDIT_NET_CONTRACT: TypedContract<ScanEditNetParams> = TypedContract::new();
 const FREE_FORM_CONTRACT: TypedContract<ScanFreeFormParams> = TypedContract::new();
 const MERGE_SURFACES_CONTRACT: TypedContract<ScanMergeSurfacesParams> = TypedContract::new();
+const SLICE_SURFACE_CONTRACT: TypedContract<ScanSliceSurfaceParams> = TypedContract::new();
 const WRAP_SURFACE_CONTRACT: TypedContract<ScanWrapSurfaceParams> = TypedContract::new();
 const FLOATING_CONTRACT: TypedContract<ScanFloatingParams> = TypedContract::new();
 const HOLES_CONTRACT: TypedContract<ScanHolesParams> = TypedContract::new();
@@ -190,6 +192,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&MERGE_SURFACES_CONTRACT)
         .output(output_schema_for::<ScanMergeSurfacesResult>)
         .params("surfaces?: [surface body names] (default: the selected ones, else every surface Fit Surface, New Free Form or Wrap Surface made); gap?: length (how far apart two sides may be on average to be made one, default a tenth of the shortest side); stitch?: bool (default true: sewn into the first, a solid when they close): each side that runs along another's within the gap made one curve (the nets' knots matched, corners and points put half way between), one undo step → surfaces, seams, gap, body, feature"),
+    CommandSpec::new("scan.slice_surface", "Slice Surface", crate::checked!("scan.slice_surface", slice::slice_surface))
+        .at("SCAN", "FREEFORM")
+        .icon("surface_trim")
+        .contract(&SLICE_SURFACE_CONTRACT)
+        .output(output_schema_for::<ScanSliceSurfaceResult>)
+        .params("plane: XY|XZ|YZ|plane name|{origin, normal}; keep?: front|back|[x,y,z] (default front: where the plane's normal points); cap?: bool (default true: each loop of the cut closed with a flat face and sewn in, a solid when nothing else is open; refused when the plane does not cut right round the surface); surface?: the surface body (default: the selected one, else the one made last): Trim, Patch and Stitch in one undo step → body, caps, solid"),
     CommandSpec::new("scan.edit_net", "Edit Net", crate::checked!("scan.edit_net", surface::edit_net))
         .icon("grid")
         .contract(&EDIT_NET_CONTRACT)
@@ -980,6 +988,8 @@ pub mod free_form;
 #[path = "scan_section.rs"]
 pub mod section;
 
+#[path = "scan_slice.rs"]
+pub mod slice;
 #[path = "scan_surface.rs"]
 pub mod surface;
 

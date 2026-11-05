@@ -407,6 +407,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             ScanFreeForm(crate::dialogs_scan_free_form::NewFreeForm),
             ScanWrapSurface(crate::dialogs_scan_free_form::WrapSurface),
             ScanMergeSurfaces(crate::dialogs_scan_free_form::MergeSurfaces),
+            ScanSliceSurface(crate::dialogs_scan_slice::SliceSurface),
             ScanFloating(crate::dialogs_scan_clean::Floating),
             ScanHoles(crate::dialogs_scan_clean::Holes),
             ScanReduce(crate::dialogs_scan_clean::Reduce),
@@ -1120,6 +1121,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_scan_free_form::start(app, id))
                     .or_else(|| crate::dialogs_scan_clean::start(app, id))
                     .or_else(|| crate::dialogs_scan_section::start(app, id))
+                    .or_else(|| crate::dialogs_scan_slice::start(app, id))
                     .or_else(|| crate::dialogs_appearance::start(app, id))
                     .or_else(|| crate::dialogs_motion::start(app, id))
                     .or_else(|| crate::dialogs_parts::start(app, id))
@@ -2586,6 +2588,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::ScanFreeForm(_) => "NEW FREE FORM",
         Kind::ScanWrapSurface(_) => "WRAP SURFACE",
         Kind::ScanMergeSurfaces(_) => "MERGE SURFACES",
+        Kind::ScanSliceSurface(_) => "SLICE SURFACE",
         Kind::ScanFloating(_) => "FLOATING PIECES",
         Kind::ScanHoles(_) => "FILL HOLES",
         Kind::ScanReduce(_) => "REDUCE MESH",
@@ -5630,6 +5633,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanFreeForm(k) => return crate::dialogs_scan_free_form::commands(k),
         Kind::ScanWrapSurface(k) => return crate::dialogs_scan_free_form::wrap_commands(k, &d.inputs),
         Kind::ScanMergeSurfaces(k) => return crate::dialogs_scan_free_form::merge_commands(k),
+        Kind::ScanSliceSurface(k) => return crate::dialogs_scan_slice::commands(app, k, &d.inputs),
         Kind::ScanFloating(k) => return crate::dialogs_scan_clean::commands(k),
         Kind::ScanHoles(k) => return crate::dialogs_scan_clean::holes_commands(k),
         Kind::ScanReduce(k) => return crate::dialogs_scan_clean::reduce_commands(k),

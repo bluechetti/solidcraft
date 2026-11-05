@@ -137,6 +137,7 @@ mod tests {
             "scan.edit_net",
             "scan.wrap_surface",
             "scan.merge_surfaces",
+            "scan.slice_surface",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {

@@ -581,6 +581,39 @@ pub struct ScanMergeSurfacesResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Slice a surface by a plane, keeping one side, and with `cap` close each loop of the cut with a
+/// flat face sewn in (a solid when nothing else is open). One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanSliceSurfaceParams {
+    /// The plane: XY, XZ, YZ, a construction plane's name, or {origin, normal}.
+    pub plane: Value,
+    /// The side kept: front (where the plane's normal points, the default), back, or a point
+    /// [x, y, z] on it.
+    #[serde(default)]
+    pub keep: Option<Value>,
+    /// Close each loop of the cut with a flat face sewn in. Default: true; refused when the plane
+    /// does not cut right round the surface.
+    #[serde(default)]
+    pub cap: Option<bool>,
+    /// The surface body. Default: the selected one, else the surface made last.
+    #[serde(default)]
+    pub surface: Option<String>,
+}
+
+/// What `scan.slice_surface` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanSliceSurfaceResult {
+    /// The surface sliced.
+    pub body: String,
+    /// How many loops of the cut were capped, and whether the body is now a solid.
+    pub caps: usize,
+    pub solid: bool,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// A whole control net: its points each way, its knots each way, and its points (u fastest).
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]

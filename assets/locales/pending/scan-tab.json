@@ -179,7 +179,16 @@
     "ui.scan_merge_gap": "Gap",
     "ui.scan_merge_stitch": "Sew into one body",
     "ui.scan_merge_found": "{seams} pairs of sides of {surfaces} surfaces made one, {gap} apart at most.",
-    "ui.scan_merge_hint": "Choose the surfaces to merge, or none for every one. Sides that run along each other within the gap become one curve: put the corners of neighboring free forms together when you click them."
+    "ui.scan_merge_hint": "Choose the surfaces to merge, or none for every one. Sides that run along each other within the gap become one curve: put the corners of neighboring free forms together when you click them.",
+    "cmd.scan_slice_surface": "Slice Surface",
+    "help.scan.slice_surface": "Cuts a surface with a plane, keeping one side, and caps the cut with a flat face sewn in: a part made round with free forms becomes a solid. Use it to square off a free form at a symmetry plane or at the part's ends.",
+    "ui.scan_slice_keep": "Keep",
+    "ui.scan_slice_front": "Front",
+    "ui.scan_slice_back": "Back",
+    "ui.scan_slice_cap": "Cap the cut",
+    "ui.scan_slice_loops": "Loops to cap",
+    "ui.scan_slice_open": "The plane does not cut right round the surface, so there is nothing to cap: turn Cap off to slice it open, or merge the surfaces round the part first.",
+    "ui.scan_slice_hint": "Pick the plane to slice with: a construction plane, such as a symmetry plane, or a flat face. Front keeps the side the plane faces."
   },
   "de": {
     "ALIGN": "AUSRICHTEN",
@@ -361,7 +370,16 @@
     "ui.scan_merge_gap": "Spalt",
     "ui.scan_merge_stitch": "Zu einem Körper nähen",
     "ui.scan_merge_found": "{seams} Randpaare von {surfaces} Flächen vereint, höchstens {gap} voneinander entfernt.",
-    "ui.scan_merge_hint": "Wählen Sie die zusammenzuführenden Flächen, oder keine für alle. Ränder, die innerhalb des Spalts aneinander entlanglaufen, werden eine Kurve: Setzen Sie beim Klicken die Ecken benachbarter Freiformen aufeinander."
+    "ui.scan_merge_hint": "Wählen Sie die zusammenzuführenden Flächen, oder keine für alle. Ränder, die innerhalb des Spalts aneinander entlanglaufen, werden eine Kurve: Setzen Sie beim Klicken die Ecken benachbarter Freiformen aufeinander.",
+    "cmd.scan_slice_surface": "Fläche schneiden",
+    "help.scan.slice_surface": "Schneidet eine Fläche mit einer Ebene, behält eine Seite und schließt den Schnitt mit einer eingenähten ebenen Fläche: Ein rundum aus Freiformen erstelltes Teil wird ein Volumenkörper. Verwenden Sie es, um eine Freiform an einer Symmetrieebene oder an den Enden des Teils gerade abzuschneiden.",
+    "ui.scan_slice_keep": "Behalten",
+    "ui.scan_slice_front": "Vorne",
+    "ui.scan_slice_back": "Hinten",
+    "ui.scan_slice_cap": "Schnitt schließen",
+    "ui.scan_slice_loops": "Zu schließende Schleifen",
+    "ui.scan_slice_open": "Die Ebene schneidet die Fläche nicht ringsum, also gibt es nichts zu schließen: Schalten Sie „Schnitt schließen“ aus, um offen zu schneiden, oder führen Sie die Flächen rund um das Teil zuerst zusammen.",
+    "ui.scan_slice_hint": "Wählen Sie die Schnittebene: eine Konstruktionsebene, etwa eine Symmetrieebene, oder eine ebene Fläche. „Vorne“ behält die Seite, der die Ebene zugewandt ist."
   },
   "ja": {
     "ALIGN": "位置合わせ",
@@ -543,7 +561,16 @@
     "ui.scan_merge_gap": "すき間",
     "ui.scan_merge_stitch": "1つのボディに縫い合わせる",
     "ui.scan_merge_found": "{surfaces} 枚のサーフェスの {seams} 組の辺を1つにしました。最大 {gap} 離れていました。",
-    "ui.scan_merge_hint": "結合するサーフェスを選ぶか、すべてなら何も選びません。すき間以内で沿い合う辺は1本の曲線になります。隣のフリーフォームの角は、クリックするときに合わせてください。"
+    "ui.scan_merge_hint": "結合するサーフェスを選ぶか、すべてなら何も選びません。すき間以内で沿い合う辺は1本の曲線になります。隣のフリーフォームの角は、クリックするときに合わせてください。",
+    "cmd.scan_slice_surface": "サーフェスをスライス",
+    "help.scan.slice_surface": "平面でサーフェスを切って片側を残し、切り口を縫い込んだ平らな面でふさぎます。フリーフォームで周りを作った部品がソリッドになります。対称面や部品の端でフリーフォームを切りそろえるのに使います。",
+    "ui.scan_slice_keep": "残す側",
+    "ui.scan_slice_front": "表",
+    "ui.scan_slice_back": "裏",
+    "ui.scan_slice_cap": "切り口をふさぐ",
+    "ui.scan_slice_loops": "ふさぐループ",
+    "ui.scan_slice_open": "平面がサーフェスを一周して切っていないので、ふさぐものがありません。開いたまま切るには「切り口をふさぐ」をオフにするか、先に部品の周りのサーフェスを結合してください。",
+    "ui.scan_slice_hint": "切る平面を選びます。対称面などの構築平面か、平らな面です。「表」は平面が向いている側を残します。"
   },
   "ko": {
     "ALIGN": "정렬",
@@ -725,7 +752,16 @@
     "ui.scan_merge_gap": "틈",
     "ui.scan_merge_stitch": "하나의 바디로 꿰매기",
     "ui.scan_merge_found": "곡면 {surfaces}개의 가장자리 {seams}쌍을 하나로 만들었습니다. 최대 {gap} 떨어져 있었습니다.",
-    "ui.scan_merge_hint": "병합할 곡면을 고르거나, 모두 병합하려면 아무것도 고르지 마세요. 틈 안에서 맞닿아 이어지는 가장자리는 하나의 곡선이 됩니다. 이웃 자유형의 모서리는 클릭할 때 맞춰 두세요."
+    "ui.scan_merge_hint": "병합할 곡면을 고르거나, 모두 병합하려면 아무것도 고르지 마세요. 틈 안에서 맞닿아 이어지는 가장자리는 하나의 곡선이 됩니다. 이웃 자유형의 모서리는 클릭할 때 맞춰 두세요.",
+    "cmd.scan_slice_surface": "곡면 자르기",
+    "help.scan.slice_surface": "평면으로 곡면을 잘라 한쪽을 남기고, 잘린 곳을 꿰매 넣은 평평한 면으로 막습니다. 자유형으로 둘레를 만든 부품이 솔리드가 됩니다. 대칭 평면이나 부품 끝에서 자유형을 반듯하게 자를 때 사용하세요.",
+    "ui.scan_slice_keep": "남길 쪽",
+    "ui.scan_slice_front": "앞",
+    "ui.scan_slice_back": "뒤",
+    "ui.scan_slice_cap": "잘린 곳 막기",
+    "ui.scan_slice_loops": "막을 고리",
+    "ui.scan_slice_open": "평면이 곡면을 한 바퀴 둘러 자르지 않아 막을 것이 없습니다. 열린 채로 자르려면 '잘린 곳 막기'를 끄거나, 먼저 부품 둘레의 곡면을 병합하세요.",
+    "ui.scan_slice_hint": "자를 평면을 고르세요. 대칭 평면 같은 구성 평면이나 평평한 면입니다. '앞'은 평면이 향한 쪽을 남깁니다."
   },
   "zh": {
     "ALIGN": "对齐",
@@ -907,7 +943,16 @@
     "ui.scan_merge_gap": "间隙",
     "ui.scan_merge_stitch": "缝合成一个实体",
     "ui.scan_merge_found": "已将 {surfaces} 个曲面的 {seams} 对边合为一条，最多相距 {gap}。",
-    "ui.scan_merge_hint": "选择要合并的曲面，或不选以合并全部。在间隙内彼此相沿的边将成为一条曲线：单击时让相邻自由曲面的角重合。"
+    "ui.scan_merge_hint": "选择要合并的曲面，或不选以合并全部。在间隙内彼此相沿的边将成为一条曲线：单击时让相邻自由曲面的角重合。",
+    "cmd.scan_slice_surface": "切割曲面",
+    "help.scan.slice_surface": "用平面切割曲面，保留一侧，并用缝入的平面封住切口：用自由曲面围成的零件即成为实体。用于在对称平面或零件两端将自由曲面切齐。",
+    "ui.scan_slice_keep": "保留",
+    "ui.scan_slice_front": "正面",
+    "ui.scan_slice_back": "背面",
+    "ui.scan_slice_cap": "封闭切口",
+    "ui.scan_slice_loops": "要封闭的环",
+    "ui.scan_slice_open": "平面没有绕曲面切一整圈，因此没有可封闭的切口：关闭“封闭切口”以开口切割，或先合并零件周围的曲面。",
+    "ui.scan_slice_hint": "选择用于切割的平面：构造平面（如对称平面）或平面面。“正面”保留平面朝向的一侧。"
   },
   "ar": {
     "ALIGN": "محاذاة",
@@ -1089,7 +1134,16 @@
     "ui.scan_merge_gap": "الفجوة",
     "ui.scan_merge_stitch": "الخياطة في جسم واحد",
     "ui.scan_merge_found": "جُعل {seams} زوجًا من حواف {surfaces} أسطح حافة واحدة، بفجوة {gap} على الأكثر.",
-    "ui.scan_merge_hint": "اختر الأسطح المراد دمجها، أو لا شيء لدمجها كلها. الحواف الممتدة بمحاذاة بعضها ضمن الفجوة تصبح منحنى واحدًا: ضع زوايا الأشكال الحرة المتجاورة معًا عند نقرها."
+    "ui.scan_merge_hint": "اختر الأسطح المراد دمجها، أو لا شيء لدمجها كلها. الحواف الممتدة بمحاذاة بعضها ضمن الفجوة تصبح منحنى واحدًا: ضع زوايا الأشكال الحرة المتجاورة معًا عند نقرها.",
+    "cmd.scan_slice_surface": "تقطيع سطح",
+    "help.scan.slice_surface": "يقطع سطحًا بمستوٍ ويُبقي جانبًا واحدًا، ويسدّ القطع بوجه مستوٍ مخيط فيه: فتصبح القطعة المصنوعة بالأشكال الحرة من حولها جسمًا مصمتًا. استخدمه لتسوية شكل حر عند مستوى تماثل أو عند طرفي القطعة.",
+    "ui.scan_slice_keep": "الإبقاء",
+    "ui.scan_slice_front": "الأمام",
+    "ui.scan_slice_back": "الخلف",
+    "ui.scan_slice_cap": "سدّ القطع",
+    "ui.scan_slice_loops": "الحلقات المراد سدّها",
+    "ui.scan_slice_open": "لا يقطع المستوى السطح من كل جهة، فلا شيء يُسدّ: أوقف «سدّ القطع» لتقطيعه مفتوحًا، أو ادمج الأسطح حول القطعة أولًا.",
+    "ui.scan_slice_hint": "اختر المستوى الذي تقطع به: مستوى إنشاء، كمستوى تماثل، أو وجهًا مستويًا. «الأمام» يُبقي الجانب الذي يواجهه المستوى."
   },
   "he": {
     "ALIGN": "יישור",
@@ -1271,7 +1325,16 @@
     "ui.scan_merge_gap": "מרווח",
     "ui.scan_merge_stitch": "תפירה לגוף אחד",
     "ui.scan_merge_found": "{seams} זוגות צלעות של {surfaces} משטחים אוחדו, במרחק של {gap} לכל היותר.",
-    "ui.scan_merge_hint": "בחרו את המשטחים למיזוג, או אף אחד כדי למזג את כולם. צלעות הנמשכות זו לאורך זו בתוך המרווח הופכות לעקום אחד: הניחו את פינות הצורות החופשיות השכנות יחד כשאתם לוחצים עליהן."
+    "ui.scan_merge_hint": "בחרו את המשטחים למיזוג, או אף אחד כדי למזג את כולם. צלעות הנמשכות זו לאורך זו בתוך המרווח הופכות לעקום אחד: הניחו את פינות הצורות החופשיות השכנות יחד כשאתם לוחצים עליהן.",
+    "cmd.scan_slice_surface": "חיתוך משטח",
+    "help.scan.slice_surface": "חותך משטח במישור, שומר צד אחד, וסוגר את החתך בפאה שטוחה שנתפרת פנימה: חלק שנבנה סביב מצורות חופשיות הופך למוצק. השתמשו בו כדי ליישר צורה חופשית במישור סימטריה או בקצות החלק.",
+    "ui.scan_slice_keep": "שמירה",
+    "ui.scan_slice_front": "קדימה",
+    "ui.scan_slice_back": "אחורה",
+    "ui.scan_slice_cap": "סגירת החתך",
+    "ui.scan_slice_loops": "לולאות לסגירה",
+    "ui.scan_slice_open": "המישור אינו חותך את המשטח מסביב, ולכן אין מה לסגור: כבו את „סגירת החתך” כדי לחתוך פתוח, או מזגו קודם את המשטחים סביב החלק.",
+    "ui.scan_slice_hint": "בחרו את המישור לחיתוך: מישור עזר, כמו מישור סימטריה, או פאה שטוחה. „קדימה” שומר את הצד שאליו המישור פונה."
   },
   "vi": {
     "ALIGN": "CĂN CHỈNH",
@@ -1453,7 +1516,16 @@
     "ui.scan_merge_gap": "Khe hở",
     "ui.scan_merge_stitch": "Khâu thành một khối",
     "ui.scan_merge_found": "Đã hợp {seams} cặp cạnh của {surfaces} mặt thành một, cách nhau nhiều nhất {gap}.",
-    "ui.scan_merge_hint": "Chọn các mặt cần gộp, hoặc không chọn để gộp tất cả. Các cạnh chạy dọc nhau trong khe hở trở thành một đường cong: hãy đặt các góc của những mặt tự do kề nhau trùng nhau khi bấm."
+    "ui.scan_merge_hint": "Chọn các mặt cần gộp, hoặc không chọn để gộp tất cả. Các cạnh chạy dọc nhau trong khe hở trở thành một đường cong: hãy đặt các góc của những mặt tự do kề nhau trùng nhau khi bấm.",
+    "cmd.scan_slice_surface": "Cắt mặt",
+    "help.scan.slice_surface": "Cắt một mặt bằng một mặt phẳng, giữ một bên, và bịt vết cắt bằng một mặt phẳng khâu vào: chi tiết được bao quanh bằng mặt tự do trở thành khối đặc. Dùng để cắt bằng một mặt tự do tại mặt phẳng đối xứng hoặc ở hai đầu chi tiết.",
+    "ui.scan_slice_keep": "Giữ",
+    "ui.scan_slice_front": "Trước",
+    "ui.scan_slice_back": "Sau",
+    "ui.scan_slice_cap": "Bịt vết cắt",
+    "ui.scan_slice_loops": "Vòng cần bịt",
+    "ui.scan_slice_open": "Mặt phẳng không cắt trọn quanh mặt, nên không có gì để bịt: tắt Bịt vết cắt để cắt hở, hoặc gộp các mặt quanh chi tiết trước.",
+    "ui.scan_slice_hint": "Chọn mặt phẳng để cắt: một mặt phẳng dựng, như mặt phẳng đối xứng, hoặc một mặt phẳng của vật. Trước giữ bên mà mặt phẳng hướng tới."
   },
   "en-GB": {
     "cmd.scan_center": "Centre on Origin",

@@ -213,7 +213,7 @@ pub use polyhedron::{HalfSpace, convex_polyhedron, draft, offset_faces, shell};
 pub use prism::{PLANAR_FIT_TOL, extrude_planar_regions, planar_regions_boolean};
 pub use prism_curve::{PlanarPiece, PlanarSpline};
 pub use prism_measure::{PrismSection, certified_prism_equivalent, certified_prism_section};
-pub use repair::{Hole, RebuiltFace, RefusedFace, RepairOptions, RepairReport, SewnGap, repair};
+pub use repair::{Hole, RebuiltFace, RefusedFace, RepairOptions, RepairReport, SewnGap, free_loops, repair};
 pub use sew::{EdgeSpec, FaceSpec, SurfSpec, sew, sew_touching};
 pub use solidcraft_smlib::trace as smlib_trace;
 pub use splitface::{SplitTool, split_body, split_faces, split_faces_with_map};

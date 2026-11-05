@@ -866,3 +866,42 @@ fn merge_surfaces_sews_free_forms_side_by_side() {
     run(&mut s, "edit.undo", json!({}));
     assert!(s.model.state().body("FreeForm2").is_some(), "one undo step");
 }
+
+/// Four flat Free Forms round a square tube are merged into one open tube; sliced across with a
+/// cap it is closed at that end, and sliced again at the other it is a solid. One free form alone
+/// has no loop to cap and is refused, but sliced open without one.
+#[test]
+fn slice_surface_caps_a_tube_into_a_solid() {
+    let (mut s, _) = session_with_triangles("slice", &dome_triangles(10));
+    for corners in [
+        json!([[0, 0, 0], [20, 0, 0], [20, 0, 40], [0, 0, 40]]),
+        json!([[20, 0, 0], [20, 20, 0], [20, 20, 40], [20, 0, 40]]),
+        json!([[20, 20, 0], [0, 20, 0], [0, 20, 40], [20, 20, 40]]),
+        json!([[0, 20, 0], [0, 0, 0], [0, 0, 40], [0, 20, 40]]),
+    ] {
+        run(&mut s, "scan.free_form", json!({"corners": corners, "fit": "off"}));
+    }
+    let lone = s.execute("scan.slice_surface", &json!({"surface": "FreeForm1", "plane": {"origin": [0, 0, 30], "normal": [0, 0, 1]}}));
+    assert!(lone.as_ref().is_err_and(|e| e.to_string().contains("right round")), "{lone:?}");
+    let merged = run(&mut s, "scan.merge_surfaces", json!({}));
+    assert_eq!(merged["seams"], 4, "{merged}");
+    let top = run(&mut s, "scan.slice_surface", json!({"plane": {"origin": [0, 0, 30], "normal": [0, 0, 1]}, "keep": "back"}));
+    assert_eq!((top["body"].as_str(), top["caps"].as_u64(), top["solid"].as_bool()), (Some("FreeForm1"), Some(1), Some(false)), "{top}");
+    let bottom = run(&mut s, "scan.slice_surface", json!({"surface": "FreeForm1", "plane": {"origin": [0, 0, 5], "normal": [0, 0, 1]}}));
+    assert_eq!((bottom["caps"].as_u64(), bottom["solid"].as_bool()), (Some(1), Some(true)), "{bottom}");
+    {
+        let state = s.model.state();
+        let body = state.body("FreeForm1").unwrap();
+        assert_eq!(solidcraft_kernel::brep_record(&body.body).unwrap().faces.len(), 6, "four sides and two caps");
+        let volume = body.body.volume_at(1e-3).unwrap_or(0.0);
+        assert!((volume - 20.0 * 20.0 * 25.0).abs() < 1.0, "{volume}");
+    }
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.model.state().body("FreeForm1").map(|b| solidcraft_kernel::brep_record(&b.body).unwrap().faces.len()), Some(5), "one undo step");
+    let open = run(
+        &mut s,
+        "scan.slice_surface",
+        json!({"surface": "FreeForm1", "plane": {"origin": [10, 10, 10], "normal": [1, 0, 0]}, "keep": [15, 10, 10], "cap": false}),
+    );
+    assert_eq!((open["caps"].as_u64(), open["solid"].as_bool()), (Some(0), Some(false)), "{open}");
+}
