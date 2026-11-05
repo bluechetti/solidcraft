@@ -21,6 +21,8 @@
 //! - [`reconstruct`]: what Reconstruct reads off Find All's shapes: prisms, a turned part,
 //!   repeats and round holes.
 //! - [`reduce`]: fewer triangles for a scan, cheapest collapses first (quadric errors).
+//! - [`register`]: one scan laid onto another (a second pass onto the first): point-to-plane
+//!   ICP both ways, from starts the principal axes and matched surface features give.
 //! - [`repair`]: copies, edges of three or more faces and slivers put right.
 //! - [`section`]: where a plane cuts the scan, as runs of points in the plane.
 //! - [`segment`]: Find All: the scan cut into regions, each a simple shape or freeform.
@@ -46,6 +48,7 @@ pub mod place;
 pub mod profile;
 pub mod reconstruct;
 pub mod reduce;
+pub mod register;
 pub mod repair;
 pub mod section;
 pub mod segment;

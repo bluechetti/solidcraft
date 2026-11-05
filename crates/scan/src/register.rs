@@ -1,0 +1,974 @@
+//! Registration: one scan laid onto another (a second pass onto the first), after SurfaceCraft's.
+//! The fit is iterative closest point, point to plane, both ways (the moving scan's points to the
+//! reference and the reference's to the moving scan), trimmed of the share that has nothing under
+//! it and robustly weighted. It starts from where the scan lies and, searching, also from every way
+//! the two principal-axis frames can lie on each other and from the moves that matched surface
+//! features agree on (Fast Point Feature Histograms, Rusu, Blodow and Beetz 2009, matched and
+//! sampled by consensus); each start is judged by how much of the scan it lays on the reference,
+//! close and facing the same way, so a part that overlaps in part is not laid askew. A second
+//! placement nearly as good (a part nearly its own mirror image) is said.
+
+use solidcore_record::Vec3;
+use solidcraft_geom::compare::{TriangleTree, closest_on_triangle};
+use solidcraft_geom::prelude::*;
+
+use crate::Scan;
+use crate::place::Rigid;
+
+/// How a scan is laid onto a reference.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Settings {
+    /// Search the starts (principal axes, matched features) as well as where the scan lies.
+    pub search: bool,
+    /// The share of the scan, 0 to 0.6, the fit may leave out because the reference has nothing
+    /// near it.
+    pub ignored: f64,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings { search: true, ignored: 0.2 }
+    }
+}
+
+/// What laying a scan onto a reference found.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Registration {
+    /// The move that lays the scan on the reference.
+    pub moved: Rigid,
+    /// How far the scan lay from the reference before and after (the trimmed root mean square of
+    /// the nearest distances), in mm.
+    pub rms_before: f64,
+    pub rms_after: f64,
+    /// The share of the scan within a few widths of the surfaces' roughness of the reference after.
+    pub matched: f64,
+    pub rounds: usize,
+    pub converged: bool,
+    /// Where the winning start came from.
+    pub start: &'static str,
+    /// Another placement, well apart, that lays nearly as much of the scan on the reference.
+    pub rival: Option<String>,
+}
+
+/// Why a scan could not be laid onto a reference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegisterError {
+    /// A scan has too little surface to fit.
+    TooLittle,
+    /// The fit found too few points of the scan near the reference.
+    NoOverlap,
+}
+
+impl std::fmt::Display for RegisterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            RegisterError::TooLittle => "a scan has too little surface to lay onto the other",
+            RegisterError::NoOverlap => "the scans have too little in common to lay one onto the other",
+        })
+    }
+}
+
+/// Samples the fit works with, and the finer ones it finishes with.
+const FEW: usize = 1_500;
+const MANY: usize = 8_000;
+/// Points each scan's features are described at.
+const FEATURE_POINTS: usize = 4_000;
+/// The most vertices the last pass and the matched share are read at.
+const VERTEX_LIMIT: usize = 200_000;
+/// How many widths of the surfaces' roughness two surfaces of one part may lie apart.
+const ROUGHNESS_REACH: f64 = 5.0;
+/// Two placements are two when one turns more than this from the other (5°), or moves the scan's
+/// middle more than this many spacings.
+const DISTINCT_TURN: f64 = 0.087;
+const DISTINCT_SLIDE: f64 = 3.0;
+/// The most placements fitted to the end and judged again, and the share of the best one must
+/// reach to be among them; a second at this share of the best is a rival.
+const MOST_FINALISTS: usize = 4;
+const FINALIST_SHARE: f64 = 0.5;
+const RIVAL_SHARE: f64 = 0.9;
+/// The cosine two normals must reach to face the same way, either way round.
+const FACING: f64 = 0.8;
+/// The median absolute deviation as a standard deviation, for normal noise.
+const MAD_TO_SIGMA: f64 = 1.4826;
+
+impl Rigid {
+    /// This move, then `after`.
+    pub fn then(&self, after: &Rigid) -> Rigid {
+        let rows = |r: &[[f64; 3]; 3], c: &[[f64; 3]; 3]| -> [[f64; 3]; 3] {
+            std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| r[i][k] * c[k][j]).sum()))
+        };
+        Rigid { rotation: rows(&after.rotation, &self.rotation), translation: after.apply(self.translation) }
+    }
+
+    /// How far this move turns from `other`, in radians.
+    pub fn turn_from(&self, other: &Rigid) -> f64 {
+        let (a, b) = (self.rotation, other.rotation);
+        let trace: f64 = (0..3).map(|i| (0..3).map(|k| a[k][i] * b[k][i]).sum::<f64>()).sum();
+        ((trace - 1.0) / 2.0).clamp(-1.0, 1.0).acos()
+    }
+}
+
+/// A scan as the fit reads it: its nearest points and its triangles' directions.
+struct Surface<'a> {
+    scan: Scan<'a>,
+    tree: TriangleTree,
+    diagonal: f64,
+}
+
+/// The nearest point of a surface to a point.
+#[derive(Clone, Copy)]
+struct Hit {
+    point: Vec3,
+    distance: f64,
+    normal: Option<Vec3>,
+}
+
+impl<'a> Surface<'a> {
+    fn new(scan: Scan<'a>) -> Self {
+        let mesh = solidcraft_geom::Mesh { positions: scan.positions.to_vec(), triangles: scan.triangles.to_vec(), ..Default::default() };
+        Surface { tree: TriangleTree::new(&mesh), diagonal: scan.extent().max(1e-9), scan }
+    }
+
+    fn nearest(&self, p: Vec3) -> Option<Hit> {
+        let (distance, t) = self.tree.nearest(p)?;
+        let [a, b, c] = self.scan.corners(t as usize)?;
+        Some(Hit { point: closest_on_triangle(p, a, b, c), distance, normal: (b - a).cross(c - a).normalized() })
+    }
+}
+
+/// A point of the scan with what it is matched to.
+#[derive(Clone, Copy, Debug)]
+struct Pair {
+    point: Vec3,
+    target: Vec3,
+    normal: Vec3,
+    distance: f64,
+    weight: f64,
+}
+
+/// Points spread over the scan's surface in proportion to area (a low-discrepancy pattern, so the
+/// same scan gives the same points), at most `count`.
+pub fn sample(scan: &Scan, count: usize) -> Vec<Vec3> {
+    let mut cumulative = Vec::with_capacity(scan.triangle_count());
+    let mut total = 0.0;
+    for t in 0..scan.triangle_count() {
+        let area = scan.corners(t).map_or(0.0, |[a, b, c]| (b - a).cross(c - a).len() / 2.0);
+        total += if area.is_finite() { area } else { 0.0 };
+        cumulative.push(total);
+    }
+    if !(total > 0.0) || count == 0 {
+        return Vec::new();
+    }
+    let (g1, g2) = (0.754_877_666_246_692_8, 0.569_840_290_998_053_3);
+    (0..count)
+        .filter_map(|i| {
+            let at = (i as f64 + 0.5) / count as f64 * total;
+            let t = cumulative.partition_point(|&c| c < at).min(cumulative.len() - 1);
+            let [a, b, c] = scan.corners(t)?;
+            let (mut r1, mut r2) = ((0.5 + i as f64 * g1).fract(), (0.5 + i as f64 * g2).fract());
+            if r1 + r2 > 1.0 {
+                (r1, r2) = (1.0 - r1, 1.0 - r2);
+            }
+            Some(a + (b - a) * r1 + (c - a) * r2)
+        })
+        .collect()
+}
+
+fn every(points: &[Vec3], limit: usize) -> Vec<Vec3> {
+    crate::thinned(points, limit)
+}
+
+/// The rms of the nearest distances from `points`, moved, to `reference`, the worst `ignored`
+/// share left out.
+fn trimmed_rms(points: &[Vec3], moved: &Rigid, reference: &Surface, ignored: f64) -> f64 {
+    let mut distances: Vec<f64> = points.iter().filter_map(|p| reference.nearest(moved.apply(*p)).map(|h| h.distance)).collect();
+    if distances.is_empty() {
+        return f64::INFINITY;
+    }
+    distances.sort_by(f64::total_cmp);
+    let keep = ((distances.len() as f64 * (1.0 - ignored)).round() as usize).clamp(1, distances.len());
+    (distances[..keep].iter().map(|d| d * d).sum::<f64>() / keep as f64).sqrt()
+}
+
+/// Each point, moved, paired with the nearest point of `reference`, measured along the
+/// reference's direction there (along the gap itself at an edge or a corner).
+fn pairs_to(points: &[Vec3], moved: &Rigid, reference: &Surface) -> Vec<Pair> {
+    points
+        .iter()
+        .filter_map(|&s| {
+            let p = moved.apply(s);
+            let hit = reference.nearest(p)?;
+            let mut normal = hit.normal?;
+            let delta = p - hit.point;
+            if hit.distance > 1e-10 * reference.diagonal && delta.dot(normal).abs() < (1.0 - 1e-6) * hit.distance {
+                normal = delta / hit.distance;
+            }
+            Some(Pair { point: p, target: hit.point, normal, distance: hit.distance, weight: 1.0 })
+        })
+        .collect()
+}
+
+/// Each of the reference's points paired with the nearest point of the moving scan, moved.
+fn pairs_from(targets: &[Vec3], moved: &Rigid, moving: &Surface) -> Vec<Pair> {
+    let back = moved.inverse();
+    targets
+        .iter()
+        .filter_map(|&target| {
+            let hit = moving.nearest(back.apply(target))?;
+            let point = moved.apply(hit.point);
+            let mut normal = moved.turned(hit.normal?);
+            let delta = point - target;
+            if hit.distance > 1e-10 * moving.diagonal && delta.dot(normal).abs() < (1.0 - 1e-6) * hit.distance {
+                normal = delta / delta.len();
+            }
+            Some(Pair { point, target, normal, distance: hit.distance, weight: 1.0 })
+        })
+        .collect()
+}
+
+/// The finite pairs, nearest first: the worst `ignored` share left out, those past the median and
+/// three robust widths gated out, and each weighted by Cauchy's function of its distance.
+fn robust(pairs: Vec<Pair>, ignored: f64, reach: f64, gate: f64) -> Vec<Pair> {
+    let mut ordered: Vec<Pair> = pairs.into_iter().filter(|p| p.distance.is_finite() && p.distance <= gate).collect();
+    ordered.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+    if ordered.len() < 6 {
+        return Vec::new();
+    }
+    let median = ordered[ordered.len() / 2].distance;
+    let mut deviations: Vec<f64> = ordered.iter().map(|p| (p.distance - median).abs()).collect();
+    deviations.sort_by(f64::total_cmp);
+    let scatter = (MAD_TO_SIGMA * deviations[deviations.len() / 2]).max(1e-6 * reach.max(1.0));
+    let limit = median + 3.0 * scatter;
+    let keep = ((ordered.len() as f64 * (1.0 - ignored.clamp(0.0, 0.6))) as usize).max(6).min(ordered.len());
+    let scale = (median + scatter).max(1e-6 * reach.max(1.0));
+    ordered.truncate(keep);
+    ordered
+        .into_iter()
+        .filter(|p| p.distance <= limit)
+        .map(|mut p| {
+            let x = p.distance / scale;
+            p.weight = 1.0 / (1.0 + x * x);
+            p
+        })
+        .collect()
+}
+
+/// The eigenvalues and eigenvectors (columns, `v[i][k]` the i-th component of the k-th) of a
+/// symmetric 6 × 6 matrix, by Jacobi's rotations.
+fn eigen6(mut a: [[f64; 6]; 6]) -> ([f64; 6], [[f64; 6]; 6]) {
+    let mut v = [[0.0; 6]; 6];
+    for (i, row) in v.iter_mut().enumerate() {
+        row[i] = 1.0;
+    }
+    for _ in 0..60 {
+        let off: f64 = (0..6).flat_map(|i| (0..6).filter(move |&j| j != i).map(move |j| (i, j))).map(|(i, j)| a[i][j] * a[i][j]).sum();
+        if off < 1e-30 {
+            break;
+        }
+        for p in 0..6 {
+            for q in p + 1..6 {
+                if a[p][q].abs() < 1e-300 {
+                    continue;
+                }
+                let theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q]);
+                let t = theta.signum() / (theta.abs() + (theta * theta + 1.0).sqrt());
+                let t = if theta == 0.0 { 1.0 } else { t };
+                let c = 1.0 / (t * t + 1.0).sqrt();
+                let s = t * c;
+                for row in a.iter_mut() {
+                    let (akp, akq) = (row[p], row[q]);
+                    row[p] = c * akp - s * akq;
+                    row[q] = s * akp + c * akq;
+                }
+                let (row_p, row_q) = (a[p], a[q]);
+                for (k, (apk, aqk)) in row_p.into_iter().zip(row_q).enumerate() {
+                    a[p][k] = c * apk - s * aqk;
+                    a[q][k] = s * apk + c * aqk;
+                }
+                for row in v.iter_mut() {
+                    let (vp, vq) = (row[p], row[q]);
+                    row[p] = c * vp - s * vq;
+                    row[q] = s * vp + c * vq;
+                }
+            }
+        }
+    }
+    (std::array::from_fn(|i| a[i][i]), v)
+}
+
+/// What a run of the fit gave.
+struct Refined {
+    moved: Rigid,
+    rounds: usize,
+    converged: bool,
+}
+
+/// Point-to-plane ICP from `start`, both ways, at most `rounds` rounds, pairs further apart than
+/// `gate` left out. Directions the pairs do not pin (a plane slides along itself) are not moved.
+#[allow(clippy::too_many_arguments)]
+fn refine(points: &[Vec3], start: Rigid, reference: &Surface, ignored: f64, rounds: usize, moving: &Surface, reverse: &[Vec3], gate: f64) -> Refined {
+    let mut moved = start;
+    let (mut converged, mut used, mut previous) = (false, 0, f64::INFINITY);
+    let reach = reference.diagonal;
+    for round in 0..rounds {
+        used = round + 1;
+        let mut forward = robust(pairs_to(points, &moved, reference), ignored, reach, gate);
+        let mut backward = robust(pairs_from(reverse, &moved, moving), ignored, reach, gate);
+        if forward.len() < 6 || backward.len() < 6 {
+            break;
+        }
+        // The two ways count alike.
+        let count = forward.len() as f64;
+        let (fw, bw) = (forward.iter().map(|p| p.weight).sum::<f64>(), backward.iter().map(|p| p.weight).sum::<f64>());
+        for p in &mut forward {
+            p.weight *= count / fw.max(1e-12);
+        }
+        for p in &mut backward {
+            p.weight *= count / bw.max(1e-12);
+        }
+        forward.extend(backward);
+        let kept = forward;
+        let centroid = kept.iter().fold(Vec3::ZERO, |s, p| s + p.point) / kept.len() as f64;
+        let scale = (kept.iter().map(|p| (p.point - centroid).len2()).sum::<f64>() / kept.len() as f64).sqrt().max(1e-9 * reach);
+        let (mut h, mut g, mut sum) = ([[0.0f64; 6]; 6], [0.0f64; 6], 0.0);
+        for p in &kept {
+            let c = (p.point - centroid).cross(p.normal) / scale;
+            let row = [c.x, c.y, c.z, p.normal.x, p.normal.y, p.normal.z];
+            let residual = (p.point - p.target).dot(p.normal);
+            sum += p.weight * residual * residual;
+            for i in 0..6 {
+                g[i] -= p.weight * row[i] * residual;
+                for j in 0..6 {
+                    h[i][j] += p.weight * row[i] * row[j];
+                }
+            }
+        }
+        let (values, vectors) = eigen6(h);
+        let largest = values.iter().copied().fold(0.0, f64::max);
+        if !(largest > 0.0) {
+            break;
+        }
+        let mut x = [0.0; 6];
+        for k in 0..6 {
+            if !(values[k] > 1e-4 * largest) {
+                continue;
+            }
+            let along = (0..6).map(|i| vectors[i][k] * g[i]).sum::<f64>() / values[k];
+            for (i, xi) in x.iter_mut().enumerate() {
+                *xi += vectors[i][k] * along;
+            }
+        }
+        let turn = Vec3::new(x[0], x[1], x[2]) / scale;
+        let slide = Vec3::new(x[3], x[4], x[5]);
+        let angle = turn.len();
+        let rotation = match turn.normalized() {
+            Some(axis) if angle > 1e-15 => Rigid::turn(axis, angle),
+            _ => Rigid::shift(Vec3::ZERO),
+        };
+        let step = Rigid { translation: centroid - rotation.turned(centroid) + slide, ..rotation };
+        moved = moved.then(&step);
+        let rms = (sum / kept.len() as f64).sqrt();
+        if slide.len() + angle * scale < 1e-7 * reach || (previous - rms).abs() < 1e-9 * reach {
+            converged = true;
+            break;
+        }
+        previous = rms;
+    }
+    Refined { moved, rounds: used, converged }
+}
+
+/// The centroid, the axes longest first as a right-handed frame, and how far the points spread
+/// along each.
+fn principal(points: &[Vec3]) -> Option<(Vec3, [Vec3; 3], [f64; 3])> {
+    if points.is_empty() {
+        return None;
+    }
+    let centroid = points.iter().fold(Vec3::ZERO, |s, p| s + *p) / points.len() as f64;
+    let mut spread = [[0.0f64; 3]; 3];
+    for p in points {
+        let d = *p - centroid;
+        let d = [d.x, d.y, d.z];
+        for (row, di) in spread.iter_mut().zip(d) {
+            for (cell, dj) in row.iter_mut().zip(d) {
+                *cell += di * dj;
+            }
+        }
+    }
+    let (values, axes) = solidcraft_geom::inertia::principal(&spread, 0.0)?;
+    if !(values[2] > 0.0) {
+        return None;
+    }
+    let x = axes[2].normalized()?;
+    let y = axes[1].normalized()?;
+    Some((centroid, [x, y, x.cross(y)], [values[2], values[1], values[0]]))
+}
+
+/// The rigid move with rotation columns `f` times `eᵀ` and centres `from` onto `to`.
+fn frame_move(e: [Vec3; 3], f: [Vec3; 3], from: Vec3, to: Vec3) -> Rigid {
+    let get = |v: Vec3, i: usize| [v.x, v.y, v.z][i];
+    let rotation: [[f64; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| get(f[k], i) * get(e[k], j)).sum()));
+    let turn = Rigid { rotation, translation: Vec3::ZERO };
+    Rigid { translation: to - turn.turned(from), ..turn }
+}
+
+/// The ways of laying the moving points' principal axes on the reference's, centres together:
+/// the four turns that keep the axes' order, and with axes of near-equal spread, those that swap.
+fn principal_starts(moving: &[Vec3], reference: &[Vec3]) -> Vec<Rigid> {
+    let (Some(a), Some(b)) = (principal(moving), principal(reference)) else { return Vec::new() };
+    let mut permutations: Vec<[usize; 3]> = vec![[0, 1, 2]];
+    if a.2[1] > 0.7 * a.2[0] || b.2[1] > 0.7 * b.2[0] {
+        permutations.push([1, 0, 2]);
+    }
+    if a.2[2] > 0.7 * a.2[1] || b.2[2] > 0.7 * b.2[1] {
+        permutations.push([0, 2, 1]);
+    }
+    if permutations.len() == 3 {
+        permutations.extend([[1, 2, 0], [2, 0, 1], [2, 1, 0]]);
+    }
+    let mut starts = Vec::new();
+    for p in &permutations {
+        for signs in [[1.0, 1.0, 1.0], [1.0, -1.0, -1.0], [-1.0, 1.0, -1.0], [-1.0, -1.0, 1.0]] {
+            let (f0, f1) = (b.1[p[0]] * signs[0], b.1[p[1]] * signs[1]);
+            // Right-handed whatever the swap.
+            let f2 = f0.cross(f1);
+            starts.push(frame_move(a.1, [f0, f1, f2], a.0, b.0));
+        }
+    }
+    starts
+}
+
+/// The least-squares rigid move laying `sources` onto `targets` (in step): Kabsch's, from the
+/// eigenvectors of AᵀA. `None` for fewer than three pairs or points along a line.
+fn fit_pairs(sources: &[Vec3], targets: &[Vec3]) -> Option<Rigid> {
+    let n = sources.len().min(targets.len());
+    if n < 3 {
+        return None;
+    }
+    let cs = sources[..n].iter().fold(Vec3::ZERO, |s, p| s + *p) / n as f64;
+    let ct = targets[..n].iter().fold(Vec3::ZERO, |s, p| s + *p) / n as f64;
+    let mut a = [[0.0f64; 3]; 3];
+    for i in 0..n {
+        let (s, t) = (sources[i] - cs, targets[i] - ct);
+        let (s, t) = ([s.x, s.y, s.z], [t.x, t.y, t.z]);
+        for (r, ti) in a.iter_mut().zip(t) {
+            for (cell, sj) in r.iter_mut().zip(s) {
+                *cell += ti * sj;
+            }
+        }
+    }
+    let ata: [[f64; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| (0..3).map(|k| a[k][i] * a[k][j]).sum()));
+    let (values, axes) = solidcraft_geom::inertia::principal(&ata, 0.0)?;
+    let sigma = [values[2].max(0.0).sqrt(), values[1].max(0.0).sqrt()];
+    if !(sigma[0] > 1e-12 && sigma[1] > 1e-7 * sigma[0]) {
+        return None;
+    }
+    let (v1, v2) = (axes[2].normalized()?, axes[1].normalized()?);
+    let times = |v: Vec3| {
+        Vec3::new(
+            a[0][0] * v.x + a[0][1] * v.y + a[0][2] * v.z,
+            a[1][0] * v.x + a[1][1] * v.y + a[1][2] * v.z,
+            a[2][0] * v.x + a[2][1] * v.y + a[2][2] * v.z,
+        )
+    };
+    let (u1, u2) = (times(v1) / sigma[0], times(v2) / sigma[1]);
+    Some(frame_move([v1, v2, v1.cross(v2)], [u1, u2, u1.cross(u2)], cs, ct))
+}
+
+/// A grid of points by cells, for the points near a point.
+struct Grid<'a> {
+    points: &'a [Vec3],
+    cell: f64,
+    cells: std::collections::HashMap<[i64; 3], Vec<u32>>,
+}
+
+impl<'a> Grid<'a> {
+    fn new(points: &'a [Vec3], cell: f64) -> Self {
+        let mut cells: std::collections::HashMap<[i64; 3], Vec<u32>> = std::collections::HashMap::new();
+        for (i, p) in points.iter().enumerate() {
+            cells.entry(Self::key(*p, cell)).or_default().push(i as u32);
+        }
+        Grid { points, cell, cells }
+    }
+
+    fn key(p: Vec3, cell: f64) -> [i64; 3] {
+        [(p.x / cell).floor() as i64, (p.y / cell).floor() as i64, (p.z / cell).floor() as i64]
+    }
+
+    /// Each point within `reach` of `p`, with its distance.
+    fn within(&self, p: Vec3, reach: f64, mut found: impl FnMut(u32, f64)) {
+        let [x, y, z] = Self::key(p, self.cell);
+        let r = (reach / self.cell).ceil() as i64;
+        for i in x - r..=x + r {
+            for j in y - r..=y + r {
+                for k in z - r..=z + r {
+                    for &q in self.cells.get(&[i, j, k]).into_iter().flatten() {
+                        let d = self.points[q as usize].dist(p);
+                        if d <= reach {
+                            found(q, d);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Bins of each of a histogram's three angles.
+const BINS: usize = 11;
+const LENGTH: usize = 3 * BINS;
+
+/// How two oriented points lie to each other (the pair feature): the turn of the second normal
+/// about the first's frame and two cosines. `None` for points together or a frame with no turn.
+fn pair_feature(p1: Vec3, n1: Vec3, p2: Vec3, n2: Vec3) -> Option<[f64; 3]> {
+    let mut d = p2 - p1;
+    let length = d.len();
+    if !(length > 0.0) {
+        return None;
+    }
+    let (a1, a2) = (n1.dot(d) / length, n2.dot(d) / length);
+    let (source, target, third) = if a1.abs().acos() > a2.abs().acos() {
+        d = -d;
+        (n2, n1, -a2)
+    } else {
+        (n1, n2, a1)
+    };
+    let v = d.cross(source).normalized()?;
+    let w = source.cross(v);
+    Some([w.dot(target).atan2(source.dot(target)), v.dot(target), third])
+}
+
+fn bin(value: f64) -> usize {
+    ((BINS as f64 * (value + 1.0) * 0.5).floor().max(0.0) as usize).min(BINS - 1)
+}
+
+/// Each point's normal (the way its neighbours within `reach` spread least, turned to agree with
+/// the surface's) and its Fast Point Feature Histogram over `5 × spacing`.
+fn describe(points: &[Vec3], surface: &Surface, spacing: f64) -> Vec<[f32; LENGTH]> {
+    let grid = Grid::new(points, spacing);
+    let normals: Vec<Vec3> = points
+        .iter()
+        .map(|&p| {
+            let own = surface.nearest(p).and_then(|h| h.normal).unwrap_or(Vec3::Z);
+            let mut near = Vec::new();
+            grid.within(p, 2.0 * spacing, |q, _| near.push(points[q as usize]));
+            principal(&near).map(|(_, axes, _)| axes[2]).filter(|_| near.len() >= 5).map_or(own, |n| if n.dot(own) < 0.0 { -n } else { n })
+        })
+        .collect();
+    let neighbours: Vec<Vec<(u32, f64)>> = points
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| {
+            let mut near = Vec::new();
+            grid.within(p, 5.0 * spacing, |q, d| {
+                if q as usize != i && d > 0.0 {
+                    near.push((q, d));
+                }
+            });
+            near
+        })
+        .collect();
+    let simple: Vec<[f64; LENGTH]> = (0..points.len())
+        .map(|i| {
+            let mut h = [0.0; LENGTH];
+            let mut counted = 0usize;
+            for &(q, _) in &neighbours[i] {
+                let Some([f1, f2, f3]) = pair_feature(points[i], normals[i], points[q as usize], normals[q as usize]) else { continue };
+                h[bin(f1 / std::f64::consts::PI)] += 1.0;
+                h[BINS + bin(f2)] += 1.0;
+                h[2 * BINS + bin(f3)] += 1.0;
+                counted += 1;
+            }
+            if counted > 0 {
+                for v in &mut h {
+                    *v *= 100.0 / counted as f64;
+                }
+            }
+            h
+        })
+        .collect();
+    (0..points.len())
+        .map(|i| {
+            let mut sum = [0.0; LENGTH];
+            for &(q, distance) in &neighbours[i] {
+                for (s, v) in sum.iter_mut().zip(&simple[q as usize]) {
+                    *s += v / distance;
+                }
+            }
+            let mut out = [0.0f32; LENGTH];
+            for third in 0..3 {
+                let range = third * BINS..(third + 1) * BINS;
+                let total: f64 = sum[range.clone()].iter().sum();
+                for k in range {
+                    out[k] = ((if total > 0.0 { 100.0 * sum[k] / total } else { 0.0 }) + simple[i][k]) as f32;
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+/// For each of `from`, the one of `to` most like it.
+fn most_alike(from: &[[f32; LENGTH]], to: &[[f32; LENGTH]]) -> Vec<usize> {
+    from.iter()
+        .map(|f| {
+            to.iter()
+                .enumerate()
+                .map(|(j, t)| (f.iter().zip(t).map(|(x, y)| (x - y) * (x - y)).sum::<f32>(), j))
+                .fold((f32::INFINITY, 0), |best, c| if c.0 < best.0 { c } else { best })
+                .1
+        })
+        .collect()
+}
+
+/// A small fast generator, seeded, so the same scans give the same starts.
+struct SplitMix64(u64);
+
+impl SplitMix64 {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+}
+
+/// Moves that lay the moving points onto the reference's where their shapes agree, best first:
+/// each moving point matched to the reference point whose histogram is most like it, and the
+/// moves three matches agree on found by random sample consensus. At most eight, each different
+/// from the others.
+fn feature_starts(moving: &[Vec3], moving_surface: &Surface, reference: &[Vec3], reference_surface: &Surface, spacing: f64) -> Vec<Rigid> {
+    if moving.len() < 12 || reference.len() < 12 || !(spacing > 0.0) {
+        return Vec::new();
+    }
+    let (a, b) = (describe(moving, moving_surface, spacing), describe(reference, reference_surface, spacing));
+    let forward = most_alike(&a, &b);
+    let backward = most_alike(&b, &a);
+    let mutual: Vec<(usize, usize)> = forward.iter().enumerate().filter(|&(i, &j)| backward[j] == i).map(|(i, &j)| (i, j)).collect();
+    let matches = if mutual.len() >= 30 { mutual } else { forward.iter().copied().enumerate().collect() };
+    if matches.len() < 3 {
+        return Vec::new();
+    }
+    let (from, to): (Vec<Vec3>, Vec<Vec3>) = matches.iter().map(|&(i, j)| (moving[i], reference[j])).unzip();
+    let agree = 1.5 * spacing;
+    let shortest = 2.0 * spacing;
+    let agreeing = |t: &Rigid| from.iter().zip(&to).filter(|(p, q)| t.apply(**p).dist(**q) <= agree).count();
+    let mut random = SplitMix64(0xC0A2_5E00);
+    let mut found: Vec<(usize, usize, Rigid)> = Vec::new();
+    for trial in 0..20_000usize {
+        let mut pick = || (random.next() % from.len() as u64) as usize;
+        let k = [pick(), pick(), pick()];
+        if k[0] == k[1] || k[1] == k[2] || k[0] == k[2] {
+            continue;
+        }
+        let alike = [(0, 1), (1, 2), (0, 2)].iter().all(|&(x, y)| {
+            let (m, r) = (from[k[x]].dist(from[k[y]]), to[k[x]].dist(to[k[y]]));
+            m >= shortest && r >= shortest && m.min(r) >= 0.9 * m.max(r)
+        });
+        if !alike {
+            continue;
+        }
+        let Some(solved) = fit_pairs(&k.map(|i| from[i]), &k.map(|i| to[i])) else { continue };
+        let count = agreeing(&solved);
+        if count >= 3 {
+            found.push((count, trial, solved));
+        }
+    }
+    found.sort_by(|x, y| y.0.cmp(&x.0).then(x.1.cmp(&y.1)));
+    let middle = moving.iter().fold(Vec3::ZERO, |s, p| s + *p) / moving.len() as f64;
+    let mut kept: Vec<Rigid> = Vec::new();
+    for (_, _, t) in found {
+        if kept.len() >= 8 {
+            break;
+        }
+        // Fitted again to every match that agrees with it.
+        let (p, q): (Vec<Vec3>, Vec<Vec3>) = from.iter().zip(&to).filter(|(p, q)| t.apply(**p).dist(**q) <= agree).map(|(p, q)| (*p, *q)).unzip();
+        let t = fit_pairs(&p, &q).unwrap_or(t);
+        if kept.iter().all(|k| k.turn_from(&t) > 0.17 || k.apply(middle).dist(t.apply(middle)) > 3.0 * spacing) {
+            kept.push(t);
+        }
+    }
+    kept
+}
+
+/// How far a scan's vertices stray from the plane of the patch round them: the median over patches
+/// spread across it, so edges and corners do not count.
+fn roughness(scan: &Scan) -> Option<f64> {
+    let n = scan.positions.len();
+    let mut starts = vec![0u32; n + 1];
+    for t in scan.triangles {
+        for &v in t {
+            if let Some(s) = starts.get_mut(v as usize + 1) {
+                *s += 2;
+            }
+        }
+    }
+    for k in 1..starts.len() {
+        starts[k] += starts[k - 1];
+    }
+    let mut filled = starts.clone();
+    let mut neighbours = vec![0u32; starts[n] as usize];
+    for t in scan.triangles {
+        for k in 0..3 {
+            let v = t[k] as usize;
+            for other in [t[(k + 1) % 3], t[(k + 2) % 3]] {
+                if let Some(slot) = filled.get_mut(v)
+                    && let Some(cell) = neighbours.get_mut(*slot as usize)
+                {
+                    *cell = other;
+                    *slot += 1;
+                }
+            }
+        }
+    }
+    let ring = |v: u32| -> &[u32] {
+        let (a, b) = (starts.get(v as usize).copied().unwrap_or(0) as usize, starts.get(v as usize + 1).copied().unwrap_or(0) as usize);
+        neighbours.get(a..b).unwrap_or_default()
+    };
+    let seeds: Vec<usize> = (0..n).step_by((n / 3000).max(1)).collect();
+    let mut values: Vec<f64> = seeds
+        .iter()
+        .filter_map(|&seed| {
+            let mut patch = vec![seed as u32];
+            for _ in 0..3 {
+                let mut grown = patch.clone();
+                for &v in &patch {
+                    grown.extend_from_slice(ring(v));
+                }
+                grown.sort_unstable();
+                grown.dedup();
+                patch = grown;
+            }
+            if patch.len() < 8 {
+                return None;
+            }
+            let points: Vec<Vec3> = patch.iter().filter_map(|&v| scan.positions.get(v as usize).copied()).collect();
+            let (centre, _, _) = principal(&points)?;
+            let mut spread = [[0.0f64; 3]; 3];
+            for p in &points {
+                let d = *p - centre;
+                let d = [d.x, d.y, d.z];
+                for (row, di) in spread.iter_mut().zip(d) {
+                    for (cell, dj) in row.iter_mut().zip(d) {
+                        *cell += di * dj;
+                    }
+                }
+            }
+            let (least, _) = solidcraft_geom::inertia::principal(&spread, 0.0)?;
+            Some((least[0].max(0.0) / points.len() as f64).sqrt())
+        })
+        .collect();
+    if values.len() * 2 < seeds.len() {
+        return None;
+    }
+    values.sort_by(f64::total_cmp);
+    Some(values[values.len() / 2])
+}
+
+/// How many of `points`, moved, lie within `reach` of `reference` facing as it does there (the
+/// points' `normals` turned with them), either way round.
+fn consensus(points: &[Vec3], normals: &[Vec3], moved: &Rigid, reference: &Surface, reach: f64) -> f64 {
+    points
+        .iter()
+        .zip(normals)
+        .filter(|(p, n)| {
+            reference
+                .nearest(moved.apply(**p))
+                .is_some_and(|h| h.distance <= reach && h.normal.is_some_and(|m| moved.turned(**n).dot(m).abs() >= FACING))
+        })
+        .count() as f64
+}
+
+/// The area of a scan's surface.
+fn area(scan: &Scan) -> f64 {
+    (0..scan.triangle_count()).filter_map(|t| scan.corners(t)).map(|[a, b, c]| (b - a).cross(c - a).len() / 2.0).filter(|a| a.is_finite()).sum()
+}
+
+/// Lays `moving` onto `reference`: the move, and how well it fits.
+pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<Registration, RegisterError> {
+    let ignored = settings.ignored.clamp(0.0, 0.6);
+    let samples = sample(moving, MANY);
+    let reference_samples = sample(reference, MANY);
+    if samples.len() < 12 || reference_samples.len() < 12 {
+        return Err(RegisterError::TooLittle);
+    }
+    let (mine, theirs) = (Surface::new(*moving), Surface::new(*reference));
+    let few = every(&samples, FEW);
+    let reverse_few = every(&reference_samples, FEW);
+    let vertices = every(&moving.points().collect::<Vec<_>>(), VERTEX_LIMIT);
+    let identity = Rigid::shift(Vec3::ZERO);
+    let rms_before = trimmed_rms(&vertices, &identity, &theirs, ignored);
+    let rough = [roughness(moving), roughness(reference)].into_iter().flatten().fold(0.0, f64::max);
+
+    let mut starts: Vec<(&'static str, Rigid)> = vec![("where it was", identity)];
+    let mut spacing = None;
+    if settings.search {
+        starts.extend(principal_starts(&samples, &reference_samples).into_iter().map(|t| ("its principal axes", t)));
+        let apart = ((area(moving).max(area(reference))) / FEATURE_POINTS as f64).sqrt();
+        let count = |a: f64| ((a / (apart * apart)).round() as usize).clamp(12, FEATURE_POINTS);
+        let (m, r) = (sample(moving, count(area(moving))), sample(reference, count(area(reference))));
+        starts.extend(feature_starts(&m, &mine, &r, &theirs, apart).into_iter().map(|t| ("shapes that match", t)));
+        spacing = Some(apart);
+    }
+    let mut best = starts[0];
+    let mut gated: Option<(Rigid, f64)> = None;
+    let mut rival = None;
+    if starts.len() > 1 {
+        let reach = (ROUGHNESS_REACH * rough).max(2e-3 * theirs.diagonal);
+        let normals: Vec<Vec3> = few.iter().map(|p| mine.nearest(*p).and_then(|h| h.normal).unwrap_or(Vec3::ZERO)).collect();
+        let gate = spacing.map_or(f64::INFINITY, |s| 2.0 * s);
+        let mut scored: Vec<(f64, Rigid, f64, usize)> = Vec::new();
+        for (index, (_, start)) in starts.iter().enumerate() {
+            let free = refine(&few, *start, &theirs, ignored, 8, &mine, &reverse_few, f64::INFINITY).moved;
+            scored.push((consensus(&few, &normals, &free, &theirs, reach), free, f64::INFINITY, index));
+            if gate.is_finite() {
+                let held = refine(&few, *start, &theirs, ignored, 8, &mine, &reverse_few, gate).moved;
+                scored.push((consensus(&few, &normals, &held, &theirs, reach), held, gate, index));
+            }
+        }
+        let best_score = scored.iter().map(|s| s.0).fold(0.0, f64::max);
+        let middle = few.iter().fold(Vec3::ZERO, |s, p| s + *p) / few.len().max(1) as f64;
+        let slide = spacing.map_or(reach, |s| DISTINCT_SLIDE * s);
+        let distinct = |a: &Rigid, b: &Rigid| a.turn_from(b) > DISTINCT_TURN || a.apply(middle).dist(b.apply(middle)) > slide;
+        let mut order: Vec<usize> = (0..scored.len()).collect();
+        order.sort_by(|&x, &y| scored[y].0.total_cmp(&scored[x].0));
+        let mut finalists: Vec<usize> = Vec::new();
+        for k in order {
+            if finalists.len() >= MOST_FINALISTS || scored[k].0 < FINALIST_SHARE * best_score {
+                break;
+            }
+            if finalists.iter().all(|&f| distinct(&scored[f].1, &scored[k].1)) {
+                finalists.push(k);
+            }
+        }
+        // Fitted to the end and judged within the surfaces' own roughness, which a placement a
+        // little off does not reach.
+        let tight = (ROUGHNESS_REACH * rough).max(2e-4 * theirs.diagonal);
+        let judged: Vec<(f64, Rigid, f64, usize)> = finalists
+            .iter()
+            .map(|&k| {
+                let (_, from, held, start) = scored[k];
+                let fitted = refine(&few, from, &theirs, ignored, 40, &mine, &reverse_few, held).moved;
+                (consensus(&few, &normals, &fitted, &theirs, tight), fitted, held, start)
+            })
+            .collect();
+        if let Some(&(score, fitted, held, start)) = judged.iter().max_by(|a, b| a.0.total_cmp(&b.0)) {
+            best = (starts[start].0, fitted);
+            if held.is_finite() {
+                gated = Some((fitted, held));
+            }
+            let other = judged.iter().filter(|j| distinct(&fitted, &j.1)).max_by(|a, b| a.0.total_cmp(&b.0));
+            if let Some(&(theirs_score, at, _, _)) = other.filter(|j| score > 0.0 && j.0 >= RIVAL_SHARE * score) {
+                let away = fitted.apply(middle).dist(at.apply(middle));
+                let how = if away > slide {
+                    format!("{away:.0} mm away")
+                } else {
+                    format!("turned {:.0}° from this one", fitted.turn_from(&at).to_degrees())
+                };
+                rival = Some(format!("another placement {how} lays {:.0}% as much of the scan on the reference", 100.0 * theirs_score / score));
+            }
+        }
+    }
+    let (from, rough_gate, fine_gate) = match gated {
+        Some((t, gate)) => (t, gate / 2.0, gate / 4.0),
+        None => (best.1, f64::INFINITY, f64::INFINITY),
+    };
+    let first = refine(&few, from, &theirs, ignored, 40, &mine, &reverse_few, rough_gate);
+    let fine = refine(&samples, first.moved, &theirs, ignored, 20, &mine, &reference_samples, fine_gate);
+    // The last pass on the scan's own vertices that lie on the reference.
+    let inliers: Vec<Vec3> = robust(pairs_to(&vertices, &fine.moved, &theirs), ignored, theirs.diagonal, fine_gate)
+        .iter()
+        .map(|p| fine.moved.inverse().apply(p.point))
+        .collect();
+    let reference_vertices = every(&reference.points().collect::<Vec<_>>(), VERTEX_LIMIT);
+    let reverse: Vec<Vec3> =
+        robust(pairs_from(&reference_vertices, &fine.moved, &mine), ignored, theirs.diagonal, fine_gate).iter().map(|p| p.target).collect();
+    if inliers.len() < 12 || reverse.len() < 12 {
+        return Err(RegisterError::NoOverlap);
+    }
+    let last = refine(&every(&inliers, VERTEX_LIMIT / 4), fine.moved, &theirs, 0.0, 40, &mine, &every(&reverse, VERTEX_LIMIT / 4), fine_gate);
+    let rms_after = trimmed_rms(&vertices, &last.moved, &theirs, ignored);
+    let least = 1e-3 * theirs.diagonal;
+    let near = if 3.0 * rms_after > least {
+        let r = if rough > 0.0 { (3.0 * rms_after).min(ROUGHNESS_REACH * rough) } else { 3.0 * rms_after };
+        r.max(least)
+    } else {
+        least
+    };
+    let matched = vertices.iter().filter(|p| theirs.nearest(last.moved.apply(**p)).is_some_and(|h| h.distance <= near)).count() as f64
+        / vertices.len().max(1) as f64;
+    Ok(Registration {
+        moved: last.moved,
+        rms_before,
+        rms_after,
+        matched,
+        rounds: first.rounds + fine.rounds + last.rounds,
+        converged: last.converged,
+        start: best.0,
+        rival,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_meshes::{fine_cuboid, turned};
+
+    /// A block with a boss at one end, so no turn of it is itself: a scan of it.
+    fn part() -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        let (mut positions, mut triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(60.0, 40.0, 20.0), 16);
+        let (boss, more) = fine_cuboid(Vec3::new(5.0, 5.0, 20.0), Vec3::new(20.0, 15.0, 32.0), 8);
+        let base = positions.len() as u32;
+        positions.extend(boss);
+        triangles.extend(more.into_iter().map(|t| t.map(|v| v + base)));
+        (positions, triangles)
+    }
+
+    #[test]
+    fn a_pass_turned_a_little_is_laid_back_from_where_it_lies() {
+        let (positions, triangles) = part();
+        let axis = Vec3::new(0.3, 0.8, 0.5).normalized().unwrap();
+        let moved = turned(&positions, axis, 0.12, Vec3::new(2.0, -1.5, 1.0));
+        let (reference, pass) = (Scan::new(&positions, &triangles), Scan::new(&moved, &triangles));
+        let found = register(&pass, &reference, &Settings { search: false, ignored: 0.2 }).unwrap();
+        let back = moved.iter().map(|p| found.moved.apply(*p)).zip(&positions).map(|(a, b)| a.dist(*b)).fold(0.0, f64::max);
+        assert!(back < 1e-3, "every point back within a micron: {back} ({found:?})");
+        assert!(found.rms_after < 1e-4 && found.rms_before > 1.0, "{found:?}");
+        assert!(found.matched > 0.99, "{found:?}");
+    }
+
+    /// Turned half round and moved far off, the search finds it: the principal axes or the matched
+    /// features start it near.
+    #[test]
+    fn a_pass_lying_any_way_is_found_by_the_search() {
+        let (positions, triangles) = part();
+        let axis = Vec3::new(-0.4, 0.2, 0.9).normalized().unwrap();
+        let moved = turned(&positions, axis, 2.6, Vec3::new(140.0, -60.0, 35.0));
+        let (reference, pass) = (Scan::new(&positions, &triangles), Scan::new(&moved, &triangles));
+        let found = register(&pass, &reference, &Settings::default()).unwrap();
+        let back = moved.iter().map(|p| found.moved.apply(*p)).zip(&positions).map(|(a, b)| a.dist(*b)).fold(0.0, f64::max);
+        assert!(back < 1e-2, "{back} from {} ({found:?})", found.start);
+        assert!(found.matched > 0.99, "{found:?}");
+    }
+
+    /// A pass that covers only part of the part (its top and two sides cut away) is laid onto the
+    /// whole.
+    #[test]
+    fn a_pass_of_part_of_the_part_lies_on_the_whole() {
+        let (positions, triangles) = part();
+        let kept: Vec<[u32; 3]> = triangles.iter().copied().filter(|t| t.iter().all(|&v| positions[v as usize].y < 30.0)).collect();
+        let axis = Vec3::new(0.1, -0.6, 0.8).normalized().unwrap();
+        let moved = turned(&positions, axis, 0.4, Vec3::new(-12.0, 8.0, 5.0));
+        let (reference, pass) = (Scan::new(&positions, &triangles), Scan::new(&moved, &kept));
+        let found = register(&pass, &reference, &Settings::default()).unwrap();
+        let back = kept.iter().flatten().map(|&v| found.moved.apply(moved[v as usize]).dist(positions[v as usize])).fold(0.0, f64::max);
+        assert!(back < 1e-2, "{back} ({found:?})");
+    }
+
+    #[test]
+    fn a_scan_with_no_surface_is_refused() {
+        let positions = vec![Vec3::ZERO, Vec3::X, Vec3::Y];
+        let (good, triangles) = part();
+        assert_eq!(register(&Scan::new(&positions, &[]), &Scan::new(&good, &triangles), &Settings::default()), Err(RegisterError::TooLittle));
+    }
+}

@@ -146,6 +146,7 @@ mod tests {
             "scan.revolve_it",
             "scan.cut_it",
             "scan.pattern_it",
+            "scan.register",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {

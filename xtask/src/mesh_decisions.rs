@@ -42,6 +42,7 @@ pub const SKIPPED_MODULES: &[(&str, &str)] = &[
     ("crates/engine/src/cmd/render.rs", "rendered pictures"),
     ("crates/engine/src/cmd/scan.rs", "mesh bodies: placing a scan, its mirror plane and the shapes fitted to it"),
     ("crates/engine/src/cmd/scan_clean.rs", "mesh bodies: a scan's own triangles cleaned and written back"),
+    ("crates/engine/src/cmd/scan_mesh.rs", "mesh bodies: a scan's mesh laid onto another, remeshed, smoothed or made from points"),
     ("crates/engine/src/cmd/scan_reconstruct.rs", "mesh bodies: a scan cut into the shapes it is, and what Reconstruct reads off them"),
     ("crates/engine/src/cmd/silhouette.rs", "a picture's view-aligned silhouette of the display meshes"),
     ("crates/engine/src/cmd/surface_analysis.rs", "view analyses: zebra, draft and curvature shading of the display mesh"),

@@ -1013,6 +1013,9 @@ pub mod curve;
 #[path = "scan_free_form.rs"]
 pub mod free_form;
 
+#[path = "scan_mesh.rs"]
+pub mod mesh;
+
 #[path = "scan_reconstruct.rs"]
 pub mod reconstruct;
 

@@ -347,6 +347,7 @@ pub const SECTIONS: &[Section] = &[
             "scan.complete_by_mirroring",
             "scan.quick_align",
             "scan.center",
+            "scan.register",
         ],
     },
     Section {

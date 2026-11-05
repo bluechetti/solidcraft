@@ -1,0 +1,34 @@
+{
+  "en": {
+    "cmd.scan_register": "Align to Scan",
+    "help.scan.register": "Lays the selected scan onto the other, a second pass onto the first, wherever it lies: point-to-plane fitting both ways from the ways their principal axes and matched surface features line up, and kept as a Move of the scan."
+  },
+  "de": {
+    "cmd.scan_register": "An Scan ausrichten",
+    "help.scan.register": "Legt den gewählten Scan auf den anderen, einen zweiten Durchgang auf den ersten, wie er auch liegt: Punkt-zu-Ebene-Einpassen in beide Richtungen, ausgehend von den Lagen ihrer Hauptachsen und passender Oberflächenmerkmale, behalten als Verschieben des Scans."
+  },
+  "ja": {
+    "cmd.scan_register": "スキャンに位置合わせ",
+    "help.scan.register": "選んだスキャンをもう一方に重ねます（2回目のパスを1回目に）。どの向きにあっても、主軸と一致する表面特徴の並びから双方向の点‐平面フィットを行い、スキャンの移動として残します。"
+  },
+  "ko": {
+    "cmd.scan_register": "스캔에 정렬",
+    "help.scan.register": "고른 스캔을 다른 스캔 위에 놓습니다(두 번째 패스를 첫 번째에). 어떻게 놓여 있든 주축과 일치하는 표면 특징의 배치에서 시작해 양방향 점-평면 맞춤을 하고 스캔의 이동으로 남깁니다."
+  },
+  "zh": {
+    "cmd.scan_register": "对齐到扫描",
+    "help.scan.register": "把所选扫描贴合到另一个扫描上（第二遍贴到第一遍），无论其位置如何：从两者主轴和匹配表面特征的对应方式出发，双向点到面拟合，并作为扫描的移动保留。"
+  },
+  "ar": {
+    "cmd.scan_register": "محاذاة مع مسح",
+    "help.scan.register": "يضع المسح المحدد على الآخر، تمريرة ثانية على الأولى، أينما كان: ملاءمة نقطة إلى مستوٍ في الاتجاهين بدءًا من كيفية تطابق محاورهما الرئيسية وسمات السطح المتطابقة، وتُحفظ كتحريك للمسح."
+  },
+  "he": {
+    "cmd.scan_register": "יישור לסריקה",
+    "help.scan.register": "מניח את הסריקה שנבחרה על האחרת, מעבר שני על הראשון, היכן שהיא נמצאת: התאמת נקודה-למישור בשני הכיוונים מכיווני הצירים הראשיים ומאפייני פני שטח תואמים, ונשמר כהזזה של הסריקה."
+  },
+  "vi": {
+    "cmd.scan_register": "Căn theo bản quét",
+    "help.scan.register": "Đặt bản quét đã chọn lên bản kia, lượt quét thứ hai lên lượt đầu, dù nó nằm ở đâu: khớp điểm-mặt phẳng hai chiều, bắt đầu từ cách các trục chính và các đặc trưng bề mặt khớp nhau thẳng hàng, và giữ lại như một phép di chuyển bản quét."
+  }
+}
