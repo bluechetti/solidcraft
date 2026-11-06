@@ -1396,6 +1396,10 @@ preference_settings! {
     /// With `extrude_view_isometric`: when Extrude closes (OK or Cancel) the view goes back to
     /// where it was before it turned (#9176). Off (the default): it stays isometric.
     extrude_view_return: bool = false, PAGE_TOOLS => check_id("prefs.extrude_view_return");
+    /// Section to Sketch and Sections Along Curve start with a tolerance of three times the cut's
+    /// noise (at least 0.1 mm), so a noisy or very large scan is not traced point by point. Off:
+    /// they start at 0.1 mm, as before.
+    section_tolerance_from_scan: bool = true, PAGE_TOOLS => check_id("prefs.section_tolerance_from_scan");
     /// Feature windows choose Join, New Body or Cut from what their material touches (`op_auto`,
     /// #6901). Off: they keep the operation they open with (Extrude its own Join or Cut), as before.
     auto_operation: bool = true, PAGE_TOOLS => check_id("prefs.auto_operation");

@@ -53,6 +53,16 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                         crate::scenario::publish_target("prefs:extrude_view_return", response.rect);
                     });
                 });
+                create_row(ui, app.tr("cmd.scan_section_sketch"), &["fit_section"], false, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.section_tolerance_from_scan_note");
+                        let response = setting::section_tolerance_from_scan(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:section_tolerance_from_scan", response.rect);
+                        if !crate::prefs_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                });
                 create_row(ui, app.tr("prefs.design_tools.placement_group"), &["rest", "boss", "snap_fit"], false, |ui| {
                     ui.horizontal_wrapped(|ui| {
                         let response = setting::placement_handles(app, ui).backing_on_hover_text(app.tr("ui.placement_handles_tip"));

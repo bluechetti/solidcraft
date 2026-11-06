@@ -26,23 +26,27 @@ pub struct SectionSketch {
     pub offset: f64,
     /// How far a piece may stray from the cut (mm).
     pub tolerance: f64,
+    /// The tolerance follows the cut's noise (three times it, at least 0.1 mm) until one is typed;
+    /// the preference `section_tolerance_from_scan` off starts it at 0.1 mm, as before.
+    pub from_scan: bool,
     shown: Option<Shown>,
 }
 
 impl Default for SectionSketch {
     fn default() -> Self {
-        SectionSketch { plane: 0, offset: 0.0, tolerance: section::TOLERANCE, shown: None }
+        SectionSketch { plane: 0, offset: 0.0, tolerance: section::TOLERANCE, from_scan: false, shown: None }
     }
 }
 
 #[derive(Clone, Debug)]
 struct Shown {
-    key: (usize, u64, u64, u64),
+    key: (usize, u64, u64, u64, bool),
     result: Result<(String, Plane, Vec<Outline>), String>,
 }
 
-pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
-    (id == "scan.section_sketch").then(|| (Kind::ScanSection(SectionSketch::default()), Vec::new()))
+pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
+    let from_scan = app.preferences.section_tolerance_from_scan;
+    (id == "scan.section_sketch").then(|| (Kind::ScanSection(SectionSketch { from_scan, ..SectionSketch::default() }), Vec::new()))
 }
 
 fn tr(id: &'static str) -> &'static str {
@@ -54,16 +58,25 @@ fn in_sketch(app: &SolveApp) -> bool {
     app.session.active_sketch.is_some()
 }
 
-/// Cut and fit again when the plane, the tolerance or the design has changed.
+/// Cut and fit again when the plane, the tolerance or the design has changed; while the tolerance
+/// follows the cut, it is the cut's.
 fn cut(app: &SolveApp, k: &mut SectionSketch) {
-    let key = (k.plane, k.offset.to_bits(), k.tolerance.to_bits(), app.session.revision);
+    let tolerance = if k.from_scan { 0 } else { k.tolerance.to_bits() };
+    let key = (k.plane, k.offset.to_bits(), tolerance, app.session.revision, k.from_scan);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         return;
     }
     let plane = section::standard_plane(PLANES[k.plane.min(PLANES.len() - 1)], k.offset);
+    let asked = (!k.from_scan).then_some(k.tolerance);
     let result = plane
         .ok_or_else(|| "no such plane".to_owned())
-        .and_then(|plane| section::preview(&app.session, None, plane, k.tolerance).map_err(|e| e.to_string()));
+        .and_then(|plane| section::preview(&app.session, None, plane, asked).map_err(|e| e.to_string()));
+    let result = result.map(|(body, plane, outlines, used)| {
+        if k.from_scan {
+            k.tolerance = used;
+        }
+        (body, plane, outlines)
+    });
     k.shown = Some(Shown { key, result });
 }
 
@@ -76,8 +89,13 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SectionSketch) -> bool {
         choice_row(ui, tr("ui.scan_section_plane"), "scan_section_plane", &mut k.plane, &PLANES);
         form_row(ui, tr("ui.scan_section_offset"), |ui| ui_kit::length_field(ui, &mut k.offset, &units, decimals));
     }
+    let before = k.tolerance;
     form_row(ui, tr("ui.scan_section_tolerance"), |ui| ui_kit::length_field(ui, &mut k.tolerance, &units, decimals.max(3)));
-    k.tolerance = k.tolerance.clamp(1e-3, 10.0);
+    // A tolerance typed is kept; until then it follows the cut.
+    if k.tolerance != before {
+        k.from_scan = false;
+        k.tolerance = k.tolerance.clamp(1e-3, 10.0);
+    }
     cut(app, k);
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok((_, _, outlines))) if outlines.is_empty() => {
@@ -111,7 +129,10 @@ pub fn commands(app: &SolveApp, k: &SectionSketch) -> Result<Vec<(String, Value)
     if outlines.is_empty() {
         return Err(tr("ui.scan_section_nothing").into());
     }
-    let mut p = json!({"body": body, "tolerance": format!("{} mm", k.tolerance)});
+    let mut p = json!({"body": body});
+    if !k.from_scan {
+        p["tolerance"] = json!(format!("{} mm", k.tolerance));
+    }
     if !in_sketch(app) {
         p["plane"] = json!(PLANES[k.plane.min(PLANES.len() - 1)]);
         p["offset"] = json!(format!("{} mm", k.offset));
@@ -194,11 +215,8 @@ mod tests {
 
     use super::*;
 
-    /// A slab with a round boss as an STL: cut through the boss the dialog shows one circle, and OK
-    /// sketches it.
-    #[test]
-    fn the_cut_through_a_boss_is_one_circle_and_ok_sketches_it() {
-        let mut h = crate::scenario::Harness::new();
+    /// A round tube R 10, 20 tall, as an STL.
+    fn tube(h: &mut crate::scenario::Harness) {
         let mut stl = String::from("solid b\n");
         let n = 96;
         let ring = |k: u32, z: f64| {
@@ -217,6 +235,14 @@ mod tests {
         let path = h.dir.join("tube.stl");
         std::fs::write(&path, stl + "endsolid b\n").unwrap();
         h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+    }
+
+    /// A slab with a round boss as an STL: cut through the boss the dialog shows one circle, and OK
+    /// sketches it.
+    #[test]
+    fn the_cut_through_a_boss_is_one_circle_and_ok_sketches_it() {
+        let mut h = crate::scenario::Harness::new();
+        tube(&mut h);
         h.app.start("scan.section_sketch");
         if let Some(Kind::ScanSection(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
             k.offset = 10.0;
@@ -229,5 +255,33 @@ mod tests {
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
         assert!(h.app.session.doc.features.iter().any(|f| f.name == "Section"), "the sketch made");
+    }
+
+    /// With the preference on (the default) the tolerance starts at the cut's own (three times its
+    /// noise, at least 0.1 mm), and OK leaves it to the cut; a tolerance typed is kept. With it off
+    /// the dialog starts at 0.1 mm and OK says so, as before.
+    #[test]
+    fn the_tolerance_follows_the_cut_unless_the_preference_is_off() {
+        let mut h = crate::scenario::Harness::new();
+        tube(&mut h);
+        let open = |h: &mut crate::scenario::Harness| -> (SectionSketch, Value) {
+            h.app.dialog = None;
+            h.app.start("scan.section_sketch");
+            if let Some(Kind::ScanSection(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+                k.offset = 10.0;
+            }
+            h.frames(2);
+            let Some(Kind::ScanSection(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the dialog") };
+            let (_, p) = commands(&h.app, k).unwrap().remove(0);
+            (k.clone(), p)
+        };
+        assert!(h.app.preferences.section_tolerance_from_scan, "on by default");
+        let (k, p) = open(&mut h);
+        assert!(k.from_scan && (k.tolerance - section::TOLERANCE).abs() < 1e-12, "a clean tube's cut: 0.1 mm");
+        assert!(p.get("tolerance").is_none(), "left to the cut: {p}");
+        h.app.preferences.section_tolerance_from_scan = false;
+        let (k, p) = open(&mut h);
+        assert!(!k.from_scan && k.tolerance == section::TOLERANCE);
+        assert_eq!(p["tolerance"], "0.1 mm", "as before: {p}");
     }
 }

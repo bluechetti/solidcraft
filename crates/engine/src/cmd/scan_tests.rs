@@ -839,6 +839,29 @@ fn section_sketch_fits_the_cut_with_lines_and_circles() {
     assert!(s.active_sketch.is_none(), "a refused cut leaves no sketch open");
 }
 
+/// Left to the cut, the tolerance is three times its noise and never under 0.1 mm: the clean plate
+/// is fitted at 0.1 mm, as before; a cut whose points wander 0.1 mm either way in turn is fitted at
+/// about 0.7 mm, so its noise is averaged, not traced (a T-LESS part read 1000 times too large had
+/// 358 pieces at a fixed 0.1 mm, against 61 at its own size).
+#[test]
+fn a_section_left_to_itself_is_fitted_at_three_times_its_noise() {
+    use solidcore_record::Vec2;
+    use solidcraft_scan::section::Run;
+    let (mut s, _) = session_with_a_plate_and_boss("section-noise");
+    let plate = run(&mut s, "scan.section_sketch", json!({"plane": "XY", "offset": "4 mm"}));
+    assert_eq!(plate["tolerance"].as_f64(), Some(super::section::TOLERANCE), "{plate}");
+    let line = |wander: f64| {
+        let points: Vec<Vec2> = (0..400).map(|i| Vec2::new(0.25 * f64::from(i), if i % 2 == 0 { wander } else { -wander })).collect();
+        vec![Run { triangles: vec![0; points.len()], points, closed: false }]
+    };
+    assert_eq!(super::section::noise_tolerance(&line(0.0)), super::section::TOLERANCE, "a clean cut");
+    let noisy = super::section::noise_tolerance(&line(0.1));
+    assert!((0.5..1.0).contains(&noisy), "{noisy}");
+    // Never more than a hundredth of the cut's size (its box 99.75 × 10 mm).
+    let wild = super::section::noise_tolerance(&line(5.0));
+    assert!((wild - 0.01 * 99.75f64.hypot(10.0)).abs() < 1e-9, "{wild}");
+}
+
 /// A ring (torus) about Z: its core a circle of radius 30, its tube of radius 5.
 fn ring_triangles() -> Vec<[Vec3; 3]> {
     let (around, across) = (96u32, 32u32);

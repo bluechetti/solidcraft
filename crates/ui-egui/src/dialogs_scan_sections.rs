@@ -22,12 +22,14 @@ pub struct SectionsAlong {
     pub every: bool,
     /// How far a piece may stray from the cut (mm).
     pub tolerance: f64,
+    /// The tolerance follows the cuts' noise until one is typed (Section to Sketch's preference).
+    pub from_scan: bool,
     shown: Option<Shown>,
 }
 
 impl Default for SectionsAlong {
     fn default() -> Self {
-        SectionsAlong { path: None, count: section::SECTIONS, every: false, tolerance: section::TOLERANCE, shown: None }
+        SectionsAlong { path: None, count: section::SECTIONS, every: false, tolerance: section::TOLERANCE, from_scan: false, shown: None }
     }
 }
 
@@ -35,12 +37,13 @@ type Cut = (String, Vec<Vec3>, Vec<(Along, Vec<Outline>)>);
 
 #[derive(Clone, Debug)]
 struct Shown {
-    key: (Option<(u64, String)>, usize, bool, u64, u64),
+    key: (Option<(u64, String)>, usize, bool, u64, u64, bool),
     result: Result<Cut, String>,
 }
 
-pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
-    (id == "scan.sections_along_curve").then(|| (Kind::ScanSections(SectionsAlong::default()), Vec::new()))
+pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
+    let from_scan = app.preferences.section_tolerance_from_scan;
+    (id == "scan.sections_along_curve").then(|| (Kind::ScanSections(SectionsAlong { from_scan, ..SectionsAlong::default() }), Vec::new()))
 }
 
 fn tr(id: &'static str) -> &'static str {
@@ -50,7 +53,8 @@ fn tr(id: &'static str) -> &'static str {
 /// Cut and fit again when the curve, the count, the loops kept, the tolerance or the design has
 /// changed.
 fn cut(app: &SolveApp, k: &mut SectionsAlong) {
-    let key = (k.path.clone(), k.count, k.every, k.tolerance.to_bits(), app.session.revision);
+    let tolerance = if k.from_scan { 0 } else { k.tolerance.to_bits() };
+    let key = (k.path.clone(), k.count, k.every, tolerance, app.session.revision, k.from_scan);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         return;
     }
@@ -58,7 +62,14 @@ fn cut(app: &SolveApp, k: &mut SectionsAlong) {
         Some((sketch, id)) => (Some(*sketch), vec![id.clone()]),
         None => (None, Vec::new()),
     };
-    let result = section::along_preview(&app.session, None, sketch, &curves, k.count, k.every, k.tolerance).map_err(|e| e.to_string());
+    let asked = (!k.from_scan).then_some(k.tolerance);
+    let result = section::along_preview(&app.session, None, sketch, &curves, k.count, k.every, asked).map_err(|e| e.to_string());
+    let result = result.map(|(body, path, sections, used)| {
+        if k.from_scan {
+            k.tolerance = used;
+        }
+        (body, path, sections)
+    });
     k.shown = Some(Shown { key, result });
 }
 
@@ -76,8 +87,13 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SectionsAlong) -> bool {
     form_row(ui, tr("ui.scan_sections_count"), |ui| ui_kit::number_field(ui, &mut k.count, 1..=60, 0.2, ""));
     k.count = k.count.clamp(1, 60);
     form_row(ui, tr("ui.scan_sections_every"), |ui| check(ui, &mut k.every));
+    let before = k.tolerance;
     form_row(ui, tr("ui.scan_section_tolerance"), |ui| ui_kit::length_field(ui, &mut k.tolerance, &units, decimals.max(3)));
-    k.tolerance = k.tolerance.clamp(1e-3, 10.0);
+    // A tolerance typed is kept; until then it follows the cuts.
+    if k.tolerance != before {
+        k.from_scan = false;
+        k.tolerance = k.tolerance.clamp(1e-3, 10.0);
+    }
     cut(app, k);
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok((_, _, sections))) => {
@@ -115,7 +131,10 @@ pub fn commands(k: &SectionsAlong) -> Result<Vec<(String, Value)>, String> {
     if sections.iter().all(|(_, o)| o.is_empty()) {
         return Err(tr("ui.scan_sections_nothing").into());
     }
-    let mut p = json!({"body": body, "count": k.count, "every": k.every, "tolerance": format!("{} mm", k.tolerance)});
+    let mut p = json!({"body": body, "count": k.count, "every": k.every});
+    if !k.from_scan {
+        p["tolerance"] = json!(format!("{} mm", k.tolerance));
+    }
     if let Some((sketch, id)) = &k.path {
         p["sketch"] = json!(sketch);
         p["curves"] = json!([id]);

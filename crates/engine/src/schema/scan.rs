@@ -988,7 +988,8 @@ pub struct ScanSectionParams {
     /// How far along its normal to move the plane, as `sketch.create` takes it.
     #[serde(default)]
     pub offset: Option<LengthExpr>,
-    /// How far a piece may stray from the cut's points. Default: 0.1 mm.
+    /// How far a piece may stray from the cut's points. Default: three times the cut's noise, at
+    /// least 0.1 mm and at most 1 % of the cut's size.
     #[serde(default)]
     pub tolerance: Option<LengthExpr>,
 }
@@ -1036,7 +1037,8 @@ pub struct ScanSectionsAlongParams {
     /// inside it (a pipe's bore), or the loop nearest it.
     #[serde(default)]
     pub every: Option<bool>,
-    /// How far a piece may stray from the cut's points. Default: 0.1 mm.
+    /// How far a piece may stray from the cut's points. Default: three times the cut's noise, at
+    /// least 0.1 mm and at most 1 % of the cut's size.
     #[serde(default)]
     pub tolerance: Option<LengthExpr>,
 }
