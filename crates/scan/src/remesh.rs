@@ -4,8 +4,11 @@
 //! (signed: positive on the side its faces point to); where scans overlap the readings are
 //! averaged, and the surface is read off where the average is zero by surface nets (a vertex in
 //! each cell the surface crosses, two triangles for each grid edge it crosses), optionally put
-//! where the planes of a sharp cell meet (dual contouring), so a part's edges stay sharp. Pieces
-//! far smaller than the rest (noise read as surface) go.
+//! where the planes of a sharp cell meet (dual contouring), so a part's edges stay sharp. A cell
+//! a scan leaves partly unread (past its open edge) keeps the edges it does read, so a scan's rim
+//! and a strip a few cells wide keep their surface. Small pieces that do not lie on a scan (a few
+//! faces read a cell or more off it, where readings at the band's edge disagree) go; a small piece
+//! on a scan (a fragment of it, a strip cut off past a gap) stays.
 
 use std::collections::{HashMap, HashSet};
 
@@ -37,7 +40,8 @@ pub struct Remeshed {
     pub scan_p95: f64,
     /// The share of the scans' vertices more than two cells from the new surface (what it left out).
     pub uncovered: f64,
-    /// The triangles of the small pieces taken away.
+    /// The triangles taken away: those of small pieces not on a scan, and those two vertices at one
+    /// place left with no area.
     pub dropped: usize,
 }
 
@@ -65,8 +69,13 @@ const BAND: i64 = 2;
 const MOST_NODES: usize = 40_000_000;
 /// The most scan vertices the error is measured at.
 const MEASURED: usize = 200_000;
-/// A piece with fewer than this share of the triangles goes.
+/// A piece with fewer than this share of the triangles is looked at: it stays only if it lies on a
+/// scan (its points, the middle of them, within [`ON_SCAN`] of one).
 const LEAST_PIECE: f64 = 0.002;
+/// How near a scan a small piece's points must lie, in cells, to be the scan's own surface.
+const ON_SCAN: f64 = 0.5;
+/// The most points of a small piece looked at.
+const PIECE_SAMPLE: usize = 32;
 
 /// The middle length of a scan's edges: a cell that keeps its detail.
 pub fn typical_edge(scan: &Scan) -> f64 {
@@ -352,16 +361,22 @@ pub fn remesh(sources: &[Scan], settings: &Settings) -> Result<Remeshed, RemeshE
     }
     let made: Vec<Vec<(u16, Vec3)>> = par::map(candidates.len(), |c| {
         let (i, j, k) = unpack(candidates[c]);
+        // A corner no scan reads (past a scan's open edge) leaves its edges out, not the cell: the
+        // cell's other edges still say where the surface crosses it, so a scan's rim and a strip a
+        // few cells wide keep their surface (as SurfaceCraft's fusion reads them).
         let mut corner = [0.0f64; 8];
-        for (m, slot) in corner.iter_mut().enumerate() {
-            let m = m as i64;
-            let Some(v) = value(i + (m & 1), j + ((m >> 1) & 1), k + ((m >> 2) & 1)) else { return Vec::new() };
-            *slot = f64::from(v);
+        let mut read = [false; 8];
+        for m in 0..8usize {
+            let n = m as i64;
+            if let Some(v) = value(i + (n & 1), j + ((n >> 1) & 1), k + ((n >> 2) & 1)) {
+                corner[m] = f64::from(v);
+                read[m] = true;
+            }
         }
         let crossed: Vec<usize> = (0..12)
             .filter(|&e| {
                 let (from, to) = edge_ends(e);
-                (corner[from] < 0.0) != (corner[to] < 0.0)
+                read[from] && read[to] && (corner[from] < 0.0) != (corner[to] < 0.0)
             })
             .collect();
         if crossed.is_empty() {
@@ -502,7 +517,7 @@ pub fn remesh(sources: &[Scan], settings: &Settings) -> Result<Remeshed, RemeshE
     if triangles.is_empty() {
         return Err(RemeshError::Empty);
     }
-    // Pieces far smaller than the rest go.
+    // Small pieces that are not on a scan go: noise read as surface, a cell or more off it.
     let mut pieces = UnionFind::new(positions.len());
     for t in &triangles {
         pieces.join(t[0] as usize, t[1] as usize);
@@ -514,9 +529,36 @@ pub fn remesh(sources: &[Scan], settings: &Settings) -> Result<Remeshed, RemeshE
         *sizes.entry(*r).or_default() += 1;
     }
     let least = (LEAST_PIECE * triangles.len() as f64).ceil() as usize;
+    let mut sampled: HashMap<usize, Vec<u32>> = HashMap::new();
+    for (t, r) in triangles.iter().zip(&roots) {
+        if sizes.get(r).copied().unwrap_or(0) < least {
+            let at = sampled.entry(*r).or_default();
+            for &v in t {
+                if at.len() < PIECE_SAMPLE && !at.contains(&v) {
+                    at.push(v);
+                }
+            }
+        }
+    }
+    let on_scan: HashSet<usize> = sampled
+        .into_iter()
+        .filter(|(_, vertices)| {
+            let mut gaps: Vec<f64> = vertices
+                .iter()
+                .filter_map(|&v| prepared.iter().filter_map(|s| s.tree.nearest(*positions.get(v as usize)?)).map(|(d, _)| d).min_by(f64::total_cmp))
+                .collect();
+            gaps.sort_by(f64::total_cmp);
+            gaps.get(gaps.len() / 2).is_some_and(|middle| *middle <= ON_SCAN * cell)
+        })
+        .map(|(r, _)| r)
+        .collect();
     let before = triangles.len();
-    let kept: Vec<[u32; 3]> =
-        triangles.into_iter().zip(&roots).filter(|(_, r)| sizes.get(r).copied().unwrap_or(0) >= least).map(|(t, _)| t).collect();
+    let kept: Vec<[u32; 3]> = triangles
+        .into_iter()
+        .zip(&roots)
+        .filter(|(_, r)| sizes.get(r).copied().unwrap_or(0) >= least || on_scan.contains(r))
+        .map(|(t, _)| t)
+        .collect();
     // Vertices put at one place (two cells' patches at one corner) are one, and the triangles
     // that leaves with two corners together are none.
     let step = 1e-7 * cell;
@@ -662,5 +704,65 @@ mod tests {
         let (positions, triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(500.0, 500.0, 500.0), 2);
         assert_eq!(remesh(&[Scan::new(&positions, &triangles)], &Settings { cell: 0.01, sharp: false }), Err(RemeshError::TooFine));
         assert_eq!(remesh(&[Scan::new(&positions, &[])], &Settings { cell: 1.0, sharp: false }), Err(RemeshError::Empty));
+    }
+
+    /// A flat sheet `n` × `n` squares of `side` mm, from `at`, tilted off the grid's axes.
+    fn sheet(at: [f64; 2], n: u32, side: f64) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        let mut positions = Vec::new();
+        for j in 0..=n {
+            for i in 0..=n {
+                positions.push(Vec3::new(at[0] + side * f64::from(i), at[1] + side * f64::from(j), 0.0));
+            }
+        }
+        let mut triangles = Vec::new();
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * (n + 1) + i;
+                triangles.push([k, k + 1, k + n + 2]);
+                triangles.push([k, k + n + 2, k + n + 1]);
+            }
+        }
+        (turned(&positions, Vec3::new(0.3, -0.5, 0.8).normalized().unwrap(), 0.4, Vec3::new(1.3, -0.7, 2.1)), triangles)
+    }
+
+    /// The farthest any of the scan's points is from the surface made of it.
+    fn farthest(positions: &[Vec3], made: &Remeshed) -> f64 {
+        let mesh = solidcraft_geom::Mesh { positions: made.positions.clone(), triangles: made.triangles.clone(), ..Default::default() };
+        let tree = TriangleTree::new(&mesh);
+        positions.iter().map(|p| tree.nearest(*p).map_or(f64::INFINITY, |(d, _)| d)).fold(0.0, f64::max)
+    }
+
+    /// An open sheet made again reaches near its rim: a cell some of whose corners lie past the rim
+    /// (no reading there) still keeps the edges it does read, so no point of the scan is left as much
+    /// as 1.7 cells from the new surface (a cell only all of whose corners are read left 2.2), and the
+    /// sheet stays one piece.
+    #[test]
+    fn an_open_sheet_keeps_its_rim() {
+        let (positions, triangles) = sheet([0.0, 0.0], 60, 0.5);
+        let made = remesh(&[Scan::new(&positions, &triangles)], &Settings { cell: 0.5, sharp: false }).unwrap();
+        let far = farthest(&positions, &made);
+        assert!(far < 0.85, "the rim's points are {far} mm from the surface");
+        assert_eq!(made.uncovered, 0.0);
+        let mut pieces = crate::UnionFind::new(made.positions.len());
+        for t in &made.triangles {
+            pieces.join(t[0] as usize, t[1] as usize);
+            pieces.join(t[1] as usize, t[2] as usize);
+        }
+        let roots: HashSet<usize> = made.triangles.iter().map(|t| pieces.find(t[0] as usize)).collect();
+        assert_eq!(roots.len(), 1);
+    }
+
+    /// A small fragment of the scan apart from the rest (far fewer triangles than a five-hundredth of
+    /// it) is the scan's own surface: it stays.
+    #[test]
+    fn a_small_fragment_of_the_scan_stays() {
+        let (mut positions, mut triangles) = sheet([0.0, 0.0], 200, 0.5);
+        let (bit, bit_triangles) = sheet([110.0, 40.0], 8, 0.5);
+        let base = positions.len() as u32;
+        positions.extend(&bit);
+        triangles.extend(bit_triangles.iter().map(|t| t.map(|v| v + base)));
+        let made = remesh(&[Scan::new(&positions, &triangles)], &Settings { cell: 0.5, sharp: false }).unwrap();
+        assert!(farthest(&bit, &made) < 0.75, "the fragment is kept: {}", farthest(&bit, &made));
+        assert!(made.dropped < 50, "{}", made.dropped);
     }
 }
