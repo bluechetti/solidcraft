@@ -220,6 +220,19 @@ when the design's parameters change. Compare *spline*, whose points are placed b
 - **Elsewhere:** equation-driven curve, curve from equation, function plot.
 - **For translators:** "equation" is a mathematical formula, not a balance or an equality constraint.
 
+### falloff
+
+The distance within which the control points round one moved by hand go with it, each less the
+further it is, none from that distance out.
+
+It makes one drag reshape an area smoothly instead of raising a single spike. Compare *slide*.
+
+- **In SolidCraft:** the `falloff` parameter of `scan.edit_surface`; Falloff in the Edit Surface
+  dialog.
+- **Don't use:** soft selection (for the distance), radius (alone), influence.
+- **Elsewhere:** falloff, soft selection, proportional editing, move neighbours.
+- **For translators:** a distance that fades, not a fall or a drop.
+
 ### feature
 
 One step in the timeline that creates or changes geometry, such as an extrude, a fillet or a
@@ -419,6 +432,17 @@ A point or a curve in a sketch.
 - **Elsewhere:** sketch entity, sketch geometry, sketch element.
 - **For translators:** "entity" names both points and curves.
 
+### slide (a control point)
+
+To move a surface's control point along the surface instead of through space, so the net moves
+over the surface and the surface keeps its shape as far as its points allow.
+
+- **In SolidCraft:** the `slide` parameter of `scan.edit_surface` (`points`, `u`, `v`); Drag set
+  to Slide on surface, and Slide, in the Edit Surface dialog.
+- **Don't use:** glide, drift, slip.
+- **Elsewhere:** slide, slide control points.
+- **For translators:** a movement along the surface, not a slide of a presentation or a slider.
+
 ### standard part
 
 A ready-made component, such as a screw, nut, washer, pin or bearing, that SolidCraft builds from
@@ -429,6 +453,21 @@ a standard size.
 - **Don't use:** library part, part (on its own), content.
 - **Elsewhere:** standard part, library part, fastener, catalogue part.
 - **For translators:** see *Words with more than one meaning*, "part".
+
+### surface check
+
+A check of each B-spline face of a body for folds, pinches and places where the surface passes
+through itself, with how square and how even its parameters are.
+
+A *fold* is where the surface doubles back over itself; a *pinch* is where it narrows to no area
+away from a corner of its parameter square; a *crossing* is where two parts of it that are not
+neighbours pass through each other.
+
+- **In SolidCraft:** `inspect.surface_check` (`bodies`, `grid`); the Surface Check line of the
+  Edit Surface dialog.
+- **Don't use:** surface analysis (for this check), surface validation, surface health.
+- **Elsewhere:** surface check, surface diagnostics, check geometry.
+- **For translators:** "pinch" is a narrowing of the surface, not a touch gesture.
 
 ### timeline
 

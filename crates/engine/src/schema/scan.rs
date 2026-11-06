@@ -462,6 +462,28 @@ pub struct ScanEditSurfaceParams {
     /// control net's size, at least 1 mm.
     #[serde(default)]
     pub reach: Option<LengthExpr>,
+    /// A soft selection: the points within this distance of a point moved or slid go with it, less
+    /// the further they are (none from the distance out), and are held when refitting. Default: 0,
+    /// only the points named move.
+    #[serde(default)]
+    pub falloff: Option<LengthExpr>,
+    /// Points slid along the surface instead of moved through space: the net slides over the
+    /// surface, which keeps its shape as far as its points allow. Not with `moves` or `points`.
+    #[serde(default)]
+    pub slide: Option<ScanSlide>,
+}
+
+/// Control points slid along a surface.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanSlide {
+    /// The control points, each `[u, v]`.
+    pub points: Vec<[u32; 2]>,
+    /// How far along u and along v, about, on the surface (negative the other way). At least one.
+    #[serde(default)]
+    pub u: Option<LengthExpr>,
+    #[serde(default)]
+    pub v: Option<LengthExpr>,
 }
 
 /// Make a Free Form: a cubic net over four corners clicked round its first face, fitted to the scan
@@ -715,8 +737,10 @@ pub struct ScanEditSurfaceResult {
     pub surface: String,
     /// Its control points along u and v.
     pub controls: [usize; 2],
-    /// How many control points were moved and how many fitted to the scan again.
+    /// How many control points were moved (or slid), how many a falloff carried with them, and how
+    /// many were fitted to the scan again.
     pub moved: usize,
+    pub carried: usize,
     pub refitted: usize,
     /// The scan measured against, the scan points under the surface, and their distance from it
     /// (root mean square and largest, mm); absent with no scan.

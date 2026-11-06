@@ -40,7 +40,13 @@ pub struct EditableSurface {
 /// The surface's one face as a NURBS surface, `None` for anything else.
 fn nurbs_of(record: &b::Brep) -> Option<NurbsSurface> {
     let [face] = record.faces.as_slice() else { return None };
-    let (u_knots, v_knots, rows): (&Vec<f64>, &Vec<f64>, Vec<Vec<HPoint>>) = match &face.surface {
+    nurbs_of_surface(&face.surface)
+}
+
+/// A B-spline record surface (rational or not) as a NURBS surface, on the same (u, v); `None` for
+/// any other kind of surface.
+pub fn nurbs_of_surface(surface: &b::Surface) -> Option<NurbsSurface> {
+    let (u_knots, v_knots, rows): (&Vec<f64>, &Vec<f64>, Vec<Vec<HPoint>>) = match surface {
         b::Surface::Spline { u_knots, v_knots, points } => {
             (u_knots, v_knots, points.iter().map(|row| row.iter().map(|p| HPoint::weighted(Vec3::new(p[0], p[1], p[2]), 1.0)).collect()).collect())
         }
@@ -206,6 +212,19 @@ fn write_step(s: &mut Session, target: &EditableSurface, step: String, cmd: &str
     }
 }
 
+/// A length (an expression, negative allowed) under `key`, `None` when it is not given.
+fn signed_length(s: &Session, p: &Value, key: &str, cmd: &str) -> Result<Option<f64>> {
+    if p.get(key).is_none_or(Value::is_null) {
+        return Ok(None);
+    }
+    let e = crate::params::expr(p, key).ok_or_else(|| bad(cmd, format!("`{key}` must be a length")))?;
+    let v = s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("{key}: {e}")))?;
+    if !v.is_finite() {
+        return Err(bad(cmd, format!("`{key}` must be a finite length")));
+    }
+    Ok(Some(v))
+}
+
 /// A control point `[u, v]` by its place in the net, checked against the net's size.
 fn index(v: &Value, count: [usize; 2], cmd: &str, what: &str) -> Result<usize> {
     let pair = v.as_array().filter(|a| a.len() == 2).and_then(|a| Some([a[0].as_u64()?, a[1].as_u64()?]));
@@ -260,6 +279,7 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
             surface: target.body,
             controls: made.count(),
             moved: 0,
+            carried: 0,
             refitted: 0,
             scan: None,
             points: None,
@@ -273,8 +293,16 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
     let count = target.surface.count();
     let mut net = surface_edit::points(&target.surface);
     let mut moved = vec![false; net.len()];
+    let falloff = signed_length(s, p, "falloff", cmd)?.unwrap_or(0.0);
+    if falloff < 0.0 {
+        return Err(bad(cmd, "`falloff` must be a length of 0 or more"));
+    }
+    let slide = p.get("slide").filter(|v| !v.is_null());
     // The whole net, as a dialog that previewed it sends it.
     if let Some(all) = p.get("points").filter(|v| !v.is_null()) {
+        if falloff > 0.0 || slide.is_some() {
+            return Err(bad(cmd, "`points` gives the whole net as it goes: give it without `falloff` or `slide`"));
+        }
         let all = all.as_array().ok_or_else(|| bad(cmd, "`points` must be a list of points [x, y, z]"))?;
         if all.len() != net.len() {
             return Err(bad(cmd, format!("`points` must hold all {} control points ({} × {}, u fastest)", net.len(), count[0], count[1])));
@@ -285,9 +313,22 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
             net[k] = q;
         }
     }
-    // Moves of single points.
+    // The points held when refitting, and never carried by a falloff.
+    let mut hold_flags = vec![false; net.len()];
+    if let Some(hold) = p.get("hold").filter(|v| !v.is_null()) {
+        let hold = hold.as_array().ok_or_else(|| bad(cmd, "`hold` must be a list of [u, v]"))?;
+        for (k, h) in hold.iter().enumerate() {
+            hold_flags[index(h, count, cmd, &format!("hold[{k}]"))?] = true;
+        }
+    }
+    // Moves of single points, the points round them carried along with a falloff.
+    let mut carried = vec![false; net.len()];
     if let Some(moves) = p.get("moves").filter(|v| !v.is_null()) {
+        if slide.is_some() {
+            return Err(bad(cmd, "give `moves` or `slide`, not both"));
+        }
         let moves = moves.as_array().ok_or_else(|| bad(cmd, "`moves` must be a list of {point: [u, v], to: [x, y, z]} or {point, along}"))?;
+        let mut list: Vec<(usize, Vec3)> = Vec::with_capacity(moves.len());
         for (k, m) in moves.iter().enumerate() {
             let at = index(m.get("point").unwrap_or(&Value::Null), count, cmd, &format!("moves[{k}].point"))?;
             let to = match (m.get("to").filter(|v| !v.is_null()), m.get("along").filter(|v| !v.is_null())) {
@@ -305,17 +346,48 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
                 }
                 _ => return Err(bad(cmd, format!("`moves[{k}]` needs one of `to` (a point) or `along` (a length along the surface's normal)"))),
             };
-            net[at] = to;
-            moved[at] = true;
+            list.retain(|(i, _)| *i != at);
+            list.push((at, to));
+        }
+        let (made, by) = surface_edit::with_falloff(&net, &list, &hold_flags, falloff);
+        net = made;
+        carried = by;
+        for (at, _) in &list {
+            moved[*at] = true;
         }
     }
-    let mut held = moved.clone();
-    if let Some(hold) = p.get("hold").filter(|v| !v.is_null()) {
-        let hold = hold.as_array().ok_or_else(|| bad(cmd, "`hold` must be a list of [u, v]"))?;
-        for (k, h) in hold.iter().enumerate() {
-            held[index(h, count, cmd, &format!("hold[{k}]"))?] = true;
+    // Points slid along the surface, the points round them carried with a falloff.
+    if let Some(slide) = slide {
+        let points = slide
+            .get("points")
+            .and_then(Value::as_array)
+            .filter(|a| !a.is_empty())
+            .ok_or_else(|| bad(cmd, "`slide.points` must list the control points [u, v] to slide"))?;
+        let mut chosen = Vec::with_capacity(points.len());
+        for (k, v) in points.iter().enumerate() {
+            chosen.push(index(v, count, cmd, &format!("slide.points[{k}]"))?);
+        }
+        let along = [signed_length(s, slide, "u", cmd)?.unwrap_or(0.0), signed_length(s, slide, "v", cmd)?.unwrap_or(0.0)];
+        if along == [0.0, 0.0] {
+            return Err(bad(cmd, "`slide` needs a length along `u` or `v` (or both)"));
+        }
+        let steps = surface_edit::slide_steps(&target.surface, along);
+        let mut weights = surface_edit::falloff_weights(&net, &chosen, &hold_flags, falloff);
+        for &c in &chosen {
+            // A point chosen slides all the way, unless it is held.
+            weights[c] = if hold_flags[c] { 0.0 } else { 1.0 };
+        }
+        let slid = surface_edit::slid(&target.surface, &weights, |i| steps.get(i).copied().unwrap_or((0.0, 0.0)))
+            .ok_or_else(|| bad(cmd, "the surface could not be evaluated to slide its points"))?;
+        for (k, (q, w)) in slid.into_iter().zip(&weights).enumerate() {
+            if *w > 0.0 && q.dist(net[k]) > 1e-12 {
+                net[k] = q;
+                if chosen.contains(&k) { moved[k] = true } else { carried[k] = true }
+            }
         }
     }
+    // Held when refitting: the points moved, those held and those a falloff carried.
+    let held: Vec<bool> = moved.iter().zip(&hold_flags).zip(&carried).map(|((m, h), c)| *m || *h || *c).collect();
     let refit = str_(p, "refit").unwrap_or("none");
     let free: Vec<bool> = match refit {
         "none" => vec![false; net.len()],
@@ -332,7 +404,7 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
         }
         other => return Err(bad(cmd, format!("`refit` must be none, around or all, not `{other}`"))),
     };
-    if !moved.iter().any(|m| *m) && !free.iter().any(|f| *f) {
+    if !moved.iter().any(|m| *m) && !carried.iter().any(|c| *c) && !free.iter().any(|f| *f) {
         return Err(bad(cmd, "nothing to change: move a control point, or refit"));
     }
     let edited = surface_edit::with_points(&target.surface, &net).ok_or_else(|| bad(cmd, "a control point is not a finite place"))?;
@@ -369,6 +441,7 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
         surface: target.body,
         controls: count,
         moved: moved.iter().filter(|m| **m).count(),
+        carried: carried.iter().filter(|c| **c).count(),
         refitted: free.iter().filter(|f| **f).count(),
         scan: under.as_ref().map(|c| c.scan.clone()),
         points: under.as_ref().map(|c| c.points.len()),
@@ -381,7 +454,13 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// The surface maths a dialog previews an edit with, as the command does it.
-pub use solidcraft_scan::surface_edit::{around, distance, normal_at, points as control_points, refit, with_points};
+pub use solidcraft_scan::surface_edit::{
+    around, distance, falloff_weights, foot, greville_places, normal_at, points as control_points, refit, slid, slide_steps, with_falloff,
+    with_points,
+};
+
+/// Surface Check on a surface as a dialog shows it while it is edited.
+pub use solidcraft_scan::surface_check::{Check as SurfaceCheck, Trouble, check_whole as check_surface};
 
 /// A line of a net from `{row: j}` or `{column: i}`.
 fn line_param(v: &Value, cmd: &str) -> Result<Line> {

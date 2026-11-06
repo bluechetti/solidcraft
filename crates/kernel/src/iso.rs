@@ -69,24 +69,7 @@ impl<'a> FaceTrims<'a> {
                 brep::Loop::Vertex { .. } => None,
             })
             .collect();
-        let polygons = loops
-            .iter()
-            .map(|l| {
-                // In the loop's order: a pcurve runs along its edge's interval whichever way the
-                // loop does, so one the loop runs against is walked backwards.
-                let mut poly: Vec<[f64; 2]> = Vec::new();
-                for (_, samples, forward) in l {
-                    let pts = samples.iter().map(|(_, q)| *q);
-                    if *forward { poly.extend(pts) } else { poly.extend(pts.rev()) }
-                }
-                // Closed: a loop whose pcurves leave a side of the box out (a sphere's poles, as
-                // vertex loops) has that side as its closing edge.
-                if let Some(first) = poly.first().copied() {
-                    poly.push(first);
-                }
-                poly
-            })
-            .collect();
+        let polygons = loops.iter().map(|l| polygon(l.iter().map(|(_, samples, forward)| (samples.as_slice(), *forward)))).collect();
         Ok(FaceTrims { surface, eval, domain: f.domain, loops, polygons })
     }
 
@@ -249,6 +232,63 @@ fn shared_extent(body: &Body, face: usize, trims: &FaceTrims) -> Result<[[f64; 2
         b = [[b[0][0].min(a0), b[0][1].max(a1)], [b[1][0].min(c0), b[1][1].max(c1)]];
     }
     Ok(b)
+}
+
+/// One edge loop as a closed polygon in (u, v), from each of its pcurves' samples and whether the
+/// loop runs along it.
+fn polygon<'s>(edges: impl Iterator<Item = (&'s [(f64, [f64; 2])], bool)>) -> Vec<[f64; 2]> {
+    // In the loop's order: a pcurve runs along its edge's interval whichever way the loop does, so
+    // one the loop runs against is walked backwards.
+    let mut poly: Vec<[f64; 2]> = Vec::new();
+    for (samples, forward) in edges {
+        let pts = samples.iter().map(|(_, q)| *q);
+        if forward { poly.extend(pts) } else { poly.extend(pts.rev()) }
+    }
+    // Closed: a loop whose pcurves leave a side of the box out (a sphere's poles, as vertex loops)
+    // has that side as its closing edge.
+    if let Some(first) = poly.first().copied() {
+        poly.push(first);
+    }
+    poly
+}
+
+/// Where a face lies in its surface's (u, v) ([`brep::Face::parameters`]): the rectangle it is
+/// modelled in and its loops as polygons, to tell whether a place of the surface is on the face
+/// (inside its outer loop and outside its holes), as Isocurve Analysis cuts its lines.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FaceRegion {
+    /// The face's rectangle in (u, v), `[[u0, u1], [v0, v1]]`.
+    pub domain: [[f64; 2]; 2],
+    polygons: Vec<Vec<[f64; 2]>>,
+}
+
+impl FaceRegion {
+    /// Whether `(u, v)` is on the face. A face with no edge loops is its whole rectangle.
+    pub fn contains(&self, u: f64, v: f64) -> bool {
+        let [[u0, u1], [v0, v1]] = self.domain;
+        if !(u >= u0 && u <= u1 && v >= v0 && v <= v1) {
+            return false;
+        }
+        self.polygons.is_empty() || self.polygons.iter().filter(|l| crosses_right([u, v], l)).count() % 2 == 1
+    }
+}
+
+/// Face `face`'s region in its surface's (u, v).
+pub fn face_region(body: &Body, face: usize) -> Result<FaceRegion> {
+    let f = body.record().faces.get(face).ok_or_else(|| KernelError::Invalid(format!("the body has no face {face}")))?;
+    let polygons: Vec<Vec<[f64; 2]>> = f
+        .loops
+        .iter()
+        .filter_map(|l| match l {
+            brep::Loop::Edges { edges } => {
+                let samples: Vec<(Vec<(f64, [f64; 2])>, bool)> = edges.iter().map(|e| (pcurve_samples(&e.pcurve), e.forward)).collect();
+                Some(polygon(samples.iter().map(|(s, forward)| (s.as_slice(), *forward))))
+            }
+            brep::Loop::Vertex { .. } => None,
+        })
+        .filter(|p| p.len() > 3)
+        .collect();
+    Ok(FaceRegion { domain: f.domain, polygons })
 }
 
 /// A pcurve's parameters and points at [`ISO_SAMPLES`] per knot span, in its direction.

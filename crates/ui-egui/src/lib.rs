@@ -68,6 +68,7 @@ pub(crate) mod dialogs_scan_split;
 pub(crate) mod dialogs_scan_surface;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
+pub(crate) mod dialogs_surface_check;
 pub mod dialogs_sweep;
 mod dialogs_thread;
 pub mod dialogs_view_dxf;

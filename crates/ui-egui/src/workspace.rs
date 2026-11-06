@@ -205,6 +205,7 @@ pub const SECTIONS: &[Section] = &[
             "inspect.minimum_radius",
             "inspect.environment_map",
             "inspect.continuity",
+            "inspect.surface_check",
         ],
     },
     Section { tab: "INSPECT", panel: "HISTORY", promoted: 3, ids: &["timeline.play", "timeline.dependents", "document.inspect"] },
@@ -411,7 +412,7 @@ pub const SECTIONS: &[Section] = &[
         promoted: 1,
         ids: &["scan.select", "scan.select_inside_curve", "scan.keep_selection", "scan.delete_selection"],
     },
-    Section { tab: "SCAN", panel: "CHECK", promoted: 1, ids: &["scan.deviation", "inspect.section", "inspect.compare"] },
+    Section { tab: "SCAN", panel: "CHECK", promoted: 1, ids: &["scan.deviation", "inspect.surface_check", "inspect.section", "inspect.compare"] },
 ];
 
 // Migration data only: Render commands remain registered, but have no live ribbon sections.

@@ -8,8 +8,12 @@
 //! screen (keeping its depth along the view), or, with Snap to scan on, onto the scan under the
 //! pointer; with Refit on, the points round it (or all but those moved by hand) are fitted to the
 //! scan again as it moves, the dragged one held where it is put. The surface it would make is drawn
-//! as lines across it, and how far it is from the scan is shown as it moves. OK keeps the net as
-//! one undo step; Reset Points puts it back as it was.
+//! as lines across it, and how far it is from the scan is shown as it moves. With a Falloff the
+//! points round the one dragged go with it, less the further they are (a soft selection); with
+//! Drag set to Slide a handle dragged slides its point along the surface instead of through space,
+//! and Slide does so by lengths typed. Surface Check runs on the surface as it is shown, so a fold
+//! made by a drag is seen as it is made. OK keeps the net as one undo step; Reset Points puts it
+//! back as it was.
 
 use std::sync::Arc;
 
@@ -42,6 +46,13 @@ const PREVIEW_POINTS: usize = 2_500;
 /// The surface drawn as this many lines each way, each sampled at this many points.
 const LINES: usize = 10;
 const SAMPLES: usize = 40;
+
+/// Cells each way Surface Check uses on the surface shown (it runs on every frame of a drag).
+const CHECK_GRID: usize = 24;
+
+/// What a dragged handle does: moves its point through space, or slides it along the surface.
+pub const DRAG_MOVE: usize = 0;
+pub const DRAG_SLIDE: usize = 1;
 
 /// The Edit Surface dialog's values.
 #[derive(Clone, Debug)]
@@ -77,6 +88,14 @@ pub struct EditSurface {
     chosen: Option<usize>,
     /// How far Move takes the chosen point along the way the surface faces, in mm.
     pub along: f64,
+    /// The points within this of one moved go with it, less the further they are (mm; 0, none).
+    pub falloff: f64,
+    /// What a dragged handle does: [`DRAG_MOVE`] or [`DRAG_SLIDE`].
+    pub drag_mode: usize,
+    /// How far Slide takes the chosen point (or its line) along u and along v, in mm.
+    pub slide: [f64; 2],
+    /// Surface Check on the surface shown.
+    check: Option<edit::SurfaceCheck>,
     drag: Option<Drag>,
 }
 
@@ -99,6 +118,10 @@ impl Default for EditSurface {
             fit: None,
             chosen: None,
             along: 1.0,
+            falloff: 0.0,
+            drag_mode: DRAG_MOVE,
+            slide: [1.0, 0.0],
+            check: None,
             drag: None,
         }
     }
@@ -120,6 +143,16 @@ struct Drag {
     from: Vec3,
     /// The points that go with it (its line, when one is chosen and holds it), and where each was.
     with: Vec<(usize, Vec3)>,
+    /// Sliding: the surface as the drag began and the dragged point's place on it.
+    slide: Option<Box<SlideFrom>>,
+}
+
+#[derive(Clone, Debug)]
+struct SlideFrom {
+    surface: NurbsSurface,
+    /// The dragged point's Greville place `(u, v)` and the surface's point there.
+    at: (f64, f64),
+    on: Vec3,
 }
 
 /// Where a dragged point goes.
@@ -361,36 +394,82 @@ fn show(k: &mut EditSurface, surface: NurbsSurface, dragging: bool) {
         Some(edit::distance(&surface, if dragging { &l.sample } else { &c.points }))
     });
     k.shown_net = edit::control_points(&surface);
+    k.check = edit::check_surface(&surface, CHECK_GRID);
     k.shown = Some(surface);
 }
 
-/// The surface with the points `moves` put where they go, and, as Refit says, the points round
-/// them or all those not moved by hand fitted to the scan again with them held.
+/// The surface with the points `moves` put where they go, those round them carried along as the
+/// Falloff says, and, as Refit says, the points round them or all those not moved by hand fitted
+/// to the scan again with them (and those carried) held.
 fn preview(k: &EditSurface, moves: &[(usize, Vec3)]) -> Option<NurbsSurface> {
+    let (net, carried) = edit::with_falloff(&k.net, moves, &k.moved, k.falloff);
+    refitted(k, net, &moves.iter().map(|m| m.0).collect::<Vec<_>>(), &carried)
+}
+
+/// The surface with its net at `net` (the points `now` moved by hand and those `carried` with
+/// them), refitted as Refit says.
+fn refitted(k: &EditSurface, net: Vec<Vec3>, now: &[usize], carried: &[bool]) -> Option<NurbsSurface> {
     let l = loaded(k)?;
-    let mut net = k.net.clone();
     let mut moved = k.moved.clone();
-    for &(index, to) in moves {
-        *net.get_mut(index)? = to;
-        moved[index] = true;
+    for &index in now {
+        *moved.get_mut(index)? = true;
     }
     let surface = edit::with_points(base(k)?, &net)?;
     let points = l.sample.as_slice();
     let count = surface.count();
+    let kept = |i: usize| moved.get(i).copied().unwrap_or(false) || carried.get(i).copied().unwrap_or(false);
     let held: Vec<bool> = match k.refit {
         REFIT_AROUND => {
             let mut near = vec![false; net.len()];
-            for &(index, _) in moves {
+            for &index in now {
                 for (n, r) in edit::around(count, index % count[0], index / count[0], RING).into_iter().enumerate() {
                     near[n] |= r;
                 }
             }
-            near.iter().zip(&moved).map(|(near, m)| !near || *m).collect()
+            near.iter().enumerate().map(|(i, near)| !near || kept(i)).collect()
         }
-        REFIT_ALL => moved,
+        REFIT_ALL => (0..net.len()).map(kept).collect(),
         _ => return Some(surface),
     };
     Some(edit::refit(&surface, points, &held).unwrap_or(surface))
+}
+
+/// The points `chosen` slid along the surface shown by `step` for each, those round them carried
+/// as the Falloff says: the net, and which points were carried.
+fn slid_net(k: &EditSurface, surface: &NurbsSurface, chosen: &[usize], step: impl Fn(usize) -> (f64, f64)) -> Option<(Vec<Vec3>, Vec<bool>)> {
+    let others: Vec<bool> = k.moved.iter().enumerate().map(|(i, m)| *m && !chosen.contains(&i)).collect();
+    let mut weights = edit::falloff_weights(&k.net, chosen, &others, k.falloff);
+    for &c in chosen {
+        *weights.get_mut(c)? = 1.0;
+    }
+    let net = edit::slid(surface, &weights, step)?;
+    let carried = weights.iter().enumerate().map(|(i, w)| *w > 0.0 && !chosen.contains(&i)).collect();
+    Some((net, carried))
+}
+
+/// The points that go with the one chosen: its line when one is chosen and holds it, else itself.
+fn going_with(k: &EditSurface, index: usize) -> Vec<usize> {
+    match (k.line, base(k).map(NurbsSurface::count)) {
+        (Some(l), Some(c)) if l.points(c).contains(&index) => l.points(c),
+        _ => vec![index],
+    }
+}
+
+/// The chosen point (or its line) slid by the lengths typed, as a drag let go there would.
+fn slide_typed(k: &mut EditSurface, index: usize) {
+    let Some(surface) = k.shown.clone() else { return };
+    let chosen = going_with(k, index);
+    let steps = edit::slide_steps(&surface, k.slide);
+    let Some((net, carried)) = slid_net(k, &surface, &chosen, |i| steps.get(i).copied().unwrap_or((0.0, 0.0))) else { return };
+    if let Some(made) = refitted(k, net, &chosen, &carried) {
+        show(k, made, false);
+        k.net = k.shown_net.clone();
+        for i in chosen {
+            if let Some(m) = k.moved.get_mut(i) {
+                *m = true;
+            }
+        }
+    }
 }
 
 fn tr(id: &'static str) -> &'static str {
@@ -424,6 +503,11 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
     } else {
         ui_kit::text(ui, tr("ui.scan_edit_no_scan"), ui_kit::Text::Hint("scan_edit_no_scan"));
     }
+    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+    form_row(ui, tr("ui.scan_edit_falloff"), |ui| ui_kit::length_field(ui, &mut k.falloff, &units, decimals));
+    k.falloff = if k.falloff.is_finite() { k.falloff.max(0.0) } else { 0.0 };
+    let modes = [tr("ui.scan_edit_drag_move"), tr("ui.scan_edit_drag_slide")];
+    choice_row(ui, tr("ui.scan_edit_drag"), "scan_edit_drag", &mut k.drag_mode, &modes);
     let moved = k.moved.iter().filter(|m| **m).count().to_string();
     form_row(ui, tr("ui.scan_edit_moved"), |ui| ui_kit::text(ui, &moved, ui_kit::Text::Cell));
     if let Some((rms, max)) = k.fit {
@@ -433,6 +517,15 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         );
         form_row(ui, tr("ui.scan_edit_distance"), |ui| ui_kit::text(ui, &fit, ui_kit::Text::Cell));
     }
+    // Surface Check on the surface as shown: a fold a drag makes is seen as it is made.
+    if let Some(c) = &k.check {
+        if c.is_clean() {
+            form_row(ui, tr("ui.scan_edit_check"), |ui| ui_kit::text(ui, tr("ui.scan_edit_check_clean"), ui_kit::Text::Cell));
+        } else {
+            let line = crate::dialogs_surface_check::trouble(c.folds, c.pinches, c.crossings);
+            form_row(ui, tr("ui.scan_edit_check"), |ui| ui_kit::text(ui, &line, ui_kit::Text::Report("scan_edit_check", true)));
+        }
+    }
     let edited = k.moved.iter().any(|m| *m) || k.reshaped;
     if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_reset"), ui_kit::Button::Enabled(edited))).clicked() {
         reset_to(k, l.target.surface.clone());
@@ -441,7 +534,6 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
     // The point chosen (clicked or last dragged): where it goes, typed, or a distance along the
     // way the surface faces.
     if let Some(i) = k.chosen.filter(|i| *i < k.net.len()) {
-        let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
         let which = format!("[{}, {}]", i % nu, i / nu);
         form_row(ui, tr("ui.scan_edit_point"), |ui| ui_kit::text(ui, &which, ui_kit::Text::Cell));
         let p = k.net[i];
@@ -463,6 +555,17 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         {
             let to = k.net[i] + n * k.along;
             move_to(k, i, to);
+        }
+        form_row(ui, tr("ui.scan_edit_slide_u"), |ui| ui_kit::length_field(ui, &mut k.slide[0], &units, decimals));
+        form_row(ui, tr("ui.scan_edit_slide_v"), |ui| ui_kit::length_field(ui, &mut k.slide[1], &units, decimals));
+        for v in &mut k.slide {
+            if !v.is_finite() {
+                *v = 0.0;
+            }
+        }
+        let can = k.slide != [0.0, 0.0];
+        if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_slide"), ui_kit::Button::Enabled(can))).clicked() && can {
+            slide_typed(k, i);
         }
     }
     ui_kit::text(ui, tr("ui.scan_edit_hint"), ui_kit::Text::Hint("scan_edit_hint"));
@@ -662,13 +765,42 @@ pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::P
         (Some(l), Some(c)) if l.points(c).contains(&index) => l.points(c).into_iter().filter_map(|p| k.net.get(p).map(|q| (p, *q))).collect(),
         _ => vec![(index, k.net[index])],
     };
-    k.drag = Some(Drag { index, from: k.net[index], with });
+    // Sliding: the surface as it is and the point's place on it, which the pointer then moves.
+    let slide = (k.drag_mode == DRAG_SLIDE)
+        .then(|| {
+            let surface = k.shown.clone()?;
+            let (u, v) = *edit::greville_places(&surface).get(index)?;
+            let on = surface.eval(u, v).ok()?;
+            Some(Box::new(SlideFrom { surface, at: (u, v), on }))
+        })
+        .flatten();
+    k.drag = Some(Drag { index, from: k.net[index], with, slide });
     k.chosen = Some(index);
     true
 }
 
 /// The handle dragged to `to` on the screen.
 pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, to: egui::Pos2) {
+    // Sliding: the point goes to the surface's place under the pointer (in the plane of the screen
+    // through where it was on the surface), the others going with it the same way in u and v.
+    if let Some(from) = dialog(app).and_then(|k| k.drag.as_ref()?.slide.clone()) {
+        let (o, d) = proj.ray(to);
+        let n = proj.cam.back();
+        let den = d.dot(n);
+        if den.abs() <= 1e-12 {
+            return;
+        }
+        let Some(f) = edit::foot(&from.surface, o + d * ((from.on - o).dot(n) / den)) else { return };
+        let step = (f.u - from.at.0, f.v - from.at.1);
+        let Some(k) = dialog(app) else { return };
+        let chosen: Vec<usize> = k.drag.as_ref().map(|d| d.with.iter().map(|(i, _)| *i).collect()).unwrap_or_default();
+        if let Some((net, carried)) = slid_net(k, &from.surface, &chosen, |_| step)
+            && let Some(surface) = refitted(k, net, &chosen, &carried)
+        {
+            show(k, surface, true);
+        }
+        return;
+    }
     let Some((drag, snap, reach, scan)) =
         dialog(app).and_then(|k| Some((k.drag.clone()?, k.snap, k.snap_reach, loaded(k)?.covered.as_ref().map(|c| c.scan.clone()))))
     else {
@@ -777,6 +909,12 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         let rect = egui::Rect::from_center_size(*s, egui::vec2(2.0 * HANDLE, 2.0 * HANDLE));
         painter.rect_filled(rect, 1.0, fill);
         painter.rect_stroke(rect, 1.0, egui::Stroke::new(1.0, t.panel), egui::StrokeKind::Outside);
+    }
+    // Where Surface Check finds the surface shown folds, pinches or crosses itself.
+    for (trouble, at) in k.check.iter().flat_map(|c| &c.places) {
+        if let Some(s) = proj.to_screen(*at) {
+            crate::dialogs_surface_check::mark(painter, s, trouble.name());
+        }
     }
 }
 
@@ -894,6 +1032,77 @@ mod tests {
         h.app.run("edit.undo", json!({})).unwrap();
         let undone = edit::editable(&h.app.session, Some("Surface1"), "test").unwrap();
         assert!(edit::control_points(&undone.surface)[k].dist(from) < 1e-6, "one undo puts it back");
+    }
+
+    /// With a Falloff, a point moved carries its neighbours along, less the further they are; Slide
+    /// carries a point along the surface; a drag with Drag set to Slide does so too; and the
+    /// surface's check line turns from clean to folds when a point is pulled back past its
+    /// neighbours. OK keeps the net as edited.
+    #[test]
+    fn falloff_and_slide_move_points_and_the_check_sees_a_fold() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.fit_surface", json!({"point": [30, 30, 8], "radius": 25, "controls": 6})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        assert!(kind(&h).check.as_ref().is_some_and(edit::SurfaceCheck::is_clean), "a fitted dome is clean");
+        let start = kind(&h).net.clone();
+        let k = 2 * 6 + 2;
+        let step = start[k].dist(start[k + 1]);
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            e.refit = 0;
+            e.falloff = 2.0 * step;
+            move_to(e, k, start[k] + Vec3::new(0.0, 0.0, 6.0));
+            let next = e.net[k + 1].z - start[k + 1].z;
+            assert!(next > 1.0 && next < 5.0, "a neighbour goes part of the way: {next}");
+            assert!(!e.moved[k + 1], "carried, not moved by hand");
+            assert!((e.net[k + 4] - start[k + 4]).len() < 1e-9 || start[k + 4].dist(start[k]) < 2.0 * step);
+
+            // Slide 3 mm along u: the point keeps to the surface, about 3 mm on.
+            e.falloff = 0.0;
+            let j = 3 * 6 + 2;
+            let before = e.net[j];
+            e.slide = [3.0, 0.0];
+            slide_typed(e, j);
+            let d = e.net[j] - before;
+            assert!(e.moved[j] && d.len() > 2.0 && d.len() < 4.0, "{d:?}");
+
+            // A column pulled back past the next one folds the surface, and the check says so.
+            let fold: Vec<(usize, Vec3)> = (0..6).map(|r| (r * 6 + 3, e.net[r * 6 + 1] - Vec3::new(4.0, 0.0, 0.0))).collect();
+            let folded = preview(e, &fold).unwrap();
+            show(e, folded, false);
+            assert!(e.check.as_ref().is_some_and(|c| c.folds > 0), "{:?}", e.check);
+            let back = e.base.as_deref().cloned().unwrap();
+            let net = e.net.clone();
+            show(e, edit::with_points(&back, &net).unwrap(), false);
+        }
+
+        // A drag in Slide mode moves the point along the surface, toward the pointer.
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            e.drag_mode = DRAG_SLIDE;
+            e.chosen = None;
+            e.line = None;
+        }
+        let j = 3 * 6 + 3;
+        let from = kind(&h).shown_net[j];
+        let to = from + Vec3::new(0.0, 5.0, 0.0);
+        h.step(&json!({"drag": [{"world": [from.x, from.y, from.z]}, {"world": [to.x, to.y, to.z]}], "steps": 6})).unwrap();
+        h.frames(2);
+        let after = kind(&h).clone();
+        assert!(after.moved[j], "slid by hand");
+        let d = after.net[j] - from;
+        assert!(d.y > 2.0 && d.x.abs() < 1.5, "along the surface toward the pointer: {d:?}");
+
+        let edited = after.net.clone();
+        h.frames(2);
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        let kept = edit::control_points(&edit::editable(&h.app.session, Some("Surface1"), "test").unwrap().surface);
+        assert!(kept.iter().zip(&edited).all(|(a, b)| a.dist(*b) < 1e-6), "the net as edited, kept");
     }
 
     /// Fit Surface opens a dialog: a click on the dome marks the area round it and fits the

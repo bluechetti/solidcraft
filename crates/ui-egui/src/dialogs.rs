@@ -411,6 +411,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             ScanSplit(crate::dialogs_scan_split::SplitMesh),
             ScanAlignPairs(crate::dialogs_scan_align::AlignPairs),
             ScanFillet(crate::dialogs_scan_fillet::FilletScan),
+            SurfaceCheck(crate::dialogs_surface_check::SurfaceCheck),
             ScanFlatten(crate::dialogs_scan_flatten::Flatten),
             ScanFitPatches(crate::dialogs_scan_patches::FitPatches),
             ScanFloating(crate::dialogs_scan_clean::Floating),
@@ -1139,6 +1140,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_scan_split::start(app, id))
                     .or_else(|| crate::dialogs_scan_align::start(app, id))
                     .or_else(|| crate::dialogs_scan_fillet::start(app, id))
+                    .or_else(|| crate::dialogs_surface_check::start(app, id))
                     .or_else(|| crate::dialogs_scan_flatten::start(app, id))
                     .or_else(|| crate::dialogs_scan_patches::start(app, id))
                     .or_else(|| crate::dialogs_scan_reconstruct::start(app, id))
@@ -2641,6 +2643,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::ScanSplit(_) => "SPLIT MESH",
         Kind::ScanAlignPairs(_) => "ALIGN BY POINTS",
         Kind::ScanFillet(_) => "FILLET FROM SCAN",
+        Kind::SurfaceCheck(_) => "SURFACE CHECK",
         Kind::ScanFlatten(_) => "FLATTEN",
         Kind::ScanFitPatches(_) => "FIT PATCHES",
         Kind::ScanFloating(_) => "FLOATING PIECES",
@@ -5696,6 +5699,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanSplit(k) => return crate::dialogs_scan_split::commands(app, k, &d.inputs),
         Kind::ScanAlignPairs(k) => return crate::dialogs_scan_align::commands(k, &d.inputs),
         Kind::ScanFillet(k) => return crate::dialogs_scan_fillet::commands(k, &d.inputs),
+        Kind::SurfaceCheck(_) => return crate::dialogs_surface_check::commands(),
         Kind::ScanFlatten(k) => return crate::dialogs_scan_flatten::commands(app, k, &d.inputs),
         Kind::ScanFitPatches(k) => return crate::dialogs_scan_patches::commands(app, k, &d.inputs),
         Kind::ScanFloating(k) => return crate::dialogs_scan_clean::commands(k),

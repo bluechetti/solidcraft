@@ -93,7 +93,7 @@ fn axis(dir: Dir) -> usize {
 }
 
 /// The Greville place of point `i` on `knots` of degree `p`: where it pulls hardest.
-fn greville(knots: &[f64], i: usize, p: usize) -> f64 {
+pub(crate) fn greville(knots: &[f64], i: usize, p: usize) -> f64 {
     knots.get(i + 1..=i + p).map_or(0.0, |k| k.iter().sum::<f64>() / p as f64)
 }
 

@@ -126,6 +126,7 @@ mod sketch_store;
 mod surface;
 mod surface_analysis;
 mod surface_boundary;
+pub mod surface_check;
 mod surface_match;
 mod view_dxf;
 mod view_navigation;
@@ -327,6 +328,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(sketch_3d::COMMANDS.iter());
     v.extend(surface_analysis::COMMANDS.iter());
     v.extend(surface_boundary::COMMANDS.iter());
+    v.extend(surface_check::COMMANDS.iter());
     v.extend(surface::COMMANDS.iter());
     v.extend(surface_match::COMMANDS.iter());
     v.extend(sketch_modify::COMMANDS.iter());

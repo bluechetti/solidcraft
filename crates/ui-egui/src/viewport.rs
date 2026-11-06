@@ -5352,6 +5352,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::point_clouds::show(app, &painter, &proj);
     crate::dialogs_scan::draw(app, &painter, &proj);
     crate::dialogs_scan_surface::draw(app, &painter, &proj);
+    crate::dialogs_surface_check::draw(app, &painter, &proj);
     crate::dialogs_scan_curve::draw(app, &painter, &proj);
     crate::dialogs_scan_free_form::draw(app, &painter, &proj);
     crate::dialogs_scan_slice::draw(app, &painter, &proj);

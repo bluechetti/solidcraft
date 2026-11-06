@@ -39,7 +39,10 @@
 //! - [`segment`]: Find All: the scan cut into regions, each a simple shape or freeform.
 //! - [`split`]: Split Mesh: a scan cut by a plane, a shape, a body, a curve or a sketch.
 //! - [`surface`]: a smooth B-spline surface fitted to the part of the scan round a picked point.
-//! - [`surface_edit`]: a surface's control points moved and the rest fitted to the scan again.
+//! - [`surface_check`]: Surface Check: where a B-spline surface folds, pinches or passes through
+//!   itself, and how square and even its parameters are.
+//! - [`surface_edit`]: a surface's control points moved (with a falloff, or slid along the
+//!   surface) and the rest fitted to the scan again.
 //! - [`symmetry`]: the plane a scan is a mirror image about, found by itself or near a line drawn
 //!   along it, how far each point's reflection lands from the scan, and the move that squares
 //!   the scan to it.
@@ -75,6 +78,7 @@ pub mod segment;
 pub mod selection;
 pub mod split;
 pub mod surface;
+pub mod surface_check;
 pub mod surface_edit;
 pub mod symmetry;
 pub mod wrap;

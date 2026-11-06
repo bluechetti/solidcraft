@@ -591,6 +591,57 @@ fn edit_surface_works_where_a_later_move_put_the_surface() {
     assert!(refused.contains("one of `to`"), "{refused}");
 }
 
+/// A point raised with a falloff carries the points round it up less the further they are and
+/// none past the falloff; sliding a point along the flat surface keeps it in the plane and moves
+/// it about as far as asked, carrying its neighbours by their share.
+#[test]
+fn edit_surface_moves_with_a_falloff_and_slides_points_along_the_surface() {
+    let (mut s, _) = session_with_a_plate_and_boss("edit-falloff");
+    run(&mut s, "scan.fit_surface", json!({"point": [12, 12, 8], "radius": 8, "controls": 6}));
+    let start = super::surface::editable(&s, None, "test").unwrap();
+    let net = solidcraft_scan::surface_edit::points(&start.surface);
+    let step = net[2 * 6 + 3].dist(net[2 * 6 + 2]);
+    let k = 2 * 6 + 2;
+    let up = net[k] + Vec3::new(0.0, 0.0, 2.0);
+    // A falloff of two steps: the next point along takes about half, two along none.
+    let raised = run(&mut s, "scan.edit_surface", json!({"moves": [{"point": [2, 2], "to": [up.x, up.y, up.z]}], "falloff": 2.0 * step}));
+    assert_eq!(raised["moved"].as_u64(), Some(1), "{raised}");
+    assert!(raised["carried"].as_u64().unwrap() >= 8, "the ring round it: {raised}");
+    let now = solidcraft_scan::surface_edit::points(&super::surface::editable(&s, None, "test").unwrap().surface);
+    assert!(now[k].dist(up) < 1e-9);
+    let next = now[k + 1].z - net[k + 1].z;
+    assert!(next > 0.8 && next < 1.2, "half way, about: {next}");
+    for (i, (a, b)) in now.iter().zip(&net).enumerate() {
+        if b.dist(net[k]) >= 2.0 * step {
+            assert!((*a - *b).len() < 1e-9, "point {i}, past the falloff: untouched");
+        }
+    }
+    run(&mut s, "edit.undo", json!({}));
+
+    // Slid 2 mm along u: the point stays on the plate's plane (its net is flat) and goes about 2 mm.
+    let slid = run(&mut s, "scan.edit_surface", json!({"slide": {"points": [[2, 2]], "u": "2 mm"}}));
+    assert_eq!((slid["moved"].as_u64(), slid["carried"].as_u64()), (Some(1), Some(0)), "{slid}");
+    let now = solidcraft_scan::surface_edit::points(&super::surface::editable(&s, None, "test").unwrap().surface);
+    let d = now[k] - net[k];
+    assert!((d.len() - 2.0).abs() < 0.5 && d.z.abs() < 0.05, "{d:?}");
+    run(&mut s, "edit.undo", json!({}));
+    let with = run(&mut s, "scan.edit_surface", json!({"slide": {"points": [[2, 2]], "v": "-1.5 mm"}, "falloff": 2.0 * step}));
+    assert!(with["carried"].as_u64().unwrap() > 0, "{with}");
+
+    for (p, why) in [
+        (json!({"slide": {"points": [[2, 2]]}}), "needs a length"),
+        (json!({"slide": {"points": [], "u": 1}}), "slide.points"),
+        (json!({"slide": {"points": [[9, 9]], "u": 1}}), "outside the net"),
+        (json!({"slide": {"points": [[2, 2]], "u": 1}, "moves": [{"point": [1, 1], "along": 1}]}), "not both"),
+        (json!({"moves": [{"point": [1, 1], "along": 1}], "falloff": -1}), "0 or more"),
+        (json!({"moves": [{"point": [1, 1], "along": 1}], "falloff": "nope"}), "falloff"),
+        (json!({"points": net.iter().map(|p| [p.x, p.y, p.z]).collect::<Vec<_>>(), "falloff": 3}), "without `falloff`"),
+    ] {
+        let refused = s.execute("scan.edit_surface", &p).unwrap_err().to_string();
+        assert!(refused.contains(why), "{p}: {refused}");
+    }
+}
+
 /// A curve clicked half way round the plate's boss is kept as a 3D spline in a new `Scan Curves`
 /// 3D sketch, close to the scan; a closed one round it goes in the same sketch; each is one undo
 /// step.

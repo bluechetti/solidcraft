@@ -351,6 +351,125 @@ pub fn around(count: [usize; 2], i: usize, j: usize, ring: usize) -> Vec<bool> {
     (0..nu * nv).map(|k| (k % nu).abs_diff(i) <= ring && (k / nu).abs_diff(j) <= ring).collect()
 }
 
+/// How much of a move a control point `distance` from the nearest point moved takes, with a
+/// falloff of `radius`: all of it at the points moved, none from the radius out, and a smooth step
+/// between (one less the smoothstep `3t² − 2t³` of `t = distance / radius`, level at both ends).
+/// With no radius only the points moved move.
+pub fn falloff_weight(distance: f64, radius: f64) -> f64 {
+    if !(radius > 0.0) {
+        return if distance <= 0.0 { 1.0 } else { 0.0 };
+    }
+    let t = (distance / radius).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
+}
+
+/// How much of a move each point of `net` takes when the points `chosen` are moved with a falloff
+/// of `radius` (mm, from the nearest one chosen, as the net is): 1 at those chosen, none where
+/// `held` (a held point chosen does not move either).
+pub fn falloff_weights(net: &[Vec3], chosen: &[usize], held: &[bool], radius: f64) -> Vec<f64> {
+    let chosen: Vec<Vec3> = chosen.iter().filter_map(|&i| net.get(i).copied()).collect();
+    net.iter()
+        .enumerate()
+        .map(|(i, p)| {
+            if held.get(i).copied().unwrap_or(false) || chosen.is_empty() {
+                return 0.0;
+            }
+            falloff_weight(chosen.iter().map(|c| c.dist(*p)).fold(f64::INFINITY, f64::min), radius)
+        })
+        .collect()
+}
+
+/// The net with the points `moves` put where they go and the others within `radius` of them
+/// carried along by their [`falloff_weight`] of the nearest one's distance, each by the moves of
+/// the points moved blended by how near each is, so that one move carries its neighbours exactly
+/// as far as their weight says (a soft selection). Points `held` stay. The net, and which points
+/// the falloff carried (not those moved).
+pub fn with_falloff(net: &[Vec3], moves: &[(usize, Vec3)], held: &[bool], radius: f64) -> (Vec<Vec3>, Vec<bool>) {
+    let mut out = net.to_vec();
+    let mut carried = vec![false; net.len()];
+    // Each move as where its point was and how far it goes.
+    let from: Vec<(Vec3, Vec3)> = moves.iter().filter_map(|&(i, to)| net.get(i).map(|p| (*p, to - *p))).collect();
+    if radius > 0.0 && !from.is_empty() {
+        for (i, p) in net.iter().enumerate() {
+            if held.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let (mut sum, mut delta, mut nearest) = (0.0, Vec3::ZERO, f64::INFINITY);
+            for (at, d) in &from {
+                let gap = at.dist(*p);
+                let w = falloff_weight(gap, radius);
+                sum += w;
+                delta += *d * w;
+                nearest = nearest.min(gap);
+            }
+            let w = falloff_weight(nearest, radius);
+            if w > 0.0 && sum > 0.0 {
+                out[i] = *p + delta * (w / sum);
+                carried[i] = true;
+            }
+        }
+    }
+    // The points moved go exactly where they were put.
+    for &(i, to) in moves {
+        if let Some(q) = out.get_mut(i) {
+            *q = to;
+            carried[i] = false;
+        }
+    }
+    (out, carried)
+}
+
+/// The Greville places of the surface's control points (u fastest): where each pulls hardest, kept
+/// in the domain.
+pub fn greville_places(surface: &NurbsSurface) -> Vec<(f64, f64)> {
+    let [nu, nv] = surface.count();
+    let [pu, pv] = surface.degree();
+    let [ku, kv] = surface.knots();
+    let [[u0, u1], [v0, v1]] = surface.domain();
+    let at = |k: &[f64], i: usize, p: usize| if p == 0 { k.get(i).copied().unwrap_or(0.0) } else { crate::net::greville(k, i, p) };
+    (0..nv).flat_map(|j| (0..nu).map(move |i| (i, j))).map(|(i, j)| (at(ku, i, pu).clamp(u0, u1), at(kv, j, pv).clamp(v0, v1))).collect()
+}
+
+/// The steps in (u, v) that carry each control point's Greville place about `along[0]` mm along u
+/// and `along[1]` along v on the surface (each by the surface's speed there), for [`slid`].
+pub fn slide_steps(surface: &NurbsSurface, along: [f64; 2]) -> Vec<(f64, f64)> {
+    let net = points(surface);
+    greville_places(surface)
+        .into_iter()
+        .map(|(u, v)| {
+            let Some((_, su, sv)) = frame(surface, &net, u, v) else { return (0.0, 0.0) };
+            let per = |speed: f64, mm: f64| if speed > 1e-12 && mm.is_finite() { mm / speed } else { 0.0 };
+            (per(su.len(), along[0]), per(sv.len(), along[1]))
+        })
+        .collect()
+}
+
+/// Slide (after Plasticity's): each control point that takes a share (`weights`) moved along the
+/// surface rather than through space, by that share of the way the surface goes from its Greville
+/// place to that place shifted by `step` for it (kept in the domain): `P + w · (S(g + Δ) − S(g))`.
+/// So the net slides over the surface and the surface keeps its shape as far as its points allow.
+/// `None` when the surface cannot be evaluated.
+pub fn slid(surface: &NurbsSurface, weights: &[f64], step: impl Fn(usize) -> (f64, f64)) -> Option<Vec<Vec3>> {
+    let net = points(surface);
+    let [[u0, u1], [v0, v1]] = surface.domain();
+    greville_places(surface)
+        .into_iter()
+        .enumerate()
+        .map(|(i, (u, v))| {
+            let p = *net.get(i)?;
+            let w = weights.get(i).copied().unwrap_or(0.0);
+            if !(w > 0.0) {
+                return Some(p);
+            }
+            let (du, dv) = step(i);
+            let (du, dv) = (if du.is_finite() { du } else { 0.0 }, if dv.is_finite() { dv } else { 0.0 });
+            let (from, _, _) = frame(surface, &net, u, v)?;
+            let (to, _, _) = frame(surface, &net, (u + du).clamp(u0, u1), (v + dv).clamp(v0, v1))?;
+            Some(p + (to - from) * w)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,5 +564,92 @@ mod tests {
         assert!(f.inside && f.point.dist(Vec3::new(30.0, 30.0, dome(30.0, 30.0))) < 0.05, "{f:?}");
         let off = foot(&fit.surface, Vec3::new(200.0, 30.0, 0.0)).unwrap();
         assert!(!off.inside, "beyond the edge: {off:?}");
+    }
+
+    /// A flat bicubic net, `n` points a side, 10 mm apart, clamped knots on [0, 1].
+    fn flat(n: usize) -> NurbsSurface {
+        let mut knots = vec![0.0; 4];
+        knots.extend((1..n - 3).map(|k| k as f64 / (n - 3) as f64));
+        knots.extend([1.0; 4]);
+        let net: Vec<Vec3> = (0..n * n).map(|k| Vec3::new((k % n) as f64 * 10.0, (k / n) as f64 * 10.0, 0.0)).collect();
+        NurbsSurface::new([3, 3], [knots.clone(), knots], &net, &vec![1.0; n * n]).unwrap()
+    }
+
+    #[test]
+    fn the_falloff_takes_all_at_the_point_none_past_the_radius_and_half_half_way() {
+        assert_eq!(falloff_weight(0.0, 10.0), 1.0);
+        assert_eq!(falloff_weight(10.0, 10.0), 0.0);
+        assert_eq!(falloff_weight(25.0, 10.0), 0.0);
+        assert!((falloff_weight(5.0, 10.0) - 0.5).abs() < 1e-12);
+        assert_eq!(falloff_weight(0.0, 0.0), 1.0, "no radius: the point moved only");
+        assert_eq!(falloff_weight(1.0, 0.0), 0.0);
+        assert_eq!(falloff_weight(1.0, f64::NAN), 0.0);
+        let net = points(&flat(5));
+        let w = falloff_weights(&net, &[12], &[false; 25], 15.0);
+        assert_eq!(w[12], 1.0);
+        assert!(w[13] > 0.0 && w[13] < 1.0 && w[14] == 0.0, "{w:?}");
+        let held = (0..25).map(|k| k == 13).collect::<Vec<_>>();
+        assert_eq!(falloff_weights(&net, &[12], &held, 15.0)[13], 0.0, "held");
+    }
+
+    #[test]
+    fn a_point_moved_with_a_falloff_carries_its_neighbours_less_the_further_they_are() {
+        let net = points(&flat(5));
+        let up = Vec3::new(0.0, 0.0, 6.0);
+        let (moved, carried) = with_falloff(&net, &[(12, net[12] + up)], &[false; 25], 20.0);
+        assert_eq!(moved[12], net[12] + up, "the point goes where it was put");
+        assert!(!carried[12]);
+        // One step away (10 mm): half; two steps (20 mm): none; across (14.1 mm): less than half.
+        assert!((moved[13].z - 3.0).abs() < 1e-9 && carried[13], "{:?}", moved[13]);
+        assert_eq!(moved[14], net[14]);
+        assert!(!carried[14]);
+        assert!(moved[18].z > 0.0 && moved[18].z < 3.0);
+        // A held neighbour stays; with no radius nothing but the point moves.
+        let held = (0..25).map(|k| k == 13).collect::<Vec<_>>();
+        assert_eq!(with_falloff(&net, &[(12, net[12] + up)], &held, 20.0).0[13], net[13]);
+        let (alone, none) = with_falloff(&net, &[(12, net[12] + up)], &[false; 25], 0.0);
+        assert!(alone.iter().enumerate().all(|(k, p)| k == 12 || *p == net[k]) && !none.iter().any(|c| *c));
+        // Two points moved the same way carry the one between them as the nearer one alone would;
+        // moved opposite ways, their moves cancel there.
+        let (two, _) = with_falloff(&net, &[(11, net[11] + up), (13, net[13] + up)], &[false; 25], 20.0);
+        assert!((two[12].z - 3.0).abs() < 1e-9, "{:?}", two[12]);
+        let (apart, _) = with_falloff(&net, &[(11, net[11] + up), (13, net[13] - up)], &[false; 25], 20.0);
+        assert!(apart[12].z.abs() < 1e-9, "{:?}", apart[12]);
+    }
+
+    #[test]
+    fn a_net_slid_along_a_flat_surface_moves_in_its_plane_by_the_length_asked() {
+        let s = flat(6);
+        let n = s.count()[0] * s.count()[1];
+        let steps = slide_steps(&s, [3.0, 0.0]);
+        let middle = 2 * 6 + 2;
+        let slid = slid(&s, &vec![1.0; n], |i| steps[i]).unwrap();
+        let before = points(&s);
+        // Inside the net, every point goes about 3 mm along u (by the surface's speed where it
+        // starts) and stays in the plane.
+        let d = slid[middle] - before[middle];
+        assert!((d.x - 3.0).abs() < 0.3 && d.y.abs() < 1e-9 && d.z.abs() < 1e-12, "{d:?}");
+        // Points at the far edge are held by the edge of the domain.
+        let last = 5;
+        assert!((slid[last] - before[last]).len() < 1e-9);
+        // Only the points with a share move; a share of a half goes half way.
+        let mut w = vec![0.0; n];
+        w[middle] = 0.5;
+        let half = super::slid(&s, &w, |i| steps[i]).unwrap();
+        assert!(((half[middle] - before[middle]).x - d.x / 2.0).abs() < 1e-9);
+        assert!(half.iter().zip(&before).enumerate().all(|(k, (a, b))| k == middle || a == b));
+        // Hostile steps leave a point where it is.
+        let still = super::slid(&s, &vec![1.0; n], |_| (f64::NAN, f64::INFINITY)).unwrap();
+        assert!(still.iter().zip(&before).all(|(a, b)| a.is_finite() && (a.x - b.x).abs() < 1e-9));
+    }
+
+    #[test]
+    fn greville_places_lie_in_the_domain_one_a_point() {
+        let s = flat(7);
+        let g = greville_places(&s);
+        assert_eq!(g.len(), 49);
+        assert_eq!(g[0], (0.0, 0.0));
+        assert_eq!(g[48], (1.0, 1.0));
+        assert!(g.windows(2).take(6).all(|w| w[1].0 > w[0].0));
     }
 }
