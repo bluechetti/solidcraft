@@ -267,6 +267,41 @@ pub fn merged(s: &Session, names: Option<&[String]>, gap: Option<f64>) -> Result
     Ok((targets, made, gap))
 }
 
+/// Why sewing `surfaces` (`what`: "the seam", "the surfaces") failed, in words rather than the
+/// kernel's test names: the joined surface folding over itself where its sides were brought
+/// together (by Surface Check), else what the kernel's check refused.
+pub(super) fn sewing_refusal(what: &str, surfaces: &[&NurbsSurface], kernel: &str, cmd: &str) -> EngineError {
+    let trouble = surfaces.iter().map(|f| solidcraft_scan::surface_check::trouble(f)).fold([0; 3], |a, b| [a[0] + b[0], a[1] + b[1], a[2] + b[2]]);
+    if trouble.iter().sum::<usize>() > 0 {
+        return bad(
+            cmd,
+            format!(
+                "{what} could not be sewn: where the sides were brought together the surface folds over itself ({}); bring the sides closer and running the same way (Edit Surface), or merge with a smaller gap",
+                super::surface::trouble_text(trouble)
+            ),
+        );
+    }
+    bad(cmd, format!("{what} could not be sewn: {}", kernel_words(kernel)))
+}
+
+/// What the kernel's check refused, in words: each kind of failure it names, once.
+fn kernel_words(kernel: &str) -> String {
+    let kinds = [
+        ("NonMonotonic", "the control net doubles back on itself"),
+        ("CurveCusp", "an edge curve kinks sharply"),
+        ("Bad Gap", "an edge does not lie on the faces it joins"),
+        ("Bad Edge loc", "an edge does not lie on the faces it joins"),
+        ("ntersect", "the surface passes through itself"),
+    ];
+    let mut said: Vec<&str> = Vec::new();
+    for (name, words) in kinds {
+        if kernel.contains(name) && !said.contains(&words) {
+            said.push(words);
+        }
+    }
+    if said.is_empty() { "the kernel's check refused the joined surface".to_string() } else { said.join("; ") }
+}
+
 pub(super) fn merge_surfaces(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.merge_surfaces";
     let names = match p.get("surfaces").filter(|v| !v.is_null()) {
@@ -298,7 +333,15 @@ pub(super) fn merge_surfaces(s: &mut Session, p: &Value) -> Result<Value> {
     let run = |s: &mut Session, id: &str, p: Value| -> Result<Value> {
         super::super::find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?.run_nested(s, &p)
     };
-    let feature = if stitch && bodies.len() > 1 { Some(run(s, "surface.stitch", serde_json::json!({ "bodies": bodies }))?) } else { None };
+    let feature = if stitch && bodies.len() > 1 {
+        let all: Vec<&NurbsSurface> = made.surfaces.iter().collect();
+        Some(
+            run(s, "surface.stitch", serde_json::json!({ "bodies": bodies }))
+                .map_err(|e| sewing_refusal("the surfaces", &all, &e.to_string(), cmd))?,
+        )
+    } else {
+        None
+    };
     let reply = ScanMergeSurfacesResult {
         body: stitch.then(|| bodies[0].clone()),
         surfaces: bodies,
@@ -308,4 +351,18 @@ pub(super) fn merge_surfaces(s: &mut Session, p: &Value) -> Result<Value> {
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+#[cfg(test)]
+mod sewing_tests {
+    /// The kernel's refusal of a seam on T-LESS 01 (a wrap merged round on itself), in words: no
+    /// test numbers, owners or offsets, each kind once.
+    #[test]
+    fn a_sewing_refusal_is_said_in_words() {
+        let kernel = "the operation failed: SMLib stitch: SMLib's check refuses the result: 2 failed tests:\nSmBSplineSurface::Test #5 Bad NonMonotonic CPts: SmBSplineSurface Control Net doubles back on itself probably making a self intersecting surface [owner SmBSplineSurface]\nSmBSplineCurve::Test #14 Bad CurveCusp: 3D BSplineCurve Warning: Extremely small radius of curvature (offset=0.0028879039, tolerance=0.0076947937) [owner SmBSplineCurve]";
+        let words = super::kernel_words(kernel);
+        assert_eq!(words, "the control net doubles back on itself; an edge curve kinks sharply; the surface passes through itself");
+        assert!(!words.contains("Sm") && !words.contains('#'));
+        assert_eq!(super::kernel_words("something else"), "the kernel's check refused the joined surface");
+    }
 }

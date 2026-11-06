@@ -194,7 +194,8 @@ pub(super) fn write_closed(s: &mut Session, target: &EditableSurface, surface: &
     let (a, b) = solidcraft_scan::merge::halves(&unmoved(target, surface, cmd)?, 1 - side.along()).map_err(|e| bad(cmd, e.to_string()))?;
     let sheet = |half: &NurbsSurface| solidcraft_kernel::nurbs_sheet(half).map_err(|e| bad(cmd, format!("the surface: {e}")));
     let (a, b) = (sheet(&a)?, sheet(&b)?);
-    let sewn = solidcraft_kernel::stitch(&[&a, &b], 0.0).map_err(|e| bad(cmd, format!("the seam could not be sewn: {e}")))?;
+    let sewn =
+        solidcraft_kernel::stitch(&[&a, &b], 0.0).map_err(|e| super::free_form::sewing_refusal("the seam", &[surface], &e.to_string(), cmd))?;
     let step = solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| bad(cmd, format!("the surface: {e}")))?;
     write_step(s, target, step, cmd)
 }
