@@ -598,6 +598,15 @@ pub struct ScanWrapSurfaceResult {
     pub met: usize,
     /// How far the places are from the face, root mean square, in mm.
     pub rms: f64,
+    /// Where the surface is wrong (Surface Check on it): folds (it doubles back), pinches (it
+    /// narrows to nothing) and crossings (it passes through itself). A net following rims and ribs
+    /// it is too coarse for folds there.
+    pub folds: usize,
+    pub pinches: usize,
+    pub crossings: usize,
+    /// Said when the surface folds, pinches or crosses itself: what to do instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     /// The feature that keeps it, as a feature command replies.
     #[schemars(with = "FeatureResult")]
     pub feature: Value,

@@ -244,13 +244,17 @@ pub struct WrapSurface {
     pub axis: usize,
     /// How far round the net goes, in degrees; 0 for the part's own reach.
     pub arc: f64,
+    /// 0 (the net follows the scan) to 1 (it keeps nearly to its cylinder).
+    pub stiffness: f64,
     shown: Option<Box<WrapShown>>,
 }
 
 #[derive(Clone, Debug)]
 struct WrapShown {
-    key: ([u64; 3], u64, usize, usize, u64, u64),
+    key: ([u64; 3], u64, usize, usize, u64, u64, u64),
     result: Result<Wrapped, String>,
+    /// Where the net made folds, pinches and crosses itself (Surface Check on it).
+    trouble: [usize; 3],
 }
 
 /// The point clicked on a scan: its scan and the place.
@@ -273,16 +277,24 @@ fn wrap(app: &SolveApp, k: &mut WrapSurface, inputs: &[crate::selection::SelInpu
     if !(k.reach > 0.0) {
         k.reach = free_form::default_wrap_reach(&app.session, Some(&body)).unwrap_or(20.0);
     }
-    let key =
-        ([point.x.to_bits(), point.y.to_bits(), point.z.to_bits()], k.reach.to_bits(), k.details, k.axis, k.arc.to_bits(), app.session.revision);
+    let key = (
+        [point.x.to_bits(), point.y.to_bits(), point.z.to_bits()],
+        k.reach.to_bits(),
+        k.details,
+        k.axis,
+        k.arc.to_bits(),
+        k.stiffness.to_bits(),
+        app.session.revision,
+    );
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         return;
     }
     let axis = [None, Some(Vec3::X), Some(Vec3::Y), Some(Vec3::Z)][k.axis.min(3)];
     let arc = (k.arc > 0.0).then(|| k.arc.to_radians());
-    let wrap = Wrap { axis, details: k.details.min(2), arc, stiffness: 0.0 };
+    let wrap = Wrap { axis, details: k.details.min(2), arc, stiffness: k.stiffness };
     let result = free_form::wrapped(&app.session, Some(&body), point, k.reach, wrap).map_err(|e| e.to_string());
-    k.shown = Some(Box::new(WrapShown { key, result }));
+    let trouble = result.as_ref().map_or([0; 3], |w| w.trouble);
+    k.shown = Some(Box::new(WrapShown { key, result, trouble }));
 }
 
 /// The Wrap Surface dialog's rows (after the point input).
@@ -297,8 +309,12 @@ pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs:
     choice_row(ui, tr("ui.scan_wrap_axis"), "scan_wrap_axis", &mut k.axis, &axes);
     form_row(ui, tr("ui.scan_wrap_arc"), |ui| ui_kit::angle_field(ui, &mut k.arc));
     k.arc = k.arc.clamp(0.0, 360.0);
-    match k.shown.as_ref().map(|s| &s.result) {
-        Some(Ok(w)) => {
+    let format = |v: f64| format!("{:.0} %", 100.0 * v);
+    form_row(ui, tr("ui.scan_free_form_stiffness"), |ui| {
+        ui_kit::slider(ui, &mut k.stiffness, 0.0..=1.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
+    });
+    match k.shown.as_ref().map(|s| (&s.result, s.trouble)) {
+        Some((Ok(w), [folds, pinches, crossings])) => {
             let [nu, nv] = w.made.surface.count();
             let note = crate::i18n::format(
                 "ui.scan_wrap_found",
@@ -313,8 +329,14 @@ pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs:
             if w.off > 0.1 * w.cylinder.radius {
                 ui_kit::text(ui, tr("ui.scan_wrap_poor"), ui_kit::Text::Report("scan_wrap_poor", false));
             }
+            // The net follows rims and ribs it is too coarse for: Stiffness smooths them out.
+            if folds + pinches + crossings > 0 {
+                let trouble = crate::dialogs_surface_check::trouble(folds, pinches, crossings);
+                let line = crate::i18n::format("ui.scan_wrap_folds", &[("trouble", &trouble)]);
+                ui_kit::text(ui, &line, ui_kit::Text::Report("scan_wrap_folds", true));
+            }
         }
-        Some(Err(why)) => {
+        Some((Err(why), _)) => {
             ui_kit::text(ui, why, ui_kit::Text::Report("scan_wrap_error", true));
         }
         None => {}
@@ -336,6 +358,9 @@ pub fn wrap_commands(k: &WrapSurface, inputs: &[crate::selection::SelInput]) -> 
     });
     if k.arc > 0.0 {
         p["arc"] = json!(format!("{} deg", k.arc));
+    }
+    if k.stiffness > 0.0 {
+        p["stiffness"] = json!(k.stiffness);
     }
     Ok(vec![("scan.wrap_surface".into(), p)])
 }
@@ -577,6 +602,14 @@ mod tests {
         // The radius, how far off the part is and the rms are lengths, not areas or volumes.
         let found = painted_text(&mut h).into_iter().find(|t| t.contains("cylinder of radius")).expect("the note on the net found");
         assert!(found.contains(" mm") && !found.contains('²') && !found.contains('³'), "{found}");
+        // Stiffness is the dialog's too, and OK passes it.
+        if let Some(Kind::ScanWrapSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.stiffness = 0.1;
+        }
+        h.frames(2);
+        let d = h.app.dialog.as_ref().unwrap();
+        let Kind::ScanWrapSurface(k) = &d.kind else { panic!("the dialog") };
+        assert_eq!(wrap_commands(k, &d.inputs).unwrap()[0].1["stiffness"], 0.1);
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
         assert!(h.app.session.model.state().body("FreeForm1").is_some(), "kept");

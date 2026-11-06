@@ -1015,6 +1015,11 @@ fn wrap_surface_wraps_a_net_on_a_tube() {
     let made = run(&mut s, "scan.wrap_surface", json!({"point": point, "reach": "60 mm"}));
     assert_eq!((made["surface"].as_str(), made["controls"].clone()), (Some("FreeForm1"), json!([8, 20])), "{made}");
     assert!((made["radius"].as_f64().unwrap() - 10.0).abs() < 0.05 && made["rms"].as_f64().unwrap() < 0.05, "{made}");
+    assert_eq!((made["folds"].as_u64(), made["crossings"].as_u64()), (Some(0), Some(0)), "{made}");
+    assert!(made.get("warning").is_none(), "{made}");
+    // A quarter of the tube does not close round on itself: Merge says how far apart its sides are.
+    let open = s.execute("scan.merge_surfaces", &json!({"surfaces": ["FreeForm1"]})).unwrap_err().to_string();
+    assert!(open.contains("does not close round on itself") && open.contains("mm apart"), "{open}");
     let about_z = run(&mut s, "scan.wrap_surface", json!({"point": point, "reach": "60 mm", "axis": "z", "details": "low"}));
     assert_eq!(about_z["surface"].as_str(), Some("FreeForm2"), "{about_z}");
     assert!((about_z["radius"].as_f64().unwrap() - 10.0).abs() < 0.05 && about_z["controls"][0] == 4, "{about_z}");
@@ -1022,6 +1027,19 @@ fn wrap_surface_wraps_a_net_on_a_tube() {
     assert!(s.model.state().body("FreeForm2").is_none() && s.model.state().body("FreeForm1").is_some(), "one undo step");
     let refused = s.execute("scan.wrap_surface", &json!({"point": point, "details": "huge"})).unwrap_err().to_string();
     assert!(refused.contains("low, medium or fine"), "{refused}");
+}
+
+/// A wrap that folds says so and says what to do: Stiffness, then more of it; one that does not
+/// says nothing.
+#[test]
+fn a_folded_wrap_is_told_to_raise_stiffness() {
+    assert!(super::free_form::wrap_warning([0, 0, 0], 0.0).is_none());
+    let soft = super::free_form::wrap_warning([20, 0, 0], 0.0).unwrap();
+    assert!(soft.contains("20 folds") && soft.contains("raise Stiffness a little") && soft.contains("cannot sew"), "{soft}");
+    let stiff = super::free_form::wrap_warning([3, 0, 1], 0.2).unwrap();
+    assert!(stiff.contains("raise Stiffness further") && stiff.contains("1 crossing"), "{stiff}");
+    let crossing = super::free_form::wrap_warning([0, 0, 13], 0.0).unwrap();
+    assert!(crossing.starts_with("the surface passes through itself (13 crossings)"), "{crossing}");
 }
 
 /// Two Free Forms clicked side by side on a dome, a little apart and of other sizes, are merged:

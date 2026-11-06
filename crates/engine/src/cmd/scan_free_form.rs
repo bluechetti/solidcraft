@@ -122,6 +122,8 @@ pub struct Wrapped {
     pub cylinder: Cylinder,
     pub off: f64,
     pub made: Made,
+    /// Where the net folds, pinches and passes through itself (Surface Check on it).
+    pub trouble: [usize; 3],
 }
 
 /// The part's reach round the point when none is given: a fifth of the scan's size.
@@ -147,8 +149,9 @@ pub fn wrapped(s: &Session, body: Option<&str>, point: Vec3, reach: f64, wrap: W
     let snap = |ps: &[Vec3], limit: f64| ps.iter().map(|p| on.nearest(*p).filter(|(_, d)| *d <= limit).map(|(q, _)| q)).collect::<Vec<_>>();
     let w = solidcraft_scan::wrap::wrap(&scan, seed, point, reach, &wrap, snap).map_err(|e| bad(cmd, e.to_string()))?;
     let f = w.fitted;
+    let trouble = solidcraft_scan::surface_check::trouble(&f.surface);
     let made = Made { scan: Some(name.clone()), surface: f.surface, places: f.places, met: f.met, kept: f.kept, rms: f.rms };
-    Ok(Wrapped { scan: name, cylinder: w.cylinder, off: w.off, made })
+    Ok(Wrapped { scan: name, cylinder: w.cylinder, off: w.off, made, trouble })
 }
 
 pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
@@ -192,6 +195,7 @@ pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
         None => default_wrap_reach(s, Some(&body))?,
     };
     let w = wrapped(s, Some(&body), point, reach, Wrap { axis, details, arc, stiffness })?;
+    let trouble = w.trouble;
     let (name, feature) = super::surface::keep_surface(s, &w.made.surface, "FreeForm", "Wrap Surface", &format!("{body} (wrap)"), cmd)?;
     let at = |v: Vec3| [v.x, v.y, v.z];
     let reply = ScanWrapSurfaceResult {
@@ -205,10 +209,33 @@ pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
         places: w.made.places,
         met: w.made.met,
         rms: w.made.rms,
+        folds: trouble[0],
+        pinches: trouble[1],
+        crossings: trouble[2],
+        warning: wrap_warning(trouble, stiffness),
         feature,
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// What to tell someone about a wrap that folds, pinches or passes through itself: where its net
+/// follows rims and ribs it is too coarse for. Stiffness smooths them out (on the online test
+/// scans 0.05 to 0.1 left none, a little further from the scan); finer Details fold more, and
+/// Merge Surfaces cannot sew a folded seam. `None` when it does none of them.
+pub(super) fn wrap_warning(trouble: [usize; 3], stiffness: f64) -> Option<String> {
+    (trouble.iter().sum::<usize>() > 0).then(|| {
+        let raise = if stiffness < 0.1 { "raise Stiffness a little (0.05 to 0.1)" } else { "raise Stiffness further" };
+        let how = match trouble {
+            [0, 0, _] => "passes through itself",
+            [0, _, 0] => "pinches",
+            _ => "folds over itself",
+        };
+        format!(
+            "the surface {how} ({}) where the net follows rims and ribs it is too coarse for: {raise}, or wrap a smaller reach; Merge Surfaces cannot sew a folded seam, and finer Details fold more",
+            super::surface::trouble_text(trouble)
+        )
+    })
 }
 
 /// The surfaces Merge works on: those named, else the selected ones, else every surface in the
@@ -250,6 +277,9 @@ pub fn default_gap(surfaces: &[NurbsSurface]) -> f64 {
     if shortest.is_finite() { 0.1 * shortest } else { 1.0 }
 }
 
+/// Sides this many gaps apart or nearer are worth a wider gap, said when Merge finds no seam.
+const NEAR_ENOUGH: f64 = 3.0;
+
 /// The surfaces as Merge would make them meet, within `gap` (default [`default_gap`]), and the
 /// gap used.
 pub fn merged(s: &Session, names: Option<&[String]>, gap: Option<f64>) -> Result<(Vec<super::surface::EditableSurface>, Merged, f64)> {
@@ -263,7 +293,33 @@ pub fn merged(s: &Session, names: Option<&[String]>, gap: Option<f64>) -> Result
     if !(gap.is_finite() && gap > 0.0) {
         return Err(bad(cmd, "`gap` must be a length above 0"));
     }
-    let made = solidcraft_scan::merge::merge(&surfaces, gap).map_err(|e| bad(cmd, e.to_string()))?;
+    let made = solidcraft_scan::merge::merge(&surfaces, gap).map_err(|e| match e {
+        // How far off the nearest sides are, and how wide a gap reaches them.
+        solidcraft_scan::merge::MergeError::NoSeam => match solidcraft_scan::merge::nearest_sides(&surfaces) {
+            Some((apart, own)) => {
+                // A gap to reach them is worth giving only when they are near: sides far apart
+                // made one would bend the surfaces out of shape.
+                let reach = if apart <= NEAR_ENOUGH * gap { format!(", or give a gap of {:.2} mm or more", 1.05 * apart) } else { String::new() };
+                if own && surfaces.len() == 1 {
+                    bad(
+                        cmd,
+                        format!(
+                            "the surface does not close round on itself: its opposite sides are {apart:.2} mm apart on average, more than the gap ({gap:.2} mm); wrap a part that goes round its axis (on one that does not, the net's back meets other parts of the scan){reach}"
+                        ),
+                    )
+                } else {
+                    bad(
+                        cmd,
+                        format!(
+                            "no side of one surface runs along a side of another within the gap ({gap:.2} mm): the nearest two are {apart:.2} mm apart on average; put their corners together{reach}"
+                        ),
+                    )
+                }
+            }
+            None => bad(cmd, e.to_string()),
+        },
+        e => bad(cmd, e.to_string()),
+    })?;
     Ok((targets, made, gap))
 }
 
@@ -276,7 +332,7 @@ pub(super) fn sewing_refusal(what: &str, surfaces: &[&NurbsSurface], kernel: &st
         return bad(
             cmd,
             format!(
-                "{what} could not be sewn: where the sides were brought together the surface folds over itself ({}); bring the sides closer and running the same way (Edit Surface), or merge with a smaller gap",
+                "{what} could not be sewn: the surface folds over itself ({}): a wrap whose net follows rims and ribs too fine for it (wrap it again with Stiffness 0.05 to 0.1), or sides brought together that ran apart (Edit Surface, or merge with a smaller gap)",
                 super::surface::trouble_text(trouble)
             ),
         );
