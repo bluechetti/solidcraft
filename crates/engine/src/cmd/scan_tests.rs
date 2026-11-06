@@ -380,6 +380,29 @@ fn scan_deviation_measures_the_scan_against_the_model() {
     assert!(err.contains("more than"), "{err}");
 }
 
+/// The model as an STL (as a part's CAD often comes, T-LESS's among them): the scan is measured
+/// against the mesh as against the solid it was made from, and with no solid in the design the
+/// other mesh is the model; a scan is not measured against itself.
+#[test]
+fn scan_deviation_measures_the_scan_against_a_model_mesh() {
+    let (mut s, scan) = session_with_a_plate_and_boss("deviation-mesh");
+    run(&mut s, "solid.box", json!({"body_name": "Plate", "operation": "new", "length": 60, "width": 40, "height": 8}));
+    let against_solid = run(&mut s, "scan.deviation", json!({}));
+    let path = std::env::temp_dir().join(format!("solidcraft-scan-deviation-mesh-{}", std::process::id())).join("model.stl");
+    run(&mut s, "file.export", json!({"path": path, "bodies": ["Plate"]}));
+    run(&mut s, "edit.undo", json!({}));
+    let model = run(&mut s, "file.insert_mesh", json!({"path": path}))["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut s, "select.clear", json!({}));
+    let err = s.execute("scan.deviation", &json!({"scan": scan, "body": scan})).unwrap_err().to_string();
+    assert!(err.contains("not itself"), "{err}");
+    let reply = run(&mut s, "scan.deviation", json!({"scan": scan}));
+    assert_eq!(reply["body"].as_str(), Some(model.as_str()), "the other mesh is the model: {reply}");
+    for k in ["within", "max_above", "max_below", "rms"] {
+        let (mesh, solid) = (reply[k].as_f64().unwrap(), against_solid[k].as_f64().unwrap());
+        assert!((mesh - solid).abs() < 1e-3, "{k}: {mesh} against the mesh, {solid} against the solid");
+    }
+}
+
 /// Pressed again and again, Stand on Base goes through the bases one by one and round; a face
 /// picked on the scan is stood on instead.
 #[test]

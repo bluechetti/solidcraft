@@ -220,7 +220,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&DEVIATION_CONTRACT)
         .output(output_schema_for::<ScanDeviationResult>)
-        .params("scan?: mesh body (default: the selected or only one); body?: the model (default: the selected or only solid or surface body); tolerance?: length (default 0.1 mm); limit?: length (default 0.5 mm); show?: bool (false takes the map away): colours the scan by its distance from the model in the viewport, a view and not an undo step → shown, scan, body, rms, mean, max_above, max_below, within, measured, unmatched, tolerance, limit"),
+        .params("scan?: mesh body (default: the selected or only one); body?: the model: a solid or surface body, or a mesh body (a CAD model that came as an STL) (default: the selected or only solid or surface body, else with none the only other mesh body); tolerance?: length (default 0.1 mm); limit?: length (default 0.5 mm); show?: bool (false takes the map away): colours the scan by its distance from the model in the viewport, a view and not an undo step → shown, scan, body, rms, mean, max_above, max_below, within, measured, unmatched, tolerance, limit"),
 ];
 
 /// A move smaller than this (mm, at the scan's reach) leaves the scan where it is.
@@ -758,32 +758,47 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
     let model_name = match str_(p, "body").filter(|b| !b.trim().is_empty()) {
         Some(name) => name.to_owned(),
         None => {
-            let solid = |name: &str| state.body(name).is_some_and(|b| !b.body.is_mesh());
-            let selected: Vec<&str> = s
+            // A solid or surface body; with none in the design, another mesh body: a CAD model
+            // that came as an STL.
+            let solids: Vec<&str> = state.bodies.iter().filter(|b| !b.body.is_mesh()).map(|b| b.name.as_str()).collect();
+            let models: Vec<&str> = if solids.is_empty() {
+                state.bodies.iter().filter(|b| b.body.is_mesh() && b.name != mesh.body).map(|b| b.name.as_str()).collect()
+            } else {
+                solids
+            };
+            let mut selected: Vec<&str> = s
                 .selection
                 .iter()
                 .filter_map(|x| match x {
                     Sel::Body { name } | Sel::Face { body: name, .. } | Sel::Edge { body: name, .. } => Some(name.as_str()),
                     _ => None,
                 })
-                .filter(|n| solid(n))
+                .filter(|n| models.contains(n))
                 .collect();
-            let all: Vec<&str> = state.bodies.iter().filter(|b| !b.body.is_mesh()).map(|b| b.name.as_str()).collect();
-            match (selected.as_slice(), all.as_slice()) {
+            selected.sort_unstable();
+            selected.dedup();
+            match (selected.as_slice(), models.as_slice()) {
                 ([one], _) | ([], [one]) => (*one).to_owned(),
-                ([], []) => return Err(bad(cmd, "the design has no model to measure the scan against: build one first")),
-                _ => return Err(bad(cmd, "select the model (a solid or surface body) to measure the scan against")),
+                ([], []) => return Err(bad(cmd, "the design has no model to measure the scan against: build one, or insert the model's mesh")),
+                _ => return Err(bad(cmd, "select the model (a solid, surface or mesh body) to measure the scan against")),
             }
         }
     };
-    let model = state.body(&model_name).ok_or_else(|| bad(cmd, format!("no body `{model_name}`")))?;
-    if model.body.is_mesh() {
-        return Err(bad(cmd, format!("`{model_name}` is a mesh: measure the scan against a solid or surface body")));
+    if model_name == mesh.body {
+        return Err(bad(cmd, "measure the scan against another body, not itself"));
     }
-    // Meshed within a quarter of the tolerance, as Compare Bodies does, so the mesh agrees with
-    // the surface well within what is measured.
-    let surface = model.body.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance / 4.0)).map_err(|e| bad(cmd, format!("`{model_name}`: {e}")))?;
-    let d = solidcraft_scan::deviation::measure(&mesh.positions, &surface, tolerance, 4.0 * limit);
+    let model = state.body(&model_name).ok_or_else(|| bad(cmd, format!("no body `{model_name}`")))?;
+    let d = match model.body.display_mesh().filter(|_| model.body.is_mesh()) {
+        // A mesh body (the model as an STL) is measured against as it is, its triangles shared.
+        Some(triangles) => solidcraft_scan::deviation::measure(&mesh.positions, &triangles, tolerance, 4.0 * limit),
+        None => {
+            // Meshed within a quarter of the tolerance, as Compare Bodies does, so the mesh agrees
+            // with the surface well within what is measured.
+            let surface =
+                model.body.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance / 4.0)).map_err(|e| bad(cmd, format!("`{model_name}`: {e}")))?;
+            solidcraft_scan::deviation::measure(&mesh.positions, &surface, tolerance, 4.0 * limit)
+        }
+    };
     if d.measured == 0 {
         return Err(bad(cmd, format!("the scan is nowhere near `{model_name}`: no point is within {:.3} mm of it", 4.0 * limit)));
     }

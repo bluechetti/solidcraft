@@ -316,8 +316,9 @@ pub struct ScanDeviationParams {
     /// The scan (mesh body). Default: the selected mesh body, else the design's only mesh body.
     #[serde(default)]
     pub scan: Option<String>,
-    /// The model it is measured against (a solid or surface body). Default: the selected one, else
-    /// the design's only one.
+    /// The model it is measured against: a solid or surface body, or a mesh body (a CAD model that
+    /// came as an STL). Default: the selected solid or surface body, else the design's only one;
+    /// with none, the only other mesh body.
     #[serde(default)]
     pub body: Option<String>,
     /// How far off still counts as on the model, a length above 0. Default: 0.1 mm.
