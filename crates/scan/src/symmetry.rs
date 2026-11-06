@@ -34,9 +34,10 @@ pub struct Mirror {
 
 impl Mirror {
     /// Whether the scan is a mirror image about the plane: most of it (85 %) lands on itself, and
-    /// typically within 2 % of its size or two point spacings.
+    /// typically within 2 % of its size or two point spacings (a coarse mesh's spacing counted as
+    /// at most [`SPACING_SHARE`] of its size).
     pub fn is_symmetric(&self) -> bool {
-        self.coverage >= 0.85 && self.rms <= (0.02 * self.size).max(2.0 * self.spacing)
+        self.coverage >= 0.85 && self.rms <= (0.02 * self.size).max(2.0 * judged_spacing(self.spacing, self.size))
     }
 
     /// Lower is better: how far off, weighted by how much of the scan has no match.
@@ -48,6 +49,51 @@ impl Mirror {
     pub fn reflect(&self, p: Vec3) -> Vec3 {
         reflect(p, self.normal, self.point)
     }
+}
+
+/// A coarse mesh's points lie far apart, a sizeable share of the part (948 triangles of the
+/// Stanford bunny lie 11.5 mm apart, and "within three spacings" of them matched 95 % of a part
+/// that is no mirror image). A match is judged as if they were at most this share of the size
+/// apart, against points spread over its surface ([`surface_points`]), not its corners alone.
+const SPACING_SHARE: f64 = 0.01;
+
+/// The spacing a match is judged by: the points', or [`SPACING_SHARE`] of the size if less.
+fn judged_spacing(spacing: f64, size: f64) -> f64 {
+    spacing.min(SPACING_SHARE * size)
+}
+
+/// A triangle more than this many squares of the judged spacing in area gets points of its own
+/// inside it, so a reflection is measured to the surface, not to the nearest of its corners.
+const BIG_TRIANGLE: f64 = 4.0;
+
+/// The most points added inside big triangles; past it they are spread more thinly.
+const ADDED_LIMIT: usize = 4 * TABLE_LIMIT;
+
+/// The scan's points, and points spread inside its big triangles about `spacing` apart: what a
+/// coarse mesh or a reduced scan (big triangles, their corners on the edges) is matched against.
+fn surface_points(scan: &Scan, vertices: &[Vec3], spacing: f64) -> Vec<Vec3> {
+    let cell = spacing * spacing;
+    let big = |area: f64| area > BIG_TRIANGLE * cell;
+    let areas: Vec<(usize, f64)> = (0..scan.triangle_count())
+        .filter_map(|t| scan.corners(t).map(|[a, b, c]| (t, (b - a).cross(c - a).len() / 2.0)))
+        .filter(|&(_, area)| area.is_finite() && big(area))
+        .collect();
+    let wanted: f64 = areas.iter().map(|&(_, area)| area / cell).sum();
+    let thin = (wanted / ADDED_LIMIT as f64).max(1.0);
+    let mut points = vertices.to_vec();
+    for (t, area) in areas {
+        let Some([a, b, c]) = scan.corners(t) else { continue };
+        // A triangular grid of about `area / cell` points, each in the middle of its little triangle.
+        let n = (area / cell / thin).floor().max(1.0);
+        let m = (2.0 * n).sqrt().ceil().clamp(1.0, 400.0) as usize;
+        for i in 0..m {
+            for j in 0..m - i {
+                let (u, v) = ((i as f64 + 1.0 / 3.0) / m as f64, (j as f64 + 1.0 / 3.0) / m as f64);
+                points.push(a + (b - a) * u + (c - a) * v);
+            }
+        }
+    }
+    points
 }
 
 fn reflect(p: Vec3, normal: Vec3, point: Vec3) -> Vec3 {
@@ -184,6 +230,12 @@ struct Scene {
     normals: Vec<Vec3>,
     samples: Vec<Vec3>,
     table: Table,
+    /// What a plane found is judged by ([`judge`]): points over the surface ([`surface_points`])
+    /// and a sample of them, and how far apart they are (the vertices' spacing, or less on a
+    /// coarse mesh, whose surface is filled in between its points).
+    surface_table: Table,
+    surface_samples: Vec<Vec3>,
+    judged: f64,
     centroid: Vec3,
     /// The middle of the scan's box.
     middle: Vec3,
@@ -262,7 +314,25 @@ fn scene(scan: &Scan) -> Option<Scene> {
     let factor = if vertices.len() > TABLE_LIMIT { (vertices.len() as f64 / TABLE_LIMIT as f64).sqrt() } else { 1.0 };
     let table = Table::new(thinned(&vertices, TABLE_LIMIT), 2.5 * spacing * factor);
     let samples = thinned(&vertices, SAMPLE_LIMIT);
-    Some(Scene { vertices, normals, samples, table, centroid, middle: (lo + hi) / 2.0, size, spacing, features })
+    let judged = judged_spacing(spacing, size);
+    let surface = surface_points(scan, &vertices, judged);
+    let factor = if surface.len() > TABLE_LIMIT { (surface.len() as f64 / TABLE_LIMIT as f64).sqrt() } else { 1.0 };
+    let surface_table = Table::new(thinned(&surface, TABLE_LIMIT), 2.5 * judged * factor);
+    let surface_samples = thinned(&surface, SAMPLE_LIMIT);
+    Some(Scene {
+        vertices,
+        normals,
+        samples,
+        table,
+        surface_table,
+        surface_samples,
+        judged,
+        centroid,
+        middle: (lo + hi) / 2.0,
+        size,
+        spacing,
+        features,
+    })
 }
 
 /// The best mirror plane of the scan, `None` for a scan too small to search.
@@ -308,7 +378,7 @@ pub fn find(scan: &Scan) -> Option<Mirror> {
     };
     let settled = assess(normal, point, &scene);
     let best = if settled.score() <= best.score() * 1.05 { settled } else { best };
-    Some(polish(&best, &scene, 12))
+    Some(judge(polish(&best, &scene, 12), &scene))
 }
 
 /// The mirror plane near the one `guide` marks: the turns about the line and the places along the
@@ -385,7 +455,7 @@ pub fn find_guided(scan: &Scan, guide: &Guide) -> Option<Mirror> {
         }
         None => refine(normal, point, &finer, &scene.table, 2.0 * scene.spacing, scene.size, 8),
     };
-    Some(polish(&assess(normal, point, &scene), &scene, 12))
+    Some(judge(polish(&assess(normal, point, &scene), &scene, 12), &scene))
 }
 
 /// `v` turned by `angle` radians about the unit `axis`.
@@ -570,6 +640,27 @@ fn assess(normal: Vec3, point: Vec3, scene: &Scene) -> Mirror {
     }
 }
 
+/// The plane found, judged against the scan's surface rather than its corners: how far each of
+/// the surface's points lands from it when reflected, and how much lands within three of its
+/// judged spacings. On a fine scan this is close to [`assess`]; on a coarse or reduced mesh its
+/// big triangles count by their area, and a reflection landing on one is on the scan.
+fn judge(found: Mirror, scene: &Scene) -> Mirror {
+    let reach = 3.0 * scene.surface_table.cell;
+    let mut distances: Vec<f64> = scene
+        .surface_samples
+        .iter()
+        .map(|p| {
+            let m = found.reflect(*p);
+            scene.surface_table.nearest(m, reach).map_or(reach, |q| q.dist(m))
+        })
+        .collect();
+    distances.sort_by(f64::total_cmp);
+    let matched = distances.iter().filter(|&&d| d <= 3.0 * scene.judged).count();
+    let core = &distances[..(distances.len() * 4 / 5).clamp(1, distances.len().max(1))];
+    let rms = (core.iter().map(|d| d * d).sum::<f64>() / core.len().max(1) as f64).sqrt();
+    Mirror { rms, coverage: matched as f64 / distances.len().max(1) as f64, ..found }
+}
+
 /// Settles a plane against the surface: each sample's reflection measured along the surface's
 /// direction at the nearest point, by Tukey-weighted Gauss–Newton steps on the plane's two turns
 /// and its place. The plane as it was if that does not match its reflection better.
@@ -654,7 +745,8 @@ fn polish(plane: &Mirror, scene: &Scene, iterations: usize) -> Mirror {
 pub fn measure(scan: &Scan, point: Vec3, normal: Vec3) -> Option<Mirror> {
     let normal = normal.normalized()?;
     point.is_finite().then_some(())?;
-    Some(assess(normal, point, &scene(scan)?))
+    let scene = scene(scan)?;
+    Some(judge(assess(normal, point, &scene), &scene))
 }
 
 /// How far each point's reflection lands from the scan, for colouring the scan by where its two
@@ -760,6 +852,24 @@ mod tests {
         let angle = m.normal.dot(normal).abs().clamp(-1.0, 1.0).acos();
         let offset = (m.point - point).dot(normal).abs();
         (angle, offset)
+    }
+
+    /// The block reduced to 200 big triangles (from 2,496), their corners left on its edges where the
+    /// collapses stopped (as Reduce Mesh leaves a scan): its corners are no mirror image of one
+    /// another, but its surface is, and it is judged by its surface, typically within a fraction
+    /// of a millimetre (T-LESS 05 reduced to 2 % read 3.55 mm off by its corners, 0.99 by its
+    /// surface).
+    #[test]
+    fn a_reduced_part_is_judged_by_its_surface() {
+        let (positions, triangles) = l_block();
+        let full = Scan::new(&positions, &triangles);
+        let settings = crate::reduce::Settings { target: 200, max_error: 0.0, keep_rim: true };
+        let reduced = crate::reduce::reduce(&full, settings).unwrap();
+        assert!(reduced.triangles.len() <= 200, "{}", reduced.triangles.len());
+        let scan = Scan::new(&reduced.positions, &reduced.triangles);
+        let mirror = find(&scan).unwrap();
+        assert!(mirror.is_symmetric(), "{mirror:?}");
+        assert!(mirror.rms < 0.005 * mirror.size && mirror.coverage > 0.95, "{mirror:?}");
     }
 
     /// The block is symmetric about X = 30 and about Y = 10: found wherever it lies, to within a
