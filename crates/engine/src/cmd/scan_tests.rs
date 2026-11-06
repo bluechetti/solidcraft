@@ -1130,6 +1130,53 @@ fn crease_makes_a_shared_edge_follow_a_ridge_and_uncrease_makes_it_smooth_again(
     assert!(one.contains("is one face"), "{one}");
 }
 
+/// A point on a Free Form pushed up off the dome is brushed back down: the smoothing brush evens
+/// the points under it out and keeps them on the scan; with `snap` off it fairs the surface
+/// instead. One undo step. Hostile brushes are refused in words.
+#[test]
+fn the_smoothing_brush_evens_out_points_and_keeps_them_on_the_scan() {
+    let (mut s, _) = session_with_triangles("brush", &dome_triangles(40));
+    run(&mut s, "scan.free_form", json!({"corners": [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]], "count": 5}));
+    let dome = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+    let height = |s: &Session| -> f64 {
+        let faces = super::surface::editable(s, Some("FreeForm1"), "test").unwrap().faces;
+        let joins = solidcraft_scan::network::joins(&faces).unwrap();
+        let dots = solidcraft_scan::network::dots(&faces, &joins);
+        let d = dots.iter().min_by(|a, b| a.at.dist(Vec3::new(30.0, 30.0, 8.0)).total_cmp(&b.at.dist(Vec3::new(30.0, 30.0, 8.0)))).unwrap();
+        d.at.z - dome(d.at.x, d.at.y)
+    };
+    run(&mut s, "scan.edit_surface", json!({"dots": [{"at": [30, 30, 8], "along": "3 mm"}]}));
+    let pushed = height(&s);
+    assert!(pushed > 2.5, "pushed up: {pushed}");
+    let brushed = run(&mut s, "scan.edit_surface", json!({"brush": {"points": [[30, 30, 11]], "radius": "25 mm", "passes": 8}}));
+    assert!(brushed["moved"].as_u64().unwrap() >= 5 && brushed["rms"].as_f64().unwrap() < 0.2, "{brushed}");
+    let down = height(&s);
+    assert!(down < 1.0, "brushed back onto the dome: {down}");
+    run(&mut s, "edit.undo", json!({}));
+    assert!((height(&s) - pushed).abs() < 1e-6, "one undo step");
+    let faired =
+        run(&mut s, "scan.edit_surface", json!({"brush": {"points": [[30, 30, 11]], "radius": "25 mm", "passes": 8, "snap": false, "strength": 1}}));
+    assert!(faired["moved"].as_u64().unwrap() >= 5, "{faired}");
+    assert!(height(&s) < 2.0, "faired: {}", height(&s));
+    for (brush, words) in [
+        (json!({"points": [], "radius": "10 mm"}), "1 to 10000"),
+        (json!({"points": [[30, 30, 8]]}), "radius"),
+        (json!({"points": [[30, 30, 8]], "radius": "0 mm"}), "above 0"),
+        (json!({"points": [[30, 30, 8]], "radius": "10 mm", "strength": 2}), "at most 1"),
+        (json!({"points": [[30, 30, 8]], "radius": "10 mm", "passes": 0}), "1 to 100"),
+        (json!({"points": [[500, 500, 500]], "radius": "10 mm"}), "no point of the surface"),
+        (json!({"points": [["x", 0, 0]], "radius": "10 mm"}), "numbers"),
+    ] {
+        let refused = s.execute("scan.edit_surface", &json!({"brush": brush})).unwrap_err().to_string();
+        assert!(refused.contains(words), "{brush}: {refused}");
+    }
+    let with_dots = s
+        .execute("scan.edit_surface", &json!({"brush": {"points": [[30, 30, 8]], "radius": "10 mm"}, "dots": [{"at": [30, 30, 8], "along": "1 mm"}]}))
+        .unwrap_err()
+        .to_string();
+    assert!(with_dots.contains("give it alone"), "{with_dots}");
+}
+
 /// `turn` radians round a tube of radius 10 along Z, 40 long, as triangles.
 fn tube_triangles(turn: f64) -> Vec<[Vec3; 3]> {
     let (rings, segments) = (20u32, 48u32);

@@ -447,6 +447,81 @@ fn creased_edges(s: &mut Session, target: &EditableSurface, p: &Value, cmd: &str
     faces_reply(s, target, &current, 0, cmd)
 }
 
+/// A smoothing brush dabbed on the surface (`brush`): at each place, the points on the surface
+/// within the radius are evened out, more toward the middle, as many passes as asked, kept on the
+/// scan unless `snap` is off.
+fn brushed_points(s: &mut Session, target: &EditableSurface, v: &Value, p: &Value, cmd: &str) -> Result<Value> {
+    use solidcraft_scan::network;
+    let places = v
+        .get("points")
+        .and_then(Value::as_array)
+        .filter(|a| !a.is_empty() && a.len() <= 10_000)
+        .ok_or_else(|| bad(cmd, "`brush.points` must list 1 to 10000 places [x, y, z]"))?;
+    let places: Vec<Vec3> = places
+        .iter()
+        .enumerate()
+        .map(|(k, q)| crate::params::vec3(q).ok_or_else(|| bad(cmd, format!("`brush.points[{k}]` must be a point [x, y, z] of numbers"))))
+        .collect::<Result<_>>()?;
+    if crate::params::expr(v, "radius").is_none() {
+        return Err(bad(cmd, "`brush.radius` must be a length: how far round each place the brush reaches"));
+    }
+    let radius = length(s, v, "radius", 1.0, cmd)?;
+    if !(radius.is_finite() && radius > 0.0) {
+        return Err(bad(cmd, "`brush.radius` must be a length above 0"));
+    }
+    let strength = match v.get("strength").filter(|x| !x.is_null()) {
+        None => 0.5,
+        Some(x) => {
+            x.as_f64().filter(|f| f.is_finite() && *f > 0.0 && *f <= 1.0).ok_or_else(|| bad(cmd, "`brush.strength` must be above 0 and at most 1"))?
+        }
+    };
+    let passes = match v.get("passes").filter(|x| !x.is_null()) {
+        None => 4,
+        Some(x) => x.as_u64().filter(|n| (1..=100).contains(n)).ok_or_else(|| bad(cmd, "`brush.passes` must be a whole number, 1 to 100"))?,
+    };
+    if places.len() as u64 * passes > 2000 {
+        return Err(bad(cmd, "`brush`: at most 2000 passes in all (places × passes)"));
+    }
+    let snap = match v.get("snap").filter(|x| !x.is_null()) {
+        None => true,
+        Some(x) => x.as_bool().ok_or_else(|| bad(cmd, "`brush.snap` must be true or false"))?,
+    };
+    let mut faces = target.faces.clone();
+    let joins = network::joins(&faces).map_err(|e| bad(cmd, e.to_string()))?;
+    let reach = length(s, p, "reach", faces.iter().map(default_reach).fold(1.0, f64::max), cmd)?;
+    if !(reach.is_finite() && reach > 0.0) {
+        return Err(bad(cmd, "`reach` must be a length above 0"));
+    }
+    let scan: Vec<Vec3> = if snap {
+        let (_, sh) = shade(s, str_(p, "scan"), &faces, cmd)?;
+        sh.points.iter().map(|u| u.at).collect()
+    } else {
+        Vec::new()
+    };
+    let all = vec![true; faces.len()];
+    let mut touched: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+    for (k, place) in places.iter().enumerate() {
+        let dots = network::dots(&faces, &joins);
+        let under: Vec<(usize, f64)> =
+            dots.iter().enumerate().map(|(i, d)| (i, d.at.dist(*place))).filter(|(_, d)| *d <= radius).map(|(i, d)| (i, 1.0 - d / radius)).collect();
+        if under.is_empty() {
+            return Err(bad(cmd, format!("`brush.points[{k}]` has no point of the surface within the radius ({radius:.2} mm) of it")));
+        }
+        touched.extend(under.iter().map(|u| u.0));
+        for _ in 0..passes {
+            let goals = if scan.is_empty() { Vec::new() } else { network::feet(&faces, &scan, reach, &all) };
+            match network::brushed(&faces, &joins, &under, &goals, strength) {
+                Some(next) => faces = next,
+                None => {
+                    return Err(bad(cmd, format!("`brush.points[{k}]`: nothing under the brush there may move (the surface's own corners stay)")));
+                }
+            }
+        }
+    }
+    write_faces(s, target, &faces, cmd)?;
+    faces_reply(s, target, &faces, touched.len(), cmd)
+}
+
 /// Points on the surface moved (`dots`): each the surface at a control point's place on it,
 /// taken where it goes; the points round it hold the surface through every other dot, or follow.
 fn moved_dots(s: &mut Session, target: &EditableSurface, list: &Value, p: &Value, cmd: &str) -> Result<Value> {
@@ -512,6 +587,18 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.edit_surface";
     let target = editable(s, str_(p, "surface"), cmd)?;
     let given = |k: &str| p.get(k).is_some_and(|v| !v.is_null());
+    // A smoothing brush dabbed on the surface.
+    if let Some(v) = p.get("brush").filter(|v| !v.is_null()) {
+        if ["points", "moves", "hold", "net", "slide", "dots", "faces", "crease", "uncrease"].iter().any(|k| given(k))
+            || str_(p, "refit").is_some_and(|r| r != "none")
+        {
+            return Err(bad(
+                cmd,
+                "`brush` smooths points on the surface: give it alone, without points, moves, hold, net, slide, dots, faces, crease, uncrease or a refit",
+            ));
+        }
+        return brushed_points(s, &target, v, p, cmd);
+    }
     // Shared edges creased or made smooth again.
     if given("crease") || given("uncrease") {
         if ["points", "moves", "hold", "net", "slide", "dots", "faces"].iter().any(|k| given(k)) || str_(p, "refit").is_some_and(|r| r != "none") {

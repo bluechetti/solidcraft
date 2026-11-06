@@ -506,6 +506,30 @@ pub struct ScanEditSurfaceParams {
     /// fitted to the scan again. Given alone, or with `crease`.
     #[serde(default)]
     pub uncrease: Option<Vec<ScanEdgePick>>,
+    /// A smoothing brush dabbed at places on the surface: the points on it within the radius of
+    /// each are evened out, more toward its middle, and kept on the scan. Given alone.
+    #[serde(default)]
+    pub brush: Option<ScanBrush>,
+}
+
+/// A smoothing brush dabbed on a surface.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanBrush {
+    /// Where it is dabbed, in order (1 to 10000 places).
+    pub points: Vec<Point3>,
+    /// How far round each place it reaches: the points on the surface within it are smoothed,
+    /// less the further out they are.
+    pub radius: LengthExpr,
+    /// How hard, 0 to 1 (default 0.5).
+    #[serde(default)]
+    pub strength: Option<f64>,
+    /// How many times each dab is applied, 1 to 100 (default 4); at most 2000 in all.
+    #[serde(default)]
+    pub passes: Option<u32>,
+    /// Whether the points are kept on the scan (default true); off, the surface is faired.
+    #[serde(default)]
+    pub snap: Option<bool>,
 }
 
 /// A shared edge of a Free Form: by a point near it, or by its two ends.

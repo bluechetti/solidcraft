@@ -917,6 +917,51 @@ pub fn smoothed(faces: &[NurbsSurface], joins: &Joins, scan: &[Goal], strength: 
     moved(faces, joins, &Moves { free: &free, goals: &goals, tangent: 40.0, even: 0.0, bend, also_smooth: &[] })
 }
 
+/// The network under a smoothing brush (QuickSurface's): the points `under` it, each with how much
+/// of the brush it gets (0 to 1, more toward the brush's middle), move to straighten their rows and
+/// columns, as hard as `strength` (0 to 1); held near the scan by `scan` (its places on the faces)
+/// or, with none, near where the surface is (its dots), and each near its own dot the more the less
+/// brush it gets, so the brush's middle smooths most and its rim hardly moves. The network's own
+/// corners and the corners where faces meet unevenly stay, and the faces stay tangent where they
+/// met smoothly. `None` when nothing under the brush may move.
+pub fn brushed(faces: &[NurbsSurface], joins: &Joins, under: &[(usize, f64)], scan: &[Goal], strength: f64) -> Option<Vec<NurbsSurface>> {
+    if !(strength.is_finite() && strength > 0.0) || faces.len() != joins.of.len() {
+        return None;
+    }
+    let held: Vec<usize> = joins.corners.iter().filter(|c| c.irregular() || (c.border && c.faces == 1)).map(|c| c.point).collect();
+    let mut free = vec![false; joins.len()];
+    let mut share = vec![0.0f64; joins.len()];
+    for &(p, w) in under {
+        if p < joins.len() && w.is_finite() && w > 0.0 && !held.contains(&p) {
+            free[p] = true;
+            share[p] = share[p].max(w.min(1.0));
+        }
+    }
+    if !free.iter().any(|f| *f) {
+        return None;
+    }
+    let places: Vec<Vec<(f64, f64)>> = faces.iter().map(dot_places).collect();
+    let all = dots(faces, joins);
+    let mut goals: Vec<Goal> = scan.to_vec();
+    for p in (0..joins.len()).filter(|p| free[*p]) {
+        let hold = 2.0 * (1.0 - share[p]) + 0.05;
+        for &(f, k) in joins.at.get(p).map_or(&[][..], Vec::as_slice) {
+            let (Some(&(u, v)), Some(dot)) = (places.get(f).and_then(|pl| pl.get(k)), all.get(p)) else { continue };
+            goals.push(Goal { face: f, u, v, to: dot.at, weight: hold });
+        }
+    }
+    // The straightening weighs as much as `strength`² of one goal on each row through a point
+    // (not as much as all its goals, as `moved` scales a row): a bump is brushed down a little a
+    // step, and the scan's places, or the dots, keep the surface's own curve.
+    let n_free = free.iter().filter(|f| **f).count() as f64;
+    let mut weights: Vec<f64> = goals.iter().map(|g| g.weight).collect();
+    weights.sort_by(f64::total_cmp);
+    let middle = weights.get(weights.len() / 2).copied().unwrap_or(1.0);
+    let per_point = (middle * weights.len() as f64 / n_free).max(1.0);
+    let bend = strength.min(1.0).powi(2) / per_point;
+    moved(faces, joins, &Moves { free: &free, goals: &goals, tangent: 40.0, even: 0.0, bend, also_smooth: &[] })
+}
+
 /// The network's faces with every face's points doubled both ways (Increase Resolution): every
 /// face exactly as it was, so seams stay seams.
 pub fn refined(faces: &[NurbsSurface]) -> Result<Vec<NurbsSurface>, crate::net::NetError> {
@@ -1759,5 +1804,44 @@ mod tests {
         assert!(refit_near_seam(&grown, &sharp, 0, &positions, f64::NAN, &held).is_none());
         assert!(refit_near_seam(&grown, &sharp, 0, &positions, 2.0, &vec![true; gj.len()]).is_none());
         assert_eq!(without_tangency(&gj, 7), gj);
+    }
+    /// A dot pushed up off the dome is brushed back toward its neighbours: with the scan's points
+    /// the surface stays on the dome, without them it is faired; the brush's rim hardly moves, and
+    /// the network's own corners never do. A brush over nothing that may move does nothing.
+    #[test]
+    fn the_brush_evens_out_a_bump_and_keeps_the_points_on_the_scan() {
+        let (positions, triangles) = field(60, dome);
+        let scan = Scan::new(&positions, &triangles);
+        let on = Projector::new(&scan);
+        let faces = vec![first_face(&on)];
+        let j = joins(&faces).unwrap();
+        let middle = 2 * 5 + 2;
+        let start = dots(&faces, &j);
+        let bumped = dot_moved(&faces, &j, middle, start[middle].at + Vec3::new(0.0, 0.0, 3.0), DOT_RING, true).unwrap();
+        let height = |faces: &[NurbsSurface]| dots(faces, &j)[middle].at.z - dome(start[middle].at.x, start[middle].at.y);
+        assert!(height(&bumped) > 2.9, "{}", height(&bumped));
+        // Under the brush: the bump fully, less the further out (the corners least, and held anyway).
+        let under: Vec<(usize, f64)> = (0..25usize).map(|p| (p, 1.0 - ((p % 5).abs_diff(2).max((p / 5).abs_diff(2))) as f64 / 3.0)).collect();
+        let mut on_scan = bumped.clone();
+        for _ in 0..6 {
+            let goals = feet(&on_scan, &positions, 2.0, &[true]);
+            on_scan = brushed(&on_scan, &j, &under, &goals, 0.5).unwrap();
+        }
+        assert!(height(&on_scan) < 1.0, "brushed down onto the dome: {}", height(&on_scan));
+        let under_it = surface_edit::covered(&scan, &on_scan[0], 2.0, 5_000);
+        assert!(surface_edit::distance(&on_scan[0], &under_it).0 < 0.2, "still on the scan");
+        let mut faired = bumped.clone();
+        for _ in 0..6 {
+            faired = brushed(&faired, &j, &under, &[], 0.5).unwrap();
+        }
+        assert!(height(&faired) < 2.0, "faired without the scan: {}", height(&faired));
+        let (before, after) = (dots(&bumped, &j), dots(&faired, &j));
+        assert!(before[0].at.dist(after[0].at) < 1e-9, "the corner stays");
+        assert!(before[middle + 1].at.dist(after[middle + 1].at) < before[middle].at.dist(after[middle].at), "the rim moves less than the middle");
+        // Nothing under the brush that may move: the corner alone, a point that is not there, no strength.
+        assert!(brushed(&bumped, &j, &[(0, 1.0)], &[], 0.5).is_none());
+        assert!(brushed(&bumped, &j, &[(99, 1.0)], &[], 0.5).is_none());
+        assert!(brushed(&bumped, &j, &under, &[], 0.0).is_none());
+        assert!(brushed(&bumped, &j, &[(middle, f64::NAN)], &[], 0.5).is_none());
     }
 }

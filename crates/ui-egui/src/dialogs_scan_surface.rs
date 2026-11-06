@@ -54,6 +54,10 @@ const GRAB: f32 = 10.0;
 /// How near the pointer must be to an open edge to take it for Add Face, in pixels.
 const EDGE_GRAB: f32 = 24.0;
 
+/// The smoothing brush's circle to start with, and its least and most, in points.
+const BRUSH_SIZE: f32 = 60.0;
+const BRUSH_SIZES: std::ops::RangeInclusive<f32> = 8.0..=300.0;
+
 /// The most scan points a drag's preview refits to: the full set (as the command uses) once it
 /// is let go.
 const PREVIEW_POINTS: usize = 2_500;
@@ -151,6 +155,13 @@ pub struct EditSurface {
     /// Crease Edge (`Some(true)`) or Remove Crease (`Some(false)`) is on: a click on a shared edge
     /// creases it, or makes it smooth again.
     creasing: Option<bool>,
+    /// The Smoothing Brush is on: a drag evens out the points under its circle, and a stroke is
+    /// going (one step of Undo Last Change for the whole stroke).
+    brushing: bool,
+    stroke: bool,
+    /// The brush's circle on the screen, in points, and how hard it smooths, 0 to 1.
+    pub brush_size: f32,
+    pub brush_strength: f64,
     /// The shared edges creased by hand, and those made smooth by hand, each by its ends: the
     /// faces are held tangent across them or not as these say, whatever angle they meet at now.
     creases: Vec<(Vec3, Vec3)>,
@@ -209,6 +220,10 @@ impl Default for EditSurface {
             adding: None,
             deleting: false,
             creasing: None,
+            brushing: false,
+            stroke: false,
+            brush_size: BRUSH_SIZE,
+            brush_strength: 0.5,
             creases: Vec::new(),
             smooths: Vec::new(),
             shade: None,
@@ -823,6 +838,39 @@ fn crease_click(k: &mut EditSurface, seam: usize, crease: bool) {
     k.note = None;
 }
 
+/// One step of the smoothing brush at `at` on the screen: the dots within its circle evened out,
+/// more toward its middle, held on the scan when Snap is on. The faces shown are kept as they
+/// come (the stroke was remembered as it began).
+fn brush_at(k: &mut EditSurface, proj: &crate::viewport::Proj, at: egui::Pos2) {
+    let size = k.brush_size.max(1.0);
+    let under: Vec<(usize, f64)> = k
+        .shown_dots
+        .iter()
+        .enumerate()
+        .filter_map(|(i, d)| {
+            let dist = proj.to_screen(d.at)?.distance(at);
+            (dist <= size).then(|| (i, f64::from(1.0 - dist / size)))
+        })
+        .collect();
+    if under.is_empty() {
+        return;
+    }
+    let ids: Vec<usize> = under.iter().map(|u| u.0).collect();
+    let touched = touched_by(k, &ids);
+    let goals = match loaded(k).and_then(|l| l.covered.as_ref().map(|_| l.sample.clone())) {
+        Some(sample) if k.snap != SNAP_OFF && !sample.is_empty() => {
+            let reach = k.faces.iter().map(edit::default_reach).fold(1.0, f64::max);
+            network::feet(&k.faces, &sample, reach, &touched)
+        }
+        _ => Vec::new(),
+    };
+    if let Some(faces) = network::brushed(&k.faces, &k.joins, &under, &goals, k.brush_strength) {
+        show_faces(k, faces, true, Some(&touched));
+        k.faces = k.shown.clone();
+        k.net = k.shown_net.clone();
+    }
+}
+
 /// The faces shown kept as edited, the points `by_hand` counted as moved by hand.
 fn commit(k: &mut EditSurface, by_hand: &[usize]) {
     remember(k);
@@ -873,6 +921,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         k.line = None;
         k.adding = None;
         k.creasing = None;
+        k.brushing = false;
     }
     let dots = k.handles != HANDLES_NET;
     if l.covered.is_some() {
@@ -966,6 +1015,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
     }
     let hint = match (&k.adding, dots) {
         _ if k.deleting => tr("ui.scan_edit_delete_face_hint"),
+        _ if k.brushing => tr("ui.scan_edit_brush_hint"),
         _ if k.creasing == Some(true) => tr("ui.scan_edit_crease_hint"),
         _ if k.creasing == Some(false) => tr("ui.scan_edit_uncrease_hint"),
         (Some(a), _) if a.side.is_none() => tr("ui.scan_edit_add_face_edge"),
@@ -988,6 +1038,7 @@ fn whole_tools(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, l: &Loade
         k.adding = if on { None } else { Some(Adding::default()) };
         k.deleting = false;
         k.creasing = None;
+        k.brushing = false;
         k.chosen = None;
         k.line = None;
     }
@@ -997,6 +1048,7 @@ fn whole_tools(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, l: &Loade
             k.deleting = !k.deleting;
             k.adding = None;
             k.creasing = None;
+            k.brushing = false;
             k.chosen = None;
         }
     }
@@ -1009,8 +1061,35 @@ fn whole_tools(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, l: &Loade
                 k.creasing = if on { None } else { Some(mode) };
                 k.adding = None;
                 k.deleting = false;
+                k.brushing = false;
                 k.chosen = None;
                 k.line = None;
+            }
+        }
+    }
+    // The Smoothing Brush, on points on the surface: its size on the screen and its strength.
+    if k.handles == HANDLES_DOTS {
+        let style = if k.brushing { ui_kit::Button::SmallSelected } else { ui_kit::Button::Normal };
+        if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_brush"), style)).clicked() {
+            k.brushing = !k.brushing;
+            k.stroke = false;
+            k.adding = None;
+            k.deleting = false;
+            k.creasing = None;
+            k.chosen = None;
+            k.line = None;
+        }
+        if k.brushing {
+            form_row(ui, tr("ui.scan_edit_brush_size"), |ui| ui_kit::number_field(ui, &mut k.brush_size, BRUSH_SIZES, 2.0, " px"));
+            k.brush_size = if k.brush_size.is_finite() { k.brush_size.clamp(*BRUSH_SIZES.start(), *BRUSH_SIZES.end()) } else { BRUSH_SIZE };
+            let mut percent = 100.0 * k.brush_strength;
+            let format = |v: f64| format!("{v:.0} %");
+            let changed = form_row(ui, tr("ui.scan_edit_brush_strength"), |ui| {
+                ui_kit::slider(ui, &mut percent, 5.0..=100.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
+            })
+            .changed();
+            if changed && percent.is_finite() {
+                k.brush_strength = (percent / 100.0).clamp(0.05, 1.0);
             }
         }
     }
@@ -1317,7 +1396,7 @@ pub(crate) fn edited_body(app: &SolveApp) -> Option<&str> {
 
 /// Whether a handle is being dragged: the drag neither selects nor turns the view.
 pub(crate) fn holds_pointer(app: &SolveApp) -> bool {
-    matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanEditSurface(k)) if k.drag.is_some())
+    matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanEditSurface(k)) if k.drag.is_some() || k.stroke)
 }
 
 /// The handle under `at` on the screen, if any.
@@ -1396,6 +1475,14 @@ pub(crate) fn choose(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui:
         if let (Some(seam), Some(crease)) = (seam_at(k, proj, at), k.creasing) {
             crease_click(k, seam, crease);
         }
+        return;
+    }
+    // A click with the brush on is a dab: one step, one change.
+    if let Some(k) = dialog(app).filter(|k| k.brushing && !k.stroke) {
+        remember(k);
+        brush_at(k, proj, at);
+        let shown = k.shown.clone();
+        show_faces(k, shown, false, None);
         return;
     }
     if let Some(k) = dialog(app).filter(|k| k.deleting) {
@@ -1516,6 +1603,15 @@ pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::P
     if k.adding.is_some() || k.deleting || k.creasing.is_some() {
         return false;
     }
+    // A stroke of the brush: remembered once, then a step at each place the pointer goes.
+    if k.brushing && k.handles == HANDLES_DOTS {
+        remember(k);
+        k.stroke = true;
+        k.faces = k.shown.clone();
+        k.net = k.shown_net.clone();
+        brush_at(k, proj, at);
+        return true;
+    }
     let Some(mut index) = handle_at(k, proj, at) else { return false };
     // A drag starts from the faces as shown (a refit the last drag made is kept).
     k.faces = k.shown.clone();
@@ -1580,6 +1676,10 @@ pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::P
 
 /// The handle dragged to `to` on the screen.
 pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, to: egui::Pos2) {
+    if let Some(k) = dialog(app).filter(|k| k.stroke) {
+        brush_at(k, proj, to);
+        return;
+    }
     // Sliding: the point goes to the surface's place under the pointer (in the plane of the screen
     // through where it was on the surface), the others going with it the same way in u and v.
     if let Some(from) = dialog(app).and_then(|k| k.drag.as_ref()?.slide.clone()) {
@@ -1667,6 +1767,13 @@ pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, to: egui
 /// The drag let go: the faces as previewed are kept and the point counts as moved by hand; a
 /// face dragged out of an open edge is added, out to where the edge was taken.
 pub(crate) fn release(app: &mut SolveApp) {
+    // A stroke of the brush ends: the faces as brushed are kept, measured again on every point.
+    if let Some(k) = dialog(app).filter(|k| k.stroke) {
+        k.stroke = false;
+        let shown = k.shown.clone();
+        show_faces(k, shown, false, None);
+        return;
+    }
     let grown = dialog(app).and_then(|k| {
         let d = k.drag.as_ref().filter(|d| !d.grow.is_empty())?;
         Some((grown_far(k, d)?, loaded(k).and_then(|l| l.covered.as_ref().map(|c| c.scan.clone())), k.faces.clone(), k.snap_reach))
@@ -1914,6 +2021,13 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
                 painter.rect_stroke(rect, 1.0, egui::Stroke::new(1.0, t.panel), egui::StrokeKind::Outside);
             }
         }
+    }
+    // The smoothing brush's circle round the pointer.
+    if k.brushing
+        && let Some(at) = pointer
+        && proj.rect.contains(at)
+    {
+        painter.circle_stroke(at, k.brush_size, egui::Stroke::new(1.5, t.accent));
     }
     // Corners where faces meet other than as a grid's: the surface is less smooth there.
     for c in k.joins.irregular() {
@@ -2441,5 +2555,58 @@ mod tests {
         h.app.start("scan.edit_surface");
         h.frames(3);
         assert_eq!(network::creased(&kind(&h).joins), vec![true], "read back as a crease");
+    }
+    /// With the Smoothing Brush on, a drag across a point pushed up off the dome brings it back
+    /// toward its neighbours in one change (the stroke), which Undo Last Change takes back whole;
+    /// with Snap on the points stay on the scan; a click is a dab; the corners never move.
+    #[test]
+    fn the_smoothing_brush_evens_out_what_a_stroke_crosses_in_one_change() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]], "count": 5})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        let dome = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+        let middle = 2 * 5 + 2;
+        let height = |k: &EditSurface| k.shown_dots[middle].at.z - dome(k.shown_dots[middle].at.x, k.shown_dots[middle].at.y);
+        if let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.snap = SNAP_OFF;
+            let up = k.shown_dots[middle].at + Vec3::new(0.0, 0.0, 3.0);
+            move_to(k, middle, up);
+            assert!(height(k) > 2.9, "pushed up: {}", height(k));
+            k.brushing = true;
+            k.brush_size = 90.0;
+            k.brush_strength = 1.0;
+            k.snap = SNAP_POINTER;
+        }
+        let k = kind(&h).clone();
+        let (from, to) = (k.shown_dots[middle].at + Vec3::new(-12.0, 0.0, 0.0), k.shown_dots[middle].at + Vec3::new(12.0, 0.0, 0.0));
+        let corner = k.shown_dots[0].at;
+        let steps = k.history.len();
+        h.step(&json!({"drag": [{"world": [from.x, from.y, from.z]}, {"world": [to.x, to.y, to.z]}], "steps": 8})).unwrap();
+        h.frames(2);
+        let k = kind(&h).clone();
+        assert!(!k.stroke && k.drag.is_none(), "the stroke over");
+        assert!(height(&k) < 2.0, "brushed down: {}", height(&k));
+        assert_eq!(k.history.len(), steps + 1, "one change");
+        assert!(k.shown_dots[0].at.dist(corner) < 1e-6, "the corner stays");
+        assert!(k.fit.is_some_and(|f| f.0 < 0.5), "kept on the scan: {:?}", k.fit);
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            undo_last(e);
+            assert!((height(e) - 3.0).abs() < 0.3, "the whole stroke taken back: {}", height(e));
+        }
+        // A click is a dab: one step, one change.
+        let at = kind(&h).shown_dots[middle].at;
+        h.step(&json!({"click": {"world": [at.x, at.y, at.z]}})).unwrap();
+        h.frames(2);
+        let k = kind(&h).clone();
+        assert_eq!(k.history.len(), steps + 1, "one change");
+        assert!(height(&k) < 2.9, "a dab smooths a little: {}", height(&k));
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
     }
 }

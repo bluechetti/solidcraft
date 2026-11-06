@@ -38,6 +38,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(
         input_schema_for::<ScanEditSurfaceParams>(),
         &[
+            "brush",
             "crease",
             "dots",
             "faces",
