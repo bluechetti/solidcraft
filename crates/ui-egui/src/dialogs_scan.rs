@@ -331,6 +331,12 @@ pub fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Symmetry) -> boo
     choice_row(ui, ids("ui.scan_symmetry_on_ok"), "scan_symmetry_on_ok", &mut k.square, &labels);
     if k.square == COMPLETE {
         ui_kit::text(ui, ids("ui.scan_symmetry_complete_hint"), ui_kit::Text::Hint("scan_symmetry_complete_hint"));
+        // OK adds geometry: say plainly when the scan is no mirror image about the plane.
+        if let Some(m) = k.found.as_ref().and_then(|f| f.mirror.as_ref().ok()).filter(|m| !m.symmetric) {
+            let share = format!("{:.0} %", 100.0 * m.coverage);
+            let unlike = crate::i18n::format("ui.scan_symmetry_complete_unlike", &[("share", &share)]);
+            ui_kit::text(ui, &unlike, ui_kit::Text::Report("scan_symmetry_complete_unlike", true));
+        }
     }
     ui_kit::text(ui, ids("ui.scan_symmetry_hint"), ui_kit::Text::Hint("scan_symmetry_hint"));
     false
@@ -648,5 +654,24 @@ mod tests {
         let fill = state.bodies.iter().find(|b| b.name.ends_with("Mirror Fill")).expect("the fill, a body of its own");
         let (positions, _) = fill.body.triangle_mesh().expect("a mesh");
         assert!(!positions.is_empty() && positions.iter().all(|p| p.x > 44.0 && p.y > 11.0), "only the corner the scan missed");
+    }
+
+    /// A slab with a tall post on one corner is no mirror image: Complete by Mirroring says what OK
+    /// would add may not be the part, before anything is added.
+    #[test]
+    fn complete_by_mirroring_warns_on_a_part_that_is_no_mirror_image() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("post.stl");
+        let boxes = [([0.0, 0.0, 0.0], [60.0, 20.0, 10.0]), ([0.0, 0.0, 10.0], [25.0, 10.0, 45.0])];
+        std::fs::write(&path, boxes_stl_keeping(&boxes, 12, |_| true)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.start("scan.complete_by_mirroring");
+        h.frames(3);
+        let symmetric = match h.app.dialog.as_ref().map(|d| &d.kind) {
+            Some(Kind::ScanSymmetry(k)) => k.found.as_ref().and_then(|f| f.mirror.as_ref().ok()).map(|m| m.symmetric),
+            _ => None,
+        };
+        assert_eq!(symmetric, Some(false), "the best plane found is no mirror plane");
+        assert!(crate::scenario::rect_of("dialog:report:scan_symmetry_complete_unlike").is_some(), "the dialog says so");
     }
 }

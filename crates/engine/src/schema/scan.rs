@@ -154,6 +154,10 @@ pub struct ScanCompleteResult {
     pub joined: usize,
     /// The reach used, in mm.
     pub reach: f64,
+    /// When the scan is no mirror image about the plane: what was added is right for a scan of
+    /// one side of a mirror-image part, but a part that is no mirror image does not have it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     /// The feature that keeps it, as a feature command replies.
     #[schemars(with = "FeatureResult")]
     pub feature: Value,

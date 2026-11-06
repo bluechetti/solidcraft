@@ -251,6 +251,25 @@ fn complete_by_mirroring_adds_what_the_scan_missed() {
     assert!(refused.contains("nothing is missing"), "{refused}");
 }
 
+/// A scan that matches little of itself in the plane is completed anyway (it may be one side of a
+/// mirror-image part), but the reply says what was added may not be the part: the Stanford bunny
+/// was given 10,600 reflected triangles without a word. A scan missing only a sliver says nothing.
+#[test]
+fn complete_by_mirroring_warns_when_the_scan_is_no_mirror_image() {
+    let (mut s, _, place) = session_with_part_of_the_block("mirror-one-side", |t| t.iter().any(|p| p.x < 45.0));
+    let (point, normal) = (place(Vec3::new(30.0, 10.0, 10.0)), place(Vec3::X) - place(Vec3::ZERO));
+    let plane = json!({"point": [point.x, point.y, point.z], "normal": [normal.x, normal.y, normal.z]});
+    let reply = run(&mut s, "scan.complete_by_mirroring", json!({"plane": plane}));
+    assert_eq!(reply["mirror"]["symmetric"], false, "{reply}");
+    assert!(reply["warning"].as_str().is_some_and(|w| w.contains("matches its reflection") && w.contains("one side")), "{reply}");
+    let (mut sliver, _, place) = session_with_part_of_the_block("mirror-sliver", |t| t.iter().any(|p| p.x < 58.0));
+    let (point, normal) = (place(Vec3::new(30.0, 10.0, 10.0)), place(Vec3::X) - place(Vec3::ZERO));
+    let plane = json!({"point": [point.x, point.y, point.z], "normal": [normal.x, normal.y, normal.z]});
+    let reply = run(&mut sliver, "scan.complete_by_mirroring", json!({"plane": plane}));
+    assert_eq!(reply["mirror"]["symmetric"], true, "{reply}");
+    assert!(reply.get("warning").is_none(), "{reply}");
+}
+
 /// Squared to its mirror plane, the block lies evenly either side of X = 0; one undo puts it back.
 #[test]
 fn square_to_symmetry_puts_the_mirror_plane_on_yz() {

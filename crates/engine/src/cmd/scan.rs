@@ -124,7 +124,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("mirror")
         .contract(&COMPLETE_CONTRACT)
         .output(output_schema_for::<ScanCompleteResult>)
-        .params("body?: mesh body (default: the selected mesh body, else the design's only one); plane?: {point, normal: [x,y,z]} to reflect in (default: found near guide, else the best found; a one-sided scan is not refused for matching little); guide?: {from, to, toward?}; reach?: length a reflected triangle must lie from the scan to count as missing (default 1.5 typical edges or 3 × the plane's mismatch): the reflected triangles where the scan has nothing, as an amber mesh body `<scan> Mirror Fill` beside it (one undo step); a scan missing nothing is refused → body, fill, mirror, pieces, triangles, area, joined, reach, feature"),
+        .params("body?: mesh body (default: the selected mesh body, else the design's only one); plane?: {point, normal: [x,y,z]} to reflect in (default: found near guide, else the best found; a one-sided scan is not refused for matching little, but `warning` says so); guide?: {from, to, toward?}; reach?: length a reflected triangle must lie from the scan to count as missing (default 1.5 typical edges or 3 × the plane's mismatch): the reflected triangles where the scan has nothing, as an amber mesh body `<scan> Mirror Fill` beside it (one undo step); a scan missing nothing is refused → body, fill, mirror, pieces, triangles, area, joined, reach, warning?, feature"),
     CommandSpec::new("scan.fit_plane", "Fit Plane", crate::checked!("scan.fit_plane", fit_plane))
         .at("SCAN", "FIT")
         .icon("plane")
@@ -607,10 +607,22 @@ fn complete_by_mirroring(s: &mut Session, p: &Value) -> Result<Value> {
         area: fill.area,
         joined: fill.joined,
         reach: fill.reach,
+        warning: (!plane.is_symmetric()).then(|| unlike(&plane)),
         feature,
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// Why what Complete by Mirroring added may not be the part: the scan is no mirror image about the
+/// plane. A scan of one side of a mirror-image part matches little of itself too, so it warns
+/// rather than refuses.
+fn unlike(plane: &Mirror) -> String {
+    format!(
+        "only {:.0} % of the scan matches its reflection in this plane (typically {:.2} mm off): what was added is right for a scan of one side of a mirror-image part, but a part that is no mirror image does not have it; check it, or undo",
+        100.0 * plane.coverage,
+        plane.rms
+    )
 }
 
 /// What the Stand on Base dialog shows before it stands the scan: the base and the scan's points to
