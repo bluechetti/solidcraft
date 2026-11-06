@@ -72,6 +72,7 @@ fn label(app: &SolveApp, found: &ScanShapes, step: &Proposal) -> String {
             let count = reading.holes.get(k).and_then(|h| h.repeat).map_or(0, |r| r.0);
             crate::i18n::format("ui.scan_reconstruct_pattern", &[("number", &(k + 1).to_string()), ("count", &count.to_string())])
         }
+        Proposal::Fillet => crate::i18n::format("ui.scan_reconstruct_fillet", &[("edges", &reading.fillets.len().to_string())]),
     }
 }
 

@@ -21,7 +21,7 @@ pub const REACH: f64 = 10.0;
 pub const STEP: f64 = 0.5;
 
 /// How finely the model is meshed to lay stations along its edges and read its faces there.
-const CHORD: f64 = 0.01;
+pub const CHORD: f64 = 0.01;
 
 pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.fillet", "Fillet from Scan", crate::checked!("scan.fillet", fillet_from_scan))
     .at("SCAN", "RECONSTRUCT")

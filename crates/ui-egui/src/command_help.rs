@@ -154,6 +154,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.extrude_it",
     "scan.fill_holes",
     "scan.fillet",
+    "scan.fillet_it",
     "scan.find_all",
     "scan.fit_cone",
     "scan.fit_cylinder",

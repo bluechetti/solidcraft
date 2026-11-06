@@ -172,8 +172,12 @@ pub struct ScanReconstructResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub built: Option<String>,
     /// The next steps, as commands with their parameters, the body first: Revolve It for a turned
-    /// part, else Extrude It for each prism, then Cut It and Pattern It for the holes.
+    /// part, else Extrude It for each prism, then Cut It and Pattern It for the holes, and Fillet
+    /// It last for the rounds no profile holds.
     pub proposals: Vec<Value>,
+    /// The rounds along edges no profile holds, which Fillet It fillets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fillets: Vec<ScanEdgeRound>,
     /// Said where the scan is mostly no shape, or nothing can be built.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -244,6 +248,55 @@ pub struct ScanPatternItParams {
     /// The cut to repeat. Default: the one Cut It made for that hole.
     #[serde(default)]
     pub feature: Option<String>,
+}
+
+/// A round along an edge of the part that no profile Reconstruct sketches holds.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanEdgeRound {
+    /// The shape it is, as Find All numbers them.
+    pub face: usize,
+    /// Its radius as fitted, in mm.
+    pub radius: f64,
+    /// A point on the sharp edge of the model it rounds, where Fillet It measures it.
+    pub edge: [f64; 3],
+}
+
+/// Fillet It: the rounds along edges Reconstruct reads that no profile holds, each measured off
+/// the scan at the edge of the built body it rounds, as Fillet from Scan measures, and the edges
+/// where a round fits filleted at the radius measured: one Fillet for each radius. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanFilletItParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The body to fillet. Default: the body Reconstruct builds.
+    #[serde(default)]
+    pub into: Option<String>,
+}
+
+/// One radius Fillet It filleted at, and how many edges.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanFilleted {
+    pub radius: f64,
+    pub edges: usize,
+}
+
+/// What Fillet It returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanFilletItResult {
+    /// The scan, and the body filleted.
+    pub body: String,
+    pub solid: String,
+    /// Each radius measured, with how many edges it filleted.
+    pub fillets: Vec<ScanFilleted>,
+    /// How many rounds were set aside: the scan shows the edge sharp there, or the body has no
+    /// edge where the round is.
+    pub set_aside: usize,
+    /// The Fillet features made.
+    pub features: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
 }
 
 /// What Extrude It, Revolve It, Cut It and Pattern It return.

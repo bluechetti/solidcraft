@@ -22,8 +22,9 @@ use solidcraft_sketch::{ConstraintKind, Sketch};
 use super::CommandSpec;
 use crate::params::{bad, bool_, str_};
 use crate::schema::scan_reconstruct::{
-    ScanBuildResult, ScanCutItParams, ScanExtrudeItParams, ScanFindAllParams, ScanFindAllResult, ScanHole, ScanPatternItParams, ScanPrism,
-    ScanReconstructParams, ScanReconstructResult, ScanRepeat, ScanRevolveItParams, ScanShapeFound, ScanTurned,
+    ScanBuildResult, ScanCutItParams, ScanEdgeRound, ScanExtrudeItParams, ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams,
+    ScanFindAllResult, ScanHole, ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanRepeat, ScanRevolveItParams,
+    ScanShapeFound, ScanTurned,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -34,6 +35,7 @@ const EXTRUDE_IT_CONTRACT: TypedContract<ScanExtrudeItParams> = TypedContract::n
 const REVOLVE_IT_CONTRACT: TypedContract<ScanRevolveItParams> = TypedContract::new();
 const CUT_IT_CONTRACT: TypedContract<ScanCutItParams> = TypedContract::new();
 const PATTERN_IT_CONTRACT: TypedContract<ScanPatternItParams> = TypedContract::new();
+const FILLET_IT_CONTRACT: TypedContract<ScanFilletItParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("scan.find_all", "Find All", crate::checked!("scan.find_all", find_all))
@@ -74,6 +76,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&PATTERN_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
         .params("body?: mesh body; hole?: index of scan.reconstruct's holes, one that repeats (default: the first that does); feature?: the cut to repeat (default: the one Cut It made for that hole): the cut repeated as the row or ring of holes is, with its count and spacing, one undo step → feature, solid, count"),
+    CommandSpec::new("scan.fillet_it", "Fillet It", crate::checked!("scan.fillet_it", fillet_it))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("fillet")
+        .contract(&FILLET_IT_CONTRACT)
+        .output(output_schema_for::<ScanFilletItResult>)
+        .params("body?: mesh body; into?: body to fillet (default: `<scan> Reconstructed`): each round along an edge that scan.reconstruct reads and no profile holds (its `fillets`), measured off the scan as Fillet from Scan does at the edge of the body it rounds; the edges where a round fits the scan filleted at the radius measured, one Fillet for each radius, one undo step; an edge where the scan shows a sharp edge, or no edge of the body, is set aside → body, solid, fillets [{radius, edges}], set_aside, features"),
 ];
 
 /// What Find All found on a scan, and what Reconstruct reads off it: view state for the viewport
@@ -281,6 +289,8 @@ pub enum Proposal {
     Cut(usize),
     /// A cut hole's row or ring (the hole's index), patterned.
     Pattern(usize),
+    /// The rounds along edges no profile holds, filleted.
+    Fillet,
 }
 
 impl Proposal {
@@ -290,13 +300,14 @@ impl Proposal {
             Proposal::Extrude(_) => "scan.extrude_it",
             Proposal::Cut(_) => "scan.cut_it",
             Proposal::Pattern(_) => "scan.pattern_it",
+            Proposal::Fillet => "scan.fillet_it",
         }
     }
 
     /// Its command's parameters, on scan `body`.
     pub fn params(&self, body: &str) -> Value {
         match *self {
-            Proposal::Revolve => json!({"body": body}),
+            Proposal::Revolve | Proposal::Fillet => json!({"body": body}),
             Proposal::Extrude(k) => json!({"body": body, "prism": k}),
             Proposal::Cut(k) | Proposal::Pattern(k) => json!({"body": body, "hole": k}),
         }
@@ -305,7 +316,8 @@ impl Proposal {
 
 /// What Reconstruct proposes, in the order to build it: the turned part (when its profile can be
 /// read), else each prism, the main body first; then each hole cut and, where it repeats,
-/// patterned, once there is a body to cut them in: one a step above builds, or one `built` before.
+/// patterned, and last the rounds no profile holds filleted, once there is a body to cut and
+/// fillet: one a step above builds, or one `built` before.
 pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
     let mut out = Vec::new();
     if reading.revolve.is_some() && reading.turned_unread.is_none() {
@@ -320,6 +332,9 @@ pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
         if hole.repeat.is_some() {
             out.push(Proposal::Pattern(k));
         }
+    }
+    if !reading.fillets.is_empty() {
+        out.push(Proposal::Fillet);
     }
     out
 }
@@ -442,6 +457,7 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         repeats,
         built,
         proposals,
+        fillets: reading.fillets.iter().map(|f| ScanEdgeRound { face: f.face, radius: f.radius, edge: at(f.edge) }).collect(),
         note,
         param_warnings: Vec::new(),
     })
@@ -801,6 +817,104 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
         count: Some(count),
         param_warnings: Vec::new(),
     })
+}
+
+/// Fillet It: the rounds along edges Reconstruct reads that no profile holds, each measured off the
+/// scan at the edge of the built body it rounds (Fillet from Scan's measure, one edge at a time,
+/// so one the scan shows sharp is set aside rather than refusing the rest). Edges running on
+/// tangentially into each other (a prism's end, its outline of lines and arcs) are one chain, and
+/// a round cannot stop part way along one, so each chain is filleted whole, at the radius measured
+/// most often along it: one Fillet for each radius, all one undo step.
+pub(super) fn fillet_it(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.fillet_it";
+    let found = shapes(s, p, cmd, false)?;
+    let rounds = found.reading.fillets.clone();
+    if rounds.is_empty() {
+        return Err(bad(cmd, "Reconstruct reads no round along an edge that its other steps leave sharp"));
+    }
+    let solid = built_body(s, &found.scan, p, cmd)?;
+    // The body's edges as Fillet from Scan reads them, for their tangent chains.
+    let surface = {
+        let state = s.model.state();
+        let body = state.body(&solid).ok_or_else(|| bad(cmd, format!("no body `{solid}`")))?;
+        body.body
+            .mesh(&solidcraft_kernel::MeshTolerance::chord(super::fillet::CHORD))
+            .map_err(|e| bad(cmd, format!("`{solid}` could not be meshed: {e}")))?
+    };
+    // Each chain (its edges), a point on it, and the radii measured along it.
+    let mut chains: Vec<(Vec<usize>, [f64; 3], Vec<f64>)> = Vec::new();
+    let mut set_aside = 0;
+    for round in &rounds {
+        let edge = at(round.edge);
+        let Ok((_, _, edges, measured)) = super::fillet::measured(s, &json!({"body": solid, "scan": found.scan, "edges": [edge]}), cmd) else {
+            set_aside += 1;
+            continue;
+        };
+        let Some(&e) = edges.first() else { continue };
+        match chains.iter_mut().find(|c| c.0.contains(&e)) {
+            Some(chain) => chain.2.push(measured.radius),
+            None => chains.push((surface.tangent_chain(e, 2f64.to_radians()), edge, vec![measured.radius])),
+        }
+    }
+    if chains.is_empty() {
+        return Err(bad(
+            cmd,
+            format!("none of the {} rounds Reconstruct reads fits the scan better than a sharp edge of `{solid}` there", rounds.len()),
+        ));
+    }
+    // The radius measured most often along each chain (the smaller of a tie), and the chains by it.
+    let key = |r: f64| (r * 1e6).round() as i64;
+    let mut by_radius: std::collections::BTreeMap<i64, (f64, Vec<[f64; 3]>)> = std::collections::BTreeMap::new();
+    for (_, edge, radii) in &chains {
+        let count = |r: f64| radii.iter().filter(|&&q| key(q) == key(r)).count();
+        let Some(radius) = radii.iter().copied().max_by(|&a, &b| count(a).cmp(&count(b)).then(b.total_cmp(&a))) else { continue };
+        by_radius.entry(key(radius)).or_insert((radius, Vec::new())).1.push(*edge);
+    }
+    let run_fillet = super::super::find_command("solid.fillet").ok_or_else(|| EngineError::UnknownCommand("solid.fillet".into()))?;
+    // A Fillet the kernel refuses is taken back, so the next is tried on the body as it was.
+    let fillet = |s: &mut Session, radius: f64, edges: &[[f64; 3]]| -> Result<Value> {
+        let before = s.doc.clone();
+        let made = run_fillet
+            .run_nested(s, &json!({"edges": edges, "radius": format!("{radius} mm"), "body": solid, "tangent_chain": true, "fit": "reduce"}));
+        if made.is_err() {
+            s.doc = before;
+            s.refresh();
+        }
+        made
+    };
+    let (mut fillets, mut features, mut refused, mut first_refusal) = (Vec::new(), Vec::new(), 0, None);
+    for (radius, edges) in by_radius.into_values() {
+        // All the chains of one radius as one Fillet; if the kernel refuses that, each alone.
+        let tries: Vec<Vec<[f64; 3]>> = match fillet(s, radius, &edges) {
+            Ok(made) => {
+                fillets.push(ScanFilleted { radius, edges: edges.len() });
+                features.push(made);
+                continue;
+            }
+            Err(_) if edges.len() > 1 => edges.iter().map(|e| vec![*e]).collect(),
+            Err(e) => {
+                refused += 1;
+                first_refusal.get_or_insert(e.to_string());
+                continue;
+            }
+        };
+        for one in tries {
+            match fillet(s, radius, &one) {
+                Ok(made) => {
+                    fillets.push(ScanFilleted { radius, edges: 1 });
+                    features.push(made);
+                }
+                Err(e) => {
+                    refused += 1;
+                    first_refusal.get_or_insert(e.to_string());
+                }
+            }
+        }
+    }
+    if fillets.is_empty() {
+        return Err(bad(cmd, format!("the kernel could fillet none of the edges the scan shows round: {}", first_refusal.unwrap_or_default())));
+    }
+    reply(ScanFilletItResult { body: found.scan.clone(), solid, fillets, set_aside: set_aside + refused, features, param_warnings: Vec::new() })
 }
 
 #[cfg(test)]

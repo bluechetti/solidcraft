@@ -146,6 +146,7 @@ mod tests {
             "scan.revolve_it",
             "scan.cut_it",
             "scan.pattern_it",
+            "scan.fillet_it",
             "scan.register",
             "scan.mesh_from_points",
             "scan.remesh",

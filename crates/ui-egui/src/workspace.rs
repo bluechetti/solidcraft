@@ -374,7 +374,16 @@ pub const SECTIONS: &[Section] = &[
         tab: "SCAN",
         panel: "RECONSTRUCT",
         promoted: 2,
-        ids: &["scan.find_all", "scan.reconstruct", "scan.extrude_it", "scan.revolve_it", "scan.cut_it", "scan.pattern_it", "scan.fillet"],
+        ids: &[
+            "scan.find_all",
+            "scan.reconstruct",
+            "scan.extrude_it",
+            "scan.revolve_it",
+            "scan.cut_it",
+            "scan.pattern_it",
+            "scan.fillet_it",
+            "scan.fillet",
+        ],
     },
     Section {
         tab: "SCAN",
