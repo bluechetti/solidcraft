@@ -4024,6 +4024,8 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     // How strongly print faces are tinted (Preferences › General › Slicer).
     app.preferences.print_face_highlight.to_bits().hash(&mut h);
     image_target_outlines(app).hash(&mut h);
+    // Whether a Free Form dialog keeps the scan out of the selection colour.
+    crate::dialogs_scan_free_form::plain_scan(app).hash(&mut h);
     h.finish()
 }
 
@@ -4475,8 +4477,14 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
     // looking each one up along the world's bodies made Select All on an assembly of thousands
     // of bodies quadratic (millions of name comparisons on every hover change).
     let mut by_name = BodiesByName::new(&st);
+    // A Free Form dialog draws the scan plain: the scan clicked (Fit Surface's and Wrap Surface's
+    // point, or a scan selected before the dialog opened) is not painted in the selection colour,
+    // which would hide the surface's lines, its points and the scan's colouring by distance.
+    let plain_scan = crate::dialogs_scan_free_form::plain_scan(app);
+    let scan_kept_plain = |b: &solidcraft_engine::doc::ModelBody| plain_scan && b.body.is_mesh();
     for x in &sel {
         match x {
+            Sel::Face { body, .. } | Sel::Body { name: body } if by_name.get(body).is_some_and(scan_kept_plain) => {}
             Sel::Face { body, index, .. } => {
                 // A live preview stands in for the body: its old faces would fight with it.
                 // Lit, not flat: an imported mesh (STL, OBJ) is one face, and a flat fill would

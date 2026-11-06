@@ -146,6 +146,9 @@ pub struct EditSurface {
     pub slide: [f64; 2],
     /// The deviation colouring's tolerance, mm.
     pub tolerance: f64,
+    /// The scan under the surface is coloured by how far it is from it (on by default); off, the
+    /// scan is drawn as it is, so nothing sits under the points but the scan itself.
+    pub colours: bool,
     /// Surface Check on each face shown.
     check: Vec<edit::SurfaceCheck>,
     drag: Option<Drag>,
@@ -221,6 +224,7 @@ impl Default for EditSurface {
             drag_mode: DRAG_MOVE,
             slide: [1.0, 0.0],
             tolerance: TOLERANCE,
+            colours: true,
             check: Vec::new(),
             drag: None,
             adding: None,
@@ -449,6 +453,41 @@ pub(crate) fn gpu_fit_marks(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuC
     })
 }
 
+/// The Deviation colours row: whether the scan under the surface is coloured by how far it is.
+pub(crate) fn colours_row(ui: &mut egui::Ui, on: &mut bool) {
+    form_row(ui, tr("ui.scan_deviation_colours"), |ui| {
+        let response = ui_kit::checkbox(ui, "", on);
+        crate::scenario::publish_target("dialog:scan_deviation_colours", response.rect);
+    });
+}
+
+/// How much wider than its core a mark's dark casing is (both sides together), in points.
+const CASING: f32 = 2.0;
+
+/// The dark casing under every mark a Free Form dialog draws over the picture: the theme's marker
+/// halo, so a line or a point reads over the scan, its colouring and the selection colour alike.
+pub(crate) fn casing() -> egui::Color32 {
+    crate::theme::Tokens::get().icons.marker_halo
+}
+
+/// A line over the picture, on its casing.
+pub(crate) fn cased_line(painter: &egui::Painter, points: Vec<egui::Pos2>, stroke: egui::Stroke) {
+    painter.add(egui::Shape::line(points.clone(), egui::Stroke::new(stroke.width + CASING, casing())));
+    painter.add(egui::Shape::line(points, stroke));
+}
+
+/// A segment over the picture, on its casing.
+pub(crate) fn cased_segment(painter: &egui::Painter, ends: [egui::Pos2; 2], stroke: egui::Stroke) {
+    painter.line_segment(ends, egui::Stroke::new(stroke.width + CASING, casing()));
+    painter.line_segment(ends, stroke);
+}
+
+/// A filled point over the picture, ringed by its casing.
+pub(crate) fn cased_dot(painter: &egui::Painter, at: egui::Pos2, radius: f32, fill: egui::Color32) {
+    painter.circle_filled(at, radius + CASING / 2.0 + 0.5, casing());
+    painter.circle_filled(at, radius, fill);
+}
+
 /// Lines across `surface`, `LINES` each way, over the picture.
 pub(crate) fn draw_lines(painter: &egui::Painter, proj: &crate::viewport::Proj, surface: &NurbsSurface, stroke: egui::Stroke) {
     let [[u0, u1], [v0, v1]] = surface.domain();
@@ -463,7 +502,7 @@ pub(crate) fn draw_lines(painter: &egui::Painter, proj: &crate::viewport::Proj, 
                 })
                 .collect();
             if let Some(curve) = curve {
-                painter.add(egui::Shape::line(curve, stroke));
+                cased_line(painter, curve, stroke);
             }
         }
     }
@@ -1130,6 +1169,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         ui_kit::text(ui, &format!("{}: {fit}", tr("ui.scan_edit_distance")), ui_kit::Text::Note("scan_edit_distance"));
     }
     if k.shade.is_some() {
+        colours_row(ui, &mut k.colours);
         form_row(ui, tr("ui.scan_edit_tolerance"), |ui| ui_kit::length_field(ui, &mut k.tolerance, &units, decimals));
         k.tolerance = if k.tolerance.is_finite() && k.tolerance > 0.0 { k.tolerance } else { TOLERANCE };
         recolour(k);
@@ -1982,6 +2022,9 @@ pub(crate) fn release(app: &mut SolveApp) {
 /// The colouring of the scan under the surface, as a cloud for the GPU viewport.
 pub(crate) fn gpu_shade(app: &SolveApp) -> Option<GpuCloud> {
     let Some(Kind::ScanEditSurface(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    if !k.colours {
+        return None;
+    }
     let sh = k.shade.as_ref().filter(|s| s.version != 0)?;
     Some(shade_cloud(SHADE_CLOUD_ID, sh.version, sh.dots.clone()))
 }
@@ -2086,7 +2129,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
                 (false, true) => (2.5, t.continuity[2]),
                 (false, false) => (1.5, t.surface_accent),
             };
-            painter.add(egui::Shape::line(side_on_screen(proj, s, seam.a_side), egui::Stroke::new(width, colour)));
+            cased_line(painter, side_on_screen(proj, s, seam.a_side), egui::Stroke::new(width, colour));
         }
     }
     for &(f, side) in &k.joins.open {
@@ -2098,7 +2141,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         } else {
             (2.0, t.surface_accent)
         };
-        painter.add(egui::Shape::line(side_on_screen(proj, s, side), egui::Stroke::new(width, colour)));
+        cased_line(painter, side_on_screen(proj, s, side), egui::Stroke::new(width, colour));
     }
     // Delete Face: the face under the pointer outlined in the error colour.
     if k.deleting
@@ -2106,7 +2149,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         && let Some(s) = k.shown.get(f)
     {
         for side in [Side::FirstRow, Side::LastRow, Side::FirstColumn, Side::LastColumn] {
-            painter.add(egui::Shape::line(side_on_screen(proj, s, side), egui::Stroke::new(3.0, t.error)));
+            cased_line(painter, side_on_screen(proj, s, side), egui::Stroke::new(3.0, t.error));
         }
     }
     // Add Face: from the edge's ends to the corners clicked and the pointer.
@@ -2124,14 +2167,14 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         if let ([e0, e1], [c0, rest @ ..]) = (ends.as_slice(), far.as_slice()) {
             // Each far corner goes with the end of the edge it lies nearer, as the face is made.
             let (n0, n1) = if e0.distance(*c0) <= e1.distance(*c0) { (*e0, *e1) } else { (*e1, *e0) };
-            painter.line_segment([n0, *c0], guide);
+            cased_segment(painter, [n0, *c0], guide);
             if let Some(c1) = rest.first() {
-                painter.line_segment([n1, *c1], guide);
-                painter.line_segment([*c0, *c1], guide);
+                cased_segment(painter, [n1, *c1], guide);
+                cased_segment(painter, [*c0, *c1], guide);
             }
         }
         for c in a.corners.iter().filter_map(|p| proj.to_screen(*p)) {
-            painter.circle_filled(c, HANDLE + 1.0, t.warning);
+            cased_dot(painter, c, HANDLE + 1.0, t.warning);
         }
     }
     // A face being dragged out of an open edge: the edge and where its far side goes.
@@ -2144,9 +2187,9 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         let far: Vec<egui::Pos2> = far.iter().filter_map(|p| proj.to_screen(*p)).collect();
         if let ([e0, e1], [f0, f1]) = (ends.as_slice(), far.as_slice()) {
             let guide = egui::Stroke::new(1.5, t.warning);
-            painter.line_segment([*e0, *f0], guide);
-            painter.line_segment([*e1, *f1], guide);
-            painter.line_segment([*f0, *f1], guide);
+            cased_segment(painter, [*e0, *f0], guide);
+            cased_segment(painter, [*e1, *f1], guide);
+            cased_segment(painter, [*f0, *f1], guide);
         }
     }
     let moved_fill = crate::theme::model_color(t.analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8));
@@ -2165,14 +2208,13 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         if k.adding.is_none() {
             for (i, d) in k.shown_dots.iter().enumerate() {
                 let Some(s) = proj.to_screen(d.at) else { continue };
-                painter.circle_filled(s, HANDLE, fill_of(i, false));
-                painter.circle_stroke(s, HANDLE, egui::Stroke::new(1.0, t.panel));
+                cased_dot(painter, s, HANDLE, fill_of(i, false));
             }
         }
     } else {
         // The control net, face by face.
         let screen: Vec<Option<egui::Pos2>> = k.shown_net.iter().map(|p| proj.to_screen(*p)).collect();
-        let net = egui::Stroke::new(1.0, t.text.gamma_multiply(0.45));
+        let net = egui::Stroke::new(1.0, t.text.gamma_multiply(0.8));
         for (face, ids) in k.shown.iter().zip(&k.joins.of) {
             let [nu, nv] = face.count();
             for j in 0..nv {
@@ -2180,7 +2222,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
                     let here = ids.get(j * nu + i).and_then(|p| screen.get(*p).copied().flatten());
                     for next in [(i + 1 < nu).then(|| j * nu + i + 1), (j + 1 < nv).then(|| (j + 1) * nu + i)].into_iter().flatten() {
                         if let (Some(a), Some(b)) = (here, ids.get(next).and_then(|p| screen.get(*p).copied().flatten())) {
-                            painter.line_segment([a, b], net);
+                            cased_segment(painter, [a, b], net);
                         }
                     }
                 }
@@ -2192,8 +2234,8 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
                 let Some(s) = s else { continue };
                 let on_line = k.line.zip(count).is_some_and(|(l, c)| l.points(c).contains(&i));
                 let rect = egui::Rect::from_center_size(*s, egui::vec2(2.0 * HANDLE, 2.0 * HANDLE));
+                painter.rect_filled(rect.expand(CASING / 2.0 + 0.5), 1.5, casing());
                 painter.rect_filled(rect, 1.0, fill_of(i, on_line));
-                painter.rect_stroke(rect, 1.0, egui::Stroke::new(1.0, t.panel), egui::StrokeKind::Outside);
             }
         }
     }
@@ -2251,7 +2293,7 @@ fn draw_lines_n(painter: &egui::Painter, proj: &crate::viewport::Proj, surface: 
                 })
                 .collect();
             if let Some(curve) = curve {
-                painter.add(egui::Shape::line(curve, stroke));
+                cased_line(painter, curve, stroke);
             }
         }
     }
@@ -2684,6 +2726,75 @@ mod tests {
         h.app.start("scan.edit_surface");
         h.frames(2);
         assert_eq!((kind(&h).handles, kind(&h).snap), (HANDLES_NET, SNAP_OFF), "the old default, kept behind the preference");
+    }
+
+    /// What the highlight paints in the selection colour: whole bodies redrawn (planned, in
+    /// blocks, instanced) and loose triangles, counted.
+    fn selection_painted(h: &crate::scenario::Harness) -> [usize; 4] {
+        let lit = crate::viewport::build_highlight(&h.app);
+        let planned = lit.selected_planned.len();
+        let blocks = lit.selected_blocks.len();
+        let instanced = lit.selected_instanced.len();
+        [planned, blocks, instanced, lit.merged().tris.len()]
+    }
+
+    /// While a Free Form dialog is open (Edit Surface, Fit Surface after its click), the scan is
+    /// not painted in the selection colour, which hid the surface's lines and points; with the
+    /// preference `free_form_plain_scan` off it is, as before. The Deviation colours row hides the
+    /// scan's colouring by distance and brings it back.
+    #[test]
+    fn free_form_dialogs_draw_the_scan_without_the_selection_colour() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(20)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.fit_surface", json!({"point": [30, 30, 8], "radius": 20, "controls": 5})).unwrap();
+        let scan = h.app.session.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).expect("the scan");
+        h.app.session.selection = vec![solidcraft_engine::Sel::Body { name: scan.clone() }];
+        h.frames(1);
+        let nothing = [0, 0, 0, 0];
+        let selected = selection_painted(&h);
+        assert_ne!(selected, nothing, "the scan selected is painted in the selection colour with no dialog open");
+
+        assert!(h.app.preferences.free_form_plain_scan, "on by default");
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        assert!(crate::dialogs_scan_free_form::plain_scan(&h.app));
+        assert_eq!(selection_painted(&h), nothing, "Edit Surface draws the scan plain");
+
+        // The Deviation colours row: the scan's colouring by distance off, then on again.
+        assert!(gpu_shade(&h.app).is_some(), "the scan coloured by distance");
+        h.step(&json!({"click": {"handle": "dialog:scan_deviation_colours"}})).unwrap();
+        h.frames(1);
+        assert!(!kind(&h).colours && gpu_shade(&h.app).is_none(), "Deviation colours off");
+        h.step(&json!({"click": {"handle": "dialog:scan_deviation_colours"}})).unwrap();
+        h.frames(1);
+        assert!(kind(&h).colours && gpu_shade(&h.app).is_some(), "Deviation colours on again");
+
+        // The old look, kept behind the preference.
+        h.app.preferences.free_form_plain_scan = false;
+        h.frames(1);
+        assert_ne!(selection_painted(&h), nothing, "the scan painted as selected, as before");
+        h.step(&json!({"click": {"handle": "dialog:cancel"}})).unwrap();
+        h.settle();
+
+        // Fit Surface, on a scan with no surface over it: the point clicked on the scan is the
+        // dialog's input, which the old look paints in the selection colour; the new one does not.
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.fit_surface");
+        h.frames(2);
+        let top = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+        h.step(&json!({"click": {"world": [31.0, 29.0, top(31.0, 29.0)]}})).unwrap();
+        h.frames(2);
+        assert!(gpu_fit_marks(&h.app).is_some(), "the point clicked on the scan");
+        assert_eq!(selection_painted(&h), nothing, "Fit Surface draws the scan plain");
+        h.app.preferences.free_form_plain_scan = false;
+        h.frames(1);
+        assert_ne!(selection_painted(&h), nothing, "the point's scan painted as selected, as before");
     }
     /// Crease Edge on: a click on the shared edge of two faces grown smoothly over a ridge creases
     /// it, so the faces follow the ridge; it is one step of Undo Last Change, which puts the

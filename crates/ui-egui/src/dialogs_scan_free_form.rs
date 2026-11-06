@@ -39,6 +39,8 @@ pub struct NewFreeForm {
     pub stiffness: f64,
     /// The deviation colouring's tolerance, mm.
     pub tolerance: f64,
+    /// The scan under the face is coloured by how far it is from it (on by default).
+    pub colours: bool,
     clicks: Vec<Vec3>,
     /// The view's right and up when the rectangle's second corner was clicked.
     view: Option<(Vec3, Vec3)>,
@@ -47,7 +49,18 @@ pub struct NewFreeForm {
 
 impl Default for NewFreeForm {
     fn default() -> Self {
-        NewFreeForm { corners_mode: 0, fit: 1, reach: 0.0, count: 4, stiffness: 0.0, tolerance: 0.1, clicks: Vec::new(), view: None, shown: None }
+        NewFreeForm {
+            corners_mode: 0,
+            fit: 1,
+            reach: 0.0,
+            count: 4,
+            stiffness: 0.0,
+            tolerance: 0.1,
+            colours: true,
+            clicks: Vec::new(),
+            view: None,
+            shown: None,
+        }
     }
 }
 
@@ -156,6 +169,9 @@ fn shade(app: &SolveApp, k: &mut NewFreeForm) {
 /// The colouring of the scan under the face, as a cloud for the GPU viewport.
 pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuCloud> {
     let Some(Kind::ScanFreeForm(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    if !k.colours {
+        return None;
+    }
     let (_, _, version, dots) = k.shown.as_ref()?.shade.as_ref()?;
     Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots.clone()))
 }
@@ -179,6 +195,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
     }
     form_row(ui, tr("ui.scan_free_form_points"), |ui| ui_kit::number_field(ui, &mut k.count, 4..=12, 0.2, ""));
     if k.fit != 0 {
+        crate::dialogs_scan_surface::colours_row(ui, &mut k.colours);
         form_row(ui, tr("ui.scan_edit_tolerance"), |ui| ui_kit::length_field(ui, &mut k.tolerance, &units, decimals));
         k.tolerance = if k.tolerance.is_finite() && k.tolerance > 0.0 { k.tolerance } else { 0.1 };
     }
@@ -268,6 +285,18 @@ pub(crate) fn colours_the_scan(app: &SolveApp) -> bool {
     matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(_)))
 }
 
+/// Whether a Free Form dialog is open (New Free Form, Wrap Surface, Fit Surface, Edit Surface) and
+/// the scan is drawn plain under it (Preferences › Tools, on by default): the scan clicked is not
+/// painted in the selection colour, which would hide the surface's lines and points and the
+/// scan's colouring by distance.
+pub(crate) fn plain_scan(app: &SolveApp) -> bool {
+    app.preferences.free_form_plain_scan
+        && matches!(
+            app.dialog.as_ref().map(|d| &d.kind),
+            Some(Kind::ScanFreeForm(_) | Kind::ScanWrapSurface(_) | Kind::ScanFitSurface(_) | Kind::ScanEditSurface(_))
+        )
+}
+
 /// Whether the dialog takes clicks in the view as corners.
 pub(crate) fn drawing(app: &SolveApp) -> bool {
     matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(k)) if k.clicks.len() < needed(k))
@@ -313,11 +342,10 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         if corners(k).is_some() {
             closed.push(on[0]);
         }
-        painter.add(egui::Shape::line(closed, egui::Stroke::new(1.0, t.text_dim)));
+        crate::dialogs_scan_surface::cased_line(painter, closed, egui::Stroke::new(1.0, t.text_dim));
     }
     for (i, p) in on.iter().enumerate() {
-        painter.circle_filled(*p, DOT / 2.0, if i == 0 { t.accent } else { t.text });
-        painter.circle_stroke(*p, DOT / 2.0, egui::Stroke::new(1.0, t.panel));
+        crate::dialogs_scan_surface::cased_dot(painter, *p, DOT / 2.0, if i == 0 { t.accent } else { t.text });
     }
 }
 
@@ -468,7 +496,7 @@ pub(crate) fn draw_wrap(app: &SolveApp, painter: &egui::Painter, proj: &crate::v
     let foot = c.point + c.axis * (middle - c.point).dot(c.axis);
     let half = c.axis * (2.0 * c.radius);
     if let (Some(a), Some(b)) = (proj.to_screen(foot - half), proj.to_screen(foot + half)) {
-        painter.line_segment([a, b], egui::Stroke::new(1.0, t.text_dim));
+        crate::dialogs_scan_surface::cased_segment(painter, [a, b], egui::Stroke::new(1.0, t.text_dim));
     }
 }
 
