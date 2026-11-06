@@ -68,7 +68,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reconstruct) -> bool {
         ui_kit::text(ui, tr("ui.scan_reconstruct_unread"), ui_kit::Text::Report("scan_reconstruct_unread", true));
         return false;
     };
-    let steps = reconstruct::proposals(&found.reading);
+    let steps = reconstruct::proposals(&found.reading, reconstruct::is_built(&app.session, &found.scan));
     k.ticked.resize(steps.len(), true);
     let summary = crate::i18n::format(
         "ui.scan_reconstruct_found",
@@ -88,7 +88,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reconstruct) -> bool {
 /// What OK runs: the ticked steps, in order.
 pub fn commands(app: &SolveApp, k: &Reconstruct) -> Result<Vec<(String, Value)>, String> {
     let found = found(app).ok_or_else(|| tr("ui.scan_reconstruct_unread").to_string())?;
-    let chosen: Vec<(String, Value)> = reconstruct::proposals(&found.reading)
+    let chosen: Vec<(String, Value)> = reconstruct::proposals(&found.reading, reconstruct::is_built(&app.session, &found.scan))
         .iter()
         .zip(k.ticked.iter().copied().chain(std::iter::repeat(true)))
         .filter(|(_, ticked)| *ticked)
@@ -143,7 +143,7 @@ mod tests {
         h.app.start("scan.reconstruct");
         assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanReconstruct(_))), "the dialog is open");
         let found = found(&h.app).expect("read");
-        let steps = reconstruct::proposals(&found.reading);
+        let steps = reconstruct::proposals(&found.reading, reconstruct::is_built(&h.app.session, &found.scan));
         assert!(matches!(steps.first(), Some(Proposal::Extrude(0))), "{steps:?}");
         let commands = commands(&h.app, &Reconstruct { ticked: vec![true; steps.len()] }).unwrap();
         assert_eq!(commands[0].0, "scan.extrude_it");

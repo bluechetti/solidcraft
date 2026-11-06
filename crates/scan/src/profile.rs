@@ -24,7 +24,7 @@ use solidcraft_geom::prelude::*;
 
 use crate::Scan;
 use crate::fit::Shape;
-use crate::reconstruct::{Axis, Prism, Reading};
+use crate::reconstruct::{Axis, Face, Prism, Reading, Revolve};
 use crate::segment::Outcome;
 
 /// A piece of an outline, from its corner to the next.
@@ -643,10 +643,23 @@ pub fn prism_plane(prism: &Prism) -> Plane {
 /// lies in and its outlines (`faces` index `reading.faces`); why not, when no loop goes round its
 /// walls.
 pub fn prism_profile(scan: &Scan, outcome: &Outcome, reading: &Reading, prism: &Prism) -> Result<(Plane, Vec<Outline>), String> {
+    prism_profile_from(scan, &crate::welded(scan.positions), outcome, &reading.faces, reading.size, prism)
+}
+
+/// [`prism_profile`] from the shapes found (`faces`) and the part's size, the scan's points
+/// already welded (`weld`), so that Reconstruct can ask it of every prism it reads.
+pub(crate) fn prism_profile_from(
+    scan: &Scan,
+    weld: &[u32],
+    outcome: &Outcome,
+    faces: &[Face],
+    size: f64,
+    prism: &Prism,
+) -> Result<(Plane, Vec<Outline>), String> {
     let plane = prism_plane(prism);
     // Which face each triangle is on.
     let mut owner = vec![u32::MAX; scan.triangle_count()];
-    for (k, segment) in outcome.segments.iter().enumerate().take(reading.faces.len()) {
+    for (k, segment) in outcome.segments.iter().enumerate().take(faces.len()) {
         for &t in &segment.triangles {
             if let Some(slot) = owner.get_mut(t) {
                 *slot = k as u32;
@@ -654,9 +667,9 @@ pub fn prism_profile(scan: &Scan, outcome: &Outcome, reading: &Reading, prism: &
         }
     }
     let walls: Vec<(usize, Wall)> =
-        prism.walls.iter().filter_map(|&k| reading.faces.get(k).and_then(|f| wall_of(&f.shape, &plane)).map(|w| (k, w))).collect();
+        prism.walls.iter().filter_map(|&k| faces.get(k).and_then(|f| wall_of(&f.shape, &plane)).map(|w| (k, w))).collect();
     let place: BTreeMap<usize, usize> = walls.iter().enumerate().map(|(i, (k, _))| (*k, i)).collect();
-    let loops: Vec<(Vec<Vec2>, Vec<Option<usize>>)> = crate::section::section(scan, &plane)
+    let loops: Vec<(Vec<Vec2>, Vec<Option<usize>>)> = crate::section::section_welded(scan, weld, &plane)
         .into_iter()
         .filter(|r| r.closed)
         .map(|r| {
@@ -664,7 +677,7 @@ pub fn prism_profile(scan: &Scan, outcome: &Outcome, reading: &Reading, prism: &
             (r.points, on)
         })
         .collect();
-    let outlines = prism_outlines(&walls, &loops, 0.005 * reading.size);
+    let outlines = prism_outlines(&walls, &loops, 0.005 * size);
     if outlines.is_empty() {
         return Err("no loop of the scan's slice halfway along the prism runs round its walls".into());
     }
@@ -683,8 +696,19 @@ pub fn turned_plane(axis: &Axis) -> Plane {
 /// outline (`faces` index `reading.faces`) and each face as held (by face index); why not.
 pub fn turned_profile(scan: &Scan, outcome: &Outcome, reading: &Reading) -> Result<(Plane, Outline, BTreeMap<usize, Turned>), String> {
     let revolve = reading.revolve.as_ref().ok_or("the part is not turned: no axis holds most of its faces")?;
+    turned_profile_of(scan, outcome, &reading.faces, reading.size, revolve)
+}
+
+/// [`turned_profile`] of `revolve` from the shapes `found` and the part's size, so that
+/// Reconstruct can ask it before it proposes Revolve It.
+pub(crate) fn turned_profile_of(
+    scan: &Scan,
+    outcome: &Outcome,
+    found: &[Face],
+    size: f64,
+    revolve: &Revolve,
+) -> Result<(Plane, Outline, BTreeMap<usize, Turned>), String> {
     let axis = &revolve.axis;
-    let size = reading.size;
     let polar_of = |p: Vec3| polar(p, axis);
     // Each member held to the axis, and which member each triangle is on.
     let mut owner = vec![usize::MAX; scan.triangle_count()];
@@ -692,7 +716,7 @@ pub fn turned_profile(scan: &Scan, outcome: &Outcome, reading: &Reading) -> Resu
     let mut numbered = Vec::new();
     let mut held_faces = BTreeMap::new();
     for &k in &revolve.members {
-        let (Some(segment), Some(face)) = (outcome.segments.get(k), reading.faces.get(k)) else { continue };
+        let (Some(segment), Some(face)) = (outcome.segments.get(k), found.get(k)) else { continue };
         let points: Vec<(Vec2, f64)> = segment.triangles.iter().filter_map(|&t| scan.corners(t)).flatten().map(|p| (polar_of(p), 1.0)).collect();
         let Some(turned) = held(face.shape.kind(), &points) else { continue };
         let total = points.len().max(1) as f64;

@@ -94,7 +94,7 @@ pub enum CurveError {
 impl std::fmt::Display for CurveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CurveError::TooFew => f.write_str("click at least two points on the scan (three for a closed curve)"),
+            CurveError::TooFew => f.write_str("click at least two points on the scan, apart from each other (three for a closed curve)"),
             CurveError::OffTheScan { point } => write!(f, "point {} is not on the scan", point + 1),
             CurveError::Gap { after } => {
                 write!(f, "between points {} and {} the curve leaves the scan (a gap or a hole): click a point between them", after + 1, after + 2)

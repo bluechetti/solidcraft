@@ -846,7 +846,13 @@ pub struct Reading {
     /// The share of the scan's area in shapes.
     pub in_shapes: f64,
     pub prisms: Vec<Prism>,
+    /// How many more prisms the shapes seemed to make whose slice halfway along runs round no
+    /// walls of theirs, so Extrude It could not build them: left out of `prisms`.
+    pub unread_prisms: usize,
     pub revolve: Option<Revolve>,
+    /// Why the turned part's profile cannot be read (a face about the axis missing, or one too
+    /// many), when there is a turned part and Revolve It could not build it.
+    pub turned_unread: Option<String>,
     pub repeats: Vec<Repeat>,
     /// The repeats of round holes or bosses a solid can be built with as a pattern.
     pub plans: Vec<PatternPlan>,
@@ -955,6 +961,15 @@ pub fn read(scan: &Scan, outcome: &Outcome) -> Reading {
     let repeats = repeats(&faces);
     // A prism whose sides are all holes is a hole, cut and not extruded.
     prisms.retain(|p| !p.walls.iter().all(|&w| hole(w)));
+    // Only a prism Extrude It can build: one whose slice halfway along runs round its walls. Walls
+    // that bound nothing (a round's sliver of cylinder alone, two faces side by side) are no prism.
+    let read_prisms = prisms.len();
+    if !prisms.is_empty() {
+        let weld = crate::welded(scan.positions);
+        prisms.retain(|p| crate::profile::prism_profile_from(scan, &weld, outcome, &faces, size, p).is_ok());
+    }
+    let unread_prisms = read_prisms - prisms.len();
+    let turned_unread = revolve.as_ref().and_then(|r| crate::profile::turned_profile_of(scan, outcome, &faces, size, r).err());
     let explained: BTreeSet<usize> = match &revolve {
         Some(revolve) => revolve.members.iter().copied().collect(),
         None => prisms.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).copied().collect(),
@@ -963,7 +978,7 @@ pub fn read(scan: &Scan, outcome: &Outcome) -> Reading {
     let holes = holes(&faces, &hole, &explained, &repeats, &span_of, middle);
     let rounds: BTreeSet<usize> = (0..shaped.len()).filter(|&k| is_edge_round(scan, shaped[k], size)).collect();
     let plans = pattern_plans(&faces, &repeats, &rounds);
-    Reading { faces, in_shapes: outcome.in_shapes, prisms, revolve, repeats, plans, holes, rounds, size }
+    Reading { faces, in_shapes: outcome.in_shapes, prisms, unread_prisms, revolve, turned_unread, repeats, plans, holes, rounds, size }
 }
 
 #[cfg(test)]
@@ -1103,5 +1118,35 @@ mod tests {
         assert!(found.axis.direction.dot(Vec3::Z).abs() > 0.9999 && (found.axis.point - Vec3::Z * found.axis.point.z).len() < 1e-6);
         let block: Vec<Face> = block().into_iter().map(|g| g.0).collect();
         assert!(revolve(&block, 60.0).is_none());
+    }
+
+    /// A box's floor, and one side of it read as a sliver of a wide round (as Find All reads a
+    /// fillet on a noisy scan): the shapes alone make an open prism, but its slice halfway runs on
+    /// the round for one short arc and on nothing else of it, so Extrude It could not build it.
+    /// Reconstruct leaves it out and counts it.
+    #[test]
+    fn walls_that_go_round_nothing_are_no_prism() {
+        let n = 8;
+        let (positions, triangles) = crate::test_meshes::fine_cuboid(Vec3::ZERO, Vec3::new(20.0, 20.0, 10.0), n);
+        let scan = Scan::new(&positions, &triangles);
+        // The sides in `fine_cuboid`'s order: −X, +X, −Y, +Y, −Z, +Z.
+        let side = |k: usize| -> Vec<usize> { (k * 2 * (n * n) as usize..(k + 1) * 2 * (n * n) as usize).collect() };
+        let segment = |triangles: Vec<usize>, shape: Shape| Segment { triangles, shape: Some(shape), area: 200.0, rms: 0.0 };
+        let outcome = Outcome {
+            segments: vec![
+                segment(side(4), Shape::Plane { point: Vec3::ZERO, normal: -Vec3::Z }),
+                segment(side(0), Shape::Cylinder { point: Vec3::new(30.0, 10.0, 0.0), axis: Vec3::Z, radius: 30.0 }),
+            ],
+            noise: 0.0,
+            tolerance: 0.01,
+            in_shapes: 0.3,
+            cancelled: false,
+        };
+        let faces: Vec<Face> = outcome.segments.iter().map(|s| Face { shape: s.shape.unwrap(), area: s.area }).collect();
+        let span_of = |k: usize, d: Vec3| outcome.segments.get(k).and_then(|s| span(&scan, s, d));
+        assert_eq!(extrusions(&faces, &span_of, scan.extent(), &BTreeSet::new()).len(), 1, "the shapes alone make a prism");
+        let reading = super::read(&scan, &outcome);
+        assert!(reading.prisms.is_empty(), "{:?}", reading.prisms);
+        assert_eq!(reading.unread_prisms, 1);
     }
 }

@@ -321,7 +321,14 @@ pub fn plan(s: &Session, p: &Value, cmd: &str) -> Result<Planned> {
         if others > 0 {
             return Err(bad(cmd, "give one cutter: the selection, or another"));
         }
-        let cut = split::by_triangles(&on.scan(), &sel.selected).map_err(|e| bad(cmd, e.to_string()))?;
+        let cut = split::by_triangles(&on.scan(), &sel.selected).map_err(|e| match e {
+            // The selection's edge is only the rims of whole pieces (a floating bit picked, or all of it).
+            split::SplitError::Misses => bad(
+                cmd,
+                "what is selected has no edge inside the scan to part it along: it is whole pieces of the scan, or all of it (Remove Floating Pieces takes small pieces off)",
+            ),
+            e => bad(cmd, e.to_string()),
+        })?;
         return Ok(Planned { body: on.body, cutter: "selection".into(), sides: Sides::SelectedRest, cut });
     }
     let on = mesh(s, p, cmd)?;

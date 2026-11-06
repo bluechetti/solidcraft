@@ -171,6 +171,35 @@ fn reconstructs_tools_say_what_comes_first() {
     assert!(beyond.contains("`prism` is 0 to"), "{beyond}");
 }
 
+/// Reconstruct proposes only steps that can run in order: a hole is cut once a step before it
+/// builds the body or the body is built already, and a turned part whose profile cannot be read
+/// is not revolved. (On T-LESS's scans it proposed Cut It first, refused for want of a body.)
+#[test]
+fn reconstruct_proposes_no_cut_with_nothing_to_cut() {
+    use solidcraft_scan::fit::Shape;
+    use solidcraft_scan::reconstruct::{Axis, Face, Hole, Reading, Revolve};
+    let hole = Hole { face: 0, mouth: Vec3::new(0.0, 0.0, 10.0), bottom: Vec3::ZERO, radius: 3.0, repeat: None };
+    let mut reading = Reading {
+        faces: vec![Face { shape: Shape::Cylinder { point: Vec3::ZERO, axis: Vec3::Z, radius: 3.0 }, area: 180.0 }],
+        in_shapes: 0.4,
+        prisms: Vec::new(),
+        unread_prisms: 0,
+        revolve: None,
+        turned_unread: None,
+        repeats: Vec::new(),
+        plans: Vec::new(),
+        holes: vec![hole],
+        rounds: Default::default(),
+        size: 60.0,
+    };
+    assert!(super::proposals(&reading, false).is_empty());
+    assert_eq!(super::proposals(&reading, true), vec![super::Proposal::Cut(0)]);
+    reading.revolve = Some(Revolve { axis: Axis { point: Vec3::ZERO, direction: Vec3::Z }, members: vec![0], share: 1.0 });
+    assert_eq!(super::proposals(&reading, false), vec![super::Proposal::Revolve, super::Proposal::Cut(0)]);
+    reading.turned_unread = Some("a face between them is missing".into());
+    assert!(super::proposals(&reading, false).is_empty());
+}
+
 /// A plain shaft R 20 × 40 with the same ring of holes at mid-height: one round face is a disc
 /// extruded, so Extrude It builds it, its holes' floors not ending it; then Cut It and Pattern It.
 #[test]

@@ -37,6 +37,12 @@ pub fn section(scan: &Scan, plane: &Plane) -> Vec<Run> {
     cut(scan, &welded(scan.positions), plane)
 }
 
+/// [`section`] with the scan's points already welded (`weld`, as [`crate::welded`] gives them),
+/// for many planes through one scan.
+pub(crate) fn section_welded(scan: &Scan, weld: &[u32], plane: &Plane) -> Vec<Run> {
+    cut(scan, weld, plane)
+}
+
 /// [`section`] with the scan's points already welded.
 fn cut(scan: &Scan, weld: &[u32], plane: &Plane) -> Vec<Run> {
     let height = |v: u32| {

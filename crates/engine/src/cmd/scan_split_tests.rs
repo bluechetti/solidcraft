@@ -230,3 +230,15 @@ fn what_is_selected_is_parted_into_a_scan_of_its_own() {
         "the top left the scan"
     );
 }
+
+/// All of a piece selected (as a brush on a floating bit of the YCB mug's scan takes it whole):
+/// there is no edge inside the scan to part along, and the refusal says so, not that a cutter
+/// misses.
+#[test]
+fn a_whole_piece_selected_has_no_edge_to_part_along() {
+    let mut s = Session::default();
+    scan(&mut s);
+    run(&mut s, "scan.select", json!({"all": true}));
+    let e = s.execute("scan.split", &json!({"selection": true})).expect_err("all of it selected").to_string();
+    assert!(e.contains("whole pieces"), "{e}");
+}

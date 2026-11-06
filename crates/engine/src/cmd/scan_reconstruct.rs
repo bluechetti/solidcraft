@@ -303,14 +303,18 @@ impl Proposal {
     }
 }
 
-/// What Reconstruct proposes, in the order to build it: the turned part, else each prism, the
-/// main body first; then each hole cut and, where it repeats, patterned.
-pub fn proposals(reading: &Reading) -> Vec<Proposal> {
+/// What Reconstruct proposes, in the order to build it: the turned part (when its profile can be
+/// read), else each prism, the main body first; then each hole cut and, where it repeats,
+/// patterned, once there is a body to cut them in: one a step above builds, or one `built` before.
+pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
     let mut out = Vec::new();
-    if reading.revolve.is_some() {
+    if reading.revolve.is_some() && reading.turned_unread.is_none() {
         out.push(Proposal::Revolve);
     }
     out.extend((0..reading.prisms.len()).map(Proposal::Extrude));
+    if out.is_empty() && !built {
+        return out;
+    }
     for (k, hole) in reading.holes.iter().enumerate() {
         out.push(Proposal::Cut(k));
         if hole.repeat.is_some() {
@@ -323,6 +327,11 @@ pub fn proposals(reading: &Reading) -> Vec<Proposal> {
 /// The body Reconstruct builds on scan `scan`.
 fn built_name(scan: &str) -> String {
     format!("{scan} Reconstructed")
+}
+
+/// Whether the body Reconstruct builds on scan `scan` is in the design, so its holes can be cut.
+pub fn is_built(s: &Session, scan: &str) -> bool {
+    s.model.state().body(&built_name(scan)).is_some()
 }
 
 fn layout_name(layout: &Layout) -> &'static str {
@@ -404,11 +413,20 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         share: r.share,
     });
     let body = found.scan.clone();
-    let proposals = proposals(reading).iter().map(|p| json!({"command": p.command(), "params": p.params(&body)})).collect();
+    let proposals = proposals(reading, built.is_some()).iter().map(|p| json!({"command": p.command(), "params": p.params(&body)})).collect();
     let note = if reading.faces.is_empty() {
         Some("Find All found no shape on the scan: it is all freeform".to_string())
+    } else if let (true, Some(why)) = (reading.prisms.is_empty(), &reading.turned_unread) {
+        Some(format!("the part turns about one axis, but Revolve It cannot read its profile: {why}"))
     } else if reading.prisms.is_empty() && reading.revolve.is_none() {
-        Some("the shapes make no prism and no turned part: build from Fit Plane, Fit Cylinder and Section to Sketch, or with free forms".to_string())
+        let unread = match reading.unread_prisms {
+            0 => String::new(),
+            1 => " (one set of walls runs along one direction, but no slice halfway along it goes round them)".to_string(),
+            n => format!(" ({n} sets of walls run along one direction, but no slice halfway along them goes round them)"),
+        };
+        Some(format!(
+            "the shapes make no prism and no turned part{unread}: build from Fit Plane, Fit Cylinder and Section to Sketch, or with free forms"
+        ))
     } else if found.outcome.in_shapes < 0.5 {
         Some(format!("only {:.0}% of the scan is in shapes: the rest is freeform, for free forms", 100.0 * found.outcome.in_shapes))
     } else {
