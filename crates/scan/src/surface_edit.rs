@@ -155,8 +155,14 @@ pub fn foot(surface: &NurbsSurface, p: Vec3) -> Option<Foot> {
 /// side most of them face, so neither a wall the surface's edge comes near nor the far side of a
 /// thin part counts), at most `limit` of them (thinned evenly).
 pub fn covered(scan: &Scan, surface: &NurbsSurface, reach: f64, limit: usize) -> Vec<Vec3> {
+    covered_facing(scan, surface, reach, limit).0
+}
+
+/// [`covered`], and which way the scan's outside is from the surface: 1 along the surface's own
+/// normal (u × v), -1 against it.
+pub fn covered_facing(scan: &Scan, surface: &NurbsSurface, reach: f64, limit: usize) -> (Vec<Vec3>, f64) {
     let net = points(surface);
-    let Some(first) = net.first().copied() else { return Vec::new() };
+    let Some(first) = net.first().copied() else { return (Vec::new(), 1.0) };
     let (lo, hi) = net.iter().fold((first, first), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
     let pad = Vec3::new(reach, reach, reach);
     let (lo, hi) = (lo - pad, hi + pad);
@@ -183,7 +189,7 @@ pub fn covered(scan: &Scan, surface: &NurbsSurface, reach: f64, limit: usize) ->
         .collect();
     let sign = facing.iter().map(|(_, d)| d.signum()).sum::<f64>().signum();
     let kept: Vec<Vec3> = facing.into_iter().filter(|(_, d)| d.signum() == sign).map(|(m, _)| m).collect();
-    thinned(&kept, limit)
+    (thinned(&kept, limit), if sign < 0.0 { -1.0 } else { 1.0 })
 }
 
 /// The points' distance from the surface: root mean square and largest, in mm (0 with none).

@@ -146,6 +146,7 @@ mod tests {
             "scan.revolve_it",
             "scan.cut_it",
             "scan.pattern_it",
+            "scan.fillet_it",
             "scan.register",
             "scan.mesh_from_points",
             "scan.remesh",
@@ -164,6 +165,7 @@ mod tests {
             "scan.flatten",
             "scan.roll_onto_scan",
             "scan.fit_patches",
+            "scan.add_face",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {

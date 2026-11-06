@@ -989,6 +989,54 @@ fn free_form_makes_a_surface_on_the_scan_and_its_net_changes() {
     assert!(refused.contains("four points"), "{refused}");
 }
 
+/// A face added on an open edge of a Free Form: one surface body of two faces sharing the edge,
+/// tangent across it and lying on the dome; points on it moved by `dots` take the surface through
+/// them, the other faces' points held; the net is doubled as a whole; each one undo step.
+#[test]
+fn add_face_grows_a_free_form_into_a_network_edited_by_its_points() {
+    let (mut s, _) = session_with_triangles("add-face", &dome_triangles(40));
+    run(&mut s, "scan.free_form", json!({"corners": [[10, 10, 0], [30, 10, 0], [30, 50, 0], [10, 50, 0]], "count": 5}));
+    let added = run(&mut s, "scan.add_face", json!({"edge": [[30, 10, 0], [30, 50, 0]], "far": [[50, 10, 0], [50, 50, 0]], "rows": 5}));
+    assert_eq!((added["surface"].as_str(), added["faces"].as_u64(), added["face"].as_u64()), (Some("FreeForm1"), Some(2), Some(1)), "{added}");
+    assert!(added["rms"].as_f64().unwrap() < 0.05 && added["kink"].as_f64().unwrap() < 0.5, "on the dome and tangent: {added}");
+    let net = super::surface::editable(&s, Some("FreeForm1"), "test").unwrap();
+    assert_eq!(net.faces.len(), 2, "one body of two faces, editable");
+    assert_eq!(solidcraft_kernel::brep_record(&s.model.state().body("FreeForm1").unwrap().body).unwrap().faces.len(), 2);
+    // Its edge is not open any more: a face there is refused.
+    let refused =
+        s.execute("scan.add_face", &json!({"edge": [[30, 10, 0], [30, 50, 0]], "far": [[20, 10, 0], [20, 50, 0]]})).unwrap_err().to_string();
+    assert!(refused.contains("open edge"), "{refused}");
+
+    // A point in the middle of the shared edge pulled up 2 mm: the surface runs through it.
+    let joins = solidcraft_scan::network::joins(&net.faces).unwrap();
+    let dots = solidcraft_scan::network::dots(&net.faces, &joins);
+    let on_seam =
+        (0..dots.len()).filter(|p| joins.on_seam(*p)).min_by(|a, b| (dots[*a].at.y - 30.0).abs().total_cmp(&(dots[*b].at.y - 30.0).abs())).unwrap();
+    let was = dots[on_seam].at;
+    let moved = run(&mut s, "scan.edit_surface", json!({"dots": [{"at": [was.x, was.y, was.z], "along": "2 mm"}]}));
+    assert_eq!((moved["moved"].as_u64(), moved["faces"].as_u64()), (Some(1), Some(2)), "{moved}");
+    let after = super::surface::editable(&s, Some("FreeForm1"), "test").unwrap();
+    let aj = solidcraft_scan::network::joins(&after.faces).unwrap();
+    let now = solidcraft_scan::network::dots(&after.faces, &aj);
+    let risen = now.iter().map(|d| d.at.dist(was)).filter(|d| *d > 1.0).fold(f64::INFINITY, f64::min);
+    assert!((risen - 2.0).abs() < 0.1, "a point on the surface 2 mm along the normal from where it was: {risen}");
+    assert_eq!(aj.seams.len(), 1, "still one seam");
+    assert!(solidcraft_scan::network::worst_kink(&after.faces, &aj) < 1.0, "still tangent");
+    // The control net of a network is not edited point by point.
+    let refused = s.execute("scan.edit_surface", &json!({"moves": [{"point": [1, 1], "along": "1 mm"}]})).unwrap_err().to_string();
+    assert!(refused.contains("2 faces"), "{refused}");
+    let refined = run(&mut s, "scan.edit_net", json!({"op": "refine"}));
+    assert_eq!(refined["controls"], json!([7, 7]), "{refined}");
+    assert_eq!(
+        super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces.iter().map(|f| f.count()).collect::<Vec<_>>(),
+        vec![[7, 7], [7, 7]]
+    );
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces.len(), 1, "one undo step each");
+}
+
 /// `turn` radians round a tube of radius 10 along Z, 40 long, as triangles.
 fn tube_triangles(turn: f64) -> Vec<[Vec3; 3]> {
     let (rings, segments) = (20u32, 48u32);
@@ -1015,6 +1063,11 @@ fn wrap_surface_wraps_a_net_on_a_tube() {
     let made = run(&mut s, "scan.wrap_surface", json!({"point": point, "reach": "60 mm"}));
     assert_eq!((made["surface"].as_str(), made["controls"].clone()), (Some("FreeForm1"), json!([8, 20])), "{made}");
     assert!((made["radius"].as_f64().unwrap() - 10.0).abs() < 0.05 && made["rms"].as_f64().unwrap() < 0.05, "{made}");
+    assert_eq!((made["folds"].as_u64(), made["crossings"].as_u64()), (Some(0), Some(0)), "{made}");
+    assert!(made.get("warning").is_none(), "{made}");
+    // A quarter of the tube does not close round on itself: Merge says how far apart its sides are.
+    let open = s.execute("scan.merge_surfaces", &json!({"surfaces": ["FreeForm1"]})).unwrap_err().to_string();
+    assert!(open.contains("does not close round on itself") && open.contains("mm apart"), "{open}");
     let about_z = run(&mut s, "scan.wrap_surface", json!({"point": point, "reach": "60 mm", "axis": "z", "details": "low"}));
     assert_eq!(about_z["surface"].as_str(), Some("FreeForm2"), "{about_z}");
     assert!((about_z["radius"].as_f64().unwrap() - 10.0).abs() < 0.05 && about_z["controls"][0] == 4, "{about_z}");
@@ -1022,6 +1075,19 @@ fn wrap_surface_wraps_a_net_on_a_tube() {
     assert!(s.model.state().body("FreeForm2").is_none() && s.model.state().body("FreeForm1").is_some(), "one undo step");
     let refused = s.execute("scan.wrap_surface", &json!({"point": point, "details": "huge"})).unwrap_err().to_string();
     assert!(refused.contains("low, medium or fine"), "{refused}");
+}
+
+/// A wrap that folds says so and says what to do: Stiffness, then more of it; one that does not
+/// says nothing.
+#[test]
+fn a_folded_wrap_is_told_to_raise_stiffness() {
+    assert!(super::free_form::wrap_warning([0, 0, 0], 0.0).is_none());
+    let soft = super::free_form::wrap_warning([20, 0, 0], 0.0).unwrap();
+    assert!(soft.contains("20 folds") && soft.contains("raise Stiffness a little") && soft.contains("cannot sew"), "{soft}");
+    let stiff = super::free_form::wrap_warning([3, 0, 1], 0.2).unwrap();
+    assert!(stiff.contains("raise Stiffness further") && stiff.contains("1 crossing"), "{stiff}");
+    let crossing = super::free_form::wrap_warning([0, 0, 13], 0.0).unwrap();
+    assert!(crossing.starts_with("the surface passes through itself (13 crossings)"), "{crossing}");
 }
 
 /// Two Free Forms clicked side by side on a dome, a little apart and of other sizes, are merged:

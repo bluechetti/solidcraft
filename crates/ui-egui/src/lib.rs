@@ -2578,6 +2578,10 @@ impl SolveApp {
     /// Visibility in the editor's scene: hidden face-profile sources are temporarily shown
     /// without changing the session's visibility or either history stack.
     pub(crate) fn body_visible(&self, name: &str) -> bool {
+        // The surface Edit Surface edits is drawn by the dialog as it is edited, not as it was.
+        if dialogs_scan_surface::edited_body(self) == Some(name) {
+            return false;
+        }
         self.session.body_visible(name) || self.dialog.as_ref().is_some_and(|d| d.edit_source_bodies.iter().any(|source| source == name))
     }
 

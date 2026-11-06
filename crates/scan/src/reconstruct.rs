@@ -170,6 +170,54 @@ impl Hole {
     }
 }
 
+/// A round along an edge of the part that no profile Reconstruct sketches holds (across a prism's
+/// ends, round a hole's mouth): the face it is, its radius as fitted, and a point on the sharp
+/// edge of the model it rounds, for Fillet from Scan to find that edge by.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EdgeRound {
+    pub face: usize,
+    pub radius: f64,
+    pub edge: Vec3,
+}
+
+/// Where the sharp edge a round cylinder (`segment`) rounds lies: where the two flat faces it is
+/// tangent to meet, level with the middle of the round; with no such two faces, as far out from
+/// its axis through the round's middle as a square edge would be (√2 radii). `faces` are the
+/// reading's (a face of no area is a piece of another and is passed by).
+fn edge_of_round(scan: &Scan, segment: &Segment, faces: &[Face]) -> Option<Vec3> {
+    let Some(Shape::Cylinder { point, axis, radius }) = segment.shape else { return None };
+    let axis = axis.normalized()?;
+    let step = (segment.triangles.len() / 2000).max(1);
+    let corners: Vec<Vec3> = segment.triangles.iter().step_by(step).filter_map(|&t| scan.corners(t)).flatten().collect();
+    let middle = corners.iter().fold(Vec3::ZERO, |s, p| s + *p) / corners.len().max(1) as f64;
+    let foot = point + axis * (middle - point).dot(axis);
+    let out = (middle - foot).normalized()?;
+    // The flat faces along it, as far from its axis as its radius: each with the way from the axis
+    // to where it touches.
+    let beside: Vec<(Vec3, Vec3, Vec3)> = faces
+        .iter()
+        .filter(|f| f.area > 0.0)
+        .filter_map(plane)
+        .filter_map(|(p, n)| {
+            let off = (foot - p).dot(n);
+            let touch = n * -off.signum();
+            (n.dot(axis).abs() <= SQUARE && (off.abs() - radius).abs() <= 0.25 * radius && touch.dot(out) >= 0.17).then_some((p, n, touch))
+        })
+        .collect();
+    let side = |touch: Vec3| axis.dot(out.cross(touch)).signum();
+    let best = |sign: f64| beside.iter().filter(|b| side(b.2) == sign).max_by(|a, b| a.2.dot(out).total_cmp(&b.2.dot(out)));
+    if let (Some(a), Some(b)) = (best(1.0), best(-1.0)) {
+        let rows = [[a.1.x, a.1.y, a.1.z], [b.1.x, b.1.y, b.1.z], [axis.x, axis.y, axis.z]];
+        if let Some(x) = crate::symmetry::solve3(&rows, [a.1.dot(a.0), b.1.dot(b.0), axis.dot(middle)]) {
+            let edge = Vec3::new(x[0], x[1], x[2]);
+            if edge.dist(foot) <= 3.0 * radius {
+                return Some(edge);
+            }
+        }
+    }
+    Some(foot + out * (radius * std::f64::consts::SQRT_2))
+}
+
 fn plane(face: &Face) -> Option<(Vec3, Vec3)> {
     if let Shape::Plane { point, normal } = face.shape { Some((point, normal.normalized()?)) } else { None }
 }
@@ -186,8 +234,17 @@ fn unit(v: Vec3) -> Vec3 {
 /// is taken first, then the one that explains most of the rest, while one still explains a share
 /// worth offering: as a part is modelled, the main body first. `span` gives how far a face runs
 /// along a direction, least and most; `size` is the part's. The faces `ignored` (a hole's floor,
-/// which the hole's cut makes) are neither walls nor ends.
-pub fn extrusions(faces: &[Face], span: &dyn Fn(usize, Vec3) -> Option<(f64, f64)>, size: f64, ignored: &BTreeSet<usize>) -> Vec<Prism> {
+/// which the hole's cut makes) are neither walls nor ends; the faces `unscored` (the rounds along
+/// edges, which Fillet It makes where no profile holds them) are walls but explain nothing, so a
+/// block with rounded top edges is extruded upright and filleted, not extruded on its side
+/// because its side profile holds two of the rounds.
+pub fn extrusions(
+    faces: &[Face],
+    span: &dyn Fn(usize, Vec3) -> Option<(f64, f64)>,
+    size: f64,
+    ignored: &BTreeSet<usize>,
+    unscored: &BTreeSet<usize>,
+) -> Vec<Prism> {
     let reach = WALL_START * size;
     let mut order: Vec<usize> = (0..faces.len()).filter(|&k| !ignored.contains(&k) && plane(&faces[k]).is_some()).collect();
     order.sort_by(|&a, &b| faces[b].area.total_cmp(&faces[a].area).then(a.cmp(&b)));
@@ -202,7 +259,7 @@ pub fn extrusions(faces: &[Face], span: &dyn Fn(usize, Vec3) -> Option<(f64, f64
     let total: f64 = faces.iter().map(|f| f.area).sum();
     let mut explained = vec![0.0; faces.len()];
     let gain = |shares: &[(usize, f64)], explained: &[f64]| {
-        shares.iter().map(|&(k, s)| faces[k].area * ((explained[k] + s).min(1.0) - explained[k])).sum::<f64>()
+        shares.iter().filter(|(k, _)| !unscored.contains(k)).map(|&(k, s)| faces[k].area * ((explained[k] + s).min(1.0) - explained[k])).sum::<f64>()
     };
     let mut chosen = Vec::new();
     loop {
@@ -871,6 +928,9 @@ pub struct Reading {
     pub holes: Vec<Hole>,
     /// The faces that are rounds along an edge (a fillet), not features of their own.
     pub rounds: BTreeSet<usize>,
+    /// The rounds along an edge no profile holds, for Fillet It: cylinders (a torus where two
+    /// rounds meet is made by filleting their edges).
+    pub fillets: Vec<EdgeRound>,
     /// The part's size, the diagonal of its box.
     pub size: f64,
 }
@@ -1089,7 +1149,9 @@ pub fn read(scan: &Scan, outcome: &Outcome) -> Reading {
     let floors: BTreeSet<usize> = (0..faces.len()).filter(|&j| (0..faces.len()).any(|k| hole(k) && is_floor_of(&faces[k], &faces[j]))).collect();
     let revolve = revolve(&faces, size);
     let ignored: BTreeSet<usize> = floors.union(&pieces).copied().collect();
-    let mut prisms = extrusions(&faces, &span_of, size, &ignored);
+    // The rounds along edges, read before the prisms, which they do not choose.
+    let rounds: BTreeSet<usize> = (0..shaped.len()).filter(|&k| !piece(k) && is_edge_round(scan, &whole(k), size)).collect();
+    let mut prisms = extrusions(&faces, &span_of, size, &ignored, &rounds);
     // Walls all about the turning axis are the steps of a turned part, read twice over.
     if let Some(revolve) = &revolve {
         prisms.retain(|p| !p.walls.iter().all(|w| revolve.members.contains(w)));
@@ -1112,9 +1174,22 @@ pub fn read(scan: &Scan, outcome: &Outcome) -> Reading {
     };
     let middle = crate::surface_centre(scan).unwrap_or(Vec3::ZERO);
     let holes = holes(&faces, &hole, &explained, &repeats, &span_of, middle);
-    let rounds: BTreeSet<usize> = (0..shaped.len()).filter(|&k| !piece(k) && is_edge_round(scan, &whole(k), size)).collect();
     let plans = pattern_plans(&faces, &repeats, &rounds);
-    Reading { faces, same, in_shapes: outcome.in_shapes, prisms, unread_prisms, revolve, turned_unread, repeats, plans, holes, rounds, size }
+    // The rounds no profile holds: not a wall of a prism, nor a face of a turned part that is read.
+    let profiled: BTreeSet<usize> = prisms
+        .iter()
+        .flat_map(|p| p.walls.iter().copied())
+        .chain(revolve.iter().filter(|_| turned_unread.is_none()).flat_map(|r| r.members.iter().copied()))
+        .collect();
+    let fillets: Vec<EdgeRound> = rounds
+        .iter()
+        .filter(|k| !profiled.contains(k))
+        .filter_map(|&k| match faces[k].shape {
+            Shape::Cylinder { radius, .. } => edge_of_round(scan, &whole(k), &faces).map(|edge| EdgeRound { face: k, radius, edge }),
+            _ => None,
+        })
+        .collect();
+    Reading { faces, same, in_shapes: outcome.in_shapes, prisms, unread_prisms, revolve, turned_unread, repeats, plans, holes, rounds, fillets, size }
 }
 
 #[cfg(test)]
@@ -1141,7 +1216,7 @@ mod tests {
 
     fn read(given: &[(Face, Vec3, Vec3)], size: f64) -> Vec<Prism> {
         let faces: Vec<Face> = given.iter().map(|g| g.0).collect();
-        extrusions(&faces, &|k, d| given.get(k).map(|g| along(g.1, g.2, d)), size, &BTreeSet::new())
+        extrusions(&faces, &|k, d| given.get(k).map(|g| along(g.1, g.2, d)), size, &BTreeSet::new(), &BTreeSet::new())
     }
 
     /// A plane face facing `normal` across the box from `low` to `high`.
@@ -1280,7 +1355,7 @@ mod tests {
         };
         let faces: Vec<Face> = outcome.segments.iter().map(|s| Face { shape: s.shape.unwrap(), area: s.area }).collect();
         let span_of = |k: usize, d: Vec3| outcome.segments.get(k).and_then(|s| span(&scan, s, d));
-        assert_eq!(extrusions(&faces, &span_of, scan.extent(), &BTreeSet::new()).len(), 1, "the shapes alone make a prism");
+        assert_eq!(extrusions(&faces, &span_of, scan.extent(), &BTreeSet::new(), &BTreeSet::new()).len(), 1, "the shapes alone make a prism");
         let reading = super::read(&scan, &outcome);
         assert!(reading.prisms.is_empty(), "{:?}", reading.prisms);
         assert_eq!(reading.unread_prisms, 1);

@@ -646,6 +646,7 @@ fn base_scene_key(app: &SolveApp) -> u64 {
     app.session.active_component.hash(&mut h);
     app.session.active_occurrence_path.hash(&mut h);
     app.preview.effective_replaced().hash(&mut h);
+    crate::dialogs_scan_surface::edited_body(app).hash(&mut h);
     app.preview.rolled_back.hash(&mut h);
     app.preferences.cosmetic_threads.hash(&mut h);
     app.preferences.section_hatch.hash(&mut h);
@@ -4954,6 +4955,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let corner = hover.filter(|_| inside && !navigating).and_then(|p| crate::sketch_modify_ui::corner_hit(app, &proj, p));
     let cand = if app.tool.is_some() {
         tool_hover(app, &hits).map(|h| (h, None))
+    } else if takes_scan_clicks(app) {
+        // A Scan dialog placing points on the scan: a click there selects nothing, so nothing
+        // lights up under the pointer (a lit scan hides the dialog's colouring).
+        None
     } else if let Some((hit, sel)) = corner {
         Some((hit, Some(sel)))
     } else {
@@ -5050,6 +5055,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 .chain(crate::dialogs_scan_split::gpu_marks(app))
                 .chain(crate::dialogs_scan_flatten::gpu_marks(app))
                 .chain(crate::dialogs_scan_surface::gpu_fit_marks(app))
+                .chain(crate::dialogs_scan_surface::gpu_shade(app))
+                .chain(crate::dialogs_scan_free_form::gpu_shade(app))
                 .collect(),
             analysis: analysis_uniform(app),
             analysis_colors: crate::gpu::analysis_colors(&t.analysis),

@@ -7,6 +7,7 @@
 use serde_json::Value;
 use solidcore_record::Vec3;
 use solidcraft_geom::bspline::NurbsSurface;
+use solidcraft_geom::prelude::*;
 use solidcraft_scan::free_form;
 pub use solidcraft_scan::free_form::Fitting;
 pub use solidcraft_scan::merge::{Merged, Seam};
@@ -14,7 +15,7 @@ pub use solidcraft_scan::wrap::{Cylinder, Wrap};
 
 use super::length;
 use crate::params::bad;
-use crate::schema::scan::{ScanFreeFormResult, ScanMergeSurfacesResult, ScanWrapSurfaceResult};
+use crate::schema::scan::{ScanAddFaceResult, ScanFreeFormResult, ScanMergeSurfacesResult, ScanWrapSurfaceResult};
 use crate::{EngineError, Result, Session};
 
 /// How a new face meets the scan.
@@ -114,6 +115,96 @@ pub(super) fn new_free_form(s: &mut Session, p: &Value) -> Result<Value> {
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
+pub use solidcraft_scan::network::Side;
+
+/// The faces with one added on the open `side` of face `face` out to `far`, `rows` points across,
+/// fitted to the scan `body` (or the selected or only one), places met no farther than `reach`
+/// from it when given: as Add Face (`scan.add_face`) and Edit Surface's Add Face make it. Also
+/// the scan's name.
+#[allow(clippy::too_many_arguments)]
+pub fn added_face(
+    s: &Session,
+    body: Option<&str>,
+    faces: &[NurbsSurface],
+    face: usize,
+    side: Side,
+    far: [Vec3; 2],
+    rows: usize,
+    reach: Option<f64>,
+) -> Result<(String, Vec<NurbsSurface>)> {
+    let cmd = "scan.add_face";
+    let joins = solidcraft_scan::network::joins(faces).map_err(|e| bad(cmd, e.to_string()))?;
+    let (scan, on) = super::curve::projector(s, body, cmd)?;
+    let reach = reach.unwrap_or(f64::INFINITY);
+    let snap = |ps: &[Vec3]| ps.iter().map(|p| on.nearest(*p).filter(|(_, d)| *d <= reach).map(|(q, _)| q)).collect::<Vec<_>>();
+    let made = solidcraft_scan::network::with_face(faces, &joins, face, side, far, rows, snap).map_err(|e| bad(cmd, e.to_string()))?;
+    Ok((scan, made))
+}
+
+/// Two points `[x, y, z]` under `key`.
+fn two_points(p: &Value, key: &str, cmd: &str, what: &str) -> Result<[Vec3; 2]> {
+    let list = p.get(key).and_then(Value::as_array).ok_or_else(|| bad(cmd, format!("`{key}` must be two points [x, y, z]: {what}")))?;
+    let points: Vec<Vec3> = list
+        .iter()
+        .map(|v| crate::params::vec3(v).ok_or_else(|| bad(cmd, format!("a point of `{key}` must be [x, y, z] of numbers"))))
+        .collect::<Result<_>>()?;
+    <[Vec3; 2]>::try_from(points).map_err(|_| bad(cmd, format!("`{key}` must be two points: {what}")))
+}
+
+pub(super) fn add_face(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.add_face";
+    let [a, b] = two_points(p, "edge", cmd, "the ends of the open edge to build on")?;
+    let far = two_points(p, "far", cmd, "the new face's far corners")?;
+    let rows = match p.get("rows").filter(|v| !v.is_null()) {
+        Some(v) => v
+            .as_u64()
+            .filter(|n| (free_form::LEAST_POINTS as u64..=free_form::MOST_POINTS as u64).contains(n))
+            .ok_or_else(|| bad(cmd, "`rows` must be a whole number from 4 to 12"))? as usize,
+        None => free_form::LEAST_POINTS,
+    };
+    let reach = match crate::params::expr(p, "reach") {
+        Some(_) => Some(length(s, p, "reach", 1.0, cmd)?),
+        None => None,
+    };
+    let target = super::surface::editable(s, crate::params::str_(p, "surface"), cmd)?;
+    let joins = solidcraft_scan::network::joins(&target.faces).map_err(|e| bad(cmd, e.to_string()))?;
+    let ((face, side), off) =
+        solidcraft_scan::network::open_side_near(&target.faces, &joins, a, b).ok_or_else(|| bad(cmd, "the surface has no open edge to build on"))?;
+    // Near enough: the two ends off by less than the edge is long, all told.
+    let places = solidcraft_scan::network::network_points(&target.faces, &joins);
+    let ends = joins.side(&target.faces, face, side);
+    let long = match (ends.first(), ends.last()) {
+        (Some(a), Some(b)) => places[*a].dist(places[*b]),
+        _ => 0.0,
+    };
+    if !(off <= long) {
+        return Err(bad(cmd, "`edge` is not near the ends of an open edge of the surface: give the two corners of the edge to build on"));
+    }
+    let body = crate::params::str_(p, "body").map(str::to_owned);
+    let (scan, made) = added_face(s, body.as_deref(), &target.faces, face, side, far, rows, reach)?;
+    super::surface::write_faces(s, &target, &made, cmd)?;
+    let new = made.len() - 1;
+    let joins = solidcraft_scan::network::joins(&made).map_err(|e| bad(cmd, e.to_string()))?;
+    let (rms, max) = match super::surface::covered(s, Some(&scan), &made[new], super::surface::default_reach(&made[new]), cmd) {
+        Ok(c) if !c.points.is_empty() => solidcraft_scan::surface_edit::distance(&made[new], &c.points),
+        _ => (0.0, 0.0),
+    };
+    let reply = ScanAddFaceResult {
+        surface: target.body,
+        faces: made.len(),
+        face: new,
+        controls: made[new].count(),
+        body: scan,
+        rms,
+        max,
+        kink: solidcraft_scan::network::worst_kink(&made, &joins),
+        irregular: joins.irregular().count(),
+        feature: target.feature,
+        param_warnings: Vec::new(),
+    };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
 /// A net wrapped on a tube-like part of a scan, before it is kept: the scan, the cylinder it was
 /// laid on, how far the part is from that on average, and the face.
 #[derive(Clone, Debug)]
@@ -122,6 +213,8 @@ pub struct Wrapped {
     pub cylinder: Cylinder,
     pub off: f64,
     pub made: Made,
+    /// Where the net folds, pinches and passes through itself (Surface Check on it).
+    pub trouble: [usize; 3],
 }
 
 /// The part's reach round the point when none is given: a fifth of the scan's size.
@@ -147,8 +240,9 @@ pub fn wrapped(s: &Session, body: Option<&str>, point: Vec3, reach: f64, wrap: W
     let snap = |ps: &[Vec3], limit: f64| ps.iter().map(|p| on.nearest(*p).filter(|(_, d)| *d <= limit).map(|(q, _)| q)).collect::<Vec<_>>();
     let w = solidcraft_scan::wrap::wrap(&scan, seed, point, reach, &wrap, snap).map_err(|e| bad(cmd, e.to_string()))?;
     let f = w.fitted;
+    let trouble = solidcraft_scan::surface_check::trouble(&f.surface);
     let made = Made { scan: Some(name.clone()), surface: f.surface, places: f.places, met: f.met, kept: f.kept, rms: f.rms };
-    Ok(Wrapped { scan: name, cylinder: w.cylinder, off: w.off, made })
+    Ok(Wrapped { scan: name, cylinder: w.cylinder, off: w.off, made, trouble })
 }
 
 pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
@@ -192,6 +286,7 @@ pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
         None => default_wrap_reach(s, Some(&body))?,
     };
     let w = wrapped(s, Some(&body), point, reach, Wrap { axis, details, arc, stiffness })?;
+    let trouble = w.trouble;
     let (name, feature) = super::surface::keep_surface(s, &w.made.surface, "FreeForm", "Wrap Surface", &format!("{body} (wrap)"), cmd)?;
     let at = |v: Vec3| [v.x, v.y, v.z];
     let reply = ScanWrapSurfaceResult {
@@ -205,10 +300,33 @@ pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
         places: w.made.places,
         met: w.made.met,
         rms: w.made.rms,
+        folds: trouble[0],
+        pinches: trouble[1],
+        crossings: trouble[2],
+        warning: wrap_warning(trouble, stiffness),
         feature,
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// What to tell someone about a wrap that folds, pinches or passes through itself: where its net
+/// follows rims and ribs it is too coarse for. Stiffness smooths them out (on the online test
+/// scans 0.05 to 0.1 left none, a little further from the scan); finer Details fold more, and
+/// Merge Surfaces cannot sew a folded seam. `None` when it does none of them.
+pub(super) fn wrap_warning(trouble: [usize; 3], stiffness: f64) -> Option<String> {
+    (trouble.iter().sum::<usize>() > 0).then(|| {
+        let raise = if stiffness < 0.1 { "raise Stiffness a little (0.05 to 0.1)" } else { "raise Stiffness further" };
+        let how = match trouble {
+            [0, 0, _] => "passes through itself",
+            [0, _, 0] => "pinches",
+            _ => "folds over itself",
+        };
+        format!(
+            "the surface {how} ({}) where the net follows rims and ribs it is too coarse for: {raise}, or wrap a smaller reach; Merge Surfaces cannot sew a folded seam, and finer Details fold more",
+            super::surface::trouble_text(trouble)
+        )
+    })
 }
 
 /// The surfaces Merge works on: those named, else the selected ones, else every surface in the
@@ -250,6 +368,9 @@ pub fn default_gap(surfaces: &[NurbsSurface]) -> f64 {
     if shortest.is_finite() { 0.1 * shortest } else { 1.0 }
 }
 
+/// Sides this many gaps apart or nearer are worth a wider gap, said when Merge finds no seam.
+const NEAR_ENOUGH: f64 = 3.0;
+
 /// The surfaces as Merge would make them meet, within `gap` (default [`default_gap`]), and the
 /// gap used.
 pub fn merged(s: &Session, names: Option<&[String]>, gap: Option<f64>) -> Result<(Vec<super::surface::EditableSurface>, Merged, f64)> {
@@ -263,7 +384,33 @@ pub fn merged(s: &Session, names: Option<&[String]>, gap: Option<f64>) -> Result
     if !(gap.is_finite() && gap > 0.0) {
         return Err(bad(cmd, "`gap` must be a length above 0"));
     }
-    let made = solidcraft_scan::merge::merge(&surfaces, gap).map_err(|e| bad(cmd, e.to_string()))?;
+    let made = solidcraft_scan::merge::merge(&surfaces, gap).map_err(|e| match e {
+        // How far off the nearest sides are, and how wide a gap reaches them.
+        solidcraft_scan::merge::MergeError::NoSeam => match solidcraft_scan::merge::nearest_sides(&surfaces) {
+            Some((apart, own)) => {
+                // A gap to reach them is worth giving only when they are near: sides far apart
+                // made one would bend the surfaces out of shape.
+                let reach = if apart <= NEAR_ENOUGH * gap { format!(", or give a gap of {:.2} mm or more", 1.05 * apart) } else { String::new() };
+                if own && surfaces.len() == 1 {
+                    bad(
+                        cmd,
+                        format!(
+                            "the surface does not close round on itself: its opposite sides are {apart:.2} mm apart on average, more than the gap ({gap:.2} mm); wrap a part that goes round its axis (on one that does not, the net's back meets other parts of the scan){reach}"
+                        ),
+                    )
+                } else {
+                    bad(
+                        cmd,
+                        format!(
+                            "no side of one surface runs along a side of another within the gap ({gap:.2} mm): the nearest two are {apart:.2} mm apart on average; put their corners together{reach}"
+                        ),
+                    )
+                }
+            }
+            None => bad(cmd, e.to_string()),
+        },
+        e => bad(cmd, e.to_string()),
+    })?;
     Ok((targets, made, gap))
 }
 
@@ -276,7 +423,7 @@ pub(super) fn sewing_refusal(what: &str, surfaces: &[&NurbsSurface], kernel: &st
         return bad(
             cmd,
             format!(
-                "{what} could not be sewn: where the sides were brought together the surface folds over itself ({}); bring the sides closer and running the same way (Edit Surface), or merge with a smaller gap",
+                "{what} could not be sewn: the surface folds over itself ({}): a wrap whose net follows rims and ribs too fine for it (wrap it again with Stiffness 0.05 to 0.1), or sides brought together that ran apart (Edit Surface, or merge with a smaller gap)",
                 super::surface::trouble_text(trouble)
             ),
         );

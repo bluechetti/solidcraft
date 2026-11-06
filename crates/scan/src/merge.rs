@@ -34,7 +34,7 @@ impl Side {
     }
 
     /// The places of its points in a net of `[nu, nv]` (u fastest), in order along it.
-    fn indices(self, [nu, nv]: [usize; 2]) -> Vec<usize> {
+    pub(crate) fn indices(self, [nu, nv]: [usize; 2]) -> Vec<usize> {
         match self {
             Side::FirstRow => (0..nu).collect(),
             Side::LastRow => (0..nu).map(|i| (nv - 1) * nu + i).collect(),
@@ -44,7 +44,7 @@ impl Side {
     }
 
     /// The side across the net from it.
-    fn opposite(self) -> Side {
+    pub(crate) fn opposite(self) -> Side {
         match self {
             Side::FirstRow => Side::LastRow,
             Side::LastRow => Side::FirstRow,
@@ -162,6 +162,13 @@ pub fn seams(surfaces: &[NurbsSurface], gap: f64) -> Vec<Seam> {
         true
     });
     all
+}
+
+/// The two sides of `surfaces` that come nearest running along each other, at any gap: how far
+/// apart they are on average, and whether they are one net's own opposite sides (a wrap's seam).
+/// `None` for no surfaces.
+pub fn nearest_sides(surfaces: &[NurbsSurface]) -> Option<(f64, bool)> {
+    seams(surfaces, f64::INFINITY).into_iter().map(|s| (s.gap, s.a == s.b)).min_by(|x, y| x.0.total_cmp(&y.0))
 }
 
 fn dir(d: usize) -> Dir {
@@ -427,8 +434,10 @@ mod tests {
         assert_eq!((seam.a, seam.b, seam.a_side, seam.b_side), (0, 0, Side::FirstColumn, Side::LastColumn));
         let closed = &merged.surfaces[0];
         assert!(worst(closed, Side::FirstColumn, closed, Side::LastColumn, false) < 1e-9, "the seam is one curve");
-        // Too narrow a gap finds no seam.
-        assert_eq!(merge(&[wrapped], 0.1), Err(MergeError::NoSeam));
+        // Too narrow a gap finds no seam; the nearest sides are its own seam, 0.83 mm apart.
+        assert_eq!(merge(std::slice::from_ref(&wrapped), 0.1), Err(MergeError::NoSeam));
+        let (apart, own) = nearest_sides(&[wrapped]).unwrap();
+        assert!(own && (apart - 10.0 * (std::f64::consts::TAU - 6.2)).abs() < 0.05, "{apart}");
     }
 
     /// The two halves are the surface: each place on it is on one half, and they share their

@@ -1,10 +1,10 @@
 use serde_json::{Value, json};
 
 use super::{
-    ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCurveParams, ScanDeviationParams, ScanDeviationResult, ScanEditNetParams,
-    ScanEditSurfaceParams, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFloatingParams, ScanFreeFormParams,
-    ScanHolesParams, ScanMergeSurfacesParams, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanRepairParams, ScanSectionParams,
-    ScanSectionsAlongParams, ScanSliceSurfaceParams, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
+    ScanAddFaceParams, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCurveParams, ScanDeviationParams, ScanDeviationResult,
+    ScanEditNetParams, ScanEditSurfaceParams, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFloatingParams,
+    ScanFreeFormParams, ScanHolesParams, ScanMergeSurfacesParams, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanRepairParams,
+    ScanSectionParams, ScanSectionsAlongParams, ScanSliceSurfaceParams, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult,
     ScanWrapSurfaceParams,
 };
 use crate::Session;
@@ -26,6 +26,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanFreeFormParams>(), &["body", "corners", "count", "fit", "reach", "stiffness"]);
     assert_keys(input_schema_for::<ScanEditNetParams>(), &["after", "distance", "in", "line", "op", "surface"]);
     assert_keys(input_schema_for::<ScanWrapSurfaceParams>(), &["arc", "axis", "body", "details", "point", "reach", "stiffness"]);
+    assert_keys(input_schema_for::<ScanAddFaceParams>(), &["body", "edge", "far", "reach", "rows", "surface"]);
     assert_keys(input_schema_for::<ScanMergeSurfacesParams>(), &["gap", "stitch", "surfaces"]);
     assert_keys(input_schema_for::<ScanSliceSurfaceParams>(), &["cap", "keep", "plane", "surface"]);
     assert_keys(input_schema_for::<ScanHolesParams>(), &["body", "fair", "max_edges"]);
@@ -36,7 +37,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanCurveParams>(), &["body", "closed", "points", "sketch", "tolerance"]);
     assert_keys(
         input_schema_for::<ScanEditSurfaceParams>(),
-        &["falloff", "hold", "moves", "net", "points", "reach", "refit", "scan", "slide", "surface"],
+        &["dots", "faces", "falloff", "hold", "moves", "neighbours", "net", "points", "reach", "refit", "scan", "slide", "surface"],
     );
 }
 

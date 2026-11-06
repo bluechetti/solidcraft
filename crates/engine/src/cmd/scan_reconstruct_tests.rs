@@ -214,6 +214,7 @@ fn reconstruct_proposes_no_cut_with_nothing_to_cut() {
         plans: Vec::new(),
         holes: vec![hole],
         rounds: Default::default(),
+        fillets: Vec::new(),
         size: 60.0,
     };
     assert!(super::proposals(&reading, false).is_empty());
@@ -253,4 +254,36 @@ fn a_drilled_disc_is_extruded_cut_and_patterned_back_from_its_scan() {
     run(&mut s, "scan.cut_it", json!({}));
     run(&mut s, "scan.pattern_it", json!({}));
     assert!((volume(&s, &solid) - (shaft - 3.0 * hole)).abs() < 0.005 * shaft, "{}", volume(&s, &solid));
+}
+
+/// A block 80 × 60 × 20 whose four top edges are rounded R 2: the rounds run across the prism
+/// Reconstruct reads, so no profile holds them, and it proposes Fillet It after Extrude It. Fillet
+/// It measures each round off the scan at the built block's edge and fillets the four at R 2, one
+/// Fillet, the part's own volume back.
+#[test]
+fn rounds_across_a_prism_are_filleted_back_from_its_scan() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 80, "width": 60, "height": 20}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.fillet", json!({"edges": [[40, 0, 20], [80, 30, 20], [40, 60, 20], [0, 30, 20]], "radius": 2, "tangent_chain": false}));
+    let expected = volume(&part, &body);
+    let (mut s, _) = scanned(&part, &body, 2, "rounded-top");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let commands: Vec<&str> = read["proposals"].as_array().unwrap().iter().map(|p| p["command"].as_str().unwrap()).collect();
+    assert_eq!(commands.first(), Some(&"scan.extrude_it"), "{read}");
+    assert_eq!(commands.last(), Some(&"scan.fillet_it"), "{read}");
+    let rounds = read["fillets"].as_array().unwrap();
+    assert_eq!(rounds.len(), 4, "{read}");
+    assert!(rounds.iter().all(|r| (r["radius"].as_f64().unwrap() - 2.0).abs() < 0.1), "{read}");
+    for step in &read["proposals"].as_array().unwrap()[..commands.len() - 1] {
+        run(&mut s, step["command"].as_str().unwrap(), step["params"].clone());
+    }
+    let solid = format!("{} Reconstructed", read["body"].as_str().unwrap());
+    let sharp = volume(&s, &solid);
+    let filleted = run(&mut s, "scan.fillet_it", json!({}));
+    assert_eq!(filleted["set_aside"], 0, "{filleted}");
+    let radii: Vec<f64> = filleted["fillets"].as_array().unwrap().iter().map(|f| f["radius"].as_f64().unwrap()).collect();
+    assert_eq!(radii, [2.0], "{filleted}");
+    let v = volume(&s, &solid);
+    assert!(v < sharp && (v - expected).abs() < 0.002 * expected, "{v} against {expected} (sharp {sharp})");
 }

@@ -259,6 +259,23 @@ makes is a *group*.
 - **Elsewhere:** folder, node.
 - **For translators:** not a group and not a folder on disk.
 
+### Free Form
+
+A surface made by hand over a scan: one face or several four-sided faces, each a cubic B-spline,
+that share whole sides, kept as one surface body.
+
+Where two faces share a side they meet exactly, and where they met smoothly they are kept
+tangent as the surface is edited. A face is added on an *open edge* (a side no other face shares).
+The points a user drags lie on the surface; the control net behind them is shown on request.
+Compare *irregular corner*.
+
+- **In SolidCraft:** `scan.free_form`, `scan.add_face`, `scan.wrap_surface`; `scan.edit_surface`
+  (`dots`, `neighbours`, `faces`); New Free Form, Add Face, Points on the surface and Control
+  net in the Edit Surface dialog; bodies `FreeForm1`, `FreeForm2`, ….
+- **Don't use:** patch network, quad cage, T-spline, subdivision surface (for the Free Form itself).
+- **Elsewhere:** freeform, quad surface, patch network, NURBS patch layout.
+- **For translators:** a kind of surface the user makes, not "free shape" in general.
+
 ### group
 
 A named container that someone makes, in the browser or in the timeline, to keep items together.
@@ -273,6 +290,21 @@ features are computed.
 - **Don't use:** feature folder, folder (for a group).
 - **Elsewhere:** folder, group.
 - **For translators:** not a rigid group (a joint) and not a fixed browser *folder*.
+
+### irregular corner
+
+A corner of a *Free Form* where other than four of its faces meet inside it, or more than three on
+its edge.
+
+The faces round such a corner cannot all be tangent to each other there, so the surface is less
+smooth at it. The Edit Surface dialog marks each one in red and counts them.
+
+- **In SolidCraft:** the `irregular` reply of `scan.add_face`; Irregular corners in the Edit
+  Surface dialog.
+- **Don't use:** pole, star point, bad vertex.
+- **Elsewhere:** extraordinary vertex, irregular point, star point.
+- **For translators:** a corner that is unusual in how many faces meet there, not one that is
+  wrong.
 
 ### material
 

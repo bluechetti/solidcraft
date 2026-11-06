@@ -12,6 +12,8 @@
 //! Merge Surfaces (`scan.merge_surfaces`): choose the surfaces (or none, for every one); the sides
 //! that will be made one are drawn over the picture. OK makes them meet and sews them together.
 
+use std::sync::Arc;
+
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
 use solidcraft_engine::cmd::scan::free_form::{self, Fit, Fitting, Made, Merged, Wrap, Wrapped};
@@ -35,6 +37,8 @@ pub struct NewFreeForm {
     pub reach: f64,
     pub count: usize,
     pub stiffness: f64,
+    /// The deviation colouring's tolerance, mm.
+    pub tolerance: f64,
     clicks: Vec<Vec3>,
     /// The view's right and up when the rectangle's second corner was clicked.
     view: Option<(Vec3, Vec3)>,
@@ -43,7 +47,7 @@ pub struct NewFreeForm {
 
 impl Default for NewFreeForm {
     fn default() -> Self {
-        NewFreeForm { corners_mode: 0, fit: 1, reach: 0.0, count: 4, stiffness: 0.0, clicks: Vec::new(), view: None, shown: None }
+        NewFreeForm { corners_mode: 0, fit: 1, reach: 0.0, count: 4, stiffness: 0.0, tolerance: 0.1, clicks: Vec::new(), view: None, shown: None }
     }
 }
 
@@ -51,7 +55,13 @@ impl Default for NewFreeForm {
 struct Shown {
     key: (Vec<[u64; 3]>, usize, usize, u64, usize, u64, u64),
     result: Result<Made, String>,
+    /// The scan under the face, coloured by how far it is from it: for which tolerance and colours,
+    /// the dots' version, and the dots.
+    shade: Option<(u64, [[u8; 3]; 3], u64, Arc<Vec<u8>>)>,
 }
+
+/// The colouring's id among the clouds the viewport draws.
+const SHADE_CLOUD_ID: u64 = u64::MAX - 8;
 
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
     match id {
@@ -112,7 +122,33 @@ fn fit(app: &SolveApp, k: &mut NewFreeForm) {
     let reach = (k.reach > 0.0).then_some(k.reach);
     let fitting = Fitting { count: k.count, stiffness: k.stiffness, overall: false };
     let result = free_form::make(&app.session, None, c, fit_mode(k), fitting, reach).map_err(|e| e.to_string());
-    k.shown = Some(Box::new(Shown { key, result }));
+    k.shown = Some(Box::new(Shown { key, result, shade: None }));
+}
+
+/// The scan under the face coloured by how far it is from it, again when the face, the tolerance
+/// or the colours have changed.
+fn shade(app: &SolveApp, k: &mut NewFreeForm) {
+    let tolerance = k.tolerance;
+    let Some(shown) = k.shown.as_mut() else { return };
+    let colours = crate::scan_deviation::colours();
+    if shown.shade.as_ref().is_some_and(|(t, c, _, _)| *t == tolerance.to_bits() && *c == colours) {
+        return;
+    }
+    let Ok(made) = &shown.result else { return };
+    let Some(scan) = made.scan.as_deref() else { return };
+    let faces = [made.surface.clone()];
+    let Ok((_, mut found)) = solidcraft_engine::cmd::scan::surface::shade(&app.session, Some(scan), &faces, "scan.free_form") else { return };
+    let mut values = Vec::new();
+    solidcraft_engine::cmd::scan::surface::network::shade_values(&mut found, &faces, None, &mut values);
+    let dots = Arc::new(crate::dialogs_scan_surface::shade_dots(&found, &values, tolerance, colours));
+    shown.shade = Some((tolerance.to_bits(), colours, crate::dialogs_scan_surface::next_shade_version(), dots));
+}
+
+/// The colouring of the scan under the face, as a cloud for the GPU viewport.
+pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuCloud> {
+    let Some(Kind::ScanFreeForm(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    let (_, _, version, dots) = k.shown.as_ref()?.shade.as_ref()?;
+    Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots.clone()))
 }
 
 /// The dialog's rows.
@@ -136,7 +172,12 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
         });
     }
     form_row(ui, tr("ui.scan_free_form_points"), |ui| ui_kit::number_field(ui, &mut k.count, 4..=12, 0.2, ""));
+    if k.fit != 0 {
+        form_row(ui, tr("ui.scan_edit_tolerance"), |ui| ui_kit::length_field(ui, &mut k.tolerance, &units, decimals));
+        k.tolerance = if k.tolerance.is_finite() && k.tolerance > 0.0 { k.tolerance } else { 0.1 };
+    }
     fit(app, k);
+    shade(app, k);
     let count = format!("{} / {}", k.clicks.len(), needed(k));
     form_row(ui, tr("ui.scan_free_form_clicked"), |ui| ui_kit::text(ui, &count, ui_kit::Text::Cell));
     if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_curve_undo_point"), ui_kit::Button::Enabled(!k.clicks.is_empty()))).clicked() {
@@ -244,13 +285,17 @@ pub struct WrapSurface {
     pub axis: usize,
     /// How far round the net goes, in degrees; 0 for the part's own reach.
     pub arc: f64,
+    /// 0 (the net follows the scan) to 1 (it keeps nearly to its cylinder).
+    pub stiffness: f64,
     shown: Option<Box<WrapShown>>,
 }
 
 #[derive(Clone, Debug)]
 struct WrapShown {
-    key: ([u64; 3], u64, usize, usize, u64, u64),
+    key: ([u64; 3], u64, usize, usize, u64, u64, u64),
     result: Result<Wrapped, String>,
+    /// Where the net made folds, pinches and crosses itself (Surface Check on it).
+    trouble: [usize; 3],
 }
 
 /// The point clicked on a scan: its scan and the place.
@@ -273,16 +318,24 @@ fn wrap(app: &SolveApp, k: &mut WrapSurface, inputs: &[crate::selection::SelInpu
     if !(k.reach > 0.0) {
         k.reach = free_form::default_wrap_reach(&app.session, Some(&body)).unwrap_or(20.0);
     }
-    let key =
-        ([point.x.to_bits(), point.y.to_bits(), point.z.to_bits()], k.reach.to_bits(), k.details, k.axis, k.arc.to_bits(), app.session.revision);
+    let key = (
+        [point.x.to_bits(), point.y.to_bits(), point.z.to_bits()],
+        k.reach.to_bits(),
+        k.details,
+        k.axis,
+        k.arc.to_bits(),
+        k.stiffness.to_bits(),
+        app.session.revision,
+    );
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         return;
     }
     let axis = [None, Some(Vec3::X), Some(Vec3::Y), Some(Vec3::Z)][k.axis.min(3)];
     let arc = (k.arc > 0.0).then(|| k.arc.to_radians());
-    let wrap = Wrap { axis, details: k.details.min(2), arc, stiffness: 0.0 };
+    let wrap = Wrap { axis, details: k.details.min(2), arc, stiffness: k.stiffness };
     let result = free_form::wrapped(&app.session, Some(&body), point, k.reach, wrap).map_err(|e| e.to_string());
-    k.shown = Some(Box::new(WrapShown { key, result }));
+    let trouble = result.as_ref().map_or([0; 3], |w| w.trouble);
+    k.shown = Some(Box::new(WrapShown { key, result, trouble }));
 }
 
 /// The Wrap Surface dialog's rows (after the point input).
@@ -297,8 +350,12 @@ pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs:
     choice_row(ui, tr("ui.scan_wrap_axis"), "scan_wrap_axis", &mut k.axis, &axes);
     form_row(ui, tr("ui.scan_wrap_arc"), |ui| ui_kit::angle_field(ui, &mut k.arc));
     k.arc = k.arc.clamp(0.0, 360.0);
-    match k.shown.as_ref().map(|s| &s.result) {
-        Some(Ok(w)) => {
+    let format = |v: f64| format!("{:.0} %", 100.0 * v);
+    form_row(ui, tr("ui.scan_free_form_stiffness"), |ui| {
+        ui_kit::slider(ui, &mut k.stiffness, 0.0..=1.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
+    });
+    match k.shown.as_ref().map(|s| (&s.result, s.trouble)) {
+        Some((Ok(w), [folds, pinches, crossings])) => {
             let [nu, nv] = w.made.surface.count();
             let note = crate::i18n::format(
                 "ui.scan_wrap_found",
@@ -313,8 +370,14 @@ pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs:
             if w.off > 0.1 * w.cylinder.radius {
                 ui_kit::text(ui, tr("ui.scan_wrap_poor"), ui_kit::Text::Report("scan_wrap_poor", false));
             }
+            // The net follows rims and ribs it is too coarse for: Stiffness smooths them out.
+            if folds + pinches + crossings > 0 {
+                let trouble = crate::dialogs_surface_check::trouble(folds, pinches, crossings);
+                let line = crate::i18n::format("ui.scan_wrap_folds", &[("trouble", &trouble)]);
+                ui_kit::text(ui, &line, ui_kit::Text::Report("scan_wrap_folds", true));
+            }
         }
-        Some(Err(why)) => {
+        Some((Err(why), _)) => {
             ui_kit::text(ui, why, ui_kit::Text::Report("scan_wrap_error", true));
         }
         None => {}
@@ -336,6 +399,9 @@ pub fn wrap_commands(k: &WrapSurface, inputs: &[crate::selection::SelInput]) -> 
     });
     if k.arc > 0.0 {
         p["arc"] = json!(format!("{} deg", k.arc));
+    }
+    if k.stiffness > 0.0 {
+        p["stiffness"] = json!(k.stiffness);
     }
     Ok(vec![("scan.wrap_surface".into(), p)])
 }
@@ -577,6 +643,14 @@ mod tests {
         // The radius, how far off the part is and the rms are lengths, not areas or volumes.
         let found = painted_text(&mut h).into_iter().find(|t| t.contains("cylinder of radius")).expect("the note on the net found");
         assert!(found.contains(" mm") && !found.contains('²') && !found.contains('³'), "{found}");
+        // Stiffness is the dialog's too, and OK passes it.
+        if let Some(Kind::ScanWrapSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.stiffness = 0.1;
+        }
+        h.frames(2);
+        let d = h.app.dialog.as_ref().unwrap();
+        let Kind::ScanWrapSurface(k) = &d.kind else { panic!("the dialog") };
+        assert_eq!(wrap_commands(k, &d.inputs).unwrap()[0].1["stiffness"], 0.1);
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
         assert!(h.app.session.model.state().body("FreeForm1").is_some(), "kept");

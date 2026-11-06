@@ -31,16 +31,31 @@ pub struct EditableSurface {
     /// The surface body and the Import feature that keeps it.
     pub body: String,
     pub feature: u64,
+    /// Its first face (its only one, but for a Free Form of several faces).
     pub surface: NurbsSurface,
+    /// Every face: one, or a Free Form's network of faces that share whole sides.
+    pub faces: Vec<NurbsSurface>,
     /// How later features have moved it since it was imported, if they have: an edit is written
     /// back moved the other way, so they move it to where it was edited.
     pub placed: Option<Rigid>,
 }
 
-/// The surface's one face as a NURBS surface, `None` for anything else.
-fn nurbs_of(record: &b::Brep) -> Option<NurbsSurface> {
-    let [face] = record.faces.as_slice() else { return None };
-    nurbs_of_surface(&face.surface)
+impl EditableSurface {
+    /// Whether it is a network of several faces.
+    pub fn is_network(&self) -> bool {
+        self.faces.len() > 1
+    }
+}
+
+/// The surface's faces as NURBS surfaces: one B-spline face, or several cubic ones that make a Free
+/// Form's network (they share whole sides). `None` for anything else.
+fn faces_of(record: &b::Brep) -> Option<Vec<NurbsSurface>> {
+    let faces: Vec<NurbsSurface> = record.faces.iter().map(|f| nurbs_of_surface(&f.surface)).collect::<Option<_>>()?;
+    match faces.len() {
+        0 => None,
+        1 => Some(faces),
+        _ => solidcraft_scan::network::joins(&faces).ok().filter(|j| !j.seams.is_empty()).map(|_| faces),
+    }
 }
 
 /// A B-spline record surface (rational or not) as a NURBS surface, on the same (u, v); `None` for
@@ -82,21 +97,27 @@ pub fn editable(s: &Session, name: Option<&str>, cmd: &str) -> Result<EditableSu
             .filter(is_import)
             .or_else(|| s.doc.features.iter().filter(is_import).rfind(|f| f.body_names.iter().any(|n| n == name)))?;
         let solidcraft_doc::FeatureKind::Import { step, .. } = &feature.kind else { return None };
-        let surface = nurbs_of(&solidcraft_kernel::brep_record(&body.body).ok()?)?;
+        let faces = faces_of(&solidcraft_kernel::brep_record(&body.body).ok()?)?;
         // The file's own surface is this one, or this one moved: writing it back changes nothing else.
         let imported = solidcraft_kernel::step_import_shared(step).ok()?;
         let [only] = imported.bodies.as_slice() else { return None };
-        let original = nurbs_of(&solidcraft_kernel::brep_record(&only.body).ok()?)?;
-        let placed = if original == surface {
+        let original = faces_of(&solidcraft_kernel::brep_record(&only.body).ok()?)?;
+        if original.len() != faces.len() {
+            return None;
+        }
+        let placed = if original == faces {
             None
         } else {
-            let (from, to) = (surface_edit::points(&original), surface_edit::points(&surface));
-            let by = surface_edit::placement(&from, &to, original.count())?;
+            let from: Vec<Vec3> = original.iter().flat_map(surface_edit::points).collect();
+            let to: Vec<Vec3> = faces.iter().flat_map(surface_edit::points).collect();
+            let by = surface_edit::placement(&from, &to, [from.len(), 1])?;
             // Only moved: the same knots and weights, its points where the move puts them.
-            (surface_edit::with_points(&original, &to).as_ref() == Some(&surface)).then_some(())?;
+            let moved = original.iter().zip(&faces).all(|(o, f)| surface_edit::with_points(o, &surface_edit::points(f)).as_ref() == Some(f));
+            moved.then_some(())?;
             Some(by)
         };
-        Some(EditableSurface { body: name.to_owned(), feature: feature.id, surface, placed })
+        let surface = faces[0].clone();
+        Some(EditableSurface { body: name.to_owned(), feature: feature.id, surface, faces, placed })
     };
     let named = name.filter(|n| !n.trim().is_empty());
     if let Some(name) = named {
@@ -107,7 +128,7 @@ pub fn editable(s: &Session, name: Option<&str>, cmd: &str) -> Result<EditableSu
             bad(
                 cmd,
                 format!(
-                    "`{name}` is not a surface whose control points can be edited: one B-spline face, as Fit Surface makes it, not reshaped since"
+                    "`{name}` is not a surface whose control points can be edited: one B-spline face, as Fit Surface makes it, or a Free Form's faces, not reshaped since"
                 ),
             )
         });
@@ -151,6 +172,21 @@ pub fn covered(s: &Session, scan: Option<&str>, surface: &NurbsSurface, reach: f
     Ok(Covered { scan: mesh.body, points: Arc::new(points) })
 }
 
+/// The most scan points the colouring of a surface's deviation shows.
+pub const SHADE_POINTS: usize = 40_000;
+
+/// The scan (`scan`, or the selected or only one) under `faces`, for colouring it by how far it is
+/// from them as they are edited: one look over the scan for all the faces.
+pub fn shade(s: &Session, scan: Option<&str>, faces: &[NurbsSurface], cmd: &str) -> Result<(String, solidcraft_scan::network::Shade)> {
+    let mesh = mesh(s, &json!({ "body": scan }), cmd)?;
+    let reach = faces.iter().map(default_reach).fold(1.0, f64::max);
+    let shade = solidcraft_scan::network::shade(&mesh.scan(), faces, reach, SHADE_POINTS);
+    Ok((mesh.body, shade))
+}
+
+/// The network maths a dialog edits a Free Form of several faces with, as the commands do.
+pub use solidcraft_scan::network;
+
 /// The surface as STEP text: one face, the whole of it (its knots may be uneven or repeated).
 pub fn surface_step(surface: &NurbsSurface, cmd: &str) -> Result<String> {
     let sheet = solidcraft_kernel::nurbs_sheet(surface).map_err(|e| bad(cmd, format!("the surface: {e}")))?;
@@ -185,6 +221,29 @@ fn unmoved(target: &EditableSurface, surface: &NurbsSurface, cmd: &str) -> Resul
 pub(super) fn write_back(s: &mut Session, target: &EditableSurface, surface: &NurbsSurface, cmd: &str) -> Result<()> {
     let step = surface_step(&unmoved(target, surface, cmd)?, cmd)?;
     write_step(s, target, step, cmd)
+}
+
+/// Writes `faces` back into the Import feature that keeps the surface: one face as it is, a
+/// network's faces sewn into one body along the sides they share. One undo step.
+pub(super) fn write_faces(s: &mut Session, target: &EditableSurface, faces: &[NurbsSurface], cmd: &str) -> Result<()> {
+    match faces {
+        [] => Err(bad(cmd, "a surface needs a face")),
+        [one] => write_back(s, target, one, cmd),
+        many => {
+            let unmoved: Vec<NurbsSurface> = many.iter().map(|f| unmoved(target, f, cmd)).collect::<Result<_>>()?;
+            write_step(s, target, network_step(&unmoved, cmd)?, cmd)
+        }
+    }
+}
+
+/// A network's faces as STEP text: sewn into one body along the sides they share.
+pub fn network_step(faces: &[NurbsSurface], cmd: &str) -> Result<String> {
+    let sheets: Vec<_> =
+        faces.iter().map(|f| solidcraft_kernel::nurbs_sheet(f).map_err(|e| bad(cmd, format!("a face: {e}")))).collect::<Result<_>>()?;
+    let refs: Vec<_> = sheets.iter().collect();
+    let sewn = solidcraft_kernel::stitch(&refs, 0.0)
+        .map_err(|e| bad(cmd, format!("the faces could not be sewn into one surface (a face folds or passes through another?): {e}")))?;
+    solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| bad(cmd, format!("the faces: {e}")))
 }
 
 /// Writes `surface`, closed round on its own seam (its side `side` and the one across are one
@@ -266,9 +325,150 @@ fn net_param(v: &Value, cmd: &str) -> Result<NurbsSurface> {
     NurbsSurface::new(degree, [ku, kv], &points, &vec![1.0; points.len()]).map_err(|e| bad(cmd, format!("`net`: {e}")))
 }
 
+/// The scan points under `faces` and how far they are from them, root mean square and largest:
+/// each face's covered points measured to it (`None` with no scan under them).
+pub fn faces_distance(s: &Session, scan: Option<&str>, faces: &[NurbsSurface], cmd: &str) -> Option<(String, usize, f64, f64)> {
+    let (mut name, mut count, mut squares, mut max) = (None, 0usize, 0.0, 0.0f64);
+    for face in faces {
+        let Ok(c) = covered(s, scan, face, default_reach(face), cmd) else { continue };
+        if c.points.is_empty() {
+            continue;
+        }
+        let (rms, m) = surface_edit::distance(face, &c.points);
+        squares += rms * rms * c.points.len() as f64;
+        count += c.points.len();
+        max = max.max(m);
+        name = Some(c.scan);
+    }
+    Some((name?, count, (squares / count.max(1) as f64).sqrt(), max))
+}
+
+/// A whole network of faces, as `faces` gives it: each a net as `net` is, the faces one piece.
+fn faces_param(v: &Value, cmd: &str) -> Result<Vec<NurbsSurface>> {
+    let list = v.as_array().filter(|a| !a.is_empty()).ok_or_else(|| bad(cmd, "`faces` must list the faces, each {count, knots, points, degree?}"))?;
+    if list.len() > solidcraft_scan::network::MOST_FACES {
+        return Err(bad(cmd, format!("`faces` lists at most {} faces", solidcraft_scan::network::MOST_FACES)));
+    }
+    let faces: Vec<NurbsSurface> = list.iter().map(|f| net_param(f, cmd)).collect::<Result<_>>()?;
+    if faces.len() > 1 {
+        let joins = solidcraft_scan::network::joins(&faces).map_err(|e| bad(cmd, e.to_string()))?;
+        if !solidcraft_scan::network::connected(&faces, &joins) {
+            return Err(bad(cmd, "the faces must make one piece: each shares a whole side with another"));
+        }
+    }
+    Ok(faces)
+}
+
+/// The reply of an edit that wrote `faces` back.
+fn faces_reply(s: &Session, target: &EditableSurface, faces: &[NurbsSurface], moved: usize, cmd: &str) -> Result<Value> {
+    let measured = if s.model.state().bodies.iter().any(|b| b.body.is_mesh()) { faces_distance(s, None, faces, cmd) } else { None };
+    let reply = ScanEditSurfaceResult {
+        surface: target.body.clone(),
+        controls: faces.first().map_or([0, 0], NurbsSurface::count),
+        moved,
+        carried: 0,
+        refitted: 0,
+        scan: measured.as_ref().map(|m| m.0.clone()),
+        points: measured.as_ref().map(|m| m.1),
+        rms: measured.as_ref().map(|m| m.2),
+        max: measured.as_ref().map(|m| m.3),
+        faces: (faces.len() > 1).then_some(faces.len()),
+        feature: target.feature,
+        param_warnings: Vec::new(),
+    };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// Points on the surface moved (`dots`): each the surface at a control point's place on it,
+/// taken where it goes; the points round it hold the surface through every other dot, or follow.
+fn moved_dots(s: &mut Session, target: &EditableSurface, list: &Value, p: &Value, cmd: &str) -> Result<Value> {
+    use solidcraft_scan::network;
+    let list = list.as_array().filter(|a| !a.is_empty()).ok_or_else(|| bad(cmd, "`dots` must list {point: [u, v], face?, to | along}"))?;
+    let hold = match str_(p, "neighbours").unwrap_or("hold") {
+        "hold" => true,
+        "follow" => false,
+        other => return Err(bad(cmd, format!("`neighbours` must be hold or follow, not `{other}`"))),
+    };
+    let faces = &target.faces;
+    let joins = network::joins(faces).map_err(|e| bad(cmd, e.to_string()))?;
+    let dots = network::dots(faces, &joins);
+    let mut moves: Vec<(usize, Vec3)> = Vec::new();
+    for (k, d) in list.iter().enumerate() {
+        let id = match d.get("at").filter(|v| !v.is_null()) {
+            Some(v) => {
+                if d.get("point").is_some_and(|v| !v.is_null()) {
+                    return Err(bad(cmd, format!("`dots[{k}]` names its point by `at` or by `point`, not both")));
+                }
+                let near = crate::params::vec3(v).ok_or_else(|| bad(cmd, format!("`dots[{k}].at` must be a point [x, y, z] of numbers")))?;
+                (0..dots.len())
+                    .min_by(|a, b| dots[*a].at.dist(near).total_cmp(&dots[*b].at.dist(near)))
+                    .ok_or_else(|| bad(cmd, "the surface has no points"))?
+            }
+            None => {
+                let face = match d.get("face").filter(|v| !v.is_null()) {
+                    Some(v) => v
+                        .as_u64()
+                        .and_then(|f| usize::try_from(f).ok())
+                        .filter(|f| *f < faces.len())
+                        .ok_or_else(|| bad(cmd, format!("`dots[{k}].face` must be a face of the surface, 0 to {}", faces.len() - 1)))?,
+                    None => 0,
+                };
+                let at = index(d.get("point").unwrap_or(&Value::Null), faces[face].count(), cmd, &format!("dots[{k}].point"))?;
+                joins.of[face][at]
+            }
+        };
+        let dot = dots[id];
+        let to = match (d.get("to").filter(|v| !v.is_null()), d.get("along").filter(|v| !v.is_null())) {
+            (Some(to), None) => crate::params::vec3(to).ok_or_else(|| bad(cmd, format!("`dots[{k}].to` must be a point [x, y, z] of numbers")))?,
+            (None, Some(_)) => {
+                let e = crate::params::expr(d, "along").ok_or_else(|| bad(cmd, format!("`dots[{k}].along` must be a length")))?;
+                let length = s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("dots[{k}].along: {e}")))?;
+                if !length.is_finite() {
+                    return Err(bad(cmd, format!("`dots[{k}].along` must be a finite length")));
+                }
+                let n = network::dot_normal(faces, &dot).ok_or_else(|| bad(cmd, "the surface has no direction at that point"))?;
+                dot.at + n * length
+            }
+            _ => return Err(bad(cmd, format!("`dots[{k}]` needs one of `to` (a point) or `along` (a length along the surface's normal)"))),
+        };
+        moves.retain(|m| m.0 != id);
+        moves.push((id, to));
+    }
+    let made =
+        network::dots_moved(faces, &joins, &moves, network::DOT_RING, hold, &[]).ok_or_else(|| bad(cmd, "the points could not be moved there"))?;
+    write_faces(s, target, &made, cmd)?;
+    faces_reply(s, target, &made, moves.len(), cmd)
+}
+
 pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.edit_surface";
     let target = editable(s, str_(p, "surface"), cmd)?;
+    let given = |k: &str| p.get(k).is_some_and(|v| !v.is_null());
+    // Every face as it now is: a network as the dialog edited it, faces added.
+    if let Some(v) = p.get("faces").filter(|v| !v.is_null()) {
+        if ["points", "moves", "hold", "net", "slide", "dots"].iter().any(|k| given(k)) || str_(p, "refit").is_some_and(|r| r != "none") {
+            return Err(bad(cmd, "`faces` gives every face as it is: give it alone"));
+        }
+        let made = faces_param(v, cmd)?;
+        write_faces(s, &target, &made, cmd)?;
+        return faces_reply(s, &target, &made, 0, cmd);
+    }
+    if let Some(list) = p.get("dots").filter(|v| !v.is_null()) {
+        if ["points", "moves", "hold", "net", "slide"].iter().any(|k| given(k)) || str_(p, "refit").is_some_and(|r| r != "none") {
+            return Err(bad(cmd, "`dots` moves points on the surface: give it without points, moves, hold, net, slide or a refit"));
+        }
+        return moved_dots(s, &target, list, p, cmd);
+    }
+    if target.is_network() {
+        return Err(bad(
+            cmd,
+            format!(
+                "`{}` is a Free Form of {} faces: move points on it with `dots`, or give every face with `faces`",
+                target.body,
+                target.faces.len()
+            ),
+        ));
+    }
     // A whole new net: the surface as it is sent, nothing else done to it.
     if let Some(v) = p.get("net").filter(|v| !v.is_null()) {
         if ["points", "moves", "hold"].iter().any(|k| p.get(*k).is_some_and(|v| !v.is_null())) || str_(p, "refit").is_some_and(|r| r != "none") {
@@ -286,6 +486,7 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
             points: None,
             rms: None,
             max: None,
+            faces: None,
             feature: target.feature,
             param_warnings: Vec::new(),
         };
@@ -448,6 +649,7 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
         points: under.as_ref().map(|c| c.points.len()),
         rms,
         max,
+        faces: None,
         feature: target.feature,
         param_warnings: Vec::new(),
     };
@@ -512,6 +714,25 @@ pub(super) fn edit_net(s: &mut Session, p: &Value) -> Result<Value> {
     let need = |l: Option<Line>| l.ok_or_else(|| bad(cmd, format!("`{op}` needs `line`: {{row: j}} or {{column: i}}")));
     let target = editable(s, str_(p, "surface"), cmd)?;
     let fail = |e: solidcraft_scan::net::NetError| bad(cmd, e.to_string());
+    if target.is_network() {
+        if op != "refine" || str_(p, "in").is_some_and(|i| i != "both") {
+            return Err(bad(
+                cmd,
+                format!("`{}` is a Free Form of {} faces: its net is changed as a whole (refine, both ways)", target.body, target.faces.len()),
+            ));
+        }
+        let made = solidcraft_scan::network::refined(&target.faces).map_err(fail)?;
+        write_faces(s, &target, &made, cmd)?;
+        let reply = ScanEditNetResult {
+            surface: target.body,
+            controls: made.first().map_or([0, 0], NurbsSurface::count),
+            line: None,
+            creases: Vec::new(),
+            feature: target.feature,
+            param_warnings: Vec::new(),
+        };
+        return serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()));
+    }
     let (made, new_line) = match op {
         "refine" => {
             let (u, v) = match str_(p, "in").unwrap_or("both") {
