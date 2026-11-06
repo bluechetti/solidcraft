@@ -431,20 +431,34 @@ pub fn default_gap(surfaces: &[NurbsSurface]) -> f64 {
 /// Sides this many gaps apart or nearer are worth a wider gap, said when Merge finds no seam.
 const NEAR_ENOUGH: f64 = 3.0;
 
+/// Which surface each face of the merge belongs to: a surface's faces, in order, surface by surface.
+pub fn face_owners(targets: &[super::surface::EditableSurface]) -> Vec<usize> {
+    targets.iter().enumerate().flat_map(|(i, t)| std::iter::repeat_n(i, t.faces.len())).collect()
+}
+
 /// The surfaces as Merge would make them meet, within `gap` (default [`default_gap`]), and the
-/// gap used.
+/// gap used. Every face of every surface is taken (a Free Form of several faces whole), so the
+/// merged faces are one per face, surface by surface ([`face_owners`]); the seams are those the
+/// merge makes, not the sides a Free Form's faces already share.
 pub fn merged(s: &Session, names: Option<&[String]>, gap: Option<f64>) -> Result<(Vec<super::surface::EditableSurface>, Merged, f64)> {
     let cmd = "scan.merge_surfaces";
     let targets = merge_candidates(s, names, cmd)?;
     if targets.is_empty() {
         return Err(bad(cmd, "the design has no surface to merge: make them with New Free Form, Wrap Surface or Fit Surface"));
     }
-    let surfaces: Vec<NurbsSurface> = targets.iter().map(|t| t.surface.clone()).collect();
+    let surfaces: Vec<NurbsSurface> = targets.iter().flat_map(|t| t.faces.iter().cloned()).collect();
+    if surfaces.len() > solidcraft_scan::network::MOST_FACES {
+        return Err(bad(
+            cmd,
+            format!("the surfaces have {} faces together; a Free Form has at most {}", surfaces.len(), solidcraft_scan::network::MOST_FACES),
+        ));
+    }
+    let owners = face_owners(&targets);
     let gap = gap.unwrap_or_else(|| default_gap(&surfaces));
     if !(gap.is_finite() && gap > 0.0) {
         return Err(bad(cmd, "`gap` must be a length above 0"));
     }
-    let made = solidcraft_scan::merge::merge(&surfaces, gap).map_err(|e| match e {
+    let mut made = solidcraft_scan::merge::merge(&surfaces, gap).map_err(|e| match e {
         // How far off the nearest sides are, and how wide a gap reaches them.
         solidcraft_scan::merge::MergeError::NoSeam => match solidcraft_scan::merge::nearest_sides(&surfaces) {
             Some((apart, own)) => {
@@ -471,7 +485,30 @@ pub fn merged(s: &Session, names: Option<&[String]>, gap: Option<f64>) -> Result
         },
         e => bad(cmd, e.to_string()),
     })?;
+    // The sides a Free Form's own faces share already are not seams the merge makes.
+    let own = |m: &Seam| m.a != m.b && owners.get(m.a) == owners.get(m.b) && m.gap <= 1e-9;
+    made.seams.retain(|m| !own(m));
+    if made.seams.is_empty() {
+        return Err(bad(cmd, format!("no side of one surface runs along a side of another within the gap ({gap:.2} mm)")));
+    }
     Ok((targets, made, gap))
+}
+
+/// The merged faces as one Free Form: a face closed on its own seam cut into two halves there,
+/// so that each seam is between two faces (the kernel never pairs the edges of one face).
+fn one_network(made: &Merged, cmd: &str) -> Result<Vec<NurbsSurface>> {
+    let mut faces = Vec::with_capacity(made.surfaces.len() + 1);
+    for (i, surface) in made.surfaces.iter().enumerate() {
+        match made.seams.iter().find(|m| m.a == i && m.b == i) {
+            Some(seam) => {
+                let (a, b) = solidcraft_scan::merge::halves(surface, 1 - seam.a_side.along()).map_err(|e| bad(cmd, e.to_string()))?;
+                faces.push(a);
+                faces.push(b);
+            }
+            None => faces.push(surface.clone()),
+        }
+    }
+    Ok(faces)
 }
 
 /// Why sewing `surfaces` (`what`: "the seam", "the surfaces") failed, in words rather than the
@@ -528,32 +565,41 @@ pub(super) fn merge_surfaces(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let stitch = crate::params::bool_(p, "stitch").unwrap_or(true);
     let (targets, made, _) = merged(s, names.as_deref(), gap)?;
-    for (i, (target, surface)) in targets.iter().zip(&made.surfaces).enumerate() {
-        // A net closed round on its own seam is sewn there as it is written back.
-        match made.seams.iter().find(|m| m.a == i && m.b == i).filter(|_| stitch) {
-            Some(seam) => super::surface::write_closed(s, target, surface, seam.a_side, cmd)?,
-            None if &target.surface != surface => super::surface::write_back(s, target, surface, cmd)?,
-            None => {}
-        }
-    }
+    let owners = face_owners(&targets);
     let bodies: Vec<String> = targets.iter().map(|t| t.body.clone()).collect();
     let run = |s: &mut Session, id: &str, p: Value| -> Result<Value> {
         super::super::find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?.run_nested(s, &p)
     };
-    let feature = if stitch && bodies.len() > 1 {
-        let all: Vec<&NurbsSurface> = made.surfaces.iter().collect();
-        Some(
-            run(s, "surface.stitch", serde_json::json!({ "bodies": bodies }))
-                .map_err(|e| sewing_refusal("the surfaces", &all, &e.to_string(), cmd))?,
-        )
+    let (feature, faces) = if stitch {
+        // One Free Form: every face, kept in the first surface's own feature, edited with Edit
+        // Surface from then on; the other surfaces are taken out of the timeline from here on.
+        let faces = one_network(&made, cmd)?;
+        let joins = solidcraft_scan::network::joins(&faces).map_err(|e| bad(cmd, format!("the merged faces make no Free Form: {e}")))?;
+        if !solidcraft_scan::network::connected(&faces, &joins) {
+            return Err(bad(cmd, "the surfaces do not all meet: a surface none of the others runs along is left out of the choice"));
+        }
+        let keeper = targets.first().ok_or_else(|| bad(cmd, "no surface"))?;
+        let refs: Vec<&NurbsSurface> = faces.iter().collect();
+        super::surface::write_faces(s, keeper, &faces, cmd).map_err(|e| sewing_refusal("the surfaces", &refs, &e.to_string(), cmd))?;
+        let others: Vec<String> = bodies.iter().skip(1).cloned().collect();
+        let feature = if others.is_empty() { None } else { Some(run(s, "solid.remove", serde_json::json!({ "bodies": others }))?) };
+        (feature, Some(faces.len()))
     } else {
-        None
+        // Each surface written back as it now meets the others, still a body of its own.
+        for (i, target) in targets.iter().enumerate() {
+            let own: Vec<NurbsSurface> = made.surfaces.iter().zip(&owners).filter(|(_, o)| **o == i).map(|(f, _)| f.clone()).collect();
+            if own != target.faces {
+                super::surface::write_faces(s, target, &own, cmd)?;
+            }
+        }
+        (None, None)
     };
     let reply = ScanMergeSurfacesResult {
         body: stitch.then(|| bodies[0].clone()),
         surfaces: bodies,
         seams: made.seams.len(),
         gap: made.seams.iter().map(|m| m.gap).fold(0.0, f64::max),
+        faces,
         feature,
         param_warnings: Vec::new(),
     };

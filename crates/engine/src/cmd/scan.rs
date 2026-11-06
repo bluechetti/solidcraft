@@ -209,7 +209,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("surface_stitch")
         .contract(&MERGE_SURFACES_CONTRACT)
         .output(output_schema_for::<ScanMergeSurfacesResult>)
-        .params("surfaces?: [surface body names] (default: the selected ones, else every surface Fit Surface, New Free Form or Wrap Surface made; one alone is closed at its own seam, as a wrap that goes the whole way round); gap?: length (how far apart two sides may be on average to be made one, default a tenth of the shortest side); stitch?: bool (default true: sewn into the first, a solid when they close): each side that runs along another's within the gap made one curve (the nets' knots matched, corners and points put half way between), one undo step → surfaces, seams, gap, body, feature"),
+        .params("surfaces?: [surface body names] (default: the selected ones, else every surface Fit Surface, New Free Form or Wrap Surface made; one alone is closed at its own seam, as a wrap that goes the whole way round); gap?: length (how far apart two sides may be on average to be made one, default a tenth of the shortest side); stitch?: bool (default true: made one Free Form, kept in the first surface's feature and edited with Edit Surface, a solid when its faces close; the other surfaces are removed from here on): each side that runs along another's within the gap made one curve (the nets' knots matched, corners and points put half way between), a Free Form of several faces taken whole, one undo step → surfaces, seams, gap, body, faces, feature"),
     CommandSpec::new("scan.slice_surface", "Slice Surface", crate::checked!("scan.slice_surface", slice::slice_surface))
         .at("SCAN", "FREEFORM")
         .icon("surface_trim")

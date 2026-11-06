@@ -1118,24 +1118,49 @@ fn a_folded_wrap_is_told_to_raise_stiffness() {
 }
 
 /// Two Free Forms clicked side by side on a dome, a little apart and of other sizes, are merged:
-/// their sides made one and sewn into one body of two faces; one undo step puts them back.
+/// their sides made one, and the two one Free Form of two faces in the first's feature, edited
+/// with Edit Surface from then on; a third merged into it is taken whole, with its faces; one
+/// undo step puts each merge back.
 #[test]
-fn merge_surfaces_sews_free_forms_side_by_side() {
+fn merge_surfaces_makes_free_forms_side_by_side_one_free_form() {
     let (mut s, _) = session_with_triangles("merge", &dome_triangles(40));
     run(&mut s, "scan.free_form", json!({"corners": [[10, 10, 0], [30, 10, 0], [30, 50, 0], [10, 50, 0]], "count": 4}));
     run(&mut s, "scan.free_form", json!({"corners": [[30.5, 10, 0], [50, 10, 0], [50, 50, 0], [30.5, 50, 0]], "count": 6}));
     let refused = s.execute("scan.merge_surfaces", &json!({"surfaces": ["FreeForm1", "FreeForm2"], "gap": "0.1 mm"})).unwrap_err().to_string();
     assert!(refused.contains("within the gap"), "{refused}");
     let merged = run(&mut s, "scan.merge_surfaces", json!({}));
-    assert_eq!((merged["seams"].as_u64(), merged["body"].as_str()), (Some(1), Some("FreeForm1")), "{merged}");
+    assert_eq!((merged["seams"].as_u64(), merged["body"].as_str(), merged["faces"].as_u64()), (Some(1), Some("FreeForm1"), Some(2)), "{merged}");
+    assert!(merged["feature"]["feature"].is_u64(), "the Remove feature: {merged}");
     {
         let state = s.model.state();
-        let body = state.body("FreeForm1").expect("the sewn body");
+        let body = state.body("FreeForm1").expect("the merged body");
         assert_eq!(solidcraft_kernel::brep_record(&body.body).unwrap().faces.len(), 2, "two faces in one body");
-        assert!(state.body("FreeForm2").is_none(), "sewn into the first");
+        assert!(state.body("FreeForm2").is_none(), "taken into the first");
     }
+    let kept = super::surface::editable(&s, Some("FreeForm1"), "test").unwrap();
+    assert!(kept.is_network() && kept.faces.len() == 2, "one Free Form of two faces, editable: {}", kept.faces.len());
+    // Edited as a Free Form: a point on the seam moved keeps both faces through it.
+    let moved = run(&mut s, "scan.edit_surface", json!({"surface": "FreeForm1", "dots": [{"at": [30.25, 30, 8], "along": "1 mm"}]}));
+    assert_eq!(moved["faces"].as_u64(), Some(2), "{moved}");
+    // A third Free Form merged into it: the Free Form is taken whole, three faces now.
+    run(&mut s, "scan.free_form", json!({"corners": [[10, 50.5, 0], [30, 50.5, 0], [30, 58, 0], [10, 58, 0]], "count": 4}));
+    let again = run(&mut s, "scan.merge_surfaces", json!({}));
+    assert_eq!((again["seams"].as_u64(), again["body"].as_str(), again["faces"].as_u64()), (Some(1), Some("FreeForm1"), Some(3)), "{again}");
+    // The third took the removed body's name, as a body made after a Delete does.
+    let third = again["surfaces"][1].as_str().unwrap().to_owned();
+    assert!(s.model.state().body(&third).is_none(), "taken into the first: {again}");
+    assert_eq!(super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces.len(), 3, "three faces, still editable");
     run(&mut s, "edit.undo", json!({}));
-    assert!(s.model.state().body("FreeForm2").is_some(), "one undo step");
+    assert!(s.model.state().body(&third).is_some(), "one undo step");
+    assert_eq!(super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces.len(), 2);
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.model.state().body("FreeForm2").is_some(), "the first merge undone too");
+    // Not made one: each surface is written back as it now meets the other, still its own body.
+    let apart = run(&mut s, "scan.merge_surfaces", json!({"stitch": false}));
+    assert!(apart.get("body").is_none() && apart.get("faces").is_none() && apart["seams"] == 1, "{apart}");
+    assert!(s.model.state().body("FreeForm2").is_some(), "still a body of its own");
 }
 
 /// Four flat Free Forms round a square tube are merged into one open tube; sliced across with a

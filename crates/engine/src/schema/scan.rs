@@ -735,10 +735,14 @@ pub struct ScanMergeSurfacesResult {
     /// How many pairs of sides were made one, and the widest gap closed, in mm.
     pub seams: usize,
     pub gap: f64,
-    /// The body sewn from them, when sewn.
+    /// The one Free Form they are now (the first surface), and how many faces it has: edited
+    /// with Edit Surface. Absent when they were made to meet but left as bodies of their own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
-    /// The Stitch feature that sews them, as a feature command replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faces: Option<usize>,
+    /// The Remove feature that takes the other surfaces out of the timeline from here on, as a
+    /// feature command replies; absent when one surface was closed on its own seam.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<FeatureResult>")]
     pub feature: Option<Value>,

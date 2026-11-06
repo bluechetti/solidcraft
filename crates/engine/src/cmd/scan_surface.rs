@@ -246,19 +246,6 @@ pub fn network_step(faces: &[NurbsSurface], cmd: &str) -> Result<String> {
     solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| bad(cmd, format!("the faces: {e}")))
 }
 
-/// Writes `surface`, closed round on its own seam (its side `side` and the one across are one
-/// curve), back into the Import feature that keeps it: sewn as two halves, so that each seam is
-/// between two faces, one body.
-pub(super) fn write_closed(s: &mut Session, target: &EditableSurface, surface: &NurbsSurface, side: Side, cmd: &str) -> Result<()> {
-    let (a, b) = solidcraft_scan::merge::halves(&unmoved(target, surface, cmd)?, 1 - side.along()).map_err(|e| bad(cmd, e.to_string()))?;
-    let sheet = |half: &NurbsSurface| solidcraft_kernel::nurbs_sheet(half).map_err(|e| bad(cmd, format!("the surface: {e}")));
-    let (a, b) = (sheet(&a)?, sheet(&b)?);
-    let sewn =
-        solidcraft_kernel::stitch(&[&a, &b], 0.0).map_err(|e| super::free_form::sewing_refusal("the seam", &[surface], &e.to_string(), cmd))?;
-    let step = solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| bad(cmd, format!("the surface: {e}")))?;
-    write_step(s, target, step, cmd)
-}
-
 /// Writes `step` into the Import feature that keeps the surface, and works the design out again.
 fn write_step(s: &mut Session, target: &EditableSurface, step: String, cmd: &str) -> Result<()> {
     let feature = s.doc_mut().feature_mut(target.feature).ok_or_else(|| bad(cmd, "the surface's feature is gone"))?;
