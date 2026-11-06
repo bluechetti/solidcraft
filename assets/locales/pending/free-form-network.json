@@ -39,7 +39,15 @@
     "ui.scan_edit_brush": "Smoothing Brush",
     "ui.scan_edit_brush_size": "Brush size",
     "ui.scan_edit_brush_strength": "Strength",
-    "ui.scan_edit_brush_hint": "Drag over the surface: the points under the circle are evened out, more toward its middle, and kept on the scan while Snap is on. Press Smoothing Brush again to stop."
+    "ui.scan_edit_brush_hint": "Drag over the surface: the points under the circle are evened out, more toward its middle, and kept on the scan while Snap is on. Press Smoothing Brush again to stop.",
+    "cmd.scan_mirror_free_form": "Mirror Free Form",
+    "ui.scan_edit_symmetry": "Symmetry",
+    "ui.scan_edit_symmetry_none": "None",
+    "ui.scan_edit_symmetry_value": "Pairs of points: {pairs}; on the plane (ringed): {on}",
+    "ui.scan_edit_symmetry_mirrored": "Mirrored in {plane}: {added} faces added, {onto} points put onto the plane.",
+    "ui.scan_edit_symmetry_already": "A mirror image in {plane} already: its points are paired.",
+    "ui.scan_edit_symmetry_lost": "The Free Form is no longer a mirror image in the plane, so Symmetry is off.",
+    "ui.scan_edit_symmetry_hint": "A point and its mirror image move together; a ringed point lies on the plane and moves only along it. Choose None to edit the two sides apart."
   },
   "de": {
     "ui.scan_edit_one_face": "Teilen, Kopieren, Entfernen und Knick ändern eine Fläche: Diese Freiform hat mehrere",
@@ -81,7 +89,15 @@
     "ui.scan_edit_brush": "Glättungspinsel",
     "ui.scan_edit_brush_size": "Pinselgröße",
     "ui.scan_edit_brush_strength": "Stärke",
-    "ui.scan_edit_brush_hint": "Ziehen Sie über die Fläche: Die Punkte unter dem Kreis werden ausgeglichen, zur Mitte hin stärker, und bleiben auf dem Scan, solange Fangen an ist. Erneut Glättungspinsel zum Beenden."
+    "ui.scan_edit_brush_hint": "Ziehen Sie über die Fläche: Die Punkte unter dem Kreis werden ausgeglichen, zur Mitte hin stärker, und bleiben auf dem Scan, solange Fangen an ist. Erneut Glättungspinsel zum Beenden.",
+    "cmd.scan_mirror_free_form": "Freiform spiegeln",
+    "ui.scan_edit_symmetry": "Symmetrie",
+    "ui.scan_edit_symmetry_none": "Keine",
+    "ui.scan_edit_symmetry_value": "Punktpaare: {pairs}; auf der Ebene (umringt): {on}",
+    "ui.scan_edit_symmetry_mirrored": "In {plane} gespiegelt: {added} Flächen hinzugefügt, {onto} Punkte auf die Ebene gesetzt.",
+    "ui.scan_edit_symmetry_already": "Bereits ein Spiegelbild in {plane}: die Punkte sind gepaart.",
+    "ui.scan_edit_symmetry_lost": "Die Freiform ist kein Spiegelbild in der Ebene mehr, daher ist Symmetrie aus.",
+    "ui.scan_edit_symmetry_hint": "Ein Punkt und sein Spiegelbild bewegen sich zusammen; ein umringter Punkt liegt auf der Ebene und bewegt sich nur in ihr. Wählen Sie Keine, um die beiden Seiten getrennt zu bearbeiten."
   },
   "ja": {
     "ui.scan_edit_one_face": "分割・コピー・削除・折り目は 1 つの面を変更します: このフリーフォームには複数の面があります",
@@ -123,7 +139,15 @@
     "ui.scan_edit_brush": "スムージングブラシ",
     "ui.scan_edit_brush_size": "ブラシサイズ",
     "ui.scan_edit_brush_strength": "強さ",
-    "ui.scan_edit_brush_hint": "サーフェス上をドラッグします。円の下の点が均され、中心ほど強く、スナップがオンの間はスキャン上に保たれます。終了するにはもう一度スムージングブラシを押します。"
+    "ui.scan_edit_brush_hint": "サーフェス上をドラッグします。円の下の点が均され、中心ほど強く、スナップがオンの間はスキャン上に保たれます。終了するにはもう一度スムージングブラシを押します。",
+    "cmd.scan_mirror_free_form": "フリーフォームをミラー",
+    "ui.scan_edit_symmetry": "対称",
+    "ui.scan_edit_symmetry_none": "なし",
+    "ui.scan_edit_symmetry_value": "点のペア: {pairs}、平面上（輪付き）: {on}",
+    "ui.scan_edit_symmetry_mirrored": "{plane} でミラーしました: 面を {added} 個追加、点を {onto} 個平面上に置きました。",
+    "ui.scan_edit_symmetry_already": "すでに {plane} の鏡像です。点はペアになっています。",
+    "ui.scan_edit_symmetry_lost": "フリーフォームはもう平面の鏡像ではないため、対称はオフになりました。",
+    "ui.scan_edit_symmetry_hint": "点とその鏡像は一緒に動きます。輪付きの点は平面上にあり、平面に沿ってのみ動きます。両側を別々に編集するにはなしを選びます。"
   },
   "ko": {
     "ui.scan_edit_one_face": "분할, 복사, 제거, 주름은 한 면을 바꿉니다: 이 자유형에는 면이 여러 개 있습니다",
@@ -165,7 +189,15 @@
     "ui.scan_edit_brush": "스무딩 브러시",
     "ui.scan_edit_brush_size": "브러시 크기",
     "ui.scan_edit_brush_strength": "강도",
-    "ui.scan_edit_brush_hint": "표면 위를 드래그하세요. 원 아래의 점들이 고르게 되며, 중심일수록 더 많이 바뀌고, 스냅이 켜져 있는 동안 스캔 위에 유지됩니다. 끝내려면 스무딩 브러시를 다시 누르세요."
+    "ui.scan_edit_brush_hint": "표면 위를 드래그하세요. 원 아래의 점들이 고르게 되며, 중심일수록 더 많이 바뀌고, 스냅이 켜져 있는 동안 스캔 위에 유지됩니다. 끝내려면 스무딩 브러시를 다시 누르세요.",
+    "cmd.scan_mirror_free_form": "자유형 미러",
+    "ui.scan_edit_symmetry": "대칭",
+    "ui.scan_edit_symmetry_none": "없음",
+    "ui.scan_edit_symmetry_value": "점 쌍: {pairs}, 평면 위(고리 표시): {on}",
+    "ui.scan_edit_symmetry_mirrored": "{plane}에 미러했습니다: 면 {added}개 추가, 점 {onto}개를 평면 위에 놓았습니다.",
+    "ui.scan_edit_symmetry_already": "이미 {plane}의 거울상입니다. 점들이 쌍을 이룹니다.",
+    "ui.scan_edit_symmetry_lost": "자유형이 더 이상 평면의 거울상이 아니므로 대칭이 꺼졌습니다.",
+    "ui.scan_edit_symmetry_hint": "점과 그 거울상은 함께 움직입니다. 고리가 표시된 점은 평면 위에 있으며 평면을 따라서만 움직입니다. 양쪽을 따로 편집하려면 없음을 선택하세요."
   },
   "zh": {
     "ui.scan_edit_one_face": "拆分、复制、删除和折痕只改变一个面：此自由形状有多个面",
@@ -207,7 +239,15 @@
     "ui.scan_edit_brush": "平滑笔刷",
     "ui.scan_edit_brush_size": "笔刷大小",
     "ui.scan_edit_brush_strength": "强度",
-    "ui.scan_edit_brush_hint": "在曲面上拖动：圆圈下的点会被匀化，越靠近中心越明显，吸附开启时保持在扫描上。再按一次平滑笔刷结束。"
+    "ui.scan_edit_brush_hint": "在曲面上拖动：圆圈下的点会被匀化，越靠近中心越明显，吸附开启时保持在扫描上。再按一次平滑笔刷结束。",
+    "cmd.scan_mirror_free_form": "镜像自由曲面",
+    "ui.scan_edit_symmetry": "对称",
+    "ui.scan_edit_symmetry_none": "无",
+    "ui.scan_edit_symmetry_value": "点对：{pairs}；在平面上（带环）：{on}",
+    "ui.scan_edit_symmetry_mirrored": "已在 {plane} 中镜像：添加了 {added} 个面，{onto} 个点放到了平面上。",
+    "ui.scan_edit_symmetry_already": "已经是 {plane} 中的镜像：各点已配对。",
+    "ui.scan_edit_symmetry_lost": "自由曲面不再是该平面中的镜像，对称已关闭。",
+    "ui.scan_edit_symmetry_hint": "一个点与其镜像一起移动；带环的点位于平面上，只沿平面移动。选择无可分别编辑两侧。"
   },
   "ar": {
     "ui.scan_edit_one_face": "التقسيم والنسخ والإزالة والطي تغيّر وجهًا واحدًا: هذا الشكل الحر له عدة أوجه",
@@ -249,7 +289,15 @@
     "ui.scan_edit_brush": "فرشاة التنعيم",
     "ui.scan_edit_brush_size": "حجم الفرشاة",
     "ui.scan_edit_brush_strength": "الشدة",
-    "ui.scan_edit_brush_hint": "اسحب فوق السطح: تُسوّى النقاط تحت الدائرة، أكثر نحو وسطها، وتبقى على المسح ما دام الالتقاط مفعّلًا. اضغط فرشاة التنعيم مرة أخرى للتوقف."
+    "ui.scan_edit_brush_hint": "اسحب فوق السطح: تُسوّى النقاط تحت الدائرة، أكثر نحو وسطها، وتبقى على المسح ما دام الالتقاط مفعّلًا. اضغط فرشاة التنعيم مرة أخرى للتوقف.",
+    "cmd.scan_mirror_free_form": "عكس الشكل الحر",
+    "ui.scan_edit_symmetry": "التناظر",
+    "ui.scan_edit_symmetry_none": "بلا",
+    "ui.scan_edit_symmetry_value": "أزواج النقاط: {pairs}؛ على المستوى (محاطة بحلقة): {on}",
+    "ui.scan_edit_symmetry_mirrored": "عُكس في {plane}: أُضيف {added} من الأوجه، ووُضعت {onto} من النقاط على المستوى.",
+    "ui.scan_edit_symmetry_already": "صورة مرآتية في {plane} بالفعل: نقاطه مقترنة.",
+    "ui.scan_edit_symmetry_lost": "لم يعد الشكل الحر صورة مرآتية في المستوى، فأُوقف التناظر.",
+    "ui.scan_edit_symmetry_hint": "تتحرك النقطة وصورتها المرآتية معًا؛ والنقطة المحاطة بحلقة تقع على المستوى ولا تتحرك إلا على امتداده. اختر «بلا» لتحرير الجانبين على حدة."
   },
   "he": {
     "ui.scan_edit_one_face": "פיצול, העתקה, הסרה וקיפול משנים פאה אחת: לצורה החופשית הזו יש כמה פאות",
@@ -291,7 +339,15 @@
     "ui.scan_edit_brush": "מברשת החלקה",
     "ui.scan_edit_brush_size": "גודל המברשת",
     "ui.scan_edit_brush_strength": "עוצמה",
-    "ui.scan_edit_brush_hint": "גררו על פני המשטח: הנקודות שמתחת לעיגול מיושרות, יותר לכיוון מרכזו, ונשארות על הסריקה כל עוד ההצמדה פעילה. לחצו שוב על מברשת החלקה כדי לסיים."
+    "ui.scan_edit_brush_hint": "גררו על פני המשטח: הנקודות שמתחת לעיגול מיושרות, יותר לכיוון מרכזו, ונשארות על הסריקה כל עוד ההצמדה פעילה. לחצו שוב על מברשת החלקה כדי לסיים.",
+    "cmd.scan_mirror_free_form": "שיקוף צורה חופשית",
+    "ui.scan_edit_symmetry": "סימטריה",
+    "ui.scan_edit_symmetry_none": "ללא",
+    "ui.scan_edit_symmetry_value": "זוגות נקודות: {pairs}; על המישור (בטבעת): {on}",
+    "ui.scan_edit_symmetry_mirrored": "שוקף ב-{plane}: נוספו {added} פאות, {onto} נקודות הונחו על המישור.",
+    "ui.scan_edit_symmetry_already": "כבר תמונת ראי ב-{plane}: הנקודות מזווגות.",
+    "ui.scan_edit_symmetry_lost": "הצורה החופשית כבר אינה תמונת ראי במישור, ולכן הסימטריה כבויה.",
+    "ui.scan_edit_symmetry_hint": "נקודה ותמונת הראי שלה זזות יחד; נקודה בטבעת מונחת על המישור וזזה רק לאורכו. בחרו ללא כדי לערוך את שני הצדדים בנפרד."
   },
   "vi": {
     "ui.scan_edit_one_face": "Tách, Sao chép, Xóa và Gấp nếp thay đổi một mặt: dạng tự do này có nhiều mặt",
@@ -333,6 +389,14 @@
     "ui.scan_edit_brush": "Cọ làm mượt",
     "ui.scan_edit_brush_size": "Cỡ cọ",
     "ui.scan_edit_brush_strength": "Độ mạnh",
-    "ui.scan_edit_brush_hint": "Kéo trên mặt: các điểm dưới vòng tròn được làm đều, mạnh hơn về phía giữa, và giữ trên bản quét khi Bắt dính đang bật. Nhấn Cọ làm mượt lần nữa để dừng."
+    "ui.scan_edit_brush_hint": "Kéo trên mặt: các điểm dưới vòng tròn được làm đều, mạnh hơn về phía giữa, và giữ trên bản quét khi Bắt dính đang bật. Nhấn Cọ làm mượt lần nữa để dừng.",
+    "cmd.scan_mirror_free_form": "Đối xứng mặt tự do",
+    "ui.scan_edit_symmetry": "Đối xứng",
+    "ui.scan_edit_symmetry_none": "Không",
+    "ui.scan_edit_symmetry_value": "Cặp điểm: {pairs}; trên mặt phẳng (có vòng): {on}",
+    "ui.scan_edit_symmetry_mirrored": "Đã đối xứng qua {plane}: thêm {added} mặt, {onto} điểm được đặt lên mặt phẳng.",
+    "ui.scan_edit_symmetry_already": "Đã là ảnh gương qua {plane}: các điểm đã được ghép cặp.",
+    "ui.scan_edit_symmetry_lost": "Mặt tự do không còn là ảnh gương qua mặt phẳng, nên Đối xứng đã tắt.",
+    "ui.scan_edit_symmetry_hint": "Một điểm và ảnh gương của nó di chuyển cùng nhau; điểm có vòng nằm trên mặt phẳng và chỉ di chuyển dọc theo nó. Chọn Không để chỉnh sửa hai bên riêng rẽ."
   }
 }

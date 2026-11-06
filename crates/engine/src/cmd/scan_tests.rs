@@ -1177,6 +1177,69 @@ fn the_smoothing_brush_evens_out_points_and_keeps_them_on_the_scan() {
     assert!(with_dots.contains("give it alone"), "{with_dots}");
 }
 
+/// A half of a Free Form modelled on one side of the dome's mirror plane is mirrored into one
+/// Free Form joined on the plane; a dot moved with `symmetry` takes its twin to the mirror image;
+/// mirrored again it is one already; what is not a half is refused in words.
+#[test]
+fn mirror_free_form_makes_a_half_whole_and_symmetric_edits_keep_it() {
+    let (mut s, _) = session_with_triangles("mirror", &dome_triangles(40));
+    run(&mut s, "scan.free_form", json!({"corners": [[10, 10, 0], [29.6, 10, 0], [29.6, 50, 0], [10, 50, 0]], "count": 5}));
+    run(&mut s, "scan.symmetry", json!({"plane": {"point": [30, 30, 8], "normal": [1, 0, 0]}}));
+    let made = run(&mut s, "scan.mirror_free_form", json!({"plane": "Symmetry Plane"}));
+    assert_eq!(
+        (
+            made["faces"].as_u64(),
+            made["how"].as_str(),
+            made["added"].as_u64(),
+            made["onto"].as_u64(),
+            made["pairs"].as_u64(),
+            made["on_plane"].as_u64()
+        ),
+        (Some(2), Some("mirrored"), Some(1), Some(5), Some(20), Some(5)),
+        "{made}"
+    );
+    assert!(made["kink"].as_f64().unwrap() < 0.5, "{made}");
+    let dots_of = |s: &Session| {
+        let faces = super::surface::editable(s, Some("FreeForm1"), "test").unwrap().faces;
+        let joins = solidcraft_scan::network::joins(&faces).unwrap();
+        solidcraft_scan::network::dots(&faces, &joins)
+    };
+    assert_eq!(super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces.len(), 2);
+    let moved = run(&mut s, "scan.edit_surface", json!({"symmetry": "Symmetry Plane", "dots": [{"at": [20, 30, 8], "along": "2 mm"}]}));
+    assert_eq!((moved["faces"].as_u64(), moved["moved"].as_u64()), (Some(2), Some(2)), "both sides: {moved}");
+    let dots = dots_of(&s);
+    let near = |x: f64| dots.iter().min_by(|a, b| a.at.dist(Vec3::new(x, 30.0, 8.0)).total_cmp(&b.at.dist(Vec3::new(x, 30.0, 8.0)))).unwrap().at;
+    let (a, b) = (near(20.0), near(40.0));
+    assert!(b.dist(Vec3::new(60.0 - a.x, a.y, a.z)) < 1e-6 && a.z > 9.0, "the twin is the mirror image: {a:?} {b:?}");
+    let again = run(&mut s, "scan.mirror_free_form", json!({"plane": {"point": [30, 0, 0], "normal": [1, 0, 0]}}));
+    assert_eq!((again["how"].as_str(), again["faces"].as_u64()), (Some("already"), Some(2)), "{again}");
+    run(&mut s, "edit.undo", json!({}));
+    assert!(dots_of(&s).iter().all(|d| d.at.z < 8.5), "the dots edit undone");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces.len(), 1, "the mirroring undone");
+    for (params, words) in [
+        (json!({"plane": "XY"}), "mm off"),
+        (json!({"plane": "Nowhere"}), "no plane"),
+        (json!({"plane": {"point": [30, 0, 0], "normal": [0, 0, 0]}}), "no direction"),
+        (json!({"plane": {"normal": [1, 0, 0]}}), "needs `point`"),
+        (json!({}), "`plane` is needed"),
+        (json!({"plane": "YZ", "gap": "-1 mm"}), "above 0"),
+    ] {
+        let refused = s.execute("scan.mirror_free_form", &params).unwrap_err().to_string();
+        assert!(refused.contains(words), "{params}: {refused}");
+    }
+    let not_mirror = s
+        .execute("scan.edit_surface", &json!({"symmetry": "Symmetry Plane", "dots": [{"at": [20, 30, 8], "along": "1 mm"}]}))
+        .unwrap_err()
+        .to_string();
+    assert!(not_mirror.contains("not a mirror image"), "{not_mirror}");
+    let alone = s.execute("scan.edit_surface", &json!({"symmetry": "Symmetry Plane"})).unwrap_err().to_string();
+    assert!(alone.contains("goes with `dots`"), "{alone}");
+    run(&mut s, "scan.free_form", json!({"corners": [[22, 10, 0], [45, 10, 0], [45, 50, 0], [22, 50, 0]], "count": 4}));
+    let straddles = s.execute("scan.mirror_free_form", &json!({"surface": "FreeForm2", "plane": "Symmetry Plane"})).unwrap_err().to_string();
+    assert!(straddles.contains("both sides"), "{straddles}");
+}
+
 /// `turn` radians round a tube of radius 10 along Z, 40 long, as triangles.
 fn tube_triangles(turn: f64) -> Vec<[Vec3; 3]> {
     let (rings, segments) = (20u32, 48u32);

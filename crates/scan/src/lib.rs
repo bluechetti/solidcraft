@@ -85,6 +85,7 @@ mod subdivide;
 pub mod surface;
 pub mod surface_check;
 pub mod surface_edit;
+pub mod symmetric;
 pub mod symmetry;
 pub mod wrap;
 

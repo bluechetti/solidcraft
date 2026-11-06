@@ -21,10 +21,10 @@ use crate::schema::scan::{
     ScanCurveResult, ScanDeviationParams, ScanDeviationResult, ScanEditNetParams, ScanEditNetResult, ScanEditSurfaceParams, ScanEditSurfaceResult,
     ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere,
     ScanFittedTorus, ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult,
-    ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult,
-    ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult,
-    ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams,
-    ScanWrapSurfaceResult,
+    ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror, ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams,
+    ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult,
+    ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams,
+    ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -44,6 +44,7 @@ const CURVE_CONTRACT: TypedContract<ScanCurveParams> = TypedContract::new();
 const EDIT_NET_CONTRACT: TypedContract<ScanEditNetParams> = TypedContract::new();
 const FREE_FORM_CONTRACT: TypedContract<ScanFreeFormParams> = TypedContract::new();
 const ADD_FACE_CONTRACT: TypedContract<ScanAddFaceParams> = TypedContract::new();
+const MIRROR_FREE_FORM_CONTRACT: TypedContract<ScanMirrorFreeFormParams> = TypedContract::new();
 const MERGE_SURFACES_CONTRACT: TypedContract<ScanMergeSurfacesParams> = TypedContract::new();
 const SLICE_SURFACE_CONTRACT: TypedContract<ScanSliceSurfaceParams> = TypedContract::new();
 const WRAP_SURFACE_CONTRACT: TypedContract<ScanWrapSurfaceParams> = TypedContract::new();
@@ -198,6 +199,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&ADD_FACE_CONTRACT)
         .output(output_schema_for::<ScanAddFaceResult>)
         .params("edge: [[x,y,z] × 2] at or near the ends of an open edge of the Free Form; far: [[x,y,z] × 2] the new face's far corners (either order; a corner on a point of the Free Form is that point); rows?: 4…12 points across (default 4); reach?: length (the scan met no farther than this); surface?: the Free Form (default: the selected one, else the one made last); body?: the scan: a face added on that edge, sharing it, tangent to the face it grows from, a side that runs along another open edge shared with it too, fitted to the scan on its own and then held tangent to the faces it goes on from smoothly (a side where the scan turns sharply is left a crease, `sharp`); a face that would have a flat corner (one face over a smooth rim) is refused; the Free Form stays one surface body of several faces, a solid once it closes, edited with Edit Surface (one undo step) → surface, faces, face, controls, body, rms, max, kink (where held tangent), irregular, sharp, feature"),
+    CommandSpec::new("scan.mirror_free_form", "Mirror Free Form", crate::checked!("scan.mirror_free_form", free_form::mirror_free_form))
+        .icon("surface_patch")
+        .contract(&MIRROR_FREE_FORM_CONTRACT)
+        .output(output_schema_for::<ScanMirrorFreeFormResult>)
+        .params("plane: YZ|XZ|XY | a construction plane's name (Find Symmetry's `Symmetry Plane`) | {point, normal}; gap?: length (how far from the plane an edge may be to be put onto it, default a tenth of the net's size, at least 1 mm); surface?: the Free Form (default: the selected one, else the one made last): a half modelled on one side of the plane mirrored and joined to its image on the plane, its edges within the gap put onto it, one Free Form that Edit Surface's Symmetry keeps a mirror image (scan.edit_surface's `symmetry` with `dots` edits both sides); one that is a mirror image already is left as it is (how: already); one on both sides that is not, or none of whose edges reaches the plane, is refused (one undo step) → surface, faces, how, added, onto, pairs, on_plane, kink, feature"),
     CommandSpec::new("scan.wrap_surface", "Wrap Surface", crate::checked!("scan.wrap_surface", free_form::wrap_surface))
         .at("SCAN", "FREEFORM")
         .icon("surface_revolve")

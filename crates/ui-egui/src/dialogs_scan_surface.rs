@@ -30,6 +30,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
 use solidcraft_engine::cmd::scan::surface::network::{self, Dot, Joins, Side};
+use solidcraft_engine::cmd::scan::surface::symmetric::{self, MirrorPlane};
 use solidcraft_engine::cmd::scan::surface::{self as edit, Covered, EditableSurface, Line};
 use solidcraft_engine::geom::bspline::NurbsSurface;
 use solidcraft_engine::geom::prelude::*;
@@ -166,6 +167,11 @@ pub struct EditSurface {
     /// faces are held tangent across them or not as these say, whatever angle they meet at now.
     creases: Vec<(Vec3, Vec3)>,
     smooths: Vec<(Vec3, Vec3)>,
+    /// Symmetry: the plane chosen (0 none; then YZ, XZ, XY and the design's construction planes),
+    /// the pairs of points while the Free Form is a mirror image in it, and what choosing it did.
+    pub symmetry: usize,
+    mirror: Option<Box<symmetric::Pairs>>,
+    mirror_note: Option<Box<Result<String, String>>>,
     /// The scan under the faces and how far each point is from them, coloured.
     shade: Option<Box<Shading>>,
     /// The faces' shape changed since the scan under them was looked for.
@@ -226,6 +232,9 @@ impl Default for EditSurface {
             brush_strength: 0.5,
             creases: Vec::new(),
             smooths: Vec::new(),
+            symmetry: 0,
+            mirror: None,
+            mirror_note: None,
             shade: None,
             restudy: false,
             history: Vec::new(),
@@ -534,6 +543,9 @@ fn reset_to(k: &mut EditSurface, faces: Vec<NurbsSurface>) {
     k.creases.clear();
     k.smooths.clear();
     k.creasing = None;
+    k.mirror = None;
+    k.mirror_note = None;
+    k.symmetry = 0;
     k.joins = Arc::new(joins_of(k, &faces));
     k.net = network::network_points(&faces, &k.joins);
     k.moved = vec![false; k.net.len()];
@@ -576,7 +588,9 @@ fn undo_last(k: &mut EditSurface) {
     k.drag = None;
     k.faces = before.faces.clone();
     k.restudy |= restudy;
+    let plane = k.mirror.take().map(|p| p.plane);
     show_faces(k, before.faces, false, None);
+    refresh_mirror(k, plane);
 }
 
 /// The faces' shape changed (a face added, points doubled): `faces` as edited from now on, what
@@ -591,7 +605,126 @@ fn reshaped_to(k: &mut EditSurface, faces: Vec<NurbsSurface>) {
     k.chosen = None;
     k.faces = faces.clone();
     k.restudy = true;
+    let plane = k.mirror.take().map(|p| p.plane);
     show_faces(k, faces, false, None);
+    refresh_mirror(k, plane);
+}
+
+/// How far from the symmetry plane an edge may be to be put onto it: a tenth of the net's size.
+fn mirror_gap(k: &EditSurface) -> f64 {
+    k.faces.iter().map(edit::default_reach).fold(1.0, f64::max)
+}
+
+/// The pairs found again in `plane` after the faces changed shape (a face added, points doubled,
+/// an edit undone), the Free Form made an exact mirror image; Symmetry turned off, and said so,
+/// when it is one no longer.
+fn refresh_mirror(k: &mut EditSurface, plane: Option<MirrorPlane>) {
+    let Some(plane) = plane else { return };
+    let tolerance = symmetric::pairing_tolerance(&k.faces, mirror_gap(k));
+    match symmetric::pairs_of(&k.faces, &k.joins, plane, tolerance) {
+        Ok(pairs) => {
+            k.mirror = Some(Box::new(pairs));
+            let faces = k.faces.clone();
+            show_faces(k, faces, false, None);
+            k.faces = k.shown.clone();
+            k.net = k.shown_net.clone();
+        }
+        Err(_) => {
+            k.mirror = None;
+            k.symmetry = 0;
+            k.mirror_note = Some(Box::new(Err(tr("ui.scan_edit_symmetry_lost").to_owned())));
+        }
+    }
+}
+
+/// The planes Symmetry offers: the origin planes, then the design's construction planes.
+fn symmetry_planes(app: &SolveApp) -> Vec<(String, MirrorPlane)> {
+    let mut planes: Vec<(String, MirrorPlane)> = [("YZ", Vec3::X), ("XZ", Vec3::Y), ("XY", Vec3::Z)]
+        .into_iter()
+        .filter_map(|(n, normal)| MirrorPlane::new(Vec3::ZERO, normal).map(|p| (n.to_owned(), p)))
+        .collect();
+    for (_, name, pl) in solidcraft_engine::view::construction_planes(&app.session) {
+        if let Some(p) = MirrorPlane::new(pl.origin, pl.x.cross(pl.y)) {
+            planes.push((name, p));
+        }
+    }
+    planes
+}
+
+/// Symmetry chosen (`None` for none): a half mirrored and joined on the plane (one step of Undo
+/// Last Change), a Free Form that is a mirror image already paired; else refused, and said why.
+fn apply_symmetry(k: &mut EditSurface, plane: Option<(String, MirrorPlane)>) {
+    let Some((name, plane)) = plane else {
+        k.mirror = None;
+        k.mirror_note = None;
+        return;
+    };
+    match symmetric::mirrored(&k.faces, plane, mirror_gap(k)) {
+        Ok((faces, pairs, how)) => match how {
+            symmetric::How::Already => {
+                k.mirror = None;
+                refresh_mirror(k, Some(pairs.plane));
+                k.mirror_note = Some(Box::new(Ok(crate::i18n::format("ui.scan_edit_symmetry_already", &[("plane", &name)]))));
+            }
+            symmetric::How::Mirrored { added, onto } => {
+                k.mirror = None;
+                reshaped_to(k, faces);
+                refresh_mirror(k, Some(plane));
+                k.mirror_note = Some(Box::new(Ok(crate::i18n::format(
+                    "ui.scan_edit_symmetry_mirrored",
+                    &[("plane", &name), ("added", &added.to_string()), ("onto", &onto.to_string())],
+                ))));
+            }
+        },
+        Err(e) => {
+            k.mirror = None;
+            k.symmetry = 0;
+            k.mirror_note = Some(Box::new(Err(e.to_string())));
+        }
+    }
+}
+
+/// The Symmetry row: the plane, what choosing it did, and the pairs while it is on.
+fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) {
+    let planes = symmetry_planes(app);
+    let mut labels: Vec<&str> = vec![tr("ui.scan_edit_symmetry_none")];
+    labels.extend(planes.iter().map(|(n, _)| n.as_str()));
+    let before = k.symmetry.min(labels.len() - 1);
+    let mut choice = before;
+    choice_row(ui, tr("ui.scan_edit_symmetry"), "scan_edit_symmetry", &mut choice, &labels);
+    if choice != before {
+        k.symmetry = choice;
+        k.adding = None;
+        k.deleting = false;
+        k.creasing = None;
+        k.chosen = None;
+        apply_symmetry(k, choice.checked_sub(1).and_then(|i| planes.get(i)).map(|(n, p)| (n.clone(), *p)));
+    }
+    if let Some(pairs) = &k.mirror {
+        let line =
+            crate::i18n::format("ui.scan_edit_symmetry_value", &[("pairs", &pairs.pairs().to_string()), ("on", &pairs.on_plane_count().to_string())]);
+        ui_kit::text(ui, &line, ui_kit::Text::Note("scan_edit_symmetry_value"));
+    }
+    match k.mirror_note.as_deref() {
+        Some(Ok(note)) => {
+            ui_kit::text(ui, note, ui_kit::Text::Note("scan_edit_symmetry_note"));
+        }
+        Some(Err(why)) => {
+            ui_kit::text(ui, why, ui_kit::Text::Report("scan_edit_symmetry_note", true));
+        }
+        None => {}
+    }
+    if k.mirror.is_some() {
+        ui_kit::text(ui, tr("ui.scan_edit_symmetry_hint"), ui_kit::Text::Hint("scan_edit_symmetry_hint"));
+    }
+}
+
+/// `faces` with the face just added (the last) given its mirror image too, while Symmetry is on.
+fn with_twins(k: &EditSurface, faces: Vec<NurbsSurface>) -> Vec<NurbsSurface> {
+    match &k.mirror {
+        Some(pairs) if !faces.is_empty() => symmetric::with_twin_face(&faces, pairs.plane, faces.len() - 1, mirror_gap(k)).unwrap_or(faces),
+        _ => faces,
+    }
 }
 
 /// The one face, when the surface is one face whose points are its network's (not a network).
@@ -633,6 +766,11 @@ fn show(k: &mut EditSurface, surface: NurbsSurface, dragging: bool) {
 /// Show `faces`, with how far the scan is from them: the scan's places on the faces `touched`
 /// marks found again (on all with `None`), and the colouring with them.
 fn show_faces(k: &mut EditSurface, faces: Vec<NurbsSurface>, dragging: bool, touched: Option<&[bool]>) {
+    // With Symmetry on, exactly a mirror image: each pair at the mean of the two.
+    let faces = match &k.mirror {
+        Some(pairs) => pairs.kept(&faces, &k.joins).unwrap_or(faces),
+        None => faces,
+    };
     k.shown_net = network::network_points(&faces, &k.joins);
     k.shown_dots = network::dots(&faces, &k.joins);
     // Coarser while a drag goes (it runs every frame), as Surface Check itself once it is let go.
@@ -703,6 +841,14 @@ fn refitted(k: &EditSurface, net: Vec<Vec3>, now: &[usize], carried: &[bool]) ->
 /// The network with its points `moves` put where they go (control net handles on a network): the
 /// points next to them across smooth seams kept in line, so the faces stay tangent.
 fn net_moved(k: &EditSurface, moves: &[(usize, Vec3)]) -> Option<Vec<NurbsSurface>> {
+    let mirrored;
+    let moves = match &k.mirror {
+        Some(pairs) => {
+            mirrored = pairs.moves(moves);
+            mirrored.as_slice()
+        }
+        None => moves,
+    };
     let mut places = k.net.clone();
     for &(i, to) in moves {
         *places.get_mut(i)? = to;
@@ -728,6 +874,14 @@ fn net_moved(k: &EditSurface, moves: &[(usize, Vec3)]) -> Option<Vec<NurbsSurfac
 /// The faces with the dot `index` put at `to`: the dots round it held or following as
 /// Neighbours says, and with Refit Around the scan under the ring fitted too.
 fn dot_preview(k: &EditSurface, moves: &[(usize, Vec3)]) -> Option<Vec<NurbsSurface>> {
+    let mirrored;
+    let moves = match &k.mirror {
+        Some(pairs) => {
+            mirrored = pairs.moves(moves);
+            mirrored.as_slice()
+        }
+        None => moves,
+    };
     let around: Vec<usize> = moves.iter().map(|m| m.0).collect();
     let hold = k.neighbours == NEIGHBOURS_HOLD;
     let extra = match (k.refit, loaded(k)) {
@@ -818,14 +972,25 @@ fn crease_click(k: &mut EditSurface, seam: usize, crease: bool) {
         return;
     }
     let (mut creases, mut smooths) = (k.creases.clone(), k.smooths.clone());
-    creases.retain(|e| !same_edge(e, a, b));
-    smooths.retain(|e| !same_edge(e, a, b));
-    if crease {
-        creases.push((a, b))
-    } else {
-        smooths.push((a, b))
+    // With Symmetry on, the seam's mirror image too.
+    let mut seams = vec![(seam, a, b)];
+    if let Some(pairs) = &k.mirror {
+        let (ra, rb) = (pairs.plane.reflect(a), pairs.plane.reflect(b));
+        if let Some(t) = network::seam_between(&k.faces, &k.joins, ra, rb, 1e-6).filter(|t| *t != seam) {
+            seams.push((t, ra, rb));
+        }
     }
-    let joins = if crease { network::without_tangency(&k.joins, seam) } else { network::with_tangency(&k.faces, &k.joins, seam) };
+    let mut joins = (*k.joins).clone();
+    for &(i, p, q) in &seams {
+        creases.retain(|e| !same_edge(e, p, q));
+        smooths.retain(|e| !same_edge(e, p, q));
+        if crease {
+            creases.push((p, q))
+        } else {
+            smooths.push((p, q))
+        }
+        joins = if crease { network::without_tangency(&joins, i) } else { network::with_tangency(&k.faces, &joins, i) };
+    }
     let scan = loaded(k).and_then(|l| l.covered.as_ref()).map(|c| c.points.clone()).unwrap_or_default();
     let reach = k.faces.iter().map(edit::default_reach).fold(1.0, f64::max);
     let faces = network::refit_near_seam(&k.faces, &joins, seam, &scan, reach, &k.moved).unwrap_or_else(|| k.faces.clone());
@@ -924,6 +1089,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         k.brushing = false;
     }
     let dots = k.handles != HANDLES_NET;
+    symmetry_rows(app, ui, k);
     if l.covered.is_some() {
         let snaps = [tr("ui.scan_edit_snap_off"), tr("ui.scan_edit_snap_pointer"), tr("ui.scan_edit_snap_nearest")];
         choice_row(ui, tr("ui.scan_edit_snap"), "scan_edit_snap", &mut k.snap, &snaps);
@@ -1487,7 +1653,14 @@ pub(crate) fn choose(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui:
     }
     if let Some(k) = dialog(app).filter(|k| k.deleting) {
         if let Some(face) = face_at(k, proj, at) {
-            match network::without_face(&k.faces, face) {
+            // With Symmetry on, the face's mirror image goes with it (the higher one first, so
+            // the other's place stays).
+            let twin = k.mirror.as_ref().and_then(|p| symmetric::twin_face(&k.faces, p.plane, face, 1e-6)).filter(|t| *t != face);
+            let mut gone = vec![face];
+            gone.extend(twin);
+            gone.sort_unstable();
+            let taken = gone.iter().rev().try_fold(k.faces.clone(), |faces, &f| network::without_face(&faces, f));
+            match taken {
                 Ok(faces) => {
                     reshaped_to(k, faces);
                     k.note = None;
@@ -1559,6 +1732,7 @@ fn add_face_click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Po
     k.adding = Some(Adding::default());
     match made {
         Ok((_, faces)) => {
+            let faces = with_twins(k, faces);
             reshaped_to(k, faces);
             k.note = None;
         }
@@ -1785,6 +1959,7 @@ pub(crate) fn release(app: &mut SolveApp) {
         k.drag = None;
         match made {
             Ok((_, faces)) => {
+                let faces = with_twins(k, faces);
                 reshaped_to(k, faces);
                 k.note = None;
             }
@@ -2019,6 +2194,25 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
                 let rect = egui::Rect::from_center_size(*s, egui::vec2(2.0 * HANDLE, 2.0 * HANDLE));
                 painter.rect_filled(rect, 1.0, fill_of(i, on_line));
                 painter.rect_stroke(rect, 1.0, egui::Stroke::new(1.0, t.panel), egui::StrokeKind::Outside);
+            }
+        }
+    }
+    // Symmetry: the plane as a sheet over the Free Form, and the points on it ringed.
+    if let Some(pairs) = &k.mirror
+        && let Some(first) = k.shown_net.first()
+    {
+        let (lo, hi) = k.shown_net.iter().fold((*first, *first), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+        let grow = (hi - lo).len() * 0.1 + 1.0;
+        let pad = Vec3::new(grow, grow, grow);
+        let corners: Option<Vec<egui::Pos2>> =
+            crate::dialogs_scan::sheet(pairs.plane.point, pairs.plane.normal, lo - pad, hi + pad).iter().map(|p| proj.to_screen(*p)).collect();
+        if let Some(corners) = corners.filter(|c| c.len() >= 3) {
+            let fill = t.construction_plane.gamma_multiply(0.25);
+            painter.extend(crate::viewport::projected_polygon(&corners, fill, egui::Stroke::new(1.0, t.construction_geom)));
+        }
+        for (i, d) in k.shown_dots.iter().enumerate().filter(|(i, _)| pairs.is_on_plane(*i)) {
+            if let Some(s) = proj.to_screen(if k.handles == HANDLES_DOTS { d.at } else { k.shown_net.get(i).copied().unwrap_or(d.at) }) {
+                painter.circle_stroke(s, HANDLE + 2.5, egui::Stroke::new(1.5, t.construction_geom));
             }
         }
     }
@@ -2608,5 +2802,72 @@ mod tests {
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+    }
+    /// Symmetry chosen on a half modelled on one side of the dome's mirror plane mirrors it into
+    /// one Free Form joined on the plane; a point moved takes its twin to the mirror image; Undo
+    /// Last Change takes the mirroring back and turns Symmetry off; chosen again, OK keeps both
+    /// halves as one body.
+    #[test]
+    fn symmetry_mirrors_a_half_and_an_edit_moves_both_sides() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[10, 10, 0], [29.6, 10, 0], [29.6, 50, 0], [10, 50, 0]], "count": 5})).unwrap();
+        h.app.run("scan.symmetry", json!({"plane": {"point": [30, 30, 8], "normal": [1, 0, 0]}})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        let planes = symmetry_planes(&h.app);
+        let kept = planes.iter().find(|(n, _)| n == "Symmetry Plane").cloned().expect("Find Symmetry's plane offered");
+        assert_eq!((kind(&h).symmetry, planes.len()), (0, 4), "the three origin planes and the kept one");
+        if let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.symmetry = 4;
+            apply_symmetry(k, Some(kept.clone()));
+        }
+        h.frames(2);
+        let k = kind(&h).clone();
+        assert_eq!((k.faces.len(), k.history.len()), (2, 1), "mirrored in one step: {:?}", k.mirror_note);
+        let pairs = k.mirror.clone().expect("paired");
+        assert_eq!((pairs.pairs(), pairs.on_plane_count()), (20, 5));
+        assert!(network::worst_kink(&k.faces, &k.joins) < 0.5, "smooth across the plane");
+        // A dot on the half raised 3 mm: its twin rises to the mirror image.
+        let inner = (0..k.shown_dots.len())
+            .find(|&p| !pairs.is_on_plane(p) && (k.shown_dots[p].at.x - 20.0).abs() < 2.0 && (k.shown_dots[p].at.y - 30.0).abs() < 2.0)
+            .unwrap();
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            e.snap = SNAP_OFF;
+            let up = e.shown_dots[inner].at + Vec3::new(0.0, 0.0, 3.0);
+            move_to(e, inner, up);
+            let twin = pairs.twin[inner];
+            let (a, b) = (e.shown_dots[inner].at, e.shown_dots[twin].at);
+            assert!(a.z > up.z - 0.5 && b.dist(pairs.plane.reflect(a)) < 1e-6, "both sides: {a:?} {b:?}");
+            // A point on the plane sent sideways stays on it.
+            let on = (0..e.shown_dots.len()).find(|&p| pairs.is_on_plane(p)).unwrap();
+            let to = e.shown_dots[on].at + Vec3::new(4.0, 0.0, 1.0);
+            move_to(e, on, to);
+            assert!(pairs.plane.side(e.shown_dots[on].at).abs() < 1e-6, "on the plane still");
+            // Undo Last Change back past the mirroring: one face, Symmetry off.
+            undo_last(e);
+            undo_last(e);
+            undo_last(e);
+            assert_eq!((e.faces.len(), e.symmetry, e.mirror.is_some()), (1, 0, false), "{:?}", e.mirror_note);
+            e.symmetry = 4;
+            apply_symmetry(e, Some(kept));
+            assert_eq!(e.faces.len(), 2);
+        }
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        let body = edit::editable(&h.app.session, Some("FreeForm1"), "test").unwrap();
+        assert_eq!(body.faces.len(), 2, "both halves kept as one body");
+        let joins = network::joins(&body.faces).unwrap();
+        let tolerance = symmetric::pairing_tolerance(&body.faces, 1.0);
+        assert!(symmetric::pairs_of(&body.faces, &joins, kind_plane(&h), tolerance).is_ok(), "a mirror image as kept");
+    }
+
+    /// The plane Find Symmetry kept, as Edit Surface reads it.
+    fn kind_plane(h: &crate::scenario::Harness) -> MirrorPlane {
+        symmetry_planes(&h.app).into_iter().find(|(n, _)| n == "Symmetry Plane").map(|(_, p)| p).unwrap()
     }
 }

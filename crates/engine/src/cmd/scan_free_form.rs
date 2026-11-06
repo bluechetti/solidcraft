@@ -15,7 +15,7 @@ pub use solidcraft_scan::wrap::{Cylinder, Wrap};
 
 use super::length;
 use crate::params::bad;
-use crate::schema::scan::{ScanAddFaceResult, ScanFreeFormResult, ScanMergeSurfacesResult, ScanWrapSurfaceResult};
+use crate::schema::scan::{ScanAddFaceResult, ScanFreeFormResult, ScanMergeSurfacesResult, ScanMirrorFreeFormResult, ScanWrapSurfaceResult};
 use crate::{EngineError, Result, Session};
 
 /// How a new face meets the scan.
@@ -160,6 +160,75 @@ pub fn added_face(
     let snap = |ps: &[Vec3], along: Option<Vec3>| ps.iter().map(|p| snapped(&on, *p, along, reach)).collect::<Vec<_>>();
     let made = solidcraft_scan::network::with_face(faces, &joins, face, side, far, rows, snap).map_err(|e| bad(cmd, e.to_string()))?;
     Ok((scan, made))
+}
+
+/// A plane to mirror in, from `v`: `YZ`, `XZ` or `XY` (through the origin), a construction plane's
+/// name, or `{point | origin, normal}`.
+pub fn mirror_plane_param(s: &Session, v: Option<&Value>, cmd: &str) -> Result<solidcraft_scan::symmetric::MirrorPlane> {
+    use solidcraft_scan::symmetric::MirrorPlane;
+    const WANT: &str = "`YZ`, `XZ`, `XY`, a construction plane's name, or {point, normal}";
+    let of = |pl: &solidcore_record::Plane| MirrorPlane::new(pl.origin, pl.x.cross(pl.y));
+    match v.filter(|v| !v.is_null()) {
+        Some(Value::String(name)) => {
+            let name = name.trim();
+            if let Some(pl) = solidcore_record::Plane::named(name) {
+                return of(&pl).ok_or_else(|| bad(cmd, "the plane has no direction"));
+            }
+            let found = crate::view::construction_planes(s).into_iter().find(|(_, n, _)| n == name).map(|(_, _, pl)| pl);
+            match found {
+                Some(pl) => of(&pl).ok_or_else(|| bad(cmd, format!("the construction plane `{name}` has no direction"))),
+                None => Err(bad(cmd, format!("no plane `{name}`: a plane is {WANT}"))),
+            }
+        }
+        Some(v) if v.is_object() => {
+            let point = v.get("point").or_else(|| v.get("origin")).and_then(crate::params::vec3);
+            let normal = v.get("normal").and_then(crate::params::vec3);
+            match (point, normal) {
+                (Some(point), Some(normal)) => MirrorPlane::new(point, normal).ok_or_else(|| bad(cmd, "`plane.normal` has no direction")),
+                _ => Err(bad(
+                    cmd,
+                    format!("a plane given as an object needs `point` (or `origin`) and `normal`, each [x, y, z] of numbers; a plane is {WANT}"),
+                )),
+            }
+        }
+        _ => Err(bad(cmd, format!("`plane` is needed: {WANT}"))),
+    }
+}
+
+pub(super) fn mirror_free_form(s: &mut Session, p: &Value) -> Result<Value> {
+    use solidcraft_scan::symmetric::{self, How};
+    let cmd = "scan.mirror_free_form";
+    let plane = mirror_plane_param(s, p.get("plane"), cmd)?;
+    let target = super::surface::editable(s, crate::params::str_(p, "surface"), cmd)?;
+    let gap = match crate::params::expr(p, "gap") {
+        Some(_) => length(s, p, "gap", 1.0, cmd)?,
+        None => target.faces.iter().map(super::surface::default_reach).fold(1.0, f64::max),
+    };
+    if !(gap.is_finite() && gap > 0.0) {
+        return Err(bad(cmd, "`gap` must be a length above 0"));
+    }
+    let (faces, pairs, how) = symmetric::mirrored(&target.faces, plane, gap).map_err(|e| bad(cmd, e.to_string()))?;
+    let (how, added, onto) = match how {
+        How::Already => ("already", 0, 0),
+        How::Mirrored { added, onto } => {
+            super::surface::write_faces(s, &target, &faces, cmd)?;
+            ("mirrored", added, onto)
+        }
+    };
+    let joins = solidcraft_scan::network::joins(&faces).map_err(|e| bad(cmd, e.to_string()))?;
+    let reply = ScanMirrorFreeFormResult {
+        surface: target.body,
+        faces: faces.len(),
+        how: how.into(),
+        added,
+        onto,
+        pairs: pairs.pairs(),
+        on_plane: pairs.on_plane_count(),
+        kink: solidcraft_scan::network::worst_kink(&faces, &joins),
+        feature: target.feature,
+        param_warnings: Vec::new(),
+    };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
 /// Two points `[x, y, z]` under `key`.

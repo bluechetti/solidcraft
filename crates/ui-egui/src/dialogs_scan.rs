@@ -449,7 +449,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
 
 /// Where the plane through `point` square to `normal` cuts the box `lo`..`hi`, a little larger:
 /// its corners in order round it.
-fn sheet(point: Vec3, normal: Vec3, lo: Vec3, hi: Vec3) -> Vec<Vec3> {
+pub(crate) fn sheet(point: Vec3, normal: Vec3, lo: Vec3, hi: Vec3) -> Vec<Vec3> {
     let corner =
         |i: usize| Vec3::new(if i & 1 == 0 { lo.x } else { hi.x }, if i & 2 == 0 { lo.y } else { hi.y }, if i & 4 == 0 { lo.z } else { hi.z });
     let edges = [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)];

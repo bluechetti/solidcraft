@@ -510,6 +510,55 @@ pub struct ScanEditSurfaceParams {
     /// each are evened out, more toward its middle, and kept on the scan. Given alone.
     #[serde(default)]
     pub brush: Option<ScanBrush>,
+    /// With `dots`: the plane the Free Form is a mirror image in (`YZ`, `XZ`, `XY`, a construction
+    /// plane's name such as Find Symmetry's `Symmetry Plane`, or `{point, normal}`): each dot's
+    /// twin moves to the mirror image of where it goes, a dot on the plane stays on it, and the
+    /// Free Form is kept an exact mirror image. A Free Form that is not one is refused
+    /// (`scan.mirror_free_form` mirrors a half).
+    #[serde(default)]
+    pub symmetry: Option<Value>,
+}
+
+/// Mirror a Free Form modelled on one side of a plane: its edges within the gap are put onto the
+/// plane, and its mirror image is added, joined to it there, so it is one Free Form that Edit
+/// Surface's Symmetry keeps a mirror image. One that is a mirror image already is left as it
+/// is. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanMirrorFreeFormParams {
+    /// The Free Form. Default: the selected one, else the one made last.
+    #[serde(default)]
+    pub surface: Option<String>,
+    /// The plane: `YZ`, `XZ`, `XY`, a construction plane's name (Find Symmetry's `Symmetry
+    /// Plane`), or `{point, normal}`.
+    pub plane: Value,
+    /// How far from the plane an edge may be to be put onto it. Default: a tenth of the net's
+    /// size, at least 1 mm.
+    #[serde(default)]
+    pub gap: Option<LengthExpr>,
+}
+
+/// What `scan.mirror_free_form` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanMirrorFreeFormResult {
+    /// The Free Form, and how many faces it has now.
+    pub surface: String,
+    pub faces: usize,
+    /// `mirrored` (a half mirrored: `added` faces, `onto` points put onto the plane) or `already`
+    /// (a mirror image as it was; nothing changed).
+    pub how: String,
+    pub added: usize,
+    pub onto: usize,
+    /// How many pairs of points the Free Form has, and how many points lie on the plane.
+    pub pairs: usize,
+    pub on_plane: usize,
+    /// How far from tangent the faces meet at worst where they are held tangent, in degrees.
+    pub kink: f64,
+    /// The Import feature that keeps the Free Form.
+    pub feature: u64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
 }
 
 /// A smoothing brush dabbed on a surface.

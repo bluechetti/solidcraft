@@ -186,6 +186,8 @@ pub fn shade(s: &Session, scan: Option<&str>, faces: &[NurbsSurface], cmd: &str)
 
 /// The network maths a dialog edits a Free Form of several faces with, as the commands do.
 pub use solidcraft_scan::network;
+/// Symmetry for a Free Form, as Edit Surface keeps it.
+pub use solidcraft_scan::symmetric;
 
 /// The surface as STEP text: one face, the whole of it (its knots may be uneven or repeated).
 pub fn surface_step(surface: &NurbsSurface, cmd: &str) -> Result<String> {
@@ -577,8 +579,25 @@ fn moved_dots(s: &mut Session, target: &EditableSurface, list: &Value, p: &Value
         moves.retain(|m| m.0 != id);
         moves.push((id, to));
     }
+    // With a symmetry plane: each dot's twin goes to the mirror image, and the result is made an
+    // exact mirror image again.
+    let pairs = match p.get("symmetry").filter(|v| !v.is_null()) {
+        Some(v) => {
+            let plane = super::free_form::mirror_plane_param(s, Some(v), cmd)?;
+            let tolerance = solidcraft_scan::symmetric::pairing_tolerance(faces, faces.iter().map(default_reach).fold(1.0, f64::max));
+            Some(solidcraft_scan::symmetric::pairs_of(faces, &joins, plane, tolerance).map_err(|e| bad(cmd, format!("`symmetry`: {e}")))?)
+        }
+        None => None,
+    };
+    if let Some(pairs) = &pairs {
+        moves = pairs.moves(&moves);
+    }
     let made =
         network::dots_moved(faces, &joins, &moves, network::DOT_RING, hold, &[]).ok_or_else(|| bad(cmd, "the points could not be moved there"))?;
+    let made = match &pairs {
+        Some(pairs) => pairs.kept(&made, &joins).unwrap_or(made),
+        None => made,
+    };
     write_faces(s, target, &made, cmd)?;
     faces_reply(s, target, &made, moves.len(), cmd)
 }
@@ -623,6 +642,9 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad(cmd, "`dots` moves points on the surface: give it without points, moves, hold, net, slide or a refit"));
         }
         return moved_dots(s, &target, list, p, cmd);
+    }
+    if given("symmetry") {
+        return Err(bad(cmd, "`symmetry` goes with `dots`: the plane the Free Form is a mirror image in, each dot's twin moved with it"));
     }
     if target.is_network() {
         return Err(bad(
