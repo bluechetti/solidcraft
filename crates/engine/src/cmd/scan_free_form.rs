@@ -7,6 +7,7 @@
 use serde_json::Value;
 use solidcore_record::Vec3;
 use solidcraft_geom::bspline::NurbsSurface;
+use solidcraft_geom::prelude::*;
 use solidcraft_scan::free_form;
 pub use solidcraft_scan::free_form::Fitting;
 pub use solidcraft_scan::merge::{Merged, Seam};
@@ -14,7 +15,7 @@ pub use solidcraft_scan::wrap::{Cylinder, Wrap};
 
 use super::length;
 use crate::params::bad;
-use crate::schema::scan::{ScanFreeFormResult, ScanMergeSurfacesResult, ScanWrapSurfaceResult};
+use crate::schema::scan::{ScanAddFaceResult, ScanFreeFormResult, ScanMergeSurfacesResult, ScanWrapSurfaceResult};
 use crate::{EngineError, Result, Session};
 
 /// How a new face meets the scan.
@@ -109,6 +110,96 @@ pub(super) fn new_free_form(s: &mut Session, p: &Value) -> Result<Value> {
         kept: made.kept,
         rms: made.rms,
         feature,
+        param_warnings: Vec::new(),
+    };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+pub use solidcraft_scan::network::Side;
+
+/// The faces with one added on the open `side` of face `face` out to `far`, `rows` points across,
+/// fitted to the scan `body` (or the selected or only one), places met no farther than `reach`
+/// from it when given: as Add Face (`scan.add_face`) and Edit Surface's Add Face make it. Also
+/// the scan's name.
+#[allow(clippy::too_many_arguments)]
+pub fn added_face(
+    s: &Session,
+    body: Option<&str>,
+    faces: &[NurbsSurface],
+    face: usize,
+    side: Side,
+    far: [Vec3; 2],
+    rows: usize,
+    reach: Option<f64>,
+) -> Result<(String, Vec<NurbsSurface>)> {
+    let cmd = "scan.add_face";
+    let joins = solidcraft_scan::network::joins(faces).map_err(|e| bad(cmd, e.to_string()))?;
+    let (scan, on) = super::curve::projector(s, body, cmd)?;
+    let reach = reach.unwrap_or(f64::INFINITY);
+    let snap = |ps: &[Vec3]| ps.iter().map(|p| on.nearest(*p).filter(|(_, d)| *d <= reach).map(|(q, _)| q)).collect::<Vec<_>>();
+    let made = solidcraft_scan::network::with_face(faces, &joins, face, side, far, rows, snap).map_err(|e| bad(cmd, e.to_string()))?;
+    Ok((scan, made))
+}
+
+/// Two points `[x, y, z]` under `key`.
+fn two_points(p: &Value, key: &str, cmd: &str, what: &str) -> Result<[Vec3; 2]> {
+    let list = p.get(key).and_then(Value::as_array).ok_or_else(|| bad(cmd, format!("`{key}` must be two points [x, y, z]: {what}")))?;
+    let points: Vec<Vec3> = list
+        .iter()
+        .map(|v| crate::params::vec3(v).ok_or_else(|| bad(cmd, format!("a point of `{key}` must be [x, y, z] of numbers"))))
+        .collect::<Result<_>>()?;
+    <[Vec3; 2]>::try_from(points).map_err(|_| bad(cmd, format!("`{key}` must be two points: {what}")))
+}
+
+pub(super) fn add_face(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.add_face";
+    let [a, b] = two_points(p, "edge", cmd, "the ends of the open edge to build on")?;
+    let far = two_points(p, "far", cmd, "the new face's far corners")?;
+    let rows = match p.get("rows").filter(|v| !v.is_null()) {
+        Some(v) => v
+            .as_u64()
+            .filter(|n| (free_form::LEAST_POINTS as u64..=free_form::MOST_POINTS as u64).contains(n))
+            .ok_or_else(|| bad(cmd, "`rows` must be a whole number from 4 to 12"))? as usize,
+        None => free_form::LEAST_POINTS,
+    };
+    let reach = match crate::params::expr(p, "reach") {
+        Some(_) => Some(length(s, p, "reach", 1.0, cmd)?),
+        None => None,
+    };
+    let target = super::surface::editable(s, crate::params::str_(p, "surface"), cmd)?;
+    let joins = solidcraft_scan::network::joins(&target.faces).map_err(|e| bad(cmd, e.to_string()))?;
+    let ((face, side), off) =
+        solidcraft_scan::network::open_side_near(&target.faces, &joins, a, b).ok_or_else(|| bad(cmd, "the surface has no open edge to build on"))?;
+    // Near enough: the two ends off by less than the edge is long, all told.
+    let places = solidcraft_scan::network::network_points(&target.faces, &joins);
+    let ends = joins.side(&target.faces, face, side);
+    let long = match (ends.first(), ends.last()) {
+        (Some(a), Some(b)) => places[*a].dist(places[*b]),
+        _ => 0.0,
+    };
+    if !(off <= long) {
+        return Err(bad(cmd, "`edge` is not near the ends of an open edge of the surface: give the two corners of the edge to build on"));
+    }
+    let body = crate::params::str_(p, "body").map(str::to_owned);
+    let (scan, made) = added_face(s, body.as_deref(), &target.faces, face, side, far, rows, reach)?;
+    super::surface::write_faces(s, &target, &made, cmd)?;
+    let new = made.len() - 1;
+    let joins = solidcraft_scan::network::joins(&made).map_err(|e| bad(cmd, e.to_string()))?;
+    let (rms, max) = match super::surface::covered(s, Some(&scan), &made[new], super::surface::default_reach(&made[new]), cmd) {
+        Ok(c) if !c.points.is_empty() => solidcraft_scan::surface_edit::distance(&made[new], &c.points),
+        _ => (0.0, 0.0),
+    };
+    let reply = ScanAddFaceResult {
+        surface: target.body,
+        faces: made.len(),
+        face: new,
+        controls: made[new].count(),
+        body: scan,
+        rms,
+        max,
+        kink: solidcraft_scan::network::worst_kink(&made, &joins),
+        irregular: joins.irregular().count(),
+        feature: target.feature,
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))

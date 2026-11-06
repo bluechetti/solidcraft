@@ -12,6 +12,8 @@
 //! Merge Surfaces (`scan.merge_surfaces`): choose the surfaces (or none, for every one); the sides
 //! that will be made one are drawn over the picture. OK makes them meet and sews them together.
 
+use std::sync::Arc;
+
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
 use solidcraft_engine::cmd::scan::free_form::{self, Fit, Fitting, Made, Merged, Wrap, Wrapped};
@@ -35,6 +37,8 @@ pub struct NewFreeForm {
     pub reach: f64,
     pub count: usize,
     pub stiffness: f64,
+    /// The deviation colouring's tolerance, mm.
+    pub tolerance: f64,
     clicks: Vec<Vec3>,
     /// The view's right and up when the rectangle's second corner was clicked.
     view: Option<(Vec3, Vec3)>,
@@ -43,7 +47,7 @@ pub struct NewFreeForm {
 
 impl Default for NewFreeForm {
     fn default() -> Self {
-        NewFreeForm { corners_mode: 0, fit: 1, reach: 0.0, count: 4, stiffness: 0.0, clicks: Vec::new(), view: None, shown: None }
+        NewFreeForm { corners_mode: 0, fit: 1, reach: 0.0, count: 4, stiffness: 0.0, tolerance: 0.1, clicks: Vec::new(), view: None, shown: None }
     }
 }
 
@@ -51,7 +55,13 @@ impl Default for NewFreeForm {
 struct Shown {
     key: (Vec<[u64; 3]>, usize, usize, u64, usize, u64, u64),
     result: Result<Made, String>,
+    /// The scan under the face, coloured by how far it is from it: for which tolerance and colours,
+    /// the dots' version, and the dots.
+    shade: Option<(u64, [[u8; 3]; 3], u64, Arc<Vec<u8>>)>,
 }
+
+/// The colouring's id among the clouds the viewport draws.
+const SHADE_CLOUD_ID: u64 = u64::MAX - 8;
 
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
     match id {
@@ -112,7 +122,33 @@ fn fit(app: &SolveApp, k: &mut NewFreeForm) {
     let reach = (k.reach > 0.0).then_some(k.reach);
     let fitting = Fitting { count: k.count, stiffness: k.stiffness, overall: false };
     let result = free_form::make(&app.session, None, c, fit_mode(k), fitting, reach).map_err(|e| e.to_string());
-    k.shown = Some(Box::new(Shown { key, result }));
+    k.shown = Some(Box::new(Shown { key, result, shade: None }));
+}
+
+/// The scan under the face coloured by how far it is from it, again when the face, the tolerance
+/// or the colours have changed.
+fn shade(app: &SolveApp, k: &mut NewFreeForm) {
+    let tolerance = k.tolerance;
+    let Some(shown) = k.shown.as_mut() else { return };
+    let colours = crate::scan_deviation::colours();
+    if shown.shade.as_ref().is_some_and(|(t, c, _, _)| *t == tolerance.to_bits() && *c == colours) {
+        return;
+    }
+    let Ok(made) = &shown.result else { return };
+    let Some(scan) = made.scan.as_deref() else { return };
+    let faces = [made.surface.clone()];
+    let Ok((_, mut found)) = solidcraft_engine::cmd::scan::surface::shade(&app.session, Some(scan), &faces, "scan.free_form") else { return };
+    let mut values = Vec::new();
+    solidcraft_engine::cmd::scan::surface::network::shade_values(&mut found, &faces, None, &mut values);
+    let dots = Arc::new(crate::dialogs_scan_surface::shade_dots(&found, &values, tolerance, colours));
+    shown.shade = Some((tolerance.to_bits(), colours, crate::dialogs_scan_surface::next_shade_version(), dots));
+}
+
+/// The colouring of the scan under the face, as a cloud for the GPU viewport.
+pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuCloud> {
+    let Some(Kind::ScanFreeForm(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    let (_, _, version, dots) = k.shown.as_ref()?.shade.as_ref()?;
+    Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots.clone()))
 }
 
 /// The dialog's rows.
@@ -136,7 +172,12 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
         });
     }
     form_row(ui, tr("ui.scan_free_form_points"), |ui| ui_kit::number_field(ui, &mut k.count, 4..=12, 0.2, ""));
+    if k.fit != 0 {
+        form_row(ui, tr("ui.scan_edit_tolerance"), |ui| ui_kit::length_field(ui, &mut k.tolerance, &units, decimals));
+        k.tolerance = if k.tolerance.is_finite() && k.tolerance > 0.0 { k.tolerance } else { 0.1 };
+    }
     fit(app, k);
+    shade(app, k);
     let count = format!("{} / {}", k.clicks.len(), needed(k));
     form_row(ui, tr("ui.scan_free_form_clicked"), |ui| ui_kit::text(ui, &count, ui_kit::Text::Cell));
     if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_curve_undo_point"), ui_kit::Button::Enabled(!k.clicks.is_empty()))).clicked() {

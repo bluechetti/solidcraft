@@ -17,13 +17,14 @@ use solidcraft_scan::symmetry::{self, Guide, Mirror};
 use super::CommandSpec;
 use crate::params::{bad, str_};
 use crate::schema::scan::{
-    ScanBase, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams,
-    ScanDeviationResult, ScanEditNetParams, ScanEditNetResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitParams, ScanFitResult,
-    ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFittedTorus,
-    ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult, ScanMergeSurfacesParams,
-    ScanMergeSurfacesResult, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams, ScanRepairResult,
-    ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult,
-    ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
+    ScanAddFaceParams, ScanAddFaceResult, ScanBase, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCompleteResult, ScanCurveParams,
+    ScanCurveResult, ScanDeviationParams, ScanDeviationResult, ScanEditNetParams, ScanEditNetResult, ScanEditSurfaceParams, ScanEditSurfaceResult,
+    ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere,
+    ScanFittedTorus, ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult,
+    ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult,
+    ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult,
+    ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams,
+    ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -42,6 +43,7 @@ const EDIT_SURFACE_CONTRACT: TypedContract<ScanEditSurfaceParams> = TypedContrac
 const CURVE_CONTRACT: TypedContract<ScanCurveParams> = TypedContract::new();
 const EDIT_NET_CONTRACT: TypedContract<ScanEditNetParams> = TypedContract::new();
 const FREE_FORM_CONTRACT: TypedContract<ScanFreeFormParams> = TypedContract::new();
+const ADD_FACE_CONTRACT: TypedContract<ScanAddFaceParams> = TypedContract::new();
 const MERGE_SURFACES_CONTRACT: TypedContract<ScanMergeSurfacesParams> = TypedContract::new();
 const SLICE_SURFACE_CONTRACT: TypedContract<ScanSliceSurfaceParams> = TypedContract::new();
 const WRAP_SURFACE_CONTRACT: TypedContract<ScanWrapSurfaceParams> = TypedContract::new();
@@ -166,7 +168,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("surface_patch")
         .contract(&EDIT_SURFACE_CONTRACT)
         .output(output_schema_for::<ScanEditSurfaceResult>)
-        .params("surface?: the surface body (default: the selected or only one Fit Surface made; moved since is fine, reshaped is refused); points?: the whole control net [[x,y,z], …], u fastest; moves?: [{point: [u, v], to: [x,y,z] | along: length along the surface's normal}]; hold?: [[u, v], …] points kept where they are when refitting (besides those moved); net?: {count, knots, points, degree?} a whole new net, given alone; refit?: none|around|all (default none: the ring of two round each point moved or held, or every point not moved or held, fitted to the scan again); scan?: mesh body to refit to (default the selected or only one); reach?: length a scan point may be from the surface to count as under it (default a tenth of the net's size, at least 1 mm); falloff?: length (default 0): the points within it of a point moved or slid go with it, less the further they are, and are held when refitting; slide?: {points: [[u, v], …], u?: length, v?: length} the points slid about that far along the surface instead of moved through space (not with moves or points): one undo step → surface, controls [u, v], moved, carried, refitted, scan, points, rms, max, feature"),
+        .params("surface?: the surface body (default: the selected or only one Fit Surface made; moved since is fine, reshaped is refused); dots?: [{at: [x,y,z] (the point on the surface nearest it) | point: [u, v] with face?: n, to: [x,y,z] | along: length}] points on the surface moved (the surface at that control point's place on it, the points spread evenly over each face, runs through where it goes; the way to edit a Free Form of several faces), neighbours?: hold (default: the surface still runs through every other point on it) | follow (the points round it go with it); faces?: [{count, knots, points, degree?}, …] every face as it now is, given alone; points?: the whole control net [[x,y,z], …], u fastest; moves?: [{point: [u, v], to: [x,y,z] | along: length along the surface's normal}]; hold?: [[u, v], …] points kept where they are when refitting (besides those moved); net?: {count, knots, points, degree?} a whole new net, given alone; refit?: none|around|all (default none: the ring of two round each point moved or held, or every point not moved or held, fitted to the scan again); scan?: mesh body to refit to (default the selected or only one); reach?: length a scan point may be from the surface to count as under it (default a tenth of the net's size, at least 1 mm); falloff?: length (default 0): the points within it of a point moved or slid go with it, less the further they are, and are held when refitting; slide?: {points: [[u, v], …], u?: length, v?: length} the points slid about that far along the surface instead of moved through space (not with moves or points): one undo step → surface, controls [u, v], moved, carried, refitted, scan, points, rms, max, feature"),
     CommandSpec::new("scan.curve_on_scan", "Curve on Scan", crate::checked!("scan.curve_on_scan", curve::curve_on_scan))
         .at("SCAN", "SKETCH")
         .icon("spline")
@@ -191,6 +193,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&FREE_FORM_CONTRACT)
         .output(output_schema_for::<ScanFreeFormResult>)
         .params("corners: [[x,y,z] × 4] in order round the first face; fit?: off|follow|overall (default follow: fitted to the scan under it; overall: the places far off it left out, so it spans openings and ribs; off: flat over the corners); count?: 4…12 points each way (default 4); stiffness?: 0…1 (default 0); reach?: length (snap distance: the scan met no farther than this); body?: the scan (default: the selected or only one): a surface of its own, a cubic net, to edit with Edit Surface and Edit Net (one undo step) → body, surface, controls, places, met, kept, rms, feature"),
+    CommandSpec::new("scan.add_face", "Add Face", crate::checked!("scan.add_face", free_form::add_face))
+        .icon("surface_patch")
+        .contract(&ADD_FACE_CONTRACT)
+        .output(output_schema_for::<ScanAddFaceResult>)
+        .params("edge: [[x,y,z] × 2] at or near the ends of an open edge of the Free Form; far: [[x,y,z] × 2] the new face's far corners (either order; a corner on a point of the Free Form is that point); rows?: 4…12 points across (default 4); reach?: length (the scan met no farther than this); surface?: the Free Form (default: the selected one, else the one made last); body?: the scan: a face added on that edge, sharing it, tangent to the face it grows from, a side that runs along another open edge shared with it too, fitted to the scan; the Free Form stays one surface body of several faces, edited with Edit Surface (one undo step) → surface, faces, face, controls, body, rms, max, kink, irregular, feature"),
     CommandSpec::new("scan.wrap_surface", "Wrap Surface", crate::checked!("scan.wrap_surface", free_form::wrap_surface))
         .at("SCAN", "FREEFORM")
         .icon("surface_revolve")

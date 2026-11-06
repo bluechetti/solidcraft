@@ -485,6 +485,88 @@ pub struct ScanEditSurfaceParams {
     /// surface, which keeps its shape as far as its points allow. Not with `moves` or `points`.
     #[serde(default)]
     pub slide: Option<ScanSlide>,
+    /// Points on the surface moved (the surface runs through where each goes), as QuickSurface's
+    /// points are dragged; on a Free Form of several faces, the way to edit it besides `faces`.
+    #[serde(default)]
+    pub dots: Option<Vec<ScanDotMove>>,
+    /// With `dots`: `hold` (the default: the surface still runs through every other point on it)
+    /// or `follow` (the points round a dot moved go with it, smoothly).
+    #[serde(default)]
+    pub neighbours: Option<String>,
+    /// Every face of the surface as it now is (a Free Form's network, faces added), given alone.
+    #[serde(default)]
+    pub faces: Option<Vec<ScanNet>>,
+}
+
+/// A point on a surface moved: the surface at a control point's place on it (one for each control
+/// point, spread evenly over its face) taken to a place.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanDotMove {
+    /// The point on the surface nearest this place moves (the way to name one on a Free Form of
+    /// several faces, whose faces the body may list in another order after an edit).
+    #[serde(default)]
+    pub at: Option<Point3>,
+    /// Or: the face, from 0 (default 0), and the control point whose place on it moves, `[u, v]`.
+    #[serde(default)]
+    pub face: Option<u32>,
+    #[serde(default)]
+    pub point: Option<[u32; 2]>,
+    /// Where it goes, in mm.
+    #[serde(default)]
+    pub to: Option<Point3>,
+    /// How far it goes along the way the surface faces there (negative the other way).
+    #[serde(default)]
+    pub along: Option<LengthExpr>,
+}
+
+/// Add a face to a Free Form on one of its open edges, out to two far corners: the new face shares
+/// the edge, meets the face it grows from tangentially, and is fitted to the scan. One undo step;
+/// the Free Form stays one surface body of several faces.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanAddFaceParams {
+    /// The Free Form. Default: the selected one, else the one made last.
+    #[serde(default)]
+    pub surface: Option<String>,
+    /// Two points at (or near) the ends of the open edge to build on, in mm.
+    pub edge: Vec<Point3>,
+    /// The new face's far corners, in mm, in either order.
+    pub far: Vec<Point3>,
+    /// The new face's points across, from the edge out: 4 to 12. Default: 4.
+    #[serde(default)]
+    pub rows: Option<u32>,
+    /// The scan met no farther than this from a place. Default: no limit.
+    #[serde(default)]
+    pub reach: Option<LengthExpr>,
+    /// The scan. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+/// What `scan.add_face` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanAddFaceResult {
+    /// The Free Form, and how many faces it has now.
+    pub surface: String,
+    pub faces: usize,
+    /// The new face (its place among the faces, from 0) and its points each way.
+    pub face: usize,
+    pub controls: [usize; 2],
+    /// The scan, and how far its points under the new face are from it (root mean square and
+    /// largest, mm).
+    pub body: String,
+    pub rms: f64,
+    pub max: f64,
+    /// How far from tangent the faces meet at worst, in degrees.
+    pub kink: f64,
+    /// Corners where other than four faces meet (inside) or more than three (on the edge).
+    pub irregular: usize,
+    /// The Import feature that keeps the surface.
+    pub feature: u64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
 }
 
 /// Control points slid along a surface.
@@ -775,6 +857,9 @@ pub struct ScanEditSurfaceResult {
     pub rms: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f64>,
+    /// How many faces the surface has (more than one for a Free Form's network).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faces: Option<usize>,
     /// The Import feature that keeps the surface.
     pub feature: u64,
     /// In the warn parameter-check mode: what the call's parameters got wrong.

@@ -1,0 +1,1265 @@
+//! A Free Form network (QuickSurface's quad surface, by way of SurfaceCraft's cage): faces, each a
+//! cubic B-spline net, that share whole sides. A point on a shared side is one point of the
+//! network, held by both nets, so the faces meet exactly; where two faces met smoothly when the
+//! network was read, the points next to their shared side are kept in line with it either side,
+//! so the faces stay tangent there as they are edited; where they met sharply (a crease) only the
+//! side is held.
+//!
+//! The network is read from its faces alone ([`joins`]): points of different faces that are in
+//! the same place are one point. So a network is kept as nothing but its faces (a sewn surface
+//! body), and a design keeps no list of welds.
+//!
+//! An edit is least squares over the points that may move ([`moved`]): places on the faces put
+//! where they go (a point dragged, the points round it held where they are, scan places to fit),
+//! the faces held tangent across smooth seams, and a light hold on how unevenly neighbouring
+//! points move. The points a user drags are on the surface ([`dots`]: the surface at each point's
+//! Greville place), as QuickSurface's feature points are; the control net is the cage behind them.
+
+use std::collections::HashMap;
+
+use solidcore_record::Vec3;
+use solidcraft_geom::bspline::NurbsSurface;
+use solidcraft_geom::prelude::*;
+
+use crate::merge::SIDES;
+pub use crate::merge::Side;
+use crate::surface::{cholesky_back, cholesky_factor, clamped_knots};
+use crate::surface_edit::{basis, foot_from, frame, greville_places, points, samples, with_points};
+
+/// How far from straight across a seam two faces may meet and still be held tangent, degrees.
+pub const SMOOTH_DEGREES: f64 = 3.0;
+
+/// The most faces a network has.
+pub const MOST_FACES: usize = 400;
+
+/// Points closer than this share of the network's size are one point.
+const SAME_POINT: f64 = 1e-7;
+
+/// The most free points solved for with a dense factoring; more go by conjugate gradients.
+const DENSE: usize = 900;
+
+/// Two faces' sides that are one: the same network points, in order, or the other way round.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Seam {
+    pub a: usize,
+    pub a_side: Side,
+    pub b: usize,
+    pub b_side: Side,
+    pub reversed: bool,
+}
+
+/// A corner of the network's faces: the point, how many faces have a corner there, and whether it
+/// lies on the network's edge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Corner {
+    pub point: usize,
+    pub faces: usize,
+    pub border: bool,
+}
+
+impl Corner {
+    /// Not as a grid's corner is: inside, other than four faces round it; on the edge, more than
+    /// three (three are a grid's corner with a quarter left out). The surface cannot be smooth all
+    /// round such a point (QuickSurface's red points).
+    pub fn irregular(&self) -> bool {
+        if self.border { self.faces > 3 } else { self.faces != 4 }
+    }
+}
+
+/// A point on a seam (`e`) and the points next to it either side, `a` in one face and `b` in the
+/// other: held in a line, each seam's `b` as far from `e` as its `a` is, times one ratio for the
+/// whole seam, so the faces are tangent all along it and not only at their points.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Across {
+    pub seam: usize,
+    pub e: usize,
+    pub a: usize,
+    pub b: usize,
+}
+
+/// How the faces of a network are joined.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Joins {
+    /// For each face, the network point each point of its net is (u fastest).
+    pub of: Vec<Vec<usize>>,
+    /// Each network point's places: a face and a point of its net, the first its own.
+    pub at: Vec<Vec<(usize, usize)>>,
+    /// The sides two faces share.
+    pub seams: Vec<Seam>,
+    /// The sides of one face only: the network's edge.
+    pub open: Vec<(usize, Side)>,
+    /// Across each smooth seam: a point on it and the points next to it inside the two faces,
+    /// held in a line.
+    pub smooth: Vec<Across>,
+    pub corners: Vec<Corner>,
+}
+
+impl Joins {
+    /// How many points the network has.
+    pub fn len(&self) -> usize {
+        self.at.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.at.is_empty()
+    }
+
+    /// Whether network point `p` is on a side two faces share.
+    pub fn on_seam(&self, p: usize) -> bool {
+        self.at.get(p).is_some_and(|at| at.len() > 1)
+    }
+
+    /// The network points along `side` of `face`, in its order.
+    pub fn side(&self, faces: &[NurbsSurface], face: usize, side: Side) -> Vec<usize> {
+        let (Some(f), Some(of)) = (faces.get(face), self.of.get(face)) else { return Vec::new() };
+        side.indices(f.count()).iter().filter_map(|k| of.get(*k).copied()).collect()
+    }
+
+    pub fn irregular(&self) -> impl Iterator<Item = &Corner> {
+        self.corners.iter().filter(|c| c.irregular())
+    }
+}
+
+/// Why a network could not be read or changed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkError {
+    /// A face is not a cubic B-spline without weights.
+    NotCubic,
+    TooManyFaces,
+    /// The side asked for is not on the network's edge.
+    NotOpen,
+    /// The side is too short to build on.
+    TooShort,
+    /// The face's places are not finite, or no face could be fitted.
+    Failed,
+}
+
+impl std::fmt::Display for NetworkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            NetworkError::NotCubic => "only cubic surfaces without weights (as New Free Form and Fit Surface make them) join a network",
+            NetworkError::TooManyFaces => "a Free Form has at most 400 faces",
+            NetworkError::NotOpen => "a face is added on an open edge: that edge has a face on it already",
+            NetworkError::TooShort => "that edge has too few points to build on",
+            NetworkError::Failed => "the face could not be made there: click its far corners away from the edge, on the scan",
+        })
+    }
+}
+
+fn cubic(s: &NurbsSurface) -> bool {
+    s.degree() == [3, 3] && s.count().iter().all(|n| *n >= 4) && s.homogeneous().iter().all(|h| (h.w - 1.0).abs() <= 1e-12)
+}
+
+/// One step into the face from a point of `side` (at `k` in the net of `count`).
+fn inward(side: Side, [nu, _]: [usize; 2], k: usize) -> usize {
+    match side {
+        Side::FirstRow => k + nu,
+        Side::LastRow => k - nu,
+        Side::FirstColumn => k + 1,
+        Side::LastColumn => k - 1,
+    }
+}
+
+/// The four corners of a net of `count`, as places in it.
+fn corner_places([nu, nv]: [usize; 2]) -> [usize; 4] {
+    [0, nu - 1, nu * nv - 1, (nv - 1) * nu]
+}
+
+fn find(parent: &mut [usize], mut a: usize) -> usize {
+    while parent[a] != a {
+        parent[a] = parent[parent[a]];
+        a = parent[a];
+    }
+    a
+}
+
+/// How the faces join: points of different faces' sides within a ten-millionth of the network's
+/// size of each other are one point; sides all of whose points are one are seams.
+pub fn joins(faces: &[NurbsSurface]) -> Result<Joins, NetworkError> {
+    if faces.len() > MOST_FACES {
+        return Err(NetworkError::TooManyFaces);
+    }
+    if faces.iter().any(|f| !cubic(f)) {
+        return Err(NetworkError::NotCubic);
+    }
+    let nets: Vec<Vec<Vec3>> = faces.iter().map(points).collect();
+    if nets.iter().flatten().any(|p| !p.is_finite()) {
+        return Err(NetworkError::Failed);
+    }
+    let starts: Vec<usize> = nets.iter().scan(0, |s, n| Some(std::mem::replace(s, *s + n.len()))).collect();
+    let total = nets.iter().map(Vec::len).sum::<usize>();
+    let (lo, hi) = nets
+        .iter()
+        .flatten()
+        .fold((Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+    let tolerance = (SAME_POINT * hi.dist(lo)).max(1e-12);
+    // The points on the faces' sides, swept along x: those within the tolerance are one.
+    let mut border: Vec<(usize, Vec3)> = Vec::new();
+    for (f, face) in faces.iter().enumerate() {
+        let mut on: Vec<usize> = SIDES.iter().flat_map(|s| s.indices(face.count())).collect();
+        on.sort_unstable();
+        on.dedup();
+        border.extend(on.into_iter().map(|k| (starts[f] + k, nets[f][k])));
+    }
+    border.sort_by(|a, b| a.1.x.total_cmp(&b.1.x));
+    let mut parent: Vec<usize> = (0..total).collect();
+    for (n, &(a, p)) in border.iter().enumerate() {
+        for &(b, q) in border[n + 1..].iter().take_while(|(_, q)| q.x - p.x <= tolerance) {
+            if p.dist(q) <= tolerance {
+                let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+                if ra != rb {
+                    parent[ra.max(rb)] = ra.min(rb);
+                }
+            }
+        }
+    }
+    let mut id_of_root: HashMap<usize, usize> = HashMap::new();
+    let mut at: Vec<Vec<(usize, usize)>> = Vec::new();
+    let mut of: Vec<Vec<usize>> = Vec::with_capacity(faces.len());
+    for (f, net) in nets.iter().enumerate() {
+        let mut ids = Vec::with_capacity(net.len());
+        for k in 0..net.len() {
+            let root = find(&mut parent, starts[f] + k);
+            let id = *id_of_root.entry(root).or_insert_with(|| {
+                at.push(Vec::new());
+                at.len() - 1
+            });
+            at[id].push((f, k));
+            ids.push(id);
+        }
+        of.push(ids);
+    }
+    // Sides by their ends: two sides of the same points, either way round, are a seam.
+    let side_ids = |f: usize, s: Side| -> Vec<usize> { s.indices(faces[f].count()).iter().map(|k| of[f][*k]).collect() };
+    let mut by_ends: HashMap<(usize, usize, usize), Vec<(usize, Side)>> = HashMap::new();
+    for f in 0..faces.len() {
+        for s in SIDES {
+            let ids = side_ids(f, s);
+            let (Some(&first), Some(&last)) = (ids.first(), ids.last()) else { continue };
+            if first == last {
+                continue;
+            }
+            by_ends.entry((first.min(last), first.max(last), ids.len())).or_default().push((f, s));
+        }
+    }
+    let mut seams = Vec::new();
+    let mut paired: Vec<(usize, Side)> = Vec::new();
+    let mut keys: Vec<_> = by_ends.keys().copied().collect();
+    keys.sort_unstable();
+    for key in keys {
+        let sides = &by_ends[&key];
+        for (n, &(a, sa)) in sides.iter().enumerate() {
+            for &(b, sb) in &sides[n + 1..] {
+                if paired.contains(&(a, sa)) || paired.contains(&(b, sb)) || (a == b && sa == sb) {
+                    continue;
+                }
+                let (ia, ib) = (side_ids(a, sa), side_ids(b, sb));
+                let reversed = ia.first() != ib.first();
+                let same = if reversed { ia.iter().eq(ib.iter().rev()) } else { ia == ib };
+                if same {
+                    seams.push(Seam { a, a_side: sa, b, b_side: sb, reversed });
+                    paired.push((a, sa));
+                    paired.push((b, sb));
+                }
+            }
+        }
+    }
+    let open: Vec<(usize, Side)> = (0..faces.len()).flat_map(|f| SIDES.map(|s| (f, s))).filter(|fs| !paired.contains(fs)).collect();
+    // A corner's faces, and whether it is on an open side.
+    let on_open: std::collections::HashSet<usize> = open.iter().flat_map(|&(f, s)| side_ids(f, s)).collect();
+    let mut corner_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (f, face) in faces.iter().enumerate() {
+        for k in corner_places(face.count()) {
+            corner_faces.entry(of[f][k]).or_default().push(f);
+        }
+    }
+    let mut corners: Vec<Corner> =
+        corner_faces.into_iter().map(|(point, fs)| Corner { point, faces: fs.len(), border: on_open.contains(&point) }).collect();
+    corners.sort_by_key(|c| c.point);
+    let irregular: std::collections::HashSet<usize> = corners.iter().filter(|c| c.irregular()).map(|c| c.point).collect();
+    // Tangency held across seams that are smooth: along them, and at their ends where the corner
+    // is as a grid's (an irregular corner cannot be held so: its faces would pull against each other).
+    let mut smooth = Vec::new();
+    for (index, seam) in seams.iter().enumerate() {
+        let (ca, cb) = (faces[seam.a].count(), faces[seam.b].count());
+        let (ka, mut kb) = (seam.a_side.indices(ca), seam.b_side.indices(cb));
+        if seam.reversed {
+            kb.reverse();
+        }
+        for (n, (&pa, &pb)) in ka.iter().zip(&kb).enumerate() {
+            let e = of[seam.a][pa];
+            if (n == 0 || n + 1 == ka.len()) && irregular.contains(&e) {
+                continue;
+            }
+            let (ia, ib) = (of[seam.a][inward(seam.a_side, ca, pa)], of[seam.b][inward(seam.b_side, cb, pb)]);
+            let (pe, pia, pib) = (nets[seam.a][pa], nets[seam.a][inward(seam.a_side, ca, pa)], nets[seam.b][inward(seam.b_side, cb, pb)]);
+            let (da, db) = (pia - pe, pe - pib);
+            let straight = match (da.normalized(), db.normalized()) {
+                (Some(a), Some(b)) => a.dot(b) >= SMOOTH_DEGREES.to_radians().cos(),
+                _ => false,
+            };
+            if straight && ia != ib {
+                smooth.push(Across { seam: index, e, a: ia, b: ib });
+            }
+        }
+    }
+    Ok(Joins { of, at, seams, open, smooth, corners })
+}
+
+/// The network's points, each once, read from the faces (a point's own place).
+pub fn network_points(faces: &[NurbsSurface], joins: &Joins) -> Vec<Vec3> {
+    let nets: Vec<Vec<Vec3>> = faces.iter().map(points).collect();
+    joins.at.iter().map(|at| at.first().and_then(|&(f, k)| nets.get(f)?.get(k).copied()).unwrap_or(Vec3::ZERO)).collect()
+}
+
+/// The faces with the network's points at `places` (one per network point).
+pub fn with_network_points(faces: &[NurbsSurface], joins: &Joins, places: &[Vec3]) -> Option<Vec<NurbsSurface>> {
+    faces
+        .iter()
+        .zip(&joins.of)
+        .map(|(face, ids)| {
+            let net: Option<Vec<Vec3>> = ids.iter().map(|id| places.get(*id).copied()).collect();
+            with_points(face, &net?)
+        })
+        .collect()
+}
+
+/// Where on a face the points a user drags lie, one for each of its control points (u fastest):
+/// evenly spaced along each way whose knots are (as a Free Form's are), so they do not crowd its
+/// edges as the control points' Greville places do; else at the Greville places. Either way the
+/// surface can be made to run through any places put there (each point's own basis is not zero
+/// at its place).
+pub fn dot_places(face: &NurbsSurface) -> Vec<(f64, f64)> {
+    let even = |d: usize| -> bool {
+        let (k, p) = (&face.knots()[d], face.degree()[d]);
+        let inner: Vec<f64> = k.iter().copied().skip(p).take(k.len().saturating_sub(2 * p)).collect();
+        inner.windows(3).all(|w| ((w[2] - w[1]) - (w[1] - w[0])).abs() <= 1e-9 * (k[k.len() - 1] - k[0]).abs().max(1e-300))
+            && inner.windows(2).all(|w| w[1] > w[0])
+    };
+    let [nu, nv] = face.count();
+    let [[u0, u1], [v0, v1]] = face.domain();
+    let greville = greville_places(face);
+    let (eu, ev) = (even(0), even(1));
+    (0..nv)
+        .flat_map(|j| (0..nu).map(move |i| (i, j)))
+        .map(|(i, j)| {
+            let (gu, gv) = greville[j * nu + i];
+            let u = if eu { u0 + (u1 - u0) * i as f64 / (nu - 1).max(1) as f64 } else { gu };
+            let v = if ev { v0 + (v1 - v0) * j as f64 / (nv - 1).max(1) as f64 } else { gv };
+            (u, v)
+        })
+        .collect()
+}
+
+/// A point the user drags: on the surface, at a network point's own place's [`dot_places`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Dot {
+    pub face: usize,
+    pub u: f64,
+    pub v: f64,
+    pub at: Vec3,
+}
+
+/// One dot per network point, in the network's order.
+pub fn dots(faces: &[NurbsSurface], joins: &Joins) -> Vec<Dot> {
+    let places: Vec<Vec<(f64, f64)>> = faces.iter().map(dot_places).collect();
+    let nets: Vec<Vec<Vec3>> = faces.iter().map(points).collect();
+    joins
+        .at
+        .iter()
+        .map(|at| {
+            let &(face, k) = at.first().unwrap_or(&(0, 0));
+            let (u, v) = places.get(face).and_then(|p| p.get(k)).copied().unwrap_or((0.0, 0.0));
+            let at = faces.get(face).zip(nets.get(face)).and_then(|(f, n)| frame(f, n, u, v)).map_or(Vec3::ZERO, |(s, _, _)| s);
+            Dot { face, u, v, at }
+        })
+        .collect()
+}
+
+/// The way the surface faces at a dot.
+pub fn dot_normal(faces: &[NurbsSurface], dot: &Dot) -> Option<Vec3> {
+    let face = faces.get(dot.face)?;
+    let (_, su, sv) = frame(face, &points(face), dot.u, dot.v)?;
+    su.cross(sv).normalized()
+}
+
+/// The open side whose ends are nearest `a` and `b` (either way round), and how far they are off
+/// in all.
+pub fn open_side_near(faces: &[NurbsSurface], joins: &Joins, a: Vec3, b: Vec3) -> Option<((usize, Side), f64)> {
+    let places = network_points(faces, joins);
+    joins
+        .open
+        .iter()
+        .filter_map(|&(f, s)| {
+            let ids = joins.side(faces, f, s);
+            let (p, q) = (places[*ids.first()?], places[*ids.last()?]);
+            Some(((f, s), (p.dist(a) + q.dist(b)).min(p.dist(b) + q.dist(a))))
+        })
+        .min_by(|x, y| x.1.total_cmp(&y.1))
+}
+
+/// Whether every face is joined to every other by seams (one piece).
+pub fn connected(faces: &[NurbsSurface], joins: &Joins) -> bool {
+    if faces.len() <= 1 {
+        return true;
+    }
+    let mut reached = vec![false; faces.len()];
+    let mut stack = vec![0];
+    reached[0] = true;
+    while let Some(f) = stack.pop() {
+        for seam in joins.seams.iter().filter(|s| s.a == f || s.b == f) {
+            let other = if seam.a == f { seam.b } else { seam.a };
+            if !reached[other] {
+                reached[other] = true;
+                stack.push(other);
+            }
+        }
+    }
+    reached.iter().all(|r| *r)
+}
+
+/// A place on a face put where it goes: the surface of `face` at `(u, v)` drawn toward `to`, as
+/// hard as `weight` (a scan place counts 1).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Goal {
+    pub face: usize,
+    pub u: f64,
+    pub v: f64,
+    pub to: Vec3,
+    pub weight: f64,
+}
+
+/// How the network moves in one step of [`moved`].
+#[derive(Clone, Copy, Debug)]
+pub struct Moves<'a> {
+    /// The network points that may move.
+    pub free: &'a [bool],
+    pub goals: &'a [Goal],
+    /// How hard the faces are held tangent across smooth seams, as so many places a point.
+    pub tangent: f64,
+    /// How evenly neighbouring points move (second differences of the move), as places a point.
+    pub even: f64,
+    /// How straight the net itself is held (second differences of its points), as places a
+    /// point: for a new face, whose net starts as a guess, not for one being edited.
+    pub bend: f64,
+    /// Seams held tangent though they are not smooth yet (a face just added).
+    pub also_smooth: &'a [Across],
+}
+
+/// A row of the least squares: network points, their shares, the place it wants and how hard.
+struct Row {
+    cols: Vec<(usize, f64)>,
+    to: Vec3,
+    weight: f64,
+}
+
+/// One least-squares step: the points `moves.free` marks moved to bring the goals nearest, the
+/// faces tangent across smooth seams and neighbouring points moving evenly; the rest stay. `None`
+/// when nothing may move or the solve has no answer.
+pub fn moved(faces: &[NurbsSurface], joins: &Joins, moves: &Moves) -> Option<Vec<NurbsSurface>> {
+    let start = network_points(faces, joins);
+    let n = start.len();
+    if moves.free.len() != n {
+        return None;
+    }
+    let mut slot = vec![usize::MAX; n];
+    let mut free = 0;
+    for (p, f) in moves.free.iter().enumerate() {
+        if *f {
+            slot[p] = free;
+            free += 1;
+        }
+    }
+    if free == 0 {
+        return None;
+    }
+    let mut rows: Vec<Row> = Vec::new();
+    let mut weights: Vec<f64> = Vec::new();
+    for g in moves.goals {
+        let (Some(face), Some(ids)) = (faces.get(g.face), joins.of.get(g.face)) else { continue };
+        if !(g.weight > 0.0 && g.to.is_finite() && g.u.is_finite() && g.v.is_finite()) {
+            continue;
+        }
+        let Some(b) = basis(face, g.u, g.v) else { continue };
+        let mut cols: Vec<(usize, f64)> = Vec::with_capacity(16);
+        for (&c, &w) in b.cols.iter().zip(&b.value) {
+            let Some(&id) = ids.get(c) else { continue };
+            match cols.iter_mut().find(|(i, _)| *i == id) {
+                Some(e) => e.1 += w,
+                None => cols.push((id, w)),
+            }
+        }
+        if cols.iter().any(|(id, _)| moves.free[*id]) {
+            weights.push(g.weight);
+            rows.push(Row { cols, to: g.to, weight: g.weight });
+        }
+    }
+    // What the goals weigh for each free point, by their middle weight: a point dragged weighs far
+    // more than those held, and must not make the holds between points weigh more with it.
+    weights.sort_by(f64::total_cmp);
+    let middle = weights.get(weights.len() / 2).copied().unwrap_or(1.0);
+    let per_point = (middle * weights.len() as f64 / free as f64).max(1.0);
+    // Tangent across smooth seams: the inner point either side in line with the seam's, the far
+    // one as far off as the near one times the seam's own ratio (of their lengths as they are, all
+    // along it): with one ratio the faces' slopes across the seam agree everywhere along it, where
+    // a ratio for each point would leave them kinked between the points.
+    let across: Vec<Across> = joins.smooth.iter().chain(moves.also_smooth).copied().collect();
+    let mut sums: HashMap<usize, (f64, f64)> = HashMap::new();
+    for t in &across {
+        let s = sums.entry(t.seam).or_insert((0.0, 0.0));
+        s.0 += start[t.a].dist(start[t.e]);
+        s.1 += start[t.b].dist(start[t.e]);
+    }
+    for t in &across {
+        let (e, a, b) = (t.e, t.a, t.b);
+        if !(moves.free[e] || moves.free[a] || moves.free[b]) {
+            continue;
+        }
+        let (near, far) = sums.get(&t.seam).copied().unwrap_or((0.0, 0.0));
+        if !(near > 1e-12 && far > 1e-12) {
+            continue;
+        }
+        let r = near / far;
+        rows.push(Row { cols: vec![(a, 1.0), (b, r), (e, -(1.0 + r))], to: Vec3::ZERO, weight: moves.tangent * per_point });
+    }
+    // Even moves, and a straight net, along each face's rows and columns.
+    for (face, ids) in faces.iter().zip(&joins.of) {
+        let [nu, nv] = face.count();
+        let mut lines: Vec<[usize; 3]> = Vec::new();
+        for j in 0..nv {
+            for i in 1..nu - 1 {
+                lines.push([ids[j * nu + i - 1], ids[j * nu + i], ids[j * nu + i + 1]]);
+            }
+        }
+        for i in 0..nu {
+            for j in 1..nv - 1 {
+                lines.push([ids[(j - 1) * nu + i], ids[j * nu + i], ids[(j + 1) * nu + i]]);
+            }
+        }
+        for [a, b, c] in lines {
+            if !(moves.free[a] || moves.free[b] || moves.free[c]) {
+                continue;
+            }
+            let cols = vec![(a, 1.0), (b, -2.0), (c, 1.0)];
+            let now = start[a] - start[b] * 2.0 + start[c];
+            if moves.even > 0.0 {
+                rows.push(Row { cols: cols.clone(), to: now, weight: moves.even * per_point });
+            }
+            if moves.bend > 0.0 {
+                rows.push(Row { cols, to: Vec3::ZERO, weight: moves.bend * per_point });
+            }
+        }
+    }
+    // A light pull toward where each free point is, so one nothing reaches stays put.
+    for (p, f) in moves.free.iter().enumerate() {
+        if *f {
+            rows.push(Row { cols: vec![(p, 1.0)], to: start[p], weight: 1e-6 * per_point });
+        }
+    }
+    let solved = solve(&rows, &start, &slot, free)?;
+    let mut places = start;
+    for (p, s) in slot.iter().enumerate() {
+        if let Some(q) = solved.get(*s) {
+            places[p] = *q;
+        }
+    }
+    with_network_points(faces, joins, &places)
+}
+
+/// The free points (`slot` numbers them) that bring the rows nearest, the others where `at` has them.
+fn solve(rows: &[Row], at: &[Vec3], slot: &[usize], free: usize) -> Option<Vec<Vec3>> {
+    // The normal equations, by their entries; three right-hand sides.
+    let mut entries: HashMap<(usize, usize), f64> = HashMap::new();
+    let mut rhs = vec![Vec3::ZERO; free];
+    for row in rows {
+        let w = row.weight;
+        let rest = row.cols.iter().filter(|(p, _)| slot[*p] == usize::MAX).fold(row.to, |r, (p, c)| r - at[*p] * *c);
+        for &(pa, ca) in row.cols.iter().filter(|(p, _)| slot[*p] != usize::MAX) {
+            let sa = slot[pa];
+            rhs[sa] += rest * (w * ca);
+            for &(pb, cb) in row.cols.iter().filter(|(p, _)| slot[*p] != usize::MAX) {
+                *entries.entry((sa, slot[pb])).or_insert(0.0) += w * ca * cb;
+            }
+        }
+    }
+    let column = |c: usize| rhs.iter().map(|r| [r.x, r.y, r.z][c]).collect::<Vec<f64>>();
+    let (x, y, z) = if free <= DENSE {
+        let mut m = vec![0.0; free * free];
+        for (&(a, b), v) in &entries {
+            m[a * free + b] += v;
+        }
+        if !cholesky_factor(&mut m, free) {
+            return None;
+        }
+        (cholesky_back(&m, &column(0), free)?, cholesky_back(&m, &column(1), free)?, cholesky_back(&m, &column(2), free)?)
+    } else {
+        let mut by_row: Vec<Vec<(usize, f64)>> = vec![Vec::new(); free];
+        for (&(a, b), v) in &entries {
+            by_row[a].push((b, *v));
+        }
+        let start = |c: usize| (0..slot.len()).filter(|p| slot[*p] != usize::MAX).map(|p| [at[p].x, at[p].y, at[p].z][c]).collect::<Vec<f64>>();
+        let order: Vec<usize> = (0..slot.len()).filter(|p| slot[*p] != usize::MAX).collect();
+        let guess = |c: usize| {
+            let mut x = vec![0.0; free];
+            for (k, p) in order.iter().enumerate() {
+                x[slot[*p]] = start(c)[k];
+            }
+            conjugate_gradients(&by_row, &column(c), x)
+        };
+        (guess(0)?, guess(1)?, guess(2)?)
+    };
+    Some((0..free).map(|i| Vec3::new(x[i], y[i], z[i])).collect())
+}
+
+/// `M x = b` for the sparse symmetric positive definite `M` (its rows), by conjugate gradients
+/// with the diagonal as preconditioner, from `x`.
+fn conjugate_gradients(m: &[Vec<(usize, f64)>], b: &[f64], mut x: Vec<f64>) -> Option<Vec<f64>> {
+    let n = b.len();
+    let apply = |v: &[f64], out: &mut [f64]| {
+        for (i, row) in m.iter().enumerate() {
+            out[i] = row.iter().map(|(j, a)| a * v[*j]).sum();
+        }
+    };
+    let diagonal: Vec<f64> = m.iter().enumerate().map(|(i, row)| row.iter().filter(|(j, _)| *j == i).map(|(_, a)| *a).sum()).collect();
+    let pre = |i: usize, v: f64| if diagonal[i] > 1e-300 { v / diagonal[i] } else { v };
+    let mut ax = vec![0.0; n];
+    apply(&x, &mut ax);
+    let mut r: Vec<f64> = (0..n).map(|i| b[i] - ax[i]).collect();
+    let mut z: Vec<f64> = (0..n).map(|i| pre(i, r[i])).collect();
+    let mut p = z.clone();
+    let mut rz: f64 = r.iter().zip(&z).map(|(a, b)| a * b).sum();
+    let norm = b.iter().map(|v| v * v).sum::<f64>().sqrt().max(1e-300);
+    let mut ap = vec![0.0; n];
+    for _ in 0..(4 * n).max(200) {
+        if r.iter().map(|v| v * v).sum::<f64>().sqrt() <= 1e-10 * norm {
+            break;
+        }
+        apply(&p, &mut ap);
+        let pap: f64 = p.iter().zip(&ap).map(|(a, b)| a * b).sum();
+        if !(pap > 0.0) {
+            break;
+        }
+        let alpha = rz / pap;
+        for i in 0..n {
+            x[i] += alpha * p[i];
+            r[i] -= alpha * ap[i];
+        }
+        z = (0..n).map(|i| pre(i, r[i])).collect();
+        let next: f64 = r.iter().zip(&z).map(|(a, b)| a * b).sum();
+        let beta = next / rz;
+        rz = next;
+        for i in 0..n {
+            p[i] = z[i] + beta * p[i];
+        }
+    }
+    x.iter().all(|v| v.is_finite()).then_some(x)
+}
+
+/// The scan points' places on the faces: for each point, the face whose surface it lies nearest
+/// (its foot inside the face, within `reach`), as a goal of weight 1 there; points on no face (off
+/// every edge, or farther than `reach`) left out. Only the faces `among` marks are looked at.
+pub fn feet(faces: &[NurbsSurface], points_of_scan: &[Vec3], reach: f64, among: &[bool]) -> Vec<Goal> {
+    let nets: Vec<Vec<Vec3>> = faces.iter().map(points).collect();
+    let guesses: Vec<Vec<(f64, f64, Vec3)>> = faces.iter().zip(&nets).map(|(f, n)| samples(f, n)).collect();
+    let boxes: Vec<(Vec3, Vec3)> = nets
+        .iter()
+        .map(|n| {
+            n.iter().fold((Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)))
+        })
+        .map(|(lo, hi)| (lo - Vec3::new(reach, reach, reach), hi + Vec3::new(reach, reach, reach)))
+        .collect();
+    let mut goals = Vec::new();
+    for p in points_of_scan {
+        let mut best: Option<(f64, Goal)> = None;
+        for (f, face) in faces.iter().enumerate() {
+            if !among.get(f).copied().unwrap_or(false) {
+                continue;
+            }
+            let (lo, hi) = boxes[f];
+            if p.x < lo.x || p.y < lo.y || p.z < lo.z || p.x > hi.x || p.y > hi.y || p.z > hi.z {
+                continue;
+            }
+            let Some(&(u, v, _)) = guesses[f].iter().min_by(|a, b| a.2.dist(*p).total_cmp(&b.2.dist(*p))) else { continue };
+            let Some(foot) = foot_from(face, &nets[f], *p, u, v).filter(|f| f.inside) else { continue };
+            let d = foot.point.dist(*p);
+            if d <= reach && best.as_ref().is_none_or(|(b, _)| d < *b) {
+                best = Some((d, Goal { face: f, u: foot.u, v: foot.v, to: *p, weight: 1.0 }));
+            }
+        }
+        if let Some((_, g)) = best {
+            goals.push(g);
+        }
+    }
+    goals
+}
+
+/// A scan point under a face, for the deviation colouring: where it is, the face and its place
+/// on it (carried from one look to the next, so a drag finds it again in a step or two).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Under {
+    pub at: Vec3,
+    pub face: usize,
+    pub u: f64,
+    pub v: f64,
+}
+
+/// The scan under the faces, each point on the face it lies nearest, and for each face which
+/// way the scan's outside is (1 along the face's u × v, -1 against).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Shade {
+    pub points: Vec<Under>,
+    pub outside: Vec<f64>,
+}
+
+/// The scan under the faces, at most `limit` points (the middles of its triangles, thinned evenly):
+/// each on the face nearest it, its foot inside that face and within `reach` of it, facing the way
+/// the face does (within 45°, on the side most of that face's points are, so neither a wall a
+/// face's edge comes near nor the far side of a thin part counts). One look over the scan for all
+/// the faces.
+pub fn shade(scan: &crate::Scan, faces: &[NurbsSurface], reach: f64, limit: usize) -> Shade {
+    let nets: Vec<Vec<Vec3>> = faces.iter().map(points).collect();
+    let Some(first) = nets.iter().flatten().next().copied() else { return Shade::default() };
+    let (lo, hi) = nets.iter().flatten().fold((first, first), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+    let pad = Vec3::new(reach, reach, reach);
+    let (lo, hi) = (lo - pad, hi + pad);
+    let near: Vec<(Vec3, Vec3)> = (0..scan.triangle_count())
+        .filter_map(|t| {
+            let [a, b, c] = scan.corners(t)?;
+            let m = (a + b + c) / 3.0;
+            let inside = m.x >= lo.x && m.y >= lo.y && m.z >= lo.z && m.x <= hi.x && m.y <= hi.y && m.z <= hi.z;
+            inside.then(|| (b - a).cross(c - a).normalized().map(|n| (m, n)))?
+        })
+        .collect();
+    let near = crate::thinned(&near, limit.saturating_mul(3));
+    let middles: Vec<Vec3> = near.iter().map(|(m, _)| *m).collect();
+    let all = vec![true; faces.len()];
+    let found = feet(faces, &middles, reach, &all);
+    // Each foot's facing: the triangle's normal against the face's there.
+    let mut facing: Vec<(Under, f64)> = Vec::with_capacity(found.len());
+    let by_place: HashMap<[u64; 3], Vec3> = near.iter().map(|(m, n)| ([m.x.to_bits(), m.y.to_bits(), m.z.to_bits()], *n)).collect();
+    for g in found {
+        let Some(n) = by_place.get(&[g.to.x.to_bits(), g.to.y.to_bits(), g.to.z.to_bits()]) else { continue };
+        let Some((_, su, sv)) = frame(&faces[g.face], &nets[g.face], g.u, g.v) else { continue };
+        let Some(normal) = su.cross(sv).normalized() else { continue };
+        let along = n.dot(normal);
+        if along.abs() >= std::f64::consts::FRAC_1_SQRT_2 {
+            facing.push((Under { at: g.to, face: g.face, u: g.u, v: g.v }, along));
+        }
+    }
+    let outside: Vec<f64> = (0..faces.len())
+        .map(|f| if facing.iter().filter(|(u, _)| u.face == f).map(|(_, a)| a.signum()).sum::<f64>() < 0.0 { -1.0 } else { 1.0 })
+        .collect();
+    let kept: Vec<Under> = facing.into_iter().filter(|(u, a)| a.signum() == outside[u.face]).map(|(u, _)| u).collect();
+    Shade { points: crate::thinned(&kept, limit), outside }
+}
+
+/// How far each point of `shade` is from the faces, along the way the scan's outside is (above
+/// the surface positive): each point's place found again on its face from where it was. Only the
+/// points on the faces `only` marks are measured again (all with `None`, or when `values` does not
+/// hold one for each point yet); the others keep their values.
+pub fn shade_values(shade: &mut Shade, faces: &[NurbsSurface], only: Option<&[bool]>, values: &mut Vec<f32>) {
+    let nets: Vec<Vec<Vec3>> = faces.iter().map(points).collect();
+    let all = only.is_none() || values.len() != shade.points.len();
+    if values.len() != shade.points.len() {
+        *values = vec![f32::NAN; shade.points.len()];
+    }
+    for (under, value) in shade.points.iter_mut().zip(values.iter_mut()) {
+        if !all && !only.is_some_and(|o| o.get(under.face).copied().unwrap_or(false)) {
+            continue;
+        }
+        let (Some(face), Some(net)) = (faces.get(under.face), nets.get(under.face)) else {
+            *value = f32::NAN;
+            continue;
+        };
+        if let Some(f) = foot_from(face, net, under.at, under.u, under.v) {
+            under.u = f.u;
+            under.v = f.v;
+        }
+        let Some((s, su, sv)) = frame(face, net, under.u, under.v) else {
+            *value = f32::NAN;
+            continue;
+        };
+        let n = su.cross(sv).normalized().unwrap_or(Vec3::Z) * shade.outside.get(under.face).copied().unwrap_or(1.0);
+        *value = (under.at - s).dot(n) as f32;
+    }
+}
+
+/// The network points of the faces `chosen` marks, and the rings `ring` deep round the network
+/// points `around` in every face that has them.
+pub fn region(faces: &[NurbsSurface], joins: &Joins, around: &[usize], ring: usize) -> Vec<bool> {
+    let mut free = vec![false; joins.len()];
+    for &p in around {
+        for &(f, k) in joins.at.get(p).map_or(&[][..], Vec::as_slice) {
+            let [nu, nv] = faces[f].count();
+            let (i, j) = (k % nu, k / nu);
+            for jj in j.saturating_sub(ring)..=(j + ring).min(nv - 1) {
+                for ii in i.saturating_sub(ring)..=(i + ring).min(nu - 1) {
+                    free[joins.of[f][jj * nu + ii]] = true;
+                }
+            }
+        }
+    }
+    free
+}
+
+/// How many rings round a dot dragged move: enough that the dots beyond hold still (the surface
+/// runs through every dot, which ripples out from one moved).
+pub const DOT_RING: usize = 3;
+
+/// The faces with one network point `point` (a dot) put at `to`, the points round it moved as
+/// `ring` says: the points of the faces that hold it within `ring` of it move, the dots outside
+/// that stay where they are (with `hold_near`, those inside too: the surface runs through every
+/// other dot, QuickSurface's Don't Move Neighbours), the faces stay tangent across smooth seams.
+pub fn dot_moved(faces: &[NurbsSurface], joins: &Joins, point: usize, to: Vec3, ring: usize, hold_near: bool) -> Option<Vec<NurbsSurface>> {
+    dots_moved(faces, joins, &[(point, to)], ring, hold_near, &[])
+}
+
+/// As [`dot_moved`], several dots at once, with `extra` goals (scan places to fit).
+pub fn dots_moved(
+    faces: &[NurbsSurface],
+    joins: &Joins,
+    moves: &[(usize, Vec3)],
+    ring: usize,
+    hold_near: bool,
+    extra: &[Goal],
+) -> Option<Vec<NurbsSurface>> {
+    let around: Vec<usize> = moves.iter().map(|m| m.0).collect();
+    let free = region(faces, joins, &around, ring);
+    let all = dots(faces, joins);
+    let touched: Vec<bool> = (0..faces.len()).map(|f| joins.of[f].iter().any(|p| free[*p])).collect();
+    // Each dot of a face that moves: a moved one where it goes, the rest held (inside the ring
+    // only when holding the near ones too). A dot is held on each face it is on, so a seam's dot
+    // stays on both.
+    const HOLD: f64 = 1e3;
+    let places: Vec<Vec<(f64, f64)>> = faces.iter().map(dot_places).collect();
+    let mut goals: Vec<Goal> = extra.to_vec();
+    for (p, dot) in all.iter().enumerate() {
+        let to = moves.iter().find(|m| m.0 == p).map(|m| m.1);
+        if to.is_none() && free[p] && !hold_near {
+            continue;
+        }
+        let place = to.unwrap_or(dot.at);
+        for &(f, k) in &joins.at[p] {
+            if !touched[f] {
+                continue;
+            }
+            let (u, v) = places[f].get(k).copied().unwrap_or((dot.u, dot.v));
+            goals.push(Goal { face: f, u, v, to: place, weight: HOLD * if to.is_some() { 1e3 } else { 1.0 } });
+        }
+    }
+    let even = if hold_near { 1e-3 } else { 1.0 };
+    moved(faces, joins, &Moves { free: &free, goals: &goals, tangent: 40.0, even, bend: 0.0, also_smooth: &[] })
+}
+
+/// The network's faces with every face's points doubled both ways (Increase Resolution): every
+/// face exactly as it was, so seams stay seams.
+pub fn refined(faces: &[NurbsSurface]) -> Result<Vec<NurbsSurface>, crate::net::NetError> {
+    faces.iter().map(|f| crate::net::refine(f, true, true)).collect()
+}
+
+/// The places across a new face snapped to the scan, rounds of fitting, and how straight its net is
+/// held at first.
+const ADD_PLACES: usize = 4;
+const ADD_ROUNDS: usize = 5;
+
+/// The network with a face added on its open side `side` of `face`, out to the far corners `far`
+/// (in either order), `rows` points across it: its near side the side it is added on (one with it),
+/// a side of it that runs where an open side of another face does (one point for point) one with
+/// that too, and the rest fitted to the scan by `snap` (`None` for a place with no scan near), held
+/// tangent to the face it grows from. The new face is the last.
+pub fn with_face(
+    faces: &[NurbsSurface],
+    joins: &Joins,
+    face: usize,
+    side: Side,
+    far: [Vec3; 2],
+    rows: usize,
+    snap: impl Fn(&[Vec3]) -> Vec<Option<Vec3>>,
+) -> Result<Vec<NurbsSurface>, NetworkError> {
+    if faces.len() >= MOST_FACES {
+        return Err(NetworkError::TooManyFaces);
+    }
+    if !joins.open.contains(&(face, side)) {
+        return Err(NetworkError::NotOpen);
+    }
+    if far.iter().any(|p| !p.is_finite()) {
+        return Err(NetworkError::Failed);
+    }
+    let rows = rows.clamp(crate::free_form::LEAST_POINTS, crate::free_form::MOST_POINTS);
+    let places = network_points(faces, joins);
+    let ids = joins.side(faces, face, side);
+    let m = ids.len();
+    if m < 4 {
+        return Err(NetworkError::TooShort);
+    }
+    let edge: Vec<Vec3> = ids.iter().map(|p| places[*p]).collect();
+    let (first, last) = (edge[0], edge[m - 1]);
+    let far = if first.dist(far[0]) + last.dist(far[1]) <= first.dist(far[1]) + last.dist(far[0]) { far } else { [far[1], far[0]] };
+    // The far corners on the scan, unless one is a point of the network already (it is welded).
+    let snapped = snap(&far);
+    let far: [Vec3; 2] = std::array::from_fn(|k| {
+        let on_net = places.iter().find(|p| p.dist(far[k]) <= 1e-9 * (1.0 + first.dist(last)));
+        on_net.copied().or_else(|| snapped.get(k).copied().flatten()).unwrap_or(far[k])
+    });
+    if far[0].dist(first) <= 1e-9 || far[1].dist(last) <= 1e-9 {
+        return Err(NetworkError::Failed);
+    }
+    // The net: rows from the edge out to the far side, u along the edge.
+    let mut net = vec![Vec3::ZERO; m * rows];
+    for r in 0..rows {
+        let t = r as f64 / (rows - 1) as f64;
+        for k in 0..m {
+            let out = far[0] + (far[1] - far[0]) * (k as f64 / (m - 1) as f64);
+            net[r * m + k] = edge[k] + (out - edge[k]) * t;
+        }
+    }
+    let make = |net: &[Vec3]| NurbsSurface::new([3, 3], [clamped_knots(m), clamped_knots(rows)], net, &vec![1.0; net.len()]).ok();
+    // Facing the way the face it grows from does.
+    let grows_from = &faces[face];
+    let (facing_from, facing_new) = (side_normal(grows_from, side), make(&net).and_then(|s| side_normal(&s, Side::FirstRow)));
+    if let (Some(a), Some(b)) = (facing_from, facing_new)
+        && a.dot(b) < 0.0
+    {
+        for r in 0..rows {
+            net[r * m..(r + 1) * m].reverse();
+        }
+    }
+    let new = make(&net).ok_or(NetworkError::Failed)?;
+    // Its other sides one with open sides of the network that run between the same points.
+    let mut held = vec![false; m * rows];
+    for k in Side::FirstRow.indices([m, rows]) {
+        held[k] = true;
+    }
+    for s in [Side::LastRow, Side::FirstColumn, Side::LastColumn] {
+        let mine = s.indices([m, rows]);
+        let (a, b) = (net[mine[0]], net[mine[mine.len() - 1]]);
+        let found = joins.open.iter().filter(|o| **o != (face, side)).find_map(|&(f, os)| {
+            let theirs: Vec<Vec3> = joins.side(faces, f, os).iter().map(|p| places[*p]).collect();
+            let close = |p: Vec3, q: Vec3| p.dist(q) <= 1e-9 * (1.0 + first.dist(last));
+            (theirs.len() == mine.len()).then_some(())?;
+            if close(theirs[0], a) && close(theirs[theirs.len() - 1], b) {
+                Some(theirs)
+            } else if close(theirs[0], b) && close(theirs[theirs.len() - 1], a) {
+                Some(theirs.into_iter().rev().collect())
+            } else {
+                None
+            }
+        });
+        if let Some(theirs) = found {
+            for (k, p) in mine.iter().zip(theirs) {
+                net[*k] = p;
+                held[*k] = true;
+            }
+        }
+    }
+    for k in corner_places([m, rows]) {
+        held[k] = true;
+    }
+    let new = with_points(&new, &net).ok_or(NetworkError::Failed)?;
+    let mut all: Vec<NurbsSurface> = faces.to_vec();
+    all.push(new);
+    let mut grown = joins_after(&all)?;
+    let at = all.len() - 1;
+    // The new seam held tangent from the start (the face is a guess until it is fitted).
+    let tangent: Vec<Across> = tangency_across(&all, &grown, at);
+    // The row of the face it grows from next to the edge moves too, fitted to the scan with the
+    // new face: so the two settle into one smooth surface across it, even where that face's net
+    // turned back at its edge (going straight on from there, the new face would fold).
+    let beside: Vec<usize> =
+        tangent.iter().flat_map(|t| [t.a, t.b]).filter(|p| grown.at[*p].len() == 1 && grown.at[*p].iter().all(|&(f, _)| f != at)).collect();
+    let neighbours: Vec<usize> = {
+        let mut f: Vec<usize> = beside.iter().flat_map(|p| grown.at[*p].iter().map(|&(f, _)| f)).collect();
+        f.sort_unstable();
+        f.dedup();
+        f
+    };
+    // Places go to the scan along the way each face faces as a whole, never across it: each to the
+    // height of its nearest scan point (on a rough scan the nearest point is often off to one side,
+    // which would drag the places, and the net with them, across the face).
+    let facings: HashMap<usize, Option<Vec3>> = neighbours.iter().chain(std::iter::once(&at)).map(|&f| (f, mean_normal(&all[f]))).collect();
+    for round in 0..ADD_ROUNDS {
+        let mut goals: Vec<Goal> = Vec::new();
+        for &f in neighbours.iter().chain(std::iter::once(&at)) {
+            let surface = &all[f];
+            let snet = points(surface);
+            let [cu, cv] = surface.count();
+            let (nu, nv) = (ADD_PLACES * cu, ADD_PLACES * cv);
+            let [[u0, u1], [v0, v1]] = surface.domain();
+            let mut uv = Vec::with_capacity((nu + 1) * (nv + 1));
+            let mut on = Vec::with_capacity(uv.capacity());
+            for j in 0..=nv {
+                for i in 0..=nu {
+                    let (u, v) = (u0 + (u1 - u0) * i as f64 / nu as f64, v0 + (v1 - v0) * j as f64 / nv as f64);
+                    if let Some((p, _, _)) = frame(surface, &snet, u, v) {
+                        uv.push((u, v));
+                        on.push(p);
+                    }
+                }
+            }
+            let facing = facings.get(&f).copied().flatten();
+            let found = snap(&on);
+            goals.extend(uv.iter().zip(on.iter().zip(found)).filter_map(|(&(u, v), (place, p))| {
+                let to = match facing {
+                    Some(n) => *place + n * (p? - *place).dot(n),
+                    None => p?,
+                };
+                Some(Goal { face: f, u, v, to, weight: 1.0 })
+            }));
+        }
+        let free: Vec<bool> = (0..grown.len()).map(|p| beside.contains(&p) || grown.at[p].iter().all(|&(f, k)| f == at && !held[k])).collect();
+        let bend = if round == 0 { 1e-2 } else { 1e-4 };
+        let moves = Moves { free: &free, goals: &goals, tangent: 40.0, even: 0.0, bend, also_smooth: &tangent };
+        match moved(&all, &grown, &moves) {
+            Some(next) => all = next,
+            None => break,
+        }
+        grown = joins_after(&all)?;
+    }
+    Ok(all)
+}
+
+/// The joins of `faces` (each weld exact, as a face added copies its points).
+fn joins_after(faces: &[NurbsSurface]) -> Result<Joins, NetworkError> {
+    joins(faces)
+}
+
+/// The tangency rows across every seam of face `at`, smooth or not yet.
+fn tangency_across(faces: &[NurbsSurface], joins: &Joins, at: usize) -> Vec<Across> {
+    let irregular: std::collections::HashSet<usize> = joins.irregular().map(|c| c.point).collect();
+    let mut out = Vec::new();
+    for (index, seam) in joins.seams.iter().enumerate().filter(|(_, s)| s.a == at || s.b == at) {
+        let (ca, cb) = (faces[seam.a].count(), faces[seam.b].count());
+        let (ka, mut kb) = (seam.a_side.indices(ca), seam.b_side.indices(cb));
+        if seam.reversed {
+            kb.reverse();
+        }
+        for (n, (&pa, &pb)) in ka.iter().zip(&kb).enumerate() {
+            let e = joins.of[seam.a][pa];
+            if (n == 0 || n + 1 == ka.len()) && irregular.contains(&e) {
+                continue;
+            }
+            let (ia, ib) = (joins.of[seam.a][inward(seam.a_side, ca, pa)], joins.of[seam.b][inward(seam.b_side, cb, pb)]);
+            if ia != ib {
+                out.push(Across { seam: index, e, a: ia, b: ib });
+            }
+        }
+    }
+    out
+}
+
+/// The way `s` faces on the whole: its normals across it, added up.
+fn mean_normal(s: &NurbsSurface) -> Option<Vec3> {
+    let net = points(s);
+    let mut sum = Vec3::ZERO;
+    for j in 0..=4 {
+        for i in 0..=4 {
+            if let Some((_, su, sv)) = frame(s, &net, f64::from(i) / 4.0, f64::from(j) / 4.0)
+                && let Some(n) = su.cross(sv).normalized()
+            {
+                sum += n;
+            }
+        }
+    }
+    sum.normalized()
+}
+
+/// The way `s` faces at the middle of `side`.
+fn side_normal(s: &NurbsSurface, side: Side) -> Option<Vec3> {
+    let net = points(s);
+    let [[u0, u1], [v0, v1]] = s.domain();
+    let (u, v) = match side {
+        Side::FirstRow => (0.5 * (u0 + u1), v0),
+        Side::LastRow => (0.5 * (u0 + u1), v1),
+        Side::FirstColumn => (u0, 0.5 * (v0 + v1)),
+        Side::LastColumn => (u1, 0.5 * (v0 + v1)),
+    };
+    let (_, su, sv) = frame(s, &net, u, v)?;
+    su.cross(sv).normalized()
+}
+
+/// How far from tangent two faces meet across their seams at most, degrees: the angle between the
+/// faces' normals, sampled along each seam.
+pub fn worst_kink(faces: &[NurbsSurface], joins: &Joins) -> f64 {
+    let mut worst = 0.0f64;
+    for seam in &joins.seams {
+        for k in 1..8 {
+            let t = k as f64 / 8.0;
+            let normal = |f: usize, side: Side, t: f64| -> Option<Vec3> {
+                let s = &faces[f];
+                let net = points(s);
+                let [[u0, u1], [v0, v1]] = s.domain();
+                let (u, v) = match side {
+                    Side::FirstRow => (u0 + (u1 - u0) * t, v0),
+                    Side::LastRow => (u0 + (u1 - u0) * t, v1),
+                    Side::FirstColumn => (u0, v0 + (v1 - v0) * t),
+                    Side::LastColumn => (u1, v0 + (v1 - v0) * t),
+                };
+                let (_, su, sv) = frame(s, &net, u, v)?;
+                su.cross(sv).normalized()
+            };
+            let tb = if seam.reversed { 1.0 - t } else { t };
+            if let (Some(a), Some(b)) = (normal(seam.a, seam.a_side, t), normal(seam.b, seam.b_side, tb)) {
+                worst = worst.max(a.dot(b).abs().clamp(-1.0, 1.0).acos().to_degrees());
+            }
+        }
+    }
+    worst
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::curve::Projector;
+    use crate::{Scan, surface_edit};
+
+    /// A grid mesh of `z = f(x, y)` over 120 × 60, `n` squares a side.
+    fn field(n: u32, f: impl Fn(f64, f64) -> f64) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        let mut positions = Vec::new();
+        for j in 0..=n {
+            for i in 0..=2 * n {
+                let (x, y) = (120.0 * f64::from(i) / f64::from(2 * n), 60.0 * f64::from(j) / f64::from(n));
+                positions.push(Vec3::new(x, y, f(x, y)));
+            }
+        }
+        let w = 2 * n + 1;
+        let mut triangles = Vec::new();
+        for j in 0..n {
+            for i in 0..2 * n {
+                let k = j * w + i;
+                triangles.push([k, k + 1, k + w + 1]);
+                triangles.push([k, k + w + 1, k + w]);
+            }
+        }
+        (positions, triangles)
+    }
+
+    fn dome(x: f64, y: f64) -> f64 {
+        10.0 - 0.002 * ((x - 60.0).powi(2) + 2.0 * (y - 30.0).powi(2))
+    }
+
+    fn snapper(on: &Projector) -> impl Fn(&[Vec3]) -> Vec<Option<Vec3>> + '_ {
+        |ps: &[Vec3]| ps.iter().map(|p| on.nearest(*p).map(|(q, _)| q)).collect()
+    }
+
+    /// The first face of a network: a Free Form over four corners, fitted to the dome.
+    fn first_face(on: &Projector) -> NurbsSurface {
+        let corners = [Vec3::new(10.0, 10.0, 0.0), Vec3::new(50.0, 10.0, 0.0), Vec3::new(50.0, 50.0, 0.0), Vec3::new(10.0, 50.0, 0.0)];
+        crate::free_form::fitted(corners, &crate::free_form::Fitting { count: 5, ..Default::default() }, snapper(on)).unwrap().surface
+    }
+
+    /// One surface cut at a knot is two faces of one network: they share the side, meet smoothly,
+    /// and their corners are a grid's.
+    #[test]
+    fn two_halves_of_one_surface_are_a_network_of_one_smooth_seam() {
+        let net: Vec<Vec3> =
+            (0..6).flat_map(|j| (0..7).map(move |i| Vec3::new(f64::from(i) * 10.0, f64::from(j) * 10.0, f64::from(i * j) * 0.3))).collect();
+        let whole = NurbsSurface::new([3, 3], [clamped_knots(7), clamped_knots(6)], &net, &[1.0; 42]).unwrap();
+        let (a, b) = crate::merge::halves(&whole, 0).unwrap();
+        let j = joins(&[a.clone(), b.clone()]).unwrap();
+        assert_eq!(j.seams.len(), 1, "{:?}", j.seams);
+        assert_eq!(j.open.len(), 6);
+        let side = a.count()[1];
+        assert_eq!(j.len(), points(&a).len() + points(&b).len() - side, "the shared side's points are one");
+        assert!(j.smooth.len() >= side - 2, "held tangent along it: {}", j.smooth.len());
+        assert!(j.irregular().next().is_none());
+        assert!(worst_kink(&[a, b], &j) < 1e-6);
+    }
+
+    /// A face added on an open edge of a face fitted to a dome lies on the dome, shares the edge
+    /// exactly, and meets the first face tangentially.
+    #[test]
+    fn a_face_added_on_an_edge_lies_on_the_scan_and_meets_the_first_smoothly() {
+        let (positions, triangles) = field(60, dome);
+        let scan = Scan::new(&positions, &triangles);
+        let on = Projector::new(&scan);
+        let first = first_face(&on);
+        let faces = vec![first];
+        let j = joins(&faces).unwrap();
+        // The first face's u = 1 side runs along x = 50: grow out to x = 90.
+        let side = *j.open.iter().find(|(_, s)| *s == Side::LastColumn).unwrap();
+        let grown = with_face(&faces, &j, side.0, side.1, [Vec3::new(90.0, 10.0, 0.0), Vec3::new(90.0, 50.0, 0.0)], 5, snapper(&on)).unwrap();
+        assert_eq!(grown.len(), 2);
+        let gj = joins(&grown).unwrap();
+        assert_eq!(gj.seams.len(), 1, "the new face shares the edge");
+        let under = surface_edit::covered(&scan, &grown[1], 2.0, 5_000);
+        let (rms, max) = surface_edit::distance(&grown[1], &under);
+        assert!(rms < 0.05 && max < 0.25, "on the dome: {rms} {max}");
+        let kink = worst_kink(&grown, &gj);
+        assert!(kink < 0.5, "tangent across the edge: {kink}°");
+        let check = crate::surface_check::check_whole(&grown[1], 24).unwrap();
+        eprintln!("new face: least angle {} stretch {}", check.least_angle, check.stretch);
+        // The first face moved only next to the edge, and stays on the dome.
+        let moved_points = points(&grown[0]).iter().zip(points(&faces[0])).filter(|(a, b)| a.dist(*b) > 1e-9).count();
+        assert!(moved_points <= 5, "only the row next to the edge: {moved_points}");
+        let under = surface_edit::covered(&scan, &grown[0], 2.0, 5_000);
+        let (rms, _) = surface_edit::distance(&grown[0], &under);
+        assert!(rms < 0.05, "the first face still on the dome: {rms}");
+    }
+
+    /// A dot dragged with its neighbours held: the surface runs through the new place and through
+    /// every other dot, the seam stays one and tangent.
+    #[test]
+    fn a_dot_dragged_takes_the_surface_through_it_and_holds_the_rest() {
+        let (positions, triangles) = field(60, dome);
+        let scan = Scan::new(&positions, &triangles);
+        let on = Projector::new(&scan);
+        let faces = vec![first_face(&on)];
+        let j = joins(&faces).unwrap();
+        let side = *j.open.iter().find(|(_, s)| *s == Side::LastColumn).unwrap();
+        let grown = with_face(&faces, &j, side.0, side.1, [Vec3::new(90.0, 10.0, 0.0), Vec3::new(90.0, 50.0, 0.0)], 5, snapper(&on)).unwrap();
+        let gj = joins(&grown).unwrap();
+        let before = dots(&grown, &gj);
+        // A dot on the seam, not at a corner, pulled up 3 mm.
+        let seam_dot = (0..gj.len()).find(|p| gj.on_seam(*p) && gj.corners.iter().all(|c| c.point != *p)).unwrap();
+        let to = before[seam_dot].at + Vec3::new(0.0, 0.0, 3.0);
+        let after = dot_moved(&grown, &gj, seam_dot, to, DOT_RING, true).unwrap();
+        let aj = joins(&after).unwrap();
+        assert_eq!(aj.seams.len(), 1, "still one seam");
+        let now = dots(&after, &aj);
+        assert!(now[seam_dot].at.dist(to) < 0.05, "the surface runs through where the dot went: {}", now[seam_dot].at.dist(to));
+        // The points next to it across the seam rise with it to keep the faces tangent (a seam is
+        // held smooth: the drag makes a bump, not a spike); those beyond the ring it moves stay.
+        let near = region(&grown, &gj, &[seam_dot], DOT_RING - 1);
+        let worst = (0..gj.len()).filter(|p| !near[*p]).map(|p| now[p].at.dist(before[p].at)).fold(0.0, f64::max);
+        assert!(worst < 0.25, "the dots beyond the ring held: {worst}");
+        let kink = worst_kink(&after, &aj);
+        assert!(kink < 1.0, "still tangent: {kink}°");
+    }
+
+    /// Three faces round a corner on the network's edge (an L): the corner where they meet is
+    /// irregular, and the open sides are the L's outline.
+    #[test]
+    fn three_faces_round_a_corner_make_it_irregular() {
+        let square = |x: f64, y: f64| -> NurbsSurface {
+            let net: Vec<Vec3> = (0..4).flat_map(|j| (0..4).map(move |i| Vec3::new(x + 10.0 * f64::from(i), y + 10.0 * f64::from(j), 0.0))).collect();
+            NurbsSurface::new([3, 3], [clamped_knots(4), clamped_knots(4)], &net, &[1.0; 16]).unwrap()
+        };
+        let faces = [square(0.0, 0.0), square(30.0, 0.0), square(0.0, 30.0)];
+        let j = joins(&faces).unwrap();
+        assert_eq!(j.seams.len(), 2);
+        let odd: Vec<&Corner> = j.irregular().collect();
+        assert!(odd.is_empty(), "an L of three squares has no corner of three: {odd:?}");
+        // A fourth square closing the L into a square makes the middle a grid's corner.
+        let four = [faces[0].clone(), faces[1].clone(), faces[2].clone(), square(30.0, 30.0)];
+        let j4 = joins(&four).unwrap();
+        assert_eq!(j4.seams.len(), 4);
+        let middle = j4.corners.iter().find(|c| c.faces == 4).unwrap();
+        assert!(!middle.border && !middle.irregular());
+    }
+
+    /// Hostile input is refused or left alone, never a panic.
+    #[test]
+    fn hostile_input_is_refused() {
+        let bad = NurbsSurface::new([1, 1], [vec![0.0, 0.0, 1.0, 1.0], vec![0.0, 0.0, 1.0, 1.0]], &[Vec3::ZERO; 4], &[1.0; 4]).unwrap();
+        assert_eq!(joins(&[bad]), Err(NetworkError::NotCubic));
+        assert!(joins(&[]).is_ok_and(|j| j.is_empty()));
+        let net: Vec<Vec3> = (0..4).flat_map(|j| (0..4).map(move |i| Vec3::new(f64::from(i), f64::from(j), 0.0))).collect();
+        let s = NurbsSurface::new([3, 3], [clamped_knots(4), clamped_knots(4)], &net, &[1.0; 16]).unwrap();
+        let j = joins(std::slice::from_ref(&s)).unwrap();
+        let none = |ps: &[Vec3]| vec![None; ps.len()];
+        assert!(with_face(std::slice::from_ref(&s), &j, 0, Side::FirstRow, [Vec3::new(f64::NAN, 0.0, 0.0), Vec3::ZERO], 4, none).is_err());
+        assert!(with_face(std::slice::from_ref(&s), &j, 5, Side::FirstRow, [Vec3::ZERO, Vec3::ZERO], 4, none).is_err());
+        assert!(dot_moved(std::slice::from_ref(&s), &j, 99, Vec3::ZERO, 2, true).is_none(), "no such dot: nothing moves");
+        assert!(moved(&[s], &j, &Moves { free: &[], goals: &[], tangent: 1.0, even: 1.0, bend: 0.0, also_smooth: &[] }).is_none());
+    }
+}

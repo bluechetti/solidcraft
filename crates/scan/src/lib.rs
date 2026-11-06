@@ -18,6 +18,8 @@
 //! - [`holes`]: the holes in a scan and the smooth patches that close them.
 //! - [`mirror_fill`]: a scan completed by its mirror image where it has nothing.
 //! - [`net`]: a Free Form's net changed as a whole: split, copied out at an edge, doubled, creased.
+//! - [`network`]: a Free Form of several faces sharing whole sides: how they join, a face added on
+//!   an open edge, and points dragged on the surface with the faces held tangent where they meet.
 //! - [`patches`]: smooth patches over a region of the scan, in a grid, in blocks, or as a quad whose
 //!   edges follow the region's edge.
 //! - [`pieces`]: the pieces of a scan, and those small enough to float.
@@ -63,6 +65,7 @@ pub mod merge;
 pub mod mirror_fill;
 pub mod net;
 mod net_fit;
+pub mod network;
 mod par;
 pub mod patches;
 pub mod pieces;

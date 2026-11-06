@@ -34,7 +34,7 @@ impl Side {
     }
 
     /// The places of its points in a net of `[nu, nv]` (u fastest), in order along it.
-    fn indices(self, [nu, nv]: [usize; 2]) -> Vec<usize> {
+    pub(crate) fn indices(self, [nu, nv]: [usize; 2]) -> Vec<usize> {
         match self {
             Side::FirstRow => (0..nu).collect(),
             Side::LastRow => (0..nu).map(|i| (nv - 1) * nu + i).collect(),
@@ -44,7 +44,7 @@ impl Side {
     }
 
     /// The side across the net from it.
-    fn opposite(self) -> Side {
+    pub(crate) fn opposite(self) -> Side {
         match self {
             Side::FirstRow => Side::LastRow,
             Side::LastRow => Side::FirstRow,

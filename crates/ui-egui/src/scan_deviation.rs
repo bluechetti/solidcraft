@@ -60,7 +60,7 @@ pub(crate) fn colours() -> [[u8; 3]; 3] {
 
 /// A point's colour at `s` on the scale (-1 to 1, 0 within the tolerance): out of the tolerance it
 /// starts a third of the way to the far colour, so it never reads as within.
-fn colour([below, within, above]: [[u8; 3]; 3], s: f64) -> [u8; 3] {
+pub(crate) fn colour([below, within, above]: [[u8; 3]; 3], s: f64) -> [u8; 3] {
     if s == 0.0 {
         return within;
     }
