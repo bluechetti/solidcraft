@@ -4052,6 +4052,11 @@ impl Renderer {
         tris(pass, &res.pbr, &m.pbr);
         if !cb.product {
             res.clouds.paint(pass, &res.cloud_pipes, tally);
+            // A cloud's style takes group 1: the passes after it (the ground's shadow) read the
+            // access group there, as set at the start of the pass. Left as the cloud's, every
+            // frame with a cloud (a point cloud, a scan's deviation map or found shapes) and the
+            // ground's shadow failed validation and was not drawn.
+            pass.set_bind_group(1, &res.access_bind, &[]);
         }
         in_moving(pass, &|pass, mv| tris(pass, &res.pbr, &mv.pbr));
         // Whole-body tints first, so a face or an edge highlighted over the body (in `h.tris`
@@ -5791,6 +5796,32 @@ mod glass_tests {
         frame.clouds.clear();
         let hidden = render_frame(&mut renderer, &device, &queue, &frame, true);
         assert!(!has(&hidden, &|p| p[0] > 200 && p[1] < 90 && p[2] < 90), "hiding the cloud removes it");
+    }
+
+    /// A cloud drawn with the ground's shadow: the shadow is drawn after the cloud, with the group
+    /// the cloud's style had taken put back. Left as the cloud's, the frame failed validation and
+    /// nothing of it was drawn (a scan's deviation map or found shapes with the ground on).
+    #[test]
+    fn a_cloud_and_the_grounds_shadow_draw_in_one_valid_frame() {
+        use solidcore_record::Vec3;
+        let Some((_, device, queue)) = crate::open_headless().ok() else { return };
+        let depth = crate::depth_format(&device, true);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mut renderer = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false }, None);
+        let bounds = solidcraft_geom::Aabb3 { min: Vec3::new(-5.0, -5.0, 0.0), max: Vec3::new(5.0, 5.0, 2.0) };
+        let mut frame =
+            test_frame(GpuScene { ground_ao: GroundAo::new(bounds, -0.5, solidcraft_render::UpAxis::Z, 1.0), ..GpuScene::default() }, 1.0);
+        frame.ao_radius = 1.0;
+        let mut dots = Vec::new();
+        cloud_cell(&mut dots, &Cell { corners: [[0.0, 0.0, 1.0]; 3], rgb: [0, 0, 255], ..Default::default() });
+        let style = CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: 20.0 };
+        let empty = Arc::new(Vec::new());
+        frame.clouds.push(GpuCloud { id: 1, version: 1, dots: Arc::new(dots), segments: empty.clone(), triangles: empty, style });
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let image = render_frame(&mut renderer, &device, &queue, &frame, true);
+        let error = pollster::block_on(scope.pop());
+        assert!(error.is_none(), "{error:?}");
+        assert!(image.as_chunks::<4>().0.iter().any(|p| p[2] > 200 && p[0] < 30), "the dot is drawn");
     }
 
     /// A set of values keeps the part of a bead where its rounded value is kept, as the range
