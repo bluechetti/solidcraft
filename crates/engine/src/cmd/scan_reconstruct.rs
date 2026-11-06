@@ -467,10 +467,14 @@ fn piece_direction(piece: &Piece, from: Vec2, to: Vec2, at_end: bool) -> Option<
     }
 }
 
+/// How a profile's line is held, by its face and its two ends: level (`Some(true)`, along the
+/// sketch's X), upright (`Some(false)`) or neither.
+type Level<'a> = dyn Fn(Option<usize>, Vec2, Vec2) -> Option<bool> + 'a;
+
 /// Outline `outline` drawn into the sketch: its corners shared by the pieces either side, each
-/// line a line and each arc an arc, smooth joins held tangent. `level` holds each piece on a face
-/// level (along the sketch's X) or upright, by its face: for a turned profile.
-fn draw(sk: &mut Sketch, outline: &Outline, level: &dyn Fn(Option<usize>) -> Option<bool>, drawn: &mut Drawn) -> Result<()> {
+/// line a line and each arc an arc, smooth joins held tangent. `level` holds each line level (along
+/// the sketch's X) or upright, by its face and its two ends: for a turned profile.
+fn draw(sk: &mut Sketch, outline: &Outline, level: &Level<'_>, drawn: &mut Drawn) -> Result<()> {
     let n = outline.corners.len();
     if n < 2 {
         return Ok(());
@@ -516,7 +520,7 @@ fn draw(sk: &mut Sketch, outline: &Outline, level: &dyn Fn(Option<usize>) -> Opt
             Piece::Line => {
                 drawn.lines += 1;
                 let line = sk.add_line_pts(a, b, None)?;
-                match level(outline.faces.get(k).copied().flatten()) {
+                match level(outline.faces.get(k).copied().flatten(), from, to) {
                     Some(true) => {
                         sk.add_constraint(ConstraintKind::Horizontal { l: line }, None)?;
                     }
@@ -552,14 +556,7 @@ fn draw(sk: &mut Sketch, outline: &Outline, level: &dyn Fn(Option<usize>) -> Opt
 }
 
 /// A sketch on `plane` named `name`, with `outlines` drawn in; its id.
-fn sketch_outlines(
-    s: &mut Session,
-    plane: &Plane,
-    name: &str,
-    outlines: &[Outline],
-    level: &dyn Fn(Option<usize>) -> Option<bool>,
-    drawn: &mut Drawn,
-) -> Result<u64> {
+fn sketch_outlines(s: &mut Session, plane: &Plane, name: &str, outlines: &[Outline], level: &Level<'_>, drawn: &mut Drawn) -> Result<u64> {
     let create = json!({"plane": {"origin": at(plane.origin), "x_dir": at(plane.x), "y_dir": at(plane.y)}, "name": name});
     let made = run(s, "sketch.create", create)?;
     let id = made.get("sketch").and_then(Value::as_u64).ok_or_else(|| EngineError::Other("the sketch was not made".into()))?;
@@ -631,7 +628,7 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let (operation, solid, how) = into_params(s, &found.scan, p, cmd)?;
     let mut drawn = Drawn::default();
-    let sketch = sketch_outlines(s, &plane, &format!("Prism Profile {}", index + 1), &outlines, &|_| None, &mut drawn)?;
+    let sketch = sketch_outlines(s, &plane, &format!("Prism Profile {}", index + 1), &outlines, &|_, _, _| None, &mut drawn)?;
     let depth = prism.depth();
     let extrude =
         merged(json!({"sketch": sketch, "distance": depth, "direction": "symmetric", "name": format!("Extrude It {}", index + 1)}), operation);
@@ -661,8 +658,10 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
         profile::turned_profile(&Scan::new(positions, triangles), &found.outcome, &found.reading).map_err(|e| bad(cmd, e))?
     };
     let (operation, solid, how) = into_params(s, &found.scan, p, cmd)?;
-    // A cylinder's piece runs level along the axis, an end's upright, the axis's own along it.
-    let level = |face: Option<usize>| match face.and_then(|k| held.get(&k)) {
+    // A cylinder's piece runs level along the axis, an end's upright, the axis's own along it. A
+    // piece with no face off the axis bridges a gap the scan's faces leave, and is held neither way.
+    let level = |face: Option<usize>, from: Vec2, to: Vec2| match face.and_then(|k| held.get(&k)) {
+        None if face.is_none() => (from.y.abs() < 1e-9 && to.y.abs() < 1e-9).then_some(true),
         None => Some(true),
         Some(Turned::Cylinder { .. }) => Some(true),
         Some(Turned::Plane { .. }) => Some(false),
@@ -729,7 +728,7 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
         faces: vec![None; 2],
     };
     let mut drawn = Drawn::default();
-    let sketch = sketch_outlines(s, &plane, &format!("Hole {}", index + 1), &[circle], &|_| None, &mut drawn)?;
+    let sketch = sketch_outlines(s, &plane, &format!("Hole {}", index + 1), &[circle], &|_, _, _| None, &mut drawn)?;
     // The sketch's normal (x × y) points into the hole.
     let depth = hole.depth() + margin;
     let feature =

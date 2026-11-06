@@ -131,7 +131,7 @@ pub fn wall_of(shape: &Shape, plane: &Plane) -> Option<Wall> {
 pub fn prism_outlines(walls: &[(usize, Wall)], loops: &[(Vec<Vec2>, Vec<Option<usize>>)], reach: f64) -> Vec<Outline> {
     let mut found: Vec<(Outline, Vec<Vec2>)> = loops
         .iter()
-        .filter_map(|(points, on)| outline_of(walls, points, on, reach))
+        .filter_map(|(points, on)| outline_of(walls, points, on, reach, None))
         .map(|o| {
             let r = ring(&o);
             (o, r)
@@ -210,17 +210,24 @@ fn is_simple_ring(ring: &[Vec2]) -> bool {
     m >= 3 && (0..m).all(|i| ((i + 2)..m).all(|j| (i == 0 && j == m - 1) || !crosses(ring[i], ring[(i + 1) % m], ring[j], ring[(j + 1) % m])))
 }
 
-/// A stretch of a loop on one wall: the wall (its place in `walls`), where it starts and ends,
-/// and how far round the wall's centre it turns (a circle's, counter-clockwise positive).
+/// A stretch of a loop on one wall: the wall (its place in `walls`), where it starts and ends
+/// (and how far along the loop from where the walk began, in points), and how far round the
+/// wall's centre it turns (a circle's, counter-clockwise positive).
 #[derive(Clone, Copy, Debug)]
 struct Stretch {
     wall: usize,
     first: Vec2,
     last: Vec2,
+    first_at: usize,
+    last_at: usize,
     turn: f64,
 }
 
-fn outline_of(walls: &[(usize, Wall)], points: &[Vec2], on: &[Option<usize>], reach: f64) -> Option<Outline> {
+/// The loop's outline on the walls (see [`prism_outlines`]). With `fill` (a tolerance), a gap
+/// between two walls whose points stray further from where the walls would meet than the
+/// tolerance allows (faces Find All did not find) is drawn as the loop runs there instead, in
+/// lines and arcs fitted to it (SurfaceCraft's chain fitter), no face holding them.
+fn outline_of(walls: &[(usize, Wall)], points: &[Vec2], on: &[Option<usize>], reach: f64, fill: Option<f64>) -> Option<Outline> {
     let n = points.len();
     if n < 3 || on.len() != n {
         return None;
@@ -254,13 +261,14 @@ fn outline_of(walls: &[(usize, Wall)], points: &[Vec2], on: &[Option<usize>], re
             j += 1;
         }
         if length >= reach {
-            let stretch = Stretch { wall, first: points[k], last: points[(start + j) % n], turn };
+            let stretch = Stretch { wall, first: points[k], last: points[(start + j) % n], first_at: i, last_at: j, turn };
             match stretches.last_mut() {
                 // One wall again past a stretch passed over: one stretch.
                 Some(previous) if previous.wall == wall => {
                     let gap = centre_of(wall).map_or(0.0, |c| angle_to(previous.last - c, stretch.first - c));
                     previous.turn += stretch.turn + gap;
                     previous.last = stretch.last;
+                    previous.last_at = stretch.last_at;
                 }
                 _ => stretches.push(stretch),
             }
@@ -270,6 +278,7 @@ fn outline_of(walls: &[(usize, Wall)], points: &[Vec2], on: &[Option<usize>], re
     if stretches.len() > 1 && stretches[0].wall == stretches[stretches.len() - 1].wall {
         let last = stretches.pop()?;
         stretches[0].first = last.first;
+        stretches[0].first_at = last.first_at;
         stretches[0].turn += last.turn;
     }
     // Round one circle alone: a hole or a boss, two halves.
@@ -303,6 +312,54 @@ fn outline_of(walls: &[(usize, Wall)], points: &[Vec2], on: &[Option<usize>], re
             Wall::Line { .. } => Piece::Line,
             Wall::Circle { center, .. } => Piece::Arc { center, ccw: stretch.turn > 0.0 },
         };
+        // The loop's own points between the two stretches, when they stray from where the walls
+        // would meet: drawn as the loop runs.
+        let (from, to) = (a.foot(here.last), b.foot(next.first));
+        let filled = fill.and_then(|tolerance| {
+            let end = if next.first_at > here.last_at { next.first_at } else { next.first_at + n };
+            let between: Vec<Vec2> = (here.last_at..=end).map(|i| points[(start + i) % n]).collect();
+            let path: Vec<Vec2> = match crossing {
+                Some(c) => vec![from, c, to],
+                None => vec![from, to],
+            };
+            let off =
+                between.iter().map(|&p| path.windows(2).map(|w| segment_distance(p, w[0], w[1])).fold(f64::INFINITY, f64::min)).fold(0.0, f64::max);
+            if between.len() < 4 || off <= (4.0 * tolerance).max(reach) {
+                return None;
+            }
+            match crate::chain::chain(&between, false, tolerance)? {
+                crate::chain::Outline::Chain(chain) if !chain.is_empty() => Some(chain),
+                _ => None,
+            }
+        });
+        if let Some(chain) = filled {
+            let kind = |p: &crate::chain::Piece| match *p {
+                crate::chain::Piece::Line { .. } => Piece::Line,
+                crate::chain::Piece::Arc { center, ccw, .. } => Piece::Arc { center, ccw },
+            };
+            // From the wall's end to the chain's start, along the chain, and on to the next wall.
+            let mut at = from;
+            for p in &chain {
+                if at.dist(p.from()) > 1e-9 {
+                    corners.push(at);
+                    pieces.push(Piece::Line);
+                    faces.push(None);
+                }
+                corners.push(p.from());
+                pieces.push(kind(p));
+                faces.push(None);
+                at = p.to();
+            }
+            if at.dist(to) > 1e-9 {
+                corners.push(at);
+                pieces.push(Piece::Line);
+                faces.push(None);
+            }
+            corners.push(to);
+            pieces.push(piece(&b, &next));
+            faces.push(Some(walls[next.wall].0));
+            continue;
+        }
         // This stretch's piece ends at the corner (or its own end, bridged), the next starts there.
         match crossing {
             Some(c) => {
@@ -355,6 +412,13 @@ fn laid_tangent(before: Wall, round: Wall, after: Wall) -> Wall {
     }
     let half = 0.5 * m.dot(q - p);
     Wall::Circle { center: center + m * (half - a), radius: half }
+}
+
+/// How far `p` is from the segment from `a` to `b`.
+fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f64 {
+    let d = b - a;
+    let t = if d.len2() > 0.0 { ((p - a).dot(d) / d.len2()).clamp(0.0, 1.0) } else { 0.0 };
+    p.dist(a + d * t)
 }
 
 /// Where walls `a` and `b` cross, the crossing nearest `near`; for a line and a circle that only
@@ -805,15 +869,116 @@ pub(crate) fn turned_profile_of(
     }
     let meetings: Vec<Meeting> =
         shared.into_iter().filter(|(_, (_, n))| *n >= 2).map(|((a, b), (sum, n))| Meeting { faces: [a, b], at: sum / n as f64 }).collect();
-    let outline = turned_outline(&faces, &meetings, 0.05 * size).map_err(|refusal| match refusal {
-        Refusal::TooFew => "fewer than two faces about the turning axis meet on the scan, so there is no profile to turn".to_string(),
-        Refusal::Meets(k, n) => format!("face {} meets {n} other faces about the turning axis, where a profile has each meet two: a face between them is missing, or one too many is found", numbered[k] + 1),
-        Refusal::Apart => "the faces about the turning axis make more than one outline, so there is no one profile to turn".to_string(),
-        Refusal::Corner(a, b) => format!("faces {} and {} meet on the scan where their shapes do not cross: one of them is fitted wrong", numbered[a] + 1, numbered.get(b).map_or(0, |k| k + 1)),
-    })?;
-    // Numbered by the reading's faces.
-    let outline = Outline { faces: outline.faces.iter().map(|f| f.map(|i| numbered[i])).collect(), ..outline };
+    let outline = match turned_outline(&faces, &meetings, 0.05 * size) {
+        // Numbered by the reading's faces.
+        Ok(outline) => Outline { faces: outline.faces.iter().map(|f| f.map(|i| numbered[i])).collect(), ..outline },
+        // Where the faces' meetings go round no one profile, a slice through the axis may.
+        Err(refusal) => turned_sliced(scan, axis, &faces, &numbered, &owner, 0.005 * size, outcome.tolerance).ok_or_else(|| match refusal {
+            Refusal::TooFew => "fewer than two faces about the turning axis meet on the scan, so there is no profile to turn".to_string(),
+            Refusal::Meets(k, n) => format!("face {} meets {n} other faces about the turning axis, where a profile has each meet two: a face between them is missing, or one too many is found", numbered[k] + 1),
+            Refusal::Apart => "the faces about the turning axis make more than one outline, so there is no one profile to turn".to_string(),
+            Refusal::Corner(a, b) => format!("faces {} and {} meet on the scan where their shapes do not cross: one of them is fitted wrong", numbered[a] + 1, numbered.get(b).map_or(0, |k| k + 1)),
+        })?,
+    };
     Ok((turned_plane(axis), outline, held_faces))
+}
+
+/// How many planes through the axis [`turned_sliced`] cuts the scan with, evenly round half a turn;
+/// each gives two half-sections.
+const TURNED_SLICES: usize = 8;
+
+/// A face about the axis as a wall of the half-section (height along the axis, radius from it): a
+/// cylinder a line along the axis, a plane a line across it, a cone a slanted line, a torus or a
+/// ball on the axis a circle.
+fn turned_wall(face: &Turned) -> Option<Wall> {
+    Some(match *face {
+        Turned::Cylinder { radius } => Wall::Line { point: Vec2::new(0.0, radius), direction: Vec2::X },
+        Turned::Plane { height } => Wall::Line { point: Vec2::new(height, 0.0), direction: Vec2::Y },
+        Turned::Cone { slope, offset } => Wall::Line { point: Vec2::new(0.0, offset), direction: Vec2::new(1.0, slope).normalized()? },
+        Turned::Torus { major, height, minor } => Wall::Circle { center: Vec2::new(height, major), radius: minor },
+    })
+}
+
+/// The part of the closed loop `points` (each on the wall `on` names) with radius at least 0: where
+/// it dips below the axis, the axis (wall `axis`) runs from where it leaves to where it comes back.
+/// `None` when none of it is above the axis.
+fn above_axis(points: &[Vec2], on: &[Option<usize>], axis: usize) -> Option<(Vec<Vec2>, Vec<Option<usize>>)> {
+    let n = points.len();
+    let (mut kept, mut walls) = (Vec::new(), Vec::new());
+    for i in 0..n {
+        let (p, q) = (points[i], points[(i + 1) % n]);
+        if p.y >= 0.0 {
+            kept.push(p);
+            walls.push(on[i]);
+        }
+        if (p.y >= 0.0) != (q.y >= 0.0) {
+            let t = p.y / (p.y - q.y);
+            kept.push(Vec2::new(p.x + (q.x - p.x) * t, 0.0));
+            walls.push(Some(axis));
+        }
+    }
+    (kept.len() >= 3).then_some((kept, walls))
+}
+
+/// A turned part's profile off a slice through its axis, for when the faces' meetings go round no
+/// one profile (a face Find All missed between two, a slot or a boss across them): the scan cut by
+/// planes through the axis at even turns, each half-section walked as a prism's slice is
+/// ([`outline_of`]), every face about the axis (`faces`, numbered in the reading by `numbered`,
+/// triangle `t` on face `owner[t]`) its curve held to the axis, and the axis closing the profile
+/// where the section comes down to it. Between two faces the walls run on to where they meet, or
+/// are bridged straight across; where the slice strays from that by more than the scan's
+/// `tolerance` (faces Find All did not find), it is drawn as the slice runs, in lines and arcs. Of
+/// the half-sections, the one whose outline runs furthest on the faces, so a slot or a hole across
+/// some of them is passed by. Pieces on the axis have no face; neither do the bridges and the
+/// pieces drawn off the slice.
+fn turned_sliced(
+    scan: &Scan,
+    axis: &Axis,
+    faces: &[ProfileFace],
+    numbered: &[usize],
+    owner: &[usize],
+    reach: f64,
+    tolerance: f64,
+) -> Option<Outline> {
+    let mut walls: Vec<(usize, Wall)> = faces.iter().zip(numbered).filter_map(|(f, &k)| turned_wall(&f.face).map(|w| (k, w))).collect();
+    // Each face's place among the walls (a face with no wall has none).
+    let place: Vec<Option<usize>> = {
+        let mut next = 0;
+        faces.iter().map(|f| turned_wall(&f.face).map(|_| (next, next += 1).0)).collect()
+    };
+    let axis_wall = walls.len();
+    walls.push((usize::MAX, Wall::Line { point: Vec2::ZERO, direction: Vec2::X }));
+    let weld = crate::welded(scan.positions);
+    let (u, v) = crate::in_plane(axis.direction);
+    let mut best: Option<(f64, Outline)> = None;
+    for i in 0..TURNED_SLICES {
+        let angle = PI * i as f64 / TURNED_SLICES as f64;
+        let plane = Plane { origin: axis.point, x: axis.direction, y: u * angle.cos() + v * angle.sin() };
+        for run in crate::section::section_welded(scan, &weld, &plane).into_iter().filter(|r| r.closed) {
+            let on: Vec<Option<usize>> = run.triangles.iter().map(|&t| owner.get(t).and_then(|&f| place.get(f).copied().flatten())).collect();
+            for side in [1.0, -1.0] {
+                let flipped: Vec<Vec2> = run.points.iter().map(|p| Vec2::new(p.x, side * p.y)).collect();
+                let Some((points, on)) = above_axis(&flipped, &on, axis_wall) else { continue };
+                let Some(outline) = outline_of(&walls, &points, &on, reach, Some(tolerance)) else { continue };
+                let ring = ring(&outline);
+                if !is_simple_ring(&ring) || ring.iter().any(|p| p.y < -reach) {
+                    continue;
+                }
+                // How far the outline runs on the faces.
+                let on_faces: f64 = (0..outline.corners.len())
+                    .filter(|&k| outline.faces[k].is_some_and(|f| f != usize::MAX))
+                    .map(|k| outline.corners[k].dist(outline.corners[(k + 1) % outline.corners.len()]))
+                    .sum();
+                if best.as_ref().is_none_or(|(b, _)| on_faces > *b) {
+                    best = Some((on_faces, outline));
+                }
+            }
+        }
+    }
+    let (_, outline) = best?;
+    let corners = outline.corners.iter().map(|c| Vec2::new(c.x, c.y.max(0.0))).collect();
+    let faces = outline.faces.iter().map(|f| f.filter(|&k| k != usize::MAX)).collect();
+    Some(Outline { corners, faces, ..outline })
 }
 
 #[cfg(test)]
@@ -910,6 +1075,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A shaft R 20 × 20 stepping down to R 10 × 20, whose step Find All did not find (taken out
+    /// of its shapes, as on a scan whose step was not read): the faces' meetings go round no
+    /// profile, so it is read off a slice through the axis, the step drawn as the slice runs there.
+    /// The profile is the shaft's half-section, 600 mm².
+    #[test]
+    fn a_turned_part_with_a_face_unfound_is_read_off_a_slice() {
+        let mut profile = vec![[0.0, 0.0]];
+        profile.extend(steps([0.0, 0.5], [0.0, 19.5], 19));
+        profile.extend(steps([0.0, 20.0], [20.0, 20.0], 40));
+        profile.extend(steps([20.0, 20.0], [20.0, 10.0], 20).into_iter().skip(1));
+        profile.extend(steps([20.0, 10.0], [40.0, 10.0], 40).into_iter().skip(1));
+        profile.extend(steps([40.0, 10.0], [40.0, 0.5], 19).into_iter().skip(1));
+        profile.push([40.0, 0.0]);
+        let (positions, triangles) = revolved(&profile, 120, false);
+        let scan = Scan::new(&positions, &triangles);
+        let found = find_all(&scan, &Options::default(), &|| false);
+        let step = |s: &crate::segment::Segment| matches!(s.shape, Some(Shape::Plane { point, normal }) if normal.z.abs() > 0.99 && (point.z - 20.0).abs() < 0.5);
+        assert!(found.segments.iter().any(step), "Find All found the step");
+        // The step left unfound: after the shapes, a region with no shape.
+        let mut segments: Vec<crate::segment::Segment> = found.segments.iter().filter(|s| s.shape.is_some() && !step(s)).cloned().collect();
+        segments.extend(found.segments.iter().filter(|s| step(s)).map(|s| crate::segment::Segment { shape: None, ..s.clone() }));
+        segments.extend(found.segments.iter().filter(|s| s.shape.is_none()).cloned());
+        let outcome = Outcome { segments, ..found };
+        let reading = read(&scan, &outcome);
+        assert!(reading.revolve.is_some() && reading.turned_unread.is_none(), "{:?}", reading.turned_unread);
+        let (_, outline, _) = turned_profile(&scan, &outcome, &reading).unwrap();
+        assert!(outline.faces.iter().any(Option::is_none), "{outline:?}");
+        let half = area(&ring(&outline)).abs() / 2.0;
+        assert!((half - 600.0).abs() < 0.02 * 600.0, "{half} mm² against 600: {outline:?}");
     }
 
     /// The turned part: a face at −4 down to the axis, a round R 4 into the shaft R 20, the shaft
