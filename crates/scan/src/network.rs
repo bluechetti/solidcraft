@@ -132,6 +132,10 @@ pub enum NetworkError {
     TooShort,
     /// The face's places are not finite, or no face could be fitted.
     Failed,
+    /// A Free Form keeps one face at least.
+    LastFace,
+    /// Taking the face away would leave the faces in two pieces.
+    WouldSplit,
 }
 
 impl std::fmt::Display for NetworkError {
@@ -142,6 +146,8 @@ impl std::fmt::Display for NetworkError {
             NetworkError::NotOpen => "a face is added on an open edge: that edge has a face on it already",
             NetworkError::TooShort => "that edge has too few points to build on",
             NetworkError::Failed => "the face could not be made there: click its far corners away from the edge, on the scan",
+            NetworkError::LastFace => "a Free Form keeps one face at least: delete the surface body to take it all away",
+            NetworkError::WouldSplit => "taking that face away would leave the Free Form in two pieces: take away a face on its edge",
         })
     }
 }
@@ -851,6 +857,48 @@ pub fn dots_moved(
     moved(faces, joins, &Moves { free: &free, goals: &goals, tangent: 40.0, even, bend: 0.0, also_smooth: &[] })
 }
 
+/// The network without face `face`, the rest as they were. Refused for the last face, and for one
+/// whose going would leave the others in two pieces.
+pub fn without_face(faces: &[NurbsSurface], face: usize) -> Result<Vec<NurbsSurface>, NetworkError> {
+    if face >= faces.len() {
+        return Err(NetworkError::Failed);
+    }
+    if faces.len() == 1 {
+        return Err(NetworkError::LastFace);
+    }
+    let rest: Vec<NurbsSurface> = faces.iter().enumerate().filter(|(i, _)| *i != face).map(|(_, f)| f.clone()).collect();
+    let joins = joins(&rest)?;
+    if !connected(&rest, &joins) {
+        return Err(NetworkError::WouldSplit);
+    }
+    Ok(rest)
+}
+
+/// The network smoothed one step (QuickSurface's Smooth): every point but the network's own
+/// corners and the corners where faces meet unevenly moves to straighten its rows and columns,
+/// held near the scan by `scan` (its places on the faces) or, with none, near where the surface is
+/// (its dots), the faces tangent where they met smoothly. `strength` above 0: 1 smooths hard.
+pub fn smoothed(faces: &[NurbsSurface], joins: &Joins, scan: &[Goal], strength: f64) -> Option<Vec<NurbsSurface>> {
+    if !(strength.is_finite() && strength > 0.0) {
+        return None;
+    }
+    let held: Vec<usize> = joins.corners.iter().filter(|c| c.irregular() || (c.border && c.faces == 1)).map(|c| c.point).collect();
+    let free: Vec<bool> = (0..joins.len()).map(|p| !held.contains(&p)).collect();
+    let goals: Vec<Goal> = if scan.is_empty() {
+        let places: Vec<Vec<(f64, f64)>> = faces.iter().map(dot_places).collect();
+        dots(faces, joins)
+            .iter()
+            .enumerate()
+            .flat_map(|(p, d)| joins.at[p].iter().map(move |&(f, k)| (f, k, d.at)))
+            .filter_map(|(f, k, at)| places.get(f)?.get(k).map(|&(u, v)| Goal { face: f, u, v, to: at, weight: 1.0 }))
+            .collect()
+    } else {
+        scan.to_vec()
+    };
+    let bend = strength * strength;
+    moved(faces, joins, &Moves { free: &free, goals: &goals, tangent: 40.0, even: 0.0, bend, also_smooth: &[] })
+}
+
 /// The network's faces with every face's points doubled both ways (Increase Resolution): every
 /// face exactly as it was, so seams stay seams.
 pub fn refined(faces: &[NurbsSurface]) -> Result<Vec<NurbsSurface>, crate::net::NetError> {
@@ -874,7 +922,7 @@ pub fn with_face(
     side: Side,
     far: [Vec3; 2],
     rows: usize,
-    snap: impl Fn(&[Vec3]) -> Vec<Option<Vec3>>,
+    snap: impl Fn(&[Vec3], Option<Vec3>) -> Vec<Option<Vec3>>,
 ) -> Result<Vec<NurbsSurface>, NetworkError> {
     if faces.len() >= MOST_FACES {
         return Err(NetworkError::TooManyFaces);
@@ -896,7 +944,7 @@ pub fn with_face(
     let (first, last) = (edge[0], edge[m - 1]);
     let far = if first.dist(far[0]) + last.dist(far[1]) <= first.dist(far[1]) + last.dist(far[0]) { far } else { [far[1], far[0]] };
     // The far corners on the scan, unless one is a point of the network already (it is welded).
-    let snapped = snap(&far);
+    let snapped = snap(&far, None);
     let far: [Vec3; 2] = std::array::from_fn(|k| {
         let on_net = places.iter().find(|p| p.dist(far[k]) <= 1e-9 * (1.0 + first.dist(last)));
         on_net.copied().or_else(|| snapped.get(k).copied().flatten()).unwrap_or(far[k])
@@ -973,9 +1021,9 @@ pub fn with_face(
         f.dedup();
         f
     };
-    // Places go to the scan along the way each face faces as a whole, never across it: each to the
-    // height of its nearest scan point (on a rough scan the nearest point is often off to one side,
-    // which would drag the places, and the net with them, across the face).
+    // Places go to the scan along the way each face faces as a whole, never across it (on a rough
+    // scan the nearest point is often off to one side, which would drag the places, and the net
+    // with them, across the face).
     let facings: HashMap<usize, Option<Vec3>> = neighbours.iter().chain(std::iter::once(&at)).map(|&f| (f, mean_normal(&all[f]))).collect();
     for round in 0..ADD_ROUNDS {
         let mut goals: Vec<Goal> = Vec::new();
@@ -997,14 +1045,8 @@ pub fn with_face(
                 }
             }
             let facing = facings.get(&f).copied().flatten();
-            let found = snap(&on);
-            goals.extend(uv.iter().zip(on.iter().zip(found)).filter_map(|(&(u, v), (place, p))| {
-                let to = match facing {
-                    Some(n) => *place + n * (p? - *place).dot(n),
-                    None => p?,
-                };
-                Some(Goal { face: f, u, v, to, weight: 1.0 })
-            }));
+            let found = snap(&on, facing);
+            goals.extend(uv.iter().zip(found).filter_map(|(&(u, v), p)| Some(Goal { face: f, u, v, to: p?, weight: 1.0 })));
         }
         let free: Vec<bool> = (0..grown.len()).map(|p| beside.contains(&p) || grown.at[p].iter().all(|&(f, k)| f == at && !held[k])).collect();
         let bend = if round == 0 { 1e-2 } else { 1e-4 };
@@ -1137,8 +1179,10 @@ mod tests {
         10.0 - 0.002 * ((x - 60.0).powi(2) + 2.0 * (y - 30.0).powi(2))
     }
 
-    fn snapper(on: &Projector) -> impl Fn(&[Vec3]) -> Vec<Option<Vec3>> + '_ {
-        |ps: &[Vec3]| ps.iter().map(|p| on.nearest(*p).map(|(q, _)| q)).collect()
+    fn snapper(on: &Projector) -> impl Fn(&[Vec3], Option<Vec3>) -> Vec<Option<Vec3>> + '_ {
+        |ps: &[Vec3], along: Option<Vec3>| {
+            ps.iter().map(|p| along.and_then(|d| on.along(*p, d)).map(|(q, _)| q).or_else(|| on.nearest(*p).map(|(q, _)| q))).collect()
+        }
     }
 
     /// The first face of a network: a Free Form over four corners, fitted to the dome.
@@ -1247,6 +1291,36 @@ mod tests {
         assert!(!middle.border && !middle.irregular());
     }
 
+    /// A face taken away leaves the rest as they were; the last face, and one between two others,
+    /// stay. Smoothing a wavy face straightens it, its corners where they were.
+    #[test]
+    fn a_face_is_taken_away_and_a_wavy_net_smoothed() {
+        let square = |x: f64, wave: f64| -> NurbsSurface {
+            let net: Vec<Vec3> = (0..5)
+                .flat_map(|j| (0..5).map(move |i| Vec3::new(x + 10.0 * f64::from(i), 10.0 * f64::from(j), if (i + j) % 2 == 1 { wave } else { 0.0 })))
+                .collect();
+            NurbsSurface::new([3, 3], [clamped_knots(5), clamped_knots(5)], &net, &[1.0; 25]).unwrap()
+        };
+        let three = [square(0.0, 0.0), square(40.0, 0.0), square(80.0, 0.0)];
+        assert_eq!(without_face(&three, 1), Err(NetworkError::WouldSplit));
+        let two = without_face(&three, 2).unwrap();
+        assert_eq!(two, three[..2].to_vec());
+        assert_eq!(without_face(&two[..1], 0), Err(NetworkError::LastFace));
+
+        let wavy = [square(0.0, 1.0)];
+        let j = joins(&wavy).unwrap();
+        let bumps = |f: &NurbsSurface| points(f).iter().map(|p| p.z.abs()).fold(0.0, f64::max);
+        let mut smooth = wavy.to_vec();
+        for _ in 0..5 {
+            smooth = smoothed(&smooth, &j, &[], 1.0).unwrap();
+        }
+        assert!(bumps(&smooth[0]) < 0.5 * bumps(&wavy[0]), "{} against {}", bumps(&smooth[0]), bumps(&wavy[0]));
+        for k in [0, 4, 20, 24] {
+            assert_eq!(points(&smooth[0])[k], points(&wavy[0])[k], "corner {k} held");
+        }
+        assert!(smoothed(&wavy, &j, &[], f64::NAN).is_none());
+    }
+
     /// Hostile input is refused or left alone, never a panic.
     #[test]
     fn hostile_input_is_refused() {
@@ -1256,7 +1330,7 @@ mod tests {
         let net: Vec<Vec3> = (0..4).flat_map(|j| (0..4).map(move |i| Vec3::new(f64::from(i), f64::from(j), 0.0))).collect();
         let s = NurbsSurface::new([3, 3], [clamped_knots(4), clamped_knots(4)], &net, &[1.0; 16]).unwrap();
         let j = joins(std::slice::from_ref(&s)).unwrap();
-        let none = |ps: &[Vec3]| vec![None; ps.len()];
+        let none = |ps: &[Vec3], _: Option<Vec3>| vec![None; ps.len()];
         assert!(with_face(std::slice::from_ref(&s), &j, 0, Side::FirstRow, [Vec3::new(f64::NAN, 0.0, 0.0), Vec3::ZERO], 4, none).is_err());
         assert!(with_face(std::slice::from_ref(&s), &j, 5, Side::FirstRow, [Vec3::ZERO, Vec3::ZERO], 4, none).is_err());
         assert!(dot_moved(std::slice::from_ref(&s), &j, 99, Vec3::ZERO, 2, true).is_none(), "no such dot: nothing moves");

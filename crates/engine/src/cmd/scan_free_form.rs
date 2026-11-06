@@ -54,7 +54,7 @@ pub fn make(s: &Session, body: Option<&str>, corners: [Vec3; 4], fit: Fit, fitti
     }
     let (scan, on) = super::curve::projector(s, body, cmd)?;
     let reach = reach.unwrap_or(f64::INFINITY);
-    let snap = |ps: &[Vec3]| ps.iter().map(|p| on.nearest(*p).filter(|(_, d)| *d <= reach).map(|(q, _)| q)).collect::<Vec<_>>();
+    let snap = |ps: &[Vec3], along: Option<Vec3>| ps.iter().map(|p| snapped(&on, *p, along, reach)).collect::<Vec<_>>();
     let fitting = Fitting { count, overall: fit == Fit::Overall, ..fitting };
     let fitted = free_form::fitted(corners, &fitting, snap)
         .ok_or_else(|| bad(cmd, "no face could be fitted over those corners: click them round a face, not in a line"))?;
@@ -62,6 +62,12 @@ pub fn make(s: &Session, body: Option<&str>, corners: [Vec3; 4], fit: Fit, fitti
         return Err(bad(cmd, "the scan is nowhere near those corners within the snap distance"));
     }
     Ok(Made { scan: Some(scan), surface: fitted.surface, places: fitted.places, met: fitted.met, kept: fitted.kept, rms: fitted.rms })
+}
+
+/// `p` put on the scan no farther than `reach`: along `along` where that line meets the scan,
+/// else at the scan's nearest place.
+fn snapped(on: &solidcraft_scan::curve::Projector, p: Vec3, along: Option<Vec3>, reach: f64) -> Option<Vec3> {
+    along.and_then(|d| on.along(p, d)).or_else(|| on.nearest(p)).filter(|(_, d)| *d <= reach).map(|(q, _)| q)
 }
 
 /// The corners: four points [x, y, z], in order round the face.
@@ -136,7 +142,7 @@ pub fn added_face(
     let joins = solidcraft_scan::network::joins(faces).map_err(|e| bad(cmd, e.to_string()))?;
     let (scan, on) = super::curve::projector(s, body, cmd)?;
     let reach = reach.unwrap_or(f64::INFINITY);
-    let snap = |ps: &[Vec3]| ps.iter().map(|p| on.nearest(*p).filter(|(_, d)| *d <= reach).map(|(q, _)| q)).collect::<Vec<_>>();
+    let snap = |ps: &[Vec3], along: Option<Vec3>| ps.iter().map(|p| snapped(&on, *p, along, reach)).collect::<Vec<_>>();
     let made = solidcraft_scan::network::with_face(faces, &joins, face, side, far, rows, snap).map_err(|e| bad(cmd, e.to_string()))?;
     Ok((scan, made))
 }

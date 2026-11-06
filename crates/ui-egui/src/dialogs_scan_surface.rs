@@ -146,11 +146,27 @@ pub struct EditSurface {
     drag: Option<Drag>,
     /// Add Face, while it is on: the open edge taken and the far corners clicked.
     adding: Option<Adding>,
+    /// Delete Face is on: a click on a face takes it away.
+    deleting: bool,
     /// The scan under the faces and how far each point is from them, coloured.
     shade: Option<Box<Shading>>,
     /// The faces' shape changed since the scan under them was looked for.
     restudy: bool,
+    /// The edits so far, last last: each the faces, the points moved by hand and whether the
+    /// shape had changed before it, for Undo Last Change.
+    history: Vec<Before>,
 }
+
+/// The dialog's faces before an edit.
+#[derive(Clone, Debug)]
+struct Before {
+    faces: Vec<NurbsSurface>,
+    moved: Vec<bool>,
+    reshaped: bool,
+}
+
+/// How many edits Undo Last Change goes back, at most.
+const HISTORY: usize = 100;
 
 impl Default for EditSurface {
     fn default() -> Self {
@@ -182,8 +198,10 @@ impl Default for EditSurface {
             check: Vec::new(),
             drag: None,
             adding: None,
+            deleting: false,
             shade: None,
             restudy: false,
+            history: Vec::new(),
         }
     }
 }
@@ -465,13 +483,39 @@ fn reset_to(k: &mut EditSurface, faces: Vec<NurbsSurface>) {
     k.drag = None;
     k.reshaped = false;
     k.adding = None;
+    k.history.clear();
     k.faces = faces.clone();
     show_faces(k, faces, false, None);
+}
+
+/// The faces as they are, kept for Undo Last Change before an edit changes them.
+fn remember(k: &mut EditSurface) {
+    if k.history.len() >= HISTORY {
+        k.history.remove(0);
+    }
+    k.history.push(Before { faces: k.faces.clone(), moved: k.moved.clone(), reshaped: k.reshaped });
+}
+
+/// The last edit undone: the faces as they were before it.
+fn undo_last(k: &mut EditSurface) {
+    let Some(before) = k.history.pop() else { return };
+    let restudy = before.faces.len() != k.faces.len();
+    k.joins = Arc::new(network::joins(&before.faces).unwrap_or_default());
+    k.net = network::network_points(&before.faces, &k.joins);
+    k.moved = before.moved;
+    k.reshaped = before.reshaped;
+    k.chosen = None;
+    k.line = None;
+    k.drag = None;
+    k.faces = before.faces.clone();
+    k.restudy |= restudy;
+    show_faces(k, before.faces, false, None);
 }
 
 /// The faces' shape changed (a face added, points doubled): `faces` as edited from now on, what
 /// was moved kept moved where it still is.
 fn reshaped_to(k: &mut EditSurface, faces: Vec<NurbsSurface>) {
+    remember(k);
     let moved_at: Vec<Vec3> = k.net.iter().zip(&k.moved).filter(|(_, m)| **m).map(|(p, _)| *p).collect();
     k.joins = Arc::new(network::joins(&faces).unwrap_or_default());
     k.net = network::network_points(&faces, &k.joins);
@@ -671,6 +715,7 @@ fn slide_typed(k: &mut EditSurface, index: usize) {
 
 /// The faces shown kept as edited, the points `by_hand` counted as moved by hand.
 fn commit(k: &mut EditSurface, by_hand: &[usize]) {
+    remember(k);
     k.faces = k.shown.clone();
     k.net = k.shown_net.clone();
     for &i in by_hand {
@@ -779,6 +824,10 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         }
     }
     let edited = k.moved.iter().any(|m| *m) || k.reshaped || k.faces != l.target.faces;
+    let can_undo = !k.history.is_empty();
+    if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_undo"), ui_kit::Button::Enabled(can_undo))).clicked() && can_undo {
+        undo_last(k);
+    }
     if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_reset"), ui_kit::Button::Enabled(edited))).clicked() {
         reset_to(k, l.target.faces.clone());
         k.restudy = true;
@@ -793,6 +842,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         ui_kit::text(ui, note, ui_kit::Text::Report("scan_edit_note", true));
     }
     let hint = match (&k.adding, dots) {
+        _ if k.deleting => tr("ui.scan_edit_delete_face_hint"),
         (Some(a), _) if a.side.is_none() => tr("ui.scan_edit_add_face_edge"),
         (Some(_), _) => tr("ui.scan_edit_add_face_corners"),
         (None, true) => tr("ui.scan_edit_hint_dots"),
@@ -811,8 +861,34 @@ fn whole_tools(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, l: &Loade
     let style = if on { ui_kit::Button::SmallSelected } else { ui_kit::Button::Enabled(scan) };
     if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_add_face"), style)).clicked() && scan {
         k.adding = if on { None } else { Some(Adding::default()) };
+        k.deleting = false;
         k.chosen = None;
         k.line = None;
+    }
+    if is_network(k) || k.deleting {
+        let style = if k.deleting { ui_kit::Button::SmallSelected } else { ui_kit::Button::Normal };
+        if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_delete_face"), style)).clicked() {
+            k.deleting = !k.deleting;
+            k.adding = None;
+            k.chosen = None;
+        }
+    }
+    if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_smooth_all"), ui_kit::Button::Normal)).clicked() {
+        let goals = match (loaded(k).and_then(|l| l.covered.as_ref()), k.snap != SNAP_OFF) {
+            (Some(c), true) => {
+                let reach = k.faces.iter().map(edit::default_reach).fold(1.0, f64::max);
+                network::feet(&k.faces, &c.points, reach, &vec![true; k.faces.len()])
+            }
+            _ => Vec::new(),
+        };
+        outcome = Some(match network::smoothed(&k.faces, &k.joins, &goals, 0.5) {
+            Some(faces) => {
+                show_faces(k, faces, false, None);
+                commit(k, &[]);
+                Ok(())
+            }
+            None => Err(tr("ui.scan_edit_nothing").to_owned()),
+        });
     }
     if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_refine"), ui_kit::Button::Normal)).clicked() {
         outcome = Some(match network::refined(&k.faces) {
@@ -1088,6 +1164,37 @@ fn handle_at(k: &EditSurface, proj: &crate::viewport::Proj, at: egui::Pos2) -> O
     found.into_iter().filter(|(_, d)| *d <= GRAB).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i)
 }
 
+/// The face under `at` on the screen: the one whose outline on the screen holds it.
+fn face_at(k: &EditSurface, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<usize> {
+    k.shown.iter().position(|s| {
+        let outline: Vec<egui::Pos2> = [Side::FirstRow, Side::LastColumn, Side::LastRow, Side::FirstColumn]
+            .into_iter()
+            .enumerate()
+            .flat_map(|(n, side)| {
+                let mut on = side_on_screen(proj, s, side);
+                // Round the face in one direction: its last row and first column run backwards.
+                if n >= 2 {
+                    on.reverse();
+                }
+                on
+            })
+            .collect();
+        inside(&outline, at)
+    })
+}
+
+/// Whether `p` lies inside the closed polygon `outline` (even-odd).
+fn inside(outline: &[egui::Pos2], p: egui::Pos2) -> bool {
+    let mut odd = false;
+    for (i, a) in outline.iter().enumerate() {
+        let b = outline[(i + 1) % outline.len()];
+        if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (b.x - a.x) * (p.y - a.y) / (b.y - a.y) {
+            odd = !odd;
+        }
+    }
+    odd
+}
+
 /// The open edge nearest `at` on the screen, within [`EDGE_GRAB`].
 fn open_edge_at(k: &EditSurface, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<(usize, Side)> {
     k.joins
@@ -1116,6 +1223,19 @@ fn distance_to_segment(p: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
 pub(crate) fn choose(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
     if dialog(app).is_some_and(|k| k.adding.is_some()) {
         add_face_click(app, proj, at);
+        return;
+    }
+    if let Some(k) = dialog(app).filter(|k| k.deleting) {
+        if let Some(face) = face_at(k, proj, at) {
+            match network::without_face(&k.faces, face) {
+                Ok(faces) => {
+                    reshaped_to(k, faces);
+                    k.note = None;
+                    k.deleting = is_network(k);
+                }
+                Err(e) => k.note = Some(e.to_string()),
+            }
+        }
         return;
     }
     if let Some(k) = dialog(app)
@@ -1220,7 +1340,7 @@ fn rows_for(k: &EditSurface, face: usize, side: Side) -> usize {
 /// surface out (QuickSurface's Alt-drag; the control net of one face).
 pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, copy: bool) -> bool {
     let Some(k) = dialog(app) else { return false };
-    if k.adding.is_some() {
+    if k.adding.is_some() || k.deleting {
         return false;
     }
     let Some(mut index) = handle_at(k, proj, at) else { return false };
@@ -1515,6 +1635,15 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         };
         painter.add(egui::Shape::line(side_on_screen(proj, s, side), egui::Stroke::new(width, colour)));
     }
+    // Delete Face: the face under the pointer outlined in the error colour.
+    if k.deleting
+        && let Some(f) = pointer.and_then(|at| face_at(k, proj, at))
+        && let Some(s) = k.shown.get(f)
+    {
+        for side in [Side::FirstRow, Side::LastRow, Side::FirstColumn, Side::LastColumn] {
+            painter.add(egui::Shape::line(side_on_screen(proj, s, side), egui::Stroke::new(3.0, t.error)));
+        }
+    }
     // Add Face: from the edge's ends to the corners clicked and the pointer.
     if let Some(a) = &k.adding
         && let Some((f, side)) = a.side
@@ -1555,8 +1684,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
             painter.line_segment([*f0, *f1], guide);
         }
     }
-    let [r, g, b] = t.analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
-    let moved_fill = egui::Color32::from_rgb(r, g, b);
+    let moved_fill = crate::theme::model_color(t.analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8));
     let fill_of = |i: usize, on_line: bool| {
         if k.chosen == Some(i) {
             t.accent
@@ -1914,6 +2042,37 @@ mod tests {
         assert_eq!(k.joins.seams.len(), 1, "sharing the edge");
         assert!(network::worst_kink(&k.shown, &k.joins) < 0.5, "tangent to the first");
         assert!(k.adding.as_ref().is_some_and(|a| a.side.is_none()), "ready for the next face");
+        // Undo Last Change takes the face away again; added again by the same clicks, it is the same.
+        let added = k.faces.clone();
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            undo_last(e);
+            assert_eq!((e.shown.len(), e.history.len()), (1, 0), "the face taken away");
+        }
+        h.step(&json!({"click": {"world": [mid.x, mid.y, mid.z]}})).unwrap();
+        h.frames(2);
+        for (x, y) in [(38.0, 20.0), (38.0, 40.0)] {
+            h.step(&json!({"click": {"world": [x, y, top(x, y)]}})).unwrap();
+            h.frames(2);
+        }
+        assert_eq!(kind(&h).faces, added, "added again as it was");
+        // Delete Face: a click inside the new face takes it away; Undo Last Change brings it back.
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            e.adding = None;
+            e.deleting = true;
+        }
+        let inner = top(34.0, 30.0);
+        h.step(&json!({"click": {"world": [34.0, 30.0, inner]}})).unwrap();
+        h.frames(2);
+        assert_eq!(kind(&h).faces.len(), 1, "the face clicked taken away: {:?}", kind(&h).note);
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            undo_last(e);
+            assert_eq!(e.faces, added, "back again");
+            e.deleting = false;
+            // Smooth keeps it a network on the scan.
+            let goals = network::feet(&e.faces, &loaded(e).unwrap().covered.as_ref().unwrap().points, 2.0, &[true, true]);
+            let smooth = network::smoothed(&e.faces, &e.joins, &goals, 0.5).unwrap();
+            assert_eq!(smooth.len(), 2);
+        }
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));

@@ -18,7 +18,11 @@
     "ui.scan_edit_snap_all": "Snap All to Scan",
     "ui.scan_edit_fit_all": "Fit to Scan",
     "ui.scan_edit_hint_dots": "Drag a point to take the surface through where you let it go; Alt-drag a point on an open edge to drag a new face out of it; click a point to type where it goes. The scan is coloured by how far it is from the surface. OK keeps the surface as edited.",
-    "cmd.scan_add_face": "Add Face"
+    "cmd.scan_add_face": "Add Face",
+    "ui.scan_edit_undo": "Undo Last Change",
+    "ui.scan_edit_delete_face": "Delete Face",
+    "ui.scan_edit_delete_face_hint": "Click a face of the Free Form to take it away. Press Delete Face again to stop.",
+    "ui.scan_edit_smooth_all": "Smooth"
   },
   "de": {
     "ui.scan_edit_one_face": "Teilen, Kopieren, Entfernen und Knick ändern eine Fläche: Diese Freiform hat mehrere",
@@ -39,7 +43,11 @@
     "ui.scan_edit_snap_all": "Alle auf Scan fangen",
     "ui.scan_edit_fit_all": "An Scan anpassen",
     "ui.scan_edit_hint_dots": "Ziehen Sie einen Punkt, damit die Fläche dort verläuft, wo Sie loslassen; ziehen Sie mit Alt einen Punkt einer offenen Kante, um eine neue Fläche herauszuziehen; klicken Sie einen Punkt an, um seine Lage einzugeben. Der Scan ist nach seinem Abstand zur Fläche gefärbt. OK übernimmt die bearbeitete Fläche.",
-    "cmd.scan_add_face": "Fläche hinzufügen"
+    "cmd.scan_add_face": "Fläche hinzufügen",
+    "ui.scan_edit_undo": "Letzte Änderung rückgängig",
+    "ui.scan_edit_delete_face": "Fläche löschen",
+    "ui.scan_edit_delete_face_hint": "Klicken Sie auf eine Fläche der Freiform, um sie zu entfernen. Erneut Fläche löschen zum Beenden.",
+    "ui.scan_edit_smooth_all": "Glätten"
   },
   "ja": {
     "ui.scan_edit_one_face": "分割・コピー・削除・折り目は 1 つの面を変更します: このフリーフォームには複数の面があります",
@@ -60,7 +68,11 @@
     "ui.scan_edit_snap_all": "すべてスキャンにスナップ",
     "ui.scan_edit_fit_all": "スキャンにフィット",
     "ui.scan_edit_hint_dots": "点をドラッグすると、放した位置をサーフェスが通ります。開いたエッジ上の点を Alt キーを押しながらドラッグすると、新しい面を引き出します。点をクリックすると位置を入力できます。スキャンはサーフェスからの距離で色分けされます。OK で編集したサーフェスを保持します。",
-    "cmd.scan_add_face": "面を追加"
+    "cmd.scan_add_face": "面を追加",
+    "ui.scan_edit_undo": "最後の変更を元に戻す",
+    "ui.scan_edit_delete_face": "面を削除",
+    "ui.scan_edit_delete_face_hint": "フリーフォームの面をクリックすると取り除きます。終了するにはもう一度［面を削除］を押します。",
+    "ui.scan_edit_smooth_all": "スムーズ"
   },
   "ko": {
     "ui.scan_edit_one_face": "분할, 복사, 제거, 주름은 한 면을 바꿉니다: 이 자유형에는 면이 여러 개 있습니다",
@@ -81,7 +93,11 @@
     "ui.scan_edit_snap_all": "모두 스캔에 맞추기",
     "ui.scan_edit_fit_all": "스캔에 피팅",
     "ui.scan_edit_hint_dots": "점을 끌면 놓은 곳을 서피스가 지나갑니다. 열린 모서리 위의 점을 Alt를 누른 채 끌면 새 면을 끌어냅니다. 점을 클릭하면 위치를 입력할 수 있습니다. 스캔은 서피스와의 거리로 색이 칠해집니다. 확인을 누르면 편집한 서피스를 유지합니다.",
-    "cmd.scan_add_face": "면 추가"
+    "cmd.scan_add_face": "면 추가",
+    "ui.scan_edit_undo": "마지막 변경 취소",
+    "ui.scan_edit_delete_face": "면 삭제",
+    "ui.scan_edit_delete_face_hint": "자유형의 면을 클릭하면 없앱니다. 끝내려면 면 삭제를 다시 누릅니다.",
+    "ui.scan_edit_smooth_all": "매끄럽게"
   },
   "zh": {
     "ui.scan_edit_one_face": "拆分、复制、删除和折痕只改变一个面：此自由形状有多个面",
@@ -102,7 +118,11 @@
     "ui.scan_edit_snap_all": "全部吸附到扫描",
     "ui.scan_edit_fit_all": "拟合到扫描",
     "ui.scan_edit_hint_dots": "拖动一个点，曲面会经过松开的位置；按住 Alt 拖动开放边上的点可拉出一个新面；单击一个点可输入其位置。扫描按与曲面的距离着色。确定保留编辑后的曲面。",
-    "cmd.scan_add_face": "添加面"
+    "cmd.scan_add_face": "添加面",
+    "ui.scan_edit_undo": "撤销上次更改",
+    "ui.scan_edit_delete_face": "删除面",
+    "ui.scan_edit_delete_face_hint": "单击自由形状的一个面将其去掉。再次按“删除面”结束。",
+    "ui.scan_edit_smooth_all": "平滑"
   },
   "ar": {
     "ui.scan_edit_one_face": "التقسيم والنسخ والإزالة والطي تغيّر وجهًا واحدًا: هذا الشكل الحر له عدة أوجه",
@@ -123,7 +143,11 @@
     "ui.scan_edit_snap_all": "التقاط الكل إلى المسح",
     "ui.scan_edit_fit_all": "ملاءمة مع المسح",
     "ui.scan_edit_hint_dots": "اسحب نقطة ليمر السطح حيث تفلتها؛ اسحب مع Alt نقطة على حافة مفتوحة لسحب وجه جديد منها؛ انقر نقطة لكتابة موضعها. يُلوَّن المسح حسب بعده عن السطح. موافق يحفظ السطح كما عُدّل.",
-    "cmd.scan_add_face": "إضافة وجه"
+    "cmd.scan_add_face": "إضافة وجه",
+    "ui.scan_edit_undo": "تراجع عن آخر تغيير",
+    "ui.scan_edit_delete_face": "حذف وجه",
+    "ui.scan_edit_delete_face_hint": "انقر وجهًا من الشكل الحر لإزالته. اضغط حذف وجه مرة أخرى للتوقف.",
+    "ui.scan_edit_smooth_all": "تنعيم"
   },
   "he": {
     "ui.scan_edit_one_face": "פיצול, העתקה, הסרה וקיפול משנים פאה אחת: לצורה החופשית הזו יש כמה פאות",
@@ -144,7 +168,11 @@
     "ui.scan_edit_snap_all": "הצמדת הכול לסריקה",
     "ui.scan_edit_fit_all": "התאמה לסריקה",
     "ui.scan_edit_hint_dots": "גררו נקודה כדי שהמשטח יעבור היכן שמשחררים אותה; גררו עם Alt נקודה על קצה פתוח כדי למשוך ממנו פאה חדשה; לחצו על נקודה כדי להקליד את מקומה. הסריקה צבועה לפי מרחקה מהמשטח. אישור שומר את המשטח כפי שנערך.",
-    "cmd.scan_add_face": "הוספת פאה"
+    "cmd.scan_add_face": "הוספת פאה",
+    "ui.scan_edit_undo": "ביטול השינוי האחרון",
+    "ui.scan_edit_delete_face": "מחיקת פאה",
+    "ui.scan_edit_delete_face_hint": "לחצו על פאה של הצורה החופשית כדי להסיר אותה. לחצו שוב על מחיקת פאה כדי לסיים.",
+    "ui.scan_edit_smooth_all": "החלקה"
   },
   "vi": {
     "ui.scan_edit_one_face": "Tách, Sao chép, Xóa và Gấp nếp thay đổi một mặt: dạng tự do này có nhiều mặt",
@@ -165,6 +193,10 @@
     "ui.scan_edit_snap_all": "Bám tất cả vào bản quét",
     "ui.scan_edit_fit_all": "Khớp với bản quét",
     "ui.scan_edit_hint_dots": "Kéo một điểm để bề mặt đi qua chỗ bạn thả; giữ Alt kéo một điểm trên cạnh hở để kéo ra một mặt mới; bấm một điểm để nhập vị trí. Bản quét được tô màu theo khoảng cách đến bề mặt. OK giữ bề mặt đã sửa.",
-    "cmd.scan_add_face": "Thêm mặt"
+    "cmd.scan_add_face": "Thêm mặt",
+    "ui.scan_edit_undo": "Hoàn tác thay đổi cuối",
+    "ui.scan_edit_delete_face": "Xóa mặt",
+    "ui.scan_edit_delete_face_hint": "Bấm vào một mặt của dạng tự do để bỏ nó. Bấm Xóa mặt lần nữa để dừng.",
+    "ui.scan_edit_smooth_all": "Làm trơn"
   }
 }

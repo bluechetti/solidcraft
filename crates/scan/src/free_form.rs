@@ -352,10 +352,16 @@ fn edge_fitted(a: Vec3, b: Vec3, places: &[Option<Vec3>], fitting: &Fitting, flo
 /// (one with none within reach stays where it was clicked), each edge the curve nearest the scan
 /// over the straight line between its corners, and the points inside those that bring the face
 /// nearest the scan under the Coons patch the edges bound. `None` when the net cannot be made.
-pub fn fitted(corners: [Vec3; 4], fitting: &Fitting, snap: impl Fn(&[Vec3]) -> Vec<Option<Vec3>>) -> Option<Fitted> {
+pub fn fitted(corners: [Vec3; 4], fitting: &Fitting, snap: impl Fn(&[Vec3], Option<Vec3>) -> Vec<Option<Vec3>>) -> Option<Fitted> {
     let n = fitting.count.clamp(LEAST_POINTS, MOST_POINTS);
     let fitting = Fitting { count: n, ..*fitting };
-    let on = snap(&corners);
+    let on = snap(&corners, None);
+    // The places along the edges and across the inside go to the scan along the way the face
+    // faces as a whole (QuickSurface's ray projection), not to the scan's nearest place: on a rough
+    // scan the nearest place is often off to one side, and places drawn sideways leave the net
+    // uneven, its edges zigzagging.
+    let facing = (corners[2] - corners[0]).cross(corners[3] - corners[1]).normalized();
+    let snap = |ps: &[Vec3]| snap(ps, facing);
     let c: [Vec3; 4] = std::array::from_fn(|k| on.get(k).copied().flatten().unwrap_or(corners[k]));
     let floor = TRIM_FLOOR * c[2].dist(c[0]).max(c[3].dist(c[1]));
     let edge_places = EDGE_PLACES * n;
@@ -440,6 +446,30 @@ mod tests {
         8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2))
     }
 
+    /// `p` on the scan: along `along` where the line meets it, else its nearest place.
+    fn snapped(on: &Projector, p: Vec3, along: Option<Vec3>) -> Option<Vec3> {
+        along.and_then(|d| on.along(p, d)).map(|(q, _)| q).or_else(|| on.nearest(p).map(|(q, _)| q))
+    }
+
+    /// On a rough scan (a dome with bumps), the places go to the scan along the face's normal, so
+    /// the net stays even: its edges do not zigzag as the bumps would draw them.
+    #[test]
+    fn on_a_rough_scan_the_net_stays_even() {
+        let rough = |x: f64, y: f64| dome(x, y) + 0.6 * ((x * 1.7).sin() * (y * 1.3).cos());
+        let (positions, triangles) = field(90, rough);
+        let scan = Scan::new(&positions, &triangles);
+        let on = Projector::new(&scan);
+        let corners = [Vec3::new(10.0, 10.0, 0.0), Vec3::new(50.0, 10.0, 0.0), Vec3::new(50.0, 50.0, 0.0), Vec3::new(10.0, 50.0, 0.0)];
+        let snap = |ps: &[Vec3], along: Option<Vec3>| ps.iter().map(|p| snapped(&on, *p, along)).collect::<Vec<_>>();
+        let fit = fitted(corners, &Fitting { count: 6, ..Fitting::default() }, snap).unwrap();
+        let check = crate::surface_check::check_whole(&fit.surface, 24).unwrap();
+        assert!(check.is_clean() && check.least_angle > 70.0 && check.stretch < 1.6, "{check:?}");
+        // The edge along y = 10 stays near it: no point of it pulled sideways.
+        let net = points(&fit.surface);
+        let off = (0..6).map(|i| (net[i].y - 10.0).abs()).fold(0.0, f64::max);
+        assert!(off < 1.0, "the edge's points keep to y = 10: {off}");
+    }
+
     /// Four corners clicked round a dome: the face fitted to the scan lies on it (not only its
     /// control points), where the net left flat over the corners does not.
     #[test]
@@ -447,7 +477,7 @@ mod tests {
         let (positions, triangles) = field(60, dome);
         let scan = Scan::new(&positions, &triangles);
         let on = Projector::new(&scan);
-        let snap = |ps: &[Vec3]| ps.iter().map(|p| on.nearest(*p).map(|(q, _)| q)).collect::<Vec<_>>();
+        let snap = |ps: &[Vec3], along: Option<Vec3>| ps.iter().map(|p| snapped(&on, *p, along)).collect::<Vec<_>>();
         let corners = [Vec3::new(10.0, 10.0, 0.0), Vec3::new(50.0, 10.0, 0.0), Vec3::new(50.0, 50.0, 0.0), Vec3::new(10.0, 50.0, 0.0)];
         let fit = fitted(corners, &Fitting { count: 6, ..Fitting::default() }, snap).unwrap();
         assert_eq!(fit.surface.count(), [6, 6]);
@@ -469,7 +499,7 @@ mod tests {
         let (positions, triangles) = field(60, rib);
         let scan = Scan::new(&positions, &triangles);
         let on = Projector::new(&scan);
-        let snap = |ps: &[Vec3]| ps.iter().map(|p| on.nearest(*p).map(|(q, _)| q)).collect::<Vec<_>>();
+        let snap = |ps: &[Vec3], along: Option<Vec3>| ps.iter().map(|p| snapped(&on, *p, along)).collect::<Vec<_>>();
         let corners = [Vec3::new(5.0, 5.0, 0.0), Vec3::new(55.0, 5.0, 0.0), Vec3::new(55.0, 55.0, 0.0), Vec3::new(5.0, 55.0, 0.0)];
         let follow = fitted(corners, &Fitting { count: 6, ..Fitting::default() }, snap).unwrap();
         let overall = fitted(corners, &Fitting { count: 6, overall: true, ..Fitting::default() }, snap).unwrap();

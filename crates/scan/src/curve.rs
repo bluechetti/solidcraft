@@ -70,6 +70,40 @@ impl Projector {
         Some((closest_on_triangle(p, at(tri[0])?, at(tri[1])?, at(tri[2])?), d))
     }
 
+    /// Where the line through `p` along `dir` (either way) meets the scan, and how far that is
+    /// from `p`: from the nearest place of the scan, the line is met with the plane of the
+    /// triangle there, again from the scan's nearest place to that, until it settles (a few steps
+    /// on a smooth scan). `None` where the line runs along the scan (it grazes it) or settles off it,
+    /// as over a hole: the scan's nearest place is the better guess there.
+    pub fn along(&self, p: Vec3, dir: Vec3) -> Option<(Vec3, f64)> {
+        let n = dir.normalized()?;
+        let mut x = p;
+        for _ in 0..8 {
+            let (q, m) = self.nearest_and_normal(x)?;
+            let c = n.dot(m);
+            if c.abs() < 0.25 {
+                return None;
+            }
+            let next = p + n * ((q - p).dot(m) / c);
+            let settled = next.dist(x) <= 1e-9 * (1.0 + next.dist(p));
+            x = next;
+            if settled {
+                break;
+            }
+        }
+        let (_, off) = self.nearest(x)?;
+        (off <= 0.25 * self.edge.max(1e-9) + 1e-9).then(|| (x, x.dist(p)))
+    }
+
+    /// The scan's nearest place to `p` and the unit normal of the triangle it lies on.
+    fn nearest_and_normal(&self, p: Vec3) -> Option<(Vec3, Vec3)> {
+        let (_, t) = self.tree.nearest(p)?;
+        let tri = self.mesh.triangles.get(t as usize)?;
+        let at = |i: u32| self.mesh.positions.get(i as usize).copied();
+        let (a, b, c) = (at(tri[0])?, at(tri[1])?, at(tri[2])?);
+        Some((closest_on_triangle(p, a, b, c), (b - a).cross(c - a).normalized()?))
+    }
+
     /// The way the scan faces at its nearest place to `p`: that triangle's unit normal.
     pub fn normal(&self, p: Vec3) -> Option<Vec3> {
         let (_, t) = self.tree.nearest(p)?;
