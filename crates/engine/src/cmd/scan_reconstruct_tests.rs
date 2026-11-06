@@ -331,3 +331,32 @@ fn a_turned_boss_selected_on_a_block_is_revolved_onto_it() {
     let v = volume(&s, &solid);
     assert!((v - expected).abs() < 0.005 * expected, "{v} against the part's {expected} (block {block})");
 }
+
+/// A flanged shaft, the flange R 30 × 8 with four bolt holes Ø 6 through it at R 22 and the shaft
+/// R 10 × 30: a turned part with a ring of holes. The flange's walls (its round and the holes) also
+/// make a slab along the axis; extruded, it would lie on the turned body's own faces (the kernel
+/// refused that join, or left the body broken for the cuts after it). Reconstruct proposes the
+/// revolve, the cut and the pattern only, and they build the part.
+#[test]
+fn a_flange_with_bolt_holes_is_revolved_and_cut_not_extruded_again() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.cylinder", json!({"radius": 30, "height": 8}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.cylinder", json!({"radius": 10, "height": 30, "base": [0, 0, 8], "operation": "join", "targets": [body]}));
+    run(&mut part, "solid.cylinder", json!({"radius": 3, "height": 8, "base": [22, 0, 0], "operation": "cut", "targets": [body], "name": "Bolt"}));
+    run(&mut part, "solid.pattern.circular", json!({"features": ["Bolt"], "axis": "Z", "count": 4}));
+    let expected = volume(&part, &body);
+    let (mut s, scan) = scanned(&part, &body, 2, "flange");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let commands: Vec<&str> = read["proposals"].as_array().unwrap().iter().map(|p| p["command"].as_str().unwrap()).collect();
+    assert_eq!(commands.first(), Some(&"scan.revolve_it"), "{read}");
+    assert!(!commands.contains(&"scan.extrude_it"), "no slab of the turned body again: {read}");
+    assert!(commands.contains(&"scan.cut_it") && commands.contains(&"scan.pattern_it"), "{read}");
+    for step in read["proposals"].as_array().unwrap() {
+        if step["command"] != "scan.fillet_it" {
+            run(&mut s, step["command"].as_str().unwrap(), step["params"].clone());
+        }
+    }
+    let v = volume(&s, &format!("{scan} Reconstructed"));
+    assert!((v - expected).abs() < 0.005 * expected, "{v} against {expected}");
+}

@@ -1223,9 +1223,12 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     // The rounds along edges, read before the prisms, which they do not choose.
     let rounds: BTreeSet<usize> = (0..shaped.len()).filter(|&k| !piece(k) && is_edge_round(scan, &whole(k), size)).collect();
     let mut prisms = extrusions(&faces, &span_of, size, &ignored, &rounds);
-    // Walls all about the turning axis are the steps of a turned part, read twice over.
+    // Walls all about the turning axis are the steps of a turned part, read twice over; so are
+    // walls about it with holes through them, which Cut It makes. Extruded too, such a slab lies
+    // on the turned body's own faces, which the kernel's boolean refuses or leaves the body
+    // broken for the cuts after it (T-LESS part 4).
     if let Some(revolve) = &revolve {
-        prisms.retain(|p| !p.walls.iter().all(|w| revolve.members.contains(w)));
+        prisms.retain(|p| !p.walls.iter().all(|&w| revolve.members.contains(&w) || hole(w)));
     }
     let repeats = repeats(&faces);
     // A prism whose sides are all holes is a hole, cut and not extruded.
