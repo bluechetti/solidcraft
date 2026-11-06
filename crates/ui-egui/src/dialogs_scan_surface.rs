@@ -148,6 +148,13 @@ pub struct EditSurface {
     adding: Option<Adding>,
     /// Delete Face is on: a click on a face takes it away.
     deleting: bool,
+    /// Crease Edge (`Some(true)`) or Remove Crease (`Some(false)`) is on: a click on a shared edge
+    /// creases it, or makes it smooth again.
+    creasing: Option<bool>,
+    /// The shared edges creased by hand, and those made smooth by hand, each by its ends: the
+    /// faces are held tangent across them or not as these say, whatever angle they meet at now.
+    creases: Vec<(Vec3, Vec3)>,
+    smooths: Vec<(Vec3, Vec3)>,
     /// The scan under the faces and how far each point is from them, coloured.
     shade: Option<Box<Shading>>,
     /// The faces' shape changed since the scan under them was looked for.
@@ -163,6 +170,8 @@ struct Before {
     faces: Vec<NurbsSurface>,
     moved: Vec<bool>,
     reshaped: bool,
+    creases: Vec<(Vec3, Vec3)>,
+    smooths: Vec<(Vec3, Vec3)>,
 }
 
 /// How many edits Undo Last Change goes back, at most.
@@ -199,6 +208,9 @@ impl Default for EditSurface {
             drag: None,
             adding: None,
             deleting: false,
+            creasing: None,
+            creases: Vec::new(),
+            smooths: Vec::new(),
             shade: None,
             restudy: false,
             history: Vec::new(),
@@ -482,9 +494,32 @@ fn study(app: &SolveApp, k: &mut EditSurface) {
     show_faces(k, shown, false, None);
 }
 
-/// The dialog started again from `faces`: nothing moved, nothing chosen.
+/// Whether the seam with ends `a` and `b` is the edge `e` (either way round).
+fn same_edge(e: &(Vec3, Vec3), a: Vec3, b: Vec3) -> bool {
+    (e.0.dist(a) < 1e-6 && e.1.dist(b) < 1e-6) || (e.0.dist(b) < 1e-6 && e.1.dist(a) < 1e-6)
+}
+
+/// How `faces` join, with the seams creased or made smooth by hand held so (found again by their
+/// ends, so a face added or the points doubled keeps them).
+fn joins_of(k: &EditSurface, faces: &[NurbsSurface]) -> Joins {
+    let mut joins = network::joins(faces).unwrap_or_default();
+    for i in 0..joins.seams.len() {
+        let Some((a, b)) = network::seam_ends(faces, &joins, i) else { continue };
+        if k.creases.iter().any(|e| same_edge(e, a, b)) {
+            joins = network::without_tangency(&joins, i);
+        } else if k.smooths.iter().any(|e| same_edge(e, a, b)) {
+            joins = network::with_tangency(faces, &joins, i);
+        }
+    }
+    joins
+}
+
+/// The dialog started again from `faces`: nothing moved, nothing chosen, no crease but the faces' own.
 fn reset_to(k: &mut EditSurface, faces: Vec<NurbsSurface>) {
-    k.joins = Arc::new(network::joins(&faces).unwrap_or_default());
+    k.creases.clear();
+    k.smooths.clear();
+    k.creasing = None;
+    k.joins = Arc::new(joins_of(k, &faces));
     k.net = network::network_points(&faces, &k.joins);
     k.moved = vec![false; k.net.len()];
     k.chosen = None;
@@ -502,14 +537,22 @@ fn remember(k: &mut EditSurface) {
     if k.history.len() >= HISTORY {
         k.history.remove(0);
     }
-    k.history.push(Before { faces: k.faces.clone(), moved: k.moved.clone(), reshaped: k.reshaped });
+    k.history.push(Before {
+        faces: k.faces.clone(),
+        moved: k.moved.clone(),
+        reshaped: k.reshaped,
+        creases: k.creases.clone(),
+        smooths: k.smooths.clone(),
+    });
 }
 
 /// The last edit undone: the faces as they were before it.
 fn undo_last(k: &mut EditSurface) {
     let Some(before) = k.history.pop() else { return };
     let restudy = before.faces.len() != k.faces.len();
-    k.joins = Arc::new(network::joins(&before.faces).unwrap_or_default());
+    k.creases = before.creases;
+    k.smooths = before.smooths;
+    k.joins = Arc::new(joins_of(k, &before.faces));
     k.net = network::network_points(&before.faces, &k.joins);
     k.moved = before.moved;
     k.reshaped = before.reshaped;
@@ -526,7 +569,7 @@ fn undo_last(k: &mut EditSurface) {
 fn reshaped_to(k: &mut EditSurface, faces: Vec<NurbsSurface>) {
     remember(k);
     let moved_at: Vec<Vec3> = k.net.iter().zip(&k.moved).filter(|(_, m)| **m).map(|(p, _)| *p).collect();
-    k.joins = Arc::new(network::joins(&faces).unwrap_or_default());
+    k.joins = Arc::new(joins_of(k, &faces));
     k.net = network::network_points(&faces, &k.joins);
     k.moved = k.net.iter().map(|p| moved_at.iter().any(|q| q.dist(*p) < 1e-9)).collect();
     k.reshaped = true;
@@ -723,6 +766,63 @@ fn slide_typed(k: &mut EditSurface, index: usize) {
     }
 }
 
+/// How many edges creased by hand still meet smoothly: not kept when the dialog closes, since a
+/// crease is kept by the angle the faces meet at.
+fn unkept_creases(k: &EditSurface) -> usize {
+    let creased = network::creased(&k.joins);
+    (0..k.joins.seams.len())
+        .filter(|&i| creased.get(i).copied().unwrap_or(false))
+        .filter(|&i| network::seam_ends(&k.faces, &k.joins, i).is_some_and(|(a, b)| k.creases.iter().any(|e| same_edge(e, a, b))))
+        .filter(|&i| network::seam_angle(&k.faces, &k.joins.seams[i]) <= network::SMOOTH_DEGREES)
+        .count()
+}
+
+/// The shared edge nearest `at` on the screen, within [`EDGE_GRAB`].
+fn seam_at(k: &EditSurface, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<usize> {
+    k.joins
+        .seams
+        .iter()
+        .enumerate()
+        .filter_map(|(i, seam)| {
+            let curve = side_on_screen(proj, k.shown.get(seam.a)?, seam.a_side);
+            let d = curve.windows(2).map(|w| distance_to_segment(at, w[0], w[1])).fold(f32::INFINITY, f32::min);
+            Some((i, d))
+        })
+        .filter(|(_, d)| *d <= EDGE_GRAB)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(i, _)| i)
+}
+
+/// Seam `seam` creased (`crease`), or made smooth again: the faces held tangent across it or not
+/// from now on, and the points near it fitted to the scan again, so they take the scan's edge
+/// there, or round it over. One step of Undo Last Change.
+fn crease_click(k: &mut EditSurface, seam: usize, crease: bool) {
+    let Some((a, b)) = network::seam_ends(&k.faces, &k.joins, seam) else { return };
+    if network::creased(&k.joins).get(seam).copied() == Some(crease) {
+        k.note = Some(tr(if crease { "ui.scan_edit_crease_already" } else { "ui.scan_edit_uncrease_already" }).to_owned());
+        return;
+    }
+    let (mut creases, mut smooths) = (k.creases.clone(), k.smooths.clone());
+    creases.retain(|e| !same_edge(e, a, b));
+    smooths.retain(|e| !same_edge(e, a, b));
+    if crease {
+        creases.push((a, b))
+    } else {
+        smooths.push((a, b))
+    }
+    let joins = if crease { network::without_tangency(&k.joins, seam) } else { network::with_tangency(&k.faces, &k.joins, seam) };
+    let scan = loaded(k).and_then(|l| l.covered.as_ref()).map(|c| c.points.clone()).unwrap_or_default();
+    let reach = k.faces.iter().map(edit::default_reach).fold(1.0, f64::max);
+    let faces = network::refit_near_seam(&k.faces, &joins, seam, &scan, reach, &k.moved).unwrap_or_else(|| k.faces.clone());
+    k.joins = Arc::new(joins);
+    show_faces(k, faces, false, None);
+    // Remembered with the creases as they were, so Undo Last Change puts the tangency back too.
+    commit(k, &[]);
+    k.creases = creases;
+    k.smooths = smooths;
+    k.note = None;
+}
+
 /// The faces shown kept as edited, the points `by_hand` counted as moved by hand.
 fn commit(k: &mut EditSurface, by_hand: &[usize]) {
     remember(k);
@@ -761,6 +861,10 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         let line = crate::i18n::format("ui.scan_edit_irregular_value", &[("count", &odd.to_string())]);
         form_row(ui, tr("ui.scan_edit_irregular"), |ui| ui_kit::text(ui, &line, ui_kit::Text::Report("scan_edit_irregular", false)));
     }
+    let sharp = network::creased(&k.joins).iter().filter(|c| **c).count();
+    if sharp > 0 {
+        form_row(ui, tr("ui.scan_edit_creases"), |ui| ui_kit::text(ui, &sharp.to_string(), ui_kit::Text::Cell));
+    }
     let kinds = [tr("ui.scan_edit_handles_dots"), tr("ui.scan_edit_handles_net")];
     let before = k.handles;
     choice_row(ui, tr("ui.scan_edit_handles"), "scan_edit_handles", &mut k.handles, &kinds);
@@ -768,6 +872,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         k.chosen = None;
         k.line = None;
         k.adding = None;
+        k.creasing = None;
     }
     let dots = k.handles != HANDLES_NET;
     if l.covered.is_some() {
@@ -852,8 +957,17 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
     if let Some(note) = &k.note {
         ui_kit::text(ui, note, ui_kit::Text::Report("scan_edit_note", true));
     }
+    // A crease whose faces still meet smoothly (no sharp scan edge under it) is not kept by OK:
+    // a crease lives in the angle the faces meet at.
+    let unkept = unkept_creases(k);
+    if unkept > 0 {
+        let line = crate::i18n::format("ui.scan_edit_crease_unkept", &[("count", &unkept.to_string())]);
+        ui_kit::text(ui, &line, ui_kit::Text::Report("scan_edit_crease_unkept", false));
+    }
     let hint = match (&k.adding, dots) {
         _ if k.deleting => tr("ui.scan_edit_delete_face_hint"),
+        _ if k.creasing == Some(true) => tr("ui.scan_edit_crease_hint"),
+        _ if k.creasing == Some(false) => tr("ui.scan_edit_uncrease_hint"),
         (Some(a), _) if a.side.is_none() => tr("ui.scan_edit_add_face_edge"),
         (Some(_), _) => tr("ui.scan_edit_add_face_corners"),
         (None, true) => tr("ui.scan_edit_hint_dots"),
@@ -873,6 +987,7 @@ fn whole_tools(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, l: &Loade
     if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_add_face"), style)).clicked() && scan {
         k.adding = if on { None } else { Some(Adding::default()) };
         k.deleting = false;
+        k.creasing = None;
         k.chosen = None;
         k.line = None;
     }
@@ -881,7 +996,22 @@ fn whole_tools(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, l: &Loade
         if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_delete_face"), style)).clicked() {
             k.deleting = !k.deleting;
             k.adding = None;
+            k.creasing = None;
             k.chosen = None;
+        }
+    }
+    // Crease Edge and Remove Crease: a click on a shared edge then makes it sharp, or smooth.
+    if is_network(k) {
+        for (mode, id) in [(true, "ui.scan_edit_crease_edge"), (false, "ui.scan_edit_uncrease_edge")] {
+            let on = k.creasing == Some(mode);
+            let style = if on { ui_kit::Button::SmallSelected } else { ui_kit::Button::Normal };
+            if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr(id), style)).clicked() {
+                k.creasing = if on { None } else { Some(mode) };
+                k.adding = None;
+                k.deleting = false;
+                k.chosen = None;
+                k.line = None;
+            }
         }
     }
     if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_smooth_all"), ui_kit::Button::Normal)).clicked() {
@@ -1262,6 +1392,12 @@ pub(crate) fn choose(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui:
         add_face_click(app, proj, at);
         return;
     }
+    if let Some(k) = dialog(app).filter(|k| k.creasing.is_some()) {
+        if let (Some(seam), Some(crease)) = (seam_at(k, proj, at), k.creasing) {
+            crease_click(k, seam, crease);
+        }
+        return;
+    }
     if let Some(k) = dialog(app).filter(|k| k.deleting) {
         if let Some(face) = face_at(k, proj, at) {
             match network::without_face(&k.faces, face) {
@@ -1377,7 +1513,7 @@ fn rows_for(k: &EditSurface, face: usize, side: Side) -> usize {
 /// surface out (QuickSurface's Alt-drag; the control net of one face).
 pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, copy: bool) -> bool {
     let Some(k) = dialog(app) else { return false };
-    if k.adding.is_some() || k.deleting {
+    if k.adding.is_some() || k.deleting || k.creasing.is_some() {
         return false;
     }
     let Some(mut index) = handle_at(k, proj, at) else { return false };
@@ -1656,9 +1792,19 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         (Some(_), Some(at)) => open_edge_at(k, proj, at),
         _ => None,
     };
-    for seam in &k.joins.seams {
+    // Shared sides thin; a crease (the faces meet at an angle, not held tangent) in Continuity
+    // Analysis's crease colour; with Crease Edge or Remove Crease on, the one under the pointer bold.
+    let creased = network::creased(&k.joins);
+    let under_pointer = k.creasing.and_then(|_| pointer.and_then(|at| seam_at(k, proj, at)));
+    for (i, seam) in k.joins.seams.iter().enumerate() {
         if let Some(s) = k.shown.get(seam.a) {
-            painter.add(egui::Shape::line(side_on_screen(proj, s, seam.a_side), egui::Stroke::new(1.5, t.surface_accent)));
+            let sharp = creased.get(i).copied().unwrap_or(false);
+            let (width, colour) = match (under_pointer == Some(i), sharp) {
+                (true, _) => (4.0, t.accent),
+                (false, true) => (2.5, t.continuity[2]),
+                (false, false) => (1.5, t.surface_accent),
+            };
+            painter.add(egui::Shape::line(side_on_screen(proj, s, seam.a_side), egui::Stroke::new(width, colour)));
         }
     }
     for &(f, side) in &k.joins.open {
@@ -1829,6 +1975,27 @@ mod tests {
             }
         }
         stl + "endsolid d\n"
+    }
+
+    /// A ridge scanned as a grid, `n` squares a side over 60 mm: z = 10 − 0.2·|x − 30|, as an STL.
+    fn ridge_stl(n: u32) -> String {
+        let at = |i: u32, j: u32| {
+            let (x, y) = (60.0 * f64::from(i) / f64::from(n), 60.0 * f64::from(j) / f64::from(n));
+            [x, y, 10.0 - 0.2 * (x - 30.0).abs()]
+        };
+        let mut stl = String::from("solid r\n");
+        for i in 0..n {
+            for j in 0..n {
+                for tri in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                    stl += "facet normal 0 0 0\nouter loop\n";
+                    for [x, y, z] in tri {
+                        stl += &format!("vertex {x} {y} {z}\n");
+                    }
+                    stl += "endloop\nendfacet\n";
+                }
+            }
+        }
+        stl + "endsolid r\n"
     }
 
     /// The dialog's handles set to the control net, a dragged point free of the scan.
@@ -2209,5 +2376,70 @@ mod tests {
         h.app.start("scan.edit_surface");
         h.frames(2);
         assert_eq!((kind(&h).handles, kind(&h).snap), (HANDLES_NET, SNAP_OFF), "the old default, kept behind the preference");
+    }
+    /// Crease Edge on: a click on the shared edge of two faces grown smoothly over a ridge creases
+    /// it, so the faces follow the ridge; it is one step of Undo Last Change, which puts the
+    /// tangency back; Remove Crease makes it smooth again; OK keeps the crease, which reads back
+    /// from the angle the faces meet at. No point can be dragged while a crease mode is on.
+    #[test]
+    fn crease_edge_in_edit_surface_follows_the_ridge_and_remove_crease_smooths_it() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("ridge.stl");
+        std::fs::write(&path, ridge_stl(60)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[10, 10, 6], [30, 10, 10], [30, 50, 10], [10, 50, 6]], "count": 5})).unwrap();
+        h.app.run("scan.add_face", json!({"edge": [[30, 10, 10], [30, 50, 10]], "far": [[50, 10, 6], [50, 50, 6]], "rows": 5})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        let k = kind(&h).clone();
+        assert_eq!((k.faces.len(), network::creased(&k.joins)), (2, vec![false]), "two faces, held tangent across the ridge");
+        let before = k.fit.expect("the scan's distance").0;
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            e.creasing = Some(true);
+        }
+        let mid = k.joins.seams[0].a_side.at(&k.shown[k.joins.seams[0].a], 0.5).unwrap();
+        // No drag moves a point while the mode is on.
+        let dot = k.shown_dots.iter().find(|d| d.at.dist(mid) > 5.0).map(|d| d.at).unwrap();
+        let to = dot + Vec3::new(0.0, 5.0, 0.0);
+        h.step(&json!({"drag": [{"world": [dot.x, dot.y, dot.z]}, {"world": [to.x, to.y, to.z]}], "steps": 4})).unwrap();
+        h.frames(2);
+        assert!(kind(&h).history.is_empty() && kind(&h).moved.iter().all(|m| !*m), "no drag while Crease Edge is on");
+        h.step(&json!({"click": {"world": [mid.x, mid.y, mid.z]}})).unwrap();
+        h.frames(2);
+        let k = kind(&h).clone();
+        assert_eq!((network::creased(&k.joins), k.history.len(), k.creases.len()), (vec![true], 1, 1), "creased in one step: {:?}", k.note);
+        assert!(network::seam_angle(&k.faces, &k.joins.seams[0]) > 15.0, "the faces meet at an angle now");
+        assert!(k.fit.is_some_and(|f| f.0 < before / 2.0), "and follow the ridge: {:?} against {before}", k.fit);
+        assert_eq!(unkept_creases(&k), 0, "a crease the scan has is kept");
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            undo_last(e);
+            assert_eq!((network::creased(&e.joins), e.creases.len()), (vec![false], 0), "the tangency back");
+            assert!(network::worst_kink(&e.faces, &e.joins) < 1.0);
+        }
+        h.step(&json!({"click": {"world": [mid.x, mid.y, mid.z]}})).unwrap();
+        h.frames(2);
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            e.creasing = Some(false);
+        }
+        h.step(&json!({"click": {"world": [mid.x, mid.y, mid.z]}})).unwrap();
+        h.frames(2);
+        let k = kind(&h).clone();
+        assert_eq!((network::creased(&k.joins), k.smooths.len()), (vec![false], 1), "smooth again: {:?}", k.note);
+        assert!(network::worst_kink(&k.faces, &k.joins) < 1.0, "{}", network::worst_kink(&k.faces, &k.joins));
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            e.creasing = Some(true);
+        }
+        h.step(&json!({"click": {"world": [mid.x, mid.y, mid.z]}})).unwrap();
+        h.frames(2);
+        assert_eq!(network::creased(&kind(&h).joins), vec![true]);
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        let kept = edit::editable(&h.app.session, Some("FreeForm1"), "test").unwrap();
+        assert_eq!(network::creased(&network::joins(&kept.faces).unwrap()), vec![true], "the crease kept by the angle");
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        assert_eq!(network::creased(&kind(&h).joins), vec![true], "read back as a crease");
     }
 }

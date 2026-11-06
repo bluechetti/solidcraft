@@ -496,6 +496,28 @@ pub struct ScanEditSurfaceParams {
     /// Every face of the surface as it now is (a Free Form's network, faces added), given alone.
     #[serde(default)]
     pub faces: Option<Vec<ScanNet>>,
+    /// Shared edges of a Free Form of several faces made sharp: the faces are no longer held
+    /// tangent across each, and the points near it are fitted to the scan again, so they take the
+    /// scan's edge there. A crease is kept by the faces meeting at an angle. Given alone, or with
+    /// `uncrease`.
+    #[serde(default)]
+    pub crease: Option<Vec<ScanEdgePick>>,
+    /// Creased edges made smooth again: the faces held tangent across each, the points near it
+    /// fitted to the scan again. Given alone, or with `crease`.
+    #[serde(default)]
+    pub uncrease: Option<Vec<ScanEdgePick>>,
+}
+
+/// A shared edge of a Free Form: by a point near it, or by its two ends.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanEdgePick {
+    /// The shared edge nearest this place (within the reach).
+    #[serde(default)]
+    pub at: Option<Point3>,
+    /// Or: the edge whose ends are these (either way round).
+    #[serde(default)]
+    pub edge: Option<[Point3; 2]>,
 }
 
 /// A point on a surface moved: the surface at a control point's place on it (one for each control
@@ -872,9 +894,12 @@ pub struct ScanEditSurfaceResult {
     pub rms: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f64>,
-    /// How many faces the surface has (more than one for a Free Form's network).
+    /// How many faces the surface has (more than one for a Free Form's network), and how many of
+    /// the edges they share are creases (the faces meet at an angle there, not held tangent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub faces: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creases: Option<usize>,
     /// The Import feature that keeps the surface.
     pub feature: u64,
     /// In the warn parameter-check mode: what the call's parameters got wrong.

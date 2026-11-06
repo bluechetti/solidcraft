@@ -360,10 +360,91 @@ fn faces_reply(s: &Session, target: &EditableSurface, faces: &[NurbsSurface], mo
         rms: measured.as_ref().map(|m| m.2),
         max: measured.as_ref().map(|m| m.3),
         faces: (faces.len() > 1).then_some(faces.len()),
+        creases: (faces.len() > 1).then(|| {
+            solidcraft_scan::network::joins(faces).map(|j| solidcraft_scan::network::creased(&j).iter().filter(|c| **c).count()).unwrap_or(0)
+        }),
         feature: target.feature,
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// Shared edges of a Free Form creased (`crease`) or made smooth again (`uncrease`): each named by
+/// a point near it or by its ends; the faces held tangent across it or not from now on, and the
+/// points near it fitted to the scan again, so they take the scan's edge, or round it over.
+fn creased_edges(s: &mut Session, target: &EditableSurface, p: &Value, cmd: &str) -> Result<Value> {
+    use solidcraft_scan::network;
+    if !target.is_network() {
+        return Err(bad(
+            cmd,
+            format!(
+                "`{}` is one face: a crease needs a shared edge of a Free Form of several faces (Edit Net's crease creases a row or column of one face)",
+                target.body
+            ),
+        ));
+    }
+    let faces = target.faces.clone();
+    let mut joins = network::joins(&faces).map_err(|e| bad(cmd, e.to_string()))?;
+    let reach = length(s, p, "reach", faces.iter().map(default_reach).fold(1.0, f64::max), cmd)?;
+    if !(reach.is_finite() && reach > 0.0) {
+        return Err(bad(cmd, "`reach` must be a length above 0"));
+    }
+    let mut picks: Vec<(bool, usize)> = Vec::new();
+    for (key, crease) in [("crease", true), ("uncrease", false)] {
+        let Some(list) = p.get(key).filter(|v| !v.is_null()) else { continue };
+        let list = list
+            .as_array()
+            .filter(|a| !a.is_empty() && a.len() <= 256)
+            .ok_or_else(|| bad(cmd, format!("`{key}` must list 1 to 256 edges, each {{at: [x, y, z]}} or {{edge: [[x, y, z], [x, y, z]]}}")))?;
+        for (k, pick) in list.iter().enumerate() {
+            let at = pick.get("at").filter(|v| !v.is_null());
+            let edge = pick.get("edge").filter(|v| !v.is_null());
+            let seam = match (at, edge) {
+                (Some(at), None) => {
+                    let near = crate::params::vec3(at).ok_or_else(|| bad(cmd, format!("`{key}[{k}].at` must be a point [x, y, z] of numbers")))?;
+                    let (seam, off) = network::seam_near(&faces, &joins, near).ok_or_else(|| bad(cmd, "the Free Form has no shared edge"))?;
+                    if off > reach {
+                        return Err(bad(
+                            cmd,
+                            format!("`{key}[{k}].at` is {off:.2} mm from the nearest shared edge, more than the reach ({reach:.2} mm)"),
+                        ));
+                    }
+                    seam
+                }
+                (None, Some(edge)) => {
+                    let ends = edge
+                        .as_array()
+                        .filter(|a| a.len() == 2)
+                        .ok_or_else(|| bad(cmd, format!("`{key}[{k}].edge` must be two points [x, y, z]")))?;
+                    let (Some(a), Some(b)) = (crate::params::vec3(&ends[0]), crate::params::vec3(&ends[1])) else {
+                        return Err(bad(cmd, format!("`{key}[{k}].edge` must be two points [x, y, z] of numbers")));
+                    };
+                    network::seam_between(&faces, &joins, a, b, reach).ok_or_else(|| {
+                        bad(cmd, format!("`{key}[{k}].edge` is not the ends of a shared edge of the Free Form (within the reach, {reach:.2} mm)"))
+                    })?
+                }
+                _ => return Err(bad(cmd, format!("`{key}[{k}]` names its edge by `at` (a point near it) or by `edge` (its two ends): one of them"))),
+            };
+            if picks.iter().any(|(_, i)| *i == seam) {
+                return Err(bad(cmd, format!("`{key}[{k}]` names an edge already named in this call")));
+            }
+            picks.push((crease, seam));
+        }
+    }
+    if picks.is_empty() {
+        return Err(bad(cmd, "`crease` or `uncrease` must name an edge"));
+    }
+    let scan: Vec<Vec3> = shade(s, str_(p, "scan"), &faces, cmd).map(|(_, sh)| sh.points.iter().map(|u| u.at).collect()).unwrap_or_default();
+    let mut current = faces;
+    let held = vec![false; joins.len()];
+    for (crease, seam) in picks {
+        joins = if crease { network::without_tangency(&joins, seam) } else { network::with_tangency(&current, &joins, seam) };
+        if let Some(next) = network::refit_near_seam(&current, &joins, seam, &scan, reach, &held) {
+            current = next;
+        }
+    }
+    write_faces(s, target, &current, cmd)?;
+    faces_reply(s, target, &current, 0, cmd)
 }
 
 /// Points on the surface moved (`dots`): each the surface at a control point's place on it,
@@ -431,6 +512,16 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.edit_surface";
     let target = editable(s, str_(p, "surface"), cmd)?;
     let given = |k: &str| p.get(k).is_some_and(|v| !v.is_null());
+    // Shared edges creased or made smooth again.
+    if given("crease") || given("uncrease") {
+        if ["points", "moves", "hold", "net", "slide", "dots", "faces"].iter().any(|k| given(k)) || str_(p, "refit").is_some_and(|r| r != "none") {
+            return Err(bad(
+                cmd,
+                "`crease` and `uncrease` name shared edges of a Free Form: give them without points, moves, hold, net, slide, dots, faces or a refit",
+            ));
+        }
+        return creased_edges(s, &target, p, cmd);
+    }
     // Every face as it now is: a network as the dialog edited it, faces added.
     if let Some(v) = p.get("faces").filter(|v| !v.is_null()) {
         if ["points", "moves", "hold", "net", "slide", "dots"].iter().any(|k| given(k)) || str_(p, "refit").is_some_and(|r| r != "none") {
@@ -474,6 +565,7 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
             rms: None,
             max: None,
             faces: None,
+            creases: None,
             feature: target.feature,
             param_warnings: Vec::new(),
         };
@@ -637,6 +729,7 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
         rms,
         max,
         faces: None,
+        creases: None,
         feature: target.feature,
         param_warnings: Vec::new(),
     };

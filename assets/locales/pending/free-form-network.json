@@ -27,7 +27,15 @@
     "ui.scan_edit_fit_folds": "Fit to Scan would fold the surface: Increase Resolution first, or fit a smaller Free Form.",
     "ui.scan_free_form_folds_hint": "The face folds where it follows bumps it has too few points for: raise Stiffness, take fewer Points, or click the corners closer together.",
     "ui.scan_wrap_round_closes": "The net goes the whole way round, open where its ends meet ({gap} apart): Merge Surfaces with only this surface closes it.",
-    "ui.scan_wrap_round_open": "The net goes the whole way round, but its ends are {gap} apart, too far to close: wrap a part that is round all the way, or set Arc below 360°."
+    "ui.scan_wrap_round_open": "The net goes the whole way round, but its ends are {gap} apart, too far to close: wrap a part that is round all the way, or set Arc below 360°.",
+    "ui.scan_edit_creases": "Creases",
+    "ui.scan_edit_crease_hint": "Click a shared edge to make it sharp: the faces meet at an angle there and follow the scan's edge. Press Crease Edge again to stop.",
+    "ui.scan_edit_uncrease_hint": "Click a creased edge to make it smooth again. Press Remove Crease again to stop.",
+    "ui.scan_edit_crease_already": "That edge is a crease already.",
+    "ui.scan_edit_uncrease_already": "That edge is smooth already.",
+    "ui.scan_edit_crease_unkept": "{count} creased edges still meet smoothly: a crease is kept by the faces meeting at an angle, so these are not kept when the dialog closes. Drag the points next to them onto the scan's edge.",
+    "ui.scan_edit_crease_edge": "Crease Edge",
+    "ui.scan_edit_uncrease_edge": "Remove Crease"
   },
   "de": {
     "ui.scan_edit_one_face": "Teilen, Kopieren, Entfernen und Knick ändern eine Fläche: Diese Freiform hat mehrere",
@@ -57,7 +65,15 @@
     "ui.scan_edit_fit_folds": "An Scan anpassen würde die Fläche falten: zuerst die Auflösung erhöhen oder eine kleinere Freiform anpassen.",
     "ui.scan_free_form_folds_hint": "Die Fläche faltet sich, wo sie Unebenheiten folgt, für die sie zu wenige Punkte hat: Steifigkeit erhöhen, weniger Punkte nehmen oder die Ecken näher beieinander klicken.",
     "ui.scan_wrap_round_closes": "Das Netz geht ganz herum und ist dort offen, wo sich seine Enden treffen ({gap} Abstand): Flächen zusammenführen mit nur dieser Fläche schließt es.",
-    "ui.scan_wrap_round_open": "Das Netz geht ganz herum, aber seine Enden sind {gap} voneinander entfernt, zu weit zum Schließen: Wickeln Sie einen rundum runden Teil oder stellen Sie den Bogen unter 360°."
+    "ui.scan_wrap_round_open": "Das Netz geht ganz herum, aber seine Enden sind {gap} voneinander entfernt, zu weit zum Schließen: Wickeln Sie einen rundum runden Teil oder stellen Sie den Bogen unter 360°.",
+    "ui.scan_edit_creases": "Knicke",
+    "ui.scan_edit_crease_hint": "Klicken Sie auf eine gemeinsame Kante, um sie scharf zu machen: Die Flächen treffen sich dort in einem Winkel und folgen der Kante des Scans. Erneut Kante knicken zum Beenden.",
+    "ui.scan_edit_uncrease_hint": "Klicken Sie auf eine geknickte Kante, um sie wieder glatt zu machen. Erneut Knick entfernen zum Beenden.",
+    "ui.scan_edit_crease_already": "Diese Kante ist bereits ein Knick.",
+    "ui.scan_edit_uncrease_already": "Diese Kante ist bereits glatt.",
+    "ui.scan_edit_crease_unkept": "{count} geknickte Kanten treffen sich noch glatt: Ein Knick bleibt durch den Winkel erhalten, in dem sich die Flächen treffen, daher bleiben diese beim Schließen des Dialogs nicht erhalten. Ziehen Sie die Punkte daneben auf die Kante des Scans.",
+    "ui.scan_edit_crease_edge": "Kante knicken",
+    "ui.scan_edit_uncrease_edge": "Knick entfernen"
   },
   "ja": {
     "ui.scan_edit_one_face": "分割・コピー・削除・折り目は 1 つの面を変更します: このフリーフォームには複数の面があります",
@@ -87,7 +103,15 @@
     "ui.scan_edit_fit_folds": "スキャンにフィットするとサーフェスが折れ返ります。先に解像度を上げるか、小さいフリーフォームでフィットしてください。",
     "ui.scan_free_form_folds_hint": "点が足りない凹凸に沿う所で面が折れ返ります。剛性を上げる、点を減らす、または角をもっと近くにクリックしてください。",
     "ui.scan_wrap_round_closes": "ネットは一周しており、端が合う所で開いています（{gap} 離れています）。この面だけで［面を結合］すると閉じます。",
-    "ui.scan_wrap_round_open": "ネットは一周していますが、端が {gap} 離れていて閉じられません。全周が丸い部分を巻くか、円弧を 360° 未満にしてください。"
+    "ui.scan_wrap_round_open": "ネットは一周していますが、端が {gap} 離れていて閉じられません。全周が丸い部分を巻くか、円弧を 360° 未満にしてください。",
+    "ui.scan_edit_creases": "折り目",
+    "ui.scan_edit_crease_hint": "共有エッジをクリックして鋭くします。そこで面は角度をもって接し、スキャンのエッジに沿います。終了するにはもう一度エッジを折るを押します。",
+    "ui.scan_edit_uncrease_hint": "折ったエッジをクリックして再び滑らかにします。終了するにはもう一度折り目を削除を押します。",
+    "ui.scan_edit_crease_already": "そのエッジはすでに折り目です。",
+    "ui.scan_edit_uncrease_already": "そのエッジはすでに滑らかです。",
+    "ui.scan_edit_crease_unkept": "{count} 本の折ったエッジはまだ滑らかに接しています。折り目は面が接する角度で保たれるため、ダイアログを閉じると保たれません。隣の点をスキャンのエッジへドラッグしてください。",
+    "ui.scan_edit_crease_edge": "エッジを折る",
+    "ui.scan_edit_uncrease_edge": "折り目を削除"
   },
   "ko": {
     "ui.scan_edit_one_face": "분할, 복사, 제거, 주름은 한 면을 바꿉니다: 이 자유형에는 면이 여러 개 있습니다",
@@ -117,7 +141,15 @@
     "ui.scan_edit_fit_folds": "스캔에 피팅하면 서피스가 접힙니다. 먼저 해상도를 높이거나 더 작은 자유형을 피팅하세요.",
     "ui.scan_free_form_folds_hint": "점이 부족한 요철을 따라가는 곳에서 면이 접힙니다. 강성을 높이거나, 점을 줄이거나, 모서리를 더 가깝게 클릭하세요.",
     "ui.scan_wrap_round_closes": "그물이 한 바퀴 돌며 끝이 만나는 곳이 열려 있습니다({gap} 떨어짐). 이 서피스만으로 서피스 병합을 하면 닫힙니다.",
-    "ui.scan_wrap_round_open": "그물이 한 바퀴 돌지만 끝이 {gap} 떨어져 있어 닫을 수 없습니다. 둘레 전체가 둥근 부분을 감싸거나 호를 360° 미만으로 하세요."
+    "ui.scan_wrap_round_open": "그물이 한 바퀴 돌지만 끝이 {gap} 떨어져 있어 닫을 수 없습니다. 둘레 전체가 둥근 부분을 감싸거나 호를 360° 미만으로 하세요.",
+    "ui.scan_edit_creases": "접힘",
+    "ui.scan_edit_crease_hint": "공유 모서리를 클릭하여 날카롭게 만듭니다. 그곳에서 면들이 각을 이루며 만나 스캔의 모서리를 따릅니다. 끝내려면 모서리 접기를 다시 누르세요.",
+    "ui.scan_edit_uncrease_hint": "접힌 모서리를 클릭하여 다시 매끄럽게 만듭니다. 끝내려면 접힘 제거를 다시 누르세요.",
+    "ui.scan_edit_crease_already": "그 모서리는 이미 접힘입니다.",
+    "ui.scan_edit_uncrease_already": "그 모서리는 이미 매끄럽습니다.",
+    "ui.scan_edit_crease_unkept": "접힌 모서리 {count}개가 아직 매끄럽게 만납니다. 접힘은 면이 만나는 각으로 유지되므로 대화 상자를 닫으면 유지되지 않습니다. 옆의 점들을 스캔의 모서리로 드래그하세요.",
+    "ui.scan_edit_crease_edge": "모서리 접기",
+    "ui.scan_edit_uncrease_edge": "접힘 제거"
   },
   "zh": {
     "ui.scan_edit_one_face": "拆分、复制、删除和折痕只改变一个面：此自由形状有多个面",
@@ -147,7 +179,15 @@
     "ui.scan_edit_fit_folds": "拟合到扫描会使曲面折叠：先提高分辨率，或拟合较小的自由形状。",
     "ui.scan_free_form_folds_hint": "面在点数不足以贴合的凹凸处折叠：提高刚度、减少点数，或把角点点得更近。",
     "ui.scan_wrap_round_closes": "网格绕了一整圈，在两端相接处开口（相距 {gap}）：只对此曲面执行“合并曲面”即可闭合。",
-    "ui.scan_wrap_round_open": "网格绕了一整圈，但两端相距 {gap}，太远无法闭合：请包裹整圈都是圆的部分，或把弧设为小于 360°。"
+    "ui.scan_wrap_round_open": "网格绕了一整圈，但两端相距 {gap}，太远无法闭合：请包裹整圈都是圆的部分，或把弧设为小于 360°。",
+    "ui.scan_edit_creases": "折痕",
+    "ui.scan_edit_crease_hint": "点击一条共享边使其变尖锐：各面在此以一定角度相接并贴合扫描的边。再按一次折边结束。",
+    "ui.scan_edit_uncrease_hint": "点击一条折边使其重新平滑。再按一次去除折痕结束。",
+    "ui.scan_edit_crease_already": "该边已经是折痕。",
+    "ui.scan_edit_uncrease_already": "该边已经是平滑的。",
+    "ui.scan_edit_crease_unkept": "{count} 条折边仍然平滑相接：折痕由各面相接的角度保持，因此关闭对话框后这些折痕不会保留。请将旁边的点拖到扫描的边上。",
+    "ui.scan_edit_crease_edge": "折边",
+    "ui.scan_edit_uncrease_edge": "去除折痕"
   },
   "ar": {
     "ui.scan_edit_one_face": "التقسيم والنسخ والإزالة والطي تغيّر وجهًا واحدًا: هذا الشكل الحر له عدة أوجه",
@@ -177,7 +217,15 @@
     "ui.scan_edit_fit_folds": "الملاءمة مع المسح ستطوي السطح: زد الدقة أولًا، أو لائم شكلًا حرًا أصغر.",
     "ui.scan_free_form_folds_hint": "ينطوي الوجه حيث يتبع نتوءات نقاطه أقل من أن تتبعها: ارفع الصلابة، أو خذ نقاطًا أقل، أو انقر الزوايا أقرب إلى بعضها.",
     "ui.scan_wrap_round_closes": "تلتف الشبكة دورة كاملة، مفتوحة حيث يلتقي طرفاها (بينهما {gap}): دمج الأسطح بهذا السطح وحده يغلقها.",
-    "ui.scan_wrap_round_open": "تلتف الشبكة دورة كاملة لكن بين طرفيها {gap}، أبعد من أن يُغلق: لُفّ جزءًا مستديرًا على طول الدورة، أو اجعل القوس أقل من 360°."
+    "ui.scan_wrap_round_open": "تلتف الشبكة دورة كاملة لكن بين طرفيها {gap}، أبعد من أن يُغلق: لُفّ جزءًا مستديرًا على طول الدورة، أو اجعل القوس أقل من 360°.",
+    "ui.scan_edit_creases": "الطيّات",
+    "ui.scan_edit_crease_hint": "انقر حافة مشتركة لجعلها حادة: تلتقي الأوجه هناك بزاوية وتتبع حافة المسح. اضغط طيّ الحافة مرة أخرى للتوقف.",
+    "ui.scan_edit_uncrease_hint": "انقر حافة مطوية لجعلها ناعمة مرة أخرى. اضغط إزالة الطيّة مرة أخرى للتوقف.",
+    "ui.scan_edit_crease_already": "تلك الحافة طيّة بالفعل.",
+    "ui.scan_edit_uncrease_already": "تلك الحافة ناعمة بالفعل.",
+    "ui.scan_edit_crease_unkept": "{count} من الحواف المطوية ما تزال تلتقي بنعومة: تُحفظ الطيّة بالزاوية التي تلتقي بها الأوجه، فلا تُحفظ هذه عند إغلاق مربع الحوار. اسحب النقاط المجاورة لها إلى حافة المسح.",
+    "ui.scan_edit_crease_edge": "طيّ الحافة",
+    "ui.scan_edit_uncrease_edge": "إزالة الطيّة"
   },
   "he": {
     "ui.scan_edit_one_face": "פיצול, העתקה, הסרה וקיפול משנים פאה אחת: לצורה החופשית הזו יש כמה פאות",
@@ -207,7 +255,15 @@
     "ui.scan_edit_fit_folds": "התאמה לסריקה תקפל את המשטח: הגדילו קודם את הרזולוציה, או התאימו צורה חופשית קטנה יותר.",
     "ui.scan_free_form_folds_hint": "הפאה מתקפלת היכן שהיא עוקבת אחר בליטות שאין לה די נקודות עבורן: העלו את הקשיחות, קחו פחות נקודות, או לחצו את הפינות קרוב יותר זו לזו.",
     "ui.scan_wrap_round_closes": "הרשת מקיפה את כל הסיבוב, פתוחה היכן שקצותיה נפגשים ({gap} ביניהם): מיזוג משטחים עם משטח זה בלבד סוגר אותה.",
-    "ui.scan_wrap_round_open": "הרשת מקיפה את כל הסיבוב, אבל קצותיה במרחק {gap}, רחוק מכדי לסגור: עטפו חלק שעגול לכל אורכו, או קבעו קשת קטנה מ־360°."
+    "ui.scan_wrap_round_open": "הרשת מקיפה את כל הסיבוב, אבל קצותיה במרחק {gap}, רחוק מכדי לסגור: עטפו חלק שעגול לכל אורכו, או קבעו קשת קטנה מ־360°.",
+    "ui.scan_edit_creases": "קיפולים",
+    "ui.scan_edit_crease_hint": "לחצו על קצה משותף כדי לחדד אותו: הפאות נפגשות שם בזווית ועוקבות אחר קצה הסריקה. לחצו שוב על קיפול קצה כדי לסיים.",
+    "ui.scan_edit_uncrease_hint": "לחצו על קצה מקופל כדי להחליקו שוב. לחצו שוב על הסרת קיפול כדי לסיים.",
+    "ui.scan_edit_crease_already": "הקצה הזה כבר מקופל.",
+    "ui.scan_edit_uncrease_already": "הקצה הזה כבר חלק.",
+    "ui.scan_edit_crease_unkept": "{count} קצוות מקופלים עדיין נפגשים בצורה חלקה: קיפול נשמר על ידי הזווית שבה הפאות נפגשות, ולכן אלה לא יישמרו כשתיבת הדו-שיח תיסגר. גררו את הנקודות לידם אל קצה הסריקה.",
+    "ui.scan_edit_crease_edge": "קיפול קצה",
+    "ui.scan_edit_uncrease_edge": "הסרת קיפול"
   },
   "vi": {
     "ui.scan_edit_one_face": "Tách, Sao chép, Xóa và Gấp nếp thay đổi một mặt: dạng tự do này có nhiều mặt",
@@ -237,6 +293,14 @@
     "ui.scan_edit_fit_folds": "Khớp với bản quét sẽ làm gập bề mặt: tăng độ phân giải trước, hoặc khớp một dạng tự do nhỏ hơn.",
     "ui.scan_free_form_folds_hint": "Mặt bị gập ở chỗ bám theo những chỗ lồi lõm mà nó có quá ít điểm: tăng Độ cứng, lấy ít Điểm hơn, hoặc bấm các góc gần nhau hơn.",
     "ui.scan_wrap_round_closes": "Lưới đi trọn một vòng, hở ở chỗ hai đầu gặp nhau (cách {gap}): Gộp bề mặt chỉ với bề mặt này sẽ khép nó lại.",
-    "ui.scan_wrap_round_open": "Lưới đi trọn một vòng nhưng hai đầu cách nhau {gap}, quá xa để khép: hãy bọc một phần tròn suốt vòng, hoặc đặt Cung dưới 360°."
+    "ui.scan_wrap_round_open": "Lưới đi trọn một vòng nhưng hai đầu cách nhau {gap}, quá xa để khép: hãy bọc một phần tròn suốt vòng, hoặc đặt Cung dưới 360°.",
+    "ui.scan_edit_creases": "Nếp gấp",
+    "ui.scan_edit_crease_hint": "Nhấp một cạnh chung để làm nó sắc: các mặt gặp nhau theo một góc ở đó và bám theo cạnh của bản quét. Nhấn Gấp cạnh lần nữa để dừng.",
+    "ui.scan_edit_uncrease_hint": "Nhấp một cạnh đã gấp để làm nó trơn lại. Nhấn Bỏ nếp gấp lần nữa để dừng.",
+    "ui.scan_edit_crease_already": "Cạnh đó đã là nếp gấp.",
+    "ui.scan_edit_uncrease_already": "Cạnh đó đã trơn.",
+    "ui.scan_edit_crease_unkept": "{count} cạnh đã gấp vẫn gặp nhau trơn tru: nếp gấp được giữ bởi góc các mặt gặp nhau, nên những cạnh này không được giữ khi đóng hộp thoại. Kéo các điểm bên cạnh chúng lên cạnh của bản quét.",
+    "ui.scan_edit_crease_edge": "Gấp cạnh",
+    "ui.scan_edit_uncrease_edge": "Bỏ nếp gấp"
   }
 }

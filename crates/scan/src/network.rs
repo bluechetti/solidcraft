@@ -1,9 +1,9 @@
 //! A Free Form network (QuickSurface's quad surface, by way of SurfaceCraft's cage): faces, each a
 //! cubic B-spline net, that share whole sides. A point on a shared side is one point of the
 //! network, held by both nets, so the faces meet exactly; where two faces met smoothly when the
-//! network was read, the points next to their shared side are kept in line with it either side,
-//! so the faces stay tangent there as they are edited; where they met sharply (a crease) only the
-//! side is held.
+//! network was read (most of the seam's points meet straight), the points next to their shared
+//! side are kept in line with it either side, so the faces stay tangent there as they are edited;
+//! where they met sharply (a crease) only the side is held.
 //!
 //! The network is read from its faces alone ([`joins`]): points of different faces that are in
 //! the same place are one point. So a network is kept as nothing but its faces (a sewn surface
@@ -288,7 +288,10 @@ pub fn joins(faces: &[NurbsSurface]) -> Result<Joins, NetworkError> {
     corners.sort_by_key(|c| c.point);
     let irregular: std::collections::HashSet<usize> = corners.iter().filter(|c| c.irregular()).map(|c| c.point).collect();
     // Tangency held across seams that are smooth: along them, and at their ends where the corner
-    // is as a grid's (an irregular corner cannot be held so: its faces would pull against each other).
+    // is as a grid's (an irregular corner cannot be held so: its faces would pull against each
+    // other). A seam is one thing: smooth when most of its points meet straight (the few that do
+    // not are held straight too), a crease when most meet at an angle (none is held: a crease's
+    // ends, on the network's edge, often still meet smoothly, and must not round it over again).
     let mut smooth = Vec::new();
     for (index, seam) in seams.iter().enumerate() {
         let (ca, cb) = (faces[seam.a].count(), faces[seam.b].count());
@@ -296,21 +299,32 @@ pub fn joins(faces: &[NurbsSurface]) -> Result<Joins, NetworkError> {
         if seam.reversed {
             kb.reverse();
         }
+        let mut held = Vec::new();
+        let (mut straight_points, mut sharp_points) = (0usize, 0usize);
         for (n, (&pa, &pb)) in ka.iter().zip(&kb).enumerate() {
             let e = of[seam.a][pa];
             if (n == 0 || n + 1 == ka.len()) && irregular.contains(&e) {
                 continue;
             }
             let (ia, ib) = (of[seam.a][inward(seam.a_side, ca, pa)], of[seam.b][inward(seam.b_side, cb, pb)]);
+            if ia == ib {
+                continue;
+            }
             let (pe, pia, pib) = (nets[seam.a][pa], nets[seam.a][inward(seam.a_side, ca, pa)], nets[seam.b][inward(seam.b_side, cb, pb)]);
             let (da, db) = (pia - pe, pe - pib);
             let straight = match (da.normalized(), db.normalized()) {
                 (Some(a), Some(b)) => a.dot(b) >= SMOOTH_DEGREES.to_radians().cos(),
                 _ => false,
             };
-            if straight && ia != ib {
-                smooth.push(Across { seam: index, e, a: ia, b: ib });
+            if straight {
+                straight_points += 1
+            } else {
+                sharp_points += 1
             }
+            held.push(Across { seam: index, e, a: ia, b: ib });
+        }
+        if sharp_points <= straight_points {
+            smooth.extend(held);
         }
     }
     Ok(Joins { of, at, seams, open, smooth, corners })
@@ -1167,26 +1181,158 @@ pub fn flattest_corner(s: &NurbsSurface) -> f64 {
 
 /// The tangency rows across every seam of face `at`, smooth or not yet.
 fn tangency_across(faces: &[NurbsSurface], joins: &Joins, at: usize) -> Vec<Across> {
+    (0..joins.seams.len()).filter(|&i| joins.seams[i].a == at || joins.seams[i].b == at).flat_map(|i| across_seam(faces, joins, i)).collect()
+}
+
+/// Across seam `seam`: each point on it and the points next to it either side, as tangency across
+/// it holds them (whether or not the faces meet smoothly there now); none at an irregular corner.
+pub fn across_seam(faces: &[NurbsSurface], joins: &Joins, seam: usize) -> Vec<Across> {
     let irregular: std::collections::HashSet<usize> = joins.irregular().map(|c| c.point).collect();
+    let Some(s) = joins.seams.get(seam) else { return Vec::new() };
+    let (Some(fa), Some(fb), Some(oa), Some(ob)) = (faces.get(s.a), faces.get(s.b), joins.of.get(s.a), joins.of.get(s.b)) else {
+        return Vec::new();
+    };
+    let (ca, cb) = (fa.count(), fb.count());
+    let (ka, mut kb) = (s.a_side.indices(ca), s.b_side.indices(cb));
+    if s.reversed {
+        kb.reverse();
+    }
     let mut out = Vec::new();
-    for (index, seam) in joins.seams.iter().enumerate().filter(|(_, s)| s.a == at || s.b == at) {
-        let (ca, cb) = (faces[seam.a].count(), faces[seam.b].count());
-        let (ka, mut kb) = (seam.a_side.indices(ca), seam.b_side.indices(cb));
-        if seam.reversed {
-            kb.reverse();
+    for (n, (&pa, &pb)) in ka.iter().zip(&kb).enumerate() {
+        let (Some(&e), Some(&ia), Some(&ib)) = (oa.get(pa), oa.get(inward(s.a_side, ca, pa)), ob.get(inward(s.b_side, cb, pb))) else { continue };
+        if (n == 0 || n + 1 == ka.len()) && irregular.contains(&e) {
+            continue;
         }
-        for (n, (&pa, &pb)) in ka.iter().zip(&kb).enumerate() {
-            let e = joins.of[seam.a][pa];
-            if (n == 0 || n + 1 == ka.len()) && irregular.contains(&e) {
-                continue;
-            }
-            let (ia, ib) = (joins.of[seam.a][inward(seam.a_side, ca, pa)], joins.of[seam.b][inward(seam.b_side, cb, pb)]);
-            if ia != ib {
-                out.push(Across { seam: index, e, a: ia, b: ib });
-            }
+        if ia != ib {
+            out.push(Across { seam, e, a: ia, b: ib });
         }
     }
     out
+}
+
+/// Whether each seam is a crease: the faces are not held tangent across it (they met sharply when
+/// the network was read, or it was creased).
+pub fn creased(joins: &Joins) -> Vec<bool> {
+    let held: std::collections::HashSet<usize> = joins.smooth.iter().map(|t| t.seam).collect();
+    (0..joins.seams.len()).map(|i| !held.contains(&i)).collect()
+}
+
+/// `joins` with seam `seam` a crease: the faces no longer held tangent across it.
+pub fn without_tangency(joins: &Joins, seam: usize) -> Joins {
+    let mut j = joins.clone();
+    j.smooth.retain(|t| t.seam != seam);
+    j
+}
+
+/// `joins` with seam `seam` smooth: the faces held tangent across it from now on.
+pub fn with_tangency(faces: &[NurbsSurface], joins: &Joins, seam: usize) -> Joins {
+    let mut j = without_tangency(joins, seam);
+    j.smooth.extend(across_seam(faces, joins, seam));
+    j
+}
+
+/// The ends of seam `seam`: its first and last point.
+pub fn seam_ends(faces: &[NurbsSurface], joins: &Joins, seam: usize) -> Option<(Vec3, Vec3)> {
+    let s = joins.seams.get(seam)?;
+    let ids = joins.side(faces, s.a, s.a_side);
+    let places = network_points(faces, joins);
+    Some((*places.get(*ids.first()?)?, *places.get(*ids.last()?)?))
+}
+
+/// The seam whose ends are `a` and `b` (either way round), each within `tolerance`.
+pub fn seam_between(faces: &[NurbsSurface], joins: &Joins, a: Vec3, b: Vec3, tolerance: f64) -> Option<usize> {
+    if !(a.is_finite() && b.is_finite() && tolerance.is_finite()) {
+        return None;
+    }
+    (0..joins.seams.len())
+        .filter_map(|i| {
+            let (p, q) = seam_ends(faces, joins, i)?;
+            let off = (p.dist(a) + q.dist(b)).min(p.dist(b) + q.dist(a));
+            (off <= 2.0 * tolerance).then_some((i, off))
+        })
+        .min_by(|x, y| x.1.total_cmp(&y.1))
+        .map(|(i, _)| i)
+}
+
+/// The seam nearest `p` (sampled along each), and how far it is.
+pub fn seam_near(faces: &[NurbsSurface], joins: &Joins, p: Vec3) -> Option<(usize, f64)> {
+    if !p.is_finite() {
+        return None;
+    }
+    (0..joins.seams.len())
+        .filter_map(|i| {
+            let s = joins.seams.get(i)?;
+            let f = faces.get(s.a)?;
+            let d = (0..=16).filter_map(|k| s.a_side.at(f, f64::from(k) / 16.0)).map(|q| q.dist(p)).fold(f64::INFINITY, f64::min);
+            d.is_finite().then_some((i, d))
+        })
+        .min_by(|x, y| x.1.total_cmp(&y.1))
+}
+
+/// How many rows of points either side of a seam a crease, or its removal, refits: the seam's
+/// points and the rows next to them.
+pub const CREASE_RING: usize = 2;
+
+/// The network with the points within [`CREASE_RING`] of seam `seam` fitted to `scan` again (its
+/// points on the faces, within `reach`), the faces held tangent as `joins` says ([`without_tangency`]
+/// for a crease, [`with_tangency`] for a seam made smooth); the network's own corners, its open
+/// sides, irregular corners and the points `held` marks stay. With no scan points the dots of the
+/// points that move are held where they are, so the faces change only to meet as `joins` says.
+/// `None` when nothing may move or the solve has no answer.
+pub fn refit_near_seam(faces: &[NurbsSurface], joins: &Joins, seam: usize, scan: &[Vec3], reach: f64, held: &[bool]) -> Option<Vec<NurbsSurface>> {
+    let s = joins.seams.get(seam)?;
+    if faces.len() != joins.of.len() || !(reach.is_finite() && reach > 0.0) {
+        return None;
+    }
+    let on = joins.side(faces, s.a, s.a_side);
+    let mut free = region(faces, joins, &on, CREASE_RING);
+    for c in joins.corners.iter().filter(|c| c.irregular() || (c.border && c.faces == 1)) {
+        if let Some(f) = free.get_mut(c.point) {
+            *f = false;
+        }
+    }
+    for &(f, side) in &joins.open {
+        for p in joins.side(faces, f, side) {
+            if let Some(f) = free.get_mut(p) {
+                *f = false;
+            }
+        }
+    }
+    for (p, h) in held.iter().enumerate() {
+        if *h && let Some(f) = free.get_mut(p) {
+            *f = false;
+        }
+    }
+    if !free.iter().any(|f| *f) {
+        return None;
+    }
+    let touched: Vec<bool> = joins.of.iter().map(|ids| ids.iter().any(|p| free.get(*p).copied().unwrap_or(false))).collect();
+    let mut faces = faces.to_vec();
+    let rounds = if scan.is_empty() { 1 } else { 3 };
+    for round in 0..rounds {
+        let goals: Vec<Goal> = if scan.is_empty() {
+            let places: Vec<Vec<(f64, f64)>> = faces.iter().map(dot_places).collect();
+            let all = dots(&faces, joins);
+            (0..joins.len())
+                .filter(|p| free[*p])
+                .flat_map(|p| joins.at[p].iter().map(move |&(f, k)| (f, k, p)))
+                .filter_map(|(f, k, p)| {
+                    let &(u, v) = places.get(f)?.get(k)?;
+                    Some(Goal { face: f, u, v, to: all.get(p)?.at, weight: 1.0 })
+                })
+                .collect()
+        } else {
+            feet(&faces, scan, reach, &touched)
+        };
+        // Hardly held even: the rows next to the seam must move apart from it for a crease.
+        let moves = Moves { free: &free, goals: &goals, tangent: 40.0, even: 1e-3, bend: 1e-4, also_smooth: &[] };
+        match moved(&faces, joins, &moves) {
+            Some(next) => faces = next,
+            None if round > 0 => break,
+            None => return None,
+        }
+    }
+    Some(faces)
 }
 
 /// The way `s` faces on the whole: its normals across it, added up.
@@ -1549,5 +1695,69 @@ mod tests {
         assert!(with_face(std::slice::from_ref(&s), &j, 5, Side::FirstRow, [Vec3::ZERO, Vec3::ZERO], 4, none).is_err());
         assert!(dot_moved(std::slice::from_ref(&s), &j, 99, Vec3::ZERO, 2, true).is_none(), "no such dot: nothing moves");
         assert!(moved(&[s], &j, &Moves { free: &[], goals: &[], tangent: 1.0, even: 1.0, bend: 0.0, also_smooth: &[] }).is_none());
+    }
+    /// Two faces fitted over a ridge the smooth way (its sides meet within 25°, so Add Face held
+    /// them tangent, rounding the ridge): creasing their seam lets the tangency go and refits the
+    /// rows next to it, so the faces take the ridge; made smooth again, with the scan or without,
+    /// they meet tangentially again. A seam named by its ends or by a point near it is found.
+    #[test]
+    fn a_creased_seam_follows_a_ridge_and_made_smooth_again_meets_tangentially() {
+        let ridge = |x: f64, _y: f64| 10.0 - 0.2 * (x - 60.0).abs();
+        let (positions, triangles) = field(60, ridge);
+        let scan = Scan::new(&positions, &triangles);
+        let on = Projector::new(&scan);
+        // Corners on the scan (a corner below the ridge would snap to the slope beside it).
+        let corners = [Vec3::new(20.0, 10.0, 2.0), Vec3::new(60.0, 10.0, 10.0), Vec3::new(60.0, 50.0, 10.0), Vec3::new(20.0, 50.0, 2.0)];
+        let first = crate::free_form::fitted(corners, &crate::free_form::Fitting { count: 5, ..Default::default() }, snapper(&on)).unwrap().surface;
+        let faces = vec![first];
+        let j = joins(&faces).unwrap();
+        let side = *j.open.iter().find(|(_, s)| *s == Side::LastColumn).unwrap();
+        let grown = with_face(&faces, &j, side.0, side.1, [Vec3::new(100.0, 10.0, 2.0), Vec3::new(100.0, 50.0, 2.0)], 5, snapper(&on)).unwrap();
+        let gj = joins(&grown).unwrap();
+        assert_eq!(creased(&gj), vec![false], "held tangent across the ridge");
+        let rms = |faces: &[NurbsSurface]| -> f64 {
+            let (mut squares, mut n) = (0.0, 0usize);
+            for f in faces {
+                let under = surface_edit::covered(&scan, f, 2.0, 5_000);
+                let (r, _) = surface_edit::distance(f, &under);
+                squares += r * r * under.len() as f64;
+                n += under.len();
+            }
+            (squares / n.max(1) as f64).sqrt()
+        };
+        let before = rms(&grown);
+        assert!(before > 0.05, "the ridge rounded over: {before}");
+        // Found by a point near it, and by its ends either way round.
+        let (near, off) = seam_near(&grown, &gj, Vec3::new(60.0, 30.0, 10.0)).unwrap();
+        assert!(near == 0 && off < 1.0, "{near} {off}");
+        let (a, b) = seam_ends(&grown, &gj, 0).unwrap();
+        assert!((a.x - 60.0).abs() < 1e-6 && (b.x - 60.0).abs() < 1e-6, "{a:?} {b:?}");
+        assert_eq!(seam_between(&grown, &gj, b, a, 1.0), Some(0));
+        assert_eq!(seam_between(&grown, &gj, Vec3::new(0.0, 0.0, 0.0), b, 1.0), None);
+        // Creased: the tangency let go, the rows next to the seam refitted to the ridge.
+        let held = vec![false; gj.len()];
+        let sharp = without_tangency(&gj, 0);
+        assert_eq!(creased(&sharp), vec![true]);
+        let folded = refit_near_seam(&grown, &sharp, 0, &positions, 2.0, &held).unwrap();
+        let angle = seam_angle(&folded, &gj.seams[0]);
+        let after = rms(&folded);
+        assert!(angle > 15.0 && after < before / 2.0, "{angle}° {after} against {before}");
+        assert!(joins(&folded).unwrap().smooth.is_empty(), "read back as a crease");
+        // Made smooth again, with the scan: tangent, the ridge rounded over once more.
+        let smooth = with_tangency(&folded, &sharp, 0);
+        assert!(!smooth.smooth.is_empty());
+        let rounded = refit_near_seam(&folded, &smooth, 0, &positions, 2.0, &held).unwrap();
+        assert!(worst_kink(&rounded, &smooth) < 1.0, "{}", worst_kink(&rounded, &smooth));
+        // And without a scan: the faces change only as far as meeting tangentially needs.
+        let eased = refit_near_seam(&folded, &smooth, 0, &[], 2.0, &held).unwrap();
+        assert!(worst_kink(&eased, &smooth) < 1.0, "{}", worst_kink(&eased, &smooth));
+        // Hostile: a seam that is not there, a point that is not a place, nothing free to move.
+        assert!(across_seam(&grown, &gj, 7).is_empty());
+        assert!(seam_near(&grown, &gj, Vec3::new(f64::NAN, 0.0, 0.0)).is_none());
+        assert!(seam_between(&grown, &gj, Vec3::new(f64::NAN, 0.0, 0.0), b, 1.0).is_none());
+        assert!(refit_near_seam(&grown, &sharp, 7, &positions, 2.0, &held).is_none());
+        assert!(refit_near_seam(&grown, &sharp, 0, &positions, f64::NAN, &held).is_none());
+        assert!(refit_near_seam(&grown, &sharp, 0, &positions, 2.0, &vec![true; gj.len()]).is_none());
+        assert_eq!(without_tangency(&gj, 7), gj);
     }
 }

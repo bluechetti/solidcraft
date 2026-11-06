@@ -1064,6 +1064,72 @@ fn add_face_closes_a_free_form_round_a_box() {
     assert_eq!(super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces.len(), 6, "still editable as a Free Form");
 }
 
+/// A ridge scanned as a grid, `n` squares a side over 60 mm: z = 10 − 0.2·|x − 30|, its sides
+/// meeting at 23°, within what Add Face holds tangent.
+fn ridge_triangles(n: u32) -> Vec<[Vec3; 3]> {
+    let at = |i: u32, j: u32| {
+        let (x, y) = (60.0 * f64::from(i) / f64::from(n), 60.0 * f64::from(j) / f64::from(n));
+        Vec3::new(x, y, 10.0 - 0.2 * (x - 30.0).abs())
+    };
+    let mut out = Vec::new();
+    for i in 0..n {
+        for j in 0..n {
+            out.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+            out.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+        }
+    }
+    out
+}
+
+/// A Free Form grown over a ridge the smooth way rounds the ridge; `crease` on the shared edge
+/// at the ridge makes the faces meet at an angle and follow it (the reply counts the crease, and
+/// it reads back as one); `uncrease` makes them smooth again. Each is one undo step. Hostile
+/// picks are refused in words.
+#[test]
+fn crease_makes_a_shared_edge_follow_a_ridge_and_uncrease_makes_it_smooth_again() {
+    let (mut s, _) = session_with_triangles("crease", &ridge_triangles(60));
+    // Corners on the scan: a corner below the ridge would snap to the slope beside it.
+    run(&mut s, "scan.free_form", json!({"corners": [[10, 10, 6], [30, 10, 10], [30, 50, 10], [10, 50, 6]], "count": 5}));
+    let grown = run(&mut s, "scan.add_face", json!({"edge": [[30, 10, 10], [30, 50, 10]], "far": [[50, 10, 6], [50, 50, 6]], "rows": 5}));
+    assert_eq!((grown["faces"].as_u64(), grown["sharp"].as_u64()), (Some(2), Some(0)), "held tangent across the ridge: {grown}");
+    let rounded = grown["rms"].as_f64().unwrap();
+    assert!(rounded > 0.05, "the ridge rounded over: {grown}");
+    let creased = run(&mut s, "scan.edit_surface", json!({"crease": [{"at": [30, 30, 10]}]}));
+    assert_eq!((creased["faces"].as_u64(), creased["creases"].as_u64()), (Some(2), Some(1)), "{creased}");
+    assert!(creased["rms"].as_f64().unwrap() < rounded / 2.0, "follows the ridge now: {creased} against {rounded}");
+    let faces = super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces;
+    let joins = solidcraft_scan::network::joins(&faces).unwrap();
+    assert_eq!(solidcraft_scan::network::creased(&joins), vec![true], "kept by the angle the faces meet at");
+    assert!(solidcraft_scan::network::seam_angle(&faces, &joins.seams[0]) > 15.0);
+    // Already a crease: nothing changes but the points refitted; still one crease.
+    let again = run(&mut s, "scan.edit_surface", json!({"crease": [{"edge": [[30, 10, 10], [30, 50, 10]]}]}));
+    assert_eq!(again["creases"].as_u64(), Some(1), "{again}");
+    let smooth = run(&mut s, "scan.edit_surface", json!({"uncrease": [{"edge": [[30, 50, 10], [30, 10, 10]]}]}));
+    assert_eq!(smooth["creases"].as_u64(), Some(0), "{smooth}");
+    let faces = super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces;
+    let joins = solidcraft_scan::network::joins(&faces).unwrap();
+    assert!(solidcraft_scan::network::worst_kink(&faces, &joins) < 1.0, "{}", solidcraft_scan::network::worst_kink(&faces, &joins));
+    run(&mut s, "edit.undo", json!({}));
+    let faces = super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces;
+    assert_eq!(solidcraft_scan::network::creased(&solidcraft_scan::network::joins(&faces).unwrap()), vec![true], "one undo step");
+    for (params, words) in [
+        (json!({"crease": [{"at": [0, 0, 100]}]}), "from the nearest shared edge"),
+        (json!({"crease": [{"at": [30, 30, 10], "edge": [[30, 10, 10], [30, 50, 10]]}]}), "one of them"),
+        (json!({"crease": [{}]}), "one of them"),
+        (json!({"crease": [{"at": [30, 30, 10]}], "dots": [{"at": [20, 30, 8], "along": "1 mm"}]}), "without points"),
+        (json!({"crease": [{"at": [30, 30, 10]}], "uncrease": [{"at": [30, 30, 10]}]}), "already named"),
+        (json!({"crease": []}), "1 to 256 edges"),
+        (json!({"uncrease": [{"edge": [[0, 0, 0], [1, 1, 1]]}]}), "not the ends of a shared edge"),
+        (json!({"crease": [{"at": ["x", 0, 0]}]}), "numbers"),
+    ] {
+        let refused = s.execute("scan.edit_surface", &params).unwrap_err().to_string();
+        assert!(refused.contains(words), "{params}: {refused}");
+    }
+    run(&mut s, "scan.free_form", json!({"corners": [[10, 52, 0], [30, 52, 0], [30, 58, 0], [10, 58, 0]], "count": 4}));
+    let one = s.execute("scan.edit_surface", &json!({"surface": "FreeForm2", "crease": [{"at": [20, 55, 8]}]})).unwrap_err().to_string();
+    assert!(one.contains("is one face"), "{one}");
+}
+
 /// `turn` radians round a tube of radius 10 along Z, 40 long, as triangles.
 fn tube_triangles(turn: f64) -> Vec<[Vec3; 3]> {
     let (rings, segments) = (20u32, 48u32);

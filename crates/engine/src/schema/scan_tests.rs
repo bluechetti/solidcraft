@@ -37,7 +37,23 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanCurveParams>(), &["body", "closed", "points", "sketch", "tolerance"]);
     assert_keys(
         input_schema_for::<ScanEditSurfaceParams>(),
-        &["dots", "faces", "falloff", "hold", "moves", "neighbours", "net", "points", "reach", "refit", "scan", "slide", "surface"],
+        &[
+            "crease",
+            "dots",
+            "faces",
+            "falloff",
+            "hold",
+            "moves",
+            "neighbours",
+            "net",
+            "points",
+            "reach",
+            "refit",
+            "scan",
+            "slide",
+            "surface",
+            "uncrease",
+        ],
     );
 }
 
