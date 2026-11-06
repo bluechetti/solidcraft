@@ -264,9 +264,18 @@ pub const SNAP_OFF: usize = 0;
 pub const SNAP_POINTER: usize = 1;
 pub const SNAP_NEAREST: usize = 2;
 
-pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
+pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
     match id {
-        "scan.edit_surface" => Some((Kind::ScanEditSurface(EditSurface::default()), Vec::new())),
+        "scan.edit_surface" => {
+            // The preference `edit_surface_on_surface` off opens on the control net with snapping
+            // off, as Edit Surface did before its points moved onto the surface.
+            let k = if app.preferences.edit_surface_on_surface {
+                EditSurface::default()
+            } else {
+                EditSurface { handles: HANDLES_NET, snap: SNAP_OFF, ..EditSurface::default() }
+            };
+            Some((Kind::ScanEditSurface(k), Vec::new()))
+        }
         "scan.fit_surface" => {
             Some((Kind::ScanFitSurface(FitSurface::default()), vec![crate::selection::SelInput::new("Point", crate::selection::FACES, false)]))
         }
@@ -2179,5 +2188,26 @@ mod tests {
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
         assert!(h.app.session.model.state().body("Surface1").is_some(), "kept");
+    }
+    /// Edit Surface opens on points on the surface with Snap set to Under the pointer; with the
+    /// preference `edit_surface_on_surface` off it opens on the control net with snapping off, as
+    /// it did before.
+    #[test]
+    fn the_preference_keeps_edit_surface_opening_on_the_control_net() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(20)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.fit_surface", json!({"point": [30, 30, 8], "radius": 20, "controls": 5})).unwrap();
+        assert!(h.app.preferences.edit_surface_on_surface, "on by default");
+        h.app.start("scan.edit_surface");
+        h.frames(2);
+        assert_eq!((kind(&h).handles, kind(&h).snap), (HANDLES_DOTS, SNAP_POINTER), "the new default");
+        h.step(&json!({"click": {"handle": "dialog:cancel"}})).unwrap();
+        h.settle();
+        h.app.preferences.edit_surface_on_surface = false;
+        h.app.start("scan.edit_surface");
+        h.frames(2);
+        assert_eq!((kind(&h).handles, kind(&h).snap), (HANDLES_NET, SNAP_OFF), "the old default, kept behind the preference");
     }
 }

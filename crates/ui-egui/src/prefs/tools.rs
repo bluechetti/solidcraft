@@ -64,6 +64,16 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                         }
                     });
                 });
+                create_row(ui, app.tr("cmd.scan_edit_surface"), &["surface_patch"], false, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.edit_surface_on_surface_note");
+                        let response = setting::edit_surface_on_surface(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:edit_surface_on_surface", response.rect);
+                        if !crate::prefs_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                });
                 create_row(ui, app.tr("prefs.design_tools.placement_group"), &["rest", "boss", "snap_fit"], false, |ui| {
                     ui.horizontal_wrapped(|ui| {
                         let response = setting::placement_handles(app, ui).backing_on_hover_text(app.tr("ui.placement_handles_tip"));

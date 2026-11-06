@@ -1466,6 +1466,10 @@ preference_settings! {
     /// noise (at least 0.1 mm), so a noisy or very large scan is not traced point by point. Off:
     /// they start at 0.1 mm, as before.
     section_tolerance_from_scan: bool = true, PAGE_TOOLS => check_id("prefs.section_tolerance_from_scan");
+    /// Edit Surface opens with its points on the surface (the surface runs through each) and Snap
+    /// set to Under the pointer, as QuickSurface's Free Forms are edited. Off: it opens on the
+    /// control net with snapping off, as before.
+    edit_surface_on_surface: bool = true, PAGE_TOOLS => check_id("prefs.edit_surface_on_surface");
     /// Feature windows choose Join, New Body or Cut from what their material touches (`op_auto`,
     /// #6901). Off: they keep the operation they open with (Extrude its own Join or Cut), as before.
     auto_operation: bool = true, PAGE_TOOLS => check_id("prefs.auto_operation");
