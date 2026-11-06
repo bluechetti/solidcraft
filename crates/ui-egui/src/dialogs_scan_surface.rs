@@ -2083,6 +2083,40 @@ mod tests {
         assert_eq!(kind(&h).shown.len(), 2, "opens again as a network");
     }
 
+    /// Alt-drag a point on an open edge (QuickSurface's Alt-drag): a face is drawn out of that edge
+    /// as far as the point was taken, added when it is let go, sharing the edge and tangent to the
+    /// face it grows from.
+    #[test]
+    fn alt_drag_on_an_open_edge_grows_a_face() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[16, 20, 0], [28, 20, 0], [28, 40, 0], [16, 40, 0]], "count": 5})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        let k = kind(&h).clone();
+        // The dot in the middle of the edge along x = 28.
+        let (i, dot) = k
+            .shown_dots
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| (d.at.x - 28.0).abs() < 1.0)
+            .min_by(|a, b| (a.1.at.y - 30.0).abs().total_cmp(&(b.1.at.y - 30.0).abs()))
+            .map(|(i, d)| (i, *d))
+            .expect("a dot on the edge");
+        let to = dot.at + Vec3::new(10.0, 0.0, 0.0);
+        h.step(&json!({"drag": [{"world": [dot.at.x, dot.at.y, dot.at.z]}, {"world": [to.x, to.y, to.z]}], "steps": 6, "alt": true})).unwrap();
+        h.frames(2);
+        let after = kind(&h).clone();
+        assert_eq!(after.shown.len(), 2, "a face grown out of the edge: {:?}", after.note);
+        assert_eq!(after.joins.seams.len(), 1, "sharing it");
+        assert!(network::worst_kink(&after.shown, &after.joins) < 0.5, "tangent to the first");
+        assert!(after.shown_dots.iter().any(|d| (d.at.x - 38.0).abs() < 1.5), "out to where the point was taken");
+        assert!(!after.moved.get(i).copied().unwrap_or(false), "the edge's point itself not moved");
+    }
+
     /// Fit Surface opens a dialog: a click on the dome marks the area round it and fits the
     /// surface, a smaller radius fits a smaller area, and OK keeps it.
     #[test]
