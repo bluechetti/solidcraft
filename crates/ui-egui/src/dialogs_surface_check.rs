@@ -128,6 +128,16 @@ pub(crate) fn trouble(folds: usize, pinches: usize, crossings: usize) -> String 
         .join(crate::i18n::tr("ui.surface_check_join"))
 }
 
+/// Under a fit's result: that the surface it made folds, pinches or passes through itself, and what
+/// to do instead. Nothing when it does none of them.
+pub(crate) fn fold_warning(ui: &mut egui::Ui, [folds, pinches, crossings]: [usize; 3]) {
+    if folds + pinches + crossings == 0 {
+        return;
+    }
+    let line = crate::i18n::format("ui.scan_fit_folds", &[("trouble", &trouble(folds, pinches, crossings))]);
+    ui_kit::text(ui, &line, ui_kit::Text::Report("scan_fit_folds", true));
+}
+
 /// OK closes: the check changes nothing.
 pub fn commands() -> Result<Vec<(String, Value)>, String> {
     Ok(Vec::new())

@@ -33,6 +33,8 @@ pub struct SurfaceFit {
     pub max: f64,
     /// How many points it was fitted to.
     pub points: usize,
+    /// Where the surface is wrong: its folds, pinches and crossings ([`crate::surface_check`]).
+    pub trouble: [usize; 3],
 }
 
 /// Why no surface could be fitted.
@@ -150,7 +152,8 @@ pub fn fit_surface(scan: &Scan, seed: usize, radius: f64, controls: usize, smoot
     // Even with no smoothing asked for, a little holds the corners the scan does not reach.
     let weight = crate::patches::smoothing_weight(smoothing);
     let fitted = crate::net_fit::fit(&samples, None, [n, n], weight, crate::net_fit::ROUNDS).ok_or(SurfaceError::TooFew)?;
-    Ok(SurfaceFit { surface: fitted.surface, region, rms: fitted.rms, max: fitted.max, points: samples.len() })
+    let trouble = crate::surface_check::trouble(&fitted.surface);
+    Ok(SurfaceFit { surface: fitted.surface, region, rms: fitted.rms, max: fitted.max, points: samples.len(), trouble })
 }
 
 /// The cosine of the most a triangle may face away from the way the surface faces at the pick and

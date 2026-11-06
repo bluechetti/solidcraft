@@ -260,6 +260,7 @@ pub fn fit_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitSurface, inputs: &
                 ],
             );
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_fit_found"));
+            crate::dialogs_surface_check::fold_warning(ui, found.trouble);
         }
         Some(Err(why)) => {
             ui_kit::text(ui, why, ui_kit::Text::Report("scan_fit_error", true));

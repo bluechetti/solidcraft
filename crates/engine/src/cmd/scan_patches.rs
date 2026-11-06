@@ -21,7 +21,7 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.fit_patches", "Fi
     .icon("surface_patch")
     .contract(&PATCHES_CONTRACT)
     .output(output_schema_for::<ScanPatchesResult>)
-    .params("body?: the scan (default: what is selected on a scan, else the picked or only one); the region: triangles?: [indices] | point?: [x,y,z] (the piece there) with radius?: length (default: what is selected, else the point picked); layout?: grid (default: one patch over the region's flattened box) | blocks (that patch cut exactly into `rows` × `columns` faces, sewn into one body) | quads (one patch whose edges follow the region's edge, its corners where the region's are); controls?: 4–30 or [u, v] (default 10: control points each way over the whole); rows?, columns?: blocks (default 2 × 2); smoothing?: 0–1 (default 0.1): fitted in all three directions to the region's points placed by its flattening, so a region that curves round fits too; kept as a surface body `Patches1`, … (one undo step) → body, surface, layout, patches, rows, columns, controls, rms, max, points, feature")];
+    .params("body?: the scan (default: what is selected on a scan, else the picked or only one); the region: triangles?: [indices] | point?: [x,y,z] (the piece there) with radius?: length (default: what is selected, else the point picked); layout?: grid (default: one patch over the region's flattened box) | blocks (that patch cut exactly into `rows` × `columns` faces, sewn into one body) | quads (one patch whose edges follow the region's edge, its corners where the region's are); controls?: 4–30 or [u, v] (default 10: control points each way over the whole); rows?, columns?: blocks (default 2 × 2); smoothing?: 0–1 (default 0.1): fitted in all three directions to the region's points, each starting on the base surface the region fits best (its plane, a cylinder round it, or its flattening, so a region that curves round fits too) and moved to its foot on the surface between rounds; kept as a surface body `Patches1`, … (one undo step); a surface that folds, pinches or passes through itself is kept and said so (warning), and blocks that cannot be sewn because of it are refused → body, surface, layout, patches, rows, columns, controls, rms, max, points, folds, pinches, crossings, warning?, feature")];
 
 fn reply<T: serde::Serialize>(r: T) -> Result<Value> {
     serde_json::to_value(r).map_err(|e| EngineError::Other(e.to_string()))
@@ -83,7 +83,21 @@ fn fit_patches(s: &mut Session, p: &Value) -> Result<Value> {
             .map(|f| solidcraft_kernel::nurbs_sheet(f).map_err(|e| bad(cmd, format!("a patch: {e}"))))
             .collect::<Result<Vec<_>>>()?;
         let refs: Vec<&_> = sheets.iter().collect();
-        let sewn = solidcraft_kernel::stitch(&refs, 0.0).map_err(|e| bad(cmd, format!("the blocks could not be sewn: {e}")))?;
+        // A surface that folds over itself has blocks whose sides do not meet where their
+        // neighbours' do: said so, rather than in the kernel's words.
+        let sewn = solidcraft_kernel::stitch(&refs, 0.0).map_err(|e| {
+            if found.trouble.iter().sum::<usize>() > 0 {
+                bad(
+                    cmd,
+                    format!(
+                        "the blocks could not be sewn into one body: the surface folds over itself ({}), so the blocks' sides do not meet; take a smaller region (more control points do not stop it folding)",
+                        super::surface::trouble_text(found.trouble)
+                    ),
+                )
+            } else {
+                bad(cmd, format!("the blocks could not be sewn: {e}"))
+            }
+        })?;
         let step = solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| bad(cmd, format!("the patches: {e}")))?;
         let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
         let name = (1..).map(|i| format!("Patches{i}")).find(|n| !taken.contains(n)).unwrap_or_else(|| "Patches".into());
@@ -107,6 +121,10 @@ fn fit_patches(s: &mut Session, p: &Value) -> Result<Value> {
         rms: found.rms,
         max: found.max,
         points: found.points,
+        folds: found.trouble[0],
+        pinches: found.trouble[1],
+        crossings: found.trouble[2],
+        warning: super::surface::fold_warning(found.trouble),
         feature,
         param_warnings: Vec::new(),
     })

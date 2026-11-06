@@ -45,6 +45,9 @@ fn a_curving_scan_fits_as_a_grid_as_blocks_and_as_a_quad() {
     let r = run(&mut s, "scan.fit_patches", json!({"body": scan, "point": [0, 15, 0]}));
     assert_eq!((r["layout"].as_str(), r["patches"].as_u64()), (Some("grid"), Some(1)));
     assert!(r["rms"].as_f64().unwrap() < 0.05, "{r}");
+    // A clean surface: no folds, pinches or crossings, and nothing to warn of.
+    assert_eq!((r["folds"].as_u64(), r["pinches"].as_u64(), r["crossings"].as_u64()), (Some(0), Some(0), Some(0)), "{r}");
+    assert!(r.get("warning").is_none(), "{r}");
     let one = r["surface"].as_str().unwrap().to_owned();
     assert_eq!(s.model.state().body(&one).map(|b| b.body.face_count()), Some(1));
     let r = run(&mut s, "scan.fit_patches", json!({"body": scan, "point": [0, 15, 0], "layout": "blocks", "rows": 2, "columns": 3}));
@@ -57,4 +60,15 @@ fn a_curving_scan_fits_as_a_grid_as_blocks_and_as_a_quad() {
     assert!(s.model.state().body(r["surface"].as_str().unwrap()).is_none(), "one undo step");
     let e = s.execute("scan.fit_patches", &json!({"body": scan, "point": [0, 15, 0], "layout": "rings"})).unwrap_err().to_string();
     assert!(e.contains("`layout`"), "{e}");
+}
+
+/// A surface that folds is said to, in words a person can act on.
+#[test]
+fn a_folded_surface_is_told_of_in_plain_words() {
+    use super::super::surface::{fold_warning, trouble_text};
+    assert_eq!(fold_warning([0, 0, 0]), None);
+    assert_eq!(trouble_text([128, 0, 722]), "128 folds, 722 crossings");
+    assert_eq!(trouble_text([1, 1, 0]), "1 fold, 1 pinch");
+    let w = fold_warning([3, 0, 0]).unwrap();
+    assert!(w.contains("folds over itself (3 folds)") && w.contains("smaller region"), "{w}");
 }

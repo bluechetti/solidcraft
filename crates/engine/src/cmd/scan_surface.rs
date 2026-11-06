@@ -453,6 +453,27 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
+/// How a fitted surface is wrong, for a reader: "128 folds, 722 crossings" (only the kinds found).
+pub fn trouble_text([folds, pinches, crossings]: [usize; 3]) -> String {
+    [(folds, "fold", "folds"), (pinches, "pinch", "pinches"), (crossings, "crossing", "crossings")]
+        .into_iter()
+        .filter(|(n, _, _)| *n > 0)
+        .map(|(n, one, many)| format!("{n} {}", if n == 1 { one } else { many }))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// What to tell someone about a surface a fit made that folds, pinches or passes through itself
+/// (by Surface Check): `None` when it does none of them.
+pub fn fold_warning(trouble: [usize; 3]) -> Option<String> {
+    (trouble.iter().sum::<usize>() > 0).then(|| {
+        format!(
+            "the surface folds over itself ({}): the region is too intricate for one surface; take a smaller region (more control points do not stop it folding)",
+            trouble_text(trouble)
+        )
+    })
+}
+
 /// The surface maths a dialog previews an edit with, as the command does it.
 pub use solidcraft_scan::surface_edit::{
     around, distance, falloff_weights, foot, greville_places, normal_at, points as control_points, refit, slid, slide_steps, with_falloff,

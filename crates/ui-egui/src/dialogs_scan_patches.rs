@@ -37,7 +37,7 @@ impl Default for FitPatches {
 struct Shown {
     key: String,
     /// How close they come, and lines across each patch to draw.
-    result: Result<(f64, f64, usize, Vec<Vec<Vec3>>), String>,
+    result: Result<(f64, f64, usize, Vec<Vec<Vec3>>, [usize; 3]), String>,
 }
 
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
@@ -89,7 +89,7 @@ fn look(app: &SolveApp, k: &mut FitPatches, inputs: &[SelInput]) {
                 lines.push(along_v);
             }
         }
-        (found.rms, found.max, found.surfaces.len(), lines)
+        (found.rms, found.max, found.surfaces.len(), lines, found.trouble)
     });
     k.shown = Some(Box::new(Shown { key, result }));
 }
@@ -109,12 +109,13 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitPatches, inputs: &[Sel
     });
     look(app, k, inputs);
     match k.shown.as_ref().map(|s| &s.result) {
-        Some(Ok((rms, max, count, _))) => {
+        Some(Ok((rms, max, count, _, trouble))) => {
             let line = crate::i18n::format(
                 "ui.scan_patches_found",
                 &[("patches", &count.to_string()), ("rms", &format!("{rms:.3}")), ("max", &format!("{max:.3}"))],
             );
             ui_kit::text(ui, &line, ui_kit::Text::Note("scan_patches_found"));
+            crate::dialogs_surface_check::fold_warning(ui, *trouble);
         }
         Some(Err(why)) => {
             ui_kit::text(ui, why, ui_kit::Text::Report("scan_patches_error", true));
@@ -136,7 +137,7 @@ pub fn commands(app: &SolveApp, k: &FitPatches, inputs: &[SelInput]) -> Result<V
 /// The patches' lines over the picture while the dialog is open.
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanFitPatches(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
-    let Some(Ok((_, _, _, lines))) = k.shown.as_ref().map(|s| &s.result) else { return };
+    let Some(Ok((_, _, _, lines, _))) = k.shown.as_ref().map(|s| &s.result) else { return };
     let stroke = egui::Stroke::new(1.0, crate::theme::Tokens::get().accent);
     for line in lines {
         let pts: Vec<egui::Pos2> = line.iter().filter_map(|q| proj.to_screen(*q)).collect();

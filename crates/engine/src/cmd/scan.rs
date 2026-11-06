@@ -160,7 +160,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("surface")
         .contract(&SURFACE_CONTRACT)
         .output(output_schema_for::<ScanFitSurfaceResult>)
-        .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan, the middle of the area (default: the point picked on it); radius?: length (default a tenth of the scan's size); controls?: 4…30 control points each way (default 8); smoothing?: 0…1 (default 0.1): a smooth B-spline surface over the area, kept as a surface body (one undo step); an area that wraps round is refused → body, surface, rms, max, points, controls, feature"),
+        .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan, the middle of the area (default: the point picked on it); radius?: length (default a tenth of the scan's size); controls?: 4…30 control points each way (default 8); smoothing?: 0…1 (default 0.1): a smooth B-spline surface over the area, fitted in all three directions (each point moved to its foot on it between rounds), kept as a surface body (one undo step); an area that wraps round is refused; a surface that folds, pinches or passes through itself is kept and said so (warning) → body, surface, rms, max, points, controls, folds, pinches, crossings, warning?, feature"),
     CommandSpec::new("scan.edit_surface", "Edit Surface", crate::checked!("scan.edit_surface", surface::edit_surface))
         .at("SCAN", "FREEFORM")
         .icon("surface_patch")
@@ -844,6 +844,10 @@ fn fit_surface(s: &mut Session, p: &Value) -> Result<Value> {
         max: fitted.max,
         points: fitted.points,
         controls,
+        folds: fitted.trouble[0],
+        pinches: fitted.trouble[1],
+        crossings: fitted.trouble[2],
+        warning: surface::fold_warning(fitted.trouble),
         feature,
         param_warnings: Vec::new(),
     };
@@ -860,6 +864,8 @@ pub struct SurfacePreview {
     pub rms: f64,
     pub max: f64,
     pub points: usize,
+    /// Its folds, pinches and crossings (Surface Check).
+    pub trouble: [usize; 3],
     pub marked: Vec<[f32; 3]>,
 }
 
@@ -889,7 +895,16 @@ pub fn surface_preview(s: &Session, body: Option<&str>, point: Vec3, radius: f64
             }
         }
     }
-    Ok(SurfacePreview { body: mesh.body, surface: fitted.surface, radius, rms: fitted.rms, max: fitted.max, points: fitted.points, marked })
+    Ok(SurfacePreview {
+        body: mesh.body,
+        surface: fitted.surface,
+        radius,
+        rms: fitted.rms,
+        max: fitted.max,
+        points: fitted.points,
+        trouble: fitted.trouble,
+        marked,
+    })
 }
 
 /// The point picked on the scan `body`: a picked face or edge of it.

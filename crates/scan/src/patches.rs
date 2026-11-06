@@ -72,6 +72,9 @@ pub struct Patches {
     pub rms: f64,
     pub max: f64,
     pub points: usize,
+    /// Where the surface is wrong ([`crate::surface_check`]): its folds, pinches and crossings. A
+    /// region too intricate for one surface (deep crevices, a part curling over itself) folds.
+    pub trouble: [usize; 3],
 }
 
 /// Patches of `layout` over the triangles `region` of the scan, `controls` control points each
@@ -120,8 +123,9 @@ pub fn fit(scan: &Scan, region: &[usize], layout: Layout, controls: [usize; 2], 
         Layout::Blocks { rows, columns } => (rows.max(1), columns.max(1)),
         _ => (1, 1),
     };
+    let trouble = crate::surface_check::trouble(&surface);
     let surfaces = if rows * columns > 1 { blocks(&surface, rows, columns)? } else { vec![surface] };
-    Ok(Patches { surfaces, rows, columns, rms, max, points: samples.len() })
+    Ok(Patches { surfaces, rows, columns, rms, max, points: samples.len(), trouble })
 }
 
 /// How hard the smoothing holds the net against the points, from the 0 to 1 a person sets: at the
@@ -553,6 +557,7 @@ mod tests {
         let all: Vec<usize> = (0..triangles.len()).collect();
         let grid = fit(&scan, &all, Layout::Grid, [8, 8], 0.1).unwrap();
         assert!(grid.rms < 0.01, "{} {}", grid.rms, grid.max);
+        assert_eq!(grid.trouble, [0, 0, 0]);
         assert!(crate::surface_check::check_whole(&grid.surfaces[0], 40).is_some_and(|c| c.is_clean()));
     }
 

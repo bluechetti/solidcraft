@@ -180,6 +180,12 @@ pub fn check_whole(surface: &NurbsSurface, grid: usize) -> Option<Check> {
     check(surface, grid, surface.domain(), &|_, _| true)
 }
 
+/// How a surface a fit made is wrong: its folds, pinches and crossings on the default grid (none
+/// when it cannot be evaluated).
+pub fn trouble(surface: &NurbsSurface) -> [usize; 3] {
+    check_whole(surface, GRID).map_or([0; 3], |c| [c.folds, c.pinches, c.crossings])
+}
+
 /// The pairs of the cells' triangles (two a cell) that share no corner and pass through each other:
 /// each triangle's sides tried against the other among the triangles near it (a grid of buckets as
 /// big as the largest triangle). How many, and the middles of the first [`MOST_PLACES`].
