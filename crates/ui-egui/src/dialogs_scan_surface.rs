@@ -63,10 +63,7 @@ const BRUSH_SIZES: std::ops::RangeInclusive<f32> = 8.0..=300.0;
 /// is let go.
 const PREVIEW_POINTS: usize = 2_500;
 
-/// A face drawn as this many lines each way (fewer on each face of a network), each sampled at
-/// this many points.
-const LINES: usize = 10;
-const NETWORK_LINES: usize = 4;
+/// Each line of a face's grid is sampled at this many points.
 const SAMPLES: usize = 40;
 
 /// Cells each way Surface Check uses on the surface shown (it runs on every frame of a drag).
@@ -488,16 +485,35 @@ pub(crate) fn cased_dot(painter: &egui::Painter, at: egui::Pos2, radius: f32, fi
     painter.circle_filled(at, radius, fill);
 }
 
-/// Lines across `surface`, `LINES` each way, over the picture.
-pub(crate) fn draw_lines(painter: &egui::Painter, proj: &crate::viewport::Proj, surface: &NurbsSurface, stroke: egui::Stroke) {
+/// Where the grid's lines run on `surface`: the `u` of each column of its points and the `v` of
+/// each row, one for each control point's place on it ([`network::dot_places`]). The dots a user
+/// drags are at these places, so each dot is where a line each way crosses: the lines and the
+/// points are one grid.
+pub(crate) fn grid_params(surface: &NurbsSurface) -> (Vec<f64>, Vec<f64>) {
+    let [nu, nv] = surface.count();
+    let places = network::dot_places(surface);
+    let us = (0..nu).filter_map(|i| places.get(i).map(|p| p.0)).collect();
+    let vs = (0..nv).filter_map(|j| places.get(j * nu).map(|p| p.1)).collect();
+    (us, vs)
+}
+
+/// The grid over `surface` over the picture: a line along each row and each column of its points,
+/// through the places of the dots. With `edges` the first and last of each way are drawn too (a
+/// preview with nothing else drawing its sides); without, only the lines inside, as the sides are
+/// drawn on their own.
+pub(crate) fn draw_grid(painter: &egui::Painter, proj: &crate::viewport::Proj, surface: &NurbsSurface, stroke: egui::Stroke, edges: bool) {
     let [[u0, u1], [v0, v1]] = surface.domain();
-    let at = |i: usize, n: usize, a: f64, b: f64| a + (b - a) * i as f64 / n as f64;
-    for along_u in [true, false] {
-        for i in 0..=LINES {
+    let at = |j: usize, a: f64, b: f64| a + (b - a) * j as f64 / SAMPLES as f64;
+    let (us, vs) = grid_params(surface);
+    let inside = |list: &[f64]| -> Vec<f64> {
+        let (skip, take) = if edges { (0, list.len()) } else { (1, list.len().saturating_sub(2)) };
+        list.iter().copied().skip(skip).take(take).collect()
+    };
+    for (along_u, fixed) in [(true, inside(&vs)), (false, inside(&us))] {
+        for f in fixed {
             let curve: Option<Vec<egui::Pos2>> = (0..=SAMPLES)
                 .map(|j| {
-                    let (u, v) =
-                        if along_u { (at(j, SAMPLES, u0, u1), at(i, LINES, v0, v1)) } else { (at(i, LINES, u0, u1), at(j, SAMPLES, v0, v1)) };
+                    let (u, v) = if along_u { (at(j, u0, u1), f) } else { (f, at(j, v0, v1)) };
                     surface.eval(u, v).ok().and_then(|p| proj.to_screen(p))
                 })
                 .collect();
@@ -2098,16 +2114,19 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     if let Some(Kind::ScanFitSurface(k)) = app.dialog.as_ref().map(|d| &d.kind)
         && let Some(Ok((found, _, _))) = k.shown.as_ref().map(|s| &s.result)
     {
-        draw_lines(painter, proj, &found.surface, egui::Stroke::new(1.5, t.surface_accent));
+        draw_grid(painter, proj, &found.surface, egui::Stroke::new(1.5, t.surface_accent), true);
         return;
     }
     let Some(Kind::ScanEditSurface(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     if k.shown.is_empty() {
         return;
     }
-    let lines = if k.shown.len() > 1 { NETWORK_LINES } else { LINES };
-    for face in &k.shown {
-        draw_lines_n(painter, proj, face, lines, egui::Stroke::new(1.0, t.surface_accent.gamma_multiply(0.8)));
+    // One grid: with the points on the surface its lines run through them; with the control net
+    // shown the net is the grid, and the surface's lines would be a second one over it.
+    if k.handles == HANDLES_DOTS {
+        for face in &k.shown {
+            draw_grid(painter, proj, face, egui::Stroke::new(1.0, t.surface_accent.gamma_multiply(0.8)), false);
+        }
     }
     // The sides: shared ones thin, the open edge bold (Add Face's edge under the pointer, or the
     // one taken, in the accent).
@@ -2275,26 +2294,6 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     for (trouble, at) in k.check.iter().flat_map(|c| &c.places) {
         if let Some(s) = proj.to_screen(*at) {
             crate::dialogs_surface_check::mark(painter, s, trouble.name());
-        }
-    }
-}
-
-/// Lines across `surface`, `lines` each way, over the picture.
-fn draw_lines_n(painter: &egui::Painter, proj: &crate::viewport::Proj, surface: &NurbsSurface, lines: usize, stroke: egui::Stroke) {
-    let [[u0, u1], [v0, v1]] = surface.domain();
-    let at = |i: usize, n: usize, a: f64, b: f64| a + (b - a) * i as f64 / n as f64;
-    for along_u in [true, false] {
-        for i in 1..lines {
-            let curve: Option<Vec<egui::Pos2>> = (0..=SAMPLES)
-                .map(|j| {
-                    let (u, v) =
-                        if along_u { (at(j, SAMPLES, u0, u1), at(i, lines, v0, v1)) } else { (at(i, lines, u0, u1), at(j, SAMPLES, v0, v1)) };
-                    surface.eval(u, v).ok().and_then(|p| proj.to_screen(p))
-                })
-                .collect();
-            if let Some(curve) = curve {
-                cased_line(painter, curve, stroke);
-            }
         }
     }
 }
@@ -2726,6 +2725,55 @@ mod tests {
         h.app.start("scan.edit_surface");
         h.frames(2);
         assert_eq!((kind(&h).handles, kind(&h).snap), (HANDLES_NET, SNAP_OFF), "the old default, kept behind the preference");
+    }
+
+    /// The lines of a face's grid and the dots a user drags are one grid: every dot lies where a
+    /// line along u crosses one along v, for a fitted surface, a Free Form face and a face added
+    /// to it (a network), and the lines are as many as the points are each way.
+    #[test]
+    fn the_surface_lines_run_through_the_dots() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[16, 20, 0], [28, 20, 0], [28, 40, 0], [16, 40, 0]], "count": 5})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        let through = |k: &EditSurface| {
+            assert!(!k.shown.is_empty() && !k.shown_dots.is_empty(), "the surface and its dots shown");
+            let grids: Vec<(Vec<f64>, Vec<f64>)> = k.shown.iter().map(grid_params).collect();
+            for (face, (us, vs)) in k.shown.iter().zip(&grids) {
+                let [nu, nv] = face.count();
+                assert_eq!((us.len(), vs.len()), (nu, nv), "a line for each column and each row of points");
+            }
+            for d in &k.shown_dots {
+                let (face, (us, vs)) = (&k.shown[d.face], &grids[d.face]);
+                let on_line = us.iter().any(|&u| vs.iter().any(|&v| face.eval(u, v).is_ok_and(|p| p.dist(d.at) < 1e-6)));
+                assert!(on_line, "the dot at {:?} on face {} is where two lines cross", d.at, d.face);
+            }
+        };
+        through(kind(&h));
+        assert_eq!(kind(&h).shown.len(), 1, "one face to start with");
+
+        // A face added on the open edge at x = 28 (Add Face's clicks): a network of two faces, whose
+        // dots (a point on the shared side is one dot) still lie where each face's lines cross.
+        if let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.adding = Some(Adding::default());
+        }
+        let k = kind(&h).clone();
+        let (f, side) =
+            *k.joins.open.iter().find(|&&(f, s)| s.at(&k.shown[f], 0.5).is_some_and(|p| (p.x - 28.0).abs() < 1.0)).expect("the edge at x = 28");
+        let mid = side.at(&k.shown[f], 0.5).unwrap();
+        h.step(&json!({"click": {"world": [mid.x, mid.y, mid.z]}})).unwrap();
+        h.frames(2);
+        let top = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+        for (x, y) in [(38.0, 20.0), (38.0, 40.0)] {
+            h.step(&json!({"click": {"world": [x, y, top(x, y)]}})).unwrap();
+            h.frames(2);
+        }
+        assert_eq!(kind(&h).shown.len(), 2, "a face added: {:?}", kind(&h).note);
+        through(kind(&h));
     }
 
     /// What the highlight paints in the selection colour: whole bodies redrawn (planned, in

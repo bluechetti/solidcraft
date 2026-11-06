@@ -333,7 +333,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     let Some(Kind::ScanFreeForm(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let t = crate::theme::Tokens::get();
     if let Some(Ok(made)) = k.shown.as_ref().map(|s| &s.result) {
-        crate::dialogs_scan_surface::draw_lines(painter, proj, &made.surface, egui::Stroke::new(1.5, t.surface_accent));
+        crate::dialogs_scan_surface::draw_grid(painter, proj, &made.surface, egui::Stroke::new(1.5, t.surface_accent), true);
     }
     let outline: Vec<Vec3> = corners(k).map_or_else(|| k.clicks.clone(), |c| c.to_vec());
     let on: Vec<egui::Pos2> = outline.iter().filter_map(|p| proj.to_screen(*p)).collect();
@@ -490,7 +490,7 @@ pub(crate) fn draw_wrap(app: &SolveApp, painter: &egui::Painter, proj: &crate::v
     let Some(Kind::ScanWrapSurface(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let Some(Ok(w)) = k.shown.as_ref().map(|s| &s.result) else { return };
     let t = crate::theme::Tokens::get();
-    crate::dialogs_scan_surface::draw_lines(painter, proj, &w.made.surface, egui::Stroke::new(1.5, t.surface_accent));
+    crate::dialogs_scan_surface::draw_grid(painter, proj, &w.made.surface, egui::Stroke::new(1.5, t.surface_accent), true);
     let c = &w.cylinder;
     let middle = w.made.surface.eval(0.5, 0.5).unwrap_or(c.point);
     let foot = c.point + c.axis * (middle - c.point).dot(c.axis);
@@ -592,7 +592,7 @@ fn draw_merge(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::P
     let Some(Ok((made, _))) = k.shown.as_ref().map(|s| &s.result) else { return };
     let t = crate::theme::Tokens::get();
     for surface in &made.surfaces {
-        crate::dialogs_scan_surface::draw_lines(painter, proj, surface, egui::Stroke::new(1.0, t.surface_accent.gamma_multiply(0.6)));
+        crate::dialogs_scan_surface::draw_grid(painter, proj, surface, egui::Stroke::new(1.0, t.surface_accent.gamma_multiply(0.6)), true);
     }
     for seam in &made.seams {
         let Some(surface) = made.surfaces.get(seam.a) else { continue };
