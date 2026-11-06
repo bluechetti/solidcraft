@@ -922,23 +922,37 @@ fn above_axis(points: &[Vec2], on: &[Option<usize>], axis: usize) -> Option<(Vec
 
 /// The parts of the open run `points` (each point on the wall `on` names; its ends where the scan,
 /// or the part of it selected, stops) with radius at least 0, each closed as a profile is: a part
-/// that comes down to the axis at one end runs along the axis to the height of its other end, so
-/// what was cut off there (a boss selected without the block it stands on) stands on it; a part
-/// with neither end on the axis is closed straight across.
-fn above_axis_open(points: &[Vec2], on: &[Option<usize>], axis: usize) -> Vec<(Vec<Vec2>, Vec<Option<usize>>)> {
+/// that comes down to the axis at one end runs on `overlap` past its other end, the way the run
+/// was going there, and along the axis from that height, so what was cut off there (a boss
+/// selected without the block it stands on) stands a little into it: joined to it, the two meet in
+/// material, not in two faces a hair apart, which the kernel's boolean refuses. A part with neither
+/// end on the axis is closed straight across.
+fn above_axis_open(points: &[Vec2], on: &[Option<usize>], axis: usize, overlap: f64) -> Vec<(Vec<Vec2>, Vec<Option<usize>>)> {
     let finish = |mut kept: Vec<Vec2>, mut walls: Vec<Option<usize>>| -> Option<(Vec<Vec2>, Vec<Option<usize>>)> {
         if kept.len() < 3 {
             return None;
         }
         let (first, last) = (walls.first().copied().flatten() == Some(axis), walls.last().copied().flatten() == Some(axis));
-        let other_end = match (first, last) {
-            (false, true) => kept.first().copied(),
-            (true, false) => kept.last().copied(),
-            _ => None,
-        };
-        if let Some(end) = other_end {
-            kept.push(Vec2::new(end.x, 0.0));
-            walls.push(Some(axis));
+        let n = kept.len();
+        // The end cut off, carried on past where the run stopped.
+        let onward = |end: Vec2, before: Vec2| end + (end - before).normalized().unwrap_or(Vec2::ZERO) * overlap;
+        match (first, last) {
+            (false, true) => {
+                let start = onward(kept[0], kept[1]);
+                let wall = walls[0];
+                kept.insert(0, start);
+                walls.insert(0, wall);
+                kept.push(Vec2::new(start.x, 0.0));
+                walls.push(Some(axis));
+            }
+            (true, false) => {
+                let end = onward(kept[n - 1], kept[n - 2]);
+                kept.push(end);
+                walls.push(walls[n - 1]);
+                kept.push(Vec2::new(end.x, 0.0));
+                walls.push(Some(axis));
+            }
+            _ => {}
         }
         Some((kept, walls))
     };
@@ -1004,18 +1018,23 @@ fn turned_sliced(
                 let flipped: Vec<Vec2> = run.points.iter().map(|p| Vec2::new(p.x, side * p.y)).collect();
                 // A closed loop's half above the axis; an open run's (the scan's edge, or where the
                 // part selected stops), closed down to the axis.
-                let halves =
-                    if run.closed { above_axis(&flipped, &on, axis_wall).into_iter().collect() } else { above_axis_open(&flipped, &on, axis_wall) };
+                let halves = if run.closed {
+                    above_axis(&flipped, &on, axis_wall).into_iter().collect()
+                } else {
+                    above_axis_open(&flipped, &on, axis_wall, 2.0 * reach)
+                };
                 for (points, on) in halves {
                     let Some(outline) = outline_of(&walls, &points, &on, reach, Some(tolerance)) else { continue };
                     let ring = ring(&outline);
                     if !is_simple_ring(&ring) || ring.iter().any(|p| p.y < -reach) {
                         continue;
                     }
-                    // How far the outline runs on the faces.
-                    let on_faces: f64 = (0..outline.corners.len())
-                        .filter(|&k| outline.faces[k].is_some_and(|f| f != usize::MAX))
-                        .map(|k| outline.corners[k].dist(outline.corners[(k + 1) % outline.corners.len()]))
+                    // How far the slice itself runs on the faces: where the scan has them, not
+                    // how far the outline draws their walls on (closing an open slice down the
+                    // axis draws a face on to the axis, which the scan may have only a stretch of).
+                    let on_faces: f64 = (1..points.len())
+                        .filter(|&i| on[i].is_some_and(|w| w != axis_wall) && on[i] == on[i - 1])
+                        .map(|i| points[i].dist(points[i - 1]))
                         .sum();
                     if best.as_ref().is_none_or(|(b, _)| on_faces > *b) {
                         best = Some((on_faces, outline));
@@ -1182,8 +1201,15 @@ mod tests {
         let reading = &region.reading;
         assert!(reading.revolve.is_some() && reading.turned_unread.is_none(), "{:?} {:?}", reading.revolve, reading.turned_unread);
         let (_, outline, _) = turned_profile(&region.scan(&scan), &region.outcome, reading).unwrap();
+        // Closed down the axis 2 × 0.005 of the part's size into the block, so a join meets in material.
+        let into = 2.0 * 0.005 * scan.extent();
+        let expected = 99.0 + 8.0 * into;
         let half = area(&ring(&outline)).abs() / 2.0;
-        assert!((half - 99.0).abs() < 0.03 * 99.0, "{half} mm² against 99: {outline:?}");
+        assert!((half - expected).abs() < 0.03 * expected, "{half} mm² against {expected}: {outline:?}");
+        // Along the axis, the boss's 15 and the stretch into the block.
+        let along = |f: fn(f64, f64) -> f64, from: f64| outline.corners.iter().map(|c| c.x).fold(from, f);
+        let span = along(f64::max, f64::NEG_INFINITY) - along(f64::min, f64::INFINITY);
+        assert!((span - (15.0 + into)).abs() < 0.2, "{span} along the axis: {outline:?}");
     }
 
     /// The turned part: a face at −4 down to the axis, a round R 4 into the shaft R 20, the shaft
