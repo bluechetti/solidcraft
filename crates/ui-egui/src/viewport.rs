@@ -4955,9 +4955,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     let corner = hover.filter(|_| inside && !navigating).and_then(|p| crate::sketch_modify_ui::corner_hit(app, &proj, p));
     let cand = if app.tool.is_some() {
         tool_hover(app, &hits).map(|h| (h, None))
-    } else if takes_scan_clicks(app) {
-        // A Scan dialog placing points on the scan: a click there selects nothing, so nothing
-        // lights up under the pointer (a lit scan hides the dialog's colouring).
+    } else if takes_scan_clicks(app) || crate::dialogs_scan_free_form::colours_the_scan(app) {
+        // A Scan dialog placing points on the scan, or colouring it: a click there selects
+        // nothing, so nothing lights up under the pointer (a lit scan hides the colouring).
         None
     } else if let Some((hit, sel)) = corner {
         Some((hit, Some(sel)))

@@ -221,6 +221,12 @@ pub fn commands(k: &NewFreeForm) -> Result<Vec<(String, Value)>, String> {
     Ok(vec![("scan.free_form".into(), p)])
 }
 
+/// Whether New Free Form is open: it colours the scan under the face, which the pointer's
+/// highlight of the scan would hide.
+pub(crate) fn colours_the_scan(app: &SolveApp) -> bool {
+    matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(_)))
+}
+
 /// Whether the dialog takes clicks in the view as corners.
 pub(crate) fn drawing(app: &SolveApp) -> bool {
     matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(k)) if k.clicks.len() < needed(k))
