@@ -22,7 +22,12 @@
     "ui.scan_edit_undo": "Undo Last Change",
     "ui.scan_edit_delete_face": "Delete Face",
     "ui.scan_edit_delete_face_hint": "Click a face of the Free Form to take it away. Press Delete Face again to stop.",
-    "ui.scan_edit_smooth_all": "Smooth"
+    "ui.scan_edit_smooth_all": "Smooth",
+    "ui.scan_edit_folds_hint": "Where the surface folds (marked), take the point back, set Other points to Follow, press Smooth, or Undo Last Change.",
+    "ui.scan_edit_fit_folds": "Fit to Scan would fold the surface: Increase Resolution first, or fit a smaller Free Form.",
+    "ui.scan_free_form_folds_hint": "The face folds where it follows bumps it has too few points for: raise Stiffness, take fewer Points, or click the corners closer together.",
+    "ui.scan_wrap_round_closes": "The net goes the whole way round, open where its ends meet ({gap} apart): Merge Surfaces with only this surface closes it.",
+    "ui.scan_wrap_round_open": "The net goes the whole way round, but its ends are {gap} apart, too far to close: wrap a part that is round all the way, or set Arc below 360°."
   },
   "de": {
     "ui.scan_edit_one_face": "Teilen, Kopieren, Entfernen und Knick ändern eine Fläche: Diese Freiform hat mehrere",
@@ -47,7 +52,12 @@
     "ui.scan_edit_undo": "Letzte Änderung rückgängig",
     "ui.scan_edit_delete_face": "Fläche löschen",
     "ui.scan_edit_delete_face_hint": "Klicken Sie auf eine Fläche der Freiform, um sie zu entfernen. Erneut Fläche löschen zum Beenden.",
-    "ui.scan_edit_smooth_all": "Glätten"
+    "ui.scan_edit_smooth_all": "Glätten",
+    "ui.scan_edit_folds_hint": "Wo die Fläche sich faltet (markiert): den Punkt zurückziehen, Andere Punkte auf Folgen stellen, Glätten drücken oder Letzte Änderung rückgängig machen.",
+    "ui.scan_edit_fit_folds": "An Scan anpassen würde die Fläche falten: zuerst die Auflösung erhöhen oder eine kleinere Freiform anpassen.",
+    "ui.scan_free_form_folds_hint": "Die Fläche faltet sich, wo sie Unebenheiten folgt, für die sie zu wenige Punkte hat: Steifigkeit erhöhen, weniger Punkte nehmen oder die Ecken näher beieinander klicken.",
+    "ui.scan_wrap_round_closes": "Das Netz geht ganz herum und ist dort offen, wo sich seine Enden treffen ({gap} Abstand): Flächen zusammenführen mit nur dieser Fläche schließt es.",
+    "ui.scan_wrap_round_open": "Das Netz geht ganz herum, aber seine Enden sind {gap} voneinander entfernt, zu weit zum Schließen: Wickeln Sie einen rundum runden Teil oder stellen Sie den Bogen unter 360°."
   },
   "ja": {
     "ui.scan_edit_one_face": "分割・コピー・削除・折り目は 1 つの面を変更します: このフリーフォームには複数の面があります",
@@ -72,7 +82,12 @@
     "ui.scan_edit_undo": "最後の変更を元に戻す",
     "ui.scan_edit_delete_face": "面を削除",
     "ui.scan_edit_delete_face_hint": "フリーフォームの面をクリックすると取り除きます。終了するにはもう一度［面を削除］を押します。",
-    "ui.scan_edit_smooth_all": "スムーズ"
+    "ui.scan_edit_smooth_all": "スムーズ",
+    "ui.scan_edit_folds_hint": "サーフェスが折れ返る所（マーク）では、点を戻す、［他の点］を［追従］にする、［スムーズ］を押す、または［最後の変更を元に戻す］を使います。",
+    "ui.scan_edit_fit_folds": "スキャンにフィットするとサーフェスが折れ返ります。先に解像度を上げるか、小さいフリーフォームでフィットしてください。",
+    "ui.scan_free_form_folds_hint": "点が足りない凹凸に沿う所で面が折れ返ります。剛性を上げる、点を減らす、または角をもっと近くにクリックしてください。",
+    "ui.scan_wrap_round_closes": "ネットは一周しており、端が合う所で開いています（{gap} 離れています）。この面だけで［面を結合］すると閉じます。",
+    "ui.scan_wrap_round_open": "ネットは一周していますが、端が {gap} 離れていて閉じられません。全周が丸い部分を巻くか、円弧を 360° 未満にしてください。"
   },
   "ko": {
     "ui.scan_edit_one_face": "분할, 복사, 제거, 주름은 한 면을 바꿉니다: 이 자유형에는 면이 여러 개 있습니다",
@@ -97,7 +112,12 @@
     "ui.scan_edit_undo": "마지막 변경 취소",
     "ui.scan_edit_delete_face": "면 삭제",
     "ui.scan_edit_delete_face_hint": "자유형의 면을 클릭하면 없앱니다. 끝내려면 면 삭제를 다시 누릅니다.",
-    "ui.scan_edit_smooth_all": "매끄럽게"
+    "ui.scan_edit_smooth_all": "매끄럽게",
+    "ui.scan_edit_folds_hint": "서피스가 접히는 곳(표시됨)에서는 점을 되돌리거나, 다른 점을 따라가기로 하거나, 매끄럽게를 누르거나, 마지막 변경 취소를 누릅니다.",
+    "ui.scan_edit_fit_folds": "스캔에 피팅하면 서피스가 접힙니다. 먼저 해상도를 높이거나 더 작은 자유형을 피팅하세요.",
+    "ui.scan_free_form_folds_hint": "점이 부족한 요철을 따라가는 곳에서 면이 접힙니다. 강성을 높이거나, 점을 줄이거나, 모서리를 더 가깝게 클릭하세요.",
+    "ui.scan_wrap_round_closes": "그물이 한 바퀴 돌며 끝이 만나는 곳이 열려 있습니다({gap} 떨어짐). 이 서피스만으로 서피스 병합을 하면 닫힙니다.",
+    "ui.scan_wrap_round_open": "그물이 한 바퀴 돌지만 끝이 {gap} 떨어져 있어 닫을 수 없습니다. 둘레 전체가 둥근 부분을 감싸거나 호를 360° 미만으로 하세요."
   },
   "zh": {
     "ui.scan_edit_one_face": "拆分、复制、删除和折痕只改变一个面：此自由形状有多个面",
@@ -122,7 +142,12 @@
     "ui.scan_edit_undo": "撤销上次更改",
     "ui.scan_edit_delete_face": "删除面",
     "ui.scan_edit_delete_face_hint": "单击自由形状的一个面将其去掉。再次按“删除面”结束。",
-    "ui.scan_edit_smooth_all": "平滑"
+    "ui.scan_edit_smooth_all": "平滑",
+    "ui.scan_edit_folds_hint": "曲面折叠处（已标记）：把点拖回，把“其他点”设为“跟随”，按“平滑”，或“撤销上次更改”。",
+    "ui.scan_edit_fit_folds": "拟合到扫描会使曲面折叠：先提高分辨率，或拟合较小的自由形状。",
+    "ui.scan_free_form_folds_hint": "面在点数不足以贴合的凹凸处折叠：提高刚度、减少点数，或把角点点得更近。",
+    "ui.scan_wrap_round_closes": "网格绕了一整圈，在两端相接处开口（相距 {gap}）：只对此曲面执行“合并曲面”即可闭合。",
+    "ui.scan_wrap_round_open": "网格绕了一整圈，但两端相距 {gap}，太远无法闭合：请包裹整圈都是圆的部分，或把弧设为小于 360°。"
   },
   "ar": {
     "ui.scan_edit_one_face": "التقسيم والنسخ والإزالة والطي تغيّر وجهًا واحدًا: هذا الشكل الحر له عدة أوجه",
@@ -147,7 +172,12 @@
     "ui.scan_edit_undo": "تراجع عن آخر تغيير",
     "ui.scan_edit_delete_face": "حذف وجه",
     "ui.scan_edit_delete_face_hint": "انقر وجهًا من الشكل الحر لإزالته. اضغط حذف وجه مرة أخرى للتوقف.",
-    "ui.scan_edit_smooth_all": "تنعيم"
+    "ui.scan_edit_smooth_all": "تنعيم",
+    "ui.scan_edit_folds_hint": "حيث ينطوي السطح (معلَّم): أعد النقطة، أو اجعل النقاط الأخرى تتبع، أو اضغط تنعيم، أو تراجع عن آخر تغيير.",
+    "ui.scan_edit_fit_folds": "الملاءمة مع المسح ستطوي السطح: زد الدقة أولًا، أو لائم شكلًا حرًا أصغر.",
+    "ui.scan_free_form_folds_hint": "ينطوي الوجه حيث يتبع نتوءات نقاطه أقل من أن تتبعها: ارفع الصلابة، أو خذ نقاطًا أقل، أو انقر الزوايا أقرب إلى بعضها.",
+    "ui.scan_wrap_round_closes": "تلتف الشبكة دورة كاملة، مفتوحة حيث يلتقي طرفاها (بينهما {gap}): دمج الأسطح بهذا السطح وحده يغلقها.",
+    "ui.scan_wrap_round_open": "تلتف الشبكة دورة كاملة لكن بين طرفيها {gap}، أبعد من أن يُغلق: لُفّ جزءًا مستديرًا على طول الدورة، أو اجعل القوس أقل من 360°."
   },
   "he": {
     "ui.scan_edit_one_face": "פיצול, העתקה, הסרה וקיפול משנים פאה אחת: לצורה החופשית הזו יש כמה פאות",
@@ -172,7 +202,12 @@
     "ui.scan_edit_undo": "ביטול השינוי האחרון",
     "ui.scan_edit_delete_face": "מחיקת פאה",
     "ui.scan_edit_delete_face_hint": "לחצו על פאה של הצורה החופשית כדי להסיר אותה. לחצו שוב על מחיקת פאה כדי לסיים.",
-    "ui.scan_edit_smooth_all": "החלקה"
+    "ui.scan_edit_smooth_all": "החלקה",
+    "ui.scan_edit_folds_hint": "היכן שהמשטח מתקפל (מסומן): החזירו את הנקודה, הגדירו נקודות אחרות לעוקבות, לחצו החלקה, או בטלו את השינוי האחרון.",
+    "ui.scan_edit_fit_folds": "התאמה לסריקה תקפל את המשטח: הגדילו קודם את הרזולוציה, או התאימו צורה חופשית קטנה יותר.",
+    "ui.scan_free_form_folds_hint": "הפאה מתקפלת היכן שהיא עוקבת אחר בליטות שאין לה די נקודות עבורן: העלו את הקשיחות, קחו פחות נקודות, או לחצו את הפינות קרוב יותר זו לזו.",
+    "ui.scan_wrap_round_closes": "הרשת מקיפה את כל הסיבוב, פתוחה היכן שקצותיה נפגשים ({gap} ביניהם): מיזוג משטחים עם משטח זה בלבד סוגר אותה.",
+    "ui.scan_wrap_round_open": "הרשת מקיפה את כל הסיבוב, אבל קצותיה במרחק {gap}, רחוק מכדי לסגור: עטפו חלק שעגול לכל אורכו, או קבעו קשת קטנה מ־360°."
   },
   "vi": {
     "ui.scan_edit_one_face": "Tách, Sao chép, Xóa và Gấp nếp thay đổi một mặt: dạng tự do này có nhiều mặt",
@@ -197,6 +232,11 @@
     "ui.scan_edit_undo": "Hoàn tác thay đổi cuối",
     "ui.scan_edit_delete_face": "Xóa mặt",
     "ui.scan_edit_delete_face_hint": "Bấm vào một mặt của dạng tự do để bỏ nó. Bấm Xóa mặt lần nữa để dừng.",
-    "ui.scan_edit_smooth_all": "Làm trơn"
+    "ui.scan_edit_smooth_all": "Làm trơn",
+    "ui.scan_edit_folds_hint": "Chỗ bề mặt bị gập (đã đánh dấu): kéo điểm về, đặt Các điểm khác thành Đi theo, bấm Làm trơn, hoặc Hoàn tác thay đổi cuối.",
+    "ui.scan_edit_fit_folds": "Khớp với bản quét sẽ làm gập bề mặt: tăng độ phân giải trước, hoặc khớp một dạng tự do nhỏ hơn.",
+    "ui.scan_free_form_folds_hint": "Mặt bị gập ở chỗ bám theo những chỗ lồi lõm mà nó có quá ít điểm: tăng Độ cứng, lấy ít Điểm hơn, hoặc bấm các góc gần nhau hơn.",
+    "ui.scan_wrap_round_closes": "Lưới đi trọn một vòng, hở ở chỗ hai đầu gặp nhau (cách {gap}): Gộp bề mặt chỉ với bề mặt này sẽ khép nó lại.",
+    "ui.scan_wrap_round_open": "Lưới đi trọn một vòng nhưng hai đầu cách nhau {gap}, quá xa để khép: hãy bọc một phần tròn suốt vòng, hoặc đặt Cung dưới 360°."
   }
 }

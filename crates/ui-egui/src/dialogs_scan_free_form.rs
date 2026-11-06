@@ -56,8 +56,11 @@ struct Shown {
     key: (Vec<[u64; 3]>, usize, usize, u64, usize, u64, u64),
     result: Result<Made, String>,
     /// The scan under the face, coloured by how far it is from it: for which tolerance and colours,
-    /// the dots' version, and the dots.
+    /// the dots' version, and the dots; and how much of it is within the tolerance.
     shade: Option<(u64, [[u8; 3]; 3], u64, Arc<Vec<u8>>)>,
+    within: Option<f64>,
+    /// Surface Check on the face: where it folds, pinches or passes through itself.
+    check: Option<solidcraft_engine::cmd::scan::surface::SurfaceCheck>,
 }
 
 /// The colouring's id among the clouds the viewport draws.
@@ -122,7 +125,11 @@ fn fit(app: &SolveApp, k: &mut NewFreeForm) {
     let reach = (k.reach > 0.0).then_some(k.reach);
     let fitting = Fitting { count: k.count, stiffness: k.stiffness, overall: false };
     let result = free_form::make(&app.session, None, c, fit_mode(k), fitting, reach).map_err(|e| e.to_string());
-    k.shown = Some(Box::new(Shown { key, result, shade: None }));
+    let check = result
+        .as_ref()
+        .ok()
+        .and_then(|m| solidcraft_engine::cmd::scan::surface::check_surface(&m.surface, solidcraft_engine::cmd::scan::surface::SURFACE_CHECK_GRID));
+    k.shown = Some(Box::new(Shown { key, result, shade: None, within: None, check }));
 }
 
 /// The scan under the face coloured by how far it is from it, again when the face, the tolerance
@@ -142,6 +149,8 @@ fn shade(app: &SolveApp, k: &mut NewFreeForm) {
     solidcraft_engine::cmd::scan::surface::network::shade_values(&mut found, &faces, None, &mut values);
     let dots = Arc::new(crate::dialogs_scan_surface::shade_dots(&found, &values, tolerance, colours));
     shown.shade = Some((tolerance.to_bits(), colours, crate::dialogs_scan_surface::next_shade_version(), dots));
+    let counted: Vec<f32> = values.into_iter().filter(|v| v.is_finite()).collect();
+    shown.within = (!counted.is_empty()).then(|| counted.iter().filter(|v| f64::from(v.abs()) <= tolerance).count() as f64 / counted.len() as f64);
 }
 
 /// The colouring of the scan under the face, as a cloud for the GPU viewport.
@@ -166,10 +175,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
     if k.fit != 0 {
         form_row(ui, tr("ui.scan_edit_snap_reach"), |ui| ui_kit::length_field(ui, &mut k.reach, &units, decimals));
         k.reach = k.reach.max(0.0);
-        let format = |v: f64| format!("{:.0} %", 100.0 * v);
-        form_row(ui, tr("ui.scan_free_form_stiffness"), |ui| {
-            ui_kit::slider(ui, &mut k.stiffness, 0.0..=1.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
-        });
+        stiffness_row(ui, &mut k.stiffness);
     }
     form_row(ui, tr("ui.scan_free_form_points"), |ui| ui_kit::number_field(ui, &mut k.count, 4..=12, 0.2, ""));
     if k.fit != 0 {
@@ -184,21 +190,56 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
         k.clicks.pop();
         k.view = None;
     }
-    match k.shown.as_ref().map(|s| &s.result) {
-        Some(Ok(made)) if made.scan.is_some() => {
+    match k.shown.as_ref().map(|s| (&s.result, s.within, s.check.as_ref())) {
+        Some((Ok(made), within, check)) if made.scan.is_some() => {
             let note = crate::i18n::format(
                 "ui.scan_free_form_found",
                 &[("met", &made.met.to_string()), ("places", &made.places.to_string()), ("rms", &crate::prefs::show_mm(app, made.rms, 1))],
             );
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_free_form_found"));
+            let fit = crate::i18n::format(
+                "ui.scan_edit_distance_value",
+                &[("rms", &crate::prefs::show_mm(app, made.rms, 1)), ("max", &crate::prefs::show_mm(app, made.max, 1))],
+            );
+            ui_kit::text(ui, &format!("{}: {fit}", tr("ui.scan_edit_distance")), ui_kit::Text::Note("scan_free_form_distance"));
+            if let Some(within) = within {
+                let line = crate::i18n::format(
+                    "ui.scan_edit_within",
+                    &[("within", &format!("{:.0} %", 100.0 * within)), ("tolerance", &crate::prefs::show_mm(app, k.tolerance, 1))],
+                );
+                ui_kit::text(ui, &line, ui_kit::Text::Note("scan_free_form_within"));
+            }
+            // Surface Check on the face as it will be kept: a fold is seen before OK, not after.
+            if let Some(c) = check {
+                if c.folds + c.pinches + c.crossings == 0 {
+                    form_row(ui, tr("ui.scan_edit_check"), |ui| ui_kit::text(ui, tr("ui.scan_edit_check_clean"), ui_kit::Text::Cell));
+                } else {
+                    let line = crate::dialogs_surface_check::trouble(c.folds, c.pinches, c.crossings);
+                    form_row(ui, tr("ui.scan_edit_check"), |ui| ui_kit::text(ui, &line, ui_kit::Text::Report("scan_free_form_check", true)));
+                    ui_kit::text(ui, tr("ui.scan_free_form_folds_hint"), ui_kit::Text::Hint("scan_free_form_folds_hint"));
+                }
+            }
         }
-        Some(Err(why)) => {
+        Some((Err(why), _, _)) => {
             ui_kit::text(ui, why, ui_kit::Text::Report("scan_free_form_error", true));
         }
         _ => {}
     }
     ui_kit::text(ui, tr("ui.scan_free_form_hint"), ui_kit::Text::Hint("scan_free_form_hint"));
     false
+}
+
+/// Stiffness, 0 to 1, shown and typed as a percentage (10 is 10 %, not ten times the most).
+fn stiffness_row(ui: &mut egui::Ui, stiffness: &mut f64) {
+    let mut percent = 100.0 * *stiffness;
+    let format = |v: f64| format!("{v:.0} %");
+    let changed = form_row(ui, tr("ui.scan_free_form_stiffness"), |ui| {
+        ui_kit::slider(ui, &mut percent, 0.0..=100.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
+    })
+    .changed();
+    if changed && percent.is_finite() {
+        *stiffness = (percent / 100.0).clamp(0.0, 1.0);
+    }
 }
 
 /// What OK runs: the face made over the corners.
@@ -356,10 +397,7 @@ pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs:
     choice_row(ui, tr("ui.scan_wrap_axis"), "scan_wrap_axis", &mut k.axis, &axes);
     form_row(ui, tr("ui.scan_wrap_arc"), |ui| ui_kit::angle_field(ui, &mut k.arc));
     k.arc = k.arc.clamp(0.0, 360.0);
-    let format = |v: f64| format!("{:.0} %", 100.0 * v);
-    form_row(ui, tr("ui.scan_free_form_stiffness"), |ui| {
-        ui_kit::slider(ui, &mut k.stiffness, 0.0..=1.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
-    });
+    stiffness_row(ui, &mut k.stiffness);
     match k.shown.as_ref().map(|s| (&s.result, s.trouble)) {
         Some((Ok(w), [folds, pinches, crossings])) => {
             let [nu, nv] = w.made.surface.count();
@@ -375,6 +413,13 @@ pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs:
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_wrap_found"));
             if w.off > 0.1 * w.cylinder.radius {
                 ui_kit::text(ui, tr("ui.scan_wrap_poor"), ui_kit::Text::Report("scan_wrap_poor", false));
+            }
+            // The whole way round: open where its ends meet, and whether Merge can close it.
+            if let Some(gap) = w.seam {
+                let closes = gap <= free_form::default_gap(std::slice::from_ref(&w.made.surface));
+                let id = if closes { "ui.scan_wrap_round_closes" } else { "ui.scan_wrap_round_open" };
+                let line = crate::i18n::format(id, &[("gap", &crate::prefs::show_mm(app, gap, 1))]);
+                ui_kit::text(ui, &line, ui_kit::Text::Report("scan_wrap_round", !closes));
             }
             // The net follows rims and ribs it is too coarse for: Stiffness smooths them out.
             if folds + pinches + crossings > 0 {

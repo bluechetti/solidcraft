@@ -558,10 +558,13 @@ pub struct ScanAddFaceResult {
     pub body: String,
     pub rms: f64,
     pub max: f64,
-    /// How far from tangent the faces meet at worst, in degrees.
+    /// How far from tangent the faces meet at worst where they are held tangent, in degrees.
     pub kink: f64,
     /// Corners where other than four faces meet (inside) or more than three (on the edge).
     pub irregular: usize,
+    /// The sides the new face shares that are left creases: where the scan turns sharply, it is not
+    /// held tangent to the face there.
+    pub sharp: usize,
     /// The Import feature that keeps the surface.
     pub feature: u64,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
@@ -620,8 +623,10 @@ pub struct ScanFreeFormResult {
     pub places: usize,
     pub met: usize,
     pub kept: usize,
-    /// How far the kept places inside are from the face, root mean square, in mm.
+    /// How far the scan under the face is from it, root mean square and largest, in mm (what Edit
+    /// Surface shows for it; with no scan under it, the places' own distance).
     pub rms: f64,
+    pub max: f64,
     /// The feature that keeps it, as a feature command replies.
     #[schemars(with = "FeatureResult")]
     pub feature: Value,
@@ -678,8 +683,14 @@ pub struct ScanWrapSurfaceResult {
     /// The places fitted to, and those met on the scan.
     pub places: usize,
     pub met: usize,
-    /// How far the places are from the face, root mean square, in mm.
+    /// How far the scan under the net is from it, root mean square and largest, in mm (what Edit
+    /// Surface shows for it; with no scan under it, the places' own distance).
     pub rms: f64,
+    pub max: f64,
+    /// For a net that goes the whole way round the part: how far apart its two ends are, in mm (it is
+    /// open there; Merge Surfaces with only this surface closes a seam within its gap).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seam: Option<f64>,
     /// Where the surface is wrong (Surface Check on it): folds (it doubles back), pinches (it
     /// narrows to nothing) and crossings (it passes through itself). A net following rims and ribs
     /// it is too coarse for folds there.

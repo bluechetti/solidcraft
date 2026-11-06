@@ -1037,6 +1037,33 @@ fn add_face_grows_a_free_form_into_a_network_edited_by_its_points() {
     assert_eq!(super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces.len(), 1, "one undo step each");
 }
 
+/// A Free Form closed round a scanned box face by face with Add Face: each face after the first
+/// shares one, two or (the lid) four sides; where the box turns the sides are left creases; the
+/// kernel sews the six faces into a solid of the box's volume.
+#[test]
+fn add_face_closes_a_free_form_round_a_box() {
+    let (mut s, _) = session_with_triangles("add-face-box", &fine_box(Vec3::ZERO, Vec3::new(40.0, 40.0, 40.0), 40));
+    run(&mut s, "scan.free_form", json!({"corners": [[0, 0, 0], [40, 0, 0], [40, 0, 40], [0, 0, 40]], "count": 5}));
+    let steps = [
+        ([[0, 0, 0], [40, 0, 0]], [[0, 40, 0], [40, 40, 0]]),
+        ([[40, 0, 0], [40, 40, 0]], [[40, 0, 40], [40, 40, 40]]),
+        ([[0, 40, 0], [40, 40, 0]], [[0, 40, 40], [40, 40, 40]]),
+        ([[0, 0, 0], [0, 40, 0]], [[0, 0, 40], [0, 40, 40]]),
+        ([[0, 0, 40], [40, 0, 40]], [[0, 40, 40], [40, 40, 40]]),
+    ];
+    let mut last = Value::Null;
+    for (edge, far) in steps {
+        last = run(&mut s, "scan.add_face", json!({"edge": edge, "far": far, "rows": 5}));
+        assert!(last["rms"].as_f64().unwrap() < 0.05 && last["sharp"].as_u64().unwrap() >= 1, "{last}");
+    }
+    assert_eq!((last["faces"].as_u64(), last["irregular"].as_u64(), last["sharp"].as_u64()), (Some(6), Some(8), Some(4)), "{last}");
+    let state = s.model.state();
+    let body = state.body("FreeForm1").expect("the Free Form");
+    let volume = body.body.volume_at(1e-3).unwrap_or(0.0);
+    assert!((volume - 64_000.0).abs() < 100.0, "closed into a solid of the box's volume: {volume}");
+    assert_eq!(super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces.len(), 6, "still editable as a Free Form");
+}
+
 /// `turn` radians round a tube of radius 10 along Z, 40 long, as triangles.
 fn tube_triangles(turn: f64) -> Vec<[Vec3; 3]> {
     let (rings, segments) = (20u32, 48u32);

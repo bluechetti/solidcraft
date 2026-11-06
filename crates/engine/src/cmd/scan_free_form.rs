@@ -29,7 +29,9 @@ pub enum Fit {
     Overall,
 }
 
-/// A face made, before it is kept: the scan it was fitted to, the surface and how it fits.
+/// A face made, before it is kept: the scan it was fitted to, the surface and how it fits: the
+/// places it was fitted to, those met on the scan and those kept, and how far the scan under it is
+/// from it, root mean square and largest (mm; the places' own distance where no scan is under it).
 #[derive(Clone, Debug)]
 pub struct Made {
     pub scan: Option<String>,
@@ -38,6 +40,17 @@ pub struct Made {
     pub met: usize,
     pub kept: usize,
     pub rms: f64,
+    pub max: f64,
+}
+
+/// How far the scan `scan` under `surface` is from it, root mean square and largest: the scan, not
+/// the places the surface was fitted to, so it is what Edit Surface shows for it after. `fallback`
+/// for both with no scan under it.
+fn scan_distance(s: &Session, scan: &str, surface: &NurbsSurface, fallback: f64, cmd: &str) -> (f64, f64) {
+    match super::surface::covered(s, Some(scan), surface, super::surface::default_reach(surface), cmd) {
+        Ok(c) if !c.points.is_empty() => solidcraft_scan::surface_edit::distance(surface, &c.points),
+        _ => (fallback, fallback),
+    }
 }
 
 /// The face over `corners`: fitted to the scan `body` (or the selected or only one) unless `fit`
@@ -50,7 +63,7 @@ pub fn make(s: &Session, body: Option<&str>, corners: [Vec3; 4], fit: Fit, fitti
     let count = fitting.count.clamp(free_form::LEAST_POINTS, free_form::MOST_POINTS);
     if fit == Fit::Off {
         let surface = free_form::surface(&free_form::net_over(corners, count), count).ok_or_else(|| bad(cmd, "the corners make no face"))?;
-        return Ok(Made { scan: None, surface, places: 0, met: 0, kept: 0, rms: 0.0 });
+        return Ok(Made { scan: None, surface, places: 0, met: 0, kept: 0, rms: 0.0, max: 0.0 });
     }
     let (scan, on) = super::curve::projector(s, body, cmd)?;
     let reach = reach.unwrap_or(f64::INFINITY);
@@ -61,7 +74,8 @@ pub fn make(s: &Session, body: Option<&str>, corners: [Vec3; 4], fit: Fit, fitti
     if fitted.met == 0 {
         return Err(bad(cmd, "the scan is nowhere near those corners within the snap distance"));
     }
-    Ok(Made { scan: Some(scan), surface: fitted.surface, places: fitted.places, met: fitted.met, kept: fitted.kept, rms: fitted.rms })
+    let (rms, max) = scan_distance(s, &scan, &fitted.surface, fitted.rms, cmd);
+    Ok(Made { scan: Some(scan), surface: fitted.surface, places: fitted.places, met: fitted.met, kept: fitted.kept, rms, max })
 }
 
 /// `p` put on the scan no farther than `reach`: along `along` where that line meets the scan,
@@ -115,6 +129,7 @@ pub(super) fn new_free_form(s: &mut Session, p: &Value) -> Result<Value> {
         met: made.met,
         kept: made.kept,
         rms: made.rms,
+        max: made.max,
         feature,
         param_warnings: Vec::new(),
     };
@@ -205,6 +220,10 @@ pub(super) fn add_face(s: &mut Session, p: &Value) -> Result<Value> {
         max,
         kink: solidcraft_scan::network::worst_kink(&made, &joins),
         irregular: joins.irregular().count(),
+        sharp: {
+            let held: std::collections::HashSet<usize> = joins.smooth.iter().map(|t| t.seam).collect();
+            joins.seams.iter().enumerate().filter(|(i, m)| (m.a == new || m.b == new) && !held.contains(i)).count()
+        },
         feature: target.feature,
         param_warnings: Vec::new(),
     };
@@ -221,6 +240,8 @@ pub struct Wrapped {
     pub made: Made,
     /// Where the net folds, pinches and passes through itself (Surface Check on it).
     pub trouble: [usize; 3],
+    /// For a net that goes the whole way round: how far apart its two ends are (it is open there).
+    pub seam: Option<f64>,
 }
 
 /// The part's reach round the point when none is given: a fifth of the scan's size.
@@ -247,8 +268,39 @@ pub fn wrapped(s: &Session, body: Option<&str>, point: Vec3, reach: f64, wrap: W
     let w = solidcraft_scan::wrap::wrap(&scan, seed, point, reach, &wrap, snap).map_err(|e| bad(cmd, e.to_string()))?;
     let f = w.fitted;
     let trouble = solidcraft_scan::surface_check::trouble(&f.surface);
-    let made = Made { scan: Some(name.clone()), surface: f.surface, places: f.places, met: f.met, kept: f.kept, rms: f.rms };
-    Ok(Wrapped { scan: name, cylinder: w.cylinder, off: w.off, made, trouble })
+    let (rms, max) = scan_distance(s, &name, &f.surface, f.rms, cmd);
+    let seam = round_seam(&f.surface, &w.cylinder);
+    let made = Made { scan: Some(name.clone()), surface: f.surface, places: f.places, met: f.met, kept: f.kept, rms, max };
+    Ok(Wrapped { scan: name, cylinder: w.cylinder, off: w.off, made, trouble, seam })
+}
+
+/// For a net that goes the whole way round its cylinder (its first and last columns at about the
+/// same angle round the axis, as a wrap of a whole part is, open at a seam at its back): how far
+/// apart those two sides are on average, mm. `None` for a net that goes only part of the way.
+pub fn round_seam(surface: &NurbsSurface, c: &Cylinder) -> Option<f64> {
+    use solidcraft_scan::merge::Side;
+    let angle = |side: Side| -> Option<f64> {
+        let p = side.at(surface, 0.5)? - c.point;
+        let off = p - c.axis * p.dot(c.axis);
+        let (x, y) = {
+            let any = if c.axis.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+            let u = c.axis.cross(any).normalized()?;
+            (u, c.axis.cross(u))
+        };
+        Some(off.dot(y).atan2(off.dot(x)))
+    };
+    let (a, b) = (angle(Side::FirstColumn)?, angle(Side::LastColumn)?);
+    let apart = (b - a).sin().atan2((b - a).cos()).abs();
+    if apart > 15f64.to_radians() {
+        return None;
+    }
+    let gaps: Vec<f64> = (0..=8)
+        .filter_map(|k| {
+            let t = f64::from(k) / 8.0;
+            Some(Side::FirstColumn.at(surface, t)?.dist(Side::LastColumn.at(surface, t)?))
+        })
+        .collect();
+    (!gaps.is_empty()).then(|| gaps.iter().sum::<f64>() / gaps.len() as f64)
 }
 
 pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
@@ -306,6 +358,8 @@ pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
         places: w.made.places,
         met: w.made.met,
         rms: w.made.rms,
+        max: w.made.max,
+        seam: w.seam,
         folds: trouble[0],
         pinches: trouble[1],
         crossings: trouble[2],

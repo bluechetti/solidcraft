@@ -683,8 +683,9 @@ pub use solidcraft_scan::surface_edit::{
     with_points,
 };
 
-/// Surface Check on a surface as a dialog shows it while it is edited.
-pub use solidcraft_scan::surface_check::{Check as SurfaceCheck, Trouble, check_whole as check_surface};
+/// Surface Check on a surface as a dialog shows it while it is edited, and the grid Surface Check
+/// itself uses (a dialog checks on it too, so the two count the same).
+pub use solidcraft_scan::surface_check::{Check as SurfaceCheck, GRID as SURFACE_CHECK_GRID, Trouble, check_whole as check_surface};
 
 /// A line of a net from `{row: j}` or `{column: i}`.
 fn line_param(v: &Value, cmd: &str) -> Result<Line> {

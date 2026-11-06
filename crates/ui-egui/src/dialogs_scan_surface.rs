@@ -566,10 +566,11 @@ fn show(k: &mut EditSurface, surface: NurbsSurface, dragging: bool) {
 /// Show `faces`, with how far the scan is from them: the scan's places on the faces `touched`
 /// marks found again (on all with `None`), and the colouring with them.
 fn show_faces(k: &mut EditSurface, faces: Vec<NurbsSurface>, dragging: bool, touched: Option<&[bool]>) {
-    let _ = dragging;
     k.shown_net = network::network_points(&faces, &k.joins);
     k.shown_dots = network::dots(&faces, &k.joins);
-    k.check = faces.iter().filter_map(|f| edit::check_surface(f, CHECK_GRID)).collect();
+    // Coarser while a drag goes (it runs every frame), as Surface Check itself once it is let go.
+    let grid = if dragging { CHECK_GRID } else { edit::SURFACE_CHECK_GRID };
+    k.check = faces.iter().filter_map(|f| edit::check_surface(f, grid)).collect();
     k.fit = None;
     if let Some(sh) = k.shade.as_mut() {
         network::shade_values(&mut sh.shade, &faces, touched, &mut sh.values);
@@ -821,6 +822,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         } else {
             let line = crate::dialogs_surface_check::trouble(folds, pinches, crossings);
             form_row(ui, tr("ui.scan_edit_check"), |ui| ui_kit::text(ui, &line, ui_kit::Text::Report("scan_edit_check", true)));
+            ui_kit::text(ui, tr("ui.scan_edit_folds_hint"), ui_kit::Text::Hint("scan_edit_folds_hint"));
         }
     }
     let edited = k.moved.iter().any(|m| *m) || k.reshaped || k.faces != l.target.faces;
@@ -931,26 +933,46 @@ fn snap_all(app: &SolveApp, k: &mut EditSurface) -> Result<(), String> {
     Ok(())
 }
 
-/// Every face fitted to the scan under it, the faces held tangent where they met smoothly; the
-/// corners where faces meet in other than a grid's way, and the network's own corners, held.
+/// Every face fitted to the scan under it, the faces held tangent where they met smoothly, the
+/// network's own edge (its open sides), the corners where faces meet unevenly and the points moved
+/// by hand held where they are; the points moving smoothly with each other, so that the net does not
+/// slide over the scan into folds. A fit that would fold a surface that did not is tried again
+/// held smoother, and refused if it still does.
 fn fit_all(k: &mut EditSurface) -> Result<(), String> {
     let points = loaded(k).and_then(|l| l.covered.as_ref().map(|c| c.points.clone())).ok_or_else(|| tr("ui.scan_edit_no_scan").to_owned())?;
-    let mut faces = k.faces.clone();
-    let reach = faces.iter().map(edit::default_reach).fold(1.0, f64::max);
-    let held: Vec<usize> = k.joins.corners.iter().filter(|c| c.irregular() || (c.border && c.faces == 1)).map(|c| c.point).collect();
-    let free: Vec<bool> = (0..k.net.len()).map(|p| !held.contains(&p) && !k.moved[p]).collect();
-    let all = vec![true; faces.len()];
-    for _ in 0..3 {
-        let goals = network::feet(&faces, &points, reach, &all);
-        let moves = network::Moves { free: &free, goals: &goals, tangent: 40.0, even: 0.0, bend: 1e-4, also_smooth: &[] };
-        match network::moved(&faces, &k.joins, &moves) {
-            Some(next) => faces = next,
-            None => break,
+    let reach = k.faces.iter().map(edit::default_reach).fold(1.0, f64::max);
+    let mut held: Vec<bool> = vec![false; k.net.len()];
+    for c in k.joins.corners.iter().filter(|c| c.irregular() || (c.border && c.faces == 1)) {
+        held[c.point] = true;
+    }
+    for &(f, side) in &k.joins.open {
+        for p in k.joins.side(&k.faces, f, side) {
+            held[p] = true;
         }
     }
-    show_faces(k, faces, false, None);
-    commit(k, &[]);
-    Ok(())
+    let free: Vec<bool> = (0..k.net.len()).map(|p| !held[p] && !k.moved.get(p).copied().unwrap_or(false)).collect();
+    let all = vec![true; k.faces.len()];
+    let trouble = |faces: &[NurbsSurface]| -> usize {
+        faces.iter().filter_map(|f| edit::check_surface(f, edit::SURFACE_CHECK_GRID)).map(|c| c.folds + c.pinches + c.crossings).sum()
+    };
+    let before = trouble(&k.faces);
+    for even in [0.1, 1.0, 10.0] {
+        let mut faces = k.faces.clone();
+        for _ in 0..3 {
+            let goals = network::feet(&faces, &points, reach, &all);
+            let moves = network::Moves { free: &free, goals: &goals, tangent: 40.0, even, bend: 1e-4, also_smooth: &[] };
+            match network::moved(&faces, &k.joins, &moves) {
+                Some(next) => faces = next,
+                None => break,
+            }
+        }
+        if trouble(&faces) <= before {
+            show_faces(k, faces, false, None);
+            commit(k, &[]);
+            return Ok(());
+        }
+    }
+    Err(tr("ui.scan_edit_fit_folds").to_owned())
 }
 
 /// The point chosen (clicked or last dragged): where it goes, typed, or a distance along the way
@@ -1036,6 +1058,7 @@ fn net_tools(ui: &mut egui::Ui, k: &mut EditSurface, count: [usize; 2]) {
     }
     if let Some(line) = k.line {
         let creased = base(k).is_some_and(|b| solidcraft_engine::cmd::scan::surface::creases(b).contains(&line));
+        // Two buttons to a row: four in one ran past the card's edge, Crease out of reach.
         ui_kit::row(ui, tr("ui.scan_edit_line"), |ui| {
             ui.horizontal(|ui| {
                 if ui_kit::button(ui, tr("ui.scan_edit_split"), ui_kit::Button::Small).clicked() {
@@ -1044,6 +1067,11 @@ fn net_tools(ui: &mut egui::Ui, k: &mut EditSurface, count: [usize; 2]) {
                 if ui_kit::button(ui, tr("ui.scan_edit_copy"), ui_kit::Button::Small).clicked() {
                     outcome = Some(reshape(k, |s| edit::duplicate_line(s, line, true).map(|(m, l)| (m, Some(l)))));
                 }
+            })
+            .response
+        });
+        ui_kit::row(ui, "", |ui| {
+            ui.horizontal(|ui| {
                 if ui_kit::button(ui, tr("ui.scan_edit_remove"), ui_kit::Button::Small).clicked() {
                     outcome = Some(reshape(k, |s| edit::remove_line(s, line).map(|m| (m, None))));
                 }
