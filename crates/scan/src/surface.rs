@@ -1,13 +1,15 @@
-//! A smooth surface fitted to the part of a scan round a picked point: a bicubic B-spline over the
-//! region's own plane, its control points on an even grid in that plane and their heights fitted
-//! by least squares, with a smoothness term (second differences of the heights) that holds the
-//! surface where the scan has no points and keeps it from following the noise.
+//! A smooth surface fitted to the part of a scan round a picked point: a bicubic B-spline whose
+//! points start at their places over the region's own plane, fitted in all three directions by
+//! least squares with a smoothness term (the bending of its net) that holds the surface where the
+//! scan has no points and keeps it from following the noise, each point's place then moved to its
+//! foot on the surface and the net fitted again ([`crate::net_fit`]), so a region that slopes or
+//! curves away from its plane is not fitted as heights over it.
 //!
 //! A region that wraps round (faces more than one way across its plane) cannot be one height
 //! field and is refused.
 
-use solidcore_record::Vec3;
-use solidcraft_geom::bspline::{NurbsSurface, basis_derivatives};
+use solidcore_record::{Vec2, Vec3};
+use solidcraft_geom::bspline::NurbsSurface;
 use solidcraft_geom::prelude::*;
 
 use crate::base::{EdgeNeighbours, edge_neighbours};
@@ -25,8 +27,8 @@ pub struct SurfaceFit {
     pub surface: NurbsSurface,
     /// The region's triangles.
     pub region: Vec<usize>,
-    /// The region's points' distance from the surface along its plane's normal: root mean square
-    /// and largest, in mm.
+    /// The region's points' distance from the surface at their feet on it: root mean square and
+    /// largest, in mm.
     pub rms: f64,
     pub max: f64,
     /// How many points it was fitted to.
@@ -142,69 +144,13 @@ pub fn fit_surface(scan: &Scan, seed: usize, radius: f64, controls: usize, smoot
     if !(size[0] > 0.0 && size[1] > 0.0) {
         return Err(SurfaceError::TooFew);
     }
-    let knots = clamped_knots(n);
-
-    // Least squares for the heights: Σ (Σ Nᵢ(s) Nⱼ(t) hᵢⱼ − w)², plus the smoothness term.
-    let k = n * n;
-    let mut m = vec![0.0f64; k * k];
-    let mut rhs = vec![0.0f64; k];
-    let mut rows: Vec<(f64, [f64; 16], [usize; 16])> = Vec::with_capacity(frame.len());
-    for [u, v, w] in &frame {
-        let (s, t) = (((u - lo[0]) / size[0]).clamp(0.0, 1.0), ((v - lo[1]) / size[1]).clamp(0.0, 1.0));
-        let Some((cols, vals)) = basis_row(&knots, n, s, t) else { continue };
-        for a in 0..16 {
-            rhs[cols[a]] += vals[a] * w;
-            for b in 0..16 {
-                m[cols[a] * k + cols[b]] += vals[a] * vals[b];
-            }
-        }
-        rows.push((*w, vals, cols));
-    }
-    let trace: f64 = (0..k).map(|i| m[i * k + i]).sum::<f64>() / k as f64;
+    // Each point's starting place on the square: where it lies over the plane.
+    let samples: Vec<(Vec2, Vec3)> =
+        frame.iter().zip(&points).map(|([u, v, _], p)| (Vec2::new((u - lo[0]) / size[0], (v - lo[1]) / size[1]), *p)).collect();
     // Even with no smoothing asked for, a little holds the corners the scan does not reach.
-    let lambda = trace * (1e-4 + smoothing.clamp(0.0, 1.0) * 0.5);
-    let id = |i: usize, j: usize| j * n + i;
-    let mut add_term = |terms: &[(usize, f64)]| {
-        for &(a, wa) in terms {
-            for &(b, wb) in terms {
-                m[a * k + b] += lambda * wa * wb;
-            }
-        }
-    };
-    for j in 0..n {
-        for i in 1..n - 1 {
-            add_term(&[(id(i - 1, j), 1.0), (id(i, j), -2.0), (id(i + 1, j), 1.0)]);
-            add_term(&[(id(j, i - 1), 1.0), (id(j, i), -2.0), (id(j, i + 1), 1.0)]);
-        }
-    }
-    for j in 0..n - 1 {
-        for i in 0..n - 1 {
-            add_term(&[(id(i, j), 1.0), (id(i + 1, j), -1.0), (id(i, j + 1), -1.0), (id(i + 1, j + 1), 1.0)]);
-        }
-    }
-    let heights = cholesky_solve(&mut m, &rhs, k).ok_or(SurfaceError::TooFew)?;
-
-    // How far the points are from it, along the normal.
-    let (mut squares, mut max) = (0.0f64, 0.0f64);
-    for (w, vals, cols) in &rows {
-        let fitted: f64 = (0..16).map(|a| vals[a] * heights[cols[a]]).sum();
-        let d = w - fitted;
-        squares += d * d;
-        max = max.max(d.abs());
-    }
-    let rms = (squares / rows.len().max(1) as f64).sqrt();
-
-    // Control points: on the grid of the Greville points (so the plane's u and v are reproduced
-    // exactly), at their heights.
-    let greville: Vec<f64> = (0..n).map(|i| (knots[i + 1] + knots[i + 2] + knots[i + 3]) / 3.0).collect();
-    let net: Vec<Vec3> = (0..k)
-        .map(|idx| {
-            let (i, j) = (idx % n, idx / n);
-            middle + e1 * (lo[0] + greville[i] * size[0]) + e2 * (lo[1] + greville[j] * size[1]) + normal * heights[idx]
-        })
-        .collect();
-    let surface = NurbsSurface::new([DEGREE, DEGREE], [knots.clone(), knots], &net, &vec![1.0; k]).map_err(|_| SurfaceError::TooFew)?;
-    Ok(SurfaceFit { surface, region, rms, max, points: rows.len() })
+    let weight = crate::patches::smoothing_weight(smoothing);
+    let fitted = crate::net_fit::fit(&samples, None, [n, n], weight, crate::net_fit::ROUNDS).ok_or(SurfaceError::TooFew)?;
+    Ok(SurfaceFit { surface: fitted.surface, region, rms: fitted.rms, max: fitted.max, points: samples.len() })
 }
 
 /// The cosine of the most a triangle may face away from the way the surface faces at the pick and
@@ -246,31 +192,29 @@ pub(crate) fn clamped_knots(n: usize) -> Vec<f64> {
     knots
 }
 
-/// The 16 control points a point (s, t) depends on and their weights Nᵢ(s) Nⱼ(t).
-pub(crate) fn basis_row(knots: &[f64], n: usize, s: f64, t: f64) -> Option<([usize; 16], [f64; 16])> {
-    // The index of the first function alive at the parameter, and each one's value (element 0).
-    let (fu, bu) = basis_derivatives(knots, DEGREE, n, s, 0)?;
-    let (fv, bv) = basis_derivatives(knots, DEGREE, n, t, 0)?;
-    let (mut cols, mut vals) = ([0usize; 16], [0.0f64; 16]);
-    for a in 0..=DEGREE {
-        for b in 0..=DEGREE {
-            cols[b * 4 + a] = (fv + b) * n + fu + a;
-            vals[b * 4 + a] = bu.get(a)?.first()? * bv.get(b)?.first()?;
-        }
-    }
-    Some((cols, vals))
-}
-
 /// The symmetric positive definite system `m x = rhs` (`k` × `k`, row by row) by Cholesky; `None`
 /// when it is not positive definite.
 pub(crate) fn cholesky_solve(m: &mut [f64], rhs: &[f64], k: usize) -> Option<Vec<f64>> {
+    if !cholesky_factor(m, k) {
+        return None;
+    }
+    cholesky_back(m, rhs, k)
+}
+
+/// `m` (`k` × `k`, row by row, symmetric) factored in place into `L Lᵀ`, its lower triangle `L`;
+/// false when it is not positive definite. One factoring answers any number of right-hand sides
+/// ([`cholesky_back`]).
+pub(crate) fn cholesky_factor(m: &mut [f64], k: usize) -> bool {
+    if m.len() < k * k {
+        return false;
+    }
     for j in 0..k {
         let mut d = m[j * k + j];
         for p in 0..j {
             d -= m[j * k + p] * m[j * k + p];
         }
         if !(d > 0.0) {
-            return None;
+            return false;
         }
         let d = d.sqrt();
         m[j * k + j] = d;
@@ -282,15 +226,23 @@ pub(crate) fn cholesky_solve(m: &mut [f64], rhs: &[f64], k: usize) -> Option<Vec
             m[i * k + j] = s / d;
         }
     }
+    true
+}
+
+/// `x` with `L Lᵀ x = rhs`, `l` as [`cholesky_factor`] left it; `None` when the answer is not finite.
+pub(crate) fn cholesky_back(l: &[f64], rhs: &[f64], k: usize) -> Option<Vec<f64>> {
+    if l.len() < k * k || rhs.len() < k {
+        return None;
+    }
     let mut y = vec![0.0; k];
     for i in 0..k {
-        let s: f64 = (0..i).map(|p| m[i * k + p] * y[p]).sum();
-        y[i] = (rhs[i] - s) / m[i * k + i];
+        let s: f64 = (0..i).map(|p| l[i * k + p] * y[p]).sum();
+        y[i] = (rhs[i] - s) / l[i * k + i];
     }
     let mut x = vec![0.0; k];
     for i in (0..k).rev() {
-        let s: f64 = (i + 1..k).map(|p| m[p * k + i] * x[p]).sum();
-        x[i] = (y[i] - s) / m[i * k + i];
+        let s: f64 = (i + 1..k).map(|p| l[p * k + i] * x[p]).sum();
+        x[i] = (y[i] - s) / l[i * k + i];
     }
     x.iter().all(|v| v.is_finite()).then_some(x)
 }

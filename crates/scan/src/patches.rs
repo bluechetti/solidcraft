@@ -1,7 +1,9 @@
 //! Smooth patches fitted over a region of the scan, after SurfaceCraft's layouts: the region's
 //! points placed on a square by the region's own flattening (so a region that curves round, which
 //! no plane can see as a height field, fits too), and a bicubic B-spline's control points fitted
-//! to them in all three directions by least squares, held smooth where the scan says nothing.
+//! to them in all three directions by least squares, held smooth where the scan says nothing, each
+//! point's place then moved to its foot on the surface and the net fitted again
+//! ([`crate::net_fit`]).
 //!
 //! - Grid: one patch over the flattened region's box.
 //! - Blocks: that patch cut into rows and columns of patches at its knots, exactly, so they meet
@@ -15,7 +17,7 @@ use solidcraft_geom::bspline::{Dir, NurbsSurface};
 use solidcraft_geom::prelude::*;
 
 use crate::flatten::{self, FlattenError};
-use crate::surface::{basis_row, cholesky_solve, clamped_knots};
+use crate::net_fit::{self, Hold};
 use crate::{Scan, thinned};
 
 /// The most scan points the patches are fitted to; a larger region is sampled evenly.
@@ -66,7 +68,7 @@ pub struct Patches {
     pub surfaces: Vec<NurbsSurface>,
     pub rows: usize,
     pub columns: usize,
-    /// The points' distance from the surface at their own place on it: root mean square, most.
+    /// The points' distance from the surface at their feet on it: root mean square, most.
     pub rms: f64,
     pub max: f64,
     pub points: usize,
@@ -76,27 +78,176 @@ pub struct Patches {
 /// way over the whole (4 to 30), held smooth by `smoothing` (0 to 1).
 pub fn fit(scan: &Scan, region: &[usize], layout: Layout, controls: [usize; 2], smoothing: f64) -> Result<Patches, PatchError> {
     let [nu, nv] = controls.map(|c| c.clamp(4, 30));
-    let flat = flatten::flatten(scan, region, true).map_err(PatchError::Flatten)?;
-    let uv = match layout {
-        Layout::Quads => square_map(&flat)?,
-        _ => boxed(&flat.points),
+    let smoothing = smoothing.clamp(0.0, 1.0);
+    let weight = smoothing_weight(smoothing);
+    // The points, each at its place on the square. Quads lays the outline on the square's sides;
+    // Grid and Blocks start from the base surface the region fits best (its plane, a cylinder
+    // round it, or its flattening), as each point's place there is near its place on the surface.
+    let all: Vec<(Vec2, Vec3)> = if layout == Layout::Quads {
+        let flat = flatten::flatten(scan, region, true).map_err(PatchError::Flatten)?;
+        // The pattern laid over the region's plane where it faces one way: nearer the surface's
+        // own parameters than the flattening, so the square's inside starts nearer them too.
+        let (_, facing) = region_points(scan, region);
+        let positions: Vec<Vec3> = flat.vertices.iter().map(|&v| scan.positions[v as usize]).collect();
+        let flat = match net_fit::over_plane(&positions, &facing, false) {
+            Some(places) => replanted(flat, places),
+            None => flat,
+        };
+        let uv = square_map(&flat)?;
+        flat.vertices.iter().zip(&uv).map(|(&v, &q)| (q, scan.positions[v as usize])).collect()
+    } else {
+        best_start(scan, region, [nu, nv], weight)?
     };
-    // The points, each at its place on the square.
-    let all: Vec<(Vec2, Vec3)> = flat.vertices.iter().zip(&uv).map(|(&v, &q)| (q, scan.positions[v as usize])).collect();
     let samples = thinned(&all, POINT_LIMIT);
     if samples.len() < nu * nv {
         return Err(PatchError::TooFew);
     }
-    let surface = least_squares(&samples, [nu, nv], smoothing.clamp(0.0, 1.0))?;
-    let errors: Vec<f64> = samples.iter().filter_map(|(q, p)| surface.eval(q.x, q.y).ok().map(|s| s.dist(*p))).collect();
-    let rms = (errors.iter().map(|e| e * e).sum::<f64>() / errors.len().max(1) as f64).sqrt();
-    let max = errors.iter().copied().fold(0.0, f64::max);
+    // Quads keeps the outline on the square's sides: a point there slides along its side only.
+    let hold: Option<Vec<Hold>> = (layout == Layout::Quads).then(|| {
+        samples
+            .iter()
+            .map(|(q, _)| match (q.x == 0.0 || q.x == 1.0, q.y == 0.0 || q.y == 1.0) {
+                (true, true) => Hold::Both,
+                (true, false) => Hold::U,
+                (false, true) => Hold::V,
+                _ => Hold::Free,
+            })
+            .collect()
+    });
+    let fitted = net_fit::fit(&samples, hold.as_deref(), [nu, nv], weight, net_fit::ROUNDS).ok_or(PatchError::Failed)?;
+    let (surface, rms, max) = (fitted.surface, fitted.rms, fitted.max);
     let (rows, columns) = match layout {
         Layout::Blocks { rows, columns } => (rows.max(1), columns.max(1)),
         _ => (1, 1),
     };
     let surfaces = if rows * columns > 1 { blocks(&surface, rows, columns)? } else { vec![surface] };
     Ok(Patches { surfaces, rows, columns, rms, max, points: samples.len() })
+}
+
+/// How hard the smoothing holds the net against the points, from the 0 to 1 a person sets: at the
+/// default (0.1) about a thousandth of the data's own weight, as SurfaceCraft's patch fit holds it,
+/// rising to a tenth at 1.
+pub(crate) fn smoothing_weight(smoothing: f64) -> f64 {
+    let s = if smoothing.is_finite() { smoothing.clamp(0.0, 1.0) } else { 0.0 };
+    1e-4 + 0.1 * s * s
+}
+
+/// Points each candidate start is tried on before the best is fitted on all of them.
+const TRIAL_POINTS: usize = 4_000;
+
+/// The region's points placed on the square by the base surface that fits them best: each start
+/// (the region's plane, a cylinder round it, its flattening) is fitted on a sample of the points,
+/// and the one whose surface comes closest without folding is kept (a parametrization from a base
+/// surface the points are projected onto, after Ma and Kruth, 1995).
+fn best_start(scan: &Scan, region: &[usize], counts: [usize; 2], weight: f64) -> Result<Vec<(Vec2, Vec3)>, PatchError> {
+    let (points, facing) = region_points(scan, region);
+    let mut starts: Vec<Vec<(Vec2, Vec3)>> = Vec::new();
+    if let Some(places) = net_fit::over_plane(&points, &facing, false) {
+        starts.push(places.into_iter().zip(points.iter().copied()).collect());
+    }
+    if let Some(places) = round_cylinder(scan, region, &points) {
+        starts.push(places.into_iter().zip(points.iter().copied()).collect());
+    }
+    let flat_error = match flatten::flatten(scan, region, true) {
+        Ok(flat) => {
+            let uv = boxed(&flat.points);
+            starts.push(flat.vertices.iter().zip(&uv).map(|(&v, &q)| (q, scan.positions[v as usize])).collect());
+            None
+        }
+        Err(e) => Some(e),
+    };
+    if starts.len() <= 1 {
+        return starts.pop().ok_or_else(|| flat_error.map_or(PatchError::Failed, PatchError::Flatten));
+    }
+    // Each tried on the same few points; the closest that does not fold kept.
+    let score = |start: &Vec<(Vec2, Vec3)>| -> Option<(bool, f64)> {
+        let trial = thinned(start, TRIAL_POINTS);
+        let f = net_fit::fit(&trial, None, counts, weight, net_fit::ROUNDS)?;
+        let clean = crate::surface_check::check_whole(&f.surface, 24).is_some_and(|c| c.is_clean());
+        Some((clean, f.rms))
+    };
+    let scored: Vec<Option<(bool, f64)>> = starts.iter().map(score).collect();
+    let best = scored
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| s.map(|s| (i, s)))
+        .min_by(|(_, a), (_, b)| b.0.cmp(&a.0).then(a.1.total_cmp(&b.1)))
+        .map(|(i, _)| i)
+        .ok_or(PatchError::Failed)?;
+    Ok(starts.swap_remove(best))
+}
+
+/// The region's points (each scan vertex once) and its triangles' normals and areas.
+fn region_points(scan: &Scan, region: &[usize]) -> (Vec<Vec3>, Vec<(Vec3, f64)>) {
+    let mut seen = vec![false; scan.positions.len()];
+    let (mut points, mut facing) = (Vec::new(), Vec::with_capacity(region.len()));
+    for &t in region {
+        let Some([a, b, c]) = scan.corners(t) else { continue };
+        let cross = (b - a).cross(c - a);
+        if let Some(n) = cross.normalized() {
+            facing.push((n, cross.len() / 2.0));
+        }
+        for &v in scan.triangles.get(t).into_iter().flatten() {
+            if let (Some(slot), Some(p)) = (seen.get_mut(v as usize), scan.positions.get(v as usize))
+                && !*slot
+            {
+                *slot = true;
+                points.push(*p);
+            }
+        }
+    }
+    (points, facing)
+}
+
+/// Places on the square for `points` round a cylinder fitted to the region: the angle round its
+/// axis and the distance along it, scaled to their box. `None` when no cylinder fits, or the region
+/// goes the whole way round (one patch cannot close on itself).
+fn round_cylinder(scan: &Scan, region: &[usize], points: &[Vec3]) -> Option<Vec<Vec2>> {
+    let crate::fit::Shape::Cylinder { point, axis, radius } = crate::fit::shape_of_sampled(scan, region, crate::fit::Kind::Cylinder, TRIAL_POINTS)?
+    else {
+        return None;
+    };
+    let axis = axis.normalized()?;
+    if !(radius.is_finite() && radius > 0.0) || points.is_empty() {
+        return None;
+    }
+    // Angles measured from the way the region lies from the axis, so they do not jump across ±π.
+    let across = |p: Vec3| {
+        let d = p - point;
+        d - axis * d.dot(axis)
+    };
+    let middle = points.iter().fold(Vec3::ZERO, |s, p| s + across(*p)).normalized()?;
+    let side = axis.cross(middle);
+    let placed: Vec<(f64, f64)> = points
+        .iter()
+        .map(|p| {
+            let r = across(*p);
+            (r.dot(side).atan2(r.dot(middle)), (*p - point).dot(axis))
+        })
+        .collect();
+    let (lo, hi) = placed
+        .iter()
+        .fold(((f64::MAX, f64::MAX), (f64::MIN, f64::MIN)), |(lo, hi), (a, h)| ((lo.0.min(*a), lo.1.min(*h)), (hi.0.max(*a), hi.1.max(*h))));
+    let (turn, length) = (hi.0 - lo.0, hi.1 - lo.1);
+    if !(turn > 0.0 && turn < 1.9 * std::f64::consts::PI && length > 0.0) {
+        return None;
+    }
+    Some(placed.into_iter().map(|(a, h)| Vec2::new((a - lo.0) / turn, (h - lo.1) / length)).collect())
+}
+
+/// `flat` with its points at `places` (one each, in order), its outline moved with them.
+fn replanted(flat: flatten::Flat, places: Vec<Vec2>) -> flatten::Flat {
+    if places.len() != flat.points.len() {
+        return flat;
+    }
+    let index: std::collections::HashMap<[u64; 2], usize> =
+        flat.points.iter().enumerate().map(|(i, p)| ([p.x.to_bits(), p.y.to_bits()], i)).collect();
+    let outline = flat
+        .outline
+        .iter()
+        .map(|ring| ring.iter().filter_map(|p| index.get(&[p.x.to_bits(), p.y.to_bits()]).map(|&i| places[i])).collect())
+        .collect();
+    flatten::Flat { points: places, outline, ..flat }
 }
 
 /// The pattern's points turned to its own axes and scaled into the unit square.
@@ -205,74 +356,6 @@ fn square_map(flat: &flatten::Flat) -> Result<Vec<Vec2>, PatchError> {
         }
     }
     Ok(placed)
-}
-
-/// A bicubic surface `counts` across fitted to `samples` (each a place on the unit square and
-/// the point there) by least squares, held smooth by the second differences of its net.
-fn least_squares(samples: &[(Vec2, Vec3)], counts: [usize; 2], smoothing: f64) -> Result<NurbsSurface, PatchError> {
-    let [nu, nv] = counts;
-    let (ku, kv) = (clamped_knots(nu), clamped_knots(nv));
-    let k = nu * nv;
-    let mut m = vec![0.0; k * k];
-    let mut rhs = [vec![0.0; k], vec![0.0; k], vec![0.0; k]];
-    for (q, p) in samples {
-        let Some((cols, vals)) = row(&ku, &kv, nu, nv, q.x.clamp(0.0, 1.0), q.y.clamp(0.0, 1.0)) else { continue };
-        for a in 0..16 {
-            for b in 0..16 {
-                m[cols[a] * k + cols[b]] += vals[a] * vals[b];
-            }
-            rhs[0][cols[a]] += vals[a] * p.x;
-            rhs[1][cols[a]] += vals[a] * p.y;
-            rhs[2][cols[a]] += vals[a] * p.z;
-        }
-    }
-    // Smoothness: second differences of the net along u and v, weighed against the data.
-    let scale = (0..k).map(|i| m[i * k + i]).sum::<f64>() / k as f64;
-    let lambda = (1e-4 + smoothing * smoothing) * scale.max(1e-12);
-    let at = |i: usize, j: usize| j * nu + i;
-    let mut second = |a: usize, b: usize, c: usize| {
-        let idx = [a, b, c];
-        let w = [1.0, -2.0, 1.0];
-        for x in 0..3 {
-            for y in 0..3 {
-                m[idx[x] * k + idx[y]] += lambda * w[x] * w[y];
-            }
-        }
-    };
-    for j in 0..nv {
-        for i in 1..nu - 1 {
-            second(at(i - 1, j), at(i, j), at(i + 1, j));
-        }
-    }
-    for i in 0..nu {
-        for j in 1..nv - 1 {
-            second(at(i, j - 1), at(i, j), at(i, j + 1));
-        }
-    }
-    let mut coords = Vec::with_capacity(3);
-    for r in &rhs {
-        let mut copy = m.clone();
-        coords.push(cholesky_solve(&mut copy, r, k).ok_or(PatchError::Failed)?);
-    }
-    let points: Vec<Vec3> = (0..k).map(|i| Vec3::new(coords[0][i], coords[1][i], coords[2][i])).collect();
-    NurbsSurface::new([3, 3], [ku, kv], &points, &vec![1.0; k]).map_err(|_| PatchError::Failed)
-}
-
-/// The 16 control points a place depends on and their weights, on a net `nu` × `nv` across.
-fn row(ku: &[f64], kv: &[f64], nu: usize, nv: usize, s: f64, t: f64) -> Option<([usize; 16], [f64; 16])> {
-    if nu == nv && ku == kv {
-        return basis_row(ku, nu, s, t);
-    }
-    let (fu, bu) = solidcraft_geom::bspline::basis_derivatives(ku, 3, nu, s, 0)?;
-    let (fv, bv) = solidcraft_geom::bspline::basis_derivatives(kv, 3, nv, t, 0)?;
-    let (mut cols, mut vals) = ([0usize; 16], [0.0f64; 16]);
-    for a in 0..4 {
-        for b in 0..4 {
-            cols[b * 4 + a] = (fv + b) * nu + fu + a;
-            vals[b * 4 + a] = bu.get(a)?.first()? * bv.get(b)?.first()?;
-        }
-    }
-    Some((cols, vals))
 }
 
 /// The surface cut into `rows` × `columns` patches at evenly spread knots, exactly: each cut a
@@ -426,5 +509,64 @@ mod tests {
             assert!(nearest < 0.5, "a corner on the sheet's corner: {q:?} ({nearest})");
         }
         assert!(quads.rms < 0.05, "{}", quads.rms);
+    }
+
+    /// A sheet of `n` × `n` squares bent `turn` radians round a cylinder of radius 20 about Y.
+    fn bent_by(n: u32, turn: f64) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        let (mut positions, mut triangles) = (Vec::new(), Vec::new());
+        for j in 0..=n {
+            for i in 0..=n {
+                let a = (f64::from(i) / f64::from(n) - 0.5) * turn;
+                positions.push(Vec3::new(20.0 * a.sin(), f64::from(j) * 30.0 / f64::from(n), 20.0 * (1.0 - a.cos())));
+            }
+        }
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * (n + 1) + i;
+                triangles.push([k, k + 1, k + n + 2]);
+                triangles.push([k, k + n + 2, k + n + 1]);
+            }
+        }
+        (positions, triangles)
+    }
+
+    /// A gentle dome fits from its own plane: within a hundredth of a millimetre at the default
+    /// smoothing, as SurfaceCraft's patch fit does, and without folds.
+    #[test]
+    fn a_dome_fits_closely_at_the_default_smoothing() {
+        let n = 40u32;
+        let (mut positions, mut triangles) = (Vec::new(), Vec::new());
+        for j in 0..=n {
+            for i in 0..=n {
+                let (x, y) = (60.0 * f64::from(i) / f64::from(n), 60.0 * f64::from(j) / f64::from(n));
+                positions.push(Vec3::new(x, y, 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2))));
+            }
+        }
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * (n + 1) + i;
+                triangles.push([k, k + 1, k + n + 2]);
+                triangles.push([k, k + n + 2, k + n + 1]);
+            }
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let all: Vec<usize> = (0..triangles.len()).collect();
+        let grid = fit(&scan, &all, Layout::Grid, [8, 8], 0.1).unwrap();
+        assert!(grid.rms < 0.01, "{} {}", grid.rms, grid.max);
+        assert!(crate::surface_check::check_whole(&grid.surfaces[0], 40).is_some_and(|c| c.is_clean()));
+    }
+
+    /// A sheet bent three quarters of the way round, which no plane sees without folding it over,
+    /// fits round a cylinder: close to it, without folds.
+    #[test]
+    fn a_sheet_bent_most_of_the_way_round_fits_without_folding() {
+        let (p, t) = bent_by(36, 1.5 * std::f64::consts::PI);
+        let all: Vec<usize> = (0..t.len()).collect();
+        let scan = Scan::new(&p, &t);
+        let grid = fit(&scan, &all, Layout::Grid, [12, 6], 0.1).unwrap();
+        assert!(grid.rms < 0.05, "{} {}", grid.rms, grid.max);
+        assert!(off_cylinder(&grid.surfaces[0]) < 0.2, "{}", off_cylinder(&grid.surfaces[0]));
+        assert!(crate::surface_check::check_whole(&grid.surfaces[0], 40).is_some_and(|c| c.is_clean()));
+        assert!(round_cylinder(&scan, &all, &region_points(&scan, &all).0).is_some(), "a cylinder fits round it");
     }
 }

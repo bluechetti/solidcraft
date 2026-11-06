@@ -62,6 +62,7 @@ mod hull;
 pub mod merge;
 pub mod mirror_fill;
 pub mod net;
+mod net_fit;
 mod par;
 pub mod patches;
 pub mod pieces;
