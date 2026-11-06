@@ -532,7 +532,133 @@ fn tolerance_of(options: &Options, noise: f64, size: f64) -> f64 {
 /// segment is measured on the scan. The answer with more of the scan in shapes is kept. Asked
 /// only when the first reading fails, a scan it reads well keeps its answer, wherever the scan
 /// lies and however its triangles are ordered.
+///
+/// A scan much of whose area is in triangles long against its size ([`Coarse`]: a CAD model's
+/// slivers, a thinned scan) starves the rules that count triangles. A very coarse one is read cut
+/// finer, its edges no longer than [`COARSE`] of its size, and each of its triangles then takes
+/// the shape that covers most of it, fitted again to its own triangles. A scan only somewhat
+/// coarse (a fusion scanner's mesh) is read as it is first, and cut finer only when that finds
+/// less than [`READ_WELL`] of it in shapes; the answer with more in shapes is kept.
 pub fn find_all(scan: &Scan, options: &Options, cancelled: &dyn Fn() -> bool) -> Outcome {
+    let cut = || {
+        let finer = crate::subdivide::finer(scan, COARSE * scan.extent(), MOST_CUT)?;
+        let found = read(&finer.scan(), options, cancelled);
+        Some(carried_back(scan, &finer, found, options))
+    };
+    match coarse(scan) {
+        Coarse::Very => cut().unwrap_or_else(|| read(scan, options, cancelled)),
+        Coarse::Somewhat => {
+            let plain = read(scan, options, cancelled);
+            if plain.cancelled || plain.in_shapes >= READ_WELL {
+                return plain;
+            }
+            match cut() {
+                Some(finer) if finer.cancelled || finer.in_shapes > plain.in_shapes => finer,
+                _ => plain,
+            }
+        }
+        Coarse::Not => read(scan, options, cancelled),
+    }
+}
+
+/// A triangle whose longest edge is more than this share of the scan's size is coarse: fewer of
+/// it than a patch of the noise or a seed needs lie in one. A scan is cut finer to this share, so
+/// that none is coarse, at most [`MOST_CUT`] triangles. Cut to half of it, the T-LESS CAD models
+/// read hardly better (75% of their area in shapes against 74%) and take half as long again.
+const COARSE: f64 = 0.01;
+/// A scan with more than this share of its area in coarse triangles is coarse.
+const COARSE_AREA: f64 = 0.25;
+/// A scan coarse at twice [`COARSE`] is very coarse. Every T-LESS CAD model and every scan
+/// reduced to 30% or less has half its area or more in triangles that long; a fusion scanner's
+/// mesh as it comes, a fifth or less.
+const VERY_COARSE: f64 = 2.0 * COARSE;
+/// A somewhat coarse scan read as it is with this share of its area in shapes keeps its answer.
+const READ_WELL: f64 = 0.9;
+const MOST_CUT: usize = 4_000_000;
+
+/// How coarse a scan's triangles are against its size, by the share of its area in long ones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Coarse {
+    Not,
+    Somewhat,
+    Very,
+}
+
+fn coarse(scan: &Scan) -> Coarse {
+    let size = scan.extent();
+    let (mut long, mut very, mut total) = (0.0, 0.0, 0.0);
+    for [a, b, c] in (0..scan.triangle_count()).filter_map(|t| scan.corners(t)) {
+        let area = (b - a).cross(c - a).len() / 2.0;
+        let edge = a.dist(b).max(b.dist(c)).max(c.dist(a));
+        total += area;
+        if edge > COARSE * size {
+            long += area;
+        }
+        if edge > VERY_COARSE * size {
+            very += area;
+        }
+    }
+    if very > COARSE_AREA * total {
+        Coarse::Very
+    } else if long > COARSE_AREA * total {
+        Coarse::Somewhat
+    } else {
+        Coarse::Not
+    }
+}
+
+/// What was found on the scan cut finer, carried back to its own triangles: each takes the shape
+/// whose pieces cover most of its area, or none; what no shape takes is freeform, measured on the
+/// scan.
+fn carried_back(scan: &Scan, finer: &crate::subdivide::Finer, found: Outcome, options: &Options) -> Outcome {
+    let n = scan.triangle_count();
+    let fine = finer.scan();
+    // Each triangle's area under each shape (by its index in `found`).
+    let mut under: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
+    for (index, segment) in found.segments.iter().enumerate().filter(|(_, s)| s.shape.is_some()) {
+        for &t in &segment.triangles {
+            let (Some(&parent), Some([a, b, c])) = (finer.parent.get(t), fine.corners(t)) else { continue };
+            let Some(slot) = under.get_mut(parent as usize) else { continue };
+            let area = (b - a).cross(c - a).len() / 2.0;
+            match slot.iter_mut().find(|(i, _)| *i == index) {
+                Some(entry) => entry.1 += area,
+                None => slot.push((index, area)),
+            }
+        }
+    }
+    let mut regions: Vec<Vec<usize>> = vec![Vec::new(); found.segments.len()];
+    for (t, shares) in under.iter().enumerate() {
+        if let Some(&(index, _)) = shares.iter().max_by(|a, b| a.1.total_cmp(&b.1).then(b.0.cmp(&a.0))) {
+            regions[index].push(t);
+        }
+    }
+    let mut reading = Reading::new(*scan);
+    // Each shape fitted again to its own triangles of the scan: a CAD model's corners lie on the
+    // surface and the flat of its triangles inside it, so the points the cut added would draw a
+    // shape in (a cylinder of 48 sides by two thirds of its sag).
+    let shapes: Vec<(Shape, Vec<usize>)> = found
+        .segments
+        .iter()
+        .zip(regions)
+        .filter_map(|(segment, region)| Some((segment.shape?, region)).filter(|(_, r)| !r.is_empty()))
+        .map(|(shape, region)| {
+            let refit = fit::refined(scan, &region, &shape, GROWING_POINTS).filter(|r| r.kind() == shape.kind());
+            let closer = refit.filter(|r| reading.rms(&region, r) <= reading.rms(&region, &shape));
+            (closer.unwrap_or(shape), region)
+        })
+        .collect();
+    for (id, (_, region)) in shapes.iter().enumerate() {
+        for &t in region {
+            reading.label[t] = id as u32;
+        }
+    }
+    let total: f64 = reading.areas.iter().sum();
+    // Slivers are told by area alone: the scan's own triangles are few.
+    finished(&mut reading, shapes, found.noise, found.tolerance, 0, options.minimum_area_share * total, found.cancelled)
+}
+
+/// Find All on `scan` as it is.
+fn read(scan: &Scan, options: &Options, cancelled: &dyn Fn() -> bool) -> Outcome {
     let mut reading = Reading::new(*scan);
     let size = scan.extent();
     let total: f64 = reading.areas.iter().sum();
@@ -1042,6 +1168,28 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    /// A cylinder as a CAD program writes it, long slivers down the side and fans of slivers on
+    /// the ends: too few triangles in any patch to seed or grow on, so the side came back as
+    /// freeform. Read cut finer, it is a cylinder and two planes, each to its own triangles.
+    #[test]
+    fn a_cad_models_slivers_are_its_faces() {
+        let (positions, triangles) = crate::test_meshes::cad_cylinder(10.0, 30.0, 48);
+        let scan = Scan::new(&positions, &triangles);
+        let outcome = find_all(&scan, &Options::default(), &|| false);
+        let found = kinds(&outcome);
+        let count = |k: Kind| found.iter().filter(|f| f.0 == k).count();
+        assert_eq!((count(Kind::Plane), count(Kind::Cylinder)), (2, 1), "{found:?}");
+        assert!(outcome.in_shapes > 0.99, "{}", outcome.in_shapes);
+        for segment in outcome.segments.iter().filter(|s| s.shape.is_some()) {
+            if let Some(Shape::Cylinder { radius, .. }) = segment.shape {
+                assert!((radius - 10.0).abs() < 0.01, "{radius}");
+            }
+            let all = |side: bool| segment.triangles.iter().all(|&t| (t % 4 < 2) == side);
+            assert!(all(true) || all(false), "a face takes only its own triangles");
+        }
+        assert_eq!(outcome.segments.iter().map(|s| s.triangles.len()).sum::<usize>(), triangles.len(), "every triangle once");
     }
 
     /// A draw about as spread as a normal one of deviation 1: three uniform draws summed.

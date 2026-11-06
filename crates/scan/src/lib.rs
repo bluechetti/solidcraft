@@ -78,6 +78,7 @@ pub mod section;
 pub mod segment;
 pub mod selection;
 pub mod split;
+mod subdivide;
 pub mod surface;
 pub mod surface_check;
 pub mod surface_edit;
@@ -242,6 +243,27 @@ pub(crate) mod test_meshes {
         let positions = (0..8).map(p).collect();
         let triangles =
             vec![[0, 2, 1], [1, 2, 3], [4, 5, 6], [5, 7, 6], [0, 1, 4], [1, 5, 4], [2, 6, 3], [3, 6, 7], [0, 4, 2], [2, 4, 6], [1, 3, 5], [3, 7, 5]];
+        (positions, triangles)
+    }
+
+    /// A closed cylinder of `radius` and `height` on the Z axis as a CAD program writes one, `n`
+    /// long slivers down its side and a fan of slivers on each end, wound outward.
+    pub fn cad_cylinder(radius: f64, height: f64, n: u32) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        let mut positions = Vec::new();
+        for z in [0.0, height] {
+            for i in 0..n {
+                let a = std::f64::consts::TAU * f64::from(i) / f64::from(n);
+                positions.push(Vec3::new(radius * a.cos(), radius * a.sin(), z));
+            }
+        }
+        positions.extend([Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 0.0, height)]);
+        let (bottom, top) = (2 * n, 2 * n + 1);
+        let mut triangles = Vec::new();
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let (i2, j2) = (i + n, j + n);
+            triangles.extend([[i, j, j2], [i, j2, i2], [bottom, j, i], [top, i2, j2]]);
+        }
         (positions, triangles)
     }
 
