@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use solidcraft_engine::cmd::scan::reconstruct::ScanShapes;
 use solidcraft_engine::doc::component_color::automatic_color;
-use solidcraft_gpu::view::{CloudStyle, ColorMode, Dot, GpuCloud, cloud_dot};
+use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
+
+use crate::scan_dots::{Dot, cloud_dot};
 
 use crate::SolveApp;
 
@@ -86,6 +88,8 @@ pub(crate) fn gpu_cloud(app: &SolveApp) -> Option<GpuCloud> {
         id: CLOUD_ID,
         version,
         dots,
+        segments: crate::scan_dots::none(),
+        triangles: crate::scan_dots::none(),
         style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: DOT_PIXELS },
     })
 }
@@ -103,9 +107,9 @@ fn records(app: &SolveApp, shapes: &ScanShapes, freeform: [u8; 3]) -> Option<Vec
             }
         }
     }
-    let mut out = Vec::with_capacity(positions.len() * solidcraft_gpu::view::DOT_SIZE);
+    let mut out = Vec::with_capacity(positions.len() * crate::scan_dots::DOT_SIZE);
     for (p, &k) in positions.iter().zip(&region) {
-        let dot = Dot { at: [p.x as f32, p.y as f32, p.z as f32], value: k as f32, rgb: colour(shapes, k, freeform), ..Dot::default() };
+        let dot = Dot { at: [p.x as f32, p.y as f32, p.z as f32], value: k as f32, rgb: colour(shapes, k, freeform) };
         cloud_dot(&mut out, &dot);
     }
     Some(out)
@@ -209,7 +213,7 @@ mod tests {
         let cloud = gpu_cloud(&h.app).unwrap();
         let points =
             h.app.session.model.state().bodies.iter().find(|b| b.body.is_mesh()).and_then(|b| b.body.triangle_mesh()).map(|(p, _)| p.len()).unwrap();
-        assert_eq!(cloud.dots.len(), points * solidcraft_gpu::view::DOT_SIZE, "one dot per point");
+        assert_eq!(cloud.dots.len(), points * crate::scan_dots::DOT_SIZE, "one dot per point");
         let (summary, rows) = legend(&h.app).unwrap();
         assert!(summary.starts_with('6'), "{summary}");
         assert_eq!(rows.len(), 6, "{rows:?}");

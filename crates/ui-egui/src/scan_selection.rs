@@ -6,7 +6,9 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use solidcraft_engine::cmd::scan::select::{self, ScanSelected};
-use solidcraft_gpu::view::{CloudStyle, ColorMode, Dot, GpuCloud, cloud_dot};
+use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
+
+use crate::scan_dots::{Dot, cloud_dot};
 
 use crate::SolveApp;
 
@@ -56,6 +58,8 @@ pub(crate) fn gpu_cloud(app: &SolveApp) -> Option<GpuCloud> {
         id: CLOUD_ID,
         version,
         dots,
+        segments: crate::scan_dots::none(),
+        triangles: crate::scan_dots::none(),
         style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: DOT_PIXELS },
     })
 }
@@ -72,9 +76,9 @@ fn records(app: &SolveApp, selected: &ScanSelected, rgb: [u8; 3]) -> Option<Vec<
             }
         }
     }
-    let mut out = Vec::with_capacity(selected.count.saturating_mul(solidcraft_gpu::view::DOT_SIZE));
+    let mut out = Vec::with_capacity(selected.count.saturating_mul(crate::scan_dots::DOT_SIZE));
     for (p, _) in positions.iter().zip(&on).filter(|(_, o)| **o) {
-        cloud_dot(&mut out, &Dot { at: [p.x as f32, p.y as f32, p.z as f32], value: 1.0, rgb, ..Dot::default() });
+        cloud_dot(&mut out, &Dot { at: [p.x as f32, p.y as f32, p.z as f32], value: 1.0, rgb });
     }
     Some(out)
 }

@@ -227,7 +227,7 @@ pub(super) fn cloud_points(s: &Session, p: &Value, cmd: &str) -> Result<(String,
     let cloud = cloud.ok_or_else(|| bad(cmd, "no such point cloud"))?;
     let points: Vec<Vec3> = (0..cloud.len()).filter_map(|i| cloud.world_point(i)).collect();
     // Normals the file states, turned with the cloud.
-    let column = |name: &str| cloud.complex.column(name).map(|c| c.values.0.clone());
+    let column = |name: &str| cloud.complex.column(name, solidcraft_doc::point_cloud::On::Point).map(|c| c.values.0.clone());
     let normals = match (column("nx"), column("ny"), column("nz")) {
         (Some(x), Some(y), Some(z)) if x.len() == cloud.len() && y.len() == cloud.len() && z.len() == cloud.len() => {
             let at = |v: Vec3| solidcraft_doc::apply_point(&cloud.transform, v);

@@ -1,6 +1,5 @@
 {
   "en": {
-    "ALIGN": "ALIGN",
     "CLEAN": "CLEAN",
     "FIT": "FIT",
     "cmd.scan_deviation": "Scan Deviation",
@@ -382,7 +381,6 @@
     "ui.scan_slice_hint": "Wählen Sie die Schnittebene: eine Konstruktionsebene, etwa eine Symmetrieebene, oder eine ebene Fläche. „Vorne“ behält die Seite, der die Ebene zugewandt ist."
   },
   "ja": {
-    "ALIGN": "位置合わせ",
     "CLEAN": "クリーンアップ",
     "FIT": "フィット",
     "cmd.scan_deviation": "スキャン偏差",
@@ -764,7 +762,6 @@
     "ui.scan_slice_hint": "자를 평면을 고르세요. 대칭 평면 같은 구성 평면이나 평평한 면입니다. '앞'은 평면이 향한 쪽을 남깁니다."
   },
   "zh": {
-    "ALIGN": "对齐",
     "CLEAN": "清理",
     "FIT": "拟合",
     "cmd.scan_deviation": "扫描偏差",
@@ -955,7 +952,6 @@
     "ui.scan_slice_hint": "选择用于切割的平面：构造平面（如对称平面）或平面面。“正面”保留平面朝向的一侧。"
   },
   "ar": {
-    "ALIGN": "محاذاة",
     "CLEAN": "تنظيف",
     "FIT": "ملاءمة",
     "cmd.scan_deviation": "انحراف المسح",
@@ -1146,7 +1142,6 @@
     "ui.scan_slice_hint": "اختر المستوى الذي تقطع به: مستوى إنشاء، كمستوى تماثل، أو وجهًا مستويًا. «الأمام» يُبقي الجانب الذي يواجهه المستوى."
   },
   "he": {
-    "ALIGN": "יישור",
     "CLEAN": "ניקוי",
     "FIT": "התאמה",
     "cmd.scan_deviation": "סטיית סריקה",
@@ -1337,7 +1332,6 @@
     "ui.scan_slice_hint": "בחרו את המישור לחיתוך: מישור עזר, כמו מישור סימטריה, או פאה שטוחה. „קדימה” שומר את הצד שאליו המישור פונה."
   },
   "vi": {
-    "ALIGN": "CĂN CHỈNH",
     "CLEAN": "LÀM SẠCH",
     "FIT": "KHỚP",
     "cmd.scan_deviation": "Độ lệch quét",

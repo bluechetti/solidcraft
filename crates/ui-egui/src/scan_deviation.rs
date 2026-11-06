@@ -11,7 +11,9 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use solidcraft_engine::cmd::scan::DeviationMap;
-use solidcraft_gpu::view::{CloudStyle, ColorMode, Dot, GpuCloud, cloud_dot};
+use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
+
+use crate::scan_dots::{Dot, cloud_dot};
 
 use crate::SolveApp;
 
@@ -92,6 +94,8 @@ pub(crate) fn gpu_cloud(app: &SolveApp) -> Option<GpuCloud> {
         id: CLOUD_ID,
         version,
         dots,
+        segments: crate::scan_dots::none(),
+        triangles: crate::scan_dots::none(),
         style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: DOT_PIXELS },
     })
 }
@@ -100,10 +104,10 @@ pub(crate) fn gpu_cloud(app: &SolveApp) -> Option<GpuCloud> {
 fn records(app: &SolveApp, map: &DeviationMap, colours: [[u8; 3]; 3]) -> Option<Vec<u8>> {
     let state = app.session.model.state();
     let (positions, _) = state.body(&map.scan)?.body.triangle_mesh()?;
-    let mut out = Vec::with_capacity(positions.len() * solidcraft_gpu::view::DOT_SIZE);
+    let mut out = Vec::with_capacity(positions.len() * crate::scan_dots::DOT_SIZE);
     for (p, &v) in positions.iter().zip(&map.values) {
         let Some(s) = map.scale(v) else { continue };
-        let dot = Dot { at: [p.x as f32, p.y as f32, p.z as f32], value: v, rgb: colour(colours, s), ..Dot::default() };
+        let dot = Dot { at: [p.x as f32, p.y as f32, p.z as f32], value: v, rgb: colour(colours, s) };
         cloud_dot(&mut out, &dot);
     }
     Some(out)
@@ -156,7 +160,7 @@ mod tests {
         h.app.run("scan.deviation", json!({"body": "Model"})).unwrap();
         assert!(shown(&h.app) && crate::toolbar::shows_pressed(&h.app, "scan.deviation"));
         let cloud = gpu_cloud(&h.app).unwrap();
-        assert_eq!(cloud.dots.len(), 8 * solidcraft_gpu::view::DOT_SIZE, "one dot per corner of the cube");
+        assert_eq!(cloud.dots.len(), 8 * crate::scan_dots::DOT_SIZE, "one dot per corner of the cube");
         let (summary, rows) = legend(&h.app).unwrap();
         assert!(summary.contains("mm") && !summary.contains("mm²") && !summary.contains("mm³"), "{summary}");
         assert_eq!(rows.len(), 3);

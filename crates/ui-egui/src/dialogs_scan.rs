@@ -14,7 +14,9 @@ use solidcore_record::Vec3;
 use solidcraft_engine::Sel;
 use solidcraft_engine::cmd::scan::{BasePreview, base_preview, mismatch_preview, scan_box, symmetry_preview};
 use solidcraft_engine::schema::scan::ScanMirror;
-use solidcraft_gpu::view::{CloudStyle, ColorMode, Dot, GpuCloud, cloud_dot};
+use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
+
+use crate::scan_dots::{Dot, cloud_dot};
 
 use solidcraft_engine::geom::prelude::*;
 
@@ -105,7 +107,7 @@ fn refresh(app: &SolveApp, k: &mut StandBase, inputs: &[SelInput]) {
         // Yellow, the analysis colours' middle one: the accent blue is what a whole selected body
         // turns, so a base marked in it could not be told apart.
         let rgb = crate::theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
-        let mut dots = Vec::with_capacity(found.marked.len() * solidcraft_gpu::view::DOT_SIZE);
+        let mut dots = Vec::with_capacity(found.marked.len() * crate::scan_dots::DOT_SIZE);
         for at in &found.marked {
             cloud_dot(&mut dots, &Dot { at: *at, rgb, ..Dot::default() });
         }
@@ -178,6 +180,8 @@ pub(crate) fn gpu_marks(app: &SolveApp) -> Option<GpuCloud> {
         id: CLOUD_ID,
         version: p.version,
         dots: p.dots.clone(),
+        segments: crate::scan_dots::none(),
+        triangles: crate::scan_dots::none(),
         style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: DOT_PIXELS },
     })
 }
@@ -259,14 +263,14 @@ fn colour(app: &SolveApp, k: &mut Symmetry) {
         let state = app.session.model.state();
         let (positions, _) = state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or("the scan is gone")?;
         let [good, bad] = mismatch_colours();
-        let mut dots = Vec::with_capacity(positions.len() * solidcraft_gpu::view::DOT_SIZE);
+        let mut dots = Vec::with_capacity(positions.len() * crate::scan_dots::DOT_SIZE);
         for (p, &v) in positions.iter().zip(&mm.values) {
             if !v.is_finite() {
                 continue;
             }
             let t = (f64::from(v) / mm.limit).clamp(0.0, 1.0);
             let rgb = std::array::from_fn(|i| (f64::from(good[i]) + (f64::from(bad[i]) - f64::from(good[i])) * t).round() as u8);
-            cloud_dot(&mut dots, &Dot { at: [p.x as f32, p.y as f32, p.z as f32], value: v, rgb, ..Dot::default() });
+            cloud_dot(&mut dots, &Dot { at: [p.x as f32, p.y as f32, p.z as f32], value: v, rgb });
         }
         let version = VERSION.with(|v| {
             v.set(v.get() + 1);
@@ -364,6 +368,8 @@ pub(crate) fn gpu_mismatch(app: &SolveApp) -> Option<GpuCloud> {
         id: MISMATCH_ID,
         version: *version,
         dots: dots.clone(),
+        segments: crate::scan_dots::none(),
+        triangles: crate::scan_dots::none(),
         style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: DOT_PIXELS },
     })
 }
@@ -529,7 +535,7 @@ mod tests {
         h.frames(3);
         let marks = gpu_marks(&h.app).expect("the steadiest base is marked");
         // A broad face: 9 × 9 points of its grid.
-        assert_eq!(marks.dots.len(), 81 * solidcraft_gpu::view::DOT_SIZE);
+        assert_eq!(marks.dots.len(), 81 * crate::scan_dots::DOT_SIZE);
 
         if let Some(Kind::ScanBase(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
             k.index = 2;
@@ -544,7 +550,7 @@ mod tests {
         let picked = h.app.dialog.as_ref().map(|d| d.inputs[0].items.clone()).unwrap();
         assert!(matches!(picked.first(), Some(Sel::Face { .. })), "{picked:?}");
         let end = gpu_marks(&h.app).unwrap();
-        assert_eq!(end.dots.len(), 81 * solidcraft_gpu::view::DOT_SIZE, "the end face's 9 × 9 points");
+        assert_eq!(end.dots.len(), 81 * crate::scan_dots::DOT_SIZE, "the end face's 9 × 9 points");
 
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();

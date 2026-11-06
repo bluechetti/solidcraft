@@ -225,9 +225,9 @@ fn fit(app: &SolveApp, k: &mut FitSurface, inputs: &[crate::selection::SelInput]
         .map_err(|e| e.to_string())
         .map(|found| {
             let rgb = crate::theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
-            let mut dots = Vec::with_capacity(found.marked.len() * solidcraft_gpu::view::DOT_SIZE);
+            let mut dots = Vec::with_capacity(found.marked.len() * crate::scan_dots::DOT_SIZE);
             for at in &found.marked {
-                solidcraft_gpu::view::cloud_dot(&mut dots, &solidcraft_gpu::view::Dot { at: *at, rgb, ..solidcraft_gpu::view::Dot::default() });
+                crate::scan_dots::cloud_dot(&mut dots, &crate::scan_dots::Dot { at: *at, rgb, ..crate::scan_dots::Dot::default() });
             }
             let version = FIT_VERSION.with(|v| {
                 v.set(v.get() + 1);
@@ -289,6 +289,8 @@ pub(crate) fn gpu_fit_marks(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuC
         id: FIT_CLOUD_ID,
         version: *version,
         dots: dots.clone(),
+        segments: crate::scan_dots::none(),
+        triangles: crate::scan_dots::none(),
         style: solidcraft_gpu::view::CloudStyle {
             mode: solidcraft_gpu::view::ColorMode::Own,
             range: [0.0, 1.0],

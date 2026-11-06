@@ -60,7 +60,46 @@ fn joint_from_two_snaps() {
     assert_eq!(app.session.doc.assembly.joints.len(), 1);
 }
 
-/// A straight edge is the revolute axis, even when both adjacent faces are perpendicular to it.
+/// A joint origin can be the design origin or a sketch point, not just faces, edges and vertices
+/// (#10290). The origin snaps to the world origin with z up; a sketch point snaps to its world
+/// position with the sketch plane's normal as z, and both make a joint.
+#[test]
+fn joint_origin_can_be_the_origin_or_a_sketch_point() {
+    let mut app = two_boxes();
+    // A sketch point on B's top face, at world (35, 5, 10).
+    app.session.execute("component.activate", &json!({"component": "B"})).unwrap();
+    app.session
+        .execute("sketch.create", &json!({"plane": {"origin": [30.0, 0.0, 10.0], "x_dir": [1.0, 0.0, 0.0], "y_dir": [0.0, 1.0, 0.0]}, "name": "S"}))
+        .unwrap();
+    app.session.execute("sketch.point", &json!({"point": [5.0, 5.0], "id": "q"})).unwrap();
+    app.session.execute("sketch.finish", &json!({})).unwrap();
+    let sketch = app.session.doc.find_feature("S").unwrap().id;
+
+    // The two picks a joint origin input now accepts.
+    let origin = Sel::Vertex { body: String::new(), point: Vec3::ZERO };
+    let sketch_point = Sel::SketchPoint { id: format!("{sketch}:q") };
+    let so = |s: &Sel| snap_of(&app.session, s).expect("a snap for the pick");
+    let o = so(&origin);
+    let sp = so(&sketch_point);
+    assert!(o.at.dist(Vec3::ZERO) < 1e-6, "the world origin snaps to the origin: {o:?}");
+    assert!(o.z.dist(Vec3::Z) < 1e-9, "the origin's z is up: {o:?}");
+    assert!(sp.at.dist(Vec3::new(35.0, 5.0, 10.0)) < 1e-6, "the sketch point snaps to its world position: {sp:?}");
+    assert!(sp.z.dist(Vec3::Z) < 1e-9, "the sketch point's z is the plane normal: {sp:?}");
+
+    // And a joint can be made from them.
+    app.start("joint.create");
+    let mut d = app.dialog.clone().unwrap();
+    d.pick(&app.session, origin);
+    d.pick(&app.session, sketch_point);
+    if let Kind::Assembly(Asm::Joint(f)) = &mut d.kind {
+        f.kind = 1;
+        f.fit_limits(&app.session.doc);
+    }
+    for (id, p) in apply_commands(&app, &d).unwrap() {
+        app.run(&id, p).unwrap();
+    }
+    assert_eq!(app.session.doc.assembly.joints.len(), 1, "a joint was made from the origin and the sketch point");
+}
 #[test]
 fn revolute_joint_uses_the_picked_straight_edges() {
     let mut app = two_boxes();
@@ -834,7 +873,7 @@ fn slider_drag_does_not_open_suggestions_over_the_slider() {
         .unwrap();
     h.app.start("joint.drive");
     h.frames(4);
-    let editor = egui::Id::new("sc_drive_value");
+    let editor = egui::Id::unique("sc_drive_value");
     let bounds = h
         .output
         .accesskit_update
@@ -888,6 +927,37 @@ fn joint_origins_follow_their_component() {
     m[3][0] += 5.0;
     app.session.pending_moves.insert(b, m);
     assert!(at(&app).dist(Vec3::new(45.0, 10.0, 25.0)) < 1e-6, "{:?}", at(&app));
+}
+
+/// A named joint origin on a hidden occurrence draws no triad; nor does one in a hidden Joints
+/// folder (the design's or the placement's). Showing it again brings the triad back.
+#[test]
+fn joint_origin_triads_follow_occurrence_visibility() {
+    let mut app = two_boxes();
+    app.session.execute("joint.origin", &json!({"name": "Top of B", "face": [40, 10, 10]})).unwrap();
+    assert!(origin_drawn(&app.session, "Top of B"));
+    let b = occ(&app, "B");
+    app.session.execute("browser.visibility", &json!({"paths": [[b]], "visible": false})).unwrap();
+    assert!(!origin_drawn(&app.session, "Top of B"), "a hidden occurrence still draws its origin triad");
+    app.session.execute("browser.visibility", &json!({"paths": [[b]], "visible": true})).unwrap();
+    assert!(origin_drawn(&app.session, "Top of B"));
+    app.session.visibility.hidden_folders.push(format!("o:{b}/joints"));
+    assert!(!origin_drawn(&app.session, "Top of B"), "the placement's hidden Joints folder");
+    app.session.visibility.hidden_folders.clear();
+    app.session.visibility.hidden_folders.push("c0/joints".into());
+    assert!(!origin_drawn(&app.session, "Top of B"), "the design's hidden Joints folder");
+    app.session.visibility.hidden_folders.clear();
+    // On a copy, the triad follows that copy, not the component's first placement.
+    app.session.execute("occurrence.copy", &json!({"component": "B", "translate": [0, 40, 0]})).unwrap();
+    app.session.execute("joint.origin", &json!({"name": "Top of copy", "face": [40, 50, 10]})).unwrap();
+    let copy = app.session.doc.occurrences.iter().find(|o| o.component == app.session.doc.find_component("B").unwrap() && o.id != b).unwrap().id;
+    assert_eq!(app.session.doc.assembly.origins.iter().find(|o| o.name == "Top of copy").unwrap().origin.occurrence, copy);
+    app.session.execute("browser.visibility", &json!({"paths": [[b]], "visible": false})).unwrap();
+    assert!(origin_drawn(&app.session, "Top of copy"), "hiding the first placement hides the copy's triad");
+    app.session.execute("browser.visibility", &json!({"paths": [[b]], "visible": true})).unwrap();
+    app.session.execute("browser.visibility", &json!({"paths": [[copy]], "visible": false})).unwrap();
+    assert!(!origin_drawn(&app.session, "Top of copy"), "a hidden copy still draws its origin triad");
+    assert!(origin_drawn(&app.session, "Top of B"));
 }
 
 /// Edit Feature on a moved component: the dialog shows the feature's picks where the
@@ -1399,4 +1469,37 @@ fn interference_checks_off_the_window_thread_and_drops_a_check_of_a_changed_desi
     assert_eq!(overlaps, 1, "the shared volume, drawn in red");
     compute(&mut app, true);
     assert_eq!(state(&app), (None, 0, false), "a check of the design before the change is dropped");
+}
+
+#[test]
+fn joint_dialog_applies_custom_name_or_falls_back_to_type_default() {
+    // 1. Empty name field: commands() generates payload without "name", backend creates "Rigid Joint1"
+    let mut app = two_boxes();
+    app.start("joint.create");
+    let mut d = app.dialog.clone().unwrap();
+    d.pick(&app.session, face_sel(&app.session, Vec3::new(10.0, 10.0, 10.0)).unwrap());
+    d.pick(&app.session, face_sel(&app.session, Vec3::new(40.0, 10.0, 0.0)).unwrap());
+    let cmds = apply_commands(&app, &d).unwrap();
+    assert_eq!(cmds[0].0, "joint.create");
+    assert!(cmds[0].1.get("name").is_none());
+    for (id, p) in cmds {
+        let r = app.run(&id, p).unwrap();
+        assert_eq!(r["name"], "Rigid Joint1");
+    }
+
+    // 2. Custom name in f.name: reset to fresh boxes so B is at its initial coordinates
+    let mut app = two_boxes();
+    app.start("joint.create");
+    let mut d = app.dialog.clone().unwrap();
+    d.pick(&app.session, face_sel(&app.session, Vec3::new(10.0, 10.0, 10.0)).unwrap());
+    d.pick(&app.session, face_sel(&app.session, Vec3::new(40.0, 10.0, 0.0)).unwrap());
+    if let Kind::Assembly(Asm::Joint(f)) = &mut d.kind {
+        f.name = "MyCustomJoint".into();
+    }
+    let cmds = apply_commands(&app, &d).unwrap();
+    assert_eq!(cmds[0].1["name"], "MyCustomJoint");
+    for (id, p) in cmds {
+        let r = app.run(&id, p).unwrap();
+        assert_eq!(r["name"], "MyCustomJoint");
+    }
 }

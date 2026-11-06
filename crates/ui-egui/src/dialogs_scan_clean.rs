@@ -15,7 +15,9 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use solidcraft_engine::cmd::scan::clean;
-use solidcraft_gpu::view::{CloudStyle, ColorMode, Dot, GpuCloud, cloud_dot};
+use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
+
+use crate::scan_dots::{Dot, cloud_dot};
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, check, form_row};
@@ -160,6 +162,8 @@ pub(crate) fn gpu_marks(app: &SolveApp) -> Option<GpuCloud> {
         id: CLOUD_ID,
         version: m.version,
         dots: m.dots.clone(),
+        segments: crate::scan_dots::none(),
+        triangles: crate::scan_dots::none(),
         style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: DOT_PIXELS },
     })
 }
@@ -364,7 +368,7 @@ mod tests {
         h.app.start("scan.remove_floating");
         h.frames(2);
         let marks = gpu_marks(&h.app).expect("the speck marked");
-        assert_eq!(marks.dots.len(), 12 * 3 * solidcraft_gpu::view::DOT_SIZE, "its 12 triangles' corners");
+        assert_eq!(marks.dots.len(), 12 * 3 * crate::scan_dots::DOT_SIZE, "its 12 triangles' corners");
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
