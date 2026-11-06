@@ -164,11 +164,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// A finely cut box scan: Find All shows its six faces, one dot per point, keyed; pressed again
-    /// the colouring goes.
-    #[test]
-    fn find_all_colours_the_scan_and_its_button_takes_it_away() {
-        let mut h = crate::scenario::Harness::new();
+    /// A 30 mm cube scan, each face a 12 × 12 grid.
+    fn cube(h: &mut crate::scenario::Harness) {
         let n = 12;
         let mut stl = String::from("solid b\n");
         let s = 30.0 / f64::from(n);
@@ -199,6 +196,14 @@ mod tests {
         let path = h.dir.join("cube.stl");
         std::fs::write(&path, stl + "endsolid b\n").unwrap();
         h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+    }
+
+    /// A finely cut box scan: Find All shows its six faces, one dot per point, keyed; pressed again
+    /// the colouring goes.
+    #[test]
+    fn find_all_colours_the_scan_and_its_button_takes_it_away() {
+        let mut h = crate::scenario::Harness::new();
+        cube(&mut h);
         h.app.start("scan.find_all");
         assert!(shown(&h.app) && crate::toolbar::shows_pressed(&h.app, "scan.find_all"));
         let cloud = gpu_cloud(&h.app).unwrap();
@@ -211,5 +216,25 @@ mod tests {
         assert!(crate::viewport::analysis_legend_data(&h.app).is_some(), "the corner key");
         h.app.start("scan.find_all");
         assert!(!shown(&h.app) && gpu_cloud(&h.app).is_none(), "pressed again, the colouring goes");
+    }
+
+    /// Find All works through the whole scan (45 s on 10 million triangles): its button computes
+    /// it beside the window, saying so, and the scan is coloured when it is in.
+    #[test]
+    fn find_all_is_computed_beside_the_window() {
+        let mut h = crate::scenario::Harness::new();
+        cube(&mut h);
+        h.app.apply_off_thread = Some(std::time::Duration::ZERO);
+        h.app.start("scan.find_all");
+        assert_eq!(h.app.computing_command(), Some("scan.find_all"));
+        assert!(!shown(&h.app), "nothing shown until it is in");
+        for _ in 0..500 {
+            if h.app.computing_command().is_none() {
+                break;
+            }
+            h.frames(1);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(shown(&h.app) && legend(&h.app).is_some_and(|(summary, _)| summary.starts_with('6')));
     }
 }

@@ -117,6 +117,10 @@ pub(crate) fn computed_whole(id: &str) -> bool {
     matches!(
         id,
         "scan.repair"
+            // Find All, and Reconstruct reading the scan with it: 16 s on a 2.7-million-triangle
+            // scan, 45 s on 10 million. What they read comes back with the copy.
+            | "scan.find_all"
+            | "scan.reconstruct"
             | "scan.remesh"
             | "scan.mesh_from_points"
             | "scan.keep_selection"
@@ -301,6 +305,11 @@ impl SolveApp {
         let r = self.run_with_kept(kept, |app| app.run(id, params));
         self.session.unprime();
         r
+    }
+
+    /// The command computing off the window thread, if one is.
+    pub(crate) fn computing_command(&self) -> Option<&str> {
+        self.deferred.as_ref().map(|d| d.command.0.as_str())
     }
 
     /// Since when a command, or a delete's check, has been computing off the window thread (ms),

@@ -1948,7 +1948,9 @@ impl Session {
             analysis: None,
             continuity: Vec::new(),
             scan_deviation: None,
-            scan_shapes: None,
+            // What Find All read is kept, so a copy computing a scan tool beside the window
+            // reads it again only when the scan changed (`ScanShapes::current`).
+            scan_shapes: self.scan_shapes.clone(),
             scan_selection: self.scan_selection.clone(),
             scan_base_cycle: None,
             scan_flats: Vec::new(),
@@ -2079,7 +2081,16 @@ impl Session {
             crash::accepted_command(self, &step.before, &step.after, &step.id, &step.params, step.changed);
         }
         let replies = prepared.steps.into_iter().map(|step| (step.id, step.reply)).collect();
+        let shapes = prepared.computed.scan_shapes.take();
         self.accept_computed(prepared.computed);
+        // What Find All read on the copy (Find All or Reconstruct computed beside the window),
+        // when it is of the scan as the design now has it.
+        if let Some(shapes) = shapes
+            && !self.scan_shapes.as_ref().is_some_and(|known| Arc::ptr_eq(known, &shapes))
+            && shapes.current(self)
+        {
+            self.scan_shapes = Some(shapes);
+        }
         Ok(replies)
     }
 

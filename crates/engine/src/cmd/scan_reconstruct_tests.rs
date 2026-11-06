@@ -173,6 +173,27 @@ fn reconstructs_tools_say_what_comes_first() {
     assert!(beyond.contains("`prism` is 0 to"), "{beyond}");
 }
 
+/// Find All computed on a copy of the design, as the window computes it beside itself, comes
+/// back with the copy: the design colours the scan by it and Reconstruct reads it again for
+/// nothing; a later copy starts with it.
+#[test]
+fn find_all_computed_on_a_copy_comes_back_with_it() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 20, "width": 20, "height": 20}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    let (mut s, _) = scanned(&part, &body, 3, "copy");
+    assert!(s.scan_shapes.is_none());
+    let prepared = s.scratch().compute_commands(&[("scan.find_all".into(), json!({}))], None).unwrap();
+    s.accept_commands(prepared).unwrap();
+    let found = s.scan_shapes.clone().expect("what Find All read is kept");
+    assert!(found.shown && found.current(&s));
+    assert!(s.scratch().scan_shapes.is_some_and(|k| std::sync::Arc::ptr_eq(&k, &found)), "a copy starts with it");
+    // Reading again on a copy finds it current: the same, not read afresh.
+    let prepared = s.scratch().compute_commands(&[("scan.reconstruct".into(), json!({}))], None).unwrap();
+    s.accept_commands(prepared).unwrap();
+    assert!(s.scan_shapes.is_some_and(|k| std::sync::Arc::ptr_eq(&k, &found)));
+}
+
 /// Reconstruct proposes only steps that can run in order: a hole is cut once a step before it
 /// builds the body or the body is built already, and a turned part whose profile cannot be read
 /// is not revolved. (On T-LESS's scans it proposed Cut It first, refused for want of a body.)

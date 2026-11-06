@@ -22,9 +22,22 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::S
     (id == "scan.reconstruct").then(|| (Kind::ScanReconstruct(Reconstruct::default()), Vec::new()))
 }
 
-/// Read the scan before the dialog opens: false (and nothing opens) when it cannot be read.
+/// Read the scan as the dialog opens: false (and nothing opens) when it cannot be read. Find All
+/// can take most of a minute on a big scan, so it reads beside the window when that takes long,
+/// and the dialog lists what to build once the reading is in.
 pub fn read_first(app: &mut SolveApp) -> bool {
-    app.run("scan.reconstruct", serde_json::json!({})).is_ok()
+    match app.run_heavy("scan.reconstruct", serde_json::json!({})) {
+        Ok(_) => true,
+        Err(why) => {
+            app.set_status(why, true);
+            false
+        }
+    }
+}
+
+/// Whether the scan is being read beside the window for the dialog.
+fn reading(app: &SolveApp) -> bool {
+    app.computing_command() == Some("scan.reconstruct")
 }
 
 fn tr(id: &'static str) -> &'static str {
@@ -65,7 +78,11 @@ fn label(app: &SolveApp, found: &ScanShapes, step: &Proposal) -> String {
 /// The dialog's rows.
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reconstruct) -> bool {
     let Some(found) = found(app) else {
-        ui_kit::text(ui, tr("ui.scan_reconstruct_unread"), ui_kit::Text::Report("scan_reconstruct_unread", true));
+        if reading(app) {
+            ui_kit::text(ui, tr("ui.scan_reconstruct_reading"), ui_kit::Text::Note("scan_reconstruct_reading"));
+        } else {
+            ui_kit::text(ui, tr("ui.scan_reconstruct_unread"), ui_kit::Text::Report("scan_reconstruct_unread", true));
+        }
         return false;
     };
     let steps = reconstruct::proposals(&found.reading, reconstruct::is_built(&app.session, &found.scan));
@@ -106,12 +123,8 @@ mod tests {
 
     use super::*;
 
-    /// A rounded slab as a scan: Reconstruct's button reads it and lists one Extrude It, ticked;
-    /// OK builds the slab.
-    #[test]
-    fn reconstruct_lists_the_prism_and_ok_extrudes_it() {
-        let mut h = crate::scenario::Harness::new();
-        // A slab 30 × 20 × 6, each face a fine grid, as a scan.
+    /// A slab 30 × 20 × 6, each face a fine grid, inserted as a scan.
+    fn slab(h: &mut crate::scenario::Harness) {
         let (n, size) = (10u32, [30.0, 20.0, 6.0]);
         let mut stl = String::from("solid s\n");
         for (axis, high) in [(0, false), (0, true), (1, false), (1, true), (2, false), (2, true)] {
@@ -140,6 +153,14 @@ mod tests {
         let path = h.dir.join("slab.stl");
         std::fs::write(&path, stl + "endsolid s\n").unwrap();
         h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+    }
+
+    /// A rounded slab as a scan: Reconstruct's button reads it and lists one Extrude It, ticked;
+    /// OK builds the slab.
+    #[test]
+    fn reconstruct_lists_the_prism_and_ok_extrudes_it() {
+        let mut h = crate::scenario::Harness::new();
+        slab(&mut h);
         h.app.start("scan.reconstruct");
         assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanReconstruct(_))), "the dialog is open");
         let found = found(&h.app).expect("read");
@@ -152,5 +173,29 @@ mod tests {
         }
         let built = h.app.session.model.state().bodies.iter().find(|b| b.name.ends_with("Reconstructed")).and_then(|b| b.body.volume_at(0.01));
         assert!(built.is_some_and(|v| (v - 3600.0).abs() < 1.0), "{built:?}");
+    }
+
+    /// Find All can take most of a minute on a big scan: Reconstruct's button opens its dialog at
+    /// once, saying the scan is being read, reads it beside the window, and lists the steps when
+    /// the reading is in. Nothing waits on the window thread.
+    #[test]
+    fn reconstruct_reads_the_scan_beside_the_window() {
+        let mut h = crate::scenario::Harness::new();
+        slab(&mut h);
+        h.app.apply_off_thread = Some(std::time::Duration::ZERO);
+        h.app.start("scan.reconstruct");
+        assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanReconstruct(_))), "the dialog opens at once");
+        assert!(reading(&h.app) && found(&h.app).is_none(), "it is reading the scan");
+        for _ in 0..500 {
+            if !reading(&h.app) {
+                break;
+            }
+            h.frames(1);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let found = found(&h.app).expect("read");
+        assert!(found.shown, "the scan is coloured by its shapes");
+        let steps = reconstruct::proposals(&found.reading, reconstruct::is_built(&h.app.session, &found.scan));
+        assert!(matches!(steps.first(), Some(Proposal::Extrude(0))), "{steps:?}");
     }
 }
