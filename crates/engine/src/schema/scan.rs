@@ -687,10 +687,17 @@ pub struct ScanSlide {
 pub struct ScanFreeFormParams {
     /// The four corners, in order round the face, in mm.
     pub corners: Vec<Point3>,
-    /// off (flat over the corners), follow (fitted to the scan, the default) or overall (fitted, the
-    /// places far off it left out, so it spans openings, dents and ribs).
+    /// off (flat over the corners), follow (fitted to the scan, the default), overall (fitted, the
+    /// places far off it left out, so it spans openings, dents and ribs) or flat (exactly flat: in
+    /// the one plane fitted to the scan under it, the places far off it left out). With `plane`,
+    /// flat is the default.
     #[serde(default)]
     pub fit: Option<String>,
+    /// A plane to lay the face flat on instead of fitting one to the scan: `YZ`, `XZ`, `XY`, a
+    /// construction plane's name, or `{point, normal}`. The corners are put onto it; no scan is
+    /// needed.
+    #[serde(default)]
+    pub plane: Option<Value>,
     /// The net's points each way, 4 to 12. Default: 4.
     #[serde(default)]
     pub count: Option<u32>,

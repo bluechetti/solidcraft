@@ -9,7 +9,7 @@ use solidcore_record::Vec3;
 use solidcraft_geom::bspline::NurbsSurface;
 use solidcraft_geom::prelude::*;
 use solidcraft_scan::free_form;
-pub use solidcraft_scan::free_form::Fitting;
+pub use solidcraft_scan::free_form::{Fitting, flat_plane};
 pub use solidcraft_scan::merge::{Merged, Seam};
 pub use solidcraft_scan::wrap::{Cylinder, Wrap};
 
@@ -27,6 +27,10 @@ pub enum Fit {
     Follow,
     /// The same, the places far off it left out: it spans openings, dents and ribs.
     Overall,
+    /// Exactly flat: in the one plane fitted to the scan under it (the places far off it left out,
+    /// so a rib or a dent does not tilt it), the corners laid on that plane. For a panel or a wall
+    /// that only has to be flat, not to follow every bump.
+    Flat,
 }
 
 /// A face made, before it is kept: the scan it was fitted to, the surface and how it fits: the
@@ -69,8 +73,13 @@ pub fn make(s: &Session, body: Option<&str>, corners: [Vec3; 4], fit: Fit, fitti
     let reach = reach.unwrap_or(f64::INFINITY);
     let snap = |ps: &[Vec3], along: Option<Vec3>| ps.iter().map(|p| snapped(&on, *p, along, reach)).collect::<Vec<_>>();
     let fitting = Fitting { count, overall: fit == Fit::Overall, ..fitting };
-    let fitted = free_form::fitted(corners, &fitting, snap)
-        .ok_or_else(|| bad(cmd, "no face could be fitted over those corners: click them round a face, not in a line"))?;
+    let fitted = if fit == Fit::Flat {
+        free_form::flattened(corners, &fitting, snap)
+            .ok_or_else(|| bad(cmd, "no flat face could be fitted over those corners: the scan under them makes no plane within the snap distance"))?
+    } else {
+        free_form::fitted(corners, &fitting, snap)
+            .ok_or_else(|| bad(cmd, "no face could be fitted over those corners: click them round a face, not in a line"))?
+    };
     if fitted.met == 0 {
         return Err(bad(cmd, "the scan is nowhere near those corners within the snap distance"));
     }
@@ -93,15 +102,34 @@ fn corners_param(p: &Value, cmd: &str) -> Result<[Vec3; 4]> {
     <[Vec3; 4]>::try_from(points).map_err(|_| bad(cmd, "`corners` must be four points, in order round the face"))
 }
 
+/// A face laid flat on the chosen `plane` over `corners`, `count` points each way: no scan needed.
+pub fn made_on_plane(corners: [Vec3; 4], count: usize, plane: solidcraft_scan::symmetric::MirrorPlane) -> Result<Made> {
+    let cmd = "scan.free_form";
+    if corners.iter().any(|c| !c.is_finite()) {
+        return Err(bad(cmd, "the corners must be finite points"));
+    }
+    let surface = free_form::flat_over(corners, count, plane.point, plane.normal)
+        .ok_or_else(|| bad(cmd, "the corners make no face on that plane: click them round a face, not in a line"))?;
+    Ok(Made { scan: None, surface, places: 0, met: 0, kept: 0, rms: 0.0, max: 0.0 })
+}
+
 pub(super) fn new_free_form(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.free_form";
     let corners = corners_param(p, cmd)?;
-    let fit = match crate::params::str_(p, "fit").unwrap_or("follow") {
+    let plane = match p.get("plane").filter(|v| !v.is_null()) {
+        Some(v) => Some(mirror_plane_param(s, Some(v), cmd)?),
+        None => None,
+    };
+    let fit = match crate::params::str_(p, "fit").unwrap_or(if plane.is_some() { "flat" } else { "follow" }) {
         "off" => Fit::Off,
         "follow" => Fit::Follow,
         "overall" => Fit::Overall,
-        other => return Err(bad(cmd, format!("`fit` must be off, follow or overall, not `{other}`"))),
+        "flat" => Fit::Flat,
+        other => return Err(bad(cmd, format!("`fit` must be off, follow, overall or flat, not `{other}`"))),
     };
+    if plane.is_some() && fit != Fit::Flat {
+        return Err(bad(cmd, "a `plane` lays the face flat on it: leave `fit` out, or give `flat`"));
+    }
     let count = match p.get("count").filter(|v| !v.is_null()) {
         Some(v) => v
             .as_u64()
@@ -118,7 +146,10 @@ pub(super) fn new_free_form(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let body = crate::params::str_(p, "body").map(str::to_owned);
-    let made = make(s, body.as_deref(), corners, fit, Fitting { count, stiffness, overall: false }, reach)?;
+    let made = match plane {
+        Some(plane) => made_on_plane(corners, count, plane)?,
+        None => make(s, body.as_deref(), corners, fit, Fitting { count, stiffness, overall: false }, reach)?,
+    };
     let file = made.scan.as_deref().map_or_else(|| "free form".to_owned(), |scan| format!("{scan} (free form)"));
     let (name, feature) = super::surface::keep_surface(s, &made.surface, "FreeForm", "Free Form", &file, cmd)?;
     let reply = ScanFreeFormResult {

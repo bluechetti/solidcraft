@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_free_form_fit_flat": "Flat"
+  },
+  "de": {
+    "ui.scan_free_form_fit_flat": "Eben"
+  },
+  "ja": {
+    "ui.scan_free_form_fit_flat": "平面"
+  },
+  "ko": {
+    "ui.scan_free_form_fit_flat": "평평하게"
+  },
+  "zh": {
+    "ui.scan_free_form_fit_flat": "平面"
+  },
+  "ar": {
+    "ui.scan_free_form_fit_flat": "مستوٍ"
+  },
+  "he": {
+    "ui.scan_free_form_fit_flat": "שטוח"
+  },
+  "vi": {
+    "ui.scan_free_form_fit_flat": "Phẳng"
+  }
+}

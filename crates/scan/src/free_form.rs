@@ -415,6 +415,101 @@ pub fn fitted(corners: [Vec3; 4], fitting: &Fitting, snap: impl Fn(&[Vec3], Opti
     Some(Fitted { surface: made, places, met, kept: used, rms })
 }
 
+/// How many times a flat face's plane is fitted again, leaving out the places far off the last.
+const FLAT_ROUNDS: usize = 4;
+
+/// The plane through `points`: through their middle, square to the way they spread least. `None`
+/// for fewer than three, or points in a line (a plane through them could turn about it).
+fn plane_through(points: &[Vec3]) -> Option<(Vec3, Vec3)> {
+    if points.len() < 3 || !points.iter().all(|p| p.is_finite()) {
+        return None;
+    }
+    let middle = points.iter().fold(Vec3::ZERO, |s, p| s + *p) / points.len() as f64;
+    let mut spread = [[0.0f64; 3]; 3];
+    for p in points {
+        let d = *p - middle;
+        let d = [d.x, d.y, d.z];
+        for (row, di) in spread.iter_mut().zip(d) {
+            for (cell, dj) in row.iter_mut().zip(d) {
+                *cell += di * dj;
+            }
+        }
+    }
+    let (moments, axes) = solidcraft_geom::inertia::principal(&spread, 0.0)?;
+    // The middle moment must be there: with it as small as the least, the points are in a line.
+    if !(moments[1] > 1e-12 * moments[2].abs().max(f64::MIN_POSITIVE)) {
+        return None;
+    }
+    Some((middle, axes[0].normalized()?))
+}
+
+/// The plane `places` lie nearest, fitted again with the places far off it left out (as Overall
+/// Shape does, so a rib or a dent does not tilt it): a point on it, its unit normal, and how many
+/// places were kept at the last. `None` for places that do not spread over an area.
+pub fn flat_plane(places: &[Vec3]) -> Option<(Vec3, Vec3, usize)> {
+    let mut plane = plane_through(places)?;
+    let (lo, hi) = places
+        .iter()
+        .fold((Vec3::new(f64::MAX, f64::MAX, f64::MAX), Vec3::new(f64::MIN, f64::MIN, f64::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+    let floor = TRIM_FLOOR * (hi - lo).len();
+    let mut kept_count = places.len();
+    for _ in 0..FLAT_ROUNDS {
+        let distances: Vec<f64> = places.iter().map(|p| (*p - plane.0).dot(plane.1).abs()).collect();
+        let keep = kept(&distances, true, floor);
+        let used: Vec<Vec3> = places.iter().zip(&keep).filter(|(_, k)| **k).map(|(p, _)| *p).collect();
+        let Some(next) = plane_through(&used) else { break };
+        plane = next;
+        kept_count = used.len();
+    }
+    Some((plane.0, plane.1, kept_count))
+}
+
+/// The face over `corners` laid flat on the plane through `point` square to `normal`: each corner
+/// put onto the plane (the foot of the line square to it), the net the bilinear patch they make.
+/// `None` for a plane with no direction, or corners that make no face on it.
+pub fn flat_over(corners: [Vec3; 4], count: usize, point: Vec3, normal: Vec3) -> Option<NurbsSurface> {
+    let normal = normal.normalized()?;
+    if !(point.is_finite() && corners.iter().all(|c| c.is_finite())) {
+        return None;
+    }
+    let count = count.clamp(LEAST_POINTS, MOST_POINTS);
+    let onto = corners.map(|c| c - normal * (c - point).dot(normal));
+    // Corners that enclose no area (all in one place, or in a line) make no face.
+    let (d0, d1) = (onto[2] - onto[0], onto[3] - onto[1]);
+    let size = d0.len2().max(d1.len2());
+    if !(size > 0.0 && d0.cross(d1).len() > 1e-9 * size) {
+        return None;
+    }
+    surface(&net_over(onto, count), count)
+}
+
+/// A flat face over `corners`: the plane fitted to the scan under them (`snap` putting places on
+/// the scan, `None` for a place with none within reach, which is left out; those far off the plane
+/// are left out too), the corners laid on it. `places` are those looked for, `met` those found on
+/// the scan, `kept` those the plane was fitted to, and `rms` how far they are from it. `None` when
+/// the scan under the corners makes no plane.
+pub fn flattened(corners: [Vec3; 4], fitting: &Fitting, snap: impl Fn(&[Vec3], Option<Vec3>) -> Vec<Option<Vec3>>) -> Option<Fitted> {
+    let n = fitting.count.clamp(LEAST_POINTS, MOST_POINTS);
+    let facing = (corners[2] - corners[0]).cross(corners[3] - corners[1]).normalized();
+    let across = INSIDE_PLACES * n;
+    let mut at = Vec::with_capacity(across * across);
+    for j in 0..across {
+        let t = (j as f64 + 0.5) / across as f64;
+        for i in 0..across {
+            let s = (i as f64 + 0.5) / across as f64;
+            at.push(corners[0] * ((1.0 - s) * (1.0 - t)) + corners[1] * (s * (1.0 - t)) + corners[2] * (s * t) + corners[3] * ((1.0 - s) * t));
+        }
+    }
+    let found = snap(&at, facing);
+    let places = found.len();
+    let on: Vec<Vec3> = found.into_iter().flatten().collect();
+    let (point, normal, kept_count) = flat_plane(&on)?;
+    let surface = flat_over(corners, n, point, normal)?;
+    let off: Vec<f64> = on.iter().map(|p| (*p - point).dot(normal)).collect();
+    let rms = if off.is_empty() { 0.0 } else { (off.iter().map(|d| d * d).sum::<f64>() / off.len() as f64).sqrt() };
+    Some(Fitted { surface, places, met: on.len(), kept: kept_count, rms })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,6 +585,68 @@ mod tests {
         assert!(flat_rms > 0.5, "flat over the corners is not: {flat_rms}");
         // The corners went onto the dome.
         assert!(on.nearest(points(&fit.surface)[0]).is_some_and(|(_, d)| d < 1e-9));
+    }
+
+    /// The corners clicked on a panel with a rib across it: a flat face lies in one plane, the
+    /// panel's, with the rib's places left out, where Follow the Scan bends over the rib; and the
+    /// plane is square to a tilted panel's own direction.
+    #[test]
+    fn a_flat_face_lies_in_the_panels_plane_and_leaves_a_rib_out() {
+        let rib = |x: f64, y: f64| if (28.0..32.0).contains(&x) { 4.0 } else { 0.0 } + 0.0 * y;
+        let (positions, triangles) = field(60, rib);
+        let scan = Scan::new(&positions, &triangles);
+        let on = Projector::new(&scan);
+        let snap = |ps: &[Vec3], along: Option<Vec3>| ps.iter().map(|p| snapped(&on, *p, along)).collect::<Vec<_>>();
+        let corners = [Vec3::new(5.0, 5.0, 0.0), Vec3::new(55.0, 5.0, 0.0), Vec3::new(55.0, 55.0, 0.0), Vec3::new(5.0, 55.0, 0.0)];
+        let flat = flattened(corners, &Fitting { count: 6, ..Fitting::default() }, snap).unwrap();
+        assert_eq!(flat.surface.count(), [6, 6]);
+        assert!(flat.met == flat.places && flat.kept < flat.met, "the rib's places left out: {} of {}", flat.kept, flat.met);
+        let net = points(&flat.surface);
+        let (point, normal, _) = flat_plane(&net).unwrap();
+        let off = net.iter().map(|p| (*p - point).dot(normal).abs()).fold(0.0, f64::max);
+        assert!(off < 1e-9, "every point of the net in one plane: {off}");
+        assert!(
+            net.iter().all(|p| p.z.abs() < 0.2),
+            "in the panel's plane, not lifted by the rib: {:?}",
+            net.iter().map(|p| p.z).fold(0.0, f64::max)
+        );
+        let follow = fitted(corners, &Fitting { count: 6, ..Fitting::default() }, snap).unwrap();
+        assert!(
+            follow.surface.eval(0.5, 0.5).unwrap().z.abs() > flat.surface.eval(0.5, 0.5).unwrap().z.abs(),
+            "Follow bends over the rib, flat does not"
+        );
+
+        let tilt = |x: f64, y: f64| 3.0 + 0.2 * x + 0.0 * y;
+        let (positions, triangles) = field(60, tilt);
+        let scan = Scan::new(&positions, &triangles);
+        let on = Projector::new(&scan);
+        let snap = |ps: &[Vec3], along: Option<Vec3>| ps.iter().map(|p| snapped(&on, *p, along)).collect::<Vec<_>>();
+        let flat = flattened(corners, &Fitting::default(), snap).unwrap();
+        let (_, normal, _) = flat_plane(&points(&flat.surface)).unwrap();
+        let want = Vec3::new(-0.2, 0.0, 1.0).normalized().unwrap();
+        assert!(normal.dot(want).abs() > 1.0 - 1e-9, "square to the tilted panel: {normal:?}");
+        assert!(flat.rms < 1e-9, "on the panel: {}", flat.rms);
+    }
+
+    /// A chosen plane: the corners are put onto it; a plane with no direction, or places in a line,
+    /// make no face and no panic.
+    #[test]
+    fn a_face_on_a_chosen_plane_and_hostile_input() {
+        let corners = [Vec3::new(0.0, 0.0, 2.0), Vec3::new(10.0, 0.0, -1.0), Vec3::new(10.0, 10.0, 3.0), Vec3::new(0.0, 10.0, 1.0)];
+        let face = flat_over(corners, 4, Vec3::new(0.0, 0.0, 5.0), Vec3::new(0.0, 0.0, 3.0)).unwrap();
+        assert!(points(&face).iter().all(|p| (p.z - 5.0).abs() < 1e-12), "all on z = 5");
+        assert!(flat_over(corners, 4, Vec3::ZERO, Vec3::ZERO).is_none(), "no direction");
+        assert!(flat_over(corners, 4, Vec3::new(f64::NAN, 0.0, 0.0), Vec3::Z).is_none(), "not a place");
+        let one_place = [Vec3::new(1.0, 2.0, 3.0); 4];
+        assert!(flat_over(one_place, 4, Vec3::ZERO, Vec3::Z).is_none(), "four corners in one place enclose no area");
+        let in_line = [Vec3::new(0.0, 0.0, 0.0), Vec3::new(5.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0), Vec3::new(15.0, 0.0, 0.0)];
+        assert!(flat_over(in_line, 4, Vec3::ZERO, Vec3::Z).is_none(), "corners in a line enclose no area");
+        let above = [Vec3::new(0.0, 0.0, 9.0), Vec3::new(10.0, 0.0, 9.0), Vec3::new(10.0, 10.0, 9.0), Vec3::new(0.0, 10.0, 9.0)];
+        assert!(flat_over(above, 4, Vec3::ZERO, Vec3::X).is_none(), "a plane square to the corners' own plane folds them into a line");
+        let line: Vec<Vec3> = (0..20).map(|i| Vec3::new(f64::from(i), 0.0, 0.0)).collect();
+        assert!(flat_plane(&line).is_none(), "places in a line make no plane");
+        assert!(flat_plane(&[]).is_none() && flat_plane(&line[..2]).is_none());
+        assert!(flat_plane(&[Vec3::new(f64::INFINITY, 0.0, 0.0), Vec3::X, Vec3::Y, Vec3::Z]).is_none());
     }
 
     /// Overall Shape spans a rib: the face stays near the panel where Follow the Scan bends over it.

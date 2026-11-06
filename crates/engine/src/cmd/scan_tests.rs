@@ -989,6 +989,51 @@ fn free_form_makes_a_surface_on_the_scan_and_its_net_changes() {
     assert!(refused.contains("four points"), "{refused}");
 }
 
+/// A flat Free Form: fitted to the scan it lies in the one plane through the panel (a dome's top
+/// is a plane the dome only leans away from), where Follow lies on the dome; given a plane it lies
+/// flat on it with no scan at all; a plane with no direction, a plane with another fit and a bad
+/// fit name are refused.
+#[test]
+fn a_flat_free_form_lies_in_one_plane_fitted_to_the_scan_or_chosen() {
+    let (mut s, _) = session_with_triangles("flat-free-form", &dome_triangles(40));
+    let corners = json!([[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]]);
+    let flat = run(&mut s, "scan.free_form", json!({"corners": corners, "count": 5, "fit": "flat"}));
+    assert_eq!((flat["surface"].as_str(), flat["controls"].clone()), (Some("FreeForm1"), json!([5, 5])), "{flat}");
+    assert!(flat["met"] == flat["places"] && flat["kept"].as_u64().unwrap() > 0, "{flat}");
+    let net = solidcraft_scan::surface_edit::points(&super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().surface);
+    let (point, normal, _) = solidcraft_scan::free_form::flat_plane(&net).unwrap();
+    let off = net.iter().map(|p| (*p - point).dot(normal).abs()).fold(0.0, f64::max);
+    assert!(off < 1e-9, "every point of the net in one plane: {off}");
+    // The dome curves away from its top: flat is farther from the scan than Follow the Scan is.
+    let follow = run(&mut s, "scan.free_form", json!({"corners": corners, "count": 5}));
+    assert!(flat["rms"].as_f64().unwrap() > follow["rms"].as_f64().unwrap(), "{flat} {follow}");
+
+    // A chosen plane: no scan is looked at, the corners are put onto it.
+    let (mut empty, _) = session_with_triangles("flat-on-plane", &dome_triangles(4));
+    let on = run(
+        &mut empty,
+        "scan.free_form",
+        json!({"corners": [[0, 0, 1], [10, 0, 3], [10, 10, -2], [0, 10, 4]], "plane": {"point": [0, 0, 5], "normal": [0, 0, 2]}, "count": 4}),
+    );
+    assert!(on.get("body").is_none() && on["places"] == 0, "{on}");
+    let name = on["surface"].as_str().unwrap().to_owned();
+    let net = solidcraft_scan::surface_edit::points(&super::surface::editable(&empty, Some(&name), "test").unwrap().surface);
+    assert!(net.iter().all(|p| (p.z - 5.0).abs() < 1e-9), "all on z = 5: {:?}", net.iter().map(|p| p.z).collect::<Vec<_>>());
+    let named = run(&mut empty, "scan.free_form", json!({"corners": [[0, 0, 1], [10, 0, 1], [10, 10, 1], [0, 10, 1]], "plane": "XY", "fit": "flat"}));
+    assert!(named["rms"] == 0.0, "{named}");
+
+    for (params, want) in [
+        (json!({"corners": corners, "plane": {"point": [0, 0, 0], "normal": [0, 0, 0]}}), "direction"),
+        (json!({"corners": corners, "plane": "XY", "fit": "follow"}), "flat"),
+        (json!({"corners": corners, "fit": "level"}), "flat"),
+        (json!({"corners": corners, "plane": "NoSuchPlane"}), "no plane"),
+        (json!({"corners": [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]], "plane": "XY"}), "no face"),
+    ] {
+        let refused = s.execute("scan.free_form", &params).unwrap_err().to_string();
+        assert!(refused.contains(want), "{params}: {refused}");
+    }
+}
+
 /// A face added on an open edge of a Free Form: one surface body of two faces sharing the edge,
 /// tangent across it and lying on the dome; points on it moved by `dots` take the surface through
 /// them, the other faces' points held; the net is doubled as a whole; each one undo step.

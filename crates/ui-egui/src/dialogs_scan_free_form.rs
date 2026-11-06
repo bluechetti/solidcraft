@@ -31,7 +31,7 @@ const DOT: f32 = 7.0;
 pub struct NewFreeForm {
     /// 0: four corners clicked round the face; 1: two, a rectangle's diagonal.
     pub corners_mode: usize,
-    /// 0 off, 1 follow the scan, 2 overall shape.
+    /// 0 off, 1 follow the scan, 2 overall shape, 3 flat (one plane fitted to the scan).
     pub fit: usize,
     /// The snap distance (mm; 0, no limit).
     pub reach: f64,
@@ -120,9 +120,13 @@ fn fit_mode(k: &NewFreeForm) -> Fit {
     match k.fit {
         0 => Fit::Off,
         2 => Fit::Overall,
+        3 => Fit::Flat,
         _ => Fit::Follow,
     }
 }
+
+/// The fit's name as `scan.free_form` takes it.
+const FIT_NAMES: [&str; 4] = ["off", "follow", "overall", "flat"];
 
 /// Fit again when the corners, the settings or the design have changed.
 fn fit(app: &SolveApp, k: &mut NewFreeForm) {
@@ -185,13 +189,17 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
         k.clicks.clear();
         k.view = None;
     }
-    let fits = [tr("ui.scan_free_form_fit_off"), tr("ui.scan_free_form_fit_follow"), tr("ui.scan_free_form_fit_overall")];
+    let fits =
+        [tr("ui.scan_free_form_fit_off"), tr("ui.scan_free_form_fit_follow"), tr("ui.scan_free_form_fit_overall"), tr("ui.scan_free_form_fit_flat")];
     choice_row(ui, tr("ui.scan_free_form_fit"), "scan_free_form_fit", &mut k.fit, &fits);
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
     if k.fit != 0 {
         form_row(ui, tr("ui.scan_edit_snap_reach"), |ui| ui_kit::length_field(ui, &mut k.reach, &units, decimals));
         k.reach = k.reach.max(0.0);
-        stiffness_row(ui, &mut k.stiffness);
+        // A flat face is one plane: how much it bends to the scan has no meaning.
+        if k.fit != 3 {
+            stiffness_row(ui, &mut k.stiffness);
+        }
     }
     form_row(ui, tr("ui.scan_free_form_points"), |ui| ui_kit::number_field(ui, &mut k.count, 4..=12, 0.2, ""));
     if k.fit != 0 {
@@ -263,7 +271,7 @@ fn stiffness_row(ui: &mut egui::Ui, stiffness: &mut f64) {
 pub fn commands(k: &NewFreeForm) -> Result<Vec<(String, Value)>, String> {
     let c = corners(k).ok_or_else(|| tr("ui.scan_free_form_hint").to_owned())?;
     let made = k.shown.as_ref().ok_or("still fitting")?.result.as_ref().map_err(Clone::clone)?;
-    let fit = ["off", "follow", "overall"][k.fit.min(2)];
+    let fit = FIT_NAMES[k.fit.min(FIT_NAMES.len() - 1)];
     let mut p = json!({
         "corners": c.iter().map(|p| [p.x, p.y, p.z]).collect::<Vec<_>>(),
         "fit": fit,
@@ -678,6 +686,46 @@ mod tests {
         h.settle();
         assert!(h.app.session.model.state().body("FreeForm1").is_some(), "kept");
         assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanEditSurface(_))), "Edit Surface opens on it");
+    }
+
+    /// Flat in New Free Form: the same four corners clicked on the dome make a face in one plane
+    /// (the dome's top is where it leans away, so it is farther from the scan than Follow the Scan
+    /// is), and OK keeps it as such, sending `fit: flat`. Flat has no Stiffness row.
+    #[test]
+    fn a_flat_face_is_one_plane_on_the_scan() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.free_form");
+        h.frames(2);
+        let z = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+        for [x, y] in [[16.0, 16.0], [44.0, 16.0], [44.0, 44.0], [16.0, 44.0]] {
+            h.step(&json!({"click": {"world": [x, y, z(x, y)]}})).unwrap();
+            h.frames(2);
+        }
+        let rms = |h: &crate::scenario::Harness| match h.app.dialog.as_ref().map(|d| &d.kind) {
+            Some(Kind::ScanFreeForm(k)) => k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).map(|m| m.rms),
+            _ => None,
+        };
+        let follow = rms(&h).expect("fitted to follow the scan");
+        if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.fit = 3;
+        }
+        h.frames(3);
+        let flat = rms(&h).expect("fitted flat");
+        assert!(flat > follow, "flat is farther from the dome than following it: {flat} {follow}");
+        let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the dialog") };
+        assert_eq!(commands(k).unwrap()[0].1["fit"], "flat");
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.as_ref().is_some_and(|d| matches!(d.kind, Kind::ScanEditSurface(_))), "Edit Surface opens on it");
+        let kept = solidcraft_engine::cmd::scan::surface::editable(&h.app.session, Some("FreeForm1"), "test").unwrap().surface;
+        let net = solidcraft_engine::cmd::scan::surface::control_points(&kept);
+        let (point, normal, _) = free_form::flat_plane(&net).unwrap();
+        let off = net.iter().map(|p| (*p - point).dot(normal).abs()).fold(0.0, f64::max);
+        assert!(off < 1e-9, "kept in one plane: {off}");
     }
 
     /// Half a tube of radius 20 along Y, 40 long, open at its ends, as an STL.
