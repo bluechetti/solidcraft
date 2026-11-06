@@ -1417,6 +1417,8 @@ pub(crate) fn shade_cloud(id: u64, version: u64, dots: Arc<Vec<u8>>) -> GpuCloud
         id,
         version,
         dots,
+        segments: crate::scan_dots::none(),
+        triangles: crate::scan_dots::none(),
         style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: SHADE_PIXELS },
     }
 }
@@ -1445,16 +1447,11 @@ pub(crate) fn next_shade_version() -> u64 {
 /// The scan's points under the surface as coloured dots: each by how far it is from the surface,
 /// against `tolerance`.
 pub(crate) fn shade_dots(shade: &network::Shade, values: &[f32], tolerance: f64, colours: [[u8; 3]; 3]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(shade.points.len() * solidcraft_gpu::view::DOT_SIZE);
+    let mut out = Vec::with_capacity(shade.points.len() * crate::scan_dots::DOT_SIZE);
     for (p, v) in shade.points.iter().zip(values) {
         let Some(s) = solidcraft_scan_scale(*v, tolerance) else { continue };
-        let dot = solidcraft_gpu::view::Dot {
-            at: p.at.to_f32(),
-            value: *v,
-            rgb: crate::scan_deviation::colour(colours, s),
-            ..solidcraft_gpu::view::Dot::default()
-        };
-        solidcraft_gpu::view::cloud_dot(&mut out, &dot);
+        let dot = crate::scan_dots::Dot { at: p.at.to_f32(), value: *v, rgb: crate::scan_deviation::colour(colours, s) };
+        crate::scan_dots::cloud_dot(&mut out, &dot);
     }
     out
 }
@@ -1853,7 +1850,7 @@ mod tests {
         h.frames(3);
         assert_eq!((kind(&h).handles, kind(&h).snap), (HANDLES_DOTS, SNAP_POINTER), "points on the surface, snapped to the scan, by default");
         let cloud = gpu_shade(&h.app).expect("the scan under the surface coloured");
-        assert!(cloud.dots.len() > 100 * solidcraft_gpu::view::DOT_SIZE, "{}", cloud.dots.len());
+        assert!(cloud.dots.len() > 100 * crate::scan_dots::DOT_SIZE, "{}", cloud.dots.len());
         let (rms, _) = kind(&h).fit.expect("the distance");
         assert!(rms < 0.05, "a Free Form lies on the dome: {rms}");
         if let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
