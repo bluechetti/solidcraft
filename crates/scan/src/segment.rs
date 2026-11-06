@@ -9,6 +9,8 @@
 //!   much (a small patch of a wide shaft is flat too, so the kind is told by what it grows into).
 //! - Shapes that meet and are one are joined, and what no shape takes is freeform, in connected
 //!   regions; a sliver of it goes to the neighbour it shares most edges with.
+//! - A scan so noisy against its triangles that next to nothing is found is read again on a copy
+//!   smoothed with its edges kept, each shape then fitted on the scan itself ([`find_all`]).
 
 use solidcore_record::Vec3;
 use solidcraft_geom::prelude::*;
@@ -139,23 +141,19 @@ impl<'a> Reading<'a> {
                 }
             }
         }
-        let (mut middles, mut normals, mut areas) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
-        for t in 0..n {
-            match scan.corners(t) {
-                Some([a, b, c]) => {
-                    let cross = (b - a).cross(c - a);
-                    middles.push((a + b + c) / 3.0);
-                    normals.push(cross.normalized());
-                    areas.push(cross.len() / 2.0);
-                }
-                None => {
-                    middles.push(Vec3::ZERO);
-                    normals.push(None);
-                    areas.push(0.0);
-                }
-            }
-        }
+        let (middles, normals, areas) = geometry(&scan);
         Reading { scan, across, middles, normals, areas, label: vec![OPEN; n], stamp: vec![0; n], now: 0 }
+    }
+
+    /// The same triangles at `positions` (one for each of the scan's), nothing taken yet.
+    fn on<'b>(&self, positions: &'b [Vec3]) -> Reading<'b>
+    where
+        'a: 'b,
+    {
+        let scan = Scan::new(positions, self.scan.triangles);
+        let (middles, normals, areas) = geometry(&scan);
+        let n = middles.len();
+        Reading { scan, across: self.across.clone(), middles, normals, areas, label: vec![OPEN; n], stamp: vec![0; n], now: 0 }
     }
 
     fn count(&self) -> usize {
@@ -311,6 +309,30 @@ impl<'a> Reading<'a> {
     }
 }
 
+/// Each triangle's middle, unit normal (none for a triangle gone to a line) and area.
+type Geometry = (Vec<Vec3>, Vec<Option<Vec3>>, Vec<f64>);
+
+fn geometry(scan: &Scan) -> Geometry {
+    let n = scan.triangle_count();
+    let (mut middles, mut normals, mut areas) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    for t in 0..n {
+        match scan.corners(t) {
+            Some([a, b, c]) => {
+                let cross = (b - a).cross(c - a);
+                middles.push((a + b + c) / 3.0);
+                normals.push(cross.normalized());
+                areas.push(cross.len() / 2.0);
+            }
+            None => {
+                middles.push(Vec3::ZERO);
+                normals.push(None);
+                areas.push(0.0);
+            }
+        }
+    }
+    (middles, normals, areas)
+}
+
 /// Whether `shape`, fitted to a region `across` wide about `at` on a scan `size` across, is no more than a
 /// flatter or simpler kind bent by noise or a scan's warp: a round far wider than the region, or
 /// wider than the part, a cone as steep as a plane or as narrow as a cylinder.
@@ -358,9 +380,15 @@ fn noise(reading: &mut Reading, options: &Options, size: f64) -> f64 {
 /// fitted to them in the frame of their plane: the root mean square.
 fn quadric_spread(scan: &Scan, patch: &[usize]) -> Option<f64> {
     let points: Vec<Vec3> = patch.iter().filter_map(|&t| scan.corners(t)).flatten().collect();
+    quadric_spread_of(&points)
+}
+
+/// How far `points` stray from the quadric fitted to them in the frame of their plane: the root
+/// mean square.
+pub(crate) fn quadric_spread_of(points: &[Vec3]) -> Option<f64> {
     let middle = points.iter().fold(Vec3::ZERO, |s, p| s + *p) / points.len().max(1) as f64;
     let mut spread = [[0.0f64; 3]; 3];
-    for p in &points {
+    for p in points {
         let d = *p - middle;
         let d = [d.x, d.y, d.z];
         for (row, di) in spread.iter_mut().zip(d) {
@@ -373,7 +401,7 @@ fn quadric_spread(scan: &Scan, patch: &[usize]) -> Option<f64> {
     let normal = axes[0].normalized()?;
     let (u, v) = crate::in_plane(normal);
     let (mut a, mut b) = ([[0.0f64; 6]; 6], [0.0f64; 6]);
-    for p in &points {
+    for p in points {
         let d = *p - middle;
         let (x, y, z) = (d.dot(u), d.dot(v), d.dot(normal));
         let row = [x * x, x * y, y * y, x, y, 1.0];
@@ -488,20 +516,142 @@ fn grow_kind(reading: &mut Reading, seed: usize, patch: &[usize], kind: Kind, to
     Some((shape, region))
 }
 
+/// How close a shape must lie to a scan `size` across with `noise`.
+fn tolerance_of(options: &Options, noise: f64, size: f64) -> f64 {
+    (options.noise_multiple * noise).max(options.form_share * size).max(1e-9)
+}
+
 /// Find All on `scan`. `cancelled` is asked between seeds; once it says so, the segments are what
 /// it had, every triangle still in one.
+///
+/// A scan whose noise is large against its triangles (a fine scanner mesh, not thinned) can turn
+/// each triangle further off its surface than any test of direction allows, and then next to
+/// nothing is found. Such a scan, when it finds less than [`FOUND_ENOUGH`] of its area in shapes,
+/// is read again on a copy smoothed by Denoise's filter, which keeps the edges: each shape found
+/// there is fitted again on the scan, its region freeform where it is no shape there, and every
+/// segment is measured on the scan. The answer with more of the scan in shapes is kept. Asked
+/// only when the first reading fails, a scan it reads well keeps its answer, wherever the scan
+/// lies and however its triangles are ordered.
 pub fn find_all(scan: &Scan, options: &Options, cancelled: &dyn Fn() -> bool) -> Outcome {
     let mut reading = Reading::new(*scan);
-    let n = reading.count();
     let size = scan.extent();
     let total: f64 = reading.areas.iter().sum();
     let noise = noise(&mut reading, options, size);
-    let tolerance = (options.noise_multiple * noise).max(options.form_share * size).max(1e-9);
+    let tolerance = tolerance_of(options, noise, size);
     let least_area = options.minimum_area_share * total;
+    let edge = crate::remesh::typical_edge(scan);
+    let noisy = edge > 0.0 && noise > SMOOTH_ABOVE * edge;
+    // A noisy scan whose first seeds find next to nothing is read on the copy without trying the rest.
+    let give_up = noisy.then_some(GIVE_UP_AFTER);
+    let (shapes, stopped) = shapes_on(&mut reading, options, tolerance, least_area, give_up, cancelled);
+    let first = finished(&mut reading, shapes, noise, tolerance, options.minimum_triangles, least_area, stopped);
+    if !noisy || first.cancelled || first.in_shapes >= FOUND_ENOUGH {
+        return first;
+    }
+    let Some(copy) = smoothed(&reading, options, noise, edge, size) else { return first };
+    // Only the directions are the copy's to give: how close a shape must lie is the scan's.
+    let mut on_copy = reading.on(&copy);
+    let (found, stopped) = shapes_on(&mut on_copy, options, tolerance, least_area, None, cancelled);
+    let shapes = refitted(&mut reading, &on_copy, found, noise, tolerance, size);
+    drop(on_copy);
+    let second = finished(&mut reading, shapes, noise, tolerance, options.minimum_triangles, least_area, stopped);
+    if second.in_shapes > first.in_shapes { second } else { first }
+}
+
+/// A scan that finds less than this share of its area in shapes, and is noisy against its
+/// triangles (noise above [`SMOOTH_ABOVE`] of the typical edge), is read again on a smoothed copy.
+const FOUND_ENOUGH: f64 = 0.5;
+const SMOOTH_ABOVE: f64 = 0.05;
+/// A noisy scan's first reading stops after this many seeds when they have found less than
+/// [`FOUND_NOTHING`] of its area in shapes: it is read on the copy.
+const GIVE_UP_AFTER: usize = 100;
+const FOUND_NOTHING: f64 = 0.01;
+/// The copy is smoothed until its noise is at most this, against the typical edge, or for at most
+/// [`MOST_PASSES`] passes.
+const SMOOTH_TO: f64 = 0.02;
+const MOST_PASSES: usize = 8;
+/// A copy that keeps more than this share of the noise had none to take away: what was measured
+/// was the scan's own shape on triangles too coarse for the patches it is measured on.
+const MOST_NOISE_KEPT: f64 = 0.5;
+
+/// The scan smoothed (its typical edge `edge`) for finding its regions on; `None` when smoothing
+/// does not halve its noise.
+fn smoothed(reading: &Reading, options: &Options, noise: f64, edge: f64, size: f64) -> Option<Vec<Vec3>> {
+    let mut kept = noise;
+    let (copy, _) = crate::denoise::smoothed_until(&reading.scan, MOST_PASSES, |positions| {
+        kept = self::noise(&mut reading.on(positions), options, size);
+        kept <= SMOOTH_TO * edge
+    })?;
+    (kept <= MOST_NOISE_KEPT * noise).then_some(copy)
+}
+
+/// A more complex kind replaces the kind found on the smoothed copy where it lies at most this
+/// share as far from the copy (root mean square), and the simpler kind is off the copy by at
+/// least [`OFF_BY`] of the scan's noise more than it: with the scan's noise allowed, a band of a
+/// cone lies near enough a sphere, the simpler kind, for the sphere to take it whole, while on
+/// the copy, its noise gone, the cone lies clearly closer. A plane stays a plane however a torus,
+/// freer, follows the little the smoothing left.
+const CLOSER: f64 = 0.9;
+const OFF_BY: f64 = 0.25;
+
+/// The shapes found on the smoothed `copy`, each of the kind that lies closest there (a more
+/// complex one only when it is clearly closer) and fitted again on the scan itself: kept, its
+/// triangles labelled, where it lies on the scan as closely as a shape must (its corners' root mean
+/// square within the tolerance, and no flatter kind bent); otherwise its triangles are left open.
+fn refitted(
+    reading: &mut Reading,
+    copy: &Reading,
+    found: Vec<(Shape, Vec<usize>)>,
+    noise: f64,
+    tolerance: f64,
+    size: f64,
+) -> Vec<(Shape, Vec<usize>)> {
+    reading.label.fill(OPEN);
+    let mut kept = Vec::new();
+    for (shape, region) in found {
+        let at = region.first().map_or(Vec3::ZERO, |&t| reading.middles[t]);
+        let across = reading.across_of(&region);
+        let (mut kind_of, mut closest) = (shape, copy.rms(&region, &shape));
+        for &kind in KINDS.iter().skip_while(|&&k| k != shape.kind()).skip(1) {
+            let Some(other) = fit::shape_of_sampled(&copy.scan, &region, kind, GROWING_POINTS) else { continue };
+            let rms = copy.rms(&region, &other);
+            // How far the closer kind's shape is from the other's, against the scan's noise.
+            let apart = (closest * closest - rms * rms).max(0.0).sqrt();
+            if rms < CLOSER * closest && apart > OFF_BY * noise && !degenerate(&other, at, across, size) {
+                (kind_of, closest) = (other, rms);
+            }
+        }
+        let Some(refit) = fit::refined(&reading.scan, &region, &kind_of, GROWING_POINTS) else { continue };
+        if reading.rms(&region, &refit) > tolerance || degenerate(&refit, at, across, size) {
+            continue;
+        }
+        let id = kept.len() as u32;
+        for &t in &region {
+            reading.label[t] = id;
+        }
+        kept.push((refit, region));
+    }
+    kept
+}
+
+/// The shapes on `reading`, each its triangles labelled; and whether it stopped because it was
+/// asked to. With `give_up`, it stops after that many seeds if they found next to nothing.
+fn shapes_on(
+    reading: &mut Reading,
+    options: &Options,
+    tolerance: f64,
+    least_area: f64,
+    give_up: Option<usize>,
+    cancelled: &dyn Fn() -> bool,
+) -> (Vec<(Shape, Vec<usize>)>, bool) {
+    let n = reading.count();
+    let total: f64 = reading.areas.iter().sum();
+    let mut found_area = 0.0;
+    let size = reading.scan.extent();
     let reach = options.seed_radius_share * size;
 
     // Seeds, deepest first.
-    let depth = depths(&reading);
+    let depth = depths(reading);
     let mut order: Vec<usize> = (0..n).filter(|&t| reading.areas[t] > 0.0).collect();
     order.sort_by_key(|&t| (std::cmp::Reverse(depth[t]), t));
     let mut tried = vec![false; n];
@@ -509,7 +659,7 @@ pub fn find_all(scan: &Scan, options: &Options, cancelled: &dyn Fn() -> bool) ->
     let mut seeds = 0usize;
     let mut stopped = false;
     for &seed in &order {
-        if seeds >= options.maximum_seeds {
+        if seeds >= options.maximum_seeds || give_up.is_some_and(|k| seeds >= k && found_area < FOUND_NOTHING * total) {
             break;
         }
         if tried[seed] || !reading.is_open(seed) {
@@ -535,7 +685,7 @@ pub fn find_all(scan: &Scan, options: &Options, cancelled: &dyn Fn() -> bool) ->
         // Each kind grown; the one that takes most, or a simpler one taking nearly as much.
         let mut grown: Vec<(Shape, Vec<usize>, f64)> = Vec::new();
         for kind in KINDS {
-            if let Some((shape, region)) = grow_kind(&mut reading, seed, &patch, kind, tolerance, size) {
+            if let Some((shape, region)) = grow_kind(reading, seed, &patch, kind, tolerance, size) {
                 let area = reading.area_of(&region);
                 grown.push((shape, region, area));
             }
@@ -549,11 +699,26 @@ pub fn find_all(scan: &Scan, options: &Options, cancelled: &dyn Fn() -> bool) ->
         for &t in &region {
             reading.label[t] = id;
         }
+        found_area += area;
         shapes.push((shape, region));
     }
 
-    let shapes = retaken(&mut reading, shapes, tolerance, options.minimum_triangles, least_area);
-    let shapes = joined(&mut reading, shapes, tolerance);
+    let shapes = retaken(reading, shapes, tolerance, options.minimum_triangles, least_area);
+    (joined(reading, shapes, tolerance), stopped)
+}
+
+/// The segments of `reading`: its shapes (their triangles labelled), and what they leave as
+/// freeform regions; measured, each plane facing out of the material, and in order.
+fn finished(
+    reading: &mut Reading,
+    shapes: Vec<(Shape, Vec<usize>)>,
+    noise: f64,
+    tolerance: f64,
+    least_triangles: usize,
+    least_area: f64,
+    stopped: bool,
+) -> Outcome {
+    let total: f64 = reading.areas.iter().sum();
     let mut segments: Vec<Segment> = shapes
         .into_iter()
         .map(|(shape, triangles)| {
@@ -561,9 +726,10 @@ pub fn find_all(scan: &Scan, options: &Options, cancelled: &dyn Fn() -> bool) ->
             Segment { triangles, shape: Some(shape), area, rms }
         })
         .collect();
-    leftovers(&mut reading, &mut segments, options.minimum_triangles, least_area);
+    leftovers(reading, &mut segments, least_triangles, least_area);
     // Each plane faces out of the material, as the scan is wound.
-    let outward = crate::reconstruct::outward(scan);
+    let scan = reading.scan;
+    let outward = crate::reconstruct::outward(&scan);
     for segment in &mut segments {
         if let Some(Shape::Plane { point, normal }) = segment.shape {
             let facing: f64 = segment.triangles.iter().filter_map(|&t| reading.normals[t].map(|n| n.dot(normal) * reading.areas[t])).sum();
@@ -874,6 +1040,46 @@ mod tests {
                 Some(Shape::Cone { half_angle, .. }) => assert!((half_angle.to_degrees() - 45.0).abs() < 0.1, "{half_angle}"),
                 Some(Shape::Torus { major, minor, .. }) => assert!((major - 16.0).abs() < 0.05 && (minor - 4.0).abs() < 0.05, "{major} {minor}"),
                 _ => {}
+            }
+        }
+    }
+
+    /// A draw about as spread as a normal one of deviation 1: three uniform draws summed.
+    fn draw(i: usize) -> f64 {
+        let uniform = |k: usize| {
+            let s = ((k as f64) * 12.9898 + 78.233).sin() * 43_758.545;
+            s - s.floor() - 0.5
+        };
+        2.0 * (uniform(3 * i) + uniform(3 * i + 1) + uniform(3 * i + 2))
+    }
+
+    /// A tube R 20 with a flat flange round its top and a chamfer round the flange, scanned finely
+    /// (edges about 0.7 to 1.4) with noise of a fifth of an edge, as a hand scanner's mesh comes
+    /// before it is thinned: each triangle faces up to 20° or more off its surface, which shattered
+    /// every face. Its faces are found, as on the clean part, and their sizes read from the scan.
+    #[test]
+    fn a_finely_scanned_noisy_part_is_its_faces() {
+        let mut profile: Vec<[f64; 2]> = (0..=30).map(|j| [0.7 * f64::from(j), 20.0]).collect();
+        profile.extend((1..=20).map(|j| [21.0, 20.0 + 0.7 * f64::from(j)]));
+        profile.extend((1..=10).map(|j| [21.0 - 0.7 * f64::from(j), 34.0 + 0.7 * f64::from(j)]));
+        let (clean, triangles) = revolved(&profile, 180, false);
+        let edge = crate::remesh::typical_edge(&Scan::new(&clean, &triangles));
+        let sigma = 0.2 * edge;
+        let positions: Vec<Vec3> =
+            clean.iter().enumerate().map(|(i, p)| *p + Vec3::new(draw(3 * i), draw(3 * i + 1), draw(3 * i + 2)) * sigma).collect();
+        for (positions, noise) in [(&clean, 0.0), (&positions, sigma)] {
+            let scan = Scan::new(positions, &triangles);
+            let outcome = find_all(&scan, &Options::default(), &|| false);
+            let found = kinds(&outcome);
+            let count = |k: Kind| found.iter().filter(|f| f.0 == k).count();
+            assert_eq!((count(Kind::Plane), count(Kind::Cylinder), count(Kind::Cone)), (1, 1, 1), "noise {noise}: {found:?}");
+            assert!(outcome.in_shapes > 0.9, "noise {noise}: {}", outcome.in_shapes);
+            for segment in &outcome.segments {
+                match segment.shape {
+                    Some(Shape::Cylinder { radius, .. }) => assert!((radius - 20.0).abs() < 0.05, "noise {noise}: {radius}"),
+                    Some(Shape::Cone { half_angle, .. }) => assert!((half_angle.to_degrees() - 45.0).abs() < 0.5, "noise {noise}: {half_angle}"),
+                    _ => {}
+                }
             }
         }
     }

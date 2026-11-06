@@ -168,13 +168,22 @@ pub fn tolerance(extent: f64) -> f64 {
     (0.0015 * extent).max(1e-6)
 }
 
+/// A shape must lie within this many times the scan's noise round the pick (by default).
+const NOISE_MULTIPLE: f64 = 3.0;
+
+/// Above this noise, against the typical edge round the pick, a triangle's direction is read over
+/// the triangles round it ([`RINGS`] of them deep): its own turns too far with the noise for any
+/// test of direction (a fifth of an edge turns it 15–20°).
+const SMOOTH_ABOVE: f64 = 0.05;
+const RINGS: usize = 3;
+
 /// Fits a `kind` of shape to the region round triangle `seed`. `tolerance` is how far (mm) a
-/// triangle may be from the shape and still be on it (default: [`tolerance`] of the scan).
+/// triangle may be from the shape and still be on it (default: [`tolerance`] of the scan, or three
+/// times its noise round the pick where that is more).
 pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Result<Fitted, FitError> {
     let [a, b, c] = scan.corners(seed).ok_or(FitError::NotOnTheScan)?;
     let pick = (a + b + c) / 3.0;
     let extent = scan.extent();
-    let tolerance = tolerance.filter(|t| t.is_finite() && *t > 0.0).unwrap_or_else(|| self::tolerance(extent));
     let neighbours = edge_neighbours(scan);
     // The start: the connected triangles within a small reach of the pick, wider for a cylinder
     // so that the patch curves enough to show its axis.
@@ -189,8 +198,13 @@ pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Resu
         reach *= 2.0;
         start = near(reach);
     }
-    let mut shape = solve(scan, &start, kind).ok_or(FitError::NoFit)?;
-    let rules = |region: &[usize], shape: &Shape| Growth { tolerance, lean: MAX_LEAN, bend: Some(bend_slack(scan, &neighbours, region, shape)) };
+    let (noise, edge) = noise_round(scan, &neighbours, &start).unwrap_or((0.0, 0.0));
+    let tolerance = tolerance.filter(|t| t.is_finite() && *t > 0.0).unwrap_or_else(|| self::tolerance(extent).max(NOISE_MULTIPLE * noise));
+    let facings = Facings::new(*scan, &neighbours, if edge > 0.0 && noise > SMOOTH_ABOVE * edge { RINGS } else { 0 });
+    // The shape read with the directions growth reads: a noisy scan's own normals mislead an axis.
+    let solve = |region: &[usize], kind: Kind| solve_facing(scan, region, kind, SOLVE_LIMIT, &facings);
+    let mut shape = solve(&start, kind).ok_or(FitError::NoFit)?;
+    let rules = |region: &[usize], shape: &Shape| Growth { tolerance, lean: MAX_LEAN, bend: Some(bend_slack(&facings, region, shape)) };
     // Grow against the shape, fitting again while the region grows by a tenth, then once more
     // against the final shape; the turn allowed is read again from each fit.
     let mut region = start;
@@ -199,16 +213,16 @@ pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Resu
         if flat_cylinder(scan, &region, &shape, 0.1 * extent) {
             return Err(FitError::NoFit);
         }
-        let grown = grow_by(scan, &neighbours, &[seed], &shape, &rules(&region, &shape), None);
+        let grown = grow_by(&facings, &[seed], &shape, &rules(&region, &shape), None);
         let more = grown.len() * 10 >= region.len() * 11;
         region = grown;
-        shape = solve(scan, &region, kind).unwrap_or(shape);
+        shape = solve(&region, kind).unwrap_or(shape);
         if !more {
             break;
         }
     }
-    let region = grow_by(scan, &neighbours, &[seed], &shape, &rules(&region, &shape), None);
-    let shape = solve(scan, &region, kind).unwrap_or(shape);
+    let region = grow_by(&facings, &[seed], &shape, &rules(&region, &shape), None);
+    let shape = solve(&region, kind).unwrap_or(shape);
     if region.len() < 3 {
         return Err(FitError::NoFit);
     }
@@ -362,9 +376,100 @@ pub(crate) struct Growth {
     pub bend: Option<f64>,
 }
 
+/// The directions triangles face as growth reads them: each its own normal on a clean scan; on a
+/// noisy one, the area-weighted normal of the triangles within `rings` edges of it, each read
+/// once and kept.
+pub(crate) struct Facings<'a> {
+    scan: Scan<'a>,
+    neighbours: &'a EdgeNeighbours,
+    rings: usize,
+    known: std::cell::RefCell<std::collections::HashMap<usize, Option<Vec3>>>,
+}
+
+impl<'a> Facings<'a> {
+    pub(crate) fn new(scan: Scan<'a>, neighbours: &'a EdgeNeighbours, rings: usize) -> Self {
+        Facings { scan, neighbours, rings, known: Default::default() }
+    }
+
+    fn cross(&self, t: usize) -> Option<Vec3> {
+        self.scan.corners(t).map(|[a, b, c]| (b - a).cross(c - a))
+    }
+
+    /// The way triangle `t` faces, either way round as it is wound.
+    pub(crate) fn of(&self, t: usize) -> Option<Vec3> {
+        if self.rings == 0 {
+            return self.cross(t)?.normalized();
+        }
+        if let Some(known) = self.known.borrow().get(&t) {
+            return *known;
+        }
+        let own = self.cross(t)?;
+        let (mut seen, mut front, mut sum) = (vec![t], vec![t], own);
+        for _ in 0..self.rings {
+            let mut next = Vec::new();
+            for &f in &front {
+                for n in self.neighbours.of(&self.scan, f) {
+                    if !seen.contains(&n) {
+                        seen.push(n);
+                        next.push(n);
+                        if let Some(c) = self.cross(n) {
+                            sum += if c.dot(own) < 0.0 { -c } else { c };
+                        }
+                    }
+                }
+            }
+            front = next;
+        }
+        let facing = sum.normalized();
+        self.known.borrow_mut().insert(t, facing);
+        facing
+    }
+}
+
+/// How noisy the scan is round the triangles `start`, and its typical edge there: a quadric fitted
+/// to each of a few small patches spread over them, the lower middle of how far their points
+/// stray from it (a patch over an edge strays far, and does not count); `None` with no patch to
+/// read.
+fn noise_round(scan: &Scan, neighbours: &EdgeNeighbours, start: &[usize]) -> Option<(f64, f64)> {
+    const PATCH: usize = 60;
+    let (mut spreads, mut edges) = (Vec::new(), Vec::new());
+    for centre in crate::thinned(start, 9) {
+        // The first triangles reached from the centre.
+        let (mut patch, mut head) = (vec![centre], 0);
+        while let Some(&t) = patch.get(head) {
+            head += 1;
+            for n in neighbours.of(scan, t) {
+                if patch.len() < PATCH && !patch.contains(&n) {
+                    patch.push(n);
+                }
+            }
+        }
+        let mut corners: Vec<u32> = patch.iter().filter_map(|&t| scan.triangles.get(t)).flatten().copied().collect();
+        corners.sort_unstable();
+        corners.dedup();
+        let points: Vec<Vec3> = corners.iter().filter_map(|&v| scan.positions.get(v as usize).copied()).collect();
+        if points.len() < 16 {
+            continue;
+        }
+        // The quadric's six numbers take their share of the points' spread.
+        let m = points.len() as f64;
+        if let Some(spread) = crate::segment::quadric_spread_of(&points) {
+            spreads.push(spread * (m / (m - 6.0)).sqrt());
+        }
+        edges.extend(patch.iter().filter_map(|&t| scan.corners(t)).flat_map(|[a, b, c]| [a.dist(b), b.dist(c), c.dist(a)]));
+    }
+    if spreads.is_empty() || edges.is_empty() {
+        return None;
+    }
+    spreads.sort_by(f64::total_cmp);
+    edges.sort_by(f64::total_cmp);
+    Some((spreads[(spreads.len() * 3) / 10], edges[edges.len() / 2]))
+}
+
 /// The connected triangles from `seeds` (each of them taken, on the shape or not) that lie on
 /// `shape` by `rules`, and only those `open` allows when it is given.
-pub(crate) fn grow_by(scan: &Scan, neighbours: &EdgeNeighbours, seeds: &[usize], shape: &Shape, rules: &Growth, open: Option<&[bool]>) -> Vec<usize> {
+pub(crate) fn grow_by(facings: &Facings, seeds: &[usize], shape: &Shape, rules: &Growth, open: Option<&[bool]>) -> Vec<usize> {
+    let (scan, neighbours) = (&facings.scan, facings.neighbours);
     let cos = rules.lean.cos();
     let tolerance = rules.tolerance;
     let on = |t: usize| -> Option<(Vec3, Option<Vec3>)> {
@@ -373,7 +478,7 @@ pub(crate) fn grow_by(scan: &Scan, neighbours: &EdgeNeighbours, seeds: &[usize],
             return None;
         }
         let middle = (a + b + c) / 3.0;
-        let own = (b - a).cross(c - a).normalized();
+        let own = facings.of(t);
         match (own, shape.normal_at(middle)) {
             (Some(n), Some(m)) if n.dot(m).abs() < cos => None,
             // A sliver with no direction is judged by where it is alone.
@@ -391,7 +496,7 @@ pub(crate) fn grow_by(scan: &Scan, neighbours: &EdgeNeighbours, seeds: &[usize],
     let mut head = 0;
     while let Some(&t) = found.get(head) {
         head += 1;
-        let here = scan.corners(t).map(|[a, b, c]| ((a + b + c) / 3.0, (b - a).cross(c - a).normalized()));
+        let here = scan.corners(t).map(|[a, b, c]| ((a + b + c) / 3.0, facings.of(t)));
         for n in neighbours.of(scan, t) {
             if seen.get(n).is_none_or(|s| *s) || open.is_some_and(|o| !o.get(n).copied().unwrap_or(false)) {
                 continue;
@@ -421,14 +526,15 @@ fn bend_off(shape: &Shape, from: Vec3, a: Vec3, to: Vec3, b: Vec3) -> Option<f64
 /// `region` (fitted to it): half as much again as the most it is off between nearly every pair
 /// (the 995th in a thousand: a faceted mesh turns at its facets' edges, a few pairs in many), and
 /// at least 2°.
-pub(crate) fn bend_slack(scan: &Scan, neighbours: &EdgeNeighbours, region: &[usize], shape: &Shape) -> f64 {
+pub(crate) fn bend_slack(facings: &Facings, region: &[usize], shape: &Shape) -> f64 {
+    let (scan, neighbours) = (&facings.scan, facings.neighbours);
     let mut inside = vec![false; scan.triangle_count()];
     for &t in region {
         if let Some(slot) = inside.get_mut(t) {
             *slot = true;
         }
     }
-    let place = |t: usize| scan.corners(t).and_then(|[a, b, c]| Some(((a + b + c) / 3.0, (b - a).cross(c - a).normalized()?)));
+    let place = |t: usize| scan.corners(t).and_then(|[a, b, c]| Some(((a + b + c) / 3.0, facings.of(t)?)));
     let mut offs = Vec::new();
     for &t in region {
         let Some((from, a)) = place(t) else { continue };
@@ -463,6 +569,11 @@ struct Samples {
 }
 
 fn samples(scan: &Scan, region: &[usize], limit: usize) -> Option<Samples> {
+    samples_facing(scan, region, limit, None)
+}
+
+/// [`samples`], each triangle's direction the one `facings` reads when it is given.
+fn samples_facing(scan: &Scan, region: &[usize], limit: usize, facings: Option<&Facings>) -> Option<Samples> {
     let mut points = Vec::with_capacity(region.len() * 3);
     let mut normals = [[0.0f64; 3]; 3];
     let (mut total, mut sum) = (0.0, Vec3::ZERO);
@@ -470,7 +581,8 @@ fn samples(scan: &Scan, region: &[usize], limit: usize) -> Option<Samples> {
         let Some([a, b, c]) = scan.corners(t) else { continue };
         let cross = (b - a).cross(c - a);
         let area = cross.len() / 2.0;
-        let Some(n) = cross.normalized() else { continue };
+        let Some(own) = cross.normalized() else { continue };
+        let n = facings.and_then(|f| f.of(t)).unwrap_or(own);
         total += area;
         sum += (a + b + c) * (area / 3.0);
         for p in [a, b, c] {
@@ -508,12 +620,23 @@ fn solve(scan: &Scan, region: &[usize], kind: Kind) -> Option<Shape> {
 /// [`solve`] on at most about `limit` of the region's points.
 fn solve_with(scan: &Scan, region: &[usize], kind: Kind, limit: usize) -> Option<Shape> {
     let s = samples(scan, region, limit)?;
+    solved(&s, kind)
+}
+
+/// [`solve_with`], each triangle facing as `facings` reads it.
+fn solve_facing(scan: &Scan, region: &[usize], kind: Kind, limit: usize, facings: &Facings) -> Option<Shape> {
+    let s = samples_facing(scan, region, limit, Some(facings))?;
+    solved(&s, kind)
+}
+
+/// The shape of `kind` fitted to the samples.
+fn solved(s: &Samples, kind: Kind) -> Option<Shape> {
     let shape = match kind {
-        Kind::Plane => plane(&s)?,
-        Kind::Cylinder => cylinder(&s)?,
-        Kind::Sphere => sphere(&s)?,
-        Kind::Cone => cone(&s)?,
-        Kind::Torus => torus(&s)?,
+        Kind::Plane => plane(s)?,
+        Kind::Cylinder => cylinder(s)?,
+        Kind::Sphere => sphere(s)?,
+        Kind::Cone => cone(s)?,
+        Kind::Torus => torus(s)?,
     };
     // Back from about the region's middle.
     Some(shape.moved(s.origin))
@@ -1280,5 +1403,56 @@ mod tests {
             Err(FitError::NoFit),
             "a flat face has no axis"
         );
+    }
+
+    /// A draw about as spread as a normal one of deviation 1: three uniform draws summed.
+    fn draw(i: usize) -> f64 {
+        let uniform = |k: usize| {
+            let s = ((k as f64) * 12.9898 + 78.233).sin() * 43_758.545;
+            s - s.floor() - 0.5
+        };
+        2.0 * (uniform(3 * i) + uniform(3 * i + 1) + uniform(3 * i + 2))
+    }
+
+    /// `positions` each moved by a noise of deviation `sigma` every way.
+    fn noisy(positions: &mut [Vec3], sigma: f64) {
+        for (i, p) in positions.iter_mut().enumerate() {
+            *p += Vec3::new(draw(3 * i), draw(3 * i + 1), draw(3 * i + 2)) * sigma;
+        }
+    }
+
+    /// A tube R 20, 30 long, scanned finely (edges about 0.7) with noise of a fifth of an edge, as a
+    /// hand scanner's mesh comes before it is thinned: each triangle faces up to 20° or more off the
+    /// tube. A cylinder picked on it takes nearly the whole tube, at its true radius, and a plane
+    /// picked on a noisy plate the whole plate.
+    #[test]
+    fn a_noisy_fine_scan_is_fitted_whole() {
+        let profile: Vec<[f64; 2]> = (0..=43).map(|j| [0.7 * f64::from(j), 20.0]).collect();
+        let (mut positions, triangles) = crate::test_meshes::revolved(&profile, 180, false);
+        noisy(&mut positions, 0.14);
+        let scan = Scan::new(&positions, &triangles);
+        let seed = nearest_triangle(&scan, Vec3::new(20.0, 0.0, 15.0)).unwrap();
+        let fitted = fit(&scan, seed, Kind::Cylinder, None).unwrap();
+        let Shape::Cylinder { axis, radius, .. } = fitted.shape else { panic!("{:?}", fitted.shape) };
+        assert!((radius - 20.0).abs() < 0.05 && axis.z.abs() > 0.5f64.to_radians().cos(), "{radius} {axis:?}");
+        assert!(fitted.triangles.len() > 9 * triangles.len() / 10, "{} of {}", fitted.triangles.len(), triangles.len());
+
+        let n = 86u32;
+        let mut positions: Vec<Vec3> = (0..=n).flat_map(|j| (0..=n).map(move |i| Vec3::new(0.7 * f64::from(i), 0.7 * f64::from(j), 0.0))).collect();
+        let mut triangles = Vec::new();
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * (n + 1) + i;
+                triangles.push([k, k + 1, k + n + 2]);
+                triangles.push([k, k + n + 2, k + n + 1]);
+            }
+        }
+        noisy(&mut positions, 0.14);
+        let scan = Scan::new(&positions, &triangles);
+        let seed = nearest_triangle(&scan, Vec3::new(30.0, 30.0, 0.0)).unwrap();
+        let fitted = fit(&scan, seed, Kind::Plane, None).unwrap();
+        let Shape::Plane { normal, .. } = fitted.shape else { panic!("{:?}", fitted.shape) };
+        assert!(normal.z.abs() > 0.2f64.to_radians().cos(), "{normal:?}");
+        assert!(fitted.triangles.len() > 9 * triangles.len() / 10, "{} of {}", fitted.triangles.len(), triangles.len());
     }
 }

@@ -286,6 +286,11 @@ impl Run {
         Stage { roughness: self.mesh.roughness(p), rms_moved, max_moved }
     }
 
+    /// `p` with every position following its weld (a pass moves only the first copy of each).
+    fn expanded(&self, p: &[Vec3]) -> Vec<Vec3> {
+        (0..self.original.len()).map(|v| p.get(self.mesh.weld[v] as usize).or(p.get(v)).copied().unwrap_or(self.original[v])).collect()
+    }
+
     /// The positions at `strength` passes: as many whole passes as it reaches, the last two
     /// blended, every position following its weld.
     fn smoothed(&self, strength: f64) -> Option<Vec<Vec3>> {
@@ -336,6 +341,22 @@ pub fn study(scan: &Scan) -> Option<Study> {
     }
     let suggested = if best_value <= (1.0 - REQUIRED_IMPROVEMENT) * error[0] { (best * 20.0).round() / 20.0 } else { 0.0 };
     Some(Study { noise: stages[0].roughness, stages, suggested, typical_edge: run.edge })
+}
+
+/// `scan`'s positions smoothed pass by pass until `enough` finds them smooth enough or `most`
+/// passes have run, and how many ran; `None` for a scan with nothing to smooth.
+pub(crate) fn smoothed_until(scan: &Scan, most: usize, mut enough: impl FnMut(&[Vec3]) -> bool) -> Option<(Vec<Vec3>, usize)> {
+    let run = Run::new(scan)?;
+    let mut at = run.original.clone();
+    let mut positions = at.clone();
+    for pass in 1..=most {
+        at = run.mesh.pass(&at, run.edge);
+        positions = run.expanded(&at);
+        if enough(&positions) {
+            return Some((positions, pass));
+        }
+    }
+    Some((positions, most))
 }
 
 /// `scan` smoothed at `strength` passes, or at the strength the study suggests (which runs the
