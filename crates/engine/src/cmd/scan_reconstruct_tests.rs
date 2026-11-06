@@ -62,6 +62,8 @@ fn scanned(s: &Session, body: &str, levels: u32, tag: &str) -> (Session, String)
     std::fs::write(&path, stl).unwrap();
     let mut scan = Session::default();
     run(&mut scan, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    // The scan is in the design now; the file (over 200 MB for a fine part) would fill /tmp.
+    let _ = std::fs::remove_dir_all(&dir);
     let name = scan.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
     (scan, name)
 }
@@ -181,6 +183,7 @@ fn reconstruct_proposes_no_cut_with_nothing_to_cut() {
     let hole = Hole { face: 0, mouth: Vec3::new(0.0, 0.0, 10.0), bottom: Vec3::ZERO, radius: 3.0, repeat: None };
     let mut reading = Reading {
         faces: vec![Face { shape: Shape::Cylinder { point: Vec3::ZERO, axis: Vec3::Z, radius: 3.0 }, area: 180.0 }],
+        same: vec![0],
         in_shapes: 0.4,
         prisms: Vec::new(),
         unread_prisms: 0,

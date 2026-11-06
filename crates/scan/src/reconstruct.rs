@@ -62,7 +62,8 @@ const SAME_LEVEL: f64 = 0.25;
 /// those before it do not.
 const LEAST_NEW: f64 = 0.02;
 
-/// A shape and how much of the scan it covers.
+/// A shape and how much of the scan it covers (none for a piece of another face's surface,
+/// [`Reading::same`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Face {
     pub shape: Shape,
@@ -465,7 +466,9 @@ pub fn turning_axis(shapes: &[(Shape, f64)], size: f64) -> Option<Axis> {
 pub fn revolve(faces: &[Face], size: f64) -> Option<Revolve> {
     let weighted: Vec<(Shape, f64)> = faces.iter().map(|f| (f.shape, f.area)).collect();
     let axis = turning_axis(&weighted, size)?;
-    let on: Vec<(usize, bool)> = faces.iter().enumerate().filter_map(|(k, f)| about(f, &axis, size).map(|round| (k, round))).collect();
+    // A piece of another face's surface (no area of its own) is read with that face.
+    let on: Vec<(usize, bool)> =
+        faces.iter().enumerate().filter(|(_, f)| f.area > 0.0).filter_map(|(k, f)| about(f, &axis, size).map(|round| (k, round))).collect();
     let total: f64 = faces.iter().map(|f| f.area).sum();
     let members: Vec<usize> = on.iter().map(|m| m.0).collect();
     let share = members.iter().map(|&k| faces[k].area).sum::<f64>() / total.max(1e-300);
@@ -481,6 +484,10 @@ struct Likeness {
 }
 
 fn likeness(face: &Face) -> Option<Likeness> {
+    // A piece of another face's surface is no shape of its own to repeat.
+    if !(face.area > 0.0) {
+        return None;
+    }
     match face.shape {
         Shape::Cylinder { point, axis, radius } => Some(Likeness { kind: Kind::Cylinder, size: radius, direction: Some(unit(axis)), place: point }),
         Shape::Sphere { center, radius } => Some(Likeness { kind: Kind::Sphere, size: radius, direction: None, place: center }),
@@ -841,8 +848,13 @@ pub fn holes(
 /// What Reconstruct reads off a scan's Find All.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Reading {
-    /// The shapes found, in the order of the outcome's segments (shape `k` is segment `k`).
+    /// The shapes found, in the order of the outcome's segments (shape `k` is segment `k`). A
+    /// surface Find All found in pieces is read as its largest: that face has their area together,
+    /// and each other piece none.
     pub faces: Vec<Face>,
+    /// Each face's surface ([`same_surfaces`]): the face that stands for it, itself unless it is a
+    /// piece of a larger one.
+    pub same: Vec<usize>,
     /// The share of the scan's area in shapes.
     pub in_shapes: f64,
     pub prisms: Vec<Prism>,
@@ -885,6 +897,13 @@ pub fn is_round_hole(scan: &Scan, segment: &Segment, outward: f64) -> bool {
         })
         .sum();
     facing * outward < 0.0
+}
+
+/// Whether the cylinder of `segment` is a hole Cut It should drill: material round it
+/// ([`is_round_hole`]) at least half way round its axis. A narrower hollow strip is the round in an
+/// inside corner or the side of a groove, which a cut through the part would ruin it with.
+pub fn is_hole_to_cut(scan: &Scan, segment: &Segment, outward: f64) -> bool {
+    is_round_hole(scan, segment, outward) && arc_covered(scan, segment) >= PI
 }
 
 /// How far round its axis a round segment's triangles reach, in radians (`TAU` all the way).
@@ -942,18 +961,135 @@ pub fn span(scan: &Scan, segment: &Segment, direction: Vec3) -> Option<(f64, f64
         .fold(None, |range: Option<(f64, f64)>, d| Some(range.map_or((d, d), |(least, most)| (least.min(d), most.max(d)))))
 }
 
+/// Planes facing this nearly the same way, or cylinders whose axes lie this nearly along each
+/// other (a cosine, about 3°: a narrow strip of a round holds its axis no better), may be one
+/// surface.
+const SAME_SURFACE: f64 = 0.9986;
+/// How many of a shape's triangles [`same_surfaces`] fits and measures, at most.
+const SURFACE_SAMPLES: usize = 240;
+
+/// One surface as [`same_surfaces`] gathers it: the face that stands for it, every `step`th
+/// triangle of each of its pieces (so each piece weighs as much as it covers), and the shape
+/// fitted to them.
+struct Surface {
+    face: usize,
+    step: usize,
+    sample: Vec<usize>,
+    shape: Shape,
+}
+
+/// `fitted` turned to face as `was` does: a plane fitted afresh faces either way, and which way a
+/// face faces is which side its material is on.
+fn facing_as(fitted: Shape, was: &Shape) -> Shape {
+    match (fitted, *was) {
+        (Shape::Plane { point, normal }, Shape::Plane { normal: before, .. }) if normal.dot(before) < 0.0 => Shape::Plane { point, normal: -normal },
+        (Shape::Cylinder { point, axis, radius }, Shape::Cylinder { axis: before, .. }) if axis.dot(before) < 0.0 => {
+            Shape::Cylinder { point, axis: -axis, radius }
+        }
+        _ => fitted,
+    }
+}
+
+/// The shapes Find All found in pieces of one surface (a parting line or a crease of noise across
+/// a face, a round cut in two along its length): each shape's surface, as an index into `shaped`
+/// (its largest piece, else the shape itself), and for each surface in pieces the shape fitted to
+/// them all. A piece joins a larger surface of its kind (a plane facing the same way, a cylinder
+/// about nearly the same axis with nearly the same radius) when one shape fitted to both lies
+/// within the scan's `tolerance` of each (as a root mean square). Each piece is measured against
+/// the surface gathered so far, never one piece against another, so a gently curved face Find
+/// All read as several planes is not run together into one.
+pub fn same_surfaces(scan: &Scan, shaped: &[&Segment], tolerance: f64) -> (Vec<usize>, BTreeMap<usize, Shape>) {
+    let n = shaped.len();
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| shaped[b].area.total_cmp(&shaped[a].area).then(a.cmp(&b)));
+    let corners = |triangles: &[usize]| -> Vec<Vec3> { triangles.iter().filter_map(|&t| scan.corners(t)).flatten().collect() };
+    let within = |shape: &Shape, points: &[Vec3]| {
+        !points.is_empty() && (points.iter().map(|&p| shape.distance(p).powi(2)).sum::<f64>() / points.len() as f64).sqrt() <= tolerance
+    };
+    let mut same: Vec<usize> = (0..n).collect();
+    let mut surfaces: Vec<Surface> = Vec::new();
+    for &k in &order {
+        let Some(shape) = shaped[k].shape else { continue };
+        let step = (shaped[k].triangles.len() / SURFACE_SAMPLES).max(1);
+        let sample: Vec<usize> = shaped[k].triangles.iter().step_by(step).copied().collect();
+        let points = corners(&sample);
+        let Some(middle) = (!points.is_empty()).then(|| points.iter().fold(Vec3::ZERO, |s, p| s + *p) / points.len() as f64) else { continue };
+        // Of a kind with the surface, and near enough that fitting both is worth it: a plane's
+        // middle on the surface, a cylinder's axis along the surface's.
+        let kin = |surface: &Surface| match (surface.shape, shape) {
+            (Shape::Plane { normal: m, .. }, Shape::Plane { normal: n, .. }) => {
+                unit(m).dot(unit(n)) >= SAME_SURFACE && surface.shape.distance(middle).abs() <= 4.0 * tolerance
+            }
+            (Shape::Cylinder { point: p, axis: a, radius: r }, Shape::Cylinder { point: q, axis: b, radius: s }) => {
+                let (a, v) = (unit(a), q - p);
+                let off = (v - a * v.dot(a)).len();
+                let reach = 4.0 * tolerance + 0.05 * r.max(s);
+                a.dot(unit(b)).abs() >= SAME_SURFACE && (r - s).abs() <= reach && off <= reach
+            }
+            _ => false,
+        };
+        let joined = surfaces.iter_mut().filter(|s| kin(s)).find_map(|surface| {
+            let weighed: Vec<usize> = shaped[k].triangles.iter().step_by(surface.step).copied().collect();
+            let both: Vec<usize> = surface.sample.iter().chain(&weighed).copied().collect();
+            let fitted = facing_as(crate::fit::refined(scan, &both, &surface.shape, 4 * SURFACE_SAMPLES)?, &surface.shape);
+            (fitted.kind() == shape.kind() && within(&fitted, &corners(&surface.sample)) && within(&fitted, &points)).then(|| {
+                surface.sample = both;
+                surface.shape = fitted;
+                surface.face
+            })
+        });
+        match joined {
+            Some(face) => same[k] = face,
+            None => surfaces.push(Surface { face: k, step, sample, shape }),
+        }
+    }
+    let fitted =
+        surfaces.into_iter().filter(|s| same.iter().enumerate().any(|(k, &f)| f == s.face && k != s.face)).map(|s| (s.face, s.shape)).collect();
+    (same, fitted)
+}
+
 /// What the shapes of `outcome` (Find All on `scan`) say.
 pub fn read(scan: &Scan, outcome: &Outcome) -> Reading {
     let shaped: Vec<&Segment> = outcome.segments.iter().take_while(|s| s.shape.is_some()).collect();
-    let faces: Vec<Face> = shaped.iter().filter_map(|s| s.shape.map(|shape| Face { shape, area: s.area })).collect();
+    let (same, fitted) = same_surfaces(scan, &shaped, outcome.tolerance);
+    let piece = |k: usize| same.get(k).is_some_and(|&s| s != k);
+    let pieces: BTreeSet<usize> = (0..shaped.len()).filter(|&k| piece(k)).collect();
+    // A surface in pieces is read whole: the shape fitted to them all, its area theirs together,
+    // a piece's none.
+    let mut faces: Vec<Face> = shaped.iter().filter_map(|s| s.shape.map(|shape| Face { shape, area: s.area })).collect();
+    for (&k, &shape) in &fitted {
+        faces[k].shape = shape;
+    }
+    for &k in &pieces {
+        faces[same[k]].area += faces[k].area;
+        faces[k].area = 0.0;
+    }
     let size = scan.extent();
-    let span_of = |k: usize, d: Vec3| shaped.get(k).and_then(|s| span(scan, s, d));
+    let span_of = |k: usize, d: Vec3| {
+        (0..shaped.len()).filter(|&j| same[j] == k).filter_map(|j| span(scan, shaped[j], d)).reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
+    };
+    // A round surface in pieces, its triangles together, for how far round it goes.
+    let whole = |k: usize| -> std::borrow::Cow<'_, Segment> {
+        if pieces.iter().any(|&j| same[j] == k) {
+            let mut joined = shaped[k].clone();
+            for &j in pieces.iter().filter(|&&j| same[j] == k) {
+                joined.triangles.extend_from_slice(&shaped[j].triangles);
+                joined.area += shaped[j].area;
+            }
+            std::borrow::Cow::Owned(joined)
+        } else {
+            std::borrow::Cow::Borrowed(shaped[k])
+        }
+    };
     let sign = outward(scan);
-    let hole = |k: usize| shaped.get(k).is_some_and(|s| is_round_hole(scan, s, sign));
+    // Read once: the floors below ask of every pair of faces.
+    let holes_at: Vec<bool> = (0..shaped.len()).map(|k| !piece(k) && is_hole_to_cut(scan, &whole(k), sign)).collect();
+    let hole = |k: usize| holes_at.get(k).copied().unwrap_or(false);
     // A hole's floor is the hole's: a flat face on its axis, square to it, about as big as its end.
     let floors: BTreeSet<usize> = (0..faces.len()).filter(|&j| (0..faces.len()).any(|k| hole(k) && is_floor_of(&faces[k], &faces[j]))).collect();
     let revolve = revolve(&faces, size);
-    let mut prisms = extrusions(&faces, &span_of, size, &floors);
+    let ignored: BTreeSet<usize> = floors.union(&pieces).copied().collect();
+    let mut prisms = extrusions(&faces, &span_of, size, &ignored);
     // Walls all about the turning axis are the steps of a turned part, read twice over.
     if let Some(revolve) = &revolve {
         prisms.retain(|p| !p.walls.iter().all(|w| revolve.members.contains(w)));
@@ -966,19 +1102,19 @@ pub fn read(scan: &Scan, outcome: &Outcome) -> Reading {
     let read_prisms = prisms.len();
     if !prisms.is_empty() {
         let weld = crate::welded(scan.positions);
-        prisms.retain(|p| crate::profile::prism_profile_from(scan, &weld, outcome, &faces, size, p).is_ok());
+        prisms.retain(|p| crate::profile::prism_profile_from(scan, &weld, outcome, &faces, &same, size, p).is_ok());
     }
     let unread_prisms = read_prisms - prisms.len();
-    let turned_unread = revolve.as_ref().and_then(|r| crate::profile::turned_profile_of(scan, outcome, &faces, size, r).err());
+    let turned_unread = revolve.as_ref().and_then(|r| crate::profile::turned_profile_of(scan, outcome, &faces, &same, size, r).err());
     let explained: BTreeSet<usize> = match &revolve {
         Some(revolve) => revolve.members.iter().copied().collect(),
         None => prisms.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).copied().collect(),
     };
     let middle = crate::surface_centre(scan).unwrap_or(Vec3::ZERO);
     let holes = holes(&faces, &hole, &explained, &repeats, &span_of, middle);
-    let rounds: BTreeSet<usize> = (0..shaped.len()).filter(|&k| is_edge_round(scan, shaped[k], size)).collect();
+    let rounds: BTreeSet<usize> = (0..shaped.len()).filter(|&k| !piece(k) && is_edge_round(scan, &whole(k), size)).collect();
     let plans = pattern_plans(&faces, &repeats, &rounds);
-    Reading { faces, in_shapes: outcome.in_shapes, prisms, unread_prisms, revolve, turned_unread, repeats, plans, holes, rounds, size }
+    Reading { faces, same, in_shapes: outcome.in_shapes, prisms, unread_prisms, revolve, turned_unread, repeats, plans, holes, rounds, size }
 }
 
 #[cfg(test)]
@@ -1148,5 +1284,63 @@ mod tests {
         let reading = super::read(&scan, &outcome);
         assert!(reading.prisms.is_empty(), "{:?}", reading.prisms);
         assert_eq!(reading.unread_prisms, 1);
+    }
+
+    /// A block whose −Y side Find All found as two planes (a parting line across it), the smaller
+    /// fitted a little turned: one surface, read as the larger, so the prism has the block's four
+    /// sides and its profile four lines, not a fifth wall bridged across.
+    #[test]
+    fn a_side_found_in_two_pieces_is_one_wall() {
+        let n = 8;
+        let (positions, triangles) = crate::test_meshes::fine_cuboid(Vec3::ZERO, Vec3::new(20.0, 20.0, 10.0), n);
+        let scan = Scan::new(&positions, &triangles);
+        // The sides in `fine_cuboid`'s order: −X, +X, −Y, +Y, −Z, +Z.
+        let per = 2 * (n * n) as usize;
+        let side = |k: usize| -> Vec<usize> { (k * per..(k + 1) * per).collect() };
+        let segment = |triangles: Vec<usize>, shape: Shape, area: f64| Segment { triangles, shape: Some(shape), area, rms: 0.0 };
+        let plane = |point: Vec3, normal: Vec3| Shape::Plane { point, normal };
+        let turned = Vec3::new(0.3f64.to_radians().sin(), -0.3f64.to_radians().cos(), 0.0);
+        let outcome = Outcome {
+            segments: vec![
+                segment(side(4), plane(Vec3::ZERO, -Vec3::Z), 400.0),
+                segment(side(5), plane(Vec3::new(0.0, 0.0, 10.0), Vec3::Z), 400.0),
+                segment(side(0), plane(Vec3::ZERO, -Vec3::X), 200.0),
+                segment(side(1), plane(Vec3::new(20.0, 0.0, 0.0), Vec3::X), 200.0),
+                segment(side(3), plane(Vec3::new(0.0, 20.0, 0.0), Vec3::Y), 200.0),
+                segment(side(2)[..per / 2].to_vec(), plane(Vec3::ZERO, -Vec3::Y), 100.0),
+                segment(side(2)[per / 2..].to_vec(), plane(Vec3::new(10.0, 0.01, 5.0), turned), 99.0),
+            ],
+            noise: 0.0,
+            tolerance: 0.05,
+            in_shapes: 1.0,
+            cancelled: false,
+        };
+        let reading = super::read(&scan, &outcome);
+        assert_eq!(reading.same, vec![0, 1, 2, 3, 4, 5, 5], "{:?}", reading.same);
+        assert_eq!(reading.faces[5].area, 199.0);
+        assert_eq!(reading.faces[6].area, 0.0);
+        let prism = reading.prisms.iter().find(|p| p.direction.dot(Vec3::Z).abs() > 0.99).expect("a prism along Z");
+        assert!(!prism.walls.contains(&6), "{prism:?}");
+        let (_, outlines) = crate::profile::prism_profile(&scan, &outcome, &reading, prism).unwrap();
+        assert_eq!(outlines.len(), 1, "{outlines:?}");
+        assert_eq!(outlines[0].pieces, vec![crate::profile::Piece::Line; 4], "{:?}", outlines[0]);
+    }
+
+    /// A washer's bore goes all the way round its axis and is a hole to cut. A quarter of it, as
+    /// the round in an inside corner shows on a scan, is hollow too, but no hole: Reconstruct
+    /// proposed cutting such strips through a scanned case (3 mm bores 30 mm long).
+    #[test]
+    fn a_hollow_strip_less_than_half_round_is_no_hole() {
+        let sides = 48;
+        let (positions, triangles) = crate::test_meshes::revolved(&[[0.0, 5.0], [10.0, 5.0], [10.0, 10.0], [0.0, 10.0]], sides, true);
+        let scan = Scan::new(&positions, &triangles);
+        let bore = Shape::Cylinder { point: Vec3::ZERO, axis: Vec3::Z, radius: 5.0 };
+        // The bore is the first pair of rings: two triangles each step round.
+        let segment = |steps: u32| Segment { triangles: (0..2 * steps as usize).collect(), shape: Some(bore), area: 100.0, rms: 0.0 };
+        let (whole, quarter) = (segment(sides), segment(sides / 4));
+        let sign = outward(&scan);
+        assert!(is_round_hole(&scan, &whole, sign) && is_round_hole(&scan, &quarter, sign), "both are hollow");
+        assert!(is_hole_to_cut(&scan, &whole, sign));
+        assert!(!is_hole_to_cut(&scan, &quarter, sign));
     }
 }

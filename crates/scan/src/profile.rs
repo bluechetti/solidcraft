@@ -291,9 +291,11 @@ fn outline_of(walls: &[(usize, Wall)], points: &[Vec2], on: &[Option<usize>], re
     }
     let (mut corners, mut pieces, mut faces) = (Vec::new(), Vec::new(), Vec::new());
     let count = stretches.len();
+    let wall = |r: usize| walls[stretches[r % count].wall].1;
+    let laid: Vec<Wall> = (0..count).map(|r| laid_tangent(wall(r + count - 1), wall(r), wall(r + 1))).collect();
     for r in 0..count {
         let (here, next) = (stretches[r], stretches[(r + 1) % count]);
-        let (a, b) = (walls[here.wall].1, walls[next.wall].1);
+        let (a, b) = (laid[r], laid[(r + 1) % count]);
         let near = (here.last + next.first) * 0.5;
         let gap = here.last.dist(next.first);
         let crossing = cross(&a, &b, near).filter(|c| c.dist(near) <= 2.0 * gap + 4.0 * reach);
@@ -319,6 +321,40 @@ fn outline_of(walls: &[(usize, Wall)], points: &[Vec2], on: &[Option<usize>], re
         }
     }
     Some(Outline { corners, pieces, faces })
+}
+
+/// A round between two flat walls that it touches or nearly (as [`cross`] reads touching), laid
+/// tangent to both with its radius kept, or between two parallel walls half way across. The flat
+/// walls are fitted over far more of the scan than a round, so they stay as fitted; laid
+/// otherwise, the sketch's tangent joins would move them by as much as the round is off (0.2 mm
+/// on a scanned case). Any other wall as it was.
+fn laid_tangent(before: Wall, round: Wall, after: Wall) -> Wall {
+    let (Wall::Line { point: p, direction: d }, Wall::Circle { center, radius }, Wall::Line { point: q, direction: e }) = (before, round, after)
+    else {
+        return round;
+    };
+    // Each flat wall's side toward the round's centre, and how far the centre is from it.
+    let toward = |point: Vec2, direction: Vec2| {
+        let n = direction.perp();
+        let off = n.dot(center - point);
+        (n * off.signum(), off.abs())
+    };
+    let ((m, a), (k, b)) = (toward(p, d), toward(q, e));
+    if (a - radius).abs() > TOUCHING * radius || (b - radius).abs() > TOUCHING * radius {
+        return round;
+    }
+    let s = d.cross(e);
+    if s.abs() >= CROSSING {
+        // The two walls moved in by the radius cross at the laid round's centre.
+        let (p, q) = (p + m * radius, q + k * radius);
+        return Wall::Circle { center: p + d * ((q - p).cross(e) / s), radius };
+    }
+    // Parallel walls either side of the centre (a slot's end): the round as wide as the gap.
+    if m.dot(k) >= 0.0 {
+        return round;
+    }
+    let half = 0.5 * m.dot(q - p);
+    Wall::Circle { center: center + m * (half - a), radius: half }
 }
 
 /// Where walls `a` and `b` cross, the crossing nearest `near`; for a line and a circle that only
@@ -643,26 +679,29 @@ pub fn prism_plane(prism: &Prism) -> Plane {
 /// lies in and its outlines (`faces` index `reading.faces`); why not, when no loop goes round its
 /// walls.
 pub fn prism_profile(scan: &Scan, outcome: &Outcome, reading: &Reading, prism: &Prism) -> Result<(Plane, Vec<Outline>), String> {
-    prism_profile_from(scan, &crate::welded(scan.positions), outcome, &reading.faces, reading.size, prism)
+    prism_profile_from(scan, &crate::welded(scan.positions), outcome, &reading.faces, &reading.same, reading.size, prism)
 }
 
-/// [`prism_profile`] from the shapes found (`faces`) and the part's size, the scan's points
-/// already welded (`weld`), so that Reconstruct can ask it of every prism it reads.
+/// [`prism_profile`] from the shapes found (`faces`, each on the surface `same` names) and the
+/// part's size, the scan's points already welded (`weld`), so that Reconstruct can ask it of every
+/// prism it reads.
 pub(crate) fn prism_profile_from(
     scan: &Scan,
     weld: &[u32],
     outcome: &Outcome,
     faces: &[Face],
+    same: &[usize],
     size: f64,
     prism: &Prism,
 ) -> Result<(Plane, Vec<Outline>), String> {
     let plane = prism_plane(prism);
-    // Which face each triangle is on.
+    // Which face's surface each triangle is on.
     let mut owner = vec![u32::MAX; scan.triangle_count()];
     for (k, segment) in outcome.segments.iter().enumerate().take(faces.len()) {
+        let surface = same.get(k).copied().unwrap_or(k);
         for &t in &segment.triangles {
             if let Some(slot) = owner.get_mut(t) {
-                *slot = k as u32;
+                *slot = surface as u32;
             }
         }
     }
@@ -696,7 +735,7 @@ pub fn turned_plane(axis: &Axis) -> Plane {
 /// outline (`faces` index `reading.faces`) and each face as held (by face index); why not.
 pub fn turned_profile(scan: &Scan, outcome: &Outcome, reading: &Reading) -> Result<(Plane, Outline, BTreeMap<usize, Turned>), String> {
     let revolve = reading.revolve.as_ref().ok_or("the part is not turned: no axis holds most of its faces")?;
-    turned_profile_of(scan, outcome, &reading.faces, reading.size, revolve)
+    turned_profile_of(scan, outcome, &reading.faces, &reading.same, reading.size, revolve)
 }
 
 /// [`turned_profile`] of `revolve` from the shapes `found` and the part's size, so that
@@ -705,6 +744,7 @@ pub(crate) fn turned_profile_of(
     scan: &Scan,
     outcome: &Outcome,
     found: &[Face],
+    same: &[usize],
     size: f64,
     revolve: &Revolve,
 ) -> Result<(Plane, Outline, BTreeMap<usize, Turned>), String> {
@@ -716,15 +756,21 @@ pub(crate) fn turned_profile_of(
     let mut numbered = Vec::new();
     let mut held_faces = BTreeMap::new();
     for &k in &revolve.members {
-        let (Some(segment), Some(face)) = (outcome.segments.get(k), found.get(k)) else { continue };
-        let points: Vec<(Vec2, f64)> = segment.triangles.iter().filter_map(|&t| scan.corners(t)).flatten().map(|p| (polar_of(p), 1.0)).collect();
+        let Some(face) = found.get(k) else { continue };
+        // The member's surface: it and the pieces of it.
+        let triangles: Vec<usize> = (0..found.len())
+            .filter(|&j| same.get(j).copied().unwrap_or(j) == k)
+            .filter_map(|j| outcome.segments.get(j))
+            .flat_map(|s| s.triangles.iter().copied())
+            .collect();
+        let points: Vec<(Vec2, f64)> = triangles.iter().filter_map(|&t| scan.corners(t)).flatten().map(|p| (polar_of(p), 1.0)).collect();
         let Some(turned) = held(face.shape.kind(), &points) else { continue };
         let total = points.len().max(1) as f64;
         let middle = points.iter().fold(Vec2::ZERO, |s, (p, _)| s + *p) / total;
         let nearest = points.iter().map(|(p, _)| *p).min_by(|a, b| a.y.total_cmp(&b.y));
         // A face comes down to the axis when the scan has it within a hundredth of the part.
         let at_axis = nearest.filter(|n| n.y <= 0.01 * size);
-        for &t in &segment.triangles {
+        for &t in &triangles {
             if let Some(slot) = owner.get_mut(t) {
                 *slot = faces.len();
             }
@@ -801,6 +847,69 @@ mod tests {
         let length: f64 = (0..points.len()).map(|i| points[i].dist(points[(i + 1) % points.len()])).sum();
         let expected = 100.0 + std::f64::consts::TAU * 5.0;
         assert!((length - expected).abs() < 0.1, "{length} against {expected}");
+    }
+
+    /// A rounded rectangle 40 × 30, corners R 5, whose rounds were fitted a little off its sides,
+    /// as on a noisy scan: each round is laid tangent to its two sides, and the sides stay where
+    /// they were fitted, so a sketch holding the joins tangent has nothing to move.
+    #[test]
+    fn rounds_are_laid_tangent_to_the_sides_as_fitted() {
+        use std::f64::consts::FRAC_PI_2;
+        let (w, h, r) = (40.0, 30.0, 5.0);
+        let walls: Vec<(usize, Wall)> = vec![
+            (0, Wall::Line { point: Vec2::new(0.0, 0.0), direction: Vec2::X }),
+            (1, Wall::Line { point: Vec2::new(w, 0.0), direction: Vec2::Y }),
+            (2, Wall::Line { point: Vec2::new(w, h), direction: -Vec2::X }),
+            (3, Wall::Line { point: Vec2::new(0.0, h), direction: -Vec2::Y }),
+            (4, Wall::Circle { center: Vec2::new(w - r + 0.12, r + 0.1), radius: r + 0.05 }),
+            (5, Wall::Circle { center: Vec2::new(w - r - 0.1, h - r + 0.15), radius: r - 0.08 }),
+            (6, Wall::Circle { center: Vec2::new(r + 0.2, h - r), radius: r + 0.1 }),
+            (7, Wall::Circle { center: Vec2::new(r - 0.05, r - 0.12), radius: r }),
+        ];
+        // The slice round the true outline, counter-clockwise, each point on its wall.
+        let sides = [
+            (Vec2::new(r, 0.0), Vec2::new(w - r, 0.0)),
+            (Vec2::new(w, r), Vec2::new(w, h - r)),
+            (Vec2::new(w - r, h), Vec2::new(r, h)),
+            (Vec2::new(0.0, h - r), Vec2::new(0.0, r)),
+        ];
+        let rounds = [(Vec2::new(w - r, r), -FRAC_PI_2), (Vec2::new(w - r, h - r), 0.0), (Vec2::new(r, h - r), FRAC_PI_2), (Vec2::new(r, r), PI)];
+        let (mut points, mut on) = (Vec::new(), Vec::new());
+        for (k, ((from, to), (center, start))) in sides.into_iter().zip(rounds).enumerate() {
+            for i in 0..20 {
+                points.push(from + (to - from) * (f64::from(i) / 20.0));
+                on.push(Some(k));
+            }
+            for i in 0..10 {
+                points.push(center + rotated(Vec2::X * r, start + FRAC_PI_2 * f64::from(i) / 10.0));
+                on.push(Some(4 + k));
+            }
+        }
+        let outlines = prism_outlines(&walls, &[(points, on)], 0.2);
+        assert_eq!(outlines.len(), 1, "{outlines:?}");
+        let o = &outlines[0];
+        assert_eq!(o.pieces.len(), 8, "{o:?}");
+        let n = o.pieces.len();
+        for k in 0..n {
+            let (from, to) = (o.corners[k], o.corners[(k + 1) % n]);
+            match o.pieces[k] {
+                Piece::Line => {
+                    let Some(Wall::Line { point, direction }) = o.faces[k].map(|f| walls[f].1) else { panic!("{o:?}") };
+                    for c in [from, to] {
+                        assert!(direction.cross(c - point).abs() < 1e-9, "a corner off its side as fitted: {o:?}");
+                    }
+                }
+                Piece::Arc { center, .. } => {
+                    let radius = from.dist(center);
+                    assert!((to.dist(center) - radius).abs() < 1e-9, "{o:?}");
+                    // Square to the side at each end: tangent.
+                    for (corner, side) in [(from, (k + n - 1) % n), (to, (k + 1) % n)] {
+                        let Some(Wall::Line { direction, .. }) = o.faces[side].map(|f| walls[f].1) else { panic!("{o:?}") };
+                        assert!((corner - center).dot(direction).abs() < 1e-9, "not tangent: {o:?}");
+                    }
+                }
+            }
+        }
     }
 
     /// The turned part: a face at −4 down to the axis, a round R 4 into the shaft R 20, the shaft
