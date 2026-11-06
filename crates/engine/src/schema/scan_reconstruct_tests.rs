@@ -1,5 +1,6 @@
 use super::{
-    ScanCutItParams, ScanExtrudeItParams, ScanFilletItParams, ScanFindAllParams, ScanPatternItParams, ScanReconstructParams, ScanRevolveItParams,
+    ScanCutItParams, ScanExtrudeItParams, ScanFilletItParams, ScanFindAllParams, ScanPatternItParams, ScanReconstructParams,
+    ScanReconstructSelectionParams, ScanRevolveItParams,
 };
 use crate::schema::input_schema_for;
 use crate::schema::tests::assert_keys;
@@ -7,10 +8,11 @@ use crate::schema::tests::assert_keys;
 #[test]
 fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanFindAllParams>(), &["body", "show"]);
-    assert_keys(input_schema_for::<ScanReconstructParams>(), &["body"]);
-    assert_keys(input_schema_for::<ScanExtrudeItParams>(), &["body", "into", "prism"]);
-    assert_keys(input_schema_for::<ScanRevolveItParams>(), &["body", "into"]);
-    assert_keys(input_schema_for::<ScanCutItParams>(), &["body", "hole", "into"]);
-    assert_keys(input_schema_for::<ScanPatternItParams>(), &["body", "feature", "hole"]);
-    assert_keys(input_schema_for::<ScanFilletItParams>(), &["body", "into"]);
+    assert_keys(input_schema_for::<ScanReconstructParams>(), &["body", "selected"]);
+    assert_keys(input_schema_for::<ScanReconstructSelectionParams>(), &["body"]);
+    assert_keys(input_schema_for::<ScanExtrudeItParams>(), &["body", "into", "prism", "selected"]);
+    assert_keys(input_schema_for::<ScanRevolveItParams>(), &["body", "into", "selected"]);
+    assert_keys(input_schema_for::<ScanCutItParams>(), &["body", "hole", "into", "selected"]);
+    assert_keys(input_schema_for::<ScanPatternItParams>(), &["body", "feature", "hole", "selected"]);
+    assert_keys(input_schema_for::<ScanFilletItParams>(), &["body", "into", "selected"]);
 }

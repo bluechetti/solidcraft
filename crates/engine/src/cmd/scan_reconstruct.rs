@@ -15,7 +15,9 @@ use solidcraft_geom::prelude::*;
 use solidcraft_scan::Scan;
 pub use solidcraft_scan::fit::Shape;
 use solidcraft_scan::profile::{self, Outline, Piece, Turned};
-use solidcraft_scan::reconstruct::{self, Layout, Reading};
+/// What Reconstruct reads off a scan, as its dialog lists it.
+pub use solidcraft_scan::reconstruct::Reading;
+use solidcraft_scan::reconstruct::{self, Layout};
 use solidcraft_scan::segment::{self, Outcome};
 use solidcraft_sketch::{ConstraintKind, Sketch};
 
@@ -23,14 +25,15 @@ use super::CommandSpec;
 use crate::params::{bad, bool_, str_};
 use crate::schema::scan_reconstruct::{
     ScanBuildResult, ScanCutItParams, ScanEdgeRound, ScanExtrudeItParams, ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams,
-    ScanFindAllResult, ScanHole, ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanRepeat, ScanRevolveItParams,
-    ScanShapeFound, ScanTurned,
+    ScanFindAllResult, ScanHole, ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams,
+    ScanRepeat, ScanRevolveItParams, ScanShapeFound, ScanTurned,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
 
 const FIND_ALL_CONTRACT: TypedContract<ScanFindAllParams> = TypedContract::new();
 const RECONSTRUCT_CONTRACT: TypedContract<ScanReconstructParams> = TypedContract::new();
+const RECONSTRUCT_SELECTION_CONTRACT: TypedContract<ScanReconstructSelectionParams> = TypedContract::new();
 const EXTRUDE_IT_CONTRACT: TypedContract<ScanExtrudeItParams> = TypedContract::new();
 const REVOLVE_IT_CONTRACT: TypedContract<ScanRevolveItParams> = TypedContract::new();
 const CUT_IT_CONTRACT: TypedContract<ScanCutItParams> = TypedContract::new();
@@ -51,37 +54,44 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&RECONSTRUCT_CONTRACT)
         .output(output_schema_for::<ScanReconstructResult>)
-        .params("body?: mesh body (default: the selected or only one): what Find All's shapes make (it runs Find All first when it has not run on this scan): prisms (stretches of one section along a direction a plane faces), a turned part (most of the shapes about one axis), repeats (in a row, round an axis, in a grid, drilled along the radius) and the round holes no profile holds; reads only → shapes, in_shapes, prisms [{index, direction, middle, depth, walls, ends, open}], turned? {point, direction, faces, share}, holes [{index, shape, radius, diameter, mouth, bottom, depth, repeat?, layout?}], repeats, built?, proposals [{command, params}], note?"),
+        .params("body?: mesh body (default: the selected or only one); selected?: bool (default false: the whole scan; true: only the part of it selected, read as a part of its own, and each step proposed takes `selected`): what Find All's shapes make (it runs Find All first when it has not run on this scan): prisms (stretches of one section along a direction a plane faces), a turned part (most of the shapes about one axis), repeats (in a row, round an axis, in a grid, drilled along the radius) and the round holes no profile holds; reads only → shapes, in_shapes, prisms [{index, direction, middle, depth, walls, ends, open}], turned? {point, direction, faces, share}, holes [{index, shape, radius, diameter, mouth, bottom, depth, repeat?, layout?}], repeats, built?, proposals [{command, params}], note?"),
+    CommandSpec::new("scan.reconstruct_selection", "Reconstruct Selection", crate::checked!("scan.reconstruct_selection", read_selection))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("auto_constrain")
+        .noundo()
+        .contract(&RECONSTRUCT_SELECTION_CONTRACT)
+        .output(output_schema_for::<ScanReconstructResult>)
+        .params("body?: mesh body (default: the one selected on): scan.reconstruct with selected: true, what the shapes make on the part of the scan selected, read as a part of its own (a boss, a turned feature, a hole of a part too busy to read whole), and the steps that build it, each with `selected`; refused with nothing selected; reads only → as scan.reconstruct"),
     CommandSpec::new("scan.extrude_it", "Extrude It", crate::checked!("scan.extrude_it", extrude_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("extrude")
         .contract(&EXTRUDE_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; prism?: index of scan.reconstruct's prisms (default 0); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the prism's profile sketched halfway along it off its walls exactly as fitted (lines and arcs from crossing to crossing, joins held tangent) and extruded symmetric to its depth, one undo step → sketch, feature, solid, operation, lines, arcs, tangents, depth"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); prism?: index of scan.reconstruct's prisms (default 0); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the prism's profile sketched halfway along it off its walls exactly as fitted (lines and arcs from crossing to crossing, joins held tangent) and extruded symmetric to its depth, one undo step → sketch, feature, solid, operation, lines, arcs, tangents, depth"),
     CommandSpec::new("scan.revolve_it", "Revolve It", crate::checked!("scan.revolve_it", revolve_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("revolve")
         .contract(&REVOLVE_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the turned part's profile sketched on a plane through its axis, each face held to the axis (cylinders level, ends upright, rounds tangent), and revolved all the way round, one undo step → sketch, feature, solid, operation, lines, arcs, tangents"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the turned part's profile sketched on a plane through its axis, each face held to the axis (cylinders level, ends upright, rounds tangent), and revolved all the way round, one undo step → sketch, feature, solid, operation, lines, arcs, tangents"),
     CommandSpec::new("scan.cut_it", "Cut It", crate::checked!("scan.cut_it", cut_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("hole")
         .contract(&CUT_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; hole?: index of scan.reconstruct's holes (default 0); into?: body to cut (default: `<scan> Reconstructed`): a circle sketched square to the hole outside its mouth and cut as deep as the scan has the hole, one undo step → sketch, feature, solid, operation, depth"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); hole?: index of scan.reconstruct's holes (default 0); into?: body to cut (default: `<scan> Reconstructed`): a circle sketched square to the hole outside its mouth and cut as deep as the scan has the hole, one undo step → sketch, feature, solid, operation, depth"),
     CommandSpec::new("scan.pattern_it", "Pattern It", crate::checked!("scan.pattern_it", pattern_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("pattern_circ")
         .contract(&PATTERN_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; hole?: index of scan.reconstruct's holes, one that repeats (default: the first that does); feature?: the cut to repeat (default: the one Cut It made for that hole): the cut repeated as the row or ring of holes is, with its count and spacing, one undo step → feature, solid, count"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); hole?: index of scan.reconstruct's holes, one that repeats (default: the first that does); feature?: the cut to repeat (default: the one Cut It made for that hole): the cut repeated as the row or ring of holes is, with its count and spacing, one undo step → feature, solid, count"),
     CommandSpec::new("scan.fillet_it", "Fillet It", crate::checked!("scan.fillet_it", fillet_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("fillet")
         .contract(&FILLET_IT_CONTRACT)
         .output(output_schema_for::<ScanFilletItResult>)
-        .params("body?: mesh body; into?: body to fillet (default: `<scan> Reconstructed`): each round along an edge that scan.reconstruct reads and no profile holds (its `fillets`), measured off the scan as Fillet from Scan does at the edge of the body it rounds; the edges where a round fits the scan filleted at the radius measured, one Fillet for each radius, one undo step; an edge where the scan shows a sharp edge, or no edge of the body, is set aside → body, solid, fillets [{radius, edges}], set_aside, features"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to fillet (default: `<scan> Reconstructed`): each round along an edge that scan.reconstruct reads and no profile holds (its `fillets`), measured off the scan as Fillet from Scan does at the edge of the body it rounds; the edges where a round fits the scan filleted at the radius measured, one Fillet for each radius, one undo step; an edge where the scan shows a sharp edge, or no edge of the body, is set aside → body, solid, fillets [{radius, edges}], set_aside, features"),
 ];
 
 /// What Find All found on a scan, and what Reconstruct reads off it: view state for the viewport
@@ -99,6 +109,79 @@ pub struct ScanShapes {
     pub regions: Vec<u32>,
     /// Whether the viewport colours the scan by its regions.
     pub shown: bool,
+    /// What Reconstruct last read off the part of the scan selected (`selected`), if it has.
+    pub region: Option<Arc<RegionShapes>>,
+}
+
+/// What Reconstruct read off the part of a scan selected, and which selection that was.
+#[derive(Debug)]
+pub struct RegionShapes {
+    /// One flag a triangle of the scan.
+    selection: Arc<Vec<bool>>,
+    pub region: reconstruct::Region,
+}
+
+impl RegionShapes {
+    /// Whether it was read off `selected`.
+    fn of(&self, selected: &Arc<Vec<bool>>) -> bool {
+        Arc::ptr_eq(&self.selection, selected) || *self.selection == **selected
+    }
+}
+
+/// The reading a Reconstruct step works from: the whole scan's, or (`selected`) the part of it
+/// selected now.
+struct View {
+    found: Arc<ScanShapes>,
+    region: Option<Arc<RegionShapes>>,
+}
+
+impl View {
+    fn reading(&self) -> &Reading {
+        self.region.as_ref().map_or(&self.found.reading, |r| &r.region.reading)
+    }
+
+    fn outcome(&self) -> &Outcome {
+        self.region.as_ref().map_or(&self.found.outcome, |r| &r.region.outcome)
+    }
+
+    /// The scan the reading is of: the whole, or the part selected, on the scan's points.
+    fn scan<'a>(&'a self, positions: &'a [Vec3], triangles: &'a [[u32; 3]]) -> Scan<'a> {
+        match &self.region {
+            Some(r) => Scan::new(positions, &r.region.triangles),
+            None => Scan::new(positions, triangles),
+        }
+    }
+
+    fn selected(&self) -> bool {
+        self.region.is_some()
+    }
+}
+
+/// The reading for `p`: the whole scan's ([`shapes`]), or with `selected` the part of it selected
+/// now, read the first time it is asked for and kept while the selection and the scan are the
+/// same.
+fn view(s: &mut Session, p: &Value, cmd: &str, show: bool) -> Result<View> {
+    let found = shapes(s, p, cmd, show)?;
+    if !bool_(p, "selected").unwrap_or(false) {
+        return Ok(View { found, region: None });
+    }
+    let selection = super::select::selected(s)
+        .filter(|k| k.scan == found.scan && k.count > 0)
+        .ok_or_else(|| bad(cmd, format!("nothing is selected on `{}`: select the part to rebuild first (Select on Scan)", found.scan)))?;
+    if let Some(region) = found.region.clone().filter(|r| r.of(&selection.selected)) {
+        return Ok(View { found, region: Some(region) });
+    }
+    let region = {
+        let state = s.model.state();
+        let (positions, triangles) =
+            state.body(&found.scan).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
+        reconstruct::read_region(&Scan::new(positions, triangles), &found.outcome, &selection.selected)
+            .ok_or_else(|| bad(cmd, format!("too little is selected on `{}` to read: select at least 50 of its triangles", found.scan)))?
+    };
+    let region = Arc::new(RegionShapes { selection: selection.selected.clone(), region });
+    let with = Arc::new(found.with(found.shown, Some(region.clone())));
+    s.scan_shapes = Some(with.clone());
+    Ok(View { found: with, region: Some(region) })
 }
 
 impl ScanShapes {
@@ -112,8 +195,14 @@ impl ScanShapes {
             .is_some_and(|(p, t)| held(p, t) == self.held || fingerprint(p, t) == self.fingerprint)
     }
 
-    /// The same, shown or not.
-    fn with_shown(&self, shown: bool) -> ScanShapes {
+    /// What Reconstruct read off the part of the scan selected now, if it has read it.
+    pub fn selected_region(&self, s: &Session) -> Option<Arc<RegionShapes>> {
+        let selection = super::select::selected(s).filter(|k| k.scan == self.scan && k.count > 0)?;
+        self.region.clone().filter(|r| r.of(&selection.selected))
+    }
+
+    /// The same, shown or not, with the reading of a part of it selected.
+    fn with(&self, shown: bool, region: Option<Arc<RegionShapes>>) -> ScanShapes {
         ScanShapes {
             scan: self.scan.clone(),
             fingerprint: self.fingerprint,
@@ -122,6 +211,7 @@ impl ScanShapes {
             reading: self.reading.clone(),
             regions: self.regions.clone(),
             shown,
+            region,
         }
     }
 }
@@ -164,7 +254,7 @@ fn shapes(s: &mut Session, p: &Value, cmd: &str, show: bool) -> Result<Arc<ScanS
         if known.shown || !show {
             return Ok(known);
         }
-        let shown = Arc::new(known.with_shown(true));
+        let shown = Arc::new(known.with(true, known.region.clone()));
         s.scan_shapes = Some(shown.clone());
         return Ok(shown);
     }
@@ -188,7 +278,7 @@ fn shapes(s: &mut Session, p: &Value, cmd: &str, show: bool) -> Result<Arc<ScanS
         }
         (outcome, reading, fingerprint(positions, triangles), held(positions, triangles), regions)
     };
-    let found = Arc::new(ScanShapes { scan: name, fingerprint: print, held: at, outcome, reading, regions, shown: show });
+    let found = Arc::new(ScanShapes { scan: name, fingerprint: print, held: at, outcome, reading, regions, shown: show, region: None });
     s.scan_shapes = Some(found.clone());
     Ok(found)
 }
@@ -248,7 +338,7 @@ pub(super) fn find_all(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.find_all";
     if bool_(p, "show") == Some(false) {
         if let Some(known) = s.scan_shapes.take() {
-            s.scan_shapes = Some(Arc::new(known.with_shown(false)));
+            s.scan_shapes = Some(Arc::new(known.with(false, known.region.clone())));
         }
         return reply(ScanFindAllResult {
             shown: false,
@@ -304,13 +394,18 @@ impl Proposal {
         }
     }
 
-    /// Its command's parameters, on scan `body`.
-    pub fn params(&self, body: &str) -> Value {
-        match *self {
+    /// Its command's parameters, on scan `body`; `selected` when it was read off the part of the
+    /// scan selected.
+    pub fn params(&self, body: &str, selected: bool) -> Value {
+        let mut p = match *self {
             Proposal::Revolve | Proposal::Fillet => json!({"body": body}),
             Proposal::Extrude(k) => json!({"body": body, "prism": k}),
             Proposal::Cut(k) | Proposal::Pattern(k) => json!({"body": body, "hole": k}),
+        };
+        if let (true, Some(map)) = (selected, p.as_object_mut()) {
+            map.insert("selected".into(), Value::Bool(true));
         }
+        p
     }
 }
 
@@ -357,10 +452,29 @@ fn layout_name(layout: &Layout) -> &'static str {
     }
 }
 
+/// Reconstruct Selection: Reconstruct on the part of the scan selected.
+pub(super) fn read_selection(s: &mut Session, p: &Value) -> Result<Value> {
+    let mut p = p.clone();
+    if let Some(map) = p.as_object_mut() {
+        map.insert("selected".into(), Value::Bool(true));
+    } else {
+        p = json!({"selected": true});
+    }
+    // Named the scan selected on, unless told.
+    if p.get("body").and_then(Value::as_str).is_none_or(|b| b.trim().is_empty())
+        && let Some(on) = super::select::selected(s).filter(|k| k.count > 0)
+        && let Some(map) = p.as_object_mut()
+    {
+        map.insert("body".into(), Value::String(on.scan.clone()));
+    }
+    read_scan(s, &p)
+}
+
 pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.reconstruct";
-    let found = shapes(s, p, cmd, true)?;
-    let reading = &found.reading;
+    let view = view(s, p, cmd, true)?;
+    let found = &view.found;
+    let reading = view.reading();
     let built = built_name(&found.scan);
     let built = s.model.state().body(&built).is_some().then_some(built);
     let prisms: Vec<ScanPrism> = reading
@@ -428,7 +542,8 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         share: r.share,
     });
     let body = found.scan.clone();
-    let proposals = proposals(reading, built.is_some()).iter().map(|p| json!({"command": p.command(), "params": p.params(&body)})).collect();
+    let proposals =
+        proposals(reading, built.is_some()).iter().map(|p| json!({"command": p.command(), "params": p.params(&body, view.selected())})).collect();
     let note = if reading.faces.is_empty() {
         Some("Find All found no shape on the scan: it is all freeform".to_string())
     } else if let (true, Some(why)) = (reading.prisms.is_empty(), &reading.turned_unread) {
@@ -442,8 +557,9 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         Some(format!(
             "the shapes make no prism and no turned part{unread}: build from Fit Plane, Fit Cylinder and Section to Sketch, or with free forms"
         ))
-    } else if found.outcome.in_shapes < 0.5 {
-        Some(format!("only {:.0}% of the scan is in shapes: the rest is freeform, for free forms", 100.0 * found.outcome.in_shapes))
+    } else if view.outcome().in_shapes < 0.5 {
+        let of = if view.selected() { "what is selected" } else { "the scan" };
+        Some(format!("only {:.0}% of {of} is in shapes: the rest is freeform, for free forms", 100.0 * view.outcome().in_shapes))
     } else {
         None
     };
@@ -626,8 +742,9 @@ fn merged(mut a: Value, b: Value) -> Value {
 
 pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.extrude_it";
-    let found = shapes(s, p, cmd, false)?;
-    let reading = &found.reading;
+    let view = view(s, p, cmd, false)?;
+    let found = &view.found;
+    let reading = view.reading();
     if reading.prisms.is_empty() {
         return Err(bad(cmd, "Reconstruct reads no prism on the scan: run Find All and see what it found"));
     }
@@ -640,7 +757,7 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         let state = s.model.state();
         let (positions, triangles) =
             state.body(&found.scan).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
-        profile::prism_profile(&Scan::new(positions, triangles), &found.outcome, reading, prism).map_err(|e| bad(cmd, e))?
+        profile::prism_profile(&view.scan(positions, triangles), view.outcome(), reading, prism).map_err(|e| bad(cmd, e))?
     };
     let (operation, solid, how) = into_params(s, &found.scan, p, cmd)?;
     let mut drawn = Drawn::default();
@@ -666,12 +783,13 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.revolve_it";
-    let found = shapes(s, p, cmd, false)?;
+    let view = view(s, p, cmd, false)?;
+    let found = &view.found;
     let (plane, outline, held) = {
         let state = s.model.state();
         let (positions, triangles) =
             state.body(&found.scan).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
-        profile::turned_profile(&Scan::new(positions, triangles), &found.outcome, &found.reading).map_err(|e| bad(cmd, e))?
+        profile::turned_profile(&view.scan(positions, triangles), view.outcome(), view.reading()).map_err(|e| bad(cmd, e))?
     };
     let (operation, solid, how) = into_params(s, &found.scan, p, cmd)?;
     // A cylinder's piece runs level along the axis, an end's upright, the axis's own along it. A
@@ -717,10 +835,35 @@ fn cut_name(index: usize) -> String {
     format!("Cut It {}", index + 1)
 }
 
+/// The name for a new cut of hole `index`: [`cut_name`], or where a cut of another reading (a part
+/// of the scan selected and built before) has it, `Cut It 1.2`, `Cut It 1.3` and so on, so that
+/// Pattern It repeats this cut and not that one.
+fn free_cut_name(s: &Session, index: usize) -> String {
+    let base = cut_name(index);
+    let taken = |n: &str| s.doc.features.iter().any(|f| f.name == n);
+    if !taken(&base) {
+        return base;
+    }
+    (2..).map(|k| format!("{base}.{k}")).find(|n| !taken(n)).unwrap_or(base)
+}
+
+/// The latest cut of hole `index` Cut It made ([`free_cut_name`]): the one Pattern It repeats.
+fn last_cut_name(s: &Session, index: usize) -> String {
+    let base = cut_name(index);
+    let prefix = format!("{base}.");
+    s.doc
+        .features
+        .iter()
+        .rev()
+        .find(|f| f.name == base || f.name.strip_prefix(&prefix).is_some_and(|k| k.parse::<u32>().is_ok()))
+        .map_or(base, |f| f.name.clone())
+}
+
 pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.cut_it";
-    let found = shapes(s, p, cmd, false)?;
-    let reading = &found.reading;
+    let view = view(s, p, cmd, false)?;
+    let found = &view.found;
+    let reading = view.reading();
     if reading.holes.is_empty() {
         return Err(bad(cmd, "Reconstruct reads no round hole to cut"));
     }
@@ -747,8 +890,11 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
     let sketch = sketch_outlines(s, &plane, &format!("Hole {}", index + 1), &[circle], &|_, _, _| None, &mut drawn)?;
     // The sketch's normal (x × y) points into the hole.
     let depth = hole.depth() + margin;
-    let feature =
-        run(s, "solid.extrude", json!({"sketch": sketch, "distance": depth, "operation": "cut", "targets": [solid], "name": cut_name(index)}))?;
+    let feature = run(
+        s,
+        "solid.extrude",
+        json!({"sketch": sketch, "distance": depth, "operation": "cut", "targets": [solid], "name": free_cut_name(s, index)}),
+    )?;
     reply(ScanBuildResult {
         body: found.scan.clone(),
         sketch: Some(sketch),
@@ -766,8 +912,9 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.pattern_it";
-    let found = shapes(s, p, cmd, false)?;
-    let reading = &found.reading;
+    let view = view(s, p, cmd, false)?;
+    let found = &view.found;
+    let reading = view.reading();
     let index = match p.get("hole").and_then(Value::as_u64) {
         Some(k) => k as usize,
         None => {
@@ -779,7 +926,7 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
         .get(index)
         .ok_or_else(|| bad(cmd, format!("there are {} holes: `hole` is 0 to {}", reading.holes.len(), reading.holes.len().saturating_sub(1))))?;
     let (count, layout) = hole.repeat.ok_or_else(|| bad(cmd, format!("hole {index} does not repeat: cut it with Cut It alone")))?;
-    let feature_name = str_(p, "feature").filter(|f| !f.trim().is_empty()).map_or_else(|| cut_name(index), str::to_owned);
+    let feature_name = str_(p, "feature").filter(|f| !f.trim().is_empty()).map_or_else(|| last_cut_name(s, index), str::to_owned);
     if !s.doc.features.iter().any(|f| f.name == feature_name) {
         return Err(bad(cmd, format!("there is no `{feature_name}`: cut the hole first with Cut It")));
     }
@@ -827,8 +974,9 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
 /// most often along it: one Fillet for each radius, all one undo step.
 pub(super) fn fillet_it(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.fillet_it";
-    let found = shapes(s, p, cmd, false)?;
-    let rounds = found.reading.fillets.clone();
+    let view = view(s, p, cmd, false)?;
+    let found = &view.found;
+    let rounds = view.reading().fillets.clone();
     if rounds.is_empty() {
         return Err(bad(cmd, "Reconstruct reads no round along an edge that its other steps leave sharp"));
     }

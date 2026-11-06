@@ -378,6 +378,7 @@ pub const SECTIONS: &[Section] = &[
         ids: &[
             "scan.find_all",
             "scan.reconstruct",
+            "scan.reconstruct_selection",
             "scan.extrude_it",
             "scan.revolve_it",
             "scan.cut_it",

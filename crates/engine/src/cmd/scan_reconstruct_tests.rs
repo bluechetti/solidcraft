@@ -287,3 +287,47 @@ fn rounds_across_a_prism_are_filleted_back_from_its_scan() {
     let v = volume(&s, &solid);
     assert!(v < sharp && (v - expected).abs() < 0.002 * expected, "{v} against {expected} (sharp {sharp})");
 }
+
+/// A block 60 × 40 × 10 with a turned boss on top, R 8 for 10 and coned in to R 5 over 3 more:
+/// read whole, the boss is a disc extruded and its cone is lost (no prism has a cone for a wall).
+/// The block built from the whole reading, then the boss selected and read alone (Reconstruct
+/// Selection) is a turned part, and Revolve It on that reading joins it, cone and all: the part's
+/// own volume.
+#[test]
+fn a_turned_boss_selected_on_a_block_is_revolved_onto_it() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 60, "width": 40, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.cylinder", json!({"radius": 8, "height": 10, "base": [30, 20, 10], "operation": "join", "targets": [body]}));
+    run(&mut part, "solid.cone", json!({"radius": 8, "top_radius": 5, "height": 3, "base": [30, 20, 20], "operation": "join", "targets": [body]}));
+    let expected = volume(&part, &body);
+    let (mut s, scan) = scanned(&part, &body, 2, "boss-on-block");
+
+    let whole = run(&mut s, "scan.reconstruct", json!({}));
+    assert!(whole.get("turned").is_none(), "{whole}");
+    assert_eq!(whole["proposals"][0]["command"], "scan.extrude_it", "{whole}");
+    run(&mut s, "scan.extrude_it", json!({"prism": 0}));
+    let solid = format!("{scan} Reconstructed");
+    let block = volume(&s, &solid);
+    assert!((block - 24000.0).abs() < 0.005 * 24000.0, "the block first: {block}");
+
+    // Nothing selected: refused, and says how to go on.
+    let none = s.execute("scan.reconstruct_selection", &json!({})).unwrap_err().to_string();
+    assert!(none.contains("nothing is selected"), "{none}");
+    // The boss: every triangle above the block's top.
+    let boss: Vec<usize> = {
+        let state = s.model.state();
+        let (positions, triangles) = state.body(&scan).and_then(|b| b.body.triangle_mesh()).unwrap();
+        (0..triangles.len()).filter(|&t| triangles[t].iter().map(|&i| positions[i as usize].z).sum::<f64>() / 3.0 > 10.05).collect()
+    };
+    run(&mut s, "scan.select", json!({"body": scan, "triangles": boss}));
+    let read = run(&mut s, "scan.reconstruct_selection", json!({}));
+    assert!(read.get("turned").is_some(), "the boss alone is turned: {read}");
+    let first = &read["proposals"][0];
+    assert_eq!(first["command"], "scan.revolve_it", "{read}");
+    assert_eq!(first["params"]["selected"], true, "{read}");
+    let built = run(&mut s, "scan.revolve_it", first["params"].clone());
+    assert_eq!(built["operation"], "join", "{built}");
+    let v = volume(&s, &solid);
+    assert!((v - expected).abs() < 0.005 * expected, "{v} against the part's {expected} (block {block})");
+}

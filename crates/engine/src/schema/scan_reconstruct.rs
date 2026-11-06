@@ -79,6 +79,21 @@ pub struct ScanReconstructParams {
     /// The mesh body. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// Read only the part of the scan selected (Select on Scan), as a part of its own: a boss,
+    /// a turned feature or a hole of a part too busy to read whole. Default: false, the whole
+    /// scan.
+    #[serde(default)]
+    pub selected: Option<bool>,
+}
+
+/// Reconstruct Selection: what the shapes make on the part of the scan selected, read as a part
+/// of its own (Reconstruct with `selected`), and what to build. Reads only.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanReconstructSelectionParams {
+    /// The mesh body. Default: the one selected on.
+    #[serde(default)]
+    pub body: Option<String>,
 }
 
 /// A prism Reconstruct reads.
@@ -194,6 +209,10 @@ pub struct ScanExtrudeItParams {
     /// The mesh body. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// Build from the reading of the part of the scan selected, as `scan.reconstruct` with
+    /// `selected` gave it (its numbers are that reading's). Default: false, the whole scan's.
+    #[serde(default)]
+    pub selected: Option<bool>,
     /// Which of `scan.reconstruct`'s prisms, from 0. Default: the first.
     #[serde(default)]
     pub prism: Option<usize>,
@@ -212,6 +231,10 @@ pub struct ScanRevolveItParams {
     /// The mesh body. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// Build from the reading of the part of the scan selected, as `scan.reconstruct` with
+    /// `selected` gave it (its numbers are that reading's). Default: false, the whole scan's.
+    #[serde(default)]
+    pub selected: Option<bool>,
     /// The body to join. Default: the body Reconstruct builds, made new when there is none.
     #[serde(default)]
     pub into: Option<String>,
@@ -226,6 +249,10 @@ pub struct ScanCutItParams {
     /// The mesh body. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// Build from the reading of the part of the scan selected, as `scan.reconstruct` with
+    /// `selected` gave it (its numbers are that reading's). Default: false, the whole scan's.
+    #[serde(default)]
+    pub selected: Option<bool>,
     /// Which of `scan.reconstruct`'s holes, from 0. Default: the first.
     #[serde(default)]
     pub hole: Option<usize>,
@@ -242,6 +269,10 @@ pub struct ScanPatternItParams {
     /// The mesh body. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// Build from the reading of the part of the scan selected, as `scan.reconstruct` with
+    /// `selected` gave it (its numbers are that reading's). Default: false, the whole scan's.
+    #[serde(default)]
+    pub selected: Option<bool>,
     /// Which of `scan.reconstruct`'s holes, from 0: one that repeats. Default: the first that does.
     #[serde(default)]
     pub hole: Option<usize>,
@@ -270,6 +301,10 @@ pub struct ScanFilletItParams {
     /// The mesh body. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// Build from the reading of the part of the scan selected, as `scan.reconstruct` with
+    /// `selected` gave it (its numbers are that reading's). Default: false, the whole scan's.
+    #[serde(default)]
+    pub selected: Option<bool>,
     /// The body to fillet. Default: the body Reconstruct builds.
     #[serde(default)]
     pub into: Option<String>,

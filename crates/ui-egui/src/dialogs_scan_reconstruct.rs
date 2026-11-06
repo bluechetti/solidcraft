@@ -2,31 +2,42 @@
 //! ordinary features. The button reads the scan first (Find All runs when it has not, and the scan
 //! is coloured by its regions); the dialog then lists each step Reconstruct proposes (Revolve It
 //! for a turned part, Extrude It for each prism, Cut It for each round hole and Pattern It for a
-//! row or ring of them), all ticked, and OK builds the ticked ones in order, each its own undo
-//! step.
+//! row or ring of them, Fillet It for the rounds no profile holds), all ticked, and OK builds the
+//! ticked ones in order, each its own undo step. Reconstruct Selection
+//! (`scan.reconstruct_selection`) is the same on the part of the scan selected, read as a part of
+//! its own: a part too busy to read whole is built a feature at a time.
 
 use serde_json::Value;
-use solidcraft_engine::cmd::scan::reconstruct::{self, Proposal, ScanShapes};
+use solidcraft_engine::cmd::scan::reconstruct::{self, Proposal, Reading, ScanShapes};
 
 use crate::SolveApp;
 use crate::dialogs::Kind;
 use crate::ui_kit;
 
-/// The Reconstruct dialog's values: which steps are ticked, by their place in the proposals.
+/// The Reconstruct dialog's values: which steps are ticked, by their place in the proposals, and
+/// whether it reads only the part of the scan selected (Reconstruct Selection).
 #[derive(Clone, Debug, Default)]
 pub struct Reconstruct {
     pub ticked: Vec<bool>,
+    pub selected: bool,
 }
 
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
-    (id == "scan.reconstruct").then(|| (Kind::ScanReconstruct(Reconstruct::default()), Vec::new()))
+    matches!(id, "scan.reconstruct" | "scan.reconstruct_selection")
+        .then(|| (Kind::ScanReconstruct(Reconstruct { selected: id == "scan.reconstruct_selection", ..Reconstruct::default() }), Vec::new()))
 }
 
-/// Read the scan as the dialog opens: false (and nothing opens) when it cannot be read. Find All
-/// can take most of a minute on a big scan, so it reads beside the window when that takes long,
-/// and the dialog lists what to build once the reading is in.
-pub fn read_first(app: &mut SolveApp) -> bool {
-    match app.run_heavy("scan.reconstruct", serde_json::json!({})) {
+/// Read the scan (or with `selected`, the part of it selected) as the dialog opens: false (and
+/// nothing opens) when it cannot be read. Find All can take most of a minute on a big scan, so it
+/// reads beside the window when that takes long, and the dialog lists what to build once the
+/// reading is in.
+pub fn read_first(app: &mut SolveApp, selected: bool) -> bool {
+    if selected && solidcraft_engine::cmd::scan::select::selected(&app.session).is_none_or(|k| k.count == 0) {
+        app.set_status(tr("ui.scan_reconstruct_selection_none").to_string(), true);
+        return false;
+    }
+    let params = if selected { serde_json::json!({"selected": true}) } else { serde_json::json!({}) };
+    match app.run_heavy("scan.reconstruct", params) {
         Ok(_) => true,
         Err(why) => {
             app.set_status(why, true);
@@ -48,9 +59,17 @@ fn found(app: &SolveApp) -> Option<std::sync::Arc<ScanShapes>> {
     app.session.scan_shapes.clone().filter(|k| k.current(&app.session))
 }
 
+/// The reading the dialog lists the steps of, and the share of what was read in shapes: the whole
+/// scan's, or (`selected`) the part of it selected now, once that has been read.
+fn reading_of(app: &SolveApp, found: &ScanShapes, selected: bool) -> Option<(Reading, f64)> {
+    if !selected {
+        return Some((found.reading.clone(), found.outcome.in_shapes));
+    }
+    found.selected_region(&app.session).map(|r| (r.region.reading.clone(), r.region.outcome.in_shapes))
+}
+
 /// A step's line in the list.
-fn label(app: &SolveApp, found: &ScanShapes, step: &Proposal) -> String {
-    let reading = &found.reading;
+fn label(app: &SolveApp, reading: &Reading, step: &Proposal) -> String {
     let mm = |v: f64| crate::prefs::show_mm(app, v, 1);
     match *step {
         Proposal::Revolve => {
@@ -78,7 +97,7 @@ fn label(app: &SolveApp, found: &ScanShapes, step: &Proposal) -> String {
 
 /// The dialog's rows.
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reconstruct) -> bool {
-    let Some(found) = found(app) else {
+    let Some((found, (reading, in_shapes))) = found(app).and_then(|f| reading_of(app, &f, k.selected).map(|r| (f, r))) else {
         if reading(app) {
             ui_kit::text(ui, tr("ui.scan_reconstruct_reading"), ui_kit::Text::Note("scan_reconstruct_reading"));
         } else {
@@ -86,18 +105,16 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reconstruct) -> bool {
         }
         return false;
     };
-    let steps = reconstruct::proposals(&found.reading, reconstruct::is_built(&app.session, &found.scan));
+    let steps = reconstruct::proposals(&reading, reconstruct::is_built(&app.session, &found.scan));
     k.ticked.resize(steps.len(), true);
-    let summary = crate::i18n::format(
-        "ui.scan_reconstruct_found",
-        &[("shapes", &found.reading.faces.len().to_string()), ("share", &format!("{:.0} %", 100.0 * found.outcome.in_shapes))],
-    );
+    let found_id = if k.selected { "ui.scan_reconstruct_found_selected" } else { "ui.scan_reconstruct_found" };
+    let summary = crate::i18n::format(found_id, &[("shapes", &reading.faces.len().to_string()), ("share", &format!("{:.0} %", 100.0 * in_shapes))]);
     ui_kit::text(ui, &summary, ui_kit::Text::Note("scan_reconstruct_found"));
     if steps.is_empty() {
         ui_kit::text(ui, tr("ui.scan_reconstruct_nothing"), ui_kit::Text::Report("scan_reconstruct_nothing", true));
     }
     for (step, ticked) in steps.iter().zip(k.ticked.iter_mut()) {
-        ui_kit::checkbox(ui, &label(app, &found, step), ticked);
+        ui_kit::checkbox(ui, &label(app, &reading, step), ticked);
     }
     ui_kit::text(ui, tr("ui.scan_reconstruct_hint"), ui_kit::Text::Hint("scan_reconstruct_hint"));
     false
@@ -106,11 +123,12 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reconstruct) -> bool {
 /// What OK runs: the ticked steps, in order.
 pub fn commands(app: &SolveApp, k: &Reconstruct) -> Result<Vec<(String, Value)>, String> {
     let found = found(app).ok_or_else(|| tr("ui.scan_reconstruct_unread").to_string())?;
-    let chosen: Vec<(String, Value)> = reconstruct::proposals(&found.reading, reconstruct::is_built(&app.session, &found.scan))
+    let (reading, _) = reading_of(app, &found, k.selected).ok_or_else(|| tr("ui.scan_reconstruct_unread").to_string())?;
+    let chosen: Vec<(String, Value)> = reconstruct::proposals(&reading, reconstruct::is_built(&app.session, &found.scan))
         .iter()
         .zip(k.ticked.iter().copied().chain(std::iter::repeat(true)))
         .filter(|(_, ticked)| *ticked)
-        .map(|(step, _)| (step.command().to_string(), step.params(&found.scan)))
+        .map(|(step, _)| (step.command().to_string(), step.params(&found.scan, k.selected)))
         .collect();
     if chosen.is_empty() {
         return Err(tr("ui.scan_reconstruct_none_ticked").into());
@@ -167,8 +185,37 @@ mod tests {
         let found = found(&h.app).expect("read");
         let steps = reconstruct::proposals(&found.reading, reconstruct::is_built(&h.app.session, &found.scan));
         assert!(matches!(steps.first(), Some(Proposal::Extrude(0))), "{steps:?}");
-        let commands = commands(&h.app, &Reconstruct { ticked: vec![true; steps.len()] }).unwrap();
+        let commands = commands(&h.app, &Reconstruct { ticked: vec![true; steps.len()], selected: false }).unwrap();
         assert_eq!(commands[0].0, "scan.extrude_it");
+        for (id, p) in commands {
+            h.app.run(&id, p).unwrap();
+        }
+        let built = h.app.session.model.state().bodies.iter().find(|b| b.name.ends_with("Reconstructed")).and_then(|b| b.body.volume_at(0.01));
+        assert!(built.is_some_and(|v| (v - 3600.0).abs() < 1.0), "{built:?}");
+    }
+
+    /// Reconstruct Selection with nothing selected opens nothing and says to select first. With
+    /// the slab selected it reads that, lists its steps each taking `selected`, and OK builds it.
+    #[test]
+    fn reconstruct_selection_reads_what_is_selected() {
+        let mut h = crate::scenario::Harness::new();
+        slab(&mut h);
+        h.app.start("scan.reconstruct_selection");
+        assert!(!matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanReconstruct(_))), "nothing to read: no dialog");
+        let said = h.app.status.as_ref().map(|s| s.0.clone()).unwrap_or_default();
+        assert!(said.contains("Nothing is selected"), "{said}");
+        h.app.run("scan.select", json!({"all": true})).unwrap();
+        h.app.start("scan.reconstruct_selection");
+        assert!(
+            matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanReconstruct(k)) if k.selected),
+            "the dialog is open, on the selection"
+        );
+        let found = found(&h.app).expect("read");
+        let region = found.selected_region(&h.app.session).expect("the selection is read");
+        let steps = reconstruct::proposals(&region.region.reading, reconstruct::is_built(&h.app.session, &found.scan));
+        assert!(matches!(steps.first(), Some(Proposal::Extrude(0))), "{steps:?}");
+        let commands = commands(&h.app, &Reconstruct { ticked: vec![true; steps.len()], selected: true }).unwrap();
+        assert!(commands.iter().all(|(_, p)| p["selected"] == true), "{commands:?}");
         for (id, p) in commands {
             h.app.run(&id, p).unwrap();
         }

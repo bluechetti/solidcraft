@@ -104,7 +104,7 @@ pub(super) fn command(kind: &Kind) -> Option<&'static str> {
         Kind::ScanDenoise(_) => Some("scan.denoise"),
         Kind::ScanSelect(_) => Some("scan.select"),
         Kind::ScanEdgeCurve(_) => Some("scan.curve_from_selection"),
-        Kind::ScanReconstruct(_) => Some("scan.reconstruct"),
+        Kind::ScanReconstruct(k) => Some(if k.selected { "scan.reconstruct_selection" } else { "scan.reconstruct" }),
         Kind::Plastic(k) => match k {
             crate::dialogs_plastic::Pl::SnapFit { .. } => Some("plastic.snap_fit"),
             crate::dialogs_plastic::Pl::Assign { .. } => Some("plastic.assign_rule"),

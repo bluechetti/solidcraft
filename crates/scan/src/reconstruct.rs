@@ -1108,8 +1108,80 @@ pub fn same_surfaces(scan: &Scan, shaped: &[&Segment], tolerance: f64) -> (Vec<u
     (same, fitted)
 }
 
+/// The fewest triangles a selection [`read_region`] reads, and the fewest of a shape's (and the
+/// least share of the selection's area) for the shape to be read in it: a shape the selection
+/// only grazes is left out, its triangles freeform.
+const REGION_LEAST: usize = 50;
+const REGION_SHAPE_LEAST: usize = 12;
+const REGION_SHAPE_SHARE: f64 = 0.005;
+
+/// What Reconstruct reads off part of a scan ([`read_region`]): the part's triangles, a smaller
+/// scan on the same points; the shapes Find All found there, as an outcome of that smaller scan;
+/// and what they say.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Region {
+    pub triangles: Vec<[u32; 3]>,
+    pub outcome: Outcome,
+    pub reading: Reading,
+}
+
+impl Region {
+    /// The part as a scan, on `scan`'s points.
+    pub fn scan<'a>(&'a self, scan: &Scan<'a>) -> Scan<'a> {
+        Scan::new(scan.positions, &self.triangles)
+    }
+}
+
+/// What the shapes of `outcome` (Find All on the whole of `scan`) say about the triangles
+/// `selected` (one flag a triangle): a turned boss, a prism, a hole of a part too busy to read
+/// whole, read alone, to build as a feature of its own. The selected triangles are a smaller scan
+/// on the same points; each shape keeps its triangles there (one the selection only grazes is
+/// left freeform); which way is out of the material is the whole scan's, as an open patch's own
+/// winding cannot tell; sizes are the whole part's. `None` for a selection of fewer than 50
+/// triangles.
+pub fn read_region(scan: &Scan, outcome: &Outcome, selected: &[bool]) -> Option<Region> {
+    let mut index = vec![u32::MAX; scan.triangle_count()];
+    let mut triangles = Vec::new();
+    for (t, slot) in index.iter_mut().enumerate() {
+        if selected.get(t).copied().unwrap_or(false) && scan.corners(t).is_some() {
+            *slot = triangles.len() as u32;
+            triangles.push(scan.triangles[t]);
+        }
+    }
+    if triangles.len() < REGION_LEAST {
+        return None;
+    }
+    let part = Scan::new(scan.positions, &triangles);
+    let area_of = |t: usize| part.corners(t).map_or(0.0, |[a, b, c]| (b - a).cross(c - a).len() / 2.0);
+    let total: f64 = (0..triangles.len()).map(area_of).sum();
+    let (mut shaped, mut freeform) = (Vec::new(), Vec::new());
+    for segment in &outcome.segments {
+        let inside: Vec<usize> =
+            segment.triangles.iter().filter_map(|&t| index.get(t).copied()).filter(|&i| i != u32::MAX).map(|i| i as usize).collect();
+        if inside.is_empty() {
+            continue;
+        }
+        let area: f64 = inside.iter().map(|&t| area_of(t)).sum();
+        let kept = Segment { triangles: inside, shape: segment.shape, area, rms: segment.rms };
+        match segment.shape {
+            Some(_) if kept.triangles.len() >= REGION_SHAPE_LEAST && area >= REGION_SHAPE_SHARE * total => shaped.push(kept),
+            _ => freeform.push(Segment { shape: None, rms: 0.0, ..kept }),
+        }
+    }
+    let in_shapes = shaped.iter().map(|s| s.area).sum::<f64>() / total.max(1e-300);
+    shaped.extend(freeform);
+    let outcome = Outcome { segments: shaped, noise: outcome.noise, tolerance: outcome.tolerance, in_shapes, cancelled: outcome.cancelled };
+    let reading = read_signed(&part, &outcome, outward(scan));
+    Some(Region { triangles, outcome, reading })
+}
+
 /// What the shapes of `outcome` (Find All on `scan`) say.
 pub fn read(scan: &Scan, outcome: &Outcome) -> Reading {
+    read_signed(scan, outcome, outward(scan))
+}
+
+/// [`read`], out of the material being the way the scan's winding times `sign` faces.
+fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     let shaped: Vec<&Segment> = outcome.segments.iter().take_while(|s| s.shape.is_some()).collect();
     let (same, fitted) = same_surfaces(scan, &shaped, outcome.tolerance);
     let piece = |k: usize| same.get(k).is_some_and(|&s| s != k);
@@ -1141,7 +1213,6 @@ pub fn read(scan: &Scan, outcome: &Outcome) -> Reading {
             std::borrow::Cow::Borrowed(shaped[k])
         }
     };
-    let sign = outward(scan);
     // Read once: the floors below ask of every pair of faces.
     let holes_at: Vec<bool> = (0..shaped.len()).map(|k| !piece(k) && is_hole_to_cut(scan, &whole(k), sign)).collect();
     let hole = |k: usize| holes_at.get(k).copied().unwrap_or(false);

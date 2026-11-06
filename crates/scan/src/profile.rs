@@ -920,6 +920,50 @@ fn above_axis(points: &[Vec2], on: &[Option<usize>], axis: usize) -> Option<(Vec
     (kept.len() >= 3).then_some((kept, walls))
 }
 
+/// The parts of the open run `points` (each point on the wall `on` names; its ends where the scan,
+/// or the part of it selected, stops) with radius at least 0, each closed as a profile is: a part
+/// that comes down to the axis at one end runs along the axis to the height of its other end, so
+/// what was cut off there (a boss selected without the block it stands on) stands on it; a part
+/// with neither end on the axis is closed straight across.
+fn above_axis_open(points: &[Vec2], on: &[Option<usize>], axis: usize) -> Vec<(Vec<Vec2>, Vec<Option<usize>>)> {
+    let finish = |mut kept: Vec<Vec2>, mut walls: Vec<Option<usize>>| -> Option<(Vec<Vec2>, Vec<Option<usize>>)> {
+        if kept.len() < 3 {
+            return None;
+        }
+        let (first, last) = (walls.first().copied().flatten() == Some(axis), walls.last().copied().flatten() == Some(axis));
+        let other_end = match (first, last) {
+            (false, true) => kept.first().copied(),
+            (true, false) => kept.last().copied(),
+            _ => None,
+        };
+        if let Some(end) = other_end {
+            kept.push(Vec2::new(end.x, 0.0));
+            walls.push(Some(axis));
+        }
+        Some((kept, walls))
+    };
+    let mut parts = Vec::new();
+    let (mut kept, mut walls) = (Vec::new(), Vec::new());
+    for (i, &p) in points.iter().enumerate() {
+        if p.y >= 0.0 {
+            kept.push(p);
+            walls.push(on.get(i).copied().flatten());
+        }
+        let Some(&q) = points.get(i + 1) else { continue };
+        if (p.y >= 0.0) != (q.y >= 0.0) {
+            let t = p.y / (p.y - q.y);
+            kept.push(Vec2::new(p.x + (q.x - p.x) * t, 0.0));
+            walls.push(Some(axis));
+            // Going below the axis: this part ends at it.
+            if p.y >= 0.0 {
+                parts.extend(finish(std::mem::take(&mut kept), std::mem::take(&mut walls)));
+            }
+        }
+    }
+    parts.extend(finish(kept, walls));
+    parts
+}
+
 /// A turned part's profile off a slice through its axis, for when the faces' meetings go round no
 /// one profile (a face Find All missed between two, a slot or a boss across them): the scan cut by
 /// planes through the axis at even turns, each half-section walked as a prism's slice is
@@ -954,23 +998,28 @@ fn turned_sliced(
     for i in 0..TURNED_SLICES {
         let angle = PI * i as f64 / TURNED_SLICES as f64;
         let plane = Plane { origin: axis.point, x: axis.direction, y: u * angle.cos() + v * angle.sin() };
-        for run in crate::section::section_welded(scan, &weld, &plane).into_iter().filter(|r| r.closed) {
+        for run in crate::section::section_welded(scan, &weld, &plane) {
             let on: Vec<Option<usize>> = run.triangles.iter().map(|&t| owner.get(t).and_then(|&f| place.get(f).copied().flatten())).collect();
             for side in [1.0, -1.0] {
                 let flipped: Vec<Vec2> = run.points.iter().map(|p| Vec2::new(p.x, side * p.y)).collect();
-                let Some((points, on)) = above_axis(&flipped, &on, axis_wall) else { continue };
-                let Some(outline) = outline_of(&walls, &points, &on, reach, Some(tolerance)) else { continue };
-                let ring = ring(&outline);
-                if !is_simple_ring(&ring) || ring.iter().any(|p| p.y < -reach) {
-                    continue;
-                }
-                // How far the outline runs on the faces.
-                let on_faces: f64 = (0..outline.corners.len())
-                    .filter(|&k| outline.faces[k].is_some_and(|f| f != usize::MAX))
-                    .map(|k| outline.corners[k].dist(outline.corners[(k + 1) % outline.corners.len()]))
-                    .sum();
-                if best.as_ref().is_none_or(|(b, _)| on_faces > *b) {
-                    best = Some((on_faces, outline));
+                // A closed loop's half above the axis; an open run's (the scan's edge, or where the
+                // part selected stops), closed down to the axis.
+                let halves =
+                    if run.closed { above_axis(&flipped, &on, axis_wall).into_iter().collect() } else { above_axis_open(&flipped, &on, axis_wall) };
+                for (points, on) in halves {
+                    let Some(outline) = outline_of(&walls, &points, &on, reach, Some(tolerance)) else { continue };
+                    let ring = ring(&outline);
+                    if !is_simple_ring(&ring) || ring.iter().any(|p| p.y < -reach) {
+                        continue;
+                    }
+                    // How far the outline runs on the faces.
+                    let on_faces: f64 = (0..outline.corners.len())
+                        .filter(|&k| outline.faces[k].is_some_and(|f| f != usize::MAX))
+                        .map(|k| outline.corners[k].dist(outline.corners[(k + 1) % outline.corners.len()]))
+                        .sum();
+                    if best.as_ref().is_none_or(|(b, _)| on_faces > *b) {
+                        best = Some((on_faces, outline));
+                    }
                 }
             }
         }
@@ -1106,6 +1155,35 @@ mod tests {
         assert!(outline.faces.iter().any(Option::is_none), "{outline:?}");
         let half = area(&ring(&outline)).abs() / 2.0;
         assert!((half - 600.0).abs() < 0.02 * 600.0, "{half} mm² against 600: {outline:?}");
+    }
+
+    /// A block 40 × 40 × 10 with a turned boss on it, R 8 to 18 high and R 5 to 25: the whole is
+    /// no turned part, but the boss selected alone reads as one, its slice through the axis open
+    /// where the selection stops and closed down to the axis there. Its profile is the boss's
+    /// half-section, 64 + 35 mm².
+    #[test]
+    fn a_turned_boss_selected_on_a_block_is_read_alone() {
+        let (mut positions, mut triangles) = crate::test_meshes::fine_cuboid(Vec3::new(-20.0, -20.0, 0.0), Vec3::new(20.0, 20.0, 10.0), 10);
+        let mut profile = vec![[25.0, 0.0]];
+        profile.extend(steps([25.0, 0.5], [25.0, 5.0], 9));
+        profile.extend(steps([25.0, 5.0], [18.0, 5.0], 14).into_iter().skip(1));
+        profile.extend(steps([18.0, 5.0], [18.0, 8.0], 6).into_iter().skip(1));
+        profile.extend(steps([18.0, 8.0], [10.0, 8.0], 16).into_iter().skip(1));
+        let (boss, faces) = revolved(&profile, 96, false);
+        let (base, from) = (positions.len() as u32, triangles.len());
+        positions.extend(boss);
+        triangles.extend(faces.iter().map(|t| t.map(|i| i + base)));
+        let scan = Scan::new(&positions, &triangles);
+        let found = find_all(&scan, &Options::default(), &|| false);
+        assert!(read(&scan, &found).revolve.is_none(), "the block and the boss are no turned part");
+        let selected: Vec<bool> = (0..triangles.len()).map(|t| t >= from).collect();
+        let region = crate::reconstruct::read_region(&scan, &found, &selected).expect("the boss is read");
+        assert_eq!(region.triangles.len(), triangles.len() - from);
+        let reading = &region.reading;
+        assert!(reading.revolve.is_some() && reading.turned_unread.is_none(), "{:?} {:?}", reading.revolve, reading.turned_unread);
+        let (_, outline, _) = turned_profile(&region.scan(&scan), &region.outcome, reading).unwrap();
+        let half = area(&ring(&outline)).abs() / 2.0;
+        assert!((half - 99.0).abs() < 0.03 * 99.0, "{half} mm² against 99: {outline:?}");
     }
 
     /// The turned part: a face at −4 down to the axis, a round R 4 into the shaft R 20, the shaft

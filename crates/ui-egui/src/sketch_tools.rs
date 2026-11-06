@@ -283,8 +283,11 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
         let _ = app.run(id, json!({"show": false}));
         return false;
     }
-    // Reconstruct reads the scan before its dialog lists what to build.
-    if id == "scan.reconstruct" && !crate::dialogs_scan_reconstruct::read_first(app) {
+    // Reconstruct reads the scan (Reconstruct Selection the part of it selected) before its dialog
+    // lists what to build.
+    if matches!(id, "scan.reconstruct" | "scan.reconstruct_selection")
+        && !crate::dialogs_scan_reconstruct::read_first(app, id == "scan.reconstruct_selection")
+    {
         return false;
     }
     if id == "inspect.section" && app.preferences.viewport_section_status && app.session.section.is_some() {
