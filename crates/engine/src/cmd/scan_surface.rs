@@ -1,6 +1,6 @@
 //! Editing a fitted surface by its control points (`scan.edit_surface`): the surface Fit Surface
-//! made (one B-spline face, kept as STEP in an Import feature) has its control points moved, and
-//! those round them or all the others fitted to the scan again. The Import feature's STEP is
+//! made (one B-spline face, kept as STEP in a Scan Surface feature) has its control points moved, and
+//! those round them or all the others fitted to the scan again. The feature's STEP is
 //! replaced, so an edit is one undo step and the design opens anywhere, with no format change.
 
 use std::sync::Arc;
@@ -28,7 +28,7 @@ pub const REFIT_POINTS: usize = 8_000;
 /// A surface that can be edited, as it now is.
 #[derive(Clone, Debug)]
 pub struct EditableSurface {
-    /// The surface body and the Import feature that keeps it.
+    /// The surface body and the feature that keeps it.
     pub body: String,
     pub feature: u64,
     /// Its first face (its only one, but for a Free Form of several faces).
@@ -87,8 +87,11 @@ pub fn editable(s: &Session, name: Option<&str>, cmd: &str) -> Result<EditableSu
     let state = s.model.state();
     let usable = |name: &str| -> Option<EditableSurface> {
         let body = state.body(name).filter(|b| !b.body.is_mesh())?;
-        let is_import = |f: &&solidcraft_doc::Feature| matches!(f.kind, solidcraft_doc::FeatureKind::Import { .. });
-        // The feature that made it, or, once a later feature has moved it, the import that named it.
+        // A Scan Surface feature, or an Import feature in a design from before there was one.
+        let is_import = |f: &&solidcraft_doc::Feature| {
+            matches!(f.kind, solidcraft_doc::FeatureKind::ScanSurface { .. } | solidcraft_doc::FeatureKind::Import { .. })
+        };
+        // The feature that made it, or, once a later feature has moved it, the one that named it.
         let feature = s
             .doc
             .features
@@ -96,7 +99,9 @@ pub fn editable(s: &Session, name: Option<&str>, cmd: &str) -> Result<EditableSu
             .find(|f| f.id == body.feature)
             .filter(is_import)
             .or_else(|| s.doc.features.iter().filter(is_import).rfind(|f| f.body_names.iter().any(|n| n == name)))?;
-        let solidcraft_doc::FeatureKind::Import { step, .. } = &feature.kind else { return None };
+        let (solidcraft_doc::FeatureKind::ScanSurface { step, .. } | solidcraft_doc::FeatureKind::Import { step, .. }) = &feature.kind else {
+            return None;
+        };
         let faces = faces_of(&solidcraft_kernel::brep_record(&body.body).ok()?)?;
         // The file's own surface is this one, or this one moved: writing it back changes nothing else.
         let imported = solidcraft_kernel::step_import_shared(step).ok()?;
@@ -196,13 +201,13 @@ pub fn surface_step(surface: &NurbsSurface, cmd: &str) -> Result<String> {
 }
 
 /// Keeps `surface` as a surface body of its own, named `<base>1`, `<base>2`, … (the first free),
-/// in an Import feature called `feature`, whose file reads `file`: one undo step, and a design
+/// in a Scan Surface feature called `feature`, whose file reads `file`: one undo step, and a design
 /// that opens anywhere. The body's name and the feature's reply.
 pub fn keep_surface(s: &mut Session, surface: &NurbsSurface, base: &str, feature: &str, file: &str, cmd: &str) -> Result<(String, Value)> {
     let step = surface_step(surface, cmd)?;
     let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
     let name = (1..).map(|i| format!("{base}{i}")).find(|n| !taken.contains(n)).unwrap_or_else(|| base.into());
-    let kind = solidcraft_doc::FeatureKind::Import { file: file.into(), step: step.into(), components: Vec::new(), skip: Vec::new() };
+    let kind = solidcraft_doc::FeatureKind::ScanSurface { file: file.into(), step: step.into() };
     let reply = super::super::features::add_feature(s, &json!({ "body_name": name, "name": feature }), kind)?;
     Ok((name, reply))
 }
@@ -219,13 +224,13 @@ fn unmoved(target: &EditableSurface, surface: &NurbsSurface, cmd: &str) -> Resul
     }
 }
 
-/// Writes `surface` back into the Import feature that keeps the surface: one undo step.
+/// Writes `surface` back into the feature that keeps the surface: one undo step.
 pub(super) fn write_back(s: &mut Session, target: &EditableSurface, surface: &NurbsSurface, cmd: &str) -> Result<()> {
     let step = surface_step(&unmoved(target, surface, cmd)?, cmd)?;
     write_step(s, target, step, cmd)
 }
 
-/// Writes `faces` back into the Import feature that keeps the surface: one face as it is, a
+/// Writes `faces` back into the feature that keeps the surface: one face as it is, a
 /// network's faces sewn into one body along the sides they share. One undo step.
 pub(super) fn write_faces(s: &mut Session, target: &EditableSurface, faces: &[NurbsSurface], cmd: &str) -> Result<()> {
     match faces {
@@ -248,10 +253,10 @@ pub fn network_step(faces: &[NurbsSurface], cmd: &str) -> Result<String> {
     solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| bad(cmd, format!("the faces: {e}")))
 }
 
-/// Writes `step` into the Import feature that keeps the surface, and works the design out again.
+/// Writes `step` into the feature that keeps the surface, and works the design out again.
 fn write_step(s: &mut Session, target: &EditableSurface, step: String, cmd: &str) -> Result<()> {
     let feature = s.doc_mut().feature_mut(target.feature).ok_or_else(|| bad(cmd, "the surface's feature is gone"))?;
-    if let solidcraft_doc::FeatureKind::Import { step: kept, .. } = &mut feature.kind {
+    if let solidcraft_doc::FeatureKind::ScanSurface { step: kept, .. } | solidcraft_doc::FeatureKind::Import { step: kept, .. } = &mut feature.kind {
         *kept = step.into();
     }
     s.refresh();

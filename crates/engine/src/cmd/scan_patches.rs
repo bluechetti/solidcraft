@@ -2,8 +2,8 @@
 //! region of the scan (what is selected, the piece clicked, or as far as a radius round the
 //! click) fitted with a bicubic surface placed by the region's own flattening, so a region that
 //! curves round fits too; in blocks, cut exactly into rows and columns of faces sewn into one
-//! body; or as a quad whose edges follow the region's edge. The surface is kept as STEP in an
-//! Import feature, so a design opens anywhere.
+//! body; or as a quad whose edges follow the region's edge. The surface is kept as STEP in a
+//! Scan Surface feature, so a design opens anywhere.
 
 use serde_json::{Value, json};
 use solidcraft_scan::patches::{self, Layout, Patches};
@@ -18,7 +18,7 @@ const PATCHES_CONTRACT: TypedContract<ScanPatchesParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.fit_patches", "Fit Patches", crate::checked!("scan.fit_patches", fit_patches))
     .at("SCAN", "FREEFORM")
-    .icon("surface_patch")
+    .icon("scan_fit_patches")
     .contract(&PATCHES_CONTRACT)
     .output(output_schema_for::<ScanPatchesResult>)
     .params("body?: the scan (default: what is selected on a scan, else the picked or only one); the region: triangles?: [indices] | point?: [x,y,z] (the piece there) with radius?: length (default: what is selected, else the point picked); layout?: grid (default: one patch over the region's flattened box) | blocks (that patch cut exactly into `rows` × `columns` faces, sewn into one body) | quads (one patch whose edges follow the region's edge, its corners where the region's are); controls?: 4–30 or [u, v] (default 10: control points each way over the whole); rows?, columns?: blocks (default 2 × 2); smoothing?: 0–1 (default 0.1): fitted in all three directions to the region's points, each starting on the base surface the region fits best (its plane, a cylinder round it, or its flattening, so a region that curves round fits too) and moved to its foot on the surface between rounds; kept as a surface body `Patches1`, … (one undo step); a surface that folds, pinches or passes through itself is kept and said so (warning), and blocks that cannot be sewn because of it are refused → body, surface, layout, patches, rows, columns, controls, rms, max, points, folds, pinches, crossings, warning?, feature")];
@@ -101,7 +101,7 @@ fn fit_patches(s: &mut Session, p: &Value) -> Result<Value> {
         let step = solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| bad(cmd, format!("the patches: {e}")))?;
         let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
         let name = (1..).map(|i| format!("Patches{i}")).find(|n| !taken.contains(n)).unwrap_or_else(|| "Patches".into());
-        let kind = solidcraft_doc::FeatureKind::Import { file: "patches".into(), step: step.into(), components: Vec::new(), skip: Vec::new() };
+        let kind = solidcraft_doc::FeatureKind::ScanSurface { file: "patches".into(), step: step.into() };
         let reply = super::super::features::add_feature(s, &json!({ "body_name": name, "name": "Fit Patches" }), kind)?;
         (name, reply)
     };

@@ -239,6 +239,7 @@ surface_trim_mutual
 move
   remap_bodies: bodies[0]
 import
+scan_surface
 mesh_convert
   remap_bodies: body
 mesh_import

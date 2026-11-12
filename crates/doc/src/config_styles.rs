@@ -116,7 +116,7 @@ impl Document {
                 sketch == current && extent.taper.is_none()
                     && self.feature(*sketch).is_some_and(|feature| matches!(&feature.kind, FeatureKind::Sketch { sketch, .. } if sketch.curves.iter().any(|candidate| candidate.id == *curve && !candidate.construction && matches!(candidate.kind, solidcraft_sketch::CurveKind::Line { .. } | solidcraft_sketch::CurveKind::Circle { .. } | solidcraft_sketch::CurveKind::Arc { .. }))))
             }
-            (FaceCertificate::Imported { .. }, FeatureKind::Import { .. }) => true,
+            (FaceCertificate::Imported { .. }, FeatureKind::Import { .. } | FeatureKind::ScanSurface { .. }) => true,
             _ => false,
         }
     }
@@ -152,7 +152,7 @@ impl Document {
                         && self.feature(*sketch).is_some_and(|feature| matches!(&feature.kind, FeatureKind::Sketch { sketch, .. } if sketch.curves.iter().any(|candidate| candidate.id == *curve && !candidate.construction && matches!(candidate.kind, solidcraft_sketch::CurveKind::Line { .. } | solidcraft_sketch::CurveKind::Circle { .. } | solidcraft_sketch::CurveKind::Arc { .. }))))
                 }
                 // A linked design's face is named after its name there (`link:…`, see lineage::link_role).
-                (super::FaceCertificate::Imported { .. }, FeatureKind::Import { .. }) => {
+                (super::FaceCertificate::Imported { .. }, FeatureKind::Import { .. } | FeatureKind::ScanSurface { .. }) => {
                     role.strip_prefix("face:").is_some_and(|index| index.parse::<usize>().is_ok()) || role.starts_with("link:")
                 }
                 (super::FaceCertificate::Lineage, _) => !role.is_empty(),

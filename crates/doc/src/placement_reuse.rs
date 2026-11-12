@@ -96,6 +96,7 @@ pub(super) fn local_geometry(f: &Feature, components: &std::collections::HashMap
         | FeatureKind::Sphere { center: _, radius: _, operation: Operation::NewBody }
         | FeatureKind::Torus { center: _, major: _, minor: _, operation: Operation::NewBody }
         | FeatureKind::Import { file: _, step: _, components: _, skip: _ }
+        | FeatureKind::ScanSurface { file: _, step: _ }
         | FeatureKind::MeshImport { file: _, meshes: _ } => true,
         FeatureKind::Sketch { plane, sketch } => sketch.links.is_empty() && sketch.wires.is_empty() && local_plane(plane, 0),
         FeatureKind::Extrude { sketch, profiles: _, extent, operation: Operation::NewBody, targets: _, thin: _ } => {

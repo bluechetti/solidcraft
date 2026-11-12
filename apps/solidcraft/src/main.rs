@@ -37,6 +37,8 @@ mod native_crash_macos;
 mod native_frame;
 #[cfg(target_os = "macos")]
 mod native_menu;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod native_signal_unix;
 mod nav_bridge;
 #[cfg(target_os = "macos")]
 mod open_documents;
@@ -1050,6 +1052,8 @@ fn main() -> eframe::Result {
     native_crash::install();
     #[cfg(target_os = "macos")]
     native_crash_macos::install();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    native_signal_unix::install();
     // Windows with only OpenGL to start: the system title bar instead of ours (#2063).
     let started = match &wgpu_options.wgpu_setup {
         eframe::egui_wgpu::WgpuSetup::CreateNew(setup) => setup.instance_descriptor.backends,

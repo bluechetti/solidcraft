@@ -867,7 +867,23 @@ fn unclean_exit(dir: &Path, build: &Build, journal: &Path) {
         (None, None) => "between commands".to_string(),
     };
     let field = |k: &str| native.as_ref().and_then(|n| n.get(k)).and_then(Value::as_str).map(|v| limited(v, 300));
+    let sent = native.as_ref().and_then(|n| n.get("sent_by")).and_then(Value::as_u64);
     let (message, location, signature_text, backtrace) = match &native {
+        // Ended from outside by a signal (Linux): say which and who sent it.
+        Some(_) if native.as_ref().is_some_and(|n| n.get("sent_by").is_some()) => {
+            let code = field("code").unwrap_or_else(|| "a signal".into());
+            let who = match (sent, field("sender").filter(|n| !n.is_empty())) {
+                (Some(pid), Some(name)) if pid > 0 => format!("process {pid} ({name})"),
+                (Some(pid), None) if pid > 0 => format!("process {pid}"),
+                _ => "the system or a process that has gone".to_string(),
+            };
+            (
+                format!("SolidCraft {was} (started {when}) was ended by {code} from {who} {during}"),
+                format!("ended by {code}"),
+                format!("ended by {code} {}", starting.as_ref().map_or(doing.unwrap_or("idle"), |(p, _)| p.as_str())),
+                vec![format!("{code} sent by {who}")],
+            )
+        }
         Some(_) => {
             let code = field("code").unwrap_or_else(|| "?".into());
             let name = field("name").unwrap_or_else(|| "exception".into());

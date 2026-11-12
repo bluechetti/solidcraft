@@ -729,7 +729,7 @@ impl Document {
             return Ok(Some(certificate));
         }
         if let solidcraft_kernel::FaceSource::Imported { item, face, payload_sha256: Some(digest), producer: Some(producer) } = source {
-            if !self.feature(*producer).is_some_and(|feature| matches!(feature.kind, FeatureKind::Import { .. })) {
+            if !self.feature(*producer).is_some_and(|feature| matches!(feature.kind, FeatureKind::Import { .. } | FeatureKind::ScanSurface { .. })) {
                 return Err(DocError::Invalid("import source producer missing".into()));
             }
             let certificate = FaceCertificate::Imported { payload_sha256: digest.clone(), item: *item, face: *face };

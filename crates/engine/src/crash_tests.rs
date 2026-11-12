@@ -22,7 +22,7 @@ fn child() {
     println!("FRESH {}", serde_json::to_string(&fresh).unwrap());
     // Dying while starting up, before any command: in a graphics driver, with or without what
     // a native crash handler caught.
-    if mode == "startup" || mode == "native" || mode == "signal" {
+    if mode == "startup" || mode == "native" || mode == "signal" || mode == "ended" {
         phase("window");
         phase("adapter request");
         set_environment("Renderer: Vulkan Test GPU (driver 1.2.3)");
@@ -47,6 +47,11 @@ fn child() {
                 "module": "/System/Library/Extensions/AGXMetalG13X.bundle/Contents/MacOS/libAGXMetalG13X.dylib",
                 "offset": "0x1A2B3C", "thread": 4242, "thread_name": "main", "pid": 77, "frames": frames});
             fs::write(info, v.to_string()).unwrap();
+        }
+        // What the Linux handler writes when a signal from outside ends the app.
+        if mode == "ended" {
+            let (info, _) = native_paths().unwrap();
+            fs::write(info, r#"{"code":"SIGHUP","name":"signal","sent_by":4321,"sender":"foot","module":"","offset":"","address":""}"#).unwrap();
         }
         std::process::abort();
     }
@@ -482,6 +487,21 @@ fn a_crash_signal_is_reported_with_its_thread_and_its_walk_up_the_stack() {
     assert_eq!(bt[5], "solidcraft+0x0 frame0");
     assert_eq!(bt.len(), 3 + MAX_FRAMES, "{bt:?}");
     assert!(v.get("minidump_path").is_none(), "{v}");
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn an_app_ended_by_a_signal_says_which_and_who_sent_it() {
+    let d = fresh_dir("ended");
+    let (_, ok) = run_child(&d, "ended");
+    assert!(!ok, "the child aborted");
+    let (_, ok) = run_child(&d, "none");
+    assert!(ok);
+    let (s, v) = only_report(&d);
+    assert_eq!(s.kind, "unclean_exit");
+    assert!(s.message.contains("was ended by SIGHUP from process 4321 (foot) during startup (device creation"), "{}", s.message);
+    assert_eq!(v["location"], "ended by SIGHUP");
+    assert_eq!(v["backtrace"][0], "SIGHUP sent by process 4321 (foot)");
     let _ = fs::remove_dir_all(&d);
 }
 

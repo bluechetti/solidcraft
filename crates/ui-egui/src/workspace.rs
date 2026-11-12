@@ -263,6 +263,8 @@ pub const SECTIONS: &[Section] = &[
             "sketch.arc.three_point",
             "sketch.construction_line",
             "sketch.infinite",
+            // In a 3D sketch with a scan in the design: a curve laid along the scan.
+            "scan.curve_on_scan",
         ],
     },
     Section {
@@ -399,6 +401,11 @@ pub const SECTIONS: &[Section] = &[
             "scan.merge_surfaces",
             "scan.slice_surface",
             "scan.fit_patches",
+            // The fitted surfaces trimmed, joined, patched and thickened without leaving the Scan tab.
+            "surface.trim",
+            "surface.stitch",
+            "surface.patch",
+            "surface.thicken",
         ],
     },
     Section {
@@ -423,7 +430,12 @@ pub const SECTIONS: &[Section] = &[
         promoted: 1,
         ids: &["scan.select", "scan.select_inside_curve", "scan.keep_selection", "scan.delete_selection"],
     },
-    Section { tab: "SCAN", panel: "CHECK", promoted: 1, ids: &["scan.deviation", "inspect.surface_check", "inspect.section", "inspect.compare"] },
+    Section {
+        tab: "SCAN",
+        panel: "CHECK",
+        promoted: 1,
+        ids: &["scan.deviation", "inspect.surface_check", "inspect.zebra", "inspect.curvature_map", "inspect.section", "inspect.compare"],
+    },
 ];
 
 // Migration data only: Render commands remain registered, but have no live ribbon sections.
@@ -540,12 +552,12 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("render.scene", "Scene"),
     ("scan.center", "Center"),
     ("scan.complete_by_mirroring", "Mirror Fill"),
-    ("scan.curve_on_scan", "Scan Curve"),
+    ("scan.curve_on_scan", "Curve on Scan"),
     ("scan.deviation", "Deviation"),
     ("scan.free_form", "Free Form"),
     ("scan.reconstruct", "Rebuild"),
     ("scan.remove_floating", "Floating"),
-    ("scan.section_sketch", "Section"),
+    ("scan.section_sketch", "Cut to Sketch"),
     ("scan.select", "Select"),
     ("scan.select_inside_curve", "Inside Curve"),
     ("scan.square_to_symmetry", "Square Up"),
@@ -636,6 +648,10 @@ pub(crate) fn legacy_render_destination(c: &CommandSpec) -> Option<(&'static str
         "sheet.convert" => Some(("MODEL", "MODIFY")),
         "parameters.change" => Some(("MANAGE", "PARAMETERS")),
         "config.table" | "config.configure" => Some(("MANAGE", "CONFIGURATIONS")),
+        // Also on SKETCH while a 3D sketch is edited; its home is the Scan tab.
+        "scan.curve_on_scan" => Some(("SCAN", "SKETCH")),
+        // Also in the Scan tab's SURFACE EDIT panel.
+        "surface.patch" => Some(("SURFACE", "CREATE")),
         _ => None,
     };
     primary

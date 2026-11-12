@@ -1951,6 +1951,16 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         skip: Vec<u64>,
     },
+    /// A smooth surface made on the Scan tab (Fit Surface, New Free Form, Wrap Surface, Merge
+    /// Surfaces, Fit Patches): one B-spline face or a network of them, kept as STEP text in the
+    /// design as an Import keeps it, but a feature kind of its own. Edit Surface rewrites the text.
+    /// Designs from before it kept these in Import features, which build and edit as they did.
+    ScanSurface {
+        /// What the surface was made as (display only).
+        file: String,
+        /// The STEP (ISO 10303-21) text of the surface body, shared by every copy of the design.
+        step: std::sync::Arc<str>,
+    },
     /// Rebuild an upstream constant-section mesh with analytic planar/cylindrical faces.
     MeshConvert {
         body: BodyName,
@@ -2706,6 +2716,7 @@ impl FeatureKind {
             FeatureKind::ReverseNormal { .. } => "ReverseNormalFeature",
             FeatureKind::SurfaceUntrim { .. } => "UntrimFeature",
             FeatureKind::Import { .. } => "BaseFeature",
+            FeatureKind::ScanSurface { .. } => "ScanSurfaceFeature",
             FeatureKind::MeshImport { .. } => "MeshFeature",
             FeatureKind::MeshConvert { .. } => "MeshConvertFeature",
             FeatureKind::Repair { .. } => "RepairFeature",
@@ -2788,6 +2799,7 @@ impl FeatureKind {
             FeatureKind::SurfaceTrim { .. } => "surface_trim",
             FeatureKind::Move { .. } => "move",
             FeatureKind::Import { .. } => "import",
+            FeatureKind::ScanSurface { .. } => "scan_surface",
             FeatureKind::MeshConvert { .. } => "mesh_convert",
             FeatureKind::MeshImport { .. } => "mesh_import",
             FeatureKind::Repair { .. } => "repair",
@@ -2869,6 +2881,7 @@ impl FeatureKind {
             "ReverseNormalFeature" => "reverse_normal",
             "UntrimFeature" => "surface_untrim",
             "BaseFeature" => "import",
+            "ScanSurfaceFeature" => "scan_surface",
             "MeshFeature" => "mesh_import",
             "MeshConvertFeature" => "mesh_convert",
             "RepairFeature" => "repair",
@@ -2955,6 +2968,7 @@ impl FeatureKind {
             FeatureKind::ReverseNormal { .. } => "ReverseNormal",
             FeatureKind::SurfaceUntrim { .. } => "Untrim",
             FeatureKind::Import { .. } => "Import",
+            FeatureKind::ScanSurface { .. } => "ScanSurface",
             FeatureKind::MeshImport { .. } => "Mesh",
             FeatureKind::MeshConvert { .. } => "ConvertMesh",
             FeatureKind::Repair { .. } => "Repair",

@@ -611,8 +611,12 @@ pub(crate) fn face_feature(app: &SolveApp, body: &str, index: usize) -> Option<u
     let name = names.get(index)?;
     let id = solidcraft_engine::doc::persistent_name::made_by(name)?;
     let owner = app.session.doc.feature(body.feature)?;
-    if matches!(owner.kind, solidcraft_engine::doc::FeatureKind::Import { .. } | solidcraft_engine::doc::FeatureKind::MeshImport { .. })
-        && id != owner.id
+    if matches!(
+        owner.kind,
+        solidcraft_engine::doc::FeatureKind::Import { .. }
+            | solidcraft_engine::doc::FeatureKind::ScanSurface { .. }
+            | solidcraft_engine::doc::FeatureKind::MeshImport { .. }
+    ) && id != owner.id
     {
         return None;
     }

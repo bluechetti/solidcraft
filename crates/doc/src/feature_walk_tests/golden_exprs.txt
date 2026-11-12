@@ -431,6 +431,7 @@ move
     Angle = move.angle (Angle)
   expressions: move.x, move.y, move.z, move.angle
 import
+scan_surface
 mesh_convert
   inputs:
     Tolerance = mesh_convert.tolerance (Length)

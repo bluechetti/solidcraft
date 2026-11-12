@@ -232,7 +232,7 @@ fn write_container(
     let mut features = Vec::with_capacity(doc.features.len());
     for feature in &doc.features {
         let replacements = match &feature.kind {
-            FeatureKind::Import { step, .. } => {
+            FeatureKind::Import { step, .. } | FeatureKind::ScanSurface { step, .. } => {
                 // STEP is text and shrinks several times: always compressed, so an import as large
                 // as MAX_STEP_BYTES still fits in a design file.
                 let blob = writer.blob(step.as_bytes(), "step", true)?;
@@ -877,7 +877,7 @@ fn hydrate_newer<R: Read + Seek>(doc: &mut Document, metadata: &Value, container
     for (index, feature) in doc.features.iter_mut().enumerate() {
         let Some(value) = metadata.get("features").and_then(|v| v.get(index)) else { continue };
         let readable = match &mut feature.kind {
-            FeatureKind::Import { .. } => reader.blob(value, "step_blob", "step").map(|_| ()),
+            FeatureKind::Import { .. } | FeatureKind::ScanSurface { .. } => reader.blob(value, "step_blob", "step").map(|_| ()),
             FeatureKind::MeshImport { meshes, .. } => {
                 let mut check = meshes.clone();
                 check.iter_mut().enumerate().try_for_each(|(i, mesh)| {
@@ -1007,7 +1007,7 @@ fn read_document<R: Read + Seek>(reader: &mut PackageReader<R>) -> Result<Docume
     for (index, feature) in doc.features.iter_mut().enumerate() {
         let value = metadata.get("features").and_then(|v| v.get(index)).ok_or_else(|| invalid("missing feature metadata"))?;
         match &mut feature.kind {
-            FeatureKind::Import { step, .. } => {
+            FeatureKind::Import { step, .. } | FeatureKind::ScanSurface { step, .. } => {
                 if !step.is_empty() {
                     return Err(invalid("ambiguous embedded STEP and blob"));
                 }

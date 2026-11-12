@@ -171,6 +171,21 @@ A sketch entity that is not a point: a line, an arc, a circle, an ellipse, a spl
 - **Elsewhere:** curve, sketch curve, segment.
 - **For translators:** not an edge of a body.
 
+
+### curve on scan
+
+A smooth 3D curve laid along the surface of a scan through points the user clicks, kept as a
+spline in a 3D sketch.
+
+The curve is as fine as the scan's triangles allow, within a tolerance, so it can be swept along,
+lofted through or projected like any sketch curve. Compare *section* (a cut by a plane).
+
+- **In SolidCraft:** `scan.curve_on_scan`; Curve on Scan on the SCAN tab and on the SKETCH tab of
+  a 3D sketch; the 3D sketch `Scan Curves`.
+- **Don't use:** scan curve, projected curve, trace.
+- **Elsewhere:** curve on mesh, draw curve on scan, spline on mesh.
+- **For translators:** the curve lies on the scan; it does not describe a curve of the scan.
+
 ### design
 
 The model that is open in SolidCraft: its timeline, components, bodies, sketches, parameters and
@@ -184,6 +199,7 @@ A design is saved as a *design file*.
 - **Elsewhere:** design, document, model, part file, assembly file.
 - **For translators:** not the *Project* design property and not the sketch Project command.
 
+
 ### design file
 
 A file in which SolidCraft saves one design, with the `.sc` extension (`.solidcraft` in earlier releases; those files still open).
@@ -193,6 +209,16 @@ A file in which SolidCraft saves one design, with the `.sc` extension (`.solidcr
 - **Elsewhere:** design file, model file.
 - **For translators:** "file" is only for what is on disk: opening, saving, importing and
   exporting.
+
+### deviation
+
+How far each point of a scan is from a surface or body it is compared with, shown as colour.
+
+- **In SolidCraft:** `scan.deviation`; Deviation in SCAN › CHECK.
+- **Don't use:** error, difference (for this distance).
+- **Elsewhere:** deviation analysis, colour map, scan-to-CAD comparison.
+- **For translators:** a distance between two shapes, not a statistical deviation.
+
 
 ### dimension
 
@@ -205,6 +231,7 @@ A dimension can drive the sketch, or be driven by it and only show the value.
 - **Don't use:** measurement (for a dimension), size.
 - **Elsewhere:** dimension, dimensional constraint, driving dimension.
 - **For translators:** not a drawing dimension and not a measured value.
+
 
 ### equation curve
 
@@ -441,6 +468,44 @@ are kept, not deleted.
 - **Elsewhere:** rollback bar, rollback marker, end-of-part marker.
 - **For translators:** "history" is the undo history, not the timeline. French had three names
   for this marker while English did.
+
+### scan
+
+A body made of triangles, or a cloud of points, that measures a real object.
+
+A scan stays as it was measured; shapes, sketches and surfaces made from it are separate features
+that refer to it.
+
+- **In SolidCraft:** mesh bodies and point clouds inserted with `file.insert_mesh` and
+  `pointcloud.insert`; the SCAN tab and the `scan.*` commands.
+- **Don't use:** mesh (alone), model, capture, reality capture.
+- **Elsewhere:** scan, mesh, point cloud, STL.
+- **For translators:** the result of measuring, not a scan of a document.
+
+### scan surface
+
+A smooth B-spline surface body fitted to, or drawn over, a scan, kept as its own feature.
+
+It holds one face or a network of faces. It is made by Fit Surface, New Free Form, Wrap Surface,
+Merge Surfaces and Fit Patches, and edited by Edit Surface. Compare *Free Form*.
+
+- **In SolidCraft:** the `scan_surface` feature type (the Scan Surface feature in the history);
+  `scan.fit_surface`, `scan.free_form`, `scan.wrap_surface`, `scan.merge_surfaces`,
+  `scan.fit_patches`, `scan.edit_surface`.
+- **Don't use:** imported surface, STEP surface (for these), scan patch.
+- **Elsewhere:** NURBS surface fitted to a mesh, surface from scan.
+- **For translators:** a surface made from a scan, not the surface of a scan.
+
+### section
+
+The outline where a plane cuts a scan or a body, shown as a line or sketched as lines and arcs
+fitted to the cut.
+
+- **In SolidCraft:** `scan.section_sketch` (Cut to Sketch in SCAN › SKETCH), `inspect.section`
+  (Section in the CHECK panel: a view of the cut, not a sketch).
+- **Don't use:** slice (for the cut), cross-section, profile.
+- **Elsewhere:** cross-section, slice, section to sketch.
+- **For translators:** a cut, not a part of a document.
 
 ### settings profile
 

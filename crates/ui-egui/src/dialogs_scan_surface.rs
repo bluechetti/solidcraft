@@ -1761,7 +1761,7 @@ fn dialog(app: &mut SolveApp) -> Option<&mut EditSurface> {
 /// when the feature is not such a surface (or is rolled back), to be edited the usual way.
 pub(crate) fn edit_from_history(app: &mut SolveApp, feature: u64) -> bool {
     let Some(f) = app.session.doc.feature(feature) else { return false };
-    if !matches!(f.kind, solidcraft_engine::doc::FeatureKind::Import { .. }) {
+    if !matches!(f.kind, solidcraft_engine::doc::FeatureKind::ScanSurface { .. } | solidcraft_engine::doc::FeatureKind::Import { .. }) {
         return false;
     }
     let mut names = f.body_names.clone();

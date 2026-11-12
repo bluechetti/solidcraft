@@ -215,6 +215,7 @@ surface_trim_mutual
 move
   moves: rotate_axis[1], rotate_axis[2]
 import
+scan_surface
 mesh_convert
 mesh_import
 repair

@@ -14,6 +14,7 @@
 - [Components and joints](guide/assemblies.md)
 - [Sheet metal](guide/sheet-metal.md)
 - [Plastic parts](guide/plastic.md)
+- [Scan to CAD](guide/scan-to-cad.md)
 - [Import and export](guide/files.md)
 - [Keyboard shortcuts](guide/shortcuts.md)
 - [Updates and privacy](guide/updates.md)

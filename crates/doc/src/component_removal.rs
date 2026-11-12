@@ -25,7 +25,7 @@ impl Document {
     /// (`Feature::inserted`) or a linked design's bodies? Deleting it then removes that tree.
     pub fn feature_owns_component(&self, f: &crate::Feature) -> bool {
         f.component != 0
-            && matches!(f.kind, FeatureKind::Import { .. } | FeatureKind::MeshImport { .. })
+            && matches!(f.kind, FeatureKind::Import { .. } | FeatureKind::ScanSurface { .. } | FeatureKind::MeshImport { .. })
             && (f.inserted || self.links.get(&f.component).is_some_and(|link| link.feature == f.id))
     }
 

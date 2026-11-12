@@ -3,8 +3,8 @@
 //! angle the faces meet at; a design keeps only what that reading would get wrong: the shared
 //! edges creased by hand where the faces still meet smoothly, those made smooth by hand where they
 //! still meet at an angle, and the plane Symmetry keeps it a mirror image in. Each is kept by the
-//! Import feature that holds the Free Form; an edge is named by its two ends, as they are in that
-//! feature's file (before later features move it).
+//! feature that holds the Free Form (a Scan Surface, or an Import in an older design); an edge is
+//! named by its two ends, as they are in that feature's file (before later features move it).
 
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +24,7 @@ pub struct KeptPlane {
 /// What one Free Form keeps besides its faces.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FreeFormKeep {
-    /// The Import feature that holds the Free Form.
+    /// The feature that holds the Free Form.
     pub feature: u64,
     /// Shared edges, each by its two ends, that are creases though the faces meet smoothly.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

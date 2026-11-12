@@ -1130,6 +1130,7 @@ fn heavy_fields(kind: &FeatureKind) -> &'static [(&'static str, &'static str)] {
     match kind {
         FeatureKind::Sketch { .. } => &[("sketch", "the sketch geometry (sketch.inspect; edit it with the sketch commands)")],
         FeatureKind::Import { .. } => &[("step", "the imported STEP text"), ("components", "the imported product tree")],
+        FeatureKind::ScanSurface { .. } => &[("step", "the surface's STEP text (change it with Edit Surface)")],
         FeatureKind::MeshImport { .. } => &[("meshes", "the imported meshes")],
         _ => &[],
     }

@@ -1226,7 +1226,7 @@ impl ImportDigests {
         let mut out = ImportDigests::default();
         for f in &doc.features {
             match &f.kind {
-                FeatureKind::Import { step, .. } => {
+                FeatureKind::Import { step, .. } | FeatureKind::ScanSurface { step, .. } => {
                     let digest = known.get(f.id, step).unwrap_or_else(|| step_text_digest(step));
                     out.steps.insert(f.id, (step.clone(), digest));
                 }
@@ -1324,7 +1324,7 @@ fn fingerprint_sketch(sk: &mut solidcraft_sketch::Sketch) {
 fn hash_feature_json(f: &Feature, steps: &ImportDigests, h: &mut impl Hasher) {
     type Written = std::collections::HashMap<u64, Arc<(Feature, String)>>;
     static WRITTEN: std::sync::LazyLock<std::sync::Mutex<Written>> = std::sync::LazyLock::new(Default::default);
-    if matches!(f.kind, FeatureKind::Import { .. } | FeatureKind::MeshImport { .. }) {
+    if matches!(f.kind, FeatureKind::Import { .. } | FeatureKind::ScanSurface { .. } | FeatureKind::MeshImport { .. }) {
         feature_json(f, steps).hash(h);
         return;
     }
@@ -1362,9 +1362,9 @@ fn feature_json(f: &Feature, steps: &ImportDigests) -> String {
         // writing the large numeric arrays out again. Equal content in fresh Arcs hashes alike.
         return serde_json::to_string(&(g, digests)).unwrap_or_default();
     }
-    if let FeatureKind::Import { step, .. } = &f.kind {
+    if let FeatureKind::Import { step, .. } | FeatureKind::ScanSurface { step, .. } = &f.kind {
         let mut g = f.clone();
-        if let FeatureKind::Import { step: text, .. } = &mut g.kind {
+        if let FeatureKind::Import { step: text, .. } | FeatureKind::ScanSurface { step: text, .. } = &mut g.kind {
             let digest = steps.get(f.id, step).unwrap_or_else(|| step_text_digest(step));
             *text = Arc::from(format!("{digest:016x}:{}", step.len()));
         }
@@ -8194,7 +8194,12 @@ fn eval_feature(
             }
             Ok(())
         }
-        FeatureKind::Import { step, skip, .. } => {
+        FeatureKind::Import { step, .. } | FeatureKind::ScanSurface { step, .. } => {
+            // A Scan Surface skips no body of its file.
+            let skip: &[u64] = match &f.kind {
+                FeatureKind::Import { skip, .. } => skip,
+                _ => &[],
+            };
             let imp = kernel::step_import_shared(step)?;
             let digest = crate::config::payload_digest(step);
             let names = import_body_names(st, &f.body_names, &imp, skip);

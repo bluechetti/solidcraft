@@ -55,6 +55,8 @@ keyring = { version = "3.6", default-features = false, features = ["apple-native
 
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
 quick-xml = { workspace = true }
+# Who ended the app with a signal (src/native_signal_unix.rs), already in the tree through many crates.
+libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
