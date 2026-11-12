@@ -101,6 +101,7 @@ pub mod scan_patches;
 pub mod scan_reconstruct;
 pub mod scan_select;
 pub mod scan_split;
+pub mod scan_template;
 pub mod section;
 pub mod sheet;
 pub mod sketch;

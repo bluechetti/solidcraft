@@ -1112,6 +1112,9 @@ pub mod split;
 #[path = "scan_surface.rs"]
 pub mod surface;
 
+#[path = "scan_template.rs"]
+pub mod template;
+
 #[cfg(test)]
 #[path = "scan_tests.rs"]
 mod tests;

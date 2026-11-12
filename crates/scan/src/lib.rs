@@ -48,6 +48,8 @@
 //! - [`symmetry`]: the plane a scan is a mirror image about, found by itself or near a line drawn
 //!   along it, how far each point's reflection lands from the scan, and the move that squares
 //!   the scan to it.
+//! - [`template`]: a flat template of a wall from its scan: the outline picked laid on the panel's
+//!   plane, a cut-out for each part standing off it, and the scan's own edge to check against.
 
 pub mod align;
 pub mod base;
@@ -91,6 +93,7 @@ pub mod surface_check;
 pub mod surface_edit;
 pub mod symmetric;
 pub mod symmetry;
+pub mod template;
 pub mod wrap;
 
 use std::collections::HashMap;

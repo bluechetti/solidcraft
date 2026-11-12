@@ -1636,3 +1636,119 @@ fn close_surface_refuses_a_scan_and_a_bad_continuity() {
     let e = s.execute("scan.close_surface", &json!({"continuity": "g2"})).unwrap_err().to_string();
     assert!(e.contains("g0 or g1"), "{e}");
 }
+
+/// A wall 400 × 300 with an outlet box standing 25 off it, as a grid of `n` squares a side.
+fn wall_triangles(n: u32) -> Vec<[Vec3; 3]> {
+    let z = |x: f64, y: f64| if (100.0..=160.0).contains(&x) && (100.0..=180.0).contains(&y) { 25.0 } else { 0.0 };
+    let at = |i: u32, j: u32| {
+        let (x, y) = (400.0 * f64::from(i) / f64::from(n), 300.0 * f64::from(j) / f64::from(n));
+        Vec3::new(x, y, z(x, y))
+    };
+    let mut out = Vec::new();
+    for j in 0..n {
+        for i in 0..n {
+            out.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+            out.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+        }
+    }
+    out
+}
+
+/// Flat Template over a wall with an outlet: the wall's plane is fitted without the outlet, the
+/// outline is laid exactly on it, the outlet is cut out, the scan's edge is construction, and one
+/// undo takes the sketch away.
+#[test]
+fn flat_template_cuts_the_protrusion_out_and_shows_the_scan_edge() {
+    let (mut s, body) = session_with_triangles("flat-template", &wall_triangles(200));
+    let outline = json!([[20, 20, 4], [280, 20, -3], [280, 280, 2], [20, 280, 0]]);
+    let r = run(&mut s, "scan.flat_template", json!({"body": body, "outline": outline}));
+    assert_eq!(r["fitted"], true, "{r}");
+    assert_eq!(r["cutouts"].as_array().unwrap().len(), 1, "{r}");
+    let c = &r["cutouts"][0];
+    assert!((c["area"].as_f64().unwrap() - 60.0 * 80.0).abs() < 0.15 * 4800.0, "{r}");
+    assert!((c["height"].as_f64().unwrap() - 25.0).abs() < 1e-6 && c["side"] == "out", "{r}");
+    let normal = r["normal"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect::<Vec<_>>();
+    assert!(normal[2].abs() > 0.999, "the wall's plane, not tilted by the outlet: {normal:?}");
+    assert_eq!(r["scan_edge_loops"], 1, "{r}");
+    assert!((r["area"].as_f64().unwrap() - 260.0 * 260.0).abs() < 1e-3, "{r}");
+    let sketch = r["sketch"].as_u64().unwrap();
+    {
+        let state = s.model.state();
+        let solved = state.sketch(sketch).unwrap();
+        let construction = solved.sketch.curves.iter().filter(|c| c.construction).count();
+        let drawn = solved.sketch.curves.iter().filter(|c| !c.construction).count();
+        assert!(construction >= 4, "the scan's edge is construction: {construction}");
+        assert!(drawn >= 8, "the outline's four sides and the outlet's loop: {drawn}");
+    }
+    // The outline's corner is at the origin: nothing drawn below or left of it.
+    assert_eq!(r["shift"].as_array().unwrap().len(), 2);
+
+    // Only the side asked for: the outlet stands off the +z side, so `in` cuts nothing.
+    let none = run(&mut s, "scan.flat_template", json!({"body": body, "outline": outline, "side": "in", "name": "In only"}));
+    assert_eq!(none["cutouts"].as_array().unwrap().len(), 0, "{none}");
+    // A chosen plane is used as given.
+    let given = run(
+        &mut s,
+        "scan.flat_template",
+        json!({"body": body, "outline": outline, "plane": {"point": [0, 0, 0], "normal": [0, 0, 1]}, "tolerance": "3 mm", "name": "Given"}),
+    );
+    assert_eq!(given["fitted"], false);
+    assert_eq!(given["cutouts"].as_array().unwrap().len(), 1, "{given}");
+
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.model.state().sketch(sketch).is_some(), "one undo took the last sketch only");
+
+    for bad in [
+        json!({"outline": [[0, 0, 0], [1, 0, 0]]}),
+        json!({"outline": outline, "side": "up"}),
+        json!({"outline": outline, "tolerance": -1}),
+        json!({"outline": outline, "least_area": "x"}),
+        json!({"outline": [[0, 0, 0], [10, 0, 0], [20, 0, 0]]}),
+        json!({"outline": outline, "plane": {"point": [0, 0, 0], "normal": [0, 0, 0]}}),
+    ] {
+        assert!(s.execute("scan.flat_template", &bad).is_err(), "{bad}");
+    }
+}
+
+/// Flat Template with `make_face`: a flat Free Form face over the template with the outlet a hole
+/// in it, its area the outline's less the cut-out's; the sketch lies on the wall, and the
+/// outline's sides are told.
+#[test]
+fn flat_template_can_make_a_free_form_face_with_the_cutout_as_a_hole() {
+    let (mut s, body) = session_with_triangles("flat-template-face", &wall_triangles(200));
+    let outline = json!([[20, 20, 0], [280, 20, 0], [280, 280, 0], [20, 280, 0]]);
+    let r = run(&mut s, "scan.flat_template", json!({"body": body, "outline": outline, "make_face": true}));
+    let face = r["face"].as_str().unwrap_or_else(|| panic!("a face: {r}")).to_owned();
+    let want = 260.0 * 260.0 - r["cut_area"].as_f64().unwrap();
+    let area = solidcraft_kernel::measure(&s.world_state().unwrap().body(&face).unwrap().body).unwrap().area;
+    assert!((area - want).abs() < 0.02 * want, "outline less the outlet: {area} vs {want}");
+    let sides: Vec<f64> = r["edge_lengths"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    assert!(sides.len() == 4 && sides.iter().all(|l| (l - 260.0).abs() < 1e-6), "{sides:?}");
+    // The sketch is on the wall: a plane through the template's corner, not XY at the origin.
+    let sketch = r["sketch"].as_u64().unwrap();
+    assert!(s.model.state().sketch(sketch).unwrap().plane.origin.dist(Vec3::new(20.0, 20.0, 0.0)) < 1e-6);
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.model.state().body(&face).is_none(), "one undo takes the face and the sketch away");
+}
+
+/// Make Flat lays a bumpy Free Form exactly on its fitted plane, one undo step.
+#[test]
+fn make_flat_puts_a_free_form_exactly_flat() {
+    use solidcraft_scan::surface_edit::points;
+    let mut s = Session::default();
+    run(&mut s, "scan.free_form", json!({"corners": [[0, 0, 0], [100, 0, 3], [100, 100, 0], [0, 100, 2]], "fit": "off", "count": 6}));
+    let name = s.model.state().bodies.iter().find(|b| !b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
+    let r = run(&mut s, "scan.make_flat", json!({}));
+    assert_eq!(r["surface"], json!(name), "{r}");
+    assert!(r["max"].as_f64().unwrap() > 0.5 && r["max"].as_f64().unwrap() < 3.0, "it was a little off the plane: {r}");
+    let target = super::surface::editable(&s, Some(&name), "test").unwrap();
+    let net = points(&target.surface);
+    let normal: Vec<f64> = r["normal"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let point = Vec3::new(r["point"][0].as_f64().unwrap(), r["point"][1].as_f64().unwrap(), r["point"][2].as_f64().unwrap());
+    let n = Vec3::new(normal[0], normal[1], normal[2]);
+    assert!(net.iter().all(|q| (*q - point).dot(n).abs() < 1e-9), "every point on the plane");
+    run(&mut s, "edit.undo", json!({}));
+    let target = super::surface::editable(&s, Some(&name), "test").unwrap();
+    assert!(points(&target.surface).iter().any(|q| (*q - point).dot(n).abs() > 0.1), "undone");
+    assert!(s.execute("scan.make_flat", &json!({"plane": {"point": [0, 0, 0], "normal": [0, 0, 0]}})).is_err());
+}

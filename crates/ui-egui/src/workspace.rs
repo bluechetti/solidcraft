@@ -401,6 +401,7 @@ pub const SECTIONS: &[Section] = &[
             "scan.merge_surfaces",
             "scan.slice_surface",
             "scan.close_surface",
+            "scan.make_flat",
             "scan.fit_patches",
             // The fitted surfaces trimmed, joined, patched and thickened without leaving the Scan tab.
             "surface.trim",
@@ -421,6 +422,7 @@ pub const SECTIONS: &[Section] = &[
             "scan.curve_from_selection",
             "sketch.fit_curves_to_section",
             "scan.flatten",
+            "scan.flat_template",
             "scan.roll_onto_scan",
         ],
     },
