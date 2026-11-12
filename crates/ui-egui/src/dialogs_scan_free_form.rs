@@ -42,6 +42,10 @@ pub struct NewFreeForm {
     /// The scan under the face is coloured by how far it is from it (on by default).
     pub colours: bool,
     clicks: Vec<Vec3>,
+    /// With Four Curves: the 3D curves clicked (their sketch and id), up to four.
+    curves: Vec<(u64, String)>,
+    /// Their points, as OK sends them, when the face over them was made.
+    shown_curves: Option<Vec<Vec<[f64; 3]>>>,
     /// The view's right and up when the rectangle's second corner was clicked.
     view: Option<(Vec3, Vec3)>,
     shown: Option<Box<Shown>>,
@@ -58,6 +62,8 @@ impl Default for NewFreeForm {
             tolerance: 0.1,
             colours: true,
             clicks: Vec::new(),
+            curves: Vec::new(),
+            shown_curves: None,
             view: None,
             shown: None,
         }
@@ -101,6 +107,24 @@ fn needed(k: &NewFreeForm) -> usize {
     if k.corners_mode == 1 { 2 } else { 4 }
 }
 
+/// The corners mode that takes four curves.
+const CURVES_MODE: usize = 2;
+
+/// The points of the curves clicked, once there are four.
+fn curve_points(app: &SolveApp, k: &NewFreeForm) -> Option<Vec<Vec<Vec3>>> {
+    if k.corners_mode != CURVES_MODE || k.curves.len() != 4 {
+        return None;
+    }
+    let state = app.session.model.state();
+    k.curves
+        .iter()
+        .map(|(sketch, id)| {
+            let wire = state.sketch(*sketch)?.sketch.wires.iter().find(|w| w.id == *id)?;
+            Some(wire.pts.clone())
+        })
+        .collect()
+}
+
 /// The four corners, once they are all in: as clicked, or the rectangle on the diagonal clicked,
 /// its sides along the view's right and up.
 fn corners(k: &NewFreeForm) -> Option<[Vec3; 4]> {
@@ -130,6 +154,10 @@ const FIT_NAMES: [&str; 4] = ["off", "follow", "overall", "flat"];
 
 /// Fit again when the corners, the settings or the design have changed.
 fn fit(app: &SolveApp, k: &mut NewFreeForm) {
+    if k.corners_mode == CURVES_MODE {
+        fit_curves(app, k);
+        return;
+    }
     let Some(c) = corners(k) else {
         k.shown = None;
         return;
@@ -142,6 +170,29 @@ fn fit(app: &SolveApp, k: &mut NewFreeForm) {
     let reach = (k.reach > 0.0).then_some(k.reach);
     let fitting = Fitting { count: k.count, stiffness: k.stiffness, overall: false };
     let result = free_form::make(&app.session, None, c, fit_mode(k), fitting, reach).map_err(|e| e.to_string());
+    let check = result
+        .as_ref()
+        .ok()
+        .and_then(|m| solidcraft_engine::cmd::scan::surface::check_surface(&m.surface, solidcraft_engine::cmd::scan::surface::SURFACE_CHECK_GRID));
+    k.shown = Some(Box::new(Shown { key, result, shade: None, within: None, check }));
+}
+
+/// The face whose sides follow the four curves clicked, again when they, the settings or the design change.
+fn fit_curves(app: &SolveApp, k: &mut NewFreeForm) {
+    let Some(curves) = curve_points(app, k) else {
+        k.shown = None;
+        k.shown_curves = None;
+        return;
+    };
+    k.shown_curves = Some(curves.iter().map(|c| c.iter().map(|p| [p.x, p.y, p.z]).collect()).collect());
+    let bits = |v: &Vec3| [v.x.to_bits(), v.y.to_bits(), v.z.to_bits()];
+    let key =
+        (curves.iter().flatten().map(bits).collect(), k.fit, k.count, k.reach.to_bits(), k.corners_mode, k.stiffness.to_bits(), app.session.revision);
+    if k.shown.as_ref().is_some_and(|s| s.key == key) {
+        return;
+    }
+    let reach = (k.reach > 0.0).then_some(k.reach);
+    let result = free_form::made_from_curves(&app.session, None, &curves, k.count, reach).map_err(|e| e.to_string());
     let check = result
         .as_ref()
         .ok()
@@ -182,13 +233,16 @@ pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuCloud
 
 /// The dialog's rows.
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
-    let modes = [tr("ui.scan_free_form_four"), tr("ui.scan_free_form_two")];
+    let modes = [tr("ui.scan_free_form_four"), tr("ui.scan_free_form_two"), tr("ui.scan_free_form_curves")];
     let before = k.corners_mode;
     choice_row(ui, tr("ui.scan_free_form_corners"), "scan_free_form_corners", &mut k.corners_mode, &modes);
     if k.corners_mode != before {
         k.clicks.clear();
+        k.curves.clear();
         k.view = None;
+        k.shown = None;
     }
+    let curves_mode = k.corners_mode == CURVES_MODE;
     let fits =
         [tr("ui.scan_free_form_fit_off"), tr("ui.scan_free_form_fit_follow"), tr("ui.scan_free_form_fit_overall"), tr("ui.scan_free_form_fit_flat")];
     choice_row(ui, tr("ui.scan_free_form_fit"), "scan_free_form_fit", &mut k.fit, &fits);
@@ -209,10 +263,17 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
     }
     fit(app, k);
     shade(app, k);
-    let count = format!("{} / {}", k.clicks.len(), needed(k));
-    form_row(ui, tr("ui.scan_free_form_clicked"), |ui| ui_kit::text(ui, &count, ui_kit::Text::Cell));
-    if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_curve_undo_point"), ui_kit::Button::Enabled(!k.clicks.is_empty()))).clicked() {
-        k.clicks.pop();
+    let (have, want) = if curves_mode { (k.curves.len(), 4) } else { (k.clicks.len(), needed(k)) };
+    let count = format!("{have} / {want}");
+    form_row(ui, tr(if curves_mode { "ui.scan_free_form_curves_clicked" } else { "ui.scan_free_form_clicked" }), |ui| {
+        ui_kit::text(ui, &count, ui_kit::Text::Cell)
+    });
+    if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_curve_undo_point"), ui_kit::Button::Enabled(have > 0))).clicked() {
+        if curves_mode {
+            k.curves.pop();
+        } else {
+            k.clicks.pop();
+        }
         k.view = None;
     }
     match k.shown.as_ref().map(|s| (&s.result, s.within, s.check.as_ref())) {
@@ -250,7 +311,8 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
         }
         _ => {}
     }
-    ui_kit::text(ui, tr("ui.scan_free_form_hint"), ui_kit::Text::Hint("scan_free_form_hint"));
+    let hint = if curves_mode { tr("ui.scan_free_form_curves_hint") } else { tr("ui.scan_free_form_hint") };
+    ui_kit::text(ui, hint, ui_kit::Text::Hint("scan_free_form_hint"));
     false
 }
 
@@ -269,6 +331,18 @@ fn stiffness_row(ui: &mut egui::Ui, stiffness: &mut f64) {
 
 /// What OK runs: the face made over the corners.
 pub fn commands(k: &NewFreeForm) -> Result<Vec<(String, Value)>, String> {
+    if k.corners_mode == CURVES_MODE {
+        let made = k.shown.as_ref().ok_or_else(|| tr("ui.scan_free_form_curves_hint").to_owned())?.result.as_ref().map_err(Clone::clone)?;
+        let curves = k.shown_curves.as_ref().ok_or("still fitting")?;
+        let mut p = json!({"curves": curves, "count": k.count});
+        if let Some(scan) = &made.scan {
+            p["body"] = json!(scan);
+        }
+        if k.reach > 0.0 {
+            p["reach"] = json!(format!("{} mm", k.reach));
+        }
+        return Ok(vec![("scan.free_form".into(), p)]);
+    }
     let c = corners(k).ok_or_else(|| tr("ui.scan_free_form_hint").to_owned())?;
     let made = k.shown.as_ref().ok_or("still fitting")?.result.as_ref().map_err(Clone::clone)?;
     let fit = FIT_NAMES[k.fit.min(FIT_NAMES.len() - 1)];
@@ -307,7 +381,29 @@ pub(crate) fn plain_scan(app: &SolveApp) -> bool {
 
 /// Whether the dialog takes clicks in the view as corners.
 pub(crate) fn drawing(app: &SolveApp) -> bool {
-    matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(k)) if k.clicks.len() < needed(k))
+    matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(k)) if k.corners_mode != CURVES_MODE && k.clicks.len() < needed(k))
+}
+
+/// Whether the dialog takes clicks on 3D curves as the face's sides (Four Curves).
+pub(crate) fn choosing_curves(app: &SolveApp) -> bool {
+    matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(k)) if k.corners_mode == CURVES_MODE)
+}
+
+/// A click at `at` on a 3D curve: it becomes a side of the face (up to four); clicked again, it is let go.
+pub(crate) fn click_curve(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
+    let hit = crate::viewport::pick_cached(app, proj, at).into_iter().find_map(|h| match h {
+        crate::viewport::Hit::SketchCurve { sketch, id, .. } => Some((sketch, id)),
+        _ => None,
+    });
+    let state = app.session.model.state();
+    let wire = hit.filter(|(sketch, id)| state.sketch(*sketch).is_some_and(|ss| ss.sketch.wire_index(id).is_some()));
+    drop(state);
+    let (Some(wire), Some(Kind::ScanFreeForm(k))) = (wire, app.dialog.as_mut().map(|d| &mut d.kind)) else { return };
+    if let Some(at) = k.curves.iter().position(|c| *c == wire) {
+        k.curves.remove(at);
+    } else if k.curves.len() < 4 {
+        k.curves.push(wire);
+    }
 }
 
 /// A click at `at`: a corner on what is under it, or in the view's plane through the corner before.
@@ -342,6 +438,17 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     let t = crate::theme::Tokens::get();
     if let Some(Ok(made)) = k.shown.as_ref().map(|s| &s.result) {
         crate::dialogs_scan_surface::draw_grid(painter, proj, &made.surface, egui::Stroke::new(1.5, t.surface_accent), true);
+    }
+    // The curves clicked, in the accent.
+    if k.corners_mode == CURVES_MODE {
+        let state = app.session.model.state();
+        for (sketch, id) in &k.curves {
+            if let Some(wire) = state.sketch(*sketch).and_then(|ss| ss.sketch.wires.iter().find(|w| w.id == *id)) {
+                let line: Vec<egui::Pos2> = wire.pts.iter().filter_map(|p| proj.to_screen(*p)).collect();
+                crate::dialogs_scan_surface::cased_line(painter, line, egui::Stroke::new(3.0, t.accent));
+            }
+        }
+        return;
     }
     let outline: Vec<Vec3> = corners(k).map_or_else(|| k.clicks.clone(), |c| c.to_vec());
     let on: Vec<egui::Pos2> = outline.iter().filter_map(|p| proj.to_screen(*p)).collect();
@@ -807,5 +914,76 @@ mod tests {
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
         assert!(h.app.session.model.state().body("FreeForm2").is_none(), "sewn into the first");
+    }
+
+    /// New Free Form with Four Curves: four curves drawn on the dome with Curve on Scan are the
+    /// face's sides; the face is made over them and lies on the scan, and OK keeps it as a Free
+    /// Form. Three curves make no face yet.
+    #[test]
+    fn four_curves_drawn_on_the_scan_make_a_free_form() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let side = |a: [f64; 2], b: [f64; 2]| -> Vec<[f64; 3]> {
+            (0..=6)
+                .map(|i| {
+                    let t = f64::from(i) / 6.0;
+                    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, 4.0]
+                })
+                .collect()
+        };
+        for (a, b) in [([10.0, 10.0], [50.0, 10.0]), ([50.0, 10.0], [50.0, 50.0]), ([50.0, 50.0], [10.0, 50.0]), ([10.0, 50.0], [10.0, 10.0])] {
+            h.app.run("scan.curve_on_scan", json!({"points": side(a, b)})).unwrap();
+        }
+        let wires: Vec<(u64, String)> = {
+            let state = h.app.session.model.state();
+            h.app
+                .session
+                .doc
+                .features
+                .iter()
+                .filter(|f| f.name == "Scan Curves")
+                .flat_map(|f| {
+                    state
+                        .sketch(f.id)
+                        .map(|s| s.sketch.wires.iter().filter(|w| w.pts.len() >= 2).map(|w| (f.id, w.id.clone())).collect::<Vec<_>>())
+                        .unwrap_or_default()
+                })
+                .collect()
+        };
+        assert!(wires.len() >= 4, "four curves drawn: {wires:?}");
+        h.app.start("scan.free_form");
+        h.frames(2);
+        if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.corners_mode = CURVES_MODE;
+            k.count = 6;
+            k.curves = wires[..3].to_vec();
+        }
+        h.frames(2);
+        assert!(commands_of(&h).is_err(), "three curves make no face yet");
+        if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.curves = wires[wires.len() - 4..].to_vec();
+        }
+        h.frames(3);
+        let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the dialog") };
+        let made = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).expect("the face over the curves");
+        assert!(made.rms < 0.3, "it lies on the scan: {}", made.rms);
+        assert!(commands_of(&h).is_ok_and(|c| c[0].1.get("curves").is_some()), "OK sends the curves");
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(
+            h.app.dialog.as_ref().is_none_or(|d| matches!(d.kind, Kind::ScanEditSurface(_))),
+            "{:?}",
+            h.app.dialog.as_ref().map(|d| d.error.clone())
+        );
+        assert!(solidcraft_engine::cmd::scan::surface::editable(&h.app.session, Some("FreeForm1"), "test").is_ok(), "kept as a Free Form");
+    }
+
+    fn commands_of(h: &crate::scenario::Harness) -> Result<Vec<(String, Value)>, String> {
+        match h.app.dialog.as_ref().map(|d| &d.kind) {
+            Some(Kind::ScanFreeForm(k)) => commands(k),
+            _ => Err("no dialog".into()),
+        }
     }
 }

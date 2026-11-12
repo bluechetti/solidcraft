@@ -5719,6 +5719,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     {
         crate::dialogs_scan_sections::click(app, &proj, p);
     }
+    // New Free Form with Four Curves: a click on a 3D curve takes it as a side of the face.
+    if crate::dialogs_scan_free_form::choosing_curves(app)
+        && resp.clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        crate::dialogs_scan_free_form::click_curve(app, &proj, p);
+    }
     // New Free Form: a click puts the next corner on what is under it.
     if crate::dialogs_scan_free_form::drawing(app)
         && resp.clicked()
@@ -6758,6 +6765,7 @@ pub(crate) fn measurement_selection(s: &solidcraft_engine::Session, sel: &Sel) -
 fn takes_scan_clicks(app: &SolveApp) -> bool {
     crate::dialogs_scan_curve::drawing(app)
         || crate::dialogs_scan_free_form::drawing(app)
+        || crate::dialogs_scan_free_form::choosing_curves(app)
         || crate::dialogs_scan_surface::editing(app)
         || crate::dialogs_scan_sections::choosing(app)
 }
