@@ -305,8 +305,11 @@ made from four curves (`curves` of `scan.free_form`).
 - **In SolidCraft:** `scan.free_form`, `scan.add_face`, `scan.wrap_surface`,
   `scan.mirror_free_form`; `scan.edit_surface` (`dots`, `neighbours`, `faces`, `crease`, `smooth`,
   `delete_face`, `weld`, `keep_half`, `symmetry`); New Free Form, Add Face, Points on the surface
-  and Control net in the Edit Surface dialog; bodies `FreeForm1`, `FreeForm2`, …; the design
-  file's `free_forms` (the edges creased or held smooth by hand, the symmetry plane).
+  and Control net in the Edit Surface dialog; `scan.refit` (fits it again on the scan as it is
+  now, keeping the hand edits); bodies `FreeForm1`, `FreeForm2`, …; the design file's `free_forms`
+  (the edges creased or held smooth by hand, the symmetry plane) and a Scan Surface feature's
+  `recipe` (how it was fitted); `scan.tolerance` and the file's `scan_tolerances` (how far off the
+  scan still counts as on it, per scan).
 - **Don't use:** patch network, quad cage, T-spline, subdivision surface (for the Free Form itself).
 - **Elsewhere:** freeform, quad surface, patch network, NURBS patch layout.
 - **For translators:** a kind of surface the user makes, not "free shape" in general.

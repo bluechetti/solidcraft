@@ -19,6 +19,10 @@ the full scan. A few things help:
   with `--max-file-size` to raise it, or reduce the scan first with **Reduce Mesh**
   (`scan.reduce`).
 - **OK** in a scan dialog computes beside the window, so the window keeps responding.
+- On a scan of more than 300 000 triangles the previews of **New Free Form**, **Fit Patches**
+  and **Flat Template** are worked out beside the window too: the last preview stays drawn and
+  the dialog says *Refining…* until the new one arrives. The preview works from a thinned sample
+  of the scan, so it stays quick however big the scan is.
 - Commands that must look at every triangle (**Find All**, **Repair**, **Denoise**) take
   seconds to minutes on the biggest scans; use **Select** and **Reconstruct Selection** to work
   on part of one.
@@ -66,6 +70,39 @@ curve, stitched to its neighbours into a closed body and thickened without leavi
 **Surface Check** finds folds, pinches and crossings in a surface. **Zebra** and **Curvature**
 show how smoothly neighbouring surfaces meet and where a surface bends sharply. **Section**
 cuts the model, and **Compare** sets it beside another design.
+
+## The same checks and keys in every tool
+
+**One tolerance per scan.** *Scan tolerance* is how far off the scan's surface still counts as on
+it. It is kept in the design for that scan (`scan.tolerance`, default 0.1 mm) and set once: the
+**Scan tolerance** row of New Free Form, Edit Surface, Fit Patches and Flat Template shows it, and a
+change made there is kept when you press OK, so the next tool opens with it. **Deviation** uses it
+too.
+
+**One answer to "is this still faithful?"** While you work, those four tools colour the scan under
+their result by its distance from it (the same colours and key as **Deviation**) and say one line:
+root mean square, mean, the worst distance each way, and the share within the tolerance. Flat
+Template colours the wall by how far it stands off the template's plane and counts only the wall
+outside the cut-outs, so a flat wall reads as within tolerance and the outlet does not count
+against it.
+
+**Clicks snap.** A click on a scan in New Free Form, Curve on Scan, Flat Template and Fit
+Patches lands on the nearest corner, edge or crease of the scan, or point of a curve already drawn
+on it, when one is within a few pixels, and a marker names it before you click. Hold the snap-suppress
+key (Ctrl or Alt by default) to click exactly where the pointer is; **Preferences › Tools ›
+Clicks on a scan snap** turns it off. On a scan too big to analyse on the spot it snaps to
+curve points only, until a selection tool has read the scan.
+
+**The same keys.** Shift adds to what is chosen and Ctrl or Alt takes away, with a click or a
+brush, in Edit Surface and Select. Shift and the wheel size the soft selection; Ctrl+Shift and the
+wheel size the brush (Edit Surface's Smoothing Brush and Select's brush).
+
+**Refit after a re-scan.** A surface made by New Free Form or by Fit Patches (from a click) keeps
+its recipe in the design: the scan, the command with its parameters, and where the fit put each
+control point. **Refit to Scan** (`scan.refit`) fits it again on the scan as it is now (a new scan,
+or one moved or cleaned earlier in the timeline) and moves each point you dragged by hand the same
+way on the new fit, so a re-scan does not cost your edits. A surface reshaped so its net changed
+(a face or a row added) asks for `discard_edits`.
 
 ## Selecting part of a scan
 

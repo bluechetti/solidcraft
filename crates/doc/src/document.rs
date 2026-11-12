@@ -1960,6 +1960,10 @@ pub enum FeatureKind {
         file: String,
         /// The STEP (ISO 10303-21) text of the surface body, shared by every copy of the design.
         step: std::sync::Arc<str>,
+        /// How it was made, so `scan.refit` can make it again on the scan as it is now, with the
+        /// hand edits laid on the result. None for a surface made another way.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recipe: Option<crate::scan_recipe::ScanRecipe>,
     },
     /// Rebuild an upstream constant-section mesh with analytic planar/cylindrical faces.
     MeshConvert {
@@ -3243,6 +3247,10 @@ pub struct Document {
     /// symmetry plane (Edit Surface).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub free_forms: Vec<crate::free_form::FreeFormKeep>,
+    /// How far off a scan's surface still counts as on it, per scan (mesh body name), in mm: the one
+    /// tolerance every Scan-tab tool colours and reports against. A scan with none uses the default.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub scan_tolerances: std::collections::BTreeMap<String, f64>,
     /// Comments of feature-input parameters (by name).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub param_comments: std::collections::BTreeMap<String, String>,
@@ -3570,6 +3578,7 @@ impl Document {
             point_clouds: Vec::new(),
             scan_selections: Vec::new(),
             free_forms: Vec::new(),
+            scan_tolerances: Default::default(),
             param_comments: Default::default(),
             browser_groups: Vec::new(),
             timeline_groups: Vec::new(),

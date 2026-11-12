@@ -13,37 +13,7 @@ use std::collections::BTreeSet;
 
 use super::*;
 
-/// How a click or a box changes what is chosen.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum How {
-    /// The new handles are the choice.
-    Replace,
-    /// The new handles join the choice.
-    Add,
-    /// The new handles that are chosen are let go, the others chosen.
-    Toggle,
-    /// The new handles are let go.
-    Remove,
-}
-
-impl How {
-    /// By the keys held: Shift adds, Ctrl (Command on macOS) toggles, Alt takes away. Ctrl and
-    /// Shift together are the smoothing brush's, so they choose nothing special.
-    pub(super) fn of(mods: egui::Modifiers) -> How {
-        let ctrl = mods.ctrl || mods.command;
-        match (mods.alt, mods.shift, ctrl) {
-            (true, _, _) => How::Remove,
-            (false, true, false) => How::Add,
-            (false, false, true) => How::Toggle,
-            _ => How::Replace,
-        }
-    }
-
-    /// Whether the keys held keep what is chosen (a click then does not start again).
-    pub(super) fn keeps(self) -> bool {
-        self != How::Replace
-    }
-}
+pub(super) use crate::scan_how::How;
 
 /// A box being drawn on the screen: its corners, and what was chosen before it began.
 #[derive(Clone, Debug)]

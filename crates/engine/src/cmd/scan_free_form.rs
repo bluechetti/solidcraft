@@ -4,7 +4,7 @@
 //! Shape), or left flat over the corners (Off). It is kept as a surface body of its own, so Edit
 //! Surface drags its points, snaps them to the scan and refits them, and Edit Net changes its net.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use solidcore_record::Vec3;
 use solidcraft_geom::bspline::NurbsSurface;
 use solidcraft_geom::prelude::*;
@@ -143,7 +143,8 @@ pub fn made_from_curves(s: &Session, body: Option<&str>, curves: &[Vec<Vec3>], c
     Ok(Made { scan: Some(covered.scan), surface, places, met: places, kept: places, rms, max })
 }
 
-pub(super) fn new_free_form(s: &mut Session, p: &Value) -> Result<Value> {
+/// The face `scan.free_form` makes from `p`, without keeping it: what `scan.refit` runs again.
+pub fn made_from_params(s: &Session, p: &Value) -> Result<Made> {
     let cmd = "scan.free_form";
     let curves = match p.get("curves").filter(|v| !v.is_null()) {
         Some(v) => Some(curves_param(v, cmd)?),
@@ -189,8 +190,21 @@ pub(super) fn new_free_form(s: &mut Session, p: &Value) -> Result<Value> {
         Some(plane) => made_on_plane(corners, count, plane)?,
         None => make(s, body.as_deref(), corners, fit, Fitting { count, stiffness, overall: false }, reach)?,
     };
+    Ok(made)
+}
+
+pub(super) fn new_free_form(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.free_form";
+    let made = made_from_params(s, p)?;
     let file = made.scan.as_deref().map_or_else(|| "free form".to_owned(), |scan| format!("{scan} (free form)"));
-    let (name, feature) = super::surface::keep_surface(s, &made.surface, "FreeForm", "Free Form", &file, cmd)?;
+    // Fitted to a scan: the recipe keeps how, so `scan.refit` can fit it again on the scan as it is
+    // then, with the hand edits made since laid on the result.
+    let recipe = made.scan.as_deref().map(|scan| {
+        let mut params = p.clone();
+        params["body"] = json!(scan);
+        super::refit::recipe(scan, "scan.free_form", params, std::slice::from_ref(&made.surface))
+    });
+    let (name, feature) = super::surface::keep_surface(s, &made.surface, "FreeForm", "Free Form", &file, recipe, cmd)?;
     let reply = ScanFreeFormResult {
         body: made.scan,
         surface: name,
@@ -499,7 +513,7 @@ pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let w = wrapped(s, Some(&body), point, reach, Wrap { axis, details, arc, stiffness })?;
     let trouble = w.trouble;
-    let (name, feature) = super::surface::keep_surface(s, &w.made.surface, "FreeForm", "Wrap Surface", &format!("{body} (wrap)"), cmd)?;
+    let (name, feature) = super::surface::keep_surface(s, &w.made.surface, "FreeForm", "Wrap Surface", &format!("{body} (wrap)"), None, cmd)?;
     let at = |v: Vec3| [v.x, v.y, v.z];
     let reply = ScanWrapSurfaceResult {
         body,

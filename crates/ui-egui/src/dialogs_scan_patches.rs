@@ -3,6 +3,8 @@
 //! region's edge. The patches are fitted and drawn over the scan, with how close they come, as
 //! the layout, the control points and the smoothing change; OK keeps them as a surface body.
 
+use std::sync::Arc;
+
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
 use solidcraft_engine::Sel;
@@ -10,6 +12,7 @@ use solidcraft_engine::cmd::scan::patches::fitted;
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, form_row};
+use crate::scan_job;
 use crate::selection::{FACES, SelInput, items};
 use crate::ui_kit::{self, choice_row};
 
@@ -24,12 +27,31 @@ pub struct FitPatches {
     pub rows: usize,
     pub columns: usize,
     pub smoothing: f64,
+    /// The scan under the patches is coloured by how far it is from them (on by default).
+    pub colours: bool,
+    /// A tolerance tried here instead of the scan's own, mm (0: the scan's, see `scan.tolerance`).
+    pub tolerance: f64,
+    /// The scan's tolerance as changed here, kept by OK.
+    keep_tolerance: Option<(String, f64)>,
+    /// The fit being worked out beside the window (a large scan), for the values it was begun for.
+    pending: Option<Arc<scan_job::Job<String, Computed>>>,
     shown: Option<Box<Shown>>,
 }
 
 impl Default for FitPatches {
     fn default() -> Self {
-        FitPatches { layout: 0, controls: 10, rows: 2, columns: 2, smoothing: 0.1, shown: None }
+        FitPatches {
+            layout: 0,
+            controls: 10,
+            rows: 2,
+            columns: 2,
+            smoothing: 0.1,
+            colours: true,
+            tolerance: 0.0,
+            keep_tolerance: None,
+            pending: None,
+            shown: None,
+        }
     }
 }
 
@@ -38,7 +60,22 @@ struct Shown {
     key: String,
     /// How close they come, and lines across each patch to draw.
     result: Result<(f64, f64, usize, Vec<Vec<Vec3>>, [usize; 3]), String>,
+    /// The scan under the patches and how far it is from them (as Free Form's colouring is made).
+    under: Option<Under>,
 }
+
+/// The scan under the patches, its distances and the coloured dots (for which tolerance and
+/// colours).
+#[derive(Clone, Debug)]
+struct Under {
+    scan: String,
+    shade: solidcraft_engine::cmd::scan::surface::network::Shade,
+    values: Vec<f32>,
+    dots: Option<(u64, [[u8; 3]; 3], u64, Arc<Vec<u8>>)>,
+}
+
+/// The colouring's id among the clouds the viewport draws.
+const SHADE_CLOUD_ID: u64 = u64::MAX - 11;
 
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     (id == "scan.fit_patches").then(|| (Kind::ScanFitPatches(FitPatches::default()), vec![SelInput::new("Point", FACES, false)]))
@@ -71,13 +108,50 @@ fn params(app: &SolveApp, k: &FitPatches, inputs: &[SelInput]) -> Option<Value> 
 fn look(app: &SolveApp, k: &mut FitPatches, inputs: &[SelInput]) {
     let Some(p) = params(app, k, inputs) else {
         k.shown = None;
+        k.pending = None;
         return;
     };
     let key = format!("{p}|{}", app.session.revision);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
+        k.pending = None;
         return;
     }
-    let result = fitted(&app.session, &p, "scan.fit_patches").map_err(|e| e.to_string()).map(|(_, _, _, found)| {
+    // On a large scan the fit is worked out beside the window and what was drawn stays until it arrives.
+    if scan_job::beside_window(app) {
+        if let Some(job) = k.pending.clone() {
+            match job.poll() {
+                scan_job::Poll::Working if job.key == key => return,
+                scan_job::Poll::Done((result, under)) if job.key == key => {
+                    k.pending = None;
+                    k.shown = Some(Box::new(Shown { key, result, under }));
+                    return;
+                }
+                _ => k.pending = None,
+            }
+        }
+        let given = p.clone();
+        if let Some(job) = scan_job::spawn(app, key.clone(), move |s| compute(s, &given)) {
+            k.pending = Some(Arc::new(job));
+            return;
+        }
+    }
+    let (result, under) = compute(&app.session, &p);
+    k.shown = Some(Box::new(Shown { key, result, under }));
+}
+
+/// What a fit of `p` comes to, and the scan under the patches: all that looks over the scan.
+type Computed = (Result<(f64, f64, usize, Vec<Vec<Vec3>>, [usize; 3]), String>, Option<Under>);
+
+fn compute(s: &solidcraft_engine::Session, p: &Value) -> Computed {
+    let mut under = None;
+    let result = fitted(s, p, "scan.fit_patches").map_err(|e| e.to_string()).map(|(scan, _, _, found)| {
+        let surface = solidcraft_engine::cmd::scan::surface::shade(s, Some(&scan), &found.surfaces, "scan.fit_patches");
+        if let Ok((_, mut shade)) = surface {
+            let mut values = Vec::new();
+            solidcraft_engine::cmd::scan::surface::network::shade_values(&mut shade, &found.surfaces, None, &mut values);
+            // The points beside the patches are what the colouring is of: kept with their values.
+            under = Some((scan, shade, values));
+        }
         // Each patch's sides and three lines across it each way.
         let mut lines = Vec::new();
         for s in &found.surfaces {
@@ -91,7 +165,7 @@ fn look(app: &SolveApp, k: &mut FitPatches, inputs: &[SelInput]) {
         }
         (found.rms, found.max, found.surfaces.len(), lines, found.trouble)
     });
-    k.shown = Some(Box::new(Shown { key, result }));
+    (result, under.map(|(scan, shade, values)| Under { scan, shade, values, dots: None }))
 }
 
 /// The dialog's rows (after the click).
@@ -108,6 +182,15 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitPatches, inputs: &[Sel
         ui_kit::slider(ui, &mut k.smoothing, 0.0..=1.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
     });
     look(app, k, inputs);
+    if k.shown.as_ref().is_some_and(|s| s.under.is_some()) {
+        crate::dialogs_scan_surface::colours_row(ui, &mut k.colours);
+        let scan = k.shown.as_ref().and_then(|s| s.under.as_ref()).map(|u| u.scan.clone());
+        k.keep_tolerance = crate::scan_fidelity::row(app, ui, scan.as_deref(), &mut k.tolerance).keep;
+    }
+    colour(app, k);
+    if k.pending.is_some() {
+        scan_job::refining_note(ui, "scan_patches_refining");
+    }
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok((rms, max, count, _, trouble))) => {
             let line = crate::i18n::format(
@@ -115,6 +198,9 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitPatches, inputs: &[Sel
                 &[("patches", &count.to_string()), ("rms", &format!("{rms:.3}")), ("max", &format!("{max:.3}"))],
             );
             ui_kit::text(ui, &line, ui_kit::Text::Note("scan_patches_found"));
+            if let Some((stats, tolerance)) = fidelity(app, k) {
+                crate::scan_fidelity::readout(app, ui, "scan_patches_fidelity", &stats, tolerance);
+            }
             crate::dialogs_surface_check::fold_warning(ui, *trouble);
         }
         Some(Err(why)) => {
@@ -127,11 +213,48 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitPatches, inputs: &[Sel
     false
 }
 
-/// What OK runs.
+/// The colouring of the scan under the patches made again when the tolerance or the colours have
+/// changed.
+fn colour(app: &SolveApp, k: &mut FitPatches) {
+    let colours = crate::scan_deviation::colours();
+    let Some(under) = k.shown.as_mut().and_then(|s| s.under.as_mut()) else { return };
+    let tolerance = crate::scan_fidelity::effective(app, Some(&under.scan), k.tolerance);
+    if under.dots.as_ref().is_some_and(|(t, c, _, _)| *t == tolerance.to_bits() && *c == colours) {
+        return;
+    }
+    let dots = Arc::new(crate::dialogs_scan_surface::shade_dots(&under.shade, &under.values, tolerance, colours));
+    under.dots = Some((tolerance.to_bits(), colours, crate::dialogs_scan_surface::next_shade_version(), dots));
+}
+
+/// What the colouring of the scan under the patches adds up to, and its tolerance, for the
+/// viewport's key and the dialog's line.
+pub(crate) fn fidelity(app: &SolveApp, k: &FitPatches) -> Option<(crate::scan_fidelity::Stats, f64)> {
+    if !k.colours {
+        return None;
+    }
+    let under = k.shown.as_ref()?.under.as_ref()?;
+    let tolerance = crate::scan_fidelity::effective(app, Some(&under.scan), k.tolerance);
+    Some((crate::scan_fidelity::stats(&under.values, tolerance)?, tolerance))
+}
+
+/// The colouring of the scan under the patches, as a cloud for the GPU viewport.
+pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuCloud> {
+    let Some(Kind::ScanFitPatches(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    if !k.colours {
+        return None;
+    }
+    let (_, _, version, dots) = k.shown.as_ref()?.under.as_ref()?.dots.as_ref()?;
+    Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots.clone()))
+}
+
+/// What OK runs: the patches, and the scan's tolerance if it was changed here.
 pub fn commands(app: &SolveApp, k: &FitPatches, inputs: &[SelInput]) -> Result<Vec<(String, Value)>, String> {
     let p = params(app, k, inputs).ok_or_else(|| tr("ui.scan_patches_hint").to_owned())?;
     k.shown.as_ref().ok_or("still fitting")?.result.as_ref().map_err(Clone::clone)?;
-    Ok(vec![("scan.fit_patches".into(), p)])
+    let mut all = Vec::new();
+    all.extend(crate::scan_fidelity::keep(k.keep_tolerance.as_ref()));
+    all.push(("scan.fit_patches".into(), p));
+    Ok(all)
 }
 
 /// The patches' lines over the picture while the dialog is open.
@@ -172,6 +295,39 @@ mod tests {
         out
     }
 
+    /// On a large scan the patches are fitted beside the window and arrive as they would have here.
+    #[test]
+    fn on_a_large_scan_the_patches_are_fitted_beside_the_window() {
+        crate::scan_job::force(true);
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("bent.stl");
+        std::fs::write(&path, bent_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let scan = h.app.session.model.state().bodies[0].name.clone();
+        h.app.run("select.clear", json!({})).unwrap();
+        h.app.start("scan.fit_patches");
+        if let Some(d) = h.app.dialog.as_mut() {
+            d.inputs[0].items.push(Sel::Face { body: scan, index: 0, point: Vec3::new(0.0, 15.0, 0.0) });
+        }
+        h.frames(1);
+        let under_way = matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFitPatches(k)) if k.pending.is_some());
+        for _ in 0..500 {
+            h.frames(1);
+            if matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFitPatches(k)) if k.shown.is_some()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        crate::scan_job::force(false);
+        let Some(Kind::ScanFitPatches(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the Fit Patches dialog") };
+        assert!(under_way, "begun beside the window");
+        assert!(
+            k.shown.as_ref().is_some_and(|s| s.result.is_ok() && s.under.is_some()),
+            "fitted and measured: {:?}",
+            k.shown.as_ref().map(|s| &s.result)
+        );
+    }
+
     /// A click on a curving sheet, Blocks chosen: the blocks are fitted and drawn before anything
     /// changes; OK keeps them as one surface body of four faces.
     #[test]
@@ -194,9 +350,23 @@ mod tests {
         let Some(Kind::ScanFitPatches(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the Fit Patches dialog") };
         let found = k.shown.as_ref().map(|s| s.result.clone()).expect("fitted");
         assert_eq!(found.as_ref().map(|r| r.2), Ok(4), "{:?}", found.as_ref().err());
+        // The scan under the patches is coloured and the one line of fidelity says how close they
+        // come, against the scan's own tolerance (0.1 mm until one is set).
+        let (stats, tolerance) = fidelity(&h.app, k).expect("the scan under the patches measured");
+        assert!(stats.count > 100 && tolerance == 0.1 && stats.rms < 1.0, "{stats:?} {tolerance}");
+        assert!(gpu_shade(&h.app).is_some_and(|c| !c.dots.is_empty()), "the scan coloured");
+        assert!(crate::scan_fidelity::legend(&h.app).is_some(), "and its key");
+        // A tolerance set here is the scan's: kept by OK, so the next tool opens with it.
+        if let Some(Kind::ScanFitPatches(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.tolerance = 0.5;
+        }
+        h.frames(2);
+        let Some(Kind::ScanFitPatches(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the Fit Patches dialog") };
+        assert_eq!(fidelity(&h.app, k).map(|(_, t)| t), Some(0.5));
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
         assert_eq!(h.app.session.model.state().body("Patches1").map(|b| b.body.face_count()), Some(4));
+        assert_eq!(h.app.session.doc.scan_tolerances.values().copied().collect::<Vec<_>>(), vec![0.5], "the scan keeps it");
     }
 }

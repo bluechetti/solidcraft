@@ -240,7 +240,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&DEVIATION_CONTRACT)
         .output(output_schema_for::<ScanDeviationResult>)
-        .params("scan?: mesh body (default: the selected or only one); body?: the model: a solid or surface body, or a mesh body (a CAD model that came as an STL) (default: the selected or only solid or surface body, else with none the only other mesh body); tolerance?: length (default 0.1 mm); limit?: length (default 0.5 mm); show?: bool (false takes the map away): colours the scan by its distance from the model in the viewport, a view and not an undo step → shown, scan, body, rms, mean, max_above, max_below, within, measured, unmatched, tolerance, limit"),
+        .params("scan?: mesh body (default: the selected or only one); body?: the model: a solid or surface body, or a mesh body (a CAD model that came as an STL) (default: the selected or only solid or surface body, else with none the only other mesh body); tolerance?: length (default: the scan's, see scan.tolerance, else 0.1 mm); limit?: length (default 0.5 mm, at least five tolerances); show?: bool (false takes the map away): colours the scan by its distance from the model in the viewport, a view and not an undo step → shown, scan, body, rms, mean, max_above, max_below, within, measured, unmatched, tolerance, limit"),
 ];
 
 /// A move smaller than this (mm, at the scan's reach) leaves the scan where it is.
@@ -779,13 +779,14 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         s.scan_deviation = None;
         return reply(empty);
     }
-    let tolerance = length(s, p, "tolerance", 0.1, cmd)?;
-    let limit = length(s, p, "limit", 0.5, cmd)?;
+    let scan_name = str_(p, "scan").filter(|b| !b.trim().is_empty()).map(str::to_owned);
+    let mesh = mesh(s, &json!({ "body": scan_name }), cmd)?;
+    // The tolerance the design keeps for this scan, unless one is given.
+    let tolerance = length(s, p, "tolerance", tolerance::of(s, &mesh.body), cmd)?;
+    let limit = length(s, p, "limit", 0.5_f64.max(5.0 * tolerance), cmd)?;
     if !(limit > tolerance) {
         return Err(bad(cmd, "`limit` must be more than `tolerance`"));
     }
-    let scan_name = str_(p, "scan").filter(|b| !b.trim().is_empty()).map(str::to_owned);
-    let mesh = mesh(s, &json!({ "body": scan_name }), cmd)?;
     let state = s.model.state();
     let model_name = match str_(p, "body").filter(|b| !b.trim().is_empty()) {
         Some(name) => name.to_owned(),
@@ -883,7 +884,7 @@ fn fit_surface(s: &mut Session, p: &Value) -> Result<Value> {
     let seed = base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
     let fitted = solidcraft_scan::surface::fit_surface(&scan, seed, radius, controls, smoothing).map_err(|e| bad(cmd, e.to_string()))?;
     // The surface as a sheet, kept as STEP in a Scan Surface feature: the design reopens anywhere.
-    let (name, feature) = surface::keep_surface(s, &fitted.surface, "Surface", "Fit Surface", &format!("{} (fitted surface)", mesh.body), cmd)?;
+    let (name, feature) = surface::keep_surface(s, &fitted.surface, "Surface", "Fit Surface", &format!("{} (fitted surface)", mesh.body), None, cmd)?;
     let reply = ScanFitSurfaceResult {
         body: mesh.body,
         surface: name,
@@ -1098,6 +1099,9 @@ pub mod patches;
 #[path = "scan_reconstruct.rs"]
 pub mod reconstruct;
 
+#[path = "scan_refit.rs"]
+pub mod refit;
+
 #[path = "scan_section.rs"]
 pub mod section;
 
@@ -1114,6 +1118,9 @@ pub mod surface;
 
 #[path = "scan_template.rs"]
 pub mod template;
+
+#[path = "scan_tolerance.rs"]
+pub mod tolerance;
 
 #[cfg(test)]
 #[path = "scan_tests.rs"]

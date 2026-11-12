@@ -96,7 +96,7 @@ pub(super) fn local_geometry(f: &Feature, components: &std::collections::HashMap
         | FeatureKind::Sphere { center: _, radius: _, operation: Operation::NewBody }
         | FeatureKind::Torus { center: _, major: _, minor: _, operation: Operation::NewBody }
         | FeatureKind::Import { file: _, step: _, components: _, skip: _ }
-        | FeatureKind::ScanSurface { file: _, step: _ }
+        | FeatureKind::ScanSurface { file: _, step: _, recipe: _ }
         | FeatureKind::MeshImport { file: _, meshes: _ } => true,
         FeatureKind::Sketch { plane, sketch } => sketch.links.is_empty() && sketch.wires.is_empty() && local_plane(plane, 0),
         FeatureKind::Extrude { sketch, profiles: _, extent, operation: Operation::NewBody, targets: _, thin: _ } => {
@@ -164,6 +164,7 @@ fn same_geometry_inputs(a: &Document, b: &Document) -> bool {
         point_clouds,
         scan_selections,
         free_forms,
+        scan_tolerances,
     } = a;
     (Arc::ptr_eq(render, &b.render) || *render == b.render)
         && *format == b.format
@@ -202,6 +203,7 @@ fn same_geometry_inputs(a: &Document, b: &Document) -> bool {
         && *point_clouds == b.point_clouds
         && *scan_selections == b.scan_selections
         && *free_forms == b.free_forms
+        && *scan_tolerances == b.scan_tolerances
 }
 
 /// Compare feature definitions without traversing immutable imported payloads. A replacement

@@ -402,6 +402,7 @@ pub const SECTIONS: &[Section] = &[
             "scan.slice_surface",
             "scan.close_surface",
             "scan.make_flat",
+            "scan.refit",
             "scan.fit_patches",
             // The fitted surfaces trimmed, joined, patched and thickened without leaving the Scan tab.
             "surface.trim",

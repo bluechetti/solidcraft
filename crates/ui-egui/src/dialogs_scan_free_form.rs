@@ -21,6 +21,7 @@ use solidcraft_engine::geom::prelude::*;
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, form_row};
+use crate::scan_job;
 use crate::ui_kit::{self, choice_row};
 
 /// A corner's dot, in pixels across.
@@ -37,11 +38,15 @@ pub struct NewFreeForm {
     pub reach: f64,
     pub count: usize,
     pub stiffness: f64,
-    /// The deviation colouring's tolerance, mm.
+    /// A tolerance tried here instead of the scan's own, mm (0: the scan's, see `scan.tolerance`).
     pub tolerance: f64,
+    /// The scan's tolerance as changed here, kept by OK.
+    keep_tolerance: Option<(String, f64)>,
     /// The scan under the face is coloured by how far it is from it (on by default).
     pub colours: bool,
     clicks: Vec<Vec3>,
+    /// The fit being worked out beside the window (a large scan), for the values it was begun for.
+    pending: Option<Arc<scan_job::Job<ShownKey, Computed>>>,
     /// With Four Curves: the 3D curves clicked (their sketch and id), up to four.
     curves: Vec<(u64, String)>,
     /// Their points, as OK sends them, when the face over them was made.
@@ -59,9 +64,11 @@ impl Default for NewFreeForm {
             reach: 0.0,
             count: 4,
             stiffness: 0.0,
-            tolerance: 0.1,
+            tolerance: 0.0,
+            keep_tolerance: None,
             colours: true,
             clicks: Vec::new(),
+            pending: None,
             curves: Vec::new(),
             shown_curves: None,
             view: None,
@@ -70,14 +77,43 @@ impl Default for NewFreeForm {
     }
 }
 
+/// What a fit is for: the corners or curve points, the fit, the points, the reach, the corner mode,
+/// the stiffness and the design's revision.
+type ShownKey = (Vec<[u64; 3]>, usize, usize, u64, usize, u64, u64);
+
+/// The scan under the face and how far each point is from it.
+type Under = (solidcraft_engine::cmd::scan::surface::network::Shade, Vec<f32>);
+
+/// A fit, Surface Check on it, and the scan under it: all that looks over the scan.
+type Computed = (Result<Made, String>, Option<solidcraft_engine::cmd::scan::surface::SurfaceCheck>, Option<Arc<Under>>);
+
+/// `result` with Surface Check and the scan under the face worked out (the part that takes long on a
+/// scan of millions of triangles).
+fn computed(s: &solidcraft_engine::Session, result: Result<Made, String>) -> Computed {
+    let check = result
+        .as_ref()
+        .ok()
+        .and_then(|m| solidcraft_engine::cmd::scan::surface::check_surface(&m.surface, solidcraft_engine::cmd::scan::surface::SURFACE_CHECK_GRID));
+    let under = result.as_ref().ok().and_then(|m| {
+        let faces = [m.surface.clone()];
+        let (_, mut found) = solidcraft_engine::cmd::scan::surface::shade(s, m.scan.as_deref(), &faces, "scan.free_form").ok()?;
+        let mut values = Vec::new();
+        solidcraft_engine::cmd::scan::surface::network::shade_values(&mut found, &faces, None, &mut values);
+        Some(Arc::new((found, values)))
+    });
+    (result, check, under)
+}
+
 #[derive(Clone, Debug)]
 struct Shown {
-    key: (Vec<[u64; 3]>, usize, usize, u64, usize, u64, u64),
+    key: ShownKey,
     result: Result<Made, String>,
     /// The scan under the face, coloured by how far it is from it: for which tolerance and colours,
-    /// the dots' version, and the dots; and how much of it is within the tolerance.
+    /// the dots' version, and the dots; and what its distances add up to.
     shade: Option<(u64, [[u8; 3]; 3], u64, Arc<Vec<u8>>)>,
-    within: Option<f64>,
+    stats: Option<crate::scan_fidelity::Stats>,
+    /// The scan under the face and its distances, worked out with the fit.
+    under: Option<Arc<Under>>,
     /// Surface Check on the face: where it folds, pinches or passes through itself.
     check: Option<solidcraft_engine::cmd::scan::surface::SurfaceCheck>,
 }
@@ -152,6 +188,35 @@ fn fit_mode(k: &NewFreeForm) -> Fit {
 /// The fit's name as `scan.free_form` takes it.
 const FIT_NAMES: [&str; 4] = ["off", "follow", "overall", "flat"];
 
+/// The fit for `key`: kept already, or come from the worker, or worked out now. On a large scan it
+/// is begun beside the window, and what was drawn stays until it arrives.
+fn resolve(app: &SolveApp, k: &mut NewFreeForm, key: ShownKey, compute: Arc<dyn Fn(&solidcraft_engine::Session) -> Computed + Send + Sync>) {
+    if k.shown.as_ref().is_some_and(|s| s.key == key) {
+        k.pending = None;
+        return;
+    }
+    if scan_job::beside_window(app) {
+        if let Some(job) = k.pending.clone() {
+            match job.poll() {
+                scan_job::Poll::Working if job.key == key => return,
+                scan_job::Poll::Done((result, check, under)) if job.key == key => {
+                    k.pending = None;
+                    k.shown = Some(Box::new(Shown { key, result, shade: None, stats: None, check, under }));
+                    return;
+                }
+                _ => k.pending = None,
+            }
+        }
+        let work = compute.clone();
+        if let Some(job) = scan_job::spawn(app, key.clone(), move |s| work(s)) {
+            k.pending = Some(Arc::new(job));
+            return;
+        }
+    }
+    let (result, check, under) = compute(&app.session);
+    k.shown = Some(Box::new(Shown { key, result, shade: None, stats: None, check, under }));
+}
+
 /// Fit again when the corners, the settings or the design have changed.
 fn fit(app: &SolveApp, k: &mut NewFreeForm) {
     if k.corners_mode == CURVES_MODE {
@@ -165,16 +230,13 @@ fn fit(app: &SolveApp, k: &mut NewFreeForm) {
     let bits = |v: Vec3| [v.x.to_bits(), v.y.to_bits(), v.z.to_bits()];
     let key = (c.iter().map(|p| bits(*p)).collect(), k.fit, k.count, k.reach.to_bits(), k.corners_mode, k.stiffness.to_bits(), app.session.revision);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
+        k.pending = None;
         return;
     }
     let reach = (k.reach > 0.0).then_some(k.reach);
     let fitting = Fitting { count: k.count, stiffness: k.stiffness, overall: false };
-    let result = free_form::make(&app.session, None, c, fit_mode(k), fitting, reach).map_err(|e| e.to_string());
-    let check = result
-        .as_ref()
-        .ok()
-        .and_then(|m| solidcraft_engine::cmd::scan::surface::check_surface(&m.surface, solidcraft_engine::cmd::scan::surface::SURFACE_CHECK_GRID));
-    k.shown = Some(Box::new(Shown { key, result, shade: None, within: None, check }));
+    let mode = fit_mode(k);
+    resolve(app, k, key, Arc::new(move |s| computed(s, free_form::make(s, None, c, mode, fitting, reach).map_err(|e| e.to_string()))));
 }
 
 /// The face whose sides follow the four curves clicked, again when they, the settings or the design change.
@@ -189,36 +251,40 @@ fn fit_curves(app: &SolveApp, k: &mut NewFreeForm) {
     let key =
         (curves.iter().flatten().map(bits).collect(), k.fit, k.count, k.reach.to_bits(), k.corners_mode, k.stiffness.to_bits(), app.session.revision);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
+        k.pending = None;
         return;
     }
     let reach = (k.reach > 0.0).then_some(k.reach);
-    let result = free_form::made_from_curves(&app.session, None, &curves, k.count, reach).map_err(|e| e.to_string());
-    let check = result
-        .as_ref()
-        .ok()
-        .and_then(|m| solidcraft_engine::cmd::scan::surface::check_surface(&m.surface, solidcraft_engine::cmd::scan::surface::SURFACE_CHECK_GRID));
-    k.shown = Some(Box::new(Shown { key, result, shade: None, within: None, check }));
+    let count = k.count;
+    resolve(app, k, key, Arc::new(move |s| computed(s, free_form::made_from_curves(s, None, &curves, count, reach).map_err(|e| e.to_string()))));
 }
 
 /// The scan under the face coloured by how far it is from it, again when the face, the tolerance
 /// or the colours have changed.
 fn shade(app: &SolveApp, k: &mut NewFreeForm) {
-    let tolerance = k.tolerance;
+    let scan = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.scan.clone());
+    let tolerance = crate::scan_fidelity::effective(app, scan.as_deref(), k.tolerance);
     let Some(shown) = k.shown.as_mut() else { return };
     let colours = crate::scan_deviation::colours();
     if shown.shade.as_ref().is_some_and(|(t, c, _, _)| *t == tolerance.to_bits() && *c == colours) {
         return;
     }
-    let Ok(made) = &shown.result else { return };
-    let Some(scan) = made.scan.as_deref() else { return };
-    let faces = [made.surface.clone()];
-    let Ok((_, mut found)) = solidcraft_engine::cmd::scan::surface::shade(&app.session, Some(scan), &faces, "scan.free_form") else { return };
-    let mut values = Vec::new();
-    solidcraft_engine::cmd::scan::surface::network::shade_values(&mut found, &faces, None, &mut values);
-    let dots = Arc::new(crate::dialogs_scan_surface::shade_dots(&found, &values, tolerance, colours));
+    let Some(under) = shown.under.clone() else { return };
+    let (found, values) = &*under;
+    let dots = Arc::new(crate::dialogs_scan_surface::shade_dots(found, values, tolerance, colours));
     shown.shade = Some((tolerance.to_bits(), colours, crate::dialogs_scan_surface::next_shade_version(), dots));
-    let counted: Vec<f32> = values.into_iter().filter(|v| v.is_finite()).collect();
-    shown.within = (!counted.is_empty()).then(|| counted.iter().filter(|v| f64::from(v.abs()) <= tolerance).count() as f64 / counted.len() as f64);
+    shown.stats = crate::scan_fidelity::stats(values, tolerance);
+}
+
+/// What the colouring of the scan under the face adds up to, and its tolerance, for the viewport's
+/// key.
+pub(crate) fn fidelity(app: &SolveApp, k: &NewFreeForm) -> Option<(crate::scan_fidelity::Stats, f64)> {
+    if !k.colours {
+        return None;
+    }
+    let shown = k.shown.as_ref()?;
+    let scan = shown.result.as_ref().ok()?.scan.as_deref();
+    Some((shown.stats?, crate::scan_fidelity::effective(app, scan, k.tolerance)))
 }
 
 /// The colouring of the scan under the face, as a cloud for the GPU viewport.
@@ -258,10 +324,13 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
     form_row(ui, tr("ui.scan_free_form_points"), |ui| ui_kit::number_field(ui, &mut k.count, 4..=12, 0.2, ""));
     if k.fit != 0 {
         crate::dialogs_scan_surface::colours_row(ui, &mut k.colours);
-        form_row(ui, tr("ui.scan_edit_tolerance"), |ui| ui_kit::length_field(ui, &mut k.tolerance, &units, decimals));
-        k.tolerance = if k.tolerance.is_finite() && k.tolerance > 0.0 { k.tolerance } else { 0.1 };
+        let scan = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.scan.clone());
+        k.keep_tolerance = crate::scan_fidelity::row(app, ui, scan.as_deref(), &mut k.tolerance).keep;
     }
     fit(app, k);
+    if k.pending.is_some() {
+        scan_job::refining_note(ui, "scan_free_form_refining");
+    }
     shade(app, k);
     let (have, want) = if curves_mode { (k.curves.len(), 4) } else { (k.clicks.len(), needed(k)) };
     let count = format!("{have} / {want}");
@@ -276,8 +345,10 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
         }
         k.view = None;
     }
-    match k.shown.as_ref().map(|s| (&s.result, s.within, s.check.as_ref())) {
-        Some((Ok(made), within, check)) if made.scan.is_some() => {
+    let tolerance =
+        crate::scan_fidelity::effective(app, k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.scan.as_deref()), k.tolerance);
+    match k.shown.as_ref().map(|s| (&s.result, s.stats, s.check.as_ref())) {
+        Some((Ok(made), stats, check)) if made.scan.is_some() => {
             let note = crate::i18n::format(
                 "ui.scan_free_form_found",
                 &[("met", &made.met.to_string()), ("places", &made.places.to_string()), ("rms", &crate::prefs::show_mm(app, made.rms, 1))],
@@ -288,12 +359,8 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
                 &[("rms", &crate::prefs::show_mm(app, made.rms, 1)), ("max", &crate::prefs::show_mm(app, made.max, 1))],
             );
             ui_kit::text(ui, &format!("{}: {fit}", tr("ui.scan_edit_distance")), ui_kit::Text::Note("scan_free_form_distance"));
-            if let Some(within) = within {
-                let line = crate::i18n::format(
-                    "ui.scan_edit_within",
-                    &[("within", &format!("{:.0} %", 100.0 * within)), ("tolerance", &crate::prefs::show_mm(app, k.tolerance, 1))],
-                );
-                ui_kit::text(ui, &line, ui_kit::Text::Note("scan_free_form_within"));
+            if let Some(stats) = stats {
+                crate::scan_fidelity::readout(app, ui, "scan_free_form_fidelity", &stats, tolerance);
             }
             // Surface Check on the face as it will be kept: a fold is seen before OK, not after.
             if let Some(c) = check {
@@ -329,8 +396,15 @@ fn stiffness_row(ui: &mut egui::Ui, stiffness: &mut f64) {
     }
 }
 
-/// What OK runs: the face made over the corners.
+/// What OK runs: the face made over the corners, and the scan's tolerance if it was changed here.
 pub fn commands(k: &NewFreeForm) -> Result<Vec<(String, Value)>, String> {
+    let mut all = Vec::new();
+    all.extend(crate::scan_fidelity::keep(k.keep_tolerance.as_ref()));
+    all.extend(made_commands(k)?);
+    Ok(all)
+}
+
+fn made_commands(k: &NewFreeForm) -> Result<Vec<(String, Value)>, String> {
     if k.corners_mode == CURVES_MODE {
         let made = k.shown.as_ref().ok_or_else(|| tr("ui.scan_free_form_curves_hint").to_owned())?.result.as_ref().map_err(Clone::clone)?;
         let curves = k.shown_curves.as_ref().ok_or("still fitting")?;
@@ -375,7 +449,14 @@ pub(crate) fn plain_scan(app: &SolveApp) -> bool {
     app.preferences.free_form_plain_scan
         && matches!(
             app.dialog.as_ref().map(|d| &d.kind),
-            Some(Kind::ScanFreeForm(_) | Kind::ScanWrapSurface(_) | Kind::ScanFitSurface(_) | Kind::ScanEditSurface(_))
+            Some(
+                Kind::ScanFreeForm(_)
+                    | Kind::ScanWrapSurface(_)
+                    | Kind::ScanFitSurface(_)
+                    | Kind::ScanEditSurface(_)
+                    | Kind::ScanFitPatches(_)
+                    | Kind::ScanFlatTemplate(_)
+            )
         )
 }
 
@@ -409,8 +490,16 @@ pub(crate) fn click_curve(app: &mut SolveApp, proj: &crate::viewport::Proj, at: 
 /// A click at `at`: a corner on what is under it, or in the view's plane through the corner before.
 pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
     let hit = crate::viewport::pick_cached(app, proj, at).into_iter().find_map(|h| match h {
-        crate::viewport::Hit::Face { point, .. } => Some(point),
+        crate::viewport::Hit::Face { body, point, .. } => Some((body, point)),
         _ => None,
+    });
+    // Where the click lands: on a corner, edge, crease or curve point close to it.
+    let hit = hit.map(|(body, point)| {
+        if app.session.model.state().body(&body).is_some_and(|b| b.body.is_mesh()) {
+            crate::scan_snap::snapped(app, proj, &body, point)
+        } else {
+            point
+        }
     });
     let (right, up, back) = proj.cam.basis();
     let Some(Kind::ScanFreeForm(k)) = app.dialog.as_mut().map(|d| &mut d.kind) else { return };
@@ -793,6 +882,47 @@ mod tests {
         h.settle();
         assert!(h.app.session.model.state().body("FreeForm1").is_some(), "kept");
         assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanEditSurface(_))), "Edit Surface opens on it");
+    }
+
+    /// On a large scan the fit is worked out beside the window: right after the last corner it is
+    /// still under way (the dialog says Refining…), and when it arrives the face, its colouring and
+    /// its fidelity line are those of the fit worked out here.
+    #[test]
+    fn on_a_large_scan_the_fit_is_worked_out_beside_the_window() {
+        crate::scan_job::force(true);
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.free_form");
+        h.frames(2);
+        let z = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+        let mut under_way = false;
+        for [x, y] in [[22.0, 22.0], [38.0, 22.0], [38.0, 38.0], [22.0, 38.0]] {
+            h.step(&json!({"click": {"world": [x, y, z(x, y)]}})).unwrap();
+            if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) {
+                under_way |= k.pending.is_some();
+            }
+        }
+        for _ in 0..500 {
+            h.frames(1);
+            if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) {
+                under_way |= k.pending.is_some();
+                if k.shown.is_some() {
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        h.frames(2);
+        crate::scan_job::force(false);
+        assert!(under_way, "the fit was begun beside the window");
+        let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the dialog") };
+        let Some(Ok(made)) = k.shown.as_ref().map(|s| s.result.clone()) else { panic!("fitted: {:?}", k.shown) };
+        assert!(made.rms < 0.05, "the fit that came back is on the dome: {}", made.rms);
+        assert!(k.pending.is_none(), "nothing left under way");
+        assert!(fidelity(&h.app, k).is_some_and(|(s, _)| s.count > 100), "the scan under the face measured by the worker too");
     }
 
     /// Flat in New Free Form: the same four corners clicked on the dome make a face in one plane

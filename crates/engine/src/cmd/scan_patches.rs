@@ -73,8 +73,15 @@ pub fn fitted(s: &Session, p: &Value, cmd: &str) -> Result<(String, Layout, [usi
 fn fit_patches(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.fit_patches";
     let (body, layout, controls, found) = fitted(s, p, cmd)?;
+    // Fitted to the part of the scan under a click: the recipe keeps how, so `scan.refit` can fit it
+    // again. (A part chosen by selecting is not in the parameters, so it cannot be made again.)
+    let recipe = p.get("point").filter(|v| !v.is_null()).map(|_| {
+        let mut params = p.clone();
+        params["body"] = json!(body);
+        super::refit::recipe(&body, "scan.fit_patches", params, &found.surfaces)
+    });
     let (surface, feature) = if let [one] = found.surfaces.as_slice() {
-        super::surface::keep_surface(s, one, "Patches", "Fit Patches", "patches", cmd)?
+        super::surface::keep_surface(s, one, "Patches", "Fit Patches", "patches", recipe, cmd)?
     } else {
         // The blocks sewn into one body along the cuts they share.
         let sheets = found
@@ -101,7 +108,7 @@ fn fit_patches(s: &mut Session, p: &Value) -> Result<Value> {
         let step = solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| bad(cmd, format!("the patches: {e}")))?;
         let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
         let name = (1..).map(|i| format!("Patches{i}")).find(|n| !taken.contains(n)).unwrap_or_else(|| "Patches".into());
-        let kind = solidcraft_doc::FeatureKind::ScanSurface { file: "patches".into(), step: step.into() };
+        let kind = solidcraft_doc::FeatureKind::ScanSurface { file: "patches".into(), step: step.into(), recipe };
         let reply = super::super::features::add_feature(s, &json!({ "body_name": name, "name": "Fit Patches" }), kind)?;
         (name, reply)
     };

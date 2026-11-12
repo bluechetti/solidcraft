@@ -172,7 +172,7 @@ fn template_face(
     let is_box = (made.area - (hi.x - lo.x) * (hi.y - lo.y)).abs() <= 1e-9 * made.area.abs().max(1.0);
     let (first, last) = if is_box { (after_outline, after_cuts) } else { (0, after_cuts) };
     let trims: Vec<&String> = ids.iter().skip(first).take(last.saturating_sub(first)).collect();
-    let (name, _) = super::surface::keep_surface(s, &surface, "FreeForm", "Free Form", &format!("{scan} (flat template)"), cmd)?;
+    let (name, _) = super::surface::keep_surface(s, &surface, "FreeForm", "Free Form", &format!("{scan} (flat template)"), None, cmd)?;
     if !trims.is_empty() {
         let keep = clear_point(made).ok_or_else(|| bad(cmd, "no part of the template is left clear of the cut-outs"))?;
         let keep = made.at(keep);

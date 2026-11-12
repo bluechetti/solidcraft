@@ -56,6 +56,9 @@ pub struct ScanSelect {
     pub angle: f64,
     /// The name to keep the selection by.
     pub name: String,
+    /// The keys held as the pointer acted: the mode they stand for instead of `mode` (Shift adds,
+    /// Ctrl and Alt take away), as in every Scan-tab tool.
+    keys: Option<usize>,
     /// The polygon's corners or the lasso's points, on the screen.
     corners: Vec<egui::Pos2>,
     /// The brush stroke's places not yet sent, and whether the stroke has sent any.
@@ -76,6 +79,7 @@ impl Default for ScanSelect {
             through: false,
             angle: engine_select::REGION_ANGLE,
             name: String::new(),
+            keys: None,
             corners: Vec::new(),
             stroke: Vec::new(),
             stroked: false,
@@ -107,6 +111,56 @@ pub(crate) fn active(app: &SolveApp) -> bool {
 
 fn mode_word(mode: usize) -> &'static str {
     ["replace", "add", "remove"][mode.min(2)]
+}
+
+/// The mode a pointer action uses: the one the keys held stand for, else the dialog's.
+fn mode_now(k: &ScanSelect) -> &'static str {
+    mode_word(k.keys.unwrap_or(k.mode))
+}
+
+/// Takes the keys held this frame (call before the clicks and drags are read): Shift adds, Ctrl and
+/// Alt take away.
+pub(crate) fn keys(app: &mut SolveApp, mods: egui::Modifiers) {
+    if let Some(k) = dialog(app) {
+        k.keys = crate::scan_how::How::of(mods).select_mode();
+    }
+}
+
+/// The wheel turned with Ctrl+Shift held over the view: the brush's radius grows or shrinks, and the
+/// view does not zoom: the same keys as the Smoothing Brush of Edit Surface. Before the camera reads
+/// the wheel.
+pub(crate) fn radius_wheel(app: &mut SolveApp, ctx: &egui::Context, rect: egui::Rect) {
+    let over = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| rect.contains(p));
+    if !over || !app.preferences.edit_surface_brush_keys {
+        return;
+    }
+    let Some(k) = dialog(app).filter(|k| k.tool == BRUSH) else { return };
+    let line = ctx.options(|o| o.input_options.line_scroll_speed);
+    let (turned, points) = ctx.input(|i| {
+        let (mut turned, mut points) = (false, 0.0f32);
+        for e in &i.events {
+            let egui::Event::MouseWheel { unit, delta, modifiers, phase, .. } = e else { continue };
+            if !((modifiers.ctrl || modifiers.command) && modifiers.shift && !modifiers.alt) {
+                continue;
+            }
+            turned = true;
+            if *phase == egui::TouchPhase::Move {
+                points += match unit {
+                    egui::MouseWheelUnit::Point => delta.x + delta.y,
+                    egui::MouseWheelUnit::Line => (delta.x + delta.y) * line,
+                    egui::MouseWheelUnit::Page => (delta.x + delta.y) * 400.0,
+                };
+            }
+        }
+        (turned, points)
+    });
+    if !turned {
+        return;
+    }
+    if points != 0.0 && points.is_finite() {
+        k.radius = (k.radius * f64::from((0.0025 * points).exp())).clamp(1e-3, 1e4);
+    }
+    crate::navigation::claim_wheel(ctx);
 }
 
 /// The dialog's rows.
@@ -190,7 +244,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect) -> bool {
         ui_kit::row(ui, &line, |ui| {
             ui.horizontal(|ui| {
                 if ui_kit::button(ui, tr("ui.scan_select_open"), ui_kit::Button::Enabled(true)).clicked() {
-                    k.asked = Some(("scan.select".into(), json!({"saved": kept.name, "mode": mode_word(k.mode)})));
+                    k.asked = Some(("scan.select".into(), json!({"saved": kept.name, "mode": mode_now(k)})));
                 }
                 if ui_kit::button(ui, tr("ui.scan_select_delete"), ui_kit::Button::Enabled(true)).clicked() {
                     k.asked = Some(("scan.delete_selection".into(), json!({"name": kept.name})));
@@ -264,7 +318,7 @@ fn polygon_command(app: &SolveApp, proj: &crate::viewport::Proj, k: &ScanSelect)
     if let Some(e) = eye {
         polygon["eye"] = json!([e.x, e.y, e.z]);
     }
-    Some(json!({"polygon": polygon, "mode": mode_word(k.mode)}))
+    Some(json!({"polygon": polygon, "mode": mode_now(k)}))
 }
 
 /// Each frame: the command a button asked for.
@@ -310,16 +364,16 @@ pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::
             let curve = curve.filter(|(sketch, id)| state.sketch(*sketch).is_some_and(|ss| ss.sketch.wire_index(id).is_some()));
             drop(state);
             if let Some((sketch, id)) = curve {
-                run(app, "scan.select_inside_curve", json!({"sketch": sketch, "curves": [id], "mode": mode_word(k.mode)}));
+                run(app, "scan.select_inside_curve", json!({"sketch": sketch, "curves": [id], "mode": mode_now(&k)}));
             }
         }
         _ => {
             let Some((body, point)) = scan_at(app, proj, at) else { return };
             let place = json!([point.x, point.y, point.z]);
             let p = match k.tool {
-                REGION => json!({"body": body, "region": {"point": place, "angle": k.angle}, "mode": mode_word(k.mode)}),
-                SHAPE => json!({"body": body, "shape": {"point": place}, "mode": mode_word(k.mode)}),
-                _ => json!({"body": body, "brush": {"points": [place], "radius": format!("{} mm", k.radius)}, "mode": mode_word(k.mode)}),
+                REGION => json!({"body": body, "region": {"point": place, "angle": k.angle}, "mode": mode_now(&k)}),
+                SHAPE => json!({"body": body, "shape": {"point": place}, "mode": mode_now(&k)}),
+                _ => json!({"body": body, "brush": {"points": [place], "radius": format!("{} mm", k.radius)}, "mode": mode_now(&k)}),
             };
             run(app, "scan.select", p);
         }
@@ -333,7 +387,7 @@ fn send_stroke(app: &mut SolveApp, body: Option<String>) {
         return;
     }
     let points: Vec<[f64; 3]> = std::mem::take(&mut k.stroke).iter().map(|p| [p.x, p.y, p.z]).collect();
-    let mode = if k.mode == 0 && k.stroked { "add" } else { mode_word(k.mode) };
+    let mode = if k.keys.unwrap_or(k.mode) == 0 && k.stroked { "add" } else { mode_now(k) };
     k.stroked = true;
     let mut p = json!({"brush": {"points": points, "radius": format!("{} mm", k.radius)}, "mode": mode});
     if let Some(b) = body {
@@ -451,6 +505,36 @@ mod tests {
 
     fn kind(h: &mut crate::scenario::Harness) -> &mut ScanSelect {
         dialog(&mut h.app).expect("the Select on Scan dialog")
+    }
+
+    /// The keys held with a click choose as they do in every Scan-tab tool: Shift adds to the
+    /// selection, Ctrl takes the region from it, and a plain click replaces it.
+    #[test]
+    fn shift_adds_and_ctrl_takes_away_with_a_click() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("box.stl");
+        std::fs::write(&path, box_stl(24)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.select");
+        h.frames(2);
+        kind(&mut h).tool = REGION;
+        h.frames(1);
+        let count = |h: &crate::scenario::Harness| engine_select::selected(&h.app.session).map_or(0, |s| s.count);
+        h.step(&json!({"click": {"world": [15.0, 10.0, 10.0]}})).unwrap();
+        h.frames(2);
+        let top = count(&h);
+        assert!(top > 0);
+        h.step(&json!({"click": {"world": [15.0, 10.0, 10.0]}, "ctrl": true})).unwrap();
+        h.frames(2);
+        assert_eq!(count(&h), 0, "Ctrl took the region away");
+        h.step(&json!({"click": {"world": [15.0, 10.0, 10.0]}, "shift": true})).unwrap();
+        h.frames(2);
+        assert_eq!(count(&h), top, "Shift added it again");
+        h.step(&json!({"click": {"world": [15.0, 10.0, 10.0]}, "shift": true})).unwrap();
+        h.frames(2);
+        assert_eq!(count(&h), top, "added to what was chosen, not doubled");
+        assert_eq!(kind(&mut h).mode, 0, "the dialog's own mode is not changed by the keys");
     }
 
     /// Through the viewport's own input on a box seen from above: a click with Region takes its

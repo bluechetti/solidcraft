@@ -829,6 +829,10 @@ fn body_items(app: &SolveApp, bodies: &[String], browser: bool) -> Vec<Item> {
     ];
     if one {
         let b = bodies.first().cloned().unwrap_or_default();
+        if let Some(feature) = crate::dialogs_scan_surface::editable_feature(app, &b) {
+            v.insert(0, act("ui.editFeature", "Edit Surface", "edit").with(json!({ "feature": feature })));
+            v.insert(1, Item::sep());
+        }
         if let Some(component) = crate::dialogs_part_size::component_for_bodies(app, bodies) {
             v.push(cmd(app, "parts.resize", "Change Part Size").with(json!({"component":component})));
         }

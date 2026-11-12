@@ -40,7 +40,7 @@ const LAYER_JUMP: f64 = 6.0;
 pub struct CurveOnScan {
     /// The scan the points are on (the first one clicked), and the points.
     scan: Option<String>,
-    picks: Vec<Vec3>,
+    pub(crate) picks: Vec<Vec3>,
     pub closed: bool,
     /// How far the curve may stray from the line on the scan, in mm; 0 until the scan's own default
     /// is known (as fine as its triangles).
@@ -189,7 +189,10 @@ pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::
     if k.scan.as_ref().is_some_and(|s| *s != body) {
         return;
     }
-    k.scan = Some(body);
+    k.scan = Some(body.clone());
+    // Where the click lands: on a corner, edge, crease or curve point close to it.
+    let point = crate::scan_snap::snapped(app, proj, &body, point);
+    let Some(k) = dialog(app) else { return };
     k.picks.push(point);
 }
 

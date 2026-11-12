@@ -1479,6 +1479,11 @@ preference_settings! {
     /// QuickSurface's brush is used. Off: Ctrl+Shift drags and the wheel with Ctrl+Shift do what
     /// they do elsewhere (the wheel zooms), as before.
     edit_surface_brush_keys: bool = true, PAGE_TOOLS => check_id("prefs.edit_surface_brush_keys");
+    /// A click on a scan in a Scan-tab tool (New Free Form, Curve on Scan, Flat Template, Fit
+    /// Patches) lands on the nearest corner, edge or crease of the scan, or point of a curve drawn
+    /// on it, when one is within a few pixels, and the view shows where. Off: the click lands
+    /// exactly where it is, as before.
+    scan_click_snap: bool = true, PAGE_TOOLS => check_id("prefs.scan_click_snap");
     /// Feature windows choose Join, New Body or Cut from what their material touches (`op_auto`,
     /// #6901). Off: they keep the operation they open with (Extrude its own Join or Cut), as before.
     auto_operation: bool = true, PAGE_TOOLS => check_id("prefs.auto_operation");

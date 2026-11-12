@@ -205,17 +205,25 @@ pub fn surface_step(surface: &NurbsSurface, cmd: &str) -> Result<String> {
 /// Keeps `surface` as a surface body of its own, named `<base>1`, `<base>2`, … (the first free),
 /// in a Scan Surface feature called `feature`, whose file reads `file`: one undo step, and a design
 /// that opens anywhere. The body's name and the feature's reply.
-pub fn keep_surface(s: &mut Session, surface: &NurbsSurface, base: &str, feature: &str, file: &str, cmd: &str) -> Result<(String, Value)> {
+pub fn keep_surface(
+    s: &mut Session,
+    surface: &NurbsSurface,
+    base: &str,
+    feature: &str,
+    file: &str,
+    recipe: Option<solidcraft_doc::scan_recipe::ScanRecipe>,
+    cmd: &str,
+) -> Result<(String, Value)> {
     let step = surface_step(surface, cmd)?;
     let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
     let name = (1..).map(|i| format!("{base}{i}")).find(|n| !taken.contains(n)).unwrap_or_else(|| base.into());
-    let kind = solidcraft_doc::FeatureKind::ScanSurface { file: file.into(), step: step.into() };
+    let kind = solidcraft_doc::FeatureKind::ScanSurface { file: file.into(), step: step.into(), recipe };
     let reply = super::super::features::add_feature(s, &json!({ "body_name": name, "name": feature }), kind)?;
     Ok((name, reply))
 }
 
 /// `surface` where it was before later features moved the surface, as an edit is written back.
-fn unmoved(target: &EditableSurface, surface: &NurbsSurface, cmd: &str) -> Result<NurbsSurface> {
+pub(super) fn unmoved(target: &EditableSurface, surface: &NurbsSurface, cmd: &str) -> Result<NurbsSurface> {
     match &target.placed {
         Some(by) => {
             let back = by.inverse();
@@ -256,7 +264,7 @@ pub fn network_step(faces: &[NurbsSurface], cmd: &str) -> Result<String> {
 }
 
 /// Writes `step` into the feature that keeps the surface, and works the design out again.
-fn write_step(s: &mut Session, target: &EditableSurface, step: String, cmd: &str) -> Result<()> {
+pub(super) fn write_step(s: &mut Session, target: &EditableSurface, step: String, cmd: &str) -> Result<()> {
     let feature = s.doc_mut().feature_mut(target.feature).ok_or_else(|| bad(cmd, "the surface's feature is gone"))?;
     if let solidcraft_doc::FeatureKind::ScanSurface { step: kept, .. } | solidcraft_doc::FeatureKind::Import { step: kept, .. } = &mut feature.kind {
         *kept = step.into();

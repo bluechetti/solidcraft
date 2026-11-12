@@ -86,9 +86,7 @@ pub const HANDLES_NET: usize = 1;
 pub const NEIGHBOURS_HOLD: usize = 0;
 pub const NEIGHBOURS_FOLLOW: usize = 1;
 
-/// The deviation colouring's tolerance to begin with, mm, and how many tolerances out the colours
-/// are deepest.
-const TOLERANCE: f64 = 0.1;
+/// How many tolerances out the deviation colours are deepest.
 const DEEPEST: f64 = 8.0;
 
 /// The colouring's id among the clouds the viewport draws, and a dot's size on the screen.
@@ -154,8 +152,10 @@ pub struct EditSurface {
     pub drag_mode: usize,
     /// How far Slide takes the chosen point (or its line) along u and along v, in mm.
     pub slide: [f64; 2],
-    /// The deviation colouring's tolerance, mm.
+    /// A tolerance tried here instead of the scan's own, mm (0: the scan's, see `scan.tolerance`).
     pub tolerance: f64,
+    /// The scan's tolerance as changed here, kept by OK.
+    keep_tolerance: Option<(String, f64)>,
     /// The scan under the surface is coloured by how far it is from it (on by default); off, the
     /// scan is drawn as it is, so nothing sits under the points but the scan itself.
     pub colours: bool,
@@ -248,7 +248,8 @@ impl Default for EditSurface {
             falloff: 0.0,
             drag_mode: DRAG_MOVE,
             slide: [1.0, 0.0],
-            tolerance: TOLERANCE,
+            tolerance: 0.0,
+            keep_tolerance: None,
             colours: true,
             check: Vec::new(),
             drag: None,
@@ -298,6 +299,9 @@ struct Adding {
 /// The scan under the faces: where each point lies on them, how far it is, and the coloured dots.
 #[derive(Clone, Debug)]
 struct Shading {
+    /// The scan the points are of, and its own tolerance as the design keeps it, mm.
+    scan: String,
+    base: f64,
     shade: network::Shade,
     values: Vec<f32>,
     version: u64,
@@ -639,7 +643,17 @@ fn study(app: &SolveApp, k: &mut EditSurface) {
         let all = l.covered.as_ref().map(|c| c.points.as_slice()).unwrap_or_default();
         l.sample = Arc::new(all.iter().step_by(all.len() / PREVIEW_POINTS + 1).copied().collect());
     }
-    k.shade = found.map(|(_, shade)| Box::new(Shading { shade, values: Vec::new(), version: 0, dots: Arc::new(Vec::new()), key: (0, [[0; 3]; 3]) }));
+    k.shade = found.map(|(scan, shade)| {
+        Box::new(Shading {
+            base: crate::scan_fidelity::of(app, Some(&scan)),
+            scan,
+            shade,
+            values: Vec::new(),
+            version: 0,
+            dots: Arc::new(Vec::new()),
+            key: (0, [[0; 3]; 3]),
+        })
+    });
     let shown = k.shown.clone();
     show_faces(k, shown, false, None);
 }
@@ -1335,17 +1349,15 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
     }
     if k.shade.is_some() {
         colours_row(ui, &mut k.colours);
-        form_row(ui, tr("ui.scan_edit_tolerance"), |ui| ui_kit::length_field(ui, &mut k.tolerance, &units, decimals));
-        k.tolerance = if k.tolerance.is_finite() && k.tolerance > 0.0 { k.tolerance } else { TOLERANCE };
+        let scan = k.shade.as_ref().map(|sh| sh.scan.clone());
+        if let (Some(sh), Some(name)) = (k.shade.as_mut(), scan.as_deref()) {
+            sh.base = crate::scan_fidelity::of(app, Some(name));
+        }
+        let t = crate::scan_fidelity::row(app, ui, scan.as_deref(), &mut k.tolerance);
+        k.keep_tolerance = t.keep;
         recolour(k);
-        let counted: Vec<f32> = k.shade.as_ref().map(|sh| sh.values.iter().copied().filter(|v| v.is_finite()).collect()).unwrap_or_default();
-        if !counted.is_empty() {
-            let within = counted.iter().filter(|v| f64::from(v.abs()) <= k.tolerance).count() as f64 / counted.len() as f64;
-            let line = crate::i18n::format(
-                "ui.scan_edit_within",
-                &[("within", &format!("{:.0} %", 100.0 * within)), ("tolerance", &crate::prefs::show_mm(app, k.tolerance, 1))],
-            );
-            ui_kit::text(ui, &line, ui_kit::Text::Note("scan_edit_within"));
+        if let Some(stats) = fidelity(app, k).map(|(s, _)| s) {
+            crate::scan_fidelity::readout(app, ui, "scan_edit_fidelity", &stats, t.mm);
         }
     }
     // Surface Check on the faces as shown: a fold a drag makes is seen as it is made.
@@ -1806,6 +1818,13 @@ fn same_edge_within(e: &(Vec3, Vec3), a: Vec3, b: Vec3, tolerance: f64) -> bool 
 /// or for a network, with the edges creased or held smooth by hand and the symmetry plane for the
 /// design to keep.
 pub fn commands(k: &EditSurface) -> Result<Vec<(String, Value)>, String> {
+    let mut all = Vec::new();
+    all.extend(crate::scan_fidelity::keep(k.keep_tolerance.as_ref()));
+    all.extend(surface_commands(k)?);
+    Ok(all)
+}
+
+fn surface_commands(k: &EditSurface) -> Result<Vec<(String, Value)>, String> {
     let l = k.loaded.as_ref().ok_or("still loading the surface")?.as_ref().map_err(Clone::clone)?;
     let kept = kept_changed(k, l);
     if k.faces == l.target.faces && !k.reshaped && !kept {
@@ -1873,6 +1892,18 @@ pub(crate) fn edit_from_history(app: &mut SolveApp, feature: u64) -> bool {
         k.loaded = None;
     }
     true
+}
+
+/// The feature that keeps `body` when it is a surface Edit Surface can edit (a Free Form, a fitted
+/// surface), for a double-click or a menu to open the editor on exactly that surface.
+pub(crate) fn editable_feature(app: &SolveApp, body: &str) -> Option<u64> {
+    edit::editable(&app.session, Some(body), "scan.edit_surface").ok().map(|t| t.feature)
+}
+
+/// Double-click on a surface in the view: Edit Surface opens on that surface. False when it is not
+/// one that can be edited.
+pub(crate) fn edit_body(app: &mut SolveApp, body: &str) -> bool {
+    editable_feature(app, body).is_some_and(|f| edit_from_history(app, f))
 }
 
 /// Whether the dialog shows handles (the next primary press on one takes it), or takes clicks
@@ -2577,7 +2608,7 @@ pub(crate) fn shade_cloud(id: u64, version: u64, dots: Arc<Vec<u8>>) -> GpuCloud
 
 /// The colouring built again when the values, the tolerance or the theme's colours have changed.
 fn recolour(k: &mut EditSurface) {
-    let tolerance = k.tolerance;
+    let tolerance = tolerance_now(k);
     let Some(sh) = k.shade.as_mut() else { return };
     let key = (tolerance.to_bits(), crate::scan_deviation::colours());
     if sh.key == key && sh.version != 0 {
@@ -2586,6 +2617,19 @@ fn recolour(k: &mut EditSurface) {
     sh.dots = Arc::new(shade_dots(&sh.shade, &sh.values, tolerance, key.1));
     sh.version = next_shade_version();
     sh.key = key;
+}
+
+/// The tolerance the colouring uses: the one tried here, else the scan's own.
+fn tolerance_now(k: &EditSurface) -> f64 {
+    if k.tolerance.is_finite() && k.tolerance > 0.0 { k.tolerance } else { k.shade.as_ref().map_or(0.1, |sh| sh.base) }
+}
+
+/// What the colouring of the scan under the faces adds up to, and its tolerance, for the
+/// viewport's key.
+pub(crate) fn fidelity(_app: &SolveApp, k: &EditSurface) -> Option<(crate::scan_fidelity::Stats, f64)> {
+    let sh = k.shade.as_ref()?;
+    let tolerance = tolerance_now(k);
+    Some((crate::scan_fidelity::stats(&sh.values, tolerance)?, tolerance))
 }
 
 /// A new version for a colouring's dots (each is uploaded again).
@@ -2609,7 +2653,7 @@ pub(crate) fn shade_dots(shade: &network::Shade, values: &[f32], tolerance: f64,
 }
 
 /// Where a distance sits on the colouring's scale, -1 to 1 (0 within the tolerance).
-fn solidcraft_scan_scale(v: f32, tolerance: f64) -> Option<f64> {
+pub(crate) fn solidcraft_scan_scale(v: f32, tolerance: f64) -> Option<f64> {
     let v = f64::from(v);
     if !v.is_finite() {
         return None;
@@ -3799,5 +3843,22 @@ mod tests {
         h.step(&stroke).unwrap();
         h.frames(2);
         assert_eq!(kind(&h).history.len(), steps, "no stroke");
+    }
+
+    /// A double-click on a Free Form in the view opens Edit Surface on that very surface, even with
+    /// a later one made; nothing opens on a body that is no editable surface.
+    #[test]
+    fn double_clicking_a_free_form_edits_it() {
+        let mut h = crate::scenario::Harness::new();
+        for corners in [[[0, 0, 0], [20, 0, 0], [20, 20, 0], [0, 20, 0]], [[40, 0, 0], [60, 0, 0], [60, 20, 0], [40, 20, 0]]] {
+            h.app.run("scan.free_form", json!({"corners": corners, "plane": "XY"})).unwrap();
+        }
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.frames(3);
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        h.step(&json!({"click": {"world": [10.0, 10.0, 0.0]}, "double": true})).unwrap();
+        h.frames(3);
+        let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("Edit Surface should be open") };
+        assert_eq!(k.target.as_deref(), Some("FreeForm1"), "the one clicked, not the one made last");
     }
 }

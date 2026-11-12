@@ -325,7 +325,7 @@ pub struct ScanDeviationParams {
     /// with none, the only other mesh body.
     #[serde(default)]
     pub body: Option<String>,
-    /// How far off still counts as on the model, a length above 0. Default: 0.1 mm.
+    /// How far off still counts as on the model, a length above 0. Default: the scan's tolerance (`scan.tolerance`), else 0.1 mm.
     #[serde(default)]
     pub tolerance: Option<LengthExpr>,
     /// Where the colours stop deepening, a length above the tolerance. Default: 0.5 mm. Points

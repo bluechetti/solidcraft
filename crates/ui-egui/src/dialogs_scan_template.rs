@@ -4,6 +4,8 @@
 //! plane, and drawn over the view before OK sketches it: the outline, the cut-outs, and the scan's
 //! own edge on the same plane to check it against.
 
+use std::sync::Arc;
+
 use serde_json::{Value, json};
 use solidcore_record::{Vec2, Vec3};
 use solidcraft_engine::Sel;
@@ -12,6 +14,7 @@ use solidcraft_engine::geom::prelude::*;
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, check, form_row};
+use crate::scan_job;
 use crate::selection::{FACES, SelInput, items};
 use crate::ui_kit::{self, choice_row};
 
@@ -23,12 +26,20 @@ pub struct FlatTemplate {
     /// How far off the plane a part must stand; 0 for what the wall's noise says.
     pub tolerance: f64,
     pub edge: bool,
+    /// The scan is coloured by how far it stands off the template's plane (on by default).
+    pub colours: bool,
+    /// A tolerance tried here instead of the scan's own, mm (0: the scan's, see `scan.tolerance`).
+    pub scan_tolerance: f64,
+    /// The scan's tolerance as changed here, kept by OK.
+    keep_tolerance: Option<(String, f64)>,
+    /// The template being worked out beside the window (a large scan), for the values it was begun for.
+    pending: Option<Arc<scan_job::Job<String, Computed>>>,
     shown: Option<Box<Shown>>,
 }
 
 impl Default for FlatTemplate {
     fn default() -> Self {
-        FlatTemplate { side: 0, tolerance: 0.0, edge: true, shown: None }
+        FlatTemplate { side: 0, tolerance: 0.0, edge: true, colours: true, scan_tolerance: 0.0, keep_tolerance: None, pending: None, shown: None }
     }
 }
 
@@ -36,7 +47,25 @@ impl Default for FlatTemplate {
 struct Shown {
     key: String,
     result: Result<Marked, String>,
+    under: Option<Under>,
 }
+
+/// The scan over the template, each point by how far it stands off the template's plane (along the
+/// side `Out` goes), and the coloured dots made for a tolerance and colours.
+#[derive(Clone, Debug)]
+struct Under {
+    scan: String,
+    at: Vec<Vec3>,
+    values: Vec<f32>,
+    /// Whether the point is inside a cut-out: a part standing off the wall by design, which does not
+    /// count against how flat the wall is.
+    cut: Vec<bool>,
+    dots: Option<(u64, [[u8; 3]; 3], u64, Arc<Vec<u8>>)>,
+}
+
+/// The colouring's id among the clouds the viewport draws, and the most points it shows.
+const SHADE_CLOUD_ID: u64 = u64::MAX - 12;
+const SHADE_POINTS: usize = 40_000;
 
 /// The template as it will lie, in space.
 #[derive(Clone, Debug)]
@@ -97,13 +126,44 @@ fn params(k: &FlatTemplate, inputs: &[SelInput]) -> Option<Value> {
 fn look(app: &SolveApp, k: &mut FlatTemplate, inputs: &[SelInput]) {
     let Some(p) = params(k, inputs) else {
         k.shown = None;
+        k.pending = None;
         return;
     };
     let key = format!("{p}|{}", app.session.revision);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
+        k.pending = None;
         return;
     }
-    let result = prepare(&app.session, &p, "scan.flat_template").map_err(|e| e.to_string()).map(|m| {
+    // On a large scan the template is worked out beside the window and what was drawn stays until it arrives.
+    if scan_job::beside_window(app) {
+        if let Some(job) = k.pending.clone() {
+            match job.poll() {
+                scan_job::Poll::Working if job.key == key => return,
+                scan_job::Poll::Done((result, under)) if job.key == key => {
+                    k.pending = None;
+                    k.shown = Some(Box::new(Shown { key, result, under }));
+                    return;
+                }
+                _ => k.pending = None,
+            }
+        }
+        let given = p.clone();
+        if let Some(job) = scan_job::spawn(app, key.clone(), move |s| compute(s, &given)) {
+            k.pending = Some(Arc::new(job));
+            return;
+        }
+    }
+    let (result, under) = compute(&app.session, &p);
+    k.shown = Some(Box::new(Shown { key, result, under }));
+}
+
+/// The template `p` asks for and the scan over it: all that looks over the scan.
+type Computed = (Result<Marked, String>, Option<Under>);
+
+fn compute(s: &solidcraft_engine::Session, p: &Value) -> Computed {
+    let mut under = None;
+    let result = prepare(s, p, "scan.flat_template").map_err(|e| e.to_string()).map(|m| {
+        under = under_of(s, &m);
         let t = &m.made;
         let place = |ring: &[solidcore_record::Vec2]| -> Vec<Vec3> { ring.iter().map(|q| t.at(*q)).collect() };
         let (lo, hi) = t.outline.iter().fold((Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN)), |(lo, hi), q| {
@@ -126,7 +186,82 @@ fn look(app: &SolveApp, k: &mut FlatTemplate, inputs: &[SelInput]) {
             under: m.under,
         }
     });
-    k.shown = Some(Box::new(Shown { key, result }));
+    (result, under)
+}
+
+/// Whether `p` is inside the ring (even-odd), both in the template's coordinates.
+fn inside(ring: &[Vec2], p: Vec2) -> bool {
+    let mut on = false;
+    for (a, b) in ring.iter().zip(ring.iter().cycle().skip(1)) {
+        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+            on = !on;
+        }
+    }
+    on
+}
+
+/// The scan's points over the template's outline and how far each stands off its plane: thinned
+/// evenly to [`SHADE_POINTS`].
+fn under_of(s: &solidcraft_engine::Session, m: &solidcraft_engine::cmd::scan::template::Prepared) -> Option<Under> {
+    let state = s.model.state();
+    let (positions, _) = state.body(&m.body)?.body.triangle_mesh()?;
+    let t = &m.made;
+    let normal = t.frame.x.cross(t.frame.y).normalized()?;
+    let step = (positions.len() / SHADE_POINTS).max(1);
+    let local = |p: Vec3| {
+        let d = p - t.frame.origin;
+        Vec2::new(d.dot(t.frame.x), d.dot(t.frame.y))
+    };
+    let mut under = Under { scan: m.body.clone(), at: Vec::new(), values: Vec::new(), cut: Vec::new(), dots: None };
+    for p in positions.iter().step_by(step) {
+        let q = local(*p);
+        if !inside(&t.outline, q) {
+            continue;
+        }
+        under.at.push(*p);
+        under.values.push(((*p - t.frame.origin).dot(normal)) as f32);
+        under.cut.push(t.cutouts.iter().any(|c| inside(&c.ring, q)));
+    }
+    (!under.at.is_empty()).then_some(under)
+}
+
+/// The scan's dots made again when the tolerance or the colours have changed.
+fn colour(app: &SolveApp, k: &mut FlatTemplate) {
+    let colours = crate::scan_deviation::colours();
+    let Some(under) = k.shown.as_mut().and_then(|s| s.under.as_mut()) else { return };
+    let tolerance = crate::scan_fidelity::effective(app, Some(&under.scan), k.scan_tolerance);
+    if under.dots.as_ref().is_some_and(|(t, c, _, _)| *t == tolerance.to_bits() && *c == colours) {
+        return;
+    }
+    let mut out = Vec::with_capacity(under.at.len() * crate::scan_dots::DOT_SIZE);
+    for (at, v) in under.at.iter().zip(&under.values) {
+        let Some(s) = crate::dialogs_scan_surface::solidcraft_scan_scale(*v, tolerance) else { continue };
+        let dot = crate::scan_dots::Dot { at: at.to_f32(), value: *v, rgb: crate::scan_deviation::colour(colours, s) };
+        crate::scan_dots::cloud_dot(&mut out, &dot);
+    }
+    under.dots = Some((tolerance.to_bits(), colours, crate::dialogs_scan_surface::next_shade_version(), Arc::new(out)));
+}
+
+/// How flat the wall is under the template, and the tolerance: the points outside the cut-outs,
+/// for the viewport's key and the dialog's line.
+pub(crate) fn fidelity(app: &SolveApp, k: &FlatTemplate) -> Option<(crate::scan_fidelity::Stats, f64)> {
+    if !k.colours {
+        return None;
+    }
+    let under = k.shown.as_ref()?.under.as_ref()?;
+    let tolerance = crate::scan_fidelity::effective(app, Some(&under.scan), k.scan_tolerance);
+    let wall: Vec<f32> = under.values.iter().zip(&under.cut).filter(|(_, c)| !**c).map(|(v, _)| *v).collect();
+    Some((crate::scan_fidelity::stats(&wall, tolerance)?, tolerance))
+}
+
+/// The colouring of the scan over the template, as a cloud for the GPU viewport.
+pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuCloud> {
+    let Some(Kind::ScanFlatTemplate(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    if !k.colours {
+        return None;
+    }
+    let (_, _, version, dots) = k.shown.as_ref()?.under.as_ref()?.dots.as_ref()?;
+    Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots.clone()))
 }
 
 /// The dialog's rows.
@@ -138,6 +273,15 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
     k.tolerance = k.tolerance.max(0.0);
     form_row(ui, tr("ui.scan_template_edge"), |ui| check(ui, &mut k.edge));
     look(app, k, inputs);
+    if k.shown.as_ref().is_some_and(|s| s.under.is_some()) {
+        crate::dialogs_scan_surface::colours_row(ui, &mut k.colours);
+        let scan = k.shown.as_ref().and_then(|s| s.under.as_ref()).map(|u| u.scan.clone());
+        k.keep_tolerance = crate::scan_fidelity::row(app, ui, scan.as_deref(), &mut k.scan_tolerance).keep;
+    }
+    colour(app, k);
+    if k.pending.is_some() {
+        scan_job::refining_note(ui, "scan_template_refining");
+    }
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok(m)) => {
             let line = crate::i18n::format(
@@ -153,6 +297,9 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
             let sides = m.sides.iter().map(|(_, l)| format!("{l:.1}")).collect::<Vec<_>>().join(" · ");
             let dims = crate::i18n::format("ui.scan_template_sides", &[("sides", &sides)]);
             ui_kit::text(ui, &dims, ui_kit::Text::Note("scan_template_sides"));
+            if let Some((stats, tolerance)) = fidelity(app, k) {
+                crate::scan_fidelity::readout(app, ui, "scan_template_fidelity", &stats, tolerance);
+            }
             if m.fitted {
                 let plane = crate::i18n::format("ui.scan_template_plane", &[("kept", &m.kept.to_string()), ("under", &m.under.to_string())]);
                 ui_kit::text(ui, &plane, ui_kit::Text::Note("scan_template_plane"));
@@ -172,7 +319,10 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
 pub fn commands(k: &FlatTemplate, inputs: &[SelInput]) -> Result<Vec<(String, Value)>, String> {
     let p = params(k, inputs).ok_or_else(|| tr("ui.scan_template_hint").to_owned())?;
     k.shown.as_ref().ok_or("still working out the template")?.result.as_ref().map_err(Clone::clone)?;
-    Ok(vec![("scan.flat_template".into(), p)])
+    let mut all = Vec::new();
+    all.extend(crate::scan_fidelity::keep(k.keep_tolerance.as_ref()));
+    all.push(("scan.flat_template".into(), p));
+    Ok(all)
 }
 
 /// The points clicked so far, in order.
@@ -294,6 +444,12 @@ mod tests {
         assert_eq!(m.cutouts.len(), 1, "the outlet is cut out");
         assert!(!m.edge.is_empty() && m.outline.len() == 4, "the scan's edge and the outline are shown");
         assert!(h.app.session.doc.features.iter().all(|f| f.name != "Wall Template"), "nothing sketched before OK");
+        // The scan over the template is coloured by how far it stands off the plane; the wall
+        // outside the outlet is flat, so all of it is within the tolerance (the outlet, a cut-out
+        // by design, is not counted against it).
+        let (stats, tolerance) = fidelity(&h.app, k).expect("the wall measured");
+        assert!(stats.count > 100 && tolerance == 0.1 && stats.within > 0.99 && stats.rms < 0.01, "{stats:?}");
+        assert!(gpu_shade(&h.app).is_some_and(|c| !c.dots.is_empty()), "the scan coloured over the template");
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));

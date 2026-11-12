@@ -158,6 +158,27 @@ pub fn scan_tree(mesh: &Arc<solidcraft_geom::Mesh>) -> Arc<solidcraft_geom::comp
     built
 }
 
+pub use solidcraft_scan::selection::{Snap, SnapKind};
+
+/// The scans a click's snap may build the topology of on the spot (triangles): larger ones snap
+/// only once a selection tool has built it, so a hover never stalls the window.
+pub const SNAP_BUILD_LIMIT: usize = 300_000;
+
+/// The topology of the scan `body` for a click to snap to: the one already built, or built now
+/// when the scan is small enough ([`SNAP_BUILD_LIMIT`]); `None` for a larger scan nothing has
+/// built it for.
+pub fn topology_for_snap(s: &Session, body: &str) -> Option<Arc<Topology>> {
+    let state = s.model.state();
+    let mesh = state.body(body).and_then(|b| b.body.kept_mesh())?;
+    let held = [mesh.positions.as_ptr() as usize, mesh.positions.len(), mesh.triangles.as_ptr() as usize, mesh.triangles.len()];
+    let ready = TOPOLOGY.lock().ok().and_then(|c| c.as_ref().filter(|(h, ..)| *h == held).map(|(_, _, t)| t.clone()));
+    drop(state);
+    ready.or_else(|| {
+        let small = s.model.state().body(body).and_then(|b| b.body.kept_mesh()).is_some_and(|m| m.triangles.len() <= SNAP_BUILD_LIMIT);
+        small.then(|| topology(s, body, "scan.snap").ok()).flatten()
+    })
+}
+
 /// The topology of the scan `body`, built once while the scan is as it was.
 pub fn topology(s: &Session, body: &str, cmd: &str) -> Result<Arc<Topology>> {
     let state = s.model.state();

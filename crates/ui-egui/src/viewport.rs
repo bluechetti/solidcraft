@@ -3522,9 +3522,12 @@ pub(crate) fn analysis_legend_data(app: &SolveApp) -> Option<AnalysisLegend> {
         ),
         _ => match crate::scan_deviation::legend(app) {
             Some((summary, rows)) => (tr("Scan Deviation"), Some(summary), rows),
-            None => match crate::scan_shapes::legend(app) {
-                Some((summary, rows)) => (tr("cmd.scan_find_all"), Some(summary), rows),
-                None => return None,
+            None => match crate::scan_fidelity::legend(app) {
+                Some((summary, rows)) => (tr("Scan Deviation"), Some(summary), rows),
+                None => match crate::scan_shapes::legend(app) {
+                    Some((summary, rows)) => (tr("cmd.scan_find_all"), Some(summary), rows),
+                    None => return None,
+                },
             },
         },
     };
@@ -4901,6 +4904,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // Edit Surface's Smoothing Brush on Ctrl+Shift: the wheel sizes its circle instead of zooming.
     crate::dialogs_scan_surface::brush_wheel(app, ui.ctx(), rect);
     crate::dialogs_scan_surface::falloff_wheel(app, ui.ctx(), rect);
+    crate::dialogs_scan_select::radius_wheel(app, ui.ctx(), rect);
     let input =
         if flat { crate::dialogs_sheet::navigate(app, ui, rect, &resp) } else { crate::navigation::handle(app, ui, rect, &resp, NavCaps::MODEL) };
     let CameraInput { hover, scroll, mods, middle, secondary_down, primary_down, primary_pressed, inside, axes, pinch, pan, primary_nav, mode } =
@@ -4964,6 +4968,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // The Fillet and Chamfer window resolves its own corners: the nearest sketch point to a
     // corner drawn from the origin is the fixed origin, which ends no two curves.
     let corner = hover.filter(|_| inside && !navigating).and_then(|p| crate::sketch_modify_ui::corner_hit(app, &proj, p));
+    crate::scan_snap::track(app, &proj, &hits);
     let cand = if app.tool.is_some() {
         tool_hover(app, &hits).map(|h| (h, None))
     } else if takes_scan_clicks(app) || crate::dialogs_scan_free_form::colours_the_scan(app) {
@@ -5068,6 +5073,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 .chain(crate::dialogs_scan_surface::gpu_fit_marks(app))
                 .chain(crate::dialogs_scan_surface::gpu_shade(app))
                 .chain(crate::dialogs_scan_free_form::gpu_shade(app))
+                .chain(crate::dialogs_scan_patches::gpu_shade(app))
+                .chain(crate::dialogs_scan_template::gpu_shade(app))
                 .collect(),
             analysis: analysis_uniform(app),
             analysis_colors: crate::gpu::analysis_colors(&t.analysis),
@@ -5290,6 +5297,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 crate::tools::on_click(app, &proj, p, mods.shift);
             } else if app.dialog.as_ref().is_some_and(|d| d.wants_picks()) {
                 if let Some((hit, Some(sel))) = cand {
+                    let sel = crate::scan_snap::snapped_sel(app, &proj, sel);
                     dialog_pick(app, &hit, sel);
                 } else if let Some(mut dialog) = app.dialog.take() {
                     // A pick field clicked into says what it is for when the click is not one (#10428).
@@ -5393,8 +5401,18 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 .collect();
             let _ = app.run("select.set", json!({ "items": items, "add": add }));
         }
-        // Double-click a component's face: edit a linked one in place, activate any other.
+        // Double-click a Free Form (or another surface Edit Surface edits): edit that surface.
         if resp.double_clicked()
+            && !held
+            && !dim_edit
+            && app.tool.is_none()
+            && app.dialog.is_none()
+            && app.session.active_sketch.is_none()
+            && let Some(Hit::Face { body, .. }) = app.viewport.hover.clone()
+            && crate::dialogs_scan_surface::edit_body(app, &body)
+        {
+            // Edit Surface is open on it.
+        } else if resp.double_clicked()
             && !held
             && !dim_edit
             && mods.is_none()
@@ -5694,6 +5712,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     // Select on Scan: clicks and drags on the scan select with the dialog's tool.
     if crate::dialogs_scan_select::active(app) {
+        crate::dialogs_scan_select::keys(app, mods);
         crate::dialogs_scan_select::tick(app, &proj);
         if resp.clicked()
             && let Some(p) = resp.interact_pointer_pos()
@@ -5787,6 +5806,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::dialogs_scan_surface::draw(app, &painter, &proj);
     crate::dialogs_surface_check::draw(app, &painter, &proj);
     crate::dialogs_scan_curve::draw(app, &painter, &proj);
+    crate::scan_snap::draw(&painter, &proj);
     crate::dialogs_scan_free_form::draw(app, &painter, &proj);
     crate::dialogs_scan_slice::draw(app, &painter, &proj);
     crate::dialogs_scan_split::draw(app, &painter, &proj);
