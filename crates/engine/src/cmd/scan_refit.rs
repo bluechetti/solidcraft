@@ -5,7 +5,7 @@
 //! re-scan, or a change earlier in the timeline that moved or cleaned the scan, costs a click and
 //! not the hand work.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use solidcore_record::Vec3;
 use solidcraft_doc::scan_recipe::ScanRecipe;
 use solidcraft_geom::prelude::*;
@@ -23,7 +23,7 @@ const CONTRACT: TypedContract<ScanRefitParams> = TypedContract::new();
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("scan.refit", "Refit to Scan", crate::checked!("scan.refit", refit))
         .at("SCAN", "FREEFORM")
-        .icon("scan_fit_patches")
+        .icon("scan_refit")
         .contract(&CONTRACT)
         .output(output_schema_for::<ScanRefitResult>)
         .params("surface?: the surface body (default: the selected one, else the one made last); discard_edits?: bool (default false: fit afresh and drop the hand edits; needed when a face or a row of the net was added or taken away by hand): the command that made the surface (New Free Form, Fit Patches) runs again with its parameters on the scan as it is now, and the control points moved by hand are moved the same on the new fit; one undo step → surface, scan, faces, carried, discarded, feature"),
@@ -48,7 +48,23 @@ pub fn recipe_of(s: &Session, id: u64) -> Option<ScanRecipe> {
 fn fresh(s: &Session, r: &ScanRecipe, cmd: &str) -> Result<Vec<solidcraft_geom::bspline::NurbsSurface>> {
     match r.command.as_str() {
         "scan.free_form" => Ok(vec![super::free_form::made_from_params(s, &r.params)?.surface]),
-        "scan.fit_patches" => Ok(super::patches::fitted(s, &r.params, cmd)?.3.surfaces),
+        "scan.fit_patches" => {
+            // A region kept as triangle numbers means the same triangles only while the scan has the
+            // same number of them: cleaning or splitting it numbers them anew.
+            if let Some(then) = r.params.get("of_triangles").and_then(Value::as_u64) {
+                let now = super::mesh(s, &json!({ "body": r.scan }), cmd)?.triangles.len() as u64;
+                if now != then {
+                    return Err(bad(
+                        cmd,
+                        format!(
+                            "`{}` has {now} triangles now and had {then} when the surface was fitted to the part selected on it, so the part is not the same: select it again and fit again",
+                            r.scan
+                        ),
+                    ));
+                }
+            }
+            Ok(super::patches::fitted(s, &r.params, cmd)?.3.surfaces)
+        }
         other => Err(bad(cmd, format!("the recipe names `{other}`, which cannot be run again"))),
     }
 }
@@ -143,7 +159,7 @@ fn refit(s: &mut Session, p: &Value) -> Result<Value> {
         bad(
             cmd,
             format!(
-                "`{}` has no recipe: only a surface made by New Free Form or Fit Patches (from a click on a scan) can be fitted again",
+                "`{}` has no recipe: only a surface made by New Free Form or Fit Patches (from a click, or a part selected, on a scan) can be fitted again",
                 target.body
             ),
         )

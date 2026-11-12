@@ -693,25 +693,7 @@ pub(super) fn sewing_refusal(what: &str, surfaces: &[&NurbsSurface], kernel: &st
             ),
         );
     }
-    bad(cmd, format!("{what} could not be sewn: {}", kernel_words(kernel)))
-}
-
-/// What the kernel's check refused, in words: each kind of failure it names, once.
-fn kernel_words(kernel: &str) -> String {
-    let kinds = [
-        ("NonMonotonic", "the control net doubles back on itself"),
-        ("CurveCusp", "an edge curve kinks sharply"),
-        ("Bad Gap", "an edge does not lie on the faces it joins"),
-        ("Bad Edge loc", "an edge does not lie on the faces it joins"),
-        ("ntersect", "the surface passes through itself"),
-    ];
-    let mut said: Vec<&str> = Vec::new();
-    for (name, words) in kinds {
-        if kernel.contains(name) && !said.contains(&words) {
-            said.push(words);
-        }
-    }
-    if said.is_empty() { "the kernel's check refused the joined surface".to_string() } else { said.join("; ") }
+    bad(cmd, format!("{what} could not be sewn: {}; {}", super::refusal::kernel_words(kernel), super::refusal::kernel_fix(kernel)))
 }
 
 pub(super) fn merge_surfaces(s: &mut Session, p: &Value) -> Result<Value> {
@@ -772,18 +754,4 @@ pub(super) fn merge_surfaces(s: &mut Session, p: &Value) -> Result<Value> {
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
-}
-
-#[cfg(test)]
-mod sewing_tests {
-    /// The kernel's refusal of a seam on T-LESS 01 (a wrap merged round on itself), in words: no
-    /// test numbers, owners or offsets, each kind once.
-    #[test]
-    fn a_sewing_refusal_is_said_in_words() {
-        let kernel = "the operation failed: SMLib stitch: SMLib's check refuses the result: 2 failed tests:\nSmBSplineSurface::Test #5 Bad NonMonotonic CPts: SmBSplineSurface Control Net doubles back on itself probably making a self intersecting surface [owner SmBSplineSurface]\nSmBSplineCurve::Test #14 Bad CurveCusp: 3D BSplineCurve Warning: Extremely small radius of curvature (offset=0.0028879039, tolerance=0.0076947937) [owner SmBSplineCurve]";
-        let words = super::kernel_words(kernel);
-        assert_eq!(words, "the control net doubles back on itself; an edge curve kinks sharply; the surface passes through itself");
-        assert!(!words.contains("Sm") && !words.contains('#'));
-        assert_eq!(super::kernel_words("something else"), "the kernel's check refused the joined surface");
-    }
 }

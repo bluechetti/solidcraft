@@ -1,0 +1,42 @@
+{
+  "ar": {
+    "cmd.scan_chamfer_it": "شطف الحواف",
+    "help.scan.chamfer_it": "يشطف حواف الجسم الذي تبنيه إعادة البناء حيث يُظهر المسح شطفًا مستويًا لا يحمله أي مقطع (عبر أطراف المنشور): تُقرأ مسافة كل شطف من الوجهين اللذين يصل بينهما، وتُشطف الحواف بها. تُستبعد الحافة التي يرفضها النواة.",
+    "ui.scan_reconstruct_chamfer": "شطف الحواف: {edges} حافة مشطوفة"
+  },
+  "de": {
+    "cmd.scan_chamfer_it": "Kanten fasen",
+    "help.scan.chamfer_it": "Fast die Kanten des Körpers, den Rekonstruieren aufbaut, wo der Scan ebene Fasen zeigt, die kein Profil enthält (quer über die Enden eines Prismas): Der Abstand jeder Fase wird aus den beiden Flächen gelesen, die sie verbindet, und die Kanten werden damit gefast. Eine Kante, die der Kernel ablehnt, wird übersprungen.",
+    "ui.scan_reconstruct_chamfer": "Kanten fasen: {edges} gefaste Kanten"
+  },
+  "en": {
+    "cmd.scan_chamfer_it": "Chamfer It",
+    "help.scan.chamfer_it": "Chamfers the edges of the body Reconstruct builds where the scan shows flat bevels no profile holds (across a prism's ends): each chamfer's distance is read from the two faces it joins, and the edges are chamfered at it. An edge the kernel refuses is set aside.",
+    "ui.scan_reconstruct_chamfer": "Chamfer It: {edges} chamfered edges"
+  },
+  "he": {
+    "cmd.scan_chamfer_it": "חיתוך קצוות בשיפוע",
+    "help.scan.chamfer_it": "חותך בשיפוע את קצוות הגוף ששחזור בונה היכן שהסריקה מראה שיפועים שטוחים שאף פרופיל אינו מכיל (לרוחב קצות מנסרה): מרחק כל שיפוע נקרא משני הפנים שהוא מחבר, והקצוות נחתכים בו. קצה שהליבה דוחה מדולג.",
+    "ui.scan_reconstruct_chamfer": "חיתוך קצוות בשיפוע: {edges} קצוות"
+  },
+  "ja": {
+    "cmd.scan_chamfer_it": "エッジを面取り",
+    "help.scan.chamfer_it": "再構築が作成するボディのエッジのうち、どのプロファイルにも含まれない平らな面取り（角柱の端を横切るもの）がスキャンにある箇所を面取りします。各面取りの距離は、それがつなぐ2つの面から読み取ります。カーネルが拒否したエッジは除外されます。",
+    "ui.scan_reconstruct_chamfer": "エッジを面取り: 面取りするエッジ {edges} 本"
+  },
+  "ko": {
+    "cmd.scan_chamfer_it": "모서리 모따기",
+    "help.scan.chamfer_it": "재구성이 만드는 바디의 모서리 중 어떤 프로파일에도 없는 평평한 모따기(각기둥 끝을 가로지르는 것)가 스캔에 있는 곳을 모따기합니다. 각 모따기의 거리는 그것이 잇는 두 면에서 읽습니다. 커널이 거부한 모서리는 제외됩니다.",
+    "ui.scan_reconstruct_chamfer": "모서리 모따기: 모따기할 모서리 {edges}개"
+  },
+  "vi": {
+    "cmd.scan_chamfer_it": "Vát cạnh",
+    "help.scan.chamfer_it": "Vát các cạnh của thân mà Tái dựng dựng ở nơi bản quét cho thấy mặt vát phẳng mà không biên dạng nào chứa (ngang qua các đầu của lăng trụ): khoảng cách mỗi mặt vát được đọc từ hai mặt mà nó nối, và các cạnh được vát theo đó. Cạnh mà nhân từ chối sẽ được bỏ qua.",
+    "ui.scan_reconstruct_chamfer": "Vát cạnh: {edges} cạnh được vát"
+  },
+  "zh": {
+    "cmd.scan_chamfer_it": "倒斜角",
+    "help.scan.chamfer_it": "在重建所构建实体的边上倒斜角：扫描显示有平坦斜面而任何轮廓都不包含的地方（横跨棱柱端部）。每个斜角的距离由它所连接的两个面读出，并按该距离倒角。内核拒绝的边会被跳过。",
+    "ui.scan_reconstruct_chamfer": "倒斜角：{edges} 条边"
+  }
+}

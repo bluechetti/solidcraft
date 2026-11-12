@@ -142,6 +142,46 @@ fn three_passes_are_laid_together_in_one_undo_step() {
     assert_eq!(positions_of(&s, &b), before_b, "one undo puts every pass back");
 }
 
+/// Combine Scans in one step: the second and third passes laid on the first, then all three fused
+/// into the first as one surface. The first stays where it is, the others stay as they were laid,
+/// and one undo puts every pass back and the first's triangles with it.
+#[test]
+fn three_passes_are_combined_into_one_scan_in_one_undo_step() {
+    let (_, _, p, t) = part();
+    let mut s = Session::default();
+    let a = insert(&mut s, &p, &seen(&p, &t, Vec3::new(0.6, -0.5, 0.6)), "a");
+    let axis = Vec3::new(-0.4, 0.2, 0.9).normalized().unwrap();
+    let b = insert(&mut s, &turned(&p, axis, 2.1, Vec3::new(120.0, -40.0, 15.0)), &seen(&p, &t, Vec3::new(-0.6, -0.4, 0.7)), "b");
+    let c = insert(&mut s, &turned(&p, axis, -1.3, Vec3::new(-90.0, 60.0, 5.0)), &seen(&p, &t, Vec3::new(0.1, 0.7, 0.7)), "c");
+    let (before_a, before_b) = (positions_of(&s, &a), positions_of(&s, &b));
+    let r = run(&mut s, "scan.combine", json!({}));
+    assert_eq!(r["body"], json!(a), "{r}");
+    assert_eq!(r["with"], json!([b, c]), "{r}");
+    assert_eq!(r["aligned"]["passes"][0]["held"], true, "{r}");
+    assert!(r["fused"]["triangles"].as_u64().unwrap() > 0, "{r}");
+    assert!(r["fused"]["new_rms"].as_f64().unwrap() < 0.2, "the fused surface keeps to the passes: {r}");
+    for body in [&b, &c] {
+        assert!(worst_off(&s, body, &p) < 0.05, "{body} was laid on the part: {r}");
+    }
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(positions_of(&s, &b), before_b, "one undo puts every pass back");
+    assert_eq!(positions_of(&s, &a), before_a, "and the first's triangles");
+}
+
+/// Combine Scans with `align` false skips the alignment, and says in words what it cannot do.
+#[test]
+fn combine_scans_can_skip_the_alignment_and_refuses_one_scan() {
+    let (_, _, p, t) = part();
+    let mut s = Session::default();
+    insert(&mut s, &p, &seen(&p, &t, Vec3::new(0.6, -0.5, 0.6)), "a");
+    let alone = s.execute("scan.combine", &json!({})).unwrap_err().to_string();
+    assert!(alone.contains("two scans or more"), "{alone}");
+    insert(&mut s, &p, &seen(&p, &t, Vec3::new(-0.6, -0.4, 0.7)), "b");
+    let r = run(&mut s, "scan.combine", json!({"align": false}));
+    assert!(r.get("aligned").is_none(), "{r}");
+    assert!(r["fused"]["triangles"].as_u64().unwrap() > 0, "{r}");
+}
+
 /// Four points on a moved scan picked against their places on the part's own scan: the points'
 /// move lays it within the picks' error, and the fit after lays it on.
 #[test]

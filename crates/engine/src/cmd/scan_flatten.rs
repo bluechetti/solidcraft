@@ -59,7 +59,7 @@ fn run(s: &mut Session, id: &str, p: Value) -> Result<Value> {
 }
 
 /// The point picked on the scan `body`, if one is.
-fn picked_on(s: &Session, body: &str) -> Option<Vec3> {
+pub(super) fn picked_on(s: &Session, body: &str) -> Option<Vec3> {
     s.selection.iter().rev().find_map(|x| match x {
         Sel::Face { body: b, point, .. } if b == body => Some(*point),
         _ => None,

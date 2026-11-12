@@ -180,3 +180,51 @@ mod tests {
         assert_keys(input_schema_for::<ScanAlignModelParams>(), &["body", "ignored", "model", "search"]);
     }
 }
+
+/// Combine several passes of one part into one scan: the others are laid on `body` as Align All
+/// Scans lays them (`body` held where it is), then fused into it as Remesh fuses passes, one even
+/// surface from all of them. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanCombineParams {
+    /// The scan the others are fused into, and held where it is. Default: the first of the
+    /// selected scans, else the first scan.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The other passes. Default: the other selected scans, else every other scan.
+    #[serde(default)]
+    pub with: Option<Vec<String>>,
+    /// Lay the passes on `body` first. Default: true; false when they already lie together.
+    #[serde(default)]
+    pub align: Option<bool>,
+    /// Place a pass that does not yet lie on the others from wherever it lies. Default: true.
+    #[serde(default)]
+    pub search: Option<bool>,
+    /// The least share of a pass two passes must have in common to be fitted to each other, 0.02
+    /// to 0.9. Default: 0.1.
+    #[serde(default)]
+    pub overlap: Option<f64>,
+    /// The new mesh's edge length. Default: the scan's typical edge.
+    #[serde(default)]
+    pub cell: Option<Value>,
+    /// Keep sharp edges and corners sharp. Default: false.
+    #[serde(default)]
+    pub sharp: Option<bool>,
+}
+
+/// What `scan.combine` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanCombineResult {
+    /// The scan the passes were fused into, and the passes.
+    pub body: String,
+    pub with: Vec<String>,
+    /// What Align All Scans did; absent when `align` was false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<ScanAlignAllResult>")]
+    pub aligned: Option<Value>,
+    /// What Remesh did: the new mesh and how well it keeps to the passes.
+    #[schemars(with = "super::scan_mesh::ScanRemeshResult")]
+    pub fused: Value,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}

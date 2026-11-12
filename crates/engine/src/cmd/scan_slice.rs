@@ -89,8 +89,8 @@ pub fn sliced(s: &Session, body: &str, plane: &Value, keep: Keep, cmd: &str) -> 
         Keep::Point(p) => p,
     };
     let trimmed = solidcraft_kernel::trim_keep(&mb.body, &solidcraft_kernel::SplitTool::Plane(pl), solidcraft_kernel::TrimKeep::Side(at))
-        .map_err(|e| bad(cmd, format!("the plane does not slice the surface: {e}")))?;
-    let free = solidcraft_kernel::free_loops(&trimmed).map_err(|e| bad(cmd, format!("the cut could not be followed: {e}")))?;
+        .map_err(|e| super::refusal::refused(cmd, "the plane does not slice the surface", &e.to_string()))?;
+    let free = solidcraft_kernel::free_loops(&trimmed).map_err(|e| super::refusal::refused(cmd, "the cut could not be followed", &e.to_string()))?;
     // The loops wholly on the plane are the cut's; a loop with other edges is the surface's own rim.
     let on = (1e-5 * size).max(1e-4);
     let loops = free.into_iter().filter(|e| !e.is_empty() && e.iter().all(|q| pl.height(*q).abs() <= on)).collect();

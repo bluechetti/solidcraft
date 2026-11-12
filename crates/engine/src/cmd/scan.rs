@@ -734,7 +734,16 @@ pub struct DeviationMap {
     pub within: f64,
 }
 
+/// The share of measured points that must lie within the tolerance for a fit to pass.
+pub const PASS_SHARE: f64 = 0.95;
+
 impl DeviationMap {
+    /// Whether the fit passes: at least [`PASS_SHARE`] of the measured points are within the
+    /// tolerance.
+    pub fn passes(&self) -> bool {
+        self.within >= PASS_SHARE
+    }
+
     /// Whether it still stands for the design: nothing has changed since it was measured.
     pub fn current(&self, s: &Session) -> bool {
         self.revision == s.revision
@@ -769,6 +778,7 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         max_above: None,
         max_below: None,
         within: None,
+        passes: None,
         measured: None,
         unmatched: None,
         tolerance: None,
@@ -854,6 +864,7 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         max_above: Some(d.max_above),
         max_below: Some(d.max_below),
         within: Some(d.within),
+        passes: Some(d.within >= PASS_SHARE),
         measured: Some(d.measured),
         unmatched: Some(d.unmatched),
         tolerance: Some(tolerance),
@@ -1101,6 +1112,9 @@ pub mod reconstruct;
 
 #[path = "scan_refit.rs"]
 pub mod refit;
+
+#[path = "scan_refusal.rs"]
+pub mod refusal;
 
 #[path = "scan_section.rs"]
 pub mod section;

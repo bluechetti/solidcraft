@@ -92,6 +92,7 @@ fn label(app: &SolveApp, reading: &Reading, step: &Proposal) -> String {
             crate::i18n::format("ui.scan_reconstruct_pattern", &[("number", &(k + 1).to_string()), ("count", &count.to_string())])
         }
         Proposal::Fillet => crate::i18n::format("ui.scan_reconstruct_fillet", &[("edges", &reading.fillets.len().to_string())]),
+        Proposal::Chamfer => crate::i18n::format("ui.scan_reconstruct_chamfer", &[("edges", &reading.chamfers.len().to_string())]),
     }
 }
 

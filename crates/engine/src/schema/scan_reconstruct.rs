@@ -193,6 +193,9 @@ pub struct ScanReconstructResult {
     /// The rounds along edges no profile holds, which Fillet It fillets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fillets: Vec<ScanEdgeRound>,
+    /// The flat chamfers along edges no profile holds, which Chamfer It chamfers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chamfers: Vec<ScanEdgeChamfer>,
     /// Said where the scan is mostly no shape, or nothing can be built.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -363,3 +366,55 @@ pub struct ScanBuildResult {
 #[cfg(test)]
 #[path = "scan_reconstruct_tests.rs"]
 mod tests;
+
+/// A flat chamfer along an edge of the part that no profile Reconstruct sketches holds.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanEdgeChamfer {
+    /// The shape it is, as Find All numbers them.
+    pub face: usize,
+    /// How far it cuts back along each of the two faces it joins, in mm.
+    pub distance: f64,
+    /// A point on the sharp edge of the model it cuts, where Chamfer It finds that edge.
+    pub edge: [f64; 3],
+}
+
+/// Chamfer It: the flat chamfers along edges Reconstruct reads that no profile holds, cut at the
+/// edge of the built body they cut, at the distance read off the scan's two faces: one Chamfer for
+/// each distance. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanChamferItParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Build from the reading of the part of the scan selected, as `scan.reconstruct` with
+    /// `selected` gave it (its numbers are that reading's). Default: false, the whole scan's.
+    #[serde(default)]
+    pub selected: Option<bool>,
+    /// The body to chamfer. Default: the body Reconstruct builds.
+    #[serde(default)]
+    pub into: Option<String>,
+}
+
+/// One distance Chamfer It chamfered at, and how many edges.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanChamfered {
+    pub distance: f64,
+    pub edges: usize,
+}
+
+/// What Chamfer It returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanChamferItResult {
+    /// The scan, and the body chamfered.
+    pub body: String,
+    pub solid: String,
+    /// Each distance read, with how many edges it chamfered.
+    pub chamfers: Vec<ScanChamfered>,
+    /// How many chamfers were set aside: the kernel refused the edge.
+    pub set_aside: usize,
+    /// The Chamfer features made.
+    pub features: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}

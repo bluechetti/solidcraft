@@ -72,3 +72,41 @@ fn a_folded_surface_is_told_of_in_plain_words() {
     let w = fold_warning([3, 0, 0]).unwrap();
     assert!(w.contains("folds over itself (3 folds)") && w.contains("smaller region"), "{w}");
 }
+
+/// A part chosen by selecting is fitted again like one chosen by a click: the recipe keeps its
+/// triangles with how many the scan had, `scan.refit` fits them again, and once the scan has been
+/// reduced (its triangles numbered anew) it says the part is not the same instead of fitting
+/// other triangles. A click's Radius keeps the region to what is that near.
+#[test]
+fn a_selected_part_is_fitted_again_until_the_scan_is_renumbered() {
+    let mut s = Session::default();
+    let scan = bent_scan(&mut s);
+    let half: Vec<usize> = {
+        let state = s.model.state();
+        let (positions, triangles) = state.body(&scan).and_then(|b| b.body.triangle_mesh()).unwrap();
+        (0..triangles.len()).filter(|&t| triangles[t].iter().map(|&i| positions[i as usize].y).sum::<f64>() / 3.0 < 15.0).collect()
+    };
+    run(&mut s, "scan.select", json!({"body": scan, "triangles": half}));
+    let made = run(&mut s, "scan.fit_patches", json!({}));
+    let feature = made["feature"]["feature"].as_u64().unwrap();
+    let recipe = crate::cmd::scan::refit::recipe_of(&s, feature).expect("a part selected is kept as a recipe too");
+    assert_eq!(recipe.params["triangles"].as_array().map(Vec::len), Some(half.len()), "{}", recipe.params);
+    assert!(recipe.params["of_triangles"].as_u64().unwrap() > half.len() as u64);
+    let again = run(&mut s, "scan.refit", json!({"surface": made["surface"]}));
+    assert_eq!(again["faces"], 1, "{again}");
+
+    // Reduced, the same numbers are other triangles: refused in words.
+    run(&mut s, "scan.reduce", json!({"ratio": 0.5}));
+    let refused = s.execute("scan.refit", &json!({"surface": made["surface"]})).unwrap_err().to_string();
+    assert!(refused.contains("select it again"), "{refused}");
+}
+
+/// A click's `radius` keeps the region to what is that near it.
+#[test]
+fn a_clicks_radius_bounds_the_region() {
+    let mut s = Session::default();
+    let scan = bent_scan(&mut s);
+    let whole = run(&mut s, "scan.fit_patches", json!({"body": scan, "point": [0, 15, 0]}));
+    let near = run(&mut s, "scan.fit_patches", json!({"body": scan, "point": [0, 15, 0], "radius": 6}));
+    assert!(near["points"].as_u64().unwrap() < whole["points"].as_u64().unwrap() / 2, "{near} against {whole}");
+}

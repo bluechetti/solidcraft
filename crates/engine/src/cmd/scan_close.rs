@@ -50,7 +50,7 @@ pub(super) fn close_surface(s: &mut Session, p: &Value) -> Result<Value> {
     let free = {
         let state = s.model.state();
         let mb = state.body(&body).ok_or_else(|| bad(cmd, format!("no body `{body}`")))?;
-        solidcraft_kernel::free_loops(&mb.body).map_err(|e| bad(cmd, format!("the open edges could not be followed: {e}")))?
+        solidcraft_kernel::free_loops(&mb.body).map_err(|e| super::refusal::refused(cmd, "the open edges could not be followed", &e.to_string()))?
     };
     if free.len() > MOST_LOOPS {
         return Err(bad(cmd, format!("the surface has {} open loops; close at most {MOST_LOOPS} at a time (merge its pieces first)", free.len())));
@@ -66,8 +66,8 @@ pub(super) fn close_surface(s: &mut Session, p: &Value) -> Result<Value> {
                 bad(
                     cmd,
                     format!(
-                        "the opening of {} edges about [{:.1}, {:.1}, {:.1}] ({:.1} mm across) could not be closed: {e}; try continuity g1, or close it with Patch on its edges",
-                        at.edges, at.at[0], at.at[1], at.at[2], at.size
+                        "the opening of {} edges about [{:.1}, {:.1}, {:.1}] ({:.1} mm across) could not be closed: {}; try continuity g1, or close it with Patch on its edges",
+                        at.edges, at.at[0], at.at[1], at.at[2], at.size, super::refusal::kernel_words(&e.to_string())
                     ),
                 )
             })?;

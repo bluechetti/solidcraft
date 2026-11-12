@@ -360,6 +360,9 @@ pub struct ScanDeviationResult {
     /// The share of the points within reach that are within the tolerance, 0 to 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub within: Option<f64>,
+    /// Whether the fit passes: at least 95 % of the measured points are within the tolerance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passes: Option<bool>,
     /// How many scan points were measured, and how many were too far from the model to count.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub measured: Option<usize>,

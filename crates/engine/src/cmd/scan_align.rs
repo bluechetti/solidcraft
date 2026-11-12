@@ -13,7 +13,7 @@ use super::{CommandSpec, Mesh, mesh, move_by};
 use crate::params::{bad, bool_, num, str_};
 use crate::schema::scan_align::{
     ScanAlignAllParams, ScanAlignAllResult, ScanAlignLink, ScanAlignModelParams, ScanAlignModelResult, ScanAlignPairsParams, ScanAlignPairsResult,
-    ScanAlignPass,
+    ScanAlignPass, ScanCombineParams, ScanCombineResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -21,11 +21,18 @@ use crate::{EngineError, Result, Sel, Session};
 const ALL_CONTRACT: TypedContract<ScanAlignAllParams> = TypedContract::new();
 const PAIRS_CONTRACT: TypedContract<ScanAlignPairsParams> = TypedContract::new();
 const MODEL_CONTRACT: TypedContract<ScanAlignModelParams> = TypedContract::new();
+const COMBINE_CONTRACT: TypedContract<ScanCombineParams> = TypedContract::new();
 
 /// How finely a model is meshed to lay a scan on it: a hundredth of a millimetre off at most.
 const MODEL_CHORD: f64 = 0.01;
 
 pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec::new("scan.combine", "Combine Scans", crate::checked!("scan.combine", combine))
+        .at("SCAN", "ALIGN")
+        .icon("align")
+        .contract(&COMBINE_CONTRACT)
+        .output(output_schema_for::<ScanCombineResult>)
+        .params("body?: the scan the others are fused into and held where it is (default: the first selected scan, else the first); with?: [the other passes] (default: the other selected scans, else every other scan); align?: bool (default true: the passes laid on `body` first, as scan.align_all lays them; false when they already lie together); search?, overlap?: as scan.align_all; cell?: length, sharp?: bool as scan.remesh: the passes laid together and fused into `body` as one even surface (the other passes stay as they are, laid on it), one undo step → body, with, aligned? (scan.align_all's reply), fused (scan.remesh's reply)"),
     CommandSpec::new("scan.align_all", "Align All Scans", crate::checked!("scan.align_all", align_all))
         .at("SCAN", "ALIGN")
         .icon("align")
@@ -285,3 +292,58 @@ fn align_to_model(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 #[path = "scan_align_tests.rs"]
 mod tests;
+
+/// Combine Scans: Align All Scans (`body` held), then Remesh with the other passes fused in, as
+/// one command and one undo step. A failure in either leaves the design as it was.
+fn combine(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.combine";
+    let all = scans(s);
+    let picked: Vec<String> = selected(s).into_iter().filter(|n| all.contains(n)).collect();
+    let base = match str_(p, "body").filter(|b| !b.trim().is_empty()) {
+        Some(b) => b.to_owned(),
+        None => picked.first().or(all.first()).cloned().ok_or_else(|| bad(cmd, "the design has no scan: insert the passes with Insert Mesh"))?,
+    };
+    if !all.contains(&base) {
+        return Err(bad(cmd, format!("`{base}` is not a scan")));
+    }
+    let with: Vec<String> = match p.get("with").filter(|v| !v.is_null()) {
+        Some(_) => crate::params::string_list_or_default(p, "with"),
+        None if picked.len() >= 2 => picked.iter().filter(|n| **n != base).cloned().collect(),
+        None => all.iter().filter(|n| **n != base).cloned().collect(),
+    };
+    if with.is_empty() {
+        return Err(bad(cmd, "combining needs two scans or more: insert the other passes with Insert Mesh"));
+    }
+    for name in &with {
+        if !all.contains(name) {
+            return Err(bad(cmd, format!("`{name}` is not a scan")));
+        }
+        if *name == base {
+            return Err(bad(cmd, "`with` names the scan itself"));
+        }
+    }
+    let command = |id: &str| super::super::find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_owned()));
+    // The keys one step takes and the other does not are passed on only to the step that has them.
+    let pass_on = |keys: &[&str], mut to: serde_json::Map<String, Value>| {
+        for key in keys {
+            if let Some(v) = p.get(*key).filter(|v| !v.is_null()) {
+                to.insert((*key).to_owned(), v.clone());
+            }
+        }
+        Value::Object(to)
+    };
+    let aligned = if bool_(p, "align").unwrap_or(true) {
+        let bodies: Vec<String> = std::iter::once(base.clone()).chain(with.iter().cloned()).collect();
+        let mut given = serde_json::Map::new();
+        given.insert("bodies".into(), json!(bodies));
+        given.insert("hold".into(), json!([base]));
+        Some(command("scan.align_all")?.run_nested(s, &pass_on(&["search", "overlap"], given))?)
+    } else {
+        None
+    };
+    let mut given = serde_json::Map::new();
+    given.insert("body".into(), json!(base));
+    given.insert("with".into(), json!(with));
+    let fused = command("scan.remesh")?.run_nested(s, &pass_on(&["cell", "sharp"], given))?;
+    reply(ScanCombineResult { body: base, with, aligned, fused, param_warnings: Vec::new() })
+}

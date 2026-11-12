@@ -27,6 +27,9 @@ pub struct FitPatches {
     pub rows: usize,
     pub columns: usize,
     pub smoothing: f64,
+    /// How far round the click the region goes, mm; 0 for the whole piece (what is selected is not
+    /// bounded by it).
+    pub radius: f64,
     /// The scan under the patches is coloured by how far it is from them (on by default).
     pub colours: bool,
     /// A tolerance tried here instead of the scan's own, mm (0: the scan's, see `scan.tolerance`).
@@ -46,6 +49,7 @@ impl Default for FitPatches {
             rows: 2,
             columns: 2,
             smoothing: 0.1,
+            radius: 0.0,
             colours: true,
             tolerance: 0.0,
             keep_tolerance: None,
@@ -88,7 +92,13 @@ fn tr(id: &'static str) -> &'static str {
 /// What `scan.fit_patches` is sent.
 fn params(app: &SolveApp, k: &FitPatches, inputs: &[SelInput]) -> Option<Value> {
     let mut p = match items(inputs, 0).first() {
-        Some(Sel::Face { body, point, .. }) => json!({"body": body, "point": [point.x, point.y, point.z]}),
+        Some(Sel::Face { body, point, .. }) => {
+            let mut p = json!({"body": body, "point": [point.x, point.y, point.z]});
+            if k.radius > 0.0 {
+                p["radius"] = json!(k.radius);
+            }
+            p
+        }
         _ => {
             let sel = solidcraft_engine::cmd::scan::select::selected(&app.session).filter(|s| s.count > 0)?;
             json!({"body": sel.scan})
@@ -172,6 +182,9 @@ fn compute(s: &solidcraft_engine::Session, p: &Value) -> Computed {
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitPatches, inputs: &[SelInput]) -> bool {
     let layouts = [tr("ui.scan_patches_grid"), tr("ui.scan_patches_blocks"), tr("ui.scan_patches_quads")];
     choice_row(ui, tr("ui.scan_patches_layout"), "scan_patches_layout", &mut k.layout, &layouts);
+    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+    form_row(ui, tr("ui.scan_flatten_radius"), |ui| ui_kit::length_field(ui, &mut k.radius, &units, decimals));
+    k.radius = k.radius.max(0.0);
     form_row(ui, tr("ui.scan_patches_controls"), |ui| ui_kit::number_field(ui, &mut k.controls, 4..=30, 0.2, ""));
     if k.layout == 1 {
         form_row(ui, tr("ui.scan_patches_rows"), |ui| ui_kit::number_field(ui, &mut k.rows, 1..=8, 0.1, ""));

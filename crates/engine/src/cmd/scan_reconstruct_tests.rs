@@ -215,6 +215,7 @@ fn reconstruct_proposes_no_cut_with_nothing_to_cut() {
         holes: vec![hole],
         rounds: Default::default(),
         fillets: Vec::new(),
+        chamfers: Vec::new(),
         size: 60.0,
     };
     assert!(super::proposals(&reading, false).is_empty());
@@ -286,6 +287,37 @@ fn rounds_across_a_prism_are_filleted_back_from_its_scan() {
     assert_eq!(radii, [2.0], "{filleted}");
     let v = volume(&s, &solid);
     assert!(v < sharp && (v - expected).abs() < 0.002 * expected, "{v} against {expected} (sharp {sharp})");
+}
+
+/// A block 80 × 60 × 20 whose four top edges are chamfered 2 mm: the chamfers run across the
+/// prism Reconstruct reads (they are no wall of it, and no profile holds them), so it proposes
+/// Chamfer It after Extrude It, which cuts the four at 2 mm, one Chamfer, the part's own volume
+/// back. Read before the chamfers were told apart, they made two side prisms of the block.
+#[test]
+fn chamfers_across_a_prism_are_chamfered_back_from_its_scan() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 80, "width": 60, "height": 20}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.chamfer", json!({"edges": [[40, 0, 20], [80, 30, 20], [40, 60, 20], [0, 30, 20]], "distance": 2, "tangent_chain": false}));
+    let expected = volume(&part, &body);
+    let (mut s, _) = scanned(&part, &body, 2, "chamfered-top");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let commands: Vec<&str> = read["proposals"].as_array().unwrap().iter().map(|p| p["command"].as_str().unwrap()).collect();
+    assert_eq!(commands, ["scan.extrude_it", "scan.chamfer_it"], "{read}");
+    assert_eq!(read["prisms"].as_array().unwrap().len(), 1, "{read}");
+    let cuts = read["chamfers"].as_array().unwrap();
+    assert_eq!(cuts.len(), 4, "{read}");
+    assert!(cuts.iter().all(|c| (c["distance"].as_f64().unwrap() - 2.0).abs() < 0.1), "{read}");
+    run(&mut s, "scan.extrude_it", read["proposals"][0]["params"].clone());
+    let solid = format!("{} Reconstructed", read["body"].as_str().unwrap());
+    let sharp = volume(&s, &solid);
+    let chamfered = run(&mut s, "scan.chamfer_it", json!({}));
+    assert_eq!(chamfered["set_aside"], 0, "{chamfered}");
+    let distances: Vec<f64> = chamfered["chamfers"].as_array().unwrap().iter().map(|f| f["distance"].as_f64().unwrap()).collect();
+    assert_eq!(distances.len(), 1, "{chamfered}");
+    assert!((distances[0] - 2.0).abs() < 0.1, "{chamfered}");
+    let v = volume(&s, &solid);
+    assert!(v < sharp && (v - expected).abs() < 0.01 * expected, "{v} against {expected} (sharp {sharp})");
 }
 
 /// A block 60 × 40 × 10 with a turned boss on top, R 8 for 10 and coned in to R 5 over 3 more:

@@ -1,0 +1,34 @@
+{
+  "ar": {
+    "ui.scan_deviation_fail": "غير مطابق (يلزم {share} ضمن التفاوت)",
+    "ui.scan_deviation_pass": "مطابق (يلزم {share})"
+  },
+  "de": {
+    "ui.scan_deviation_fail": "nicht bestanden ({share} innerhalb nötig)",
+    "ui.scan_deviation_pass": "bestanden ({share} nötig)"
+  },
+  "en": {
+    "ui.scan_deviation_fail": "fails (needs {share} within)",
+    "ui.scan_deviation_pass": "passes ({share} needed)"
+  },
+  "he": {
+    "ui.scan_deviation_fail": "נכשל (נדרשים {share} בתוך הסבולת)",
+    "ui.scan_deviation_pass": "עבר (נדרשים {share})"
+  },
+  "ja": {
+    "ui.scan_deviation_fail": "不合格（{share} 以内が必要）",
+    "ui.scan_deviation_pass": "合格（{share} が必要）"
+  },
+  "ko": {
+    "ui.scan_deviation_fail": "불합격 ({share} 이내 필요)",
+    "ui.scan_deviation_pass": "합격 ({share} 필요)"
+  },
+  "vi": {
+    "ui.scan_deviation_fail": "không đạt (cần {share} trong dung sai)",
+    "ui.scan_deviation_pass": "đạt (cần {share})"
+  },
+  "zh": {
+    "ui.scan_deviation_fail": "不合格（需要 {share} 在范围内）",
+    "ui.scan_deviation_pass": "合格（需要 {share}）"
+  }
+}

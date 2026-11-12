@@ -70,16 +70,45 @@ pub fn fitted(s: &Session, p: &Value, cmd: &str) -> Result<(String, Layout, [usi
     Ok((on.body, layout, controls, found))
 }
 
+/// The most triangles a recipe keeps as its region: a part selected on a scan is kept as its
+/// triangle numbers, which a vast part would make a vast design file.
+const MOST_RECIPE_TRIANGLES: usize = 200_000;
+
+/// The parameters a Scan Surface's recipe keeps to fit the same region again: the click's point (and
+/// radius) as given, else the region's triangles (what was selected, or given) with how many the
+/// scan had, so a scan since cleaned or split, whose triangles are numbered differently, is
+/// noticed; else the point picked. `None` where the region cannot be kept (a vast selection).
+fn recipe_params(s: &Session, p: &Value, body: &str) -> Option<Value> {
+    let mut params = p.clone();
+    params["body"] = json!(body);
+    let has = |key: &str| p.get(key).is_some_and(|v| !v.is_null());
+    if has("point") {
+        return Some(params);
+    }
+    let total = s.model.state().body(body).and_then(|b| b.body.triangle_mesh()).map(|(_, t)| t.len())?;
+    let list: Vec<usize> = if has("triangles") {
+        p["triangles"].as_array()?.iter().filter_map(|v| v.as_u64().map(|t| t as usize)).collect()
+    } else if let Some(sel) = super::select::selected(s).filter(|k| k.scan == body && k.count > 0) {
+        sel.selected.iter().enumerate().filter(|(_, on)| **on).map(|(t, _)| t).collect()
+    } else {
+        let at = super::flatten::picked_on(s, body)?;
+        params["point"] = json!([at.x, at.y, at.z]);
+        return Some(params);
+    };
+    if list.len() > MOST_RECIPE_TRIANGLES {
+        return None;
+    }
+    params["triangles"] = json!(list);
+    params["of_triangles"] = json!(total);
+    Some(params)
+}
+
 fn fit_patches(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.fit_patches";
     let (body, layout, controls, found) = fitted(s, p, cmd)?;
-    // Fitted to the part of the scan under a click: the recipe keeps how, so `scan.refit` can fit it
-    // again. (A part chosen by selecting is not in the parameters, so it cannot be made again.)
-    let recipe = p.get("point").filter(|v| !v.is_null()).map(|_| {
-        let mut params = p.clone();
-        params["body"] = json!(body);
-        super::refit::recipe(&body, "scan.fit_patches", params, &found.surfaces)
-    });
+    // The recipe keeps how the region was chosen (a click, or the triangles selected), so
+    // `scan.refit` can fit it again.
+    let recipe = recipe_params(s, p, &body).map(|params| super::refit::recipe(&body, "scan.fit_patches", params, &found.surfaces));
     let (surface, feature) = if let [one] = found.surfaces.as_slice() {
         super::surface::keep_surface(s, one, "Patches", "Fit Patches", "patches", recipe, cmd)?
     } else {
@@ -87,7 +116,9 @@ fn fit_patches(s: &mut Session, p: &Value) -> Result<Value> {
         let sheets = found
             .surfaces
             .iter()
-            .map(|f| solidcraft_kernel::nurbs_sheet(f).map_err(|e| bad(cmd, format!("a patch: {e}"))))
+            .map(|f| {
+                solidcraft_kernel::nurbs_sheet(f).map_err(|e| super::refusal::refused(cmd, "a patch could not be made into a face", &e.to_string()))
+            })
             .collect::<Result<Vec<_>>>()?;
         let refs: Vec<&_> = sheets.iter().collect();
         // A surface that folds over itself has blocks whose sides do not meet where their
@@ -102,10 +133,11 @@ fn fit_patches(s: &mut Session, p: &Value) -> Result<Value> {
                     ),
                 )
             } else {
-                bad(cmd, format!("the blocks could not be sewn: {e}"))
+                super::refusal::refused(cmd, "the blocks could not be sewn", &e.to_string())
             }
         })?;
-        let step = solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| bad(cmd, format!("the patches: {e}")))?;
+        let step = solidcraft_kernel::step_export(&[&sewn], "SolidCraft")
+            .map_err(|e| super::refusal::refused(cmd, "the patches could not be kept", &e.to_string()))?;
         let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
         let name = (1..).map(|i| format!("Patches{i}")).find(|n| !taken.contains(n)).unwrap_or_else(|| "Patches".into());
         let kind = solidcraft_doc::FeatureKind::ScanSurface { file: "patches".into(), step: step.into(), recipe };

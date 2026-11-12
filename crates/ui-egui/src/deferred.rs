@@ -131,6 +131,7 @@ pub(crate) fn computed_whole(id: &str) -> bool {
             | "scan.quick_align"
             | "scan.register"
             | "scan.align_all"
+            | "scan.combine"
             | "scan.align_to_model"
     )
 }

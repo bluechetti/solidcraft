@@ -43,6 +43,84 @@ impl PartialEq for Key {
     }
 }
 
+/// A map being measured again beside the window: for which revision of the design, and what it
+/// finds (`None` where the scan or the model is gone).
+type Remeasure = crate::scan_job::Job<u64, Option<Arc<DeviationMap>>>;
+
+thread_local! {
+    static REMEASURING: RefCell<Option<Remeasure>> = const { RefCell::new(None) };
+}
+
+/// A map measured at some revision of the design, measured again at this one: same scan, same
+/// model, same tolerance and limit.
+fn remeasure_params(map: &DeviationMap) -> serde_json::Value {
+    serde_json::json!({ "scan": map.scan, "body": map.body, "tolerance": map.tolerance, "limit": map.limit })
+}
+
+/// Keeps a shown map true to the design: when an edit has made it stale, it is measured again
+/// (beside the window on a large scan, here on a small one), so the colours, the numbers and the
+/// verdict follow what the user does instead of vanishing until Scan Deviation is run again. A
+/// scan or model that is gone ends it.
+pub(crate) fn follow(app: &mut SolveApp, ctx: &egui::Context) {
+    let Some(map) = app.session.scan_deviation.clone() else {
+        REMEASURING.with(|r| *r.borrow_mut() = None);
+        return;
+    };
+    let revision = app.session.revision;
+    if map.current(&app.session) {
+        REMEASURING.with(|r| *r.borrow_mut() = None);
+        return;
+    }
+    let params = remeasure_params(&map);
+    let polled = REMEASURING.with(|r| {
+        let mut r = r.borrow_mut();
+        let job = r.as_ref().filter(|j| j.key == revision)?;
+        match job.poll() {
+            crate::scan_job::Poll::Working => Some(None),
+            crate::scan_job::Poll::Done(found) => {
+                *r = None;
+                Some(Some(found))
+            }
+            crate::scan_job::Poll::Lost => {
+                *r = None;
+                Some(Some(None))
+            }
+        }
+    });
+    match polled {
+        Some(None) => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
+        Some(Some(found)) => {
+            // Measured on a copy of the design as it was at `revision`, which is the design now.
+            app.session.scan_deviation = found.map(|m| Arc::new(DeviationMap { revision, ..(*m).clone() }));
+            ctx.request_repaint();
+        }
+        None if crate::scan_job::beside_window(app) => {
+            let given = params.clone();
+            let started = crate::scan_job::spawn(app, revision, move |s| {
+                let mut copy = s.scratch();
+                copy.execute("scan.deviation", &given).ok()?;
+                copy.scan_deviation.clone()
+            });
+            match started {
+                Some(job) => {
+                    REMEASURING.with(|r| *r.borrow_mut() = Some(job));
+                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                }
+                // No thread to work on: here, as for a small scan.
+                None => measure_here(app, &params),
+            }
+        }
+        None => measure_here(app, &params),
+    }
+}
+
+/// Measures again now; a scan or model that has gone ends the map.
+fn measure_here(app: &mut SolveApp, params: &serde_json::Value) {
+    if app.session.execute("scan.deviation", params).is_err() {
+        app.session.scan_deviation = None;
+    }
+}
+
 /// The map, if one is shown and still stands for the design.
 pub(crate) fn current(app: &SolveApp) -> Option<Arc<DeviationMap>> {
     app.session.scan_deviation.clone().filter(|m| m.current(&app.session))
@@ -124,6 +202,7 @@ pub(crate) fn legend(app: &SolveApp) -> Option<(String, Vec<(egui::Color32, Stri
         "ui.scan_deviation_summary",
         &[("rms", &crate::prefs::show_mm(app, map.rms, 1)), ("within", &format!("{:.0} %", 100.0 * map.within)), ("tolerance", &tol)],
     );
+    let summary = format!("{summary} · {}", crate::scan_fidelity::verdict(map.within));
     let rows = vec![
         (c(colour([below, within, above], 1.0)), format!("> +{tol}"), false),
         (c(within), format!("± {tol}"), false),
@@ -178,5 +257,49 @@ mod tests {
         assert_eq!(colour(c, -1.0), [0, 0, 200]);
         let just_above = colour(c, 0.01);
         assert!(just_above[0] > 60 && just_above[1] < 140, "out of the tolerance never reads as within: {just_above:?}");
+    }
+}
+
+#[cfg(test)]
+mod follow_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A map made, then the design edited: the map is stale and hidden until `follow` measures it
+    /// again for the design as it is, with the verdict the key shows.
+    #[test]
+    fn an_edit_makes_the_map_follow_the_design_instead_of_vanishing() {
+        let mut h = crate::scenario::Harness::new();
+        let mut stl = String::from("solid c\n");
+        let corner = |i: usize| [if i & 1 == 0 { 0 } else { 10 }, if i & 2 == 0 { 0 } else { 10 }, if i & 4 == 0 { 0 } else { 10 }];
+        for f in [[0, 2, 1], [1, 2, 3], [4, 5, 6], [5, 7, 6], [0, 1, 4], [1, 5, 4], [2, 6, 3], [3, 6, 7], [0, 4, 2], [2, 4, 6], [1, 3, 5], [3, 7, 5]]
+        {
+            stl += "facet normal 0 0 0\nouter loop\n";
+            for i in f {
+                let [x, y, z] = corner(i);
+                stl += &format!("vertex {x} {y} {z}\n");
+            }
+            stl += "endloop\nendfacet\n";
+        }
+        let path = h.dir.join("cube.stl");
+        std::fs::write(&path, stl + "endsolid c\n").unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("solid.box", json!({"body_name": "Model", "operation": "new", "length": 10, "width": 10, "height": 10})).unwrap();
+        let reply = h.app.run("scan.deviation", json!({"body": "Model"})).unwrap();
+        assert_eq!(reply["passes"], json!(true), "a scan on its model passes: {reply}");
+        let ctx = egui::Context::default();
+
+        // Any edit makes the map stale; it is hidden, then measured again for the design now.
+        h.app.run("solid.box", json!({"body_name": "Other", "operation": "new", "length": 3, "width": 3, "height": 3, "x": 50})).unwrap();
+        assert!(!shown(&h.app), "stale after an edit");
+        follow(&mut h.app, &ctx);
+        assert!(shown(&h.app), "followed the design");
+        assert!(legend(&h.app).unwrap().0.contains("passes"), "{}", legend(&h.app).unwrap().0);
+
+        // The model gone, the map goes with it.
+        h.app.run("edit.undo", json!({})).unwrap();
+        h.app.run("edit.undo", json!({})).unwrap();
+        follow(&mut h.app, &ctx);
+        assert!(!shown(&h.app) && h.app.session.scan_deviation.is_none(), "no model, no map");
     }
 }

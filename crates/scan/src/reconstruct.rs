@@ -180,6 +180,92 @@ pub struct EdgeRound {
     pub edge: Vec3,
 }
 
+/// A flat chamfer along an edge of the part that no profile Reconstruct sketches holds: the face
+/// it is, how far it cuts back along each of the two faces it joins, and a point on the sharp edge
+/// of the model it cuts, for Chamfer It to find that edge by.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EdgeChamfer {
+    pub face: usize,
+    pub distance: f64,
+    pub edge: Vec3,
+}
+
+/// How unequal a chamfer's two legs may be, as a share of the longer.
+const CHAMFER_LEGS_EVEN: f64 = 0.15;
+/// The longest leg of a chamfer and the shortest, as shares of the part's size. A flat face that
+/// cuts back further is a side of the part (an octagon's), not a chamfer.
+const CHAMFER_MOST: f64 = 0.08;
+const CHAMFER_LEAST: f64 = 0.002;
+/// How far off square to the edge a chamfer's normal may lean (the dot product).
+const CHAMFER_SQUARE: f64 = 0.05;
+/// The most flat faces searched for a chamfer's two neighbours (each is tried against every pair).
+const CHAMFER_PLANES: usize = 120;
+
+/// The middle of a segment's triangles, from a sample of them.
+fn middle_of(scan: &Scan, segment: &Segment) -> Vec3 {
+    let step = (segment.triangles.len() / 2000).max(1);
+    let corners: Vec<Vec3> = segment.triangles.iter().step_by(step).filter_map(|&t| scan.corners(t)).flatten().collect();
+    corners.iter().fold(Vec3::ZERO, |s, p| s + *p) / corners.len().max(1) as f64
+}
+
+/// The flat faces that are chamfers: a face whose two flat neighbours (each at least as big) meet
+/// in an edge it cuts back evenly, square to that edge, not further than [`CHAMFER_MOST`] of the
+/// part. `middles` are the middles of the faces' triangles; the faces in `skip` are not tried.
+/// Each pair of neighbours is judged by how the chamfer's plane cuts the two faces' planes from
+/// the sharp edge they would make: a leg along each, on the side of the face's middle.
+fn chamfers(faces: &[Face], middles: &[Vec3], size: f64, skip: &BTreeSet<usize>) -> Vec<EdgeChamfer> {
+    let planes: Vec<usize> = (0..faces.len()).filter(|&k| faces[k].area > 0.0 && plane(&faces[k]).is_some()).collect();
+    if planes.len() > CHAMFER_PLANES || planes.len() < 3 {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    for &k in planes.iter().filter(|k| !skip.contains(k)) {
+        let Some((_, nk)) = plane(&faces[k]) else { continue };
+        let c = middles[k];
+        let mut best: Option<(f64, EdgeChamfer)> = None;
+        for (i, &a) in planes.iter().enumerate() {
+            for &b in &planes[i + 1..] {
+                if a == k || b == k || faces[a].area < faces[k].area || faces[b].area < faces[k].area {
+                    continue;
+                }
+                let (Some((pa, na)), Some((pb, nb))) = (plane(&faces[a]), plane(&faces[b])) else { continue };
+                let Some(e) = na.cross(nb).normalized() else { continue };
+                // Two faces that make an edge, not nearly parallel; a chamfer is square to it.
+                if na.cross(nb).len() < 0.2 || nk.dot(e).abs() > CHAMFER_SQUARE {
+                    continue;
+                }
+                let rows = [[na.x, na.y, na.z], [nb.x, nb.y, nb.z], [e.x, e.y, e.z]];
+                let Some(x) = crate::symmetry::solve3(&rows, [na.dot(pa), nb.dot(pb), e.dot(c)]) else { continue };
+                let p0 = Vec3::new(x[0], x[1], x[2]);
+                // The leg along each face: from the sharp edge, across the face towards its middle,
+                // to where the chamfer's plane cuts it.
+                let leg = |n: Vec3, face: usize| -> Option<(f64, Vec3)> {
+                    let along = e.cross(n).normalized()?;
+                    let along = if along.dot(middles[face] - p0) < 0.0 { -along } else { along };
+                    let cuts = along.dot(nk);
+                    (cuts.abs() > 0.1).then(|| (((c - p0).dot(nk)) / cuts, along))
+                };
+                let (Some((ta, ua)), Some((tb, ub))) = (leg(na, a), leg(nb, b)) else { continue };
+                let (longer, shorter) = (ta.max(tb), ta.min(tb));
+                if shorter < CHAMFER_LEAST * size || longer > CHAMFER_MOST * size || (longer - shorter) > CHAMFER_LEGS_EVEN * longer {
+                    continue;
+                }
+                // The chamfer lies between the two cuts, not off to one side of them.
+                let between = (p0 + ua * ta + p0 + ub * tb) * 0.5;
+                if between.dist(c) > 0.6 * longer {
+                    continue;
+                }
+                let found = EdgeChamfer { face: k, distance: 0.5 * (ta + tb), edge: p0 };
+                if best.as_ref().is_none_or(|(s, _)| longer - shorter < *s) {
+                    best = Some((longer - shorter, found));
+                }
+            }
+        }
+        found.extend(best.map(|(_, f)| f));
+    }
+    found
+}
+
 /// Where the sharp edge a round cylinder (`segment`) rounds lies: where the two flat faces it is
 /// tangent to meet, level with the middle of the round; with no such two faces, as far out from
 /// its axis through the round's middle as a square edge would be (√2 radii). `faces` are the
@@ -931,6 +1017,8 @@ pub struct Reading {
     /// The rounds along an edge no profile holds, for Fillet It: cylinders (a torus where two
     /// rounds meet is made by filleting their edges).
     pub fillets: Vec<EdgeRound>,
+    /// The flat chamfers along an edge no profile holds, for Chamfer It.
+    pub chamfers: Vec<EdgeChamfer>,
     /// The part's size, the diagonal of its box.
     pub size: f64,
 }
@@ -1222,7 +1310,14 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     let ignored: BTreeSet<usize> = floors.union(&pieces).copied().collect();
     // The rounds along edges, read before the prisms, which they do not choose.
     let rounds: BTreeSet<usize> = (0..shaped.len()).filter(|&k| !piece(k) && is_edge_round(scan, &whole(k), size)).collect();
-    let mut prisms = extrusions(&faces, &span_of, size, &ignored, &rounds);
+    // The chamfers along edges, read with the rounds: walls that explain nothing, so a block with
+    // chamfered top edges is extruded upright and chamfered, not extruded on its side because its
+    // side profile holds two of the chamfers.
+    let middles: Vec<Vec3> = (0..shaped.len()).map(|k| middle_of(scan, &whole(k))).collect();
+    let chamfer_skip: BTreeSet<usize> = ignored.union(&rounds).copied().chain((0..shaped.len()).filter(|&k| hole(k))).collect();
+    let chamfered = chamfers(&faces, &middles, size, &chamfer_skip);
+    let unscored: BTreeSet<usize> = rounds.iter().copied().chain(chamfered.iter().map(|c| c.face)).collect();
+    let mut prisms = extrusions(&faces, &span_of, size, &ignored, &unscored);
     // Walls all about the turning axis are the steps of a turned part, read twice over; so are
     // walls about it with holes through them, which Cut It makes. Extruded too, such a slab lies
     // on the turned body's own faces, which the kernel's boolean refuses or leaves the body
@@ -1263,7 +1358,23 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
             _ => None,
         })
         .collect();
-    Reading { faces, same, in_shapes: outcome.in_shapes, prisms, unread_prisms, revolve, turned_unread, repeats, plans, holes, rounds, fillets, size }
+    let chamfers: Vec<EdgeChamfer> = chamfered.into_iter().filter(|c| !profiled.contains(&c.face)).collect();
+    Reading {
+        faces,
+        same,
+        in_shapes: outcome.in_shapes,
+        prisms,
+        unread_prisms,
+        revolve,
+        turned_unread,
+        repeats,
+        plans,
+        holes,
+        rounds,
+        fillets,
+        chamfers,
+        size,
+    }
 }
 
 #[cfg(test)]

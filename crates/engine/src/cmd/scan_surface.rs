@@ -198,8 +198,9 @@ pub use solidcraft_scan::{constrain, face_options, pattern};
 
 /// The surface as STEP text: one face, the whole of it (its knots may be uneven or repeated).
 pub fn surface_step(surface: &NurbsSurface, cmd: &str) -> Result<String> {
-    let sheet = solidcraft_kernel::nurbs_sheet(surface).map_err(|e| bad(cmd, format!("the surface: {e}")))?;
-    solidcraft_kernel::step_export(&[&sheet], "SolidCraft").map_err(|e| bad(cmd, format!("the surface: {e}")))
+    let sheet = solidcraft_kernel::nurbs_sheet(surface)
+        .map_err(|e| super::refusal::refused(cmd, "the surface could not be made into a face", &e.to_string()))?;
+    solidcraft_kernel::step_export(&[&sheet], "SolidCraft").map_err(|e| super::refusal::refused(cmd, "the surface could not be kept", &e.to_string()))
 }
 
 /// Keeps `surface` as a surface body of its own, named `<base>1`, `<base>2`, … (the first free),
@@ -255,12 +256,16 @@ pub(super) fn write_faces(s: &mut Session, target: &EditableSurface, faces: &[Nu
 
 /// A network's faces as STEP text: sewn into one body along the sides they share.
 pub fn network_step(faces: &[NurbsSurface], cmd: &str) -> Result<String> {
-    let sheets: Vec<_> =
-        faces.iter().map(|f| solidcraft_kernel::nurbs_sheet(f).map_err(|e| bad(cmd, format!("a face: {e}")))).collect::<Result<_>>()?;
+    let sheets: Vec<_> = faces
+        .iter()
+        .map(|f| {
+            solidcraft_kernel::nurbs_sheet(f).map_err(|e| super::refusal::refused(cmd, "a face could not be made into a surface", &e.to_string()))
+        })
+        .collect::<Result<_>>()?;
     let refs: Vec<_> = sheets.iter().collect();
     let sewn = solidcraft_kernel::stitch(&refs, 0.0)
-        .map_err(|e| bad(cmd, format!("the faces could not be sewn into one surface (a face folds or passes through another?): {e}")))?;
-    solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| bad(cmd, format!("the faces: {e}")))
+        .map_err(|e| super::refusal::refused(cmd, "the faces could not be sewn into one surface", &e.to_string()))?;
+    solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| super::refusal::refused(cmd, "the faces could not be kept", &e.to_string()))
 }
 
 /// Writes `step` into the feature that keeps the surface, and works the design out again.

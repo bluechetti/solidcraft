@@ -24,9 +24,9 @@ use solidcraft_sketch::{ConstraintKind, Sketch};
 use super::CommandSpec;
 use crate::params::{bad, bool_, str_};
 use crate::schema::scan_reconstruct::{
-    ScanBuildResult, ScanCutItParams, ScanEdgeRound, ScanExtrudeItParams, ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams,
-    ScanFindAllResult, ScanHole, ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams,
-    ScanRepeat, ScanRevolveItParams, ScanShapeFound, ScanTurned,
+    ScanBuildResult, ScanChamferItParams, ScanChamferItResult, ScanChamfered, ScanCutItParams, ScanEdgeChamfer, ScanEdgeRound, ScanExtrudeItParams,
+    ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams, ScanFindAllResult, ScanHole, ScanPatternItParams, ScanPrism,
+    ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat, ScanRevolveItParams, ScanShapeFound, ScanTurned,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -39,6 +39,7 @@ const REVOLVE_IT_CONTRACT: TypedContract<ScanRevolveItParams> = TypedContract::n
 const CUT_IT_CONTRACT: TypedContract<ScanCutItParams> = TypedContract::new();
 const PATTERN_IT_CONTRACT: TypedContract<ScanPatternItParams> = TypedContract::new();
 const FILLET_IT_CONTRACT: TypedContract<ScanFilletItParams> = TypedContract::new();
+const CHAMFER_IT_CONTRACT: TypedContract<ScanChamferItParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("scan.find_all", "Find All", crate::checked!("scan.find_all", find_all))
@@ -92,6 +93,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&FILLET_IT_CONTRACT)
         .output(output_schema_for::<ScanFilletItResult>)
         .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to fillet (default: `<scan> Reconstructed`): each round along an edge that scan.reconstruct reads and no profile holds (its `fillets`), measured off the scan as Fillet from Scan does at the edge of the body it rounds; the edges where a round fits the scan filleted at the radius measured, one Fillet for each radius, one undo step; an edge where the scan shows a sharp edge, or no edge of the body, is set aside → body, solid, fillets [{radius, edges}], set_aside, features"),
+    CommandSpec::new("scan.chamfer_it", "Chamfer It", crate::checked!("scan.chamfer_it", chamfer_it))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("chamfer")
+        .contract(&CHAMFER_IT_CONTRACT)
+        .output(output_schema_for::<ScanChamferItResult>)
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to chamfer (default: `<scan> Reconstructed`): each flat chamfer along an edge that scan.reconstruct reads and no profile holds (its `chamfers`), cut at the edge of the body it cuts at the distance its two faces give; one Chamfer for each distance, one undo step; an edge the kernel refuses is set aside → body, solid, chamfers [{distance, edges}], set_aside, features"),
 ];
 
 /// What Find All found on a scan, and what Reconstruct reads off it: view state for the viewport
@@ -381,6 +388,8 @@ pub enum Proposal {
     Pattern(usize),
     /// The rounds along edges no profile holds, filleted.
     Fillet,
+    /// The flat chamfers along edges no profile holds, chamfered.
+    Chamfer,
 }
 
 impl Proposal {
@@ -391,6 +400,7 @@ impl Proposal {
             Proposal::Cut(_) => "scan.cut_it",
             Proposal::Pattern(_) => "scan.pattern_it",
             Proposal::Fillet => "scan.fillet_it",
+            Proposal::Chamfer => "scan.chamfer_it",
         }
     }
 
@@ -398,7 +408,7 @@ impl Proposal {
     /// scan selected.
     pub fn params(&self, body: &str, selected: bool) -> Value {
         let mut p = match *self {
-            Proposal::Revolve | Proposal::Fillet => json!({"body": body}),
+            Proposal::Revolve | Proposal::Fillet | Proposal::Chamfer => json!({"body": body}),
             Proposal::Extrude(k) => json!({"body": body, "prism": k}),
             Proposal::Cut(k) | Proposal::Pattern(k) => json!({"body": body, "hole": k}),
         };
@@ -430,6 +440,9 @@ pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
     }
     if !reading.fillets.is_empty() {
         out.push(Proposal::Fillet);
+    }
+    if !reading.chamfers.is_empty() {
+        out.push(Proposal::Chamfer);
     }
     out
 }
@@ -574,6 +587,7 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         built,
         proposals,
         fillets: reading.fillets.iter().map(|f| ScanEdgeRound { face: f.face, radius: f.radius, edge: at(f.edge) }).collect(),
+        chamfers: reading.chamfers.iter().map(|c| ScanEdgeChamfer { face: c.face, distance: c.distance, edge: at(c.edge) }).collect(),
         note,
         param_warnings: Vec::new(),
     })
@@ -1068,3 +1082,71 @@ pub(super) fn fillet_it(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 #[path = "scan_reconstruct_tests.rs"]
 mod tests;
+
+/// Chamfer It: the flat chamfers Reconstruct reads along edges no profile holds, cut on the built
+/// body at the distance each one's two faces give, one Chamfer for each distance. A chamfer the
+/// kernel refuses is taken back and the rest tried; it is set aside.
+pub(super) fn chamfer_it(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.chamfer_it";
+    let view = view(s, p, cmd, false)?;
+    let found = &view.found;
+    let chamfers = view.reading().chamfers.clone();
+    if chamfers.is_empty() {
+        return Err(bad(cmd, "Reconstruct reads no chamfer along an edge that its other steps leave sharp"));
+    }
+    let solid = built_body(s, &found.scan, p, cmd)?;
+    // The distance read most often is not needed: each chamfer's own, grouped to the micron so a
+    // row of the same chamfer is one Chamfer.
+    let key = |d: f64| (d * 1e3).round() as i64;
+    let mut by_distance: std::collections::BTreeMap<i64, (f64, Vec<[f64; 3]>)> = std::collections::BTreeMap::new();
+    for c in &chamfers {
+        by_distance.entry(key(c.distance)).or_insert((c.distance, Vec::new())).1.push(at(c.edge));
+    }
+    let run_chamfer = super::super::find_command("solid.chamfer").ok_or_else(|| EngineError::UnknownCommand("solid.chamfer".into()))?;
+    let chamfer = |s: &mut Session, distance: f64, edges: &[[f64; 3]]| -> Result<Value> {
+        let before = s.doc.clone();
+        let made = run_chamfer.run_nested(s, &json!({"edges": edges, "distance": format!("{distance} mm"), "body": solid, "tangent_chain": false}));
+        if made.is_err() {
+            s.doc = before;
+            s.refresh();
+        }
+        made
+    };
+    let (mut done, mut features, mut refused, mut first_refusal) = (Vec::new(), Vec::new(), 0, None);
+    for (distance, edges) in by_distance.into_values() {
+        // All the edges of one distance as one Chamfer; if the kernel refuses that, each alone.
+        let tries: Vec<Vec<[f64; 3]>> = match chamfer(s, distance, &edges) {
+            Ok(made) => {
+                done.push(ScanChamfered { distance, edges: edges.len() });
+                features.push(made);
+                continue;
+            }
+            Err(_) if edges.len() > 1 => edges.iter().map(|e| vec![*e]).collect(),
+            Err(e) => {
+                refused += 1;
+                first_refusal.get_or_insert(e.to_string());
+                continue;
+            }
+        };
+        for one in tries {
+            match chamfer(s, distance, &one) {
+                Ok(made) => {
+                    done.push(ScanChamfered { distance, edges: 1 });
+                    features.push(made);
+                }
+                Err(e) => {
+                    refused += 1;
+                    first_refusal.get_or_insert(e.to_string());
+                }
+            }
+        }
+    }
+    if done.is_empty() {
+        return Err(super::refusal::refused(
+            cmd,
+            "the kernel could chamfer none of the edges the scan shows cut",
+            &first_refusal.unwrap_or_default(),
+        ));
+    }
+    reply(ScanChamferItResult { body: found.scan.clone(), solid, chamfers: done, set_aside: refused, features, param_warnings: Vec::new() })
+}
