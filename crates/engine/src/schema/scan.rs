@@ -987,6 +987,51 @@ pub struct ScanSliceSurfaceResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Close the openings of a surface body with patches sewn in, so it becomes a solid; or only list
+/// them. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanCloseSurfaceParams {
+    /// The surface body. Default: the selected one, else the surface made last.
+    #[serde(default)]
+    pub surface: Option<String>,
+    /// Close the openings (default: true); false only lists them and changes nothing.
+    #[serde(default)]
+    pub close: Option<bool>,
+    /// How a patch meets the faces round its opening: g0 (default) or g1 (tangent).
+    #[serde(default)]
+    pub continuity: Option<String>,
+}
+
+/// One loop of free edges: an opening of a surface.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanOpenLoop {
+    /// How many edges it has.
+    pub edges: usize,
+    /// The middle of its edges, and the diagonal of the box round them (mm).
+    pub at: [f64; 3],
+    pub size: f64,
+}
+
+/// What `scan.close_surface` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanCloseSurfaceResult {
+    /// The surface body.
+    pub body: String,
+    /// The openings it had before.
+    pub loops: Vec<ScanOpenLoop>,
+    /// How many were closed, how many are open now, and whether the body is a solid.
+    pub caps: usize,
+    pub open: usize,
+    pub solid: bool,
+    /// The solid's volume (mm3), only when it is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume: Option<f64>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// A whole control net: its points each way, its knots each way, and its points (u fastest).
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]

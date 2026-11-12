@@ -1,0 +1,34 @@
+{
+  "en": {
+    "cmd.scan_close_surface": "Close Surface",
+    "help.scan.close_surface": "Lists every opening of a surface (where it is and how big) and closes each with a patch sewn in, so a part made round with free forms becomes a solid. Use it after Merge Surfaces, when the part still has a missing face or an open end. Turn Close off to only look."
+  },
+  "de": {
+    "cmd.scan_close_surface": "Fläche schließen",
+    "help.scan.close_surface": "Listet jede Öffnung einer Fläche auf (wo sie liegt und wie groß sie ist) und schließt jede mit einem eingenähten Flicken, sodass ein aus Freiformen erstelltes Teil ein Volumenkörper wird. Verwenden Sie es nach Flächen zusammenführen, wenn dem Teil noch eine Fläche fehlt oder ein Ende offen ist. Schalten Sie Schließen aus, um nur nachzusehen."
+  },
+  "ja": {
+    "cmd.scan_close_surface": "サーフェスを閉じる",
+    "help.scan.close_surface": "サーフェスの開口部をすべて一覧にし(位置と大きさ)、それぞれにパッチを縫い合わせて閉じます。フリーフォームで作ったパーツがソリッドになります。サーフェスを結合した後も面が欠けていたり端が開いていたりするときに使います。「閉じる」をオフにすると確認だけを行います。"
+  },
+  "ko": {
+    "cmd.scan_close_surface": "곡면 닫기",
+    "help.scan.close_surface": "곡면의 모든 열린 부분(위치와 크기)을 나열하고 각각을 패치로 꿰매어 닫아, 프리폼으로 만든 부품을 솔리드로 만듭니다. 곡면 병합 후에도 면이 빠졌거나 끝이 열려 있을 때 사용하세요. '닫기'를 끄면 확인만 합니다."
+  },
+  "zh": {
+    "cmd.scan_close_surface": "闭合曲面",
+    "help.scan.close_surface": "列出曲面的每个开口(位置和大小),并用缝合的补片逐一闭合,使用自由形态做成的零件成为实体。合并曲面后零件仍缺少面或端部敞开时使用。关闭“闭合”则只查看。"
+  },
+  "ar": {
+    "cmd.scan_close_surface": "إغلاق السطح",
+    "help.scan.close_surface": "يعرض كل فتحة في السطح (موقعها وحجمها) ويغلق كلاً منها برقعة تُخاط في مكانها، فيصبح الجزء المصنوع بالأشكال الحرة جسمًا صلبًا. استخدمه بعد دمج الأسطح عندما يبقى في الجزء وجه ناقص أو طرف مفتوح. أوقف «إغلاق» للاطلاع فقط."
+  },
+  "he": {
+    "cmd.scan_close_surface": "סגירת משטח",
+    "help.scan.close_surface": "מציג כל פתח במשטח (היכן הוא וכמה גדול) וסוגר כל אחד בטלאי שנתפר פנימה, כך שחלק שנבנה מצורות חופשיות הופך לגוף מלא. השתמשו בו אחרי מיזוג משטחים, כשעדיין חסר לחלק פן או שקצהו פתוח. כבו את «סגירה» כדי רק לבדוק."
+  },
+  "vi": {
+    "cmd.scan_close_surface": "Đóng bề mặt",
+    "help.scan.close_surface": "Liệt kê mọi lỗ hở của một bề mặt (vị trí và kích thước) và đóng từng lỗ bằng một miếng vá được khâu vào, để chi tiết làm từ các Free Form trở thành khối đặc. Dùng sau khi Gộp bề mặt, khi chi tiết vẫn thiếu một mặt hoặc hở một đầu. Tắt Đóng để chỉ xem."
+  }
+}

@@ -143,6 +143,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.align_pairs",
     "scan.align_to_model",
     "scan.center",
+    "scan.close_surface",
     "scan.complete_by_mirroring",
     "scan.curve_from_selection",
     "scan.curve_on_scan",

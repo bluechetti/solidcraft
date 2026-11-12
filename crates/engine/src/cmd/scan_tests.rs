@@ -1587,3 +1587,52 @@ fn a_whole_wrap_merged_and_sliced_at_both_ends_is_a_solid() {
     let expected = std::f64::consts::PI * 100.0 * 30.0;
     assert!((volume - expected).abs() < 0.02 * expected, "{volume} against {expected}");
 }
+
+/// Four flat Free Forms round a square tube merged into one open tube: Close Surface lists the two
+/// openings without changing anything, then closes both with patches into a solid of the tube's
+/// volume in one undo step; run again it has nothing left to close.
+#[test]
+fn close_surface_lists_and_closes_the_openings_of_a_tube() {
+    let (mut s, _) = session_with_triangles("close", &dome_triangles(10));
+    for corners in [
+        json!([[0, 0, 0], [20, 0, 0], [20, 0, 40], [0, 0, 40]]),
+        json!([[20, 0, 0], [20, 20, 0], [20, 20, 40], [20, 0, 40]]),
+        json!([[20, 20, 0], [0, 20, 0], [0, 20, 40], [20, 20, 40]]),
+        json!([[0, 20, 0], [0, 0, 0], [0, 0, 40], [0, 20, 40]]),
+    ] {
+        run(&mut s, "scan.free_form", json!({"corners": corners, "fit": "off"}));
+    }
+    run(&mut s, "scan.merge_surfaces", json!({}));
+    let faces = |s: &Session| s.model.state().body("FreeForm1").map(|b| solidcraft_kernel::brep_record(&b.body).unwrap().faces.len());
+    let before = faces(&s);
+    let looked = run(&mut s, "scan.close_surface", json!({"close": false}));
+    assert_eq!((looked["caps"].as_u64(), looked["open"].as_u64(), looked["solid"].as_bool()), (Some(0), Some(2), Some(false)), "{looked}");
+    assert!(looked.get("volume").is_none(), "an open shell has no volume: {looked}");
+    let loops = looked["loops"].as_array().unwrap();
+    assert_eq!(loops.len(), 2, "{looked}");
+    let mut heights: Vec<f64> = loops.iter().map(|l| l["at"][2].as_f64().unwrap()).collect();
+    heights.sort_by(f64::total_cmp);
+    assert!(heights[0].abs() < 1e-6 && (heights[1] - 40.0).abs() < 1e-6, "{heights:?}");
+    assert!(loops.iter().all(|l| (l["size"].as_f64().unwrap() - 20.0 * 2f64.sqrt()).abs() < 0.5), "{looked}");
+    assert_eq!(faces(&s), before, "only looking changes nothing");
+    let closed = run(&mut s, "scan.close_surface", json!({}));
+    assert_eq!((closed["caps"].as_u64(), closed["open"].as_u64(), closed["solid"].as_bool()), (Some(2), Some(0), Some(true)), "{closed}");
+    let volume = closed["volume"].as_f64().unwrap();
+    assert!((volume - 16000.0).abs() < 160.0, "{volume}");
+    assert_eq!(faces(&s), Some(6), "four sides and two caps");
+    let again = run(&mut s, "scan.close_surface", json!({}));
+    assert_eq!((again["caps"].as_u64(), again["solid"].as_bool()), (Some(0), Some(true)), "{again}");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(faces(&s), before, "the no-op left no step, so one undo puts the openings back");
+}
+
+/// Close Surface refuses what it cannot work on, in words, and changes nothing.
+#[test]
+fn close_surface_refuses_a_scan_and_a_bad_continuity() {
+    let (mut s, scan) = session_with_triangles("close-refused", &dome_triangles(10));
+    let e = s.execute("scan.close_surface", &json!({"surface": scan})).unwrap_err().to_string();
+    assert!(e.contains("is a scan"), "{e}");
+    run(&mut s, "scan.free_form", json!({"corners": [[0, 0, 0], [20, 0, 0], [20, 20, 0], [0, 20, 0]], "fit": "off"}));
+    let e = s.execute("scan.close_surface", &json!({"continuity": "g2"})).unwrap_err().to_string();
+    assert!(e.contains("g0 or g1"), "{e}");
+}

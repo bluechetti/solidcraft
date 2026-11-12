@@ -138,6 +138,7 @@ mod tests {
             "scan.wrap_surface",
             "scan.merge_surfaces",
             "scan.slice_surface",
+            "scan.close_surface",
             "scan.fit_cone",
             "scan.fit_torus",
             "scan.find_all",

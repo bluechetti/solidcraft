@@ -36,7 +36,7 @@ pub struct Slice {
     pub size: f64,
 }
 
-fn run(s: &mut Session, id: &str, p: Value) -> Result<Value> {
+pub(super) fn run(s: &mut Session, id: &str, p: Value) -> Result<Value> {
     super::super::find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?.run_nested(s, &p)
 }
 
@@ -98,7 +98,7 @@ pub fn sliced(s: &Session, body: &str, plane: &Value, keep: Keep, cmd: &str) -> 
 }
 
 /// A body name not yet used: `base`, else `base 2`, `base 3`, …
-fn unused(s: &Session, base: &str) -> String {
+pub(super) fn unused(s: &Session, base: &str) -> String {
     let state = s.model.state();
     (1..).map(|k| if k == 1 { base.to_owned() } else { format!("{base} {k}") }).find(|n| state.body(n).is_none()).unwrap_or_else(|| base.to_owned())
 }

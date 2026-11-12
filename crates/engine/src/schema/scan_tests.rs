@@ -1,11 +1,11 @@
 use serde_json::{Value, json};
 
 use super::{
-    ScanAddFaceParams, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCurveParams, ScanDeviationParams, ScanDeviationResult,
-    ScanEditNetParams, ScanEditSurfaceParams, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFloatingParams,
-    ScanFreeFormParams, ScanHolesParams, ScanMergeSurfacesParams, ScanMirrorFreeFormParams, ScanPlaceParams, ScanPlaceResult, ScanReduceParams,
-    ScanRepairParams, ScanSectionParams, ScanSectionsAlongParams, ScanSliceSurfaceParams, ScanSquareParams, ScanStandParams, ScanSymmetryParams,
-    ScanSymmetryResult, ScanWrapSurfaceParams,
+    ScanAddFaceParams, ScanBasesParams, ScanBasesResult, ScanCloseSurfaceParams, ScanCompleteParams, ScanCurveParams, ScanDeviationParams,
+    ScanDeviationResult, ScanEditNetParams, ScanEditSurfaceParams, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult,
+    ScanFloatingParams, ScanFreeFormParams, ScanHolesParams, ScanMergeSurfacesParams, ScanMirrorFreeFormParams, ScanPlaceParams, ScanPlaceResult,
+    ScanReduceParams, ScanRepairParams, ScanSectionParams, ScanSectionsAlongParams, ScanSliceSurfaceParams, ScanSquareParams, ScanStandParams,
+    ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams,
 };
 use crate::Session;
 use crate::schema::tests::{assert_keys, assert_strict_keeps_todays_errors, conforms};
@@ -29,6 +29,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanAddFaceParams>(), &["body", "edge", "far", "reach", "rows", "surface", "symmetry"]);
     assert_keys(input_schema_for::<ScanMirrorFreeFormParams>(), &["gap", "plane", "surface"]);
     assert_keys(input_schema_for::<ScanMergeSurfacesParams>(), &["gap", "stitch", "surfaces"]);
+    assert_keys(input_schema_for::<ScanCloseSurfaceParams>(), &["close", "continuity", "surface"]);
     assert_keys(input_schema_for::<ScanSliceSurfaceParams>(), &["cap", "keep", "plane", "surface"]);
     assert_keys(input_schema_for::<ScanHolesParams>(), &["body", "fair", "max_edges"]);
     assert_keys(input_schema_for::<ScanRepairParams>(), &["body", "crossings"]);

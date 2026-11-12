@@ -17,14 +17,14 @@ use solidcraft_scan::symmetry::{self, Guide, Mirror};
 use super::CommandSpec;
 use crate::params::{bad, str_};
 use crate::schema::scan::{
-    ScanAddFaceParams, ScanAddFaceResult, ScanBase, ScanBasesParams, ScanBasesResult, ScanCompleteParams, ScanCompleteResult, ScanCurveParams,
-    ScanCurveResult, ScanDeviationParams, ScanDeviationResult, ScanEditNetParams, ScanEditNetResult, ScanEditSurfaceParams, ScanEditSurfaceResult,
-    ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere,
-    ScanFittedTorus, ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult,
-    ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror, ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams,
-    ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult,
-    ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams,
-    ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
+    ScanAddFaceParams, ScanAddFaceResult, ScanBase, ScanBasesParams, ScanBasesResult, ScanCloseSurfaceParams, ScanCloseSurfaceResult,
+    ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams, ScanDeviationResult, ScanEditNetParams,
+    ScanEditNetResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult,
+    ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFittedTorus, ScanFloatingParams, ScanFloatingResult,
+    ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror,
+    ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams,
+    ScanRepairResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams,
+    ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -46,6 +46,7 @@ const FREE_FORM_CONTRACT: TypedContract<ScanFreeFormParams> = TypedContract::new
 const ADD_FACE_CONTRACT: TypedContract<ScanAddFaceParams> = TypedContract::new();
 const MIRROR_FREE_FORM_CONTRACT: TypedContract<ScanMirrorFreeFormParams> = TypedContract::new();
 const MERGE_SURFACES_CONTRACT: TypedContract<ScanMergeSurfacesParams> = TypedContract::new();
+const CLOSE_SURFACE_CONTRACT: TypedContract<ScanCloseSurfaceParams> = TypedContract::new();
 const SLICE_SURFACE_CONTRACT: TypedContract<ScanSliceSurfaceParams> = TypedContract::new();
 const WRAP_SURFACE_CONTRACT: TypedContract<ScanWrapSurfaceParams> = TypedContract::new();
 const FLOATING_CONTRACT: TypedContract<ScanFloatingParams> = TypedContract::new();
@@ -216,6 +217,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&MERGE_SURFACES_CONTRACT)
         .output(output_schema_for::<ScanMergeSurfacesResult>)
         .params("surfaces?: [surface body names] (default: the selected ones, else every surface Fit Surface, New Free Form or Wrap Surface made; one alone is closed at its own seam, as a wrap that goes the whole way round); gap?: length (how far apart two sides may be on average to be made one, default a tenth of the shortest side); stitch?: bool (default true: made one Free Form, kept in the first surface's feature and edited with Edit Surface, a solid when its faces close; the other surfaces are removed from here on): each side that runs along another's within the gap made one curve (the nets' knots matched, corners and points put half way between), a Free Form of several faces taken whole, one undo step → surfaces, seams, gap, body, faces, feature"),
+    CommandSpec::new("scan.close_surface", "Close Surface", crate::checked!("scan.close_surface", close::close_surface))
+        .at("SCAN", "FREEFORM")
+        .icon("surface_patch")
+        .contract(&CLOSE_SURFACE_CONTRACT)
+        .output(output_schema_for::<ScanCloseSurfaceResult>)
+        .params("surface?: the surface body (default: the selected one, else the one made last); close?: bool (default true; false only lists the openings and changes nothing); continuity?: g0|g1 (default g0: how a patch meets the faces round its opening): each loop of free edges closed with a patch and all sewn, a solid when nothing else is open; an opening a patch cannot close is said with where it is, nothing changed; one undo step → body, loops (edges, at, size), caps, open, solid, volume?"),
     CommandSpec::new("scan.slice_surface", "Slice Surface", crate::checked!("scan.slice_surface", slice::slice_surface))
         .at("SCAN", "FREEFORM")
         .icon("surface_trim")
@@ -1063,6 +1070,9 @@ pub mod align;
 
 #[path = "scan_clean.rs"]
 pub mod clean;
+
+#[path = "scan_close.rs"]
+pub mod close;
 
 #[path = "scan_curve.rs"]
 pub mod curve;
