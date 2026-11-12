@@ -780,8 +780,14 @@ pub struct ScanSlide {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ScanFreeFormParams {
-    /// The four corners, in order round the face, in mm.
+    /// The four corners, in order round the face, in mm. Give these or `curves`.
+    #[serde(default)]
     pub corners: Vec<Point3>,
+    /// Instead of corners, the face's four sides: four curves, each a list of points in mm (a
+    /// Curve on Scan curve's points), in any order and direction, meeting end to end. The face's
+    /// edges follow them and its inside is fitted to the scan.
+    #[serde(default)]
+    pub curves: Option<Vec<Vec<Point3>>>,
     /// off (flat over the corners), follow (fitted to the scan, the default), overall (fitted, the
     /// places far off it left out, so it spans openings, dents and ribs) or flat (exactly flat: in
     /// the one plane fitted to the scan under it, the places far off it left out). With `plane`,

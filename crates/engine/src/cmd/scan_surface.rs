@@ -193,6 +193,8 @@ pub fn shade(s: &Session, scan: Option<&str>, faces: &[NurbsSurface], cmd: &str)
 pub use solidcraft_scan::network;
 /// Symmetry for a Free Form, as Edit Surface keeps it.
 pub use solidcraft_scan::symmetric;
+/// Shapes points are held to, refinement fixes and patterns, as Edit Surface offers them.
+pub use solidcraft_scan::{constrain, face_options, pattern};
 
 /// The surface as STEP text: one face, the whole of it (its knots may be uneven or repeated).
 pub fn surface_step(surface: &NurbsSurface, cmd: &str) -> Result<String> {
@@ -969,8 +971,8 @@ pub fn fold_warning(trouble: [usize; 3]) -> Option<String> {
 
 /// The surface maths a dialog previews an edit with, as the command does it.
 pub use solidcraft_scan::surface_edit::{
-    around, distance, falloff_weights, foot, greville_places, normal_at, points as control_points, refit, slid, slide_steps, with_falloff,
-    with_points,
+    around, distance, falloff_weight, falloff_weights, foot, greville_places, normal_at, points as control_points, refit, slid, slide_steps,
+    with_falloff, with_points,
 };
 
 /// Surface Check on a surface as a dialog shows it while it is edited, and the grid Surface Check

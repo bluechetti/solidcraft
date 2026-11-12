@@ -23,7 +23,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanFitSurfaceParams>(), &["body", "controls", "point", "radius", "smoothing"]);
     assert_keys(input_schema_for::<ScanCompleteParams>(), &["body", "guide", "plane", "reach"]);
     assert_keys(input_schema_for::<ScanFloatingParams>(), &["below", "body"]);
-    assert_keys(input_schema_for::<ScanFreeFormParams>(), &["body", "corners", "count", "fit", "plane", "reach", "stiffness"]);
+    assert_keys(input_schema_for::<ScanFreeFormParams>(), &["body", "corners", "count", "curves", "fit", "plane", "reach", "stiffness"]);
     assert_keys(input_schema_for::<ScanEditNetParams>(), &["after", "distance", "in", "line", "op", "surface"]);
     assert_keys(input_schema_for::<ScanWrapSurfaceParams>(), &["arc", "axis", "body", "details", "point", "reach", "stiffness"]);
     assert_keys(input_schema_for::<ScanAddFaceParams>(), &["body", "edge", "far", "reach", "rows", "surface", "symmetry"]);

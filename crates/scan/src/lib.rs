@@ -51,10 +51,13 @@
 
 pub mod align;
 pub mod base;
+pub mod boundary_face;
 pub mod chain;
+pub mod constrain;
 pub mod curve;
 pub mod denoise;
 pub mod deviation;
+pub mod face_options;
 pub mod fillet;
 pub mod fit;
 pub mod flatten;
@@ -68,6 +71,7 @@ mod net_fit;
 pub mod network;
 mod par;
 pub mod patches;
+pub mod pattern;
 pub mod pieces;
 pub mod place;
 pub mod poisson;

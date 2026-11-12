@@ -296,6 +296,12 @@ tangent as the surface is edited. A face is added on an *open edge* (a side no o
 The points a user drags lie on the surface; the control net behind them is shown on request.
 Compare *irregular corner*.
 
+Any number of its points can be chosen at once (a click, Shift or Ctrl-click, a box, a
+double-click on a face). A drag of one chosen point moves them all; Snap to Scan, Fit to Scan and
+the shape tools (a plane, line, circle, sphere, cylinder or cone) act on the chosen points, and
+Shift+wheel sizes the soft selection that takes the points near them along. A face can also be
+made from four curves (`curves` of `scan.free_form`).
+
 - **In SolidCraft:** `scan.free_form`, `scan.add_face`, `scan.wrap_surface`,
   `scan.mirror_free_form`; `scan.edit_surface` (`dots`, `neighbours`, `faces`, `crease`, `smooth`,
   `delete_face`, `weld`, `keep_half`, `symmetry`); New Free Form, Add Face, Points on the surface

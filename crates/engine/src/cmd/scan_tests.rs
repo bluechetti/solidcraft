@@ -989,6 +989,34 @@ fn free_form_makes_a_surface_on_the_scan_and_its_net_changes() {
     assert!(refused.contains("four points"), "{refused}");
 }
 
+/// New Free Form from four curves: the sides follow the curves given in any order and direction,
+/// the inside lies on the scan; curves that do not close, or corners given as well, are refused.
+#[test]
+fn free_form_from_four_boundary_curves_follows_them_and_lies_on_the_scan() {
+    let (mut s, _) = session_with_triangles("free-form-curves", &dome_triangles(40));
+    let z = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+    let line = |a: [f64; 2], b: [f64; 2]| -> Vec<[f64; 3]> {
+        (0..=8)
+            .map(|i| {
+                let t = f64::from(i) / 8.0;
+                let (x, y) = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
+                [x, y, z(x, y)]
+            })
+            .collect()
+    };
+    let mut top = line([50.0, 50.0], [10.0, 50.0]);
+    top.reverse();
+    let curves = json!([top, line([10.0, 10.0], [50.0, 10.0]), line([50.0, 10.0], [50.0, 50.0]), line([10.0, 50.0], [10.0, 10.0])]);
+    let made = run(&mut s, "scan.free_form", json!({"curves": curves, "count": 6}));
+    assert_eq!(made["controls"], json!([6, 6]), "{made}");
+    assert!(made["rms"].as_f64().unwrap() < 0.1, "{made}");
+    let both =
+        s.execute("scan.free_form", &json!({"curves": curves, "corners": [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]]})).unwrap_err().to_string();
+    assert!(both.contains("not both"), "{both}");
+    let open = s.execute("scan.free_form", &json!({"curves": [line([10.0, 10.0], [50.0, 10.0]), line([50.0, 10.0], [50.0, 50.0]), line([50.0, 50.0], [10.0, 50.0]), line([10.0, 10.0], [10.0, 40.0])]})).unwrap_err().to_string();
+    assert!(!open.is_empty(), "an open loop is refused");
+}
+
 /// A flat Free Form: fitted to the scan it lies in the one plane through the panel (a dome's top
 /// is a plane the dome only leans away from), where Follow lies on the dome; given a plane it lies
 /// flat on it with no scan at all; a plane with no direction, a plane with another fit and a bad

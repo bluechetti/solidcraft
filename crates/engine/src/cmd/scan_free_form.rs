@@ -113,9 +113,46 @@ pub fn made_on_plane(corners: [Vec3; 4], count: usize, plane: solidcraft_scan::s
     Ok(Made { scan: None, surface, places: 0, met: 0, kept: 0, rms: 0.0, max: 0.0 })
 }
 
+/// The four curves of `curves`: lists of points [x, y, z].
+fn curves_param(v: &Value, cmd: &str) -> Result<Vec<Vec<Vec3>>> {
+    let lists = v.as_array().ok_or_else(|| bad(cmd, "`curves` must list four curves, each a list of points [x, y, z]"))?;
+    lists
+        .iter()
+        .map(|list| {
+            list.as_array()
+                .ok_or_else(|| bad(cmd, "a curve must be a list of points [x, y, z]"))?
+                .iter()
+                .map(|v| crate::params::vec3(v).ok_or_else(|| bad(cmd, "a curve's point must be [x, y, z] of numbers")))
+                .collect()
+        })
+        .collect()
+}
+
+/// The face whose four sides follow `curves` (laid on the scan `body`, or the selected or only
+/// one), `count` points each way, its inside fitted to the scan under it.
+pub fn made_from_curves(s: &Session, body: Option<&str>, curves: &[Vec<Vec3>], count: usize, reach: Option<f64>) -> Result<Made> {
+    let cmd = "scan.free_form";
+    let count = count.clamp(free_form::LEAST_POINTS, free_form::MOST_POINTS);
+    let boundary = solidcraft_scan::boundary_face::order(curves, 0.0).map_err(|e| bad(cmd, e.to_string()))?;
+    let flat = solidcraft_scan::boundary_face::face(&boundary, &[], [count, count]).map_err(|e| bad(cmd, e.to_string()))?;
+    let reach = reach.unwrap_or_else(|| super::surface::default_reach(&flat));
+    let covered = super::surface::covered(s, body, &flat, reach, cmd)?;
+    let surface = solidcraft_scan::boundary_face::face(&boundary, &covered.points, [count, count]).map_err(|e| bad(cmd, e.to_string()))?;
+    let (rms, max) = if covered.points.is_empty() { (0.0, 0.0) } else { solidcraft_scan::surface_edit::distance(&surface, &covered.points) };
+    let places = covered.points.len();
+    Ok(Made { scan: Some(covered.scan), surface, places, met: places, kept: places, rms, max })
+}
+
 pub(super) fn new_free_form(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.free_form";
-    let corners = corners_param(p, cmd)?;
+    let curves = match p.get("curves").filter(|v| !v.is_null()) {
+        Some(v) => Some(curves_param(v, cmd)?),
+        None => None,
+    };
+    if curves.is_some() && p.get("corners").is_some_and(|v| !v.is_null()) {
+        return Err(bad(cmd, "give `corners` or `curves`, not both"));
+    }
+    let corners = if curves.is_some() { [Vec3::ZERO; 4] } else { corners_param(p, cmd)? };
     let plane = match p.get("plane").filter(|v| !v.is_null()) {
         Some(v) => Some(mirror_plane_param(s, Some(v), cmd)?),
         None => None,
@@ -147,6 +184,8 @@ pub(super) fn new_free_form(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let body = crate::params::str_(p, "body").map(str::to_owned);
     let made = match plane {
+        _ if curves.is_some() && plane.is_some() => return Err(bad(cmd, "`curves` are fitted to the scan: leave `plane` out")),
+        _ if curves.is_some() => made_from_curves(s, body.as_deref(), curves.as_deref().unwrap_or_default(), count, reach)?,
         Some(plane) => made_on_plane(corners, count, plane)?,
         None => make(s, body.as_deref(), corners, fit, Fitting { count, stiffness, overall: false }, reach)?,
     };

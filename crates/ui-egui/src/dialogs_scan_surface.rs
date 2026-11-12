@@ -25,6 +25,7 @@
 //! deep end of the curvature map. Surface Check runs on the faces as shown, so a fold a drag makes
 //! is seen as it is made. OK keeps every face as one undo step; Reset Points puts them back.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
@@ -40,6 +41,9 @@ use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
 use crate::SolveApp;
 use crate::dialogs::{Kind, form_row};
 use crate::ui_kit::{self, choice_row};
+
+mod select;
+mod shape;
 
 /// What a drag refits (0 nothing): the ring round the point dragged, or every point not moved by
 /// hand.
@@ -136,6 +140,12 @@ pub struct EditSurface {
     /// The scan's distance from the faces shown: root mean square and largest.
     fit: Option<(f64, f64)>,
     chosen: Option<usize>,
+    /// Every handle chosen (the one `chosen` among them): a drag of one moves them all.
+    picked: BTreeSet<usize>,
+    /// A box being drawn to choose the handles in it.
+    marquee: Option<Box<select::Marquee>>,
+    /// What Constrain last held the points to, and the refinements Suggest Refinement offers.
+    shape: Box<shape::State>,
     /// How far Move takes the chosen point along the way the surface faces, in mm.
     pub along: f64,
     /// The points within this of one moved go with it, less the further they are (mm; 0, none).
@@ -231,6 +241,9 @@ impl Default for EditSurface {
             shown_dots: Vec::new(),
             fit: None,
             chosen: None,
+            picked: BTreeSet::new(),
+            marquee: None,
+            shape: Box::default(),
             along: 1.0,
             falloff: 0.0,
             drag_mode: DRAG_MOVE,
@@ -304,6 +317,9 @@ struct Drag {
     slide: Option<Box<SlideFrom>>,
     /// A dot on the surface, not a control point.
     dot: bool,
+    /// Where every dot (or network point) was when the drag began: a soft selection moves those
+    /// near the points dragged from there.
+    start: Arc<Vec<Vec3>>,
     /// Alt-dragging a dot on an open edge: the open edges it is on (a face grows from the one the
     /// drag leaves most squarely), and where the pointer has taken it.
     grow: Vec<(usize, Side)>,
@@ -662,7 +678,7 @@ fn reset_to(k: &mut EditSurface, faces: Vec<NurbsSurface>) {
     k.joins = Arc::new(joins_of(k, &faces));
     k.net = network::network_points(&faces, &k.joins);
     k.moved = vec![false; k.net.len()];
-    k.chosen = None;
+    select::clear(k);
     k.line = None;
     k.drag = None;
     k.reshaped = false;
@@ -675,6 +691,8 @@ fn reset_to(k: &mut EditSurface, faces: Vec<NurbsSurface>) {
 /// The faces as they are, kept for Undo Last Change before an edit changes them.
 fn remember(k: &mut EditSurface) {
     k.told = None;
+    k.shape.note = None;
+    k.shape.suggestions.clear();
     if k.history.len() >= HISTORY {
         k.history.remove(0);
     }
@@ -697,7 +715,7 @@ fn undo_last(k: &mut EditSurface) {
     k.net = network::network_points(&before.faces, &k.joins);
     k.moved = before.moved;
     k.reshaped = before.reshaped;
-    k.chosen = None;
+    select::clear(k);
     k.line = None;
     k.drag = None;
     k.faces = before.faces.clone();
@@ -716,7 +734,7 @@ fn reshaped_to(k: &mut EditSurface, faces: Vec<NurbsSurface>) {
     k.net = network::network_points(&faces, &k.joins);
     k.moved = k.net.iter().map(|p| moved_at.iter().any(|q| q.dist(*p) < 1e-9)).collect();
     k.reshaped = true;
-    k.chosen = None;
+    select::clear(k);
     k.faces = faces.clone();
     k.restudy = true;
     let plane = k.mirror.take().map(|p| p.plane);
@@ -818,7 +836,7 @@ fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) {
         k.adding = None;
         k.deleting = false;
         k.creasing = None;
-        k.chosen = None;
+        select::clear(k);
         apply_symmetry(k, choice.checked_sub(1).and_then(|i| planes.get(i)).map(|(n, p)| (n.clone(), *p)));
     }
     if let Some(pairs) = &k.mirror {
@@ -847,7 +865,7 @@ fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) {
             k.deleting = false;
             k.creasing = None;
             k.brushing = false;
-            k.chosen = None;
+            select::clear(k);
         }
     }
 }
@@ -910,6 +928,7 @@ fn reshape(k: &mut EditSurface, change: impl FnOnce(&NurbsSurface) -> Result<(Nu
     reshaped_to(k, vec![made.clone()]);
     k.line = then;
     k.chosen = then.and_then(|l| l.points(made.count()).first().copied());
+    k.picked = k.chosen.into_iter().collect();
     Ok(())
 }
 
@@ -1266,7 +1285,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
     let before = k.handles;
     choice_row(ui, tr("ui.scan_edit_handles"), "scan_edit_handles", &mut k.handles, &kinds);
     if k.handles != before {
-        k.chosen = None;
+        select::clear(k);
         k.line = None;
         k.adding = None;
         k.creasing = None;
@@ -1298,11 +1317,12 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
             let labels = [tr("ui.scan_edit_refit_off"), tr("ui.scan_edit_refit_around"), tr("ui.scan_edit_refit_all")];
             choice_row(ui, tr("ui.scan_edit_refit"), "scan_edit_refit", &mut k.refit, &labels);
         }
-        form_row(ui, tr("ui.scan_edit_falloff"), |ui| ui_kit::length_field(ui, &mut k.falloff, &units, decimals));
-        k.falloff = if k.falloff.is_finite() { k.falloff.max(0.0) } else { 0.0 };
         let modes = [tr("ui.scan_edit_drag_move"), tr("ui.scan_edit_drag_slide")];
         choice_row(ui, tr("ui.scan_edit_drag"), "scan_edit_drag", &mut k.drag_mode, &modes);
     }
+    form_row(ui, tr("ui.scan_edit_falloff"), |ui| ui_kit::length_field(ui, &mut k.falloff, &units, decimals));
+    k.falloff = if k.falloff.is_finite() { k.falloff.max(0.0) } else { 0.0 };
+    select::rows(ui, k);
     let moved = k.moved.iter().filter(|m| **m).count().to_string();
     form_row(ui, tr("ui.scan_edit_moved"), |ui| ui_kit::text(ui, &moved, ui_kit::Text::Cell));
     // How far the scan is from the surface, and its colouring against the tolerance.
@@ -1350,6 +1370,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         k.restudy = true;
     }
     whole_tools(app, ui, k, &l);
+    shape::rows(app, ui, k, l.covered.is_some());
     if !dots && !is_network(k) {
         let count = base(k).map_or([0, 0], NurbsSurface::count);
         net_tools(ui, k, count);
@@ -1373,6 +1394,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         (None, false) => tr("ui.scan_edit_hint"),
     };
     ui_kit::text(ui, hint, ui_kit::Text::Hint("scan_edit_hint"));
+    ui_kit::text(ui, tr("ui.scan_edit_select_hint"), ui_kit::Text::Hint("scan_edit_select_hint"));
     // The Smoothing Brush on Ctrl+Shift (Preferences › Tools), with the points on the surface.
     if dots && app.preferences.edit_surface_brush_keys && !k.brushing && k.adding.is_none() && !k.deleting && k.creasing.is_none() {
         ui_kit::text(ui, tr("ui.scan_edit_brush_keys_hint"), ui_kit::Text::Hint("scan_edit_brush_keys_hint"));
@@ -1392,7 +1414,7 @@ fn whole_tools(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, l: &Loade
         k.deleting = false;
         k.creasing = None;
         k.brushing = false;
-        k.chosen = None;
+        select::clear(k);
         k.line = None;
     }
     if is_network(k) || k.deleting {
@@ -1402,7 +1424,7 @@ fn whole_tools(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, l: &Loade
             k.adding = None;
             k.creasing = None;
             k.brushing = false;
-            k.chosen = None;
+            select::clear(k);
         }
     }
     // Crease Edge and Remove Crease: a click on a shared edge then makes it sharp, or smooth.
@@ -1415,7 +1437,7 @@ fn whole_tools(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, l: &Loade
                 k.adding = None;
                 k.deleting = false;
                 k.brushing = false;
-                k.chosen = None;
+                select::clear(k);
                 k.line = None;
             }
         }
@@ -1429,7 +1451,7 @@ fn whole_tools(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, l: &Loade
             k.adding = None;
             k.deleting = false;
             k.creasing = None;
-            k.chosen = None;
+            select::clear(k);
             k.line = None;
         }
         if k.brushing {
@@ -1473,10 +1495,13 @@ fn whole_tools(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, l: &Loade
         });
     }
     if scan {
-        if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_snap_all"), ui_kit::Button::Normal)).clicked() {
+        let some = !k.picked.is_empty();
+        let (snap_id, fit_id) =
+            if some { ("ui.scan_edit_snap_selected", "ui.scan_edit_fit_selected") } else { ("ui.scan_edit_snap_all", "ui.scan_edit_fit_all") };
+        if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr(snap_id), ui_kit::Button::Normal)).clicked() {
             outcome = Some(snap_all(app, k));
         }
-        if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_fit_all"), ui_kit::Button::Normal)).clicked() {
+        if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr(fit_id), ui_kit::Button::Normal)).clicked() {
             outcome = Some(fit_all(k));
         }
     }
@@ -1492,8 +1517,14 @@ fn snap_all(app: &SolveApp, k: &mut EditSurface) -> Result<(), String> {
     let scan = loaded(k).and_then(|l| l.covered.as_ref().map(|c| c.scan.clone())).ok_or_else(|| tr("ui.scan_edit_no_scan").to_owned())?;
     let (_, on) = solidcraft_engine::cmd::scan::curve::projector(&app.session, Some(&scan), "scan.edit_surface").map_err(|e| e.to_string())?;
     let reach = if k.snap_reach > 0.0 { k.snap_reach } else { f64::INFINITY };
-    let moves: Vec<(usize, Vec3)> =
-        k.shown_dots.iter().enumerate().filter_map(|(i, d)| on.nearest(d.at).filter(|(_, dist)| *dist <= reach).map(|(q, _)| (i, q))).collect();
+    let wanted = select::scope(k);
+    let moves: Vec<(usize, Vec3)> = k
+        .shown_dots
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| wanted.binary_search(i).is_ok())
+        .filter_map(|(i, d)| on.nearest(d.at).filter(|(_, dist)| *dist <= reach).map(|(q, _)| (i, q)))
+        .collect();
     if moves.is_empty() {
         return Err(tr("ui.scan_edit_no_scan").to_owned());
     }
@@ -1521,7 +1552,12 @@ fn fit_all(k: &mut EditSurface) -> Result<(), String> {
             held[p] = true;
         }
     }
-    let free: Vec<bool> = (0..k.net.len()).map(|p| !held[p] && !k.moved.get(p).copied().unwrap_or(false)).collect();
+    // With points chosen only those are fitted (even ones moved by hand); else every point not held
+    // or moved by hand.
+    let chosen = select::chosen_ids(k);
+    let free: Vec<bool> = (0..k.net.len())
+        .map(|p| if chosen.is_empty() { !held[p] && !k.moved.get(p).copied().unwrap_or(false) } else { !held[p] && chosen.binary_search(&p).is_ok() })
+        .collect();
     let all = vec![true; k.faces.len()];
     let trouble = |faces: &[NurbsSurface]| -> usize {
         faces.iter().filter_map(|f| edit::check_surface(f, edit::SURFACE_CHECK_GRID)).map(|c| c.folds + c.pinches + c.crossings).sum()
@@ -1551,6 +1587,11 @@ fn fit_all(k: &mut EditSurface) -> Result<(), String> {
 fn chosen_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, units: &str, decimals: u8) {
     let _ = app;
     let dots = k.handles == HANDLES_DOTS;
+    let group = select::chosen_ids(k);
+    if group.len() > 1 {
+        group_rows(ui, k, &group, units, decimals);
+        return;
+    }
     let Some(i) = k.chosen.filter(|i| *i < k.net.len()) else { return };
     let which = match k.joins.at.get(i).and_then(|a| a.first()) {
         Some(&(f, at)) => {
@@ -1597,6 +1638,43 @@ fn chosen_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, units: &s
     let can = k.slide != [0.0, 0.0];
     if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_slide"), ui_kit::Button::Enabled(can))).clicked() && can {
         slide_typed(k, i);
+    }
+}
+
+/// The way the surface faces at handle `i`.
+fn normal_of(k: &EditSurface, i: usize) -> Option<Vec3> {
+    if k.handles == HANDLES_DOTS {
+        k.shown_dots.get(i).and_then(|d| network::dot_normal(&k.shown, d))
+    } else {
+        k.joins.at.get(i).and_then(|a| a.first()).and_then(|&(f, at)| k.shown.get(f).and_then(|s| edit::normal_at(s, at)))
+    }
+}
+
+/// Several points chosen: where their middle goes, typed (they all move by the same amount), and
+/// a distance along the way the surface faces at each.
+fn group_rows(ui: &mut egui::Ui, k: &mut EditSurface, group: &[usize], units: &str, decimals: u8) {
+    let Some(c) = select::centre(k) else { return };
+    let line =
+        crate::i18n::format("ui.scan_edit_selected_value", &[("count", &group.len().to_string()), ("all", &select::handle_count(k).to_string())]);
+    form_row(ui, tr("ui.scan_edit_point"), |ui| ui_kit::text(ui, &line, ui_kit::Text::Cell));
+    let mut xyz = [c.x, c.y, c.z];
+    let mut typed = false;
+    for (axis, v) in ["X", "Y", "Z"].into_iter().zip(&mut xyz) {
+        form_row(ui, axis, |ui| {
+            let r = ui_kit::length_field(ui, v, units, decimals);
+            typed |= r.changed();
+            r
+        });
+    }
+    if typed && xyz.iter().all(|v| v.is_finite()) {
+        let delta = Vec3::new(xyz[0], xyz[1], xyz[2]) - c;
+        let moves: Vec<(usize, Vec3)> = group.iter().filter_map(|&i| select::handle_place(k, i).map(|p| (i, p + delta))).collect();
+        move_many(k, &moves);
+    }
+    form_row(ui, tr("ui.scan_edit_along"), |ui| ui_kit::length_field(ui, &mut k.along, units, decimals));
+    if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_move"), ui_kit::Button::Normal)).clicked() && k.along.is_finite() {
+        let moves: Vec<(usize, Vec3)> = group.iter().filter_map(|&i| Some((i, select::handle_place(k, i)? + normal_of(k, i)? * k.along))).collect();
+        move_many(k, &moves);
     }
 }
 
@@ -1666,16 +1744,33 @@ fn net_tools(ui: &mut egui::Ui, k: &mut EditSurface, count: [usize; 2]) {
 /// Point (or dot) `index` put at `to`, as a drag let go there would: refitted as Refit says, and
 /// kept.
 fn move_to(k: &mut EditSurface, index: usize, to: Vec3) {
-    let made = if k.handles == HANDLES_DOTS {
-        dot_preview(k, &[(index, to)])
-    } else if base(k).is_some() {
-        preview(k, &[(index, to)]).map(|s| vec![s])
+    move_many(k, &[(index, to)]);
+}
+
+/// Points (or dots) `moves` put where they go together, as a drag let go there would, those
+/// near them going with them as the Falloff says: kept as one step.
+fn move_many(k: &mut EditSurface, moves: &[(usize, Vec3)]) {
+    let by_hand: Vec<usize> = moves.iter().map(|m| m.0).collect();
+    let soft = k.handles == HANDLES_DOTS || is_network(k);
+    let moves: Vec<(usize, Vec3)> = if soft && k.falloff > 0.0 {
+        let (start, held): (Vec<Vec3>, Vec<bool>) =
+            if k.handles == HANDLES_DOTS { (k.shown_dots.iter().map(|d| d.at).collect(), Vec::new()) } else { (k.net.clone(), k.moved.clone()) };
+        let from: Vec<(usize, Vec3)> = moves.iter().filter_map(|m| start.get(m.0).map(|p| (m.0, *p))).collect();
+        select::soft_moves(&start, &from, moves, k.falloff, &held)
     } else {
-        net_moved(k, &[(index, to)])
+        moves.to_vec()
+    };
+    let moves = moves.as_slice();
+    let made = if k.handles == HANDLES_DOTS {
+        dot_preview(k, moves)
+    } else if base(k).is_some() {
+        preview(k, moves).map(|s| vec![s])
+    } else {
+        net_moved(k, moves)
     };
     if let Some(faces) = made {
         show_faces(k, faces, false, None);
-        commit(k, &[index]);
+        commit(k, &by_hand);
     }
 }
 
@@ -1840,9 +1935,60 @@ pub(crate) fn brush_wheel(app: &mut SolveApp, ctx: &egui::Context, rect: egui::R
     crate::navigation::claim_wheel(ctx);
 }
 
+/// The wheel turned with Shift held over the view while Edit Surface has points chosen: the soft
+/// selection's radius (Falloff) grows or shrinks, and the view does not zoom. Before the camera
+/// reads the wheel.
+pub(crate) fn falloff_wheel(app: &mut SolveApp, ctx: &egui::Context, rect: egui::Rect) {
+    let over = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| rect.contains(p));
+    if !over {
+        return;
+    }
+    let Some(k) = dialog(app).filter(|k| loaded(k).is_some() && (!k.picked.is_empty() || k.drag.is_some())) else { return };
+    let line = ctx.options(|o| o.input_options.line_scroll_speed);
+    let (turned, points) = ctx.input(|i| {
+        let mut turned = false;
+        let mut points = 0.0f32;
+        for e in &i.events {
+            let egui::Event::MouseWheel { unit, delta, modifiers, phase, .. } = e else { continue };
+            if !modifiers.shift || modifiers.ctrl || modifiers.command || modifiers.alt {
+                continue;
+            }
+            turned = true;
+            if *phase == egui::TouchPhase::Move {
+                points += match unit {
+                    egui::MouseWheelUnit::Point => delta.x + delta.y,
+                    egui::MouseWheelUnit::Line => (delta.x + delta.y) * line,
+                    egui::MouseWheelUnit::Page => (delta.x + delta.y) * 400.0,
+                };
+            }
+        }
+        (turned, points)
+    });
+    if !turned {
+        return;
+    }
+    if points != 0.0 && points.is_finite() {
+        k.falloff = turned_falloff(k, f64::from(points));
+    }
+    crate::navigation::claim_wheel(ctx);
+}
+
+/// The Falloff radius after the wheel turned `points`: a tenth of the surface's size to begin
+/// with, then a quarter more or less for each ~100 points, never below nothing.
+fn turned_falloff(k: &EditSurface, points: f64) -> f64 {
+    let size = k.shown_net.first().map_or(0.0, |first| {
+        let (lo, hi) = k.shown_net.iter().fold((*first, *first), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+        (hi - lo).len()
+    });
+    let now = if k.falloff > 0.0 { k.falloff } else { 0.02 * size };
+    let next = now * (0.0025 * points).exp();
+    // Wheeled right down it is off.
+    if next.is_finite() && next >= 0.01 * size.max(1.0) { next } else { 0.0 }
+}
+
 /// Whether a handle is being dragged: the drag neither selects nor turns the view.
 pub(crate) fn holds_pointer(app: &SolveApp) -> bool {
-    matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanEditSurface(k)) if k.drag.is_some() || k.stroke)
+    matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanEditSurface(k)) if k.drag.is_some() || k.stroke || k.marquee.is_some())
 }
 
 /// The handle under `at` on the screen, if any.
@@ -1912,7 +2058,7 @@ fn distance_to_segment(p: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
 
 /// A click at `at`: chooses the handle under it, to type where its point goes; with Add Face on,
 /// takes an open edge, then the new face's far corners.
-pub(crate) fn choose(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
+pub(crate) fn choose(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, mods: egui::Modifiers) {
     if dialog(app).is_some_and(|k| k.adding.is_some()) {
         add_face_click(app, proj, at);
         return;
@@ -1957,20 +2103,31 @@ pub(crate) fn choose(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui:
         }
         return;
     }
-    if let Some(k) = dialog(app)
-        && let Some(index) = handle_at(k, proj, at)
-    {
-        k.chosen = Some(index);
+    let Some(k) = dialog(app) else { return };
+    let how = select::How::of(mods);
+    match handle_at(k, proj, at) {
+        Some(index) => select::pick(k, index, how),
+        // A click on nothing chooses nothing, unless keys held keep the choice.
+        None if !how.keeps() => select::clear(k),
+        None => {}
     }
 }
 
 /// A double-click at `at`: with Crease Edge or Remove Crease on, the shared edge under it and the
-/// edges it runs on into through the grid's corners, at once.
-pub(crate) fn double_click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
-    if let Some(k) = dialog(app).filter(|k| k.creasing.is_some())
-        && let (Some(seam), Some(crease)) = (seam_at(k, proj, at), k.creasing)
+/// edges it runs on into through the grid's corners, at once; else the face under it, all its
+/// points chosen.
+pub(crate) fn double_click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, mods: egui::Modifiers) {
+    if let Some(k) = dialog(app).filter(|k| k.creasing.is_some()) {
+        if let (Some(seam), Some(crease)) = (seam_at(k, proj, at), k.creasing) {
+            crease_chain_click(k, seam, crease);
+        }
+        return;
+    }
+    // Otherwise a double-click on a face chooses all its points.
+    if let Some(k) = dialog(app).filter(|k| k.adding.is_none() && !k.deleting && !k.keeping_half && !k.brushing)
+        && let Some(face) = face_at(k, proj, at)
     {
-        crease_chain_click(k, seam, crease);
+        select::pick_face(k, face, select::How::of(mods));
     }
 }
 
@@ -2068,7 +2225,8 @@ fn rows_for(k: &EditSurface, face: usize, side: Side) -> usize {
 /// A primary press at `at`: takes the handle under it, if any. With `copy` (Alt held) a point on
 /// an edge of the net has its edge copied beside itself first and the copy taken, to drag the
 /// surface out (QuickSurface's Alt-drag; the control net of one face).
-pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, copy: bool, brush_keys: bool) -> bool {
+pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, mods: egui::Modifiers, brush_keys: bool) -> bool {
+    let copy = mods.alt;
     let Some(k) = dialog(app) else { return false };
     if k.adding.is_some() || k.deleting || k.creasing.is_some() || k.keeping_half {
         return false;
@@ -2083,20 +2241,31 @@ pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::P
         brush_at(k, proj, at);
         return true;
     }
-    let Some(mut index) = handle_at(k, proj, at) else { return false };
+    let how = select::How::of(mods);
+    let Some(mut index) = handle_at(k, proj, at) else {
+        // A drag begun on nothing draws a box that chooses the handles in it.
+        select::begin_box(k, at, how);
+        return true;
+    };
+    // Keys that keep the choice make a press on a handle a click (it is added or taken away).
+    if how.keeps() && !copy {
+        return false;
+    }
     // A drag starts from the faces as shown (a refit the last drag made is kept).
     k.faces = k.shown.clone();
     k.net = k.shown_net.clone();
     if k.handles == HANDLES_DOTS {
         let Some(dot) = k.shown_dots.get(index).copied() else { return false };
+        let group = select::dragged_with(k, index);
+        let with: Vec<(usize, Vec3)> = group.iter().filter_map(|&i| k.shown_dots.get(i).map(|d| (i, d.at))).collect();
+        let start = Arc::new(k.shown_dots.iter().map(|d| d.at).collect::<Vec<_>>());
         // Alt on a dot of an open edge drags a new face out of that edge (QuickSurface's Alt-drag).
         let grow: Vec<(usize, Side)> = if copy {
             k.joins.open.iter().copied().filter(|&(f, side)| k.joins.side(&k.faces, f, side).contains(&index)).collect()
         } else {
             Vec::new()
         };
-        k.drag = Some(Box::new(Drag { index, from: dot.at, with: vec![(index, dot.at)], slide: None, dot: true, grow, to: None, weld: None }));
-        k.chosen = Some(index);
+        k.drag = Some(Box::new(Drag { index, from: dot.at, with, slide: None, dot: true, start, grow, to: None, weld: None }));
         return true;
     }
     if copy && let Some(count) = base(k).map(NurbsSurface::count) {
@@ -2127,9 +2296,11 @@ pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::P
         }
     }
     let count = base(k).map(NurbsSurface::count);
-    let with: Vec<(usize, Vec3)> = match (k.line, count) {
-        (Some(l), Some(c)) if l.points(c).contains(&index) => l.points(c).into_iter().filter_map(|p| k.net.get(p).map(|q| (p, *q))).collect(),
-        _ => vec![(index, k.net[index])],
+    let line = k.line.zip(count).filter(|(l, c)| l.points(*c).contains(&index));
+    let group = select::dragged_with(k, index);
+    let with: Vec<(usize, Vec3)> = match line {
+        Some((l, c)) => l.points(c).into_iter().filter_map(|p| k.net.get(p).map(|q| (p, *q))).collect(),
+        None => group.iter().filter_map(|&p| k.net.get(p).map(|q| (p, *q))).collect(),
     };
     // Sliding: the surface as it is and the point's place on it, which the pointer then moves.
     let slide = (k.drag_mode == DRAG_SLIDE && base(k).is_some())
@@ -2140,13 +2311,26 @@ pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::P
             Some(Box::new(SlideFrom { surface, at: (u, v), on }))
         })
         .flatten();
-    k.drag = Some(Box::new(Drag { index, from: k.net[index], with, slide, dot: false, grow: Vec::new(), to: None, weld: None }));
-    k.chosen = Some(index);
+    k.drag = Some(Box::new(Drag {
+        index,
+        from: k.net[index],
+        with,
+        slide,
+        dot: false,
+        start: Arc::new(k.net.clone()),
+        grow: Vec::new(),
+        to: None,
+        weld: None,
+    }));
     true
 }
 
 /// The handle dragged to `to` on the screen.
 pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, to: egui::Pos2) {
+    if let Some(k) = dialog(app).filter(|k| k.marquee.is_some()) {
+        select::drag_box(k, proj, to);
+        return;
+    }
     if let Some(k) = dialog(app).filter(|k| k.stroke) {
         brush_at(k, proj, to);
         return;
@@ -2230,6 +2414,14 @@ pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, to: egui
     let moves: Vec<(usize, Vec3)> = match weld.and_then(|w| k.shown_net.get(w).copied()) {
         Some(onto) => moves.into_iter().map(|(i, p)| if i == drag.index { (i, onto) } else { (i, p) }).collect(),
         None => moves,
+    };
+    // A soft selection: the points near those dragged go with them, less the further they are. (The
+    // control net of one face does it by itself.)
+    let moves = if drag.dot || is_network(k) {
+        let held: Vec<bool> = if drag.dot { Vec::new() } else { k.moved.clone() };
+        select::soft_moves(&drag.start, &drag.with, &moves, k.falloff, &held)
+    } else {
+        moves
     };
     let around: Vec<usize> = moves.iter().map(|m| m.0).collect();
     let made = if drag.dot {
@@ -2315,6 +2507,10 @@ fn weld(k: &mut EditSurface, point: usize, onto: usize) {
 /// face dragged out of an open edge is added, out to where the edge was taken; a corner let go
 /// on another corner is welded to it.
 pub(crate) fn release(app: &mut SolveApp) {
+    if let Some(k) = dialog(app).filter(|k| k.marquee.is_some()) {
+        select::end_box(k);
+        return;
+    }
     // A stroke of the brush ends: the faces as brushed are kept, measured again on every point.
     if let Some(k) = dialog(app).filter(|k| k.stroke) {
         k.stroke = false;
@@ -2535,7 +2731,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     }
     let moved_fill = crate::theme::model_color(t.analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8));
     let fill_of = |i: usize, on_line: bool| {
-        if k.chosen == Some(i) {
+        if k.chosen == Some(i) || k.picked.contains(&i) {
             t.accent
         } else if on_line {
             t.accent_soft
@@ -2578,6 +2774,26 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
                 painter.rect_filled(rect.expand(CASING / 2.0 + 0.5), 1.5, casing());
                 painter.rect_filled(rect, 1.0, fill_of(i, on_line));
             }
+        }
+    }
+    // Points chosen ringed; the box being drawn; the soft selection's circle round the choice.
+    for &i in &k.picked {
+        if let Some(s) = select::handle_place(k, i).and_then(|p| proj.to_screen(p)) {
+            painter.circle_stroke(s, HANDLE + 2.5, egui::Stroke::new(1.5, t.accent));
+        }
+    }
+    if let Some(m) = &k.marquee {
+        painter.rect_filled(m.rect(), 0.0, t.accent.gamma_multiply(0.15));
+        painter.rect_stroke(m.rect(), 0.0, egui::Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+    }
+    if k.falloff > 0.0
+        && let Some(c) = select::centre(k)
+        && let Some(mid) = proj.to_screen(c)
+    {
+        let n = proj.cam.back();
+        let side = n.cross(if n.x.abs() < 0.9 { Vec3::X } else { Vec3::Y }).normalized().unwrap_or(Vec3::X);
+        if let Some(edge) = proj.to_screen(c + side * k.falloff) {
+            painter.circle_stroke(mid, mid.distance(edge), egui::Stroke::new(1.0, t.accent_soft));
         }
     }
     // Symmetry: the plane as a sheet over the Free Form, and the points on it ringed.
@@ -3301,6 +3517,98 @@ mod tests {
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
     }
+    /// Several points chosen at once: a click chooses one, Shift-click adds one, a box drawn on
+    /// nothing chooses those inside it, and a drag of one chosen point moves them all by the same
+    /// amount; a soft selection takes its neighbours along, less the further they are.
+    #[test]
+    fn several_points_can_be_chosen_and_dragged_together() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]], "count": 6})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        if let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.snap = SNAP_OFF;
+        }
+        let dots = kind(&h).shown_dots.clone();
+        let world = |i: usize| json!({"world": [dots[i].at.x, dots[i].at.y, dots[i].at.z]});
+        let (a, b) = (2 * 6 + 2, 3 * 6 + 3);
+        h.step(&json!({"click": world(a)})).unwrap();
+        assert_eq!(kind(&h).picked.iter().copied().collect::<Vec<_>>(), vec![a], "a click chooses one");
+        h.step(&json!({"click": world(b), "shift": true})).unwrap();
+        assert_eq!(kind(&h).picked.iter().copied().collect::<Vec<_>>(), vec![a, b], "Shift adds one");
+        h.step(&json!({"click": world(a), "ctrl": true})).unwrap();
+        assert_eq!(kind(&h).picked.iter().copied().collect::<Vec<_>>(), vec![b], "Ctrl takes one away");
+        // A box from outside the net to between the dots (a, b chosen again by the box).
+        let corner = |x: f64, y: f64| json!({"world": [x, y, 0.0]});
+        let (lo, hi) = (dots[a].at, dots[b].at);
+        let (x0, y0, x1, y1) = (lo.x.min(hi.x) - 1.0, lo.y.min(hi.y) - 1.0, lo.x.max(hi.x) + 1.0, lo.y.max(hi.y) + 1.0);
+        h.step(&json!({"drag": [corner(x0, y0), corner(x1, y1)], "steps": 4})).unwrap();
+        h.frames(2);
+        let k = kind(&h);
+        assert!(k.marquee.is_none() && k.drag.is_none(), "the box is over");
+        assert!(k.picked.contains(&a) && k.picked.contains(&b), "the box chose the points inside it: {:?}", k.picked);
+        assert!(k.picked.len() < dots.len(), "but not all");
+        // Dragging one chosen point moves all of them by the same amount.
+        let chosen: Vec<usize> = k.picked.iter().copied().collect();
+        let (from, to) = (dots[a].at, dots[a].at + Vec3::new(0.0, 4.0, 0.0));
+        h.step(&json!({"drag": [{"world": [from.x, from.y, from.z]}, {"world": [to.x, to.y, to.z]}], "steps": 6})).unwrap();
+        h.frames(2);
+        let after = kind(&h).clone();
+        for &i in &chosen {
+            assert!(after.moved[i], "point {i} moved by hand");
+        }
+        let rise = |i: usize| after.shown_dots[i].at.y - dots[i].at.y;
+        assert!(
+            chosen.iter().all(|&i| (rise(i) - rise(a)).abs() < 0.3),
+            "they moved together: {:?}",
+            chosen.iter().map(|&i| rise(i)).collect::<Vec<_>>()
+        );
+        assert!(rise(a) > 2.0, "and moved: {}", rise(a));
+        // Choosing all, then none.
+        if let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            select::all(k);
+            assert_eq!(k.picked.len(), 36);
+            select::clear(k);
+            assert!(k.picked.is_empty() && k.chosen.is_none());
+        }
+    }
+
+    /// The shape tools on the points chosen: Constrain to a plane puts them all in one plane, a
+    /// shape needing more points than are chosen says so, a pattern whose copies do not touch is
+    /// refused in words, and Suggest Refinement answers either way.
+    #[test]
+    fn the_shape_tools_hold_chosen_points_to_a_plane_and_refuse_what_cannot_be_made() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]], "count": 6})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) else { panic!("the dialog") };
+        k.snap = SNAP_OFF;
+        select::all(k);
+        assert_eq!(k.picked.len(), 36);
+        let flat_before = k.shown_dots.iter().map(|d| d.at.z).fold((f64::MAX, f64::MIN), |(lo, hi), z| (lo.min(z), hi.max(z)));
+        shape::constrain_to(k, Some(solidcraft_engine::cmd::scan::surface::constrain::Kind::Plane), 0.0).unwrap();
+        let zs: Vec<f64> = k.shown_dots.iter().map(|d| d.at.z).collect();
+        let spread = zs.iter().cloned().fold(f64::MIN, f64::max) - zs.iter().cloned().fold(f64::MAX, f64::min);
+        assert!(flat_before.1 - flat_before.0 > 1.0 && spread < 0.5, "the dome flattened: {flat_before:?} → {spread}");
+        assert!(k.shape.note.is_some(), "what was held to is said");
+        // Two points are too few for a cylinder.
+        select::clear(k);
+        select::pick_many(k, &[0, 1], select::How::Add);
+        let few = shape::constrain_to(k, Some(solidcraft_engine::cmd::scan::surface::constrain::Kind::Cylinder), 0.0).unwrap_err();
+        assert!(!few.is_empty(), "refused in words");
+        // Copies that do not touch are refused, not crashed on.
+        k.shape.step = 500.0;
+        assert!(shape::repeated_for_test(k, false).is_err());
+    }
+
     /// Symmetry chosen on a half modelled on one side of the dome's mirror plane mirrors it into
     /// one Free Form joined on the plane; a point moved takes its twin to the mirror image; Undo
     /// Last Change takes the mirroring back and turns Symmetry off; chosen again, OK keeps both
