@@ -81,6 +81,14 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                             ui_kit::help_icon(ui, note);
                         }
                     });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.edit_surface_brush_keys_note");
+                        let response = setting::edit_surface_brush_keys(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:edit_surface_brush_keys", response.rect);
+                        if !crate::prefs_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
                 });
                 create_row(ui, app.tr("prefs.design_tools.placement_group"), &["rest", "boss", "snap_fit"], false, |ui| {
                     ui.horizontal_wrapped(|ui| {

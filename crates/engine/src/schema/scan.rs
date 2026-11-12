@@ -498,7 +498,7 @@ pub struct ScanEditSurfaceParams {
     pub faces: Option<Vec<ScanNet>>,
     /// Shared edges of a Free Form of several faces made sharp: the faces are no longer held
     /// tangent across each, and the points near it are fitted to the scan again, so they take the
-    /// scan's edge there. A crease is kept by the faces meeting at an angle. Given alone, or with
+    /// scan's edge there. The design keeps a crease where the faces still meet smoothly. Given alone, or with
     /// `uncrease`.
     #[serde(default)]
     pub crease: Option<Vec<ScanEdgePick>>,
@@ -510,11 +510,34 @@ pub struct ScanEditSurfaceParams {
     /// each are evened out, more toward its middle, and kept on the scan. Given alone.
     #[serde(default)]
     pub brush: Option<ScanBrush>,
-    /// With `dots`: the plane the Free Form is a mirror image in (`YZ`, `XZ`, `XY`, a construction
-    /// plane's name such as Find Symmetry's `Symmetry Plane`, or `{point, normal}`): each dot's
-    /// twin moves to the mirror image of where it goes, a dot on the plane stays on it, and the
-    /// Free Form is kept an exact mirror image. A Free Form that is not one is refused
-    /// (`scan.mirror_free_form` mirrors a half).
+    /// The Free Form smoothed as a whole (Edit Surface's Smooth): `true` or {strength, passes,
+    /// snap}. Given alone.
+    #[serde(default)]
+    pub smooth: Option<Value>,
+    /// A face of a Free Form of several faces taken away (with Symmetry its mirror image too); the
+    /// last face, and one between others, stay. Given alone.
+    #[serde(default)]
+    pub delete_face: Option<ScanFacePick>,
+    /// A corner on the Free Form's edge dropped onto another: the two are one point, and two open
+    /// sides whose ends then meet are sewn into one shared edge (held tangent where the faces go on
+    /// from each other). Given alone.
+    #[serde(default)]
+    pub weld: Option<ScanWeld>,
+    /// Symmetry turned off keeping one half: the faces on the far side of the plane taken away.
+    /// Given alone.
+    #[serde(default)]
+    pub keep_half: Option<ScanKeepHalf>,
+    /// With `faces`: the shared edges creased or held smooth by hand among them, kept in the design
+    /// (Edit Surface's OK sends them). Default: the edges the design keeps.
+    #[serde(default)]
+    pub kept_edges: Option<ScanKeptEdges>,
+    /// The plane the Free Form is kept a mirror image in (`YZ`, `XZ`, `XY`, a construction plane's
+    /// name such as Find Symmetry's `Symmetry Plane`, `{point, normal}`, or `none`), with an edit
+    /// of a Free Form of several faces: each dot's twin moves to the mirror image of where it goes,
+    /// a dot on the plane stays on it, and the Free Form is kept an exact mirror image; the design
+    /// keeps the plane. Default: the plane the design keeps for the Free Form (Mirror Free Form).
+    /// A plane the Free Form is not a mirror image in is refused (`scan.mirror_free_form` mirrors
+    /// a half).
     #[serde(default)]
     pub symmetry: Option<Value>,
 }
@@ -591,6 +614,70 @@ pub struct ScanEdgePick {
     /// Or: the edge whose ends are these (either way round).
     #[serde(default)]
     pub edge: Option<[Point3; 2]>,
+    /// The edge and the edges it runs on into, through the corners where four faces meet as a
+    /// grid's do, to the Free Form's edge or a corner of other than four faces (a double-click in
+    /// Edit Surface). Default: false.
+    #[serde(default)]
+    pub chain: Option<bool>,
+}
+
+/// Smooth a Free Form as a whole: every point but its own corners and the corners where faces meet
+/// unevenly straightens its rows and columns.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanSmooth {
+    /// How hard, above 0 and at most 1 (default 0.5).
+    #[serde(default)]
+    pub strength: Option<f64>,
+    /// How many times, 1 to 20 (default 1).
+    #[serde(default)]
+    pub passes: Option<u32>,
+    /// Whether the surface is kept on the scan (default true); off, it is faired.
+    #[serde(default)]
+    pub snap: Option<bool>,
+}
+
+/// A face of a Free Form, by a place near it.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanFacePick {
+    /// The face that comes nearest this place (within the reach).
+    pub at: Point3,
+}
+
+/// A corner on a Free Form's edge dropped onto another.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanWeld {
+    /// The corner on the Free Form's edge nearest this place (within the reach) moves.
+    pub at: Point3,
+    /// Onto the other corner on its edge nearest this place (within the reach).
+    pub onto: Point3,
+}
+
+/// Keep one half of a Free Form that is a mirror image of itself.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanKeepHalf {
+    /// A place on the side of the plane whose half stays.
+    pub side: Point3,
+    /// The plane (`YZ`, `XZ`, `XY`, a construction plane's name, or `{point, normal}`). Default:
+    /// the plane the design keeps for the Free Form.
+    #[serde(default)]
+    pub plane: Option<Value>,
+}
+
+/// The shared edges of a Free Form held otherwise than the angle its faces meet at says, each by
+/// its two ends.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanKeptEdges {
+    /// Creases though the faces meet smoothly.
+    #[serde(default)]
+    pub creases: Option<Vec<[Point3; 2]>>,
+    /// Held tangent though the faces meet at an angle.
+    #[serde(default)]
+    pub smooths: Option<Vec<[Point3; 2]>>,
 }
 
 /// A point on a surface moved: the surface at a control point's place on it (one for each control
@@ -637,6 +724,11 @@ pub struct ScanAddFaceParams {
     /// The scan. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// The plane the Free Form is kept a mirror image in (`YZ`, `XZ`, `XY`, a construction plane's
+    /// name, `{point, normal}`, or `none`): the face's mirror image is added too. Default: the
+    /// plane the design keeps for the Free Form (Mirror Free Form, Edit Surface's Symmetry), if any.
+    #[serde(default)]
+    pub symmetry: Option<Value>,
 }
 
 /// What `scan.add_face` returns.
@@ -647,6 +739,9 @@ pub struct ScanAddFaceResult {
     pub faces: usize,
     /// The new face (its place among the faces, from 0) and its points each way.
     pub face: usize,
+    /// With Symmetry: the face added as its mirror image (its place among the faces).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub twin: Option<usize>,
     pub controls: [usize; 2],
     /// The scan, and how far its points under the new face are from it (root mean square and
     /// largest, mm).
@@ -980,6 +1075,9 @@ pub struct ScanEditSurfaceResult {
     pub faces: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creases: Option<usize>,
+    /// `weld`: how many pairs of open sides were sewn into shared edges.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sewn: Option<usize>,
     /// The Import feature that keeps the surface.
     pub feature: u64,
     /// In the warn parameter-check mode: what the call's parameters got wrong.

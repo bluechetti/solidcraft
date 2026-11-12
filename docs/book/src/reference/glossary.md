@@ -269,9 +269,11 @@ tangent as the surface is edited. A face is added on an *open edge* (a side no o
 The points a user drags lie on the surface; the control net behind them is shown on request.
 Compare *irregular corner*.
 
-- **In SolidCraft:** `scan.free_form`, `scan.add_face`, `scan.wrap_surface`; `scan.edit_surface`
-  (`dots`, `neighbours`, `faces`); New Free Form, Add Face, Points on the surface and Control
-  net in the Edit Surface dialog; bodies `FreeForm1`, `FreeForm2`, ….
+- **In SolidCraft:** `scan.free_form`, `scan.add_face`, `scan.wrap_surface`,
+  `scan.mirror_free_form`; `scan.edit_surface` (`dots`, `neighbours`, `faces`, `crease`, `smooth`,
+  `delete_face`, `weld`, `keep_half`, `symmetry`); New Free Form, Add Face, Points on the surface
+  and Control net in the Edit Surface dialog; bodies `FreeForm1`, `FreeForm2`, …; the design
+  file's `free_forms` (the edges creased or held smooth by hand, the symmetry plane).
 - **Don't use:** patch network, quad cage, T-spline, subdivision surface (for the Free Form itself).
 - **Elsewhere:** freeform, quad surface, patch network, NURBS patch layout.
 - **For translators:** a kind of surface the user makes, not "free shape" in general.
@@ -562,6 +564,20 @@ A program that shows web pages, such as the one that runs SolidCraft's web build
 - **Don't use:** browser on its own.
 - **For translators:** not the *browser* panel. Where a language uses one word for both, use the
   CAD word for the panel.
+
+### weld (Free Form corners)
+
+Two corners on a *Free Form*'s edge made one point, by dropping one on the other.
+
+When the corners at both ends of two open sides have been welded, and the sides have as many
+points, the two sides are sewn into one shared edge: the faces meet there exactly, held tangent
+where they go on from each other.
+
+- **In SolidCraft:** the `weld` parameter of `scan.edit_surface` and its `sewn` reply; dropping a
+  corner on another in the Edit Surface dialog.
+- **Don't use:** merge, snap, join (for two corners made one).
+- **Elsewhere:** weld vertices, merge vertices, stitch.
+- **For translators:** not welding metal parts together.
 
 ## Words with more than one meaning
 

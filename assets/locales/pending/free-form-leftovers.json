@@ -1,0 +1,90 @@
+{
+  "en": {
+    "prefs.edit_surface_brush_keys": "Smoothing Brush on Ctrl+Shift in Edit Surface",
+    "prefs.edit_surface_brush_keys_note": "In Edit Surface, hold Ctrl+Shift and drag to smooth the surface under the brush's circle, without turning the Smoothing Brush on, and turn the wheel with Ctrl+Shift held to size the circle. Off: Ctrl+Shift drags and the wheel with Ctrl+Shift do what they do elsewhere (the wheel zooms), as before.",
+    "ui.scan_edit_brush_keys_hint": "Hold Ctrl+Shift and drag to smooth the points under the circle; Ctrl+Shift and the wheel size it.",
+    "ui.scan_edit_keep_half": "Keep One Half",
+    "ui.scan_edit_keep_half_hint": "Click a face of the half to keep: the faces on the other side of the plane are taken away.",
+    "ui.scan_edit_sewn": "Welded: the sides whose ends meet are one shared edge now.",
+    "ui.scan_edit_symmetry_kept": "Kept plane",
+    "ui.scan_edit_symmetry_off": "Symmetry is off: both halves stay and are edited apart. Keep One Half takes one side away.",
+    "ui.scan_edit_welded": "Welded: the two corners are one point now."
+  },
+  "de": {
+    "prefs.edit_surface_brush_keys": "Glättungspinsel auf Strg+Umschalt in Fläche bearbeiten",
+    "prefs.edit_surface_brush_keys_note": "Halten Sie in Fläche bearbeiten Strg+Umschalt und ziehen Sie, um die Fläche unter dem Pinselkreis zu glätten, ohne den Glättungspinsel einzuschalten; drehen Sie das Mausrad mit Strg+Umschalt, um den Kreis zu vergrößern oder zu verkleinern. Aus: Ziehen mit Strg+Umschalt und das Mausrad mit Strg+Umschalt tun, was sie sonst tun (das Rad zoomt), wie zuvor.",
+    "ui.scan_edit_brush_keys_hint": "Halten Sie Strg+Umschalt und ziehen Sie, um die Punkte unter dem Kreis zu glätten; Strg+Umschalt und das Mausrad ändern seine Größe.",
+    "ui.scan_edit_keep_half": "Eine Hälfte behalten",
+    "ui.scan_edit_keep_half_hint": "Klicken Sie auf eine Fläche der Hälfte, die bleiben soll: Die Flächen auf der anderen Seite der Ebene werden entfernt.",
+    "ui.scan_edit_sewn": "Verschweißt: Die Seiten, deren Enden sich treffen, sind jetzt eine gemeinsame Kante.",
+    "ui.scan_edit_symmetry_kept": "Gespeicherte Ebene",
+    "ui.scan_edit_symmetry_off": "Symmetrie ist aus: Beide Hälften bleiben und werden getrennt bearbeitet. Eine Hälfte behalten entfernt eine Seite.",
+    "ui.scan_edit_welded": "Verschweißt: Die beiden Ecken sind jetzt ein Punkt."
+  },
+  "ja": {
+    "prefs.edit_surface_brush_keys": "サーフェスを編集で Ctrl+Shift にスムージングブラシ",
+    "prefs.edit_surface_brush_keys_note": "サーフェスを編集で Ctrl+Shift を押しながらドラッグすると、スムージングブラシをオンにしなくても円の下のサーフェスを滑らかにします。Ctrl+Shift を押しながらホイールを回すと円の大きさを変えます。オフ: 以前のように、Ctrl+Shift でのドラッグと Ctrl+Shift でのホイールは他の場所と同じ動作になります（ホイールはズーム）。",
+    "ui.scan_edit_brush_keys_hint": "Ctrl+Shift を押しながらドラッグすると円の下の点を滑らかにします。Ctrl+Shift とホイールで大きさを変えます。",
+    "ui.scan_edit_keep_half": "片側を残す",
+    "ui.scan_edit_keep_half_hint": "残す側の面をクリックします。平面の反対側の面は取り除かれます。",
+    "ui.scan_edit_sewn": "溶接しました: 端が一致した辺は 1 本の共有エッジになりました。",
+    "ui.scan_edit_symmetry_kept": "保存された平面",
+    "ui.scan_edit_symmetry_off": "対称はオフです: 両側が残り、別々に編集されます。片側を残すで一方を取り除けます。",
+    "ui.scan_edit_welded": "溶接しました: 2 つのコーナーは 1 つの点になりました。"
+  },
+  "ko": {
+    "prefs.edit_surface_brush_keys": "표면 편집에서 Ctrl+Shift로 스무딩 브러시",
+    "prefs.edit_surface_brush_keys_note": "표면 편집에서 Ctrl+Shift를 누른 채 끌면 스무딩 브러시를 켜지 않아도 원 아래의 표면을 매끄럽게 하고, Ctrl+Shift를 누른 채 휠을 돌리면 원의 크기를 바꿉니다. 끔: 이전처럼 Ctrl+Shift 끌기와 Ctrl+Shift 휠은 다른 곳에서와 같이 동작합니다(휠은 확대/축소).",
+    "ui.scan_edit_brush_keys_hint": "Ctrl+Shift를 누른 채 끌면 원 아래의 점을 매끄럽게 합니다. Ctrl+Shift와 휠로 크기를 바꿉니다.",
+    "ui.scan_edit_keep_half": "한쪽 절반 유지",
+    "ui.scan_edit_keep_half_hint": "남길 절반의 면을 클릭하세요. 평면 반대쪽의 면은 제거됩니다.",
+    "ui.scan_edit_sewn": "용접됨: 끝이 만나는 변은 이제 하나의 공유 모서리입니다.",
+    "ui.scan_edit_symmetry_kept": "저장된 평면",
+    "ui.scan_edit_symmetry_off": "대칭이 꺼졌습니다. 두 절반은 남아 따로 편집됩니다. 한쪽 절반 유지로 한쪽을 제거할 수 있습니다.",
+    "ui.scan_edit_welded": "용접됨: 두 꼭짓점은 이제 하나의 점입니다."
+  },
+  "zh": {
+    "prefs.edit_surface_brush_keys": "在编辑曲面中按 Ctrl+Shift 使用平滑笔刷",
+    "prefs.edit_surface_brush_keys_note": "在编辑曲面中按住 Ctrl+Shift 拖动，无需打开平滑笔刷即可平滑圆圈下的曲面；按住 Ctrl+Shift 转动滚轮可调整圆圈大小。关闭：像以前一样，Ctrl+Shift 拖动和 Ctrl+Shift 滚轮与其他地方相同（滚轮缩放）。",
+    "ui.scan_edit_brush_keys_hint": "按住 Ctrl+Shift 拖动可平滑圆圈下的点；Ctrl+Shift 加滚轮调整其大小。",
+    "ui.scan_edit_keep_half": "保留一半",
+    "ui.scan_edit_keep_half_hint": "单击要保留的那一半上的面：平面另一侧的面将被移除。",
+    "ui.scan_edit_sewn": "已焊接：两端相合的边现在是一条共享边。",
+    "ui.scan_edit_symmetry_kept": "已保存的平面",
+    "ui.scan_edit_symmetry_off": "对称已关闭：两半都保留并分别编辑。保留一半可移除一侧。",
+    "ui.scan_edit_welded": "已焊接：两个角点现在是一个点。"
+  },
+  "ar": {
+    "prefs.edit_surface_brush_keys": "فرشاة التنعيم على Ctrl+Shift في تحرير السطح",
+    "prefs.edit_surface_brush_keys_note": "في تحرير السطح، اضغط Ctrl+Shift واسحب لتنعيم السطح تحت دائرة الفرشاة دون تشغيل فرشاة التنعيم، وأدر العجلة مع Ctrl+Shift لتغيير حجم الدائرة. عند الإيقاف: يفعل السحب مع Ctrl+Shift والعجلة مع Ctrl+Shift ما يفعلانه في غير ذلك (العجلة تكبّر وتصغّر)، كما كان.",
+    "ui.scan_edit_brush_keys_hint": "اضغط Ctrl+Shift واسحب لتنعيم النقاط تحت الدائرة؛ Ctrl+Shift مع العجلة يغيّر حجمها.",
+    "ui.scan_edit_keep_half": "الإبقاء على نصف واحد",
+    "ui.scan_edit_keep_half_hint": "انقر وجهًا من النصف الذي يبقى: تُزال الأوجه على الجانب الآخر من المستوى.",
+    "ui.scan_edit_sewn": "تم اللحام: الجوانب التي تلتقي أطرافها صارت حافة مشتركة واحدة.",
+    "ui.scan_edit_symmetry_kept": "المستوى المحفوظ",
+    "ui.scan_edit_symmetry_off": "التماثل متوقف: يبقى النصفان ويُحرَّران كلٌّ على حدة. الإبقاء على نصف واحد يزيل جانبًا.",
+    "ui.scan_edit_welded": "تم اللحام: صارت الزاويتان نقطة واحدة."
+  },
+  "he": {
+    "prefs.edit_surface_brush_keys": "מברשת החלקה ב-Ctrl+Shift בעריכת משטח",
+    "prefs.edit_surface_brush_keys_note": "בעריכת משטח, החזיקו Ctrl+Shift וגררו כדי להחליק את המשטח שמתחת לעיגול המברשת בלי להפעיל את מברשת ההחלקה, וסובבו את הגלגלת עם Ctrl+Shift כדי לשנות את גודל העיגול. כבוי: גרירה עם Ctrl+Shift והגלגלת עם Ctrl+Shift עושות מה שהן עושות במקום אחר (הגלגלת מזיזה זום), כמו קודם.",
+    "ui.scan_edit_brush_keys_hint": "החזיקו Ctrl+Shift וגררו כדי להחליק את הנקודות שמתחת לעיגול; Ctrl+Shift והגלגלת משנים את גודלו.",
+    "ui.scan_edit_keep_half": "שמירת חצי אחד",
+    "ui.scan_edit_keep_half_hint": "לחצו על פאה של החצי שנשאר: הפאות בצד השני של המישור יוסרו.",
+    "ui.scan_edit_sewn": "רותך: הצלעות שקצותיהן נפגשים הן עכשיו קצה משותף אחד.",
+    "ui.scan_edit_symmetry_kept": "מישור שמור",
+    "ui.scan_edit_symmetry_off": "הסימטריה כבויה: שני החצאים נשארים ונערכים בנפרד. שמירת חצי אחד מסירה צד אחד.",
+    "ui.scan_edit_welded": "רותך: שתי הפינות הן עכשיו נקודה אחת."
+  },
+  "vi": {
+    "prefs.edit_surface_brush_keys": "Cọ làm mịn bằng Ctrl+Shift trong Sửa bề mặt",
+    "prefs.edit_surface_brush_keys_note": "Trong Sửa bề mặt, giữ Ctrl+Shift và kéo để làm mịn bề mặt dưới vòng tròn của cọ mà không cần bật Cọ làm mịn, và xoay bánh xe khi giữ Ctrl+Shift để đổi cỡ vòng tròn. Tắt: kéo với Ctrl+Shift và bánh xe với Ctrl+Shift làm như ở chỗ khác (bánh xe thu phóng), như trước.",
+    "ui.scan_edit_brush_keys_hint": "Giữ Ctrl+Shift và kéo để làm mịn các điểm dưới vòng tròn; Ctrl+Shift và bánh xe đổi cỡ của nó.",
+    "ui.scan_edit_keep_half": "Giữ một nửa",
+    "ui.scan_edit_keep_half_hint": "Bấm một mặt của nửa cần giữ: các mặt ở phía bên kia mặt phẳng sẽ bị bỏ.",
+    "ui.scan_edit_sewn": "Đã hàn: các cạnh có đầu gặp nhau giờ là một cạnh chung.",
+    "ui.scan_edit_symmetry_kept": "Mặt phẳng đã lưu",
+    "ui.scan_edit_symmetry_off": "Đối xứng đã tắt: cả hai nửa được giữ và sửa riêng. Giữ một nửa sẽ bỏ một bên.",
+    "ui.scan_edit_welded": "Đã hàn: hai góc giờ là một điểm."
+  }
+}

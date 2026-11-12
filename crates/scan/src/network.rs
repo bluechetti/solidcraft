@@ -6,8 +6,10 @@
 //! where they met sharply (a crease) only the side is held.
 //!
 //! The network is read from its faces alone ([`joins`]): points of different faces that are in
-//! the same place are one point. So a network is kept as nothing but its faces (a sewn surface
-//! body), and a design keeps no list of welds.
+//! the same place are one point. So a network is kept as its faces (a sewn surface body), a
+//! corner dropped on another is welded by being put in its place ([`welded`]), and a design keeps
+//! only the seams creased or held smooth by hand where the faces' angle reads them otherwise
+//! ([`held_by_hand`], read back with [`joins_keeping`]).
 //!
 //! An edit is least squares over the points that may move ([`moved`]): places on the faces put
 //! where they go (a point dragged, the points round it held where they are, scan places to fit),
@@ -1380,6 +1382,163 @@ pub fn refit_near_seam(faces: &[NurbsSurface], joins: &Joins, seam: usize, scan:
     Some(faces)
 }
 
+/// Whether the edge with ends `a` and `b` is `e` (either way round), each end within `tolerance`.
+fn same_ends(e: &(Vec3, Vec3), a: Vec3, b: Vec3, tolerance: f64) -> bool {
+    (e.0.dist(a) <= tolerance && e.1.dist(b) <= tolerance) || (e.0.dist(b) <= tolerance && e.1.dist(a) <= tolerance)
+}
+
+/// How far two ends may be apart and still name the same seam: a millionth of the network's size.
+pub fn ends_tolerance(faces: &[NurbsSurface]) -> f64 {
+    let all: Vec<Vec3> = faces.iter().flat_map(points).collect();
+    let Some(first) = all.first().copied() else { return 1e-9 };
+    let (lo, hi) = all.iter().fold((first, first), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+    (1e-6 * hi.dist(lo)).max(1e-9)
+}
+
+/// How `faces` join ([`joins`]), with the seams creased by hand (`creases`, each by its ends) held
+/// creases and those made smooth by hand (`smooths`) held tangent, whatever angle the faces meet at
+/// now: a seam's ends within `tolerance` of a kept edge's are that edge.
+pub fn joins_keeping(faces: &[NurbsSurface], creases: &[(Vec3, Vec3)], smooths: &[(Vec3, Vec3)], tolerance: f64) -> Result<Joins, NetworkError> {
+    let mut joins = joins(faces)?;
+    if creases.is_empty() && smooths.is_empty() {
+        return Ok(joins);
+    }
+    for i in 0..joins.seams.len() {
+        let Some((a, b)) = seam_ends(faces, &joins, i) else { continue };
+        if creases.iter().any(|e| same_ends(e, a, b, tolerance)) {
+            joins = without_tangency(&joins, i);
+        } else if smooths.iter().any(|e| same_ends(e, a, b, tolerance)) {
+            joins = with_tangency(faces, &joins, i);
+        }
+    }
+    Ok(joins)
+}
+
+/// The seams whose join `joins` holds otherwise than the faces' angle reads it ([`joins`]), each by
+/// its ends: those creased though the faces meet smoothly, and those held tangent though they meet
+/// at an angle. What a design keeps of a Free Form besides its faces.
+pub fn held_by_hand(faces: &[NurbsSurface], joins: &Joins) -> (Vec<(Vec3, Vec3)>, Vec<(Vec3, Vec3)>) {
+    let Ok(read) = self::joins(faces) else { return (Vec::new(), Vec::new()) };
+    let tolerance = ends_tolerance(faces);
+    let (now, read_creased) = (creased(joins), creased(&read));
+    let (mut creases, mut smooths) = (Vec::new(), Vec::new());
+    for (i, sharp) in now.iter().enumerate() {
+        let Some((a, b)) = seam_ends(faces, joins, i) else { continue };
+        let Some(r) = seam_between(faces, &read, a, b, tolerance) else { continue };
+        match (sharp, read_creased.get(r).copied().unwrap_or(*sharp)) {
+            (true, false) => creases.push((a, b)),
+            (false, true) => smooths.push((a, b)),
+            _ => {}
+        }
+    }
+    (creases, smooths)
+}
+
+/// The seams that run on from seam `seam` through the corners at its ends, `seam` first: at a
+/// corner where four faces meet as a grid's do, the seam on the far side (the one that shares no
+/// face with this one); the chain stops at a corner of other than four faces, at the network's
+/// edge, and where it comes back round to its start.
+pub fn crease_chain(faces: &[NurbsSurface], joins: &Joins, seam: usize) -> Vec<usize> {
+    let Some(&first) = joins.seams.get(seam) else { return Vec::new() };
+    let ends = |i: usize| -> Option<(usize, usize)> {
+        let s = joins.seams.get(i)?;
+        let ids = joins.side(faces, s.a, s.a_side);
+        Some((*ids.first()?, *ids.last()?))
+    };
+    let regular: std::collections::HashSet<usize> = joins.corners.iter().filter(|c| !c.border && c.faces == 4).map(|c| c.point).collect();
+    let mut chain = vec![seam];
+    let Some((start_a, start_b)) = ends(seam) else { return chain };
+    // Each way from the seam's two ends.
+    for start in [start_a, start_b] {
+        let (mut at, mut from, mut faces_of) = (start, seam, [first.a, first.b]);
+        while regular.contains(&at) {
+            let next: Vec<usize> = (0..joins.seams.len())
+                .filter(|&t| t != from)
+                .filter(|&t| ends(t).is_some_and(|(p, q)| p == at || q == at))
+                .filter(|&t| {
+                    let s = joins.seams[t];
+                    !faces_of.contains(&s.a) && !faces_of.contains(&s.b)
+                })
+                .collect();
+            let [t] = next.as_slice() else { break };
+            if chain.contains(t) {
+                break;
+            }
+            chain.push(*t);
+            let Some((p, q)) = ends(*t) else { break };
+            at = if p == at { q } else { p };
+            from = *t;
+            faces_of = [joins.seams[*t].a, joins.seams[*t].b];
+        }
+    }
+    chain
+}
+
+/// What [`welded`] made: the faces, and the open sides it sewed into seams, each by its ends.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Welded {
+    pub faces: Vec<NurbsSurface>,
+    pub sewn: Vec<(Vec3, Vec3)>,
+}
+
+/// Network point `point` (a corner on the network's edge) put exactly at `onto` (another such
+/// corner, or a place on an open side), as a corner dropped on another is: the two are one point
+/// from then on, and two open sides of the same number of points whose ends now meet, either way
+/// round, are sewn into one shared side, each pair of their points put at its middle. `None` for a
+/// point that is not there or a place that is not one.
+pub fn welded(faces: &[NurbsSurface], joins: &Joins, point: usize, onto: Vec3) -> Option<Welded> {
+    if point >= joins.len() || !onto.is_finite() {
+        return None;
+    }
+    let mut places = network_points(faces, joins);
+    places[point] = onto;
+    let mut faces = with_network_points(faces, joins, &places)?;
+    let tolerance = ends_tolerance(&faces);
+    let mut sewn = Vec::new();
+    // Sew one pair at a time, reading the network again: a sewn pair changes which sides are open.
+    for _ in 0..8 {
+        let j = self::joins(&faces).ok()?;
+        let places = network_points(&faces, &j);
+        let ends = |&(f, s): &(usize, Side)| -> Option<(Vec<usize>, Vec3, Vec3)> {
+            let ids = j.side(&faces, f, s);
+            let (a, b) = (*places.get(*ids.first()?)?, *places.get(*ids.last()?)?);
+            Some((ids, a, b))
+        };
+        let mut pair = None;
+        'search: for (n, x) in j.open.iter().enumerate() {
+            let Some((ix, xa, xb)) = ends(x) else { continue };
+            for y in &j.open[n + 1..] {
+                let Some((iy, ya, yb)) = ends(y) else { continue };
+                if ix.len() != iy.len() || xa.dist(xb) <= tolerance {
+                    continue;
+                }
+                if xa.dist(ya) <= tolerance && xb.dist(yb) <= tolerance {
+                    pair = Some((ix, iy, false));
+                    break 'search;
+                }
+                if xa.dist(yb) <= tolerance && xb.dist(ya) <= tolerance {
+                    pair = Some((ix, iy, true));
+                    break 'search;
+                }
+            }
+        }
+        let Some((ix, mut iy, reversed)) = pair else { break };
+        if reversed {
+            iy.reverse();
+        }
+        let mut moved = places.clone();
+        for (&p, &q) in ix.iter().zip(&iy) {
+            let middle = (places[p] + places[q]) * 0.5;
+            moved[p] = middle;
+            moved[q] = middle;
+        }
+        let (Some(&a), Some(&b)) = (ix.first(), ix.last()) else { break };
+        sewn.push((moved[a], moved[b]));
+        faces = with_network_points(&faces, &j, &moved)?;
+    }
+    Some(Welded { faces, sewn })
+}
+
 /// The way `s` faces on the whole: its normals across it, added up.
 fn mean_normal(s: &NurbsSurface) -> Option<Vec3> {
     let net = points(s);
@@ -1843,5 +2002,80 @@ mod tests {
         assert!(brushed(&bumped, &j, &[(99, 1.0)], &[], 0.5).is_none());
         assert!(brushed(&bumped, &j, &under, &[], 0.0).is_none());
         assert!(brushed(&bumped, &j, &[(middle, f64::NAN)], &[], 0.5).is_none());
+    }
+
+    /// A flat square `x`..`x + 30` by `y`..`y + 30` at height `z`, 4 × 4 points.
+    fn square_at(x: f64, y: f64, z: f64) -> NurbsSurface {
+        let net: Vec<Vec3> = (0..4).flat_map(|j| (0..4).map(move |i| Vec3::new(x + 10.0 * f64::from(i), y + 10.0 * f64::from(j), z))).collect();
+        NurbsSurface::new([3, 3], [clamped_knots(4), clamped_knots(4)], &net, &[1.0; 16]).unwrap()
+    }
+
+    /// In a grid of three by three squares the seam through the middle runs on across the grid's
+    /// corners to the edge both ways; in an L of three squares it stops at the corner where three
+    /// faces meet.
+    #[test]
+    fn a_crease_chain_runs_on_through_grid_corners() {
+        let grid: Vec<NurbsSurface> = (0..3).flat_map(|j| (0..3).map(move |i| square_at(30.0 * f64::from(i), 30.0 * f64::from(j), 0.0))).collect();
+        let j = joins(&grid).unwrap();
+        assert_eq!(j.seams.len(), 12);
+        let (middle, _) = seam_near(&grid, &j, Vec3::new(45.0, 30.0, 0.0)).unwrap();
+        let chain = crease_chain(&grid, &j, middle);
+        assert_eq!(chain.len(), 3, "the line y = 30 all the way across: {chain:?}");
+        assert_eq!(chain[0], middle);
+        for &s in &chain {
+            let (a, b) = seam_ends(&grid, &j, s).unwrap();
+            assert!((a.y - 30.0).abs() < 1e-9 && (b.y - 30.0).abs() < 1e-9, "{a:?} {b:?}");
+        }
+        let l = [square_at(0.0, 0.0, 0.0), square_at(30.0, 0.0, 0.0), square_at(0.0, 30.0, 0.0)];
+        let jl = joins(&l).unwrap();
+        let (s, _) = seam_near(&l, &jl, Vec3::new(30.0, 15.0, 0.0)).unwrap();
+        assert_eq!(crease_chain(&l, &jl, s), vec![s], "no grid corner to run on through");
+        assert!(crease_chain(&l, &jl, 99).is_empty());
+    }
+
+    /// Seams creased or held smooth by hand are kept by their ends: read again from the faces
+    /// alone they are lost, read with what was kept they come back, and only they are kept.
+    #[test]
+    fn edges_held_by_hand_are_kept_by_their_ends() {
+        let two = [square_at(0.0, 0.0, 0.0), square_at(30.0, 0.0, 0.0)];
+        let j = joins(&two).unwrap();
+        assert_eq!(creased(&j), vec![false], "flat: smooth");
+        let sharp = without_tangency(&j, 0);
+        let (creases, smooths) = held_by_hand(&two, &sharp);
+        assert_eq!((creases.len(), smooths.len()), (1, 0));
+        assert!(held_by_hand(&two, &j).0.is_empty(), "nothing by hand");
+        let back = joins_keeping(&two, &creases, &smooths, ends_tolerance(&two)).unwrap();
+        assert_eq!(creased(&back), vec![true]);
+        // The ends either way round name it; ends elsewhere do not.
+        let turned: Vec<(Vec3, Vec3)> = creases.iter().map(|(a, b)| (*b, *a)).collect();
+        assert_eq!(creased(&joins_keeping(&two, &turned, &[], 1e-6).unwrap()), vec![true]);
+        let elsewhere = [(Vec3::new(0.0, 0.0, 9.0), Vec3::new(1.0, 0.0, 9.0))];
+        assert_eq!(creased(&joins_keeping(&two, &elsewhere, &[], 1e-6).unwrap()), vec![false]);
+    }
+
+    /// A corner dropped on another's is one point with it; dropping the second corner of the side
+    /// sews the two open sides into one seam, each pair of points at its middle.
+    #[test]
+    fn corners_dropped_on_corners_weld_and_a_side_whose_ends_meet_is_sewn() {
+        let faces = [square_at(0.0, 0.0, 0.0), square_at(31.0, 0.0, 2.0)];
+        let j = joins(&faces).unwrap();
+        assert!(j.seams.is_empty(), "apart");
+        let places = network_points(&faces, &j);
+        let at = |p: Vec3| (0..places.len()).min_by(|a, b| places[*a].dist(p).total_cmp(&places[*b].dist(p))).unwrap();
+        let (a, b) = (at(Vec3::new(31.0, 0.0, 2.0)), at(Vec3::new(31.0, 30.0, 2.0)));
+        let once = welded(&faces, &j, a, Vec3::new(30.0, 0.0, 0.0)).unwrap();
+        assert!(once.sewn.is_empty(), "one corner: no side sewn yet");
+        let j1 = joins(&once.faces).unwrap();
+        assert_eq!(j1.len(), j.len() - 1, "the two corners are one point");
+        let places1 = network_points(&once.faces, &j1);
+        let b1 = (0..places1.len()).min_by(|x, y| places1[*x].dist(places[b]).total_cmp(&places1[*y].dist(places[b]))).unwrap();
+        let twice = welded(&once.faces, &j1, b1, Vec3::new(30.0, 30.0, 0.0)).unwrap();
+        assert_eq!(twice.sewn.len(), 1, "both ends meet: the sides are one");
+        let j2 = joins(&twice.faces).unwrap();
+        assert_eq!((j2.seams.len(), j2.open.len()), (1, 6));
+        let (p, q) = seam_ends(&twice.faces, &j2, 0).unwrap();
+        assert!(p.dist(Vec3::new(30.0, 0.0, 0.0)) < 1e-9 || q.dist(Vec3::new(30.0, 0.0, 0.0)) < 1e-9);
+        assert!(welded(&faces, &j, 999, Vec3::ZERO).is_none());
+        assert!(welded(&faces, &j, a, Vec3::new(f64::NAN, 0.0, 0.0)).is_none());
     }
 }

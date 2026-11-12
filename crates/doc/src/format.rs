@@ -766,6 +766,7 @@ pub(crate) fn decode(mut v: Value, version: u32, applied: Option<&[String]>) -> 
     }
     crate::point_cloud::check_all(&d.point_clouds)?;
     crate::scan_selection::check_all(&d.scan_selections)?;
+    crate::free_form::check_all(&d.free_forms)?;
     let feature_ids: std::collections::BTreeSet<_> = d.features.iter().map(|feature| feature.id).collect();
     let mut group_ids = std::collections::BTreeSet::new();
     let mut grouped_features = std::collections::BTreeSet::new();

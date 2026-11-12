@@ -348,8 +348,15 @@ fn faces_param(v: &Value, cmd: &str) -> Result<Vec<NurbsSurface>> {
     Ok(faces)
 }
 
-/// The reply of an edit that wrote `faces` back.
-fn faces_reply(s: &Session, target: &EditableSurface, faces: &[NurbsSurface], moved: usize, cmd: &str) -> Result<Value> {
+/// The reply of an edit that wrote `faces` back, joined as `joins` says.
+pub(super) fn faces_reply(
+    s: &Session,
+    target: &EditableSurface,
+    faces: &[NurbsSurface],
+    joins: &solidcraft_scan::network::Joins,
+    moved: usize,
+    cmd: &str,
+) -> Result<Value> {
     let measured = if s.model.state().bodies.iter().any(|b| b.body.is_mesh()) { faces_distance(s, None, faces, cmd) } else { None };
     let reply = ScanEditSurfaceResult {
         surface: target.body.clone(),
@@ -362,9 +369,8 @@ fn faces_reply(s: &Session, target: &EditableSurface, faces: &[NurbsSurface], mo
         rms: measured.as_ref().map(|m| m.2),
         max: measured.as_ref().map(|m| m.3),
         faces: (faces.len() > 1).then_some(faces.len()),
-        creases: (faces.len() > 1).then(|| {
-            solidcraft_scan::network::joins(faces).map(|j| solidcraft_scan::network::creased(&j).iter().filter(|c| **c).count()).unwrap_or(0)
-        }),
+        creases: (faces.len() > 1).then(|| solidcraft_scan::network::creased(joins).iter().filter(|c| **c).count()),
+        sewn: None,
         feature: target.feature,
         param_warnings: Vec::new(),
     };
@@ -386,11 +392,12 @@ fn creased_edges(s: &mut Session, target: &EditableSurface, p: &Value, cmd: &str
         ));
     }
     let faces = target.faces.clone();
-    let mut joins = network::joins(&faces).map_err(|e| bad(cmd, e.to_string()))?;
+    let mut joins = super::network_edit::joins_for(s, target, &faces, cmd)?;
     let reach = length(s, p, "reach", faces.iter().map(default_reach).fold(1.0, f64::max), cmd)?;
     if !(reach.is_finite() && reach > 0.0) {
         return Err(bad(cmd, "`reach` must be a length above 0"));
     }
+    let (pairs, symmetry) = super::network_edit::edit_pairs(s, target, &joins, p, cmd)?;
     let mut picks: Vec<(bool, usize)> = Vec::new();
     for (key, crease) in [("crease", true), ("uncrease", false)] {
         let Some(list) = p.get(key).filter(|v| !v.is_null()) else { continue };
@@ -430,7 +437,26 @@ fn creased_edges(s: &mut Session, target: &EditableSurface, p: &Value, cmd: &str
             if picks.iter().any(|(_, i)| *i == seam) {
                 return Err(bad(cmd, format!("`{key}[{k}]` names an edge already named in this call")));
             }
-            picks.push((crease, seam));
+            let chain = match pick.get("chain").filter(|v| !v.is_null()) {
+                None => false,
+                Some(v) => v.as_bool().ok_or_else(|| bad(cmd, format!("`{key}[{k}].chain` must be true or false")))?,
+            };
+            // The edge, the edges it runs on into through the grid's corners, and with Symmetry
+            // their mirror images.
+            let mut named = if chain { network::crease_chain(&faces, &joins, seam) } else { vec![seam] };
+            if let Some(pairs) = &pairs {
+                let twins: Vec<usize> = named
+                    .iter()
+                    .filter_map(|&i| network::seam_ends(&faces, &joins, i))
+                    .filter_map(|(a, b)| network::seam_between(&faces, &joins, pairs.plane.reflect(a), pairs.plane.reflect(b), 1e-6))
+                    .collect();
+                named.extend(twins);
+            }
+            for i in named {
+                if !picks.iter().any(|(_, j)| *j == i) {
+                    picks.push((crease, i));
+                }
+            }
         }
     }
     if picks.is_empty() {
@@ -444,9 +470,13 @@ fn creased_edges(s: &mut Session, target: &EditableSurface, p: &Value, cmd: &str
         if let Some(next) = network::refit_near_seam(&current, &joins, seam, &scan, reach, &held) {
             current = next;
         }
+        if let Some(pairs) = &pairs {
+            current = pairs.kept(&current, &joins).unwrap_or(current);
+        }
     }
     write_faces(s, target, &current, cmd)?;
-    faces_reply(s, target, &current, 0, cmd)
+    super::network_edit::keep(s, target, &current, &joins, symmetry);
+    faces_reply(s, target, &current, &joins, 0, cmd)
 }
 
 /// A smoothing brush dabbed on the surface (`brush`): at each place, the points on the surface
@@ -489,11 +519,12 @@ fn brushed_points(s: &mut Session, target: &EditableSurface, v: &Value, p: &Valu
         Some(x) => x.as_bool().ok_or_else(|| bad(cmd, "`brush.snap` must be true or false"))?,
     };
     let mut faces = target.faces.clone();
-    let joins = network::joins(&faces).map_err(|e| bad(cmd, e.to_string()))?;
+    let joins = super::network_edit::joins_for(s, target, &faces, cmd)?;
     let reach = length(s, p, "reach", faces.iter().map(default_reach).fold(1.0, f64::max), cmd)?;
     if !(reach.is_finite() && reach > 0.0) {
         return Err(bad(cmd, "`reach` must be a length above 0"));
     }
+    let (pairs, symmetry) = super::network_edit::edit_pairs(s, target, &joins, p, cmd)?;
     let scan: Vec<Vec3> = if snap {
         let (_, sh) = shade(s, str_(p, "scan"), &faces, cmd)?;
         sh.points.iter().map(|u| u.at).collect()
@@ -510,6 +541,19 @@ fn brushed_points(s: &mut Session, target: &EditableSurface, v: &Value, p: &Valu
             return Err(bad(cmd, format!("`brush.points[{k}]` has no point of the surface within the radius ({radius:.2} mm) of it")));
         }
         touched.extend(under.iter().map(|u| u.0));
+        // With Symmetry the brush works on both sides at once.
+        let under = match &pairs {
+            Some(pairs) => {
+                let mut both = under.clone();
+                for &(p, w) in &under {
+                    if let Some(&t) = pairs.twin.get(p).filter(|t| !under.iter().any(|u| u.0 == **t)) {
+                        both.push((t, w));
+                    }
+                }
+                both
+            }
+            None => under,
+        };
         for _ in 0..passes {
             let goals = if scan.is_empty() { Vec::new() } else { network::feet(&faces, &scan, reach, &all) };
             match network::brushed(&faces, &joins, &under, &goals, strength) {
@@ -518,10 +562,14 @@ fn brushed_points(s: &mut Session, target: &EditableSurface, v: &Value, p: &Valu
                     return Err(bad(cmd, format!("`brush.points[{k}]`: nothing under the brush there may move (the surface's own corners stay)")));
                 }
             }
+            if let Some(pairs) = &pairs {
+                faces = pairs.kept(&faces, &joins).unwrap_or(faces);
+            }
         }
     }
     write_faces(s, target, &faces, cmd)?;
-    faces_reply(s, target, &faces, touched.len(), cmd)
+    super::network_edit::keep(s, target, &faces, &joins, symmetry);
+    faces_reply(s, target, &faces, &joins, touched.len(), cmd)
 }
 
 /// Points on the surface moved (`dots`): each the surface at a control point's place on it,
@@ -535,7 +583,7 @@ fn moved_dots(s: &mut Session, target: &EditableSurface, list: &Value, p: &Value
         other => return Err(bad(cmd, format!("`neighbours` must be hold or follow, not `{other}`"))),
     };
     let faces = &target.faces;
-    let joins = network::joins(faces).map_err(|e| bad(cmd, e.to_string()))?;
+    let joins = super::network_edit::joins_for(s, target, faces, cmd)?;
     let dots = network::dots(faces, &joins);
     let mut moves: Vec<(usize, Vec3)> = Vec::new();
     for (k, d) in list.iter().enumerate() {
@@ -579,16 +627,9 @@ fn moved_dots(s: &mut Session, target: &EditableSurface, list: &Value, p: &Value
         moves.retain(|m| m.0 != id);
         moves.push((id, to));
     }
-    // With a symmetry plane: each dot's twin goes to the mirror image, and the result is made an
-    // exact mirror image again.
-    let pairs = match p.get("symmetry").filter(|v| !v.is_null()) {
-        Some(v) => {
-            let plane = super::free_form::mirror_plane_param(s, Some(v), cmd)?;
-            let tolerance = solidcraft_scan::symmetric::pairing_tolerance(faces, faces.iter().map(default_reach).fold(1.0, f64::max));
-            Some(solidcraft_scan::symmetric::pairs_of(faces, &joins, plane, tolerance).map_err(|e| bad(cmd, format!("`symmetry`: {e}")))?)
-        }
-        None => None,
-    };
+    // With a symmetry plane (given, or the one the design keeps): each dot's twin goes to the
+    // mirror image, and the result is made an exact mirror image again.
+    let (pairs, symmetry) = super::network_edit::edit_pairs(s, target, &joins, p, cmd)?;
     if let Some(pairs) = &pairs {
         moves = pairs.moves(&moves);
     }
@@ -599,13 +640,43 @@ fn moved_dots(s: &mut Session, target: &EditableSurface, list: &Value, p: &Value
         None => made,
     };
     write_faces(s, target, &made, cmd)?;
-    faces_reply(s, target, &made, moves.len(), cmd)
+    super::network_edit::keep(s, target, &made, &joins, symmetry);
+    faces_reply(s, target, &made, &joins, moves.len(), cmd)
 }
 
 pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.edit_surface";
     let target = editable(s, str_(p, "surface"), cmd)?;
     let given = |k: &str| p.get(k).is_some_and(|v| !v.is_null());
+    // The edits of a Free Form as a whole, each given alone.
+    const WHOLE: [&str; 6] = ["brush", "smooth", "delete_face", "weld", "keep_half", "crease"];
+    const POINTS: [&str; 8] = ["points", "moves", "hold", "net", "slide", "dots", "faces", "kept_edges"];
+    let whole: Vec<&str> = WHOLE.iter().copied().filter(|k| given(k) || (*k == "crease" && given("uncrease"))).collect();
+    if let Some(op) = whole.first()
+        && (whole.len() > 1 || POINTS.iter().any(|k| given(k)) || str_(p, "refit").is_some_and(|r| r != "none"))
+    {
+        return Err(bad(
+            cmd,
+            format!(
+                "`{op}` edits a Free Form as a whole: give it alone (with `reach`, `scan` or `symmetry`), without points, moves, hold, net, slide, dots, faces or a refit, and without another of brush, smooth, delete_face, weld, keep_half or crease"
+            ),
+        ));
+    }
+    if given("kept_edges") && !given("faces") {
+        return Err(bad(cmd, "`kept_edges` goes with `faces`: the edges creased or held smooth by hand among the faces given"));
+    }
+    if let Some(v) = p.get("smooth").filter(|v| !v.is_null()) {
+        return super::network_edit::smoothed(s, &target, v, p, cmd);
+    }
+    if let Some(v) = p.get("delete_face").filter(|v| !v.is_null()) {
+        return super::network_edit::deleted_face(s, &target, v, p, cmd);
+    }
+    if let Some(v) = p.get("weld").filter(|v| !v.is_null()) {
+        return super::network_edit::welded_corner(s, &target, v, p, cmd);
+    }
+    if let Some(v) = p.get("keep_half").filter(|v| !v.is_null()) {
+        return super::network_edit::kept_half(s, &target, v, cmd);
+    }
     // A smoothing brush dabbed on the surface.
     if let Some(v) = p.get("brush").filter(|v| !v.is_null()) {
         if ["points", "moves", "hold", "net", "slide", "dots", "faces", "crease", "uncrease"].iter().any(|k| given(k))
@@ -634,8 +705,28 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad(cmd, "`faces` gives every face as it is: give it alone"));
         }
         let made = faces_param(v, cmd)?;
+        // The edges creased or held smooth by hand among them, as given, else as the design keeps them.
+        let joins = match p.get("kept_edges").filter(|v| !v.is_null()) {
+            Some(k) => {
+                let creases = super::network_edit::edge_list(k, "creases", cmd)?;
+                let smooths = super::network_edit::edge_list(k, "smooths", cmd)?;
+                solidcraft_scan::network::joins_keeping(&made, &creases, &smooths, solidcraft_scan::network::ends_tolerance(&made))
+                    .map_err(|e| bad(cmd, e.to_string()))?
+            }
+            None => super::network_edit::joins_for(s, &target, &made, cmd)?,
+        };
+        // The symmetry plane kept with them: as given (`none` drops it), else as kept, while the
+        // faces are still a mirror image in it.
+        let (plane, named) = super::network_edit::wanted_symmetry(s, &target, p, cmd)?;
+        let symmetry = match plane {
+            Some(pl) if super::network_edit::pairs_in(&made, &joins, pl).is_some() => named.then_some(Some(pl)),
+            Some(_) if named => return Err(bad(cmd, format!("`symmetry`: {}", solidcraft_scan::symmetric::MirrorError::NotMirror))),
+            Some(_) => Some(None),
+            None => named.then_some(None),
+        };
         write_faces(s, &target, &made, cmd)?;
-        return faces_reply(s, &target, &made, 0, cmd);
+        super::network_edit::keep(s, &target, &made, &joins, symmetry);
+        return faces_reply(s, &target, &made, &joins, 0, cmd);
     }
     if let Some(list) = p.get("dots").filter(|v| !v.is_null()) {
         if ["points", "moves", "hold", "net", "slide"].iter().any(|k| given(k)) || str_(p, "refit").is_some_and(|r| r != "none") {
@@ -644,7 +735,10 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
         return moved_dots(s, &target, list, p, cmd);
     }
     if given("symmetry") {
-        return Err(bad(cmd, "`symmetry` goes with `dots`: the plane the Free Form is a mirror image in, each dot's twin moved with it"));
+        return Err(bad(
+            cmd,
+            "`symmetry` goes with an edit of a Free Form of several faces (`dots`, `faces`, `brush`, `smooth`, `crease`, `delete_face`, `weld`): the plane it is kept a mirror image in",
+        ));
     }
     if target.is_network() {
         return Err(bad(
@@ -675,6 +769,7 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
             max: None,
             faces: None,
             creases: None,
+            sewn: None,
             feature: target.feature,
             param_warnings: Vec::new(),
         };
@@ -839,6 +934,7 @@ pub(super) fn edit_surface(s: &mut Session, p: &Value) -> Result<Value> {
         max,
         faces: None,
         creases: None,
+        sewn: None,
         feature: target.feature,
         param_warnings: Vec::new(),
     };

@@ -246,7 +246,9 @@ pub(super) fn mirror_free_form(s: &mut Session, p: &Value) -> Result<Value> {
             ("mirrored", added, onto)
         }
     };
-    let joins = solidcraft_scan::network::joins(&faces).map_err(|e| bad(cmd, e.to_string()))?;
+    // The design keeps the plane: Edit Surface opens with Symmetry on in it, and edits keep it.
+    let joins = super::network_edit::joins_for(s, &target, &faces, cmd)?;
+    super::network_edit::keep(s, &target, &faces, &joins, Some(Some(plane)));
     let reply = ScanMirrorFreeFormResult {
         surface: target.body,
         faces: faces.len(),
@@ -302,10 +304,22 @@ pub(super) fn add_face(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "`edge` is not near the ends of an open edge of the surface: give the two corners of the edge to build on"));
     }
     let body = crate::params::str_(p, "body").map(str::to_owned);
+    // With Symmetry (given, or the plane the design keeps) the face's mirror image comes too.
+    let before = super::network_edit::joins_for(s, &target, &target.faces, cmd)?;
+    let (pairs, symmetry) = super::network_edit::edit_pairs(s, &target, &before, p, cmd)?;
     let (scan, made) = added_face(s, body.as_deref(), &target.faces, face, side, far, rows, reach)?;
-    super::surface::write_faces(s, &target, &made, cmd)?;
     let new = made.len() - 1;
-    let joins = solidcraft_scan::network::joins(&made).map_err(|e| bad(cmd, e.to_string()))?;
+    let gap = target.faces.iter().map(super::surface::default_reach).fold(1.0, f64::max);
+    let (made, symmetry) = match &pairs {
+        Some(pairs) => match solidcraft_scan::symmetric::with_twin_face_after(&target.faces, &made, pairs.plane, gap) {
+            Some(both) => (both, symmetry),
+            None => (made, Some(None)),
+        },
+        None => (made, symmetry),
+    };
+    super::surface::write_faces(s, &target, &made, cmd)?;
+    let joins = super::network_edit::joins_for(s, &target, &made, cmd)?;
+    super::network_edit::keep(s, &target, &made, &joins, symmetry);
     let (rms, max) = match super::surface::covered(s, Some(&scan), &made[new], super::surface::default_reach(&made[new]), cmd) {
         Ok(c) if !c.points.is_empty() => solidcraft_scan::surface_edit::distance(&made[new], &c.points),
         _ => (0.0, 0.0),
@@ -313,6 +327,7 @@ pub(super) fn add_face(s: &mut Session, p: &Value) -> Result<Value> {
     let reply = ScanAddFaceResult {
         surface: target.body,
         faces: made.len(),
+        twin: (made.len() > new + 1).then_some(made.len() - 1),
         face: new,
         controls: made[new].count(),
         body: scan,

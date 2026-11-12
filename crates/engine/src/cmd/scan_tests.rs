@@ -1279,10 +1279,130 @@ fn mirror_free_form_makes_a_half_whole_and_symmetric_edits_keep_it() {
         .to_string();
     assert!(not_mirror.contains("not a mirror image"), "{not_mirror}");
     let alone = s.execute("scan.edit_surface", &json!({"symmetry": "Symmetry Plane"})).unwrap_err().to_string();
-    assert!(alone.contains("goes with `dots`"), "{alone}");
+    assert!(alone.contains("goes with an edit"), "{alone}");
     run(&mut s, "scan.free_form", json!({"corners": [[22, 10, 0], [45, 10, 0], [45, 50, 0], [22, 50, 0]], "count": 4}));
     let straddles = s.execute("scan.mirror_free_form", &json!({"surface": "FreeForm2", "plane": "Symmetry Plane"})).unwrap_err().to_string();
     assert!(straddles.contains("both sides"), "{straddles}");
+}
+
+/// The design keeps a Free Form's symmetry plane: once mirrored, a dot moved, a face added and a
+/// face deleted are each made on both sides without `symmetry`; Keep One Half takes the other
+/// side away and drops the plane. Undo puts the plane back with the faces.
+#[test]
+fn the_design_keeps_a_free_forms_symmetry_plane_and_edits_keep_it() {
+    let (mut s, _) = session_with_triangles("kept-symmetry", &dome_triangles(40));
+    run(&mut s, "scan.free_form", json!({"corners": [[14, 14, 0], [29.6, 14, 0], [29.6, 46, 0], [14, 46, 0]], "count": 5}));
+    run(&mut s, "scan.mirror_free_form", json!({"plane": {"point": [30, 0, 0], "normal": [1, 0, 0]}}));
+    let kept = s.doc.free_forms.first().cloned().expect("the plane kept");
+    let plane = kept.symmetry.expect("a symmetry plane");
+    assert!((plane.point[0] - 30.0).abs() < 1e-9 && (plane.normal[0].abs() - 1.0).abs() < 1e-9, "{plane:?}");
+    // A dot moved with no `symmetry`: its twin goes too.
+    let moved = run(&mut s, "scan.edit_surface", json!({"dots": [{"at": [20, 30, 8], "along": "2 mm"}]}));
+    assert_eq!(moved["moved"].as_u64(), Some(2), "both sides: {moved}");
+    // A face added on the half's far side brings its twin.
+    let added = run(&mut s, "scan.add_face", json!({"edge": [[14, 14, 0], [14, 46, 0]], "far": [[4, 14, 0], [4, 46, 0]], "rows": 4}));
+    assert_eq!((added["faces"].as_u64(), added["twin"].as_u64()), (Some(4), Some(3)), "{added}");
+    // `none` adds one face alone and lets the plane go.
+    let lone =
+        run(&mut s, "scan.add_face", json!({"edge": [[14, 46, 0], [29.6, 46, 0]], "far": [[14, 56, 0], [30, 56, 0]], "rows": 4, "symmetry": "none"}));
+    assert_eq!((lone["faces"].as_u64(), lone.get("twin")), (Some(5), None), "{lone}");
+    assert!(s.doc.free_forms.iter().all(|k| k.symmetry.is_none()), "the plane let go");
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.doc.free_forms.first().is_some_and(|k| k.symmetry.is_some()), "undo brings the plane back");
+    // Delete Face on the added face takes its twin too.
+    let deleted = run(&mut s, "scan.edit_surface", json!({"delete_face": {"at": [9, 30, 6]}}));
+    assert_eq!(deleted["faces"].as_u64(), Some(2), "{deleted}");
+    // Keep One Half: the +x side goes, and the plane with it.
+    let half = run(&mut s, "scan.edit_surface", json!({"keep_half": {"side": [10, 30, 0]}}));
+    assert_eq!(half["faces"].as_u64(), None, "one face left: {half}");
+    let faces = super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces;
+    assert_eq!(faces.len(), 1);
+    assert!(solidcraft_scan::surface_edit::points(&faces[0]).iter().all(|p| p.x <= 30.0 + 1e-6));
+    assert!(s.doc.free_forms.is_empty(), "nothing kept any more");
+    for (params, words) in [
+        (json!({"keep_half": {"side": [10, 30, 0]}}), "is one face"),
+        (json!({"delete_face": {"at": [10, 30, 6]}}), "is one face"),
+        (json!({"smooth": true, "dots": [{"at": [20, 30, 8], "along": "1 mm"}]}), "give it alone"),
+        (json!({"smooth": {"strength": 3}}), "at most 1"),
+        (json!({"smooth": {"passes": 0}}), "1 to 20"),
+        (json!({"smooth": "hard"}), "true or"),
+        (json!({"weld": {"at": [0, 0, 0]}}), "weld.onto"),
+        (json!({"kept_edges": {"creases": []}}), "goes with `faces`"),
+    ] {
+        let refused = s.execute("scan.edit_surface", &params).unwrap_err().to_string();
+        assert!(refused.contains(words), "{params}: {refused}");
+    }
+}
+
+/// A crease on a shared edge where the faces still meet smoothly is kept by the design (by its
+/// ends): edits after it keep it a crease, and OK of Edit Surface sending every face with its
+/// `kept_edges` keeps them. `smooth` evens out a point pushed up, in one undo step.
+#[test]
+fn a_crease_set_by_hand_is_kept_by_the_design_and_smooth_evens_the_surface() {
+    let (mut s, _) = session_with_triangles("kept-crease", &dome_triangles(40));
+    run(&mut s, "scan.free_form", json!({"corners": [[10, 10, 0], [30, 10, 0], [30, 50, 0], [10, 50, 0]], "count": 5}));
+    run(&mut s, "scan.add_face", json!({"edge": [[30, 10, 0], [30, 50, 0]], "far": [[50, 10, 0], [50, 50, 0]], "rows": 5}));
+    // On a smooth dome a crease refits the faces to the scan, which goes on smoothly there.
+    let creased = run(&mut s, "scan.edit_surface", json!({"crease": [{"at": [30, 30, 8], "chain": true}]}));
+    assert_eq!(creased["creases"].as_u64(), Some(1), "{creased}");
+    let faces = super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces;
+    assert_eq!(solidcraft_scan::network::creased(&solidcraft_scan::network::joins(&faces).unwrap()), vec![false], "the angle alone reads it smooth");
+    assert_eq!(s.doc.free_forms.first().map(|k| k.creases.len()), Some(1), "so the design keeps it");
+    let moved = run(&mut s, "scan.edit_surface", json!({"dots": [{"at": [20, 30, 8], "along": "3 mm"}]}));
+    assert_eq!(moved["creases"].as_u64(), Some(1), "still a crease after an edit elsewhere: {moved}");
+    let smoothed = run(&mut s, "scan.edit_surface", json!({"smooth": {"passes": 4}}));
+    assert_eq!(smoothed["creases"].as_u64(), Some(1), "{smoothed}");
+    let peak = |s: &Session| {
+        let faces = super::surface::editable(s, Some("FreeForm1"), "test").unwrap().faces;
+        let joins = solidcraft_scan::network::joins(&faces).unwrap();
+        let dots = solidcraft_scan::network::dots(&faces, &joins);
+        let d = dots.iter().min_by(|a, b| a.at.dist(Vec3::new(20.0, 30.0, 8.0)).total_cmp(&b.at.dist(Vec3::new(20.0, 30.0, 8.0)))).unwrap();
+        d.at.z - (8.0 - 0.004 * ((d.at.x - 30.0).powi(2) + (d.at.y - 30.0).powi(2)))
+    };
+    assert!(peak(&s) < 2.0, "smoothed down toward the dome: {}", peak(&s));
+    run(&mut s, "edit.undo", json!({}));
+    assert!(peak(&s) > 2.5, "one undo step: {}", peak(&s));
+    // Every face sent back with no edge kept: the crease goes.
+    let faces = super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces;
+    let net_of = |f: &solidcraft_geom::bspline::NurbsSurface| {
+        let points: Vec<[f64; 3]> = solidcraft_scan::surface_edit::points(f).iter().map(|p| [p.x, p.y, p.z]).collect();
+        json!({"count": f.count(), "knots": [f.knots()[0].clone(), f.knots()[1].clone()], "degree": f.degree(), "points": points})
+    };
+    let all: Vec<Value> = faces.iter().map(net_of).collect();
+    let read = solidcraft_scan::network::creased(&solidcraft_scan::network::joins(&faces).unwrap()).iter().filter(|c| **c).count();
+    let sent = run(&mut s, "scan.edit_surface", json!({"faces": all, "kept_edges": {}}));
+    assert_eq!(sent["creases"].as_u64(), Some(read as u64), "as the faces' angle reads them: {sent}");
+    assert!(s.doc.free_forms.is_empty(), "nothing held by hand any more");
+}
+
+/// A corner on a Free Form's edge dropped on another's: the corner is one point with it, and the
+/// two open sides whose ends then meet are sewn into a shared edge (the four faces round the
+/// middle a grid's corner). A corner too far from `at` is refused.
+#[test]
+fn weld_drops_a_corner_on_another_and_sews_the_sides_that_meet() {
+    let (mut s, _) = session_with_triangles("weld", &dome_triangles(40));
+    run(&mut s, "scan.free_form", json!({"corners": [[10, 10, 0], [30, 10, 0], [30, 30, 0], [10, 30, 0]], "count": 5}));
+    run(&mut s, "scan.add_face", json!({"edge": [[30, 10, 0], [30, 30, 0]], "far": [[50, 10, 0], [50, 30, 0]], "rows": 5}));
+    run(&mut s, "scan.add_face", json!({"edge": [[10, 30, 0], [30, 30, 0]], "far": [[10, 50, 0], [30, 50, 0]], "rows": 5}));
+    // On the second face's top edge, its far corner short of the third face's.
+    let fourth = run(&mut s, "scan.add_face", json!({"edge": [[30, 30, 0], [50, 30, 0]], "far": [[34, 53, 0], [50, 50, 0]], "rows": 5}));
+    assert_eq!(fourth["faces"].as_u64(), Some(4), "{fourth}");
+    let seams = |s: &Session| {
+        let faces = super::surface::editable(s, Some("FreeForm1"), "test").unwrap().faces;
+        solidcraft_scan::network::joins(&faces).unwrap().seams.len()
+    };
+    assert_eq!(seams(&s), 3, "the fourth face's left side open beside the third's right");
+    let refused =
+        s.execute("scan.edit_surface", &json!({"weld": {"at": [90, 90, 0], "onto": [30, 50, 6]}, "reach": "6 mm"})).unwrap_err().to_string();
+    assert!(refused.contains("weld.at"), "{refused}");
+    let welded = run(&mut s, "scan.edit_surface", json!({"weld": {"at": [34, 53, 6], "onto": [30, 50, 6]}, "reach": "6 mm"}));
+    assert_eq!((welded["sewn"].as_u64(), welded["faces"].as_u64()), (Some(1), Some(4)), "{welded}");
+    assert_eq!(seams(&s), 4, "sewn");
+    let faces = super::surface::editable(&s, Some("FreeForm1"), "test").unwrap().faces;
+    let joins = solidcraft_scan::network::joins(&faces).unwrap();
+    assert!(joins.corners.iter().any(|c| c.faces == 4 && !c.border), "the middle is a grid's corner now");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(seams(&s), 3, "one undo step");
 }
 
 /// `turn` radians round a tube of radius 10 along Z, 40 long, as triangles.

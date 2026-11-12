@@ -4898,6 +4898,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if !flat {
         app.flat_view.fitted = false;
     }
+    // Edit Surface's Smoothing Brush on Ctrl+Shift: the wheel sizes its circle instead of zooming.
+    crate::dialogs_scan_surface::brush_wheel(app, ui.ctx(), rect);
     let input =
         if flat { crate::dialogs_sheet::navigate(app, ui, rect, &resp) } else { crate::navigation::handle(app, ui, rect, &resp, NavCaps::MODEL) };
     let CameraInput { hover, scroll, mods, middle, secondary_down, primary_down, primary_pressed, inside, axes, pinch, pan, primary_nav, mode } =
@@ -5647,7 +5649,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         if resp.drag_started_by(egui::PointerButton::Primary)
             && let Some(a) = ui.input(|i| i.pointer.press_origin()).filter(|a| rect.contains(*a))
         {
-            crate::dialogs_scan_surface::grab(app, &proj, a, mods.alt);
+            let brush_keys = crate::dialogs_scan_surface::brush_keys_held(app, mods);
+            crate::dialogs_scan_surface::grab(app, &proj, a, mods.alt, brush_keys);
         }
         if crate::dialogs_scan_surface::holds_pointer(app)
             && resp.dragged_by(egui::PointerButton::Primary)
@@ -5662,6 +5665,11 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             && let Some(p) = resp.interact_pointer_pos()
         {
             crate::dialogs_scan_surface::choose(app, &proj, p);
+        }
+        if resp.double_clicked()
+            && let Some(p) = resp.interact_pointer_pos()
+        {
+            crate::dialogs_scan_surface::double_click(app, &proj, p);
         }
     }
     // Curve on Scan: a click on the scan adds a point (on the first one, closes the curve).

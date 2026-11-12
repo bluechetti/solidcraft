@@ -2,8 +2,9 @@
 //! image of itself in a plane. A half modelled on one side is mirrored and joined to its image on
 //! the plane ([`mirrored`]); from then on its points come in pairs ([`Pairs`]): every edit is made
 //! on both ([`Pairs::moves`]), the network is made an exact mirror image again after each solve
-//! ([`Pairs::kept`]), and a point on the plane stays on it. Symmetry is read from the points'
-//! places alone, so a design keeps no record of it.
+//! ([`Pairs::kept`]), and a point on the plane stays on it. The pairs are read from the points'
+//! places alone; a design keeps only the plane (its `free_forms`), and Symmetry turned off can
+//! keep one half ([`half_kept`]).
 
 use solidcore_record::Vec3;
 use solidcraft_geom::bspline::NurbsSurface;
@@ -355,6 +356,70 @@ pub fn with_twin_face(faces: &[NurbsSurface], plane: MirrorPlane, new: usize, ga
     made_exact(&faces, plane, gap)
 }
 
+/// `faces` (the network `before`, a mirror image in `plane`, with a face added last and the faces
+/// it grows from refitted near it) given the added face's mirror image too: each point the
+/// adding moved takes its twin to its mirror image first, so the two sides are still each
+/// other's, then [`with_twin_face`]. `None` when `before` is no mirror image in `plane`, or the
+/// faces are not `before`'s with one added.
+pub fn with_twin_face_after(before: &[NurbsSurface], faces: &[NurbsSurface], plane: MirrorPlane, gap: f64) -> Option<Vec<NurbsSurface>> {
+    let n = before.len();
+    if faces.len() != n + 1 || faces[..n].iter().zip(before).any(|(a, b)| a.count() != b.count()) {
+        return None;
+    }
+    let joins = network::joins(before).ok()?;
+    let pairs = pairs_of(before, &joins, plane, pairing_tolerance(before, gap.max(1e-6))).ok()?;
+    let was = network::network_points(before, &joins);
+    let now = network::network_points(&faces[..n], &joins);
+    let mut places = now.clone();
+    for p in 0..places.len() {
+        let t = pairs.twin.get(p).copied()?;
+        let moved = |q: usize| now[q].dist(was[q]) > 1e-12;
+        if pairs.is_on_plane(p) {
+            places[p] = plane.onto(now[p]);
+        } else if moved(p) && !moved(t) {
+            places[t] = plane.reflect(now[p]);
+        }
+    }
+    let mut all = network::with_network_points(&faces[..n], &joins, &places)?;
+    all.push(faces[n].clone());
+    with_twin_face(&all, plane, n, gap)
+}
+
+/// `faces` with the half on the far side of `plane` from `keep` taken away: the faces whose points
+/// all lie on `keep`'s side (or on the plane) stay, those on the other side go, as Symmetry turned
+/// off with Keep One Half does. Refused when a face lies across the plane, when `keep` is on the
+/// plane, and when nothing would go or nothing stay.
+pub fn half_kept(faces: &[NurbsSurface], plane: MirrorPlane, keep: Vec3) -> Result<Vec<NurbsSurface>, MirrorError> {
+    if !keep.is_finite() {
+        return Err(MirrorError::Failed);
+    }
+    let tolerance = network::ends_tolerance(faces).max(1e-6);
+    let sign = plane.side(keep);
+    if sign.abs() <= tolerance {
+        return Err(MirrorError::OnPlane);
+    }
+    let sign = sign.signum();
+    let mut kept = Vec::new();
+    for face in faces {
+        let sides: Vec<f64> = points(face).iter().map(|p| sign * plane.side(*p)).collect();
+        let (low, high) = sides.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), s| (lo.min(*s), hi.max(*s)));
+        if low < -tolerance && high > tolerance {
+            return Err(MirrorError::Straddles { across: low.abs().min(high) });
+        }
+        if low >= -tolerance {
+            kept.push(face.clone());
+        }
+    }
+    if kept.is_empty() || kept.len() == faces.len() {
+        return Err(MirrorError::NotMirror);
+    }
+    let joins = network::joins(&kept).map_err(MirrorError::Network)?;
+    if !network::connected(&kept, &joins) {
+        return Err(MirrorError::Network(NetworkError::WouldSplit));
+    }
+    Ok(kept)
+}
+
 /// `faces`, nearly a mirror image in `plane` (each point within `gap`, and within a quarter of
 /// the net's spacing, of its twin), made an exact one. `None` when they are not.
 pub fn made_exact(faces: &[NurbsSurface], plane: MirrorPlane, gap: f64) -> Option<Vec<NurbsSurface>> {
@@ -514,5 +579,24 @@ mod tests {
         let joins = network::joins(&both).unwrap();
         assert!(pairs_of(&both, &joins, plane(), 1e-6).is_ok(), "a mirror image still");
         assert!(network::worst_kink(&both, &joins) < 0.5);
+    }
+
+    /// Keep One Half: the faces on the side of the point given stay, their mirror images go; a
+    /// point on the plane, a face across it, and a half with nothing to take away are refused.
+    #[test]
+    fn keep_one_half_takes_the_other_side_away() {
+        let (positions, triangles) = field(60, dome);
+        let on = Projector::new(&Scan::new(&positions, &triangles));
+        let half = fitted(&on, 20.0, 59.6);
+        let (faces, _, _) = mirrored(std::slice::from_ref(&half), plane(), 1.0).unwrap();
+        let left = half_kept(&faces, plane(), Vec3::new(30.0, 30.0, 0.0)).unwrap();
+        assert_eq!(left.len(), 1);
+        assert!(points(&left[0]).iter().all(|p| p.x <= 60.0 + 1e-9), "the -x half kept");
+        let right = half_kept(&faces, plane(), Vec3::new(90.0, 30.0, 0.0)).unwrap();
+        assert!(points(&right[0]).iter().all(|p| p.x >= 60.0 - 1e-9), "the +x half kept");
+        assert_eq!(half_kept(&faces, plane(), Vec3::new(60.0, 0.0, 0.0)), Err(MirrorError::OnPlane));
+        assert!(matches!(half_kept(&[fitted(&on, 30.0, 80.0)], plane(), Vec3::new(30.0, 0.0, 0.0)), Err(MirrorError::Straddles { .. })));
+        assert_eq!(half_kept(&left, plane(), Vec3::new(30.0, 30.0, 0.0)), Err(MirrorError::NotMirror), "nothing to take away");
+        assert_eq!(half_kept(&faces, plane(), Vec3::new(f64::NAN, 0.0, 0.0)), Err(MirrorError::Failed));
     }
 }

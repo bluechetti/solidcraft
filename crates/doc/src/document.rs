@@ -3225,6 +3225,10 @@ pub struct Document {
     /// Selections of a scan's triangles kept to be opened again (Keep Selection).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scan_selections: Vec<crate::scan_selection::ScanSelection>,
+    /// What each Free Form keeps besides its faces: edges creased or smoothed by hand, its
+    /// symmetry plane (Edit Surface).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub free_forms: Vec<crate::free_form::FreeFormKeep>,
     /// Comments of feature-input parameters (by name).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub param_comments: std::collections::BTreeMap<String, String>,
@@ -3551,6 +3555,7 @@ impl Document {
             canvases: Vec::new(),
             point_clouds: Vec::new(),
             scan_selections: Vec::new(),
+            free_forms: Vec::new(),
             param_comments: Default::default(),
             browser_groups: Vec::new(),
             timeline_groups: Vec::new(),

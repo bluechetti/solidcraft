@@ -29,6 +29,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
+use solidcraft_engine::cmd::scan::network_edit;
 use solidcraft_engine::cmd::scan::surface::network::{self, Dot, Joins, Side};
 use solidcraft_engine::cmd::scan::surface::symmetric::{self, MirrorPlane};
 use solidcraft_engine::cmd::scan::surface::{self as edit, Covered, EditableSurface, Line};
@@ -111,6 +112,8 @@ pub struct EditSurface {
     line: Option<Line>,
     /// Why the last tool did nothing.
     note: Option<String>,
+    /// What the last edit did, when it is worth saying (a weld): gone with the next edit.
+    told: Option<&'static str>,
     /// What a drag refits: 0 nothing, [`REFIT_AROUND`] or [`REFIT_ALL`].
     pub refit: usize,
     /// The surface body to edit, when it was named (opened from the history); else the selected
@@ -148,7 +151,8 @@ pub struct EditSurface {
     pub colours: bool,
     /// Surface Check on each face shown.
     check: Vec<edit::SurfaceCheck>,
-    drag: Option<Drag>,
+    /// The drag going on (boxed: the dialog's values stay small).
+    drag: Option<Box<Drag>>,
     /// Add Face, while it is on: the open edge taken and the far corners clicked.
     adding: Option<Adding>,
     /// Delete Face is on: a click on a face takes it away.
@@ -160,6 +164,9 @@ pub struct EditSurface {
     /// going (one step of Undo Last Change for the whole stroke).
     brushing: bool,
     stroke: bool,
+    /// The last crease click: the edge, and how many edits the history had after it (a
+    /// double-click on it takes it back and creases its whole chain instead).
+    last_crease: Option<(usize, usize)>,
     /// The brush's circle on the screen, in points, and how hard it smooths, 0 to 1.
     pub brush_size: f32,
     pub brush_strength: f64,
@@ -172,6 +179,13 @@ pub struct EditSurface {
     pub symmetry: usize,
     mirror: Option<Box<symmetric::Pairs>>,
     mirror_note: Option<Box<Result<String, String>>>,
+    /// The plane the design keeps the Free Form a mirror image in, offered among the planes when
+    /// it is none of them.
+    kept_plane: Option<Box<MirrorPlane>>,
+    /// Symmetry turned off: the plane whose other half Keep One Half takes away, and whether a
+    /// click on a face now chooses the half to keep.
+    half_offer: Option<Box<MirrorPlane>>,
+    keeping_half: bool,
     /// The scan under the faces and how far each point is from them, coloured.
     shade: Option<Box<Shading>>,
     /// The faces' shape changed since the scan under them was looked for.
@@ -203,6 +217,7 @@ impl Default for EditSurface {
             neighbours: NEIGHBOURS_HOLD,
             line: None,
             note: None,
+            told: None,
             refit: REFIT_AROUND,
             target: None,
             loaded: None,
@@ -229,6 +244,7 @@ impl Default for EditSurface {
             creasing: None,
             brushing: false,
             stroke: false,
+            last_crease: None,
             brush_size: BRUSH_SIZE,
             brush_strength: 0.5,
             creases: Vec::new(),
@@ -236,6 +252,9 @@ impl Default for EditSurface {
             symmetry: 0,
             mirror: None,
             mirror_note: None,
+            kept_plane: None,
+            half_offer: None,
+            keeping_half: false,
             shade: None,
             restudy: false,
             history: Vec::new(),
@@ -246,6 +265,9 @@ impl Default for EditSurface {
 #[derive(Clone, Debug)]
 struct Loaded {
     target: EditableSurface,
+    /// What the design keeps of it besides its faces: edges creased or held smooth by hand, its
+    /// symmetry plane.
+    kept: network_edit::Kept,
     covered: Option<Covered>,
     /// An even sample of the covered points, for previews while a handle is dragged.
     sample: Arc<Vec<Vec3>>,
@@ -286,6 +308,9 @@ struct Drag {
     /// drag leaves most squarely), and where the pointer has taken it.
     grow: Vec<(usize, Side)>,
     to: Option<Vec3>,
+    /// A corner on the network's edge dragged over another such corner: that corner, which it is
+    /// welded to when let go.
+    weld: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -548,13 +573,43 @@ fn load(app: &SolveApp, k: &mut EditSurface) {
         l.revision = revision;
         return;
     }
-    let loaded = found.map(|target| Box::new(Loaded { target, covered: None, sample: Arc::new(Vec::new()), revision }));
+    let loaded = found.map(|target| {
+        let kept = network_edit::kept(&app.session, &target);
+        Box::new(Loaded { target, kept, covered: None, sample: Arc::new(Vec::new()), revision })
+    });
     let faces = loaded.as_ref().ok().map(|l| l.target.faces.clone());
     k.loaded = Some(loaded);
     if let Some(faces) = faces {
         reset_to(k, faces);
+        apply_kept(app, k);
         study(app, k);
     }
+}
+
+/// What the design keeps of the Free Form put back after the dialog started again from its faces:
+/// its edges creased or held smooth by hand, and Symmetry on in its plane (while it is still a
+/// mirror image in it).
+fn apply_kept(app: &SolveApp, k: &mut EditSurface) {
+    let Some(kept) = loaded(k).map(|l| l.kept.clone()) else { return };
+    k.creases = kept.creases;
+    k.smooths = kept.smooths;
+    k.joins = Arc::new(joins_of(k, &k.faces));
+    k.net = network::network_points(&k.faces, &k.joins);
+    k.kept_plane = kept.symmetry.map(Box::new);
+    if let Some(plane) = kept.symmetry {
+        refresh_mirror(k, Some(plane));
+        k.mirror_note = None;
+        if k.mirror.is_some() {
+            k.symmetry = symmetry_planes(app, k).iter().position(|(_, p)| same_plane(p, &plane)).map_or(0, |i| i + 1);
+        }
+    }
+    let faces = k.faces.clone();
+    show_faces(k, faces, false, None);
+}
+
+/// Whether two mirror planes are one: facing the same way (or the other) through the same place.
+fn same_plane(a: &MirrorPlane, b: &MirrorPlane) -> bool {
+    a.normal.dot(b.normal).abs() > 1.0 - 1e-9 && a.side(b.point).abs() < 1e-6
 }
 
 /// The scan under the faces looked for again (as loaded, or a face added): for refits, the
@@ -598,9 +653,12 @@ fn reset_to(k: &mut EditSurface, faces: Vec<NurbsSurface>) {
     k.creases.clear();
     k.smooths.clear();
     k.creasing = None;
+    k.last_crease = None;
     k.mirror = None;
     k.mirror_note = None;
     k.symmetry = 0;
+    k.half_offer = None;
+    k.keeping_half = false;
     k.joins = Arc::new(joins_of(k, &faces));
     k.net = network::network_points(&faces, &k.joins);
     k.moved = vec![false; k.net.len()];
@@ -616,6 +674,7 @@ fn reset_to(k: &mut EditSurface, faces: Vec<NurbsSurface>) {
 
 /// The faces as they are, kept for Undo Last Change before an edit changes them.
 fn remember(k: &mut EditSurface) {
+    k.told = None;
     if k.history.len() >= HISTORY {
         k.history.remove(0);
     }
@@ -692,8 +751,9 @@ fn refresh_mirror(k: &mut EditSurface, plane: Option<MirrorPlane>) {
     }
 }
 
-/// The planes Symmetry offers: the origin planes, then the design's construction planes.
-fn symmetry_planes(app: &SolveApp) -> Vec<(String, MirrorPlane)> {
+/// The planes Symmetry offers: the origin planes, then the design's construction planes, then the
+/// plane the design keeps the Free Form a mirror image in, when it is none of those.
+fn symmetry_planes(app: &SolveApp, k: &EditSurface) -> Vec<(String, MirrorPlane)> {
     let mut planes: Vec<(String, MirrorPlane)> = [("YZ", Vec3::X), ("XZ", Vec3::Y), ("XY", Vec3::Z)]
         .into_iter()
         .filter_map(|(n, normal)| MirrorPlane::new(Vec3::ZERO, normal).map(|p| (n.to_owned(), p)))
@@ -703,17 +763,23 @@ fn symmetry_planes(app: &SolveApp) -> Vec<(String, MirrorPlane)> {
             planes.push((name, p));
         }
     }
+    if let Some(kept) = k.kept_plane.as_deref().copied().filter(|kept| !planes.iter().any(|(_, p)| same_plane(p, kept))) {
+        planes.push((tr("ui.scan_edit_symmetry_kept").to_owned(), kept));
+    }
     planes
 }
 
 /// Symmetry chosen (`None` for none): a half mirrored and joined on the plane (one step of Undo
 /// Last Change), a Free Form that is a mirror image already paired; else refused, and said why.
 fn apply_symmetry(k: &mut EditSurface, plane: Option<(String, MirrorPlane)>) {
+    k.keeping_half = false;
     let Some((name, plane)) = plane else {
-        k.mirror = None;
-        k.mirror_note = None;
+        // Turned off: both halves stay, and Keep One Half is offered to take one side away.
+        k.half_offer = k.mirror.take().filter(|_| is_network(k)).map(|p| Box::new(p.plane));
+        k.mirror_note = k.half_offer.as_ref().map(|_| Box::new(Ok(tr("ui.scan_edit_symmetry_off").to_owned())));
         return;
     };
+    k.half_offer = None;
     match symmetric::mirrored(&k.faces, plane, mirror_gap(k)) {
         Ok((faces, pairs, how)) => match how {
             symmetric::How::Already => {
@@ -741,7 +807,7 @@ fn apply_symmetry(k: &mut EditSurface, plane: Option<(String, MirrorPlane)>) {
 
 /// The Symmetry row: the plane, what choosing it did, and the pairs while it is on.
 fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) {
-    let planes = symmetry_planes(app);
+    let planes = symmetry_planes(app, k);
     let mut labels: Vec<&str> = vec![tr("ui.scan_edit_symmetry_none")];
     labels.extend(planes.iter().map(|(n, _)| n.as_str()));
     let before = k.symmetry.min(labels.len() - 1);
@@ -772,12 +838,50 @@ fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) {
     if k.mirror.is_some() {
         ui_kit::text(ui, tr("ui.scan_edit_symmetry_hint"), ui_kit::Text::Hint("scan_edit_symmetry_hint"));
     }
+    // Symmetry turned off: Keep One Half, then a click on a face of the half to keep.
+    if k.half_offer.is_some() {
+        let style = if k.keeping_half { ui_kit::Button::SmallSelected } else { ui_kit::Button::Normal };
+        if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_keep_half"), style)).clicked() {
+            k.keeping_half = !k.keeping_half;
+            k.adding = None;
+            k.deleting = false;
+            k.creasing = None;
+            k.brushing = false;
+            k.chosen = None;
+        }
+    }
 }
 
-/// `faces` with the face just added (the last) given its mirror image too, while Symmetry is on.
+/// Keep One Half's click: the faces on the far side of the plane from the face clicked taken away
+/// (one step of Undo Last Change).
+fn keep_half_click(k: &mut EditSurface, face: usize) {
+    let Some(plane) = k.half_offer.as_deref().copied() else { return };
+    let Some(middle) = k.shown.get(face).and_then(|s| {
+        let [[u0, u1], [v0, v1]] = s.domain();
+        s.eval(0.5 * (u0 + u1), 0.5 * (v0 + v1)).ok()
+    }) else {
+        return;
+    };
+    match symmetric::half_kept(&k.faces, plane, middle) {
+        Ok(faces) => {
+            reshaped_to(k, faces);
+            k.half_offer = None;
+            k.keeping_half = false;
+            k.kept_plane = None;
+            k.mirror_note = None;
+            k.note = None;
+        }
+        Err(e) => k.note = Some(e.to_string()),
+    }
+}
+
+/// `faces` (the dialog's with one added last) given the added face's mirror image too, while
+/// Symmetry is on: the faces it grew from refitted on both sides alike.
 fn with_twins(k: &EditSurface, faces: Vec<NurbsSurface>) -> Vec<NurbsSurface> {
     match &k.mirror {
-        Some(pairs) if !faces.is_empty() => symmetric::with_twin_face(&faces, pairs.plane, faces.len() - 1, mirror_gap(k)).unwrap_or(faces),
+        Some(pairs) if !faces.is_empty() => symmetric::with_twin_face_after(&k.faces, &faces, pairs.plane, mirror_gap(k))
+            .or_else(|| symmetric::with_twin_face(&faces, pairs.plane, faces.len() - 1, mirror_gap(k)))
+            .unwrap_or(faces),
         _ => faces,
     }
 }
@@ -990,17 +1094,6 @@ fn slide_typed(k: &mut EditSurface, index: usize) {
     }
 }
 
-/// How many edges creased by hand still meet smoothly: not kept when the dialog closes, since a
-/// crease is kept by the angle the faces meet at.
-fn unkept_creases(k: &EditSurface) -> usize {
-    let creased = network::creased(&k.joins);
-    (0..k.joins.seams.len())
-        .filter(|&i| creased.get(i).copied().unwrap_or(false))
-        .filter(|&i| network::seam_ends(&k.faces, &k.joins, i).is_some_and(|(a, b)| k.creases.iter().any(|e| same_edge(e, a, b))))
-        .filter(|&i| network::seam_angle(&k.faces, &k.joins.seams[i]) <= network::SMOOTH_DEGREES)
-        .count()
-}
-
 /// The shared edge nearest `at` on the screen, within [`EDGE_GRAB`].
 fn seam_at(k: &EditSurface, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<usize> {
     k.joins
@@ -1021,22 +1114,52 @@ fn seam_at(k: &EditSurface, proj: &crate::viewport::Proj, at: egui::Pos2) -> Opt
 /// from now on, and the points near it fitted to the scan again, so they take the scan's edge
 /// there, or round it over. One step of Undo Last Change.
 fn crease_click(k: &mut EditSurface, seam: usize, crease: bool) {
-    let Some((a, b)) = network::seam_ends(&k.faces, &k.joins, seam) else { return };
-    if network::creased(&k.joins).get(seam).copied() == Some(crease) {
-        k.note = Some(tr(if crease { "ui.scan_edit_crease_already" } else { "ui.scan_edit_uncrease_already" }).to_owned());
-        return;
+    if crease_seams(k, &[seam], crease) {
+        k.last_crease = Some((seam, k.history.len()));
     }
-    let (mut creases, mut smooths) = (k.creases.clone(), k.smooths.clone());
-    // With Symmetry on, the seam's mirror image too.
-    let mut seams = vec![(seam, a, b)];
-    if let Some(pairs) = &k.mirror {
-        let (ra, rb) = (pairs.plane.reflect(a), pairs.plane.reflect(b));
-        if let Some(t) = network::seam_between(&k.faces, &k.joins, ra, rb, 1e-6).filter(|t| *t != seam) {
-            seams.push((t, ra, rb));
+}
+
+/// A double-click on seam `seam`: it and the seams it runs on into through the grid's corners
+/// creased (or made smooth) at once. The single click just before it, on the same seam, is taken
+/// back first, so the whole chain is one step of Undo Last Change.
+fn crease_chain_click(k: &mut EditSurface, seam: usize, crease: bool) {
+    let ends = network::seam_ends(&k.faces, &k.joins, seam);
+    if k.last_crease == Some((seam, k.history.len())) {
+        undo_last(k);
+    }
+    k.last_crease = None;
+    // Found again by its ends: the undo may have read the seams afresh.
+    let Some(seam) = ends.and_then(|(a, b)| network::seam_between(&k.faces, &k.joins, a, b, 1e-6)) else { return };
+    let chain = network::crease_chain(&k.faces, &k.joins, seam);
+    crease_seams(k, &chain, crease);
+}
+
+/// Seams `seams` creased (`crease`), or made smooth again, each with its mirror image while
+/// Symmetry is on: one step of Undo Last Change. False when every one was so already (said so).
+fn crease_seams(k: &mut EditSurface, seams: &[usize], crease: bool) -> bool {
+    let state = network::creased(&k.joins);
+    let mut picked: Vec<(usize, Vec3, Vec3)> = Vec::new();
+    for &seam in seams {
+        let Some((a, b)) = network::seam_ends(&k.faces, &k.joins, seam) else { continue };
+        if state.get(seam).copied() == Some(crease) || picked.iter().any(|(i, _, _)| *i == seam) {
+            continue;
+        }
+        picked.push((seam, a, b));
+        // With Symmetry on, the seam's mirror image too.
+        if let Some(pairs) = &k.mirror {
+            let (ra, rb) = (pairs.plane.reflect(a), pairs.plane.reflect(b));
+            if let Some(t) = network::seam_between(&k.faces, &k.joins, ra, rb, 1e-6).filter(|t| !picked.iter().any(|(i, _, _)| i == t)) {
+                picked.push((t, ra, rb));
+            }
         }
     }
+    if picked.is_empty() {
+        k.note = Some(tr(if crease { "ui.scan_edit_crease_already" } else { "ui.scan_edit_uncrease_already" }).to_owned());
+        return false;
+    }
+    let (mut creases, mut smooths) = (k.creases.clone(), k.smooths.clone());
     let mut joins = (*k.joins).clone();
-    for &(i, p, q) in &seams {
+    for &(i, p, q) in &picked {
         creases.retain(|e| !same_edge(e, p, q));
         smooths.retain(|e| !same_edge(e, p, q));
         if crease {
@@ -1048,7 +1171,12 @@ fn crease_click(k: &mut EditSurface, seam: usize, crease: bool) {
     }
     let scan = loaded(k).and_then(|l| l.covered.as_ref()).map(|c| c.points.clone()).unwrap_or_default();
     let reach = k.faces.iter().map(edit::default_reach).fold(1.0, f64::max);
-    let faces = network::refit_near_seam(&k.faces, &joins, seam, &scan, reach, &k.moved).unwrap_or_else(|| k.faces.clone());
+    let mut faces = k.faces.clone();
+    for &(i, _, _) in &picked {
+        if let Some(next) = network::refit_near_seam(&faces, &joins, i, &scan, reach, &k.moved) {
+            faces = next;
+        }
+    }
     k.joins = Arc::new(joins);
     show_faces(k, faces, false, None);
     // Remembered with the creases as they were, so Undo Last Change puts the tangency back too.
@@ -1056,6 +1184,7 @@ fn crease_click(k: &mut EditSurface, seam: usize, crease: bool) {
     k.creases = creases;
     k.smooths = smooths;
     k.note = None;
+    true
 }
 
 /// One step of the smoothing brush at `at` on the screen: the dots within its circle evened out,
@@ -1210,13 +1339,14 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
             ui_kit::text(ui, tr("ui.scan_edit_folds_hint"), ui_kit::Text::Hint("scan_edit_folds_hint"));
         }
     }
-    let edited = k.moved.iter().any(|m| *m) || k.reshaped || k.faces != l.target.faces;
+    let edited = k.moved.iter().any(|m| *m) || k.reshaped || k.faces != l.target.faces || kept_changed(k, &l);
     let can_undo = !k.history.is_empty();
     if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_undo"), ui_kit::Button::Enabled(can_undo))).clicked() && can_undo {
         undo_last(k);
     }
     if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_edit_reset"), ui_kit::Button::Enabled(edited))).clicked() {
         reset_to(k, l.target.faces.clone());
+        apply_kept(app, k);
         k.restudy = true;
     }
     whole_tools(app, ui, k, &l);
@@ -1228,14 +1358,11 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
     if let Some(note) = &k.note {
         ui_kit::text(ui, note, ui_kit::Text::Report("scan_edit_note", true));
     }
-    // A crease whose faces still meet smoothly (no sharp scan edge under it) is not kept by OK:
-    // a crease lives in the angle the faces meet at.
-    let unkept = unkept_creases(k);
-    if unkept > 0 {
-        let line = crate::i18n::format("ui.scan_edit_crease_unkept", &[("count", &unkept.to_string())]);
-        ui_kit::text(ui, &line, ui_kit::Text::Report("scan_edit_crease_unkept", false));
+    if let Some(told) = k.told {
+        ui_kit::text(ui, told, ui_kit::Text::Note("scan_edit_told"));
     }
     let hint = match (&k.adding, dots) {
+        _ if k.keeping_half => tr("ui.scan_edit_keep_half_hint"),
         _ if k.deleting => tr("ui.scan_edit_delete_face_hint"),
         _ if k.brushing => tr("ui.scan_edit_brush_hint"),
         _ if k.creasing == Some(true) => tr("ui.scan_edit_crease_hint"),
@@ -1246,6 +1373,10 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         (None, false) => tr("ui.scan_edit_hint"),
     };
     ui_kit::text(ui, hint, ui_kit::Text::Hint("scan_edit_hint"));
+    // The Smoothing Brush on Ctrl+Shift (Preferences › Tools), with the points on the surface.
+    if dots && app.preferences.edit_surface_brush_keys && !k.brushing && k.adding.is_none() && !k.deleting && k.creasing.is_none() {
+        ui_kit::text(ui, tr("ui.scan_edit_brush_keys_hint"), ui_kit::Text::Hint("scan_edit_brush_keys_hint"));
+    }
     false
 }
 
@@ -1548,24 +1679,72 @@ fn move_to(k: &mut EditSurface, index: usize, to: Vec3) {
     }
 }
 
+/// The plane Symmetry keeps the Free Form a mirror image in as the dialog has it now.
+fn symmetry_now(k: &EditSurface) -> Option<MirrorPlane> {
+    k.mirror.as_ref().map(|p| p.plane)
+}
+
+/// Whether what the design keeps of the Free Form besides its faces (its edges creased or held
+/// smooth by hand, its symmetry plane) would change with OK.
+fn kept_changed(k: &EditSurface, l: &Loaded) -> bool {
+    if k.faces.len() < 2 && l.kept == network_edit::Kept::default() {
+        return false;
+    }
+    let (creases, smooths) = network::held_by_hand(&k.faces, &k.joins);
+    let tolerance = network::ends_tolerance(&k.faces);
+    let same_edges =
+        |a: &[(Vec3, Vec3)], b: &[(Vec3, Vec3)]| a.len() == b.len() && a.iter().all(|e| b.iter().any(|f| same_edge_within(e, f.0, f.1, tolerance)));
+    let same_symmetry = match (symmetry_now(k), l.kept.symmetry) {
+        (None, None) => true,
+        (Some(a), Some(b)) => same_plane(&a, &b),
+        _ => false,
+    };
+    !(same_edges(&creases, &l.kept.creases) && same_edges(&smooths, &l.kept.smooths) && same_symmetry)
+}
+
+/// Whether the edge with ends `a` and `b` is `e` (either way round), each end within `tolerance`.
+fn same_edge_within(e: &(Vec3, Vec3), a: Vec3, b: Vec3, tolerance: f64) -> bool {
+    (e.0.dist(a) <= tolerance && e.1.dist(b) <= tolerance) || (e.0.dist(b) <= tolerance && e.1.dist(a) <= tolerance)
+}
+
 /// What OK runs: the net as edited; every face, once a face was added or a net's shape changed,
-/// or for a network.
+/// or for a network, with the edges creased or held smooth by hand and the symmetry plane for the
+/// design to keep.
 pub fn commands(k: &EditSurface) -> Result<Vec<(String, Value)>, String> {
     let l = k.loaded.as_ref().ok_or("still loading the surface")?.as_ref().map_err(Clone::clone)?;
-    if k.faces == l.target.faces && !k.reshaped {
+    let kept = kept_changed(k, l);
+    if k.faces == l.target.faces && !k.reshaped && !kept {
         return Err(crate::i18n::tr("ui.scan_edit_nothing").into());
     }
     let net_of = |s: &NurbsSurface| {
         let points: Vec<[f64; 3]> = edit::control_points(s).iter().map(|p| [p.x, p.y, p.z]).collect();
         json!({"count": s.count(), "knots": [s.knots()[0].clone(), s.knots()[1].clone()], "degree": s.degree(), "points": points})
     };
-    match (k.faces.as_slice(), k.reshaped) {
-        ([one], false) => {
+    // A surface that was a Free Form of several faces goes back as faces, so what the design keeps
+    // of it (its creases, its symmetry plane) goes with them, even down to one face.
+    match (k.faces.as_slice(), k.reshaped, l.target.is_network() || l.kept != network_edit::Kept::default()) {
+        ([one], false, false) => {
             let points: Vec<[f64; 3]> = edit::control_points(one).iter().map(|p| [p.x, p.y, p.z]).collect();
             Ok(vec![("scan.edit_surface".into(), json!({"surface": l.target.body, "points": points}))])
         }
-        ([one], true) => Ok(vec![("scan.edit_surface".into(), json!({"surface": l.target.body, "net": net_of(one)}))]),
-        (many, _) => Ok(vec![("scan.edit_surface".into(), json!({"surface": l.target.body, "faces": many.iter().map(net_of).collect::<Vec<_>>()}))]),
+        ([one], true, false) => Ok(vec![("scan.edit_surface".into(), json!({"surface": l.target.body, "net": net_of(one)}))]),
+        (many, _, _) => {
+            let (creases, smooths) = network::held_by_hand(many, &k.joins);
+            let ends = |list: Vec<(Vec3, Vec3)>| list.into_iter().map(|(a, b)| [[a.x, a.y, a.z], [b.x, b.y, b.z]]).collect::<Vec<_>>();
+            let symmetry = match symmetry_now(k) {
+                Some(p) => json!({"point": [p.point.x, p.point.y, p.point.z], "normal": [p.normal.x, p.normal.y, p.normal.z]}),
+                None => json!("none"),
+            };
+            Ok(vec![(
+                "scan.edit_surface".into(),
+                json!({
+                    "surface": l.target.body,
+                    "faces": many.iter().map(net_of).collect::<Vec<_>>(),
+                    "kept_edges": {"creases": ends(creases), "smooths": ends(smooths)},
+                    "symmetry": symmetry,
+                }),
+            )])
+        }
     }
 }
 
@@ -1614,6 +1793,51 @@ pub(crate) fn edited_body(app: &SolveApp) -> Option<&str> {
         Some(Kind::ScanEditSurface(k)) => loaded(k).map(|l| l.target.body.as_str()),
         _ => None,
     }
+}
+
+/// Whether Ctrl+Shift is held for the Smoothing Brush (Preferences › Tools): `mods` exactly Ctrl
+/// (Command on macOS) and Shift, with the preference on.
+pub(crate) fn brush_keys_held(app: &SolveApp, mods: egui::Modifiers) -> bool {
+    app.preferences.edit_surface_brush_keys && (mods.ctrl || mods.command) && mods.shift && !mods.alt
+}
+
+/// The wheel turned with Ctrl+Shift held over the view while Edit Surface shows its points on the
+/// surface: the brush's circle grows or shrinks, and the view does not zoom. Before the camera
+/// reads the wheel.
+pub(crate) fn brush_wheel(app: &mut SolveApp, ctx: &egui::Context, rect: egui::Rect) {
+    let over = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| rect.contains(p));
+    if !over || !app.preferences.edit_surface_brush_keys {
+        return;
+    }
+    let Some(k) = dialog(app).filter(|k| k.handles == HANDLES_DOTS && loaded(k).is_some()) else { return };
+    // Each wheel event by the keys held as it was turned.
+    let line = ctx.options(|o| o.input_options.line_scroll_speed);
+    let (turned, points) = ctx.input(|i| {
+        let mut turned = false;
+        let mut points = 0.0f32;
+        for e in &i.events {
+            let egui::Event::MouseWheel { unit, delta, modifiers, phase, .. } = e else { continue };
+            if !((modifiers.ctrl || modifiers.command) && modifiers.shift && !modifiers.alt) {
+                continue;
+            }
+            turned = true;
+            if *phase == egui::TouchPhase::Move {
+                points += match unit {
+                    egui::MouseWheelUnit::Point => delta.x + delta.y,
+                    egui::MouseWheelUnit::Line => (delta.x + delta.y) * line,
+                    egui::MouseWheelUnit::Page => (delta.x + delta.y) * 400.0,
+                };
+            }
+        }
+        (turned, points)
+    });
+    if !turned {
+        return;
+    }
+    if points != 0.0 && points.is_finite() {
+        k.brush_size = (k.brush_size * (0.0025 * points).exp()).clamp(*BRUSH_SIZES.start(), *BRUSH_SIZES.end());
+    }
+    crate::navigation::claim_wheel(ctx);
 }
 
 /// Whether a handle is being dragged: the drag neither selects nor turns the view.
@@ -1693,6 +1917,12 @@ pub(crate) fn choose(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui:
         add_face_click(app, proj, at);
         return;
     }
+    if let Some(k) = dialog(app).filter(|k| k.keeping_half) {
+        if let Some(face) = face_at(k, proj, at) {
+            keep_half_click(k, face);
+        }
+        return;
+    }
     if let Some(k) = dialog(app).filter(|k| k.creasing.is_some()) {
         if let (Some(seam), Some(crease)) = (seam_at(k, proj, at), k.creasing) {
             crease_click(k, seam, crease);
@@ -1731,6 +1961,16 @@ pub(crate) fn choose(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui:
         && let Some(index) = handle_at(k, proj, at)
     {
         k.chosen = Some(index);
+    }
+}
+
+/// A double-click at `at`: with Crease Edge or Remove Crease on, the shared edge under it and the
+/// edges it runs on into through the grid's corners, at once.
+pub(crate) fn double_click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
+    if let Some(k) = dialog(app).filter(|k| k.creasing.is_some())
+        && let (Some(seam), Some(crease)) = (seam_at(k, proj, at), k.creasing)
+    {
+        crease_chain_click(k, seam, crease);
     }
 }
 
@@ -1828,13 +2068,14 @@ fn rows_for(k: &EditSurface, face: usize, side: Side) -> usize {
 /// A primary press at `at`: takes the handle under it, if any. With `copy` (Alt held) a point on
 /// an edge of the net has its edge copied beside itself first and the copy taken, to drag the
 /// surface out (QuickSurface's Alt-drag; the control net of one face).
-pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, copy: bool) -> bool {
+pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, copy: bool, brush_keys: bool) -> bool {
     let Some(k) = dialog(app) else { return false };
-    if k.adding.is_some() || k.deleting || k.creasing.is_some() {
+    if k.adding.is_some() || k.deleting || k.creasing.is_some() || k.keeping_half {
         return false;
     }
-    // A stroke of the brush: remembered once, then a step at each place the pointer goes.
-    if k.brushing && k.handles == HANDLES_DOTS {
+    // A stroke of the brush (on, or Ctrl+Shift held): remembered once, then a step at each place
+    // the pointer goes.
+    if (k.brushing || brush_keys) && k.handles == HANDLES_DOTS {
         remember(k);
         k.stroke = true;
         k.faces = k.shown.clone();
@@ -1854,7 +2095,7 @@ pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::P
         } else {
             Vec::new()
         };
-        k.drag = Some(Drag { index, from: dot.at, with: vec![(index, dot.at)], slide: None, dot: true, grow, to: None });
+        k.drag = Some(Box::new(Drag { index, from: dot.at, with: vec![(index, dot.at)], slide: None, dot: true, grow, to: None, weld: None }));
         k.chosen = Some(index);
         return true;
     }
@@ -1899,7 +2140,7 @@ pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::P
             Some(Box::new(SlideFrom { surface, at: (u, v), on }))
         })
         .flatten();
-    k.drag = Some(Drag { index, from: k.net[index], with, slide, dot: false, grow: Vec::new(), to: None });
+    k.drag = Some(Box::new(Drag { index, from: k.net[index], with, slide, dot: false, grow: Vec::new(), to: None, weld: None }));
     k.chosen = Some(index);
     true
 }
@@ -1980,6 +2221,16 @@ pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, to: egui
         }
         return;
     }
+    // A corner on the network's edge over another such corner: it goes onto it, and is welded to
+    // it when let go.
+    let weld = weld_target(k, proj, drag.index, to);
+    if let Some(d) = k.drag.as_mut() {
+        d.weld = weld;
+    }
+    let moves: Vec<(usize, Vec3)> = match weld.and_then(|w| k.shown_net.get(w).copied()) {
+        Some(onto) => moves.into_iter().map(|(i, p)| if i == drag.index { (i, onto) } else { (i, p) }).collect(),
+        None => moves,
+    };
     let around: Vec<usize> = moves.iter().map(|m| m.0).collect();
     let made = if drag.dot {
         dot_preview(k, &moves)
@@ -1994,8 +2245,75 @@ pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, to: egui
     }
 }
 
+/// Whether network point `p` is a corner on the network's edge.
+fn edge_corner(k: &EditSurface, p: usize) -> bool {
+    k.joins.corners.iter().any(|c| c.point == p && c.border)
+}
+
+/// The corner on the network's edge under the pointer at `at` that the dragged point `index` (a
+/// corner on the edge too) would be welded to: another one, within [`GRAB`] on the screen.
+fn weld_target(k: &EditSurface, proj: &crate::viewport::Proj, index: usize, at: egui::Pos2) -> Option<usize> {
+    if !edge_corner(k, index) {
+        return None;
+    }
+    k.joins
+        .corners
+        .iter()
+        .filter(|c| c.border && c.point != index)
+        .filter_map(|c| Some((c.point, proj.to_screen(*k.shown_net.get(c.point)?)?.distance(at))))
+        .filter(|(_, d)| *d <= GRAB)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(p, _)| p)
+}
+
+/// Corner `point` dropped on corner `onto`: one point from then on, and open sides whose ends then
+/// meet sewn into a shared edge, held tangent and fitted to the scan near it where the faces go on
+/// from each other (else a crease); with Symmetry the mirror image welded too. One step of Undo
+/// Last Change.
+fn weld(k: &mut EditSurface, point: usize, onto: usize) {
+    let (Some(&from), Some(&to)) = (k.net.get(point), k.shown_net.get(onto)) else { return };
+    let reach = k.faces.iter().map(edit::default_reach).fold(1.0, f64::max);
+    let Some((mut faces, mut sewn, _, mut smooths)) = network_edit::corner_welded(&k.faces, &k.joins, point, to, reach, &k.creases, &k.smooths)
+    else {
+        k.note = Some(tr("ui.scan_edit_nothing").to_owned());
+        return;
+    };
+    // With Symmetry on, the mirror image too: the corners nearest the two reflected places.
+    if let Some(plane) = k.mirror.as_ref().map(|p| p.plane)
+        && plane.reflect(from).dist(from) > 1e-6
+        && let Ok(joins) = network::joins_keeping(&faces, &k.creases, &smooths, network::ends_tolerance(&faces))
+    {
+        let places = network::network_points(&faces, &joins);
+        let nearest = |q: Vec3, but: Option<usize>| {
+            joins
+                .corners
+                .iter()
+                .filter(|c| c.border && Some(c.point) != but)
+                .min_by(|a, b| places[a.point].dist(q).total_cmp(&places[b.point].dist(q)))
+                .map(|c| c.point)
+        };
+        if let Some(p) = nearest(plane.reflect(from), None)
+            && let Some(o) = nearest(plane.reflect(to), Some(p))
+            && let Some((f, n, _, both)) = network_edit::corner_welded(&faces, &joins, p, places[o], reach, &k.creases, &smooths)
+        {
+            faces = f;
+            sewn += n;
+            smooths = both;
+        }
+    }
+    let before = k.smooths.clone();
+    k.smooths = smooths;
+    reshaped_to(k, faces);
+    if let Some(b) = k.history.last_mut() {
+        b.smooths = before;
+    }
+    k.note = None;
+    k.told = Some(tr(if sewn > 0 { "ui.scan_edit_sewn" } else { "ui.scan_edit_welded" }));
+}
+
 /// The drag let go: the faces as previewed are kept and the point counts as moved by hand; a
-/// face dragged out of an open edge is added, out to where the edge was taken.
+/// face dragged out of an open edge is added, out to where the edge was taken; a corner let go
+/// on another corner is welded to it.
 pub(crate) fn release(app: &mut SolveApp) {
     // A stroke of the brush ends: the faces as brushed are kept, measured again on every point.
     if let Some(k) = dialog(app).filter(|k| k.stroke) {
@@ -2025,6 +2343,10 @@ pub(crate) fn release(app: &mut SolveApp) {
     }
     let Some(k) = dialog(app) else { return };
     let Some(drag) = k.drag.take() else { return };
+    if let Some(onto) = drag.weld {
+        weld(k, drag.index, onto);
+        return;
+    }
     let changed = k.shown_net.len() == k.net.len() && (k.shown_net != k.net || k.shown != k.faces);
     if changed {
         let by_hand: Vec<usize> = drag.with.iter().map(|(i, _)| *i).collect();
@@ -2277,12 +2599,21 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
             }
         }
     }
-    // The smoothing brush's circle round the pointer.
-    if k.brushing
+    // The smoothing brush's circle round the pointer: while it is on, or Ctrl+Shift is held
+    // (Preferences › Tools) with the points on the surface.
+    let keys = brush_keys_held(app, painter.ctx().input(|i| i.modifiers));
+    if (k.brushing || keys || k.stroke)
+        && k.handles == HANDLES_DOTS
         && let Some(at) = pointer
         && proj.rect.contains(at)
     {
         painter.circle_stroke(at, k.brush_size, egui::Stroke::new(1.5, t.accent));
+    }
+    // The corner a dragged corner is welded to when let go.
+    if let Some(w) = k.drag.as_ref().and_then(|d| d.weld)
+        && let Some(s) = k.shown_net.get(w).and_then(|p| proj.to_screen(*p))
+    {
+        painter.circle_stroke(s, HANDLE + 4.0, egui::Stroke::new(2.5, t.accent));
     }
     // Corners where faces meet other than as a grid's: the surface is less smooth there.
     for c in k.joins.irregular() {
@@ -2878,7 +3209,6 @@ mod tests {
         assert_eq!((network::creased(&k.joins), k.history.len(), k.creases.len()), (vec![true], 1, 1), "creased in one step: {:?}", k.note);
         assert!(network::seam_angle(&k.faces, &k.joins.seams[0]) > 15.0, "the faces meet at an angle now");
         assert!(k.fit.is_some_and(|f| f.0 < before / 2.0), "and follow the ridge: {:?} against {before}", k.fit);
-        assert_eq!(unkept_creases(&k), 0, "a crease the scan has is kept");
         if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
             undo_last(e);
             assert_eq!((network::creased(&e.joins), e.creases.len()), (vec![false], 0), "the tangency back");
@@ -2908,6 +3238,15 @@ mod tests {
         h.app.start("scan.edit_surface");
         h.frames(3);
         assert_eq!(network::creased(&kind(&h).joins), vec![true], "read back as a crease");
+        // A double-click with Remove Crease on: the edge and those it runs on into (here, itself)
+        // made smooth in one step, the first click of it taken back.
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            e.creasing = Some(false);
+        }
+        h.step(&json!({"click": {"world": [mid.x, mid.y, mid.z]}, "double": true})).unwrap();
+        h.frames(2);
+        let k = kind(&h).clone();
+        assert_eq!((network::creased(&k.joins), k.history.len()), (vec![false], 1), "one step: {:?}", k.note);
     }
     /// With the Smoothing Brush on, a drag across a point pushed up off the dome brings it back
     /// toward its neighbours in one change (the stroke), which Undo Last Change takes back whole;
@@ -2977,7 +3316,7 @@ mod tests {
         h.step(&json!({"view_anim": "top"})).unwrap();
         h.app.start("scan.edit_surface");
         h.frames(3);
-        let planes = symmetry_planes(&h.app);
+        let planes = symmetry_planes(&h.app, kind(&h));
         let kept = planes.iter().find(|(n, _)| n == "Symmetry Plane").cloned().expect("Find Symmetry's plane offered");
         assert_eq!((kind(&h).symmetry, planes.len()), (0, 4), "the three origin planes and the kept one");
         if let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
@@ -3023,10 +3362,134 @@ mod tests {
         let joins = network::joins(&body.faces).unwrap();
         let tolerance = symmetric::pairing_tolerance(&body.faces, 1.0);
         assert!(symmetric::pairs_of(&body.faces, &joins, kind_plane(&h), tolerance).is_ok(), "a mirror image as kept");
+        assert!(h.app.session.doc.free_forms.first().is_some_and(|k| k.symmetry.is_some()), "the design keeps the plane");
+
+        // Opened again: Symmetry is on in the plane kept.
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        let k = kind(&h).clone();
+        assert!(k.mirror.is_some() && k.symmetry == 4, "Symmetry on as kept: {} {:?}", k.symmetry, k.mirror_note);
+        // None: both halves stay, and Keep One Half is offered; a click on a face of the -x half
+        // keeps that half.
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            e.symmetry = 0;
+            apply_symmetry(e, None);
+            assert!(e.half_offer.is_some() && e.faces.len() == 2, "both halves stay, one can go");
+            e.keeping_half = true;
+        }
+        let top = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+        h.step(&json!({"click": {"world": [20.0, 30.0, top(20.0, 30.0)]}})).unwrap();
+        h.frames(2);
+        let k = kind(&h).clone();
+        assert_eq!((k.faces.len(), k.half_offer.is_none(), k.history.len()), (1, true, 1), "one half kept: {:?}", k.note);
+        assert!(edit::control_points(&k.faces[0]).iter().all(|p| p.x <= 30.0 + 1e-6), "the -x half");
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        assert_eq!(edit::editable(&h.app.session, Some("FreeForm1"), "test").unwrap().faces.len(), 1);
+        assert!(h.app.session.doc.free_forms.is_empty(), "the plane let go");
     }
 
     /// The plane Find Symmetry kept, as Edit Surface reads it.
     fn kind_plane(h: &crate::scenario::Harness) -> MirrorPlane {
-        symmetry_planes(&h.app).into_iter().find(|(n, _)| n == "Symmetry Plane").map(|(_, p)| p).unwrap()
+        symmetry_planes(&h.app, &EditSurface::default()).into_iter().find(|(n, _)| n == "Symmetry Plane").map(|(_, p)| p).unwrap()
+    }
+
+    /// A corner of a face on the Free Form's edge dragged onto a neighbour's corner is welded to
+    /// it when let go: the two open sides whose ends then meet are sewn into one shared edge, in
+    /// one step of Undo Last Change, and OK keeps the four faces as one network.
+    #[test]
+    fn a_corner_dropped_on_a_corner_is_welded_and_the_sides_sewn() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        // In the middle of the view: the top of a top view is under the ribbon.
+        h.app.run("scan.free_form", json!({"corners": [[10, 6, 0], [30, 6, 0], [30, 24, 0], [10, 24, 0]], "count": 5})).unwrap();
+        h.app.run("scan.add_face", json!({"edge": [[30, 6, 0], [30, 24, 0]], "far": [[50, 6, 0], [50, 24, 0]], "rows": 5})).unwrap();
+        h.app.run("scan.add_face", json!({"edge": [[10, 24, 0], [30, 24, 0]], "far": [[10, 42, 0], [30, 42, 0]], "rows": 5})).unwrap();
+        h.app.run("scan.add_face", json!({"edge": [[30, 24, 0], [50, 24, 0]], "far": [[34, 45, 0], [50, 42, 0]], "rows": 5})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        let k = kind(&h).clone();
+        assert_eq!((k.faces.len(), k.joins.seams.len()), (4, 3));
+        let corner_near = |k: &EditSurface, q: Vec3| {
+            k.joins.corners.iter().filter(|c| c.border).map(|c| k.shown_net[c.point]).min_by(|a, b| a.dist(q).total_cmp(&b.dist(q))).unwrap()
+        };
+        let (from, onto) = (corner_near(&k, Vec3::new(34.0, 45.0, 7.0)), corner_near(&k, Vec3::new(30.0, 42.0, 7.0)));
+        assert!(from.dist(onto) > 2.0, "apart to begin with");
+        // The corners in the middle of the view, clear of the ribbon.
+        h.app.cam.target = (from + onto) * 0.5;
+        h.frames(2);
+        h.step(&json!({"drag": [{"world": [from.x, from.y, from.z]}, {"world": [onto.x, onto.y, onto.z]}], "steps": 6})).unwrap();
+        h.frames(2);
+        let k = kind(&h).clone();
+        assert_eq!((k.faces.len(), k.joins.seams.len(), k.history.len()), (4, 4, 1), "sewn in one step: {:?}", k.note);
+        assert!(k.told.is_some(), "and said so");
+        assert!(k.joins.corners.iter().any(|c| c.faces == 4 && !c.border), "the middle a grid's corner");
+        if let Some(Kind::ScanEditSurface(e)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            undo_last(e);
+            assert_eq!(e.joins.seams.len(), 3, "taken back whole");
+        }
+        h.step(&json!({"drag": [{"world": [from.x, from.y, from.z]}, {"world": [onto.x, onto.y, onto.z]}], "steps": 6})).unwrap();
+        h.frames(2);
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        let body = edit::editable(&h.app.session, Some("FreeForm1"), "test").unwrap();
+        assert_eq!(network::joins(&body.faces).unwrap().seams.len(), 4, "kept sewn");
+    }
+
+    /// With the preference on (the default), Ctrl+Shift and a drag smooths with the brush off,
+    /// and Ctrl+Shift with the wheel sizes the brush instead of zooming; off, neither does.
+    #[test]
+    fn ctrl_shift_brushes_and_sizes_the_brush_unless_the_preference_is_off() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]], "count": 5})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        assert!(h.app.preferences.edit_surface_brush_keys, "on by default");
+        let dome = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+        let middle = 2 * 5 + 2;
+        let height = |k: &EditSurface| k.shown_dots[middle].at.z - dome(k.shown_dots[middle].at.x, k.shown_dots[middle].at.y);
+        if let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.snap = SNAP_OFF;
+            let up = k.shown_dots[middle].at + Vec3::new(0.0, 0.0, 3.0);
+            move_to(k, middle, up);
+            k.brush_size = 90.0;
+            k.brush_strength = 1.0;
+            k.snap = SNAP_POINTER;
+        }
+        let k = kind(&h).clone();
+        assert!(!k.brushing && height(&k) > 2.9);
+        let steps = k.history.len();
+        let (from, to) = (Vec3::new(2.0, 30.0, dome(2.0, 30.0)), Vec3::new(58.0, 30.0, dome(58.0, 30.0)));
+        let stroke = json!({"drag": [{"world": [from.x, from.y, from.z]}, {"world": [to.x, to.y, to.z]}], "steps": 10, "ctrl": true, "shift": true});
+        h.step(&stroke).unwrap();
+        h.frames(2);
+        let k = kind(&h).clone();
+        assert!(height(&k) < 2.0 && k.history.len() == steps + 1 && !k.brushing, "brushed in one change, the brush still off: {}", height(&k));
+        // Ctrl+Shift and the wheel: the circle grows, the view stays.
+        let middle_of_view = h.app.viewport.rect.expect("the view").center();
+        let cam = h.app.cam;
+        h.call("ui.scroll", json!({"x": middle_of_view.x, "y": middle_of_view.y, "delta": -200, "ctrl": true, "shift": true}));
+        h.frames(2);
+        let size = kind(&h).brush_size;
+        assert!((size - 90.0).abs() > 5.0, "sized: {size}");
+        assert!((h.app.cam.distance - cam.distance).abs() < 1e-9, "no zoom");
+        // The old behaviour, kept behind the preference: the wheel zooms, a drag does not brush.
+        h.app.preferences.edit_surface_brush_keys = false;
+        h.call("ui.scroll", json!({"x": middle_of_view.x, "y": middle_of_view.y, "delta": -200, "ctrl": true, "shift": true}));
+        h.frames(2);
+        assert_eq!(kind(&h).brush_size, size, "not sized");
+        let steps = kind(&h).history.len();
+        h.step(&stroke).unwrap();
+        h.frames(2);
+        assert_eq!(kind(&h).history.len(), steps, "no stroke");
     }
 }

@@ -1474,6 +1474,11 @@ preference_settings! {
     /// painted in the selection colour, so the surface, its points and the scan's colouring stay
     /// in sight. Off: the scan clicked is painted as selected, as before.
     free_form_plain_scan: bool = true, PAGE_TOOLS => check_id("prefs.free_form_plain_scan");
+    /// In Edit Surface, Ctrl+Shift and a drag smooths the surface under the Smoothing Brush's
+    /// circle (no need to turn the brush on), and Ctrl+Shift with the wheel sizes the circle, as
+    /// QuickSurface's brush is used. Off: Ctrl+Shift drags and the wheel with Ctrl+Shift do what
+    /// they do elsewhere (the wheel zooms), as before.
+    edit_surface_brush_keys: bool = true, PAGE_TOOLS => check_id("prefs.edit_surface_brush_keys");
     /// Feature windows choose Join, New Body or Cut from what their material touches (`op_auto`,
     /// #6901). Off: they keep the operation they open with (Extrude its own Join or Cut), as before.
     auto_operation: bool = true, PAGE_TOOLS => check_id("prefs.auto_operation");

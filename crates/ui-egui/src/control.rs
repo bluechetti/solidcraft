@@ -1300,8 +1300,10 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
             if !x.is_finite() || !y.is_finite() || !delta.is_finite() {
                 return err("x, y and delta must fit finite screen coordinates");
             }
-            let modifiers = if ctrl { egui::Modifiers::CTRL } else { Default::default() };
-            let explicit = p.get("ctrl").is_some();
+            let mut modifiers = if ctrl { egui::Modifiers::CTRL } else { Default::default() };
+            // `shift: true` holds Shift as well (Edit Surface sizes its brush on Ctrl+Shift).
+            modifiers.shift = b("shift");
+            let explicit = p.get("ctrl").is_some() || p.get("shift").is_some();
             app.synthetic.push(egui::Event::PointerMoved(egui::pos2(x, y)));
             if explicit {
                 app.synthetic.push(egui::Event::ModifiersChanged(modifiers));
