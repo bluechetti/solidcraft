@@ -29,28 +29,26 @@ pub struct Deviation {
 /// numbers; `tolerance` is what counts as on it.
 pub fn measure(points: &[Vec3], model: &Mesh, tolerance: f64, reach: f64) -> Deviation {
     let tree = TriangleTree::new(model);
-    let values: Vec<f32> = points
-        .iter()
-        .map(|&p| {
-            let Some((distance, t)) = tree.nearest(p) else { return f32::NAN };
-            if !(distance <= reach) {
-                return f32::NAN;
-            }
-            let sign = model
-                .triangles
-                .get(t as usize)
-                .and_then(|&[a, b, c]| {
-                    Some([*model.positions.get(a as usize)?, *model.positions.get(b as usize)?, *model.positions.get(c as usize)?])
-                })
-                .and_then(|[a, b, c]| {
-                    let normal = (b - a).cross(c - a).normalized()?;
-                    let off = p - closest_on_triangle(p, a, b, c);
-                    Some(if off.dot(normal) < 0.0 { -1.0 } else { 1.0 })
-                })
-                .unwrap_or(1.0);
-            (sign * distance) as f32
-        })
-        .collect();
+    // A whole scan's points (tens of millions when a selection reads every triangle) are measured
+    // across the threads; each point on its own, so the order and the answer do not change.
+    let values: Vec<f32> = crate::par::map(points.len(), |i| {
+        let Some(&p) = points.get(i) else { return f32::NAN };
+        let Some((distance, t)) = tree.nearest(p) else { return f32::NAN };
+        if !(distance <= reach) {
+            return f32::NAN;
+        }
+        let sign = model
+            .triangles
+            .get(t as usize)
+            .and_then(|&[a, b, c]| Some([*model.positions.get(a as usize)?, *model.positions.get(b as usize)?, *model.positions.get(c as usize)?]))
+            .and_then(|[a, b, c]| {
+                let normal = (b - a).cross(c - a).normalized()?;
+                let off = p - closest_on_triangle(p, a, b, c);
+                Some(if off.dot(normal) < 0.0 { -1.0 } else { 1.0 })
+            })
+            .unwrap_or(1.0);
+        (sign * distance) as f32
+    });
     let measured: Vec<f64> = values.iter().filter(|v| v.is_finite()).map(|&v| f64::from(v)).collect();
     let n = measured.len().max(1) as f64;
     Deviation {

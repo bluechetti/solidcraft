@@ -21,6 +21,7 @@ A scan is a mesh body. Read it with `scan.survey {}`, clean and place it, choose
 5. **Place:** `scan.stand_on_base {}`, `scan.quick_align {}`, or `scan.symmetry {}` then `scan.square_to_symmetry {}`. Several passes: `scan.align_all {}` or `scan.combine {}`.
 6. **Route:** `scan.find_all {}`, then survey: by `shapes.in_shapes` and `sheet_like`:
    - 0.6 or more: `scan.reconstruct {}`, then run its `proposals` one by one; undo a step whose `fit.verdict` is `worse`.
+     Then what is still missing: `scan.select {"unexplained": "<scan> Reconstructed"}`, `scan.reconstruct_selection {}`, run those proposals; repeat until `pieces` is empty or a piece adds nothing (then `"piece": 1`).
    - 0.3 to 0.6: reconstruct, then `scan.fit_patches {}` over the freeform rest.
    - under 0.3: `scan.fit_patches {}` or `scan.free_form {}`.
    - `sheet_like`: `scan.flat_template {"outline":"scan"}`.

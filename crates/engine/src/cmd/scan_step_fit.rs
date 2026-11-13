@@ -63,11 +63,18 @@ fn verdict(before: Option<&ScanFitSample>, after: &ScanFitSample) -> &'static st
     }
 }
 
+/// How far from the body a part of the scan may be and still be explained by it: five times the
+/// scan's tolerance, at least half a millimetre (a scan's own noise and the rounds of its sharp
+/// edges stay within it).
+pub(super) fn limit(tolerance: f64) -> f64 {
+    0.5_f64.max(5.0 * tolerance)
+}
+
 /// `solid` measured against at most [`SAMPLE`] of `scan`'s points, evenly spread through them;
 /// `None` when either is missing, the solid is a mesh or cannot be meshed.
 pub(super) fn sample(s: &Session, scan: &str, solid: &str) -> Option<ScanFitSample> {
     let tolerance = tolerance::of(s, scan);
-    let limit = 0.5_f64.max(5.0 * tolerance);
+    let limit = limit(tolerance);
     let state = s.model.state();
     let model = state.body(solid).filter(|b| !b.body.is_mesh())?;
     let (positions, _) = state.body(scan)?.body.triangle_mesh()?;

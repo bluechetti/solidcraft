@@ -22,7 +22,7 @@ use super::{CommandSpec, length, mesh_name};
 use crate::params::{bad, bool_, str_, string_list_or_default};
 use crate::schema::scan_select::{
     ScanCurveFromSelectionParams, ScanCurveFromSelectionResult, ScanDeleteSelectionParams, ScanDeleteSelectionResult, ScanKeepSelectionParams,
-    ScanKeepSelectionResult, ScanSelectInsideParams, ScanSelectParams, ScanSelectResult,
+    ScanKeepSelectionResult, ScanSelectInsideParams, ScanSelectParams, ScanSelectResult, ScanUnexplainedPiece,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -46,7 +46,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("select")
         .contract(&SELECT_CONTRACT)
         .output(output_schema_for::<ScanSelectResult>)
-        .params("body?: the scan (default: the one selected on, else the selected or only one); mode?: replace|add|remove (default replace); and one of: brush: {points: [[x,y,z], …], radius: length} (the triangles within the radius of each place, reached across the scan from the one under it); polygon: {points: [[x,y,z], …] (its corners as the view draws them), direction: [x,y,z] (the way the view looks), eye?: [x,y,z] (a perspective view's), through?: bool (default false: only what is seen)}; region: {point, angle?: degrees (default 30)} (grown while the scan faces within the angle of the way it faces there: a face up to where its rounds turn away); shape: n | {point} (a shape Find All found); saved: name (a kept selection); triangles: [n, …]; all: true; none: true; invert: true; grow: rings; shrink: rings. A view of the scan, not an undo step → body, triangles, area, of, changed"),
+        .params("body?: the scan (default: the one selected on, else the selected or only one); mode?: replace|add|remove (default replace); and one of: brush: {points: [[x,y,z], …], radius: length} (the triangles within the radius of each place, reached across the scan from the one under it); polygon: {points: [[x,y,z], …] (its corners as the view draws them), direction: [x,y,z] (the way the view looks), eye?: [x,y,z] (a perspective view's), through?: bool (default false: only what is seen)}; region: {point, angle?: degrees (default 30)} (grown while the scan faces within the angle of the way it faces there: a face up to where its rounds turn away); shape: n | {point} (a shape Find All found); saved: name (a kept selection); triangles: [n, …]; all: true; none: true; invert: true; grow: rings; shrink: rings; unexplained: solid | {body: solid, piece?: n (default 0, the largest), grow?: rings} (the part of the scan the solid built from it does not explain yet: its triangles farther from the solid than five times the scan's tolerance, at least 0.5 mm, in pieces of 50 triangles or more; one piece selected, nothing when the solid explains the whole scan; read it with scan.reconstruct_selection to build what is missing). A view of the scan, not an undo step → body, triangles, area, of, changed, pieces? [{piece, triangles, area, side: missing|extra, deepest, point}], limit?"),
     CommandSpec::new("scan.select_inside_curve", "Select Inside Curve", crate::checked!("scan.select_inside_curve", select_inside))
         .at("SCAN", "SELECT")
         .icon("boundary_fill")
@@ -253,7 +253,8 @@ fn set(s: &mut Session, scan: &str, flags: Vec<bool>, cmd: &str) -> Result<Value
     s.scan_selection =
         (count > 0).then(|| Arc::new(ScanSelected { scan: scan.to_owned(), selected: Arc::new(flags), count, area, key, held: Mutex::new(held) }));
     let changed = changed && !(before.is_none() && count == 0);
-    let reply = ScanSelectResult { body: scan.to_owned(), triangles: count, area, of, changed, param_warnings: Vec::new() };
+    let reply =
+        ScanSelectResult { body: scan.to_owned(), triangles: count, area, of, changed, pieces: None, limit: None, param_warnings: Vec::new() };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -281,7 +282,7 @@ fn combined(s: &Session, scan: &str, count: usize, found: &[bool], mode: Mode) -
 
 pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.select";
-    let ways = ["brush", "polygon", "region", "shape", "saved", "triangles", "all", "none", "invert", "grow", "shrink"];
+    let ways = ["brush", "polygon", "region", "shape", "saved", "triangles", "all", "none", "invert", "grow", "shrink", "unexplained"];
     let given: Vec<&str> = ways.iter().copied().filter(|k| p.get(*k).is_some_and(|v| !v.is_null() && *v != json!(false))).collect();
     let [way] = given[..] else {
         return Err(bad(cmd, format!("give one way to select: {}", ways.join(", "))));
@@ -293,6 +294,16 @@ pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
     let current =
         || selected(s).filter(|k| k.scan == scan && k.selected.len() == count).map(|k| (*k.selected).clone()).unwrap_or_else(|| vec![false; count]);
     let v = &p[way];
+    if way == "unexplained" {
+        let (found, pieces, limit) = unexplained(s, &scan, v, &topology, cmd)?;
+        let flags = combined(s, &scan, count, &found, mode);
+        let mut reply = set(s, &scan, flags, cmd)?;
+        if let Some(obj) = reply.as_object_mut() {
+            obj.insert("pieces".into(), serde_json::to_value(pieces).map_err(|e| EngineError::Other(e.to_string()))?);
+            obj.insert("limit".into(), json!(limit));
+        }
+        return Ok(reply);
+    }
     let flags = match way {
         "all" => vec![true; count],
         "none" => vec![false; count],
@@ -380,6 +391,87 @@ pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     set(s, &scan, flags, cmd)
+}
+
+/// Pieces smaller than this many triangles are left out of what a solid leaves unexplained: a
+/// sharp edge's rounding or a stray speck, too little for Reconstruct to read.
+const LEAST_PIECE: usize = 50;
+
+/// The triangles of `scan` the solid `v` names does not explain (their middles farther from it
+/// than [`super::step_fit::limit`]), in pieces largest first; the piece asked for (the largest
+/// by default), grown by the rings asked for, is what is selected. Nothing is selected when the
+/// solid explains the whole scan.
+fn unexplained(s: &Session, scan: &str, v: &Value, topology: &Topology, cmd: &str) -> Result<(Vec<bool>, Vec<ScanUnexplainedPiece>, f64)> {
+    let (solid, piece, grow) = match v {
+        Value::String(b) => (b.clone(), 0, 0),
+        Value::Object(_) => {
+            let solid =
+                str_(v, "body").filter(|b| !b.trim().is_empty()).ok_or_else(|| bad(cmd, "`unexplained.body` is the solid built from the scan"))?;
+            let number = |key: &str, most: u64| -> Result<u64> {
+                match v.get(key).filter(|n| !n.is_null()) {
+                    None => Ok(0),
+                    Some(n) => n.as_u64().filter(|n| *n <= most).ok_or_else(|| bad(cmd, format!("`unexplained.{key}` is a number, 0 to {most}"))),
+                }
+            };
+            (solid.to_owned(), number("piece", u64::from(u32::MAX))? as usize, number("grow", MOST_RINGS)? as i32)
+        }
+        _ => return Err(bad(cmd, "`unexplained` is the solid's name or {body, piece?, grow?}")),
+    };
+    if solid == scan {
+        return Err(bad(cmd, "`unexplained` names the solid built from the scan, not the scan itself"));
+    }
+    let tolerance = super::tolerance::of(s, scan);
+    let limit = super::step_fit::limit(tolerance);
+    let surface = {
+        let state = s.model.state();
+        let model = state.body(&solid).ok_or_else(|| bad(cmd, format!("there is no body `{solid}`")))?;
+        if model.body.is_mesh() {
+            return Err(bad(cmd, format!("`{solid}` is a mesh: give the solid built from the scan (Reconstruct builds `{scan} Reconstructed`)")));
+        }
+        model
+            .body
+            .mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance / 4.0))
+            .map_err(|e| bad(cmd, format!("`{solid}` cannot be measured against the scan: {e}")))?
+    };
+    let count = topology.triangle_count();
+    let middles: Vec<Vec3> = (0..count).map(|t| topology.middle(t)).collect();
+    let distances = solidcraft_scan::deviation::measure(&middles, &surface, tolerance, f64::INFINITY).values;
+    let off: Vec<bool> = distances.iter().map(|d| !(f64::from(d.abs()) <= limit)).collect();
+    let pieces: Vec<Vec<usize>> = topology.pieces(&off).into_iter().filter(|p| p.len() >= LEAST_PIECE).collect();
+    let described = pieces
+        .iter()
+        .enumerate()
+        .map(|(k, piece)| {
+            let area: f64 = piece.iter().map(|&t| topology.area(t)).sum();
+            let weighed = piece.iter().fold(Vec3::ZERO, |m, &t| m + topology.middle(t) * topology.area(t));
+            let centre = if area > 0.0 { weighed * (1.0 / area) } else { topology.middle(piece[0]) };
+            let near = piece.iter().copied().min_by(|&a, &b| {
+                solidcraft_geom::Vec3Geom::len2(topology.middle(a) - centre).total_cmp(&solidcraft_geom::Vec3Geom::len2(topology.middle(b) - centre))
+            });
+            let point = topology.middle(near.unwrap_or(piece[0]));
+            let signed: f64 = piece.iter().map(|&t| f64::from(distances[t]) * topology.area(t)).filter(|d| d.is_finite()).sum();
+            let deepest = piece.iter().map(|&t| f64::from(distances[t].abs())).filter(|d| d.is_finite()).fold(0.0, f64::max);
+            ScanUnexplainedPiece {
+                piece: k,
+                triangles: piece.len(),
+                area,
+                side: if signed >= 0.0 { "missing" } else { "extra" }.to_owned(),
+                deepest,
+                point: [point.x, point.y, point.z],
+            }
+        })
+        .collect();
+    let mut flags = vec![false; count];
+    if !pieces.is_empty() {
+        let chosen = pieces.get(piece).ok_or_else(|| bad(cmd, format!("`{solid}` leaves {} pieces unexplained, numbered from 0", pieces.len())))?;
+        for &t in chosen {
+            flags[t] = true;
+        }
+        if grow > 0 {
+            topology.rings(&mut flags, grow);
+        }
+    }
+    Ok((flags, described, limit))
 }
 
 /// The triangles of a shape Find All found on `scan`: by its number, or the one under `{point}`.

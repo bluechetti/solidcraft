@@ -136,3 +136,46 @@ fn inside_a_curve_and_the_curve_round_a_selection() {
     let refused = s.execute("scan.select_inside_curve", &json!({"curves": ["nope"]})).unwrap_err().to_string();
     assert!(refused.contains("nope"), "{refused}");
 }
+
+/// A ball scanned, and a solid built from it that lacks its top (cut off above z = 15) and has
+/// a block on its side the scan does not: what the solid leaves unexplained is the top cap,
+/// largest and `missing`, then the patch of the ball inside the block, `extra`; each selected by
+/// its number. The whole ball as a solid explains the whole scan: nothing is selected.
+#[test]
+fn what_a_solid_leaves_unexplained_is_selected_piece_by_piece() {
+    let (mut s, body) = session_with("unexplained", &ball_triangles());
+    run(&mut s, "solid.sphere", json!({"radius": 20, "operation": "new", "body_name": "Built"}));
+    run(&mut s, "solid.box", json!({"length": 50, "width": 50, "height": 20, "center": [0, 0, 25], "operation": "cut", "targets": ["Built"]}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "center": [20, 0, 0], "operation": "join", "targets": ["Built"]}));
+    let undo = s.undo.len();
+    let r = run(&mut s, "scan.select", json!({"body": body, "unexplained": "Built"}));
+    let pieces = r["pieces"].as_array().unwrap();
+    assert_eq!(pieces.len(), 2, "{r}");
+    assert_eq!(pieces[0]["side"], "missing", "{r}");
+    assert!(pieces[0]["point"][2].as_f64().unwrap() > 15.0, "the top cap: {r}");
+    assert!(pieces[0]["deepest"].as_f64().unwrap() > 4.0, "the pole is 5 mm above the cut: {r}");
+    assert_eq!(pieces[1]["side"], "extra", "{r}");
+    assert!(pieces[1]["point"][0].as_f64().unwrap() > 15.0, "inside the block: {r}");
+    assert_eq!(r["limit"], 0.5);
+    assert_eq!(r["triangles"], pieces[0]["triangles"], "the largest piece is selected");
+    let cap = (s.scan_selection.as_ref().unwrap().selected).clone();
+    let tri = s.model.state().body(&body).unwrap().body.triangle_mesh().unwrap().0.to_vec();
+    let mesh = s.model.state().body(&body).unwrap().body.triangle_mesh().unwrap().1.to_vec();
+    for (t, on) in cap.iter().enumerate() {
+        if *on {
+            assert!(mesh[t].iter().all(|&v| tri[v as usize].z > 14.0), "on the cap");
+        }
+    }
+    let second = run(&mut s, "scan.select", json!({"unexplained": {"body": "Built", "piece": 1}}));
+    assert_eq!(second["triangles"], pieces[1]["triangles"], "{second}");
+    let grown = run(&mut s, "scan.select", json!({"unexplained": {"body": "Built", "piece": 1, "grow": 2}}));
+    assert!(grown["triangles"].as_u64().unwrap() > second["triangles"].as_u64().unwrap(), "{grown}");
+    assert!(s.execute("scan.select", &json!({"unexplained": {"body": "Built", "piece": 2}})).is_err(), "only two pieces");
+    assert!(s.execute("scan.select", &json!({"unexplained": body})).is_err(), "the scan is no solid");
+    assert!(s.execute("scan.select", &json!({"unexplained": "Nothing"})).is_err());
+    assert_eq!(s.undo.len(), undo, "selecting is no undo step");
+    run(&mut s, "solid.sphere", json!({"radius": 20, "operation": "new", "body_name": "Whole"}));
+    let whole = run(&mut s, "scan.select", json!({"body": body, "unexplained": "Whole"}));
+    assert_eq!(whole["pieces"], json!([]), "{whole}");
+    assert_eq!(whole["triangles"], 0);
+}

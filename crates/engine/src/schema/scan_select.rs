@@ -90,6 +90,29 @@ pub struct ScanSelectParams {
     /// Shrink what is selected by this many rings of triangles (1 to 1000).
     #[serde(default)]
     pub shrink: Option<u32>,
+    /// The part of the scan a solid built from it does not explain yet: the solid's name, or
+    /// `{body, piece?, grow?}` (`piece`: which piece, 0 the largest, the default; `grow`: rings
+    /// of triangles added round it, 0 to 1000).
+    #[serde(default)]
+    pub unexplained: Option<Value>,
+}
+
+/// A piece of a scan that a solid built from it does not explain: its triangles farther from
+/// the solid than the scan's tolerance allows, reached from one another across the scan.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanUnexplainedPiece {
+    /// Its number, 0 the largest.
+    pub piece: usize,
+    pub triangles: usize,
+    /// Its area in mm².
+    pub area: f64,
+    /// `missing`: the scan stands outside the solid there, material the solid lacks; `extra`: the
+    /// scan is inside the solid, material the solid should not have (a hole not cut).
+    pub side: String,
+    /// How far from the solid its farthest triangle is, in mm.
+    pub deepest: f64,
+    /// A place on the scan in it, near its middle.
+    pub point: [f64; 3],
 }
 
 /// What a scan selection command returns.
@@ -102,6 +125,13 @@ pub struct ScanSelectResult {
     pub of: usize,
     /// Whether the selection is other than it was.
     pub changed: bool,
+    /// With `unexplained`: every piece of the scan the solid does not explain, largest first
+    /// (empty when it explains the whole scan), and how far from it the scan may be and count
+    /// as explained, in mm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pieces: Option<Vec<ScanUnexplainedPiece>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }
@@ -217,7 +247,7 @@ mod tests {
     fn the_selection_commands_take_these_keys() {
         assert_keys(
             input_schema_for::<ScanSelectParams>(),
-            &["all", "body", "brush", "grow", "invert", "mode", "none", "polygon", "region", "saved", "shape", "shrink", "triangles"],
+            &["all", "body", "brush", "grow", "invert", "mode", "none", "polygon", "region", "saved", "shape", "shrink", "triangles", "unexplained"],
         );
         assert_keys(input_schema_for::<ScanSelectInsideParams>(), &["body", "curves", "mode", "sketch"]);
         assert_keys(input_schema_for::<ScanKeepSelectionParams>(), &["name"]);

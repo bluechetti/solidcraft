@@ -493,6 +493,36 @@ impl Topology {
         taken
     }
 
+    /// The selected triangles in pieces: each piece the selected triangles reached from one
+    /// another across edges, largest area first (ties by their first triangle, so the same flags
+    /// give the same order).
+    pub fn pieces(&self, selected: &[bool]) -> Vec<Vec<usize>> {
+        let on = |t: usize| selected.get(t).copied().unwrap_or(false);
+        let mut seen = vec![false; self.corners().len()];
+        let mut pieces: Vec<(f64, Vec<usize>)> = Vec::new();
+        for start in 0..seen.len() {
+            if seen[start] || !on(start) {
+                continue;
+            }
+            seen[start] = true;
+            let mut piece = vec![start];
+            let mut next = 0;
+            while let Some(&t) = piece.get(next) {
+                next += 1;
+                for n in self.neighbours(t) {
+                    if !seen[n] && on(n) {
+                        seen[n] = true;
+                        piece.push(n);
+                    }
+                }
+            }
+            let area = piece.iter().map(|&t| self.area(t)).sum();
+            pieces.push((area, piece));
+        }
+        pieces.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1[0].cmp(&b.1[0])));
+        pieces.into_iter().map(|(_, piece)| piece).collect()
+    }
+
     /// The selection grown by `rings` rings of triangles (those sharing a corner with it), or
     /// shrunk by them when `rings` is negative.
     pub fn rings(&self, selected: &mut [bool], rings: i32) {
@@ -841,6 +871,29 @@ mod tests {
         let outlines = topology.outlines(&scan, &top);
         assert_eq!(outlines.len(), 1);
         assert!((loop_length(&outlines[0]) - 100.0).abs() < 1e-6, "the top's perimeter: {}", loop_length(&outlines[0]));
+    }
+
+    /// Two brushes apart on a box's top and one on its bottom are three pieces, the largest
+    /// first; brushes that overlap are one piece; nothing selected is no piece.
+    #[test]
+    fn a_selection_falls_into_pieces_largest_first() {
+        let (positions, triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(30.0, 20.0, 10.0), 30);
+        let topology = Topology::new(&Scan::new(&positions, &triangles));
+        let either = |a: &[bool], b: &[bool]| a.iter().zip(b).map(|(x, y)| *x || *y).collect::<Vec<_>>();
+        let small = topology.brush(Vec3::new(5.0, 5.0, 10.0), 2.0);
+        let big = topology.brush(Vec3::new(22.0, 12.0, 10.0), 4.0);
+        let under = topology.brush(Vec3::new(15.0, 10.0, 0.0), 3.0);
+        let all = either(&either(&small, &big), &under);
+        let pieces = topology.pieces(&all);
+        assert_eq!(pieces.len(), 3);
+        let area = |p: &[usize]| p.iter().map(|&t| topology.area(t)).sum::<f64>();
+        assert!(area(&pieces[0]) >= area(&pieces[1]) && area(&pieces[1]) >= area(&pieces[2]));
+        assert!(pieces[0].iter().all(|&t| big[t]), "the largest is the big brush");
+        assert!(pieces[2].iter().all(|&t| small[t]), "the smallest is the small one");
+        assert_eq!(pieces.iter().map(Vec::len).sum::<usize>(), count(&all), "every selected triangle in one piece");
+        let overlapping = either(&big, &topology.brush(Vec3::new(19.0, 10.0, 10.0), 4.0));
+        assert_eq!(topology.pieces(&overlapping).len(), 1);
+        assert!(topology.pieces(&vec![false; topology.triangle_count()]).is_empty());
     }
 
     /// A box seen from above through a polygon round all of it: what is seen is its top; through
