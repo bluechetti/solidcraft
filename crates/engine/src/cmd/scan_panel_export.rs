@@ -12,7 +12,7 @@ use solidcraft_geom::prelude::*;
 use solidcraft_io::{DxfEntity, DxfLayer, DxfShape, write_dxf_drawing};
 
 use super::CommandSpec;
-use super::template::{fixing_hole, hole_size, hole_sizes, panel, panel_keep, prepare_panel};
+use super::template::{fixing_hole, hole_size, hole_sizes, panel, panel_keep_checked, prepare_panel};
 use crate::params::str_;
 use crate::schema::scan_template::{PanelCheckOut, PanelPieceOut, ScanPanelExportParams, ScanPanelExportResult};
 use crate::schema::{TypedContract, output_schema_for};
@@ -64,7 +64,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         o.entry("panel").or_insert(json!({}));
     }
     let pp = prepare_panel(s, &asked, cmd)?;
-    let keep = panel_keep(&asked, &pp.proposal, cmd)?;
+    let keep = panel_keep_checked(&asked, &pp, cmd)?;
     let sizes = hole_sizes(&asked, cmd)?;
     let fixing = fixing_hole(&asked, cmd)?;
     let pieces = panel::pieces(&pp.proposal, &keep);
@@ -75,10 +75,15 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let plans = panel::sheets(&blanks, pp.proposal.sheet, panel::KERF);
     let sheet_of = |n: usize| plans.iter().position(|plan| plan.pieces.iter().any(|pl| pl.piece + 1 == n)).map_or(0, |i| i + 1);
     let scanned = |q: Vec2| pp.proposal.holes.iter().find(|h| h.at.dist(q) < 1e-6).map_or(0.0, |h| h.diameter);
+    // Whether the other scan has the hole too (with `confirm_with`).
+    let seen = |q: Vec2| -> &'static str {
+        let Some((_, _, seen)) = &pp.confirm else { return "" };
+        pp.proposal.holes.iter().position(|h| h.at.dist(q) < 1e-6).and_then(|i| seen.get(i)).map_or("", |s| s.name())
+    };
 
     // --- The pieces' drawing: each piece's row of the wall a row of the drawing, top row first.
     let mut ents: Vec<DxfEntity> = Vec::new();
-    let mut holes_csv = String::from("piece,label,kind,x,y,drill,scanned,gap_behind_panel\n");
+    let mut holes_csv = String::from("piece,label,kind,x,y,drill,scanned,gap_behind_panel,seen\n");
     // The wall's rows (pieces whose corners are within a sloping seam's rise of one another),
     // each a row of the drawing below the one before, as tall as its tallest piece.
     let mut rows: Vec<Vec<&panel::Piece>> = Vec::new();
@@ -118,7 +123,8 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
                 shape: DxfShape::Text { at: at(pt.at + Vec2::new(0.0, d / 2.0 + 4.0)), height: LABEL, angle_deg: 0.0, text: label.clone() },
             });
             let scan_d = if pt.kind == panel::PointKind::Hole { format!("{:.1}", scanned(pt.on_panel)) } else { String::new() };
-            let _ = writeln!(holes_csv, "{},{label},{kind},{:.0},{:.0},{d:.1},{scan_d},{:.0}", piece.number, pt.at.x, pt.at.y, pt.behind);
+            let seen_here = if pt.kind == panel::PointKind::Hole { seen(pt.on_panel) } else { "" };
+            let _ = writeln!(holes_csv, "{},{label},{kind},{:.0},{:.0},{d:.1},{scan_d},{:.0},{seen_here}", piece.number, pt.at.x, pt.at.y, pt.behind);
         }
         ents.push(DxfEntity {
             layer: "LABELS".into(),

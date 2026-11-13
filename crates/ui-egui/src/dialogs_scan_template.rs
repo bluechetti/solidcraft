@@ -13,7 +13,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use solidcore_record::{Vec2, Vec3};
 use solidcraft_engine::Sel;
-use solidcraft_engine::cmd::scan::template::panel::Shape;
+use solidcraft_engine::cmd::scan::template::panel::{Seen, Shape};
 use solidcraft_engine::cmd::scan::template::{PanelKeep, PanelPrepared, panel_laid, prepare, prepare_panel};
 use solidcraft_engine::geom::Aabb3;
 use solidcraft_engine::geom::prelude::*;
@@ -62,6 +62,8 @@ pub struct FlatTemplate {
     pub spacing: f64,
     /// Seams moved square to themselves (mm), by their number; worked out again when changed.
     pub seam_moves: BTreeMap<usize, f64>,
+    /// Another scan to check the holes against (the wall opposite, or another pass of this one).
+    pub confirm_with: Option<String>,
     review: Review,
     /// Where the view is to frame next (done each frame by [`tick`]).
     focus: Option<Aabb3>,
@@ -94,6 +96,7 @@ impl Default for FlatTemplate {
             clearance: solidcraft_engine::cmd::scan::template::panel::CLEARANCE,
             spacing: solidcraft_engine::cmd::scan::template::panel::SPACING,
             seam_moves: BTreeMap::new(),
+            confirm_with: None,
             review: Review::default(),
             focus: None,
             export_asked: false,
@@ -223,6 +226,9 @@ fn params(k: &FlatTemplate, inputs: &[SelInput]) -> Option<Value> {
         }
         if k.panel {
             let mut panel = json!({"sheet": k.sheet, "turn": k.turn % 4, "clearance": k.clearance, "spacing": k.spacing});
+            if let Some(other) = &k.confirm_with {
+                panel["confirm_with"] = json!(other);
+            }
             let moves: Vec<Value> = k.seam_moves.iter().filter(|(_, by)| **by != 0.0).map(|(seam, by)| json!({"seam": seam, "by": by})).collect();
             if !moves.is_empty() {
                 panel["move_seams"] = json!(moves);
@@ -452,6 +458,24 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
             form_row(ui, tr("ui.scan_panel_spacing"), |ui| ui_kit::length_field(ui, &mut k.spacing, &units, decimals));
             // 0 proposes no fixing points; otherwise every 50 mm at the closest.
             k.spacing = if !k.spacing.is_finite() || k.spacing <= 0.0 { 0.0 } else { k.spacing.clamp(50.0, 5000.0) };
+            // Another scan to check the holes against: any other scan in the design.
+            let own = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.panel.as_ref()).map(|pp| pp.prepared.body.clone());
+            let scans: Vec<String> = app
+                .session
+                .model
+                .state()
+                .bodies
+                .iter()
+                .filter(|b| b.body.is_mesh() && own.as_deref() != Some(b.name.as_str()))
+                .map(|b| b.name.clone())
+                .collect();
+            if !scans.is_empty() || k.confirm_with.is_some() {
+                let mut labels: Vec<&str> = vec![tr("ui.scan_panel_confirm_none")];
+                labels.extend(scans.iter().map(String::as_str));
+                let mut pick = k.confirm_with.as_ref().and_then(|c| scans.iter().position(|s| s == c)).map_or(0, |i| i + 1);
+                choice_row(ui, tr("ui.scan_panel_confirm"), "scan_panel_confirm", &mut pick, &labels);
+                k.confirm_with = pick.checked_sub(1).and_then(|i| scans.get(i)).cloned();
+            }
             k.sheet = [k.sheet[0].clamp(100.0, 100_000.0), k.sheet[1].clamp(100.0, 100_000.0)];
             form_row(ui, tr("ui.scan_panel_floor"), |ui| {
                 if ui_kit::button(ui, tr("ui.scan_panel_turn"), ui_kit::Button::Small).clicked() {
@@ -763,6 +787,17 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
         }
     };
     ui_kit::text(ui, &what, ui_kit::Text::Report("scan_panel_item", k.review.dropped.contains(&item)));
+    // A hole checked against the other scan: whether that has it too.
+    if let (Item::Hole(i), Some((_, Some(_), seen))) = (item, &pp.confirm)
+        && let Some(s) = seen.get(i)
+    {
+        let id = match s {
+            Seen::Both => "ui.scan_panel_seen_both",
+            Seen::NotFound => "ui.scan_panel_seen_not_found",
+            Seen::Unscanned => "ui.scan_panel_seen_unscanned",
+        };
+        ui_kit::text(ui, tr(id), ui_kit::Text::Report("scan_panel_seen", *s == Seen::NotFound));
+    }
     // An edge or a seam moved here.
     match item {
         Item::Edge(side) => {
@@ -923,6 +958,39 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
         let sheets = crate::i18n::format("ui.scan_panel_sheets", &[("count", &plans.len().to_string())]);
         ui_kit::text(ui, &sheets, ui_kit::Text::Note("scan_panel_sheets"));
     }
+    // The holes checked against the other scan: how they lined up, and those it lacks dropped at a press.
+    if let Some((body, fit, seen)) = &pp.confirm {
+        match fit {
+            Some(f) => {
+                let count = |w: Seen| seen.iter().filter(|s| **s == w).count().to_string();
+                let line = crate::i18n::format(
+                    if f.mirror { "ui.scan_panel_confirm_mirror" } else { "ui.scan_panel_confirm_same" },
+                    &[
+                        ("body", body),
+                        ("rms", &format!("{:.1}", f.rms)),
+                        ("both", &count(Seen::Both)),
+                        ("not_found", &count(Seen::NotFound)),
+                        ("unscanned", &count(Seen::Unscanned)),
+                    ],
+                );
+                ui_kit::text(ui, &line, ui_kit::Text::Note("scan_panel_confirm_line"));
+                let lacking: Vec<usize> = seen.iter().enumerate().filter(|(_, s)| **s == Seen::NotFound).map(|(i, _)| i).collect();
+                if !lacking.is_empty() {
+                    let label = crate::i18n::format("ui.scan_panel_drop_not_found", &[("count", &lacking.len().to_string())]);
+                    if ui_kit::button(ui, label, ui_kit::Button::Small).clicked() {
+                        for i in lacking {
+                            k.review.dropped.insert(Item::Hole(i));
+                            k.review.seen.insert(Item::Hole(i));
+                        }
+                    }
+                }
+            }
+            None => {
+                let line = crate::i18n::format("ui.scan_panel_confirm_failed", &[("body", body)]);
+                ui_kit::text(ui, &line, ui_kit::Text::Report("scan_panel_confirm_failed", true));
+            }
+        }
+    }
     if p.unbacked > 0 {
         let none = crate::i18n::format("ui.scan_panel_unbacked", &[("count", &p.unbacked.to_string())]);
         ui_kit::text(ui, &none, ui_kit::Text::Note("scan_panel_unbacked"));
@@ -994,10 +1062,19 @@ fn draw_panel(painter: &egui::Painter, proj: &crate::viewport::Proj, k: &FlatTem
         let edge = screen(at + Vec2::new(d / 2.0, 0.0))?;
         Some((c, c.distance(edge).max(2.5)))
     };
+    let lacking = |i: usize| pp.confirm.as_ref().and_then(|(_, _, seen)| seen.get(i)).is_some_and(|s| *s == Seen::NotFound);
     for (i, h) in p.holes.iter().enumerate() {
         let kept = keep.holes.get(i).copied().unwrap_or(true);
+        // A hole the other scan covers without one: in the error colour, to be looked at.
+        let colour = if !kept {
+            tokens.text_dim
+        } else if lacking(i) {
+            tokens.error
+        } else {
+            tokens.accent
+        };
         if let Some((c, r)) = radius(h.at, h.diameter) {
-            painter.circle_stroke(c, r, egui::Stroke::new(1.2, if kept { tokens.accent } else { tokens.text_dim }));
+            painter.circle_stroke(c, r, egui::Stroke::new(1.2, colour));
         }
     }
     // Fixing points: a filled dot, to tell them from the holes already there.

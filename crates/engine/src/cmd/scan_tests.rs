@@ -1866,6 +1866,13 @@ fn make_flat_puts_a_free_form_exactly_flat() {
 /// The wall the straight panel tests use: 600 × 400 at 1 mm, a wheel well standing out of its
 /// bottom edge, two rows of 8 mm holes 34 mm apart across it and two columns up it.
 fn panel_wall(name: &str) -> (Session, String, Vec<(f64, f64)>) {
+    let centres = panel_wall_holes();
+    let (s, body) = session_with_triangles(name, &panel_wall_triangles(&centres, false));
+    (s, body, centres)
+}
+
+/// The panel wall's holes.
+fn panel_wall_holes() -> Vec<(f64, f64)> {
     let mut centres = Vec::new();
     for k in 0..6 {
         let x = 60.0 + 90.0 * f64::from(k);
@@ -1876,12 +1883,18 @@ fn panel_wall(name: &str) -> (Session, String, Vec<(f64, f64)>) {
         centres.push((290.0, y));
         centres.push((320.0, y));
     }
+    centres
+}
+
+/// The panel wall's scan with holes at `centres`, mirrored left to right when asked (the wall
+/// opposite, seen from the room).
+fn panel_wall_triangles(centres: &[(f64, f64)], mirror: bool) -> Vec<[Vec3; 3]> {
     let hole = |x: f64, y: f64| centres.iter().any(|(cx, cy)| (x - cx).powi(2) + (y - cy).powi(2) < 16.0);
     let z = |x: f64, y: f64| if ((x - 300.0) / 100.0).powi(2) + (y / 80.0).powi(2) < 1.0 { 120.0 } else { 0.0 };
     let (w, h) = (600u32, 400u32);
     let at = |i: u32, j: u32| {
         let (x, y) = (f64::from(i), f64::from(j));
-        Vec3::new(x, y, z(x, y))
+        Vec3::new(if mirror { 600.0 - x } else { x }, y, z(x, y))
     };
     let mut tris = Vec::new();
     for j in 0..h {
@@ -1890,12 +1903,18 @@ fn panel_wall(name: &str) -> (Session, String, Vec<(f64, f64)>) {
             if hole(cx, cy) {
                 continue;
             }
-            tris.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
-            tris.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+            let (p, q, r, t) = (at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
+            // Mirrored, the triangles turn the other way round: kept facing the room.
+            if mirror {
+                tris.push([p, r, q]);
+                tris.push([p, t, r]);
+            } else {
+                tris.push([p, q, r]);
+                tris.push([p, r, t]);
+            }
         }
     }
-    let (s, body) = session_with_triangles(name, &tris);
-    (s, body, centres)
+    tris
 }
 
 #[test]
@@ -2016,5 +2035,52 @@ fn panel_export_writes_the_pieces_the_sheets_and_the_lists() {
     assert_eq!(files.len(), 5, "{w}");
     assert!(files.iter().all(|f| std::path::Path::new(f.as_str().unwrap()).exists()), "{w}");
     assert!(w.get("pieces_dxf").is_none(), "{w}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Checking the holes against the wall opposite: its scan is the mirror image, two of the holes
+/// missing. The holes line up mirrored; the two are not found there (the other scan covers the
+/// place), the rest are in both; dropped as asked, they leave the holes list.
+#[test]
+fn panel_holes_are_checked_against_the_mirror_scan() {
+    let mut centres = panel_wall_holes();
+    // A few holes off the rows, so the pattern lines up one way only.
+    centres.extend([(130.0, 50.0), (470.0, 330.0), (77.0, 290.0), (555.0, 120.0), (410.0, 60.0)]);
+    let (mut s, body) = session_with_triangles("panel-confirm", &panel_wall_triangles(&centres, false));
+    let missing = [centres[0], centres[5]];
+    let theirs: Vec<(f64, f64)> = centres.iter().copied().filter(|c| !missing.contains(c)).collect();
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-panel-mirror-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut stl = String::from("solid m\n");
+    for t in panel_wall_triangles(&theirs, true) {
+        stl += "facet normal 0 0 0\nouter loop\n";
+        for p in t {
+            stl += &format!("vertex {} {} {}\n", p.x, p.y, p.z);
+        }
+        stl += "endloop\nendfacet\n";
+    }
+    let path = dir.join("mirror.stl");
+    std::fs::write(&path, stl + "endsolid m\n").unwrap();
+    let other = run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}))["bodies"][0].as_str().unwrap().to_owned();
+    let panel = json!({"sheet": [400, 250], "spacing": 0, "confirm_with": other});
+    let r = run(&mut s, "scan.panel_proposals", json!({"body": body, "panel": panel}));
+    let c = &r["confirm"];
+    assert!(c["mirrored"] == true && c["matched"].as_u64().unwrap() >= 15 && c["rms"].as_f64().unwrap() < 0.5, "{c}");
+    let holes = r["holes"].as_array().unwrap();
+    for h in holes {
+        let at = (h["center"][0].as_f64().unwrap(), h["center"][1].as_f64().unwrap());
+        let gone = missing.iter().any(|m| (m.0 - at.0).hypot(m.1 - at.1) < 1.0);
+        assert_eq!(h["seen"], if gone { "not_found" } else { "both" }, "{h}");
+    }
+    assert_eq!(c["not_found"], 2, "{c}");
+    // Dropped: two rows fewer in the holes list.
+    let all = run(&mut s, "scan.panel_export", json!({"body": body, "panel": panel}));
+    let mut dropping = panel.clone();
+    dropping["drop_unconfirmed"] = json!(true);
+    let fewer = run(&mut s, "scan.panel_export", json!({"body": body, "panel": dropping}));
+    let rows = |v: &Value| v["holes_csv"].as_str().unwrap().lines().count();
+    assert_eq!(rows(&all), rows(&fewer) + 2, "{}", fewer["holes_csv"]);
+    assert!(all["holes_csv"].as_str().unwrap().contains(",both"), "the seen column: {}", all["holes_csv"]);
+    assert!(s.execute("scan.panel_proposals", &json!({"body": body, "panel": {"confirm_with": body}})).is_err(), "not itself");
     let _ = std::fs::remove_dir_all(&dir);
 }

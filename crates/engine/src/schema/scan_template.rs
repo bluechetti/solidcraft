@@ -145,6 +145,14 @@ pub struct PanelChoices {
     /// Fixing points not made, by their number.
     #[serde(default)]
     pub drop_fixings: Option<Vec<usize>>,
+    /// Another scan of the wall (or of the wall opposite, its mirror image): each hole is checked
+    /// against it, `both` when it has the hole too, `not_found` when it covers the place without
+    /// one (likely a gap in this scan, not a hole), `unscanned` when it does not cover it.
+    #[serde(default)]
+    pub confirm_with: Option<String>,
+    /// Holes the other scan covers without a hole there are not drawn. Default: false.
+    #[serde(default)]
+    pub drop_unconfirmed: Option<bool>,
 }
 
 /// One cut-out's shape: its number and `box`, `straight` (dents filled, straight sides) or
@@ -379,6 +387,24 @@ pub struct PanelHoleProposal {
     pub behind: f64,
     /// Its size as drawn: the nearest of `hole_sizes` within 1 mm, or as scanned.
     pub size: f64,
+    /// With `confirm_with`: `both`, `not_found` or `unscanned`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seen: Option<String>,
+}
+
+/// How the holes were checked against another scan.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelConfirmOut {
+    pub body: String,
+    /// The two scans' holes lined up: mirrored (the wall opposite), how many matched and how far
+    /// apart they were after (mm, root mean square). None lined up: `matched` 0.
+    pub mirrored: bool,
+    pub matched: usize,
+    pub rms: f64,
+    /// The proposal's holes the other scan has too, covers without, and does not cover.
+    pub both: usize,
+    pub not_found: usize,
+    pub unscanned: usize,
 }
 
 /// A straight panel's edges (mm from the outline's corner).
@@ -414,6 +440,9 @@ pub struct ScanPanelProposalsResult {
     /// The pieces laid on sheets, and seam moves that would bring every piece within the sheet.
     pub sheets: Vec<PanelSheet>,
     pub fit_moves: Vec<PanelFitMove>,
+    /// With `confirm_with`: how the holes were checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<PanelConfirmOut>,
     /// Notches too shallow to cut (the edge goes over them) and how deep the deepest is (mm).
     pub flattened: usize,
     pub flattened_depth: f64,

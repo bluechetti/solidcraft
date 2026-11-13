@@ -1321,6 +1321,38 @@ impl Backing {
         }
         (f64::from(high - low) <= FIX_FLAT && n > 0).then(|| sum / n as f64)
     }
+    /// Whether the scan covers the ring round `p` (between 8 and 25 mm from it) for the most part:
+    /// a hole there would have been seen.
+    pub fn covered(&self, p: Vec3) -> bool {
+        let d = p - self.origin;
+        let q = Vec2::new(d.dot(self.x), d.dot(self.y));
+        let (mut seen, mut all) = (0usize, 0usize);
+        let r = (25.0 / self.cell).ceil() as i64;
+        let (ci, cj) = (((q.x - self.lo.x) / self.cell).floor() as i64, ((q.y - self.lo.y) / self.cell).floor() as i64);
+        for j in cj - r..=cj + r {
+            for i in ci - r..=ci + r {
+                let off = Vec2::new((i - ci) as f64 * self.cell, (j - cj) as f64 * self.cell);
+                let dist = (off.x * off.x + off.y * off.y).sqrt();
+                if !(8.0..=25.0).contains(&dist) {
+                    continue;
+                }
+                all += 1;
+                if i >= 0
+                    && j >= 0
+                    && (i as usize) < self.w
+                    && (j as usize) < self.h
+                    && self.front.get(j as usize * self.w + i as usize).is_some_and(|v| !v.is_nan())
+                {
+                    seen += 1;
+                }
+            }
+        }
+        all > 0 && seen as f64 >= 0.6 * all as f64
+    }
+    /// A point of the backing's plane (its own coordinates) in space.
+    pub fn at(&self, q: Vec2) -> Vec3 {
+        self.origin + self.x * q.x + self.y * q.y
+    }
     #[cfg(test)]
     fn normal(&self) -> Vec3 {
         self.normal
@@ -1643,6 +1675,185 @@ pub fn checks(pieces: &[Piece]) -> Vec<Check> {
         }
     }
     out
+}
+
+/// How one scan's holes lie on another's: `b` points mirrored (x → −x) when `mirror`, turned
+/// `angle` radians and moved by `shift` land on `a`'s. Two walls of one van are mirror images.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HoleFit {
+    pub mirror: bool,
+    pub angle: f64,
+    pub shift: Vec2,
+    /// Holes matched, and how far apart they are after the fit (root mean square, mm).
+    pub matched: usize,
+    pub rms: f64,
+}
+
+impl HoleFit {
+    /// A point of the other scan, where it lies on this one.
+    pub fn to_a(&self, p: Vec2) -> Vec2 {
+        let q = if self.mirror { Vec2::new(-p.x, p.y) } else { p };
+        let (s, c) = self.angle.sin_cos();
+        Vec2::new(c * q.x - s * q.y, s * q.x + c * q.y) + self.shift
+    }
+    /// A point of this scan, where it lies on the other.
+    pub fn to_b(&self, p: Vec2) -> Vec2 {
+        let d = p - self.shift;
+        let (s, c) = self.angle.sin_cos();
+        let q = Vec2::new(c * d.x + s * d.y, -s * d.x + c * d.y);
+        if self.mirror { Vec2::new(-q.x, q.y) } else { q }
+    }
+}
+
+/// Whether a hole is in the other scan too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Seen {
+    /// The other scan has a hole there, of about its size.
+    Both,
+    /// The other scan covers the place and has no hole there: likely a gap in this scan, not a
+    /// hole in the metal.
+    NotFound,
+    /// The other scan does not cover the place.
+    Unscanned,
+}
+
+impl Seen {
+    pub fn name(self) -> &'static str {
+        match self {
+            Seen::Both => "both",
+            Seen::NotFound => "not_found",
+            Seen::Unscanned => "unscanned",
+        }
+    }
+}
+
+/// Holes this close after the fit are one (mm); their sizes this close.
+const MATCH_WITHIN: f64 = 5.0;
+const MATCH_SIZE: f64 = 3.0;
+/// The fit needs this many holes matched.
+const LEAST_MATCHED: usize = 8;
+
+/// How the holes `b` (another scan of the wall, or of its mirror image) lie on `a`, both on their
+/// own wall's plane: found by trying every quarter degree of turn (mirrored or not) for the move
+/// most hole pairs agree on, then fitted by least squares to the holes it matches.
+pub fn fit_holes(a: &[Hole], b: &[Hole]) -> Option<HoleFit> {
+    const BIN: f64 = 10.0;
+    let small = |h: &&Hole| h.diameter < ACCESS_HOLE;
+    let pa: Vec<Vec2> = a.iter().filter(small).map(|h| h.at).take(600).collect();
+    let pb: Vec<Vec2> = b.iter().filter(small).map(|h| h.at).take(600).collect();
+    if pa.len() < LEAST_MATCHED || pb.len() < LEAST_MATCHED {
+        return None;
+    }
+    // The move most pairs agree on for a mirror and a turn, and how many agree.
+    let votes = |mirror: bool, angle: f64| -> (usize, Vec2) {
+        let fit = HoleFit { mirror, angle, shift: Vec2::new(0.0, 0.0), matched: 0, rms: 0.0 };
+        let moved: Vec<Vec2> = pb.iter().map(|q| fit.to_a(*q)).collect();
+        let mut out = (0usize, Vec2::new(0.0, 0.0));
+        // On two grids half a bin apart, so pairs that agree are never split across a bin's edge.
+        for off in [0.0, BIN / 2.0] {
+            let mut keys: Vec<i64> = Vec::with_capacity(pa.len() * moved.len());
+            for p in &pa {
+                for q in &moved {
+                    let d = *p - *q;
+                    let (i, j) = (((d.x + off) / BIN).floor() as i64, ((d.y + off) / BIN).floor() as i64);
+                    keys.push((i << 32) ^ (j & 0xffff_ffff));
+                }
+            }
+            keys.sort_unstable();
+            let (mut best, mut best_key, mut k) = (0usize, 0i64, 0usize);
+            while k < keys.len() {
+                let mut e = k + 1;
+                while e < keys.len() && keys[e] == keys[k] {
+                    e += 1;
+                }
+                if e - k > best {
+                    best = e - k;
+                    best_key = keys[k];
+                }
+                k = e;
+            }
+            if best > out.0 {
+                let (i, j) = (best_key >> 32, (best_key & 0xffff_ffff) as i32 as i64);
+                out = (best, Vec2::new((i as f64 + 0.5) * BIN - off, (j as f64 + 0.5) * BIN - off));
+            }
+        }
+        out
+    };
+    let mut best: Option<(usize, bool, f64, Vec2)> = None;
+    for mirror in [false, true] {
+        for step in 0..360 {
+            let angle = f64::from(step).to_radians();
+            let (n, shift) = votes(mirror, angle);
+            if best.is_none_or(|(b, ..)| n > b) {
+                best = Some((n, mirror, angle, shift));
+            }
+        }
+    }
+    let (_, mirror, coarse, _) = best?;
+    // Finer round the best whole degree.
+    let mut fine = (0usize, coarse, Vec2::new(0.0, 0.0));
+    for k in -8..=8 {
+        let angle = coarse + f64::from(k) * 0.125f64.to_radians();
+        let (n, shift) = votes(mirror, angle);
+        if n > fine.0 {
+            fine = (n, angle, shift);
+        }
+    }
+    let mut fit = HoleFit { mirror, angle: fine.1, shift: fine.2, matched: 0, rms: f64::INFINITY };
+    // Least squares on the pairs within reach, a few times, the reach narrowing.
+    for reach in [3.0 * BIN, 2.0 * MATCH_WITHIN, MATCH_WITHIN, MATCH_WITHIN] {
+        let pairs: Vec<(Vec2, Vec2)> = pb
+            .iter()
+            .filter_map(|q| {
+                let m = fit.to_a(*q);
+                let near = pa.iter().copied().min_by(|x, y| x.dist(m).partial_cmp(&y.dist(m)).unwrap_or(std::cmp::Ordering::Equal))?;
+                (near.dist(m) <= reach).then_some((near, if fit.mirror { Vec2::new(-q.x, q.y) } else { *q }))
+            })
+            .collect();
+        if pairs.len() < LEAST_MATCHED {
+            return None;
+        }
+        let n = pairs.len() as f64;
+        let ca = pairs.iter().fold(Vec2::new(0.0, 0.0), |s, (x, _)| s + *x) / n;
+        let cb = pairs.iter().fold(Vec2::new(0.0, 0.0), |s, (_, y)| s + *y) / n;
+        let (mut sxx, mut sxy) = (0.0, 0.0);
+        for (x, y) in &pairs {
+            let (u, v) = (*x - ca, *y - cb);
+            sxx += v.x * u.x + v.y * u.y;
+            sxy += v.x * u.y - v.y * u.x;
+        }
+        let angle = sxy.atan2(sxx);
+        let (s, c) = angle.sin_cos();
+        let shift = ca - Vec2::new(c * cb.x - s * cb.y, s * cb.x + c * cb.y);
+        fit = HoleFit { mirror, angle, shift, matched: pairs.len(), rms: 0.0 };
+        let sq: f64 = pairs
+            .iter()
+            .map(|(x, y)| {
+                let m = Vec2::new(c * y.x - s * y.y, s * y.x + c * y.y) + shift;
+                x.dist(m).powi(2)
+            })
+            .sum();
+        fit.rms = (sq / n).sqrt();
+    }
+    (fit.matched >= LEAST_MATCHED && fit.rms.is_finite()).then_some(fit)
+}
+
+/// For each of `holes`, whether `other` (fitted by `fit`) has it too; `covered` says whether the
+/// other scan covers a place (in its own coordinates).
+pub fn seen_in(holes: &[Hole], other: &[Hole], fit: &HoleFit, covered: &dyn Fn(Vec2) -> bool) -> Vec<Seen> {
+    let moved: Vec<(Vec2, f64)> = other.iter().map(|h| (fit.to_a(h.at), h.diameter)).collect();
+    holes
+        .iter()
+        .map(|h| {
+            if moved.iter().any(|(q, d)| q.dist(h.at) <= MATCH_WITHIN && (d - h.diameter).abs() <= MATCH_SIZE) {
+                Seen::Both
+            } else if covered(fit.to_b(h.at)) {
+                Seen::NotFound
+            } else {
+                Seen::Unscanned
+            }
+        })
+        .collect()
 }
 
 /// A piece laid on a sheet: which, where its corner goes, its size as laid, and whether it is
@@ -2022,5 +2233,45 @@ mod tests {
         let cs = checks(&ps);
         assert!(!cs.is_empty() && cs.iter().all(|c| c.distance > 0.0), "{cs:?}");
         assert!(cs.iter().any(|c| (c.distance - Vec2::new(100.0, 480.0).dist(Vec2::new(1900.0, 520.0))).abs() < 1e-9), "{cs:?}");
+    }
+
+    /// The other wall's holes: the same pattern mirrored, turned 37°, moved, with 0.3 mm of noise,
+    /// two holes missing and three of its own. The fit finds the mirror, the turn and the move;
+    /// a hole the other scan lacks where it covers the wall is not found, one off its edge is
+    /// unscanned.
+    #[test]
+    fn holes_are_checked_against_the_other_walls_scan() {
+        let mut a = Vec::new();
+        let mut seed = 7u64;
+        let mut rnd = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) as f64) / f64::from(1u32 << 31)
+        };
+        for k in 0..60 {
+            let at = Vec2::new(4000.0 * rnd(), 2000.0 * rnd());
+            a.push(Hole { at, diameter: if k % 5 == 0 { 12.0 } else { 8.0 }, behind: 10.0 });
+        }
+        let truth = HoleFit { mirror: true, angle: 37f64.to_radians(), shift: Vec2::new(150.0, -420.0), matched: 0, rms: 0.0 };
+        let mut b: Vec<Hole> = a
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| *k != 3 && *k != 11)
+            .map(|(_, h)| Hole { at: truth.to_b(h.at) + Vec2::new(0.3 * (rnd() - 0.5), 0.3 * (rnd() - 0.5)), ..*h })
+            .collect();
+        for _ in 0..3 {
+            b.push(Hole { at: Vec2::new(-3000.0 * rnd(), 1000.0 * rnd()), diameter: 8.0, behind: 10.0 });
+        }
+        let fit = fit_holes(&a, &b).expect("fit");
+        assert!(fit.mirror && fit.matched >= 55 && fit.rms < 0.5, "{fit:?}");
+        let p = Vec2::new(1234.0, 567.0);
+        assert!(fit.to_a(truth.to_b(p)).dist(p) < 1.0 && fit.to_b(fit.to_a(p)).dist(p) < 1e-9, "{fit:?}");
+        // The other scan covers everything but x below 200 on this wall.
+        let covered = |q: Vec2| fit.to_a(q).x >= 200.0;
+        let seen = seen_in(&a, &b, &fit, &covered);
+        for (k, (h, s)) in a.iter().zip(&seen).enumerate() {
+            let want = if k == 3 || k == 11 { if h.at.x >= 200.0 { Seen::NotFound } else { Seen::Unscanned } } else { Seen::Both };
+            assert_eq!(*s, want, "hole {k} at {:?}", h.at);
+        }
+        assert!(fit_holes(&a[..4], &b).is_none(), "too few holes to fit");
     }
 }

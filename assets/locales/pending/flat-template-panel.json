@@ -47,7 +47,16 @@
     "ui.scan_panel_fixings": "Fixings {count}",
     "ui.scan_panel_keep_all": "Keep All of These",
     "ui.scan_panel_drop_all": "Drop All of These",
-    "ui.scan_panel_export": "Export Drawings…"
+    "ui.scan_panel_export": "Export Drawings…",
+    "ui.scan_panel_confirm": "Check Holes Against",
+    "ui.scan_panel_confirm_none": "Nothing",
+    "ui.scan_panel_confirm_mirror": "{body} is the wall opposite: its holes line up mirrored within {rms} mm. {both} holes are in it too, {not_found} are not, {unscanned} it does not cover.",
+    "ui.scan_panel_confirm_same": "{body} lines up within {rms} mm. {both} holes are in it too, {not_found} are not, {unscanned} it does not cover.",
+    "ui.scan_panel_confirm_failed": "The holes of {body} do not line up with these: check it is a scan of this wall or the wall opposite.",
+    "ui.scan_panel_drop_not_found": "Drop the {count} Holes Not in It",
+    "ui.scan_panel_seen_both": "The other scan has this hole too.",
+    "ui.scan_panel_seen_not_found": "The other scan covers this place and has no hole here: likely a gap in this scan, not a hole.",
+    "ui.scan_panel_seen_unscanned": "The other scan does not cover this place."
   },
   "de": {
     "cmd.scan.panel_proposals": "Plattenvorschläge",
@@ -97,7 +106,16 @@
     "ui.scan_panel_fixings": "Befestigungen {count}",
     "ui.scan_panel_keep_all": "Alle diese behalten",
     "ui.scan_panel_drop_all": "Alle diese verwerfen",
-    "ui.scan_panel_export": "Zeichnungen exportieren…"
+    "ui.scan_panel_export": "Zeichnungen exportieren…",
+    "ui.scan_panel_confirm": "Löcher prüfen gegen",
+    "ui.scan_panel_confirm_none": "Nichts",
+    "ui.scan_panel_confirm_mirror": "{body} ist die gegenüberliegende Wand: ihre Löcher passen gespiegelt auf {rms} mm. {both} Löcher sind auch dort, {not_found} nicht, {unscanned} deckt sie nicht ab.",
+    "ui.scan_panel_confirm_same": "{body} passt auf {rms} mm. {both} Löcher sind auch dort, {not_found} nicht, {unscanned} deckt es nicht ab.",
+    "ui.scan_panel_confirm_failed": "Die Löcher von {body} passen nicht zu diesen: prüfen Sie, ob es ein Scan dieser oder der gegenüberliegenden Wand ist.",
+    "ui.scan_panel_drop_not_found": "Die {count} Löcher verwerfen, die dort fehlen",
+    "ui.scan_panel_seen_both": "Der andere Scan hat dieses Loch auch.",
+    "ui.scan_panel_seen_not_found": "Der andere Scan deckt diese Stelle ab und hat hier kein Loch: wohl eine Lücke in diesem Scan, kein Loch.",
+    "ui.scan_panel_seen_unscanned": "Der andere Scan deckt diese Stelle nicht ab."
   },
   "ja": {
     "cmd.scan.panel_proposals": "パネルの提案",
@@ -147,7 +165,16 @@
     "ui.scan_panel_fixings": "固定点 {count}",
     "ui.scan_panel_keep_all": "この種類をすべて残す",
     "ui.scan_panel_drop_all": "この種類をすべて除外",
-    "ui.scan_panel_export": "図面を書き出す…"
+    "ui.scan_panel_export": "図面を書き出す…",
+    "ui.scan_panel_confirm": "穴を照合するスキャン",
+    "ui.scan_panel_confirm_none": "なし",
+    "ui.scan_panel_confirm_mirror": "{body} は反対側の壁です。穴は鏡像で {rms} mm 以内に一致します。{both} 個の穴はそちらにもあり、{not_found} 個はなく、{unscanned} 個は範囲外です。",
+    "ui.scan_panel_confirm_same": "{body} は {rms} mm 以内に一致します。{both} 個の穴はそちらにもあり、{not_found} 個はなく、{unscanned} 個は範囲外です。",
+    "ui.scan_panel_confirm_failed": "{body} の穴はこれと一致しません。この壁か反対側の壁のスキャンか確認してください。",
+    "ui.scan_panel_drop_not_found": "そちらにない穴 {count} 個を除外",
+    "ui.scan_panel_seen_both": "もう一方のスキャンにもこの穴があります。",
+    "ui.scan_panel_seen_not_found": "もう一方のスキャンはこの場所を写していますが穴はありません。穴ではなく、このスキャンの欠けと思われます。",
+    "ui.scan_panel_seen_unscanned": "もう一方のスキャンはこの場所を写していません。"
   },
   "ko": {
     "cmd.scan.panel_proposals": "패널 제안",
@@ -197,7 +224,16 @@
     "ui.scan_panel_fixings": "고정점 {count}",
     "ui.scan_panel_keep_all": "이 종류 모두 유지",
     "ui.scan_panel_drop_all": "이 종류 모두 제외",
-    "ui.scan_panel_export": "도면 내보내기…"
+    "ui.scan_panel_export": "도면 내보내기…",
+    "ui.scan_panel_confirm": "구멍 대조 스캔",
+    "ui.scan_panel_confirm_none": "없음",
+    "ui.scan_panel_confirm_mirror": "{body}은(는) 반대쪽 벽입니다. 구멍이 대칭으로 {rms} mm 이내로 맞습니다. 구멍 {both}개는 그쪽에도 있고, {not_found}개는 없으며, {unscanned}개는 범위 밖입니다.",
+    "ui.scan_panel_confirm_same": "{body}이(가) {rms} mm 이내로 맞습니다. 구멍 {both}개는 그쪽에도 있고, {not_found}개는 없으며, {unscanned}개는 범위 밖입니다.",
+    "ui.scan_panel_confirm_failed": "{body}의 구멍이 이 구멍들과 맞지 않습니다. 이 벽이나 반대쪽 벽의 스캔인지 확인하세요.",
+    "ui.scan_panel_drop_not_found": "그쪽에 없는 구멍 {count}개 제외",
+    "ui.scan_panel_seen_both": "다른 스캔에도 이 구멍이 있습니다.",
+    "ui.scan_panel_seen_not_found": "다른 스캔은 이곳을 담고 있지만 구멍이 없습니다. 구멍이 아니라 이 스캔의 빈틈일 가능성이 큽니다.",
+    "ui.scan_panel_seen_unscanned": "다른 스캔은 이곳을 담고 있지 않습니다."
   },
   "zh": {
     "cmd.scan.panel_proposals": "面板建议",
@@ -247,7 +283,16 @@
     "ui.scan_panel_fixings": "固定点 {count}",
     "ui.scan_panel_keep_all": "全部保留这一类",
     "ui.scan_panel_drop_all": "全部去掉这一类",
-    "ui.scan_panel_export": "导出图纸…"
+    "ui.scan_panel_export": "导出图纸…",
+    "ui.scan_panel_confirm": "对照扫描检查孔",
+    "ui.scan_panel_confirm_none": "无",
+    "ui.scan_panel_confirm_mirror": "{body} 是对面的墙：其孔镜像对齐，误差 {rms} mm 以内。{both} 个孔在其中也有，{not_found} 个没有，{unscanned} 个不在其范围内。",
+    "ui.scan_panel_confirm_same": "{body} 对齐误差 {rms} mm 以内。{both} 个孔在其中也有，{not_found} 个没有，{unscanned} 个不在其范围内。",
+    "ui.scan_panel_confirm_failed": "{body} 的孔与这些孔对不上：请确认它是这面墙或对面墙的扫描。",
+    "ui.scan_panel_drop_not_found": "去掉其中没有的 {count} 个孔",
+    "ui.scan_panel_seen_both": "另一个扫描也有这个孔。",
+    "ui.scan_panel_seen_not_found": "另一个扫描覆盖此处但这里没有孔：很可能是本扫描的缺口，而不是孔。",
+    "ui.scan_panel_seen_unscanned": "另一个扫描没有覆盖此处。"
   },
   "ar": {
     "cmd.scan.panel_proposals": "مقترحات اللوح",
@@ -297,7 +342,16 @@
     "ui.scan_panel_fixings": "نقاط التثبيت {count}",
     "ui.scan_panel_keep_all": "إبقاء كل هذه",
     "ui.scan_panel_drop_all": "إسقاط كل هذه",
-    "ui.scan_panel_export": "تصدير الرسومات…"
+    "ui.scan_panel_export": "تصدير الرسومات…",
+    "ui.scan_panel_confirm": "مطابقة الثقوب مع",
+    "ui.scan_panel_confirm_none": "لا شيء",
+    "ui.scan_panel_confirm_mirror": "{body} هو الجدار المقابل: ثقوبه تتطابق معكوسة ضمن {rms} مم. {both} ثقوب موجودة فيه أيضًا، و{not_found} غير موجودة، و{unscanned} لا يغطيها.",
+    "ui.scan_panel_confirm_same": "{body} يتطابق ضمن {rms} مم. {both} ثقوب موجودة فيه أيضًا، و{not_found} غير موجودة، و{unscanned} لا يغطيها.",
+    "ui.scan_panel_confirm_failed": "ثقوب {body} لا تتطابق مع هذه: تحقق أنه مسح لهذا الجدار أو للجدار المقابل.",
+    "ui.scan_panel_drop_not_found": "إسقاط الثقوب الـ{count} غير الموجودة فيه",
+    "ui.scan_panel_seen_both": "المسح الآخر فيه هذا الثقب أيضًا.",
+    "ui.scan_panel_seen_not_found": "المسح الآخر يغطي هذا الموضع ولا ثقب فيه: على الأرجح فجوة في هذا المسح وليست ثقبًا.",
+    "ui.scan_panel_seen_unscanned": "المسح الآخر لا يغطي هذا الموضع."
   },
   "he": {
     "cmd.scan.panel_proposals": "הצעות ללוח",
@@ -347,7 +401,16 @@
     "ui.scan_panel_fixings": "נקודות קיבוע {count}",
     "ui.scan_panel_keep_all": "שמירת כל אלה",
     "ui.scan_panel_drop_all": "הסרת כל אלה",
-    "ui.scan_panel_export": "ייצוא שרטוטים…"
+    "ui.scan_panel_export": "ייצוא שרטוטים…",
+    "ui.scan_panel_confirm": "בדיקת חורים מול",
+    "ui.scan_panel_confirm_none": "כלום",
+    "ui.scan_panel_confirm_mirror": "{body} הוא הקיר שממול: החורים שלו מתיישרים בתמונת ראי בתוך {rms} מ״מ. {both} חורים קיימים גם בו, {not_found} לא, {unscanned} הוא לא מכסה.",
+    "ui.scan_panel_confirm_same": "{body} מתיישר בתוך {rms} מ״מ. {both} חורים קיימים גם בו, {not_found} לא, {unscanned} הוא לא מכסה.",
+    "ui.scan_panel_confirm_failed": "החורים של {body} לא מתיישרים עם אלה: בדקו שזו סריקה של הקיר הזה או של הקיר שממול.",
+    "ui.scan_panel_drop_not_found": "הסרת {count} החורים שאינם בו",
+    "ui.scan_panel_seen_both": "גם בסריקה האחרת יש את החור הזה.",
+    "ui.scan_panel_seen_not_found": "הסריקה האחרת מכסה את המקום ואין בו חור: כנראה פער בסריקה הזו, לא חור.",
+    "ui.scan_panel_seen_unscanned": "הסריקה האחרת לא מכסה את המקום הזה."
   },
   "vi": {
     "cmd.scan.panel_proposals": "Đề xuất tấm",
@@ -397,6 +460,15 @@
     "ui.scan_panel_fixings": "Điểm bắt vít {count}",
     "ui.scan_panel_keep_all": "Giữ tất cả loại này",
     "ui.scan_panel_drop_all": "Bỏ tất cả loại này",
-    "ui.scan_panel_export": "Xuất bản vẽ…"
+    "ui.scan_panel_export": "Xuất bản vẽ…",
+    "ui.scan_panel_confirm": "Đối chiếu lỗ với",
+    "ui.scan_panel_confirm_none": "Không",
+    "ui.scan_panel_confirm_mirror": "{body} là bức tường đối diện: các lỗ của nó khớp theo đối xứng trong {rms} mm. {both} lỗ cũng có ở đó, {not_found} lỗ không có, {unscanned} lỗ nằm ngoài vùng quét.",
+    "ui.scan_panel_confirm_same": "{body} khớp trong {rms} mm. {both} lỗ cũng có ở đó, {not_found} lỗ không có, {unscanned} lỗ nằm ngoài vùng quét.",
+    "ui.scan_panel_confirm_failed": "Các lỗ của {body} không khớp với các lỗ này: hãy kiểm tra đó là bản quét của bức tường này hoặc bức tường đối diện.",
+    "ui.scan_panel_drop_not_found": "Bỏ {count} lỗ không có ở đó",
+    "ui.scan_panel_seen_both": "Bản quét kia cũng có lỗ này.",
+    "ui.scan_panel_seen_not_found": "Bản quét kia có quét chỗ này nhưng không có lỗ: có lẽ là chỗ hở của bản quét này, không phải lỗ.",
+    "ui.scan_panel_seen_unscanned": "Bản quét kia không quét tới chỗ này."
   }
 }
