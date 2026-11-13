@@ -1731,6 +1731,111 @@ fn flat_template_can_make_a_free_form_face_with_the_cutout_as_a_hole() {
     assert!(s.model.state().body(&face).is_none(), "one undo takes the face and the sketch away");
 }
 
+/// Flat Template with `outline: "scan"`: nothing picked. A wall 600 × 400 with a hump standing 120
+/// off the middle of its bottom edge (a wheel well) and the outlet box inside: the outline is the
+/// whole wall with the hump notched out of it, the box is the one cut-out, and the face made has
+/// the outline's area less the box.
+#[test]
+fn flat_template_finds_the_whole_outline_from_the_scan() {
+    let z = |x: f64, y: f64| {
+        if ((x - 300.0) / 100.0).powi(2) + (y / 80.0).powi(2) < 1.0 {
+            120.0
+        } else if (400.0..=460.0).contains(&x) && (200.0..=280.0).contains(&y) {
+            25.0
+        } else {
+            0.0
+        }
+    };
+    let n = 150;
+    let at = |i: u32, j: u32| {
+        let (x, y) = (600.0 * f64::from(i) / f64::from(n), 400.0 * f64::from(j) / f64::from(n));
+        Vec3::new(x, y, z(x, y))
+    };
+    let mut tris = Vec::new();
+    for j in 0..n {
+        for i in 0..n {
+            tris.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+            tris.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+        }
+    }
+    let (mut s, body) = session_with_triangles("flat-template-scan", &tris);
+    let r = run(&mut s, "scan.flat_template", json!({"body": body, "outline": "scan", "make_face": true, "smooth": 0, "round": 0}));
+    assert_eq!(r["fitted"], true, "{r}");
+    assert_eq!(r["step"], json!(2.0), "{r}");
+    assert_eq!(r["scan_edge_loops"], 0, "the scan's ragged edge is not drawn unless asked: {r}");
+    let notch = std::f64::consts::PI * 100.0 * 80.0 / 2.0;
+    let area = r["area"].as_f64().unwrap();
+    assert!((area - (600.0 * 400.0 - notch)).abs() < 0.02 * 240_000.0, "the wall less the wheel well: {area}");
+    let cuts = r["cutouts"].as_array().unwrap();
+    assert_eq!(cuts.len(), 1, "{r}");
+    assert!((cuts[0]["area"].as_f64().unwrap() - 60.0 * 80.0).abs() < 0.2 * 4800.0 && cuts[0]["side"] == "out", "{r}");
+    let face = r["face"].as_str().unwrap_or_else(|| panic!("a face: {r}")).to_owned();
+    let made = solidcraft_kernel::measure(&s.world_state().unwrap().body(&face).unwrap().body).unwrap().area;
+    let want = area - r["cut_area"].as_f64().unwrap();
+    assert!((made - want).abs() < 0.02 * want, "outline less the box: {made} vs {want}");
+
+    // Smoothed (the default, 100 mm): the box, 60 wide, goes behind the template; the wheel well,
+    // 200 wide, is still notched.
+    let clean = run(&mut s, "scan.flat_template", json!({"body": body, "outline": "scan", "name": "Clean"}));
+    assert_eq!(clean["cutouts"].as_array().unwrap().len(), 0, "{clean}");
+    let clean_area = clean["area"].as_f64().unwrap();
+    assert!((clean_area - (600.0 * 400.0 - notch)).abs() < 0.03 * 240_000.0, "still notched: {clean_area}");
+
+    for bad in [
+        json!({"outline": "scan", "smooth": -1}),
+        json!({"outline": "scan", "round": -1}),
+        json!({"outline": "scan", "finger": -1}),
+        json!({"outline": "scan", "cover": [[0, 0]]}),
+        json!({"outline": "scan", "cover": "here"}),
+        json!({"outline": "scan", "gap": -1}),
+        json!({"outline": "scan", "step": 0}),
+        json!({"outline": "outline"}),
+        json!({"outline": "scan", "side": "up"}),
+    ] {
+        assert!(s.execute("scan.flat_template", &bad).is_err(), "{bad}");
+    }
+}
+
+/// Flat Template's face, both ways: the Free Form trimmed to the template (the usual way) and the
+/// planar patch of the template's region (made when the kernel cannot trim the Free Form) are the
+/// same face, on a wall with 72 small cut-outs (8 mm bolts) and a notch.
+#[test]
+fn flat_template_face_trimmed_and_patched_agree() {
+    let bolt = |x: f64, y: f64| {
+        let (i, j) = ((x - 47.0) / 61.0, (y - 33.0) / 43.0);
+        let (fi, fj) = (i - i.floor(), j - j.floor());
+        i >= 0.0 && j >= 0.0 && i < 9.0 && j < 8.0 && fi * 61.0 < 8.0 && fj * 43.0 < 8.0
+    };
+    let notch = |x: f64, y: f64| (250.0..350.0).contains(&x) && y < 60.0;
+    let n = 300;
+    let at = |i: u32, j: u32| {
+        let (x, y) = (600.0 * f64::from(i) / f64::from(n), 400.0 * f64::from(j) / f64::from(n));
+        Vec3::new(x, y, if bolt(x, y) || notch(x, y) { 20.0 } else { 0.0 })
+    };
+    let mut tris = Vec::new();
+    for j in 0..n {
+        for i in 0..n {
+            tris.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+            tris.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+        }
+    }
+    let (mut s, body) = session_with_triangles("flat-template-bolts", &tris);
+    let r = run(&mut s, "scan.flat_template", json!({"body": body, "outline": "scan", "smooth": 0, "round": 0, "make_face": true}));
+    assert!(r["cutouts"].as_array().unwrap().len() >= 60, "the bolts are cut out: {r}");
+    assert_eq!(r["face_kind"], "free_form", "{r}");
+    let area = |s: &Session, name: &str| solidcraft_kernel::measure(&s.world_state().unwrap().body(name).unwrap().body).unwrap().area;
+    let trimmed = area(&s, r["face"].as_str().unwrap());
+    // The patch of the same sketch's region.
+    let sketch = r["sketch"].as_u64().unwrap();
+    let solved = s.model.state().sketch(sketch).unwrap().sketch.clone();
+    let ids: Vec<String> = solved.curves.iter().map(|c| c.id.clone()).collect();
+    let outline = solved.curves.iter().position(|c| matches!(c.kind, solidcraft_sketch::CurveKind::Circle { .. })).unwrap_or(ids.len());
+    let patched = super::template::planar_face(&mut s, &body, &ids, outline, sketch, "test").unwrap();
+    let flat = area(&s, &patched);
+    assert!((flat - trimmed).abs() < 1e-3 * trimmed, "patched {flat} vs trimmed {trimmed}");
+    assert!(flat < r["area"].as_f64().unwrap() - 0.5 * r["cut_area"].as_f64().unwrap(), "the bolts are holes in it");
+}
+
 /// Make Flat lays a bumpy Free Form exactly on its fitted plane, one undo step.
 #[test]
 fn make_flat_puts_a_free_form_exactly_flat() {
@@ -1751,4 +1856,92 @@ fn make_flat_puts_a_free_form_exactly_flat() {
     let target = super::surface::editable(&s, Some(&name), "test").unwrap();
     assert!(points(&target.surface).iter().any(|q| (*q - point).dot(n).abs() > 0.1), "undone");
     assert!(s.execute("scan.make_flat", &json!({"plane": {"point": [0, 0, 0], "normal": [0, 0, 0]}})).is_err());
+}
+
+/// A straight panel from a wall's scan: a wheel well standing out of the bottom edge, two rows of
+/// 8 mm holes 34 mm apart across the middle and two columns 30 mm apart up it, on sheets smaller
+/// than the wall. The proposal has the wheel well as a notch, a seam between the rows and one
+/// between the columns, and the holes; the panel made with the notch dropped is the whole
+/// rectangle, with a circle for each hole kept.
+#[test]
+fn flat_template_panel_proposes_seams_between_the_rows_of_holes() {
+    let mut centres = Vec::new();
+    for k in 0..6 {
+        let x = 60.0 + 90.0 * f64::from(k);
+        centres.push((x, 183.0));
+        centres.push((x, 217.0));
+    }
+    for y in [100.0, 260.0, 300.0, 340.0] {
+        centres.push((290.0, y));
+        centres.push((320.0, y));
+    }
+    let hole = |x: f64, y: f64| centres.iter().any(|(cx, cy)| (x - cx).powi(2) + (y - cy).powi(2) < 16.0);
+    let z = |x: f64, y: f64| if ((x - 300.0) / 100.0).powi(2) + (y / 80.0).powi(2) < 1.0 { 120.0 } else { 0.0 };
+    let (w, h) = (600u32, 400u32);
+    let at = |i: u32, j: u32| {
+        let (x, y) = (f64::from(i), f64::from(j));
+        Vec3::new(x, y, z(x, y))
+    };
+    let mut tris = Vec::new();
+    for j in 0..h {
+        for i in 0..w {
+            let (cx, cy) = (f64::from(i) + 0.5, f64::from(j) + 0.5);
+            if hole(cx, cy) {
+                continue;
+            }
+            tris.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+            tris.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+        }
+    }
+    let (mut s, body) = session_with_triangles("panel-wall", &tris);
+    let sheet = json!({"sheet": [400, 250]});
+    let r = run(&mut s, "scan.panel_proposals", json!({"body": body, "panel": sheet}));
+    assert_eq!(r["holes_found"].as_u64(), Some(centres.len() as u64), "every hole found: {r}");
+    let e = &r["edges"];
+    assert_eq!(
+        (e["left"].as_f64(), e["right"].as_f64(), e["bottom"].as_f64(), e["top"].as_f64()),
+        (Some(0.0), Some(600.0), Some(0.0), Some(400.0)),
+        "{r}"
+    );
+    let cuts = r["cutouts"].as_array().unwrap();
+    assert_eq!(cuts.len(), 1, "the wheel well: {r}");
+    assert!(cuts[0]["notch"] == true && cuts[0]["edges"] == json!(["bottom"]) && (cuts[0]["depth"].as_f64().unwrap() - 80.0).abs() < 6.0, "{r}");
+    let seams = r["seams"].as_array().unwrap();
+    let across: Vec<&Value> = seams.iter().filter(|s| s["upright"] == false).collect();
+    let up: Vec<&Value> = seams.iter().filter(|s| s["upright"] == true).collect();
+    assert_eq!((across.len(), up.len()), (1, 1), "{r}");
+    assert!(across[0]["between_rows"] == true && (across[0]["from"][1].as_f64().unwrap() - 200.0).abs() < 1.0, "{r}");
+    assert!(up[0]["between_rows"] == true && (up[0]["from"][0].as_f64().unwrap() - 305.0).abs() < 1.0, "{r}");
+    assert_eq!(r["over"], json!(0.0), "pieces 305 and 295 wide, 200 high fit 400 × 250: {r}");
+    let holes = r["holes"].as_array().unwrap();
+    assert_eq!(holes.len(), centres.len(), "all near a seam: {r}");
+    for hl in holes {
+        let (x, y) = (hl["center"][0].as_f64().unwrap(), hl["center"][1].as_f64().unwrap());
+        assert!(centres.iter().any(|(cx, cy)| (x - cx).hypot(y - cy) < 0.3), "a hole's centre is where it is: {hl}");
+        assert!((hl["diameter"].as_f64().unwrap() - 8.0).abs() < 1.0, "{hl}");
+    }
+
+    // Made, with the wheel well covered and one hole dropped: the whole rectangle, the seams, and
+    // a circle for each hole kept.
+    let made = run(
+        &mut s,
+        "scan.flat_template",
+        json!({"body": body, "outline": "scan", "panel": {"sheet": [400, 250], "drop_cutouts": [0], "drop_holes": [0]}}),
+    );
+    assert!((made["area"].as_f64().unwrap() - 600.0 * 400.0).abs() < 1e-6, "{made}");
+    assert_eq!(made["circles"].as_u64(), Some(centres.len() as u64 - 1), "{made}");
+    assert_eq!(made["panel"]["seams"], 2, "{made}");
+    assert_eq!(made["lines"].as_u64(), Some(4 + 2), "the rectangle and the two seams: {made}");
+
+    for bad in [
+        json!({"body": body, "panel": {"drop_holes": [9999]}}),
+        json!({"body": body, "panel": {"sheet": [0, 0]}}),
+        json!({"body": body, "panel": {"edges": {"left": 500, "right": 100}}}),
+        json!({"body": body, "panel": {"move_seams": [{"seam": 7, "by": 5}]}}),
+        json!({"body": body, "panel": {"move_seams": [{"seam": 0, "by": 1e300}]}}),
+    ] {
+        assert!(s.execute("scan.panel_proposals", &bad).is_err(), "{bad}");
+    }
+    let picked = json!({"body": body, "outline": [[0, 0, 0], [600, 0, 0], [600, 400, 0]], "panel": {}});
+    assert!(s.execute("scan.flat_template", &picked).is_err(), "a panel needs the whole outline");
 }

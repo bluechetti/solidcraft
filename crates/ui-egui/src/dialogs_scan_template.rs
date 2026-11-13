@@ -3,13 +3,18 @@
 //! (fitted to the scan, what stands off it left out), with a cut-out for each part standing off the
 //! plane, and drawn over the view before OK sketches it: the outline, the cut-outs, and the scan's
 //! own edge on the same plane to check it against.
+//!
+//! With the outline set to Whole Scan nothing is clicked: the whole wall's outline is found from the
+//! scan, on the face it rests on, each part standing out of it a notch or a cut-out.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use serde_json::{Value, json};
 use solidcore_record::{Vec2, Vec3};
 use solidcraft_engine::Sel;
-use solidcraft_engine::cmd::scan::template::prepare;
+use solidcraft_engine::cmd::scan::template::{PanelKeep, PanelPrepared, panel_laid, prepare, prepare_panel};
+use solidcraft_engine::geom::Aabb3;
 use solidcraft_engine::geom::prelude::*;
 
 use crate::SolveApp;
@@ -21,6 +26,17 @@ use crate::ui_kit::{self, choice_row};
 /// The Flat Template dialog's values (the clicks on the scan are its selection input).
 #[derive(Clone, Debug)]
 pub struct FlatTemplate {
+    /// Where the outline comes from: 0 the points clicked, 1 the whole scan.
+    pub outline: usize,
+    /// With the whole scan: tears in its edge narrower than this are bridged (mm).
+    pub gap: f64,
+    /// With the whole scan: notches, cut-outs and slivers narrower than this are smoothed away (mm).
+    pub smooth: f64,
+    /// With the whole scan: the grid the template is squared and rounded to (mm; 0 as found).
+    pub round: f64,
+    /// With the whole scan: fingers of the template narrower than this between parts standing
+    /// out are cut off (mm; 0 keeps them).
+    pub finger: f64,
     /// Which parts are cut out: both sides, out, in.
     pub side: usize,
     /// How far off the plane a part must stand; 0 for what the wall's noise says.
@@ -30,6 +46,19 @@ pub struct FlatTemplate {
     pub colours: bool,
     /// A tolerance tried here instead of the scan's own, mm (0: the scan's, see `scan.tolerance`).
     pub scan_tolerance: f64,
+    /// With the whole scan: a straight panel cut from sheets, each thing proposed for it looked
+    /// through and kept or dropped.
+    pub panel: bool,
+    /// The sheet, long × short (mm).
+    pub sheet: [f64; 2],
+    /// Quarter turns of the panel in the wall's plane: which edge is the floor.
+    pub turn: u8,
+    /// The straight edges as moved (left, right, bottom, top, mm from the outline's corner); none:
+    /// as proposed.
+    pub edges: Option<[f64; 4]>,
+    review: Review,
+    /// Where the view is to frame next (done each frame by [`tick`]).
+    focus: Option<Aabb3>,
     /// The scan's tolerance as changed here, kept by OK.
     keep_tolerance: Option<(String, f64)>,
     /// The template being worked out beside the window (a large scan), for the values it was begun for.
@@ -39,7 +68,27 @@ pub struct FlatTemplate {
 
 impl Default for FlatTemplate {
     fn default() -> Self {
-        FlatTemplate { side: 0, tolerance: 0.0, edge: true, colours: true, scan_tolerance: 0.0, keep_tolerance: None, pending: None, shown: None }
+        FlatTemplate {
+            outline: 0,
+            gap: solidcraft_engine::cmd::scan::template::GAP,
+            smooth: solidcraft_engine::cmd::scan::template::SMOOTH,
+            round: solidcraft_engine::cmd::scan::template::ROUND,
+            finger: solidcraft_engine::cmd::scan::template::FINGER,
+            side: 0,
+            tolerance: 0.0,
+            edge: true,
+            colours: true,
+            scan_tolerance: 0.0,
+            panel: false,
+            sheet: solidcraft_engine::cmd::scan::template::panel::SHEET,
+            turn: 0,
+            edges: None,
+            review: Review::default(),
+            focus: None,
+            keep_tolerance: None,
+            pending: None,
+            shown: None,
+        }
     }
 }
 
@@ -81,9 +130,37 @@ struct Marked {
     area: f64,
     cut_area: f64,
     tolerance: f64,
+    /// With the whole scan: the grid's cell, how true the outline is (mm).
+    step: Option<f64>,
+    /// With the whole scan rounded: the most a corner moved (mm).
+    moved: Option<f64>,
     fitted: bool,
     kept: usize,
     under: usize,
+    /// With a straight panel: what is proposed for it.
+    panel: Option<Arc<PanelPrepared>>,
+}
+
+/// One thing proposed for a straight panel, as looked through: an edge (0 bottom, 1 right, 2 top,
+/// 3 left), a cut-out, a seam or a hole, by its number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Item {
+    Edge(u8),
+    Cut(usize),
+    Seam(usize),
+    Hole(usize),
+}
+
+/// Looking through a straight panel's proposal: where, what was dropped or moved, what was seen.
+#[derive(Clone, Debug, Default)]
+struct Review {
+    /// The proposal this is about (a new one starts the look-through again).
+    key: String,
+    at: usize,
+    dropped: BTreeSet<Item>,
+    /// Seams moved square to themselves (mm).
+    moved: BTreeMap<usize, f64>,
+    seen: BTreeSet<Item>,
 }
 
 const SIDES: [&str; 3] = ["both", "out", "in"];
@@ -97,8 +174,38 @@ fn tr(id: &'static str) -> &'static str {
     crate::i18n::tr(id)
 }
 
-/// What `scan.flat_template` is sent: the clicks in order, once there are three.
+/// What `scan.flat_template` is sent: the clicks in order, once there are three, or the whole scan.
 fn params(k: &FlatTemplate, inputs: &[SelInput]) -> Option<Value> {
+    if k.outline == 1 {
+        let mut p = json!({
+            "outline": "scan",
+            "gap": k.gap,
+            "smooth": k.smooth,
+            "round": k.round,
+            "finger": k.finger,
+            "side": SIDES[k.side.min(SIDES.len() - 1)],
+            "show_scan_edge": k.edge,
+        });
+        if let Some(Sel::Face { body, .. }) = items(inputs, 0).first() {
+            p["body"] = json!(body);
+        }
+        // With the whole scan, a click on a raised part covers it rather than cutting round it.
+        let picked = clicks(inputs);
+        if !picked.is_empty() {
+            p["cover"] = json!(picked.iter().map(|q| [q.x, q.y, q.z]).collect::<Vec<_>>());
+        }
+        if k.tolerance > 0.0 {
+            p["tolerance"] = json!(k.tolerance);
+        }
+        if k.panel {
+            let mut panel = json!({"sheet": k.sheet, "turn": k.turn % 4});
+            if let Some([left, right, bottom, top]) = k.edges {
+                panel["edges"] = json!({"left": left, "right": right, "bottom": bottom, "top": top});
+            }
+            p["panel"] = panel;
+        }
+        return Some(p);
+    }
     let clicks: Vec<(&str, Vec3)> = items(inputs, 0)
         .iter()
         .filter_map(|s| match s {
@@ -162,7 +269,13 @@ type Computed = (Result<Marked, String>, Option<Under>);
 
 fn compute(s: &solidcraft_engine::Session, p: &Value) -> Computed {
     let mut under = None;
-    let result = prepare(s, p, "scan.flat_template").map_err(|e| e.to_string()).map(|m| {
+    let panel = p.get("panel").is_some();
+    let prepared = if panel {
+        prepare_panel(s, p, "scan.flat_template").map(|pp| (pp.prepared.clone(), Some(Arc::new(pp))))
+    } else {
+        prepare(s, p, "scan.flat_template").map(|m| (m, None))
+    };
+    let result = prepared.map_err(|e| e.to_string()).map(|(m, panel)| {
         under = under_of(s, &m);
         let t = &m.made;
         let place = |ring: &[solidcore_record::Vec2]| -> Vec<Vec3> { ring.iter().map(|q| t.at(*q)).collect() };
@@ -171,7 +284,12 @@ fn compute(s: &solidcraft_engine::Session, p: &Value) -> Computed {
         });
         let grow = 0.15 * (hi.x - lo.x).max(hi.y - lo.y);
         let (lo, hi) = (Vec2::new(lo.x - grow, lo.y - grow), Vec2::new(hi.x + grow, hi.y + grow));
-        let sides = t.outline.iter().zip(t.outline.iter().cycle().skip(1)).map(|(a, b)| (t.at((*a + *b) / 2.0), a.dist(*b))).collect();
+        // A found outline has hundreds of sides: no lengths over it.
+        let sides = if m.step.is_some() {
+            Vec::new()
+        } else {
+            t.outline.iter().zip(t.outline.iter().cycle().skip(1)).map(|(a, b)| (t.at((*a + *b) / 2.0), a.dist(*b))).collect()
+        };
         Marked {
             ghost: [t.at(lo), t.at(Vec2::new(hi.x, lo.y)), t.at(hi), t.at(Vec2::new(lo.x, hi.y))],
             sides,
@@ -181,9 +299,12 @@ fn compute(s: &solidcraft_engine::Session, p: &Value) -> Computed {
             area: t.area,
             cut_area: t.cut_area,
             tolerance: m.tolerance,
+            step: m.step,
+            moved: m.moved,
             fitted: m.fitted,
             kept: m.kept,
             under: m.under,
+            panel,
         }
     });
     (result, under)
@@ -267,6 +388,48 @@ pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuCloud
 /// The dialog's rows.
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[SelInput]) -> bool {
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+    let was = k.outline;
+    choice_row(
+        ui,
+        tr("ui.scan_template_outline"),
+        "scan_template_outline",
+        &mut k.outline,
+        &[tr("ui.scan_template_picked"), tr("ui.scan_template_whole")],
+    );
+    if k.outline != was && k.outline == 1 {
+        // A whole wall: cut what stands out into the room, and leave its ragged edge undrawn.
+        k.side = 1;
+        k.edge = false;
+    }
+    if k.outline == 1 {
+        form_row(ui, tr("ui.scan_template_gap"), |ui| ui_kit::length_field(ui, &mut k.gap, &units, decimals));
+        k.gap = k.gap.max(0.0);
+        form_row(ui, tr("ui.scan_template_smooth"), |ui| ui_kit::length_field(ui, &mut k.smooth, &units, decimals));
+        k.smooth = k.smooth.max(0.0);
+        form_row(ui, tr("ui.scan_template_round"), |ui| ui_kit::length_field(ui, &mut k.round, &units, decimals));
+        k.round = k.round.max(0.0);
+        form_row(ui, tr("ui.scan_template_finger"), |ui| ui_kit::length_field(ui, &mut k.finger, &units, decimals));
+        k.finger = k.finger.max(0.0);
+        let was_panel = k.panel;
+        form_row(ui, tr("ui.scan_panel"), |ui| check(ui, &mut k.panel));
+        if k.panel && !was_panel {
+            // The panel's lines are what is looked at: the scan's colours would hide them.
+            k.colours = false;
+        }
+        if k.panel {
+            form_row(ui, tr("ui.scan_panel_sheet_long"), |ui| ui_kit::length_field(ui, &mut k.sheet[0], &units, decimals));
+            form_row(ui, tr("ui.scan_panel_sheet_short"), |ui| ui_kit::length_field(ui, &mut k.sheet[1], &units, decimals));
+            k.sheet = [k.sheet[0].clamp(100.0, 100_000.0), k.sheet[1].clamp(100.0, 100_000.0)];
+            form_row(ui, tr("ui.scan_panel_floor"), |ui| {
+                if ui_kit::button(ui, tr("ui.scan_panel_turn"), ui_kit::Button::Small).clicked() {
+                    k.turn = (k.turn + 1) % 4;
+                    // The edges were for the panel as it lay.
+                    k.edges = None;
+                }
+            });
+            ui_kit::text(ui, tr("ui.scan_panel_floor_hint"), ui_kit::Text::Hint("scan_panel_floor_hint"));
+        }
+    }
     let sides = [tr("ui.scan_template_both"), tr("ui.scan_template_out"), tr("ui.scan_template_in")];
     choice_row(ui, tr("ui.scan_template_side"), "scan_template_side", &mut k.side, &sides);
     form_row(ui, tr("ui.scan_template_tolerance"), |ui| ui_kit::length_field(ui, &mut k.tolerance, &units, decimals));
@@ -279,6 +442,13 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
         k.keep_tolerance = crate::scan_fidelity::row(app, ui, scan.as_deref(), &mut k.scan_tolerance).keep;
     }
     colour(app, k);
+    let panel = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.panel.clone());
+    if k.panel
+        && k.outline == 1
+        && let Some(pp) = panel
+    {
+        review_rows(app, ui, k, &pp);
+    }
     if k.pending.is_some() {
         scan_job::refining_note(ui, "scan_template_refining");
     }
@@ -294,9 +464,20 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
                 ],
             );
             ui_kit::text(ui, &line, ui_kit::Text::Note("scan_template_found"));
-            let sides = m.sides.iter().map(|(_, l)| format!("{l:.1}")).collect::<Vec<_>>().join(" · ");
-            let dims = crate::i18n::format("ui.scan_template_sides", &[("sides", &sides)]);
-            ui_kit::text(ui, &dims, ui_kit::Text::Note("scan_template_sides"));
+            if let Some(step) = m.step {
+                let how = crate::i18n::format("ui.scan_template_whole_hint", &[("step", &format!("{step:.1}"))]);
+                ui_kit::text(ui, &how, ui_kit::Text::Note("scan_template_whole_hint"));
+                ui_kit::text(ui, tr("ui.scan_template_cover_hint"), ui_kit::Text::Hint("scan_template_cover_hint"));
+                if let Some(moved) = m.moved {
+                    let tidied =
+                        crate::i18n::format("ui.scan_template_tidied", &[("round", &format!("{:.1}", k.round)), ("moved", &format!("{moved:.1}"))]);
+                    ui_kit::text(ui, &tidied, ui_kit::Text::Note("scan_template_tidied"));
+                }
+            } else {
+                let sides = m.sides.iter().map(|(_, l)| format!("{l:.1}")).collect::<Vec<_>>().join(" · ");
+                let dims = crate::i18n::format("ui.scan_template_sides", &[("sides", &sides)]);
+                ui_kit::text(ui, &dims, ui_kit::Text::Note("scan_template_sides"));
+            }
             if let Some((stats, tolerance)) = fidelity(app, k) {
                 crate::scan_fidelity::readout(app, ui, "scan_template_fidelity", &stats, tolerance);
             }
@@ -319,6 +500,15 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
 pub fn commands(k: &FlatTemplate, inputs: &[SelInput]) -> Result<Vec<(String, Value)>, String> {
     let p = params(k, inputs).ok_or_else(|| tr("ui.scan_template_hint").to_owned())?;
     k.shown.as_ref().ok_or("still working out the template")?.result.as_ref().map_err(Clone::clone)?;
+    let mut p = p;
+    if let Some(panel) = p.get_mut("panel").and_then(Value::as_object_mut) {
+        let numbers = |pick: fn(&Item) -> Option<usize>| k.review.dropped.iter().filter_map(pick).collect::<Vec<_>>();
+        panel.insert("drop_cutouts".into(), json!(numbers(|i| if let Item::Cut(n) = i { Some(*n) } else { None })));
+        panel.insert("drop_seams".into(), json!(numbers(|i| if let Item::Seam(n) = i { Some(*n) } else { None })));
+        panel.insert("drop_holes".into(), json!(numbers(|i| if let Item::Hole(n) = i { Some(*n) } else { None })));
+        let moves: Vec<Value> = k.review.moved.iter().filter(|(_, by)| **by != 0.0).map(|(seam, by)| json!({"seam": seam, "by": by})).collect();
+        panel.insert("move_seams".into(), json!(moves));
+    }
     let mut all = Vec::new();
     all.extend(crate::scan_fidelity::keep(k.keep_tolerance.as_ref()));
     all.push(("scan.flat_template".into(), p));
@@ -376,12 +566,329 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     for ring in &m.edge {
         line(ring, true, egui::Stroke::new(1.0, tokens.text_dim));
     }
+    if let Some(pp) = m.panel.as_ref().filter(|_| k.panel) {
+        draw_panel(painter, proj, k, pp);
+        return;
+    }
     for ring in &m.cutouts {
         line(ring, true, egui::Stroke::new(1.5, tokens.error));
     }
     line(&m.outline, true, egui::Stroke::new(2.0, tokens.accent));
     for (at, mm) in &m.sides {
         label(painter, proj, *at, *mm);
+    }
+}
+
+/// Every thing proposed, in the order they are looked through: the edges, the cut-outs, the seams,
+/// the holes.
+fn items_of(pp: &PanelPrepared) -> Vec<Item> {
+    let p = &pp.proposal;
+    (0..4u8)
+        .map(Item::Edge)
+        .chain((0..p.cuts.len()).map(Item::Cut))
+        .chain((0..p.seams.len()).map(Item::Seam))
+        .chain((0..p.holes.len()).map(Item::Hole))
+        .collect()
+}
+
+/// What is kept, as the panel is to be laid.
+fn keep_of(pp: &PanelPrepared, r: &Review) -> PanelKeep {
+    let p = &pp.proposal;
+    let mut moved = p.seams.clone();
+    for (i, by) in &r.moved {
+        if let Some(seam) = moved.get_mut(*i) {
+            let shift = if seam.upright { Vec2::new(*by, 0.0) } else { Vec2::new(0.0, *by) };
+            seam.from += shift;
+            seam.to += shift;
+        }
+    }
+    PanelKeep {
+        cuts: (0..p.cuts.len()).map(|i| !r.dropped.contains(&Item::Cut(i))).collect(),
+        seams: (0..p.seams.len()).map(|i| !r.dropped.contains(&Item::Seam(i))).collect(),
+        holes: (0..p.holes.len()).map(|i| !r.dropped.contains(&Item::Hole(i))).collect(),
+        moved,
+    }
+}
+
+/// The edge's two ends (template coordinates).
+fn edge_ends(pp: &PanelPrepared, side: u8) -> (Vec2, Vec2) {
+    let e = pp.proposal.edges;
+    match side {
+        0 => (Vec2::new(e.left, e.bottom), Vec2::new(e.right, e.bottom)),
+        1 => (Vec2::new(e.right, e.bottom), Vec2::new(e.right, e.top)),
+        2 => (Vec2::new(e.right, e.top), Vec2::new(e.left, e.top)),
+        _ => (Vec2::new(e.left, e.top), Vec2::new(e.left, e.bottom)),
+    }
+}
+
+/// The places an item is drawn through (template coordinates).
+fn item_points(pp: &PanelPrepared, keep: &PanelKeep, item: Item) -> Vec<Vec2> {
+    let p = &pp.proposal;
+    match item {
+        Item::Edge(side) => {
+            let (a, b) = edge_ends(pp, side);
+            vec![a, b]
+        }
+        Item::Cut(i) => p.cuts.get(i).map(|c| c.ring.clone()).unwrap_or_default(),
+        Item::Seam(i) => keep.moved.get(i).map(|s| vec![s.from, s.to]).unwrap_or_default(),
+        Item::Hole(i) => p.holes.get(i).map(|h| vec![h.at]).unwrap_or_default(),
+    }
+}
+
+/// The box the view frames to look at an item: the item, and room round it to see where it is.
+fn focus_of(pp: &PanelPrepared, keep: &PanelKeep, item: Item) -> Option<Aabb3> {
+    let pts: Vec<Vec3> = item_points(pp, keep, item).into_iter().map(|q| pp.at(q)).collect();
+    let first = *pts.first()?;
+    let (lo, hi) = pts.iter().fold((first, first), |(lo, hi), q| {
+        (Vec3::new(lo.x.min(q.x), lo.y.min(q.y), lo.z.min(q.z)), Vec3::new(hi.x.max(q.x), hi.y.max(q.y), hi.z.max(q.z)))
+    });
+    let mid = (lo + hi) * 0.5;
+    let half = ((hi - lo).len() * 0.65).max(FOCUS_ROOM);
+    let r = Vec3::new(half, half, half);
+    Some(Aabb3 { min: mid - r, max: mid + r })
+}
+
+/// The least the view frames round an item (mm): enough to see where on the wall it is.
+const FOCUS_ROOM: f64 = 250.0;
+
+fn side_word(side: u8) -> &'static str {
+    match side {
+        0 => tr("ui.scan_panel_bottom"),
+        1 => tr("ui.scan_panel_right"),
+        2 => tr("ui.scan_panel_top"),
+        _ => tr("ui.scan_panel_left"),
+    }
+}
+
+/// Looking through the straight panel's proposal, one thing at a time: what it is, Keep or Drop
+/// (Enter or Y, X), Back (Backspace), Keep the Rest; an edge or a seam can be moved.
+fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc<PanelPrepared>) {
+    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+    let key = k.shown.as_ref().map(|s| s.key.clone()).unwrap_or_default();
+    if k.review.key != key {
+        k.review = Review { key, ..Review::default() };
+    }
+    let items = items_of(pp);
+    let Some(last) = items.len().checked_sub(1) else { return };
+    k.review.at = k.review.at.min(last);
+    let item = items[k.review.at];
+    let p = &pp.proposal;
+    let progress = crate::i18n::format(
+        "ui.scan_panel_progress",
+        &[("seen", &k.review.seen.len().to_string()), ("total", &items.len().to_string()), ("dropped", &k.review.dropped.len().to_string())],
+    );
+    ui_kit::text(ui, &progress, ui_kit::Text::Note("scan_panel_progress"));
+    let count = |n: usize| n.to_string();
+    let what = match item {
+        Item::Edge(side) => {
+            let e = p.edges;
+            let at = match side {
+                0 => e.bottom - pp.base.y,
+                1 => e.right - pp.base.x,
+                2 => e.top - pp.base.y,
+                _ => e.left - pp.base.x,
+            };
+            crate::i18n::format("ui.scan_panel_edge", &[("side", side_word(side)), ("at", &format!("{at:.0}"))])
+        }
+        Item::Cut(i) => {
+            let c = &p.cuts[i];
+            let (lo, hi) = c.ring.iter().fold((Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN)), |(lo, hi), q| {
+                (Vec2::new(lo.x.min(q.x), lo.y.min(q.y)), Vec2::new(hi.x.max(q.x), hi.y.max(q.y)))
+            });
+            let args = [
+                ("n", &count(i + 1)),
+                ("count", &count(p.cuts.len())),
+                ("w", &format!("{:.0}", hi.x - lo.x)),
+                ("h", &format!("{:.0}", hi.y - lo.y)),
+                ("depth", &format!("{:.0}", c.depth)),
+            ];
+            let args: Vec<(&str, &str)> = args.iter().map(|(a, b)| (*a, b.as_str())).collect();
+            crate::i18n::format(if c.notch { "ui.scan_panel_notch" } else { "ui.scan_panel_inside" }, &args)
+        }
+        Item::Seam(i) => {
+            let between = p.seams[i].between_rows;
+            crate::i18n::format(
+                if between { "ui.scan_panel_seam_between" } else { "ui.scan_panel_seam_beside" },
+                &[("n", &count(i + 1)), ("count", &count(p.seams.len()))],
+            )
+        }
+        Item::Hole(i) => {
+            let h = &p.holes[i];
+            crate::i18n::format(
+                "ui.scan_panel_hole",
+                &[
+                    ("n", &count(i + 1)),
+                    ("count", &count(p.holes.len())),
+                    ("d", &format!("{:.1}", h.diameter)),
+                    ("behind", &format!("{:.0}", h.behind)),
+                ],
+            )
+        }
+    };
+    ui_kit::text(ui, &what, ui_kit::Text::Report("scan_panel_item", k.review.dropped.contains(&item)));
+    // An edge or a seam moved here.
+    match item {
+        Item::Edge(side) => {
+            let e = p.edges;
+            let mut now = [e.left - pp.base.x, e.right - pp.base.x, e.bottom - pp.base.y, e.top - pp.base.y];
+            let slot = match side {
+                0 => 2,
+                1 => 1,
+                2 => 3,
+                _ => 0,
+            };
+            let before = now[slot];
+            form_row(ui, tr("ui.scan_panel_move_to"), |ui| ui_kit::length_field(ui, &mut now[slot], &units, decimals));
+            if now[slot].is_finite() && (now[slot] - before).abs() > 1e-9 {
+                k.edges = Some(now);
+            }
+        }
+        Item::Seam(i) => {
+            let by = k.review.moved.entry(i).or_insert(0.0);
+            form_row(ui, tr("ui.scan_panel_move_by"), |ui| ui_kit::length_field(ui, by, &units, decimals));
+            if !by.is_finite() {
+                *by = 0.0;
+            }
+        }
+        _ => {}
+    }
+    let mut keep = false;
+    let mut drop = false;
+    let mut back = false;
+    let mut rest = false;
+    ui.horizontal(|ui| {
+        keep = ui_kit::button(ui, tr("ui.scan_panel_keep"), ui_kit::Button::Primary).clicked();
+        drop = ui_kit::button(ui, tr("ui.scan_panel_drop"), ui_kit::Button::Enabled(!matches!(item, Item::Edge(_)))).clicked();
+        back = ui_kit::button(ui, tr("ui.scan_panel_back"), ui_kit::Button::Enabled(k.review.at > 0)).clicked();
+        rest = ui_kit::button(ui, tr("ui.scan_panel_keep_rest"), ui_kit::Button::Small).clicked();
+    });
+    ui_kit::text(ui, tr("ui.scan_panel_keys"), ui_kit::Text::Hint("scan_panel_keys"));
+    // The keys, while no value is being typed. Enter keeps the item until all are seen; then it is OK.
+    let typing = ui.ctx().memory(|m| m.focused().is_some());
+    if !typing {
+        let all_seen = k.review.seen.len() >= items.len();
+        ui.input_mut(|i| {
+            if !all_seen && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter) {
+                keep = true;
+            }
+            keep |= i.consume_key(egui::Modifiers::NONE, egui::Key::Y);
+            drop |= i.consume_key(egui::Modifiers::NONE, egui::Key::X) && !matches!(item, Item::Edge(_));
+            back |= i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace);
+        });
+    }
+    let moved_to = if keep || drop {
+        if drop {
+            k.review.dropped.insert(item);
+        } else {
+            k.review.dropped.remove(&item);
+        }
+        k.review.seen.insert(item);
+        Some((k.review.at + 1).min(last))
+    } else if back {
+        Some(k.review.at.saturating_sub(1))
+    } else if rest {
+        k.review.seen.extend(items.iter().copied());
+        Some(k.review.at)
+    } else {
+        None
+    };
+    if let Some(at) = moved_to {
+        k.review.at = at;
+        let kept = keep_of(pp, &k.review);
+        k.focus = items.get(at).and_then(|i| focus_of(pp, &kept, *i));
+    }
+    // The pieces the seams kept make, against the sheet.
+    let kept = keep_of(pp, &k.review);
+    let sizes = solidcraft_engine::cmd::scan::template::panel::piece_sizes(p, &kept.seams, Some(&kept.moved));
+    if let Some([w, h]) = sizes.iter().copied().max_by(|a, b| (a[0] * a[1]).partial_cmp(&(b[0] * b[1])).unwrap_or(std::cmp::Ordering::Equal)) {
+        let line =
+            crate::i18n::format("ui.scan_panel_pieces", &[("count", &sizes.len().to_string()), ("w", &format!("{w:.0}")), ("h", &format!("{h:.0}"))]);
+        ui_kit::text(ui, &line, ui_kit::Text::Note("scan_panel_pieces"));
+        let (long, short) = (k.sheet[0].max(k.sheet[1]), k.sheet[0].min(k.sheet[1]));
+        let fits = |[w, h]: [f64; 2]| (w <= long + 1e-6 && h <= short + 1e-6) || (w <= short + 1e-6 && h <= long + 1e-6);
+        let over = sizes.iter().map(|&[w, h]| if fits([w, h]) { 0.0 } else { (w.max(h) - long).max(w.min(h) - short).max(0.0) }).fold(0.0, f64::max);
+        if over > 0.0 {
+            let warn = crate::i18n::format("ui.scan_panel_over", &[("over", &format!("{over:.0}"))]);
+            ui_kit::text(ui, &warn, ui_kit::Text::Report("scan_panel_over", true));
+        }
+    }
+    if k.review.seen.len() >= items.len() {
+        ui_kit::text(ui, tr("ui.scan_panel_all_seen"), ui_kit::Text::Note("scan_panel_all_seen"));
+    }
+}
+
+/// Each frame: frame the view on the item being looked at, when it changed.
+pub(crate) fn tick(app: &mut SolveApp) {
+    let Some(Kind::ScanFlatTemplate(k)) = app.dialog.as_mut().map(|d| &mut d.kind) else { return };
+    if let Some(bounds) = k.focus.take() {
+        app.fit_bounds(bounds);
+    }
+}
+
+/// The straight panel over the picture as it will be cut: its outline, the cut-outs dropped as dim
+/// ghosts, the seams, the holes, the floor marked, and the item being looked at picked out.
+fn draw_panel(painter: &egui::Painter, proj: &crate::viewport::Proj, k: &FlatTemplate, pp: &PanelPrepared) {
+    let tokens = crate::theme::Tokens::get();
+    let keep = keep_of(pp, &k.review);
+    let laid = panel_laid(pp, &keep);
+    let screen = |q: Vec2| proj.to_screen(pp.at(q));
+    let ring = |r: &[Vec2], stroke: egui::Stroke| {
+        let pts: Vec<egui::Pos2> = r.iter().chain(r.first()).filter_map(|q| screen(*q)).collect();
+        painter.add(egui::Shape::line(pts, stroke));
+    };
+    let p = &pp.proposal;
+    for (c, kept) in p.cuts.iter().zip(&keep.cuts) {
+        if !kept {
+            ring(&c.ring, egui::Stroke::new(1.0, tokens.text_dim));
+        }
+    }
+    for r in &laid.inside {
+        ring(r, egui::Stroke::new(1.5, tokens.error));
+    }
+    ring(&laid.outline, egui::Stroke::new(2.0, tokens.accent));
+    for (a, b) in laid.seams.iter().flatten() {
+        if let (Some(a), Some(b)) = (screen(*a), screen(*b)) {
+            painter.add(egui::Shape::dashed_line(&[a, b], egui::Stroke::new(1.5, tokens.accent), 8.0, 5.0));
+        }
+    }
+    // A hole drawn at its size, but never smaller than a dot.
+    let radius = |at: Vec2, d: f64| -> Option<(egui::Pos2, f32)> {
+        let c = screen(at)?;
+        let edge = screen(at + Vec2::new(d / 2.0, 0.0))?;
+        Some((c, c.distance(edge).max(2.5)))
+    };
+    for (i, h) in p.holes.iter().enumerate() {
+        let kept = keep.holes.get(i).copied().unwrap_or(true);
+        if let Some((c, r)) = radius(h.at, h.diameter) {
+            painter.circle_stroke(c, r, egui::Stroke::new(1.2, if kept { tokens.accent } else { tokens.text_dim }));
+        }
+    }
+    // The floor: the bottom edge, named at its middle.
+    let (a, b) = edge_ends(pp, 0);
+    if let Some(mid) = screen((a + b) / 2.0) {
+        painter.text(
+            mid + egui::vec2(0.0, 14.0),
+            egui::Align2::CENTER_TOP,
+            tr("ui.scan_panel_floor"),
+            egui::FontId::proportional(tokens.font_label),
+            tokens.text,
+        );
+    }
+    // The item being looked at.
+    let items = items_of(pp);
+    let Some(&item) = items.get(k.review.at) else { return };
+    let mark = egui::Stroke::new(3.0, tokens.warning);
+    match item {
+        Item::Hole(i) => {
+            if let Some((c, r)) = p.holes.get(i).and_then(|h| radius(h.at, h.diameter)) {
+                painter.circle_stroke(c, r + 4.0, mark);
+            }
+        }
+        Item::Cut(_) => ring(&item_points(pp, &keep, item), mark),
+        _ => {
+            let pts: Vec<egui::Pos2> = item_points(pp, &keep, item).into_iter().filter_map(screen).collect();
+            painter.add(egui::Shape::line(pts, mark));
+        }
     }
 }
 
@@ -454,5 +961,76 @@ mod tests {
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
         assert!(h.app.session.doc.features.iter().any(|f| f.name == "Wall Template"), "the template's sketch");
+    }
+
+    /// Whole Scan: nothing clicked, the wall's whole outline is found with the outlet cut out, no
+    /// side lengths are told over it, and OK sketches it.
+    #[test]
+    fn whole_scan_finds_the_outline_without_clicks() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("wall.stl");
+        std::fs::write(&path, wall_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("select.clear", json!({})).unwrap();
+        h.app.start("scan.flat_template");
+        if let Some(Kind::ScanFlatTemplate(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.outline = 1;
+            k.smooth = 0.0;
+            k.round = 0.0;
+            k.side = 1;
+            k.edge = false;
+        }
+        h.frames(3);
+        let Some(Kind::ScanFlatTemplate(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the Flat Template dialog") };
+        let m = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).expect("worked out");
+        assert_eq!(m.cutouts.len(), 1, "the outlet is cut out");
+        assert!(m.step.is_some() && m.sides.is_empty() && m.edge.is_empty(), "a found outline: no side lengths, no ragged edge");
+        assert!((m.area - 400.0 * 300.0).abs() < 0.02 * 120_000.0, "the whole wall: {}", m.area);
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        assert!(h.app.session.doc.features.iter().any(|f| f.name == "Wall Template"), "the template's sketch");
+    }
+
+    /// Straight Panel: the proposal is looked through one thing at a time (the four edges, then the
+    /// outlet's cut-out); dropping the outlet sends it as dropped, and OK sketches the panel.
+    #[test]
+    fn a_straight_panel_is_looked_through_and_ok_makes_what_was_kept() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("wall.stl");
+        std::fs::write(&path, wall_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("select.clear", json!({})).unwrap();
+        h.app.start("scan.flat_template");
+        if let Some(Kind::ScanFlatTemplate(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.outline = 1;
+            k.smooth = 0.0;
+            k.round = 0.0;
+            k.side = 1;
+            k.edge = false;
+            k.panel = true;
+        }
+        h.frames(3);
+        let Some(Kind::ScanFlatTemplate(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the Flat Template dialog") };
+        let pp = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.panel.clone()).expect("a proposal");
+        let items = items_of(&pp);
+        assert_eq!(items, vec![Item::Edge(0), Item::Edge(1), Item::Edge(2), Item::Edge(3), Item::Cut(0)], "the edges and the outlet");
+        assert!(focus_of(&pp, &keep_of(&pp, &k.review), Item::Cut(0)).is_some_and(|b| b.max.x - b.min.x >= 2.0 * FOCUS_ROOM), "room round it");
+        if let Some(Kind::ScanFlatTemplate(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.review.dropped.insert(Item::Cut(0));
+            k.review.seen.extend(items.iter().copied());
+            k.review.at = 4;
+        }
+        h.frames(1);
+        let d = h.app.dialog.as_ref().expect("still open");
+        let Kind::ScanFlatTemplate(k) = &d.kind else { panic!("the Flat Template dialog") };
+        let sent = commands(k, &d.inputs).expect("OK runs");
+        let (_, p) = sent.last().expect("the template");
+        assert_eq!(p["panel"]["drop_cutouts"], json!([0]), "{p}");
+        // All looked at: Enter is OK again.
+        h.step(&json!({"key": "Enter"})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        assert!(h.app.session.doc.features.iter().any(|f| f.name == "Wall Template"), "the panel's sketch");
     }
 }

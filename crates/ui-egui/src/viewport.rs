@@ -5710,6 +5710,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::dialogs_scan_curve::stroke_end(app, &proj);
         }
     }
+    // Flat Template's straight panel: the view framed on the item being looked at.
+    crate::dialogs_scan_template::tick(app);
     // Select on Scan: clicks and drags on the scan select with the dialog's tool.
     if crate::dialogs_scan_select::active(app) {
         crate::dialogs_scan_select::keys(app, mods);

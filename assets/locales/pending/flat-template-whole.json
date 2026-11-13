@@ -1,0 +1,98 @@
+{
+  "en": {
+    "ui.scan_template_outline": "Outline",
+    "ui.scan_template_picked": "Picked Points",
+    "ui.scan_template_whole": "Whole Scan",
+    "ui.scan_template_gap": "Bridge Tears Under",
+    "ui.scan_template_whole_hint": "The whole wall's outline, found from the scan: the plane is the face the wall rests on, tears in the scan narrower than the gap are bridged, and each part standing off the plane becomes a notch in the outline or a cut-out. Outline true to {step} mm.",
+    "ui.scan_template_smooth": "Smooth Away Under",
+    "ui.scan_template_round": "Round Corners To",
+    "ui.scan_template_tidied": "Squared and rounded to {round} mm: no corner moved more than {moved} mm.",
+    "ui.scan_template_finger": "Cut Off Fingers Under",
+    "ui.scan_template_cover_hint": "Click a raised part to cover it instead of cutting round it (a plateau the panel can sit over); each click covers one."
+  },
+  "de": {
+    "ui.scan_template_outline": "Umriss",
+    "ui.scan_template_picked": "Gewählte Punkte",
+    "ui.scan_template_whole": "Ganzer Scan",
+    "ui.scan_template_gap": "Risse überbrücken unter",
+    "ui.scan_template_whole_hint": "Der Umriss der ganzen Wand, aus dem Scan ermittelt: Die Ebene ist die Fläche, auf der die Wand aufliegt, Risse im Scan schmaler als die Lücke werden überbrückt, und jedes von der Ebene abstehende Teil wird eine Kerbe im Umriss oder ein Ausschnitt. Umriss genau auf {step} mm.",
+    "ui.scan_template_smooth": "Glätten unter",
+    "ui.scan_template_round": "Ecken runden auf",
+    "ui.scan_template_tidied": "Rechtwinklig ausgerichtet und auf {round} mm gerundet: keine Ecke um mehr als {moved} mm verschoben.",
+    "ui.scan_template_finger": "Finger abtrennen unter",
+    "ui.scan_template_cover_hint": "Klicken Sie auf ein erhabenes Teil, um es abzudecken statt es auszuschneiden (eine Fläche, über der die Platte liegen kann); jeder Klick deckt eines ab."
+  },
+  "ja": {
+    "ui.scan_template_outline": "輪郭",
+    "ui.scan_template_picked": "選んだ点",
+    "ui.scan_template_whole": "スキャン全体",
+    "ui.scan_template_gap": "この幅未満の裂け目をつなぐ",
+    "ui.scan_template_whole_hint": "スキャンから求めた壁全体の輪郭です。平面は壁が接する面で、この幅より狭いスキャンの裂け目はつながれ、平面から出ている部分は輪郭の切り欠きか切り抜きになります。輪郭の精度は {step} mm です。",
+    "ui.scan_template_smooth": "この幅未満をならす",
+    "ui.scan_template_round": "角を丸める単位",
+    "ui.scan_template_tidied": "直角にそろえ {round} mm 単位に丸めました。どの角も {moved} mm を超えて動いていません。",
+    "ui.scan_template_finger": "この幅未満の突き出しを切り落とす",
+    "ui.scan_template_cover_hint": "出っ張った部分をクリックすると、切り抜かずに覆います (パネルがかぶさる台地状の部分など)。1 回のクリックで 1 か所です。"
+  },
+  "ko": {
+    "ui.scan_template_outline": "윤곽",
+    "ui.scan_template_picked": "선택한 점",
+    "ui.scan_template_whole": "스캔 전체",
+    "ui.scan_template_gap": "이보다 좁은 틈 잇기",
+    "ui.scan_template_whole_hint": "스캔에서 찾은 벽 전체의 윤곽입니다. 평면은 벽이 닿는 면이고, 이 폭보다 좁은 스캔의 틈은 이어지며, 평면에서 튀어나온 부분은 윤곽의 홈이나 컷아웃이 됩니다. 윤곽 정확도 {step} mm.",
+    "ui.scan_template_smooth": "이보다 좁은 부분 다듬기",
+    "ui.scan_template_round": "모서리 반올림 단위",
+    "ui.scan_template_tidied": "직각으로 맞추고 {round} mm 단위로 반올림했습니다. 어떤 모서리도 {moved} mm 넘게 움직이지 않았습니다.",
+    "ui.scan_template_finger": "이보다 좁은 돌출부 잘라내기",
+    "ui.scan_template_cover_hint": "튀어나온 부분을 클릭하면 잘라내지 않고 덮습니다(패널이 위에 놓일 수 있는 평평한 부분). 클릭 한 번에 한 곳입니다."
+  },
+  "zh": {
+    "ui.scan_template_outline": "轮廓",
+    "ui.scan_template_picked": "所选点",
+    "ui.scan_template_whole": "整个扫描",
+    "ui.scan_template_gap": "桥接窄于此的裂缝",
+    "ui.scan_template_whole_hint": "由扫描求出的整面墙轮廓：平面是墙所贴靠的面，扫描中窄于此间隙的裂缝会被桥接，凸出平面的每个部分成为轮廓上的缺口或切口。轮廓精度 {step} mm。",
+    "ui.scan_template_smooth": "平滑掉窄于此的部分",
+    "ui.scan_template_round": "角点取整到",
+    "ui.scan_template_tidied": "已取直并取整到 {round} mm：没有角点移动超过 {moved} mm。",
+    "ui.scan_template_finger": "切掉窄于此的伸入部分",
+    "ui.scan_template_cover_hint": "点击凸出部分即可覆盖它而不是绕开切除（面板可以盖住的平台）；每次点击覆盖一处。"
+  },
+  "ar": {
+    "ui.scan_template_outline": "الحدود",
+    "ui.scan_template_picked": "النقاط المختارة",
+    "ui.scan_template_whole": "المسح كله",
+    "ui.scan_template_gap": "سدّ الشقوق الأضيق من",
+    "ui.scan_template_whole_hint": "حدود الجدار كله، مستخرجة من المسح: المستوى هو الوجه الذي يستند إليه الجدار، وتُسدّ الشقوق في المسح الأضيق من الفجوة، ويصبح كل جزء يبرز عن المستوى شقًا في الحدود أو فتحة. دقة الحدود {step} مم.",
+    "ui.scan_template_smooth": "تنعيم ما هو أضيق من",
+    "ui.scan_template_round": "تقريب الزوايا إلى",
+    "ui.scan_template_tidied": "قُوِّمت وقُرِّبت إلى {round} مم: لم تتحرك أي زاوية أكثر من {moved} مم.",
+    "ui.scan_template_finger": "قصّ الأصابع الأضيق من",
+    "ui.scan_template_cover_hint": "انقر جزءًا بارزًا لتغطيته بدل القصّ حوله (هضبة يمكن أن يستقر اللوح فوقها)؛ كل نقرة تغطي جزءًا واحدًا."
+  },
+  "he": {
+    "ui.scan_template_outline": "קו מתאר",
+    "ui.scan_template_picked": "נקודות שנבחרו",
+    "ui.scan_template_whole": "כל הסריקה",
+    "ui.scan_template_gap": "גישור קרעים צרים מ־",
+    "ui.scan_template_whole_hint": "קו המתאר של הקיר כולו, מתוך הסריקה: המישור הוא הפן שהקיר נשען עליו, קרעים בסריקה צרים מהפער מגושרים, וכל חלק שבולט מהמישור הופך לחריץ בקו המתאר או לחיתוך. קו המתאר מדויק עד {step} מ״מ.",
+    "ui.scan_template_smooth": "החלקת חלקים צרים מ־",
+    "ui.scan_template_round": "עיגול פינות ל־",
+    "ui.scan_template_tidied": "יושר ועוגל ל־{round} מ״מ: אף פינה לא זזה יותר מ־{moved} מ״מ.",
+    "ui.scan_template_finger": "חיתוך אצבעות צרות מ־",
+    "ui.scan_template_cover_hint": "לחצו על חלק בולט כדי לכסות אותו במקום לחתוך סביבו (משטח שהלוח יכול לשבת מעליו); כל לחיצה מכסה אחד."
+  },
+  "vi": {
+    "ui.scan_template_outline": "Đường bao",
+    "ui.scan_template_picked": "Điểm đã chọn",
+    "ui.scan_template_whole": "Toàn bộ bản quét",
+    "ui.scan_template_gap": "Nối vết rách hẹp hơn",
+    "ui.scan_template_whole_hint": "Đường bao của cả bức tường, tìm từ bản quét: mặt phẳng là mặt mà tường tựa lên, các vết rách trong bản quét hẹp hơn khe hở được nối lại, và mỗi phần nhô ra khỏi mặt phẳng trở thành một khấc trên đường bao hoặc một ô khoét. Đường bao chính xác đến {step} mm.",
+    "ui.scan_template_smooth": "Làm mịn phần hẹp hơn",
+    "ui.scan_template_round": "Làm tròn góc đến",
+    "ui.scan_template_tidied": "Đã vuông góc và làm tròn đến {round} mm: không góc nào dịch quá {moved} mm.",
+    "ui.scan_template_finger": "Cắt bỏ phần thò hẹp hơn",
+    "ui.scan_template_cover_hint": "Nhấp vào phần nhô ra để phủ lên nó thay vì khoét quanh (một bề mặt tấm có thể nằm đè lên); mỗi lần nhấp phủ một phần."
+  }
+}

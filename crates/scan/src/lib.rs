@@ -71,6 +71,7 @@ pub mod mirror_fill;
 pub mod net;
 mod net_fit;
 pub mod network;
+pub mod panel;
 mod par;
 pub mod patches;
 pub mod pattern;
@@ -94,6 +95,7 @@ pub mod surface_edit;
 pub mod symmetric;
 pub mod symmetry;
 pub mod template;
+pub mod wall_outline;
 pub mod wrap;
 
 use std::collections::HashMap;

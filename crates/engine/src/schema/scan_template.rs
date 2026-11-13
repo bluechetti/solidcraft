@@ -23,9 +23,11 @@ pub struct ScanFlatTemplateParams {
     /// The scan. Default: the picked, selected or only one.
     #[serde(default)]
     pub body: Option<String>,
-    /// The outline, three or more points [x, y, z] in order round it. They are put onto the plane
-    /// exactly; nothing else snaps to the scan.
-    pub outline: Vec<Point3>,
+    /// The outline: three or more points [x, y, z] in order round it, put onto the plane exactly
+    /// (nothing else snaps to the scan), or `scan` for the whole wall's outline found from the
+    /// scan (the plane it rests on, tears narrower than `gap` bridged, each part standing off it a
+    /// notch or a cut-out).
+    pub outline: TemplateOutline,
     /// The wall's plane. Default: fitted to the scan under the outline, the parts standing far off
     /// it left out.
     #[serde(default)]
@@ -51,6 +53,239 @@ pub struct ScanFlatTemplateParams {
     /// The sketch's name. Default: `Wall Template`.
     #[serde(default)]
     pub name: Option<String>,
+    /// With `outline: "scan"`: tears and notches in the scan's edge narrower than this are bridged.
+    /// Default: 50 mm.
+    #[serde(default)]
+    pub gap: Option<f64>,
+    /// With `outline: "scan"`: the grid the outline is found on, and so how true it is. Default:
+    /// 2 mm (larger for a very large scan).
+    #[serde(default)]
+    pub step: Option<f64>,
+    /// With `outline: "scan"`: notches in the outline, cut-outs and slivers narrower than this are
+    /// smoothed away, so the template goes over a cable or a bracket rather than round it. Default:
+    /// 100 mm; 0 keeps them all.
+    #[serde(default)]
+    pub smooth: Option<f64>,
+    /// With `outline: "scan"`: the template tidied: sides nearly level or plumb made exactly so,
+    /// those nearly on one line put on it, and every corner rounded to this grid from the template's
+    /// corner, no side added or taken away. Default: 5 mm; 0 leaves it as found.
+    #[serde(default)]
+    pub round: Option<f64>,
+    /// With `outline: "scan"`: fingers of the template narrower than this reaching more than
+    /// 100 mm in between parts standing out (a tongue between a raised corner and a ridge, a lobe
+    /// into a pocket in a raised frame) are cut off with them. Default: 300 mm; 0 keeps them.
+    #[serde(default)]
+    pub finger: Option<f64>,
+    /// With `outline: "scan"`: places on raised parts to cover rather than cut round (up to 100):
+    /// at each, the raised part there, as far as it stays within 15 mm of its height there (a
+    /// plateau and a low ridge on it, not the block it rises steeply to).
+    #[serde(default)]
+    pub cover: Option<Vec<Point3>>,
+    /// With `outline: "scan"`: a straight panel cut from sheets instead of the outline as found:
+    /// straight edges, the cut-outs they need, seams along the frame's rows of holes and the holes
+    /// near the edges and seams, each kept unless dropped here (see `scan.panel_proposals`).
+    #[serde(default)]
+    pub panel: Option<PanelChoices>,
+}
+
+/// What is kept of a straight panel's proposal (`scan.panel_proposals` lists it, numbered).
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct PanelChoices {
+    /// The sheet's size, long × short (mm). Default: [2440, 1220] (8 × 4 ft).
+    #[serde(default)]
+    pub sheet: Option<[f64; 2]>,
+    /// The straight edges, in mm from the bottom-left corner of the wall's outline as found.
+    /// Default: each where the outline lies beyond it along most of that side.
+    #[serde(default)]
+    pub edges: Option<PanelEdges>,
+    /// Cut-outs not cut (the panel goes over them), by their number in the proposal.
+    #[serde(default)]
+    pub drop_cutouts: Option<Vec<usize>>,
+    /// Seams not made (the pieces either side are one), by their number.
+    #[serde(default)]
+    pub drop_seams: Option<Vec<usize>>,
+    /// Holes not drawn, by their number.
+    #[serde(default)]
+    pub drop_holes: Option<Vec<usize>>,
+    /// Seams moved square to themselves (mm; up or right is positive).
+    #[serde(default)]
+    pub move_seams: Option<Vec<SeamMove>>,
+    /// Look for the frame's holes. Default: true.
+    #[serde(default)]
+    pub holes: Option<bool>,
+    /// Which way is up along the wall, a direction [x, y, z]: the panel is turned in its plane so
+    /// its bottom edge is the floor. Default: as the wall's plane was found.
+    #[serde(default)]
+    pub up: Option<Point3>,
+    /// Quarter turns counter-clockwise in its plane after `up` (0 to 3), to put the floor at the
+    /// bottom edge. Default: 0.
+    #[serde(default)]
+    pub turn: Option<u8>,
+}
+
+/// A straight panel's edges (mm from the bottom-left corner of the wall's outline as found).
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct PanelEdges {
+    #[serde(default)]
+    pub left: Option<f64>,
+    #[serde(default)]
+    pub right: Option<f64>,
+    #[serde(default)]
+    pub bottom: Option<f64>,
+    #[serde(default)]
+    pub top: Option<f64>,
+}
+
+/// One seam moved: its number and how far (mm).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct SeamMove {
+    pub seam: usize,
+    pub by: f64,
+}
+
+/// List what a straight panel cut from sheets would have, for checking one by one before
+/// `scan.flat_template` with `outline: "scan"` and `panel` makes it. Changes nothing.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanPanelProposalsParams {
+    /// The scan. Default: the picked, selected or only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The wall's plane. Default: the plane it rests on (its outermost large flat face).
+    #[serde(default)]
+    pub plane: Option<TemplatePlane>,
+    /// How far off the plane a part must stand to be cut round. Default: four times the wall's
+    /// noise, at least 1 mm.
+    #[serde(default)]
+    pub tolerance: Option<f64>,
+    /// Which parts are cut round: `out` (default), `in` or `both`.
+    #[serde(default)]
+    pub side: Option<String>,
+    /// As for `scan.flat_template`.
+    #[serde(default)]
+    pub least_area: Option<f64>,
+    #[serde(default)]
+    pub gap: Option<f64>,
+    #[serde(default)]
+    pub step: Option<f64>,
+    #[serde(default)]
+    pub smooth: Option<f64>,
+    #[serde(default)]
+    pub round: Option<f64>,
+    #[serde(default)]
+    pub finger: Option<f64>,
+    #[serde(default)]
+    pub cover: Option<Vec<Point3>>,
+    /// The sheet, the edges and what is dropped or moved, as for `scan.flat_template`.
+    #[serde(default)]
+    pub panel: Option<PanelChoices>,
+}
+
+/// A cut-out proposed for a straight panel.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelCutoutProposal {
+    /// A notch in an edge (rather than a cut-out inside), and the edges it opens on.
+    pub notch: bool,
+    pub edges: Vec<String>,
+    /// How far it reaches in (mm), its area (mm²) and its box (mm).
+    pub depth: f64,
+    pub area: f64,
+    pub size: [f64; 2],
+    /// Its middle in space, and its outline in mm from the outline's corner.
+    pub center: [f64; 3],
+    pub ring: Vec<[f64; 2]>,
+}
+
+/// A seam proposed: a straight line across the panel where two sheets meet.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelSeamProposal {
+    /// Up the panel (rather than across it).
+    pub upright: bool,
+    /// Between two rows of holes, so each sheet gets one (rather than beside one row).
+    pub between_rows: bool,
+    /// Its ends (mm from the outline's corner, and in space).
+    pub from: [f64; 2],
+    pub to: [f64; 2],
+    pub from_point: [f64; 3],
+    pub to_point: [f64; 3],
+}
+
+/// A hole of the frame proposed: one near an edge or a seam, to fasten the panel through.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelHoleProposal {
+    /// Its centre (mm from the outline's corner, and in space) and diameter (mm, as scanned).
+    pub at: [f64; 2],
+    pub center: [f64; 3],
+    pub diameter: f64,
+    /// How far its rim is behind the panel's back face (mm; less than 0: proud of it).
+    pub behind: f64,
+}
+
+/// A straight panel's edges (mm from the outline's corner).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelEdgesOut {
+    pub left: f64,
+    pub right: f64,
+    pub bottom: f64,
+    pub top: f64,
+}
+
+/// What `scan.panel_proposals` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanPanelProposalsResult {
+    pub body: String,
+    /// The wall's frame: where 0, 0 is in space (the outline's bottom-left corner), and its axes.
+    pub origin: [f64; 3],
+    pub x_axis: [f64; 3],
+    pub y_axis: [f64; 3],
+    pub normal: [f64; 3],
+    pub edges: PanelEdgesOut,
+    /// Numbered from 0, in this order, for `drop_cutouts`, `drop_seams`, `drop_holes`.
+    pub cutouts: Vec<PanelCutoutProposal>,
+    pub seams: Vec<PanelSeamProposal>,
+    pub holes: Vec<PanelHoleProposal>,
+    /// The frame's holes found in all (the proposal keeps those near an edge or a seam).
+    pub holes_found: usize,
+    /// Notches too shallow to cut (the edge goes over them) and how deep the deepest is (mm).
+    pub flattened: usize,
+    pub flattened_depth: f64,
+    /// The sheet, each piece's size (width × height, mm, top row first) and how far the longest
+    /// piece is past the sheet (0: all fit).
+    pub sheet: [f64; 2],
+    pub pieces: Vec<[f64; 2]>,
+    pub over: f64,
+    /// The panel's outline with everything kept (mm from the outline's corner).
+    pub outline: Vec<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// What a straight panel came to (`scan.flat_template` with `panel`).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelMade {
+    pub edges: PanelEdgesOut,
+    pub seams: usize,
+    pub holes: usize,
+    pub pieces: Vec<[f64; 2]>,
+    pub over: f64,
+}
+
+/// The points picked round a template, or `scan` for the whole outline found from the scan.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum TemplateOutline {
+    Points(Vec<Point3>),
+    Found(OutlineFromScan),
+}
+
+/// The whole outline found from the scan.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub enum OutlineFromScan {
+    #[serde(rename = "scan")]
+    Scan,
 }
 
 /// A part cut out of the template.
@@ -106,8 +341,22 @@ pub struct ScanFlatTemplateResult {
     /// The Free Form body made (with `make_face`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub face: Option<String>,
+    /// What the face is (with `make_face`): `free_form` (a Free Form trimmed to the template) or
+    /// `planar` (a planar patch of the template's region, when the kernel could not trim the Free
+    /// Form).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face_kind: Option<String>,
     /// The outline's sides in order, in mm: the dimensions between the points picked.
     pub edge_lengths: Vec<f64>,
+    /// With `outline: "scan"`: the size of the grid's cells (mm), how true the outline is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<f64>,
+    /// With `outline: "scan"` and `round`: the most a corner was moved by the tidying (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moved: Option<f64>,
+    /// With `panel`: what the straight panel came to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel: Option<PanelMade>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }

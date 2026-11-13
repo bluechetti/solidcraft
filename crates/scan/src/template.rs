@@ -202,7 +202,7 @@ fn clipped(subject: &[Vec2], clip: &[Vec2]) -> Vec<Vec2> {
 }
 
 /// The loops of the scan's open edges (edges of one triangle), on the plane.
-fn scan_edges(scan: &Scan, weld: &[u32], frame: &Plane) -> Vec<Vec<Vec2>> {
+pub(crate) fn scan_edges(scan: &Scan, weld: &[u32], frame: &Plane) -> Vec<Vec<Vec2>> {
     let id = |v: u32| weld.get(v as usize).copied().unwrap_or(v);
     let mut uses: HashMap<(u32, u32), u32> = HashMap::new();
     for t in scan.triangles {

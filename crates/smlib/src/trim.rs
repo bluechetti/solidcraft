@@ -68,4 +68,10 @@ impl Brep {
     pub fn face_points(&self) -> Result<Vec<[f64; 3]>> {
         core::trim::face_points(self.core())
     }
+
+    /// For each point, the face nearest it, in SMLib's face order: by the exact closest point on
+    /// each face, inside its trims (`SmApiFaceClosestPoint`); `None` where no face answers.
+    pub fn nearest_faces(&self, points: &[[f64; 3]]) -> Result<Vec<Option<usize>>> {
+        core::trim::nearest_faces(self.core(), points)
+    }
 }
