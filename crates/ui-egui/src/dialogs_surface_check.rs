@@ -47,7 +47,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// What `inspect.surface_check` is asked, from the bodies picked and the grid.
@@ -92,24 +92,26 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SurfaceCheck, inputs: &[S
         ui_kit::text(ui, tr("ui.surface_check_none"), ui_kit::Text::Note("surface_check_none"));
         return false;
     }
-    let total = crate::i18n::format("ui.surface_check_result", &[("checked", &r.checked.to_string()), ("clean", &r.clean.to_string())]);
+    let total = solidcraft_ui_text::format("ui.surface_check_result", &[("checked", &r.checked.to_string()), ("clean", &r.clean.to_string())]);
     ui_kit::text(ui, &total, ui_kit::Text::Report("surface_check_result", r.clean < r.checked));
     let bad: Vec<_> = r.faces.iter().filter(|f| !f.clean).collect();
     for f in bad.iter().take(LISTED) {
-        let line = crate::i18n::format(
+        let line = solidcraft_ui_text::format(
             "ui.surface_check_face",
             &[("body", &f.body), ("face", &f.face.to_string()), ("trouble", &trouble(f.folds, f.pinches, f.crossings))],
         );
         ui_kit::text(ui, &line, ui_kit::Text::Report("surface_check_face", true));
     }
     if bad.len() > LISTED {
-        let more = crate::i18n::format("ui.surface_check_more", &[("count", &(bad.len() - LISTED).to_string())]);
+        let more = solidcraft_ui_text::format("ui.surface_check_more", &[("count", &(bad.len() - LISTED).to_string())]);
         ui_kit::text(ui, &more, ui_kit::Text::Note("surface_check_more"));
     }
     // One face: how square and how even its parameters are.
     if let [f] = r.faces.as_slice() {
-        let shape =
-            crate::i18n::format("ui.surface_check_shape", &[("angle", &format!("{:.0}", f.least_angle)), ("stretch", &format!("{:.1}", f.stretch))]);
+        let shape = solidcraft_ui_text::format(
+            "ui.surface_check_shape",
+            &[("angle", &format!("{:.0}", f.least_angle)), ("stretch", &format!("{:.1}", f.stretch))],
+        );
         ui_kit::text(ui, &shape, ui_kit::Text::Note("surface_check_shape"));
     }
     if !bad.is_empty() {
@@ -123,9 +125,9 @@ pub(crate) fn trouble(folds: usize, pinches: usize, crossings: usize) -> String 
     [("ui.surface_check_folds", folds), ("ui.surface_check_pinches", pinches), ("ui.surface_check_crossings", crossings)]
         .into_iter()
         .filter(|(_, n)| *n > 0)
-        .map(|(id, n)| crate::i18n::format(id, &[("count", &n.to_string())]))
+        .map(|(id, n)| solidcraft_ui_text::format(id, &[("count", &n.to_string())]))
         .collect::<Vec<_>>()
-        .join(crate::i18n::tr("ui.surface_check_join"))
+        .join(solidcraft_ui_text::tr("ui.surface_check_join"))
 }
 
 /// Under a fit's result: that the surface it made folds, pinches or passes through itself, and what
@@ -134,7 +136,7 @@ pub(crate) fn fold_warning(ui: &mut egui::Ui, [folds, pinches, crossings]: [usiz
     if folds + pinches + crossings == 0 {
         return;
     }
-    let line = crate::i18n::format("ui.scan_fit_folds", &[("trouble", &trouble(folds, pinches, crossings))]);
+    let line = solidcraft_ui_text::format("ui.scan_fit_folds", &[("trouble", &trouble(folds, pinches, crossings))]);
     ui_kit::text(ui, &line, ui_kit::Text::Report("scan_fit_folds", true));
 }
 
@@ -160,7 +162,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
 /// One trouble mark at `at` on the screen, by its kind (fold, pinch or crossing): its shape tells
 /// it as well as its colour.
 pub(crate) fn mark(painter: &egui::Painter, at: egui::Pos2, kind: &str) {
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     match kind {
         "fold" => {
             painter.circle_filled(at, MARK, t.error);

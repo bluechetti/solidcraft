@@ -104,7 +104,7 @@ pub(crate) fn note_due(app: &mut SolveApp, ctx: &egui::Context) -> Option<String
         return None;
     }
     let size = format!("{} mm", two_figures(offer.across));
-    Some(crate::i18n::format("ui.mesh_units_note", &[("size", &size)]))
+    Some(solidcraft_ui_text::format("ui.mesh_units_note", &[("size", &size)]))
 }
 
 /// `v` to two significant figures: 0.16, 2.5, 0.0042.
@@ -122,9 +122,9 @@ pub const NOTE_CLOSE: &str = "toast:mesh_units_note:close";
 /// The note's buttons, in the order of [`NOTE_HANDLES`], and the unit each reads the mesh in.
 pub(crate) fn note_labels() -> [(String, Option<&'static str>); 3] {
     [
-        (crate::i18n::tr("ui.mesh_units_meters").to_string(), Some("m")),
-        (crate::i18n::tr("ui.mesh_units_inches").to_string(), Some("in")),
-        (crate::i18n::tr_label("Don't ask again").to_string(), None),
+        (solidcraft_ui_text::tr("ui.mesh_units_meters").to_string(), Some("m")),
+        (solidcraft_ui_text::tr("ui.mesh_units_inches").to_string(), Some("in")),
+        (solidcraft_ui_text::tr_label("Don't ask again").to_string(), None),
     ]
 }
 

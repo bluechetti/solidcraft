@@ -76,7 +76,7 @@ pub fn sliced(s: &Session, body: &str, plane: &Value, keep: Keep, cmd: &str) -> 
     let pref = super::super::features::plane_param(s, Some(plane), cmd)?;
     let (vals, _) = s.doc.param_values();
     let state = s.model.state();
-    let pl = s.doc.resolve_plane_in(&vals, &pref, 0, Some(&state)).map_err(|e| bad(cmd, e.to_string()))?;
+    let pl = s.doc.resolve_plane_in(&vals, &pref, 0, s.active_component, Some(&state)).map_err(|e| bad(cmd, e.to_string()))?;
     let mb = state.body(body).ok_or_else(|| bad(cmd, format!("no body `{body}`")))?;
     if mb.body.is_mesh() {
         return Err(bad(cmd, format!("`{body}` is a scan: slice a surface made on it")));

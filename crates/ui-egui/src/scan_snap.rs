@@ -36,7 +36,7 @@ pub(crate) enum Target {
 impl Target {
     /// The label shown beside the marker.
     fn label(self) -> &'static str {
-        crate::i18n::tr(match self {
+        solidcraft_ui_text::tr(match self {
             Target::Curve => "ui.scan_snap_curve",
             Target::Corner => "ui.scan_snap_corner",
             Target::Boundary => "ui.scan_snap_edge",
@@ -155,7 +155,7 @@ pub(crate) fn track(app: &SolveApp, proj: &Proj, hits: &[crate::viewport::Hit]) 
 pub(crate) fn draw(painter: &Painter, proj: &Proj) {
     let Some((at, kind)) = HOVER.with(|h| *h.borrow()) else { return };
     let Some(p) = proj.to_screen(at) else { return };
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let colour: Color32 = t.accent;
     crate::dialogs_scan_surface::cased_dot(painter, p, 5.0, colour);
     painter.text(p + egui::vec2(9.0, -9.0), egui::Align2::LEFT_BOTTOM, kind.label(), egui::FontId::proportional(t.font_label), t.text);

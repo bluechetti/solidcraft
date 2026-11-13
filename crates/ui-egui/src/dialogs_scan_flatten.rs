@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use solidcore_record::Vec3;
 use solidcraft_engine::Sel;
 use solidcraft_engine::cmd::scan::flatten::flattened;
-use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
+use solidcraft_viewport_gpu::view::{CloudStyle, ColorMode, GpuCloud};
 
 use crate::scan_dots::{Dot, cloud_dot};
 
@@ -65,7 +65,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// What `scan.flatten` is sent.
@@ -94,7 +94,7 @@ fn look(app: &SolveApp, k: &mut Flatten, inputs: &[SelInput]) {
     }
     let result = flattened(&app.session, &p, "scan.flatten").map_err(|e| e.to_string()).map(|(body, flat, shift)| {
         let state = app.session.model.state();
-        let rgb = crate::theme::Tokens::get().accent.to_array();
+        let rgb = solidcraft_theme::Tokens::get().accent.to_array();
         let mut dots = Vec::new();
         if let Some((positions, _)) = state.body(&body).and_then(|b| b.body.triangle_mesh()) {
             // At most a few hundred thousand marks: every so many points on a vast region.
@@ -125,7 +125,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Flatten, inputs: &[SelInp
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok(m)) => {
             let st = &m.stats;
-            let line = crate::i18n::format(
+            let line = solidcraft_ui_text::format(
                 "ui.scan_flatten_found",
                 &[
                     ("triangles", &m.triangles.to_string()),
@@ -137,7 +137,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Flatten, inputs: &[SelInp
             );
             ui_kit::text(ui, &line, ui_kit::Text::Note("scan_flatten_found"));
             if st.flipped > 0 {
-                let folds = crate::i18n::format("ui.scan_flatten_flipped", &[("flipped", &st.flipped.to_string())]);
+                let folds = solidcraft_ui_text::format("ui.scan_flatten_flipped", &[("flipped", &st.flipped.to_string())]);
                 ui_kit::text(ui, &folds, ui_kit::Text::Report("scan_flatten_flipped", true));
             }
         }
@@ -162,7 +162,7 @@ pub fn commands(app: &SolveApp, k: &Flatten, inputs: &[SelInput]) -> Result<Vec<
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanFlatten(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let Some(Ok(m)) = k.shown.as_ref().map(|s| &s.result) else { return };
-    let stroke = egui::Stroke::new(1.5, crate::theme::Tokens::get().accent);
+    let stroke = egui::Stroke::new(1.5, solidcraft_theme::Tokens::get().accent);
     for lp in &m.outline {
         let step = (lp.len() / 20_000).max(1);
         let pts: Vec<egui::Pos2> = lp.iter().step_by(step).chain(lp.first()).filter_map(|q| proj.to_screen(*q)).collect();

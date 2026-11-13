@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use solidcraft_engine::cmd::scan::reconstruct::ScanShapes;
 use solidcraft_engine::doc::component_color::automatic_color;
-use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
+use solidcraft_viewport_gpu::view::{CloudStyle, ColorMode, GpuCloud};
 
 use crate::scan_dots::{Dot, cloud_dot};
 
@@ -53,7 +53,7 @@ pub(crate) fn shown(app: &SolveApp) -> bool {
 }
 
 fn freeform() -> [u8; 3] {
-    let c = crate::theme::Tokens::get().text_dim;
+    let c = solidcraft_theme::Tokens::get().text_dim;
     [c.r(), c.g(), c.b()]
 }
 
@@ -121,7 +121,7 @@ pub(crate) fn legend(app: &SolveApp) -> Option<(String, Vec<(egui::Color32, Stri
     let shapes = current(app)?;
     let c = |rgb: [u8; 3]| crate::theme::model_color(rgb);
     let found = shapes.reading.faces.len();
-    let summary = crate::i18n::format(
+    let summary = solidcraft_ui_text::format(
         "ui.scan_find_all_summary",
         &[
             ("shapes", &found.to_string()),
@@ -137,28 +137,28 @@ pub(crate) fn legend(app: &SolveApp) -> Option<(String, Vec<(egui::Color32, Stri
         .take(found.min(KEYED))
         .filter_map(|(k, segment)| {
             let kind = match segment.shape? {
-                solidcraft_engine::cmd::scan::reconstruct::Shape::Plane { .. } => crate::i18n::tr("ui.scan_find_all_plane").to_string(),
+                solidcraft_engine::cmd::scan::reconstruct::Shape::Plane { .. } => solidcraft_ui_text::tr("ui.scan_find_all_plane").to_string(),
                 solidcraft_engine::cmd::scan::reconstruct::Shape::Cylinder { radius, .. } => {
-                    format!("{} R {}", crate::i18n::tr("ui.scan_find_all_cylinder"), crate::prefs::show_mm(app, radius, 1))
+                    format!("{} R {}", solidcraft_ui_text::tr("ui.scan_find_all_cylinder"), crate::prefs::show_mm(app, radius, 1))
                 }
                 solidcraft_engine::cmd::scan::reconstruct::Shape::Sphere { radius, .. } => {
-                    format!("{} R {}", crate::i18n::tr("ui.scan_find_all_sphere"), crate::prefs::show_mm(app, radius, 1))
+                    format!("{} R {}", solidcraft_ui_text::tr("ui.scan_find_all_sphere"), crate::prefs::show_mm(app, radius, 1))
                 }
                 solidcraft_engine::cmd::scan::reconstruct::Shape::Cone { half_angle, .. } => {
-                    format!("{} {:.1}°", crate::i18n::tr("ui.scan_find_all_cone"), half_angle.to_degrees())
+                    format!("{} {:.1}°", solidcraft_ui_text::tr("ui.scan_find_all_cone"), half_angle.to_degrees())
                 }
                 solidcraft_engine::cmd::scan::reconstruct::Shape::Torus { minor, .. } => {
-                    format!("{} r {}", crate::i18n::tr("ui.scan_find_all_torus"), crate::prefs::show_mm(app, minor, 1))
+                    format!("{} r {}", solidcraft_ui_text::tr("ui.scan_find_all_torus"), crate::prefs::show_mm(app, minor, 1))
                 }
             };
             Some((c(colour(&shapes, k as u32, freeform())), kind, false))
         })
         .collect();
     if found > KEYED {
-        rows.push((c(freeform()), crate::i18n::format("ui.scan_find_all_more", &[("count", &(found - KEYED).to_string())]), false));
+        rows.push((c(freeform()), solidcraft_ui_text::format("ui.scan_find_all_more", &[("count", &(found - KEYED).to_string())]), false));
     }
     if shapes.outcome.segments.len() > found {
-        rows.push((c(freeform()), crate::i18n::tr("ui.scan_find_all_freeform").to_string(), false));
+        rows.push((c(freeform()), solidcraft_ui_text::tr("ui.scan_find_all_freeform").to_string(), false));
     }
     Some((summary, rows))
 }

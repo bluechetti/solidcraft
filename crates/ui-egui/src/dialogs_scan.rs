@@ -14,7 +14,7 @@ use solidcore_record::Vec3;
 use solidcraft_engine::Sel;
 use solidcraft_engine::cmd::scan::{BasePreview, base_preview, mismatch_preview, scan_box, symmetry_preview};
 use solidcraft_engine::schema::scan::ScanMirror;
-use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
+use solidcraft_viewport_gpu::view::{CloudStyle, ColorMode, GpuCloud};
 
 use crate::scan_dots::{Dot, cloud_dot};
 
@@ -85,7 +85,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
 }
 
 fn tr(text: &str) -> &str {
-    crate::i18n::tr_label(text)
+    solidcraft_ui_text::tr_label(text)
 }
 
 /// The face clicked on the scan: its scan and the point.
@@ -106,7 +106,7 @@ fn refresh(app: &SolveApp, k: &mut StandBase, inputs: &[SelInput]) {
     let result = base_preview(&app.session, pick.map(|(b, _)| b), pick.map(|(_, p)| p), k.index).map_err(|e| e.to_string()).map(|found| {
         // Yellow, the analysis colours' middle one: the accent blue is what a whole selected body
         // turns, so a base marked in it could not be told apart.
-        let rgb = crate::theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
+        let rgb = solidcraft_theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
         let mut dots = Vec::with_capacity(found.marked.len() * crate::scan_dots::DOT_SIZE);
         for at in &found.marked {
             cloud_dot(&mut dots, &Dot { at: *at, rgb, ..Dot::default() });
@@ -132,28 +132,29 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut StandBase, inputs: &[SelI
         Ok(p) => {
             let base = &p.found.base;
             if !picked && p.found.count > 0 {
-                let labels: Vec<String> = (0..p.found.count).map(|i| format!("{} {}", crate::i18n::tr("ui.scan_base_number"), i + 1)).collect();
+                let labels: Vec<String> =
+                    (0..p.found.count).map(|i| format!("{} {}", solidcraft_ui_text::tr("ui.scan_base_number"), i + 1)).collect();
                 let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
                 let mut index = k.index % p.found.count;
-                choice_row(ui, crate::i18n::tr("ui.scan_base"), "scan_base", &mut index, &labels);
+                choice_row(ui, solidcraft_ui_text::tr("ui.scan_base"), "scan_base", &mut index, &labels);
                 k.index = index;
             }
             let what = match base.kind.as_str() {
-                "flat" => crate::i18n::tr("ui.scan_base_flat"),
-                "resting" => crate::i18n::tr("ui.scan_base_resting"),
-                "axis" => crate::i18n::tr("ui.scan_base_axis"),
-                _ => crate::i18n::tr("ui.scan_base_grown"),
+                "flat" => solidcraft_ui_text::tr("ui.scan_base_flat"),
+                "resting" => solidcraft_ui_text::tr("ui.scan_base_resting"),
+                "axis" => solidcraft_ui_text::tr("ui.scan_base_axis"),
+                _ => solidcraft_ui_text::tr("ui.scan_base_grown"),
             };
-            form_row(ui, crate::i18n::tr("ui.scan_base_kind"), |ui| ui_kit::text(ui, what, ui_kit::Text::Cell));
+            form_row(ui, solidcraft_ui_text::tr("ui.scan_base_kind"), |ui| ui_kit::text(ui, what, ui_kit::Text::Cell));
             if base.area > 0.0 {
                 let area = crate::prefs::show_mm(app, base.area, 2);
                 form_row(ui, tr("Area"), |ui| ui_kit::text(ui, &area, ui_kit::Text::Cell));
             }
             if base.tip_degrees > 0.0 {
                 let tip = format!("{:.0}°", base.tip_degrees);
-                form_row(ui, crate::i18n::tr("ui.scan_base_tips"), |ui| ui_kit::text(ui, &tip, ui_kit::Text::Cell));
+                form_row(ui, solidcraft_ui_text::tr("ui.scan_base_tips"), |ui| ui_kit::text(ui, &tip, ui_kit::Text::Cell));
             }
-            ui_kit::text(ui, crate::i18n::tr("ui.scan_base_hint"), ui_kit::Text::Hint("scan_base_hint"));
+            ui_kit::text(ui, solidcraft_ui_text::tr("ui.scan_base_hint"), ui_kit::Text::Hint("scan_base_hint"));
         }
     }
     false
@@ -284,7 +285,7 @@ fn colour(app: &SolveApp, k: &mut Symmetry) {
 /// The ends of the mismatch colouring: where a reflection lands on the scan, and a few noise widths
 /// off or more (the draft analysis's good and bad colours, which follow the colour vision setting).
 fn mismatch_colours() -> [[u8; 3]; 2] {
-    let a = crate::theme::Tokens::get().analysis;
+    let a = solidcraft_theme::Tokens::get().analysis;
     let byte = |c: [f32; 3]| c.map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
     [byte(a.draft[0]), byte(a.draft[2])]
 }
@@ -292,7 +293,7 @@ fn mismatch_colours() -> [[u8; 3]; 2] {
 /// The Symmetry dialog's rows.
 pub fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Symmetry) -> bool {
     search(app, k);
-    let ids = |id: &'static str| crate::i18n::tr(id);
+    let ids = |id: &'static str| solidcraft_ui_text::tr(id);
     if let Some(found) = &k.found {
         match &found.mirror {
             Err(why) => {
@@ -315,7 +316,7 @@ pub fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Symmetry) -> boo
     {
         match &c.result {
             Ok((limit, _, _)) => {
-                let key = crate::i18n::format("ui.scan_symmetry_colour_key", &[("limit", &crate::prefs::show_mm(app, *limit, 1))]);
+                let key = solidcraft_ui_text::format("ui.scan_symmetry_colour_key", &[("limit", &crate::prefs::show_mm(app, *limit, 1))]);
                 ui_kit::text(ui, &key, ui_kit::Text::Hint("scan_symmetry_colour_key"));
             }
             Err(why) => {
@@ -338,7 +339,7 @@ pub fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Symmetry) -> boo
         // OK adds geometry: say plainly when the scan is no mirror image about the plane.
         if let Some(m) = k.found.as_ref().and_then(|f| f.mirror.as_ref().ok()).filter(|m| !m.symmetric) {
             let share = format!("{:.0} %", 100.0 * m.coverage);
-            let unlike = crate::i18n::format("ui.scan_symmetry_complete_unlike", &[("share", &share)]);
+            let unlike = solidcraft_ui_text::format("ui.scan_symmetry_complete_unlike", &[("share", &share)]);
             ui_kit::text(ui, &unlike, ui_kit::Text::Report("scan_symmetry_complete_unlike", true));
         }
     }
@@ -417,7 +418,7 @@ pub(crate) fn guide_end(app: &mut SolveApp, proj: &crate::viewport::Proj) {
 /// The plane's sheet over the scan, and the guide while it is dragged or once drawn.
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanSymmetry(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let [r, g, b] = t.analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
     let (fill, line) = (egui::Color32::from_rgba_unmultiplied(r, g, b, 60), egui::Color32::from_rgb(r, g, b));
     if let Some(found) = &k.found
@@ -433,17 +434,17 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
                 painter.extend(crate::viewport::projected_polygon(&corners, fill, egui::Stroke::NONE));
                 let mut closed = corners.clone();
                 closed.extend(corners.first().copied());
-                painter.extend(crate::viewport::dashed_line(&closed, proj.rect, stroke, 8.0, 6.0));
+                painter.extend(crate::ui_kit::dashed_line(&closed, proj.rect, stroke, 8.0, 6.0));
             }
         }
     }
     let guide_stroke = egui::Stroke::new(2.0, line);
     if let Some((a, b)) = k.dragging {
-        painter.extend(crate::viewport::dashed_line(&[a, b], proj.rect, guide_stroke, 10.0, 6.0));
+        painter.extend(crate::ui_kit::dashed_line(&[a, b], proj.rect, guide_stroke, 10.0, 6.0));
     } else if let Some([from, to, _]) = k.guide
         && let (Some(a), Some(b)) = (proj.to_screen(from), proj.to_screen(to))
     {
-        painter.extend(crate::viewport::dashed_line(&[a, b], proj.rect, guide_stroke, 10.0, 6.0));
+        painter.extend(crate::ui_kit::dashed_line(&[a, b], proj.rect, guide_stroke, 10.0, 6.0));
     }
 }
 

@@ -45,7 +45,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::S
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// The study, once in: the scan, and the study or why none.
@@ -111,7 +111,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Denoise) -> bool {
     form_row(ui, tr("ui.scan_denoise_scan"), |ui| ui_kit::text(ui, &body, ui_kit::Text::Cell));
     form_row(ui, tr("ui.scan_denoise_noise"), |ui| ui_kit::text(ui, &mm(found.noise), ui_kit::Text::Cell));
     let verdict = if found.suggested > 0.0 {
-        crate::i18n::format("ui.scan_denoise_suggests", &[("strength", &format!("{:.2}", found.suggested))])
+        solidcraft_ui_text::format("ui.scan_denoise_suggests", &[("strength", &format!("{:.2}", found.suggested))])
     } else {
         tr("ui.scan_denoise_smooth_already").to_owned()
     };
@@ -132,9 +132,9 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Denoise) -> bool {
     }
     let at = found.at(k.strength);
     let share = if found.noise > 0.0 { 100.0 * (1.0 - at.roughness / found.noise) } else { 0.0 };
-    let rough = crate::i18n::format("ui.scan_denoise_roughness_value", &[("roughness", &mm(at.roughness)), ("less", &format!("{share:.0}"))]);
+    let rough = solidcraft_ui_text::format("ui.scan_denoise_roughness_value", &[("roughness", &mm(at.roughness)), ("less", &format!("{share:.0}"))]);
     form_row(ui, tr("ui.scan_denoise_roughness"), |ui| ui_kit::text(ui, &rough, ui_kit::Text::Cell));
-    let moved = crate::i18n::format("ui.scan_denoise_moved_value", &[("rms", &mm(at.rms_moved))]);
+    let moved = solidcraft_ui_text::format("ui.scan_denoise_moved_value", &[("rms", &mm(at.rms_moved))]);
     form_row(ui, tr("ui.scan_denoise_moved"), |ui| ui_kit::text(ui, &moved, ui_kit::Text::Cell));
     form_row(ui, tr("ui.scan_denoise_most"), |ui| ui_kit::text(ui, &mm(at.max_moved), ui_kit::Text::Cell));
     plot(ui, &found, k.strength);
@@ -145,7 +145,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Denoise) -> bool {
 /// The roughness (falling) and the movement (rising) over the passes, each on its own scale, the
 /// suggested strength a dot on the roughness and the chosen one a line across.
 fn plot(ui: &mut egui::Ui, found: &Study, strength: f64) {
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), PLOT_HEIGHT), egui::Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_stroke(rect, 2.0, egui::Stroke::new(1.0, t.text_dim), egui::StrokeKind::Inside);

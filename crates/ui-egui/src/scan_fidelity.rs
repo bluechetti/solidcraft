@@ -48,7 +48,7 @@ pub(crate) fn stats(values: &[f32], tolerance: f64) -> Option<Stats> {
 pub(crate) fn verdict(within: f64) -> String {
     let share = format!("{:.0} %", 100.0 * solidcraft_engine::cmd::scan::PASS_SHARE);
     let id = if within >= solidcraft_engine::cmd::scan::PASS_SHARE { "ui.scan_deviation_pass" } else { "ui.scan_deviation_fail" };
-    crate::i18n::format(id, &[("share", &share)])
+    solidcraft_ui_text::format(id, &[("share", &share)])
 }
 
 /// A tool's tolerance as it stands: the value being tried, and the change OK keeps for the scan.
@@ -75,7 +75,7 @@ pub(crate) fn row(app: &SolveApp, ui: &mut egui::Ui, scan: Option<&str>, local: 
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
     let stored = of(app, scan);
     let mut value = effective(app, scan, *local);
-    form_row(ui, crate::i18n::tr("ui.scan_tolerance"), |ui| ui_kit::length_field(ui, &mut value, &units, decimals));
+    form_row(ui, solidcraft_ui_text::tr("ui.scan_tolerance"), |ui| ui_kit::length_field(ui, &mut value, &units, decimals));
     if !(value.is_finite() && value > 0.0) {
         value = stored;
     }
@@ -91,7 +91,7 @@ pub(crate) fn keep(kept: Option<&(String, f64)>) -> Option<(String, Value)> {
 /// The line every tool says about how close its result is.
 pub(crate) fn line(app: &SolveApp, s: &Stats, tolerance: f64) -> String {
     let mm = |v: f64| crate::prefs::show_mm(app, v, 1);
-    let said = crate::i18n::format(
+    let said = solidcraft_ui_text::format(
         "ui.scan_fidelity",
         &[
             ("rms", &mm(s.rms)),
@@ -128,7 +128,7 @@ pub(crate) fn legend(app: &SolveApp) -> Option<(String, Vec<(Color32, String, bo
         Kind::ScanFlatTemplate(k) => crate::dialogs_scan_template::fidelity(app, k)?,
         _ => return None,
     };
-    let summary = crate::i18n::format(
+    let summary = solidcraft_ui_text::format(
         "ui.scan_deviation_summary",
         &[
             ("rms", &crate::prefs::show_mm(app, s.rms, 1)),

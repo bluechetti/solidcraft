@@ -36,7 +36,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// The points picked in input `k`, in order, and the one body they are all on (if one).
@@ -68,20 +68,20 @@ pub fn rows(_app: &SolveApp, ui: &mut egui::Ui, k: &mut AlignPairs, inputs: &[Se
     if target.is_some() {
         form_row(ui, tr("ui.scan_align_refine"), |ui| check(ui, &mut k.refine));
     }
-    let counts = crate::i18n::format("ui.scan_align_pairs", &[("from", &from.len().to_string()), ("onto", &onto.len().to_string())]);
+    let counts = solidcraft_ui_text::format("ui.scan_align_pairs", &[("from", &from.len().to_string()), ("onto", &onto.len().to_string())]);
     ui_kit::text(ui, &counts, ui_kit::Text::Note("scan_align_pairs"));
     match fit(inputs) {
         Some(Ok(found)) => {
             let worst = found.worst();
             for (i, r) in found.residuals.iter().enumerate() {
-                let line = crate::i18n::format("ui.scan_align_residual", &[("pair", &(i + 1).to_string()), ("off", &format!("{r:.3}"))]);
+                let line = solidcraft_ui_text::format("ui.scan_align_residual", &[("pair", &(i + 1).to_string()), ("off", &format!("{r:.3}"))]);
                 if i == worst && found.residuals.len() > 3 {
                     ui_kit::text(ui, &line, ui_kit::Text::Report("scan_align_worst", true));
                 } else {
                     ui_kit::text(ui, &line, ui_kit::Text::Cell);
                 }
             }
-            let rms = crate::i18n::format("ui.scan_align_rms", &[("rms", &format!("{:.3}", found.rms))]);
+            let rms = solidcraft_ui_text::format("ui.scan_align_rms", &[("rms", &format!("{:.3}", found.rms))]);
             ui_kit::text(ui, &rms, ui_kit::Text::Note("scan_align_rms"));
         }
         Some(Err(why)) => {
@@ -114,7 +114,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     let Some(d) = app.dialog.as_ref() else { return };
     let Kind::ScanAlignPairs(_) = &d.kind else { return };
     let ((from, _), (onto, _)) = (picked(&d.inputs, 0), picked(&d.inputs, 1));
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let font = egui::FontId::proportional(13.0);
     for (i, q) in from.iter().enumerate() {
         if let Some(a) = proj.to_screen(*q) {

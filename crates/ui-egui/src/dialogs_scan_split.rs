@@ -12,7 +12,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use solidcraft_engine::Sel;
 use solidcraft_engine::cmd::scan::split::{self, Keep, Planned};
-use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
+use solidcraft_viewport_gpu::view::{CloudStyle, ColorMode, GpuCloud};
 
 use crate::scan_dots::{Dot, cloud_dot};
 
@@ -67,7 +67,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// The scan the dialog cuts: the selected or only one.
@@ -153,7 +153,7 @@ fn look(app: &SolveApp, k: &mut SplitMesh, inputs: &[SelInput]) {
 /// The dots that mark the triangles: the side a new scan takes (with both) or the side that goes
 /// (with one side kept), and the envelope's slab.
 fn marks(planned: &Planned, keep: usize) -> Vec<u8> {
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let rgb = |c: [f32; 3]| c.map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
     let accent = t.accent.to_array();
     let (marked, colour) = match keep {
@@ -238,7 +238,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SplitMesh, inputs: &[SelI
         Some(Ok(m)) => {
             let cut = &m.planned.cut;
             let runs = cut.runs();
-            let line = crate::i18n::format(
+            let line = solidcraft_ui_text::format(
                 "ui.scan_split_found",
                 &[
                     ("negative", negative),
@@ -251,7 +251,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SplitMesh, inputs: &[SelI
             );
             ui_kit::text(ui, &line, ui_kit::Text::Note("scan_split_found"));
             if cut.count(0) > 0 {
-                let slab = crate::i18n::format("ui.scan_split_slab", &[("triangles", &cut.count(0).to_string())]);
+                let slab = solidcraft_ui_text::format("ui.scan_split_slab", &[("triangles", &cut.count(0).to_string())]);
                 ui_kit::text(ui, &slab, ui_kit::Text::Note("scan_split_slab"));
             }
             if cut.carried_on {
@@ -280,7 +280,7 @@ pub fn commands(app: &SolveApp, k: &SplitMesh, inputs: &[SelInput]) -> Result<Ve
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanSplit(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let Some(Ok(m)) = k.shown.as_ref().map(|s| &s.result) else { return };
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let stroke = egui::Stroke::new(2.0, t.accent);
     // At most some tens of thousands of pieces drawn: a long cut on a vast scan is thinned.
     let segments = &m.planned.cut.segments;

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use solidcraft_engine::cmd::scan::clean;
-use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
+use solidcraft_viewport_gpu::view::{CloudStyle, ColorMode, GpuCloud};
 
 use crate::scan_dots::{Dot, cloud_dot};
 
@@ -90,7 +90,7 @@ fn mark(app: &SolveApp, k: &mut Floating) {
         let floating = found.floating(share);
         let state = app.session.model.state();
         let (positions, triangles) = state.body(&body).and_then(|b| b.body.triangle_mesh()).ok_or("the scan is gone")?;
-        let rgb = crate::theme::Tokens::get().analysis.draft[2].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
+        let rgb = solidcraft_theme::Tokens::get().analysis.draft[2].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
         let mut dots = Vec::new();
         let mut count = 0;
         for (t, tri) in triangles.iter().enumerate() {
@@ -125,12 +125,12 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Floating) -> bool {
     mark(app, k);
     // 0.05 % to 50 % of the largest piece, on a log scale.
     let format = |v: f64| format!("{:.2} %", 10f64.powf(v));
-    form_row(ui, crate::i18n::tr("ui.scan_floating_below"), |ui| {
+    form_row(ui, solidcraft_ui_text::tr("ui.scan_floating_below"), |ui| {
         ui_kit::slider(ui, &mut k.log_percent, -1.3..=1.7, ui_kit::Slider { format, ..ui_kit::Slider::default() })
     });
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok(m)) => {
-            let found = crate::i18n::format(
+            let found = solidcraft_ui_text::format(
                 "ui.scan_floating_found",
                 &[("floating", &m.floating.to_string()), ("pieces", &m.pieces.to_string()), ("triangles", &m.triangles.to_string())],
             );
@@ -141,7 +141,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Floating) -> bool {
         }
         None => {}
     }
-    ui_kit::text(ui, crate::i18n::tr("ui.scan_floating_hint"), ui_kit::Text::Hint("scan_floating_hint"));
+    ui_kit::text(ui, solidcraft_ui_text::tr("ui.scan_floating_hint"), ui_kit::Text::Hint("scan_floating_hint"));
     false
 }
 
@@ -149,7 +149,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Floating) -> bool {
 pub fn commands(k: &Floating) -> Result<Vec<(String, Value)>, String> {
     let m = k.shown.as_ref().ok_or("still finding the pieces")?.result.as_ref().map_err(Clone::clone)?;
     if m.floating == 0 {
-        return Err(crate::i18n::tr("ui.scan_floating_none").into());
+        return Err(solidcraft_ui_text::tr("ui.scan_floating_none").into());
     }
     Ok(vec![("scan.remove_floating".into(), json!({"body": m.body, "below": k.share()}))])
 }
@@ -213,12 +213,12 @@ fn find_holes(app: &SolveApp, k: &mut Holes) {
 /// The Fill Holes dialog's rows.
 pub fn holes_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Holes) -> bool {
     find_holes(app, k);
-    form_row(ui, crate::i18n::tr("ui.scan_holes_max"), |ui| ui_kit::number_field(ui, &mut k.max_edges, 3..=5000, 1.0, ""));
-    form_row(ui, crate::i18n::tr("ui.scan_holes_fair"), |ui| check(ui, &mut k.fair));
+    form_row(ui, solidcraft_ui_text::tr("ui.scan_holes_max"), |ui| ui_kit::number_field(ui, &mut k.max_edges, 3..=5000, 1.0, ""));
+    form_row(ui, solidcraft_ui_text::tr("ui.scan_holes_fair"), |ui| check(ui, &mut k.fair));
     match k.found.as_ref().map(|f| &f.result) {
         Some(Ok((_, outlines, unfillable))) => {
             let within = outlines.iter().filter(|(_, n)| *n <= k.max_edges).count();
-            let found = crate::i18n::format(
+            let found = solidcraft_ui_text::format(
                 "ui.scan_holes_found",
                 &[("within", &within.to_string()), ("holes", &outlines.len().to_string()), ("unfillable", &unfillable.to_string())],
             );
@@ -229,7 +229,7 @@ pub fn holes_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Holes) -> bool {
         }
         None => {}
     }
-    ui_kit::text(ui, crate::i18n::tr("ui.scan_holes_hint"), ui_kit::Text::Hint("scan_holes_hint"));
+    ui_kit::text(ui, solidcraft_ui_text::tr("ui.scan_holes_hint"), ui_kit::Text::Hint("scan_holes_hint"));
     false
 }
 
@@ -237,7 +237,7 @@ pub fn holes_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Holes) -> bool {
 pub fn holes_commands(k: &Holes) -> Result<Vec<(String, Value)>, String> {
     let (body, outlines, _) = k.found.as_ref().ok_or("still finding the holes")?.result.as_ref().map_err(Clone::clone)?;
     if !outlines.iter().any(|(_, n)| *n <= k.max_edges) {
-        return Err(crate::i18n::tr("ui.scan_holes_none").into());
+        return Err(solidcraft_ui_text::tr("ui.scan_holes_none").into());
     }
     Ok(vec![("scan.fill_holes".into(), json!({"body": body, "max_edges": k.max_edges, "fair": k.fair}))])
 }
@@ -246,7 +246,7 @@ pub fn holes_commands(k: &Holes) -> Result<Vec<(String, Value)>, String> {
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanHoles(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let Some(Ok((_, outlines, _))) = k.found.as_ref().map(|f| &f.result) else { return };
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     for (outline, edges) in outlines {
         let stroke = if *edges <= k.max_edges { egui::Stroke::new(2.0, t.accent) } else { egui::Stroke::new(1.0, t.text_dim) };
         let mut line: Vec<egui::Pos2> = outline.iter().filter_map(|p| proj.to_screen(*p)).collect();
@@ -284,7 +284,7 @@ pub fn reduce_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reduce) -> bool {
         });
         k.scan = Some((app.session.revision, found));
     }
-    let tr = crate::i18n::tr;
+    let tr = solidcraft_ui_text::tr;
     let format = |v: f64| format!("{v:.0} %");
     form_row(ui, tr("ui.scan_reduce_keep"), |ui| {
         ui_kit::slider(ui, &mut k.percent, 1.0..=99.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
@@ -296,7 +296,7 @@ pub fn reduce_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reduce) -> bool {
     match k.scan.as_ref().map(|(_, r)| r) {
         Some(Ok((_, count))) => {
             let kept = ((k.percent / 100.0) * *count as f64).round() as usize;
-            let note = crate::i18n::format("ui.scan_reduce_count", &[("now", &count.to_string()), ("kept", &kept.to_string())]);
+            let note = solidcraft_ui_text::format("ui.scan_reduce_count", &[("now", &count.to_string()), ("kept", &kept.to_string())]);
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_reduce_count"));
         }
         Some(Err(why)) => {

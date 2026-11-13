@@ -52,7 +52,7 @@ fn reading(app: &SolveApp) -> bool {
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 fn found(app: &SolveApp) -> Option<std::sync::Arc<ScanShapes>> {
@@ -74,27 +74,30 @@ fn label(app: &SolveApp, reading: &Reading, step: &Proposal) -> String {
     match *step {
         Proposal::Revolve => {
             let faces = reading.revolve.as_ref().map_or(0, |r| r.members.len());
-            crate::i18n::format("ui.scan_reconstruct_revolve", &[("faces", &faces.to_string())])
+            solidcraft_ui_text::format("ui.scan_reconstruct_revolve", &[("faces", &faces.to_string())])
         }
         Proposal::Extrude(k) => {
             let (depth, walls) = reading.prisms.get(k).map_or((0.0, 0), |p| (p.depth(), p.walls.len()));
-            crate::i18n::format(
+            solidcraft_ui_text::format(
                 "ui.scan_reconstruct_extrude",
                 &[("number", &(k + 1).to_string()), ("depth", &mm(depth)), ("walls", &walls.to_string())],
             )
         }
         Proposal::Cut(k) => {
             let (diameter, depth) = reading.holes.get(k).map_or((0.0, 0.0), |h| (2.0 * h.radius, h.depth()));
-            crate::i18n::format("ui.scan_reconstruct_cut", &[("number", &(k + 1).to_string()), ("diameter", &mm(diameter)), ("depth", &mm(depth))])
+            solidcraft_ui_text::format(
+                "ui.scan_reconstruct_cut",
+                &[("number", &(k + 1).to_string()), ("diameter", &mm(diameter)), ("depth", &mm(depth))],
+            )
         }
         Proposal::Pattern(k) => {
             let count = reading.holes.get(k).and_then(|h| h.repeat).map_or(0, |r| r.0);
-            crate::i18n::format("ui.scan_reconstruct_pattern", &[("number", &(k + 1).to_string()), ("count", &count.to_string())])
+            solidcraft_ui_text::format("ui.scan_reconstruct_pattern", &[("number", &(k + 1).to_string()), ("count", &count.to_string())])
         }
-        Proposal::Fillet => crate::i18n::format("ui.scan_reconstruct_fillet", &[("edges", &reading.fillets.len().to_string())]),
-        Proposal::Chamfer => crate::i18n::format("ui.scan_reconstruct_chamfer", &[("edges", &reading.chamfers.len().to_string())]),
+        Proposal::Fillet => solidcraft_ui_text::format("ui.scan_reconstruct_fillet", &[("edges", &reading.fillets.len().to_string())]),
+        Proposal::Chamfer => solidcraft_ui_text::format("ui.scan_reconstruct_chamfer", &[("edges", &reading.chamfers.len().to_string())]),
         Proposal::Shell => {
-            crate::i18n::format("ui.scan_reconstruct_shell", &[("thickness", &mm(reading.shell.as_ref().map_or(0.0, |w| w.thickness)))])
+            solidcraft_ui_text::format("ui.scan_reconstruct_shell", &[("thickness", &mm(reading.shell.as_ref().map_or(0.0, |w| w.thickness)))])
         }
     }
 }
@@ -112,7 +115,8 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reconstruct) -> bool {
     let steps = reconstruct::proposals(&reading, reconstruct::is_built(&app.session, &found.scan));
     k.ticked.resize(steps.len(), true);
     let found_id = if k.selected { "ui.scan_reconstruct_found_selected" } else { "ui.scan_reconstruct_found" };
-    let summary = crate::i18n::format(found_id, &[("shapes", &reading.faces.len().to_string()), ("share", &format!("{:.0} %", 100.0 * in_shapes))]);
+    let summary =
+        solidcraft_ui_text::format(found_id, &[("shapes", &reading.faces.len().to_string()), ("share", &format!("{:.0} %", 100.0 * in_shapes))]);
     ui_kit::text(ui, &summary, ui_kit::Text::Note("scan_reconstruct_found"));
     if steps.is_empty() {
         ui_kit::text(ui, tr("ui.scan_reconstruct_nothing"), ui_kit::Text::Report("scan_reconstruct_nothing", true));

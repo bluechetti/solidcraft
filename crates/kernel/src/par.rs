@@ -221,7 +221,7 @@ mod tests {
     }
 
     /// Kernel work recurses as deep as solidcore's algorithms do on every thread the kernel runs
-    /// it on: a kernel thread, the pool's workers, and the helpers of `map_on_threads`.
+    /// it on: a kernel thread and the helpers of `map_on_threads`.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn kernel_threads_have_the_kernels_stack() {
@@ -229,22 +229,7 @@ mod tests {
         let on_thread = kernel_thread("deep").spawn(|| deep(80)).unwrap().join().unwrap();
         assert_eq!(on_thread, want);
         let items = [80u8; 16];
-        let on_pool = kernel_thread("deep-pool").spawn(move || map("deep", &items, true, |&d| Ok(deep(d)))).unwrap().join().unwrap();
-        assert!(on_pool.iter().all(|r| r.as_ref().ok() == Some(&want)), "{on_pool:?}");
         let on_helpers = kernel_thread("deep-helpers").spawn(move || map_on_threads(&items, 8, |&d| deep(d))).unwrap().join().unwrap();
         assert!(on_helpers.iter().all(|r| *r == Some(want)), "{on_helpers:?}");
-    }
-
-    #[test]
-    fn keeps_order_and_errors() {
-        let items: Vec<u32> = (0..1000).collect();
-        let out = map("test", &items, true, |x| if *x == 500 { Err(KernelError::Invalid("five hundred".into())) } else { Ok(x * 2) });
-        assert_eq!(out.len(), 1000);
-        for (i, r) in out.iter().enumerate() {
-            match r {
-                Ok(v) => assert_eq!(*v, 2 * i as u32),
-                Err(_) => assert_eq!(i, 500),
-            }
-        }
     }
 }

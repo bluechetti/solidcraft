@@ -94,7 +94,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::S
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 fn dialog(app: &mut SolveApp) -> Option<&mut ScanSelect> {
@@ -204,7 +204,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect) -> bool {
     }
     let now = engine_select::selected(&app.session);
     let summary = match &now {
-        Some(s) => crate::i18n::format("ui.scan_select_count", &[("triangles", &s.count.to_string()), ("of", &s.selected.len().to_string())]),
+        Some(s) => solidcraft_ui_text::format("ui.scan_select_count", &[("triangles", &s.count.to_string()), ("of", &s.selected.len().to_string())]),
         None => tr("ui.scan_select_nothing").to_owned(),
     };
     form_row(ui, tr("ui.scan_select_selected"), |ui| ui_kit::text(ui, &summary, ui_kit::Text::Cell));
@@ -240,7 +240,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect) -> bool {
         k.asked = Some(("scan.keep_selection".into(), if name.is_empty() { json!({}) } else { json!({ "name": name }) }));
     }
     for kept in &app.session.doc.scan_selections {
-        let line = crate::i18n::format("ui.scan_select_kept", &[("name", &kept.name), ("triangles", &kept.count().to_string())]);
+        let line = solidcraft_ui_text::format("ui.scan_select_kept", &[("name", &kept.name), ("triangles", &kept.count().to_string())]);
         ui_kit::row(ui, &line, |ui| {
             ui.horizontal(|ui| {
                 if ui_kit::button(ui, tr("ui.scan_select_open"), ui_kit::Button::Enabled(true)).clicked() {
@@ -443,7 +443,7 @@ pub(crate) fn drag_end(app: &mut SolveApp) {
 /// The polygon or lasso being drawn, and the brush under the pointer.
 pub(crate) fn draw(app: &mut SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj, hover: Option<egui::Pos2>) {
     let Some(k) = dialog(app).map(|k| (k.tool, k.corners.clone(), k.radius)) else { return };
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let (tool, corners, radius) = k;
     if corners.len() >= 2 {
         let mut line = corners.clone();

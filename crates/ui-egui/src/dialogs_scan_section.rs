@@ -50,7 +50,7 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::Se
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// Whether a sketch is being edited: the cut is its plane.
@@ -103,7 +103,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SectionSketch) -> bool {
         }
         Some(Ok((_, _, outlines))) => {
             let (lines, arcs, circles) = counts(outlines);
-            let note = crate::i18n::format(
+            let note = solidcraft_ui_text::format(
                 "ui.scan_section_found",
                 &[
                     ("outlines", &outlines.len().to_string()),
@@ -162,7 +162,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
 /// Outlines fitted in `plane` drawn over the picture as they will be sketched: lines in the
 /// sketch colour, arcs and circles in the accent, the joints as dots.
 pub(crate) fn paint(painter: &egui::Painter, proj: &crate::viewport::Proj, plane: &Plane, outlines: &[Outline]) {
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let screen = |p: Vec2| proj.to_screen(plane.to_world(p));
     let line = |points: Vec<Vec2>, colour: egui::Color32| {
         let on: Vec<egui::Pos2> = points.into_iter().filter_map(screen).collect();

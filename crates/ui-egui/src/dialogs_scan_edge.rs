@@ -39,7 +39,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::S
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// Lay the outlines again when a value, the design or the selection has changed.
@@ -84,11 +84,13 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EdgeCurve) -> bool {
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok((_, lines, skipped))) => {
             let max = lines.iter().map(|l| l.2).fold(0.0, f64::max);
-            let note =
-                crate::i18n::format("ui.scan_edge_found", &[("curves", &lines.len().to_string()), ("max", &crate::prefs::show_mm(app, max, 1))]);
+            let note = solidcraft_ui_text::format(
+                "ui.scan_edge_found",
+                &[("curves", &lines.len().to_string()), ("max", &crate::prefs::show_mm(app, max, 1))],
+            );
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_edge_found"));
             if *skipped > 0 {
-                let note = crate::i18n::format("ui.scan_edge_skipped", &[("skipped", &skipped.to_string())]);
+                let note = solidcraft_ui_text::format("ui.scan_edge_skipped", &[("skipped", &skipped.to_string())]);
                 ui_kit::text(ui, &note, ui_kit::Text::Note("scan_edge_skipped"));
             }
         }
@@ -121,7 +123,7 @@ pub fn commands(k: &EdgeCurve) -> Result<Vec<(String, Value)>, String> {
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanEdgeCurve(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let Some(Ok((_, lines, _))) = k.shown.as_ref().map(|s| &s.result) else { return };
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     for (path, fit, _) in lines {
         let line: Vec<egui::Pos2> = path.iter().filter_map(|p| proj.to_screen(*p)).collect();
         painter.add(egui::Shape::line(line, egui::Stroke::new(2.0, t.sketch_accent)));

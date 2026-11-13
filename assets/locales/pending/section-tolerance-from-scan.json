@@ -1,7 +1,7 @@
 {
   "en": {
-    "prefs.section_tolerance_from_scan": "Section tolerance follows the scan's noise",
-    "prefs.section_tolerance_from_scan_note": "Section to Sketch and Sections Along Curve start with a tolerance of three times the cut's noise, at least 0.1 mm, so a noisy or very large scan is not traced point by point. A tolerance you type is kept. Off: they start at 0.1 mm."
+    "prefs.section_tolerance_from_scan": "The scan's noise sets the Section to Sketch tolerance",
+    "prefs.section_tolerance_from_scan_note": "On: Section to Sketch and Sections Along Curve start with a tolerance of three times the cut's noise, at least 0.1 mm, so a noisy or very large scan is not traced point by point. A tolerance you type is kept. Off: they start at 0.1 mm."
   },
   "de": {
     "prefs.section_tolerance_from_scan": "Schnitttoleranz folgt dem Rauschen des Scans",

@@ -85,6 +85,6 @@ pub(crate) fn spawn<K, T: Send + 'static>(_: &SolveApp, _: K, _: impl FnOnce(&Se
 
 /// The note a dialog shows while a preview is worked out, and the frames to come back for it.
 pub(crate) fn refining_note(ui: &mut egui::Ui, id: &'static str) {
-    crate::ui_kit::text(ui, crate::i18n::tr("ui.scan_refining"), crate::ui_kit::Text::Hint(id));
+    crate::ui_kit::text(ui, solidcraft_ui_text::tr("ui.scan_refining"), crate::ui_kit::Text::Hint(id));
     ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
 }

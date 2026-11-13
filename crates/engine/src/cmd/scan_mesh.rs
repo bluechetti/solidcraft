@@ -283,6 +283,7 @@ pub(super) fn mesh_from_points(s: &mut Session, p: &Value) -> Result<Value> {
         name: name.clone(),
         positions: made.positions.iter().flat_map(|q| [q.x, q.y, q.z]).collect::<Vec<f64>>().into(),
         triangles: made.triangles.iter().flatten().copied().collect::<Vec<u32>>().into(),
+        corner_normals: Default::default(),
         color: None,
     };
     let kind = solidcraft_doc::FeatureKind::MeshImport { file: format!("{cloud} (mesh from points)"), meshes: vec![data] };

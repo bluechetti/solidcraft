@@ -1,10 +1,10 @@
 //! The Scan workspace's marks drawn as point-cloud dots: a deviation map, found shapes, a kept
 //! selection, a dialog's preview. The viewport draws them on its point-cloud path, whose records
-//! are cells (a point, a segment or a triangle, `solidcraft_gpu::view::Cell`); a dot is a cell
+//! are cells (a point, a segment or a triangle, `solidcraft_viewport_gpu::view::Cell`); a dot is a cell
 //! with its three corners on the point. It takes its own colour unless it is given a value and a
 //! cloud style that colours by it.
 
-use solidcraft_gpu::view::{CELL_SIZE, Cell, cloud_cell};
+use solidcraft_viewport_gpu::view::{CELL_SIZE, Cell, cloud_cell};
 
 /// Bytes per dot's record.
 pub const DOT_SIZE: usize = CELL_SIZE;

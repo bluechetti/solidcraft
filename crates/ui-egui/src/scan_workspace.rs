@@ -21,7 +21,7 @@ pub fn enter(app: &mut SolveApp, scan: bool) -> Result<(), String> {
         return Ok(());
     }
     if app.session.active_sketch.is_some() || app.tool.is_some() || app.dialog.is_some() || app.file_load.busy() {
-        return Err(crate::i18n::tr("ui.workspace_finish_operation").into());
+        return Err(solidcraft_ui_text::tr("ui.workspace_finish_operation").into());
     }
     if crate::render_workspace::active(app) {
         crate::render_workspace::enter(app, false)?;

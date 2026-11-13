@@ -41,7 +41,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// What `scan.fillet` is sent, from the edges picked and the values.
@@ -84,7 +84,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FilletScan, inputs: &[Sel
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok(m)) => {
             let n = |key: &str| m.get(key).and_then(Value::as_f64).unwrap_or(0.0);
-            let line = crate::i18n::format(
+            let line = solidcraft_ui_text::format(
                 "ui.scan_fillet_found",
                 &[
                     ("radius", &format!("{:.3}", n("radius"))),

@@ -22,6 +22,10 @@ pub const MAX_VERTICES: usize = 250_000_000;
 pub struct TriMesh {
     pub positions: Vec<Vec3>,
     pub triangles: Vec<[u32; 3]>,
+    /// Shading normals per triangle corner, in the triangles' order, or none (each triangle lit
+    /// flat). The body keeps them beside its mesh ([`Body::triangle_corner_normals`]); they never
+    /// change which triangles share a side.
+    pub corner_normals: Vec<[Vec3; 3]>,
 }
 
 impl TriMesh {
@@ -54,17 +58,23 @@ impl TriMesh {
 /// A mesh body from triangles (`positions` in mm). Coincident vertices are merged, degenerate
 /// triangles dropped, and a closed mesh with inward winding is turned outward.
 pub fn mesh_body(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<Body> {
-    body_from(|i| positions.get(i).copied().unwrap_or(Vec3::ZERO), positions.len(), triangles)
+    mesh_body_with_normals(positions, triangles, &[])
 }
 
-/// [`mesh_body`] from positions held flat, x, y, z for each (as a design keeps a mesh import),
-/// without a copy of them or of the triangles.
-pub fn mesh_body_flat(positions: &[f64], triangles: &[[u32; 3]]) -> Result<Body> {
+/// A mesh with optional independent, finite nonzero shading normals per triangle corner.
+/// Welding and winding repair affect geometric indices; seams never affect connectivity.
+pub fn mesh_body_with_normals(positions: &[Vec3], triangles: &[[u32; 3]], normals: &[[Vec3; 3]]) -> Result<Body> {
+    body_from(|i| positions.get(i).copied().unwrap_or(Vec3::ZERO), positions.len(), triangles, normals)
+}
+
+/// [`mesh_body_with_normals`] from positions held flat, x, y, z for each (as a design keeps a
+/// mesh import), without a copy of them or of the triangles.
+pub fn mesh_body_flat(positions: &[f64], triangles: &[[u32; 3]], normals: &[[Vec3; 3]]) -> Result<Body> {
     let (points, rest) = positions.as_chunks::<3>();
     if !rest.is_empty() {
         return Err(KernelError::Invalid("mesh positions are not whole points".into()));
     }
-    body_from(|i| points.get(i).map_or(Vec3::ZERO, |c| Vec3::new(c[0], c[1], c[2])), points.len(), triangles)
+    body_from(|i| points.get(i).map_or(Vec3::ZERO, |c| Vec3::new(c[0], c[1], c[2])), points.len(), triangles, normals)
 }
 
 /// What [`mesh_body`] refuses, checked without building the body: too many triangles, a
@@ -96,20 +106,33 @@ pub fn weld_exact(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<(Vec<Vec
     weld(|i| positions.get(i).copied().unwrap_or(Vec3::ZERO), positions.len(), triangles)
 }
 
-/// The body of `count` points (`point(i)` the `i`th) and `triangles`.
-fn body_from(point: impl Fn(usize) -> Vec3 + Sync, count: usize, triangles: &[[u32; 3]]) -> Result<Body> {
+/// The body of `count` points (`point(i)` the `i`th), `triangles` and, when there are any, each
+/// triangle's corner `normals`.
+fn body_from(point: impl Fn(usize) -> Vec3 + Sync, count: usize, triangles: &[[u32; 3]], normals: &[[Vec3; 3]]) -> Result<Body> {
     let _span = solidcraft_profile::span("kernel", "mesh_body");
     check_counts_and_points((0..count).map(&point), triangles)?;
+    if !normals.is_empty() && (normals.len() != triangles.len() || normals.iter().flatten().any(|n| !n.is_finite() || n.normalized().is_none())) {
+        return Err(KernelError::Invalid("mesh shading normals must contain three finite nonzero vectors per triangle".into()));
+    }
     let (positions, mut triangles) = weld(point, count, triangles)?;
-    triangles.retain(|t| t[0] != t[1] && t[1] != t[2] && t[2] != t[0]);
+    let proper = |t: &[u32; 3]| t[0] != t[1] && t[1] != t[2] && t[2] != t[0];
+    let mut corner_normals = Vec::new();
+    if normals.is_empty() {
+        triangles.retain(proper);
+    } else {
+        (triangles, corner_normals) = triangles.iter().zip(normals).filter(|(t, _)| proper(t)).map(|(t, n)| (*t, *n)).unzip();
+    }
     if triangles.is_empty() {
         return Err(no_triangles());
     }
-    let mut out = TriMesh { positions, triangles };
+    let mut out = TriMesh { positions, triangles, corner_normals };
     unify_winding(&mut out);
     if out.volume6() < 0.0 && is_closed(&out.triangles) {
-        for t in &mut out.triangles {
+        for (i, t) in out.triangles.iter_mut().enumerate() {
             t.swap(1, 2);
+            if let Some(n) = out.corner_normals.get_mut(i) {
+                n.swap(1, 2);
+            }
         }
     }
     Ok(Body::of_mesh(out))
@@ -284,9 +307,12 @@ fn unify_winding(m: &mut TriMesh) {
             }
         }
     }
-    for (t, turn) in m.triangles.iter_mut().zip(turned) {
+    for (i, (t, turn)) in m.triangles.iter_mut().zip(turned).enumerate() {
         if turn {
             t.swap(1, 2);
+            if let Some(n) = m.corner_normals.get_mut(i) {
+                n.swap(1, 2);
+            }
         }
     }
 }
@@ -469,6 +495,32 @@ fn shown(kept: &std::sync::Arc<Mesh>) -> std::sync::Arc<Mesh> {
     })
 }
 
+/// The kept mesh `kept` with its corners split per triangle, each lit with its normal in
+/// `normals` (turned to the triangle's side; the triangle's own where one has no direction), and
+/// its outlines: how a mesh with authored shading normals is shown.
+fn with_corner_normals(kept: &Mesh, normals: &[[Vec3; 3]]) -> Mesh {
+    let mut out = Mesh { edges: kept.edges.clone(), display_only_edges: kept.display_only_edges, ..Mesh::default() };
+    out.positions.reserve(kept.triangles.len() * 3);
+    out.normals.reserve(kept.triangles.len() * 3);
+    for (index, t) in kept.triangles.iter().enumerate() {
+        let Some([a, b, c]) = kept.tri(t) else { continue };
+        let n = solidcraft_geom::flat_normal(a, b, c);
+        let base = u32::try_from(out.positions.len()).unwrap_or(u32::MAX);
+        out.positions.extend([a, b, c]);
+        out.normals.extend(normals.get(index).copied().unwrap_or([n; 3]).map(|v| {
+            let v = v.normalized().unwrap_or(n);
+            match v.dot(n).partial_cmp(&0.0) {
+                Some(std::cmp::Ordering::Greater) => v,
+                Some(std::cmp::Ordering::Less) => -v,
+                _ => n,
+            }
+        }));
+        out.triangles.push([base, base.saturating_add(1), base.saturating_add(2)]);
+        out.tri_face.push(0);
+    }
+    out
+}
+
 /// Distinct undirected triangle sides.
 pub(crate) fn edge_count(triangles: &[[u32; 3]]) -> usize {
     sorted_sides(triangles).chunk_by(|x, y| (x.0, x.1) == (y.0, y.1)).count()
@@ -490,6 +542,11 @@ impl Body {
     pub fn kept_mesh(&self) -> Option<std::sync::Arc<Mesh>> {
         self.mesh.clone()
     }
+    /// Shading metadata independent of the mesh body's certified geometric triangles: a normal
+    /// for each corner of each of [`Body::triangle_mesh`]'s triangles, or none (lit flat).
+    pub fn triangle_corner_normals(&self) -> Option<&[[Vec3; 3]]> {
+        self.mesh.as_ref().map(|_| self.mesh_normals.as_deref().unwrap_or_default())
+    }
     /// Does a mesh body enclose a volume (every side shared by two triangles)?
     pub fn is_closed_mesh(&self) -> bool {
         self.mesh.as_ref().is_some_and(|m| is_closed(&m.triangles))
@@ -499,13 +556,20 @@ impl Body {
     /// ([`TriMesh::into_kept`]), shared, not copied. A vertex no triangle uses (one only a
     /// dropped degenerate triangle had) stays in the body, so its vertices match the file's;
     /// when there is one, the mesh shown is a copy without it, so its box is its triangles'.
+    /// A mesh with corner normals ([`Body::triangle_corner_normals`]) is shown with its corners
+    /// split, each lit with its own normal, so authored seams stay independent.
     pub fn display_mesh(&self) -> Option<std::sync::Arc<Mesh>> {
-        self.mesh.as_ref().map(shown)
+        let kept = self.mesh.as_ref()?;
+        Some(match self.mesh_normals.as_deref() {
+            Some(normals) if !normals.is_empty() => std::sync::Arc::new(with_corner_normals(kept, normals)),
+            _ => shown(kept),
+        })
     }
 
     /// A mesh body moved by a column-major affine matrix (reflections keep outward winding).
     pub(crate) fn mesh_transformed(&self, m: &[[f64; 4]; 4]) -> Option<Body> {
         let tm = self.mesh.as_ref()?;
+        let corner_normals = self.mesh_normals.as_deref().unwrap_or_default();
         let f = |p: Vec3| {
             Vec3::new(
                 m[0][0] * p.x + m[1][0] * p.y + m[2][0] * p.z + m[3][0],
@@ -515,10 +579,30 @@ impl Body {
         };
         let det = m[0][0] * (m[1][1] * m[2][2] - m[2][1] * m[1][2]) - m[1][0] * (m[0][1] * m[2][2] - m[2][1] * m[0][2])
             + m[2][0] * (m[0][1] * m[1][2] - m[1][1] * m[0][2]);
-        let mut out = TriMesh { positions: tm.positions.iter().map(|p| f(*p)).collect(), triangles: tm.triangles.clone() };
+        // Cofactors have the inverse-transpose direction after the determinant's
+        // sign is removed. Avoid division by a tiny/zero determinant; display
+        // conversion normalizes and falls back to geometry for a collapsed vector.
+        let a = Vec3::new(m[0][0], m[0][1], m[0][2]);
+        let b = Vec3::new(m[1][0], m[1][1], m[1][2]);
+        let c = Vec3::new(m[2][0], m[2][1], m[2][2]);
+        let normal = |n: Vec3| {
+            let n = (b.cross(c) * n.x + c.cross(a) * n.y + a.cross(b) * n.z) * if det < 0.0 { -1.0 } else { 1.0 };
+            let scale = n.x.abs().max(n.y.abs()).max(n.z.abs());
+            // Normal directions are independent of the scale's magnitude. Rescale
+            // before normalization so a small valid mesh keeps its authored normals.
+            if scale > 0.0 && scale.is_finite() { (n / scale).normalized().unwrap_or(n) } else { n }
+        };
+        let mut out = TriMesh {
+            positions: tm.positions.iter().map(|p| f(*p)).collect(),
+            triangles: tm.triangles.clone(),
+            corner_normals: corner_normals.iter().map(|n| n.map(normal)).collect(),
+        };
         if det < 0.0 {
-            for t in &mut out.triangles {
+            for (i, t) in out.triangles.iter_mut().enumerate() {
                 t.swap(1, 2);
+                if let Some(n) = out.corner_normals.get_mut(i) {
+                    n.swap(1, 2);
+                }
             }
         }
         let mut placed = Body::of_mesh(out);
@@ -627,7 +711,7 @@ mod tests {
                 t.swap(1, 2);
             }
         }
-        TriMesh { positions, triangles }
+        TriMesh { positions, triangles, corner_normals: Vec::new() }
     }
 
     #[test]
@@ -682,8 +766,8 @@ mod tests {
         let body = |b: Body| b.triangle_mesh().map(|(p, t)| (p.to_vec(), t.to_vec()));
         let want = body(mesh_body(&corners, &separate).unwrap());
         assert_eq!(body(mesh_body(&welded, &triangles).unwrap()), want);
-        assert_eq!(body(mesh_body_flat(&flat, &separate).unwrap()), want);
-        assert!(mesh_body_flat(&flat[1..], &separate).is_err(), "not whole points");
+        assert_eq!(body(mesh_body_flat(&flat, &separate, &[]).unwrap()), want);
+        assert!(mesh_body_flat(&flat[1..], &separate, &[]).is_err(), "not whole points");
     }
 
     #[test]

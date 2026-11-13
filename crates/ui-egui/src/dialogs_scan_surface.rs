@@ -36,7 +36,7 @@ use solidcraft_engine::cmd::scan::surface::symmetric::{self, MirrorPlane};
 use solidcraft_engine::cmd::scan::surface::{self as edit, Covered, EditableSurface, Line};
 use solidcraft_engine::geom::bspline::NurbsSurface;
 use solidcraft_engine::geom::prelude::*;
-use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
+use solidcraft_viewport_gpu::view::{CloudStyle, ColorMode, GpuCloud};
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, form_row};
@@ -419,7 +419,7 @@ fn fit(app: &SolveApp, k: &mut FitSurface, inputs: &[crate::selection::SelInput]
     let result = solidcraft_engine::cmd::scan::surface_preview(&app.session, Some(&body), point, k.radius, k.controls, k.smoothing)
         .map_err(|e| e.to_string())
         .map(|found| {
-            let rgb = crate::theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
+            let rgb = solidcraft_theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
             let mut dots = Vec::with_capacity(found.marked.len() * crate::scan_dots::DOT_SIZE);
             for at in &found.marked {
                 crate::scan_dots::cloud_dot(&mut dots, &crate::scan_dots::Dot { at: *at, rgb, ..crate::scan_dots::Dot::default() });
@@ -446,7 +446,7 @@ pub fn fit_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitSurface, inputs: &
     });
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok((found, _, _))) => {
-            let note = crate::i18n::format(
+            let note = solidcraft_ui_text::format(
                 "ui.scan_fit_found",
                 &[
                     ("points", &found.points.to_string()),
@@ -477,17 +477,17 @@ pub fn fit_commands(k: &FitSurface, inputs: &[crate::selection::SelInput]) -> Re
 }
 
 /// The area fitted to, marked on the scan while the dialog is open.
-pub(crate) fn gpu_fit_marks(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuCloud> {
+pub(crate) fn gpu_fit_marks(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view::GpuCloud> {
     let Some(Kind::ScanFitSurface(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
     let (_, version, dots) = k.shown.as_ref()?.result.as_ref().ok()?;
-    Some(solidcraft_gpu::view::GpuCloud {
+    Some(solidcraft_viewport_gpu::view::GpuCloud {
         id: FIT_CLOUD_ID,
         version: *version,
         dots: dots.clone(),
         segments: crate::scan_dots::none(),
         triangles: crate::scan_dots::none(),
-        style: solidcraft_gpu::view::CloudStyle {
-            mode: solidcraft_gpu::view::ColorMode::Own,
+        style: solidcraft_viewport_gpu::view::CloudStyle {
+            mode: solidcraft_viewport_gpu::view::ColorMode::Own,
             range: [0.0, 1.0],
             filters: Default::default(),
             point_size: 3.0,
@@ -509,7 +509,7 @@ const CASING: f32 = 2.0;
 /// The dark casing under every mark a Free Form dialog draws over the picture: the theme's marker
 /// halo, so a line or a point reads over the scan, its colouring and the selection colour alike.
 pub(crate) fn casing() -> egui::Color32 {
-    crate::theme::Tokens::get().icons.marker_halo
+    solidcraft_theme::Tokens::get().icons.marker_halo
 }
 
 /// A line over the picture, on its casing.
@@ -817,13 +817,13 @@ fn apply_symmetry(k: &mut EditSurface, plane: Option<(String, MirrorPlane)>) {
             symmetric::How::Already => {
                 k.mirror = None;
                 refresh_mirror(k, Some(pairs.plane));
-                k.mirror_note = Some(Box::new(Ok(crate::i18n::format("ui.scan_edit_symmetry_already", &[("plane", &name)]))));
+                k.mirror_note = Some(Box::new(Ok(solidcraft_ui_text::format("ui.scan_edit_symmetry_already", &[("plane", &name)]))));
             }
             symmetric::How::Mirrored { added, onto } => {
                 k.mirror = None;
                 reshaped_to(k, faces);
                 refresh_mirror(k, Some(plane));
-                k.mirror_note = Some(Box::new(Ok(crate::i18n::format(
+                k.mirror_note = Some(Box::new(Ok(solidcraft_ui_text::format(
                     "ui.scan_edit_symmetry_mirrored",
                     &[("plane", &name), ("added", &added.to_string()), ("onto", &onto.to_string())],
                 ))));
@@ -854,8 +854,10 @@ fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) {
         apply_symmetry(k, choice.checked_sub(1).and_then(|i| planes.get(i)).map(|(n, p)| (n.clone(), *p)));
     }
     if let Some(pairs) = &k.mirror {
-        let line =
-            crate::i18n::format("ui.scan_edit_symmetry_value", &[("pairs", &pairs.pairs().to_string()), ("on", &pairs.on_plane_count().to_string())]);
+        let line = solidcraft_ui_text::format(
+            "ui.scan_edit_symmetry_value",
+            &[("pairs", &pairs.pairs().to_string()), ("on", &pairs.on_plane_count().to_string())],
+        );
         ui_kit::text(ui, &line, ui_kit::Text::Note("scan_edit_symmetry_value"));
     }
     match k.mirror_note.as_deref() {
@@ -1266,7 +1268,7 @@ fn commit(k: &mut EditSurface, by_hand: &[usize]) {
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// The dialog's rows.
@@ -1283,12 +1285,12 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
     let name = match k.faces.as_slice() {
         [one] => format!("{} ({} × {})", l.target.body, one.count()[0], one.count()[1]),
-        many => crate::i18n::format("ui.scan_edit_faces_value", &[("body", &l.target.body), ("faces", &many.len().to_string())]),
+        many => solidcraft_ui_text::format("ui.scan_edit_faces_value", &[("body", &l.target.body), ("faces", &many.len().to_string())]),
     };
-    form_row(ui, crate::i18n::tr_label("Surface"), |ui| ui_kit::text(ui, &name, ui_kit::Text::Cell));
+    form_row(ui, solidcraft_ui_text::tr_label("Surface"), |ui| ui_kit::text(ui, &name, ui_kit::Text::Cell));
     let odd = k.joins.irregular().count();
     if odd > 0 {
-        let line = crate::i18n::format("ui.scan_edit_irregular_value", &[("count", &odd.to_string())]);
+        let line = solidcraft_ui_text::format("ui.scan_edit_irregular_value", &[("count", &odd.to_string())]);
         form_row(ui, tr("ui.scan_edit_irregular"), |ui| ui_kit::text(ui, &line, ui_kit::Text::Report("scan_edit_irregular", false)));
     }
     let sharp = network::creased(&k.joins).iter().filter(|c| **c).count();
@@ -1341,7 +1343,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
     form_row(ui, tr("ui.scan_edit_moved"), |ui| ui_kit::text(ui, &moved, ui_kit::Text::Cell));
     // How far the scan is from the surface, and its colouring against the tolerance.
     if let Some((rms, max)) = k.fit {
-        let fit = crate::i18n::format(
+        let fit = solidcraft_ui_text::format(
             "ui.scan_edit_distance_value",
             &[("rms", &crate::prefs::show_mm(app, rms, 1)), ("max", &crate::prefs::show_mm(app, max, 1))],
         );
@@ -1666,8 +1668,10 @@ fn normal_of(k: &EditSurface, i: usize) -> Option<Vec3> {
 /// a distance along the way the surface faces at each.
 fn group_rows(ui: &mut egui::Ui, k: &mut EditSurface, group: &[usize], units: &str, decimals: u8) {
     let Some(c) = select::centre(k) else { return };
-    let line =
-        crate::i18n::format("ui.scan_edit_selected_value", &[("count", &group.len().to_string()), ("all", &select::handle_count(k).to_string())]);
+    let line = solidcraft_ui_text::format(
+        "ui.scan_edit_selected_value",
+        &[("count", &group.len().to_string()), ("all", &select::handle_count(k).to_string())],
+    );
     form_row(ui, tr("ui.scan_edit_point"), |ui| ui_kit::text(ui, &line, ui_kit::Text::Cell));
     let mut xyz = [c.x, c.y, c.z];
     let mut typed = false;
@@ -1828,7 +1832,7 @@ fn surface_commands(k: &EditSurface) -> Result<Vec<(String, Value)>, String> {
     let l = k.loaded.as_ref().ok_or("still loading the surface")?.as_ref().map_err(Clone::clone)?;
     let kept = kept_changed(k, l);
     if k.faces == l.target.faces && !k.reshaped && !kept {
-        return Err(crate::i18n::tr("ui.scan_edit_nothing").into());
+        return Err(solidcraft_ui_text::tr("ui.scan_edit_nothing").into());
     }
     let net_of = |s: &NurbsSurface| {
         let points: Vec<[f64; 3]> = edit::control_points(s).iter().map(|p| [p.x, p.y, p.z]).collect();
@@ -2672,7 +2676,7 @@ fn side_on_screen(proj: &crate::viewport::Proj, s: &NurbsSurface, side: Side) ->
 /// The faces shown, their sides, the handles (dots on the surface or the control net), the
 /// corners that are not a grid's, and Add Face's edge and guides, over the picture.
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     if let Some(Kind::ScanFitSurface(k)) = app.dialog.as_ref().map(|d| &d.kind)
         && let Some(Ok((found, _, _))) = k.shown.as_ref().map(|s| &s.result)
     {

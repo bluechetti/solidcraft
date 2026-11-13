@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use solidcraft_engine::cmd::scan::DeviationMap;
-use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
+use solidcraft_viewport_gpu::view::{CloudStyle, ColorMode, GpuCloud};
 
 use crate::scan_dots::{Dot, cloud_dot};
 
@@ -133,7 +133,7 @@ pub(crate) fn shown(app: &SolveApp) -> bool {
 
 /// The three colours of the scale: below, within, above.
 pub(crate) fn colours() -> [[u8; 3]; 3] {
-    let a = crate::theme::Tokens::get().analysis;
+    let a = solidcraft_theme::Tokens::get().analysis;
     let byte = |c: [f32; 3]| c.map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
     [byte(a.curvature[0]), byte(a.draft[0]), byte(a.draft[2])]
 }
@@ -198,7 +198,7 @@ pub(crate) fn legend(app: &SolveApp) -> Option<(String, Vec<(egui::Color32, Stri
     let [below, within, above] = colours();
     let c = |rgb: [u8; 3]| crate::theme::model_color(rgb);
     let tol = crate::prefs::show_mm(app, map.tolerance, 1);
-    let summary = crate::i18n::format(
+    let summary = solidcraft_ui_text::format(
         "ui.scan_deviation_summary",
         &[("rms", &crate::prefs::show_mm(app, map.rms, 1)), ("within", &format!("{:.0} %", 100.0 * map.within)), ("tolerance", &tol)],
     );

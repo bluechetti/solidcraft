@@ -47,7 +47,7 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::Se
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// Cut and fit again when the curve, the count, the loops kept, the tolerance or the design has
@@ -104,14 +104,14 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SectionsAlong) -> bool {
             } else {
                 let owned: Vec<Outline> = kept.into_iter().cloned().collect();
                 let (lines, arcs, circles) = crate::dialogs_scan_section::counts(&owned);
-                let note = crate::i18n::format(
+                let note = solidcraft_ui_text::format(
                     "ui.scan_sections_found",
                     &[("sections", &cut.to_string()), ("lines", &lines.to_string()), ("arcs", &arcs.to_string()), ("circles", &circles.to_string())],
                 );
                 ui_kit::text(ui, &note, ui_kit::Text::Note("scan_sections_found"));
                 let missed = sections.len() - cut;
                 if missed > 0 {
-                    let note = crate::i18n::format("ui.scan_sections_missed", &[("missed", &missed.to_string())]);
+                    let note = solidcraft_ui_text::format("ui.scan_sections_missed", &[("missed", &missed.to_string())]);
                     ui_kit::text(ui, &note, ui_kit::Text::Note("scan_sections_missed"));
                 }
             }
@@ -165,7 +165,7 @@ pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanSections(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let Some(Ok((_, path, sections))) = k.shown.as_ref().map(|s| &s.result) else { return };
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let line: Vec<egui::Pos2> = path.iter().filter_map(|p| proj.to_screen(*p)).collect();
     painter.add(egui::Shape::line(line, egui::Stroke::new(1.5, t.text)));
     for (along, outlines) in sections {

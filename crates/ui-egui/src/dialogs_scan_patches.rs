@@ -86,7 +86,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// What `scan.fit_patches` is sent.
@@ -206,7 +206,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitPatches, inputs: &[Sel
     }
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok((rms, max, count, _, trouble))) => {
-            let line = crate::i18n::format(
+            let line = solidcraft_ui_text::format(
                 "ui.scan_patches_found",
                 &[("patches", &count.to_string()), ("rms", &format!("{rms:.3}")), ("max", &format!("{max:.3}"))],
             );
@@ -251,7 +251,7 @@ pub(crate) fn fidelity(app: &SolveApp, k: &FitPatches) -> Option<(crate::scan_fi
 }
 
 /// The colouring of the scan under the patches, as a cloud for the GPU viewport.
-pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuCloud> {
+pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view::GpuCloud> {
     let Some(Kind::ScanFitPatches(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
     if !k.colours {
         return None;
@@ -274,7 +274,7 @@ pub fn commands(app: &SolveApp, k: &FitPatches, inputs: &[SelInput]) -> Result<V
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanFitPatches(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let Some(Ok((_, _, _, lines, _))) = k.shown.as_ref().map(|s| &s.result) else { return };
-    let stroke = egui::Stroke::new(1.0, crate::theme::Tokens::get().accent);
+    let stroke = egui::Stroke::new(1.0, solidcraft_theme::Tokens::get().accent);
     for line in lines {
         let pts: Vec<egui::Pos2> = line.iter().filter_map(|q| proj.to_screen(*q)).collect();
         painter.add(egui::Shape::line(pts, stroke));

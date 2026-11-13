@@ -214,7 +214,7 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// What `scan.flat_template` is sent: the clicks in order, once there are three, or the whole scan.
@@ -431,7 +431,7 @@ pub(crate) fn fidelity(app: &SolveApp, k: &FlatTemplate) -> Option<(crate::scan_
 }
 
 /// The colouring of the scan over the template, as a cloud for the GPU viewport.
-pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuCloud> {
+pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view::GpuCloud> {
     let Some(Kind::ScanFlatTemplate(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
     if !k.colours {
         return None;
@@ -553,7 +553,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
     }
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok(m)) => {
-            let line = crate::i18n::format(
+            let line = solidcraft_ui_text::format(
                 "ui.scan_template_found",
                 &[
                     ("cutouts", &m.cutouts.len().to_string()),
@@ -564,24 +564,26 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
             );
             ui_kit::text(ui, &line, ui_kit::Text::Note("scan_template_found"));
             if let Some(step) = m.step {
-                let how = crate::i18n::format("ui.scan_template_whole_hint", &[("step", &format!("{step:.1}"))]);
+                let how = solidcraft_ui_text::format("ui.scan_template_whole_hint", &[("step", &format!("{step:.1}"))]);
                 ui_kit::text(ui, &how, ui_kit::Text::Note("scan_template_whole_hint"));
                 ui_kit::text(ui, tr("ui.scan_template_cover_hint"), ui_kit::Text::Hint("scan_template_cover_hint"));
                 if let Some(moved) = m.moved {
-                    let tidied =
-                        crate::i18n::format("ui.scan_template_tidied", &[("round", &format!("{:.1}", k.round)), ("moved", &format!("{moved:.1}"))]);
+                    let tidied = solidcraft_ui_text::format(
+                        "ui.scan_template_tidied",
+                        &[("round", &format!("{:.1}", k.round)), ("moved", &format!("{moved:.1}"))],
+                    );
                     ui_kit::text(ui, &tidied, ui_kit::Text::Note("scan_template_tidied"));
                 }
             } else {
                 let sides = m.sides.iter().map(|(_, l)| format!("{l:.1}")).collect::<Vec<_>>().join(" · ");
-                let dims = crate::i18n::format("ui.scan_template_sides", &[("sides", &sides)]);
+                let dims = solidcraft_ui_text::format("ui.scan_template_sides", &[("sides", &sides)]);
                 ui_kit::text(ui, &dims, ui_kit::Text::Note("scan_template_sides"));
             }
             if let Some((stats, tolerance)) = fidelity(app, k) {
                 crate::scan_fidelity::readout(app, ui, "scan_template_fidelity", &stats, tolerance);
             }
             if m.fitted {
-                let plane = crate::i18n::format("ui.scan_template_plane", &[("kept", &m.kept.to_string()), ("under", &m.under.to_string())]);
+                let plane = solidcraft_ui_text::format("ui.scan_template_plane", &[("kept", &m.kept.to_string()), ("under", &m.under.to_string())]);
                 ui_kit::text(ui, &plane, ui_kit::Text::Note("scan_template_plane"));
             }
         }
@@ -629,7 +631,7 @@ fn clicks(inputs: &[SelInput]) -> Vec<Vec3> {
 
 /// A length's label at `at`.
 fn label(painter: &egui::Painter, proj: &crate::viewport::Proj, at: Vec3, mm: f64) {
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     if let Some(p) = proj.to_screen(at) {
         painter.text(p, egui::Align2::CENTER_CENTER, format!("{mm:.1}"), egui::FontId::proportional(t.font_label), t.text);
     }
@@ -641,7 +643,7 @@ fn label(painter: &egui::Painter, proj: &crate::viewport::Proj, at: Vec3, mm: f6
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(d) = app.dialog.as_ref() else { return };
     let Kind::ScanFlatTemplate(k) = &d.kind else { return };
-    let tokens = crate::theme::Tokens::get();
+    let tokens = solidcraft_theme::Tokens::get();
     let line = |ring: &[Vec3], looped: bool, stroke: egui::Stroke| {
         let step = (ring.len() / 20_000).max(1);
         let pts: Vec<egui::Pos2> =
@@ -773,7 +775,7 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
     k.review.at = k.review.at.min(last);
     let item = items[k.review.at];
     let p = &pp.proposal;
-    let progress = crate::i18n::format(
+    let progress = solidcraft_ui_text::format(
         "ui.scan_panel_progress",
         &[("seen", &k.review.seen.len().to_string()), ("total", &items.len().to_string()), ("dropped", &k.review.dropped.len().to_string())],
     );
@@ -788,7 +790,7 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
                 2 => e.top - pp.base.y,
                 _ => e.left - pp.base.x,
             };
-            crate::i18n::format("ui.scan_panel_edge", &[("side", side_word(side)), ("at", &format!("{at:.0}"))])
+            solidcraft_ui_text::format("ui.scan_panel_edge", &[("side", side_word(side)), ("at", &format!("{at:.0}"))])
         }
         Item::Cut(i) => {
             let c = &p.cuts[i];
@@ -803,18 +805,18 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
                 ("depth", &format!("{:.0}", c.depth)),
             ];
             let args: Vec<(&str, &str)> = args.iter().map(|(a, b)| (*a, b.as_str())).collect();
-            crate::i18n::format(if c.notch { "ui.scan_panel_notch" } else { "ui.scan_panel_inside" }, &args)
+            solidcraft_ui_text::format(if c.notch { "ui.scan_panel_notch" } else { "ui.scan_panel_inside" }, &args)
         }
         Item::Seam(i) => {
             let between = p.seams[i].between_rows;
-            crate::i18n::format(
+            solidcraft_ui_text::format(
                 if between { "ui.scan_panel_seam_between" } else { "ui.scan_panel_seam_beside" },
                 &[("n", &count(i + 1)), ("count", &count(p.seams.len()))],
             )
         }
         Item::Hole(i) => {
             let h = &p.holes[i];
-            crate::i18n::format(
+            solidcraft_ui_text::format(
                 "ui.scan_panel_hole",
                 &[
                     ("n", &count(i + 1)),
@@ -826,7 +828,7 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
         }
         Item::Fixing(i) => {
             let f = &p.fixings[i];
-            crate::i18n::format(
+            solidcraft_ui_text::format(
                 "ui.scan_panel_fixing",
                 &[("n", &count(i + 1)), ("count", &count(p.fixings.len())), ("behind", &format!("{:.0}", f.behind))],
             )
@@ -834,7 +836,7 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
         Item::Insert(i) => {
             let o = &p.inserts[i];
             let [w, h] = o.size();
-            crate::i18n::format(
+            solidcraft_ui_text::format(
                 "ui.scan_panel_insert",
                 &[
                     ("n", &count(i + 1)),
@@ -924,7 +926,7 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
             if count == 0 {
                 continue;
             }
-            let label = crate::i18n::format(name, &[("count", &count.to_string())]);
+            let label = solidcraft_ui_text::format(name, &[("count", &count.to_string())]);
             let style = if group(&item) == g { ui_kit::Button::SmallSelected } else { ui_kit::Button::Small };
             if ui_kit::button(ui, label, style).clicked() {
                 jump = items.iter().position(|i| group(i) == g);
@@ -1004,22 +1006,24 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
     let kept = keep_of(pp, &k.review);
     let sizes = solidcraft_engine::cmd::scan::template::panel::piece_sizes(p, &kept);
     if let Some([w, h]) = sizes.iter().copied().max_by(|a, b| (a[0] * a[1]).partial_cmp(&(b[0] * b[1])).unwrap_or(std::cmp::Ordering::Equal)) {
-        let line =
-            crate::i18n::format("ui.scan_panel_pieces", &[("count", &sizes.len().to_string()), ("w", &format!("{w:.0}")), ("h", &format!("{h:.0}"))]);
+        let line = solidcraft_ui_text::format(
+            "ui.scan_panel_pieces",
+            &[("count", &sizes.len().to_string()), ("w", &format!("{w:.0}")), ("h", &format!("{h:.0}"))],
+        );
         ui_kit::text(ui, &line, ui_kit::Text::Note("scan_panel_pieces"));
         if let Some(turn) = pp.prepared.squared {
-            let squared = crate::i18n::format("ui.scan_panel_squared", &[("deg", &format!("{:.1}", turn.to_degrees().abs()))]);
+            let squared = solidcraft_ui_text::format("ui.scan_panel_squared", &[("deg", &format!("{:.1}", turn.to_degrees().abs()))]);
             ui_kit::text(ui, &squared, ui_kit::Text::Note("scan_panel_squared"));
         }
         let (long, short) = (k.sheet[0].max(k.sheet[1]), k.sheet[0].min(k.sheet[1]));
         let fits = |[w, h]: [f64; 2]| (w <= long + 1e-6 && h <= short + 1e-6) || (w <= short + 1e-6 && h <= long + 1e-6);
         let over = sizes.iter().map(|&[w, h]| if fits([w, h]) { 0.0 } else { (w.max(h) - long).max(w.min(h) - short).max(0.0) }).fold(0.0, f64::max);
         if over > 0.0 {
-            let warn = crate::i18n::format("ui.scan_panel_over", &[("over", &format!("{over:.0}"))]);
+            let warn = solidcraft_ui_text::format("ui.scan_panel_over", &[("over", &format!("{over:.0}"))]);
             ui_kit::text(ui, &warn, ui_kit::Text::Report("scan_panel_over", true));
             // The seam move that would bring every piece within the sheet, a press away.
             if let Some(&(seam, by)) = solidcraft_engine::cmd::scan::template::panel::fit_moves(p, &kept).first() {
-                let fit = crate::i18n::format("ui.scan_panel_fit", &[("n", &(seam + 1).to_string()), ("by", &format!("{by:.0}"))]);
+                let fit = solidcraft_ui_text::format("ui.scan_panel_fit", &[("n", &(seam + 1).to_string()), ("by", &format!("{by:.0}"))]);
                 ui_kit::text(ui, &fit, ui_kit::Text::Note("scan_panel_fit"));
                 if ui_kit::button(ui, tr("ui.scan_panel_fit_apply"), ui_kit::Button::Small).clicked() {
                     *k.seam_moves.entry(seam).or_insert(0.0) += by;
@@ -1027,7 +1031,7 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
             }
         }
         let plans = solidcraft_engine::cmd::scan::template::panel::sheets(&sizes, k.sheet, solidcraft_engine::cmd::scan::template::panel::KERF);
-        let sheets = crate::i18n::format("ui.scan_panel_sheets", &[("count", &plans.len().to_string())]);
+        let sheets = solidcraft_ui_text::format("ui.scan_panel_sheets", &[("count", &plans.len().to_string())]);
         ui_kit::text(ui, &sheets, ui_kit::Text::Note("scan_panel_sheets"));
     }
     // The holes checked against the other scan: how they lined up, and those it lacks dropped at a press.
@@ -1035,7 +1039,7 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
         match fit {
             Some(f) => {
                 let count = |w: Seen| seen.iter().filter(|s| **s == w).count().to_string();
-                let line = crate::i18n::format(
+                let line = solidcraft_ui_text::format(
                     if f.mirror { "ui.scan_panel_confirm_mirror" } else { "ui.scan_panel_confirm_same" },
                     &[
                         ("body", body),
@@ -1048,7 +1052,7 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
                 ui_kit::text(ui, &line, ui_kit::Text::Note("scan_panel_confirm_line"));
                 let lacking: Vec<usize> = seen.iter().enumerate().filter(|(_, s)| **s == Seen::NotFound).map(|(i, _)| i).collect();
                 if !lacking.is_empty() {
-                    let label = crate::i18n::format("ui.scan_panel_drop_not_found", &[("count", &lacking.len().to_string())]);
+                    let label = solidcraft_ui_text::format("ui.scan_panel_drop_not_found", &[("count", &lacking.len().to_string())]);
                     if ui_kit::button(ui, label, ui_kit::Button::Small).clicked() {
                         for i in lacking {
                             k.review.dropped.insert(Item::Hole(i));
@@ -1058,13 +1062,13 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
                 }
             }
             None => {
-                let line = crate::i18n::format("ui.scan_panel_confirm_failed", &[("body", body)]);
+                let line = solidcraft_ui_text::format("ui.scan_panel_confirm_failed", &[("body", body)]);
                 ui_kit::text(ui, &line, ui_kit::Text::Report("scan_panel_confirm_failed", true));
             }
         }
     }
     if p.unbacked > 0 {
-        let none = crate::i18n::format("ui.scan_panel_unbacked", &[("count", &p.unbacked.to_string())]);
+        let none = solidcraft_ui_text::format("ui.scan_panel_unbacked", &[("count", &p.unbacked.to_string())]);
         ui_kit::text(ui, &none, ui_kit::Text::Note("scan_panel_unbacked"));
     }
     if k.review.seen.len() >= items.len() {
@@ -1105,7 +1109,7 @@ fn export_params(k: &FlatTemplate, inputs: &[SelInput]) -> Option<Value> {
 /// The straight panel over the picture as it will be cut: its outline, the cut-outs dropped as dim
 /// ghosts, the seams, the holes, the floor marked, and the item being looked at picked out.
 fn draw_panel(painter: &egui::Painter, proj: &crate::viewport::Proj, k: &FlatTemplate, pp: &PanelPrepared) {
-    let tokens = crate::theme::Tokens::get();
+    let tokens = solidcraft_theme::Tokens::get();
     let keep = keep_of(pp, &k.review);
     let laid = panel_laid(pp, &keep);
     let screen = |q: Vec2| proj.to_screen(pp.at(q));

@@ -614,6 +614,7 @@ fn complete_by_mirroring(s: &mut Session, p: &Value) -> Result<Value> {
         name: name.clone(),
         positions: fill.positions.iter().flat_map(|q| [q.x, q.y, q.z]).collect::<Vec<f64>>().into(),
         triangles: fill.triangles.iter().flatten().copied().collect::<Vec<u32>>().into(),
+        corner_normals: Default::default(),
         color: Some(FILL_COLOR),
     };
     let kind = solidcraft_doc::FeatureKind::MeshImport { file: format!("{} (mirror fill)", mesh.body), meshes: vec![data] };

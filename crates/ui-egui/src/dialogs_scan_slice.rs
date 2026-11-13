@@ -47,7 +47,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// The surface chosen, if one is.
@@ -132,7 +132,7 @@ pub fn commands(app: &SolveApp, k: &SliceSurface, inputs: &[SelInput]) -> Result
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanSliceSurface(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let Some(Ok((found, middle))) = k.shown.as_ref().map(|s| &s.result) else { return };
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let pl = &found.plane;
     let n = pl.normal();
     let centre = *middle - n * pl.height(*middle);

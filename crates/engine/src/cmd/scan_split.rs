@@ -103,7 +103,7 @@ fn cutter(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<(Cutter, Strin
             let pref = super::super::features::plane_param(s, Some(&plane), cmd)?;
             let (vals, _) = s.doc.param_values();
             let state = s.model.state();
-            let pl = s.doc.resolve_plane_in(&vals, &pref, 0, Some(&state)).map_err(|e| bad(cmd, e.to_string()))?;
+            let pl = s.doc.resolve_plane_in(&vals, &pref, 0, s.active_component, Some(&state)).map_err(|e| bad(cmd, e.to_string()))?;
             let name = match &plane {
                 Value::String(n) => format!("plane {n}"),
                 _ => "plane".to_owned(),
@@ -366,6 +366,7 @@ fn new_scan(s: &mut Session, name: &str, from: &str, positions: &[Vec3], triangl
         name: name.to_owned(),
         positions: positions.iter().flat_map(|q| [q.x, q.y, q.z]).collect::<Vec<f64>>().into(),
         triangles: triangles.iter().flatten().copied().collect::<Vec<u32>>().into(),
+        corner_normals: Default::default(),
         color: None,
     };
     let kind = solidcraft_doc::FeatureKind::MeshImport { file: format!("{from} (split)"), meshes: vec![data] };

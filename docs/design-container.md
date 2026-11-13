@@ -34,6 +34,14 @@ Both counts must be divisible by three; the byte length must match exactly. Coor
 must be finite and at most 1e9 mm in magnitude; indices must address an existing vertex.
 Names and colours remain in JSON. Signed zero and full coordinate precision survive.
 
+A mesh with shading normals is written as `SCMESH02`: the same layout with a `u64` normal
+count after the index count and that many `f64` values (x, y, z for each triangle corner)
+at the end. A mesh without them is written as `SCMESH03`: the two counts, one byte that is
+1 when every coordinate is stored as `f32` (each is exactly one) or 0 for `f64`, the
+coordinates, then each index as the zigzag LEB128 of its difference from the index before.
+All three are read; a `SCMESH02` blob whose lengths do not match that layout is read as
+`SCMESH03`'s, which the Scan workspace once saved under that magic.
+
 The default `fast` policy stores STEP and binary meshes without Deflate for faster
 saving and reading. Small document metadata uses Deflate level one; PNG/JPEG are
 stored directly. An explicit `compact` policy compresses STEP and mesh payloads at
@@ -162,7 +170,7 @@ Before #9170 one mesh body left the cache out for the whole model. As for a B-re
 mesh body is kept only when its slice reads back as the same vertices, bit for bit, the
 same triangles, colour and paint; the picture shown while opening draws its triangles.
 
-`cache/model.json` records `solidcraft-model-cache/9`, the producer revision
+`cache/model.json` records `solidcraft-model-cache/10`, the producer revision
 `solidcraft-truck-adapter/4`, the application version, the build (source commit,
 CPU architecture and OS), the evaluation source (below, with the CPU architecture
 and OS), the geometry kernel that computed it (`solidcore`; earlier builds could write `smlib`, a cache this build evaluates again), the SHA-256 of the exact `document.json` (whose blob references pin every
@@ -175,9 +183,9 @@ numbers on the same kernel; a design opened on the other kernel is evaluated on 
 The evaluation source (`SOLIDCRAFT_EVALUATION_SOURCE`, `crates/io/build.rs`) is a
 digest of the committed source a model is computed from: the `doc` crate and every
 workspace crate it is built from (a test checks the list against their manifests),
-the patched dependencies in `vendor/` (not the interface's renderer), the locked
-versions of every other dependency, the workspace `Cargo.toml` without the
-application's version, `.cargo/config.toml`, and the cache's own reader. An update
+the vendored kernel in `solidcore/` and the patched dependencies in `vendor/` (not the
+interface's renderer), the locked versions of every other dependency, the workspace `Cargo.toml`
+without the application's version, `.cargo/config.toml`, and the cache's own reader. An update
 that changed none of it (the interface, the commands, other file formats, a new
 version number) opens designs from the caches the build before it wrote (#7168);
 one that changed any of it (a kernel fix, the codec, a dependency) evaluates them
@@ -261,7 +269,7 @@ phase-one container PR (#327):
    loops, geometric domains, analytic/spline curve and surface definitions, units,
    tolerances and orientation must have explicit semantics. Preserve face-source
    certificates, persistent names and history using SolidCraft-owned identities.
-   No truck serialized structs, memory layouts, pointers or opaque kernel blobs
+   No kernel serialized structs, memory layouts, pointers or opaque kernel blobs
    form part of the persisted contract. No evaluated STEP round trip is a substitute.
 3. Separate adapters between the neutral schema and supported kernels. Unsupported
    geometry or provenance is a cache miss. Explicitly fitted intersection splines

@@ -24,7 +24,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::S
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 /// Read the scan as the dialog opens: false (and nothing opens) when it cannot be read, such as
@@ -76,7 +76,9 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Survey) -> bool {
         form_row(ui, tr("ui.scan_survey_tangled"), |ui| ui_kit::text(ui, &count("tangled_edges").to_string(), ui_kit::Text::Cell));
     }
     let read = match r.get("shapes") {
-        Some(sh) => crate::i18n::format("ui.scan_survey_in_shapes", &[("share", &format!("{:.0}", 100.0 * sh["in_shapes"].as_f64().unwrap_or(0.0)))]),
+        Some(sh) => {
+            solidcraft_ui_text::format("ui.scan_survey_in_shapes", &[("share", &format!("{:.0}", 100.0 * sh["in_shapes"].as_f64().unwrap_or(0.0)))])
+        }
         None if r["sheet_like"] == true => tr("ui.scan_survey_sheet").to_owned(),
         None => tr("ui.scan_survey_not_read").to_owned(),
     };
@@ -91,7 +93,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Survey) -> bool {
     }
     for step in &steps {
         let Some(id) = step["command"].as_str() else { continue };
-        let label = crate::i18n::tr_label(crate::command_label(id));
+        let label = solidcraft_ui_text::tr_label(crate::command_label(id));
         if ui_kit::row(ui, "", |ui| ui_kit::button(ui, label, ui_kit::Button::Normal)).clicked() {
             k.open = Some(id.to_owned());
         }
@@ -112,7 +114,7 @@ fn named(why: &str) -> String {
         let end = from.find(|c: char| !(c.is_ascii_lowercase() || c == '_' || c == '.')).unwrap_or(from.len());
         let id = from[..end].trim_end_matches('.');
         if solidcraft_engine::find_command(id).is_some() {
-            out.push_str(crate::i18n::tr_label(crate::command_label(id)));
+            out.push_str(solidcraft_ui_text::tr_label(crate::command_label(id)));
         } else {
             out.push_str(id);
         }

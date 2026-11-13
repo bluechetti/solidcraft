@@ -44,7 +44,7 @@ pub(super) fn constrain_to(k: &mut EditSurface, kind: Option<constrain::Kind>, t
     let (kind, fit) = match kind {
         Some(kind) => {
             if places.len() < kind.min_points() {
-                return Err(crate::i18n::format("ui.scan_edit_constrain_few", &[("count", &kind.min_points().to_string())]));
+                return Err(solidcraft_ui_text::format("ui.scan_edit_constrain_few", &[("count", &kind.min_points().to_string())]));
             }
             (kind, constrain::fit(kind, &places).ok_or_else(nothing)?)
         }
@@ -57,7 +57,7 @@ pub(super) fn constrain_to(k: &mut EditSurface, kind: Option<constrain::Kind>, t
     move_many(k, &moves);
     k.falloff = falloff;
     let name = SHAPES.iter().find(|s| s.0 == kind).map_or("", |s| tr(s.1));
-    k.shape.note = Some(crate::i18n::format("ui.scan_edit_constrained_value", &[("shape", name), ("rms", &format!("{:.3}", fit.rms))]));
+    k.shape.note = Some(solidcraft_ui_text::format("ui.scan_edit_constrained_value", &[("shape", name), ("rms", &format!("{:.3}", fit.rms))]));
     Ok(())
 }
 
@@ -199,7 +199,7 @@ pub(super) fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface, scan:
         }
         let mut chosen: Option<usize> = None;
         for (n, s) in k.shape.suggestions.iter().enumerate() {
-            let line = crate::i18n::format(
+            let line = solidcraft_ui_text::format(
                 "ui.scan_edit_suggestion_value",
                 &[
                     ("face", &(s.face + 1).to_string()),

@@ -68,7 +68,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::S
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 fn bits(v: Vec3) -> [u64; 3] {
@@ -120,8 +120,10 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut CurveOnScan) -> bool {
         Some(Ok((_, fit, max, length))) => {
             let length = crate::prefs::show_mm(app, *length, 1);
             form_row(ui, tr("ui.scan_curve_length"), |ui| ui_kit::text(ui, &length, ui_kit::Text::Cell));
-            let fitted =
-                crate::i18n::format("ui.scan_curve_fit_value", &[("points", &fit.len().to_string()), ("max", &crate::prefs::show_mm(app, *max, 1))]);
+            let fitted = solidcraft_ui_text::format(
+                "ui.scan_curve_fit_value",
+                &[("points", &fit.len().to_string()), ("max", &crate::prefs::show_mm(app, *max, 1))],
+            );
             form_row(ui, tr("ui.scan_curve_fit"), |ui| ui_kit::text(ui, &fitted, ui_kit::Text::Cell));
         }
         Some(Err(why)) => {
@@ -313,7 +315,7 @@ pub(crate) fn stroke_end(app: &mut SolveApp, proj: &crate::viewport::Proj) {
 /// The line on the scan and the points clicked, over the picture.
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanCurve(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     if let Some(Ok((path, fit, _, _))) = k.shown.as_ref().map(|s| &s.result) {
         let line: Vec<egui::Pos2> = path.iter().filter_map(|p| proj.to_screen(*p)).collect();
         painter.add(egui::Shape::line(line, egui::Stroke::new(2.0, t.sketch_accent)));

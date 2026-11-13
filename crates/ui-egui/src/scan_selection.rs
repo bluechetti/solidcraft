@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use solidcraft_engine::cmd::scan::select::{self, ScanSelected};
-use solidcraft_gpu::view::{CloudStyle, ColorMode, GpuCloud};
+use solidcraft_viewport_gpu::view::{CloudStyle, ColorMode, GpuCloud};
 
 use crate::scan_dots::{Dot, cloud_dot};
 
@@ -30,7 +30,7 @@ pub(crate) fn current(app: &SolveApp) -> Option<Arc<ScanSelected>> {
 }
 
 fn colour() -> [u8; 3] {
-    let c = crate::theme::Tokens::get().sel_face;
+    let c = solidcraft_theme::Tokens::get().sel_face;
     [c.r(), c.g(), c.b()]
 }
 

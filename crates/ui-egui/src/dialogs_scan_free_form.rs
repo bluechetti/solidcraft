@@ -136,7 +136,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::S
 }
 
 fn tr(id: &'static str) -> &'static str {
-    crate::i18n::tr(id)
+    solidcraft_ui_text::tr(id)
 }
 
 fn needed(k: &NewFreeForm) -> usize {
@@ -288,7 +288,7 @@ pub(crate) fn fidelity(app: &SolveApp, k: &NewFreeForm) -> Option<(crate::scan_f
 }
 
 /// The colouring of the scan under the face, as a cloud for the GPU viewport.
-pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_gpu::view::GpuCloud> {
+pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view::GpuCloud> {
     let Some(Kind::ScanFreeForm(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
     if !k.colours {
         return None;
@@ -349,12 +349,12 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
         crate::scan_fidelity::effective(app, k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.scan.as_deref()), k.tolerance);
     match k.shown.as_ref().map(|s| (&s.result, s.stats, s.check.as_ref())) {
         Some((Ok(made), stats, check)) if made.scan.is_some() => {
-            let note = crate::i18n::format(
+            let note = solidcraft_ui_text::format(
                 "ui.scan_free_form_found",
                 &[("met", &made.met.to_string()), ("places", &made.places.to_string()), ("rms", &crate::prefs::show_mm(app, made.rms, 1))],
             );
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_free_form_found"));
-            let fit = crate::i18n::format(
+            let fit = solidcraft_ui_text::format(
                 "ui.scan_edit_distance_value",
                 &[("rms", &crate::prefs::show_mm(app, made.rms, 1)), ("max", &crate::prefs::show_mm(app, made.max, 1))],
             );
@@ -524,7 +524,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     draw_wrap(app, painter, proj);
     draw_merge(app, painter, proj);
     let Some(Kind::ScanFreeForm(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     if let Some(Ok(made)) = k.shown.as_ref().map(|s| &s.result) {
         crate::dialogs_scan_surface::draw_grid(painter, proj, &made.surface, egui::Stroke::new(1.5, t.surface_accent), true);
     }
@@ -633,7 +633,7 @@ pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs:
     match k.shown.as_ref().map(|s| (&s.result, s.trouble)) {
         Some((Ok(w), [folds, pinches, crossings])) => {
             let [nu, nv] = w.made.surface.count();
-            let note = crate::i18n::format(
+            let note = solidcraft_ui_text::format(
                 "ui.scan_wrap_found",
                 &[
                     ("net", &format!("{nu} × {nv}")),
@@ -650,13 +650,13 @@ pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs:
             if let Some(gap) = w.seam {
                 let closes = gap <= free_form::default_gap(std::slice::from_ref(&w.made.surface));
                 let id = if closes { "ui.scan_wrap_round_closes" } else { "ui.scan_wrap_round_open" };
-                let line = crate::i18n::format(id, &[("gap", &crate::prefs::show_mm(app, gap, 1))]);
+                let line = solidcraft_ui_text::format(id, &[("gap", &crate::prefs::show_mm(app, gap, 1))]);
                 ui_kit::text(ui, &line, ui_kit::Text::Report("scan_wrap_round", !closes));
             }
             // The net follows rims and ribs it is too coarse for: Stiffness smooths them out.
             if folds + pinches + crossings > 0 {
                 let trouble = crate::dialogs_surface_check::trouble(folds, pinches, crossings);
-                let line = crate::i18n::format("ui.scan_wrap_folds", &[("trouble", &trouble)]);
+                let line = solidcraft_ui_text::format("ui.scan_wrap_folds", &[("trouble", &trouble)]);
                 ui_kit::text(ui, &line, ui_kit::Text::Report("scan_wrap_folds", true));
             }
         }
@@ -693,7 +693,7 @@ pub fn wrap_commands(k: &WrapSurface, inputs: &[crate::selection::SelInput]) -> 
 pub(crate) fn draw_wrap(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanWrapSurface(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let Some(Ok(w)) = k.shown.as_ref().map(|s| &s.result) else { return };
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     crate::dialogs_scan_surface::draw_grid(painter, proj, &w.made.surface, egui::Stroke::new(1.5, t.surface_accent), true);
     let c = &w.cylinder;
     let middle = w.made.surface.eval(0.5, 0.5).unwrap_or(c.point);
@@ -769,7 +769,7 @@ pub fn merge_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut MergeSurfaces, inpu
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok((made, names))) => {
             let widest = made.seams.iter().map(|m| m.gap).fold(0.0, f64::max);
-            let note = crate::i18n::format(
+            let note = solidcraft_ui_text::format(
                 "ui.scan_merge_found",
                 &[("seams", &made.seams.len().to_string()), ("surfaces", &names.len().to_string()), ("gap", &crate::prefs::show_mm(app, widest, 1))],
             );
@@ -794,7 +794,7 @@ pub fn merge_commands(k: &MergeSurfaces) -> Result<Vec<(String, Value)>, String>
 fn draw_merge(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanMergeSurfaces(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let Some(Ok((made, _))) = k.shown.as_ref().map(|s| &s.result) else { return };
-    let t = crate::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     for surface in &made.surfaces {
         crate::dialogs_scan_surface::draw_grid(painter, proj, surface, egui::Stroke::new(1.0, t.surface_accent.gamma_multiply(0.6)), true);
     }

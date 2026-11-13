@@ -226,7 +226,7 @@ pub(super) fn dragged_with(k: &mut EditSurface, index: usize) -> Vec<usize> {
 /// The dialog's rows for the choice: how many handles are chosen and the tools on it.
 pub(super) fn rows(ui: &mut egui::Ui, k: &mut EditSurface) {
     let count = chosen_ids(k).len();
-    let line = crate::i18n::format("ui.scan_edit_selected_value", &[("count", &count.to_string()), ("all", &handle_count(k).to_string())]);
+    let line = solidcraft_ui_text::format("ui.scan_edit_selected_value", &[("count", &count.to_string()), ("all", &handle_count(k).to_string())]);
     form_row(ui, tr("ui.scan_edit_selected"), |ui| ui_kit::text(ui, &line, ui_kit::Text::Cell));
     let some = count > 0;
     let mut tools: [(&'static str, fn(&mut EditSurface), bool); 6] = [
