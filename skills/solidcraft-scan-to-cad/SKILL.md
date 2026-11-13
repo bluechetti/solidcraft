@@ -20,7 +20,7 @@ A scan is a mesh body. Read it with `scan.survey {}`, clean and place it, choose
 4. **Tolerance:** `scan.tolerance {"tolerance": 0.2}`: the user's accuracy, else about three times `noise`. Every check reads against it.
 5. **Place:** `scan.stand_on_base {}`, `scan.quick_align {}`, or `scan.symmetry {}` then `scan.square_to_symmetry {}`. Several passes: `scan.align_all {}` or `scan.combine {}`.
 6. **Route:** `scan.find_all {}`, then survey: by `shapes.in_shapes` and `sheet_like`:
-   - 0.6 or more: `scan.reconstruct {}`, then run its `proposals` in `batch` calls, risky steps alone.
+   - 0.6 or more: `scan.reconstruct {}`, then run its `proposals` one by one; undo a step whose `fit.verdict` is `worse`.
    - 0.3 to 0.6: reconstruct, then `scan.fit_patches {}` over the freeform rest.
    - under 0.3: `scan.fit_patches {}` or `scan.free_form {}`.
    - `sheet_like`: `scan.flat_template {"outline":"scan"}`.

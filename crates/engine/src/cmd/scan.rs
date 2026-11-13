@@ -1133,6 +1133,9 @@ pub mod split;
 #[path = "scan_surface.rs"]
 pub mod surface;
 
+#[path = "scan_step_fit.rs"]
+pub mod step_fit;
+
 #[path = "scan_survey.rs"]
 pub mod survey;
 

@@ -63,42 +63,42 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&RECONSTRUCT_SELECTION_CONTRACT)
         .output(output_schema_for::<ScanReconstructResult>)
         .params("body?: mesh body (default: the one selected on): scan.reconstruct with selected: true, what the shapes make on the part of the scan selected, read as a part of its own (a boss, a turned feature, a hole of a part too busy to read whole), and the steps that build it, each with `selected`; refused with nothing selected; reads only → as scan.reconstruct"),
-    CommandSpec::new("scan.extrude_it", "Extrude It", crate::checked!("scan.extrude_it", extrude_it))
+    CommandSpec::new("scan.extrude_it", "Extrude It", crate::checked!("scan.extrude_it", fitted_extrude_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("extrude")
         .contract(&EXTRUDE_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); prism?: index of scan.reconstruct's prisms (default 0); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the prism's profile sketched halfway along it off its walls exactly as fitted (lines and arcs from crossing to crossing, joins held tangent) and extruded symmetric to its depth, one undo step → sketch, feature, solid, operation, lines, arcs, tangents, depth"),
-    CommandSpec::new("scan.revolve_it", "Revolve It", crate::checked!("scan.revolve_it", revolve_it))
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); prism?: index of scan.reconstruct's prisms (default 0); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the prism's profile sketched halfway along it off its walls exactly as fitted (lines and arcs from crossing to crossing, joins held tangent) and extruded symmetric to its depth, one undo step → sketch, feature, solid, operation, lines, arcs, tangents, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.revolve_it", "Revolve It", crate::checked!("scan.revolve_it", fitted_revolve_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("revolve")
         .contract(&REVOLVE_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the turned part's profile sketched on a plane through its axis, each face held to the axis (cylinders level, ends upright, rounds tangent), and revolved all the way round, one undo step → sketch, feature, solid, operation, lines, arcs, tangents"),
-    CommandSpec::new("scan.cut_it", "Cut It", crate::checked!("scan.cut_it", cut_it))
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the turned part's profile sketched on a plane through its axis, each face held to the axis (cylinders level, ends upright, rounds tangent), and revolved all the way round, one undo step → sketch, feature, solid, operation, lines, arcs, tangents, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.cut_it", "Cut It", crate::checked!("scan.cut_it", fitted_cut_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("hole")
         .contract(&CUT_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); hole?: index of scan.reconstruct's holes (default 0); into?: body to cut (default: `<scan> Reconstructed`): a circle sketched square to the hole outside its mouth and cut as deep as the scan has the hole, one undo step → sketch, feature, solid, operation, depth"),
-    CommandSpec::new("scan.pattern_it", "Pattern It", crate::checked!("scan.pattern_it", pattern_it))
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); hole?: index of scan.reconstruct's holes (default 0); into?: body to cut (default: `<scan> Reconstructed`): a circle sketched square to the hole outside its mouth and cut as deep as the scan has the hole, one undo step → sketch, feature, solid, operation, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.pattern_it", "Pattern It", crate::checked!("scan.pattern_it", fitted_pattern_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("pattern_circ")
         .contract(&PATTERN_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); hole?: index of scan.reconstruct's holes, one that repeats (default: the first that does); feature?: the cut to repeat (default: the one Cut It made for that hole): the cut repeated as the row or ring of holes is, with its count and spacing, one undo step → feature, solid, count"),
-    CommandSpec::new("scan.fillet_it", "Fillet It", crate::checked!("scan.fillet_it", fillet_it))
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); hole?: index of scan.reconstruct's holes, one that repeats (default: the first that does); feature?: the cut to repeat (default: the one Cut It made for that hole): the cut repeated as the row or ring of holes is, with its count and spacing, one undo step → feature, solid, count, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.fillet_it", "Fillet It", crate::checked!("scan.fillet_it", fitted_fillet_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("fillet")
         .contract(&FILLET_IT_CONTRACT)
         .output(output_schema_for::<ScanFilletItResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to fillet (default: `<scan> Reconstructed`): each round along an edge that scan.reconstruct reads and no profile holds (its `fillets`), measured off the scan as Fillet from Scan does at the edge of the body it rounds; the edges where a round fits the scan filleted at the radius measured, one Fillet for each radius, one undo step; an edge where the scan shows a sharp edge, or no edge of the body, is set aside → body, solid, fillets [{radius, edges}], set_aside, features"),
-    CommandSpec::new("scan.chamfer_it", "Chamfer It", crate::checked!("scan.chamfer_it", chamfer_it))
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to fillet (default: `<scan> Reconstructed`): each round along an edge that scan.reconstruct reads and no profile holds (its `fillets`), measured off the scan as Fillet from Scan does at the edge of the body it rounds; the edges where a round fits the scan filleted at the radius measured, one Fillet for each radius, one undo step; an edge where the scan shows a sharp edge, or no edge of the body, is set aside → body, solid, fillets [{radius, edges}], set_aside, features, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.chamfer_it", "Chamfer It", crate::checked!("scan.chamfer_it", fitted_chamfer_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("chamfer")
         .contract(&CHAMFER_IT_CONTRACT)
         .output(output_schema_for::<ScanChamferItResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to chamfer (default: `<scan> Reconstructed`): each flat chamfer along an edge that scan.reconstruct reads and no profile holds (its `chamfers`), cut at the edge of the body it cuts at the distance its two faces give; one Chamfer for each distance, one undo step; an edge the kernel refuses is set aside → body, solid, chamfers [{distance, edges}], set_aside, features"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to chamfer (default: `<scan> Reconstructed`): each flat chamfer along an edge that scan.reconstruct reads and no profile holds (its `chamfers`), cut at the edge of the body it cuts at the distance its two faces give; one Chamfer for each distance, one undo step; an edge the kernel refuses is set aside → body, solid, chamfers [{distance, edges}], set_aside, features, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
 ];
 
 /// What Find All found on a scan, and what Reconstruct reads off it: view state for the viewport
@@ -448,7 +448,7 @@ pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
 }
 
 /// The body Reconstruct builds on scan `scan`.
-fn built_name(scan: &str) -> String {
+pub(super) fn built_name(scan: &str) -> String {
     format!("{scan} Reconstructed")
 }
 
@@ -791,6 +791,7 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         tangents: drawn.tangents,
         depth: Some(depth),
         count: None,
+        fit: None,
         param_warnings: Vec::new(),
     })
 }
@@ -830,6 +831,7 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
         tangents: drawn.tangents,
         depth: None,
         count: None,
+        fit: None,
         param_warnings: Vec::new(),
     })
 }
@@ -920,6 +922,7 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
         tangents: 0,
         depth: Some(depth),
         count: None,
+        fit: None,
         param_warnings: Vec::new(),
     })
 }
@@ -976,6 +979,7 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
         tangents: 0,
         depth: None,
         count: Some(count),
+        fit: None,
         param_warnings: Vec::new(),
     })
 }
@@ -1076,7 +1080,15 @@ pub(super) fn fillet_it(s: &mut Session, p: &Value) -> Result<Value> {
     if fillets.is_empty() {
         return Err(bad(cmd, format!("the kernel could fillet none of the edges the scan shows round: {}", first_refusal.unwrap_or_default())));
     }
-    reply(ScanFilletItResult { body: found.scan.clone(), solid, fillets, set_aside: set_aside + refused, features, param_warnings: Vec::new() })
+    reply(ScanFilletItResult {
+        body: found.scan.clone(),
+        solid,
+        fillets,
+        set_aside: set_aside + refused,
+        features,
+        fit: None,
+        param_warnings: Vec::new(),
+    })
 }
 
 #[cfg(test)]
@@ -1148,5 +1160,30 @@ pub(super) fn chamfer_it(s: &mut Session, p: &Value) -> Result<Value> {
             &first_refusal.unwrap_or_default(),
         ));
     }
-    reply(ScanChamferItResult { body: found.scan.clone(), solid, chamfers: done, set_aside: refused, features, param_warnings: Vec::new() })
+    reply(ScanChamferItResult {
+        body: found.scan.clone(),
+        solid,
+        chamfers: done,
+        set_aside: refused,
+        features,
+        fit: None,
+        param_warnings: Vec::new(),
+    })
 }
+
+macro_rules! fitted {
+    ($($name:ident => $step:ident),* $(,)?) => {
+        $(fn $name(s: &mut Session, p: &Value) -> Result<Value> {
+            super::step_fit::with_fit(s, p, $step)
+        })*
+    };
+}
+
+fitted!(
+    fitted_extrude_it => extrude_it,
+    fitted_revolve_it => revolve_it,
+    fitted_cut_it => cut_it,
+    fitted_pattern_it => pattern_it,
+    fitted_fillet_it => fillet_it,
+    fitted_chamfer_it => chamfer_it,
+);

@@ -333,8 +333,40 @@ pub struct ScanFilletItResult {
     pub set_aside: usize,
     /// The Fillet features made.
     pub features: Vec<Value>,
+    /// How close the body is to the scan before and after the step (absent when it could not be
+    /// measured).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<ScanStepFit>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
+}
+
+/// How close a body is to the scan, read on a sample of the scan's points.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanFitSample {
+    /// The share of the points within the scan's tolerance of the body's surface, and within the
+    /// limit (five tolerances, at least 0.5 mm): the part of the scan the body explains.
+    pub within: f64,
+    pub explained: f64,
+    /// Root mean square distance over the points within reach of the body (mm).
+    pub rms: f64,
+    /// The points read.
+    pub points: usize,
+}
+
+/// How a Reconstruct step changed the fit of the body it builds to the scan.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanStepFit {
+    /// The body measured, before the step (absent when the step made it) and after.
+    pub solid: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<ScanFitSample>,
+    pub after: ScanFitSample,
+    /// first (the step made the body), better, same or worse.
+    pub verdict: String,
+    /// What to do about a step that made the fit worse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// What Extrude It, Revolve It, Cut It and Pattern It return.
@@ -359,6 +391,10 @@ pub struct ScanBuildResult {
     /// How many places a pattern makes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<usize>,
+    /// How close the body is to the scan before and after the step (absent when it could not be
+    /// measured).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<ScanStepFit>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }
@@ -415,6 +451,10 @@ pub struct ScanChamferItResult {
     pub set_aside: usize,
     /// The Chamfer features made.
     pub features: Vec<Value>,
+    /// How close the body is to the scan before and after the step (absent when it could not be
+    /// measured).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<ScanStepFit>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }

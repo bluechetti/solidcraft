@@ -252,9 +252,19 @@ fn a_drilled_disc_is_extruded_cut_and_patterned_back_from_its_scan() {
     let solid = built["solid"].as_str().unwrap().to_owned();
     let (shaft, hole) = (std::f64::consts::PI * 400.0 * 40.0, std::f64::consts::PI * 9.0 * 12.0);
     assert!((volume(&s, &solid) - shaft).abs() < 0.005 * shaft, "{}", volume(&s, &solid));
-    run(&mut s, "scan.cut_it", json!({}));
-    run(&mut s, "scan.pattern_it", json!({}));
+    assert_eq!(built["fit"]["verdict"], "first", "the first step makes the body: {built}");
+    let cut = run(&mut s, "scan.cut_it", json!({}));
+    assert_eq!(cut["fit"]["verdict"], "better", "a hole the scan has brings the body closer: {cut}");
+    let pattern = run(&mut s, "scan.pattern_it", json!({}));
+    assert_eq!(pattern["fit"]["verdict"], "better", "{pattern}");
+    let before = pattern["fit"]["before"]["explained"].as_f64().unwrap();
+    let after = pattern["fit"]["after"]["explained"].as_f64().unwrap();
+    assert!(after > before && after > 0.95, "{pattern}");
     assert!((volume(&s, &solid) - (shaft - 3.0 * hole)).abs() < 0.005 * shaft, "{}", volume(&s, &solid));
+    // The same hole cut again changes nothing.
+    let again = run(&mut s, "scan.cut_it", json!({"hole": 0}));
+    assert_eq!(again["fit"]["verdict"], "same", "{again}");
+    assert!(again["fit"].get("note").is_none(), "{again}");
 }
 
 /// A block 80 × 60 × 20 whose four top edges are rounded R 2: the rounds run across the prism
