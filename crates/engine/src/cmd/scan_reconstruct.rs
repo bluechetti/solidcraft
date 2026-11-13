@@ -26,7 +26,8 @@ use crate::params::{bad, bool_, str_};
 use crate::schema::scan_reconstruct::{
     ScanBuildResult, ScanChamferItParams, ScanChamferItResult, ScanChamfered, ScanCutItParams, ScanEdgeChamfer, ScanEdgeRound, ScanExtrudeItParams,
     ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams, ScanFindAllResult, ScanHole, ScanPatternItParams, ScanPrism,
-    ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat, ScanRevolveItParams, ScanShapeFound, ScanTurned,
+    ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat, ScanRevolveItParams, ScanShapeFound, ScanShell,
+    ScanShellItParams, ScanTurned,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -40,6 +41,7 @@ const CUT_IT_CONTRACT: TypedContract<ScanCutItParams> = TypedContract::new();
 const PATTERN_IT_CONTRACT: TypedContract<ScanPatternItParams> = TypedContract::new();
 const FILLET_IT_CONTRACT: TypedContract<ScanFilletItParams> = TypedContract::new();
 const CHAMFER_IT_CONTRACT: TypedContract<ScanChamferItParams> = TypedContract::new();
+const SHELL_IT_CONTRACT: TypedContract<ScanShellItParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("scan.find_all", "Find All", crate::checked!("scan.find_all", find_all))
@@ -55,7 +57,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&RECONSTRUCT_CONTRACT)
         .output(output_schema_for::<ScanReconstructResult>)
-        .params("body?: mesh body (default: the selected or only one); tolerance?: mm (Find All read again with this least tolerance, as scan.find_all takes it); selected?: bool (default false: the whole scan; true: only the part of it selected, read as a part of its own, and each step proposed takes `selected`): what Find All's shapes make (it runs Find All first when it has not run on this scan): prisms (stretches of one section along a direction a plane faces), a turned part (most of the shapes about one axis), repeats (in a row, round an axis, in a grid, drilled along the radius) and the round holes no profile holds; reads only → shapes, in_shapes, prisms [{index, direction, middle, depth, walls, ends, open}], turned? {point, direction, faces, share}, holes [{index, shape, radius, diameter, mouth, bottom, depth, repeat?, layout?}], repeats, built?, proposals [{command, params}], note?"),
+        .params("body?: mesh body (default: the selected or only one); tolerance?: mm (Find All read again with this least tolerance, as scan.find_all takes it); selected?: bool (default false: the whole scan; true: only the part of it selected, read as a part of its own, and each step proposed takes `selected`): what Find All's shapes make (it runs Find All first when it has not run on this scan): prisms (stretches of one section along a direction a plane faces), a turned part (most of the shapes about one axis), repeats (in a row, round an axis, in a grid, drilled along the radius) and the round holes no profile holds; reads only → shapes, in_shapes, prisms [{index, direction, middle, depth, walls, ends, open, draft (degrees the walls lean in, a moulded part's)}], turned? {point, direction, faces, share}, shell? {thickness, inner, open} (walls of one thickness, open at an end: Shell It hollows the body), holes [{index, shape, radius, diameter, mouth, bottom, depth, repeat?, layout?}], repeats, built?, proposals [{command, params}], note?"),
     CommandSpec::new("scan.reconstruct_selection", "Reconstruct Selection", crate::checked!("scan.reconstruct_selection", read_selection))
         .at("SCAN", "RECONSTRUCT")
         .icon("auto_constrain")
@@ -68,7 +70,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("extrude")
         .contract(&EXTRUDE_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); prism?: index of scan.reconstruct's prisms (default 0); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the prism's profile sketched halfway along it off its walls exactly as fitted (lines and arcs from crossing to crossing, joins held tangent) and extruded symmetric to its depth, one undo step → sketch, feature, solid, operation, lines, arcs, tangents, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); prism?: index of scan.reconstruct's prisms (default 0); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the prism's profile sketched halfway along it off its walls exactly as fitted (lines and arcs from crossing to crossing, joins held tangent) and extruded symmetric to its depth; a drafted prism (its `draft` not 0) sketched at its low end and extruded tapered by its draft; one undo step → sketch, feature, solid, operation, lines, arcs, tangents, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
     CommandSpec::new("scan.revolve_it", "Revolve It", crate::checked!("scan.revolve_it", fitted_revolve_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("revolve")
@@ -93,6 +95,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&FILLET_IT_CONTRACT)
         .output(output_schema_for::<ScanFilletItResult>)
         .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to fillet (default: `<scan> Reconstructed`): each round along an edge that scan.reconstruct reads and no profile holds (its `fillets`), measured off the scan as Fillet from Scan does at the edge of the body it rounds; the edges where a round fits the scan filleted at the radius measured, one Fillet for each radius, one undo step; an edge where the scan shows a sharp edge, or no edge of the body, is set aside → body, solid, fillets [{radius, edges}], set_aside, features, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.shell_it", "Shell It", crate::checked!("scan.shell_it", fitted_shell_it))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("shell")
+        .contract(&SHELL_IT_CONTRACT)
+        .output(output_schema_for::<ScanBuildResult>)
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to hollow (default: `<scan> Reconstructed`): the body hollowed to the thickness of the walls scan.reconstruct reads (its `shell`: planes in pairs facing apart, one behind the other, the same distance apart), the faces with no inner face behind them left open; run it after Extrude It and before Fillet It; one undo step → feature, solid, operation, depth (the thickness), fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
     CommandSpec::new("scan.chamfer_it", "Chamfer It", crate::checked!("scan.chamfer_it", fitted_chamfer_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("chamfer")
@@ -406,6 +414,8 @@ pub enum Proposal {
     Fillet,
     /// The flat chamfers along edges no profile holds, chamfered.
     Chamfer,
+    /// Walls of one thickness: the body shelled.
+    Shell,
 }
 
 impl Proposal {
@@ -417,6 +427,7 @@ impl Proposal {
             Proposal::Pattern(_) => "scan.pattern_it",
             Proposal::Fillet => "scan.fillet_it",
             Proposal::Chamfer => "scan.chamfer_it",
+            Proposal::Shell => "scan.shell_it",
         }
     }
 
@@ -424,7 +435,7 @@ impl Proposal {
     /// scan selected.
     pub fn params(&self, body: &str, selected: bool) -> Value {
         let mut p = match *self {
-            Proposal::Revolve | Proposal::Fillet | Proposal::Chamfer => json!({"body": body}),
+            Proposal::Revolve | Proposal::Fillet | Proposal::Chamfer | Proposal::Shell => json!({"body": body}),
             Proposal::Extrude(k) => json!({"body": body, "prism": k}),
             Proposal::Cut(k) | Proposal::Pattern(k) => json!({"body": body, "hole": k}),
         };
@@ -447,6 +458,11 @@ pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
     out.extend((0..reading.prisms.len()).map(Proposal::Extrude));
     if out.is_empty() && !built {
         return out;
+    }
+    // The shell before the cuts and rounds: a round on the rim made first stops the kernel
+    // shelling a drafted body, and a hole cut first would be walled round by the shell.
+    if reading.shell.is_some() {
+        out.push(Proposal::Shell);
     }
     for (k, hole) in reading.holes.iter().enumerate() {
         out.push(Proposal::Cut(k));
@@ -518,6 +534,7 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
             walls: prism.walls.clone(),
             ends: prism.ends,
             open: prism.open,
+            draft: prism.draft.to_degrees(),
         })
         .collect();
     let holes: Vec<ScanHole> = reading
@@ -604,6 +621,7 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         proposals,
         fillets: reading.fillets.iter().map(|f| ScanEdgeRound { face: f.face, radius: f.radius, edge: at(f.edge) }).collect(),
         chamfers: reading.chamfers.iter().map(|c| ScanEdgeChamfer { face: c.face, distance: c.distance, edge: at(c.edge) }).collect(),
+        shell: reading.shell.as_ref().map(|w| ScanShell { thickness: w.thickness, inner: w.inner.clone(), open: w.open.clone() }),
         note,
         param_warnings: Vec::new(),
     })
@@ -829,7 +847,13 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
     let mut drawn = Drawn::default();
     let sketch = sketch_outlines(s, &plane, &format!("Prism Profile {}", index + 1), &outlines, &|_, _, _| None, &mut drawn)?;
     let depth = prism.depth();
-    let mut extrude = json!({"sketch": sketch, "distance": depth, "direction": "symmetric", "name": format!("Extrude It {}", index + 1)});
+    let mut extrude = if prism.draft == 0.0 {
+        json!({"sketch": sketch, "distance": depth, "direction": "symmetric", "name": format!("Extrude It {}", index + 1)})
+    } else {
+        // Sketched at the low end, the walls leaning in (a positive draft) as it goes up.
+        json!({"sketch": sketch, "distance": depth, "direction": "positive", "taper": format!("{} deg", -prism.draft.to_degrees()),
+            "corner": "preserve_curvature", "name": format!("Extrude It {}", index + 1)})
+    };
     if let Some(material) = material_profiles(s, sketch) {
         extrude["profiles"] = json!(material);
     }
@@ -899,6 +923,37 @@ fn built_body(s: &Session, scan: &str, p: &Value, cmd: &str) -> Result<String> {
         Some(_) => Err(bad(cmd, format!("`{name}` is a mesh: cut a solid body"))),
         None => Err(bad(cmd, format!("there is no `{name}` yet: build it first with Extrude It or Revolve It"))),
     }
+}
+
+/// Shell It: the body Reconstruct builds hollowed to the thickness of the scan's walls, each face
+/// with no inner face behind it (an end of the main prism) left open.
+pub(super) fn shell_it(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.shell_it";
+    let view = view(s, p, cmd, false)?;
+    let found = &view.found;
+    let shell = view
+        .reading()
+        .shell
+        .clone()
+        .ok_or_else(|| bad(cmd, "Reconstruct reads no walls of one thickness open at an end: the part is solid, or its inside is not scanned"))?;
+    let solid = built_body(s, &found.scan, p, cmd)?;
+    let faces: Vec<[f64; 3]> = shell.points.iter().map(|q| at(*q)).collect();
+    let made = run(s, "solid.shell", json!({"faces": faces, "thickness": format!("{} mm", shell.thickness), "body": solid, "name": "Shell It"}))
+        .map_err(|e| super::refusal::refused(cmd, "the kernel could not hollow the body to the scan's walls", &e.to_string()))?;
+    reply(ScanBuildResult {
+        body: found.scan.clone(),
+        sketch: None,
+        feature: made,
+        solid,
+        operation: "shell".into(),
+        lines: 0,
+        arcs: 0,
+        tangents: 0,
+        depth: Some(shell.thickness),
+        count: None,
+        fit: None,
+        param_warnings: Vec::new(),
+    })
 }
 
 /// The name Cut It gives the cut of hole `index`.
@@ -1241,4 +1296,5 @@ fitted!(
     fitted_pattern_it => pattern_it,
     fitted_fillet_it => fillet_it,
     fitted_chamfer_it => chamfer_it,
+    fitted_shell_it => shell_it,
 );

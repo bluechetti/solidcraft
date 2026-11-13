@@ -30,6 +30,23 @@ use crate::{Scan, in_plane};
 const SAME_DIRECTION: f64 = 0.9994;
 /// A plane this close to square to a direction is a wall along it (a sine: about 2°).
 const SQUARE: f64 = 0.035;
+/// Walls may lean this far from running along a prism (a sine: about 10°) and still be its walls,
+/// when they all lean alike: a moulded or cast part's draft.
+const MOST_DRAFT: f64 = 0.174;
+/// The cosine of that lean, for a round's axis.
+const MOST_DRAFT_COS: f64 = 0.985;
+/// Walls leaning within this of their mean lean alike (radians: about 0.5°).
+const SAME_DRAFT: f64 = 0.009;
+/// A mean lean smaller than this is no draft (radians: about 0.3°): the walls are square.
+const LEAST_DRAFT: f64 = 0.005;
+/// A shell's walls are at most this share of the part's size thick.
+const MOST_WALL: f64 = 0.15;
+/// Wall thicknesses within this share of each other are one thickness.
+const SAME_WALL: f64 = 0.1;
+/// A shell's paired faces face at least this many ways (a lid and walls round it).
+const LEAST_SHELL_SIDES: usize = 3;
+/// ... and are at least this share of the area of the part's flat faces.
+const LEAST_SHELL_SHARE: f64 = 0.5;
 /// A prism's sides have to be this many walls at least, or a cylinder, which is a side by itself.
 const LEAST_WALLS: usize = 3;
 /// Radii within this share of each other are one radius.
@@ -86,6 +103,9 @@ pub struct Prism {
     pub walls: Vec<usize>,
     /// Whether one end is no plane: it is then as far as all the walls run.
     pub open: bool,
+    /// How far its walls lean in, in radians: positive where the section shrinks from `low` to
+    /// `high` (a moulded part's draft), 0 for walls square to its ends.
+    pub draft: f64,
 }
 
 impl Prism {
@@ -324,12 +344,18 @@ fn unit(v: Vec3) -> Vec3 {
 /// edges, which Fillet It makes where no profile holds them) are walls but explain nothing, so a
 /// block with rounded top edges is extruded upright and filleted, not extruded on its side
 /// because its side profile holds two of the rounds.
+///
+/// Walls that all lean alike from running along a direction (by up to [`MOST_DRAFT`]) are a
+/// drafted prism's; `sign` turns the scan's winding out of its material, which says which way a
+/// wall leans. Without `drafts`, only square walls are read, as before drafts were.
 pub fn extrusions(
     faces: &[Face],
     span: &dyn Fn(usize, Vec3) -> Option<(f64, f64)>,
     size: f64,
     ignored: &BTreeSet<usize>,
     unscored: &BTreeSet<usize>,
+    sign: f64,
+    drafts: bool,
 ) -> Vec<Prism> {
     let reach = WALL_START * size;
     let mut order: Vec<usize> = (0..faces.len()).filter(|&k| !ignored.contains(&k) && plane(&faces[k]).is_some()).collect();
@@ -341,7 +367,8 @@ pub fn extrusions(
             directions.push(normal);
         }
     }
-    let mut candidates: Vec<(Prism, Vec<(usize, f64)>)> = directions.iter().flat_map(|&d| stacked(faces, d, span, reach, ignored)).collect();
+    let mut candidates: Vec<(Prism, Vec<(usize, f64)>)> =
+        directions.iter().flat_map(|&d| stacked(faces, d, span, reach, ignored, sign, drafts)).collect();
     let total: f64 = faces.iter().map(|f| f.area).sum();
     let mut explained = vec![0.0; faces.len()];
     let gain = |shares: &[(usize, f64)], explained: &[f64]| {
@@ -364,6 +391,21 @@ pub fn extrusions(
     chosen
 }
 
+/// A direction this near a world axis is along it (a sine: about 0.1°).
+const ON_GRID: f64 = 0.00175;
+
+/// `direction` (unit) as the part was placed: the world axis it lies along when within
+/// [`ON_GRID`] of one (a scan stood on its base or squared to the grid leaves its faces a few
+/// thousandths of a degree off the axes, which a model built along them should not keep), else
+/// as it is.
+fn on_grid(direction: Vec3) -> Vec3 {
+    [Vec3::X, Vec3::Y, Vec3::Z]
+        .into_iter()
+        .map(|axis| if direction.dot(axis) < 0.0 { -axis } else { axis })
+        .find(|axis| direction.cross(*axis).len() <= ON_GRID)
+        .unwrap_or(direction)
+}
+
 /// A level along a direction where the section may change, and the planes facing that way or back
 /// at it.
 struct Level {
@@ -382,13 +424,15 @@ fn stacked(
     span: &dyn Fn(usize, Vec3) -> Option<(f64, f64)>,
     reach: f64,
     ignored: &BTreeSet<usize>,
+    sign: f64,
+    drafts: bool,
 ) -> Vec<(Prism, Vec<(usize, f64)>)> {
     let noise = SAME_LEVEL * reach;
     let facing = |k: usize| plane(&faces[k]).map(|(point, normal)| (point.dot(direction), normal.dot(direction)));
     let kept = || (0..faces.len()).filter(|k| !ignored.contains(k));
     let caps: Vec<(usize, f64)> = kept().filter_map(|k| facing(k).filter(|f| f.1.abs() >= SAME_DIRECTION).map(|f| (k, f.0))).collect();
     let walls: Vec<(usize, f64, f64)> =
-        kept().filter(|&k| is_wall(&faces[k], direction)).filter_map(|k| span(k, direction).map(|(a, b)| (k, a, b))).collect();
+        kept().filter(|&k| lean(&faces[k], direction, sign).is_some()).filter_map(|k| span(k, direction).map(|(a, b)| (k, a, b))).collect();
     // The planes, and where a wall ends with no plane just outside its end.
     let mut ends: Vec<(f64, Option<usize>)> = caps.iter().map(|&(k, at)| (at, Some(k))).collect();
     for &(_, a, b) in &walls {
@@ -446,28 +490,29 @@ fn stacked(
     };
     let runs_of: Vec<(usize, f64, f64)> = walls.iter().map(|&(k, a, b)| (k, low_end(a), high_end(b))).collect();
     // Each slab's section, the walls right across it, where they are enough to bound anything.
-    let sections: Vec<Option<Vec<usize>>> = levels
+    let sections: Vec<Option<(Vec<usize>, f64)>> = levels
         .windows(2)
         .map(|pair| {
             let (low, high) = (pair[0].at, pair[1].at);
             let across: Vec<usize> = runs_of.iter().filter(|w| w.1 <= low && w.2 >= high).map(|w| w.0).collect();
+            let (across, draft) = section_of(faces, &across, direction, sign, drafts);
             let cylinders = across.iter().any(|&k| matches!(faces[k].shape, Shape::Cylinder { .. }));
-            (across.len() >= LEAST_WALLS || cylinders).then_some(across)
+            (across.len() >= LEAST_WALLS || cylinders).then_some((across, draft))
         })
         .collect();
     let mut found = Vec::new();
     let mut start = 0;
     while start < sections.len() {
-        let Some(section) = &sections[start] else {
+        let Some((section, draft)) = &sections[start] else {
             start += 1;
             continue;
         };
         let mut end = start + 1;
-        while end < sections.len() && sections[end].as_ref() == Some(section) {
+        while end < sections.len() && sections[end].as_ref().is_some_and(|(w, d)| w == section && d == draft) {
             end += 1;
         }
         let goes_on = (start > 0 && sections[start - 1].is_some(), end < sections.len() && sections[end].is_some());
-        if let Some(extrusion) = extrusion(faces, direction, (&levels[start], &levels[end]), goes_on, section, &runs_of) {
+        if let Some(extrusion) = extrusion(faces, direction, (&levels[start], &levels[end]), goes_on, (section, *draft), &runs_of) {
             found.push(extrusion);
         }
         start = end;
@@ -484,7 +529,7 @@ fn extrusion(
     direction: Vec3,
     (low, high): (&Level, &Level),
     goes_on: (bool, bool),
-    section: &[usize],
+    (section, draft): (&[usize], f64),
     runs: &[(usize, f64, f64)],
 ) -> Option<(Prism, Vec<(usize, f64)>)> {
     let out = |level: &Level, up: bool| -> Vec<usize> {
@@ -514,7 +559,50 @@ fn extrusion(
     let open = first.is_none() || second.is_none();
     // An end with no plane is as far as the shortest wall runs, so a slice halfway crosses them all.
     let (from, to) = (if low.caps.is_empty() { low.reach.1 } else { low.at }, if high.caps.is_empty() { high.reach.0 } else { high.at });
-    Some((Prism { direction, origin, low: from - at, high: to - at, ends, walls: section.to_vec(), open }, shares))
+    // A drafted prism lies along the grid's axis when it is that near it: the kernel shells a
+    // tapered body reliably only so. A square one keeps its own direction, so that prisms meeting
+    // on a plane do not meet exactly on it, which the kernel's join refuses.
+    let direction = if draft != 0.0 { on_grid(direction) } else { direction };
+    Some((Prism { direction, origin, low: from - at, high: to - at, ends, walls: section.to_vec(), open, draft }, shares))
+}
+
+/// How far a face leans from running along `direction`, when it is near enough to be a wall: for
+/// a plane, `Some` of the angle its outward normal (the winding times `sign`) turns from square
+/// toward `direction` (positive where it faces along `direction`: the part narrows that way); for
+/// a cylinder or a cone of little taper about an axis near `direction`, `Some(None)` (a round
+/// follows the walls beside it).
+fn lean(face: &Face, direction: Vec3, sign: f64) -> Option<Option<f64>> {
+    match face.shape {
+        Shape::Plane { normal, .. } => {
+            let s = (unit(normal) * sign).dot(direction);
+            (s.abs() <= MOST_DRAFT).then(|| Some(s.clamp(-1.0, 1.0).asin()))
+        }
+        Shape::Cylinder { axis, .. } => (unit(axis).dot(direction).abs() >= MOST_DRAFT_COS).then_some(None),
+        Shape::Cone { axis, half_angle, .. } => {
+            (unit(axis).dot(direction).abs() >= MOST_DRAFT_COS && half_angle.abs() <= MOST_DRAFT.asin()).then_some(None)
+        }
+        _ => None,
+    }
+}
+
+/// The walls `across` a slab as a prism takes them, and its draft: when the planes among them lean
+/// alike (each within [`SAME_DRAFT`] of their mean by area, the mean at least [`LEAST_DRAFT`]),
+/// all of them with the rounds between them, leaning by that mean; else only the walls along
+/// `direction` ([`is_wall`]), square. A shelled part's outside and inside lean opposite ways, so
+/// its walls together are square or nothing, as before drafts were read.
+fn section_of(faces: &[Face], across: &[usize], direction: Vec3, sign: f64, drafts: bool) -> (Vec<usize>, f64) {
+    if !drafts {
+        return (across.iter().copied().filter(|&k| is_wall(&faces[k], direction)).collect(), 0.0);
+    }
+    let leans: Vec<(usize, f64)> = across.iter().filter_map(|&k| lean(&faces[k], direction, sign).flatten().map(|l| (k, l))).collect();
+    let weight: f64 = leans.iter().map(|&(k, _)| faces[k].area).sum();
+    if weight > 0.0 {
+        let mean = leans.iter().map(|&(k, l)| faces[k].area * l).sum::<f64>() / weight;
+        if mean.abs() >= LEAST_DRAFT && leans.iter().all(|&(_, l)| (l - mean).abs() <= SAME_DRAFT) {
+            return (across.to_vec(), mean);
+        }
+    }
+    (across.iter().copied().filter(|&k| is_wall(&faces[k], direction)).collect(), 0.0)
 }
 
 /// Whether a face runs along `direction`: a plane square to the ends, or a cylinder along it.
@@ -988,6 +1076,115 @@ pub fn holes(
         .collect()
 }
 
+/// A part made of walls of one thickness, open at an end (a moulded housing, a tray, a box without
+/// its lid): built as its outside, then shelled.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Shell {
+    /// How thick its walls are, in mm.
+    pub thickness: f64,
+    /// The inner faces: each a plane behind an outer one, facing the other way, `thickness` in,
+    /// or a round inside an outer round about the same axis, `thickness` smaller. Set aside, so
+    /// the prisms are read off the outside alone.
+    pub inner: Vec<usize>,
+    /// The outer faces with an inner face behind them.
+    pub outer: Vec<usize>,
+    /// The faces the shell leaves open: ends of the main prism with no inner face behind them,
+    /// and a point on each, on its plane inside the prism's outline.
+    pub open: Vec<usize>,
+    pub points: Vec<Vec3>,
+}
+
+/// The walls of one thickness the flat faces make, if they make a shell: each pair of planes
+/// facing apart with material between them, no thicker than [`MOST_WALL`] of the part, one in
+/// front of the other (the outer the one facing away from the part's `centre`); the thickness
+/// the pairs share most by area; a shell when those pairs face [`LEAST_SHELL_SIDES`] ways or more
+/// and hold [`LEAST_SHELL_SHARE`] of the flat faces' area. A plate is one pair, one way: no shell.
+/// The rounds inside outer rounds (`is_hole` for material round them) that much smaller about the
+/// same axis are inner too. `open` and `points` are left for the prisms to say.
+fn shell_of(
+    faces: &[Face],
+    middles: &[Vec3],
+    centre: Vec3,
+    size: f64,
+    sign: f64,
+    skip: &BTreeSet<usize>,
+    is_hole: &dyn Fn(usize) -> bool,
+) -> Option<Shell> {
+    let planes: Vec<(usize, Vec3, Vec3)> = (0..faces.len())
+        .filter(|k| !skip.contains(k) && faces[*k].area > 0.0)
+        .filter_map(|k| plane(&faces[k]).map(|(point, normal)| (k, point, unit(normal) * sign)))
+        .collect();
+    let flat_area: f64 = planes.iter().map(|p| faces[p.0].area).sum();
+    // (thickness, outer, inner)
+    let mut pairs: Vec<(f64, usize, usize)> = Vec::new();
+    for (i, &(a, pa, na)) in planes.iter().enumerate() {
+        for &(b, pb, nb) in &planes[i + 1..] {
+            if na.dot(nb) > -SAME_DIRECTION {
+                continue;
+            }
+            let t = (pa - pb).dot(na);
+            if !(t > 0.0 && t <= MOST_WALL * size) {
+                continue;
+            }
+            // One in front of the other: their middles apart across the planes by less than
+            // half the smaller face's width.
+            let (ma, mb) = (middles.get(a).copied().unwrap_or(pa), middles.get(b).copied().unwrap_or(pb));
+            let off = mb - ma;
+            let across = (off - na * off.dot(na)).len();
+            if across > 0.5 * faces[a].area.min(faces[b].area).sqrt() {
+                continue;
+            }
+            let outer_first = (ma - centre).dot(na) >= (mb - centre).dot(nb);
+            pairs.push(if outer_first { (t, a, b) } else { (t, b, a) });
+        }
+    }
+    let weight = |p: &(f64, usize, usize)| faces[p.1].area + faces[p.2].area;
+    let best = pairs
+        .iter()
+        .map(|&(t, ..)| {
+            let near: Vec<&(f64, usize, usize)> = pairs.iter().filter(|q| (q.0 - t).abs() <= SAME_WALL * t).collect();
+            let area: f64 = near.iter().map(|q| weight(q)).sum();
+            (area, t)
+        })
+        .max_by(|x, y| x.0.total_cmp(&y.0))?;
+    let held: Vec<&(f64, usize, usize)> = pairs.iter().filter(|q| (q.0 - best.1).abs() <= SAME_WALL * best.1).collect();
+    let thickness = held.iter().map(|q| q.0 * weight(q)).sum::<f64>() / best.0;
+    let mut sides: Vec<Vec3> = Vec::new();
+    for q in &held {
+        let Some((_, n)) = plane(&faces[q.1]) else { continue };
+        let n = unit(n);
+        if !sides.iter().any(|s| s.dot(n) >= SAME_DIRECTION) {
+            sides.push(n);
+        }
+    }
+    if sides.len() < LEAST_SHELL_SIDES || best.0 < LEAST_SHELL_SHARE * flat_area {
+        return None;
+    }
+    let mut outer: BTreeSet<usize> = held.iter().map(|q| q.1).collect();
+    let mut inner: BTreeSet<usize> = held.iter().map(|q| q.2).collect();
+    // The rounds inside outer rounds about the same axis, a wall thinner.
+    let round = |k: usize| match faces[k].shape {
+        Shape::Cylinder { point, axis, radius } => Some((point, unit(axis), radius)),
+        _ => None,
+    };
+    for j in (0..faces.len()).filter(|&j| !skip.contains(&j) && is_hole(j)) {
+        let Some((pj, aj, rj)) = round(j) else { continue };
+        let outside = (0..faces.len()).filter(|&k| k != j && !skip.contains(&k) && !is_hole(k)).find(|&k| {
+            round(k).is_some_and(|(pk, ak, rk)| {
+                let off = pj - pk;
+                aj.dot(ak).abs() >= MOST_DRAFT_COS
+                    && (off - ak * off.dot(ak)).len() <= SAME_WALL * rk.max(thickness)
+                    && (rk - rj - thickness).abs() <= SAME_WALL.max(0.2) * thickness
+            })
+        });
+        if let Some(k) = outside {
+            inner.insert(j);
+            outer.insert(k);
+        }
+    }
+    Some(Shell { thickness, inner: inner.into_iter().collect(), outer: outer.into_iter().collect(), open: Vec::new(), points: Vec::new() })
+}
+
 /// What Reconstruct reads off a scan's Find All.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Reading {
@@ -1019,6 +1216,9 @@ pub struct Reading {
     pub fillets: Vec<EdgeRound>,
     /// The flat chamfers along an edge no profile holds, for Chamfer It.
     pub chamfers: Vec<EdgeChamfer>,
+    /// Walls of one thickness, open at an end: the prisms are read off the outside, and Shell It
+    /// hollows the body they make.
+    pub shell: Option<Shell>,
     /// The part's size, the diagonal of its box.
     pub size: f64,
 }
@@ -1317,37 +1517,94 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     let chamfer_skip: BTreeSet<usize> = ignored.union(&rounds).copied().chain((0..shaped.len()).filter(|&k| hole(k))).collect();
     let chamfered = chamfers(&faces, &middles, size, &chamfer_skip);
     let unscored: BTreeSet<usize> = rounds.iter().copied().chain(chamfered.iter().map(|c| c.face)).collect();
-    let mut prisms = extrusions(&faces, &span_of, size, &ignored, &unscored);
-    // Walls all about the turning axis are the steps of a turned part, read twice over; so are
-    // walls about it with holes through them, which Cut It makes. Extruded too, such a slab lies
-    // on the turned body's own faces, which the kernel's boolean refuses or leaves the body
-    // broken for the cuts after it (T-LESS part 4).
-    if let Some(revolve) = &revolve {
-        prisms.retain(|p| !p.walls.iter().all(|&w| revolve.members.contains(&w) || hole(w)));
+    // Walls of one thickness: the prisms are read off the outside, the inner faces set aside, while
+    // that leaves the main prism an end with no inner face behind it for the shell to open.
+    let centre = crate::surface_centre(scan).unwrap_or(Vec3::ZERO);
+    let walled = if revolve.is_none() {
+        // Material round a round, however far round it goes: an inside corner is a quarter turn.
+        let hollow: Vec<bool> = (0..shaped.len()).map(|k| !piece(k) && is_round_hole(scan, &whole(k), sign)).collect();
+        shell_of(&faces, &middles, centre, size, sign, &ignored, &|k| hollow.get(k).copied().unwrap_or(false))
+    } else {
+        None
+    };
+    // Only a prism Extrude It can build: not the steps of a turned part read twice over (walls all
+    // about the turning axis, or about it with holes through them, which Cut It makes: extruded
+    // too, such a slab lies on the turned body's own faces, which the kernel's boolean refuses or
+    // leaves broken for the cuts after it, T-LESS part 4); not a hole (sides all holes, cut and
+    // not extruded); and one whose slice halfway along runs round its walls (walls that bound
+    // nothing, a round's sliver of cylinder alone, two faces side by side, are no prism). The
+    // prisms kept, and how many were read.
+    let weld = std::cell::OnceCell::new();
+    let usable = |mut list: Vec<Prism>| -> (Vec<Prism>, usize) {
+        if let Some(revolve) = &revolve {
+            list.retain(|p| !p.walls.iter().all(|&w| revolve.members.contains(&w) || hole(w)));
+        }
+        list.retain(|p| !p.walls.iter().all(|&w| hole(w)));
+        let read = list.len();
+        if !list.is_empty() {
+            let weld = weld.get_or_init(|| crate::welded(scan.positions));
+            list.retain(|p| crate::profile::prism_profile_from(scan, weld, outcome, &faces, &same, size, p).is_ok());
+        }
+        (list, read)
+    };
+    let explains = |list: &[Prism]| -> f64 {
+        let held: BTreeSet<usize> = list.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).copied().collect();
+        held.iter().map(|&k| faces[k].area).sum()
+    };
+    let mut shell = None;
+    let mut chosen: Option<(Vec<Prism>, usize)> = None;
+    if let Some(mut walls) = walled {
+        let outside: BTreeSet<usize> = ignored.iter().chain(&walls.inner).copied().collect();
+        let read = extrusions(&faces, &span_of, size, &outside, &unscored, sign, true);
+        // A shell's outside is all walls with an inner face behind them (its rounds aside); a
+        // bent sheet (a bracket) pairs its faces too, but its edges have nothing behind them.
+        let closed_round = |p: &Prism| p.walls.iter().all(|&w| plane(&faces[w]).is_none() || walls.outer.contains(&w));
+        if let Some(main) = read.first().filter(|p| closed_round(p)) {
+            let mut ends = main.ends.to_vec();
+            ends.dedup();
+            walls.open = ends.into_iter().filter(|e| !walls.outer.contains(e)).collect();
+            walls.points = walls
+                .open
+                .iter()
+                .filter_map(|&e| {
+                    let (point, normal) = plane(&faces[e])?;
+                    let n = unit(normal);
+                    let m = main.middle();
+                    Some(m - n * (m - point).dot(n))
+                })
+                .collect();
+        }
+        if !walls.open.is_empty() {
+            let (list, read) = usable(read);
+            if !list.is_empty() {
+                chosen = Some((list, read));
+                shell = Some(walls);
+            }
+        }
     }
-    let repeats = repeats(&faces);
-    // A prism whose sides are all holes is a hole, cut and not extruded.
-    prisms.retain(|p| !p.walls.iter().all(|&w| hole(w)));
-    // Only a prism Extrude It can build: one whose slice halfway along runs round its walls. Walls
-    // that bound nothing (a round's sliver of cylinder alone, two faces side by side) are no prism.
-    let read_prisms = prisms.len();
-    if !prisms.is_empty() {
-        let weld = crate::welded(scan.positions);
-        prisms.retain(|p| crate::profile::prism_profile_from(scan, &weld, outcome, &faces, &same, size, p).is_ok());
-    }
+    // Drafts read where they make a prism Extrude It can build that explains more than the square
+    // walls do: on a noisy scan, square walls can lean alike by chance into a drafted section whose
+    // slice no profile goes round, which would hide the square prism there.
+    let (prisms, read_prisms) = chosen.unwrap_or_else(|| {
+        let square = usable(extrusions(&faces, &span_of, size, &ignored, &unscored, sign, false));
+        let drafted = usable(extrusions(&faces, &span_of, size, &ignored, &unscored, sign, true));
+        if explains(&drafted.0) > explains(&square.0) { drafted } else { square }
+    });
     let unread_prisms = read_prisms - prisms.len();
+    let inner: BTreeSet<usize> = shell.iter().flat_map(|w| w.inner.iter().copied()).collect();
+    let repeats = repeats(&faces);
     let turned_unread = revolve.as_ref().and_then(|r| crate::profile::turned_profile_of(scan, outcome, &faces, &same, size, r).err());
     let explained: BTreeSet<usize> = match &revolve {
         Some(revolve) => revolve.members.iter().copied().collect(),
-        None => prisms.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).copied().collect(),
+        None => prisms.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).chain(&inner).copied().collect(),
     };
-    let middle = crate::surface_centre(scan).unwrap_or(Vec3::ZERO);
-    let holes = holes(&faces, &hole, &explained, &repeats, &span_of, middle);
+    let holes = holes(&faces, &hole, &explained, &repeats, &span_of, centre);
     let plans = pattern_plans(&faces, &repeats, &rounds);
     // The rounds no profile holds: not a wall of a prism, nor a face of a turned part that is read.
     let profiled: BTreeSet<usize> = prisms
         .iter()
         .flat_map(|p| p.walls.iter().copied())
+        .chain(inner.iter().copied())
         .chain(revolve.iter().filter(|_| turned_unread.is_none()).flat_map(|r| r.members.iter().copied()))
         .collect();
     let fillets: Vec<EdgeRound> = rounds
@@ -1373,6 +1630,7 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         rounds,
         fillets,
         chamfers,
+        shell,
         size,
     }
 }
@@ -1401,7 +1659,7 @@ mod tests {
 
     fn read(given: &[(Face, Vec3, Vec3)], size: f64) -> Vec<Prism> {
         let faces: Vec<Face> = given.iter().map(|g| g.0).collect();
-        extrusions(&faces, &|k, d| given.get(k).map(|g| along(g.1, g.2, d)), size, &BTreeSet::new(), &BTreeSet::new())
+        extrusions(&faces, &|k, d| given.get(k).map(|g| along(g.1, g.2, d)), size, &BTreeSet::new(), &BTreeSet::new(), 1.0, true)
     }
 
     /// A plane face facing `normal` across the box from `low` to `high`.
@@ -1540,7 +1798,11 @@ mod tests {
         };
         let faces: Vec<Face> = outcome.segments.iter().map(|s| Face { shape: s.shape.unwrap(), area: s.area }).collect();
         let span_of = |k: usize, d: Vec3| outcome.segments.get(k).and_then(|s| span(&scan, s, d));
-        assert_eq!(extrusions(&faces, &span_of, scan.extent(), &BTreeSet::new(), &BTreeSet::new()).len(), 1, "the shapes alone make a prism");
+        assert_eq!(
+            extrusions(&faces, &span_of, scan.extent(), &BTreeSet::new(), &BTreeSet::new(), 1.0, true).len(),
+            1,
+            "the shapes alone make a prism"
+        );
         let reading = super::read(&scan, &outcome);
         assert!(reading.prisms.is_empty(), "{:?}", reading.prisms);
         assert_eq!(reading.unread_prisms, 1);

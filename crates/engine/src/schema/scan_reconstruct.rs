@@ -119,6 +119,21 @@ pub struct ScanPrism {
     pub ends: [usize; 2],
     /// Whether one end is no plane (a domed top): it is then as far as all its walls run.
     pub open: bool,
+    /// How far its walls lean in from its low end to its high end, in degrees (a moulded part's
+    /// draft): Extrude It sketches it at its low end and extrudes it tapered. 0 for square walls.
+    pub draft: f64,
+}
+
+/// Walls of one thickness, open at an end (a moulded housing, a tray): the prisms are read off
+/// the outside, and Shell It hollows the body they make.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanShell {
+    /// How thick the walls are, in mm.
+    pub thickness: f64,
+    /// The inner faces, set aside when the prisms are read, and the faces the shell leaves open
+    /// (by Find All's numbers).
+    pub inner: Vec<usize>,
+    pub open: Vec<usize>,
 }
 
 /// The part read as turned.
@@ -204,6 +219,9 @@ pub struct ScanReconstructResult {
     /// The flat chamfers along edges no profile holds, which Chamfer It chamfers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub chamfers: Vec<ScanEdgeChamfer>,
+    /// Walls of one thickness open at an end, which Shell It hollows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<ScanShell>,
     /// Said where the scan is mostly no shape, or nothing can be built.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -436,6 +454,23 @@ pub struct ScanChamferItParams {
     #[serde(default)]
     pub selected: Option<bool>,
     /// The body to chamfer. Default: the body Reconstruct builds.
+    #[serde(default)]
+    pub into: Option<String>,
+}
+
+/// Shell It: the body Reconstruct builds hollowed to the thickness of the scan's walls, the faces
+/// with no inner face behind them left open. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanShellItParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Build from the reading of the part of the scan selected, as `scan.reconstruct` with
+    /// `selected` gave it. Default: false, the whole scan's.
+    #[serde(default)]
+    pub selected: Option<bool>,
+    /// The body to hollow. Default: the body Reconstruct builds.
     #[serde(default)]
     pub into: Option<String>,
 }

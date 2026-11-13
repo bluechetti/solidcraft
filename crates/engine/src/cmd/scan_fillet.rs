@@ -97,7 +97,13 @@ pub fn measured(s: &Session, p: &Value, cmd: &str) -> Result<(String, String, Ve
     let stations: Vec<Vec<Station>> =
         indices.iter().map(|&e| stations(&surface, e, reach)).collect::<std::result::Result<_, String>>().map_err(|e| bad(cmd, e))?;
     let scan = mesh(s, &json!({ "body": scan_body }), cmd)?;
-    let found = fillet::measure(&scan.positions, &stations, reach, step).map_err(|e| bad(cmd, e.to_string()))?;
+    // Only the scan facing out of the corners: the inside of a thin wall near an edge is no part
+    // of its round.
+    let points = {
+        let on = solidcraft_scan::Scan::new(&scan.positions, &scan.triangles);
+        fillet::facing_out(&on, &stations, reach, solidcraft_scan::reconstruct::outward(&on))
+    };
+    let found = fillet::measure(&points, &stations, reach, step).map_err(|e| bad(cmd, e.to_string()))?;
     Ok((model, scan.body, indices, found))
 }
 

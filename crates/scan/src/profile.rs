@@ -68,8 +68,8 @@ fn rotated(v: Vec2, angle: f64) -> Vec2 {
 // A prism's profile.
 
 /// How far from square to the prism a plane's normal may be (a sine), or from along it a
-/// cylinder's axis, to be a wall along it.
-const ALONG: f64 = 0.035;
+/// cylinder's or cone's axis, to be a wall along it: a drafted wall leans up to about 10°.
+const ALONG: f64 = 0.174;
 /// The sine of the least angle between two walls that cross at a corner: nearer parallel, they
 /// are joined straight across.
 const CROSSING: f64 = 0.035;
@@ -118,8 +118,116 @@ pub fn wall_of(shape: &Shape, plane: &Plane) -> Option<Wall> {
             let along = (plane.origin - point).dot(d) / a.dot(d);
             Some(Wall::Circle { center: plane.to_local(point + a * along), radius })
         }
+        // A drafted round: the circle it makes where its axis crosses the plane.
+        Shape::Cone { apex, axis, half_angle } => {
+            let a = axis.normalized()?;
+            if a.cross(d).len() > ALONG {
+                return None;
+            }
+            let along = (plane.origin - apex).dot(d) / a.dot(d);
+            let radius = (along * half_angle.tan()).abs();
+            (radius > 0.0).then(|| Wall::Circle { center: plane.to_local(apex + a * along), radius })
+        }
         _ => None,
     }
+}
+
+/// The slice's and the sketch's planes (`plane`, `sketch`, along the same direction) turned about
+/// it so that their X runs along the largest flat wall among `walls`: a part's sides then lie
+/// along the sketch's axes, as it was drawn, rather than a few thousandths of a degree off them
+/// wherever the plane's axes happened to fall.
+fn squared_to_walls(plane: Plane, sketch: Plane, faces: &[Face], walls: &[usize]) -> (Plane, Plane) {
+    let d = plane.normal();
+    let largest = walls
+        .iter()
+        .filter_map(|&k| faces.get(k))
+        .filter_map(|f| match f.shape {
+            Shape::Plane { normal, .. } => Some((f.area, normal)),
+            _ => None,
+        })
+        .max_by(|a, b| a.0.total_cmp(&b.0));
+    let Some(x) = largest.and_then(|(_, n)| d.cross(n).normalized()) else { return (plane, sketch) };
+    let Some(y) = d.cross(x).normalized() else { return (plane, sketch) };
+    (Plane { x, y, ..plane }, Plane { x, y, ..sketch })
+}
+
+/// Lines within this of square or parallel to the largest wall are made so (radians: about 0.5°).
+const SNAP_SQUARE: f64 = 0.0087;
+/// Rounds whose radii are within this share of each other are given one radius.
+const SAME_ROUND: f64 = 0.015;
+
+/// The walls as they were designed, as far as the scan leaves no doubt: each line within
+/// [`SNAP_SQUARE`] of parallel or square to the line of the largest face turned to be exactly so,
+/// about the middle of its stretch in the slice's `loops` (where it is measured best); the
+/// circles whose radii lie within [`SAME_ROUND`] of each other's given their mean by area. The
+/// scan's few hundredths of a degree and of a millimetre otherwise reach the model (and its
+/// kernel, which can refuse to shell a tapered body whose rounds and sides are all slightly off).
+/// `areas` are the walls' faces' areas.
+pub fn as_designed(walls: &[(usize, Wall)], areas: &[f64], loops: &[(Vec<Vec2>, Vec<Option<usize>>)]) -> Vec<(usize, Wall)> {
+    let mut out = walls.to_vec();
+    let area = |i: usize| areas.get(i).copied().unwrap_or(0.0);
+    // Each wall's middle in the slice: the mean of the slice's points on it.
+    let mut sums = vec![(Vec2::ZERO, 0usize); walls.len()];
+    for (points, on) in loops {
+        for (p, w) in points.iter().zip(on) {
+            if let Some(sum) = w.and_then(|w| sums.get_mut(w)) {
+                sum.0 += *p;
+                sum.1 += 1;
+            }
+        }
+    }
+    let largest = (0..walls.len()).filter(|&i| matches!(walls[i].1, Wall::Line { .. })).max_by(|&a, &b| area(a).total_cmp(&area(b)));
+    if let Some(Wall::Line { direction: reference, .. }) = largest.map(|i| walls[i].1) {
+        // Along the sketch's own axes when it is that near them (it is once the planes are
+        // squared to the walls): exactly along them.
+        let reference = [Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0), Vec2::new(0.0, -1.0)]
+            .into_iter()
+            .find(|a| angle_to(reference, *a).abs() <= SNAP_SQUARE)
+            .unwrap_or(reference);
+        for (i, (_, wall)) in out.iter_mut().enumerate() {
+            let Wall::Line { point, direction } = *wall else { continue };
+            let candidates = [reference, reference.perp(), -reference, -reference.perp()];
+            let Some(&snapped) = candidates.iter().max_by(|a, b| a.dot(direction).total_cmp(&b.dot(direction))) else { continue };
+            let turn = angle_to(direction, snapped).abs();
+            if turn == 0.0 || turn > SNAP_SQUARE {
+                continue;
+            }
+            let pivot = match sums[i] {
+                (sum, n) if n > 0 => {
+                    let m = sum * (1.0 / n as f64);
+                    point + direction * (m - point).dot(direction)
+                }
+                _ => point,
+            };
+            *wall = Wall::Line { point: pivot, direction: snapped };
+        }
+    }
+    // Rounds of one radius: each with the others near its radius, largest group first.
+    let circles: Vec<usize> = (0..out.len()).filter(|&i| matches!(out[i].1, Wall::Circle { .. })).collect();
+    let radii: Vec<f64> = out
+        .iter()
+        .map(|(_, w)| match *w {
+            Wall::Circle { radius, .. } => radius,
+            Wall::Line { .. } => 0.0,
+        })
+        .collect();
+    let radius = |i: usize| radii[i];
+    let mut done = vec![false; out.len()];
+    for &i in &circles {
+        if done[i] {
+            continue;
+        }
+        let group: Vec<usize> = circles.iter().copied().filter(|&j| !done[j] && (radius(j) - radius(i)).abs() <= SAME_ROUND * radius(i)).collect();
+        let weight: f64 = group.iter().map(|&j| area(j).max(1e-9)).sum();
+        let mean = group.iter().map(|&j| radius(j) * area(j).max(1e-9)).sum::<f64>() / weight;
+        for &j in &group {
+            done[j] = true;
+            if let Wall::Circle { center, .. } = out[j].1 {
+                out[j].1 = Wall::Circle { center, radius: mean };
+            }
+        }
+    }
+    out
 }
 
 /// The outlines the `walls` (by face index, the wall) give from the slice's closed `loops`, each
@@ -738,6 +846,16 @@ pub fn prism_plane(prism: &Prism) -> Plane {
     Plane { origin: prism.middle(), x, y }
 }
 
+/// The plane a prism's profile is sketched in: halfway along it, extruded both ways; for a
+/// drafted prism, at its `low` end, extruded along its direction with the walls leaning in.
+pub fn prism_sketch_plane(prism: &Prism) -> Plane {
+    let plane = prism_plane(prism);
+    if prism.draft == 0.0 {
+        return plane;
+    }
+    Plane { origin: prism.origin + prism.direction * prism.low, ..plane }
+}
+
 /// Prism `prism`'s profile off its walls: the scan sliced halfway along it, each loop that runs on
 /// its walls the curves of those walls, exactly as fitted, from crossing to crossing. The plane it
 /// lies in and its outlines (`faces` index `reading.faces`); why not, when no loop goes round its
@@ -765,7 +883,10 @@ pub(crate) fn prism_profile_from(
     size: f64,
     prism: &Prism,
 ) -> Result<(Plane, Vec<Outline>), String> {
-    let plane = prism_plane(prism);
+    // The scan is sliced halfway along; the walls are where they cross the sketch's plane (the
+    // same plane for a square prism, its low end for a drafted one: their in-plane axes are the
+    // same, so the slice's loops say which wall is which there too).
+    let (plane, sketch) = squared_to_walls(prism_plane(prism), prism_sketch_plane(prism), faces, &prism.walls);
     // Which face's surface each triangle is on.
     let mut owner = vec![u32::MAX; scan.triangle_count()];
     for (k, segment) in outcome.segments.iter().enumerate().take(faces.len()) {
@@ -777,7 +898,7 @@ pub(crate) fn prism_profile_from(
         }
     }
     let walls: Vec<(usize, Wall)> =
-        prism.walls.iter().filter_map(|&k| faces.get(k).and_then(|f| wall_of(&f.shape, &plane)).map(|w| (k, w))).collect();
+        prism.walls.iter().filter_map(|&k| faces.get(k).and_then(|f| wall_of(&f.shape, &sketch)).map(|w| (k, w))).collect();
     let place: BTreeMap<usize, usize> = walls.iter().enumerate().map(|(i, (k, _))| (*k, i)).collect();
     let loops: Vec<(Vec<Vec2>, Vec<Option<usize>>)> = crate::section::section_welded(scan, weld, &plane)
         .into_iter()
@@ -787,11 +908,13 @@ pub(crate) fn prism_profile_from(
             (r.points, on)
         })
         .collect();
+    let areas: Vec<f64> = walls.iter().map(|(k, _)| faces.get(*k).map_or(0.0, |f| f.area)).collect();
+    let walls = as_designed(&walls, &areas, &loops);
     let outlines = prism_outlines(&walls, &loops, 0.005 * size);
     if outlines.is_empty() {
         return Err("no loop of the scan's slice halfway along the prism runs round its walls".into());
     }
-    Ok((plane, outlines))
+    Ok((sketch, outlines))
 }
 
 /// The plane a turned part's profile lies in: through the axis, its X along it and its Y square
@@ -1145,6 +1268,37 @@ mod tests {
         let length: f64 = (0..points.len()).map(|i| points[i].dist(points[(i + 1) % points.len()])).sum();
         let expected = 100.0 + std::f64::consts::TAU * 5.0;
         assert!((length - expected).abs() < 0.1, "{length} against {expected}");
+    }
+
+    /// Walls a scan leaves slightly off: a side 0.2° off square to the largest, turned about the
+    /// middle of its stretch to be square; a side 2° off left as it is; rounds of 5.99 and 6.03
+    /// given one radius, a round of 3 its own.
+    #[test]
+    fn walls_are_squared_and_rounds_made_one_radius_as_designed() {
+        let off = 0.2f64.to_radians();
+        let walls = vec![
+            (0, Wall::Line { point: Vec2::new(0.0, -10.0), direction: Vec2::new(1.0, 0.0) }),
+            (1, Wall::Line { point: Vec2::new(20.0, 0.0), direction: Vec2::new(off.sin(), off.cos()) }),
+            (2, Wall::Line { point: Vec2::new(0.0, 10.0), direction: Vec2::new(2f64.to_radians().cos(), 2f64.to_radians().sin()) }),
+            (3, Wall::Circle { center: Vec2::new(14.0, -4.0), radius: 5.99 }),
+            (4, Wall::Circle { center: Vec2::new(-14.0, -4.0), radius: 6.03 }),
+            (5, Wall::Circle { center: Vec2::new(0.0, 0.0), radius: 3.0 }),
+        ];
+        let areas = [500.0, 100.0, 100.0, 10.0, 10.0, 10.0];
+        // The slice's points on the second side, round its middle at y = 5.
+        let points: Vec<Vec2> = (0..5).map(|k| Vec2::new(20.0 + (3.0 + f64::from(k)) * off.sin(), (3.0 + f64::from(k)) * off.cos())).collect();
+        let loops = vec![(points, vec![Some(1); 5])];
+        let out = as_designed(&walls, &areas, &loops);
+        let Wall::Line { point, direction } = out[1].1 else { panic!("a line") };
+        assert!((direction.x).abs() < 1e-12 && (direction.y - 1.0).abs() < 1e-12, "square: {direction:?}");
+        assert!((point.x - (20.0 + 5.0 * off.sin())).abs() < 1e-9, "turned about its middle: {point:?}");
+        assert_eq!(out[2].1, walls[2].1, "2° off is a side of its own");
+        let radius = |i: usize| match out[i].1 {
+            Wall::Circle { radius, .. } => radius,
+            Wall::Line { .. } => f64::NAN,
+        };
+        assert!((radius(3) - 6.01).abs() < 1e-9 && (radius(4) - 6.01).abs() < 1e-9, "{} {}", radius(3), radius(4));
+        assert_eq!(radius(5), 3.0);
     }
 
     /// A rounded rectangle 40 × 30, corners R 5, whose rounds were fitted a little off its sides,

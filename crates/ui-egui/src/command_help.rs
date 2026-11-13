@@ -190,6 +190,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.sections_along_curve",
     "scan.select",
     "scan.select_inside_curve",
+    "scan.shell_it",
     "scan.slice_surface",
     "scan.split",
     "scan.square_to_symmetry",

@@ -93,6 +93,9 @@ fn label(app: &SolveApp, reading: &Reading, step: &Proposal) -> String {
         }
         Proposal::Fillet => crate::i18n::format("ui.scan_reconstruct_fillet", &[("edges", &reading.fillets.len().to_string())]),
         Proposal::Chamfer => crate::i18n::format("ui.scan_reconstruct_chamfer", &[("edges", &reading.chamfers.len().to_string())]),
+        Proposal::Shell => {
+            crate::i18n::format("ui.scan_reconstruct_shell", &[("thickness", &mm(reading.shell.as_ref().map_or(0.0, |w| w.thickness)))])
+        }
     }
 }
 

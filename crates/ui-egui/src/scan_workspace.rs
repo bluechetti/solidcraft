@@ -147,6 +147,7 @@ mod tests {
             "scan.reconstruct_selection",
             "scan.extrude_it",
             "scan.revolve_it",
+            "scan.shell_it",
             "scan.cut_it",
             "scan.pattern_it",
             "scan.fillet_it",

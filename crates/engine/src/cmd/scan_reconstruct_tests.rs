@@ -237,6 +237,7 @@ fn reconstruct_proposes_no_cut_with_nothing_to_cut() {
         rounds: Default::default(),
         fillets: Vec::new(),
         chamfers: Vec::new(),
+        shell: None,
         size: 60.0,
     };
     assert!(super::proposals(&reading, false).is_empty());
@@ -422,4 +423,44 @@ fn a_flange_with_bolt_holes_is_revolved_and_cut_not_extruded_again() {
     }
     let v = volume(&s, &format!("{scan} Reconstructed"));
     assert!((v - expected).abs() < 0.005 * expected, "{v} against {expected}");
+}
+
+/// A moulded housing: an 80 × 60 × 30 box, its sides drafted 2° in toward the top, its upright
+/// corners R 6, shelled 2 mm open at the bottom, its outer top rim R 3. Reconstruct reads one
+/// drafted prism off the outside (the inside set aside as the shell's), walls 2 mm thick open at
+/// the bottom and the rim's rounds; Extrude It, Shell It and Fillet It build it back.
+#[test]
+fn a_drafted_shelled_housing_is_extruded_shelled_and_filleted_back_from_its_scan() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 80, "width": 60, "height": 30, "center": [0, 0, 15]}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(
+        &mut part,
+        "solid.draft",
+        json!({"faces": [[40, 0, 15], [-40, 0, 15], [0, 30, 15], [0, -30, 15]], "angle": "2 deg", "neutral": "XY", "pull": [0, 0, 1]}),
+    );
+    let lean = 15.0 * 2f64.to_radians().tan();
+    let (x, y) = (40.0 - lean, 30.0 - lean);
+    run(&mut part, "solid.fillet", json!({"edges": [[x, y, 15], [-x, y, 15], [x, -y, 15], [-x, -y, 15]], "radius": 6}));
+    run(&mut part, "solid.shell", json!({"faces": [[0, 0, 0]], "thickness": 2}));
+    run(&mut part, "solid.fillet", json!({"edges": [[0, 30.0 - 2.0 * lean, 30]], "radius": 3}));
+    let expected = volume(&part, &body);
+    let (mut s, scan) = scanned(&part, &body, 2, "housing");
+
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    assert_eq!(read["prisms"].as_array().unwrap().len(), 1, "{read}");
+    let prism = &read["prisms"][0];
+    assert!((prism["draft"].as_f64().unwrap() - 2.0).abs() < 0.05, "drafted 2°: {read}");
+    assert_eq!(prism["direction"], json!([0.0, 0.0, 1.0]), "along the grid's Z: {read}");
+    let shell = &read["shell"];
+    assert!((shell["thickness"].as_f64().unwrap() - 2.0).abs() < 0.02, "{read}");
+    assert_eq!(shell["open"].as_array().unwrap().len(), 1, "open at the bottom only: {read}");
+    let commands: Vec<&str> = read["proposals"].as_array().unwrap().iter().map(|p| p["command"].as_str().unwrap()).collect();
+    assert_eq!(commands, ["scan.extrude_it", "scan.shell_it", "scan.fillet_it"], "{read}");
+    for step in read["proposals"].as_array().unwrap() {
+        let done = run(&mut s, step["command"].as_str().unwrap(), step["params"].clone());
+        assert_ne!(done["fit"]["verdict"], "worse", "{done}");
+    }
+    let v = volume(&s, &format!("{scan} Reconstructed"));
+    assert!((v - expected).abs() < 0.01 * expected, "{v} against the housing's {expected}");
 }

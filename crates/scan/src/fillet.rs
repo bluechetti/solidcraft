@@ -110,6 +110,35 @@ struct Section {
 /// The most points fitted.
 const MOST_POINTS: usize = 6_000;
 
+/// The corners of the scan's triangles near `edges` (within `reach` of their stations' box)
+/// that face out of the corner: each triangle's outward normal (its winding times `outward`)
+/// not turned back against the two faces' outward normals at its nearest station. A round and the
+/// faces it joins all face out of the corner; the inside of a thin wall near the edge (a shelled
+/// part's, a few millimetres in) faces back into it, and read as part of the corner it makes any
+/// round look sharp.
+pub fn facing_out(scan: &crate::Scan, edges: &[Vec<Station>], reach: f64, outward: f64) -> Vec<Vec3> {
+    let stations: Vec<&Station> = edges.iter().flatten().collect();
+    let Some(first) = stations.first() else { return Vec::new() };
+    let (lo, hi) = stations.iter().fold((first.point, first.point), |(lo, hi), s| (lo.min(s.point), hi.max(s.point)));
+    let pad = Vec3::new(1.0, 1.0, 1.0) * reach;
+    let (lo, hi) = (lo - pad, hi + pad);
+    let inside = |q: Vec3| q.x >= lo.x && q.y >= lo.y && q.z >= lo.z && q.x <= hi.x && q.y <= hi.y && q.z <= hi.z;
+    let mut out = Vec::new();
+    for t in 0..scan.triangle_count() {
+        let Some([a, b, c]) = scan.corners(t) else { continue };
+        if !(inside(a) || inside(b) || inside(c)) {
+            continue;
+        }
+        let Some(normal) = ((b - a).cross(c - a) * outward).normalized() else { continue };
+        let middle = (a + b + c) / 3.0;
+        let Some(near) = stations.iter().min_by(|x, y| x.point.dist(middle).total_cmp(&y.point.dist(middle))) else { continue };
+        if normal.dot(near.faces[0].0 + near.faces[1].0) >= 0.0 {
+            out.extend([a, b, c]);
+        }
+    }
+    out
+}
+
 /// One radius fitted to the scan's `points` near `edges` (each edge's stations, in order).
 /// Points further than `reach` from an edge are not used; `step` > 0 rounds the radius used to a
 /// multiple of it.
