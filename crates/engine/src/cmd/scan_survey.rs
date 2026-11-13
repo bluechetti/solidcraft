@@ -34,22 +34,59 @@ const PRISMATIC: f64 = 0.6;
 const ORGANIC: f64 = 0.3;
 
 pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.survey", "Survey Scan", crate::checked!("scan.survey", survey))
-    .icon("curvature_map")
+    .at("SCAN", "INSERT")
+    .icon("inspect")
     .contract(&CONTRACT)
     .output(output_schema_for::<ScanSurveyResult>)
     .noundo()
     .params("body?: mesh body (default: the selected or only one): a first look at the scan, changing nothing: its size (own_size along its own directions, longest first), fineness, noise and the Denoise strength it would take, holes, rims, floating pieces, open edges no hole closes, how much of it is broad flat faces, whether it is sheet-like, what Find All read off it (once it has run), the design's other scans and models, and `next`: the commands to run next with why and parameters to start from, in the order the work goes → body, triangles, points, unusable, low, high, center, own_size, area, typical_edge, units_hint, noise, smoothing, tolerance, tolerance_set, holes, longest_hole, rims, open_edges, tangled_edges, pieces, floating, floating_share, flat_share, sheet_like, shapes{in_shapes, planes, cylinders, spheres, cones, tori, freeform, regions}, other_scans, models, next[{command, why, params}]")];
 
+/// A survey kept for the Survey dialog: the reply, for the scan as it was read.
+#[derive(Debug)]
+pub struct KeptSurvey {
+    pub scan: String,
+    held: [usize; 4],
+    fingerprint: u64,
+    /// Whether Find All's reading was in the survey.
+    had_shapes: bool,
+    pub reply: Value,
+}
+
+impl KeptSurvey {
+    /// Whether it is of the scan as it is now: the same mesh, and Find All's reading in it when
+    /// there is one now (a survey read before Find All ran is read again after).
+    pub fn current(&self, s: &Session) -> bool {
+        let state = s.model.state();
+        let same = state
+            .body(&self.scan)
+            .and_then(|b| b.body.triangle_mesh())
+            .is_some_and(|(p, t)| super::reconstruct::held(p, t) == self.held || super::reconstruct::fingerprint(p, t) == self.fingerprint);
+        same && self.had_shapes == shapes_now(s, &self.scan)
+    }
+}
+
+/// Whether Find All's reading of `scan` as it is now is in the session.
+fn shapes_now(s: &Session, scan: &str) -> bool {
+    s.scan_shapes.as_ref().is_some_and(|k| k.scan == scan && k.current(s))
+}
+
 fn survey(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.survey";
     let body = mesh_name(s, p, cmd)?;
-    let (found, other_scans, models) = {
+    let (found, other_scans, models, held, fingerprint) = {
         let state = s.model.state();
         let b = state.body(&body).ok_or_else(|| bad(cmd, format!("no body `{body}`")))?;
         let (positions, triangles) = b.body.triangle_mesh().ok_or_else(|| bad(cmd, format!("`{body}` is not a scan (a mesh body)")))?;
         let found = look(&Scan::new(positions, triangles), FLOATING_SHARE);
+        let (held, fingerprint) = (super::reconstruct::held(positions, triangles), super::reconstruct::fingerprint(positions, triangles));
         let (scans, models): (Vec<_>, Vec<_>) = state.bodies.iter().filter(|b| b.name != body).partition(|b| b.body.is_mesh());
-        (found, scans.iter().map(|b| b.name.clone()).collect::<Vec<_>>(), models.iter().map(|b| b.name.clone()).collect::<Vec<_>>())
+        (
+            found,
+            scans.iter().map(|b| b.name.clone()).collect::<Vec<_>>(),
+            models.iter().map(|b| b.name.clone()).collect::<Vec<_>>(),
+            held,
+            fingerprint,
+        )
     };
     let found = found.ok_or_else(|| bad(cmd, format!("`{body}` has no triangle with area to read")))?;
     let shapes = s.scan_shapes.clone().filter(|k| k.scan == body && k.current(s)).map(|k| shares(&k.outcome));
@@ -105,7 +142,16 @@ fn survey(s: &mut Session, p: &Value) -> Result<Value> {
         next,
         param_warnings: Vec::new(),
     };
-    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+    let had_shapes = reply.shapes.is_some();
+    let reply = serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))?;
+    s.scan_survey = Some(std::sync::Arc::new(KeptSurvey {
+        scan: reply["body"].as_str().unwrap_or_default().to_owned(),
+        held,
+        fingerprint,
+        had_shapes,
+        reply: reply.clone(),
+    }));
+    Ok(reply)
 }
 
 /// Find All's regions as shares of the area by kind.

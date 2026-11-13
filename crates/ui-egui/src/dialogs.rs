@@ -432,6 +432,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             ScanSelect(crate::dialogs_scan_select::ScanSelect),
             ScanEdgeCurve(crate::dialogs_scan_edge::EdgeCurve),
             ScanReconstruct(crate::dialogs_scan_reconstruct::Reconstruct),
+            ScanSurvey(crate::dialogs_scan_survey::Survey),
             /// Appearance (`dialogs_appearance`).
             Appearance(crate::dialogs_appearance::Ap),
             /// Contact sets, motion studies, exploded views, configurations (`dialogs_motion`).
@@ -1164,6 +1165,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_surface_check::start(app, id))
                     .or_else(|| crate::dialogs_scan_flatten::start(app, id))
                     .or_else(|| crate::dialogs_scan_template::start(app, id))
+                    .or_else(|| crate::dialogs_scan_survey::start(app, id))
                     .or_else(|| crate::dialogs_scan_patches::start(app, id))
                     .or_else(|| crate::dialogs_scan_reconstruct::start(app, id))
                     .or_else(|| crate::dialogs_appearance::start(app, id))
@@ -2717,6 +2719,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::ScanSelect(_) => "SELECT ON SCAN",
         Kind::ScanEdgeCurve(_) => "CURVE FROM SELECTION EDGE",
         Kind::ScanReconstruct(_) => "RECONSTRUCT",
+        Kind::ScanSurvey(_) => "SURVEY SCAN",
         Kind::Appearance(_) => "APPEARANCE",
         Kind::Motion(k) => k.title(),
         Kind::Part(_) => "INSERT PART",
@@ -3817,7 +3820,7 @@ pub(crate) fn card_width(d: &Dialog) -> f32 {
 /// says what it does.
 pub(crate) fn action_labels(kind: &Kind) -> (&'static str, &'static str) {
     match kind {
-        Kind::Measure { .. } => ("", "Close"),
+        Kind::Measure { .. } | Kind::ScanSurvey(_) => ("", "Close"),
         Kind::ConfirmDelete { .. } => ("Delete", "Cancel"),
         Kind::SaveMesh(k) => (crate::dialogs_save_mesh::button(k), "Cancel"),
         Kind::ViewDxf { .. } => ("Export DXF…", "Cancel"),
@@ -3928,7 +3931,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let heading = if d.editing.is_some() { crate::i18n::format("dialog.edit_title", &[("title", tr(raw_title))]) } else { tr(raw_title).to_string() };
     let frame = crate::ui_kit::Panel::feature_frame(ctx, app.ui.layout, side);
     // OK is offered once the inputs make a feature.
-    let has_ok = !matches!(d.kind, Kind::Sketch | Kind::Measure { .. });
+    let has_ok = !matches!(d.kind, Kind::Sketch | Kind::Measure { .. } | Kind::ScanSurvey(_));
     let valid = match &d.kind {
         Kind::Sketch => false,
         // Nothing picked is an answer too: OK empties the chat's tray.
@@ -4123,7 +4126,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let nothing_focused = ctx.memory(|m| m.focused().is_none());
     let canvas_enter = enter_free && ctx.memory(|m| m.had_focus_last_frame(egui::Id::unique("sc_canvas_value")));
     // Tables (configurations, a study's keys) take Enter for their cells.
-    let enter_applies = !matches!(d.kind, Kind::Sketch | Kind::Measure { .. } | Kind::ConfirmDelete { .. })
+    let enter_applies = !matches!(d.kind, Kind::Sketch | Kind::Measure { .. } | Kind::ConfirmDelete { .. } | Kind::ScanSurvey(_))
         && !matches!(&d.kind, Kind::Motion(k) if k.wide())
         && !matches!(&d.kind, Kind::Material { editor, .. } if editor.editing());
     let report_active = app.issue_report.draft.is_some();
@@ -6110,6 +6113,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanSelect(k) => return crate::dialogs_scan_select::commands(k),
         Kind::ScanEdgeCurve(k) => return crate::dialogs_scan_edge::commands(k),
         Kind::ScanReconstruct(k) => return crate::dialogs_scan_reconstruct::commands(app, k),
+        Kind::ScanSurvey(_) => return Ok(Vec::new()),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),
         Kind::Part(k) => return crate::dialogs_parts::commands(app, k, &d.inputs),

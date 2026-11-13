@@ -290,6 +290,10 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
     {
         return false;
     }
+    // Survey Scan reads the scan before its dialog shows what it found.
+    if id == "scan.survey" && !crate::dialogs_scan_survey::read_first(app) {
+        return false;
+    }
     if id == "inspect.section" && app.preferences.viewport_section_status && app.session.section.is_some() {
         let _ = app.run(id, json!({"clear":true}));
         return false;

@@ -122,6 +122,8 @@ pub(crate) fn computed_whole(id: &str) -> bool {
             // scan, 45 s on 10 million. What they read comes back with the copy.
             | "scan.find_all"
             | "scan.reconstruct"
+            // A first look reads every triangle: seconds on ten million.
+            | "scan.survey"
             | "scan.remesh"
             | "scan.mesh_from_points"
             | "scan.keep_selection"

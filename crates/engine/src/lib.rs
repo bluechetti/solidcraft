@@ -602,6 +602,9 @@ pub struct Session {
     /// viewport to colour and Reconstruct's tools to build from. View state: not part of the
     /// design and not an undo step.
     pub scan_shapes: Option<std::sync::Arc<cmd::scan::reconstruct::ScanShapes>>,
+    /// What `scan.survey` last read off a scan, for the Survey dialog. View state: not part of the
+    /// design and not an undo step.
+    pub scan_survey: Option<std::sync::Arc<cmd::scan::survey::KeptSurvey>>,
     /// What is selected on a scan (`scan.select`), for the scan tools that work on part of one.
     /// View state: not part of the design and not an undo step (`scan.keep_selection` keeps it).
     pub scan_selection: Option<std::sync::Arc<cmd::scan::select::ScanSelected>>,
@@ -876,6 +879,7 @@ impl Session {
             continuity: Vec::new(),
             scan_deviation: None,
             scan_shapes: None,
+            scan_survey: None,
             scan_selection: None,
             scan_base_cycle: None,
             scan_flats: Vec::new(),
@@ -1991,6 +1995,7 @@ impl Session {
             // What Find All read is kept, so a copy computing a scan tool beside the window
             // reads it again only when the scan changed (`ScanShapes::current`).
             scan_shapes: self.scan_shapes.clone(),
+            scan_survey: None,
             scan_selection: self.scan_selection.clone(),
             scan_base_cycle: None,
             scan_flats: Vec::new(),
@@ -2131,6 +2136,7 @@ impl Session {
         }
         let replies = prepared.steps.into_iter().map(|step| (step.id, step.reply)).collect();
         let shapes = prepared.computed.scan_shapes.take();
+        let survey = prepared.computed.scan_survey.take();
         self.accept_computed(prepared.computed);
         // What Find All read on the copy (Find All or Reconstruct computed beside the window),
         // when it is of the scan as the design now has it.
@@ -2139,6 +2145,10 @@ impl Session {
             && shapes.current(self)
         {
             self.scan_shapes = Some(shapes);
+        }
+        // The survey a copy read (Survey Scan computed beside the window), of the scan as it is.
+        if let Some(survey) = survey.filter(|k| k.current(self)) {
+            self.scan_survey = Some(survey);
         }
         Ok(replies)
     }

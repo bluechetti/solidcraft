@@ -24,6 +24,7 @@ use crate::{EngineError, Result, Session};
 const CONTRACT: TypedContract<ScanPanelExportParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.panel_export", "Export Panel", crate::checked!("scan.panel_export", export))
+    .icon("export")
     .contract(&CONTRACT)
     .output(output_schema_for::<ScanPanelExportResult>)
     .params("the straight panel as for `scan.panel_proposals` (body?, plane?, tolerance?, side?, least_area?, gap?, step?, smooth?, round?, finger?, cover?, panel?: with what is dropped, moved and how each cut-out is cut); path?: the pieces' DXF (the sheets' DXF, holes CSV, cut list CSV, checks CSV and the drawings' PDF are written beside it, named after it; without it their text is returned, the PDF only counted): each piece at its own 0, 0 (its blank's bottom-left corner seen from the room) with its outline, cut-outs, holes (layer HOLES, numbered), fixing points (FIXINGS, F1, F2, …), its number and blank size and dimension lines; the blanks laid on sheets; the design is not changed → files, pieces[{number, blank, sheet, holes, fixings}], sheets, pdf_pages, checks[{from_piece, from_hole, to_piece, to_hole, distance, across, up}]")];

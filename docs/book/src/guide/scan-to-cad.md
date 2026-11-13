@@ -110,6 +110,14 @@ way on the new fit, so a re-scan does not cost your edits. A surface reshaped so
 those inside a curve on the scan. **Keep Selection** and **Delete Selection** cut the scan down, and **Reconstruct
 Selection** and **Curve from Selection** work on the selected part only.
 
+## Survey Scan
+
+**Survey Scan** (SCAN › INSERT menu) takes a first look at a scan without changing it: its size
+along its own directions, its noise, holes, floating pieces and edges to repair, and, once Find
+All has read it, how much of it is simple shapes. Below that it lists the next steps in the order
+the work goes, each with its reason and a button that opens that tool. Open it again after
+cleaning and after Find All: the route it suggests follows what they found.
+
 ## With an agent
 
 An agent working through SolidCraft's [MCP server](mcp.md) reads the bundled skill

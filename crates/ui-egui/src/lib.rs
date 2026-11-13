@@ -66,6 +66,7 @@ pub(crate) mod dialogs_scan_select;
 pub(crate) mod dialogs_scan_slice;
 pub(crate) mod dialogs_scan_split;
 pub(crate) mod dialogs_scan_surface;
+pub(crate) mod dialogs_scan_survey;
 pub(crate) mod dialogs_scan_template;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;

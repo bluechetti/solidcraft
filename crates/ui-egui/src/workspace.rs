@@ -332,7 +332,7 @@ pub const SECTIONS: &[Section] = &[
     // fit native geometry to it, sketch on that, then check the result against the scan. The
     // tools not built yet are greyed with their reason; the working ones are shared with their
     // home tabs.
-    Section { tab: "SCAN", panel: "INSERT", promoted: 2, ids: &["file.insert_mesh", "pointcloud.insert"] },
+    Section { tab: "SCAN", panel: "INSERT", promoted: 2, ids: &["file.insert_mesh", "pointcloud.insert", "scan.survey"] },
     Section {
         tab: "SCAN",
         panel: "CLEAN",

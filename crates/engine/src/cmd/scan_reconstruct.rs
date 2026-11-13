@@ -226,12 +226,12 @@ impl ScanShapes {
     }
 }
 
-fn held(positions: &[Vec3], triangles: &[[u32; 3]]) -> [usize; 4] {
+pub(super) fn held(positions: &[Vec3], triangles: &[[u32; 3]]) -> [usize; 4] {
     [positions.as_ptr() as usize, positions.len(), triangles.as_ptr() as usize, triangles.len()]
 }
 
 /// A cheap fingerprint of a mesh: its sizes and every position's and triangle's bits, folded.
-fn fingerprint(positions: &[Vec3], triangles: &[[u32; 3]]) -> u64 {
+pub(super) fn fingerprint(positions: &[Vec3], triangles: &[[u32; 3]]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ (positions.len() as u64) ^ ((triangles.len() as u64) << 32);
     let mut mix = |x: u64| {
         h ^= x;
