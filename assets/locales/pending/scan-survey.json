@@ -1,0 +1,26 @@
+{
+  "ar": {
+    "cmd.scan_survey": "فحص المسح"
+  },
+  "de": {
+    "cmd.scan_survey": "Scan begutachten"
+  },
+  "en": {
+    "cmd.scan_survey": "Survey Scan"
+  },
+  "he": {
+    "cmd.scan_survey": "סקירת סריקה"
+  },
+  "ja": {
+    "cmd.scan_survey": "スキャンを調査"
+  },
+  "ko": {
+    "cmd.scan_survey": "스캔 살펴보기"
+  },
+  "vi": {
+    "cmd.scan_survey": "Khảo sát bản quét"
+  },
+  "zh": {
+    "cmd.scan_survey": "勘查扫描"
+  }
+}

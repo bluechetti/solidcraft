@@ -1133,6 +1133,9 @@ pub mod split;
 #[path = "scan_surface.rs"]
 pub mod surface;
 
+#[path = "scan_survey.rs"]
+pub mod survey;
+
 #[path = "scan_template.rs"]
 pub mod template;
 

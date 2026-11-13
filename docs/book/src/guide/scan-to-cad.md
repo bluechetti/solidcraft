@@ -110,6 +110,17 @@ way on the new fit, so a re-scan does not cost your edits. A surface reshaped so
 those inside a curve on the scan. **Keep Selection** and **Delete Selection** cut the scan down, and **Reconstruct
 Selection** and **Curve from Selection** work on the selected part only.
 
+## With an agent
+
+An agent working through SolidCraft's [MCP server](mcp.md) reads the bundled skill
+`solidcraft-scan-to-cad` and starts on a scan with **Survey Scan** (`scan.survey`). Survey Scan
+changes nothing. It reports the scan's size along its own directions, its noise, its holes,
+floating pieces and open edges, whether it is a wall or a panel, and, once Find All has run, how
+much of it is planes, cylinders and other shapes. Its `next` field lists the commands to run next
+in the order the work goes, each with the reason and parameters to start from. For example, it
+leaves a wall's holes open, because on a wall they are the frame's own holes, and it suggests
+Denoise only when the noise is a real share of the scan's tolerance.
+
 ## Terms
 
 The terms used here (*scan*, *scan surface*, *curve on scan*, *deviation*, *section*, *Free

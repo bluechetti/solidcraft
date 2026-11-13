@@ -6,7 +6,7 @@ description that tell the agent when to load it, and an optional supporting refe
 
 The modelling documents are built into SolidCraft: its MCP server's `skill_reference` tool returns them, so an
 agent without file access (such as the one in SolidCraft's own chat) can still read a skill's reference.
-The contributor skills (everything except modeling, editing, checking and mechanisms) are for repository work and are not embedded in that tool. `AGENTS.md` routes to them; `cargo xtask skills` fails when its table and this folder disagree or a file, `cargo xtask` command or skill they name is gone.
+The contributor skills (everything except modeling, editing, checking, mechanisms and scan-to-cad) are for repository work and are not embedded in that tool. `AGENTS.md` routes to them; `cargo xtask skills` fails when its table and this folder disagree or a file, `cargo xtask` command or skill they name is gone.
 
 | Skill | Loads when the agent |
 |---|---|
@@ -26,6 +26,7 @@ The contributor skills (everything except modeling, editing, checking and mechan
 | [`solidcraft-editing`](solidcraft-editing/SKILL.md) | changes, fixes or extends an existing design |
 | [`solidcraft-checking`](solidcraft-checking/SKILL.md) | builds, changes or ports a design, next to the two above: parameter ranges, every allowed value, exact STEP comparison, regression tests, designs kept in git |
 | [`solidcraft-mechanisms`](solidcraft-mechanisms/SKILL.md) | builds, drives or animates an assembly: components, joints, motion links, closed loops such as actuators, contact sets, motion studies |
+| [`solidcraft-scan-to-cad`](solidcraft-scan-to-cad/SKILL.md) | turns a scan (a mesh measured off a real part, wall or object) into CAD: reads it with `scan.survey`, cleans and places it, picks the route (Reconstruct, fitted surfaces, Flat Template or fits by hand) and checks the result with Scan Deviation |
 | [`solidcraft-reporting`](solidcraft-reporting/SKILL.md) | hears that something went wrong (a crash, a failed command, a wrong shape or number, a hang): reproduces it in a fresh design, shrinks it to a minimal script and writes the bug report |
 
 The modelling skills teach the agent to:
@@ -44,14 +45,14 @@ The modelling skills, for Claude Code in all projects:
 
 ```sh
 git clone --depth 1 https://github.com/tangency-labs/solidcraft
-cp -r solidcraft/skills/solidcraft-{modeling,editing,checking,mechanisms} ~/.claude/skills/
+cp -r solidcraft/skills/solidcraft-{modeling,editing,checking,mechanisms,scan-to-cad} ~/.claude/skills/
 ```
 
 Windows (PowerShell):
 
 ```powershell
 git clone --depth 1 https://github.com/tangency-labs/solidcraft
-foreach ($s in 'modeling','editing','checking','mechanisms') { Copy-Item -Recurse solidcraft\skills\solidcraft-$s $HOME\.claude\skills\ }
+foreach ($s in 'modeling','editing','checking','mechanisms','scan-to-cad') { Copy-Item -Recurse solidcraft\skills\solidcraft-$s $HOME\.claude\skills\ }
 ```
 
 - **One project only:** copy the folders into that project's `.claude/skills/` instead.

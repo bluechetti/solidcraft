@@ -35,7 +35,9 @@ open the user watches the model appear, otherwise a headless session builds it. 
 with these tools straight away. Units are millimetres and degrees in expressions, Z is up.\n\n\
 Start: for anything beyond one primitive, call `skill_reference {\"skill\":\"solidcraft-modeling\"}` first (command shapes, \
 ids, plane axes, worked examples and the known traps of this version; `file: \"SKILL.md\"` has the workflow). Then \
-`inspect_design {\"measure\":false,\"sketches\":false}` to see what is already there.\n\n\
+`inspect_design {\"measure\":false,\"sketches\":false}` to see what is already there. A scan (a mesh body, or a mesh file the \
+user brings) is turned into CAD with `skill_reference {\"skill\":\"solidcraft-scan-to-cad\"}`: start with `scan.survey`, which reads it \
+and names the commands to run next.\n\n\
 Plan: work the numbers out first (the parameters, the expected volume and bounding box after each stage, the world point you \
 will use for each edge or face pick). Then build in a few `batch` calls (all-or-nothing; the reply names the failing step; \
 `save`, `measure` and `set_parameter` can be steps). Use `verbose: false`. Name every feature. `list_commands {\"filter\": word}` \
