@@ -537,11 +537,23 @@ pub struct Options<'a> {
     /// The seams to use (moved by hand) instead of finding them; the holes near them and the fixing
     /// points are worked out for these.
     pub seams: Option<&'a [Seam]>,
+    /// Openings behind the panel of this area or more (mm²) are traced for pieces to drop into
+    /// them (0: none).
+    pub insert_least: f64,
 }
 
 impl Default for Options<'_> {
     fn default() -> Self {
-        Options { edges: None, sheet: SHEET, round: 5.0, clearance: CLEARANCE, access_holes: false, spacing: SPACING, seams: None }
+        Options {
+            edges: None,
+            sheet: SHEET,
+            round: 5.0,
+            clearance: CLEARANCE,
+            access_holes: false,
+            spacing: SPACING,
+            seams: None,
+            insert_least: crate::inserts::LEAST,
+        }
     }
 }
 
@@ -564,6 +576,8 @@ pub struct Proposal {
     pub clearance: f64,
     /// Places an edge needed fastening but no flat metal was found behind it.
     pub unbacked: usize,
+    /// The openings in the wall's metal behind the panel, for pieces cut to drop into them.
+    pub inserts: Vec<crate::inserts::Insert>,
 }
 
 /// What is kept of a proposal: a mark for each cut-out (and how it is cut), seam, hole and fixing
@@ -577,6 +591,7 @@ pub struct Keep {
     pub holes: Vec<bool>,
     pub fixings: Vec<bool>,
     pub moved: Vec<Seam>,
+    pub inserts: Vec<bool>,
 }
 
 impl Keep {
@@ -589,7 +604,12 @@ impl Keep {
             holes: vec![true; p.holes.len()],
             fixings: vec![true; p.fixings.len()],
             moved: p.seams.clone(),
+            inserts: vec![true; p.inserts.len()],
         }
+    }
+    /// The openings kept, as pieces to drop into them.
+    pub fn inserts<'a>(&'a self, p: &'a Proposal) -> impl Iterator<Item = (usize, &'a crate::inserts::Insert)> + 'a {
+        p.inserts.iter().enumerate().filter(|(i, _)| Keep::mark(&self.inserts, *i))
     }
     fn mark(marks: &[bool], i: usize) -> bool {
         marks.get(i).copied().unwrap_or(true)
@@ -648,6 +668,7 @@ pub fn propose(made: &Template, holes: &[Hole], backing: Option<&Backing>, optio
         over: 0.0,
         clearance,
         unbacked: 0,
+        inserts: Vec::new(),
     };
     let panel = lay(&p, &Keep::all(&p)).outline;
     let inside: Vec<Hole> = holes.iter().copied().filter(|h| contains(&panel, h.at) && (options.access_holes || h.diameter < ACCESS_HOLE)).collect();
@@ -683,6 +704,9 @@ pub fn propose(made: &Template, holes: &[Hole], backing: Option<&Backing>, optio
         let (fixings, unbacked) = fixings_for(&panel, &p.seams, clearance, &p.holes, &at, backing, options.spacing);
         p.fixings = fixings;
         p.unbacked = unbacked;
+    }
+    if let Some(backing) = backing.filter(|_| options.insert_least.is_finite() && options.insert_least > 0.0) {
+        p.inserts = crate::inserts::find(made, backing, &edges, &panel, &p.seams, options.insert_least);
     }
     Some(p)
 }
@@ -1376,6 +1400,26 @@ impl Backing {
             }
         }
         all > 0 && seen as f64 >= 0.6 * all as f64
+    }
+    /// How far the frontmost surface over `p` stands in front of the plane through `p` square to
+    /// the backing's normal (mm; behind it is below 0); none where the scan has nothing.
+    pub fn front_at(&self, p: Vec3) -> Option<f64> {
+        let d = p - self.origin;
+        let q = Vec2::new(d.dot(self.x), d.dot(self.y));
+        let (ci, cj) = ((q.x - self.lo.x) / self.cell, (q.y - self.lo.y) / self.cell);
+        if !(ci >= 0.0 && cj >= 0.0) {
+            return None;
+        }
+        let (i, j) = (ci as usize, cj as usize);
+        if i >= self.w || j >= self.h {
+            return None;
+        }
+        let v = *self.front.get(j * self.w + i)?;
+        (!v.is_nan()).then(|| f64::from(v) - d.dot(self.normal))
+    }
+    /// The backing's cell (mm).
+    pub fn cell(&self) -> f64 {
+        self.cell
     }
     /// A point of the backing's plane (its own coordinates) in space.
     pub fn at(&self, q: Vec2) -> Vec3 {

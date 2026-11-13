@@ -17,7 +17,7 @@ use solidcraft_io::{DxfEntity, DxfLayer, DxfShape, write_dxf_drawing};
 use super::CommandSpec;
 use super::template::{fixing_hole, hole_size, hole_sizes, panel, panel_keep_checked, prepare_panel};
 use crate::params::str_;
-use crate::schema::scan_template::{PanelCheckOut, PanelPieceOut, ScanPanelExportParams, ScanPanelExportResult};
+use crate::schema::scan_template::{PanelCheckOut, PanelInsertOut, PanelPieceOut, ScanPanelExportParams, ScanPanelExportResult};
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
 
@@ -74,6 +74,33 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     if pieces.is_empty() {
         return Err(crate::params::bad(cmd, "the panel makes no pieces"));
     }
+    // The pieces that drop into the openings behind the panel: each its own piece at its 0, 0.
+    let inserts: Vec<Insert> = keep
+        .inserts(&pp.proposal)
+        .enumerate()
+        .filter_map(|(k, (opening, found))| {
+            let ring = found.piece(pp.proposal.clearance);
+            let first = *ring.first()?;
+            let (lo, hi) =
+                ring.iter().fold((first, first), |(lo, hi), q| (Vec2::new(lo.x.min(q.x), lo.y.min(q.y)), Vec2::new(hi.x.max(q.x), hi.y.max(q.y))));
+            let fit = super::template::inserts::rounded_box(&ring);
+            Some(Insert {
+                piece: panel::Piece {
+                    number: k + 1,
+                    origin: lo,
+                    outline: ring.iter().map(|q| *q - lo).collect(),
+                    inside: Vec::new(),
+                    points: Vec::new(),
+                    blank: [hi.x - lo.x, hi.y - lo.y],
+                },
+                opening,
+                depth: found.depth,
+                radius: fit.map_or(0.0, |f| f.radius),
+                off: fit.map_or(0.0, |f| f.off),
+                at_wall: pp.wall(lo),
+            })
+        })
+        .collect();
     let blanks: Vec<[f64; 2]> = pieces.iter().map(|q| q.blank).collect();
     let plans = panel::sheets(&blanks, pp.proposal.sheet, panel::KERF);
     let sheet_of = |n: usize| plans.iter().position(|plan| plan.pieces.iter().any(|pl| pl.piece + 1 == n)).map_or(0, |i| i + 1);
@@ -98,6 +125,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let mut placed: Vec<(&panel::Piece, f64, f64)> = Vec::new();
     let mut y = 0.0f64;
+    let mut placed_width = 0.0f64;
     for row in &rows {
         let tallest = row.iter().map(|q| q.blank[1]).fold(0.0, f64::max);
         y -= tallest;
@@ -106,6 +134,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
             placed.push((piece, x, y));
             x += piece.blank[0] + SPACE;
         }
+        placed_width = placed_width.max(x - SPACE);
         y -= SPACE + 2.0 * TITLE;
     }
     for (piece, x, y) in placed {
@@ -141,10 +170,45 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         dimension(&mut ents, at(Vec2::new(0.0, 0.0)), at(Vec2::new(w, 0.0)), Vec2::new(0.0, -60.0), format!("{w:.0}"));
         dimension(&mut ents, at(Vec2::new(0.0, h)), at(Vec2::new(0.0, 0.0)), Vec2::new(-60.0, 0.0), format!("{h:.0}"));
     }
+    // The inserts in rows below the panel's pieces, as wide as the panel's widest row.
+    let widest = placed_width.max(1000.0);
+    let (mut x, mut row_h) = (0.0f64, 0.0f64);
+    y -= SPACE;
+    let mut at_of = Vec::new();
+    for ins in &inserts {
+        let [w, h] = ins.piece.blank;
+        if x > 0.0 && x + w > widest {
+            y -= row_h + SPACE + 2.0 * TITLE;
+            (x, row_h) = (0.0, 0.0);
+        }
+        at_of.push((x, y - h));
+        x += w + SPACE;
+        row_h = row_h.max(h);
+    }
+    for (ins, (x, y)) in inserts.iter().zip(at_of) {
+        let at = |q: Vec2| Vec2::new(q.x + x, q.y + y);
+        let [w, h] = ins.piece.blank;
+        ents.push(DxfEntity { layer: "INSERTS".into(), shape: shape_line(&ins.piece.outline.iter().map(|q| at(*q)).collect::<Vec<_>>(), true) });
+        ents.push(DxfEntity {
+            layer: "LABELS".into(),
+            shape: DxfShape::Text { at: at(Vec2::new(w / 2.0, h + TITLE)), height: TITLE, angle_deg: 0.0, text: ins.title() },
+        });
+        dimension(&mut ents, at(Vec2::new(0.0, 0.0)), at(Vec2::new(w, 0.0)), Vec2::new(0.0, -60.0), format!("{w:.0}"));
+        dimension(&mut ents, at(Vec2::new(0.0, h)), at(Vec2::new(0.0, 0.0)), Vec2::new(-60.0, 0.0), format!("{h:.0}"));
+    }
+    let mut inserts_csv = String::from("insert,opening,width,height,corner_radius,off_rounded_box,depth,x_on_wall,y_on_wall\n");
+    for ins in &inserts {
+        let _ = writeln!(
+            inserts_csv,
+            "{},{},{:.0},{:.0},{:.0},{:.1},{:.0},{:.0},{:.0}",
+            ins.piece.number, ins.opening, ins.piece.blank[0], ins.piece.blank[1], ins.radius, ins.off, ins.depth, ins.at_wall[0], ins.at_wall[1]
+        );
+    }
     let layers = [
         DxfLayer::new("PANEL", 7),
         DxfLayer::new("HOLES", 5),
         DxfLayer::new("FIXINGS", 3),
+        DxfLayer::new("INSERTS", 6),
         DxfLayer::new("LABELS", 2),
         DxfLayer::new("DIMENSIONS", 8),
     ];
@@ -221,7 +285,8 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         None => format!("Holes could not be lined up with {body}."),
     });
     let seen_of = |q: Vec2| seen(q);
-    let pages = drawings(&pieces, &plans, &checks, pp.proposal.sheet, &sizes, fixing, pp.proposal.clearance, confirm_line.as_deref(), &seen_of);
+    let pages =
+        drawings(&pieces, &inserts, &plans, &checks, pp.proposal.sheet, &sizes, fixing, pp.proposal.clearance, confirm_line.as_deref(), &seen_of);
     let prepared: Vec<_> =
         pages.iter().map(|page| page.prepare()).collect::<std::result::Result<_, _>>().map_err(|e| EngineError::Other(e.to_string()))?;
     let pdf = solidcraft_io::paper::paper_pdf(&prepared)?;
@@ -244,6 +309,9 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         write(format!("{stem}-holes.csv"), &holes_csv, &mut files)?;
         write(format!("{stem}-cut-list.csv"), &cut_list, &mut files)?;
         write(format!("{stem}-checks.csv"), &checks_csv, &mut files)?;
+        if !inserts.is_empty() {
+            write(format!("{stem}-inserts.csv"), &inserts_csv, &mut files)?;
+        }
         let name = format!("{stem}.pdf");
         solidcraft_io::vfs::write(&name, &pdf).map_err(|e| EngineError::Other(format!("{name}: {e}")))?;
         files.push(name);
@@ -261,6 +329,17 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
             .collect(),
         sheets: plans.len(),
         pdf_pages: pages.len(),
+        inserts: inserts
+            .iter()
+            .map(|i| PanelInsertOut {
+                number: i.piece.number,
+                opening: i.opening,
+                size: i.piece.blank,
+                depth: i.depth,
+                corner_radius: i.radius,
+                off_rounded_box: i.off,
+            })
+            .collect(),
         checks: checks
             .iter()
             .map(|c| PanelCheckOut {
@@ -278,11 +357,47 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         holes_csv: path.is_none().then_some(holes_csv),
         cut_list_csv: path.is_none().then_some(cut_list),
         checks_csv: path.is_none().then_some(checks_csv),
+        inserts_csv: path.is_none().then_some(inserts_csv),
         files,
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
+
+/// A piece cut to drop into an opening behind the panel: drawn as a piece of its own (`origin` where
+/// its box's corner is on the panel), the opening's number, how deep it is and the rounded box
+/// nearest it (corner radius, the farthest it strays from it), and its corner on the wall.
+struct Insert {
+    piece: panel::Piece,
+    opening: usize,
+    depth: f64,
+    radius: f64,
+    off: f64,
+    at_wall: [f64; 2],
+}
+
+impl Insert {
+    fn title(&self) -> String {
+        let [w, h] = self.piece.blank;
+        format!("INSERT {}  {w:.0} x {h:.0}  (depth {:.0})", self.piece.number, self.depth)
+    }
+    /// How to cut it: as a rounded box when it strays little from one, else along its trace.
+    fn how(&self) -> String {
+        let [w, h] = self.piece.blank;
+        if self.off <= ROUNDED_OFF {
+            format!(
+                "Cut as a {w:.0} x {h:.0} box with corners of about {:.0} mm radius (the trace is within {:.0} mm of it).",
+                self.radius,
+                self.off.max(1.0)
+            )
+        } else {
+            format!("Cut along the trace: it is up to {:.0} mm off a {w:.0} x {h:.0} box with rounded corners.", self.off)
+        }
+    }
+}
+
+/// A trace this close to a rounded box (mm) can be cut as that box.
+const ROUNDED_OFF: f64 = 6.0;
 
 /// Letter, landscape (mm), and the margin kept clear.
 const PAGE: [f64; 2] = [279.4, 215.9];
@@ -346,6 +461,7 @@ fn page(view: Vec<Item>, notes: Vec<Item>) -> Scene {
 #[allow(clippy::too_many_arguments)]
 fn drawings(
     pieces: &[panel::Piece],
+    inserts: &[Insert],
     plans: &[panel::SheetPlan],
     checks: &[panel::Check],
     sheet: [f64; 2],
@@ -398,6 +514,15 @@ fn drawings(
             let mid = ring.iter().fold(Vec2::new(0.0, 0.0), |s, q| s + *q) / ring.len().max(1) as f64;
             notes.push(text_item(mid - Vec2::new(0.0, 3.0), 8.0, Anchor::Middle, p.number.to_string()));
         }
+        // The openings behind, each with its insert's number.
+        for i in inserts {
+            let ring: Vec<Vec2> = i.piece.outline.iter().map(|q| fit.at(*q + i.piece.origin)).collect();
+            view.extend(line_item(&ring, true, 0.12));
+            let [w, h] = i.piece.blank;
+            // A quarter of the way along, clear of the piece's number in the middle.
+            let at = fit.at(i.piece.origin + Vec2::new(w / 4.0, h / 2.0));
+            notes.push(text_item(at, 2.2, Anchor::Middle, format!("I{}", i.piece.number)));
+        }
         let mut y = 84.0;
         notes.push(text_item(Vec2::new(MARGIN, y), 3.5, Anchor::Start, "Pieces"));
         for p in pieces {
@@ -445,112 +570,65 @@ fn drawings(
 
     // --- A page for each piece.
     for p in pieces {
-        let (mut view, mut notes) = (Vec::new(), Vec::new());
         let [w, h] = p.blank;
-        let lo = p.outline.iter().fold(Vec2::new(0.0, 0.0), |m, q| Vec2::new(m.x.min(q.x), m.y.min(q.y)));
-        let fit = Fit::of(lo, Vec2::new(w.max(1.0), h.max(1.0)), Vec2::new(MARGIN + 12.0, 104.0), Vec2::new(PAGE[0] - MARGIN - 12.0, top - 22.0));
-        notes.push(text_item(Vec2::new(MARGIN, top - 4.0), 6.0, Anchor::Start, format!("Piece {} of {}", p.number, pieces.len())));
+        let note = format!(
+            "Blank {w:.0} x {h:.0} mm from sheet {}. 0,0 is the blank's bottom-left corner seen from the room; x along the bottom, y straight up. Gaps already taken off.",
+            sheet_of(p.number)
+        );
+        pages.push(piece_page(p, format!("Piece {} of {}", p.number, pieces.len()), &note, sizes, fixing, seen));
+    }
+
+    // --- The inserts: all of them, then a page for each.
+    if !inserts.is_empty() {
+        let (mut view, mut notes) = (Vec::new(), Vec::new());
+        notes.push(text_item(
+            Vec2::new(MARGIN, top - 4.0),
+            6.0,
+            Anchor::Start,
+            format!("Inserts: {} pieces for the openings behind the panel", inserts.len()),
+        ));
         notes.push(text_item(
             Vec2::new(MARGIN, top - 10.0),
             2.8,
             Anchor::Start,
-            format!(
-                "Blank {w:.0} x {h:.0} mm from sheet {}. 0,0 is the blank's bottom-left corner seen from the room; x along the bottom, y straight up. Gaps already taken off.",
-                sheet_of(p.number)
-            ),
+            format!("Traced from the scan at each opening's lip, {clearance:.0} mm taken off all round so they drop in. Depth: how far the opening goes back behind the panel."),
         ));
-        let ring: Vec<Vec2> = p.outline.iter().map(|q| fit.at(*q)).collect();
-        view.extend(line_item(&ring, true, 0.35));
-        for r in &p.inside {
-            view.extend(line_item(&r.iter().map(|q| fit.at(*q)).collect::<Vec<_>>(), true, 0.3));
-        }
-        // Corners lettered, out from the middle.
-        let letters: Vec<char> = ('A'..='Z').chain('a'..='z').collect();
-        let mid = ring.iter().fold(Vec2::new(0.0, 0.0), |s, q| s + *q) / ring.len().max(1) as f64;
-        for (k, q) in ring.iter().enumerate() {
-            let out = *q - mid;
-            let len = (out.x * out.x + out.y * out.y).sqrt().max(1e-9);
-            let at = *q + out * (2.6 / len) - Vec2::new(0.0, 0.8);
-            notes.push(text_item(at, 2.0, Anchor::Middle, letters.get(k % letters.len()).map_or(String::new(), |c| c.to_string())));
-        }
-        // Holes and fixing points, numbered.
-        for pt in &p.points {
-            let c = fit.at(pt.at);
-            let (r, label) = match pt.kind {
-                panel::PointKind::Hole => (hole_size(pt.diameter, sizes) / 2.0, pt.number.to_string()),
-                panel::PointKind::Fixing => (fixing / 2.0, format!("F{}", pt.number)),
-            };
-            let rr = (r * fit.scale).max(0.6);
-            view.push(circle_item(c, rr, if pt.kind == panel::PointKind::Fixing { 0.3 } else { 0.18 }));
-            notes.push(text_item(c + Vec2::new(0.0, rr + 0.6), 1.7, Anchor::Middle, label));
-        }
-        // The blank's width below it and height to its left.
-        let (a, b, c) = (fit.at(Vec2::new(0.0, 0.0)), fit.at(Vec2::new(w, 0.0)), fit.at(Vec2::new(0.0, h)));
-        let below = a.y.min(ring.iter().map(|q| q.y).fold(f64::MAX, f64::min)) - 6.0;
-        view.extend(line_item(&[Vec2::new(a.x, below), Vec2::new(b.x, below)], false, 0.2));
-        for x in [a.x, b.x] {
-            view.extend(line_item(&[Vec2::new(x, below - 1.5), Vec2::new(x, below + 1.5)], false, 0.2));
-        }
-        notes.push(text_item(Vec2::new((a.x + b.x) / 2.0, below - 4.0), 3.0, Anchor::Middle, format!("{w:.0}")));
-        let left = a.x - 7.0;
-        view.extend(line_item(&[Vec2::new(left, a.y), Vec2::new(left, c.y)], false, 0.2));
-        for y in [a.y, c.y] {
-            view.extend(line_item(&[Vec2::new(left - 1.5, y), Vec2::new(left + 1.5, y)], false, 0.2));
-        }
-        notes.push(Item::Text {
-            at: Vec2::new(left - 1.8, (a.y + c.y) / 2.0),
-            height_mm: 3.0,
-            angle: std::f64::consts::FRAC_PI_2,
-            anchor: Anchor::Middle,
-            text: format!("{h:.0}"),
-        });
-        // The corners and the holes as tables.
-        let pitch = 3.3;
-        let first_row = 86.0;
-        let rows = ((first_row - MARGIN) / pitch).floor() as usize;
-        notes.push(text_item(Vec2::new(MARGIN, first_row + 4.0), 3.2, Anchor::Start, "Corners (x, y mm)"));
-        let corner_cols = p.outline.len().div_ceil(rows.max(1));
-        for (k, q) in p.outline.iter().enumerate() {
-            let (col, row) = (k / rows.max(1), k % rows.max(1));
-            let label = letters.get(k % letters.len()).map_or(String::new(), |c| c.to_string());
+        let cols = inserts.len().clamp(1, 4);
+        let rows_n = inserts.len().div_ceil(cols).max(1);
+        let list_h = 6.0 + 4.0 * inserts.len().min(14) as f64;
+        let cell_w = (PAGE[0] - 2.0 * MARGIN) / cols as f64;
+        let cell_h = ((top - 16.0 - MARGIN - list_h) / rows_n as f64).max(10.0);
+        // One scale for all, so their sizes compare.
+        let biggest = inserts.iter().map(|i| (i.piece.blank[0] / (cell_w - 8.0)).max(i.piece.blank[1] / (cell_h - 10.0))).fold(1e-9, f64::max);
+        for (k, i) in inserts.iter().enumerate() {
+            let (col, row) = (k % cols, k / cols);
+            let corner = Vec2::new(MARGIN + col as f64 * cell_w + 4.0, top - 16.0 - (row + 1) as f64 * cell_h + 6.0);
+            let ring: Vec<Vec2> = i.piece.outline.iter().map(|q| corner + *q / biggest).collect();
+            view.extend(line_item(&ring, true, 0.25));
+            let [w, h] = i.piece.blank;
             notes.push(text_item(
-                Vec2::new(MARGIN + col as f64 * 26.0, first_row - row as f64 * pitch),
-                2.3,
-                Anchor::Start,
-                format!("{label}  {:.0}, {:.0}", q.x, q.y),
+                corner + Vec2::new(w / biggest / 2.0, h / biggest + 1.5),
+                2.6,
+                Anchor::Middle,
+                format!("I{}  {w:.0} x {h:.0}", i.piece.number),
             ));
         }
-        let table_x = MARGIN + corner_cols as f64 * 26.0 + 6.0;
-        notes.push(text_item(Vec2::new(table_x, first_row + 4.0), 3.2, Anchor::Start, "Holes and fixing points (F): x, y, drill, gap behind"));
-        let col_w = 64.0;
-        for (k, pt) in p.points.iter().enumerate() {
-            let (col, row) = (k / rows.max(1), k % rows.max(1));
-            let x = table_x + col as f64 * col_w;
-            if x + col_w > PAGE[0] - MARGIN + 20.0 {
-                notes.push(text_item(Vec2::new(table_x, MARGIN - 6.0), 2.3, Anchor::Start, "More holes in the holes list (CSV)."));
-                break;
-            }
-            let (label, d) = match pt.kind {
-                panel::PointKind::Hole => (pt.number.to_string(), hole_size(pt.diameter, sizes)),
-                panel::PointKind::Fixing => (format!("F{}", pt.number), fixing),
-            };
-            let checked = if pt.kind == panel::PointKind::Hole {
-                match seen(pt.on_panel) {
-                    "not_found" => "  not in other scan",
-                    "unscanned" => "  not checked",
-                    _ => "",
-                }
-            } else {
-                ""
-            };
-            notes.push(text_item(
-                Vec2::new(x, first_row - row as f64 * pitch),
-                2.3,
-                Anchor::Start,
-                format!("{label}   {:.0}, {:.0}   d {d:.1}   gap {:.0}{checked}", pt.at.x, pt.at.y, pt.behind),
-            ));
+        let mut y = MARGIN + list_h - 4.0;
+        for i in inserts.iter().take(14) {
+            notes.push(text_item(Vec2::new(MARGIN, y), 2.4, Anchor::Start, format!("I{}:  depth {:.0} mm.  {}", i.piece.number, i.depth, i.how())));
+            y -= 4.0;
         }
         pages.push(page(view, notes));
+        for i in inserts {
+            let note = format!(
+                "{} Depth {:.0} mm. 0,0 is the box's bottom-left corner seen from the room; on the wall it is at {:.0}, {:.0} from the panel's corner.",
+                i.how(),
+                i.depth,
+                i.at_wall[0],
+                i.at_wall[1]
+            );
+            pages.push(piece_page(&i.piece, format!("Insert {} of {}", i.piece.number, inserts.len()), &note, sizes, fixing, seen));
+        }
     }
 
     // --- The sheets.
@@ -593,6 +671,121 @@ fn drawings(
     }
     pages.push(page(view, notes));
     pages
+}
+
+/// A piece's page: `title` and `note` over it, its outline to scale with its corners lettered (or
+/// numbered when it has many) and its blank's size, the corners and its holes as tables.
+fn piece_page(p: &panel::Piece, title: String, note: &str, sizes: &[f64], fixing: f64, seen: &dyn Fn(Vec2) -> &'static str) -> Scene {
+    let top = PAGE[1] - MARGIN;
+    let (mut view, mut notes) = (Vec::new(), Vec::new());
+    let [w, h] = p.blank;
+    let lo = p.outline.iter().fold(Vec2::new(0.0, 0.0), |m, q| Vec2::new(m.x.min(q.x), m.y.min(q.y)));
+    let fit = Fit::of(lo, Vec2::new(w.max(1.0), h.max(1.0)), Vec2::new(MARGIN + 12.0, 104.0), Vec2::new(PAGE[0] - MARGIN - 12.0, top - 22.0));
+    notes.push(text_item(Vec2::new(MARGIN, top - 4.0), 6.0, Anchor::Start, title));
+    for (k, line) in wrap(note, 150).into_iter().enumerate() {
+        notes.push(text_item(Vec2::new(MARGIN, top - 10.0 - 3.6 * k as f64), 2.8, Anchor::Start, line));
+    }
+    let ring: Vec<Vec2> = p.outline.iter().map(|q| fit.at(*q)).collect();
+    view.extend(line_item(&ring, true, 0.35));
+    for r in &p.inside {
+        view.extend(line_item(&r.iter().map(|q| fit.at(*q)).collect::<Vec<_>>(), true, 0.3));
+    }
+    // Corners lettered, out from the middle.
+    let letters: Vec<char> = ('A'..='Z').chain('a'..='z').collect();
+    let numbered = p.outline.len() > letters.len();
+    let every = if numbered { p.outline.len().div_ceil(40) } else { 1 };
+    let corner = |k: usize| if numbered { (k + 1).to_string() } else { letters.get(k % letters.len()).map_or(String::new(), |c| c.to_string()) };
+    let mid = ring.iter().fold(Vec2::new(0.0, 0.0), |s, q| s + *q) / ring.len().max(1) as f64;
+    for (k, q) in ring.iter().enumerate() {
+        let out = *q - mid;
+        let len = (out.x * out.x + out.y * out.y).sqrt().max(1e-9);
+        let at = *q + out * (2.6 / len) - Vec2::new(0.0, 0.8);
+        // A long trace's corners labelled every few, so the labels stay apart.
+        if k % every == 0 {
+            notes.push(text_item(at, if numbered { 1.6 } else { 2.0 }, Anchor::Middle, corner(k)));
+        }
+    }
+    // Holes and fixing points, numbered.
+    for pt in &p.points {
+        let c = fit.at(pt.at);
+        let (r, label) = match pt.kind {
+            panel::PointKind::Hole => (hole_size(pt.diameter, sizes) / 2.0, pt.number.to_string()),
+            panel::PointKind::Fixing => (fixing / 2.0, format!("F{}", pt.number)),
+        };
+        let rr = (r * fit.scale).max(0.6);
+        view.push(circle_item(c, rr, if pt.kind == panel::PointKind::Fixing { 0.3 } else { 0.18 }));
+        notes.push(text_item(c + Vec2::new(0.0, rr + 0.6), 1.7, Anchor::Middle, label));
+    }
+    // The blank's width below it and height to its left.
+    let (a, b, c) = (fit.at(Vec2::new(0.0, 0.0)), fit.at(Vec2::new(w, 0.0)), fit.at(Vec2::new(0.0, h)));
+    let below = a.y.min(ring.iter().map(|q| q.y).fold(f64::MAX, f64::min)) - 6.0;
+    view.extend(line_item(&[Vec2::new(a.x, below), Vec2::new(b.x, below)], false, 0.2));
+    for x in [a.x, b.x] {
+        view.extend(line_item(&[Vec2::new(x, below - 1.5), Vec2::new(x, below + 1.5)], false, 0.2));
+    }
+    notes.push(text_item(Vec2::new((a.x + b.x) / 2.0, below - 4.0), 3.0, Anchor::Middle, format!("{w:.0}")));
+    let left = a.x - 7.0;
+    view.extend(line_item(&[Vec2::new(left, a.y), Vec2::new(left, c.y)], false, 0.2));
+    for y in [a.y, c.y] {
+        view.extend(line_item(&[Vec2::new(left - 1.5, y), Vec2::new(left + 1.5, y)], false, 0.2));
+    }
+    notes.push(Item::Text {
+        at: Vec2::new(left - 1.8, (a.y + c.y) / 2.0),
+        height_mm: 3.0,
+        angle: std::f64::consts::FRAC_PI_2,
+        anchor: Anchor::Middle,
+        text: format!("{h:.0}"),
+    });
+    // The corners and the holes as tables.
+    let pitch = 3.3;
+    let first_row = 86.0;
+    let rows = ((first_row - MARGIN) / pitch).floor() as usize;
+    notes.push(text_item(Vec2::new(MARGIN, first_row + 4.0), 3.2, Anchor::Start, "Corners (x, y mm)"));
+    let corner_cols = p.outline.len().div_ceil(rows.max(1));
+    for (k, q) in p.outline.iter().enumerate() {
+        let (col, row) = (k / rows.max(1), k % rows.max(1));
+        let label = corner(k);
+        notes.push(text_item(
+            Vec2::new(MARGIN + col as f64 * 26.0, first_row - row as f64 * pitch),
+            2.3,
+            Anchor::Start,
+            format!("{label}  {:.0}, {:.0}", q.x, q.y),
+        ));
+    }
+    let table_x = MARGIN + corner_cols as f64 * 26.0 + 6.0;
+    if p.points.is_empty() {
+        return page(view, notes);
+    }
+    notes.push(text_item(Vec2::new(table_x, first_row + 4.0), 3.2, Anchor::Start, "Holes and fixing points (F): x, y, drill, gap behind"));
+    let col_w = 64.0;
+    for (k, pt) in p.points.iter().enumerate() {
+        let (col, row) = (k / rows.max(1), k % rows.max(1));
+        let x = table_x + col as f64 * col_w;
+        if x + col_w > PAGE[0] - MARGIN + 20.0 {
+            notes.push(text_item(Vec2::new(table_x, MARGIN - 6.0), 2.3, Anchor::Start, "More holes in the holes list (CSV)."));
+            break;
+        }
+        let (label, d) = match pt.kind {
+            panel::PointKind::Hole => (pt.number.to_string(), hole_size(pt.diameter, sizes)),
+            panel::PointKind::Fixing => (format!("F{}", pt.number), fixing),
+        };
+        let checked = if pt.kind == panel::PointKind::Hole {
+            match seen(pt.on_panel) {
+                "not_found" => "  not in other scan",
+                "unscanned" => "  not checked",
+                _ => "",
+            }
+        } else {
+            ""
+        };
+        notes.push(text_item(
+            Vec2::new(x, first_row - row as f64 * pitch),
+            2.3,
+            Anchor::Start,
+            format!("{label}   {:.0}, {:.0}   d {d:.1}   gap {:.0}{checked}", pt.at.x, pt.at.y, pt.behind),
+        ));
+    }
+    page(view, notes)
 }
 
 /// `text` in lines of at most `width` characters, broken at spaces.

@@ -2030,6 +2030,65 @@ fn panel_is_squared_to_the_rows_and_columns_of_holes() {
     assert!(s.execute("scan.panel_proposals", &json!({"body": body, "panel": {"square_to": "door"}})).is_err());
 }
 
+/// A wall with a wheel well standing out and a bay 160 × 120 going 120 mm back behind it (smaller than
+/// the default least area, so a smaller one is asked for): proposed as an opening for an insert
+/// piece, exported as a piece of its own (the gap taken off) with its own CSV and pages; dropped,
+/// none; asked of no area, an error.
+#[test]
+fn panel_openings_behind_the_wall_become_insert_pieces() {
+    let bay = |x: f64, y: f64| (400.0..560.0).contains(&x) && (250.0..370.0).contains(&y);
+    let mut tris = Vec::new();
+    for j in 0..400u32 {
+        for i in 0..600u32 {
+            let (cx, cy) = (f64::from(i) + 0.5, f64::from(j) + 0.5);
+            // The wheel well standing out into the room, as on a van's wall: which way the room is.
+            let well = ((cx - 150.0) / 100.0).powi(2) + (cy / 80.0).powi(2) < 1.0;
+            let z = if bay(cx, cy) {
+                -120.0
+            } else if well {
+                120.0
+            } else {
+                0.0
+            };
+            let at = |x: u32, y: u32| Vec3::new(f64::from(x), f64::from(y), z);
+            tris.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+            tris.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+        }
+    }
+    let (mut s, body) = session_with_triangles("panel-bay", &tris);
+    let panel = json!({"sheet": [700, 500], "spacing": 0, "insert_least": 10000});
+    let r = run(&mut s, "scan.panel_proposals", json!({"body": body, "panel": panel}));
+    let inserts = r["inserts"].as_array().unwrap();
+    assert_eq!(inserts.len(), 1, "{r}");
+    let o = &inserts[0];
+    let size = (o["size"][0].as_f64().unwrap(), o["size"][1].as_f64().unwrap());
+    assert!((size.0 - 160.0).abs() <= 8.0 && (size.1 - 120.0).abs() <= 8.0, "{o}");
+    assert!((o["depth"].as_f64().unwrap() - 120.0).abs() < 1.0, "{o}");
+    assert!((o["piece_size"][0].as_f64().unwrap() - (size.0 - 6.0)).abs() < 0.5, "3 mm off all round: {o}");
+
+    let x = run(&mut s, "scan.panel_export", json!({"body": body, "panel": panel}));
+    assert_eq!(x["inserts"].as_array().map(Vec::len), Some(1), "{x}");
+    assert_eq!(x["inserts_csv"].as_str().unwrap().lines().count(), 2, "{x}");
+    assert!(x["pieces_dxf"].as_str().unwrap().contains("INSERT 1"), "the insert drawn as a piece");
+    let pieces = x["pieces"].as_array().unwrap().len() as u64;
+    assert_eq!(x["pdf_pages"].as_u64(), Some(1 + pieces + 2 + 1), "the panel, its pieces, the inserts and the insert, the sheets: {x}");
+
+    let dropped = json!({"sheet": [700, 500], "spacing": 0, "insert_least": 10000, "drop_inserts": [0]});
+    let x = run(&mut s, "scan.panel_export", json!({"body": body, "panel": dropped}));
+    assert_eq!(x["inserts"].as_array().map(Vec::len), Some(0), "{x}");
+    let made = run(&mut s, "scan.flat_template", json!({"body": body, "outline": "scan", "panel": dropped}));
+    assert_eq!(made["panel"]["inserts"], 0, "{made}");
+    for bad in [
+        json!({"body": body, "panel": {"insert_least": 10000, "drop_inserts": [5]}}),
+        json!({"body": body, "panel": {"insert_least": -1}}),
+        json!({"body": body, "panel": {"insert_least": f64::MAX}}),
+    ] {
+        assert!(s.execute("scan.panel_proposals", &bad).is_err(), "{bad}");
+    }
+    let none = run(&mut s, "scan.panel_proposals", json!({"body": body, "panel": {"sheet": [700, 500], "insert_least": 0}}));
+    assert!(none["inserts"].as_array().unwrap().is_empty(), "{none}");
+}
+
 /// Export Panel: the pieces at their own 0, 0 (outline, holes and fixing points on their layers,
 /// labelled), the blanks on sheets, a row in the holes list for each hole and fixing point, the
 /// cut list and distances to check; written beside the path when given.

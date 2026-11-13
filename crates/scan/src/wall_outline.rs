@@ -139,7 +139,7 @@ impl Grid {
 }
 
 /// Every cell within `r` cells (a square) of a set cell, along rows then columns.
-fn dilate(m: &[bool], w: usize, h: usize, r: usize) -> Vec<bool> {
+pub(crate) fn dilate(m: &[bool], w: usize, h: usize, r: usize) -> Vec<bool> {
     if r == 0 {
         return m.to_vec();
     }
@@ -170,7 +170,7 @@ fn dilate(m: &[bool], w: usize, h: usize, r: usize) -> Vec<bool> {
 }
 
 /// Gaps narrower than `2r + 1` cells filled: dilated, then eroded back.
-fn close(m: &[bool], w: usize, h: usize, r: usize) -> Vec<bool> {
+pub(crate) fn close(m: &[bool], w: usize, h: usize, r: usize) -> Vec<bool> {
     let grown = dilate(m, w, h, r);
     let outside: Vec<bool> = grown.iter().map(|b| !b).collect();
     dilate(&outside, w, h, r).into_iter().map(|b| !b).collect()
@@ -183,7 +183,7 @@ fn neighbours(i: usize, w: usize, h: usize) -> impl Iterator<Item = usize> {
 
 /// The cells not reachable from the grid's border through unset cells: the set ones and the holes
 /// they enclose.
-fn filled(m: &[bool], w: usize, h: usize) -> Vec<bool> {
+pub(crate) fn filled(m: &[bool], w: usize, h: usize) -> Vec<bool> {
     let mut outside = vec![false; w * h];
     let mut queue = VecDeque::new();
     for i in (0..w).chain((0..w).map(|x| (h - 1) * w + x)).chain((0..h).map(|y| y * w)).chain((0..h).map(|y| y * w + w - 1)) {
@@ -315,7 +315,7 @@ fn without_fingers(m: &[bool], scanned: &[bool], asked: &[bool], w: usize, h: us
 /// The closed boundaries of the set cells along cell sides, each with the set cells on its left: an
 /// outer boundary runs counter-clockwise, a hole's clockwise. Where two set cells touch only at a
 /// corner the boundary turns left, keeping them apart.
-fn boundaries(m: &[bool], w: usize, h: usize) -> Vec<Vec<(usize, usize)>> {
+pub(crate) fn boundaries(m: &[bool], w: usize, h: usize) -> Vec<Vec<(usize, usize)>> {
     let set = |x: isize, y: isize| x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h && m[y as usize * w + x as usize];
     let mut out: HashMap<(usize, usize), Vec<(usize, usize)>> = HashMap::new();
     for y in 0..h {
@@ -412,7 +412,7 @@ fn simplify_run(pts: &[Vec2], eps: f64, keep: &mut Vec<Vec2>) {
 }
 
 /// A closed ring simplified to within `eps`, split at its first point and the point farthest from it.
-fn simplify_ring(ring: &[Vec2], eps: f64) -> Vec<Vec2> {
+pub(crate) fn simplify_ring(ring: &[Vec2], eps: f64) -> Vec<Vec2> {
     let Some(&first) = ring.first() else { return Vec::new() };
     let far = (0..ring.len()).max_by(|&i, &j| ring[i].dist(first).total_cmp(&ring[j].dist(first))).unwrap_or(0);
     let mut out = Vec::new();
@@ -425,7 +425,7 @@ fn simplify_ring(ring: &[Vec2], eps: f64) -> Vec<Vec2> {
     out
 }
 
-fn crosses_itself(ring: &[Vec2]) -> bool {
+pub(crate) fn crosses_itself(ring: &[Vec2]) -> bool {
     let n = ring.len();
     let cross2 = |o: Vec2, a: Vec2, b: Vec2| (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
     let crossing = |a: Vec2, b: Vec2, c: Vec2, d: Vec2| {

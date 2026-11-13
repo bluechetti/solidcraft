@@ -66,6 +66,7 @@ pub mod flatten;
 pub mod free_form;
 pub mod holes;
 mod hull;
+pub mod inserts;
 pub mod merge;
 pub mod mirror_fill;
 pub mod net;

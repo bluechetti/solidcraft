@@ -158,6 +158,13 @@ pub struct PanelChoices {
     /// is turned 0.25° or more on the outline's sides). Default: auto.
     #[serde(default)]
     pub square_to: Option<String>,
+    /// Openings in the wall's metal behind the panel of this area or more (mm²) are traced, for
+    /// pieces cut to drop into them; 0 traces none. Default: 50 000 (about 220 × 220 mm).
+    #[serde(default)]
+    pub insert_least: Option<f64>,
+    /// Openings not cut pieces for, by their number.
+    #[serde(default)]
+    pub drop_inserts: Option<Vec<usize>>,
 }
 
 /// One cut-out's shape: its number and `box`, `straight` (dents filled, straight sides) or
@@ -303,6 +310,8 @@ pub struct ScanPanelExportResult {
     /// Pages in the drawings' PDF (written with `path`): the panel, one for each piece, the sheets.
     pub pdf_pages: usize,
     pub checks: Vec<PanelCheckOut>,
+    /// The pieces cut to drop into the openings behind the panel (numbered from 1, as drawn).
+    pub inserts: Vec<PanelInsertOut>,
     /// Without `path`: the files' text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pieces_dxf: Option<String>,
@@ -314,8 +323,25 @@ pub struct ScanPanelExportResult {
     pub cut_list_csv: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checks_csv: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inserts_csv: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
+}
+
+/// A piece cut to drop into an opening behind the panel.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelInsertOut {
+    /// Its number in the drawings, and the opening's number in `scan.panel_proposals`.
+    pub number: usize,
+    pub opening: usize,
+    /// Its box (mm, the gap already taken off) and how deep the opening is behind the panel (mm).
+    pub size: [f64; 2],
+    pub depth: f64,
+    /// The corner radius of the rounded box nearest it, and the farthest its trace strays from
+    /// that box (mm): under a few mm it can be cut as that box.
+    pub corner_radius: f64,
+    pub off_rounded_box: f64,
 }
 
 /// A cut-out proposed for a straight panel.
@@ -342,6 +368,23 @@ pub struct PanelFixingProposal {
     pub center: [f64; 3],
     /// How far the metal is behind the panel's back face (mm; less than 0: proud of it).
     pub behind: f64,
+}
+
+/// An opening in the wall's metal behind the panel (a bay, the outer skin seen through the inner
+/// sheet), traced at its lip, for a piece cut to drop into it.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelInsertProposal {
+    /// Its outline (mm from the outline's corner, counter-clockwise), area (mm²), box and middle.
+    pub ring: Vec<[f64; 2]>,
+    pub area: f64,
+    pub size: [f64; 2],
+    pub center: [f64; 3],
+    /// How far its back lies behind the panel (the median, mm): how thick a piece fills it.
+    pub depth: f64,
+    /// It runs out to the panel's edge and is cut off there.
+    pub at_edge: bool,
+    /// The piece's box once the gap is taken off all round (mm).
+    pub piece_size: [f64; 2],
 }
 
 /// A piece laid on a sheet.
@@ -439,6 +482,8 @@ pub struct ScanPanelProposalsResult {
     pub seams: Vec<PanelSeamProposal>,
     pub holes: Vec<PanelHoleProposal>,
     pub fixings: Vec<PanelFixingProposal>,
+    /// Numbered from 0 for `drop_inserts`, in rows from the top, left to right.
+    pub inserts: Vec<PanelInsertProposal>,
     /// The frame's holes found in all (the proposal keeps those near an edge or a seam).
     pub holes_found: usize,
     /// Places an edge needed fastening but no flat metal was found behind it.
@@ -476,6 +521,8 @@ pub struct PanelMade {
     pub seams: usize,
     pub holes: usize,
     pub fixings: usize,
+    /// The openings behind the panel kept for pieces to drop into.
+    pub inserts: usize,
     /// How many sheets the pieces are cut from.
     pub sheets: usize,
     pub pieces: Vec<[f64; 2]>,

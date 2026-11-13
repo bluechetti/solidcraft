@@ -62,7 +62,9 @@
     "ui.scan_panel_square_auto": "Automatic",
     "ui.scan_panel_square_holes": "Frame Holes",
     "ui.scan_panel_square_outline": "Outline",
-    "ui.scan_panel_squared": "Squared to the frame's holes: turned {deg}° from the scan's edge."
+    "ui.scan_panel_squared": "Squared to the frame's holes: turned {deg}° from the scan's edge.",
+    "ui.scan_panel_inserts": "Insert Pieces {count}",
+    "ui.scan_panel_insert": "Insert piece {n} of {count}: an opening {w} × {h} mm, {depth} mm deep behind the panel; a piece is cut to drop into it."
   },
   "de": {
     "cmd.scan.panel_proposals": "Plattenvorschläge",
@@ -127,7 +129,9 @@
     "ui.scan_panel_square_auto": "Automatisch",
     "ui.scan_panel_square_holes": "Rahmenlöcher",
     "ui.scan_panel_square_outline": "Umriss",
-    "ui.scan_panel_squared": "An den Rahmenlöchern ausgerichtet: {deg}° gegenüber dem Scanrand gedreht."
+    "ui.scan_panel_squared": "An den Rahmenlöchern ausgerichtet: {deg}° gegenüber dem Scanrand gedreht.",
+    "ui.scan_panel_inserts": "Einlegeteile {count}",
+    "ui.scan_panel_insert": "Einlegeteil {n} von {count}: eine Öffnung {w} × {h} mm, {depth} mm tief hinter der Platte; ein Teil wird passend zum Einlegen zugeschnitten."
   },
   "ja": {
     "cmd.scan.panel_proposals": "パネルの提案",
@@ -192,7 +196,9 @@
     "ui.scan_panel_square_auto": "自動",
     "ui.scan_panel_square_holes": "フレームの穴",
     "ui.scan_panel_square_outline": "外形",
-    "ui.scan_panel_squared": "フレームの穴に合わせて直角化：スキャンの縁から {deg}° 回転。"
+    "ui.scan_panel_squared": "フレームの穴に合わせて直角化：スキャンの縁から {deg}° 回転。",
+    "ui.scan_panel_inserts": "はめ込み材 {count}",
+    "ui.scan_panel_insert": "はめ込み材 {count} 件中 {n}: パネルの奥 {depth} mm の開口 {w} × {h} mm。はめ込む材を切り出します。"
   },
   "ko": {
     "cmd.scan.panel_proposals": "패널 제안",
@@ -257,7 +263,9 @@
     "ui.scan_panel_square_auto": "자동",
     "ui.scan_panel_square_holes": "프레임 구멍",
     "ui.scan_panel_square_outline": "외곽선",
-    "ui.scan_panel_squared": "프레임 구멍에 맞춰 직각화: 스캔 가장자리에서 {deg}° 회전."
+    "ui.scan_panel_squared": "프레임 구멍에 맞춰 직각화: 스캔 가장자리에서 {deg}° 회전.",
+    "ui.scan_panel_inserts": "끼움 조각 {count}",
+    "ui.scan_panel_insert": "끼움 조각 {count}개 중 {n}: 패널 뒤 {depth} mm 깊이의 개구부 {w} × {h} mm. 끼워 넣을 조각을 자릅니다."
   },
   "zh": {
     "cmd.scan.panel_proposals": "面板建议",
@@ -322,7 +330,9 @@
     "ui.scan_panel_square_auto": "自动",
     "ui.scan_panel_square_holes": "车架孔",
     "ui.scan_panel_square_outline": "轮廓",
-    "ui.scan_panel_squared": "已按车架孔取正：相对扫描边缘旋转 {deg}°。"
+    "ui.scan_panel_squared": "已按车架孔取正：相对扫描边缘旋转 {deg}°。",
+    "ui.scan_panel_inserts": "嵌入件 {count}",
+    "ui.scan_panel_insert": "嵌入件 {n}/{count}：面板后 {depth} mm 深的开口 {w} × {h} mm；裁一块嵌入其中。"
   },
   "ar": {
     "cmd.scan.panel_proposals": "مقترحات اللوح",
@@ -387,7 +397,9 @@
     "ui.scan_panel_square_auto": "تلقائي",
     "ui.scan_panel_square_holes": "ثقوب الهيكل",
     "ui.scan_panel_square_outline": "المخطط",
-    "ui.scan_panel_squared": "رُبّعت على ثقوب الهيكل: أُديرت {deg}° عن حافة المسح."
+    "ui.scan_panel_squared": "رُبّعت على ثقوب الهيكل: أُديرت {deg}° عن حافة المسح.",
+    "ui.scan_panel_inserts": "قطع الحشو {count}",
+    "ui.scan_panel_insert": "قطعة الحشو {n} من {count}: فتحة {w} × {h} مم بعمق {depth} مم خلف اللوح؛ تُقص قطعة لتوضع فيها."
   },
   "he": {
     "cmd.scan.panel_proposals": "הצעות ללוח",
@@ -452,7 +464,9 @@
     "ui.scan_panel_square_auto": "אוטומטי",
     "ui.scan_panel_square_holes": "חורי השלדה",
     "ui.scan_panel_square_outline": "קו המתאר",
-    "ui.scan_panel_squared": "יושר לפי חורי השלדה: סובב {deg}° מקצה הסריקה."
+    "ui.scan_panel_squared": "יושר לפי חורי השלדה: סובב {deg}° מקצה הסריקה.",
+    "ui.scan_panel_inserts": "חלקי מילוי {count}",
+    "ui.scan_panel_insert": "חלק מילוי {n} מתוך {count}: פתח {w} × {h} מ״מ, בעומק {depth} מ״מ מאחורי הלוח; נחתך חלק שנכנס לתוכו."
   },
   "vi": {
     "cmd.scan.panel_proposals": "Đề xuất tấm",
@@ -517,6 +531,8 @@
     "ui.scan_panel_square_auto": "Tự động",
     "ui.scan_panel_square_holes": "Lỗ khung",
     "ui.scan_panel_square_outline": "Đường viền",
-    "ui.scan_panel_squared": "Đã vuông theo lỗ khung: xoay {deg}° so với mép bản quét."
+    "ui.scan_panel_squared": "Đã vuông theo lỗ khung: xoay {deg}° so với mép bản quét.",
+    "ui.scan_panel_inserts": "Miếng chèn {count}",
+    "ui.scan_panel_insert": "Miếng chèn {n} trên {count}: một ô hở {w} × {h} mm, sâu {depth} mm sau tấm; cắt một miếng để đặt vào."
   }
 }

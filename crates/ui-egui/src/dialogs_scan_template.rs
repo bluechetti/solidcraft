@@ -173,6 +173,7 @@ enum Item {
     Seam(usize),
     Hole(usize),
     Fixing(usize),
+    Insert(usize),
 }
 
 /// Looking through a straight panel's proposal: where, what was dropped or moved, what was seen.
@@ -605,6 +606,7 @@ pub fn commands(k: &FlatTemplate, inputs: &[SelInput]) -> Result<Vec<(String, Va
         panel.insert("drop_seams".into(), json!(numbers(|i| if let Item::Seam(n) = i { Some(*n) } else { None })));
         panel.insert("drop_holes".into(), json!(numbers(|i| if let Item::Hole(n) = i { Some(*n) } else { None })));
         panel.insert("drop_fixings".into(), json!(numbers(|i| if let Item::Fixing(n) = i { Some(*n) } else { None })));
+        panel.insert("drop_inserts".into(), json!(numbers(|i| if let Item::Insert(n) = i { Some(*n) } else { None })));
         let shapes: Vec<Value> = k.review.shapes.iter().map(|(cutout, shape)| json!({"cutout": cutout, "shape": shape.name()})).collect();
         panel.insert("shapes".into(), json!(shapes));
     }
@@ -688,6 +690,7 @@ fn items_of(pp: &PanelPrepared) -> Vec<Item> {
         .chain((0..p.seams.len()).map(Item::Seam))
         .chain((0..p.holes.len()).map(Item::Hole))
         .chain((0..p.fixings.len()).map(Item::Fixing))
+        .chain((0..p.inserts.len()).map(Item::Insert))
         .collect()
 }
 
@@ -701,6 +704,7 @@ fn keep_of(pp: &PanelPrepared, r: &Review) -> PanelKeep {
         holes: (0..p.holes.len()).map(|i| !r.dropped.contains(&Item::Hole(i))).collect(),
         fixings: (0..p.fixings.len()).map(|i| !r.dropped.contains(&Item::Fixing(i))).collect(),
         moved: p.seams.clone(),
+        inserts: (0..p.inserts.len()).map(|i| !r.dropped.contains(&Item::Insert(i))).collect(),
     }
 }
 
@@ -727,6 +731,7 @@ fn item_points(pp: &PanelPrepared, keep: &PanelKeep, item: Item) -> Vec<Vec2> {
         Item::Seam(i) => keep.moved.get(i).map(|s| vec![s.from, s.to]).unwrap_or_default(),
         Item::Hole(i) => p.holes.get(i).map(|h| vec![h.at]).unwrap_or_default(),
         Item::Fixing(i) => p.fixings.get(i).map(|f| vec![f.at]).unwrap_or_default(),
+        Item::Insert(i) => p.inserts.get(i).map(|o| o.ring.clone()).unwrap_or_default(),
     }
 }
 
@@ -826,6 +831,20 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
                 &[("n", &count(i + 1)), ("count", &count(p.fixings.len())), ("behind", &format!("{:.0}", f.behind))],
             )
         }
+        Item::Insert(i) => {
+            let o = &p.inserts[i];
+            let [w, h] = o.size();
+            crate::i18n::format(
+                "ui.scan_panel_insert",
+                &[
+                    ("n", &count(i + 1)),
+                    ("count", &count(p.inserts.len())),
+                    ("w", &format!("{w:.0}")),
+                    ("h", &format!("{h:.0}")),
+                    ("depth", &format!("{:.0}", o.depth)),
+                ],
+            )
+        }
     };
     ui_kit::text(ui, &what, ui_kit::Text::Report("scan_panel_item", k.review.dropped.contains(&item)));
     // A hole checked against the other scan: whether that has it too.
@@ -888,8 +907,16 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
         Item::Seam(_) => 2,
         Item::Hole(_) => 3,
         Item::Fixing(_) => 4,
+        Item::Insert(_) => 5,
     };
-    let names = ["ui.scan_panel_edges", "ui.scan_panel_cutouts", "ui.scan_panel_seams", "ui.scan_panel_holes", "ui.scan_panel_fixings"];
+    let names = [
+        "ui.scan_panel_edges",
+        "ui.scan_panel_cutouts",
+        "ui.scan_panel_seams",
+        "ui.scan_panel_holes",
+        "ui.scan_panel_fixings",
+        "ui.scan_panel_inserts",
+    ];
     let mut jump: Option<usize> = None;
     ui.horizontal_wrapped(|ui| {
         for (g, name) in names.iter().enumerate() {
@@ -1092,6 +1119,11 @@ fn draw_panel(painter: &egui::Painter, proj: &crate::viewport::Proj, k: &FlatTem
             ring(&c.ring, egui::Stroke::new(1.0, tokens.text_dim));
         }
     }
+    // The openings behind the panel the insert pieces drop into, dim when dropped.
+    for (i, o) in p.inserts.iter().enumerate() {
+        let kept = keep.inserts.get(i).copied().unwrap_or(true);
+        ring(&o.ring, egui::Stroke::new(1.0, if kept { tokens.text } else { tokens.text_dim }));
+    }
     for r in &laid.inside {
         ring(r, egui::Stroke::new(1.5, tokens.error));
     }
@@ -1155,7 +1187,7 @@ fn draw_panel(painter: &egui::Painter, proj: &crate::viewport::Proj, k: &FlatTem
                 painter.circle_stroke(c, r + 4.0, mark);
             }
         }
-        Item::Cut(_) => ring(&item_points(pp, &keep, item), mark),
+        Item::Cut(_) | Item::Insert(_) => ring(&item_points(pp, &keep, item), mark),
         _ => {
             let pts: Vec<egui::Pos2> = item_points(pp, &keep, item).into_iter().filter_map(screen).collect();
             painter.add(egui::Shape::line(pts, mark));
