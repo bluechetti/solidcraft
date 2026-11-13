@@ -57,7 +57,12 @@
     "ui.scan_panel_seen_both": "The other scan has this hole too.",
     "ui.scan_panel_seen_not_found": "The other scan covers this place and has no hole here: likely a gap in this scan, not a hole.",
     "ui.scan_panel_seen_unscanned": "The other scan does not cover this place.",
-    "ui.scan_panel_scan": "Scan"
+    "ui.scan_panel_scan": "Scan",
+    "ui.scan_panel_square": "Square To",
+    "ui.scan_panel_square_auto": "Automatic",
+    "ui.scan_panel_square_holes": "Frame Holes",
+    "ui.scan_panel_square_outline": "Outline",
+    "ui.scan_panel_squared": "Squared to the frame's holes: turned {deg}° from the scan's edge."
   },
   "de": {
     "cmd.scan.panel_proposals": "Plattenvorschläge",
@@ -117,7 +122,12 @@
     "ui.scan_panel_seen_both": "Der andere Scan hat dieses Loch auch.",
     "ui.scan_panel_seen_not_found": "Der andere Scan deckt diese Stelle ab und hat hier kein Loch: wohl eine Lücke in diesem Scan, kein Loch.",
     "ui.scan_panel_seen_unscanned": "Der andere Scan deckt diese Stelle nicht ab.",
-    "ui.scan_panel_scan": "Scan"
+    "ui.scan_panel_scan": "Scan",
+    "ui.scan_panel_square": "Ausrichten an",
+    "ui.scan_panel_square_auto": "Automatisch",
+    "ui.scan_panel_square_holes": "Rahmenlöcher",
+    "ui.scan_panel_square_outline": "Umriss",
+    "ui.scan_panel_squared": "An den Rahmenlöchern ausgerichtet: {deg}° gegenüber dem Scanrand gedreht."
   },
   "ja": {
     "cmd.scan.panel_proposals": "パネルの提案",
@@ -177,7 +187,12 @@
     "ui.scan_panel_seen_both": "もう一方のスキャンにもこの穴があります。",
     "ui.scan_panel_seen_not_found": "もう一方のスキャンはこの場所を写していますが穴はありません。穴ではなく、このスキャンの欠けと思われます。",
     "ui.scan_panel_seen_unscanned": "もう一方のスキャンはこの場所を写していません。",
-    "ui.scan_panel_scan": "スキャン"
+    "ui.scan_panel_scan": "スキャン",
+    "ui.scan_panel_square": "直角の基準",
+    "ui.scan_panel_square_auto": "自動",
+    "ui.scan_panel_square_holes": "フレームの穴",
+    "ui.scan_panel_square_outline": "外形",
+    "ui.scan_panel_squared": "フレームの穴に合わせて直角化：スキャンの縁から {deg}° 回転。"
   },
   "ko": {
     "cmd.scan.panel_proposals": "패널 제안",
@@ -237,7 +252,12 @@
     "ui.scan_panel_seen_both": "다른 스캔에도 이 구멍이 있습니다.",
     "ui.scan_panel_seen_not_found": "다른 스캔은 이곳을 담고 있지만 구멍이 없습니다. 구멍이 아니라 이 스캔의 빈틈일 가능성이 큽니다.",
     "ui.scan_panel_seen_unscanned": "다른 스캔은 이곳을 담고 있지 않습니다.",
-    "ui.scan_panel_scan": "스캔"
+    "ui.scan_panel_scan": "스캔",
+    "ui.scan_panel_square": "직각 기준",
+    "ui.scan_panel_square_auto": "자동",
+    "ui.scan_panel_square_holes": "프레임 구멍",
+    "ui.scan_panel_square_outline": "외곽선",
+    "ui.scan_panel_squared": "프레임 구멍에 맞춰 직각화: 스캔 가장자리에서 {deg}° 회전."
   },
   "zh": {
     "cmd.scan.panel_proposals": "面板建议",
@@ -297,7 +317,12 @@
     "ui.scan_panel_seen_both": "另一个扫描也有这个孔。",
     "ui.scan_panel_seen_not_found": "另一个扫描覆盖此处但这里没有孔：很可能是本扫描的缺口，而不是孔。",
     "ui.scan_panel_seen_unscanned": "另一个扫描没有覆盖此处。",
-    "ui.scan_panel_scan": "扫描"
+    "ui.scan_panel_scan": "扫描",
+    "ui.scan_panel_square": "对齐基准",
+    "ui.scan_panel_square_auto": "自动",
+    "ui.scan_panel_square_holes": "车架孔",
+    "ui.scan_panel_square_outline": "轮廓",
+    "ui.scan_panel_squared": "已按车架孔取正：相对扫描边缘旋转 {deg}°。"
   },
   "ar": {
     "cmd.scan.panel_proposals": "مقترحات اللوح",
@@ -357,7 +382,12 @@
     "ui.scan_panel_seen_both": "المسح الآخر فيه هذا الثقب أيضًا.",
     "ui.scan_panel_seen_not_found": "المسح الآخر يغطي هذا الموضع ولا ثقب فيه: على الأرجح فجوة في هذا المسح وليست ثقبًا.",
     "ui.scan_panel_seen_unscanned": "المسح الآخر لا يغطي هذا الموضع.",
-    "ui.scan_panel_scan": "المسح"
+    "ui.scan_panel_scan": "المسح",
+    "ui.scan_panel_square": "التربيع على",
+    "ui.scan_panel_square_auto": "تلقائي",
+    "ui.scan_panel_square_holes": "ثقوب الهيكل",
+    "ui.scan_panel_square_outline": "المخطط",
+    "ui.scan_panel_squared": "رُبّعت على ثقوب الهيكل: أُديرت {deg}° عن حافة المسح."
   },
   "he": {
     "cmd.scan.panel_proposals": "הצעות ללוח",
@@ -417,7 +447,12 @@
     "ui.scan_panel_seen_both": "גם בסריקה האחרת יש את החור הזה.",
     "ui.scan_panel_seen_not_found": "הסריקה האחרת מכסה את המקום ואין בו חור: כנראה פער בסריקה הזו, לא חור.",
     "ui.scan_panel_seen_unscanned": "הסריקה האחרת לא מכסה את המקום הזה.",
-    "ui.scan_panel_scan": "סריקה"
+    "ui.scan_panel_scan": "סריקה",
+    "ui.scan_panel_square": "יישור לפי",
+    "ui.scan_panel_square_auto": "אוטומטי",
+    "ui.scan_panel_square_holes": "חורי השלדה",
+    "ui.scan_panel_square_outline": "קו המתאר",
+    "ui.scan_panel_squared": "יושר לפי חורי השלדה: סובב {deg}° מקצה הסריקה."
   },
   "vi": {
     "cmd.scan.panel_proposals": "Đề xuất tấm",
@@ -477,6 +512,11 @@
     "ui.scan_panel_seen_both": "Bản quét kia cũng có lỗ này.",
     "ui.scan_panel_seen_not_found": "Bản quét kia có quét chỗ này nhưng không có lỗ: có lẽ là chỗ hở của bản quét này, không phải lỗ.",
     "ui.scan_panel_seen_unscanned": "Bản quét kia không quét tới chỗ này.",
-    "ui.scan_panel_scan": "Bản quét"
+    "ui.scan_panel_scan": "Bản quét",
+    "ui.scan_panel_square": "Vuông theo",
+    "ui.scan_panel_square_auto": "Tự động",
+    "ui.scan_panel_square_holes": "Lỗ khung",
+    "ui.scan_panel_square_outline": "Đường viền",
+    "ui.scan_panel_squared": "Đã vuông theo lỗ khung: xoay {deg}° so với mép bản quét."
   }
 }

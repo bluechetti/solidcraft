@@ -64,6 +64,9 @@ pub struct FlatTemplate {
     pub seam_moves: BTreeMap<usize, f64>,
     /// Another scan to check the holes against (the wall opposite, or another pass of this one).
     pub confirm_with: Option<String>,
+    /// What the panel is squared to: 0 the frame's holes when they say the wall is turned, 1 the
+    /// frame's holes always, 2 the outline's own sides.
+    pub square_to: usize,
     /// With the whole scan: which scan, when the design has more than one (the one selected when the
     /// dialog opened, or chosen in it).
     pub scan: Option<String>,
@@ -100,6 +103,7 @@ impl Default for FlatTemplate {
             spacing: solidcraft_engine::cmd::scan::template::panel::SPACING,
             seam_moves: BTreeMap::new(),
             confirm_with: None,
+            square_to: 0,
             scan: None,
             review: Review::default(),
             focus: None,
@@ -241,6 +245,9 @@ fn params(k: &FlatTemplate, inputs: &[SelInput]) -> Option<Value> {
             let mut panel = json!({"sheet": k.sheet, "turn": k.turn % 4, "clearance": k.clearance, "spacing": k.spacing});
             if let Some(other) = &k.confirm_with {
                 panel["confirm_with"] = json!(other);
+            }
+            if let Some(to) = [None, Some("holes"), Some("outline")].get(k.square_to).copied().flatten() {
+                panel["square_to"] = json!(to);
             }
             let moves: Vec<Value> = k.seam_moves.iter().filter(|(_, by)| **by != 0.0).map(|(seam, by)| json!({"seam": seam, "by": by})).collect();
             if !moves.is_empty() {
@@ -502,6 +509,13 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
                 let mut pick = k.confirm_with.as_ref().and_then(|c| scans.iter().position(|s| s == c)).map_or(0, |i| i + 1);
                 choice_row(ui, tr("ui.scan_panel_confirm"), "scan_panel_confirm", &mut pick, &labels);
                 k.confirm_with = pick.checked_sub(1).and_then(|i| scans.get(i)).cloned();
+            }
+            let was_square = k.square_to;
+            let square = [tr("ui.scan_panel_square_auto"), tr("ui.scan_panel_square_holes"), tr("ui.scan_panel_square_outline")];
+            choice_row(ui, tr("ui.scan_panel_square"), "scan_panel_square", &mut k.square_to, &square);
+            if k.square_to != was_square {
+                // The edges were for the panel as it lay.
+                k.edges = None;
             }
             k.sheet = [k.sheet[0].clamp(100.0, 100_000.0), k.sheet[1].clamp(100.0, 100_000.0)];
             form_row(ui, tr("ui.scan_panel_floor"), |ui| {
@@ -966,6 +980,10 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
         let line =
             crate::i18n::format("ui.scan_panel_pieces", &[("count", &sizes.len().to_string()), ("w", &format!("{w:.0}")), ("h", &format!("{h:.0}"))]);
         ui_kit::text(ui, &line, ui_kit::Text::Note("scan_panel_pieces"));
+        if let Some(turn) = pp.prepared.squared {
+            let squared = crate::i18n::format("ui.scan_panel_squared", &[("deg", &format!("{:.1}", turn.to_degrees().abs()))]);
+            ui_kit::text(ui, &squared, ui_kit::Text::Note("scan_panel_squared"));
+        }
         let (long, short) = (k.sheet[0].max(k.sheet[1]), k.sheet[0].min(k.sheet[1]));
         let fits = |[w, h]: [f64; 2]| (w <= long + 1e-6 && h <= short + 1e-6) || (w <= short + 1e-6 && h <= long + 1e-6);
         let over = sizes.iter().map(|&[w, h]| if fits([w, h]) { 0.0 } else { (w.max(h) - long).max(w.min(h) - short).max(0.0) }).fold(0.0, f64::max);
@@ -1180,6 +1198,19 @@ mod tests {
         let k = FlatTemplate::default();
         let none: Vec<SelInput> = vec![SelInput::new("Outline Points", FACES, true).places()];
         assert!(params(&k, &none).is_none());
+    }
+
+    /// Square To sends nothing on Automatic (the command's own default) and its choice otherwise.
+    #[test]
+    fn square_to_is_sent_with_the_panel() {
+        let none: Vec<SelInput> = vec![SelInput::new("Outline Points", FACES, true).places()];
+        let mut k = FlatTemplate { outline: 1, panel: true, ..FlatTemplate::default() };
+        let sent = |k: &FlatTemplate| params(k, &none).map(|p| p["panel"]["square_to"].clone());
+        assert_eq!(sent(&k), Some(Value::Null));
+        k.square_to = 1;
+        assert_eq!(sent(&k), Some(json!("holes")));
+        k.square_to = 2;
+        assert_eq!(sent(&k), Some(json!("outline")));
     }
 
     /// Four clicks on a wall show the template (the outlet cut out, the scan's edge) before
