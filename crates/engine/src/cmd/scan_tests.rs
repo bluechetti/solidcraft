@@ -2004,6 +2004,32 @@ fn flat_template_panel_proposes_seams_between_the_rows_of_holes() {
     assert!(s.execute("scan.flat_template", &picked).is_err(), "a panel needs the whole outline");
 }
 
+/// A wall whose frame holes run 1.5° off its outline (the scan's edge is a door or a trim, not the
+/// structure): the panel is squared to the rows and columns of holes, so the seam between the rows
+/// stays level; asked to square to the outline, it is not turned.
+#[test]
+fn panel_is_squared_to_the_rows_and_columns_of_holes() {
+    let (c, sn) = (1.5f64.to_radians().cos(), 1.5f64.to_radians().sin());
+    let centres: Vec<(f64, f64)> = panel_wall_holes()
+        .into_iter()
+        // On whole millimetres, so each hole is as round on the 1 mm grid as the plain wall's.
+        .map(|(x, y)| ((300.0 + c * (x - 300.0) - sn * (y - 200.0)).round(), (200.0 + sn * (x - 300.0) + c * (y - 200.0)).round()))
+        .collect();
+    let (mut s, body) = session_with_triangles("panel-turned", &panel_wall_triangles(&centres, false));
+    let r = run(&mut s, "scan.panel_proposals", json!({"body": body, "panel": {"sheet": [400, 250]}}));
+    let turn = r["squared_to_holes"].as_f64().unwrap_or(0.0);
+    assert!((turn.abs() - 1.5).abs() < 0.2, "turned to the holes: {r}");
+    let seams = r["seams"].as_array().unwrap();
+    let across = seams.iter().find(|s| s["upright"] == false).unwrap();
+    assert!((across["from"][1].as_f64().unwrap() - across["to"][1].as_f64().unwrap()).abs() < 1e-6, "{r}");
+    assert!(across["between_rows"] == true, "level between the rows once turned: {r}");
+    let outline = run(&mut s, "scan.panel_proposals", json!({"body": body, "panel": {"sheet": [400, 250], "square_to": "outline"}}));
+    assert!(outline["squared_to_holes"].is_null(), "{outline}");
+    let plain = run(&mut s, "scan.panel_proposals", json!({"body": body, "panel": {"sheet": [400, 250], "square_to": "holes"}}));
+    assert!((plain["squared_to_holes"].as_f64().unwrap() - turn).abs() < 1e-9, "{plain}");
+    assert!(s.execute("scan.panel_proposals", &json!({"body": body, "panel": {"square_to": "door"}})).is_err());
+}
+
 /// Export Panel: the pieces at their own 0, 0 (outline, holes and fixing points on their layers,
 /// labelled), the blanks on sheets, a row in the holes list for each hole and fixing point, the
 /// cut list and distances to check; written beside the path when given.

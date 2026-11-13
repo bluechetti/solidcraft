@@ -54,7 +54,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("flat")
         .contract(&CONTRACT)
         .output(output_schema_for::<ScanFlatTemplateResult>)
-        .params("body?: the scan (default: the picked, selected or only one); outline: [[x,y,z], …] three or more points in order round the template (laid exactly on the plane; nothing else snaps to the scan), or `scan`: the whole wall's outline found from the scan, on the plane it rests on (its outermost large flat face), each part standing off it a notch in the outline or a cut-out (side defaults to out, show_scan_edge to false); gap?: length (with outline scan: tears in the scan's edge narrower than this bridged; default 50 mm); step?: length (with outline scan: the grid it is found on, how true it is; default 2 mm); smooth?: length (with outline scan: notches, cut-outs and slivers narrower than this smoothed away, the template going over a cable or bracket that thin; default 100 mm, 0 keeps them); round?: length (with outline scan: the template tidied, sides nearly level or plumb made so, those nearly on one line put on it, corners rounded to this grid from its corner, no side added or taken away; default 5 mm, 0 as found); finger?: length (with outline scan: fingers of the template narrower than this reaching over 100 mm in between parts standing out are cut off with them; default 300 mm, 0 keeps them); cover?: [[x,y,z], …] (with outline scan, up to 100: at each, the raised part there, as far as it stays within 15 mm of its height there, is covered rather than cut round — a plateau the panel sits over); plane?: {point, normal} (default: fitted to the scan under the outline, the parts standing far off it left out); tolerance?: length (how far off the plane a part must stand to be cut out; default four times the wall's noise, at least 1 mm); side?: both|out|in (default both; out is the side the parts stand farthest off); least_area?: mm² (default 25: smaller parts are noise); show_scan_edge?: bool (default true: the scan's edge as construction lines); panel?: {sheet?: [long, short] mm (default [2440, 1220]), up?: [x, y, z] (which way is up along the wall: the panel turned so its bottom edge is the floor), turn?: 0-3 (quarter turns after that), edges?: {left?, right?, bottom?, top?} (mm from the outline's corner), drop_cutouts?: [n], drop_seams?: [n], drop_holes?: [n], move_seams?: [{seam, by}], holes?: bool, clearance?: mm (default 3: the gap at edges, cut-outs and seams), spacing?: mm (default 300: edges with no hole that long get fixing points on flat metal; 0 none), access_holes?: bool (default false), hole_sizes?: [mm] (holes drawn at the nearest within 1 mm), fixing_hole?: mm (default 7), shapes?: [{cutout, shape: box|straight|scanned}], drop_fixings?: [n], confirm_with?: another scan of the wall or of its mirror image (each hole checked against it: both, not_found, unscanned), drop_unconfirmed?: bool} (with outline scan: a straight panel cut from sheets: straight edges, the cut-outs they need (small ones as boxes, larger ones with straight sides), seams along the frame's rows of holes as few as fit the sheet, circles for the holes near the edges and seams and for fixing points where an edge has none; each kept unless dropped, numbered as `scan.panel_proposals` lists them); make_face?: bool (default false, not with panel: also a flat Free Form face over the template with each cut-out a hole in it, or a planar patch of the template's region when the kernel cannot trim the Free Form); name?: the sketch's (default `Wall Template`): a sketch on a plane through the wall at the outline's corner (the sketch's origin), a cut-out loop for each part standing off the plane, and the scan's edge → body, sketch, point, normal, fitted, kept, under, tolerance, area, cut_area, cutouts[{area, height, side, center, size, at_scan_edge, crosses, clipped}], edge_lengths (the outline's sides, mm), step (with outline scan: the cell used), moved (with round: the most a corner moved), face (the face's body, with make_face), face_kind (free_form or planar), found, specks, outside, scan_edge_loops, lines, arcs, circles, shift"),
+        .params("body?: the scan (default: the picked, selected or only one); outline: [[x,y,z], …] three or more points in order round the template (laid exactly on the plane; nothing else snaps to the scan), or `scan`: the whole wall's outline found from the scan, on the plane it rests on (its outermost large flat face), each part standing off it a notch in the outline or a cut-out (side defaults to out, show_scan_edge to false); gap?: length (with outline scan: tears in the scan's edge narrower than this bridged; default 50 mm); step?: length (with outline scan: the grid it is found on, how true it is; default 2 mm); smooth?: length (with outline scan: notches, cut-outs and slivers narrower than this smoothed away, the template going over a cable or bracket that thin; default 100 mm, 0 keeps them); round?: length (with outline scan: the template tidied, sides nearly level or plumb made so, those nearly on one line put on it, corners rounded to this grid from its corner, no side added or taken away; default 5 mm, 0 as found); finger?: length (with outline scan: fingers of the template narrower than this reaching over 100 mm in between parts standing out are cut off with them; default 300 mm, 0 keeps them); cover?: [[x,y,z], …] (with outline scan, up to 100: at each, the raised part there, as far as it stays within 15 mm of its height there, is covered rather than cut round — a plateau the panel sits over); plane?: {point, normal} (default: fitted to the scan under the outline, the parts standing far off it left out); tolerance?: length (how far off the plane a part must stand to be cut out; default four times the wall's noise, at least 1 mm); side?: both|out|in (default both; out is the side the parts stand farthest off); least_area?: mm² (default 25: smaller parts are noise); show_scan_edge?: bool (default true: the scan's edge as construction lines); panel?: {sheet?: [long, short] mm (default [2440, 1220]), up?: [x, y, z] (which way is up along the wall: the panel turned so its bottom edge is the floor), turn?: 0-3 (quarter turns after that), edges?: {left?, right?, bottom?, top?} (mm from the outline's corner), drop_cutouts?: [n], drop_seams?: [n], drop_holes?: [n], move_seams?: [{seam, by}], holes?: bool, clearance?: mm (default 3: the gap at edges, cut-outs and seams), spacing?: mm (default 300: edges with no hole that long get fixing points on flat metal; 0 none), access_holes?: bool (default false), hole_sizes?: [mm] (holes drawn at the nearest within 1 mm), fixing_hole?: mm (default 7), shapes?: [{cutout, shape: box|straight|scanned}], drop_fixings?: [n], square_to?: auto|holes|outline (default auto: squared to the rows and columns of holes when they agree the wall is turned 0.25° or more on the outline's own sides), confirm_with?: another scan of the wall or of its mirror image (each hole checked against it: both, not_found, unscanned), drop_unconfirmed?: bool} (with outline scan: a straight panel cut from sheets: straight edges, the cut-outs they need (small ones as boxes, larger ones with straight sides), seams along the frame's rows of holes as few as fit the sheet, circles for the holes near the edges and seams and for fixing points where an edge has none; each kept unless dropped, numbered as `scan.panel_proposals` lists them); make_face?: bool (default false, not with panel: also a flat Free Form face over the template with each cut-out a hole in it, or a planar patch of the template's region when the kernel cannot trim the Free Form); name?: the sketch's (default `Wall Template`): a sketch on a plane through the wall at the outline's corner (the sketch's origin), a cut-out loop for each part standing off the plane, and the scan's edge → body, sketch, point, normal, fitted, kept, under, tolerance, area, cut_area, cutouts[{area, height, side, center, size, at_scan_edge, crosses, clipped}], edge_lengths (the outline's sides, mm), step (with outline scan: the cell used), moved (with round: the most a corner moved), face (the face's body, with make_face), face_kind (free_form or planar), found, specks, outside, scan_edge_loops, lines, arcs, circles, shift"),
     CommandSpec::new("scan.panel_proposals", "Panel Proposals", crate::checked!("scan.panel_proposals", panel_proposals))
         .contract(&PROPOSALS_CONTRACT)
         .output(output_schema_for::<ScanPanelProposalsResult>)
@@ -105,6 +105,9 @@ pub struct Prepared {
     /// With `panel.confirm_with`: the other scan's holes, on the plane it rests on, and its backing
     /// there (where it covers the wall).
     pub other: Option<std::sync::Arc<OtherScan>>,
+    /// With `panel`: how far the outline was turned to square it to the wall's structure (radians),
+    /// when it was.
+    pub squared: Option<f64>,
 }
 
 /// Another scan of the wall to check the holes against.
@@ -177,7 +180,7 @@ pub fn prepare(s: &Session, p: &Value, cmd: &str) -> Result<Prepared> {
         let smooth = length_or_zero(s, p, "smooth", wall_outline::SMOOTH, cmd)?;
         let round = length_or_zero(s, p, "round", wall_outline::ROUND, cmd)?;
         let finger = length_or_zero(s, p, "finger", wall_outline::FINGER, cmd)?;
-        let options = wall_outline::Options { gap, step, smooth, least_area, round, finger, edge: show_scan_edge };
+        let options = wall_outline::Options { gap, step, smooth, least_area, round, finger, edge: show_scan_edge, square_dir: None };
         let cover: Vec<Vec3> = match p.get("cover").filter(|v| !v.is_null()) {
             None => Vec::new(),
             Some(v) => v
@@ -188,12 +191,31 @@ pub fn prepare(s: &Session, p: &Value, cmd: &str) -> Result<Prepared> {
                 .map(|q| crate::params::vec3(q).ok_or_else(|| bad(cmd, "a `cover` point must be [x, y, z] of numbers")))
                 .collect::<Result<_>>()?,
         };
-        let (made, how) = wall_outline::template_covering(&scan, given_plane, asked, side, options, &cover).map_err(|e| bad(cmd, e.to_string()))?;
+        let (mut made, mut how) =
+            wall_outline::template_covering(&scan, given_plane, asked, side, options, &cover).map_err(|e| bad(cmd, e.to_string()))?;
         let choices = panel_choices(p, cmd)?;
-        let holes = match &choices {
+        let mut holes = match &choices {
             Some(c) if c.holes.unwrap_or(true) => panel::frame_holes(&scan, &made.frame),
             _ => Vec::new(),
         };
+        // A straight panel square to the van: when the rows and columns of holes say the wall's
+        // structure is turned on the outline's own squaring, the outline is found again square to it.
+        let square_to = choices.as_ref().and_then(|c| c.square_to.clone()).unwrap_or_else(|| "auto".to_owned());
+        if !matches!(square_to.as_str(), "auto" | "holes" | "outline") {
+            return Err(bad(cmd, format!("`panel.square_to` is auto, holes or outline, not `{square_to}`")));
+        }
+        let mut squared = None;
+        if choices.is_some()
+            && square_to != "outline"
+            && let Some(turn) = panel::structure_angle(&holes)
+            && (square_to == "holes" || turn.to_degrees().abs() >= panel::STRUCTURE_LEAST)
+        {
+            let dir = made.frame.x * turn.cos() + made.frame.y * turn.sin();
+            let again = wall_outline::Options { square_dir: Some(dir), ..options };
+            (made, how) = wall_outline::template_covering(&scan, given_plane, asked, side, again, &cover).map_err(|e| bad(cmd, e.to_string()))?;
+            holes = panel::holes_turned(&holes, turn);
+            squared = Some(turn);
+        }
         let backing = match &choices {
             Some(c) if c.spacing.unwrap_or(panel::SPACING) > 0.0 => panel::backing(&scan, &made.frame).map(std::sync::Arc::new),
             _ => None,
@@ -230,6 +252,7 @@ pub fn prepare(s: &Session, p: &Value, cmd: &str) -> Result<Prepared> {
             holes,
             backing,
             other,
+            squared,
         });
     }
     let (point, normal, tolerance, fitted, kept, under) = match given_plane {
@@ -257,6 +280,7 @@ pub fn prepare(s: &Session, p: &Value, cmd: &str) -> Result<Prepared> {
         holes: Vec::new(),
         backing: None,
         other: None,
+        squared: None,
     })
 }
 
@@ -672,6 +696,7 @@ fn panel_proposals(s: &mut Session, p: &Value) -> Result<Value> {
         sheets,
         fit_moves,
         confirm,
+        squared_to_holes: pp.prepared.squared.map(f64::to_degrees),
         flattened: pp.proposal.flattened,
         flattened_depth: pp.proposal.flattened_depth,
         sheet: pp.proposal.sheet,

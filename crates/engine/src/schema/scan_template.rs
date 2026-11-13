@@ -153,6 +153,11 @@ pub struct PanelChoices {
     /// Holes the other scan covers without a hole there are not drawn. Default: false.
     #[serde(default)]
     pub drop_unconfirmed: Option<bool>,
+    /// What the panel is squared to: `holes` (the rows and columns of the frame's holes),
+    /// `outline` (the way the outline's sides run) or `auto` (the holes when they agree the wall
+    /// is turned 0.25° or more on the outline's sides). Default: auto.
+    #[serde(default)]
+    pub square_to: Option<String>,
 }
 
 /// One cut-out's shape: its number and `box`, `straight` (dents filled, straight sides) or
@@ -446,6 +451,10 @@ pub struct ScanPanelProposalsResult {
     /// With `confirm_with`: how the holes were checked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirm: Option<PanelConfirmOut>,
+    /// When the panel was squared to the frame's holes: how far it turned from the outline's own
+    /// squaring (degrees).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub squared_to_holes: Option<f64>,
     /// Notches too shallow to cut (the edge goes over them) and how deep the deepest is (mm).
     pub flattened: usize,
     pub flattened_depth: f64,

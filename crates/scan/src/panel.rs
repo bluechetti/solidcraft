@@ -198,6 +198,34 @@ pub fn quarters_for(made: &Template, up: Vec3) -> u8 {
     (0..4u8).max_by(|a, b| ups[*a as usize].dot(up).partial_cmp(&ups[*b as usize].dot(up)).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0)
 }
 
+/// The turn of the wall's structure on the template (radians, anticlockwise): the rows of holes
+/// rising that much and the columns leaning the same way, when both are found and agree within
+/// [`STRUCTURE_AGREE`]; none otherwise (a lean of rows alone may be the wall's own).
+pub fn structure_angle(holes: &[Hole]) -> Option<f64> {
+    let small: Vec<Hole> = holes.iter().copied().filter(|h| h.diameter < ACCESS_HOLE).collect();
+    let (row_slope, rows) = lines_of(&small, false, ROW_HOLES, ROW_SPREAD);
+    let (column_slope, columns) = lines_of(&small, true, COLUMN_HOLES, COLUMN_SPREAD);
+    if rows.is_empty() || columns.is_empty() {
+        return None;
+    }
+    // A column leaning left as it rises is the same turn as a row rising to the right.
+    let (by_rows, by_columns) = (row_slope.atan(), -column_slope.atan());
+    ((by_rows - by_columns).abs() <= STRUCTURE_AGREE.to_radians()).then_some((by_rows + by_columns) / 2.0)
+}
+
+/// Rows and columns of holes agree on a turn within this (degrees).
+const STRUCTURE_AGREE: f64 = 0.4;
+
+/// A turn of the structure under this (degrees) is left: the outline's own squaring stands.
+pub const STRUCTURE_LEAST: f64 = 0.25;
+
+/// `holes` in the template turned by `angle` (the template's x then runs `angle` anticlockwise
+/// of where it ran): the same places, their coordinates turned the other way.
+pub fn holes_turned(holes: &[Hole], angle: f64) -> Vec<Hole> {
+    let (s, c) = angle.sin_cos();
+    holes.iter().map(|h| Hole { at: Vec2::new(c * h.at.x + s * h.at.y, -s * h.at.x + c * h.at.y), ..*h }).collect()
+}
+
 /// The panel's straight edges, in the template's coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Edges {
@@ -2273,5 +2301,45 @@ mod tests {
             assert_eq!(*s, want, "hole {k} at {:?}", h.at);
         }
         assert!(fit_holes(&a[..4], &b).is_none(), "too few holes to fit");
+    }
+
+    /// A grid of holes turned 1.7°: rows and columns agree, and that is the structure's turn;
+    /// turned back, the holes stand square. Rows alone leaning (columns plumb) are not a turn.
+    #[test]
+    fn the_structure_turn_is_found_from_rows_and_columns_of_holes() {
+        let mut grid = Vec::new();
+        for i in 0..12 {
+            for y in [500.0, 534.0, 1600.0] {
+                grid.push(Vec2::new(150.0 + 300.0 * f64::from(i), y));
+            }
+        }
+        for j in 0..8 {
+            for x in [1450.0, 1490.0, 3900.0] {
+                grid.push(Vec2::new(x, 200.0 + 200.0 * f64::from(j)));
+            }
+        }
+        let a = 1.7f64.to_radians();
+        let (s, c) = a.sin_cos();
+        let holes: Vec<Hole> =
+            grid.iter().map(|p| Hole { at: Vec2::new(c * p.x - s * p.y, s * p.x + c * p.y), diameter: 8.0, behind: 10.0 }).collect();
+        let found = structure_angle(&holes).expect("a turn");
+        assert!((found - a).abs() < 0.05f64.to_radians(), "{}", found.to_degrees());
+        let back = holes_turned(&holes, found);
+        for (h, p) in back.iter().zip(&grid) {
+            assert!(h.at.dist(*p) < 3.0, "{:?} {p:?}", h.at);
+        }
+        // Rows rising 0.3°, columns plumb: no turn.
+        let leaning: Vec<Hole> = grid
+            .iter()
+            .map(|p| {
+                let rise = if (p.y - 500.0).abs() < 1.0 || (p.y - 534.0).abs() < 1.0 || (p.y - 1600.0).abs() < 1.0 {
+                    0.3f64.to_radians().tan() * p.x
+                } else {
+                    0.0
+                };
+                Hole { at: Vec2::new(p.x, p.y + rise), diameter: 8.0, behind: 10.0 }
+            })
+            .collect();
+        assert!(structure_angle(&leaning).is_none_or(|t| t.to_degrees().abs() < STRUCTURE_LEAST), "{:?}", structure_angle(&leaning));
     }
 }

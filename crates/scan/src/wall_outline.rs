@@ -521,11 +521,23 @@ pub struct Options {
     pub finger: f64,
     /// Also give the scan's own edge loops.
     pub edge: bool,
+    /// The way the template's x runs (a direction in space, laid on the plane), in place of the way
+    /// the outline's sides run: the outline is squared and tidied to it.
+    pub square_dir: Option<Vec3>,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { gap: GAP, step: STEP, smooth: SMOOTH, least_area: crate::template::LEAST_AREA, round: ROUND, finger: FINGER, edge: false }
+        Options {
+            gap: GAP,
+            step: STEP,
+            smooth: SMOOTH,
+            least_area: crate::template::LEAST_AREA,
+            round: ROUND,
+            finger: FINGER,
+            edge: false,
+            square_dir: None,
+        }
     }
 }
 
@@ -578,7 +590,7 @@ pub fn template_covering(
     if !keep_over.iter().all(|p| p.is_finite()) {
         return Err(TemplateError::Outline("is asked to cover a place that is not one"));
     }
-    let Options { gap, step, smooth, least_area, round, finger, edge } = options;
+    let Options { gap, step, smooth, least_area, round, finger, edge, square_dir } = options;
     if !(finger.is_finite() && finger >= 0.0) {
         return Err(TemplateError::Number("`finger`"));
     }
@@ -869,8 +881,12 @@ pub fn template_covering(
         let which = if side == Side::In { Side::In } else { Side::Out };
         cutouts.push(Cutout { ring, side: which, area: ring_area, height: most, at_scan_edge: false, crosses, clipped: false });
     }
-    // Square to its own edges: the frame turned in its plane to the way the outline's sides run.
-    let turn = squaring_angle(&outline);
+    // Square to its own edges: the frame turned in its plane to the way the outline's sides run
+    // (or to the way asked).
+    let turn = match square_dir.filter(|d| d.is_finite()) {
+        Some(d) if d.dot(frame.x).hypot(d.dot(frame.y)) > 1e-9 => d.dot(frame.y).atan2(d.dot(frame.x)),
+        _ => squaring_angle(&outline),
+    };
     let (c, sn) = (turn.cos(), turn.sin());
     let frame = Plane { origin: frame.origin, x: frame.x * c + frame.y * sn, y: frame.y * c - frame.x * sn };
     let spin = |ring: &mut Vec<Vec2>| {
