@@ -739,6 +739,42 @@ fn sketch_outlines(s: &mut Session, plane: &Plane, name: &str, outlines: &[Outli
     Ok(id)
 }
 
+/// The profiles of sketch `id` that are material, when some are not: a profile inside a hole of
+/// another is the hole itself (a disc where the part has a bore), one inside a hole of that is an
+/// island again (a pin standing in the bore). Extrude takes every profile unless told, which would
+/// fill each hole the profile has. `None` when every profile is material or the sketch is not
+/// there.
+fn material_profiles(s: &mut Session, id: u64) -> Option<Vec<usize>> {
+    // A sketch just finished has its profiles once the model is brought up to date.
+    if s.model.state().sketch(id).is_none_or(|k| k.profiles.is_empty()) {
+        s.refresh();
+    }
+    let state = s.model.state();
+    let profiles = &state.sketch(id)?.profiles;
+    let key = |curves: &[String]| {
+        let mut k: Vec<String> = solidcraft_sketch::distinct_curves(curves);
+        k.sort();
+        k
+    };
+    let outers: Vec<Vec<String>> = profiles.iter().map(|p| key(&p.outer_curves)).collect();
+    // Each profile's parent: the profile one of whose holes is its outer loop.
+    let parent: Vec<Option<usize>> =
+        outers.iter().map(|outer| profiles.iter().position(|q| q.hole_curves.iter().any(|h| key(h) == *outer))).collect();
+    let depth = |mut k: usize| {
+        let mut d = 0usize;
+        while let Some(up) = parent.get(k).copied().flatten() {
+            d += 1;
+            if d > profiles.len() {
+                break;
+            }
+            k = up;
+        }
+        d
+    };
+    let material: Vec<usize> = (0..profiles.len()).filter(|&k| depth(k) % 2 == 0).collect();
+    (material.len() < profiles.len() && !material.is_empty()).then_some(material)
+}
+
 /// How a feature builds into the body Reconstruct builds: joining `into` (default: that body,
 /// when it is there), else making it new.
 fn into_params(s: &Session, scan: &str, p: &Value, cmd: &str) -> Result<(Value, String, &'static str)> {
@@ -793,8 +829,11 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
     let mut drawn = Drawn::default();
     let sketch = sketch_outlines(s, &plane, &format!("Prism Profile {}", index + 1), &outlines, &|_, _, _| None, &mut drawn)?;
     let depth = prism.depth();
-    let extrude =
-        merged(json!({"sketch": sketch, "distance": depth, "direction": "symmetric", "name": format!("Extrude It {}", index + 1)}), operation);
+    let mut extrude = json!({"sketch": sketch, "distance": depth, "direction": "symmetric", "name": format!("Extrude It {}", index + 1)});
+    if let Some(material) = material_profiles(s, sketch) {
+        extrude["profiles"] = json!(material);
+    }
+    let extrude = merged(extrude, operation);
     let feature = run(s, "solid.extrude", extrude)?;
     reply(ScanBuildResult {
         body: found.scan.clone(),

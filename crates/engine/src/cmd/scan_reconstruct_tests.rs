@@ -116,6 +116,27 @@ fn a_rounded_block_is_extruded_back_from_its_scan() {
     assert!(s.scan_shapes.as_ref().is_some_and(|k| !k.shown));
 }
 
+/// A block 40 × 30 × 10 with two holes Ø 8 through it: the prism's profile holds the holes as
+/// circles inside its outline, and Extrude It extrudes the outline with the holes open, not the
+/// discs inside them as well.
+#[test]
+fn holes_through_a_prism_stay_open_when_it_is_extruded() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 40, "width": 30, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    for x in [10, 30] {
+        run(&mut part, "solid.hole", json!({"position": [x, 15, 10], "diameter": 8}));
+    }
+    let expected = 40.0 * 30.0 * 10.0 - 2.0 * std::f64::consts::PI * 16.0 * 10.0;
+    assert!((volume(&part, &body) - expected).abs() < 1e-3 * expected, "{}", volume(&part, &body));
+    let (mut s, _) = scanned(&part, &body, 3, "holed-block");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    assert_eq!(read["proposals"][0]["command"], "scan.extrude_it", "{read}");
+    let built = run(&mut s, "scan.extrude_it", json!({}));
+    let v = volume(&s, built["solid"].as_str().unwrap());
+    assert!((v - expected).abs() < 0.005 * expected, "{v} against {expected}: {read} {built}");
+}
+
 /// A shaft stepped from R 20 (25 long) to R 12 (15 long) with three blind holes Ø 6 × 12 drilled
 /// along the radius into the wider part: Reconstruct reads it as turned with a ring of holes;
 /// Revolve It builds the shaft, Cut It the first hole and Pattern It the other two. (A plain

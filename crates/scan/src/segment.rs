@@ -195,10 +195,13 @@ impl<'a> Reading<'a> {
     }
 
     /// The open triangles reached from `seed` across edges whose middles lie within `reach` of
-    /// the seed's, at most `limit` of them.
-    fn patch(&mut self, seed: usize, reach: f64, limit: usize) -> Vec<usize> {
+    /// the seed's, at most `limit` of them; with `smooth`, only across edges that are no crease
+    /// (the two triangles' directions within [`CREASE`]), so the patch keeps to the one face the
+    /// seed is on.
+    fn patch(&mut self, seed: usize, reach: f64, limit: usize, smooth: bool) -> Vec<usize> {
         let visit = self.visit();
         let at = self.middles[seed];
+        let cos = CREASE.cos();
         self.seen(seed, visit);
         let mut found = vec![seed];
         let mut head = 0;
@@ -208,12 +211,37 @@ impl<'a> Reading<'a> {
                 if found.len() >= limit {
                     return found;
                 }
-                if self.is_open(n) && self.middles[n].dist(at) <= reach && !self.seen(n, visit) {
+                let crease = smooth
+                    && match (self.normals[t], self.normals[n]) {
+                        (Some(x), Some(y)) => x.dot(y) < cos,
+                        _ => true,
+                    };
+                if self.is_open(n) && !crease && self.middles[n].dist(at) <= reach && !self.seen(n, visit) {
                     found.push(n);
                 }
             }
         }
         found
+    }
+
+    /// A seed's patch: the smooth face round it within `reach` (twice as far, up to four times,
+    /// while it holds too few triangles); where the face is too small for that, the scan round
+    /// the seed whatever its creases. A face smaller than the reach (a counterbore's wall, a
+    /// boss's side on a large part) is then fitted on its own, not mixed with the faces round it
+    /// into a patch no shape fits.
+    fn seed_patch(&mut self, seed: usize, reach: f64, options: &Options) -> Vec<usize> {
+        for smooth in [true, false] {
+            let mut patch = self.patch(seed, reach, options.patch_limit, smooth);
+            let mut wider = reach;
+            while patch.len() < options.seed_triangles && wider < 4.0 * reach {
+                wider *= 2.0;
+                patch = self.patch(seed, wider, options.patch_limit, smooth);
+            }
+            if patch.len() >= options.seed_triangles / 2 {
+                return patch;
+            }
+        }
+        vec![seed]
     }
 
     /// The open triangles reached from `seeds` that lie on `shape`: every corner within
@@ -367,7 +395,7 @@ fn noise(reading: &mut Reading, options: &Options, size: f64) -> f64 {
     let mut spreads = Vec::new();
     for t in (0..n).step_by(step) {
         if reading.areas[t] > 0.0 {
-            let patch = reading.patch(t, reach, 400);
+            let patch = reading.patch(t, reach, 400, false);
             if let Some(spread) = (patch.len() >= 8).then(|| quadric_spread(&reading.scan, &patch)).flatten() {
                 spreads.push(spread);
             }
@@ -800,12 +828,7 @@ fn shapes_on(
             break;
         }
         seeds += 1;
-        let mut patch = reading.patch(seed, reach, options.patch_limit);
-        let mut wider = reach;
-        while patch.len() < options.seed_triangles && wider < 4.0 * reach {
-            wider *= 2.0;
-            patch = reading.patch(seed, wider, options.patch_limit);
-        }
+        let patch = reading.seed_patch(seed, reach, options);
         for &t in &patch {
             tried[t] = true;
         }
