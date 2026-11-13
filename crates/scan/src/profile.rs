@@ -743,6 +743,13 @@ pub fn prism_plane(prism: &Prism) -> Plane {
 /// lies in and its outlines (`faces` index `reading.faces`); why not, when no loop goes round its
 /// walls.
 pub fn prism_profile(scan: &Scan, outcome: &Outcome, reading: &Reading, prism: &Prism) -> Result<(Plane, Vec<Outline>), String> {
+    let (plane, outlines) = prism_profile_found(scan, outcome, reading, prism)?;
+    let least = SLIVER_SHARE * reading.size;
+    Ok((plane, outlines.into_iter().map(|o| without_slivers(o, least, false)).collect()))
+}
+
+/// [`prism_profile`] as the faces' meetings give it, slivers and all.
+fn prism_profile_found(scan: &Scan, outcome: &Outcome, reading: &Reading, prism: &Prism) -> Result<(Plane, Vec<Outline>), String> {
     prism_profile_from(scan, &crate::welded(scan.positions), outcome, &reading.faces, &reading.same, reading.size, prism)
 }
 
@@ -799,7 +806,47 @@ pub fn turned_plane(axis: &Axis) -> Plane {
 /// outline (`faces` index `reading.faces`) and each face as held (by face index); why not.
 pub fn turned_profile(scan: &Scan, outcome: &Outcome, reading: &Reading) -> Result<(Plane, Outline, BTreeMap<usize, Turned>), String> {
     let revolve = reading.revolve.as_ref().ok_or("the part is not turned: no axis holds most of its faces")?;
-    turned_profile_of(scan, outcome, &reading.faces, &reading.same, reading.size, revolve)
+    let (plane, outline, held) = turned_profile_of(scan, outcome, &reading.faces, &reading.same, reading.size, revolve)?;
+    Ok((plane, without_slivers(outline, SLIVER_SHARE * reading.size, true), held))
+}
+
+/// A line of a profile shorter than this share of the part is a sliver between two faces that
+/// meet (a corner the faces' fits leave a hair apart), not a face of the part: a kernel builds a
+/// degenerate face from it and refuses the result.
+pub const SLIVER_SHARE: f64 = 0.002;
+
+/// `outline` with each line shorter than `least` taken out, its two ends joined at its middle,
+/// while three pieces or more are left. With `axis` (a turned profile, the axis along x), corners
+/// within `least` of the axis or across it are put on it, so the profile never crosses it.
+pub fn without_slivers(mut outline: Outline, least: f64, axis: bool) -> Outline {
+    if axis {
+        for c in &mut outline.corners {
+            if c.y < least {
+                c.y = 0.0;
+            }
+        }
+    }
+    loop {
+        let n = outline.pieces.len();
+        if n <= 3 || outline.corners.len() != n || outline.faces.len() != n {
+            return outline;
+        }
+        let shortest = (0..n)
+            .filter(|&k| matches!(outline.pieces[k], Piece::Line))
+            .map(|k| (k, outline.corners[k].dist(outline.corners[(k + 1) % n])))
+            .filter(|(_, length)| *length < least)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        let Some((k, _)) = shortest else { return outline };
+        let next = (k + 1) % n;
+        let mut middle = (outline.corners[k] + outline.corners[next]) * 0.5;
+        if axis && (outline.corners[k].y == 0.0 || outline.corners[next].y == 0.0) {
+            middle.y = 0.0;
+        }
+        outline.corners[k] = middle;
+        outline.corners.remove(next);
+        outline.pieces.remove(k);
+        outline.faces.remove(k);
+    }
 }
 
 /// [`turned_profile`] of `revolve` from the shapes `found` and the part's size, so that
@@ -1051,6 +1098,24 @@ fn turned_sliced(
 
 #[cfg(test)]
 mod tests {
+    /// A hair-long line between two faces is joined away at its middle; a real side stays; a turned
+    /// profile's corners a hair off the axis, or across it, go onto it.
+    #[test]
+    fn slivers_are_joined_away_and_corners_put_on_the_axis() {
+        let square =
+            |corners: Vec<Vec2>| Outline { pieces: vec![Piece::Line; corners.len()], faces: (0..corners.len()).map(Some).collect(), corners };
+        let o = square(vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 5.0), Vec2::new(10.01, 5.0), Vec2::new(0.0, 5.0)]);
+        let t = without_slivers(o, 0.1, false);
+        assert_eq!(t.pieces.len(), 4, "{t:?}");
+        assert!((t.corners[2] - Vec2::new(10.005, 5.0)).len() < 1e-12, "{t:?}");
+        assert_eq!(t.faces, [Some(0), Some(1), Some(3), Some(4)]);
+        let kept = without_slivers(square(vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)]), 5.0, false);
+        assert_eq!(kept.pieces.len(), 3, "a triangle keeps its three sides");
+        let turned =
+            without_slivers(square(vec![Vec2::new(0.0, -0.01), Vec2::new(10.0, 0.02), Vec2::new(10.0, 5.0), Vec2::new(0.0, 5.0)]), 0.1, true);
+        assert!(turned.corners.iter().all(|c| c.y >= 0.0) && turned.corners[0].y == 0.0 && turned.corners[1].y == 0.0, "{turned:?}");
+    }
+
     use super::*;
 
     use crate::reconstruct::read;

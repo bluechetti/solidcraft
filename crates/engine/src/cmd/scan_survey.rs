@@ -182,8 +182,12 @@ fn next_steps(plan: &Plan) -> Vec<ScanSurveyStep> {
             json!({"bodies": bodies}),
         );
     }
+    // Smoothing and patched holes help surfaces fitted over the scan; Reconstruct fits shapes
+    // through the noise and the holes, and on the T-LESS benchmark it read worse after either. So
+    // they are suggested once Find All has shown the scan is for fitted surfaces.
+    let surfaces = !plan.sheet_like && plan.shapes.is_some_and(|sh| sh.in_shapes < PRISMATIC);
     let worth_smoothing = look.noise.is_some_and(|n| n > NOISE_WORTH * plan.tolerance);
-    if let Some(strength) = plan.look.smoothing.filter(|s| *s > 0.0 && worth_smoothing) {
+    if let Some(strength) = plan.look.smoothing.filter(|s| *s > 0.0 && worth_smoothing && surfaces) {
         step(
             "scan.denoise",
             format!("its noise ({:.3} mm) smooths away with strength {strength:.2} without rounding sharp edges", look.noise.unwrap_or(0.0)),
@@ -191,7 +195,7 @@ fn next_steps(plan: &Plan) -> Vec<ScanSurveyStep> {
         );
     }
     // On a wall or a panel the holes are mostly real: the frame's holes Flat Template reads.
-    if look.holes > 0 && !plan.sheet_like {
+    if look.holes > 0 && surfaces {
         step(
             "scan.fill_holes",
             format!(
@@ -398,5 +402,63 @@ mod tests {
         let r = run(&mut s, "scan.survey", json!({}));
         assert_eq!(r["sheet_like"], true, "{r}");
         assert_eq!(commands(&r), ["scan.flat_template"], "{r}");
+    }
+
+    /// Denoise and Fill Holes wait for Find All: before it a holey, noisy scan is sent to Find All
+    /// only; read as mostly freeform it gets both before Fit Patches; read as shapes, neither.
+    #[test]
+    fn smoothing_and_holes_wait_for_the_route() {
+        use solidcore_record::Vec3;
+        let look = solidcraft_scan::survey::Look {
+            triangle_count: 1000,
+            points: 600,
+            unusable: 0,
+            low: Vec3::new(-10.0, -10.0, -10.0),
+            high: Vec3::new(10.0, 10.0, 10.0),
+            centre: Vec3::ZERO,
+            own_size: [20.0, 20.0, 20.0],
+            area: 2400.0,
+            typical_edge: 1.0,
+            noise: Some(0.05),
+            smoothing: Some(1.0),
+            noise_places: 8,
+            rims: 0,
+            holes: 3,
+            longest_hole: 12.0,
+            open_edges: 30,
+            tangled_edges: 0,
+            pieces: 1,
+            floating: 0,
+            floating_share: 0.0,
+            flat_share: 0.0,
+        };
+        let shares = |in_shapes: f64| super::ScanSurveyShapes {
+            in_shapes,
+            planes: in_shapes,
+            cylinders: 0.0,
+            spheres: 0.0,
+            cones: 0.0,
+            tori: 0.0,
+            freeform: 1.0 - in_shapes,
+            regions: 4,
+        };
+        let run = |shapes: Option<&super::ScanSurveyShapes>| -> Vec<String> {
+            let plan = super::Plan {
+                body: "s",
+                sizes: look.own_size,
+                look: &look,
+                tiny: false,
+                sheet_like: false,
+                shapes,
+                tolerance: 0.2,
+                tolerance_set: true,
+                other_scans: &[],
+                models: &[],
+            };
+            super::next_steps(&plan).into_iter().map(|n| n.command).collect()
+        };
+        assert_eq!(run(None), ["scan.find_all"]);
+        assert_eq!(run(Some(&shares(0.1))), ["scan.denoise", "scan.fill_holes", "scan.fit_patches"]);
+        assert_eq!(run(Some(&shares(0.9))), ["scan.reconstruct"]);
     }
 }

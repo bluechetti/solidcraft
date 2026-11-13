@@ -48,14 +48,14 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&FIND_ALL_CONTRACT)
         .output(output_schema_for::<ScanFindAllResult>)
-        .params("body?: mesh body (default: the selected or only one); show?: bool (false takes the colouring away): the whole scan cut into regions, each a plane, cylinder, sphere, cone or torus or freeform (the scan's noise sets how close a shape must lie), coloured in the viewport; a view and not an undo step → shapes [{index, kind, area, triangles, rms, point, direction?, radius?, minor?, half_angle?, hole?}], freeform, freeform_area, in_shapes, noise, tolerance"),
+        .params("body?: mesh body (default: the selected or only one); tolerance?: mm (the least distance a shape may lie from the scan and still take it; default: the scan's tolerance when one is set, else three times its noise; raise it for a scan smooth but off by more than its noise, as a fused depth-camera scan is); show?: bool (false takes the colouring away): the whole scan cut into regions, each a plane, cylinder, sphere, cone or torus or freeform (the scan's noise sets how close a shape must lie), coloured in the viewport; a view and not an undo step → shapes [{index, kind, area, triangles, rms, point, direction?, radius?, minor?, half_angle?, hole?}], freeform, freeform_area, in_shapes, noise, tolerance"),
     CommandSpec::new("scan.reconstruct", "Reconstruct", crate::checked!("scan.reconstruct", read_scan))
         .at("SCAN", "RECONSTRUCT")
         .icon("auto_constrain")
         .noundo()
         .contract(&RECONSTRUCT_CONTRACT)
         .output(output_schema_for::<ScanReconstructResult>)
-        .params("body?: mesh body (default: the selected or only one); selected?: bool (default false: the whole scan; true: only the part of it selected, read as a part of its own, and each step proposed takes `selected`): what Find All's shapes make (it runs Find All first when it has not run on this scan): prisms (stretches of one section along a direction a plane faces), a turned part (most of the shapes about one axis), repeats (in a row, round an axis, in a grid, drilled along the radius) and the round holes no profile holds; reads only → shapes, in_shapes, prisms [{index, direction, middle, depth, walls, ends, open}], turned? {point, direction, faces, share}, holes [{index, shape, radius, diameter, mouth, bottom, depth, repeat?, layout?}], repeats, built?, proposals [{command, params}], note?"),
+        .params("body?: mesh body (default: the selected or only one); tolerance?: mm (Find All read again with this least tolerance, as scan.find_all takes it); selected?: bool (default false: the whole scan; true: only the part of it selected, read as a part of its own, and each step proposed takes `selected`): what Find All's shapes make (it runs Find All first when it has not run on this scan): prisms (stretches of one section along a direction a plane faces), a turned part (most of the shapes about one axis), repeats (in a row, round an axis, in a grid, drilled along the radius) and the round holes no profile holds; reads only → shapes, in_shapes, prisms [{index, direction, middle, depth, walls, ends, open}], turned? {point, direction, faces, share}, holes [{index, shape, radius, diameter, mouth, bottom, depth, repeat?, layout?}], repeats, built?, proposals [{command, params}], note?"),
     CommandSpec::new("scan.reconstruct_selection", "Reconstruct Selection", crate::checked!("scan.reconstruct_selection", read_selection))
         .at("SCAN", "RECONSTRUCT")
         .icon("auto_constrain")
@@ -118,6 +118,8 @@ pub struct ScanShapes {
     pub shown: bool,
     /// What Reconstruct last read off the part of the scan selected (`selected`), if it has.
     pub region: Option<Arc<RegionShapes>>,
+    /// The least tolerance Find All was asked to read with (0: its own from the scan's noise).
+    pub least: f64,
 }
 
 /// What Reconstruct read off the part of a scan selected, and which selection that was.
@@ -219,6 +221,7 @@ impl ScanShapes {
             regions: self.regions.clone(),
             shown,
             region,
+            least: self.least,
         }
     }
 }
@@ -253,11 +256,24 @@ fn reply<T: serde::Serialize>(r: T) -> Result<Value> {
     serde_json::to_value(r).map_err(|e| EngineError::Other(e.to_string()))
 }
 
+/// The least tolerance Find All reads `scan` with: `tolerance` when given, else the scan's own
+/// tolerance when one was set for it (`scan.tolerance`), else none (0: its own from the noise).
+fn least_tolerance(s: &Session, p: &Value, scan: &str, cmd: &str) -> Result<f64> {
+    match p.get("tolerance").filter(|v| !v.is_null()) {
+        Some(v) => v.as_f64().filter(|t| t.is_finite() && *t > 0.0 && *t < 1e6).ok_or_else(|| bad(cmd, "`tolerance` must be a length in mm above 0")),
+        None => Ok(if super::tolerance::is_set(s, scan) { super::tolerance::of(s, scan) } else { 0.0 }),
+    }
+}
+
 /// Find All on the scan `p` names (or the selected or only one), kept in the session: what was
 /// found before on the same mesh is used again.
 fn shapes(s: &mut Session, p: &Value, cmd: &str, show: bool) -> Result<Arc<ScanShapes>> {
     let name = super::mesh_body_name(s, str_(p, "body").filter(|b| !b.trim().is_empty()), cmd)?;
-    if let Some(known) = s.scan_shapes.clone().filter(|k| k.scan == name && k.current(s)) {
+    let least = least_tolerance(s, p, &name, cmd)?;
+    // Find All reads again when its tolerance changed, Reconstruct only when given one; the build
+    // steps take the reading they were proposed from, whatever it was read with.
+    let reads = cmd == "scan.find_all" || (cmd.starts_with("scan.reconstruct") && p.get("tolerance").is_some_and(|v| !v.is_null()));
+    if let Some(known) = s.scan_shapes.clone().filter(|k| k.scan == name && k.current(s) && (!reads || k.least == least)) {
         if known.shown || !show {
             return Ok(known);
         }
@@ -273,7 +289,7 @@ fn shapes(s: &mut Session, p: &Value, cmd: &str, show: bool) -> Result<Arc<ScanS
             return Err(bad(cmd, format!("`{name}` has no triangles")));
         }
         let scan = Scan::new(positions, triangles);
-        let outcome = segment::find_all(&scan, &segment::Options::default(), &|| false);
+        let outcome = segment::find_all(&scan, &segment::Options { least_tolerance: least, ..segment::Options::default() }, &|| false);
         let reading = reconstruct::read(&scan, &outcome);
         let mut regions = vec![u32::MAX; triangles.len()];
         for (k, segment) in outcome.segments.iter().enumerate() {
@@ -285,7 +301,7 @@ fn shapes(s: &mut Session, p: &Value, cmd: &str, show: bool) -> Result<Arc<ScanS
         }
         (outcome, reading, fingerprint(positions, triangles), held(positions, triangles), regions)
     };
-    let found = Arc::new(ScanShapes { scan: name, fingerprint: print, held: at, outcome, reading, regions, shown: show, region: None });
+    let found = Arc::new(ScanShapes { scan: name, fingerprint: print, held: at, outcome, reading, regions, shown: show, region: None, least });
     s.scan_shapes = Some(found.clone());
     Ok(found)
 }
@@ -1174,7 +1190,7 @@ pub(super) fn chamfer_it(s: &mut Session, p: &Value) -> Result<Value> {
 macro_rules! fitted {
     ($($name:ident => $step:ident),* $(,)?) => {
         $(fn $name(s: &mut Session, p: &Value) -> Result<Value> {
-            super::step_fit::with_fit(s, p, $step)
+            super::step_fit::with_fit(s, p, concat!("scan.", stringify!($step)), $step)
         })*
     };
 }

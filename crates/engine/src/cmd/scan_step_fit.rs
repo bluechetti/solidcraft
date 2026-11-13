@@ -20,7 +20,7 @@ const RMS_STEP: f64 = 0.05;
 /// Run `step`, a Reconstruct step building into a solid, and add `fit` to its reply: the solid
 /// measured against the scan before and after. A step that fails fails as it would alone; a fit
 /// that cannot be measured is left out.
-pub(super) fn with_fit(s: &mut Session, p: &Value, step: fn(&mut Session, &Value) -> Result<Value>) -> Result<Value> {
+pub(super) fn with_fit(s: &mut Session, p: &Value, cmd: &str, step: fn(&mut Session, &Value) -> Result<Value>) -> Result<Value> {
     let scan = mesh_name(s, p, "").ok();
     let target = scan
         .as_deref()
@@ -29,7 +29,7 @@ pub(super) fn with_fit(s: &mut Session, p: &Value, step: fn(&mut Session, &Value
         (Some(scan), Some(target)) => sample(s, scan, target),
         _ => None,
     };
-    let mut reply = step(s, p)?;
+    let mut reply = step(s, p).map_err(|e| super::refusal::reconstruct_refusal(cmd, e))?;
     let Some(scan) = scan else { return Ok(reply) };
     let solid = reply.get("solid").and_then(Value::as_str).map(str::to_owned).or(target);
     let Some(solid) = solid else { return Ok(reply) };

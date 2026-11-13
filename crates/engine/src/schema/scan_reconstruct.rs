@@ -16,6 +16,11 @@ pub struct ScanFindAllParams {
     /// false takes the colouring away. Default: true.
     #[serde(default)]
     pub show: Option<bool>,
+    /// The least distance (mm) a shape may lie from the scan and still take it. Default: the
+    /// scan's tolerance when one was set for it, else three times the scan's noise. Raise it for a
+    /// scan that is smooth but off by more than its noise (a fused depth-camera scan).
+    #[serde(default)]
+    pub tolerance: Option<f64>,
 }
 
 /// A shape Find All found.
@@ -84,6 +89,9 @@ pub struct ScanReconstructParams {
     /// scan.
     #[serde(default)]
     pub selected: Option<bool>,
+    /// Find All's least tolerance, as `scan.find_all` takes it (it reads again when it differs).
+    #[serde(default)]
+    pub tolerance: Option<f64>,
 }
 
 /// Reconstruct Selection: what the shapes make on the part of the scan selected, read as a part

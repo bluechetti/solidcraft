@@ -41,6 +41,9 @@ pub struct Options {
     pub noise_radius_share: f64,
     /// A simpler kind is kept while it takes at least this share of what the best kind takes.
     pub simpler_share: f64,
+    /// A shape may always lie this far (mm) from the corners it takes, however clean the scan
+    /// reads: for a scan smooth at small scale but off at larger ones (a fused depth-camera scan).
+    pub least_tolerance: f64,
 }
 
 impl Default for Options {
@@ -57,6 +60,7 @@ impl Default for Options {
             noise_samples: 200,
             noise_radius_share: 0.015,
             simpler_share: 0.9,
+            least_tolerance: 0.0,
         }
     }
 }
@@ -518,7 +522,7 @@ fn grow_kind(reading: &mut Reading, seed: usize, patch: &[usize], kind: Kind, to
 
 /// How close a shape must lie to a scan `size` across with `noise`.
 fn tolerance_of(options: &Options, noise: f64, size: f64) -> f64 {
-    (options.noise_multiple * noise).max(options.form_share * size).max(1e-9)
+    (options.noise_multiple * noise).max(options.form_share * size).max(options.least_tolerance).max(1e-9)
 }
 
 /// Find All on `scan`. `cancelled` is asked between seeds; once it says so, the segments are what

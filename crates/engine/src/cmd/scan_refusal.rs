@@ -7,7 +7,7 @@ use crate::EngineError;
 use crate::params::bad;
 
 /// Kinds of failure the kernel's check names: what to look for in its text, what it means.
-const KINDS: [(&str, &str); 9] = [
+const KINDS: &[(&str, &str)] = &[
     ("NonMonotonic", "the control net doubles back on itself"),
     ("CurveCusp", "an edge curve kinks sharply"),
     ("Bad Gap", "an edge does not lie on the faces it joins"),
@@ -17,6 +17,10 @@ const KINDS: [(&str, &str); 9] = [
     ("Degenerate", "part of the surface has collapsed to a point or a line"),
     ("Sliver", "a face is too thin to hold"),
     ("not supported", "the kernel does not support this shape yet"),
+    ("Bad Cone", "a slanted piece of the profile is too short to make a cone face"),
+    ("SurfOfRevolution", "a turned face collapses where the profile meets the axis"),
+    ("Face Near", "two faces meet a hair apart"),
+    ("upstream status", "the faces could not be joined where they meet"),
 ];
 
 /// What to try, by the first kind of failure found: the fix that most often clears it.
@@ -34,7 +38,7 @@ const FIXES: [(&str, &str); 6] = [
 pub(super) fn kernel_words(kernel: &str) -> String {
     let mut said: Vec<&str> = Vec::new();
     for (name, words) in KINDS {
-        if kernel.contains(name) && !said.contains(&words) {
+        if kernel.contains(name) && !said.contains(words) {
             said.push(words);
         }
     }
@@ -45,6 +49,19 @@ pub(super) fn kernel_words(kernel: &str) -> String {
 /// gets the general advice.
 pub(super) fn kernel_fix(kernel: &str) -> &'static str {
     FIXES.iter().find(|(name, _)| kernel.contains(name)).map_or("try a smaller region, or fewer control points", |(_, fix)| fix)
+}
+
+/// What to try when the kernel refuses a feature a Reconstruct step builds.
+const RECONSTRUCT_FIX: &str = "undo to the last step that came back better and try the next proposal, read the part a region at a time (scan.reconstruct_selection), or build this feature by hand from scan.fit_plane, scan.fit_cylinder and scan.section_sketch";
+
+/// A Reconstruct step's error, with a kernel refusal in it said in words and the steps' own fix;
+/// any other error as it was.
+pub(super) fn reconstruct_refusal(cmd: &str, e: EngineError) -> EngineError {
+    let text = e.to_string();
+    if !(text.contains("SMLib") || text.contains("solidcore")) {
+        return e;
+    }
+    bad(cmd, format!("the kernel refused the feature this step builds: {}; {RECONSTRUCT_FIX}", kernel_words(&text)))
 }
 
 /// A refusal of `what` (such as "the faces could not be sewn"): the reason in words, then what
@@ -67,6 +84,21 @@ mod tests {
         assert_eq!(words, "the control net doubles back on itself; an edge curve kinks sharply; the surface passes through itself");
         assert!(!words.contains("Sm") && !words.contains('#'));
         assert_eq!(kernel_words("something else"), "the kernel's check refused the joined surface");
+    }
+
+    /// A Reconstruct step the kernel refused (T-LESS 04's revolve before slivers were joined away)
+    /// says why and what to try; an error of its own passes as it was.
+    #[test]
+    fn a_reconstruct_refusal_is_said_in_words() {
+        let raw = bad(
+            "scan.revolve_it",
+            "body `x Reconstructed`: the operation failed: SMLib revolve: SMLib's check refuses the result: 1 failed tests:\nSmCone::Test #5 Bad Cone GenCurve [owner SmCone]",
+        );
+        let text = reconstruct_refusal("scan.revolve_it", raw).to_string();
+        assert!(text.contains("too short to make a cone face") && text.contains("scan.reconstruct_selection"), "{text}");
+        assert!(!text.contains("SmCone") && !text.contains("Test #"), "{text}");
+        let own = reconstruct_refusal("scan.cut_it", bad("scan.cut_it", "there is no `x Reconstructed` yet")).to_string();
+        assert!(own.contains("there is no") && !own.contains("kernel"), "{own}");
     }
 
     /// The error a person reads names the reason and a fix, and none of the kernel's text.
