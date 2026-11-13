@@ -122,6 +122,38 @@ pub struct PanelChoices {
     /// bottom edge. Default: 0.
     #[serde(default)]
     pub turn: Option<u8>,
+    /// The gap left at every edge, round every cut-out and at every seam (mm). Default: 3.
+    #[serde(default)]
+    pub clearance: Option<f64>,
+    /// How often the edges are fastened (mm): a stretch longer than this with no hole near gets
+    /// fixing points on flat metal behind it. Default: 300; 0 proposes none.
+    #[serde(default)]
+    pub spacing: Option<f64>,
+    /// Propose the frame's access holes (20 mm and up) too. Default: false.
+    #[serde(default)]
+    pub access_holes: Option<bool>,
+    /// The sizes the frame's holes come in (mm): each hole is drawn at the nearest within 1 mm of
+    /// it as scanned. Default: as scanned.
+    #[serde(default)]
+    pub hole_sizes: Option<Vec<f64>>,
+    /// The diameter a fixing point is drawn (mm). Default: 7.
+    #[serde(default)]
+    pub fixing_hole: Option<f64>,
+    /// Cut-outs cut another way than proposed, by their number: `box`, `straight` or `scanned`.
+    #[serde(default)]
+    pub shapes: Option<Vec<CutoutShape>>,
+    /// Fixing points not made, by their number.
+    #[serde(default)]
+    pub drop_fixings: Option<Vec<usize>>,
+}
+
+/// One cut-out's shape: its number and `box`, `straight` (dents filled, straight sides) or
+/// `scanned` (as found).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CutoutShape {
+    pub cutout: usize,
+    pub shape: String,
 }
 
 /// A straight panel's edges (mm from the bottom-left corner of the wall's outline as found).
@@ -197,6 +229,43 @@ pub struct PanelCutoutProposal {
     /// Its middle in space, and its outline in mm from the outline's corner.
     pub center: [f64; 3],
     pub ring: Vec<[f64; 2]>,
+    /// How it is proposed to be cut: `box`, `straight` or `scanned`.
+    pub shape: String,
+}
+
+/// A new place to fasten the panel: flat metal behind it where an edge had no hole near.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelFixingProposal {
+    pub at: [f64; 2],
+    pub center: [f64; 3],
+    /// How far the metal is behind the panel's back face (mm; less than 0: proud of it).
+    pub behind: f64,
+}
+
+/// A piece laid on a sheet.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelPlaced {
+    /// The piece's number in `pieces`, where its corner goes on the sheet (mm), its size as laid
+    /// and whether it is turned a quarter.
+    pub piece: usize,
+    pub at: [f64; 2],
+    pub size: [f64; 2],
+    pub turned: bool,
+}
+
+/// One sheet and the pieces cut from it.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelSheet {
+    pub pieces: Vec<PanelPlaced>,
+    /// Its one piece is too big for the sheet.
+    pub too_big: bool,
+}
+
+/// A seam move that brings every piece within the sheet.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelFitMove {
+    pub seam: usize,
+    pub by: f64,
 }
 
 /// A seam proposed: a straight line across the panel where two sheets meet.
@@ -222,6 +291,8 @@ pub struct PanelHoleProposal {
     pub diameter: f64,
     /// How far its rim is behind the panel's back face (mm; less than 0: proud of it).
     pub behind: f64,
+    /// Its size as drawn: the nearest of `hole_sizes` within 1 mm, or as scanned.
+    pub size: f64,
 }
 
 /// A straight panel's edges (mm from the outline's corner).
@@ -247,8 +318,16 @@ pub struct ScanPanelProposalsResult {
     pub cutouts: Vec<PanelCutoutProposal>,
     pub seams: Vec<PanelSeamProposal>,
     pub holes: Vec<PanelHoleProposal>,
+    pub fixings: Vec<PanelFixingProposal>,
     /// The frame's holes found in all (the proposal keeps those near an edge or a seam).
     pub holes_found: usize,
+    /// Places an edge needed fastening but no flat metal was found behind it.
+    pub unbacked: usize,
+    /// The gap at edges, cut-outs and seams (mm).
+    pub clearance: f64,
+    /// The pieces laid on sheets, and seam moves that would bring every piece within the sheet.
+    pub sheets: Vec<PanelSheet>,
+    pub fit_moves: Vec<PanelFitMove>,
     /// Notches too shallow to cut (the edge goes over them) and how deep the deepest is (mm).
     pub flattened: usize,
     pub flattened_depth: f64,
@@ -269,6 +348,9 @@ pub struct PanelMade {
     pub edges: PanelEdgesOut,
     pub seams: usize,
     pub holes: usize,
+    pub fixings: usize,
+    /// How many sheets the pieces are cut from.
+    pub sheets: usize,
     pub pieces: Vec<[f64; 2]>,
     pub over: f64,
 }

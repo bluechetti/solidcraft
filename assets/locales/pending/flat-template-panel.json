@@ -27,7 +27,18 @@
     "ui.scan_panel_keys": "Enter or Y keeps, X drops, Backspace goes back.",
     "ui.scan_panel_pieces": "{count} pieces; the largest {w} × {h} mm.",
     "ui.scan_panel_over": "A piece is {over} mm longer than the sheet: move or drop a seam, or use a larger sheet.",
-    "ui.scan_panel_all_seen": "All looked at: OK makes the panel."
+    "ui.scan_panel_all_seen": "All looked at: OK makes the panel.",
+    "ui.scan_panel_gap": "Edge Gap",
+    "ui.scan_panel_spacing": "Fixings Every",
+    "ui.scan_panel_shape": "Cut As",
+    "ui.scan_panel_shape_box": "Box",
+    "ui.scan_panel_shape_straight": "Straight Sides",
+    "ui.scan_panel_shape_scanned": "As Scanned",
+    "ui.scan_panel_fixing": "Fixing {n} of {count}: drill here and fit an insert; the metal is {behind} mm behind the panel.",
+    "ui.scan_panel_fit": "To fit the sheet, move seam {n} by {by} mm (put a batten behind it if that takes it off the frame).",
+    "ui.scan_panel_fit_apply": "Move It",
+    "ui.scan_panel_sheets": "Cut from {count} sheets.",
+    "ui.scan_panel_unbacked": "{count} places along the edges have no flat metal behind them for a fixing: fasten there with a batten."
   },
   "de": {
     "cmd.scan.panel_proposals": "Plattenvorschläge",
@@ -57,7 +68,18 @@
     "ui.scan_panel_keys": "Eingabe oder Y behält, X verwirft, Rücktaste geht zurück.",
     "ui.scan_panel_pieces": "{count} Teile; das größte {w} × {h} mm.",
     "ui.scan_panel_over": "Ein Teil ist {over} mm länger als die Platte: Fuge verschieben oder verwerfen, oder eine größere Platte nehmen.",
-    "ui.scan_panel_all_seen": "Alles angesehen: OK erstellt die Platte."
+    "ui.scan_panel_all_seen": "Alles angesehen: OK erstellt die Platte.",
+    "ui.scan_panel_gap": "Randfuge",
+    "ui.scan_panel_spacing": "Befestigung alle",
+    "ui.scan_panel_shape": "Schneiden als",
+    "ui.scan_panel_shape_box": "Rechteck",
+    "ui.scan_panel_shape_straight": "Gerade Seiten",
+    "ui.scan_panel_shape_scanned": "Wie gescannt",
+    "ui.scan_panel_fixing": "Befestigung {n} von {count}: hier bohren und einen Einsatz setzen; das Blech liegt {behind} mm hinter der Platte.",
+    "ui.scan_panel_fit": "Damit es auf die Platte passt, Fuge {n} um {by} mm verschieben (eine Leiste dahinter, wenn sie dann neben dem Rahmen liegt).",
+    "ui.scan_panel_fit_apply": "Verschieben",
+    "ui.scan_panel_sheets": "Aus {count} Platten geschnitten.",
+    "ui.scan_panel_unbacked": "An {count} Stellen entlang der Kanten liegt kein ebenes Blech für eine Befestigung dahinter: dort mit einer Leiste befestigen."
   },
   "ja": {
     "cmd.scan.panel_proposals": "パネルの提案",
@@ -87,7 +109,18 @@
     "ui.scan_panel_keys": "Enter または Y で残す、X で除外、Backspace で戻る。",
     "ui.scan_panel_pieces": "{count} 枚、最大 {w} × {h} mm。",
     "ui.scan_panel_over": "1 枚が合板より {over} mm 長くなります。継ぎ目を移動するか除外するか、大きな合板を使ってください。",
-    "ui.scan_panel_all_seen": "すべて確認済み: OK でパネルを作成します。"
+    "ui.scan_panel_all_seen": "すべて確認済み: OK でパネルを作成します。",
+    "ui.scan_panel_gap": "端のすき間",
+    "ui.scan_panel_spacing": "固定の間隔",
+    "ui.scan_panel_shape": "切り方",
+    "ui.scan_panel_shape_box": "長方形",
+    "ui.scan_panel_shape_straight": "直線の辺",
+    "ui.scan_panel_shape_scanned": "スキャンどおり",
+    "ui.scan_panel_fixing": "固定点 {count} 件中 {n}: ここに穴をあけてインサートを入れます。金属はパネルの {behind} mm 奥です。",
+    "ui.scan_panel_fit": "合板に収めるには、継ぎ目 {n} を {by} mm 動かします (フレームから外れる場合は裏に桟を入れてください)。",
+    "ui.scan_panel_fit_apply": "動かす",
+    "ui.scan_panel_sheets": "合板 {count} 枚から切り出します。",
+    "ui.scan_panel_unbacked": "端に沿った {count} か所は、裏に固定できる平らな金属がありません。桟で固定してください。"
   },
   "ko": {
     "cmd.scan.panel_proposals": "패널 제안",
@@ -117,7 +150,18 @@
     "ui.scan_panel_keys": "Enter 또는 Y는 유지, X는 제외, Backspace는 뒤로.",
     "ui.scan_panel_pieces": "{count}장, 가장 큰 것 {w} × {h} mm.",
     "ui.scan_panel_over": "한 장이 합판보다 {over} mm 깁니다. 이음매를 옮기거나 제외하거나 더 큰 합판을 쓰세요.",
-    "ui.scan_panel_all_seen": "모두 확인: 확인을 누르면 패널을 만듭니다."
+    "ui.scan_panel_all_seen": "모두 확인: 확인을 누르면 패널을 만듭니다.",
+    "ui.scan_panel_gap": "가장자리 틈",
+    "ui.scan_panel_spacing": "고정 간격",
+    "ui.scan_panel_shape": "자르는 모양",
+    "ui.scan_panel_shape_box": "사각형",
+    "ui.scan_panel_shape_straight": "직선 변",
+    "ui.scan_panel_shape_scanned": "스캔 그대로",
+    "ui.scan_panel_fixing": "고정점 {count}개 중 {n}: 여기에 구멍을 뚫고 인서트를 넣으세요. 금속은 패널 뒤 {behind} mm에 있습니다.",
+    "ui.scan_panel_fit": "합판에 맞추려면 이음매 {n}을 {by} mm 옮기세요 (프레임을 벗어나면 뒤에 각재를 대세요).",
+    "ui.scan_panel_fit_apply": "옮기기",
+    "ui.scan_panel_sheets": "합판 {count}장에서 자릅니다.",
+    "ui.scan_panel_unbacked": "가장자리를 따라 {count}곳은 뒤에 고정할 평평한 금속이 없습니다. 각재로 고정하세요."
   },
   "zh": {
     "cmd.scan.panel_proposals": "面板建议",
@@ -147,7 +191,18 @@
     "ui.scan_panel_keys": "Enter 或 Y 保留，X 去掉，Backspace 返回。",
     "ui.scan_panel_pieces": "{count} 块；最大 {w} × {h} mm。",
     "ui.scan_panel_over": "有一块比板材长 {over} mm：移动或去掉一条接缝，或使用更大的板材。",
-    "ui.scan_panel_all_seen": "已全部查看：点确定生成面板。"
+    "ui.scan_panel_all_seen": "已全部查看：点确定生成面板。",
+    "ui.scan_panel_gap": "边缘间隙",
+    "ui.scan_panel_spacing": "固定间距",
+    "ui.scan_panel_shape": "切割方式",
+    "ui.scan_panel_shape_box": "矩形",
+    "ui.scan_panel_shape_straight": "直边",
+    "ui.scan_panel_shape_scanned": "按扫描",
+    "ui.scan_panel_fixing": "固定点 {n}/{count}：在此钻孔并装入嵌件；金属在面板后 {behind} mm。",
+    "ui.scan_panel_fit": "要放进板材，把接缝 {n} 移动 {by} mm（如因此离开框架，在其后加一根木条）。",
+    "ui.scan_panel_fit_apply": "移动",
+    "ui.scan_panel_sheets": "从 {count} 块板材切出。",
+    "ui.scan_panel_unbacked": "沿边缘有 {count} 处后面没有平整的金属可固定：在那里用木条固定。"
   },
   "ar": {
     "cmd.scan.panel_proposals": "مقترحات اللوح",
@@ -177,7 +232,18 @@
     "ui.scan_panel_keys": "Enter أو Y للإبقاء، X للإسقاط، Backspace للرجوع.",
     "ui.scan_panel_pieces": "{count} قطع؛ أكبرها {w} × {h} مم.",
     "ui.scan_panel_over": "إحدى القطع أطول من الصفيحة بمقدار {over} مم: انقل وصلة أو أسقطها، أو استخدم صفيحة أكبر.",
-    "ui.scan_panel_all_seen": "رُوجع الكل: موافق يصنع اللوح."
+    "ui.scan_panel_all_seen": "رُوجع الكل: موافق يصنع اللوح.",
+    "ui.scan_panel_gap": "فجوة الحافة",
+    "ui.scan_panel_spacing": "تثبيت كل",
+    "ui.scan_panel_shape": "القص على شكل",
+    "ui.scan_panel_shape_box": "مستطيل",
+    "ui.scan_panel_shape_straight": "جوانب مستقيمة",
+    "ui.scan_panel_shape_scanned": "كما في المسح",
+    "ui.scan_panel_fixing": "نقطة التثبيت {n} من {count}: اثقب هنا وركّب حشوة؛ المعدن خلف اللوح بمقدار {behind} مم.",
+    "ui.scan_panel_fit": "لتلائم الصفيحة، انقل الوصلة {n} بمقدار {by} مم (ضع عارضة خلفها إن خرجت بذلك عن الإطار).",
+    "ui.scan_panel_fit_apply": "انقلها",
+    "ui.scan_panel_sheets": "تُقص من {count} صفائح.",
+    "ui.scan_panel_unbacked": "في {count} مواضع على الحواف لا يوجد خلفها معدن مستوٍ للتثبيت: ثبّت هناك بعارضة."
   },
   "he": {
     "cmd.scan.panel_proposals": "הצעות ללוח",
@@ -207,7 +273,18 @@
     "ui.scan_panel_keys": "Enter או Y שומרים, X מסיר, Backspace חוזר.",
     "ui.scan_panel_pieces": "{count} חלקים; הגדול {w} × {h} מ״מ.",
     "ui.scan_panel_over": "חלק אחד ארוך מהגיליון ב־{over} מ״מ: הזיזו או הסירו תפר, או השתמשו בגיליון גדול יותר.",
-    "ui.scan_panel_all_seen": "הכול נבדק: אישור יוצר את הלוח."
+    "ui.scan_panel_all_seen": "הכול נבדק: אישור יוצר את הלוח.",
+    "ui.scan_panel_gap": "מרווח בקצה",
+    "ui.scan_panel_spacing": "קיבוע כל",
+    "ui.scan_panel_shape": "חיתוך כ־",
+    "ui.scan_panel_shape_box": "מלבן",
+    "ui.scan_panel_shape_straight": "צלעות ישרות",
+    "ui.scan_panel_shape_scanned": "כמו בסריקה",
+    "ui.scan_panel_fixing": "נקודת קיבוע {n} מתוך {count}: קדחו כאן והתקינו תותב; המתכת {behind} מ״מ מאחורי הלוח.",
+    "ui.scan_panel_fit": "כדי להתאים לגיליון, הזיזו את תפר {n} ב־{by} מ״מ (שימו מאחוריו פס עץ אם הוא יוצא כך מהמסגרת).",
+    "ui.scan_panel_fit_apply": "הזזה",
+    "ui.scan_panel_sheets": "נחתך מ־{count} גיליונות.",
+    "ui.scan_panel_unbacked": "ב־{count} מקומות לאורך הקצוות אין מאחור מתכת שטוחה לקיבוע: חזקו שם עם פס עץ."
   },
   "vi": {
     "cmd.scan.panel_proposals": "Đề xuất tấm",
@@ -237,6 +314,17 @@
     "ui.scan_panel_keys": "Enter hoặc Y để giữ, X để bỏ, Backspace để quay lại.",
     "ui.scan_panel_pieces": "{count} miếng; miếng lớn nhất {w} × {h} mm.",
     "ui.scan_panel_over": "Một miếng dài hơn tấm ván {over} mm: dời hoặc bỏ một đường nối, hoặc dùng tấm ván lớn hơn.",
-    "ui.scan_panel_all_seen": "Đã xem hết: OK sẽ tạo tấm."
+    "ui.scan_panel_all_seen": "Đã xem hết: OK sẽ tạo tấm.",
+    "ui.scan_panel_gap": "Khe hở mép",
+    "ui.scan_panel_spacing": "Bắt vít mỗi",
+    "ui.scan_panel_shape": "Cắt theo",
+    "ui.scan_panel_shape_box": "Hình chữ nhật",
+    "ui.scan_panel_shape_straight": "Cạnh thẳng",
+    "ui.scan_panel_shape_scanned": "Như bản quét",
+    "ui.scan_panel_fixing": "Điểm bắt vít {n} trên {count}: khoan ở đây và lắp tán ren; lớp kim loại nằm sau tấm {behind} mm.",
+    "ui.scan_panel_fit": "Để vừa tấm ván, dời đường nối {n} thêm {by} mm (đặt một thanh gỗ phía sau nếu nó ra khỏi khung).",
+    "ui.scan_panel_fit_apply": "Dời",
+    "ui.scan_panel_sheets": "Cắt từ {count} tấm ván.",
+    "ui.scan_panel_unbacked": "{count} chỗ dọc các mép không có kim loại phẳng phía sau để bắt vít: bắt vào một thanh gỗ ở đó."
   }
 }

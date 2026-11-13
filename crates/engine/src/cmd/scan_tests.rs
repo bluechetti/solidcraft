@@ -1894,7 +1894,8 @@ fn flat_template_panel_proposes_seams_between_the_rows_of_holes() {
         }
     }
     let (mut s, body) = session_with_triangles("panel-wall", &tris);
-    let sheet = json!({"sheet": [400, 250]});
+    // No gap and no fixing points first: exact areas and counts.
+    let sheet = json!({"sheet": [400, 250], "clearance": 0, "spacing": 0});
     let r = run(&mut s, "scan.panel_proposals", json!({"body": body, "panel": sheet}));
     assert_eq!(r["holes_found"].as_u64(), Some(centres.len() as u64), "every hole found: {r}");
     let e = &r["edges"];
@@ -1926,12 +1927,37 @@ fn flat_template_panel_proposes_seams_between_the_rows_of_holes() {
     let made = run(
         &mut s,
         "scan.flat_template",
-        json!({"body": body, "outline": "scan", "panel": {"sheet": [400, 250], "drop_cutouts": [0], "drop_holes": [0]}}),
+        json!({"body": body, "outline": "scan", "panel": {"sheet": [400, 250], "clearance": 0, "spacing": 0, "drop_cutouts": [0], "drop_holes": [0]}}),
     );
     assert!((made["area"].as_f64().unwrap() - 600.0 * 400.0).abs() < 1e-6, "{made}");
     assert_eq!(made["circles"].as_u64(), Some(centres.len() as u64 - 1), "{made}");
     assert_eq!(made["panel"]["seams"], 2, "{made}");
     assert_eq!(made["lines"].as_u64(), Some(4 + 2), "the rectangle and the two seams: {made}");
+
+    // As proposed: the wheel well (200 × 80, small) as a box, a 3 mm gap all round and at the
+    // seams, fixing points on the flat wall where an edge has no hole near, and the pieces laid on
+    // the sheets they are cut from.
+    let r = run(&mut s, "scan.panel_proposals", json!({"body": body, "panel": {"sheet": [400, 250]}}));
+    assert_eq!(r["cutouts"][0]["shape"], "box", "{r}");
+    assert_eq!(r["clearance"], json!(3.0), "{r}");
+    let fixings = r["fixings"].as_array().unwrap();
+    assert!(!fixings.is_empty() && fixings.iter().all(|f| f["behind"].as_f64().unwrap().abs() < 0.5), "the wall is flat at the panel: {r}");
+    let sheets = r["sheets"].as_array().unwrap();
+    let placed: usize = sheets.iter().map(|s| s["pieces"].as_array().unwrap().len()).sum();
+    assert_eq!(placed, r["pieces"].as_array().unwrap().len(), "every piece on a sheet: {r}");
+    assert!(r["fit_moves"].as_array().unwrap().is_empty(), "they all fit already: {r}");
+    let boxed = run(
+        &mut s,
+        "scan.panel_proposals",
+        json!({"body": body, "panel": {"sheet": [400, 250], "shapes": [{"cutout": 0, "shape": "straight"}], "hole_sizes": [8.5]}}),
+    );
+    assert!(boxed["holes"].as_array().unwrap().iter().all(|h| h["size"] == json!(8.5)), "{boxed}");
+    let made = run(&mut s, "scan.flat_template", json!({"body": body, "outline": "scan", "name": "Gapped", "panel": {"sheet": [400, 250]}}));
+    // The box round the well (200 × 80) grown 3 mm: 206 × 80 out of the panel 3 mm in all round.
+    assert!((made["area"].as_f64().unwrap() - (594.0 * 394.0 - 206.0 * 80.0)).abs() < 1e-6, "{made}");
+    assert_eq!(made["panel"]["seams"], 2, "{made}");
+    assert!(made["lines"].as_u64().unwrap() >= 4 + 4, "each seam two cut lines: {made}");
+    assert!(made["panel"]["fixings"].as_u64().unwrap() > 0 && made["panel"]["sheets"].as_u64().unwrap() >= 1, "{made}");
 
     for bad in [
         json!({"body": body, "panel": {"drop_holes": [9999]}}),
@@ -1939,6 +1965,12 @@ fn flat_template_panel_proposes_seams_between_the_rows_of_holes() {
         json!({"body": body, "panel": {"edges": {"left": 500, "right": 100}}}),
         json!({"body": body, "panel": {"move_seams": [{"seam": 7, "by": 5}]}}),
         json!({"body": body, "panel": {"move_seams": [{"seam": 0, "by": 1e300}]}}),
+        json!({"body": body, "panel": {"clearance": -1}}),
+        json!({"body": body, "panel": {"spacing": 10}}),
+        json!({"body": body, "panel": {"shapes": [{"cutout": 0, "shape": "round"}]}}),
+        json!({"body": body, "panel": {"shapes": [{"cutout": 99, "shape": "box"}]}}),
+        json!({"body": body, "panel": {"drop_fixings": [99999]}}),
+        json!({"body": body, "panel": {"hole_sizes": [-1]}}),
     ] {
         assert!(s.execute("scan.panel_proposals", &bad).is_err(), "{bad}");
     }
