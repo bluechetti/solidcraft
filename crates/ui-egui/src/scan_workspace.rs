@@ -169,6 +169,7 @@ mod tests {
             "scan.fillet",
             "scan.flatten",
             "scan.flat_template",
+            "scan.panel_export",
             "scan.panel_proposals",
             "scan.roll_onto_scan",
             "scan.fit_patches",

@@ -216,6 +216,92 @@ pub struct ScanPanelProposalsParams {
     pub panel: Option<PanelChoices>,
 }
 
+/// Write a straight panel's pieces for cutting: each piece's outline, cut-outs, holes and fixing
+/// points at its own 0, 0, labelled and dimensioned (DXF), the blanks laid on sheets (DXF), every
+/// hole and fixing point (CSV), the cut list (CSV) and distances to check in the van first (CSV).
+/// Changes nothing in the design.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanPanelExportParams {
+    /// The pieces' DXF; the other files are written beside it, named after it. Default: none, the
+    /// files' text is returned.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// As for `scan.panel_proposals`.
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub plane: Option<TemplatePlane>,
+    #[serde(default)]
+    pub tolerance: Option<f64>,
+    #[serde(default)]
+    pub side: Option<String>,
+    #[serde(default)]
+    pub least_area: Option<f64>,
+    #[serde(default)]
+    pub gap: Option<f64>,
+    #[serde(default)]
+    pub step: Option<f64>,
+    #[serde(default)]
+    pub smooth: Option<f64>,
+    #[serde(default)]
+    pub round: Option<f64>,
+    #[serde(default)]
+    pub finger: Option<f64>,
+    #[serde(default)]
+    pub cover: Option<Vec<Point3>>,
+    #[serde(default)]
+    pub panel: Option<PanelChoices>,
+}
+
+/// A piece as exported.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelPieceOut {
+    /// Numbered from 1, top row first, left to right.
+    pub number: usize,
+    /// Its blank (mm), and the sheet it is cut from (from 1).
+    pub blank: [f64; 2],
+    pub sheet: usize,
+    pub holes: usize,
+    pub fixings: usize,
+}
+
+/// A distance to measure in the van before cutting, between two holes (piece and hole numbers).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PanelCheckOut {
+    pub from_piece: usize,
+    pub from_hole: usize,
+    pub to_piece: usize,
+    pub to_hole: usize,
+    /// Straight between the two, and how far across and up (mm).
+    pub distance: f64,
+    pub across: f64,
+    pub up: f64,
+}
+
+/// What `scan.panel_export` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanPanelExportResult {
+    /// The files written (with `path`).
+    pub files: Vec<String>,
+    pub pieces: Vec<PanelPieceOut>,
+    pub sheets: usize,
+    pub checks: Vec<PanelCheckOut>,
+    /// Without `path`: the files' text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pieces_dxf: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheets_dxf: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holes_csv: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cut_list_csv: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checks_csv: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// A cut-out proposed for a straight panel.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct PanelCutoutProposal {

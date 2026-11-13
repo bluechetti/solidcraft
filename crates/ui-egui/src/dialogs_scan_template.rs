@@ -65,6 +65,8 @@ pub struct FlatTemplate {
     review: Review,
     /// Where the view is to frame next (done each frame by [`tick`]).
     focus: Option<Aabb3>,
+    /// Export Drawings was pressed: [`tick`] asks where and writes them.
+    export_asked: bool,
     /// The scan's tolerance as changed here, kept by OK.
     keep_tolerance: Option<(String, f64)>,
     /// The template being worked out beside the window (a large scan), for the values it was begun for.
@@ -94,6 +96,7 @@ impl Default for FlatTemplate {
             seam_moves: BTreeMap::new(),
             review: Review::default(),
             focus: None,
+            export_asked: false,
             keep_tolerance: None,
             pending: None,
             shown: None,
@@ -802,6 +805,51 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
         }
         _ => {}
     }
+    // The groups, each a press away, and the whole group kept or dropped at once.
+    let group = |i: &Item| match i {
+        Item::Edge(_) => 0,
+        Item::Cut(_) => 1,
+        Item::Seam(_) => 2,
+        Item::Hole(_) => 3,
+        Item::Fixing(_) => 4,
+    };
+    let names = ["ui.scan_panel_edges", "ui.scan_panel_cutouts", "ui.scan_panel_seams", "ui.scan_panel_holes", "ui.scan_panel_fixings"];
+    let mut jump: Option<usize> = None;
+    ui.horizontal_wrapped(|ui| {
+        for (g, name) in names.iter().enumerate() {
+            let count = items.iter().filter(|i| group(i) == g).count();
+            if count == 0 {
+                continue;
+            }
+            let label = crate::i18n::format(name, &[("count", &count.to_string())]);
+            let style = if group(&item) == g { ui_kit::Button::SmallSelected } else { ui_kit::Button::Small };
+            if ui_kit::button(ui, label, style).clicked() {
+                jump = items.iter().position(|i| group(i) == g);
+            }
+        }
+    });
+    let mut all: Option<bool> = None;
+    ui.horizontal(|ui| {
+        if ui_kit::button(ui, tr("ui.scan_panel_keep_all"), ui_kit::Button::Small).clicked() {
+            all = Some(true);
+        }
+        if !matches!(item, Item::Edge(_)) && ui_kit::button(ui, tr("ui.scan_panel_drop_all"), ui_kit::Button::Small).clicked() {
+            all = Some(false);
+        }
+    });
+    if let Some(kept) = all {
+        let g = group(&item);
+        for i in items.iter().filter(|i| group(i) == g) {
+            k.review.seen.insert(*i);
+            if kept {
+                k.review.dropped.remove(i);
+            } else {
+                k.review.dropped.insert(*i);
+            }
+        }
+        // On to the next group, or stay at the last.
+        jump = Some(items.iter().position(|i| group(i) > g).unwrap_or(k.review.at));
+    }
     let mut keep = false;
     let mut drop = false;
     let mut back = false;
@@ -826,7 +874,9 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
             back |= i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace);
         });
     }
-    let moved_to = if keep || drop {
+    let moved_to = if let Some(at) = jump {
+        Some(at)
+    } else if keep || drop {
         if drop {
             k.review.dropped.insert(item);
         } else {
@@ -880,14 +930,36 @@ fn review_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, pp: &Arc
     if k.review.seen.len() >= items.len() {
         ui_kit::text(ui, tr("ui.scan_panel_all_seen"), ui_kit::Text::Note("scan_panel_all_seen"));
     }
+    if ui_kit::button(ui, tr("ui.scan_panel_export"), ui_kit::Button::Normal).clicked() {
+        k.export_asked = true;
+    }
 }
 
 /// Each frame: frame the view on the item being looked at, when it changed.
 pub(crate) fn tick(app: &mut SolveApp) {
-    let Some(Kind::ScanFlatTemplate(k)) = app.dialog.as_mut().map(|d| &mut d.kind) else { return };
-    if let Some(bounds) = k.focus.take() {
+    let Some(d) = app.dialog.as_mut() else { return };
+    let Kind::ScanFlatTemplate(k) = &mut d.kind else { return };
+    let focus = k.focus.take();
+    // Export Drawings: the panel as it stands, written where the person picks.
+    let export = std::mem::take(&mut k.export_asked).then(|| export_params(k, &d.inputs)).flatten();
+    if let Some(bounds) = focus {
         app.fit_bounds(bounds);
     }
+    if let Some(p) = export {
+        app.pick_save_command("panel.dxf", &["dxf"], "scan.panel_export", p);
+    }
+}
+
+/// What `scan.panel_export` is sent for the panel as the dialog has it: OK's parameters, less what
+/// only the sketch takes.
+fn export_params(k: &FlatTemplate, inputs: &[SelInput]) -> Option<Value> {
+    let (_, mut p) = commands(k, inputs).ok()?.into_iter().find(|(c, _)| c == "scan.flat_template")?;
+    if let Some(o) = p.as_object_mut() {
+        for key in ["outline", "show_scan_edge", "name", "make_face"] {
+            o.remove(key);
+        }
+    }
+    Some(p)
 }
 
 /// The straight panel over the picture as it will be cut: its outline, the cut-outs dropped as dim
@@ -1106,6 +1178,11 @@ mod tests {
         let sent = commands(k, &d.inputs).expect("OK runs");
         let (_, p) = sent.last().expect("the template");
         assert_eq!(p["panel"]["drop_cutouts"], json!([0]), "{p}");
+        // Export Drawings sends the same panel to Export Panel, less what only the sketch takes.
+        let e = export_params(k, &d.inputs).expect("export parameters");
+        assert!(e.get("outline").is_none() && e["panel"]["drop_cutouts"] == json!([0]), "{e}");
+        let exported = h.app.session.execute("scan.panel_export", &e).expect("exported");
+        assert!(exported["pieces"].as_array().is_some_and(|p| !p.is_empty()), "{exported}");
         // All looked at: Enter is OK again.
         h.step(&json!({"key": "Enter"})).unwrap();
         h.settle();

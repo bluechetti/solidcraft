@@ -1433,6 +1433,218 @@ fn fixings_for(
     (out, unbacked)
 }
 
+/// What a point on a piece is: a hole of the frame to fasten through, or a new fixing point.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointKind {
+    Hole,
+    Fixing,
+}
+
+/// A point to drill on a piece, in the piece's own coordinates.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PiecePoint {
+    pub kind: PointKind,
+    /// Numbered on its piece: holes 1, 2, …, fixing points 1, 2, … (drawn F1, F2, …).
+    pub number: usize,
+    pub at: Vec2,
+    pub diameter: f64,
+    /// How far the metal is behind the panel's back face (mm).
+    pub behind: f64,
+    /// Where it is on the panel (template coordinates).
+    pub on_panel: Vec2,
+}
+
+/// One piece of the panel, cut from its own blank.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Piece {
+    /// Numbered from 1, top row first, left to right (as [`piece_sizes`] lists them).
+    pub number: usize,
+    /// Where the piece's 0, 0 is on the panel (template coordinates): the blank's bottom-left
+    /// corner, on the seam or edge below it.
+    pub origin: Vec2,
+    /// Its outline and the cut-outs inside it, counter-clockwise, in its own coordinates.
+    pub outline: Vec<Vec2>,
+    pub inside: Vec<Vec<Vec2>>,
+    pub points: Vec<PiecePoint>,
+    /// Its blank: the box its outline fits in (mm).
+    pub blank: [f64; 2],
+}
+
+/// `ring` with what lies on the far side of the line through `a` along `d` cut off: what is kept
+/// is to the left of the direction `d` (Sutherland–Hodgman against one half-plane).
+fn clip_half(ring: &[Vec2], a: Vec2, d: Vec2) -> Vec<Vec2> {
+    let side = |p: Vec2| d.x * (p.y - a.y) - d.y * (p.x - a.x);
+    let mut out = Vec::with_capacity(ring.len() + 2);
+    for k in 0..ring.len() {
+        let (p, q) = (ring[k], ring[(k + 1) % ring.len()]);
+        let (sp, sq) = (side(p), side(q));
+        if sp >= 0.0 {
+            out.push(p);
+        }
+        if (sp >= 0.0) != (sq >= 0.0) {
+            let t = sp / (sp - sq);
+            out.push(p + (q - p) * t);
+        }
+    }
+    tidied(out)
+}
+
+/// The panel laid as `keep` says, cut into its pieces along the seams kept (each piece stopping
+/// half the gap short of a seam), numbered top row first; each with its holes and fixing points
+/// in its own coordinates. Pieces smaller than half a percent of the panel (a sliver a seam cuts
+/// off a notch) are left out.
+pub fn pieces(proposal: &Proposal, keep: &Keep) -> Vec<Piece> {
+    let laid = lay(proposal, keep);
+    let c = proposal.clearance;
+    let seams: Vec<Seam> = keep.seams(proposal).iter().enumerate().filter(|(i, _)| Keep::mark(&keep.seams, *i)).map(|(_, s)| *s).collect();
+    // Seams across, bottom first, and up, left first (by their middles).
+    let mid = |s: &Seam| (s.from + s.to) * 0.5;
+    let mut across: Vec<Seam> = seams.iter().copied().filter(|s| !s.upright).collect();
+    let mut up: Vec<Seam> = seams.iter().copied().filter(|s| s.upright).collect();
+    across.sort_by(|a, b| mid(a).y.partial_cmp(&mid(b).y).unwrap_or(std::cmp::Ordering::Equal));
+    up.sort_by(|a, b| mid(a).x.partial_cmp(&mid(b).x).unwrap_or(std::cmp::Ordering::Equal));
+    // A seam's line moved half the gap towards `toward` (+1 up or right), running so that what is
+    // kept (to its left) is that side.
+    let line = |s: &Seam, toward: f64| {
+        let (a, b) = if s.upright {
+            if s.from.y <= s.to.y { (s.from, s.to) } else { (s.to, s.from) }
+        } else if s.from.x <= s.to.x {
+            (s.from, s.to)
+        } else {
+            (s.to, s.from)
+        };
+        let d = b - a;
+        let l = (d.x * d.x + d.y * d.y).sqrt().max(1e-12);
+        // Left of a→b: up for a seam across, left for a seam up.
+        let left = Vec2::new(-d.y / l, d.x / l);
+        let shift = left * (c / 2.0) * if s.upright { -toward } else { toward };
+        let (a, b, d) = (a + shift, b + shift, d);
+        // Keep the side `toward` points to.
+        let keep_left = if s.upright { toward < 0.0 } else { toward > 0.0 };
+        if keep_left { (a, d) } else { (b, d * -1.0) }
+    };
+    let total = twice_area(&laid.outline).abs() / 2.0;
+    let mut found: Vec<(usize, usize, Vec<Vec2>)> = Vec::new();
+    for row in 0..=across.len() {
+        for col in 0..=up.len() {
+            let mut ring = laid.outline.clone();
+            if let Some(s) = row.checked_sub(1).and_then(|r| across.get(r)) {
+                let (a, d) = line(s, 1.0);
+                ring = clip_half(&ring, a, d);
+            }
+            if let Some(s) = across.get(row) {
+                let (a, d) = line(s, -1.0);
+                ring = clip_half(&ring, a, d);
+            }
+            if let Some(s) = col.checked_sub(1).and_then(|k| up.get(k)) {
+                let (a, d) = line(s, 1.0);
+                ring = clip_half(&ring, a, d);
+            }
+            if let Some(s) = up.get(col) {
+                let (a, d) = line(s, -1.0);
+                ring = clip_half(&ring, a, d);
+            }
+            if ring.len() >= 3 && twice_area(&ring).abs() / 2.0 > 0.005 * total {
+                found.push((row, col, ring));
+            }
+        }
+    }
+    // Top row first, then left to right.
+    found.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let e = proposal.edges;
+    let mut out = Vec::new();
+    for (n, (row, _, ring)) in found.into_iter().enumerate() {
+        let Some((lo, hi)) = bounds(&ring) else { continue };
+        // The blank's corner: on the seam (or the edge) below, at the piece's left.
+        let base = match row.checked_sub(1).and_then(|r| across.get(r)) {
+            Some(s) => {
+                let (a, b) = (s.from, s.to);
+                let t = if (b.x - a.x).abs() > 1e-12 { (lo.x - a.x) / (b.x - a.x) } else { 0.0 };
+                a.y + (b.y - a.y) * t + c / 2.0
+            }
+            None => e.bottom + c,
+        }
+        .min(lo.y);
+        let origin = Vec2::new(lo.x, base);
+        let local = |q: Vec2| q - origin;
+        let inside: Vec<Vec<Vec2>> =
+            laid.inside.iter().filter(|r| r.first().is_some_and(|q| contains(&ring, *q))).map(|r| r.iter().map(|q| local(*q)).collect()).collect();
+        let mut points: Vec<PiecePoint> = Vec::new();
+        let near = |q: Vec2| contains(&ring, q);
+        let mut holes: Vec<(Vec2, f64, f64)> = laid
+            .holes
+            .iter()
+            .filter(|(q, _)| near(*q))
+            .map(|(q, d)| (*q, *d, proposal.holes.iter().find(|h| h.at.dist(*q) < 1e-9).map_or(0.0, |h| h.behind)))
+            .collect();
+        let row_of = |q: Vec2| ((q.y - base) / 45.0).round() as i64;
+        holes.sort_by(|a, b| (row_of(a.0), a.0.x).partial_cmp(&(row_of(b.0), b.0.x)).unwrap_or(std::cmp::Ordering::Equal));
+        for (k, (q, d, behind)) in holes.into_iter().enumerate() {
+            points.push(PiecePoint { kind: PointKind::Hole, number: k + 1, at: local(q), diameter: d, behind, on_panel: q });
+        }
+        let mut fixings: Vec<(Vec2, f64)> = laid
+            .fixings
+            .iter()
+            .filter(|q| near(**q))
+            .map(|q| (*q, proposal.fixings.iter().find(|f| f.at.dist(*q) < 1e-9).map_or(0.0, |f| f.behind)))
+            .collect();
+        fixings.sort_by(|a, b| (row_of(a.0), a.0.x).partial_cmp(&(row_of(b.0), b.0.x)).unwrap_or(std::cmp::Ordering::Equal));
+        for (k, (q, behind)) in fixings.into_iter().enumerate() {
+            points.push(PiecePoint { kind: PointKind::Fixing, number: k + 1, at: local(q), diameter: 0.0, behind, on_panel: q });
+        }
+        let outline: Vec<Vec2> = ring.iter().map(|q| local(*q)).collect();
+        out.push(Piece { number: n + 1, origin, blank: [hi.x - lo.x, hi.y - base], outline, inside, points });
+    }
+    out
+}
+
+/// A distance to measure in the van before cutting: between two holes of the frame far apart, so
+/// a tape across the wall checks the scan and where the panel will sit.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Check {
+    /// (piece number, hole number) at each end.
+    pub from: (usize, usize),
+    pub to: (usize, usize),
+    pub distance: f64,
+    /// How far across and up from the first to the second (mm).
+    pub across: f64,
+    pub up: f64,
+}
+
+/// Up to three distances to check: the two holes farthest apart across the panel, the two
+/// farthest apart up it, and the two farthest apart in all.
+pub fn checks(pieces: &[Piece]) -> Vec<Check> {
+    let holes: Vec<(usize, usize, Vec2)> =
+        pieces.iter().flat_map(|p| p.points.iter().filter(|q| q.kind == PointKind::Hole).map(move |q| (p.number, q.number, q.on_panel))).collect();
+    let mut out: Vec<Check> = Vec::new();
+    let best = |score: &dyn Fn(Vec2, Vec2) -> f64| {
+        let mut top: Option<(f64, usize, usize)> = None;
+        for i in 0..holes.len() {
+            for j in i + 1..holes.len() {
+                let v = score(holes[i].2, holes[j].2);
+                if top.is_none_or(|(t, _, _)| v > t) {
+                    top = Some((v, i, j));
+                }
+            }
+        }
+        top
+    };
+    // Across: far apart in x, close in height (one tape along a row); up: the other way.
+    let along_x = |a: Vec2, b: Vec2| (a.x - b.x).abs() - 4.0 * (a.y - b.y).abs();
+    let along_y = |a: Vec2, b: Vec2| (a.y - b.y).abs() - 4.0 * (a.x - b.x).abs();
+    let far = |a: Vec2, b: Vec2| a.dist(b);
+    for score in [&along_x as &dyn Fn(Vec2, Vec2) -> f64, &along_y, &far] {
+        if let Some((_, i, j)) = best(score) {
+            let (a, b) = if holes[i].2.x <= holes[j].2.x { (holes[i], holes[j]) } else { (holes[j], holes[i]) };
+            let c = Check { from: (a.0, a.1), to: (b.0, b.1), distance: a.2.dist(b.2), across: b.2.x - a.2.x, up: b.2.y - a.2.y };
+            if !out.iter().any(|o| o.from == c.from && o.to == c.to) {
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
 /// A piece laid on a sheet: which, where its corner goes, its size as laid, and whether it is
 /// turned a quarter.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1774,5 +1986,41 @@ mod tests {
         assert!(propose(&made, &[], None, &with(Some(Edges { left: 5000.0, right: 6000.0, bottom: 0.0, top: 10.0 }), SHEET, 3.0)).is_none());
         assert!(propose(&made, &[], None, &with(None, SHEET, f64::NAN)).is_none());
         assert!(propose(&made, &[], None, &with(None, SHEET, 5000.0)).is_none());
+    }
+
+    /// Cut along a seam across and one up, with the gap: four pieces, numbered top row first, each
+    /// stopping half the gap short of the seams; holes go with the piece they are on, in its own
+    /// coordinates from its blank's corner.
+    #[test]
+    fn the_panel_is_cut_into_pieces_along_the_seams() {
+        let rect = vec![Vec2::new(0.0, 0.0), Vec2::new(2000.0, 0.0), Vec2::new(2000.0, 1000.0), Vec2::new(0.0, 1000.0)];
+        let made = template_of(rect);
+        let holes = [
+            Hole { at: Vec2::new(100.0, 480.0), diameter: 8.0, behind: 12.0 },
+            Hole { at: Vec2::new(1900.0, 520.0), diameter: 8.0, behind: 12.0 },
+            Hole { at: Vec2::new(1020.0, 900.0), diameter: 8.0, behind: 12.0 },
+        ];
+        let mut p = propose(&made, &holes, None, &Options { spacing: 0.0, ..Options::default() }).expect("proposal");
+        p.seams = vec![
+            Seam { from: Vec2::new(0.0, 500.0), to: Vec2::new(2000.0, 500.0), upright: false, between_rows: true },
+            Seam { from: Vec2::new(1000.0, 0.0), to: Vec2::new(1000.0, 1000.0), upright: true, between_rows: true },
+        ];
+        let keep = Keep::all(&p);
+        let ps = pieces(&p, &keep);
+        assert_eq!(ps.len(), 4, "{ps:?}");
+        // Top left: x 3..998.5, y 501.5..997.
+        let tl = &ps[0];
+        assert!((tl.origin.x - 3.0).abs() < 1e-9 && (tl.origin.y - 501.5).abs() < 1e-9, "{:?}", tl.origin);
+        assert!((tl.blank[0] - 995.5).abs() < 1e-9 && (tl.blank[1] - 495.5).abs() < 1e-9, "{:?}", tl.blank);
+        let areas: f64 = ps.iter().map(|q| twice_area(&q.outline).abs() / 2.0).sum();
+        assert!((areas - (1994.0 * 994.0 - 3.0 * 1994.0 - 3.0 * 991.0)).abs() < 1e-6, "{areas}");
+        // The hole at (1020, 900) is on the top right piece, 18.5 in from its left edge.
+        let tr = &ps[1];
+        let h = tr.points.iter().find(|q| q.on_panel == Vec2::new(1020.0, 900.0)).expect("hole");
+        // Numbered by rows from the bottom: the hole at (1900, 520), 18.5 up, is the first.
+        assert!((h.at.x - 18.5).abs() < 1e-9 && (h.at.y - 398.5).abs() < 1e-9 && h.number == 2, "{h:?}");
+        let cs = checks(&ps);
+        assert!(!cs.is_empty() && cs.iter().all(|c| c.distance > 0.0), "{cs:?}");
+        assert!(cs.iter().any(|c| (c.distance - Vec2::new(100.0, 480.0).dist(Vec2::new(1900.0, 520.0))).abs() < 1e-9), "{cs:?}");
     }
 }

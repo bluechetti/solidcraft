@@ -1104,6 +1104,9 @@ pub mod mesh;
 #[path = "scan_network_edit.rs"]
 pub mod network_edit;
 
+#[path = "scan_panel_export.rs"]
+pub mod panel_export;
+
 #[path = "scan_patches.rs"]
 pub mod patches;
 

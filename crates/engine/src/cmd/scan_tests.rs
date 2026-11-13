@@ -1863,8 +1863,9 @@ fn make_flat_puts_a_free_form_exactly_flat() {
 /// than the wall. The proposal has the wheel well as a notch, a seam between the rows and one
 /// between the columns, and the holes; the panel made with the notch dropped is the whole
 /// rectangle, with a circle for each hole kept.
-#[test]
-fn flat_template_panel_proposes_seams_between_the_rows_of_holes() {
+/// The wall the straight panel tests use: 600 × 400 at 1 mm, a wheel well standing out of its
+/// bottom edge, two rows of 8 mm holes 34 mm apart across it and two columns up it.
+fn panel_wall(name: &str) -> (Session, String, Vec<(f64, f64)>) {
     let mut centres = Vec::new();
     for k in 0..6 {
         let x = 60.0 + 90.0 * f64::from(k);
@@ -1893,7 +1894,13 @@ fn flat_template_panel_proposes_seams_between_the_rows_of_holes() {
             tris.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
         }
     }
-    let (mut s, body) = session_with_triangles("panel-wall", &tris);
+    let (s, body) = session_with_triangles(name, &tris);
+    (s, body, centres)
+}
+
+#[test]
+fn flat_template_panel_proposes_seams_between_the_rows_of_holes() {
+    let (mut s, body, centres) = panel_wall("panel-wall");
     // No gap and no fixing points first: exact areas and counts.
     let sheet = json!({"sheet": [400, 250], "clearance": 0, "spacing": 0});
     let r = run(&mut s, "scan.panel_proposals", json!({"body": body, "panel": sheet}));
@@ -1976,4 +1983,38 @@ fn flat_template_panel_proposes_seams_between_the_rows_of_holes() {
     }
     let picked = json!({"body": body, "outline": [[0, 0, 0], [600, 0, 0], [600, 400, 0]], "panel": {}});
     assert!(s.execute("scan.flat_template", &picked).is_err(), "a panel needs the whole outline");
+}
+
+/// Export Panel: the pieces at their own 0, 0 (outline, holes and fixing points on their layers,
+/// labelled), the blanks on sheets, a row in the holes list for each hole and fixing point, the
+/// cut list and distances to check; written beside the path when given.
+#[test]
+fn panel_export_writes_the_pieces_the_sheets_and_the_lists() {
+    let (mut s, body, _) = panel_wall("panel-export");
+    let r = run(&mut s, "scan.panel_export", json!({"body": body, "panel": {"sheet": [400, 250]}}));
+    let pieces = r["pieces"].as_array().unwrap();
+    assert_eq!(pieces.len(), 4, "{r}");
+    let points: u64 = pieces.iter().map(|p| p["holes"].as_u64().unwrap() + p["fixings"].as_u64().unwrap()).sum();
+    let csv = r["holes_csv"].as_str().unwrap();
+    assert_eq!(csv.lines().count() as u64, points + 1, "{csv}");
+    assert!(pieces.iter().all(|p| p["sheet"].as_u64().unwrap() >= 1), "{r}");
+    let dxf = r["pieces_dxf"].as_str().unwrap();
+    for needle in ["PIECE 1", "PIECE 4", "HOLES", "FIXINGS", "DIMENSIONS", "CIRCLE"] {
+        assert!(dxf.contains(needle), "{needle} in the pieces' DXF");
+    }
+    assert!(r["sheets_dxf"].as_str().unwrap().contains("SHEET 1"), "{r}");
+    assert_eq!(r["cut_list_csv"].as_str().unwrap().lines().count(), 5, "{r}");
+    let checks = r["checks"].as_array().unwrap();
+    assert!(!checks.is_empty() && checks.iter().all(|c| c["distance"].as_f64().unwrap() > 100.0), "{r}");
+    assert_eq!(s.doc.features.len(), 1, "nothing made: only the scan");
+
+    let dir = std::env::temp_dir().join(format!("solidcraft-panel-export-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("wall.dxf");
+    let w = run(&mut s, "scan.panel_export", json!({"body": body, "path": path.to_string_lossy(), "panel": {"sheet": [400, 250]}}));
+    let files = w["files"].as_array().unwrap();
+    assert_eq!(files.len(), 5, "{w}");
+    assert!(files.iter().all(|f| std::path::Path::new(f.as_str().unwrap()).exists()), "{w}");
+    assert!(w.get("pieces_dxf").is_none(), "{w}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

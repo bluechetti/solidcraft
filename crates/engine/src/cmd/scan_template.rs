@@ -482,12 +482,21 @@ pub fn hole_size(scanned: f64, sizes: &[f64]) -> f64 {
 }
 
 /// The hole sizes `p`'s `panel` gives.
-fn hole_sizes(p: &Value, cmd: &str) -> Result<Vec<f64>> {
+pub(crate) fn hole_sizes(p: &Value, cmd: &str) -> Result<Vec<f64>> {
     let sizes = panel_choices(p, cmd)?.and_then(|c| c.hole_sizes).unwrap_or_default();
     if sizes.len() > 100 || !sizes.iter().all(|v| v.is_finite() && *v > 0.0 && *v < 1000.0) {
         return Err(bad(cmd, "`panel.hole_sizes` must list up to 100 diameters in mm"));
     }
     Ok(sizes)
+}
+
+/// The diameter fixing points are drawn (`panel.fixing_hole`).
+pub(crate) fn fixing_hole(p: &Value, cmd: &str) -> Result<f64> {
+    let d = panel_choices(p, cmd)?.and_then(|c| c.fixing_hole).unwrap_or(FIXING_HOLE);
+    if !(d.is_finite() && d > 0.0 && d <= 100.0) {
+        return Err(bad(cmd, "`panel.fixing_hole` must be a diameter of up to 100 mm"));
+    }
+    Ok(d)
 }
 
 /// The pieces of `keep` laid on sheets.
@@ -623,10 +632,7 @@ fn flat_template(s: &mut Session, p: &Value) -> Result<Value> {
             over: pp.proposal.over,
         };
         let sizes = hole_sizes(p, cmd)?;
-        let fixing_hole = panel_choices(p, cmd)?.and_then(|c| c.fixing_hole).unwrap_or(FIXING_HOLE);
-        if !(fixing_hole.is_finite() && fixing_hole > 0.0 && fixing_hole <= 100.0) {
-            return Err(bad(cmd, "`panel.fixing_hole` must be a diameter of up to 100 mm"));
-        }
+        let fixing_hole = fixing_hole(p, cmd)?;
         let mut laid = laid;
         for h in &mut laid.holes {
             h.1 = hole_size(h.1, &sizes);

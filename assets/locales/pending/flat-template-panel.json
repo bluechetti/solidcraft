@@ -38,7 +38,16 @@
     "ui.scan_panel_fit": "To fit the sheet, move seam {n} by {by} mm (put a batten behind it if that takes it off the frame).",
     "ui.scan_panel_fit_apply": "Move It",
     "ui.scan_panel_sheets": "Cut from {count} sheets.",
-    "ui.scan_panel_unbacked": "{count} places along the edges have no flat metal behind them for a fixing: fasten there with a batten."
+    "ui.scan_panel_unbacked": "{count} places along the edges have no flat metal behind them for a fixing: fasten there with a batten.",
+    "cmd.scan.panel_export": "Export Panel",
+    "ui.scan_panel_edges": "Edges {count}",
+    "ui.scan_panel_cutouts": "Cut-outs {count}",
+    "ui.scan_panel_seams": "Seams {count}",
+    "ui.scan_panel_holes": "Holes {count}",
+    "ui.scan_panel_fixings": "Fixings {count}",
+    "ui.scan_panel_keep_all": "Keep All of These",
+    "ui.scan_panel_drop_all": "Drop All of These",
+    "ui.scan_panel_export": "Export Drawings…"
   },
   "de": {
     "cmd.scan.panel_proposals": "Plattenvorschläge",
@@ -79,7 +88,16 @@
     "ui.scan_panel_fit": "Damit es auf die Platte passt, Fuge {n} um {by} mm verschieben (eine Leiste dahinter, wenn sie dann neben dem Rahmen liegt).",
     "ui.scan_panel_fit_apply": "Verschieben",
     "ui.scan_panel_sheets": "Aus {count} Platten geschnitten.",
-    "ui.scan_panel_unbacked": "An {count} Stellen entlang der Kanten liegt kein ebenes Blech für eine Befestigung dahinter: dort mit einer Leiste befestigen."
+    "ui.scan_panel_unbacked": "An {count} Stellen entlang der Kanten liegt kein ebenes Blech für eine Befestigung dahinter: dort mit einer Leiste befestigen.",
+    "cmd.scan.panel_export": "Platte exportieren",
+    "ui.scan_panel_edges": "Kanten {count}",
+    "ui.scan_panel_cutouts": "Ausschnitte {count}",
+    "ui.scan_panel_seams": "Fugen {count}",
+    "ui.scan_panel_holes": "Löcher {count}",
+    "ui.scan_panel_fixings": "Befestigungen {count}",
+    "ui.scan_panel_keep_all": "Alle diese behalten",
+    "ui.scan_panel_drop_all": "Alle diese verwerfen",
+    "ui.scan_panel_export": "Zeichnungen exportieren…"
   },
   "ja": {
     "cmd.scan.panel_proposals": "パネルの提案",
@@ -120,7 +138,16 @@
     "ui.scan_panel_fit": "合板に収めるには、継ぎ目 {n} を {by} mm 動かします (フレームから外れる場合は裏に桟を入れてください)。",
     "ui.scan_panel_fit_apply": "動かす",
     "ui.scan_panel_sheets": "合板 {count} 枚から切り出します。",
-    "ui.scan_panel_unbacked": "端に沿った {count} か所は、裏に固定できる平らな金属がありません。桟で固定してください。"
+    "ui.scan_panel_unbacked": "端に沿った {count} か所は、裏に固定できる平らな金属がありません。桟で固定してください。",
+    "cmd.scan.panel_export": "パネルを書き出す",
+    "ui.scan_panel_edges": "辺 {count}",
+    "ui.scan_panel_cutouts": "切り抜き {count}",
+    "ui.scan_panel_seams": "継ぎ目 {count}",
+    "ui.scan_panel_holes": "穴 {count}",
+    "ui.scan_panel_fixings": "固定点 {count}",
+    "ui.scan_panel_keep_all": "この種類をすべて残す",
+    "ui.scan_panel_drop_all": "この種類をすべて除外",
+    "ui.scan_panel_export": "図面を書き出す…"
   },
   "ko": {
     "cmd.scan.panel_proposals": "패널 제안",
@@ -161,7 +188,16 @@
     "ui.scan_panel_fit": "합판에 맞추려면 이음매 {n}을 {by} mm 옮기세요 (프레임을 벗어나면 뒤에 각재를 대세요).",
     "ui.scan_panel_fit_apply": "옮기기",
     "ui.scan_panel_sheets": "합판 {count}장에서 자릅니다.",
-    "ui.scan_panel_unbacked": "가장자리를 따라 {count}곳은 뒤에 고정할 평평한 금속이 없습니다. 각재로 고정하세요."
+    "ui.scan_panel_unbacked": "가장자리를 따라 {count}곳은 뒤에 고정할 평평한 금속이 없습니다. 각재로 고정하세요.",
+    "cmd.scan.panel_export": "패널 내보내기",
+    "ui.scan_panel_edges": "모서리 {count}",
+    "ui.scan_panel_cutouts": "컷아웃 {count}",
+    "ui.scan_panel_seams": "이음매 {count}",
+    "ui.scan_panel_holes": "구멍 {count}",
+    "ui.scan_panel_fixings": "고정점 {count}",
+    "ui.scan_panel_keep_all": "이 종류 모두 유지",
+    "ui.scan_panel_drop_all": "이 종류 모두 제외",
+    "ui.scan_panel_export": "도면 내보내기…"
   },
   "zh": {
     "cmd.scan.panel_proposals": "面板建议",
@@ -202,7 +238,16 @@
     "ui.scan_panel_fit": "要放进板材，把接缝 {n} 移动 {by} mm（如因此离开框架，在其后加一根木条）。",
     "ui.scan_panel_fit_apply": "移动",
     "ui.scan_panel_sheets": "从 {count} 块板材切出。",
-    "ui.scan_panel_unbacked": "沿边缘有 {count} 处后面没有平整的金属可固定：在那里用木条固定。"
+    "ui.scan_panel_unbacked": "沿边缘有 {count} 处后面没有平整的金属可固定：在那里用木条固定。",
+    "cmd.scan.panel_export": "导出面板",
+    "ui.scan_panel_edges": "边 {count}",
+    "ui.scan_panel_cutouts": "切口 {count}",
+    "ui.scan_panel_seams": "接缝 {count}",
+    "ui.scan_panel_holes": "孔 {count}",
+    "ui.scan_panel_fixings": "固定点 {count}",
+    "ui.scan_panel_keep_all": "全部保留这一类",
+    "ui.scan_panel_drop_all": "全部去掉这一类",
+    "ui.scan_panel_export": "导出图纸…"
   },
   "ar": {
     "cmd.scan.panel_proposals": "مقترحات اللوح",
@@ -243,7 +288,16 @@
     "ui.scan_panel_fit": "لتلائم الصفيحة، انقل الوصلة {n} بمقدار {by} مم (ضع عارضة خلفها إن خرجت بذلك عن الإطار).",
     "ui.scan_panel_fit_apply": "انقلها",
     "ui.scan_panel_sheets": "تُقص من {count} صفائح.",
-    "ui.scan_panel_unbacked": "في {count} مواضع على الحواف لا يوجد خلفها معدن مستوٍ للتثبيت: ثبّت هناك بعارضة."
+    "ui.scan_panel_unbacked": "في {count} مواضع على الحواف لا يوجد خلفها معدن مستوٍ للتثبيت: ثبّت هناك بعارضة.",
+    "cmd.scan.panel_export": "تصدير اللوح",
+    "ui.scan_panel_edges": "الحواف {count}",
+    "ui.scan_panel_cutouts": "الفتحات {count}",
+    "ui.scan_panel_seams": "الوصلات {count}",
+    "ui.scan_panel_holes": "الثقوب {count}",
+    "ui.scan_panel_fixings": "نقاط التثبيت {count}",
+    "ui.scan_panel_keep_all": "إبقاء كل هذه",
+    "ui.scan_panel_drop_all": "إسقاط كل هذه",
+    "ui.scan_panel_export": "تصدير الرسومات…"
   },
   "he": {
     "cmd.scan.panel_proposals": "הצעות ללוח",
@@ -284,7 +338,16 @@
     "ui.scan_panel_fit": "כדי להתאים לגיליון, הזיזו את תפר {n} ב־{by} מ״מ (שימו מאחוריו פס עץ אם הוא יוצא כך מהמסגרת).",
     "ui.scan_panel_fit_apply": "הזזה",
     "ui.scan_panel_sheets": "נחתך מ־{count} גיליונות.",
-    "ui.scan_panel_unbacked": "ב־{count} מקומות לאורך הקצוות אין מאחור מתכת שטוחה לקיבוע: חזקו שם עם פס עץ."
+    "ui.scan_panel_unbacked": "ב־{count} מקומות לאורך הקצוות אין מאחור מתכת שטוחה לקיבוע: חזקו שם עם פס עץ.",
+    "cmd.scan.panel_export": "ייצוא לוח",
+    "ui.scan_panel_edges": "קצוות {count}",
+    "ui.scan_panel_cutouts": "חיתוכים {count}",
+    "ui.scan_panel_seams": "תפרים {count}",
+    "ui.scan_panel_holes": "חורים {count}",
+    "ui.scan_panel_fixings": "נקודות קיבוע {count}",
+    "ui.scan_panel_keep_all": "שמירת כל אלה",
+    "ui.scan_panel_drop_all": "הסרת כל אלה",
+    "ui.scan_panel_export": "ייצוא שרטוטים…"
   },
   "vi": {
     "cmd.scan.panel_proposals": "Đề xuất tấm",
@@ -325,6 +388,15 @@
     "ui.scan_panel_fit": "Để vừa tấm ván, dời đường nối {n} thêm {by} mm (đặt một thanh gỗ phía sau nếu nó ra khỏi khung).",
     "ui.scan_panel_fit_apply": "Dời",
     "ui.scan_panel_sheets": "Cắt từ {count} tấm ván.",
-    "ui.scan_panel_unbacked": "{count} chỗ dọc các mép không có kim loại phẳng phía sau để bắt vít: bắt vào một thanh gỗ ở đó."
+    "ui.scan_panel_unbacked": "{count} chỗ dọc các mép không có kim loại phẳng phía sau để bắt vít: bắt vào một thanh gỗ ở đó.",
+    "cmd.scan.panel_export": "Xuất tấm",
+    "ui.scan_panel_edges": "Cạnh {count}",
+    "ui.scan_panel_cutouts": "Ô khoét {count}",
+    "ui.scan_panel_seams": "Đường nối {count}",
+    "ui.scan_panel_holes": "Lỗ {count}",
+    "ui.scan_panel_fixings": "Điểm bắt vít {count}",
+    "ui.scan_panel_keep_all": "Giữ tất cả loại này",
+    "ui.scan_panel_drop_all": "Bỏ tất cả loại này",
+    "ui.scan_panel_export": "Xuất bản vẽ…"
   }
 }
