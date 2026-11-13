@@ -226,7 +226,8 @@ pub struct ScanPanelProposalsParams {
 
 /// Write a straight panel's pieces for cutting: each piece's outline, cut-outs, holes and fixing
 /// points at its own 0, 0, labelled and dimensioned (DXF), the blanks laid on sheets (DXF), every
-/// hole and fixing point (CSV), the cut list (CSV) and distances to check in the van first (CSV).
+/// hole and fixing point (CSV), the cut list (CSV), distances to check in the van first (CSV) and
+/// the drawings (PDF: the panel, a page for each piece, the sheets).
 /// Changes nothing in the design.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -294,6 +295,8 @@ pub struct ScanPanelExportResult {
     pub files: Vec<String>,
     pub pieces: Vec<PanelPieceOut>,
     pub sheets: usize,
+    /// Pages in the drawings' PDF (written with `path`): the panel, one for each piece, the sheets.
+    pub pdf_pages: usize,
     pub checks: Vec<PanelCheckOut>,
     /// Without `path`: the files' text.
     #[serde(default, skip_serializing_if = "Option::is_none")]

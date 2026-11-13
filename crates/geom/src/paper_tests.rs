@@ -83,6 +83,8 @@ fn each_kind_names_its_layer_in_the_capitals_of_its_id() {
         (TitleBlock, "TITLE_BLOCK"),
         (PartsList, "PARTS_LIST"),
         (RevisionTable, "REVISION_TABLE"),
+        (View, "VIEW"),
+        (Annotation, "ANNOTATION"),
     ] {
         assert_eq!(kind.layer(), layer);
         let id = layer.to_ascii_lowercase();
@@ -302,4 +304,35 @@ fn unknown_fields_kinds_and_ids_are_refused_when_read() {
     let mut v = value;
     v["groups"][0]["object"] = json!(u64::MAX);
     read(v).unwrap().validate().unwrap();
+}
+
+#[test]
+fn a_text_is_one_line_of_bounded_size_at_a_finite_place() {
+    let text = |at: Vec2, height_mm: f64, angle: f64, text: &str| Scene {
+        size_mm: p(420.0, 297.0),
+        groups: vec![Group {
+            object: 3,
+            kind: ObjectKind::Annotation,
+            items: vec![Item::Text { at, height_mm, angle, anchor: Anchor::Middle, text: text.into() }],
+        }],
+    };
+    text(p(10.0, 10.0), 3.5, 0.5, "PIECE 1  2440 x 407").validate().unwrap();
+    for bad in [
+        text(p(10.0, 10.0), 0.0, 0.0, "a"),
+        text(p(10.0, 10.0), 101.0, 0.0, "a"),
+        text(p(f64::NAN, 10.0), 3.0, 0.0, "a"),
+        text(p(2e5, 10.0), 3.0, 0.0, "a"),
+        text(p(10.0, 10.0), 3.0, f64::INFINITY, "a"),
+        text(p(10.0, 10.0), 3.0, 0.0, ""),
+        text(p(10.0, 10.0), 3.0, 0.0, "two\nlines"),
+        text(p(10.0, 10.0), 3.0, 0.0, &"x".repeat(501)),
+    ] {
+        assert!(bad.validate().is_err(), "{bad:?}");
+    }
+    // Saved and read back as it was, the anchor and turn defaulting when left out.
+    let scene = text(p(10.0, 10.0), 3.5, 0.0, "hole 1");
+    let value = serde_json::to_value(&scene).unwrap();
+    assert_eq!(serde_json::from_value::<Scene>(value).unwrap(), scene);
+    let bare: Item = serde_json::from_value(json!({"kind": "text", "at": [1.0, 2.0], "height_mm": 2.0, "text": "a"})).unwrap();
+    assert_eq!(bare, Item::Text { at: p(1.0, 2.0), height_mm: 2.0, angle: 0.0, anchor: Anchor::Start, text: "a".into() });
 }

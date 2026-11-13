@@ -23,7 +23,7 @@ use solidcraft_geom::prelude::*;
 use std::fmt::Write;
 
 use solidcore_record::{Region2, Seg2, Vec2};
-use solidcraft_geom::paper::{Item, Prepared, arc_pieces};
+use solidcraft_geom::paper::{Anchor, Item, Prepared, arc_pieces};
 
 use crate::{IoError, MAX_DRAWING_BYTES, Result};
 
@@ -58,6 +58,7 @@ pub fn paper_svg(scene: &Prepared) -> Result<(Vec<u8>, SvgReport)> {
             match item {
                 Item::Stroke { path, closed, width_mm } => w.stroke(path, *closed, *width_mm)?,
                 Item::Fill { region } => w.fill(region)?,
+                Item::Text { at, height_mm, angle, anchor, text } => w.text(*at, *height_mm, *angle, *anchor, text)?,
             }
             if w.out.len() > MAX_DRAWING_BYTES {
                 return Err(IoError::Invalid(format!("the SVG would be over {} MiB", MAX_DRAWING_BYTES >> 20)));
@@ -223,6 +224,45 @@ impl Writer {
         self.move_to(first.start())?;
         self.pieces(path, closed)?;
         self.out.push_str("\"/>\n");
+        Ok(())
+    }
+
+    /// One line of text, black, in a sans-serif face, turned about its point (after the flip a
+    /// turn anticlockwise on paper is a negative `rotate`).
+    fn text(&mut self, at: Vec2, height_mm: f64, angle: f64, anchor: Anchor, text: &str) -> Result<()> {
+        let (x, y) = self.grid(at)?;
+        let size = nano(height_mm)?.max(1);
+        let anchor = match anchor {
+            Anchor::Start => "start",
+            Anchor::Middle => "middle",
+            Anchor::End => "end",
+        };
+        self.out.push_str("<text fill=\"#000\" stroke=\"none\" font-family=\"Helvetica, Arial, sans-serif\" font-size=\"");
+        push_number(&mut self.out, size);
+        let _ = write!(self.out, "\" text-anchor=\"{anchor}\" x=\"");
+        push_number(&mut self.out, x);
+        self.out.push_str("\" y=\"");
+        push_number(&mut self.out, y);
+        self.out.push('"');
+        if angle != 0.0 {
+            // Degrees to the nanodegree, on the same grid as the numbers.
+            self.out.push_str(" transform=\"rotate(");
+            push_number(&mut self.out, nano(-angle.to_degrees())?);
+            self.out.push(' ');
+            self.point((x, y));
+            self.out.push_str(")\"");
+        }
+        self.out.push('>');
+        for c in text.chars() {
+            match c {
+                '&' => self.out.push_str("&amp;"),
+                '<' => self.out.push_str("&lt;"),
+                '>' => self.out.push_str("&gt;"),
+                '"' => self.out.push_str("&quot;"),
+                c => self.out.push(c),
+            }
+        }
+        self.out.push_str("</text>\n");
         Ok(())
     }
 

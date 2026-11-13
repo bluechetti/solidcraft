@@ -163,3 +163,25 @@ fn the_svg_reader_reads_it_back() {
     let (c, a, b) = arcs[0];
     assert!(c.dist(p(50.0, 50.0)) < 3e-6 && a.dist(p(60.0, 50.0)) < 3e-6 && b.dist(p(50.0, 60.0)) < 3e-6, "{:?}", arcs[0]);
 }
+
+/// A text: black, sans-serif, its size and place in mm with y flipped, anchored as asked, turned
+/// the other way after the flip, and its characters escaped.
+#[test]
+fn a_text_is_written_where_the_scene_puts_it() {
+    use solidcraft_geom::paper::Anchor;
+    let scene = Scene {
+        size_mm: p(420.0, 297.0),
+        groups: vec![Group {
+            object: 4,
+            kind: ObjectKind::Annotation,
+            items: vec![
+                Item::Text { at: p(10.0, 20.0), height_mm: 3.5, angle: 0.0, anchor: Anchor::Middle, text: "hole <1> & 2".into() },
+                Item::Text { at: p(10.0, 20.0), height_mm: 3.0, angle: std::f64::consts::FRAC_PI_2, anchor: Anchor::Start, text: "525".into() },
+            ],
+        }],
+    };
+    let (bytes, _) = paper_svg(&scene.prepare().unwrap()).unwrap();
+    let svg = String::from_utf8(bytes).unwrap();
+    assert!(svg.contains("font-size=\"3.5\" text-anchor=\"middle\" x=\"10\" y=\"277\">hole &lt;1&gt; &amp; 2</text>"), "{svg}");
+    assert!(svg.contains("transform=\"rotate(-90 10 277)\">525</text>"), "{svg}");
+}

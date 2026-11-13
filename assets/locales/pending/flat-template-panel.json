@@ -56,7 +56,8 @@
     "ui.scan_panel_drop_not_found": "Drop the {count} Holes Not in It",
     "ui.scan_panel_seen_both": "The other scan has this hole too.",
     "ui.scan_panel_seen_not_found": "The other scan covers this place and has no hole here: likely a gap in this scan, not a hole.",
-    "ui.scan_panel_seen_unscanned": "The other scan does not cover this place."
+    "ui.scan_panel_seen_unscanned": "The other scan does not cover this place.",
+    "ui.scan_panel_scan": "Scan"
   },
   "de": {
     "cmd.scan.panel_proposals": "Plattenvorschläge",
@@ -115,7 +116,8 @@
     "ui.scan_panel_drop_not_found": "Die {count} Löcher verwerfen, die dort fehlen",
     "ui.scan_panel_seen_both": "Der andere Scan hat dieses Loch auch.",
     "ui.scan_panel_seen_not_found": "Der andere Scan deckt diese Stelle ab und hat hier kein Loch: wohl eine Lücke in diesem Scan, kein Loch.",
-    "ui.scan_panel_seen_unscanned": "Der andere Scan deckt diese Stelle nicht ab."
+    "ui.scan_panel_seen_unscanned": "Der andere Scan deckt diese Stelle nicht ab.",
+    "ui.scan_panel_scan": "Scan"
   },
   "ja": {
     "cmd.scan.panel_proposals": "パネルの提案",
@@ -174,7 +176,8 @@
     "ui.scan_panel_drop_not_found": "そちらにない穴 {count} 個を除外",
     "ui.scan_panel_seen_both": "もう一方のスキャンにもこの穴があります。",
     "ui.scan_panel_seen_not_found": "もう一方のスキャンはこの場所を写していますが穴はありません。穴ではなく、このスキャンの欠けと思われます。",
-    "ui.scan_panel_seen_unscanned": "もう一方のスキャンはこの場所を写していません。"
+    "ui.scan_panel_seen_unscanned": "もう一方のスキャンはこの場所を写していません。",
+    "ui.scan_panel_scan": "スキャン"
   },
   "ko": {
     "cmd.scan.panel_proposals": "패널 제안",
@@ -233,7 +236,8 @@
     "ui.scan_panel_drop_not_found": "그쪽에 없는 구멍 {count}개 제외",
     "ui.scan_panel_seen_both": "다른 스캔에도 이 구멍이 있습니다.",
     "ui.scan_panel_seen_not_found": "다른 스캔은 이곳을 담고 있지만 구멍이 없습니다. 구멍이 아니라 이 스캔의 빈틈일 가능성이 큽니다.",
-    "ui.scan_panel_seen_unscanned": "다른 스캔은 이곳을 담고 있지 않습니다."
+    "ui.scan_panel_seen_unscanned": "다른 스캔은 이곳을 담고 있지 않습니다.",
+    "ui.scan_panel_scan": "스캔"
   },
   "zh": {
     "cmd.scan.panel_proposals": "面板建议",
@@ -292,7 +296,8 @@
     "ui.scan_panel_drop_not_found": "去掉其中没有的 {count} 个孔",
     "ui.scan_panel_seen_both": "另一个扫描也有这个孔。",
     "ui.scan_panel_seen_not_found": "另一个扫描覆盖此处但这里没有孔：很可能是本扫描的缺口，而不是孔。",
-    "ui.scan_panel_seen_unscanned": "另一个扫描没有覆盖此处。"
+    "ui.scan_panel_seen_unscanned": "另一个扫描没有覆盖此处。",
+    "ui.scan_panel_scan": "扫描"
   },
   "ar": {
     "cmd.scan.panel_proposals": "مقترحات اللوح",
@@ -351,7 +356,8 @@
     "ui.scan_panel_drop_not_found": "إسقاط الثقوب الـ{count} غير الموجودة فيه",
     "ui.scan_panel_seen_both": "المسح الآخر فيه هذا الثقب أيضًا.",
     "ui.scan_panel_seen_not_found": "المسح الآخر يغطي هذا الموضع ولا ثقب فيه: على الأرجح فجوة في هذا المسح وليست ثقبًا.",
-    "ui.scan_panel_seen_unscanned": "المسح الآخر لا يغطي هذا الموضع."
+    "ui.scan_panel_seen_unscanned": "المسح الآخر لا يغطي هذا الموضع.",
+    "ui.scan_panel_scan": "المسح"
   },
   "he": {
     "cmd.scan.panel_proposals": "הצעות ללוח",
@@ -410,7 +416,8 @@
     "ui.scan_panel_drop_not_found": "הסרת {count} החורים שאינם בו",
     "ui.scan_panel_seen_both": "גם בסריקה האחרת יש את החור הזה.",
     "ui.scan_panel_seen_not_found": "הסריקה האחרת מכסה את המקום ואין בו חור: כנראה פער בסריקה הזו, לא חור.",
-    "ui.scan_panel_seen_unscanned": "הסריקה האחרת לא מכסה את המקום הזה."
+    "ui.scan_panel_seen_unscanned": "הסריקה האחרת לא מכסה את המקום הזה.",
+    "ui.scan_panel_scan": "סריקה"
   },
   "vi": {
     "cmd.scan.panel_proposals": "Đề xuất tấm",
@@ -469,6 +476,7 @@
     "ui.scan_panel_drop_not_found": "Bỏ {count} lỗ không có ở đó",
     "ui.scan_panel_seen_both": "Bản quét kia cũng có lỗ này.",
     "ui.scan_panel_seen_not_found": "Bản quét kia có quét chỗ này nhưng không có lỗ: có lẽ là chỗ hở của bản quét này, không phải lỗ.",
-    "ui.scan_panel_seen_unscanned": "Bản quét kia không quét tới chỗ này."
+    "ui.scan_panel_seen_unscanned": "Bản quét kia không quét tới chỗ này.",
+    "ui.scan_panel_scan": "Bản quét"
   }
 }

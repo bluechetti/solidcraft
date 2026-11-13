@@ -2032,7 +2032,13 @@ fn panel_export_writes_the_pieces_the_sheets_and_the_lists() {
     let path = dir.join("wall.dxf");
     let w = run(&mut s, "scan.panel_export", json!({"body": body, "path": path.to_string_lossy(), "panel": {"sheet": [400, 250]}}));
     let files = w["files"].as_array().unwrap();
-    assert_eq!(files.len(), 5, "{w}");
+    assert_eq!(files.len(), 6, "{w}");
+    assert_eq!(w["pdf_pages"].as_u64(), Some(4 + 2), "the panel, a page for each piece, the sheets: {w}");
+    let pdf = std::fs::read(dir.join("wall.pdf")).unwrap();
+    assert!(pdf.starts_with(b"%PDF-1.4") && pdf.ends_with(b"%%EOF\n"), "a PDF");
+    let pdf_text = String::from_utf8_lossy(&pdf);
+    assert_eq!(pdf_text.matches("/Type /Page ").count(), 6, "six pages");
+    assert!(pdf_text.contains("(Piece 1 of 4) Tj") && pdf_text.contains("Measure in the van before cutting"), "the drawings' text");
     assert!(files.iter().all(|f| std::path::Path::new(f.as_str().unwrap()).exists()), "{w}");
     assert!(w.get("pieces_dxf").is_none(), "{w}");
     let _ = std::fs::remove_dir_all(&dir);

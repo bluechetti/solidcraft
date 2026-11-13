@@ -64,6 +64,9 @@ pub struct FlatTemplate {
     pub seam_moves: BTreeMap<usize, f64>,
     /// Another scan to check the holes against (the wall opposite, or another pass of this one).
     pub confirm_with: Option<String>,
+    /// With the whole scan: which scan, when the design has more than one (the one selected when the
+    /// dialog opened, or chosen in it).
+    pub scan: Option<String>,
     review: Review,
     /// Where the view is to frame next (done each frame by [`tick`]).
     focus: Option<Aabb3>,
@@ -97,6 +100,7 @@ impl Default for FlatTemplate {
             spacing: solidcraft_engine::cmd::scan::template::panel::SPACING,
             seam_moves: BTreeMap::new(),
             confirm_with: None,
+            scan: None,
             review: Review::default(),
             focus: None,
             export_asked: false,
@@ -192,9 +196,16 @@ fn review_key(key: &str) -> String {
 
 const SIDES: [&str; 3] = ["both", "out", "in"];
 
-pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
-    (id == "scan.flat_template")
-        .then(|| (Kind::ScanFlatTemplate(FlatTemplate::default()), vec![SelInput::new("Outline Points", FACES, true).places()]))
+pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
+    (id == "scan.flat_template").then(|| {
+        // The scan selected as the dialog opens: the one a whole outline is found from.
+        let state = app.session.model.state();
+        let scan = app.session.selection.iter().find_map(|x| match x {
+            Sel::Body { name } | Sel::Face { body: name, .. } if state.body(name).is_some_and(|b| b.body.is_mesh()) => Some(name.clone()),
+            _ => None,
+        });
+        (Kind::ScanFlatTemplate(FlatTemplate { scan, ..FlatTemplate::default() }), vec![SelInput::new("Outline Points", FACES, true).places()])
+    })
 }
 
 fn tr(id: &'static str) -> &'static str {
@@ -215,6 +226,8 @@ fn params(k: &FlatTemplate, inputs: &[SelInput]) -> Option<Value> {
         });
         if let Some(Sel::Face { body, .. }) = items(inputs, 0).first() {
             p["body"] = json!(body);
+        } else if let Some(scan) = &k.scan {
+            p["body"] = json!(scan);
         }
         // With the whole scan, a click on a raised part covers it rather than cutting round it.
         let picked = clicks(inputs);
@@ -436,6 +449,17 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
         k.edge = false;
     }
     if k.outline == 1 {
+        // With more than one scan in the design: which one the wall's outline is found from.
+        let meshes: Vec<String> = app.session.model.state().bodies.iter().filter(|b| b.body.is_mesh()).map(|b| b.name.clone()).collect();
+        if meshes.len() > 1 {
+            let labels: Vec<&str> = meshes.iter().map(String::as_str).collect();
+            let mut pick = k.scan.as_ref().and_then(|n| meshes.iter().position(|m| m == n)).unwrap_or(0);
+            choice_row(ui, tr("ui.scan_panel_scan"), "scan_panel_scan", &mut pick, &labels);
+            k.scan = meshes.get(pick).cloned();
+            if k.confirm_with == k.scan {
+                k.confirm_with = None;
+            }
+        }
         form_row(ui, tr("ui.scan_template_gap"), |ui| ui_kit::length_field(ui, &mut k.gap, &units, decimals));
         k.gap = k.gap.max(0.0);
         form_row(ui, tr("ui.scan_template_smooth"), |ui| ui_kit::length_field(ui, &mut k.smooth, &units, decimals));
@@ -459,7 +483,10 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
             // 0 proposes no fixing points; otherwise every 50 mm at the closest.
             k.spacing = if !k.spacing.is_finite() || k.spacing <= 0.0 { 0.0 } else { k.spacing.clamp(50.0, 5000.0) };
             // Another scan to check the holes against: any other scan in the design.
-            let own = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.panel.as_ref()).map(|pp| pp.prepared.body.clone());
+            let own = k
+                .scan
+                .clone()
+                .or_else(|| k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.panel.as_ref()).map(|pp| pp.prepared.body.clone()));
             let scans: Vec<String> = app
                 .session
                 .model
@@ -1265,5 +1292,39 @@ mod tests {
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
         assert!(h.app.session.doc.features.iter().any(|f| f.name == "Wall Template"), "the panel's sketch");
+    }
+
+    /// With a second scan in the design, Check Holes Against is offered; checked against a scan
+    /// whose holes do not line up (these walls have none), the panel is still proposed and says so.
+    #[test]
+    fn a_second_scan_is_offered_to_check_the_holes_against() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("wall.stl");
+        std::fs::write(&path, wall_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let names: Vec<String> = h.app.session.model.state().bodies.iter().filter(|b| b.body.is_mesh()).map(|b| b.name.clone()).collect();
+        assert_eq!(names.len(), 2, "{names:?}");
+        h.app.run("select.set", json!({"items": [Sel::Body { name: names[0].clone() }]})).unwrap();
+        h.app.start("scan.flat_template");
+        if let Some(Kind::ScanFlatTemplate(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.outline = 1;
+            k.smooth = 0.0;
+            k.round = 0.0;
+            k.side = 1;
+            k.edge = false;
+            k.panel = true;
+            k.confirm_with = Some(names[1].clone());
+        }
+        h.frames(3);
+        let Some(Kind::ScanFlatTemplate(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the Flat Template dialog") };
+        let shown = k.shown.as_ref().map(|s| s.result.as_ref().map(|_| ()).map_err(Clone::clone));
+        let pp =
+            k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.panel.clone()).unwrap_or_else(|| panic!("a proposal: {shown:?}"));
+        let (body, fit, _) = pp.confirm.as_ref().expect("checked");
+        assert!(body == &names[1] && fit.is_none(), "no holes to line up");
+        let d = h.app.dialog.as_ref().expect("open");
+        let (_, p) = commands(k, &d.inputs).expect("OK runs").pop().expect("the template");
+        assert_eq!(p["panel"]["confirm_with"], json!(names[1]), "{p}");
     }
 }

@@ -1,7 +1,7 @@
-//! The paper scene: what a sheet shows, as strokes and fills in sheet millimetres, for the writers
-//! that put it in a file (DXF, SVG, PNG, PDF). Plain data with one check, [`Scene::validate`]:
-//! nothing here is saved, drawn on screen or made by a command yet. Text, clips, line patterns and
-//! styles are later additions.
+//! The paper scene: what a sheet shows, as strokes, fills and text in sheet millimetres, for the
+//! writers that put it in a file (DXF, SVG, PNG, PDF). Plain data with one check,
+//! [`Scene::validate`]: nothing here is saved or drawn on screen. Clips, line patterns and styles
+//! are later additions.
 //!
 //! - Coordinates are millimetres from the sheet's lower-left corner, x to the right and y up;
 //!   angles are radians, anticlockwise. A line's width is its width on paper, centred on its path.
@@ -23,7 +23,9 @@
 //!   within ±2e5 mm;
 //! - a stroke's pieces meeting end to start within [`EPS`], and its ends too when it is closed;
 //!   every loop of a fill closed the same way;
-//! - a line width above 0 and at most [`MAX_LINE_MM`].
+//! - a line width above 0 and at most [`MAX_LINE_MM`];
+//! - a text's height above 0 and at most [`MAX_TEXT_MM`], its place finite and in range, its turn
+//!   finite, and its words one line of at most [`MAX_TEXT_CHARS`] characters, none a control.
 //!
 //! It does not certify simple loops, holes inside their outer loop or a path that never doubles
 //! back. Validation after parsing cannot bound parsing allocations: an encoded-input boundary must
@@ -48,6 +50,9 @@ pub const MAX_SIDE_MM: f64 = 5000.0;
 pub const MAX_RECORDS: usize = 100_000;
 /// The largest coordinate and radius either way, in millimetres: twenty times the longest side.
 pub const MAX_COORDINATE_MM: f64 = 1e5;
+/// The tallest text a scene may write, in millimetres, and the most characters in one text.
+pub const MAX_TEXT_MM: f64 = 100.0;
+pub const MAX_TEXT_CHARS: usize = 500;
 
 /// One sheet's marks, in paint order.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -84,6 +89,10 @@ pub enum ObjectKind {
     PartsList,
     /// The sheet table that lists the drawing's revisions.
     RevisionTable,
+    /// What a drawing shows of the part: its outlines and holes.
+    View,
+    /// Words, numbers and dimensions written on the sheet.
+    Annotation,
 }
 
 impl ObjectKind {
@@ -96,6 +105,8 @@ impl ObjectKind {
             ObjectKind::TitleBlock => "TITLE_BLOCK",
             ObjectKind::PartsList => "PARTS_LIST",
             ObjectKind::RevisionTable => "REVISION_TABLE",
+            ObjectKind::View => "VIEW",
+            ObjectKind::Annotation => "ANNOTATION",
         }
     }
 }
@@ -109,6 +120,27 @@ pub enum Item {
     Stroke { path: Vec<Seg2>, closed: bool, width_mm: f64 },
     /// A region painted solid.
     Fill { region: Region2 },
+    /// One line of text `height_mm` tall (the font's size), its baseline through `at` turned
+    /// `angle` radians anticlockwise, placed from `at` as `anchor` says.
+    Text {
+        at: Vec2,
+        height_mm: f64,
+        #[serde(default)]
+        angle: f64,
+        #[serde(default)]
+        anchor: Anchor,
+        text: String,
+    },
+}
+
+/// Where a text's baseline starts from its point: there, centred on it, or ending there.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Anchor {
+    #[default]
+    Start,
+    Middle,
+    End,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -191,6 +223,7 @@ impl Scene {
                             budget.add(1 + l.segs.len())?;
                         }
                     }
+                    Item::Text { .. } => budget.add(1)?,
                 }
             }
         }
@@ -212,6 +245,18 @@ impl Scene {
                         pieces(&l.segs)?;
                         require(l.is_closed(EPS), "each loop of a fill is closed")?;
                     }
+                }
+                Item::Text { at, height_mm, angle, text, .. } => {
+                    require(*height_mm > 0.0 && *height_mm <= MAX_TEXT_MM, "a text is above 0 and at most 100 mm tall")?;
+                    require(
+                        at.x.is_finite() && at.y.is_finite() && at.x.abs() <= MAX_COORDINATE_MM && at.y.abs() <= MAX_COORDINATE_MM,
+                        "a text's place is a point within 1e5 mm",
+                    )?;
+                    require(angle.is_finite(), "a text's turn is a number")?;
+                    require(
+                        !text.is_empty() && text.chars().count() <= MAX_TEXT_CHARS && !text.chars().any(char::is_control),
+                        "a text is one line of 1 to 500 characters, none a control character",
+                    )?;
                 }
             }
         }
