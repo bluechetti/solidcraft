@@ -374,14 +374,20 @@ pub fn extrusions(
     let gain = |shares: &[(usize, f64)], explained: &[f64]| {
         shares.iter().filter(|(k, _)| !unscored.contains(k)).map(|&(k, s)| faces[k].area * ((explained[k] + s).min(1.0) - explained[k])).sum::<f64>()
     };
+    // How many rounds along edges a candidate's walls hold: of two that explain as much, the one
+    // holding fewer is the part as modelled (a block with rounded top edges stands upright, its
+    // rounds filleted, rather than lying on its side with two of them in its profile).
+    let held = |shares: &[(usize, f64)]| shares.iter().filter(|(k, _)| unscored.contains(k)).count();
     let mut chosen = Vec::new();
     loop {
-        let best =
-            candidates.iter().enumerate().map(|(i, c)| (i, gain(&c.1, &explained))).fold(None, |best: Option<(usize, f64)>, (i, g)| match best {
-                Some((_, b)) if b >= g => best,
-                _ => Some((i, g)),
-            });
-        let Some((i, _)) = best.filter(|b| b.1 >= LEAST_NEW * total) else { break };
+        let best = candidates.iter().enumerate().map(|(i, c)| (i, gain(&c.1, &explained), held(&c.1))).fold(
+            None,
+            |best: Option<(usize, f64, usize)>, (i, g, h)| match best {
+                Some((_, b, bh)) if b >= g + TIE * total || (b + TIE * total > g && (bh < h || (bh == h && b >= g))) => best,
+                _ => Some((i, g, h)),
+            },
+        );
+        let Some((i, _, _)) = best.filter(|b| b.1 >= LEAST_NEW * total) else { break };
         let (prism, shares) = candidates.remove(i);
         for (k, s) in shares {
             explained[k] = (explained[k] + s).min(1.0);
@@ -390,6 +396,10 @@ pub fn extrusions(
     }
     chosen
 }
+
+/// Two prisms explaining within this share of the whole scan's area explain as much
+/// ([`extrusions`] then takes the one whose walls hold fewer rounds).
+const TIE: f64 = 0.001;
 
 /// A direction this near a world axis is along it (a sine: about 0.1°).
 const ON_GRID: f64 = 0.00175;
