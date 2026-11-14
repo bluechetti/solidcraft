@@ -59,9 +59,93 @@ pub(crate) struct Tolerance {
     pub keep: Option<(String, f64)>,
 }
 
-/// The scan's own tolerance, mm (the default for a scan with none, or no scan yet).
-pub(crate) fn of(app: &SolveApp, scan: Option<&str>) -> f64 {
+/// The tolerance kept in the design for the scan, mm (the default for a scan with none, or no
+/// scan yet): what commands read.
+fn kept(app: &SolveApp, scan: Option<&str>) -> f64 {
     scan.map_or(solidcraft_engine::doc::scan_tolerance::DEFAULT_MM, |s| solidcraft_engine::cmd::scan::tolerance::of(&app.session, s))
+}
+
+/// The scan's tolerance, mm: the one kept for it; for a scan with none (with the preference
+/// `scan_tolerance_from_noise`) three times its noise, at least the default, once the noise is
+/// read; else the default.
+pub(crate) fn of(app: &SolveApp, scan: Option<&str>) -> f64 {
+    match noise_tolerance(app, scan) {
+        Some((tolerance, _)) => tolerance,
+        None => kept(app, scan),
+    }
+}
+
+/// For a scan with no tolerance kept and the preference on: the tolerance its noise gives and the
+/// noise, mm, once read. Read here on a small scan, beside the window on a large one (none until
+/// it is in).
+fn noise_tolerance(app: &SolveApp, scan: Option<&str>) -> Option<(f64, f64)> {
+    let scan = scan?;
+    if !app.preferences.scan_tolerance_from_noise || solidcraft_engine::cmd::scan::tolerance::is_set(&app.session, scan) {
+        return None;
+    }
+    let noise = noise(app, scan)?;
+    Some((solidcraft_engine::cmd::scan::tolerance::for_noise(noise), noise))
+}
+
+/// A scan's noise as read: none yet while it is read beside the window.
+enum Reading {
+    Working(crate::scan_job::Job<(), Option<f64>>),
+    Read(Option<f64>),
+}
+
+thread_local! {
+    /// The noise read per scan, with the mesh it was read from (a changed scan is read again).
+    static NOISE: std::cell::RefCell<std::collections::HashMap<String, (usize, Reading)>> = std::cell::RefCell::default();
+}
+
+/// The noise of `scan`, mm: read once per mesh, beside the window on a large scan.
+fn noise(app: &SolveApp, scan: &str) -> Option<f64> {
+    let mesh = app.session.model.state().body(scan).and_then(|b| b.body.kept_mesh())?;
+    let id = std::sync::Arc::as_ptr(&mesh) as usize;
+    let known = NOISE.with(|n| {
+        let mut n = n.borrow_mut();
+        let (_, reading) = n.get_mut(scan).filter(|(at, _)| *at == id)?;
+        let read = match reading {
+            Reading::Read(v) => *v,
+            Reading::Working(job) => match job.poll() {
+                crate::scan_job::Poll::Working => return Some(None),
+                crate::scan_job::Poll::Done(v) => v,
+                crate::scan_job::Poll::Lost => None,
+            },
+        };
+        *reading = Reading::Read(read);
+        Some(read)
+    });
+    if let Some(read) = known {
+        return read;
+    }
+    let reading = if crate::scan_job::beside_window(app) {
+        let name = scan.to_owned();
+        match crate::scan_job::spawn(app, (), move |s| solidcraft_engine::cmd::scan::tolerance::noise(s, &name)) {
+            Some(job) => Reading::Working(job),
+            None => Reading::Read(solidcraft_engine::cmd::scan::tolerance::noise(&app.session, scan)),
+        }
+    } else {
+        Reading::Read(solidcraft_engine::cmd::scan::tolerance::noise(&app.session, scan))
+    };
+    let read = match &reading {
+        Reading::Read(v) => *v,
+        Reading::Working(_) => None,
+    };
+    NOISE.with(|n| {
+        let mut n = n.borrow_mut();
+        // A design with many scans keeps only what it reads now.
+        if n.len() > 64 {
+            n.clear();
+        }
+        n.insert(scan.to_owned(), (id, reading));
+    });
+    read
+}
+
+/// Whether the noise of `scan` is still being read beside the window.
+fn reading(scan: Option<&str>) -> bool {
+    scan.is_some_and(|s| NOISE.with(|n| matches!(n.borrow().get(s), Some((_, Reading::Working(_))))))
 }
 
 /// The tolerance in force while a tool's own value is `local` (0: the scan's).
@@ -71,16 +155,35 @@ pub(crate) fn effective(app: &SolveApp, scan: Option<&str>, local: f64) -> f64 {
 
 /// The Tolerance row of a tool: the scan's tolerance, or the tool's own `local` when it was changed
 /// here (0 until then). The change is kept by OK for the scan.
+///
+/// A scan with no tolerance kept starts from three times its noise (the preference
+/// `scan_tolerance_from_noise`); the row says so on hover, and OK keeps it for the scan so the
+/// commands read it too.
 pub(crate) fn row(app: &SolveApp, ui: &mut egui::Ui, scan: Option<&str>, local: &mut f64) -> Tolerance {
+    use ui_kit::BackingTooltipExt;
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
-    let stored = of(app, scan);
+    let from_noise = noise_tolerance(app, scan);
+    let start = of(app, scan);
     let mut value = effective(app, scan, *local);
-    form_row(ui, solidcraft_ui_text::tr("ui.scan_tolerance"), |ui| ui_kit::length_field(ui, &mut value, &units, decimals));
-    if !(value.is_finite() && value > 0.0) {
-        value = stored;
+    let why = from_noise
+        .filter(|_| *local <= 0.0)
+        .map(|(_, noise)| solidcraft_ui_text::format("ui.scan_tolerance_noise", &[("noise", &crate::prefs::show_mm(app, noise, 2))]));
+    form_row(ui, solidcraft_ui_text::tr("ui.scan_tolerance"), |ui| {
+        let r = ui_kit::length_field(ui, &mut value, &units, decimals);
+        match why {
+            Some(why) => r.backing_on_hover_text(why),
+            None => r,
+        }
+    });
+    if reading(scan) {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
     }
-    *local = if (value - stored).abs() > 1e-12 { value } else { 0.0 };
-    Tolerance { mm: value, keep: scan.filter(|_| *local > 0.0).map(|s| (s.to_owned(), value)) }
+    if !(value.is_finite() && value > 0.0) {
+        value = start;
+    }
+    *local = if (value - start).abs() > 1e-12 { value } else { 0.0 };
+    let changed = (value - kept(app, scan)).abs() > 1e-12;
+    Tolerance { mm: value, keep: scan.filter(|_| changed).map(|s| (s.to_owned(), value)) }
 }
 
 /// What OK also runs to keep a changed tolerance for the scan.
@@ -105,20 +208,17 @@ pub(crate) fn line(app: &SolveApp, s: &Stats, tolerance: f64) -> String {
     format!("{said} · {}", verdict(s.within))
 }
 
-/// A tool's Fit row: the RMS and the share within the tolerance, red when it fails; the whole
-/// line (mean, worst each way, the verdict) on hover.
-pub(crate) fn readout(app: &SolveApp, ui: &mut egui::Ui, id: &'static str, s: &Stats, tolerance: f64) {
+/// A tool's Fit row: the share within the tolerance (the row above it), red when it fails; the
+/// whole line (RMS, mean, worst each way, the verdict) on hover, with what the tool `also` says
+/// about its result.
+pub(crate) fn readout(app: &SolveApp, ui: &mut egui::Ui, id: &'static str, s: &Stats, tolerance: f64, also: Option<&str>) {
     use ui_kit::BackingTooltipExt;
-    let short = solidcraft_ui_text::format(
-        "ui.scan_deviation_summary",
-        &[
-            ("rms", &crate::prefs::show_mm(app, s.rms, 1)),
-            ("within", &format!("{:.0} %", 100.0 * s.within)),
-            ("tolerance", &crate::prefs::show_mm(app, tolerance, 1)),
-        ],
-    );
+    let short = solidcraft_ui_text::format("ui.scan_fit_within", &[("within", &format!("{:.0} %", 100.0 * s.within))]);
     let fails = s.within < solidcraft_engine::cmd::scan::PASS_SHARE;
-    let full = line(app, s, tolerance);
+    let full = match also {
+        Some(also) => format!("{also}\n{}", line(app, s, tolerance)),
+        None => line(app, s, tolerance),
+    };
     form_row(ui, solidcraft_ui_text::tr("ui.scan_fit_result"), |ui| {
         ui_kit::text(ui, &short, ui_kit::Text::Report(id, fails)).backing_on_hover_text(full)
     });

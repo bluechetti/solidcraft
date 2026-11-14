@@ -210,9 +210,15 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitPatches, inputs: &[Sel
                 "ui.scan_patches_found",
                 &[("patches", &count.to_string()), ("rms", &format!("{rms:.3}")), ("max", &format!("{max:.3}"))],
             );
-            ui_kit::text(ui, &line, ui_kit::Text::Note("scan_patches_found"));
-            if let Some((stats, tolerance)) = fidelity(app, k) {
-                crate::scan_fidelity::readout(app, ui, "scan_patches_fidelity", &stats, tolerance);
+            // With the scan coloured the Fit row says how close they come (the patch count and
+            // distances on its hover); without, this line does.
+            match fidelity(app, k) {
+                Some((stats, tolerance)) => {
+                    crate::scan_fidelity::readout(app, ui, "scan_patches_fidelity", &stats, tolerance, Some(&line));
+                }
+                None => {
+                    ui_kit::text(ui, &line, ui_kit::Text::Note("scan_patches_found"));
+                }
             }
             crate::dialogs_surface_check::fold_warning(ui, *trouble);
         }
@@ -306,6 +312,64 @@ mod tests {
         }
         out.push_str("endsolid s\n");
         out
+    }
+
+    /// A sheet 60 mm square scanned with about 0.1 mm of noise, the same every run.
+    fn noisy_sheet_stl() -> String {
+        let mut seed = 99u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+        };
+        let n = 60;
+        let z: Vec<f64> = (0..(n + 1) * (n + 1)).map(|_| 0.35 * next()).collect();
+        let at = |i: usize, j: usize| [i as f64, j as f64, z[j * (n + 1) + i]];
+        let mut out = String::from("solid s\n");
+        for j in 0..n {
+            for i in 0..n {
+                for tri in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                    out.push_str("facet normal 0 0 0\nouter loop\n");
+                    for [x, y, z] in tri {
+                        out.push_str(&format!("vertex {x} {y} {z}\n"));
+                    }
+                    out.push_str("endloop\nendfacet\n");
+                }
+            }
+        }
+        out.push_str("endsolid s\n");
+        out
+    }
+
+    /// A noisy scan with no tolerance of its own is checked against three times its noise, not
+    /// 0.1 mm, so a faithful fit does not read as off; the row says why on hover and OK keeps it
+    /// for the scan. With the preference off it is 0.1 mm, as before.
+    #[test]
+    fn a_noisy_scan_starts_from_three_times_its_noise() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("noisy.stl");
+        std::fs::write(&path, noisy_sheet_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let scan = h.app.session.model.state().bodies[0].name.clone();
+        let noise = solidcraft_engine::cmd::scan::tolerance::noise(&h.app.session, &scan).expect("the noise read");
+        let expected = solidcraft_engine::cmd::scan::tolerance::for_noise(noise);
+        assert!(expected > 0.15, "a noisy scan: {noise} → {expected}");
+        h.app.preferences.scan_tolerance_from_noise = false;
+        assert_eq!(crate::scan_fidelity::of(&h.app, Some(&scan)), 0.1, "off: as before");
+        h.app.preferences.scan_tolerance_from_noise = true;
+        assert_eq!(crate::scan_fidelity::of(&h.app, Some(&scan)), expected);
+        h.app.run("select.clear", json!({})).unwrap();
+        h.app.start("scan.fit_patches");
+        if let Some(d) = h.app.dialog.as_mut() {
+            d.inputs[0].items.push(Sel::Face { body: scan.clone(), index: 0, point: Vec3::new(30.0, 30.0, 0.0) });
+        }
+        h.frames(3);
+        let Some(Kind::ScanFitPatches(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the Fit Patches dialog") };
+        assert_eq!(fidelity(&h.app, k).map(|(_, t)| t), Some(expected), "{:?}", k.shown.as_ref().map(|s| &s.result));
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        assert_eq!(h.app.session.doc.scan_tolerances.get(&scan).copied(), Some(expected), "OK keeps it for the scan");
+        assert_eq!(solidcraft_engine::cmd::scan::tolerance::of(&h.app.session, &scan), expected, "so the commands read it too");
     }
 
     /// On a large scan the patches are fitted beside the window and arrive as they would have here.

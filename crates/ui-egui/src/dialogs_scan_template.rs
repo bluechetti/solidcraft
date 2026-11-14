@@ -584,7 +584,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
                 ui_kit::text(ui, &dims, ui_kit::Text::Note("scan_template_sides"));
             }
             if let Some((stats, tolerance)) = fidelity(app, k) {
-                crate::scan_fidelity::readout(app, ui, "scan_template_fidelity", &stats, tolerance);
+                crate::scan_fidelity::readout(app, ui, "scan_template_fidelity", &stats, tolerance, None);
             }
             if m.fitted {
                 let plane = solidcraft_ui_text::format("ui.scan_template_plane", &[("kept", &m.kept.to_string()), ("under", &m.under.to_string())]);

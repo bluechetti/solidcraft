@@ -252,7 +252,7 @@ fn next_steps(plan: &Plan) -> Vec<ScanSurveyStep> {
         );
     }
     if let Some(noise) = look.noise.filter(|n| !plan.tolerance_set && 3.0 * n > plan.tolerance) {
-        let suggested = (300.0 * noise).ceil() / 100.0;
+        let suggested = super::tolerance::for_noise(noise);
         step(
             "scan.tolerance",
             format!(

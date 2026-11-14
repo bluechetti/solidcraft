@@ -239,6 +239,34 @@ pub fn around(scan: &Scan, seed: usize, at: Vec3, reach: f64) -> Vec<usize> {
     connected(scan, &neighbours, seed, |t| scan.corners(t).is_some_and(|[a, b, c]| ((a + b + c) / 3.0).dist(at) <= reach))
 }
 
+/// Below this, the normals of a piece weighted by area (their sum's length over the area) nearly
+/// cancel: the piece wraps round (a closed part, or one scanned all round), and no one surface
+/// laid over it can cover it without folding. A sheet facing one way is near 1, half a tube 0.64.
+const WRAPS: f64 = 0.3;
+/// How far (cosine) a triangle may turn from the way the scan faces at a click and still be part
+/// of what the click means on a piece that wraps round: 60°, so the part is one over which a
+/// surface lies without folding.
+const FACING: f64 = 0.5;
+
+/// The part of the scan a click at `at` on the triangle `seed` means when no radius is given: the
+/// piece clicked, unless it wraps round ([`WRAPS`]), when one surface cannot cover it; then the
+/// triangles reached from the click that face within 60° of the way the scan faces there.
+pub fn clicked_part(scan: &Scan, seed: usize, at: Vec3) -> Vec<usize> {
+    let neighbours = edge_neighbours(scan);
+    let whole = connected(scan, &neighbours, seed, |t| scan.corners(t).is_some());
+    let doubled = |t: usize| scan.corners(t).map(|[a, b, c]| (b - a).cross(c - a)).filter(|n| n.len().is_finite());
+    let (sum, area) = whole.iter().filter_map(|&t| doubled(t)).fold((Vec3::ZERO, 0.0), |(s, a), n| (s + n, a + n.len()));
+    if !(area > 0.0) || sum.len() / area > WRAPS {
+        return whole;
+    }
+    // The way the scan faces at the click: over the triangles within a few of their sides of it,
+    // so its noise does not turn it.
+    let side = (area / whole.len() as f64).sqrt();
+    let near = connected(scan, &neighbours, seed, |t| scan.corners(t).is_some_and(|[a, b, c]| ((a + b + c) / 3.0).dist(at) <= 5.0 * side));
+    let Some(facing) = near.iter().filter_map(|&t| doubled(t)).fold(Vec3::ZERO, |s, n| s + n).normalized() else { return whole };
+    connected(scan, &neighbours, seed, |t| doubled(t).and_then(|n| n.normalized()).is_some_and(|n| n.dot(facing) >= FACING))
+}
+
 /// The shape of `kind` fitted to all of the triangles `region`, `None` when they have too little
 /// to fit or are not that shape.
 pub fn shape_of(scan: &Scan, region: &[usize], kind: Kind) -> Option<Shape> {
@@ -1244,6 +1272,52 @@ mod tests {
     }
 
     use crate::place::Rigid;
+
+    /// A click with no radius on a closed box means the side clicked (one surface cannot cover a
+    /// box); on an open sheet, a bent one too, it means the whole sheet.
+    #[test]
+    fn a_click_on_a_part_that_wraps_round_means_the_side_facing_it() {
+        let (p, t) = fine_cuboid(Vec3::ZERO, Vec3::new(40.0, 20.0, 10.0), 12);
+        let scan = Scan::new(&p, &t);
+        let at = Vec3::new(20.0, 10.0, 10.0);
+        let seed = nearest_triangle(&scan, at).unwrap();
+        let top = clicked_part(&scan, seed, at);
+        assert!(!top.is_empty() && top.len() < t.len() / 2, "{} of {}", top.len(), t.len());
+        for &k in &top {
+            let [a, b, c] = scan.corners(k).unwrap();
+            assert!((a.z - 10.0).abs() < 1e-9 && (b.z - 10.0).abs() < 1e-9 && (c.z - 10.0).abs() < 1e-9, "only the top");
+        }
+        // The box with its bottom left open is a tray turned over: it still wraps round.
+        let open: Vec<[u32; 3]> =
+            t.iter().copied().filter(|&[a, b, c]| !(p[a as usize].z == 0.0 && p[b as usize].z == 0.0 && p[c as usize].z == 0.0)).collect();
+        let tray = Scan::new(&p, &open);
+        let seed = nearest_triangle(&tray, at).unwrap();
+        assert!(clicked_part(&tray, seed, at).len() < open.len() / 2);
+        // A sheet bent through 120°: the whole of it.
+        let n = 24u32;
+        let at_ij = |i: u32, j: u32| {
+            let a = f64::from(i) / f64::from(n) * 2.1 - 1.05;
+            Vec3::new(20.0 * a.sin(), f64::from(j), 20.0 * (1.0 - a.cos()))
+        };
+        let mut sheet = Vec::new();
+        let mut tris = Vec::new();
+        for j in 0..=n {
+            for i in 0..=n {
+                sheet.push(at_ij(i, j));
+            }
+        }
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * (n + 1) + i;
+                tris.push([k, k + 1, k + n + 2]);
+                tris.push([k, k + n + 2, k + n + 1]);
+            }
+        }
+        let bent = Scan::new(&sheet, &tris);
+        let at = at_ij(2, 12);
+        let seed = nearest_triangle(&bent, at).unwrap();
+        assert_eq!(clicked_part(&bent, seed, at).len(), tris.len(), "a sheet is taken whole");
+    }
 
     /// A ball R 12, half of it scanned, turned and moved anywhere: its centre and radius are found;
     /// a pick on a flat face is no sphere.

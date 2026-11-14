@@ -1359,7 +1359,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         k.keep_tolerance = t.keep;
         recolour(k);
         if let Some(stats) = fidelity(app, k).map(|(s, _)| s) {
-            crate::scan_fidelity::readout(app, ui, "scan_edit_fidelity", &stats, t.mm);
+            crate::scan_fidelity::readout(app, ui, "scan_edit_fidelity", &stats, t.mm, None);
         }
     }
     // Surface Check on the faces as shown: a fold a drag makes is seen as it is made.

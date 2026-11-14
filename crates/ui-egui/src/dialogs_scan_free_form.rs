@@ -358,7 +358,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
                 ui_kit::text(ui, &note, ui_kit::Text::Note("scan_free_form_found"));
             }
             if let Some(stats) = stats {
-                crate::scan_fidelity::readout(app, ui, "scan_free_form_fidelity", &stats, tolerance);
+                crate::scan_fidelity::readout(app, ui, "scan_free_form_fidelity", &stats, tolerance, None);
             }
             // Surface Check on the face as it will be kept: a fold is seen before OK, not after.
             if let Some(c) = check {

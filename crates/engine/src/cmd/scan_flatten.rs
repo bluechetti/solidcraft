@@ -41,7 +41,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("flat")
         .contract(&FLATTEN_CONTRACT)
         .output(output_schema_for::<ScanFlattenResult>)
-        .params("body?: the scan (default: the picked, selected or only one); point?: [x,y,z] on it (default: what is selected on the scan, else the point picked; the region is the piece of the scan there); radius?: length (the region only as far as this round the point); triangles?: [indices of the scan's triangles] (the region, instead of point and radius); saved?: a kept selection (Keep Selection) whose triangles are the region; relax?: bool (default true: relaxed toward keeping each edge's length after the angle-keeping map); tolerance?: length (default 0.05 mm: how far the outline's lines and arcs may stray from the region's edge); name?: the sketch's (default `Flat Pattern`): the region unrolled onto the XY plane beside the scan, its outline sketched, one undo step; a region that closes round on itself is refused (cut it with Split Mesh) → body, sketch, triangles, loops, lines, arcs, circles, area, flat_area, worst_area, strain_rms, strain_max, flipped, relaxed, settled, shift"),
+        .params("body?: the scan (default: the picked, selected or only one); point?: [x,y,z] on it (default: what is selected on the scan, else the point picked; the region is the piece of the scan there, or on a piece that wraps round, a closed part, the side of it facing the click); radius?: length (the region only as far as this round the point); triangles?: [indices of the scan's triangles] (the region, instead of point and radius); saved?: a kept selection (Keep Selection) whose triangles are the region; relax?: bool (default true: relaxed toward keeping each edge's length after the angle-keeping map); tolerance?: length (default 0.05 mm: how far the outline's lines and arcs may stray from the region's edge); name?: the sketch's (default `Flat Pattern`): the region unrolled onto the XY plane beside the scan, its outline sketched, one undo step; a region that closes round on itself is refused (cut it with Split Mesh) → body, sketch, triangles, loops, lines, arcs, circles, area, flat_area, worst_area, strain_rms, strain_max, flipped, relaxed, settled, shift"),
     CommandSpec::new("scan.roll_onto_scan", "Roll onto Scan", crate::checked!("scan.roll_onto_scan", roll_onto_scan))
         .at("SCAN", "SKETCH")
         .icon("spline")
@@ -81,7 +81,8 @@ pub(super) fn region_scan(s: &Session, p: &Value) -> Option<String> {
 }
 
 /// The region of the scan `p` names: its triangles, a kept selection's (`saved`), what is selected
-/// on the scan, else the smooth part round the point given or picked.
+/// on the scan, else round the point given or picked: within `radius` of it, else the piece there
+/// (on a piece that wraps round, the part of it facing the way the scan faces there).
 pub(super) fn region(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<Vec<usize>> {
     if let Some(list) = p.get("triangles").filter(|v| !v.is_null()) {
         let list = list.as_array().ok_or_else(|| bad(cmd, "`triangles` must list the scan's triangle numbers"))?;
@@ -123,12 +124,12 @@ pub(super) fn region(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<Vec
     };
     let scan = on.scan();
     let seed = solidcraft_scan::base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
-    let reach = match crate::params::num(p, "radius") {
-        Some(r) if r.is_finite() && r > 0.0 => r,
-        Some(_) => return Err(bad(cmd, "`radius` must be a length above 0")),
-        None => f64::INFINITY,
-    };
-    Ok(solidcraft_scan::fit::around(&scan, seed, point, reach))
+    match crate::params::num(p, "radius") {
+        Some(r) if r.is_finite() && r > 0.0 => Ok(solidcraft_scan::fit::around(&scan, seed, point, r)),
+        Some(_) => Err(bad(cmd, "`radius` must be a length above 0")),
+        // The piece clicked; on one that wraps round (a closed part), the side facing the click.
+        None => Ok(solidcraft_scan::fit::clicked_part(&scan, seed, point)),
+    }
 }
 
 /// The pattern `p` asks for: the scan, its region flattened, and the shift that lays it on XY
