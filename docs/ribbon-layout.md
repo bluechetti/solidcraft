@@ -6,7 +6,7 @@ Shown by default, in order: MODEL, SURFACE, ASSEMBLE, INSERT, INSPECT, MANAGE, V
 
 SKETCH appears during sketch editing; with Preferences › Interface › **Keep the Sketch tab shown** (`sketch_tab_always`, #7904) it stays right after MODEL all the time, and outside a sketch the tools in its CREATE and REFERENCE sections open Create Sketch first and then start in the new sketch. Hidden tabs stay hidden when creating features, opening designs, selecting bodies or undoing changes. When shown, SHEET METAL takes the contextual style and selects itself when the selected body (or the last body of the active component) has evaluated sheet-metal data. When shown, WELDMENTS selects itself when that body is a frame member, keeping the ordinary tab look (sheet metal comes first). Entering a context selects its tab; the other tabs remain available. RENDER belongs to the Render workspace.
 
-The Scan workspace (scan to CAD, #8615; Workspace › Scan, or `ui.workspace` with `scan`) shows SCAN and VIEW instead of the design tabs, on the same design, history and selection. SCAN holds the work in its order: insert, clean, align, fit, sketch, check. Its `scan.*` tools are planned commands, greyed with their reason until each is built; the rest are shared with their home tabs. A sketch started there opens SKETCH and finishing it returns to SCAN; picking a sheet-metal body or frame member does not leave the workspace.
+The Scan workspace (scan to CAD, #8615; Workspace › Scan, or `ui.workspace` with `scan`) shows SCAN and VIEW instead of the design tabs, on the same design, history and selection. SCAN holds the work in its order: insert and survey, clean, align, reconstruct (as features), freeform, sketch, check. Its `scan.*` tools are planned commands, greyed with their reason until each is built; the rest are shared with their home tabs. A sketch started there opens SKETCH and finishing it returns to SCAN; picking a sheet-metal body or frame member does not leave the workspace.
 
 **Bold command ids are default promoted buttons.** Every listed command remains in the section menu. Saved user pins can add buttons, as before.
 
@@ -59,13 +59,13 @@ The Scan workspace (scan to CAD, #8615; Workspace › Scan, or `ui.workspace` wi
 | WELDMENTS | SKETCH | **`sketch.create`** |
 | WELDMENTS | CREATE | **`frame.member`** |
 | WELDMENTS | CONFIGURE | **`parameters.change`**, **`config.table`**, `config.configure` |
-| SCAN | INSERT | **`file.insert_mesh`**, **`pointcloud.insert`** |
-| SCAN | CLEAN | **`scan.repair`**, **`scan.fill_holes`**, **`scan.remove_floating`**, **`scan.reduce`**, `scan.remesh`, `scan.mesh_from_points` |
-| SCAN | ALIGN | **`scan.stand_on_base`**, **`scan.symmetry`**, **`scan.square_to_symmetry`**, **`scan.rest_on_grid`**, `scan.complete_by_mirroring`, `scan.quick_align`, `scan.center` |
-| SCAN | FIT | **`scan.fit_plane`**, **`scan.fit_cylinder`**, **`scan.fit_sphere`**, **`mesh.convert`** |
-| SCAN | FREEFORM | **`scan.fit_surface`**, **`scan.free_form`**, **`scan.wrap_surface`**, **`scan.edit_surface`**, `scan.merge_surfaces`, `scan.slice_surface` |
-| SCAN | SKETCH | **`sketch.create`**, **`scan.section_sketch`**, **`scan.curve_on_scan`**, `sketch.fit_curves_to_section` |
-| SCAN | CHECK | **`scan.deviation`**, **`inspect.section`**, **`inspect.compare`** |
+| SCAN | INSERT | **`file.insert_mesh`**, **`scan.survey`**, `pointcloud.insert` |
+| SCAN | CLEAN | **`scan.select`**, **`scan.remove_floating`**, **`scan.fill_holes`**, `scan.repair`, `scan.reduce`, `scan.denoise`, `scan.remesh`, `scan.split`, the selection tools, `scan.mesh_from_points` |
+| SCAN | ALIGN | **`scan.stand_on_base`**, **`scan.quick_align`**, **`scan.register`**, `scan.align_all`, `scan.combine`, `scan.align_pairs`, `scan.symmetry`, `scan.square_to_symmetry`, `scan.complete_by_mirroring`, `scan.rest_on_grid`, `scan.center` |
+| SCAN | RECONSTRUCT | **`scan.reconstruct`**, **`scan.find_all`**, **`scan.fit_plane`**, the other fits, `mesh.convert`, `scan.reconstruct_selection`, `scan.reconstruct_rest`, `scan.fillet`, then the steps Reconstruct lists (`scan.extrude_it` … `scan.chamfer_it`) |
+| SCAN | FREEFORM | **`scan.free_form`**, **`scan.wrap_surface`**, **`scan.fit_patches`**, **`scan.edit_surface`**, `scan.fit_surface`, `scan.merge_surfaces`, `scan.slice_surface`, `scan.close_surface`, `scan.make_flat`, `scan.refit`, surface trim/stitch/patch/thicken |
+| SCAN | SKETCH | **`scan.section_sketch`**, **`scan.curve_on_scan`**, **`scan.flat_template`**, `sketch.create`, `scan.sections_along_curve`, `scan.curve_from_selection`, `sketch.fit_curves_to_section`, `scan.flatten`, `scan.roll_onto_scan` |
+| SCAN | CHECK | **`scan.deviation`**, **`scan.align_to_model`**, `inspect.surface_check`, `inspect.zebra`, `inspect.curvature_map`, `inspect.section`, `inspect.compare` |
 | SKETCH | CONFIGURE | **`parameters.change`**, **`config.table`**, `config.configure` |
 | RENDER | SCENE | **`render.scene`** |
 | RENDER | IMAGE | **`render.start`** |
