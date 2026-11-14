@@ -40,6 +40,13 @@ impl Default for Denoise {
     }
 }
 
+impl Denoise {
+    /// A strength set already (a Denoise step edited): it does not follow the suggestion.
+    pub fn chosen(strength: f64) -> Self {
+        Denoise { strength: strength.clamp(0.0, MOST_PASSES as f64), chosen: true, ..Denoise::default() }
+    }
+}
+
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
     (id == "scan.denoise").then(|| (Kind::ScanDenoise(Denoise::default()), Vec::new()))
 }

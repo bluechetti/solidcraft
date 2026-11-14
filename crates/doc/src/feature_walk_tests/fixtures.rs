@@ -248,6 +248,7 @@ pub(super) fn fixtures() -> Vec<(&'static str, Value)> {
         ("import", json!({"type": "import", "file": "a.step", "step": ""})),
         ("scan_surface", json!({"type": "scan_surface", "file": "a", "step": ""})),
         ("mesh_convert", json!({"type": "mesh_convert", "body": "B", "tolerance": "mesh_convert.tolerance"})),
+        ("scan_clean", json!({"type": "scan_clean", "body": "B", "step": {"op": "remesh", "sharp": false, "with": ["B"]}})),
         ("mesh_import", json!({"type": "mesh_import", "file": "a.stl", "meshes": []})),
         ("repair", json!({"type": "repair", "body": "B", "gap": "repair.gap", "patch_holes": true})),
     ]

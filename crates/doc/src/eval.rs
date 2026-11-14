@@ -10268,6 +10268,31 @@ fn eval_feature(
             *target = result;
             Ok(())
         }
+        FeatureKind::ScanClean { body, step } => {
+            step.check()?;
+            let index = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let source = st.bodies.get(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let with: Vec<&Body> = step
+                .with()
+                .iter()
+                .map(|w| st.body(w).map(|b| &b.body).ok_or_else(|| DocError::Unknown(format!("body `{w}`"))))
+                .collect::<Result<_>>()?;
+            match crate::scan_clean::clean(step, &source.body, &with) {
+                Ok(done) => {
+                    // The scan stays the one its Mesh Import brought in, as a Move of it does.
+                    let result = ModelBody::new(source.name.clone(), done.body.with_color(source.body.color()), source.feature);
+                    let target = st.bodies.get_mut(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+                    *target = result;
+                    Ok(())
+                }
+                // Nothing to do on the scan as the steps before left it: it stays as it is.
+                Err(crate::scan_clean::Refused::Nothing(why)) => {
+                    *warning = Some(why);
+                    Ok(())
+                }
+                Err(crate::scan_clean::Refused::Failed(why)) => Err(DocError::Invalid(why)),
+            }
+        }
         FeatureKind::Repair { body, gap, patch_holes } => {
             let gap = val(vals, gap, Kind::Length)?;
             let index = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;

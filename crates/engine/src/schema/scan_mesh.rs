@@ -109,13 +109,17 @@ pub struct ScanMeshFromPointsResult {
 }
 
 /// Make a scan again as one even surface, with other passes of the part fused into it when they
-/// are given; written back into the scan, one undo step.
+/// are given; kept as a Scan Clean step in the timeline, one undo step.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ScanRemeshParams {
     /// The scan. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// Write the cleaned scan back into its Insert Mesh feature, as before, instead of adding a
+    /// step to the timeline that keeps the settings. Default: false.
+    #[serde(default)]
+    pub in_place: Option<bool>,
     /// Other passes of the part, laid on it (Align to Scan), fused in.
     #[serde(default)]
     pub with: Option<Vec<String>>,
@@ -155,13 +159,17 @@ pub struct ScanRemeshResult {
 }
 
 /// Smooth a scan's noise away, its sharp edges kept, at the strength that leaves the least error
-/// (or the one given); written back into the scan, one undo step.
+/// (or the one given); kept as a Scan Clean step in the timeline, one undo step.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ScanDenoiseParams {
     /// The scan. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// Write the cleaned scan back into its Insert Mesh feature, as before, instead of adding a
+    /// step to the timeline that keeps the settings. Default: false.
+    #[serde(default)]
+    pub in_place: Option<bool>,
     /// How hard, in passes of the filter, 0 to 8 (fractions blend between passes). Default: the
     /// strength the scan's own noise and shrinkage suggest.
     #[serde(default)]

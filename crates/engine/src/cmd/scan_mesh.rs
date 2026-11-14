@@ -6,8 +6,9 @@
 
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
+use solidcraft_doc::scan_clean::{CleanStep, Report};
 use solidcraft_scan::register::{self, Settings};
-use solidcraft_scan::{Scan, denoise, poisson, remesh};
+use solidcraft_scan::{Scan, denoise, poisson};
 
 use super::{CommandSpec, Mesh, mesh, move_by};
 use crate::params::{bad, bool_, num, str_};
@@ -36,13 +37,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("c_smooth")
         .contract(&DENOISE_CONTRACT)
         .output(output_schema_for::<ScanDenoiseResult>)
-        .params("body?: the scan (default: the selected or only one); strength?: passes 0.05–8 (default: the strength its noise and shrinkage suggest, refused when smoothing would not lower its error): the faces' normals filtered bilaterally (faces across a sharp edge barely mix) and the vertices moved square to them, the open rim kept put, written back into the scan, one undo step → body, strength, suggested, noise, roughness, rms_moved, max_moved, feature"),
+        .params("body?: the scan (default: the selected or only one); strength?: passes 0.05–8 (default: the strength its noise and shrinkage suggest, refused when smoothing would not lower its error): the faces' normals filtered bilaterally (faces across a sharp edge barely mix) and the vertices moved square to them, the open rim kept put, kept as a Scan Clean step in the timeline (its settings only; in_place?: bool writes the scan back instead), one undo step → body, strength, suggested, noise, roughness, rms_moved, max_moved, feature"),
     CommandSpec::new("scan.remesh", "Remesh", crate::checked!("scan.remesh", remesh_scan))
         .at("SCAN", "CLEAN")
         .icon("grid")
         .contract(&REMESH_CONTRACT)
         .output(output_schema_for::<ScanRemeshResult>)
-        .params("body?: the scan (default: the selected or only one); with?: [other passes, laid on it] fused in; cell?: length (default the scan's typical edge: the new mesh's edge); sharp?: bool (default false: each vertex where the planes of its cell meet, so sharp edges and corners stay sharp): the scan made again as one even surface from the signed distances of the scans in a narrow band of a grid (overlaps averaged), written back into it, one undo step → body, with, before, triangles, vertices, cell, sharp, new_rms, new_max, scan_rms, scan_p95, uncovered, feature"),
+        .params("body?: the scan (default: the selected or only one); with?: [other passes, laid on it] fused in; cell?: length (default the scan's typical edge: the new mesh's edge); sharp?: bool (default false: each vertex where the planes of its cell meet, so sharp edges and corners stay sharp): the scan made again as one even surface from the signed distances of the scans in a narrow band of a grid (overlaps averaged), kept as a Scan Clean step in the timeline (its settings only; in_place?: bool writes the scan back instead), one undo step → body, with, before, triangles, vertices, cell, sharp, new_rms, new_max, scan_rms, scan_p95, uncovered, feature"),
     CommandSpec::new("scan.register", "Align to Scan", crate::checked!("scan.register", register_scan))
     .at("SCAN", "ALIGN")
     .icon("align")
@@ -123,42 +124,32 @@ pub(super) fn register_scan(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.remesh";
-    let scan = mesh(s, p, cmd)?;
+    let body = super::mesh_body_name(s, str_(p, "body"), cmd)?;
     let with = crate::params::string_list_or_default(p, "with");
-    let mut passes = Vec::with_capacity(with.len());
-    for name in &with {
-        if *name == scan.body {
-            return Err(bad(cmd, "`with` names the scan itself"));
-        }
-        passes.push(mesh(s, &json!({ "body": name }), cmd)?);
-    }
     let cell = match crate::params::expr(p, "cell") {
-        Some(_) => super::length(s, p, "cell", 1.0, cmd)?,
-        None => {
-            let edge = remesh::typical_edge(&scan.scan());
-            if !(edge > 0.0) {
-                return Err(bad(cmd, "the scan has no edges to remesh"));
-            }
-            edge
-        }
+        Some(_) => Some(super::length(s, p, "cell", 1.0, cmd)?),
+        None => None,
     };
     let sharp = bool_(p, "sharp").unwrap_or(false);
-    let sources: Vec<Scan> = std::iter::once(scan.scan()).chain(passes.iter().map(Mesh::scan)).collect();
-    let made = remesh::remesh(&sources, &remesh::Settings { cell, sharp }).map_err(|e| bad(cmd, e.to_string()))?;
-    let feature = super::clean::replace_mesh(s, &scan.body, &made.positions, &made.triangles, cmd)?;
+    let step = CleanStep::Remesh { cell, sharp, with: with.iter().cloned().map(Into::into).collect() };
+    let (done, feature) = super::clean::apply(s, p, &body, step, cmd)?;
+    let (vertices, triangles) = done.body.triangle_mesh().map_or((0, 0), |(p, t)| (p.len(), t.len()));
+    let Report::Remesh { before, cell, new_rms, new_max, scan_rms, scan_p95, uncovered } = done.report else {
+        return Err(bad(cmd, "the step did something else"));
+    };
     reply(ScanRemeshResult {
-        body: scan.body.clone(),
+        body,
         with,
-        before: scan.triangles.len(),
-        triangles: made.triangles.len(),
-        vertices: made.positions.len(),
+        before,
+        triangles,
+        vertices,
         cell,
         sharp,
-        new_rms: made.new_rms,
-        new_max: made.new_max,
-        scan_rms: made.scan_rms,
-        scan_p95: made.scan_p95,
-        uncovered: made.uncovered,
+        new_rms,
+        new_max,
+        scan_rms,
+        scan_p95,
+        uncovered,
         feature,
         param_warnings: Vec::new(),
     })
@@ -178,36 +169,16 @@ pub fn denoise_study(positions: &[Vec3], triangles: &[[u32; 3]]) -> Option<Study
 
 pub(super) fn denoise_scan(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.denoise";
-    let scan = mesh(s, p, cmd)?;
+    let body = super::mesh_body_name(s, str_(p, "body"), cmd)?;
     let strength = num(p, "strength");
     if strength.is_some_and(|k| !(0.0..=denoise::MOST_PASSES as f64).contains(&k)) {
         return Err(bad(cmd, "`strength` is a number of passes from 0 to 8"));
     }
-    let done = denoise::denoise(&scan.scan(), strength).ok_or_else(|| bad(cmd, "the scan has no triangles to smooth"))?;
-    if !(done.strength > 0.0) && strength.is_some() {
-        return Err(bad(cmd, "a `strength` of 0 smooths nothing: give 0.05 to 8 passes"));
-    }
-    if !(done.strength > 0.0) {
-        return Err(bad(
-            cmd,
-            format!(
-                "smoothing would not lower the scan's error: it is as smooth as it can be read (noise {:.4} mm); give a `strength` to smooth it anyway",
-                done.noise
-            ),
-        ));
-    }
-    let feature = super::clean::replace_mesh(s, &scan.body, &done.positions, &scan.triangles, cmd)?;
-    reply(ScanDenoiseResult {
-        body: scan.body.clone(),
-        strength: done.strength,
-        suggested: done.suggested,
-        noise: done.noise,
-        roughness: done.roughness,
-        rms_moved: done.rms_moved,
-        max_moved: done.max_moved,
-        feature,
-        param_warnings: Vec::new(),
-    })
+    let (done, feature) = super::clean::apply(s, p, &body, CleanStep::Denoise { strength }, cmd)?;
+    let Report::Denoise { strength, suggested, noise, roughness, rms_moved, max_moved } = done.report else {
+        return Err(bad(cmd, "the step did something else"));
+    };
+    reply(ScanDenoiseResult { body, strength, suggested, noise, roughness, rms_moved, max_moved, feature, param_warnings: Vec::new() })
 }
 
 /// The cloud `p` names (or the only one): its name, its points in the design, and the normals it

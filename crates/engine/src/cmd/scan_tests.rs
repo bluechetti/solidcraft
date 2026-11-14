@@ -818,6 +818,68 @@ fn repair_takes_a_copied_triangle_off() {
     assert_eq!(count(&s), before, "one undo step");
 }
 
+/// A clean tool adds a Scan Clean step that keeps its settings, not its triangles: the Mesh Import
+/// keeps the scan as it came in; suppressing the step brings the speck back; the step made again
+/// with other settings takes nothing off and says so; the design saved and opened again cleans the
+/// scan once more from the settings; and `in_place` writes the scan back as before, with no step.
+#[test]
+fn a_clean_step_keeps_settings_and_makes_the_scan_again() {
+    use solidcraft_doc::FeatureKind;
+    use solidcraft_doc::scan_clean::CleanStep;
+    let mut triangles = fine_box(Vec3::ZERO, Vec3::new(30.0, 20.0, 10.0), 12);
+    let block = triangles.len();
+    triangles.extend(fine_box(Vec3::new(50.0, 0.0, 5.0), Vec3::new(51.0, 1.0, 6.0), 1));
+    let all = triangles.len();
+    let (mut s, body) = session_with_triangles("clean-step", &triangles);
+    let count = |s: &Session| s.model.state().body(&body).and_then(|b| b.body.triangle_mesh()).map_or(0, |(_, t)| t.len());
+    let imported = |s: &Session| {
+        s.doc.features.iter().find_map(|f| match &f.kind {
+            FeatureKind::MeshImport { meshes, .. } => Some(meshes[0].triangles.len() / 3),
+            _ => None,
+        })
+    };
+    let reply = run(&mut s, "scan.remove_floating", json!({}));
+    let id = reply["feature"].as_u64().unwrap();
+    let step = s.doc.feature(id).unwrap();
+    assert_eq!(step.kind, FeatureKind::ScanClean { body: body.clone().into(), step: CleanStep::RemoveFloating { below: 0.02 } });
+    assert_eq!(step.name, "RemoveFloating1");
+    assert_eq!((count(&s), imported(&s)), (block, Some(all)), "the scan cleaned, the import as it came in");
+
+    run(&mut s, "timeline.suppress", json!({"feature": id, "suppressed": true}));
+    assert_eq!(count(&s), all, "the step suppressed: the speck is back");
+    run(&mut s, "timeline.suppress", json!({"feature": id, "suppressed": false}));
+    assert_eq!(count(&s), block);
+
+    // Made again with another setting: the step keeps it, in its place.
+    run(&mut s, "timeline.redefine", json!({"feature": id, "command": "scan.remove_floating", "params": {"body": body, "below": 0.5}}));
+    let at = s.doc.feature_index(id).unwrap();
+    assert!(matches!(&s.doc.features[at].kind, FeatureKind::ScanClean { step: CleanStep::RemoveFloating { below }, .. } if *below == 0.5));
+    assert_eq!(count(&s), block);
+    // The same step put in before it: the later one finds nothing to do, leaves the scan, says so.
+    run(&mut s, "timeline.roll_to", json!({"position": at}));
+    run(&mut s, "scan.remove_floating", json!({}));
+    run(&mut s, "timeline.roll_to", json!({}));
+    let later = s.doc.features.last().unwrap().id;
+    let warning = s.model.result(later).and_then(|r| r.warning.clone()).unwrap_or_default();
+    assert!(warning.contains("no piece floats") && s.model.result(later).is_some_and(|r| r.error.is_none()), "{warning}");
+    assert_eq!(count(&s), block);
+
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-clean-step-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cleaned.solidcraft");
+    run(&mut s, "file.save", json!({"path": path.to_string_lossy()}));
+    let mut opened = Session::default();
+    run(&mut opened, "doc.open", json!({"path": path.to_string_lossy()}));
+    assert_eq!((count(&opened), imported(&opened)), (block, Some(all)), "made again from the settings when the design opens");
+
+    let (mut old, old_body) = session_with_triangles("clean-in-place", &triangles);
+    let reply = run(&mut old, "scan.remove_floating", json!({"in_place": true}));
+    assert!(matches!(old.doc.feature(reply["feature"].as_u64().unwrap()).map(|f| &f.kind), Some(FeatureKind::MeshImport { .. })), "{reply}");
+    assert!(!old.doc.features.iter().any(|f| matches!(f.kind, FeatureKind::ScanClean { .. })));
+    assert_eq!(old.model.state().body(&old_body).and_then(|b| b.body.triangle_mesh()).map(|(_, t)| t.len()), Some(block));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Section to Sketch on the plate and boss: cut through the boss it is one circle of the boss's
 /// radius, in a new `Section` sketch; cut through the plate, the plate's four sides as four lines;
 /// a plane above the part cuts nothing.
