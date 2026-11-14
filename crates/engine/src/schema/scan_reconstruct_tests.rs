@@ -1,6 +1,6 @@
 use super::{
     ScanCutItParams, ScanExtrudeItParams, ScanFilletItParams, ScanFindAllParams, ScanHoleItParams, ScanPatternItParams, ScanReconstructParams,
-    ScanReconstructSelectionParams, ScanRevolveItParams, ScanShapeItParams, ScanShellItParams,
+    ScanReconstructSelectionParams, ScanRestParams, ScanRevolveItParams, ScanShapeItParams, ScanShellItParams,
 };
 use crate::schema::input_schema_for;
 use crate::schema::tests::assert_keys;
@@ -14,6 +14,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanRevolveItParams>(), &["body", "into", "selected"]);
     assert_keys(input_schema_for::<ScanCutItParams>(), &["body", "hole", "into", "selected"]);
     assert_keys(input_schema_for::<ScanShapeItParams>(), &["body", "into", "selected"]);
+    assert_keys(input_schema_for::<ScanRestParams>(), &["body", "rounds"]);
     assert_keys(input_schema_for::<ScanHoleItParams>(), &["body", "hole", "into", "selected", "thread"]);
     assert_keys(input_schema_for::<ScanPatternItParams>(), &["body", "feature", "hole", "selected"]);
     assert_keys(input_schema_for::<ScanFilletItParams>(), &["body", "into", "selected"]);

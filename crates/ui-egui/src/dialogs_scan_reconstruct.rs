@@ -20,6 +20,9 @@ use crate::ui_kit;
 pub struct Reconstruct {
     pub ticked: Vec<bool>,
     pub selected: bool,
+    /// After the steps, Reconstruct the Rest: what the body leaves of the scan unexplained, read
+    /// and built piece by piece. Off unless ticked.
+    pub rest: bool,
 }
 
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
@@ -152,6 +155,9 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reconstruct) -> bool {
     for (step, ticked) in steps.iter().zip(k.ticked.iter_mut()) {
         ui_kit::checkbox(ui, &label(app, &reading, step), ticked);
     }
+    if !k.selected && (!steps.is_empty() || reconstruct::is_built(&app.session, &found.scan)) {
+        ui_kit::checkbox(ui, tr("ui.scan_reconstruct_rest"), &mut k.rest);
+    }
     ui_kit::text(ui, tr("ui.scan_reconstruct_hint"), ui_kit::Text::Hint("scan_reconstruct_hint"));
     false
 }
@@ -166,6 +172,10 @@ pub fn commands(app: &SolveApp, k: &Reconstruct) -> Result<Vec<(String, Value)>,
         .filter(|(_, ticked)| *ticked)
         .map(|(step, _)| (step.command().to_string(), step.params(&found.scan, k.selected)))
         .collect();
+    let mut chosen = chosen;
+    if k.rest && !k.selected {
+        chosen.push(("scan.reconstruct_rest".to_string(), serde_json::json!({"body": found.scan})));
+    }
     if chosen.is_empty() {
         return Err(tr("ui.scan_reconstruct_none_ticked").into());
     }
@@ -221,7 +231,7 @@ mod tests {
         let found = found(&h.app).expect("read");
         let steps = reconstruct::proposals(&found.reading, reconstruct::is_built(&h.app.session, &found.scan));
         assert!(matches!(steps.first(), Some(Proposal::Extrude(0))), "{steps:?}");
-        let commands = commands(&h.app, &Reconstruct { ticked: vec![true; steps.len()], selected: false }).unwrap();
+        let commands = commands(&h.app, &Reconstruct { ticked: vec![true; steps.len()], selected: false, rest: false }).unwrap();
         assert_eq!(commands[0].0, "scan.extrude_it");
         for (id, p) in commands {
             h.app.run(&id, p).unwrap();
@@ -250,7 +260,7 @@ mod tests {
         let region = found.selected_region(&h.app.session).expect("the selection is read");
         let steps = reconstruct::proposals(&region.region.reading, reconstruct::is_built(&h.app.session, &found.scan));
         assert!(matches!(steps.first(), Some(Proposal::Extrude(0))), "{steps:?}");
-        let commands = commands(&h.app, &Reconstruct { ticked: vec![true; steps.len()], selected: true }).unwrap();
+        let commands = commands(&h.app, &Reconstruct { ticked: vec![true; steps.len()], selected: true, rest: false }).unwrap();
         assert!(commands.iter().all(|(_, p)| p["selected"] == true), "{commands:?}");
         for (id, p) in commands {
             h.app.run(&id, p).unwrap();

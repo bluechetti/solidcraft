@@ -145,6 +145,7 @@ mod tests {
             "scan.find_all",
             "scan.reconstruct",
             "scan.reconstruct_selection",
+            "scan.reconstruct_rest",
             "scan.extrude_it",
             "scan.revolve_it",
             "scan.loft_it",

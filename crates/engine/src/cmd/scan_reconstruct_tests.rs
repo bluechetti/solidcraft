@@ -597,3 +597,29 @@ fn a_twisted_blade_is_lofted_back_with_loft_it() {
     let v = volume(&s, &format!("{scan} Reconstructed"));
     assert!((v - expected).abs() < 0.02 * expected, "{v} against the blade's {expected}");
 }
+
+/// A plate 60 × 40 × 10 with a block 20 × 14 × 12 on its top: with only the plate built, Reconstruct
+/// the Rest finds the block the plate leaves unexplained, reads it on its own and builds it, all
+/// one undo step, and leaves nothing selected.
+#[test]
+fn reconstruct_the_rest_builds_what_the_body_leaves_unexplained() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 60, "width": 40, "height": 10, "center": [0, 0, 5]}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.box", json!({"length": 20, "width": 14, "height": 12, "center": [10, 0, 16], "operation": "join", "targets": [body]}));
+    let expected = volume(&part, &body);
+    let (mut s, scan) = scanned(&part, &body, 2, "rest");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let plate = read["prisms"].as_array().unwrap().iter().position(|p| (p["depth"].as_f64().unwrap() - 10.0).abs() < 0.1).unwrap();
+    run(&mut s, "scan.extrude_it", json!({"prism": plate}));
+    let solid = format!("{scan} Reconstructed");
+    let plate_only = volume(&s, &solid);
+    assert!((plate_only - 24000.0).abs() < 0.01 * 24000.0, "{plate_only}");
+    let rest = run(&mut s, "scan.reconstruct_rest", json!({}));
+    assert!(rest["kept"].as_u64().unwrap() >= 1, "{rest}");
+    let v = volume(&s, &solid);
+    assert!((v - expected).abs() < 0.01 * expected, "{v} against the part's {expected}: {rest}");
+    assert!(super::super::select::selected(&s).is_none_or(|k| k.count == 0), "nothing left selected");
+    run(&mut s, "edit.undo", json!({}));
+    assert!((volume(&s, &solid) - plate_only).abs() < 1e-6, "one undo takes the rest back");
+}

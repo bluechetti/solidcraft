@@ -67,6 +67,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | `scan.cut_it {"hole": 0}` | a round hole cut as deep as the scan has it |
 | `scan.hole_it {"hole": 0}` | a hole with a `form` (counterbore, countersink, drill point, tap drill) drilled with Hole, sizes read as designed |
 | `scan.pattern_it {"hole": 0}` | that cut or hole repeated as the holes repeat |
+| `scan.reconstruct_rest {}` | what the built body leaves of the scan unexplained, read and built piece by piece |
 | `scan.pipe_it {}` | a bar bent along a flat path (`pipe`): the path's lines and arcs swept |
 | `scan.coil_it {}` | a coil spring (`coil`): the wire wound at the pitch and turns read |
 | `scan.loft_it {}` | no prism, turned part, pipe or coil (`loft`): slices from end to end lofted |

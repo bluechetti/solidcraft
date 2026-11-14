@@ -394,6 +394,47 @@ pub struct ScanShapeItParams {
     pub into: Option<String>,
 }
 
+/// Reconstruct the Rest: what the body Reconstruct built leaves of the scan unexplained, read and
+/// built piece by piece, each step that leaves the body further from the scan taken back. One undo
+/// step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanRestParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// How many pieces to read and build at most, 1 to 20. Default: 6.
+    #[serde(default)]
+    pub rounds: Option<u64>,
+}
+
+/// One piece Reconstruct the Rest read: which piece (0 the largest left), its area in mm², the
+/// steps proposed for it and those kept.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanRestRound {
+    pub piece: usize,
+    pub area: f64,
+    pub proposed: Vec<String>,
+    pub kept: Vec<String>,
+    /// Why nothing was proposed for it, when Reconstruct could not read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// What Reconstruct the Rest did.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanRestResult {
+    /// The scan and the body built on it.
+    pub body: String,
+    pub solid: String,
+    pub rounds: Vec<ScanRestRound>,
+    /// How many steps were kept in all, and why it stopped.
+    pub kept: usize,
+    pub stop: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// Hole It: a hole Reconstruct reads as a Hole feature makes it (a counterbore, a countersink, a
 /// blind hole's drill point or flat bottom, a tap drill), drilled into the body it builds with
 /// Hole at its mouth, along its axis, with the sizes read as designed. One undo step.

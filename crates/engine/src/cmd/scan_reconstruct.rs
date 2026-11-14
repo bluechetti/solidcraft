@@ -26,8 +26,8 @@ use crate::params::{bad, bool_, str_};
 use crate::schema::scan_reconstruct::{
     ScanBuildResult, ScanChamferItParams, ScanChamferItResult, ScanChamfered, ScanCutItParams, ScanEdgeChamfer, ScanEdgeRound, ScanExtrudeItParams,
     ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams, ScanFindAllResult, ScanHole, ScanHoleForm, ScanHoleItParams,
-    ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat, ScanRevolveItParams,
-    ScanShapeFound, ScanShapeItParams, ScanShell, ScanShellItParams, ScanTurned,
+    ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat, ScanRestParams,
+    ScanRestResult, ScanRevolveItParams, ScanShapeFound, ScanShapeItParams, ScanShell, ScanShellItParams, ScanTurned,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -40,6 +40,7 @@ const REVOLVE_IT_CONTRACT: TypedContract<ScanRevolveItParams> = TypedContract::n
 const CUT_IT_CONTRACT: TypedContract<ScanCutItParams> = TypedContract::new();
 const HOLE_IT_CONTRACT: TypedContract<ScanHoleItParams> = TypedContract::new();
 const SHAPE_IT_CONTRACT: TypedContract<ScanShapeItParams> = TypedContract::new();
+const REST_CONTRACT: TypedContract<ScanRestParams> = TypedContract::new();
 const PATTERN_IT_CONTRACT: TypedContract<ScanPatternItParams> = TypedContract::new();
 const FILLET_IT_CONTRACT: TypedContract<ScanFilletItParams> = TypedContract::new();
 const CHAMFER_IT_CONTRACT: TypedContract<ScanChamferItParams> = TypedContract::new();
@@ -67,6 +68,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&RECONSTRUCT_SELECTION_CONTRACT)
         .output(output_schema_for::<ScanReconstructResult>)
         .params("body?: mesh body (default: the one selected on): scan.reconstruct with selected: true, what the shapes make on the part of the scan selected, read as a part of its own (a boss, a turned feature, a hole of a part too busy to read whole), and the steps that build it, each with `selected`; refused with nothing selected; reads only → as scan.reconstruct"),
+    CommandSpec::new("scan.reconstruct_rest", "Reconstruct the Rest", crate::checked!("scan.reconstruct_rest", rest::reconstruct_rest))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("auto_constrain")
+        .contract(&REST_CONTRACT)
+        .output(output_schema_for::<ScanRestResult>)
+        .params("body?: mesh body (default: the selected or only one); rounds?: 1 to 20 (default 6): after the steps Reconstruct proposes have built `<scan> Reconstructed`, what it leaves of the scan unexplained, piece by piece: each round selects the largest piece the body does not explain yet (scan.select unexplained), reads it as a part of its own (scan.reconstruct_selection) and runs the steps proposed for it, taking back each that is refused or leaves the body no closer to the scan (its fit verdict); a piece that adds nothing is passed over for the next, three in a row end it; the selection is cleared after; one undo step → body, solid, rounds [{piece, area, proposed, kept}], kept, stop"),
     CommandSpec::new("scan.extrude_it", "Extrude It", crate::checked!("scan.extrude_it", fitted_extrude_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("extrude")
@@ -1483,3 +1490,6 @@ fitted!(
 #[path = "scan_reconstruct_shapes.rs"]
 mod shapes;
 use shapes::{coil_it, loft_it, pipe_it};
+
+#[path = "scan_reconstruct_rest.rs"]
+mod rest;
