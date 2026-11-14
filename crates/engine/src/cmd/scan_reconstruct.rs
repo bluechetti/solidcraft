@@ -25,9 +25,9 @@ use super::CommandSpec;
 use crate::params::{bad, bool_, str_};
 use crate::schema::scan_reconstruct::{
     ScanBuildResult, ScanChamferItParams, ScanChamferItResult, ScanChamfered, ScanCutItParams, ScanEdgeChamfer, ScanEdgeRound, ScanExtrudeItParams,
-    ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams, ScanFindAllResult, ScanHole, ScanPatternItParams, ScanPrism,
-    ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat, ScanRevolveItParams, ScanShapeFound, ScanShell,
-    ScanShellItParams, ScanTurned,
+    ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams, ScanFindAllResult, ScanHole, ScanHoleForm, ScanHoleItParams,
+    ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat, ScanRevolveItParams,
+    ScanShapeFound, ScanShapeItParams, ScanShell, ScanShellItParams, ScanTurned,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -38,6 +38,8 @@ const RECONSTRUCT_SELECTION_CONTRACT: TypedContract<ScanReconstructSelectionPara
 const EXTRUDE_IT_CONTRACT: TypedContract<ScanExtrudeItParams> = TypedContract::new();
 const REVOLVE_IT_CONTRACT: TypedContract<ScanRevolveItParams> = TypedContract::new();
 const CUT_IT_CONTRACT: TypedContract<ScanCutItParams> = TypedContract::new();
+const HOLE_IT_CONTRACT: TypedContract<ScanHoleItParams> = TypedContract::new();
+const SHAPE_IT_CONTRACT: TypedContract<ScanShapeItParams> = TypedContract::new();
 const PATTERN_IT_CONTRACT: TypedContract<ScanPatternItParams> = TypedContract::new();
 const FILLET_IT_CONTRACT: TypedContract<ScanFilletItParams> = TypedContract::new();
 const CHAMFER_IT_CONTRACT: TypedContract<ScanChamferItParams> = TypedContract::new();
@@ -83,6 +85,30 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&CUT_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
         .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); hole?: index of scan.reconstruct's holes (default 0); into?: body to cut (default: `<scan> Reconstructed`): a circle sketched square to the hole outside its mouth and cut as deep as the scan has the hole, one undo step → sketch, feature, solid, operation, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.hole_it", "Hole It", crate::checked!("scan.hole_it", fitted_hole_it))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("hole")
+        .contract(&HOLE_IT_CONTRACT)
+        .output(output_schema_for::<ScanBuildResult>)
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); hole?: index of scan.reconstruct's holes (default: the first with a `form`); thread?: bool (default true: a bore the size of a tap drill drilled as tapped, its thread listed; false: plain); into?: body to drill (default: `<scan> Reconstructed`): a hole read as a Hole feature makes it (its `form`: counterbore, countersink, drilled blind with its drill point or a flat bottom, tapped) drilled with Hole at its mouth along its axis, through or as deep as the scan has it, the sizes read as designed; one undo step → feature, solid, operation, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.loft_it", "Loft It", crate::checked!("scan.loft_it", fitted_loft_it))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("loft")
+        .contract(&SHAPE_IT_CONTRACT)
+        .output(output_schema_for::<ScanBuildResult>)
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the part scan.reconstruct reads as sections lofted (its `loft`: no prism, turned part, pipe or coil read, every slice square to the direction it runs one closed loop; the direction two flat ends face apart along, else its longest): each section sketched as a closed fit-point spline through the slice's points, laid out from matching starts so the loft does not twist, and lofted end to end; one undo step → feature, solid, operation, depth (the length), fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.pipe_it", "Pipe It", crate::checked!("scan.pipe_it", fitted_pipe_it))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("pipe")
+        .contract(&SHAPE_IT_CONTRACT)
+        .output(output_schema_for::<ScanBuildResult>)
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the bar bent along a flat path scan.reconstruct reads (its `pipe`: cylinders for the straight runs, tori of the same tube for the bends, each running on from the one before): the path through their axes sketched as lines and arcs, joined where a run touches a bend, and the bar's circle swept along it with Pipe; one undo step → sketch, feature, solid, operation, lines, arcs, depth (the path's length), fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.coil_it", "Coil It", crate::checked!("scan.coil_it", fitted_coil_it))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("coil")
+        .contract(&SHAPE_IT_CONTRACT)
+        .output(output_schema_for::<ScanBuildResult>)
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the coil spring scan.reconstruct reads (its `coil`: tori alike round one axis, each leaning by the helix's angle; the pitch that lines the wire up on one helix, the turns the scan's height holds, the hand): the wire's circle sketched where it starts, on the plane through the axis, and wound with Coil; one undo step → sketch, feature, solid, operation, depth (the height wound), fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
     CommandSpec::new("scan.pattern_it", "Pattern It", crate::checked!("scan.pattern_it", fitted_pattern_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("pattern_circ")
@@ -408,10 +434,18 @@ pub enum Proposal {
     Extrude(usize),
     /// A round hole (its index), cut.
     Cut(usize),
+    /// A hole as a Hole feature makes it (its index), drilled.
+    Hole(usize),
     /// A cut hole's row or ring (the hole's index), patterned.
     Pattern(usize),
     /// The rounds along edges no profile holds, filleted.
     Fillet,
+    /// A coil spring, wound.
+    Coil,
+    /// A bar bent along a flat path, swept.
+    Pipe,
+    /// The part as sections, lofted.
+    Loft,
     /// The flat chamfers along edges no profile holds, chamfered.
     Chamfer,
     /// Walls of one thickness: the body shelled.
@@ -424,8 +458,12 @@ impl Proposal {
             Proposal::Revolve => "scan.revolve_it",
             Proposal::Extrude(_) => "scan.extrude_it",
             Proposal::Cut(_) => "scan.cut_it",
+            Proposal::Hole(_) => "scan.hole_it",
             Proposal::Pattern(_) => "scan.pattern_it",
             Proposal::Fillet => "scan.fillet_it",
+            Proposal::Coil => "scan.coil_it",
+            Proposal::Pipe => "scan.pipe_it",
+            Proposal::Loft => "scan.loft_it",
             Proposal::Chamfer => "scan.chamfer_it",
             Proposal::Shell => "scan.shell_it",
         }
@@ -435,9 +473,11 @@ impl Proposal {
     /// scan selected.
     pub fn params(&self, body: &str, selected: bool) -> Value {
         let mut p = match *self {
-            Proposal::Revolve | Proposal::Fillet | Proposal::Chamfer | Proposal::Shell => json!({"body": body}),
+            Proposal::Revolve | Proposal::Fillet | Proposal::Chamfer | Proposal::Shell | Proposal::Coil | Proposal::Pipe | Proposal::Loft => {
+                json!({"body": body})
+            }
             Proposal::Extrude(k) => json!({"body": body, "prism": k}),
-            Proposal::Cut(k) | Proposal::Pattern(k) => json!({"body": body, "hole": k}),
+            Proposal::Cut(k) | Proposal::Hole(k) | Proposal::Pattern(k) => json!({"body": body, "hole": k}),
         };
         if let (true, Some(map)) = (selected, p.as_object_mut()) {
             map.insert("selected".into(), Value::Bool(true));
@@ -452,6 +492,15 @@ impl Proposal {
 /// fillet: one a step above builds, or one `built` before.
 pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
     let mut out = Vec::new();
+    if reading.coil.is_some() {
+        out.push(Proposal::Coil);
+    }
+    if reading.pipe.is_some() {
+        out.push(Proposal::Pipe);
+    }
+    if reading.loft.is_some() {
+        out.push(Proposal::Loft);
+    }
     if reading.revolve.is_some() && reading.turned_unread.is_none() {
         out.push(Proposal::Revolve);
     }
@@ -465,7 +514,7 @@ pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
         out.push(Proposal::Shell);
     }
     for (k, hole) in reading.holes.iter().enumerate() {
-        out.push(Proposal::Cut(k));
+        out.push(if hole.form.is_some() { Proposal::Hole(k) } else { Proposal::Cut(k) });
         if hole.repeat.is_some() {
             out.push(Proposal::Pattern(k));
         }
@@ -477,6 +526,11 @@ pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
         out.push(Proposal::Chamfer);
     }
     out
+}
+
+/// How many bends the bar Reconstruct reads bent along a path has (none without one).
+pub fn pipe_bends(reading: &Reading) -> usize {
+    reading.pipe.as_ref().map_or(0, |p| p.pieces.iter().filter(|k| matches!(k, solidcraft_scan::pipe::Piece::Arc { .. })).count())
 }
 
 /// The body Reconstruct builds on scan `scan`.
@@ -551,6 +605,7 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
             depth: h.depth(),
             repeat: h.repeat.map(|r| r.0),
             layout: h.repeat.map(|r| layout_name(&r.1).to_string()),
+            form: h.form.as_ref().map(hole_form),
         })
         .collect();
     let repeats = reading
@@ -622,6 +677,9 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         fillets: reading.fillets.iter().map(|f| ScanEdgeRound { face: f.face, radius: f.radius, edge: at(f.edge) }).collect(),
         chamfers: reading.chamfers.iter().map(|c| ScanEdgeChamfer { face: c.face, distance: c.distance, edge: at(c.edge) }).collect(),
         shell: reading.shell.as_ref().map(|w| ScanShell { thickness: w.thickness, inner: w.inner.clone(), open: w.open.clone() }),
+        coil: reading.coil.as_ref().map(shapes::coil_of),
+        pipe: reading.pipe.as_ref().map(shapes::pipe_of),
+        loft: reading.loft.as_ref().map(shapes::loft_of),
         note,
         param_warnings: Vec::new(),
     })
@@ -973,16 +1031,135 @@ fn free_cut_name(s: &Session, index: usize) -> String {
     (2..).map(|k| format!("{base}.{k}")).find(|n| !taken(n)).unwrap_or(base)
 }
 
-/// The latest cut of hole `index` Cut It made ([`free_cut_name`]): the one Pattern It repeats.
+/// The latest cut of hole `index` Cut It or Hole It made ([`free_cut_name`]): the one Pattern It
+/// repeats.
 fn last_cut_name(s: &Session, index: usize) -> String {
-    let base = cut_name(index);
-    let prefix = format!("{base}.");
-    s.doc
-        .features
-        .iter()
-        .rev()
-        .find(|f| f.name == base || f.name.strip_prefix(&prefix).is_some_and(|k| k.parse::<u32>().is_ok()))
-        .map_or(base, |f| f.name.clone())
+    let names = [cut_name(index), hole_name(index)];
+    let of = |name: &str| {
+        names
+            .iter()
+            .any(|base| name == base || name.strip_prefix(base.as_str()).and_then(|k| k.strip_prefix('.')).is_some_and(|k| k.parse::<u32>().is_ok()))
+    };
+    s.doc.features.iter().rev().find(|f| of(&f.name)).map_or_else(|| names[0].clone(), |f| f.name.clone())
+}
+
+/// The name Hole It gives the hole of hole `index`.
+fn hole_name(index: usize) -> String {
+    format!("Hole It {}", index + 1)
+}
+
+/// A hole's form as the reply lists it.
+fn hole_form(f: &solidcraft_scan::hole_form::Formed) -> ScanHoleForm {
+    let kind = if f.counterbore.is_some() {
+        "counterbore"
+    } else if f.countersink.is_some() {
+        "countersink"
+    } else if f.thread.is_some() {
+        "tapped"
+    } else {
+        "drilled"
+    };
+    ScanHoleForm {
+        kind: kind.into(),
+        diameter: 2.0 * f.radius,
+        through: f.depth.is_none(),
+        depth: f.depth,
+        tip_angle: f.tip.map(f64::to_degrees),
+        cb_diameter: f.counterbore.map(|c| 2.0 * c.0),
+        cb_depth: f.counterbore.map(|c| c.1),
+        cs_diameter: f.countersink.map(|c| 2.0 * c.0),
+        cs_angle: f.countersink.map(|c| c.1.to_degrees()),
+        thread: f.thread.map(str::to_owned),
+        faces: f.faces.iter().copied().collect(),
+    }
+}
+
+/// Hole It: a hole read as a Hole feature makes it, drilled with Hole at its mouth along its axis.
+pub(super) fn hole_it(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.hole_it";
+    let view = view(s, p, cmd, false)?;
+    let found = &view.found;
+    let reading = view.reading();
+    let index = match p.get("hole").and_then(Value::as_u64) {
+        Some(k) => k as usize,
+        None => reading
+            .holes
+            .iter()
+            .position(|h| h.form.is_some())
+            .ok_or_else(|| bad(cmd, "Reconstruct reads no counterbore, countersink, blind or tapped hole: cut round holes with Cut It"))?,
+    };
+    let hole = reading
+        .holes
+        .get(index)
+        .ok_or_else(|| bad(cmd, format!("there are {} holes: `hole` is 0 to {}", reading.holes.len(), reading.holes.len().saturating_sub(1))))?;
+    let solid = built_body(s, &found.scan, p, cmd)?;
+    // A plain round hole is drilled as it is, flat at the bottom, as deep as the scan has it.
+    let plain;
+    let form = match &hole.form {
+        Some(f) => f,
+        None => {
+            plain = solidcraft_scan::hole_form::Formed {
+                bore: hole.face,
+                radius: hole.radius,
+                mouth: hole.mouth,
+                inward: (hole.bottom - hole.mouth).normalized().ok_or_else(|| bad(cmd, "the hole has no depth on the scan"))?,
+                bottom: hole.bottom,
+                counterbore: None,
+                countersink: None,
+                depth: Some(hole.depth()),
+                tip: Some(std::f64::consts::PI),
+                thread: None,
+                faces: std::collections::BTreeSet::from([hole.face]),
+            };
+            &plain
+        }
+    };
+    let mut params = json!({"position": at(form.mouth), "direction": at(form.inward), "targets": [solid], "name": free_hole_name(s, index)});
+    match bool_(p, "thread").unwrap_or(true).then_some(form.thread).flatten() {
+        Some(thread) => params["thread"] = json!(thread),
+        None => params["diameter"] = json!(format!("{} mm", 2.0 * form.radius)),
+    }
+    if let Some((r, depth)) = form.counterbore {
+        params["type"] = json!("counterbore");
+        params["cb_diameter"] = json!(format!("{} mm", 2.0 * r));
+        params["cb_depth"] = json!(format!("{depth} mm"));
+    } else if let Some((r, angle)) = form.countersink {
+        params["type"] = json!("countersink");
+        params["cs_diameter"] = json!(format!("{} mm", 2.0 * r));
+        params["cs_angle"] = json!(format!("{} deg", angle.to_degrees()));
+    }
+    if let Some(depth) = form.depth {
+        params["depth"] = json!(format!("{depth} mm"));
+        if let Some(tip) = form.tip {
+            params["tip_angle"] = json!(format!("{} deg", tip.to_degrees()));
+        }
+    }
+    let feature = run(s, "solid.hole", params)
+        .map_err(|e| super::refusal::refused(cmd, "the kernel could not drill the hole the scan shows", &e.to_string()))?;
+    reply(ScanBuildResult {
+        body: found.scan.clone(),
+        sketch: None,
+        feature,
+        solid,
+        operation: "cut".into(),
+        lines: 0,
+        arcs: 0,
+        tangents: 0,
+        depth: Some(form.depth.unwrap_or_else(|| form.mouth.dist(form.bottom))),
+        count: None,
+        fit: None,
+        param_warnings: Vec::new(),
+    })
+}
+
+/// The name for a new hole of hole `index`, as [`free_cut_name`] for a cut.
+fn free_hole_name(s: &Session, index: usize) -> String {
+    let base = hole_name(index);
+    let taken = |n: &str| s.doc.features.iter().any(|f| f.name == n);
+    if !taken(&base) {
+        return base;
+    }
+    (2..).map(|k| format!("{base}.{k}")).find(|n| !taken(n)).unwrap_or(base)
 }
 
 pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1293,8 +1470,16 @@ fitted!(
     fitted_extrude_it => extrude_it,
     fitted_revolve_it => revolve_it,
     fitted_cut_it => cut_it,
+    fitted_hole_it => hole_it,
+    fitted_loft_it => loft_it,
+    fitted_pipe_it => pipe_it,
+    fitted_coil_it => coil_it,
     fitted_pattern_it => pattern_it,
     fitted_fillet_it => fillet_it,
     fitted_chamfer_it => chamfer_it,
     fitted_shell_it => shell_it,
 );
+
+#[path = "scan_reconstruct_shapes.rs"]
+mod shapes;
+use shapes::{coil_it, loft_it, pipe_it};

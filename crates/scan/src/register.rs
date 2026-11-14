@@ -381,7 +381,7 @@ fn refine(points: &[Vec3], start: Rigid, reference: &Surface, ignored: f64, roun
 
 /// The centroid, the axes longest first as a right-handed frame, and how far the points spread
 /// along each.
-fn principal(points: &[Vec3]) -> Option<(Vec3, [Vec3; 3], [f64; 3])> {
+pub(crate) fn principal(points: &[Vec3]) -> Option<(Vec3, [Vec3; 3], [f64; 3])> {
     if points.is_empty() {
         return None;
     }

@@ -65,7 +65,11 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | `scan.revolve_it {}` | the turned part's profile revolved |
 | `scan.shell_it {}` | the body hollowed to the scan's wall thickness, open where `shell.open` says |
 | `scan.cut_it {"hole": 0}` | a round hole cut as deep as the scan has it |
-| `scan.pattern_it {"hole": 0}` | that cut repeated as the holes repeat |
+| `scan.hole_it {"hole": 0}` | a hole with a `form` (counterbore, countersink, drill point, tap drill) drilled with Hole, sizes read as designed |
+| `scan.pattern_it {"hole": 0}` | that cut or hole repeated as the holes repeat |
+| `scan.pipe_it {}` | a bar bent along a flat path (`pipe`): the path's lines and arcs swept |
+| `scan.coil_it {}` | a coil spring (`coil`): the wire wound at the pitch and turns read |
+| `scan.loft_it {}` | no prism, turned part, pipe or coil (`loft`): slices from end to end lofted |
 | `scan.fillet_it {}` | rounds measured off the scan, one Fillet per radius |
 | `scan.chamfer_it {}` | chamfers read off the scan |
 | `scan.fit_plane {"point": [x,y,z]}` | construction plane; reply `plane`, `rms`, `max` |

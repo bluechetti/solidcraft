@@ -90,9 +90,37 @@ fn label(app: &SolveApp, reading: &Reading, step: &Proposal) -> String {
                 &[("number", &(k + 1).to_string()), ("diameter", &mm(diameter)), ("depth", &mm(depth))],
             )
         }
+        Proposal::Hole(k) => {
+            let hole = reading.holes.get(k);
+            let form = hole.and_then(|h| h.form.as_ref());
+            let kind = match form {
+                Some(f) if f.counterbore.is_some() => "ui.scan_reconstruct_hole_counterbore",
+                Some(f) if f.countersink.is_some() => "ui.scan_reconstruct_hole_countersink",
+                Some(f) if f.thread.is_some() => "ui.scan_reconstruct_hole_tapped",
+                _ => "ui.scan_reconstruct_hole_drilled",
+            };
+            let diameter = hole.map_or(0.0, |h| 2.0 * h.radius);
+            solidcraft_ui_text::format(
+                "ui.scan_reconstruct_hole",
+                &[("number", &(k + 1).to_string()), ("kind", tr(kind)), ("diameter", &mm(diameter))],
+            )
+        }
         Proposal::Pattern(k) => {
             let count = reading.holes.get(k).and_then(|h| h.repeat).map_or(0, |r| r.0);
             solidcraft_ui_text::format("ui.scan_reconstruct_pattern", &[("number", &(k + 1).to_string()), ("count", &count.to_string())])
+        }
+        Proposal::Coil => {
+            let (pitch, turns) = reading.coil.as_ref().map_or((0.0, 0.0), |c| (c.pitch, c.turns));
+            solidcraft_ui_text::format("ui.scan_reconstruct_coil", &[("pitch", &mm(pitch)), ("turns", &format!("{turns}"))])
+        }
+        Proposal::Pipe => {
+            let diameter = reading.pipe.as_ref().map_or(0.0, |p| 2.0 * p.radius);
+            let bends = reconstruct::pipe_bends(reading);
+            solidcraft_ui_text::format("ui.scan_reconstruct_pipe", &[("diameter", &mm(diameter)), ("bends", &bends.to_string())])
+        }
+        Proposal::Loft => {
+            let sections = reading.loft.as_ref().map_or(0, |l| l.sections.len());
+            solidcraft_ui_text::format("ui.scan_reconstruct_loft", &[("sections", &sections.to_string())])
         }
         Proposal::Fillet => solidcraft_ui_text::format("ui.scan_reconstruct_fillet", &[("edges", &reading.fillets.len().to_string())]),
         Proposal::Chamfer => solidcraft_ui_text::format("ui.scan_reconstruct_chamfer", &[("edges", &reading.chamfers.len().to_string())]),

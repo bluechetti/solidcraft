@@ -222,7 +222,7 @@ fn find_all_computed_on_a_copy_comes_back_with_it() {
 fn reconstruct_proposes_no_cut_with_nothing_to_cut() {
     use solidcraft_scan::fit::Shape;
     use solidcraft_scan::reconstruct::{Axis, Face, Hole, Reading, Revolve};
-    let hole = Hole { face: 0, mouth: Vec3::new(0.0, 0.0, 10.0), bottom: Vec3::ZERO, radius: 3.0, repeat: None };
+    let hole = Hole { face: 0, mouth: Vec3::new(0.0, 0.0, 10.0), bottom: Vec3::ZERO, radius: 3.0, repeat: None, form: None };
     let mut reading = Reading {
         faces: vec![Face { shape: Shape::Cylinder { point: Vec3::ZERO, axis: Vec3::Z, radius: 3.0 }, area: 180.0 }],
         same: vec![0],
@@ -239,6 +239,9 @@ fn reconstruct_proposes_no_cut_with_nothing_to_cut() {
         chamfers: Vec::new(),
         shell: None,
         size: 60.0,
+        coil: None,
+        pipe: None,
+        loft: None,
     };
     assert!(super::proposals(&reading, false).is_empty());
     assert_eq!(super::proposals(&reading, true), vec![super::Proposal::Cut(0)]);
@@ -463,4 +466,134 @@ fn a_drafted_shelled_housing_is_extruded_shelled_and_filleted_back_from_its_scan
     }
     let v = volume(&s, &format!("{scan} Reconstructed"));
     assert!((v - expected).abs() < 0.01 * expected, "{v} against the housing's {expected}");
+}
+
+/// A plate 100 × 60 × 12 drilled as a designer drills one: two counterbores (Ø 6.6, Ø 11 × 6.5),
+/// a countersink (Ø 5.5, Ø 10.4 at 90°), a tapped M6 and a blind Ø 8 × 8 with its drill point.
+/// Reconstruct reads the plate as one prism (no counterbore step or blind hole's end cuts it into
+/// slabs) and each hole as a Hole feature makes it; Extrude It and Hole It build the plate back.
+#[test]
+fn a_plate_with_counterbores_countersinks_and_blind_holes_is_drilled_back_with_hole_it() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 100, "width": 60, "height": 12, "center": [0, 0, 6]}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    for y in [-15, 15] {
+        run(&mut part, "solid.hole", json!({"position": [-35, y, 12], "diameter": 6.6, "type": "counterbore", "cb_diameter": 11, "cb_depth": 6.5}));
+    }
+    run(&mut part, "solid.hole", json!({"position": [0, 15, 12], "diameter": 5.5, "type": "countersink", "cs_diameter": 10.4, "cs_angle": 90}));
+    run(&mut part, "solid.hole", json!({"position": [35, 15, 12], "thread": "M6"}));
+    run(&mut part, "solid.hole", json!({"position": [35, -15, 12], "diameter": 8, "depth": 8, "type": "drilled"}));
+    let expected = volume(&part, &body);
+    let (mut s, scan) = scanned(&part, &body, 2, "drilled-plate");
+
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    assert_eq!(read["prisms"].as_array().unwrap().len(), 1, "one plate: {read}");
+    assert!((read["prisms"][0]["depth"].as_f64().unwrap() - 12.0).abs() < 0.05, "{read}");
+    let forms: Vec<&str> = read["holes"].as_array().unwrap().iter().filter_map(|h| h["form"]["kind"].as_str()).collect();
+    for kind in ["counterbore", "countersink", "tapped", "drilled"] {
+        assert!(forms.contains(&kind), "{kind}: {read}");
+    }
+    let counterbore = read["holes"].as_array().unwrap().iter().find(|h| h["form"]["kind"] == "counterbore").unwrap();
+    assert_eq!((counterbore["form"]["diameter"].as_f64(), counterbore["form"]["cb_diameter"].as_f64()), (Some(6.6), Some(11.0)), "{read}");
+    assert_eq!(counterbore["form"]["cb_depth"].as_f64(), Some(6.5), "{read}");
+    let blind = read["holes"].as_array().unwrap().iter().find(|h| h["form"]["kind"] == "drilled").unwrap();
+    assert_eq!((blind["form"]["depth"].as_f64(), blind["form"]["through"].as_bool()), (Some(8.0), Some(false)), "{read}");
+    let commands: Vec<&str> = read["proposals"].as_array().unwrap().iter().map(|p| p["command"].as_str().unwrap()).collect();
+    assert_eq!(commands[0], "scan.extrude_it", "{read}");
+    assert_eq!(commands.iter().filter(|c| **c == "scan.hole_it").count(), 5, "{read}");
+    let mut log = Vec::new();
+    for step in read["proposals"].as_array().unwrap() {
+        let done = run(&mut s, step["command"].as_str().unwrap(), step["params"].clone());
+        assert_ne!(done["fit"]["verdict"], "worse", "{done}");
+        log.push(format!("{} {} {}", step["params"], volume(&s, &format!("{scan} Reconstructed")), done["feature"]));
+    }
+    let v = volume(&s, &format!("{scan} Reconstructed"));
+    assert!((v - expected).abs() < 0.003 * expected, "{v} against the plate's {expected}: {log:#?} {} {}", read["holes"][2], read["holes"][3]);
+}
+
+/// Runs every step Reconstruct proposes on `s`, none worse; the commands run.
+fn build_all(s: &mut Session) -> Vec<String> {
+    let read = run(s, "scan.reconstruct", json!({}));
+    let mut done = Vec::new();
+    for step in read["proposals"].as_array().unwrap() {
+        let command = step["command"].as_str().unwrap();
+        let built = run(s, command, step["params"].clone());
+        assert_ne!(built["fit"]["verdict"], "worse", "{built} {read}");
+        done.push(command.to_owned());
+    }
+    done
+}
+
+/// A Ø 16 bar up 50, round a quarter bend R 30 and along 60: Find All finds its two straight runs
+/// and the bend; Reconstruct reads one bar along a flat path, and Pipe It sweeps it back (not two
+/// prisms extruded along the runs).
+#[test]
+fn a_bent_bar_is_swept_back_along_its_path_with_pipe_it() {
+    let mut part = Session::default();
+    run(&mut part, "sketch.create", json!({"plane": "XZ", "name": "Path"}));
+    run(&mut part, "sketch.line", json!({"points": [[0, 0], [0, -50]]}));
+    run(&mut part, "sketch.arc.center_point", json!({"center": [30, -50], "start": [0, -50], "end": [30, -80]}));
+    run(&mut part, "sketch.line", json!({"points": [[30, -80], [90, -80]]}));
+    run(&mut part, "sketch.finish", json!({}));
+    let made = run(&mut part, "solid.pipe", json!({"path_sketch": "Path", "path": ["l1", "a1", "l2"], "diameter": 16}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    let expected = volume(&part, &body);
+    let (mut s, scan) = scanned(&part, &body, 1, "bent-bar");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    assert!((read["pipe"]["diameter"].as_f64().unwrap() - 16.0).abs() < 0.05, "{read}");
+    assert_eq!((read["pipe"]["lines"].as_u64(), read["pipe"]["arcs"].as_u64()), (Some(2), Some(1)), "{read}");
+    assert_eq!(build_all(&mut s), ["scan.pipe_it"], "{read}");
+    let v = volume(&s, &format!("{scan} Reconstructed"));
+    assert!((v - expected).abs() < 0.01 * expected, "{v} against the bar's {expected}");
+}
+
+/// A spring: a Ø 4 wire wound Ø 30, 5 turns at 8 a turn. Find All fits short stretches of it as
+/// tori; Reconstruct reads the coil off them, and Coil It winds it back.
+#[test]
+fn a_spring_is_wound_back_with_coil_it() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.coil", json!({"diameter": 30, "revolutions": 5, "pitch": 8, "section_size": 4, "section": "circular"}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    let expected = volume(&part, &body);
+    let (mut s, scan) = scanned(&part, &body, 0, "spring");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let coil = &read["coil"];
+    assert_eq!((coil["diameter"].as_f64(), coil["wire"].as_f64(), coil["pitch"].as_f64()), (Some(30.0), Some(4.0), Some(8.0)), "{read}");
+    assert_eq!((coil["turns"].as_f64(), coil["clockwise"].as_bool()), (Some(5.0), Some(false)), "{read}");
+    assert_eq!(build_all(&mut s), ["scan.coil_it"], "{read}");
+    let v = volume(&s, &format!("{scan} Reconstructed"));
+    assert!((v - expected).abs() < 0.02 * expected, "{v} against the spring's {expected}");
+}
+
+/// A blade lofted through three sections, each narrower and turned further than the one below:
+/// no prism, turned part, pipe or coil, so Reconstruct reads sections lofted between its flat
+/// ends, and Loft It lofts them back.
+#[test]
+fn a_twisted_blade_is_lofted_back_with_loft_it() {
+    let mut part = Session::default();
+    let section = |chord: f64, turn: f64| -> Vec<[f64; 2]> {
+        (0..16)
+            .map(|k| {
+                let t = std::f64::consts::TAU * f64::from(k) / 16.0;
+                let (x, y) = (0.5 * chord * t.cos(), 0.12 * chord * t.sin());
+                let a = turn.to_radians();
+                [x * a.cos() - y * a.sin(), x * a.sin() + y * a.cos()]
+            })
+            .collect()
+    };
+    for (k, (z, chord, turn)) in [(0, 60.0, 0.0), (50, 50.0, 15.0), (100, 40.0, 30.0)].into_iter().enumerate() {
+        run(&mut part, "sketch.create", json!({"plane": "XY", "offset": z, "name": format!("Section{k}")}));
+        run(&mut part, "sketch.spline.fit_point", json!({"points": section(chord, turn), "periodic": true}));
+        run(&mut part, "sketch.finish", json!({}));
+    }
+    let made = run(&mut part, "solid.loft", json!({"sections": [{"sketch": "Section0"}, {"sketch": "Section1"}, {"sketch": "Section2"}]}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    let expected = volume(&part, &body);
+    let (mut s, scan) = scanned(&part, &body, 1, "blade");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    assert_eq!(read["loft"]["capped"], true, "between its flat ends: {read}");
+    assert!((read["loft"]["length"].as_f64().unwrap() - 100.0).abs() < 0.1, "{read}");
+    assert_eq!(build_all(&mut s), ["scan.loft_it"], "{read}");
+    let v = volume(&s, &format!("{scan} Reconstructed"));
+    assert!((v - expected).abs() < 0.02 * expected, "{v} against the blade's {expected}");
 }

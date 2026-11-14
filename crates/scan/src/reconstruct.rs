@@ -182,6 +182,9 @@ pub struct Hole {
     pub radius: f64,
     /// For the first of a row or a ring of holes alike: how many there are and how laid out.
     pub repeat: Option<(usize, Layout)>,
+    /// A hole as a Hole feature makes it (a counterbore, a countersink, a drill point, a tap
+    /// drill), for Hole It; none for a plain round hole, which Cut It cuts.
+    pub form: Option<crate::hole_form::Formed>,
 }
 
 impl Hole {
@@ -408,7 +411,7 @@ const ON_GRID: f64 = 0.00175;
 /// [`ON_GRID`] of one (a scan stood on its base or squared to the grid leaves its faces a few
 /// thousandths of a degree off the axes, which a model built along them should not keep), else
 /// as it is.
-fn on_grid(direction: Vec3) -> Vec3 {
+pub(crate) fn on_grid(direction: Vec3) -> Vec3 {
     [Vec3::X, Vec3::Y, Vec3::Z]
         .into_iter()
         .map(|axis| if direction.dot(axis) < 0.0 { -axis } else { axis })
@@ -1081,8 +1084,35 @@ pub fn holes(
             let at = |t: f64| point + axis * (t - point.dot(axis));
             let (a, b) = (at(least), at(most));
             let (mouth, bottom) = if a.dist(middle) >= b.dist(middle) { (a, b) } else { (b, a) };
-            Some(Hole { face: k, mouth, bottom, radius, repeat: repeated.get(&k).copied() })
+            Some(Hole { face: k, mouth, bottom, radius, repeat: repeated.get(&k).copied(), form: None })
         })
+        .collect()
+}
+
+/// The holes a Hole feature makes, as holes: where the bores of several repeat (a row or a ring
+/// of counterbores alike), only the first, with the repeat.
+fn formed_holes(formed: Vec<crate::hole_form::Formed>, repeats: &[Repeat]) -> Vec<Hole> {
+    let bores: BTreeMap<usize, usize> = formed.iter().enumerate().map(|(i, f)| (f.bore, i)).collect();
+    let mut repeated: BTreeMap<usize, (usize, Layout)> = BTreeMap::new();
+    let mut rest = BTreeSet::new();
+    for repeat in repeats.iter().filter(|r| r.kind == Kind::Cylinder && !matches!(r.layout, Layout::Grid { .. })) {
+        let Some(first) = repeat.members.first().and_then(|k| bores.get(k)) else { continue };
+        let alike = |k: &usize| {
+            bores.get(k).is_some_and(|&i| {
+                let (a, b) = (&formed[*first], &formed[i]);
+                (a.counterbore, a.countersink, a.depth, a.tip, a.thread, a.radius)
+                    == (b.counterbore, b.countersink, b.depth, b.tip, b.thread, b.radius)
+            })
+        };
+        if repeat.members.iter().all(alike) && !repeat.members.iter().any(|k| rest.contains(k) || repeated.contains_key(k)) {
+            repeated.insert(repeat.members[0], (repeat.members.len(), repeat.layout));
+            rest.extend(repeat.members[1..].iter().copied());
+        }
+    }
+    formed
+        .into_iter()
+        .filter(|f| !rest.contains(&f.bore))
+        .map(|f| Hole { face: f.bore, mouth: f.mouth, bottom: f.bottom, radius: f.radius, repeat: repeated.get(&f.bore).copied(), form: Some(f) })
         .collect()
 }
 
@@ -1231,6 +1261,12 @@ pub struct Reading {
     pub shell: Option<Shell>,
     /// The part's size, the diagonal of its box.
     pub size: f64,
+    /// A coil spring the tori make, for Coil It.
+    pub coil: Option<crate::coil::Coil>,
+    /// A bar bent along a flat path (cylinders and the tori of its bends), for Pipe It.
+    pub pipe: Option<crate::pipe::Pipe>,
+    /// With no prism, turned part, pipe or coil read: the part as sections lofted, for Loft It.
+    pub loft: Option<crate::loft::Loft>,
 }
 
 /// The sign that turns the scan's winding out of its material: the sign of the volume its
@@ -1517,7 +1553,12 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     // A hole's floor is the hole's: a flat face on its axis, square to it, about as big as its end.
     let floors: BTreeSet<usize> = (0..faces.len()).filter(|&j| (0..faces.len()).any(|k| hole(k) && is_floor_of(&faces[k], &faces[j]))).collect();
     let revolve = revolve(&faces, size);
-    let ignored: BTreeSet<usize> = floors.union(&pieces).copied().collect();
+    // Holes as a Hole feature makes them (a counterbore, a countersink, a blind hole's point, a
+    // tap drill): Hole It drills each whole, so none of their faces is a prism's wall or end, whose
+    // levels would cut the prism into slabs at a counterbore's step or a blind hole's end.
+    let formed = crate::hole_form::read(&faces, &hole, &span_of, crate::surface_centre(scan).unwrap_or(Vec3::ZERO), outcome.tolerance, size, &pieces);
+    let in_formed: BTreeSet<usize> = formed.iter().flat_map(|f| f.faces.iter().copied()).collect();
+    let ignored: BTreeSet<usize> = floors.union(&pieces).chain(&in_formed).copied().collect();
     // The rounds along edges, read before the prisms, which they do not choose.
     let rounds: BTreeSet<usize> = (0..shaped.len()).filter(|&k| !piece(k) && is_edge_round(scan, &whole(k), size)).collect();
     // The chamfers along edges, read with the rounds: walls that explain nothing, so a block with
@@ -1608,7 +1649,9 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         Some(revolve) => revolve.members.iter().copied().collect(),
         None => prisms.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).chain(&inner).copied().collect(),
     };
-    let holes = holes(&faces, &hole, &explained, &repeats, &span_of, centre);
+    let plain_explained: BTreeSet<usize> = explained.union(&in_formed).copied().collect();
+    let mut holes = holes(&faces, &hole, &plain_explained, &repeats, &span_of, centre);
+    holes.extend(formed_holes(formed, &repeats));
     let plans = pattern_plans(&faces, &repeats, &rounds);
     // The rounds no profile holds: not a wall of a prism, nor a face of a turned part that is read.
     let profiled: BTreeSet<usize> = prisms
@@ -1626,6 +1669,36 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         })
         .collect();
     let chamfers: Vec<EdgeChamfer> = chamfered.into_iter().filter(|c| !profiled.contains(&c.face)).collect();
+    let corners_of = |k: usize| -> Vec<Vec3> { whole(k).triangles.iter().filter_map(|&t| scan.corners(t)).flatten().collect() };
+    let coil = crate::coil::read(&faces, &corners_of, outcome.tolerance);
+    let pipe = if coil.is_some() {
+        None
+    } else {
+        crate::pipe::read(
+            &faces,
+            &|k| !piece(k) && is_round_hole(scan, &whole(k), sign),
+            &span_of,
+            &|k, centre, axis, u| crate::pipe::angular_extent(corners_of(k).into_iter(), centre, axis, u),
+            outcome.tolerance,
+        )
+    };
+    // A pipe's straight runs read as prisms too: Pipe It builds them.
+    let mut prisms = prisms;
+    if let Some(pipe) = &pipe {
+        prisms.retain(|p| !p.walls.iter().all(|w| pipe.faces.contains(w)));
+    }
+    let loft = (prisms.is_empty() && revolve.is_none() && coil.is_none() && pipe.is_none())
+        .then(|| crate::loft::read(scan, &faces, LOFT_SECTIONS).ok())
+        .flatten();
+    // A coil's or a loft's pieces, and a pipe's bends, are no rounds along an edge.
+    let (mut fillets, mut chamfers) = (fillets, chamfers);
+    if coil.is_some() || loft.is_some() {
+        fillets.clear();
+        chamfers.clear();
+    }
+    if let Some(pipe) = &pipe {
+        fillets.retain(|f| !pipe.faces.contains(&f.face));
+    }
     Reading {
         faces,
         same,
@@ -1642,8 +1715,14 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         chamfers,
         shell,
         size,
+        coil,
+        pipe,
+        loft,
     }
 }
+
+/// How many sections Reconstruct reads a lofted part with.
+pub const LOFT_SECTIONS: usize = 5;
 
 #[cfg(test)]
 mod tests {
