@@ -153,3 +153,31 @@ pub(crate) fn whole_last(results: &mut [FeatureResult]) {
         r.state = whole.clone();
     }
 }
+
+/// What a design file left out after a Scan Clean step stands in as, when the design opens: the
+/// state before the step, its scan thinned and the step added to its run, so the step is done
+/// only if something reads that state ([`materialized`]), not to be thinned again at once. `None`
+/// unless `f` is a Scan Clean step whose scan, and the scans it fuses in, `before` holds whole
+/// or as a run's thinned scan.
+pub(crate) fn stand_in(before: &ModelState, f: &Feature) -> Option<ModelState> {
+    let FeatureKind::ScanClean { body, step } = &f.kind else { return None };
+    let name = body.0.as_str();
+    let scan = before.body(name)?;
+    let mut with = Vec::new();
+    for w in step.with() {
+        // A scan fused in must be whole: a thinned one is not the scan the step read.
+        if before.thinned.contains(&w.0) {
+            return None;
+        }
+        with.push(before.body(&w.0)?.body.clone());
+    }
+    let (base, mut steps) = match before.scan_runs.get(name).filter(|_| before.thinned.contains(name)) {
+        Some(run) => (run.base.clone(), run.steps.clone()),
+        None => (scan.body.clone(), Vec::new()),
+    };
+    steps.push((step.clone(), with));
+    let mut st = before.clone();
+    st.scan_runs.insert(name.to_owned(), Arc::new(ScanRun { base, steps, latest: Weak::new() }));
+    st.thinned.insert(name.to_owned());
+    Some(st)
+}

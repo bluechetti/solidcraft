@@ -897,7 +897,8 @@ fn scan_copies(s: &Session, body: &str) -> usize {
 /// A run of three Scan Clean steps holds one working scan: the states after the import and the
 /// steps hold two meshes of it in all (the scan as it came in and the latest result), however many
 /// steps. Rolling back onto the first step, or editing the second, makes the scan again from the
-/// import, as the steps left it; saved and opened again, the same two.
+/// import, as the steps left it; saved and opened again, the same two, and no step done again
+/// until something reads the state after it.
 #[test]
 fn a_run_of_clean_steps_holds_the_scan_as_it_came_in_and_the_latest_result() {
     use solidcraft_doc::FeatureKind;
@@ -939,8 +940,20 @@ fn a_run_of_clean_steps_holds_the_scan_as_it_came_in_and_the_latest_result() {
     run(&mut s, "file.save", json!({"path": path.to_string_lossy()}));
     let mut opened = Session::default();
     run(&mut opened, "doc.open", json!({"path": path.to_string_lossy()}));
-    assert_eq!(count(&opened), now, "the steps made again on open");
+    assert_eq!(count(&opened), now, "the last step's scan, from the file");
+    assert_eq!(opened.model.last_recomputed, 0, "no step done again on opening, only to be thinned");
     assert_eq!(scan_copies(&opened, &body), 2, "opened, the same two");
+    // The steps left out are done where something reads them: rolled back onto the first one.
+    let steps_opened: Vec<usize> =
+        opened.doc.features.iter().enumerate().filter(|(_, f)| matches!(f.kind, FeatureKind::ScanClean { .. })).map(|(i, _)| i).collect();
+    run(&mut opened, "timeline.roll_to", json!({"position": steps_opened[0] + 1}));
+    assert_eq!(count(&opened), block, "the first step's scan, made again");
+    run(&mut opened, "timeline.roll_to", json!({"position": steps_opened[1] + 1}));
+    let second_made = count(&opened);
+    assert!(second_made < block && second_made > now, "{second_made} {now}");
+    run(&mut opened, "timeline.roll_to", json!({}));
+    assert_eq!(count(&opened), now);
+    assert_eq!(scan_copies(&opened, &body), 2, "rolled back and forward, the same two");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
