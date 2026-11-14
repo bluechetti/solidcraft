@@ -1,7 +1,8 @@
-//! The scan deviation map (`scan.deviation`) in the viewport: the scan's points drawn as dots in
-//! the 3D pass, depth-tested with the model, each coloured by its distance from the model. The
-//! dots go through the point-cloud path, so they are uploaded once per map and cost nothing to
-//! draw again when the pointer moves; a scan of millions of triangles stays interactive.
+//! The scan deviation map (`scan.deviation`) in the viewport: the scan's triangles painted in the
+//! 3D pass, depth-tested with the model, each coloured by its corners' distance from the model; a
+//! scan of more than [`PAINT_LIMIT`] triangles is drawn as one dot per point instead. Both go
+//! through the point-cloud path, so they are uploaded once per map and cost nothing to draw again
+//! when the pointer moves; a scan of millions of triangles stays interactive.
 //!
 //! The colours are the theme's analysis colours, so they follow the colour vision setting: within
 //! the tolerance the draft analysis's good colour, above the model its bad colour and below it
@@ -23,9 +24,12 @@ const CLOUD_ID: u64 = u64::MAX - 1;
 /// A dot's size on screen, in pixels: dense enough on a scan to read as a coloured surface.
 const DOT_PIXELS: f32 = 3.0;
 
+/// The most triangles the map paints.
+const PAINT_LIMIT: usize = crate::scan_dots::PAINT_MOST;
+
 thread_local! {
-    /// The dots last built: for which map and colours, their version, and the records.
-    static BUILT: RefCell<Option<(Key, u64, Arc<Vec<u8>>)>> = const { RefCell::new(None) };
+    /// The colouring last built: for which map and colours, its version, and the records.
+    static BUILT: RefCell<Option<(Key, u64, Painted)>> = const { RefCell::new(None) };
     static VERSION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
@@ -204,42 +208,65 @@ pub(crate) fn colour([far_below, below, within, above, far_above]: Colours, s: f
 pub(crate) fn gpu_cloud(app: &SolveApp) -> Option<GpuCloud> {
     let map = current(app)?;
     let key = Key { map: map.clone(), colours: colours() };
-    let (version, dots) = BUILT.with(|b| {
+    let (version, built) = BUILT.with(|b| {
         let mut b = b.borrow_mut();
-        if let Some((k, version, dots)) = b.as_ref()
+        if let Some((k, version, built)) = b.as_ref()
             && *k == key
         {
-            return Some((*version, dots.clone()));
+            return Some((*version, built.clone()));
         }
-        let dots = Arc::new(records(app, &map, key.colours)?);
+        let built = records(app, &map, key.colours)?;
         let version = VERSION.with(|v| {
             v.set(v.get() + 1);
             v.get()
         });
-        *b = Some((key, version, dots.clone()));
-        Some((version, dots))
+        *b = Some((key, version, built.clone()));
+        Some((version, built))
     })?;
     Some(GpuCloud {
         id: CLOUD_ID,
         version,
-        dots,
+        dots: built.dots,
         segments: crate::scan_dots::none(),
-        triangles: crate::scan_dots::none(),
+        triangles: built.triangles,
         style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: DOT_PIXELS },
     })
 }
 
-/// One dot per measured point of the scan; points the model leaves out are not drawn.
-fn records(app: &SolveApp, map: &DeviationMap, colours: Colours) -> Option<Vec<u8>> {
+/// The map's records: its triangles painted, or its points as dots.
+#[derive(Clone)]
+struct Painted {
+    dots: Arc<Vec<u8>>,
+    triangles: Arc<Vec<u8>>,
+}
+
+/// The scan's triangles painted, each by the mean of its corners the model measured (one with
+/// none is not drawn); past [`PAINT_LIMIT`] triangles, one dot per measured point instead.
+fn records(app: &SolveApp, map: &DeviationMap, colours: Colours) -> Option<Painted> {
     let state = app.session.model.state();
-    let (positions, _) = state.body(&map.scan)?.body.triangle_mesh()?;
+    let (positions, triangles) = state.body(&map.scan)?.body.triangle_mesh()?;
+    if triangles.len() <= PAINT_LIMIT {
+        let mut out = Vec::with_capacity(triangles.len() * crate::scan_dots::DOT_SIZE);
+        for tri in triangles {
+            let corner = |i: u32| positions.get(i as usize).copied();
+            let (Some(a), Some(b), Some(c)) = (corner(tri[0]), corner(tri[1]), corner(tri[2])) else { continue };
+            let measured: Vec<f32> = tri.iter().filter_map(|i| map.values.get(*i as usize).copied()).filter(|v| map.scale(*v).is_some()).collect();
+            if measured.is_empty() {
+                continue;
+            }
+            let v = measured.iter().sum::<f32>() / measured.len() as f32;
+            let Some(s) = map.scale(v) else { continue };
+            crate::scan_dots::cloud_painted(&mut out, [a, b, c], v, colour(colours, s));
+        }
+        return Some(Painted { dots: crate::scan_dots::none(), triangles: Arc::new(out) });
+    }
     let mut out = Vec::with_capacity(positions.len() * crate::scan_dots::DOT_SIZE);
     for (p, &v) in positions.iter().zip(&map.values) {
         let Some(s) = map.scale(v) else { continue };
         let dot = Dot { at: [p.x as f32, p.y as f32, p.z as f32], value: v, rgb: colour(colours, s) };
         cloud_dot(&mut out, &dot);
     }
-    Some(out)
+    Some(Painted { dots: Arc::new(out), triangles: crate::scan_dots::none() })
 }
 
 /// The legend's rows while the map is shown: above, within and below the tolerance, and a line of
@@ -261,7 +288,8 @@ mod tests {
     use serde_json::json;
 
     /// A scan of a 10 mm cube measured against a solid 10 mm cube: every point is on it, the map is
-    /// drawn as one dot per point, the key reads in millimetres, and the button takes it away again.
+    /// painted on the scan's triangles, the key reads in millimetres, and the button takes it away
+    /// again.
     #[test]
     fn the_map_is_drawn_keyed_and_taken_away_by_its_button() {
         let mut h = crate::scenario::Harness::new();
@@ -283,7 +311,8 @@ mod tests {
         h.app.run("scan.deviation", json!({"body": "Model"})).unwrap();
         assert!(shown(&h.app) && crate::toolbar::shows_pressed(&h.app, "scan.deviation"));
         let cloud = gpu_cloud(&h.app).unwrap();
-        assert_eq!(cloud.dots.len(), 8 * crate::scan_dots::DOT_SIZE, "one dot per corner of the cube");
+        assert!(cloud.dots.is_empty(), "painted, not dots");
+        assert_eq!(cloud.triangles.len(), 12 * crate::scan_dots::DOT_SIZE, "each of the cube's twelve triangles painted");
         let (summary, rows) = legend(&h.app).unwrap();
         assert!(summary.contains("mm") && !summary.contains("mm²") && !summary.contains("mm³"), "{summary}");
         assert_eq!(rows.len(), 5, "far above, above, within, below, far below");
