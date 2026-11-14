@@ -78,7 +78,7 @@ pub(crate) fn of(app: &SolveApp, scan: Option<&str>) -> f64 {
 /// For a scan with no tolerance kept and the preference on: the tolerance its noise gives and the
 /// noise, mm, once read. Read here on a small scan, beside the window on a large one (none until
 /// it is in).
-fn noise_tolerance(app: &SolveApp, scan: Option<&str>) -> Option<(f64, f64)> {
+pub(crate) fn noise_tolerance(app: &SolveApp, scan: Option<&str>) -> Option<(f64, f64)> {
     let scan = scan?;
     if !app.preferences.scan_tolerance_from_noise || solidcraft_engine::cmd::scan::tolerance::is_set(&app.session, scan) {
         return None;
@@ -144,7 +144,7 @@ fn noise(app: &SolveApp, scan: &str) -> Option<f64> {
 }
 
 /// Whether the noise of `scan` is still being read beside the window.
-fn reading(scan: Option<&str>) -> bool {
+pub(crate) fn reading(scan: Option<&str>) -> bool {
     scan.is_some_and(|s| NOISE.with(|n| matches!(n.borrow().get(s), Some((_, Reading::Working(_))))))
 }
 
@@ -240,24 +240,17 @@ pub(crate) fn key_rows(app: &SolveApp, tolerance: f64, deep: f64) -> Vec<(Color3
     ]
 }
 
-/// The key and summary of the colouring the open tool shows, for the viewport's corner key.
-pub(crate) fn legend(app: &SolveApp) -> Option<(String, Vec<(Color32, String, bool)>)> {
-    let (s, tolerance) = match app.dialog.as_ref().map(|d| &d.kind)? {
+/// The key of the colouring the open tool shows, for the viewport's corner key. The numbers are in
+/// the tool's own Fit row, so the key does not say them again.
+pub(crate) fn legend(app: &SolveApp) -> Option<Vec<(Color32, String, bool)>> {
+    let (_, tolerance) = match app.dialog.as_ref().map(|d| &d.kind)? {
         Kind::ScanFreeForm(k) => crate::dialogs_scan_free_form::fidelity(app, k)?,
         Kind::ScanEditSurface(k) => crate::dialogs_scan_surface::fidelity(app, k)?,
         Kind::ScanFitPatches(k) => crate::dialogs_scan_patches::fidelity(app, k)?,
         Kind::ScanFlatTemplate(k) => crate::dialogs_scan_template::fidelity(app, k)?,
         _ => return None,
     };
-    let summary = solidcraft_ui_text::format(
-        "ui.scan_deviation_summary",
-        &[
-            ("rms", &crate::prefs::show_mm(app, s.rms, 1)),
-            ("within", &format!("{:.0} %", 100.0 * s.within)),
-            ("tolerance", &crate::prefs::show_mm(app, tolerance, 1)),
-        ],
-    );
-    Some((format!("{summary} · {}", verdict(s.within)), key_rows(app, tolerance, tolerance * crate::dialogs_scan_surface::DEEPEST)))
+    Some(key_rows(app, tolerance, tolerance * crate::dialogs_scan_surface::DEEPEST))
 }
 
 #[cfg(test)]

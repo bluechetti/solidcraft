@@ -287,7 +287,8 @@ pub(crate) fn legacy_legends(app: &SolveApp, ui: &mut egui::Ui, viewport: egui::
     // analysis has the corner.
     let deviation_only = app.session.analysis.is_none() && (crate::scan_deviation::shown(app) || crate::scan_fidelity::legend(app).is_some());
     if !app.preferences.viewport_analysis_status || deviation_only {
-        descriptions.push(("analysis:legend", legacy_description(app)));
+        // The scan's key stays small: it is up the whole time the user works on the scan.
+        descriptions.push(("analysis:legend", Details { compact: deviation_only, ..legacy_description(app) }));
     }
     if (!app.preferences.viewport_analysis_status || !app.preferences.viewport_status_details) && !app.session.continuity.is_empty() {
         let t = solidcraft_theme::Tokens::get();

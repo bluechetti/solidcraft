@@ -4029,7 +4029,7 @@ pub(crate) fn analysis_legend_data(app: &SolveApp) -> Option<AnalysisLegend> {
         _ => match crate::scan_deviation::legend(app) {
             Some((summary, rows)) => (tr("Scan Deviation"), Some(summary), rows),
             None => match crate::scan_fidelity::legend(app) {
-                Some((summary, rows)) => (tr("Scan Deviation"), Some(summary), rows),
+                Some(rows) => (tr("Scan Deviation"), None, rows),
                 None => match crate::scan_shapes::legend(app) {
                     Some((summary, rows)) => (tr("cmd.scan_find_all"), Some(summary), rows),
                     None => return None,

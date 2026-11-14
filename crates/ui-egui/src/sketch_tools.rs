@@ -276,10 +276,14 @@ fn marks(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
 /// Commands that start with a step of their own: Canvas and Decal ask for the image first,
 /// Edit Canvas opens the canvas panel. False when the command should not go on.
 pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
-    // Scan Deviation's button takes the map away again while it is shown.
-    if id == "scan.deviation" && crate::scan_deviation::shown(app) {
-        let _ = app.run(id, json!({"show": false}));
-        return false;
+    // Scan Deviation's button takes the map away again while it is shown, and measures against
+    // the tolerance the scan tools start from.
+    if id == "scan.deviation" {
+        if crate::scan_deviation::shown(app) {
+            let _ = app.run(id, json!({"show": false}));
+            return false;
+        }
+        return crate::scan_deviation::start(app);
     }
     // Find All's button takes its colouring away again while it is shown.
     if id == "scan.find_all" && crate::scan_shapes::shown(app) {

@@ -49,6 +49,51 @@ type Remeasure = crate::scan_job::Job<u64, Option<Arc<DeviationMap>>>;
 
 thread_local! {
     static REMEASURING: RefCell<Option<Remeasure>> = const { RefCell::new(None) };
+    /// The scan whose map was drawn against the default while its noise was still being read: it
+    /// is measured again once the noise is in.
+    static AWAITING_NOISE: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Scan Deviation's button: a scan with no tolerance of its own is measured against the one its
+/// tools start from (three times its noise, the preference `scan_tolerance_from_noise`), so the
+/// map and the tools agree on what is within. On a large scan whose noise is still being read
+/// the map is drawn against the default now and measured again once it is in. False when the
+/// map was made here.
+pub(crate) fn start(app: &mut SolveApp) -> bool {
+    let Ok(scan) = solidcraft_engine::cmd::scan::mesh_body_name(&app.session, None, "scan.deviation") else {
+        return true;
+    };
+    match crate::scan_fidelity::noise_tolerance(app, Some(&scan)) {
+        Some((mm, _)) => app.run("scan.deviation", serde_json::json!({"scan": scan, "tolerance": format!("{mm} mm")})).is_err(),
+        None => {
+            let waiting = crate::scan_fidelity::reading(Some(&scan)).then_some(scan);
+            AWAITING_NOISE.with(|w| *w.borrow_mut() = waiting);
+            true
+        }
+    }
+}
+
+/// A map drawn against the default while the scan's noise was read: measured again against the
+/// tolerance the noise gives once it is in (same scan and model, the limit following).
+fn once_noise_is_read(app: &mut SolveApp, ctx: &egui::Context, map: &DeviationMap) {
+    let Some(scan) = AWAITING_NOISE.with(|w| w.borrow().clone()) else {
+        return;
+    };
+    if scan != map.scan {
+        AWAITING_NOISE.with(|w| *w.borrow_mut() = None);
+        return;
+    }
+    match crate::scan_fidelity::noise_tolerance(app, Some(&scan)) {
+        Some((mm, _)) => {
+            AWAITING_NOISE.with(|w| *w.borrow_mut() = None);
+            if (mm - map.tolerance).abs() > 1e-12 {
+                measure_here(app, &serde_json::json!({ "scan": map.scan, "body": map.body, "tolerance": format!("{mm} mm") }));
+                ctx.request_repaint();
+            }
+        }
+        None if crate::scan_fidelity::reading(Some(&scan)) => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
+        None => AWAITING_NOISE.with(|w| *w.borrow_mut() = None),
+    }
 }
 
 /// A map measured at some revision of the design, measured again at this one: same scan, same
@@ -69,6 +114,7 @@ pub(crate) fn follow(app: &mut SolveApp, ctx: &egui::Context) {
     let revision = app.session.revision;
     if map.current(&app.session) {
         REMEASURING.with(|r| *r.borrow_mut() = None);
+        once_noise_is_read(app, ctx, &map);
         return;
     }
     let params = remeasure_params(&map);
@@ -245,6 +291,35 @@ mod tests {
 
         h.app.start("scan.deviation");
         assert!(!shown(&h.app) && gpu_cloud(&h.app).is_none(), "pressed again, the map goes");
+    }
+
+    /// The button on a noisy scan with no tolerance of its own measures against three times its
+    /// noise, as the scan tools do, not 0.1 mm; with the preference off, 0.1 mm as before.
+    #[test]
+    fn the_button_measures_against_the_tolerance_the_tools_start_from() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("noisy.stl");
+        std::fs::write(&path, crate::dialogs_scan_patches::tests::noisy_sheet_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let scan = h.app.session.model.state().bodies[0].name.clone();
+        h.app
+            .run("solid.box", json!({"body_name": "Model", "operation": "new", "length": 60, "width": 60, "height": 5, "corner": [0, 0, -5]}))
+            .unwrap();
+        h.app.run("select.clear", json!({})).unwrap();
+        let noise = solidcraft_engine::cmd::scan::tolerance::noise(&h.app.session, &scan).expect("the noise read");
+        let expected = solidcraft_engine::cmd::scan::tolerance::for_noise(noise);
+        assert!(expected > 0.15, "a noisy scan: {noise} → {expected}");
+
+        h.app.start("scan.deviation");
+        let map = current(&h.app).expect("the map");
+        assert!((map.tolerance - expected).abs() < 1e-9, "{} against {expected}", map.tolerance);
+        assert!(!solidcraft_engine::cmd::scan::tolerance::is_set(&h.app.session, &scan), "nothing kept by a look");
+
+        h.app.start("scan.deviation");
+        assert!(!shown(&h.app));
+        h.app.preferences.scan_tolerance_from_noise = false;
+        h.app.start("scan.deviation");
+        assert_eq!(current(&h.app).expect("the map").tolerance, 0.1, "off: as before");
     }
 
     #[test]

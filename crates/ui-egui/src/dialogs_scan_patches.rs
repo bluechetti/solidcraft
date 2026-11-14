@@ -288,7 +288,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use serde_json::json;
 
     use super::*;
@@ -315,7 +315,7 @@ mod tests {
     }
 
     /// A sheet 60 mm square scanned with about 0.1 mm of noise, the same every run.
-    fn noisy_sheet_stl() -> String {
+    pub(crate) fn noisy_sheet_stl() -> String {
         let mut seed = 99u64;
         let mut next = || {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -433,6 +433,10 @@ mod tests {
         assert!(stats.count > 100 && tolerance == 0.1 && stats.rms < 1.0, "{stats:?} {tolerance}");
         assert!(gpu_shade(&h.app).is_some_and(|c| !c.dots.is_empty() || !c.triangles.is_empty()), "the scan coloured");
         assert!(crate::scan_fidelity::legend(&h.app).is_some(), "and its key");
+        // The key in the view's corner is small: as wide as its rows, the numbers left to the Fit row.
+        let key = crate::scenario::rect_of("analysis:legend").expect("the corner key");
+        let t = solidcraft_theme::Tokens::get();
+        assert!(key.width() < 0.75 * t.form_card_width && key.height() < 5.0 * t.control_height, "{key:?}");
         // A tolerance set here is the scan's: kept by OK, so the next tool opens with it.
         if let Some(Kind::ScanFitPatches(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
             k.tolerance = 0.5;
