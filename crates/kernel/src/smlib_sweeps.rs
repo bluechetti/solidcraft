@@ -631,21 +631,11 @@ mod imp {
         let c = curves(&base, pieces)?;
         let top = plane.offset(from + sign.signum() * distance);
         let edges = seeds(&base, pieces, |q| q);
-        let foot = draft.map_or(0.0, |d| d.foot);
         if let Some(d) = draft.filter(|d| d.foot > 0.0) {
             // A straight foot, then the walls sloping from its top to the far end the taper gives
             // from the base, joined face to face where they meet.
-            if !(foot < distance) {
-                return Err(KernelError::Invalid(format!("taper foot = {foot}")));
-            }
-            let knee = plane.offset(from + sign.signum() * foot);
-            let lean = -(distance * d.taper.tan() / (distance - foot)).atan();
-            let prism = Brep::extrude(&c, p(dir), foot, 0.0, DraftCorner::default(), true).map_err(|e| failed("extrude", e))?;
-            let slope =
-                Brep::extrude(&curves(&knee, pieces)?, p(dir), distance - foot, lean, corner(d.corner), true).map_err(|e| failed("extrude", e))?;
-            let brep = prism.boolean(&slope, solidcraft_smlib::BooleanOp::Union).map_err(|e| failed("extrude", e))?;
-            let brep = brep.ok_or_else(|| failed("extrude", "nothing is left"))?;
-            let body = body_of(brep, "extrude")?;
+            let knee = plane.offset(from + sign.signum() * d.foot);
+            let body = body_of(drafted_loop(plane, pieces, from, distance, sign, d)?, "extrude")?;
             // The caps and the foot's walls from the base; the sloping walls (and the foot's again)
             // from the edges at the knee, which both stand on.
             let low = roles(&body, &base, Some(&top), &edges, &[], false)?;
@@ -664,10 +654,10 @@ mod imp {
                 .collect();
             return with_history(body, &roles, pieces);
         }
-        // SMLib's draft is positive inward; the kernel's taper grows the profile.
-        let lean = draft.map_or(0.0, |d| -d.taper);
-        let rule = draft.map_or(DraftCorner::default(), |d| corner(d.corner));
-        let brep = Brep::extrude(&c, p(dir), distance, lean, rule, true).map_err(|e| failed("extrude", e))?;
+        let brep = match draft {
+            Some(d) => drafted_loop(plane, pieces, from, distance, sign, d)?,
+            None => Brep::extrude(&c, p(dir), distance, 0.0, DraftCorner::default(), true).map_err(|e| failed("extrude", e))?,
+        };
         let body = body_of(brep, "extrude")?;
         let roles = roles(&body, &base, Some(&top), &edges, &[], false)?;
         let sources = (draft.is_none() && sign > 0.0).then(|| extrude_sources(&roles, pieces, region, plane, &base, &top));
@@ -678,7 +668,27 @@ mod imp {
     /// The solid `pieces` (one closed loop) on `plane` sweep, moved `from` along its normal and
     /// drafted `d` over `distance` along `sign` × the normal, as [`extrude`] builds it, without
     /// its roles.
+    ///
+    /// The walls are built on the plane z = 0 with its x and y, and the solid then moved onto
+    /// `plane`: SMLib's draft extrusion makes a line's wall a plane and an arc's a cone only
+    /// when the profile lies square to z, and fits B-splines to them on any other plane, even
+    /// one turned 1e-6 rad off it, whose seams then fail SMLib's check (a 2 deg draft of a
+    /// rounded rectangle 1e-4 rad off XY: vertex gaps of 8.4e-5 against 2e-5) or whose shell
+    /// does (degenerate trims). A rigid move keeps the plane and cone walls what they are.
     fn drafted_loop(plane: &Plane, pieces: &[Piece], from: f64, distance: f64, sign: f64, d: Draft) -> Result<Brep> {
+        let square = Plane { origin: Vec3::ZERO, x: Vec3::X, y: Vec3::Y };
+        if *plane == square {
+            return drafted_loop_on(plane, pieces, from, distance, sign, d);
+        }
+        let n = plane.x.cross(plane.y).normalized().ok_or_else(|| KernelError::Invalid("profile plane".into()))?;
+        let (x, y, o) = (plane.x, plane.y, plane.origin);
+        // Column-major, as SMLib takes it: the images of x, y and z, then the translation.
+        let onto = [[x.x, x.y, x.z, 0.0], [y.x, y.y, y.z, 0.0], [n.x, n.y, n.z, 0.0], [o.x, o.y, o.z, 1.0]];
+        drafted_loop_on(&square, pieces, from, distance, sign, d)?.transformed(&onto).map_err(|e| failed("extrude", e))
+    }
+
+    /// [`drafted_loop`] as SMLib builds it on `plane` itself.
+    fn drafted_loop_on(plane: &Plane, pieces: &[Piece], from: f64, distance: f64, sign: f64, d: Draft) -> Result<Brep> {
         let base = plane.offset(from);
         let n = plane.x.cross(plane.y).normalized().ok_or_else(|| KernelError::Invalid("profile plane".into()))?;
         let dir = n * sign.signum();
