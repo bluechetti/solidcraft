@@ -87,7 +87,7 @@ pub const NEIGHBOURS_HOLD: usize = 0;
 pub const NEIGHBOURS_FOLLOW: usize = 1;
 
 /// How many tolerances out the deviation colours are deepest.
-const DEEPEST: f64 = 8.0;
+pub(crate) const DEEPEST: f64 = 8.0;
 
 /// The colouring's id among the clouds the viewport draws, and a dot's size on the screen.
 const SHADE_CLOUD_ID: u64 = u64::MAX - 7;
@@ -305,9 +305,9 @@ struct Shading {
     shade: network::Shade,
     values: Vec<f32>,
     version: u64,
-    dots: Arc<Vec<u8>>,
+    dots: Shaded,
     /// The tolerance and colours the dots were coloured with.
-    key: (u64, [[u8; 3]; 3]),
+    key: (u64, crate::scan_deviation::Colours),
 }
 
 #[derive(Clone, Debug)]
@@ -650,8 +650,8 @@ fn study(app: &SolveApp, k: &mut EditSurface) {
             shade,
             values: Vec::new(),
             version: 0,
-            dots: Arc::new(Vec::new()),
-            key: (0, [[0; 3]; 3]),
+            dots: Shaded::default(),
+            key: (0, [[0; 3]; 5]),
         })
     });
     let shown = k.shown.clone();
@@ -982,7 +982,7 @@ fn show_faces(k: &mut EditSurface, faces: Vec<NurbsSurface>, dragging: bool, tou
         if n > 0 {
             k.fit = Some(((squares / n as f64).sqrt(), max));
         }
-        sh.key = (0, [[0; 3]; 3]);
+        sh.key = (0, [[0; 3]; 5]);
     }
     k.shown = faces;
     recolour(k);
@@ -1342,7 +1342,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
     let moved = k.moved.iter().filter(|m| **m).count().to_string();
     form_row(ui, tr("ui.scan_edit_moved"), |ui| ui_kit::text(ui, &moved, ui_kit::Text::Cell));
     // How far the scan is from the surface, and its colouring against the tolerance.
-    if let Some((rms, max)) = k.fit {
+    if let Some((rms, max)) = k.fit.filter(|_| k.shade.is_none()) {
         let fit = solidcraft_ui_text::format(
             "ui.scan_edit_distance_value",
             &[("rms", &crate::prefs::show_mm(app, rms, 1)), ("max", &crate::prefs::show_mm(app, max, 1))],
@@ -1359,7 +1359,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
         k.keep_tolerance = t.keep;
         recolour(k);
         if let Some(stats) = fidelity(app, k).map(|(s, _)| s) {
-            crate::scan_fidelity::readout(app, ui, "scan_edit_fidelity", &stats, t.mm);
+            crate::scan_fidelity::readout(app, ui, "scan_edit_fidelity", &stats, t.mm, None);
         }
     }
     // Surface Check on the faces as shown: a fold a drag makes is seen as it is made.
@@ -2595,17 +2595,17 @@ pub(crate) fn gpu_shade(app: &SolveApp) -> Option<GpuCloud> {
         return None;
     }
     let sh = k.shade.as_ref().filter(|s| s.version != 0)?;
-    Some(shade_cloud(SHADE_CLOUD_ID, sh.version, sh.dots.clone()))
+    Some(shade_cloud(SHADE_CLOUD_ID, sh.version, &sh.dots))
 }
 
-/// A colouring's dots as a cloud for the GPU viewport, under `id`.
-pub(crate) fn shade_cloud(id: u64, version: u64, dots: Arc<Vec<u8>>) -> GpuCloud {
+/// A colouring as a cloud for the GPU viewport, under `id`.
+pub(crate) fn shade_cloud(id: u64, version: u64, shaded: &Shaded) -> GpuCloud {
     GpuCloud {
         id,
         version,
-        dots,
+        dots: shaded.dots.clone(),
         segments: crate::scan_dots::none(),
-        triangles: crate::scan_dots::none(),
+        triangles: shaded.triangles.clone(),
         style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: SHADE_PIXELS },
     }
 }
@@ -2618,7 +2618,7 @@ fn recolour(k: &mut EditSurface) {
     if sh.key == key && sh.version != 0 {
         return;
     }
-    sh.dots = Arc::new(shade_dots(&sh.shade, &sh.values, tolerance, key.1));
+    sh.dots = shade_dots(&sh.shade, &sh.values, tolerance, key.1);
     sh.version = next_shade_version();
     sh.key = key;
 }
@@ -2644,16 +2644,35 @@ pub(crate) fn next_shade_version() -> u64 {
     })
 }
 
-/// The scan's points under the surface as coloured dots: each by how far it is from the surface,
-/// against `tolerance`.
-pub(crate) fn shade_dots(shade: &network::Shade, values: &[f32], tolerance: f64, colours: [[u8; 3]; 3]) -> Vec<u8> {
+/// A colouring's records for the GPU viewport: the scan's triangles under the surface painted, or
+/// its points as dots where too many triangles lie under it ([`network::PAINT_LIMIT`]).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Shaded {
+    pub dots: Arc<Vec<u8>>,
+    pub triangles: Arc<Vec<u8>>,
+}
+
+/// The scan under the surface coloured by how far each part of it is from the surface, against
+/// `tolerance`: its triangles painted where the shade has them, else its points as dots.
+pub(crate) fn shade_dots(shade: &network::Shade, values: &[f32], tolerance: f64, colours: crate::scan_deviation::Colours) -> Shaded {
+    let rgb = |v: f32| solidcraft_scan_scale(v, tolerance).map(|s| crate::scan_deviation::colour(colours, s));
+    if !shade.paint.is_empty() {
+        let mut out = Vec::with_capacity(shade.paint.len() * crate::scan_dots::DOT_SIZE);
+        for t in &shade.paint {
+            let Some(&v) = values.get(t.point as usize) else { continue };
+            let Some(rgb) = rgb(v) else { continue };
+            let cell = solidcraft_viewport_gpu::view::Cell { corners: t.corners, value: [v; 3], rgb, ..Default::default() };
+            solidcraft_viewport_gpu::view::cloud_cell(&mut out, &cell);
+        }
+        return Shaded { dots: crate::scan_dots::none(), triangles: Arc::new(out) };
+    }
     let mut out = Vec::with_capacity(shade.points.len() * crate::scan_dots::DOT_SIZE);
     for (p, v) in shade.points.iter().zip(values) {
-        let Some(s) = solidcraft_scan_scale(*v, tolerance) else { continue };
-        let dot = crate::scan_dots::Dot { at: p.at.to_f32(), value: *v, rgb: crate::scan_deviation::colour(colours, s) };
+        let Some(rgb) = rgb(*v) else { continue };
+        let dot = crate::scan_dots::Dot { at: p.at.to_f32(), value: *v, rgb };
         crate::scan_dots::cloud_dot(&mut out, &dot);
     }
-    out
+    Shaded { dots: Arc::new(out), triangles: crate::scan_dots::none() }
 }
 
 /// Where a distance sits on the colouring's scale, -1 to 1 (0 within the tolerance).
@@ -3126,7 +3145,8 @@ mod tests {
         h.frames(3);
         assert_eq!((kind(&h).handles, kind(&h).snap), (HANDLES_DOTS, SNAP_POINTER), "points on the surface, snapped to the scan, by default");
         let cloud = gpu_shade(&h.app).expect("the scan under the surface coloured");
-        assert!(cloud.dots.len() > 100 * crate::scan_dots::DOT_SIZE, "{}", cloud.dots.len());
+        assert!(cloud.dots.is_empty(), "painted, not dotted");
+        assert!(cloud.triangles.len() > 100 * crate::scan_dots::DOT_SIZE, "the scan's triangles under it painted: {}", cloud.triangles.len());
         let (rms, _) = kind(&h).fit.expect("the distance");
         assert!(rms < 0.05, "a Free Form lies on the dome: {rms}");
         if let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {

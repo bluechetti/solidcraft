@@ -11,6 +11,9 @@ pub struct AnalysisColors {
     /// to light yellow in one straight blend, so the lightness rises the whole way and the scale
     /// reads with hue lost too (#975).
     pub curvature: [[f32; 3]; 3],
+    /// Scan deviation, from far below a result through within the tolerance to far above it: each
+    /// side blends through a lighter colour on its way out, so a little off reads apart from a lot.
+    pub deviation: [[f32; 3]; 5],
     /// Stripe the negative draft and blocked faces too, so colour is not the only cue.
     pub hatch: bool,
 }
@@ -21,6 +24,7 @@ impl AnalysisColors {
         draft: [[0.20, 0.75, 0.30], [0.95, 0.80, 0.15], [0.85, 0.22, 0.20]],
         access: [[0.20, 0.75, 0.30], [0.85, 0.22, 0.20]],
         curvature: [[0.08, 0.12, 0.45], [0.53, 0.51, 0.425], [0.98, 0.90, 0.40]],
+        deviation: [[0.15, 0.30, 0.85], [0.30, 0.75, 0.92], [0.20, 0.75, 0.30], [0.96, 0.82, 0.18], [0.86, 0.20, 0.18]],
         hatch: false,
     };
 }

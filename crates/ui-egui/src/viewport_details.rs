@@ -282,11 +282,13 @@ pub(crate) fn legacy_description(app: &SolveApp) -> Details {
 /// Compatibility placement uses the same description and renderer, never a second painter.
 pub(crate) fn legacy_legends(app: &SolveApp, ui: &mut egui::Ui, viewport: egui::Rect) {
     let mut descriptions = Vec::new();
-    // The scan deviation map has no status item of its own: its key shows in the corner whenever
-    // it is on and no surface analysis has the corner.
-    let deviation_only = app.session.analysis.is_none() && crate::scan_deviation::shown(app);
+    // The scan deviation map, and a Scan-tab tool colouring the scan under its result, have no
+    // status item of their own: their key shows in the corner whenever they colour and no surface
+    // analysis has the corner.
+    let deviation_only = app.session.analysis.is_none() && (crate::scan_deviation::shown(app) || crate::scan_fidelity::legend(app).is_some());
     if !app.preferences.viewport_analysis_status || deviation_only {
-        descriptions.push(("analysis:legend", legacy_description(app)));
+        // The scan's key stays small: it is up the whole time the user works on the scan.
+        descriptions.push(("analysis:legend", Details { compact: deviation_only, ..legacy_description(app) }));
     }
     if (!app.preferences.viewport_analysis_status || !app.preferences.viewport_status_details) && !app.session.continuity.is_empty() {
         let t = solidcraft_theme::Tokens::get();

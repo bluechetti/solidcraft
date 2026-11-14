@@ -132,12 +132,17 @@ struct Under {
     /// Whether the point is inside a cut-out: a part standing off the wall by design, which does not
     /// count against how flat the wall is.
     cut: Vec<bool>,
-    dots: Option<(u64, [[u8; 3]; 3], u64, Arc<Vec<u8>>)>,
+    /// The scan's triangles over the template, each with how far its middle stands off the plane:
+    /// the colouring painted on the scan. Empty past [`PAINT_LIMIT`]: then the points are dots.
+    paint: Vec<([Vec3; 3], f32)>,
+    dots: Option<(u64, crate::scan_deviation::Colours, u64, crate::dialogs_scan_surface::Shaded)>,
 }
 
 /// The colouring's id among the clouds the viewport draws, and the most points it shows.
 const SHADE_CLOUD_ID: u64 = u64::MAX - 12;
 const SHADE_POINTS: usize = 40_000;
+/// The most of the scan's triangles the colouring paints (more and its points are dots).
+const PAINT_LIMIT: usize = crate::scan_dots::PAINT_MOST;
 
 /// The template as it will lie, in space.
 #[derive(Clone, Debug)]
@@ -380,7 +385,7 @@ fn inside(ring: &[Vec2], p: Vec2) -> bool {
 /// evenly to [`SHADE_POINTS`].
 fn under_of(s: &solidcraft_engine::Session, m: &solidcraft_engine::cmd::scan::template::Prepared) -> Option<Under> {
     let state = s.model.state();
-    let (positions, _) = state.body(&m.body)?.body.triangle_mesh()?;
+    let (positions, triangles) = state.body(&m.body)?.body.triangle_mesh()?;
     let t = &m.made;
     let normal = t.frame.x.cross(t.frame.y).normalized()?;
     let step = (positions.len() / SHADE_POINTS).max(1);
@@ -388,7 +393,7 @@ fn under_of(s: &solidcraft_engine::Session, m: &solidcraft_engine::cmd::scan::te
         let d = p - t.frame.origin;
         Vec2::new(d.dot(t.frame.x), d.dot(t.frame.y))
     };
-    let mut under = Under { scan: m.body.clone(), at: Vec::new(), values: Vec::new(), cut: Vec::new(), dots: None };
+    let mut under = Under { scan: m.body.clone(), at: Vec::new(), values: Vec::new(), cut: Vec::new(), paint: Vec::new(), dots: None };
     for p in positions.iter().step_by(step) {
         let q = local(*p);
         if !inside(&t.outline, q) {
@@ -398,10 +403,123 @@ fn under_of(s: &solidcraft_engine::Session, m: &solidcraft_engine::cmd::scan::te
         under.values.push(((*p - t.frame.origin).dot(normal)) as f32);
         under.cut.push(t.cutouts.iter().any(|c| inside(&c.ring, q)));
     }
+    let off = |p: Vec3| ((p - t.frame.origin).dot(normal)) as f32;
+    under.paint = painted(positions, triangles, &t.outline, local, off);
+    if under.paint.is_empty() {
+        under.paint = gridded(positions, triangles, &t.outline, local, off, |q| t.at(q), normal);
+    }
     (!under.at.is_empty()).then_some(under)
 }
 
-/// The scan's dots made again when the tolerance or the colours have changed.
+/// The scan's triangles whose middles lie inside the template's `outline` (`local` puts a point in
+/// its coordinates), each with `value` at its middle; none past [`PAINT_LIMIT`]. The outline's box
+/// is tried first, so a found outline of hundreds of sides is walked only for triangles near it.
+fn painted(
+    positions: &[Vec3],
+    triangles: &[[u32; 3]],
+    outline: &[Vec2],
+    local: impl Fn(Vec3) -> Vec2,
+    value: impl Fn(Vec3) -> f32,
+) -> Vec<([Vec3; 3], f32)> {
+    let Some(first) = outline.first() else { return Vec::new() };
+    let (lo, hi) =
+        outline.iter().fold((*first, *first), |(lo, hi), q| (Vec2::new(lo.x.min(q.x), lo.y.min(q.y)), Vec2::new(hi.x.max(q.x), hi.y.max(q.y))));
+    let mut out = Vec::new();
+    for tri in triangles {
+        let corner = |i: u32| positions.get(i as usize).copied();
+        let (Some(a), Some(b), Some(c)) = (corner(tri[0]), corner(tri[1]), corner(tri[2])) else { continue };
+        let middle = (a + b + c) / 3.0;
+        let q = local(middle);
+        if q.x < lo.x || q.y < lo.y || q.x > hi.x || q.y > hi.y || !inside(outline, q) {
+            continue;
+        }
+        if out.len() == PAINT_LIMIT {
+            return Vec::new();
+        }
+        out.push(([a, b, c], value(middle)));
+    }
+    out
+}
+
+/// The scan over the template as a grid of cells for a scan with too many triangles to paint (a
+/// whole wall of millions): each cell at the scan's mean height in it, its corners at the mean of
+/// the cells round them so the grid lies on the scan as one sheet, coloured by its own mean. As
+/// many cells as fit [`PAINT_LIMIT`] triangles; a cell with no scan in it, or outside the
+/// outline, is left out. Its triangles face the way the scan's do.
+fn gridded(
+    positions: &[Vec3],
+    triangles: &[[u32; 3]],
+    outline: &[Vec2],
+    local: impl Fn(Vec3) -> Vec2,
+    offset: impl Fn(Vec3) -> f32,
+    at: impl Fn(Vec2) -> Vec3,
+    normal: Vec3,
+) -> Vec<([Vec3; 3], f32)> {
+    let Some(first) = outline.first() else { return Vec::new() };
+    let (lo, hi) =
+        outline.iter().fold((*first, *first), |(lo, hi), q| (Vec2::new(lo.x.min(q.x), lo.y.min(q.y)), Vec2::new(hi.x.max(q.x), hi.y.max(q.y))));
+    let (w, h) = (hi.x - lo.x, hi.y - lo.y);
+    let size = (w * h / (PAINT_LIMIT / 2) as f64).sqrt();
+    if !(size.is_finite() && size > 0.0) {
+        return Vec::new();
+    }
+    let (nx, ny) = ((w / size).ceil().max(1.0) as usize, (h / size).ceil().max(1.0) as usize);
+    let mut sums = vec![(0.0f64, 0u32); nx * ny];
+    let mut facing = 0.0;
+    for tri in triangles {
+        let corner = |i: u32| positions.get(i as usize).copied();
+        let (Some(a), Some(b), Some(c)) = (corner(tri[0]), corner(tri[1]), corner(tri[2])) else { continue };
+        let middle = (a + b + c) / 3.0;
+        let q = local(middle);
+        let (i, j) = (((q.x - lo.x) / size).floor(), ((q.y - lo.y) / size).floor());
+        if !(i >= 0.0 && j >= 0.0 && (i as usize) < nx && (j as usize) < ny) {
+            continue;
+        }
+        let cell = &mut sums[j as usize * nx + i as usize];
+        cell.0 += f64::from(offset(middle));
+        cell.1 += 1;
+        facing += (b - a).cross(c - a).dot(normal);
+    }
+    let mean = |i: usize, j: usize| sums.get(j * nx + i).filter(|c| c.1 > 0).map(|c| c.0 / f64::from(c.1));
+    // A grid corner's height: the mean of the cells round it that have scan.
+    let corner = |i: usize, j: usize| {
+        let round: Vec<f64> = [(i.wrapping_sub(1), j.wrapping_sub(1)), (i, j.wrapping_sub(1)), (i.wrapping_sub(1), j), (i, j)]
+            .into_iter()
+            .filter(|(a, b)| *a < nx && *b < ny)
+            .filter_map(|(a, b)| mean(a, b))
+            .collect();
+        (!round.is_empty()).then(|| round.iter().sum::<f64>() / round.len() as f64)
+    };
+    let place = |i: usize, j: usize, height: f64| at(Vec2::new(lo.x + i as f64 * size, lo.y + j as f64 * size)) + normal * height;
+    let mut out = Vec::new();
+    for j in 0..ny {
+        for i in 0..nx {
+            let Some(value) = mean(i, j) else { continue };
+            let middle = Vec2::new(lo.x + (i as f64 + 0.5) * size, lo.y + (j as f64 + 0.5) * size);
+            if !inside(outline, middle) {
+                continue;
+            }
+            let height = |a: usize, b: usize| corner(a, b).unwrap_or(value);
+            let [p00, p10, p11, p01] = [
+                place(i, j, height(i, j)),
+                place(i + 1, j, height(i + 1, j)),
+                place(i + 1, j + 1, height(i + 1, j + 1)),
+                place(i, j + 1, height(i, j + 1)),
+            ];
+            let v = value as f32;
+            // Wound so each triangle faces the way the scan does.
+            if facing >= 0.0 {
+                out.extend([([p00, p10, p11], v), ([p00, p11, p01], v)]);
+            } else {
+                out.extend([([p00, p11, p10], v), ([p00, p01, p11], v)]);
+            }
+        }
+    }
+    out
+}
+
+/// The scan's colouring made again when the tolerance or the colours have changed: its triangles
+/// painted, or its points as dots where too many lie over the template.
 fn colour(app: &SolveApp, k: &mut FlatTemplate) {
     let colours = crate::scan_deviation::colours();
     let Some(under) = k.shown.as_mut().and_then(|s| s.under.as_mut()) else { return };
@@ -409,13 +527,23 @@ fn colour(app: &SolveApp, k: &mut FlatTemplate) {
     if under.dots.as_ref().is_some_and(|(t, c, _, _)| *t == tolerance.to_bits() && *c == colours) {
         return;
     }
-    let mut out = Vec::with_capacity(under.at.len() * crate::scan_dots::DOT_SIZE);
-    for (at, v) in under.at.iter().zip(&under.values) {
-        let Some(s) = crate::dialogs_scan_surface::solidcraft_scan_scale(*v, tolerance) else { continue };
-        let dot = crate::scan_dots::Dot { at: at.to_f32(), value: *v, rgb: crate::scan_deviation::colour(colours, s) };
-        crate::scan_dots::cloud_dot(&mut out, &dot);
-    }
-    under.dots = Some((tolerance.to_bits(), colours, crate::dialogs_scan_surface::next_shade_version(), Arc::new(out)));
+    let rgb = |v: f32| crate::dialogs_scan_surface::solidcraft_scan_scale(v, tolerance).map(|s| crate::scan_deviation::colour(colours, s));
+    let shaded = if under.paint.is_empty() {
+        let mut out = Vec::with_capacity(under.at.len() * crate::scan_dots::DOT_SIZE);
+        for (at, v) in under.at.iter().zip(&under.values) {
+            let Some(rgb) = rgb(*v) else { continue };
+            crate::scan_dots::cloud_dot(&mut out, &crate::scan_dots::Dot { at: at.to_f32(), value: *v, rgb });
+        }
+        crate::dialogs_scan_surface::Shaded { dots: Arc::new(out), triangles: crate::scan_dots::none() }
+    } else {
+        let mut out = Vec::with_capacity(under.paint.len() * crate::scan_dots::DOT_SIZE);
+        for (corners, v) in &under.paint {
+            let Some(rgb) = rgb(*v) else { continue };
+            crate::scan_dots::cloud_painted(&mut out, *corners, *v, rgb);
+        }
+        crate::dialogs_scan_surface::Shaded { dots: crate::scan_dots::none(), triangles: Arc::new(out) }
+    };
+    under.dots = Some((tolerance.to_bits(), colours, crate::dialogs_scan_surface::next_shade_version(), shaded));
 }
 
 /// How flat the wall is under the template, and the tolerance: the points outside the cut-outs,
@@ -436,8 +564,8 @@ pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view:
     if !k.colours {
         return None;
     }
-    let (_, _, version, dots) = k.shown.as_ref()?.under.as_ref()?.dots.as_ref()?;
-    Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots.clone()))
+    let (_, _, version, shaded) = k.shown.as_ref()?.under.as_ref()?.dots.as_ref()?;
+    Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, shaded))
 }
 
 /// The dialog's rows.
@@ -580,7 +708,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
                 ui_kit::text(ui, &dims, ui_kit::Text::Note("scan_template_sides"));
             }
             if let Some((stats, tolerance)) = fidelity(app, k) {
-                crate::scan_fidelity::readout(app, ui, "scan_template_fidelity", &stats, tolerance);
+                crate::scan_fidelity::readout(app, ui, "scan_template_fidelity", &stats, tolerance, None);
             }
             if m.fitted {
                 let plane = solidcraft_ui_text::format("ui.scan_template_plane", &[("kept", &m.kept.to_string()), ("under", &m.under.to_string())]);
@@ -1211,6 +1339,43 @@ fn draw_panel(painter: &egui::Painter, proj: &crate::viewport::Proj, k: &FlatTem
 
 #[cfg(test)]
 mod tests {
+    /// A wall with too many triangles to paint is coloured as a grid of cells: lying on the scan
+    /// (a sheet 2 mm off the template's plane, tilted 1 mm across), facing the way the scan does,
+    /// only inside the outline, and no more triangles than the limit.
+    #[test]
+    fn a_large_wall_is_painted_as_a_grid_lying_on_the_scan() {
+        let n = 80u32;
+        let height = |x: f64| 2.0 + x / 100.0;
+        let positions: Vec<Vec3> =
+            (0..=n).flat_map(|j| (0..=n).map(move |i| (f64::from(i), f64::from(j)))).map(|(x, y)| Vec3::new(x, y, height(x))).collect();
+        let mut triangles = Vec::new();
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * (n + 1) + i;
+                triangles.push([k, k + 1, k + n + 2]);
+                triangles.push([k, k + n + 2, k + n + 1]);
+            }
+        }
+        let outline = [Vec2::new(10.0, 10.0), Vec2::new(70.0, 10.0), Vec2::new(70.0, 50.0), Vec2::new(10.0, 50.0)];
+        let local = |p: Vec3| Vec2::new(p.x, p.y);
+        let off = |p: Vec3| p.z as f32;
+        let at = |q: Vec2| Vec3::new(q.x, q.y, 0.0);
+        let cells = gridded(&positions, &triangles, &outline, local, off, at, Vec3::Z);
+        assert!(!cells.is_empty() && cells.len() <= PAINT_LIMIT, "{}", cells.len());
+        for (corners, value) in &cells {
+            let [a, b, c] = *corners;
+            assert!((b - a).cross(c - a).z > 0.0, "facing the way the scan does");
+            for p in corners {
+                assert!((9.9..=70.1).contains(&p.x) && (9.9..=50.1).contains(&p.y), "inside the outline: {p:?}");
+                assert!((p.z - height(p.x)).abs() < 0.05, "on the scan: {p:?}");
+            }
+            let middle = (a + b + c) / 3.0;
+            assert!((f64::from(*value) - height(middle.x)).abs() < 0.05, "its colour is the scan's height there");
+        }
+        // Small enough to paint, the scan's own triangles are painted instead.
+        assert_eq!(painted(&positions, &triangles, &outline, local, off).len(), 2 * 60 * 40);
+    }
+
     use serde_json::json;
 
     use super::*;
@@ -1286,7 +1451,10 @@ mod tests {
         // by design, is not counted against it).
         let (stats, tolerance) = fidelity(&h.app, k).expect("the wall measured");
         assert!(stats.count > 100 && tolerance == 0.1 && stats.within > 0.99 && stats.rms < 0.01, "{stats:?}");
-        assert!(gpu_shade(&h.app).is_some_and(|c| !c.dots.is_empty()), "the scan coloured over the template");
+        assert!(
+            gpu_shade(&h.app).is_some_and(|c| c.dots.is_empty() && !c.triangles.is_empty()),
+            "the scan painted over the template, its triangles, not dots"
+        );
         // Once the wall's plane is known, a click on the outlet, 25 off the wall, lands on the
         // plane under it: where the template's corner will be.
         let (_, normal) = wall_plane(&h.app).expect("the wall's plane");

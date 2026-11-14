@@ -115,6 +115,19 @@ pub fn look(scan: &Scan, floating: f64) -> Option<Look> {
     })
 }
 
+/// The scan's noise alone (what [`look`] reads as `noise`), in mm: the median of the places read,
+/// `None` with too few triangles at any place to read it.
+pub fn noise(scan: &Scan) -> Option<f64> {
+    let area: f64 =
+        (0..scan.triangle_count()).filter_map(|t| scan.corners(t)).map(|[a, b, c]| (b - a).cross(c - a).len() / 2.0).filter(|a| a.is_finite()).sum();
+    if !(area > 0.0) {
+        return None;
+    }
+    let mut read: Vec<f64> = noise_places(scan, area).into_iter().map(|r| r.0).collect();
+    read.sort_by(f64::total_cmp);
+    read.get(read.len() / 2).copied()
+}
+
 /// The scan's size along its own directions, longest first: the box round a sample of its points
 /// laid along them as Quick Align lays it; the design's box when it has no such directions.
 fn own_size(scan: &Scan, low: Vec3, high: Vec3) -> [f64; 3] {
@@ -235,6 +248,7 @@ mod tests {
         let rough = look(&Scan::new(&noisy, &t), 0.02).unwrap();
         let noise = rough.noise.unwrap();
         assert!(noise > 0.01 && noise < 0.2, "{noise}");
+        assert_eq!(super::noise(&Scan::new(&noisy, &t)), Some(noise), "the noise alone reads the same");
         assert!(rough.smoothing.is_some_and(|s| s > 0.0), "{rough:?}");
     }
 

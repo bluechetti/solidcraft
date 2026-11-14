@@ -499,6 +499,20 @@ mod tests {
         }
     }
 
+    /// Scan help stays short: two short sentences, as every tool's help should be. Long help was
+    /// the first thing users of the Scan tab tripped over.
+    #[test]
+    fn scan_help_is_two_short_sentences() {
+        let english = catalog(include_str!(concat!(env!("OUT_DIR"), "/locales/en.json")));
+        let long: Vec<_> = english
+            .iter()
+            .filter(|(k, _)| k.starts_with("help.scan."))
+            .filter(|(_, text)| text.split_whitespace().count() > 30)
+            .map(|(k, text)| format!("{k} ({} words)", text.split_whitespace().count()))
+            .collect();
+        assert!(long.is_empty(), "scan help over 30 words: {long:?}");
+    }
+
     #[test]
     fn a_documented_command_has_help_and_others_do_not() {
         crate::i18n::install();

@@ -1,0 +1,42 @@
+{
+  "en": {
+    "ui.ribbon_scan_align_to_model": "Align to CAD",
+    "ui.ribbon_scan_flat_template": "Template",
+    "ui.ribbon_scan_register": "Align Scans"
+  },
+  "ar": {
+    "ui.ribbon_scan_align_to_model": "محاذاة مع CAD",
+    "ui.ribbon_scan_flat_template": "قالب",
+    "ui.ribbon_scan_register": "محاذاة المسوح"
+  },
+  "de": {
+    "ui.ribbon_scan_align_to_model": "An CAD",
+    "ui.ribbon_scan_flat_template": "Schablone",
+    "ui.ribbon_scan_register": "Scans ausrichten"
+  },
+  "he": {
+    "ui.ribbon_scan_align_to_model": "יישור ל-CAD",
+    "ui.ribbon_scan_flat_template": "תבנית",
+    "ui.ribbon_scan_register": "יישור סריקות"
+  },
+  "ja": {
+    "ui.ribbon_scan_align_to_model": "CADに合わせる",
+    "ui.ribbon_scan_flat_template": "テンプレート",
+    "ui.ribbon_scan_register": "スキャン位置合わせ"
+  },
+  "ko": {
+    "ui.ribbon_scan_align_to_model": "CAD에 정렬",
+    "ui.ribbon_scan_flat_template": "템플릿",
+    "ui.ribbon_scan_register": "스캔 정렬"
+  },
+  "vi": {
+    "ui.ribbon_scan_align_to_model": "Căn theo CAD",
+    "ui.ribbon_scan_flat_template": "Khuôn",
+    "ui.ribbon_scan_register": "Căn bản quét"
+  },
+  "zh": {
+    "ui.ribbon_scan_align_to_model": "对齐到 CAD",
+    "ui.ribbon_scan_flat_template": "样板",
+    "ui.ribbon_scan_register": "对齐扫描"
+  }
+}

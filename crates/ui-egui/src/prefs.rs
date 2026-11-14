@@ -1551,6 +1551,10 @@ preference_settings! {
     /// on it, when one is within a few pixels, and the view shows where. Off: the click lands
     /// exactly where it is, as before.
     scan_click_snap: bool = true, PAGE_TOOLS => check_id("prefs.scan_click_snap");
+    /// A scan with no tolerance of its own is read against three times its noise (at least
+    /// 0.1 mm) in New Free Form, Edit Surface, Fit Patches and Flat Template, and OK keeps it for
+    /// the scan, so a faithful fit to a noisy scan does not read as off. Off: 0.1 mm, as before.
+    scan_tolerance_from_noise: bool = true, PAGE_TOOLS => check_id("prefs.scan_tolerance_from_noise");
     /// Remove Floating Pieces, Fill Holes, Reduce Mesh, Repair Mesh, Denoise and Remesh write the
     /// cleaned scan back into its Insert Mesh feature, as before, instead of adding a step to the
     /// timeline that keeps their settings (and can be edited, suppressed or deleted later).

@@ -27,6 +27,21 @@ pub fn of(s: &Session, scan: &str) -> f64 {
     s.doc.scan_tolerances.get(scan).copied().filter(|t| valid(*t)).unwrap_or(DEFAULT_MM)
 }
 
+/// The tolerance a scan with `noise` (mm) is read against so that a faithful fit reads as on it:
+/// three times the noise, rounded up to a hundredth of a millimetre, and never under the default.
+pub fn for_noise(noise: f64) -> f64 {
+    let three = (300.0 * noise).ceil() / 100.0;
+    if three.is_finite() && valid(three) { three.max(DEFAULT_MM) } else { DEFAULT_MM }
+}
+
+/// The noise of the scan `scan` in mm (Survey Scan's reading of it), `None` for a body that is not
+/// a scan or too small to read. Reads the whole scan: on a large one, call it beside the window.
+pub fn noise(s: &Session, scan: &str) -> Option<f64> {
+    let state = s.model.state();
+    let (positions, triangles) = state.body(scan)?.body.triangle_mesh()?;
+    solidcraft_scan::survey::noise(&solidcraft_scan::Scan::new(positions, triangles)).filter(|n| n.is_finite() && *n >= 0.0)
+}
+
 /// Whether `scan` has a tolerance of its own.
 pub fn is_set(s: &Session, scan: &str) -> bool {
     s.doc.scan_tolerances.contains_key(scan)
@@ -106,5 +121,17 @@ mod tests {
         run(&mut s, "scan.tolerance", json!({"tolerance": 0.3}));
         let reset = run(&mut s, "scan.tolerance", json!({"reset": true}));
         assert_eq!((reset["tolerance"].as_f64(), reset["set"].as_bool()), (Some(0.1), Some(false)));
+    }
+
+    /// A noisy scan's tolerance is three times its noise, rounded up; a clean one keeps the
+    /// default, and nonsense noise gives the default.
+    #[test]
+    fn the_tolerance_for_a_noise_is_three_times_it() {
+        assert_eq!(super::for_noise(0.1), 0.3);
+        assert_eq!(super::for_noise(0.0412), 0.13);
+        assert_eq!(super::for_noise(0.001), 0.1, "never under the default");
+        for bad in [f64::NAN, f64::INFINITY, -1.0] {
+            assert_eq!(super::for_noise(bad), 0.1, "{bad}");
+        }
     }
 }

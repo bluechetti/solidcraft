@@ -714,34 +714,60 @@ fn on_segment(p: Vec3, a: Vec3, b: Vec3) -> Vec3 {
     if l2 <= 1e-24 { a } else { a + d * ((p - a).dot(d) / l2).clamp(0.0, 1.0) }
 }
 
+/// The most triangles a snap looks over round the place clicked (a far view of a fine scan).
+const SNAP_MOST: usize = 60_000;
+
 impl Topology {
+    /// The triangles of the scan within `reach` of `p`, reached across it from `t` (the one under
+    /// `p`) through corners within reach: the surface round the place, not the far side of a thin
+    /// part. At most [`SNAP_MOST`], nearest rings first.
+    fn round(&self, t: usize, p: Vec3, reach: f64) -> Vec<usize> {
+        let scan = self.scan();
+        let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::from([t]);
+        let mut out = vec![t];
+        let mut k = 0;
+        while k < out.len() && out.len() < SNAP_MOST {
+            let f = out[k];
+            k += 1;
+            let (Some(ids), Some(places)) = (self.corners().get(f), scan.corners(f)) else { continue };
+            for (&v, at) in ids.iter().zip(places) {
+                if at.dist(p) > reach {
+                    continue;
+                }
+                for &n in self.fan_of(v) {
+                    if seen.insert(n as usize) {
+                        out.push(n as usize);
+                    }
+                }
+            }
+        }
+        out.truncate(SNAP_MOST);
+        out
+    }
+
     /// What `p` (a place on the scan) snaps to within `reach` mm: a corner (a vertex on the scan's
-    /// outline or on a crease), else the nearest point of the scan's edge or of a crease (two
-    /// triangles meeting at more than `crease_degrees`), else the nearest vertex within half the
-    /// reach. Looks only at the triangles round the one under `p`, so it costs the same on a scan
-    /// of millions of triangles. `None` when nothing is within reach.
+    /// outline or on a crease where they turn), else the nearest point of the scan's edge or of a
+    /// crease (two triangles meeting at more than `crease_degrees`), else the nearest vertex within
+    /// half the reach. Looks over the scan round `p` as far as the reach (reached across the scan
+    /// from the triangle under it), so it costs the same on a scan of millions of triangles and
+    /// finds an edge a few pixels away however fine the scan is. `None` when nothing is within
+    /// reach.
     pub fn snap(&self, p: Vec3, reach: f64, crease_degrees: f64) -> Option<Snap> {
         if !(reach.is_finite() && reach > 0.0) {
             return None;
         }
         let (t, _) = self.nearest(p)?;
         let scan = self.scan();
-        let mut near: Vec<usize> = vec![t];
-        for &v in self.corners().get(t)? {
-            near.extend(self.fan_of(v).iter().map(|&f| f as usize));
-        }
-        near.sort_unstable();
-        near.dedup();
-        near.truncate(256);
+        let near = self.round(t, p, reach);
         let cos = crease_degrees.to_radians().cos();
-        // The feature edges' ends with the way each runs away from its end, and the nearest edge.
-        let mut feature_ends: Vec<(Vec3, Vec3)> = Vec::new();
+        // The ways the feature edges leave each corner within reach, and the nearest edge.
+        let mut leaving: std::collections::HashMap<u32, (Vec3, Vec<Vec3>)> = std::collections::HashMap::new();
         let mut best_edge: Option<(f64, Vec3, SnapKind)> = None;
         let mut best_vertex: Option<(f64, Vec3)> = None;
         for &f in &near {
-            let Some([a, b, c]) = scan.corners(f) else { continue };
+            let (Some([a, b, c]), Some(&[ia, ib, ic])) = (scan.corners(f), self.corners().get(f)) else { continue };
             let own = face_of(&scan, f).1;
-            for (k, (x, y)) in [(a, b), (b, c), (c, a)].into_iter().enumerate() {
+            for (k, ((x, ix), (y, iy))) in [((a, ia), (b, ib)), ((b, ib), (c, ic)), ((c, ic), (a, ia))].into_iter().enumerate() {
                 let across = self.across.get(f).map_or(NONE, |e| e[k]);
                 let kind = if across == NONE {
                     Some(SnapKind::Boundary)
@@ -749,16 +775,18 @@ impl Topology {
                     let other = face_of(&scan, across as usize).1;
                     (own.dot(other) < cos).then_some(SnapKind::Crease)
                 };
-                if let Some(kind) = kind {
-                    if let Some(d) = (y - x).normalized() {
-                        feature_ends.push((x, d));
-                        feature_ends.push((y, d * -1.0));
+                let Some(kind) = kind else { continue };
+                if let Some(d) = (y - x).normalized() {
+                    for (v, at, way) in [(ix, x, d), (iy, y, d * -1.0)] {
+                        if at.dist(p) <= reach {
+                            leaving.entry(v).or_insert_with(|| (at, Vec::new())).1.push(way);
+                        }
                     }
-                    let q = on_segment(p, x, y);
-                    let d = q.dist(p);
-                    if d <= reach && best_edge.is_none_or(|(bd, _, _)| d < bd) {
-                        best_edge = Some((d, q, kind));
-                    }
+                }
+                let q = on_segment(p, x, y);
+                let d = q.dist(p);
+                if d <= reach && best_edge.is_none_or(|(bd, _, _)| d < bd) {
+                    best_edge = Some((d, q, kind));
                 }
             }
             for v in [a, b, c] {
@@ -768,14 +796,15 @@ impl Topology {
                 }
             }
         }
-        // A corner is a vertex within reach where two feature edges leave at more than the crease
-        // angle apart (a straight run of a crease has the same direction both ways: no corner).
-        let corner = feature_ends
-            .iter()
-            .filter(|(v, _)| v.dist(p) <= reach)
-            .filter(|(v, d)| feature_ends.iter().any(|(w, e)| w.dist(*v) <= 1e-9 && d.dot(*e) > -cos && d.dot(*e) < cos))
-            .map(|(v, _)| (v.dist(p), *v))
-            .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        // A corner is where two feature edges leave at more than the crease angle apart (a straight
+        // run has its two ways opposite: no corner; the same edge seen from both its triangles
+        // leaves the same way: not two edges).
+        let turns = |ways: &[Vec3]| ways.iter().enumerate().any(|(i, d)| ways[i + 1..].iter().any(|e| d.dot(*e) > -cos && d.dot(*e) < cos));
+        let corner = leaving
+            .values()
+            .filter(|(_, ways)| turns(ways))
+            .map(|(at, _)| (at.dist(p), *at))
+            .min_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.x.total_cmp(&b.1.x)));
         if let Some((_, at)) = corner {
             return Some(Snap { at, kind: SnapKind::Corner });
         }
@@ -838,6 +867,24 @@ mod tests {
         assert_eq!(rim.kind, SnapKind::Boundary);
         assert!(rim.at.y.abs() < 1e-9, "{:?}", rim.at);
         assert!(sheet.snap(Vec3::new(5.0, 5.0, 0.0), 1.0, 30.0).is_none(), "the diagonal inside is no feature");
+        // A fine sheet seen from afar: the reach spans many triangles, and the edge 1.5 mm away is
+        // still found (not only the triangles touching the one under the click).
+        let n = 200u32;
+        let at = |i: u32, j: u32| Vec3::new(f64::from(i) * 0.1, f64::from(j) * 0.1, 0.0);
+        let positions: Vec<Vec3> = (0..=n).flat_map(|j| (0..=n).map(move |i| at(i, j))).collect();
+        let w = n + 1;
+        let triangles: Vec<[u32; 3]> = (0..n)
+            .flat_map(|j| {
+                (0..n).flat_map(move |i| [[j * w + i, j * w + i + 1, (j + 1) * w + i + 1], [j * w + i, (j + 1) * w + i + 1, (j + 1) * w + i]])
+            })
+            .collect();
+        let fine = Topology::new(&Scan::new(&positions, &triangles));
+        let edge = fine.snap(Vec3::new(10.0, 1.53, 0.0), 2.0, 30.0).expect("the sheet's edge within reach");
+        assert_eq!(edge.kind, SnapKind::Boundary);
+        assert!(edge.at.y.abs() < 1e-9 && (edge.at.x - 10.0).abs() < 1e-9, "straight across onto it: {:?}", edge.at);
+        let corner = fine.snap(Vec3::new(1.2, 1.1, 0.0), 2.0, 30.0).expect("the sheet's corner within reach");
+        assert_eq!(corner.kind, SnapKind::Corner);
+        assert!(corner.at.dist(Vec3::ZERO) < 1e-9, "{:?}", corner.at);
     }
 
     /// A brush on a box's top takes a disc of it, never the bottom; the smooth region from the top

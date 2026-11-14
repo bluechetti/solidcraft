@@ -93,21 +93,32 @@ mod tests {
     #[test]
     fn the_scan_tab_shows_its_layout_with_planned_tools_greyed() {
         let specs = solidcraft_engine::command_specs();
-        assert_eq!(crate::workspace::panels("SCAN"), ["INSERT", "CLEAN", "ALIGN", "FIT", "RECONSTRUCT", "FREEFORM", "SKETCH", "SELECT", "CHECK"]);
+        assert_eq!(crate::workspace::panels("SCAN"), ["INSERT", "CLEAN", "ALIGN", "RECONSTRUCT", "FREEFORM", "SKETCH", "CHECK"]);
         let mut h = crate::scenario::Harness::new();
         super::enter(&mut h.app, true).unwrap();
         h.frames(2);
+        // The tools most work needs are buttons, in working order; the rest are in the drop-downs.
         for id in [
             "file.insert_mesh",
-            "scan.repair",
+            "scan.survey",
+            "scan.select",
+            "scan.remove_floating",
+            "scan.fill_holes",
             "scan.stand_on_base",
-            "scan.symmetry",
-            "scan.square_to_symmetry",
-            "scan.rest_on_grid",
+            "scan.quick_align",
+            "scan.register",
+            "scan.reconstruct",
+            "scan.find_all",
             "scan.fit_plane",
-            "mesh.convert",
-            "sketch.create",
+            "scan.free_form",
+            "scan.wrap_surface",
+            "scan.fit_patches",
+            "scan.edit_surface",
+            "scan.section_sketch",
+            "scan.curve_on_scan",
+            "scan.flat_template",
             "scan.deviation",
+            "scan.align_to_model",
         ] {
             assert!(crate::scenario::handle_at(&format!("button:{id}")).is_some(), "{id} is a button on the Scan tab");
         }

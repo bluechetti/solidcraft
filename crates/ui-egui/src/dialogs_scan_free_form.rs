@@ -110,7 +110,7 @@ struct Shown {
     result: Result<Made, String>,
     /// The scan under the face, coloured by how far it is from it: for which tolerance and colours,
     /// the dots' version, and the dots; and what its distances add up to.
-    shade: Option<(u64, [[u8; 3]; 3], u64, Arc<Vec<u8>>)>,
+    shade: Option<(u64, crate::scan_deviation::Colours, u64, crate::dialogs_scan_surface::Shaded)>,
     stats: Option<crate::scan_fidelity::Stats>,
     /// The scan under the face and its distances, worked out with the fit.
     under: Option<Arc<Under>>,
@@ -271,7 +271,7 @@ fn shade(app: &SolveApp, k: &mut NewFreeForm) {
     }
     let Some(under) = shown.under.clone() else { return };
     let (found, values) = &*under;
-    let dots = Arc::new(crate::dialogs_scan_surface::shade_dots(found, values, tolerance, colours));
+    let dots = crate::dialogs_scan_surface::shade_dots(found, values, tolerance, colours);
     shown.shade = Some((tolerance.to_bits(), colours, crate::dialogs_scan_surface::next_shade_version(), dots));
     shown.stats = crate::scan_fidelity::stats(values, tolerance);
 }
@@ -294,7 +294,7 @@ pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view:
         return None;
     }
     let (_, _, version, dots) = k.shown.as_ref()?.shade.as_ref()?;
-    Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots.clone()))
+    Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots))
 }
 
 /// The dialog's rows.
@@ -321,7 +321,17 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
             stiffness_row(ui, &mut k.stiffness);
         }
     }
-    form_row(ui, tr("ui.scan_free_form_points"), |ui| ui_kit::number_field(ui, &mut k.count, 4..=12, 0.2, ""));
+    // Follow the Scan adds points where the scan needs them: the row says how many it used.
+    let used = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).map(|m| m.surface.count()[0]).filter(|n| *n > k.count);
+    form_row(ui, tr("ui.scan_free_form_points"), |ui| {
+        use ui_kit::BackingTooltipExt;
+        let field = ui_kit::number_field(ui, &mut k.count, 4..=12, 0.2, "");
+        if let Some(used) = used {
+            let why = solidcraft_ui_text::format("ui.scan_free_form_points_used", &[("count", &used.to_string())]);
+            ui_kit::text(ui, &format!("→ {used}"), ui_kit::Text::Cell).backing_on_hover_text(why);
+        }
+        field
+    });
     if k.fit != 0 {
         crate::dialogs_scan_surface::colours_row(ui, &mut k.colours);
         let scan = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.scan.clone());
@@ -349,18 +359,16 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
         crate::scan_fidelity::effective(app, k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.scan.as_deref()), k.tolerance);
     match k.shown.as_ref().map(|s| (&s.result, s.stats, s.check.as_ref())) {
         Some((Ok(made), stats, check)) if made.scan.is_some() => {
-            let note = solidcraft_ui_text::format(
-                "ui.scan_free_form_found",
-                &[("met", &made.met.to_string()), ("places", &made.places.to_string()), ("rms", &crate::prefs::show_mm(app, made.rms, 1))],
-            );
-            ui_kit::text(ui, &note, ui_kit::Text::Note("scan_free_form_found"));
-            let fit = solidcraft_ui_text::format(
-                "ui.scan_edit_distance_value",
-                &[("rms", &crate::prefs::show_mm(app, made.rms, 1)), ("max", &crate::prefs::show_mm(app, made.max, 1))],
-            );
-            ui_kit::text(ui, &format!("{}: {fit}", tr("ui.scan_edit_distance")), ui_kit::Text::Note("scan_free_form_distance"));
+            // Places the fit could not reach on the scan are worth saying; a full fit is not.
+            if made.met < made.places {
+                let note = solidcraft_ui_text::format(
+                    "ui.scan_free_form_found",
+                    &[("met", &made.met.to_string()), ("places", &made.places.to_string()), ("rms", &crate::prefs::show_mm(app, made.rms, 1))],
+                );
+                ui_kit::text(ui, &note, ui_kit::Text::Note("scan_free_form_found"));
+            }
             if let Some(stats) = stats {
-                crate::scan_fidelity::readout(app, ui, "scan_free_form_fidelity", &stats, tolerance);
+                crate::scan_fidelity::readout(app, ui, "scan_free_form_fidelity", &stats, tolerance, None);
             }
             // Surface Check on the face as it will be kept: a fold is seen before OK, not after.
             if let Some(c) = check {
@@ -378,8 +386,11 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
         }
         _ => {}
     }
-    let hint = if curves_mode { tr("ui.scan_free_form_curves_hint") } else { tr("ui.scan_free_form_hint") };
-    ui_kit::text(ui, hint, ui_kit::Text::Hint("scan_free_form_hint"));
+    // How to place the corners, until they are placed.
+    if have < want {
+        let hint = if curves_mode { tr("ui.scan_free_form_curves_hint") } else { tr("ui.scan_free_form_hint") };
+        ui_kit::text(ui, hint, ui_kit::Text::Hint("scan_free_form_hint"));
+    }
     false
 }
 
@@ -460,6 +471,14 @@ pub(crate) fn plain_scan(app: &SolveApp) -> bool {
         )
 }
 
+impl NewFreeForm {
+    /// The corners clicked so far (tests).
+    #[cfg(test)]
+    pub(crate) fn corners_clicked(&self) -> &[Vec3] {
+        &self.clicks
+    }
+}
+
 /// Whether the dialog takes clicks in the view as corners.
 pub(crate) fn drawing(app: &SolveApp) -> bool {
     matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(k)) if k.corners_mode != CURVES_MODE && k.clicks.len() < needed(k))
@@ -489,10 +508,14 @@ pub(crate) fn click_curve(app: &mut SolveApp, proj: &crate::viewport::Proj, at: 
 
 /// A click at `at`: a corner on what is under it, or in the view's plane through the corner before.
 pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
-    let hit = crate::viewport::pick_cached(app, proj, at).into_iter().find_map(|h| match h {
-        crate::viewport::Hit::Face { body, point, .. } => Some((body, point)),
-        _ => None,
-    });
+    let hit = crate::viewport::pick_cached(app, proj, at)
+        .into_iter()
+        .find_map(|h| match h {
+            crate::viewport::Hit::Face { body, point, .. } => Some((body, point)),
+            _ => None,
+        })
+        // Just past a scan's outline: on the scan, not in the air beyond it.
+        .or_else(|| crate::scan_snap::scan_under(app, proj, at));
     // Where the click lands: on a corner, edge, crease or curve point close to it.
     let hit = hit.map(|(body, point)| {
         if app.session.model.state().body(&body).is_some_and(|b| b.body.is_mesh()) {

@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_free_form_points_used": "Follow the scan used {count} points each way: fewer left the face off the scan."
+  },
+  "ar": {
+    "ui.scan_free_form_points_used": "استخدم اتباع المسح {count} نقاط في كل اتجاه: عدد أقل كان يُبعد الوجه عن المسح."
+  },
+  "de": {
+    "ui.scan_free_form_points_used": "„Dem Scan folgen“ verwendete {count} Punkte je Richtung: Mit weniger lag die Fläche neben dem Scan."
+  },
+  "he": {
+    "ui.scan_free_form_points_used": "מעקב אחר הסריקה השתמש ב-{count} נקודות לכל כיוון: עם פחות הפאה סטתה מהסריקה."
+  },
+  "ja": {
+    "ui.scan_free_form_points_used": "「スキャンに沿う」は各方向 {count} 点を使いました。少ないと面がスキャンから離れます。"
+  },
+  "ko": {
+    "ui.scan_free_form_points_used": "스캔 따라가기가 방향마다 {count}개 점을 썼습니다. 더 적으면 면이 스캔에서 벗어납니다."
+  },
+  "vi": {
+    "ui.scan_free_form_points_used": "Theo bản quét đã dùng {count} điểm mỗi chiều: ít hơn thì mặt lệch khỏi bản quét."
+  },
+  "zh": {
+    "ui.scan_free_form_points_used": "“贴合扫描”每个方向用了 {count} 个点：更少会使面偏离扫描。"
+  }
+}

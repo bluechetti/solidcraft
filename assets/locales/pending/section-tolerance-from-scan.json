@@ -1,34 +1,34 @@
 {
   "en": {
     "prefs.section_tolerance_from_scan": "The scan's noise sets the Section to Sketch tolerance",
-    "prefs.section_tolerance_from_scan_note": "On: Section to Sketch and Sections Along Curve start with a tolerance of three times the cut's noise, at least 0.1 mm, so a noisy or very large scan is not traced point by point. A tolerance you type is kept. Off: they start at 0.1 mm."
+    "prefs.section_tolerance_from_scan_note": "On: Section to Sketch and Sections Along Curve start at three times the cut's noise (at least 0.1 mm), so noisy scans are not traced point by point. Off: 0.1 mm."
   },
   "de": {
     "prefs.section_tolerance_from_scan": "Schnitttoleranz folgt dem Rauschen des Scans",
-    "prefs.section_tolerance_from_scan_note": "Schnitt zu Skizze und Schnitte entlang Kurve beginnen mit einer Toleranz vom Dreifachen des Rauschens im Schnitt, mindestens 0,1 mm, damit ein verrauschter oder sehr großer Scan nicht Punkt für Punkt nachgezeichnet wird. Eine eingegebene Toleranz bleibt. Aus: Sie beginnen bei 0,1 mm."
+    "prefs.section_tolerance_from_scan_note": "„Schnitt zu Skizze“ und „Schnitte entlang Kurve“ beginnen mit dem Dreifachen des Schnittrauschens (mindestens 0,1 mm), damit verrauschte Scans nicht Punkt für Punkt nachgezeichnet werden. Aus: 0,1 mm."
   },
   "ja": {
     "prefs.section_tolerance_from_scan": "断面の許容差をスキャンのノイズに合わせる",
-    "prefs.section_tolerance_from_scan_note": "断面からスケッチと曲線に沿った断面は、断面のノイズの 3 倍 (最小 0.1 mm) の許容差で始まります。ノイズの多いスキャンや非常に大きなスキャンを点ごとになぞらないためです。入力した許容差はそのまま使われます。オフ: 0.1 mm で始まります。"
+    "prefs.section_tolerance_from_scan_note": "「断面をスケッチに」と「曲線に沿った断面」は、切断のノイズの3倍（最低0.1 mm）から始めるので、ノイズの多いスキャンを点ごとになぞりません。オフ：0.1 mm。"
   },
   "ko": {
     "prefs.section_tolerance_from_scan": "단면 허용 오차를 스캔의 노이즈에 맞춤",
-    "prefs.section_tolerance_from_scan_note": "단면을 스케치로와 곡선을 따라 단면은 단면 노이즈의 3배(최소 0.1 mm) 허용 오차로 시작합니다. 노이즈가 많거나 아주 큰 스캔을 점마다 따라 그리지 않기 위해서입니다. 입력한 허용 오차는 그대로 유지됩니다. 끔: 0.1 mm로 시작합니다."
+    "prefs.section_tolerance_from_scan_note": "‘단면을 스케치로’와 ‘곡선을 따른 단면’은 단면 노이즈의 세 배(최소 0.1 mm)에서 시작해, 노이즈 많은 스캔을 점마다 따라가지 않습니다. 끄면: 0.1 mm."
   },
   "zh": {
     "prefs.section_tolerance_from_scan": "截面公差随扫描噪声而定",
-    "prefs.section_tolerance_from_scan_note": "截面转草图与沿曲线截面以截面噪声的三倍（至少 0.1 mm）作为初始公差，以免逐点描摹噪声大或非常大的扫描。输入的公差会保留。关闭：从 0.1 mm 开始。"
+    "prefs.section_tolerance_from_scan_note": "“截面转草图”和“沿曲线截面”从截面噪声的三倍（至少 0.1 mm）开始，避免逐点描画噪声大的扫描。关闭：0.1 mm。"
   },
   "ar": {
     "prefs.section_tolerance_from_scan": "تسامح المقطع يتبع ضجيج المسح",
-    "prefs.section_tolerance_from_scan_note": "يبدأ «مقطع إلى رسم» و«مقاطع على طول منحنى» بتسامح يساوي ثلاثة أضعاف ضجيج المقطع، بحد أدنى 0.1 مم، حتى لا يُتتبَّع مسح كثير الضجيج أو كبير جدًا نقطةً نقطة. يُحتفظ بالتسامح الذي تكتبه. عند الإيقاف: يبدآن من 0.1 مم."
+    "prefs.section_tolerance_from_scan_note": "يبدأ المقطع إلى رسم ومقاطع على امتداد منحنى بثلاثة أضعاف ضجيج القطع (0.1 مم على الأقل)، فلا تُتتبع المسوح المشوشة نقطة بنقطة. عند الإيقاف: 0.1 مم."
   },
   "he": {
     "prefs.section_tolerance_from_scan": "סבולת החתך עוקבת אחר רעש הסריקה",
-    "prefs.section_tolerance_from_scan_note": "חתך לסקיצה וחתכים לאורך עקומה מתחילים בסבולת של פי שלושה מרעש החתך, לפחות 0.1 מ\"מ, כדי שסריקה רועשת או גדולה מאוד לא תיעקב נקודה אחר נקודה. סבולת שתקלידו נשמרת. כבוי: הם מתחילים ב־0.1 מ\"מ."
+    "prefs.section_tolerance_from_scan_note": "חתך לסקיצה וחתכים לאורך עקומה מתחילים בשלוש פעמים רעש החתך (לפחות 0.1 מ\"מ), כך שסריקות רועשות לא נעקבות נקודה אחר נקודה. כבוי: 0.1 מ\"מ."
   },
   "vi": {
     "prefs.section_tolerance_from_scan": "Dung sai mặt cắt theo nhiễu của bản quét",
-    "prefs.section_tolerance_from_scan_note": "Mặt cắt thành phác thảo và Mặt cắt dọc đường cong bắt đầu với dung sai bằng ba lần nhiễu của mặt cắt, ít nhất 0,1 mm, để bản quét nhiều nhiễu hoặc rất lớn không bị dò theo từng điểm. Dung sai bạn nhập sẽ được giữ. Tắt: bắt đầu ở 0,1 mm."
+    "prefs.section_tolerance_from_scan_note": "Mặt cắt thành phác thảo và Mặt cắt dọc đường cong bắt đầu ở ba lần nhiễu của mặt cắt (ít nhất 0,1 mm), để bản quét nhiễu không bị dò từng điểm. Tắt: 0,1 mm."
   }
 }

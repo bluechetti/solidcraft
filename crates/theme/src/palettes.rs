@@ -483,6 +483,7 @@ impl Tokens {
         t.preview_sketch = Color32::from_rgb(80, 185, 145);
         t.analysis.draft = [positive, [0.95, 0.90, 0.60], negative];
         t.analysis.access = [positive, negative];
+        t.analysis.deviation = [[0.10, 0.25, 0.75], [0.45, 0.65, 0.95], [0.82, 0.82, 0.78], [0.96, 0.68, 0.30], [0.85, 0.40, 0.05]];
         t.analysis.hatch = true;
         // Keep validation badges separate from red errors under both red-green
         // simulations, while retaining their explicit Valid / Not valid labels.
@@ -517,6 +518,7 @@ impl Tokens {
     pub(super) const fn blue_yellow(self, dark: bool) -> Tokens {
         let mut t = self;
         t.analysis.hatch = true;
+        t.analysis.deviation = [[0.15, 0.20, 0.60], [0.55, 0.55, 0.85], [0.82, 0.82, 0.82], [0.95, 0.55, 0.55], [0.80, 0.10, 0.15]];
         t.surface_accent = if dark { Color32::from_rgb(210, 120, 95) } else { Color32::from_rgb(164, 65, 50) };
         t.mesh_accent = if dark { Color32::from_rgb(200, 175, 135) } else { Color32::from_rgb(130, 103, 65) };
         t.form_accent = if dark { Color32::from_rgb(150, 140, 210) } else { Color32::from_rgb(115, 73, 170) };

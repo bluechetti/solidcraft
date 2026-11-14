@@ -46,7 +46,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(output_schema_for::<ScanAlignPairsResult>)
         .params("body?: the scan to move (default: the selected or only one); from: [[x,y,z], …] points on it; onto: [[x,y,z], …] their partners, in order (three pairs or more, not all in a line); to?: the scan or model the partners are on; refine?: bool (default true with `to`: fitted onto it after the points, where its surface allows; refined_rms tells): the turn and shift that lay the points on their partners best (no scale, no mirror), kept as a Move of the scan, one undo step → body, to?, residuals, rms, worst, refined_rms?, matched?, moved, feature?"),
     CommandSpec::new("scan.align_to_model", "Align to Model", crate::checked!("scan.align_to_model", align_to_model))
-        .at("SCAN", "ALIGN")
+        .at("SCAN", "CHECK")
         .icon("align")
         .contract(&MODEL_CONTRACT)
         .output(output_schema_for::<ScanAlignModelResult>)

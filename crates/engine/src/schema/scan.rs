@@ -802,7 +802,8 @@ pub struct ScanFreeFormParams {
     /// needed.
     #[serde(default)]
     pub plane: Option<Value>,
-    /// The net's points each way, 4 to 12. Default: 4.
+    /// The net's points each way, 4 to 12. Default: 4. Follow (with stiffness 0) adds points, two at
+    /// a time up to 12, until the face is within half the scan's tolerance.
     #[serde(default)]
     pub count: Option<u32>,
     /// How much the net keeps from bending to the scan, 0 to 1. Default: 0.

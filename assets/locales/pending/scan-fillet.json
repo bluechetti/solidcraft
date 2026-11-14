@@ -1,7 +1,7 @@
 {
   "en": {
     "cmd.scan_fillet": "Fillet from Scan",
-    "help.scan.fillet": "Measures the round the scan shows along a model's edges, one radius between each edge's two faces, and fillets the edges at it, rounded to the step chosen. Use it when the model is built and its edges are still sharp.",
+    "help.scan.fillet": "Measures each round the scan shows along a model's edges and fillets the edges at it. Use it once the model is built with sharp edges.",
     "ui.scan_fillet_reach": "Search Width",
     "ui.scan_fillet_step": "Round To",
     "ui.scan_fillet_exact": "Exact",
@@ -10,7 +10,7 @@
   },
   "de": {
     "cmd.scan_fillet": "Verrundung aus Scan",
-    "help.scan.fillet": "Misst die Rundung, die der Scan entlang der Kanten eines Modells zeigt, einen Radius zwischen den beiden Flächen jeder Kante, und verrundet die Kanten damit, gerundet auf den gewählten Schritt. Verwenden Sie es, wenn das Modell gebaut ist und seine Kanten noch scharf sind.",
+    "help.scan.fillet": "Misst jede Rundung, die der Scan entlang der Kanten eines Modells zeigt, und verrundet die Kanten damit. Wenn das Modell gebaut ist und seine Kanten noch scharf sind.",
     "ui.scan_fillet_reach": "Suchbreite",
     "ui.scan_fillet_step": "Runden auf",
     "ui.scan_fillet_exact": "Genau",
@@ -19,7 +19,7 @@
   },
   "ja": {
     "cmd.scan_fillet": "スキャンからフィレット",
-    "help.scan.fillet": "モデルのエッジに沿ってスキャンが示す丸み (各エッジの 2 面の間の 1 つの半径) を測り、選んだ刻みに丸めた半径でエッジをフィレットします。モデルができてエッジがまだシャープなときに使います。",
+    "help.scan.fillet": "モデルのエッジに沿ってスキャンが示す丸みを測り、その半径でエッジをフィレットします。モデルが完成し、エッジがまだ鋭いときに使います。",
     "ui.scan_fillet_reach": "探索幅",
     "ui.scan_fillet_step": "丸め",
     "ui.scan_fillet_exact": "そのまま",
@@ -28,7 +28,7 @@
   },
   "ko": {
     "cmd.scan_fillet": "스캔에서 필렛",
-    "help.scan.fillet": "모델의 모서리를 따라 스캔이 보여 주는 둥글림(각 모서리의 두 면 사이의 한 반지름)을 재고, 고른 단위로 반올림한 반지름으로 모서리를 필렛합니다. 모델이 만들어졌고 모서리가 아직 날카로울 때 사용하세요.",
+    "help.scan.fillet": "모델 모서리를 따라 스캔이 보여 주는 둥근 정도를 재어 그 반지름으로 모서리를 필렛합니다. 모델을 만든 뒤 모서리가 아직 날카로울 때 사용하세요.",
     "ui.scan_fillet_reach": "찾을 폭",
     "ui.scan_fillet_step": "반올림",
     "ui.scan_fillet_exact": "그대로",
@@ -37,7 +37,7 @@
   },
   "zh": {
     "cmd.scan_fillet": "由扫描倒圆",
-    "help.scan.fillet": "测量扫描沿模型边显示的圆角（每条边两面之间的一个半径），并按所选步长取整后对这些边倒圆。在模型已建成而边仍是尖角时使用。",
+    "help.scan.fillet": "测量扫描沿模型边显示的每处圆角，并按该半径对边倒圆角。在模型建好且边仍为锐边时使用。",
     "ui.scan_fillet_reach": "搜索宽度",
     "ui.scan_fillet_step": "取整到",
     "ui.scan_fillet_exact": "精确",
@@ -46,7 +46,7 @@
   },
   "ar": {
     "cmd.scan_fillet": "تدوير من المسح",
-    "help.scan.fillet": "يقيس الاستدارة التي يُظهرها المسح على طول حواف نموذج، نصف قطر واحد بين وجهي كل حافة، ويدوّر الحواف به مقرّبًا إلى الخطوة المختارة. استخدمه حين يكون النموذج مبنيًا وحوافه ما زالت حادة.",
+    "help.scan.fillet": "يقيس كل تقوير يظهره المسح على حواف النموذج ويقوّر الحواف به. استخدمه بعد بناء النموذج وحوافه ما زالت حادة.",
     "ui.scan_fillet_reach": "عرض البحث",
     "ui.scan_fillet_step": "التقريب إلى",
     "ui.scan_fillet_exact": "تمامًا",
@@ -55,7 +55,7 @@
   },
   "he": {
     "cmd.scan_fillet": "עיגול מהסריקה",
-    "help.scan.fillet": "מודדת את העיגול שהסריקה מראה לאורך קצוות של מודל, רדיוס אחד בין שני הפרצופים של כל קצה, ומעגלת את הקצוות בו, מעוגל לצעד שנבחר. השתמשו בה כשהמודל בנוי וקצוותיו עדיין חדים.",
+    "help.scan.fillet": "מודד כל עיגול שהסריקה מראה לאורך קצוות המודל ומעגל את הקצוות בהתאם. השתמשו בו כשהמודל בנוי וקצוותיו עדיין חדים.",
     "ui.scan_fillet_reach": "רוחב חיפוש",
     "ui.scan_fillet_step": "עיגול ל־",
     "ui.scan_fillet_exact": "מדויק",
@@ -64,7 +64,7 @@
   },
   "vi": {
     "cmd.scan_fillet": "Bo tròn từ bản quét",
-    "help.scan.fillet": "Đo độ bo tròn mà bản quét cho thấy dọc các cạnh của mô hình, một bán kính giữa hai mặt của mỗi cạnh, rồi bo tròn các cạnh theo đó, làm tròn theo bước đã chọn. Dùng khi mô hình đã dựng xong mà các cạnh vẫn còn sắc.",
+    "help.scan.fillet": "Đo từng góc bo mà bản quét thể hiện dọc các cạnh của mô hình và bo các cạnh theo đó. Dùng khi mô hình đã dựng xong với cạnh còn sắc.",
     "ui.scan_fillet_reach": "Độ rộng tìm",
     "ui.scan_fillet_step": "Làm tròn đến",
     "ui.scan_fillet_exact": "Chính xác",

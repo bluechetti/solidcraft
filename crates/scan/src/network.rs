@@ -735,7 +735,27 @@ pub struct Under {
 pub struct Shade {
     pub points: Vec<Under>,
     pub outside: Vec<f64>,
+    /// The scan's triangles under the faces, each with the point of `points` that colours it, so
+    /// the colouring covers the scan as a surface rather than as dots. Empty when more than
+    /// [`PAINT_LIMIT`] triangles lie under the faces: then the points alone are shown.
+    pub paint: Vec<Painted>,
 }
+
+/// A triangle of the scan under a face, coloured by one of the shade's points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Painted {
+    /// Its corners, nudged off the scan along its normal by a sliver of its size, so that it is
+    /// drawn over the scan's own triangle rather than fighting it for the same depth.
+    pub corners: [[f32; 3]; 3],
+    /// The index in [`Shade::points`] whose distance colours it.
+    pub point: u32,
+}
+
+/// The most scan triangles a colouring paints (more and it is shown as dots).
+pub const PAINT_LIMIT: usize = 250_000;
+
+/// How far a painted triangle stands off the scan, as a share of its longest side.
+const PAINT_LIFT: f64 = 0.05;
 
 /// The scan under the faces, at most `limit` points (the middles of its triangles, thinned evenly):
 /// each on the face nearest it, its foot inside that face and within `reach` of it, facing the way
@@ -748,15 +768,15 @@ pub fn shade(scan: &crate::Scan, faces: &[NurbsSurface], reach: f64, limit: usiz
     let (lo, hi) = nets.iter().flatten().fold((first, first), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
     let pad = Vec3::new(reach, reach, reach);
     let (lo, hi) = (lo - pad, hi + pad);
-    let near: Vec<(Vec3, Vec3)> = (0..scan.triangle_count())
+    let boxed: Vec<(Vec3, Vec3, usize)> = (0..scan.triangle_count())
         .filter_map(|t| {
             let [a, b, c] = scan.corners(t)?;
             let m = (a + b + c) / 3.0;
             let inside = m.x >= lo.x && m.y >= lo.y && m.z >= lo.z && m.x <= hi.x && m.y <= hi.y && m.z <= hi.z;
-            inside.then(|| (b - a).cross(c - a).normalized().map(|n| (m, n)))?
+            inside.then(|| (b - a).cross(c - a).normalized().map(|n| (m, n, t)))?
         })
         .collect();
-    let near = crate::thinned(&near, limit.saturating_mul(3));
+    let near: Vec<(Vec3, Vec3)> = crate::thinned(&boxed, limit.saturating_mul(3)).into_iter().map(|(m, n, _)| (m, n)).collect();
     let middles: Vec<Vec3> = near.iter().map(|(m, _)| *m).collect();
     let all = vec![true; faces.len()];
     let found = feet(faces, &middles, reach, &all);
@@ -776,7 +796,58 @@ pub fn shade(scan: &crate::Scan, faces: &[NurbsSurface], reach: f64, limit: usiz
         .map(|f| if facing.iter().filter(|(u, _)| u.face == f).map(|(_, a)| a.signum()).sum::<f64>() < 0.0 { -1.0 } else { 1.0 })
         .collect();
     let kept: Vec<Under> = facing.into_iter().filter(|(u, a)| a.signum() == outside[u.face]).map(|(u, _)| u).collect();
-    Shade { points: crate::thinned(&kept, limit), outside }
+    let points = crate::thinned(&kept, limit);
+    // Each shade point stands for this many of the scan's triangles round it.
+    let share = (boxed.len() as f64 / near.len().max(1) as f64) * (kept.len() as f64 / points.len().max(1) as f64);
+    let paint = painted(scan, &boxed, &points, &by_place, share);
+    Shade { points, outside, paint }
+}
+
+/// The triangles of `boxed` (middle, normal, index) that a point of `points` stands for: the
+/// nearest within the spacing the points have on the scan (`share` triangles each), facing the
+/// same way as the triangle it was measured at (so the far side of a thin part is not painted).
+/// Empty when there are more than [`PAINT_LIMIT`].
+fn painted(scan: &crate::Scan, boxed: &[(Vec3, Vec3, usize)], points: &[Under], normals: &HashMap<[u64; 3], Vec3>, share: f64) -> Vec<Painted> {
+    if points.is_empty() || boxed.is_empty() {
+        return Vec::new();
+    }
+    // A typical side of the scan's triangles here, from an even sample of them.
+    let sample = crate::thinned(boxed, 512);
+    let sides: Vec<f64> = sample.iter().filter_map(|(_, _, t)| scan.corners(*t)).map(|[a, b, c]| (a.dist(b) + b.dist(c) + c.dist(a)) / 3.0).collect();
+    let side = sides.iter().sum::<f64>() / sides.len().max(1) as f64;
+    if !(side.is_finite() && side > 0.0) {
+        return Vec::new();
+    }
+    // Within the points' own spacing: a triangle just past the face's side is not painted.
+    let reach = side * 0.75 * share.max(1.0).sqrt();
+    let at: Vec<Vec3> = points.iter().map(|u| u.at).collect();
+    let grid = crate::poisson::PointGrid::new(&at, reach);
+    let key = |p: Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
+    let mut out = Vec::new();
+    for &(m, n, t) in boxed {
+        let mut best: Option<(f64, u32)> = None;
+        grid.within(m, reach, |q, d| {
+            if best.is_none_or(|(b, _)| d < b) {
+                best = Some((d, q));
+            }
+        });
+        let Some((_, q)) = best else { continue };
+        let facing = at.get(q as usize).and_then(|p| normals.get(&key(*p))).is_none_or(|sn| sn.dot(n) > 0.5);
+        if !facing {
+            continue;
+        }
+        let Some([a, b, c]) = scan.corners(t) else { continue };
+        let lift = n * (PAINT_LIFT * a.dist(b).max(b.dist(c)).max(c.dist(a)));
+        let f = |p: Vec3| {
+            let p = p + lift;
+            [p.x as f32, p.y as f32, p.z as f32]
+        };
+        out.push(Painted { corners: [f(a), f(b), f(c)], point: q });
+        if out.len() > PAINT_LIMIT {
+            return Vec::new();
+        }
+    }
+    out
 }
 
 /// How far each point of `shade` is from the faces, along the way the scan's outside is (above
@@ -1641,6 +1712,36 @@ mod tests {
     fn first_face(on: &Projector) -> NurbsSurface {
         let corners = [Vec3::new(10.0, 10.0, 0.0), Vec3::new(50.0, 10.0, 0.0), Vec3::new(50.0, 50.0, 0.0), Vec3::new(10.0, 50.0, 0.0)];
         crate::free_form::fitted(corners, &crate::free_form::Fitting { count: 5, ..Default::default() }, snapper(on)).unwrap().surface
+    }
+
+    /// The colouring under a face paints the scan's triangles under it, each lifted a sliver off
+    /// the scan towards its outside and coloured by a point near it; with the points thinned the
+    /// same triangles are still painted.
+    #[test]
+    fn the_colouring_paints_the_scans_triangles_under_the_face() {
+        let (positions, triangles) = field(60, dome);
+        let scan = Scan::new(&positions, &triangles);
+        let on = Projector::new(&scan);
+        let face = first_face(&on);
+        let full = shade(&scan, std::slice::from_ref(&face), 2.0, 1_000_000);
+        // The face covers 40 × 40 of the 120 × 60 field: 2/9 of its 14 400 triangles.
+        let painted = full.paint.len();
+        assert!((3000..=3600).contains(&painted), "{painted} triangles painted");
+        for t in &full.paint {
+            let [a, b, c] = t.corners.map(|[x, y, z]| Vec3::new(f64::from(x), f64::from(y), f64::from(z)));
+            let m = (a + b + c) / 3.0;
+            assert!((8.0..=52.0).contains(&m.x) && (8.0..=52.0).contains(&m.y), "under the face: {m:?}");
+            let lift = m.z - dome(m.x, m.y);
+            assert!(lift > 0.0 && lift < 0.1, "a sliver above the scan: {lift}");
+            assert!(full.points.get(t.point as usize).is_some_and(|p| p.at.dist(m) < 3.0), "coloured by a point near it");
+        }
+        let thin = shade(&scan, std::slice::from_ref(&face), 2.0, 200);
+        assert!(thin.points.len() <= 200);
+        assert!(
+            thin.paint.len().abs_diff(painted) * 6 < painted,
+            "about the same triangles from 200 points (a rim half their spacing wide): {} vs {painted}",
+            thin.paint.len()
+        );
     }
 
     /// One surface cut at a knot is two faces of one network: they share the side, meet smoothly,

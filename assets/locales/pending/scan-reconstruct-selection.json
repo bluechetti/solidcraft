@@ -1,49 +1,49 @@
 {
   "en": {
     "cmd.scan_reconstruct_selection": "Reconstruct Selection",
-    "help.scan.reconstruct_selection": "Reads only the part of the scan selected, as a part of its own (a boss, a turned feature, a hole of a part too busy to read whole), and lists the steps that build it into the body Reconstruct builds. OK builds the ticked steps in order.",
+    "help.scan.reconstruct_selection": "Reads only the selected part of the scan, such as a boss or a hole, and lists the steps that build it into Reconstruct's body.",
     "ui.scan_reconstruct_found_selected": "{shapes} shapes cover {share} of what is selected.",
     "ui.scan_reconstruct_selection_none": "Nothing is selected on the scan: select the part to rebuild with Select on Scan first."
   },
   "de": {
     "cmd.scan_reconstruct_selection": "Auswahl rekonstruieren",
-    "help.scan.reconstruct_selection": "Liest nur den ausgewählten Teil des Scans als eigenes Teil (einen Absatz, ein Drehteil, eine Bohrung eines Teils, das als Ganzes zu verwickelt ist) und listet die Schritte, die ihn an den Körper anbauen, den Rekonstruieren aufbaut. OK baut die angehakten Schritte der Reihe nach.",
+    "help.scan.reconstruct_selection": "Liest nur den ausgewählten Teil des Scans, etwa einen Zapfen oder ein Loch, und listet die Schritte auf, die ihn in den rekonstruierten Körper bauen.",
     "ui.scan_reconstruct_found_selected": "{shapes} Formen decken {share} der Auswahl ab.",
     "ui.scan_reconstruct_selection_none": "Auf dem Scan ist nichts ausgewählt: Wählen Sie den Teil, der aufgebaut werden soll, zuerst mit „Auf Scan auswählen“."
   },
   "ja": {
     "cmd.scan_reconstruct_selection": "選択範囲を再構築",
-    "help.scan.reconstruct_selection": "スキャンの選択した部分だけを独立した部品として読み取り（ボス、回転形状、全体では複雑すぎる部品の穴など）、再構築が作成するボディに追加する手順を一覧表示します。OK でチェックした手順を順に作成します。",
+    "help.scan.reconstruct_selection": "スキャンの選択部分（ボスや穴など）だけを読み取り、それを再構築のボディに作り込むステップを一覧にします。",
     "ui.scan_reconstruct_found_selected": "{shapes} 個の形状が選択範囲の {share} を占めます。",
     "ui.scan_reconstruct_selection_none": "スキャン上で何も選択されていません。まず「スキャン上で選択」で作り直す部分を選択してください。"
   },
   "ko": {
     "cmd.scan_reconstruct_selection": "선택 재구성",
-    "help.scan.reconstruct_selection": "스캔에서 선택한 부분만 하나의 부품으로 읽고(보스, 회전 형상, 전체로는 너무 복잡한 부품의 구멍 등), 재구성이 만드는 바디에 그것을 더하는 단계를 나열합니다. 확인을 누르면 체크한 단계를 순서대로 만듭니다.",
+    "help.scan.reconstruct_selection": "스캔의 선택한 부분(보스나 구멍 등)만 읽고, 그것을 재구성 바디에 만들어 넣는 단계를 나열합니다.",
     "ui.scan_reconstruct_found_selected": "형상 {shapes}개가 선택 영역의 {share}를 덮습니다.",
     "ui.scan_reconstruct_selection_none": "스캔에서 선택한 것이 없습니다. 먼저 '스캔에서 선택'으로 다시 만들 부분을 선택하세요."
   },
   "zh": {
     "cmd.scan_reconstruct_selection": "重建所选",
-    "help.scan.reconstruct_selection": "只读取扫描中选中的部分，把它当作独立的零件（凸台、回转特征、整体过于复杂的零件上的孔），并列出把它加到重建所构建实体上的步骤。确定按顺序构建勾选的步骤。",
+    "help.scan.reconstruct_selection": "只读取扫描中选中的部分（如凸台或孔），并列出将其构建进重建实体的步骤。",
     "ui.scan_reconstruct_found_selected": "{shapes} 个形状覆盖了所选部分的 {share}。",
     "ui.scan_reconstruct_selection_none": "扫描上没有选中任何内容：请先用“在扫描上选择”选中要重建的部分。"
   },
   "ar": {
     "cmd.scan_reconstruct_selection": "إعادة بناء التحديد",
-    "help.scan.reconstruct_selection": "يقرأ الجزء المحدد من المسح فقط كجزء قائم بذاته (نتوء، أو شكل دوراني، أو ثقب في قطعة أعقد من أن تُقرأ كاملة)، ويسرد الخطوات التي تبنيه على الجسم الذي تبنيه إعادة البناء. موافق يبني الخطوات المحددة بالترتيب.",
+    "help.scan.reconstruct_selection": "يقرأ الجزء المحدد من المسح فقط، كبروز أو ثقب، ويسرد الخطوات التي تبنيه في جسم إعادة البناء.",
     "ui.scan_reconstruct_found_selected": "{shapes} أشكال تغطي {share} من التحديد.",
     "ui.scan_reconstruct_selection_none": "لا شيء محدد على المسح: حدد الجزء المراد إعادة بنائه أولًا باستخدام «تحديد على المسح»."
   },
   "he": {
     "cmd.scan_reconstruct_selection": "שחזור הבחירה",
-    "help.scan.reconstruct_selection": "קורא רק את החלק הנבחר של הסריקה, כחלק בפני עצמו (בליטה, צורה מסובבת, חור בחלק מסובך מכדי לקרוא אותו בשלמותו), ומציג את השלבים שבונים אותו על הגוף ששחזור בונה. אישור בונה את השלבים המסומנים לפי הסדר.",
+    "help.scan.reconstruct_selection": "קורא רק את החלק הנבחר של הסריקה, כמו בליטה או חור, ומפרט את השלבים שבונים אותו לתוך גוף השחזור.",
     "ui.scan_reconstruct_found_selected": "{shapes} צורות מכסות {share} מהבחירה.",
     "ui.scan_reconstruct_selection_none": "לא נבחר דבר על הסריקה: בחרו קודם את החלק לבנייה מחדש ב„בחירה על הסריקה”."
   },
   "vi": {
     "cmd.scan_reconstruct_selection": "Tái dựng phần chọn",
-    "help.scan.reconstruct_selection": "Chỉ đọc phần bản quét được chọn, như một chi tiết riêng (một vấu, một chi tiết tròn xoay, một lỗ của chi tiết quá phức tạp để đọc cả), và liệt kê các bước dựng nó vào thân mà Tái dựng dựng. OK dựng các bước được đánh dấu theo thứ tự.",
+    "help.scan.reconstruct_selection": "Chỉ đọc phần được chọn của bản quét, như vấu hay lỗ, và liệt kê các bước dựng nó vào thân Tái dựng.",
     "ui.scan_reconstruct_found_selected": "{shapes} hình phủ {share} phần được chọn.",
     "ui.scan_reconstruct_selection_none": "Chưa chọn gì trên bản quét: hãy chọn phần cần dựng lại bằng Chọn trên bản quét trước."
   }

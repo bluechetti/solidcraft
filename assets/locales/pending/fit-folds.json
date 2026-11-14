@@ -1,26 +1,26 @@
 {
   "en": {
-    "ui.scan_fit_folds": "This surface folds over itself ({trouble}): the region is too intricate for one surface. Take a smaller region; more control points do not stop it folding."
+    "ui.scan_fit_folds": "This surface folds over itself ({trouble}): take a smaller region. More control points will not stop it."
   },
   "de": {
-    "ui.scan_fit_folds": "Diese Fläche faltet sich über sich selbst ({trouble}): Der Bereich ist für eine Fläche zu verwinkelt. Wählen Sie einen kleineren Bereich; mehr Kontrollpunkte verhindern das Falten nicht."
+    "ui.scan_fit_folds": "Diese Fläche faltet sich über sich selbst ({trouble}): einen kleineren Bereich nehmen. Mehr Kontrollpunkte verhindern das nicht."
   },
   "ja": {
-    "ui.scan_fit_folds": "このサーフェスは自身の上に折れ返っています ({trouble})。領域が 1 つのサーフェスには複雑すぎます。領域を小さくしてください。制御点を増やしても折れ返りは止まりません。"
+    "ui.scan_fit_folds": "このサーフェスは自己交差して折り返しています（{trouble}）。範囲を小さくしてください。制御点を増やしても解消しません。"
   },
   "ko": {
-    "ui.scan_fit_folds": "이 서피스는 자기 위로 접힙니다 ({trouble}). 영역이 하나의 서피스로는 너무 복잡합니다. 더 작은 영역을 고르세요. 제어점을 늘려도 접힘은 없어지지 않습니다."
+    "ui.scan_fit_folds": "이 곡면이 자기 자신 위로 접힙니다({trouble}). 더 작은 영역을 잡으세요. 제어점을 늘려도 해결되지 않습니다."
   },
   "zh": {
-    "ui.scan_fit_folds": "该曲面自身折叠（{trouble}）：此区域对单个曲面而言过于复杂。请选择更小的区域；增加控制点无法消除折叠。"
+    "ui.scan_fit_folds": "此曲面自身折叠（{trouble}）：请选取更小的区域。增加控制点无法阻止折叠。"
   },
   "ar": {
-    "ui.scan_fit_folds": "هذا السطح ينطوي على نفسه ({trouble}): المنطقة أعقد من أن يمثلها سطح واحد. اختر منطقة أصغر؛ زيادة نقاط التحكم لا تمنع الانطواء."
+    "ui.scan_fit_folds": "هذا السطح ينطوي على نفسه ({trouble}): اختر منطقة أصغر. زيادة نقاط التحكم لن توقف ذلك."
   },
   "he": {
-    "ui.scan_fit_folds": "המשטח הזה מתקפל על עצמו ({trouble}): האזור מורכב מדי למשטח אחד. בחרו אזור קטן יותר; יותר נקודות בקרה לא ימנעו את הקיפול."
+    "ui.scan_fit_folds": "המשטח הזה מתקפל על עצמו ({trouble}): בחרו אזור קטן יותר. עוד נקודות בקרה לא יעצרו זאת."
   },
   "vi": {
-    "ui.scan_fit_folds": "Bề mặt này tự gấp lên chính nó ({trouble}): vùng này quá phức tạp cho một bề mặt. Hãy chọn vùng nhỏ hơn; thêm điểm điều khiển không ngăn được việc gấp."
+    "ui.scan_fit_folds": "Bề mặt này gập lên chính nó ({trouble}): hãy lấy vùng nhỏ hơn. Thêm điểm điều khiển sẽ không ngăn được."
   }
 }

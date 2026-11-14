@@ -1,26 +1,26 @@
 {
   "en": {
-    "ui.scan_wrap_folds": "This surface folds over itself ({trouble}) where the net follows rims and ribs it is too coarse for: raise Stiffness a little (5 to 10 %), or take a smaller reach. Merge Surfaces cannot sew a folded seam, and finer details fold more."
+    "ui.scan_wrap_folds": "This surface folds over itself ({trouble}): raise Stiffness a little (5 to 10 %) or take a smaller reach. Merge Surfaces cannot sew a folded seam."
   },
   "de": {
-    "ui.scan_wrap_folds": "Diese Fläche faltet sich über sich selbst ({trouble}), wo das Netz Rändern und Rippen folgt, für die es zu grob ist: Erhöhen Sie die Steifigkeit etwas (5 bis 10 %) oder wählen Sie eine kleinere Reichweite. Flächen zusammenführen kann eine gefaltete Naht nicht vernähen, und feinere Details falten stärker."
+    "ui.scan_wrap_folds": "Diese Fläche faltet sich über sich selbst ({trouble}): „Steifigkeit“ etwas erhöhen (5 bis 10 %) oder eine kleinere Reichweite nehmen. „Flächen zusammenführen“ kann keine gefaltete Naht vernähen."
   },
   "ja": {
-    "ui.scan_wrap_folds": "このサーフェスは、ネットが粗すぎて追いきれない縁やリブに沿う所で自身の上に折れ返っています ({trouble})。剛性を少し上げる (5〜10 %) か、範囲を小さくしてください。サーフェスの結合は折れ返った継ぎ目を縫えず、詳細を細かくすると折れ返りは増えます。"
+    "ui.scan_wrap_folds": "このサーフェスは自己交差して折り返しています（{trouble}）。剛性を少し上げる（5〜10 %）か、範囲を小さくしてください。「サーフェスを結合」は折り返した継ぎ目を縫えません。"
   },
   "ko": {
-    "ui.scan_wrap_folds": "이 서피스는 그물이 따라가기에 너무 성긴 테두리와 리브를 따라가는 곳에서 자기 위로 접힙니다({trouble}). 강성을 조금 높이거나(5~10 %) 범위를 줄이세요. 서피스 병합은 접힌 이음매를 꿰맬 수 없고, 세부를 더 촘촘히 하면 더 많이 접힙니다."
+    "ui.scan_wrap_folds": "이 곡면이 자기 자신 위로 접힙니다({trouble}). 강성을 조금 올리거나(5~10 %) 범위를 줄이세요. 곡면 병합은 접힌 이음매를 꿰맬 수 없습니다."
   },
   "zh": {
-    "ui.scan_wrap_folds": "该曲面在网格跟随过细的边缘和筋的地方自身折叠（{trouble}）：请稍微提高刚度（5% 到 10%），或缩小范围。合并曲面无法缝合折叠的接缝，细节越细折叠越多。"
+    "ui.scan_wrap_folds": "此曲面自身折叠（{trouble}）：稍微提高刚度（5 到 10 %）或缩小范围。“合并曲面”无法缝合折叠的接缝。"
   },
   "ar": {
-    "ui.scan_wrap_folds": "ينطوي هذا السطح على نفسه ({trouble}) حيث تتبع الشبكة حوافَّ وأضلاعًا أخشن من أن تتبعها: ارفع الصلابة قليلًا (5 إلى 10 %)، أو خذ مدى أصغر. لا يستطيع «دمج الأسطح» خياطة درز مطوي، والتفاصيل الأدق تنطوي أكثر."
+    "ui.scan_wrap_folds": "هذا السطح ينطوي على نفسه ({trouble}): ارفع الصلابة قليلًا (5 إلى 10 %) أو قلّل المدى. لا يستطيع دمج الأسطح خياطة درز مطوي."
   },
   "he": {
-    "ui.scan_wrap_folds": "משטח זה מתקפל על עצמו ({trouble}) היכן שהרשת עוקבת אחר שוליים וצלעות שהיא גסה מדי עבורם: הגבירו מעט את הקשיחות (5 עד 10 %), או קחו טווח קטן יותר. מיזוג משטחים אינו יכול לתפור תפר מקופל, ופרטים עדינים יותר מתקפלים יותר."
+    "ui.scan_wrap_folds": "המשטח הזה מתקפל על עצמו ({trouble}): העלו מעט את הקשיחות (5 עד 10 %) או הקטינו את הטווח. מיזוג משטחים לא יכול לתפור תפר מקופל."
   },
   "vi": {
-    "ui.scan_wrap_folds": "Bề mặt này tự gập lên chính nó ({trouble}) ở chỗ lưới bám theo các mép và gân mà nó quá thô để theo: tăng Độ cứng một chút (5 đến 10 %), hoặc lấy phạm vi nhỏ hơn. Gộp bề mặt không thể khâu đường nối bị gập, và chi tiết mịn hơn gập nhiều hơn."
+    "ui.scan_wrap_folds": "Bề mặt này gập lên chính nó ({trouble}): tăng Độ cứng một chút (5 đến 10 %) hoặc thu nhỏ phạm vi. Gộp mặt không khâu được đường nối bị gập."
   }
 }

@@ -1,42 +1,42 @@
 {
   "en": {
     "cmd.scan_fillet_it": "Fillet It",
-    "help.scan.fillet_it": "Fillets the edges of the body Reconstruct builds where the scan shows rounds no profile holds (across a prism's ends, round a hole's mouth): each round measured off the scan as Fillet from Scan does, and the edges filleted at the radius measured. An edge the scan shows sharp is set aside.",
+    "help.scan.fillet_it": "Fillets the edges of Reconstruct's body where the scan shows rounds, each at the radius measured off the scan. Edges the scan shows sharp are set aside.",
     "ui.scan_reconstruct_fillet": "Fillet It: {edges} rounded edges"
   },
   "de": {
     "cmd.scan_fillet_it": "Kanten verrunden",
-    "help.scan.fillet_it": "Verrundet die Kanten des Körpers, den Rekonstruieren aufbaut, wo der Scan Rundungen zeigt, die kein Profil enthält (quer über die Enden eines Prismas, um die Öffnung einer Bohrung): Jede Rundung wird wie bei „Verrundung aus Scan“ am Scan gemessen und die Kanten mit dem gemessenen Radius verrundet. Eine Kante, die der Scan scharf zeigt, wird übergangen.",
+    "help.scan.fillet_it": "Verrundet die Kanten des rekonstruierten Körpers dort, wo der Scan Rundungen zeigt, jeweils mit dem am Scan gemessenen Radius. Kanten, die der Scan scharf zeigt, werden übergangen.",
     "ui.scan_reconstruct_fillet": "Kanten verrunden: {edges} gerundete Kanten"
   },
   "ja": {
     "cmd.scan_fillet_it": "エッジをフィレット",
-    "help.scan.fillet_it": "再構築が作成するボディのエッジのうち、どのプロファイルにも含まれない丸み（角柱の端を横切る丸み、穴の口の丸み）がスキャンにある箇所をフィレットします。各丸みを「スキャンからフィレット」と同じようにスキャンで測り、測った半径でエッジをフィレットします。スキャンで鋭いエッジは除外します。",
+    "help.scan.fillet_it": "スキャンに丸みが見える所で、再構築のボディのエッジを、スキャンから測った半径でフィレットします。スキャンで鋭いエッジは除外します。",
     "ui.scan_reconstruct_fillet": "エッジをフィレット: 丸みのあるエッジ {edges} 本"
   },
   "ko": {
     "cmd.scan_fillet_it": "모서리 필렛",
-    "help.scan.fillet_it": "재구성이 만드는 바디의 모서리 중 어떤 프로파일에도 없는 둥근 부분(각기둥 끝을 가로지르는 둥근 모서리, 구멍 입구의 둥근 부분)이 스캔에 있는 곳을 필렛합니다. 각 둥근 부분을 '스캔에서 필렛'처럼 스캔에서 측정하고, 측정한 반지름으로 모서리를 필렛합니다. 스캔에서 날카로운 모서리는 제외합니다.",
+    "help.scan.fillet_it": "스캔에 둥근 부분이 보이는 곳에서 재구성 바디의 모서리를 스캔에서 잰 반지름으로 필렛합니다. 스캔에서 날카로운 모서리는 제외합니다.",
     "ui.scan_reconstruct_fillet": "모서리 필렛: 둥근 모서리 {edges}개"
   },
   "zh": {
     "cmd.scan_fillet_it": "倒圆边",
-    "help.scan.fillet_it": "在重建所构建实体的边上倒圆：扫描显示有圆角而任何轮廓都不包含的地方（横跨棱柱端部、孔口一圈）。每个圆角都像“由扫描倒圆”一样在扫描上测量，并按测得的半径倒圆。扫描显示为锐边的边会被跳过。",
+    "help.scan.fillet_it": "在扫描显示圆角处，按从扫描测得的半径对重建实体的边倒圆。扫描显示为锐边的边会被跳过。",
     "ui.scan_reconstruct_fillet": "倒圆边：{edges} 条圆角边"
   },
   "ar": {
     "cmd.scan_fillet_it": "تدوير الحواف",
-    "help.scan.fillet_it": "يدوّر حواف الجسم الذي تبنيه إعادة البناء حيث يُظهر المسح تدويرات لا يحملها أي مقطع (عبر طرفي منشور، حول فتحة ثقب): يُقاس كل تدوير من المسح كما يفعل «تدوير من المسح»، وتُدوَّر الحواف بنصف القطر المقيس. الحافة التي يُظهرها المسح حادة تُترك.",
+    "help.scan.fillet_it": "يدوّر حواف جسم إعادة البناء حيث يُظهر المسح تقويرات، كلٌّ بنصف القطر المقيس من المسح. تُستبعد الحواف التي يُظهرها المسح حادة.",
     "ui.scan_reconstruct_fillet": "تدوير الحواف: {edges} حواف مدوّرة"
   },
   "he": {
     "cmd.scan_fillet_it": "עיגול קצוות",
-    "help.scan.fillet_it": "מעגל את קצוות הגוף ששחזור בונה היכן שהסריקה מראה עיגולים שאף פרופיל אינו מכיל (לרוחב קצות מנסרה, סביב פתח של חור): כל עיגול נמדד מהסריקה כמו ב„עיגול מהסריקה”, והקצוות מעוגלים ברדיוס שנמדד. קצה שהסריקה מראה חד מושאר.",
+    "help.scan.fillet_it": "מעגל את קצוות גוף השחזור היכן שהסריקה מראה עיגולים, כל אחד ברדיוס שנמדד מהסריקה. קצוות שהסריקה מראה חדים נשארים בצד.",
     "ui.scan_reconstruct_fillet": "עיגול קצוות: {edges} קצוות מעוגלים"
   },
   "vi": {
     "cmd.scan_fillet_it": "Bo tròn cạnh",
-    "help.scan.fillet_it": "Bo tròn các cạnh của thân mà Tái dựng dựng ở nơi bản quét cho thấy chỗ bo mà không biên dạng nào chứa (ngang qua hai đầu lăng trụ, quanh miệng lỗ): mỗi chỗ bo được đo trên bản quét như Bo tròn từ bản quét, và các cạnh được bo theo bán kính đo được. Cạnh mà bản quét cho thấy sắc sẽ được bỏ qua.",
+    "help.scan.fillet_it": "Bo tròn các cạnh của thân Tái dựng ở nơi bản quét có góc bo, mỗi cạnh theo bán kính đo từ bản quét. Cạnh mà bản quét cho thấy sắc được bỏ qua.",
     "ui.scan_reconstruct_fillet": "Bo tròn cạnh: {edges} cạnh bo tròn"
   }
 }

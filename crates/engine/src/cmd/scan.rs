@@ -130,31 +130,31 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(output_schema_for::<ScanCompleteResult>)
         .params("body?: mesh body (default: the selected mesh body, else the design's only one); plane?: {point, normal: [x,y,z]} to reflect in (default: found near guide, else the best found; a one-sided scan is not refused for matching little, but `warning` says so); guide?: {from, to, toward?}; reach?: length a reflected triangle must lie from the scan to count as missing (default 1.5 typical edges or 3 × the plane's mismatch): the reflected triangles where the scan has nothing, as an amber mesh body `<scan> Mirror Fill` beside it (one undo step); a scan missing nothing is refused → body, fill, mirror, pieces, triangles, area, joined, reach, warning?, feature"),
     CommandSpec::new("scan.fit_plane", "Fit Plane", crate::checked!("scan.fit_plane", fit_plane))
-        .at("SCAN", "FIT")
+        .at("SCAN", "RECONSTRUCT")
         .icon("plane")
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
         .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: mm (default 0.15 % of the scan's size); keep?: bool (default true: kept as a construction plane) → body, plane: {point, normal}, triangles, area, rms, max, feature"),
     CommandSpec::new("scan.fit_cylinder", "Fit Cylinder", crate::checked!("scan.fit_cylinder", fit_cylinder))
-        .at("SCAN", "FIT")
+        .at("SCAN", "RECONSTRUCT")
         .icon("cylinder")
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
         .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: mm (default 0.15 % of the scan's size); keep?: bool (default true: kept as a construction axis) → body, cylinder: {point, axis, radius, diameter, length}, triangles, area, rms, max, feature"),
     CommandSpec::new("scan.fit_sphere", "Fit Sphere", crate::checked!("scan.fit_sphere", fit_sphere))
-        .at("SCAN", "FIT")
+        .at("SCAN", "RECONSTRUCT")
         .icon("sphere")
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
         .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: length (default 0.15 % of the scan's size); keep?: bool (default true: its centre kept as a construction point) → body, sphere: {center, radius, diameter}, triangles, area, rms, max, feature"),
     CommandSpec::new("scan.fit_cone", "Fit Cone", crate::checked!("scan.fit_cone", fit_cone))
-        .at("SCAN", "FIT")
+        .at("SCAN", "RECONSTRUCT")
         .icon("cone")
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
         .params("point?: [x,y,z] on the scan (default: the point picked on it); body?: mesh body (default: the picked one, else the selected or only one); tolerance?: length (how far a triangle may be from the cone and still be on it; default 0.15% of the scan's size); keep?: bool (default true): a cone fitted to the slanted round wall round the point (a chamfer, a countersink, a drafted boss), kept as a construction axis along it → cone {apex, axis, half_angle}, triangles, area, rms, max, feature"),
     CommandSpec::new("scan.fit_torus", "Fit Torus", crate::checked!("scan.fit_torus", fit_torus))
-        .at("SCAN", "FIT")
+        .at("SCAN", "RECONSTRUCT")
         .icon("torus")
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
@@ -194,7 +194,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("scan_free_form")
         .contract(&FREE_FORM_CONTRACT)
         .output(output_schema_for::<ScanFreeFormResult>)
-        .params("corners: [[x,y,z] × 4] in order round the first face (or curves: [[[x,y,z], …] × 4] the face's four sides, any order and direction, meeting end to end, as Curve on Scan points them: its edges follow them and its inside is fitted to the scan, count? points each way); fit?: off|follow|overall|flat (default follow: fitted to the scan under it; overall: the places far off it left out, so it spans openings and ribs; flat: exactly flat, in the one plane fitted to the scan under it with the places far off it left out, so a panel or wall need not follow every bump; off: flat over the corners only if they are in one plane); plane?: YZ|XZ|XY|construction plane name|{point, normal} (lay the face flat on that plane instead of fitting one: the corners put onto it, no scan needed; fit is then flat); count?: 4…12 points each way (default 4); stiffness?: 0…1 (default 0); reach?: length (snap distance: the scan met no farther than this); body?: the scan (default: the selected or only one): a surface of its own, a cubic net, to edit with Edit Surface and Edit Net (one undo step) → body, surface, controls, places, met, kept, rms, max (how far the scan under it is from it), feature"),
+        .params("corners: [[x,y,z] × 4] in order round the first face (or curves: [[[x,y,z], …] × 4] the face's four sides, any order and direction, meeting end to end, as Curve on Scan points them: its edges follow them and its inside is fitted to the scan, count? points each way); fit?: off|follow|overall|flat (default follow: fitted to the scan under it; overall: the places far off it left out, so it spans openings and ribs; flat: exactly flat, in the one plane fitted to the scan under it with the places far off it left out, so a panel or wall need not follow every bump; off: flat over the corners only if they are in one plane); plane?: YZ|XZ|XY|construction plane name|{point, normal} (lay the face flat on that plane instead of fitting one: the corners put onto it, no scan needed; fit is then flat); count?: 4…12 points each way (default 4; follow with stiffness 0 adds points, two at a time up to 12, until the face is within half the scan's tolerance, so it follows a rounded edge instead of bowing off it); stiffness?: 0…1 (default 0); reach?: length (snap distance: the scan met no farther than this); body?: the scan (default: the selected or only one): a surface of its own, a cubic net, to edit with Edit Surface and Edit Net (one undo step) → body, surface, controls, places, met, kept, rms, max (how far the scan under it is from it), feature"),
     CommandSpec::new("scan.add_face", "Add Face", crate::checked!("scan.add_face", free_form::add_face))
         .icon("scan_free_form")
         .contract(&ADD_FACE_CONTRACT)

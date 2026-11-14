@@ -22,6 +22,28 @@ pub fn cloud_dot(out: &mut Vec<u8>, d: &Dot) {
     cloud_cell(out, &Cell { corners: [d.at; 3], value: [d.value; 3], rgb: d.rgb, ..Cell::default() });
 }
 
+/// The most of a scan's triangles a colouring built once per change paints (Scan Deviation, Flat
+/// Template): a painted triangle's record is a dot's size and a scan has about twice as many
+/// triangles as points, so past this its points are drawn as dots instead.
+pub const PAINT_MOST: usize = 1_000_000;
+
+/// How far a painted triangle stands off the scan, as a share of its longest side (as the scan
+/// tools' own colouring lifts it): drawn over the scan's triangle, not fighting it for depth.
+const PAINT_LIFT: f64 = 0.05;
+
+/// One of the scan's triangles, its corners `a`, `b`, `c`, painted in `rgb` for `value`: lifted a
+/// sliver off the scan along its normal. Nothing for a triangle with no area.
+pub fn cloud_painted(out: &mut Vec<u8>, [a, b, c]: [solidcore_record::Vec3; 3], value: f32, rgb: [u8; 3]) {
+    use solidcraft_engine::geom::prelude::*;
+    let Some(n) = (b - a).cross(c - a).normalized() else { return };
+    let lift = n * (PAINT_LIFT * a.dist(b).max(b.dist(c)).max(c.dist(a)));
+    let f = |p: solidcore_record::Vec3| {
+        let p = p + lift;
+        [p.x as f32, p.y as f32, p.z as f32]
+    };
+    cloud_cell(out, &Cell { corners: [f(a), f(b), f(c)], value: [value; 3], rgb, ..Cell::default() });
+}
+
 /// What a cloud of only dots has of segments and triangles.
 pub fn none() -> std::sync::Arc<Vec<u8>> {
     std::sync::Arc::new(Vec::new())

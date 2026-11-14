@@ -1,7 +1,7 @@
 {
   "en": {
     "cmd.scan_fit_patches": "Fit Patches",
-    "help.scan.fit_patches": "Fits smooth patches over part of the scan, placed by the part's own flattening so a part that curves round fits too: one patch, blocks of patches cut from it and sewn into one body, or a quad whose edges follow the part's edge.",
+    "help.scan.fit_patches": "Fits smooth patches over part of the scan, even one that curves round: one patch, blocks of patches sewn into one body, or a quad following the part's edge.",
     "ui.scan_patches_layout": "Layout",
     "ui.scan_patches_grid": "Grid",
     "ui.scan_patches_blocks": "Blocks",
@@ -15,7 +15,7 @@
   },
   "de": {
     "cmd.scan_fit_patches": "Flächen einpassen",
-    "help.scan.fit_patches": "Passt glatte Flächen über einen Teil des Scans ein, platziert durch die Abwicklung dieses Teils, sodass auch ein herumgebogener Teil passt: eine Fläche, daraus geschnittene und zu einem Körper vernähte Blöcke, oder ein Viereck, dessen Kanten dem Rand des Teils folgen.",
+    "help.scan.fit_patches": "Passt glatte Flicken über einen Teil des Scans ein, auch einen, der sich herumkrümmt: ein Flicken, zu einem Körper vernähte Flickenblöcke oder ein Viereck entlang des Teilrands.",
     "ui.scan_patches_layout": "Aufteilung",
     "ui.scan_patches_grid": "Raster",
     "ui.scan_patches_blocks": "Blöcke",
@@ -29,7 +29,7 @@
   },
   "ja": {
     "cmd.scan_fit_patches": "パッチをフィット",
-    "help.scan.fit_patches": "スキャンの一部になめらかなパッチをフィットします。その部分の展開で配置するので、回り込むように曲がった部分もフィットします。1 枚のパッチ、そこから切り出して 1 つのボディに縫い合わせたブロック、または縁が部分の縁に沿う四辺形。",
+    "help.scan.fit_patches": "スキャンの一部に滑らかなパッチを当てはめます。回り込む部分にも対応し、1枚のパッチ、1つのボディに縫い合わせたパッチのブロック、部分のエッジに沿う四辺形から選べます。",
     "ui.scan_patches_layout": "レイアウト",
     "ui.scan_patches_grid": "グリッド",
     "ui.scan_patches_blocks": "ブロック",
@@ -43,7 +43,7 @@
   },
   "ko": {
     "cmd.scan_fit_patches": "패치 맞춤",
-    "help.scan.fit_patches": "스캔의 일부에 매끄러운 패치를 맞춥니다. 그 부분을 펼친 것으로 배치하므로 휘어 돌아가는 부분도 맞습니다. 패치 하나, 거기서 잘라 하나의 바디로 꿰맨 블록, 또는 가장자리가 그 부분의 가장자리를 따르는 사각형.",
+    "help.scan.fit_patches": "스캔 일부에 매끄러운 패치를 맞춥니다. 둥글게 감기는 부분도 됩니다. 패치 하나, 한 바디로 꿰맨 패치 블록, 또는 부분의 가장자리를 따르는 사각형.",
     "ui.scan_patches_layout": "배치",
     "ui.scan_patches_grid": "격자",
     "ui.scan_patches_blocks": "블록",
@@ -57,7 +57,7 @@
   },
   "zh": {
     "cmd.scan_fit_patches": "拟合面片",
-    "help.scan.fit_patches": "在扫描的一部分上拟合光滑面片，按该部分自身的展平来放置，因此弯曲回绕的部分也能拟合：一个面片、从中切出并缝合为一个实体的分块，或边沿该部分边缘的四边面片。",
+    "help.scan.fit_patches": "在扫描的一部分上拟合平滑面片，包括弯曲环绕的部分：单个面片、缝合成一个实体的面片块，或沿该部分边缘的四边形。",
     "ui.scan_patches_layout": "布局",
     "ui.scan_patches_grid": "网格",
     "ui.scan_patches_blocks": "分块",
@@ -71,7 +71,7 @@
   },
   "ar": {
     "cmd.scan_fit_patches": "ملاءمة رقع",
-    "help.scan.fit_patches": "يلائم رقعًا ناعمة على جزء من المسح، موضوعة بحسب تسطيح ذلك الجزء نفسه فيلائم حتى جزءًا منحنيًا يلتف: رقعة واحدة، أو كتل مقطوعة منها ومخيطة في جسم واحد، أو رقعة رباعية تتبع حوافها حافة الجزء.",
+    "help.scan.fit_patches": "يلائم رقعًا ناعمة على جزء من المسح، حتى لو كان منحنيًا حول نفسه: رقعة واحدة، أو كتل رقع مخيطة في جسم واحد، أو رباعي يتبع حافة الجزء.",
     "ui.scan_patches_layout": "التخطيط",
     "ui.scan_patches_grid": "شبكة",
     "ui.scan_patches_blocks": "كتل",
@@ -85,7 +85,7 @@
   },
   "he": {
     "cmd.scan_fit_patches": "התאמת טלאים",
-    "help.scan.fit_patches": "מתאימה טלאים חלקים על חלק מהסריקה, ממוקמים לפי השיטוח של החלק עצמו כך שגם חלק שמתעקם סביב מתאים: טלאי אחד, בלוקים שנחתכו ממנו ונתפרו לגוף אחד, או מרובע שקצוותיו הולכים לאורך קצה החלק.",
+    "help.scan.fit_patches": "מתאים טלאים חלקים על חלק מהסריקה, גם כזה שמתעגל סביב: טלאי אחד, גושי טלאים תפורים לגוף אחד, או מרובע שעוקב אחר קצה החלק.",
     "ui.scan_patches_layout": "פריסה",
     "ui.scan_patches_grid": "רשת",
     "ui.scan_patches_blocks": "בלוקים",
@@ -99,7 +99,7 @@
   },
   "vi": {
     "cmd.scan_fit_patches": "Khớp mảnh",
-    "help.scan.fit_patches": "Khớp các mảnh trơn lên một phần bản quét, đặt theo cách trải phẳng của chính phần đó nên cả phần cong vòng cũng khớp được: một mảnh, các khối cắt từ đó và khâu thành một khối, hoặc một tứ giác có cạnh theo mép của phần đó.",
+    "help.scan.fit_patches": "Khớp các mảnh trơn lên một phần bản quét, kể cả phần cong vòng: một mảnh, các khối mảnh khâu thành một thân, hoặc tứ giác theo mép của phần đó.",
     "ui.scan_patches_layout": "Bố cục",
     "ui.scan_patches_grid": "Lưới",
     "ui.scan_patches_blocks": "Khối",
