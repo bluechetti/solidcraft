@@ -443,6 +443,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             ScanFitPatches(crate::dialogs_scan_patches::FitPatches),
             ScanFloating(crate::dialogs_scan_clean::Floating),
             ScanHoles(crate::dialogs_scan_clean::Holes),
+            ScanFit(crate::dialogs_scan_fit::FitShape),
             ScanReduce(crate::dialogs_scan_clean::Reduce),
             ScanSection(crate::dialogs_scan_section::SectionSketch),
             ScanSections(crate::dialogs_scan_sections::SectionsAlong),
@@ -1213,6 +1214,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_scan_curve::start(app, id))
                     .or_else(|| crate::dialogs_scan_free_form::start(app, id))
                     .or_else(|| crate::dialogs_scan_clean::start(app, id))
+                    .or_else(|| crate::dialogs_scan_fit::start(app, id))
                     .or_else(|| crate::dialogs_scan_section::start(app, id))
                     .or_else(|| crate::dialogs_scan_sections::start(app, id))
                     .or_else(|| crate::dialogs_scan_denoise::start(app, id))
@@ -1504,6 +1506,7 @@ impl Dialog {
                 | Kind::ScanFitPatches(_)
                 | Kind::ScanFloating(_)
                 | Kind::ScanHoles(_)
+                | Kind::ScanFit(_)
                 | Kind::ScanReduce(_)
                 | Kind::ScanSection(_)
                 | Kind::ScanSections(_)
@@ -2961,6 +2964,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::ScanFitPatches(_) => "FIT PATCHES",
         Kind::ScanFloating(_) => "FLOATING PIECES",
         Kind::ScanHoles(_) => "FILL HOLES",
+        Kind::ScanFit(_) => "FIT SHAPE",
         Kind::ScanReduce(_) => "REDUCE MESH",
         Kind::ScanSection(_) => "SECTION TO SKETCH",
         Kind::ScanSections(_) => "SECTIONS ALONG CURVE",
@@ -6669,6 +6673,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanFitPatches(k) => return crate::dialogs_scan_patches::commands(app, k, &d.inputs),
         Kind::ScanFloating(k) => return crate::dialogs_scan_clean::commands(k),
         Kind::ScanHoles(k) => return crate::dialogs_scan_clean::holes_commands(k),
+        Kind::ScanFit(k) => return crate::dialogs_scan_fit::commands(k, &d.inputs),
         Kind::ScanReduce(k) => return crate::dialogs_scan_clean::reduce_commands(k),
         Kind::ScanSection(k) => return crate::dialogs_scan_section::commands(app, k),
         Kind::ScanSections(k) => return crate::dialogs_scan_sections::commands(k),

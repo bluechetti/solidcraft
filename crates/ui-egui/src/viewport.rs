@@ -5838,6 +5838,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 .chain(crate::dialogs_scan::gpu_marks(app))
                 .chain(crate::dialogs_scan::gpu_mismatch(app))
                 .chain(crate::dialogs_scan_clean::gpu_marks(app))
+                .chain(crate::dialogs_scan_fit::gpu_marks(app))
                 .chain(crate::dialogs_scan_split::gpu_marks(app))
                 .chain(crate::dialogs_scan_flatten::gpu_marks(app))
                 .chain(crate::dialogs_scan_surface::gpu_fit_marks(app))
@@ -6540,6 +6541,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 crate::dialogs_scan_select::drag_end(app);
             }
         }
+    }
+    // Fill Holes: a click by an outline ticks or unticks that hole.
+    if crate::dialogs_scan_clean::choosing_holes(app)
+        && resp.clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        crate::dialogs_scan_clean::hole_click(app, &proj, p);
     }
     // Sections Along Curve: a click on a 3D curve is the curve the sections follow.
     if crate::dialogs_scan_sections::choosing(app)
@@ -7317,13 +7325,14 @@ pub(crate) fn measurement_selection(s: &solidcraft_engine::Session, sel: &Sel) -
 }
 
 /// Whether a Scan dialog takes clicks in the view as its own: Curve on Scan's points, New Free
-/// Form's corners, Edit Surface's handles, the curve Sections Along Curve follows.
+/// Form's corners, Edit Surface's handles, the curve Sections Along Curve follows, Fill Holes' rings.
 fn takes_scan_clicks(app: &SolveApp) -> bool {
     crate::dialogs_scan_curve::drawing(app)
         || crate::dialogs_scan_free_form::drawing(app)
         || crate::dialogs_scan_free_form::choosing_curves(app)
         || crate::dialogs_scan_surface::editing(app)
         || crate::dialogs_scan_sections::choosing(app)
+        || crate::dialogs_scan_clean::choosing_holes(app)
 }
 
 /// What a box selects: sketch entities while sketching, otherwise what the open

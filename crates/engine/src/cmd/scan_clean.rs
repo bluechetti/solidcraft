@@ -123,6 +123,15 @@ pub fn pieces_of(s: &Session, body: Option<&str>, cmd: &str) -> Result<(String, 
     Ok((name, found))
 }
 
+/// The piece of `found` (the pieces of the scan `body`) under `point`: the piece of the
+/// triangle nearest it.
+pub fn piece_at(s: &Session, body: &str, found: &Pieces, point: Vec3) -> Option<usize> {
+    let state = s.model.state();
+    let (positions, triangles) = state.body(body).and_then(|b| b.body.triangle_mesh())?;
+    let t = solidcraft_scan::base::nearest_triangle(&Scan::new(positions, triangles), point)?;
+    found.of.get(t).copied().filter(|&k| k != u32::MAX).map(|k| k as usize)
+}
+
 /// The share parameter `below`, 0 to 0.5.
 fn share(p: &Value, cmd: &str) -> Result<f64> {
     match p.get("below").filter(|v| !v.is_null()) {
@@ -208,11 +217,20 @@ pub(super) fn apply(s: &mut Session, p: &Value, body: &str, step: CleanStep, cmd
     Ok((done, feature))
 }
 
+/// Points clicked on the scan, `key` a list of [x, y, z]; none when not given.
+fn points(p: &Value, key: &str, cmd: &str) -> Result<Vec<[f64; 3]>> {
+    let Some(list) = p.get(key).filter(|v| !v.is_null()) else { return Ok(Vec::new()) };
+    let why = || bad(cmd, format!("`{key}` must be a list of at most 10000 points [x, y, z]"));
+    let list = list.as_array().filter(|l| l.len() <= 10_000).ok_or_else(why)?;
+    list.iter().map(|v| crate::params::vec3(v).map(|q| [q.x, q.y, q.z]).ok_or_else(why)).collect()
+}
+
 pub(super) fn remove_floating(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.remove_floating";
     let below = share(p, cmd)?;
     let name = mesh_name(s, p, cmd)?;
-    let (done, feature) = apply(s, p, &name, CleanStep::RemoveFloating { below }, cmd)?;
+    let (keep, remove) = (points(p, "keep", cmd)?, points(p, "remove", cmd)?);
+    let (done, feature) = apply(s, p, &name, CleanStep::RemoveFloating { below, keep, remove }, cmd)?;
     let Report::Floating { pieces, removed, removed_triangles } = done.report else { return Err(bad(cmd, "the step did something else")) };
     let reply =
         ScanFloatingResult { body: name, pieces, removed, removed_triangles, triangles: done.triangles(), feature, param_warnings: Vec::new() };
@@ -227,7 +245,8 @@ pub(super) fn fill_holes(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let fair = crate::params::bool_(p, "fair").unwrap_or(true);
     let name = mesh_name(s, p, cmd)?;
-    let (done, feature) = apply(s, p, &name, CleanStep::FillHoles { max_edges, fair }, cmd)?;
+    let at = points(p, "at", cmd)?;
+    let (done, feature) = apply(s, p, &name, CleanStep::FillHoles { max_edges, fair, at }, cmd)?;
     let Report::Holes { holes, filled, failed, larger, added_triangles, unfillable_edges } = done.report else {
         return Err(bad(cmd, "the step did something else"));
     };

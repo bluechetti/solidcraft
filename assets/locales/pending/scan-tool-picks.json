@@ -1,0 +1,52 @@
+{
+  "en": {
+    "ui.scan_fit_click": "Click the scan on the face to fit.",
+    "ui.scan_fit_half_angle": "Half angle",
+    "ui.scan_fit_makes_axis": "OK keeps a construction axis along it.",
+    "ui.scan_fit_makes_plane": "OK keeps a construction plane on it.",
+    "ui.scan_fit_makes_point": "OK keeps a construction point at its centre.",
+    "ui.scan_fit_off": "{rms} average, {max} worst",
+    "ui.scan_fit_tube": "Tube radius",
+    "ui.scan_holes_by_size": "By size"
+  },
+  "de": {
+    "ui.scan_fit_click": "Klicken Sie auf die Fläche des Scans, die eingepasst werden soll.",
+    "ui.scan_fit_half_angle": "Halber Winkel",
+    "ui.scan_fit_makes_axis": "OK behält eine Konstruktionsachse entlang der Form.",
+    "ui.scan_fit_makes_plane": "OK behält eine Konstruktionsebene darauf.",
+    "ui.scan_fit_makes_point": "OK behält einen Konstruktionspunkt in ihrer Mitte.",
+    "ui.scan_fit_off": "{rms} im Mittel, {max} höchstens",
+    "ui.scan_fit_tube": "Rohrradius",
+    "ui.scan_holes_by_size": "Nach Größe"
+  },
+  "ja": {
+    "ui.scan_fit_click": "当てはめる面をスキャン上でクリックします。",
+    "ui.scan_fit_half_angle": "半角",
+    "ui.scan_fit_makes_axis": "OK でその軸に沿った構築軸を残します。",
+    "ui.scan_fit_makes_plane": "OK でその上に構築平面を残します。",
+    "ui.scan_fit_makes_point": "OK で中心に構築点を残します。",
+    "ui.scan_fit_off": "平均 {rms}、最大 {max}",
+    "ui.scan_fit_tube": "管の半径",
+    "ui.scan_holes_by_size": "サイズで選ぶ"
+  },
+  "zh": {
+    "ui.scan_fit_click": "在扫描上单击要拟合的面。",
+    "ui.scan_fit_half_angle": "半角",
+    "ui.scan_fit_makes_axis": "确定后沿它保留一条构造轴。",
+    "ui.scan_fit_makes_plane": "确定后在其上保留一个构造平面。",
+    "ui.scan_fit_makes_point": "确定后在其中心保留一个构造点。",
+    "ui.scan_fit_off": "平均 {rms}，最大 {max}",
+    "ui.scan_fit_tube": "管半径",
+    "ui.scan_holes_by_size": "按大小"
+  },
+  "ko": {
+    "ui.scan_fit_click": "맞출 면을 스캔에서 클릭하세요.",
+    "ui.scan_fit_half_angle": "반각",
+    "ui.scan_fit_makes_axis": "확인하면 그 축을 따라 구성 축을 남깁니다.",
+    "ui.scan_fit_makes_plane": "확인하면 그 위에 구성 평면을 남깁니다.",
+    "ui.scan_fit_makes_point": "확인하면 중심에 구성 점을 남깁니다.",
+    "ui.scan_fit_off": "평균 {rms}, 최대 {max}",
+    "ui.scan_fit_tube": "관 반지름",
+    "ui.scan_holes_by_size": "크기로"
+  }
+}

@@ -841,7 +841,10 @@ fn a_clean_step_keeps_settings_and_makes_the_scan_again() {
     let reply = run(&mut s, "scan.remove_floating", json!({}));
     let id = reply["feature"].as_u64().unwrap();
     let step = s.doc.feature(id).unwrap();
-    assert_eq!(step.kind, FeatureKind::ScanClean { body: body.clone().into(), step: CleanStep::RemoveFloating { below: 0.02 } });
+    assert_eq!(
+        step.kind,
+        FeatureKind::ScanClean { body: body.clone().into(), step: CleanStep::RemoveFloating { below: 0.02, keep: Vec::new(), remove: Vec::new() } }
+    );
     assert_eq!(step.name, "RemoveFloating1");
     assert_eq!((count(&s), imported(&s)), (block, Some(all)), "the scan cleaned, the import as it came in");
 
@@ -853,7 +856,7 @@ fn a_clean_step_keeps_settings_and_makes_the_scan_again() {
     // Made again with another setting: the step keeps it, in its place.
     run(&mut s, "timeline.redefine", json!({"feature": id, "command": "scan.remove_floating", "params": {"body": body, "below": 0.5}}));
     let at = s.doc.feature_index(id).unwrap();
-    assert!(matches!(&s.doc.features[at].kind, FeatureKind::ScanClean { step: CleanStep::RemoveFloating { below }, .. } if *below == 0.5));
+    assert!(matches!(&s.doc.features[at].kind, FeatureKind::ScanClean { step: CleanStep::RemoveFloating { below, .. }, .. } if *below == 0.5));
     assert_eq!(count(&s), block);
     // The same step put in before it: the later one finds nothing to do, leaves the scan, says so.
     run(&mut s, "timeline.roll_to", json!({"position": at}));

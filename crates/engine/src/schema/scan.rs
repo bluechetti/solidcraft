@@ -1202,6 +1202,12 @@ pub struct ScanFloatingParams {
     /// of fewer than two). 0 to 0.5; default 0.02.
     #[serde(default)]
     pub below: Option<f64>,
+    /// Points [x, y, z] on pieces to keep whatever their size.
+    #[serde(default)]
+    pub keep: Option<Vec<[f64; 3]>>,
+    /// Points [x, y, z] on pieces to take off whatever their size.
+    #[serde(default)]
+    pub remove: Option<Vec<[f64; 3]>>,
 }
 
 /// What `scan.remove_floating` returns.
@@ -1243,6 +1249,10 @@ pub struct ScanHolesParams {
     /// Shape each patch to carry the surface's curve across. Default: true; false leaves it flat.
     #[serde(default)]
     pub fair: Option<bool>,
+    /// Points [x, y, z] by the holes to close: exactly the rings nearest them are closed, whatever
+    /// their size, an outer rim among them capped; `max_edges` is then not used.
+    #[serde(default)]
+    pub at: Option<Vec<[f64; 3]>>,
 }
 
 /// What `scan.fill_holes` returns.

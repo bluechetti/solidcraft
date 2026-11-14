@@ -10,6 +10,8 @@ use serde_json::{Value, json};
 use solidcraft_geom::Vec3Geom as _;
 use solidcraft_scan::Scan;
 use solidcraft_scan::base::{self, Base};
+/// The shapes fitted to a scan, for a dialog to read a fit's preview.
+pub use solidcraft_scan::fit as fitting;
 use solidcraft_scan::fit::{self, Fitted, Kind, Shape};
 use solidcraft_scan::place::{self, Rigid};
 use solidcraft_scan::symmetry::{self, Guide, Mirror};
@@ -665,6 +667,47 @@ pub struct BasePreview {
     /// How many bases the scan has.
     pub count: usize,
     pub marked: Vec<[f32; 3]>,
+}
+
+/// What `scan.fit_<kind>` would fit at a point (the Fit dialog's preview): the shape, how well it
+/// fits, and the corners of the region it was fitted to, to paint on the scan.
+#[derive(Clone, Debug)]
+pub struct FitPreview {
+    pub body: String,
+    pub fitted: Fitted,
+    /// The region's triangles' corners, at most [`FIT_PAINT_MOST`] (every so many past that).
+    pub region: Vec<[Vec3; 3]>,
+}
+
+/// The most of a fitted region's triangles [`fit_preview`] hands back to paint.
+pub const FIT_PAINT_MOST: usize = 400_000;
+
+/// The shape `kind` fitted to the scan `body` (or the selected or only one) round `point`, without
+/// keeping anything.
+pub fn fit_preview(s: &Session, body: Option<&str>, point: Vec3, kind: Kind) -> Result<FitPreview> {
+    let cmd = match kind {
+        Kind::Plane => "scan.fit_plane",
+        Kind::Cylinder => "scan.fit_cylinder",
+        Kind::Sphere => "scan.fit_sphere",
+        Kind::Cone => "scan.fit_cone",
+        Kind::Torus => "scan.fit_torus",
+    };
+    let mesh = mesh(s, &json!({ "body": body }), cmd)?;
+    let scan = mesh.scan();
+    let seed = base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
+    let fitted = fit::fit(&scan, seed, kind, None).map_err(|e| bad(cmd, e.to_string()))?;
+    let step = fitted.triangles.len().div_ceil(FIT_PAINT_MOST).max(1);
+    let at = |i: u32| mesh.positions.get(i as usize).copied();
+    let region = fitted
+        .triangles
+        .iter()
+        .step_by(step)
+        .filter_map(|&t| {
+            let [a, b, c] = *mesh.triangles.get(t)?;
+            Some([at(a)?, at(b)?, at(c)?])
+        })
+        .collect();
+    Ok(FitPreview { body: mesh.body, fitted, region })
 }
 
 /// The base `scan.stand_on_base` would stand the scan `body` on (the dialog's preview): the face
