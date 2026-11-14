@@ -1,34 +1,34 @@
 {
   "en": {
     "prefs.scan_clean_in_place": "Clean scans in place, with no step in the timeline",
-    "prefs.scan_clean_in_place_note": "Remove Floating Pieces, Fill Holes, Reduce Mesh, Repair Mesh, Denoise and Remesh write the cleaned scan back into its Insert Mesh feature, as before. Off: each adds a step to the timeline that keeps only its settings, so the scan is kept as it came in and a step can be edited, suppressed or deleted later."
+    "prefs.scan_clean_in_place_note": "The cleaning tools write the cleaned scan back into its Insert Mesh feature, as before. Off: each adds a timeline step you can edit, suppress or delete later."
   },
   "de": {
     "prefs.scan_clean_in_place": "Scans direkt bereinigen, ohne Schritt in der Zeitleiste",
-    "prefs.scan_clean_in_place_note": "Lose Teile entfernen, Löcher füllen, Netz reduzieren, Netz reparieren, Entrauschen und Neu vernetzen schreiben den bereinigten Scan in sein Netz-einfügen-Feature zurück, wie zuvor. Aus: Jedes Werkzeug fügt der Zeitleiste einen Schritt hinzu, der nur seine Einstellungen speichert; der Scan bleibt, wie er eingefügt wurde, und ein Schritt lässt sich später bearbeiten, unterdrücken oder löschen."
+    "prefs.scan_clean_in_place_note": "Die Bereinigungswerkzeuge schreiben den bereinigten Scan in sein „Netz einfügen“-Feature zurück, wie bisher. Aus: Jedes fügt einen Zeitachsenschritt hinzu, den man später bearbeiten, unterdrücken oder löschen kann."
   },
   "ja": {
     "prefs.scan_clean_in_place": "スキャンをその場でクリーンアップし、タイムラインに手順を追加しない",
-    "prefs.scan_clean_in_place_note": "浮遊部分の削除、穴埋め、メッシュの削減、メッシュの修復、ノイズ除去、再メッシュは、これまでどおりクリーンアップしたスキャンをメッシュ挿入フィーチャーに書き戻します。オフ: 各ツールは設定だけを保持する手順をタイムラインに追加するため、スキャンは取り込んだままの状態で残り、手順は後から編集、抑制、削除できます。"
+    "prefs.scan_clean_in_place_note": "クリーニングツールは、従来どおり整えたスキャンをメッシュ挿入フィーチャーに書き戻します。オフ：各ツールが後で編集・抑制・削除できるタイムラインのステップを追加します。"
   },
   "ko": {
     "prefs.scan_clean_in_place": "타임라인에 단계 없이 스캔을 그 자리에서 정리",
-    "prefs.scan_clean_in_place_note": "떠 있는 조각 제거, 구멍 채우기, 메시 축소, 메시 복구, 노이즈 제거, 리메시는 이전처럼 정리된 스캔을 메시 삽입 피처에 다시 씁니다. 끄기: 각 도구는 설정만 보관하는 단계를 타임라인에 추가하므로 스캔은 가져온 그대로 남고, 단계는 나중에 편집, 억제 또는 삭제할 수 있습니다."
+    "prefs.scan_clean_in_place_note": "정리 도구가 이전처럼 정리된 스캔을 메시 삽입 피처에 다시 씁니다. 끄면: 각 도구가 나중에 편집, 억제, 삭제할 수 있는 타임라인 단계를 추가합니다."
   },
   "zh": {
     "prefs.scan_clean_in_place": "就地清理扫描，不在时间线中添加步骤",
-    "prefs.scan_clean_in_place_note": "删除浮动碎片、填充孔洞、简化网格、修复网格、去噪和重新网格化会像以前一样把清理后的扫描写回其插入网格特征。关闭时：每个工具都会在时间线中添加一个只保存其设置的步骤，因此扫描保持导入时的样子，步骤以后可以编辑、抑制或删除。"
+    "prefs.scan_clean_in_place_note": "清理工具将清理后的扫描写回其“插入网格”特征，与以前一样。关闭：每个工具都添加一个可在之后编辑、抑制或删除的时间线步骤。"
   },
   "ar": {
     "prefs.scan_clean_in_place": "تنظيف المسوح في مكانها دون خطوة في المخطط الزمني",
-    "prefs.scan_clean_in_place_note": "تكتب أدوات إزالة القطع العائمة وملء الثقوب وتقليل الشبكة وإصلاح الشبكة وإزالة الضوضاء وإعادة التشبيك المسحَ المنظَّف في ميزة إدراج الشبكة الخاصة به، كما كان من قبل. عند الإيقاف: تضيف كل أداة إلى المخطط الزمني خطوة لا تحفظ إلا إعداداتها، فيبقى المسح كما أُدرج، ويمكن تعديل الخطوة أو تعليقها أو حذفها لاحقًا."
+    "prefs.scan_clean_in_place_note": "تكتب أدوات التنظيف المسح المنظَّف في ميزة إدراج الشبكة الخاصة به، كما كان. عند الإيقاف: تضيف كل أداة خطوة في الخط الزمني يمكن تحريرها أو تعطيلها أو حذفها لاحقًا."
   },
   "he": {
     "prefs.scan_clean_in_place": "ניקוי סריקות במקום, ללא שלב בציר הזמן",
-    "prefs.scan_clean_in_place_note": "הסרת חלקים צפים, מילוי חורים, הקטנת רשת, תיקון רשת, הסרת רעש ויצירת רשת מחדש כותבים את הסריקה הנקייה בחזרה לתכונת הוספת הרשת שלה, כמו קודם. כבוי: כל כלי מוסיף לציר הזמן שלב ששומר רק את ההגדרות שלו, כך שהסריקה נשמרת כפי שהוכנסה ואפשר לערוך, להשהות או למחוק שלב מאוחר יותר."
+    "prefs.scan_clean_in_place_note": "כלי הניקוי כותבים את הסריקה הנקייה בחזרה לתכונת הוספת רשת משולשים שלה, כמו קודם. כבוי: כל כלי מוסיף שלב בציר הזמן שאפשר לערוך, להשבית או למחוק אחר כך."
   },
   "vi": {
     "prefs.scan_clean_in_place": "Làm sạch bản quét tại chỗ, không thêm bước vào dòng thời gian",
-    "prefs.scan_clean_in_place_note": "Xóa mảnh trôi nổi, Lấp lỗ, Giảm lưới, Sửa lưới, Khử nhiễu và Tạo lại lưới ghi bản quét đã làm sạch trở lại tính năng Chèn lưới của nó, như trước. Tắt: mỗi công cụ thêm vào dòng thời gian một bước chỉ giữ thiết lập của nó, nên bản quét được giữ nguyên như khi chèn vào và có thể sửa, tạm tắt hoặc xóa bước đó sau này."
+    "prefs.scan_clean_in_place_note": "Các công cụ làm sạch ghi bản quét đã làm sạch trở lại tính năng Chèn lưới của nó, như trước. Tắt: mỗi công cụ thêm một bước dòng thời gian có thể sửa, tạm tắt hoặc xóa sau."
   }
 }

@@ -1,26 +1,26 @@
 {
   "en": {
-    "ui.scan_symmetry_complete_unlike": "Only {share} of the scan matches its mirror image about this plane. OK adds the mirror image where the scan has nothing: right when the scan shows one side of a mirror-image part, but on a part that is not one it adds what the part does not have."
+    "ui.scan_symmetry_complete_unlike": "Only {share} of the scan matches its mirror image here. OK still fills the empty side from the mirror image, wrong if the part is not symmetric."
   },
   "de": {
-    "ui.scan_symmetry_complete_unlike": "Nur {share} des Scans stimmt mit seinem Spiegelbild an dieser Ebene überein. OK ergänzt das Spiegelbild dort, wo der Scan nichts hat: richtig, wenn der Scan eine Seite eines spiegelsymmetrischen Teils zeigt, bei einem nicht symmetrischen Teil ergänzt es jedoch, was das Teil nicht hat."
+    "ui.scan_symmetry_complete_unlike": "Nur {share} des Scans passt hier zu seinem Spiegelbild. OK füllt die leere Seite trotzdem aus dem Spiegelbild, falsch, wenn das Teil nicht symmetrisch ist."
   },
   "ja": {
-    "ui.scan_symmetry_complete_unlike": "この面についての鏡像と一致するのはスキャンの {share} だけです。OK を押すと、スキャンに何もない所へ鏡像を追加します。スキャンが鏡像対称な部品の片側を写している場合は正しいですが、対称でない部品では、その部品にない形を追加してしまいます。"
+    "ui.scan_symmetry_complete_unlike": "ここで鏡像と一致するのはスキャンの {share} だけです。OKを押すと空の側を鏡像で埋めますが、部品が対称でなければ誤りになります。"
   },
   "ko": {
-    "ui.scan_symmetry_complete_unlike": "이 평면에 대한 거울상과 일치하는 것은 스캔의 {share}뿐입니다. 확인을 누르면 스캔에 아무것도 없는 곳에 거울상을 더합니다. 스캔이 거울 대칭인 부품의 한쪽을 보여 줄 때는 맞지만, 대칭이 아닌 부품에서는 부품에 없는 형상을 더하게 됩니다."
+    "ui.scan_symmetry_complete_unlike": "여기서 거울상과 맞는 부분은 스캔의 {share}뿐입니다. 확인을 누르면 빈 쪽을 거울상으로 채우지만, 부품이 대칭이 아니면 잘못된 결과가 됩니다."
   },
   "zh": {
-    "ui.scan_symmetry_complete_unlike": "关于此平面，扫描只有 {share} 与其镜像吻合。确定会在扫描空缺处添加镜像：若扫描是镜像对称零件的一侧，这是对的；但对于不对称的零件，它会添加零件本没有的形状。"
+    "ui.scan_symmetry_complete_unlike": "此处只有 {share} 的扫描与其镜像吻合。确定仍会用镜像填补空缺的一侧，若零件不对称则结果错误。"
   },
   "ar": {
-    "ui.scan_symmetry_complete_unlike": "لا يطابق صورته المرآوية حول هذا المستوى سوى {share} من المسح. يضيف «موافق» الصورة المرآوية حيث لا يوجد شيء في المسح: وهذا صحيح عندما يُظهر المسح جانبًا واحدًا من جزء متماثل مرآويًا، أما في جزء غير متماثل فيضيف ما ليس في الجزء."
+    "ui.scan_symmetry_complete_unlike": "{share} فقط من المسح يطابق صورته المرآتية هنا. سيملأ موافق الجانب الفارغ من الصورة المرآتية رغم ذلك، وهذا خطأ إن لم تكن القطعة متماثلة."
   },
   "he": {
-    "ui.scan_symmetry_complete_unlike": "רק {share} מהסריקה תואמים לתמונת הראי שלה סביב מישור זה. אישור מוסיף את תמונת הראי במקומות שבהם אין בסריקה דבר: נכון כשהסריקה מראה צד אחד של חלק סימטרי, אבל בחלק שאינו סימטרי הוא מוסיף את מה שאין בחלק."
+    "ui.scan_symmetry_complete_unlike": "רק {share} מהסריקה תואם את תמונת הראי שלה כאן. אישור עדיין ימלא את הצד הריק מתמונת הראי, וזה שגוי אם החלק אינו סימטרי."
   },
   "vi": {
-    "ui.scan_symmetry_complete_unlike": "Chỉ {share} bản quét khớp với ảnh đối xứng của nó qua mặt phẳng này. OK sẽ thêm ảnh đối xứng vào chỗ bản quét không có gì: đúng khi bản quét cho thấy một phía của chi tiết đối xứng gương, nhưng với chi tiết không đối xứng thì nó thêm phần mà chi tiết không có."
+    "ui.scan_symmetry_complete_unlike": "Chỉ {share} bản quét khớp với ảnh đối xứng ở đây. OK vẫn lấp phía trống bằng ảnh đối xứng, sai nếu chi tiết không đối xứng."
   }
 }
