@@ -1722,9 +1722,14 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     let prisms = shared(prisms, &faces, outcome.tolerance);
     let inner: BTreeSet<usize> = shell.iter().flat_map(|w| w.inner.iter().copied()).collect();
     let repeats = repeats(&faces);
-    let turned_unread = revolve.as_ref().and_then(|r| crate::profile::turned_profile_of(scan, outcome, &faces, &same, size, r).err());
+    let turned = revolve.as_ref().map(|r| crate::profile::turned_profile_of(scan, outcome, &faces, &same, size, r));
+    let turned_unread = turned.as_ref().and_then(|t| t.as_ref().err().cloned());
+    // The faces the turned profile runs along. A bore about the axis the profile does not run
+    // along (one read off a slice that comes down to the axis there) is no part of the revolved
+    // body: it is cut, as a hole is, or the revolve fills it.
+    let in_profile: Option<BTreeSet<usize>> = turned.and_then(|t| t.ok()).map(|(_, outline, _)| outline.faces.iter().flatten().copied().collect());
     let explained: BTreeSet<usize> = match &revolve {
-        Some(revolve) => revolve.members.iter().copied().collect(),
+        Some(revolve) => revolve.members.iter().copied().filter(|&k| !hole(k) || in_profile.as_ref().is_none_or(|p| p.contains(&k))).collect(),
         None => prisms.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).chain(&inner).copied().collect(),
     };
     let plain_explained: BTreeSet<usize> = explained.union(&in_formed).copied().collect();
