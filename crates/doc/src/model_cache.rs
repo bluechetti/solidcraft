@@ -7,7 +7,8 @@
 //! and the solved sketches the states share. Face names are kept as worked out, not as the
 //! history they were worked out from: a model taken from a file names every face as the model
 //! that was saved did. A file without room for every state keeps fewer
-//! ([`SavedModel::thinned`]); opening evaluates the features whose state it left out again.
+//! ([`SavedModel::thinned`]); opening evaluates the features whose state it left out again, but
+//! for a Scan Clean step's, which stands in as a thinned state until something reads it.
 
 use super::*;
 use crate::history_names::{FaceInfo, Names};
@@ -950,6 +951,15 @@ impl Model {
                 }
             }
             let state = state.map(|at| states.get(at).cloned().ok_or_else(|| bad("saved model: state"))).transpose()?;
+            // A Scan Clean step's state left out stands in as the state before it with the step
+            // added to its scan's run: the step is done again only where something reads it, not
+            // on opening, to be thrown away again at once.
+            let stood = match &state {
+                None if exact && r.get("skipped").and_then(Json::as_bool) == Some(false) => scan_runs::stand_in(&before, f).map(Arc::new),
+                _ => None,
+            };
+            let unkept = state.is_none() && stood.is_none();
+            let state = state.or(stood);
             let result = FeatureResult {
                 id: f.id,
                 name: f.name.clone(),
@@ -965,7 +975,7 @@ impl Model {
                 skipped: r.get("skipped").and_then(Json::as_bool).ok_or_else(|| bad("saved model: skipped"))?,
                 stale: false,
                 fingerprint: prev,
-                unkept: state.is_none(),
+                unkept,
                 state: state.unwrap_or_else(|| before.clone()),
             };
             if !result.skipped {
@@ -997,7 +1007,8 @@ impl Model {
             for (f, r) in doc.features.iter().zip(&model.results).filter(|(_, r)| !r.skipped && r.error.is_none()) {
                 // A pose-only feature's fingerprint leaves its pose out, so its saved result may be
                 // from another pose than `doc`'s: it is no result for `doc`'s key (#12139).
-                if pose_only(f) {
+                // A Scan Clean step's result is never cached (each would hold a copy of the scan).
+                if pose_only(f) || matches!(f.kind, FeatureKind::ScanClean { .. }) {
                     before = r.state.clone();
                     continue;
                 }
