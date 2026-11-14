@@ -75,7 +75,7 @@ struct Under {
     scan: String,
     shade: solidcraft_engine::cmd::scan::surface::network::Shade,
     values: Vec<f32>,
-    dots: Option<(u64, [[u8; 3]; 3], u64, Arc<Vec<u8>>)>,
+    dots: Option<(u64, crate::scan_deviation::Colours, u64, crate::dialogs_scan_surface::Shaded)>,
 }
 
 /// The colouring's id among the clouds the viewport draws.
@@ -235,7 +235,7 @@ fn colour(app: &SolveApp, k: &mut FitPatches) {
     if under.dots.as_ref().is_some_and(|(t, c, _, _)| *t == tolerance.to_bits() && *c == colours) {
         return;
     }
-    let dots = Arc::new(crate::dialogs_scan_surface::shade_dots(&under.shade, &under.values, tolerance, colours));
+    let dots = crate::dialogs_scan_surface::shade_dots(&under.shade, &under.values, tolerance, colours);
     under.dots = Some((tolerance.to_bits(), colours, crate::dialogs_scan_surface::next_shade_version(), dots));
 }
 
@@ -257,7 +257,7 @@ pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view:
         return None;
     }
     let (_, _, version, dots) = k.shown.as_ref()?.under.as_ref()?.dots.as_ref()?;
-    Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots.clone()))
+    Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots))
 }
 
 /// What OK runs: the patches, and the scan's tolerance if it was changed here.
@@ -367,7 +367,7 @@ mod tests {
         // come, against the scan's own tolerance (0.1 mm until one is set).
         let (stats, tolerance) = fidelity(&h.app, k).expect("the scan under the patches measured");
         assert!(stats.count > 100 && tolerance == 0.1 && stats.rms < 1.0, "{stats:?} {tolerance}");
-        assert!(gpu_shade(&h.app).is_some_and(|c| !c.dots.is_empty()), "the scan coloured");
+        assert!(gpu_shade(&h.app).is_some_and(|c| !c.dots.is_empty() || !c.triangles.is_empty()), "the scan coloured");
         assert!(crate::scan_fidelity::legend(&h.app).is_some(), "and its key");
         // A tolerance set here is the scan's: kept by OK, so the next tool opens with it.
         if let Some(Kind::ScanFitPatches(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {

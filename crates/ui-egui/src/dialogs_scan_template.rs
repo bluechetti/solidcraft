@@ -132,7 +132,7 @@ struct Under {
     /// Whether the point is inside a cut-out: a part standing off the wall by design, which does not
     /// count against how flat the wall is.
     cut: Vec<bool>,
-    dots: Option<(u64, [[u8; 3]; 3], u64, Arc<Vec<u8>>)>,
+    dots: Option<(u64, crate::scan_deviation::Colours, u64, Arc<Vec<u8>>)>,
 }
 
 /// The colouring's id among the clouds the viewport draws, and the most points it shows.
@@ -437,7 +437,11 @@ pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view:
         return None;
     }
     let (_, _, version, dots) = k.shown.as_ref()?.under.as_ref()?.dots.as_ref()?;
-    Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots.clone()))
+    Some(crate::dialogs_scan_surface::shade_cloud(
+        SHADE_CLOUD_ID,
+        *version,
+        &crate::dialogs_scan_surface::Shaded { dots: dots.clone(), triangles: crate::scan_dots::none() },
+    ))
 }
 
 /// The dialog's rows.

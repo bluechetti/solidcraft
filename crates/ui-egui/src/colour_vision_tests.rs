@@ -403,6 +403,18 @@ fn groups(t: &Tokens) -> Vec<Group> {
             ],
             &[],
         ),
+        // Scan deviation's five stops, unlit: far below to far above a result.
+        group(
+            "scan deviation",
+            &[
+                ("analysis.deviation[0]", solidcraft_theme::srgb(a.deviation[0])),
+                ("analysis.deviation[1]", solidcraft_theme::srgb(a.deviation[1])),
+                ("analysis.deviation[2]", solidcraft_theme::srgb(a.deviation[2])),
+                ("analysis.deviation[3]", solidcraft_theme::srgb(a.deviation[3])),
+                ("analysis.deviation[4]", solidcraft_theme::srgb(a.deviation[4])),
+            ],
+            &[],
+        ),
         group(
             "ribbon accents",
             &[("glyph_text", t.glyph_text), ("sketch_accent", t.sketch_accent), ("construction_geom", t.construction_geom)],
@@ -858,6 +870,7 @@ fn each_mode_changes_only_its_table() {
         "figure_conflict",
         "analysis.draft",
         "analysis.access",
+        "analysis.deviation",
         "analysis.hatch",
         "bend_up",
         "bend_down",
@@ -897,6 +910,7 @@ fn each_mode_changes_only_its_table() {
                 "glyph_text",
                 "preview_sketch",
                 "sketch_conflict",
+                "analysis.deviation",
                 "analysis.hatch",
             ]),
         ),
@@ -920,6 +934,7 @@ fn each_mode_changes_only_its_table() {
                 "glyph_text",
                 "preview_sketch",
                 "sketch_conflict",
+                "analysis.deviation",
                 "analysis.hatch",
             ]),
         ),

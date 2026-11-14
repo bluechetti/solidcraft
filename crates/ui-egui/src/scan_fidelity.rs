@@ -105,18 +105,39 @@ pub(crate) fn line(app: &SolveApp, s: &Stats, tolerance: f64) -> String {
     format!("{said} · {}", verdict(s.within))
 }
 
-/// The line as a note under a tool's rows.
+/// A tool's Fit row: the RMS and the share within the tolerance, red when it fails; the whole
+/// line (mean, worst each way, the verdict) on hover.
 pub(crate) fn readout(app: &SolveApp, ui: &mut egui::Ui, id: &'static str, s: &Stats, tolerance: f64) {
-    ui_kit::text(ui, &line(app, s, tolerance), ui_kit::Text::Note(id));
+    use ui_kit::BackingTooltipExt;
+    let short = solidcraft_ui_text::format(
+        "ui.scan_deviation_summary",
+        &[
+            ("rms", &crate::prefs::show_mm(app, s.rms, 1)),
+            ("within", &format!("{:.0} %", 100.0 * s.within)),
+            ("tolerance", &crate::prefs::show_mm(app, tolerance, 1)),
+        ],
+    );
+    let fails = s.within < solidcraft_engine::cmd::scan::PASS_SHARE;
+    let full = line(app, s, tolerance);
+    form_row(ui, solidcraft_ui_text::tr("ui.scan_fit_result"), |ui| {
+        ui_kit::text(ui, &short, ui_kit::Text::Report(id, fails)).backing_on_hover_text(full)
+    });
 }
 
-/// The key rows: above, within and below the tolerance, in the Scan Deviation colours.
-pub(crate) fn key_rows(app: &SolveApp, tolerance: f64) -> Vec<(Color32, String, bool)> {
-    let [below, within, above] = crate::scan_deviation::colours();
-    let c = |rgb: [u8; 3]| crate::theme::model_color(rgb);
+/// The key rows, top to bottom: far above, above, within, below and far below the tolerance, in
+/// the Scan Deviation colours; `deep` is where the colour is at its deepest, mm.
+pub(crate) fn key_rows(app: &SolveApp, tolerance: f64, deep: f64) -> Vec<(Color32, String, bool)> {
+    let colours = crate::scan_deviation::colours();
     let tol = crate::prefs::show_mm(app, tolerance, 1);
-    let scale = |s: f64| crate::scan_deviation::colour([below, within, above], s);
-    vec![(c(scale(1.0)), format!("> +{tol}"), false), (c(within), format!("± {tol}"), false), (c(scale(-1.0)), format!("< −{tol}"), false)]
+    let deep = crate::prefs::show_mm(app, deep, 1);
+    let scale = |s: f64| crate::theme::model_color(crate::scan_deviation::colour(colours, s));
+    vec![
+        (scale(1.0), format!("≥ +{deep}"), false),
+        (scale(0.25), format!("+{tol} … +{deep}"), false),
+        (scale(0.0), format!("± {tol}"), false),
+        (scale(-0.25), format!("−{deep} … −{tol}"), false),
+        (scale(-1.0), format!("≤ −{deep}"), false),
+    ]
 }
 
 /// The key and summary of the colouring the open tool shows, for the viewport's corner key.
@@ -136,7 +157,7 @@ pub(crate) fn legend(app: &SolveApp) -> Option<(String, Vec<(Color32, String, bo
             ("tolerance", &crate::prefs::show_mm(app, tolerance, 1)),
         ],
     );
-    Some((format!("{summary} · {}", verdict(s.within)), key_rows(app, tolerance)))
+    Some((format!("{summary} · {}", verdict(s.within)), key_rows(app, tolerance, tolerance * crate::dialogs_scan_surface::DEEPEST)))
 }
 
 #[cfg(test)]

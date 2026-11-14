@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_fit_result": "Fit"
+  },
+  "ar": {
+    "ui.scan_fit_result": "المطابقة"
+  },
+  "de": {
+    "ui.scan_fit_result": "Passung"
+  },
+  "he": {
+    "ui.scan_fit_result": "התאמה"
+  },
+  "ja": {
+    "ui.scan_fit_result": "フィット"
+  },
+  "ko": {
+    "ui.scan_fit_result": "맞춤"
+  },
+  "vi": {
+    "ui.scan_fit_result": "Độ khớp"
+  },
+  "zh": {
+    "ui.scan_fit_result": "拟合"
+  }
+}

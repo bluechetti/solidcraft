@@ -5724,7 +5724,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     // The Fillet and Chamfer window resolves its own corners: the nearest sketch point to a
     // corner drawn from the origin is the fixed origin, which ends no two curves.
     let corner = hover.filter(|_| inside && !navigating).and_then(|p| crate::sketch_modify_ui::corner_hit(app, &proj, p));
-    crate::scan_snap::track(app, &proj, &hits);
+    crate::scan_snap::track(app, &proj, hover.filter(|_| inside && !navigating), &hits);
     let cand = if app.tool.is_some() {
         tool_hover(app, &hits).map(|h| (h, None))
     } else if takes_scan_clicks(app) || crate::dialogs_scan_free_form::colours_the_scan(app) {

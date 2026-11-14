@@ -32,7 +32,7 @@ thread_local! {
 #[derive(Clone)]
 struct Key {
     map: Arc<DeviationMap>,
-    colours: [[u8; 3]; 3],
+    colours: Colours,
 }
 
 /// The same map (by identity: comparing millions of values every frame would cost more than
@@ -131,22 +131,27 @@ pub(crate) fn shown(app: &SolveApp) -> bool {
     current(app).is_some()
 }
 
-/// The three colours of the scale: below, within, above.
-pub(crate) fn colours() -> [[u8; 3]; 3] {
+/// The colours of the scale, the theme's: far below, below, within, above, far above.
+pub(crate) type Colours = [[u8; 3]; 5];
+
+/// The scale's colours in the theme now.
+pub(crate) fn colours() -> Colours {
     let a = solidcraft_theme::Tokens::get().analysis;
-    let byte = |c: [f32; 3]| c.map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
-    [byte(a.curvature[0]), byte(a.draft[0]), byte(a.draft[2])]
+    a.deviation.map(|c| c.map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8))
 }
 
 /// A point's colour at `s` on the scale (-1 to 1, 0 within the tolerance): out of the tolerance it
-/// starts a third of the way to the far colour, so it never reads as within.
-pub(crate) fn colour([below, within, above]: [[u8; 3]; 3], s: f64) -> [u8; 3] {
-    if s == 0.0 {
+/// starts well along to its side's lighter colour, so it never reads as within, and reaches the
+/// far colour at the end of the scale.
+pub(crate) fn colour([far_below, below, within, above, far_above]: Colours, s: f64) -> [u8; 3] {
+    if s == 0.0 || !s.is_finite() {
         return within;
     }
-    let far = if s > 0.0 { above } else { below };
-    let k = 0.35 + 0.65 * s.abs().min(1.0);
-    std::array::from_fn(|i| (f64::from(within[i]) + (f64::from(far[i]) - f64::from(within[i])) * k).round() as u8)
+    let (near, far) = if s > 0.0 { (above, far_above) } else { (below, far_below) };
+    // 0 to 2 along within → near → far; out of the tolerance at least 0.7.
+    let t = 2.0 * (0.35 + 0.65 * s.abs().min(1.0));
+    let (a, b, k) = if t <= 1.0 { (within, near, t) } else { (near, far, t - 1.0) };
+    std::array::from_fn(|i| (f64::from(a[i]) + (f64::from(b[i]) - f64::from(a[i])) * k).round() as u8)
 }
 
 /// The map as a cloud for the GPU viewport, or nothing when none is shown.
@@ -179,7 +184,7 @@ pub(crate) fn gpu_cloud(app: &SolveApp) -> Option<GpuCloud> {
 }
 
 /// One dot per measured point of the scan; points the model leaves out are not drawn.
-fn records(app: &SolveApp, map: &DeviationMap, colours: [[u8; 3]; 3]) -> Option<Vec<u8>> {
+fn records(app: &SolveApp, map: &DeviationMap, colours: Colours) -> Option<Vec<u8>> {
     let state = app.session.model.state();
     let (positions, _) = state.body(&map.scan)?.body.triangle_mesh()?;
     let mut out = Vec::with_capacity(positions.len() * crate::scan_dots::DOT_SIZE);
@@ -195,20 +200,13 @@ fn records(app: &SolveApp, map: &DeviationMap, colours: [[u8; 3]; 3]) -> Option<
 /// what it adds up to.
 pub(crate) fn legend(app: &SolveApp) -> Option<(String, Vec<(egui::Color32, String, bool)>)> {
     let map = current(app)?;
-    let [below, within, above] = colours();
-    let c = |rgb: [u8; 3]| crate::theme::model_color(rgb);
     let tol = crate::prefs::show_mm(app, map.tolerance, 1);
     let summary = solidcraft_ui_text::format(
         "ui.scan_deviation_summary",
         &[("rms", &crate::prefs::show_mm(app, map.rms, 1)), ("within", &format!("{:.0} %", 100.0 * map.within)), ("tolerance", &tol)],
     );
     let summary = format!("{summary} · {}", crate::scan_fidelity::verdict(map.within));
-    let rows = vec![
-        (c(colour([below, within, above], 1.0)), format!("> +{tol}"), false),
-        (c(within), format!("± {tol}"), false),
-        (c(colour([below, within, above], -1.0)), format!("< −{tol}"), false),
-    ];
-    Some((summary, rows))
+    Some((summary, crate::scan_fidelity::key_rows(app, map.tolerance, map.limit)))
 }
 
 #[cfg(test)]
@@ -242,7 +240,7 @@ mod tests {
         assert_eq!(cloud.dots.len(), 8 * crate::scan_dots::DOT_SIZE, "one dot per corner of the cube");
         let (summary, rows) = legend(&h.app).unwrap();
         assert!(summary.contains("mm") && !summary.contains("mm²") && !summary.contains("mm³"), "{summary}");
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 5, "far above, above, within, below, far below");
         assert!(crate::viewport::analysis_legend_data(&h.app).is_some(), "the corner key");
 
         h.app.start("scan.deviation");
@@ -251,12 +249,16 @@ mod tests {
 
     #[test]
     fn the_scale_runs_from_below_through_within_to_above() {
-        let c = [[0, 0, 200], [0, 200, 0], [200, 0, 0]];
+        let c = [[0, 0, 200], [0, 200, 200], [0, 200, 0], [200, 200, 0], [200, 0, 0]];
         assert_eq!(colour(c, 0.0), [0, 200, 0]);
         assert_eq!(colour(c, 1.0), [200, 0, 0]);
         assert_eq!(colour(c, -1.0), [0, 0, 200]);
         let just_above = colour(c, 0.01);
-        assert!(just_above[0] > 60 && just_above[1] < 140, "out of the tolerance never reads as within: {just_above:?}");
+        assert!(just_above[0] > 120 && just_above[1] > 180, "out of the tolerance it is nearly the lighter colour, never within: {just_above:?}");
+        let halfway = colour(c, 0.5);
+        assert!(halfway[0] == 200 && halfway[1] < 200 && halfway[1] > 0, "then on towards the far colour: {halfway:?}");
+        let just_below = colour(c, -0.01);
+        assert!(just_below[2] > 120 && just_below[1] > 180, "and the same way below: {just_below:?}");
     }
 }
 

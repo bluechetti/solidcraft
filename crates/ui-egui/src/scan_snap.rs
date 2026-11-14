@@ -1,10 +1,14 @@
 //! One snapping for every Scan-tab tool that takes a click on a scan: New Free Form's corners,
 //! Curve on Scan's points, Flat Template's outline and Fit Patches' click. A click lands on the
 //! nearest target within a few pixels, in this order: a point of a curve already drawn on the scan
-//! (a 3D sketch's fit points and ends), a corner, edge or crease of the scan itself, or a vertex
-//! of its mesh; the view shows the target under the pointer before the click, so it is never a
-//! surprise. The suppress-snap chord (Ctrl or Alt by default) clicks exactly where the pointer is,
-//! and Preferences › Tools › Clicks on a scan snap turns it off.
+//! (a 3D sketch's fit points and ends), or a corner, edge or crease of the scan itself; with none
+//! near it lands exactly where the pointer is on the scan (a scan's own vertices are noise, not
+//! targets). A click just past the scan's outline lands on the scan, not in the air beyond it. The
+//! view always shows where the click will land: a ring on the scan, and a dot with what it is when
+//! it snaps. On a scan too large to read its edges on the spot, they are read beside the window
+//! once a tool starts placing points on it. The suppress-snap chord (Ctrl or Alt by default)
+//! clicks exactly where the pointer is, and Preferences › Tools › Clicks on a scan snap turns it
+//! off.
 
 use std::cell::RefCell;
 
@@ -15,6 +19,7 @@ use solidcraft_engine::geom::prelude::*;
 
 use crate::SolveApp;
 use crate::dialogs::Kind;
+use crate::scan_job;
 use crate::viewport::Proj;
 
 /// How near the pointer a target is taken, in pixels.
@@ -30,22 +35,23 @@ pub(crate) enum Target {
     Corner,
     Boundary,
     Crease,
-    Vertex,
+    /// Nothing to snap to: the place on the scan under the pointer.
+    Surface,
     /// Flat Template: the foot on the wall's plane of where the click is (nothing nearer to snap to).
     Plane,
 }
 
 impl Target {
-    /// The label shown beside the marker.
-    fn label(self) -> &'static str {
-        solidcraft_ui_text::tr(match self {
+    /// The label shown beside the marker (none on the plain surface).
+    fn label(self) -> Option<&'static str> {
+        Some(solidcraft_ui_text::tr(match self {
             Target::Curve => "ui.scan_snap_curve",
             Target::Corner => "ui.scan_snap_corner",
             Target::Boundary => "ui.scan_snap_edge",
             Target::Crease => "ui.scan_snap_crease",
-            Target::Vertex => "ui.scan_snap_vertex",
+            Target::Surface => return None,
             Target::Plane => "ui.scan_snap_plane",
-        })
+        }))
     }
 }
 
@@ -114,18 +120,104 @@ fn on_scan(app: &SolveApp, proj: &Proj, body: &str, point: Vec3) -> Option<(Vec3
     if let Some((_, at)) = curve {
         return Some((at, Target::Curve));
     }
-    let topology = topology_for_snap(&app.session, body)?;
+    let Some(topology) = topology_for_snap(&app.session, body) else {
+        warm(app, body);
+        return None;
+    };
     let found = topology.snap(point, reach, CREASE_DEGREES)?;
     use solidcraft_engine::cmd::scan::select::SnapKind as K;
-    Some((
-        found.at,
-        match found.kind {
-            K::Corner => Target::Corner,
-            K::Boundary => Target::Boundary,
-            K::Crease => Target::Crease,
-            K::Vertex => Target::Vertex,
-        },
-    ))
+    let kind = match found.kind {
+        K::Corner => Target::Corner,
+        K::Boundary => Target::Boundary,
+        K::Crease => Target::Crease,
+        // A vertex of a scan's mesh is where the scanner happened to put a point: snapping to it
+        // only moves the click off where it was aimed.
+        K::Vertex => return None,
+    };
+    Some((found.at, kind))
+}
+
+/// Scans larger than this have their edges read for snapping beside the window, once (smaller
+/// ones are read on the spot by [`topology_for_snap`]); larger than [`WARM_LIMIT`] not at all.
+const WARM_LIMIT: usize = 30_000_000;
+
+thread_local! {
+    /// The scan whose edges are being read beside the window, by its name and triangle count.
+    static WARMING: RefCell<Option<((String, usize), scan_job::Job<(), ()>)>> = const { RefCell::new(None) };
+}
+
+/// Starts reading the edges of the large scan `body` beside the window, so clicks on it snap once
+/// they are read; does nothing while they are being read, or for a scan past [`WARM_LIMIT`].
+fn warm(app: &SolveApp, body: &str) {
+    let Some(count) = app.session.model.state().body(body).and_then(|b| b.body.kept_mesh()).map(|m| m.triangles.len()) else { return };
+    if count > WARM_LIMIT {
+        return;
+    }
+    let key = (body.to_owned(), count);
+    let busy = WARMING.with(|w| {
+        let mut w = w.borrow_mut();
+        match w.as_ref().map(|(k, job)| (k == &key, job.poll())) {
+            Some((true, scan_job::Poll::Working)) => true,
+            // Read, or the worker is gone: a later hover tries again only if it is still missing.
+            Some((_, scan_job::Poll::Done(()) | scan_job::Poll::Lost)) | Some((false, scan_job::Poll::Working)) | None => {
+                *w = None;
+                false
+            }
+        }
+    });
+    if busy {
+        return;
+    }
+    let name = body.to_owned();
+    if let Some(job) = scan_job::spawn(app, (), move |s| {
+        let _ = solidcraft_engine::cmd::scan::select::topology(s, &name, "scan.snap");
+    }) {
+        WARMING.with(|w| *w.borrow_mut() = Some((key, job)));
+    }
+}
+
+/// The scan under the screen point `at`, and the place on it: the scan right under the pointer,
+/// else the nearest one within [`SNAP_PX`] on the screen (a click just past a scan's outline lands
+/// on the scan, not in the air beyond it). Only scans (mesh bodies) the view shows count.
+pub(crate) fn scan_under(app: &SolveApp, proj: &Proj, at: egui::Pos2) -> Option<(String, Vec3)> {
+    let state = app.session.model.state();
+    let scans: Vec<_> = state.bodies.iter().filter(|b| b.body.is_mesh() && app.body_visible(&b.name)).collect();
+    if scans.is_empty() {
+        return None;
+    }
+    let hit = |p: egui::Pos2| -> Option<(f64, String, Vec3)> {
+        let (o, d) = proj.ray(p);
+        let mut best: Option<(f64, String, Vec3)> = None;
+        for b in &scans {
+            let (m, place) = b.mesh_in_place();
+            let Some((lo, ld)) = crate::viewport::local_ray(&place, o, d) else { continue };
+            let index = app.viewport.pick_index.of(&m);
+            if let Some((t, _)) = crate::pick_index::raycast(index.as_deref(), &m, lo, ld)
+                && best.as_ref().is_none_or(|(bt, ..)| t < *bt)
+            {
+                best = Some((t, b.name.clone(), o + d * t));
+            }
+        }
+        best
+    };
+    if let Some((_, body, point)) = hit(at) {
+        return Some((body, point));
+    }
+    // Rings round the pointer, nearest first: the first ring that touches a scan gives the place
+    // nearest the pointer on it.
+    const SPOKES: usize = 12;
+    for radius in [SNAP_PX * 0.4, SNAP_PX * 0.7, SNAP_PX] {
+        let found = (0..SPOKES)
+            .filter_map(|k| {
+                let a = std::f32::consts::TAU * k as f32 / SPOKES as f32;
+                hit(at + egui::vec2(a.cos(), a.sin()) * radius)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((_, body, point)) = found {
+            return Some((body, point));
+        }
+    }
+    None
 }
 
 /// `point` on the scan `body` as a click lands: on its snap target, or where it is.
@@ -151,27 +243,48 @@ pub(crate) fn snapped_sel(app: &SolveApp, proj: &Proj, sel: solidcraft_engine::S
     }
 }
 
-/// Finds what the pointer is over now (from the hits under it) for the marker; call once a frame.
-pub(crate) fn track(app: &SolveApp, proj: &Proj, hits: &[crate::viewport::Hit]) {
-    let found = (placing(app) && enabled(app))
+/// Finds where a click would land now, for the marker; call once a frame. `pointer` is where the
+/// pointer is over the view, and `hits` what is under it: a body's face in front of the scans takes
+/// the click as it is (no marker).
+pub(crate) fn track(app: &SolveApp, proj: &Proj, pointer: Option<egui::Pos2>, hits: &[crate::viewport::Hit]) {
+    let found = placing(app)
         .then(|| {
-            hits.iter().find_map(|h| match h {
-                crate::viewport::Hit::Face { body, point, .. } => target(app, proj, body, *point),
+            let front = hits.iter().find_map(|h| match h {
+                crate::viewport::Hit::Face { body, point, .. } => Some((body.clone(), *point)),
                 _ => None,
-            })
+            });
+            let on_scan = |body: &str| app.session.model.state().body(body).is_some_and(|b| b.body.is_mesh());
+            let (body, point) = match front {
+                Some((body, _)) if !on_scan(&body) => return None,
+                Some(found) => found,
+                None => scan_under(app, proj, pointer?)?,
+            };
+            if !enabled(app) {
+                return Some((point, Target::Surface));
+            }
+            Some(target(app, proj, &body, point).unwrap_or((point, Target::Surface)))
         })
         .flatten();
     HOVER.with(|h| *h.borrow_mut() = found);
 }
 
-/// The marker where a click would land, with what it is.
+/// The marker where a click would land: a ring on the scan, or a dot and what it is when it snaps.
 pub(crate) fn draw(painter: &Painter, proj: &Proj) {
     let Some((at, kind)) = HOVER.with(|h| *h.borrow()) else { return };
     let Some(p) = proj.to_screen(at) else { return };
     let t = solidcraft_theme::Tokens::get();
     let colour: Color32 = t.accent;
+    let Some(label) = kind.label() else {
+        painter.circle_stroke(p, 6.0, egui::Stroke::new(3.5, crate::dialogs_scan_surface::casing()));
+        painter.circle_stroke(p, 6.0, egui::Stroke::new(1.5, colour));
+        return;
+    };
     crate::dialogs_scan_surface::cased_dot(painter, p, 5.0, colour);
-    painter.text(p + egui::vec2(9.0, -9.0), egui::Align2::LEFT_BOTTOM, kind.label(), egui::FontId::proportional(t.font_label), t.text);
+    let font = egui::FontId::proportional(t.font_label);
+    let galley = painter.layout_no_wrap(label.to_owned(), font, t.text);
+    let at = p + egui::vec2(10.0, -10.0 - galley.size().y);
+    painter.rect_filled(egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(4.0, 2.0)), t.radius_sm, t.panel);
+    painter.galley(at, galley, t.text);
 }
 
 /// Where the pointer's snap would land: for tests.
@@ -238,6 +351,28 @@ mod tests {
         assert_eq!(marker, Some(Target::Boundary), "the marker named it before the click");
         let (y, marker) = first_pick(false).expect("a point was placed");
         assert!((y - 0.2).abs() < 0.05, "where it was clicked: {y}");
-        assert_eq!(marker, None, "no marker with snapping off");
+        assert_eq!(marker, Some(Target::Surface), "with snapping off, a ring where it lands and nothing named");
+    }
+
+    /// New Free Form, the tube seen from above: a click a few pixels past its outline puts the
+    /// corner on the tube, not in the air beyond it, and the ring shows where before the click.
+    #[test]
+    fn a_click_just_past_the_scans_outline_lands_on_it() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("tube.stl");
+        std::fs::write(&path, tube_stl(64)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.free_form");
+        h.frames(2);
+        h.step(&json!({"move": {"world": [20.3, 20.0, 0.0]}})).unwrap();
+        h.frames(2);
+        let (ring, _) = hovered().expect("a marker just past the outline");
+        assert!((ring.x.hypot(ring.z) - 20.0).abs() < 0.1, "on the tube: {ring:?}");
+        h.step(&json!({"click": {"world": [20.3, 20.0, 0.0]}})).unwrap();
+        h.frames(2);
+        let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the dialog is open") };
+        let corner = k.corners_clicked().first().copied().expect("a corner was placed");
+        assert!((corner.x.hypot(corner.z) - 20.0).abs() < 0.1, "on the tube: {corner:?}");
     }
 }
