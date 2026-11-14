@@ -411,8 +411,8 @@ fn shared(mut prisms: Vec<Prism>, faces: &[Face], tolerance: f64) -> Vec<Prism> 
     // them (a plane's middle), else where it was read.
     let level_of_end = |k: usize, d: Vec3, fallback: f64| plane(&faces[k]).map_or(fallback, |(point, _)| point.dot(d));
     let mut groups: Vec<(Vec3, Vec<usize>)> = Vec::new();
-    for k in 0..prisms.len() {
-        let d = prisms[k].direction;
+    for (k, prism) in prisms.iter().enumerate() {
+        let d = prism.direction;
         match groups.iter_mut().find(|g| g.0.dot(d).abs() >= SAME_DIRECTION) {
             Some(g) => g.1.push(k),
             None => groups.push((on_grid(unit(d)), vec![k])),
