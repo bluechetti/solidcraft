@@ -133,6 +133,40 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     }
 }
 
+/// Align (`scan.align`): the ways of aligning a scan, each a button with what it is for; a button
+/// opens that tool. Close only, as Survey Scan's next steps are.
+#[derive(Clone, Debug, Default)]
+pub struct AlignChoose {
+    /// The tool a button chose, opened on the next frame.
+    open: Option<&'static str>,
+}
+
+pub fn start_choose(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
+    (id == "scan.align").then(|| (Kind::ScanAlignChoose(AlignChoose::default()), Vec::new()))
+}
+
+/// The chooser's rows: a button for each way, and the help that says what it is for.
+pub fn choose_rows(_app: &SolveApp, ui: &mut egui::Ui, k: &mut AlignChoose) -> bool {
+    for (_, id) in solidcraft_engine::cmd::scan::align::ALIGN_METHODS {
+        let label = solidcraft_ui_text::tr_label(crate::command_label(id));
+        if ui_kit::row(ui, "", |ui| ui_kit::button(ui, label, ui_kit::Button::Normal)).clicked() {
+            k.open = Some(id);
+        }
+        let help = format!("help.{id}");
+        ui_kit::text(ui, solidcraft_ui_text::tr(&help), ui_kit::Text::Hint("scan_align_why"));
+    }
+    false
+}
+
+/// Open the tool a button chose, in the chooser's place.
+pub(crate) fn tick(app: &mut SolveApp) {
+    let Some(Kind::ScanAlignChoose(k)) = app.dialog.as_mut().map(|d| &mut d.kind) else { return };
+    if let Some(id) = k.open.take() {
+        crate::dialogs::cancel(app);
+        app.start(id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -193,5 +227,18 @@ mod tests {
         let (p, _) = state.body(&there).and_then(|b| b.body.triangle_mesh()).unwrap();
         let lo = p.iter().fold(Vec3::new(f64::MAX, f64::MAX, f64::MAX), |a, q| Vec3::new(a.x.min(q.x), a.y.min(q.y), a.z.min(q.z)));
         assert!(lo.x.abs() < 1e-6 && lo.y.abs() < 1e-6 && lo.z.abs() < 1e-6, "laid on the other: {lo:?}");
+    }
+
+    /// Align opens its chooser; a button there opens that tool in its place.
+    #[test]
+    fn align_chooses_a_way_and_opens_its_tool() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.start("scan.align");
+        assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanAlignChoose(_))));
+        if let Some(Kind::ScanAlignChoose(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.open = Some("scan.align_pairs");
+        }
+        super::tick(&mut h.app);
+        assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanAlignPairs(_))), "Align by Points opens");
     }
 }

@@ -1,6 +1,7 @@
 //! Stand on Base (`scan.stand_on_base`): the dialog finds the ways the scan could stand and marks
 //! the steadiest on it, where the part would touch the ground. The Base list chooses another; a
-//! face clicked on the scan is grown from the click and marked instead. OK stands the scan on it.
+//! face clicked on the scan is grown from the click and marked instead, and three or more clicks
+//! (feet, rails, a rim) are the plane through them. OK stands the scan on it.
 //!
 //! The marks are the scan's points drawn as dots in the 3D pass through the point-cloud path, in
 //! the analysis yellow, built again only when the choice changes. Symmetry's colouring by mismatch
@@ -54,7 +55,7 @@ struct Shown {
 
 #[derive(Clone, Debug, PartialEq)]
 struct Key {
-    point: Option<[u64; 3]>,
+    points: Vec<[u64; 3]>,
     index: usize,
     revision: u64,
 }
@@ -70,7 +71,7 @@ struct Preview {
 /// keep the plane or to square the scan to it).
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     match id {
-        "scan.stand_on_base" => Some((Kind::ScanBase(StandBase::default()), vec![SelInput::new("Face", FACES, false)])),
+        "scan.stand_on_base" => Some((Kind::ScanBase(StandBase::default()), vec![SelInput::new("Face", FACES, true).places()])),
         "scan.symmetry" | "scan.square_to_symmetry" | "scan.complete_by_mirroring" => {
             let square = match id {
                 "scan.square_to_symmetry" => SQUARE,
@@ -88,22 +89,32 @@ fn tr(text: &str) -> &str {
     solidcraft_ui_text::tr_label(text)
 }
 
-/// The face clicked on the scan: its scan and the point.
-fn picked(inputs: &[SelInput]) -> Option<(&str, Vec3)> {
-    crate::selection::items(inputs, 0).iter().find_map(|s| match s {
-        Sel::Face { body, point, .. } => Some((body.as_str(), *point)),
-        _ => None,
-    })
+/// The clicks on the scan: the scan (the first click's) and the points on it.
+fn picked(inputs: &[SelInput]) -> Option<(&str, Vec<Vec3>)> {
+    let faces: Vec<(&str, Vec3)> = crate::selection::items(inputs, 0)
+        .iter()
+        .filter_map(|s| match s {
+            Sel::Face { body, point, .. } => Some((body.as_str(), *point)),
+            _ => None,
+        })
+        .collect();
+    let body = faces.first()?.0;
+    Some((body, faces.iter().filter(|(b, _)| *b == body).map(|(_, p)| *p).collect()))
 }
 
 /// Work out what to mark, when the choice or the design has changed since it last was.
 fn refresh(app: &SolveApp, k: &mut StandBase, inputs: &[SelInput]) {
     let pick = picked(inputs);
-    let key = Key { point: pick.map(|(_, p)| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]), index: k.index, revision: app.session.revision };
+    let points = pick.as_ref().map(|(_, p)| p.clone()).unwrap_or_default();
+    let key = Key {
+        points: points.iter().map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]).collect(),
+        index: k.index,
+        revision: app.session.revision,
+    };
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         return;
     }
-    let result = base_preview(&app.session, pick.map(|(b, _)| b), pick.map(|(_, p)| p), k.index).map_err(|e| e.to_string()).map(|found| {
+    let result = base_preview(&app.session, pick.as_ref().map(|(b, _)| *b), &points, k.index).map_err(|e| e.to_string()).map(|found| {
         // Yellow, the analysis colours' middle one: the accent blue is what a whole selected body
         // turns, so a base marked in it could not be told apart.
         let rgb = solidcraft_theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
@@ -166,9 +177,10 @@ pub fn commands(k: &StandBase, inputs: &[SelInput]) -> Result<Vec<(String, Value
     let p = shown.result.as_ref().map_err(Clone::clone)?;
     let mut params = Map::new();
     params.insert("body".into(), json!(p.found.body));
-    match picked(inputs) {
-        Some((_, point)) => params.insert("point".into(), json!([point.x, point.y, point.z])),
-        None => params.insert("base".into(), json!(p.found.index.unwrap_or(0))),
+    match picked(inputs).map(|(_, p)| p).unwrap_or_default().as_slice() {
+        [] => params.insert("base".into(), json!(p.found.index.unwrap_or(0))),
+        [point] => params.insert("point".into(), json!([point.x, point.y, point.z])),
+        points => params.insert("points".into(), json!(points.iter().map(|q| [q.x, q.y, q.z]).collect::<Vec<_>>())),
     };
     Ok(vec![("scan.stand_on_base".into(), Value::Object(params))])
 }

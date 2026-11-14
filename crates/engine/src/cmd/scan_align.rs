@@ -19,6 +19,7 @@ use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
 
 const ALL_CONTRACT: TypedContract<ScanAlignAllParams> = TypedContract::new();
+const ALIGN_CONTRACT: TypedContract<crate::schema::scan_align::ScanAlignParams> = TypedContract::new();
 const PAIRS_CONTRACT: TypedContract<ScanAlignPairsParams> = TypedContract::new();
 const MODEL_CONTRACT: TypedContract<ScanAlignModelParams> = TypedContract::new();
 const COMBINE_CONTRACT: TypedContract<ScanCombineParams> = TypedContract::new();
@@ -27,6 +28,11 @@ const COMBINE_CONTRACT: TypedContract<ScanCombineParams> = TypedContract::new();
 const MODEL_CHORD: f64 = 0.01;
 
 pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec::new("scan.align", "Align", crate::checked!("scan.align", align))
+        .at("SCAN", "ALIGN")
+        .icon("align")
+        .contract(&ALIGN_CONTRACT)
+        .params("method: own_axes (as scan.quick_align) | to_scan (as scan.register) | all (as scan.align_all) | by_points (as scan.align_pairs) | to_model (as scan.align_to_model); the other parameters are that command's: one way of aligning a scan chosen by name → that command's reply"),
     CommandSpec::new("scan.combine", "Combine Scans", crate::checked!("scan.combine", combine))
         .at("SCAN", "ALIGN")
         .icon("align")
@@ -52,6 +58,28 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(output_schema_for::<ScanAlignModelResult>)
         .params("body?: the scan to move (default: the selected or only one); model?: a solid or surface body (default: the selected one, else the only one); search?: bool (default true: from the ways the two could lie on each other too); ignored?: 0–0.6 (default 0.2: the share of the scan with no model under it, a fixture or the table): the scan fitted onto the model's surface (point-to-plane both ways, trimmed and robust), the model not moved, one undo step kept as a Move of the scan → body, model, moved, rms_before, rms_after, matched, start, converged, rival?, feature?"),
 ];
+
+/// The ways of aligning a scan, as `scan.align` names them, and the command each runs.
+pub const ALIGN_METHODS: [(&str, &str); 5] = [
+    ("own_axes", "scan.quick_align"),
+    ("to_scan", "scan.register"),
+    ("all", "scan.align_all"),
+    ("by_points", "scan.align_pairs"),
+    ("to_model", "scan.align_to_model"),
+];
+
+/// Align: the way named by `method`, run with the other parameters.
+fn align(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.align";
+    let names = ALIGN_METHODS.map(|(n, _)| n).join(", ");
+    let method = str_(p, "method").ok_or_else(|| bad(cmd, format!("`method` must be one of {names}")))?;
+    let (_, id) = ALIGN_METHODS.iter().find(|(n, _)| *n == method).ok_or_else(|| bad(cmd, format!("`method` must be one of {names}")))?;
+    let mut rest = p.clone();
+    if let Some(o) = rest.as_object_mut() {
+        o.remove("method");
+    }
+    super::super::find_command(id).ok_or_else(|| EngineError::UnknownCommand((*id).into()))?.run_nested(s, &rest)
+}
 
 pub use solidcraft_scan::align::ByPairs;
 

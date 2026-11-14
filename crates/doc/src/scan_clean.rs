@@ -31,10 +31,24 @@ pub const MAX_EDGES: u32 = 300;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum CleanStep {
-    /// Remove Floating Pieces: pieces with fewer triangles than `below` of the largest one's.
-    RemoveFloating { below: f64 },
-    /// Fill Holes: every hole of at most `max_edges` edges, shaped to the surface when `fair`.
-    FillHoles { max_edges: u32, fair: bool },
+    /// Remove Floating Pieces: pieces with fewer triangles than `below` of the largest one's,
+    /// but always the pieces under the points `keep` stay and those under `remove` go (clicked).
+    RemoveFloating {
+        below: f64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        keep: Vec<[f64; 3]>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        remove: Vec<[f64; 3]>,
+    },
+    /// Fill Holes: every hole of at most `max_edges` edges, shaped to the surface when `fair`; or,
+    /// when `at` has points, exactly the rings nearest them (a rim among them, capped), whatever
+    /// their size.
+    FillHoles {
+        max_edges: u32,
+        fair: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        at: Vec<[f64; 3]>,
+    },
     /// Reduce Mesh: to a share of the triangles, a count, or as far as an error allows.
     Reduce {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,8 +119,23 @@ impl CleanStep {
     pub fn params(&self) -> serde_json::Value {
         use serde_json::json;
         match self {
-            CleanStep::RemoveFloating { below } => json!({ "below": below }),
-            CleanStep::FillHoles { max_edges, fair } => json!({ "max_edges": max_edges, "fair": fair }),
+            CleanStep::RemoveFloating { below, keep, remove } => {
+                let mut p = json!({ "below": below });
+                if !keep.is_empty() {
+                    p["keep"] = json!(keep);
+                }
+                if !remove.is_empty() {
+                    p["remove"] = json!(remove);
+                }
+                p
+            }
+            CleanStep::FillHoles { max_edges, fair, at } => {
+                let mut p = json!({ "max_edges": max_edges, "fair": fair });
+                if !at.is_empty() {
+                    p["at"] = json!(at);
+                }
+                p
+            }
             CleanStep::Reduce { ratio, triangles, max_error, keep_rim } => {
                 let mut p = json!({ "keep_rim": keep_rim });
                 if let Some(r) = ratio {
@@ -147,7 +176,11 @@ impl CleanStep {
     pub fn check(&self) -> crate::Result<()> {
         let bad = |why: &str| Err(crate::DocError::Invalid(format!("a {} step {why}", self.title())));
         match self {
-            CleanStep::RemoveFloating { below } if !(0.0..=0.5).contains(below) => bad("needs a share of the largest piece from 0 to 0.5"),
+            CleanStep::RemoveFloating { below, .. } if !(0.0..=0.5).contains(below) => bad("needs a share of the largest piece from 0 to 0.5"),
+            CleanStep::RemoveFloating { keep, remove, .. } if !points_ok(keep) || !points_ok(remove) => {
+                bad("takes at most 10000 points of three finite numbers")
+            }
+            CleanStep::FillHoles { at, .. } if !points_ok(at) => bad("takes at most 10000 points of three finite numbers"),
             CleanStep::FillHoles { max_edges, .. } if !(3..=5000).contains(max_edges) => bad("closes holes of 3 to 5000 edges"),
             CleanStep::Reduce { ratio, triangles, max_error, .. } => {
                 if ratio.is_some_and(|r| !(r > 0.0 && r <= 1.0)) {
@@ -232,6 +265,11 @@ fn same(kept: &Weak<solidcraft_geom::Mesh>, body: &Body) -> bool {
     }
 }
 
+/// Points clicked on a scan, as a step keeps them: few enough, and numbers.
+fn points_ok(points: &[[f64; 3]]) -> bool {
+    points.len() <= 10_000 && points.iter().flatten().all(|x| x.is_finite())
+}
+
 /// The step done on the scan `scan` (a mesh body), fusing in `with` for a Remesh: worked out once
 /// for the same scans and settings, however many times it is asked for in a row.
 pub fn clean(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refused> {
@@ -265,9 +303,21 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
         Ok(Cleaned { body, report })
     };
     match step {
-        CleanStep::RemoveFloating { below } => {
+        CleanStep::RemoveFloating { below, keep, remove } => {
             let found = pieces::pieces(&on);
-            let floating = found.floating(*below);
+            let mut floating = found.floating(*below);
+            // The pieces clicked: kept or taken off whatever their size.
+            let piece = |at: &[f64; 3]| {
+                let t = solidcraft_scan::base::nearest_triangle(&on, Vec3::new(at[0], at[1], at[2]))?;
+                found.of.get(t).copied().filter(|&k| k != u32::MAX).map(|k| k as usize)
+            };
+            for (points, goes) in [(keep, false), (remove, true)] {
+                for at in points {
+                    if let Some(f) = piece(at).and_then(|k| floating.get_mut(k)) {
+                        *f = goes;
+                    }
+                }
+            }
             let removed = floating.iter().filter(|f| **f).count();
             if removed == 0 {
                 return Err(Refused::Nothing(format!(
@@ -280,7 +330,24 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
             let removed_triangles = found.sizes.iter().zip(&floating).filter(|(_, f)| **f).map(|(n, _)| n).sum();
             made(&p, &t, Report::Floating { pieces: found.sizes.len(), removed, removed_triangles })
         }
-        CleanStep::FillHoles { max_edges, fair } => {
+        CleanStep::FillHoles { at, fair, .. } if !at.is_empty() => {
+            let found = holes::survey(&on);
+            let points: Vec<Vec3> = at.iter().map(|p| Vec3::new(p[0], p[1], p[2])).collect();
+            let chosen = found.chosen(positions, &points);
+            let count = found.rings.iter().filter(|r| !r.rim).count();
+            let done = holes::fill_rings(&on, &chosen, *fair)
+                .ok_or_else(|| Refused::Failed("no hole could be closed: each ring folds or crosses the scan".into()))?;
+            let report = Report::Holes {
+                holes: count,
+                filled: done.filled,
+                failed: done.failed,
+                larger: 0,
+                added_triangles: done.added_triangles,
+                unfillable_edges: found.unfillable_edges,
+            };
+            made(&done.positions, &done.triangles, report)
+        }
+        CleanStep::FillHoles { max_edges, fair, .. } => {
             let limit = *max_edges as usize;
             let found = holes::survey(&on);
             let count = found.rings.iter().filter(|r| !r.rim).count();
@@ -428,8 +495,8 @@ mod tests {
     #[test]
     fn a_step_round_trips_and_is_checked() {
         let steps = [
-            CleanStep::RemoveFloating { below: 0.6 },
-            CleanStep::FillHoles { max_edges: 2, fair: true },
+            CleanStep::RemoveFloating { below: 0.6, keep: Vec::new(), remove: Vec::new() },
+            CleanStep::FillHoles { max_edges: 2, fair: true, at: Vec::new() },
             CleanStep::Reduce { ratio: Some(0.5), triangles: Some(3), max_error: 0.0, keep_rim: true },
             CleanStep::Denoise { strength: Some(9.0) },
             CleanStep::Remesh { cell: Some(0.0), sharp: false, with: Vec::new() },
@@ -446,7 +513,7 @@ mod tests {
 
     #[test]
     fn floating_pieces_go_once_and_a_second_time_there_is_nothing() {
-        let step = CleanStep::RemoveFloating { below: 0.6 };
+        let step = CleanStep::RemoveFloating { below: 0.6, keep: Vec::new(), remove: Vec::new() };
         let scan = scan();
         let done = clean(&step, &scan, &[]).unwrap();
         assert_eq!(done.triangles(), 2);

@@ -144,6 +144,7 @@ pub(crate) fn computed_whole(id: &str) -> bool {
     matches!(
         id,
         "scan.repair"
+            | "scan.clean_up"
             // Find All, and Reconstruct reading the scan with it: 16 s on a 2.7-million-triangle
             // scan, 45 s on 10 million. What they read comes back with the copy.
             | "scan.find_all"

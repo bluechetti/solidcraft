@@ -443,6 +443,8 @@ crate::dialog_descriptor::dialog_descriptors! {
             ScanFitPatches(crate::dialogs_scan_patches::FitPatches),
             ScanFloating(crate::dialogs_scan_clean::Floating),
             ScanHoles(crate::dialogs_scan_clean::Holes),
+            ScanFit(crate::dialogs_scan_fit::FitShape),
+            ScanCleanUp(crate::dialogs_scan_clean::CleanUp),
             ScanReduce(crate::dialogs_scan_clean::Reduce),
             ScanSection(crate::dialogs_scan_section::SectionSketch),
             ScanSections(crate::dialogs_scan_sections::SectionsAlong),
@@ -451,6 +453,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             ScanEdgeCurve(crate::dialogs_scan_edge::EdgeCurve),
             ScanReconstruct(crate::dialogs_scan_reconstruct::Reconstruct),
             ScanSurvey(crate::dialogs_scan_survey::Survey),
+            ScanAlignChoose(crate::dialogs_scan_align::AlignChoose),
             /// End caps on frame members (`dialogs_end_cap`).
             EndCap(crate::dialogs_end_cap::EndCap),
             /// Appearance (`dialogs_appearance`).
@@ -1213,6 +1216,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_scan_curve::start(app, id))
                     .or_else(|| crate::dialogs_scan_free_form::start(app, id))
                     .or_else(|| crate::dialogs_scan_clean::start(app, id))
+                    .or_else(|| crate::dialogs_scan_fit::start(app, id))
                     .or_else(|| crate::dialogs_scan_section::start(app, id))
                     .or_else(|| crate::dialogs_scan_sections::start(app, id))
                     .or_else(|| crate::dialogs_scan_denoise::start(app, id))
@@ -1221,6 +1225,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_scan_slice::start(app, id))
                     .or_else(|| crate::dialogs_scan_split::start(app, id))
                     .or_else(|| crate::dialogs_scan_align::start(app, id))
+                    .or_else(|| crate::dialogs_scan_align::start_choose(app, id))
                     .or_else(|| crate::dialogs_scan_fillet::start(app, id))
                     .or_else(|| crate::dialogs_surface_check::start(app, id))
                     .or_else(|| crate::dialogs_scan_flatten::start(app, id))
@@ -1504,6 +1509,8 @@ impl Dialog {
                 | Kind::ScanFitPatches(_)
                 | Kind::ScanFloating(_)
                 | Kind::ScanHoles(_)
+                | Kind::ScanFit(_)
+                | Kind::ScanCleanUp(_)
                 | Kind::ScanReduce(_)
                 | Kind::ScanSection(_)
                 | Kind::ScanSections(_)
@@ -2961,6 +2968,8 @@ fn title(k: &Kind) -> &'static str {
         Kind::ScanFitPatches(_) => "FIT PATCHES",
         Kind::ScanFloating(_) => "FLOATING PIECES",
         Kind::ScanHoles(_) => "FILL HOLES",
+        Kind::ScanFit(_) => "FIT SHAPE",
+        Kind::ScanCleanUp(_) => "CLEAN UP",
         Kind::ScanReduce(_) => "REDUCE MESH",
         Kind::ScanSection(_) => "SECTION TO SKETCH",
         Kind::ScanSections(_) => "SECTIONS ALONG CURVE",
@@ -2969,6 +2978,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::ScanEdgeCurve(_) => "CURVE FROM SELECTION EDGE",
         Kind::ScanReconstruct(_) => "RECONSTRUCT",
         Kind::ScanSurvey(_) => "SURVEY SCAN",
+        Kind::ScanAlignChoose(_) => "ALIGN",
         Kind::EndCap(_) => "ui.end_cap_title",
         Kind::Appearance(_) => "APPEARANCE",
         Kind::Motion(k) => k.title(),
@@ -4137,7 +4147,7 @@ pub(crate) fn card_width(d: &Dialog) -> f32 {
 /// says what it does.
 pub(crate) fn action_labels(kind: &Kind) -> (&'static str, &'static str) {
     match kind {
-        Kind::Measure { .. } | Kind::ScanSurvey(_) => ("", "Close"),
+        Kind::Measure { .. } | Kind::ScanSurvey(_) | Kind::ScanAlignChoose(_) => ("", "Close"),
         Kind::ConfirmDelete { .. } => ("Delete", "Cancel"),
         Kind::SaveMesh(k) => (crate::dialogs_save_mesh::button(k), "Cancel"),
         Kind::ViewDxf { .. } => ("Export DXF…", "Cancel"),
@@ -4235,7 +4245,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         if d.editing.is_some() { solidcraft_ui_text::format("dialog.edit_title", &[("title", tr(raw_title))]) } else { tr(raw_title).to_string() };
     let frame = crate::ui_kit::Panel::feature_frame(ctx, app.ui.layout, side);
     // OK is offered once the inputs make a feature.
-    let has_ok = !matches!(d.kind, Kind::Sketch | Kind::Measure { .. } | Kind::ScanSurvey(_));
+    let has_ok = !matches!(d.kind, Kind::Sketch | Kind::Measure { .. } | Kind::ScanSurvey(_) | Kind::ScanAlignChoose(_));
     let valid = match &d.kind {
         Kind::Sketch => false,
         // Nothing picked is an answer too: OK adds no pill.
@@ -4819,7 +4829,7 @@ fn mode_inputs_key(kind: &Kind) -> Option<usize> {
 /// deletion's confirmation, a table that takes Enter for its cells (configurations, a study's
 /// keys), or a material being edited.
 fn enter_applies(d: &Dialog) -> bool {
-    !matches!(d.kind, Kind::Sketch | Kind::Measure { .. } | Kind::ConfirmDelete { .. } | Kind::ScanSurvey(_))
+    !matches!(d.kind, Kind::Sketch | Kind::Measure { .. } | Kind::ConfirmDelete { .. } | Kind::ScanSurvey(_) | Kind::ScanAlignChoose(_))
         && !matches!(&d.kind, Kind::Motion(k) if k.wide())
         && !matches!(&d.kind, Kind::Material { editor, .. } if editor.editing())
 }
@@ -6669,6 +6679,8 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanFitPatches(k) => return crate::dialogs_scan_patches::commands(app, k, &d.inputs),
         Kind::ScanFloating(k) => return crate::dialogs_scan_clean::commands(k),
         Kind::ScanHoles(k) => return crate::dialogs_scan_clean::holes_commands(k),
+        Kind::ScanFit(k) => return crate::dialogs_scan_fit::commands(k, &d.inputs),
+        Kind::ScanCleanUp(k) => return crate::dialogs_scan_clean::clean_up_commands(k),
         Kind::ScanReduce(k) => return crate::dialogs_scan_clean::reduce_commands(k),
         Kind::ScanSection(k) => return crate::dialogs_scan_section::commands(app, k),
         Kind::ScanSections(k) => return crate::dialogs_scan_sections::commands(k),
@@ -6676,7 +6688,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanSelect(k) => return crate::dialogs_scan_select::commands(k),
         Kind::ScanEdgeCurve(k) => return crate::dialogs_scan_edge::commands(k),
         Kind::ScanReconstruct(k) => return crate::dialogs_scan_reconstruct::commands(app, k),
-        Kind::ScanSurvey(_) => return Ok(Vec::new()),
+        Kind::ScanSurvey(_) | Kind::ScanAlignChoose(_) => return Ok(Vec::new()),
         Kind::EndCap(k) => return crate::dialogs_end_cap::commands(app, k, &d.inputs, &d.extra),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),

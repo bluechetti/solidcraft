@@ -46,6 +46,24 @@ impl Survey {
     pub fn holes(&self, limit: usize) -> impl Iterator<Item = &Ring> {
         self.rings.iter().filter(move |r| !r.rim && r.points.len() <= limit)
     }
+
+    /// The ring passing nearest `at` (holes and rims alike), by its points on the scan
+    /// `positions`: how a hole clicked on is found again.
+    pub fn nearest(&self, positions: &[Vec3], at: Vec3) -> Option<usize> {
+        let far = |r: &Ring| r.points.iter().filter_map(|&i| positions.get(i as usize)).map(|p| p.dist(at)).fold(f64::INFINITY, f64::min);
+        (0..self.rings.len()).min_by(|&a, &b| far(&self.rings[a]).total_cmp(&far(&self.rings[b])))
+    }
+
+    /// The rings nearest each of the points `at`, each once, in the survey's order.
+    pub fn chosen(&self, positions: &[Vec3], at: &[Vec3]) -> Vec<&Ring> {
+        let mut picked = vec![false; self.rings.len()];
+        for &p in at {
+            if let Some(k) = self.nearest(positions, p) {
+                picked[k] = true;
+            }
+        }
+        self.rings.iter().zip(picked).filter(|(_, p)| *p).map(|(r, _)| r).collect()
+    }
 }
 
 /// The scan's rings.
@@ -176,16 +194,20 @@ pub struct Filled {
 /// Closes every hole of at most `limit` edges; `fair` shapes each patch to carry the surface across
 /// (else it stays the flat triangulation, refined). `None` when no hole is closed.
 pub fn fill(scan: &Scan, survey: &Survey, limit: usize, fair: bool) -> Option<Filled> {
-    let holes: Vec<&Ring> = survey.holes(limit).collect();
+    fill_rings(scan, &survey.holes(limit).collect::<Vec<_>>(), fair)
+}
+
+/// Closes the rings `holes` (rims too, when given: an open end chosen to be capped).
+pub fn fill_rings(scan: &Scan, holes: &[&Ring], fair: bool) -> Option<Filled> {
     if holes.is_empty() {
         return None;
     }
     let weld = welded(scan.positions);
-    let around = Surroundings::new(scan, &weld, &holes);
+    let around = Surroundings::new(scan, &weld, holes);
     let mut positions = scan.positions.to_vec();
     let mut triangles = scan.triangles.to_vec();
     let (mut filled, mut failed) = (0, 0);
-    for ring in holes {
+    for &ring in holes {
         let Some(patch) = patch(ring, scan.positions, &around, fair) else {
             failed += 1;
             continue;

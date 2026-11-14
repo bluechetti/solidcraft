@@ -23,7 +23,7 @@ use solidcraft_scan::place::Rigid;
 
 use super::{length, mesh_name};
 use crate::params::bad;
-use crate::schema::scan::{ScanFloatingResult, ScanHolesResult, ScanReduceResult, ScanRepairResult};
+use crate::schema::scan::{ScanCleanUpResult, ScanCleanUpStep, ScanFloatingResult, ScanHolesResult, ScanReduceResult, ScanRepairResult};
 use crate::{EngineError, Result, Session};
 
 /// The default share of the largest piece below which a piece floats.
@@ -123,6 +123,15 @@ pub fn pieces_of(s: &Session, body: Option<&str>, cmd: &str) -> Result<(String, 
     Ok((name, found))
 }
 
+/// The piece of `found` (the pieces of the scan `body`) under `point`: the piece of the
+/// triangle nearest it.
+pub fn piece_at(s: &Session, body: &str, found: &Pieces, point: Vec3) -> Option<usize> {
+    let state = s.model.state();
+    let (positions, triangles) = state.body(body).and_then(|b| b.body.triangle_mesh())?;
+    let t = solidcraft_scan::base::nearest_triangle(&Scan::new(positions, triangles), point)?;
+    found.of.get(t).copied().filter(|&k| k != u32::MAX).map(|k| k as usize)
+}
+
 /// The share parameter `below`, 0 to 0.5.
 fn share(p: &Value, cmd: &str) -> Result<f64> {
     match p.get("below").filter(|v| !v.is_null()) {
@@ -208,11 +217,20 @@ pub(super) fn apply(s: &mut Session, p: &Value, body: &str, step: CleanStep, cmd
     Ok((done, feature))
 }
 
+/// Points clicked on the scan, `key` a list of [x, y, z]; none when not given.
+fn points(p: &Value, key: &str, cmd: &str) -> Result<Vec<[f64; 3]>> {
+    let Some(list) = p.get(key).filter(|v| !v.is_null()) else { return Ok(Vec::new()) };
+    let why = || bad(cmd, format!("`{key}` must be a list of at most 10000 points [x, y, z]"));
+    let list = list.as_array().filter(|l| l.len() <= 10_000).ok_or_else(why)?;
+    list.iter().map(|v| crate::params::vec3(v).map(|q| [q.x, q.y, q.z]).ok_or_else(why)).collect()
+}
+
 pub(super) fn remove_floating(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.remove_floating";
     let below = share(p, cmd)?;
     let name = mesh_name(s, p, cmd)?;
-    let (done, feature) = apply(s, p, &name, CleanStep::RemoveFloating { below }, cmd)?;
+    let (keep, remove) = (points(p, "keep", cmd)?, points(p, "remove", cmd)?);
+    let (done, feature) = apply(s, p, &name, CleanStep::RemoveFloating { below, keep, remove }, cmd)?;
     let Report::Floating { pieces, removed, removed_triangles } = done.report else { return Err(bad(cmd, "the step did something else")) };
     let reply =
         ScanFloatingResult { body: name, pieces, removed, removed_triangles, triangles: done.triangles(), feature, param_warnings: Vec::new() };
@@ -227,7 +245,8 @@ pub(super) fn fill_holes(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let fair = crate::params::bool_(p, "fair").unwrap_or(true);
     let name = mesh_name(s, p, cmd)?;
-    let (done, feature) = apply(s, p, &name, CleanStep::FillHoles { max_edges, fair }, cmd)?;
+    let at = points(p, "at", cmd)?;
+    let (done, feature) = apply(s, p, &name, CleanStep::FillHoles { max_edges, fair, at }, cmd)?;
     let Report::Holes { holes, filled, failed, larger, added_triangles, unfillable_edges } = done.report else {
         return Err(bad(cmd, "the step did something else"));
     };
@@ -291,5 +310,60 @@ pub(super) fn repair(s: &mut Session, p: &Value) -> Result<Value> {
         feature,
         param_warnings: Vec::new(),
     };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// Clean Up: Repair, Remove Floating, Fill Holes and, when asked, Reduce, each kept as its own
+/// step; a tool with nothing to do is left out with the reason.
+pub(super) fn clean_up(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.clean_up";
+    let name = mesh_name(s, p, cmd)?;
+    let on = |key: &str| crate::params::bool_(p, key).unwrap_or(true);
+    let reduce = match p.get("reduce").filter(|v| !v.is_null()) {
+        Some(v) => Some(v.as_f64().filter(|r| *r > 0.0 && *r < 1.0).ok_or_else(|| bad(cmd, "`reduce` must be a share above 0 and below 1"))?),
+        None => None,
+    };
+    let mut plan: Vec<(&str, Value)> = Vec::new();
+    if on("repair") {
+        plan.push(("scan.repair", json!({ "body": name })));
+    }
+    if on("floating") {
+        plan.push(("scan.remove_floating", json!({ "body": name })));
+    }
+    if on("holes") {
+        plan.push(("scan.fill_holes", json!({ "body": name })));
+    }
+    if let Some(r) = reduce {
+        plan.push(("scan.reduce", json!({ "body": name, "ratio": r })));
+    }
+    if plan.is_empty() {
+        return Err(bad(cmd, "choose at least one step"));
+    }
+    let mut steps = Vec::new();
+    for (id, params) in plan {
+        let spec = super::super::find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
+        match spec.run_nested(s, &params) {
+            Ok(reply) => {
+                let note = match id {
+                    "scan.repair" => format!(
+                        "{} copies, {} over-shared edges, {} slivers, {} crossings put right",
+                        reply["duplicates"], reply["non_manifold"], reply["slivers"], reply["crossings"]
+                    ),
+                    "scan.remove_floating" => format!("{} of {} pieces taken off", reply["removed"], reply["pieces"]),
+                    "scan.fill_holes" => format!("{} of {} holes closed", reply["filled"], reply["holes"]),
+                    _ => format!("{} → {} triangles", reply["before"], reply["triangles"]),
+                };
+                steps.push(ScanCleanUpStep { command: id.into(), done: true, note, feature: reply["feature"].as_u64() });
+            }
+            // Nothing to do (or it could not be done): left out, saying why; the rest go on.
+            Err(e) => steps.push(ScanCleanUpStep { command: id.into(), done: false, note: e.to_string(), feature: None }),
+        }
+    }
+    if !steps.iter().any(|st| st.done) {
+        let why: Vec<String> = steps.iter().map(|st| format!("{}: {}", st.command, st.note)).collect();
+        return Err(bad(cmd, format!("nothing to clean: {}", why.join("; "))));
+    }
+    let triangles = s.model.state().body(&name).and_then(|b| b.body.triangle_mesh()).map_or(0, |(_, t)| t.len());
+    let reply = ScanCleanUpResult { body: name, steps, triangles, param_warnings: Vec::new() };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }

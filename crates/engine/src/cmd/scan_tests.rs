@@ -94,6 +94,36 @@ fn a_scan_stands_on_the_face_picked_on_it() {
     assert!(lo.z.abs() < STL && (hi.z - 80.0).abs() < STL, "standing on its end: {lo:?} {hi:?}");
 }
 
+/// Three points on the slab's corners at one end and the far corner of the other: the slab
+/// stands on the plane through them, its 50 × 10 end face and beyond (the plane cuts across). Two
+/// points are not enough; three in a line are refused.
+#[test]
+fn a_scan_stands_on_the_plane_through_points_picked_on_it() {
+    let (mut s, body) = session_with_a_scan("points");
+    run(&mut s, "scan.quick_align", json!({}));
+    // The end at X = 40: three of its corners.
+    let reply = run(&mut s, "scan.stand_on_base", json!({"points": [[40.0, -25.0, -5.0], [40.0, 25.0, -5.0], [40.0, 25.0, 5.0]]}));
+    assert_eq!(reply["moved"], true, "{reply}");
+    let (lo, hi) = bounds(&s, &body);
+    assert!(lo.z.abs() < 1e-3 && (hi.z - 80.0).abs() < 1e-3, "standing on its end, the part above: {lo:?} {hi:?}");
+    assert!(s.execute("scan.stand_on_base", &json!({"points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]})).is_err(), "two points");
+    let line = s.execute("scan.stand_on_base", &json!({"points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]}));
+    assert!(line.is_err(), "three in a line");
+}
+
+/// Align by name runs the way chosen with the rest of the parameters; a way not known is refused
+/// with the ones there are.
+#[test]
+fn align_runs_the_way_named() {
+    let (mut s, body) = session_with_a_scan("align");
+    let reply = run(&mut s, "scan.align", json!({"method": "own_axes", "body": body}));
+    assert_eq!(reply["moved"], true, "{reply}");
+    let (lo, hi) = bounds(&s, &body);
+    assert!((hi.x - lo.x - 80.0).abs() < 1e-3, "laid along X as Quick Align lays it: {lo:?} {hi:?}");
+    let refused = s.execute("scan.align", &json!({"method": "sideways"})).unwrap_err().to_string();
+    assert!(refused.contains("own_axes, to_scan, all, by_points, to_model"), "{refused}");
+}
+
 /// Quick align lays the slab along X, Y and Z about the origin; rest and centre then move only
 /// what they say.
 #[test]
@@ -753,6 +783,45 @@ fn remove_floating_takes_the_speck_off_where_the_scan_lies() {
     assert!(refused.contains("no piece floats"), "{refused}");
 }
 
+/// A plate with a hole and a speck beside it: Clean Up takes the speck off and closes the hole,
+/// each its own step; Repair has nothing to do and says so; one undo takes it all back. Fill
+/// Holes given a point by the plate's rim caps the rim instead of the hole.
+#[test]
+fn clean_up_runs_the_tools_each_as_a_step() {
+    let mut triangles = Vec::new();
+    for y in 0..20 {
+        for x in 0..20 {
+            if (4..=5).contains(&x) && (4..=5).contains(&y) {
+                continue;
+            }
+            let p = |i: i32, j: i32| Vec3::new(f64::from(x + i), f64::from(y + j), 0.0);
+            triangles.push([p(0, 0), p(1, 0), p(1, 1)]);
+            triangles.push([p(0, 0), p(1, 1), p(0, 1)]);
+        }
+    }
+    let plate = triangles.clone();
+    triangles.extend(fine_box(Vec3::new(40.0, 0.0, 0.0), Vec3::new(41.0, 1.0, 1.0), 1));
+    let (mut s, body) = session_with_triangles("clean-up", &triangles);
+    let features = s.doc.features.len();
+    let reply = run(&mut s, "scan.clean_up", json!({}));
+    let steps = reply["steps"].as_array().unwrap();
+    let done: Vec<(&str, bool)> = steps.iter().map(|st| (st["command"].as_str().unwrap(), st["done"].as_bool().unwrap())).collect();
+    assert_eq!(done, [("scan.repair", false), ("scan.remove_floating", true), ("scan.fill_holes", true)], "{reply}");
+    assert_eq!(s.doc.features.len(), features + 2, "a step each");
+    assert!(bounds(&s, &body).1.x <= 20.0 + STL, "the speck is gone");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.features.len(), features, "one undo step");
+    assert!(s.execute("scan.clean_up", &json!({"repair": false, "floating": false, "holes": false})).is_err());
+
+    // A point on the rim's corner: the rim is capped, the hole left.
+    let (mut s, _) = session_with_triangles("cap-rim", &plate);
+    let reply = run(&mut s, "scan.fill_holes", json!({"at": [[0.0, 0.0, 0.0]]}));
+    assert_eq!(reply["filled"].as_u64(), Some(1), "{reply}");
+    let survey = super::clean::holes_of(&s, None, "scan.fill_holes").unwrap().1;
+    assert_eq!(survey.rings.len(), 1, "one ring is left");
+    assert_eq!(survey.rings[0].points.len(), 8, "the hole, not the rim");
+}
+
 /// A plate with a square hole: Fill Holes closes it flat (the plate's rim is left open), one undo
 /// step; a closed box has no holes.
 #[test]
@@ -841,7 +910,10 @@ fn a_clean_step_keeps_settings_and_makes_the_scan_again() {
     let reply = run(&mut s, "scan.remove_floating", json!({}));
     let id = reply["feature"].as_u64().unwrap();
     let step = s.doc.feature(id).unwrap();
-    assert_eq!(step.kind, FeatureKind::ScanClean { body: body.clone().into(), step: CleanStep::RemoveFloating { below: 0.02 } });
+    assert_eq!(
+        step.kind,
+        FeatureKind::ScanClean { body: body.clone().into(), step: CleanStep::RemoveFloating { below: 0.02, keep: Vec::new(), remove: Vec::new() } }
+    );
     assert_eq!(step.name, "RemoveFloating1");
     assert_eq!((count(&s), imported(&s)), (block, Some(all)), "the scan cleaned, the import as it came in");
 
@@ -853,7 +925,7 @@ fn a_clean_step_keeps_settings_and_makes_the_scan_again() {
     // Made again with another setting: the step keeps it, in its place.
     run(&mut s, "timeline.redefine", json!({"feature": id, "command": "scan.remove_floating", "params": {"body": body, "below": 0.5}}));
     let at = s.doc.feature_index(id).unwrap();
-    assert!(matches!(&s.doc.features[at].kind, FeatureKind::ScanClean { step: CleanStep::RemoveFloating { below }, .. } if *below == 0.5));
+    assert!(matches!(&s.doc.features[at].kind, FeatureKind::ScanClean { step: CleanStep::RemoveFloating { below, .. }, .. } if *below == 0.5));
     assert_eq!(count(&s), block);
     // The same step put in before it: the later one finds nothing to do, leaves the scan, says so.
     run(&mut s, "timeline.roll_to", json!({"position": at}));

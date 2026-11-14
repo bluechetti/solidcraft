@@ -15,14 +15,14 @@ use crate::schema::{ParamCheck, input_schema_for, output_schema_for};
 fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanBasesParams>(), &["body"]);
     assert_keys(input_schema_for::<ScanPlaceParams>(), &["body"]);
-    assert_keys(input_schema_for::<ScanStandParams>(), &["base", "body", "point"]);
+    assert_keys(input_schema_for::<ScanStandParams>(), &["base", "body", "point", "points"]);
     assert_keys(input_schema_for::<ScanSymmetryParams>(), &["body", "guide", "keep", "plane"]);
     assert_keys(input_schema_for::<ScanSquareParams>(), &["body", "guide", "plane"]);
     assert_keys(input_schema_for::<ScanFitParams>(), &["body", "keep", "point", "tolerance"]);
     assert_keys(input_schema_for::<ScanDeviationParams>(), &["body", "limit", "scan", "show", "tolerance"]);
     assert_keys(input_schema_for::<ScanFitSurfaceParams>(), &["body", "controls", "point", "radius", "smoothing"]);
     assert_keys(input_schema_for::<ScanCompleteParams>(), &["body", "guide", "plane", "reach"]);
-    assert_keys(input_schema_for::<ScanFloatingParams>(), &["below", "body", "in_place"]);
+    assert_keys(input_schema_for::<ScanFloatingParams>(), &["below", "body", "in_place", "keep", "remove"]);
     assert_keys(input_schema_for::<ScanFreeFormParams>(), &["body", "corners", "count", "curves", "fit", "plane", "reach", "stiffness"]);
     assert_keys(input_schema_for::<ScanEditNetParams>(), &["after", "distance", "in", "line", "op", "surface"]);
     assert_keys(input_schema_for::<ScanWrapSurfaceParams>(), &["arc", "axis", "body", "details", "point", "reach", "stiffness"]);
@@ -31,7 +31,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanMergeSurfacesParams>(), &["gap", "stitch", "surfaces"]);
     assert_keys(input_schema_for::<ScanCloseSurfaceParams>(), &["close", "continuity", "surface"]);
     assert_keys(input_schema_for::<ScanSliceSurfaceParams>(), &["cap", "keep", "plane", "surface"]);
-    assert_keys(input_schema_for::<ScanHolesParams>(), &["body", "fair", "in_place", "max_edges"]);
+    assert_keys(input_schema_for::<ScanHolesParams>(), &["at", "body", "fair", "in_place", "max_edges"]);
     assert_keys(input_schema_for::<ScanRepairParams>(), &["body", "crossings", "in_place"]);
     assert_keys(input_schema_for::<ScanSectionParams>(), &["body", "offset", "plane", "tolerance"]);
     assert_keys(input_schema_for::<ScanSectionsAlongParams>(), &["body", "count", "curves", "every", "sketch", "tolerance"]);

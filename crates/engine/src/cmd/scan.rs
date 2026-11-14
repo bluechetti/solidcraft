@@ -10,6 +10,8 @@ use serde_json::{Value, json};
 use solidcraft_geom::Vec3Geom as _;
 use solidcraft_scan::Scan;
 use solidcraft_scan::base::{self, Base};
+/// The shapes fitted to a scan, for a dialog to read a fit's preview.
+pub use solidcraft_scan::fit as fitting;
 use solidcraft_scan::fit::{self, Fitted, Kind, Shape};
 use solidcraft_scan::place::{self, Rigid};
 use solidcraft_scan::symmetry::{self, Guide, Mirror};
@@ -53,10 +55,17 @@ const FLOATING_CONTRACT: TypedContract<ScanFloatingParams> = TypedContract::new(
 const HOLES_CONTRACT: TypedContract<ScanHolesParams> = TypedContract::new();
 const REDUCE_CONTRACT: TypedContract<ScanReduceParams> = TypedContract::new();
 const REPAIR_CONTRACT: TypedContract<ScanRepairParams> = TypedContract::new();
+const CLEAN_UP_CONTRACT: TypedContract<crate::schema::scan::ScanCleanUpParams> = TypedContract::new();
 const SECTION_CONTRACT: TypedContract<ScanSectionParams> = TypedContract::new();
 const SECTIONS_ALONG_CONTRACT: TypedContract<ScanSectionsAlongParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec::new("scan.clean_up", "Clean Up", crate::checked!("scan.clean_up", clean::clean_up))
+        .at("SCAN", "CLEAN")
+        .icon("mesh_body")
+        .contract(&CLEAN_UP_CONTRACT)
+        .output(output_schema_for::<crate::schema::scan::ScanCleanUpResult>)
+        .params("body?: mesh body (default: the selected or only one); repair?, floating?, holes?: bool (each default true); reduce?: share of the triangles to keep (0…1, default: not reduced): Repair Mesh, Remove Floating Pieces, Fill Holes and Reduce Mesh run in that order with their usual settings, each kept as its own Scan Clean step (editable or taken out later); a tool with nothing to do is left out and says why; one undo step → body, steps [{command, done, note, feature?}], triangles"),
     CommandSpec::new("scan.repair", "Repair Mesh", crate::checked!("scan.repair", clean::repair))
         .at("SCAN", "CLEAN")
         .icon("mesh_body")
@@ -68,7 +77,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("surface_patch")
         .contract(&HOLES_CONTRACT)
         .output(output_schema_for::<ScanHolesResult>)
-        .params("body?: mesh body (default: the selected or only one); max_edges?: the largest hole to close, in edges round it (3…5000, default 300); fair?: bool (default true: each patch carries the surface's shape across; false leaves it flat): the holes closed with patches as fine as the scan round them (each piece's outer rim is not a hole), kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, holes, filled, failed, larger, added_triangles, unfillable_edges, feature"),
+        .params("body?: mesh body (default: the selected or only one); max_edges?: the largest hole to close, in edges round it (3…5000, default 300); fair?: bool (default true: each patch carries the surface's shape across; false leaves it flat); at?: [[x,y,z],…] points by the rings to close instead (exactly the nearest ring to each, any size, a rim capped): the holes closed with patches as fine as the scan round them (each piece's outer rim is not a hole), kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, holes, filled, failed, larger, added_triangles, unfillable_edges, feature"),
     CommandSpec::new("scan.reduce", "Reduce Mesh", crate::checked!("scan.reduce", clean::reduce))
         .at("SCAN", "CLEAN")
         .icon("scale")
@@ -80,7 +89,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("delete")
         .contract(&FLOATING_CONTRACT)
         .output(output_schema_for::<ScanFloatingResult>)
-        .params("body?: mesh body (default: the selected or only one); below?: share of the largest piece's triangles (0…0.5, default 0.02; never fewer than 2): the pieces of the scan (triangles joined through their corners) smaller than that taken off, kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, pieces, removed, removed_triangles, triangles, feature"),
+        .params("body?: mesh body (default: the selected or only one); below?: share of the largest piece's triangles (0…0.5, default 0.02; never fewer than 2); keep?: [[x,y,z],…] points on pieces kept whatever their size; remove?: [[x,y,z],…] points on pieces taken off whatever their size: the pieces of the scan (triangles joined through their corners) smaller than that taken off, kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, pieces, removed, removed_triangles, triangles, feature"),
     CommandSpec::new("scan.bases", "Scan Bases", crate::checked!("scan.bases", bases))
         .icon("list")
         .noundo()
@@ -92,7 +101,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("align")
         .contract(&STAND_CONTRACT)
         .output(output_schema_for::<ScanPlaceResult>)
-        .params("body?: mesh body (default: the selected mesh body, else the design's only one); point?: [x,y,z] on the scan (grow the flat face there and stand on it; a curved wall is refused; default: the point picked on the scan); base?: index into scan.bases; with neither, the steadiest base, or pressed again the next one → body, moved, base, base_index, base_count, feature (the Move)"),
+        .params("body?: mesh body (default: the selected mesh body, else the design's only one); point?: [x,y,z] on the scan (grow the flat face there and stand on it; a curved wall is refused; default: the point picked on the scan); points?: [[x,y,z],…] three or more on the scan (feet, rails, a rim: stand on the plane through them); base?: index into scan.bases; with neither, the steadiest base, or pressed again the next one → body, moved, base, base_index, base_count, feature (the Move)"),
     CommandSpec::new("scan.rest_on_grid", "Rest on Grid", crate::checked!("scan.rest_on_grid", rest_on_grid))
         .at("SCAN", "ALIGN")
         .icon("move")
@@ -124,7 +133,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(output_schema_for::<ScanPlaceResult>)
         .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z]}; plane?: {point, normal}: the smallest turn that lays the mirror plane along YZ, then sideways to X = 0, so the origin's YZ plane is the mirror plane; a plane given or guided to is used however much matches, the best one found unasked is refused when the scan is no mirror image about it → body, moved, mirror, feature (the Move)"),
     CommandSpec::new("scan.complete_by_mirroring", "Complete by Mirroring", crate::checked!("scan.complete_by_mirroring", complete_by_mirroring))
-        .at("SCAN", "ALIGN")
+        .at("SCAN", "CLEAN")
         .icon("scan_mirror_fill")
         .contract(&COMPLETE_CONTRACT)
         .output(output_schema_for::<ScanCompleteResult>)
@@ -522,8 +531,16 @@ fn stand_on_base(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(v.as_u64().ok_or_else(|| bad(cmd, "`base` must be a whole number from 0"))?),
         None => None,
     };
+    let points = stand_points(p, cmd)?;
     let mesh = mesh(s, p, cmd)?;
     let scan = mesh.scan();
+    if !points.is_empty() {
+        let chosen = base::through(&scan, &points).ok_or_else(|| bad(cmd, "the points must be three or more, not all in a line"))?;
+        let stand = place::stand(chosen.normal, chosen.anchor).ok_or_else(|| bad(cmd, "that base has no direction to stand on"))?;
+        let feature = move_by(s, &mesh, &stand)?;
+        s.scan_base_cycle = None;
+        return place_reply(mesh.body, Some(&chosen), feature);
+    }
     // A point given or picked on the scan grows the face there; else a base by number, or the
     // next one after the base the scan was last stood on by pressing again.
     let point = point.or_else(|| if index.is_none() { picked_point(s, &mesh.body) } else { None });
@@ -667,21 +684,68 @@ pub struct BasePreview {
     pub marked: Vec<[f32; 3]>,
 }
 
+/// What `scan.fit_<kind>` would fit at a point (the Fit dialog's preview): the shape, how well it
+/// fits, and the corners of the region it was fitted to, to paint on the scan.
+#[derive(Clone, Debug)]
+pub struct FitPreview {
+    pub body: String,
+    pub fitted: Fitted,
+    /// The region's triangles' corners, at most [`FIT_PAINT_MOST`] (every so many past that).
+    pub region: Vec<[Vec3; 3]>,
+}
+
+/// The most of a fitted region's triangles [`fit_preview`] hands back to paint.
+pub const FIT_PAINT_MOST: usize = 400_000;
+
+/// The shape `kind` fitted to the scan `body` (or the selected or only one) round `point`, without
+/// keeping anything.
+pub fn fit_preview(s: &Session, body: Option<&str>, point: Vec3, kind: Kind) -> Result<FitPreview> {
+    let cmd = match kind {
+        Kind::Plane => "scan.fit_plane",
+        Kind::Cylinder => "scan.fit_cylinder",
+        Kind::Sphere => "scan.fit_sphere",
+        Kind::Cone => "scan.fit_cone",
+        Kind::Torus => "scan.fit_torus",
+    };
+    let mesh = mesh(s, &json!({ "body": body }), cmd)?;
+    let scan = mesh.scan();
+    let seed = base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
+    let fitted = fit::fit(&scan, seed, kind, None).map_err(|e| bad(cmd, e.to_string()))?;
+    let step = fitted.triangles.len().div_ceil(FIT_PAINT_MOST).max(1);
+    let at = |i: u32| mesh.positions.get(i as usize).copied();
+    let region = fitted
+        .triangles
+        .iter()
+        .step_by(step)
+        .filter_map(|&t| {
+            let [a, b, c] = *mesh.triangles.get(t)?;
+            Some([at(a)?, at(b)?, at(c)?])
+        })
+        .collect();
+    Ok(FitPreview { body: mesh.body, fitted, region })
+}
+
 /// The base `scan.stand_on_base` would stand the scan `body` on (the dialog's preview): the face
-/// grown from `point` when there is one, else base number `index` (wrapped round the bases).
-pub fn base_preview(s: &Session, body: Option<&str>, point: Option<Vec3>, index: usize) -> Result<BasePreview> {
+/// grown from one point in `points`, the plane through three or more, else base number `index`
+/// (wrapped round the bases).
+pub fn base_preview(s: &Session, body: Option<&str>, points: &[Vec3], index: usize) -> Result<BasePreview> {
     let cmd = "scan.stand_on_base";
     let mesh = mesh(s, &json!({ "body": body }), cmd)?;
     let scan = mesh.scan();
     let found = base::bases(&scan);
     let count = found.len();
-    let (chosen, index, triangles) = match point {
-        Some(point) => {
-            let seed = base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
+    let (chosen, index, triangles) = match points {
+        [point] => {
+            let seed = base::nearest_triangle(&scan, *point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
             let (grown, triangles) = base::grow_face(&scan, seed).map_err(|e| bad(cmd, e.to_string()))?;
             (grown, None, triangles)
         }
-        None => {
+        [_, _] => return Err(bad(cmd, "pick a third point: the scan stands on the plane through three or more")),
+        [_, _, _, ..] => {
+            let chosen = base::through(&scan, points).ok_or_else(|| bad(cmd, "the points are in a line: pick one off it"))?;
+            (chosen, None, base::touching(&scan, &chosen))
+        }
+        [] => {
             let i = if count == 0 { 0 } else { index % count };
             let chosen = *found.get(i).ok_or_else(|| bad(cmd, "the scan has no base to stand on"))?;
             (chosen, Some(i), base::touching(&scan, &chosen))
@@ -701,6 +765,14 @@ pub fn base_preview(s: &Session, body: Option<&str>, point: Option<Vec3>, index:
         }
     }
     Ok(BasePreview { body: mesh.body, base: base_reply(&chosen), index, count, marked })
+}
+
+/// The `points` a base is fitted through, none when not given.
+fn stand_points(p: &Value, cmd: &str) -> Result<Vec<Vec3>> {
+    let Some(list) = p.get("points").filter(|v| !v.is_null()) else { return Ok(Vec::new()) };
+    let why = || bad(cmd, "`points` must be a list of 3 to 1000 points [x, y, z]");
+    let list = list.as_array().filter(|l| (3..=1000).contains(&l.len())).ok_or_else(why)?;
+    list.iter().map(|v| crate::params::vec3(v).ok_or_else(why)).collect()
 }
 
 /// Whether the scan already stands on `base`: standing it there would not move it.
