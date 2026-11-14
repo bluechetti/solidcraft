@@ -400,6 +400,79 @@ pub fn extrusions(
     chosen
 }
 
+/// `prisms` made to meet exactly where they meet on the scan: those read along nearly one
+/// direction (within [`SAME_DIRECTION`]) along exactly one (the first's, on the grid's axis when
+/// it is that near one), and their ends at nearly one level (within the scan's `tolerance`) at
+/// exactly one. Read each on its own, prisms stacked on a floor leave it a few thousandths of a
+/// millimetre and a few millionths of a radian apart in each, which the kernel's join cannot merge
+/// where two or three such meet at a corner.
+fn shared(mut prisms: Vec<Prism>, faces: &[Face], tolerance: f64) -> Vec<Prism> {
+    // Each prism's ends as levels along its own direction, read off its end planes where it has
+    // them (a plane's middle), else where it was read.
+    let level_of_end = |k: usize, d: Vec3, fallback: f64| plane(&faces[k]).map_or(fallback, |(point, _)| point.dot(d));
+    let mut groups: Vec<(Vec3, Vec<usize>)> = Vec::new();
+    for k in 0..prisms.len() {
+        let d = prisms[k].direction;
+        match groups.iter_mut().find(|g| g.0.dot(d).abs() >= SAME_DIRECTION) {
+            Some(g) => g.1.push(k),
+            None => groups.push((on_grid(unit(d)), vec![k])),
+        }
+    }
+    for (d, members) in groups {
+        if d == Vec3::ZERO {
+            continue;
+        }
+        // Each member's ends, as levels along `d`.
+        let mut ends: Vec<(usize, f64, f64)> = Vec::new();
+        for &k in &members {
+            let p = &prisms[k];
+            let sign = if p.direction.dot(d) < 0.0 { -1.0 } else { 1.0 };
+            let along = d * sign;
+            let base = p.origin.dot(p.direction);
+            let (low, high) = (base + p.low, base + p.high);
+            // Which end plane is at which end: an open prism names its one plane twice.
+            let at_low =
+                |e: usize| plane(&faces[e]).is_none_or(|(point, _)| (point.dot(p.direction) - low).abs() <= (point.dot(p.direction) - high).abs());
+            let low_new =
+                if !p.open || at_low(p.ends[0]) { level_of_end(p.ends[0], along, p.origin.dot(along) + p.low) } else { p.origin.dot(along) + p.low };
+            let high_new = if !p.open || !at_low(p.ends[1]) {
+                level_of_end(p.ends[1], along, p.origin.dot(along) + p.high)
+            } else {
+                p.origin.dot(along) + p.high
+            };
+            // As levels along `d`.
+            ends.push((k, low_new * sign, high_new * sign));
+        }
+        // Levels within the tolerance of each other are one: their mean.
+        let mut levels: Vec<f64> = ends.iter().flat_map(|e| [e.1, e.2]).collect();
+        levels.sort_by(f64::total_cmp);
+        let mut clusters: Vec<(f64, usize)> = Vec::new();
+        for l in levels {
+            match clusters.last_mut() {
+                Some((sum, n)) if l - *sum / *n as f64 <= tolerance => {
+                    *sum += l;
+                    *n += 1;
+                }
+                _ => clusters.push((l, 1)),
+            }
+        }
+        let snap = |l: f64| clusters.iter().map(|(sum, n)| sum / *n as f64).find(|m| (m - l).abs() <= tolerance).unwrap_or(l);
+        for (k, low, high) in ends {
+            let p = &mut prisms[k];
+            let sign = if p.direction.dot(d) < 0.0 { -1.0 } else { 1.0 };
+            let along = d * sign;
+            let (low, high) = (snap(low) * sign, snap(high) * sign);
+            let base = p.origin.dot(along);
+            if high - low > 0.0 {
+                p.direction = along;
+                p.low = low - base;
+                p.high = high - base;
+            }
+        }
+    }
+    prisms
+}
+
 /// Two prisms explaining within this share of the whole scan's area explain as much
 /// ([`extrusions`] then takes the one whose walls hold fewer rounds).
 const TIE: f64 = 0.001;
@@ -573,8 +646,8 @@ fn extrusion(
     // An end with no plane is as far as the shortest wall runs, so a slice halfway crosses them all.
     let (from, to) = (if low.caps.is_empty() { low.reach.1 } else { low.at }, if high.caps.is_empty() { high.reach.0 } else { high.at });
     // A drafted prism lies along the grid's axis when it is that near it: the kernel shells a
-    // tapered body reliably only so. A square one keeps its own direction, so that prisms meeting
-    // on a plane do not meet exactly on it, which the kernel's join refuses.
+    // tapered body reliably only so. A square one is put on one direction with the prisms it
+    // stacks with once all are read ([`shared`]).
     let direction = if draft != 0.0 { on_grid(direction) } else { direction };
     Some((Prism { direction, origin, low: from - at, high: to - at, ends, walls: section.to_vec(), open, draft }, shares))
 }
@@ -1646,6 +1719,7 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         if explains(&drafted.0) > explains(&square.0) { drafted } else { square }
     });
     let unread_prisms = read_prisms - prisms.len();
+    let prisms = shared(prisms, &faces, outcome.tolerance);
     let inner: BTreeSet<usize> = shell.iter().flat_map(|w| w.inner.iter().copied()).collect();
     let repeats = repeats(&faces);
     let turned_unread = revolve.as_ref().and_then(|r| crate::profile::turned_profile_of(scan, outcome, &faces, &same, size, r).err());
@@ -1819,16 +1893,8 @@ mod tests {
         // The main body, then four tabs 3 deep along Z, 12 apart along X, and one tab unlike them.
         let wall = |x: f64| plane_at(Vec3::new(x, 0.0, 0.0), Vec3::X, 30.0);
         let mut faces = vec![plane_at(Vec3::ZERO, Vec3::Z, 1000.0)];
-        let mut prisms = vec![Prism {
-            direction: Vec3::Z,
-            origin: Vec3::ZERO,
-            low: -5.0,
-            high: 0.0,
-            ends: [0, 0],
-            walls: vec![0],
-            open: false,
-            draft: 0.0,
-        }];
+        let mut prisms =
+            vec![Prism { direction: Vec3::Z, origin: Vec3::ZERO, low: -5.0, high: 0.0, ends: [0, 0], walls: vec![0], open: false, draft: 0.0 }];
         for (k, x) in [0.0, 12.0, 24.0, 36.0, 60.0].into_iter().enumerate() {
             faces.push(wall(x));
             faces.push(wall(x + 2.0));

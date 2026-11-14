@@ -887,6 +887,18 @@ pub(crate) fn prism_profile_from(
     // same plane for a square prism, its low end for a drafted one: their in-plane axes are the
     // same, so the slice's loops say which wall is which there too).
     let (plane, sketch) = squared_to_walls(prism_plane(prism), prism_sketch_plane(prism), faces, &prism.walls);
+    // A square prism's walls are read where they cross one level along its direction, the same
+    // for every prism along it, not where its own sketch lies: a wall a few millionths of a
+    // radian off the direction then gives prisms stacked along it the same line, where reading it
+    // at each one's own level would leave their sides a few thousandths of a millimetre apart,
+    // which the kernel's join cannot merge. (Same in-plane axes: the profile's coordinates do not
+    // change.)
+    let walls_at = if prism.draft == 0.0 {
+        let d = sketch.normal();
+        Plane { origin: sketch.origin - d * sketch.origin.dot(d), ..sketch }
+    } else {
+        sketch
+    };
     // Which face's surface each triangle is on.
     let mut owner = vec![u32::MAX; scan.triangle_count()];
     for (k, segment) in outcome.segments.iter().enumerate().take(faces.len()) {
@@ -898,7 +910,7 @@ pub(crate) fn prism_profile_from(
         }
     }
     let walls: Vec<(usize, Wall)> =
-        prism.walls.iter().filter_map(|&k| faces.get(k).and_then(|f| wall_of(&f.shape, &sketch)).map(|w| (k, w))).collect();
+        prism.walls.iter().filter_map(|&k| faces.get(k).and_then(|f| wall_of(&f.shape, &walls_at)).map(|w| (k, w))).collect();
     let place: BTreeMap<usize, usize> = walls.iter().enumerate().map(|(i, (k, _))| (*k, i)).collect();
     let loops: Vec<(Vec<Vec2>, Vec<Option<usize>>)> = crate::section::section_welded(scan, weld, &plane)
         .into_iter()
