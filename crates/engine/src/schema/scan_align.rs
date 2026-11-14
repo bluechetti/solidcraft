@@ -8,6 +8,30 @@ use serde_json::Value;
 use super::features::FeatureResult;
 use super::types::Point3;
 
+/// Align a scan one of five ways: by its own shape (`own_axes`, as `scan.quick_align`), onto
+/// another scan (`to_scan`, as `scan.register`), several passes together (`all`, as
+/// `scan.align_all`), by points picked in pairs (`by_points`, as `scan.align_pairs`) or onto a
+/// model (`to_model`, as `scan.align_to_model`). The other parameters are that command's.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ScanAlignParams {
+    /// How: own_axes, to_scan, all, by_points or to_model.
+    pub method: ScanAlignMethod,
+    /// The chosen command's own parameters.
+    #[serde(flatten)]
+    pub rest: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The ways `scan.align` aligns a scan.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanAlignMethod {
+    OwnAxes,
+    ToScan,
+    All,
+    ByPoints,
+    ToModel,
+}
+
 /// Lay several passes of one part together at once: each placed onto those before it from
 /// wherever it lies, then every overlapping pair fitted and the errors shared out. Each pass moved
 /// is kept as a Move of it, all in one undo step.

@@ -111,6 +111,19 @@ fn a_scan_stands_on_the_plane_through_points_picked_on_it() {
     assert!(line.is_err(), "three in a line");
 }
 
+/// Align by name runs the way chosen with the rest of the parameters; a way not known is refused
+/// with the ones there are.
+#[test]
+fn align_runs_the_way_named() {
+    let (mut s, body) = session_with_a_scan("align");
+    let reply = run(&mut s, "scan.align", json!({"method": "own_axes", "body": body}));
+    assert_eq!(reply["moved"], true, "{reply}");
+    let (lo, hi) = bounds(&s, &body);
+    assert!((hi.x - lo.x - 80.0).abs() < 1e-3, "laid along X as Quick Align lays it: {lo:?} {hi:?}");
+    let refused = s.execute("scan.align", &json!({"method": "sideways"})).unwrap_err().to_string();
+    assert!(refused.contains("own_axes, to_scan, all, by_points, to_model"), "{refused}");
+}
+
 /// Quick align lays the slab along X, Y and Z about the origin; rest and centre then move only
 /// what they say.
 #[test]

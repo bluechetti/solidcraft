@@ -454,6 +454,8 @@ pub const SECTIONS: &[Section] = &[
             "scan.reduce",
             "scan.denoise",
             "scan.remesh",
+            // It adds what the scan missed, from its mirror image: a repair, not a placing.
+            "scan.complete_by_mirroring",
             "scan.split",
             // Part of a scan chosen, kept by name or taken off.
             "scan.select_inside_curve",
@@ -465,17 +467,18 @@ pub const SECTIONS: &[Section] = &[
     Section {
         tab: "SCAN",
         panel: "ALIGN",
-        promoted: 3,
+        promoted: 2,
         ids: &[
             "scan.stand_on_base",
+            "scan.align",
+            // The ways Align offers, each also a command of its own.
             "scan.quick_align",
             "scan.register",
             "scan.align_all",
-            "scan.combine",
             "scan.align_pairs",
+            "scan.combine",
             "scan.symmetry",
             "scan.square_to_symmetry",
-            "scan.complete_by_mirroring",
             "scan.rest_on_grid",
             "scan.center",
         ],

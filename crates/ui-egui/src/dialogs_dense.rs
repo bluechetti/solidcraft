@@ -112,6 +112,7 @@ pub(super) fn command(kind: &Kind) -> Option<&'static str> {
         Kind::ScanEdgeCurve(_) => Some("scan.curve_from_selection"),
         Kind::ScanReconstruct(k) => Some(if k.selected { "scan.reconstruct_selection" } else { "scan.reconstruct" }),
         Kind::ScanSurvey(_) => Some("scan.survey"),
+        Kind::ScanAlignChoose(_) => Some("scan.align"),
         Kind::EndCap(_) => Some("frame.end_cap"),
         Kind::Plastic(k) => match k {
             crate::dialogs_plastic::Pl::SnapFit { .. } => Some("plastic.snap_fit"),
@@ -1219,6 +1220,7 @@ fn additional_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> boo
         Kind::ScanEdgeCurve(k) => enter |= crate::dialogs_scan_edge::rows(app, ui, k),
         Kind::ScanReconstruct(k) => enter |= crate::dialogs_scan_reconstruct::rows(app, ui, k),
         Kind::ScanSurvey(k) => enter |= crate::dialogs_scan_survey::rows(app, ui, k),
+        Kind::ScanAlignChoose(k) => enter |= crate::dialogs_scan_align::choose_rows(app, ui, k),
         Kind::EndCap(k) => enter |= crate::dialogs_end_cap::rows(app, ui, k, &d.inputs),
         Kind::Assembly(k) => enter |= crate::dialogs_assembly::rows(app, ui, k, &mut d.inputs, &mut d.active),
         Kind::Measure { result, show, .. } => measure_rows(app, ui, result.as_ref(), show),

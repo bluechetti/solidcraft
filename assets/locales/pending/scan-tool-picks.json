@@ -11,7 +11,9 @@
     "cmd.scan_clean_up": "Clean Up",
     "help.scan.clean_up": "Repairs the scan, takes off floating pieces and closes its holes in one go, each kept as its own step. Use it first on a new scan.",
     "ui.scan_clean_up_reduce": "Reduce to",
-    "ui.scan_clean_up_hint": "Each tool is kept as its own step in the timeline; one with nothing to do is left out."
+    "ui.scan_clean_up_hint": "Each tool is kept as its own step in the timeline; one with nothing to do is left out.",
+    "cmd.scan_align": "Align",
+    "help.scan.align": "Lays the scan where it belongs: by its own shape, onto another scan or a model, or by matching points. Choose the way that fits."
   },
   "de": {
     "ui.scan_fit_click": "Klicken Sie auf die Fläche des Scans, die eingepasst werden soll.",
@@ -25,7 +27,9 @@
     "cmd.scan_clean_up": "Bereinigen",
     "help.scan.clean_up": "Repariert den Scan, entfernt lose Stücke und schließt seine Löcher in einem Zug, jeweils als eigener Schritt. Zuerst auf einen neuen Scan anwenden.",
     "ui.scan_clean_up_reduce": "Reduzieren auf",
-    "ui.scan_clean_up_hint": "Jedes Werkzeug wird als eigener Schritt in der Zeitleiste behalten; eines ohne Arbeit entfällt."
+    "ui.scan_clean_up_hint": "Jedes Werkzeug wird als eigener Schritt in der Zeitleiste behalten; eines ohne Arbeit entfällt.",
+    "cmd.scan_align": "Ausrichten",
+    "help.scan.align": "Legt den Scan an seinen Platz: nach seiner eigenen Form, auf einen anderen Scan oder ein Modell oder nach passenden Punkten. Wählen Sie den passenden Weg."
   },
   "ja": {
     "ui.scan_fit_click": "当てはめる面をスキャン上でクリックします。",
@@ -39,7 +43,9 @@
     "cmd.scan_clean_up": "クリーンアップ",
     "help.scan.clean_up": "スキャンを修復し、浮いた部分を除き、穴を一度に閉じます。各処理は個別のステップとして残ります。新しいスキャンで最初に使います。",
     "ui.scan_clean_up_reduce": "削減後の割合",
-    "ui.scan_clean_up_hint": "各ツールはタイムラインに個別のステップとして残ります。処理の必要がないものは省かれます。"
+    "ui.scan_clean_up_hint": "各ツールはタイムラインに個別のステップとして残ります。処理の必要がないものは省かれます。",
+    "cmd.scan_align": "位置合わせ",
+    "help.scan.align": "スキャンを正しい位置に置きます。自身の形状、別のスキャンやモデル、対応する点で合わせます。合う方法を選びます。"
   },
   "zh": {
     "ui.scan_fit_click": "在扫描上单击要拟合的面。",
@@ -53,7 +59,9 @@
     "cmd.scan_clean_up": "一键清理",
     "help.scan.clean_up": "一次修复扫描、移除浮动部分并封闭孔洞，每项都保留为单独的步骤。对新扫描先用它。",
     "ui.scan_clean_up_reduce": "简化到",
-    "ui.scan_clean_up_hint": "每个工具在时间线中保留为单独的步骤；无需处理的会被跳过。"
+    "ui.scan_clean_up_hint": "每个工具在时间线中保留为单独的步骤；无需处理的会被跳过。",
+    "cmd.scan_align": "对齐",
+    "help.scan.align": "将扫描放到正确位置：按其自身形状、对齐到另一扫描或模型，或按匹配点。选择合适的方式。"
   },
   "ko": {
     "ui.scan_fit_click": "맞출 면을 스캔에서 클릭하세요.",
@@ -67,7 +75,9 @@
     "cmd.scan_clean_up": "정리",
     "help.scan.clean_up": "스캔을 복구하고 떠 있는 조각을 제거하고 구멍을 한 번에 닫으며, 각각 별도 단계로 남깁니다. 새 스캔에 먼저 사용하세요.",
     "ui.scan_clean_up_reduce": "줄일 비율",
-    "ui.scan_clean_up_hint": "각 도구는 타임라인에 별도 단계로 남습니다. 할 일이 없는 도구는 빠집니다."
+    "ui.scan_clean_up_hint": "각 도구는 타임라인에 별도 단계로 남습니다. 할 일이 없는 도구는 빠집니다.",
+    "cmd.scan_align": "정렬",
+    "help.scan.align": "스캔을 제자리에 놓습니다: 자체 형상, 다른 스캔이나 모델, 또는 대응점으로. 맞는 방법을 고르세요."
   },
   "ar": {
     "cmd.scan_clean_up": "تنظيف",
@@ -81,7 +91,9 @@
     "ui.scan_fit_makes_point": "يحتفظ موافق بنقطة إنشاء في مركزه.",
     "ui.scan_fit_off": "{rms} في المتوسط، {max} كحد أقصى",
     "ui.scan_fit_tube": "نصف قطر الأنبوب",
-    "ui.scan_holes_by_size": "حسب الحجم"
+    "ui.scan_holes_by_size": "حسب الحجم",
+    "cmd.scan_align": "محاذاة",
+    "help.scan.align": "يضع المسح في مكانه: حسب شكله، أو على مسح آخر أو نموذج، أو بنقاط متطابقة. اختر الطريقة المناسبة."
   },
   "he": {
     "cmd.scan_clean_up": "ניקוי",
@@ -95,7 +107,9 @@
     "ui.scan_fit_makes_point": "אישור שומר נקודת עזר במרכזה.",
     "ui.scan_fit_off": "{rms} בממוצע, {max} לכל היותר",
     "ui.scan_fit_tube": "רדיוס הצינור",
-    "ui.scan_holes_by_size": "לפי גודל"
+    "ui.scan_holes_by_size": "לפי גודל",
+    "cmd.scan_align": "יישור",
+    "help.scan.align": "מניח את הסריקה במקומה: לפי צורתה, על סריקה אחרת או מודל, או לפי נקודות תואמות. בחרו את הדרך המתאימה."
   },
   "vi": {
     "cmd.scan_clean_up": "Dọn dẹp",
@@ -109,6 +123,8 @@
     "ui.scan_fit_makes_point": "OK giữ một điểm dựng tại tâm của nó.",
     "ui.scan_fit_off": "trung bình {rms}, lớn nhất {max}",
     "ui.scan_fit_tube": "Bán kính ống",
-    "ui.scan_holes_by_size": "Theo kích thước"
+    "ui.scan_holes_by_size": "Theo kích thước",
+    "cmd.scan_align": "Căn chỉnh",
+    "help.scan.align": "Đặt bản quét vào đúng chỗ: theo hình dạng của nó, lên bản quét khác hoặc mô hình, hoặc theo các điểm khớp. Chọn cách phù hợp."
   }
 }

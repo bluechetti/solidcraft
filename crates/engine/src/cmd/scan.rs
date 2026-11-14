@@ -133,7 +133,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(output_schema_for::<ScanPlaceResult>)
         .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z]}; plane?: {point, normal}: the smallest turn that lays the mirror plane along YZ, then sideways to X = 0, so the origin's YZ plane is the mirror plane; a plane given or guided to is used however much matches, the best one found unasked is refused when the scan is no mirror image about it → body, moved, mirror, feature (the Move)"),
     CommandSpec::new("scan.complete_by_mirroring", "Complete by Mirroring", crate::checked!("scan.complete_by_mirroring", complete_by_mirroring))
-        .at("SCAN", "ALIGN")
+        .at("SCAN", "CLEAN")
         .icon("scan_mirror_fill")
         .contract(&COMPLETE_CONTRACT)
         .output(output_schema_for::<ScanCompleteResult>)

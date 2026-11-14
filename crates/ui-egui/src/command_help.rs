@@ -143,6 +143,7 @@ pub const DOCUMENTED: &[&str] = &[
     "plastic.rest",
     "plastic.snap_fit",
     "pointcloud.insert",
+    "scan.align",
     "scan.align_all",
     "scan.align_pairs",
     "scan.align_to_model",

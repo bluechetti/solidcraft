@@ -6521,6 +6521,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::dialogs_scan_template::tick(app);
     // Survey Scan: a next step's button opens that tool.
     crate::dialogs_scan_survey::tick(app);
+    // Align: a way chosen opens its tool.
+    crate::dialogs_scan_align::tick(app);
     // Select on Scan: clicks and drags on the scan select with the dialog's tool.
     if crate::dialogs_scan_select::active(app) {
         crate::dialogs_scan_select::keys(app, mods);
