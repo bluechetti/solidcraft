@@ -1108,7 +1108,8 @@ impl Body {
         {
             return Some(volume);
         }
-        let volume = crate::measure(self).ok()?.volume;
+        // The mass properties alone: the full measure's volume to the bit, without its mesh.
+        let volume = crate::measure::measure_mass(self).ok()?.volume;
         if let Some(cell) = &self.volume
             && let Ok(mut slot) = cell.lock()
         {
