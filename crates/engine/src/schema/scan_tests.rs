@@ -22,7 +22,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanDeviationParams>(), &["body", "limit", "scan", "show", "tolerance"]);
     assert_keys(input_schema_for::<ScanFitSurfaceParams>(), &["body", "controls", "point", "radius", "smoothing"]);
     assert_keys(input_schema_for::<ScanCompleteParams>(), &["body", "guide", "plane", "reach"]);
-    assert_keys(input_schema_for::<ScanFloatingParams>(), &["below", "body"]);
+    assert_keys(input_schema_for::<ScanFloatingParams>(), &["below", "body", "in_place"]);
     assert_keys(input_schema_for::<ScanFreeFormParams>(), &["body", "corners", "count", "curves", "fit", "plane", "reach", "stiffness"]);
     assert_keys(input_schema_for::<ScanEditNetParams>(), &["after", "distance", "in", "line", "op", "surface"]);
     assert_keys(input_schema_for::<ScanWrapSurfaceParams>(), &["arc", "axis", "body", "details", "point", "reach", "stiffness"]);
@@ -31,11 +31,11 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanMergeSurfacesParams>(), &["gap", "stitch", "surfaces"]);
     assert_keys(input_schema_for::<ScanCloseSurfaceParams>(), &["close", "continuity", "surface"]);
     assert_keys(input_schema_for::<ScanSliceSurfaceParams>(), &["cap", "keep", "plane", "surface"]);
-    assert_keys(input_schema_for::<ScanHolesParams>(), &["body", "fair", "max_edges"]);
-    assert_keys(input_schema_for::<ScanRepairParams>(), &["body", "crossings"]);
+    assert_keys(input_schema_for::<ScanHolesParams>(), &["body", "fair", "in_place", "max_edges"]);
+    assert_keys(input_schema_for::<ScanRepairParams>(), &["body", "crossings", "in_place"]);
     assert_keys(input_schema_for::<ScanSectionParams>(), &["body", "offset", "plane", "tolerance"]);
     assert_keys(input_schema_for::<ScanSectionsAlongParams>(), &["body", "count", "curves", "every", "sketch", "tolerance"]);
-    assert_keys(input_schema_for::<ScanReduceParams>(), &["body", "keep_rim", "max_error", "ratio", "triangles"]);
+    assert_keys(input_schema_for::<ScanReduceParams>(), &["body", "in_place", "keep_rim", "max_error", "ratio", "triangles"]);
     assert_keys(input_schema_for::<ScanCurveParams>(), &["body", "closed", "points", "sketch", "tolerance"]);
     assert_keys(
         input_schema_for::<ScanEditSurfaceParams>(),

@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_snap_plane": "On the wall's plane"
+  },
+  "de": {
+    "ui.scan_snap_plane": "Auf der Wandebene"
+  },
+  "ja": {
+    "ui.scan_snap_plane": "壁の平面上"
+  },
+  "ko": {
+    "ui.scan_snap_plane": "벽 평면 위"
+  },
+  "zh": {
+    "ui.scan_snap_plane": "在墙面平面上"
+  },
+  "ar": {
+    "ui.scan_snap_plane": "على مستوى الجدار"
+  },
+  "he": {
+    "ui.scan_snap_plane": "על מישור הקיר"
+  },
+  "vi": {
+    "ui.scan_snap_plane": "Trên mặt phẳng của tường"
+  }
+}

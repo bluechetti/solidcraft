@@ -18,6 +18,7 @@ solidcraft-geom = { workspace = true }
 solidcraft-sketch = { workspace = true }
 solidcraft-kernel = { workspace = true }
 solidcraft-profile = { workspace = true }
+solidcraft-scan = { workspace = true }
 solidcraft-render = { workspace = true }
 solidcraft-derive = { workspace = true }
 solidcraft-format = { workspace = true }

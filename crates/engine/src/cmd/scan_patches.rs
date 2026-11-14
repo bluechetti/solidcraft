@@ -21,7 +21,7 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.fit_patches", "Fi
     .icon("scan_fit_patches")
     .contract(&PATCHES_CONTRACT)
     .output(output_schema_for::<ScanPatchesResult>)
-    .params("body?: the scan (default: what is selected on a scan, else the picked or only one); the region: triangles?: [indices] | point?: [x,y,z] (the piece there) with radius?: length (default: what is selected, else the point picked); layout?: grid (default: one patch over the region's flattened box) | blocks (that patch cut exactly into `rows` × `columns` faces, sewn into one body) | quads (one patch whose edges follow the region's edge, its corners where the region's are); controls?: 4–30 or [u, v] (default 10: control points each way over the whole); rows?, columns?: blocks (default 2 × 2); smoothing?: 0–1 (default 0.1): fitted in all three directions to the region's points, each starting on the base surface the region fits best (its plane, a cylinder round it, or its flattening, so a region that curves round fits too) and moved to its foot on the surface between rounds; kept as a surface body `Patches1`, … (one undo step); a surface that folds, pinches or passes through itself is kept and said so (warning), and blocks that cannot be sewn because of it are refused → body, surface, layout, patches, rows, columns, controls, rms, max, points, folds, pinches, crossings, warning?, feature")];
+    .params("body?: the scan (default: what is selected on a scan, else the picked or only one); the region: triangles?: [indices] | saved?: a kept selection (Keep Selection) | point?: [x,y,z] (the piece there) with radius?: length (default: what is selected, else the point picked); layout?: grid (default: one patch over the region's flattened box) | blocks (that patch cut exactly into `rows` × `columns` faces, sewn into one body) | quads (one patch whose edges follow the region's edge, its corners where the region's are); controls?: 4–30 or [u, v] (default 10: control points each way over the whole); rows?, columns?: blocks (default 2 × 2); smoothing?: 0–1 (default 0.1): fitted in all three directions to the region's points, each starting on the base surface the region fits best (its plane, a cylinder round it, or its flattening, so a region that curves round fits too) and moved to its foot on the surface between rounds; kept as a surface body `Patches1`, … (one undo step); a surface that folds, pinches or passes through itself is kept and said so (warning), and blocks that cannot be sewn because of it are refused → body, surface, layout, patches, rows, columns, controls, rms, max, points, folds, pinches, crossings, warning?, feature")];
 
 fn reply<T: serde::Serialize>(r: T) -> Result<Value> {
     serde_json::to_value(r).map_err(|e| EngineError::Other(e.to_string()))
@@ -29,7 +29,7 @@ fn reply<T: serde::Serialize>(r: T) -> Result<Value> {
 
 /// What `p` would fit: the scan, the layout and controls, and the patches.
 pub fn fitted(s: &Session, p: &Value, cmd: &str) -> Result<(String, Layout, [usize; 2], Patches)> {
-    let body = str_(p, "body").map(str::to_owned).or_else(|| super::select::selected(s).map(|k| k.scan.clone()));
+    let body = super::flatten::region_scan(s, p);
     let on = mesh(s, &json!({ "body": body }), cmd)?;
     let region = super::flatten::region(s, p, &on, cmd)?;
     let whole = |key: &str, low: u64, high: u64, default: u64| -> Result<usize> {
@@ -88,6 +88,12 @@ fn recipe_params(s: &Session, p: &Value, body: &str) -> Option<Value> {
     let total = s.model.state().body(body).and_then(|b| b.body.triangle_mesh()).map(|(_, t)| t.len())?;
     let list: Vec<usize> = if has("triangles") {
         p["triangles"].as_array()?.iter().filter_map(|v| v.as_u64().map(|t| t as usize)).collect()
+    } else if has("saved") {
+        // A kept selection may be deleted or kept again: the recipe keeps its triangles.
+        let name = str_(p, "saved")?;
+        let kept = s.doc.scan_selections.iter().find(|k| k.name == name && k.body == body)?;
+        params.as_object_mut()?.remove("saved");
+        kept.flags().iter().enumerate().filter(|(_, on)| **on).map(|(t, _)| t).collect()
     } else if let Some(sel) = super::select::selected(s).filter(|k| k.scan == body && k.count > 0) {
         sel.selected.iter().enumerate().filter(|(_, on)| **on).map(|(t, _)| t).collect()
     } else {

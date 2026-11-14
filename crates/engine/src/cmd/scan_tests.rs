@@ -818,6 +818,132 @@ fn repair_takes_a_copied_triangle_off() {
     assert_eq!(count(&s), before, "one undo step");
 }
 
+/// A clean tool adds a Scan Clean step that keeps its settings, not its triangles: the Mesh Import
+/// keeps the scan as it came in; suppressing the step brings the speck back; the step made again
+/// with other settings takes nothing off and says so; the design saved and opened again cleans the
+/// scan once more from the settings; and `in_place` writes the scan back as before, with no step.
+#[test]
+fn a_clean_step_keeps_settings_and_makes_the_scan_again() {
+    use solidcraft_doc::FeatureKind;
+    use solidcraft_doc::scan_clean::CleanStep;
+    let mut triangles = fine_box(Vec3::ZERO, Vec3::new(30.0, 20.0, 10.0), 12);
+    let block = triangles.len();
+    triangles.extend(fine_box(Vec3::new(50.0, 0.0, 5.0), Vec3::new(51.0, 1.0, 6.0), 1));
+    let all = triangles.len();
+    let (mut s, body) = session_with_triangles("clean-step", &triangles);
+    let count = |s: &Session| s.model.state().body(&body).and_then(|b| b.body.triangle_mesh()).map_or(0, |(_, t)| t.len());
+    let imported = |s: &Session| {
+        s.doc.features.iter().find_map(|f| match &f.kind {
+            FeatureKind::MeshImport { meshes, .. } => Some(meshes[0].triangles.len() / 3),
+            _ => None,
+        })
+    };
+    let reply = run(&mut s, "scan.remove_floating", json!({}));
+    let id = reply["feature"].as_u64().unwrap();
+    let step = s.doc.feature(id).unwrap();
+    assert_eq!(step.kind, FeatureKind::ScanClean { body: body.clone().into(), step: CleanStep::RemoveFloating { below: 0.02 } });
+    assert_eq!(step.name, "RemoveFloating1");
+    assert_eq!((count(&s), imported(&s)), (block, Some(all)), "the scan cleaned, the import as it came in");
+
+    run(&mut s, "timeline.suppress", json!({"feature": id, "suppressed": true}));
+    assert_eq!(count(&s), all, "the step suppressed: the speck is back");
+    run(&mut s, "timeline.suppress", json!({"feature": id, "suppressed": false}));
+    assert_eq!(count(&s), block);
+
+    // Made again with another setting: the step keeps it, in its place.
+    run(&mut s, "timeline.redefine", json!({"feature": id, "command": "scan.remove_floating", "params": {"body": body, "below": 0.5}}));
+    let at = s.doc.feature_index(id).unwrap();
+    assert!(matches!(&s.doc.features[at].kind, FeatureKind::ScanClean { step: CleanStep::RemoveFloating { below }, .. } if *below == 0.5));
+    assert_eq!(count(&s), block);
+    // The same step put in before it: the later one finds nothing to do, leaves the scan, says so.
+    run(&mut s, "timeline.roll_to", json!({"position": at}));
+    run(&mut s, "scan.remove_floating", json!({}));
+    run(&mut s, "timeline.roll_to", json!({}));
+    let later = s.doc.features.last().unwrap().id;
+    let warning = s.model.result(later).and_then(|r| r.warning.clone()).unwrap_or_default();
+    assert!(warning.contains("no piece floats") && s.model.result(later).is_some_and(|r| r.error.is_none()), "{warning}");
+    assert_eq!(count(&s), block);
+
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-clean-step-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("cleaned.solidcraft");
+    run(&mut s, "file.save", json!({"path": path.to_string_lossy()}));
+    let mut opened = Session::default();
+    run(&mut opened, "doc.open", json!({"path": path.to_string_lossy()}));
+    assert_eq!((count(&opened), imported(&opened)), (block, Some(all)), "made again from the settings when the design opens");
+
+    let (mut old, old_body) = session_with_triangles("clean-in-place", &triangles);
+    let reply = run(&mut old, "scan.remove_floating", json!({"in_place": true}));
+    assert!(matches!(old.doc.feature(reply["feature"].as_u64().unwrap()).map(|f| &f.kind), Some(FeatureKind::MeshImport { .. })), "{reply}");
+    assert!(!old.doc.features.iter().any(|f| matches!(f.kind, FeatureKind::ScanClean { .. })));
+    assert_eq!(old.model.state().body(&old_body).and_then(|b| b.body.triangle_mesh()).map(|(_, t)| t.len()), Some(block));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The distinct meshes of the scan `body` that the states after the timeline's features hold.
+fn scan_copies(s: &Session, body: &str) -> usize {
+    let mut seen: Vec<*const solidcraft_geom::Mesh> = Vec::new();
+    for r in &s.model.results {
+        if let Some(m) = r.state.body(body).and_then(|b| b.body.kept_mesh()) {
+            let at = std::sync::Arc::as_ptr(&m);
+            if !seen.contains(&at) {
+                seen.push(at);
+            }
+        }
+    }
+    seen.len()
+}
+
+/// A run of three Scan Clean steps holds one working scan: the states after the import and the
+/// steps hold two meshes of it in all (the scan as it came in and the latest result), however many
+/// steps. Rolling back onto the first step, or editing the second, makes the scan again from the
+/// import, as the steps left it; saved and opened again, the same two.
+#[test]
+fn a_run_of_clean_steps_holds_the_scan_as_it_came_in_and_the_latest_result() {
+    use solidcraft_doc::FeatureKind;
+    let mut triangles = fine_box(Vec3::ZERO, Vec3::new(30.0, 20.0, 10.0), 12);
+    let block = triangles.len();
+    triangles.extend(fine_box(Vec3::new(50.0, 0.0, 5.0), Vec3::new(51.0, 1.0, 6.0), 1));
+    let (mut s, body) = session_with_triangles("clean-run", &triangles);
+    let count = |s: &Session| s.model.state().body(&body).and_then(|b| b.body.triangle_mesh()).map_or(0, |(_, t)| t.len());
+    run(&mut s, "scan.remove_floating", json!({}));
+    let half = run(&mut s, "scan.reduce", json!({"ratio": 0.5}))["triangles"].as_u64().unwrap() as usize;
+    let quarter = run(&mut s, "scan.reduce", json!({"ratio": 0.5}))["triangles"].as_u64().unwrap() as usize;
+    assert!(quarter < half && half < block, "{quarter} {half} {block}");
+    assert_eq!(count(&s), quarter);
+    assert_eq!(scan_copies(&s, &body), 2, "the scan as it came in and the latest result");
+
+    // Rolled back onto the first step: made again from the import, the speck taken off.
+    let steps: Vec<usize> =
+        s.doc.features.iter().enumerate().filter(|(_, f)| matches!(f.kind, FeatureKind::ScanClean { .. })).map(|(i, _)| i).collect();
+    run(&mut s, "timeline.roll_to", json!({"position": steps[0] + 1}));
+    assert_eq!(count(&s), block, "the first step's scan");
+    run(&mut s, "timeline.roll_to", json!({}));
+    assert_eq!(count(&s), quarter);
+
+    // The second step made again keeping a quarter: the third reads the scan as the second leaves it.
+    let second = s.doc.features[steps[1]].id;
+    run(&mut s, "timeline.redefine", json!({"feature": second, "command": "scan.reduce", "params": {"body": body, "ratio": 0.25}}));
+    let now = count(&s);
+    assert!(now < quarter, "{now} {quarter}");
+    assert_eq!(scan_copies(&s, &body), 2);
+
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-clean-run-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("run.solidcraft");
+    // The model is kept with the design: the thinned states are left out, the last one kept.
+    let saved = s.model.saved(&s.doc).expect("a model to keep");
+    let kept: Vec<bool> = saved.records["features"].as_array().unwrap().iter().map(|f| f.get("state").is_some()).collect();
+    assert_eq!(kept.iter().filter(|k| !**k).count(), 2, "the first two steps' states left out: {kept:?}");
+    assert_eq!(kept.last(), Some(&true));
+    run(&mut s, "file.save", json!({"path": path.to_string_lossy()}));
+    let mut opened = Session::default();
+    run(&mut opened, "doc.open", json!({"path": path.to_string_lossy()}));
+    assert_eq!(count(&opened), now, "the steps made again on open");
+    assert_eq!(scan_copies(&opened, &body), 2, "opened, the same two");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Section to Sketch on the plate and boss: cut through the boss it is one circle of the boss's
 /// radius, in a new `Section` sketch; cut through the plate, the plate's four sides as four lines;
 /// a plane above the part cuts nothing.

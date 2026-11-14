@@ -285,7 +285,8 @@ impl SolveApp {
     }
 
     /// [`Self::run_heavy`], as the operation `serial` (the operations panel's row).
-    fn run_heavy_as(&mut self, id: &str, params: Value, serial: u64) -> Result<Value, String> {
+    fn run_heavy_as(&mut self, id: &str, mut params: Value, serial: u64) -> Result<Value, String> {
+        crate::dialogs_scan_clean::in_place(self, id, &mut params);
         if id == "timeline.play" {
             return self.run(id, params);
         }

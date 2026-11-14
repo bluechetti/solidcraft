@@ -5598,6 +5598,11 @@ pub fn apply_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>
     }
     crate::length_input::extra(&mut normalized.extra, |e| crate::length_input::expression(&app.session.doc, e, ValueKind::Length));
     let mut cmds = dialog_commands(app, &normalized)?;
+    if d.editing.is_none() {
+        for (cmd, params) in &mut cmds {
+            crate::dialogs_scan_clean::in_place(app, cmd, params);
+        }
+    }
     exact_regions(d, &mut cmds);
     crate::op_auto::scope_targets(app, d, &mut cmds)?;
     if crate::hole_folder::active(d) {
@@ -8441,6 +8446,13 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = bodies.iter().map(|n| Sel::Body { name: n.to_string() }).collect();
             }
+            d
+        }
+        // A Scan Clean step opens its tool's dialog with the step's settings, on the scan as the
+        // steps before it left it (the design is rolled back to just before the step).
+        FeatureKind::ScanClean { step, .. } => {
+            let mut d = start(step.command())?;
+            crate::dialogs_scan_clean::refill(&mut d.kind, step);
             d
         }
         kind @ FeatureKind::Move { bodies, .. } => {

@@ -2187,6 +2187,13 @@ pub enum FeatureKind {
         #[walk(length = "Tolerance")]
         tolerance: Expr,
     },
+    /// A clean tool's step on a scan (a mesh body brought in by Insert Mesh): its settings only.
+    /// The scan is made again from the one before the step each time it is evaluated
+    /// (`crate::scan_clean`), so the Mesh Import keeps the scan as it came in.
+    ScanClean {
+        body: BodyName,
+        step: crate::scan_clean::CleanStep,
+    },
     /// Mesh bodies imported from a 3MF or STL file, embedded in the design.
     MeshImport {
         /// Source file name (display only).
@@ -2983,6 +2990,7 @@ impl FeatureKind {
             FeatureKind::ScanSurface { .. } => "ScanSurfaceFeature",
             FeatureKind::MeshImport { .. } => "MeshFeature",
             FeatureKind::MeshConvert { .. } => "MeshConvertFeature",
+            FeatureKind::ScanClean { .. } => "ScanCleanFeature",
             FeatureKind::Repair { .. } => "RepairFeature",
         }
     }
@@ -3067,6 +3075,7 @@ impl FeatureKind {
             FeatureKind::Import { .. } => "import",
             FeatureKind::ScanSurface { .. } => "scan_surface",
             FeatureKind::MeshConvert { .. } => "mesh_convert",
+            FeatureKind::ScanClean { .. } => "scan_clean",
             FeatureKind::MeshImport { .. } => "mesh_import",
             FeatureKind::Repair { .. } => "repair",
         }
@@ -3152,6 +3161,7 @@ impl FeatureKind {
             "ScanSurfaceFeature" => "scan_surface",
             "MeshFeature" => "mesh_import",
             "MeshConvertFeature" => "mesh_convert",
+            "ScanCleanFeature" => "scan_clean",
             "RepairFeature" => "repair",
             _ => return None,
         })
@@ -3241,6 +3251,7 @@ impl FeatureKind {
             FeatureKind::ScanSurface { .. } => "ScanSurface",
             FeatureKind::MeshImport { .. } => "Mesh",
             FeatureKind::MeshConvert { .. } => "ConvertMesh",
+            FeatureKind::ScanClean { step, .. } => step.base_name(),
             FeatureKind::Repair { .. } => "Repair",
         }
     }

@@ -88,6 +88,7 @@ pub mod render_resources;
 pub mod render_settings;
 pub mod render_surface;
 pub mod render_texture_resources;
+pub mod scan_clean;
 pub mod scan_recipe;
 pub mod scan_selection;
 pub mod scan_tolerance;

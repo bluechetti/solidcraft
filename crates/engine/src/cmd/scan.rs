@@ -62,25 +62,25 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("mesh_body")
         .contract(&REPAIR_CONTRACT)
         .output(output_schema_for::<ScanRepairResult>)
-        .params("body?: mesh body (default: the selected or only one); crossings?: bool (default true: faces passing through others they share no edge with taken off with the ring round them, the holes left closed with smooth patches): copies of a triangle taken off, an edge three or more faces meet along left with the two that continue each other best, slivers flipped away (equal points, collapsed triangles and the winding are put right when a scan is built); the scan written back in its Insert Mesh feature (one undo step); a scan that needs none is told so → body, duplicates, non_manifold, slivers, crossings, crossing_faces, refilled, triangles, feature"),
+        .params("body?: mesh body (default: the selected or only one); crossings?: bool (default true: faces passing through others they share no edge with taken off with the ring round them, the holes left closed with smooth patches): copies of a triangle taken off, an edge three or more faces meet along left with the two that continue each other best, slivers flipped away (equal points, collapsed triangles and the winding are put right when a scan is built); kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead); a scan that needs none is told so → body, duplicates, non_manifold, slivers, crossings, crossing_faces, refilled, triangles, feature"),
     CommandSpec::new("scan.fill_holes", "Fill Holes", crate::checked!("scan.fill_holes", clean::fill_holes))
         .at("SCAN", "CLEAN")
         .icon("surface_patch")
         .contract(&HOLES_CONTRACT)
         .output(output_schema_for::<ScanHolesResult>)
-        .params("body?: mesh body (default: the selected or only one); max_edges?: the largest hole to close, in edges round it (3…5000, default 300); fair?: bool (default true: each patch carries the surface's shape across; false leaves it flat): the holes closed with patches as fine as the scan round them (each piece's outer rim is not a hole), the scan written back in its Insert Mesh feature (one undo step) → body, holes, filled, failed, larger, added_triangles, unfillable_edges, feature"),
+        .params("body?: mesh body (default: the selected or only one); max_edges?: the largest hole to close, in edges round it (3…5000, default 300); fair?: bool (default true: each patch carries the surface's shape across; false leaves it flat): the holes closed with patches as fine as the scan round them (each piece's outer rim is not a hole), kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, holes, filled, failed, larger, added_triangles, unfillable_edges, feature"),
     CommandSpec::new("scan.reduce", "Reduce Mesh", crate::checked!("scan.reduce", clean::reduce))
         .at("SCAN", "CLEAN")
         .icon("scale")
         .contract(&REDUCE_CONTRACT)
         .output(output_schema_for::<ScanReduceResult>)
-        .params("body?: mesh body (default: the selected or only one); ratio?: share of the triangles to keep (0…1) or triangles?: how many to keep (default: half); max_error?: length a collapse may move the surface by, root mean square (stops first if reached); keep_rim?: bool (default true: the scan's open edges stay where they are): edges collapsed cheapest first (quadric errors), never folding the surface, the scan written back in its Insert Mesh feature (one undo step) → body, before, triangles, collapses, stopped (target|error|no_more_collapses), largest_error, feature"),
+        .params("body?: mesh body (default: the selected or only one); ratio?: share of the triangles to keep (0…1) or triangles?: how many to keep (default: half); max_error?: length a collapse may move the surface by, root mean square (stops first if reached); keep_rim?: bool (default true: the scan's open edges stay where they are): edges collapsed cheapest first (quadric errors), never folding the surface, kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, before, triangles, collapses, stopped (target|error|no_more_collapses), largest_error, feature"),
     CommandSpec::new("scan.remove_floating", "Remove Floating Pieces", crate::checked!("scan.remove_floating", clean::remove_floating))
         .at("SCAN", "CLEAN")
         .icon("delete")
         .contract(&FLOATING_CONTRACT)
         .output(output_schema_for::<ScanFloatingResult>)
-        .params("body?: mesh body (default: the selected or only one); below?: share of the largest piece's triangles (0…0.5, default 0.02; never fewer than 2): the pieces of the scan (triangles joined through their corners) smaller than that taken off, the scan written back in its Insert Mesh feature (one undo step) → body, pieces, removed, removed_triangles, triangles, feature"),
+        .params("body?: mesh body (default: the selected or only one); below?: share of the largest piece's triangles (0…0.5, default 0.02; never fewer than 2): the pieces of the scan (triangles joined through their corners) smaller than that taken off, kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, pieces, removed, removed_triangles, triangles, feature"),
     CommandSpec::new("scan.bases", "Scan Bases", crate::checked!("scan.bases", bases))
         .icon("list")
         .noundo()
@@ -300,6 +300,14 @@ fn mesh_name(s: &Session, p: &Value, cmd: &str) -> Result<String> {
             selected.sort_unstable();
             selected.dedup();
             let meshes: Vec<&str> = state.bodies.iter().filter(|b| b.body.is_mesh()).map(|b| b.name.as_str()).collect();
+            // Nothing picked: the scan triangles are selected on (Select on Scan), as Fit Patches,
+            // Flatten and Reconstruct Selection take it, so every scan tool works on the same one.
+            let on = select::selected(s).filter(|k| k.count > 0);
+            if selected.is_empty()
+                && let Some(k) = on.as_ref()
+            {
+                return Ok(k.scan.clone());
+            }
             match (selected.as_slice(), meshes.as_slice()) {
                 ([one], _) | ([], [one]) => (*one).to_owned(),
                 ([], []) => return Err(bad(cmd, "the design has no scan: insert one with Insert Mesh")),

@@ -1551,6 +1551,10 @@ preference_settings! {
     /// on it, when one is within a few pixels, and the view shows where. Off: the click lands
     /// exactly where it is, as before.
     scan_click_snap: bool = true, PAGE_TOOLS => check_id("prefs.scan_click_snap");
+    /// Remove Floating Pieces, Fill Holes, Reduce Mesh, Repair Mesh, Denoise and Remesh write the
+    /// cleaned scan back into its Insert Mesh feature, as before, instead of adding a step to the
+    /// timeline that keeps their settings (and can be edited, suppressed or deleted later).
+    scan_clean_in_place: bool = false, PAGE_TOOLS => check_id("prefs.scan_clean_in_place");
     /// Feature windows choose Join, New Body or Cut from what their material touches (`op_auto`,
     /// #6901). Off: they keep the operation they open with (Extrude its own Join or Cut), as before.
     auto_operation: bool = true, PAGE_TOOLS => check_id("prefs.auto_operation");

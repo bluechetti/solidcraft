@@ -5861,6 +5861,7 @@ dependencies = [
  "solidcraft-kernel",
  "solidcraft-profile",
  "solidcraft-render",
+ "solidcraft-scan",
  "solidcraft-sketch",
  "solidcraft-viewport",
  "thiserror 2.0.21",

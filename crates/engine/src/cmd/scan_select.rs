@@ -204,10 +204,14 @@ pub fn topology(s: &Session, body: &str, cmd: &str) -> Result<Arc<Topology>> {
 /// The scan a selection command works on: `body`, else the one already selected on, else the
 /// selected or only mesh body.
 fn scan_name(s: &Session, p: &Value, cmd: &str) -> Result<String> {
-    if str_(p, "body").is_none_or(|b| b.trim().is_empty())
-        && let Some(k) = selected(s)
-    {
-        return Ok(k.scan.clone());
+    if str_(p, "body").is_none_or(|b| b.trim().is_empty()) {
+        // A kept selection opened again is of its own scan, whichever is selected on now.
+        if let Some(kept) = str_(p, "saved").and_then(|name| s.doc.scan_selections.iter().find(|k| k.name == name)) {
+            return Ok(kept.body.clone());
+        }
+        if let Some(k) = selected(s) {
+            return Ok(k.scan.clone());
+        }
     }
     mesh_name(s, p, cmd)
 }

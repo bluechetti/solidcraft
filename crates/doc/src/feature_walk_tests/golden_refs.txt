@@ -248,6 +248,8 @@ import
 scan_surface
 mesh_convert
   remap_bodies: body
+scan_clean
+  remap_bodies: body, step.with[0]
 mesh_import
 repair
   remap_bodies: body

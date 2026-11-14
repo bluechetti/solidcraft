@@ -1,13 +1,21 @@
 //! Cleaning a scan: the tools that change the scan's own triangles (Remove Floating Pieces, Fill
-//! Holes, Reduce, Repair). A scan is kept in the Mesh Import feature that brought it in, so a
-//! cleaned scan is written back into that feature, in one undo step and with no format change.
-//! A scan a later feature has moved (a Move, Stand on Base) is written back moved the other way,
-//! so the later features still put it where it is; one a later feature has reshaped is refused.
+//! Holes, Reduce, Repair, and Denoise and Remesh in `scan_mesh`). Each adds a Scan Clean step to
+//! the timeline that keeps only the tool's settings (`solidcraft_doc::scan_clean`): the scan stays
+//! in its Mesh Import as it came in and is made again, step by step, when the design is evaluated,
+//! so a step can be edited, suppressed or deleted later.
+//!
+//! With `in_place` (the Scan preference "Clean scans in place", the way before) the cleaned scan
+//! is written back into the Mesh Import instead, in one undo step and with no step in the
+//! timeline. A scan a later feature has moved (a Move, Stand on Base) is then written back moved
+//! the other way, so the later features still put it where it is; one a later feature has
+//! reshaped is refused.
 
 use std::sync::Arc;
 
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
+use solidcraft_doc::FeatureKind;
+use solidcraft_doc::scan_clean::{self, CleanStep, Cleaned, Report};
 use solidcraft_scan::Scan;
 use solidcraft_scan::holes::{self, Survey};
 use solidcraft_scan::pieces::{self, Pieces};
@@ -123,34 +131,6 @@ fn share(p: &Value, cmd: &str) -> Result<f64> {
     }
 }
 
-pub(super) fn remove_floating(s: &mut Session, p: &Value) -> Result<Value> {
-    let cmd = "scan.remove_floating";
-    let below = share(p, cmd)?;
-    let (name, found) = pieces_of(s, crate::params::str_(p, "body"), cmd)?;
-    let floating = found.floating(below);
-    let removed: usize = floating.iter().filter(|f| **f).count();
-    if removed == 0 {
-        return Err(bad(cmd, format!("no piece floats: all {} are at least {:.1} % of the largest", found.sizes.len(), 100.0 * below)));
-    }
-    let (positions, triangles) = {
-        let state = s.model.state();
-        let (p, t) = state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, "the scan is gone"))?;
-        pieces::keeping(&Scan::new(p, t), |t| found.of.get(t).is_some_and(|&k| k != u32::MAX && !floating[k as usize]))
-    };
-    let gone: usize = found.sizes.iter().zip(&floating).filter(|(_, f)| **f).map(|(n, _)| n).sum();
-    let feature = replace_mesh(s, &name, &positions, &triangles, cmd)?;
-    let reply = ScanFloatingResult {
-        body: name,
-        pieces: found.sizes.len(),
-        removed,
-        removed_triangles: gone,
-        triangles: triangles.len(),
-        feature,
-        param_warnings: Vec::new(),
-    };
-    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
-}
-
 /// The default largest hole Fill Holes closes, in edges round it.
 pub const MAX_EDGES: usize = 300;
 
@@ -180,58 +160,78 @@ pub fn holes_of(s: &Session, body: Option<&str>, cmd: &str) -> Result<(String, A
     Ok((name, found))
 }
 
+/// Whether a clean tool writes the scan back into its Mesh Import (`in_place`, the old way, kept
+/// behind a preference) rather than adding a Scan Clean step to the timeline.
+fn in_place(p: &Value) -> bool {
+    crate::params::bool_(p, "in_place").unwrap_or(false)
+}
+
+/// `step` done on the scan `body`: as a Scan Clean step added to the timeline (its settings only;
+/// the scan is made again from the one before it each time the design is evaluated), or with
+/// `in_place` written back into the scan's Mesh Import. What it did, and the feature that keeps it.
+pub(super) fn apply(s: &mut Session, p: &Value, body: &str, step: CleanStep, cmd: &str) -> Result<(Cleaned, u64)> {
+    step.check().map_err(|e| bad(cmd, e.to_string()))?;
+    let (done, component) = {
+        let state = s.model.state();
+        let scan = state.body(body).ok_or_else(|| bad(cmd, format!("no body `{body}`")))?;
+        if scan.body.triangle_mesh().is_none() {
+            return Err(bad(cmd, format!("`{body}` is not a scan (a mesh body)")));
+        }
+        let mut with = Vec::with_capacity(step.with().len());
+        for name in step.with() {
+            if name.0 == body {
+                return Err(bad(cmd, "`with` names the scan itself"));
+            }
+            let other = state.body(name).ok_or_else(|| bad(cmd, format!("no body `{}`", name.0)))?;
+            if other.body.triangle_mesh().is_none() {
+                return Err(bad(cmd, format!("`{}` is not a scan (a mesh body)", name.0)));
+            }
+            with.push(&other.body);
+        }
+        (scan_clean::clean(&step, &scan.body, &with).map_err(|e| bad(cmd, e.why()))?, s.doc.model_body_component(scan))
+    };
+    if in_place(p) {
+        let (positions, triangles) = done.body.triangle_mesh().ok_or_else(|| bad(cmd, "the cleaned scan has no triangles"))?;
+        let (positions, triangles) = (positions.to_vec(), triangles.to_vec());
+        let feature = replace_mesh(s, body, &positions, &triangles, cmd)?;
+        return Ok((done, feature));
+    }
+    let mut params = json!({});
+    if let Some(name) = crate::params::str_(p, "name") {
+        params["name"] = json!(name);
+    }
+    // The step belongs where the scan does: an inserted scan is in a component of its own.
+    let active = std::mem::replace(&mut s.active_component, component);
+    let added = super::super::features::add_feature_in(s, &params, FeatureKind::ScanClean { body: body.into(), step }, false);
+    s.active_component = active;
+    let feature = added?.get("feature").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "the step was not added"))?;
+    Ok((done, feature))
+}
+
+pub(super) fn remove_floating(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.remove_floating";
+    let below = share(p, cmd)?;
+    let name = mesh_name(s, p, cmd)?;
+    let (done, feature) = apply(s, p, &name, CleanStep::RemoveFloating { below }, cmd)?;
+    let Report::Floating { pieces, removed, removed_triangles } = done.report else { return Err(bad(cmd, "the step did something else")) };
+    let reply =
+        ScanFloatingResult { body: name, pieces, removed, removed_triangles, triangles: done.triangles(), feature, param_warnings: Vec::new() };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
 pub(super) fn fill_holes(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.fill_holes";
-    let limit = match p.get("max_edges").filter(|v| !v.is_null()) {
-        Some(v) => {
-            v.as_u64().filter(|n| (3..=5000).contains(n)).ok_or_else(|| bad(cmd, "`max_edges` must be a whole number from 3 to 5000"))? as usize
-        }
-        None => MAX_EDGES,
+    let max_edges = match p.get("max_edges").filter(|v| !v.is_null()) {
+        Some(v) => v.as_u64().filter(|n| (3..=5000).contains(n)).ok_or_else(|| bad(cmd, "`max_edges` must be a whole number from 3 to 5000"))? as u32,
+        None => MAX_EDGES as u32,
     };
     let fair = crate::params::bool_(p, "fair").unwrap_or(true);
-    let (name, found) = holes_of(s, crate::params::str_(p, "body"), cmd)?;
-    let holes = found.rings.iter().filter(|r| !r.rim).count();
-    let within = found.holes(limit).count();
-    if within == 0 {
-        return Err(bad(
-            cmd,
-            if holes == 0 {
-                let pinched = if found.unfillable_edges > 0 {
-                    format!(" ({} open edges pinch or dead-end, so they make no ring to close)", found.unfillable_edges)
-                } else {
-                    String::new()
-                };
-                match found.rings.len() {
-                    0 if found.unfillable_edges == 0 => "the scan has no holes: it is closed".to_owned(),
-                    0 => format!("the scan has no holes to close{pinched}"),
-                    _ => format!("the scan has no holes to close: its only open ring is its outer rim{pinched}"),
-                }
-            } else {
-                format!(
-                    "no hole has {limit} edges or fewer: the smallest has {}",
-                    found.rings.iter().filter(|r| !r.rim).map(|r| r.points.len()).min().unwrap_or(0)
-                )
-            },
-        ));
-    }
-    let done = {
-        let state = s.model.state();
-        let (positions, triangles) = state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, "the scan is gone"))?;
-        holes::fill(&Scan::new(positions, triangles), &found, limit, fair)
-    }
-    .ok_or_else(|| bad(cmd, "no hole could be closed: each ring folds or crosses the scan"))?;
-    let feature = replace_mesh(s, &name, &done.positions, &done.triangles, cmd)?;
-    let reply = ScanHolesResult {
-        body: name,
-        holes,
-        filled: done.filled,
-        failed: done.failed,
-        larger: holes - within,
-        added_triangles: done.added_triangles,
-        unfillable_edges: found.unfillable_edges,
-        feature,
-        param_warnings: Vec::new(),
+    let name = mesh_name(s, p, cmd)?;
+    let (done, feature) = apply(s, p, &name, CleanStep::FillHoles { max_edges, fair }, cmd)?;
+    let Report::Holes { holes, filled, failed, larger, added_triangles, unfillable_edges } = done.report else {
+        return Err(bad(cmd, "the step did something else"));
     };
+    let reply = ScanHolesResult { body: name, holes, filled, failed, larger, added_triangles, unfillable_edges, feature, param_warnings: Vec::new() };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -241,11 +241,11 @@ pub(super) fn reduce(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(v.as_f64().filter(|x| *x > 0.0 && *x <= 1.0).ok_or_else(|| bad(cmd, "`ratio` must be a share above 0 and at most 1"))?),
         None => None,
     };
-    let count = match p.get("triangles").filter(|v| !v.is_null()) {
-        Some(v) => Some(v.as_u64().filter(|n| *n >= 1).ok_or_else(|| bad(cmd, "`triangles` must be a whole number from 1"))? as usize),
+    let triangles = match p.get("triangles").filter(|v| !v.is_null()) {
+        Some(v) => Some(v.as_u64().filter(|n| *n >= 1).ok_or_else(|| bad(cmd, "`triangles` must be a whole number from 1"))?),
         None => None,
     };
-    if ratio.is_some() && count.is_some() {
+    if ratio.is_some() && triangles.is_some() {
         return Err(bad(cmd, "give `ratio` or `triangles`, not both"));
     }
     let max_error = match crate::params::expr(p, "max_error") {
@@ -254,39 +254,16 @@ pub(super) fn reduce(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let keep_rim = crate::params::bool_(p, "keep_rim").unwrap_or(true);
     let name = mesh_name(s, p, cmd)?;
-    let done = {
-        let state = s.model.state();
-        let (positions, triangles) = state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, "the scan is gone"))?;
-        let before = triangles.len();
-        // The count to keep (at least one), or none when only the error was asked for; half by default.
-        let target = match (ratio, count) {
-            (Some(r), _) => ((r * before as f64).round() as usize).max(1),
-            (_, Some(n)) => n,
-            _ if max_error > 0.0 => 0,
-            _ => (before / 2).max(1),
-        };
-        if target >= before && max_error == 0.0 {
-            return Err(bad(cmd, format!("the scan has {before} triangles already: ask for fewer")));
-        }
-        let settings = solidcraft_scan::reduce::Settings { target, max_error, keep_rim };
-        (
-            before,
-            solidcraft_scan::reduce::reduce(&Scan::new(positions, triangles), settings)
-                .ok_or_else(|| bad(cmd, "the scan has no triangles to reduce"))?,
-        )
-    };
-    let (before, reduced) = done;
-    if reduced.collapses == 0 {
-        return Err(bad(cmd, "nothing could be collapsed within the error allowed"));
-    }
-    let feature = replace_mesh(s, &name, &reduced.positions, &reduced.triangles, cmd)?;
+    let (done, feature) = apply(s, p, &name, CleanStep::Reduce { ratio, triangles, max_error, keep_rim }, cmd)?;
+    let count = done.triangles();
+    let Report::Reduce { before, collapses, stopped, largest_error } = done.report else { return Err(bad(cmd, "the step did something else")) };
     let reply = ScanReduceResult {
         body: name,
         before,
-        triangles: reduced.triangles.len(),
-        collapses: reduced.collapses,
-        stopped: reduced.stopped.name().into(),
-        largest_error: reduced.largest_error,
+        triangles: count,
+        collapses,
+        stopped: stopped.into(),
+        largest_error,
         feature,
         param_warnings: Vec::new(),
     };
@@ -297,27 +274,20 @@ pub(super) fn repair(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.repair";
     let name = mesh_name(s, p, cmd)?;
     let crossings = crate::params::bool_(p, "crossings").unwrap_or(true);
-    let fixed = {
-        let state = s.model.state();
-        let (positions, triangles) = state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, "the scan is gone"))?;
-        solidcraft_scan::repair::repair(&Scan::new(positions, triangles), crossings)
+    let (done, feature) = apply(s, p, &name, CleanStep::Repair { crossings }, cmd)?;
+    let count = done.triangles();
+    let Report::Repair { duplicates, non_manifold, slivers, crossings, crossing_faces, refilled } = done.report else {
+        return Err(bad(cmd, "the step did something else"));
     };
-    if !fixed.changed() {
-        return Err(bad(
-            cmd,
-            "the scan needs no repair: no copied triangles, no edge of three or more faces, no slivers, no faces passing through others",
-        ));
-    }
-    let feature = replace_mesh(s, &name, &fixed.positions, &fixed.triangles, cmd)?;
     let reply = ScanRepairResult {
         body: name,
-        duplicates: fixed.duplicates,
-        non_manifold: fixed.non_manifold,
-        slivers: fixed.slivers,
-        crossings: fixed.crossings,
-        crossing_faces: fixed.crossing_faces,
-        refilled: fixed.refilled,
-        triangles: fixed.triangles.len(),
+        duplicates,
+        non_manifold,
+        slivers,
+        crossings,
+        crossing_faces,
+        refilled,
+        triangles: count,
         feature,
         param_warnings: Vec::new(),
     };

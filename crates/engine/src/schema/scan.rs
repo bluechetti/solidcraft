@@ -1186,13 +1186,17 @@ pub struct ScanCurveResult {
 }
 
 /// Take the floating pieces off a scan: the pieces (triangles joined through their corners) far
-/// smaller than the largest. The scan is written back in its Insert Mesh feature; one undo step.
+/// smaller than the largest. A Scan Clean step in the timeline keeps the settings; one undo step.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ScanFloatingParams {
     /// The mesh body. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// Write the cleaned scan back into its Insert Mesh feature, as before, instead of adding a
+    /// step to the timeline that keeps the settings. Default: false.
+    #[serde(default)]
+    pub in_place: Option<bool>,
     /// A piece with fewer triangles than this share of the largest piece's floats (and never one
     /// of fewer than two). 0 to 0.5; default 0.02.
     #[serde(default)]
@@ -1210,7 +1214,8 @@ pub struct ScanFloatingResult {
     pub removed_triangles: usize,
     /// The triangles the scan has left.
     pub triangles: usize,
-    /// The Insert Mesh feature the scan was written back into.
+    /// The Scan Clean step that keeps the settings (with `in_place`, the Insert Mesh feature the
+    /// scan was written back into).
     pub feature: u64,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1219,7 +1224,7 @@ pub struct ScanFloatingResult {
 
 /// Close the holes in a scan with smooth patches (Liepa 2003): each hole's ring triangulated,
 /// refined to the size of the scan's triangles round it, and faired to carry the surface across.
-/// Each piece's outer rim is not a hole. The scan is written back in its Insert Mesh feature; one
+/// Each piece's outer rim is not a hole. A Scan Clean step in the timeline keeps the settings; one
 /// undo step.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -1227,6 +1232,10 @@ pub struct ScanHolesParams {
     /// The mesh body. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// Write the cleaned scan back into its Insert Mesh feature, as before, instead of adding a
+    /// step to the timeline that keeps the settings. Default: false.
+    #[serde(default)]
+    pub in_place: Option<bool>,
     /// The largest hole to close, in edges round it. 3 to 5000; default 300.
     #[serde(default)]
     pub max_edges: Option<u32>,
@@ -1249,7 +1258,8 @@ pub struct ScanHolesResult {
     pub added_triangles: usize,
     /// Open edges in no simple ring (a pinch, a dead end), left alone.
     pub unfillable_edges: usize,
-    /// The Insert Mesh feature the scan was written back into.
+    /// The Scan Clean step that keeps the settings (with `in_place`, the Insert Mesh feature the
+    /// scan was written back into).
     pub feature: u64,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1257,14 +1267,18 @@ pub struct ScanHolesResult {
 }
 
 /// Reduce a scan's triangles: edges collapsed cheapest first, where a collapse costs how far it
-/// moves the surface (quadric errors), never folding it. The scan is written back in its Insert
-/// Mesh feature; one undo step.
+/// moves the surface (quadric errors), never folding it. A Scan Clean step in the timeline keeps
+/// the settings; one undo step.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ScanReduceParams {
     /// The mesh body. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// Write the cleaned scan back into its Insert Mesh feature, as before, instead of adding a
+    /// step to the timeline that keeps the settings. Default: false.
+    #[serde(default)]
+    pub in_place: Option<bool>,
     /// The share of the triangles to keep, above 0 and at most 1. Default: 0.5 (unless `triangles`
     /// or `max_error` is given).
     #[serde(default)]
@@ -1294,7 +1308,8 @@ pub struct ScanReduceResult {
     pub stopped: String,
     /// The largest error of any collapse made, root mean square, in mm.
     pub largest_error: f64,
-    /// The Insert Mesh feature the scan was written back into.
+    /// The Scan Clean step that keeps the settings (with `in_place`, the Insert Mesh feature the
+    /// scan was written back into).
     pub feature: u64,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1302,14 +1317,18 @@ pub struct ScanReduceResult {
 }
 
 /// Repair a scan's triangles: copies of a triangle taken off, an edge three or more faces meet
-/// along left with the two that continue each other best, slivers flipped away. The scan is
-/// written back in its Insert Mesh feature; one undo step.
+/// along left with the two that continue each other best, slivers flipped away. A Scan Clean
+/// step in the timeline keeps the settings; one undo step.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ScanRepairParams {
     /// The mesh body. Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub body: Option<String>,
+    /// Write the cleaned scan back into its Insert Mesh feature, as before, instead of adding a
+    /// step to the timeline that keeps the settings. Default: false.
+    #[serde(default)]
+    pub in_place: Option<bool>,
     /// Take off faces that pass through others they share no edge with, and the ring round them,
     /// and close the holes left with smooth patches. Default: true.
     #[serde(default)]
@@ -1332,7 +1351,8 @@ pub struct ScanRepairResult {
     pub refilled: usize,
     /// The triangles the scan has now.
     pub triangles: usize,
-    /// The Insert Mesh feature the scan was written back into.
+    /// The Scan Clean step that keeps the settings (with `in_place`, the Insert Mesh feature the
+    /// scan was written back into).
     pub feature: u64,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

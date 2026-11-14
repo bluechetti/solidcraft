@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use solidcraft_engine::cmd::scan::clean;
+use solidcraft_engine::doc::scan_clean::CleanStep;
 use solidcraft_viewport_gpu::view::{CloudStyle, ColorMode, GpuCloud};
 
 use crate::scan_dots::{Dot, cloud_dot};
@@ -71,6 +72,27 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::S
         _ => None,
     }
 }
+
+/// A tool's dialog `kind` set to the settings of the Scan Clean `step` being edited.
+pub fn refill(kind: &mut Kind, step: &CleanStep) {
+    match (kind, step) {
+        (Kind::ScanFloating(k), CleanStep::RemoveFloating { below }) => k.log_percent = (100.0 * below).max(MIN_PERCENT).log10(),
+        (Kind::ScanHoles(k), CleanStep::FillHoles { max_edges, fair }) => {
+            k.max_edges = *max_edges as usize;
+            k.fair = *fair;
+        }
+        (Kind::ScanReduce(k), CleanStep::Reduce { ratio, max_error, keep_rim, .. }) => {
+            k.percent = ratio.map_or(50.0, |r| (100.0 * r).clamp(1.0, 99.0));
+            k.max_error = *max_error;
+            k.keep_rim = *keep_rim;
+        }
+        (Kind::ScanDenoise(k), CleanStep::Denoise { strength: Some(strength) }) => *k = crate::dialogs_scan_denoise::Denoise::chosen(*strength),
+        _ => {}
+    }
+}
+
+/// The smallest share the Remove Floating slider shows, in percent.
+const MIN_PERCENT: f64 = 0.01;
 
 impl Floating {
     /// The share of the largest piece, 0 to 0.5.
@@ -316,6 +338,22 @@ pub fn reduce_commands(k: &Reduce) -> Result<Vec<(String, Value)>, String> {
         p["max_error"] = json!(format!("{} mm", k.max_error));
     }
     Ok(vec![("scan.reduce".into(), p)])
+}
+
+/// The clean tools that add a Scan Clean step, or write the scan back with `in_place`.
+pub(crate) fn is_clean_step(id: &str) -> bool {
+    matches!(id, "scan.remove_floating" | "scan.fill_holes" | "scan.reduce" | "scan.repair" | "scan.denoise" | "scan.remesh")
+}
+
+/// With the preference to clean scans in place (the way before), a clean tool's run from the
+/// window writes the scan back into its Insert Mesh feature instead of adding a step.
+pub(crate) fn in_place(app: &SolveApp, id: &str, params: &mut Value) {
+    if app.preferences.scan_clean_in_place
+        && is_clean_step(id)
+        && let Some(p) = params.as_object_mut()
+    {
+        p.insert("in_place".into(), json!(true));
+    }
 }
 
 #[cfg(test)]

@@ -92,6 +92,14 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                         }
                     });
                     ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.scan_clean_in_place_note");
+                        let response = setting::scan_clean_in_place(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:scan_clean_in_place", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
                         let note = app.tr("prefs.edit_surface_brush_keys_note");
                         let response = setting::edit_surface_brush_keys(app, ui).backing_on_hover_text(note);
                         crate::scenario::publish_target("prefs:edit_surface_brush_keys", response.rect);

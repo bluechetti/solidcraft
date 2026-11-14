@@ -25,6 +25,9 @@ pub struct ScanFlattenParams {
     /// The region as the scan's triangle numbers, instead of a point.
     #[serde(default)]
     pub triangles: Option<Vec<u64>>,
+    /// A kept selection (Keep Selection) whose triangles are the region, instead of `triangles`.
+    #[serde(default)]
+    pub saved: Option<String>,
     /// Relax the pattern toward keeping each edge's length. Default: true.
     #[serde(default)]
     pub relax: Option<bool>,
@@ -90,6 +93,9 @@ pub struct ScanRollParams {
     pub radius: Option<f64>,
     #[serde(default)]
     pub triangles: Option<Vec<u64>>,
+    /// A kept selection (Keep Selection) whose triangles are the region, instead of `triangles`.
+    #[serde(default)]
+    pub saved: Option<String>,
     #[serde(default)]
     pub relax: Option<bool>,
     /// How far a rolled curve may stray from the line it lifts to, in mm. Default: 0.02.
@@ -120,10 +126,10 @@ mod tests {
 
     #[test]
     fn schemas_and_the_key_check_agree() {
-        assert_keys(input_schema_for::<ScanFlattenParams>(), &["body", "name", "point", "radius", "relax", "tolerance", "triangles"]);
+        assert_keys(input_schema_for::<ScanFlattenParams>(), &["body", "name", "point", "radius", "relax", "saved", "tolerance", "triangles"]);
         assert_keys(
             input_schema_for::<ScanRollParams>(),
-            &["body", "curves", "pattern", "point", "radius", "relax", "sketch", "tolerance", "triangles"],
+            &["body", "curves", "pattern", "point", "radius", "relax", "saved", "sketch", "tolerance", "triangles"],
         );
     }
 }

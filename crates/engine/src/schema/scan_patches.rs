@@ -19,6 +19,9 @@ pub struct ScanPatchesParams {
     /// The region as the scan's triangle numbers.
     #[serde(default)]
     pub triangles: Option<Vec<u64>>,
+    /// A kept selection (Keep Selection) whose triangles are the region, instead of `triangles`.
+    #[serde(default)]
+    pub saved: Option<String>,
     /// A point on the scan: the region is the piece there. Default: what is selected, else the
     /// point picked.
     #[serde(default)]
@@ -84,7 +87,7 @@ mod tests {
     fn schemas_and_the_key_check_agree() {
         assert_keys(
             input_schema_for::<ScanPatchesParams>(),
-            &["body", "columns", "controls", "layout", "point", "radius", "rows", "smoothing", "triangles"],
+            &["body", "columns", "controls", "layout", "point", "radius", "rows", "saved", "smoothing", "triangles"],
         );
     }
 }

@@ -96,6 +96,32 @@ fn a_ball_is_selected_kept_and_opened_again() {
     assert!(s.execute("scan.select", &json!({"triangles": [99_999_999]})).is_err(), "no such triangle");
 }
 
+/// With two scans, what is selected on one is the region every scan tool takes: Flatten and Fit
+/// Patches work on that scan with no `body`, a kept selection is a region for both (`saved`) after
+/// the selection is gone, and a clean tool given no scan cleans the one selected on.
+#[test]
+fn a_selection_on_one_of_two_scans_is_the_region_every_tool_takes() {
+    let (mut s, first) = session_with("two-scans", &ball_triangles());
+    let path = std::env::temp_dir().join(format!("solidcraft-scan-select-two-scans-{}", std::process::id())).join("scan.stl");
+    run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    let second = s.model.state().bodies.iter().rev().find(|b| b.body.is_mesh()).unwrap().name.clone();
+    assert_ne!(first, second);
+    let top = run(&mut s, "scan.select", json!({"body": second, "brush": {"points": [[0, 0, 20]], "radius": "6 mm"}}));
+    let few = top["triangles"].as_u64().unwrap();
+    let flat = run(&mut s, "scan.flatten", json!({}));
+    assert_eq!((flat["body"].as_str(), flat["triangles"].as_u64()), (Some(second.as_str()), Some(few)), "{flat}");
+    run(&mut s, "scan.keep_selection", json!({"name": "Top"}));
+    run(&mut s, "scan.select", json!({"none": true}));
+    let again = run(&mut s, "scan.flatten", json!({"saved": "Top"}));
+    assert_eq!((again["body"].as_str(), again["triangles"].as_u64()), (Some(second.as_str()), Some(few)), "{again}");
+    let patches = run(&mut s, "scan.fit_patches", json!({"saved": "Top", "controls": 4}));
+    assert_eq!(patches["body"].as_str(), Some(second.as_str()), "{patches}");
+    assert!(s.execute("scan.flatten", &json!({"saved": "Bottom"})).is_err(), "no such kept selection");
+    run(&mut s, "scan.select", json!({"saved": "Top"}));
+    let reduced = run(&mut s, "scan.reduce", json!({"ratio": 0.5}));
+    assert_eq!(reduced["body"].as_str(), Some(second.as_str()), "{reduced}");
+}
+
 /// A circle drawn round the top of the ball with Curve on Scan selects the cap inside it, and
 /// Curve from Selection Edge gives back a closed curve round the cap, one undo step.
 #[test]
