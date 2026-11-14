@@ -273,6 +273,9 @@ pub struct ScanPanelExportParams {
     pub cover: Option<Vec<Point3>>,
     #[serde(default)]
     pub panel: Option<PanelChoices>,
+    /// The full-size print's paper: `letter` (default), `a4` or `none` for no print.
+    #[serde(default)]
+    pub paper: Option<String>,
 }
 
 /// A piece as exported.
@@ -309,6 +312,9 @@ pub struct ScanPanelExportResult {
     pub sheets: usize,
     /// Pages in the drawings' PDF (written with `path`): the panel, one for each piece, the sheets.
     pub pdf_pages: usize,
+    /// Pages in the full-size print (written with `path` as `<name>-full-size.pdf`): a cover, a
+    /// map of each piece's pages when it has more than one, the pages at 1:1.
+    pub full_size_pages: usize,
     pub checks: Vec<PanelCheckOut>,
     /// The pieces cut to drop into the openings behind the panel (numbered from 1, as drawn).
     pub inserts: Vec<PanelInsertOut>,

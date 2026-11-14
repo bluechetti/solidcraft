@@ -21,13 +21,16 @@ use crate::schema::scan_template::{PanelCheckOut, PanelInsertOut, PanelPieceOut,
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
 
+#[path = "scan_panel_full_size.rs"]
+mod full_size;
+
 const CONTRACT: TypedContract<ScanPanelExportParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.panel_export", "Export Panel", crate::checked!("scan.panel_export", export))
     .icon("export")
     .contract(&CONTRACT)
     .output(output_schema_for::<ScanPanelExportResult>)
-    .params("the straight panel as for `scan.panel_proposals` (body?, plane?, tolerance?, side?, least_area?, gap?, step?, smooth?, round?, finger?, cover?, panel?: with what is dropped, moved and how each cut-out is cut); path?: the pieces' DXF (the sheets' DXF, holes CSV, cut list CSV, checks CSV and the drawings' PDF are written beside it, named after it; without it their text is returned, the PDF only counted): each piece at its own 0, 0 (its blank's bottom-left corner seen from the room) with its outline, cut-outs, holes (layer HOLES, numbered), fixing points (FIXINGS, F1, F2, …), its number and blank size and dimension lines; the blanks laid on sheets; the design is not changed → files, pieces[{number, blank, sheet, holes, fixings}], sheets, pdf_pages, checks[{from_piece, from_hole, to_piece, to_hole, distance, across, up}]")];
+    .params("the straight panel as for `scan.panel_proposals` (body?, plane?, tolerance?, side?, least_area?, gap?, step?, smooth?, round?, finger?, cover?, panel?: with what is dropped, moved and how each cut-out is cut); path?: the pieces' DXF (the sheets' DXF, holes CSV, cut list CSV, checks CSV and the drawings' PDF and the full-size print's PDF (<name>-full-size.pdf) are written beside it, named after it; without it their text is returned, the PDF only counted): each piece at its own 0, 0 (its blank's bottom-left corner seen from the room) with its outline, cut-outs, holes (layer HOLES, numbered), fixing points (FIXINGS, F1, F2, …), its number and blank size and dimension lines; the blanks laid on sheets; paper?: the full-size print's paper, letter (default), a4 or none: each piece and insert piece at 1:1 over landscape pages to tape together and onto the board, only the pages with something to cut or drill; the design is not changed → files, pieces[{number, blank, sheet, holes, fixings}], sheets, pdf_pages, full_size_pages, checks[{from_piece, from_hole, to_piece, to_hole, distance, across, up}]")];
 
 /// Room between pieces and sheets in the drawings (mm), and the text heights.
 const SPACE: f64 = 300.0;
@@ -64,6 +67,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let mut asked = p.clone();
     if let Some(o) = asked.as_object_mut() {
         o.remove("path");
+        o.remove("paper");
         o.insert("outline".into(), json!("scan"));
         o.entry("panel").or_insert(json!({}));
     }
@@ -291,6 +295,31 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let prepared: Vec<_> =
         pages.iter().map(|page| page.prepare()).collect::<std::result::Result<_, _>>().map_err(|e| EngineError::Other(e.to_string()))?;
     let pdf = solidcraft_io::paper::paper_pdf(&prepared)?;
+    // --- The same pieces and the insert pieces at full size, tiled over pages.
+    let paper = match full_size::paper_of(str_(p, "paper")) {
+        None => None,
+        Some(Ok(paper)) => Some(paper),
+        Some(Err(())) => return Err(crate::params::bad(cmd, "paper is letter, a4 or none")),
+    };
+    let full = match paper {
+        Some(paper) => {
+            let mut parts: Vec<full_size::Part> = pieces
+                .iter()
+                .map(|q| full_size::Part { name: format!("Piece {}", q.number), short: format!("P{}", q.number), piece: q, note: None })
+                .collect();
+            parts.extend(inserts.iter().map(|i| full_size::Part {
+                name: format!("Insert {}", i.piece.number),
+                short: format!("I{}", i.piece.number),
+                piece: &i.piece,
+                note: Some(i.how()),
+            }));
+            let scenes = full_size::pages(&parts, paper, &sizes, fixing).map_err(|e| crate::params::bad(cmd, &e))?;
+            let prepared: Vec<_> =
+                scenes.iter().map(|page| page.prepare()).collect::<std::result::Result<_, _>>().map_err(|e| EngineError::Other(e.to_string()))?;
+            Some((solidcraft_io::paper::paper_pdf(&prepared)?, scenes.len()))
+        }
+        None => None,
+    };
     let mut checks_csv = String::from("from_piece,from_hole,to_piece,to_hole,distance,across,up\n");
     for c in &checks {
         let _ = writeln!(checks_csv, "{},{},{},{},{:.0},{:.0},{:.0}", c.from.0, c.from.1, c.to.0, c.to.1, c.distance, c.across, c.up);
@@ -316,6 +345,11 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         let name = format!("{stem}.pdf");
         solidcraft_io::vfs::write(&name, &pdf).map_err(|e| EngineError::Other(format!("{name}: {e}")))?;
         files.push(name);
+        if let Some((pdf, _)) = &full {
+            let name = format!("{stem}-full-size.pdf");
+            solidcraft_io::vfs::write(&name, pdf).map_err(|e| EngineError::Other(format!("{name}: {e}")))?;
+            files.push(name);
+        }
     }
     let reply = ScanPanelExportResult {
         pieces: pieces
@@ -330,6 +364,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
             .collect(),
         sheets: plans.len(),
         pdf_pages: pages.len(),
+        full_size_pages: full.as_ref().map_or(0, |(_, n)| *n),
         inserts: inserts
             .iter()
             .map(|i| PanelInsertOut {
