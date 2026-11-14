@@ -753,6 +753,45 @@ fn remove_floating_takes_the_speck_off_where_the_scan_lies() {
     assert!(refused.contains("no piece floats"), "{refused}");
 }
 
+/// A plate with a hole and a speck beside it: Clean Up takes the speck off and closes the hole,
+/// each its own step; Repair has nothing to do and says so; one undo takes it all back. Fill
+/// Holes given a point by the plate's rim caps the rim instead of the hole.
+#[test]
+fn clean_up_runs_the_tools_each_as_a_step() {
+    let mut triangles = Vec::new();
+    for y in 0..20 {
+        for x in 0..20 {
+            if (4..=5).contains(&x) && (4..=5).contains(&y) {
+                continue;
+            }
+            let p = |i: i32, j: i32| Vec3::new(f64::from(x + i), f64::from(y + j), 0.0);
+            triangles.push([p(0, 0), p(1, 0), p(1, 1)]);
+            triangles.push([p(0, 0), p(1, 1), p(0, 1)]);
+        }
+    }
+    let plate = triangles.clone();
+    triangles.extend(fine_box(Vec3::new(40.0, 0.0, 0.0), Vec3::new(41.0, 1.0, 1.0), 1));
+    let (mut s, body) = session_with_triangles("clean-up", &triangles);
+    let features = s.doc.features.len();
+    let reply = run(&mut s, "scan.clean_up", json!({}));
+    let steps = reply["steps"].as_array().unwrap();
+    let done: Vec<(&str, bool)> = steps.iter().map(|st| (st["command"].as_str().unwrap(), st["done"].as_bool().unwrap())).collect();
+    assert_eq!(done, [("scan.repair", false), ("scan.remove_floating", true), ("scan.fill_holes", true)], "{reply}");
+    assert_eq!(s.doc.features.len(), features + 2, "a step each");
+    assert!(bounds(&s, &body).1.x <= 20.0 + STL, "the speck is gone");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.features.len(), features, "one undo step");
+    assert!(s.execute("scan.clean_up", &json!({"repair": false, "floating": false, "holes": false})).is_err());
+
+    // A point on the rim's corner: the rim is capped, the hole left.
+    let (mut s, _) = session_with_triangles("cap-rim", &plate);
+    let reply = run(&mut s, "scan.fill_holes", json!({"at": [[0.0, 0.0, 0.0]]}));
+    assert_eq!(reply["filled"].as_u64(), Some(1), "{reply}");
+    let survey = super::clean::holes_of(&s, None, "scan.fill_holes").unwrap().1;
+    assert_eq!(survey.rings.len(), 1, "one ring is left");
+    assert_eq!(survey.rings[0].points.len(), 8, "the hole, not the rim");
+}
+
 /// A plate with a square hole: Fill Holes closes it flat (the plate's rim is left open), one undo
 /// step; a closed box has no holes.
 #[test]

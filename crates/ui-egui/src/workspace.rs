@@ -444,8 +444,9 @@ pub const SECTIONS: &[Section] = &[
     Section {
         tab: "SCAN",
         panel: "CLEAN",
-        promoted: 3,
+        promoted: 4,
         ids: &[
+            "scan.clean_up",
             "scan.select",
             "scan.remove_floating",
             "scan.fill_holes",

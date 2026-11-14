@@ -1327,6 +1327,57 @@ pub struct ScanReduceResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Clean a scan in one go: Repair Mesh, Remove Floating Pieces, Fill Holes and, when asked,
+/// Reduce Mesh, each with its usual settings and each kept as its own Scan Clean step, so any one
+/// can be edited or taken out later. A step with nothing to do is left out and says why.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanCleanUpParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Repair the triangles first. Default: true.
+    #[serde(default)]
+    pub repair: Option<bool>,
+    /// Take off the floating pieces (under 2 % of the largest). Default: true.
+    #[serde(default)]
+    pub floating: Option<bool>,
+    /// Close the holes of up to 300 edges. Default: true.
+    #[serde(default)]
+    pub holes: Option<bool>,
+    /// Then reduce to this share of the triangles (above 0, below 1). Default: not reduced.
+    #[serde(default)]
+    pub reduce: Option<f64>,
+}
+
+/// One step of `scan.clean_up`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanCleanUpStep {
+    /// The tool's command.
+    pub command: String,
+    /// Whether it changed the scan (a step was kept).
+    pub done: bool,
+    /// What it did, or why it was left out.
+    pub note: String,
+    /// The Scan Clean step kept, when done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<u64>,
+}
+
+/// What `scan.clean_up` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanCleanUpResult {
+    /// The scan.
+    pub body: String,
+    /// Each tool, in the order run.
+    pub steps: Vec<ScanCleanUpStep>,
+    /// The triangles the scan has at the end.
+    pub triangles: usize,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// Repair a scan's triangles: copies of a triangle taken off, an edge three or more faces meet
 /// along left with the two that continue each other best, slivers flipped away. A Scan Clean
 /// step in the timeline keeps the settings; one undo step.

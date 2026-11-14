@@ -23,7 +23,7 @@ use solidcraft_scan::place::Rigid;
 
 use super::{length, mesh_name};
 use crate::params::bad;
-use crate::schema::scan::{ScanFloatingResult, ScanHolesResult, ScanReduceResult, ScanRepairResult};
+use crate::schema::scan::{ScanCleanUpResult, ScanCleanUpStep, ScanFloatingResult, ScanHolesResult, ScanReduceResult, ScanRepairResult};
 use crate::{EngineError, Result, Session};
 
 /// The default share of the largest piece below which a piece floats.
@@ -310,5 +310,60 @@ pub(super) fn repair(s: &mut Session, p: &Value) -> Result<Value> {
         feature,
         param_warnings: Vec::new(),
     };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// Clean Up: Repair, Remove Floating, Fill Holes and, when asked, Reduce, each kept as its own
+/// step; a tool with nothing to do is left out with the reason.
+pub(super) fn clean_up(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.clean_up";
+    let name = mesh_name(s, p, cmd)?;
+    let on = |key: &str| crate::params::bool_(p, key).unwrap_or(true);
+    let reduce = match p.get("reduce").filter(|v| !v.is_null()) {
+        Some(v) => Some(v.as_f64().filter(|r| *r > 0.0 && *r < 1.0).ok_or_else(|| bad(cmd, "`reduce` must be a share above 0 and below 1"))?),
+        None => None,
+    };
+    let mut plan: Vec<(&str, Value)> = Vec::new();
+    if on("repair") {
+        plan.push(("scan.repair", json!({ "body": name })));
+    }
+    if on("floating") {
+        plan.push(("scan.remove_floating", json!({ "body": name })));
+    }
+    if on("holes") {
+        plan.push(("scan.fill_holes", json!({ "body": name })));
+    }
+    if let Some(r) = reduce {
+        plan.push(("scan.reduce", json!({ "body": name, "ratio": r })));
+    }
+    if plan.is_empty() {
+        return Err(bad(cmd, "choose at least one step"));
+    }
+    let mut steps = Vec::new();
+    for (id, params) in plan {
+        let spec = super::super::find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
+        match spec.run_nested(s, &params) {
+            Ok(reply) => {
+                let note = match id {
+                    "scan.repair" => format!(
+                        "{} copies, {} over-shared edges, {} slivers, {} crossings put right",
+                        reply["duplicates"], reply["non_manifold"], reply["slivers"], reply["crossings"]
+                    ),
+                    "scan.remove_floating" => format!("{} of {} pieces taken off", reply["removed"], reply["pieces"]),
+                    "scan.fill_holes" => format!("{} of {} holes closed", reply["filled"], reply["holes"]),
+                    _ => format!("{} → {} triangles", reply["before"], reply["triangles"]),
+                };
+                steps.push(ScanCleanUpStep { command: id.into(), done: true, note, feature: reply["feature"].as_u64() });
+            }
+            // Nothing to do (or it could not be done): left out, saying why; the rest go on.
+            Err(e) => steps.push(ScanCleanUpStep { command: id.into(), done: false, note: e.to_string(), feature: None }),
+        }
+    }
+    if !steps.iter().any(|st| st.done) {
+        let why: Vec<String> = steps.iter().map(|st| format!("{}: {}", st.command, st.note)).collect();
+        return Err(bad(cmd, format!("nothing to clean: {}", why.join("; "))));
+    }
+    let triangles = s.model.state().body(&name).and_then(|b| b.body.triangle_mesh()).map_or(0, |(_, t)| t.len());
+    let reply = ScanCleanUpResult { body: name, steps, triangles, param_warnings: Vec::new() };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }

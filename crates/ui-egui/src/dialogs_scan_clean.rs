@@ -73,10 +73,11 @@ struct Marked {
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
     match id {
         "scan.remove_floating" => {
-            Some((Kind::ScanFloating(Floating::default()), vec![crate::selection::SelInput::new("Pieces", crate::selection::FACES, true).places()]))
+            Some((Kind::ScanFloating(Floating::default()), vec![crate::selection::SelInput::new("Point", crate::selection::FACES, true).places()]))
         }
         "scan.fill_holes" => Some((Kind::ScanHoles(Holes::default()), Vec::new())),
         "scan.reduce" => Some((Kind::ScanReduce(Reduce::default()), Vec::new())),
+        "scan.clean_up" => Some((Kind::ScanCleanUp(CleanUp::default()), Vec::new())),
         _ => None,
     }
 }
@@ -426,6 +427,52 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
             }
         }
     }
+}
+
+/// The Clean Up dialog's values: which tools run, in order.
+#[derive(Clone, Debug)]
+pub struct CleanUp {
+    pub repair: bool,
+    pub floating: bool,
+    pub holes: bool,
+    pub reduce: bool,
+    /// The share of the triangles Reduce keeps, in percent.
+    pub percent: f64,
+}
+
+impl Default for CleanUp {
+    fn default() -> Self {
+        CleanUp { repair: true, floating: true, holes: true, reduce: false, percent: 50.0 }
+    }
+}
+
+/// The Clean Up dialog's rows: a tick for each tool, in the order they run.
+pub fn clean_up_rows(_app: &SolveApp, ui: &mut egui::Ui, k: &mut CleanUp) -> bool {
+    let tr = solidcraft_ui_text::tr;
+    form_row(ui, tr("cmd.scan_repair"), |ui| check(ui, &mut k.repair));
+    form_row(ui, tr("cmd.scan_remove_floating"), |ui| check(ui, &mut k.floating));
+    form_row(ui, tr("cmd.scan_fill_holes"), |ui| check(ui, &mut k.holes));
+    form_row(ui, tr("cmd.scan_reduce"), |ui| check(ui, &mut k.reduce));
+    if k.reduce {
+        let format = |v: f64| format!("{v:.0} %");
+        form_row(ui, tr("ui.scan_clean_up_reduce"), |ui| {
+            ui_kit::slider(ui, &mut k.percent, 5.0..=95.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
+        });
+    }
+    ui_kit::text(ui, tr("ui.scan_clean_up_hint"), ui_kit::Text::Hint("scan_clean_up_hint"));
+    false
+}
+
+/// What OK runs: one Clean Up, each tool its own step.
+pub fn clean_up_commands(k: &CleanUp) -> Result<Vec<(String, Value)>, String> {
+    let mut p = json!({"repair": k.repair, "floating": k.floating, "holes": k.holes});
+    if k.reduce {
+        p["reduce"] = json!((k.percent / 100.0).clamp(0.05, 0.95));
+    }
+    if !(k.repair || k.floating || k.holes || k.reduce) {
+        return Err(solidcraft_ui_text::tr("ui.scan_clean_up_hint").into());
+    }
+    Ok(vec![("scan.clean_up".into(), p)])
 }
 
 /// The Reduce Mesh dialog's values.

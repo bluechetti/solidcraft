@@ -101,6 +101,7 @@ mod tests {
         for id in [
             "file.insert_mesh",
             "scan.survey",
+            "scan.clean_up",
             "scan.select",
             "scan.remove_floating",
             "scan.fill_holes",
@@ -195,6 +196,7 @@ mod tests {
             "scan.refit",
             "scan.tolerance",
             "scan.survey",
+            "scan.clean_up",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {

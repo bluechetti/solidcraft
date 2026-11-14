@@ -55,10 +55,17 @@ const FLOATING_CONTRACT: TypedContract<ScanFloatingParams> = TypedContract::new(
 const HOLES_CONTRACT: TypedContract<ScanHolesParams> = TypedContract::new();
 const REDUCE_CONTRACT: TypedContract<ScanReduceParams> = TypedContract::new();
 const REPAIR_CONTRACT: TypedContract<ScanRepairParams> = TypedContract::new();
+const CLEAN_UP_CONTRACT: TypedContract<crate::schema::scan::ScanCleanUpParams> = TypedContract::new();
 const SECTION_CONTRACT: TypedContract<ScanSectionParams> = TypedContract::new();
 const SECTIONS_ALONG_CONTRACT: TypedContract<ScanSectionsAlongParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec::new("scan.clean_up", "Clean Up", crate::checked!("scan.clean_up", clean::clean_up))
+        .at("SCAN", "CLEAN")
+        .icon("mesh_body")
+        .contract(&CLEAN_UP_CONTRACT)
+        .output(output_schema_for::<crate::schema::scan::ScanCleanUpResult>)
+        .params("body?: mesh body (default: the selected or only one); repair?, floating?, holes?: bool (each default true); reduce?: share of the triangles to keep (0…1, default: not reduced): Repair Mesh, Remove Floating Pieces, Fill Holes and Reduce Mesh run in that order with their usual settings, each kept as its own Scan Clean step (editable or taken out later); a tool with nothing to do is left out and says why; one undo step → body, steps [{command, done, note, feature?}], triangles"),
     CommandSpec::new("scan.repair", "Repair Mesh", crate::checked!("scan.repair", clean::repair))
         .at("SCAN", "CLEAN")
         .icon("mesh_body")
@@ -70,7 +77,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("surface_patch")
         .contract(&HOLES_CONTRACT)
         .output(output_schema_for::<ScanHolesResult>)
-        .params("body?: mesh body (default: the selected or only one); max_edges?: the largest hole to close, in edges round it (3…5000, default 300); fair?: bool (default true: each patch carries the surface's shape across; false leaves it flat): the holes closed with patches as fine as the scan round them (each piece's outer rim is not a hole), kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, holes, filled, failed, larger, added_triangles, unfillable_edges, feature"),
+        .params("body?: mesh body (default: the selected or only one); max_edges?: the largest hole to close, in edges round it (3…5000, default 300); fair?: bool (default true: each patch carries the surface's shape across; false leaves it flat); at?: [[x,y,z],…] points by the rings to close instead (exactly the nearest ring to each, any size, a rim capped): the holes closed with patches as fine as the scan round them (each piece's outer rim is not a hole), kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, holes, filled, failed, larger, added_triangles, unfillable_edges, feature"),
     CommandSpec::new("scan.reduce", "Reduce Mesh", crate::checked!("scan.reduce", clean::reduce))
         .at("SCAN", "CLEAN")
         .icon("scale")
@@ -82,7 +89,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("delete")
         .contract(&FLOATING_CONTRACT)
         .output(output_schema_for::<ScanFloatingResult>)
-        .params("body?: mesh body (default: the selected or only one); below?: share of the largest piece's triangles (0…0.5, default 0.02; never fewer than 2): the pieces of the scan (triangles joined through their corners) smaller than that taken off, kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, pieces, removed, removed_triangles, triangles, feature"),
+        .params("body?: mesh body (default: the selected or only one); below?: share of the largest piece's triangles (0…0.5, default 0.02; never fewer than 2); keep?: [[x,y,z],…] points on pieces kept whatever their size; remove?: [[x,y,z],…] points on pieces taken off whatever their size: the pieces of the scan (triangles joined through their corners) smaller than that taken off, kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, pieces, removed, removed_triangles, triangles, feature"),
     CommandSpec::new("scan.bases", "Scan Bases", crate::checked!("scan.bases", bases))
         .icon("list")
         .noundo()

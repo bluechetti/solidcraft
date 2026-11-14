@@ -148,6 +148,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.align_to_model",
     "scan.center",
     "scan.chamfer_it",
+    "scan.clean_up",
     "scan.close_surface",
     "scan.coil_it",
     "scan.combine",
