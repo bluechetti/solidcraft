@@ -25,9 +25,9 @@ use super::CommandSpec;
 use crate::params::{bad, bool_, str_};
 use crate::schema::scan_reconstruct::{
     ScanBuildResult, ScanChamferItParams, ScanChamferItResult, ScanChamfered, ScanCutItParams, ScanEdgeChamfer, ScanEdgeRound, ScanExtrudeItParams,
-    ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams, ScanFindAllResult, ScanHole, ScanPatternItParams, ScanPrism,
-    ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat, ScanRevolveItParams, ScanShapeFound, ScanShell,
-    ScanShellItParams, ScanTurned,
+    ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams, ScanFindAllResult, ScanHole, ScanHoleForm, ScanHoleItParams,
+    ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat, ScanRestParams,
+    ScanRestResult, ScanRevolveItParams, ScanShapeFound, ScanShapeItParams, ScanShell, ScanShellItParams, ScanTurned,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -38,6 +38,9 @@ const RECONSTRUCT_SELECTION_CONTRACT: TypedContract<ScanReconstructSelectionPara
 const EXTRUDE_IT_CONTRACT: TypedContract<ScanExtrudeItParams> = TypedContract::new();
 const REVOLVE_IT_CONTRACT: TypedContract<ScanRevolveItParams> = TypedContract::new();
 const CUT_IT_CONTRACT: TypedContract<ScanCutItParams> = TypedContract::new();
+const HOLE_IT_CONTRACT: TypedContract<ScanHoleItParams> = TypedContract::new();
+const SHAPE_IT_CONTRACT: TypedContract<ScanShapeItParams> = TypedContract::new();
+const REST_CONTRACT: TypedContract<ScanRestParams> = TypedContract::new();
 const PATTERN_IT_CONTRACT: TypedContract<ScanPatternItParams> = TypedContract::new();
 const FILLET_IT_CONTRACT: TypedContract<ScanFilletItParams> = TypedContract::new();
 const CHAMFER_IT_CONTRACT: TypedContract<ScanChamferItParams> = TypedContract::new();
@@ -50,7 +53,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&FIND_ALL_CONTRACT)
         .output(output_schema_for::<ScanFindAllResult>)
-        .params("body?: mesh body (default: the selected or only one); tolerance?: mm (the least distance a shape may lie from the scan and still take it; default: the scan's tolerance when one is set, else three times its noise; raise it for a scan smooth but off by more than its noise, as a fused depth-camera scan is); show?: bool (false takes the colouring away): the whole scan cut into regions, each a plane, cylinder, sphere, cone or torus or freeform (the scan's noise sets how close a shape must lie), coloured in the viewport; a view and not an undo step → shapes [{index, kind, area, triangles, rms, point, direction?, radius?, minor?, half_angle?, hole?}], freeform, freeform_area, in_shapes, noise, tolerance"),
+        .params("body?: mesh body (default: the selected or only one); tolerance?: mm (the least distance a shape may lie from the scan and still take it; default: the scan's tolerance when one is set, else three times its noise, and on a coarse scan (triangles over a hundredth of its size long: a fused depth-camera scan) at least 0.4 of a triangle's edge; raise it for a scan smooth but off by more than its noise, as a fused depth-camera scan is); show?: bool (false takes the colouring away): the whole scan cut into regions, each a plane, cylinder, sphere, cone or torus or freeform (the scan's noise sets how close a shape must lie), coloured in the viewport; a view and not an undo step → shapes [{index, kind, area, triangles, rms, point, direction?, radius?, minor?, half_angle?, hole?}], freeform, freeform_area, in_shapes, noise, tolerance"),
     CommandSpec::new("scan.reconstruct", "Reconstruct", crate::checked!("scan.reconstruct", read_scan))
         .at("SCAN", "RECONSTRUCT")
         .icon("auto_constrain")
@@ -65,6 +68,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&RECONSTRUCT_SELECTION_CONTRACT)
         .output(output_schema_for::<ScanReconstructResult>)
         .params("body?: mesh body (default: the one selected on): scan.reconstruct with selected: true, what the shapes make on the part of the scan selected, read as a part of its own (a boss, a turned feature, a hole of a part too busy to read whole), and the steps that build it, each with `selected`; refused with nothing selected; reads only → as scan.reconstruct"),
+    CommandSpec::new("scan.reconstruct_rest", "Reconstruct the Rest", crate::checked!("scan.reconstruct_rest", rest::reconstruct_rest))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("auto_constrain")
+        .contract(&REST_CONTRACT)
+        .output(output_schema_for::<ScanRestResult>)
+        .params("body?: mesh body (default: the selected or only one); rounds?: 1 to 20 (default 6): after the steps Reconstruct proposes have built `<scan> Reconstructed`, what it leaves of the scan unexplained, piece by piece: each round selects the largest piece the body does not explain yet (scan.select unexplained), reads it as a part of its own (scan.reconstruct_selection) and runs the steps proposed for it, taking back each that is refused or leaves the body no closer to the scan (its fit verdict); a piece that adds nothing is passed over for the next, three in a row end it; the selection is cleared after; one undo step → body, solid, rounds [{piece, area, proposed, kept}], kept, stop"),
     CommandSpec::new("scan.extrude_it", "Extrude It", crate::checked!("scan.extrude_it", fitted_extrude_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("extrude")
@@ -83,6 +92,30 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&CUT_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
         .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); hole?: index of scan.reconstruct's holes (default 0); into?: body to cut (default: `<scan> Reconstructed`): a circle sketched square to the hole outside its mouth and cut as deep as the scan has the hole, one undo step → sketch, feature, solid, operation, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.hole_it", "Hole It", crate::checked!("scan.hole_it", fitted_hole_it))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("hole")
+        .contract(&HOLE_IT_CONTRACT)
+        .output(output_schema_for::<ScanBuildResult>)
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); hole?: index of scan.reconstruct's holes (default: the first with a `form`); thread?: bool (default true: a bore the size of a tap drill drilled as tapped, its thread listed; false: plain); into?: body to drill (default: `<scan> Reconstructed`): a hole read as a Hole feature makes it (its `form`: counterbore, countersink, drilled blind with its drill point or a flat bottom, tapped) drilled with Hole at its mouth along its axis, through or as deep as the scan has it, the sizes read as designed; one undo step → feature, solid, operation, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.loft_it", "Loft It", crate::checked!("scan.loft_it", fitted_loft_it))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("loft")
+        .contract(&SHAPE_IT_CONTRACT)
+        .output(output_schema_for::<ScanBuildResult>)
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the part scan.reconstruct reads as sections lofted (its `loft`: no prism, turned part, pipe or coil read, every slice square to the direction it runs one closed loop; the direction two flat ends face apart along, else its longest): each section sketched as a closed fit-point spline through the slice's points, laid out from matching starts so the loft does not twist, and lofted end to end; one undo step → feature, solid, operation, depth (the length), fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.pipe_it", "Pipe It", crate::checked!("scan.pipe_it", fitted_pipe_it))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("pipe")
+        .contract(&SHAPE_IT_CONTRACT)
+        .output(output_schema_for::<ScanBuildResult>)
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the bar bent along a flat path scan.reconstruct reads (its `pipe`: cylinders for the straight runs, tori of the same tube for the bends, each running on from the one before): the path through their axes sketched as lines and arcs, joined where a run touches a bend, and the bar's circle swept along it with Pipe; one undo step → sketch, feature, solid, operation, lines, arcs, depth (the path's length), fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.coil_it", "Coil It", crate::checked!("scan.coil_it", fitted_coil_it))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("coil")
+        .contract(&SHAPE_IT_CONTRACT)
+        .output(output_schema_for::<ScanBuildResult>)
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the coil spring scan.reconstruct reads (its `coil`: tori alike round one axis, each leaning by the helix's angle; the pitch that lines the wire up on one helix, the turns the scan's height holds, the hand): the wire's circle sketched where it starts, on the plane through the axis, and wound with Coil; one undo step → sketch, feature, solid, operation, depth (the height wound), fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
     CommandSpec::new("scan.pattern_it", "Pattern It", crate::checked!("scan.pattern_it", fitted_pattern_it))
         .at("SCAN", "RECONSTRUCT")
         .icon("pattern_circ")
@@ -408,10 +441,20 @@ pub enum Proposal {
     Extrude(usize),
     /// A round hole (its index), cut.
     Cut(usize),
+    /// A hole as a Hole feature makes it (its index), drilled.
+    Hole(usize),
     /// A cut hole's row or ring (the hole's index), patterned.
     Pattern(usize),
+    /// A prism's row or ring (the first prism's index), its extrusion patterned.
+    PatternPrism(usize),
     /// The rounds along edges no profile holds, filleted.
     Fillet,
+    /// A coil spring, wound.
+    Coil,
+    /// A bar bent along a flat path, swept.
+    Pipe,
+    /// The part as sections, lofted.
+    Loft,
     /// The flat chamfers along edges no profile holds, chamfered.
     Chamfer,
     /// Walls of one thickness: the body shelled.
@@ -424,8 +467,12 @@ impl Proposal {
             Proposal::Revolve => "scan.revolve_it",
             Proposal::Extrude(_) => "scan.extrude_it",
             Proposal::Cut(_) => "scan.cut_it",
-            Proposal::Pattern(_) => "scan.pattern_it",
+            Proposal::Hole(_) => "scan.hole_it",
+            Proposal::Pattern(_) | Proposal::PatternPrism(_) => "scan.pattern_it",
             Proposal::Fillet => "scan.fillet_it",
+            Proposal::Coil => "scan.coil_it",
+            Proposal::Pipe => "scan.pipe_it",
+            Proposal::Loft => "scan.loft_it",
             Proposal::Chamfer => "scan.chamfer_it",
             Proposal::Shell => "scan.shell_it",
         }
@@ -435,9 +482,11 @@ impl Proposal {
     /// scan selected.
     pub fn params(&self, body: &str, selected: bool) -> Value {
         let mut p = match *self {
-            Proposal::Revolve | Proposal::Fillet | Proposal::Chamfer | Proposal::Shell => json!({"body": body}),
-            Proposal::Extrude(k) => json!({"body": body, "prism": k}),
-            Proposal::Cut(k) | Proposal::Pattern(k) => json!({"body": body, "hole": k}),
+            Proposal::Revolve | Proposal::Fillet | Proposal::Chamfer | Proposal::Shell | Proposal::Coil | Proposal::Pipe | Proposal::Loft => {
+                json!({"body": body})
+            }
+            Proposal::Extrude(k) | Proposal::PatternPrism(k) => json!({"body": body, "prism": k}),
+            Proposal::Cut(k) | Proposal::Hole(k) | Proposal::Pattern(k) => json!({"body": body, "hole": k}),
         };
         if let (true, Some(map)) = (selected, p.as_object_mut()) {
             map.insert("selected".into(), Value::Bool(true));
@@ -452,10 +501,26 @@ impl Proposal {
 /// fillet: one a step above builds, or one `built` before.
 pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
     let mut out = Vec::new();
+    if reading.coil.is_some() {
+        out.push(Proposal::Coil);
+    }
+    if reading.pipe.is_some() {
+        out.push(Proposal::Pipe);
+    }
+    if reading.loft.is_some() {
+        out.push(Proposal::Loft);
+    }
     if reading.revolve.is_some() && reading.turned_unread.is_none() {
         out.push(Proposal::Revolve);
     }
-    out.extend((0..reading.prisms.len()).map(Proposal::Extrude));
+    // A prism of a row or ring alike is extruded once and patterned.
+    let made_by_pattern: std::collections::BTreeSet<usize> = reading.prism_repeats.iter().flat_map(|r| r.members[1..].iter().copied()).collect();
+    for k in (0..reading.prisms.len()).filter(|k| !made_by_pattern.contains(k)) {
+        out.push(Proposal::Extrude(k));
+        if reading.prism_repeats.iter().any(|r| r.members.first() == Some(&k)) {
+            out.push(Proposal::PatternPrism(k));
+        }
+    }
     if out.is_empty() && !built {
         return out;
     }
@@ -465,7 +530,7 @@ pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
         out.push(Proposal::Shell);
     }
     for (k, hole) in reading.holes.iter().enumerate() {
-        out.push(Proposal::Cut(k));
+        out.push(if hole.form.is_some() { Proposal::Hole(k) } else { Proposal::Cut(k) });
         if hole.repeat.is_some() {
             out.push(Proposal::Pattern(k));
         }
@@ -477,6 +542,11 @@ pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
         out.push(Proposal::Chamfer);
     }
     out
+}
+
+/// How many bends the bar Reconstruct reads bent along a path has (none without one).
+pub fn pipe_bends(reading: &Reading) -> usize {
+    reading.pipe.as_ref().map_or(0, |p| p.pieces.iter().filter(|k| matches!(k, solidcraft_scan::pipe::Piece::Arc { .. })).count())
 }
 
 /// The body Reconstruct builds on scan `scan`.
@@ -551,36 +621,10 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
             depth: h.depth(),
             repeat: h.repeat.map(|r| r.0),
             layout: h.repeat.map(|r| layout_name(&r.1).to_string()),
+            form: h.form.as_ref().map(hole_form),
         })
         .collect();
-    let repeats = reading
-        .repeats
-        .iter()
-        .map(|r| {
-            let mut out = ScanRepeat {
-                kind: format!("{:?}", r.kind).to_lowercase(),
-                members: r.members.clone(),
-                layout: layout_name(&r.layout).into(),
-                step: None,
-                angle: None,
-                axis: None,
-                centre: None,
-                across: None,
-                columns: None,
-                rows: None,
-            };
-            match r.layout {
-                Layout::Linear { step } => out.step = Some(at(step)),
-                Layout::Circular { centre, axis, angle } => {
-                    (out.centre, out.axis, out.angle) = (Some(at(centre)), Some(at(axis)), Some(angle.to_degrees()))
-                }
-                Layout::Grid { step, across, columns, rows } => {
-                    (out.step, out.across, out.columns, out.rows) = (Some(at(step)), Some(at(across)), Some(columns), Some(rows))
-                }
-            }
-            out
-        })
-        .collect();
+    let repeats = reading.repeats.iter().map(scan_repeat).collect();
     let turned = reading.revolve.as_ref().map(|r| ScanTurned {
         point: at(r.axis.point),
         direction: at(r.axis.direction),
@@ -622,9 +666,37 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         fillets: reading.fillets.iter().map(|f| ScanEdgeRound { face: f.face, radius: f.radius, edge: at(f.edge) }).collect(),
         chamfers: reading.chamfers.iter().map(|c| ScanEdgeChamfer { face: c.face, distance: c.distance, edge: at(c.edge) }).collect(),
         shell: reading.shell.as_ref().map(|w| ScanShell { thickness: w.thickness, inner: w.inner.clone(), open: w.open.clone() }),
+        prism_repeats: reading.prism_repeats.iter().map(scan_repeat).collect(),
+        coil: reading.coil.as_ref().map(shapes::coil_of),
+        pipe: reading.pipe.as_ref().map(shapes::pipe_of),
+        loft: reading.loft.as_ref().map(shapes::loft_of),
         note,
         param_warnings: Vec::new(),
     })
+}
+
+/// A repeat as the reply lists it.
+fn scan_repeat(r: &reconstruct::Repeat) -> ScanRepeat {
+    let mut out = ScanRepeat {
+        kind: format!("{:?}", r.kind).to_lowercase(),
+        members: r.members.clone(),
+        layout: layout_name(&r.layout).into(),
+        step: None,
+        angle: None,
+        axis: None,
+        centre: None,
+        across: None,
+        columns: None,
+        rows: None,
+    };
+    match r.layout {
+        Layout::Linear { step } => out.step = Some(at(step)),
+        Layout::Circular { centre, axis, angle } => (out.centre, out.axis, out.angle) = (Some(at(centre)), Some(at(axis)), Some(angle.to_degrees())),
+        Layout::Grid { step, across, columns, rows } => {
+            (out.step, out.across, out.columns, out.rows) = (Some(at(step)), Some(at(across)), Some(columns), Some(rows))
+        }
+    }
+    out
 }
 
 /// What a profile sketch was drawn with.
@@ -973,16 +1045,135 @@ fn free_cut_name(s: &Session, index: usize) -> String {
     (2..).map(|k| format!("{base}.{k}")).find(|n| !taken(n)).unwrap_or(base)
 }
 
-/// The latest cut of hole `index` Cut It made ([`free_cut_name`]): the one Pattern It repeats.
+/// The latest cut of hole `index` Cut It or Hole It made ([`free_cut_name`]): the one Pattern It
+/// repeats.
 fn last_cut_name(s: &Session, index: usize) -> String {
-    let base = cut_name(index);
-    let prefix = format!("{base}.");
-    s.doc
-        .features
-        .iter()
-        .rev()
-        .find(|f| f.name == base || f.name.strip_prefix(&prefix).is_some_and(|k| k.parse::<u32>().is_ok()))
-        .map_or(base, |f| f.name.clone())
+    let names = [cut_name(index), hole_name(index)];
+    let of = |name: &str| {
+        names
+            .iter()
+            .any(|base| name == base || name.strip_prefix(base.as_str()).and_then(|k| k.strip_prefix('.')).is_some_and(|k| k.parse::<u32>().is_ok()))
+    };
+    s.doc.features.iter().rev().find(|f| of(&f.name)).map_or_else(|| names[0].clone(), |f| f.name.clone())
+}
+
+/// The name Hole It gives the hole of hole `index`.
+fn hole_name(index: usize) -> String {
+    format!("Hole It {}", index + 1)
+}
+
+/// A hole's form as the reply lists it.
+fn hole_form(f: &solidcraft_scan::hole_form::Formed) -> ScanHoleForm {
+    let kind = if f.counterbore.is_some() {
+        "counterbore"
+    } else if f.countersink.is_some() {
+        "countersink"
+    } else if f.thread.is_some() {
+        "tapped"
+    } else {
+        "drilled"
+    };
+    ScanHoleForm {
+        kind: kind.into(),
+        diameter: 2.0 * f.radius,
+        through: f.depth.is_none(),
+        depth: f.depth,
+        tip_angle: f.tip.map(f64::to_degrees),
+        cb_diameter: f.counterbore.map(|c| 2.0 * c.0),
+        cb_depth: f.counterbore.map(|c| c.1),
+        cs_diameter: f.countersink.map(|c| 2.0 * c.0),
+        cs_angle: f.countersink.map(|c| c.1.to_degrees()),
+        thread: f.thread.map(str::to_owned),
+        faces: f.faces.iter().copied().collect(),
+    }
+}
+
+/// Hole It: a hole read as a Hole feature makes it, drilled with Hole at its mouth along its axis.
+pub(super) fn hole_it(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.hole_it";
+    let view = view(s, p, cmd, false)?;
+    let found = &view.found;
+    let reading = view.reading();
+    let index = match p.get("hole").and_then(Value::as_u64) {
+        Some(k) => k as usize,
+        None => reading
+            .holes
+            .iter()
+            .position(|h| h.form.is_some())
+            .ok_or_else(|| bad(cmd, "Reconstruct reads no counterbore, countersink, blind or tapped hole: cut round holes with Cut It"))?,
+    };
+    let hole = reading
+        .holes
+        .get(index)
+        .ok_or_else(|| bad(cmd, format!("there are {} holes: `hole` is 0 to {}", reading.holes.len(), reading.holes.len().saturating_sub(1))))?;
+    let solid = built_body(s, &found.scan, p, cmd)?;
+    // A plain round hole is drilled as it is, flat at the bottom, as deep as the scan has it.
+    let plain;
+    let form = match &hole.form {
+        Some(f) => f,
+        None => {
+            plain = solidcraft_scan::hole_form::Formed {
+                bore: hole.face,
+                radius: hole.radius,
+                mouth: hole.mouth,
+                inward: (hole.bottom - hole.mouth).normalized().ok_or_else(|| bad(cmd, "the hole has no depth on the scan"))?,
+                bottom: hole.bottom,
+                counterbore: None,
+                countersink: None,
+                depth: Some(hole.depth()),
+                tip: Some(std::f64::consts::PI),
+                thread: None,
+                faces: std::collections::BTreeSet::from([hole.face]),
+            };
+            &plain
+        }
+    };
+    let mut params = json!({"position": at(form.mouth), "direction": at(form.inward), "targets": [solid], "name": free_hole_name(s, index)});
+    match bool_(p, "thread").unwrap_or(true).then_some(form.thread).flatten() {
+        Some(thread) => params["thread"] = json!(thread),
+        None => params["diameter"] = json!(format!("{} mm", 2.0 * form.radius)),
+    }
+    if let Some((r, depth)) = form.counterbore {
+        params["type"] = json!("counterbore");
+        params["cb_diameter"] = json!(format!("{} mm", 2.0 * r));
+        params["cb_depth"] = json!(format!("{depth} mm"));
+    } else if let Some((r, angle)) = form.countersink {
+        params["type"] = json!("countersink");
+        params["cs_diameter"] = json!(format!("{} mm", 2.0 * r));
+        params["cs_angle"] = json!(format!("{} deg", angle.to_degrees()));
+    }
+    if let Some(depth) = form.depth {
+        params["depth"] = json!(format!("{depth} mm"));
+        if let Some(tip) = form.tip {
+            params["tip_angle"] = json!(format!("{} deg", tip.to_degrees()));
+        }
+    }
+    let feature = run(s, "solid.hole", params)
+        .map_err(|e| super::refusal::refused(cmd, "the kernel could not drill the hole the scan shows", &e.to_string()))?;
+    reply(ScanBuildResult {
+        body: found.scan.clone(),
+        sketch: None,
+        feature,
+        solid,
+        operation: "cut".into(),
+        lines: 0,
+        arcs: 0,
+        tangents: 0,
+        depth: Some(form.depth.unwrap_or_else(|| form.mouth.dist(form.bottom))),
+        count: None,
+        fit: None,
+        param_warnings: Vec::new(),
+    })
+}
+
+/// The name for a new hole of hole `index`, as [`free_cut_name`] for a cut.
+fn free_hole_name(s: &Session, index: usize) -> String {
+    let base = hole_name(index);
+    let taken = |n: &str| s.doc.features.iter().any(|f| f.name == n);
+    if !taken(&base) {
+        return base;
+    }
+    (2..).map(|k| format!("{base}.{k}")).find(|n| !taken(n)).unwrap_or(base)
 }
 
 pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1042,6 +1233,36 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
     let view = view(s, p, cmd, false)?;
     let found = &view.found;
     let reading = view.reading();
+    if let Some(k) = p.get("prism").and_then(Value::as_u64).map(|k| k as usize) {
+        let repeat = reading
+            .prism_repeats
+            .iter()
+            .find(|r| r.members.first() == Some(&k))
+            .ok_or_else(|| bad(cmd, format!("prism {k} does not repeat: Reconstruct reads no row or ring of prisms alike starting with it")))?;
+        let name = format!("Extrude It {}", k + 1);
+        let feature_name = str_(p, "feature")
+            .filter(|f| !f.trim().is_empty())
+            .map(str::to_owned)
+            .or_else(|| s.doc.features.iter().rev().find(|f| f.name == name).map(|f| f.name.clone()))
+            .ok_or_else(|| bad(cmd, format!("there is no `{name}`: extrude prism {k} first with Extrude It")))?;
+        let solid = built_body(s, &found.scan, &json!({}), cmd)?;
+        let count = repeat.members.len();
+        let feature = repeat_feature(s, cmd, &feature_name, count, &repeat.layout)?;
+        return reply(ScanBuildResult {
+            body: found.scan.clone(),
+            sketch: None,
+            feature,
+            solid,
+            operation: "pattern".into(),
+            lines: 0,
+            arcs: 0,
+            tangents: 0,
+            depth: None,
+            count: Some(count),
+            fit: None,
+            param_warnings: Vec::new(),
+        });
+    }
     let index = match p.get("hole").and_then(Value::as_u64) {
         Some(k) => k as usize,
         None => {
@@ -1058,7 +1279,26 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, format!("there is no `{feature_name}`: cut the hole first with Cut It")));
     }
     let solid = built_body(s, &found.scan, &json!({}), cmd)?;
-    let pattern = match layout {
+    let pattern = repeat_feature(s, cmd, &feature_name, count, &layout)?;
+    reply(ScanBuildResult {
+        body: found.scan.clone(),
+        sketch: None,
+        feature: pattern,
+        solid,
+        operation: "pattern".into(),
+        lines: 0,
+        arcs: 0,
+        tangents: 0,
+        depth: None,
+        count: Some(count),
+        fit: None,
+        param_warnings: Vec::new(),
+    })
+}
+
+/// Feature `feature_name` repeated `count` times as `layout` lays them out.
+fn repeat_feature(s: &mut Session, cmd: &str, feature_name: &str, count: usize, layout: &Layout) -> Result<Value> {
+    Ok(match *layout {
         Layout::Circular { centre, axis, .. } => {
             run(s, "solid.pattern.circular", json!({"features": [feature_name], "axis": {"origin": at(centre), "dir": at(axis)}, "count": count}))?
         }
@@ -1077,20 +1317,6 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
                 json!({"features": [feature_name], "dir1": at(one), "count1": columns, "spacing1": step.len(), "dir2": at(two), "count2": rows, "spacing2": across.len()}),
             )?
         }
-    };
-    reply(ScanBuildResult {
-        body: found.scan.clone(),
-        sketch: None,
-        feature: pattern,
-        solid,
-        operation: "pattern".into(),
-        lines: 0,
-        arcs: 0,
-        tangents: 0,
-        depth: None,
-        count: Some(count),
-        fit: None,
-        param_warnings: Vec::new(),
     })
 }
 
@@ -1293,8 +1519,19 @@ fitted!(
     fitted_extrude_it => extrude_it,
     fitted_revolve_it => revolve_it,
     fitted_cut_it => cut_it,
+    fitted_hole_it => hole_it,
+    fitted_loft_it => loft_it,
+    fitted_pipe_it => pipe_it,
+    fitted_coil_it => coil_it,
     fitted_pattern_it => pattern_it,
     fitted_fillet_it => fillet_it,
     fitted_chamfer_it => chamfer_it,
     fitted_shell_it => shell_it,
 );
+
+#[path = "scan_reconstruct_shapes.rs"]
+mod shapes;
+use shapes::{coil_it, loft_it, pipe_it};
+
+#[path = "scan_reconstruct_rest.rs"]
+mod rest;

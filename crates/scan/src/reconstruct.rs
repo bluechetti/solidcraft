@@ -182,6 +182,9 @@ pub struct Hole {
     pub radius: f64,
     /// For the first of a row or a ring of holes alike: how many there are and how laid out.
     pub repeat: Option<(usize, Layout)>,
+    /// A hole as a Hole feature makes it (a counterbore, a countersink, a drill point, a tap
+    /// drill), for Hole It; none for a plain round hole, which Cut It cuts.
+    pub form: Option<crate::hole_form::Formed>,
 }
 
 impl Hole {
@@ -397,6 +400,79 @@ pub fn extrusions(
     chosen
 }
 
+/// `prisms` made to meet exactly where they meet on the scan: those read along nearly one
+/// direction (within [`SAME_DIRECTION`]) along exactly one (the first's, on the grid's axis when
+/// it is that near one), and their ends at nearly one level (within the scan's `tolerance`) at
+/// exactly one. Read each on its own, prisms stacked on a floor leave it a few thousandths of a
+/// millimetre and a few millionths of a radian apart in each, which the kernel's join cannot merge
+/// where two or three such meet at a corner.
+fn shared(mut prisms: Vec<Prism>, faces: &[Face], tolerance: f64) -> Vec<Prism> {
+    // Each prism's ends as levels along its own direction, read off its end planes where it has
+    // them (a plane's middle), else where it was read.
+    let level_of_end = |k: usize, d: Vec3, fallback: f64| plane(&faces[k]).map_or(fallback, |(point, _)| point.dot(d));
+    let mut groups: Vec<(Vec3, Vec<usize>)> = Vec::new();
+    for (k, prism) in prisms.iter().enumerate() {
+        let d = prism.direction;
+        match groups.iter_mut().find(|g| g.0.dot(d).abs() >= SAME_DIRECTION) {
+            Some(g) => g.1.push(k),
+            None => groups.push((on_grid(unit(d)), vec![k])),
+        }
+    }
+    for (d, members) in groups {
+        if d == Vec3::ZERO {
+            continue;
+        }
+        // Each member's ends, as levels along `d`.
+        let mut ends: Vec<(usize, f64, f64)> = Vec::new();
+        for &k in &members {
+            let p = &prisms[k];
+            let sign = if p.direction.dot(d) < 0.0 { -1.0 } else { 1.0 };
+            let along = d * sign;
+            let base = p.origin.dot(p.direction);
+            let (low, high) = (base + p.low, base + p.high);
+            // Which end plane is at which end: an open prism names its one plane twice.
+            let at_low =
+                |e: usize| plane(&faces[e]).is_none_or(|(point, _)| (point.dot(p.direction) - low).abs() <= (point.dot(p.direction) - high).abs());
+            let low_new =
+                if !p.open || at_low(p.ends[0]) { level_of_end(p.ends[0], along, p.origin.dot(along) + p.low) } else { p.origin.dot(along) + p.low };
+            let high_new = if !p.open || !at_low(p.ends[1]) {
+                level_of_end(p.ends[1], along, p.origin.dot(along) + p.high)
+            } else {
+                p.origin.dot(along) + p.high
+            };
+            // As levels along `d`.
+            ends.push((k, low_new * sign, high_new * sign));
+        }
+        // Levels within the tolerance of each other are one: their mean.
+        let mut levels: Vec<f64> = ends.iter().flat_map(|e| [e.1, e.2]).collect();
+        levels.sort_by(f64::total_cmp);
+        let mut clusters: Vec<(f64, usize)> = Vec::new();
+        for l in levels {
+            match clusters.last_mut() {
+                Some((sum, n)) if l - *sum / *n as f64 <= tolerance => {
+                    *sum += l;
+                    *n += 1;
+                }
+                _ => clusters.push((l, 1)),
+            }
+        }
+        let snap = |l: f64| clusters.iter().map(|(sum, n)| sum / *n as f64).find(|m| (m - l).abs() <= tolerance).unwrap_or(l);
+        for (k, low, high) in ends {
+            let p = &mut prisms[k];
+            let sign = if p.direction.dot(d) < 0.0 { -1.0 } else { 1.0 };
+            let along = d * sign;
+            let (low, high) = (snap(low) * sign, snap(high) * sign);
+            let base = p.origin.dot(along);
+            if high - low > 0.0 {
+                p.direction = along;
+                p.low = low - base;
+                p.high = high - base;
+            }
+        }
+    }
+    prisms
+}
+
 /// Two prisms explaining within this share of the whole scan's area explain as much
 /// ([`extrusions`] then takes the one whose walls hold fewer rounds).
 const TIE: f64 = 0.001;
@@ -408,7 +484,7 @@ const ON_GRID: f64 = 0.00175;
 /// [`ON_GRID`] of one (a scan stood on its base or squared to the grid leaves its faces a few
 /// thousandths of a degree off the axes, which a model built along them should not keep), else
 /// as it is.
-fn on_grid(direction: Vec3) -> Vec3 {
+pub(crate) fn on_grid(direction: Vec3) -> Vec3 {
     [Vec3::X, Vec3::Y, Vec3::Z]
         .into_iter()
         .map(|axis| if direction.dot(axis) < 0.0 { -axis } else { axis })
@@ -570,8 +646,8 @@ fn extrusion(
     // An end with no plane is as far as the shortest wall runs, so a slice halfway crosses them all.
     let (from, to) = (if low.caps.is_empty() { low.reach.1 } else { low.at }, if high.caps.is_empty() { high.reach.0 } else { high.at });
     // A drafted prism lies along the grid's axis when it is that near it: the kernel shells a
-    // tapered body reliably only so. A square one keeps its own direction, so that prisms meeting
-    // on a plane do not meet exactly on it, which the kernel's join refuses.
+    // tapered body reliably only so. A square one is put on one direction with the prisms it
+    // stacks with once all are read ([`shared`]).
     let direction = if draft != 0.0 { on_grid(direction) } else { direction };
     Some((Prism { direction, origin, low: from - at, high: to - at, ends, walls: section.to_vec(), open, draft }, shares))
 }
@@ -1081,8 +1157,35 @@ pub fn holes(
             let at = |t: f64| point + axis * (t - point.dot(axis));
             let (a, b) = (at(least), at(most));
             let (mouth, bottom) = if a.dist(middle) >= b.dist(middle) { (a, b) } else { (b, a) };
-            Some(Hole { face: k, mouth, bottom, radius, repeat: repeated.get(&k).copied() })
+            Some(Hole { face: k, mouth, bottom, radius, repeat: repeated.get(&k).copied(), form: None })
         })
+        .collect()
+}
+
+/// The holes a Hole feature makes, as holes: where the bores of several repeat (a row or a ring
+/// of counterbores alike), only the first, with the repeat.
+fn formed_holes(formed: Vec<crate::hole_form::Formed>, repeats: &[Repeat]) -> Vec<Hole> {
+    let bores: BTreeMap<usize, usize> = formed.iter().enumerate().map(|(i, f)| (f.bore, i)).collect();
+    let mut repeated: BTreeMap<usize, (usize, Layout)> = BTreeMap::new();
+    let mut rest = BTreeSet::new();
+    for repeat in repeats.iter().filter(|r| r.kind == Kind::Cylinder && !matches!(r.layout, Layout::Grid { .. })) {
+        let Some(first) = repeat.members.first().and_then(|k| bores.get(k)) else { continue };
+        let alike = |k: &usize| {
+            bores.get(k).is_some_and(|&i| {
+                let (a, b) = (&formed[*first], &formed[i]);
+                (a.counterbore, a.countersink, a.depth, a.tip, a.thread, a.radius)
+                    == (b.counterbore, b.countersink, b.depth, b.tip, b.thread, b.radius)
+            })
+        };
+        if repeat.members.iter().all(alike) && !repeat.members.iter().any(|k| rest.contains(k) || repeated.contains_key(k)) {
+            repeated.insert(repeat.members[0], (repeat.members.len(), repeat.layout));
+            rest.extend(repeat.members[1..].iter().copied());
+        }
+    }
+    formed
+        .into_iter()
+        .filter(|f| !rest.contains(&f.bore))
+        .map(|f| Hole { face: f.bore, mouth: f.mouth, bottom: f.bottom, radius: f.radius, repeat: repeated.get(&f.bore).copied(), form: Some(f) })
         .collect()
 }
 
@@ -1231,6 +1334,16 @@ pub struct Reading {
     pub shell: Option<Shell>,
     /// The part's size, the diagonal of its box.
     pub size: f64,
+    /// Prisms alike (a rib, a boss, a tab: the same depth along the same direction, as many walls
+    /// of about the same area) evenly along a line or round a circle: each repeat's `members` are
+    /// indices into `prisms`, the first the one to extrude, the rest made by patterning it.
+    pub prism_repeats: Vec<Repeat>,
+    /// A coil spring the tori make, for Coil It.
+    pub coil: Option<crate::coil::Coil>,
+    /// A bar bent along a flat path (cylinders and the tori of its bends), for Pipe It.
+    pub pipe: Option<crate::pipe::Pipe>,
+    /// With no prism, turned part, pipe or coil read: the part as sections lofted, for Loft It.
+    pub loft: Option<crate::loft::Loft>,
 }
 
 /// The sign that turns the scan's winding out of its material: the sign of the volume its
@@ -1517,7 +1630,12 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     // A hole's floor is the hole's: a flat face on its axis, square to it, about as big as its end.
     let floors: BTreeSet<usize> = (0..faces.len()).filter(|&j| (0..faces.len()).any(|k| hole(k) && is_floor_of(&faces[k], &faces[j]))).collect();
     let revolve = revolve(&faces, size);
-    let ignored: BTreeSet<usize> = floors.union(&pieces).copied().collect();
+    // Holes as a Hole feature makes them (a counterbore, a countersink, a blind hole's point, a
+    // tap drill): Hole It drills each whole, so none of their faces is a prism's wall or end, whose
+    // levels would cut the prism into slabs at a counterbore's step or a blind hole's end.
+    let formed = crate::hole_form::read(&faces, &hole, &span_of, crate::surface_centre(scan).unwrap_or(Vec3::ZERO), outcome.tolerance, size, &pieces);
+    let in_formed: BTreeSet<usize> = formed.iter().flat_map(|f| f.faces.iter().copied()).collect();
+    let ignored: BTreeSet<usize> = floors.union(&pieces).chain(&in_formed).copied().collect();
     // The rounds along edges, read before the prisms, which they do not choose.
     let rounds: BTreeSet<usize> = (0..shaped.len()).filter(|&k| !piece(k) && is_edge_round(scan, &whole(k), size)).collect();
     // The chamfers along edges, read with the rounds: walls that explain nothing, so a block with
@@ -1601,6 +1719,7 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         if explains(&drafted.0) > explains(&square.0) { drafted } else { square }
     });
     let unread_prisms = read_prisms - prisms.len();
+    let prisms = shared(prisms, &faces, outcome.tolerance);
     let inner: BTreeSet<usize> = shell.iter().flat_map(|w| w.inner.iter().copied()).collect();
     let repeats = repeats(&faces);
     let turned_unread = revolve.as_ref().and_then(|r| crate::profile::turned_profile_of(scan, outcome, &faces, &same, size, r).err());
@@ -1608,7 +1727,9 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         Some(revolve) => revolve.members.iter().copied().collect(),
         None => prisms.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).chain(&inner).copied().collect(),
     };
-    let holes = holes(&faces, &hole, &explained, &repeats, &span_of, centre);
+    let plain_explained: BTreeSet<usize> = explained.union(&in_formed).copied().collect();
+    let mut holes = holes(&faces, &hole, &plain_explained, &repeats, &span_of, centre);
+    holes.extend(formed_holes(formed, &repeats));
     let plans = pattern_plans(&faces, &repeats, &rounds);
     // The rounds no profile holds: not a wall of a prism, nor a face of a turned part that is read.
     let profiled: BTreeSet<usize> = prisms
@@ -1626,6 +1747,37 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         })
         .collect();
     let chamfers: Vec<EdgeChamfer> = chamfered.into_iter().filter(|c| !profiled.contains(&c.face)).collect();
+    let corners_of = |k: usize| -> Vec<Vec3> { whole(k).triangles.iter().filter_map(|&t| scan.corners(t)).flatten().collect() };
+    let coil = crate::coil::read(&faces, &corners_of, outcome.tolerance);
+    let pipe = if coil.is_some() {
+        None
+    } else {
+        crate::pipe::read(
+            &faces,
+            &|k| !piece(k) && is_round_hole(scan, &whole(k), sign),
+            &span_of,
+            &|k, centre, axis, u| crate::pipe::angular_extent(corners_of(k).into_iter(), centre, axis, u),
+            outcome.tolerance,
+        )
+    };
+    // A pipe's straight runs read as prisms too: Pipe It builds them.
+    let mut prisms = prisms;
+    if let Some(pipe) = &pipe {
+        prisms.retain(|p| !p.walls.iter().all(|w| pipe.faces.contains(w)));
+    }
+    let prism_repeats = prism_repeats(&faces, &prisms);
+    let loft = (prisms.is_empty() && revolve.is_none() && coil.is_none() && pipe.is_none())
+        .then(|| crate::loft::read(scan, &faces, LOFT_SECTIONS).ok())
+        .flatten();
+    // A coil's or a loft's pieces, and a pipe's bends, are no rounds along an edge.
+    let (mut fillets, mut chamfers) = (fillets, chamfers);
+    if coil.is_some() || loft.is_some() {
+        fillets.clear();
+        chamfers.clear();
+    }
+    if let Some(pipe) = &pipe {
+        fillets.retain(|f| !pipe.faces.contains(&f.face));
+    }
     Reading {
         faces,
         same,
@@ -1642,8 +1794,52 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         chamfers,
         shell,
         size,
+        prism_repeats,
+        coil,
+        pipe,
+        loft,
     }
 }
+
+/// How unequal alike prisms' depths may be, as a share of the deeper.
+const SAME_DEPTH: f64 = 0.02;
+
+/// The prisms alike (see [`Reading::prism_repeats`]) laid out evenly, at least [`LEAST_REPEATS`]
+/// of them; never the first prism, the main body the rest stand on.
+pub fn prism_repeats(faces: &[Face], prisms: &[Prism]) -> Vec<Repeat> {
+    let walls_area = |p: &Prism| p.walls.iter().map(|&w| faces.get(w).map_or(0.0, |f| f.area)).sum::<f64>();
+    let alike = |a: &Prism, b: &Prism| {
+        a.direction.dot(b.direction).abs() >= SAME_DIRECTION
+            && (a.depth() - b.depth()).abs() <= SAME_DEPTH * a.depth().max(b.depth())
+            && a.walls.len() == b.walls.len()
+            && a.draft == b.draft
+            && (walls_area(a) - walls_area(b)).abs() <= SAME_AREA * walls_area(a).max(walls_area(b))
+    };
+    let mut grouped = vec![false; prisms.len()];
+    let mut found = Vec::new();
+    for first in 1..prisms.len() {
+        if grouped[first] {
+            continue;
+        }
+        let members: Vec<usize> = (first..prisms.len()).filter(|&k| !grouped[k] && alike(&prisms[first], &prisms[k])).collect();
+        if members.len() < LEAST_REPEATS {
+            continue;
+        }
+        let places: Vec<Vec3> = members.iter().map(|&k| prisms[k].middle()).collect();
+        let laid_out =
+            in_a_line(&members, &places, Kind::Plane).or_else(|| round_a_circle(&members, &places, Kind::Plane, Some(prisms[first].direction)));
+        if let Some(repeat) = laid_out {
+            for &k in &repeat.members {
+                grouped[k] = true;
+            }
+            found.push(repeat);
+        }
+    }
+    found
+}
+
+/// How many sections Reconstruct reads a lofted part with.
+pub const LOFT_SECTIONS: usize = 5;
 
 #[cfg(test)]
 mod tests {
@@ -1690,6 +1886,35 @@ mod tests {
             rect(Vec3::Y, Vec3::new(-x, y, -z), Vec3::new(x, y, z)),
             rect(-Vec3::Y, Vec3::new(-x, -y, -z), Vec3::new(x, -y, z)),
         ]
+    }
+
+    #[test]
+    fn prisms_alike_in_a_row_are_one_repeat_but_never_the_main_body() {
+        // The main body, then four tabs 3 deep along Z, 12 apart along X, and one tab unlike them.
+        let wall = |x: f64| plane_at(Vec3::new(x, 0.0, 0.0), Vec3::X, 30.0);
+        let mut faces = vec![plane_at(Vec3::ZERO, Vec3::Z, 1000.0)];
+        let mut prisms =
+            vec![Prism { direction: Vec3::Z, origin: Vec3::ZERO, low: -5.0, high: 0.0, ends: [0, 0], walls: vec![0], open: false, draft: 0.0 }];
+        for (k, x) in [0.0, 12.0, 24.0, 36.0, 60.0].into_iter().enumerate() {
+            faces.push(wall(x));
+            faces.push(wall(x + 2.0));
+            let depth = if k == 4 { 6.0 } else { 3.0 };
+            prisms.push(Prism {
+                direction: Vec3::Z,
+                origin: Vec3::new(x + 1.0, 0.0, 0.0),
+                low: 0.0,
+                high: depth,
+                ends: [0, 0],
+                walls: vec![faces.len() - 2, faces.len() - 1],
+                open: false,
+                draft: 0.0,
+            });
+        }
+        let found = prism_repeats(&faces, &prisms);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].members, vec![1, 2, 3, 4]);
+        let Layout::Linear { step } = found[0].layout else { panic!("{found:?}") };
+        assert!((step.len() - 12.0).abs() < 1e-9, "{step:?}");
     }
 
     #[test]

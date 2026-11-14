@@ -20,6 +20,9 @@ use crate::ui_kit;
 pub struct Reconstruct {
     pub ticked: Vec<bool>,
     pub selected: bool,
+    /// After the steps, Reconstruct the Rest: what the body leaves of the scan unexplained, read
+    /// and built piece by piece. Off unless ticked.
+    pub rest: bool,
 }
 
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
@@ -90,9 +93,41 @@ fn label(app: &SolveApp, reading: &Reading, step: &Proposal) -> String {
                 &[("number", &(k + 1).to_string()), ("diameter", &mm(diameter)), ("depth", &mm(depth))],
             )
         }
+        Proposal::Hole(k) => {
+            let hole = reading.holes.get(k);
+            let form = hole.and_then(|h| h.form.as_ref());
+            let kind = match form {
+                Some(f) if f.counterbore.is_some() => "ui.scan_reconstruct_hole_counterbore",
+                Some(f) if f.countersink.is_some() => "ui.scan_reconstruct_hole_countersink",
+                Some(f) if f.thread.is_some() => "ui.scan_reconstruct_hole_tapped",
+                _ => "ui.scan_reconstruct_hole_drilled",
+            };
+            let diameter = hole.map_or(0.0, |h| 2.0 * h.radius);
+            solidcraft_ui_text::format(
+                "ui.scan_reconstruct_hole",
+                &[("number", &(k + 1).to_string()), ("kind", tr(kind)), ("diameter", &mm(diameter))],
+            )
+        }
+        Proposal::PatternPrism(k) => {
+            let count = reading.prism_repeats.iter().find(|r| r.members.first() == Some(&k)).map_or(0, |r| r.members.len());
+            solidcraft_ui_text::format("ui.scan_reconstruct_pattern_prism", &[("number", &(k + 1).to_string()), ("count", &count.to_string())])
+        }
         Proposal::Pattern(k) => {
             let count = reading.holes.get(k).and_then(|h| h.repeat).map_or(0, |r| r.0);
             solidcraft_ui_text::format("ui.scan_reconstruct_pattern", &[("number", &(k + 1).to_string()), ("count", &count.to_string())])
+        }
+        Proposal::Coil => {
+            let (pitch, turns) = reading.coil.as_ref().map_or((0.0, 0.0), |c| (c.pitch, c.turns));
+            solidcraft_ui_text::format("ui.scan_reconstruct_coil", &[("pitch", &mm(pitch)), ("turns", &format!("{turns}"))])
+        }
+        Proposal::Pipe => {
+            let diameter = reading.pipe.as_ref().map_or(0.0, |p| 2.0 * p.radius);
+            let bends = reconstruct::pipe_bends(reading);
+            solidcraft_ui_text::format("ui.scan_reconstruct_pipe", &[("diameter", &mm(diameter)), ("bends", &bends.to_string())])
+        }
+        Proposal::Loft => {
+            let sections = reading.loft.as_ref().map_or(0, |l| l.sections.len());
+            solidcraft_ui_text::format("ui.scan_reconstruct_loft", &[("sections", &sections.to_string())])
         }
         Proposal::Fillet => solidcraft_ui_text::format("ui.scan_reconstruct_fillet", &[("edges", &reading.fillets.len().to_string())]),
         Proposal::Chamfer => solidcraft_ui_text::format("ui.scan_reconstruct_chamfer", &[("edges", &reading.chamfers.len().to_string())]),
@@ -124,6 +159,9 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reconstruct) -> bool {
     for (step, ticked) in steps.iter().zip(k.ticked.iter_mut()) {
         ui_kit::checkbox(ui, &label(app, &reading, step), ticked);
     }
+    if !k.selected && (!steps.is_empty() || reconstruct::is_built(&app.session, &found.scan)) {
+        ui_kit::checkbox(ui, tr("ui.scan_reconstruct_rest"), &mut k.rest);
+    }
     ui_kit::text(ui, tr("ui.scan_reconstruct_hint"), ui_kit::Text::Hint("scan_reconstruct_hint"));
     false
 }
@@ -138,6 +176,10 @@ pub fn commands(app: &SolveApp, k: &Reconstruct) -> Result<Vec<(String, Value)>,
         .filter(|(_, ticked)| *ticked)
         .map(|(step, _)| (step.command().to_string(), step.params(&found.scan, k.selected)))
         .collect();
+    let mut chosen = chosen;
+    if k.rest && !k.selected {
+        chosen.push(("scan.reconstruct_rest".to_string(), serde_json::json!({"body": found.scan})));
+    }
     if chosen.is_empty() {
         return Err(tr("ui.scan_reconstruct_none_ticked").into());
     }
@@ -193,7 +235,7 @@ mod tests {
         let found = found(&h.app).expect("read");
         let steps = reconstruct::proposals(&found.reading, reconstruct::is_built(&h.app.session, &found.scan));
         assert!(matches!(steps.first(), Some(Proposal::Extrude(0))), "{steps:?}");
-        let commands = commands(&h.app, &Reconstruct { ticked: vec![true; steps.len()], selected: false }).unwrap();
+        let commands = commands(&h.app, &Reconstruct { ticked: vec![true; steps.len()], selected: false, rest: false }).unwrap();
         assert_eq!(commands[0].0, "scan.extrude_it");
         for (id, p) in commands {
             h.app.run(&id, p).unwrap();
@@ -222,7 +264,7 @@ mod tests {
         let region = found.selected_region(&h.app.session).expect("the selection is read");
         let steps = reconstruct::proposals(&region.region.reading, reconstruct::is_built(&h.app.session, &found.scan));
         assert!(matches!(steps.first(), Some(Proposal::Extrude(0))), "{steps:?}");
-        let commands = commands(&h.app, &Reconstruct { ticked: vec![true; steps.len()], selected: true }).unwrap();
+        let commands = commands(&h.app, &Reconstruct { ticked: vec![true; steps.len()], selected: true, rest: false }).unwrap();
         assert!(commands.iter().all(|(_, p)| p["selected"] == true), "{commands:?}");
         for (id, p) in commands {
             h.app.run(&id, p).unwrap();

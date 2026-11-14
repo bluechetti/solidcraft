@@ -166,6 +166,41 @@ pub struct ScanHole {
     pub repeat: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<String>,
+    /// How Hole It drills it, when it is more than a round hole Cut It cuts: counterbore,
+    /// countersink, drilled (blind, with its drill point or a flat bottom) or tapped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<ScanHoleForm>,
+}
+
+/// A hole as one Hole feature makes it, its sizes read as designed (a diameter within a share of
+/// the scan's tolerance of a round size is that size).
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanHoleForm {
+    /// counterbore, countersink, drilled or tapped.
+    pub kind: String,
+    /// The bore's diameter, in mm.
+    pub diameter: f64,
+    /// Through the part, or blind to `depth` (mm, from the mouth to where the bore's wall ends).
+    pub through: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth: Option<f64>,
+    /// A blind hole's drill point, its full angle in degrees (180: a flat bottom).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tip_angle: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cb_diameter: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cb_depth: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cs_diameter: Option<f64>,
+    /// The countersink's full angle, in degrees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cs_angle: Option<f64>,
+    /// The thread whose tap drill the bore is (ISO metric coarse).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
+    /// The shapes it is made of, by Find All's numbers.
+    pub faces: Vec<usize>,
 }
 
 /// Shapes alike and evenly spaced.
@@ -222,6 +257,19 @@ pub struct ScanReconstructResult {
     /// Walls of one thickness open at an end, which Shell It hollows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell: Option<ScanShell>,
+    /// Prisms alike laid out evenly (a row of ribs, a ring of bosses): each the prisms' numbers,
+    /// the first extruded and patterned by Pattern It with `prism`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prism_repeats: Vec<ScanRepeat>,
+    /// A coil spring, which Coil It winds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coil: Option<ScanCoil>,
+    /// A bar bent along a flat path, which Pipe It sweeps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipe: Option<ScanPipe>,
+    /// With nothing else read: the part as sections lofted, which Loft It lofts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loft: Option<ScanLoft>,
     /// Said where the scan is mostly no shape, or nothing can be built.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -290,6 +338,132 @@ pub struct ScanCutItParams {
     pub into: Option<String>,
 }
 
+/// A coil spring as Reconstruct reads it.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanCoil {
+    /// On the axis where the wire's centre starts, and the direction it climbs.
+    pub base: [f64; 3],
+    pub axis: [f64; 3],
+    /// The coil's diameter (to the wire's centre) and the wire's, in mm.
+    pub diameter: f64,
+    pub wire: f64,
+    /// The climb per turn (mm) and the turns.
+    pub pitch: f64,
+    pub turns: f64,
+    /// A left-hand coil.
+    pub clockwise: bool,
+    /// The shapes it is read from, by Find All's numbers.
+    pub faces: Vec<usize>,
+}
+
+/// A bar bent along a flat path, as Reconstruct reads it.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanPipe {
+    /// The bar's diameter, in mm.
+    pub diameter: f64,
+    /// How many lines and arcs the path is.
+    pub lines: usize,
+    pub arcs: usize,
+    /// How long the path is, in mm.
+    pub length: f64,
+    /// The shapes it is read from, by Find All's numbers.
+    pub faces: Vec<usize>,
+}
+
+/// A part read as sections lofted.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanLoft {
+    /// The direction it runs, and whether its ends are faces the scan has (flat ends).
+    pub direction: [f64; 3],
+    pub capped: bool,
+    /// How many sections, and how long it is end to end, in mm.
+    pub sections: usize,
+    pub length: f64,
+}
+
+/// Loft It, Pipe It or Coil It: the part as sections lofted, as a bar swept along its path, or as
+/// a coil, built as Reconstruct reads it. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanShapeItParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Build from the reading of the part of the scan selected, as `scan.reconstruct` with
+    /// `selected` gave it. Default: false, the whole scan's.
+    #[serde(default)]
+    pub selected: Option<bool>,
+    /// The body to join. Default: the body Reconstruct builds, made new when there is none.
+    #[serde(default)]
+    pub into: Option<String>,
+}
+
+/// Reconstruct the Rest: what the body Reconstruct built leaves of the scan unexplained, read and
+/// built piece by piece, each step that leaves the body further from the scan taken back. One undo
+/// step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanRestParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// How many pieces to read and build at most, 1 to 20. Default: 6.
+    #[serde(default)]
+    pub rounds: Option<u64>,
+}
+
+/// One piece Reconstruct the Rest read: which piece (0 the largest left), its area in mm², the
+/// steps proposed for it and those kept.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanRestRound {
+    pub piece: usize,
+    pub area: f64,
+    pub proposed: Vec<String>,
+    pub kept: Vec<String>,
+    /// Why nothing was proposed for it, when Reconstruct could not read it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// What Reconstruct the Rest did.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanRestResult {
+    /// The scan and the body built on it.
+    pub body: String,
+    pub solid: String,
+    pub rounds: Vec<ScanRestRound>,
+    /// How many steps were kept in all, and why it stopped.
+    pub kept: usize,
+    pub stop: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// Hole It: a hole Reconstruct reads as a Hole feature makes it (a counterbore, a countersink, a
+/// blind hole's drill point or flat bottom, a tap drill), drilled into the body it builds with
+/// Hole at its mouth, along its axis, with the sizes read as designed. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanHoleItParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Build from the reading of the part of the scan selected, as `scan.reconstruct` with
+    /// `selected` gave it (its numbers are that reading's). Default: false, the whole scan's.
+    #[serde(default)]
+    pub selected: Option<bool>,
+    /// Which of `scan.reconstruct`'s holes, from 0. Default: the first with a `form`.
+    #[serde(default)]
+    pub hole: Option<usize>,
+    /// Drill a bore the size of a tap drill as a tapped hole (its thread listed on the feature).
+    /// Default: true; false drills it plain at its diameter.
+    #[serde(default)]
+    pub thread: Option<bool>,
+    /// The body to drill. Default: the body Reconstruct builds.
+    #[serde(default)]
+    pub into: Option<String>,
+}
+
 /// Pattern It: the first of a row or ring of holes, once cut, repeated by a pattern of its cut
 /// with the repeat's count and spacing. One undo step.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -305,6 +479,10 @@ pub struct ScanPatternItParams {
     /// Which of `scan.reconstruct`'s holes, from 0: one that repeats. Default: the first that does.
     #[serde(default)]
     pub hole: Option<usize>,
+    /// Or which of `scan.reconstruct`'s prisms, from 0: the first of a row or ring of prisms
+    /// alike (its `prism_repeats`), whose extrusion is repeated.
+    #[serde(default)]
+    pub prism: Option<usize>,
     /// The cut to repeat. Default: the one Cut It made for that hole.
     #[serde(default)]
     pub feature: Option<String>,

@@ -548,6 +548,20 @@ fn grow_kind(reading: &mut Reading, seed: usize, patch: &[usize], kind: Kind, to
     Some((shape, region))
 }
 
+/// A scan whose typical triangle edge is longer than this share of its size is coarse: a fused
+/// depth-camera scan, smooth at the scale of its triangles (its noise reads small) but off its
+/// surfaces by a good part of an edge, so shapes fitted within its noise break each face into
+/// pieces.
+const COARSE_EDGE_SHARE: f64 = 0.01;
+/// How close a shape must lie to a coarse scan, as a share of its typical edge.
+const COARSE_TOLERANCE_SHARE: f64 = 0.4;
+
+/// The least tolerance a scan `size` across with triangles `edge` long needs for being coarse
+/// (see [`COARSE_EDGE_SHARE`]): 0 for a fine scan.
+fn coarse_tolerance(edge: f64, size: f64) -> f64 {
+    if edge > COARSE_EDGE_SHARE * size { COARSE_TOLERANCE_SHARE * edge } else { 0.0 }
+}
+
 /// How close a shape must lie to a scan `size` across with `noise`.
 fn tolerance_of(options: &Options, noise: f64, size: f64) -> f64 {
     (options.noise_multiple * noise).max(options.form_share * size).max(options.least_tolerance).max(1e-9)
@@ -695,9 +709,9 @@ fn read(scan: &Scan, options: &Options, cancelled: &dyn Fn() -> bool) -> Outcome
     let size = scan.extent();
     let total: f64 = reading.areas.iter().sum();
     let noise = noise(&mut reading, options, size);
-    let tolerance = tolerance_of(options, noise, size);
-    let least_area = options.minimum_area_share * total;
     let edge = crate::remesh::typical_edge(scan);
+    let tolerance = tolerance_of(options, noise, size).max(coarse_tolerance(edge, size));
+    let least_area = options.minimum_area_share * total;
     let noisy = edge > 0.0 && noise > SMOOTH_ABOVE * edge;
     // A noisy scan whose first seeds find next to nothing is read on the copy without trying the rest.
     let give_up = noisy.then_some(GIVE_UP_AFTER);
@@ -1148,6 +1162,13 @@ fn leftovers(reading: &mut Reading, segments: &mut Vec<Segment>, least_triangles
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_coarse_fused_scan_is_read_within_part_of_its_edge() {
+        // A depth-camera scan of a part 80 across with 1.3 mm triangles; a fine one with 0.3 mm.
+        assert!((coarse_tolerance(1.3, 80.0) - 0.52).abs() < 1e-12);
+        assert_eq!(coarse_tolerance(0.3, 80.0), 0.0);
+    }
     use crate::test_meshes::{fine_cuboid, revolved, steps, turned};
 
     fn kinds(outcome: &Outcome) -> Vec<(Kind, f64)> {
