@@ -94,6 +94,23 @@ fn a_scan_stands_on_the_face_picked_on_it() {
     assert!(lo.z.abs() < STL && (hi.z - 80.0).abs() < STL, "standing on its end: {lo:?} {hi:?}");
 }
 
+/// Three points on the slab's corners at one end and the far corner of the other: the slab
+/// stands on the plane through them, its 50 × 10 end face and beyond (the plane cuts across). Two
+/// points are not enough; three in a line are refused.
+#[test]
+fn a_scan_stands_on_the_plane_through_points_picked_on_it() {
+    let (mut s, body) = session_with_a_scan("points");
+    run(&mut s, "scan.quick_align", json!({}));
+    // The end at X = 40: three of its corners.
+    let reply = run(&mut s, "scan.stand_on_base", json!({"points": [[40.0, -25.0, -5.0], [40.0, 25.0, -5.0], [40.0, 25.0, 5.0]]}));
+    assert_eq!(reply["moved"], true, "{reply}");
+    let (lo, hi) = bounds(&s, &body);
+    assert!(lo.z.abs() < 1e-3 && (hi.z - 80.0).abs() < 1e-3, "standing on its end, the part above: {lo:?} {hi:?}");
+    assert!(s.execute("scan.stand_on_base", &json!({"points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]})).is_err(), "two points");
+    let line = s.execute("scan.stand_on_base", &json!({"points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]}));
+    assert!(line.is_err(), "three in a line");
+}
+
 /// Quick align lays the slab along X, Y and Z about the origin; rest and centre then move only
 /// what they say.
 #[test]

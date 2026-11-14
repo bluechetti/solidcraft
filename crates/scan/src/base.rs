@@ -497,6 +497,47 @@ pub fn grow(scan: &Scan, seed: usize) -> Result<Base, GrowError> {
     grow_face(scan, seed).map(|(base, _)| base)
 }
 
+/// The ground through the points `at` picked on the scan (three or more: feet, rails, the rim
+/// of a bowl): the plane fitted to them, the part on its inner side. Its anchor is the points'
+/// middle; its area the area they span. `None` for fewer than three points, or points in a line.
+pub fn through(scan: &Scan, at: &[Vec3]) -> Option<Base> {
+    if at.len() < 3 || at.iter().any(|p| ![p.x, p.y, p.z].iter().all(|x| x.is_finite())) {
+        return None;
+    }
+    let middle = at.iter().fold(Vec3::ZERO, |m, p| m + *p) / at.len() as f64;
+    let mut spread = [[0.0; 3]; 3];
+    for p in at {
+        let d = *p - middle;
+        let d = [d.x, d.y, d.z];
+        for (i, row) in spread.iter_mut().enumerate() {
+            for (j, cell) in row.iter_mut().enumerate() {
+                *cell += d[i] * d[j];
+            }
+        }
+    }
+    let (moments, axes) = solidcraft_geom::inertia::principal(&spread, 0.0)?;
+    // Points in a line spread one way only: no plane through them.
+    if moments[1] <= 1e-9 * moments[2].max(1e-30) {
+        return None;
+    }
+    let mut normal = axes[0].normalized()?;
+    // Outward from the part: the scan lies on the other side.
+    let n = scan.positions.len().max(1);
+    let step = (n / 20_000).max(1);
+    let lean: f64 =
+        scan.positions.iter().step_by(step).filter(|p| [p.x, p.y, p.z].iter().all(|x| x.is_finite())).map(|p| (*p - middle).dot(normal)).sum();
+    if lean > 0.0 {
+        normal = -normal;
+    }
+    let u = normal.any_perp().normalized()?;
+    let v = normal.cross(u);
+    let flat: Vec<Vec2> = at.iter().map(|p| Vec2::new((*p - middle).dot(u), (*p - middle).dot(v))).collect();
+    let hull: Vec<Vec2> = hull2(&flat).into_iter().filter_map(|i| flat.get(i).copied()).collect();
+    let area = 0.5 * (0..hull.len()).map(|i| hull[i].cross(hull[(i + 1) % hull.len()])).sum::<f64>().abs();
+    let rms = (at.iter().map(|p| (*p - middle).dot(normal).powi(2)).sum::<f64>() / at.len() as f64).sqrt();
+    Some(Base { kind: BaseKind::Resting, normal, anchor: middle, area, share: 0.0, tip: 0.0, rms })
+}
+
 /// [`grow`], with the face's triangles (the seed first), to show which face it is.
 pub fn grow_face(scan: &Scan, seed: usize) -> Result<(Base, Vec<usize>), GrowError> {
     let seed_corners = scan.corners(seed).ok_or(GrowError::NotOnTheScan)?;

@@ -44,6 +44,10 @@ pub struct ScanStandParams {
     /// A point on a curved wall is refused. Default: the point picked on the scan, if any.
     #[serde(default)]
     pub point: Option<Point3>,
+    /// Three or more points on the scan, in mm (feet, rails, a rim): the scan stands on the plane
+    /// fitted through them, the part above it. Used instead of `point` and `base`.
+    #[serde(default)]
+    pub points: Option<Vec<Point3>>,
 }
 
 /// A line drawn along a scan's rough mirror plane, to search near it.
