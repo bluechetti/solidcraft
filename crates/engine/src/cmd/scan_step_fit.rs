@@ -33,11 +33,21 @@ pub(super) fn with_fit(s: &mut Session, p: &Value, cmd: &str, step: fn(&mut Sess
     let Some(scan) = scan else { return Ok(reply) };
     let solid = reply.get("solid").and_then(Value::as_str).map(str::to_owned).or(target);
     let Some(solid) = solid else { return Ok(reply) };
-    let Some(after) = sample(s, &scan, &solid) else { return Ok(reply) };
-    let verdict = verdict(before.as_ref(), &after);
+    let gone = before.is_some() && s.model.state().body(&solid).is_none();
+    let after = match sample(s, &scan, &solid) {
+        Some(after) => after,
+        // A cut that took the whole body away explains none of the scan.
+        None if gone => ScanFitSample { within: 0.0, explained: 0.0, rms: 0.0, points: 0 },
+        None => return Ok(reply),
+    };
+    let verdict = if gone { "worse" } else { verdict(before.as_ref(), &after) };
     let note = (verdict == "worse").then(|| {
-        "this step left the body farther from the scan: undo it (edit.undo) unless a later step needs it, or read the part a region at a time (scan.reconstruct_selection)"
-            .to_owned()
+        if gone {
+            "this step took the whole body away: undo it (edit.undo)".to_owned()
+        } else {
+            "this step left the body farther from the scan: undo it (edit.undo) unless a later step needs it, or read the part a region at a time (scan.reconstruct_selection)"
+                .to_owned()
+        }
     });
     let fit = ScanStepFit { solid, before, after, verdict: verdict.into(), note };
     if let (Some(obj), Ok(fit)) = (reply.as_object_mut(), serde_json::to_value(fit)) {
