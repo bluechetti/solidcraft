@@ -113,3 +113,29 @@ fn a_block_flush_with_the_flat_face_of_a_hemisphere_joins_exactly() {
         assert!(lowest > -1e-6, "the join reaches down to z = {lowest}");
     }
 }
+
+/// A block (x -30 to 0, z 0 to 40) joined to a 60 x 40 x 17 plate whose end x = -30, bottom and long sides it shares, each
+/// within 4e-4 and turned up to 2e-5 rad off the plate's: the stacked prisms Reconstruct reads off a scan, each fitted on
+/// its own (the scan benchmark's block, holes plate and T-LESS parts are refused this way). The union is one solid of what
+/// the two define. Today the merge refuses it (`SmMerge::MakeFaceuse`: no radial edge use classifies the face's edge use):
+/// the block's faces outside the plate are slivers 1e-5 to 5e-4 wide, and the radial sector tests at their edges step off
+/// across them and read both sectors as outside. Listed in tests/KNOWN_FAILING_TESTS.
+#[test]
+fn a_block_flush_within_a_hair_with_a_plate_joins_into_one_solid() {
+    let plate = box_solid(Vec3::new(-30.0, -20.0, 0.0), Vec3::new(30.0, 20.0, 17.0)).unwrap();
+    let (dx0, dy0, dy1, dz0) = (-3.9886887462901903e-4, 2.240459175902066e-4, -6.95679495258017e-5, -5.212622049001841e-5);
+    let mut block = box_solid(Vec3::new(-30.0 + dx0, -20.0 + dy0, dz0), Vec3::new(0.0, 20.0 + dy1, 40.0)).unwrap();
+    for (axis, angle, x) in [
+        (Vec3::new(1.0, 0.0, 0.0), 1.2443302783135992e-5, -9.67994420799224),
+        (Vec3::new(0.0, 1.0, 0.0), 8.790103348743341e-6, 8.880802584155653),
+        (Vec3::new(0.0, 0.0, 1.0), -1.5545852194595098e-5, -3.297317136978714),
+    ] {
+        block = transform(&block, Vec3::ZERO, Vec3::new(x, 0.0, 10.0), axis, angle).unwrap();
+    }
+    let joined = boolean(&plate, &block, BoolOp::Union).unwrap().unwrap();
+    // The plate and the block above it, within the hairs the block's faces stand off the plate's.
+    let v = measure(&joined).unwrap().volume;
+    assert!((v - (60.0 * 40.0 * 17.0 + 30.0 * 40.0 * 23.0)).abs() < 0.5, "{v}");
+    assert_eq!(joined.lumps().unwrap().len(), 1);
+    assert!(joined.validity().is_empty(), "{:?}", joined.validity());
+}
