@@ -41,8 +41,52 @@ pub fn boolean(a: &Body, b: &Body, op: BoolOp) -> Result<Option<Body>> {
             });
         }
         let r = guard("SMLib boolean", || crate::smlib_boolean::smlib_boolean(a, b, op));
-        with_operand_roles(a, b, op, r)
+        let r = with_operand_roles(a, b, op, r)?;
+        volumes_possible(a, b, op, r.as_ref())?;
+        Ok(r)
     })
+}
+
+/// An error when the result's volume is one no boolean of `a` and `b` can have: a cut that
+/// removes more than its tool holds or leaves more than the body had, a union smaller than
+/// either operand or larger than both together, an intersection larger than either. Such a
+/// result passed SMLib's check with faces kept on the wrong side; a refusal is better than a
+/// wrong solid. Exact mass properties, each body's measured once (kept with the body); where a
+/// volume cannot be measured, or an operand is no positive closed solid, nothing is judged.
+pub(crate) fn volumes_possible(a: &Body, b: &Body, op: BoolOp, r: Option<&Body>) -> Result<()> {
+    // A closed solid: every edge between two faces (a sheet's volume means nothing).
+    let closed = |x: &Body| !x.is_mesh() && x.record().edges.iter().all(|e| e.uses.len() == 2);
+    if !closed(a) || !closed(b) || r.is_some_and(|x| !closed(x)) {
+        return Ok(());
+    }
+    let volume = |x: &Body| x.volume_at(0.0).filter(|v| v.is_finite() && *v > 0.0);
+    let (Some(va), Some(vb)) = (volume(a), volume(b)) else { return Ok(()) };
+    let vr = match r {
+        Some(body) => match body.volume_at(0.0).filter(|v| v.is_finite()) {
+            Some(v) => v,
+            None => return Ok(()),
+        },
+        None => 0.0,
+    };
+    // Mass properties are accurate to far better than this; the wrong results it is for are off
+    // by a large part of an operand.
+    let slack = 1e-3 * (va + vb);
+    let wrong = match op {
+        BoolOp::Cut => vr > va + slack || va - vr > vb + slack,
+        BoolOp::Union => r.is_some() && (vr < va.max(vb) - slack || vr > va + vb + slack),
+        BoolOp::Intersect => vr > va.min(vb) + slack,
+    };
+    if wrong {
+        let what = match op {
+            BoolOp::Cut => "cut",
+            BoolOp::Union => "union",
+            BoolOp::Intersect => "intersection",
+        };
+        return Err(KernelError::Failed(format!(
+            "the {what} came out with a volume no {what} of these bodies can have ({vr:.6} from {va:.6} and {vb:.6}): refused rather than kept wrong"
+        )));
+    }
+    Ok(())
 }
 
 /// The union of `bodies` (at least one) in one SMLib call, each body taking part in about

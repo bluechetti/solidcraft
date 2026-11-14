@@ -139,3 +139,29 @@ fn a_block_flush_within_a_hair_with_a_plate_joins_into_one_solid() {
     assert_eq!(joined.lumps().unwrap().len(), 1);
     assert!(joined.validity().is_empty(), "{:?}", joined.validity());
 }
+
+/// A boolean result whose volume no boolean of its operands can have (a cut removing more than
+/// its tool holds, a union smaller than an operand, an intersection larger than one) is refused,
+/// not kept: SMLib's check passes a solid whose faces were kept on the wrong side (the union of
+/// the finding on flush-within-a-hair faces, which came back without the plate). A right result,
+/// and a sheet, pass.
+#[test]
+fn a_boolean_result_of_a_volume_no_boolean_can_have_is_refused() {
+    let plate = box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 12.0)).unwrap();
+    let tool = box_solid(Vec3::new(18.0, 13.0, -1.0), Vec3::new(22.0, 17.0, 13.0)).unwrap();
+    let crumb = box_solid(Vec3::new(1.0, 1.0, 1.0), Vec3::new(2.0, 2.0, 2.0)).unwrap();
+    let cut = boolean(&plate, &tool, BoolOp::Cut).unwrap().unwrap();
+    assert!((measure(&cut).unwrap().volume - (14400.0 - 192.0)).abs() < 1e-6);
+    let possible = |op, r: Option<&Body>| crate::ops::volumes_possible(&plate, &tool, op, r);
+    possible(BoolOp::Cut, Some(&cut)).unwrap();
+    // Removing 14399 mm³ with a 224 mm³ tool; everything with it; a union or an intersection
+    // that is a crumb of the plate.
+    for (op, r) in [(BoolOp::Cut, Some(&crumb)), (BoolOp::Cut, None), (BoolOp::Union, Some(&crumb)), (BoolOp::Intersect, Some(&plate))] {
+        let e = possible(op, r).unwrap_err().to_string();
+        assert!(e.contains("no") && e.contains("refused"), "{op:?}: {e}");
+    }
+    // An intersection may be empty; a union the two together.
+    possible(BoolOp::Intersect, None).unwrap();
+    let both = boolean(&plate, &tool, BoolOp::Union).unwrap().unwrap();
+    possible(BoolOp::Union, Some(&both)).unwrap();
+}
