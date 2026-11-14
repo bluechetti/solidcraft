@@ -6,6 +6,8 @@ mod overlap;
 mod placed_mesh;
 #[path = "placement_reuse.rs"]
 mod placement_reuse;
+#[path = "eval_scan_runs.rs"]
+mod scan_runs;
 
 use solidcraft_geom::prelude::*;
 use std::collections::BTreeMap;
@@ -170,6 +172,23 @@ impl ModelBody {
             iso: Default::default(),
             cuts: Default::default(),
         }
+    }
+
+    /// This body (its name, key, names and component) with other geometry, and nothing worked
+    /// out from the old geometry (meshes, plans, measures).
+    pub(crate) fn with_geometry(&self, body: Body) -> ModelBody {
+        let mut out = ModelBody::new(self.name.clone(), body, self.feature);
+        out.source_name.clone_from(&self.source_name);
+        out.source_transform = self.source_transform;
+        out.key = self.key;
+        out.names = self.names.clone();
+        out.made = self.made.clone();
+        out.component = self.component;
+        out.transferred = self.transferred;
+        out.imported.clone_from(&self.imported);
+        out.bytes = out.body.retained_bytes();
+        out.source_key = self.source_key;
+        out
     }
 
     /// A surface body: some shell does not close ([`Body::is_surface`]), worked out once.
@@ -743,6 +762,11 @@ pub struct ModelState {
     /// picks its pieces were named by (by feature id, see [`crate::lineage::order_legacy_lumps`]):
     /// the state stands for the feature only while those picks are the same.
     legacy_picks: BTreeMap<u64, u64>,
+    /// The runs of Scan Clean steps the scans are in, by scan (`eval_scan_runs.rs`).
+    scan_runs: BTreeMap<String, Arc<scan_runs::ScanRun>>,
+    /// Scans this state holds as they were before their run of Scan Clean steps, not as the
+    /// steps left them: a later step has read the result, and only the latest is kept.
+    thinned: std::collections::BTreeSet<String>,
 }
 
 /// How a piece a join split off into a body of its own (`Touching::Separate`) touched the
@@ -3315,6 +3339,10 @@ impl Model {
                     });
                     continue;
                 }
+                // A scan a later Scan Clean step thinned is made whole before anything reads it.
+                if !state.thinned.is_empty() {
+                    state = Arc::new(scan_runs::materialized(&state));
+                }
                 // The same feature on the same inputs: its earlier result.
                 let key = EvalKey::new(doc, &vals, f, fp, ctx, &state, &self.import_digests);
                 let kept = self.kept.0.as_ref().filter(|_| !self.no_cache);
@@ -3573,7 +3601,10 @@ impl Model {
                 };
                 // A panic is no result to reuse: the kernel was replaced after it. Work its watcher
                 // stopped may have been cut short (a boolean that gave up): it is not kept either.
-                if !self.no_cache && !watched.cancelled() && !internal {
+                // A Scan Clean step's result is not cached: the cache would keep every step's copy of
+                // the scan, which the thinning below lets go (the step keeps its own last result).
+                let scan_step = matches!(f.kind, FeatureKind::ScanClean { .. });
+                if !self.no_cache && !watched.cancelled() && !internal && !scan_step {
                     let whole = CachedEval {
                         error: error.clone(),
                         warning: warning.clone(),
@@ -3611,6 +3642,10 @@ impl Model {
                     unkept: false,
                     state: state.clone(),
                 });
+                // The step before it on the same scan gives up its copy now, not at the end.
+                if matches!(f.kind, FeatureKind::ScanClean { .. }) {
+                    scan_runs::thin(&mut out, &scan_runs::steps_of(doc));
+                }
             }
             // Every check still running ends before the results stand.
             if let Some(refused) = checks.settle(true, &self.cache, &self.kept) {
@@ -3621,6 +3656,8 @@ impl Model {
         }
         self.placement_local = self.placement_local && out.iter().all(|r| !r.skipped && !r.stale && !r.unkept && r.error.is_none());
         self.poses = poses;
+        scan_runs::thin(&mut out, &scan_runs::steps_of(doc));
+        scan_runs::whole_last(&mut out);
         self.results = out;
         self.last_recomputed = recomputed;
         self.recomputed += recomputed;
@@ -10272,21 +10309,25 @@ fn eval_feature(
             step.check()?;
             let index = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let source = st.bodies.get(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
-            let with: Vec<&Body> = step
+            let (input, color, made_by) = (source.body.clone(), source.body.color(), source.feature);
+            let with: Vec<Body> = step
                 .with()
                 .iter()
-                .map(|w| st.body(w).map(|b| &b.body).ok_or_else(|| DocError::Unknown(format!("body `{w}`"))))
+                .map(|w| st.body(w).map(|b| b.body.clone()).ok_or_else(|| DocError::Unknown(format!("body `{w}`"))))
                 .collect::<Result<_>>()?;
-            match crate::scan_clean::clean(step, &source.body, &with) {
+            let with: Vec<&Body> = with.iter().collect();
+            match crate::scan_clean::clean(step, &input, &with) {
                 Ok(done) => {
+                    scan_runs::note_step(st, body, &input, &done.body, step, &with);
                     // The scan stays the one its Mesh Import brought in, as a Move of it does.
-                    let result = ModelBody::new(source.name.clone(), done.body.with_color(source.body.color()), source.feature);
+                    let result = ModelBody::new(body.0.clone(), done.body.with_color(color), made_by);
                     let target = st.bodies.get_mut(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
                     *target = result;
                     Ok(())
                 }
                 // Nothing to do on the scan as the steps before left it: it stays as it is.
                 Err(crate::scan_clean::Refused::Nothing(why)) => {
+                    scan_runs::note_step(st, body, &input, &input, step, &with);
                     *warning = Some(why);
                     Ok(())
                 }

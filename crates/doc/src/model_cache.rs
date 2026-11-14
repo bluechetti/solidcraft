@@ -384,8 +384,12 @@ impl Model {
             let mut w = Writer::default();
             let mut features = Vec::with_capacity(self.results.len());
             for r in &self.results {
-                let state = w.state(&r.state).ok_or_else(|| kernel::KernelError::Invalid("not kept".into()))?;
-                let mut f = json!({"id": r.id, "fingerprint": hex(r.fingerprint), "ms": r.ms, "skipped": r.skipped, "state": state});
+                let mut f = json!({"id": r.id, "fingerprint": hex(r.fingerprint), "ms": r.ms, "skipped": r.skipped});
+                // A state thinned by a later Scan Clean step does not hold its scan as the step
+                // left it: it is left out, and opening the design makes it again.
+                if r.state.thinned.is_empty() {
+                    f["state"] = json!(w.state(&r.state).ok_or_else(|| kernel::KernelError::Invalid("not kept".into()))?);
+                }
                 if let Some(w) = &r.warning {
                     f["warning"] = json!(w);
                 }
@@ -610,6 +614,9 @@ impl SavedModel {
                 // legacy split's picks (`lineage::legacy_picks_digest`) finds no pieces in them
                 // and takes them as the design's evaluation they were saved as.
                 legacy_picks: BTreeMap::new(),
+                // Not kept: a step after a saved state starts a run of its own from it.
+                scan_runs: BTreeMap::new(),
+                thinned: Default::default(),
             })
         });
         let states = built.into_iter().map(|r| r.unwrap_or_else(|| Err(bad("saved model: state"))).map(Arc::new)).collect::<Result<Vec<_>>>()?;
@@ -732,7 +739,9 @@ impl SavedModel {
         let mut ms = vec![0.0f64; states.len()];
         let mut last = None;
         for f in features.iter().filter(|f| f.get("skipped").and_then(Json::as_bool) == Some(false)) {
-            let s = at(f.get("state"), states.len())?;
+            // A state the model left out (a Scan Clean step's, thinned) is not kept.
+            let Some(state) = f.get("state") else { continue };
+            let s = at(Some(state), states.len())?;
             if let Some(t) = ms.get_mut(s) {
                 *t += f.get("ms").and_then(Json::as_f64).filter(|t| t.is_finite() && *t > 0.0).unwrap_or(0.0);
             }
@@ -836,7 +845,10 @@ impl SavedModel {
         }
         let mut out_features = Vec::with_capacity(features.len());
         for f in features {
-            let state = new(&new_state, at(f.get("state"), states.len())?);
+            let state = match f.get("state") {
+                Some(v) => new(&new_state, at(Some(v), states.len())?),
+                None => None,
+            };
             let mut f = f.clone();
             let o = f.as_object_mut()?;
             match state {

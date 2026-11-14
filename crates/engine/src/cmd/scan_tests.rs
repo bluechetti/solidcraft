@@ -880,6 +880,70 @@ fn a_clean_step_keeps_settings_and_makes_the_scan_again() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The distinct meshes of the scan `body` that the states after the timeline's features hold.
+fn scan_copies(s: &Session, body: &str) -> usize {
+    let mut seen: Vec<*const solidcraft_geom::Mesh> = Vec::new();
+    for r in &s.model.results {
+        if let Some(m) = r.state.body(body).and_then(|b| b.body.kept_mesh()) {
+            let at = std::sync::Arc::as_ptr(&m);
+            if !seen.contains(&at) {
+                seen.push(at);
+            }
+        }
+    }
+    seen.len()
+}
+
+/// A run of three Scan Clean steps holds one working scan: the states after the import and the
+/// steps hold two meshes of it in all (the scan as it came in and the latest result), however many
+/// steps. Rolling back onto the first step, or editing the second, makes the scan again from the
+/// import, as the steps left it; saved and opened again, the same two.
+#[test]
+fn a_run_of_clean_steps_holds_the_scan_as_it_came_in_and_the_latest_result() {
+    use solidcraft_doc::FeatureKind;
+    let mut triangles = fine_box(Vec3::ZERO, Vec3::new(30.0, 20.0, 10.0), 12);
+    let block = triangles.len();
+    triangles.extend(fine_box(Vec3::new(50.0, 0.0, 5.0), Vec3::new(51.0, 1.0, 6.0), 1));
+    let (mut s, body) = session_with_triangles("clean-run", &triangles);
+    let count = |s: &Session| s.model.state().body(&body).and_then(|b| b.body.triangle_mesh()).map_or(0, |(_, t)| t.len());
+    run(&mut s, "scan.remove_floating", json!({}));
+    let half = run(&mut s, "scan.reduce", json!({"ratio": 0.5}))["triangles"].as_u64().unwrap() as usize;
+    let quarter = run(&mut s, "scan.reduce", json!({"ratio": 0.5}))["triangles"].as_u64().unwrap() as usize;
+    assert!(quarter < half && half < block, "{quarter} {half} {block}");
+    assert_eq!(count(&s), quarter);
+    assert_eq!(scan_copies(&s, &body), 2, "the scan as it came in and the latest result");
+
+    // Rolled back onto the first step: made again from the import, the speck taken off.
+    let steps: Vec<usize> =
+        s.doc.features.iter().enumerate().filter(|(_, f)| matches!(f.kind, FeatureKind::ScanClean { .. })).map(|(i, _)| i).collect();
+    run(&mut s, "timeline.roll_to", json!({"position": steps[0] + 1}));
+    assert_eq!(count(&s), block, "the first step's scan");
+    run(&mut s, "timeline.roll_to", json!({}));
+    assert_eq!(count(&s), quarter);
+
+    // The second step made again keeping a quarter: the third reads the scan as the second leaves it.
+    let second = s.doc.features[steps[1]].id;
+    run(&mut s, "timeline.redefine", json!({"feature": second, "command": "scan.reduce", "params": {"body": body, "ratio": 0.25}}));
+    let now = count(&s);
+    assert!(now < quarter, "{now} {quarter}");
+    assert_eq!(scan_copies(&s, &body), 2);
+
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-clean-run-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("run.solidcraft");
+    // The model is kept with the design: the thinned states are left out, the last one kept.
+    let saved = s.model.saved(&s.doc).expect("a model to keep");
+    let kept: Vec<bool> = saved.records["features"].as_array().unwrap().iter().map(|f| f.get("state").is_some()).collect();
+    assert_eq!(kept.iter().filter(|k| !**k).count(), 2, "the first two steps' states left out: {kept:?}");
+    assert_eq!(kept.last(), Some(&true));
+    run(&mut s, "file.save", json!({"path": path.to_string_lossy()}));
+    let mut opened = Session::default();
+    run(&mut opened, "doc.open", json!({"path": path.to_string_lossy()}));
+    assert_eq!(count(&opened), now, "the steps made again on open");
+    assert_eq!(scan_copies(&opened, &body), 2, "opened, the same two");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Section to Sketch on the plate and boss: cut through the boss it is one circle of the boss's
 /// radius, in a new `Section` sketch; cut through the plate, the plate's four sides as four lines;
 /// a plane above the part cuts nothing.
