@@ -79,9 +79,8 @@ fn picked(app: &SolveApp, inputs: &[SelInput]) -> Option<(String, Vec3)> {
     })
 }
 
-fn compute(s: &solidcraft_engine::Session, body: &str, point: Vec3, shape: Shape) -> Result<Painted, String> {
+fn compute(s: &solidcraft_engine::Session, body: &str, point: Vec3, shape: Shape, rgb: [u8; 3]) -> Result<Painted, String> {
     let found = fit_preview(s, Some(body), point, shape).map_err(|e| e.to_string())?;
-    let rgb = solidcraft_theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
     let mut out = Vec::with_capacity(found.region.len() * crate::scan_dots::DOT_SIZE);
     for &corners in &found.region {
         crate::scan_dots::cloud_painted(&mut out, corners, 0.0, rgb);
@@ -106,6 +105,8 @@ fn look(app: &SolveApp, k: &mut FitShape, inputs: &[SelInput]) {
         k.pending = None;
         return;
     }
+    // The colour is read here: the theme is the window thread's.
+    let rgb = solidcraft_theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
     if scan_job::beside_window(app) {
         if let Some(job) = k.pending.clone() {
             match job.poll() {
@@ -119,12 +120,12 @@ fn look(app: &SolveApp, k: &mut FitShape, inputs: &[SelInput]) {
             }
         }
         let given = body.clone();
-        if let Some(job) = scan_job::spawn(app, key.clone(), move |s| compute(s, &given, point, shape)) {
+        if let Some(job) = scan_job::spawn(app, key.clone(), move |s| compute(s, &given, point, shape, rgb)) {
             k.pending = Some(Arc::new(job));
             return;
         }
     }
-    let result = compute(&app.session, &body, point, shape);
+    let result = compute(&app.session, &body, point, shape, rgb);
     k.shown = Some(Box::new(Shown { key, result }));
 }
 

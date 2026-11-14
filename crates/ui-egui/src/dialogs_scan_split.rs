@@ -4,7 +4,9 @@
 //! crossing as 3D sketch curves. The cut is worked out before anything changes: the crossing is
 //! drawn over the picture, the side that becomes a new scan, or goes, is marked on the scan, and
 //! the dialog says how much is on each side; an envelope's slab is marked in its own colour. With
-//! nothing picked, what is selected on the scan is parted from the rest along its edge.
+//! nothing picked, what is selected on the scan is parted from the rest along its edge. On a large
+//! scan the cut is worked out beside the window, the last one staying drawn until the new one
+//! arrives, so changing a value never stops the window.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -14,7 +16,7 @@ use solidcraft_engine::Sel;
 use solidcraft_engine::cmd::scan::split::{self, Keep, Planned};
 use solidcraft_viewport_gpu::view::{CloudStyle, ColorMode, GpuCloud};
 
-use crate::scan_dots::{Dot, cloud_dot};
+use crate::scan_job;
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, check, form_row};
@@ -46,6 +48,7 @@ pub struct SplitMesh {
     /// Only the triangles facing the eye are cut.
     pub facing_only: bool,
     shown: Option<Box<Shown>>,
+    pending: Option<Arc<scan_job::Job<String, Result<Marked, String>>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -58,7 +61,9 @@ struct Shown {
 struct Marked {
     planned: Arc<Planned>,
     version: u64,
+    /// The painted triangles, for `keep`.
     dots: Arc<Vec<u8>>,
+    keep: usize,
 }
 
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
@@ -122,8 +127,10 @@ fn params(app: &SolveApp, k: &SplitMesh, inputs: &[SelInput]) -> Option<Value> {
         p["offset"] = json!(format!("{} mm", k.offset));
     }
     if k.facing_only {
+        // To about 3°: a view turned a little does not cut again.
         let back = app.cam.back();
-        p["facing"] = json!([back.x, back.y, back.z]);
+        let r = |x: f64| (x * 20.0).round() / 20.0;
+        p["facing"] = json!([r(back.x), r(back.y), r(back.z)]);
     }
     Some(p)
 }
@@ -132,56 +139,103 @@ fn params(app: &SolveApp, k: &SplitMesh, inputs: &[SelInput]) -> Option<Value> {
 fn look(app: &SolveApp, k: &mut SplitMesh, inputs: &[SelInput]) {
     let Some(p) = params(app, k, inputs) else {
         k.shown = None;
+        k.pending = None;
         return;
     };
     // The keep does not change the cut, only what is marked.
     let key = format!("{p}|{}", app.session.revision);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
+        k.pending = None;
         return;
     }
-    let result = split::plan(&app.session, &p, "scan.split").map_err(|e| e.to_string()).map(|planned| {
-        let version = VERSION.with(|v| {
-            v.set(v.get() + 1);
-            v.get()
-        });
-        let dots = marks(&planned, k.keep);
-        Marked { planned: Arc::new(planned), version, dots: Arc::new(dots) }
-    });
+    let (colours, keep) = (Colours::now(), k.keep);
+    if scan_job::beside_window(app) {
+        if let Some(job) = k.pending.clone() {
+            match job.poll() {
+                scan_job::Poll::Working if job.key == key => return,
+                scan_job::Poll::Done(result) if job.key == key => {
+                    k.pending = None;
+                    // The keep may have changed while it worked.
+                    let result = result.map(|mut m| {
+                        if m.keep != k.keep {
+                            remark(&mut m, k.keep, &Colours::now());
+                        }
+                        m
+                    });
+                    k.shown = Some(Box::new(Shown { key, result }));
+                    return;
+                }
+                _ => k.pending = None,
+            }
+        }
+        let given = p.clone();
+        if let Some(job) = scan_job::spawn(app, key.clone(), move |s| compute(s, &given, keep, &colours)) {
+            k.pending = Some(Arc::new(job));
+            return;
+        }
+    }
+    let result = compute(&app.session, &p, keep, &colours);
     k.shown = Some(Box::new(Shown { key, result }));
 }
 
-/// The dots that mark the triangles: the side a new scan takes (with both) or the side that goes
+/// The cut `p` makes, and its marks for `keep`.
+fn compute(s: &solidcraft_engine::Session, p: &Value, keep: usize, colours: &Colours) -> Result<Marked, String> {
+    let planned = split::plan(s, p, "scan.split").map_err(|e| e.to_string())?;
+    let mut m = Marked { planned: Arc::new(planned), version: 0, dots: crate::scan_dots::none(), keep };
+    remark(&mut m, keep, colours);
+    Ok(m)
+}
+
+/// The marks' colours, read on the window's thread (the theme is its own).
+#[derive(Clone, Copy, Debug)]
+struct Colours {
+    accent: [u8; 3],
+    goes: [u8; 3],
+    slab: [u8; 3],
+}
+
+impl Colours {
+    fn now() -> Colours {
+        let t = solidcraft_theme::Tokens::get();
+        let rgb = |c: [f32; 3]| c.map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
+        let accent = t.accent.to_array();
+        Colours { accent: [accent[0], accent[1], accent[2]], goes: rgb(t.analysis.draft[2]), slab: rgb(t.analysis.draft[1]) }
+    }
+}
+
+/// Paint the marks again for `keep`.
+fn remark(m: &mut Marked, keep: usize, colours: &Colours) {
+    m.keep = keep;
+    m.dots = Arc::new(marks(&m.planned, keep, colours));
+    m.version = VERSION.with(|v| {
+        v.set(v.get() + 1);
+        v.get()
+    });
+}
+
+/// The triangles painted on the scan: the side a new scan takes (with both) or the side that goes
 /// (with one side kept), and the envelope's slab.
-fn marks(planned: &Planned, keep: usize) -> Vec<u8> {
-    let t = solidcraft_theme::Tokens::get();
-    let rgb = |c: [f32; 3]| c.map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
-    let accent = t.accent.to_array();
+fn marks(planned: &Planned, keep: usize, colours: &Colours) -> Vec<u8> {
     let (marked, colour) = match keep {
-        0 => (-1, [accent[0], accent[1], accent[2]]),
-        1 => (-1, rgb(t.analysis.draft[2])),
-        2 => (1, rgb(t.analysis.draft[2])),
+        0 => (-1, colours.accent),
+        1 => (-1, colours.goes),
+        2 => (1, colours.goes),
         _ => return Vec::new(),
     };
-    let slab = rgb(t.analysis.draft[1]);
     let cut = &planned.cut;
-    let mut dots = Vec::new();
-    // At most a few million dots: a mark every so many triangles on a vast scan.
-    let step = (cut.triangles.len() / 4_000_000).max(1);
-    for (tri, &side) in cut.triangles.iter().zip(&cut.side).step_by(step) {
-        let rgb = if side == marked {
-            colour
-        } else if side == 0 {
-            slab
-        } else {
-            continue;
-        };
-        for &i in tri {
-            if let Some(p) = cut.positions.get(i as usize) {
-                cloud_dot(&mut dots, &Dot { at: [p.x as f32, p.y as f32, p.z as f32], rgb, ..Dot::default() });
-            }
+    let painted = cut.side.iter().filter(|&&side| side == marked || side == 0).count();
+    // At most the most a colouring paints: every so many triangles past that.
+    let step = painted.div_ceil(crate::scan_dots::PAINT_MOST).max(1);
+    let mut out = Vec::new();
+    let at = |i: u32| cut.positions.get(i as usize).copied();
+    let sides = cut.triangles.iter().zip(&cut.side).filter(|(_, side)| **side == marked || **side == 0);
+    for (tri, &side) in sides.step_by(step) {
+        let rgb = if side == 0 { colours.slab } else { colour };
+        if let (Some(a), Some(b), Some(c)) = (at(tri[0]), at(tri[1]), at(tri[2])) {
+            crate::scan_dots::cloud_painted(&mut out, [a, b, c], 0.0, rgb);
         }
     }
-    dots
+    out
 }
 
 /// The dialog's rows (after the cutter input).
@@ -217,11 +271,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SplitMesh, inputs: &[SelI
     if k.keep != before {
         // The marks follow the keep; the cut stays.
         if let Some(Ok(m)) = k.shown.as_mut().map(|s| &mut s.result) {
-            m.dots = Arc::new(marks(&m.planned, k.keep));
-            m.version = VERSION.with(|v| {
-                v.set(v.get() + 1);
-                v.get()
-            });
+            remark(m, k.keep, &Colours::now());
         }
     }
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
@@ -234,6 +284,9 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SplitMesh, inputs: &[SelI
         k.offset = k.offset.max(0.0);
     }
     form_row(ui, tr("ui.scan_split_facing"), |ui| check(ui, &mut k.facing_only));
+    if k.pending.is_some() {
+        scan_job::refining_note(ui, "scan_split_refining");
+    }
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok(m)) => {
             let cut = &m.planned.cut;
@@ -299,9 +352,9 @@ pub(crate) fn gpu_marks(app: &SolveApp) -> Option<GpuCloud> {
     Some(GpuCloud {
         id: CLOUD_ID,
         version: m.version,
-        dots: m.dots.clone(),
+        dots: crate::scan_dots::none(),
         segments: crate::scan_dots::none(),
-        triangles: crate::scan_dots::none(),
+        triangles: m.dots.clone(),
         style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: DOT_PIXELS },
     })
 }
@@ -355,11 +408,43 @@ mod tests {
         h.frames(3);
         let at = first_crossing(&h.app).expect("the cut is worked out");
         assert!((at.z - 8.0).abs() < 1e-6, "on the plane: {at:?}");
-        assert!(gpu_marks(&h.app).is_some_and(|m| !m.dots.is_empty()), "the side below is marked");
+        assert!(gpu_marks(&h.app).is_some_and(|m| !m.triangles.is_empty()), "the side below is painted");
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
         let scans = h.app.session.model.state().bodies.iter().filter(|b| b.body.is_mesh()).count();
         assert_eq!(scans, 2, "the scan and the side behind the plane");
+    }
+
+    /// On a large scan the cut is worked out beside the window: the window goes on, the dialog says
+    /// Refining…, and the cut arrives as it would have here.
+    #[test]
+    fn on_a_large_scan_the_cut_is_worked_out_beside_the_window() {
+        crate::scan_job::force(true);
+        let gate = crate::scan_job::hold();
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("block.stl");
+        std::fs::write(&path, box_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("construct.plane.offset", json!({"base": "XY", "offset": 8, "name": "Cut Here"})).unwrap();
+        h.app.run("select.clear", json!({})).unwrap();
+        h.app.start("scan.split");
+        if let Some(d) = h.app.dialog.as_mut() {
+            d.inputs[0].items.push(Sel::Plane { name: "Cut Here".into() });
+        }
+        h.frames(2);
+        let under_way = matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanSplit(k)) if k.pending.is_some() && k.shown.is_none());
+        gate.open();
+        for _ in 0..500 {
+            h.frames(1);
+            if first_crossing(&h.app).is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        crate::scan_job::force(false);
+        assert!(under_way, "begun beside the window");
+        let at = first_crossing(&h.app).expect("the cut arrives");
+        assert!((at.z - 8.0).abs() < 1e-6, "on the plane: {at:?}");
     }
 }
