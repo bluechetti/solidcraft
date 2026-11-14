@@ -41,7 +41,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("flat")
         .contract(&FLATTEN_CONTRACT)
         .output(output_schema_for::<ScanFlattenResult>)
-        .params("body?: the scan (default: the picked, selected or only one); point?: [x,y,z] on it (default: what is selected on the scan, else the point picked; the region is the piece of the scan there); radius?: length (the region only as far as this round the point); triangles?: [indices of the scan's triangles] (the region, instead of point and radius); relax?: bool (default true: relaxed toward keeping each edge's length after the angle-keeping map); tolerance?: length (default 0.05 mm: how far the outline's lines and arcs may stray from the region's edge); name?: the sketch's (default `Flat Pattern`): the region unrolled onto the XY plane beside the scan, its outline sketched, one undo step; a region that closes round on itself is refused (cut it with Split Mesh) → body, sketch, triangles, loops, lines, arcs, circles, area, flat_area, worst_area, strain_rms, strain_max, flipped, relaxed, settled, shift"),
+        .params("body?: the scan (default: the picked, selected or only one); point?: [x,y,z] on it (default: what is selected on the scan, else the point picked; the region is the piece of the scan there); radius?: length (the region only as far as this round the point); triangles?: [indices of the scan's triangles] (the region, instead of point and radius); saved?: a kept selection (Keep Selection) whose triangles are the region; relax?: bool (default true: relaxed toward keeping each edge's length after the angle-keeping map); tolerance?: length (default 0.05 mm: how far the outline's lines and arcs may stray from the region's edge); name?: the sketch's (default `Flat Pattern`): the region unrolled onto the XY plane beside the scan, its outline sketched, one undo step; a region that closes round on itself is refused (cut it with Split Mesh) → body, sketch, triangles, loops, lines, arcs, circles, area, flat_area, worst_area, strain_rms, strain_max, flipped, relaxed, settled, shift"),
     CommandSpec::new("scan.roll_onto_scan", "Roll onto Scan", crate::checked!("scan.roll_onto_scan", roll_onto_scan))
         .at("SCAN", "SKETCH")
         .icon("spline")
@@ -66,7 +66,22 @@ pub(super) fn picked_on(s: &Session, body: &str) -> Option<Vec3> {
     })
 }
 
-/// The region of the scan `p` names: its triangles.
+/// The scan a region tool (Fit Patches, Flatten) works on: `body`, else the scan of the kept
+/// selection `saved`, else the scan triangles are selected on now; `None` leaves it to the
+/// selected or only scan.
+pub(super) fn region_scan(s: &Session, p: &Value) -> Option<String> {
+    str_(p, "body")
+        .filter(|b| !b.trim().is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            let name = str_(p, "saved")?;
+            s.doc.scan_selections.iter().find(|k| k.name == name).map(|k| k.body.clone())
+        })
+        .or_else(|| super::select::selected(s).filter(|k| k.count > 0).map(|k| k.scan.clone()))
+}
+
+/// The region of the scan `p` names: its triangles, a kept selection's (`saved`), what is selected
+/// on the scan, else the smooth part round the point given or picked.
 pub(super) fn region(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<Vec<usize>> {
     if let Some(list) = p.get("triangles").filter(|v| !v.is_null()) {
         let list = list.as_array().ok_or_else(|| bad(cmd, "`triangles` must list the scan's triangle numbers"))?;
@@ -81,6 +96,19 @@ pub(super) fn region(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<Vec
             .collect::<Result<_>>()?;
         out.sort_unstable();
         out.dedup();
+        return Ok(out);
+    }
+    // A kept selection (Keep Selection), as `scan.select {saved}` opens it again.
+    if let Some(name) = p.get("saved").filter(|v| !v.is_null()) {
+        let name = name.as_str().ok_or_else(|| bad(cmd, "`saved` is the name of a kept selection"))?;
+        let kept = s.doc.scan_selections.iter().find(|k| k.name == name).ok_or_else(|| bad(cmd, format!("no kept selection `{name}`")))?;
+        if kept.body != on.body || kept.triangles as usize != on.triangles.len() {
+            return Err(bad(cmd, format!("the kept selection `{name}` is of `{}` as it was, not of `{}` as it is now", kept.body, on.body)));
+        }
+        let out: Vec<usize> = kept.flags().iter().enumerate().filter(|(_, on)| **on).map(|(t, _)| t).collect();
+        if out.is_empty() {
+            return Err(bad(cmd, format!("the kept selection `{name}` holds no triangles")));
+        }
         return Ok(out);
     }
     let point = match p.get("point").filter(|v| !v.is_null()) {
@@ -106,7 +134,7 @@ pub(super) fn region(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<Vec
 /// The pattern `p` asks for: the scan, its region flattened, and the shift that lays it on XY
 /// beside the scan (its box's corner a tenth of the scan's size past the scan's along X).
 pub fn flattened(s: &Session, p: &Value, cmd: &str) -> Result<(String, Flat, Vec2)> {
-    let body = str_(p, "body").map(str::to_owned).or_else(|| super::select::selected(s).map(|k| k.scan.clone()));
+    let body = region_scan(s, p);
     let on = mesh(s, &json!({ "body": body }), cmd)?;
     let triangles = region(s, p, &on, cmd)?;
     let flat = flatten::flatten(&on.scan(), &triangles, bool_(p, "relax").unwrap_or(true)).map_err(|e| bad(cmd, e.to_string()))?;
@@ -157,6 +185,14 @@ fn flatten_scan(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = p.get(*key).filter(|v| !v.is_null()) {
             memo.insert((*key).into(), v.clone());
         }
+    }
+    // A kept selection may be deleted or kept again: the region is kept as its triangles.
+    if !memo.contains_key("triangles")
+        && let Some(name) = str_(p, "saved")
+        && let Some(kept) = s.doc.scan_selections.iter().find(|k| k.name == name && k.body == body)
+    {
+        let list: Vec<usize> = kept.flags().iter().enumerate().filter(|(_, on)| **on).map(|(t, _)| t).collect();
+        memo.insert("triangles".into(), json!(list));
     }
     if !memo.contains_key("point") && !memo.contains_key("triangles") {
         // The selection may change: the region is kept as its triangles.

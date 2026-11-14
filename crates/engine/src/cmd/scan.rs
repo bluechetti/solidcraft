@@ -300,6 +300,14 @@ fn mesh_name(s: &Session, p: &Value, cmd: &str) -> Result<String> {
             selected.sort_unstable();
             selected.dedup();
             let meshes: Vec<&str> = state.bodies.iter().filter(|b| b.body.is_mesh()).map(|b| b.name.as_str()).collect();
+            // Nothing picked: the scan triangles are selected on (Select on Scan), as Fit Patches,
+            // Flatten and Reconstruct Selection take it, so every scan tool works on the same one.
+            let on = select::selected(s).filter(|k| k.count > 0);
+            if selected.is_empty()
+                && let Some(k) = on.as_ref()
+            {
+                return Ok(k.scan.clone());
+            }
             match (selected.as_slice(), meshes.as_slice()) {
                 ([one], _) | ([], [one]) => (*one).to_owned(),
                 ([], []) => return Err(bad(cmd, "the design has no scan: insert one with Insert Mesh")),
