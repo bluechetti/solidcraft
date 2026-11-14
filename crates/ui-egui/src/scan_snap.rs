@@ -31,6 +31,8 @@ pub(crate) enum Target {
     Boundary,
     Crease,
     Vertex,
+    /// Flat Template: the foot on the wall's plane of where the click is (nothing nearer to snap to).
+    Plane,
 }
 
 impl Target {
@@ -42,6 +44,7 @@ impl Target {
             Target::Boundary => "ui.scan_snap_edge",
             Target::Crease => "ui.scan_snap_crease",
             Target::Vertex => "ui.scan_snap_vertex",
+            Target::Plane => "ui.scan_snap_plane",
         })
     }
 }
@@ -88,8 +91,18 @@ fn curve_points(app: &SolveApp) -> Vec<Vec3> {
     out
 }
 
-/// What `point` on the scan `body` snaps to, if anything is within reach.
+/// What `point` on the scan `body` snaps to, if anything is within reach. In Flat Template, once
+/// the wall's plane is known, the target is laid onto that plane (where the template's corner will
+/// be), and a click with nothing nearer lands on the plane's foot under it.
 pub(crate) fn target(app: &SolveApp, proj: &Proj, body: &str, point: Vec3) -> Option<(Vec3, Target)> {
+    let found = on_scan(app, proj, body, point);
+    let Some((origin, normal)) = crate::dialogs_scan_template::wall_plane(app) else { return found };
+    let foot = |p: Vec3| p - normal * (p - origin).dot(normal);
+    Some(found.map_or((foot(point), Target::Plane), |(at, kind)| (foot(at), kind)))
+}
+
+/// What `point` on the scan `body` snaps to on the scan itself.
+fn on_scan(app: &SolveApp, proj: &Proj, body: &str, point: Vec3) -> Option<(Vec3, Target)> {
     let reach = reach_mm(proj, point)?;
     let on_screen = proj.to_screen(point)?;
     // A curve's point, judged on the screen so a point behind the scan's surface is not taken.

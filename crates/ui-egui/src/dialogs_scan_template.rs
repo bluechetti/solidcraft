@@ -637,6 +637,16 @@ fn label(painter: &egui::Painter, proj: &crate::viewport::Proj, at: Vec3, mm: f6
     }
 }
 
+/// The wall's plane the open Flat Template lays its points on (a point on it and its normal), once
+/// it is known: clicks snap onto it, so the marker shows where a corner of the template will be.
+pub(crate) fn wall_plane(app: &SolveApp) -> Option<(Vec3, Vec3)> {
+    let Some(Kind::ScanFlatTemplate(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    let m = k.shown.as_ref()?.result.as_ref().ok()?;
+    let [a, b, _, d] = m.ghost;
+    let normal = (b - a).cross(d - a).normalized()?;
+    Some((a, normal))
+}
+
 /// The template where it will lie, over the picture: the wall's plane as a ghost, the outline with
 /// the length of each side, the cut-outs and the scan's edge. Before there is a template, the
 /// points clicked so far are joined and each distance told.
@@ -1277,6 +1287,13 @@ mod tests {
         let (stats, tolerance) = fidelity(&h.app, k).expect("the wall measured");
         assert!(stats.count > 100 && tolerance == 0.1 && stats.within > 0.99 && stats.rms < 0.01, "{stats:?}");
         assert!(gpu_shade(&h.app).is_some_and(|c| !c.dots.is_empty()), "the scan coloured over the template");
+        // Once the wall's plane is known, a click on the outlet, 25 off the wall, lands on the
+        // plane under it: where the template's corner will be.
+        let (_, normal) = wall_plane(&h.app).expect("the wall's plane");
+        assert!(normal.z.abs() > 0.999, "{normal:?}");
+        let proj = crate::viewport::projection(&h.app, h.app.viewport.rect.expect("the view drawn"));
+        let (at, _) = crate::scan_snap::target(&h.app, &proj, &scan, Vec3::new(130.0, 140.0, 25.0)).expect("a place on the plane");
+        assert!(at.z.abs() < 0.05 && (at.x - 130.0).abs() < 5.0 && (at.y - 140.0).abs() < 5.0, "{at:?}");
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
