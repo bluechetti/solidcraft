@@ -624,4 +624,3 @@ fn reconstruct_the_rest_builds_what_the_body_leaves_unexplained() {
     run(&mut s, "edit.undo", json!({}));
     assert!((volume(&s, &solid) - plate_only).abs() < 1e-6, "one undo takes the rest back");
 }
-
