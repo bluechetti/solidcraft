@@ -445,6 +445,8 @@ pub enum Proposal {
     Hole(usize),
     /// A cut hole's row or ring (the hole's index), patterned.
     Pattern(usize),
+    /// A prism's row or ring (the first prism's index), its extrusion patterned.
+    PatternPrism(usize),
     /// The rounds along edges no profile holds, filleted.
     Fillet,
     /// A coil spring, wound.
@@ -466,7 +468,7 @@ impl Proposal {
             Proposal::Extrude(_) => "scan.extrude_it",
             Proposal::Cut(_) => "scan.cut_it",
             Proposal::Hole(_) => "scan.hole_it",
-            Proposal::Pattern(_) => "scan.pattern_it",
+            Proposal::Pattern(_) | Proposal::PatternPrism(_) => "scan.pattern_it",
             Proposal::Fillet => "scan.fillet_it",
             Proposal::Coil => "scan.coil_it",
             Proposal::Pipe => "scan.pipe_it",
@@ -483,7 +485,7 @@ impl Proposal {
             Proposal::Revolve | Proposal::Fillet | Proposal::Chamfer | Proposal::Shell | Proposal::Coil | Proposal::Pipe | Proposal::Loft => {
                 json!({"body": body})
             }
-            Proposal::Extrude(k) => json!({"body": body, "prism": k}),
+            Proposal::Extrude(k) | Proposal::PatternPrism(k) => json!({"body": body, "prism": k}),
             Proposal::Cut(k) | Proposal::Hole(k) | Proposal::Pattern(k) => json!({"body": body, "hole": k}),
         };
         if let (true, Some(map)) = (selected, p.as_object_mut()) {
@@ -511,7 +513,14 @@ pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
     if reading.revolve.is_some() && reading.turned_unread.is_none() {
         out.push(Proposal::Revolve);
     }
-    out.extend((0..reading.prisms.len()).map(Proposal::Extrude));
+    // A prism of a row or ring alike is extruded once and patterned.
+    let made_by_pattern: std::collections::BTreeSet<usize> = reading.prism_repeats.iter().flat_map(|r| r.members[1..].iter().copied()).collect();
+    for k in (0..reading.prisms.len()).filter(|k| !made_by_pattern.contains(k)) {
+        out.push(Proposal::Extrude(k));
+        if reading.prism_repeats.iter().any(|r| r.members.first() == Some(&k)) {
+            out.push(Proposal::PatternPrism(k));
+        }
+    }
     if out.is_empty() && !built {
         return out;
     }
@@ -615,34 +624,7 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
             form: h.form.as_ref().map(hole_form),
         })
         .collect();
-    let repeats = reading
-        .repeats
-        .iter()
-        .map(|r| {
-            let mut out = ScanRepeat {
-                kind: format!("{:?}", r.kind).to_lowercase(),
-                members: r.members.clone(),
-                layout: layout_name(&r.layout).into(),
-                step: None,
-                angle: None,
-                axis: None,
-                centre: None,
-                across: None,
-                columns: None,
-                rows: None,
-            };
-            match r.layout {
-                Layout::Linear { step } => out.step = Some(at(step)),
-                Layout::Circular { centre, axis, angle } => {
-                    (out.centre, out.axis, out.angle) = (Some(at(centre)), Some(at(axis)), Some(angle.to_degrees()))
-                }
-                Layout::Grid { step, across, columns, rows } => {
-                    (out.step, out.across, out.columns, out.rows) = (Some(at(step)), Some(at(across)), Some(columns), Some(rows))
-                }
-            }
-            out
-        })
-        .collect();
+    let repeats = reading.repeats.iter().map(scan_repeat).collect();
     let turned = reading.revolve.as_ref().map(|r| ScanTurned {
         point: at(r.axis.point),
         direction: at(r.axis.direction),
@@ -684,12 +666,37 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         fillets: reading.fillets.iter().map(|f| ScanEdgeRound { face: f.face, radius: f.radius, edge: at(f.edge) }).collect(),
         chamfers: reading.chamfers.iter().map(|c| ScanEdgeChamfer { face: c.face, distance: c.distance, edge: at(c.edge) }).collect(),
         shell: reading.shell.as_ref().map(|w| ScanShell { thickness: w.thickness, inner: w.inner.clone(), open: w.open.clone() }),
+        prism_repeats: reading.prism_repeats.iter().map(scan_repeat).collect(),
         coil: reading.coil.as_ref().map(shapes::coil_of),
         pipe: reading.pipe.as_ref().map(shapes::pipe_of),
         loft: reading.loft.as_ref().map(shapes::loft_of),
         note,
         param_warnings: Vec::new(),
     })
+}
+
+/// A repeat as the reply lists it.
+fn scan_repeat(r: &reconstruct::Repeat) -> ScanRepeat {
+    let mut out = ScanRepeat {
+        kind: format!("{:?}", r.kind).to_lowercase(),
+        members: r.members.clone(),
+        layout: layout_name(&r.layout).into(),
+        step: None,
+        angle: None,
+        axis: None,
+        centre: None,
+        across: None,
+        columns: None,
+        rows: None,
+    };
+    match r.layout {
+        Layout::Linear { step } => out.step = Some(at(step)),
+        Layout::Circular { centre, axis, angle } => (out.centre, out.axis, out.angle) = (Some(at(centre)), Some(at(axis)), Some(angle.to_degrees())),
+        Layout::Grid { step, across, columns, rows } => {
+            (out.step, out.across, out.columns, out.rows) = (Some(at(step)), Some(at(across)), Some(columns), Some(rows))
+        }
+    }
+    out
 }
 
 /// What a profile sketch was drawn with.
@@ -1226,6 +1233,36 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
     let view = view(s, p, cmd, false)?;
     let found = &view.found;
     let reading = view.reading();
+    if let Some(k) = p.get("prism").and_then(Value::as_u64).map(|k| k as usize) {
+        let repeat = reading
+            .prism_repeats
+            .iter()
+            .find(|r| r.members.first() == Some(&k))
+            .ok_or_else(|| bad(cmd, format!("prism {k} does not repeat: Reconstruct reads no row or ring of prisms alike starting with it")))?;
+        let name = format!("Extrude It {}", k + 1);
+        let feature_name = str_(p, "feature")
+            .filter(|f| !f.trim().is_empty())
+            .map(str::to_owned)
+            .or_else(|| s.doc.features.iter().rev().find(|f| f.name == name).map(|f| f.name.clone()))
+            .ok_or_else(|| bad(cmd, format!("there is no `{name}`: extrude prism {k} first with Extrude It")))?;
+        let solid = built_body(s, &found.scan, &json!({}), cmd)?;
+        let count = repeat.members.len();
+        let feature = repeat_feature(s, cmd, &feature_name, count, &repeat.layout)?;
+        return reply(ScanBuildResult {
+            body: found.scan.clone(),
+            sketch: None,
+            feature,
+            solid,
+            operation: "pattern".into(),
+            lines: 0,
+            arcs: 0,
+            tangents: 0,
+            depth: None,
+            count: Some(count),
+            fit: None,
+            param_warnings: Vec::new(),
+        });
+    }
     let index = match p.get("hole").and_then(Value::as_u64) {
         Some(k) => k as usize,
         None => {
@@ -1242,7 +1279,26 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, format!("there is no `{feature_name}`: cut the hole first with Cut It")));
     }
     let solid = built_body(s, &found.scan, &json!({}), cmd)?;
-    let pattern = match layout {
+    let pattern = repeat_feature(s, cmd, &feature_name, count, &layout)?;
+    reply(ScanBuildResult {
+        body: found.scan.clone(),
+        sketch: None,
+        feature: pattern,
+        solid,
+        operation: "pattern".into(),
+        lines: 0,
+        arcs: 0,
+        tangents: 0,
+        depth: None,
+        count: Some(count),
+        fit: None,
+        param_warnings: Vec::new(),
+    })
+}
+
+/// Feature `feature_name` repeated `count` times as `layout` lays them out.
+fn repeat_feature(s: &mut Session, cmd: &str, feature_name: &str, count: usize, layout: &Layout) -> Result<Value> {
+    Ok(match *layout {
         Layout::Circular { centre, axis, .. } => {
             run(s, "solid.pattern.circular", json!({"features": [feature_name], "axis": {"origin": at(centre), "dir": at(axis)}, "count": count}))?
         }
@@ -1261,20 +1317,6 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
                 json!({"features": [feature_name], "dir1": at(one), "count1": columns, "spacing1": step.len(), "dir2": at(two), "count2": rows, "spacing2": across.len()}),
             )?
         }
-    };
-    reply(ScanBuildResult {
-        body: found.scan.clone(),
-        sketch: None,
-        feature: pattern,
-        solid,
-        operation: "pattern".into(),
-        lines: 0,
-        arcs: 0,
-        tangents: 0,
-        depth: None,
-        count: Some(count),
-        fit: None,
-        param_warnings: Vec::new(),
     })
 }
 

@@ -257,6 +257,10 @@ pub struct ScanReconstructResult {
     /// Walls of one thickness open at an end, which Shell It hollows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell: Option<ScanShell>,
+    /// Prisms alike laid out evenly (a row of ribs, a ring of bosses): each the prisms' numbers,
+    /// the first extruded and patterned by Pattern It with `prism`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prism_repeats: Vec<ScanRepeat>,
     /// A coil spring, which Coil It winds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coil: Option<ScanCoil>,
@@ -475,6 +479,10 @@ pub struct ScanPatternItParams {
     /// Which of `scan.reconstruct`'s holes, from 0: one that repeats. Default: the first that does.
     #[serde(default)]
     pub hole: Option<usize>,
+    /// Or which of `scan.reconstruct`'s prisms, from 0: the first of a row or ring of prisms
+    /// alike (its `prism_repeats`), whose extrusion is repeated.
+    #[serde(default)]
+    pub prism: Option<usize>,
     /// The cut to repeat. Default: the one Cut It made for that hole.
     #[serde(default)]
     pub feature: Option<String>,

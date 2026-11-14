@@ -108,6 +108,10 @@ fn label(app: &SolveApp, reading: &Reading, step: &Proposal) -> String {
                 &[("number", &(k + 1).to_string()), ("kind", tr(kind)), ("diameter", &mm(diameter))],
             )
         }
+        Proposal::PatternPrism(k) => {
+            let count = reading.prism_repeats.iter().find(|r| r.members.first() == Some(&k)).map_or(0, |r| r.members.len());
+            solidcraft_ui_text::format("ui.scan_reconstruct_pattern_prism", &[("number", &(k + 1).to_string()), ("count", &count.to_string())])
+        }
         Proposal::Pattern(k) => {
             let count = reading.holes.get(k).and_then(|h| h.repeat).map_or(0, |r| r.0);
             solidcraft_ui_text::format("ui.scan_reconstruct_pattern", &[("number", &(k + 1).to_string()), ("count", &count.to_string())])

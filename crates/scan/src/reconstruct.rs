@@ -1261,6 +1261,10 @@ pub struct Reading {
     pub shell: Option<Shell>,
     /// The part's size, the diagonal of its box.
     pub size: f64,
+    /// Prisms alike (a rib, a boss, a tab: the same depth along the same direction, as many walls
+    /// of about the same area) evenly along a line or round a circle: each repeat's `members` are
+    /// indices into `prisms`, the first the one to extrude, the rest made by patterning it.
+    pub prism_repeats: Vec<Repeat>,
     /// A coil spring the tori make, for Coil It.
     pub coil: Option<crate::coil::Coil>,
     /// A bar bent along a flat path (cylinders and the tori of its bends), for Pipe It.
@@ -1687,6 +1691,7 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     if let Some(pipe) = &pipe {
         prisms.retain(|p| !p.walls.iter().all(|w| pipe.faces.contains(w)));
     }
+    let prism_repeats = prism_repeats(&faces, &prisms);
     let loft = (prisms.is_empty() && revolve.is_none() && coil.is_none() && pipe.is_none())
         .then(|| crate::loft::read(scan, &faces, LOFT_SECTIONS).ok())
         .flatten();
@@ -1715,10 +1720,48 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         chamfers,
         shell,
         size,
+        prism_repeats,
         coil,
         pipe,
         loft,
     }
+}
+
+/// How unequal alike prisms' depths may be, as a share of the deeper.
+const SAME_DEPTH: f64 = 0.02;
+
+/// The prisms alike (see [`Reading::prism_repeats`]) laid out evenly, at least [`LEAST_REPEATS`]
+/// of them; never the first prism, the main body the rest stand on.
+pub fn prism_repeats(faces: &[Face], prisms: &[Prism]) -> Vec<Repeat> {
+    let walls_area = |p: &Prism| p.walls.iter().map(|&w| faces.get(w).map_or(0.0, |f| f.area)).sum::<f64>();
+    let alike = |a: &Prism, b: &Prism| {
+        a.direction.dot(b.direction).abs() >= SAME_DIRECTION
+            && (a.depth() - b.depth()).abs() <= SAME_DEPTH * a.depth().max(b.depth())
+            && a.walls.len() == b.walls.len()
+            && a.draft == b.draft
+            && (walls_area(a) - walls_area(b)).abs() <= SAME_AREA * walls_area(a).max(walls_area(b))
+    };
+    let mut grouped = vec![false; prisms.len()];
+    let mut found = Vec::new();
+    for first in 1..prisms.len() {
+        if grouped[first] {
+            continue;
+        }
+        let members: Vec<usize> = (first..prisms.len()).filter(|&k| !grouped[k] && alike(&prisms[first], &prisms[k])).collect();
+        if members.len() < LEAST_REPEATS {
+            continue;
+        }
+        let places: Vec<Vec3> = members.iter().map(|&k| prisms[k].middle()).collect();
+        let laid_out =
+            in_a_line(&members, &places, Kind::Plane).or_else(|| round_a_circle(&members, &places, Kind::Plane, Some(prisms[first].direction)));
+        if let Some(repeat) = laid_out {
+            for &k in &repeat.members {
+                grouped[k] = true;
+            }
+            found.push(repeat);
+        }
+    }
+    found
 }
 
 /// How many sections Reconstruct reads a lofted part with.
@@ -1769,6 +1812,43 @@ mod tests {
             rect(Vec3::Y, Vec3::new(-x, y, -z), Vec3::new(x, y, z)),
             rect(-Vec3::Y, Vec3::new(-x, -y, -z), Vec3::new(x, -y, z)),
         ]
+    }
+
+    #[test]
+    fn prisms_alike_in_a_row_are_one_repeat_but_never_the_main_body() {
+        // The main body, then four tabs 3 deep along Z, 12 apart along X, and one tab unlike them.
+        let wall = |x: f64| plane_at(Vec3::new(x, 0.0, 0.0), Vec3::X, 30.0);
+        let mut faces = vec![plane_at(Vec3::ZERO, Vec3::Z, 1000.0)];
+        let mut prisms = vec![Prism {
+            direction: Vec3::Z,
+            origin: Vec3::ZERO,
+            low: -5.0,
+            high: 0.0,
+            ends: [0, 0],
+            walls: vec![0],
+            open: false,
+            draft: 0.0,
+        }];
+        for (k, x) in [0.0, 12.0, 24.0, 36.0, 60.0].into_iter().enumerate() {
+            faces.push(wall(x));
+            faces.push(wall(x + 2.0));
+            let depth = if k == 4 { 6.0 } else { 3.0 };
+            prisms.push(Prism {
+                direction: Vec3::Z,
+                origin: Vec3::new(x + 1.0, 0.0, 0.0),
+                low: 0.0,
+                high: depth,
+                ends: [0, 0],
+                walls: vec![faces.len() - 2, faces.len() - 1],
+                open: false,
+                draft: 0.0,
+            });
+        }
+        let found = prism_repeats(&faces, &prisms);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].members, vec![1, 2, 3, 4]);
+        let Layout::Linear { step } = found[0].layout else { panic!("{found:?}") };
+        assert!((step.len() - 12.0).abs() < 1e-9, "{step:?}");
     }
 
     #[test]

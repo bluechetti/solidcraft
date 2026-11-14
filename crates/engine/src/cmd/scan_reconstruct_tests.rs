@@ -239,6 +239,7 @@ fn reconstruct_proposes_no_cut_with_nothing_to_cut() {
         chamfers: Vec::new(),
         shell: None,
         size: 60.0,
+        prism_repeats: Vec::new(),
         coil: None,
         pipe: None,
         loft: None,
@@ -623,3 +624,4 @@ fn reconstruct_the_rest_builds_what_the_body_leaves_unexplained() {
     run(&mut s, "edit.undo", json!({}));
     assert!((volume(&s, &solid) - plate_only).abs() < 1e-6, "one undo takes the rest back");
 }
+
