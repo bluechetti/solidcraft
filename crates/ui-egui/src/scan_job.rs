@@ -27,6 +27,46 @@ pub(crate) fn force(on: bool) {
     FORCED.with(|f| f.set(on));
 }
 
+/// Holds back what the workers started from this thread work out until [`Gate::open`] (tests
+/// only): a test sees the work under way however fast it is done.
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub(crate) struct Gate(std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
+
+#[cfg(test)]
+impl Gate {
+    /// Lets every held worker's result through, and those started after.
+    pub(crate) fn open(&self) {
+        let (open, wake) = &*self.0;
+        if let Ok(mut o) = open.lock() {
+            *o = true;
+        }
+        wake.notify_all();
+    }
+
+    /// Waits until the gate is open, a minute at most (a test that never opens it fails on its
+    /// own assertions rather than hanging).
+    fn wait(&self) {
+        let (open, wake) = &*self.0;
+        let Ok(o) = open.lock() else { return };
+        let _ = wake.wait_timeout_while(o, std::time::Duration::from_secs(60), |o| !*o);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static GATE: std::cell::RefCell<Option<Gate>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A gate the workers started from this thread wait at before handing back their result (tests
+/// only).
+#[cfg(test)]
+pub(crate) fn hold() -> Gate {
+    let gate = Gate::default();
+    GATE.with(|g| *g.borrow_mut() = Some(gate.clone()));
+    gate
+}
+
 /// The most triangles any scan (mesh body) of the design has.
 pub(crate) fn biggest_scan(app: &SolveApp) -> usize {
     app.session.model.state().bodies.iter().filter_map(|b| b.body.kept_mesh()).map(|m| m.triangles.len()).max().unwrap_or(0)
@@ -69,10 +109,17 @@ impl<K, T> Job<K, T> {
 pub(crate) fn spawn<K, T: Send + 'static>(app: &SolveApp, key: K, work: impl FnOnce(&Session) -> T + Send + 'static) -> Option<Job<K, T>> {
     let copy = app.session.scratch();
     let (tx, rx) = std::sync::mpsc::channel();
+    #[cfg(test)]
+    let gate = GATE.with(|g| g.borrow().clone());
     std::thread::Builder::new()
         .name("scan-preview".into())
         .spawn(move || {
-            let _ = tx.send(work(&copy));
+            let made = work(&copy);
+            #[cfg(test)]
+            if let Some(g) = gate {
+                g.wait();
+            }
+            let _ = tx.send(made);
         })
         .ok()?;
     Some(Job { key, done: std::sync::Mutex::new(rx) })

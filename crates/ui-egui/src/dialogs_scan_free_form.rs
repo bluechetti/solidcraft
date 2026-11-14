@@ -890,6 +890,9 @@ mod tests {
     #[test]
     fn on_a_large_scan_the_fit_is_worked_out_beside_the_window() {
         crate::scan_job::force(true);
+        // The worker's fit is held back until every corner is in: the dome is small, and its fit
+        // could otherwise come back between two frames, before the dialog is seen waiting for it.
+        let gate = crate::scan_job::hold();
         let mut h = crate::scenario::Harness::new();
         let path = h.dir.join("dome.stl");
         std::fs::write(&path, dome_stl(40)).unwrap();
@@ -905,6 +908,11 @@ mod tests {
                 under_way |= k.pending.is_some();
             }
         }
+        h.frames(2);
+        if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) {
+            assert!(k.pending.is_some() && k.shown.is_none(), "after the last corner the fit is under way, nothing drawn yet");
+        }
+        gate.open();
         for _ in 0..500 {
             h.frames(1);
             if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) {
