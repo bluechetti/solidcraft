@@ -77,7 +77,9 @@ pub fn make(s: &Session, body: Option<&str>, corners: [Vec3; 4], fit: Fit, fitti
         free_form::flattened(corners, &fitting, snap)
             .ok_or_else(|| bad(cmd, "no flat face could be fitted over those corners: the scan under them makes no plane within the snap distance"))?
     } else {
-        free_form::fitted(corners, &fitting, snap)
+        // Follow the Scan adds points where the scan needs them to lie within half its tolerance.
+        let target = 0.5 * super::tolerance::of(s, &scan);
+        free_form::fitted_closely(corners, &fitting, target, snap)
             .ok_or_else(|| bad(cmd, "no face could be fitted over those corners: click them round a face, not in a line"))?
     };
     if fitted.met == 0 {

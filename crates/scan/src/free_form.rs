@@ -415,6 +415,38 @@ pub fn fitted(corners: [Vec3; 4], fitting: &Fitting, snap: impl Fn(&[Vec3], Opti
     Some(Fitted { surface: made, places, met, kept: used, rms })
 }
 
+/// Two more points each way must bring the face at least this much nearer the scan to be worth
+/// them: past that the face is down to the scan's own noise.
+const WORTH_MORE: f64 = 0.75;
+
+/// Follow the Scan as it should: the face over `corners` with the fewest points each way, from
+/// `fitting.count` up to [`MOST_POINTS`] two at a time, that lies within `target` (mm, root mean
+/// square) of the scan under it, so a face over a rounded edge or a strong curve follows it
+/// instead of bowing off it as a 4 × 4 net does. It stops sooner where two more points no longer
+/// bring the face a quarter nearer (the scan's noise). Overall Shape, a stiffened net and a target
+/// that is not a length keep `fitting.count`. `None` when the net cannot be made.
+pub fn fitted_closely(
+    corners: [Vec3; 4],
+    fitting: &Fitting,
+    target: f64,
+    snap: impl Fn(&[Vec3], Option<Vec3>) -> Vec<Option<Vec3>>,
+) -> Option<Fitted> {
+    let mut best = fitted(corners, fitting, &snap)?;
+    if fitting.overall || fitting.stiffness > 0.0 || !(target.is_finite() && target > 0.0) {
+        return Some(best);
+    }
+    let mut count = fitting.count.clamp(LEAST_POINTS, MOST_POINTS);
+    while best.rms > target && count < MOST_POINTS {
+        count = (count + 2).min(MOST_POINTS);
+        let Some(next) = fitted(corners, &Fitting { count, ..*fitting }, &snap) else { break };
+        if !(next.rms < WORTH_MORE * best.rms) {
+            break;
+        }
+        best = next;
+    }
+    Some(best)
+}
+
 /// How many times a flat face's plane is fitted again, leaving out the places far off the last.
 const FLAT_ROUNDS: usize = 4;
 
@@ -663,5 +695,60 @@ mod tests {
         let middle = |f: &Fitted| f.surface.eval(0.5, 0.5).unwrap().z;
         assert!(middle(&overall).abs() < middle(&follow).abs(), "{} {}", middle(&overall), middle(&follow));
         assert!(overall.kept < follow.kept, "the rib's places left out");
+    }
+
+    /// Corners either side of a part's rounded edge (a 3 mm fillet between two flats): the 4 × 4
+    /// net bows off the scan by over a millimetre; Follow the Scan adds points until the face
+    /// lies on it. On the plain dome four points already do, so none are added; Overall Shape
+    /// and a stiffened net keep the count asked.
+    #[test]
+    fn a_face_over_a_rounded_edge_follows_it_instead_of_bowing() {
+        let f = 3.0;
+        let mut profile = Vec::new();
+        for k in 0..=60 {
+            profile.push((-30.0 + (30.0 - f) * f64::from(k) / 60.0, 0.0));
+        }
+        for k in 1..=30 {
+            let a = std::f64::consts::FRAC_PI_2 * f64::from(k) / 30.0;
+            profile.push((-f + f * a.sin(), -f + f * a.cos()));
+        }
+        for k in 1..=60 {
+            profile.push((0.0, -f - (30.0 - f) * f64::from(k) / 60.0));
+        }
+        let (m, rows) = (profile.len() as u32, 121u32);
+        let positions: Vec<Vec3> = (0..rows).flat_map(|j| profile.iter().map(move |&(y, z)| Vec3::new(0.5 * f64::from(j), y, z))).collect();
+        let mut triangles = Vec::new();
+        for j in 0..rows - 1 {
+            for i in 0..m - 1 {
+                let a = j * m + i;
+                triangles.push([a, a + 1, a + 1 + m]);
+                triangles.push([a, a + 1 + m, a + m]);
+            }
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let on = Projector::new(&scan);
+        let snap = |ps: &[Vec3], along: Option<Vec3>| ps.iter().map(|p| snapped(&on, *p, along)).collect::<Vec<_>>();
+        let worst = |fit: &Fitted| {
+            (0..=40)
+                .flat_map(|j| (0..=40).map(move |i| (f64::from(i) / 40.0, f64::from(j) / 40.0)))
+                .filter_map(|(u, v)| fit.surface.eval(u, v).ok().and_then(|q| on.nearest(q)).map(|(_, d)| d))
+                .fold(0.0, f64::max)
+        };
+        let corners = [Vec3::new(10.0, -20.0, 0.0), Vec3::new(50.0, -20.0, 0.0), Vec3::new(50.0, 0.0, -20.0), Vec3::new(10.0, 0.0, -20.0)];
+        let four = fitted(corners, &Fitting::default(), snap).unwrap();
+        assert!(worst(&four) > 1.0, "four points bow off the round: {}", worst(&four));
+        let close = fitted_closely(corners, &Fitting::default(), 0.05, snap).unwrap();
+        assert!(close.surface.count()[0] > 4 && worst(&close) < 0.1, "{:?} {}", close.surface.count(), worst(&close));
+        for kept in [Fitting { overall: true, ..Fitting::default() }, Fitting { stiffness: 0.3, ..Fitting::default() }] {
+            assert_eq!(fitted_closely(corners, &kept, 0.05, snap).unwrap().surface.count(), [4, 4], "{kept:?}");
+        }
+        assert_eq!(fitted_closely(corners, &Fitting::default(), f64::NAN, snap).unwrap().surface.count(), [4, 4]);
+
+        let (positions, triangles) = field(60, dome);
+        let scan = Scan::new(&positions, &triangles);
+        let on = Projector::new(&scan);
+        let snap = |ps: &[Vec3], along: Option<Vec3>| ps.iter().map(|p| snapped(&on, *p, along)).collect::<Vec<_>>();
+        let corners = [Vec3::new(10.0, 10.0, 0.0), Vec3::new(50.0, 10.0, 0.0), Vec3::new(50.0, 50.0, 0.0), Vec3::new(10.0, 50.0, 0.0)];
+        assert_eq!(fitted_closely(corners, &Fitting::default(), 0.05, snap).unwrap().surface.count(), [4, 4], "the dome needs no more");
     }
 }

@@ -321,7 +321,17 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
             stiffness_row(ui, &mut k.stiffness);
         }
     }
-    form_row(ui, tr("ui.scan_free_form_points"), |ui| ui_kit::number_field(ui, &mut k.count, 4..=12, 0.2, ""));
+    // Follow the Scan adds points where the scan needs them: the row says how many it used.
+    let used = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).map(|m| m.surface.count()[0]).filter(|n| *n > k.count);
+    form_row(ui, tr("ui.scan_free_form_points"), |ui| {
+        use ui_kit::BackingTooltipExt;
+        let field = ui_kit::number_field(ui, &mut k.count, 4..=12, 0.2, "");
+        if let Some(used) = used {
+            let why = solidcraft_ui_text::format("ui.scan_free_form_points_used", &[("count", &used.to_string())]);
+            ui_kit::text(ui, &format!("→ {used}"), ui_kit::Text::Cell).backing_on_hover_text(why);
+        }
+        field
+    });
     if k.fit != 0 {
         crate::dialogs_scan_surface::colours_row(ui, &mut k.colours);
         let scan = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.scan.clone());
