@@ -431,8 +431,8 @@ pub(crate) fn guide_end(app: &mut SolveApp, proj: &crate::viewport::Proj) {
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanSymmetry(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
     let t = solidcraft_theme::Tokens::get();
-    let [r, g, b] = t.analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
-    let (fill, line) = (egui::Color32::from_rgba_unmultiplied(r, g, b, 60), egui::Color32::from_rgb(r, g, b));
+    let line = solidcraft_theme::srgb(t.analysis.draft[1]);
+    let fill = line.gamma_multiply(60.0 / 255.0);
     if let Some(found) = &k.found
         && let (Ok(m), Some((_, lo, hi))) = (&found.mirror, &found.body)
     {

@@ -115,7 +115,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     let Kind::ScanAlignPairs(_) = &d.kind else { return };
     let ((from, _), (onto, _)) = (picked(&d.inputs, 0), picked(&d.inputs, 1));
     let t = solidcraft_theme::Tokens::get();
-    let font = egui::FontId::proportional(13.0);
+    let font = egui::FontId::proportional(t.font_label);
     for (i, q) in from.iter().enumerate() {
         if let Some(a) = proj.to_screen(*q) {
             painter.circle_filled(a, 4.0, t.accent);

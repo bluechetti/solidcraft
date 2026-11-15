@@ -404,8 +404,8 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     let t = solidcraft_theme::Tokens::get();
     let colours = colours();
     let tint = |v: f32| {
-        let [r, g, b] = map.scale(v).map_or(colours[2], |s| colour(colours, s));
-        egui::Color32::from_rgb(r, g, b)
+        let rgb = map.scale(v).map_or(colours[2], |s| colour(colours, s));
+        solidcraft_theme::srgb(rgb.map(|x| f32::from(x) / 255.0))
     };
     let font = FontId::proportional(t.font_small);
     let mut tags = crate::view_tags::Tags::default();

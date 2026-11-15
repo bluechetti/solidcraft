@@ -107,8 +107,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         }
     }
     let Some(results) = current(app) else { return };
-    let within = crate::scan_deviation::colours()[2];
-    let good = egui::Color32::from_rgb(within[0], within[1], within[2]);
+    let good = solidcraft_theme::srgb(t.analysis.deviation[2]);
     let mut tags = crate::view_tags::Tags::default();
     for c in &results.results {
         let Some(at) = proj.to_screen(c.at) else { continue };

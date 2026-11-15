@@ -297,9 +297,9 @@ fn measurement_axis_distances_can_be_disabled_saved_and_restored_in_preferences(
     let mut h = vertex_measurement([0., 0., 0.], [-3., 4., -12.]);
     let measurement = result(&h).clone();
     h.call("ui.prefs", json!({"open":"Tools"}));
-    // The kit's 24 pt rows scroll inside the bounded Preferences page.
+    // The kit's 24 pt rows scroll inside the bounded Preferences page, past the Scan workspace's rows.
     let page = crate::scenario::rect_of("prefs:page_body").unwrap();
-    for _ in 0..8 {
+    for _ in 0..24 {
         if page.contains_rect(crate::scenario::rect_of("prefs:measure_axis_distances").unwrap()) {
             break;
         }

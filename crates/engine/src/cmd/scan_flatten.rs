@@ -267,8 +267,13 @@ fn clear_of_patterns(s: &Session, flat: &Flat, mut shift: Vec2) -> (Vec2, (Vec2,
         (Vec2::new(lo.x.min(q.x), lo.y.min(q.y)), Vec2::new(hi.x.max(q.x), hi.y.max(q.y)))
     });
     let gap = 0.1 * (high - low).len().max(1e-6);
-    let others: Vec<(Vec2, Vec2)> =
-        s.doc.scan_flat_patterns.iter().filter(|k| s.doc.sketch(k.sketch).is_ok()).filter_map(|k| kept_box(&k.params)).collect();
+    let others: Vec<(Vec2, Vec2)> = s
+        .doc
+        .scan_flat_patterns
+        .iter()
+        .filter(|k| super::super::sketch_store::read(&s.doc, k.sketch).is_ok())
+        .filter_map(|k| kept_box(&k.params))
+        .collect();
     // Each move clears one box upward; as many moves as boxes clear them all.
     for _ in 0..=others.len() {
         let (a, b) = (low + shift, high + shift);
@@ -304,10 +309,12 @@ fn pattern_params(s: &Session, p: &Value, cmd: &str) -> Result<(Option<u64>, Val
     };
     let kept = &s.doc.scan_flat_patterns;
     // A pattern whose sketch was deleted is no pattern.
-    let alive = |id: u64| s.doc.sketch(id).is_ok();
+    let alive = |id: u64| super::super::sketch_store::read(&s.doc, id).is_ok();
     let found = match named {
         Some(id) => kept.iter().find(|k| k.sketch == id),
-        None => s.active_sketch.and_then(|a| kept.iter().find(|k| k.sketch == a)).or_else(|| kept.iter().rev().find(|k| alive(k.sketch))),
+        None => super::super::sketch_store::active(s)
+            .and_then(|a| kept.iter().find(|k| k.sketch == a))
+            .or_else(|| kept.iter().rev().find(|k| alive(k.sketch))),
     };
     let k = found.ok_or_else(|| {
         bad(cmd, "the design has no flat pattern to roll back through: flatten the region again, or give its parameters (point, radius or triangles)")
@@ -345,7 +352,7 @@ fn roll_onto_scan(s: &mut Session, p: &Value) -> Result<Value> {
     // The sketch drawn on the pattern.
     let drawing = match p.get("sketch").filter(|v| !v.is_null()) {
         Some(_) => super::super::sketch_store::target(s, p, cmd)?,
-        None => s.active_sketch.or(pattern).ok_or_else(|| bad(cmd, "name the sketch drawn on the pattern with `sketch`"))?,
+        None => super::super::sketch_store::active(s).or(pattern).ok_or_else(|| bad(cmd, "name the sketch drawn on the pattern with `sketch`"))?,
     };
     if s.model.state().sketch(drawing).is_none() {
         s.refresh();
