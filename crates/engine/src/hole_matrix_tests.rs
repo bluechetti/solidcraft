@@ -1233,3 +1233,39 @@ fn a_hole_on_an_axis_a_hair_off_the_normal_cuts_right_or_is_refused() {
         }
     }
 }
+
+/// A hole aimed a hair off square into its face (as a direction read off a scan or a computed
+/// normal is) is drilled square: a countersink a millionth of a radian off was refused by the
+/// boolean (its rim a few millionths of a millimetre off the face), and a counterbore takes what
+/// it takes square on. A hole tilted on purpose stays tilted.
+#[test]
+fn a_hole_a_hair_off_square_is_drilled_square() {
+    let drill = |kind: &str, dir: [f64; 3]| -> f64 {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 12, "corner": [0, 0, 0], "name": "Plate"})).unwrap();
+        let (before, _) = measure(&mut s).unwrap();
+        let mut p = json!({"position": [20, 20, 12], "direction": dir, "diameter": 6.4, "type": kind, "name": "H"});
+        if kind == "counterbore" {
+            p["cb_diameter"] = json!(11);
+            p["cb_depth"] = json!(6.5);
+        } else {
+            p["cs_diameter"] = json!(12);
+            p["cs_angle"] = json!(90);
+        }
+        run(&mut s, "solid.hole", p).unwrap();
+        let (after, _) = measure(&mut s).unwrap();
+        before - after
+    };
+    for kind in ["counterbore", "countersink"] {
+        let square = drill(kind, [0.0, 0.0, -1.0]);
+        for tilt in [1e-7, 1e-6, 1e-5] {
+            let taken = drill(kind, [tilt, 0.0, -1.0]);
+            assert!((taken - square).abs() < 1e-6, "{kind} {tilt:e} off: {taken} taken, {square} square");
+        }
+    }
+    // 0.01 rad on purpose: the hole leans, so its exit leaves the bore's square footprint.
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 12, "corner": [0, 0, 0]})).unwrap();
+    run(&mut s, "solid.hole", json!({"position": [20, 20, 12], "direction": [0.01, 0, -1], "diameter": 6.4})).unwrap();
+    assert!(!solid_at(&s, Vec3::new(20.0 + 3.2 + 0.05, 20.0, 0.2)), "the leaning bore comes out 0.12 mm over");
+}

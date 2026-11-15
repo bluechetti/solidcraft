@@ -5298,6 +5298,10 @@ pub fn hole_direction_at(st: &ModelState, p: Vec3, scope: &[String]) -> Option<V
     first.filter(|(d, _, _)| *d <= reach).map(|(_, n, _)| -n)
 }
 
+/// The cosine of the most a hole's direction may lean off square into its face and still be
+/// drilled square to it: 1e-4 rad (0.006°), far finer than any angle a drawing gives a hole.
+const SQUARE_COS: f64 = 0.999_999_995;
+
 /// A hole placed on a face drills into the material: when its direction leaves every face it
 /// starts on (as designs saved before format 18 can say: their direction was taken from any face
 /// whose plane passed near the point, such as the other side of a thin plate or a face of another
@@ -5305,11 +5309,23 @@ pub fn hole_direction_at(st: &ModelState, p: Vec3, scope: &[String]) -> Option<V
 /// angle. A direction that enters a face there, or a spot on no face, is kept. Where the faces of
 /// the hole's own bodies (`scope`, see [`hole_drill_scope`]) pass through the spot, only they
 /// count: a hole that names the plate it drills, saved with the direction into a body touching
-/// the plate there, drills the plate (#12066).
+/// the plate there, drills the plate (#12066). A direction within [`SQUARE_COS`] of square into a
+/// face there is drilled square to it.
 fn hole_dir_into_face(st: &ModelState, p: Vec3, dir: Vec3, scope: &[String]) -> Vec3 {
     let size = st.bodies.iter().map(|b| b.body.size()).fold(1.0, f64::max);
     let faces: Vec<_> = hole_faces_near(st, p, size * 1e-5, size * 1e-5, scope).into_iter().map(|c| face_through(st, p, c)).collect();
-    if faces.is_empty() || faces.iter().any(|(_, n, _)| n.dot(dir) < -1e-9) {
+    if faces.is_empty() {
+        return dir;
+    }
+    // Within a hair of square into a face it is square: a drill aimed a millionth of a radian off
+    // leaves the countersink's rim a few millionths of a millimetre off the face, which the
+    // boolean can neither join nor tell apart (refused), and no one aims that close on purpose.
+    if let Some(n) = faces.iter().map(|(_, n, _)| *n).min_by(|a, b| a.dot(dir).total_cmp(&b.dot(dir)))
+        && n.dot(dir) < -SQUARE_COS
+    {
+        return -n;
+    }
+    if faces.iter().any(|(_, n, _)| n.dot(dir) < -1e-9) {
         return dir;
     }
     match faces.iter().map(|(_, n, _)| *n).max_by(|a, b| a.dot(dir).total_cmp(&b.dot(dir))) {
