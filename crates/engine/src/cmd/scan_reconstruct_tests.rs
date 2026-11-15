@@ -655,3 +655,69 @@ fn a_reconstructed_solid_moves_with_its_scan_once() {
     assert!((lowest(&s, &solid) - solid0 - shift).len() < 1e-6, "moved once: {:?} -> {:?}", solid0, lowest(&s, &solid));
     assert!((volume(&s, &solid) - v0).abs() < 1e-6 * v0);
 }
+
+/// A prism's profile read a few thousandths of a millimetre off the body it joins is put on it:
+/// a straight corner onto the body's vertex, a rounded corner's arc moved whole with both its
+/// ends, and an outline that would collapse is left as read. A drafted prism counts only what lies
+/// in its sketch's plane.
+#[test]
+fn a_profile_a_hair_off_the_body_is_put_on_it() {
+    use solidcore_record::{Plane, Vec2};
+    use solidcraft_geom::prelude::*;
+    use solidcraft_scan::profile::{Outline, Piece};
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 20, "width": 10, "height": 5, "corner": [0, 0, 0], "body_name": "Body"}));
+    // Seen from above, sketched 3 mm over the box: its corners at (0,0), (20,0), (20,10), (0,10).
+    let plane = Plane { origin: Vec3::new(0.0, 0.0, 8.0), x: Vec3::X, y: Vec3::Y };
+    let off = Vec2::new(4e-3, -3e-3);
+    let square = |at: [f64; 2]| Vec2::new(at[0], at[1]) + off;
+    let mut outlines = vec![Outline {
+        corners: vec![square([0.0, 0.0]), square([20.0, 0.0]), square([20.0, 10.0]), square([0.0, 10.0])],
+        pieces: vec![Piece::Line; 4],
+        faces: vec![None; 4],
+    }];
+    super::snap_to_body(&s, "Body", &plane, &mut outlines, 0.1, true);
+    assert_eq!(outlines[0].corners, vec![Vec2::new(0.0, 0.0), Vec2::new(20.0, 0.0), Vec2::new(20.0, 10.0), Vec2::new(0.0, 10.0)]);
+    // A half disc on the box's long side: the arc's ends both move by one offset, its centre too.
+    let mut arc = vec![Outline {
+        corners: vec![square([0.0, 0.0]), square([20.0, 0.0])],
+        pieces: vec![Piece::Line, Piece::Arc { center: square([10.0, 0.0]), ccw: true }],
+        faces: vec![None; 2],
+    }];
+    super::snap_to_body(&s, "Body", &plane, &mut arc, 0.1, true);
+    assert_eq!(arc[0].corners, vec![Vec2::new(0.0, 0.0), Vec2::new(20.0, 0.0)]);
+    assert!(matches!(arc[0].pieces[1], Piece::Arc { center, .. } if center.dist(Vec2::new(10.0, 0.0)) < 1e-12), "{:?}", arc[0].pieces);
+    // Drafted: the box's vertices are 3 mm off the sketch's plane, so nothing moves.
+    let mut drafted = vec![Outline {
+        corners: vec![square([0.0, 0.0]), square([20.0, 0.0]), square([20.0, 10.0])],
+        pieces: vec![Piece::Line; 3],
+        faces: vec![None; 3],
+    }];
+    let read = drafted[0].corners.clone();
+    super::snap_to_body(&s, "Body", &plane, &mut drafted, 0.1, false);
+    assert_eq!(drafted[0].corners, read);
+    // Two corners onto one vertex: the outline stays as read.
+    let mut thin = vec![Outline {
+        corners: vec![square([0.0, 0.0]), square([0.02, 0.0]), square([0.0, 5.0])],
+        pieces: vec![Piece::Line; 3],
+        faces: vec![None; 3],
+    }];
+    let read = thin[0].corners.clone();
+    super::snap_to_body(&s, "Body", &plane, &mut thin, 0.1, true);
+    assert_eq!(thin[0].corners, read);
+}
+
+/// Hole It starts its hole where the hole's axis enters the body built so far: a mouth read a
+/// little above the body's face, or a little inside it, is moved onto the face.
+#[test]
+fn hole_it_starts_where_the_axis_enters_the_body() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "corner": [0, 0, 0], "body_name": "Body"}));
+    let down = Vec3::new(0.0, 0.0, -1.0);
+    for mouth_z in [10.3, 9.8] {
+        let at = super::entry_on_body(&s, "Body", Vec3::new(10.0, 10.0, mouth_z), down, 5.0).expect("the axis enters the body");
+        // On the face within the body's tolerance (where the kernel calls a point on it).
+        assert!((at.z - 10.0).abs() < 1e-4 && at.x == 10.0 && at.y == 10.0, "{at:?}");
+    }
+    assert!(super::entry_on_body(&s, "Body", Vec3::new(40.0, 10.0, 10.0), down, 5.0).is_none(), "beside the body: nothing to drill");
+}

@@ -484,7 +484,7 @@ const ON_GRID: f64 = 0.00175;
 /// [`ON_GRID`] of one (a scan stood on its base or squared to the grid leaves its faces a few
 /// thousandths of a degree off the axes, which a model built along them should not keep), else
 /// as it is.
-pub(crate) fn on_grid(direction: Vec3) -> Vec3 {
+pub fn on_grid(direction: Vec3) -> Vec3 {
     [Vec3::X, Vec3::Y, Vec3::Z]
         .into_iter()
         .map(|axis| if direction.dot(axis) < 0.0 { -axis } else { axis })

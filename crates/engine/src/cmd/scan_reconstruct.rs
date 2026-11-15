@@ -885,6 +885,107 @@ fn merged(mut a: Value, b: Value) -> Value {
     a
 }
 
+/// A prism's profile (on `plane`, extruded square to it) put exactly onto the body `solid` it
+/// joins where it nearly meets it: each corner within `reach` of one of the body's vertices moves
+/// onto it, else within `reach` of one of its straight edges, onto that edge's line; an arc moves
+/// only whole (both ends by one offset, its centre with them). A `square` prism's walls run square to the plane, so the body is seen along
+/// the extrusion (a wall of a prism stacked on it); a drafted one's lean, so only the body's
+/// vertices and edges in the plane itself count. Read each on its own from the scan, two
+/// prisms' walls nearly in one plane end a few thousandths of a millimetre apart, which the
+/// kernel's join can neither merge nor tell apart (it refuses).
+fn snap_to_body(s: &Session, solid: &str, plane: &Plane, outlines: &mut [Outline], reach: f64, square: bool) {
+    if !(reach.is_finite() && reach > 0.0) {
+        return;
+    }
+    let state = s.model.state();
+    let Some(body) = state.body(solid) else { return };
+    let Ok(edges) = body.body.edges(reach * 1e-3) else { return };
+    let flat = |p: Vec3| Vec2::new((p - plane.origin).dot(plane.x), (p - plane.origin).dot(plane.y));
+    let normal = plane.x.cross(plane.y);
+    let counts = |p: Vec3| square || (p - plane.origin).dot(normal).abs() <= reach;
+    let mut vertices: Vec<Vec2> = Vec::new();
+    let mut lines: Vec<(Vec2, Vec2)> = Vec::new();
+    for e in &edges {
+        let (Some(&a), Some(&b)) = (e.points.first(), e.points.last()) else { continue };
+        let (fa, fb) = (flat(a), flat(b));
+        vertices.extend([(a, fa), (b, fb)].into_iter().filter(|(p, _)| counts(*p)).map(|(_, f)| f));
+        if !(counts(a) && counts(b)) {
+            continue;
+        }
+        // A straight edge, not one running along the extrusion (seen end on, a point).
+        let straight = e.points.iter().all(|p| p.dist_to_segment(a, b) <= reach * 1e-3);
+        if straight && fa.dist(fb) > reach {
+            lines.push((fa, fb));
+        }
+    }
+    for o in outlines.iter_mut() {
+        let n = o.corners.len();
+        if n < 2 || o.pieces.len() != n {
+            continue;
+        }
+        // Where each corner would go: onto the nearest vertex, else the nearest straight edge.
+        let mut moved: Vec<Option<Vec2>> = o
+            .corners
+            .iter()
+            .map(|&c| {
+                let vertex = vertices.iter().copied().filter(|v| v.dist(c) <= reach).min_by(|a, b| a.dist(c).total_cmp(&b.dist(c)));
+                vertex.or_else(|| {
+                    lines
+                        .iter()
+                        .filter_map(|&(a, b)| {
+                            let d = b - a;
+                            let t = (c - a).dot(d) / d.dot(d);
+                            let q = a + d * t;
+                            ((0.0..=1.0).contains(&t) && q.dist(c) <= reach).then_some(q)
+                        })
+                        .min_by(|a, b| a.dist(c).total_cmp(&b.dist(c)))
+                })
+            })
+            .collect();
+        // An arc moves whole or not at all: both its ends by one offset (its centre with them),
+        // else neither, so its centre still fits its ends. Settled until no arc is split.
+        let offset = |k: usize, moved: &[Option<Vec2>]| moved[k].map(|t| t - o.corners[k]);
+        loop {
+            let mut changed = false;
+            for k in 0..n {
+                if !matches!(o.pieces[k], Piece::Arc { .. }) {
+                    continue;
+                }
+                let next = (k + 1) % n;
+                let agree = match (offset(k, &moved), offset(next, &moved)) {
+                    (Some(a), Some(b)) => a.dist(b) <= reach * 1e-3,
+                    (None, None) => true,
+                    _ => false,
+                };
+                if !agree {
+                    changed |= moved[k].take().is_some() | moved[next].take().is_some();
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let read = (o.corners.clone(), o.pieces.clone());
+        for k in 0..n {
+            if let Piece::Arc { center, ccw } = o.pieces[k]
+                && let Some(by) = offset(k, &moved)
+            {
+                o.pieces[k] = Piece::Arc { center: center + by, ccw };
+            }
+        }
+        for (k, to) in moved.iter().enumerate() {
+            if let Some(to) = to {
+                o.corners[k] = *to;
+            }
+        }
+        // Two neighbouring corners put on one point would leave a piece of no length: that outline
+        // stays as read.
+        if (0..n).any(|k| o.corners[k].dist(o.corners[(k + 1) % n]) <= reach * 1e-3) {
+            (o.corners, o.pieces) = read;
+        }
+    }
+}
+
 pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.extrude_it";
     let view = view(s, p, cmd, false)?;
@@ -905,6 +1006,12 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         profile::prism_profile(&view.scan(positions, triangles), view.outcome(), reading, prism).map_err(|e| bad(cmd, e))?
     };
     let (operation, solid, how) = into_params(s, &found.scan, p, cmd)?;
+    // A prism joined to the body already built meets it where the scan has them meet, exactly:
+    // corners within the scan's tolerance of the body's put on it.
+    let mut outlines = outlines;
+    if how == "join" {
+        snap_to_body(s, &solid, &plane, &mut outlines, view.outcome().tolerance, prism.draft == 0.0);
+    }
     let mut drawn = Drawn::default();
     let sketch = sketch_outlines(s, &plane, &format!("Prism Profile {}", index + 1), &outlines, &|_, _, _| None, &mut drawn)?;
     let depth = prism.depth();
@@ -1077,6 +1184,46 @@ fn hole_form(f: &solidcraft_scan::hole_form::Formed) -> ScanHoleForm {
     }
 }
 
+/// Where the line through `mouth` along `inward` (unit) first enters the body `solid`, from
+/// outside it up to `reach` past the mouth, by the body's exact point classification: sampled
+/// along the line, then halved down to the face. `None` when the line meets no material there.
+fn entry_on_body(s: &Session, solid: &str, mouth: Vec3, inward: Vec3, reach: f64) -> Option<Vec3> {
+    use solidcraft_kernel::PointClass;
+    let state = s.model.state();
+    let body = &state.body(solid)?.body;
+    // A start outside the body, back along the axis from the mouth.
+    let size = body.size().max(1.0);
+    let mut back = reach.max(1.0);
+    let start = loop {
+        let a = mouth - inward * back;
+        if body.classify_point(a).ok()? == PointClass::Outside {
+            break a;
+        }
+        back *= 2.0;
+        if back > 4.0 * size {
+            return None;
+        }
+    };
+    let end = mouth + inward * reach;
+    const STEPS: usize = 64;
+    let samples: Vec<Vec3> = (0..=STEPS).map(|k| start + (end - start) * (k as f64 / STEPS as f64)).collect();
+    let classes = body.classify_points(&samples).ok()?;
+    let first = classes.iter().position(|c| *c != PointClass::Outside).filter(|&i| i > 0)?;
+    if classes[first] == PointClass::OnBoundary {
+        return Some(samples[first]);
+    }
+    let (mut out, mut inside) = (samples[first - 1], samples[first]);
+    for _ in 0..48 {
+        let mid = (out + inside) * 0.5;
+        match body.classify_point(mid).ok()? {
+            PointClass::OnBoundary => return Some(mid),
+            PointClass::Outside => out = mid,
+            PointClass::Inside => inside = mid,
+        }
+    }
+    Some((out + inside) * 0.5)
+}
+
 /// Hole It: a hole read as a Hole feature makes it, drilled with Hole at its mouth along its axis.
 pub(super) fn hole_it(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.hole_it";
@@ -1117,7 +1264,12 @@ pub(super) fn hole_it(s: &mut Session, p: &Value) -> Result<Value> {
             &plain
         }
     };
-    let mut params = json!({"position": at(form.mouth), "direction": at(form.inward), "targets": [solid], "name": free_hole_name(s, index)});
+    // The hole starts where its axis enters the body built so far: the mouth the scan shows can lie
+    // a little above that body's face or inside it, and a hole must start on a face.
+    let reach = form.depth.unwrap_or_else(|| hole.depth()).max(2.0 * form.radius);
+    let start = entry_on_body(s, &solid, form.mouth, form.inward, reach)
+        .ok_or_else(|| bad(cmd, format!("the hole's axis does not run into `{solid}` near its mouth on the scan: build the part it is in first")))?;
+    let mut params = json!({"position": at(start), "direction": at(form.inward), "targets": [solid], "name": free_hole_name(s, index)});
     match bool_(p, "thread").unwrap_or(true).then_some(form.thread).flatten() {
         Some(thread) => params["thread"] = json!(thread),
         None => params["diameter"] = json!(format!("{} mm", 2.0 * form.radius)),
@@ -1137,8 +1289,14 @@ pub(super) fn hole_it(s: &mut Session, p: &Value) -> Result<Value> {
             params["tip_angle"] = json!(format!("{} deg", tip.to_degrees()));
         }
     }
-    let feature = run(s, "solid.hole", params)
-        .map_err(|e| super::refusal::refused(cmd, "the kernel could not drill the hole the scan shows", &e.to_string()))?;
+    let feature = run(s, "solid.hole", params).map_err(|e| {
+        let text = e.to_string();
+        if text.contains("SMLib") || text.contains("solidcore") {
+            super::refusal::refused(cmd, "the kernel could not drill the hole the scan shows", &text)
+        } else {
+            bad(cmd, text)
+        }
+    })?;
     reply(ScanBuildResult {
         body: found.scan.clone(),
         sketch: None,
@@ -1179,7 +1337,10 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
         .get(index)
         .ok_or_else(|| bad(cmd, format!("there are {} holes: `hole` is 0 to {}", reading.holes.len(), reading.holes.len() - 1)))?;
     let solid = built_body(s, &found.scan, p, cmd)?;
+    // Along the grid's axis when it is that near it, as Hole It drills: a hole a few thousandths
+    // of a degree off leaves the kernel ellipses it cannot convert within its tolerance.
     let inward = (hole.bottom - hole.mouth).normalized().ok_or_else(|| bad(cmd, "the hole has no depth on the scan"))?;
+    let inward = solidcraft_scan::reconstruct::on_grid(inward);
     // Started a little outside the mouth, so the cut begins clear of the material.
     let margin = (0.01 * reading.size).max(0.5);
     let (x, y) = {
