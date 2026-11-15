@@ -135,7 +135,7 @@ fn line_fit(points: &[Vec2], tolerance: f64) -> Option<(Fit, f64)> {
 
 /// The circle that fits `points` best: an algebraic fit (Kåsa), then Gauss–Newton on the
 /// distances themselves, which the algebraic fit leans small on a short noisy arc.
-fn best_circle(points: &[Vec2], tolerance: f64) -> Option<(Vec2, f64)> {
+pub(crate) fn best_circle(points: &[Vec2], tolerance: f64) -> Option<(Vec2, f64)> {
     if points.len() < 3 {
         return None;
     }

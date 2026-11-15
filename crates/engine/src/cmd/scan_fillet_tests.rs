@@ -83,3 +83,29 @@ fn the_round_the_scan_shows_is_measured_and_filleted() {
     let e = s.execute("scan.fillet", &json!({"edges": [[30, 40, 20]], "body": "Part", "scan": scan, "apply": false})).unwrap_err().to_string();
     assert!(e.contains("sharp") || e.contains("no better"), "{e}");
 }
+
+/// A tap on the scan's round reads 3 mm from the scan alone, finds the model's edge along it,
+/// and with `apply` fillets that edge in one undo step; a tap on a flat face finds no round.
+#[test]
+fn a_tap_on_the_scan_reads_the_round_and_fillets_its_edge() {
+    let mut s = Session::default();
+    let scan = rounded_scan(&mut s);
+    let tap = [30.0, 3.0 - 3.0 * std::f64::consts::FRAC_PI_4.cos(), 17.0 + 3.0 * std::f64::consts::FRAC_PI_4.sin()];
+    let r = run(&mut s, "scan.radius", json!({"at": tap, "scan": scan}));
+    assert_eq!(r["radius"].as_f64(), Some(3.0), "{r}");
+    assert_eq!(r["convex"].as_bool(), Some(true), "{r}");
+    assert!((r["swept"].as_f64().unwrap() - 90.0).abs() < 10.0, "{r}");
+    assert!(r.get("edge").is_none(), "no model yet: {r}");
+    let e = s.execute("scan.radius", &json!({"at": tap, "scan": scan, "apply": true})).unwrap_err().to_string();
+    assert!(e.contains("no edge"), "{e}");
+    run(&mut s, "solid.box", json!({"length": 60, "width": 40, "height": 20, "body_name": "Part"}));
+    let r = run(&mut s, "scan.radius", json!({"at": tap, "scan": scan}));
+    assert_eq!(r["edge"]["body"].as_str(), Some("Part"), "{r}");
+    let faces = s.model.state().body("Part").map(|b| b.body.face_count());
+    let r = run(&mut s, "scan.radius", json!({"at": tap, "scan": scan, "apply": true}));
+    assert!(r.get("feature").is_some(), "{r}");
+    assert_eq!(s.model.state().body("Part").map(|b| b.body.face_count()), faces.map(|f| f + 1), "a round face more");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.model.state().body("Part").map(|b| b.body.face_count()), faces);
+    assert!(s.execute("scan.radius", &json!({"at": [30, 20, 20], "scan": scan})).is_err(), "the flat top is no round");
+}

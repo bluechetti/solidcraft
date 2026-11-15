@@ -303,6 +303,10 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
     if id == "scan.remove_markers" {
         return crate::scan_markers::toggle(app);
     }
+    // Radius from Scan's button asks for taps on rounds, or ends asking.
+    if id == "scan.radius" {
+        return crate::scan_radius::toggle(app);
+    }
     // Pin Deviation's button turns pinning on (showing the map if it is not) or off again.
     if id == "scan.deviation_pin" {
         return crate::scan_deviation::toggle_pinning(app);

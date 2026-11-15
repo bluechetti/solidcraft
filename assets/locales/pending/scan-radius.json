@@ -1,0 +1,74 @@
+{
+  "en": {
+    "cmd.scan_radius": "Radius from Scan",
+    "help.scan.radius": "Tap a round on the scan to read its radius, side and angle. When a model edge runs along it, OK fillets that edge at that radius.",
+    "ui.scan_radius_edge": "A round of R{radius} runs along an edge of {body}. OK fillets that edge at it.",
+    "ui.scan_radius_inside": "inside",
+    "ui.scan_radius_outside": "outside",
+    "ui.scan_radius_pick": "Tap a round on the scan",
+    "ui.scan_radius_tag": "R{radius} · {kind} · {angle}°"
+  },
+  "ar": {
+    "cmd.scan_radius": "نصف القطر من المسح",
+    "help.scan.radius": "انقر على تقويس في المسح لقراءة نصف قطره وجهته وزاويته. إذا امتدت حافة من النموذج على طوله، يقوّس موافق تلك الحافة بنصف القطر.",
+    "ui.scan_radius_edge": "تقويس R{radius} يمتد على حافة من {body}. موافق يقوّس تلك الحافة به.",
+    "ui.scan_radius_inside": "داخلي",
+    "ui.scan_radius_outside": "خارجي",
+    "ui.scan_radius_pick": "انقر على تقويس في المسح",
+    "ui.scan_radius_tag": "R{radius} · {kind} · {angle}°"
+  },
+  "de": {
+    "cmd.scan_radius": "Radius aus Scan",
+    "help.scan.radius": "Eine Rundung auf dem Scan antippen, um Radius, Seite und Winkel zu lesen. Läuft eine Modellkante an ihr entlang, verrundet OK diese Kante mit dem Radius.",
+    "ui.scan_radius_edge": "Eine Rundung R{radius} läuft entlang einer Kante von {body}. OK verrundet diese Kante damit.",
+    "ui.scan_radius_inside": "innen",
+    "ui.scan_radius_outside": "außen",
+    "ui.scan_radius_pick": "Eine Rundung auf dem Scan antippen",
+    "ui.scan_radius_tag": "R{radius} · {kind} · {angle}°"
+  },
+  "he": {
+    "cmd.scan_radius": "רדיוס מהסריקה",
+    "help.scan.radius": "הקישו על עיגול בסריקה כדי לקרוא את הרדיוס, הצד והזווית שלו. כשקצה של המודל עובר לאורכו, 'אישור' מעגל את הקצה ברדיוס הזה.",
+    "ui.scan_radius_edge": "עיגול של R{radius} עובר לאורך קצה של {body}. 'אישור' מעגל את הקצה הזה בו.",
+    "ui.scan_radius_inside": "פנימי",
+    "ui.scan_radius_outside": "חיצוני",
+    "ui.scan_radius_pick": "הקישו על עיגול בסריקה",
+    "ui.scan_radius_tag": "R{radius} · {kind} · {angle}°"
+  },
+  "ja": {
+    "cmd.scan_radius": "スキャンから半径",
+    "help.scan.radius": "スキャンの丸みをタップすると、半径、内外、角度を読み取ります。モデルのエッジが沿っていれば、OK でそのエッジをその半径でフィレットします。",
+    "ui.scan_radius_edge": "R{radius} の丸みが {body} のエッジに沿っています。OK でそのエッジをフィレットします。",
+    "ui.scan_radius_inside": "内側",
+    "ui.scan_radius_outside": "外側",
+    "ui.scan_radius_pick": "スキャン上の丸みをタップ",
+    "ui.scan_radius_tag": "R{radius} · {kind} · {angle}°"
+  },
+  "ko": {
+    "cmd.scan_radius": "스캔에서 반지름",
+    "help.scan.radius": "스캔의 라운드를 탭하면 반지름, 안팎, 각도를 읽습니다. 모델 모서리가 그것을 따라가면 확인으로 그 모서리를 그 반지름으로 필렛합니다.",
+    "ui.scan_radius_edge": "R{radius} 라운드가 {body}의 모서리를 따라갑니다. 확인을 누르면 그 모서리를 필렛합니다.",
+    "ui.scan_radius_inside": "안쪽",
+    "ui.scan_radius_outside": "바깥",
+    "ui.scan_radius_pick": "스캔에서 라운드를 탭하세요",
+    "ui.scan_radius_tag": "R{radius} · {kind} · {angle}°"
+  },
+  "vi": {
+    "cmd.scan_radius": "Bán kính từ bản quét",
+    "help.scan.radius": "Chạm vào chỗ bo trên bản quét để đọc bán kính, phía và góc. Khi một cạnh mô hình chạy dọc theo nó, OK bo cạnh đó theo bán kính này.",
+    "ui.scan_radius_edge": "Một chỗ bo R{radius} chạy dọc theo một cạnh của {body}. OK bo cạnh đó theo nó.",
+    "ui.scan_radius_inside": "trong",
+    "ui.scan_radius_outside": "ngoài",
+    "ui.scan_radius_pick": "Chạm vào một chỗ bo trên bản quét",
+    "ui.scan_radius_tag": "R{radius} · {kind} · {angle}°"
+  },
+  "zh": {
+    "cmd.scan_radius": "从扫描读取半径",
+    "help.scan.radius": "点按扫描上的圆角，读取其半径、内外和角度。若模型的一条边沿着它，确定会以该半径对这条边倒圆角。",
+    "ui.scan_radius_edge": "R{radius} 的圆角沿着 {body} 的一条边。确定将以此对这条边倒圆角。",
+    "ui.scan_radius_inside": "内侧",
+    "ui.scan_radius_outside": "外侧",
+    "ui.scan_radius_pick": "点按扫描上的圆角",
+    "ui.scan_radius_tag": "R{radius} · {kind} · {angle}°"
+  }
+}

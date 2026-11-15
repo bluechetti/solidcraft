@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::features::FeatureResult;
+use super::types::Point3;
 
 /// Measure the round the scan shows along a model's edges and fillet them at it. One undo step.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -65,14 +66,78 @@ pub struct ScanFilletResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Measure the round under a point of the scan, from the scan alone; with `apply`, fillet the
+/// model's edge that runs along it at that radius. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanRadiusParams {
+    /// A point on a round of the scan.
+    pub at: Point3,
+    /// The scan. Default: the selected or only one.
+    #[serde(default)]
+    pub scan: Option<String>,
+    /// The radius rounded to a multiple of this, in mm (0: exact). Default: 0.5.
+    #[serde(default)]
+    pub step: Option<f64>,
+    /// The model whose edge runs along the round. Default: the selected or only solid or surface
+    /// body, if there is one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Fillet the model's edge along the round at the radius measured. Default: false.
+    #[serde(default)]
+    pub apply: Option<bool>,
+}
+
+/// What `scan.radius` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanRadiusResult {
+    pub scan: String,
+    /// The radius that fits best, the one given, and the step it was rounded to (mm).
+    pub fitted: f64,
+    pub radius: f64,
+    pub step: f64,
+    /// True for a round on an outside edge, false for one filling an inside corner.
+    pub convex: bool,
+    /// The angle the round turns through, degrees.
+    pub swept: f64,
+    /// The round's axis at its middle, the point on it level with the middle, and the middle of
+    /// the round.
+    pub axis: [f64; 3],
+    pub centre: [f64; 3],
+    pub middle: [f64; 3],
+    /// Where the faces the round joins would meet were the edge sharp (none past 170°).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner: Option<[f64; 3]>,
+    /// How far the round runs, mm.
+    pub length: f64,
+    /// How far the round's points lie off it, root mean square and most (mm).
+    pub rms: f64,
+    pub maximum: f64,
+    /// Round a circular edge: the radius of the circle the round runs round.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub along_circle: Option<f64>,
+    /// The scan's triangles on the round.
+    pub triangles: usize,
+    /// The model's edge that runs along the round, {body, index}.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<Value>,
+    /// The Fillet feature, as `solid.fillet` replies, when the edge was filleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<FeatureResult>")]
+    pub feature: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ScanFilletParams;
+    use super::{ScanFilletParams, ScanRadiusParams};
     use crate::schema::input_schema_for;
     use crate::schema::tests::assert_keys;
 
     #[test]
     fn schemas_and_the_key_check_agree() {
         assert_keys(input_schema_for::<ScanFilletParams>(), &["apply", "body", "edges", "reach", "scan", "step"]);
+        assert_keys(input_schema_for::<ScanRadiusParams>(), &["apply", "at", "body", "scan", "step"]);
     }
 }

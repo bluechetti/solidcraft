@@ -6558,6 +6558,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     {
         crate::scan_markers::click(app, &proj, p);
     }
+    // Radius from Scan: a tap on the scan reads the round under it.
+    if crate::scan_radius::picking(app)
+        && resp.clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        crate::scan_radius::click(app, &proj, p);
+    }
     // Scan Deviation: the distance under the pointer; Pin Deviation: a click on the scan labels it.
     crate::scan_deviation::track(app, &proj, hover.filter(|_| !navigating));
     if crate::scan_deviation::pinning(app)
@@ -6673,6 +6680,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::section_scan::draw(app, &painter, &proj);
     crate::hole_table::draw(app, &painter, &proj);
     crate::scan_markers::draw(app, &painter, &proj);
+    crate::scan_radius::draw(app, &painter, &proj);
     crate::inspection_plan::draw(app, &painter, &proj);
     crate::dim_view::show(app, ui, &painter, &proj);
     crate::sketch_text_handles::show(app, ui, &painter, &proj, hover);
@@ -7364,6 +7372,7 @@ fn takes_scan_clicks(app: &SolveApp) -> bool {
         || crate::dialogs_scan_clean::choosing_holes(app)
         || crate::scan_deviation::pinning(app)
         || crate::scan_markers::picking(app)
+        || crate::scan_radius::picking(app)
         || crate::inspection_plan::adding(app)
 }
 

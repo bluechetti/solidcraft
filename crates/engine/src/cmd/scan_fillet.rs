@@ -10,11 +10,12 @@ use solidcraft_scan::fillet::{self, Measured, Station};
 
 use super::{CommandSpec, mesh, mesh_name};
 use crate::params::{bad, bool_, num, str_};
-use crate::schema::scan_fillet::{ScanFilletParams, ScanFilletResult};
+use crate::schema::scan_fillet::{ScanFilletParams, ScanFilletResult, ScanRadiusParams, ScanRadiusResult};
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
 
 const FILLET_CONTRACT: TypedContract<ScanFilletParams> = TypedContract::new();
+const RADIUS_CONTRACT: TypedContract<ScanRadiusParams> = TypedContract::new();
 
 /// How far from the edges to look for the scan, and the step the radius is rounded to.
 pub const REACH: f64 = 10.0;
@@ -28,7 +29,13 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.fillet", "Fillet 
     .icon("fillet")
     .contract(&FILLET_CONTRACT)
     .output(output_schema_for::<ScanFilletResult>)
-    .params("edges: [[x,y,z] point on an edge | {body, index}] of the model; body?: the model (default: the one the edges are on, else the selected or only solid or surface body); scan?: the scan (default: the selected or only one); reach?: length (default 10 mm: how far from the edges the scan is read); step?: the radius rounded to a multiple of it (default 0.5; 0 exact); apply?: bool (default true: the edges filleted at the radius measured, a Fillet feature; false only measures): one round fitted to the scan between each edge's two faces (each face free to sit a little off the model's), refused where the scan shows a sharp edge or a round fits no better → body, scan, edges, fitted, radius, step, rms, maximum, sharp_rms, points, on_round, set_aside, station_low, station_high, face_offsets, feature?")];
+    .params("edges: [[x,y,z] point on an edge | {body, index}] of the model; body?: the model (default: the one the edges are on, else the selected or only solid or surface body); scan?: the scan (default: the selected or only one); reach?: length (default 10 mm: how far from the edges the scan is read); step?: the radius rounded to a multiple of it (default 0.5; 0 exact); apply?: bool (default true: the edges filleted at the radius measured, a Fillet feature; false only measures): one round fitted to the scan between each edge's two faces (each face free to sit a little off the model's), refused where the scan shows a sharp edge or a round fits no better → body, scan, edges, fitted, radius, step, rms, maximum, sharp_rms, points, on_round, set_aside, station_low, station_high, face_offsets, feature?"),
+    CommandSpec::new("scan.radius", "Radius from Scan", crate::checked!("scan.radius", radius_from_scan))
+    .at("SCAN", "RECONSTRUCT")
+    .icon("fillet")
+    .contract(&RADIUS_CONTRACT)
+    .output(output_schema_for::<ScanRadiusResult>)
+    .params("at: [x,y,z] a point on a round of the scan; scan?: the scan (default: the selected or only one); step?: the radius rounded to a multiple of it (default 0.5; 0 exact); body?: the model whose edge runs along the round (default: the selected or only solid or surface body, if any); apply?: bool (default false: only measures; true fillets that edge at the radius): the round under the point fitted from the scan alone (a cylinder, or a torus along a circular edge), the flat faces either side left out → scan, fitted, radius, step, convex, swept, axis, centre, middle, corner?, length, rms, maximum, along_circle?, triangles, edge?, feature?")];
 
 fn reply<T: serde::Serialize>(r: T) -> Result<Value> {
     serde_json::to_value(r).map_err(|e| EngineError::Other(e.to_string()))
@@ -186,6 +193,98 @@ fn fillet_from_scan(s: &mut Session, p: &Value) -> Result<Value> {
         station_low: found.station_low,
         station_high: found.station_high,
         face_offsets: found.face_offsets,
+        feature,
+        param_warnings: Vec::new(),
+    })
+}
+
+/// How far from where the sharp edge would be a model's edge may lie and still be the edge the
+/// round is on: this share of the radius, and at least `EDGE_SLACK_MIN` mm.
+const EDGE_SLACK: f64 = 0.5;
+const EDGE_SLACK_MIN: f64 = 1.0;
+
+fn radius_from_scan(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.radius";
+    let at = p.get("at").and_then(crate::params::vec3).ok_or_else(|| bad(cmd, "`at` must be a point [x, y, z] on a round of the scan"))?;
+    let step = num(p, "step").unwrap_or(STEP);
+    if !(step.is_finite() && step >= 0.0) {
+        return Err(bad(cmd, "`step` must be 0 or more"));
+    }
+    let scan_body = mesh_name(s, &json!({ "body": str_(p, "scan") }), cmd)?;
+    let scan = mesh(s, &json!({ "body": scan_body }), cmd)?;
+    let found = {
+        let on = solidcraft_scan::Scan::new(&scan.positions, &scan.triangles);
+        fillet::measure_at(&on, at, step, solidcraft_scan::reconstruct::outward(&on)).map_err(|e| bad(cmd, e.to_string()))?
+    };
+    // The model's edge the round is on: the one through where the sharp edge would be, running
+    // along the round.
+    let model = {
+        let state = s.model.state();
+        let named = str_(p, "body").filter(|n| !n.trim().is_empty()).map(str::to_owned);
+        let selected = s.selection.iter().find_map(|x| match x {
+            Sel::Edge { body, .. } | Sel::Face { body, .. } | Sel::Body { name: body } if state.body(body).is_some_and(|b| !b.body.is_mesh()) => {
+                Some(body.clone())
+            }
+            _ => None,
+        });
+        let models: Vec<&str> = state.bodies.iter().filter(|b| !b.body.is_mesh()).map(|b| b.name.as_str()).collect();
+        match (named.or(selected), models.as_slice()) {
+            (Some(m), _) => Some(m),
+            (None, [one]) => Some((*one).to_owned()),
+            _ => None,
+        }
+    };
+    let edge = match (&model, found.corner) {
+        (Some(m), Some(corner)) => {
+            let state = s.model.state();
+            let body = state.body(m).ok_or_else(|| bad(cmd, format!("no body `{m}`")))?;
+            if body.body.is_mesh() {
+                return Err(bad(cmd, format!("`{m}` is a scan: name the model built from it")));
+            }
+            let slack = (EDGE_SLACK * found.fitted).max(EDGE_SLACK_MIN);
+            let tol = (body.body.size() * 1e-3).max(1e-3);
+            let edges = body.body.edges(tol).map_err(|e| bad(cmd, e.to_string()))?;
+            edges
+                .iter()
+                .flat_map(|e| e.points.windows(2).map(move |w| (e.index, w[0], w[1])))
+                .filter(|(_, a, b)| (*b - *a).normalized().is_some_and(|d| d.dot(found.axis).abs() > 0.9))
+                .map(|(i, a, b)| (i, corner.dist_to_segment(a, b)))
+                .filter(|(_, d)| *d <= slack)
+                .min_by(|x, y| x.1.total_cmp(&y.1))
+                .map(|(i, _)| (m.clone(), i))
+        }
+        _ => None,
+    };
+    let feature = if bool_(p, "apply").unwrap_or(false) {
+        let Some((m, index)) = &edge else {
+            return Err(bad(cmd, "no edge of the model runs along this round: pick the edge and use Fillet from Scan, or Fillet"));
+        };
+        let run = super::super::find_command("solid.fillet").ok_or_else(|| EngineError::UnknownCommand("solid.fillet".into()))?;
+        Some(run.run_nested(
+            s,
+            &json!({"edges": [{"body": m, "index": index}], "radius": format!("{} mm", found.radius), "body": m, "tangent_chain": false}),
+        )?)
+    } else {
+        None
+    };
+    let v = |p: Vec3| [p.x, p.y, p.z];
+    reply(ScanRadiusResult {
+        scan: scan.body,
+        fitted: found.fitted,
+        radius: found.radius,
+        step: found.step,
+        convex: found.convex,
+        swept: found.swept.to_degrees(),
+        axis: v(found.axis),
+        centre: v(found.centre),
+        middle: v(found.middle),
+        corner: found.corner.map(v),
+        length: found.length,
+        rms: found.rms,
+        maximum: found.maximum,
+        along_circle: found.along_circle,
+        triangles: found.triangles.len(),
+        edge: edge.map(|(body, index)| json!({"body": body, "index": index})),
         feature,
         param_warnings: Vec::new(),
     })

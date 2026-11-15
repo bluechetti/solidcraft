@@ -327,7 +327,7 @@ fn place(l: Local, c: V, s: f64) -> Primitive {
 // ---- linear algebra ----
 
 /// Eigenvalues (ascending) and the matching unit eigenvectors of a symmetric 3x3 matrix (Jacobi).
-fn eigen3(m: [[f64; 3]; 3]) -> ([f64; 3], [V; 3]) {
+pub(crate) fn eigen3(m: [[f64; 3]; 3]) -> ([f64; 3], [V; 3]) {
     let mut a = m;
     let mut v = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
     for _ in 0..60 {

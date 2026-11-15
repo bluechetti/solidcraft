@@ -389,9 +389,454 @@ fn golden_section(low: f64, high: f64, mut f: impl FnMut(f64) -> f64) -> f64 {
     (a + b) / 2.0
 }
 
+/// A round measured where the scan was tapped, with no model: the triangles round the tap that
+/// face square to one axis and lie on one circle seen along it (or, along a circular edge, on one
+/// torus), the flat faces either side left out by how far they lean from the round.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Tapped {
+    /// The radius that fits best, and the one given (rounded to `step` when one is asked for).
+    pub fitted: f64,
+    pub radius: f64,
+    pub step: f64,
+    /// True for a round on an outside edge (the material inside its arc), false for one filling
+    /// an inside corner.
+    pub convex: bool,
+    /// The angle the round turns through, radians.
+    pub swept: f64,
+    /// The round's unit axis at its middle, and the point on the axis level with its middle.
+    pub axis: Vec3,
+    pub centre: Vec3,
+    /// The middle of the round, on it.
+    pub middle: Vec3,
+    /// Where the two faces the round joins would meet were the edge sharp; none when the round
+    /// turns through more than 170° (a boss or a bore, no edge).
+    pub corner: Option<Vec3>,
+    /// How far the round runs along its axis (round a circular edge, along the circle).
+    pub length: f64,
+    /// How far the round's points lie off it, root mean square and most.
+    pub rms: f64,
+    pub maximum: f64,
+    /// Round a circular edge: the radius of the circle the round's axis runs round.
+    pub along_circle: Option<f64>,
+    /// The scan's triangles on the round.
+    pub triangles: Vec<usize>,
+}
+
+/// Why no round was found where the scan was tapped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TapError {
+    /// The scan has no triangles.
+    NotOnTheScan,
+    /// The rounding step is not 0 or more.
+    BadStep,
+    /// The scan round the tap is flat.
+    Flat,
+    /// The scan round the tap is no round (a sharp edge, a freeform).
+    NotRound,
+}
+
+impl std::fmt::Display for TapError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            TapError::NotOnTheScan => "the scan has no triangles",
+            TapError::BadStep => "the rounding step must be 0 or more",
+            TapError::Flat => "the scan is flat there: tap the middle of a round",
+            TapError::NotRound => "the scan there is no round: a sharp edge, or a curve of changing radius",
+        })
+    }
+}
+
+impl std::error::Error for TapError {}
+
+/// A triangle's normal may lean this far from the round's there and still be on it: past it, the
+/// flat face the round runs into.
+const ROUND_LEAN: f64 = 10.0 * PI / 180.0;
+/// The normals round the tap must spread this far before an axis is read from them.
+const SPREAD: f64 = 15.0 * PI / 180.0;
+/// Past this share of the middle eigenvalue the normals do not all lie square to one axis.
+const NOT_STRAIGHT: f64 = 0.05;
+
+/// The round under `at` on `scan`, its radius rounded to `step` (0: exact); `outward` is
+/// [`crate::reconstruct::outward`] of the scan, which way its triangles face out.
+pub fn measure_at(scan: &crate::Scan, at: Vec3, step: f64, outward: f64) -> Result<Tapped, TapError> {
+    if !(step.is_finite() && step >= 0.0) {
+        return Err(TapError::BadStep);
+    }
+    let seed = crate::base::nearest_triangle(scan, at).ok_or(TapError::NotOnTheScan)?;
+    let neighbours = crate::base::edge_neighbours(scan);
+    let extent = scan.extent();
+    let facet = |t: usize| -> Option<(Vec3, Vec3, f64)> {
+        let [a, b, c] = scan.corners(t)?;
+        let doubled = (b - a).cross(c - a) * outward;
+        let area = doubled.len() / 2.0;
+        Some(((a + b + c) / 3.0, doubled.normalized()?, area))
+    };
+    // Each triangle's direction read over it and the triangles beside it: a scan's noise turns a
+    // single triangle's too far for the lean test.
+    let smooth = |t: usize| -> Option<Vec3> {
+        let (_, n, a) = facet(t)?;
+        neighbours.of(scan, t).filter_map(facet).fold(n * a, |s, (_, m, w)| s + m * w).normalized()
+    };
+    let grow = |keep: &dyn Fn(usize) -> bool| -> Vec<usize> {
+        let mut seen = std::collections::HashSet::from([seed]);
+        let mut found = vec![seed];
+        let mut head = 0;
+        while let Some(&t) = found.get(head) {
+            head += 1;
+            for n in neighbours.of(scan, t) {
+                if !seen.contains(&n) && keep(n) {
+                    seen.insert(n);
+                    found.push(n);
+                }
+            }
+        }
+        found
+    };
+    let side = scan.corners(seed).map(|[a, b, c]| (a.dist(b) + b.dist(c) + c.dist(a)) / 3.0).filter(|s| *s > 0.0).ok_or(TapError::NotOnTheScan)?;
+    // The start: the scan round the tap, widened until its directions spread enough to show an axis.
+    let mut reach = 3.0 * side;
+    let start = loop {
+        let near = grow(&|t| facet(t).is_some_and(|(c, _, _)| c.dist(at) <= reach));
+        let normals: Vec<Vec3> = near.iter().filter_map(|&t| smooth(t)).collect();
+        let mean = normals.iter().fold(Vec3::ZERO, |s, n| s + *n).normalized();
+        let spread = mean.map_or(0.0, |m| normals.iter().map(|n| n.dot(m).clamp(-1.0, 1.0).acos()).fold(0.0, f64::max));
+        if spread >= SPREAD && near.len() >= 12 {
+            break near;
+        }
+        reach *= 1.5;
+        if reach > 0.1 * extent {
+            return Err(TapError::Flat);
+        }
+    };
+    let straight_round = straight(&start, &facet, &smooth, &grow);
+    // A round along a circular edge, fitted as a torus: taken when the normals do not lie square
+    // to one axis, or when it fits clearly closer than the straight round (a short stretch of a
+    // wide circle looks straight).
+    let torus = crate::fit::fit(scan, seed, crate::fit::Kind::Torus, None).ok().and_then(|f| torus_round(f, &facet));
+    match (straight_round, torus) {
+        (Some((s, bent)), Some(t)) if bent > NOT_STRAIGHT || rms(&t.residuals) < 0.5 * rms(&s.residuals) => finish(t, step),
+        (Some((s, _)), _) => finish(s, step),
+        (None, Some(t)) => finish(t, step),
+        (None, None) => Err(TapError::NotRound),
+    }
+}
+
+fn rms(residuals: &[f64]) -> f64 {
+    (residuals.iter().map(|r| r * r).sum::<f64>() / residuals.len().max(1) as f64).sqrt()
+}
+
+/// The round in its own terms before rounding: the radius, the centre and axis at the middle, the
+/// points on it in the plane square to the axis there (x out along the round's middle), and so on.
+struct Found {
+    radius: f64,
+    convex: bool,
+    swept: f64,
+    axis: Vec3,
+    centre: Vec3,
+    mid: Vec3,
+    length: f64,
+    residuals: Vec<f64>,
+    along_circle: Option<f64>,
+    triangles: Vec<usize>,
+}
+
+fn finish(f: Found, step: f64) -> Result<Tapped, TapError> {
+    let rms = rms(&f.residuals);
+    let maximum = f.residuals.iter().fold(0.0f64, |m, r| m.max(r.abs()));
+    // A round must stand clear of its own scatter.
+    if !(f.radius.is_finite() && f.radius > 4.0 * rms) {
+        return Err(TapError::NotRound);
+    }
+    let radius = if step > 0.0 { ((f.radius / step).round() * step).max(step) } else { f.radius };
+    let corner = (f.swept < 170f64.to_radians()).then(|| f.centre + f.mid * (f.radius / (f.swept / 2.0).cos()));
+    Ok(Tapped {
+        fitted: f.radius,
+        radius,
+        step,
+        convex: f.convex,
+        swept: f.swept,
+        axis: f.axis,
+        centre: f.centre,
+        middle: f.centre + f.mid * f.radius,
+        corner,
+        length: f.length,
+        rms,
+        maximum,
+        along_circle: f.along_circle,
+        triangles: f.triangles,
+    })
+}
+
+/// The span of `angles` (radians) round a circle: where it starts and how far it turns, across
+/// the widest gap between them.
+fn span(mut angles: Vec<f64>) -> Option<(f64, f64)> {
+    angles.retain(|a| a.is_finite());
+    angles.sort_by(f64::total_cmp);
+    let (first, last) = (*angles.first()?, *angles.last()?);
+    let (mut gap, mut start) = (first + 2.0 * PI - last, first);
+    for w in angles.windows(2) {
+        if w[1] - w[0] > gap {
+            gap = w[1] - w[0];
+            start = w[1];
+        }
+    }
+    Some((start, 2.0 * PI - gap))
+}
+
+type Facet<'a> = dyn Fn(usize) -> Option<(Vec3, Vec3, f64)> + 'a;
+
+/// A round along a straight edge grown from `start`, and how far its normals stray from lying
+/// square to one axis (the smallest eigenvalue over the middle one).
+fn straight(
+    start: &[usize],
+    facet: &Facet,
+    smooth: &dyn Fn(usize) -> Option<Vec3>,
+    grow: &dyn Fn(&dyn Fn(usize) -> bool) -> Vec<usize>,
+) -> Option<(Found, f64)> {
+    let axis_of = |region: &[usize]| -> Option<(Vec3, f64)> {
+        let mut m = [[0.0f64; 3]; 3];
+        for &t in region {
+            let (Some((_, _, w)), Some(n)) = (facet(t), smooth(t)) else { continue };
+            let n = [n.x, n.y, n.z];
+            for i in 0..3 {
+                for j in 0..3 {
+                    m[i][j] += w * n[i] * n[j];
+                }
+            }
+        }
+        let (values, vectors) = crate::constrain::eigen3(m);
+        let axis = Vec3::new(vectors[0][0], vectors[0][1], vectors[0][2]).normalized()?;
+        Some((axis, if values[1] > 0.0 { values[0].max(0.0) / values[1] } else { 1.0 }))
+    };
+    let circle_of = |region: &[usize], axis: Vec3| -> Option<(Vec3, f64)> {
+        let u = axis.any_perp().normalized()?;
+        let v = axis.cross(u);
+        let flat: Vec<Vec2> = region.iter().filter_map(|&t| facet(t)).map(|(c, _, _)| Vec2::new(c.dot(u), c.dot(v))).collect();
+        let (c, r) = crate::chain::best_circle(&flat, 1e-9)?;
+        Some((u * c.x + v * c.y, r))
+    };
+    let radial = |p: Vec3, centre: Vec3, axis: Vec3| -> (f64, Option<Vec3>) {
+        let d = p - centre;
+        let out = d - axis * d.dot(axis);
+        (out.len(), out.normalized())
+    };
+    let mut region = start.to_vec();
+    let (mut axis, mut straightness) = axis_of(&region)?;
+    let (mut centre, mut radius) = circle_of(&region, axis)?;
+    let convex_of = |region: &[usize], centre: Vec3, axis: Vec3| -> bool {
+        region
+            .iter()
+            .filter_map(|&t| Some((facet(t)?, smooth(t)?)))
+            .map(|((c, _, w), n)| radial(c, centre, axis).1.map_or(0.0, |o| w * n.dot(o)))
+            .sum::<f64>()
+            >= 0.0
+    };
+    let mut convex = convex_of(&region, centre, axis);
+    for _ in 0..16 {
+        let tolerance = (0.03 * radius).max(1e-6);
+        let sign = if convex { 1.0 } else { -1.0 };
+        let grown = grow(&|t| {
+            let (Some((c, _, _)), Some(n)) = (facet(t), smooth(t)) else { return false };
+            let (r, out) = radial(c, centre, axis);
+            (r - radius).abs() <= tolerance && out.is_some_and(|o| (n.dot(o) * sign).clamp(-1.0, 1.0).acos() <= ROUND_LEAN)
+        });
+        if grown.len() < 6 {
+            return None;
+        }
+        let same = grown.len() == region.len();
+        region = grown;
+        (axis, straightness) = axis_of(&region)?;
+        (centre, radius) = circle_of(&region, axis)?;
+        convex = convex_of(&region, centre, axis);
+        if same {
+            break;
+        }
+    }
+    // Points far off the circle (> 2.5σ) set aside, and the circle fitted again.
+    let off = |region: &[usize], centre: Vec3, radius: f64| -> Vec<f64> {
+        region.iter().filter_map(|&t| facet(t)).map(|(c, _, _)| radial(c, centre, axis).0 - radius).collect()
+    };
+    let residuals = off(&region, centre, radius);
+    let sigma = (residuals.iter().map(|r| r * r).sum::<f64>() / residuals.len().max(1) as f64).sqrt();
+    if sigma > 0.0 {
+        let kept: Vec<usize> = region.iter().zip(&residuals).filter(|(_, r)| r.abs() <= 2.5 * sigma).map(|(t, _)| *t).collect();
+        if kept.len() >= 6
+            && let Some((c, r)) = circle_of(&kept, axis)
+        {
+            (centre, radius, region) = (c, r, kept);
+        }
+    }
+    let u = axis.any_perp().normalized()?;
+    let v = axis.cross(u);
+    let points: Vec<Vec3> = region.iter().filter_map(|&t| facet(t)).map(|(c, _, _)| c).collect();
+    // The turn read from the directions, not the places: the flat faces' first stretch, kept
+    // within the lean, adds no turn.
+    let sign = if convex { 1.0 } else { -1.0 };
+    let (from, swept) = span(region.iter().filter_map(|&t| smooth(t)).map(|n| n * sign).map(|n| n.dot(v).atan2(n.dot(u))).collect())?;
+    let along: Vec<f64> = points.iter().map(|&p| (p - centre).dot(axis)).collect();
+    let (low, high) = along.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), &t| (l.min(t), h.max(t)));
+    let half = from + swept / 2.0;
+    let found = Found {
+        radius,
+        convex,
+        swept,
+        axis,
+        centre: centre + axis * ((low + high) / 2.0),
+        mid: u * half.cos() + v * half.sin(),
+        length: (high - low).max(0.0),
+        residuals: off(&region, centre, radius),
+        along_circle: None,
+        triangles: region,
+    };
+    Some((found, straightness))
+}
+
+/// A torus fitted round the tap read as a round along a circular edge: its tube is the round.
+fn torus_round(f: crate::fit::Fitted, facet: &Facet) -> Option<Found> {
+    let crate::fit::Shape::Torus { center, axis, major, minor } = f.shape else { return None };
+    if !(minor < major) {
+        return None;
+    }
+    let points: Vec<(Vec3, Vec3)> = f.triangles.iter().filter_map(|&t| facet(t)).map(|(c, n, _)| (c, n)).collect();
+    let u = axis.any_perp().normalized()?;
+    let v = axis.cross(u);
+    // Round the circle (azimuth), and round the tube in the plane through the axis (meridian).
+    let azimuth: Vec<f64> = points.iter().map(|(p, _)| (*p - center).dot(v).atan2((*p - center).dot(u))).collect();
+    let (from, turn) = span(azimuth)?;
+    let middle = from + turn / 2.0;
+    let w = u * middle.cos() + v * middle.sin();
+    let tube = center + w * major;
+    let meridian: Vec<f64> = points
+        .iter()
+        .map(|(p, _)| {
+            let d = *p - center;
+            let t = d.dot(axis);
+            t.atan2((d - axis * t).len() - major)
+        })
+        .collect();
+    let (start, swept) = span(meridian)?;
+    let half = start + swept / 2.0;
+    let mid = w * half.cos() + axis * half.sin();
+    let convex = points
+        .iter()
+        .map(|(p, n)| {
+            let d = *p - center;
+            let t = d.dot(axis);
+            let ring = center + (d - axis * t).normalized().unwrap_or(w) * major;
+            n.dot(*p - ring)
+        })
+        .sum::<f64>()
+        >= 0.0;
+    Some(Found {
+        radius: minor,
+        convex,
+        swept,
+        axis: axis.cross(w).normalized()?,
+        centre: tube,
+        mid,
+        length: major * turn,
+        residuals: points.iter().map(|(p, _)| f.shape.distance(*p)).collect(),
+        along_circle: Some(major),
+        triangles: f.triangles,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
+
+    use crate::test_meshes::{extruded, revolved, rounded_rectangle};
+
+    /// `positions` each moved up to `amount` in a fixed pseudo-random way, as a scan's noise.
+    fn shaken(positions: &[Vec3], amount: f64) -> Vec<Vec3> {
+        let mut seed = 11u64;
+        let mut rand = || {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            ((seed >> 11) as f64 / (1u64 << 53) as f64) - 0.5
+        };
+        positions.iter().map(|p| *p + Vec3::new(rand(), rand(), rand()) * (2.0 * amount)).collect()
+    }
+
+    /// A tap on a block's rounded vertical corner reads its radius, an outside round turning a
+    /// right angle, and where the sharp corner would be; noise moves it little.
+    #[test]
+    fn a_tap_on_an_outside_round_reads_its_radius() {
+        let (positions, triangles) = extruded(&rounded_rectangle(60.0, 40.0, 5.0, 1.0), 0.0, 20.0, 20);
+        let tap = Vec3::new(60.0 - 5.0 + 5.0 * FRAC_PI_4.cos(), 5.0 - 5.0 * FRAC_PI_4.sin(), 10.0);
+        for (noise, close) in [(0.0, 0.03), (0.02, 0.15)] {
+            let positions = shaken(&positions, noise);
+            let scan = crate::Scan::new(&positions, &triangles);
+            let m = measure_at(&scan, tap, 0.5, crate::reconstruct::outward(&scan)).unwrap();
+            assert!((m.fitted - 5.0).abs() < close, "noise {noise}: {m:?}");
+            assert_eq!(m.radius, 5.0);
+            assert!(m.convex, "{m:?}");
+            assert!((m.swept.to_degrees() - 90.0).abs() < 8.0, "{}", m.swept.to_degrees());
+            assert!(m.axis.z.abs() > 0.99 && m.length > 15.0, "{m:?}");
+            let corner = m.corner.unwrap();
+            assert!(corner.x > 59.0 && corner.y < 1.0, "{corner:?}");
+        }
+    }
+
+    /// An inside round (an L whose inner corner is rounded at 4) reads as concave.
+    #[test]
+    fn a_tap_on_an_inside_round_reads_concave() {
+        let mut outline: Vec<[f64; 2]> = Vec::new();
+        let edge = |from: [f64; 2], to: [f64; 2], out: &mut Vec<[f64; 2]>| {
+            let n = ((to[0] - from[0]).hypot(to[1] - from[1]).ceil() as u32).max(1);
+            out.extend(crate::test_meshes::steps(from, to, n).into_iter().take(n as usize));
+        };
+        edge([0.0, 0.0], [40.0, 0.0], &mut outline);
+        edge([40.0, 0.0], [40.0, 15.0], &mut outline);
+        edge([40.0, 15.0], [19.0, 15.0], &mut outline);
+        for i in 0..24 {
+            let a = -FRAC_PI_2 - FRAC_PI_2 * f64::from(i) / 24.0;
+            outline.push([19.0 + 4.0 * a.cos(), 19.0 + 4.0 * a.sin()]);
+        }
+        edge([15.0, 19.0], [15.0, 40.0], &mut outline);
+        edge([15.0, 40.0], [0.0, 40.0], &mut outline);
+        edge([0.0, 40.0], [0.0, 0.0], &mut outline);
+        let (positions, triangles) = extruded(&outline, 0.0, 10.0, 10);
+        let scan = crate::Scan::new(&positions, &triangles);
+        let tap = Vec3::new(19.0 - 4.0 * FRAC_PI_4.cos(), 19.0 - 4.0 * FRAC_PI_4.sin(), 5.0);
+        let m = measure_at(&scan, tap, 0.0, crate::reconstruct::outward(&scan)).unwrap();
+        assert!((m.radius - 4.0).abs() < 0.05, "{m:?}");
+        assert!(!m.convex, "{m:?}");
+        let corner = m.corner.unwrap();
+        assert!((corner.x - 15.0).abs() < 0.5 && (corner.y - 15.0).abs() < 0.5, "{corner:?}");
+    }
+
+    /// A round along a circular edge (a disc's rim rounded at 3) reads as a round of 3 about a
+    /// circle of 17.
+    #[test]
+    fn a_tap_on_a_rounded_rim_reads_the_round() {
+        let mut profile = vec![[0.0, 0.0], [0.0, 20.0], [7.0, 20.0]];
+        for i in 1..=12 {
+            let a = FRAC_PI_2 * f64::from(i) / 12.0;
+            profile.push([7.0 + 3.0 * a.sin(), 17.0 + 3.0 * a.cos()]);
+        }
+        profile.extend([[10.0, 0.0]]);
+        let (positions, triangles) = revolved(&profile, 180, false);
+        let scan = crate::Scan::new(&positions, &triangles);
+        let tap = Vec3::new(17.0 + 3.0 * FRAC_PI_4.cos(), 0.0, 7.0 + 3.0 * FRAC_PI_4.sin());
+        let m = measure_at(&scan, tap, 0.0, crate::reconstruct::outward(&scan)).unwrap();
+        assert!((m.radius - 3.0).abs() < 0.1, "{m:?}");
+        assert!(m.along_circle.is_some_and(|r| (r - 17.0).abs() < 0.3), "{m:?}");
+        assert!(m.convex, "{m:?}");
+    }
+
+    /// A flat face and a sharp edge are no round.
+    #[test]
+    fn flat_and_sharp_are_no_round() {
+        let (positions, triangles) = extruded(&rounded_rectangle(60.0, 40.0, 5.0, 1.0), 0.0, 20.0, 20);
+        let scan = crate::Scan::new(&positions, &triangles);
+        let outward = crate::reconstruct::outward(&scan);
+        assert!(measure_at(&scan, Vec3::new(30.0, 0.0, 10.0), 0.5, outward).is_err());
+        assert!(measure_at(&scan, Vec3::new(30.0, 0.0, 20.0), 0.5, outward).is_err());
+        assert_eq!(measure_at(&scan, Vec3::new(30.0, 0.0, 10.0), -1.0, outward).err(), Some(TapError::BadStep));
+        assert_eq!(measure_at(&crate::Scan::new(&[], &[]), Vec3::ZERO, 0.5, outward).err(), Some(TapError::NotOnTheScan));
+    }
 
     /// Stations along a straight edge on the X axis between a face running +Y (facing up) and one
     /// running down at `angle` from it, and points sampled on the corner rounded at `r` with a

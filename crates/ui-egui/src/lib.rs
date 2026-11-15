@@ -166,6 +166,7 @@ mod prompt_cards_tests;
 #[cfg(test)]
 mod scale_tests;
 pub(crate) mod scan_markers;
+pub(crate) mod scan_radius;
 #[cfg(test)]
 mod surface_clamp_tests;
 #[cfg(test)]
@@ -3886,6 +3887,7 @@ impl SolveApp {
         mouse_gesture::show(self, ui.ctx());
         delete::show(self, ui.ctx());
         scan_markers::show(self, ui.ctx());
+        scan_radius::show(self, ui.ctx());
         easyprint_ui::show(self, ui.ctx());
         plugin_install::show(self, ui.ctx());
         linked_source::show_copies(self, ui.ctx());

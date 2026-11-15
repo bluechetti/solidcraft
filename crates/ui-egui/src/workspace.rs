@@ -511,6 +511,8 @@ pub const SECTIONS: &[Section] = &[
             "scan.reconstruct_selection",
             "scan.reconstruct_rest",
             "scan.fillet",
+            // A round's radius read by tapping it, before or without a model.
+            "scan.radius",
         ],
     },
     Section {

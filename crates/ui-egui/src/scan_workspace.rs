@@ -186,6 +186,7 @@ mod tests {
             "scan.align_pairs",
             "scan.align_to_model",
             "scan.fillet",
+            "scan.radius",
             "scan.flatten",
             "scan.flat_template",
             "scan.panel_export",

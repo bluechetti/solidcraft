@@ -189,6 +189,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.pattern_it",
     "scan.pipe_it",
     "scan.quick_align",
+    "scan.radius",
     "scan.reconstruct",
     "scan.reconstruct_rest",
     "scan.reconstruct_selection",
