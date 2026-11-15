@@ -2396,3 +2396,85 @@ fn panel_holes_are_checked_against_the_mirror_scan() {
     assert!(s.execute("scan.panel_proposals", &json!({"body": body, "panel": {"confirm_with": body}})).is_err(), "not itself");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A surface fitted to a scan stays on it: a Move of the scan, a Stand on Base and a move after a
+/// rename take the surface along by exactly the same move, in the same feature; `alone` moves the
+/// scan by itself; and the surface is noted as made from the scan in the design.
+#[test]
+fn a_surface_made_from_a_scan_moves_with_it() {
+    let (mut s, scan) = session_with_a_plate_and_boss("made-from");
+    run(&mut s, "scan.fit_surface", json!({"point": [12, 12, 8], "radius": 8, "controls": 6}));
+    let made = s.doc.features.iter().find(|f| f.body_names.iter().any(|n| n == "Surface1")).map(|f| f.made_from.clone());
+    assert_eq!(made, Some(vec![scan.clone()]), "noted as made from the scan");
+    let net = |s: &Session| solidcraft_scan::surface_edit::points(&super::surface::editable(s, Some("Surface1"), "test").unwrap().surface);
+    let lo = |s: &Session, body: &str| bounds(s, body).0;
+    let (start, scan_start) = (net(&s), lo(&s, &scan));
+
+    let moved = run(&mut s, "solid.move", json!({"bodies": [scan], "translate": [10, -4, 25]}));
+    assert_eq!(moved["carried"], json!(["Surface1"]), "{moved}");
+    let shift = Vec3::new(10.0, -4.0, 25.0);
+    assert!((lo(&s, &scan) - scan_start - shift).len() < STL);
+    for (a, b) in start.iter().zip(net(&s)) {
+        assert!((b - *a - shift).len() < 1e-9, "the surface moved exactly as the scan: {a:?} -> {b:?}");
+    }
+
+    // Standing the scan on a base is a Move of it too: the surface comes along.
+    let stood = run(&mut s, "scan.stand_on_base", json!({}));
+    assert_eq!(stood["feature"]["carried"], json!(["Surface1"]), "{stood}");
+
+    // `alone` leaves the surface where it is.
+    let before = net(&s);
+    let alone = run(&mut s, "solid.move", json!({"bodies": [scan], "translate": [0, 0, 5], "alone": true}));
+    assert!(alone.get("carried").is_none(), "{alone}");
+    assert!(before.iter().zip(net(&s)).all(|(a, b)| (b - *a).len() < 1e-9));
+
+    // Renamed, the scan still takes its surface along.
+    run(&mut s, "body.rename", json!({"body": scan, "name": "Part scan"}));
+    let renamed = run(&mut s, "solid.move", json!({"bodies": ["Part scan"], "translate": [1, 0, 0]}));
+    assert_eq!(renamed["carried"], json!(["Surface1"]), "{renamed}");
+}
+
+/// A plane fitted to a scan and a curve drawn on it go with the scan as the surface does: a turned
+/// and shifted Move of the scan places the plane and the curve's points again by exactly the move
+/// the scan's own points made, in the same undo step.
+#[test]
+fn planes_and_curves_made_from_a_scan_move_with_it() {
+    let (mut s, scan) = session_with_a_plate_and_boss("made-from-sketch");
+    let fitted = run(&mut s, "scan.fit_plane", json!({"point": [8, 8, 8]}));
+    let plane_feature = fitted["feature"]["feature"].as_u64().unwrap();
+    run(&mut s, "scan.curve_on_scan", json!({"points": [[5, 5, 8], [20, 5, 8], [20, 20, 8]]}));
+    run(&mut s, "scan.fit_surface", json!({"point": [12, 12, 8], "radius": 8, "controls": 6}));
+    let plane_at = |s: &Session| match s.model.state().construct.iter().find(|c| c.feature == plane_feature).map(|c| c.geom.clone()) {
+        Some(solidcraft_doc::construct::ConstructGeom::Plane(p)) => p.origin,
+        other => panic!("{other:?}"),
+    };
+    let curve = |s: &Session| -> Vec<Vec3> {
+        s.doc
+            .features
+            .iter()
+            .find_map(|f| match &f.kind {
+                solidcraft_doc::FeatureKind::Sketch { sketch, .. } if !f.made_from.is_empty() => {
+                    Some(sketch.wires.iter().flat_map(|w| w.pts.clone()).collect())
+                }
+                _ => None,
+            })
+            .expect("the curve's sketch, noted as made from the scan")
+    };
+    let first = |s: &Session| s.model.state().body(&scan).and_then(|b| b.body.triangle_mesh()).map(|(p, _)| p[0]).unwrap();
+    let (plane0, curve0, scan0) = (plane_at(&s), curve(&s), first(&s));
+    let undo_depth = s.undo.len();
+
+    let moved = run(&mut s, "solid.move", json!({"bodies": [scan], "translate": [10, -4, 25], "axis": [0, 0, 1], "angle": "30 deg"}));
+    assert_eq!(moved["carried"], json!(["Surface1"]), "{moved}");
+    assert_eq!(moved["placed"].as_array().map(Vec::len), Some(2), "the plane and the curve's sketch: {moved}");
+    assert_eq!(s.undo.len(), undo_depth + 1, "one undo step");
+    let m = solidcraft_doc::rigid(Vec3::new(10.0, -4.0, 25.0), Vec3::ZERO, Vec3::Z, 30f64.to_radians());
+    let to = |p: Vec3| solidcraft_doc::apply_point(&m, p);
+    assert!((first(&s) - to(scan0)).len() < 1e-9, "the scan moved by the move");
+    assert!((plane_at(&s) - to(plane0)).len() < 1e-9, "the plane moved as the scan: {:?} -> {:?}", plane0, plane_at(&s));
+    for (a, b) in curve0.iter().zip(curve(&s)) {
+        assert!((b - to(*a)).len() < 1e-9, "the curve moved as the scan: {a:?} -> {b:?}");
+    }
+    run(&mut s, "edit.undo", json!({}));
+    assert!((plane_at(&s) - plane0).len() < 1e-12 && (first(&s) - scan0).len() < 1e-12, "one undo puts all back");
+}

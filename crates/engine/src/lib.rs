@@ -1824,6 +1824,8 @@ impl Session {
         if outermost {
             crash::command_begin(self, spec.id, given);
         }
+        // The scan a scan command works on, so what it makes is noted as made from it.
+        let made_from = if outermost { cmd::scan::made_from::source(self, spec.id, params) } else { None };
         let scope = crash::Scope::enter();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match live {
             Some(run) => run(self, params),
@@ -1867,6 +1869,11 @@ impl Session {
             Err(EngineError::BadParams { cmd, msg }) if cmd.is_empty() => Err(EngineError::BadParams { cmd: spec.id.to_string(), msg }),
             Err(e) => Err(e),
         };
+        if let (Ok(_), Some(scan)) = (&r, made_from.as_deref())
+            && !Arc::ptr_eq(&self.doc, &before.doc)
+        {
+            cmd::scan::made_from::note(self, &before.doc, scan);
+        }
         // New/open/recover can replace the Session. Device ownership belongs to the host,
         // so its capability metadata survives those document lifecycle commands.
         self.render_viewport = host_viewport;

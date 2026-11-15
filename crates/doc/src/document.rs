@@ -3323,6 +3323,11 @@ pub struct Feature {
     /// default), or every piece stays one body.
     #[serde(default, skip_serializing_if = "Touching::is_separate")]
     pub touching: Touching,
+    /// The scans (mesh bodies) this feature was made from: a surface fitted to a scan, a solid
+    /// reconstructed from it, a piece split off it. A Move of the scan moves what was made from
+    /// it too, so the two stay together (`solid.move`, unless it moves the scan `alone`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub made_from: Vec<String>,
     #[serde(flatten)]
     pub kind: FeatureKind,
 }
@@ -4017,7 +4022,7 @@ impl Document {
             // name (#6287). Keep the full comparison below: geometry, expressions, sketch links
             // and face anchors must still agree before the model may reuse its geometry.
             f.kind.remap_bodies(&bodies);
-            for body in f.participants.iter_mut().filter(|body| **body == old) {
+            for body in f.participants.iter_mut().chain(f.made_from.iter_mut()).filter(|body| **body == old) {
                 body.clone_from(&new);
             }
         }
@@ -4484,6 +4489,7 @@ impl Document {
             inserted: false,
             link_faces: Vec::new(),
             touching: Touching::Separate,
+            made_from: Vec::new(),
             kind,
         };
         self.place_feature(f);

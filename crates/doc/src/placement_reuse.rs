@@ -229,6 +229,8 @@ fn same_feature(a: &Feature, b: &Feature) -> bool {
         pattern_names_in_order,
         inserted,
         link_faces,
+        // Which scans a feature was made from changes nothing it builds.
+        made_from: _,
         kind,
     } = a;
     *id == b.id

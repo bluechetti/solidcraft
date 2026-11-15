@@ -210,7 +210,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.move", "Move/Copy", crate::checked!("solid.move", move_bodies))
         .at("SOLID", "MODIFY").icon("move").key("M").enabled(not_in_sketch)
         .contract(&MOVE_CONTRACT).output(output_schema_for::<MoveResult>)
-        .params("bodies: [names]; translate?: [x,y,z] (length exprs or numbers, applied after rotation); axis?: [x,y,z] (default: world Z with origin, else the body's component's Z, world Z at the root); angle?: angle expr; origin?: [x,y,z] (length exprs or numbers in world coordinates; default: the body's component's origin, the world origin at the root); matrix?: rigid row-major 3x4 or 4x4, flat or rows (instead of translate/axis/angle/origin); tolerance?: matrix rotation tolerance (default 1e-9, at most 1e-3); copy?: bool (default false; true keeps originals and transforms copies); occurrences?: [occurrence paths, root first] (only with copy: copies each component independently and transforms the copies in world space; reply lists them in occurrences); name?, body_name?, body_names?"),
+        .params("bodies: [names]; translate?: [x,y,z] (length exprs or numbers, applied after rotation); axis?: [x,y,z] (default: world Z with origin, else the body's component's Z, world Z at the root); angle?: angle expr; origin?: [x,y,z] (length exprs or numbers in world coordinates; default: the body's component's origin, the world origin at the root); matrix?: rigid row-major 3x4 or 4x4, flat or rows (instead of translate/axis/angle/origin); tolerance?: matrix rotation tolerance (default 1e-9, at most 1e-3); copy?: bool (default false; true keeps originals and transforms copies); alone?: bool (default false: a scan moved takes along the bodies made from it, listed in carried, and the sketches and construction planes, axes and points made from it, placed again by the same move and listed in placed; true moves only the bodies named); occurrences?: [occurrence paths, root first] (only with copy: copies each component independently and transforms the copies in world space; reply lists them in occurrences); name?, body_name?, body_names?"),
 ];
 
 /// Where an extrude starts and which way is positive: a point inside the (first) profile or
@@ -2356,18 +2356,66 @@ fn move_bodies(s: &mut Session, p: &Value) -> Result<Value> {
     if p.get("copy").is_some_and(|v| !v.is_boolean()) {
         return Err(bad(cmd, "copy must be a boolean"));
     }
+    if p.get("alone").is_some_and(|v| !v.is_boolean()) {
+        return Err(bad(cmd, "alone must be a boolean"));
+    }
     if let Some(paths) = copied_components(p)? {
         return copy_components(s, p, paths);
     }
-    if let Some(plan) = crate::frames::placements_moved(s, p) {
-        return move_placements(s, p, plan);
+    // A scan moved takes what was made from it along (a surface fitted to it, a solid
+    // reconstructed from it, a section sketch, a fitted plane), so they stay together; `alone`
+    // moves the scan by itself.
+    let (with_made, carried) = with_made_from_scans(s, p);
+    let p = with_made.as_ref().unwrap_or(p);
+    let mut reply = if let Some(plan) = crate::frames::placements_moved(s, p) {
+        move_placements(s, p, plan)?
+    } else if let Some(moves) = crate::frames::split_move(s, p)? {
+        // Bodies in differently placed frames: one Move feature per frame, each moving its bodies
+        // by the world vector and turn mapped into that frame (#9660).
+        move_split(s, &moves)?
+    } else {
+        move_body_feature(s, p)?
+    };
+    if !carried.placed.is_empty() {
+        // The sketches and constructions made from the scans are placed again by the move itself,
+        // read back from the Move feature it made, in the same undo step.
+        let world = reply.get("feature").and_then(Value::as_u64).and_then(|id| super::scan::made_from::world_move(s, id));
+        match world {
+            Some(world) => super::scan::made_from::place(s, &carried.placed, &world),
+            None => return Err(bad(cmd, "the move of the scan could not be read back to move what was made from it: move it `alone`")),
+        }
+        let names: Vec<String> = carried.placed.iter().filter_map(|id| s.doc.feature(*id).map(|f| f.name.clone())).collect();
+        if let Some(out) = reply.as_object_mut() {
+            out.insert("placed".into(), json!(names));
+        }
     }
-    // Bodies in differently placed frames: one Move feature per frame, each moving its bodies
-    // by the world vector and turn mapped into that frame (#9660).
-    if let Some(moves) = crate::frames::split_move(s, p)? {
-        return move_split(s, &moves);
+    if !carried.bodies.is_empty()
+        && let Some(out) = reply.as_object_mut()
+    {
+        out.insert("carried".into(), json!(carried.bodies));
     }
-    move_body_feature(s, p)
+    Ok(reply)
+}
+
+/// `p` with the bodies made from the scans it moves added to its `bodies`, and what the move
+/// takes along; `None` and nothing when it copies, moves `alone`, or moves no scan anything was
+/// made from.
+fn with_made_from_scans(s: &Session, p: &Value) -> (Option<Value>, super::scan::made_from::Carried) {
+    let none = super::scan::made_from::Carried::default();
+    if p.get("copy").and_then(Value::as_bool) == Some(true) || p.get("alone").and_then(Value::as_bool) == Some(true) {
+        return (None, none);
+    }
+    let Some(bodies) = p.get("bodies").and_then(Value::as_array) else { return (None, none) };
+    let named: Vec<String> = bodies.iter().filter_map(Value::as_str).map(str::to_owned).collect();
+    let carried = super::scan::made_from::carried(s, &named);
+    if carried.bodies.is_empty() {
+        return (None, carried);
+    }
+    let mut with = p.clone();
+    if let Some(list) = with.get_mut("bodies").and_then(Value::as_array_mut) {
+        list.extend(carried.bodies.iter().map(|n| json!(n)));
+    }
+    (Some(with), carried)
 }
 
 /// The moves of `frames::split_move`, in one step, with one reply: the features made, and the

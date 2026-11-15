@@ -170,6 +170,7 @@ fn a_rebuilt_history_that_cannot_be_inserted_falls_back_to_solids() {
         inserted: false,
         link_faces: Vec::new(),
         touching: solidcraft_doc::Touching::Separate,
+        made_from: Vec::new(),
         kind: solidcraft_doc::FeatureKind::Sketch {
             plane: solidcraft_doc::PlaneRef::Origin { name: "XY".into() },
             sketch: solidcraft_doc::sketch::Sketch::new(),

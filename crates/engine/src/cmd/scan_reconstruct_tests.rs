@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
+use solidcraft_geom::Vec3Geom as _;
 
 use crate::Session;
 
@@ -623,4 +624,34 @@ fn reconstruct_the_rest_builds_what_the_body_leaves_unexplained() {
     assert!(super::super::select::selected(&s).is_none_or(|k| k.count == 0), "nothing left selected");
     run(&mut s, "edit.undo", json!({}));
     assert!((volume(&s, &solid) - plate_only).abs() < 1e-6, "one undo takes the rest back");
+}
+
+/// A solid rebuilt from a scan's prism moves with the scan exactly once: its sketch is placed again
+/// by the move, and the extrude built on it follows the sketch, not the Move as well.
+#[test]
+fn a_reconstructed_solid_moves_with_its_scan_once() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 40, "width": 30, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    let (mut s, scan) = scanned(&part, &body, 2, "made-from-once");
+    run(&mut s, "scan.find_all", json!({}));
+    run(&mut s, "scan.reconstruct", json!({}));
+    let solid = run(&mut s, "scan.extrude_it", json!({}))["solid"].as_str().unwrap().to_owned();
+    let lowest = |s: &Session, name: &str| -> Vec3 {
+        let state = s.model.state();
+        let b = state.body(name).unwrap();
+        let positions = match b.body.triangle_mesh() {
+            Some((p, _)) => p.to_vec(),
+            None => b.body.mesh(&solidcraft_kernel::MeshTolerance { chord: 0.01, angle: None }).unwrap().positions,
+        };
+        positions.iter().fold(Vec3::new(f64::MAX, f64::MAX, f64::MAX), |lo, p| lo.min(*p))
+    };
+    let (solid0, scan0, v0) = (lowest(&s, &solid), lowest(&s, &scan), volume(&s, &solid));
+    let moved = run(&mut s, "solid.move", json!({"bodies": [scan], "translate": [5, 0, 3]}));
+    assert!(!moved.get("carried").is_some_and(|c| c.to_string().contains(&solid)), "the solid follows its sketch, not the Move: {moved}");
+    assert!(moved["placed"].as_array().is_some_and(|p| !p.is_empty()), "{moved}");
+    let shift = Vec3::new(5.0, 0.0, 3.0);
+    assert!((lowest(&s, &scan) - scan0 - shift).len() < 1e-9);
+    assert!((lowest(&s, &solid) - solid0 - shift).len() < 1e-6, "moved once: {:?} -> {:?}", solid0, lowest(&s, &solid));
+    assert!((volume(&s, &solid) - v0).abs() < 1e-6 * v0);
 }

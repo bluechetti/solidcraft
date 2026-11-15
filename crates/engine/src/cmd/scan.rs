@@ -1179,6 +1179,9 @@ pub mod flatten;
 #[path = "scan_free_form.rs"]
 pub mod free_form;
 
+#[path = "scan_made_from.rs"]
+pub mod made_from;
+
 #[path = "scan_mesh.rs"]
 pub mod mesh;
 
