@@ -6657,6 +6657,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     draw_notes(app, &painter, &proj);
     crate::scan_deviation::draw(app, &painter, &proj);
     crate::section_scan::draw(app, &painter, &proj);
+    crate::hole_table::draw(app, &painter, &proj);
     crate::dim_view::show(app, ui, &painter, &proj);
     crate::sketch_text_handles::show(app, ui, &painter, &proj, hover);
     crate::sketch3d::show(app, &painter, &proj);

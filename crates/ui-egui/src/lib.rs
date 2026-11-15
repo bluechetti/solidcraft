@@ -114,6 +114,7 @@ pub mod hole_presets;
 pub(crate) mod hole_refs;
 #[cfg(test)]
 mod hole_refs_ui_tests;
+pub(crate) mod hole_table;
 pub mod home;
 pub mod i18n;
 #[cfg(test)]

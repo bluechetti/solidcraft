@@ -81,6 +81,7 @@ mod design_link;
 mod file;
 mod frame;
 mod frame_end_cap;
+pub mod hole_table;
 pub(crate) mod inspect;
 mod interference;
 pub(crate) mod joints;
@@ -419,6 +420,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(file::COMMANDS.iter());
     v.extend(print_face::COMMANDS.iter());
     v.extend(metadata::COMMANDS.iter());
+    v.extend(hole_table::COMMANDS.iter());
     v.extend(inspect::COMMANDS.iter());
     v.extend(compare::COMMANDS.iter());
     v.extend(compare_picture::COMMANDS.iter());

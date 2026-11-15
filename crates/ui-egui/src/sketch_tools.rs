@@ -285,6 +285,13 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
         }
         return crate::scan_deviation::start(app);
     }
+    // Hole Table's button takes the numbers away again while they are shown.
+    if id == "inspect.hole_table" && crate::hole_table::shown(app) {
+        let _ = app.run(id, json!({"show": false}));
+        return false;
+    }
+    // Add Check's button turns its click tool on or off; Measure Checks' takes its results away
+    // again while they are shown.
     // Pin Deviation's button turns pinning on (showing the map if it is not) or off again.
     if id == "scan.deviation_pin" {
         return crate::scan_deviation::toggle_pinning(app);

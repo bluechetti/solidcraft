@@ -447,6 +447,35 @@ pub fn cylinder_face(b: &Body, mesh: &Mesh, face: usize) -> Option<CylinderFace>
     (c.start.is_finite() && c.end.is_finite()).then_some(c)
 }
 
+/// Face `face` of a body as a cylinder, read exactly: its own surface's axis and radius, its side
+/// (a hole when the material is outside the cylinder) and its extent along the axis from the exact
+/// curves of its boundary edges, sampled along each. `None` when the face is not on a cylinder.
+pub fn cylinder_face_exact(b: &Body, face: usize) -> Option<CylinderFace> {
+    const SAMPLES: usize = 32;
+    let faces = Faces::new(b.record(), (b.size() * 1e-4).max(1e-6) * 10.0);
+    let (axis, o, r, internal) = cylinder_of(&faces, face)?;
+    let rec = b.record();
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for l in &rec.faces.get(face)?.loops {
+        let Loop::Edges { edges } = l else { continue };
+        for oe in edges {
+            let Some(e) = rec.edges.get(oe.edge as usize) else { continue };
+            let Ok(c) = solidcraft_geom::brep::eval::CurveEval::new(e.parameters()) else { continue };
+            let [t0, t1] = e.interval;
+            for k in 0..=SAMPLES {
+                if let Some(p) = c.point(t0 + (t1 - t0) * k as f64 / SAMPLES as f64) {
+                    let s = (p - o).dot(axis);
+                    lo = lo.min(s);
+                    hi = hi.max(s);
+                }
+            }
+        }
+    }
+    (lo.is_finite() && hi.is_finite() && hi > lo).then_some(CylinderFace { axis_point: o, axis, radius: r, start: lo, end: hi, internal })
+}
+
+/// The loops of face `face` of a body as closed polygons of points sampled on the exact curves of
+/// their edges, in loop order (its outer loop first, as the record keeps it). Empty for no such face.
 impl CylinderFace {
     /// How far `p` is from the face: off its cylinder, and past its ends along the axis.
     pub fn off(&self, p: Vec3) -> f64 {

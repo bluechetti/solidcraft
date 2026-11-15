@@ -66,6 +66,7 @@ pub(crate) fn shows_pressed(app: &SolveApp, id: &str) -> bool {
         || app.session.active_analysis() == Some(id)
         || (id == "scan.deviation" && crate::scan_deviation::shown(app))
         || (id == "scan.deviation_pin" && crate::scan_deviation::pinning(app))
+        || (id == "inspect.hole_table" && crate::hole_table::shown(app))
         || (id == "scan.find_all" && crate::scan_shapes::shown(app))
 }
 

@@ -78,6 +78,7 @@ pub const DOCUMENTED: &[&str] = &[
     "inspect.curvature_map",
     "inspect.draft",
     "inspect.environment_map",
+    "inspect.hole_table",
     "inspect.interference",
     "inspect.isocurve",
     "inspect.measure",

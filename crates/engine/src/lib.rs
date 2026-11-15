@@ -643,6 +643,9 @@ pub struct Session {
     /// The scan deviation map `scan.deviation` last measured, for the viewport to colour. View
     /// state: not part of the design and not an undo step.
     pub scan_deviation: Option<std::sync::Arc<cmd::scan::DeviationMap>>,
+    /// The holes `inspect.hole_table` last read, for the viewport to number. View state: not part
+    /// of the design and not an undo step.
+    pub hole_table: Option<std::sync::Arc<cmd::hole_table::HoleTable>>,
     /// What `scan.find_all` last found on a scan, and what Reconstruct reads off it, for the
     /// viewport to colour and Reconstruct's tools to build from. View state: not part of the
     /// design and not an undo step.
@@ -935,6 +938,7 @@ impl Session {
             analysis: None,
             continuity: Vec::new(),
             scan_deviation: None,
+            hole_table: None,
             scan_shapes: None,
             scan_survey: None,
             scan_selection: None,
@@ -2135,6 +2139,7 @@ impl Session {
             analysis: None,
             continuity: Vec::new(),
             scan_deviation: None,
+            hole_table: None,
             // What Find All read is kept, so a copy computing a scan tool beside the window
             // reads it again only when the scan changed (`ScanShapes::current`).
             scan_shapes: self.scan_shapes.clone(),
