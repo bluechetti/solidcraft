@@ -659,8 +659,17 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
     }
     let sides = [tr("ui.scan_template_both"), tr("ui.scan_template_out"), tr("ui.scan_template_in")];
     choice_row(ui, tr("ui.scan_template_side"), "scan_template_side", &mut k.side, &sides);
-    form_row(ui, tr("ui.scan_template_tolerance"), |ui| ui_kit::length_field(ui, &mut k.tolerance, &units, decimals));
-    k.tolerance = k.tolerance.max(0.0);
+    let ways = [tr("ui.scan_fit_detail_auto"), tr("ui.scan_fit_detail_set")];
+    crate::dialogs_scan_surface::own_or_set(
+        app,
+        ui,
+        "scan_template_standoff",
+        tr("ui.scan_template_standoff"),
+        ways,
+        tr("ui.scan_template_stands_off"),
+        &mut k.tolerance,
+        1.0,
+    );
     form_row(ui, tr("ui.scan_template_edge"), |ui| check(ui, &mut k.edge));
     look(app, k, inputs);
     if k.shown.as_ref().is_some_and(|s| s.under.is_some()) {

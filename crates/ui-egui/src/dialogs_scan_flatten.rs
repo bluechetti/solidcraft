@@ -117,9 +117,17 @@ fn look(app: &SolveApp, k: &mut Flatten, inputs: &[SelInput]) {
 
 /// The dialog's rows (after the click).
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Flatten, inputs: &[SelInput]) -> bool {
-    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
-    form_row(ui, tr("ui.scan_flatten_radius"), |ui| ui_kit::length_field(ui, &mut k.radius, &units, decimals));
-    k.radius = k.radius.max(0.0);
+    let area = [tr("ui.scan_area_piece"), tr("ui.scan_fit_area_round")];
+    crate::dialogs_scan_surface::own_or_set(
+        app,
+        ui,
+        "scan_flatten_area",
+        tr("ui.scan_fit_area"),
+        area,
+        tr("ui.scan_fit_radius"),
+        &mut k.radius,
+        20.0,
+    );
     form_row(ui, tr("ui.scan_flatten_relax"), |ui| check(ui, &mut k.relax));
     look(app, k, inputs);
     match k.shown.as_ref().map(|s| &s.result) {

@@ -523,6 +523,41 @@ pub(crate) fn more(ui: &mut egui::Ui, id: &str, smoothing: &mut f64) {
     });
 }
 
+/// A length a tool works out for itself unless one is set: a choice of `options` (the tool's own
+/// way, then Set) and, when set, the length (`labelled`). `value` is 0 while the tool's own way is
+/// chosen; the last length set is remembered while the dialog is open, else `default`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn own_or_set(
+    app: &SolveApp,
+    ui: &mut egui::Ui,
+    id: &str,
+    label: &str,
+    options: [&str; 2],
+    labelled: &str,
+    value: &mut f64,
+    default: f64,
+) {
+    let memory = egui::Id::unique(("sc_own_or_set", id));
+    let mut pick = usize::from(*value > 0.0);
+    let before = pick;
+    choice_row(ui, label, id, &mut pick, &options);
+    if pick != before {
+        if pick == 0 {
+            let kept = *value;
+            ui.data_mut(|d| d.insert_temp(memory, kept));
+            *value = 0.0;
+        } else {
+            *value = ui.data(|d| d.get_temp::<f64>(memory)).filter(|v| *v > 0.0).unwrap_or(default);
+        }
+    }
+    if pick == 1 {
+        let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+        form_row(ui, labelled, |ui| ui_kit::length_field(ui, value, &units, decimals.max(2)));
+        // A length typed as 0 or less is the tool's own way again.
+        *value = value.max(0.0);
+    }
+}
+
 /// The Fit Surface dialog's rows (after the point input).
 pub fn fit_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitSurface, inputs: &[crate::selection::SelInput]) -> bool {
     fit(app, k, inputs);

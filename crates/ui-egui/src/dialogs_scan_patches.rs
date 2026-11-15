@@ -196,9 +196,17 @@ fn compute(s: &solidcraft_engine::Session, p: &Value) -> Computed {
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitPatches, inputs: &[SelInput]) -> bool {
     let layouts = [tr("ui.scan_patches_grid"), tr("ui.scan_patches_blocks"), tr("ui.scan_patches_quads")];
     choice_row(ui, tr("ui.scan_patches_layout"), "scan_patches_layout", &mut k.layout, &layouts);
-    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
-    form_row(ui, tr("ui.scan_flatten_radius"), |ui| ui_kit::length_field(ui, &mut k.radius, &units, decimals));
-    k.radius = k.radius.max(0.0);
+    let area = [tr("ui.scan_area_piece"), tr("ui.scan_fit_area_round")];
+    crate::dialogs_scan_surface::own_or_set(
+        app,
+        ui,
+        "scan_patches_area",
+        tr("ui.scan_fit_area"),
+        area,
+        tr("ui.scan_fit_radius"),
+        &mut k.radius,
+        20.0,
+    );
     if k.layout == 1 {
         form_row(ui, tr("ui.scan_patches_rows"), |ui| ui_kit::number_field(ui, &mut k.rows, 1..=8, 0.1, ""));
         form_row(ui, tr("ui.scan_patches_columns"), |ui| ui_kit::number_field(ui, &mut k.columns, 1..=8, 0.1, ""));

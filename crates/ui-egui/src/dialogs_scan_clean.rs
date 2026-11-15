@@ -544,8 +544,17 @@ pub fn reduce_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reduce) -> bool {
     form_row(ui, tr("ui.scan_reduce_keep"), |ui| {
         ui_kit::slider(ui, &mut k.percent, 1.0..=99.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
     });
-    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
-    form_row(ui, tr("ui.scan_reduce_error"), |ui| ui_kit::length_field(ui, &mut k.max_error, &units, decimals.max(3)));
+    let limits = [tr("ui.scan_limit_none"), tr("ui.scan_fit_detail_set")];
+    crate::dialogs_scan_surface::own_or_set(
+        app,
+        ui,
+        "scan_reduce_limit",
+        tr("ui.scan_reduce_limit"),
+        limits,
+        tr("ui.scan_reduce_most"),
+        &mut k.max_error,
+        0.05,
+    );
     k.max_error = k.max_error.clamp(0.0, 100.0);
     form_row(ui, tr("ui.scan_reduce_rim"), |ui| check(ui, &mut k.keep_rim));
     match k.scan.as_ref().map(|(_, r)| r) {
@@ -783,7 +792,16 @@ mod tests {
         h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
         h.app.start("scan.reduce");
         h.frames(2);
+        // No error limit is a choice, not a 0 typed: the length shows only once a limit is set.
+        assert!(crate::scenario::rect_of("dialog:row:Error limit").is_some(), "the choice");
+        assert!(crate::scenario::rect_of("dialog:row:Most error").is_none(), "no length while None");
         if let Some(Kind::ScanReduce(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.max_error = 0.05;
+        }
+        h.frames(2);
+        assert!(crate::scenario::rect_of("dialog:row:Most error").is_some(), "the length once Set");
+        if let Some(Kind::ScanReduce(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.max_error = 0.0;
             k.percent = 10.0;
         }
         h.frames(1);
