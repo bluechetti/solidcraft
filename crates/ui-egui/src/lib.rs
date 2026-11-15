@@ -286,6 +286,7 @@ mod rule_editor;
 #[cfg(test)]
 mod rule_editor_tests;
 pub mod save_job;
+pub(crate) mod scan_area;
 pub(crate) mod scan_deviation;
 pub(crate) mod scan_dots;
 pub(crate) mod scan_fidelity;

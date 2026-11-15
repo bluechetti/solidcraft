@@ -1,5 +1,6 @@
-//! Flatten (`scan.flatten`): click the part of the scan to unroll (the piece there, or only as far
-//! as the radius round the click), or select it first; the region is marked on the scan and the pattern drawn where
+//! Flatten (`scan.flatten`): click the part of the scan to unroll (the piece there, the face grown
+//! from the click, or only as far as the radius round the click), or select it first
+//! ([`crate::scan_area`]); the region is marked on the scan and the pattern drawn where
 //! it will lie, beside the scan on XY, with how far it is from the scan (its area, each edge's
 //! stretch, triangles turned over) before OK sketches its outline.
 
@@ -32,15 +33,15 @@ thread_local! {
 /// The Flatten dialog's values (the click on the scan is its selection input).
 #[derive(Clone, Debug)]
 pub struct Flatten {
-    /// How far round the click the region goes; 0 for the whole piece.
-    pub radius: f64,
+    /// The part of the scan unrolled.
+    pub area: crate::scan_area::Area,
     pub relax: bool,
     shown: Option<Box<Shown>>,
 }
 
 impl Default for Flatten {
     fn default() -> Self {
-        Flatten { radius: 0.0, relax: true, shown: None }
+        Flatten { area: crate::scan_area::Area::default(), relax: true, shown: None }
     }
 }
 
@@ -60,8 +61,9 @@ struct Marked {
     dots: Arc<Vec<u8>>,
 }
 
-pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
-    (id == "scan.flatten").then(|| (Kind::ScanFlatten(Flatten::default()), vec![SelInput::new("Point", FACES, false)]))
+pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
+    let k = Flatten { area: crate::scan_area::Area::opening(app, false), ..Flatten::default() };
+    (id == "scan.flatten").then(|| (Kind::ScanFlatten(k), vec![SelInput::new("Point", FACES, false)]))
 }
 
 fn tr(id: &'static str) -> &'static str {
@@ -70,15 +72,12 @@ fn tr(id: &'static str) -> &'static str {
 
 /// What `scan.flatten` is sent.
 fn params(app: &SolveApp, k: &Flatten, inputs: &[SelInput]) -> Option<Value> {
-    let Some(Sel::Face { body, point, .. }) = items(inputs, 0).first() else {
-        // Nothing clicked: what is selected on the scan, if anything.
-        let sel = solidcraft_engine::cmd::scan::select::selected(&app.session).filter(|k| k.count > 0)?;
-        return Some(json!({"body": sel.scan, "relax": k.relax}));
+    let clicked = match items(inputs, 0).first() {
+        Some(Sel::Face { body, point, .. }) => Some((body.as_str(), *point)),
+        _ => None,
     };
-    let mut p = json!({"body": body, "point": [point.x, point.y, point.z], "relax": k.relax});
-    if k.radius > 0.0 {
-        p["radius"] = json!(k.radius);
-    }
+    let mut p = k.area.params(app, clicked)?;
+    p["relax"] = json!(k.relax);
     Some(p)
 }
 
@@ -117,17 +116,7 @@ fn look(app: &SolveApp, k: &mut Flatten, inputs: &[SelInput]) {
 
 /// The dialog's rows (after the click).
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Flatten, inputs: &[SelInput]) -> bool {
-    let area = [tr("ui.scan_area_piece"), tr("ui.scan_fit_area_round")];
-    crate::dialogs_scan_surface::own_or_set(
-        app,
-        ui,
-        "scan_flatten_area",
-        tr("ui.scan_fit_area"),
-        area,
-        tr("ui.scan_fit_radius"),
-        &mut k.radius,
-        20.0,
-    );
+    crate::scan_area::row(app, ui, "scan_flatten_area", &mut k.area);
     form_row(ui, tr("ui.scan_flatten_relax"), |ui| check(ui, &mut k.relax));
     look(app, k, inputs);
     match k.shown.as_ref().map(|s| &s.result) {
@@ -153,7 +142,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Flatten, inputs: &[SelInp
             ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_flatten_error", true));
         }
         None => {
-            ui_kit::text(ui, tr("ui.scan_flatten_hint"), ui_kit::Text::Hint("scan_flatten_hint"));
+            ui_kit::text(ui, crate::scan_area::waiting(&k.area, "ui.scan_flatten_hint"), ui_kit::Text::Hint("scan_flatten_hint"));
         }
     }
     false
@@ -161,7 +150,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Flatten, inputs: &[SelInp
 
 /// What OK runs.
 pub fn commands(app: &SolveApp, k: &Flatten, inputs: &[SelInput]) -> Result<Vec<(String, Value)>, String> {
-    let p = params(app, k, inputs).ok_or_else(|| tr("ui.scan_flatten_hint").to_owned())?;
+    let p = params(app, k, inputs).ok_or_else(|| crate::scan_area::waiting(&k.area, "ui.scan_flatten_hint").to_owned())?;
     k.shown.as_ref().ok_or("still flattening")?.result.as_ref().map_err(Clone::clone)?;
     Ok(vec![("scan.flatten".into(), p)])
 }
@@ -244,5 +233,42 @@ mod tests {
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
         let made = h.app.session.doc.features.iter().any(|f| f.name == "Flat Pattern");
         assert!(made, "the pattern's sketch");
+    }
+
+    /// Each way of choosing the area flattens its own part of the sheet: grown from the click, less
+    /// than the whole piece; round the click, less again; and with part selected first the dialog
+    /// opens on What is selected and flattens that with no click.
+    #[test]
+    fn every_way_of_choosing_the_area_flattens_its_part() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("bent.stl");
+        std::fs::write(&path, bent_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let scan = h.app.session.model.state().bodies[0].name.clone();
+        h.app.run("select.clear", json!({})).unwrap();
+        h.app.start("scan.flatten");
+        if let Some(d) = h.app.dialog.as_mut() {
+            d.inputs[0].items.push(Sel::Face { body: scan.clone(), index: 0, point: Vec3::new(0.3, 15.0, 0.0) });
+        }
+        let count = |h: &mut crate::scenario::Harness, way: usize| {
+            if let Some(Kind::ScanFlatten(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+                (k.area.way, k.area.radius) = (way, 6.0);
+            }
+            h.frames(3);
+            let Some(Kind::ScanFlatten(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the Flatten dialog") };
+            k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).map_or(0, |m| m.triangles)
+        };
+        let piece = count(&mut h, crate::scan_area::PIECE);
+        let grown = count(&mut h, crate::scan_area::GROW);
+        let round = count(&mut h, crate::scan_area::ROUND);
+        assert!(piece == 800 && (0..piece).contains(&grown) && (0..grown).contains(&round) && round > 0, "{piece} {grown} {round}");
+        h.app.dialog = None;
+        let half: Vec<usize> = (0..300).collect();
+        h.app.run("scan.select", json!({"body": scan, "triangles": half})).unwrap();
+        h.app.start("scan.flatten");
+        h.frames(3);
+        let Some(Kind::ScanFlatten(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the Flatten dialog") };
+        assert_eq!(k.area.way, crate::scan_area::SELECTED);
+        assert_eq!(k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).map(|m| m.triangles), Some(300));
     }
 }

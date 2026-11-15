@@ -121,7 +121,7 @@ struct Shown {
 /// The colouring's id among the clouds the viewport draws.
 const SHADE_CLOUD_ID: u64 = u64::MAX - 8;
 
-pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
+pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
     match id {
         "scan.free_form" => Some((Kind::ScanFreeForm(NewFreeForm::default()), Vec::new())),
         "scan.merge_surfaces" => Some((
@@ -129,7 +129,8 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::S
             vec![crate::selection::SelInput::new("Surfaces", crate::selection::BODIES, true)],
         )),
         "scan.wrap_surface" => {
-            Some((Kind::ScanWrapSurface(WrapSurface::default()), vec![crate::selection::SelInput::new("Point", crate::selection::FACES, false)]))
+            let k = WrapSurface { area: crate::scan_area::Area::opening_round(app, 0.0), ..WrapSurface::default() };
+            Some((Kind::ScanWrapSurface(k), vec![crate::selection::SelInput::new("Point", crate::selection::FACES, false)]))
         }
         _ => None,
     }
@@ -579,8 +580,9 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
 /// The Wrap Surface dialog's values (the point clicked is its selection input).
 #[derive(Clone, Debug, Default)]
 pub struct WrapSurface {
-    /// How far round the point the part reaches, in mm; 0 until the scan's own default is known.
-    pub reach: f64,
+    /// The part wrapped: round the click within a radius (its reach; 0 until the scan's own default
+    /// is known), grown from it, the whole piece, or what is selected.
+    pub area: crate::scan_area::Area,
     /// 0 Low, 1 Medium, 2 Fine.
     pub details: usize,
     /// 0 fitted, 1 X, 2 Y, 3 Z.
@@ -594,7 +596,7 @@ pub struct WrapSurface {
 
 #[derive(Clone, Debug)]
 struct WrapShown {
-    key: ([u64; 3], u64, usize, usize, u64, u64, u64),
+    key: String,
     result: Result<Wrapped, String>,
     /// Where the net made folds, pinches and crosses itself (Surface Check on it).
     trouble: [usize; 3],
@@ -611,41 +613,48 @@ fn wrap_point(inputs: &[crate::selection::SelInput]) -> Option<(String, Vec3)> {
 const WRAP_AXES: [&str; 4] = ["fitted", "x", "y", "z"];
 const WRAP_DETAILS: [&str; 3] = ["low", "medium", "fine"];
 
-/// Wrap again when the point, the settings or the design have changed.
+/// What `scan.wrap_surface` is sent for the part (the area's, its radius as the reach), with the
+/// point clicked. `None` until there is a click, or nothing is selected.
+fn wrap_params(app: &SolveApp, k: &WrapSurface, inputs: &[crate::selection::SelInput]) -> Option<(Value, Option<Vec3>)> {
+    let clicked = wrap_point(inputs);
+    let mut p = k.area.params(app, clicked.as_ref().map(|(b, at)| (b.as_str(), *at)))?;
+    if let Some(r) = p.as_object_mut().and_then(|m| m.remove("radius")) {
+        p["reach"] = json!(format!("{} mm", r.as_f64().unwrap_or(k.area.radius)));
+    }
+    let point = (k.area.needs_click()).then(|| clicked.map(|(_, at)| at)).flatten();
+    Some((p, point))
+}
+
+/// Wrap again when the part, the settings or the design have changed.
 fn wrap(app: &SolveApp, k: &mut WrapSurface, inputs: &[crate::selection::SelInput]) {
-    let Some((body, point)) = wrap_point(inputs) else {
+    // The reach starts at the scan's own default: the scan clicked, else the selected or only one.
+    if !(k.area.radius > 0.0) {
+        let body = wrap_point(inputs).map(|(body, _)| body);
+        if let Ok(reach) = free_form::default_wrap_reach(&app.session, body.as_deref()) {
+            k.area.radius = reach;
+        }
+    }
+    let Some((p, point)) = wrap_params(app, k, inputs) else {
         k.shown = None;
         return;
     };
-    if !(k.reach > 0.0) {
-        k.reach = free_form::default_wrap_reach(&app.session, Some(&body)).unwrap_or(20.0);
-    }
-    let key = (
-        [point.x.to_bits(), point.y.to_bits(), point.z.to_bits()],
-        k.reach.to_bits(),
-        k.details,
-        k.axis,
-        k.arc.to_bits(),
-        k.stiffness.to_bits(),
-        app.session.revision,
-    );
+    let selection = solidcraft_engine::cmd::scan::select::selected(&app.session).map(|s| (s.count, s.selected.iter().position(|on| *on)));
+    let key = format!("{p}|{}|{}|{}|{}|{}|{selection:?}", k.details, k.axis, k.arc, k.stiffness, app.session.revision);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         return;
     }
     let axis = [None, Some(Vec3::X), Some(Vec3::Y), Some(Vec3::Z)][k.axis.min(3)];
     let arc = (k.arc > 0.0).then(|| k.arc.to_radians());
     let wrap = Wrap { axis, details: k.details.min(2), arc, stiffness: k.stiffness };
-    let result = free_form::wrapped(&app.session, Some(&body), point, k.reach, wrap).map_err(|e| e.to_string());
+    let result = free_form::wrapped_for(&app.session, &p, point, wrap).map(|(_, w)| w).map_err(|e| e.to_string());
     let trouble = result.as_ref().map_or([0; 3], |w| w.trouble);
     k.shown = Some(Box::new(WrapShown { key, result, trouble }));
 }
 
 /// The Wrap Surface dialog's rows (after the point input).
 pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs: &[crate::selection::SelInput]) -> bool {
+    crate::scan_area::row(app, ui, "scan_wrap_area", &mut k.area);
     wrap(app, k, inputs);
-    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
-    form_row(ui, tr("ui.scan_wrap_reach"), |ui| ui_kit::length_field(ui, &mut k.reach, &units, decimals));
-    k.reach = k.reach.max(0.0);
     let details = [tr("ui.scan_wrap_low"), tr("ui.scan_wrap_medium"), tr("ui.scan_wrap_fine")];
     choice_row(ui, tr("ui.scan_wrap_details"), "scan_wrap_details", &mut k.details, &details);
     let axes = [tr("ui.scan_wrap_fitted"), "X", "Y", "Z"];
@@ -688,21 +697,16 @@ pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs:
         }
         None => {}
     }
-    ui_kit::text(ui, tr("ui.scan_wrap_hint"), ui_kit::Text::Hint("scan_wrap_hint"));
+    ui_kit::text(ui, crate::scan_area::waiting(&k.area, "ui.scan_wrap_hint"), ui_kit::Text::Hint("scan_wrap_hint"));
     false
 }
 
 /// What OK runs: the net wrapped round the point clicked.
-pub fn wrap_commands(k: &WrapSurface, inputs: &[crate::selection::SelInput]) -> Result<Vec<(String, Value)>, String> {
-    let (body, point) = wrap_point(inputs).ok_or_else(|| tr("ui.scan_wrap_hint").to_owned())?;
+pub fn wrap_commands(app: &SolveApp, k: &WrapSurface, inputs: &[crate::selection::SelInput]) -> Result<Vec<(String, Value)>, String> {
+    let (mut p, _) = wrap_params(app, k, inputs).ok_or_else(|| crate::scan_area::waiting(&k.area, "ui.scan_wrap_hint").to_owned())?;
     k.shown.as_ref().ok_or("still wrapping")?.result.as_ref().map_err(Clone::clone)?;
-    let mut p = json!({
-        "body": body,
-        "point": [point.x, point.y, point.z],
-        "reach": format!("{} mm", k.reach),
-        "axis": WRAP_AXES[k.axis.min(3)],
-        "details": WRAP_DETAILS[k.details.min(2)],
-    });
+    p["axis"] = json!(WRAP_AXES[k.axis.min(3)]);
+    p["details"] = json!(WRAP_DETAILS[k.details.min(2)]);
     if k.arc > 0.0 {
         p["arc"] = json!(format!("{} deg", k.arc));
     }
@@ -1045,11 +1049,34 @@ mod tests {
         h.frames(2);
         let d = h.app.dialog.as_ref().unwrap();
         let Kind::ScanWrapSurface(k) = &d.kind else { panic!("the dialog") };
-        assert_eq!(wrap_commands(k, &d.inputs).unwrap()[0].1["stiffness"], 0.1);
+        assert_eq!(wrap_commands(&h.app, k, &d.inputs).unwrap()[0].1["stiffness"], 0.1);
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
         assert!(h.app.session.model.state().body("FreeForm1").is_some(), "kept");
         assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanEditSurface(_))), "Edit Surface opens on it");
+    }
+
+    /// Part of the half tube selected first: Wrap Surface opens on What is selected and wraps that
+    /// part with no click, and OK sends no point and no reach, only the scan.
+    #[test]
+    fn what_is_selected_is_wrapped() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("tube.stl");
+        std::fs::write(&path, half_tube_stl(48)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let scan = h.app.session.model.state().bodies[0].name.clone();
+        h.app.run("scan.select", json!({"body": scan, "brush": {"points": [[0, 10, 20], [0, 30, 20]], "radius": 12}})).unwrap();
+        h.app.start("scan.wrap_surface");
+        h.frames(3);
+        let d = h.app.dialog.as_ref().expect("the Wrap Surface dialog");
+        let Kind::ScanWrapSurface(k) = &d.kind else { panic!("the Wrap Surface dialog") };
+        assert_eq!(k.area.way, crate::scan_area::SELECTED);
+        let Some(Ok(w)) = k.shown.as_ref().map(|s| s.result.clone()) else {
+            panic!("wrapped: {:?}", k.shown.as_ref().map(|s| s.result.as_ref().err()))
+        };
+        assert!((w.cylinder.radius - 20.0).abs() < 0.5, "{:?}", w.cylinder);
+        let sent = &wrap_commands(&h.app, k, &d.inputs).unwrap()[0].1;
+        assert!(sent.get("point").is_none() && sent.get("reach").is_none() && sent["body"] == scan.as_str(), "{sent}");
     }
 
     /// Two Free Forms side by side: with none chosen the dialog finds the sides to make one; OK

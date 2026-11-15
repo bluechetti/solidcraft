@@ -174,7 +174,13 @@ pub fn wrap(
     wrap: &Wrap,
     snap: impl Fn(&[Vec3], f64) -> Vec<Option<Vec3>>,
 ) -> Result<Wrapped, WrapError> {
-    let region = fit::around(scan, seed, at, reach);
+    wrap_region(scan, &fit::around(scan, seed, at, reach), wrap, snap)
+}
+
+/// A net wrapped on the triangles `region` of the scan (chosen by hand: selected, kept, grown
+/// from a click), as [`wrap`] wraps the part round a click.
+pub fn wrap_region(scan: &Scan, region: &[usize], wrap: &Wrap, snap: impl Fn(&[Vec3], f64) -> Vec<Option<Vec3>>) -> Result<Wrapped, WrapError> {
+    let region: Vec<usize> = region.iter().copied().filter(|&t| t < scan.triangles.len()).collect();
     if region.len() < LEAST_TRIANGLES {
         return Err(WrapError::TooLittle);
     }

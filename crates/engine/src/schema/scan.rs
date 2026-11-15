@@ -1052,6 +1052,18 @@ pub struct ScanWrapSurfaceParams {
     /// How far round the point the part reaches. Default: a fifth of the scan's size.
     #[serde(default)]
     pub reach: Option<LengthExpr>,
+    /// The part chosen by hand instead of the reach round the point: the scan's triangle numbers.
+    #[serde(default)]
+    pub triangles: Option<Vec<u64>>,
+    /// The part chosen by hand: a kept selection (Keep Selection).
+    #[serde(default)]
+    pub saved: Option<String>,
+    /// The part grown from the point: `true`, as far as the scan lies on the cylinder fitted there
+    /// (as Fit Shape grows one); an angle (degrees, 1 to 90), the face there as far as the scan
+    /// faces within it of the way it faces at the point, as Select on Scan's Region grows it. Not
+    /// with `reach`.
+    #[serde(default)]
+    pub grow: Option<Value>,
     /// The cylinder's axis: fitted (to the part, the default), x, y or z (the world's, its line and
     /// radius fitted across the part).
     #[serde(default)]

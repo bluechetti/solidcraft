@@ -29,6 +29,11 @@ pub struct ScanPatchesParams {
     /// The region only as far as this round the point, in mm.
     #[serde(default)]
     pub radius: Option<f64>,
+    /// The region grown from the point as Select on Scan's Region grows it: the face there, as far
+    /// as the scan faces within this angle (degrees, 1 to 90; `true`: 30) of the way it faces at the
+    /// point. Not with `radius`.
+    #[serde(default)]
+    pub grow: Option<Value>,
     /// grid (default), blocks or quads.
     #[serde(default)]
     pub layout: Option<String>,
@@ -91,7 +96,7 @@ mod tests {
     fn schemas_and_the_key_check_agree() {
         assert_keys(
             input_schema_for::<ScanPatchesParams>(),
-            &["body", "columns", "controls", "layout", "point", "radius", "rows", "saved", "smoothing", "tolerance", "triangles"],
+            &["body", "columns", "controls", "grow", "layout", "point", "radius", "rows", "saved", "smoothing", "tolerance", "triangles"],
         );
     }
 }

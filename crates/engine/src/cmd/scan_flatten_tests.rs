@@ -149,3 +149,23 @@ fn what_is_selected_is_flattened() {
     let memo = &s.doc.scan_flat_patterns.last().unwrap().params;
     assert_eq!(memo["triangles"].as_array().map(Vec::len), Some(1200));
 }
+
+/// Grown from the click, the region is the part of the sheet facing within the angle of the way it
+/// faces there (30° by default): about a third of a quarter round from one end, all of it at 90°.
+/// A growth is not also bounded by a radius.
+#[test]
+fn a_region_grown_from_the_click_keeps_to_the_way_the_scan_faces_there() {
+    let mut s = Session::default();
+    let scan = bent_scan(&mut s);
+    let grown = run(&mut s, "scan.flatten", json!({"body": scan, "point": [0.3, 15, 0], "grow": true}));
+    let n = grown["triangles"].as_u64().unwrap();
+    assert!((700..=900).contains(&n), "a third of 2400: {grown}");
+    run(&mut s, "edit.undo", json!({}));
+    let wide = run(&mut s, "scan.flatten", json!({"body": scan, "point": [0.3, 15, 0], "grow": 90}));
+    assert_eq!(wide["triangles"], 2400, "{wide}");
+    run(&mut s, "edit.undo", json!({}));
+    let e = s.execute("scan.flatten", &json!({"body": scan, "point": [0.3, 15, 0], "grow": true, "radius": 5})).unwrap_err().to_string();
+    assert!(e.contains("not both"), "{e}");
+    let patches = run(&mut s, "scan.fit_patches", json!({"body": scan, "point": [0.3, 15, 0], "grow": true, "controls": 6}));
+    assert!(patches["points"].as_u64().is_some_and(|p| p > 0), "{patches}");
+}

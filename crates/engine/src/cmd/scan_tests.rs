@@ -1871,6 +1871,26 @@ fn wrap_surface_wraps_a_net_on_a_tube() {
     assert!(refused.contains("low, medium or fine"), "{refused}");
 }
 
+/// Wrap Surface on a part chosen any way: grown from the point (as far as the tube is round), the
+/// triangles given, or what is selected with no point; each wraps the tube at its radius. A reach
+/// with a part chosen by hand is refused.
+#[test]
+fn wrap_surface_takes_the_part_chosen_any_way() {
+    let (mut s, body) = session_with_triangles("wrap-any", &tube_triangles(std::f64::consts::PI));
+    let point = json!([10.0 * 0.7f64.cos(), 10.0 * 0.7f64.sin(), 20.0]);
+    let radius = |r: &Value| (r["radius"].as_f64().unwrap() - 10.0).abs() < 0.1;
+    let grown = run(&mut s, "scan.wrap_surface", json!({"point": point, "grow": true, "details": "low"}));
+    assert!(radius(&grown), "{grown}");
+    let half: Vec<usize> = (0..960).collect();
+    let given = run(&mut s, "scan.wrap_surface", json!({"body": body, "triangles": half, "details": "low"}));
+    assert!(radius(&given), "{given}");
+    run(&mut s, "scan.select", json!({"body": body, "brush": {"points": [point], "radius": 15}}));
+    let selected = run(&mut s, "scan.wrap_surface", json!({"details": "low"}));
+    assert!(radius(&selected), "{selected}");
+    let both = s.execute("scan.wrap_surface", &json!({"point": point, "grow": true, "reach": "20 mm"})).unwrap_err().to_string();
+    assert!(both.contains("not with"), "{both}");
+}
+
 /// A wrap that folds says so and says what to do: Stiffness, then more of it; one that does not
 /// says nothing.
 #[test]

@@ -41,7 +41,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("flat")
         .contract(&FLATTEN_CONTRACT)
         .output(output_schema_for::<ScanFlattenResult>)
-        .params("body?: the scan (default: the picked, selected or only one); point?: [x,y,z] on it (default: what is selected on the scan, else the point picked; the region is the piece of the scan there, or on a piece that wraps round, a closed part, the side of it facing the click); radius?: length (the region only as far as this round the point); triangles?: [indices of the scan's triangles] (the region, instead of point and radius); saved?: a kept selection (Keep Selection) whose triangles are the region; relax?: bool (default true: relaxed toward keeping each edge's length after the angle-keeping map); tolerance?: length (default 0.05 mm: how far the outline's lines and arcs may stray from the region's edge); name?: the sketch's (default `Flat Pattern`): the region unrolled onto the XY plane beside the scan, its outline sketched, one undo step; a region that closes round on itself is refused (cut it with Split Mesh) → body, sketch, triangles, loops, lines, arcs, circles, area, flat_area, worst_area, strain_rms, strain_max, flipped, relaxed, settled, shift"),
+        .params("body?: the scan (default: the picked, selected or only one); point?: [x,y,z] on it (default: what is selected on the scan, else the point picked; the region is the piece of the scan there, or on a piece that wraps round, a closed part, the side of it facing the click); radius?: length (the region only as far as this round the point); grow?: true | degrees (instead of radius: the face at the point, as far as it faces within 30° or that angle of the way it faces there); triangles?: [indices of the scan's triangles] (the region, instead of point and radius); saved?: a kept selection (Keep Selection) whose triangles are the region; relax?: bool (default true: relaxed toward keeping each edge's length after the angle-keeping map); tolerance?: length (default 0.05 mm: how far the outline's lines and arcs may stray from the region's edge); name?: the sketch's (default `Flat Pattern`): the region unrolled onto the XY plane beside the scan, its outline sketched, one undo step; a region that closes round on itself is refused (cut it with Split Mesh) → body, sketch, triangles, loops, lines, arcs, circles, area, flat_area, worst_area, strain_rms, strain_max, flipped, relaxed, settled, shift"),
     CommandSpec::new("scan.roll_onto_scan", "Roll onto Scan", crate::checked!("scan.roll_onto_scan", roll_onto_scan))
         .at("SCAN", "SKETCH")
         .icon("spline")
@@ -80,12 +80,12 @@ pub(super) fn region_scan(s: &Session, p: &Value) -> Option<String> {
         .or_else(|| super::select::selected(s).filter(|k| k.count > 0).map(|k| k.scan.clone()))
 }
 
-/// The region chosen by hand, if `p` chose one: its `triangles`, a kept selection (`saved`), with
-/// `radius_too` the scan within `radius` of the point, else (no `point` given) what is selected on
-/// the scan. `None`: the tool finds its region its own way (grown from the point).
+/// The region chosen by hand, if `p` chose one: its `triangles`, a kept selection (`saved`), the
+/// face grown from the point (`grow`), with `radius_too` the scan within `radius` of the point,
+/// else (no `point` given) what is selected on the scan. `None`: the tool finds its region its own way (grown from the point).
 pub(super) fn chosen_region(s: &Session, p: &Value, on: &Mesh, cmd: &str, radius_too: bool) -> Result<Option<Vec<usize>>> {
     let has = |key: &str| p.get(key).is_some_and(|v| !v.is_null());
-    if has("triangles") || has("saved") || (radius_too && has("radius")) {
+    if has("triangles") || has("saved") || has("grow") || (radius_too && has("radius")) {
         return region(s, p, on, cmd).map(Some);
     }
     if !has("point")
@@ -138,6 +138,20 @@ pub(super) fn region(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<Vec
             picked_on(s, &on.body).ok_or_else(|| bad(cmd, "select or pick the part of the scan to work on, or give `point` or `triangles`"))?
         }
     };
+    // Grown from the point as Select on Scan's Region grows: the face there, as far as the scan
+    // faces within the angle (degrees; `true`: the Region's) of the way it faces at the point.
+    if let Some(grow) = p.get("grow").filter(|v| !v.is_null() && **v != Value::Bool(false)) {
+        if p.get("radius").is_some_and(|v| !v.is_null()) {
+            return Err(bad(cmd, "give `grow` or `radius`, not both"));
+        }
+        let angle = match grow {
+            Value::Bool(true) => super::select::REGION_ANGLE,
+            v => v.as_f64().filter(|a| (1.0..=90.0).contains(a)).ok_or_else(|| bad(cmd, "`grow` is true or an angle of 1 to 90 degrees"))?,
+        };
+        let topology = super::select::topology(s, &on.body, cmd)?;
+        let (seed, _) = topology.nearest(point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
+        return Ok(topology.region(seed, angle.to_radians()).iter().enumerate().filter(|(_, on)| **on).map(|(t, _)| t).collect());
+    }
     let scan = on.scan();
     let seed = solidcraft_scan::base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
     // A number is mm; text is a length ("10 mm", an expression of the design's parameters).

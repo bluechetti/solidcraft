@@ -419,23 +419,38 @@ pub fn default_wrap_reach(s: &Session, body: Option<&str>) -> Result<f64> {
     Ok(super::default_surface_radius(s, body)? * 2.0)
 }
 
-/// The net `scan.wrap_surface` would wrap on the part of the scan `body` within `reach` of `point`.
-pub fn wrapped(s: &Session, body: Option<&str>, point: Vec3, reach: f64, wrap: Wrap) -> Result<Wrapped> {
+/// The part of the scan a net is wrapped on: within a reach of a point on it, or triangles chosen
+/// by hand (selected, kept, grown from a click).
+pub enum WrapOn<'a> {
+    Round { point: Vec3, reach: f64 },
+    Region(&'a [usize]),
+}
+
+/// The net `scan.wrap_surface` would wrap on the part `part` of the scan `body`.
+pub fn wrapped(s: &Session, body: Option<&str>, part: WrapOn, wrap: Wrap) -> Result<Wrapped> {
     let cmd = "scan.wrap_surface";
-    if !point.is_finite() {
-        return Err(bad(cmd, "`point` must be a finite point"));
-    }
-    if !(reach.is_finite() && reach > 0.0) {
-        return Err(bad(cmd, "`reach` must be a length above 0"));
+    if let WrapOn::Round { point, reach } = part {
+        if !point.is_finite() {
+            return Err(bad(cmd, "`point` must be a finite point"));
+        }
+        if !(reach.is_finite() && reach > 0.0) {
+            return Err(bad(cmd, "`reach` must be a length above 0"));
+        }
     }
     let (name, on) = super::curve::projector(s, body, cmd)?;
     let state = s.model.state();
     let (positions, triangles) =
         state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
     let scan = solidcraft_scan::Scan::new(positions, triangles);
-    let seed = solidcraft_scan::base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
     let snap = |ps: &[Vec3], limit: f64| ps.iter().map(|p| on.nearest(*p).filter(|(_, d)| *d <= limit).map(|(q, _)| q)).collect::<Vec<_>>();
-    let w = solidcraft_scan::wrap::wrap(&scan, seed, point, reach, &wrap, snap).map_err(|e| bad(cmd, e.to_string()))?;
+    let w = match part {
+        WrapOn::Round { point, reach } => {
+            let seed = solidcraft_scan::base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
+            solidcraft_scan::wrap::wrap(&scan, seed, point, reach, &wrap, snap)
+        }
+        WrapOn::Region(region) => solidcraft_scan::wrap::wrap_region(&scan, region, &wrap, snap),
+    }
+    .map_err(|e| bad(cmd, e.to_string()))?;
     let f = w.fitted;
     let trouble = solidcraft_scan::surface_check::trouble(&f.surface);
     let (rms, max) = scan_distance(s, &name, &f.surface, f.rms, cmd);
@@ -473,6 +488,47 @@ pub fn round_seam(surface: &NurbsSurface, c: &Cylinder) -> Option<f64> {
     (!gaps.is_empty()).then(|| gaps.iter().sum::<f64>() / gaps.len() as f64)
 }
 
+/// The net `scan.wrap_surface` with the parameters `p` would wrap (`point` read from them), and its
+/// scan: on a part chosen by hand (triangles, a kept selection, grown from the point, or what is
+/// selected with no point), else on the part within the reach of the point.
+pub fn wrapped_for(s: &Session, p: &Value, point: Option<Vec3>, wrap: Wrap) -> Result<(String, Wrapped)> {
+    let cmd = "scan.wrap_surface";
+    let body = super::mesh_body_name(s, crate::params::str_(p, "body"), cmd)?;
+    let on = super::mesh(s, &json!({ "body": body }), cmd)?;
+    // Grown from the point, a wrap's part is as far as the scan lies on the cylinder fitted there
+    // (as Fit Shape grows a cylinder): the straight run of a bent pipe, not the strip of it facing
+    // one way, which bends round.
+    if p.get("grow").is_some_and(|g| *g == Value::Bool(true)) {
+        if crate::params::expr(p, "reach").is_some() {
+            return Err(bad(cmd, "`reach` is how far round the point: not with `grow`"));
+        }
+        let point = point.or_else(|| super::picked_point(s, &body)).ok_or_else(|| bad(cmd, "pick a point on the part of the scan to wrap"))?;
+        let scan = on.scan();
+        let seed = solidcraft_scan::base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
+        let fitted = solidcraft_scan::fit::fit(&scan, seed, solidcraft_scan::fit::Kind::Cylinder, None)
+            .map_err(|_| bad(cmd, "the scan there is not round: click the middle of a tube-like part, or wrap round the click"))?;
+        let w = wrapped(s, Some(&body), WrapOn::Region(&fitted.triangles), wrap)?;
+        return Ok((body, w));
+    }
+    let w = match super::flatten::chosen_region(s, p, &on, cmd, false)? {
+        Some(region) => {
+            if crate::params::expr(p, "reach").is_some() {
+                return Err(bad(cmd, "`reach` is how far round the point: not with a part chosen by hand"));
+            }
+            wrapped(s, Some(&body), WrapOn::Region(&region), wrap)?
+        }
+        None => {
+            let point = point.or_else(|| super::picked_point(s, &body)).ok_or_else(|| bad(cmd, "pick a point on the part of the scan to wrap"))?;
+            let reach = match crate::params::expr(p, "reach") {
+                Some(_) => length(s, p, "reach", 1.0, cmd)?,
+                None => default_wrap_reach(s, Some(&body))?,
+            };
+            wrapped(s, Some(&body), WrapOn::Round { point, reach }, wrap)?
+        }
+    };
+    Ok((body, w))
+}
+
 pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.wrap_surface";
     let point = match p.get("point").filter(|v| !v.is_null()) {
@@ -507,13 +563,7 @@ pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => v.as_f64().filter(|x| (0.0..=1.0).contains(x)).ok_or_else(|| bad(cmd, "`stiffness` must be a number from 0 to 1"))?,
         None => 0.0,
     };
-    let body = super::mesh_body_name(s, crate::params::str_(p, "body"), cmd)?;
-    let point = point.or_else(|| super::picked_point(s, &body)).ok_or_else(|| bad(cmd, "pick a point on the part of the scan to wrap"))?;
-    let reach = match crate::params::expr(p, "reach") {
-        Some(_) => length(s, p, "reach", 1.0, cmd)?,
-        None => default_wrap_reach(s, Some(&body))?,
-    };
-    let w = wrapped(s, Some(&body), point, reach, Wrap { axis, details, arc, stiffness })?;
+    let (body, w) = wrapped_for(s, p, point, Wrap { axis, details, arc, stiffness })?;
     let trouble = w.trouble;
     let (name, feature) = super::surface::keep_surface(s, &w.made.surface, "FreeForm", "Wrap Surface", &format!("{body} (wrap)"), None, cmd)?;
     let at = |v: Vec3| [v.x, v.y, v.z];

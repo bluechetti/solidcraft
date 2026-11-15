@@ -6673,7 +6673,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanFitSurface(k) => return crate::dialogs_scan_surface::fit_commands(k, &d.inputs),
         Kind::ScanCurve(k) => return crate::dialogs_scan_curve::commands(k),
         Kind::ScanFreeForm(k) => return crate::dialogs_scan_free_form::commands(k),
-        Kind::ScanWrapSurface(k) => return crate::dialogs_scan_free_form::wrap_commands(k, &d.inputs),
+        Kind::ScanWrapSurface(k) => return crate::dialogs_scan_free_form::wrap_commands(app, k, &d.inputs),
         Kind::ScanMergeSurfaces(k) => return crate::dialogs_scan_free_form::merge_commands(k),
         Kind::ScanSliceSurface(k) => return crate::dialogs_scan_slice::commands(app, k, &d.inputs),
         Kind::ScanSplit(k) => return crate::dialogs_scan_split::commands(app, k, &d.inputs),

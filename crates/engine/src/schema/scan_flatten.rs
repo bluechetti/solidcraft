@@ -22,6 +22,11 @@ pub struct ScanFlattenParams {
     /// The region only as far as this round the point, in mm. Default: the whole piece.
     #[serde(default)]
     pub radius: Option<f64>,
+    /// The region grown from the point as Select on Scan's Region grows it: the face there, as far
+    /// as the scan faces within this angle (degrees, 1 to 90; `true`: 30) of the way it faces at the
+    /// point. Not with `radius`.
+    #[serde(default)]
+    pub grow: Option<Value>,
     /// The region as the scan's triangle numbers, instead of a point.
     #[serde(default)]
     pub triangles: Option<Vec<u64>>,
@@ -92,6 +97,8 @@ pub struct ScanRollParams {
     #[serde(default)]
     pub radius: Option<f64>,
     #[serde(default)]
+    pub grow: Option<Value>,
+    #[serde(default)]
     pub triangles: Option<Vec<u64>>,
     /// A kept selection (Keep Selection) whose triangles are the region, instead of `triangles`.
     #[serde(default)]
@@ -126,10 +133,13 @@ mod tests {
 
     #[test]
     fn schemas_and_the_key_check_agree() {
-        assert_keys(input_schema_for::<ScanFlattenParams>(), &["body", "name", "point", "radius", "relax", "saved", "tolerance", "triangles"]);
+        assert_keys(
+            input_schema_for::<ScanFlattenParams>(),
+            &["body", "grow", "name", "point", "radius", "relax", "saved", "tolerance", "triangles"],
+        );
         assert_keys(
             input_schema_for::<ScanRollParams>(),
-            &["body", "curves", "pattern", "point", "radius", "relax", "saved", "sketch", "tolerance", "triangles"],
+            &["body", "curves", "grow", "pattern", "point", "radius", "relax", "saved", "sketch", "tolerance", "triangles"],
         );
     }
 }

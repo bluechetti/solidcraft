@@ -1,4 +1,6 @@
-//! Fit Patches (`scan.fit_patches`): click the part of the scan to cover (or select it first) and
+//! Fit Patches (`scan.fit_patches`): click the part of the scan to cover (the piece there, the face
+//! grown from the click, or the scan round it within a radius), or select it first
+//! ([`crate::scan_area`]), and
 //! choose the layout: one patch in a grid, blocks of patches, or a quad whose edges follow the
 //! region's edge. The patches are fitted and drawn over the scan, with how close they come, as
 //! the layout, the control points and the smoothing change; OK keeps them as a surface body.
@@ -30,9 +32,8 @@ pub struct FitPatches {
     pub rows: usize,
     pub columns: usize,
     pub smoothing: f64,
-    /// How far round the click the region goes, mm; 0 for the whole piece (what is selected is not
-    /// bounded by it).
-    pub radius: f64,
+    /// The part of the scan covered.
+    pub area: crate::scan_area::Area,
     /// The scan under the patches is coloured by how far it is from them (on by default).
     pub colours: bool,
     /// A tolerance tried here instead of the scan's own, mm (0: the scan's, see `scan.tolerance`).
@@ -53,7 +54,7 @@ impl Default for FitPatches {
             rows: 2,
             columns: 2,
             smoothing: 0.1,
-            radius: 0.0,
+            area: crate::scan_area::Area::default(),
             colours: true,
             tolerance: 0.0,
             keep_tolerance: None,
@@ -85,8 +86,9 @@ struct Under {
 /// The colouring's id among the clouds the viewport draws.
 const SHADE_CLOUD_ID: u64 = u64::MAX - 11;
 
-pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
-    (id == "scan.fit_patches").then(|| (Kind::ScanFitPatches(FitPatches::default()), vec![SelInput::new("Point", FACES, false)]))
+pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
+    let k = FitPatches { area: crate::scan_area::Area::opening(app, false), ..FitPatches::default() };
+    (id == "scan.fit_patches").then(|| (Kind::ScanFitPatches(k), vec![SelInput::new("Point", FACES, false)]))
 }
 
 fn tr(id: &'static str) -> &'static str {
@@ -95,19 +97,11 @@ fn tr(id: &'static str) -> &'static str {
 
 /// What `scan.fit_patches` is sent.
 fn params(app: &SolveApp, k: &FitPatches, inputs: &[SelInput]) -> Option<Value> {
-    let mut p = match items(inputs, 0).first() {
-        Some(Sel::Face { body, point, .. }) => {
-            let mut p = json!({"body": body, "point": [point.x, point.y, point.z]});
-            if k.radius > 0.0 {
-                p["radius"] = json!(k.radius);
-            }
-            p
-        }
-        _ => {
-            let sel = solidcraft_engine::cmd::scan::select::selected(&app.session).filter(|s| s.count > 0)?;
-            json!({"body": sel.scan})
-        }
+    let clicked = match items(inputs, 0).first() {
+        Some(Sel::Face { body, point, .. }) => Some((body.as_str(), *point)),
+        _ => None,
     };
+    let mut p = k.area.params(app, clicked)?;
     p["layout"] = json!(LAYOUTS[k.layout.min(2)]);
     if k.detail == DETAIL_SET {
         p["controls"] = json!(k.controls);
@@ -196,17 +190,7 @@ fn compute(s: &solidcraft_engine::Session, p: &Value) -> Computed {
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitPatches, inputs: &[SelInput]) -> bool {
     let layouts = [tr("ui.scan_patches_grid"), tr("ui.scan_patches_blocks"), tr("ui.scan_patches_quads")];
     choice_row(ui, tr("ui.scan_patches_layout"), "scan_patches_layout", &mut k.layout, &layouts);
-    let area = [tr("ui.scan_area_piece"), tr("ui.scan_fit_area_round")];
-    crate::dialogs_scan_surface::own_or_set(
-        app,
-        ui,
-        "scan_patches_area",
-        tr("ui.scan_fit_area"),
-        area,
-        tr("ui.scan_fit_radius"),
-        &mut k.radius,
-        20.0,
-    );
+    crate::scan_area::row(app, ui, "scan_patches_area", &mut k.area);
     if k.layout == 1 {
         form_row(ui, tr("ui.scan_patches_rows"), |ui| ui_kit::number_field(ui, &mut k.rows, 1..=8, 0.1, ""));
         form_row(ui, tr("ui.scan_patches_columns"), |ui| ui_kit::number_field(ui, &mut k.columns, 1..=8, 0.1, ""));
@@ -254,7 +238,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitPatches, inputs: &[Sel
             ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_patches_error", true));
         }
         None => {
-            ui_kit::text(ui, tr("ui.scan_patches_hint"), ui_kit::Text::Hint("scan_patches_hint"));
+            ui_kit::text(ui, crate::scan_area::waiting(&k.area, "ui.scan_patches_hint"), ui_kit::Text::Hint("scan_patches_hint"));
         }
     }
     false
@@ -296,7 +280,7 @@ pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view:
 
 /// What OK runs: the patches, and the scan's tolerance if it was changed here.
 pub fn commands(app: &SolveApp, k: &FitPatches, inputs: &[SelInput]) -> Result<Vec<(String, Value)>, String> {
-    let p = params(app, k, inputs).ok_or_else(|| tr("ui.scan_patches_hint").to_owned())?;
+    let p = params(app, k, inputs).ok_or_else(|| crate::scan_area::waiting(&k.area, "ui.scan_patches_hint").to_owned())?;
     k.shown.as_ref().ok_or("still fitting")?.result.as_ref().map_err(Clone::clone)?;
     let mut all = Vec::new();
     all.extend(crate::scan_fidelity::keep(k.keep_tolerance.as_ref()));
