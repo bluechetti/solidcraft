@@ -14,6 +14,10 @@
 //!   stay where they are (the surface still runs through them) or, with Neighbours set to Follow,
 //!   go with it smoothly. Faces that share a side move together and stay tangent where they met
 //!   smoothly. Snap All to Scan puts every dot on the scan; Fit to Scan fits every face to it.
+//! - Lines: a click on a line of the grid chooses the points at its ends, a double-click the
+//!   whole line across the faces to the edge, and a drag on a line moves it like a point.
+//! - Guides: X, Y and Z through the middle of the points chosen, in the origin axes' colours; a
+//!   drag on one moves the choice along that axis only.
 //! - Control net: a handle at each control point, moved in the plane of the screen or onto the
 //!   scan, with Refit, a Falloff (a soft selection) and Slide along the surface, and the net tools
 //!   on a row or column of one face.
@@ -44,6 +48,7 @@ use crate::SolveApp;
 use crate::dialogs::{Kind, form_row};
 use crate::ui_kit::{self, choice_row};
 
+mod guides;
 mod select;
 mod shape;
 
@@ -333,6 +338,12 @@ struct Drag {
     /// A corner on the network's edge dragged over another such corner: that corner, which it is
     /// welded to when let go.
     weld: Option<usize>,
+    /// Dragging along a guide: the axis (0 X, 1 Y, 2 Z) and where along it the press was, from
+    /// `from`.
+    axis: Option<(usize, f64)>,
+    /// Taken by a line of the grid, not a handle: `from` is the place on the line pressed, and
+    /// no one point goes to the pointer.
+    on_line: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -2245,17 +2256,23 @@ pub(crate) fn choose(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui:
     }
     let Some(k) = dialog(app) else { return };
     let how = select::How::of(mods);
-    match handle_at(k, proj, at) {
-        Some(index) => select::pick(k, index, how),
+    if let Some(index) = handle_at(k, proj, at) {
+        select::pick(k, index, how);
+    } else if guides::guide_at(k, proj, at).is_some() {
+        // A click on a guide leaves the choice as it is (a drag on it moves the choice).
+    } else if let Some((line, _)) = select::line_at(k, proj, at) {
+        // A click on a line of the grid chooses the points at its ends.
+        select::pick_many(k, &line.ends, how);
+    } else if !how.keeps() {
         // A click on nothing chooses nothing, unless keys held keep the choice.
-        None if !how.keeps() => select::clear(k),
-        None => {}
+        select::clear(k);
     }
 }
 
 /// A double-click at `at`: with Crease Edge or Remove Crease on, the shared edge under it and the
-/// edges it runs on into through the grid's corners, at once; else the face under it, all its
-/// points chosen.
+/// edges it runs on into through the grid's corners, at once; else the line of the grid under it
+/// and the whole line it is part of (QuickSurface's); else the face under it, all its points
+/// chosen.
 pub(crate) fn double_click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, mods: egui::Modifiers) {
     if let Some(k) = dialog(app).filter(|k| k.creasing.is_some()) {
         if let (Some(seam), Some(crease)) = (seam_at(k, proj, at), k.creasing) {
@@ -2263,11 +2280,22 @@ pub(crate) fn double_click(app: &mut SolveApp, proj: &crate::viewport::Proj, at:
         }
         return;
     }
-    // Otherwise a double-click on a face chooses all its points.
-    if let Some(k) = dialog(app).filter(|k| k.adding.is_none() && !k.deleting && !k.keeping_half && !k.brushing)
-        && let Some(face) = face_at(k, proj, at)
+    let Some(k) = dialog(app).filter(|k| k.adding.is_none() && !k.deleting && !k.keeping_half && !k.brushing) else { return };
+    let how = select::How::of(mods);
+    if guides::guide_at(k, proj, at).is_some() {
+        return;
+    }
+    // On a line of the grid (off the handles), the whole line it is part of, across the faces.
+    if handle_at(k, proj, at).is_none()
+        && let Some((line, _)) = select::line_at(k, proj, at)
     {
-        select::pick_face(k, face, select::How::of(mods));
+        let whole = select::whole_line(k, line.ends[0], line.ends[1]);
+        select::pick_many(k, &whole, how);
+        return;
+    }
+    // Otherwise a double-click on a face chooses all its points.
+    if let Some(face) = face_at(k, proj, at) {
+        select::pick_face(k, face, how);
     }
 }
 
@@ -2383,6 +2411,26 @@ pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::P
     }
     let how = select::How::of(mods);
     let Some(mut index) = handle_at(k, proj, at) else {
+        // A drag begun on a guide moves the choice along its axis.
+        if !how.keeps()
+            && let Some(axis) = guides::guide_at(k, proj, at)
+            && let Some(c) = select::centre(k)
+            && let Some(t0) = crate::gizmo::along(proj, at, c, guides::DIRS[axis])
+        {
+            return begin_choice_drag(k, c, Some((axis, t0)), false);
+        }
+        // A drag begun on a line of the grid moves it (and the rest of the choice, when both its
+        // ends are chosen already).
+        if let Some((line, on)) = select::line_at(k, proj, at) {
+            if how.keeps() {
+                return false;
+            }
+            let [a, b] = line.ends;
+            if !(k.picked.contains(&a) && k.picked.contains(&b)) {
+                select::pick_many(k, &[a, b], select::How::Replace);
+            }
+            return begin_choice_drag(k, on, None, true);
+        }
         // A drag begun on nothing draws a box that chooses the handles in it.
         select::begin_box(k, at, how);
         return true;
@@ -2405,7 +2453,8 @@ pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::P
         } else {
             Vec::new()
         };
-        k.drag = Some(Box::new(Drag { index, from: dot.at, with, slide: None, dot: true, start, grow, to: None, weld: None }));
+        k.drag =
+            Some(Box::new(Drag { index, from: dot.at, with, slide: None, dot: true, start, grow, to: None, weld: None, axis: None, on_line: false }));
         return true;
     }
     if copy && let Some(count) = base(k).map(NurbsSurface::count) {
@@ -2461,7 +2510,23 @@ pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::P
         grow: Vec::new(),
         to: None,
         weld: None,
+        axis: None,
+        on_line: false,
     }));
+    true
+}
+
+/// A drag of every handle chosen, begun off them: along guide `axis` (and where along it the
+/// press was), or by a line of the grid; `from` is the place pressed.
+fn begin_choice_drag(k: &mut EditSurface, from: Vec3, axis: Option<(usize, f64)>, on_line: bool) -> bool {
+    let ids = select::chosen_ids(k);
+    let Some(index) = k.chosen.filter(|i| ids.contains(i)).or_else(|| ids.first().copied()) else { return false };
+    k.faces = k.shown.clone();
+    k.net = k.shown_net.clone();
+    let dot = k.handles == HANDLES_DOTS;
+    let with: Vec<(usize, Vec3)> = ids.iter().filter_map(|&i| select::handle_place(k, i).map(|p| (i, p))).collect();
+    let start = Arc::new(if dot { k.shown_dots.iter().map(|d| d.at).collect() } else { k.net.clone() });
+    k.drag = Some(Box::new(Drag { index, from, with, slide: None, dot, start, grow: Vec::new(), to: None, weld: None, axis, on_line }));
     true
 }
 
@@ -2501,6 +2566,14 @@ pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, to: egui
         return;
     };
     let reach = if reach > 0.0 { reach } else { f64::INFINITY };
+    // Along a guide: every point the same way along its axis, nothing snapped.
+    let along = drag.axis.and_then(|(axis, t0)| {
+        let d = guides::DIRS.get(axis).copied()?;
+        crate::gizmo::along(proj, to, drag.from, d).map(|t| d * (t - t0))
+    });
+    if drag.axis.is_some() && along.is_none() {
+        return;
+    }
     // In the plane of the screen through where the point was.
     let in_plane = {
         let (o, d) = proj.ray(to);
@@ -2510,6 +2583,7 @@ pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, to: egui
     };
     // Onto the scan under the pointer, when snapping so and there is scan there within reach.
     let under = if snap == SNAP_POINTER
+        && along.is_none()
         && let Some(scan) = &scan
     {
         crate::viewport::pick_cached(app, proj, to).into_iter().find_map(|h| match h {
@@ -2519,17 +2593,19 @@ pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, to: egui
     } else {
         None
     };
-    let Some(place) = under.filter(|p| in_plane.is_none_or(|q| p.dist(q) <= reach)).or(in_plane) else { return };
+    let Some(place) = along.map(|d| drag.from + d).or_else(|| under.filter(|p| in_plane.is_none_or(|q| p.dist(q) <= reach)).or(in_plane)) else {
+        return;
+    };
     let delta = place - drag.from;
     // Each point that goes moved as the one dragged; snapping to the nearest place puts each on the
     // scan's nearest place to where it would go, within reach.
-    let nearest = (snap == SNAP_NEAREST)
+    let nearest = (snap == SNAP_NEAREST && along.is_none())
         .then(|| scan.as_deref().and_then(|b| solidcraft_engine::cmd::scan::curve::projector(&app.session, Some(b), "scan.edit_surface").ok()));
     let moves: Vec<(usize, Vec3)> = drag
         .with
         .iter()
         .map(|&(i, from)| {
-            let to = if i == drag.index && under.is_some() { place } else { from + delta };
+            let to = if i == drag.index && under.is_some() && !drag.on_line { place } else { from + delta };
             let to = match nearest.as_ref().and_then(|n| n.as_ref()) {
                 Some((_, on)) => on.nearest(to).filter(|(_, d)| *d <= reach).map_or(to, |(q, _)| q),
                 None => to,
@@ -2547,7 +2623,7 @@ pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, to: egui
     }
     // A corner on the network's edge over another such corner: it goes onto it, and is welded to
     // it when let go.
-    let weld = weld_target(k, proj, drag.index, to);
+    let weld = if drag.axis.is_some() || drag.on_line { None } else { weld_target(k, proj, drag.index, to) };
     if let Some(d) = k.drag.as_mut() {
         d.weld = weld;
     }
@@ -2797,6 +2873,25 @@ fn side_on_screen(proj: &crate::viewport::Proj, s: &NurbsSurface, side: Side) ->
     (0..=SAMPLES).filter_map(|j| side.at(s, j as f64 / SAMPLES as f64).and_then(|p| proj.to_screen(p))).collect()
 }
 
+/// A line of the grid on the screen: along the face between its two dots (the surface's line
+/// through them), or straight between two points of the control net.
+fn line_on_screen(k: &EditSurface, proj: &crate::viewport::Proj, l: &select::GridLine) -> Vec<egui::Pos2> {
+    let ends = || l.ends.iter().filter_map(|e| select::handle_place(k, *e)).filter_map(|p| proj.to_screen(p)).collect();
+    if k.handles != HANDLES_DOTS {
+        return ends();
+    }
+    let Some(face) = k.shown.get(l.face) else { return ends() };
+    let places = network::dot_places(face);
+    let (Some(&(u0, v0)), Some(&(u1, v1))) = (places.get(l.at[0]), places.get(l.at[1])) else { return ends() };
+    const STEPS: usize = 8;
+    (0..=STEPS)
+        .filter_map(|n| {
+            let t = n as f64 / STEPS as f64;
+            face.eval(u0 + (u1 - u0) * t, v0 + (v1 - v0) * t).ok().and_then(|p| proj.to_screen(p))
+        })
+        .collect()
+}
+
 /// The faces shown, their sides, the handles (dots on the surface or the control net), the
 /// corners that are not a grid's, and Add Face's edge and guides, over the picture.
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
@@ -2954,6 +3049,29 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
             }
         }
     }
+    // The lines of the grid with both ends chosen in the accent; the one under the pointer, which
+    // a click chooses, lighter.
+    if k.adding.is_none() && !k.deleting && k.creasing.is_none() && !k.brushing && !k.keeping_half {
+        let free = k.drag.is_none() && k.marquee.is_none();
+        let hover = pointer
+            .filter(|p| free && handle_at(k, proj, *p).is_none() && guides::guide_at(k, proj, *p).is_none())
+            .and_then(|p| select::line_at(k, proj, p))
+            .map(|(l, _)| l);
+        let chosen = if k.picked.len() >= 2 {
+            select::grid_lines(k).into_iter().filter(|l| l.ends.iter().all(|e| k.picked.contains(e))).collect()
+        } else {
+            Vec::new()
+        };
+        for (lines, stroke) in [(chosen, egui::Stroke::new(3.0, t.accent)), (hover.into_iter().collect(), egui::Stroke::new(3.0, t.accent_soft))] {
+            for l in lines {
+                let on = line_on_screen(k, proj, &l);
+                if on.len() >= 2 {
+                    cased_line(painter, on, stroke);
+                }
+            }
+        }
+    }
+    guides::draw(k, painter, proj, pointer);
     // Points chosen ringed; the box being drawn; the soft selection's circle round the choice.
     for &i in &k.picked {
         if let Some(s) = select::handle_place(k, i).and_then(|p| proj.to_screen(p)) {
@@ -3766,6 +3884,112 @@ mod tests {
             select::clear(k);
             assert!(k.picked.is_empty() && k.chosen.is_none());
         }
+    }
+
+    /// A click on a line of the grid chooses its two points and a double-click the whole row; a
+    /// drag on a line moves it; the guides show through the choice and a drag on one moves the
+    /// choice along its axis only.
+    #[test]
+    fn lines_are_chosen_and_dragged_and_the_guides_move_along_an_axis() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]], "count": 6})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        let dots = kind(&h).shown_dots.clone();
+        let world = |p: Vec3| json!({"world": [p.x, p.y, p.z]});
+        let mid = |a: usize, b: usize| (dots[a].at + dots[b].at) * 0.5;
+        let picked = |h: &crate::scenario::Harness| kind(h).picked.iter().copied().collect::<Vec<_>>();
+        // A double-click on a line chooses its whole row (first: clicks just before it would
+        // make it a triple click).
+        let (a, b) = (2 * 6 + 2, 2 * 6 + 3);
+        h.step(&json!({"click": world(mid(a, b)), "double": true})).unwrap();
+        assert_eq!(picked(&h), (12..18).collect::<Vec<_>>(), "a double-click chooses the whole row");
+        // The guides go through the middle of the choice; a drag on the Y guide moves the row along
+        // Y only, though the pointer goes across too.
+        let k = kind(&h);
+        assert!(guides::shown(k));
+        let centre = select::centre(k).unwrap();
+        // Two thirds out along the guide's solid part, past the choice at its middle.
+        let proj = crate::viewport::projection(&h.app, h.app.viewport.rect.unwrap());
+        let on_y = centre + Vec3::new(0.0, crate::gizmo::mm_per_px(&proj, centre).unwrap() * 45.0, 0.0);
+        let to = on_y + Vec3::new(3.0, 3.0, 0.0);
+        h.step(&json!({"drag": [world(on_y), world(to)], "steps": 6})).unwrap();
+        h.frames(2);
+        let after = kind(&h).clone();
+        for (i, dot) in dots.iter().enumerate().take(18).skip(12) {
+            let d = after.shown_dots[i].at - dot.at;
+            assert!(d.x.abs() < 0.3 && (d.y - 3.0).abs() < 0.5, "point {i} went along Y only: {d:?}");
+            assert!(after.moved[i], "point {i} moved by hand");
+        }
+        // A click between two dots of a row chooses both.
+        let (c, e) = (4 * 6 + 1, 4 * 6 + 2);
+        let at = (after.shown_dots[c].at + after.shown_dots[e].at) * 0.5;
+        h.step(&json!({"click": world(at)})).unwrap();
+        assert_eq!(picked(&h), vec![c, e], "a click on a line chooses its ends");
+        // A drag on a line not chosen chooses it and moves it.
+        h.step(&json!({"click": world(mid(0, 1))})).unwrap();
+        let from = (after.shown_dots[c].at + after.shown_dots[e].at) * 0.5;
+        if let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.snap = SNAP_OFF;
+        }
+        h.step(&json!({"drag": [world(from), world(from + Vec3::new(0.0, -2.0, 0.0))], "steps": 6})).unwrap();
+        h.frames(2);
+        let last = kind(&h).clone();
+        assert_eq!(last.picked.iter().copied().collect::<Vec<_>>(), vec![c, e], "the line dragged is the choice");
+        for i in [c, e] {
+            let d = last.shown_dots[i].at - after.shown_dots[i].at;
+            assert!((d.y + 2.0).abs() < 0.5, "point {i} went with the line: {d:?}");
+        }
+    }
+
+    /// A whole line goes on across a side two faces share, to the network's edge, and stops at
+    /// the edge it runs into square.
+    #[test]
+    fn a_whole_line_runs_on_across_the_faces() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[16, 20, 0], [28, 20, 0], [28, 40, 0], [16, 40, 0]], "count": 5})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        if let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.adding = Some(Adding::default());
+        }
+        let k = kind(&h).clone();
+        let (f, side) =
+            *k.joins.open.iter().find(|&&(f, s)| s.at(&k.shown[f], 0.5).is_some_and(|p| (p.x - 28.0).abs() < 1.0)).expect("the edge at x = 28");
+        let edge = side.at(&k.shown[f], 0.5).unwrap();
+        h.step(&json!({"click": {"world": [edge.x, edge.y, edge.z]}})).unwrap();
+        h.frames(2);
+        let top = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+        for (x, y) in [(38.0, 20.0), (38.0, 40.0)] {
+            h.step(&json!({"click": {"world": [x, y, top(x, y)]}})).unwrap();
+            h.frames(2);
+        }
+        let k = kind(&h).clone();
+        assert_eq!(k.shown.len(), 2, "a face added: {:?}", k.note);
+        // A step of the first face's grid that crosses toward the shared side, in its middle.
+        let across = select::grid_lines(&k)
+            .into_iter()
+            .find(|l| {
+                let (p, q) = (k.shown_dots[l.ends[0]].at, k.shown_dots[l.ends[1]].at);
+                l.face == 0 && (p.y - q.y).abs() < 1e-6 && (p.y - 30.0).abs() < 1.0 && p.x < 24.0 && q.x < 24.0
+            })
+            .expect("a step along x in the middle of the first face");
+        let whole = select::whole_line(&k, across.ends[0], across.ends[1]);
+        let xs: Vec<f64> = whole.iter().map(|p| k.shown_dots[*p].at.x).collect();
+        assert!(xs.iter().all(|x| x.is_finite()));
+        let (lo, hi) = xs.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), x| (lo.min(*x), hi.max(*x)));
+        assert!(lo < 17.0 && hi > 37.0, "from one edge of the network to the other: {xs:?}");
+        assert!(whole.iter().all(|p| (k.shown_dots[*p].at.y - 30.0).abs() < 1.0), "along the one row: {whole:?}");
+        let ids: BTreeSet<usize> = whole.iter().copied().collect();
+        assert_eq!(ids.len(), whole.len(), "each point once");
     }
 
     /// The shape tools on the points chosen: Constrain to a plane puts them all in one plane, a

@@ -4,8 +4,10 @@
 //! - A click chooses one handle (a click on nothing chooses none); Ctrl-click toggles one; Shift-click adds one.
 //! - A drag begun on nothing draws a box and chooses the handles inside it (Shift adds them, Ctrl
 //!   toggles them, Alt takes them away).
-//! - A double-click on a face chooses all its points.
-//! - A drag of a chosen handle moves every chosen handle by the same amount.
+//! - A click on a line of the grid between two handles chooses both; a double-click on one
+//!   chooses the whole line it is part of, across the faces, to the edge (QuickSurface's).
+//! - A double-click on a face (off its lines) chooses all its points.
+//! - A drag of a chosen handle, or of a line, moves every chosen handle by the same amount.
 //!
 //! The handle `chosen` is the one last chosen: the one whose place is typed in the dialog.
 
@@ -183,6 +185,120 @@ pub(super) fn centre(k: &EditSurface) -> Option<Vec3> {
     }
     let sum = places.iter().fold(Vec3::ZERO, |a, p| a + *p);
     Some(sum * (1.0 / places.len() as f64))
+}
+
+/// How near a line of the grid the pointer must be to take it, in pixels.
+const LINE_GRAB: f32 = 6.0;
+
+/// One line of the grids: a step between two handles next to each other in a face's grid, the
+/// face, the two places in its net and the two handles. A side two faces share is one line.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct GridLine {
+    pub face: usize,
+    pub at: [usize; 2],
+    pub ends: [usize; 2],
+}
+
+/// Every line of the faces' grids, a shared one once.
+pub(super) fn grid_lines(k: &EditSurface) -> Vec<GridLine> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for (face, (s, of)) in k.shown.iter().zip(&k.joins.of).enumerate() {
+        let [nu, nv] = s.count();
+        for j in 0..nv {
+            for i in 0..nu {
+                let here = j * nu + i;
+                for next in [(i + 1 < nu).then_some(here + 1), (j + 1 < nv).then_some(here + nu)].into_iter().flatten() {
+                    let (Some(&a), Some(&b)) = (of.get(here), of.get(next)) else { continue };
+                    if a != b && seen.insert((a.min(b), a.max(b))) {
+                        out.push(GridLine { face, at: [here, next], ends: [a, b] });
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The line of the grid under `at` on the screen (within [`LINE_GRAB`]), and the place on it
+/// under the pointer.
+pub(super) fn line_at(k: &EditSurface, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<(GridLine, Vec3)> {
+    let screen: Vec<Option<egui::Pos2>> = (0..handle_count(k)).map(|i| handle_place(k, i).and_then(|p| proj.to_screen(p))).collect();
+    grid_lines(k)
+        .into_iter()
+        .filter_map(|l| {
+            let (a, b) = (screen.get(l.ends[0]).copied().flatten()?, screen.get(l.ends[1]).copied().flatten()?);
+            let ab = b - a;
+            let t = if ab.length_sq() > 0.0 { ((at - a).dot(ab) / ab.length_sq()).clamp(0.0, 1.0) } else { 0.0 };
+            Some((l, t, (a + ab * t).distance(at)))
+        })
+        .filter(|(_, _, d)| *d <= LINE_GRAB)
+        .min_by(|x, y| x.2.total_cmp(&y.2))
+        .and_then(|(l, t, _)| {
+            let (p, q) = (handle_place(k, l.ends[0])?, handle_place(k, l.ends[1])?);
+            Some((l, p + (q - p) * f64::from(t)))
+        })
+}
+
+/// The whole line of the grid through the step from handle `a` to handle `b`, as QuickSurface's
+/// double-click takes it: on along the grid both ways, across the sides the faces share, to the
+/// network's edge or a corner that is not a grid's (where the way straight on is not one line).
+/// At each point the line goes on along the one step that shares no cell with the step it came
+/// by; a loop round the surface ends where it began.
+pub(super) fn whole_line(k: &EditSurface, a: usize, b: usize) -> Vec<usize> {
+    use std::collections::HashMap;
+    let key = |x: usize, y: usize| (x.min(y), x.max(y));
+    let mut cells: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    let mut next_to: HashMap<usize, BTreeSet<usize>> = HashMap::new();
+    let mut cell = 0;
+    for (s, of) in k.shown.iter().zip(&k.joins.of) {
+        let [nu, nv] = s.count();
+        for j in 0..nv.saturating_sub(1) {
+            for i in 0..nu.saturating_sub(1) {
+                let corners = [j * nu + i, j * nu + i + 1, (j + 1) * nu + i + 1, (j + 1) * nu + i].map(|c| of.get(c).copied());
+                let [Some(c0), Some(c1), Some(c2), Some(c3)] = corners else { continue };
+                let c = [c0, c1, c2, c3];
+                for e in 0..4 {
+                    let (x, y) = (c[e], c[(e + 1) % 4]);
+                    if x == y {
+                        continue;
+                    }
+                    cells.entry(key(x, y)).or_default().push(cell);
+                    next_to.entry(x).or_default().insert(y);
+                    next_to.entry(y).or_default().insert(x);
+                }
+                cell += 1;
+            }
+        }
+    }
+    let mut seen: BTreeSet<usize> = [a, b].into_iter().collect();
+    let mut walk = |from: usize, at: usize| {
+        let mut out = Vec::new();
+        let (mut p, mut c) = (from, at);
+        loop {
+            let came = cells.get(&key(p, c)).map_or(&[][..], Vec::as_slice);
+            let on: Vec<usize> = next_to
+                .get(&c)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|n| *n != p && cells.get(&key(c, *n)).is_none_or(|q| q.iter().all(|x| !came.contains(x))))
+                .collect();
+            let [n] = on.as_slice() else { break };
+            if !seen.insert(*n) {
+                break;
+            }
+            out.push(*n);
+            (p, c) = (c, *n);
+        }
+        out
+    };
+    let ahead = walk(a, b);
+    let mut line = walk(b, a);
+    line.reverse();
+    line.extend([a, b]);
+    line.extend(ahead);
+    line
 }
 
 /// A box begun at `at`.
