@@ -420,6 +420,22 @@ fn a_fit_takes_the_region_chosen_by_hand() {
     assert!(surface["rms"].as_f64().unwrap() < 0.01 && surface.get("trimmed").is_some(), "{surface}");
 }
 
+/// A scan hidden with part of it still selected on is not the one a scan tool takes while another
+/// scan shows: the shown one is, as the only scan would be.
+#[test]
+fn a_hidden_scan_gives_way_to_the_shown_one() {
+    let (mut s, plate) = session_with_a_plate_and_boss("hidden-scan");
+    // Writes the slab's file.
+    session_with_a_scan("hidden-scan-slab");
+    let slab_path = std::env::temp_dir().join(format!("solidcraft-scan-hidden-scan-slab-{}", std::process::id())).join("slab.stl");
+    run(&mut s, "file.insert_mesh", json!({"path": slab_path.to_string_lossy()}));
+    let slab = s.model.state().bodies.iter().filter(|b| b.body.is_mesh()).map(|b| b.name.clone()).find(|n| *n != plate).unwrap();
+    run(&mut s, "scan.select", json!({"body": plate, "brush": {"points": [[40, 20, 15]], "radius": 4}}));
+    assert_eq!(super::mesh_body_name(&s, None, "scan.fill_holes").unwrap(), plate, "selected on, so taken");
+    run(&mut s, "browser.visibility", json!({"items": [plate.as_str()], "visible": false}));
+    assert_eq!(super::mesh_body_name(&s, None, "scan.fill_holes").unwrap(), slab);
+}
+
 /// The plate scan measured against a box built to the plate alone: the plate's points are on it,
 /// the boss's are too far to count; the map stands until the design changes, and `show: false`
 /// takes it away.

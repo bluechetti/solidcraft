@@ -351,10 +351,17 @@ fn mesh_name(s: &Session, p: &Value, cmd: &str) -> Result<String> {
             // Several points picked on one scan are one scan.
             selected.sort_unstable();
             selected.dedup();
-            let meshes: Vec<&str> = state.bodies.iter().filter(|b| b.body.is_mesh()).map(|b| b.name.as_str()).collect();
+            let mut meshes: Vec<&str> = state.bodies.iter().filter(|b| b.body.is_mesh()).map(|b| b.name.as_str()).collect();
+            // A hidden scan is not the one meant while another shows: with one scan in view, that
+            // one, as the only scan would be.
+            let shown: Vec<&str> = meshes.iter().copied().filter(|name| s.body_visible(name)).collect();
+            if !shown.is_empty() {
+                meshes = shown;
+            }
             // Nothing picked: the scan triangles are selected on (Select on Scan), as Fit Patches,
-            // Flatten and Reconstruct Selection take it, so every scan tool works on the same one.
-            let on = select::selected(s).filter(|k| k.count > 0);
+            // Flatten and Reconstruct Selection take it, so every scan tool works on the same one,
+            // unless that scan was hidden since.
+            let on = select::selected(s).filter(|k| k.count > 0 && meshes.contains(&k.scan.as_str()));
             if selected.is_empty()
                 && let Some(k) = on.as_ref()
             {

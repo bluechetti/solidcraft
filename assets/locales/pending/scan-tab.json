@@ -111,7 +111,7 @@
     "ui.scan_reduce_keep": "Keep",
     "ui.scan_reduce_rim": "Keep the rim",
     "ui.scan_reduce_count": "{now} triangles now; about {kept} kept.",
-    "ui.scan_reduce_hint": "Flat areas lose triangles first. With a most error set, it stops before moving the surface farther than that.",
+    "ui.scan_reduce_hint": "Flat areas lose triangles first. With an error limit set, it stops before moving the surface farther than that.",
     "help.scan.repair": "Fixes broken triangles: duplicates, edges shared by three or more faces, slivers and faces passing through others. Use it when fitting or filling refuses a scan.",
     "cmd.scan_section_sketch": "Section to Sketch",
     "help.scan.section_sketch": "Sketches where a plane cuts the scan as fitted lines, arcs and circles. Use it to start a part: dimension the sketch and extrude it.",
