@@ -3612,6 +3612,10 @@ pub struct Document {
     /// Notes: text anchored to points in model space, drawn as screen-facing callouts (#1631).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<crate::notes::Note>,
+    /// The inspection plan: checks picked on the model, each with its tolerance, measured against
+    /// a scan when asked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<crate::inspection::Check>,
     /// What was hidden when the design was saved. A session takes it from here when the design
     /// opens and keeps the live state itself (`browser.visibility`: saved, and undone like any
     /// other change), so a document in a session leaves this empty; the session puts it back when
@@ -3859,6 +3863,7 @@ impl Document {
             .chain(self.canvases.iter().map(|c| c.id))
             .chain(self.point_clouds.iter().map(|c| c.id))
             .chain(self.notes.iter().map(|n| n.id))
+            .chain(self.checks.iter().map(|c| c.id))
             .chain(a.joints.iter().map(|j| j.id))
             .chain(a.contact_sets.iter().map(|c| c.id))
             .chain(a.studies.iter().map(|s| s.id))
@@ -3920,6 +3925,7 @@ impl Document {
             browser_order: Default::default(),
             named_views: Vec::new(),
             notes: Vec::new(),
+            checks: Vec::new(),
             visibility: Visibility::default(),
             plugin_data: Default::default(),
         }

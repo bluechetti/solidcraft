@@ -6544,6 +6544,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         }
     }
+    // Add Check: a click on the model adds a check of the face under it.
+    if crate::inspection_plan::adding(app)
+        && resp.clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        crate::inspection_plan::click(app, &proj, p, mods.shift);
+    }
     // Remove Markers: a click on the scan finds the markers like the one under it.
     if crate::scan_markers::picking(app)
         && resp.clicked()
@@ -6666,6 +6673,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::section_scan::draw(app, &painter, &proj);
     crate::hole_table::draw(app, &painter, &proj);
     crate::scan_markers::draw(app, &painter, &proj);
+    crate::inspection_plan::draw(app, &painter, &proj);
     crate::dim_view::show(app, ui, &painter, &proj);
     crate::sketch_text_handles::show(app, ui, &painter, &proj, hover);
     crate::sketch3d::show(app, &painter, &proj);
@@ -7356,6 +7364,7 @@ fn takes_scan_clicks(app: &SolveApp) -> bool {
         || crate::dialogs_scan_clean::choosing_holes(app)
         || crate::scan_deviation::pinning(app)
         || crate::scan_markers::picking(app)
+        || crate::inspection_plan::adding(app)
 }
 
 /// What a box selects: sketch entities while sketching, otherwise what the open

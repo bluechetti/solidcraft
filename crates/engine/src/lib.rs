@@ -646,6 +646,8 @@ pub struct Session {
     /// The holes `inspect.hole_table` last read, for the viewport to number. View state: not part
     /// of the design and not an undo step.
     pub hole_table: Option<std::sync::Arc<cmd::hole_table::HoleTable>>,
+    /// The checks `inspect.check_measure` last measured, for the viewport to label. View state.
+    pub inspection: Option<std::sync::Arc<cmd::inspection_plan::Inspection>>,
     /// What `scan.find_all` last found on a scan, and what Reconstruct reads off it, for the
     /// viewport to colour and Reconstruct's tools to build from. View state: not part of the
     /// design and not an undo step.
@@ -939,6 +941,7 @@ impl Session {
             continuity: Vec::new(),
             scan_deviation: None,
             hole_table: None,
+            inspection: None,
             scan_shapes: None,
             scan_survey: None,
             scan_selection: None,
@@ -2140,6 +2143,7 @@ impl Session {
             continuity: Vec::new(),
             scan_deviation: None,
             hole_table: None,
+            inspection: None,
             // What Find All read is kept, so a copy computing a scan tool beside the window
             // reads it again only when the scan changed (`ScanShapes::current`).
             scan_shapes: self.scan_shapes.clone(),
@@ -2684,6 +2688,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         browser_order,
         named_views,
         notes,
+        checks,
         visibility,
         next_component_color_index,
         plugin_data,
@@ -2727,6 +2732,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         && *browser_order == b.browser_order
         && *named_views == b.named_views
         && *notes == b.notes
+        && *checks == b.checks
         && *visibility == b.visibility
         && *next_component_color_index == b.next_component_color_index
 }

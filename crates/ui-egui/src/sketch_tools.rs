@@ -292,6 +292,13 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
     }
     // Add Check's button turns its click tool on or off; Measure Checks' takes its results away
     // again while they are shown.
+    if id == "inspect.check_add" {
+        return crate::inspection_plan::toggle_adding(app);
+    }
+    if id == "inspect.check_measure" && crate::inspection_plan::shown(app) {
+        let _ = app.run(id, json!({"show": false}));
+        return false;
+    }
     // Remove Markers' button asks for a click on a marker, or ends asking.
     if id == "scan.remove_markers" {
         return crate::scan_markers::toggle(app);

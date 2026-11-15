@@ -293,7 +293,19 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "INSERT", panel: "2D", promoted: 2, ids: &["sketch.insert_dxf", "sketch.insert_svg"] },
     Section { tab: "INSERT", panel: "LIBRARY", promoted: 3, ids: &["parts.fastener", "parts.library", "parts.resize", "parts.insert"] },
     Section { tab: "INSERT", panel: "LINKS", promoted: 2, ids: &["component.update_links", "component.break_link"] },
-    Section { tab: "INSPECT", panel: "MEASURE", promoted: 3, ids: &["inspect.measure", "inspect.center_of_mass", "component.properties", "inspect.hole_table"] },
+    Section {
+        tab: "INSPECT",
+        panel: "MEASURE",
+        promoted: 3,
+        ids: &[
+            "inspect.measure",
+            "inspect.center_of_mass",
+            "component.properties",
+            "inspect.hole_table",
+            "inspect.check_add",
+            "inspect.check_measure",
+        ],
+    },
     Section { tab: "INSPECT", panel: "SECTION", promoted: 1, ids: &["inspect.section"] },
     Section {
         tab: "INSPECT",
@@ -546,6 +558,9 @@ pub const SECTIONS: &[Section] = &[
         ids: &[
             "scan.deviation",
             "scan.align_to_model",
+            // The inspection plan: checks picked on the model, measured on the scan.
+            "inspect.check_add",
+            "inspect.check_measure",
             // Labels places on the deviation map with their distances.
             "scan.deviation_pin",
             "inspect.hole_table",

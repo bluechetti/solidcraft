@@ -71,6 +71,8 @@ pub const DOCUMENTED: &[&str] = &[
     "frame.member",
     "inspect.accessibility",
     "inspect.center_of_mass",
+    "inspect.check_add",
+    "inspect.check_measure",
     "inspect.colored_components",
     "inspect.compare",
     "inspect.continuity",

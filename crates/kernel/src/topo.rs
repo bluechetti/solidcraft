@@ -476,6 +476,34 @@ pub fn cylinder_face_exact(b: &Body, face: usize) -> Option<CylinderFace> {
 
 /// The loops of face `face` of a body as closed polygons of points sampled on the exact curves of
 /// their edges, in loop order (its outer loop first, as the record keeps it). Empty for no such face.
+pub fn face_outline(b: &Body, face: usize) -> Vec<Vec<Vec3>> {
+    const SAMPLES: usize = 24;
+    let rec = b.record();
+    let Some(f) = rec.faces.get(face) else { return Vec::new() };
+    let mut out = Vec::new();
+    for l in &f.loops {
+        let Loop::Edges { edges } = l else { continue };
+        let mut poly = Vec::new();
+        for oe in edges {
+            let Some(e) = rec.edges.get(oe.edge as usize) else { continue };
+            let Ok(c) = solidcraft_geom::brep::eval::CurveEval::new(e.parameters()) else { continue };
+            let [t0, t1] = e.interval;
+            // Each edge from its start along the loop, its last point left to the next edge.
+            for k in 0..SAMPLES {
+                let s = k as f64 / SAMPLES as f64;
+                let t = if oe.forward { t0 + (t1 - t0) * s } else { t1 - (t1 - t0) * s };
+                if let Some(p) = c.point(t) {
+                    poly.push(p);
+                }
+            }
+        }
+        if poly.len() >= 3 {
+            out.push(poly);
+        }
+    }
+    out
+}
+
 impl CylinderFace {
     /// How far `p` is from the face: off its cylinder, and past its ends along the axis.
     pub fn off(&self, p: Vec3) -> f64 {

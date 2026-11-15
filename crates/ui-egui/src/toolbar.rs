@@ -68,6 +68,8 @@ pub(crate) fn shows_pressed(app: &SolveApp, id: &str) -> bool {
         || (id == "scan.deviation_pin" && crate::scan_deviation::pinning(app))
         || (id == "inspect.hole_table" && crate::hole_table::shown(app))
         || (id == "scan.remove_markers" && crate::scan_markers::active(app))
+        || (id == "inspect.check_add" && crate::inspection_plan::adding(app))
+        || (id == "inspect.check_measure" && crate::inspection_plan::shown(app))
         || (id == "scan.find_all" && crate::scan_shapes::shown(app))
 }
 

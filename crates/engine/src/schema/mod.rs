@@ -78,6 +78,7 @@ pub mod hole_table;
 pub mod insert_mesh;
 pub mod insert_step;
 pub mod inspect;
+pub mod inspection_plan;
 pub mod interference;
 pub mod joint_sweep;
 pub mod joints;

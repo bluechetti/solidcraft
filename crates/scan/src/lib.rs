@@ -69,6 +69,7 @@ pub mod hole_form;
 pub mod holes;
 mod hull;
 pub mod inserts;
+pub mod inspect_plan;
 pub mod loft;
 pub mod markers;
 pub mod merge;

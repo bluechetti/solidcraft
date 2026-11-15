@@ -167,6 +167,7 @@ fn same_geometry_inputs(a: &Document, b: &Document) -> bool {
         scan_tolerances,
         scan_flat_patterns,
         notes: _,
+        checks: _,
         // Plugin data is kept beside the design; no feature reads it.
         plugin_data: _,
     } = a;
