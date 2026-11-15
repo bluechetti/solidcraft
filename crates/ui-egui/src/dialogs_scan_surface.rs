@@ -315,6 +315,13 @@ struct Shading {
     dots: Shaded,
     /// The tolerance and colours the dots were coloured with.
     key: (u64, crate::scan_deviation::Colours),
+    /// Where the scan's points were when it was looked for ([`edit::scan_print`]): moved since,
+    /// it is looked for again.
+    print: Option<u64>,
+    /// The network's points when the scan under them was looked for, and how far from the faces
+    /// it was looked: faces moved well away from there have it looked for again.
+    studied: Vec<Vec3>,
+    reach: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -700,6 +707,12 @@ fn load(app: &SolveApp, k: &mut EditSurface) {
         Some(Err(_)) => return,
         _ => {}
     }
+    // The design changed: the scan moved (or was edited) is looked for under the faces again.
+    if let Some(sh) = k.shade.as_ref()
+        && edit::scan_print(&app.session, &sh.scan) != sh.print
+    {
+        k.restudy = true;
+    }
     let cmd = "scan.edit_surface";
     let found = edit::editable(&app.session, k.target.as_deref(), cmd).map_err(|e| e.to_string());
     if let (Some(Ok(l)), Ok(target)) = (&mut k.loaded, &found)
@@ -707,6 +720,9 @@ fn load(app: &SolveApp, k: &mut EditSurface) {
         && l.target.faces == target.faces
     {
         l.revision = revision;
+        if k.restudy {
+            study(app, k);
+        }
         return;
     }
     let loaded = found.map(|target| {
@@ -760,6 +776,7 @@ fn study(app: &SolveApp, k: &mut EditSurface) {
         l.sample = Arc::new(all.iter().step_by(all.len() / PREVIEW_POINTS + 1).copied().collect());
     }
     k.shade = found.map(|(scan, shade)| {
+        let print = edit::scan_print(&app.session, &scan);
         Box::new(Shading {
             base: crate::scan_fidelity::of(app, Some(&scan)),
             scan,
@@ -768,10 +785,21 @@ fn study(app: &SolveApp, k: &mut EditSurface) {
             version: 0,
             dots: Shaded::default(),
             key: (0, [[0; 3]; 5]),
+            print,
+            studied: k.shown_net.clone(),
+            reach: k.faces.iter().map(edit::default_reach).fold(1.0, f64::max),
         })
     });
     let shown = k.shown.clone();
     show_faces(k, shown, false, None);
+}
+
+/// Whether the faces shown have gone well away from where the scan under them was looked for
+/// (more than a quarter of the distance it was looked within), so scan they now lie over is not
+/// coloured, and scan they have left still is.
+fn outgrown(k: &EditSurface) -> bool {
+    let Some(sh) = k.shade.as_ref() else { return false };
+    sh.studied.len() != k.shown_net.len() || sh.studied.iter().zip(&k.shown_net).any(|(a, b)| a.dist(*b) > sh.reach * 0.25)
 }
 
 /// Whether the seam with ends `a` and `b` is the edge `e` (either way round).
@@ -1101,6 +1129,10 @@ fn show_faces(k: &mut EditSurface, faces: Vec<NurbsSurface>, dragging: bool, tou
         sh.key = (0, [[0; 3]; 5]);
     }
     k.shown = faces;
+    // Let go well away from where the scan was looked for: it is looked for again.
+    if !dragging && outgrown(k) {
+        k.restudy = true;
+    }
     recolour(k);
 }
 
@@ -3944,6 +3976,47 @@ mod tests {
             let d = last.shown_dots[i].at - after.shown_dots[i].at;
             assert!((d.y + 2.0).abs() < 0.5, "point {i} went with the line: {d:?}");
         }
+    }
+
+    /// The scan under the surface is looked for again when the scan moves, and when the faces are
+    /// let go well away from where it was looked for, so the colouring follows both.
+    #[test]
+    fn the_deviation_follows_the_scan_moved_and_the_surface_moved_far() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[16, 16, 0], [32, 16, 0], [32, 32, 0], [16, 32, 0]], "count": 5})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        let middle = |k: &EditSurface| {
+            let sh = k.shade.as_ref().expect("the scan under the surface");
+            assert!(!sh.shade.points.is_empty());
+            sh.shade.points.iter().fold(Vec3::ZERO, |a, p| a + p.at) * (1.0 / sh.shade.points.len() as f64)
+        };
+        let before = middle(kind(&h));
+        let scan = kind(&h).shade.as_ref().unwrap().scan.clone();
+        // The scan moved 3 mm up: the points coloured are the scan's where it is now.
+        h.app.run("solid.move", json!({"bodies": [scan], "translate": [0, 0, 3]})).unwrap();
+        h.frames(3);
+        let up = middle(kind(&h)) - before;
+        assert!((up.z - 3.0).abs() < 0.5, "the coloured scan went up with the scan: {up:?}");
+        // The whole surface moved 20 mm along X: the scan it now lies over is coloured.
+        let before = middle(kind(&h));
+        if let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            let places: Vec<Vec3> = k.shown_net.iter().map(|p| *p + Vec3::new(20.0, 0.0, 0.0)).collect();
+            let faces = network::with_network_points(&k.shown, &k.joins, &places).unwrap();
+            k.faces = faces.clone();
+            k.net = places;
+            show_faces(k, faces, false, None);
+            assert!(k.restudy, "moved well away, the scan is looked for again");
+        }
+        h.frames(3);
+        let k = kind(&h);
+        assert!(!k.restudy && !outgrown(k));
+        let over = middle(k) - before;
+        assert!(over.x > 15.0, "the coloured scan is where the surface went: {over:?}");
     }
 
     /// A whole line goes on across a side two faces share, to the network's edge, and stops at
