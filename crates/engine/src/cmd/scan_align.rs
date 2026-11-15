@@ -119,7 +119,7 @@ fn surface_of(s: &Session, name: &str, cmd: &str) -> Result<Mesh> {
     }
     let surface =
         body.body.mesh(&solidcraft_kernel::MeshTolerance::chord(MODEL_CHORD)).map_err(|e| bad(cmd, format!("`{name}` could not be meshed: {e}")))?;
-    Ok(Mesh { body: name.to_owned(), positions: surface.positions, triangles: surface.triangles })
+    Ok(Mesh::made(name.to_owned(), surface))
 }
 
 fn align_all(s: &mut Session, p: &Value) -> Result<Value> {

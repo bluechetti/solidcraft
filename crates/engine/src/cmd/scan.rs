@@ -274,8 +274,22 @@ const NEGLIGIBLE: f64 = 1e-3;
 /// A scan's triangles, copied out of the evaluated model so the session can then move it.
 struct Mesh {
     body: String,
-    positions: Vec<Vec3>,
-    triangles: Vec<[u32; 3]>,
+    positions: Shared<Vec3>,
+    triangles: Shared<[u32; 3]>,
+}
+
+/// The points or the triangles of a scan as the body keeps them, shared, not copied: a scan of
+/// 200 million triangles is gigabytes, and every scan command reads one.
+struct Shared<T> {
+    mesh: std::sync::Arc<solidcraft_geom::Mesh>,
+    of: fn(&solidcraft_geom::Mesh) -> &[T],
+}
+
+impl<T> std::ops::Deref for Shared<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        (self.of)(&self.mesh)
+    }
 }
 
 impl Mesh {
@@ -289,14 +303,27 @@ impl Mesh {
     }
 }
 
+impl Mesh {
+    /// A mesh made for the command (a model's surface meshed), held as a scan's is.
+    fn made(body: String, mesh: solidcraft_geom::Mesh) -> Self {
+        Self::shared(body, std::sync::Arc::new(mesh))
+    }
+
+    fn shared(body: String, kept: std::sync::Arc<solidcraft_geom::Mesh>) -> Self {
+        let positions = Shared { mesh: kept.clone(), of: |m| &m.positions };
+        let triangles = Shared { mesh: kept, of: |m| &m.triangles };
+        Mesh { body, positions, triangles }
+    }
+}
+
 /// The mesh body a scan command works on: `body`, else the one selected mesh body, else the
 /// design's only mesh body.
 fn mesh(s: &Session, p: &Value, cmd: &str) -> Result<Mesh> {
     let name = mesh_name(s, p, cmd)?;
     let state = s.model.state();
     let body = state.body(&name).ok_or_else(|| bad(cmd, format!("no body `{name}`")))?;
-    let (positions, triangles) = body.body.triangle_mesh().ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
-    Ok(Mesh { body: name, positions: positions.to_vec(), triangles: triangles.to_vec() })
+    let kept = body.body.kept_mesh().ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+    Ok(Mesh::shared(name, kept))
 }
 
 /// The scan a scan command would work on with no `body` given (`body`, else the selected or only

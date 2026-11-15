@@ -71,7 +71,7 @@ fn study(app: &SolveApp, k: &mut Denoise) {
     k.asked = Some(revision);
     let slot = Arc::new(Mutex::new(None));
     k.study = slot.clone();
-    let (body, positions, triangles) = match engine_mesh::denoise_mesh(&app.session, None) {
+    let (body, mesh) = match engine_mesh::denoise_mesh(&app.session, None) {
         Ok(mesh) => mesh,
         Err(e) => {
             if let Ok(mut s) = slot.lock() {
@@ -81,7 +81,7 @@ fn study(app: &SolveApp, k: &mut Denoise) {
         }
     };
     let work = move || {
-        let found = engine_mesh::denoise_study(&positions, &triangles).ok_or_else(|| tr("ui.scan_denoise_empty").to_owned());
+        let found = engine_mesh::denoise_study(&mesh.positions, &mesh.triangles).ok_or_else(|| tr("ui.scan_denoise_empty").to_owned());
         if let Ok(mut s) = slot.lock() {
             *s = Some((body, revision, found));
         }

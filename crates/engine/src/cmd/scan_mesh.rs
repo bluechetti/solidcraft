@@ -155,11 +155,14 @@ pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
-/// The scan Denoise would smooth (`body`, else the selected or only one): its name and a copy of
-/// its mesh, for a dialog to study off the window thread.
-pub fn denoise_mesh(s: &Session, body: Option<&str>) -> Result<(String, Vec<Vec3>, Vec<[u32; 3]>)> {
-    let m = mesh(s, &json!({ "body": body }), "scan.denoise")?;
-    Ok((m.body, m.positions, m.triangles))
+/// The scan Denoise would smooth (`body`, else the selected or only one): its name and its mesh
+/// (shared, not copied), for a dialog to study off the window thread.
+pub fn denoise_mesh(s: &Session, body: Option<&str>) -> Result<(String, std::sync::Arc<solidcraft_geom::Mesh>)> {
+    let name = super::mesh_body_name(s, body, "scan.denoise")?;
+    let state = s.model.state();
+    let kept =
+        state.body(&name).and_then(|b| b.body.kept_mesh()).ok_or_else(|| bad("scan.denoise", format!("`{name}` is not a scan (a mesh body)")))?;
+    Ok((name, kept))
 }
 
 /// What smoothing would do for a mesh: each pass measured, and the strength suggested.
