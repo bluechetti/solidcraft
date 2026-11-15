@@ -201,6 +201,12 @@ pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Resu
     let (noise, edge) = noise_round(scan, &neighbours, &start).unwrap_or((0.0, 0.0));
     let tolerance = tolerance.filter(|t| t.is_finite() && *t > 0.0).unwrap_or_else(|| self::tolerance(extent).max(NOISE_MULTIPLE * noise));
     let facings = Facings::new(*scan, &neighbours, if edge > 0.0 && noise > SMOOTH_ABOVE * edge { RINGS } else { 0 });
+    // The start keeps to the one smooth face round the pick, not across a crease onto the faces
+    // round it: a hole's wall shorter than the reach would otherwise start with its rim and the
+    // face beyond, a patch no shape of the kind fits. A face too small for a start keeps the
+    // patch as it was.
+    let smooth = smooth_part(scan, &neighbours, seed, &start);
+    let start = if smooth.len() >= START_LEAST { smooth } else { start };
     // The shape read with the directions growth reads: a noisy scan's own normals mislead an axis.
     let solve = |region: &[usize], kind: Kind| solve_facing(scan, region, kind, SOLVE_LIMIT, &facings);
     let mut shape = solve(&start, kind).ok_or(FitError::NoFit)?;
@@ -385,6 +391,43 @@ fn flat_cylinder(scan: &Scan, region: &[usize], shape: &Shape, reach: f64) -> bo
     let (lo, hi) = corners.fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p)));
     let across = (hi - lo).len();
     across >= reach && radius > 20.0 * across
+}
+
+/// Neighbours of a fit's start whose directions differ by more than this meet at a crease.
+const START_CREASE: f64 = 30.0 * PI / 180.0;
+
+/// A start keeps to its smooth face only when that holds at least this many triangles.
+const START_LEAST: usize = 12;
+
+/// The triangles of `patch` reached from `seed` without crossing a crease: across edges whose two
+/// triangles face within [`START_CREASE`] of each other. Each triangle's own direction is read, not
+/// one smoothed over the triangles round it, which turns a sharp edge a little at a time.
+fn smooth_part(scan: &Scan, neighbours: &EdgeNeighbours, seed: usize, patch: &[usize]) -> Vec<usize> {
+    let facing = |t: usize| scan.corners(t).and_then(|[a, b, c]| (b - a).cross(c - a).normalized());
+    let mut inside = vec![false; scan.triangle_count()];
+    for &t in patch {
+        if let Some(slot) = inside.get_mut(t) {
+            *slot = true;
+        }
+    }
+    let cos = START_CREASE.cos();
+    let mut found = Vec::new();
+    if let Some(slot) = inside.get_mut(seed).filter(|s| **s) {
+        *slot = false;
+        found.push(seed);
+    }
+    let mut head = 0;
+    while let Some(&t) = found.get(head) {
+        head += 1;
+        let Some(a) = facing(t) else { continue };
+        for n in neighbours.of(scan, t) {
+            if inside.get(n).copied().unwrap_or(false) && facing(n).is_some_and(|b| a.dot(b) >= cos) {
+                inside[n] = false;
+                found.push(n);
+            }
+        }
+    }
+    found
 }
 
 /// `seed` and every triangle reached from it across edges that `keep` takes.
@@ -1494,6 +1537,28 @@ mod tests {
             Err(FitError::NoFit),
             "a flat face has no axis"
         );
+    }
+
+    /// A wall shorter than the reach a fit starts from (a short boss Ø 11 × 4 on a wide disc, as a
+    /// hole's wall in a plate): the start keeps to the wall, not the disc and the boss's top beyond
+    /// its sharp edges, so a click on it fits the boss, at the scan's own tolerance and at a tight
+    /// one, with a little noise.
+    #[test]
+    fn a_cylinder_fits_a_wall_shorter_than_its_start() {
+        let mut profile: Vec<[f64; 2]> = (0..=49).map(|j| [0.0, 80.0 - 1.5 * f64::from(j)]).collect();
+        profile.extend((0..=16).map(|j| [0.25 * f64::from(j), 5.5]));
+        profile.extend((1..=9).map(|j| [4.0, 5.5 - 0.5 * f64::from(j)]));
+        let (mut positions, triangles) = crate::test_meshes::revolved(&profile, 120, false);
+        noisy(&mut positions, 0.01);
+        let scan = Scan::new(&positions, &triangles);
+        assert!(0.03 * scan.extent() > 4.0, "the start reaches past the wall");
+        let seed = nearest_triangle(&scan, Vec3::new(5.5, 0.0, 2.0)).unwrap();
+        for tolerance in [None, Some(0.1)] {
+            let fitted = fit(&scan, seed, Kind::Cylinder, tolerance).unwrap_or_else(|e| panic!("{tolerance:?}: {e:?}"));
+            let Shape::Cylinder { axis, radius, .. } = fitted.shape else { panic!("{:?}", fitted.shape) };
+            assert!((radius - 5.5).abs() < 0.05 && axis.z.abs() > 1f64.to_radians().cos(), "{tolerance:?}: {radius} {axis:?}");
+            assert!((fitted.half_length - 2.0).abs() < 0.3, "the whole wall: {}", fitted.half_length);
+        }
     }
 
     /// A draw about as spread as a normal one of deviation 1: three uniform draws summed.
