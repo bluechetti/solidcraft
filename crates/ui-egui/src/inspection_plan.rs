@@ -94,7 +94,7 @@ fn label(app: &SolveApp, c: &solidcraft_engine::cmd::inspection_plan::ShownCheck
 
 /// The hint while adding, the first face of a distance, and the results' tags.
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
-    use egui::{Rect, Stroke, vec2};
+    use egui::{Stroke, vec2};
     let t = solidcraft_theme::Tokens::get();
     let font = egui::FontId::proportional(t.font_small);
     if adding(app) {
@@ -109,6 +109,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     let Some(results) = current(app) else { return };
     let within = crate::scan_deviation::colours()[2];
     let good = egui::Color32::from_rgb(within[0], within[1], within[2]);
+    let mut tags = crate::view_tags::Tags::default();
     for c in &results.results {
         let Some(at) = proj.to_screen(c.at) else { continue };
         let tint = match c.pass {
@@ -117,7 +118,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
             None => t.text_dim,
         };
         let galley = painter.layout_no_wrap(label(app, c), font.clone(), t.text);
-        let rect = Rect::from_min_size(at + vec2(10.0, -10.0 - galley.size().y - 6.0), galley.size() + vec2(10.0, 6.0));
+        let rect = tags.place(at, galley.size() + vec2(10.0, 6.0));
         painter.line_segment([at, rect.left_bottom()], Stroke::new(1.0, tint));
         painter.circle_filled(at, 3.5, tint);
         painter.rect_filled(rect, 3.0, t.panel);

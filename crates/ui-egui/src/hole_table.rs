@@ -30,14 +30,15 @@ fn label(app: &SolveApp, h: &solidcraft_engine::cmd::hole_table::ShownHole) -> S
 
 /// The numbers over the view while the table is shown.
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
-    use egui::{Rect, Stroke, vec2};
+    use egui::{Stroke, vec2};
     let Some(table) = current(app) else { return };
     let t = solidcraft_theme::Tokens::get();
     let font = egui::FontId::proportional(t.font_small);
+    let mut tags = crate::view_tags::Tags::default();
     for h in &table.holes {
         let Some(at) = proj.to_screen(h.at) else { continue };
         let galley = painter.layout_no_wrap(label(app, h), font.clone(), t.text);
-        let rect = Rect::from_min_size(at + vec2(10.0, -10.0 - galley.size().y - 6.0), galley.size() + vec2(10.0, 6.0));
+        let rect = tags.place(at, galley.size() + vec2(10.0, 6.0));
         painter.line_segment([at, rect.left_bottom()], Stroke::new(1.0, t.accent));
         painter.circle_filled(at, 3.0, t.accent);
         painter.rect_filled(rect, 3.0, t.panel);

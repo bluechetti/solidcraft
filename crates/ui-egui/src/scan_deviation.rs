@@ -399,7 +399,7 @@ fn signed(app: &SolveApp, v: f32) -> String {
 /// The labels over the view while the map is shown: its largest distance above and below, the
 /// places pinned, and the reading under the pointer.
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
-    use egui::{Align2, FontId, Rect, Stroke, vec2};
+    use egui::{Align2, FontId, Stroke, vec2};
     let Some(map) = current(app) else { return };
     let t = solidcraft_theme::Tokens::get();
     let colours = colours();
@@ -408,9 +408,10 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         egui::Color32::from_rgb(r, g, b)
     };
     let font = FontId::proportional(t.font_small);
-    let tag = |at: egui::Pos2, text: String, v: f32| {
+    let mut tags = crate::view_tags::Tags::default();
+    let mut tag = |at: egui::Pos2, text: String, v: f32| {
         let galley = painter.layout_no_wrap(text, font.clone(), t.text);
-        let rect = Rect::from_min_size(at + vec2(10.0, -10.0 - galley.size().y - 6.0), galley.size() + vec2(10.0, 6.0));
+        let rect = tags.place(at, galley.size() + vec2(10.0, 6.0));
         painter.line_segment([at, rect.left_bottom()], Stroke::new(1.0, tint(v)));
         painter.circle_filled(at, 3.5, tint(v));
         painter.rect_filled(rect, 3.0, t.panel);

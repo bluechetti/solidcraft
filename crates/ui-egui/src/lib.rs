@@ -387,6 +387,7 @@ pub use solidcraft_ui_kit::view_compass;
 mod view_confirm;
 pub mod view_gizmo;
 pub mod view_pick;
+pub(crate) mod view_tags;
 pub mod viewport;
 mod viewport_details;
 mod viewport_layout;
