@@ -7,6 +7,10 @@
 //! The colours are the theme's analysis colours, so they follow the colour vision setting: within
 //! the tolerance the draft analysis's good colour, above the model its bad colour and below it
 //! the curvature map's deep end, deepening to the limit.
+//!
+//! The largest distance above and the largest below are labelled on the scan, so are the places
+//! the user pins (Pin Deviation: a click on the scan), and the pointer over the scan reads out the
+//! distance under it.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -68,12 +72,28 @@ pub(crate) fn start(app: &mut SolveApp) -> bool {
         return true;
     };
     match crate::scan_fidelity::noise_tolerance(app, Some(&scan)) {
-        Some((mm, _)) => app.run("scan.deviation", serde_json::json!({"scan": scan, "tolerance": format!("{mm} mm")})).is_err(),
+        Some((mm, _)) => {
+            let mut p = serde_json::json!({"scan": scan, "tolerance": format!("{mm} mm")});
+            look(app, &mut p);
+            app.run("scan.deviation", p).is_err()
+        }
         None => {
             let waiting = crate::scan_fidelity::reading(Some(&scan)).then_some(scan);
             AWAITING_NOISE.with(|w| *w.borrow_mut() = waiting);
             true
         }
+    }
+}
+
+/// How the map looks, from the preferences: its range read from the scan and its colours in steps
+/// (both off by default, as before).
+fn look(app: &SolveApp, p: &mut serde_json::Value) {
+    if app.preferences.scan_deviation_auto_range {
+        p["auto_limit"] = serde_json::json!(true);
+    }
+    let bands = app.preferences.scan_deviation_bands.round();
+    if bands >= 2.0 {
+        p["bands"] = serde_json::json!(bands.min(12.0) as u32);
     }
 }
 
@@ -91,7 +111,13 @@ fn once_noise_is_read(app: &mut SolveApp, ctx: &egui::Context, map: &DeviationMa
         Some((mm, _)) => {
             AWAITING_NOISE.with(|w| *w.borrow_mut() = None);
             if (mm - map.tolerance).abs() > 1e-12 {
-                measure_here(app, &serde_json::json!({ "scan": map.scan, "body": map.body, "tolerance": format!("{mm} mm") }));
+                // The limit follows the new tolerance, as it did when no limit was given.
+                let mut p = remeasure_params(map);
+                p["tolerance"] = serde_json::json!(format!("{mm} mm"));
+                if let Some(o) = p.as_object_mut() {
+                    o.remove("limit");
+                }
+                measure_here(app, &p);
                 ctx.request_repaint();
             }
         }
@@ -101,9 +127,19 @@ fn once_noise_is_read(app: &mut SolveApp, ctx: &egui::Context, map: &DeviationMa
 }
 
 /// A map measured at some revision of the design, measured again at this one: same scan, same
-/// model, same tolerance and limit.
+/// model, same tolerance and limit (read again from the scan when it was read from it), the same
+/// steps and the same places labelled.
 fn remeasure_params(map: &DeviationMap) -> serde_json::Value {
-    serde_json::json!({ "scan": map.scan, "body": map.body, "tolerance": map.tolerance, "limit": map.limit })
+    let mut p = serde_json::json!({ "scan": map.scan, "body": map.body, "tolerance": map.tolerance, "bands": map.bands });
+    if map.auto_limit {
+        p["auto_limit"] = serde_json::json!(true);
+    } else {
+        p["limit"] = serde_json::json!(map.limit);
+    }
+    if !map.pins.is_empty() {
+        p["pins"] = serde_json::json!(map.pins.iter().map(|(q, _)| [q.x, q.y, q.z]).collect::<Vec<_>>());
+    }
+    p
 }
 
 /// Keeps a shown map true to the design: when an edit has made it stale, it is measured again
@@ -267,6 +303,140 @@ fn records(app: &SolveApp, map: &DeviationMap, colours: Colours) -> Option<Paint
         cloud_dot(&mut out, &dot);
     }
     Some(Painted { dots: Arc::new(out), triangles: crate::scan_dots::none() })
+}
+
+thread_local! {
+    /// Whether Pin Deviation is on: a click on the scan labels the place.
+    static PINNING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The distance under the pointer: where, and how far.
+    static UNDER: RefCell<Option<(egui::Pos2, f32)>> = const { RefCell::new(None) };
+    /// For which map and pointer [`UNDER`] was read.
+    static TRACKED: RefCell<Option<(usize, Option<(u32, u32)>)>> = const { RefCell::new(None) };
+}
+
+/// Pin Deviation's button: turns pinning on (showing the map first when it is not shown) or off.
+/// False: the button runs nothing more.
+pub(crate) fn toggle_pinning(app: &mut SolveApp) -> bool {
+    if pinning(app) {
+        PINNING.with(|p| p.set(false));
+        return false;
+    }
+    if !shown(app) {
+        let _ = start(app);
+    }
+    PINNING.with(|p| p.set(shown(app)));
+    false
+}
+
+/// Whether a click on the scan labels it now: Pin Deviation on, with the map shown.
+pub(crate) fn pinning(app: &SolveApp) -> bool {
+    let on = PINNING.with(std::cell::Cell::get);
+    if on && !shown(app) {
+        PINNING.with(|p| p.set(false));
+        return false;
+    }
+    on
+}
+
+/// A click while pinning: the place on the scan under it is labelled with its distance.
+pub(crate) fn pin_click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
+    let Some(map) = current(app) else { return };
+    let Some(q) = scan_under(app, proj, at, &map.scan) else { return };
+    let _ = app.run("scan.deviation_pin", serde_json::json!({"at": [q.x, q.y, q.z]}));
+}
+
+/// The scan's point under `at` on the screen, if the scan is what is there.
+fn scan_under(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, scan: &str) -> Option<solidcore_record::Vec3> {
+    crate::viewport::pick_cached(app, proj, at).into_iter().find_map(|h| match h {
+        crate::viewport::Hit::Face { body, point, .. } if body == scan => Some(point),
+        _ => None,
+    })
+}
+
+/// Follows the pointer while the map is shown: the distance at the scan point under it, read at
+/// the nearest corner of the triangle hit, for [`draw`] to show.
+pub(crate) fn track(app: &mut SolveApp, proj: &crate::viewport::Proj, pointer: Option<egui::Pos2>) {
+    // Read again only when the pointer or the map has moved on.
+    let key = current(app).map(|m| (Arc::as_ptr(&m) as usize, pointer.map(|p| (p.x.to_bits(), p.y.to_bits()))));
+    if TRACKED.with(|t| *t.borrow() == key) && key.is_some() {
+        return;
+    }
+    TRACKED.with(|t| *t.borrow_mut() = key);
+    let found = (|| {
+        let map = current(app)?;
+        let at = pointer?;
+        let q = scan_under(app, proj, at, &map.scan)?;
+        let state = app.session.model.state();
+        let (positions, _) = state.body(&map.scan)?.body.triangle_mesh()?;
+        use solidcraft_engine::geom::Vec3Geom as _;
+        // The pick's point lies on the scan; its nearest measured corner gives the value. A local
+        // search would be faster, but the pick is cached and the pointer rarely moves every frame.
+        let mut best: Option<(f64, f32)> = None;
+        for (p, &v) in positions.iter().zip(&map.values) {
+            let d = (*p - q).len2();
+            if v.is_finite() && best.is_none_or(|(e, _)| d < e) {
+                best = Some((d, v));
+            }
+        }
+        best.map(|(_, v)| (at, v))
+    })();
+    UNDER.with(|u| *u.borrow_mut() = found);
+}
+
+/// A distance as the labels show it: signed, in the user's units.
+fn signed(app: &SolveApp, v: f32) -> String {
+    let v = f64::from(v);
+    let mm = crate::prefs::show_mm(app, v.abs(), 1);
+    if v > 0.0 {
+        format!("+{mm}")
+    } else if v < 0.0 {
+        format!("−{mm}")
+    } else {
+        mm
+    }
+}
+
+/// The labels over the view while the map is shown: its largest distance above and below, the
+/// places pinned, and the reading under the pointer.
+pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
+    use egui::{Align2, FontId, Rect, Stroke, vec2};
+    let Some(map) = current(app) else { return };
+    let t = solidcraft_theme::Tokens::get();
+    let colours = colours();
+    let tint = |v: f32| {
+        let [r, g, b] = map.scale(v).map_or(colours[2], |s| colour(colours, s));
+        egui::Color32::from_rgb(r, g, b)
+    };
+    let font = FontId::proportional(t.font_small);
+    let tag = |at: egui::Pos2, text: String, v: f32| {
+        let galley = painter.layout_no_wrap(text, font.clone(), t.text);
+        let rect = Rect::from_min_size(at + vec2(10.0, -10.0 - galley.size().y - 6.0), galley.size() + vec2(10.0, 6.0));
+        painter.line_segment([at, rect.left_bottom()], Stroke::new(1.0, tint(v)));
+        painter.circle_filled(at, 3.5, tint(v));
+        painter.rect_filled(rect, 3.0, t.panel);
+        painter.rect_stroke(rect, 3.0, Stroke::new(1.5, tint(v)), egui::StrokeKind::Inside);
+        painter.galley(rect.min + vec2(5.0, 3.0), galley, t.text);
+    };
+    let extremes = [("ui.scan_deviation_most_above", map.max_above), ("ui.scan_deviation_most_below", map.max_below)];
+    for (id, found) in extremes {
+        let Some((q, v)) = found else { continue };
+        let Some(at) = proj.to_screen(q) else { continue };
+        tag(at, solidcraft_ui_text::format(id, &[("value", &signed(app, v))]), v);
+    }
+    for &(q, v) in &map.pins {
+        if let Some(at) = proj.to_screen(q) {
+            tag(at, signed(app, v), v);
+        }
+    }
+    if let Some((at, v)) = UNDER.with(|u| *u.borrow()) {
+        let id = match map.side(v) {
+            "above" => "ui.scan_deviation_under_above",
+            "below" => "ui.scan_deviation_under_below",
+            _ => "ui.scan_deviation_under_within",
+        };
+        let text = solidcraft_ui_text::format(id, &[("value", &signed(app, v))]);
+        painter.text(at + vec2(16.0, 16.0), Align2::LEFT_TOP, text, font, t.text);
+    }
 }
 
 /// The legend's rows while the map is shown: above, within and below the tolerance, and a line of

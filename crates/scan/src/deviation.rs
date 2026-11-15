@@ -18,6 +18,10 @@ pub struct Deviation {
     pub mean: f64,
     pub max_above: f64,
     pub max_below: f64,
+    /// Which point is the largest above and which the largest below (`None` when no measured point
+    /// is on that side).
+    pub max_above_at: Option<usize>,
+    pub max_below_at: Option<usize>,
     /// The share of the points within reach that are within the tolerance, 0 to 1.
     pub within: f64,
     /// How many points were within reach, and how many were not.
@@ -51,11 +55,22 @@ pub fn measure(points: &[Vec3], model: &Mesh, tolerance: f64, reach: f64) -> Dev
     });
     let measured: Vec<f64> = values.iter().filter(|v| v.is_finite()).map(|&v| f64::from(v)).collect();
     let n = measured.len().max(1) as f64;
+    let extreme = |side: f32| {
+        values
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.is_finite() && **v * side > 0.0)
+            .max_by(|(_, a), (_, b)| (**a * side).total_cmp(&(**b * side)))
+            .map(|(i, _)| i)
+    };
+    let (max_above_at, max_below_at) = (extreme(1.0), extreme(-1.0));
     Deviation {
         rms: (measured.iter().map(|v| v * v).sum::<f64>() / n).sqrt(),
         mean: measured.iter().sum::<f64>() / n,
         max_above: measured.iter().copied().fold(0.0, f64::max),
         max_below: measured.iter().copied().fold(0.0, f64::min),
+        max_above_at,
+        max_below_at,
         within: measured.iter().filter(|v| v.abs() <= tolerance).count() as f64 / n,
         measured: measured.len(),
         unmatched: values.len() - measured.len(),
@@ -75,6 +90,32 @@ pub fn scale(value: f32, tolerance: f64, limit: f64) -> Option<f64> {
     }
     let span = (limit - tolerance).max(1e-12);
     Some(v.signum() * ((v.abs() - tolerance) / span).min(1.0))
+}
+
+/// The share of the scan the automatic colour range covers: the distance below which this share
+/// of the measured points lie, so a few stray points do not stretch the scale for all the others.
+pub const AUTO_SHARE: f64 = 0.99;
+
+/// The distance (unsigned, mm) that `share` (0 to 1) of the measured `values` lie within; `None`
+/// when none was measured.
+pub fn spread(values: &[f32], share: f64) -> Option<f64> {
+    let mut d: Vec<f32> = values.iter().filter(|v| v.is_finite()).map(|v| v.abs()).collect();
+    if d.is_empty() || !share.is_finite() {
+        return None;
+    }
+    let k = ((share.clamp(0.0, 1.0) * d.len() as f64).ceil() as usize).clamp(1, d.len()) - 1;
+    let (_, v, _) = d.select_nth_unstable_by(k, f32::total_cmp);
+    Some(f64::from(*v))
+}
+
+/// A place on the colour scale (-1 to 1) put on one of `bands` steps each side of within, the step
+/// it reaches into; 0 bands leaves it as it is (a smooth scale). Within stays within.
+pub fn banded(s: f64, bands: u32) -> f64 {
+    if bands == 0 || s == 0.0 || !s.is_finite() {
+        return s;
+    }
+    let n = f64::from(bands);
+    s.signum() * ((s.abs() * n).ceil() / n).min(1.0)
 }
 
 #[cfg(test)]
@@ -103,5 +144,30 @@ mod tests {
         assert!(scale(0.3, 0.1, 0.5).is_some_and(|s| (s - 0.5).abs() < 1e-6));
         assert_eq!(scale(-0.9, 0.1, 0.5), Some(-1.0));
         assert_eq!(scale(f32::NAN, 0.1, 0.5), None);
+        assert_eq!((d.max_above_at, d.max_below_at), (Some(0), Some(1)), "the 0.2 above and the 0.05 below");
+    }
+
+    #[test]
+    fn the_spread_leaves_out_the_stray_few() {
+        // 99 points 0.01 … 0.99 mm off and one stray 50 mm: 99 % of them lie within 0.99.
+        let mut v: Vec<f32> = (1..=99).map(|i| i as f32 / 100.0 * if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
+        v.push(50.0);
+        v.push(f32::NAN);
+        assert!((spread(&v, AUTO_SHARE).unwrap() - 0.99).abs() < 1e-6);
+        assert_eq!(spread(&v, 1.0), Some(50.0));
+        assert_eq!(spread(&[f32::NAN], 0.5), None);
+        assert_eq!(spread(&[], 0.5), None);
+        assert_eq!(spread(&[0.3], f64::NAN), None);
+    }
+
+    #[test]
+    fn bands_step_the_scale_and_leave_within_alone() {
+        assert_eq!(banded(0.0, 4), 0.0);
+        assert_eq!(banded(0.1, 4), 0.25);
+        assert_eq!(banded(0.25, 4), 0.25);
+        assert_eq!(banded(-0.26, 4), -0.5);
+        assert_eq!(banded(1.0, 4), 1.0);
+        assert_eq!(banded(0.37, 0), 0.37, "no bands: smooth");
+        assert!(banded(f64::NAN, 3).is_nan());
     }
 }

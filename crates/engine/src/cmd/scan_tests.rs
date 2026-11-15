@@ -452,6 +452,59 @@ fn scan_deviation_measures_the_scan_against_a_model_mesh() {
     }
 }
 
+/// The map's readings: where its largest distances are, a limit read from the scan, colours in
+/// steps, and places labelled with their distances (added by clicking, kept when measured again).
+#[test]
+fn scan_deviation_labels_its_extremes_and_pinned_places() {
+    let (mut s, _) = session_with_a_plate_and_boss("deviation-pins");
+    let err = s.execute("scan.deviation_pin", &json!({"at": [30, 20, 8]})).unwrap_err().to_string();
+    assert!(err.contains("show Scan Deviation"), "no map, nothing to pin: {err}");
+    run(&mut s, "solid.box", json!({"body_name": "Plate", "operation": "new", "length": 60, "width": 40, "height": 8}));
+    let reply = run(&mut s, "scan.deviation", json!({}));
+    // The largest above is the boss's lowest ring, 1.25 mm over the plate's top.
+    let above = reply["max_above_at"].as_array().unwrap();
+    assert!((above[2].as_f64().unwrap() - 9.25).abs() < STL, "{reply}");
+    assert_eq!(reply["bands"], 0, "smooth by default: {reply}");
+    assert_eq!(reply["limit"], json!(0.5), "the default limit as before: {reply}");
+
+    // The limit read from the scan: above the tolerance and no further than the largest distance.
+    let auto = run(&mut s, "scan.deviation", json!({"auto_limit": true}));
+    let (limit, tolerance) = (auto["limit"].as_f64().unwrap(), auto["tolerance"].as_f64().unwrap());
+    let largest = auto["max_above"].as_f64().unwrap().max(-auto["max_below"].as_f64().unwrap());
+    assert!(limit > tolerance && limit <= largest.max(tolerance * 1.05) + 1e-6, "{auto}");
+    let err = s.execute("scan.deviation", &json!({"auto_limit": true, "limit": 2})).unwrap_err().to_string();
+    assert!(err.contains("not both"), "{err}");
+    for bad_bands in [1, 13] {
+        let err = s.execute("scan.deviation", &json!({"bands": bad_bands})).unwrap_err().to_string();
+        assert!(err.contains("`bands`"), "{bad_bands}: {err}");
+    }
+    run(&mut s, "scan.deviation", json!({"bands": 4}));
+    let map = s.scan_deviation.clone().unwrap();
+    assert_eq!(map.bands, 4);
+    let stepped = map.scale(0.3).unwrap();
+    assert!((stepped * 4.0 - (stepped * 4.0).round()).abs() < 1e-9, "on a step: {stepped}");
+
+    // A pin on the plate's top is within; one on the boss's lowest ring is above.
+    let on_top = run(&mut s, "scan.deviation_pin", json!({"at": [5, 5, 8]}));
+    assert_eq!(on_top["side"], "within", "{on_top}");
+    let on_boss = run(&mut s, "scan.deviation_pin", json!({"at": [40, 20, 9.25]}));
+    assert_eq!(on_boss["side"], "above", "{on_boss}");
+    assert!((on_boss["added"]["value"].as_f64().unwrap() - 1.25).abs() < STL, "{on_boss}");
+    assert_eq!(on_boss["pins"].as_array().unwrap().len(), 2);
+
+    // Measured again with the same places (as the map does after an edit): the labels stay.
+    let again = run(&mut s, "scan.deviation", json!({"bands": 4, "pins": [[5, 5, 8], [40, 20, 9.25]]}));
+    assert_eq!(again["pins"].as_array().unwrap().len(), 2, "{again}");
+
+    let err = s.execute("scan.deviation_pin", &json!({"at": [5, 5, 8], "clear": true})).unwrap_err().to_string();
+    assert!(err.contains("one of"), "{err}");
+    let err = s.execute("scan.deviation_pin", &json!({"remove": 7})).unwrap_err().to_string();
+    assert!(err.contains("index"), "{err}");
+    assert_eq!(run(&mut s, "scan.deviation_pin", json!({"remove": 0}))["pins"].as_array().unwrap().len(), 1);
+    assert_eq!(run(&mut s, "scan.deviation_pin", json!({"clear": true}))["pins"], json!([]), "none left");
+    assert!(s.scan_deviation.as_ref().is_some_and(|m| m.pins.is_empty()));
+}
+
 /// Pressed again and again, Stand on Base goes through the bases one by one and round; a face
 /// picked on the scan is stood on instead.
 #[test]

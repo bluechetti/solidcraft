@@ -285,6 +285,10 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
         }
         return crate::scan_deviation::start(app);
     }
+    // Pin Deviation's button turns pinning on (showing the map if it is not) or off again.
+    if id == "scan.deviation_pin" {
+        return crate::scan_deviation::toggle_pinning(app);
+    }
     // Find All's button takes its colouring away again while it is shown.
     if id == "scan.find_all" && crate::scan_shapes::shown(app) {
         let _ = app.run(id, json!({"show": false}));

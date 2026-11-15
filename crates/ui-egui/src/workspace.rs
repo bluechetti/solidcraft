@@ -544,6 +544,8 @@ pub const SECTIONS: &[Section] = &[
         ids: &[
             "scan.deviation",
             "scan.align_to_model",
+            // Labels places on the deviation map with their distances.
+            "scan.deviation_pin",
             "inspect.surface_check",
             "inspect.zebra",
             "inspect.curvature_map",

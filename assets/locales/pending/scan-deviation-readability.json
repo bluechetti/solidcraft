@@ -1,0 +1,112 @@
+{
+  "en": {
+    "cmd.scan_deviation_pin": "Pin Deviation",
+    "help.scan.deviation_pin": "Labels places on the deviation map with their distance from the model: click the scan where you want a reading. Press again to stop.",
+    "prefs.scan_deviation_auto_range": "Scan Deviation's color range from the scan",
+    "prefs.scan_deviation_auto_range_note": "On: the colors reach their end at the distance 99 % of the scan's points lie within, so a few stray points do not wash out the rest. Off: at 0.5 mm or five tolerances.",
+    "prefs.scan_deviation_bands": "Scan Deviation color steps",
+    "prefs.scan_deviation_bands_note": "How many color steps each side of within, 2 to 12. 0: a smooth scale.",
+    "ui.scan_deviation_most_above": "Most above {value}",
+    "ui.scan_deviation_most_below": "Most below {value}",
+    "ui.scan_deviation_under_above": "{value} above the model: extra material",
+    "ui.scan_deviation_under_below": "{value} below the model: missing material",
+    "ui.scan_deviation_under_within": "{value}: within the tolerance"
+  },
+  "en-GB": {
+    "prefs.scan_deviation_auto_range": "Scan Deviation's colour range from the scan",
+    "prefs.scan_deviation_auto_range_note": "On: the colours reach their end at the distance 99 % of the scan's points lie within, so a few stray points do not wash out the rest. Off: at 0.5 mm or five tolerances.",
+    "prefs.scan_deviation_bands": "Scan Deviation colour steps",
+    "prefs.scan_deviation_bands_note": "How many colour steps each side of within, 2 to 12. 0: a smooth scale."
+  },
+  "ar": {
+    "cmd.scan_deviation_pin": "تثبيت الانحراف",
+    "help.scan.deviation_pin": "يضع على خريطة الانحراف تسميات بمسافة الأماكن عن النموذج: انقر على المسح حيث تريد قراءة. اضغط مرة أخرى للتوقف.",
+    "prefs.scan_deviation_auto_range": "نطاق ألوان انحراف المسح من المسح",
+    "prefs.scan_deviation_auto_range_note": "تشغيل: تبلغ الألوان نهايتها عند المسافة التي تقع ضمنها 99 % من نقاط المسح، فلا تطغى نقاط شاردة قليلة على البقية. إيقاف: عند 0.5 مم أو خمسة أضعاف السماحية.",
+    "prefs.scan_deviation_bands": "درجات ألوان انحراف المسح",
+    "prefs.scan_deviation_bands_note": "عدد درجات الألوان على كل جانب من ضمن السماحية، من 2 إلى 12. 0: تدرج سلس.",
+    "ui.scan_deviation_most_above": "الأكثر فوق {value}",
+    "ui.scan_deviation_most_below": "الأكثر تحت {value}",
+    "ui.scan_deviation_under_above": "{value} فوق النموذج: مادة زائدة",
+    "ui.scan_deviation_under_below": "{value} تحت النموذج: مادة ناقصة",
+    "ui.scan_deviation_under_within": "{value}: ضمن السماحية"
+  },
+  "de": {
+    "cmd.scan_deviation_pin": "Abweichung anheften",
+    "help.scan.deviation_pin": "Beschriftet Stellen der Abweichungskarte mit ihrem Abstand zum Modell: auf den Scan klicken, wo ein Wert gebraucht wird. Erneut drücken beendet.",
+    "prefs.scan_deviation_auto_range": "Farbbereich der Scan-Abweichung aus dem Scan",
+    "prefs.scan_deviation_auto_range_note": "Ein: Die Farben enden bei dem Abstand, innerhalb dessen 99 % der Scanpunkte liegen, sodass wenige Ausreißer den Rest nicht verblassen lassen. Aus: bei 0,5 mm oder fünf Toleranzen.",
+    "prefs.scan_deviation_bands": "Farbstufen der Scan-Abweichung",
+    "prefs.scan_deviation_bands_note": "Wie viele Farbstufen auf jeder Seite von innerhalb, 2 bis 12. 0: eine stufenlose Skala.",
+    "ui.scan_deviation_most_above": "Größte darüber {value}",
+    "ui.scan_deviation_most_below": "Größte darunter {value}",
+    "ui.scan_deviation_under_above": "{value} über dem Modell: Material zu viel",
+    "ui.scan_deviation_under_below": "{value} unter dem Modell: Material fehlt",
+    "ui.scan_deviation_under_within": "{value}: innerhalb der Toleranz"
+  },
+  "he": {
+    "cmd.scan_deviation_pin": "הצמדת סטייה",
+    "help.scan.deviation_pin": "מסמן מקומות במפת הסטייה עם המרחק שלהם מהמודל: לחצו על הסריקה במקום שבו רוצים קריאה. לחיצה נוספת מפסיקה.",
+    "prefs.scan_deviation_auto_range": "טווח הצבעים של סטיית הסריקה מתוך הסריקה",
+    "prefs.scan_deviation_auto_range_note": "מופעל: הצבעים מגיעים לסופם במרחק ש-99% מנקודות הסריקה נמצאות בתוכו, כך שמעט נקודות תועות לא מטשטשות את השאר. כבוי: ב-0.5 מ\"מ או בחמש סבולות.",
+    "prefs.scan_deviation_bands": "מדרגות צבע של סטיית הסריקה",
+    "prefs.scan_deviation_bands_note": "כמה מדרגות צבע בכל צד של בתוך הסבולת, 2 עד 12. 0: סולם רציף.",
+    "ui.scan_deviation_most_above": "הכי הרבה מעל {value}",
+    "ui.scan_deviation_most_below": "הכי הרבה מתחת {value}",
+    "ui.scan_deviation_under_above": "{value} מעל המודל: חומר עודף",
+    "ui.scan_deviation_under_below": "{value} מתחת למודל: חומר חסר",
+    "ui.scan_deviation_under_within": "{value}: בתוך הסבולת"
+  },
+  "ja": {
+    "cmd.scan_deviation_pin": "偏差をピン留め",
+    "help.scan.deviation_pin": "偏差マップ上の場所に、モデルからの距離のラベルを付けます。値を知りたい場所でスキャンをクリックします。もう一度押すと終了します。",
+    "prefs.scan_deviation_auto_range": "スキャン偏差の色範囲をスキャンから決める",
+    "prefs.scan_deviation_auto_range_note": "オン: スキャンの点の 99 % が収まる距離で色が最大になるため、少数の外れ点で残りの色が薄まりません。オフ: 0.5 mm または公差の 5 倍。",
+    "prefs.scan_deviation_bands": "スキャン偏差の色の段階",
+    "prefs.scan_deviation_bands_note": "公差内の両側の色の段階数 (2〜12)。0: 連続した色。",
+    "ui.scan_deviation_most_above": "最大の上側 {value}",
+    "ui.scan_deviation_most_below": "最大の下側 {value}",
+    "ui.scan_deviation_under_above": "{value} モデルより上: 材料が多い",
+    "ui.scan_deviation_under_below": "{value} モデルより下: 材料が足りない",
+    "ui.scan_deviation_under_within": "{value}: 公差内"
+  },
+  "ko": {
+    "cmd.scan_deviation_pin": "편차 고정",
+    "help.scan.deviation_pin": "편차 지도의 위치에 모델과의 거리를 표시합니다. 값을 보고 싶은 곳의 스캔을 클릭하세요. 다시 누르면 끝납니다.",
+    "prefs.scan_deviation_auto_range": "스캔 편차의 색 범위를 스캔에서 읽기",
+    "prefs.scan_deviation_auto_range_note": "켬: 스캔 점의 99 %가 들어가는 거리에서 색이 끝나므로 소수의 벗어난 점 때문에 나머지 색이 흐려지지 않습니다. 끔: 0.5 mm 또는 공차의 5배.",
+    "prefs.scan_deviation_bands": "스캔 편차 색 단계",
+    "prefs.scan_deviation_bands_note": "공차 이내 양쪽의 색 단계 수, 2~12. 0: 매끄러운 색.",
+    "ui.scan_deviation_most_above": "가장 위 {value}",
+    "ui.scan_deviation_most_below": "가장 아래 {value}",
+    "ui.scan_deviation_under_above": "{value} 모델보다 위: 재료가 남음",
+    "ui.scan_deviation_under_below": "{value} 모델보다 아래: 재료가 모자람",
+    "ui.scan_deviation_under_within": "{value}: 공차 이내"
+  },
+  "vi": {
+    "cmd.scan_deviation_pin": "Ghim độ lệch",
+    "help.scan.deviation_pin": "Gắn nhãn các vị trí trên bản đồ độ lệch với khoảng cách tới mô hình: bấm vào bản quét ở chỗ cần đọc. Bấm lần nữa để dừng.",
+    "prefs.scan_deviation_auto_range": "Dải màu Độ lệch quét lấy từ bản quét",
+    "prefs.scan_deviation_auto_range_note": "Bật: màu đạt mức cuối ở khoảng cách mà 99 % điểm của bản quét nằm trong đó, nên vài điểm lạc không làm nhạt phần còn lại. Tắt: ở 0,5 mm hoặc năm lần dung sai.",
+    "prefs.scan_deviation_bands": "Số bậc màu Độ lệch quét",
+    "prefs.scan_deviation_bands_note": "Số bậc màu mỗi bên của trong dung sai, từ 2 đến 12. 0: thang màu liền.",
+    "ui.scan_deviation_most_above": "Cao nhất {value}",
+    "ui.scan_deviation_most_below": "Thấp nhất {value}",
+    "ui.scan_deviation_under_above": "{value} trên mô hình: thừa vật liệu",
+    "ui.scan_deviation_under_below": "{value} dưới mô hình: thiếu vật liệu",
+    "ui.scan_deviation_under_within": "{value}: trong dung sai"
+  },
+  "zh": {
+    "cmd.scan_deviation_pin": "固定偏差标签",
+    "help.scan.deviation_pin": "在偏差图上的位置标出它与模型的距离：在需要读数的地方单击扫描。再按一次停止。",
+    "prefs.scan_deviation_auto_range": "扫描偏差的颜色范围取自扫描",
+    "prefs.scan_deviation_auto_range_note": "开：颜色在扫描 99 % 的点所在的距离处达到尽头，少数离群点不会冲淡其余部分。关：在 0.5 mm 或五倍公差处。",
+    "prefs.scan_deviation_bands": "扫描偏差颜色级数",
+    "prefs.scan_deviation_bands_note": "公差内两侧各有多少级颜色，2 到 12。0：连续色阶。",
+    "ui.scan_deviation_most_above": "最高 {value}",
+    "ui.scan_deviation_most_below": "最低 {value}",
+    "ui.scan_deviation_under_above": "{value} 高于模型：材料多余",
+    "ui.scan_deviation_under_below": "{value} 低于模型：材料不足",
+    "ui.scan_deviation_under_within": "{value}：在公差内"
+  }
+}

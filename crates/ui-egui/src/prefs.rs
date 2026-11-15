@@ -1555,6 +1555,15 @@ preference_settings! {
     /// 0.1 mm) in New Free Form, Edit Surface, Fit Patches and Flat Template, and OK keeps it for
     /// the scan, so a faithful fit to a noisy scan does not read as off. Off: 0.1 mm, as before.
     scan_tolerance_from_noise: bool = true, PAGE_TOOLS => check_id("prefs.scan_tolerance_from_noise");
+    /// Scan Deviation's colours reach their end at the distance 99 % of the scan's measured points
+    /// lie within, read from the scan, so a few stray points do not wash out the rest. Off: at
+    /// 0.5 mm or five tolerances, as before.
+    /// Section Analysis draws where its plane cuts each shown scan, in the mesh colour, beside the
+    /// model's cut. Off: only the model's cut, as before.
+    scan_deviation_auto_range: bool = false, PAGE_TOOLS => check_id("prefs.scan_deviation_auto_range");
+    /// Scan Deviation's colours in this many steps each side of within (2 to 12); 0, as before, a
+    /// smooth scale.
+    scan_deviation_bands: f32 = 0.0, PAGE_TOOLS, accept(0.0..=12.0) => slider("prefs.scan_deviation_bands", 0.0..=12.0, 1.0, |v| format!("{v:.0}"), "prefs:scan_deviation_bands");
     /// Remove Floating Pieces, Fill Holes, Reduce Mesh, Repair Mesh, Denoise and Remesh write the
     /// cleaned scan back into its Insert Mesh feature, as before, instead of adding a step to the
     /// timeline that keeps their settings (and can be edited, suppressed or deleted later).
@@ -4243,6 +4252,9 @@ pub fn migrate(mut p: Prefs) -> Prefs {
     if !accepted::wheel_zoom_speed(&p) {
         p.wheel_zoom_speed = Prefs::default().wheel_zoom_speed;
     }
+    if !accepted::scan_deviation_bands(&p) {
+        p.scan_deviation_bands = Prefs::default().scan_deviation_bands;
+    }
     if !accepted::home_fit_size(&p) {
         p.home_fit_size = Prefs::default().home_fit_size;
     }
@@ -4445,6 +4457,9 @@ fn prepare_preferences(
     }
     if !accepted::wheel_zoom_speed(&new) {
         return Err("`wheel_zoom_speed` must be 0.25…4".into());
+    }
+    if !accepted::scan_deviation_bands(&new) {
+        return Err("`scan_deviation_bands` must be 0…12".into());
     }
     if !accepted::home_fit_size(&new) {
         return Err("`home_fit_size` must be 0.1…1".into());

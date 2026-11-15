@@ -20,14 +20,14 @@ use super::CommandSpec;
 use crate::params::{bad, str_};
 use crate::schema::scan::{
     ScanAddFaceParams, ScanAddFaceResult, ScanBase, ScanBasesParams, ScanBasesResult, ScanCloseSurfaceParams, ScanCloseSurfaceResult,
-    ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams, ScanDeviationResult, ScanEditNetParams,
-    ScanEditNetResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitMake, ScanFitParams, ScanFitResult, ScanFitSurfaceParams,
-    ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFittedTorus, ScanFloatingParams,
-    ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult,
-    ScanMirror, ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult,
-    ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult,
-    ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams,
-    ScanWrapSurfaceResult,
+    ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams, ScanDeviationPin, ScanDeviationPinParams,
+    ScanDeviationPinResult, ScanDeviationResult, ScanEditNetParams, ScanEditNetResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitMake,
+    ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere,
+    ScanFittedTorus, ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult,
+    ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror, ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams,
+    ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult,
+    ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams,
+    ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -40,6 +40,7 @@ const SYMMETRY_CONTRACT: TypedContract<ScanSymmetryParams> = TypedContract::new(
 const SQUARE_CONTRACT: TypedContract<ScanSquareParams> = TypedContract::new();
 const FIT_CONTRACT: TypedContract<ScanFitParams> = TypedContract::new();
 const DEVIATION_CONTRACT: TypedContract<ScanDeviationParams> = TypedContract::new();
+const DEVIATION_PIN_CONTRACT: TypedContract<ScanDeviationPinParams> = TypedContract::new();
 const SURFACE_CONTRACT: TypedContract<ScanFitSurfaceParams> = TypedContract::new();
 const COMPLETE_CONTRACT: TypedContract<ScanCompleteParams> = TypedContract::new();
 const EDIT_SURFACE_CONTRACT: TypedContract<ScanEditSurfaceParams> = TypedContract::new();
@@ -250,7 +251,14 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&DEVIATION_CONTRACT)
         .output(output_schema_for::<ScanDeviationResult>)
-        .params("scan?: mesh body (default: the selected or only one); body?: the model: a solid or surface body, or a mesh body (a CAD model that came as an STL) (default: the selected or only solid or surface body, else with none the only other mesh body); tolerance?: length (default: the scan's, see scan.tolerance, else 0.1 mm); limit?: length (default 0.5 mm, at least five tolerances); show?: bool (false takes the map away): colours the scan by its distance from the model in the viewport, a view and not an undo step → shown, scan, body, rms, mean, max_above, max_below, within, measured, unmatched, tolerance, limit"),
+        .params("scan?: mesh body (default: the selected or only one); body?: the model: a solid or surface body, or a mesh body (a CAD model that came as an STL) (default: the selected or only solid or surface body, else with none the only other mesh body); tolerance?: length (default: the scan's, see scan.tolerance, else 0.1 mm); limit?: length (default 0.5 mm, at least five tolerances); auto_limit?: bool (default false: true reads the limit from the scan, the distance 99 % of its measured points lie within; not with limit); bands?: 0 | 2–12 (default 0, a smooth scale: the colours in that many steps each side of within); pins?: [[x, y, z]] (places labelled with their distance, each read at the scan point nearest it); show?: bool (false takes the map away): colours the scan by its distance from the model in the viewport, its largest distance above and below labelled, a view and not an undo step → shown, scan, body, rms, mean, max_above, max_below, max_above_at, max_below_at, within, measured, unmatched, tolerance, limit, bands, pins"),
+    CommandSpec::new("scan.deviation_pin", "Pin Deviation", crate::checked!("scan.deviation_pin", deviation_pin))
+        .at("SCAN", "CHECK")
+        .icon("curvature_map")
+        .noundo()
+        .contract(&DEVIATION_PIN_CONTRACT)
+        .output(output_schema_for::<ScanDeviationPinResult>)
+        .params("at?: [x, y, z] (a place on the scan, read at the scan point nearest it); remove?: index; clear?: bool: while Scan Deviation's map is shown, labels a place on the scan with its distance from the model (or takes labels off), a view and not an undo step → added {at, value}, side (above|below|within), pins"),
 ];
 
 /// A move smaller than this (mm, at the scan's reach) leaves the scan where it is.
@@ -814,7 +822,19 @@ pub struct DeviationMap {
     pub limit: f64,
     pub rms: f64,
     pub within: f64,
+    /// The colour steps each side of within, 0 for a smooth scale.
+    pub bands: u32,
+    /// Whether the limit was read from the scan (`auto_limit`), so a new measurement reads it again.
+    pub auto_limit: bool,
+    /// The largest distance above the model and the largest below, where they are.
+    pub max_above: Option<(Vec3, f32)>,
+    pub max_below: Option<(Vec3, f32)>,
+    /// The places labelled with their distances, in the order added.
+    pub pins: Vec<(Vec3, f32)>,
 }
+
+/// The most labels a map keeps; a further one takes the place of the oldest.
+pub const MOST_PINS: usize = 50;
 
 /// The share of measured points that must lie within the tolerance for a fit to pass.
 pub const PASS_SHARE: f64 = 0.95;
@@ -834,8 +854,26 @@ impl DeviationMap {
     /// Where a point's value sits on the colour scale, -1 to 1 (0 within the tolerance); `None` for
     /// a point the model leaves out.
     pub fn scale(&self, value: f32) -> Option<f64> {
-        solidcraft_scan::deviation::scale(value, self.tolerance, self.limit)
+        solidcraft_scan::deviation::scale(value, self.tolerance, self.limit).map(|s| solidcraft_scan::deviation::banded(s, self.bands))
     }
+
+    /// above, below or within: where a distance lies against the model and the tolerance.
+    pub fn side(&self, value: f32) -> &'static str {
+        match f64::from(value) {
+            v if v > self.tolerance => "above",
+            v if v < -self.tolerance => "below",
+            _ => "within",
+        }
+    }
+}
+
+/// The scan point nearest `at` and its index; `None` for a scan with no points.
+fn nearest_point(positions: &[Vec3], at: Vec3) -> Option<(usize, Vec3)> {
+    positions.iter().copied().enumerate().min_by(|(_, a), (_, b)| (*a - at).len2().total_cmp(&(*b - at).len2()))
+}
+
+fn pin_of((at, value): (Vec3, f32)) -> ScanDeviationPin {
+    ScanDeviationPin { at: [at.x, at.y, at.z], value: f64::from(value) }
 }
 
 /// A length parameter in mm, or `default`; above 0.
@@ -865,6 +903,10 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         unmatched: None,
         tolerance: None,
         limit: None,
+        max_above_at: None,
+        max_below_at: None,
+        bands: None,
+        pins: Vec::new(),
         param_warnings: Vec::new(),
     };
     if crate::params::bool_(p, "show") == Some(false) {
@@ -875,7 +917,29 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
     let mesh = mesh(s, &json!({ "body": scan_name }), cmd)?;
     // The tolerance the design keeps for this scan, unless one is given.
     let tolerance = length(s, p, "tolerance", tolerance::of(s, &mesh.body), cmd)?;
-    let limit = length(s, p, "limit", 0.5_f64.max(5.0 * tolerance), cmd)?;
+    let auto_limit = crate::params::bool_(p, "auto_limit") == Some(true);
+    if auto_limit && crate::params::expr(p, "limit").is_some() {
+        return Err(bad(cmd, "give `limit` or `auto_limit`, not both"));
+    }
+    let bands = match p.get("bands").filter(|v| !v.is_null()) {
+        None => 0,
+        Some(v) => match v.as_u64() {
+            Some(0) => 0,
+            Some(n @ 2..=12) => n as u32,
+            _ => return Err(bad(cmd, "`bands` is 0 (a smooth scale) or 2 to 12 steps")),
+        },
+    };
+    let pins: Vec<Vec3> = match p.get("pins").filter(|v| !v.is_null()) {
+        None => Vec::new(),
+        Some(Value::Array(a)) if a.len() <= MOST_PINS => {
+            a.iter().map(crate::params::vec3).collect::<Option<Vec<_>>>().ok_or_else(|| bad(cmd, "`pins` are places [x, y, z] of numbers"))?
+        }
+        Some(Value::Array(_)) => return Err(bad(cmd, format!("at most {MOST_PINS} `pins`"))),
+        Some(_) => return Err(bad(cmd, "`pins` is a list of places [x, y, z]")),
+    };
+    // With `auto_limit` the scan is measured as far as the default limit would reach, then the limit
+    // read from what was measured.
+    let limit = if auto_limit { 0.5_f64.max(5.0 * tolerance) } else { length(s, p, "limit", 0.5_f64.max(5.0 * tolerance), cmd)? };
     if !(limit > tolerance) {
         return Err(bad(cmd, "`limit` must be more than `tolerance`"));
     }
@@ -927,6 +991,16 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
     if d.measured == 0 {
         return Err(bad(cmd, format!("the scan is nowhere near `{model_name}`: no point is within {:.3} mm of it", 4.0 * limit)));
     }
+    // Just above the tolerance at the least, so the scale still has room to deepen.
+    let limit = match solidcraft_scan::deviation::spread(&d.values, solidcraft_scan::deviation::AUTO_SHARE).filter(|_| auto_limit) {
+        Some(spread) => spread.max(tolerance * 1.05).max(tolerance + 1e-6),
+        None => limit,
+    };
+    let at = |i: Option<usize>| i.and_then(|i| Some((*mesh.positions.get(i)?, *d.values.get(i)?)));
+    let (max_above_at, max_below_at) = (at(d.max_above_at), at(d.max_below_at));
+    let pins: Vec<(Vec3, f32)> =
+        pins.into_iter().filter_map(|q| nearest_point(&mesh.positions, q)).filter_map(|(i, q)| Some((q, *d.values.get(i)?))).collect();
+    let shown_pins = pins.iter().copied().map(pin_of).collect();
     s.scan_deviation = Some(std::sync::Arc::new(DeviationMap {
         scan: mesh.body.clone(),
         body: model_name.clone(),
@@ -936,6 +1010,11 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         limit,
         rms: d.rms,
         within: d.within,
+        bands,
+        auto_limit,
+        max_above: max_above_at,
+        max_below: max_below_at,
+        pins,
     }));
     reply(ScanDeviationResult {
         shown: true,
@@ -951,8 +1030,54 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         unmatched: Some(d.unmatched),
         tolerance: Some(tolerance),
         limit: Some(limit),
+        max_above_at: max_above_at.map(|(q, _)| [q.x, q.y, q.z]),
+        max_below_at: max_below_at.map(|(q, _)| [q.x, q.y, q.z]),
+        bands: Some(bands),
+        pins: shown_pins,
         ..empty
     })
+}
+
+fn deviation_pin(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.deviation_pin";
+    let Some(map) = s.scan_deviation.clone().filter(|m| m.current(s)) else {
+        return Err(bad(cmd, "show Scan Deviation's map first (scan.deviation)"));
+    };
+    let at = p.get("at").filter(|v| !v.is_null());
+    let remove = p.get("remove").filter(|v| !v.is_null());
+    let clear = crate::params::bool_(p, "clear") == Some(true);
+    if usize::from(at.is_some()) + usize::from(remove.is_some()) + usize::from(clear) != 1 {
+        return Err(bad(cmd, "give one of `at`, `remove` or `clear`"));
+    }
+    let mut pins = map.pins.clone();
+    let mut added = None;
+    if clear {
+        pins.clear();
+    } else if let Some(r) = remove {
+        let i = r.as_u64().and_then(|i| usize::try_from(i).ok()).filter(|i| *i < pins.len());
+        let i = i.ok_or_else(|| bad(cmd, format!("`remove` is the index of a label, 0 to {}", pins.len().saturating_sub(1))))?;
+        pins.remove(i);
+    } else if let Some(at) = at {
+        let q = crate::params::vec3(at).filter(|q| q.is_finite()).ok_or_else(|| bad(cmd, "`at` is a place [x, y, z] of numbers"))?;
+        let mesh = mesh(s, &json!({ "body": map.scan }), cmd)?;
+        let (i, on) = nearest_point(&mesh.positions, q).ok_or_else(|| bad(cmd, "the scan has no points"))?;
+        let value = map.values.get(i).copied().filter(|v| v.is_finite());
+        let value = value.ok_or_else(|| bad(cmd, "the model leaves this part of the scan out: nothing to measure there"))?;
+        if pins.len() >= MOST_PINS {
+            pins.remove(0);
+        }
+        pins.push((on, value));
+        added = Some((on, value));
+    }
+    let side = added.map(|(_, v)| map.side(v).to_owned());
+    s.scan_deviation = Some(std::sync::Arc::new(DeviationMap { pins: pins.clone(), ..(*map).clone() }));
+    serde_json::to_value(ScanDeviationPinResult {
+        added: added.map(pin_of),
+        side,
+        pins: pins.into_iter().map(pin_of).collect(),
+        param_warnings: Vec::new(),
+    })
+    .map_err(|e| EngineError::Other(e.to_string()))
 }
 
 fn fit_surface(s: &mut Session, p: &Value) -> Result<Value> {

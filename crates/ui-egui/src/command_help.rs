@@ -160,6 +160,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.delete_selection",
     "scan.denoise",
     "scan.deviation",
+    "scan.deviation_pin",
     "scan.edit_surface",
     "scan.extrude_it",
     "scan.fill_holes",

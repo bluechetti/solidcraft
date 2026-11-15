@@ -371,9 +371,31 @@ pub struct ScanDeviationParams {
     /// more than four times as far count as parts of the scan the model leaves out.
     #[serde(default)]
     pub limit: Option<LengthExpr>,
+    /// True: the limit is read from the scan instead, the distance 99 % of the measured points lie
+    /// within (at least just above the tolerance), so a few stray points do not wash out the
+    /// colours of the rest. Not with `limit`. Default: false.
+    #[serde(default)]
+    pub auto_limit: Option<bool>,
+    /// The colours in steps instead of a smooth scale: 0 (smooth, the default) or 2 to 12 steps on
+    /// each side of within.
+    #[serde(default)]
+    pub bands: Option<u32>,
+    /// Places on the scan whose distances are labelled in the view, each read at the scan point
+    /// nearest it (`scan.deviation_pin` adds them by clicking). Default: none.
+    #[serde(default)]
+    pub pins: Option<Vec<Point3>>,
     /// False takes the map away again. Default: true.
     #[serde(default)]
     pub show: Option<bool>,
+}
+
+/// A scan point labelled with its distance from the model.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanDeviationPin {
+    /// Where on the scan, mm.
+    pub at: [f64; 3],
+    /// Its distance from the model, mm: outside it positive, inside negative.
+    pub value: f64,
 }
 
 /// What `scan.deviation` returns.
@@ -412,6 +434,49 @@ pub struct ScanDeviationResult {
     pub tolerance: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<f64>,
+    /// Where the largest distance above and the largest below are (labelled in the view).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_above_at: Option<[f64; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_below_at: Option<[f64; 3]>,
+    /// The colour steps on each side of within, 0 for a smooth scale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bands: Option<u32>,
+    /// The labelled places, each with its distance.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pins: Vec<ScanDeviationPin>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// Label a place on the scan with its distance from the model while Scan Deviation's map is shown,
+/// or take labels off. A view, not a change to the design: no undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanDeviationPinParams {
+    /// The place, read at the scan point nearest it.
+    #[serde(default)]
+    pub at: Option<Point3>,
+    /// Takes off the label at this index (0 is the first added).
+    #[serde(default)]
+    pub remove: Option<usize>,
+    /// True takes off every label.
+    #[serde(default)]
+    pub clear: Option<bool>,
+}
+
+/// What `scan.deviation_pin` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanDeviationPinResult {
+    /// The label added (with `at`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added: Option<ScanDeviationPin>,
+    /// above, below or within: where the added place lies against the model and the tolerance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side: Option<String>,
+    /// Every label now shown.
+    pub pins: Vec<ScanDeviationPin>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,

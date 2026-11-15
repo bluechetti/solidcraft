@@ -134,6 +134,7 @@ mod tests {
             "scan.fit_plane",
             "scan.fit_cylinder",
             "scan.deviation",
+            "scan.deviation_pin",
             "scan.fit_sphere",
             "scan.fit_surface",
             "scan.complete_by_mirroring",
