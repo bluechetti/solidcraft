@@ -38,6 +38,10 @@ pub struct Section {
 #[derive(Serialize, JsonSchema)]
 pub struct SectionResult {
     pub section: Option<Section>,
+    /// How many runs the plane cuts through the shown scans (mesh bodies), drawn over the picture
+    /// beside the model's cut.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scan_runs: Option<usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }

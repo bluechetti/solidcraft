@@ -1560,6 +1560,7 @@ preference_settings! {
     /// 0.5 mm or five tolerances, as before.
     /// Section Analysis draws where its plane cuts each shown scan, in the mesh colour, beside the
     /// model's cut. Off: only the model's cut, as before.
+    section_scan_outline: bool = true, PAGE_TOOLS => check_id("prefs.section_scan_outline");
     scan_deviation_auto_range: bool = false, PAGE_TOOLS => check_id("prefs.scan_deviation_auto_range");
     /// Scan Deviation's colours in this many steps each side of within (2 to 12); 0, as before, a
     /// smooth scale.

@@ -293,6 +293,7 @@ pub(crate) mod scan_snap;
 pub mod scan_workspace;
 pub mod scenario;
 pub(crate) mod scene_palette;
+pub(crate) mod section_scan;
 pub mod select_other;
 pub mod selection;
 pub mod semantic_content;

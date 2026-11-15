@@ -100,7 +100,7 @@ mod plugin;
 mod point_cloud;
 pub mod scan;
 mod script;
-mod section;
+pub mod section;
 mod selection;
 pub mod settings;
 pub(crate) use clipboard::{component_path_form, copy_keys};

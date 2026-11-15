@@ -96,6 +96,18 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                         let response = setting::scan_tolerance_from_noise(app, ui).backing_on_hover_text(note);
                         crate::scenario::publish_target("prefs:scan_tolerance_from_noise", response.rect);
                         if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.section_scan_outline_note");
+                        let response = setting::section_scan_outline(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:section_scan_outline", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
                         let note = app.tr("prefs.scan_deviation_auto_range_note");
                         let response = setting::scan_deviation_auto_range(app, ui).backing_on_hover_text(note);
                         crate::scenario::publish_target("prefs:scan_deviation_auto_range", response.rect);

@@ -26,7 +26,8 @@ fn section(s: &mut Session, p: &Value) -> Result<Value> {
         s.section = None;
         s.status_slot(crate::status_items::StatusId::Section, false);
         s.refresh_display();
-        return serde_json::to_value(contract::SectionResult { section: None, param_warnings: Vec::new() }).map_err(|e| bad(cmd, e.to_string()));
+        return serde_json::to_value(contract::SectionResult { section: None, scan_runs: None, param_warnings: Vec::new() })
+            .map_err(|e| bad(cmd, e.to_string()));
     }
     // A named plane's world axis: which component of a point lies along its normal.
     let (origin, normal, axis) = match p.get("plane") {
@@ -92,7 +93,25 @@ fn section(s: &mut Session, p: &Value) -> Result<Value> {
         axis: axis.and_then(|i| ["X", "Y", "Z"].get(i).map(|v| (*v).to_owned())),
         at: axis.map(|i| axis_component(origin, i)),
     };
-    serde_json::to_value(contract::SectionResult { section: Some(section), param_warnings: Vec::new() }).map_err(|e| bad(cmd, e.to_string()))
+    let runs = scan_outlines(s).len();
+    serde_json::to_value(contract::SectionResult { section: Some(section), scan_runs: (runs > 0).then_some(runs), param_warnings: Vec::new() })
+        .map_err(|e| bad(cmd, e.to_string()))
+}
+
+/// Where the section plane shown now cuts each shown scan (mesh body): runs of points in the world,
+/// each closed or not. Empty with no section shown. A view: it changes nothing.
+pub fn scan_outlines(s: &Session) -> Vec<(Vec<Vec3>, bool)> {
+    let Some((origin, normal)) = s.section else { return Vec::new() };
+    let Some(plane) = Plane::from_normal(origin, normal) else { return Vec::new() };
+    let state = s.model.state();
+    let mut out = Vec::new();
+    for b in state.bodies.iter().filter(|b| b.body.is_mesh() && !s.visibility.hidden_bodies.contains(&b.name)) {
+        let Some((positions, triangles)) = b.body.triangle_mesh() else { continue };
+        for run in solidcraft_scan::section::section(&solidcraft_scan::Scan::new(positions, triangles), &plane) {
+            out.push((run.points.iter().map(|p| plane.to_world(*p)).collect(), run.closed));
+        }
+    }
+    out
 }
 
 fn axis_component(v: Vec3, i: usize) -> f64 {
