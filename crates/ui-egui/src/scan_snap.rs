@@ -124,7 +124,9 @@ fn on_scan(app: &SolveApp, proj: &Proj, body: &str, point: Vec3) -> Option<(Vec3
         warm(app, body);
         return None;
     };
-    let found = topology.snap(point, reach, CREASE_DEGREES)?;
+    // Reach across the line of sight, as the pointer's is on the screen.
+    let toward = proj.ray(on_screen).1;
+    let found = topology.snap_seen(point, Some(toward), reach, CREASE_DEGREES)?;
     use solidcraft_engine::cmd::scan::select::SnapKind as K;
     let kind = match found.kind {
         K::Corner => Target::Corner,

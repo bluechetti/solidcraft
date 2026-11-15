@@ -707,11 +707,32 @@ pub struct Snap {
     pub kind: SnapKind,
 }
 
-/// The nearest point of the segment `a` to `b` to `p`.
-fn on_segment(p: Vec3, a: Vec3, b: Vec3) -> Vec3 {
-    let d = b - a;
-    let l2 = d.len2();
-    if l2 <= 1e-24 { a } else { a + d * ((p - a).dot(d) / l2).clamp(0.0, 1.0) }
+/// How far a place is from `p`: straight, or (`toward`, a unit view direction) across the line of
+/// sight through `p`, as the screen shows it.
+#[derive(Clone, Copy)]
+struct Off {
+    p: Vec3,
+    toward: Option<Vec3>,
+}
+
+impl Off {
+    /// `x - p` with its part along the line of sight taken out.
+    fn across(self, x: Vec3) -> Vec3 {
+        let v = x - self.p;
+        self.toward.map_or(v, |d| v - d * v.dot(d))
+    }
+
+    fn of(self, x: Vec3) -> f64 {
+        self.across(x).len()
+    }
+
+    /// The point of the segment `a` to `b` nearest `p` so measured.
+    fn on_segment(self, a: Vec3, b: Vec3) -> Vec3 {
+        let (sa, sb) = (self.across(a), self.across(b));
+        let d = sb - sa;
+        let l2 = d.len2();
+        if l2 <= 1e-24 { a } else { a + (b - a) * (-sa.dot(d) / l2).clamp(0.0, 1.0) }
+    }
 }
 
 /// The most triangles a snap looks over round the place clicked (a far view of a fine scan).
@@ -721,7 +742,7 @@ impl Topology {
     /// The triangles of the scan within `reach` of `p`, reached across it from `t` (the one under
     /// `p`) through corners within reach: the surface round the place, not the far side of a thin
     /// part. At most [`SNAP_MOST`], nearest rings first.
-    fn round(&self, t: usize, p: Vec3, reach: f64) -> Vec<usize> {
+    fn round(&self, t: usize, off: Off, reach: f64) -> Vec<usize> {
         let scan = self.scan();
         let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::from([t]);
         let mut out = vec![t];
@@ -731,7 +752,7 @@ impl Topology {
             k += 1;
             let (Some(ids), Some(places)) = (self.corners().get(f), scan.corners(f)) else { continue };
             for (&v, at) in ids.iter().zip(places) {
-                if at.dist(p) > reach {
+                if off.of(at) > reach {
                     continue;
                 }
                 for &n in self.fan_of(v) {
@@ -753,12 +774,22 @@ impl Topology {
     /// finds an edge a few pixels away however fine the scan is. `None` when nothing is within
     /// reach.
     pub fn snap(&self, p: Vec3, reach: f64, crease_degrees: f64) -> Option<Snap> {
+        self.snap_seen(p, None, reach, crease_degrees)
+    }
+
+    /// [`Self::snap`] for a click seen along the unit direction `toward`: the reach is measured
+    /// across the line of sight through `p`, as the pointer's reach on the screen is. A fold seen
+    /// nearly edge-on is a few pixels from a click on the scan beside it, though the click lands
+    /// far from it along the line of sight.
+    pub fn snap_seen(&self, p: Vec3, toward: Option<Vec3>, reach: f64, crease_degrees: f64) -> Option<Snap> {
         if !(reach.is_finite() && reach > 0.0) {
             return None;
         }
+        let toward = toward.and_then(|d| d.normalized());
+        let off = Off { p, toward };
         let (t, _) = self.nearest(p)?;
         let scan = self.scan();
-        let near = self.round(t, p, reach);
+        let near = self.round(t, off, reach);
         let cos = crease_degrees.to_radians().cos();
         // The ways the feature edges leave each corner within reach, and the nearest edge.
         let mut leaving: std::collections::HashMap<u32, (Vec3, Vec<Vec3>)> = std::collections::HashMap::new();
@@ -778,19 +809,19 @@ impl Topology {
                 let Some(kind) = kind else { continue };
                 if let Some(d) = (y - x).normalized() {
                     for (v, at, way) in [(ix, x, d), (iy, y, d * -1.0)] {
-                        if at.dist(p) <= reach {
+                        if off.of(at) <= reach {
                             leaving.entry(v).or_insert_with(|| (at, Vec::new())).1.push(way);
                         }
                     }
                 }
-                let q = on_segment(p, x, y);
-                let d = q.dist(p);
+                let q = off.on_segment(x, y);
+                let d = off.of(q);
                 if d <= reach && best_edge.is_none_or(|(bd, _, _)| d < bd) {
                     best_edge = Some((d, q, kind));
                 }
             }
             for v in [a, b, c] {
-                let d = v.dist(p);
+                let d = off.of(v);
                 if d <= reach / 2.0 && best_vertex.is_none_or(|(bd, _)| d < bd) {
                     best_vertex = Some((d, v));
                 }
@@ -803,7 +834,7 @@ impl Topology {
         let corner = leaving
             .values()
             .filter(|(_, ways)| turns(ways))
-            .map(|(at, _)| (at.dist(p), *at))
+            .map(|(at, _)| (off.of(*at), *at))
             .min_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.x.total_cmp(&b.1.x)));
         if let Some((_, at)) = corner {
             return Some(Snap { at, kind: SnapKind::Corner });
@@ -838,6 +869,42 @@ mod tests {
 
     fn count(selected: &[bool]) -> usize {
         selected.iter().filter(|s| **s).count()
+    }
+
+    /// A floor (z = 0, x < 0) folding up by 40 degrees at x = 0, seen nearly along the floor: a
+    /// click on the floor 8 mm short of the fold is a few tenths of a millimetre from it on the
+    /// screen, so it snaps to the fold measured across the line of sight, and not by straight
+    /// distance.
+    #[test]
+    fn a_fold_seen_nearly_edge_on_is_snapped_to() {
+        let (n, cell) = (40usize, 0.5);
+        let rise = 40f64.to_radians();
+        let mut positions = Vec::new();
+        for i in 0..=2 * n {
+            for j in 0..=20 {
+                let x = (i as f64 - n as f64) * cell;
+                let y = j as f64 * cell;
+                positions.push(if x <= 0.0 { Vec3::new(x, y, 0.0) } else { Vec3::new(x * rise.cos(), y, x * rise.sin()) });
+            }
+        }
+        let at = |i: usize, j: usize| (i * 21 + j) as u32;
+        let mut triangles = Vec::new();
+        for i in 0..2 * n {
+            for j in 0..20 {
+                triangles.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+                triangles.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+            }
+        }
+        let topology = Topology::new(&Scan::new(&positions, &triangles));
+        let toward = Vec3::new(1.0, 0.0, -0.05);
+        let click = Vec3::new(-8.0, 5.0, 0.0);
+        let fold = topology.snap_seen(click, Some(toward), 1.0, 30.0).expect("the fold is within reach on the screen");
+        assert_eq!(fold.kind, SnapKind::Crease);
+        assert!(fold.at.x.abs() < 1e-6 && fold.at.z.abs() < 1e-6 && (fold.at.y - 5.0).abs() < 0.5, "on the fold: {:?}", fold.at);
+        let not_fold = |s: Option<Snap>| s.is_none_or(|s| s.kind != SnapKind::Crease);
+        assert!(not_fold(topology.snap(click, 1.0, 30.0)), "8 mm away in straight distance");
+        // Seen from straight above, the same click is 8 mm from the fold on the screen too.
+        assert!(not_fold(topology.snap_seen(click, Some(Vec3::new(0.0, 0.0, -1.0)), 1.0, 30.0)));
     }
 
     /// On a box a click near its top's edge snaps to the crease, near a corner to the corner, in
