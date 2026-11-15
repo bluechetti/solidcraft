@@ -81,6 +81,12 @@ fn a_bent_sheet_flattens_and_a_line_on_the_pattern_rolls_back_onto_it() {
     // The sheet unrolls with no stretch, so the curve keeps the length the line had on the pattern.
     let length: f64 = wire.pts.windows(2).map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2) + (w[1].z - w[0].z).powi(2)).sqrt()).sum();
     assert!((length - (y1 - y0)).abs() < 0.02 * (y1 - y0), "{length} against {}", y1 - y0);
+    drop(state);
+    // Saved and opened again, the design still knows the pattern and what it was flattened from:
+    // the roll needs nothing the app remembered.
+    let mut reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    let again = run(&mut reopened, "scan.roll_onto_scan", json!({"sketch": sketch}));
+    assert_eq!((again["pieces"].as_u64(), again["off_pattern"].as_u64()), (Some(1), Some(0)), "{again}");
 }
 
 #[test]
@@ -88,6 +94,47 @@ fn a_roll_needs_a_pattern() {
     let mut s = Session::default();
     let e = s.execute("scan.roll_onto_scan", &json!({})).unwrap_err().to_string();
     assert!(e.contains("no flat pattern") || e.contains("no scan"), "{e}");
+}
+
+/// Two patterns flattened from one scan are laid apart, not one on the other, and a line drawn on
+/// the second rolls back onto the scan where the second was flattened from.
+#[test]
+fn a_second_pattern_is_laid_clear_of_the_first_and_rolls_back_through_its_own_place() {
+    let mut s = Session::default();
+    let scan = bent_scan(&mut s);
+    let first = run(&mut s, "scan.flatten", json!({"body": scan, "point": [10, 15, 2], "radius": 8, "name": "One"}));
+    let second = run(&mut s, "scan.flatten", json!({"body": scan, "point": [10, 15, 2], "radius": 8, "name": "Two"}));
+    let boxes: Vec<[[f64; 2]; 2]> = s.doc.scan_flat_patterns.iter().map(|k| serde_json::from_value(k.params["box"].clone()).unwrap()).collect();
+    let [a, b] = [boxes[0], boxes[1]];
+    let apart = a[1][1] < b[0][1] || b[1][1] < a[0][1] || a[1][0] < b[0][0] || b[1][0] < a[0][0];
+    assert!(apart, "the boxes do not overlap: {a:?} {b:?}");
+    assert_ne!(first["shift"], second["shift"], "{first} {second}");
+    // A line across the middle of the second pattern, drawn in its own sketch, lands on the sheet.
+    let sketch = second["sketch"].as_u64().unwrap();
+    let mid = [0.5 * (b[0][0] + b[1][0]), 0.5 * (b[0][1] + b[1][1])];
+    run(&mut s, "sketch.edit", json!({"sketch": sketch}));
+    run(&mut s, "sketch.line", json!({"points": [[mid[0] - 2.0, mid[1]], [mid[0] + 2.0, mid[1]]]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let r = run(&mut s, "scan.roll_onto_scan", json!({"sketch": sketch, "pattern": sketch}));
+    assert_eq!((r["pieces"].as_u64(), r["off_pattern"].as_u64()), (Some(1), Some(0)), "{r}");
+}
+
+/// A radius given as a length with its unit limits the region as a number of mm does; one that is
+/// no length is refused rather than ignored.
+#[test]
+fn a_radius_with_its_unit_limits_the_region() {
+    let mut s = Session::default();
+    let scan = bent_scan(&mut s);
+    let bare = run(&mut s, "scan.flatten", json!({"body": scan, "point": [10, 15, 2], "radius": 8}));
+    run(&mut s, "edit.undo", json!({}));
+    let unit = run(&mut s, "scan.flatten", json!({"body": scan, "point": [10, 15, 2], "radius": "8 mm"}));
+    assert_eq!(bare["triangles"], unit["triangles"], "{bare} {unit}");
+    run(&mut s, "edit.undo", json!({}));
+    let whole = run(&mut s, "scan.flatten", json!({"body": scan, "point": [10, 15, 2]}));
+    assert!(whole["triangles"].as_u64() > unit["triangles"].as_u64(), "the radius limits it: {whole} {unit}");
+    run(&mut s, "edit.undo", json!({}));
+    let e = s.execute("scan.flatten", &json!({"body": scan, "point": [10, 15, 2], "radius": "wide"})).unwrap_err().to_string();
+    assert!(e.contains("radius"), "{e}");
 }
 
 /// With part of the scan selected, Flatten unrolls that part, and remembers it by its triangles.
@@ -99,6 +146,6 @@ fn what_is_selected_is_flattened() {
     run(&mut s, "scan.select", json!({"body": scan, "triangles": half}));
     let r = run(&mut s, "scan.flatten", json!({}));
     assert_eq!(r["triangles"], 1200, "{r}");
-    let memo = &s.scan_flats.last().unwrap().1;
+    let memo = &s.doc.scan_flat_patterns.last().unwrap().params;
     assert_eq!(memo["triangles"].as_array().map(Vec::len), Some(1200));
 }

@@ -657,10 +657,6 @@ pub struct Session {
     /// was. Pressed again with nothing picked while the scan still stands there, it goes on to the
     /// next. View state: not part of the design.
     pub scan_base_cycle: Option<(String, usize)>,
-    /// The patterns `scan.flatten` made in this session, by their sketch, with what each was
-    /// flattened from, so `scan.roll_onto_scan` can roll a drawing on one back without being told.
-    /// View state: not part of the design (the same parameters flatten the same pattern again).
-    pub scan_flats: Vec<(u64, serde_json::Value)>,
     /// The faces Isocurve Analysis shows the isoparametric curves of, for the viewport to draw
     /// ([`Session::isocurve_lines`]). View state: not part of the design and not an undo step.
     pub isocurves: Vec<IsoPick>,
@@ -943,7 +939,6 @@ impl Session {
             scan_survey: None,
             scan_selection: None,
             scan_base_cycle: None,
-            scan_flats: Vec::new(),
             isocurves: Vec::new(),
             comb: None,
             status_order: Vec::new(),
@@ -2146,7 +2141,6 @@ impl Session {
             scan_survey: None,
             scan_selection: self.scan_selection.clone(),
             scan_base_cycle: None,
-            scan_flats: Vec::new(),
             isocurves: Vec::new(),
             comb: None,
             status_order: Vec::new(),
@@ -2672,6 +2666,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         scan_selections,
         free_forms,
         scan_tolerances,
+        scan_flat_patterns,
         param_comments,
         materials,
         print_faces,
@@ -2714,6 +2709,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         && *scan_selections == b.scan_selections
         && *free_forms == b.free_forms
         && *scan_tolerances == b.scan_tolerances
+        && *scan_flat_patterns == b.scan_flat_patterns
         && *param_comments == b.param_comments
         && *materials == b.materials
         && *print_faces == b.print_faces

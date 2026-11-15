@@ -156,6 +156,34 @@ pub fn fit_surface(scan: &Scan, seed: usize, radius: f64, controls: usize, smoot
     Ok(SurfaceFit { surface: fitted.surface, region, rms: fitted.rms, max: fitted.max, points: samples.len(), trouble })
 }
 
+/// The control points each way [`fit_surface_close`] tries, fewest first.
+const CLOSE_STEPS: &[usize] = &[6, 8, 11, 15, 20, 25, 30];
+
+/// [`fit_surface`] with as many control points as bring it within `aim` (root mean square, mm) of
+/// the scan: from 6 each way up to 30, stopping once it is that close or where more points no
+/// longer cut the distance by a quarter (the scan's noise is reached). The fit and its control
+/// points each way.
+pub fn fit_surface_close(scan: &Scan, seed: usize, radius: f64, smoothing: f64, aim: f64) -> Result<(SurfaceFit, usize), SurfaceError> {
+    let mut best: Option<(SurfaceFit, usize)> = None;
+    for &n in CLOSE_STEPS {
+        let fit = match fit_surface(scan, seed, radius, n, smoothing) {
+            Ok(fit) => fit,
+            // Too few points for more control points: the last that fitted is the closest.
+            Err(SurfaceError::TooFew) if best.is_some() => break,
+            Err(e) => return Err(e),
+        };
+        if best.as_ref().is_some_and(|(b, _)| fit.rms >= 0.75 * b.rms) {
+            break;
+        }
+        let close = fit.rms <= aim;
+        best = Some((fit, n));
+        if close {
+            break;
+        }
+    }
+    best.ok_or(SurfaceError::TooFew)
+}
+
 /// The cosine of the most a triangle may face away from the way the surface faces at the pick and
 /// still be grown into: past it the surface has turned (round an edge, onto a plate's far side).
 const MOST_TURN: f64 = 0.34; // about 70°
@@ -293,6 +321,21 @@ mod tests {
         let mid = fit.surface.eval((u0 + u1) / 2.0, (v0 + v1) / 2.0).unwrap();
         let top = moved[(30 * 61 + 30) as usize];
         assert!(mid.dist(top) < 2.0, "the middle of the surface is over the middle of the dome: {mid:?} {top:?}");
+    }
+
+    /// Fitted closely, a wavy sheet takes more control points than a plain one, and stops at the
+    /// first count that comes within the aim.
+    #[test]
+    fn close_fitting_adds_control_points_until_within_the_aim() {
+        let (positions, triangles) = field(60.0, 60, |x, y| 3.0 * (x / 9.0).sin() * (y / 11.0).cos());
+        let scan = Scan::new(&positions, &triangles);
+        let seed = nearest_triangle(&scan, Vec3::new(30.0, 30.0, 0.0)).unwrap();
+        let six = fit_surface(&scan, seed, 100.0, 6, 0.0).unwrap();
+        let (close, n) = fit_surface_close(&scan, seed, 100.0, 0.0, 0.02).unwrap();
+        assert!(n > 6 && close.rms <= 0.02 && close.rms < six.rms, "{n}: {} against {}", close.rms, six.rms);
+        assert_eq!(close.surface.count(), [n, n]);
+        let (_, plain) = fit_surface_close(&scan, seed, 100.0, 0.0, 10.0).unwrap();
+        assert_eq!(plain, 6, "already within a loose aim");
     }
 
     /// Smoothing trades closeness for smoothness: with noise, a smoother surface is farther from the

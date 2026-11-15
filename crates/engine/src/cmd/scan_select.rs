@@ -48,19 +48,16 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(output_schema_for::<ScanSelectResult>)
         .params("body?: the scan (default: the one selected on, else the selected or only one); mode?: replace|add|remove (default replace); and one of: brush: {points: [[x,y,z], …], radius: length} (the triangles within the radius of each place, reached across the scan from the one under it); polygon: {points: [[x,y,z], …] (its corners as the view draws them), direction: [x,y,z] (the way the view looks), eye?: [x,y,z] (a perspective view's), through?: bool (default false: only what is seen)}; region: {point, angle?: degrees (default 30)} (grown while the scan faces within the angle of the way it faces there: a face up to where its rounds turn away); shape: n | {point} (a shape Find All found); saved: name (a kept selection); triangles: [n, …]; all: true; none: true; invert: true; grow: rings; shrink: rings; unexplained: solid | {body: solid, piece?: n (default 0, the largest), grow?: rings} (the part of the scan the solid built from it does not explain yet: its triangles farther from the solid than five times the scan's tolerance, at least 0.5 mm, in pieces of 50 triangles or more; one piece selected, nothing when the solid explains the whole scan; read it with scan.reconstruct_selection to build what is missing). A view of the scan, not an undo step → body, triangles, area, of, changed, pieces? [{piece, triangles, area, side: missing|extra, deepest, point}], limit?"),
     CommandSpec::new("scan.select_inside_curve", "Select Inside Curve", crate::checked!("scan.select_inside_curve", select_inside))
-        .at("SCAN", "CLEAN")
         .icon("boundary_fill")
         .contract(&INSIDE_CONTRACT)
         .output(output_schema_for::<ScanSelectResult>)
         .params("body?; sketch?: the 3D sketch (default the last `Scan Curves`); curves?: [ids end to end] (default its last curve), closed; mode?: replace|add|remove (default replace): the triangles inside the curve drawn on the scan, reached across the scan without crossing it, so the far side of a part is not taken. A view, not an undo step → body, triangles, area, of, changed"),
     CommandSpec::new("scan.keep_selection", "Keep Selection", crate::checked!("scan.keep_selection", keep))
-        .at("SCAN", "CLEAN")
         .icon("checkpoint")
         .contract(&KEEP_CONTRACT)
         .output(output_schema_for::<ScanKeepSelectionResult>)
         .params("name?: (default `Selection n`, the first number free; one of that name is replaced): what is selected on the scan kept in the design, opened again with scan.select {saved: name}; one undo step → name, body, triangles, replaced"),
     CommandSpec::new("scan.delete_selection", "Delete Kept Selection", crate::checked!("scan.delete_selection", delete))
-        .at("SCAN", "CLEAN")
         .icon("delete")
         .contract(&DELETE_CONTRACT)
         .output(output_schema_for::<ScanDeleteSelectionResult>)

@@ -454,6 +454,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             ScanReconstruct(crate::dialogs_scan_reconstruct::Reconstruct),
             ScanSurvey(crate::dialogs_scan_survey::Survey),
             ScanAlignChoose(crate::dialogs_scan_align::AlignChoose),
+            ScanRun(crate::dialogs_scan_run::ScanRun),
             /// End caps on frame members (`dialogs_end_cap`).
             EndCap(crate::dialogs_end_cap::EndCap),
             /// Appearance (`dialogs_appearance`).
@@ -1233,6 +1234,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_scan_survey::start(app, id))
                     .or_else(|| crate::dialogs_scan_patches::start(app, id))
                     .or_else(|| crate::dialogs_scan_reconstruct::start(app, id))
+                    .or_else(|| crate::dialogs_scan_run::start(app, id))
                     .or_else(|| crate::dialogs_end_cap::start(app, id))
                     .or_else(|| crate::dialogs_appearance::start(app, id))
                     .or_else(|| crate::dialogs_motion::start(app, id))
@@ -1493,6 +1495,9 @@ impl Dialog {
     /// it shows no preview. Not the tools that pick on the scan as they go (selecting, drawing a
     /// curve, editing a surface, aligning by pairs, a curve from the selection).
     pub fn works_on_the_scan(&self) -> bool {
+        if let Kind::ScanRun(k) = &self.kind {
+            return k.heavy();
+        }
         matches!(
             self.kind,
             Kind::ScanBase(_)
@@ -2979,6 +2984,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::ScanReconstruct(_) => "RECONSTRUCT",
         Kind::ScanSurvey(_) => "SURVEY SCAN",
         Kind::ScanAlignChoose(_) => "ALIGN",
+        Kind::ScanRun(k) => k.title(),
         Kind::EndCap(_) => "ui.end_cap_title",
         Kind::Appearance(_) => "APPEARANCE",
         Kind::Motion(k) => k.title(),
@@ -6689,6 +6695,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanEdgeCurve(k) => return crate::dialogs_scan_edge::commands(k),
         Kind::ScanReconstruct(k) => return crate::dialogs_scan_reconstruct::commands(app, k),
         Kind::ScanSurvey(_) | Kind::ScanAlignChoose(_) => return Ok(Vec::new()),
+        Kind::ScanRun(k) => return crate::dialogs_scan_run::commands(k, &d.inputs),
         Kind::EndCap(k) => return crate::dialogs_end_cap::commands(app, k, &d.inputs, &d.extra),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),

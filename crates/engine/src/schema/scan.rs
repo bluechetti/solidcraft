@@ -222,6 +222,23 @@ pub struct ScanFitParams {
     /// Keep the shape as a construction plane or axis. Default: true; false only reports it.
     #[serde(default)]
     pub keep: Option<bool>,
+    /// What keeps it: `construction` (a construction plane, axis or point; the default), `face` (a
+    /// surface of the shape trimmed to the region the scan has of it) or `both`.
+    #[serde(default)]
+    pub make: Option<ScanFitMake>,
+}
+
+/// What a fitted shape is kept as.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ScanFitMake {
+    /// A construction plane, axis or point.
+    #[default]
+    Construction,
+    /// A surface of the shape trimmed to the region the scan has of it.
+    Face,
+    /// Both.
+    Both,
 }
 
 /// A fitted plane.
@@ -310,9 +327,27 @@ pub struct ScanFitResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<FeatureResult>")]
     pub feature: Option<Value>,
+    /// The trimmed face, with `make` face or both: the surface body and the features that made it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face: Option<ScanFitFace>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
+}
+
+/// The trimmed face a fitted shape was kept as.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanFitFace {
+    /// The surface body.
+    pub surface: String,
+    /// The sketch its outline or profile is drawn in.
+    pub sketch: u64,
+    /// The feature that made it (Patch or Surface Revolve), as that command replies.
+    #[schemars(with = "FeatureResult")]
+    pub feature: Value,
+    /// How far round its axis it turns, in degrees (a plane: none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sweep: Option<f64>,
 }
 
 /// Measure how far a scan is from the model built from it and colour the scan by it in the
@@ -398,12 +433,26 @@ pub struct ScanFitSurfaceParams {
     /// size.
     #[serde(default)]
     pub radius: Option<LengthExpr>,
-    /// Control points each way, 4 to 30. Default: 8. More follow finer shape.
+    /// Control points each way, 4 to 30. Default: 8, or with `tolerance` as many as bring the
+    /// surface within half of it (from 6, stopping where more no longer help). More follow finer
+    /// shape.
     #[serde(default)]
     pub controls: Option<u32>,
     /// How smooth against how close, 0 to 1. Default: 0.1.
     #[serde(default)]
     pub smoothing: Option<f64>,
+    /// How close the surface must come to the scan, a length above 0: with no `controls`, the
+    /// control points are chosen to come within half of it. Default: none (8 control points).
+    #[serde(default)]
+    pub tolerance: Option<LengthExpr>,
+    /// Trim the surface to the area's outline (seen square to the way the area faces), keeping
+    /// the piece under the point. Default: false (the surface spans the area's bounding rectangle).
+    #[serde(default)]
+    pub trim: Option<bool>,
+    /// The whole face round the point, with no radius: the area grows until the surface turns away
+    /// (about 70° from the way it faces at the point). Default: false (the area within `radius`).
+    #[serde(default)]
+    pub whole_face: Option<bool>,
 }
 
 /// What `scan.fit_surface` returns.
@@ -431,6 +480,9 @@ pub struct ScanFitSurfaceResult {
     /// The feature that keeps it, as a feature command replies.
     #[schemars(with = "FeatureResult")]
     pub feature: Value,
+    /// With `trim`: the Trim that cut it to the area's outline, as `surface.trim` replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trimmed: Option<Value>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,

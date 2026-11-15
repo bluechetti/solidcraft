@@ -602,6 +602,52 @@ fn fit_surface_keeps_a_surface_body() {
     assert!(err.contains("4 to 30"), "{err}");
 }
 
+/// With a tolerance and no control points asked for, Fit Surface picks the fewest that come within
+/// half of it; with `trim` it is cut to the round area's outline, so it is smaller than the
+/// rectangle it spans untrimmed, and it is still one undo step.
+#[test]
+fn fit_surface_chooses_its_detail_and_trims_to_the_area() {
+    let (mut s, _) = session_with_a_plate_and_boss("fit-surface-trim");
+    let whole = run(&mut s, "scan.fit_surface", json!({"point": [12, 12, 8], "radius": 8, "tolerance": "0.1 mm"}));
+    assert_eq!(whole["controls"], 6, "a flat area needs the fewest: {whole}");
+    assert!(whole.get("trimmed").is_none(), "{whole}");
+    let rectangle = area_of(&s, whole["surface"].as_str().unwrap());
+    run(&mut s, "edit.undo", json!({}));
+    let cut = run(&mut s, "scan.fit_surface", json!({"point": [12, 12, 8], "radius": 8, "tolerance": "0.1 mm", "trim": true}));
+    assert!(cut.get("trimmed").is_some(), "{cut}");
+    let trimmed = area_of(&s, cut["surface"].as_str().unwrap());
+    // The coarse plate's triangles round the point, in the rectangle that spans them: well under it
+    // (180 of 336 mm²), but not a sliver.
+    assert!(trimmed < 0.8 * rectangle && trimmed > 0.3 * rectangle, "{trimmed} of {rectangle}");
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.model.state().bodies.iter().all(|b| b.body.is_mesh()), "one undo step");
+    // The whole face, with no radius: the plate's top as far as it goes, more than 8 mm round.
+    let face = run(&mut s, "scan.fit_surface", json!({"point": [12, 12, 8], "whole_face": true, "tolerance": "0.1 mm"}));
+    assert!(face["points"].as_u64().unwrap() > whole["points"].as_u64().unwrap(), "{face} against {whole}");
+    assert!(face["rms"].as_f64().unwrap() < 0.05, "still the flat top, not round the boss: {face}");
+}
+
+/// A Fit Surface trimmed to its area is still edited by Edit Surface: a control point moved moves
+/// the surface, which stays trimmed to the area, and the edit is one undo step.
+#[test]
+fn edit_surface_edits_a_trimmed_fit_surface() {
+    let (mut s, _) = session_with_a_plate_and_boss("edit-trimmed");
+    let cut = run(&mut s, "scan.fit_surface", json!({"point": [12, 12, 8], "radius": 8, "controls": 6, "trim": true}));
+    let name = cut["surface"].as_str().unwrap().to_owned();
+    let trimmed = area_of(&s, &name);
+    let start = super::surface::editable(&s, Some(&name), "test").expect("a trimmed Fit Surface is editable");
+    let net = solidcraft_scan::surface_edit::points(&start.surface);
+    let up = net[2 * 6 + 2] + Vec3::new(0.0, 0.0, 2.0);
+    let raised = run(&mut s, "scan.edit_surface", json!({"surface": name, "moves": [{"point": [2, 2], "to": [up.x, up.y, up.z]}]}));
+    assert!(raised["rms"].as_f64().unwrap() > 0.05, "moved off the plate: {raised}");
+    let edited = super::surface::editable(&s, Some(&name), "test").unwrap();
+    assert!(solidcraft_scan::surface_edit::points(&edited.surface)[2 * 6 + 2].dist(up) < 1e-9, "the point is where it was put");
+    let after = area_of(&s, &name);
+    assert!(after < 1.2 * trimmed, "still trimmed to the area: {after} against {trimmed}");
+    run(&mut s, "edit.undo", json!({}));
+    assert!((area_of(&s, &name) - trimmed).abs() < 1e-6, "one undo step");
+}
+
 /// A control point of a fitted surface raised 2 mm moves the surface off the plate; refitting the
 /// ring round it with that point held brings the rest nearer; refitting all but nothing held puts
 /// it back on the scan. Each edit is one undo step and the surface keeps its name.
@@ -1642,6 +1688,54 @@ fn weld_drops_a_corner_on_another_and_sews_the_sides_that_meet() {
     assert!(joins.corners.iter().any(|c| c.faces == 4 && !c.border), "the middle is a grid's corner now");
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(seams(&s), 3, "one undo step");
+}
+
+/// The area of the body `name`, mm².
+fn area_of(s: &Session, name: &str) -> f64 {
+    solidcraft_kernel::measure(&s.world_state().unwrap().body(name).unwrap().body).unwrap().area
+}
+
+/// Fit with `make: face` keeps a surface trimmed to the region: a half tube's face turns through
+/// half a turn and is as large as the half tube, a whole tube's goes all the way round, and a flat
+/// plate's is its outline with the square hole in it left open. `both` keeps the axis too.
+#[test]
+fn a_fitted_shape_is_kept_as_a_face_trimmed_to_its_region() {
+    let (mut s, _) = session_with_triangles("fit-face-half", &tube_triangles(std::f64::consts::PI));
+    let half = run(&mut s, "scan.fit_cylinder", json!({"point": [0.0, 10.0, 20.0], "make": "face"}));
+    assert!(half.get("feature").is_none(), "no construction axis with face alone: {half}");
+    let face = &half["face"];
+    assert!((face["sweep"].as_f64().unwrap() - 180.0).abs() < 8.0, "{half}");
+    let surface = face["surface"].as_str().unwrap().to_owned();
+    assert!(s.world_state().unwrap().body(&surface).unwrap().body.is_surface(), "{half}");
+    let want = std::f64::consts::PI * 10.0 * 40.0;
+    assert!((area_of(&s, &surface) - want).abs() < 0.03 * want, "{} against {want}", area_of(&s, &surface));
+
+    let (mut s, _) = session_with_triangles("fit-face-whole", &tube_triangles(std::f64::consts::TAU));
+    let whole = run(&mut s, "scan.fit_cylinder", json!({"point": [10.0, 0.0, 20.0], "make": "both"}));
+    assert!(whole.get("feature").is_some(), "the axis is kept too: {whole}");
+    assert_eq!(whole["face"]["sweep"].as_f64(), Some(360.0), "{whole}");
+    let want = std::f64::consts::TAU * 10.0 * 40.0;
+    let got = area_of(&s, whole["face"]["surface"].as_str().unwrap());
+    assert!((got - want).abs() < 0.03 * want, "{got} against {want}");
+
+    // A 40 mm plate of 5 mm cells with the middle 10 mm square left out.
+    let mut plate = Vec::new();
+    for i in 0..8 {
+        for j in 0..8 {
+            if (3..5).contains(&i) && (3..5).contains(&j) {
+                continue;
+            }
+            let p = |a: i32, b: i32| Vec3::new(5.0 * f64::from(a), 5.0 * f64::from(b), 0.0);
+            plate.push([p(i, j), p(i + 1, j), p(i + 1, j + 1)]);
+            plate.push([p(i, j), p(i + 1, j + 1), p(i, j + 1)]);
+        }
+    }
+    let (mut s, _) = session_with_triangles("fit-face-plate", &plate);
+    let flat = run(&mut s, "scan.fit_plane", json!({"point": [3.0, 3.0, 0.0], "make": "face"}));
+    let got = area_of(&s, flat["face"]["surface"].as_str().unwrap());
+    assert!((got - 1500.0).abs() < 1.0, "the outline less the hole: {got} {flat}");
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.world_state().unwrap().bodies.iter().all(|b| b.body.is_mesh()), "one undo step");
 }
 
 /// `turn` radians round a tube of radius 10 along Z, 40 long, as triangles.

@@ -21,12 +21,13 @@ use crate::params::{bad, str_};
 use crate::schema::scan::{
     ScanAddFaceParams, ScanAddFaceResult, ScanBase, ScanBasesParams, ScanBasesResult, ScanCloseSurfaceParams, ScanCloseSurfaceResult,
     ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams, ScanDeviationResult, ScanEditNetParams,
-    ScanEditNetResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult,
-    ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFittedTorus, ScanFloatingParams, ScanFloatingResult,
-    ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror,
-    ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams,
-    ScanRepairResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams,
-    ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
+    ScanEditNetResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitMake, ScanFitParams, ScanFitResult, ScanFitSurfaceParams,
+    ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFittedTorus, ScanFloatingParams,
+    ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult,
+    ScanMirror, ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult,
+    ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult,
+    ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams,
+    ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -143,37 +144,37 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("plane")
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
-        .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: mm (default 0.15 % of the scan's size); keep?: bool (default true: kept as a construction plane) → body, plane: {point, normal}, triangles, area, rms, max, feature"),
+        .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: mm (default 0.15 % of the scan's size); make?: construction|face|both (default construction: the construction plane, axis or point; face: a surface of the shape trimmed to the region, a Patch of its outline for a plane, a Surface Revolve through the angle and height the region spans for a round shape; both); keep?: bool (default true: kept as a construction plane) → body, face? {surface, sketch, feature, sweep?}, plane: {point, normal}, triangles, area, rms, max, feature"),
     CommandSpec::new("scan.fit_cylinder", "Fit Cylinder", crate::checked!("scan.fit_cylinder", fit_cylinder))
         .at("SCAN", "RECONSTRUCT")
         .icon("cylinder")
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
-        .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: mm (default 0.15 % of the scan's size); keep?: bool (default true: kept as a construction axis) → body, cylinder: {point, axis, radius, diameter, length}, triangles, area, rms, max, feature"),
+        .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: mm (default 0.15 % of the scan's size); make?: construction|face|both (default construction: the construction plane, axis or point; face: a surface of the shape trimmed to the region, a Patch of its outline for a plane, a Surface Revolve through the angle and height the region spans for a round shape; both); keep?: bool (default true: kept as a construction axis) → body, face? {surface, sketch, feature, sweep?}, cylinder: {point, axis, radius, diameter, length}, triangles, area, rms, max, feature"),
     CommandSpec::new("scan.fit_sphere", "Fit Sphere", crate::checked!("scan.fit_sphere", fit_sphere))
         .at("SCAN", "RECONSTRUCT")
         .icon("sphere")
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
-        .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: length (default 0.15 % of the scan's size); keep?: bool (default true: its centre kept as a construction point) → body, sphere: {center, radius, diameter}, triangles, area, rms, max, feature"),
+        .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan (default: the point picked on it; the region grows from it); tolerance?: length (default 0.15 % of the scan's size); make?: construction|face|both (default construction: the construction plane, axis or point; face: a surface of the shape trimmed to the region, a Patch of its outline for a plane, a Surface Revolve through the angle and height the region spans for a round shape; both); keep?: bool (default true: its centre kept as a construction point) → body, face? {surface, sketch, feature, sweep?}, sphere: {center, radius, diameter}, triangles, area, rms, max, feature"),
     CommandSpec::new("scan.fit_cone", "Fit Cone", crate::checked!("scan.fit_cone", fit_cone))
         .at("SCAN", "RECONSTRUCT")
         .icon("cone")
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
-        .params("point?: [x,y,z] on the scan (default: the point picked on it); body?: mesh body (default: the picked one, else the selected or only one); tolerance?: length (how far a triangle may be from the cone and still be on it; default 0.15% of the scan's size); keep?: bool (default true): a cone fitted to the slanted round wall round the point (a chamfer, a countersink, a drafted boss), kept as a construction axis along it → cone {apex, axis, half_angle}, triangles, area, rms, max, feature"),
+        .params("point?: [x,y,z] on the scan (default: the point picked on it); body?: mesh body (default: the picked one, else the selected or only one); tolerance?: length (how far a triangle may be from the cone and still be on it; default 0.15% of the scan's size); make?: construction|face|both (default construction: the construction plane, axis or point; face: a surface of the shape trimmed to the region, a Patch of its outline for a plane, a Surface Revolve through the angle and height the region spans for a round shape; both); keep?: bool (default true): a cone fitted to the slanted round wall round the point (a chamfer, a countersink, a drafted boss), kept as a construction axis along it → face? {surface, sketch, feature, sweep?}, cone {apex, axis, half_angle}, triangles, area, rms, max, feature"),
     CommandSpec::new("scan.fit_torus", "Fit Torus", crate::checked!("scan.fit_torus", fit_torus))
         .at("SCAN", "RECONSTRUCT")
         .icon("torus")
         .contract(&FIT_CONTRACT)
         .output(output_schema_for::<ScanFitResult>)
-        .params("point?: [x,y,z] on the scan (default: the point picked on it); body?: mesh body (default: the picked one, else the selected or only one); tolerance?: length (default 0.15% of the scan's size); keep?: bool (default true): a torus fitted to the round round the point (a fillet along a circular edge), kept as a construction axis through its centre → torus {center, axis, major, minor}, triangles, area, rms, max, feature"),
+        .params("point?: [x,y,z] on the scan (default: the point picked on it); body?: mesh body (default: the picked one, else the selected or only one); tolerance?: length (default 0.15% of the scan's size); make?: construction|face|both (default construction: the construction plane, axis or point; face: a surface of the shape trimmed to the region, a Patch of its outline for a plane, a Surface Revolve through the angle and height the region spans for a round shape; both); keep?: bool (default true): a torus fitted to the round round the point (a fillet along a circular edge), kept as a construction axis through its centre → face? {surface, sketch, feature, sweep?}, torus {center, axis, major, minor}, triangles, area, rms, max, feature"),
     CommandSpec::new("scan.fit_surface", "Fit Surface", crate::checked!("scan.fit_surface", fit_surface))
         .at("SCAN", "FREEFORM")
         .icon("surface")
         .contract(&SURFACE_CONTRACT)
         .output(output_schema_for::<ScanFitSurfaceResult>)
-        .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan, the middle of the area (default: the point picked on it); radius?: length (default a tenth of the scan's size); controls?: 4…30 control points each way (default 8); smoothing?: 0…1 (default 0.1): a smooth B-spline surface over the area, fitted in all three directions (each point moved to its foot on it between rounds), kept as a surface body (one undo step); an area that wraps round is refused; a surface that folds, pinches or passes through itself is kept and said so (warning) → body, surface, rms, max, points, controls, folds, pinches, crossings, warning?, feature"),
+        .params("body?: mesh body (default: the picked scan's, else the selected or only mesh body); point?: [x,y,z] on the scan, the middle of the area (default: the point picked on it); radius?: length (default a tenth of the scan's size); controls?: 4…30 control points each way (default 8, or with tolerance as many as bring it within half of it); smoothing?: 0…1 (default 0.1); tolerance?: length (how close it must come: with no controls, they are chosen for it); trim?: bool (default false: the surface spans the area's bounding rectangle; true: trimmed to the area's outline, the piece under the point kept); whole_face?: bool (default false: the area within `radius`; true: no radius, the area grows until the surface turns away): a smooth B-spline surface over the area, fitted in all three directions (each point moved to its foot on it between rounds), kept as a surface body (one undo step); an area that wraps round is refused; a surface that folds, pinches or passes through itself is kept and said so (warning) → body, surface, rms, max, points, controls, folds, pinches, crossings, warning?, feature, trimmed?"),
     CommandSpec::new("scan.edit_surface", "Edit Surface", crate::checked!("scan.edit_surface", surface::edit_surface))
         .at("SCAN", "FREEFORM")
         .icon("scan_edit_surface")
@@ -699,7 +700,7 @@ pub const FIT_PAINT_MOST: usize = 400_000;
 
 /// The shape `kind` fitted to the scan `body` (or the selected or only one) round `point`, without
 /// keeping anything.
-pub fn fit_preview(s: &Session, body: Option<&str>, point: Vec3, kind: Kind) -> Result<FitPreview> {
+pub fn fit_preview(s: &Session, body: Option<&str>, point: Vec3, kind: Kind, tolerance: Option<f64>) -> Result<FitPreview> {
     let cmd = match kind {
         Kind::Plane => "scan.fit_plane",
         Kind::Cylinder => "scan.fit_cylinder",
@@ -710,7 +711,7 @@ pub fn fit_preview(s: &Session, body: Option<&str>, point: Vec3, kind: Kind) -> 
     let mesh = mesh(s, &json!({ "body": body }), cmd)?;
     let scan = mesh.scan();
     let seed = base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
-    let fitted = fit::fit(&scan, seed, kind, None).map_err(|e| bad(cmd, e.to_string()))?;
+    let fitted = fit::fit(&scan, seed, kind, tolerance).map_err(|e| bad(cmd, e.to_string()))?;
     let step = fitted.triangles.len().div_ceil(FIT_PAINT_MOST).max(1);
     let at = |i: u32| mesh.positions.get(i as usize).copied();
     let region = fitted
@@ -961,22 +962,59 @@ fn fit_surface(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let controls = match p.get("controls").filter(|v| !v.is_null()) {
-        Some(v) => v.as_u64().filter(|n| (4..=30).contains(n)).ok_or_else(|| bad(cmd, "`controls` must be a whole number from 4 to 30"))? as usize,
-        None => 8,
+        Some(v) => {
+            Some(v.as_u64().filter(|n| (4..=30).contains(n)).ok_or_else(|| bad(cmd, "`controls` must be a whole number from 4 to 30"))? as usize)
+        }
+        None => None,
     };
+    let tolerance = match crate::params::expr(p, "tolerance") {
+        Some(e) => {
+            let t = s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("tolerance: {e}")))?;
+            if !(t.is_finite() && t > 0.0) {
+                return Err(bad(cmd, "`tolerance` must be a length above 0"));
+            }
+            Some(t)
+        }
+        None => None,
+    };
+    let trim = crate::params::bool_(p, "trim").unwrap_or(false);
+    let whole_face = crate::params::bool_(p, "whole_face").unwrap_or(false);
     let smoothing = match p.get("smoothing").filter(|v| !v.is_null()) {
         Some(v) => v.as_f64().filter(|x| (0.0..=1.0).contains(x)).ok_or_else(|| bad(cmd, "`smoothing` must be a number from 0 to 1"))?,
         None => 0.1,
     };
     let mesh = mesh(s, p, cmd)?;
     let scan = mesh.scan();
-    let radius = length(s, p, "radius", (scan.extent() / 10.0).max(1e-3), cmd)?;
+    // The whole face: no reach, the area grows until the surface turns away.
+    let radius = if whole_face { f64::INFINITY } else { length(s, p, "radius", (scan.extent() / 10.0).max(1e-3), cmd)? };
     let point =
         point.or_else(|| picked_point(s, &mesh.body)).ok_or_else(|| bad(cmd, "pick a point on the scan first, in the middle of the area to fit"))?;
     let seed = base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
-    let fitted = solidcraft_scan::surface::fit_surface(&scan, seed, radius, controls, smoothing).map_err(|e| bad(cmd, e.to_string()))?;
+    // Control points as asked; else, with a tolerance, as many as bring it within half of it.
+    let (fitted, controls) = match (controls, tolerance) {
+        (Some(n), _) => (solidcraft_scan::surface::fit_surface(&scan, seed, radius, n, smoothing).map_err(|e| bad(cmd, e.to_string()))?, n),
+        (None, Some(t)) => {
+            solidcraft_scan::surface::fit_surface_close(&scan, seed, radius, smoothing, t / 2.0).map_err(|e| bad(cmd, e.to_string()))?
+        }
+        (None, None) => (solidcraft_scan::surface::fit_surface(&scan, seed, radius, 8, smoothing).map_err(|e| bad(cmd, e.to_string()))?, 8),
+    };
     // The surface as a sheet, kept as STEP in a Scan Surface feature: the design reopens anywhere.
     let (name, feature) = surface::keep_surface(s, &fitted.surface, "Surface", "Fit Surface", &format!("{} (fitted surface)", mesh.body), None, cmd)?;
+    // Trimmed to the area: its outline, seen square to the way the area faces, cuts the sheet,
+    // and the piece under the point picked is kept.
+    let trimmed = if trim {
+        let plane = fit_face::region_plane(&mesh, &fitted.region).ok_or_else(|| bad(cmd, "the area has no outline to trim to"))?;
+        let within = tolerance.unwrap_or_else(|| fit::tolerance(scan.extent()));
+        let sketch = fit_face::outline_sketch(s, &mesh, &fitted.region, &plane, within, "Fit Surface Outline", cmd)?;
+        let keep = solidcraft_scan::surface_edit::foot(&fitted.surface, point).map_or(point, |f| f.point);
+        let reply = super::find_command("surface.trim")
+            .ok_or_else(|| EngineError::UnknownCommand("surface.trim".into()))?
+            .run_nested(s, &json!({"body": name, "curves": {"sketch": sketch}, "keep": [keep.x, keep.y, keep.z]}))
+            .map_err(|e| bad(cmd, format!("the surface could not be trimmed to the area: {e}")))?;
+        Some(reply)
+    } else {
+        None
+    };
     let reply = ScanFitSurfaceResult {
         body: mesh.body,
         surface: name,
@@ -989,6 +1027,7 @@ fn fit_surface(s: &mut Session, p: &Value) -> Result<Value> {
         crossings: fitted.trouble[2],
         warning: surface::fold_warning(fitted.trouble),
         feature,
+        trimmed,
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
@@ -1004,6 +1043,10 @@ pub struct SurfacePreview {
     pub rms: f64,
     pub max: f64,
     pub points: usize,
+    /// Its control points each way (chosen to come within half the tolerance when not asked for).
+    pub controls: usize,
+    /// The way the area faces (its triangles' normals weighted by area), for drawing its reach.
+    pub facing: Option<Vec3>,
     /// Its folds, pinches and crossings (Surface Check).
     pub trouble: [usize; 3],
     pub marked: Vec<[f32; 3]>,
@@ -1016,13 +1059,28 @@ pub fn default_surface_radius(s: &Session, body: Option<&str>) -> Result<f64> {
 }
 
 /// The surface `scan.fit_surface` would fit round `point` on the scan `body`.
-pub fn surface_preview(s: &Session, body: Option<&str>, point: Vec3, radius: f64, controls: usize, smoothing: f64) -> Result<SurfacePreview> {
+pub fn surface_preview(
+    s: &Session,
+    body: Option<&str>,
+    point: Vec3,
+    radius: f64,
+    controls: Option<usize>,
+    smoothing: f64,
+    tolerance: f64,
+) -> Result<SurfacePreview> {
     let cmd = "scan.fit_surface";
     let mesh = mesh(s, &json!({ "body": body }), cmd)?;
     let scan = mesh.scan();
     let seed = base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
-    let fitted = solidcraft_scan::surface::fit_surface(&scan, seed, radius, controls.clamp(4, 30), smoothing.clamp(0.0, 1.0))
-        .map_err(|e| bad(cmd, e.to_string()))?;
+    let smoothing = smoothing.clamp(0.0, 1.0);
+    let (fitted, controls) = match controls {
+        Some(n) => (
+            solidcraft_scan::surface::fit_surface(&scan, seed, radius, n.clamp(4, 30), smoothing).map_err(|e| bad(cmd, e.to_string()))?,
+            n.clamp(4, 30),
+        ),
+        None => solidcraft_scan::surface::fit_surface_close(&scan, seed, radius, smoothing, tolerance.max(1e-6) / 2.0)
+            .map_err(|e| bad(cmd, e.to_string()))?,
+    };
     let mut seen = vec![false; mesh.positions.len()];
     let mut marked = Vec::new();
     for &t in &fitted.region {
@@ -1035,6 +1093,7 @@ pub fn surface_preview(s: &Session, body: Option<&str>, point: Vec3, radius: f64
             }
         }
     }
+    let facing = fit_face::region_plane(&mesh, &fitted.region).map(|p| p.x.cross(p.y));
     Ok(SurfacePreview {
         body: mesh.body,
         surface: fitted.surface,
@@ -1042,6 +1101,8 @@ pub fn surface_preview(s: &Session, body: Option<&str>, point: Vec3, radius: f64
         rms: fitted.rms,
         max: fitted.max,
         points: fitted.points,
+        controls,
+        facing,
         trouble: fitted.trouble,
         marked,
     })
@@ -1091,12 +1152,25 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
         None => None,
     };
     let keep = crate::params::bool_(p, "keep").unwrap_or(true);
+    let make = match crate::params::str_(p, "make") {
+        None | Some("construction") => ScanFitMake::Construction,
+        Some("face") => ScanFitMake::Face,
+        Some("both") => ScanFitMake::Both,
+        Some(other) => return Err(bad(cmd, format!("`make` must be construction, face or both, not `{other}`"))),
+    };
     let mesh = mesh(s, p, cmd)?;
     let point = point.or_else(|| picked_point(s, &mesh.body)).ok_or_else(|| bad(cmd, "pick a point on the scan first, on the face to fit"))?;
     let scan = mesh.scan();
     let seed = base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
     let fitted = fit::fit(&scan, seed, kind, tolerance).map_err(|e| bad(cmd, e.to_string()))?;
-    let feature = if keep { Some(keep_shape(s, &fitted, mesh.scan().extent())?) } else { None };
+    let extent = scan.extent();
+    let feature = if keep && make != ScanFitMake::Face { Some(keep_shape(s, &fitted, extent)?) } else { None };
+    let face = if keep && make != ScanFitMake::Construction {
+        let within = tolerance.unwrap_or_else(|| fit::tolerance(extent));
+        Some(fit_face::keep_face(s, &mesh, &fitted, within, cmd)?)
+    } else {
+        None
+    };
     let at = |v: Vec3| [v.x, v.y, v.z];
     let (mut plane, mut cylinder, mut sphere, mut cone, mut torus) = (None, None, None, None, None);
     match fitted.shape {
@@ -1126,6 +1200,7 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
         rms: fitted.rms,
         max: fitted.max,
         feature,
+        face,
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
@@ -1172,6 +1247,9 @@ pub mod curve;
 
 #[path = "scan_fillet.rs"]
 pub mod fillet;
+
+#[path = "scan_fit_face.rs"]
+mod fit_face;
 
 #[path = "scan_flatten.rs"]
 pub mod flatten;

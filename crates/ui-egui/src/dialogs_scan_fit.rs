@@ -1,8 +1,11 @@
 //! Fit Shape (`scan.fit_plane`, `_cylinder`, `_sphere`, `_cone`, `_torus`): one dialog for all five.
 //! Click the scan where the shape is; the region the shape was fitted to is painted on the scan,
-//! and the dialog says the shape's size and how closely it fits, and what OK keeps (a construction
-//! plane, axis or point). The shape can be changed without clicking again. On a large scan the fit
-//! is worked out beside the window, the last one staying painted until the new one arrives.
+//! and the dialog says the shape's size and how closely it fits. The region grows as far as the
+//! scan lies within the Tolerance (the scan's own, shared with the other scan tools; a change is
+//! kept for the scan by OK). OK keeps the shape as a face trimmed to the painted region (the
+//! default), as a construction plane, axis or point, or both. The shape can be changed without
+//! clicking again. On a large scan the fit is worked out beside the window, the last one staying
+//! painted until the new one arrives.
 
 use std::cell::Cell;
 use std::sync::Arc;
@@ -27,6 +30,11 @@ const CLOUD_ID: u64 = u64::MAX - 21;
 pub const COMMANDS: [&str; 5] = ["scan.fit_plane", "scan.fit_cylinder", "scan.fit_sphere", "scan.fit_cone", "scan.fit_torus"];
 const SHAPES: [Shape; 5] = [Shape::Plane, Shape::Cylinder, Shape::Sphere, Shape::Cone, Shape::Torus];
 
+/// What OK keeps.
+pub const KEEP_FACE: usize = 0;
+pub const KEEP_CONSTRUCTION: usize = 1;
+pub const KEEP_BOTH: usize = 2;
+
 thread_local! {
     static VERSION: Cell<u64> = const { Cell::new(0) };
 }
@@ -36,6 +44,14 @@ thread_local! {
 pub struct FitShape {
     /// The shape fitted (index into [`COMMANDS`]).
     pub shape: usize,
+    /// What OK keeps: [`KEEP_FACE`], [`KEEP_CONSTRUCTION`] or [`KEEP_BOTH`].
+    pub keep: usize,
+    /// The tolerance changed here, mm (0: the scan's).
+    pub tolerance: f64,
+    /// A changed tolerance OK keeps for the scan.
+    keep_tolerance: Option<(String, f64)>,
+    /// The tolerance in force, mm.
+    within: f64,
     shown: Option<Box<Shown>>,
     pending: Option<Arc<scan_job::Job<String, Result<Painted, String>>>>,
 }
@@ -79,8 +95,8 @@ fn picked(app: &SolveApp, inputs: &[SelInput]) -> Option<(String, Vec3)> {
     })
 }
 
-fn compute(s: &solidcraft_engine::Session, body: &str, point: Vec3, shape: Shape, rgb: [u8; 3]) -> Result<Painted, String> {
-    let found = fit_preview(s, Some(body), point, shape).map_err(|e| e.to_string())?;
+fn compute(s: &solidcraft_engine::Session, body: &str, point: Vec3, shape: Shape, tolerance: f64, rgb: [u8; 3]) -> Result<Painted, String> {
+    let found = fit_preview(s, Some(body), point, shape, Some(tolerance)).map_err(|e| e.to_string())?;
     let mut out = Vec::with_capacity(found.region.len() * crate::scan_dots::DOT_SIZE);
     for &corners in &found.region {
         crate::scan_dots::cloud_painted(&mut out, corners, 0.0, rgb);
@@ -100,7 +116,8 @@ fn look(app: &SolveApp, k: &mut FitShape, inputs: &[SelInput]) {
         return;
     };
     let shape = SHAPES[k.shape.min(SHAPES.len() - 1)];
-    let key = format!("{body}|{:?}|{:?}|{}", point, shape, app.session.revision);
+    let tolerance = k.within;
+    let key = format!("{body}|{:?}|{:?}|{}|{}", point, shape, tolerance.to_bits(), app.session.revision);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         k.pending = None;
         return;
@@ -120,12 +137,12 @@ fn look(app: &SolveApp, k: &mut FitShape, inputs: &[SelInput]) {
             }
         }
         let given = body.clone();
-        if let Some(job) = scan_job::spawn(app, key.clone(), move |s| compute(s, &given, point, shape, rgb)) {
+        if let Some(job) = scan_job::spawn(app, key.clone(), move |s| compute(s, &given, point, shape, tolerance, rgb)) {
             k.pending = Some(Arc::new(job));
             return;
         }
     }
-    let result = compute(&app.session, &body, point, shape, rgb);
+    let result = compute(&app.session, &body, point, shape, tolerance, rgb);
     k.shown = Some(Box::new(Shown { key, result }));
 }
 
@@ -139,6 +156,11 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitShape, inputs: &[SelIn
     let shapes =
         [tr("ui.scan_split_plane"), tr("ui.scan_split_cylinder"), tr("ui.scan_split_sphere"), tr("ui.scan_split_cone"), tr("ui.scan_split_torus")];
     choice_row(ui, solidcraft_ui_text::tr_label("Shape"), "scan_fit_shape", &mut k.shape, &shapes);
+    let scan = picked(app, inputs).map(|(body, _)| body);
+    let t = crate::scan_fidelity::row(app, ui, scan.as_deref(), &mut k.tolerance);
+    (k.within, k.keep_tolerance) = (t.mm, t.keep);
+    let keeps = [tr("ui.scan_fit_keep_face"), tr("ui.scan_fit_keep_construction"), tr("ui.scan_fit_keep_both")];
+    choice_row(ui, tr("ui.scan_fit_keep"), "scan_fit_keep", &mut k.keep, &keeps);
     look(app, k, inputs);
     let len = |v: f64| crate::prefs::show_mm(app, v, 1);
     let row = |ui: &mut egui::Ui, label: &str, text: &str| form_row(ui, label, |ui| ui_kit::text(ui, text, ui_kit::Text::Cell));
@@ -182,7 +204,8 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitShape, inputs: &[SelIn
             row(ui, label("Area"), &crate::prefs::show_mm(app, f.area, 2));
             let fit = solidcraft_ui_text::format("ui.scan_fit_off", &[("rms", &len(f.rms)), ("max", &len(f.max))]);
             row(ui, tr("ui.scan_fit_result"), &fit);
-            ui_kit::text(ui, tr(makes), ui_kit::Text::Hint("scan_fit_makes"));
+            let makes = if k.keep == KEEP_CONSTRUCTION { tr(makes) } else { tr("ui.scan_fit_makes_face") };
+            ui_kit::text(ui, makes, ui_kit::Text::Hint("scan_fit_makes"));
         }
     }
     if k.pending.is_some() {
@@ -201,7 +224,15 @@ pub fn commands(k: &FitShape, inputs: &[SelInput]) -> Result<Vec<(String, Value)
             _ => None,
         })
         .ok_or_else(|| tr("ui.scan_fit_click").to_owned())?;
-    Ok(vec![(COMMANDS[k.shape.min(COMMANDS.len() - 1)].into(), json!({"body": p.found.body, "point": [point.x, point.y, point.z]}))])
+    let make = match k.keep {
+        KEEP_FACE => "face",
+        KEEP_BOTH => "both",
+        _ => "construction",
+    };
+    let fit = json!({"body": p.found.body, "point": [point.x, point.y, point.z], "tolerance": format!("{} mm", k.within), "make": make});
+    let mut out: Vec<(String, Value)> = crate::scan_fidelity::keep(k.keep_tolerance.as_ref()).into_iter().collect();
+    out.push((COMMANDS[k.shape.min(COMMANDS.len() - 1)].into(), fit));
+    Ok(out)
 }
 
 /// The fitted region painted on the scan while the dialog is open.
@@ -227,7 +258,8 @@ mod tests {
     use crate::dialogs::Kind;
 
     /// A tube: the Fit dialog opened from Fit Plane, its shape turned to Cylinder, a click on the
-    /// wall paints the region and reads the diameter; OK keeps an axis.
+    /// wall paints the region and reads the diameter; OK keeps a face trimmed to the region, at
+    /// the tolerance shown.
     #[test]
     fn a_click_on_a_tube_fits_a_cylinder_and_ok_keeps_its_axis() {
         let mut h = crate::scenario::Harness::new();
@@ -265,8 +297,10 @@ mod tests {
         let inputs = h.app.dialog.as_ref().map(|d| d.inputs.clone()).unwrap();
         let cmds = super::commands(k, &inputs).unwrap();
         assert_eq!(cmds[0].0, "scan.fit_cylinder");
-        let axes = h.app.session.doc.features.len();
-        h.app.run(&cmds[0].0, cmds[0].1.clone()).unwrap();
-        assert!(h.app.session.doc.features.len() > axes, "the axis is kept");
+        assert_eq!(cmds[0].1["make"], json!("face"), "a face by default");
+        assert!(cmds[0].1["tolerance"].as_str().is_some_and(|t| t.ends_with(" mm")), "{}", cmds[0].1);
+        let reply = h.app.run(&cmds[0].0, cmds[0].1.clone()).unwrap();
+        let surface = reply["face"]["surface"].as_str().unwrap_or_default().to_owned();
+        assert!(h.app.session.model.state().body(&surface).is_some_and(|b| b.body.is_surface()), "the face is kept: {reply}");
     }
 }

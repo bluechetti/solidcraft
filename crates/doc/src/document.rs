@@ -3569,6 +3569,9 @@ pub struct Document {
     /// tolerance every Scan-tab tool colours and reports against. A scan with none uses the default.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub scan_tolerances: std::collections::BTreeMap<String, f64>,
+    /// Each Flat Pattern sketch and the flattening that made it, for Roll onto Scan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scan_flat_patterns: Vec<crate::scan_flat_pattern::FlatPatternKeep>,
     /// Comments of feature-input parameters (by name).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub param_comments: std::collections::BTreeMap<String, String>,
@@ -3910,6 +3913,7 @@ impl Document {
             scan_selections: Vec::new(),
             free_forms: Vec::new(),
             scan_tolerances: Default::default(),
+            scan_flat_patterns: Vec::new(),
             param_comments: Default::default(),
             browser_groups: Vec::new(),
             timeline_groups: Vec::new(),

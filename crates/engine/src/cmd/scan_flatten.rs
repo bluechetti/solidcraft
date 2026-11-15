@@ -47,7 +47,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("spline")
         .contract(&ROLL_CONTRACT)
         .output(output_schema_for::<ScanRollResult>)
-        .params("sketch?: the sketch drawn on the pattern (default: the one being edited, else the pattern sketch itself); curves?: [ids] (default: every curve of the sketch drawn that is not the pattern's outline); pattern?: the Flat Pattern sketch (id or name; default: the last made in this session) or the flattening's own parameters (body, point, radius, triangles, relax, as scan.flatten takes them); tolerance?: length (default 0.02 mm): each curve's points lifted onto the scan through the pattern's triangles they lie over, kept as 3D sketch splines in `Rolled Curves` (one undo step); a curve leaving the pattern is cut where it leaves → curves, sketch, pieces, points, off_pattern"),
+        .params("sketch?: the sketch drawn on the pattern (default: the one being edited, else the pattern sketch itself); curves?: [ids] (default: every curve of the sketch drawn that is not the pattern's outline); pattern?: the Flat Pattern sketch (id or name; default: the one being edited when it is one, else the last the design keeps; the design keeps each with the flattening that made it) or the flattening's own parameters (body, point, radius, triangles, relax, as scan.flatten takes them); tolerance?: length (default 0.02 mm): each curve's points lifted onto the scan through the pattern's triangles they lie over, kept as 3D sketch splines in `Rolled Curves` (one undo step); a curve leaving the pattern is cut where it leaves → curves, sketch, pieces, points, off_pattern"),
 ];
 
 fn reply<T: serde::Serialize>(r: T) -> Result<Value> {
@@ -124,7 +124,18 @@ pub(super) fn region(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<Vec
     };
     let scan = on.scan();
     let seed = solidcraft_scan::base::nearest_triangle(&scan, point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
-    match crate::params::num(p, "radius") {
+    // A number is mm; text is a length ("10 mm", an expression of the design's parameters).
+    let radius = match p.get("radius").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => Some(match v.as_f64() {
+            Some(r) => r,
+            None => {
+                let e = crate::params::expr(p, "radius").ok_or_else(|| bad(cmd, "`radius` must be a length above 0"))?;
+                s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("radius: {e}")))?
+            }
+        }),
+    };
+    match radius {
         Some(r) if r.is_finite() && r > 0.0 => Ok(solidcraft_scan::fit::around(&scan, seed, point, r)),
         Some(_) => Err(bad(cmd, "`radius` must be a length above 0")),
         // The piece clicked; on one that wraps round (a closed part), the side facing the click.
@@ -157,6 +168,8 @@ fn flatten_scan(s: &mut Session, p: &Value) -> Result<Value> {
     if s.active_sketch.is_some() {
         return Err(bad(cmd, "finish the sketch being edited first"));
     }
+    // Beside the scan, but past the patterns already laid there: each keeps its own place.
+    let (shift, laid) = clear_of_patterns(s, &flat, shift);
     let outlines: Vec<(Outline, bool)> = flat
         .outline
         .iter()
@@ -182,6 +195,9 @@ fn flatten_scan(s: &mut Session, p: &Value) -> Result<Value> {
     let mut memo = serde_json::Map::new();
     memo.insert("body".into(), json!(body));
     memo.insert("outline".into(), json!(outline));
+    // Where the pattern was laid, so a roll goes back through this place and not a new one.
+    memo.insert("shift".into(), json!([shift.x, shift.y]));
+    memo.insert("box".into(), json!([[laid.0.x, laid.0.y], [laid.1.x, laid.1.y]]));
     for key in REGION_KEYS.iter().skip(1) {
         if let Some(v) = p.get(*key).filter(|v| !v.is_null()) {
             memo.insert((*key).into(), v.clone());
@@ -209,8 +225,10 @@ fn flatten_scan(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
-    s.scan_flats.retain(|(id, _)| *id != sketch);
-    s.scan_flats.push((sketch, Value::Object(memo)));
+    // Kept in the design, so Roll onto Scan finds it after the design is opened again.
+    let kept = &mut s.doc_mut().scan_flat_patterns;
+    kept.retain(|k| k.sketch != sketch);
+    kept.push(solidcraft_doc::scan_flat_pattern::FlatPatternKeep { sketch, params: Value::Object(memo) });
     let st = flat.stats;
     reply(ScanFlattenResult {
         body,
@@ -233,8 +251,42 @@ fn flatten_scan(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
-/// The flattening a roll goes back through: the pattern named (or the last made) as remembered,
-/// or the parameters given.
+/// The box a kept pattern was laid in on XY, when it says.
+fn kept_box(params: &Value) -> Option<(Vec2, Vec2)> {
+    let corner = |k: usize| {
+        let c = params.get("box")?.get(k)?;
+        Some(Vec2::new(c.get(0)?.as_f64()?, c.get(1)?.as_f64()?))
+    };
+    Some((corner(0)?, corner(1)?))
+}
+
+/// `shift` moved along Y until the pattern `flat` laid there overlaps none of the patterns the
+/// design keeps (with a gap of a tenth of its own size), and the box it then takes on XY.
+fn clear_of_patterns(s: &Session, flat: &Flat, mut shift: Vec2) -> (Vec2, (Vec2, Vec2)) {
+    let (low, high) = flat.points.iter().fold((Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN)), |(lo, hi), q| {
+        (Vec2::new(lo.x.min(q.x), lo.y.min(q.y)), Vec2::new(hi.x.max(q.x), hi.y.max(q.y)))
+    });
+    let gap = 0.1 * (high - low).len().max(1e-6);
+    let others: Vec<(Vec2, Vec2)> =
+        s.doc.scan_flat_patterns.iter().filter(|k| s.doc.sketch(k.sketch).is_ok()).filter_map(|k| kept_box(&k.params)).collect();
+    // Each move clears one box upward; as many moves as boxes clear them all.
+    for _ in 0..=others.len() {
+        let (a, b) = (low + shift, high + shift);
+        let Some(hit) = others
+            .iter()
+            .filter(|(lo, hi)| a.x < hi.x + gap && lo.x < b.x + gap && a.y < hi.y + gap && lo.y < b.y + gap)
+            .map(|(_, hi)| hi.y)
+            .reduce(f64::max)
+        else {
+            break;
+        };
+        shift.y = hit + gap - low.y;
+    }
+    (shift, (low + shift, high + shift))
+}
+
+/// The flattening a roll goes back through: the pattern named as the design keeps it, else the one
+/// being edited, else the last one the design still has; or the parameters given.
 fn pattern_params(s: &Session, p: &Value, cmd: &str) -> Result<(Option<u64>, Value)> {
     let given = REGION_KEYS.iter().any(|k| k != &"relax" && k != &"body" && p.get(*k).is_some_and(|v| !v.is_null()));
     if given {
@@ -250,14 +302,17 @@ fn pattern_params(s: &Session, p: &Value, cmd: &str) -> Result<(Option<u64>, Val
         Some(v) => Some(super::super::sketch_store::target(s, &json!({ "sketch": v }), cmd)?),
         None => None,
     };
+    let kept = &s.doc.scan_flat_patterns;
+    // A pattern whose sketch was deleted is no pattern.
+    let alive = |id: u64| s.doc.sketch(id).is_ok();
     let found = match named {
-        Some(id) => s.scan_flats.iter().find(|(k, _)| *k == id),
-        None => s.scan_flats.last(),
+        Some(id) => kept.iter().find(|k| k.sketch == id),
+        None => s.active_sketch.and_then(|a| kept.iter().find(|k| k.sketch == a)).or_else(|| kept.iter().rev().find(|k| alive(k.sketch))),
     };
-    let (id, params) = found.ok_or_else(|| {
-        bad(cmd, "this session has made no flat pattern to roll back through: flatten the region again, or give its parameters (point, radius or triangles)")
+    let k = found.ok_or_else(|| {
+        bad(cmd, "the design has no flat pattern to roll back through: flatten the region again, or give its parameters (point, radius or triangles)")
     })?;
-    Ok((Some(*id), params.clone()))
+    Ok((Some(k.sketch), k.params.clone()))
 }
 
 /// Points along a sketch curve's segments, about every half millimetre (at least 8 to a piece).
@@ -284,6 +339,9 @@ fn roll_onto_scan(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let (pattern, params) = pattern_params(s, p, cmd)?;
     let (body, flat, shift) = flattened(s, &params, cmd)?;
+    // The place the pattern was laid, when the design keeps it: past other patterns, not the first.
+    let kept_shift = params.get("shift").and_then(|v| Some(Vec2::new(v.get(0)?.as_f64()?, v.get(1)?.as_f64()?)));
+    let shift = kept_shift.filter(|v| v.x.is_finite() && v.y.is_finite()).unwrap_or(shift);
     // The sketch drawn on the pattern.
     let drawing = match p.get("sketch").filter(|v| !v.is_null()) {
         Some(_) => super::super::sketch_store::target(s, p, cmd)?,

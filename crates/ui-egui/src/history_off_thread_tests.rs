@@ -1296,9 +1296,9 @@ fn a_body_renamed_in_the_browser_keeps_the_pattern_after_it() {
     assert_eq!(h.app.session.visibility.locked_bodies, ["Plate"]);
 }
 
-/// Repair, run from the ribbon with no dialog, works through the whole scan (half a minute for
-/// 28 million triangles): it is computed whole beside the window, the design as it was until it
-/// is in, then taken as one undo step, its work not done again.
+/// Repair, from the ribbon, opens its dialog naming the scan; its OK works through the whole
+/// scan (half a minute for 28 million triangles): it is computed whole beside the window, the
+/// design as it was until it is in, then taken as one undo step, its work not done again.
 #[test]
 fn repair_from_the_ribbon_is_computed_beside_the_window() {
     let mut h = Harness::new();
@@ -1326,9 +1326,24 @@ fn repair_from_the_ribbon_is_computed_beside_the_window() {
     let before = h.app.session.doc.clone();
     h.app.apply_off_thread = Some(Duration::ZERO);
     h.app.start("scan.repair");
-    assert!(h.app.computing_since().is_some(), "computing");
+    assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(crate::dialogs::Kind::ScanRun(_))), "a dialog, not a blind run");
+    h.frames(2);
+    assert!(std::sync::Arc::ptr_eq(&before, &h.app.session.doc), "nothing runs before OK");
+    // The worker is held until let go, so the frame OK is pressed in sees it computing.
+    let (finish, gate) = std::sync::mpsc::channel();
+    h.app.apply_gate = Some(std::sync::Arc::new(std::sync::Mutex::new(gate)));
+    h.step(&json!({"key": "Enter"})).unwrap();
+    assert!(h.app.applying.is_some(), "computing");
     assert!(std::sync::Arc::ptr_eq(&before, &h.app.session.doc), "the design is as it was while it computes");
-    until_settled(&mut h);
+    finish.send(()).unwrap();
+    for _ in 0..500 {
+        if h.app.applying.is_none() {
+            break;
+        }
+        h.frames(1);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    h.frames(1);
     assert_eq!(triangles(&h), Some(4), "the copy is gone");
     h.app.run("edit.undo", json!({})).unwrap();
     assert!(std::sync::Arc::ptr_eq(&before, &h.app.session.doc), "one undo step");

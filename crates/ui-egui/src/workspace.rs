@@ -439,7 +439,8 @@ pub const SECTIONS: &[Section] = &[
     // The Scan workspace's own tab. Scan to CAD (#8615), in the order the work goes: bring the scan
     // in and look it over, clean it, square it up, build the part from it (as features, or as free
     // forms), sketch on it, then check the result against it. Each panel shows the two to four
-    // tools most work needs; the rest are in its drop-down, the steps Reconstruct lists last.
+    // tools most work needs; the rest are in its drop-down. The steps Reconstruct lists (Extrude
+    // It and the rest) run from its dialog, not from buttons that guess which one is meant.
     Section { tab: "SCAN", panel: "INSERT", promoted: 2, ids: &["file.insert_mesh", "scan.survey", "pointcloud.insert"] },
     Section {
         tab: "SCAN",
@@ -457,10 +458,6 @@ pub const SECTIONS: &[Section] = &[
             // It adds what the scan missed, from its mirror image: a repair, not a placing.
             "scan.complete_by_mirroring",
             "scan.split",
-            // Part of a scan chosen, kept by name or taken off.
-            "scan.select_inside_curve",
-            "scan.keep_selection",
-            "scan.delete_selection",
             "scan.mesh_from_points",
         ],
     },
@@ -500,18 +497,6 @@ pub const SECTIONS: &[Section] = &[
             "scan.reconstruct_selection",
             "scan.reconstruct_rest",
             "scan.fillet",
-            // The steps Reconstruct lists, each also a command of its own.
-            "scan.extrude_it",
-            "scan.revolve_it",
-            "scan.loft_it",
-            "scan.pipe_it",
-            "scan.coil_it",
-            "scan.shell_it",
-            "scan.cut_it",
-            "scan.hole_it",
-            "scan.pattern_it",
-            "scan.fillet_it",
-            "scan.chamfer_it",
         ],
     },
     Section {

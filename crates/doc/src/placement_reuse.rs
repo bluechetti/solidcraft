@@ -165,6 +165,7 @@ fn same_geometry_inputs(a: &Document, b: &Document) -> bool {
         scan_selections,
         free_forms,
         scan_tolerances,
+        scan_flat_patterns,
         notes: _,
         // Plugin data is kept beside the design; no feature reads it.
         plugin_data: _,
@@ -207,6 +208,7 @@ fn same_geometry_inputs(a: &Document, b: &Document) -> bool {
         && *scan_selections == b.scan_selections
         && *free_forms == b.free_forms
         && *scan_tolerances == b.scan_tolerances
+        && *scan_flat_patterns == b.scan_flat_patterns
 }
 
 /// Compare feature definitions without traversing immutable imported payloads. A replacement
