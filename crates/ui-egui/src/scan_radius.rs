@@ -63,11 +63,8 @@ pub(crate) fn picking(_app: &SolveApp) -> bool {
 
 /// A tap: the round under it read from the scan, changing nothing.
 pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
-    let hit = crate::viewport::pick_cached(app, proj, at).into_iter().find_map(|h| match h {
-        crate::viewport::Hit::Face { body, point, .. } => Some((body, point)),
-        _ => None,
-    });
-    let Some((scan, q)) = hit.filter(|(b, _)| app.session.model.state().body(b).is_some_and(|b| b.body.is_mesh())) else { return };
+    // The scan itself, through the model: a model's sharp edge built over the scan covers its round.
+    let Some((scan, q)) = crate::scan_snap::scan_under(app, proj, at) else { return };
     let at = [q.x, q.y, q.z];
     let Ok(reply) = app.run("scan.radius", json!({"scan": scan, "at": at})) else {
         set(Some(State::Picking(None)));
@@ -92,7 +89,7 @@ fn label(app: &SolveApp, r: &Round) -> String {
     let kind = solidcraft_ui_text::tr(if r.convex { "ui.scan_radius_outside" } else { "ui.scan_radius_inside" });
     solidcraft_ui_text::format(
         "ui.scan_radius_tag",
-        &[("radius", &crate::prefs::show_mm(app, r.radius, 2)), ("kind", kind), ("angle", &format!("{:.0}", r.swept))],
+        &[("radius", &crate::prefs::show_mm(app, r.radius, 1)), ("kind", kind), ("angle", &format!("{:.0}", r.swept))],
     )
 }
 
@@ -121,16 +118,19 @@ pub(crate) fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(r) = round().filter(|r| !r.answered) else { return };
     let Some(body) = r.edge_on.clone() else { return };
     let title = solidcraft_ui_text::tr("cmd.scan_radius");
-    let message = solidcraft_ui_text::format("ui.scan_radius_edge", &[("radius", &crate::prefs::show_mm(app, r.radius, 2)), ("body", &body)]);
+    let message = solidcraft_ui_text::format("ui.scan_radius_edge", &[("radius", &crate::prefs::show_mm(app, r.radius, 1)), ("body", &body)]);
     let (closed, action) = crate::ui_kit::Confirm::new(egui::Id::unique("sc_scan_radius"), "fillet", title).show(ctx, true, |ui| {
         crate::ui_kit::text(ui, &message, crate::ui_kit::Text::Report("radius", false));
     });
-    if !closed {
+    // OK and Cancel answer it without `closed`, which is only the close button and Escape.
+    if action == crate::ui_kit::Action::None && !closed {
         return;
     }
     set(Some(State::Picking(Some(Round { answered: true, ..r.clone() }))));
-    if action == crate::ui_kit::Action::Ok {
-        let _ = app.run("scan.radius", json!({"scan": r.scan, "at": r.at, "body": body, "apply": true}));
+    if action == crate::ui_kit::Action::Ok
+        && let Err(e) = app.run("scan.radius", json!({"scan": r.scan, "at": r.at, "body": body, "apply": true}))
+    {
+        app.set_status(e, true);
     }
 }
 
@@ -151,6 +151,36 @@ mod tests {
             Round { scan: "Scan".into(), at: [0.0; 3], radius: 3.0, convex: true, swept: 90.0, middle: Vec3::ZERO, edge_on: None, answered: false };
         set(Some(State::Picking(Some(r.clone()))));
         assert!(label(&h.app, &r).contains('3'));
+        assert!(!label(&h.app, &r).contains('²'), "a radius is a length: {}", label(&h.app, &r));
         set(None);
+    }
+
+    /// OK on the offer fillets the model's edge along the round (OK answers without `closed`).
+    #[test]
+    fn ok_fillets_the_edge_along_the_round() {
+        let mut h = crate::scenario::Harness::new();
+        let dir = std::env::temp_dir().join(format!("solidcraft-scan-radius-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stl = dir.join("rounded.stl");
+        h.app.run("solid.box", json!({"length": 60, "width": 40, "height": 20, "body_name": "Rounded"})).unwrap();
+        h.app.run("solid.fillet", json!({"edges": [[30, 0, 20]], "radius": 5, "body": "Rounded"})).unwrap();
+        h.app.run("file.export_stl", json!({"path": stl, "bodies": ["Rounded"], "quality": "finest"})).unwrap();
+        h.app.run("edit.undo", json!({})).unwrap();
+        h.app.run("edit.undo", json!({})).unwrap();
+        h.app.run("solid.box", json!({"length": 60, "width": 40, "height": 20, "body_name": "Part"})).unwrap();
+        let scan = h.app.run("file.insert_mesh", json!({"path": stl})).unwrap()["bodies"][0].as_str().unwrap().to_owned();
+        let c = 5.0 * std::f64::consts::FRAC_PI_4.cos();
+        let at = [30.0, 5.0 - c, 15.0 + c];
+        let middle = Vec3::new(at[0], at[1], at[2]);
+        let r = Round { scan, at, radius: 5.0, convex: true, swept: 90.0, middle, edge_on: Some("Part".into()), answered: false };
+        set(Some(State::Picking(Some(r))));
+        h.frames(3);
+        let ok = crate::scenario::handle_at("dialog:ok").expect("the fillet is offered");
+        h.call("ui.click", json!({"x": ok.x, "y": ok.y}));
+        h.frames(3);
+        let volume = h.app.session.model.state().body("Part").and_then(|b| b.body.volume_at(0.01));
+        set(None);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(volume.is_some_and(|v| v < 48_000.0 - 100.0), "Part filleted: {volume:?}");
     }
 }
