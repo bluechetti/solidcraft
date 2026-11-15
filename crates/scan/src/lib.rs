@@ -70,6 +70,7 @@ pub mod holes;
 mod hull;
 pub mod inserts;
 pub mod loft;
+pub mod markers;
 pub mod merge;
 pub mod mirror_fill;
 pub mod net;

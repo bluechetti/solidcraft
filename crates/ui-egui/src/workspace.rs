@@ -451,6 +451,8 @@ pub const SECTIONS: &[Section] = &[
             "scan.select",
             "scan.remove_floating",
             "scan.fill_holes",
+            // Reference spheres off the scan, the holes they leave closed.
+            "scan.remove_markers",
             "scan.repair",
             "scan.reduce",
             "scan.denoise",

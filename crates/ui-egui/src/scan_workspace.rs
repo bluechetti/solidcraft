@@ -141,6 +141,7 @@ mod tests {
             "scan.edit_surface",
             "scan.curve_on_scan",
             "scan.remove_floating",
+            "scan.remove_markers",
             "scan.fill_holes",
             "scan.reduce",
             "scan.repair",

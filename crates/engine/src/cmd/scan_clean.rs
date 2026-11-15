@@ -23,7 +23,9 @@ use solidcraft_scan::place::Rigid;
 
 use super::{length, mesh_name};
 use crate::params::bad;
-use crate::schema::scan::{ScanCleanUpResult, ScanCleanUpStep, ScanFloatingResult, ScanHolesResult, ScanReduceResult, ScanRepairResult};
+use crate::schema::scan::{
+    ScanCleanUpResult, ScanCleanUpStep, ScanFloatingResult, ScanHolesResult, ScanMarkersResult, ScanReduceResult, ScanRepairResult,
+};
 use crate::{EngineError, Result, Session};
 
 /// The default share of the largest piece below which a piece floats.
@@ -251,6 +253,60 @@ pub(super) fn fill_holes(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "the step did something else"));
     };
     let reply = ScanHolesResult { body: name, holes, filled, failed, larger, added_triangles, unfillable_edges, feature, param_warnings: Vec::new() };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+pub(super) fn remove_markers(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.remove_markers";
+    let name = mesh_name(s, p, cmd)?;
+    let fair = crate::params::bool_(p, "fair").unwrap_or(true);
+    let at = p.get("at").filter(|v| !v.is_null());
+    let given = points(p, "centres", cmd)?;
+    let (radius, centres) = match (at, given.is_empty()) {
+        (Some(_), false) => return Err(bad(cmd, "give `at` (a marker to find the others from) or `centres` with `radius`, not both")),
+        (None, true) => return Err(bad(cmd, "click a marker (`at`), or give `centres` with `radius`")),
+        (None, false) => {
+            if crate::params::expr(p, "radius").is_none() {
+                return Err(bad(cmd, "`centres` need the markers' `radius`"));
+            }
+            (length(s, p, "radius", 1.0, cmd)?, given)
+        }
+        (Some(v), true) => {
+            let q = crate::params::vec3(v).filter(|q| q.is_finite()).ok_or_else(|| bad(cmd, "`at` is a place [x, y, z] of numbers"))?;
+            let tolerance = match crate::params::expr(p, "tolerance") {
+                Some(_) => Some(length(s, p, "tolerance", 0.1, cmd)?),
+                None => None,
+            };
+            let found = {
+                let state = s.model.state();
+                let scan = state.body(&name).ok_or_else(|| bad(cmd, format!("no body `{name}`")))?;
+                let (positions, triangles) = scan.body.triangle_mesh().ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+                solidcraft_scan::markers::find(&Scan::new(positions, triangles), q, tolerance).map_err(|e| bad(cmd, e.to_string()))?
+            };
+            (found.radius, found.centres.iter().map(|c| [c.x, c.y, c.z]).collect())
+        }
+    };
+    let mut reply = ScanMarkersResult {
+        body: name.clone(),
+        radius,
+        centres: centres.clone(),
+        removed_triangles: None,
+        filled: None,
+        failed: None,
+        triangles: None,
+        feature: None,
+        param_warnings: Vec::new(),
+    };
+    if crate::params::bool_(p, "preview") == Some(true) {
+        return serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()));
+    }
+    let (done, feature) = apply(s, p, &name, CleanStep::RemoveMarkers { radius, centres, fair }, cmd)?;
+    let Report::Markers { removed_triangles, filled, failed, .. } = done.report else { return Err(bad(cmd, "the step did something else")) };
+    reply.removed_triangles = Some(removed_triangles);
+    reply.filled = Some(filled);
+    reply.failed = Some(failed);
+    reply.triangles = Some(done.triangles());
+    reply.feature = Some(feature);
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 

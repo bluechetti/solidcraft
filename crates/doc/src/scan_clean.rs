@@ -1,5 +1,5 @@
 //! Cleaning a scan as a step of the timeline: a Scan Clean feature keeps one clean tool's settings
-//! (Remove Floating Pieces, Fill Holes, Reduce Mesh, Repair Mesh, Denoise, Remesh), never the
+//! (Remove Floating Pieces, Fill Holes, Reduce Mesh, Repair Mesh, Denoise, Remesh, Remove Markers), never the
 //! triangles it makes. The scan itself is kept once, in the Mesh Import that brought it in; each
 //! step reads the scan as the steps before it left it and makes it again, so the cleaned scan is
 //! worked out when the design opens and again from a step that is edited, suppressed or deleted.
@@ -67,6 +67,9 @@ pub enum CleanStep {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         strength: Option<f64>,
     },
+    /// Remove Markers: the reference spheres of `radius` at `centres` (found when the step was
+    /// made) taken off, and the holes they leave closed, shaped to the surface when `fair`.
+    RemoveMarkers { radius: f64, centres: Vec<[f64; 3]>, fair: bool },
     /// Remesh: on a grid of `cell` (the scan's typical edge when none), fusing in the scans
     /// `with`; `sharp` keeps edges and corners sharp.
     Remesh {
@@ -88,6 +91,7 @@ impl CleanStep {
             CleanStep::Repair { .. } => "scan.repair",
             CleanStep::Denoise { .. } => "scan.denoise",
             CleanStep::Remesh { .. } => "scan.remesh",
+            CleanStep::RemoveMarkers { .. } => "scan.remove_markers",
         }
     }
 
@@ -100,6 +104,7 @@ impl CleanStep {
             CleanStep::Repair { .. } => "Repair Mesh",
             CleanStep::Denoise { .. } => "Denoise",
             CleanStep::Remesh { .. } => "Remesh",
+            CleanStep::RemoveMarkers { .. } => "Remove Markers",
         }
     }
 
@@ -112,6 +117,7 @@ impl CleanStep {
             CleanStep::Repair { .. } => "RepairMesh",
             CleanStep::Denoise { .. } => "Denoise",
             CleanStep::Remesh { .. } => "Remesh",
+            CleanStep::RemoveMarkers { .. } => "RemoveMarkers",
         }
     }
 
@@ -161,6 +167,7 @@ impl CleanStep {
                 }
                 p
             }
+            CleanStep::RemoveMarkers { radius, centres, fair } => json!({ "radius": radius, "centres": centres, "fair": fair }),
         }
     }
 
@@ -200,6 +207,10 @@ impl CleanStep {
             }
             CleanStep::Remesh { cell: Some(c), .. } if !(c.is_finite() && *c > 0.0) => bad("needs a cell that is a length above 0"),
             CleanStep::Remesh { with, .. } if with.len() > MAX_WITH => bad("fuses in too many scans"),
+            CleanStep::RemoveMarkers { radius, .. } if !(radius.is_finite() && *radius > 0.0) => bad("needs a radius that is a length above 0"),
+            CleanStep::RemoveMarkers { centres, .. } if centres.is_empty() || !points_ok(centres) => {
+                bad("takes 1 to 10000 centres of three finite numbers")
+            }
             _ => Ok(()),
         }
     }
@@ -214,6 +225,7 @@ pub enum Report {
     Repair { duplicates: usize, non_manifold: usize, slivers: usize, crossings: usize, crossing_faces: usize, refilled: usize },
     Denoise { strength: f64, suggested: Option<f64>, noise: f64, roughness: f64, rms_moved: f64, max_moved: f64 },
     Remesh { before: usize, cell: f64, new_rms: f64, new_max: f64, scan_rms: f64, scan_p95: f64, uncovered: f64 },
+    Markers { markers: usize, removed_triangles: usize, filled: usize, failed: usize },
 }
 
 /// Why a step made nothing.
@@ -402,6 +414,13 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
             let report =
                 Report::Reduce { before, collapses: reduced.collapses, stopped: reduced.stopped.name(), largest_error: reduced.largest_error };
             made(&reduced.positions, &reduced.triangles, report)
+        }
+        CleanStep::RemoveMarkers { radius, centres, fair } => {
+            let at: Vec<Vec3> = centres.iter().map(|c| Vec3::new(c[0], c[1], c[2])).collect();
+            let done = solidcraft_scan::markers::remove(&on, &at, *radius, *fair)
+                .ok_or_else(|| Refused::Nothing("no marker is on the scan any more: nothing to take off".into()))?;
+            let report = Report::Markers { markers: at.len(), removed_triangles: done.removed, filled: done.filled, failed: done.failed };
+            made(&done.positions, &done.triangles, report)
         }
         CleanStep::Repair { crossings } => {
             let fixed = repair::repair(&on, *crossings);

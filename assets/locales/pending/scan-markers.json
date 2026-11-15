@@ -1,0 +1,50 @@
+{
+  "en": {
+    "cmd.scan_remove_markers": "Remove Markers",
+    "help.scan.remove_markers": "Takes the reference markers off a scan: click one, and every sphere of its size is found and taken off, the holes closed.",
+    "ui.scan_markers_pick": "Click a marker (a reference sphere) on the scan",
+    "ui.scan_markers_found": "{count} markers of Ø{diameter} found. OK takes them off and closes the holes."
+  },
+  "ar": {
+    "cmd.scan_remove_markers": "إزالة العلامات",
+    "help.scan.remove_markers": "يزيل علامات المرجع عن المسح: انقر على واحدة فتُعثر كل كرة بحجمها وتُزال وتُسد الثقوب.",
+    "ui.scan_markers_pick": "انقر على علامة (كرة مرجعية) على المسح",
+    "ui.scan_markers_found": "وُجدت {count} علامات قطرها {diameter}. موافق يزيلها ويسد الثقوب."
+  },
+  "de": {
+    "cmd.scan_remove_markers": "Marker entfernen",
+    "help.scan.remove_markers": "Entfernt die Referenzmarker vom Scan: einen anklicken, und jede Kugel seiner Größe wird gefunden und entfernt, die Löcher geschlossen.",
+    "ui.scan_markers_pick": "Einen Marker (eine Referenzkugel) auf dem Scan anklicken",
+    "ui.scan_markers_found": "{count} Marker mit Ø{diameter} gefunden. OK entfernt sie und schließt die Löcher."
+  },
+  "he": {
+    "cmd.scan_remove_markers": "הסרת סמנים",
+    "help.scan.remove_markers": "מסיר את סמני הייחוס מהסריקה: לחצו על אחד, וכל כדור בגודלו נמצא ומוסר, והחורים נסגרים.",
+    "ui.scan_markers_pick": "לחצו על סמן (כדור ייחוס) בסריקה",
+    "ui.scan_markers_found": "נמצאו {count} סמנים בקוטר {diameter}. 'אישור' מסיר אותם וסוגר את החורים."
+  },
+  "ja": {
+    "cmd.scan_remove_markers": "マーカーを除去",
+    "help.scan.remove_markers": "スキャンから参照マーカーを除去します。1つをクリックすると同じ大きさの球がすべて見つかって除去され、穴が閉じられます。",
+    "ui.scan_markers_pick": "スキャン上のマーカー (参照球) をクリック",
+    "ui.scan_markers_found": "直径 {diameter} のマーカーが {count} 個見つかりました。OK で除去して穴を閉じます。"
+  },
+  "ko": {
+    "cmd.scan_remove_markers": "마커 제거",
+    "help.scan.remove_markers": "스캔에서 기준 마커를 제거합니다. 하나를 클릭하면 같은 크기의 구를 모두 찾아 제거하고 구멍을 메웁니다.",
+    "ui.scan_markers_pick": "스캔에서 마커(기준 구)를 클릭하세요",
+    "ui.scan_markers_found": "지름 {diameter}의 마커 {count}개를 찾았습니다. 확인을 누르면 제거하고 구멍을 메웁니다."
+  },
+  "vi": {
+    "cmd.scan_remove_markers": "Gỡ dấu mốc",
+    "help.scan.remove_markers": "Gỡ các dấu mốc tham chiếu khỏi bản quét: bấm vào một cái, mọi quả cầu cùng cỡ được tìm và gỡ, các lỗ được vá.",
+    "ui.scan_markers_pick": "Bấm vào một dấu mốc (quả cầu tham chiếu) trên bản quét",
+    "ui.scan_markers_found": "Tìm thấy {count} dấu mốc Ø{diameter}. OK gỡ chúng và vá các lỗ."
+  },
+  "zh": {
+    "cmd.scan_remove_markers": "去除标记点",
+    "help.scan.remove_markers": "去除扫描上的参考标记点：单击一个，所有同样大小的球都会被找到并去除，孔会被补上。",
+    "ui.scan_markers_pick": "在扫描上单击一个标记点（参考球）",
+    "ui.scan_markers_found": "找到 {count} 个直径 {diameter} 的标记点。确定将去除它们并补上孔。"
+  }
+}

@@ -6544,6 +6544,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         }
     }
+    // Remove Markers: a click on the scan finds the markers like the one under it.
+    if crate::scan_markers::picking(app)
+        && resp.clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        crate::scan_markers::click(app, &proj, p);
+    }
     // Scan Deviation: the distance under the pointer; Pin Deviation: a click on the scan labels it.
     crate::scan_deviation::track(app, &proj, hover.filter(|_| !navigating));
     if crate::scan_deviation::pinning(app)
@@ -6658,6 +6665,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::scan_deviation::draw(app, &painter, &proj);
     crate::section_scan::draw(app, &painter, &proj);
     crate::hole_table::draw(app, &painter, &proj);
+    crate::scan_markers::draw(app, &painter, &proj);
     crate::dim_view::show(app, ui, &painter, &proj);
     crate::sketch_text_handles::show(app, ui, &painter, &proj, hover);
     crate::sketch3d::show(app, &painter, &proj);
@@ -7347,6 +7355,7 @@ fn takes_scan_clicks(app: &SolveApp) -> bool {
         || crate::dialogs_scan_sections::choosing(app)
         || crate::dialogs_scan_clean::choosing_holes(app)
         || crate::scan_deviation::pinning(app)
+        || crate::scan_markers::picking(app)
 }
 
 /// What a box selects: sketch entities while sketching, otherwise what the open

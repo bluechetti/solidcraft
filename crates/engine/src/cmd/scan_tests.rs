@@ -2625,3 +2625,85 @@ fn planes_and_curves_made_from_a_scan_move_with_it() {
     run(&mut s, "edit.undo", json!({}));
     assert!((plane_at(&s) - plane0).len() < 1e-12 && (first(&s) - scan0).len() < 1e-12, "one undo puts all back");
 }
+
+/// An ASCII STL of a flat floor 100 mm square on z = 0 with balls of the radii given sunk half into
+/// it: a scan with reference markers on it (and, for a larger radius, a ball that is not one).
+fn floor_with_balls_stl(balls: &[(Vec3, f64)]) -> String {
+    let mut stl = String::from("solid floor\n");
+    let mut facet = |a: Vec3, b: Vec3, c: Vec3| {
+        stl += &format!(
+            "facet normal 0 0 0\nouter loop\nvertex {} {} {}\nvertex {} {} {}\nvertex {} {} {}\nendloop\nendfacet\n",
+            a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z
+        );
+    };
+    let n = 60;
+    let at = |i: usize, j: usize| Vec3::new(100.0 * i as f64 / n as f64, 100.0 * j as f64 / n as f64, 0.0);
+    for i in 0..n {
+        for j in 0..n {
+            facet(at(i, j), at(i + 1, j), at(i + 1, j + 1));
+            facet(at(i, j), at(i + 1, j + 1), at(i, j + 1));
+        }
+    }
+    for &(c, r) in balls {
+        let (rings, segments) = (20, 40);
+        let p = |i: usize, j: usize| {
+            let (phi, th) = (std::f64::consts::PI * i as f64 / rings as f64, std::f64::consts::TAU * j as f64 / segments as f64);
+            c + Vec3::new(phi.sin() * th.cos(), phi.sin() * th.sin(), phi.cos()) * r
+        };
+        for i in 0..rings {
+            for j in 0..segments {
+                facet(p(i, j), p(i + 1, j), p(i + 1, j + 1));
+                facet(p(i, j), p(i + 1, j + 1), p(i, j + 1));
+            }
+        }
+    }
+    stl + "endsolid floor\n"
+}
+
+/// Remove Markers: a click on one marker finds the other two of its radius (not the larger ball),
+/// the preview changes nothing, OK takes them off and closes the floor as one Scan Clean step,
+/// and undo brings them back.
+#[test]
+fn remove_markers_finds_them_all_from_one_and_keeps_a_step() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-markers-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("markers.stl");
+    let markers = [Vec3::new(20.0, 20.0, 0.0), Vec3::new(70.0, 30.0, 0.0), Vec3::new(40.0, 75.0, 0.0)];
+    let mut balls: Vec<(Vec3, f64)> = markers.iter().map(|&c| (c, 3.0)).collect();
+    balls.push((Vec3::new(80.0, 80.0, 0.0), 7.0));
+    std::fs::write(&path, floor_with_balls_stl(&balls)).unwrap();
+    let mut s = Session::default();
+    let scan = run(&mut s, "file.insert_mesh", json!({"path": path}))["created_bodies"][0].as_str().unwrap().to_owned();
+    let triangles = |s: &Session| s.model.state().body(&scan).and_then(|b| b.body.triangle_mesh().map(|(_, t)| t.len())).unwrap();
+    let before = triangles(&s);
+    let features = s.doc.features.len();
+
+    let preview = run(&mut s, "scan.remove_markers", json!({"body": scan, "at": [20, 20, 3], "preview": true}));
+    assert!((preview["radius"].as_f64().unwrap() - 3.0).abs() < 0.05, "{preview}");
+    assert_eq!(preview["centres"].as_array().unwrap().len(), 3, "the three markers, not the larger ball: {preview}");
+    assert_eq!((triangles(&s), s.doc.features.len()), (before, features), "a preview changes nothing");
+
+    let done = run(&mut s, "scan.remove_markers", json!({"body": scan, "at": [20, 20, 3]}));
+    assert_eq!((done["filled"].as_u64(), done["failed"].as_u64()), (Some(3), Some(0)), "{done}");
+    assert_eq!(s.doc.features.len(), features + 1, "one Scan Clean step");
+    let state = s.model.state();
+    let (positions, _) = state.body(&scan).and_then(|b| b.body.triangle_mesh()).unwrap();
+    for m in markers {
+        assert!(positions.iter().all(|p| p.dist(m) > 3.0 * 1.15 - 1e-6 || p.z.abs() < 1e-6), "only the floor is left near {m:?}");
+    }
+    assert!(positions.iter().any(|p| p.dist(Vec3::new(80.0, 80.0, 7.0)) < 1e-6), "the larger ball stays");
+    drop(state);
+
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!((triangles(&s), s.doc.features.len()), (before, features), "undone");
+
+    let err = s.execute("scan.remove_markers", &json!({"body": scan, "centres": [[20, 20, 0]]})).unwrap_err().to_string();
+    assert!(err.contains("radius"), "{err}");
+    let err = s.execute("scan.remove_markers", &json!({"body": scan})).unwrap_err().to_string();
+    assert!(err.contains("click a marker"), "{err}");
+    let err = s.execute("scan.remove_markers", &json!({"body": scan, "at": [50, 50, 0]})).unwrap_err().to_string();
+    assert!(err.contains("not a sphere"), "the floor: {err}");
+    let given = run(&mut s, "scan.remove_markers", json!({"body": scan, "centres": [[70, 30, 0]], "radius": 3}));
+    assert_eq!(given["filled"], 1, "a marker given by its centre: {given}");
+}

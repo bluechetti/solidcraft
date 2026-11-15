@@ -292,6 +292,10 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
     }
     // Add Check's button turns its click tool on or off; Measure Checks' takes its results away
     // again while they are shown.
+    // Remove Markers' button asks for a click on a marker, or ends asking.
+    if id == "scan.remove_markers" {
+        return crate::scan_markers::toggle(app);
+    }
     // Pin Deviation's button turns pinning on (showing the map if it is not) or off again.
     if id == "scan.deviation_pin" {
         return crate::scan_deviation::toggle_pinning(app);

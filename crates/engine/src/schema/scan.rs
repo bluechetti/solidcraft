@@ -398,6 +398,65 @@ pub struct ScanDeviationPin {
     pub value: f64,
 }
 
+/// Take the reference markers (small spheres) off a scan: the one at `at` fitted and every other
+/// of its radius found, or the ones given; the holes they leave closed. Kept as a Scan Clean step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanMarkersParams {
+    /// The scan (mesh body). Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// A place on one marker: it is fitted there, and every other marker of its radius found.
+    #[serde(default)]
+    pub at: Option<Point3>,
+    /// The markers' centres, instead of `at` (with `radius`).
+    #[serde(default)]
+    pub centres: Option<Vec<Point3>>,
+    /// The markers' radius, with `centres`.
+    #[serde(default)]
+    pub radius: Option<LengthExpr>,
+    /// How far a point may be off a marker's sphere and still be on it. Default: from the fit.
+    #[serde(default)]
+    pub tolerance: Option<LengthExpr>,
+    /// Shape each patch to carry the surface across. Default: true.
+    #[serde(default)]
+    pub fair: Option<bool>,
+    /// True finds the markers and changes nothing. Default: false.
+    #[serde(default)]
+    pub preview: Option<bool>,
+    /// Write the scan back into its Insert Mesh feature instead of adding a step.
+    #[serde(default)]
+    pub in_place: Option<bool>,
+    /// The step's name.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// What `scan.remove_markers` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanMarkersResult {
+    pub body: String,
+    /// The markers' radius, mm, and their centres.
+    pub radius: f64,
+    pub centres: Vec<[f64; 3]>,
+    /// Triangles taken off, holes closed and holes that could not be (none on a preview).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_triangles: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filled: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed: Option<usize>,
+    /// The scan's triangles after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triangles: Option<usize>,
+    /// The Scan Clean step (or Insert Mesh feature, `in_place`) that keeps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<u64>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// What `scan.deviation` returns.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanDeviationResult {
