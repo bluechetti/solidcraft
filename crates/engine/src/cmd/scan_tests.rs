@@ -396,6 +396,30 @@ fn a_fit_uses_the_pick_and_refuses_a_wrong_shape() {
     assert!(err.contains("not that shape"), "{err}");
 }
 
+/// Every way of choosing a region fits: what is selected on the scan (brushed), a kept selection,
+/// the scan round a point within a radius; a point alone still grows the region, whatever is
+/// selected. Fit Surface fits what is selected too, and trims to it.
+#[test]
+fn a_fit_takes_the_region_chosen_by_hand() {
+    let (mut s, body) = session_with_a_plate_and_boss("fit-by-hand");
+    run(&mut s, "scan.select", json!({"body": body, "brush": {"points": [[40, 20, 15]], "radius": 4}}));
+    let brushed = run(&mut s, "scan.fit_cylinder", json!({"keep": false}));
+    assert!((brushed["cylinder"]["diameter"].as_f64().unwrap() - 20.0).abs() < 0.05, "{brushed}");
+    assert!(brushed["area"].as_f64().unwrap() < 0.5 * std::f64::consts::PI * 20.0 * 15.0, "only what was brushed: {brushed}");
+    run(&mut s, "scan.keep_selection", json!({"name": "Wall"}));
+    let kept = run(&mut s, "scan.fit_cylinder", json!({"saved": "Wall", "keep": false}));
+    assert_eq!(kept["triangles"], brushed["triangles"], "{kept}");
+    // A point given grows from it, whatever is selected.
+    let grown = run(&mut s, "scan.fit_plane", json!({"point": [8, 8, 8], "keep": false}));
+    assert!((grown["area"].as_f64().unwrap() - 2400.0).abs() < 1.0, "the whole top: {grown}");
+    let round = run(&mut s, "scan.fit_plane", json!({"point": [8, 8, 8], "radius": 5, "keep": false}));
+    assert!(round["plane"]["normal"][2].as_f64().unwrap().abs() > 1.0 - 1e-6, "{round}");
+    assert!(round["area"].as_f64().unwrap() < 200.0, "only round the point: {round}");
+    run(&mut s, "scan.select", json!({"body": body, "brush": {"points": [[12, 12, 8]], "radius": 10}}));
+    let surface = run(&mut s, "scan.fit_surface", json!({"controls": 4, "trim": true}));
+    assert!(surface["rms"].as_f64().unwrap() < 0.01 && surface.get("trimmed").is_some(), "{surface}");
+}
+
 /// The plate scan measured against a box built to the plate alone: the plate's points are on it,
 /// the boss's are too far to count; the map stands until the design changes, and `show: false`
 /// takes it away.

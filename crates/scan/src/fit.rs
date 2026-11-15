@@ -232,6 +232,23 @@ pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Resu
     summarize(scan, region, shape)
 }
 
+/// Fits a `kind` of shape to all of `region` (triangles chosen by hand: selected, kept, or round
+/// a click), not grown from a click: the region is taken as it is, and how far it lies off the
+/// shape is in the fit's distances.
+pub fn fit_region(scan: &Scan, region: &[usize], kind: Kind) -> Result<Fitted, FitError> {
+    let mut region: Vec<usize> = region.iter().copied().filter(|&t| scan.corners(t).is_some()).collect();
+    region.sort_unstable();
+    region.dedup();
+    if region.len() < 3 {
+        return Err(FitError::NotOnTheScan);
+    }
+    let shape = solve_with(scan, &region, kind, SOLVE_LIMIT).ok_or(FitError::NoFit)?;
+    if flat_cylinder(scan, &region, &shape, 0.0) {
+        return Err(FitError::NoFit);
+    }
+    summarize(scan, region, shape)
+}
+
 /// The triangles reached from `seed` across edges whose middles are within `reach` of `at`: the
 /// part of the scan round a point.
 pub fn around(scan: &Scan, seed: usize, at: Vec3, reach: f64) -> Vec<usize> {

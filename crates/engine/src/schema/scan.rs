@@ -212,9 +212,20 @@ pub struct ScanFitParams {
     /// else the design's only mesh body.
     #[serde(default)]
     pub body: Option<String>,
-    /// A point on the scan, in mm, where the region grows from. Default: the point picked on the scan.
+    /// A point on the scan, in mm, where the region grows from. Default: what is selected on the
+    /// scan (fitted as it is), else the point picked on the scan.
     #[serde(default)]
     pub point: Option<Point3>,
+    /// With the point, the region is the scan within this length of it, fitted as it is instead of
+    /// grown.
+    #[serde(default)]
+    pub radius: Option<LengthExpr>,
+    /// The region chosen by hand instead of grown from the point: the scan's triangle numbers.
+    #[serde(default)]
+    pub triangles: Option<Vec<u64>>,
+    /// The region chosen by hand: a kept selection (Keep Selection).
+    #[serde(default)]
+    pub saved: Option<String>,
     /// How far a triangle may be from the shape and still belong to it, a length above 0. Default:
     /// 0.15 % of the scan's size.
     #[serde(default)]
@@ -550,9 +561,16 @@ pub struct ScanFitSurfaceParams {
     /// else the design's only mesh body.
     #[serde(default)]
     pub body: Option<String>,
-    /// A point on the scan, in mm, the middle of the area to fit. Default: the point picked on it.
+    /// A point on the scan, in mm, the middle of the area to fit. Default: what is selected on
+    /// the scan (fitted as it is), else the point picked on it.
     #[serde(default)]
     pub point: Option<Point3>,
+    /// The region chosen by hand instead of grown from the point: the scan's triangle numbers.
+    #[serde(default)]
+    pub triangles: Option<Vec<u64>>,
+    /// The region chosen by hand: a kept selection (Keep Selection).
+    #[serde(default)]
+    pub saved: Option<String>,
     /// How far from the point the area reaches, a length above 0. Default: a tenth of the scan's
     /// size.
     #[serde(default)]

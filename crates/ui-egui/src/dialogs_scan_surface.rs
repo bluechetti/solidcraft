@@ -2,8 +2,10 @@
 //! click is marked on the scan and the surface fitted to it drawn over the picture as lines across
 //! it, with how close it comes, as the radius, the detail and the smoothing change. The detail is
 //! automatic by default: as many control points as bring the surface within half the Scan
-//! tolerance (the scan's own, shared with the other scan tools). OK keeps it, trimmed to the
-//! area's outline unless Trim to the area is unticked.
+//! tolerance (the scan's own, shared with the other scan tools). The Area is round the click, the
+//! whole face there, or what is selected on the scan (fitted as it is, with no click; the dialog
+//! opens on that when part of a scan is selected first). OK keeps it, trimmed to the area's
+//! outline unless Trim to the area is unticked.
 //!
 //! Edit Surface (`scan.edit_surface`, after QuickSurface's): a surface Fit Surface or New Free Form
 //! made, one face or a Free Form's network of faces sharing whole sides, edited in the view.
@@ -381,8 +383,11 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::Se
         "scan.fit_surface" => {
             // The radius the scan's size gives, shown from the start (the selected or only scan's).
             let radius = solidcraft_engine::cmd::scan::default_surface_radius(&app.session, None).unwrap_or(0.0);
+            // Part of a scan selected first: that part is fitted.
+            let selected = solidcraft_engine::cmd::scan::select::selected(&app.session).is_some_and(|k| k.count > 0);
+            let area = if selected { AREA_SELECTED } else { AREA_ROUND };
             Some((
-                Kind::ScanFitSurface(FitSurface { radius, ..FitSurface::default() }),
+                Kind::ScanFitSurface(FitSurface { radius, area, ..FitSurface::default() }),
                 vec![crate::selection::SelInput::new("Point", crate::selection::FACES, false)],
             ))
         }
@@ -400,7 +405,8 @@ thread_local! {
 /// The Fit Surface dialog's values (the point clicked is its selection input).
 #[derive(Clone, Debug)]
 pub struct FitSurface {
-    /// [`AREA_ROUND`] (within `radius` of the point) or [`AREA_FACE`] (the whole face round it).
+    /// [`AREA_ROUND`] (within `radius` of the point), [`AREA_FACE`] (the whole face round it) or
+    /// [`AREA_SELECTED`] (what is selected on the scan, fitted as it is).
     pub area: usize,
     /// The radius of the area round the point, in mm; 0 until the scan's own default is known.
     pub radius: f64,
@@ -421,6 +427,7 @@ pub struct FitSurface {
 /// surface turns away).
 pub const AREA_ROUND: usize = 0;
 pub const AREA_FACE: usize = 1;
+pub const AREA_SELECTED: usize = 2;
 
 /// Fit Surface's detail: chosen for the tolerance, or the control points set.
 pub const DETAIL_AUTO: usize = 0;
@@ -473,7 +480,9 @@ fn clicked(inputs: &[crate::selection::SelInput]) -> Option<(String, Vec3)> {
 
 /// Fit again when the point, the settings or the design have changed.
 fn fit(app: &SolveApp, k: &mut FitSurface, inputs: &[crate::selection::SelInput]) {
-    let Some((body, point)) = clicked(inputs) else {
+    let selection = solidcraft_engine::cmd::scan::select::selected(&app.session).filter(|s| s.count > 0);
+    let found = if k.area == AREA_SELECTED { selection.as_ref().map(|s| (s.scan.clone(), Vec3::ZERO)) } else { clicked(inputs) };
+    let Some((body, point)) = found else {
         k.shown = None;
         return;
     };
@@ -484,31 +493,33 @@ fn fit(app: &SolveApp, k: &mut FitSurface, inputs: &[crate::selection::SelInput]
     if !(k.within > 0.0) {
         k.within = crate::scan_fidelity::effective(app, Some(&body), k.tolerance);
     }
-    let key = (
-        [point.x.to_bits(), point.y.to_bits(), point.z.to_bits()],
-        k.reach().to_bits(),
-        k.asked(),
-        k.smoothing.to_bits(),
-        k.within.to_bits(),
-        app.session.revision,
-    );
+    // What is selected stands in the key by its count and first triangle (it is not in the revision).
+    let picked = if k.area == AREA_SELECTED {
+        selection.as_ref().map_or([0; 3], |s| [s.count as u64, s.selected.iter().position(|on| *on).unwrap_or(0) as u64, u64::MAX])
+    } else {
+        [point.x.to_bits(), point.y.to_bits(), point.z.to_bits()]
+    };
+    let key = (picked, k.reach().to_bits(), k.asked(), k.smoothing.to_bits(), k.within.to_bits(), app.session.revision);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         return;
     }
-    let result = solidcraft_engine::cmd::scan::surface_preview(&app.session, Some(&body), point, k.reach(), k.asked(), k.smoothing, k.within)
-        .map_err(|e| e.to_string())
-        .map(|found| {
-            let rgb = solidcraft_theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
-            let mut dots = Vec::with_capacity(found.marked.len() * crate::scan_dots::DOT_SIZE);
-            for at in &found.marked {
-                crate::scan_dots::cloud_dot(&mut dots, &crate::scan_dots::Dot { at: *at, rgb, ..crate::scan_dots::Dot::default() });
-            }
-            let version = FIT_VERSION.with(|v| {
-                v.set(v.get() + 1);
-                v.get()
-            });
-            (found, version, Arc::new(dots))
+    let preview = if k.area == AREA_SELECTED {
+        solidcraft_engine::cmd::scan::surface_preview_selected(&app.session, k.asked(), k.smoothing, k.within)
+    } else {
+        solidcraft_engine::cmd::scan::surface_preview(&app.session, Some(&body), point, k.reach(), k.asked(), k.smoothing, k.within)
+    };
+    let result = preview.map_err(|e| e.to_string()).map(|found| {
+        let rgb = solidcraft_theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
+        let mut dots = Vec::with_capacity(found.marked.len() * crate::scan_dots::DOT_SIZE);
+        for at in &found.marked {
+            crate::scan_dots::cloud_dot(&mut dots, &crate::scan_dots::Dot { at: *at, rgb, ..crate::scan_dots::Dot::default() });
+        }
+        let version = FIT_VERSION.with(|v| {
+            v.set(v.get() + 1);
+            v.get()
         });
+        (found, version, Arc::new(dots))
+    });
     k.shown = Some(FitShown { key, result });
 }
 
@@ -562,13 +573,17 @@ pub(crate) fn own_or_set(
 pub fn fit_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitSurface, inputs: &[crate::selection::SelInput]) -> bool {
     fit(app, k, inputs);
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
-    let areas = [tr("ui.scan_fit_area_round"), tr("ui.scan_fit_area_face")];
+    let areas = [tr("ui.scan_fit_area_round"), tr("ui.scan_fit_area_face"), tr("ui.scan_area_selected")];
     choice_row(ui, tr("ui.scan_fit_area"), "scan_fit_area", &mut k.area, &areas);
     if k.area == AREA_ROUND {
         form_row(ui, tr("ui.scan_fit_radius"), |ui| ui_kit::length_field(ui, &mut k.radius, &units, decimals));
         k.radius = k.radius.max(0.0);
     }
-    let scan = clicked(inputs).map(|(body, _)| body);
+    let scan = if k.area == AREA_SELECTED {
+        solidcraft_engine::cmd::scan::select::selected(&app.session).filter(|s| s.count > 0).map(|s| s.scan.clone())
+    } else {
+        clicked(inputs).map(|(body, _)| body)
+    };
     let t = crate::scan_fidelity::row(app, ui, scan.as_deref(), &mut k.tolerance);
     (k.within, k.keep_tolerance) = (t.mm, t.keep);
     let details = [tr("ui.scan_fit_detail_auto"), tr("ui.scan_fit_detail_set")];
@@ -599,27 +614,31 @@ pub fn fit_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitSurface, inputs: &
         None => {}
     }
     form_row(ui, tr("ui.scan_fit_trim"), |ui| crate::dialogs::check(ui, &mut k.trim));
-    ui_kit::text(ui, tr("ui.scan_fit_hint"), ui_kit::Text::Hint("scan_fit_hint"));
+    let hint = if k.area == AREA_SELECTED && scan.is_none() { "ui.scan_area_select_first" } else { "ui.scan_fit_hint" };
+    ui_kit::text(ui, tr(hint), ui_kit::Text::Hint("scan_fit_hint"));
     false
 }
 
 /// What OK runs: the surface fitted round the point clicked.
 pub fn fit_commands(k: &FitSurface, inputs: &[crate::selection::SelInput]) -> Result<Vec<(String, Value)>, String> {
-    let (body, point) = clicked(inputs).ok_or_else(|| tr("ui.scan_fit_hint").to_owned())?;
-    k.shown.as_ref().ok_or("still fitting")?.result.as_ref().map_err(Clone::clone)?;
+    let shown = k.shown.as_ref().ok_or("still fitting")?.result.as_ref().map_err(Clone::clone)?;
     let mut p = json!({
-        "body": body,
-        "point": [point.x, point.y, point.z],
+        "body": shown.0.body,
         "smoothing": k.smoothing,
         "tolerance": format!("{} mm", k.within),
         "trim": k.trim,
     });
+    if k.area != AREA_SELECTED {
+        let (_, point) = clicked(inputs).ok_or_else(|| tr("ui.scan_fit_hint").to_owned())?;
+        p["point"] = json!([point.x, point.y, point.z]);
+    }
     if let Some(n) = k.asked() {
         p["controls"] = json!(n);
     }
+    // What is selected on the scan is fitted when no point is given.
     if k.area == AREA_FACE {
         p["whole_face"] = json!(true);
-    } else {
+    } else if k.area == AREA_ROUND {
         p["radius"] = json!(format!("{} mm", k.radius));
     }
     let mut out: Vec<(String, Value)> = crate::scan_fidelity::keep(k.keep_tolerance.as_ref()).into_iter().collect();

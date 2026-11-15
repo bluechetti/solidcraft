@@ -73,7 +73,30 @@ pub fn fit_surface(scan: &Scan, seed: usize, radius: f64, controls: usize, smoot
     let around = near.iter().filter_map(|&t| scan.corners(t)).fold(Vec3::ZERO, |sum, [a, b, c]| sum + (b - a).cross(c - a));
     let facing = around.normalized().unwrap_or(seed_normal);
     let region = within(scan, &neighbours, seed, pick, radius, Some(facing));
+    fit_on(scan, region, seed_normal, n, smoothing)
+}
 
+/// Fits a surface to all of `region` (triangles chosen by hand: selected or kept), with `controls`
+/// × `controls` control points, as [`fit_surface`] fits the area round a click.
+pub fn fit_surface_region(scan: &Scan, region: &[usize], controls: usize, smoothing: f64) -> Result<SurfaceFit, SurfaceError> {
+    let mut region: Vec<usize> = region.iter().copied().filter(|&t| scan.corners(t).is_some()).collect();
+    region.sort_unstable();
+    region.dedup();
+    // The way the region faces: its triangles' normals weighted by area.
+    let facing = region.iter().filter_map(|&t| scan.corners(t)).fold(Vec3::ZERO, |sum, [a, b, c]| sum + (b - a).cross(c - a));
+    let facing = facing.normalized().ok_or(SurfaceError::NotOnTheScan)?;
+    fit_on(scan, region, facing, controls.clamp(DEGREE + 1, 30), smoothing)
+}
+
+/// [`fit_surface_region`] with as many control points as bring it within `aim` of the scan, as
+/// [`fit_surface_close`] chooses them.
+pub fn fit_surface_region_close(scan: &Scan, region: &[usize], smoothing: f64, aim: f64) -> Result<(SurfaceFit, usize), SurfaceError> {
+    closest(|n| fit_surface_region(scan, region, n, smoothing), aim)
+}
+
+/// The surface fitted to the triangles `region`, facing about `seed_normal`, with `n` × `n`
+/// control points.
+fn fit_on(scan: &Scan, region: Vec<usize>, seed_normal: Vec3, n: usize, smoothing: f64) -> Result<SurfaceFit, SurfaceError> {
     // The region's points (each position once) and its facing: each triangle's normal turned to
     // agree with the seed's, weighted by area.
     let mut seen = vec![false; scan.positions.len()];
@@ -164,9 +187,15 @@ pub(crate) const CLOSE_STEPS: &[usize] = &[6, 8, 11, 15, 20, 25, 30];
 /// longer cut the distance by a quarter (the scan's noise is reached). The fit and its control
 /// points each way.
 pub fn fit_surface_close(scan: &Scan, seed: usize, radius: f64, smoothing: f64, aim: f64) -> Result<(SurfaceFit, usize), SurfaceError> {
+    closest(|n| fit_surface(scan, seed, radius, n, smoothing), aim)
+}
+
+/// The fit `fit` makes with the fewest of [`CLOSE_STEPS`] control points that bring it within
+/// `aim`, or where more no longer cut the distance by a quarter.
+fn closest(fit_with: impl Fn(usize) -> Result<SurfaceFit, SurfaceError>, aim: f64) -> Result<(SurfaceFit, usize), SurfaceError> {
     let mut best: Option<(SurfaceFit, usize)> = None;
     for &n in CLOSE_STEPS {
-        let fit = match fit_surface(scan, seed, radius, n, smoothing) {
+        let fit = match fit_with(n) {
             Ok(fit) => fit,
             // Too few points for more control points: the last that fitted is the closest.
             Err(SurfaceError::TooFew) if best.is_some() => break,

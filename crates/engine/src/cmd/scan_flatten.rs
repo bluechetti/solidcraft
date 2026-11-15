@@ -80,6 +80,22 @@ pub(super) fn region_scan(s: &Session, p: &Value) -> Option<String> {
         .or_else(|| super::select::selected(s).filter(|k| k.count > 0).map(|k| k.scan.clone()))
 }
 
+/// The region chosen by hand, if `p` chose one: its `triangles`, a kept selection (`saved`), with
+/// `radius_too` the scan within `radius` of the point, else (no `point` given) what is selected on
+/// the scan. `None`: the tool finds its region its own way (grown from the point).
+pub(super) fn chosen_region(s: &Session, p: &Value, on: &Mesh, cmd: &str, radius_too: bool) -> Result<Option<Vec<usize>>> {
+    let has = |key: &str| p.get(key).is_some_and(|v| !v.is_null());
+    if has("triangles") || has("saved") || (radius_too && has("radius")) {
+        return region(s, p, on, cmd).map(Some);
+    }
+    if !has("point")
+        && let Some(sel) = super::select::selected(s).filter(|k| k.scan == on.body && k.count > 0)
+    {
+        return Ok(Some(sel.selected.iter().enumerate().filter(|(_, on)| **on).map(|(t, _)| t).collect()));
+    }
+    Ok(None)
+}
+
 /// The region of the scan `p` names: its triangles, a kept selection's (`saved`), what is selected
 /// on the scan, else round the point given or picked: within `radius` of it, else the piece there
 /// (on a piece that wraps round, the part of it facing the way the scan faces there).

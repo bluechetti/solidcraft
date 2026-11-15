@@ -1,6 +1,9 @@
 {
   "en": {
+    "ui.scan_area_grow": "Grow from the click",
     "ui.scan_area_piece": "Whole piece",
+    "ui.scan_area_select_first": "Select part of the scan first (Select on Scan).",
+    "ui.scan_area_selected": "What is selected",
     "ui.scan_fit_more": "More",
     "ui.scan_holes_largest": "Largest hole",
     "ui.scan_limit_none": "None",
@@ -10,7 +13,10 @@
     "ui.scan_template_stands_off": "Stands off by"
   },
   "ar": {
+    "ui.scan_area_grow": "النمو من النقرة",
     "ui.scan_area_piece": "القطعة كاملة",
+    "ui.scan_area_select_first": "حدد جزءًا من المسح أولًا (تحديد على المسح).",
+    "ui.scan_area_selected": "المحدد",
     "ui.scan_fit_more": "المزيد",
     "ui.scan_holes_largest": "أكبر ثقب",
     "ui.scan_limit_none": "بلا حد",
@@ -20,7 +26,10 @@
     "ui.scan_template_stands_off": "يبتعد بمقدار"
   },
   "de": {
+    "ui.scan_area_grow": "Vom Klick aus wachsen",
     "ui.scan_area_piece": "Ganzes Stück",
+    "ui.scan_area_select_first": "Zuerst einen Teil des Scans auswählen (Auf Scan auswählen).",
+    "ui.scan_area_selected": "Die Auswahl",
     "ui.scan_fit_more": "Mehr",
     "ui.scan_holes_largest": "Größtes Loch",
     "ui.scan_limit_none": "Keine",
@@ -30,7 +39,10 @@
     "ui.scan_template_stands_off": "Steht ab um"
   },
   "he": {
+    "ui.scan_area_grow": "גדילה מהלחיצה",
     "ui.scan_area_piece": "החלק כולו",
+    "ui.scan_area_select_first": "קודם בחרו חלק מהסריקה (בחירה על הסריקה).",
+    "ui.scan_area_selected": "מה שנבחר",
     "ui.scan_fit_more": "עוד",
     "ui.scan_holes_largest": "החור הגדול ביותר",
     "ui.scan_limit_none": "ללא",
@@ -40,7 +52,10 @@
     "ui.scan_template_stands_off": "מרוחק ב"
   },
   "ja": {
+    "ui.scan_area_grow": "クリックから広げる",
     "ui.scan_area_piece": "ピース全体",
+    "ui.scan_area_select_first": "先にスキャンの一部を選択してください（スキャン上で選択）。",
+    "ui.scan_area_selected": "選択した部分",
     "ui.scan_fit_more": "詳細設定",
     "ui.scan_holes_largest": "最大の穴",
     "ui.scan_limit_none": "なし",
@@ -50,7 +65,10 @@
     "ui.scan_template_stands_off": "離れる量"
   },
   "ko": {
+    "ui.scan_area_grow": "클릭한 곳에서 넓히기",
     "ui.scan_area_piece": "조각 전체",
+    "ui.scan_area_select_first": "먼저 스캔의 일부를 선택하세요(스캔에서 선택).",
+    "ui.scan_area_selected": "선택한 부분",
     "ui.scan_fit_more": "더 보기",
     "ui.scan_holes_largest": "가장 큰 구멍",
     "ui.scan_limit_none": "없음",
@@ -60,7 +78,10 @@
     "ui.scan_template_stands_off": "이격 거리"
   },
   "vi": {
+    "ui.scan_area_grow": "Mở rộng từ điểm nhấp",
     "ui.scan_area_piece": "Cả mảnh",
+    "ui.scan_area_select_first": "Hãy chọn một phần của bản quét trước (Chọn trên bản quét).",
+    "ui.scan_area_selected": "Phần đã chọn",
     "ui.scan_fit_more": "Thêm",
     "ui.scan_holes_largest": "Lỗ lớn nhất",
     "ui.scan_limit_none": "Không",
@@ -70,7 +91,10 @@
     "ui.scan_template_stands_off": "Cách ra"
   },
   "zh": {
+    "ui.scan_area_grow": "从单击点扩展",
     "ui.scan_area_piece": "整块",
+    "ui.scan_area_select_first": "请先选择扫描的一部分（在扫描上选择）。",
+    "ui.scan_area_selected": "所选部分",
     "ui.scan_fit_more": "更多",
     "ui.scan_holes_largest": "最大孔",
     "ui.scan_limit_none": "无",
