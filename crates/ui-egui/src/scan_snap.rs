@@ -176,32 +176,37 @@ fn warm(app: &SolveApp, body: &str) {
     }
 }
 
-/// The scan under the screen point `at`, and the place on it: the scan right under the pointer,
-/// else the nearest one within [`SNAP_PX`] on the screen (a click just past a scan's outline lands
-/// on the scan, not in the air beyond it). Only scans (mesh bodies) the view shows count.
-pub(crate) fn scan_under(app: &SolveApp, proj: &Proj, at: egui::Pos2) -> Option<(String, Vec3)> {
+/// The scan right under the screen point `at` (only `only`, when given), and the place on it,
+/// read through any model in front: a model is often built over its scan and covers it. Only
+/// scans (mesh bodies) the view shows count.
+pub(crate) fn scan_hit(app: &SolveApp, proj: &Proj, at: egui::Pos2, only: Option<&str>) -> Option<(String, Vec3)> {
+    ray_hit(app, proj, at, only).map(|(_, body, point)| (body, point))
+}
+
+/// [`scan_hit`] with how far along the view ray it is.
+fn ray_hit(app: &SolveApp, proj: &Proj, at: egui::Pos2, only: Option<&str>) -> Option<(f64, String, Vec3)> {
     let state = app.session.model.state();
-    let scans: Vec<_> = state.bodies.iter().filter(|b| b.body.is_mesh() && app.body_visible(&b.name)).collect();
-    if scans.is_empty() {
-        return None;
-    }
-    let hit = |p: egui::Pos2| -> Option<(f64, String, Vec3)> {
-        let (o, d) = proj.ray(p);
-        let mut best: Option<(f64, String, Vec3)> = None;
-        for b in &scans {
-            let (m, place) = b.mesh_in_place();
-            let Some((lo, ld)) = crate::viewport::local_ray(&place, o, d) else { continue };
-            let index = app.viewport.pick_index.of(&m);
-            if let Some((t, _)) = crate::pick_index::raycast(index.as_deref(), &m, lo, ld)
-                && best.as_ref().is_none_or(|(bt, ..)| t < *bt)
-            {
-                best = Some((t, b.name.clone(), o + d * t));
-            }
+    let (o, d) = proj.ray(at);
+    let mut best: Option<(f64, String, Vec3)> = None;
+    for b in state.bodies.iter().filter(|b| b.body.is_mesh() && only.is_none_or(|n| n == b.name) && app.body_visible(&b.name)) {
+        let (m, place) = b.mesh_in_place();
+        let Some((lo, ld)) = crate::viewport::local_ray(&place, o, d) else { continue };
+        let index = app.viewport.pick_index.of(&m);
+        if let Some((t, _)) = crate::pick_index::raycast(index.as_deref(), &m, lo, ld)
+            && best.as_ref().is_none_or(|(bt, ..)| t < *bt)
+        {
+            best = Some((t, b.name.clone(), o + d * t));
         }
-        best
-    };
-    if let Some((_, body, point)) = hit(at) {
-        return Some((body, point));
+    }
+    best
+}
+
+/// The scan under the screen point `at`, and the place on it: the scan right under the pointer
+/// ([`scan_hit`], through any model), else the nearest one within [`SNAP_PX`] on the screen (a
+/// click just past a scan's outline lands on the scan, not in the air beyond it).
+pub(crate) fn scan_under(app: &SolveApp, proj: &Proj, at: egui::Pos2) -> Option<(String, Vec3)> {
+    if let Some(found) = scan_hit(app, proj, at, None) {
+        return Some(found);
     }
     // Rings round the pointer, nearest first: the first ring that touches a scan gives the place
     // nearest the pointer on it.
@@ -210,7 +215,7 @@ pub(crate) fn scan_under(app: &SolveApp, proj: &Proj, at: egui::Pos2) -> Option<
         let found = (0..SPOKES)
             .filter_map(|k| {
                 let a = std::f32::consts::TAU * k as f32 / SPOKES as f32;
-                hit(at + egui::vec2(a.cos(), a.sin()) * radius)
+                ray_hit(app, proj, at + egui::vec2(a.cos(), a.sin()) * radius, None)
             })
             .min_by(|a, b| a.0.total_cmp(&b.0));
         if let Some((_, body, point)) = found {

@@ -47,11 +47,8 @@ pub(crate) fn active(_app: &SolveApp) -> bool {
 
 /// A click while picking: the markers like the one under it found, without changing the scan.
 pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
-    let hit = crate::viewport::pick_cached(app, proj, at).into_iter().find_map(|h| match h {
-        crate::viewport::Hit::Face { body, point, .. } => Some((body, point)),
-        _ => None,
-    });
-    let Some((body, q)) = hit.filter(|(b, _)| app.session.model.state().body(b).is_some_and(|b| b.body.is_mesh())) else { return };
+    // The scan itself, through the model: a model built over the scan covers its markers.
+    let Some((body, q)) = crate::scan_snap::scan_under(app, proj, at) else { return };
     let Ok(reply) = app.run("scan.remove_markers", json!({"body": body, "at": [q.x, q.y, q.z], "preview": true})) else { return };
     let centres: Vec<[f64; 3]> = reply["centres"]
         .as_array()
@@ -95,12 +92,15 @@ pub(crate) fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let (closed, action) = crate::ui_kit::Confirm::new(egui::Id::unique("sc_scan_markers"), "mesh_body", title).show(ctx, true, |ui| {
         crate::ui_kit::text(ui, &message, crate::ui_kit::Text::Report("markers", false));
     });
-    if !closed {
+    // OK and Cancel answer it without `closed`, which is only the close button and Escape.
+    if action == crate::ui_kit::Action::None && !closed {
         return;
     }
     set(None);
-    if action == crate::ui_kit::Action::Ok {
-        let _ = app.run("scan.remove_markers", json!({"body": body, "centres": centres, "radius": radius}));
+    if action == crate::ui_kit::Action::Ok
+        && let Err(e) = app.run("scan.remove_markers", json!({"body": body, "centres": centres, "radius": radius}))
+    {
+        app.set_status(e, true);
     }
 }
 
@@ -120,5 +120,72 @@ mod tests {
         set(Some(State::Found { body: "Scan".into(), radius: 3.0, centres: vec![[0.0, 0.0, 0.0]] }));
         assert!(active(&h.app) && !picking(&h.app), "found: waits for OK");
         set(None);
+    }
+
+    /// A floor 100 mm square with balls of radius 3 standing in it, as an STL.
+    fn floor_with_markers_stl(centres: &[[f64; 2]]) -> String {
+        let mut stl = String::from("solid floor\n");
+        let mut facet = |t: [[f64; 3]; 3]| {
+            stl += "facet normal 0 0 0\nouter loop\n";
+            for [x, y, z] in t {
+                stl += &format!("vertex {x} {y} {z}\n");
+            }
+            stl += "endloop\nendfacet\n";
+        };
+        let n = 40;
+        let at = |i: usize, j: usize| [100.0 * i as f64 / n as f64, 100.0 * j as f64 / n as f64, 0.0];
+        for i in 0..n {
+            for j in 0..n {
+                facet([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+                facet([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+            }
+        }
+        for &[cx, cy] in centres {
+            let (rings, segments) = (20, 40);
+            let p = |i: usize, j: usize| {
+                let (phi, th) = (std::f64::consts::PI * i as f64 / rings as f64, std::f64::consts::TAU * j as f64 / segments as f64);
+                [cx + 3.0 * phi.sin() * th.cos(), cy + 3.0 * phi.sin() * th.sin(), 3.0 * phi.cos()]
+            };
+            for i in 0..rings {
+                for j in 0..segments {
+                    facet([p(i, j), p(i + 1, j), p(i + 1, j + 1)]);
+                    facet([p(i, j), p(i + 1, j + 1), p(i, j + 1)]);
+                }
+            }
+        }
+        stl + "endsolid floor\n"
+    }
+
+    /// A model built over the scan covers it: a click on a marker still finds the markers, and OK
+    /// takes them off (OK answers the confirmation without `closed`).
+    #[test]
+    fn a_click_through_the_model_finds_the_markers_and_ok_removes_them() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("markers.stl");
+        std::fs::write(&path, floor_with_markers_stl(&[[20.0, 20.0], [70.0, 30.0], [40.0, 75.0]])).unwrap();
+        let scan = h.app.run("file.insert_mesh", json!({"path": path})).unwrap()["bodies"][0].as_str().unwrap().to_owned();
+        h.app.run("solid.box", json!({"length": 100, "width": 100, "height": 10, "body_name": "Part"})).unwrap();
+        let triangles = |h: &crate::scenario::Harness| {
+            h.app.session.model.state().body(&scan).and_then(|b| b.body.triangle_mesh().map(|(_, t)| t.len())).unwrap_or(0)
+        };
+        let before = triangles(&h);
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.remove_markers");
+        h.frames(2);
+        h.step(&json!({"click": {"world": [20.0, 20.0, 10.0]}})).unwrap();
+        h.frames(2);
+        let found = match state() {
+            Some(State::Found { centres, .. }) => centres.len(),
+            other => panic!("the markers under the model were found: {other:?}"),
+        };
+        assert_eq!(found, 3);
+        h.frames(2);
+        let ok = crate::scenario::handle_at("dialog:ok").expect("the removal is offered");
+        h.call("ui.click", json!({"x": ok.x, "y": ok.y}));
+        h.frames(3);
+        let after = triangles(&h);
+        set(None);
+        assert!(!active(&h.app), "OK ends the tool");
+        assert_ne!(after, before, "the markers are taken off");
     }
 }

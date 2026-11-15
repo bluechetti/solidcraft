@@ -32,11 +32,16 @@ pub(crate) fn adding(_app: &SolveApp) -> bool {
 
 /// A click while adding: the face under it becomes a check; with Shift, two flat faces a distance.
 pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, shift: bool) {
-    let hit = crate::viewport::pick_cached(app, proj, at).into_iter().find_map(|h| match h {
-        crate::viewport::Hit::Face { body, point, .. } => Some((body, point)),
-        _ => None,
-    });
-    let Some((body, q)) = hit.filter(|(b, _)| app.session.model.state().body(b).is_some_and(|b| !b.body.is_mesh())) else { return };
+    // The model's face, through the scan: a scan and the model built over it lie together, and
+    // the scan is in front about half the time.
+    let hit = {
+        let state = app.session.model.state();
+        crate::viewport::pick_all(app, proj, at).into_iter().find_map(|h| match h {
+            crate::viewport::Hit::Face { body, point, .. } if state.body(&body).is_some_and(|b| !b.body.is_mesh()) => Some((body, point)),
+            _ => None,
+        })
+    };
+    let Some((body, q)) = hit else { return };
     let face = json!({"body": body, "point": [q.x, q.y, q.z]});
     if shift {
         let first = ADDING.with(|a| a.borrow_mut().as_mut().and_then(Option::take));
@@ -152,5 +157,29 @@ mod tests {
             },
         );
         assert!(tag.starts_with('1') && tag.contains("0.02"), "{tag}");
+    }
+
+    /// A scan lying just over the model's face (as a scan of the part does about half the time)
+    /// does not hide the face: a click adds its check.
+    #[test]
+    fn a_click_through_the_scan_adds_the_models_face() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.run("solid.box", json!({"body_name": "Block", "operation": "new", "length": 20, "width": 20, "height": 5})).unwrap();
+        let path = h.dir.join("skin.stl");
+        let z = 5.05;
+        let stl = format!(
+            "solid s\nfacet normal 0 0 1\nouter loop\nvertex -5 -5 {z}\nvertex 25 -5 {z}\nvertex 25 25 {z}\nendloop\nendfacet\n\
+             facet normal 0 0 1\nouter loop\nvertex -5 -5 {z}\nvertex 25 25 {z}\nvertex -5 25 {z}\nendloop\nendfacet\nendsolid s\n"
+        );
+        std::fs::write(&path, stl).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("inspect.check_add");
+        h.frames(2);
+        h.step(&json!({"click": {"world": [10.0, 10.0, 5.05]}})).unwrap();
+        h.frames(2);
+        let checks = h.app.run("inspect.check_list", json!({})).unwrap()["checks"].as_array().map_or(0, Vec::len);
+        h.app.start("inspect.check_add");
+        assert_eq!(checks, 1, "the block's top face, under the scan, became a check");
     }
 }

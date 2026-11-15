@@ -161,12 +161,7 @@ pub(crate) fn drawing(app: &SolveApp) -> bool {
 
 /// The scan under `at` on the screen, and the point of it there.
 fn scan_at(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<(String, Vec3)> {
-    let hit = crate::viewport::pick_cached(app, proj, at).into_iter().find_map(|h| match h {
-        crate::viewport::Hit::Face { body, point, .. } => Some((body, point)),
-        _ => None,
-    });
-    let state = app.session.model.state();
-    hit.filter(|(body, _)| state.body(body).is_some_and(|b| b.body.is_mesh()))
+    crate::scan_snap::scan_hit(app, proj, at, None)
 }
 
 fn dialog(app: &mut SolveApp) -> Option<&mut CurveOnScan> {

@@ -2335,10 +2335,9 @@ pub(crate) fn double_click(app: &mut SolveApp, proj: &crate::viewport::Proj, at:
 /// that point; else the scan under it, else level with the edge in the plane of the screen). The
 /// second corner adds the face.
 fn add_face_click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
-    let hit = crate::viewport::pick_cached(app, proj, at).into_iter().find_map(|h| match h {
-        crate::viewport::Hit::Face { body, point, .. } => Some((body, point)),
-        _ => None,
-    });
+    // The scan under the click, through the surface or a model in front of it.
+    let scan = dialog(app).and_then(|k| loaded(k).and_then(|l| l.covered.as_ref().map(|c| c.scan.clone())));
+    let on_scan = scan.as_deref().and_then(|scan| crate::scan_snap::scan_hit(app, proj, at, Some(scan))).map(|(_, p)| p);
     let Some(k) = dialog(app) else { return };
     let Some(adding) = k.adding.as_mut() else { return };
     let Some((face, side)) = adding.side else {
@@ -2349,7 +2348,6 @@ fn add_face_click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Po
         }
         return;
     };
-    let scan = loaded(k).and_then(|l| l.covered.as_ref().map(|c| c.scan.clone()));
     // A point of the surface near the click is welded to.
     let near_point = k
         .shown_net
@@ -2358,7 +2356,6 @@ fn add_face_click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Po
         .filter(|(_, d)| *d <= GRAB)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(p, _)| p);
-    let on_scan = hit.filter(|(body, _)| scan.as_deref() == Some(body.as_str())).map(|(_, p)| p);
     let level = || {
         let ids = k.joins.side(&k.shown, face, side);
         let anchor = *k.shown_net.get(*ids.first()?)?;
@@ -2618,10 +2615,7 @@ pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, to: egui
         && along.is_none()
         && let Some(scan) = &scan
     {
-        crate::viewport::pick_cached(app, proj, to).into_iter().find_map(|h| match h {
-            crate::viewport::Hit::Face { body, point, .. } if body == *scan => Some(point),
-            _ => None,
-        })
+        crate::scan_snap::scan_hit(app, proj, to, Some(scan)).map(|(_, point)| point)
     } else {
         None
     };

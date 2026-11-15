@@ -345,12 +345,9 @@ pub(crate) fn pin_click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: eg
     let _ = app.run("scan.deviation_pin", serde_json::json!({"at": [q.x, q.y, q.z]}));
 }
 
-/// The scan's point under `at` on the screen, if the scan is what is there.
-fn scan_under(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, scan: &str) -> Option<solidcore_record::Vec3> {
-    crate::viewport::pick_cached(app, proj, at).into_iter().find_map(|h| match h {
-        crate::viewport::Hit::Face { body, point, .. } if body == scan => Some(point),
-        _ => None,
-    })
+/// The scan's point under `at` on the screen, through any model in front of it.
+fn scan_under(app: &SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, scan: &str) -> Option<solidcore_record::Vec3> {
+    crate::scan_snap::scan_hit(app, proj, at, Some(scan)).map(|(_, point)| point)
 }
 
 /// Follows the pointer while the map is shown: the distance at the scan point under it, read at
