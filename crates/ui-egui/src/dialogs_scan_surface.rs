@@ -609,7 +609,7 @@ pub fn fit_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitSurface, inputs: &
             crate::dialogs_surface_check::fold_warning(ui, found.trouble);
         }
         Some(Err(why)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_fit_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_fit_error", true));
         }
         None => {}
     }
@@ -1486,7 +1486,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EditSurface) -> bool {
     load(app, k);
     let l = match &k.loaded {
         Some(Err(why)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_edit_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_edit_error", true));
             return false;
         }
         Some(Ok(l)) => l.clone(),

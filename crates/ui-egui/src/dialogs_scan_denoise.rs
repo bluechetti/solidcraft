@@ -105,7 +105,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Denoise) -> bool {
     let found = match found {
         Ok(found) => found,
         Err(why) => {
-            ui_kit::text(ui, &why, ui_kit::Text::Report("scan_denoise_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(&why), ui_kit::Text::Report("scan_denoise_error", true));
             return false;
         }
     };

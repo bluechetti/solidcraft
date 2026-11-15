@@ -251,7 +251,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitPatches, inputs: &[Sel
             crate::dialogs_surface_check::fold_warning(ui, *trouble);
         }
         Some(Err(why)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_patches_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_patches_error", true));
         }
         None => {
             ui_kit::text(ui, tr("ui.scan_patches_hint"), ui_kit::Text::Hint("scan_patches_hint"));

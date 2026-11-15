@@ -3827,7 +3827,7 @@ fn reveal_refusal(on_ok: bool, typing: bool, shown: Option<&str>, error: &str) -
 /// A refusal as the dialog shows it: without the engine's "invalid parameters for `id`: "
 /// prefix (the dialog already names the command), and in the interface language when the
 /// message is in the catalogs.
-fn shown_error(error: &str) -> String {
+pub(crate) fn shown_error(error: &str) -> String {
     let msg = error.strip_prefix("invalid parameters for `").and_then(|rest| rest.split_once("`: ")).map_or(error, |(_, msg)| msg);
     crate::i18n::tr_diagnostic(solidcraft_ui_text::tr_label(msg))
 }

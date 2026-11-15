@@ -192,7 +192,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Floating, inputs: &[crate
             ui_kit::text(ui, &found, ui_kit::Text::Note("scan_floating_found"));
         }
         Some(Err(why)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_floating_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_floating_error", true));
         }
         None => {}
     }
@@ -375,7 +375,7 @@ pub fn holes_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Holes) -> bool {
             }
         }
         Some(Err(why)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_holes_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_holes_error", true));
         }
         None => {}
     }
@@ -564,7 +564,7 @@ pub fn reduce_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reduce) -> bool {
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_reduce_count"));
         }
         Some(Err(why)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_reduce_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_reduce_error", true));
         }
         None => {}
     }

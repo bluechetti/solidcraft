@@ -254,7 +254,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect) -> bool {
         });
     }
     if let Some(why) = &k.error {
-        ui_kit::text(ui, why, ui_kit::Text::Report("scan_select_error", true));
+        ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_select_error", true));
     }
     let hint = match k.tool {
         BRUSH => "ui.scan_select_hint_brush",

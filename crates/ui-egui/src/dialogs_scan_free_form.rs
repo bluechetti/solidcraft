@@ -382,7 +382,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
             }
         }
         Some((Err(why), _, _)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_free_form_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_free_form_error", true));
         }
         _ => {}
     }
@@ -684,7 +684,7 @@ pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs:
             }
         }
         Some((Err(why), _)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_wrap_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_wrap_error", true));
         }
         None => {}
     }
@@ -799,7 +799,7 @@ pub fn merge_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut MergeSurfaces, inpu
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_merge_found"));
         }
         Some(Err(why)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_merge_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_merge_error", true));
         }
         None => {}
     }

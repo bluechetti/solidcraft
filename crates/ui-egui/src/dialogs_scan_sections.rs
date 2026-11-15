@@ -117,7 +117,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SectionsAlong) -> bool {
             }
         }
         Some(Err(why)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_sections_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_sections_error", true));
         }
         None => {}
     }

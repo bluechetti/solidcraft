@@ -725,7 +725,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
             }
         }
         Some(Err(why)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_template_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_template_error", true));
         }
         None => {
             ui_kit::text(ui, tr("ui.scan_template_hint"), ui_kit::Text::Hint("scan_template_hint"));

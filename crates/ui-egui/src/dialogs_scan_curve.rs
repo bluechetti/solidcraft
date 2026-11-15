@@ -127,7 +127,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut CurveOnScan) -> bool {
             form_row(ui, tr("ui.scan_curve_fit"), |ui| ui_kit::text(ui, &fitted, ui_kit::Text::Cell));
         }
         Some(Err(why)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_curve_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_curve_error", true));
         }
         None => {}
     }

@@ -100,7 +100,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FilletScan, inputs: &[Sel
             ui_kit::text(ui, &line, ui_kit::Text::Note("scan_fillet_found"));
         }
         Some(Err(why)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_fillet_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_fillet_error", true));
         }
         None => {
             ui_kit::text(ui, tr("ui.scan_fillet_hint"), ui_kit::Text::Hint("scan_fillet_hint"));

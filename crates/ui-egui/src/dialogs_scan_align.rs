@@ -85,7 +85,7 @@ pub fn rows(_app: &SolveApp, ui: &mut egui::Ui, k: &mut AlignPairs, inputs: &[Se
             ui_kit::text(ui, &rms, ui_kit::Text::Note("scan_align_rms"));
         }
         Some(Err(why)) => {
-            ui_kit::text(ui, &why, ui_kit::Text::Report("scan_align_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(&why), ui_kit::Text::Report("scan_align_error", true));
         }
         None => {
             ui_kit::text(ui, tr("ui.scan_align_hint"), ui_kit::Text::Hint("scan_align_hint"));

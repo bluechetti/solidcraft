@@ -95,7 +95,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut EdgeCurve) -> bool {
             }
         }
         Some(Err(why)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_edge_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_edge_error", true));
         }
         None => {
             ui_kit::text(ui, tr("ui.scan_edge_need"), ui_kit::Text::Report("scan_edge_error", true));

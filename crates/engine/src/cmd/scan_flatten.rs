@@ -135,7 +135,7 @@ pub(super) fn region(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<Vec
             if let Some(sel) = super::select::selected(s).filter(|k| k.scan == on.body && k.count > 0) {
                 return Ok(sel.selected.iter().enumerate().filter(|(_, on)| **on).map(|(t, _)| t).collect());
             }
-            picked_on(s, &on.body).ok_or_else(|| bad(cmd, "select or pick the part of the scan to flatten, or give `point` or `triangles`"))?
+            picked_on(s, &on.body).ok_or_else(|| bad(cmd, "select or pick the part of the scan to work on, or give `point` or `triangles`"))?
         }
     };
     let scan = on.scan();

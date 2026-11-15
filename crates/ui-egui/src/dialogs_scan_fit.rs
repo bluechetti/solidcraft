@@ -38,6 +38,10 @@ pub const AREA_GROW: usize = 0;
 pub const AREA_ROUND: usize = 1;
 pub const AREA_SELECTED: usize = 2;
 
+/// A round area whose fit lies off the shape by more than this many tolerances on average is said
+/// to hold more than the shape.
+const POOR_ROUND: f64 = 3.0;
+
 /// What OK keeps.
 pub const KEEP_FACE: usize = 0;
 pub const KEEP_CONSTRUCTION: usize = 1;
@@ -217,7 +221,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitShape, inputs: &[SelIn
             ui_kit::text(ui, tr("ui.scan_fit_click"), ui_kit::Text::Hint("scan_fit_click"));
         }
         Some(Err(why)) => {
-            ui_kit::text(ui, why, ui_kit::Text::Report("scan_fit_error", true));
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_fit_error", true));
         }
         Some(Ok(p)) => {
             let f = &p.found.fitted;
@@ -251,6 +255,11 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitShape, inputs: &[SelIn
             row(ui, label("Area"), &crate::prefs::show_mm(app, f.area, 2));
             let fit = solidcraft_ui_text::format("ui.scan_fit_off", &[("rms", &len(f.rms)), ("max", &len(f.max))]);
             row(ui, tr("ui.scan_fit_result"), &fit);
+            // A round taken in as it is, lying well off the shape on average: it crossed onto the
+            // faces beside the one meant (a radius wider than a hole), and the shape is a guess.
+            if k.area == AREA_ROUND && f.rms > POOR_ROUND * k.within {
+                ui_kit::text(ui, tr("ui.scan_fit_round_poor"), ui_kit::Text::Report("scan_fit_round_poor", true));
+            }
             let makes = if k.keep == KEEP_CONSTRUCTION { tr(makes) } else { tr("ui.scan_fit_makes_face") };
             ui_kit::text(ui, makes, ui_kit::Text::Hint("scan_fit_makes"));
         }
