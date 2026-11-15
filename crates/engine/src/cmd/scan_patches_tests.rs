@@ -62,6 +62,23 @@ fn a_curving_scan_fits_as_a_grid_as_blocks_and_as_a_quad() {
     assert!(e.contains("`layout`"), "{e}");
 }
 
+/// With a tolerance and no control points, the fit takes as few as bring it within half of it: a
+/// loose tolerance few, a tight one more and closer; control points given win over it.
+#[test]
+fn a_tolerance_chooses_the_control_points() {
+    let mut s = Session::default();
+    let scan = bent_scan(&mut s);
+    let loose = run(&mut s, "scan.fit_patches", json!({"body": scan, "point": [0, 15, 0], "tolerance": 1.0}));
+    let tight = run(&mut s, "scan.fit_patches", json!({"body": scan, "point": [0, 15, 0], "tolerance": 0.002}));
+    let controls = |r: &Value| r["controls"][0].as_u64().unwrap();
+    assert!(loose["rms"].as_f64().unwrap() <= 0.5 && controls(&loose) == 6, "{loose}");
+    assert!(controls(&tight) > controls(&loose) && tight["rms"].as_f64() < loose["rms"].as_f64(), "{loose} {tight}");
+    let given = run(&mut s, "scan.fit_patches", json!({"body": scan, "point": [0, 15, 0], "tolerance": 1.0, "controls": 12}));
+    assert_eq!(given["controls"], json!([12, 12]), "{given}");
+    let e = s.execute("scan.fit_patches", &json!({"body": scan, "point": [0, 15, 0], "tolerance": 0})).unwrap_err().to_string();
+    assert!(e.contains("`tolerance`"), "{e}");
+}
+
 /// A surface that folds is said to, in words a person can act on.
 #[test]
 fn a_folded_surface_is_told_of_in_plain_words() {

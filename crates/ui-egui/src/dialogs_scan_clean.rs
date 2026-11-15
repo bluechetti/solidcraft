@@ -233,7 +233,10 @@ pub(crate) fn gpu_marks(app: &SolveApp) -> Option<GpuCloud> {
 /// The Fill Holes dialog's values.
 #[derive(Clone, Debug)]
 pub struct Holes {
-    /// The largest hole to close, in edges round it.
+    /// The largest hole to close, by its size across in mm; 0 until the holes are found, when it
+    /// starts at the largest hole of at most [`Holes::max_edges`] edges round it.
+    pub largest: f64,
+    /// The size limit of a step made before holes were chosen by size: edges round a hole.
     pub max_edges: usize,
     /// Each patch shaped to carry the surface across.
     pub fair: bool,
@@ -246,7 +249,7 @@ pub struct Holes {
 
 impl Default for Holes {
     fn default() -> Self {
-        Holes { max_edges: clean::MAX_EDGES, fair: true, at: Vec::new(), by_hand: false, found: None }
+        Holes { largest: 0.0, max_edges: clean::MAX_EDGES, fair: true, at: Vec::new(), by_hand: false, found: None }
     }
 }
 
@@ -256,6 +259,22 @@ struct Outline {
     points: Vec<Vec3>,
     edges: usize,
     rim: bool,
+    /// How big it is: the width of the box round it, mm.
+    across: f64,
+}
+
+/// The width of the box round `points`.
+fn across(points: &[Vec3]) -> f64 {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for p in points {
+        for (k, v) in [p.x, p.y, p.z].into_iter().enumerate() {
+            lo[k] = lo[k].min(v);
+            hi[k] = hi[k].max(v);
+        }
+    }
+    let d: f64 = (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f64>().sqrt();
+    if d.is_finite() { d } else { 0.0 }
 }
 
 #[derive(Clone, Debug)]
@@ -275,7 +294,9 @@ impl Holes {
     /// Which rings OK closes: those ticked by hand, else the holes within the size limit.
     fn ticked(&self, outlines: &[Outline]) -> Vec<bool> {
         if !self.by_hand {
-            return outlines.iter().map(|o| !o.rim && o.edges <= self.max_edges).collect();
+            // A hair over, so the hole the limit was set from is ticked too.
+            let limit = self.largest * (1.0 + 1e-9);
+            return outlines.iter().map(|o| !o.rim && o.across <= limit).collect();
         }
         let mut ticked = vec![false; outlines.len()];
         for &a in &self.at {
@@ -305,26 +326,33 @@ fn find_holes(app: &SolveApp, k: &mut Holes) {
     let result = clean::holes_of(&app.session, None, "scan.fill_holes").map_err(|e| e.to_string()).and_then(|(body, found)| {
         let state = app.session.model.state();
         let (positions, _) = state.body(&body).and_then(|b| b.body.triangle_mesh()).ok_or("the scan is gone")?;
-        let outlines = found
+        let outlines: Vec<Outline> = found
             .rings
             .iter()
-            .map(|r| Outline {
-                points: r.points.iter().filter_map(|&i| positions.get(i as usize).copied()).collect(),
-                edges: r.points.len(),
-                rim: r.rim,
+            .map(|r| {
+                let points: Vec<Vec3> = r.points.iter().filter_map(|&i| positions.get(i as usize).copied()).collect();
+                Outline { across: across(&points), edges: r.points.len(), rim: r.rim, points }
             })
             .collect();
         Ok((body, outlines, found.unfillable_edges))
     });
+    // The size limit starts where the edge limit was: the largest hole within it.
+    if k.largest <= 0.0
+        && let Ok((_, outlines, _)) = &result
+    {
+        k.largest = outlines.iter().filter(|o| !o.rim && o.edges <= k.max_edges).map(|o| o.across).fold(0.0, f64::max);
+    }
     k.found = Some(FoundHoles { revision: app.session.revision, result });
 }
 
 /// The Fill Holes dialog's rows.
 pub fn holes_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Holes) -> bool {
     find_holes(app, k);
-    let before = k.max_edges;
-    form_row(ui, solidcraft_ui_text::tr("ui.scan_holes_max"), |ui| ui_kit::number_field(ui, &mut k.max_edges, 3..=5000, 1.0, ""));
-    if k.max_edges != before {
+    let before = k.largest;
+    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+    form_row(ui, solidcraft_ui_text::tr("ui.scan_holes_largest"), |ui| ui_kit::length_field(ui, &mut k.largest, &units, decimals));
+    k.largest = k.largest.max(0.0);
+    if k.largest != before {
         // A new limit ticks by size again.
         k.at.clear();
         k.by_hand = false;
@@ -361,10 +389,19 @@ pub fn holes_commands(k: &Holes) -> Result<Vec<(String, Value)>, String> {
     if !k.ticked(outlines).iter().any(|t| *t) {
         return Err(solidcraft_ui_text::tr("ui.scan_holes_none").into());
     }
-    let mut p = json!({"body": body, "max_edges": k.max_edges, "fair": k.fair});
-    if k.by_hand {
-        p["at"] = json!(k.at.iter().map(|a| [a.x, a.y, a.z]).collect::<Vec<_>>());
-    }
+    // The holes ticked, each by a point of its own, whether by size or by hand: the step closes
+    // those, found again by their points when the scan is cleaned again.
+    let at: Vec<[f64; 3]> = if k.by_hand {
+        k.at.iter().map(|a| [a.x, a.y, a.z]).collect()
+    } else {
+        outlines
+            .iter()
+            .zip(k.ticked(outlines))
+            .filter(|(o, t)| *t && !o.points.is_empty())
+            .map(|(o, _)| [o.points[0].x, o.points[0].y, o.points[0].z])
+            .collect()
+    };
+    let p = json!({"body": body, "max_edges": k.max_edges, "fair": k.fair, "at": at});
     Ok(vec![("scan.fill_holes".into(), p)])
 }
 
@@ -713,6 +750,15 @@ mod tests {
         assert!(outlines.iter().any(|o| o.rim), "the rim is outlined too");
         let outlines = outlines.clone();
         let hole = outlines.iter().position(|o| !o.rim).unwrap();
+        // The size limit starts at the hole's size (a 2 mm square: 2.83 across), so it is ticked
+        // and sent by a point of its own; a smaller limit ticks nothing.
+        assert!((k.largest - 8f64.sqrt()).abs() < 1e-6, "{}", k.largest);
+        let by_size = super::holes_commands(k).unwrap();
+        assert_eq!(by_size[0].1["at"].as_array().map(Vec::len), Some(1), "{}", by_size[0].1);
+        let Some(Kind::ScanHoles(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) else { panic!("open") };
+        k.largest = 2.0;
+        assert!(super::holes_commands(k).is_err(), "a 2 mm limit leaves the hole");
+        k.largest = 3.0;
         // Unticked by a click, nothing is closed; ticked again, it is closed by its point.
         let Some(Kind::ScanHoles(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) else { panic!("open") };
         k.turn(&outlines, hole);

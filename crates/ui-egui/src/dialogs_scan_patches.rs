@@ -12,6 +12,7 @@ use solidcraft_engine::cmd::scan::patches::fitted;
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, form_row};
+use crate::dialogs_scan_surface::{DETAIL_AUTO, DETAIL_SET};
 use crate::scan_job;
 use crate::selection::{FACES, SelInput, items};
 use crate::ui_kit::{self, choice_row};
@@ -23,6 +24,8 @@ const LAYOUTS: [&str; 3] = ["grid", "blocks", "quads"];
 #[derive(Clone, Debug)]
 pub struct FitPatches {
     pub layout: usize,
+    /// [`DETAIL_AUTO`] (control points chosen for the tolerance) or [`DETAIL_SET`] (`controls`).
+    pub detail: usize,
     pub controls: usize,
     pub rows: usize,
     pub columns: usize,
@@ -45,6 +48,7 @@ impl Default for FitPatches {
     fn default() -> Self {
         FitPatches {
             layout: 0,
+            detail: DETAIL_AUTO,
             controls: 10,
             rows: 2,
             columns: 2,
@@ -63,7 +67,7 @@ impl Default for FitPatches {
 struct Shown {
     key: String,
     /// How close they come, and lines across each patch to draw.
-    result: Result<(f64, f64, usize, Vec<Vec<Vec3>>, [usize; 3]), String>,
+    result: Result<Fit, String>,
     /// The scan under the patches and how far it is from them (as Free Form's colouring is made).
     under: Option<Under>,
 }
@@ -105,7 +109,13 @@ fn params(app: &SolveApp, k: &FitPatches, inputs: &[SelInput]) -> Option<Value> 
         }
     };
     p["layout"] = json!(LAYOUTS[k.layout.min(2)]);
-    p["controls"] = json!(k.controls);
+    if k.detail == DETAIL_SET {
+        p["controls"] = json!(k.controls);
+    } else {
+        // As many control points as bring the patches within the scan's tolerance.
+        let scan = p["body"].as_str().map(str::to_owned);
+        p["tolerance"] = json!(crate::scan_fidelity::effective(app, scan.as_deref(), k.tolerance));
+    }
     p["smoothing"] = json!(k.smoothing);
     if k.layout == 1 {
         p["rows"] = json!(k.rows);
@@ -150,11 +160,15 @@ fn look(app: &SolveApp, k: &mut FitPatches, inputs: &[SelInput]) {
 }
 
 /// What a fit of `p` comes to, and the scan under the patches: all that looks over the scan.
-type Computed = (Result<(f64, f64, usize, Vec<Vec<Vec3>>, [usize; 3]), String>, Option<Under>);
+type Computed = (Result<Fit, String>, Option<Under>);
+
+/// How close the patches come (rms, most), how many, lines across each to draw, where they are
+/// wrong (folds, pinches, crossings) and the control points each way.
+type Fit = (f64, f64, usize, Vec<Vec<Vec3>>, [usize; 3], [usize; 2]);
 
 fn compute(s: &solidcraft_engine::Session, p: &Value) -> Computed {
     let mut under = None;
-    let result = fitted(s, p, "scan.fit_patches").map_err(|e| e.to_string()).map(|(scan, _, _, found)| {
+    let result = fitted(s, p, "scan.fit_patches").map_err(|e| e.to_string()).map(|(scan, _, controls, found)| {
         let surface = solidcraft_engine::cmd::scan::surface::shade(s, Some(&scan), &found.surfaces, "scan.fit_patches");
         if let Ok((_, mut shade)) = surface {
             let mut values = Vec::new();
@@ -173,7 +187,7 @@ fn compute(s: &solidcraft_engine::Session, p: &Value) -> Computed {
                 lines.push(along_v);
             }
         }
-        (found.rms, found.max, found.surfaces.len(), lines, found.trouble)
+        (found.rms, found.max, found.surfaces.len(), lines, found.trouble, controls)
     });
     (result, under.map(|(scan, shade, values)| Under { scan, shade, values, dots: None }))
 }
@@ -185,16 +199,22 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitPatches, inputs: &[Sel
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
     form_row(ui, tr("ui.scan_flatten_radius"), |ui| ui_kit::length_field(ui, &mut k.radius, &units, decimals));
     k.radius = k.radius.max(0.0);
-    form_row(ui, tr("ui.scan_patches_controls"), |ui| ui_kit::number_field(ui, &mut k.controls, 4..=30, 0.2, ""));
     if k.layout == 1 {
         form_row(ui, tr("ui.scan_patches_rows"), |ui| ui_kit::number_field(ui, &mut k.rows, 1..=8, 0.1, ""));
         form_row(ui, tr("ui.scan_patches_columns"), |ui| ui_kit::number_field(ui, &mut k.columns, 1..=8, 0.1, ""));
     }
-    let format = |v: f64| format!("{v:.2}");
-    form_row(ui, tr("ui.scan_patches_smoothing"), |ui| {
-        ui_kit::slider(ui, &mut k.smoothing, 0.0..=1.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
-    });
     look(app, k, inputs);
+    let details = [tr("ui.scan_fit_detail_auto"), tr("ui.scan_fit_detail_set")];
+    choice_row(ui, tr("ui.scan_fit_detail"), "scan_patches_detail", &mut k.detail, &details);
+    if k.detail == DETAIL_SET {
+        form_row(ui, tr("ui.scan_patches_controls"), |ui| ui_kit::number_field(ui, &mut k.controls, 4..=30, 0.2, ""));
+    } else if let Some(Ok(fit)) = k.shown.as_ref().map(|s| &s.result) {
+        // The control points chosen, shown as Set starts from them.
+        let chosen = fit.5[0].to_string();
+        k.controls = fit.5[0];
+        form_row(ui, tr("ui.scan_patches_controls"), |ui| ui_kit::text(ui, &chosen, ui_kit::Text::Cell));
+    }
+    crate::dialogs_scan_surface::more(ui, "scan_patches_more", &mut k.smoothing);
     if k.shown.as_ref().is_some_and(|s| s.under.is_some()) {
         crate::dialogs_scan_surface::colours_row(ui, &mut k.colours);
         let scan = k.shown.as_ref().and_then(|s| s.under.as_ref()).map(|u| u.scan.clone());
@@ -205,7 +225,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitPatches, inputs: &[Sel
         scan_job::refining_note(ui, "scan_patches_refining");
     }
     match k.shown.as_ref().map(|s| &s.result) {
-        Some(Ok((rms, max, count, _, trouble))) => {
+        Some(Ok((rms, max, count, _, trouble, _))) => {
             let line = solidcraft_ui_text::format(
                 "ui.scan_patches_found",
                 &[("patches", &count.to_string()), ("rms", &format!("{rms:.3}")), ("max", &format!("{max:.3}"))],
@@ -279,7 +299,7 @@ pub fn commands(app: &SolveApp, k: &FitPatches, inputs: &[SelInput]) -> Result<V
 /// The patches' lines over the picture while the dialog is open.
 pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
     let Some(Kind::ScanFitPatches(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
-    let Some(Ok((_, _, _, lines, _))) = k.shown.as_ref().map(|s| &s.result) else { return };
+    let Some(Ok((_, _, _, lines, _, _))) = k.shown.as_ref().map(|s| &s.result) else { return };
     let stroke = egui::Stroke::new(1.0, solidcraft_theme::Tokens::get().accent);
     for line in lines {
         let pts: Vec<egui::Pos2> = line.iter().filter_map(|q| proj.to_screen(*q)).collect();
@@ -427,6 +447,12 @@ pub(crate) mod tests {
         let Some(Kind::ScanFitPatches(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the Fit Patches dialog") };
         let found = k.shown.as_ref().map(|s| s.result.clone()).expect("fitted");
         assert_eq!(found.as_ref().map(|r| r.2), Ok(4), "{:?}", found.as_ref().err());
+        // Detail opens Automatic: the control points chosen for the tolerance, not the 8 typed;
+        // Smoothing is folded away under More.
+        assert_eq!(k.detail, DETAIL_AUTO);
+        assert!(found.as_ref().is_ok_and(|r| (6..=30).contains(&r.5[0])), "{:?}", found.as_ref().map(|r| r.5));
+        assert!(crate::scenario::handle_at("dialog:section:More").is_some(), "the More section");
+        assert!(crate::scenario::rect_of("dialog:row:Smoothing").is_none(), "Smoothing is folded away");
         // The scan under the patches is coloured and the one line of fidelity says how close they
         // come, against the scan's own tolerance (0.1 mm until one is set).
         let (stats, tolerance) = fidelity(&h.app, k).expect("the scan under the patches measured");

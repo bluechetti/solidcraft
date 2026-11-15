@@ -512,6 +512,17 @@ fn fit(app: &SolveApp, k: &mut FitSurface, inputs: &[crate::selection::SelInput]
     k.shown = Some(FitShown { key, result });
 }
 
+/// A fit's settings few need, folded away under More: how much the surface is held smooth where
+/// the scan says little.
+pub(crate) fn more(ui: &mut egui::Ui, id: &str, smoothing: &mut f64) {
+    ui_kit::section(ui, id, tr("ui.scan_fit_more"), false, |ui| {
+        let format = |v: f64| format!("{v:.2}");
+        form_row(ui, tr("ui.scan_fit_smoothing"), |ui| {
+            ui_kit::slider(ui, smoothing, 0.0..=1.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
+        });
+    });
+}
+
 /// The Fit Surface dialog's rows (after the point input).
 pub fn fit_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitSurface, inputs: &[crate::selection::SelInput]) -> bool {
     fit(app, k, inputs);
@@ -533,10 +544,7 @@ pub fn fit_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitSurface, inputs: &
         let chosen = found.controls.to_string();
         form_row(ui, tr("ui.scan_fit_controls"), |ui| ui_kit::text(ui, &chosen, ui_kit::Text::Cell));
     }
-    let format = |v: f64| format!("{v:.2}");
-    form_row(ui, tr("ui.scan_fit_smoothing"), |ui| {
-        ui_kit::slider(ui, &mut k.smoothing, 0.0..=1.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
-    });
+    more(ui, "scan_fit_more", &mut k.smoothing);
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok((found, _, _))) => {
             let note = solidcraft_ui_text::format(

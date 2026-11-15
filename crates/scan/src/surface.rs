@@ -157,7 +157,7 @@ pub fn fit_surface(scan: &Scan, seed: usize, radius: f64, controls: usize, smoot
 }
 
 /// The control points each way [`fit_surface_close`] tries, fewest first.
-const CLOSE_STEPS: &[usize] = &[6, 8, 11, 15, 20, 25, 30];
+pub(crate) const CLOSE_STEPS: &[usize] = &[6, 8, 11, 15, 20, 25, 30];
 
 /// [`fit_surface`] with as many control points as bring it within `aim` (root mean square, mm) of
 /// the scan: from 6 each way up to 30, stopping once it is that close or where more points no

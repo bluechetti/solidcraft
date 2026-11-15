@@ -1,0 +1,34 @@
+{
+  "en": {
+    "ui.scan_fit_more": "More",
+    "ui.scan_holes_largest": "Largest hole"
+  },
+  "ar": {
+    "ui.scan_fit_more": "المزيد",
+    "ui.scan_holes_largest": "أكبر ثقب"
+  },
+  "de": {
+    "ui.scan_fit_more": "Mehr",
+    "ui.scan_holes_largest": "Größtes Loch"
+  },
+  "he": {
+    "ui.scan_fit_more": "עוד",
+    "ui.scan_holes_largest": "החור הגדול ביותר"
+  },
+  "ja": {
+    "ui.scan_fit_more": "詳細設定",
+    "ui.scan_holes_largest": "最大の穴"
+  },
+  "ko": {
+    "ui.scan_fit_more": "더 보기",
+    "ui.scan_holes_largest": "가장 큰 구멍"
+  },
+  "vi": {
+    "ui.scan_fit_more": "Thêm",
+    "ui.scan_holes_largest": "Lỗ lớn nhất"
+  },
+  "zh": {
+    "ui.scan_fit_more": "更多",
+    "ui.scan_holes_largest": "最大孔"
+  }
+}

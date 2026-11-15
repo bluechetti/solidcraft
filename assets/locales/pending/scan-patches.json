@@ -9,7 +9,6 @@
     "ui.scan_patches_controls": "Control Points",
     "ui.scan_patches_rows": "Rows",
     "ui.scan_patches_columns": "Columns",
-    "ui.scan_patches_smoothing": "Smoothing",
     "ui.scan_patches_found": "{patches} patches · rms {rms} mm, most {max} mm",
     "ui.scan_patches_hint": "Click the part of the scan to cover, or select it first."
   },
@@ -23,7 +22,6 @@
     "ui.scan_patches_controls": "Kontrollpunkte",
     "ui.scan_patches_rows": "Zeilen",
     "ui.scan_patches_columns": "Spalten",
-    "ui.scan_patches_smoothing": "Glättung",
     "ui.scan_patches_found": "{patches} Flächen · RMS {rms} mm, höchstens {max} mm",
     "ui.scan_patches_hint": "Klicken Sie auf den zu überdeckenden Teil des Scans, oder wählen Sie ihn vorher aus."
   },
@@ -37,7 +35,6 @@
     "ui.scan_patches_controls": "制御点",
     "ui.scan_patches_rows": "行",
     "ui.scan_patches_columns": "列",
-    "ui.scan_patches_smoothing": "スムージング",
     "ui.scan_patches_found": "{patches} パッチ · rms {rms} mm、最大 {max} mm",
     "ui.scan_patches_hint": "覆うスキャンの部分をクリックするか、先に選択します。"
   },
@@ -51,7 +48,6 @@
     "ui.scan_patches_controls": "제어점",
     "ui.scan_patches_rows": "행",
     "ui.scan_patches_columns": "열",
-    "ui.scan_patches_smoothing": "매끄럽게",
     "ui.scan_patches_found": "패치 {patches}개 · rms {rms} mm, 최대 {max} mm",
     "ui.scan_patches_hint": "덮을 스캔 부분을 클릭하거나 먼저 선택하세요."
   },
@@ -65,7 +61,6 @@
     "ui.scan_patches_controls": "控制点",
     "ui.scan_patches_rows": "行",
     "ui.scan_patches_columns": "列",
-    "ui.scan_patches_smoothing": "平滑",
     "ui.scan_patches_found": "{patches} 个面片 · 均方根 {rms} mm，最大 {max} mm",
     "ui.scan_patches_hint": "点击要覆盖的扫描部分，或先选中它。"
   },
@@ -79,7 +74,6 @@
     "ui.scan_patches_controls": "نقاط التحكم",
     "ui.scan_patches_rows": "صفوف",
     "ui.scan_patches_columns": "أعمدة",
-    "ui.scan_patches_smoothing": "التنعيم",
     "ui.scan_patches_found": "{patches} رقعة · جذر متوسط المربعات {rms} مم، أقصى {max} مم",
     "ui.scan_patches_hint": "انقر جزء المسح المراد تغطيته، أو حدده أولًا."
   },
@@ -93,7 +87,6 @@
     "ui.scan_patches_controls": "נקודות בקרה",
     "ui.scan_patches_rows": "שורות",
     "ui.scan_patches_columns": "עמודות",
-    "ui.scan_patches_smoothing": "החלקה",
     "ui.scan_patches_found": "{patches} טלאים · שורש ממוצע הריבועים {rms} מ״מ, לכל היותר {max} מ״מ",
     "ui.scan_patches_hint": "לחצו על חלק הסריקה שיש לכסות, או בחרו אותו קודם."
   },
@@ -107,7 +100,6 @@
     "ui.scan_patches_controls": "Điểm điều khiển",
     "ui.scan_patches_rows": "Hàng",
     "ui.scan_patches_columns": "Cột",
-    "ui.scan_patches_smoothing": "Làm trơn",
     "ui.scan_patches_found": "{patches} mảnh · rms {rms} mm, nhiều nhất {max} mm",
     "ui.scan_patches_hint": "Nhấp vào phần bản quét cần phủ, hoặc chọn nó trước."
   }

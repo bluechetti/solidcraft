@@ -21,7 +21,7 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.fit_patches", "Fi
     .icon("scan_fit_patches")
     .contract(&PATCHES_CONTRACT)
     .output(output_schema_for::<ScanPatchesResult>)
-    .params("body?: the scan (default: what is selected on a scan, else the picked or only one); the region: triangles?: [indices] | saved?: a kept selection (Keep Selection) | point?: [x,y,z] (the piece there; on a piece that wraps round, a closed part, the side of it facing the click) with radius?: length (default: what is selected, else the point picked); layout?: grid (default: one patch over the region's flattened box) | blocks (that patch cut exactly into `rows` × `columns` faces, sewn into one body) | quads (one patch whose edges follow the region's edge, its corners where the region's are); controls?: 4–30 or [u, v] (default 10: control points each way over the whole); rows?, columns?: blocks (default 2 × 2); smoothing?: 0–1 (default 0.1): fitted in all three directions to the region's points, each starting on the base surface the region fits best (its plane, a cylinder round it, or its flattening, so a region that curves round fits too) and moved to its foot on the surface between rounds; kept as a surface body `Patches1`, … (one undo step); a surface that folds, pinches or passes through itself is kept and said so (warning), and blocks that cannot be sewn because of it are refused → body, surface, layout, patches, rows, columns, controls, rms, max, points, folds, pinches, crossings, warning?, feature")];
+    .params("body?: the scan (default: what is selected on a scan, else the picked or only one); the region: triangles?: [indices] | saved?: a kept selection (Keep Selection) | point?: [x,y,z] (the piece there; on a piece that wraps round, a closed part, the side of it facing the click) with radius?: length (default: what is selected, else the point picked); layout?: grid (default: one patch over the region's flattened box) | blocks (that patch cut exactly into `rows` × `columns` faces, sewn into one body) | quads (one patch whose edges follow the region's edge, its corners where the region's are); controls?: 4–30 or [u, v] (default 10: control points each way over the whole); tolerance?: length (with no `controls`: as many control points, 6 to 30, as bring the fit within half of it, or as close as the scan's noise allows); rows?, columns?: blocks (default 2 × 2); smoothing?: 0–1 (default 0.1): fitted in all three directions to the region's points, each starting on the base surface the region fits best (its plane, a cylinder round it, or its flattening, so a region that curves round fits too) and moved to its foot on the surface between rounds; kept as a surface body `Patches1`, … (one undo step); a surface that folds, pinches or passes through itself is kept and said so (warning), and blocks that cannot be sewn because of it are refused → body, surface, layout, patches, rows, columns, controls, rms, max, points, folds, pinches, crossings, warning?, feature")];
 
 fn reply<T: serde::Serialize>(r: T) -> Result<Value> {
     serde_json::to_value(r).map_err(|e| EngineError::Other(e.to_string()))
@@ -48,6 +48,17 @@ pub fn fitted(s: &Session, p: &Value, cmd: &str) -> Result<(String, Layout, [usi
         "quads" => Layout::Quads,
         other => return Err(bad(cmd, format!("`layout` is grid, blocks or quads, not `{other}`"))),
     };
+    // No control points asked, with a tolerance: as many as bring the fit within half of it.
+    let tolerance = match crate::params::expr(p, "tolerance") {
+        Some(e) if p.get("controls").is_none_or(Value::is_null) => {
+            let t = s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("tolerance: {e}")))?;
+            if !(t.is_finite() && t > 0.0) {
+                return Err(bad(cmd, "`tolerance` must be a length above 0"));
+            }
+            Some(t)
+        }
+        _ => None,
+    };
     let controls = match p.get("controls").filter(|v| !v.is_null()) {
         None => [10, 10],
         Some(Value::Array(a)) if a.len() == 2 => {
@@ -66,7 +77,11 @@ pub fn fitted(s: &Session, p: &Value, cmd: &str) -> Result<(String, Layout, [usi
     if !(0.0..=1.0).contains(&smoothing) {
         return Err(bad(cmd, "`smoothing` is 0 to 1"));
     }
-    let found = patches::fit(&on.scan(), &region, layout, controls, smoothing).map_err(|e| bad(cmd, e.to_string()))?;
+    let (found, controls) = match tolerance {
+        Some(t) => patches::fit_close(&on.scan(), &region, layout, smoothing, t / 2.0).map(|(found, n)| (found, [n, n])),
+        None => patches::fit(&on.scan(), &region, layout, controls, smoothing).map(|found| (found, controls)),
+    }
+    .map_err(|e| bad(cmd, e.to_string()))?;
     Ok((on.body, layout, controls, found))
 }
 

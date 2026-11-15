@@ -43,6 +43,10 @@ pub struct ScanPatchesParams {
     /// 0 to 1: how much the surface is held smooth where the scan says little. Default: 0.1.
     #[serde(default)]
     pub smoothing: Option<f64>,
+    /// With no `controls`: as many control points (6 to 30) as bring the fit within half of this
+    /// length, or as close as the scan's noise allows.
+    #[serde(default)]
+    pub tolerance: Option<super::types::LengthExpr>,
 }
 
 /// What `scan.fit_patches` returns.
@@ -87,7 +91,7 @@ mod tests {
     fn schemas_and_the_key_check_agree() {
         assert_keys(
             input_schema_for::<ScanPatchesParams>(),
-            &["body", "columns", "controls", "layout", "point", "radius", "rows", "saved", "smoothing", "triangles"],
+            &["body", "columns", "controls", "layout", "point", "radius", "rows", "saved", "smoothing", "tolerance", "triangles"],
         );
     }
 }

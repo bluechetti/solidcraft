@@ -79,6 +79,31 @@ pub struct Patches {
 
 /// Patches of `layout` over the triangles `region` of the scan, `controls` control points each
 /// way over the whole (4 to 30), held smooth by `smoothing` (0 to 1).
+/// [`fit`] with as many control points each way as bring it within `aim` of the scan (root mean
+/// square), as [`crate::surface::fit_surface_close`] does: from 6 up to 30, stopping once it is
+/// that close or where more points no longer cut the distance by a quarter (the scan's noise is
+/// reached). The patches and their control points each way.
+pub fn fit_close(scan: &Scan, region: &[usize], layout: Layout, smoothing: f64, aim: f64) -> Result<(Patches, usize), PatchError> {
+    let mut best: Option<(Patches, usize)> = None;
+    for &n in crate::surface::CLOSE_STEPS {
+        let found = match fit(scan, region, layout, [n, n], smoothing) {
+            Ok(found) => found,
+            // Too few points for more control points: the last that fitted is the closest.
+            Err(PatchError::TooFew) if best.is_some() => break,
+            Err(e) => return Err(e),
+        };
+        if best.as_ref().is_some_and(|(b, _)| found.rms >= 0.75 * b.rms) {
+            break;
+        }
+        let close = found.rms <= aim;
+        best = Some((found, n));
+        if close {
+            break;
+        }
+    }
+    best.ok_or(PatchError::TooFew)
+}
+
 pub fn fit(scan: &Scan, region: &[usize], layout: Layout, controls: [usize; 2], smoothing: f64) -> Result<Patches, PatchError> {
     let [nu, nv] = controls.map(|c| c.clamp(4, 30));
     let smoothing = smoothing.clamp(0.0, 1.0);
