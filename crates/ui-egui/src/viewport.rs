@@ -4041,6 +4041,11 @@ pub(crate) fn analysis_legend_data(app: &SolveApp) -> Option<AnalysisLegend> {
         _ => match crate::scan_deviation::legend(app) {
             Some((summary, rows)) => (tr("Scan Deviation"), Some(summary), rows),
             None => match crate::scan_fidelity::legend(app) {
+                // Flat Template colours how far the scan stands off the wall's plane, not off a
+                // surface: its key says whose colours they are.
+                Some(rows) if matches!(app.dialog.as_ref().map(|d| &d.kind), Some(crate::dialogs::Kind::ScanFlatTemplate(_))) => {
+                    (tr("cmd.scan_flat_template"), None, rows)
+                }
                 Some(rows) => (tr("Scan Deviation"), None, rows),
                 None => match crate::scan_shapes::legend(app) {
                     Some((summary, rows)) => (tr("cmd.scan_find_all"), Some(summary), rows),

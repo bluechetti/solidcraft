@@ -129,7 +129,8 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::Se
             vec![crate::selection::SelInput::new("Surfaces", crate::selection::BODIES, true)],
         )),
         "scan.wrap_surface" => {
-            let k = WrapSurface { area: crate::scan_area::Area::opening_round(app, 0.0), ..WrapSurface::default() };
+            // Details opens on Medium, as the command does when it is not given.
+            let k = WrapSurface { area: crate::scan_area::Area::opening_round(app, 0.0), details: 1, ..WrapSurface::default() };
             Some((Kind::ScanWrapSurface(k), vec![crate::selection::SelInput::new("Point", crate::selection::FACES, false)]))
         }
         _ => None,
@@ -1061,6 +1062,8 @@ mod tests {
             panic!("wrapped: {:?}", k.shown.as_ref().map(|s| s.result.as_ref().err()))
         };
         assert!((w.cylinder.radius - 20.0).abs() < 0.2 && w.made.rms < 0.1, "{:?} {}", w.cylinder, w.made.rms);
+        // Details opens on Medium, as the command does when it is not given.
+        assert_eq!(WRAP_DETAILS[k.details], "medium");
         // The radius, how far off the part is and the rms are lengths, not areas or volumes.
         let found = painted_text(&mut h).into_iter().find(|t| t.contains("cylinder of radius")).expect("the note on the net found");
         assert!(found.contains(" mm") && !found.contains('²') && !found.contains('³'), "{found}");

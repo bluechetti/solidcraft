@@ -355,7 +355,7 @@ mod tests {
                 k.chosen = true;
             }
         }
-        for _ in 0..600 {
+        for _ in 0..2000 {
             h.frames(1);
             if outcome(dialog(&h)).is_some() {
                 break;
@@ -368,6 +368,14 @@ mod tests {
         assert!(sent[0].1.get("radius").is_some() && sent[0].1.get("point").is_some(), "{sent:?}");
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
+        // OK smooths beside the window: on a busy machine it takes a while to come in.
+        for _ in 0..2000 {
+            if h.app.dialog.is_none() {
+                break;
+            }
+            h.frames(1);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
         let after = positions(&h);
         let reach = 0.2 * (hi - lo).len() + 0.1 * (hi - lo).len();

@@ -1573,6 +1573,11 @@ mod tests {
         assert_eq!(m.cutouts.len(), 1, "the outlet is cut out");
         assert!(m.step.is_some() && m.sides.is_empty() && m.edge.is_empty(), "a found outline: no side lengths, no ragged edge");
         assert!((m.area - 400.0 * 300.0).abs() < 0.02 * 120_000.0, "the whole wall: {}", m.area);
+        // Its colours' key says they are the template's (how far the scan stands off the wall), not
+        // Scan Deviation's.
+        let (title, _, rows) = crate::viewport::analysis_legend_data(&h.app).expect("the key");
+        assert_eq!(title, solidcraft_ui_text::tr("cmd.scan_flat_template"));
+        assert!(!rows.is_empty());
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
