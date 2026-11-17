@@ -37,7 +37,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("c_smooth")
         .contract(&DENOISE_CONTRACT)
         .output(output_schema_for::<ScanDenoiseResult>)
-        .params("body?: the scan (default: the selected or only one); strength?: passes 0.05–8 (default: the strength its noise and shrinkage suggest, refused when smoothing would not lower its error): the faces' normals filtered bilaterally (faces across a sharp edge barely mix) and the vertices moved square to them, the open rim kept put, kept as a Scan Clean step in the timeline (its settings only; in_place?: bool writes the scan back instead), one undo step → body, strength, suggested, noise, roughness, rms_moved, max_moved, feature"),
+        .params("body?: the scan (default: the selected or only one); strength?: passes 0.05–8 (default: the strength its noise and shrinkage suggest, refused when smoothing would not lower its error); area: point?: [x,y,z] with grow?: true|degrees or radius?: mm, saved?: kept selection, selected?: true (what is selected; a selection is never taken unasked), or area?: {triangles, runs} as the step keeps it (default: the whole scan; outside it nothing moves); then: the faces' normals filtered bilaterally (faces across a sharp edge barely mix) and the vertices moved square to them, the open rim kept put, kept as a Scan Clean step in the timeline (its settings only; in_place?: bool writes the scan back instead), one undo step → body, strength, suggested, noise, roughness, rms_moved, max_moved, feature"),
     CommandSpec::new("scan.remesh", "Remesh", crate::checked!("scan.remesh", remesh_scan))
         .at("SCAN", "CLEAN")
         .icon("grid")
@@ -167,7 +167,12 @@ pub fn denoise_mesh(s: &Session, body: Option<&str>) -> Result<(String, std::syn
 
 /// What smoothing would do for a mesh: each pass measured, and the strength suggested.
 pub fn denoise_study(positions: &[Vec3], triangles: &[[u32; 3]]) -> Option<Study> {
-    denoise::study(&Scan::new(positions, triangles))
+    denoise_study_within(positions, triangles, None)
+}
+
+/// [`denoise_study`] of an area (one flag a triangle; the whole mesh with `None`).
+pub fn denoise_study_within(positions: &[Vec3], triangles: &[[u32; 3]], area: Option<&[bool]>) -> Option<Study> {
+    denoise::study_within(&Scan::new(positions, triangles), area)
 }
 
 pub(super) fn denoise_scan(s: &mut Session, p: &Value) -> Result<Value> {
@@ -177,7 +182,8 @@ pub(super) fn denoise_scan(s: &mut Session, p: &Value) -> Result<Value> {
     if strength.is_some_and(|k| !(0.0..=denoise::MOST_PASSES as f64).contains(&k)) {
         return Err(bad(cmd, "`strength` is a number of passes from 0 to 8"));
     }
-    let (done, feature) = super::clean::apply(s, p, &body, CleanStep::Denoise { strength }, cmd)?;
+    let area = super::flatten::step_area(s, p, &body, cmd)?;
+    let (done, feature) = super::clean::apply(s, p, &body, CleanStep::Denoise { strength, area }, cmd)?;
     let Report::Denoise { strength, suggested, noise, roughness, rms_moved, max_moved } = done.report else {
         return Err(bad(cmd, "the step did something else"));
     };

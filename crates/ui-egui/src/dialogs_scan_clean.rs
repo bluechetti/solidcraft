@@ -76,7 +76,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::S
             Some((Kind::ScanFloating(Floating::default()), vec![crate::selection::SelInput::new("Point", crate::selection::FACES, true).places()]))
         }
         "scan.fill_holes" => Some((Kind::ScanHoles(Holes::default()), Vec::new())),
-        "scan.reduce" => Some((Kind::ScanReduce(Reduce::default()), Vec::new())),
+        "scan.reduce" => Some((Kind::ScanReduce(Reduce::default()), vec![crate::selection::SelInput::new("Point", crate::selection::FACES, false)])),
         "scan.clean_up" => Some((Kind::ScanCleanUp(CleanUp::default()), Vec::new())),
         _ => None,
     }
@@ -92,12 +92,16 @@ pub fn refill(kind: &mut Kind, step: &CleanStep) {
             k.at = at.iter().map(|p| solidcore_record::Vec3::new(p[0], p[1], p[2])).collect();
             k.by_hand = !at.is_empty();
         }
-        (Kind::ScanReduce(k), CleanStep::Reduce { ratio, max_error, keep_rim, .. }) => {
+        (Kind::ScanReduce(k), CleanStep::Reduce { ratio, max_error, keep_rim, area, .. }) => {
             k.percent = ratio.map_or(50.0, |r| (100.0 * r).clamp(1.0, 99.0));
             k.max_error = *max_error;
             k.keep_rim = *keep_rim;
+            k.kept = area.as_ref().and_then(|a| serde_json::to_value(a).ok());
         }
-        (Kind::ScanDenoise(k), CleanStep::Denoise { strength: Some(strength) }) => *k = crate::dialogs_scan_denoise::Denoise::chosen(*strength),
+        (Kind::ScanDenoise(k), CleanStep::Denoise { strength, area }) => {
+            *k = strength.map_or_else(crate::dialogs_scan_denoise::Denoise::default, crate::dialogs_scan_denoise::Denoise::chosen);
+            k.kept = area.as_ref().and_then(|a| serde_json::to_value(a).ok());
+        }
         _ => {}
     }
 }
@@ -520,18 +524,51 @@ pub struct Reduce {
     /// The most a collapse may move the surface, in mm; 0 for no such limit.
     pub max_error: f64,
     pub keep_rim: bool,
+    /// Which part of the scan: the whole scan unless another way is chosen.
+    pub area: crate::scan_area::Area,
+    /// The area of the step being edited, as it keeps it: kept as it is.
+    pub kept: Option<Value>,
     /// The scan and its triangles, for the count the share means.
     scan: Option<(u64, Result<(String, usize), String>)>,
 }
 
 impl Default for Reduce {
     fn default() -> Self {
-        Reduce { percent: 50.0, max_error: 0.0, keep_rim: true, scan: None }
+        Reduce { percent: 50.0, max_error: 0.0, keep_rim: true, area: crate::scan_area::Area::clean(), kept: None, scan: None }
     }
 }
 
+/// The Area row of a clean tool, or, editing a step made on an area, a note that it keeps it.
+pub(crate) fn area_row(app: &SolveApp, ui: &mut egui::Ui, id: &str, area: &mut crate::scan_area::Area, kept: Option<&Value>) {
+    if kept.is_some() {
+        form_row(ui, solidcraft_ui_text::tr("ui.scan_fit_area"), |ui| {
+            ui_kit::text(ui, solidcraft_ui_text::tr("ui.scan_area_kept"), ui_kit::Text::Cell)
+        });
+    } else {
+        crate::scan_area::row(app, ui, id, area);
+    }
+}
+
+/// What a clean tool is sent for its area beside `body`: the kept one when editing a step made on
+/// an area, else as the row says. `Err` with what it waits for.
+pub(crate) fn area_params(
+    app: &SolveApp,
+    area: &crate::scan_area::Area,
+    kept: Option<&Value>,
+    inputs: &[crate::selection::SelInput],
+) -> Result<Value, String> {
+    if let Some(kept) = kept {
+        return Ok(json!({ "area": kept }));
+    }
+    let clicked = match crate::selection::items(inputs, 0).first() {
+        Some(solidcraft_engine::Sel::Face { body, point, .. }) => Some((body.as_str(), *point)),
+        _ => None,
+    };
+    area.step_params(app, clicked).ok_or_else(|| crate::scan_area::waiting(area, "ui.scan_clean_area_hint").to_owned())
+}
+
 /// The Reduce Mesh dialog's rows.
-pub fn reduce_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reduce) -> bool {
+pub fn reduce_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reduce, _inputs: &[crate::selection::SelInput]) -> bool {
     if k.scan.as_ref().is_none_or(|(revision, _)| *revision != app.session.revision) {
         let found = solidcraft_engine::cmd::scan::mesh_body_name(&app.session, None, "scan.reduce").map_err(|e| e.to_string()).and_then(|name| {
             let count = app.session.model.state().body(&name).and_then(|b| b.body.triangle_mesh()).map(|(_, t)| t.len()).ok_or("the scan is gone")?;
@@ -557,8 +594,11 @@ pub fn reduce_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reduce) -> bool {
     );
     k.max_error = k.max_error.clamp(0.0, 100.0);
     form_row(ui, tr("ui.scan_reduce_rim"), |ui| check(ui, &mut k.keep_rim));
+    area_row(app, ui, "scan_reduce_area", &mut k.area, k.kept.as_ref());
+    let whole = k.kept.is_none() && k.area.is_whole();
     match k.scan.as_ref().map(|(_, r)| r) {
-        Some(Ok((_, count))) => {
+        // The count the share keeps, of the whole scan (an area's own is worked out on OK).
+        Some(Ok((_, count))) if whole => {
             let kept = ((k.percent / 100.0) * *count as f64).round() as usize;
             let note = solidcraft_ui_text::format("ui.scan_reduce_count", &[("now", &count.to_string()), ("kept", &kept.to_string())]);
             ui_kit::text(ui, &note, ui_kit::Text::Note("scan_reduce_count"));
@@ -566,16 +606,21 @@ pub fn reduce_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reduce) -> bool {
         Some(Err(why)) => {
             ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_reduce_error", true));
         }
-        None => {}
+        _ => {}
     }
     ui_kit::text(ui, tr("ui.scan_reduce_hint"), ui_kit::Text::Hint("scan_reduce_hint"));
     false
 }
 
 /// What OK runs: the scan reduced.
-pub fn reduce_commands(k: &Reduce) -> Result<Vec<(String, Value)>, String> {
+pub fn reduce_commands(app: &SolveApp, k: &Reduce, inputs: &[crate::selection::SelInput]) -> Result<Vec<(String, Value)>, String> {
     let (body, _) = k.scan.as_ref().ok_or("still reading the scan")?.1.as_ref().map_err(Clone::clone)?;
-    let mut p = json!({"body": body, "ratio": (k.percent / 100.0).clamp(0.01, 0.99), "keep_rim": k.keep_rim});
+    let mut p = area_params(app, &k.area, k.kept.as_ref(), inputs)?;
+    if p.get("body").is_none() {
+        p["body"] = json!(body);
+    }
+    p["ratio"] = json!((k.percent / 100.0).clamp(0.01, 0.99));
+    p["keep_rim"] = json!(k.keep_rim);
     if k.max_error > 0.0 {
         p["max_error"] = json!(format!("{} mm", k.max_error));
     }

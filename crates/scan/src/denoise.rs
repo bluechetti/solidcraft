@@ -296,9 +296,28 @@ struct Run {
 
 impl Run {
     fn new(scan: &Scan) -> Option<Run> {
-        let mesh = Mesh::new(scan);
+        Run::within(scan, None)
+    }
+
+    /// A run that moves only the vertices of the triangles `area` marks (one flag a triangle of the
+    /// scan), and reads the roughness only there: a vertex of a triangle outside it is held.
+    fn within(scan: &Scan, area: Option<&[bool]>) -> Option<Run> {
+        let mut mesh = Mesh::new(scan);
         if mesh.triangles.is_empty() {
             return None;
+        }
+        if let Some(area) = area {
+            for (t, tri) in scan.triangles.iter().enumerate() {
+                if !area.get(t).copied().unwrap_or(false) {
+                    for v in tri {
+                        if let Some(rep) = mesh.weld.get(*v as usize).copied()
+                            && let Some(f) = mesh.fixed.get_mut(rep as usize)
+                        {
+                            *f = true;
+                        }
+                    }
+                }
+            }
         }
         let original = scan.positions.iter().enumerate().map(|(v, p)| scan.positions.get(mesh.weld[v] as usize).copied().unwrap_or(*p)).collect();
         Some(Run { mesh, original, edge: typical_edge(scan) })
@@ -350,7 +369,13 @@ impl Run {
 /// error a strength leaves is modelled as the roughness and the shrinkage together, the
 /// shrinkage being the steady growth of the movement over the last passes, once the noise is gone.
 pub fn study(scan: &Scan) -> Option<Study> {
-    let run = Run::new(scan)?;
+    study_within(scan, None)
+}
+
+/// [`study`] of the triangles `area` marks (one flag a triangle of the scan; all with `None`): only
+/// they are smoothed and measured.
+pub fn study_within(scan: &Scan, area: Option<&[bool]>) -> Option<Study> {
+    let run = Run::within(scan, area)?;
     let mut stages = vec![run.stage(&run.original)];
     let mut at = run.original.clone();
     for _ in 0..MOST_PASSES {
@@ -423,14 +448,21 @@ pub(crate) fn smoothed_until(scan: &Scan, most: usize, mut enough: impl FnMut(&[
 /// `scan` smoothed at `strength` passes, or at the strength the study suggests (which runs the
 /// study first). Given a strength, only the passes it reaches are run.
 pub fn denoise(scan: &Scan, strength: Option<f64>) -> Option<Denoised> {
+    denoise_within(scan, strength, None)
+}
+
+/// [`denoise`] within an area: only the vertices of the triangles `area` marks move (one flag a
+/// triangle of the scan; all with `None`), so the rest of the scan and the area's edge with it stay
+/// as they were; the noise and roughness are read there.
+pub fn denoise_within(scan: &Scan, strength: Option<f64>, area: Option<&[bool]>) -> Option<Denoised> {
     let (strength, suggested) = match strength {
         Some(k) => (k.clamp(0.0, MOST_PASSES as f64), None),
         None => {
-            let found = study(scan)?;
+            let found = study_within(scan, area)?;
             (found.suggested, Some(found.suggested))
         }
     };
-    let run = Run::new(scan)?;
+    let run = Run::within(scan, area)?;
     let positions = run.smoothed(strength)?;
     let measured = run.stage(&positions);
     Some(Denoised {
@@ -499,6 +531,40 @@ mod tests {
         let (before, after) =
             (edge.iter().map(|&i| off_box(positions[i], size)).sum::<f64>(), edge.iter().map(|&i| off_box(done.positions[i], size)).sum::<f64>());
         assert!(after <= 1.05 * before, "edges no rounder: {after} against {before}");
+    }
+
+    /// Within an area (the box's top), only the area is smoothed: every vertex of a triangle
+    /// outside it is exactly where it was, and the top's noise is taken down.
+    #[test]
+    fn only_the_area_is_smoothed() {
+        let size = Vec3::new(30.0, 20.0, 10.0);
+        let (mut positions, triangles) = fine_cuboid(Vec3::ZERO, size, 30);
+        let welds = welded(&positions);
+        for (i, p) in positions.iter_mut().enumerate() {
+            let k = welds[i] as usize;
+            let n = if p.x.min(size.x - p.x) < 1e-9 {
+                Vec3::X
+            } else if p.y.min(size.y - p.y) < 1e-9 {
+                Vec3::Y
+            } else {
+                Vec3::Z
+            };
+            *p += n * (0.06 * noise(k));
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let top = |t: &[u32; 3]| t.iter().all(|&v| positions[v as usize].z > size.z - 0.2);
+        let area: Vec<bool> = triangles.iter().map(top).collect();
+        let done = denoise_within(&scan, Some(3.0), Some(&area)).unwrap();
+        let outside: std::collections::HashSet<u32> = triangles.iter().zip(&area).filter(|(_, a)| !**a).flat_map(|(t, _)| *t).collect();
+        for v in &outside {
+            let i = *v as usize;
+            assert_eq!(done.positions[i], positions[welds[i] as usize], "vertex {v} outside the area moved");
+        }
+        let moved = (0..positions.len()).filter(|i| !outside.contains(&(*i as u32)) && done.positions[*i] != positions[*i]).count();
+        assert!(moved > 100, "the top smoothed: {moved} moved");
+        assert!(done.roughness < 0.5 * done.noise, "{} from {}", done.roughness, done.noise);
+        let found = study_within(&scan, Some(&area)).unwrap();
+        assert!(found.suggested > 0.0, "smoothing helps the noisy top: {found:?}");
     }
 
     /// A clean scan is left alone: nothing to gain.

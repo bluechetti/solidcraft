@@ -30,13 +30,17 @@ pub struct Denoise {
     chosen: bool,
     /// The study, filled in by its thread.
     study: Arc<Mutex<Option<Outcome>>>,
-    /// The revision being studied.
-    asked: Option<u64>,
+    /// What is being studied: the design's revision, the area asked for and the selection's stamp.
+    asked: Option<String>,
+    /// Which part of the scan: the whole scan unless another way is chosen.
+    pub area: crate::scan_area::Area,
+    /// The area of the step being edited, as it keeps it: kept as it is.
+    pub kept: Option<Value>,
 }
 
 impl Default for Denoise {
     fn default() -> Self {
-        Denoise { strength: 0.0, chosen: false, study: Arc::new(Mutex::new(None)), asked: None }
+        Denoise { strength: 0.0, chosen: false, study: Arc::new(Mutex::new(None)), asked: None, area: crate::scan_area::Area::clean(), kept: None }
     }
 }
 
@@ -48,7 +52,8 @@ impl Denoise {
 }
 
 pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
-    (id == "scan.denoise").then(|| (Kind::ScanDenoise(Denoise::default()), Vec::new()))
+    (id == "scan.denoise")
+        .then(|| (Kind::ScanDenoise(Denoise::default()), vec![crate::selection::SelInput::new("Point", crate::selection::FACES, false)]))
 }
 
 fn tr(id: &'static str) -> &'static str {
@@ -61,27 +66,46 @@ fn outcome(k: &Denoise) -> Option<(String, Result<Study, String>)> {
     slot.as_ref().map(|(body, _, study)| (body.clone(), study.clone()))
 }
 
-/// Study the scan again when the design has changed: a copy of its mesh studied beside the window
-/// (in the browser, here).
-fn study(app: &SolveApp, k: &mut Denoise) {
+/// Study the scan (its area, when one is chosen) again when the design or the area has changed: a
+/// copy of its mesh studied beside the window, the area found there too (in the browser, here).
+/// `Err` with what the area waits for.
+fn study(app: &SolveApp, k: &mut Denoise, inputs: &[crate::selection::SelInput]) -> Result<(), String> {
     let revision = app.session.revision;
-    if k.asked == Some(revision) {
-        return;
+    let area = crate::dialogs_scan_clean::area_params(app, &k.area, k.kept.as_ref(), inputs)?;
+    let key = format!("{revision}|{area}|{}", solidcraft_engine::cmd::scan::select::stamp(&app.session));
+    if k.asked.as_ref() == Some(&key) {
+        return Ok(());
     }
-    k.asked = Some(revision);
+    k.asked = Some(key);
     let slot = Arc::new(Mutex::new(None));
     k.study = slot.clone();
-    let (body, mesh) = match engine_mesh::denoise_mesh(&app.session, None) {
+    let (body, mesh) = match engine_mesh::denoise_mesh(&app.session, area.get("body").and_then(Value::as_str)) {
         Ok(mesh) => mesh,
         Err(e) => {
             if let Ok(mut s) = slot.lock() {
                 *s = Some((String::new(), revision, Err(e.to_string())));
             }
-            return;
+            return Ok(());
         }
     };
+    // The area is found on a copy of the design, beside the window: growing it over a large scan
+    // takes a while.
+    let copy = (area.as_object().is_some_and(|o| !o.is_empty())).then(|| app.session.scratch());
     let work = move || {
-        let found = engine_mesh::denoise_study(&mesh.positions, &mesh.triangles).ok_or_else(|| tr("ui.scan_denoise_empty").to_owned());
+        let flags = match &copy {
+            Some(copy) => match solidcraft_engine::cmd::scan::flatten::step_area(copy, &area, &body, "scan.denoise") {
+                Ok(found) => found.map(|a| a.flags()),
+                Err(e) => {
+                    if let Ok(mut s) = slot.lock() {
+                        *s = Some((body, revision, Err(e.to_string())));
+                    }
+                    return;
+                }
+            },
+            None => None,
+        };
+        let found = engine_mesh::denoise_study_within(&mesh.positions, &mesh.triangles, flags.as_deref())
+            .ok_or_else(|| tr("ui.scan_denoise_empty").to_owned());
         if let Ok(mut s) = slot.lock() {
             *s = Some((body, revision, found));
         }
@@ -92,11 +116,16 @@ fn study(app: &SolveApp, k: &mut Denoise) {
     }
     #[cfg(target_arch = "wasm32")]
     work();
+    Ok(())
 }
 
 /// The dialog's rows.
-pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Denoise) -> bool {
-    study(app, k);
+pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Denoise, inputs: &[crate::selection::SelInput]) -> bool {
+    crate::dialogs_scan_clean::area_row(app, ui, "scan_denoise_area", &mut k.area, k.kept.as_ref());
+    if let Err(waiting) = study(app, k, inputs) {
+        ui_kit::text(ui, &waiting, ui_kit::Text::Hint("scan_denoise_area_hint"));
+        return false;
+    }
     let Some((body, found)) = outcome(k) else {
         ui_kit::text(ui, tr("ui.scan_denoise_studying"), ui_kit::Text::Note("scan_denoise_studying"));
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
@@ -181,13 +210,16 @@ fn plot(ui: &mut egui::Ui, found: &Study, strength: f64) {
 }
 
 /// What OK runs: the scan smoothed at the strength chosen.
-pub fn commands(k: &Denoise) -> Result<Vec<(String, Value)>, String> {
+pub fn commands(app: &SolveApp, k: &Denoise, inputs: &[crate::selection::SelInput]) -> Result<Vec<(String, Value)>, String> {
+    let mut p = crate::dialogs_scan_clean::area_params(app, &k.area, k.kept.as_ref(), inputs)?;
     let (body, found) = outcome(k).ok_or_else(|| tr("ui.scan_denoise_studying").to_owned())?;
     found?;
     if !(k.strength > 0.0) {
         return Err(tr("ui.scan_denoise_choose").into());
     }
-    Ok(vec![("scan.denoise".into(), json!({"body": body, "strength": (k.strength * 100.0).round() / 100.0}))])
+    p["body"] = json!(body);
+    p["strength"] = json!((k.strength * 100.0).round() / 100.0);
+    Ok(vec![("scan.denoise".into(), p)])
 }
 
 #[cfg(test)]
@@ -286,13 +318,60 @@ mod tests {
         }
         h.frames(2);
         assert_eq!(dialog(&h).strength, 1.0, "a strength chosen stays");
-        let commands = commands(dialog(&h)).unwrap();
-        assert_eq!(commands, vec![("scan.denoise".to_owned(), json!({"body": body, "strength": 1.0}))]);
+        let inputs = h.app.dialog.as_ref().map(|d| d.inputs.clone()).unwrap_or_default();
+        let commands = commands(&h.app, dialog(&h), &inputs).unwrap();
+        assert_eq!(commands, vec![("scan.denoise".to_owned(), json!({"body": body, "strength": 1.0}))], "the whole scan, as before");
         let before = h.app.session.revision;
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
         assert!(h.app.session.revision > before, "the scan is smoothed");
         h.app.run("edit.undo", json!({})).unwrap();
+    }
+
+    /// Round the click: the study and OK work on the scan near the click alone, and nothing else
+    /// of the scan moves.
+    #[test]
+    fn round_the_click_smooths_only_there() {
+        use solidcraft_engine::geom::prelude::*;
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("plate.stl");
+        noisy_plate_stl(&path);
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let scan = h.app.session.model.state().bodies[0].name.clone();
+        let positions = |h: &crate::scenario::Harness| {
+            h.app.session.model.state().body(&scan).and_then(|b| b.body.triangle_mesh()).map(|(p, _)| p.to_vec()).unwrap_or_default()
+        };
+        let before = positions(&h);
+        let (lo, hi) = before.iter().fold((before[0], before[0]), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+        let centre = (lo + hi) * 0.5;
+        h.app.start("scan.denoise");
+        if let Some(d) = h.app.dialog.as_mut() {
+            d.inputs[0].items.push(solidcraft_engine::Sel::Face { body: scan.clone(), index: 0, point: centre });
+            if let Kind::ScanDenoise(k) = &mut d.kind {
+                k.area.way = crate::scan_area::ROUND;
+                k.area.radius = 0.2 * (hi - lo).len();
+                k.strength = 2.0;
+                k.chosen = true;
+            }
+        }
+        for _ in 0..600 {
+            h.frames(1);
+            if outcome(dialog(&h)).is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        outcome(dialog(&h)).expect("the area studied").1.expect("a study");
+        let inputs = h.app.dialog.as_ref().map(|d| d.inputs.clone()).unwrap_or_default();
+        let sent = commands(&h.app, dialog(&h), &inputs).unwrap();
+        assert!(sent[0].1.get("radius").is_some() && sent[0].1.get("point").is_some(), "{sent:?}");
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        let after = positions(&h);
+        let reach = 0.2 * (hi - lo).len() + 0.1 * (hi - lo).len();
+        assert!(before.iter().zip(&after).filter(|(a, _)| a.dist(centre) > reach).all(|(a, b)| a == b), "far from the click nothing moved");
+        assert!(before.iter().zip(&after).any(|(a, b)| a != b), "near it the scan is smoothed");
     }
 }

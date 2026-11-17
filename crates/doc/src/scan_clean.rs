@@ -49,7 +49,8 @@ pub enum CleanStep {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         at: Vec<[f64; 3]>,
     },
-    /// Reduce Mesh: to a share of the triangles, a count, or as far as an error allows.
+    /// Reduce Mesh: to a share of the triangles, a count, or as far as an error allows; within
+    /// `area` only when it has one (the share then of the area's triangles).
     Reduce {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ratio: Option<f64>,
@@ -58,14 +59,19 @@ pub enum CleanStep {
         #[serde(default)]
         max_error: f64,
         keep_rim: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        area: Option<StepArea>,
     },
     /// Repair Mesh: copied triangles, edges of three or more faces, slivers and, when
     /// `crossings`, faces passing through others.
     Repair { crossings: bool },
-    /// Denoise: `strength` passes, or as many as the scan's own noise suggests.
+    /// Denoise: `strength` passes, or as many as the scan's own noise suggests; within `area`
+    /// only when it has one.
     Denoise {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         strength: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        area: Option<StepArea>,
     },
     /// Remove Markers: the reference spheres of `radius` at `centres` (found when the step was
     /// made) taken off, and the holes they leave closed, shaped to the surface when `fair`.
@@ -79,6 +85,60 @@ pub enum CleanStep {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         with: Vec<BodyName>,
     },
+}
+
+/// The part of the scan a step works on: triangles of the scan as the step meets it (the steps
+/// before it make the same scan every time, so the numbers stand), as runs of consecutive ones,
+/// `[first, how many]`, in order, as a kept selection keeps them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+pub struct StepArea {
+    /// How many triangles the scan had.
+    pub triangles: u32,
+    pub runs: Vec<[u32; 2]>,
+}
+
+/// The most runs an area keeps.
+pub const MAX_AREA_RUNS: usize = 1_000_000;
+
+impl StepArea {
+    /// The area of the triangles `chosen` marks (one flag a triangle of the scan).
+    pub fn of(chosen: &[bool]) -> StepArea {
+        let mut runs: Vec<[u32; 2]> = Vec::new();
+        for (t, on) in chosen.iter().enumerate() {
+            if !on {
+                continue;
+            }
+            match runs.last_mut() {
+                Some([first, count]) if (*first + *count) as usize == t => *count += 1,
+                _ => runs.push([t as u32, 1]),
+            }
+        }
+        StepArea { triangles: chosen.len() as u32, runs }
+    }
+
+    /// One flag a triangle of the scan it was chosen on.
+    pub fn flags(&self) -> Vec<bool> {
+        let mut out = vec![false; self.triangles as usize];
+        for [first, count] in &self.runs {
+            let (a, b) = (*first as usize, (*first as usize).saturating_add(*count as usize).min(out.len()));
+            if let Some(span) = out.get_mut(a.min(b)..b) {
+                span.fill(true);
+            }
+        }
+        out
+    }
+
+    /// How many triangles it holds.
+    pub fn count(&self) -> usize {
+        self.runs.iter().map(|[_, n]| *n as usize).sum()
+    }
+
+    /// Runs in order, apart, within the scan, and not too many.
+    fn ok(&self) -> bool {
+        self.runs.len() <= MAX_AREA_RUNS
+            && self.runs.iter().all(|[a, n]| *n > 0 && a.checked_add(*n).is_some_and(|end| end <= self.triangles))
+            && self.runs.windows(2).all(|w| w[0][0] + w[0][1] < w[1][0])
+    }
 }
 
 impl CleanStep {
@@ -142,8 +202,11 @@ impl CleanStep {
                 }
                 p
             }
-            CleanStep::Reduce { ratio, triangles, max_error, keep_rim } => {
+            CleanStep::Reduce { ratio, triangles, max_error, keep_rim, area } => {
                 let mut p = json!({ "keep_rim": keep_rim });
+                if let Some(a) = area {
+                    p["area"] = json!(a);
+                }
                 if let Some(r) = ratio {
                     p["ratio"] = json!(r);
                 }
@@ -156,7 +219,13 @@ impl CleanStep {
                 p
             }
             CleanStep::Repair { crossings } => json!({ "crossings": crossings }),
-            CleanStep::Denoise { strength } => strength.map_or_else(|| json!({}), |k| json!({ "strength": k })),
+            CleanStep::Denoise { strength, area } => {
+                let mut p = strength.map_or_else(|| json!({}), |k| json!({ "strength": k }));
+                if let Some(a) = area {
+                    p["area"] = json!(a);
+                }
+                p
+            }
             CleanStep::Remesh { cell, sharp, with } => {
                 let mut p = json!({ "sharp": sharp });
                 if let Some(c) = cell {
@@ -189,6 +258,9 @@ impl CleanStep {
             }
             CleanStep::FillHoles { at, .. } if !points_ok(at) => bad("takes at most 10000 points of three finite numbers"),
             CleanStep::FillHoles { max_edges, .. } if !(3..=5000).contains(max_edges) => bad("closes holes of 3 to 5000 edges"),
+            CleanStep::Reduce { area: Some(a), .. } | CleanStep::Denoise { area: Some(a), .. } if !a.ok() || a.count() == 0 => {
+                bad("needs an area of the scan's triangles, in order")
+            }
             CleanStep::Reduce { ratio, triangles, max_error, .. } => {
                 if ratio.is_some_and(|r| !(r > 0.0 && r <= 1.0)) {
                     bad("keeps a share above 0 and at most 1")
@@ -202,7 +274,7 @@ impl CleanStep {
                     Ok(())
                 }
             }
-            CleanStep::Denoise { strength: Some(k) } if !(0.0..=solidcraft_scan::denoise::MOST_PASSES as f64).contains(k) => {
+            CleanStep::Denoise { strength: Some(k), .. } if !(0.0..=solidcraft_scan::denoise::MOST_PASSES as f64).contains(k) => {
                 bad("smooths 0 to 8 passes")
             }
             CleanStep::Remesh { cell: Some(c), .. } if !(c.is_finite() && *c > 0.0) => bad("needs a cell that is a length above 0"),
@@ -306,6 +378,19 @@ pub fn clean(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, R
     done
 }
 
+/// A step's area as flags on the scan it meets (`None`: the whole scan). Refused when the scan is
+/// not the one it was chosen on: a step before it was changed.
+fn within(area: Option<&StepArea>, triangles: usize) -> Result<Option<Vec<bool>>, Refused> {
+    match area {
+        None => Ok(None),
+        Some(a) if a.triangles as usize != triangles => Err(Refused::Failed(format!(
+            "its area was chosen on the scan with {} triangles; a step before it now leaves {triangles}: choose the area again",
+            a.triangles
+        ))),
+        Some(a) => Ok(Some(a.flags())),
+    }
+}
+
 fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refused> {
     use solidcraft_scan::{denoise, holes, pieces, reduce, remesh, repair};
     let (positions, triangles) = scan.triangle_mesh().ok_or_else(|| Refused::Failed("the scan is not a mesh body".into()))?;
@@ -395,18 +480,24 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
             };
             made(&done.positions, &done.triangles, report)
         }
-        CleanStep::Reduce { ratio, triangles: count, max_error, keep_rim } => {
+        CleanStep::Reduce { ratio, triangles: count, max_error, keep_rim, area } => {
             let before = on.triangle_count();
+            let flags = within(area.as_ref(), before)?;
+            // A share is of the area's triangles; the rest are kept as they are.
+            let (inside, outside) = flags.as_ref().map_or((before, 0), |f| {
+                let n = f.iter().filter(|x| **x).count();
+                (n, before - n)
+            });
             let target = match (ratio, count) {
-                (Some(r), _) => ((r * before as f64).round() as usize).max(1),
+                (Some(r), _) => outside + ((r * inside as f64).round() as usize).max(1),
                 (_, Some(n)) => usize::try_from(*n).unwrap_or(usize::MAX),
                 _ if *max_error > 0.0 => 0,
-                _ => (before / 2).max(1),
+                _ => outside + (inside / 2).max(1),
             };
             if target >= before && *max_error == 0.0 {
                 return Err(Refused::Nothing(format!("the scan has {before} triangles already: ask for fewer")));
             }
-            let reduced = reduce::reduce(&on, reduce::Settings { target, max_error: *max_error, keep_rim: *keep_rim })
+            let reduced = reduce::reduce_within(&on, reduce::Settings { target, max_error: *max_error, keep_rim: *keep_rim }, flags.as_deref())
                 .ok_or_else(|| Refused::Failed("the scan has no triangles to reduce".into()))?;
             if reduced.collapses == 0 {
                 return Err(Refused::Nothing("nothing could be collapsed within the error allowed".into()));
@@ -440,8 +531,10 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
             };
             made(&fixed.positions, &fixed.triangles, report)
         }
-        CleanStep::Denoise { strength } => {
-            let done = denoise::denoise(&on, *strength).ok_or_else(|| Refused::Failed("the scan has no triangles to smooth".into()))?;
+        CleanStep::Denoise { strength, area } => {
+            let flags = within(area.as_ref(), on.triangle_count())?;
+            let done = denoise::denoise_within(&on, *strength, flags.as_deref())
+                .ok_or_else(|| Refused::Failed("the scan has no triangles to smooth".into()))?;
             if !(done.strength > 0.0) {
                 return Err(Refused::Nothing(match strength {
                     Some(_) => "a `strength` of 0 smooths nothing: give 0.05 to 8 passes".to_owned(),
@@ -516,18 +609,51 @@ mod tests {
         let steps = [
             CleanStep::RemoveFloating { below: 0.6, keep: Vec::new(), remove: Vec::new() },
             CleanStep::FillHoles { max_edges: 2, fair: true, at: Vec::new() },
-            CleanStep::Reduce { ratio: Some(0.5), triangles: Some(3), max_error: 0.0, keep_rim: true },
-            CleanStep::Denoise { strength: Some(9.0) },
+            CleanStep::Reduce { ratio: Some(0.5), triangles: Some(3), max_error: 0.0, keep_rim: true, area: None },
+            CleanStep::Denoise { strength: Some(9.0), area: None },
+            // Runs out of order, past the scan, or empty.
+            CleanStep::Denoise { strength: None, area: Some(StepArea { triangles: 10, runs: vec![[5, 2], [1, 1]] }) },
+            CleanStep::Denoise { strength: None, area: Some(StepArea { triangles: 10, runs: vec![[8, 5]] }) },
+            CleanStep::Reduce {
+                ratio: None,
+                triangles: None,
+                max_error: 0.1,
+                keep_rim: true,
+                area: Some(StepArea { triangles: 10, runs: Vec::new() }),
+            },
             CleanStep::Remesh { cell: Some(0.0), sharp: false, with: Vec::new() },
         ];
         for s in &steps {
             assert!(s.check().is_err(), "{s:?}");
         }
-        let fine = CleanStep::Reduce { ratio: Some(0.5), triangles: None, max_error: 0.1, keep_rim: false };
+        let fine = CleanStep::Reduce { ratio: Some(0.5), triangles: None, max_error: 0.1, keep_rim: false, area: None };
         fine.check().unwrap();
         let text = serde_json::to_string(&fine).unwrap();
         assert_eq!(text, r#"{"op":"reduce","ratio":0.5,"max_error":0.1,"keep_rim":false}"#);
         assert_eq!(serde_json::from_str::<CleanStep>(&text).unwrap(), fine);
+    }
+
+    /// An area keeps its triangles as runs and gives them back; a step with one round-trips, and a
+    /// step saved before areas (none) still reads, as the whole scan.
+    #[test]
+    fn an_area_round_trips_as_runs() {
+        let chosen = [false, true, true, true, false, false, true, false];
+        let area = StepArea::of(&chosen);
+        assert_eq!(area, StepArea { triangles: 8, runs: vec![[1, 3], [6, 1]] });
+        assert_eq!(area.flags(), chosen);
+        assert_eq!(area.count(), 4);
+        let step = CleanStep::Denoise { strength: Some(2.0), area: Some(area) };
+        step.check().unwrap();
+        let text = serde_json::to_string(&step).unwrap();
+        assert_eq!(text, r#"{"op":"denoise","strength":2.0,"area":{"triangles":8,"runs":[[1,3],[6,1]]}}"#);
+        assert_eq!(serde_json::from_str::<CleanStep>(&text).unwrap(), step);
+        assert_eq!(
+            serde_json::from_str::<CleanStep>(r#"{"op":"denoise","strength":2.0}"#).unwrap(),
+            CleanStep::Denoise { strength: Some(2.0), area: None }
+        );
+        // On a scan with other triangles than it was chosen on, the step says so.
+        let other = CleanStep::Denoise { strength: Some(2.0), area: Some(StepArea { triangles: 99, runs: vec![[0, 1]] }) };
+        assert!(matches!(clean(&other, &scan(), &[]), Err(Refused::Failed(why)) if why.contains("choose the area again")));
     }
 
     #[test]

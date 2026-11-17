@@ -56,10 +56,17 @@ pub struct Reduced {
 
 /// Reduces the scan. `None` when it has no triangles or neither limit is set.
 pub fn reduce(scan: &Scan, settings: Settings) -> Option<Reduced> {
+    reduce_within(scan, settings, None)
+}
+
+/// [`reduce`] within an area: the triangles `area` marks (one flag a triangle of the scan; all of
+/// them with `None`). A vertex of a triangle outside it stays where it is, so the rest of the scan
+/// and the area's edge with it are as they were. `target` counts the whole scan's triangles.
+pub fn reduce_within(scan: &Scan, settings: Settings, area: Option<&[bool]>) -> Option<Reduced> {
     if scan.triangle_count() == 0 || (settings.target == 0 && !(settings.max_error > 0.0)) {
         return None;
     }
-    let mut r = Reducer::new(scan, settings);
+    let mut r = Reducer::new(scan, settings, area);
     if r.tris.is_empty() {
         return None;
     }
@@ -156,7 +163,7 @@ fn has(t: [u32; 3], v: u32) -> bool {
 }
 
 impl Reducer {
-    fn new(scan: &Scan, settings: Settings) -> Self {
+    fn new(scan: &Scan, settings: Settings, area: Option<&[bool]>) -> Self {
         // Points at one place are one point, so a seam the file wrote is not an open edge.
         let weld = welded(scan.positions);
         let mut id = vec![u32::MAX; scan.positions.len()];
@@ -169,11 +176,20 @@ impl Reducer {
         }
         let mut incident = vec![Vec::new(); pos.len()];
         let mut tris = Vec::with_capacity(scan.triangle_count());
+        // A vertex of a triangle outside the area is held where it is.
+        let mut held = vec![false; pos.len()];
         for (t, tri) in scan.triangles.iter().enumerate() {
             if scan.corners(t).is_none() {
                 continue;
             }
             let [a, b, c] = tri.map(|i| id[weld[i as usize] as usize]);
+            if area.is_some_and(|area| !area.get(t).copied().unwrap_or(false)) {
+                for v in [a, b, c] {
+                    if let Some(h) = held.get_mut(v as usize) {
+                        *h = true;
+                    }
+                }
+            }
             // A triangle that is a line or a point once points are merged is none.
             if a == b || b == c || c == a {
                 continue;
@@ -195,7 +211,7 @@ impl Reducer {
             incident,
             version: vec![0; n],
             rim: vec![false; n],
-            locked: vec![false; n],
+            locked: held,
             mark: vec![0; n],
             mark2: vec![0; n],
             stamp: 0,
@@ -573,6 +589,34 @@ mod tests {
         // Every point still on the box's surface.
         let on = |p: &Vec3| [p.x, p.y, p.z].iter().zip([30.0, 20.0, 10.0]).any(|(c, s)| c.abs() < 1e-9 || (c - s).abs() < 1e-9);
         assert!(done.positions.iter().all(on));
+    }
+
+    /// Within an area (the box's top), only the area is reduced: every triangle outside it comes
+    /// out as it went in, corner for corner, and the area's own are fewer.
+    #[test]
+    fn only_the_area_is_reduced() {
+        let size = Vec3::new(30.0, 20.0, 10.0);
+        let (positions, triangles) = fine_cuboid(Vec3::ZERO, size, 10);
+        let scan = Scan::new(&positions, &triangles);
+        let top = |t: &[u32; 3]| t.iter().all(|&v| (positions[v as usize].z - size.z).abs() < 1e-9);
+        let area: Vec<bool> = triangles.iter().map(top).collect();
+        let (inside, outside) = (area.iter().filter(|a| **a).count(), area.iter().filter(|a| !**a).count());
+        let done = reduce_within(&scan, Settings { target: outside + 10, max_error: 0.0, keep_rim: true }, Some(&area)).unwrap();
+        let key = |t: [Vec3; 3]| {
+            let mut k: Vec<[u64; 3]> = t.iter().map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]).collect();
+            k.sort_unstable();
+            k
+        };
+        let made: std::collections::HashSet<_> = done.triangles.iter().map(|t| key(t.map(|v| done.positions[v as usize]))).collect();
+        let kept = triangles.iter().zip(&area).filter(|(_, a)| !**a).filter(|(t, _)| made.contains(&key(t.map(|v| positions[v as usize])))).count();
+        assert_eq!(kept, outside, "every triangle outside the area as it was");
+        let on_top = done.triangles.iter().filter(|t| t.iter().all(|&v| (done.positions[v as usize].z - size.z).abs() < 1e-9)).count();
+        assert!(on_top < inside / 2, "the top reduced: {on_top} of {inside}");
+        // With no area, the whole scan.
+        assert_eq!(
+            reduce_within(&scan, Settings { target: 100, max_error: 0.0, keep_rim: true }, None),
+            reduce(&scan, Settings { target: 100, max_error: 0.0, keep_rim: true })
+        );
     }
 
     /// A curved surface stops where the error allows; a limit that allows nothing collapses nothing

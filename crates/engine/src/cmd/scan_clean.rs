@@ -329,7 +329,8 @@ pub(super) fn reduce(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let keep_rim = crate::params::bool_(p, "keep_rim").unwrap_or(true);
     let name = mesh_name(s, p, cmd)?;
-    let (done, feature) = apply(s, p, &name, CleanStep::Reduce { ratio, triangles, max_error, keep_rim }, cmd)?;
+    let area = super::flatten::step_area(s, p, &name, cmd)?;
+    let (done, feature) = apply(s, p, &name, CleanStep::Reduce { ratio, triangles, max_error, keep_rim, area }, cmd)?;
     let count = done.triangles();
     let Report::Reduce { before, collapses, stopped, largest_error } = done.report else { return Err(bad(cmd, "the step did something else")) };
     let reply = ScanReduceResult {

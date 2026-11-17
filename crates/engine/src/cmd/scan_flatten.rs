@@ -80,6 +80,46 @@ pub(super) fn region_scan(s: &Session, p: &Value) -> Option<String> {
         .or_else(|| super::select::selected(s).filter(|k| k.count > 0).map(|k| k.scan.clone()))
 }
 
+/// The area a clean step works on, when `p` asks for one (the whole scan `body` otherwise): an
+/// `area` as the step keeps it, a kept selection (`saved`), the face grown from `point` (`grow`),
+/// the scan within `radius` of `point`, or what is selected on the scan (`selected: true`). A
+/// selection on the scan is never taken unasked: a command keeps doing what it did.
+pub fn step_area(s: &Session, p: &Value, body: &str, cmd: &str) -> Result<Option<solidcraft_doc::scan_clean::StepArea>> {
+    use solidcraft_doc::scan_clean::StepArea;
+    let has = |key: &str| p.get(key).is_some_and(|v| !v.is_null() && *v != Value::Bool(false));
+    let on = mesh(s, &json!({ "body": body }), cmd)?;
+    if let Some(v) = p.get("area").filter(|v| !v.is_null()) {
+        let area: StepArea =
+            serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("`area` is {{triangles, runs: [[first, count], …]}}: {e}")))?;
+        if area.triangles as usize != on.triangles.len() {
+            return Err(bad(cmd, format!("the `area` is of a scan of {} triangles; `{body}` has {}", area.triangles, on.triangles.len())));
+        }
+        return Ok(Some(area));
+    }
+    if !(has("saved") || has("grow") || has("radius") || has("selected")) {
+        return Ok(None);
+    }
+    if has("selected") && !has("point") && super::select::selected(s).filter(|k| k.scan == on.body && k.count > 0).is_none() {
+        return Err(bad(cmd, format!("nothing is selected on `{body}`: select part of it first")));
+    }
+    // `triangles` is another tool setting here (Reduce's count): the area is never a list of them.
+    let mut asked = p.clone();
+    if let Some(o) = asked.as_object_mut() {
+        o.remove("triangles");
+    }
+    let chosen = region(s, &asked, &on, cmd)?;
+    if chosen.is_empty() {
+        return Err(bad(cmd, "the area holds none of the scan's triangles"));
+    }
+    let mut flags = vec![false; on.triangles.len()];
+    for t in chosen {
+        if let Some(f) = flags.get_mut(t) {
+            *f = true;
+        }
+    }
+    Ok(Some(StepArea::of(&flags)))
+}
+
 /// The region chosen by hand, if `p` chose one: its `triangles`, a kept selection (`saved`), the
 /// face grown from the point (`grow`), with `radius_too` the scan within `radius` of the point,
 /// else (no `point` given) what is selected on the scan. `None`: the tool finds its region its own way (grown from the point).

@@ -228,3 +228,50 @@ fn a_noisy_scan_is_denoised_and_a_clean_one_left_alone() {
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(mesh_of(&s, &scan).0, before);
 }
+
+/// Denoise and Reduce on part of the scan: round a point on the noisy box's top, only the scan
+/// there moves or is reduced, and the step keeps its area; asked for what is selected with nothing
+/// selected, they say so; a selection is never taken unasked.
+#[test]
+fn denoise_and_reduce_work_on_an_area() {
+    let (positions, triangles) = grid_box(50);
+    let noisy: Vec<Vec3> = positions
+        .iter()
+        .map(|p| {
+            let h = ((p.x * 12.9898 + p.y * 78.233 + p.z * 37.719).sin() * 43_758.545).fract() - 0.5;
+            *p + Vec3::new(0.0, 0.0, if (p.z - 10.0).abs() < 1e-9 { 0.1 * h } else { 0.0 })
+        })
+        .collect();
+    let mut s = Session::default();
+    let scan = insert(&mut s, &noisy, &triangles, "noisy");
+    let (before, _) = mesh_of(&s, &scan);
+    let centre = Vec3::new(15.0, 10.0, 10.0);
+    let reply = run(&mut s, "scan.denoise", json!({"body": scan, "strength": 3, "point": [15, 10, 10], "radius": 5}));
+    let (after, _) = mesh_of(&s, &scan);
+    for (a, b) in before.iter().zip(&after) {
+        if a.dist(centre) > 6.0 {
+            assert_eq!(a, b, "outside the area nothing moves");
+        }
+    }
+    assert!(before.iter().zip(&after).filter(|(a, b)| a != b).count() > 50, "the area smoothed: {reply}");
+    let kept = s.doc.features.iter().rev().find_map(|f| match &f.kind {
+        solidcraft_doc::FeatureKind::ScanClean { step, .. } => Some(step.clone()),
+        _ => None,
+    });
+    assert!(matches!(kept, Some(solidcraft_doc::scan_clean::CleanStep::Denoise { area: Some(_), .. })), "{kept:?}");
+    run(&mut s, "edit.undo", json!({}));
+
+    let count = |s: &Session| mesh_of(s, &scan).1.len();
+    let whole = count(&s);
+    let reply = run(&mut s, "scan.reduce", json!({"body": scan, "ratio": 0.2, "point": [15, 10, 10], "radius": 8}));
+    let removed = whole - count(&s);
+    assert!(removed > 0 && removed < whole / 10, "only the area reduced: {removed} of {whole}: {reply}");
+    run(&mut s, "edit.undo", json!({}));
+
+    let refused = s.execute("scan.denoise", &json!({"body": scan, "selected": true})).unwrap_err().to_string();
+    assert!(refused.contains("nothing is selected"), "{refused}");
+    run(&mut s, "scan.select", json!({"body": scan, "triangles": (0..200).collect::<Vec<u32>>()}));
+    // Unasked, a selection does not narrow the step.
+    let reply = run(&mut s, "scan.reduce", json!({"body": scan, "ratio": 0.5}));
+    assert!(reply["triangles"].as_u64().unwrap() <= whole as u64 / 2 + 1, "{reply}");
+}

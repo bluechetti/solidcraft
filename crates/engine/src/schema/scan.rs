@@ -1518,6 +1518,25 @@ pub struct ScanReduceParams {
     /// Keep the scan's open edges where they are. Default: true.
     #[serde(default)]
     pub keep_rim: Option<bool>,
+    /// Only part of the scan (`ratio` then a share of its triangles, `triangles` still the whole
+    /// scan's count), a point on it with `grow` or `radius`: the face grown from the point
+    /// as Select on Scan's Region grows it (degrees, 1 to 90; `true`: 30). Default: the whole scan.
+    #[serde(default)]
+    pub point: Option<Point3>,
+    #[serde(default)]
+    pub grow: Option<Value>,
+    /// Only the scan within this round `point`, in mm.
+    #[serde(default)]
+    pub radius: Option<f64>,
+    /// Only a kept selection's triangles (Keep Selection).
+    #[serde(default)]
+    pub saved: Option<String>,
+    /// Only what is selected on the scan. A selection is never taken unless asked.
+    #[serde(default)]
+    pub selected: Option<bool>,
+    /// The area as the step keeps it: `{triangles: the scan's count, runs: [[first, count], …]}`.
+    #[serde(default)]
+    pub area: Option<Value>,
 }
 
 /// What `scan.reduce` returns.

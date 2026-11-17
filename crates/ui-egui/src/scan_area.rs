@@ -2,7 +2,8 @@
 //! face grown from the click (as Select on Scan's Region grows it), the scan round the click
 //! within a radius in mm, or what is selected on the scan (brush, lasso, region, a kept
 //! selection opened), fitted as it is with no click. A dialog opened with part of a scan selected
-//! and nothing clicked starts on What is selected.
+//! and nothing clicked starts on What is selected. The clean tools (Denoise, Reduce Mesh) start on
+//! the whole scan instead, with no click ([`Area::clean`]).
 
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
@@ -26,11 +27,13 @@ pub struct Area {
     pub way: usize,
     /// With [`ROUND`], how far round the click, mm.
     pub radius: f64,
+    /// A clean tool's area ([`Area::clean`]): its first way is the whole scan, with no click.
+    pub whole: bool,
 }
 
 impl Default for Area {
     fn default() -> Self {
-        Area { way: PIECE, radius: RADIUS }
+        Area { way: PIECE, radius: RADIUS, whole: false }
     }
 }
 
@@ -39,14 +42,38 @@ impl Area {
     /// clicked, else the whole piece clicked.
     pub fn opening(app: &SolveApp, clicked: bool) -> Area {
         let way = if !clicked && selected_scan(app).is_some() { SELECTED } else { PIECE };
-        Area { way, radius: RADIUS }
+        Area { way, radius: RADIUS, whole: false }
+    }
+
+    /// A clean tool's area (Denoise, Reduce Mesh): the whole scan, as the tool always worked, until
+    /// another way is chosen; a selection never narrows it unasked.
+    pub fn clean() -> Area {
+        Area { way: PIECE, radius: RADIUS, whole: true }
+    }
+
+    /// Whether this is a clean tool's whole scan.
+    pub fn is_whole(&self) -> bool {
+        self.whole && self.way == PIECE
+    }
+
+    /// What a clean tool is sent for its area, beside the scan: nothing for the whole scan,
+    /// `selected` for What is selected, the click with `grow` or `radius` as the way says. `None`
+    /// until there is a click, or nothing is selected.
+    pub fn step_params(&self, app: &SolveApp, clicked: Option<(&str, Vec3)>) -> Option<Value> {
+        if self.is_whole() {
+            return Some(json!({}));
+        }
+        if self.way == SELECTED {
+            return selected_scan(app).map(|scan| json!({ "body": scan, "selected": true }));
+        }
+        self.params(app, clicked)
     }
 
     /// As [`Area::opening`], for a tool whose own way is Round the click (`radius` mm; 0 until the
     /// scan's own is known).
     pub fn opening_round(app: &SolveApp, radius: f64) -> Area {
         let way = if selected_scan(app).is_some() { SELECTED } else { ROUND };
-        Area { way, radius }
+        Area { way, radius, whole: false }
     }
 
     /// The scan this area is on: what is selected on, or the scan clicked.
@@ -74,7 +101,7 @@ impl Area {
 
     /// Whether the area waits for a click (every way but What is selected).
     pub fn needs_click(&self) -> bool {
-        self.way != SELECTED
+        self.way != SELECTED && !self.is_whole()
     }
 }
 
@@ -89,7 +116,8 @@ fn tr(id: &'static str) -> &'static str {
 
 /// The Area choice, and the radius under it with Round the click. `id` names the choice's handle.
 pub fn row(app: &SolveApp, ui: &mut egui::Ui, id: &str, area: &mut Area) {
-    let ways = [tr("ui.scan_area_piece"), tr("ui.scan_area_grow"), tr("ui.scan_fit_area_round"), tr("ui.scan_area_selected")];
+    let first = if area.whole { tr("ui.scan_area_whole") } else { tr("ui.scan_area_piece") };
+    let ways = [first, tr("ui.scan_area_grow"), tr("ui.scan_fit_area_round"), tr("ui.scan_area_selected")];
     choice_row(ui, tr("ui.scan_fit_area"), id, &mut area.way, &ways);
     if area.way == ROUND {
         let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
