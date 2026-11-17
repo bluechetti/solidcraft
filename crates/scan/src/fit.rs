@@ -10,7 +10,7 @@ use solidcore_record::Vec3;
 use solidcraft_geom::prelude::*;
 
 use crate::base::{EdgeNeighbours, edge_neighbours};
-use crate::{Scan, in_plane};
+use crate::{Scan, denoise, in_plane};
 
 /// A fitted shape.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -200,13 +200,16 @@ pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Resu
     }
     let (noise, edge) = noise_round(scan, &neighbours, &start).unwrap_or((0.0, 0.0));
     let tolerance = tolerance.filter(|t| t.is_finite() && *t > 0.0).unwrap_or_else(|| self::tolerance(extent).max(NOISE_MULTIPLE * noise));
-    let facings = Facings::new(*scan, &neighbours, if edge > 0.0 && noise > SMOOTH_ABOVE * edge { RINGS } else { 0 });
+    let clean = !(edge > 0.0 && noise > SMOOTH_ABOVE * edge);
+    let facings = Facings::new(*scan, &neighbours, if clean { 0 } else { RINGS });
     // The start keeps to the one smooth face round the pick, not across a crease onto the faces
     // round it: a hole's wall shorter than the reach would otherwise start with its rim and the
     // face beyond, a patch no shape of the kind fits. A face too small for a start keeps the
-    // patch as it was.
+    // patch as it was, unless the scan is clean and the shape a plane: a few triangles lie on it
+    // exactly, and a coarse CAD mesh has no more round the pick (its long triangles' middles lie
+    // far off), where the patch would reach over the rims onto the faces beyond.
     let smooth = smooth_part(scan, &neighbours, seed, &start);
-    let start = if smooth.len() >= START_LEAST { smooth } else { start };
+    let start = if smooth.len() >= START_LEAST || (clean && kind == Kind::Plane && !smooth.is_empty()) { smooth } else { start };
     // The shape read with the directions growth reads: a noisy scan's own normals mislead an axis.
     let solve = |region: &[usize], kind: Kind| solve_facing(scan, region, kind, SOLVE_LIMIT, &facings);
     let mut shape = solve(&start, kind).ok_or(FitError::NoFit)?;
@@ -517,7 +520,10 @@ impl<'a> Facings<'a> {
 /// How noisy the scan is round the triangles `start`, and its typical edge there: a quadric fitted
 /// to each of a few small patches spread over them, the lower middle of how far their points
 /// stray from it (a patch over an edge strays far, and does not count); `None` with no patch to
-/// read.
+/// read. A patch drawn exactly (a CAD mesh's: at least [`DRAWN_PATCH`] of its vertices,
+/// [`denoise::drawn_share`]) is read off its sharp edges instead ([`denoise::noise_off_creases`]),
+/// as no noise when nothing there lies off one: every quadric on a coarse CAD mesh reaches over
+/// its rims, and read millimetres of noise where there is none.
 fn noise_round(scan: &Scan, neighbours: &EdgeNeighbours, start: &[usize]) -> Option<(f64, f64)> {
     const PATCH: usize = 60;
     let (mut spreads, mut edges) = (Vec::new(), Vec::new());
@@ -532,19 +538,21 @@ fn noise_round(scan: &Scan, neighbours: &EdgeNeighbours, start: &[usize]) -> Opt
                 }
             }
         }
-        let mut corners: Vec<u32> = patch.iter().filter_map(|&t| scan.triangles.get(t)).flatten().copied().collect();
-        corners.sort_unstable();
-        corners.dedup();
-        let points: Vec<Vec3> = corners.iter().filter_map(|&v| scan.positions.get(v as usize).copied()).collect();
-        if points.len() < 16 {
+        edges.extend(patch.iter().filter_map(|&t| scan.corners(t)).flat_map(|[a, b, c]| [a.dist(b), b.dist(c), c.dist(a)]));
+        let (positions, triangles) = crate::survey::piece_of(scan, &patch);
+        let piece = Scan::new(&positions, &triangles);
+        if denoise::drawn_share(&piece) >= DRAWN_PATCH {
+            spreads.push(denoise::noise_off_creases(&piece).unwrap_or(0.0));
+            continue;
+        }
+        if positions.len() < 16 {
             continue;
         }
         // The quadric's six numbers take their share of the points' spread.
-        let m = points.len() as f64;
-        if let Some(spread) = crate::segment::quadric_spread_of(&points) {
+        let m = positions.len() as f64;
+        if let Some(spread) = crate::segment::quadric_spread_of(&positions) {
             spreads.push(spread * (m / (m - 6.0)).sqrt());
         }
-        edges.extend(patch.iter().filter_map(|&t| scan.corners(t)).flat_map(|[a, b, c]| [a.dist(b), b.dist(c), c.dist(a)]));
     }
     if spreads.is_empty() || edges.is_empty() {
         return None;
@@ -553,6 +561,9 @@ fn noise_round(scan: &Scan, neighbours: &EdgeNeighbours, start: &[usize]) -> Opt
     edges.sort_by(f64::total_cmp);
     Some((spreads[(spreads.len() * 3) / 10], edges[edges.len() / 2]))
 }
+
+/// The share of a patch's vertices drawn exactly that makes it a CAD mesh's, not a scan's.
+const DRAWN_PATCH: f64 = 0.25;
 
 /// The connected triangles from `seeds` (each of them taken, on the shape or not) that lie on
 /// `shape` by `rules`, and only those `open` allows when it is given.
@@ -1516,6 +1527,26 @@ mod tests {
         assert!(fitted.rms < 0.02, "{}", fitted.rms);
         // Its noise curves it a little everywhere, but it is no cylinder.
         assert_eq!(fit(&scan, seed, Kind::Cylinder, None), Err(FitError::NoFit));
+    }
+
+    /// A clean CAD mesh, every vertex on a rim or a corner: the noise round the pick reads as none,
+    /// so the plane grows over the whole top at the default tolerance. Read from quadrics, each
+    /// patch over the hole's rims read as millimetres of noise, and directions smoothed over three
+    /// rings of long triangles leaned off the top; a click there was refused (holes.stl).
+    #[test]
+    fn a_plane_on_a_cad_mesh_takes_the_whole_face() {
+        let (positions, triangles) = crate::test_meshes::holed_plate(40.0, 5.0, 8.0, 48);
+        let scan = Scan::new(&positions, &triangles);
+        let (noise, _) = noise_round(&scan, &edge_neighbours(&scan), &(0..scan.triangle_count()).collect::<Vec<_>>()).unwrap();
+        assert!(noise < 0.01, "{noise}");
+        for pick in [Vec3::new(14.0, 3.0, 5.0), Vec3::new(-17.0, -17.0, 5.0), Vec3::new(0.0, 12.0, 5.0)] {
+            let seed = nearest_triangle(&scan, pick).unwrap();
+            let fitted = fit(&scan, seed, Kind::Plane, None).unwrap_or_else(|e| panic!("{pick:?}: {e}"));
+            // 40 × 40 less the 48-sided hole of radius 8.
+            let expected = 1600.0 - 24.0 * 64.0 * (PI / 24.0).sin();
+            assert!((fitted.area - expected).abs() < 1e-6 * expected, "{pick:?}: {} against {expected}", fitted.area);
+            assert!(fitted.max < 1e-9, "{}", fitted.max);
+        }
     }
 
     #[test]

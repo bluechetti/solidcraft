@@ -257,6 +257,7 @@ impl UnionFind {
 #[cfg(test)]
 pub(crate) mod test_meshes {
     use solidcore_record::Vec3;
+    use solidcraft_geom::prelude::*;
 
     /// A closed box from `lo` to `hi`, 12 triangles (the placing maths reads no winding).
     pub fn cuboid(lo: Vec3, hi: Vec3) -> (Vec<Vec3>, Vec<[u32; 3]>) {
@@ -286,6 +287,60 @@ pub(crate) mod test_meshes {
             triangles.extend([[i, j, j2], [i, j2, i2], [bottom, j, i], [top, i2, j2]]);
         }
         (positions, triangles)
+    }
+
+    /// A square plate `side` wide and `thick` thick with a hole of `radius` through its middle on
+    /// `n` sides (a multiple of 4), as a CAD exporter writes it: vertices only on the hole's rims
+    /// and the plate's corners, every triangle wound outward.
+    pub fn holed_plate(side: f64, thick: f64, radius: f64, n: usize) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        let h = side / 2.0;
+        let mut p = Vec::new();
+        for z in [thick, 0.0] {
+            for i in 0..n {
+                // Half a step round, so no rim point lies on a diagonal.
+                let a = (i as f64 + 0.5) * std::f64::consts::TAU / n as f64;
+                p.push(Vec3::new(radius * a.cos(), radius * a.sin(), z));
+            }
+        }
+        let corner0 = p.len() as u32;
+        for z in [thick, 0.0] {
+            p.extend([Vec3::new(h, h, z), Vec3::new(-h, h, z), Vec3::new(-h, -h, z), Vec3::new(h, -h, z)]);
+        }
+        let (top, bottom, n32) = (0u32, n as u32, n as u32);
+        let corner = |level: u32, i: usize| corner0 + 4 * level + ((i * 4 / n) as u32 % 4);
+        let mut raw: Vec<([u32; 3], Vec3)> = Vec::new();
+        for (level, ring, up) in [(0u32, top, Vec3::Z), (1, bottom, -Vec3::Z)] {
+            for i in 0..n {
+                let j = (i + 1) % n;
+                let (ci, cj) = (ring + i as u32, ring + j as u32);
+                raw.push(([corner(level, i), ci, cj], up));
+                if corner(level, i) != corner(level, j) {
+                    raw.push(([corner(level, i), cj, corner(level, j)], up));
+                }
+            }
+        }
+        for i in 0..n32 {
+            let j = (i + 1) % n32;
+            let m = p[i as usize] + p[j as usize];
+            let inward = Vec3::new(-m.x, -m.y, 0.0);
+            raw.push(([top + i, bottom + i, bottom + j], inward));
+            raw.push(([top + i, bottom + j, top + j], inward));
+        }
+        for k in 0..4u32 {
+            let (a, b) = (corner0 + k, corner0 + (k + 1) % 4);
+            let m = p[a as usize] + p[b as usize];
+            let out = Vec3::new(m.x, m.y, 0.0);
+            raw.push(([a, a + 4, b + 4], out));
+            raw.push(([a, b + 4, b], out));
+        }
+        let t = raw
+            .into_iter()
+            .map(|(tri, want)| {
+                let [a, b, c] = tri.map(|v| p[v as usize]);
+                if (b - a).cross(c - a).dot(want) < 0.0 { [tri[0], tri[2], tri[1]] } else { tri }
+            })
+            .collect();
+        (p, t)
     }
 
     /// A box made of a grid of `n` × `n` squares on each side, so that faces have many triangles.

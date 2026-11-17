@@ -145,9 +145,10 @@ fn own_size(scan: &Scan, low: Vec3, high: Vec3) -> [f64; 3] {
     boxed(lo, hi)
 }
 
-/// The noise and the suggested Denoise strength read at up to [`PATCHES`] places spread over the
-/// scan: each place the triangles whose middles lie in a cube round an evenly picked triangle,
-/// sized to take about [`PATCH_TRIANGLES`] of them.
+/// The noise (read off sharp edges, [`denoise::noise_off_creases`]) and the suggested Denoise
+/// strength at up to [`PATCHES`] places spread over the scan: each place the triangles whose middles
+/// lie in a cube round an evenly picked triangle, sized to take about [`PATCH_TRIANGLES`] of them.
+/// A place with no vertex off a sharp edge is not read.
 fn noise_places(scan: &Scan, area: f64) -> Vec<(f64, f64)> {
     let count = scan.triangle_count();
     let usable = (0..count).filter(|&t| scan.corners(t).is_some()).count().max(1);
@@ -172,14 +173,16 @@ fn noise_places(scan: &Scan, area: f64) -> Vec<(f64, f64)> {
         .filter(|list| list.len() >= PATCH_LEAST)
         .filter_map(|list| {
             let (positions, triangles) = piece_of(scan, list);
-            let study = denoise::study(&Scan::new(&positions, &triangles))?;
-            (study.noise.is_finite() && study.suggested.is_finite()).then_some((study.noise, study.suggested))
+            let piece = Scan::new(&positions, &triangles);
+            let study = denoise::study(&piece)?;
+            let noise = denoise::noise_off_creases(&piece)?;
+            (noise.is_finite() && study.suggested.is_finite()).then_some((noise, study.suggested))
         })
         .collect()
 }
 
 /// The triangles `list` of `scan` as a mesh of their own.
-fn piece_of(scan: &Scan, list: &[usize]) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+pub(crate) fn piece_of(scan: &Scan, list: &[usize]) -> (Vec<Vec3>, Vec<[u32; 3]>) {
     let mut index = std::collections::HashMap::new();
     let mut positions = Vec::new();
     let mut triangles = Vec::with_capacity(list.len());
@@ -250,6 +253,20 @@ mod tests {
         assert!(noise > 0.01 && noise < 0.2, "{noise}");
         assert_eq!(super::noise(&Scan::new(&noisy, &t)), Some(noise), "the noise alone reads the same");
         assert!(rough.smoothing.is_some_and(|s| s > 0.0), "{rough:?}");
+    }
+
+    /// A clean CAD mesh of a plate with a round hole through it, every vertex on a rim or a corner
+    /// and the faces fanned between them: no noise. Read at every vertex, the sharp edges read as
+    /// noise (here 0.06 mm; 1 mm on the corpus's holes.stl, which set Fit Plane's tolerance to 3 mm).
+    #[test]
+    fn a_cad_plate_with_a_hole_reads_no_noise() {
+        let (p, t) = crate::test_meshes::holed_plate(40.0, 5.0, 8.0, 48);
+        let scan = Scan::new(&p, &t);
+        let at_every_vertex = denoise::study(&scan).unwrap().noise;
+        assert!(at_every_vertex > 0.04, "the case reads its edges as noise when every vertex counts: {at_every_vertex}");
+        let look = look(&scan, 0.02).unwrap();
+        assert!(look.noise.is_none_or(|n| n < 0.01), "{:?}", look.noise);
+        assert_eq!(super::noise(&scan), look.noise);
     }
 
     /// Nothing to look at is no look, not a panic.

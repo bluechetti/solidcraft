@@ -26,6 +26,9 @@ const VERTEX_STEPS: usize = 8;
 const REQUIRED_IMPROVEMENT: f64 = 0.10;
 /// The median absolute deviation as a standard deviation, for normal noise.
 const MAD_TO_SIGMA: f64 = 1.4826;
+/// A vertex with a face turned further than this from its normal (radians) is on a sharp edge,
+/// where the noise is not read.
+const CREASE: f64 = std::f64::consts::FRAC_PI_4;
 
 /// What smoothing would do for a scan, and what was done.
 #[derive(Clone, Debug, PartialEq)]
@@ -79,6 +82,13 @@ fn packed(lists: &[Vec<u32>]) -> (Vec<u32>, Vec<u32>) {
 fn slice<'a>(start: &[u32], flat: &'a [u32], i: usize) -> &'a [u32] {
     let (a, b) = (start.get(i).copied().unwrap_or(0) as usize, start.get(i + 1).copied().unwrap_or(0) as usize);
     flat.get(a..b).unwrap_or_default()
+}
+
+/// Whether two of `normals` are the same to the last few bits: two faces round a vertex on one
+/// exact plane, as a CAD mesh is drawn (or a region Flatten laid flat); measured points never lie so.
+fn drawn(normals: impl Iterator<Item = Vec3>) -> bool {
+    let all: Vec<Vec3> = normals.filter(|n| *n != Vec3::ZERO).collect();
+    all.iter().enumerate().any(|(i, a)| all[i + 1..].iter().any(|b| a.dist(*b) < 1e-9))
 }
 
 impl Mesh {
@@ -148,7 +158,18 @@ impl Mesh {
     /// The roughness of `positions`: the robust spread of each vertex's neighbours' mean height
     /// over its tangent plane, less the gain of averaging over them.
     fn roughness(&self, positions: &[Vec3]) -> f64 {
+        self.roughness_where(positions, false).0
+    }
+
+    /// The roughness of `positions` and how many vertices it was read at. With `off_creases`, only
+    /// vertices whose faces all lie within [`CREASE`] of their normal are read: at a vertex on a
+    /// sharp edge the neighbours stand off the tangent plane by the part's own shape, not noise (a
+    /// CAD mesh has almost no other vertices). A vertex with two faces on one exact plane
+    /// ([`drawn`]) reads as no noise: on a CAD mesh a rim vertex too gentle for [`CREASE`] (a
+    /// countersink's) would read its long triangles' slope as millimetres of noise.
+    fn roughness_where(&self, positions: &[Vec3], off_creases: bool) -> (f64, usize) {
         let faces = self.faces_at(positions);
+        let crease_cos = CREASE.cos();
         let mut residuals: Vec<f64> = (0..positions.len())
             .filter(|&v| !self.fixed[v])
             .filter_map(|v| {
@@ -156,21 +177,26 @@ impl Mesh {
                 if ring.len() < 3 {
                     return None;
                 }
-                let normal = slice(&self.face_start, &self.faces, v)
-                    .iter()
-                    .fold(Vec3::ZERO, |s, &f| s + faces[f as usize].0 * faces[f as usize].2)
-                    .normalized()?;
+                let around = slice(&self.face_start, &self.faces, v);
+                let normal = around.iter().fold(Vec3::ZERO, |s, &f| s + faces[f as usize].0 * faces[f as usize].2).normalized()?;
+                if off_creases && around.iter().any(|&f| faces[f as usize].0.dot(normal) < crease_cos) {
+                    return None;
+                }
+                // Drawn exactly, not measured: no noise there.
+                if off_creases && drawn(around.iter().map(|&f| faces[f as usize].0)) {
+                    return Some(0.0);
+                }
                 Some(ring.iter().map(|&q| normal.dot(positions[q as usize] - positions[v])).sum::<f64>() / ring.len() as f64)
             })
             .collect();
         if residuals.is_empty() {
-            return 0.0;
+            return (0.0, 0);
         }
         residuals.sort_by(f64::total_cmp);
         let median = residuals[residuals.len() / 2];
         let mut deviations: Vec<f64> = residuals.iter().map(|r| (r - median).abs()).collect();
         deviations.sort_by(f64::total_cmp);
-        MAD_TO_SIGMA * deviations[deviations.len() / 2] / (1.0 + 1.0 / self.mean_degree).sqrt()
+        (MAD_TO_SIGMA * deviations[deviations.len() / 2] / (1.0 + 1.0 / self.mean_degree).sqrt(), residuals.len())
     }
 
     /// One pass: the face normals filtered bilaterally, then the vertices moved to lie square to them.
@@ -341,6 +367,33 @@ pub fn study(scan: &Scan) -> Option<Study> {
     }
     let suggested = if best_value <= (1.0 - REQUIRED_IMPROVEMENT) * error[0] { (best * 20.0).round() / 20.0 } else { 0.0 };
     Some(Study { noise: stages[0].roughness, stages, suggested, typical_edge: run.edge })
+}
+
+/// `scan`'s noise read away from its sharp edges, in mm (0 where it is drawn exactly, as a CAD
+/// mesh is); `None` when no vertex lies off one. [`Study::noise`] reads every vertex, as the stages
+/// it is compared with do; this is the scan's own noise.
+pub fn noise_off_creases(scan: &Scan) -> Option<f64> {
+    let run = Run::new(scan)?;
+    let (noise, read) = run.mesh.roughness_where(&run.original, true);
+    (read > 0).then_some(noise)
+}
+
+/// The share of `scan`'s vertices with two faces on one exact plane: drawn (a CAD mesh, or a region
+/// Flatten laid flat), not measured as a scanner measures. A real scan has a few such vertices
+/// (a thousandth at most in the T-LESS scans); a CAD mesh has most of its vertices so.
+pub fn drawn_share(scan: &Scan) -> f64 {
+    let mesh = Mesh::new(scan);
+    let faces = mesh.faces_at(scan.positions);
+    let (mut drawn_count, mut count) = (0usize, 0usize);
+    for v in 0..scan.positions.len() {
+        let around = slice(&mesh.face_start, &mesh.faces, v);
+        if around.is_empty() {
+            continue;
+        }
+        count += 1;
+        drawn_count += usize::from(drawn(around.iter().map(|&f| faces[f as usize].0)));
+    }
+    if count == 0 { 0.0 } else { drawn_count as f64 / count as f64 }
 }
 
 /// `scan`'s positions smoothed pass by pass until `enough` finds them smooth enough or `most`
