@@ -25,6 +25,7 @@ use solidcraft_engine::geom::prelude::*;
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, check, form_row};
+use crate::scan_dots::{Dot, cloud_dot};
 use crate::ui_kit;
 
 /// The marks' id among the clouds the viewport draws.
@@ -528,13 +529,23 @@ pub struct Reduce {
     pub area: crate::scan_area::Area,
     /// The area of the step being edited, as it keeps it: kept as it is.
     pub kept: Option<Value>,
+    /// The area chosen, marked on the scan.
+    pub marks: AreaMarks,
     /// The scan and its triangles, for the count the share means.
     scan: Option<(u64, Result<(String, usize), String>)>,
 }
 
 impl Default for Reduce {
     fn default() -> Self {
-        Reduce { percent: 50.0, max_error: 0.0, keep_rim: true, area: crate::scan_area::Area::clean(), kept: None, scan: None }
+        Reduce {
+            percent: 50.0,
+            max_error: 0.0,
+            keep_rim: true,
+            area: crate::scan_area::Area::clean(),
+            kept: None,
+            marks: AreaMarks::default(),
+            scan: None,
+        }
     }
 }
 
@@ -547,6 +558,105 @@ pub(crate) fn area_row(app: &SolveApp, ui: &mut egui::Ui, id: &str, area: &mut c
     } else {
         crate::scan_area::row(app, ui, id, area);
     }
+}
+
+/// The area a clean tool will work on, found beside the window and marked on the scan: for which
+/// design, area and selection, and (once in) how many triangles it holds and its marks.
+#[derive(Clone, Debug, Default)]
+pub struct AreaMarks {
+    key: String,
+    found: Arc<std::sync::Mutex<Option<Result<(usize, Arc<Vec<u8>>), String>>>>,
+    version: u64,
+}
+
+/// The area marks' id among the clouds the viewport draws.
+const AREA_CLOUD_ID: u64 = u64::MAX - 21;
+
+/// Find the area again when the design, the area or the selection has changed: on a copy of the
+/// design beside the window (growing it over a large scan takes a while). The whole scan, or an
+/// area still waiting for a click, has no marks.
+pub(crate) fn mark_area(
+    app: &SolveApp,
+    area: &crate::scan_area::Area,
+    kept: Option<&Value>,
+    inputs: &[crate::selection::SelInput],
+    marks: &mut AreaMarks,
+) {
+    let asked = area_params(app, area, kept, inputs).ok().filter(|p| p.as_object().is_some_and(|o| o.keys().any(|k| k != "body")));
+    let Some(p) = asked else {
+        *marks = AreaMarks::default();
+        return;
+    };
+    let key = format!("{}|{p}|{}", app.session.revision, solidcraft_engine::cmd::scan::select::stamp(&app.session));
+    if marks.key == key {
+        return;
+    }
+    let found = Arc::new(std::sync::Mutex::new(None));
+    *marks = AreaMarks { key, found: found.clone(), version: crate::dialogs_scan_surface::next_shade_version() };
+    let body = match solidcraft_engine::cmd::scan::mesh_body_name(&app.session, p.get("body").and_then(Value::as_str), "scan.denoise") {
+        Ok(body) => body,
+        Err(e) => {
+            if let Ok(mut f) = found.lock() {
+                *f = Some(Err(e.to_string()));
+            }
+            return;
+        }
+    };
+    let copy = app.session.scratch();
+    // The scan's own accent: the scan clicked shows in the selection's, which the area must stand out on.
+    let rgb = solidcraft_theme::Tokens::get().mesh_accent.to_array();
+    let work = move || {
+        let made = solidcraft_engine::cmd::scan::flatten::step_area(&copy, &p, &body, "scan.denoise").map_err(|e| e.to_string()).map(|chosen| {
+            let state = copy.model.state();
+            let (Some(chosen), Some((positions, triangles))) = (chosen, state.body(&body).and_then(|b| b.body.triangle_mesh())) else {
+                return (0, crate::scan_dots::none());
+            };
+            let flags = chosen.flags();
+            let count = chosen.count();
+            // At most a few hundred thousand marks: every so many triangles of a vast area.
+            let step = (count / 400_000).max(1);
+            let mut dots = Vec::new();
+            for t in flags.iter().enumerate().filter(|(_, on)| **on).map(|(t, _)| t).step_by(step) {
+                let Some(tri) = triangles.get(t) else { continue };
+                let m = tri.iter().filter_map(|v| positions.get(*v as usize)).fold(Vec3::ZERO, |a, p| a + *p) / 3.0;
+                cloud_dot(&mut dots, &Dot { at: [m.x as f32, m.y as f32, m.z as f32], rgb: [rgb[0], rgb[1], rgb[2]], ..Dot::default() });
+            }
+            (count, Arc::new(dots))
+        });
+        if let Ok(mut f) = found.lock() {
+            *f = Some(made);
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = std::thread::Builder::new().name("clean area".into()).spawn(work);
+    }
+    #[cfg(target_arch = "wasm32")]
+    work();
+}
+
+/// The area's triangle count once found, or why it could not be.
+pub(crate) fn area_count(marks: &AreaMarks) -> Option<Result<usize, String>> {
+    let found = marks.found.lock().ok()?;
+    found.as_ref().map(|r| r.as_ref().map(|(n, _)| *n).map_err(Clone::clone))
+}
+
+/// The area Denoise or Reduce Mesh will work on, marked on the scan while its dialog is open.
+pub(crate) fn gpu_area_marks(app: &SolveApp) -> Option<GpuCloud> {
+    let marks = match app.dialog.as_ref().map(|d| &d.kind)? {
+        Kind::ScanReduce(k) => &k.marks,
+        Kind::ScanDenoise(k) => &k.marks,
+        _ => return None,
+    };
+    let dots = marks.found.lock().ok()?.as_ref()?.as_ref().ok()?.1.clone();
+    Some(GpuCloud {
+        id: AREA_CLOUD_ID,
+        version: marks.version,
+        dots,
+        segments: crate::scan_dots::none(),
+        triangles: crate::scan_dots::none(),
+        style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: 2.5 },
+    })
 }
 
 /// What a clean tool is sent for its area beside `body`: the kept one when editing a step made on
@@ -568,7 +678,7 @@ pub(crate) fn area_params(
 }
 
 /// The Reduce Mesh dialog's rows.
-pub fn reduce_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reduce, _inputs: &[crate::selection::SelInput]) -> bool {
+pub fn reduce_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reduce, inputs: &[crate::selection::SelInput]) -> bool {
     if k.scan.as_ref().is_none_or(|(revision, _)| *revision != app.session.revision) {
         let found = solidcraft_engine::cmd::scan::mesh_body_name(&app.session, None, "scan.reduce").map_err(|e| e.to_string()).and_then(|name| {
             let count = app.session.model.state().body(&name).and_then(|b| b.body.triangle_mesh()).map(|(_, t)| t.len()).ok_or("the scan is gone")?;
@@ -595,7 +705,23 @@ pub fn reduce_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reduce, _inputs: &
     k.max_error = k.max_error.clamp(0.0, 100.0);
     form_row(ui, tr("ui.scan_reduce_rim"), |ui| check(ui, &mut k.keep_rim));
     area_row(app, ui, "scan_reduce_area", &mut k.area, k.kept.as_ref());
+    mark_area(app, &k.area, k.kept.as_ref(), inputs, &mut k.marks);
     let whole = k.kept.is_none() && k.area.is_whole();
+    if !whole {
+        match area_count(&k.marks) {
+            // The share is of the area's triangles.
+            Some(Ok(count)) => {
+                let kept = ((k.percent / 100.0) * count as f64).round() as usize;
+                let note = solidcraft_ui_text::format("ui.scan_reduce_area_count", &[("now", &count.to_string()), ("kept", &kept.to_string())]);
+                ui_kit::text(ui, &note, ui_kit::Text::Note("scan_reduce_count"));
+            }
+            Some(Err(why)) => {
+                ui_kit::text(ui, &crate::dialogs::shown_error(&why), ui_kit::Text::Report("scan_reduce_area_error", true));
+            }
+            None if !k.marks.key.is_empty() => crate::scan_job::refining_note(ui, "scan_reduce_area_finding"),
+            None => {}
+        }
+    }
     match k.scan.as_ref().map(|(_, r)| r) {
         // The count the share keeps, of the whole scan (an area's own is worked out on OK).
         Some(Ok((_, count))) if whole => {

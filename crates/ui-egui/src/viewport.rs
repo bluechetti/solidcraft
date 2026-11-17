@@ -5856,6 +5856,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 .chain(crate::dialogs_scan::gpu_marks(app))
                 .chain(crate::dialogs_scan::gpu_mismatch(app))
                 .chain(crate::dialogs_scan_clean::gpu_marks(app))
+                .chain(crate::dialogs_scan_clean::gpu_area_marks(app))
                 .chain(crate::dialogs_scan_fit::gpu_marks(app))
                 .chain(crate::dialogs_scan_split::gpu_marks(app))
                 .chain(crate::dialogs_scan_flatten::gpu_marks(app))

@@ -36,11 +36,21 @@ pub struct Denoise {
     pub area: crate::scan_area::Area,
     /// The area of the step being edited, as it keeps it: kept as it is.
     pub kept: Option<Value>,
+    /// The area chosen, marked on the scan.
+    pub marks: crate::dialogs_scan_clean::AreaMarks,
 }
 
 impl Default for Denoise {
     fn default() -> Self {
-        Denoise { strength: 0.0, chosen: false, study: Arc::new(Mutex::new(None)), asked: None, area: crate::scan_area::Area::clean(), kept: None }
+        Denoise {
+            strength: 0.0,
+            chosen: false,
+            study: Arc::new(Mutex::new(None)),
+            asked: None,
+            area: crate::scan_area::Area::clean(),
+            kept: None,
+            marks: crate::dialogs_scan_clean::AreaMarks::default(),
+        }
     }
 }
 
@@ -122,6 +132,7 @@ fn study(app: &SolveApp, k: &mut Denoise, inputs: &[crate::selection::SelInput])
 /// The dialog's rows.
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Denoise, inputs: &[crate::selection::SelInput]) -> bool {
     crate::dialogs_scan_clean::area_row(app, ui, "scan_denoise_area", &mut k.area, k.kept.as_ref());
+    crate::dialogs_scan_clean::mark_area(app, &k.area, k.kept.as_ref(), inputs, &mut k.marks);
     if let Err(waiting) = study(app, k, inputs) {
         ui_kit::text(ui, &waiting, ui_kit::Text::Hint("scan_denoise_area_hint"));
         return false;
@@ -321,6 +332,7 @@ mod tests {
         let inputs = h.app.dialog.as_ref().map(|d| d.inputs.clone()).unwrap_or_default();
         let commands = commands(&h.app, dialog(&h), &inputs).unwrap();
         assert_eq!(commands, vec![("scan.denoise".to_owned(), json!({"body": body, "strength": 1.0}))], "the whole scan, as before");
+        assert!(crate::dialogs_scan_clean::gpu_area_marks(&h.app).is_none(), "the whole scan is not marked");
         let before = h.app.session.revision;
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
@@ -363,6 +375,16 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         outcome(dialog(&h)).expect("the area studied").1.expect("a study");
+        // The area is marked on the scan, found beside the window too.
+        for _ in 0..2000 {
+            if crate::dialogs_scan_clean::gpu_area_marks(&h.app).is_some() {
+                break;
+            }
+            h.frames(1);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let marks = crate::dialogs_scan_clean::gpu_area_marks(&h.app).expect("the area marked");
+        assert!(!marks.dots.is_empty());
         let inputs = h.app.dialog.as_ref().map(|d| d.inputs.clone()).unwrap_or_default();
         let sent = commands(&h.app, dialog(&h), &inputs).unwrap();
         assert!(sent[0].1.get("radius").is_some() && sent[0].1.get("point").is_some(), "{sent:?}");
