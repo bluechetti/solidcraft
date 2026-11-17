@@ -45,6 +45,10 @@ pub struct Made {
     pub kept: usize,
     pub rms: f64,
     pub max: f64,
+    /// How far the face bows off the scan at worst: from places spread across the face to the
+    /// scan's nearest place, so the scan's noise and spikes off the face do not count (mm; 0
+    /// where it was not looked at).
+    pub bow: f64,
 }
 
 /// How far the scan `scan` under `surface` is from it, root mean square and largest: the scan, not
@@ -67,18 +71,21 @@ pub fn make(s: &Session, body: Option<&str>, corners: [Vec3; 4], fit: Fit, fitti
     let count = fitting.count.clamp(free_form::LEAST_POINTS, free_form::MOST_POINTS);
     if fit == Fit::Off {
         let surface = free_form::surface(&free_form::net_over(corners, count), count).ok_or_else(|| bad(cmd, "the corners make no face"))?;
-        return Ok(Made { scan: None, surface, places: 0, met: 0, kept: 0, rms: 0.0, max: 0.0 });
+        return Ok(Made { scan: None, surface, places: 0, met: 0, kept: 0, rms: 0.0, max: 0.0, bow: 0.0 });
     }
     let (scan, on) = super::curve::projector(s, body, cmd)?;
     let reach = reach.unwrap_or(f64::INFINITY);
     let snap = |ps: &[Vec3], along: Option<Vec3>| ps.iter().map(|p| snapped(&on, *p, along, reach)).collect::<Vec<_>>();
     let fitting = Fitting { count, overall: fit == Fit::Overall, ..fitting };
-    let fitted = if fit == Fit::Flat {
-        free_form::flattened(corners, &fitting, snap)
-            .ok_or_else(|| bad(cmd, "no flat face could be fitted over those corners: the scan under them makes no plane within the snap distance"))?
+    let (fitted, bow) = if fit == Fit::Flat {
+        let flat = free_form::flattened(corners, &fitting, snap).ok_or_else(|| {
+            bad(cmd, "no flat face could be fitted over those corners: the scan under them makes no plane within the snap distance")
+        })?;
+        (flat, 0.0)
     } else {
-        // Follow the Scan adds points where the scan needs them to lie within half its tolerance.
-        let target = 0.5 * super::tolerance::of(s, &scan);
+        // Follow the Scan adds points where the scan needs them for the face to lie within its
+        // tolerance everywhere, not only on average.
+        let target = super::tolerance::of(s, &scan);
         free_form::fitted_closely(corners, &fitting, target, snap)
             .ok_or_else(|| bad(cmd, "no face could be fitted over those corners: click them round a face, not in a line"))?
     };
@@ -86,7 +93,7 @@ pub fn make(s: &Session, body: Option<&str>, corners: [Vec3; 4], fit: Fit, fitti
         return Err(bad(cmd, "the scan is nowhere near those corners within the snap distance"));
     }
     let (rms, max) = scan_distance(s, &scan, &fitted.surface, fitted.rms, cmd);
-    Ok(Made { scan: Some(scan), surface: fitted.surface, places: fitted.places, met: fitted.met, kept: fitted.kept, rms, max })
+    Ok(Made { scan: Some(scan), surface: fitted.surface, places: fitted.places, met: fitted.met, kept: fitted.kept, rms, max, bow })
 }
 
 /// `p` put on the scan no farther than `reach`: along `along` where that line meets the scan,
@@ -112,7 +119,7 @@ pub fn made_on_plane(corners: [Vec3; 4], count: usize, plane: solidcraft_scan::s
     }
     let surface = free_form::flat_over(corners, count, plane.point, plane.normal)
         .ok_or_else(|| bad(cmd, "the corners make no face on that plane: click them round a face, not in a line"))?;
-    Ok(Made { scan: None, surface, places: 0, met: 0, kept: 0, rms: 0.0, max: 0.0 })
+    Ok(Made { scan: None, surface, places: 0, met: 0, kept: 0, rms: 0.0, max: 0.0, bow: 0.0 })
 }
 
 /// The four curves of `curves`: lists of points [x, y, z].
@@ -142,7 +149,7 @@ pub fn made_from_curves(s: &Session, body: Option<&str>, curves: &[Vec<Vec3>], c
     let surface = solidcraft_scan::boundary_face::face(&boundary, &covered.points, [count, count]).map_err(|e| bad(cmd, e.to_string()))?;
     let (rms, max) = if covered.points.is_empty() { (0.0, 0.0) } else { solidcraft_scan::surface_edit::distance(&surface, &covered.points) };
     let places = covered.points.len();
-    Ok(Made { scan: Some(covered.scan), surface, places, met: places, kept: places, rms, max })
+    Ok(Made { scan: Some(covered.scan), surface, places, met: places, kept: places, rms, max, bow: 0.0 })
 }
 
 /// The face `scan.free_form` makes from `p`, without keeping it: what `scan.refit` runs again.
@@ -207,6 +214,7 @@ pub(super) fn new_free_form(s: &mut Session, p: &Value) -> Result<Value> {
         super::refit::recipe(scan, "scan.free_form", params, std::slice::from_ref(&made.surface))
     });
     let (name, feature) = super::surface::keep_surface(s, &made.surface, "FreeForm", "Free Form", &file, recipe, cmd)?;
+    let warning = off_warning(s, p, &made);
     let reply = ScanFreeFormResult {
         body: made.scan,
         surface: name,
@@ -216,10 +224,40 @@ pub(super) fn new_free_form(s: &mut Session, p: &Value) -> Result<Value> {
         kept: made.kept,
         rms: made.rms,
         max: made.max,
+        warning,
         feature,
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// When a face made to follow the scan (by corners, with no stiffness) still lies farther off the
+/// scan than its tolerance in places: how far, and what to do. Overall Shape, Flat and a stiffened
+/// face are asked to leave the scan's detail, so they are not warned.
+fn off_warning(s: &Session, p: &Value, made: &Made) -> Option<String> {
+    let given = |key: &str| p.get(key).is_some_and(|v| !v.is_null());
+    let follows = crate::params::str_(p, "fit").is_none_or(|f| f == "follow");
+    let stiff = p.get("stiffness").and_then(Value::as_f64).is_some_and(|x| x > 0.0);
+    if !follows || stiff || given("curves") || given("plane") {
+        return None;
+    }
+    let scan = made.scan.as_deref()?;
+    let tolerance = super::tolerance::of(s, scan);
+    if !(made.bow > tolerance) {
+        return None;
+    }
+    let [n, _] = made.surface.count();
+    // Short of the most points, more were tried and brought it no nearer.
+    let what = if n < free_form::MOST_POINTS {
+        "more points brought it no nearer: the scan there is a spike, a step or a hole edge one face cannot follow; \
+         make the face clear of it, or a face each side of it"
+    } else {
+        "it bows where the scan turns too tightly for one face; make a face each side of the round instead of one over it"
+    };
+    Some(format!(
+        "the face lies up to {:.3} mm off the scan in places, more than its tolerance of {tolerance:.3} mm, with {n} points each way: {what}",
+        made.bow
+    ))
 }
 
 pub use solidcraft_scan::network::Side;
@@ -455,7 +493,7 @@ pub fn wrapped(s: &Session, body: Option<&str>, part: WrapOn, wrap: Wrap) -> Res
     let trouble = solidcraft_scan::surface_check::trouble(&f.surface);
     let (rms, max) = scan_distance(s, &name, &f.surface, f.rms, cmd);
     let seam = round_seam(&f.surface, &w.cylinder);
-    let made = Made { scan: Some(name.clone()), surface: f.surface, places: f.places, met: f.met, kept: f.kept, rms, max };
+    let made = Made { scan: Some(name.clone()), surface: f.surface, places: f.places, met: f.met, kept: f.kept, rms, max, bow: 0.0 };
     Ok(Wrapped { scan: name, cylinder: w.cylinder, off: w.off, made, trouble, seam })
 }
 

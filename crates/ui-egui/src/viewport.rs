@@ -579,6 +579,7 @@ fn scene_key(app: &SolveApp) -> u64 {
     base_scene_key(app).hash(&mut h);
     lod_generation(app).hash(&mut h);
     app.viewport.mesh_lods.generation().hash(&mut h);
+    crate::scan_paint::scene_key(app).hash(&mut h);
     h.finish()
 }
 
@@ -1432,6 +1433,8 @@ struct Instances {
     by_mesh: std::collections::HashMap<(usize, crate::gpu::InstanceLook), usize>,
     kept: InstancedTris,
     lods: crate::mesh_lod::MeshLods,
+    /// The scans painted on their own triangles ([`crate::scan_paint`]).
+    paintings: Vec<crate::scan_paint::Painting>,
 }
 
 impl Instances {
@@ -1458,7 +1461,8 @@ impl Instances {
                 })
                 .collect();
         }
-        Instances { candidates, meshes: Vec::new(), by_mesh: std::collections::HashMap::new(), kept, lods: app.viewport.mesh_lods.clone() }
+        let paintings = if shaded { crate::scan_paint::paintings(app) } else { Vec::new() };
+        Instances { candidates, meshes: Vec::new(), by_mesh: std::collections::HashMap::new(), kept, lods: app.viewport.mesh_lods.clone(), paintings }
     }
 
     /// Draw `b` as an instance when it is one, in colour `col` (its alpha for a see-through
@@ -1493,9 +1497,16 @@ impl Instances {
                         if lod_eligible { self.lods.levels(&mesh).map(|l| l.as_ref().clone()).unwrap_or_default() } else { Vec::new() },
                     ),
                 };
+                // A scan painted (its deviation map): its opaque triangles carry the colours, and it
+                // is drawn from the levels painted so far.
+                let painting = self.paintings.iter().find(|p| p.scan == b.name).filter(|_| look == crate::gpu::InstanceLook::Opaque);
+                let (paint, levels) = match painting.and_then(|p| crate::scan_paint::paint(p, &mesh, &tris, &levels)) {
+                    Some((paint, painted)) => (Some(paint), painted),
+                    None => (None, levels),
+                };
                 self.meshes.push((
                     mesh.clone(),
-                    crate::gpu::InstancedMesh { key: key as u64, tris, instances: Vec::new(), look, levels, closed: b.is_closed() },
+                    crate::gpu::InstancedMesh { key: key as u64, tris, instances: Vec::new(), look, levels, closed: b.is_closed(), paint },
                 ));
                 self.by_mesh.insert((key, look), self.meshes.len() - 1);
                 self.meshes.len() - 1
@@ -1513,6 +1524,7 @@ impl Instances {
             self.meshes.iter().map(|(mesh, inst)| (std::sync::Arc::as_ptr(mesh) as usize, (mesh.clone(), inst.tris.clone()))).collect();
         if whole {
             self.lods.retain(&kept.keys().copied().collect());
+            crate::scan_paint::retain(app);
         }
         if let Ok(mut k) = app.viewport.instanced_tris.lock() {
             if whole {
@@ -4737,6 +4749,7 @@ impl HighlightInstances {
                     look: crate::gpu::InstanceLook::Opaque,
                     levels: Vec::new(),
                     closed: true,
+                    paint: None,
                 });
                 self.by_mesh.insert(key, self.meshes.len() - 1);
                 self.meshes.len() - 1
@@ -5768,7 +5781,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         update_refinement(app, ui.ctx(), &proj);
     }
     // Levels of detail being made: keep frames coming to draw them when they are.
-    if app.viewport.mesh_lods.busy() {
+    if app.viewport.mesh_lods.busy() || crate::scan_paint::busy() {
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
     }
     crate::frame_watch::step(app, "display refinement");
@@ -7628,6 +7641,12 @@ fn origin_hidden_by_body(app: &SolveApp, proj: &Proj) -> bool {
         }
         let (m, place) = b.mesh_in_place();
         let index = app.viewport.pick_index.of(&m);
+        // A large mesh's index is made beside the window: until it is in, the dot is not hidden
+        // by it rather than every triangle walked each frame (a quarter of a second a frame on a
+        // 10-million-triangle scan, for a dot).
+        if index.is_none() && crate::pick_index::large(&m) {
+            continue;
+        }
         // The nearest kept face along the ray: one at or behind the origin does not hide it.
         let mut from = 0.0f64;
         for _ in 0..64 {

@@ -182,22 +182,27 @@ fn warm(app: &SolveApp, body: &str) {
 /// read through any model in front: a model is often built over its scan and covers it. Only
 /// scans (mesh bodies) the view shows count.
 pub(crate) fn scan_hit(app: &SolveApp, proj: &Proj, at: egui::Pos2, only: Option<&str>) -> Option<(String, Vec3)> {
-    ray_hit(app, proj, at, only).map(|(_, body, point)| (body, point))
+    ray_hit(app, proj, at, only).map(|(_, body, point, _)| (body, point))
 }
 
-/// [`scan_hit`] with how far along the view ray it is.
-fn ray_hit(app: &SolveApp, proj: &Proj, at: egui::Pos2, only: Option<&str>) -> Option<(f64, String, Vec3)> {
+/// [`scan_hit`] with the triangle hit, its index in the scan's mesh.
+pub(crate) fn scan_hit_triangle(app: &SolveApp, proj: &Proj, at: egui::Pos2, only: Option<&str>) -> Option<(String, Vec3, usize)> {
+    ray_hit(app, proj, at, only).map(|(_, body, point, triangle)| (body, point, triangle))
+}
+
+/// [`scan_hit`] with how far along the view ray it is and the triangle hit.
+fn ray_hit(app: &SolveApp, proj: &Proj, at: egui::Pos2, only: Option<&str>) -> Option<(f64, String, Vec3, usize)> {
     let state = app.session.model.state();
     let (o, d) = proj.ray(at);
-    let mut best: Option<(f64, String, Vec3)> = None;
+    let mut best: Option<(f64, String, Vec3, usize)> = None;
     for b in state.bodies.iter().filter(|b| b.body.is_mesh() && only.is_none_or(|n| n == b.name) && app.body_visible(&b.name)) {
         let (m, place) = b.mesh_in_place();
         let Some((lo, ld)) = crate::viewport::local_ray(&place, o, d) else { continue };
         let index = app.viewport.pick_index.of(&m);
-        if let Some((t, _)) = crate::pick_index::raycast(index.as_deref(), &m, lo, ld)
+        if let Some((t, triangle)) = crate::pick_index::raycast(index.as_deref(), &m, lo, ld)
             && best.as_ref().is_none_or(|(bt, ..)| t < *bt)
         {
-            best = Some((t, b.name.clone(), o + d * t));
+            best = Some((t, b.name.clone(), o + d * t, triangle));
         }
     }
     best
@@ -220,7 +225,7 @@ pub(crate) fn scan_under(app: &SolveApp, proj: &Proj, at: egui::Pos2) -> Option<
                 ray_hit(app, proj, at + egui::vec2(a.cos(), a.sin()) * radius, None)
             })
             .min_by(|a, b| a.0.total_cmp(&b.0));
-        if let Some((_, body, point)) = found {
+        if let Some((_, body, point, _)) = found {
             return Some((body, point));
         }
     }

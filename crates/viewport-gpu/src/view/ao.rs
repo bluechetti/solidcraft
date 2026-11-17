@@ -182,7 +182,7 @@ fn draw_opaque(pass: &mut wgpu::RenderPass<'_>, pipelines: &OpaquePipelines, lay
             pass.draw_indexed(0..draw.mesh.index_count, 0, 0..1);
         }
         for draw in batch.instanced.iter().filter(|d| d.look == super::InstanceLook::Opaque) {
-            draw.draw(pass, &pipelines.instanced, &pipelines.instanced_flat, &uncounted);
+            draw.draw(pass, &pipelines.instanced, &pipelines.instanced_flat, None, &uncounted);
         }
     }
 }
@@ -224,6 +224,7 @@ impl Resources {
         let built = [Some(tri_layout())];
         let evaluated = [Some(planned_layout()), Some(color_layout())];
         let placed = [Some(shared_layout()), Some(instance_layout())];
+        let painted = [Some(shared_layout()), Some(instance_layout()), Some(super::paint_layout())];
         let target = |format| [Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::RED })];
         let opaque = |label, layout: &wgpu::PipelineLayout, fragment: &str, format, depth_write_enabled, compare| {
             let pipeline = |source: TriSource| {
@@ -237,6 +238,7 @@ impl Resources {
                             TriSource::Built => &built[..],
                             TriSource::Planned => &evaluated[..],
                             TriSource::Instanced | TriSource::InstancedFlat => &placed[..],
+                            TriSource::InstancedPainted | TriSource::InstancedFlatPainted => &painted[..],
                         },
                         compilation_options: Default::default(),
                     },

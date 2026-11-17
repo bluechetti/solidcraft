@@ -155,9 +155,8 @@ fn look(app: &SolveApp, k: &mut FitShape, inputs: &[SelInput]) {
         return;
     };
     let shape = SHAPES[k.shape.min(SHAPES.len() - 1)];
-    // The selection is not in the design's revision: its count and first triangle stand for it.
-    let selection = solidcraft_engine::cmd::scan::select::selected(&app.session).map(|s| (s.count, s.selected.iter().position(|on| *on)));
-    let key = format!("{p}|{shape:?}|{}|{selection:?}", app.session.revision);
+    // The selection is not in the design's revision: its stamp stands for it.
+    let key = format!("{p}|{shape:?}|{}|{}", app.session.revision, solidcraft_engine::cmd::scan::select::stamp(&app.session));
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         k.pending = None;
         return;

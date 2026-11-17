@@ -26,56 +26,151 @@ pub struct Bvh {
     order: Vec<u32>,
 }
 
+/// Hierarchies over at least this many boxes are built on threads below the top levels.
+const PARALLEL_FROM: usize = 200_000;
+/// The depth at which the top levels hand their nodes to threads (up to 2^depth of them).
+const SPLIT_DEPTH: usize = 5;
+
+/// Puts a subtree built on its own (`sub`, its root first) under node `n`: the root takes the
+/// node's place and the rest go on the end, their children moved with them (a pair of children
+/// stays side by side).
+fn stitch(nodes: &mut Vec<Node>, n: usize, sub: Vec<Node>) {
+    let base = nodes.len();
+    let place = |node: Node| if node.count > 0 { node } else { Node { first: (base + node.first as usize - 1) as u32, ..node } };
+    if let Some(root) = sub.first().copied()
+        && let Some(slot) = nodes.get_mut(n)
+    {
+        *slot = place(root);
+    }
+    nodes.extend(sub.into_iter().skip(1).map(place));
+}
+
+/// Fills in node `nodes[0]`'s subtree (and every node below it) over the items `order`, which sit
+/// at `offset` in the hierarchy's own order: median split on the widest axis of the box centres,
+/// a few items per leaf. A node reached at `stop` levels down is left as it is and listed in
+/// `deferred` (its index, and its span in the whole order) instead.
+fn grow(
+    item: &impl Fn(u32) -> Aabb3,
+    order: &mut [u32],
+    offset: usize,
+    nodes: &mut Vec<Node>,
+    stop: usize,
+    deferred: &mut Vec<(usize, usize, usize)>,
+) {
+    let centre = |i: u32| item(i).center();
+    // (node, start, end, depth) in `order` still to be filled in.
+    let mut todo = vec![(0usize, 0usize, order.len(), 0usize)];
+    while let Some((n, start, end, depth)) = todo.pop() {
+        if depth >= stop {
+            deferred.push((n, offset + start, offset + end));
+            continue;
+        }
+        let Some(span) = order.get_mut(start..end) else { continue };
+        let mut bounds = Aabb3::EMPTY;
+        let mut centres = Aabb3::EMPTY;
+        for &i in span.iter() {
+            bounds = bounds.union(&item(i));
+            centres.add(centre(i));
+        }
+        let size = centres.size();
+        let axis = if size.x >= size.y && size.x >= size.z {
+            0
+        } else if size.y >= size.z {
+            1
+        } else {
+            2
+        };
+        let extent = [size.x, size.y, size.z][axis];
+        if span.len() <= LEAF || !(extent > 0.0) {
+            if let Some(node) = nodes.get_mut(n) {
+                *node = Node { bounds, first: (offset + start) as u32, count: span.len() as u32 };
+            }
+            continue;
+        }
+        let key = |i: &u32| {
+            let c = centre(*i);
+            [c.x, c.y, c.z][axis]
+        };
+        let mid = span.len() / 2;
+        span.select_nth_unstable_by(mid, |a, b| key(a).total_cmp(&key(b)));
+        let left = nodes.len();
+        nodes.push(Node { bounds: Aabb3::EMPTY, first: 0, count: 0 });
+        nodes.push(Node { bounds: Aabb3::EMPTY, first: 0, count: 0 });
+        if let Some(node) = nodes.get_mut(n) {
+            *node = Node { bounds, first: left as u32, count: 0 };
+        }
+        todo.push((left, start, start + mid, depth + 1));
+        todo.push((left + 1, start + mid, end, depth + 1));
+    }
+}
+
 impl Bvh {
-    /// The hierarchy over `boxes` (empty boxes are left out).
+    /// The hierarchy over `boxes` (empty boxes are left out). A large one is built a few levels
+    /// down here and the subtrees below beside each other on threads: the same hierarchy, made
+    /// in a fraction of the time (a 10-million-triangle scan's took 13 s on one thread).
     pub fn new(boxes: &[Aabb3]) -> Bvh {
+        let parallel = cfg!(not(target_arch = "wasm32")) && boxes.len() >= PARALLEL_FROM;
+        Bvh::built(boxes, parallel)
+    }
+
+    /// [`Bvh::new`], on threads below the top levels or not.
+    fn built(boxes: &[Aabb3], parallel: bool) -> Bvh {
         let mut order: Vec<u32> =
             (0..boxes.len().min(u32::MAX as usize)).filter(|&i| boxes.get(i).is_some_and(|b| !b.is_empty() && finite(b))).map(|i| i as u32).collect();
         if order.is_empty() {
             return Bvh::default();
         }
         let item = |i: u32| boxes.get(i as usize).copied().unwrap_or(Aabb3::EMPTY);
-        let centre = |i: u32| item(i).center();
         let mut nodes = vec![Node { bounds: Aabb3::EMPTY, first: 0, count: 0 }];
-        // (node, start, end) in `order` still to be filled in.
-        let mut todo = vec![(0usize, 0usize, order.len())];
-        while let Some((n, start, end)) = todo.pop() {
-            let Some(span) = order.get_mut(start..end) else { continue };
-            let mut bounds = Aabb3::EMPTY;
-            let mut centres = Aabb3::EMPTY;
-            for &i in span.iter() {
-                bounds = bounds.union(&item(i));
-                centres.add(centre(i));
+        let len = order.len();
+        if !parallel {
+            grow(&item, &mut order, 0, &mut nodes, usize::MAX, &mut Vec::new());
+            return Bvh { nodes, order };
+        }
+        // The top levels here; each node at SPLIT_DEPTH is left for a thread.
+        let mut deferred = Vec::new();
+        grow(&item, &mut order, 0, &mut nodes, SPLIT_DEPTH, &mut deferred);
+        deferred.sort_by_key(|(_, start, _)| *start);
+        // The deferred spans are apart in `order`: each thread takes its own.
+        let mut spans = Vec::with_capacity(deferred.len());
+        let (mut rest, mut at) = (order.as_mut_slice(), 0usize);
+        for &(n, start, end) in &deferred {
+            if start < at || end > len {
+                continue;
             }
-            let size = centres.size();
-            let axis = if size.x >= size.y && size.x >= size.z {
-                0
-            } else if size.y >= size.z {
-                1
-            } else {
-                2
-            };
-            let extent = [size.x, size.y, size.z][axis];
-            if span.len() <= LEAF || !(extent > 0.0) {
-                if let Some(node) = nodes.get_mut(n) {
-                    *node = Node { bounds, first: start as u32, count: span.len() as u32 };
+            let (_, after) = rest.split_at_mut(start - at);
+            let (mine, after) = after.split_at_mut(end - start);
+            rest = after;
+            at = end;
+            spans.push((n, start, mine));
+        }
+        let subtrees: Vec<(usize, usize, Vec<Node>)> = std::thread::scope(|scope| {
+            let item = &item;
+            let jobs: Vec<_> = spans
+                .into_iter()
+                .map(|(n, start, span)| {
+                    let job = move || {
+                        let mut sub = vec![Node { bounds: Aabb3::EMPTY, first: 0, count: 0 }];
+                        grow(item, span, start, &mut sub, usize::MAX, &mut Vec::new());
+                        sub
+                    };
+                    (n, start, std::thread::Builder::new().spawn_scoped(scope, job))
+                })
+                .collect();
+            jobs.into_iter().map(|(n, start, job)| (n, start, job.ok().and_then(|h| h.join().ok()).unwrap_or_default())).collect()
+        });
+        for (n, start, sub) in subtrees {
+            if sub.is_empty() {
+                // A thread that could not start: its span is built here.
+                let end = deferred.iter().find(|d| d.0 == n).map_or(start, |d| d.2);
+                if let Some(span) = order.get_mut(start..end) {
+                    let mut here = vec![Node { bounds: Aabb3::EMPTY, first: 0, count: 0 }];
+                    grow(&item, span, start, &mut here, usize::MAX, &mut Vec::new());
+                    stitch(&mut nodes, n, here);
                 }
                 continue;
             }
-            let key = |i: &u32| {
-                let c = centre(*i);
-                [c.x, c.y, c.z][axis]
-            };
-            let mid = span.len() / 2;
-            span.select_nth_unstable_by(mid, |a, b| key(a).total_cmp(&key(b)));
-            let left = nodes.len();
-            nodes.push(Node { bounds: Aabb3::EMPTY, first: 0, count: 0 });
-            nodes.push(Node { bounds: Aabb3::EMPTY, first: 0, count: 0 });
-            if let Some(node) = nodes.get_mut(n) {
-                *node = Node { bounds, first: left as u32, count: 0 };
-            }
-            todo.push((left, start, start + mid));
-            todo.push((left + 1, start + mid, end));
+            stitch(&mut nodes, n, sub);
         }
         Bvh { nodes, order }
     }

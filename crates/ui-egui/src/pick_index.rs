@@ -3,8 +3,10 @@
 //! kept while the mesh is. The viewport's picker asks it for the nearest triangle along the
 //! cursor's ray and for the edge segments near that ray, then runs its exact screen tests on
 //! those alone. A large mesh's index takes a while to make (a third of a second for a long
-//! modelled thread, #3745), so it is made on a worker thread, and picks scan the mesh until it
-//! is there: a scan takes a few milliseconds, the index a frame never waits for.
+//! modelled thread, #3745; seconds for a 10-million-triangle scan), so it is made on a worker
+//! thread, and picks scan the mesh until it is there: a few milliseconds for a modelled part, a
+//! quarter of a second for such a scan, so what runs every frame ([`large`]) waits for the index
+//! instead.
 
 use solidcraft_engine::geom::prelude::*;
 use std::collections::HashMap;
@@ -50,6 +52,12 @@ type Indexes = HashMap<usize, (Arc<Mesh>, Option<Arc<MeshIndex>>)>;
 /// a millisecond); larger ones on a worker.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 const AT_ONCE: usize = 20_000;
+
+/// Whether `mesh` is too large to index at once: its index is made on a worker, and until it is
+/// in, picking scans every triangle.
+pub(crate) fn large(mesh: &Mesh) -> bool {
+    mesh.triangles.len() + mesh.edges.iter().map(Vec::len).sum::<usize>() > AT_ONCE
+}
 
 impl PickIndexes {
     /// The index of `mesh`, or `None` while it is being made (the caller scans the mesh).

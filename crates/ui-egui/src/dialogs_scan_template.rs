@@ -133,8 +133,13 @@ struct Under {
     /// count against how flat the wall is.
     cut: Vec<bool>,
     /// The scan's triangles over the template, each with how far its middle stands off the plane:
-    /// the colouring painted on the scan. Empty past [`PAINT_LIMIT`]: then the points are dots.
+    /// the colouring painted over the scan in wireframe. Empty past [`PAINT_LIMIT`]: then the
+    /// points are dots.
     paint: Vec<([Vec3; 3], f32)>,
+    /// Each of the scan's points by how far it stands off the plane, not a number off the
+    /// template: the colouring painted on the scan's own triangles in a shaded view
+    /// ([`crate::scan_paint`]), every point, however large the scan.
+    vertices: Arc<Vec<f32>>,
     dots: Option<(u64, crate::scan_deviation::Colours, u64, crate::dialogs_scan_surface::Shaded)>,
 }
 
@@ -393,7 +398,8 @@ fn under_of(s: &solidcraft_engine::Session, m: &solidcraft_engine::cmd::scan::te
         let d = p - t.frame.origin;
         Vec2::new(d.dot(t.frame.x), d.dot(t.frame.y))
     };
-    let mut under = Under { scan: m.body.clone(), at: Vec::new(), values: Vec::new(), cut: Vec::new(), paint: Vec::new(), dots: None };
+    let mut under =
+        Under { scan: m.body.clone(), at: Vec::new(), values: Vec::new(), cut: Vec::new(), paint: Vec::new(), vertices: Arc::default(), dots: None };
     for p in positions.iter().step_by(step) {
         let q = local(*p);
         if !inside(&t.outline, q) {
@@ -404,11 +410,29 @@ fn under_of(s: &solidcraft_engine::Session, m: &solidcraft_engine::cmd::scan::te
         under.cut.push(t.cutouts.iter().any(|c| inside(&c.ring, q)));
     }
     let off = |p: Vec3| ((p - t.frame.origin).dot(normal)) as f32;
+    under.vertices = Arc::new(over_outline(positions, &t.outline, local, off));
     under.paint = painted(positions, triangles, &t.outline, local, off);
     if under.paint.is_empty() {
         under.paint = gridded(positions, triangles, &t.outline, local, off, |q| t.at(q), normal);
     }
     (!under.at.is_empty()).then_some(under)
+}
+
+/// Each of the scan's `positions` with `value` where it lies inside the template's `outline`
+/// (`local` puts a point in its coordinates), not a number elsewhere. The outline's box is tried
+/// first, so the outline is walked only for points near it.
+fn over_outline(positions: &[Vec3], outline: &[Vec2], local: impl Fn(Vec3) -> Vec2, value: impl Fn(Vec3) -> f32) -> Vec<f32> {
+    let Some(first) = outline.first() else { return vec![f32::NAN; positions.len()] };
+    let (lo, hi) =
+        outline.iter().fold((*first, *first), |(lo, hi), q| (Vec2::new(lo.x.min(q.x), lo.y.min(q.y)), Vec2::new(hi.x.max(q.x), hi.y.max(q.y))));
+    positions
+        .iter()
+        .map(|p| {
+            let q = local(*p);
+            let near = q.x >= lo.x && q.y >= lo.y && q.x <= hi.x && q.y <= hi.y;
+            if near && inside(outline, q) { value(*p) } else { f32::NAN }
+        })
+        .collect()
 }
 
 /// The scan's triangles whose middles lie inside the template's `outline` (`local` puts a point in
@@ -558,10 +582,59 @@ pub(crate) fn fidelity(app: &SolveApp, k: &FlatTemplate) -> Option<(crate::scan_
     Some((crate::scan_fidelity::stats(&wall, tolerance)?, tolerance))
 }
 
-/// The colouring of the scan over the template, as a cloud for the GPU viewport.
-pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view::GpuCloud> {
+thread_local! {
+    /// The colouring last put on the scan's own triangles: the points' values it was made from
+    /// (held, so their address stays theirs), the tolerance and colours, the painting's key and
+    /// where each point sits on the scale.
+    #[allow(clippy::type_complexity)]
+    static PAINTED: std::cell::RefCell<Option<(Arc<Vec<f32>>, u64, crate::scan_deviation::Colours, u64, Arc<Vec<f32>>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The colouring painted on the scan's own triangles ([`crate::scan_paint`]) while the dialog
+/// shows it: each of the scan's points over the template by how far it stands off the plane.
+pub(crate) fn painting(app: &SolveApp) -> Option<crate::scan_paint::Painting> {
     let Some(Kind::ScanFlatTemplate(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
     if !k.colours {
+        return None;
+    }
+    let under = k.shown.as_ref()?.under.as_ref()?;
+    let tolerance = crate::scan_fidelity::effective(app, Some(&under.scan), k.scan_tolerance);
+    let colours = crate::scan_deviation::colours();
+    let (key, scale) = PAINTED.with(|p| {
+        let mut p = p.borrow_mut();
+        if let Some((v, t, c, key, scale)) = p.as_ref()
+            && Arc::ptr_eq(v, &under.vertices)
+            && *t == tolerance.to_bits()
+            && *c == colours
+        {
+            return (*key, scale.clone());
+        }
+        let scale: Arc<Vec<f32>> = Arc::new(
+            under
+                .vertices
+                .iter()
+                .map(|v| {
+                    if v.is_nan() {
+                        f32::NAN
+                    } else {
+                        crate::dialogs_scan_surface::solidcraft_scan_scale(*v, tolerance).map_or(f32::NAN, |s| s as f32)
+                    }
+                })
+                .collect(),
+        );
+        let key = crate::dialogs_scan_surface::next_shade_version();
+        *p = Some((under.vertices.clone(), tolerance.to_bits(), colours, key, scale.clone()));
+        (key, scale)
+    });
+    Some(crate::scan_paint::Painting { scan: under.scan.clone(), key, scale, colours })
+}
+
+/// The colouring of the scan over the template, as a cloud for the GPU viewport: in wireframe
+/// only, a shaded view paints the scan's own triangles ([`painting`]).
+pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view::GpuCloud> {
+    let Some(Kind::ScanFlatTemplate(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    if !k.colours || crate::scan_paint::on_scan(app) {
         return None;
     }
     let (_, _, version, shaded) = k.shown.as_ref()?.under.as_ref()?.dots.as_ref()?;

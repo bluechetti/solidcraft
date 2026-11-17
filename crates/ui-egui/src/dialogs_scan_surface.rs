@@ -493,9 +493,9 @@ fn fit(app: &SolveApp, k: &mut FitSurface, inputs: &[crate::selection::SelInput]
     if !(k.within > 0.0) {
         k.within = crate::scan_fidelity::effective(app, Some(&body), k.tolerance);
     }
-    // What is selected stands in the key by its count and first triangle (it is not in the revision).
+    // What is selected stands in the key by its stamp (it is not in the revision).
     let picked = if k.area == AREA_SELECTED {
-        selection.as_ref().map_or([0; 3], |s| [s.count as u64, s.selected.iter().position(|on| *on).unwrap_or(0) as u64, u64::MAX])
+        [selection.as_ref().map_or(0, |s| s.stamp), u64::MAX, u64::MAX]
     } else {
         [point.x.to_bits(), point.y.to_bits(), point.z.to_bits()]
     };

@@ -143,7 +143,7 @@ fn look(app: &SolveApp, k: &mut SplitMesh, inputs: &[SelInput]) {
         return;
     };
     // The keep does not change the cut, only what is marked.
-    let key = format!("{p}|{}", app.session.revision);
+    let key = format!("{p}|{}|{}", app.session.revision, solidcraft_engine::cmd::scan::select::stamp(&app.session));
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         k.pending = None;
         return;

@@ -1,8 +1,10 @@
-//! The scan deviation map (`scan.deviation`) in the viewport: the scan's triangles painted in the
-//! 3D pass, depth-tested with the model, each coloured by its corners' distance from the model; a
-//! scan of more than [`PAINT_LIMIT`] triangles is drawn as one dot per point instead. Both go
-//! through the point-cloud path, so they are uploaded once per map and cost nothing to draw again
-//! when the pointer moves; a scan of millions of triangles stays interactive.
+//! The scan deviation map (`scan.deviation`) in the viewport: in a shaded view the scan's own
+//! triangles are painted, each point by its distance from the model ([`crate::scan_paint`]: 4
+//! bytes a point on the GPU, so a scan of a hundred million triangles is painted whole). In
+//! wireframe the scan's triangles are painted over it through the point-cloud path instead, each
+//! coloured by its corners' distance; a scan of more than [`PAINT_LIMIT`] triangles is then drawn
+//! as one dot per point. Either is made once per map and costs nothing to draw again when the
+//! pointer moves.
 //!
 //! The colours are the theme's analysis colours, so they follow the colour vision setting: within
 //! the tolerance the draft analysis's good colour, above the model its bad colour and below it
@@ -53,10 +55,20 @@ impl PartialEq for Key {
 
 /// A map being measured again beside the window: for which revision of the design, and what it
 /// finds (`None` where the scan or the model is gone).
-type Remeasure = crate::scan_job::Job<u64, Option<Arc<DeviationMap>>>;
+type Remeasure = crate::scan_job::Job<u64, Option<Measured>>;
+
+/// A map measured beside the window, and where each of the scan's points sits on its scale
+/// (worked out there too: a scale for every point of a large scan is a frame's work and more).
+struct Measured {
+    map: Arc<DeviationMap>,
+    scale: Arc<Vec<f32>>,
+}
 
 thread_local! {
     static REMEASURING: RefCell<Option<Remeasure>> = const { RefCell::new(None) };
+    /// The first measuring of a large scan's map, beside the window: its button left the window
+    /// still for half a second on a 10-million-triangle scan.
+    static STARTING: RefCell<Option<Remeasure>> = const { RefCell::new(None) };
     /// The scan whose map was drawn against the default while its noise was still being read: it
     /// is measured again once the noise is in.
     static AWAITING_NOISE: RefCell<Option<String>> = const { RefCell::new(None) };
@@ -65,8 +77,9 @@ thread_local! {
 /// Scan Deviation's button: a scan with no tolerance of its own is measured against the one its
 /// tools start from (three times its noise, the preference `scan_tolerance_from_noise`), so the
 /// map and the tools agree on what is within. On a large scan whose noise is still being read
-/// the map is drawn against the default now and measured again once it is in. False when the
-/// map was made here.
+/// the map is drawn against the default now and measured again once it is in. A large scan is
+/// measured beside the window ([`follow`] shows the map once it is in). False when the map was
+/// made here or is being made.
 pub(crate) fn start(app: &mut SolveApp) -> bool {
     let Ok(scan) = solidcraft_engine::cmd::scan::mesh_body_name(&app.session, None, "scan.deviation") else {
         return true;
@@ -75,6 +88,12 @@ pub(crate) fn start(app: &mut SolveApp) -> bool {
         Some((mm, _)) => {
             let mut p = serde_json::json!({"scan": scan, "tolerance": format!("{mm} mm")});
             look(app, &mut p);
+            if crate::scan_job::beside_window(app)
+                && let Some(job) = measure_beside(app, p.clone())
+            {
+                STARTING.with(|j| *j.borrow_mut() = Some(job));
+                return false;
+            }
             app.run("scan.deviation", p).is_err()
         }
         None => {
@@ -94,6 +113,54 @@ fn look(app: &SolveApp, p: &mut serde_json::Value) {
     let bands = app.preferences.scan_deviation_bands.round();
     if bands >= 2.0 {
         p["bands"] = serde_json::json!(bands.min(12.0) as u32);
+    }
+}
+
+/// `scan.deviation` with `params` on a copy of the design as it is now, beside the window: the
+/// map as measured at this revision, which it stands for.
+fn measure_beside(app: &SolveApp, params: serde_json::Value) -> Option<Remeasure> {
+    let revision = app.session.revision;
+    crate::scan_job::spawn(app, revision, move |s| {
+        let mut copy = s.scratch();
+        copy.execute("scan.deviation", &params).ok()?;
+        let measured = copy.scan_deviation.as_ref()?;
+        let map = Arc::new(DeviationMap { revision, ..(**measured).clone() });
+        let scale = Arc::new(scale_of(&map));
+        Some(Measured { map, scale })
+    })
+}
+
+/// A map measured beside the window shown, painted with the scale worked out there.
+fn show_measured(app: &mut SolveApp, measured: Measured) {
+    let key = crate::dialogs_scan_surface::next_shade_version();
+    PAINTED.with(|p| *p.borrow_mut() = Some((measured.map.clone(), colours(), key, measured.scale)));
+    app.session.scan_deviation = Some(measured.map);
+}
+
+/// The first map of a large scan, once it is measured: shown as measured at the revision it was
+/// measured at ([`follow`] measures it again if the design has changed since).
+fn take_started(app: &mut SolveApp, ctx: &egui::Context) {
+    let done = STARTING.with(|j| {
+        let mut j = j.borrow_mut();
+        let job = j.as_ref()?;
+        match job.poll() {
+            crate::scan_job::Poll::Working => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                None
+            }
+            crate::scan_job::Poll::Done(found) => {
+                *j = None;
+                found
+            }
+            crate::scan_job::Poll::Lost => {
+                *j = None;
+                None
+            }
+        }
+    });
+    if let Some(measured) = done {
+        show_measured(app, measured);
+        ctx.request_repaint();
     }
 }
 
@@ -147,6 +214,7 @@ fn remeasure_params(map: &DeviationMap) -> serde_json::Value {
 /// verdict follow what the user does instead of vanishing until Scan Deviation is run again. A
 /// scan or model that is gone ends it.
 pub(crate) fn follow(app: &mut SolveApp, ctx: &egui::Context) {
+    take_started(app, ctx);
     let Some(map) = app.session.scan_deviation.clone() else {
         REMEASURING.with(|r| *r.borrow_mut() = None);
         return;
@@ -177,17 +245,14 @@ pub(crate) fn follow(app: &mut SolveApp, ctx: &egui::Context) {
         Some(None) => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
         Some(Some(found)) => {
             // Measured on a copy of the design as it was at `revision`, which is the design now.
-            app.session.scan_deviation = found.map(|m| Arc::new(DeviationMap { revision, ..(*m).clone() }));
+            match found {
+                Some(measured) => show_measured(app, measured),
+                None => app.session.scan_deviation = None,
+            }
             ctx.request_repaint();
         }
         None if crate::scan_job::beside_window(app) => {
-            let given = params.clone();
-            let started = crate::scan_job::spawn(app, revision, move |s| {
-                let mut copy = s.scratch();
-                copy.execute("scan.deviation", &given).ok()?;
-                copy.scan_deviation.clone()
-            });
-            match started {
+            match measure_beside(app, params.clone()) {
                 Some(job) => {
                     REMEASURING.with(|r| *r.borrow_mut() = Some(job));
                     ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -240,8 +305,45 @@ pub(crate) fn colour([far_below, below, within, above, far_above]: Colours, s: f
     std::array::from_fn(|i| (f64::from(a[i]) + (f64::from(b[i]) - f64::from(a[i])) * k).round() as u8)
 }
 
-/// The map as a cloud for the GPU viewport, or nothing when none is shown.
+thread_local! {
+    /// The map last put on the scan's own triangles: the map (held, so its address stays its
+    /// own), the colours, the painting's key and where each of the scan's points sits on the scale.
+    static PAINTED: RefCell<Option<(Arc<DeviationMap>, Colours, u64, Arc<Vec<f32>>)>> = const { RefCell::new(None) };
+}
+
+/// Where each of the scan's points sits on `map`'s scale (not a number for a point the model
+/// leaves out).
+fn scale_of(map: &DeviationMap) -> Vec<f32> {
+    map.values.iter().map(|v| map.scale(*v).map_or(f32::NAN, |s| s as f32)).collect()
+}
+
+/// The map painted on the scan's own triangles ([`crate::scan_paint`]), when one is shown: each of
+/// the scan's points by where its distance sits on the scale.
+pub(crate) fn painting(app: &SolveApp) -> Option<crate::scan_paint::Painting> {
+    let map = current(app)?;
+    let colours = colours();
+    let (key, scale) = PAINTED.with(|p| {
+        let mut p = p.borrow_mut();
+        if let Some((m, c, key, scale)) = p.as_ref()
+            && Arc::ptr_eq(m, &map)
+            && *c == colours
+        {
+            return (*key, scale.clone());
+        }
+        let scale: Arc<Vec<f32>> = Arc::new(scale_of(&map));
+        let key = crate::dialogs_scan_surface::next_shade_version();
+        *p = Some((map.clone(), colours, key, scale.clone()));
+        (key, scale)
+    });
+    Some(crate::scan_paint::Painting { scan: map.scan.clone(), key, scale, colours })
+}
+
+/// The map as a cloud for the GPU viewport, or nothing when none is shown or it is painted on the
+/// scan's own triangles ([`crate::scan_paint::on_scan`]).
 pub(crate) fn gpu_cloud(app: &SolveApp) -> Option<GpuCloud> {
+    if crate::scan_paint::on_scan(app) {
+        return None;
+    }
     let map = current(app)?;
     let key = Key { map: map.clone(), colours: colours() };
     let (version, built) = BUILT.with(|b| {
@@ -362,14 +464,15 @@ pub(crate) fn track(app: &mut SolveApp, proj: &crate::viewport::Proj, pointer: O
     let found = (|| {
         let map = current(app)?;
         let at = pointer?;
-        let q = scan_under(app, proj, at, &map.scan)?;
+        let (_, q, triangle) = crate::scan_snap::scan_hit_triangle(app, proj, at, Some(&map.scan))?;
         let state = app.session.model.state();
-        let (positions, _) = state.body(&map.scan)?.body.triangle_mesh()?;
+        let (positions, triangles) = state.body(&map.scan)?.body.triangle_mesh()?;
         use solidcraft_engine::geom::Vec3Geom as _;
-        // The pick's point lies on the scan; its nearest measured corner gives the value. A local
-        // search would be faster, but the pick is cached and the pointer rarely moves every frame.
+        // The pick's point lies on the triangle hit; its nearest measured corner gives the value
+        // (not a walk over every point of the scan each time the pointer moves).
         let mut best: Option<(f64, f32)> = None;
-        for (p, &v) in positions.iter().zip(&map.values) {
+        for &i in triangles.get(triangle)? {
+            let (Some(p), Some(&v)) = (positions.get(i as usize), map.values.get(i as usize)) else { continue };
             let d = (*p - q).len2();
             if v.is_finite() && best.is_none_or(|(e, _)| d < e) {
                 best = Some((d, v));
@@ -490,8 +593,94 @@ mod tests {
         assert!(!shown(&h.app) && gpu_cloud(&h.app).is_none(), "pressed again, the map goes");
     }
 
+    /// In a shaded view on the GPU the map is painted on the scan's own triangles, every point in
+    /// the colour its distance has (here all within), with no cloud over it; a new map is a new
+    /// painting, so the scene is built again; in wireframe the cloud is back and the scan is not
+    /// painted.
+    #[test]
+    fn a_shaded_view_paints_the_map_on_the_scans_own_triangles() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.viewport.gpu = Some(solidcraft_viewport_gpu::view::GpuTarget {
+            format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm,
+            depth: None,
+            samples: 1,
+            tess: false,
+            oit: false,
+        });
+        let mut stl = String::from("solid c\n");
+        let corner = |i: usize| [if i & 1 == 0 { 0 } else { 10 }, if i & 2 == 0 { 0 } else { 10 }, if i & 4 == 0 { 0 } else { 10 }];
+        for f in [[0, 2, 1], [1, 2, 3], [4, 5, 6], [5, 7, 6], [0, 1, 4], [1, 5, 4], [2, 6, 3], [3, 6, 7], [0, 4, 2], [2, 4, 6], [1, 3, 5], [3, 7, 5]]
+        {
+            stl += "facet normal 0 0 0\nouter loop\n";
+            for i in f {
+                let [x, y, z] = corner(i);
+                stl += &format!("vertex {x} {y} {z}\n");
+            }
+            stl += "endloop\nendfacet\n";
+        }
+        let path = h.dir.join("cube.stl");
+        std::fs::write(&path, stl + "endsolid c\n").unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let scan = h.app.session.model.state().bodies.iter().find(|b| b.body.is_mesh()).unwrap().name.clone();
+        h.app.run("solid.box", json!({"body_name": "Model", "operation": "new", "length": 10, "width": 10, "height": 10})).unwrap();
+        let before = crate::scan_paint::scene_key(&h.app);
+        h.app.run("scan.deviation", json!({"body": "Model"})).unwrap();
+        assert!(gpu_cloud(&h.app).is_none(), "no cloud over a painted scan");
+        assert_ne!(crate::scan_paint::scene_key(&h.app), before, "the scene is built again with the paint");
+        let scene = crate::viewport::build_scene(&h.app);
+        let painted: Vec<_> = scene.instanced.iter().filter_map(|m| m.paint.as_ref().map(|p| (m, p))).collect();
+        assert_eq!(painted.len(), 1, "the scan, and not the model, is painted");
+        let (mesh, paint) = painted[0];
+        let within = solidcraft_viewport_gpu::view::paint_colour(colours()[2]);
+        assert_eq!(paint.levels[0].len(), mesh.tris.vertex_count());
+        assert!(paint.levels[0].iter().all(|c| *c == within), "every point within: {:?}", paint.levels[0]);
+        assert_eq!(crate::scan_paint::paintings(&h.app)[0].scan, scan);
+
+        h.app.ui.visual_style = 2;
+        assert!(gpu_cloud(&h.app).is_some_and(|c| !c.triangles.is_empty()), "in wireframe, the cloud");
+        assert!(crate::viewport::build_scene(&h.app).instanced.iter().all(|m| m.paint.is_none()));
+    }
+
     /// The button on a noisy scan with no tolerance of its own measures against three times its
     /// noise, as the scan tools do, not 0.1 mm; with the preference off, 0.1 mm as before.
+    #[test]
+    fn a_large_scans_map_is_measured_beside_the_window() {
+        crate::scan_job::force(true);
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("noisy.stl");
+        std::fs::write(&path, crate::dialogs_scan_patches::tests::noisy_sheet_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app
+            .run("solid.box", json!({"body_name": "Model", "operation": "new", "length": 60, "width": 60, "height": 5, "corner": [0, 0, -5]}))
+            .unwrap();
+        h.app.run("select.clear", json!({})).unwrap();
+        // The scan's noise is read first (beside the window too): the button waits for it.
+        let scan = h.app.session.model.state().bodies[0].name.clone();
+        for _ in 0..500 {
+            if crate::scan_fidelity::noise_tolerance(&h.app, Some(&scan)).is_some() {
+                break;
+            }
+            h.frames(1);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let gate = crate::scan_job::hold();
+        h.app.start("scan.deviation");
+        let waiting = !shown(&h.app) && STARTING.with(|j| j.borrow().is_some());
+        gate.open();
+        for _ in 0..500 {
+            h.frames(1);
+            if shown(&h.app) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        crate::scan_job::force(false);
+        assert!(waiting, "measured beside the window, not on it");
+        let map = current(&h.app).expect("the map arrives");
+        assert_eq!(map.revision, h.app.session.revision, "as the design is");
+        assert!(painting(&h.app).is_some(), "and is painted");
+    }
+
     #[test]
     fn the_button_measures_against_the_tolerance_the_tools_start_from() {
         let mut h = crate::scenario::Harness::new();

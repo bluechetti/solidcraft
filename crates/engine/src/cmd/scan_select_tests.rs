@@ -122,6 +122,42 @@ fn a_selection_on_one_of_two_scans_is_the_region_every_tool_takes() {
     assert_eq!(reduced["body"].as_str(), Some(second.as_str()), "{reduced}");
 }
 
+/// A selection's stamp is new each time what is selected changes (and kept when the same is
+/// selected again), so a dialog's preview keyed on it looks again; a selection on a scan hidden
+/// since is not one the tools take or the stamp counts, yet it is held: adding to it while hidden
+/// adds to it, and it is back when the scan shows again.
+#[test]
+fn a_selection_is_stamped_and_gives_way_while_its_scan_is_hidden() {
+    let (mut s, body) = session_with("stamp", &ball_triangles());
+    let stamp = super::stamp;
+    assert_eq!(stamp(&s), 0, "nothing selected");
+    run(&mut s, "scan.select", json!({"body": body, "brush": {"points": [[0, 0, 20]], "radius": "6 mm"}}));
+    let first = stamp(&s);
+    assert_ne!(first, 0);
+    let revision = s.revision;
+    run(&mut s, "scan.select", json!({"body": body, "brush": {"points": [[0, 0, 20]], "radius": "6 mm"}}));
+    assert_eq!(stamp(&s), first, "the same triangles again");
+    run(&mut s, "scan.select", json!({"body": body, "brush": {"points": [[0, 0, 20]], "radius": "8 mm"}}));
+    let wider = stamp(&s);
+    assert_ne!(wider, first, "more selected");
+    // The design's revision does not move with the selection: a preview keyed on the revision
+    // alone would not look again.
+    assert_eq!(s.revision, revision);
+    let count = super::selected(&s).unwrap().count;
+    run(&mut s, "browser.visibility", json!({"items": [body.as_str()], "visible": false}));
+    assert!(super::selected(&s).is_none(), "a hidden scan's selection is not taken");
+    assert_eq!(stamp(&s), 0);
+    let err = s.execute("scan.flatten", &json!({})).unwrap_err().to_string();
+    assert!(err.contains("select") || err.contains("pick"), "{err}");
+    // Added to while hidden: added to what it holds, not started again.
+    let added = run(&mut s, "scan.select", json!({"body": body, "mode": "add", "brush": {"points": [[0, 0, -20]], "radius": "6 mm"}}));
+    assert!(added["triangles"].as_u64().unwrap() > count as u64, "{added}");
+    run(&mut s, "browser.visibility", json!({"items": [body.as_str()], "visible": true}));
+    let back = super::selected(&s).expect("shown again");
+    assert_eq!(back.count as u64, added["triangles"].as_u64().unwrap());
+    assert_ne!(stamp(&s), wider);
+}
+
 /// A circle drawn round the top of the ball with Curve on Scan selects the cap inside it, and
 /// Curve from Selection Edge gives back a closed curve round the cap, one undo step.
 #[test]

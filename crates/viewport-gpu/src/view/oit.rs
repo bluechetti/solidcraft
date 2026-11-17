@@ -101,6 +101,7 @@ impl Pipelines {
         let built_buffers = [Some(tri_layout())];
         let evaluated = [Some(planned_layout()), Some(color_layout())];
         let placed = [Some(shared_layout()), Some(instance_layout())];
+        let painted = [Some(shared_layout()), Some(instance_layout()), Some(super::paint_layout())];
         let pipeline = |label: &str, source: TriSource| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
@@ -112,6 +113,7 @@ impl Pipelines {
                         TriSource::Built => &built_buffers[..],
                         TriSource::Planned => &evaluated[..],
                         TriSource::Instanced | TriSource::InstancedFlat => &placed[..],
+                        TriSource::InstancedPainted | TriSource::InstancedFlatPainted => &painted[..],
                     },
                     compilation_options: Default::default(),
                 },

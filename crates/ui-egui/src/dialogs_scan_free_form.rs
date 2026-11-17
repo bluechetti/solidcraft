@@ -368,6 +368,12 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
                 );
                 ui_kit::text(ui, &note, ui_kit::Text::Note("scan_free_form_found"));
             }
+            // A face that still bows off the scan past its tolerance with the points it could use
+            // is said so before OK, as `scan.free_form` warns.
+            if made.bow > tolerance {
+                let note = solidcraft_ui_text::format("ui.scan_free_form_bows", &[("off", &crate::prefs::show_mm(app, made.bow, 1))]);
+                ui_kit::text(ui, &note, ui_kit::Text::Note("scan_free_form_bows"));
+            }
             if let Some(stats) = stats {
                 crate::scan_fidelity::readout(app, ui, "scan_free_form_fidelity", &stats, tolerance, None);
             }
@@ -638,8 +644,9 @@ fn wrap(app: &SolveApp, k: &mut WrapSurface, inputs: &[crate::selection::SelInpu
         k.shown = None;
         return;
     };
-    let selection = solidcraft_engine::cmd::scan::select::selected(&app.session).map(|s| (s.count, s.selected.iter().position(|on| *on)));
-    let key = format!("{p}|{}|{}|{}|{}|{}|{selection:?}", k.details, k.axis, k.arc, k.stiffness, app.session.revision);
+    // The selection is not in the design's revision: its stamp stands for it.
+    let selection = solidcraft_engine::cmd::scan::select::stamp(&app.session);
+    let key = format!("{p}|{}|{}|{}|{}|{}|{selection}", k.details, k.axis, k.arc, k.stiffness, app.session.revision);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         return;
     }

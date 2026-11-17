@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_free_form_bows": "The face bows up to {off} off the scan, past its tolerance: make a face each side of the round."
+  },
+  "ar": {
+    "ui.scan_free_form_bows": "ينحني الوجه حتى {off} بعيدًا عن المسح، متجاوزًا تفاوته: اصنع وجهًا على كل جانب من الاستدارة."
+  },
+  "de": {
+    "ui.scan_free_form_bows": "Die Fläche weicht bis zu {off} vom Scan ab, mehr als seine Toleranz: Erstellen Sie je eine Fläche auf beiden Seiten der Rundung."
+  },
+  "he": {
+    "ui.scan_free_form_bows": "הפאה מתעקלת עד {off} מהסריקה, מעבר לסבולת שלה: צרו פאה בכל צד של העיגול."
+  },
+  "ja": {
+    "ui.scan_free_form_bows": "面はスキャンから最大 {off} 離れて膨らみ、許容差を超えています。丸みの両側にそれぞれ面を作成してください。"
+  },
+  "ko": {
+    "ui.scan_free_form_bows": "면이 스캔에서 최대 {off}까지 휘어 허용 오차를 넘습니다. 라운드 양쪽에 각각 면을 만드세요."
+  },
+  "vi": {
+    "ui.scan_free_form_bows": "Mặt cong lệch khỏi bản quét tới {off}, vượt dung sai: hãy tạo một mặt ở mỗi bên của chỗ bo tròn."
+  },
+  "zh": {
+    "ui.scan_free_form_bows": "该面偏离扫描最多 {off}，超出其公差：请在圆角两侧各建一个面。"
+  }
+}

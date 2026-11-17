@@ -1339,6 +1339,40 @@ fn free_form_makes_a_surface_on_the_scan_and_its_net_changes() {
     assert!(refused.contains("four points"), "{refused}");
 }
 
+/// New Free Form over a sharp edge (two flats meeting square, no round): no net of points one face
+/// can have follows it, so the reply says how far the face bows off the scan and to make a face
+/// each side; over the dome it lies on the scan and says nothing. Overall Shape is not warned.
+#[test]
+fn free_form_over_an_edge_too_sharp_for_one_face_says_so() {
+    let mut profile = Vec::new();
+    for k in 0..=60 {
+        profile.push((-30.0 + 30.0 * f64::from(k) / 60.0, 0.0));
+    }
+    for k in 1..=60 {
+        profile.push((0.0, -30.0 * f64::from(k) / 60.0));
+    }
+    let at = |j: u32, k: usize| Vec3::new(0.5 * f64::from(j), profile[k].0, profile[k].1);
+    let mut triangles = Vec::new();
+    for j in 0..120 {
+        for k in 0..profile.len() - 1 {
+            triangles.push([at(j, k), at(j, k + 1), at(j + 1, k + 1)]);
+            triangles.push([at(j, k), at(j + 1, k + 1), at(j + 1, k)]);
+        }
+    }
+    let (mut s, _) = session_with_triangles("free-form-sharp", &triangles);
+    let corners = json!([[10, -20, 0], [50, -20, 0], [50, 0, -20], [10, 0, -20]]);
+    let made = run(&mut s, "scan.free_form", json!({"corners": corners}));
+    let warning = made["warning"].as_str().unwrap_or_default();
+    assert!(warning.contains("off the scan") && warning.contains("each side"), "{made}");
+    assert_eq!(made["controls"], json!([12, 12]), "every count was tried: {made}");
+    let overall = run(&mut s, "scan.free_form", json!({"corners": corners, "fit": "overall"}));
+    assert!(overall.get("warning").is_none(), "{overall}");
+
+    let (mut s, _) = session_with_triangles("free-form-dome-quiet", &dome_triangles(40));
+    let made = run(&mut s, "scan.free_form", json!({"corners": [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]]}));
+    assert!(made.get("warning").is_none(), "{made}");
+}
+
 /// New Free Form from four curves: the sides follow the curves given in any order and direction,
 /// the inside lies on the scan; curves that do not close, or corners given as well, are refused.
 #[test]

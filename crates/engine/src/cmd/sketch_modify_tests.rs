@@ -5977,3 +5977,33 @@ fn an_unlinked_offset_says_its_parameter_drives_nothing() {
     assert!(r["param"].is_string(), "{r}");
     assert!(r.get("warning").is_none(), "{r}");
 }
+
+/// A free-form curve that crosses itself is cut at its own crossing, as it is where another curve
+/// crosses it: clicking the loop removes the loop and keeps both tails, joined at the crossing.
+#[test]
+fn a_freeform_curve_trims_at_its_own_crossing() {
+    let mut s = new_sketch();
+    let made = run(&mut s, "sketch.spline.fit_point", json!({"points": [[0,0],[10,10],[20,0],[10,-10],[8,6],[12,12],[30,8]], "connect": false}));
+    let id = ids(&made["curves"])[0].clone();
+    let before = sketch(&s);
+    let piece = super::trim_piece(&before, &id, Vec2::new(20.0, 0.0)).expect("a piece");
+    let (first, last) = (piece.first().copied().unwrap(), piece.last().copied().unwrap());
+    assert!(first.dist(last) < 1e-6, "the loop starts and ends at the crossing: {first:?} {last:?}");
+    assert!(piece.len() > 50 && !piece.iter().any(|p| p.dist(Vec2::new(0.0, 0.0)) < 1e-3 || p.dist(Vec2::new(30.0, 8.0)) < 1e-3));
+
+    let out = run(&mut s, "sketch.trim", json!({"curve": id, "at": [20, 0]}));
+    let sk = sketch(&s);
+    let kept: Vec<String> = ids(&out["created"]["curves"]);
+    assert!(!kept.is_empty() && sk.curve_index(&id).is_none(), "{out}");
+    let mut ends: Vec<Vec2> = Vec::new();
+    for c in &kept {
+        let ci = sk.curve_index(c).unwrap();
+        let (a, b) = sk.curves[ci].kind.ends().unwrap();
+        ends.extend([sk.point(a).unwrap(), sk.point(b).unwrap()]);
+    }
+    assert!(ends.iter().any(|p| p.dist(Vec2::new(0.0, 0.0)) < 1e-6) && ends.iter().any(|p| p.dist(Vec2::new(30.0, 8.0)) < 1e-6), "{ends:?}");
+    assert!(ends.iter().filter(|p| p.dist(first) < 1e-6).count() >= 2, "the tails meet at the crossing: {ends:?}");
+
+    run(&mut s, "edit.undo", json!({}));
+    assert!(sketch(&s).curve_index(&id).is_some());
+}

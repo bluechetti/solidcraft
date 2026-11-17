@@ -30,7 +30,7 @@ type Lines = (String, Vec<(Vec<Vec3>, Vec<Vec3>, f64)>, usize);
 
 #[derive(Clone, Debug)]
 struct Shown {
-    key: (bool, u64, u64, u64, usize),
+    key: (bool, u64, u64, u64, u64),
     result: Result<Lines, String>,
 }
 
@@ -57,7 +57,8 @@ fn lay(app: &SolveApp, k: &mut EdgeCurve) {
         k.tolerance = engine_curve::default_tolerance(&app.session, Some(&s.scan)).ok();
     }
     let Some(tolerance) = k.tolerance else { return };
-    let at = selection.as_ref().map_or(0, |s| std::sync::Arc::as_ptr(s) as usize);
+    // The selection by its stamp, not its address (a freed selection's address can come again).
+    let at = selection.as_ref().map_or(0, |s| s.stamp);
     let key = (k.every, k.smooth.unwrap_or(0.0).to_bits(), tolerance.to_bits(), app.session.revision, at);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         return;

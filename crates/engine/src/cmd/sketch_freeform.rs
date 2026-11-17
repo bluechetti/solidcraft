@@ -100,8 +100,94 @@ fn cuts(sk: &Sketch, ci: usize, segs: &[Seg2], only_freeform: bool) -> Vec<(f64,
             }
         }
     }
+    // Where the curve crosses itself, both passes are cut (a loop trims away on its own).
+    if !only_freeform {
+        for (u, q) in self_cuts(segs) {
+            out.push((u, q, ci));
+        }
+    }
     out.sort_by(|a, b| a.0.total_cmp(&b.0));
     out
+}
+
+/// Samples per exact piece when looking for where a curve crosses itself.
+const SELF_STEPS: usize = 16;
+
+/// Where a curve crosses itself: each crossing gives its two positions along the curve with the
+/// point. Found on a sampled polyline, then settled on the exact pieces by Newton's method.
+fn self_cuts(segs: &[Seg2]) -> Vec<(f64, Vec2)> {
+    let n = segs.len();
+    let closed = segs.first().zip(segs.last()).is_some_and(|(a, b)| a.start().dist(b.end()) < 1e-9);
+    let mut samples: Vec<(f64, Vec2)> = Vec::with_capacity(n * SELF_STEPS + 1);
+    for (k, s) in segs.iter().enumerate() {
+        for i in 0..SELF_STEPS {
+            let t = i as f64 / SELF_STEPS as f64;
+            samples.push((k as f64 + t, s.point_at(t)));
+        }
+    }
+    if let Some(s) = segs.last() {
+        samples.push((n as f64, s.point_at(1.0)));
+    }
+    let m = samples.len().saturating_sub(1);
+    let nf = n as f64;
+    let at = |u: f64| point_at(segs, u.clamp(0.0, nf));
+    let mut found: Vec<(f64, f64)> = Vec::new();
+    for a in 0..m {
+        let (Some(&(ua, pa)), Some(&(ua2, pa2))) = (samples.get(a), samples.get(a + 1)) else { continue };
+        let (lo_x, hi_x) = (pa.x.min(pa2.x), pa.x.max(pa2.x));
+        let (lo_y, hi_y) = (pa.y.min(pa2.y), pa.y.max(pa2.y));
+        for b in a + 2..m {
+            if closed && a == 0 && b + 1 == m {
+                continue;
+            }
+            let (Some(&(ub, pb)), Some(&(ub2, pb2))) = (samples.get(b), samples.get(b + 1)) else { continue };
+            if pb.x.min(pb2.x) > hi_x || pb.x.max(pb2.x) < lo_x || pb.y.min(pb2.y) > hi_y || pb.y.max(pb2.y) < lo_y {
+                continue;
+            }
+            let (r, s) = (pa2 - pa, pb2 - pb);
+            let den = r.cross(s);
+            if den.abs() < 1e-15 {
+                continue;
+            }
+            let (t, w) = ((pb - pa).cross(s) / den, (pb - pa).cross(r) / den);
+            if !((-1e-9..=1.0 + 1e-9).contains(&t) && (-1e-9..=1.0 + 1e-9).contains(&w)) {
+                continue;
+            }
+            // Newton on P(u1) = P(u2), from the sampled crossing.
+            let (mut u1, mut u2) = (ua + (ua2 - ua) * t, ub + (ub2 - ub) * w);
+            let mut settled = false;
+            for _ in 0..40 {
+                let f = at(u1) - at(u2);
+                let fl = at(u1).dist(at(u2));
+                if fl < 1e-13 {
+                    settled = true;
+                    break;
+                }
+                let h = 1e-6;
+                let d1 = (at(u1 + h) - at(u1 - h)) * (0.5 / h);
+                let d2 = (at(u2 + h) - at(u2 - h)) * (0.5 / h);
+                // Solve d1 * du1 - d2 * du2 = -f.
+                let det = d1.cross(d2 * -1.0);
+                if det.abs() < 1e-14 {
+                    break;
+                }
+                let rhs = f * -1.0;
+                let du1 = rhs.cross(d2 * -1.0) / det;
+                let du2 = d1.cross(rhs) / det;
+                u1 = (u1 + du1).clamp(0.0, nf);
+                u2 = (u2 + du2).clamp(0.0, nf);
+            }
+            if !settled && at(u1).dist(at(u2)) > 1e-8 {
+                continue;
+            }
+            let (u1, u2) = (u1.min(u2), u1.max(u2));
+            if u2 - u1 < 1e-6 || found.iter().any(|(x, y)| (x - u1).abs() < 1e-6 && (y - u2).abs() < 1e-6) {
+                continue;
+            }
+            found.push((u1, u2));
+        }
+    }
+    found.into_iter().flat_map(|(u1, u2)| [(u1, at(u1)), (u2, at(u1))]).collect()
 }
 
 /// Crossings for an analytic target with free-form cutters. Analytic-to-analytic crossings
@@ -299,7 +385,7 @@ fn modify(sk: &mut Sketch, ci: usize, at: Vec2, remove: bool, points: Option<&[V
         positions.dedup_by(|a, b| (*a - *b).abs() <= 1e-9);
         positions.into_iter().map(|u| (u, point_at(&segs, u), None)).collect()
     } else {
-        trim_cuts(sk, ci, &segs, closed).into_iter().map(|(u, q, c)| (u, q, Some(c))).collect()
+        trim_cuts(sk, ci, &segs, closed).into_iter().map(|(u, q, c)| (u, q, Some(c).filter(|c| *c != ci))).collect()
     };
     let (uq, _) = locate(&segs, at);
     let ends = sk.curves.get(ci).and_then(|c| c.kind.ends());
@@ -319,9 +405,19 @@ fn modify(sk: &mut Sketch, ci: usize, at: Vec2, remove: bool, points: Option<&[V
     let intervals = between_cuts(bounds, closed, n);
     let gone = if remove { holding(&intervals, closed, n, uq) } else { None };
     // Points at the cuts are shared by neighbouring intervals.
+    // (Both passes of a crossing the curve makes with itself share one point.)
     let mut cut_pt: Vec<(f64, usize)> = Vec::new();
+    let mut placed: Vec<(Vec2, usize)> = Vec::new();
     for (u, q, _) in &cs {
-        cut_pt.push((*u, sk.add_point(*q, None)?));
+        let pi = match placed.iter().find(|(p, _)| p.dist(*q) < 1e-9) {
+            Some((_, pi)) => *pi,
+            None => {
+                let pi = sk.add_point(*q, None)?;
+                placed.push((*q, pi));
+                pi
+            }
+        };
+        cut_pt.push((*u, pi));
     }
     let point_for =
         |u: f64, cut_pt: &[(f64, usize)]| cut_pt.iter().find(|(x, _)| (x - u.rem_euclid(n)).abs() < 1e-9 || (x - u).abs() < 1e-9).map(|p| p.1);

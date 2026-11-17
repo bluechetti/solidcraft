@@ -125,7 +125,8 @@ fn look(app: &SolveApp, k: &mut FitPatches, inputs: &[SelInput]) {
         k.pending = None;
         return;
     };
-    let key = format!("{p}|{}", app.session.revision);
+    // What is selected is not in the revision: its stamp is.
+    let key = format!("{p}|{}|{}", app.session.revision, solidcraft_engine::cmd::scan::select::stamp(&app.session));
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         k.pending = None;
         return;

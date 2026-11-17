@@ -8,7 +8,10 @@
 //!
 //! What is selected is a view of the scan, as Find All's colouring is: held by the session, not
 //! part of the design and not an undo step. It follows the scan while its triangles are the same
-//! ones (a Move or Denoise keeps it) and is dropped when they are not (Remesh, Reduce).
+//! ones (a Move or Denoise keeps it) and is dropped when they are not (Remesh, Reduce). The scan
+//! tools take it only while its scan is in view ([`selected`]): one hidden since gives way, as
+//! the scan tools' own choice of scan does. Each selection made has its own [`stamp`], so a
+//! dialog's preview knows to look again when it changes (it is not in the design's revision).
 
 use std::sync::{Arc, Mutex};
 
@@ -78,11 +81,16 @@ pub struct ScanSelected {
     pub selected: Arc<Vec<bool>>,
     pub count: usize,
     pub area: f64,
+    /// This selection's own number, never given to another while the program runs.
+    pub stamp: u64,
     /// The scan's triangles' fingerprint, and the storage last found holding them (asked every
     /// frame at no cost; another storage is checked by the fingerprint, then remembered).
     key: u64,
     held: Mutex<[usize; 2]>,
 }
+
+/// The next selection's [`ScanSelected::stamp`] (0 stands for none).
+static NEXT_STAMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl ScanSelected {
     /// Whether it is of `scan`'s triangles as they are now.
@@ -112,9 +120,22 @@ fn triangles_key(triangles: &[[u32; 3]]) -> u64 {
     h
 }
 
-/// What is selected now, if it is of a scan as it is.
+/// What is selected now, if it is of a scan as it is and that scan is in view: what the scan
+/// tools take and the viewport draws.
 pub fn selected(s: &Session) -> Option<Arc<ScanSelected>> {
+    held(s).filter(|k| s.body_visible(&k.scan))
+}
+
+/// What is selected now, if it is of a scan as it is, shown or hidden: what the selection
+/// commands add to, take from and keep.
+fn held(s: &Session) -> Option<Arc<ScanSelected>> {
     s.scan_selection.clone().filter(|k| k.current(s))
+}
+
+/// The [`ScanSelected::stamp`] of what is [`selected`] now, 0 with nothing: a dialog's preview
+/// keyed on it looks again whenever the selection changes, is hidden or goes.
+pub fn stamp(s: &Session) -> u64 {
+    selected(s).map_or(0, |k| k.stamp)
 }
 
 /// The last scan's topology, and the storage and fingerprint of the mesh it was built from.
@@ -249,10 +270,15 @@ fn set(s: &mut Session, scan: &str, flags: Vec<bool>, cmd: &str) -> Result<Value
     let topology = topology(s, scan, cmd)?;
     let count = flags.iter().filter(|f| **f).count();
     let area = flags.iter().enumerate().filter(|(_, f)| **f).map(|(t, _)| topology.area(t)).sum();
-    let before = selected(s).filter(|k| k.scan == scan);
+    let before = self::held(s).filter(|k| k.scan == scan);
     let changed = before.as_ref().is_none_or(|k| *k.selected != flags);
-    s.scan_selection =
-        (count > 0).then(|| Arc::new(ScanSelected { scan: scan.to_owned(), selected: Arc::new(flags), count, area, key, held: Mutex::new(held) }));
+    // The same triangles selected again keep their stamp, so an open preview is not redone.
+    let stamp = match before.as_ref().filter(|_| !changed) {
+        Some(k) => k.stamp,
+        None => NEXT_STAMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+    };
+    s.scan_selection = (count > 0)
+        .then(|| Arc::new(ScanSelected { scan: scan.to_owned(), selected: Arc::new(flags), count, area, stamp, key, held: Mutex::new(held) }));
     let changed = changed && !(before.is_none() && count == 0);
     let reply =
         ScanSelectResult { body: scan.to_owned(), triangles: count, area, of, changed, pieces: None, limit: None, param_warnings: Vec::new() };
@@ -262,7 +288,7 @@ fn set(s: &mut Session, scan: &str, flags: Vec<bool>, cmd: &str) -> Result<Value
 /// What is selected on `scan` now (none when on another scan or a changed one), with `found`
 /// put to it as `mode` says.
 fn combined(s: &Session, scan: &str, count: usize, found: &[bool], mode: Mode) -> Vec<bool> {
-    let base = selected(s).filter(|k| k.scan == scan && k.selected.len() == count).map(|k| (*k.selected).clone());
+    let base = held(s).filter(|k| k.scan == scan && k.selected.len() == count).map(|k| (*k.selected).clone());
     match (mode, base) {
         (Mode::Replace, _) | (Mode::Add, None) => found.to_vec(),
         (Mode::Remove, None) => vec![false; count],
@@ -293,7 +319,7 @@ pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
     let topology = topology(s, &scan, cmd)?;
     let count = topology.triangle_count();
     let current =
-        || selected(s).filter(|k| k.scan == scan && k.selected.len() == count).map(|k| (*k.selected).clone()).unwrap_or_else(|| vec![false; count]);
+        || held(s).filter(|k| k.scan == scan && k.selected.len() == count).map(|k| (*k.selected).clone()).unwrap_or_else(|| vec![false; count]);
     let v = &p[way];
     if way == "unexplained" {
         let (found, pieces, limit) = unexplained(s, &scan, v, &topology, cmd)?;
@@ -513,7 +539,7 @@ pub(super) fn select_inside(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn keep(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.keep_selection";
-    let k = selected(s).ok_or_else(|| bad(cmd, "nothing is selected on a scan: select some of it first"))?;
+    let k = held(s).ok_or_else(|| bad(cmd, "nothing is selected on a scan: select some of it first"))?;
     let name = match str_(p, "name").map(str::trim).filter(|n| !n.is_empty()) {
         Some(n) if n.chars().count() > solidcraft_doc::scan_selection::MAX_NAME => return Err(bad(cmd, "the name is too long")),
         Some(n) => n.to_owned(),

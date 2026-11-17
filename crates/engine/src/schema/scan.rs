@@ -1032,6 +1032,10 @@ pub struct ScanFreeFormResult {
     /// Surface shows for it; with no scan under it, the places' own distance).
     pub rms: f64,
     pub max: f64,
+    /// When the face, following the scan, still lies farther off it than the scan's tolerance in
+    /// places (it bows over a round too tight for one face): how far, and what to do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     /// The feature that keeps it, as a feature command replies.
     #[schemars(with = "FeatureResult")]
     pub feature: Value,
