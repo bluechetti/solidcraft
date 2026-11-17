@@ -38,6 +38,10 @@ pub const AREA_GROW: usize = 0;
 pub const AREA_ROUND: usize = 1;
 pub const AREA_SELECTED: usize = 2;
 
+/// The words of the fit's refusal when the area round the click is no shape of the kind
+/// (`solidcraft_scan::fit::FitError::NoFit`).
+const NOT_THAT_SHAPE: &str = "the scan there is not that shape";
+
 /// A round area whose fit lies off the shape by more than this many tolerances on average is said
 /// to hold more than the shape.
 const POOR_ROUND: f64 = 3.0;
@@ -221,6 +225,13 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitShape, inputs: &[SelIn
         }
         Some(Err(why)) => {
             ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_fit_error", true));
+            // Grown within the tolerance, the area was too small to be a shape: on a real wall
+            // that is often a tolerance below how far the scan strays off any plane, not the
+            // wrong place (Scan2's wall: refused at 0.1 mm, fitted at 0.3 mm).
+            if why.contains(NOT_THAT_SHAPE) && k.area == AREA_GROW {
+                let more = solidcraft_ui_text::format("ui.scan_fit_raise_tolerance", &[("tolerance", &crate::prefs::show_mm(app, k.within, 1))]);
+                ui_kit::text(ui, &more, ui_kit::Text::Hint("scan_fit_raise_tolerance"));
+            }
         }
         Some(Ok(p)) => {
             let f = &p.found.fitted;
@@ -389,6 +400,23 @@ mod tests {
         assert!(h.app.session.model.state().body(&surface).is_some_and(|b| b.body.is_surface()), "the face is kept: {reply}");
     }
 
+    /// A plane clicked on a round wall is no plane within the tolerance: besides the refusal, the
+    /// dialog says a larger tolerance may take it, naming the one it tried.
+    #[test]
+    fn a_refused_area_offers_a_larger_tolerance() {
+        let mut h = crate::scenario::Harness::new();
+        let r = 5.0;
+        let body = tube(&mut h, r);
+        h.app.start("scan.fit_plane");
+        let Some(d) = h.app.dialog.as_mut() else { panic!("the Fit dialog opens") };
+        d.inputs[0].items.push(Sel::Face { body, index: 0, point: Vec3::new(r, 0.0, 12.0) });
+        h.frames(3);
+        let Some(Kind::ScanFit(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("still open") };
+        let why = k.shown.as_ref().and_then(|s| s.result.as_ref().err()).expect("refused");
+        assert!(why.contains(super::NOT_THAT_SHAPE), "{why}");
+        assert!(crate::scenario::handle_at("dialog:hint:scan_fit_raise_tolerance").is_some(), "the larger tolerance offered");
+    }
+
     /// Nothing in the dialog is cut off, whichever way the area is chosen, in the languages whose
     /// words run longest: the choices ("Grow from the click", "Vom Klick aus wachsen") and how far
     /// the scan lies off the shape ("0.00 mm im Mittel, 0.00 mm höchstens" in one row was cut in
@@ -414,7 +442,7 @@ mod tests {
                 if let Some(Kind::ScanFit(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
                     k.area = way;
                 }
-                let mut frame = |app: &mut crate::SolveApp| {
+                let frame = |app: &mut crate::SolveApp| {
                     let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
                     crate::test_support::frame(&ctx, input, |ui| crate::dialogs::show(app, ui.ctx()))
                 };

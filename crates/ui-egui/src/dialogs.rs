@@ -2805,11 +2805,20 @@ pub fn planar_face(s: &Session, body: &str, face: usize) -> Option<(Vec3, Vec3)>
     found
 }
 
+/// More triangles than this make a mesh body a scan, not an imported part (see [`face_plane`]).
+const SCAN_TRIANGLES: usize = 1_000_000;
+
 /// [`planar_face`] of one body, without the cache.
 fn face_plane(b: &solidcraft_engine::doc::ModelBody, face: usize) -> Option<(Vec3, Vec3)> {
     use solidcore_record::brep::Surface;
     if let Some(plane) = b.body.planar_face(face) {
         return Some((plane.origin, plane.normal()));
+    }
+    // A scan (a mesh past a million triangles) has no plane face to find: reading its faces
+    // walks every triangle (half a second for ten million, again after every change), for a
+    // drag arrow's direction or a sketch plane it never gives.
+    if b.body.is_mesh() && b.body.kept_mesh().is_some_and(|m| m.triangles.len() > SCAN_TRIANGLES) {
+        return None;
     }
     let surface = if b.body.is_mesh() { None } else { b.body.record().faces.get(face).map(|f| &f.surface) };
     match surface {

@@ -5197,7 +5197,21 @@ fn build_highlight_with_projection(app: &SolveApp, projection: impl FnOnce() -> 
                                 edge_lines(&mut feedback, e, selected_edge, 2.0, &[]);
                             }
                         }
-                    } else {
+                    } else if !(b.body.is_mesh()
+                        && b.body.face_count() <= 1
+                        && gpu_lit(b)
+                        && light_whole_body(
+                            app,
+                            b,
+                            &active_bodies,
+                            WholeBody { selected: true, colour: c4(t.sel_face) },
+                            &body_slots,
+                            &mut feedback,
+                            &mut selected_instances,
+                        ))
+                    {
+                        // A scan's one face is the whole scan: tinted on the GPU as a selected
+                        // body is, not copied (a gigabyte and a second for ten million triangles).
                         face_tris(&mut feedback, &m, *index, c4(t.sel_face), true);
                         hidden_face_outline(&mut feedback, &drawn(b), *index, t.sel_edge);
                     }
@@ -5413,10 +5427,26 @@ fn build_highlight_with_projection(app: &SolveApp, projection: impl FnOnce() -> 
                 let c = body_rgb(app, body);
                 let m = if outlines { shown(b) } else { drawn(b) };
                 let patch = m.surface_patch(*index);
-                if !(outlines && has_pickable_outline(&m)) {
+                let colour = [c.0.saturating_add(k), c.1.saturating_add(k), c.2.saturating_add(k), 255];
+                // A scan's one face is the whole scan: lit on the GPU as a hovered body is, not
+                // copied (a gigabyte and a second each time the pointer came onto a ten-million-
+                // triangle scan).
+                let whole_scan = b.body.is_mesh()
+                    && b.body.face_count() <= 1
+                    && gpu_lit(b)
+                    && light_whole_body(
+                        app,
+                        b,
+                        &active_bodies,
+                        WholeBody { selected: false, colour },
+                        &body_slots,
+                        &mut feedback,
+                        &mut hover_instances,
+                    );
+                if !whole_scan && !(outlines && has_pickable_outline(&m)) {
                     let lit = shown(b);
                     for &f in &patch {
-                        face_tris(&mut feedback, &lit, f, [c.0.saturating_add(k), c.1.saturating_add(k), c.2.saturating_add(k), 255], true);
+                        face_tris(&mut feedback, &lit, f, colour, true);
                     }
                 }
                 for (e, _) in m.edge_faces.iter().enumerate().filter(|(_, fs)| fs.iter().any(|f| patch.contains(&(*f as usize)))) {
@@ -12156,6 +12186,50 @@ mod tests {
     /// of them onto the CPU (a whole assembly lit that way took most of a second a frame): from
     /// its display plan where the model draws one, else from its vertices in the model scene's
     /// blocks. See-through bodies keep the CPU feedback, which colours them.
+    #[test]
+    fn a_scans_one_face_is_lit_without_copying_it() {
+        // A scan of 51 200 triangles (a scan's one face is all of it): drawn as an instance.
+        let mut h = crate::scenario::Harness::new();
+        let n = 160u32;
+        let mut stl = vec![0u8; 80];
+        stl.extend_from_slice(&(2 * n * n).to_le_bytes());
+        let at = |i: u32, j: u32| [i as f32, j as f32, 0.0f32];
+        for j in 0..n {
+            for i in 0..n {
+                for tri in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                    stl.extend_from_slice(&[0u8; 12]);
+                    for p in tri {
+                        for v in p {
+                            stl.extend_from_slice(&v.to_le_bytes());
+                        }
+                    }
+                    stl.extend_from_slice(&[0u8; 2]);
+                }
+            }
+        }
+        let path = h.dir.join("sheet.stl");
+        std::fs::write(&path, stl).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let app = &mut h.app;
+        app.viewport.gpu = Some(GpuTarget { format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm, depth: None, samples: 1, tess: false, oit: false });
+        let body = crate::open_meshing::session_world(&app.session).bodies.iter().find(|b| b.body.is_mesh()).cloned().expect("the scan");
+        build_scene(app);
+        let point = Vec3::new(80.0, 80.0, 0.0);
+        // Under the pointer: its shared triangles drawn again in the hover colour.
+        app.viewport.hover = Some(Hit::Face { body: body.name.clone(), index: 0, point });
+        let hovered = build_highlight(app);
+        assert_eq!(hovered.hover_instanced.len(), 1, "the scan's shared triangles, lit");
+        assert_eq!(hovered.tris.len(), 0, "no copy of them (a gigabyte for ten million triangles)");
+        // Picked: the same, in the selection's colour.
+        app.viewport.hover = None;
+        app.session.selection = vec![Sel::Face { body: body.name.clone(), index: 0, point }];
+        let picked = build_highlight(app);
+        assert_eq!(picked.selected_instanced.len(), 1);
+        assert_eq!(picked.tris.len(), 0);
+        // The feature that made the face is the scan's own, found without naming its faces.
+        assert_eq!(crate::context_menu::face_feature(app, &body.name, 0), Some(body.feature));
+    }
+
     #[test]
     fn whole_body_highlights_reuse_the_models_own_triangles() {
         let mut app = cylinder_app();

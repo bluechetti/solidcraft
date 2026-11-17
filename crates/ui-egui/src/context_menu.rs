@@ -570,6 +570,12 @@ fn picked_face_feature(app: &SolveApp) -> Option<u64> {
 pub(crate) fn face_feature(app: &SolveApp, body: &str, index: usize) -> Option<u64> {
     let state = crate::open_meshing::session_world(&app.session);
     let body = state.body(body)?;
+    // A mesh body's faces are made by the feature that made it (an import, a scan's clean step):
+    // naming them all to read one hashed every triangle (half a second for a ten-million-triangle
+    // scan, each time one was picked).
+    if body.body.is_mesh() {
+        return app.session.doc.feature(body.feature).filter(|f| f.component == app.session.doc.model_body_component(body)).map(|f| f.id);
+    }
     let names = solidcraft_engine::doc::naming::face_names(body);
     let name = names.get(index)?;
     let id = solidcraft_engine::doc::persistent_name::made_by(name)?;
