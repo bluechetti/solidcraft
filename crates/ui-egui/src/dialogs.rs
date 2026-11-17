@@ -4137,16 +4137,56 @@ pub(crate) fn sync_feature_edit(app: &mut SolveApp) {
     app.session.feature_edit_sketch = edited.or(started_from);
 }
 
-/// The width a dialog's card asks for: the managers' wider form, a study's table, or a card.
+/// The width a dialog's card asks for: the managers' wider form, a study's table, a scan tool's
+/// card, or a card.
 pub(crate) fn card_width(d: &Dialog) -> f32 {
     let t = Tokens::get();
     if matches!(d.kind, Kind::Appearance(_) | Kind::Material { .. }) {
         t.form_card_width + t.form_label_width + t.space_6
+    } else if scan_card(&d.kind) {
+        // Half a label column wider: their choices ("Grow from the click", "Vom Klick aus
+        // wachsen") were cut off at the card's own width.
+        t.form_card_width + t.form_label_width / 2.0
     } else if matches!(&d.kind, Kind::Motion(k) if k.wide()) {
         t.form_card_width * 3.0
     } else {
         t.form_card_width
     }
+}
+
+/// A scan tool's dialog, whose rows choose an area, a shape or a way to fit and read out how close
+/// the fit came (the Survey and the align chooser lay out their own way).
+fn scan_card(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::ScanBase(_)
+            | Kind::ScanSymmetry(_)
+            | Kind::ScanEditSurface(_)
+            | Kind::ScanFitSurface(_)
+            | Kind::ScanCurve(_)
+            | Kind::ScanFreeForm(_)
+            | Kind::ScanWrapSurface(_)
+            | Kind::ScanMergeSurfaces(_)
+            | Kind::ScanSliceSurface(_)
+            | Kind::ScanSplit(_)
+            | Kind::ScanAlignPairs(_)
+            | Kind::ScanFillet(_)
+            | Kind::ScanFlatten(_)
+            | Kind::ScanFlatTemplate(_)
+            | Kind::ScanFitPatches(_)
+            | Kind::ScanFloating(_)
+            | Kind::ScanHoles(_)
+            | Kind::ScanFit(_)
+            | Kind::ScanCleanUp(_)
+            | Kind::ScanReduce(_)
+            | Kind::ScanSection(_)
+            | Kind::ScanSections(_)
+            | Kind::ScanDenoise(_)
+            | Kind::ScanSelect(_)
+            | Kind::ScanEdgeCurve(_)
+            | Kind::ScanReconstruct(_)
+            | Kind::ScanRun(_)
+    )
 }
 
 /// A dialog's primary and closing actions. Measure only closes; a deletion's primary action

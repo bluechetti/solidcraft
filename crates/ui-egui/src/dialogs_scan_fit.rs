@@ -252,8 +252,10 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FitShape, inputs: &[SelIn
                 }
             };
             row(ui, label("Area"), &crate::prefs::show_mm(app, f.area, 2));
-            let fit = solidcraft_ui_text::format("ui.scan_fit_off", &[("rms", &len(f.rms)), ("max", &len(f.max))]);
-            row(ui, tr("ui.scan_fit_result"), &fit);
+            // How far the scan lies off the shape: on average and at worst, a row each (one row
+            // holding both was cut off in every language).
+            row(ui, tr("ui.scan_fit_average"), &len(f.rms));
+            row(ui, tr("ui.scan_fit_worst"), &len(f.max));
             // A round taken in as it is, lying well off the shape on average: it crossed onto the
             // faces beside the one meant (a radius wider than a hole), and the shape is a guess.
             if k.area == AREA_ROUND && f.rms > POOR_ROUND * k.within {
@@ -385,5 +387,45 @@ mod tests {
         let reply = h.app.run(&cmds[0].0, cmds[0].1.clone()).unwrap();
         let surface = reply["face"]["surface"].as_str().unwrap_or_default().to_owned();
         assert!(h.app.session.model.state().body(&surface).is_some_and(|b| b.body.is_surface()), "the face is kept: {reply}");
+    }
+
+    /// Nothing in the dialog is cut off, whichever way the area is chosen, in the languages whose
+    /// words run longest: the choices ("Grow from the click", "Vom Klick aus wachsen") and how far
+    /// the scan lies off the shape ("0.00 mm im Mittel, 0.00 mm höchstens" in one row was cut in
+    /// every language).
+    #[test]
+    fn nothing_in_the_dialog_is_cut_off() {
+        let mut h = crate::scenario::Harness::new();
+        let r = 5.0;
+        let body = tube(&mut h, r);
+        h.app.start("scan.fit_plane");
+        let Some(d) = h.app.dialog.as_mut() else { panic!("the Fit dialog opens") };
+        let Kind::ScanFit(k) = &mut d.kind else { panic!("the Fit dialog") };
+        k.shape = 1;
+        d.inputs[0].items.push(Sel::Face { body: body.clone(), index: 0, point: Vec3::new(r, 0.0, 12.0) });
+        h.frames(3);
+        let ctx = crate::fonts::test_context();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0));
+        let mut cut = Vec::new();
+        for lang in ["en", "de", "ja", "vi", "ar"] {
+            let _language = solidcraft_ui_text::scope(lang);
+            h.app.preferences.language = lang.to_owned();
+            for way in 0..3 {
+                if let Some(Kind::ScanFit(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+                    k.area = way;
+                }
+                let mut frame = |app: &mut crate::SolveApp| {
+                    let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+                    crate::test_support::frame(&ctx, input, |ui| crate::dialogs::show(app, ui.ctx()))
+                };
+                frame(&mut h.app);
+                let shown = frame(&mut h.app);
+                assert!(crate::test_support::text_shapes(&shown).any(|t| t.galley.text().contains("mm")), "the fit is shown");
+                cut.extend(
+                    crate::test_support::text_shapes(&shown).filter(|t| t.galley.elided).map(|t| format!("{lang} {way}: {}", t.galley.text())),
+                );
+            }
+        }
+        assert!(cut.is_empty(), "cut off: {cut:?}");
     }
 }

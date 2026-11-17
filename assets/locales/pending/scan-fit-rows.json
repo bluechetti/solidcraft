@@ -1,0 +1,34 @@
+{
+  "en": {
+    "ui.scan_fit_average": "Average off",
+    "ui.scan_fit_worst": "Worst off"
+  },
+  "ar": {
+    "ui.scan_fit_average": "في المتوسط",
+    "ui.scan_fit_worst": "كحد أقصى"
+  },
+  "de": {
+    "ui.scan_fit_average": "Im Mittel",
+    "ui.scan_fit_worst": "Höchstens"
+  },
+  "he": {
+    "ui.scan_fit_average": "בממוצע",
+    "ui.scan_fit_worst": "לכל היותר"
+  },
+  "ja": {
+    "ui.scan_fit_average": "平均のずれ",
+    "ui.scan_fit_worst": "最大のずれ"
+  },
+  "ko": {
+    "ui.scan_fit_average": "평균 편차",
+    "ui.scan_fit_worst": "최대 편차"
+  },
+  "vi": {
+    "ui.scan_fit_average": "Lệch trung bình",
+    "ui.scan_fit_worst": "Lệch lớn nhất"
+  },
+  "zh": {
+    "ui.scan_fit_average": "平均偏差",
+    "ui.scan_fit_worst": "最大偏差"
+  }
+}
