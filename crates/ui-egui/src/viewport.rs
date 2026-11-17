@@ -1497,9 +1497,10 @@ impl Instances {
                         if lod_eligible { self.lods.levels(&mesh).map(|l| l.as_ref().clone()).unwrap_or_default() } else { Vec::new() },
                     ),
                 };
-                // A scan painted (its deviation map): its opaque triangles carry the colours, and it
-                // is drawn from the levels painted so far.
-                let painting = self.paintings.iter().find(|p| p.scan == b.name).filter(|_| look == crate::gpu::InstanceLook::Opaque);
+                // A scan painted (its deviation map): its triangles carry the colours, opaque,
+                // see-through (an opacity given to look inside it) or faded (another component
+                // edited), and it is drawn from the levels painted so far. Not a PBR material's.
+                let painting = self.paintings.iter().find(|p| p.scan == b.name).filter(|_| look != crate::gpu::InstanceLook::Pbr);
                 let (paint, levels) = match painting.and_then(|p| crate::scan_paint::paint(p, &mesh, &tris, &levels)) {
                     Some((paint, painted)) => (Some(paint), painted),
                     None => (None, levels),

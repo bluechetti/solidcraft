@@ -42,6 +42,10 @@ pub(super) struct Pipelines {
     pub planned: wgpu::RenderPipeline,
     pub instanced: wgpu::RenderPipeline,
     pub instanced_flat: wgpu::RenderPipeline,
+    /// `instanced` and `instanced_flat` painting a scan's vertices: a see-through scan keeps the
+    /// colours painted on it (Scan Deviation, a tool's colouring).
+    pub instanced_painted: wgpu::RenderPipeline,
+    pub instanced_flat_painted: wgpu::RenderPipeline,
     composite: wgpu::RenderPipeline,
     bgl: wgpu::BindGroupLayout,
 }
@@ -140,6 +144,8 @@ impl Pipelines {
         let planned = pipeline("sc_oit_planned", TriSource::Planned);
         let instanced = pipeline("sc_oit_instanced", TriSource::Instanced);
         let instanced_flat = pipeline("sc_oit_instanced_flat", TriSource::InstancedFlat);
+        let instanced_painted = pipeline("sc_oit_instanced_painted", TriSource::InstancedPainted);
+        let instanced_flat_painted = pipeline("sc_oit_instanced_flat_painted", TriSource::InstancedFlatPainted);
         let texture = |binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -200,7 +206,7 @@ impl Pipelines {
             log::info!("see-through surfaces are sorted (no order-independent transparency here: {e})");
             return None;
         }
-        Some(Pipelines { built, planned, instanced, instanced_flat, composite, bgl })
+        Some(Pipelines { built, planned, instanced, instanced_flat, instanced_painted, instanced_flat_painted, composite, bgl })
     }
 
     /// The targets for a frame of `size` pixels at `samples` per pixel.

@@ -2657,10 +2657,18 @@ pub struct Renderer {
     /// `tri_instanced` and `tri_instanced_flat` for meshes with colours painted on their vertices
     /// (smooth, flat).
     tri_instanced_painted: (wgpu::RenderPipeline, wgpu::RenderPipeline),
+    /// `tri_instanced_painted` for a section's `rest` pass (smooth, flat): a painted scan cut by a
+    /// section keeps its colours on the part left.
+    tri_cut_instanced_painted: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     /// `glass_far`, `glass_near` and `trans` for instanced meshes, smooth and flat.
     glass_far_instanced: (wgpu::RenderPipeline, wgpu::RenderPipeline),
     glass_near_instanced: (wgpu::RenderPipeline, wgpu::RenderPipeline),
     trans_instanced: (wgpu::RenderPipeline, wgpu::RenderPipeline),
+    /// `glass_far_instanced`, `glass_near_instanced` and `trans_instanced` painting a scan's
+    /// vertices (smooth, flat): a see-through or faded scan keeps its colours.
+    glass_far_painted: (wgpu::RenderPipeline, wgpu::RenderPipeline),
+    glass_near_painted: (wgpu::RenderPipeline, wgpu::RenderPipeline),
+    trans_instanced_painted: (wgpu::RenderPipeline, wgpu::RenderPipeline),
     tri_cut_instanced_flat: Option<Cut>,
     /// The tessellation compute pipeline, where the device runs compute shaders.
     tess: Option<crate::TessGpu>,
@@ -3305,14 +3313,16 @@ impl Renderer {
         };
         // See-through instanced meshes: blended, depth tested, not written; `cull` for glass.
         let placed_see_through = [Some(shared_layout()), Some(instance_layout())];
+        let painted_see_through = [Some(shared_layout()), Some(instance_layout()), Some(paint_layout())];
         let see_through = |label: &str, source: TriSource, cull: Option<wgpu::Face>| {
+            let painted = matches!(source, TriSource::InstancedPainted | TriSource::InstancedFlatPainted);
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
                     module: &module,
                     entry_point: Some(source.entry()),
-                    buffers: &placed_see_through,
+                    buffers: if painted { &painted_see_through } else { &placed_see_through },
                     compilation_options: Default::default(),
                 },
                 primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, cull_mode: cull, ..Default::default() },
@@ -3510,6 +3520,14 @@ impl Renderer {
             cut_states
                 .as_ref()
                 .map(|(_, _, _, cap)| solid_writes("sc_tris_cap", "fs_solid_cut", Some(wgpu::Face::Front), Some(cap.clone()), source, false))
+        };
+        let cut_painted = || {
+            cut_states.as_ref().map(|(_, _, rest, _)| {
+                (
+                    solid("sc_tris_rest_painted", "fs_solid_open", None, rest.clone(), TriSource::InstancedPainted),
+                    solid("sc_tris_rest_flat_painted", "fs_solid_open", None, rest.clone(), TriSource::InstancedFlatPainted),
+                )
+            })
         };
         type Marks = (wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline);
         let cut =
@@ -3717,6 +3735,7 @@ impl Renderer {
             let (tri_cap, planned_cap, instanced_cap) = caps.join();
             let (tri_instanced_flat, flat_marks) = flat.join();
             let tri_instanced_painted = painted.join();
+            let tri_cut_instanced_painted = cut_painted();
             let (tri_hl_hover, tri_hl_hover_built) = hover.join();
             let (tri_hl_selected, tri_hl_selected_built) = selected.join();
             let (
@@ -3731,6 +3750,9 @@ impl Renderer {
                 tri_hl_planned,
             ) = see_through_tris.join();
             let ((glass_far_flat, glass_near_flat, trans_flat), tri_hl_instanced_flat) = see_through_flat.join();
+            let (glass_far_painted, glass_near_painted, trans_painted) = see_through_instanced(TriSource::InstancedPainted, "_painted");
+            let (glass_far_flat_painted, glass_near_flat_painted, trans_flat_painted) =
+                see_through_instanced(TriSource::InstancedFlatPainted, "_flat_painted");
             let (line, line_hidden, line_lit, line_lit_hidden) = lines.join();
             let (overlay, guide_line) = lines_all.join();
             let (ss_blit, copy_blit, ss_filter) = blits.join();
@@ -3782,10 +3804,14 @@ impl Renderer {
                 tri_cut_instanced: cut(instanced_marks, instanced_cap),
                 tri_instanced_flat,
                 tri_instanced_painted,
+                tri_cut_instanced_painted,
                 tri_cut_instanced_flat: cut(flat_marks, flat_cap.join()),
                 glass_far_instanced: (glass_far_smooth, glass_far_flat),
                 glass_near_instanced: (glass_near_smooth, glass_near_flat),
                 trans_instanced: (trans_smooth, trans_flat),
+                glass_far_painted: (glass_far_painted, glass_far_flat_painted),
+                glass_near_painted: (glass_near_painted, glass_near_flat_painted),
+                trans_instanced_painted: (trans_painted, trans_flat_painted),
                 tess,
                 #[cfg(not(target_arch = "wasm32"))]
                 tess_later: None,
@@ -4488,7 +4514,7 @@ impl Renderer {
             }
         };
         // Instanced meshes, with the pipeline for smooth and for flat triangles; their painted
-        // levels with `painted`'s where given (the shaded pass, not a section's cut).
+        // levels with `painted`'s where given (the shaded pass, and a section's `rest`).
         let instanced = |pass: &mut wgpu::RenderPass<'static>,
                          smooth: &wgpu::RenderPipeline,
                          flat: &wgpu::RenderPipeline,
@@ -4548,7 +4574,11 @@ impl Renderer {
                 // The model's own triangles, blocks, plans and instances with its palette, then the
                 // preview's with its own.
                 // `counting`: the crossing count, which leaves open bodies out.
-                let all = |pass: &mut wgpu::RenderPass<'static>, pick: fn(&Cut) -> &wgpu::RenderPipeline, counting: bool| {
+                // `painted`: the pipelines that paint a scan's vertices (the `rest` pass alone).
+                let all = |pass: &mut wgpu::RenderPass<'static>,
+                           pick: fn(&Cut) -> &wgpu::RenderPipeline,
+                           counting: bool,
+                           painted: Option<(&wgpu::RenderPipeline, &wgpu::RenderPipeline)>| {
                     pass.set_bind_group(0, scene_bind(m, &res.bind), &[]);
                     tris(pass, pick(cut), &m.tris);
                     if counting {
@@ -4561,7 +4591,7 @@ impl Renderer {
                         block_class(pass, pick(cut), TriClass::Opaque);
                     }
                     planned(pass, pick(cut_planned), m, counting);
-                    instanced(pass, pick(cut_instanced), pick(cut_flat), None, m, counting);
+                    instanced(pass, pick(cut_instanced), pick(cut_flat), painted, m, counting);
                     in_moving(pass, &|pass, mv| {
                         tris(pass, pick(cut), &mv.tris);
                         if counting {
@@ -4574,7 +4604,7 @@ impl Renderer {
                             blocks_of(pass, pick(cut), TriClass::Opaque, mv);
                         }
                         planned(pass, pick(cut_planned), mv, counting);
-                        instanced(pass, pick(cut_instanced), pick(cut_flat), None, mv, counting);
+                        instanced(pass, pick(cut_instanced), pick(cut_flat), painted, mv, counting);
                     });
                     pass.set_bind_group(0, scene_bind(pv, &res.bind), &[]);
                     tris(pass, pick(cut), &pv.tris);
@@ -4586,10 +4616,10 @@ impl Renderer {
                 pass.set_pipeline(base);
                 pass.draw(0..3, 0..1);
                 tally.call();
-                all(pass, |c| &c.count, true);
-                all(pass, |c| &c.fill, false);
-                all(pass, |c| &c.cap, false);
-                all(pass, |c| &c.rest, false);
+                all(pass, |c| &c.count, true, None);
+                all(pass, |c| &c.fill, false, None);
+                all(pass, |c| &c.cap, false, None);
+                all(pass, |c| &c.rest, false, res.tri_cut_instanced_painted.as_ref().map(|(s, f)| (s, f)));
             }
             _ => {
                 pass.set_bind_group(0, scene_bind(m, &res.bind), &[]);
@@ -4733,30 +4763,35 @@ impl Renderer {
             return;
         }
         // See-through instanced meshes (placements back to front) with the rest of their kind.
-        let see_through =
-            |pass: &mut wgpu::RenderPass<'static>, look: InstanceLook, (smooth, flat): &(wgpu::RenderPipeline, wgpu::RenderPipeline), b: &Batches| {
-                for d in b.instanced.iter().filter(|d| d.look == look) {
-                    d.draw(pass, smooth, flat, None, tally);
-                }
-            };
+        // A see-through or faded scan's painted colours, with its look's own alpha: the painted
+        // pipelines of the same pass (`painted`, smooth and flat).
+        let see_through = |pass: &mut wgpu::RenderPass<'static>,
+                           look: InstanceLook,
+                           (smooth, flat): &(wgpu::RenderPipeline, wgpu::RenderPipeline),
+                           (painted_smooth, painted_flat): &(wgpu::RenderPipeline, wgpu::RenderPipeline),
+                           b: &Batches| {
+            for d in b.instanced.iter().filter(|d| d.look == look) {
+                d.draw(pass, smooth, flat, Some((painted_smooth, painted_flat)), tally);
+            }
+        };
         tris(pass, &res.glass_far, &m.glass);
-        see_through(pass, InstanceLook::Glass, &res.glass_far_instanced, m);
+        see_through(pass, InstanceLook::Glass, &res.glass_far_instanced, &res.glass_far_painted, m);
         in_moving(pass, &|pass, mv| {
             tris(pass, &res.glass_far, &mv.glass);
-            see_through(pass, InstanceLook::Glass, &res.glass_far_instanced, mv);
+            see_through(pass, InstanceLook::Glass, &res.glass_far_instanced, &res.glass_far_painted, mv);
         });
         tris(pass, &res.glass_near, &m.glass);
-        see_through(pass, InstanceLook::Glass, &res.glass_near_instanced, m);
+        see_through(pass, InstanceLook::Glass, &res.glass_near_instanced, &res.glass_near_painted, m);
         in_moving(pass, &|pass, mv| {
             tris(pass, &res.glass_near, &mv.glass);
-            see_through(pass, InstanceLook::Glass, &res.glass_near_instanced, mv);
+            see_through(pass, InstanceLook::Glass, &res.glass_near_instanced, &res.glass_near_painted, mv);
             tris(pass, &res.trans, &mv.trans);
             blocks_of(pass, &res.trans, TriClass::Faded, mv);
-            see_through(pass, InstanceLook::Faded, &res.trans_instanced, mv);
+            see_through(pass, InstanceLook::Faded, &res.trans_instanced, &res.trans_instanced_painted, mv);
         });
         tris(pass, &res.trans, &m.trans);
         block_class(pass, &res.trans, TriClass::Faded);
-        see_through(pass, InstanceLook::Faded, &res.trans_instanced, m);
+        see_through(pass, InstanceLook::Faded, &res.trans_instanced, &res.trans_instanced_painted, m);
         Self::draw_over(res, pass, sk, h, pv, m, moving, &tris, &lines);
     }
 
@@ -4834,7 +4869,7 @@ impl Renderer {
             }
         }
         for d in m.instanced.iter().filter(|d| d.look != InstanceLook::Opaque) {
-            d.draw(pass, &p.instanced, &p.instanced_flat, None, tally);
+            d.draw(pass, &p.instanced, &p.instanced_flat, Some((&p.instanced_painted, &p.instanced_flat_painted)), tally);
         }
     }
 }
@@ -6532,6 +6567,47 @@ mod glass_tests {
             assert_eq!(renderer.uploads().geometry, uploaded, "flat {flat}: the same colours are not uploaded again");
             let short = picture(&mut renderer, Some(Arc::new(vec![paint_colour([0, 255, 0])])), 40 + u64::from(flat));
             assert!(!has(&short, &green), "flat {flat}: a list of the wrong length paints nothing");
+            // With a section shown (its plane clear of the quad), what it leaves is painted too.
+            let mut scene = GpuScene::default();
+            let base = scene.color([255, 0, 0, 255]);
+            let mut m = InstancedMesh {
+                key: 7,
+                tris: tris.clone(),
+                instances: Vec::new(),
+                look: InstanceLook::Opaque,
+                levels: Vec::new(),
+                closed: false,
+                paint: Some(Arc::new(InstancePaint { levels: vec![colours.clone()] })),
+            };
+            m.place([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]], base);
+            scene.instanced = vec![m];
+            let mut frame = test_frame(scene, 1.0);
+            frame.key = 50 + u64::from(flat);
+            frame.clip = [0.0, 0.0, 1.0, 100.0];
+            let cut = render_frame(&mut renderer, &device, &queue, &frame, true);
+            assert!(has(&cut, &green) && has(&cut, &red), "flat {flat}: a section keeps the paint on what it leaves");
+            // Faded, or see-through (an opacity given): the paint shows, blended as the look is.
+            for (k, look) in [InstanceLook::Faded, InstanceLook::Glass].into_iter().enumerate() {
+                let mut scene = GpuScene::default();
+                let base = scene.color([255, 0, 0, 128]);
+                let mut m = InstancedMesh {
+                    key: 7,
+                    tris: tris.clone(),
+                    instances: Vec::new(),
+                    look,
+                    levels: Vec::new(),
+                    closed: false,
+                    paint: Some(Arc::new(InstancePaint { levels: vec![colours.clone()] })),
+                };
+                m.place([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]], base);
+                scene.instanced = vec![m];
+                let mut frame = test_frame(scene, 1.0);
+                frame.key = 60 + 2 * k as u64 + u64::from(flat);
+                let shown = render_frame(&mut renderer, &device, &queue, &frame, true);
+                let greener = |p: &[u8; 4]| i32::from(p[1]) > i32::from(p[0]) + 40;
+                let redder = |p: &[u8; 4]| i32::from(p[0]) > i32::from(p[1]) + 40;
+                assert!(has(&shown, &greener) && has(&shown, &redder), "flat {flat}: a {look:?} scan keeps its paint");
+            }
         }
     }
 
