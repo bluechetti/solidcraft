@@ -53,6 +53,45 @@ type Indexes = HashMap<usize, (Arc<Mesh>, Option<Arc<MeshIndex>>)>;
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 const AT_ONCE: usize = 20_000;
 
+thread_local! {
+    /// A pick that follows the pointer (the hover, a tool's snap) is being made: a large mesh
+    /// whose index is still being made is left out of it, rather than scanned every frame.
+    static FOLLOWING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `pick` as one that follows the pointer ([`skip_while_building`]).
+pub(crate) fn following<R>(pick: impl FnOnce() -> R) -> R {
+    let before = FOLLOWING.with(|f| f.replace(true));
+    let out = pick();
+    FOLLOWING.with(|f| f.set(before));
+    out
+}
+
+/// Whether a pick leaves `mesh` out for now: one that follows the pointer, on a mesh too large to
+/// scan every frame ([`SCAN_EACH_FRAME_MOST`]) whose index is not in yet (a quarter of a second a
+/// frame for a 10-million-triangle scan). A smaller one is scanned as before (a few
+/// milliseconds), and a click still scans any, once.
+pub(crate) fn skip_while_building(index: Option<&MeshIndex>, mesh: &Mesh) -> bool {
+    index.is_none() && mesh.triangles.len() > scan_each_frame_most() && FOLLOWING.with(std::cell::Cell::get)
+}
+
+/// The most triangles a pick following the pointer scans each frame while an index is made.
+const SCAN_EACH_FRAME_MOST: usize = 2_000_000;
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: a lower [`SCAN_EACH_FRAME_MOST`], so a small mesh stands in for a vast scan.
+    pub(crate) static SCAN_EACH_FRAME: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+fn scan_each_frame_most() -> usize {
+    #[cfg(test)]
+    if let Some(n) = SCAN_EACH_FRAME.with(std::cell::Cell::get) {
+        return n;
+    }
+    SCAN_EACH_FRAME_MOST
+}
+
 /// Whether `mesh` is too large to index at once: its index is made on a worker, and until it is
 /// in, picking scans every triangle.
 pub(crate) fn large(mesh: &Mesh) -> bool {
@@ -94,6 +133,11 @@ impl PickIndexes {
         Some(index)
     }
 
+    /// How many indexes are still being made.
+    pub(crate) fn building(&self) -> usize {
+        self.0.lock().map(|map| map.values().filter(|(_, index)| index.is_none()).count()).unwrap_or(0)
+    }
+
     /// Drops the indexes of meshes `keep` no longer names (a new model state).
     pub(crate) fn retain(&self, keep: impl Fn(usize) -> bool) {
         if let Ok(mut map) = self.0.lock() {
@@ -112,7 +156,7 @@ impl PickIndexes {
         self.0.lock().map_or(0, |m| m.values().filter(|(_, i)| i.is_none()).count())
     }
 
-    #[cfg(test)]
+    /// How many meshes have an index, or one being made.
     pub(crate) fn len(&self) -> usize {
         self.0.lock().map_or(0, |m| m.len())
     }

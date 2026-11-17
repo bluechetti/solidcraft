@@ -258,3 +258,55 @@ fn sketch_hover_timing() {
     let (median, p90) = stats(ms);
     eprintln!("Trim piece per cursor move: median {median:.4} ms, p90 {p90:.4} ms");
 }
+
+/// While a large scan's index is being made, what follows the pointer leaves it out instead of
+/// scanning every triangle each frame (a quarter of a second a frame on a 10-million-triangle
+/// scan); a click still finds it; once the index is in, the pointer finds it where it rests.
+#[test]
+fn the_pointer_waits_for_a_large_scans_index() {
+    let mut h = crate::scenario::Harness::new();
+    let n = 160u32;
+    let mut stl = vec![0u8; 80];
+    stl.extend_from_slice(&(2 * n * n).to_le_bytes());
+    let at = |i: u32, j: u32| [i as f32, j as f32, 0.0f32];
+    for j in 0..n {
+        for i in 0..n {
+            for tri in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                stl.extend_from_slice(&[0u8; 12]);
+                for p in tri {
+                    for v in p {
+                        stl.extend_from_slice(&v.to_le_bytes());
+                    }
+                }
+                stl.extend_from_slice(&[0u8; 2]);
+            }
+        }
+    }
+    let path = h.dir.join("sheet.stl");
+    std::fs::write(&path, stl).unwrap();
+    h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+    let app = &mut h.app;
+    app.set_origin_shown(false);
+    app.cam.target = solidcore_record::Vec3::new(80.0, 80.0, 0.0);
+    app.cam.pitch = 1.2;
+    app.cam.distance = 300.0;
+    let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(640.0, 480.0));
+    let proj = projection(app, rect);
+    let centre = proj.to_screen(solidcore_record::Vec3::new(80.0, 80.0, 0.0)).unwrap();
+    let face = |hits: &[Hit]| hits.iter().any(|h| matches!(h, Hit::Face { .. }));
+    // The sheet's 51 200 triangles stand for a scan too vast to scan each frame.
+    super::SCAN_EACH_FRAME.with(|s| s.set(Some(10_000)));
+    let gate = app.viewport.pick_index.gate();
+    gate.set_closed(true);
+    assert!(!face(&crate::viewport::pick_cached(app, &proj, centre)), "the pointer leaves the scan out while its index is made");
+    assert!(face(&pick(app, &proj, centre)), "a click still finds it");
+    gate.set_closed(false);
+    for _ in 0..2000 {
+        if app.viewport.pick_index.building() == 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(face(&crate::viewport::pick_cached(app, &proj, centre)), "with the index in, the pointer finds it where it rests");
+    super::SCAN_EACH_FRAME.with(|s| s.set(None));
+}

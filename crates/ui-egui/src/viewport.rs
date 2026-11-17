@@ -3046,6 +3046,8 @@ pub(crate) fn pick_cached(app: &mut SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit
     app.view_fov().to_bits().hash(&mut h);
     (proj.rect.width().to_bits(), proj.rect.height().to_bits()).hash(&mut h);
     crate::sketch_display::projection_key(proj, app.viewport.pixels_per_point()).hash(&mut h);
+    // A large mesh left out while its index was made is picked once the index is in.
+    (app.viewport.pick_index.len(), app.viewport.pick_index.building()).hash(&mut h);
     let key = h.finish();
     if let Some((k, hits)) = &app.viewport.last_pick
         && *k == key
@@ -3053,7 +3055,7 @@ pub(crate) fn pick_cached(app: &mut SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit
         return hits.clone();
     }
     // Hover feedback mirrors what a 3D bridge click will snap to; clicks still go through `pick`.
-    let hits = pick_with_sketch_points(app, proj, pos, crate::sketch3d::drawing(app));
+    let hits = crate::pick_index::following(|| pick_with_sketch_points(app, proj, pos, crate::sketch3d::drawing(app)));
     app.viewport.last_pick = Some((key, hits.clone()));
     hits
 }
@@ -3417,6 +3419,9 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
         // moved there (a rigid move keeps distances along it), so no moved copy is made.
         let (m, place) = placed(b);
         let index = app.viewport.pick_index.of(&m);
+        if crate::pick_index::skip_while_building(index.as_deref(), &m) {
+            continue;
+        }
         // The nearest kept face: past any the section removes (a bounded walk along the ray).
         let mut nearest = None;
         let mut from = 0.0f64;
@@ -3490,7 +3495,11 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, other_sketch_points: bool, 
         let at = |p: Vec3| if moved { solidcraft_engine::doc::apply_point(&place, p) } else { p };
         // Only the segments that can come near the cursor, from the index, in the order a scan
         // of every edge would meet them, so ties go the same way.
-        let near = crate::pick_index::segments_near(app.viewport.pick_index.of(&m).as_deref(), &m, lo, ld, reach);
+        let index = app.viewport.pick_index.of(&m);
+        if crate::pick_index::skip_while_building(index.as_deref(), &m) {
+            continue;
+        }
+        let near = crate::pick_index::segments_near(index.as_deref(), &m, lo, ld, reach);
         let mut last_edge = None;
         for (ei, si) in near {
             let Some(e) = m.edges.get(ei) else { continue };
