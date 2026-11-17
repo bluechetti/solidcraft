@@ -90,6 +90,7 @@ pub mod reconstruct;
 pub mod reduce;
 pub mod register;
 pub mod remesh;
+pub mod remesh_area;
 pub mod repair;
 pub mod section;
 pub mod segment;

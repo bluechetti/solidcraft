@@ -6744,7 +6744,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanEdgeCurve(k) => return crate::dialogs_scan_edge::commands(k),
         Kind::ScanReconstruct(k) => return crate::dialogs_scan_reconstruct::commands(app, k),
         Kind::ScanSurvey(_) | Kind::ScanAlignChoose(_) => return Ok(Vec::new()),
-        Kind::ScanRun(k) => return crate::dialogs_scan_run::commands(k, &d.inputs),
+        Kind::ScanRun(k) => return crate::dialogs_scan_run::commands(app, k, &d.inputs),
         Kind::EndCap(k) => return crate::dialogs_end_cap::commands(app, k, &d.inputs, &d.extra),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),

@@ -55,6 +55,11 @@ pub struct ScanRun {
     /// Roll onto Scan: the Flat Patterns the design keeps (sketch id and name), and the one chosen.
     pub patterns: Vec<(u64, String)>,
     pub pattern: usize,
+    /// Remesh: which part of the scan (the whole scan unless another way is chosen; the click is
+    /// the second input), the area of the step being edited, and the area marked on the scan.
+    pub area: crate::scan_area::Area,
+    pub kept: Option<Value>,
+    pub marks: crate::dialogs_scan_clean::AreaMarks,
 }
 
 impl ScanRun {
@@ -71,6 +76,9 @@ impl ScanRun {
             rounds: 6,
             patterns: Vec::new(),
             pattern: 0,
+            area: crate::scan_area::Area::clean(),
+            kept: None,
+            marks: crate::dialogs_scan_clean::AreaMarks::default(),
         }
     }
 
@@ -140,7 +148,9 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     let the_scan = || solidcraft_engine::cmd::scan::mesh_body_name(s, None, id).ok();
     let the_surface = || solidcraft_engine::cmd::scan::slice::slice_target(s, None, id).ok();
     let inputs = match id {
-        "scan.remesh" | "scan.repair" | "scan.reconstruct_rest" => vec![input("Body", false, the_scan())],
+        // Remesh's second input: a click on the scan, for its area.
+        "scan.remesh" => vec![input("Body", false, the_scan()), SelInput::new("Point", crate::selection::FACES, false)],
+        "scan.repair" | "scan.reconstruct_rest" => vec![input("Body", false, the_scan())],
         // The cloud is the design's only one; there is nothing to choose yet.
         "scan.mesh_from_points" => Vec::new(),
         "scan.combine" | "scan.align_all" => {
@@ -176,7 +186,7 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
 }
 
 /// The dialog's rows (after its inputs).
-pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanRun) -> bool {
+pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanRun, inputs: &[SelInput]) -> bool {
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
     match k.id {
         "scan.remesh" | "scan.combine" => {
@@ -193,6 +203,10 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanRun) -> bool {
                 k.cell = Some(cell.max(0.001));
             }
             form_row(ui, tr("ui.scan_run_sharp"), |ui| check(ui, &mut k.sharp));
+            if k.id == "scan.remesh" {
+                crate::dialogs_scan_clean::area_row(app, ui, "scan_remesh_area", &mut k.area, k.kept.as_ref());
+                crate::dialogs_scan_clean::mark_area_at(app, &k.area, k.kept.as_ref(), inputs, 1, &mut k.marks);
+            }
         }
         "scan.repair" => {
             form_row(ui, tr("ui.scan_run_crossings"), |ui| check(ui, &mut k.crossings));
@@ -233,11 +247,19 @@ fn one(inputs: &[SelInput], i: usize) -> Option<String> {
 }
 
 /// What OK runs: the command on the bodies shown, with the choices made.
-pub fn commands(k: &ScanRun, inputs: &[SelInput]) -> Result<Vec<(String, Value)>, String> {
+pub fn commands(app: &SolveApp, k: &ScanRun, inputs: &[SelInput]) -> Result<Vec<(String, Value)>, String> {
     let need = |i: usize, why: &'static str| one(inputs, i).ok_or_else(|| tr(why).to_owned());
     let cell = k.cell.map(|c| json!(format!("{c} mm")));
     let p = match k.id {
-        "scan.remesh" => json!({"body": need(0, "ui.scan_run_pick_scan")?, "cell": cell, "sharp": k.sharp}),
+        "scan.remesh" => {
+            let mut p = crate::dialogs_scan_clean::area_params_at(app, &k.area, k.kept.as_ref(), inputs, 1)?;
+            p["body"] = json!(need(0, "ui.scan_run_pick_scan")?);
+            if let Some(c) = &cell {
+                p["cell"] = c.clone();
+            }
+            p["sharp"] = json!(k.sharp);
+            p
+        }
         "scan.repair" => json!({"body": need(0, "ui.scan_run_pick_scan")?, "crossings": k.crossings}),
         "scan.reconstruct_rest" => json!({"body": need(0, "ui.scan_run_pick_scan")?, "rounds": k.rounds}),
         "scan.mesh_from_points" => json!({"trim": if k.sparse == 0 { 0.0 } else { 0.3 }}),
@@ -314,9 +336,43 @@ mod tests {
         let Kind::ScanRun(k) = &d.kind else { panic!("the scan tool dialog") };
         assert_eq!(h.app.session.doc.features.len(), features, "nothing runs before OK");
         let body = h.app.session.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
-        let cmds = super::commands(k, &d.inputs).unwrap();
+        let cmds = super::commands(&h.app, k, &d.inputs).unwrap();
         assert_eq!(cmds[0].0, "scan.repair");
         assert_eq!(cmds[0].1["body"], json!(body), "the scan shown is the one OK works on");
+    }
+
+    /// Remesh opens on the whole scan; Round the click sends the click (its second input) and the
+    /// radius, and OK keeps the area in the step.
+    #[test]
+    fn remesh_takes_an_area_round_a_click() {
+        let mut h = crate::scenario::Harness::new();
+        box_scan(&mut h, "part", 0.0);
+        let body = h.app.session.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
+        h.app.start("scan.remesh");
+        let Some(d) = h.app.dialog.as_ref() else { panic!("Remesh opens a dialog") };
+        let Kind::ScanRun(k) = &d.kind else { panic!("the scan tool dialog") };
+        let whole = super::commands(&h.app, k, &d.inputs).unwrap();
+        assert!(whole[0].1.get("point").is_none() && whole[0].1.get("area").is_none(), "the whole scan, as before: {}", whole[0].1);
+        let bounds = crate::viewport::model_bounds(&h.app);
+        let (lo, hi) = (bounds.min, bounds.max);
+        let top = solidcore_record::Vec3::new((lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0, hi.z);
+        if let Some(d) = h.app.dialog.as_mut() {
+            d.inputs[1].items.push(solidcraft_engine::Sel::Face { body: body.clone(), index: 0, point: top });
+            if let Kind::ScanRun(k) = &mut d.kind {
+                k.area.way = crate::scan_area::ROUND;
+                k.area.radius = 0.3 * (hi.x - lo.x);
+            }
+        }
+        let Some(d) = h.app.dialog.as_ref() else { panic!() };
+        let Kind::ScanRun(k) = &d.kind else { panic!() };
+        let sent = super::commands(&h.app, k, &d.inputs).unwrap();
+        assert!(sent[0].1.get("point").is_some() && sent[0].1.get("radius").is_some(), "{}", sent[0].1);
+        h.app.run(&sent[0].0, sent[0].1.clone()).unwrap();
+        let step = h.app.session.doc.features.iter().rev().find_map(|f| match &f.kind {
+            solidcraft_engine::doc::FeatureKind::ScanClean { step, .. } => Some(step.clone()),
+            _ => None,
+        });
+        assert!(matches!(step, Some(solidcraft_engine::doc::scan_clean::CleanStep::Remesh { area: Some(_), .. })), "{step:?}");
     }
 
     /// With two scans, Align to Scan starts with the one made last laid onto the other, and
@@ -331,21 +387,21 @@ mod tests {
         h.app.start("scan.register");
         let d = h.app.dialog.take().unwrap();
         let Kind::ScanRun(k) = &d.kind else { panic!() };
-        let cmds = super::commands(k, &d.inputs).unwrap();
+        let cmds = super::commands(&h.app, k, &d.inputs).unwrap();
         assert_eq!((cmds[0].1["body"].clone(), cmds[0].1["to"].clone()), (json!(names[1]), json!(names[0])));
         h.app.start("scan.combine");
         let d = h.app.dialog.take().unwrap();
         let Kind::ScanRun(k) = &d.kind else { panic!() };
-        let cmds = super::commands(k, &d.inputs).unwrap();
+        let cmds = super::commands(&h.app, k, &d.inputs).unwrap();
         assert_eq!(cmds[0].1["with"].as_array().map(Vec::len), Some(1));
         h.app.start("scan.make_flat");
         let d = h.app.dialog.take().unwrap();
         let Kind::ScanRun(k) = &d.kind else { panic!() };
-        assert!(super::commands(k, &d.inputs).is_err(), "no surface yet: OK waits for one");
+        assert!(super::commands(&h.app, k, &d.inputs).is_err(), "no surface yet: OK waits for one");
         // No Flat Pattern in the design: Roll onto Scan says to flatten first, OK runs nothing.
         h.app.start("scan.roll_onto_scan");
         let d = h.app.dialog.take().unwrap();
         let Kind::ScanRun(k) = &d.kind else { panic!() };
-        assert!(k.patterns.is_empty() && super::commands(k, &d.inputs).is_err());
+        assert!(k.patterns.is_empty() && super::commands(&h.app, k, &d.inputs).is_err());
     }
 }

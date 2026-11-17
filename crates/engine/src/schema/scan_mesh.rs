@@ -131,6 +131,23 @@ pub struct ScanRemeshParams {
     /// false.
     #[serde(default)]
     pub sharp: Option<bool>,
+    /// Only part of the scan (its triangles made again as even triangles of about `cell`, the
+    /// rest kept; not with `with`), a point on it with `grow` (true or degrees) or `radius` (mm).
+    #[serde(default)]
+    pub point: Option<Point3>,
+    #[serde(default)]
+    pub grow: Option<Value>,
+    #[serde(default)]
+    pub radius: Option<f64>,
+    /// Only a kept selection's triangles (Keep Selection).
+    #[serde(default)]
+    pub saved: Option<String>,
+    /// Only what is selected on the scan. A selection is never taken unless asked.
+    #[serde(default)]
+    pub selected: Option<bool>,
+    /// The area as the step keeps it: `{triangles: the scan's count, runs: [[first, count], …]}`.
+    #[serde(default)]
+    pub area: Option<Value>,
 }
 
 /// What `scan.remesh` returns.

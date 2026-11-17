@@ -77,13 +77,17 @@ pub enum CleanStep {
     /// made) taken off, and the holes they leave closed, shaped to the surface when `fair`.
     RemoveMarkers { radius: f64, centres: Vec<[f64; 3]>, fair: bool },
     /// Remesh: on a grid of `cell` (the scan's typical edge when none), fusing in the scans
-    /// `with`; `sharp` keeps edges and corners sharp.
+    /// `with`; `sharp` keeps edges and corners sharp. Within `area` only when it has one: its
+    /// triangles made again as even triangles of about `cell` on the scan as it was, everything
+    /// outside it kept (no scans fused in).
     Remesh {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cell: Option<f64>,
         sharp: bool,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         with: Vec<BodyName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        area: Option<StepArea>,
     },
 }
 
@@ -226,8 +230,11 @@ impl CleanStep {
                 }
                 p
             }
-            CleanStep::Remesh { cell, sharp, with } => {
+            CleanStep::Remesh { cell, sharp, with, area } => {
                 let mut p = json!({ "sharp": sharp });
+                if let Some(a) = area {
+                    p["area"] = json!(a);
+                }
                 if let Some(c) = cell {
                     p["cell"] = json!(c);
                 }
@@ -258,9 +265,12 @@ impl CleanStep {
             }
             CleanStep::FillHoles { at, .. } if !points_ok(at) => bad("takes at most 10000 points of three finite numbers"),
             CleanStep::FillHoles { max_edges, .. } if !(3..=5000).contains(max_edges) => bad("closes holes of 3 to 5000 edges"),
-            CleanStep::Reduce { area: Some(a), .. } | CleanStep::Denoise { area: Some(a), .. } if !a.ok() || a.count() == 0 => {
+            CleanStep::Reduce { area: Some(a), .. } | CleanStep::Denoise { area: Some(a), .. } | CleanStep::Remesh { area: Some(a), .. }
+                if !a.ok() || a.count() == 0 =>
+            {
                 bad("needs an area of the scan's triangles, in order")
             }
+            CleanStep::Remesh { area: Some(_), with, .. } if !with.is_empty() => bad("fuses other scans in only over the whole scan, not an area"),
             CleanStep::Reduce { ratio, triangles, max_error, .. } => {
                 if ratio.is_some_and(|r| !(r > 0.0 && r <= 1.0)) {
                     bad("keeps a share above 0 and at most 1")
@@ -554,7 +564,8 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
             };
             made(&done.positions, triangles, report)
         }
-        CleanStep::Remesh { cell, sharp, .. } => {
+        CleanStep::Remesh { cell, sharp, area, .. } => {
+            let flags = within(area.as_ref(), on.triangle_count())?;
             let cell = match cell {
                 Some(c) => *c,
                 None => {
@@ -565,6 +576,19 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
                     edge
                 }
             };
+            if let Some(flags) = flags {
+                let done = solidcraft_scan::remesh_area::remesh_area(&on, &flags, cell, *sharp).map_err(|e| Refused::Failed(e.to_string()))?;
+                let report = Report::Remesh {
+                    before: on.triangle_count(),
+                    cell,
+                    new_rms: done.new_rms,
+                    new_max: done.new_max,
+                    scan_rms: done.scan_rms,
+                    scan_p95: done.scan_p95,
+                    uncovered: done.uncovered,
+                };
+                return made(&done.positions, &done.triangles, report);
+            }
             let mut sources = vec![on];
             for b in with {
                 let (p, t) = b.triangle_mesh().ok_or_else(|| Refused::Failed("a scan fused in is not a mesh body".into()))?;
@@ -621,7 +645,8 @@ mod tests {
                 keep_rim: true,
                 area: Some(StepArea { triangles: 10, runs: Vec::new() }),
             },
-            CleanStep::Remesh { cell: Some(0.0), sharp: false, with: Vec::new() },
+            CleanStep::Remesh { cell: Some(0.0), sharp: false, with: Vec::new(), area: None },
+            CleanStep::Remesh { cell: None, sharp: false, with: vec!["other".into()], area: Some(StepArea { triangles: 10, runs: vec![[0, 4]] }) },
         ];
         for s in &steps {
             assert!(s.check().is_err(), "{s:?}");

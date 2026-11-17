@@ -43,7 +43,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("grid")
         .contract(&REMESH_CONTRACT)
         .output(output_schema_for::<ScanRemeshResult>)
-        .params("body?: the scan (default: the selected or only one); with?: [other passes, laid on it] fused in; cell?: length (default the scan's typical edge: the new mesh's edge); sharp?: bool (default false: each vertex where the planes of its cell meet, so sharp edges and corners stay sharp): the scan made again as one even surface from the signed distances of the scans in a narrow band of a grid (overlaps averaged), kept as a Scan Clean step in the timeline (its settings only; in_place?: bool writes the scan back instead), one undo step → body, with, before, triangles, vertices, cell, sharp, new_rms, new_max, scan_rms, scan_p95, uncovered, feature"),
+        .params("body?: the scan (default: the selected or only one); with?: [other passes, laid on it] fused in; cell?: length (default the scan's typical edge: the new mesh's edge); sharp?: bool (default false: each vertex where the planes of its cell meet, so sharp edges and corners stay sharp); area: point?: [x,y,z] with grow?: true|degrees or radius?: mm, saved?: kept selection, selected?: true, or area?: {triangles, runs} (default the whole scan; within an area its triangles are made again as even triangles of about cell on the scan, the rest and the area's edge kept, sharp keeping its sharp edges; not with `with`): the scan made again as one even surface from the signed distances of the scans in a narrow band of a grid (overlaps averaged), kept as a Scan Clean step in the timeline (its settings only; in_place?: bool writes the scan back instead), one undo step → body, with, before, triangles, vertices, cell, sharp, new_rms, new_max, scan_rms, scan_p95, uncovered, feature"),
     CommandSpec::new("scan.register", "Align to Scan", crate::checked!("scan.register", register_scan))
     .at("SCAN", "ALIGN")
     .icon("align")
@@ -131,7 +131,11 @@ pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let sharp = bool_(p, "sharp").unwrap_or(false);
-    let step = CleanStep::Remesh { cell, sharp, with: with.iter().cloned().map(Into::into).collect() };
+    let area = super::flatten::step_area(s, p, &body, cmd)?;
+    if area.is_some() && !with.is_empty() {
+        return Err(bad(cmd, "`with` fuses other scans in over the whole scan, not an area: give one or the other"));
+    }
+    let step = CleanStep::Remesh { cell, sharp, with: with.iter().cloned().map(Into::into).collect(), area };
     let (done, feature) = super::clean::apply(s, p, &body, step, cmd)?;
     let (vertices, triangles) = done.body.triangle_mesh().map_or((0, 0), |(p, t)| (p.len(), t.len()));
     let Report::Remesh { before, cell, new_rms, new_max, scan_rms, scan_p95, uncovered } = done.report else {

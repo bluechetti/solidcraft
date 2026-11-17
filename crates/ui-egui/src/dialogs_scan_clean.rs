@@ -99,6 +99,11 @@ pub fn refill(kind: &mut Kind, step: &CleanStep) {
             k.keep_rim = *keep_rim;
             k.kept = area.as_ref().and_then(|a| serde_json::to_value(a).ok());
         }
+        (Kind::ScanRun(k), CleanStep::Remesh { cell, sharp, area, .. }) if k.id == "scan.remesh" => {
+            k.cell = *cell;
+            k.sharp = *sharp;
+            k.kept = area.as_ref().and_then(|a| serde_json::to_value(a).ok());
+        }
         (Kind::ScanDenoise(k), CleanStep::Denoise { strength, area }) => {
             *k = strength.map_or_else(crate::dialogs_scan_denoise::Denoise::default, crate::dialogs_scan_denoise::Denoise::chosen);
             k.kept = area.as_ref().and_then(|a| serde_json::to_value(a).ok());
@@ -582,7 +587,19 @@ pub(crate) fn mark_area(
     inputs: &[crate::selection::SelInput],
     marks: &mut AreaMarks,
 ) {
-    let asked = area_params(app, area, kept, inputs).ok().filter(|p| p.as_object().is_some_and(|o| o.keys().any(|k| k != "body")));
+    mark_area_at(app, area, kept, inputs, 0, marks);
+}
+
+/// [`mark_area`] with the click in input `click`.
+pub(crate) fn mark_area_at(
+    app: &SolveApp,
+    area: &crate::scan_area::Area,
+    kept: Option<&Value>,
+    inputs: &[crate::selection::SelInput],
+    click: usize,
+    marks: &mut AreaMarks,
+) {
+    let asked = area_params_at(app, area, kept, inputs, click).ok().filter(|p| p.as_object().is_some_and(|o| o.keys().any(|k| k != "body")));
     let Some(p) = asked else {
         *marks = AreaMarks::default();
         return;
@@ -646,6 +663,7 @@ pub(crate) fn gpu_area_marks(app: &SolveApp) -> Option<GpuCloud> {
     let marks = match app.dialog.as_ref().map(|d| &d.kind)? {
         Kind::ScanReduce(k) => &k.marks,
         Kind::ScanDenoise(k) => &k.marks,
+        Kind::ScanRun(k) if k.id == "scan.remesh" => &k.marks,
         _ => return None,
     };
     let dots = marks.found.lock().ok()?.as_ref()?.as_ref().ok()?.1.clone();
@@ -667,10 +685,21 @@ pub(crate) fn area_params(
     kept: Option<&Value>,
     inputs: &[crate::selection::SelInput],
 ) -> Result<Value, String> {
+    area_params_at(app, area, kept, inputs, 0)
+}
+
+/// [`area_params`] with the click in input `click`.
+pub(crate) fn area_params_at(
+    app: &SolveApp,
+    area: &crate::scan_area::Area,
+    kept: Option<&Value>,
+    inputs: &[crate::selection::SelInput],
+    click: usize,
+) -> Result<Value, String> {
     if let Some(kept) = kept {
         return Ok(json!({ "area": kept }));
     }
-    let clicked = match crate::selection::items(inputs, 0).first() {
+    let clicked = match crate::selection::items(inputs, click).first() {
         Some(solidcraft_engine::Sel::Face { body, point, .. }) => Some((body.as_str(), *point)),
         _ => None,
     };

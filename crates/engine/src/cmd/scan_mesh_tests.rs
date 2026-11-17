@@ -229,6 +229,35 @@ fn a_noisy_scan_is_denoised_and_a_clean_one_left_alone() {
     assert_eq!(mesh_of(&s, &scan).0, before);
 }
 
+/// Remesh round a point on the box's top: the triangles there made again as even triangles of
+/// the cell asked for, every vertex outside the area where it was, and the step keeps its area; an
+/// area and other scans fused in together are refused.
+#[test]
+fn remesh_works_on_an_area() {
+    let (positions, triangles) = grid_box(30);
+    let mut s = Session::default();
+    let scan = insert(&mut s, &positions, &triangles, "box");
+    let (before, before_tris) = mesh_of(&s, &scan);
+    let reply = run(&mut s, "scan.remesh", json!({"body": scan, "cell": "3 mm", "point": [15, 10, 10], "radius": 6}));
+    let (after, after_tris) = mesh_of(&s, &scan);
+    assert!(after_tris.len() < before_tris.len(), "coarser round the point: {} from {}: {reply}", after_tris.len(), before_tris.len());
+    let centre = Vec3::new(15.0, 10.0, 10.0);
+    let kept: std::collections::HashSet<[u64; 3]> = after.iter().map(|p| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]).collect();
+    assert!(
+        before.iter().filter(|p| p.dist(centre) > 8.0).all(|p| kept.contains(&[p.x.to_bits(), p.y.to_bits(), p.z.to_bits()])),
+        "every vertex away from the area where it was"
+    );
+    let step = s.doc.features.iter().rev().find_map(|f| match &f.kind {
+        solidcraft_doc::FeatureKind::ScanClean { step, .. } => Some(step.clone()),
+        _ => None,
+    });
+    assert!(matches!(step, Some(solidcraft_doc::scan_clean::CleanStep::Remesh { area: Some(_), .. })), "{step:?}");
+    run(&mut s, "edit.undo", json!({}));
+    let other = insert(&mut s, &positions, &triangles, "other");
+    let refused = s.execute("scan.remesh", &json!({"body": scan, "with": [other], "point": [15, 10, 10], "radius": 6})).unwrap_err().to_string();
+    assert!(refused.contains("not an area"), "{refused}");
+}
+
 /// Denoise and Reduce on part of the scan: round a point on the noisy box's top, only the scan
 /// there moves or is reduced, and the step keeps its area; asked for what is selected with nothing
 /// selected, they say so; a selection is never taken unasked.
