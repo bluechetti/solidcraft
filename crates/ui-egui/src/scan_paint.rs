@@ -1,9 +1,10 @@
-//! Colours painted on a scan's own triangles in the viewport: Scan Deviation's map and Flat
-//! Template's colouring. Each vertex of the scan gets a colour (4 bytes on the GPU) that the
-//! scan's instanced triangles are drawn in ([`solidcraft_viewport_gpu::view::InstancePaint`]), so
-//! a scan of a hundred million triangles is painted whole, at every zoom, depth-tested with the
-//! model as the scan itself is. A painted cell for each triangle (132 bytes) was the way before;
-//! past a million triangles it fell back to dots.
+//! Colours painted on a scan's own triangles in the viewport: Scan Deviation's map, and the
+//! colouring of Flat Template, Free Form, Fit Patches and Edit Surface. Each vertex of the scan
+//! gets a colour (4 bytes on the GPU) that the scan's instanced triangles are drawn in
+//! ([`solidcraft_viewport_gpu::view::InstancePaint`]), so a scan of a hundred million triangles is
+//! painted whole, at every zoom, depth-tested with the model as the scan itself is. A painted
+//! cell for each triangle (132 bytes) was the way before; past a million triangles (a quarter of a
+//! million for the surface tools) it fell back to dots. Wireframe still draws those.
 //!
 //! A scan drawn from a coarser level of detail (small on screen) is painted on that level's own
 //! vertices: each takes the strongest colour of the scan's vertices nearest it, so a spike far off
@@ -45,7 +46,13 @@ pub(crate) fn paintings(app: &SolveApp) -> Vec<Painting> {
     if !on_scan(app) {
         return Vec::new();
     }
-    crate::scan_deviation::painting(app).into_iter().chain(crate::dialogs_scan_template::painting(app)).collect()
+    crate::scan_deviation::painting(app)
+        .into_iter()
+        .chain(crate::dialogs_scan_template::painting(app))
+        .chain(crate::dialogs_scan_free_form::painting(app))
+        .chain(crate::dialogs_scan_patches::painting(app))
+        .chain(crate::dialogs_scan_surface::edit_painting(app))
+        .collect()
 }
 
 /// What the model scene's key takes from the painting: the scans painted, their colourings and

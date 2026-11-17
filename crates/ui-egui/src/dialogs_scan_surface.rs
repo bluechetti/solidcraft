@@ -2857,14 +2857,28 @@ pub(crate) fn release(app: &mut SolveApp) {
     show_faces(k, shown, false, None);
 }
 
-/// The colouring of the scan under the surface, as a cloud for the GPU viewport.
+/// The colouring of the scan under the surface, as a cloud for the GPU viewport: in wireframe, or
+/// where it is not painted on the scan's own triangles ([`edit_painting`]).
 pub(crate) fn gpu_shade(app: &SolveApp) -> Option<GpuCloud> {
     let Some(Kind::ScanEditSurface(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
     if !k.colours {
         return None;
     }
     let sh = k.shade.as_ref().filter(|s| s.version != 0)?;
+    if crate::scan_paint::on_scan(app) && sh.dots.scale.is_some() {
+        return None;
+    }
     Some(shade_cloud(SHADE_CLOUD_ID, sh.version, &sh.dots))
+}
+
+/// Edit Surface's colouring painted on the scan's own triangles, while it is shown.
+pub(crate) fn edit_painting(app: &SolveApp) -> Option<crate::scan_paint::Painting> {
+    let Some(Kind::ScanEditSurface(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    if !k.colours {
+        return None;
+    }
+    let sh = k.shade.as_ref().filter(|s| s.version != 0)?;
+    painting(&sh.scan, sh.version, sh.key.1, &sh.dots)
 }
 
 /// A colouring as a cloud for the GPU viewport, under `id`.
@@ -2914,11 +2928,34 @@ pub(crate) fn next_shade_version() -> u64 {
 }
 
 /// A colouring's records for the GPU viewport: the scan's triangles under the surface painted, or
-/// its points as dots where too many triangles lie under it ([`network::PAINT_LIMIT`]).
+/// its points as dots where too many triangles lie under it ([`network::PAINT_LIMIT`]); and where
+/// each of the scan's vertices sits on the scale (not a number off the surface), for a shaded view
+/// to paint the scan's own triangles ([`crate::scan_paint`]) at any size.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Shaded {
     pub dots: Arc<Vec<u8>>,
     pub triangles: Arc<Vec<u8>>,
+    pub scale: Option<Arc<Vec<f32>>>,
+}
+
+/// A tool's colouring painted on the scan `scan`'s own triangles: `version` names it.
+pub(crate) fn painting(scan: &str, version: u64, colours: crate::scan_deviation::Colours, shaded: &Shaded) -> Option<crate::scan_paint::Painting> {
+    let scale = shaded.scale.clone()?;
+    Some(crate::scan_paint::Painting { scan: scan.to_owned(), key: version, scale, colours })
+}
+
+/// Where each of the scan's vertices under the surface sits on the scale.
+fn vertex_scale(shade: &network::Shade, values: &[f32], tolerance: f64) -> Option<Arc<Vec<f32>>> {
+    if shade.vertices.is_empty() {
+        return None;
+    }
+    let mut scale = vec![f32::NAN; shade.vertex_count];
+    for &(v, q) in &shade.vertices {
+        if let (Some(slot), Some(&d)) = (scale.get_mut(v as usize), values.get(q as usize)) {
+            *slot = solidcraft_scan_scale(d, tolerance).map_or(f32::NAN, |s| s as f32);
+        }
+    }
+    Some(Arc::new(scale))
 }
 
 /// The scan under the surface coloured by how far each part of it is from the surface, against
@@ -2933,7 +2970,7 @@ pub(crate) fn shade_dots(shade: &network::Shade, values: &[f32], tolerance: f64,
             let cell = solidcraft_viewport_gpu::view::Cell { corners: t.corners, value: [v; 3], rgb, ..Default::default() };
             solidcraft_viewport_gpu::view::cloud_cell(&mut out, &cell);
         }
-        return Shaded { dots: crate::scan_dots::none(), triangles: Arc::new(out) };
+        return Shaded { dots: crate::scan_dots::none(), triangles: Arc::new(out), scale: vertex_scale(shade, values, tolerance) };
     }
     let mut out = Vec::with_capacity(shade.points.len() * crate::scan_dots::DOT_SIZE);
     for (p, v) in shade.points.iter().zip(values) {
@@ -2941,7 +2978,7 @@ pub(crate) fn shade_dots(shade: &network::Shade, values: &[f32], tolerance: f64,
         let dot = crate::scan_dots::Dot { at: p.at.to_f32(), value: *v, rgb };
         crate::scan_dots::cloud_dot(&mut out, &dot);
     }
-    Shaded { dots: Arc::new(out), triangles: crate::scan_dots::none() }
+    Shaded { dots: Arc::new(out), triangles: crate::scan_dots::none(), scale: vertex_scale(shade, values, tolerance) }
 }
 
 /// Where a distance sits on the colouring's scale, -1 to 1 (0 within the tolerance).

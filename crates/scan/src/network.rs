@@ -739,6 +739,11 @@ pub struct Shade {
     /// the colouring covers the scan as a surface rather than as dots. Empty when more than
     /// [`PAINT_LIMIT`] triangles lie under the faces: then the points alone are shown.
     pub paint: Vec<Painted>,
+    /// Each of the scan's vertices under the faces with the point of `points` that colours it, for
+    /// painting the scan's own vertices (no limit: 8 bytes each), and how many vertices the scan
+    /// has.
+    pub vertices: Vec<(u32, u32)>,
+    pub vertex_count: usize,
 }
 
 /// A triangle of the scan under a face, coloured by one of the shade's points.
@@ -799,24 +804,31 @@ pub fn shade(scan: &crate::Scan, faces: &[NurbsSurface], reach: f64, limit: usiz
     let points = crate::thinned(&kept, limit);
     // Each shade point stands for this many of the scan's triangles round it.
     let share = (boxed.len() as f64 / near.len().max(1) as f64) * (kept.len() as f64 / points.len().max(1) as f64);
-    let paint = painted(scan, &boxed, &points, &by_place, share);
-    Shade { points, outside, paint }
+    let (paint, vertices) = painted(scan, &boxed, &points, &by_place, share);
+    Shade { points, outside, paint, vertices, vertex_count: scan.positions.len() }
 }
 
 /// The triangles of `boxed` (middle, normal, index) that a point of `points` stands for: the
 /// nearest within the spacing the points have on the scan (`share` triangles each), facing the
 /// same way as the triangle it was measured at (so the far side of a thin part is not painted).
-/// Empty when there are more than [`PAINT_LIMIT`].
-fn painted(scan: &crate::Scan, boxed: &[(Vec3, Vec3, usize)], points: &[Under], normals: &HashMap<[u64; 3], Vec3>, share: f64) -> Vec<Painted> {
+/// Empty when there are more than [`PAINT_LIMIT`]. With them, each of their vertices and the
+/// point that colours it, however many.
+fn painted(
+    scan: &crate::Scan,
+    boxed: &[(Vec3, Vec3, usize)],
+    points: &[Under],
+    normals: &HashMap<[u64; 3], Vec3>,
+    share: f64,
+) -> (Vec<Painted>, Vec<(u32, u32)>) {
     if points.is_empty() || boxed.is_empty() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     // A typical side of the scan's triangles here, from an even sample of them.
     let sample = crate::thinned(boxed, 512);
     let sides: Vec<f64> = sample.iter().filter_map(|(_, _, t)| scan.corners(*t)).map(|[a, b, c]| (a.dist(b) + b.dist(c) + c.dist(a)) / 3.0).collect();
     let side = sides.iter().sum::<f64>() / sides.len().max(1) as f64;
     if !(side.is_finite() && side > 0.0) {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     // Within the points' own spacing: a triangle just past the face's side is not painted.
     let reach = side * 0.75 * share.max(1.0).sqrt();
@@ -824,6 +836,9 @@ fn painted(scan: &crate::Scan, boxed: &[(Vec3, Vec3, usize)], points: &[Under], 
     let grid = crate::poisson::PointGrid::new(&at, reach);
     let key = |p: Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
     let mut out = Vec::new();
+    let mut whole = true;
+    // The point colouring each vertex (u32::MAX: none).
+    let mut by_vertex = vec![u32::MAX; scan.positions.len()];
     for &(m, n, t) in boxed {
         let mut best: Option<(f64, u32)> = None;
         grid.within(m, reach, |q, d| {
@@ -837,6 +852,14 @@ fn painted(scan: &crate::Scan, boxed: &[(Vec3, Vec3, usize)], points: &[Under], 
             continue;
         }
         let Some([a, b, c]) = scan.corners(t) else { continue };
+        for v in scan.triangles.get(t).into_iter().flatten() {
+            if let Some(slot) = by_vertex.get_mut(*v as usize) {
+                *slot = q;
+            }
+        }
+        if !whole {
+            continue;
+        }
         let lift = n * (PAINT_LIFT * a.dist(b).max(b.dist(c)).max(c.dist(a)));
         let f = |p: Vec3| {
             let p = p + lift;
@@ -844,10 +867,12 @@ fn painted(scan: &crate::Scan, boxed: &[(Vec3, Vec3, usize)], points: &[Under], 
         };
         out.push(Painted { corners: [f(a), f(b), f(c)], point: q });
         if out.len() > PAINT_LIMIT {
-            return Vec::new();
+            out = Vec::new();
+            whole = false;
         }
     }
-    out
+    let vertices = by_vertex.iter().enumerate().filter(|(_, q)| **q != u32::MAX).map(|(v, q)| (v as u32, *q)).collect();
+    (out, vertices)
 }
 
 /// How far each point of `shade` is from the faces, along the way the scan's outside is (above

@@ -295,7 +295,22 @@ pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view:
         return None;
     }
     let (_, _, version, dots) = k.shown.as_ref()?.shade.as_ref()?;
+    if crate::scan_paint::on_scan(app) && dots.scale.is_some() {
+        return None;
+    }
     Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots))
+}
+
+/// The colouring painted on the scan's own triangles, while it is shown.
+pub(crate) fn painting(app: &SolveApp) -> Option<crate::scan_paint::Painting> {
+    let Some(Kind::ScanFreeForm(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    if !k.colours {
+        return None;
+    }
+    let shown = k.shown.as_ref()?;
+    let scan = shown.result.as_ref().ok()?.scan.as_deref()?;
+    let (_, colours, version, dots) = shown.shade.as_ref()?;
+    crate::dialogs_scan_surface::painting(scan, *version, *colours, dots)
 }
 
 /// The dialog's rows.

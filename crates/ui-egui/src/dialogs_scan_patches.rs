@@ -276,7 +276,21 @@ pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view:
         return None;
     }
     let (_, _, version, dots) = k.shown.as_ref()?.under.as_ref()?.dots.as_ref()?;
+    if crate::scan_paint::on_scan(app) && dots.scale.is_some() {
+        return None;
+    }
     Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots))
+}
+
+/// The colouring painted on the scan's own triangles, while it is shown.
+pub(crate) fn painting(app: &SolveApp) -> Option<crate::scan_paint::Painting> {
+    let Some(Kind::ScanFitPatches(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    if !k.colours {
+        return None;
+    }
+    let under = k.shown.as_ref()?.under.as_ref()?;
+    let (_, colours, version, dots) = under.dots.as_ref()?;
+    crate::dialogs_scan_surface::painting(&under.scan, *version, *colours, dots)
 }
 
 /// What OK runs: the patches, and the scan's tolerance if it was changed here.
@@ -420,6 +434,38 @@ pub(crate) mod tests {
 
     /// A click on a curving sheet, Blocks chosen: the blocks are fitted and drawn before anything
     /// changes; OK keeps them as one surface body of four faces.
+    #[test]
+    fn a_shaded_view_paints_the_colouring_on_the_scans_own_vertices() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.viewport.gpu = Some(solidcraft_viewport_gpu::view::GpuTarget {
+            format: egui_wgpu::wgpu::TextureFormat::Rgba8Unorm,
+            depth: None,
+            samples: 1,
+            tess: false,
+            oit: false,
+        });
+        let path = h.dir.join("bent.stl");
+        std::fs::write(&path, bent_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let scan = h.app.session.model.state().bodies[0].name.clone();
+        h.app.run("select.clear", json!({})).unwrap();
+        h.app.start("scan.fit_patches");
+        if let Some(d) = h.app.dialog.as_mut() {
+            d.inputs[0].items.push(Sel::Face { body: scan.clone(), index: 0, point: Vec3::new(0.0, 15.0, 0.0) });
+        }
+        h.frames(3);
+        let painted = painting(&h.app).expect("the colouring painted on the scan");
+        assert_eq!(painted.scan, scan);
+        let mesh = h.app.session.model.state().body(&scan).and_then(|b| b.body.kept_mesh()).expect("the scan's mesh");
+        assert_eq!(painted.scale.len(), mesh.positions.len(), "one place on the scale for each of the scan's vertices");
+        assert!(painted.scale.iter().filter(|s| s.is_finite()).count() > mesh.positions.len() / 4, "the scan under the patches painted");
+        assert!(gpu_shade(&h.app).is_none(), "no cells over a painted scan");
+        assert!(crate::scan_paint::paintings(&h.app).iter().any(|p| p.scan == scan));
+        // In wireframe the scan's triangles are not drawn: the cells are.
+        h.app.ui.visual_style = 2;
+        assert!(gpu_shade(&h.app).is_some_and(|c| !c.dots.is_empty() || !c.triangles.is_empty()));
+    }
+
     #[test]
     fn blocks_are_fitted_on_a_click_and_ok_keeps_them() {
         let mut h = crate::scenario::Harness::new();

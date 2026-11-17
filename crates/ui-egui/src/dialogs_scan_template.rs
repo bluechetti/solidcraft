@@ -558,14 +558,14 @@ fn colour(app: &SolveApp, k: &mut FlatTemplate) {
             let Some(rgb) = rgb(*v) else { continue };
             crate::scan_dots::cloud_dot(&mut out, &crate::scan_dots::Dot { at: at.to_f32(), value: *v, rgb });
         }
-        crate::dialogs_scan_surface::Shaded { dots: Arc::new(out), triangles: crate::scan_dots::none() }
+        crate::dialogs_scan_surface::Shaded { dots: Arc::new(out), triangles: crate::scan_dots::none(), scale: None }
     } else {
         let mut out = Vec::with_capacity(under.paint.len() * crate::scan_dots::DOT_SIZE);
         for (corners, v) in &under.paint {
             let Some(rgb) = rgb(*v) else { continue };
             crate::scan_dots::cloud_painted(&mut out, *corners, *v, rgb);
         }
-        crate::dialogs_scan_surface::Shaded { dots: crate::scan_dots::none(), triangles: Arc::new(out) }
+        crate::dialogs_scan_surface::Shaded { dots: crate::scan_dots::none(), triangles: Arc::new(out), scale: None }
     };
     under.dots = Some((tolerance.to_bits(), colours, crate::dialogs_scan_surface::next_shade_version(), shaded));
 }
