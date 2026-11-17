@@ -138,8 +138,8 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Denoise) -> bool {
         k.chosen = true;
     }
     let at = found.at(k.strength);
-    let share = if found.noise > 0.0 { 100.0 * (1.0 - at.roughness / found.noise) } else { 0.0 };
-    let rough = solidcraft_ui_text::format("ui.scan_denoise_roughness_value", &[("roughness", &mm(at.roughness)), ("less", &format!("{share:.0}"))]);
+    let share = if found.noise > 0.0 { 100.0 * (1.0 - at.noise / found.noise) } else { 0.0 };
+    let rough = solidcraft_ui_text::format("ui.scan_denoise_roughness_value", &[("roughness", &mm(at.noise)), ("less", &format!("{share:.0}"))]);
     form_row(ui, tr("ui.scan_denoise_roughness"), |ui| ui_kit::text(ui, &rough, ui_kit::Text::Cell));
     let moved = solidcraft_ui_text::format("ui.scan_denoise_moved_value", &[("rms", &mm(at.rms_moved))]);
     form_row(ui, tr("ui.scan_denoise_moved"), |ui| ui_kit::text(ui, &moved, ui_kit::Text::Cell));

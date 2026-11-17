@@ -262,7 +262,7 @@ mod tests {
     fn a_cad_plate_with_a_hole_reads_no_noise() {
         let (p, t) = crate::test_meshes::holed_plate(40.0, 5.0, 8.0, 48);
         let scan = Scan::new(&p, &t);
-        let at_every_vertex = denoise::study(&scan).unwrap().noise;
+        let at_every_vertex = denoise::study(&scan).unwrap().stages[0].roughness;
         assert!(at_every_vertex > 0.04, "the case reads its edges as noise when every vertex counts: {at_every_vertex}");
         let look = look(&scan, 0.02).unwrap();
         assert!(look.noise.is_none_or(|n| n < 0.01), "{:?}", look.noise);

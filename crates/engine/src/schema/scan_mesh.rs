@@ -184,7 +184,8 @@ pub struct ScanDenoiseResult {
     pub strength: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suggested: Option<f64>,
-    /// The scan's roughness before and after, in mm.
+    /// The scan's noise before and after, in mm, read off its sharp edges (none where it is
+    /// drawn exactly, as a CAD mesh is).
     pub noise: f64,
     pub roughness: f64,
     /// How far its vertices moved: root mean square and largest, in mm.

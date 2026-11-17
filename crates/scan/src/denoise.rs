@@ -39,7 +39,7 @@ pub struct Denoised {
     /// study suggested when it was asked for the strength.
     pub strength: f64,
     pub suggested: Option<f64>,
-    /// The roughness before and after, in mm.
+    /// The noise before and after, in mm, read off the sharp edges ([`Stage::noise`]).
     pub noise: f64,
     pub roughness: f64,
     /// How far the vertices moved: root mean square and largest, in mm.
@@ -247,8 +247,12 @@ fn typical_edge(scan: &Scan) -> f64 {
 /// The roughness and the movement after a number of passes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stage {
-    /// The roughness left, in mm.
+    /// The roughness left, in mm, read at every vertex: what the error a strength leaves is
+    /// modelled on.
     pub roughness: f64,
+    /// The noise left, in mm, read off the sharp edges ([`noise_off_creases`]): what is shown.
+    /// Read at every vertex, a CAD mesh's edges read as millimetres of noise.
+    pub noise: f64,
     /// How far the vertices have moved: root mean square and largest, in mm.
     pub rms_moved: f64,
     pub max_moved: f64,
@@ -260,7 +264,7 @@ pub struct Stage {
 pub struct Study {
     pub stages: Vec<Stage>,
     pub suggested: f64,
-    /// The roughness before (the noise), and the typical edge, in mm.
+    /// The noise before (off the sharp edges, [`Stage::noise`]), and the typical edge, in mm.
     pub noise: f64,
     pub typical_edge: f64,
 }
@@ -274,7 +278,12 @@ impl Study {
         let f = s - lo as f64;
         let (a, b) = (self.stages[lo], self.stages[(lo + 1).min(self.stages.len() - 1)]);
         let mix = |x: f64, y: f64| x * (1.0 - f) + y * f;
-        Stage { roughness: mix(a.roughness, b.roughness), rms_moved: mix(a.rms_moved, b.rms_moved), max_moved: mix(a.max_moved, b.max_moved) }
+        Stage {
+            roughness: mix(a.roughness, b.roughness),
+            noise: mix(a.noise, b.noise),
+            rms_moved: mix(a.rms_moved, b.rms_moved),
+            max_moved: mix(a.max_moved, b.max_moved),
+        }
     }
 }
 
@@ -309,7 +318,7 @@ impl Run {
 
     fn stage(&self, p: &[Vec3]) -> Stage {
         let (rms_moved, max_moved) = self.moved(p);
-        Stage { roughness: self.mesh.roughness(p), rms_moved, max_moved }
+        Stage { roughness: self.mesh.roughness(p), noise: self.mesh.roughness_where(p, true).0, rms_moved, max_moved }
     }
 
     /// `p` with every position following its weld (a pass moves only the first copy of each).
@@ -366,12 +375,11 @@ pub fn study(scan: &Scan) -> Option<Study> {
         s += 0.05;
     }
     let suggested = if best_value <= (1.0 - REQUIRED_IMPROVEMENT) * error[0] { (best * 20.0).round() / 20.0 } else { 0.0 };
-    Some(Study { noise: stages[0].roughness, stages, suggested, typical_edge: run.edge })
+    Some(Study { noise: stages[0].noise, stages, suggested, typical_edge: run.edge })
 }
 
 /// `scan`'s noise read away from its sharp edges, in mm (0 where it is drawn exactly, as a CAD
-/// mesh is); `None` when no vertex lies off one. [`Study::noise`] reads every vertex, as the stages
-/// it is compared with do; this is the scan's own noise.
+/// mesh is); `None` when no vertex lies off one ([`Study::noise`] reads 0 then).
 pub fn noise_off_creases(scan: &Scan) -> Option<f64> {
     let run = Run::new(scan)?;
     let (noise, read) = run.mesh.roughness_where(&run.original, true);
@@ -426,8 +434,8 @@ pub fn denoise(scan: &Scan, strength: Option<f64>) -> Option<Denoised> {
     let positions = run.smoothed(strength)?;
     let measured = run.stage(&positions);
     Some(Denoised {
-        roughness: measured.roughness,
-        noise: run.mesh.roughness(&run.original),
+        roughness: measured.noise,
+        noise: run.mesh.roughness_where(&run.original, true).0,
         positions,
         strength,
         suggested,
@@ -502,6 +510,20 @@ mod tests {
         assert!(done.max_moved < 1e-9, "{}", done.max_moved);
     }
 
+    /// A clean CAD mesh, every vertex on a rim or a corner: it reads as no noise and is left
+    /// alone. Read at every vertex, its edges were shown as noise (about a millimetre on the
+    /// corpus's holes.stl).
+    #[test]
+    fn a_cad_mesh_reads_no_noise() {
+        let (positions, triangles) = crate::test_meshes::holed_plate(40.0, 5.0, 8.0, 48);
+        let scan = Scan::new(&positions, &triangles);
+        let found = study(&scan).unwrap();
+        assert!(found.stages[0].roughness > 0.04, "its edges read as roughness: {found:?}");
+        assert_eq!((found.noise, found.suggested), (0.0, 0.0), "{found:?}");
+        let done = denoise(&scan, None).unwrap();
+        assert_eq!((done.noise, done.roughness, done.suggested), (0.0, 0.0, Some(0.0)), "{done:?}");
+    }
+
     /// The study measures every pass: the roughness falls and the movement grows; at a whole pass
     /// it reads what smoothing at that strength measures, and a strength given runs only the
     /// passes it reaches, the same as the study's.
@@ -531,7 +553,7 @@ mod tests {
             assert_eq!(done.suggested, None);
             let read = found.at(k);
             if k.fract() == 0.0 {
-                assert!((read.roughness - done.roughness).abs() < 1e-12 && (read.rms_moved - done.rms_moved).abs() < 1e-12, "{k}: {read:?} {done:?}");
+                assert!((read.noise - done.roughness).abs() < 1e-12 && (read.rms_moved - done.rms_moved).abs() < 1e-12, "{k}: {read:?} {done:?}");
             } else {
                 assert!((read.rms_moved - done.rms_moved).abs() < 0.2 * done.rms_moved, "an estimate between passes: {read:?} {done:?}");
             }
