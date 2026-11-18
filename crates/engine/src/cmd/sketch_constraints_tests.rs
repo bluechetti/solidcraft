@@ -241,6 +241,38 @@ fn auto_constrain_fully_constrains_a_rough_sketch() {
     assert!(r["added"].as_array().unwrap().len() >= 3, "{r}");
 }
 
+/// With `round`, a sketch drawn off a measurement reads as designed: each dimension within the
+/// reach of a whole, half or tenth of a millimetre takes it, the value measured kept in its
+/// parameter's comment; one farther from any is left as measured.
+#[test]
+fn auto_constrain_rounds_measured_dimensions_to_designed_ones() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[1.02, 0.98], [40.97, 0.98], [40.97, 30.53], [1.02, 30.53]], "closed": true}));
+    run(&mut s, "sketch.circle.center", json!({"center": [20.03, 15.0], "radius": 3.137}));
+    let r = run(&mut s, "sketch.auto_constrain", json!({"round": 0.05}));
+    assert_eq!(r["dof"], 0, "{r}");
+    let params: Vec<(f64, String)> = s
+        .doc
+        .params
+        .iter()
+        .filter(|q| q.model)
+        .map(|q| (s.doc.eval(&q.expr, solidcraft_doc::expr::Kind::Length).unwrap(), q.comment.clone()))
+        .collect();
+    let has = |v: f64| params.iter().any(|(x, _)| (x - v).abs() < 1e-9);
+    // The sides 39.95 and 29.55 read 40 and 29.5; the corner's place 1.02, 0.98 reads 1, 1.
+    assert!(has(40.0) && has(29.5) && has(1.0) && has(20.0), "{params:?}");
+    // Ø 6.274 lies 0.026 off 6.3, within the reach: 6.3. Every rounded one says what was measured.
+    assert!(has(6.3), "{params:?}");
+    assert!(params.iter().all(|(x, c)| c.is_empty() || (c.starts_with("measured ") && (x * 10.0 - (x * 10.0).round()).abs() < 1e-9)), "{params:?}");
+    let si = run(&mut s, "sketch.inspect", json!({}));
+    assert_eq!(si["fully_constrained"], true, "{si}");
+    // Without it, as measured.
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[1.02, 0.98], [40.97, 0.98]]}));
+    run(&mut s, "sketch.auto_constrain", json!({}));
+    assert!(s.doc.params.iter().filter(|q| q.model).all(|q| q.comment.is_empty()), "{:?}", s.doc.params);
+}
+
 #[test]
 fn auto_constrain_dimensions_construction_curves_without_moving_them() {
     for command in ["sketch.auto_constrain", "sketch.auto_constrain_from_datum", "sketch.finish_auto_constrain"] {

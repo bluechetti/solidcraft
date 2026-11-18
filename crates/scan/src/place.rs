@@ -175,9 +175,12 @@ pub fn center_on_grid(scan: &Scan) -> Option<Rigid> {
     Some(Rigid::shift(Vec3::new(-middle.x, -middle.y, 0.0)))
 }
 
-/// Lays the scan along its own directions, longest along X, thinnest along Z, with the middle of
-/// its surface at the origin. `None` for a scan with no area or one too round to have a longest
-/// or a thinnest direction.
+/// Lays the scan along its own directions, square to its own faces: longest along X, thinnest
+/// along Z, centred over the origin and resting on the grid. Its spread gives the first guess;
+/// then each axis is turned to where the box round the scan is smallest, so a part of flat faces
+/// lies square to them (a part 96 x 60 x 56 mm, sides near alike in size, was left turned 10° by
+/// its spread alone, and its middle at the origin sank half of it through the grid). `None` for a
+/// scan with no area.
 pub fn quick_align(scan: &Scan) -> Option<Rigid> {
     let centre = surface_centre(scan)?;
     let mut spread = [[0.0f64; 3]; 3];
@@ -201,13 +204,62 @@ pub fn quick_align(scan: &Scan) -> Option<Rigid> {
             }
         }
     }
-    let (values, axes) = solidcraft_geom::inertia::principal(&spread, 0.0)?;
-    // Smallest first: a scan whose spreads are all within 1 % has no direction to lay along.
-    if !(values[2] > 0.0 && (values[1] < 0.99 * values[2] || values[0] < 0.99 * values[1])) {
-        return None;
+    // The spread's axes, largest first, when they are told apart; else the scan's own.
+    let first: [Vec3; 3] = match solidcraft_geom::inertia::principal(&spread, 0.0) {
+        Some((values, axes)) if values[2] > 0.0 && (values[1] < 0.99 * values[2] || values[0] < 0.99 * values[1]) => {
+            [axes[2].normalized()?, axes[1].normalized()?, axes[0].normalized()?]
+        }
+        _ => [Vec3::X, Vec3::Y, Vec3::Z],
+    };
+    // The scan's points, a sample, about its centre in those axes.
+    let used: Vec<Vec3> = (0..scan.triangle_count()).filter_map(|t| scan.corners(t)).flatten().collect();
+    let sample = crate::thinned(&used, 20_000);
+    let mut frame = first;
+    let local = |frame: &[Vec3; 3], p: Vec3| {
+        let d = p - centre;
+        [d.dot(frame[0]), d.dot(frame[1]), d.dot(frame[2])]
+    };
+    // Each axis in turn, the frame turned about it to where the box across the other two is
+    // smallest: whole degrees first, then a fiftieth of one; three rounds.
+    for _ in 0..3 {
+        for k in 0..3 {
+            let (a, b) = ((k + 1) % 3, (k + 2) % 3);
+            let points: Vec<(f64, f64)> = sample.iter().map(|p| local(&frame, *p)).map(|q| (q[a], q[b])).collect();
+            let area = |angle: f64| {
+                let (sn, cs) = angle.sin_cos();
+                let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+                for (u, v) in &points {
+                    let (x, y) = (cs * u + sn * v, -sn * u + cs * v);
+                    lo = [lo[0].min(x), lo[1].min(y)];
+                    hi = [hi[0].max(x), hi[1].max(y)];
+                }
+                (hi[0] - lo[0]) * (hi[1] - lo[1])
+            };
+            let best = |from: f64, to: f64, step: f64| {
+                let n = ((to - from) / step).round() as i64;
+                (0..=n).map(|i| from + step * i as f64).min_by(|x, y| area(*x).total_cmp(&area(*y))).unwrap_or(0.0)
+            };
+            let degree = std::f64::consts::PI / 180.0;
+            let coarse = best(-45.0 * degree, 45.0 * degree, degree);
+            let fine = best(coarse - degree, coarse + degree, degree / 50.0);
+            if fine.abs() < 1e-12 {
+                continue;
+            }
+            let (sn, cs) = fine.sin_cos();
+            let (u, v) = (frame[a], frame[b]);
+            frame[a] = (u * cs + v * sn).normalized()?;
+            frame[b] = (v * cs - u * sn).normalized()?;
+        }
     }
-    let mut x = axes[2].normalized()?;
-    let mut z = axes[0].normalized()?;
+    // Longest along X, thinnest along Z, by the box's own sides.
+    let extent = |axis: Vec3| {
+        let (lo, hi) = sample.iter().map(|p| (*p - centre).dot(axis)).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)));
+        hi - lo
+    };
+    let mut order = frame;
+    order.sort_by(|p, q| extent(*q).total_cmp(&extent(*p)));
+    let mut x = order[0];
+    let mut z = order[2];
     if x.x < 0.0 {
         x = -x;
     }
@@ -217,7 +269,13 @@ pub fn quick_align(scan: &Scan) -> Option<Rigid> {
     let y = z.cross(x).normalized()?;
     let x = y.cross(z).normalized()?;
     let turn = Rigid { rotation: [[x.x, x.y, x.z], [y.x, y.y, y.z], [z.x, z.y, z.z]], translation: Vec3::ZERO };
-    Some(Rigid { translation: -turn.turned(centre), ..turn })
+    // Centred over the origin, resting on the grid.
+    let placed: Vec<Vec3> = used.iter().map(|p| turn.turned(*p)).collect();
+    let (lo, hi) = placed.iter().fold(
+        (Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY), Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY)),
+        |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+    );
+    Some(Rigid { translation: Vec3::new(-(lo.x + hi.x) / 2.0, -(lo.y + hi.y) / 2.0, -lo.z), ..turn })
 }
 
 #[cfg(test)]
@@ -264,7 +322,8 @@ mod tests {
         assert_eq!(rest_on_grid(&scan).unwrap().translation, Vec3::new(0.0, 0.0, -7.0));
         assert_eq!(center_on_grid(&scan).unwrap().translation, Vec3::new(-35.0, -16.0, 0.0));
 
-        // Turned and moved anywhere, quick align lays it 60 along X, 20 along Y, 5 along Z, about the origin.
+        // Turned and moved anywhere, quick align lays it 60 along X, 20 along Y, 5 along Z, centred
+        // over the origin, resting on the grid.
         let axis = Vec3::new(0.3, -0.5, 0.8).normalized().unwrap();
         let moved = turned(&positions, axis, 0.7, Vec3::new(100.0, -40.0, 15.0));
         let scan = Scan::new(&moved, &triangles);
@@ -272,13 +331,34 @@ mod tests {
         let placed: Vec<Vec3> = moved.iter().map(|p| align.apply(*p)).collect();
         let lo = placed.iter().fold(Vec3::new(f64::MAX, f64::MAX, f64::MAX), |m, p| m.min(*p));
         let hi = placed.iter().fold(Vec3::new(f64::MIN, f64::MIN, f64::MIN), |m, p| m.max(*p));
-        assert!(close(hi - lo, Vec3::new(60.0, 20.0, 5.0), 1e-9), "{:?}", hi - lo);
-        assert!(close((hi + lo) / 2.0, Vec3::ZERO, 1e-9));
+        assert!(close(hi - lo, Vec3::new(60.0, 20.0, 5.0), 1e-6), "{:?}", hi - lo);
+        assert!(close(Vec3::new((hi.x + lo.x) / 2.0, (hi.y + lo.y) / 2.0, lo.z), Vec3::ZERO, 1e-6), "{lo:?} {hi:?}");
     }
 
+    /// A block whose sides are near alike (60 x 40 x 36) turned anywhere: its spread alone left it
+    /// turned; squared to its faces, it lies 60 x 40 x 36, on the grid.
     #[test]
-    fn a_cube_is_too_round_to_lay_along() {
+    fn quick_align_squares_a_block_whose_sides_are_near_alike() {
+        let (positions, triangles) = cuboid(Vec3::ZERO, Vec3::new(60.0, 40.0, 36.0));
+        let axis = Vec3::new(0.3, 1.0, 0.2).normalized().unwrap();
+        let moved = turned(&positions, axis, 0.61, Vec3::new(20.0, 10.0, 25.0));
+        let align = quick_align(&Scan::new(&moved, &triangles)).unwrap();
+        let placed: Vec<Vec3> = moved.iter().map(|p| align.apply(*p)).collect();
+        let lo = placed.iter().fold(Vec3::new(f64::MAX, f64::MAX, f64::MAX), |m, p| m.min(*p));
+        let hi = placed.iter().fold(Vec3::new(f64::MIN, f64::MIN, f64::MIN), |m, p| m.max(*p));
+        assert!(close(hi - lo, Vec3::new(60.0, 40.0, 36.0), 1e-3), "{:?}", hi - lo);
+        assert!(lo.z.abs() < 1e-6);
+    }
+
+    /// A cube has no longest side, but it is still squared to its faces and set on the grid.
+    #[test]
+    fn a_cube_is_squared_to_its_faces() {
         let (positions, triangles) = cuboid(Vec3::ZERO, Vec3::new(10.0, 10.0, 10.0));
-        assert!(quick_align(&Scan::new(&positions, &triangles)).is_none());
+        let moved = turned(&positions, Vec3::new(1.0, 1.0, 0.0).normalized().unwrap(), 0.4, Vec3::ZERO);
+        let align = quick_align(&Scan::new(&moved, &triangles)).unwrap();
+        let placed: Vec<Vec3> = moved.iter().map(|p| align.apply(*p)).collect();
+        let lo = placed.iter().fold(Vec3::new(f64::MAX, f64::MAX, f64::MAX), |m, p| m.min(*p));
+        let hi = placed.iter().fold(Vec3::new(f64::MIN, f64::MIN, f64::MIN), |m, p| m.max(*p));
+        assert!(close(hi - lo, Vec3::new(10.0, 10.0, 10.0), 0.01), "{:?}", hi - lo);
     }
 }

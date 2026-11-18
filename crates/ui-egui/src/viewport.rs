@@ -580,6 +580,7 @@ fn scene_key(app: &SolveApp) -> u64 {
     lod_generation(app).hash(&mut h);
     app.viewport.mesh_lods.generation().hash(&mut h);
     crate::scan_paint::scene_key(app).hash(&mut h);
+    crate::scan_triangles::scene_key(app).hash(&mut h);
     h.finish()
 }
 
@@ -5110,6 +5111,22 @@ fn build_highlight_with_projection(app: &SolveApp, projection: impl FnOnce() -> 
             sc.line((p - d * r).to_f32(), (p + d * r).to_f32(), construction, 2.0, true);
         }
     }
+    // Scan Triangles: the triangles of the scans shown, as thin lines the model hides where it is
+    // in front of them.
+    if app.ui.scan_triangles {
+        let colour = sc.color(c4(t.body_edge));
+        let mut kept = Vec::new();
+        for b in st.bodies.iter().filter(|b| b.body.is_mesh() && app.session.body_visible(&b.name)) {
+            let mesh = b.mesh();
+            kept.push(std::sync::Arc::as_ptr(&mesh) as usize);
+            if let Some(lines) = crate::scan_triangles::lines(&mesh) {
+                for [a, b] in lines.iter() {
+                    sc.line(*a, *b, colour, 1.0, false);
+                }
+            }
+        }
+        crate::scan_triangles::retain(&kept);
+    }
     // A face the modelling kernel refuses, while the window points at it: a ring round its edges
     // in the error colour, over the shading (and dimmed where the model hides it), like the
     // selection's outline.
@@ -5191,7 +5208,11 @@ fn build_highlight_with_projection(app: &SolveApp, projection: impl FnOnce() -> 
     // point, or a scan selected before the dialog opened) is not painted in the selection colour,
     // which would hide the surface's lines, its points and the scan's colouring by distance.
     let plain_scan = crate::dialogs_scan_free_form::plain_scan(app);
-    let scan_kept_plain = |b: &solidcraft_engine::doc::ModelBody| plain_scan && b.body.is_mesh();
+    // A scan with triangles selected on it shows them, not the whole scan in the selection colour
+    // (a click that chose them also selected the scan, which hid them once the dialog closed).
+    let triangles_on = solidcraft_engine::cmd::scan::select::selected(&app.session).filter(|k| k.count > 0).map(|k| k.scan.clone());
+    let scan_kept_plain =
+        |b: &solidcraft_engine::doc::ModelBody| b.body.is_mesh() && (plain_scan || triangles_on.as_deref() == Some(b.name.as_str()));
     for x in &sel {
         match x {
             Sel::Face { body, .. } | Sel::Body { name: body } if by_name.get(body).is_some_and(scan_kept_plain) => {}
@@ -5826,7 +5847,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         update_refinement(app, ui.ctx(), &proj);
     }
     // Levels of detail being made: keep frames coming to draw them when they are.
-    if app.viewport.mesh_lods.busy() || crate::scan_paint::busy() {
+    if app.viewport.mesh_lods.busy() || crate::scan_paint::busy() || crate::scan_triangles::busy() {
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
     }
     crate::frame_watch::step(app, "display refinement");
@@ -5890,11 +5911,16 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             images: crate::ref_images::gpu_images(app),
             clouds: crate::point_clouds::gpu_clouds(app, ui.ctx())
                 .into_iter()
+                // The selection first: painted colourings are drawn where nothing nearer is yet,
+                // so of two on the same triangles the first wins (after Find All, which Select's
+                // Shape tool needs, its colours hid the selection).
+                .chain(crate::scan_selection::gpu_cloud(app))
+                .chain(crate::dialogs_scan_run::gpu_preview(app))
                 .chain(crate::scan_deviation::gpu_cloud(app))
                 .chain(crate::scan_shapes::gpu_cloud(app))
-                .chain(crate::scan_selection::gpu_cloud(app))
                 .chain(crate::dialogs_scan::gpu_marks(app))
                 .chain(crate::dialogs_scan::gpu_mismatch(app))
+                .chain(crate::dialogs_scan::gpu_fill(app))
                 .chain(crate::dialogs_scan_clean::gpu_marks(app))
                 .chain(crate::dialogs_scan_clean::gpu_area_marks(app))
                 .chain(crate::dialogs_scan_fit::gpu_marks(app))
@@ -6711,6 +6737,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::browser_canvas::paint_marks(app, &painter, &proj);
     crate::point_clouds::show(app, &painter, &proj);
     crate::dialogs_scan::draw(app, &painter, &proj);
+    crate::dialogs_scan_fit::draw(app, &painter, &proj);
     crate::dialogs_scan_surface::draw(app, &painter, &proj);
     crate::dialogs_surface_check::draw(app, &painter, &proj);
     crate::dialogs_scan_curve::draw(app, &painter, &proj);

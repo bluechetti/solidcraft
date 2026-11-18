@@ -49,7 +49,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("select")
         .contract(&SELECT_CONTRACT)
         .output(output_schema_for::<ScanSelectResult>)
-        .params("body?: the scan (default: the one selected on, else the selected or only one); mode?: replace|add|remove (default replace); and one of: brush: {points: [[x,y,z], …], radius: length} (the triangles within the radius of each place, reached across the scan from the one under it); polygon: {points: [[x,y,z], …] (its corners as the view draws them), direction: [x,y,z] (the way the view looks), eye?: [x,y,z] (a perspective view's), through?: bool (default false: only what is seen)}; region: {point, angle?: degrees (default 30)} (grown while the scan faces within the angle of the way it faces there: a face up to where its rounds turn away); shape: n | {point} (a shape Find All found); saved: name (a kept selection); triangles: [n, …]; all: true; none: true; invert: true; grow: rings; shrink: rings; unexplained: solid | {body: solid, piece?: n (default 0, the largest), grow?: rings} (the part of the scan the solid built from it does not explain yet: its triangles farther from the solid than five times the scan's tolerance, at least 0.5 mm, in pieces of 50 triangles or more; one piece selected, nothing when the solid explains the whole scan; read it with scan.reconstruct_selection to build what is missing). A view of the scan, not an undo step → body, triangles, area, of, changed, pieces? [{piece, triangles, area, side: missing|extra, deepest, point}], limit?"),
+        .params("body?: the scan (default: the one selected on, else the selected or only one); mode?: replace|add|remove (default replace); and one of: brush: {points: [[x,y,z], …], radius: length} (the triangles within the radius of each place, reached across the scan from the one under it); polygon: {points: [[x,y,z], …] (its corners as the view draws them), direction: [x,y,z] (the way the view looks), eye?: [x,y,z] (a perspective view's), through?: bool (default false: only what is seen)}; region: {point, angle?: degrees (default 30), until?: facing|crease} (facing, the default: grown while the scan faces within the angle of the way it faces there, a face up to where its rounds turn away; crease: grown while it turns less than the angle from one triangle to the next, up to its creases, a whole hole wall or a fillet with the faces it runs into); shape: n | {point, like?: bool} (a shape Find All found; with like, every shape like it: cylinders and spheres of its radius, cones of its half angle, tori of its radii, planes facing its way); saved: name (a kept selection); triangles: [n, …]; all: true; none: true; invert: true; grow: rings; shrink: rings; unexplained: solid | {body: solid, piece?: n (default 0, the largest), grow?: rings} (the part of the scan the solid built from it does not explain yet: its triangles farther from the solid than five times the scan's tolerance, at least 0.5 mm, in pieces of 50 triangles or more; one piece selected, nothing when the solid explains the whole scan; read it with scan.reconstruct_selection to build what is missing). A view of the scan, not an undo step → body, triangles, area, of, changed, pieces? [{piece, triangles, area, side: missing|extra, deepest, point}], limit?"),
     CommandSpec::new("scan.select_inside_curve", "Select Inside Curve", crate::checked!("scan.select_inside_curve", select_inside))
         .icon("boundary_fill")
         .contract(&INSIDE_CONTRACT)
@@ -186,21 +186,19 @@ pub const SNAP_BUILD_LIMIT: usize = 300_000;
 /// when the scan is small enough ([`SNAP_BUILD_LIMIT`]); `None` for a larger scan nothing has
 /// built it for.
 pub fn topology_for_snap(s: &Session, body: &str) -> Option<Arc<Topology>> {
-    let state = s.model.state();
-    let mesh = state.body(body).and_then(|b| b.body.kept_mesh())?;
+    let mesh = super::shown_mesh(s, body)?;
     let held = [mesh.positions.as_ptr() as usize, mesh.positions.len(), mesh.triangles.as_ptr() as usize, mesh.triangles.len()];
     let ready = TOPOLOGY.lock().ok().and_then(|c| c.as_ref().filter(|(h, ..)| *h == held).map(|(_, _, t)| t.clone()));
-    drop(state);
     ready.or_else(|| {
-        let small = s.model.state().body(body).and_then(|b| b.body.kept_mesh()).is_some_and(|m| m.triangles.len() <= SNAP_BUILD_LIMIT);
+        let small = mesh.triangles.len() <= SNAP_BUILD_LIMIT;
         small.then(|| topology(s, body, "scan.snap").ok()).flatten()
     })
 }
 
 /// The topology of the scan `body`, built once while the scan is as it was.
 pub fn topology(s: &Session, body: &str, cmd: &str) -> Result<Arc<Topology>> {
-    let state = s.model.state();
-    let mesh = state.body(body).and_then(|b| b.body.kept_mesh()).ok_or_else(|| bad(cmd, format!("`{body}` is not a scan")))?;
+    // Where the scan shows (see `shown_mesh`): what is grown, painted and cut is where it is drawn.
+    let mesh = super::shown_mesh(s, body).ok_or_else(|| bad(cmd, format!("`{body}` is not a scan")))?;
     let (positions, triangles) = (mesh.positions.as_slice(), mesh.triangles.as_slice());
     let held = [positions.as_ptr() as usize, positions.len(), triangles.as_ptr() as usize, triangles.len()];
     let mut cache = TOPOLOGY.lock().map_err(|_| EngineError::Other("the scan's topology is unavailable".into()))?;
@@ -371,10 +369,8 @@ pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
                         return Err(bad(cmd, "`polygon.direction` must not be zero"));
                     }
                     let through = bool_(v, "through").unwrap_or(false);
-                    let state = s.model.state();
-                    let (positions, triangles) =
-                        state.body(&scan).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
-                    topology.seen_inside(&Scan::new(positions, triangles), &ring, &View { direction, eye }, through)
+                    let shown = super::shown_mesh(s, &scan).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
+                    topology.seen_inside(&Scan::new(&shown.positions, &shown.triangles), &ring, &View { direction, eye }, through)
                 }
                 "region" => {
                     let point = crate::params::vec3(&v["point"]).ok_or_else(|| bad(cmd, "`region.point` must be [x, y, z]"))?;
@@ -383,7 +379,11 @@ pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
                         return Err(bad(cmd, "`region.angle` is 1 to 90 degrees"));
                     }
                     let (seed, _) = topology.nearest(point).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
-                    topology.region(seed, angle.to_radians())
+                    match v.get("until").and_then(Value::as_str) {
+                        None | Some("facing") => topology.region(seed, angle.to_radians()),
+                        Some("crease") => topology.smooth_region(seed, angle.to_radians()),
+                        Some(_) => return Err(bad(cmd, "`region.until` is facing or crease")),
+                    }
                 }
                 "shape" => shape_flags(s, &scan, v, &topology, cmd)?,
                 "saved" => {
@@ -522,7 +522,17 @@ fn shape_flags(s: &Session, scan: &str, v: &Value, topology: &Topology, cmd: &st
             *shapes.regions.get(t).ok_or_else(|| bad(cmd, "Find All's regions do not match the scan"))?
         }
     };
-    Ok(shapes.regions.iter().map(|r| *r == region).collect())
+    // With `like`, every shape Find All found that is like that one (holes of its size, faces
+    // facing its way: Shape::like).
+    let like = v.get("like").and_then(Value::as_bool).unwrap_or(false);
+    if !like {
+        return Ok(shapes.regions.iter().map(|r| *r == region).collect());
+    }
+    let Some(first) = shapes.outcome.segments.get(region as usize).and_then(|seg| seg.shape) else {
+        return Err(bad(cmd, "the scan there is freeform, no shape: there is nothing like it to find"));
+    };
+    let alike: Vec<bool> = shapes.outcome.segments.iter().map(|seg| seg.shape.is_some_and(|sh| first.like(&sh))).collect();
+    Ok(shapes.regions.iter().map(|r| alike.get(*r as usize).copied().unwrap_or(false)).collect())
 }
 
 pub(super) fn select_inside(s: &mut Session, p: &Value) -> Result<Value> {
@@ -579,10 +589,9 @@ pub fn edge_preview(s: &Session, every: bool, smooth: Option<f64>, tolerance: f6
     let topology = topology(s, &k.scan, cmd)?;
     let width = smooth.unwrap_or(2.0 * topology.edge);
     let reach = super::curve::size(s, &k.scan) / 100.0 + 3.0 * topology.edge;
-    let state = s.model.state();
-    let (positions, triangles) = state.body(&k.scan).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
+    let shown = super::shown_mesh(s, &k.scan).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
     let (lines, skipped) =
-        topology.edge_lines(&Scan::new(positions, triangles), &k.selected, every, width, reach).map_err(|e| bad(cmd, e.to_string()))?;
+        topology.edge_lines(&Scan::new(&shown.positions, &shown.triangles), &k.selected, every, width, reach).map_err(|e| bad(cmd, e.to_string()))?;
     let fitted = lines
         .into_iter()
         .map(|path| {

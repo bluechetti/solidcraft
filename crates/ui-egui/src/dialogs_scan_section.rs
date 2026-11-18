@@ -24,6 +24,10 @@ pub struct SectionSketch {
     /// Which of [`PLANES`], and how far along its normal (mm).
     pub plane: usize,
     pub offset: f64,
+    /// An offset typed is kept; until then it is the middle of the scan along the plane's normal,
+    /// so the first cut goes through the part (at 0 it grazed the bottom of a scan resting on the
+    /// grid and sketched its noise).
+    pub offset_set: bool,
     /// How far a piece may stray from the cut (mm).
     pub tolerance: f64,
     /// The tolerance follows the cut's noise (three times it, at least 0.1 mm) until one is typed;
@@ -34,7 +38,7 @@ pub struct SectionSketch {
 
 impl Default for SectionSketch {
     fn default() -> Self {
-        SectionSketch { plane: 0, offset: 0.0, tolerance: section::TOLERANCE, from_scan: false, shown: None }
+        SectionSketch { plane: 0, offset: 0.0, offset_set: false, tolerance: section::TOLERANCE, from_scan: false, shown: None }
     }
 }
 
@@ -61,6 +65,13 @@ fn in_sketch(app: &SolveApp) -> bool {
 /// Cut and fit again when the plane, the tolerance or the design has changed; while the tolerance
 /// follows the cut, it is the cut's.
 fn cut(app: &SolveApp, k: &mut SectionSketch) {
+    if !k.offset_set
+        && let Ok((_, lo, hi)) = solidcraft_engine::cmd::scan::scan_box(&app.session, None)
+    {
+        let middle = (lo + hi) / 2.0;
+        // XY, XZ, YZ: across Z, Y, X.
+        k.offset = [middle.z, middle.y, middle.x][k.plane.min(2)];
+    }
     let tolerance = if k.from_scan { 0 } else { k.tolerance.to_bits() };
     let key = (k.plane, k.offset.to_bits(), tolerance, app.session.revision, k.from_scan);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
@@ -87,7 +98,11 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SectionSketch) -> bool {
         ui_kit::text(ui, tr("ui.scan_section_in_sketch"), ui_kit::Text::Note("scan_section_in_sketch"));
     } else {
         choice_row(ui, tr("ui.scan_section_plane"), "scan_section_plane", &mut k.plane, &PLANES);
+        let before = k.offset;
         form_row(ui, tr("ui.scan_section_offset"), |ui| ui_kit::length_field(ui, &mut k.offset, &units, decimals));
+        if k.offset != before {
+            k.offset_set = true;
+        }
     }
     let before = k.tolerance;
     form_row(ui, tr("ui.scan_section_tolerance"), |ui| ui_kit::length_field(ui, &mut k.tolerance, &units, decimals.max(3)));
@@ -255,6 +270,20 @@ mod tests {
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
         assert!(h.app.session.doc.features.iter().any(|f| f.name == "Section"), "the sketch made");
+    }
+
+    /// Nothing typed, the first cut goes through the middle of the tube (Z 0 to 20), not along its
+    /// bottom on the grid: one circle.
+    #[test]
+    fn the_first_cut_goes_through_the_middle_of_the_scan() {
+        let mut h = crate::scenario::Harness::new();
+        tube(&mut h);
+        h.app.start("scan.section_sketch");
+        h.frames(2);
+        let Some(Kind::ScanSection(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the dialog") };
+        assert!((k.offset - 10.0).abs() < 0.01, "{}", k.offset);
+        let Some(Ok((_, _, outlines))) = k.shown.as_ref().map(|s| &s.result) else { panic!("a cut: {:?}", k.shown) };
+        assert!(matches!(outlines.as_slice(), [Outline::Circle { .. }]), "{outlines:?}");
     }
 
     /// With the preference on (the default) the tolerance starts at the cut's own (three times its

@@ -23,13 +23,15 @@ use solidcraft_engine::geom::prelude::*;
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, check, form_row};
-use crate::selection::{FACES, SelInput};
+use crate::selection::{FACES, PLANES, SelInput};
 use crate::ui_kit::{self, choice_row};
 
 /// The marks' id among the clouds the viewport draws (the deviation map is `u64::MAX - 1`), and
 /// Symmetry's colouring by mismatch.
 const CLOUD_ID: u64 = u64::MAX - 2;
 const MISMATCH_ID: u64 = u64::MAX - 3;
+/// What Complete by Mirroring would add, shown before OK.
+const FILL_ID: u64 = u64::MAX - 24;
 
 /// A mark's size on screen, in pixels.
 const DOT_PIXELS: f32 = 3.0;
@@ -69,9 +71,13 @@ struct Preview {
 
 /// The dialogs for Stand on Base, and for Find Symmetry and Square Up (one dialog, its OK set to
 /// keep the plane or to square the scan to it).
-pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
+pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     match id {
-        "scan.stand_on_base" => Some((Kind::ScanBase(StandBase::default()), vec![SelInput::new("Face", FACES, true).places()])),
+        // Pressed again while the scan stands where it was put, the next base is offered.
+        "scan.stand_on_base" => {
+            let index = solidcraft_engine::cmd::scan::next_base(&app.session, None);
+            Some((Kind::ScanBase(StandBase { index, ..StandBase::default() }), vec![SelInput::new("Face", FACES, true).places()]))
+        }
         "scan.symmetry" | "scan.square_to_symmetry" | "scan.complete_by_mirroring" => {
             let square = match id {
                 "scan.square_to_symmetry" => SQUARE,
@@ -79,7 +85,11 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
                 _ => KEEP,
             };
             // Completing is a guess that the two sides are alike: the colouring shows whether they are.
-            Some((Kind::ScanSymmetry(Symmetry { square, colour: square == COMPLETE, ..Symmetry::default() }), Vec::new()))
+            // A plane picked is the mirror plane, used as it is.
+            Some((
+                Kind::ScanSymmetry(Symmetry { square, colour: square == COMPLETE, ..Symmetry::default() }),
+                vec![SelInput::new("Plane", PLANES, false)],
+            ))
         }
         _ => None,
     }
@@ -211,6 +221,8 @@ pub struct Symmetry {
     /// The scan is coloured by how far each point's reflection lands from it.
     pub colour: bool,
     colouring: Option<Colouring>,
+    /// With On OK set to complete: what OK would add, for the plane shown.
+    filling: Option<Filling>,
     /// The next drag in the view draws a guide.
     pub drawing: bool,
     /// The guide drawn: from, to, and the way it was seen from (scan toward the eye).
@@ -222,9 +234,11 @@ pub struct Symmetry {
 
 #[derive(Clone, Debug)]
 struct Found {
-    key: (Option<[[u64; 3]; 3]>, u64),
+    key: (Option<[[u64; 3]; 3]>, u64, Option<[[u64; 3]; 2]>, bool),
     body: Option<(String, Vec3, Vec3)>,
     mirror: Result<ScanMirror, String>,
+    /// The plane picked and used as it is, by name.
+    plane: Option<String>,
 }
 
 fn bits(v: Vec3) -> [u64; 3] {
@@ -245,6 +259,51 @@ pub fn symmetry_command(k: &Symmetry) -> &'static str {
     }
 }
 
+/// What Complete by Mirroring would add for the plane shown: its triangles painted, and how many.
+#[derive(Clone, Debug)]
+struct Filling {
+    key: ([u64; 3], [u64; 3], u64),
+    result: Result<(usize, u64, Arc<Vec<u8>>), String>,
+}
+
+/// Work out what OK would add when the plane or the design has changed (and OK completes).
+fn fill(app: &SolveApp, k: &mut Symmetry) {
+    let Some(found) = k.found.as_ref().filter(|_| k.square == COMPLETE) else { return };
+    let Ok(m) = &found.mirror else { return };
+    let key = (bits(Vec3::from(m.point)), bits(Vec3::from(m.normal)), app.session.revision);
+    if k.filling.as_ref().is_some_and(|f| f.key == key) {
+        return;
+    }
+    let body = found.body.as_ref().map(|b| b.0.as_str());
+    let rgb = solidcraft_engine::cmd::scan::FILL_COLOR.map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
+    let result = solidcraft_engine::cmd::scan::mirror_fill_preview(&app.session, body, Vec3::from(m.point), Vec3::from(m.normal))
+        .map_err(|e| e.to_string())
+        .map(|triangles| {
+            let mut out = Vec::new();
+            crate::scan_dots::paint_corners(&mut out, triangles.iter().map(|&corners| (corners, 0.0, rgb)));
+            let version = VERSION.with(|v| {
+                v.set(v.get() + 1);
+                v.get()
+            });
+            (triangles.len(), version, Arc::new(out))
+        });
+    k.filling = Some(Filling { key, result });
+}
+
+/// What Complete by Mirroring would add, for the GPU viewport while the dialog shows it.
+pub(crate) fn gpu_fill(app: &SolveApp) -> Option<GpuCloud> {
+    let Some(Kind::ScanSymmetry(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    let (_, version, triangles) = k.filling.as_ref().filter(|_| k.square == COMPLETE)?.result.as_ref().ok()?;
+    Some(GpuCloud {
+        id: FILL_ID,
+        version: *version,
+        dots: crate::scan_dots::none(),
+        segments: crate::scan_dots::none(),
+        triangles: triangles.clone(),
+        style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: DOT_PIXELS },
+    })
+}
+
 /// The scan coloured by how far each point's reflection lands from it, and what for.
 #[derive(Clone, Debug)]
 struct Colouring {
@@ -252,15 +311,26 @@ struct Colouring {
     result: Result<(f64, u64, Arc<Vec<u8>>), String>,
 }
 
-/// Search again when the guide or the design has changed.
-fn search(app: &SolveApp, k: &mut Symmetry) {
-    let key = (k.guide.map(|g| g.map(bits)), app.session.revision);
+/// Search again when the guide, the plane picked or the design has changed. A plane picked (an
+/// origin or construction plane) is used as it is: on a scan of one side of a part that mirrors
+/// in more than one plane, no search can tell which is meant.
+fn search(app: &SolveApp, k: &mut Symmetry, inputs: &[SelInput]) {
+    let picked = inputs
+        .first()
+        .and_then(|i| i.items.iter().rev().find_map(|x| if let Sel::Plane { name } = x { Some(name.clone()) } else { None }))
+        .and_then(|name| solidcraft_engine::cmd::scan::named_plane(&app.session, &name).map(|(p, n)| (name, p, n)));
+    let key = (k.guide.map(|g| g.map(bits)), app.session.revision, picked.as_ref().map(|(_, p, n)| [bits(*p), bits(*n)]), k.square == COMPLETE);
     if k.found.as_ref().is_some_and(|f| f.key == key) {
         return;
     }
     let body = scan_box(&app.session, None).ok();
-    let mirror = symmetry_preview(&app.session, body.as_ref().map(|b| b.0.as_str()), k.guide).map_err(|e| e.to_string());
-    k.found = Some(Found { key, body, mirror });
+    let on = body.as_ref().map(|b| b.0.as_str());
+    let mirror = match &picked {
+        Some((_, point, normal)) => solidcraft_engine::cmd::scan::mirror_preview(&app.session, on, *point, *normal),
+        None => symmetry_preview(&app.session, on, k.guide, k.square == COMPLETE),
+    }
+    .map_err(|e| e.to_string());
+    k.found = Some(Found { key, body, mirror, plane: picked.map(|(name, _, _)| name) });
 }
 
 /// Colour the scan again when the plane or the design has changed (and the colouring is on).
@@ -273,8 +343,8 @@ fn colour(app: &SolveApp, k: &mut Symmetry) {
     }
     let body = found.body.as_ref().map(|b| b.0.as_str());
     let result = mismatch_preview(&app.session, body, Vec3::from(m.point), Vec3::from(m.normal)).map_err(|e| e.to_string()).and_then(|(name, mm)| {
-        let state = app.session.model.state();
-        let (positions, _) = state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or("the scan is gone")?;
+        let shown = solidcraft_engine::cmd::scan::shown_mesh(&app.session, &name).ok_or("the scan is gone")?;
+        let positions = shown.positions.as_slice();
         let [good, bad] = mismatch_colours();
         let mut dots = Vec::with_capacity(positions.len() * crate::scan_dots::DOT_SIZE);
         for (p, &v) in positions.iter().zip(&mm.values) {
@@ -303,8 +373,8 @@ fn mismatch_colours() -> [[u8; 3]; 2] {
 }
 
 /// The Symmetry dialog's rows.
-pub fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Symmetry) -> bool {
-    search(app, k);
+pub fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Symmetry, inputs: &[SelInput]) -> bool {
+    search(app, k, inputs);
     let ids = |id: &'static str| solidcraft_ui_text::tr(id);
     if let Some(found) = &k.found {
         match &found.mirror {
@@ -336,6 +406,10 @@ pub fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Symmetry) -> boo
             }
         }
     }
+    // The Plane row above takes an origin or construction plane picked; until one is, say so.
+    if k.found.as_ref().is_none_or(|f| f.plane.is_none()) {
+        ui_kit::text(ui, ids("ui.scan_symmetry_plane_hint"), ui_kit::Text::Hint("scan_symmetry_plane_hint"));
+    }
     form_row(ui, ids("ui.scan_symmetry_draw"), |ui| check(ui, &mut k.drawing));
     if k.guide.is_some() {
         let mut keep = true;
@@ -347,12 +421,18 @@ pub fn symmetry_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Symmetry) -> boo
     let labels = [ids("ui.scan_symmetry_keep"), ids("ui.scan_symmetry_square"), ids("ui.scan_symmetry_complete")];
     choice_row(ui, ids("ui.scan_symmetry_on_ok"), "scan_symmetry_on_ok", &mut k.square, &labels);
     if k.square == COMPLETE {
+        fill(app, k);
+        if let Some(Ok((n, _, _))) = k.filling.as_ref().map(|f| &f.result) {
+            let adds = solidcraft_ui_text::format("ui.scan_symmetry_fill_count", &[("triangles", &n.to_string())]);
+            ui_kit::text(ui, &adds, ui_kit::Text::Note("scan_symmetry_fill_count"));
+        }
         ui_kit::text(ui, ids("ui.scan_symmetry_complete_hint"), ui_kit::Text::Hint("scan_symmetry_complete_hint"));
         // OK adds geometry: say plainly when the scan is no mirror image about the plane.
         if let Some(m) = k.found.as_ref().and_then(|f| f.mirror.as_ref().ok()).filter(|m| !m.symmetric) {
             let share = format!("{:.0} %", 100.0 * m.coverage);
             let unlike = solidcraft_ui_text::format("ui.scan_symmetry_complete_unlike", &[("share", &share)]);
-            ui_kit::text(ui, &unlike, ui_kit::Text::Report("scan_symmetry_complete_unlike", true));
+            // Expected on a scan of one side, which is what completing is for: said, not an error.
+            ui_kit::text(ui, &unlike, ui_kit::Text::Report("scan_symmetry_complete_unlike", false));
         }
     }
     ui_kit::text(ui, ids("ui.scan_symmetry_hint"), ui_kit::Text::Hint("scan_symmetry_hint"));
@@ -572,6 +652,59 @@ mod tests {
         assert!(lo.z.abs() < 1e-4 && (hi.z - 80.0).abs() < 1e-4, "standing on its end: {lo:?} {hi:?}");
     }
 
+    /// Pressed again while the slab stands where OK put it (read off the slab: OK runs on a copy of
+    /// the session, which remembers nothing), the dialog opens on the next base, so
+    /// OK turns it to its next way up; once it has been lifted off the grid, it opens on the
+    /// steadiest again.
+    #[test]
+    fn stand_on_base_pressed_again_offers_the_next_base() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("slab.stl");
+        std::fs::write(&path, slab_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let index = |h: &crate::scenario::Harness| match h.app.dialog.as_ref().map(|d| &d.kind) {
+            Some(Kind::ScanBase(k)) => k.index,
+            _ => usize::MAX,
+        };
+        // Tilted, it stands on no base: the steadiest first.
+        h.app.run("solid.move", json!({"bodies": ["slab"], "axis": [1, 0.3, 0], "angle": "30 deg"})).unwrap();
+        h.app.start("scan.stand_on_base");
+        h.frames(3);
+        assert_eq!(index(&h), 0, "the steadiest first");
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        let first = bounds(&h);
+        h.app.start("scan.stand_on_base");
+        h.frames(3);
+        assert_eq!(index(&h), 1, "the next base");
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert_ne!(bounds(&h), first, "turned to its next way up");
+        h.app.run("solid.move", json!({"bodies": ["slab"], "translate": [0, 0, 5]})).unwrap();
+        h.app.start("scan.stand_on_base");
+        h.frames(3);
+        assert_eq!(index(&h), 0, "moved since: the steadiest again");
+    }
+
+    /// The viewport keeps each overlay cloud by its id: two scan overlays sharing one would show
+    /// each other's colours (Fit's and Clean's area marks did, and Select's and Edit Surface's).
+    #[test]
+    fn every_scan_overlay_has_its_own_cloud_id() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut seen = std::collections::BTreeMap::new();
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            for line in text.lines().filter(|l| l.trim_start().starts_with("const ") && l.contains("u64 = u64::MAX - ")) {
+                let n: u64 = line.rsplit("u64::MAX - ").next().unwrap().trim_end_matches(';').trim().parse().unwrap();
+                if let Some(other) = seen.insert(n, path.display().to_string()) {
+                    panic!("u64::MAX - {n} is both {other}'s and {}'s", path.display());
+                }
+            }
+        }
+        assert!(seen.len() >= 10, "{seen:?}");
+    }
+
     /// An STL of boxes, each side cut into `n` × `n` squares.
     fn boxes_stl(boxes: &[([f64; 3], [f64; 3])], n: u32) -> String {
         boxes_stl_keeping(boxes, n, |_| true)
@@ -665,6 +798,8 @@ mod tests {
         h.frames(3);
         let cloud = gpu_mismatch(&h.app).expect("the scan coloured by mismatch");
         assert!(!cloud.dots.is_empty());
+        let fill = gpu_fill(&h.app).expect("what OK adds, shown before it");
+        assert!(!fill.triangles.is_empty());
 
         h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
         h.settle();
@@ -673,6 +808,33 @@ mod tests {
         let fill = state.bodies.iter().find(|b| b.name.ends_with("Mirror Fill")).expect("the fill, a body of its own");
         let (positions, _) = fill.body.triangle_mesh().expect("a mesh");
         assert!(!positions.is_empty() && positions.iter().all(|p| p.x > 44.0 && p.y > 11.0), "only the corner the scan missed");
+    }
+
+    /// A box centred on the origin mirrors in YZ and in XZ; with its end past X = 15 never scanned,
+    /// the search finds XZ (all of what is there matches it). The origin's YZ plane picked is used
+    /// as it is: OK fills the missing end, mirrored in YZ.
+    #[test]
+    fn complete_by_mirroring_uses_the_plane_picked_as_it_is() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("box.stl");
+        let boxes = [([-40.0, -20.0, 0.0], [40.0, 20.0, 30.0])];
+        std::fs::write(&path, boxes_stl_keeping(&boxes, 12, |t| t.iter().all(|p| p[0] <= 15.0))).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.start("scan.complete_by_mirroring");
+        if let Some(d) = h.app.dialog.as_mut() {
+            d.inputs[0].items.push(Sel::Plane { name: "YZ".into() });
+        }
+        h.frames(3);
+        let commands = h.app.dialog.as_ref().and_then(|d| if let Kind::ScanSymmetry(k) = &d.kind { symmetry_commands(k).ok() } else { None });
+        let (_, params) = commands.and_then(|c| c.into_iter().next()).expect("OK's command");
+        let n = &params["plane"]["normal"];
+        assert!(n[0].as_f64().unwrap().abs() > 1.0 - 1e-9, "the YZ plane as it is: {params}");
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        let state = h.app.session.model.state();
+        let fill = state.bodies.iter().find(|b| b.name.ends_with("Mirror Fill")).expect("the fill");
+        let (positions, _) = fill.body.triangle_mesh().expect("a mesh");
+        assert!(positions.iter().any(|p| p.x > 35.0), "the missing end filled, out to X = 40");
     }
 
     /// A slab with a tall post on one corner is no mirror image: Complete by Mirroring says what OK

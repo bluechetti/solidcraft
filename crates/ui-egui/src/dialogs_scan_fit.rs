@@ -17,6 +17,7 @@ use solidcore_record::Vec3;
 use solidcraft_engine::Sel;
 use solidcraft_engine::cmd::scan::fitting::{Kind as Shape, Shape as Fitted};
 use solidcraft_engine::cmd::scan::{FitPreview, fit_preview_of};
+use solidcraft_engine::geom::prelude::*;
 use solidcraft_viewport_gpu::view::{CloudStyle, ColorMode, GpuCloud};
 
 use crate::SolveApp;
@@ -26,7 +27,7 @@ use crate::selection::{FACES, SelInput, items};
 use crate::ui_kit::{self, choice_row};
 
 /// The painted region's id among the clouds the viewport draws.
-const CLOUD_ID: u64 = u64::MAX - 21;
+const CLOUD_ID: u64 = u64::MAX - 22;
 
 /// The commands, in the dialog's order of shapes.
 pub const COMMANDS: [&str; 5] = ["scan.fit_plane", "scan.fit_cylinder", "scan.fit_sphere", "scan.fit_cone", "scan.fit_torus"];
@@ -140,10 +141,8 @@ fn params(app: &SolveApp, k: &FitShape, inputs: &[SelInput]) -> Option<Value> {
 
 fn compute(s: &solidcraft_engine::Session, p: &Value, shape: Shape, rgb: [u8; 3]) -> Result<Painted, String> {
     let found = fit_preview_of(s, p, shape).map_err(|e| e.to_string())?;
-    let mut out = Vec::with_capacity(found.region.len() * crate::scan_dots::DOT_SIZE);
-    for &corners in &found.region {
-        crate::scan_dots::cloud_painted(&mut out, corners, 0.0, rgb);
-    }
+    let mut out = Vec::new();
+    crate::scan_dots::paint_corners(&mut out, found.region.iter().map(|&corners| (corners, 0.0, rgb)));
     let version = VERSION.with(|v| {
         v.set(v.get() + 1);
         v.get()
@@ -301,6 +300,86 @@ pub fn commands(k: &FitShape, _inputs: &[SelInput]) -> Result<Vec<(String, Value
 }
 
 /// The fitted region painted on the scan while the dialog is open.
+/// The shape fitted, drawn over the scan while the dialog is open, so what OK keeps is seen before
+/// it is kept: a plane as an outline over the area with its normal, a cylinder or cone as its axis
+/// and end rings, a sphere as three great circles, a torus as its middle circle and tube rings.
+pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
+    let Some(Kind::ScanFit(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
+    let Some(Ok(painted)) = k.shown.as_ref().map(|s| &s.result) else { return };
+    let line = solidcraft_theme::srgb(solidcraft_theme::Tokens::get().analysis.draft[1]);
+    let stroke = egui::Stroke::new(2.0, line);
+    let fitted = &painted.found.fitted;
+    let polyline = |points: &[Vec3]| {
+        for w in points.windows(2) {
+            if let (Some(a), Some(b)) = (proj.to_screen(w[0]), proj.to_screen(w[1])) {
+                painter.line_segment([a, b], stroke);
+            }
+        }
+    };
+    let ring = |centre: Vec3, axis: Vec3, radius: f64| -> Vec<Vec3> {
+        let u = axis.any_perp().normalized().unwrap_or(Vec3::X);
+        let v = axis.cross(u);
+        (0..=48).map(|i| f64::from(i) * std::f64::consts::TAU / 48.0).map(|t| centre + (u * t.cos() + v * t.sin()) * radius).collect()
+    };
+    let corners: Vec<Vec3> = painted.found.region.iter().flatten().copied().collect();
+    match fitted.shape {
+        Fitted::Plane { normal, .. } => {
+            // The area's extent in the plane, round its middle.
+            let u = normal.any_perp().normalized().unwrap_or(Vec3::X);
+            let v = normal.cross(u);
+            let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+            for c in &corners {
+                let d = *c - fitted.middle;
+                for (i, a) in [d.dot(u), d.dot(v)].into_iter().enumerate() {
+                    lo[i] = lo[i].min(a);
+                    hi[i] = hi[i].max(a);
+                }
+            }
+            if lo[0].is_finite() {
+                let at = |a: f64, b: f64| fitted.middle + u * a + v * b;
+                polyline(&[at(lo[0], lo[1]), at(hi[0], lo[1]), at(hi[0], hi[1]), at(lo[0], hi[1]), at(lo[0], lo[1])]);
+                let reach = 0.25 * (hi[0] - lo[0]).max(hi[1] - lo[1]);
+                polyline(&[fitted.middle, fitted.middle + normal * reach]);
+            }
+        }
+        Fitted::Cylinder { axis, radius, .. } => {
+            let (a, b) = (fitted.middle - axis * fitted.half_length, fitted.middle + axis * fitted.half_length);
+            // The middle sits on the wall: the axis is a radius in from it.
+            let centre = |p: Vec3| match fitted.shape {
+                Fitted::Cylinder { point, .. } => point + axis * (p - point).dot(axis),
+                _ => p,
+            };
+            polyline(&[centre(a), centre(b)]);
+            polyline(&ring(centre(a), axis, radius));
+            polyline(&ring(centre(b), axis, radius));
+        }
+        Fitted::Cone { apex, axis, half_angle } => {
+            let along = (fitted.middle - apex).dot(axis);
+            let (s0, s1) = ((along - fitted.half_length).max(0.0), along + fitted.half_length);
+            polyline(&[apex + axis * s0, apex + axis * s1]);
+            for s in [s0, s1] {
+                polyline(&ring(apex + axis * s, axis, s * half_angle.tan()));
+            }
+        }
+        Fitted::Sphere { center, radius } => {
+            for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                polyline(&ring(center, axis, radius));
+            }
+        }
+        Fitted::Torus { center, axis, major, minor } => {
+            polyline(&ring(center, axis, major));
+            let u = axis.any_perp().normalized().unwrap_or(Vec3::X);
+            let v = axis.cross(u);
+            for k in 0..4 {
+                let t = f64::from(k) * std::f64::consts::FRAC_PI_2;
+                let out = u * t.cos() + v * t.sin();
+                let tube_axis = axis.cross(out);
+                polyline(&ring(center + out * major, tube_axis, minor));
+            }
+        }
+    }
+}
+
 pub(crate) fn gpu_marks(app: &SolveApp) -> Option<GpuCloud> {
     let Some(Kind::ScanFit(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
     let p = k.shown.as_ref()?.result.as_ref().ok()?;

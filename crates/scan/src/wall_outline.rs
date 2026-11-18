@@ -238,7 +238,11 @@ fn largest(m: &[bool], w: usize, h: usize) -> Vec<bool> {
 /// opening takes that reaches less far (a corner, the wall between two shallow slots) is kept, and
 /// so is a strip along the scan's edge (the wall between a hole and the edge), and one with a cell
 /// asked to be covered (`asked`).
-fn without_fingers(m: &[bool], scanned: &[bool], asked: &[bool], w: usize, h: usize, r: usize, depth: usize) -> Vec<bool> {
+///
+/// A tip whose own cells mostly hold no point of the scan (`seen`: a gap the closing bridged, as
+/// between a pillar bracket's two arms) is a finger even where it reaches the scan's edge: it
+/// lies over nothing that was scanned, between parts standing out on either side.
+fn without_fingers(m: &[bool], scanned: &[bool], seen: &[bool], asked: &[bool], w: usize, h: usize, r: usize, depth: usize) -> Vec<bool> {
     if r == 0 {
         return m.to_vec();
     }
@@ -292,7 +296,9 @@ fn without_fingers(m: &[bool], scanned: &[bool], asked: &[bool], w: usize, h: us
                 }
             }
         }
-        let finger = 10 * edge <= inside + edge && !piece.iter().any(|&i| asked.get(i).copied().unwrap_or(false));
+        let unseen = piece.iter().filter(|&&i| !seen.get(i).copied().unwrap_or(false)).count();
+        let over_a_gap = 2 * unseen > piece.len() && inside >= edge;
+        let finger = (10 * edge <= inside + edge || over_a_gap) && !piece.iter().any(|&i| asked.get(i).copied().unwrap_or(false));
         for i in piece {
             owner[i] = if finger { 1 } else { 2 };
             queue.push_back(i);
@@ -807,7 +813,7 @@ pub fn template_covering(
         region
     };
     let region = if finger > 0.0 {
-        without_fingers(&region, &whole, &asked, w, h, (finger / 2.0 / cell).round() as usize, (FINGER_DEPTH / cell).round() as usize)
+        without_fingers(&region, &whole, &cover, &asked, w, h, (finger / 2.0 / cell).round() as usize, (FINGER_DEPTH / cell).round() as usize)
     } else {
         region
     };
@@ -1283,6 +1289,37 @@ mod tests {
         assert!(panel(&clean, 300.0, 790.0), "the wall between the slots stays");
         assert!(!panel(&clean, 135.0, 795.0) && !panel(&clean, 435.0, 795.0), "the slots stay");
         assert!(template(&scan, None, None, Side::Out, Options { finger: f64::NAN, ..raw }).is_err());
+    }
+
+    /// A pillar's bracket at the wall's top edge: two arms 20 mm wide standing out, the 50 mm
+    /// between them never scanned. The gap is bridged, but the tongue of template it would make
+    /// over the unscanned gap, reaching the edge between the arms, is cut off with them: one notch
+    /// round the whole bracket, not two slits with a tongue between.
+    #[test]
+    fn a_tongue_over_an_unscanned_gap_between_raised_arms_is_cut_off() {
+        let arm = |x: f64| (600.0..620.0).contains(&x) || (670.0..690.0).contains(&x);
+        let (pos, tri) = wall(1200.0, 800.0, 5.0, |x, y| if arm(x) && y >= 550.0 { 30.0 } else { 0.0 });
+        // The gap between the arms, above 620, holds no triangle.
+        let tri: Vec<[u32; 3]> = tri
+            .into_iter()
+            .filter(|t| {
+                let c = (pos[t[0] as usize] + pos[t[1] as usize] + pos[t[2] as usize]) / 3.0;
+                !((620.0..670.0).contains(&c.x) && c.y > 620.0)
+            })
+            .collect();
+        let scan = Scan::new(&pos, &tri);
+        let at = |t: &Template, x: f64, y: f64| {
+            let d = Vec3::new(x, y, 0.0) - t.frame.origin;
+            Vec2::new(d.dot(t.frame.x), d.dot(t.frame.y))
+        };
+        let panel = |t: &Template, x: f64, y: f64| {
+            let q = at(t, x, y);
+            contains(&t.outline, q) && !t.cutouts.iter().any(|c| contains(&c.ring, q))
+        };
+        let (t, _) = template(&scan, None, Some(10.0), Side::Out, Options { round: 0.0, ..Options::default() }).expect("a template");
+        assert!(!panel(&t, 645.0, 760.0), "no tongue over the unscanned gap");
+        assert!(!panel(&t, 610.0, 700.0) && !panel(&t, 680.0, 700.0), "the arms are cut round");
+        assert!(panel(&t, 645.0, 450.0) && panel(&t, 300.0, 760.0), "the wall below and beside stays");
     }
 
     /// The outline lies within half a cell of the scan's edge, however the grid falls on it (the

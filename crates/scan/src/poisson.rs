@@ -43,10 +43,30 @@ impl Settings {
     /// The depth whose finest cells are about as wide as the points are apart (at most 9), and the
     /// default trim.
     pub fn suggested(extent: f64, spacing: f64) -> Settings {
-        let depth = (LEAST_DEPTH..=9).find(|&d| cell_size(extent, d) <= 1.5 * spacing).unwrap_or(9);
-        Settings { depth, trim: DEFAULT_TRIM }
+        Self::suggested_for(extent, spacing, 0.0)
+    }
+
+    /// As [`Settings::suggested`], with cells no finer than [`LAYERED_CELLS`] times the layer of
+    /// points is thick ([`layer_thickness`]): passes merged a millimetre apart then average into
+    /// one surface, where cells finer than the gap made a sheet of each (the YCB mug: 110 pieces
+    /// and four times its area at 0.56 mm cells, one mug at 2.2 mm). A clean pass, thinner than
+    /// its spacing, is meshed as before.
+    pub fn suggested_for(extent: f64, spacing: f64, thickness: f64) -> Settings {
+        let by_spacing = (LEAST_DEPTH..=9).find(|&d| cell_size(extent, d) <= 1.5 * spacing).unwrap_or(9);
+        let least = LAYERED_CELLS * thickness;
+        let by_layer = (LEAST_DEPTH..=9).rev().find(|&d| cell_size(extent, d) >= least).unwrap_or(LEAST_DEPTH);
+        Settings { depth: by_spacing.min(by_layer), trim: DEFAULT_TRIM }
     }
 }
+
+/// Cells at least this many times the thickness of the layer of points. Read off YCB's merged
+/// clouds: the mug, hammer and drill each make one surface at 1.8, 2.3 and 3 times, and come out
+/// layered at 1.1 to 1.5 times.
+const LAYERED_CELLS: f64 = 1.75;
+
+/// A layer of points thicker than this many times their spacing is not one surface's noise but
+/// passes that do not lie on each other.
+pub const LAYERED: f64 = 1.0;
 
 /// The screening weight (the paper's α).
 const SCREENING: f64 = 4.0;
@@ -280,6 +300,52 @@ pub fn typical_spacing(points: &[Vec3]) -> f64 {
     distances.sort_by(f64::total_cmp);
     distances[distances.len() / 2]
 }
+
+/// How thick the layer of points is across the surface: the median, over points spread through
+/// the cloud, of the root mean square distance of the points within `LAYER_REACH` spacings of one
+/// from the plane fitted to them. A single clean pass reads its noise (a few hundredths of a mm);
+/// passes merged without lying on each other read their gap (YCB's merged mug cloud: about 1 mm).
+pub fn layer_thickness(points: &[Vec3], spacing: f64) -> f64 {
+    if points.len() < 16 || !(spacing > 0.0 && spacing.is_finite()) {
+        return 0.0;
+    }
+    let reach = LAYER_REACH * spacing;
+    let grid = PointGrid::new(points, reach / 2.0);
+    let stride = (points.len() / 2000).max(1);
+    let picked: Vec<usize> = (0..points.len()).step_by(stride).collect();
+    let mut spreads: Vec<f64> = par::map(picked.len(), |i| {
+        let at = points[picked[i]];
+        let mut near = Vec::new();
+        grid.within(at, reach, |q, _| near.push(points[q as usize]));
+        if near.len() < 12 {
+            return None;
+        }
+        let middle = near.iter().fold(Vec3::ZERO, |s, q| s + *q) / near.len() as f64;
+        let mut spread = [[0.0f64; 3]; 3];
+        for q in &near {
+            let d = [q.x - middle.x, q.y - middle.y, q.z - middle.z];
+            for (row, di) in spread.iter_mut().zip(d) {
+                for (cell, dj) in row.iter_mut().zip(d) {
+                    *cell += di * dj;
+                }
+            }
+        }
+        let (_, axes) = solidcraft_geom::inertia::principal(&spread, 0.0)?;
+        let normal = axes[0].normalized()?;
+        Some((near.iter().map(|q| (*q - middle).dot(normal).powi(2)).sum::<f64>() / near.len() as f64).sqrt())
+    })
+    .into_iter()
+    .flatten()
+    .collect();
+    if spreads.is_empty() {
+        return 0.0;
+    }
+    spreads.sort_by(f64::total_cmp);
+    spreads[spreads.len() / 2]
+}
+
+/// How far round a point [`layer_thickness`] reads the layer, in spacings.
+const LAYER_REACH: f64 = 8.0;
 
 /// The points thinned to one a `cell`: each cell's mean, with its normals' mean.
 fn thinned(points: &[Vec3], normals: Option<&[Vec3]>, cell: f64) -> (Vec<Vec3>, Option<Vec<Vec3>>) {
@@ -997,6 +1063,32 @@ mod tests {
         assert!((v - exact).abs() < 0.02 * exact, "{v} against {exact}");
         assert!(made.distances.rms < 0.15, "{:?}", made.distances);
         assert!(made.estimated_normals);
+    }
+
+    /// Three passes of one sphere merged without lying on each other (each moved 1 mm another way)
+    /// read as a layer about as thick as their gap, far more than their spacing, and are meshed with
+    /// cells no finer than that: one closed surface through the layer, not a sheet for each pass.
+    /// One pass alone reads thin, and keeps cells as fine as its spacing.
+    #[test]
+    fn passes_merged_apart_read_as_a_thick_layer_and_mesh_as_one_surface() {
+        let one = sphere(20_000, 25.0, Vec3::ZERO);
+        let spacing = typical_spacing(&one);
+        let thin = layer_thickness(&one, spacing);
+        assert!(thin < 0.3 * spacing, "one pass is thin (its curve over the reach read): {thin} (spacing {spacing})");
+        let mut merged = Vec::new();
+        for shift in [Vec3::new(1.0, 0.0, 0.0), Vec3::new(-0.5, 0.87, 0.0), Vec3::new(-0.5, -0.87, 0.0)] {
+            merged.extend(sphere(20_000, 25.0, shift));
+        }
+        let spacing = typical_spacing(&merged);
+        let thick = layer_thickness(&merged, spacing);
+        assert!(thick > LAYERED * spacing && thick > 0.3, "the passes read as a layer: {thick} (spacing {spacing})");
+        assert_eq!(Settings::suggested_for(50.0, 0.4, 0.0).depth, Settings::suggested(50.0, 0.4).depth, "a thin layer changes nothing");
+        let settings = Settings::suggested_for(51.0, spacing, thick);
+        assert!(cell_size(51.0, settings.depth) >= LAYERED_CELLS * thick, "cells no finer than the layer: depth {}", settings.depth);
+        let made = reconstruct(&merged, None, &Settings { trim: 0.0, ..settings }).unwrap();
+        let v = volume(&made.positions, &made.triangles);
+        let exact = 4.0 / 3.0 * std::f64::consts::PI * 25.0f64.powi(3);
+        assert!((v - exact).abs() < 0.1 * exact, "one sphere through the layer: {v} against {exact}");
     }
 
     /// Half a sphere of points, trimmed: the surface stops near where the points do and is not

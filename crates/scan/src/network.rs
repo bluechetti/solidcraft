@@ -749,9 +749,15 @@ pub struct Shade {
 /// A triangle of the scan under a face, coloured by one of the shade's points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Painted {
-    /// Its corners, nudged off the scan along its normal by a sliver of its size, so that it is
-    /// drawn over the scan's own triangle rather than fighting it for the same depth.
+    /// Its corners, nudged off the scan by a sliver of the scan's triangle size, so that it is
+    /// drawn over the scan's own triangle rather than fighting it for the same depth. Each point
+    /// is nudged once, along the scan's way out there (its triangles' normals together), so
+    /// neighbours stay joined: nudged each along its own normal, a noisy scan's triangles came
+    /// apart and the bare scan showed through the cracks.
     pub corners: [[f32; 3]; 3],
+    /// The scan's way out at it (its corners' together), to light it by: lit by its own normal, a
+    /// noisy scan's paint sparkles.
+    pub up: [f32; 3],
     /// The index in [`Shade::points`] whose distance colours it.
     pub point: u32,
 }
@@ -759,7 +765,7 @@ pub struct Painted {
 /// The most scan triangles a colouring paints (more and it is shown as dots).
 pub const PAINT_LIMIT: usize = 250_000;
 
-/// How far a painted triangle stands off the scan, as a share of its longest side.
+/// How far a painted point stands off the scan, as a share of a typical side of its triangles.
 const PAINT_LIFT: f64 = 0.05;
 
 /// The scan under the faces, at most `limit` points (the middles of its triangles, thinned evenly):
@@ -835,6 +841,19 @@ fn painted(
     let at: Vec<Vec3> = points.iter().map(|u| u.at).collect();
     let grid = crate::poisson::PointGrid::new(&at, reach);
     let key = |p: Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
+    // Each point's way out, from the triangles under the faces round it (weighted by area), and
+    // the one nudge every painted point gets. Only where there are few enough to be painted at
+    // all (past that the paint is dropped; each triangle is then nudged along its own normal).
+    let mut up: HashMap<u32, Vec3> = HashMap::new();
+    for &(_, _, t) in boxed.iter().take(if boxed.len() <= 4 * PAINT_LIMIT { boxed.len() } else { 0 }) {
+        let (Some([a, b, c]), Some(tri)) = (scan.corners(t), scan.triangles.get(t)) else { continue };
+        let n = (b - a).cross(c - a);
+        for &v in tri {
+            *up.entry(v).or_insert(Vec3::ZERO) += n;
+        }
+    }
+    let nudge = PAINT_LIFT * side;
+    let out_at = |v: u32| up.get(&v).and_then(|n| n.normalized()).unwrap_or(Vec3::ZERO);
     let mut out = Vec::new();
     let mut whole = true;
     // The point colouring each vertex (u32::MAX: none).
@@ -851,8 +870,8 @@ fn painted(
         if !facing {
             continue;
         }
-        let Some([a, b, c]) = scan.corners(t) else { continue };
-        for v in scan.triangles.get(t).into_iter().flatten() {
+        let (Some([a, b, c]), Some(&tri)) = (scan.corners(t), scan.triangles.get(t)) else { continue };
+        for v in &tri {
             if let Some(slot) = by_vertex.get_mut(*v as usize) {
                 *slot = q;
             }
@@ -860,12 +879,12 @@ fn painted(
         if !whole {
             continue;
         }
-        let lift = n * (PAINT_LIFT * a.dist(b).max(b.dist(c)).max(c.dist(a)));
-        let f = |p: Vec3| {
-            let p = p + lift;
+        let f = |p: Vec3, v: u32| {
+            let p = p + if up.is_empty() { n } else { out_at(v) } * nudge;
             [p.x as f32, p.y as f32, p.z as f32]
         };
-        out.push(Painted { corners: [f(a), f(b), f(c)], point: q });
+        let way = tri.iter().fold(Vec3::ZERO, |s, &v| s + out_at(v)).normalized().unwrap_or(n);
+        out.push(Painted { corners: [f(a, tri[0]), f(b, tri[1]), f(c, tri[2])], up: [way.x as f32, way.y as f32, way.z as f32], point: q });
         if out.len() > PAINT_LIMIT {
             out = Vec::new();
             whole = false;
@@ -1740,8 +1759,9 @@ mod tests {
     }
 
     /// The colouring under a face paints the scan's triangles under it, each lifted a sliver off
-    /// the scan towards its outside and coloured by a point near it; with the points thinned the
-    /// same triangles are still painted.
+    /// the scan towards its outside (each point once, so neighbours stay joined), lit by the scan's
+    /// way out and coloured by a point near it; with the points thinned the same triangles are
+    /// still painted.
     #[test]
     fn the_colouring_paints_the_scans_triangles_under_the_face() {
         let (positions, triangles) = field(60, dome);
@@ -1759,7 +1779,15 @@ mod tests {
             let lift = m.z - dome(m.x, m.y);
             assert!(lift > 0.0 && lift < 0.1, "a sliver above the scan: {lift}");
             assert!(full.points.get(t.point as usize).is_some_and(|p| p.at.dist(m) < 3.0), "coloured by a point near it");
+            let up = Vec3::new(f64::from(t.up[0]), f64::from(t.up[1]), f64::from(t.up[2]));
+            // The dome's own normal there: (-dz/dx, -dz/dy, 1).
+            let normal = Vec3::new(0.004 * (m.x - 60.0), 0.008 * (m.y - 30.0), 1.0).normalized().unwrap();
+            assert!(up.dot(normal) > 0.999, "lit by the scan's way out: {up:?} vs {normal:?}");
         }
+        // Each point nudged once: neighbours share their lifted corners (nudged each along its own
+        // normal, no two corners on the dome were the same and the scan showed through the cracks).
+        let corners: std::collections::HashSet<[u32; 3]> = full.paint.iter().flat_map(|t| t.corners.map(|c| c.map(f32::to_bits))).collect();
+        assert!(corners.len() < painted, "{} different corners for {painted} triangles", corners.len());
         let thin = shade(&scan, std::slice::from_ref(&face), 2.0, 200);
         assert!(thin.points.len() <= 200);
         assert!(

@@ -464,6 +464,16 @@ impl ComputedCommands {
                 && session.plugin_state == source.plugin_state))
     }
 
+    /// The design as the commands leave it (a dialog's preview reads what OK would make here).
+    pub fn computed(&self) -> &Session {
+        &self.computed
+    }
+
+    /// The commands run, in order, with what each replied.
+    pub fn steps(&self) -> impl Iterator<Item = (&str, &Value, &Value)> {
+        self.steps.iter().map(|step| (step.id.as_str(), &step.params, &step.reply))
+    }
+
     /// Prepare display tessellation before returning the transaction to the window; a model that
     /// cannot be placed is the error.
     pub fn warm_meshes(&self, keep_going: impl Fn() -> bool + Sync) -> Result<()> {
@@ -2288,7 +2298,16 @@ impl Session {
         let replies = prepared.steps.into_iter().map(|step| (step.id, step.reply)).collect();
         let shapes = prepared.computed.scan_shapes.take();
         let survey = prepared.computed.scan_survey.take();
+        // Bodies the computation itself hid (Combine Scans hides the passes it fused) stay hidden;
+        // the live view's own hides are kept as they are now.
+        let newly_hidden: Vec<_> =
+            prepared.computed.visibility.hidden_bodies.iter().filter(|b| !prepared.source.visibility.hidden_bodies.contains(*b)).cloned().collect();
         self.accept_computed(prepared.computed);
+        for body in newly_hidden {
+            if !self.visibility.hidden_bodies.contains(&body) {
+                self.visibility.hidden_bodies.push(body);
+            }
+        }
         // What Find All read on the copy (Find All or Reconstruct computed beside the window),
         // when it is of the scan as the design now has it.
         if let Some(shapes) = shapes

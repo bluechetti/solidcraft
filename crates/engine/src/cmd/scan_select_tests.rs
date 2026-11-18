@@ -241,3 +241,34 @@ fn what_a_solid_leaves_unexplained_is_selected_piece_by_piece() {
     assert_eq!(whole["pieces"], json!([]), "{whole}");
     assert_eq!(whole["triangles"], 0);
 }
+
+/// A plate with three holes of 6 mm and one of 10 mm, read by Find All: a click on one 6 mm
+/// hole's wall with `like` selects all three 6 mm walls and not the 10 mm one; a click on the top
+/// with `like` takes the faces facing up, not the sides.
+#[test]
+fn shapes_like_the_one_clicked_are_selected_together() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 80, "width": 40, "height": 10, "center": [0, 0, 5]}));
+    for (x, d) in [(-27.0, 6.0), (-9.0, 6.0), (9.0, 6.0), (27.0, 10.0)] {
+        run(&mut s, "solid.hole", json!({"position": [x, 0, 10], "diameter": d, "depth": 10}));
+    }
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-select-like-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("plate.stl");
+    run(&mut s, "file.save_mesh", json!({"path": path.to_string_lossy()}));
+    let mut s = Session::default();
+    run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    let body = s.model.state().bodies.iter().find(|b| b.body.is_mesh()).unwrap().name.clone();
+    run(&mut s, "scan.find_all", json!({"body": body}));
+    let one = run(&mut s, "scan.select", json!({"body": body, "shape": {"point": [-24.0, 0.0, 5.0]}}));
+    let like = run(&mut s, "scan.select", json!({"body": body, "shape": {"point": [-24.0, 0.0, 5.0], "like": true}}));
+    let (one_area, like_area) = (one["area"].as_f64().unwrap(), like["area"].as_f64().unwrap());
+    // A 6 mm hole's wall through 10 mm: π·6·10 ≈ 188 mm²; three of them, not the 10 mm one (314).
+    assert!((one_area - 188.5).abs() < 20.0, "one wall: {one}");
+    assert!((like_area - 3.0 * 188.5).abs() < 60.0, "the three 6 mm walls: {like}");
+    // The top faces up; the sides face across.
+    let top = run(&mut s, "scan.select", json!({"body": body, "shape": {"point": [-18.0, 10.0, 10.0], "like": true}}));
+    let top_area = top["area"].as_f64().unwrap();
+    let expected = 80.0 * 40.0 - std::f64::consts::PI * (3.0 * 9.0 + 25.0);
+    assert!((top_area - expected).abs() < 0.05 * expected, "the top (and the bottom faces down, not taken): {top}");
+}

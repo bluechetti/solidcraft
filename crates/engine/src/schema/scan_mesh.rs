@@ -51,6 +51,11 @@ pub struct ScanRegisterResult {
     /// image, or its overlap repeats along it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rival: Option<String>,
+    /// What to know besides the numbers, when there is something: the scan was left where it was
+    /// because fitting it moved it further off, only a small share of it lies on the other, or the
+    /// fit was still settling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// The Move feature, as `solid.move` replies, when it moved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<FeatureResult>")]
@@ -103,6 +108,13 @@ pub struct ScanMeshFromPointsResult {
     pub rms: f64,
     pub p95: f64,
     pub max: f64,
+    /// How thick the layer of points is across the surface, mm: a clean pass reads its noise,
+    /// passes merged without lying on each other their gap.
+    pub thickness: f64,
+    /// The points lie in a layer thicker than they are apart (passes that do not lie on each
+    /// other): the surface goes through the layer's middle, with cells no finer than it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     /// The feature, as `feature.add` replies.
     pub feature: Value,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

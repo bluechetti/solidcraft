@@ -446,6 +446,21 @@ fn roll_onto_scan(s: &mut Session, p: &Value) -> Result<Value> {
     if lines.is_empty() {
         return Err(bad(cmd, "the sketch has no curve drawn on the pattern to roll"));
     }
+    // Read in the pattern's own plane: moving the scan takes the pattern's sketch with it, so the
+    // pattern lies where it now is, not on the world's XY (a pattern given by its region alone
+    // was laid there).
+    let laid = pattern.and_then(|id| s.model.state().sketch(id).map(|k| k.plane));
+    let lines: Vec<Vec<Vec3>> = match laid {
+        Some(plane) => lines
+            .iter()
+            .map(|line| {
+                line.iter()
+                    .map(|&w| Vec3::new((w - plane.origin).dot(plane.x), (w - plane.origin).dot(plane.y), (w - plane.origin).dot(plane.normal())))
+                    .collect()
+            })
+            .collect(),
+        None => lines,
+    };
     let scan = mesh(s, &json!({ "body": body }), cmd)?;
     let lifter = flat.lifter();
     // Each curve's points, off the plane's XY and back to the pattern's own, lifted; a curve that

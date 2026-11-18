@@ -184,6 +184,11 @@ pub struct ScanAlignModelResult {
     pub converged: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rival: Option<String>,
+    /// What to know besides the numbers, when there is something: the scan was left where it was
+    /// because fitting it moved it further off, only a small share of it lies on the other, or the
+    /// fit was still settling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<FeatureResult>")]
     pub feature: Option<Value>,

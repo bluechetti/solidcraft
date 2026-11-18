@@ -247,7 +247,11 @@ pub(crate) fn legend(app: &SolveApp) -> Option<Vec<(Color32, String, bool)>> {
         Kind::ScanFreeForm(k) => crate::dialogs_scan_free_form::fidelity(app, k)?,
         Kind::ScanEditSurface(k) => crate::dialogs_scan_surface::fidelity(app, k)?,
         Kind::ScanFitPatches(k) => crate::dialogs_scan_patches::fidelity(app, k)?,
-        Kind::ScanFlatTemplate(k) => crate::dialogs_scan_template::fidelity(app, k)?,
+        // Coloured over its stand-off, not the scan's tolerance.
+        Kind::ScanFlatTemplate(k) => {
+            let span = crate::dialogs_scan_template::key_span(app, k)?;
+            return Some(key_rows(app, span, span * crate::dialogs_scan_surface::DEEPEST));
+        }
         _ => return None,
     };
     Some(key_rows(app, tolerance, tolerance * crate::dialogs_scan_surface::DEEPEST))

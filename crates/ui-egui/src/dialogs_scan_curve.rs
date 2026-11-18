@@ -16,7 +16,7 @@ use crate::dialogs::{Kind, check, form_row};
 use crate::ui_kit;
 
 /// How near the first point a click must be to close the curve, in pixels.
-const CLOSE: f32 = 10.0;
+const CLOSE: f32 = 14.0;
 
 /// A clicked point's dot, in pixels across.
 const DOT: f32 = 6.0;
@@ -326,6 +326,19 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         let fill = if i == 0 { t.accent } else { t.text };
         painter.circle_filled(s, DOT / 2.0, fill);
         painter.circle_stroke(s, DOT / 2.0, egui::Stroke::new(1.0, t.panel));
+    }
+    // Over the first point, with three or more and the curve open: a click there closes it, shown
+    // by a ring round it and the closing span from the last point (closing by a click on a 10 px
+    // dot, unmarked, was easy to miss).
+    let hover = painter.ctx().pointer_hover_pos();
+    if !k.closed
+        && k.picks.len() >= 3
+        && let (Some(first), Some(last), Some(at)) =
+            (k.picks.first().and_then(|p| proj.to_screen(*p)), k.picks.last().and_then(|p| proj.to_screen(*p)), hover)
+        && first.distance(at) <= CLOSE
+    {
+        painter.circle_stroke(first, CLOSE, egui::Stroke::new(2.0, t.accent));
+        painter.add(egui::Shape::dashed_line(&[last, first], egui::Stroke::new(1.5, t.accent), 6.0, 4.0));
     }
 }
 

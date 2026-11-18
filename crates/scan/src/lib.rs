@@ -193,6 +193,57 @@ pub(crate) fn welded(positions: &[Vec3]) -> Vec<u32> {
         .collect()
 }
 
+/// How close, as a share of the scan's size, two points are one point that a file wrote twice: far
+/// below any detail a scanner reads, and some twenty times the rounding of a 32-bit coordinate
+/// (a file's two copies of a point can differ in their last digits, leaving a crack no wider).
+pub(crate) const HAIR: f64 = 1e-6;
+
+/// Each position's representative, points within `HAIR` of the scan's size of an earlier one
+/// joined to it, and how many were joined that are not at exactly the same place.
+pub(crate) fn welded_within(positions: &[Vec3]) -> (Vec<u32>, usize) {
+    let exact = welded(positions);
+    let Some(&first) = positions.first() else { return (exact, 0) };
+    let (lo, hi) = positions
+        .iter()
+        .filter(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite())
+        .fold((first, first), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+    let reach = HAIR * (hi - lo).len();
+    if !(reach > 0.0 && reach.is_finite()) {
+        return (exact, 0);
+    }
+    let cell = |p: Vec3| [(p.x / reach).floor() as i64, (p.y / reach).floor() as i64, (p.z / reach).floor() as i64];
+    let mut grid: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
+    let mut rep = exact.clone();
+    let mut joined = 0;
+    for (i, p) in positions.iter().enumerate() {
+        if exact[i] as usize != i || !(p.x.is_finite() && p.y.is_finite() && p.z.is_finite()) {
+            continue;
+        }
+        let [x, y, z] = cell(*p);
+        let near = (-1..=1)
+            .flat_map(|dx| (-1..=1).flat_map(move |dy| (-1..=1).map(move |dz| [x + dx, y + dy, z + dz])))
+            .filter_map(|k| grid.get(&k))
+            .flatten()
+            .copied()
+            .find(|&j| positions[j as usize].dist(*p) <= reach);
+        match near {
+            Some(j) => {
+                rep[i] = j;
+                joined += 1;
+            }
+            None => grid.entry([x, y, z]).or_default().push(i as u32),
+        }
+    }
+    // A copy of a joined point goes where its first went.
+    for i in 0..rep.len() {
+        let first = exact[i] as usize;
+        if first != i {
+            rep[i] = rep[first];
+        }
+    }
+    (rep, joined)
+}
+
 /// `a · x = b` by Gaussian elimination with partial pivoting; `None` when singular.
 pub(crate) fn solve_dense(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
     let n = b.len();

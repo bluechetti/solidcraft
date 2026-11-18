@@ -4,7 +4,8 @@
 //! it and robustly weighted. It starts from where the scan lies and, searching, also from every way
 //! the two principal-axis frames can lie on each other and from the moves that matched surface
 //! features agree on (Fast Point Feature Histograms, Rusu, Blodow and Beetz 2009, matched and
-//! sampled by consensus); each start is judged by how much of the scan it lays on the reference,
+//! sampled by consensus) and, for passes that meet only along a seam, from the flat faces they
+//! share (`frames`); each start is judged by how much of the scan it lays on the reference,
 //! close and facing the same way, so a part that overlaps in part is not laid askew. A second
 //! placement nearly as good (a part nearly its own mirror image) is said.
 
@@ -13,6 +14,8 @@ use solidcraft_geom::compare::{TriangleTree, closest_on_triangle};
 use solidcraft_geom::prelude::*;
 
 use crate::place::Rigid;
+
+mod frames;
 use crate::{Scan, par};
 
 /// How a scan is laid onto a reference.
@@ -48,6 +51,40 @@ pub struct Registration {
     pub start: &'static str,
     /// Another placement, well apart, that lays nearly as much of the scan on the reference.
     pub rival: Option<String>,
+    /// Set when the fit would have left the scan further from the reference than it lay, so it
+    /// was left where it was: the trimmed root mean square the fit reached, in mm.
+    pub kept: Option<f64>,
+    /// The share of the scan the fit was allowed to leave out.
+    pub ignored: f64,
+}
+
+impl Registration {
+    /// What a person should know about this fit besides its numbers, if anything.
+    pub fn note(&self) -> Option<String> {
+        if let Some(worse) = self.kept {
+            return Some(format!(
+                "left where it was: fitting it moved it further off ({:.3} mm rms instead of {:.3} mm); lay it nearer by hand (scan.align_pairs), or lower `ignored`",
+                worse, self.rms_before
+            ));
+        }
+        if self.matched < WEAK {
+            return Some(format!(
+                "only {:.0} % of the scan lies on the other: check it by eye (a seam where two passes meet fits this way; two similar flat panels laid one over the other can too); scan.align_pairs places it by points",
+                100.0 * self.matched
+            ));
+        }
+        if self.ignored < 0.6 && 1.0 - self.matched > self.ignored + 0.1 {
+            return Some(format!(
+                "{:.0} % of the scan lies off the other but the fit may leave out only {:.0} % (`ignored`), so its rms counts what has no partner; passes that overlap in part want `ignored` up to 0.6",
+                100.0 * (1.0 - self.matched),
+                100.0 * self.ignored
+            ));
+        }
+        if !self.converged {
+            return Some("the fit was still settling when it stopped".into());
+        }
+        None
+    }
 }
 
 /// Why a scan could not be laid onto a reference.
@@ -83,11 +120,19 @@ const DISTINCT_TURN: f64 = 0.087;
 const DISTINCT_SLIDE: f64 = 3.0;
 /// The most placements fitted to the end and judged again, and the share of the best one must
 /// reach to be among them; a second at this share of the best is a rival.
+/// A start whose fit lays this share of what may be fitted (all but `ignored`) onto the
+/// reference makes the search by flat faces needless (`register`).
+const ENOUGH_LAID: f64 = 0.75;
 const MOST_FINALISTS: usize = 4;
 const FINALIST_SHARE: f64 = 0.5;
 const RIVAL_SHARE: f64 = 0.9;
 /// The cosine two normals must reach to face the same way, either way round.
 const FACING: f64 = 0.8;
+/// Below this share of the scan lying on the other, a fit is called weak.
+const WEAK: f64 = 0.2;
+/// The cosine the gap to a nearest point must reach with the surface's normal there for the pair
+/// to count in a strict fit: a gap along the surface runs to its rim or an edge, not to the surface.
+const ACROSS: f64 = 0.7;
 /// The median absolute deviation as a standard deviation, for normal noise.
 const MAD_TO_SIGMA: f64 = 1.4826;
 
@@ -133,6 +178,26 @@ impl<'a> Surface<'a> {
         let (distance, t) = self.tree.nearest(p)?;
         let [a, b, c] = self.scan.corners(t as usize)?;
         Some(Hit { point: closest_on_triangle(p, a, b, c), distance, normal: (b - a).cross(c - a).normalized() })
+    }
+}
+
+/// How pairs are made: the farthest pair kept, and whether the pairs the surfaces cannot agree on
+/// are left out. A strict fit takes only pairs that face each other and whose gap runs across the
+/// surface, so the open rim of one pass does not draw the other onto it, as a thin overlap's
+/// does; a loose one also pairs along a gap at an edge, which draws a far start in.
+#[derive(Clone, Copy, Debug)]
+struct Rule {
+    gate: f64,
+    strict: bool,
+}
+
+impl Rule {
+    fn loose(gate: f64) -> Self {
+        Rule { gate, strict: false }
+    }
+
+    fn strict(gate: f64) -> Self {
+        Rule { gate, strict: true }
     }
 }
 
@@ -192,13 +257,17 @@ pub(crate) fn trimmed_rms(points: &[Vec3], moved: &Rigid, reference: &Surface, i
 }
 
 /// Each point, moved, paired with the nearest point of `reference`, measured along the
-/// reference's direction there (along the gap itself at an edge or a corner).
-fn pairs_to(points: &[Vec3], moved: &Rigid, reference: &Surface) -> Vec<Pair> {
+/// reference's direction there (along the gap itself at an edge or a corner). `own` holds the
+/// points' normals, for a strict rule.
+fn pairs_to(points: &[Vec3], moved: &Rigid, reference: &Surface, rule: Rule, own: &[Vec3]) -> Vec<Pair> {
     par::map(points.len(), |i| {
         let p = moved.apply(points[i]);
         let hit = reference.nearest(p)?;
         let mut normal = hit.normal?;
         let delta = p - hit.point;
+        if rule.strict && !agrees(moved.turned(*own.get(i)?), normal, delta, hit.distance, reference.diagonal) {
+            return None;
+        }
         if hit.distance > 1e-10 * reference.diagonal && delta.dot(normal).abs() < (1.0 - 1e-6) * hit.distance {
             normal = delta / hit.distance;
         }
@@ -209,8 +278,9 @@ fn pairs_to(points: &[Vec3], moved: &Rigid, reference: &Surface) -> Vec<Pair> {
     .collect()
 }
 
-/// Each of the reference's points paired with the nearest point of the moving scan, moved.
-fn pairs_from(targets: &[Vec3], moved: &Rigid, moving: &Surface) -> Vec<Pair> {
+/// Each of the reference's points paired with the nearest point of the moving scan, moved. `own`
+/// holds the reference points' normals, for a strict rule.
+fn pairs_from(targets: &[Vec3], moved: &Rigid, moving: &Surface, rule: Rule, own: &[Vec3]) -> Vec<Pair> {
     let back = moved.inverse();
     par::map(targets.len(), |i| {
         let target = targets[i];
@@ -218,6 +288,9 @@ fn pairs_from(targets: &[Vec3], moved: &Rigid, moving: &Surface) -> Vec<Pair> {
         let point = moved.apply(hit.point);
         let mut normal = moved.turned(hit.normal?);
         let delta = point - target;
+        if rule.strict && !agrees(*own.get(i)?, normal, delta, hit.distance, moving.diagonal) {
+            return None;
+        }
         if hit.distance > 1e-10 * moving.diagonal && delta.dot(normal).abs() < (1.0 - 1e-6) * hit.distance {
             normal = delta / delta.len();
         }
@@ -228,9 +301,22 @@ fn pairs_from(targets: &[Vec3], moved: &Rigid, moving: &Surface) -> Vec<Pair> {
     .collect()
 }
 
-/// The finite pairs, nearest first: the worst `ignored` share left out, those past the median and
+/// Whether a point with normal `mine` and the surface point it is paired with, `theirs`, `gap`
+/// apart (`distance` long), can be the same surface: facing alike, either way round, and the gap
+/// running across the surface, not along it to a rim.
+fn agrees(mine: Vec3, theirs: Vec3, gap: Vec3, distance: f64, diagonal: f64) -> bool {
+    mine.dot(theirs).abs() >= FACING && (distance <= 1e-6 * diagonal || gap.dot(theirs).abs() >= ACROSS * distance)
+}
+
+/// The normal of the surface at each point of `points` (on it), zero where it has none.
+fn normals_at(points: &[Vec3], surface: &Surface) -> Vec<Vec3> {
+    par::map(points.len(), |i| surface.nearest(points[i]).and_then(|h| h.normal).unwrap_or(Vec3::ZERO))
+}
+
+/// The finite pairs, nearest first: the worst `ignored` share left out (of `population` points,
+/// when a strict rule has already left the pairs that cannot agree out), those past the median and
 /// three robust widths gated out, and each weighted by Cauchy's function of its distance.
-fn robust(pairs: Vec<Pair>, ignored: f64, reach: f64, gate: f64) -> Vec<Pair> {
+fn robust(pairs: Vec<Pair>, ignored: f64, reach: f64, gate: f64, population: Option<usize>) -> Vec<Pair> {
     let mut ordered: Vec<Pair> = pairs.into_iter().filter(|p| p.distance.is_finite() && p.distance <= gate).collect();
     ordered.sort_by(|a, b| a.distance.total_cmp(&b.distance));
     if ordered.len() < 6 {
@@ -241,7 +327,8 @@ fn robust(pairs: Vec<Pair>, ignored: f64, reach: f64, gate: f64) -> Vec<Pair> {
     deviations.sort_by(f64::total_cmp);
     let scatter = (MAD_TO_SIGMA * deviations[deviations.len() / 2]).max(1e-6 * reach.max(1.0));
     let limit = median + 3.0 * scatter;
-    let keep = ((ordered.len() as f64 * (1.0 - ignored.clamp(0.0, 0.6))) as usize).max(6).min(ordered.len());
+    let base = population.unwrap_or(ordered.len());
+    let keep = ((base as f64 * (1.0 - ignored.clamp(0.0, 0.6))) as usize).max(6).min(ordered.len());
     let scale = (median + scatter).max(1e-6 * reach.max(1.0));
     ordered.truncate(keep);
     ordered
@@ -305,17 +392,29 @@ struct Refined {
     converged: bool,
 }
 
-/// Point-to-plane ICP from `start`, both ways, at most `rounds` rounds, pairs further apart than
-/// `gate` left out. Directions the pairs do not pin (a plane slides along itself) are not moved.
+/// Point-to-plane ICP from `start`, both ways, at most `rounds` rounds, pairs `rule` leaves out
+/// left out. Directions the pairs do not pin (a plane slides along itself) are not moved.
 #[allow(clippy::too_many_arguments)]
-fn refine(points: &[Vec3], start: Rigid, reference: &Surface, ignored: f64, rounds: usize, moving: &Surface, reverse: &[Vec3], gate: f64) -> Refined {
+fn refine(
+    points: &[Vec3],
+    start: Rigid,
+    reference: &Surface,
+    ignored: f64,
+    rounds: usize,
+    moving: &Surface,
+    reverse: &[Vec3],
+    rule: Rule,
+) -> Refined {
+    let gate = rule.gate;
+    let (own, reverse_own) = if rule.strict { (normals_at(points, moving), normals_at(reverse, reference)) } else { (Vec::new(), Vec::new()) };
     let mut moved = start;
     let (mut converged, mut used, mut previous) = (false, 0, f64::INFINITY);
     let reach = reference.diagonal;
     for round in 0..rounds {
         used = round + 1;
-        let mut forward = robust(pairs_to(points, &moved, reference), ignored, reach, gate);
-        let mut backward = robust(pairs_from(reverse, &moved, moving), ignored, reach, gate);
+        let mut forward = robust(pairs_to(points, &moved, reference, rule, &own), ignored, reach, gate, rule.strict.then_some(points.len()));
+        let mut backward =
+            robust(pairs_from(reverse, &moved, moving, rule, &reverse_own), ignored, reach, gate, rule.strict.then_some(reverse.len()));
         if forward.len() < 6 || backward.len() < 6 {
             break;
         }
@@ -800,31 +899,51 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
     let rms_before = trimmed_rms(&vertices, &identity, &theirs, ignored);
     let rough = [roughness(moving), roughness(reference)].into_iter().flatten().fold(0.0, f64::max);
 
-    let mut starts: Vec<(&'static str, Rigid)> = vec![("where it was", identity)];
+    // Each start with the gate of a seam start (one found from the flat faces, fitted strictly).
+    let mut starts: Vec<(&'static str, Rigid, Option<f64>)> = vec![("where it was", identity, None)];
     let mut spacing = None;
     if settings.search {
-        starts.extend(principal_starts(&samples, &reference_samples).into_iter().map(|t| ("its principal axes", t)));
+        starts.extend(principal_starts(&samples, &reference_samples).into_iter().map(|t| ("its principal axes", t, None)));
         let apart = ((area(moving).max(area(reference))) / FEATURE_POINTS as f64).sqrt();
         let count = |a: f64| ((a / (apart * apart)).round() as usize).clamp(12, FEATURE_POINTS);
         let (m, r) = (sample(moving, count(area(moving))), sample(reference, count(area(reference))));
-        starts.extend(feature_starts(&m, &mine, &r, &theirs, apart).into_iter().map(|t| ("shapes that match", t)));
+        starts.extend(feature_starts(&m, &mine, &r, &theirs, apart).into_iter().map(|t| ("shapes that match", t, None)));
         spacing = Some(apart);
     }
-    let mut best = starts[0];
+    let mut best = (starts[0].0, starts[0].1);
     let mut gated: Option<(Rigid, f64)> = None;
     let mut rival = None;
     if starts.len() > 1 {
         let reach = (ROUGHNESS_REACH * rough).max(2e-3 * theirs.diagonal);
         let normals: Vec<Vec3> = few.iter().map(|p| mine.nearest(*p).and_then(|h| h.normal).unwrap_or(Vec3::ZERO)).collect();
         let gate = spacing.map_or(f64::INFINITY, |s| 2.0 * s);
-        let mut scored: Vec<(f64, Rigid, f64, usize)> = Vec::new();
-        for (index, (_, start)) in starts.iter().enumerate() {
-            let free = refine(&few, *start, &theirs, ignored, 8, &mine, &reverse_few, f64::INFINITY).moved;
-            scored.push((consensus(&few, &normals, &free, &theirs, reach), free, f64::INFINITY, index));
-            if gate.is_finite() {
-                let held = refine(&few, *start, &theirs, ignored, 8, &mine, &reverse_few, gate).moved;
-                scored.push((consensus(&few, &normals, &held, &theirs, reach), held, gate, index));
+        let mut scored: Vec<(f64, Rigid, Rule, usize)> = Vec::new();
+        let score = |starts: &[(&'static str, Rigid, Option<f64>)], from: usize, scored: &mut Vec<(f64, Rigid, Rule, usize)>| {
+            for (index, (_, start, seam)) in starts.iter().enumerate().skip(from) {
+                if let Some(seam_gate) = *seam {
+                    let rule = Rule::strict(seam_gate);
+                    let held = refine(&few, *start, &theirs, ignored, 12, &mine, &reverse_few, rule).moved;
+                    scored.push((consensus(&few, &normals, &held, &theirs, reach), held, rule, index));
+                    continue;
+                }
+                let free = refine(&few, *start, &theirs, ignored, 8, &mine, &reverse_few, Rule::loose(f64::INFINITY)).moved;
+                scored.push((consensus(&few, &normals, &free, &theirs, reach), free, Rule::loose(f64::INFINITY), index));
+                if gate.is_finite() {
+                    let held = refine(&few, *start, &theirs, ignored, 8, &mine, &reverse_few, Rule::loose(gate)).moved;
+                    scored.push((consensus(&few, &normals, &held, &theirs, reach), held, Rule::loose(gate), index));
+                }
             }
+        };
+        score(&starts, 0, &mut scored);
+        // The search by flat faces (frames.rs) is for passes that overlap in part (a van's wall and
+        // its roof), and the slow part of the search (6.6 of 8 s on the holes plate against its
+        // model). Only when no other start lays most of what may be fitted onto the reference.
+        let enough = ENOUGH_LAID * (1.0 - ignored) * few.len() as f64;
+        if settings.search && scored.iter().all(|s| s.0 < enough) {
+            let (seams, cell) = frames::starts(&mine, &theirs);
+            let from = starts.len();
+            starts.extend(seams.into_iter().map(|t| ("its flat faces", t, Some(2.0 * cell))));
+            score(&starts, from, &mut scored);
         }
         let best_score = scored.iter().map(|s| s.0).fold(0.0, f64::max);
         let middle = few.iter().fold(Vec3::ZERO, |s, p| s + *p) / few.len().max(1) as f64;
@@ -844,18 +963,18 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
         // Fitted to the end and judged within the surfaces' own roughness, which a placement a
         // little off does not reach.
         let tight = (ROUGHNESS_REACH * rough).max(2e-4 * theirs.diagonal);
-        let judged: Vec<(f64, Rigid, f64, usize)> = finalists
+        let judged: Vec<(f64, Rigid, Rule, usize)> = finalists
             .iter()
             .map(|&k| {
-                let (_, from, held, start) = scored[k];
-                let fitted = refine(&few, from, &theirs, ignored, 40, &mine, &reverse_few, held).moved;
-                (consensus(&few, &normals, &fitted, &theirs, tight), fitted, held, start)
+                let (_, from, rule, start) = scored[k];
+                let fitted = refine(&few, from, &theirs, ignored, 40, &mine, &reverse_few, rule).moved;
+                (consensus(&few, &normals, &fitted, &theirs, tight), fitted, rule, start)
             })
             .collect();
-        if let Some(&(score, fitted, held, start)) = judged.iter().max_by(|a, b| a.0.total_cmp(&b.0)) {
+        if let Some(&(score, fitted, rule, start)) = judged.iter().max_by(|a, b| a.0.total_cmp(&b.0)) {
             best = (starts[start].0, fitted);
-            if held.is_finite() {
-                gated = Some((fitted, held));
+            if rule.gate.is_finite() {
+                gated = Some((fitted, rule.gate));
             }
             let other = judged.iter().filter(|j| distinct(&fitted, &j.1)).max_by(|a, b| a.0.total_cmp(&b.0));
             if let Some(&(theirs_score, at, _, _)) = other.filter(|j| score > 0.0 && j.0 >= RIVAL_SHARE * score) {
@@ -873,39 +992,85 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
         Some((t, gate)) => (t, gate / 2.0, gate / 4.0),
         None => (best.1, f64::INFINITY, f64::INFINITY),
     };
-    let first = refine(&few, from, &theirs, ignored, 40, &mine, &reverse_few, rough_gate);
-    let fine = refine(&samples, first.moved, &theirs, ignored, 20, &mine, &reference_samples, fine_gate);
-    // The last pass on the scan's own vertices that lie on the reference.
-    let inliers: Vec<Vec3> = robust(pairs_to(&vertices, &fine.moved, &theirs), ignored, theirs.diagonal, fine_gate)
+    let reference_vertices = every(&reference.points().collect::<Vec<_>>(), VERTEX_LIMIT);
+    // The fit from `from` to the end: strict, so that a thin overlap is not drawn off by the rim of
+    // one pass, and loose where the surfaces leave too few pairs that agree.
+    let finish = |strict: bool| -> Result<(Refined, Refined, Refined), RegisterError> {
+        let rule = |gate: f64| if strict { Rule::strict(gate) } else { Rule::loose(gate) };
+        let (own, reverse_own) =
+            if strict { (normals_at(&vertices, &mine), normals_at(&reference_vertices, &theirs)) } else { (Vec::new(), Vec::new()) };
+        let first = refine(&few, from, &theirs, ignored, 40, &mine, &reverse_few, rule(rough_gate));
+        let fine = refine(&samples, first.moved, &theirs, ignored, 20, &mine, &reference_samples, rule(fine_gate));
+        // The last pass on the scan's own vertices that lie on the reference.
+        let inliers: Vec<Vec3> = robust(
+            pairs_to(&vertices, &fine.moved, &theirs, rule(fine_gate), &own),
+            ignored,
+            theirs.diagonal,
+            fine_gate,
+            strict.then_some(vertices.len()),
+        )
         .iter()
         .map(|p| fine.moved.inverse().apply(p.point))
         .collect();
-    let reference_vertices = every(&reference.points().collect::<Vec<_>>(), VERTEX_LIMIT);
-    let reverse: Vec<Vec3> =
-        robust(pairs_from(&reference_vertices, &fine.moved, &mine), ignored, theirs.diagonal, fine_gate).iter().map(|p| p.target).collect();
-    if inliers.len() < 12 || reverse.len() < 12 {
-        return Err(RegisterError::NoOverlap);
-    }
-    let last = refine(&every(&inliers, VERTEX_LIMIT / 4), fine.moved, &theirs, 0.0, 40, &mine, &every(&reverse, VERTEX_LIMIT / 4), fine_gate);
-    let rms_after = trimmed_rms(&vertices, &last.moved, &theirs, ignored);
-    let least = 1e-3 * theirs.diagonal;
-    let near = if 3.0 * rms_after > least {
-        let r = if rough > 0.0 { (3.0 * rms_after).min(ROUGHNESS_REACH * rough) } else { 3.0 * rms_after };
-        r.max(least)
-    } else {
-        least
+        let reverse: Vec<Vec3> = robust(
+            pairs_from(&reference_vertices, &fine.moved, &mine, rule(fine_gate), &reverse_own),
+            ignored,
+            theirs.diagonal,
+            fine_gate,
+            strict.then_some(reference_vertices.len()),
+        )
+        .iter()
+        .map(|p| p.target)
+        .collect();
+        if inliers.len() < 12 || reverse.len() < 12 {
+            return Err(RegisterError::NoOverlap);
+        }
+        let last =
+            refine(&every(&inliers, VERTEX_LIMIT / 4), fine.moved, &theirs, 0.0, 40, &mine, &every(&reverse, VERTEX_LIMIT / 4), rule(fine_gate));
+        Ok((first, fine, last))
     };
-    let matched = vertices.iter().filter(|p| theirs.nearest(last.moved.apply(**p)).is_some_and(|h| h.distance <= near)).count() as f64
-        / vertices.len().max(1) as f64;
+    let (first, fine, last) = match finish(true) {
+        Ok(done) => done,
+        Err(_) => finish(false)?,
+    };
+    let measure = |moved: &Rigid, rms: f64| -> f64 {
+        let least = 1e-3 * theirs.diagonal;
+        let near = if 3.0 * rms > least {
+            let r = if rough > 0.0 { (3.0 * rms).min(ROUGHNESS_REACH * rough) } else { 3.0 * rms };
+            r.max(least)
+        } else {
+            least
+        };
+        vertices.iter().filter(|p| theirs.nearest(moved.apply(**p)).is_some_and(|h| h.distance <= near)).count() as f64 / vertices.len().max(1) as f64
+    };
+    let rms_after = trimmed_rms(&vertices, &last.moved, &theirs, ignored);
+    // A fit that leaves the scan further from the reference than it lay is not taken: the scan
+    // stays where it was (a good placement by hand, a thin overlap the fit could not hold).
+    if rms_after > rms_before + 1e-6 * theirs.diagonal {
+        return Ok(Registration {
+            moved: identity,
+            rms_before,
+            rms_after: rms_before,
+            matched: measure(&identity, rms_before),
+            rounds: first.rounds + fine.rounds + last.rounds,
+            converged: false,
+            start: "where it was",
+            rival,
+            kept: Some(rms_after),
+            ignored,
+        });
+    }
     Ok(Registration {
         moved: last.moved,
         rms_before,
         rms_after,
-        matched,
+        matched: measure(&last.moved, rms_after),
         rounds: first.rounds + fine.rounds + last.rounds,
         converged: last.converged,
         start: best.0,
         rival,
+        kept: None,
+        ignored,
     })
 }
 
@@ -963,6 +1128,134 @@ mod tests {
         let found = register(&pass, &reference, &Settings::default()).unwrap();
         let back = kept.iter().flatten().map(|&v| found.moved.apply(moved[v as usize]).dist(positions[v as usize])).fold(0.0, f64::max);
         assert!(back < 1e-2, "{back} ({found:?})");
+    }
+
+    /// A closed box scanned in two passes that share only a thin band round its middle, as a van's
+    /// walls and its ceiling do: the lower pass, the upper pass, and the band's vertices, with a few
+    /// bosses in the band so that nothing can slide.
+    fn seam() -> (Vec<Vec3>, Vec<[u32; 3]>, Vec<[u32; 3]>, Vec<[u32; 3]>) {
+        let (mut positions, mut triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(400.0, 180.0, 200.0), 40);
+        for (lo, hi) in [
+            (Vec3::new(-15.0, 40.0, 125.0), Vec3::new(0.0, 80.0, 145.0)),
+            (Vec3::new(400.0, 100.0, 128.0), Vec3::new(420.0, 125.0, 142.0)),
+            (Vec3::new(120.0, 180.0, 122.0), Vec3::new(170.0, 200.0, 138.0)),
+            (Vec3::new(260.0, -12.0, 130.0), Vec3::new(290.0, 0.0, 146.0)),
+        ] {
+            let (more, tri) = fine_cuboid(lo, hi, 3);
+            let base = positions.len() as u32;
+            positions.extend(more);
+            triangles.extend(tri.into_iter().map(|t| t.map(|v| v + base)));
+        }
+        // Ribs and bosses all over the walls, as sheet metal has, in a fixed irregular pattern:
+        // a placement that lays flat wall on flat wall still has to lay the ribs on each other.
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move |lo: f64, hi: f64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            lo + (hi - lo) * ((state >> 11) as f64 / (1u64 << 53) as f64)
+        };
+        for wall in 0..4 {
+            for _ in 0..14 {
+                let (along, up) = (next(10.0, if wall < 2 { 340.0 } else { 140.0 }), next(10.0, 175.0));
+                let (wide, high, out) = (next(15.0, 55.0), next(8.0, 30.0), next(5.0, 12.0));
+                let (lo, hi) = match wall {
+                    0 => (Vec3::new(-out, along, up), Vec3::new(0.0, along + wide, up + high)),
+                    1 => (Vec3::new(400.0, along, up), Vec3::new(400.0 + out, along + wide, up + high)),
+                    2 => (Vec3::new(along, -out, up), Vec3::new(along + wide, 0.0, up + high)),
+                    _ => (Vec3::new(along, 180.0, up), Vec3::new(along + wide, 180.0 + out, up + high)),
+                };
+                let (more, tri) = fine_cuboid(lo, hi, 2);
+                let base = positions.len() as u32;
+                positions.extend(more);
+                triangles.extend(tri.into_iter().map(|t| t.map(|v| v + base)));
+            }
+        }
+        let within = |t: &[u32; 3], keep: &dyn Fn(f64) -> bool| t.iter().all(|&v| keep(positions[v as usize].z));
+        let lower: Vec<[u32; 3]> = triangles.iter().copied().filter(|t| within(t, &|z| z < 150.0)).collect();
+        let upper: Vec<[u32; 3]> = triangles.iter().copied().filter(|t| within(t, &|z| z > 120.0)).collect();
+        let band: Vec<[u32; 3]> = triangles.iter().copied().filter(|t| within(t, &|z| z > 120.0 && z < 150.0)).collect();
+        (positions, lower, upper, band)
+    }
+
+    /// The most a pass's band vertices lie from where they were, after `found` is applied to `moved`.
+    fn off_by(moved: &[Vec3], positions: &[Vec3], band: &[[u32; 3]], found: &Rigid) -> f64 {
+        band.iter().flatten().map(|&v| found.apply(moved[v as usize]).dist(positions[v as usize])).fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn a_pass_sharing_only_a_seam_is_laid_back_from_near() {
+        let (positions, lower, upper, band) = seam();
+        let axis = Vec3::new(0.3, 0.8, 0.5).normalized().unwrap();
+        let moved = turned(&positions, axis, 0.03, Vec3::new(4.0, -3.0, 2.0));
+        let (reference, pass) = (Scan::new(&positions, &lower), Scan::new(&moved, &upper));
+        let found = register(&pass, &reference, &Settings { search: false, ignored: 0.6 }).unwrap();
+        let back = off_by(&moved, &positions, &band, &found.moved);
+        assert!(back < 0.5, "the seam back within half a millimetre: {back} ({found:?})");
+        assert!(found.rms_after < found.rms_before, "{found:?}");
+    }
+
+    /// The upper pass turned half round and moved far off has, among the starts the flat faces
+    /// give, one a few cells from where it belongs. (Whether the search then picks it depends on
+    /// the surfaces not being flat to a hair all over: a box that is, lays flat wall on flat wall
+    /// as well.)
+    #[test]
+    fn the_flat_faces_of_a_seam_give_a_start_near_it() {
+        let (positions, lower, upper, band) = seam();
+        let axis = Vec3::new(0.2, -0.5, 0.8).normalized().unwrap();
+        let moved = turned(&positions, axis, 2.2, Vec3::new(260.0, -180.0, 90.0));
+        let (reference, pass) = (Scan::new(&positions, &lower), Scan::new(&moved, &upper));
+        let (starts, cell) = frames::starts(&Surface::new(pass), &Surface::new(reference));
+        assert!(cell > 0.0 && !starts.is_empty());
+        let nearest = starts.iter().map(|t| off_by(&moved, &positions, &band, t)).fold(f64::INFINITY, f64::min);
+        assert!(nearest < 0.5 * cell, "nearest start {nearest} mm off, a cell is {cell} mm");
+    }
+
+    #[test]
+    fn a_pass_already_in_place_is_never_made_worse() {
+        let (positions, lower, upper, band) = seam();
+        let (reference, pass) = (Scan::new(&positions, &lower), Scan::new(&positions, &upper));
+        for ignored in [0.2, 0.6] {
+            let found = register(&pass, &reference, &Settings { search: false, ignored }).unwrap();
+            assert!(found.rms_after <= found.rms_before + 1e-9, "{found:?}");
+            assert!(off_by(&positions, &positions, &band, &found.moved) < 0.1, "stays put at {ignored}: {found:?}");
+        }
+    }
+
+    /// A fit as the van's walls and ceiling gave: 38 % of the scan lies on the other.
+    fn thin(ignored: f64, matched: f64) -> Registration {
+        Registration {
+            moved: Rigid::shift(Vec3::ZERO),
+            rms_before: 3.0,
+            rms_after: 3.0,
+            matched,
+            rounds: 3,
+            converged: true,
+            start: "where it was",
+            rival: None,
+            kept: None,
+            ignored,
+        }
+    }
+
+    #[test]
+    fn a_fit_says_when_the_scan_has_more_off_the_other_than_it_may_leave_out() {
+        let note = thin(0.2, 0.38).note().expect("a note");
+        assert!(note.contains("`ignored`") && note.contains("62 %"), "{note}");
+        assert!(thin(0.6, 0.38).note().is_none(), "nothing more to raise");
+        assert!(thin(0.2, 0.95).note().is_none(), "a scan that lies on the other");
+    }
+
+    #[test]
+    fn a_fit_with_almost_none_of_the_scan_on_the_other_says_so() {
+        let note = thin(0.6, 0.16).note().expect("a note");
+        assert!(note.contains("16 %") && note.contains("scan.align_pairs"), "{note}");
+    }
+
+    #[test]
+    fn a_fit_taken_back_says_so() {
+        let found = Registration { kept: Some(30.0), converged: false, ..thin(0.6, 0.4) };
+        assert!(found.note().is_some_and(|n| n.contains("left where it was")));
     }
 
     #[test]

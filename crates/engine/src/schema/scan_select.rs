@@ -45,6 +45,19 @@ pub struct ScanRegion {
     /// Default: 30, a flat face up to where its rounds turn away.
     #[serde(default)]
     pub angle: Option<f64>,
+    /// `facing` (default): grown while the scan faces within the angle of the way it faces at the
+    /// place. `crease`: grown while it turns less than the angle from one triangle to the next, up
+    /// to its creases (a whole hole wall, where facing takes a strip of it).
+    #[serde(default)]
+    pub until: Option<RegionUntil>,
+}
+
+/// How far a region grows: see [`ScanRegion::until`].
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum RegionUntil {
+    Facing,
+    Crease,
 }
 
 /// Select triangles of a scan: by a brush, a polygon round what is seen, a smooth region, a shape
@@ -66,7 +79,8 @@ pub struct ScanSelectParams {
     pub polygon: Option<ScanPolygon>,
     #[serde(default)]
     pub region: Option<ScanRegion>,
-    /// A shape Find All found: its number, or `{point}` for the one under a place.
+    /// A shape Find All found: its number, or `{point}` for the one under a place; with
+    /// `{point, like: true}`, every shape like it (holes of its size, faces facing its way).
     #[serde(default)]
     pub shape: Option<Value>,
     /// A selection kept in the design, by name.

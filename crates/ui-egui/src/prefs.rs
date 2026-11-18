@@ -1537,10 +1537,19 @@ preference_settings! {
     /// set to Under the pointer, as QuickSurface's Free Forms are edited. Off: it opens on the
     /// control net with snapping off, as before.
     edit_surface_on_surface: bool = true, PAGE_TOOLS => check_id("prefs.edit_surface_on_surface");
+    /// Edit Surface with points on the surface: a dragged point lifts off the scan, moved in the
+    /// plane of the screen, and the points round it follow smoothly. On: a dragged point goes onto
+    /// the scan under the pointer and the points round it stay put, as before (a point dragged
+    /// up slid along the scan instead of rising).
+    edit_surface_drags_onto_scan: bool = false, PAGE_TOOLS => check_id("prefs.edit_surface_drags_onto_scan");
     /// While New Free Form, Wrap Surface, Fit Surface or Edit Surface is open, the scan is not
     /// painted in the selection colour, so the surface, its points and the scan's colouring stay
     /// in sight. Off: the scan clicked is painted as selected, as before.
     free_form_plain_scan: bool = true, PAGE_TOOLS => check_id("prefs.free_form_plain_scan");
+    /// Flat Template shows the rows most templates need (Outline, the scan, Straight Panel, which
+    /// side is cut out) and folds the tuning values (gap, smoothing, rounding, finger gap,
+    /// stand-off, scan edge) under More. Off: every row shows, as before.
+    flat_template_short: bool = true, PAGE_TOOLS => check_id("prefs.flat_template_short");
     /// In Edit Surface, Ctrl+Shift and a drag smooths the surface under the Smoothing Brush's
     /// circle (no need to turn the brush on), and Ctrl+Shift with the wheel sizes the circle, as
     /// QuickSurface's brush is used. Off: Ctrl+Shift drags and the wheel with Ctrl+Shift do what

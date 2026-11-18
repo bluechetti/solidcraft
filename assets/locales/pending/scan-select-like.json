@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_select_like": "All like it"
+  },
+  "de": {
+    "ui.scan_select_like": "Alle gleichartigen"
+  },
+  "ja": {
+    "ui.scan_select_like": "同じ種類をすべて"
+  },
+  "ko": {
+    "ui.scan_select_like": "같은 것 모두"
+  },
+  "zh": {
+    "ui.scan_select_like": "所有同类"
+  },
+  "ar": {
+    "ui.scan_select_like": "كل ما يشبهه"
+  },
+  "he": {
+    "ui.scan_select_like": "כל מה שדומה"
+  },
+  "vi": {
+    "ui.scan_select_like": "Mọi hình giống vậy"
+  }
+}

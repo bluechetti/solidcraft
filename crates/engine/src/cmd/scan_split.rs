@@ -132,8 +132,9 @@ fn cutter(s: &Session, p: &Value, on: &Mesh, cmd: &str) -> Result<(Cutter, Strin
             }
             let state = s.model.state();
             let body = state.body(name).ok_or_else(|| bad(cmd, format!("no body `{name}`")))?;
-            let cut = match body.body.triangle_mesh() {
-                Some((positions, triangles)) => Cutter::mesh(positions, triangles),
+            let shown = if body.body.is_mesh() { super::shown_mesh(s, name) } else { None };
+            let cut = match shown.as_deref() {
+                Some(m) => Cutter::mesh(&m.positions, &m.triangles),
                 None => {
                     // Meshed finely against the scan: a hundredth of a millimetre off at most.
                     let surface = body
@@ -360,14 +361,19 @@ fn titled(side: &str) -> String {
         .join(" ")
 }
 
-/// A new scan of `positions` and `triangles`, where they lie, as an Insert Mesh of its own.
+/// The colour a piece split off is drawn in: left the scan's own grey, the two sides of a cut lay
+/// together as if one, and where one opens onto the other the scan looked broken.
+const SPLIT_COLOR: [f32; 3] = [0.50, 0.66, 0.86];
+
+/// A new scan of `positions` and `triangles`, where they lie, as an Insert Mesh of its own, in
+/// [`SPLIT_COLOR`].
 fn new_scan(s: &mut Session, name: &str, from: &str, positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<u64> {
     let data = solidcraft_doc::MeshData {
         name: name.to_owned(),
         positions: positions.iter().flat_map(|q| [q.x, q.y, q.z]).collect::<Vec<f64>>().into(),
         triangles: triangles.iter().flatten().copied().collect::<Vec<u32>>().into(),
         corner_normals: Default::default(),
-        color: None,
+        color: Some(SPLIT_COLOR),
     };
     let kind = solidcraft_doc::FeatureKind::MeshImport { file: format!("{from} (split)"), meshes: vec![data] };
     let made = super::super::features::add_feature(s, &json!({ "body_name": name, "name": "Split Mesh" }), kind)?;

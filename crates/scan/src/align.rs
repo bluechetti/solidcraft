@@ -259,9 +259,7 @@ pub fn align_all(passes: &[Scan], held: &[bool], settings: &AllSettings) -> Resu
                     let weight = f.matched.clamp(0.05, 1.0) / rms.max(1e-3 * size);
                     edges.push((moving, target, fit, weight));
                     link.accepted = true;
-                    if !f.converged {
-                        link.note = Some("the fit was still settling when it stopped".into());
-                    }
+                    link.note = f.note();
                 }
             }
             links.push(link);

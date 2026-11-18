@@ -396,6 +396,7 @@ pub const DOCUMENTED: &[&str] = &[
     "view.rename",
     "view.ribbon_tabs_only",
     "view.save",
+    "view.scan_triangles",
     "view.spin",
     "view.tool",
     "view.visual_style",

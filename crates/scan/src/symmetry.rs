@@ -237,13 +237,50 @@ struct Scene {
     surface_samples: Vec<Vec3>,
     judged: f64,
     centroid: Vec3,
-    /// The middle of the scan's box.
+    /// The middle of the scan's box, and the box.
     middle: Vec3,
+    bounds: Bounds,
     size: f64,
     spacing: f64,
     /// The vertices where the surface turns sharply (edges, rims, corners): what says where a plane
     /// is when most of a part is flat and lands on itself however the plane slides along it.
     features: Vec<Vec3>,
+}
+
+/// The scan's box. A reflection landing beyond it says nothing about a plane: that may be the side
+/// of the part that was never scanned, so a part scanned from one side is not pulled towards a
+/// plane that keeps its reflection on what there is. A reflection inside the box that lands on
+/// nothing still counts against the plane: the scanner would have seen something there.
+#[derive(Clone, Copy, Debug)]
+struct Bounds {
+    lo: Vec3,
+    hi: Vec3,
+    pad: f64,
+}
+
+impl Bounds {
+    fn holds(&self, p: Vec3) -> bool {
+        let (lo, hi) = (self.lo - Vec3::new(self.pad, self.pad, self.pad), self.hi + Vec3::new(self.pad, self.pad, self.pad));
+        (lo.x..=hi.x).contains(&p.x) && (lo.y..=hi.y).contains(&p.y) && (lo.z..=hi.z).contains(&p.z)
+    }
+}
+
+/// A plane judged on fewer than this share of the points (the rest reflected out of the scan's
+/// box) is judged as matching nothing: it has thrown the scan aside rather than onto itself.
+const JUDGED_LEAST: f64 = 1.0 / 3.0;
+
+/// The mean of `distances` of the reflections inside `bounds`, each at most `reach`; `reach` when
+/// too few are inside to judge by.
+fn mean_inside(reflections: impl Iterator<Item = (Vec3, f64)>, bounds: &Bounds, reach: f64) -> f64 {
+    let (mut total, mut inside, mut all) = (0.0, 0usize, 0usize);
+    for (m, d) in reflections {
+        all += 1;
+        if bounds.holds(m) {
+            total += d;
+            inside += 1;
+        }
+    }
+    if inside == 0 || (inside as f64) < JUDGED_LEAST * all as f64 { reach } else { total / inside as f64 }
 }
 
 /// A vertex is on an edge when a triangle round it faces more than this far (cosine, about 30°)
@@ -329,6 +366,7 @@ fn scene(scan: &Scan) -> Option<Scene> {
         judged,
         centroid,
         middle: (lo + hi) / 2.0,
+        bounds: Bounds { lo, hi, pad: 2.0 * spacing },
         size,
         spacing,
         features,
@@ -381,6 +419,9 @@ pub fn find(scan: &Scan) -> Option<Mirror> {
     Some(judge(polish(&best, &scene, 12), &scene))
 }
 
+/// How far a guided plane may turn from the guide's own direction.
+const GUIDE_TURN: f64 = 25.0 * PI / 180.0;
+
 /// The mirror plane near the one `guide` marks: the turns about the line and the places along the
 /// plane's normal ranked on a very coarse picture of the scan, the best three a good way apart and
 /// their tilts settled on a coarse one, the best of those finished on the scan's own spacing and
@@ -397,13 +438,19 @@ pub fn find_guided(scan: &Scan, guide: &Guide) -> Option<Mirror> {
     let probes = thinned(&scene.samples, 250);
     let finer = thinned(&scene.samples, 800);
     let reach = ranking.cell;
-    let rough = |normal: Vec3, point: Vec3, table: &Table, reach: f64| roughness(normal, point, &probes, table, reach);
+    let bounds = scene.bounds;
+    let rough = |normal: Vec3, point: Vec3, table: &Table, reach: f64| roughness(normal, point, &probes, table, reach, &bounds);
 
-    // The turns about the line (up to 40° either way, 5° apart) and the places along the normal
-    // (to a quarter of the scan either way).
+    // The plane stays near the guide: within GUIDE_TURN of its direction and a quarter of the scan
+    // of where it was drawn, whatever matches better further off (on a scan of one side, a plane
+    // turned well away can match more of what is there).
+    let near = |n: Vec3, p: Vec3| n.dot(seed_normal).abs() >= GUIDE_TURN.cos() && (p - seed_point).dot(n).abs() <= scene.size / 4.0;
+    // The turns about the line (up to GUIDE_TURN either way, 5° apart) and the places along the
+    // normal (to a quarter of the scan either way).
     let step = 5.0 * PI / 180.0;
+    let turns = (GUIDE_TURN / step).round() as i32;
     let mut trials: Vec<(Vec3, Vec3, f64)> = Vec::new();
-    for k in -8..=8 {
+    for k in -turns..=turns {
         let normal = turned(seed_normal, f64::from(k) * step, along);
         for j in -3..=3 {
             let point = seed_point + normal * (f64::from(j) * scene.size / 12.0);
@@ -442,20 +489,26 @@ pub fn find_guided(scan: &Scan, guide: &Guide) -> Option<Mirror> {
         .iter()
         .map(|&(n, p)| {
             let (n, p) = refine(n, p, &probes, &coarse, 0.5 * coarse.cell, scene.size, 5);
-            match &edges {
+            let settled = match &edges {
                 Some(e) => e.settle(n, p, Stage::Coarse, &scene),
                 None => (n, p, rough(n, p, &coarse, 3.0 * coarse.cell)),
-            }
+            };
+            if near(settled.0, settled.1) { settled } else { (n, p, rough(n, p, &coarse, 3.0 * coarse.cell)) }
         })
-        .min_by(|a, b| a.2.total_cmp(&b.2))?;
-    let (normal, point) = match &edges {
+        .filter(|s| near(s.0, s.1))
+        .min_by(|a, b| a.2.total_cmp(&b.2))
+        .unwrap_or((seed_normal, seed_point, 0.0));
+    let finished = match &edges {
         Some(e) => {
             let (n, p, _) = e.settle(normal, point, Stage::Fine, &scene);
             (n, p)
         }
         None => refine(normal, point, &finer, &scene.table, 2.0 * scene.spacing, scene.size, 8),
     };
-    Some(judge(polish(&assess(normal, point, &scene), &scene, 12), &scene))
+    let (normal, point) = if near(finished.0, finished.1) { finished } else { (normal, point) };
+    let polished = polish(&assess(normal, point, &scene), &scene, 12);
+    let kept = if near(polished.normal, polished.point) { polished } else { assess(normal, point, &scene) };
+    Some(judge(kept, &scene))
 }
 
 /// `v` turned by `angle` radians about the unit `axis`.
@@ -463,17 +516,14 @@ fn turned(v: Vec3, angle: f64, axis: Vec3) -> Vec3 {
     Rigid::turn(axis, angle).turned(v)
 }
 
-/// How far, on the whole, the probes' reflections are from the scan (`reach` for one that lands on
-/// nothing). Lower is better.
-fn roughness(normal: Vec3, point: Vec3, probes: &[Vec3], table: &Table, reach: f64) -> f64 {
-    let total: f64 = probes
-        .iter()
-        .map(|p| {
-            let m = reflect(*p, normal, point);
-            table.nearest(m, reach).map_or(reach, |q| q.dist(m))
-        })
-        .sum();
-    total / probes.len().max(1) as f64
+/// How far, on the whole, the probes' reflections inside the scan's box are from the scan (`reach`
+/// for one that lands on nothing). Lower is better.
+fn roughness(normal: Vec3, point: Vec3, probes: &[Vec3], table: &Table, reach: f64, bounds: &Bounds) -> f64 {
+    let reflections = probes.iter().map(|p| {
+        let m = reflect(*p, normal, point);
+        (m, table.nearest(m, reach).map_or(reach, |q| q.dist(m)))
+    });
+    mean_inside(reflections, bounds, reach)
 }
 
 /// A point, what its reflection landed nearest, and how far the reflection was from that.
@@ -529,15 +579,12 @@ fn refine(start: Vec3, start_point: Vec3, samples: &[Vec3], table: &Table, exclu
 /// most `reach` (one that lands on nothing counts `reach`). Capped, a part on one side only (a
 /// handle, a fixture) counts the same wherever the plane is, so it does not pull the plane, while
 /// the ends and corners that land on nothing at a wrong place still count against it.
-fn edge_mismatch(normal: Vec3, point: Vec3, probes: &[Vec3], table: &Table, reach: f64) -> f64 {
-    let total: f64 = probes
-        .iter()
-        .map(|p| {
-            let m = reflect(*p, normal, point);
-            table.nearest(m, reach).map_or(reach, |q| q.dist(m))
-        })
-        .sum();
-    total / probes.len().max(1) as f64
+fn edge_mismatch(normal: Vec3, point: Vec3, probes: &[Vec3], table: &Table, reach: f64, bounds: &Bounds) -> f64 {
+    let reflections = probes.iter().map(|p| {
+        let m = reflect(*p, normal, point);
+        (m, table.nearest(m, reach).map_or(reach, |q| q.dist(m)))
+    });
+    mean_inside(reflections, bounds, reach)
 }
 
 /// How far a settle searches and how finely.
@@ -577,7 +624,7 @@ impl Edges {
             Stage::Fine => (&self.fine, &self.many, 0.5f64.to_radians(), scene.size / 200.0, (0.002f64.to_radians(), scene.spacing / 200.0)),
         };
         let reach = 3.0 * table.cell;
-        let cost = |n: Vec3, p: Vec3| edge_mismatch(n, p, probes, table, reach);
+        let cost = |n: Vec3, p: Vec3| edge_mismatch(n, p, probes, table, reach, &scene.bounds);
         let (mut n, mut p) = (normal, point);
         let (mut step_a, mut step_d) = (angle, offset);
         let mut best = cost(n, p);
@@ -615,17 +662,29 @@ impl Edges {
     }
 }
 
+/// How far each point's reflection lands from the scan (at most `reach`), for the reflections that
+/// land inside the scan's box; when too few do to judge by, every one, counted `reach` beyond it
+/// (the plane has thrown the scan aside).
+fn inside_distances(points: &[Vec3], mirror: impl Fn(Vec3) -> Vec3, table: &Table, reach: f64, bounds: &Bounds) -> Vec<f64> {
+    let all: Vec<(Vec3, f64)> = points
+        .iter()
+        .map(|&p| {
+            let m = mirror(p);
+            (m, table.nearest(m, reach).map_or(reach, |q| q.dist(m)))
+        })
+        .collect();
+    let inside: Vec<f64> = all.iter().filter(|(m, _)| bounds.holds(*m)).map(|(_, d)| *d).collect();
+    if !inside.is_empty() && inside.len() as f64 >= JUDGED_LEAST * all.len() as f64 {
+        inside
+    } else {
+        all.iter().map(|(m, d)| if bounds.holds(*m) { *d } else { reach }).collect()
+    }
+}
+
 /// How well the scan matches itself in the plane through `point` square to `normal`.
 fn assess(normal: Vec3, point: Vec3, scene: &Scene) -> Mirror {
     let reach = 3.0 * scene.table.cell;
-    let mut distances: Vec<f64> = scene
-        .samples
-        .iter()
-        .map(|p| {
-            let m = reflect(*p, normal, point);
-            scene.table.nearest(m, reach).map_or(reach, |q| q.dist(m))
-        })
-        .collect();
+    let mut distances = inside_distances(&scene.samples, |p| reflect(p, normal, point), &scene.table, reach, &scene.bounds);
     distances.sort_by(f64::total_cmp);
     let matched = distances.iter().filter(|&&d| d <= 3.0 * scene.spacing).count();
     let core = &distances[..(distances.len() * 4 / 5).clamp(1, distances.len().max(1))];
@@ -646,6 +705,8 @@ fn assess(normal: Vec3, point: Vec3, scene: &Scene) -> Mirror {
 /// big triangles count by their area, and a reflection landing on one is on the scan.
 fn judge(found: Mirror, scene: &Scene) -> Mirror {
     let reach = 3.0 * scene.surface_table.cell;
+    // Judged on every point, those reflected out of the scan's box too: the verdict says how much
+    // of the scan is a mirror image, whatever the search left aside.
     let mut distances: Vec<f64> = scene
         .surface_samples
         .iter()
@@ -907,6 +968,21 @@ mod tests {
         let (a, o) = plane_error(&mirror, Vec3::X, Vec3::new(30.0, 10.0, 10.0));
         assert!(a < 1e-3_f64.to_radians() && o < 1e-3, "off by {}° and {o} mm: {mirror:?}", a.to_degrees());
         assert!(mirror.is_symmetric());
+    }
+
+    /// The block with its end past X = 45 never scanned (as one side of a part is when it was
+    /// scanned from the other): a guide along X = 30 finds X = 30, though about that plane the
+    /// missing end's mirror image lands on nothing and a plane tilted to overlap more would match
+    /// more of what is there.
+    #[test]
+    fn a_guide_finds_its_plane_on_a_part_missing_one_end() {
+        let (positions, triangles) = l_block();
+        let kept: Vec<[u32; 3]> = triangles.into_iter().filter(|t| t.iter().all(|&i| positions[i as usize].x <= 45.0)).collect();
+        let scan = Scan::new(&positions, &kept);
+        let guide = Guide { from: Vec3::new(30.0, -5.0, 30.0), to: Vec3::new(30.0, 25.0, 30.0), toward: Vec3::Z };
+        let mirror = find_guided(&scan, &guide).unwrap();
+        let (a, o) = plane_error(&mirror, Vec3::X, Vec3::new(30.0, 10.0, 10.0));
+        assert!(a < 0.1_f64.to_radians() && o < 0.1, "off by {}° and {o} mm: {mirror:?}", a.to_degrees());
     }
 
     /// Squared to its mirror plane, the block lies evenly either side of X = 0 (whichever of its

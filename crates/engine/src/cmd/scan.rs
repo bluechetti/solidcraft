@@ -74,7 +74,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("mesh_body")
         .contract(&REPAIR_CONTRACT)
         .output(output_schema_for::<ScanRepairResult>)
-        .params("body?: mesh body (default: the selected or only one); crossings?: bool (default true: faces passing through others they share no edge with taken off with the ring round them, the holes left closed with smooth patches): copies of a triangle taken off, an edge three or more faces meet along left with the two that continue each other best, slivers flipped away (equal points, collapsed triangles and the winding are put right when a scan is built); kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead); a scan that needs none is told so → body, duplicates, non_manifold, slivers, crossings, crossing_faces, refilled, triangles, feature"),
+        .params("body?: mesh body (default: the selected or only one); crossings?: bool (default true: faces passing through others they share no edge with taken off with the ring round them, the holes left closed with smooth patches): points a millionth of the scan's size apart joined (a file's two copies of one point, which leave a crack), copies of a triangle taken off, an edge three or more faces meet along left with the two that continue each other best, slivers flipped away (equal points, collapsed triangles and the winding are put right when a scan is built); kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead); a scan that needs none is told so → body, joined, duplicates, non_manifold, slivers, crossings, crossing_faces, refilled, triangles, feature"),
     CommandSpec::new("scan.fill_holes", "Fill Holes", crate::checked!("scan.fill_holes", clean::fill_holes))
         .at("SCAN", "CLEAN")
         .icon("surface_patch")
@@ -200,7 +200,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("fit_section")
         .contract(&SECTION_CONTRACT)
         .output(output_schema_for::<ScanSectionResult>)
-        .params("body?: mesh body (default: the selected or only one); plane?: as sketch.create's (default XY; used when no sketch is being edited, else that sketch's plane); offset?: length; tolerance?: how far a piece may stray from the cut (default: three times the cut's noise, at least 0.1 mm and at most 1 % of the cut's size): where the plane cuts the scan, as lines, arcs and circles each fitted to its points (the noise averaged, not traced), end to end, smooth joins tangent, in the sketch being edited or a new sketch `Section` (one undo step) → body, sketch, outlines, lines, arcs, circles, tangents, tolerance"),
+        .params("body?: mesh body (default: the selected or only one); plane?: as sketch.create's (default XY; used when no sketch is being edited, else that sketch's plane); offset?: length; tolerance?: how far a piece may stray from the cut (default: three times the cut's noise, at least 0.1 mm and at most 1 % of the cut's size): where the plane cuts the scan, as lines, arcs and circles each fitted to its points (the noise averaged, not traced), end to end, smooth joins tangent, in the sketch being edited or a new sketch `Section` (one undo step); dimensions?: bool (default true): a new sketch is finished dimensioned from its origin, each dimension a parameter → body, sketch, outlines, lines, arcs, circles, tangents, tolerance, dof?"),
     CommandSpec::new("scan.sections_along_curve", "Sections Along Curve", crate::checked!("scan.sections_along_curve", section::sections_along_curve))
         .at("SCAN", "SKETCH")
         .icon("loft")
@@ -228,7 +228,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("surface_revolve")
         .contract(&WRAP_SURFACE_CONTRACT)
         .output(output_schema_for::<ScanWrapSurfaceResult>)
-        .params("point?: [x,y,z] on the part (default: what is selected on the scan, else the point picked on it); reach?: length (how far round the point the part reaches, default a fifth of the scan's size); or the part chosen by hand: triangles?: [indices] | saved?: a kept selection | grow?: true (as far as the scan lies on the cylinder fitted at the point) | degrees (the face at the point, as far as it faces within that angle of the way it faces there); axis?: fitted|x|y|z (default fitted: the cylinder fitted to the part; x, y, z the world's, its line and radius fitted across the part); details?: low|medium|fine (4, 8 or 14 points the shorter way, default medium; the longer way as many as keep the cells square, up to 40); arc?: angle (how far round the net goes about the part's middle, default the part's own reach; the whole way round is left open at a seam); stiffness?: 0…1 (default 0); body?: the scan: a Free Form wrapped on a tube-like part, a surface of its own to edit with Edit Surface (one undo step); a surface that folds, pinches or passes through itself (a net following rims and ribs it is too coarse for) is kept and said so (warning: raise stiffness) → body, surface, controls, point, axis, radius, off, places, met, rms, max (how far the scan under it is from it), seam? (how far apart the ends of a net that goes the whole way round are: it is open there), folds, pinches, crossings, warning?, feature"),
+        .params("point?: [x,y,z] on the part (default: what is selected on the scan, else the point picked on it); reach?: length (how far round the point the part reaches, default a fifth of the scan's size); or the part chosen by hand: triangles?: [indices] | saved?: a kept selection | grow?: true (as far as the scan lies on the cylinder fitted at the point) | degrees (the face at the point, as far as it faces within that angle of the way it faces there); axis?: fitted|x|y|z (default fitted: the cylinder fitted to the part; x, y, z the world's, its line and radius fitted across the part); details?: low|medium|fine (4, 8 or 14 points the shorter way, default medium; the longer way as many as keep the cells square, up to 40); arc?: angle (how far round the net goes about the part's middle, default the part's own reach; the whole way round is left open at a seam); stiffness?: 0…1 (default: the least of 0, 0.05, 0.1, 0.2, 0.4 whose net does not fold, pinch or cross itself, in the reply's `stiffness`); body?: the scan: a Free Form wrapped on a tube-like part, a surface of its own to edit with Edit Surface (one undo step); a surface that folds, pinches or passes through itself (a net following rims and ribs it is too coarse for) is kept and said so (warning: raise stiffness) → body, surface, controls, point, axis, radius, off, places, met, rms, max (how far the scan under it is from it), seam? (how far apart the ends of a net that goes the whole way round are: it is open there), folds, pinches, crossings, warning?, feature"),
     CommandSpec::new("scan.merge_surfaces", "Merge Surfaces", crate::checked!("scan.merge_surfaces", free_form::merge_surfaces))
         .at("SCAN", "FREEFORM")
         .icon("surface_stitch")
@@ -318,12 +318,75 @@ impl Mesh {
 
 /// The mesh body a scan command works on: `body`, else the one selected mesh body, else the
 /// design's only mesh body.
+///
+/// The scan is read where it shows ([`shown_mesh`]): in a component placed in the world, moved
+/// with it, so a point picked on it, what is fitted to it and where it is moved to are the
+/// world's, as the view draws it.
 fn mesh(s: &Session, p: &Value, cmd: &str) -> Result<Mesh> {
     let name = mesh_name(s, p, cmd)?;
-    let state = s.model.state();
-    let body = state.body(&name).ok_or_else(|| bad(cmd, format!("no body `{name}`")))?;
-    let kept = body.body.kept_mesh().ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+    if s.model.state().body(&name).is_none() {
+        return Err(bad(cmd, format!("no body `{name}`")));
+    }
+    let kept = shown_mesh(s, &name).ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
     Ok(Mesh::shared(name, kept))
+}
+
+/// The mesh of the mesh body `name` where it shows: as the body keeps it, or, when the component
+/// holding it is placed in the world (a glTF file's, stood up; one moved since), a copy moved
+/// with it, made once for that placement and kept while the body is ([`SHOWN`]).
+pub fn shown_mesh(s: &Session, name: &str) -> Option<std::sync::Arc<solidcraft_geom::Mesh>> {
+    let kept = s.model.state().body(name)?.body.kept_mesh()?;
+    let Some(world) = placed(s, name) else { return Some(kept) };
+    let key = world.iter().flatten().map(|x| x.to_bits()).collect::<Vec<u64>>();
+    if let Ok(cache) = SHOWN.lock()
+        && let Some((_, _, moved)) = cache.iter().find(|(from, k, _)| from.upgrade().is_some_and(|f| std::sync::Arc::ptr_eq(&f, &kept)) && *k == key)
+    {
+        return Some(moved.clone());
+    }
+    let mut moved = (*kept).clone();
+    for q in &mut moved.positions {
+        *q = solidcraft_doc::apply_point(&world, *q);
+    }
+    for n in &mut moved.normals {
+        *n = solidcraft_doc::apply_vector(&world, *n);
+    }
+    for line in &mut moved.edges {
+        for q in line {
+            *q = solidcraft_doc::apply_point(&world, *q);
+        }
+    }
+    let moved = std::sync::Arc::new(moved);
+    if let Ok(mut cache) = SHOWN.lock() {
+        cache.retain(|(from, _, _)| from.strong_count() > 0);
+        if cache.len() >= SHOWN_MOST {
+            cache.remove(0);
+        }
+        cache.push((std::sync::Arc::downgrade(&kept), key, moved.clone()));
+    }
+    Some(moved)
+}
+
+/// `f` given the points and triangles of the scan `name` where it shows ([`shown_mesh`]).
+pub fn with_shown<R>(s: &Session, name: &str, f: impl FnOnce(&[Vec3], &[[u32; 3]]) -> R) -> Option<R> {
+    let shown = shown_mesh(s, name)?;
+    Some(f(&shown.positions, &shown.triangles))
+}
+
+/// The scan a mesh is, read as scan tools read one (a mesh from [`shown_mesh`]).
+pub fn scan_of(mesh: &solidcraft_geom::Mesh) -> Scan<'_> {
+    Scan::new(&mesh.positions, &mesh.triangles)
+}
+
+/// Scans moved to where they show ([`shown_mesh`]): the body's own mesh, the placement, the copy.
+type ShownMeshes = Vec<(std::sync::Weak<solidcraft_geom::Mesh>, Vec<u64>, std::sync::Arc<solidcraft_geom::Mesh>)>;
+static SHOWN: std::sync::Mutex<ShownMeshes> = std::sync::Mutex::new(Vec::new());
+/// The most moved copies kept.
+const SHOWN_MOST: usize = 4;
+
+/// Where the component holding the mesh body `name` is placed, to carry a point picked where the
+/// scan shows into the component's own frame (`None`: the frames are the same).
+pub fn scan_frame(s: &Session, name: &str) -> Option<solidcraft_doc::Mat> {
+    placed(s, name)
 }
 
 /// The scan a scan command would work on with no `body` given (`body`, else the selected or only
@@ -386,6 +449,11 @@ fn move_by(s: &mut Session, mesh: &Mesh, by: &Rigid) -> Result<Option<Value>> {
     if by.is_negligible(NEGLIGIBLE, mesh.reach()) {
         return Ok(None);
     }
+    // The move is the world's (the scan as it shows); its Move is kept in the scan's component.
+    let by = match placed(s, &mesh.body) {
+        Some(world) => within(&world, by).ok_or_else(|| EngineError::Other("the scan's component cannot be placed".into()))?,
+        None => *by,
+    };
     let t = by.translation;
     let mut p = json!({"bodies": [mesh.body], "translate": [t.x, t.y, t.z]});
     if let Some((axis, angle)) = by.axis_angle() {
@@ -489,7 +557,17 @@ fn plane_param(p: &Value, cmd: &str) -> Result<Option<(Vec3, Vec3)>> {
 /// the two points picked), else the best one found. A plane given or guided to is the one asked
 /// for, so it is taken however little of the scan matches it (the reply says how much); the best
 /// one found unasked is refused when the scan is no mirror image about it and `refuse` says so.
-fn chosen_mirror(s: &Session, mesh: &Mesh, p: &Value, cmd: &str, refuse: bool) -> Result<Mirror> {
+/// The plane to complete a scan in, none being given: for a scan cut short (its open edge lying
+/// near a plane), the plane across the cut, when its reflection adds something; else the best
+/// match. The best match alone is often the wrong one: T-LESS object 5 cut short across X still
+/// mirrors whole front to back, and its fill there landed in stray patches inside its cup.
+fn plane_to_fill(scan: &solidcraft_scan::Scan) -> Option<Mirror> {
+    solidcraft_scan::mirror_fill::plane_across_cut(scan)
+        .filter(|m| solidcraft_scan::mirror_fill::complete(scan, m, None).is_some())
+        .or_else(|| symmetry::find(scan))
+}
+
+fn chosen_mirror(s: &Session, mesh: &Mesh, p: &Value, cmd: &str, refuse: bool, fill: bool) -> Result<Mirror> {
     let scan = mesh.scan();
     if let Some((point, normal)) = plane_param(p, cmd)? {
         return symmetry::measure(&scan, point, normal).ok_or_else(|| bad(cmd, "the plane has no direction, or the scan is too small"));
@@ -497,7 +575,8 @@ fn chosen_mirror(s: &Session, mesh: &Mesh, p: &Value, cmd: &str, refuse: bool) -
     if let Some(g) = guide(p, cmd)?.or_else(|| picked_guide(s, mesh)) {
         return symmetry::find_guided(&scan, &g).ok_or_else(|| bad(cmd, "the guide marks no plane: draw a line with some length, not end-on"));
     }
-    let found = symmetry::find(&scan).ok_or_else(|| bad(cmd, "the scan is too small to look for a mirror plane"))?;
+    let found = if fill { plane_to_fill(&scan) } else { symmetry::find(&scan) };
+    let found = found.ok_or_else(|| bad(cmd, "the scan is too small to look for a mirror plane"))?;
     if refuse && !found.is_symmetric() {
         return Err(bad(
             cmd,
@@ -518,7 +597,7 @@ fn find_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     plane_param(p, cmd)?;
     let keep = crate::params::bool_(p, "keep").unwrap_or(true);
     let mesh = mesh(s, p, cmd)?;
-    let found = chosen_mirror(s, &mesh, p, cmd, true)?;
+    let found = chosen_mirror(s, &mesh, p, cmd, true, false)?;
     let plane = if keep {
         // Three points of the plane, a quarter of the scan apart, make an ordinary construction plane.
         let (u, v) = found.normal.any_perp().normalized().map(|u| (u, found.normal.cross(u))).unwrap_or((Vec3::X, Vec3::Y));
@@ -547,7 +626,7 @@ fn square_to_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     guide(p, cmd)?;
     plane_param(p, cmd)?;
     let mesh = mesh(s, p, cmd)?;
-    let found = chosen_mirror(s, &mesh, p, cmd, true)?;
+    let found = chosen_mirror(s, &mesh, p, cmd, true, false)?;
     let by = symmetry::square_to(&found).ok_or_else(|| bad(cmd, "the mirror plane has no direction"))?;
     let feature = move_by(s, &mesh, &by)?;
     let reply = ScanPlaceResult {
@@ -581,15 +660,18 @@ fn stand_on_base(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(v.as_u64().ok_or_else(|| bad(cmd, "`base` must be a whole number from 0"))?),
         None => None,
     };
-    let points = stand_points(p, cmd)?;
+    // The scan where it shows (see `mesh`): its bases and the ground are the world's.
     let mesh = mesh(s, p, cmd)?;
     let scan = mesh.scan();
+    let shown = |b: &Base| *b;
+    let stand_of = |b: &Base| stand_move(b);
+    let points: Vec<Vec3> = stand_points(p, cmd)?;
     if !points.is_empty() {
         let chosen = base::through(&scan, &points).ok_or_else(|| bad(cmd, "the points must be three or more, not all in a line"))?;
-        let stand = place::stand(chosen.normal, chosen.anchor).ok_or_else(|| bad(cmd, "that base has no direction to stand on"))?;
+        let stand = stand_of(&chosen).ok_or_else(|| bad(cmd, "that base has no direction to stand on"))?;
         let feature = move_by(s, &mesh, &stand)?;
         s.scan_base_cycle = None;
-        return place_reply(mesh.body, Some(&chosen), feature);
+        return place_reply(mesh.body, Some(&shown(&chosen)), feature);
     }
     // A point given or picked on the scan grows the face there; else a base by number, or the
     // next one after the base the scan was last stood on by pressing again.
@@ -605,18 +687,16 @@ fn stand_on_base(s: &mut Session, p: &Value) -> Result<Value> {
             let i = match index {
                 Some(i) => usize::try_from(i).unwrap_or(usize::MAX),
                 // The next base while the scan still stands on the last one (nothing has moved it).
-                None => match &s.scan_base_cycle {
-                    Some((body, last)) if *body == mesh.body && count > 0 && stands_on(found.get(*last), mesh.reach()) => (last + 1) % count,
-                    _ => 0,
-                },
+                None => next_after(&mesh, &found),
             };
             let base = found.get(i).copied().ok_or_else(|| bad(cmd, format!("`base` must be below {count}, the number of bases found")))?;
             (base, Some((i, count)))
         }
     };
-    let stand = place::stand(chosen.normal, chosen.anchor).ok_or_else(|| bad(cmd, "that base has no direction to stand on"))?;
+    let stand = stand_of(&chosen).ok_or_else(|| bad(cmd, "that base has no direction to stand on"))?;
     let feature = move_by(s, &mesh, &stand)?;
     s.scan_base_cycle = numbered.map(|(i, _)| (mesh.body.clone(), i));
+    let chosen = shown(&chosen);
     let reply = ScanPlaceResult {
         body: mesh.body,
         moved: feature.is_some(),
@@ -640,16 +720,34 @@ pub fn scan_box(s: &Session, body: Option<&str>) -> Result<(String, Vec3, Vec3)>
 
 /// What the Symmetry dialog shows: the mirror plane found (near `guide`, a line from, to and the
 /// way it was seen from, when one is drawn) and how well the scan matches itself in it. A scan
-/// that is no mirror image is shown as such, not refused.
-pub fn symmetry_preview(s: &Session, body: Option<&str>, guide: Option<[Vec3; 3]>) -> Result<ScanMirror> {
+/// that is no mirror image is shown as such, not refused. `fill`: for completing the scan, the
+/// plane across its cut when it has one ([`plane_to_fill`]).
+pub fn symmetry_preview(s: &Session, body: Option<&str>, guide: Option<[Vec3; 3]>, fill: bool) -> Result<ScanMirror> {
     let cmd = "scan.symmetry";
     let mesh = mesh(s, &json!({ "body": body }), cmd)?;
     let scan = mesh.scan();
     let found = match guide {
         Some([from, to, toward]) => symmetry::find_guided(&scan, &Guide { from, to, toward }),
+        None if fill => plane_to_fill(&scan),
         None => symmetry::find(&scan),
     };
     found.map(|m| mirror_reply(&m)).ok_or_else(|| bad(cmd, "no plane found: draw a guide with some length, not end-on"))
+}
+
+/// An origin plane (XY, XZ, YZ) or a construction plane by name: a point of it and its normal, the
+/// mirror plane a Symmetry dialog uses exactly when one is picked, instead of searching.
+pub fn named_plane(s: &Session, name: &str) -> Option<(Vec3, Vec3)> {
+    super::measure_sel::plane_named(s, name)
+}
+
+/// How well the scan matches its reflection in the plane through `point` square to `normal`, for
+/// the Symmetry dialog when a plane is picked: the plane as it is, not searched near.
+pub fn mirror_preview(s: &Session, body: Option<&str>, point: Vec3, normal: Vec3) -> Result<ScanMirror> {
+    let cmd = "scan.symmetry";
+    let mesh = mesh(s, &json!({ "body": body }), cmd)?;
+    symmetry::measure(&mesh.scan(), point, normal)
+        .map(|m| mirror_reply(&m))
+        .ok_or_else(|| bad(cmd, "the plane has no direction, or the scan is too small"))
 }
 
 /// How far each point of the scan lands from the scan when reflected in the plane through `point`
@@ -663,7 +761,19 @@ pub fn mismatch_preview(s: &Session, body: Option<&str>, point: Vec3, normal: Ve
 }
 
 /// The colour the mirror fill is drawn in: amber, an unscanned patch, as a hole fill would be.
-const FILL_COLOR: [f32; 3] = [0.95, 0.62, 0.15];
+pub const FILL_COLOR: [f32; 3] = [0.95, 0.62, 0.15];
+
+/// What Complete by Mirroring would add in the plane through `point` square to `normal`, for its
+/// dialog to show before OK: the fill's triangles' corners (none when nothing is missing).
+pub fn mirror_fill_preview(s: &Session, body: Option<&str>, point: Vec3, normal: Vec3) -> Result<Vec<[Vec3; 3]>> {
+    let cmd = "scan.complete_by_mirroring";
+    let mesh = mesh(s, &json!({ "body": body }), cmd)?;
+    let scan = mesh.scan();
+    let plane = symmetry::measure(&scan, point, normal).ok_or_else(|| bad(cmd, "the plane has no direction, or the scan is too small"))?;
+    let Some(fill) = solidcraft_scan::mirror_fill::complete(&scan, &plane, None) else { return Ok(Vec::new()) };
+    let at = |i: u32| fill.positions.get(i as usize).copied();
+    Ok(fill.triangles.iter().filter_map(|t| Some([at(t[0])?, at(t[1])?, at(t[2])?])).collect())
+}
 
 fn complete_by_mirroring(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.complete_by_mirroring";
@@ -677,7 +787,7 @@ fn complete_by_mirroring(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     // A scan seen from one side matches little of itself: the plane is used however little.
-    let plane = chosen_mirror(s, &mesh, p, cmd, false)?;
+    let plane = chosen_mirror(s, &mesh, p, cmd, false, true)?;
     let fill = solidcraft_scan::mirror_fill::complete(&scan, &plane, reach)
         .ok_or_else(|| bad(cmd, "nothing is missing: every reflected triangle lands on the scan (a smaller reach finds smaller gaps)"))?;
     let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
@@ -776,6 +886,34 @@ pub fn fit_preview_of(s: &Session, p: &Value, kind: Kind) -> Result<FitPreview> 
     Ok(FitPreview { body: mesh.body, fitted, region })
 }
 
+/// The move that stands the scan on `b` (read where the scan shows) on the world's grid.
+fn stand_move(b: &Base) -> Option<Rigid> {
+    place::stand(b.normal, b.anchor)
+}
+
+/// The base a press of Stand on Base with none named stands the scan on: the next after the one it
+/// stands on now, else the steadiest. Read off the scan, not remembered: a dialog's OK runs on a
+/// copy of the session, which keeps nothing.
+fn next_after(mesh: &Mesh, found: &[Base]) -> usize {
+    found.iter().position(|b| stand_move(b).is_some_and(|m| still_standing(&m, mesh.reach()))).map_or(0, |i| (i + 1) % found.len())
+}
+
+/// The base the Stand on Base dialog opens on: the one pressing it again would stand the scan on.
+pub fn next_base(s: &Session, body: Option<&str>) -> usize {
+    let Ok(mesh) = mesh(s, &json!({ "body": body }), "scan.stand_on_base") else { return 0 };
+    next_after(&mesh, &base::bases(&mesh.scan()))
+}
+
+/// Whether standing the scan on a base again would hardly move it: a scan's bases are read again
+/// from its noisy points once it is moved, so the same base comes out a hair different (T-LESS 5
+/// moved 0.05 mm and a fraction of a degree). Within a degree, and a hundredth of its reach up or
+/// down; the slide along the grid only centres it again under a base whose middle is read a hair
+/// elsewhere (a millimetre on T-LESS 5).
+fn still_standing(m: &Rigid, reach: f64) -> bool {
+    let turn = m.axis_angle().map_or(0.0, |(_, a)| a.abs());
+    turn < 1.0f64.to_radians() && m.translation.z.abs() < 0.01 * reach.max(1.0)
+}
+
 /// The base `scan.stand_on_base` would stand the scan `body` on (the dialog's preview): the face
 /// grown from one point in `points`, the plane through three or more, else base number `index`
 /// (wrapped round the bases).
@@ -826,17 +964,32 @@ fn stand_points(p: &Value, cmd: &str) -> Result<Vec<Vec3>> {
     list.iter().map(|v| crate::params::vec3(v).ok_or_else(why)).collect()
 }
 
-/// Whether the scan already stands on `base`: standing it there would not move it.
-fn stands_on(base: Option<&Base>, reach: f64) -> bool {
-    base.and_then(|b| place::stand(b.normal, b.anchor)).is_some_and(|m| m.is_negligible(NEGLIGIBLE, reach))
-}
-
 /// A placing move: `how` gives the move for the scan, or `None` with the reason in `refusal`.
 fn place_by(s: &mut Session, p: &Value, cmd: &str, how: fn(&Scan) -> Option<Rigid>, refusal: &str) -> Result<Value> {
+    // The scan where it shows: the grid and the origin are the world's (`move_by` carries the
+    // move into the scan's component).
     let mesh = mesh(s, p, cmd)?;
     let by = how(&mesh.scan()).ok_or_else(|| bad(cmd, refusal))?;
     let feature = move_by(s, &mesh, &by)?;
     place_reply(mesh.body, None, feature)
+}
+
+/// Where the component holding the scan `body` is placed in the world, when it is moved off
+/// the world's own frame (a scan inserted at the origin is lifted so).
+pub(crate) fn placed(s: &Session, body: &str) -> Option<solidcraft_doc::Mat> {
+    let state = s.model.state();
+    let component = s.doc.model_body_component(state.body(body)?);
+    let occurrence = s.doc.occurrences.iter().find(|o| o.component == component && component != 0)?;
+    let world = solidcraft_doc::joints::occurrence_world(&s.doc, occurrence.id);
+    (world != solidcraft_doc::IDENTITY).then_some(world)
+}
+
+/// The move `by` (in the world) as its component sees it: into the world, moved, and back.
+fn within(world: &solidcraft_doc::Mat, by: &Rigid) -> Option<Rigid> {
+    let back = solidcraft_doc::mat_inverse(world)?;
+    let from = [Vec3::ZERO, Vec3::new(100.0, 0.0, 0.0), Vec3::new(0.0, 100.0, 0.0), Vec3::new(0.0, 0.0, 100.0)];
+    let to: Vec<Vec3> = from.iter().map(|&q| solidcraft_doc::apply_point(&back, by.apply(solidcraft_doc::apply_point(world, q)))).collect();
+    Rigid::between(&from, &to)
 }
 
 fn rest_on_grid(s: &mut Session, p: &Value) -> Result<Value> {
@@ -928,6 +1081,43 @@ fn length(s: &Session, p: &Value, key: &str, default: f64, cmd: &str) -> Result<
     Ok(v)
 }
 
+/// The share of a mesh's corners drawn (on exact flat faces) from which it reads as a CAD model's.
+const DRAWN_CAD: f64 = 0.05;
+
+/// With nothing named or selected, two mesh bodies shown and no solid or surface: a scan and the
+/// CAD model that came as a mesh (an STL beside it). The scan is the one with noise; the model's
+/// drawn faces read none (T-LESS's CAD reads 0, its scan 0.05 mm). `None` when it is not so plain.
+fn scan_beside_its_cad(s: &Session) -> Option<String> {
+    if s.selection.iter().any(|x| matches!(x, Sel::Body { .. } | Sel::Face { .. } | Sel::Edge { .. })) {
+        return None;
+    }
+    let state = s.model.state();
+    let shown: Vec<&solidcraft_doc::ModelBody> = state.bodies.iter().filter(|b| s.body_visible(&b.name)).collect();
+    if shown.iter().any(|b| !b.body.is_mesh()) {
+        return None;
+    }
+    let [a, b] = shown.as_slice() else { return None };
+    // A CAD mesh is drawn: its corners lie on exact flat faces (T-LESS 5's CAD 9 % flat faces, its
+    // scan none). The one drawn and the other not: the other is the scan.
+    let drawn = |name: &str| with_shown(s, name, |p, t| solidcraft_scan::denoise::drawn_share(&Scan::new(p, t)));
+    let (da, db) = (drawn(&a.name)?, drawn(&b.name)?);
+    if da >= DRAWN_CAD && db < 0.5 * da {
+        return Some(b.name.clone());
+    }
+    if db >= DRAWN_CAD && da < 0.5 * db {
+        return Some(a.name.clone());
+    }
+    let (na, nb) = (tolerance::noise(s, &a.name)?, tolerance::noise(s, &b.name)?);
+    // One clearly noisy, the other all but clean.
+    if na > 4.0 * nb {
+        Some(a.name.clone())
+    } else if nb > 4.0 * na {
+        Some(b.name.clone())
+    } else {
+        None
+    }
+}
+
 fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.deviation";
     let reply = |r: ScanDeviationResult| serde_json::to_value(r).map_err(|e| EngineError::Other(e.to_string()));
@@ -955,7 +1145,7 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         s.scan_deviation = None;
         return reply(empty);
     }
-    let scan_name = str_(p, "scan").filter(|b| !b.trim().is_empty()).map(str::to_owned);
+    let scan_name = str_(p, "scan").filter(|b| !b.trim().is_empty()).map(str::to_owned).or_else(|| scan_beside_its_cad(s));
     let mesh = mesh(s, &json!({ "body": scan_name }), cmd)?;
     // The tolerance the design keeps for this scan, unless one is given.
     let tolerance = length(s, p, "tolerance", tolerance::of(s, &mesh.body), cmd)?;
@@ -991,11 +1181,21 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         None => {
             // A solid or surface body; with none in the design, another mesh body: a CAD model
             // that came as an STL.
+            // Of those shown, when any is: a model put away is not the one meant.
             let solids: Vec<&str> = state.bodies.iter().filter(|b| !b.body.is_mesh()).map(|b| b.name.as_str()).collect();
-            let models: Vec<&str> = if solids.is_empty() {
-                state.bodies.iter().filter(|b| b.body.is_mesh() && b.name != mesh.body).map(|b| b.name.as_str()).collect()
-            } else {
+            let meshes: Vec<&str> = state.bodies.iter().filter(|b| b.body.is_mesh() && b.name != mesh.body).map(|b| b.name.as_str()).collect();
+            let shown = |all: &[&'_ str]| -> Vec<String> { all.iter().filter(|n| s.body_visible(n)).map(|n| (*n).to_owned()).collect() };
+            // A solid or surface shown, else another mesh shown (a CAD model that came as an STL),
+            // else any solid, else any other mesh: a model put away is not the one meant.
+            let (shown_solids, shown_meshes) = (shown(&solids), shown(&meshes));
+            let models: Vec<&str> = if !shown_solids.is_empty() {
+                solids.iter().copied().filter(|n| shown_solids.iter().any(|m| m == n)).collect()
+            } else if !shown_meshes.is_empty() {
+                meshes.iter().copied().filter(|n| shown_meshes.iter().any(|m| m == n)).collect()
+            } else if !solids.is_empty() {
                 solids
+            } else {
+                meshes
             };
             let mut selected: Vec<&str> = s
                 .selection
@@ -1183,10 +1383,10 @@ fn fit_surface(s: &mut Session, p: &Value) -> Result<Value> {
     let (name, feature) = surface::keep_surface(s, &fitted.surface, "Surface", "Fit Surface", &format!("{} (fitted surface)", mesh.body), None, cmd)?;
     // Trimmed to the area: its outline, seen square to the way the area faces, cuts the sheet,
     // and the piece under the point picked is kept.
+    let mut untrimmed = None;
     let trimmed = if trim {
         let plane = fit_face::region_plane(&mesh, &fitted.region).ok_or_else(|| bad(cmd, "the area has no outline to trim to"))?;
         let within = tolerance.unwrap_or_else(|| fit::tolerance(scan.extent()));
-        let sketch = fit_face::outline_sketch(s, &mesh, &fitted.region, &plane, within, "Fit Surface Outline", cmd)?;
         // Under the point; for a region chosen by hand, its triangle nearest its middle (on the
         // region even where the region is a ring).
         let mids: Vec<Vec3> = fitted.region.iter().filter_map(|&t| scan.corners(t)).map(|[a, b, c]| (a + b + c) / 3.0).collect();
@@ -1194,11 +1394,34 @@ fn fit_surface(s: &mut Session, p: &Value) -> Result<Value> {
         let inside = mids.iter().copied().min_by(|a, b| a.dist(middle).total_cmp(&b.dist(middle)));
         let point = if by_hand { point.or(inside) } else { point.or_else(|| picked_point(s, &mesh.body)) }.unwrap_or(middle);
         let keep = solidcraft_scan::surface_edit::foot(&fitted.surface, point).map_or(point, |f| f.point);
-        let reply = super::find_command("surface.trim")
-            .ok_or_else(|| EngineError::UnknownCommand("surface.trim".into()))?
-            .run_nested(s, &json!({"body": name, "curves": {"sketch": sketch}, "keep": [keep.x, keep.y, keep.z]}))
-            .map_err(|e| bad(cmd, format!("the surface could not be trimmed to the area: {e}")))?;
-        Some(reply)
+        // The outline as closely as the tolerance asks; where the kernel refuses to trim along it
+        // (a noisy scan's outline is jagged: a helmet's dome failed the face split's own check),
+        // drawn again 4, 16 and 64 times looser, the refused outline's sketch taken away; refused
+        // every time, the surface is kept untrimmed and the reply says so.
+        let mut last = None;
+        let mut reply = None;
+        for loose in [1.0, 4.0, 16.0, 64.0] {
+            let sketch = fit_face::outline_sketch(s, &mesh, &fitted.region, &plane, within * loose, "Fit Surface Outline", cmd)?;
+            let tried = super::find_command("surface.trim")
+                .ok_or_else(|| EngineError::UnknownCommand("surface.trim".into()))?
+                .run_nested(s, &json!({"body": name, "curves": {"sketch": sketch}, "keep": [keep.x, keep.y, keep.z]}));
+            match tried {
+                Ok(r) => {
+                    reply = Some(r);
+                    break;
+                }
+                Err(e) => {
+                    last = Some(e);
+                    super::find_command("timeline.delete")
+                        .ok_or_else(|| EngineError::UnknownCommand("timeline.delete".into()))?
+                        .run_nested(s, &json!({"features": [sketch]}))?;
+                }
+            }
+        }
+        if reply.is_none() {
+            untrimmed = Some(format!("kept untrimmed: it could not be trimmed to the area ({})", last.map(|e| e.to_string()).unwrap_or_default()));
+        }
+        reply
     } else {
         None
     };
@@ -1212,7 +1435,10 @@ fn fit_surface(s: &mut Session, p: &Value) -> Result<Value> {
         folds: fitted.trouble[0],
         pinches: fitted.trouble[1],
         crossings: fitted.trouble[2],
-        warning: surface::fold_warning(fitted.trouble),
+        warning: match (surface::fold_warning(fitted.trouble), untrimmed) {
+            (Some(a), Some(b)) => Some(format!("{a}; {b}")),
+            (a, b) => a.or(b),
+        },
         feature,
         trimmed,
         param_warnings: Vec::new(),
@@ -1380,7 +1606,20 @@ fn fitted_shape(s: &Session, p: &Value, cmd: &str, kind: Kind, tolerance: Option
     };
     let mesh = mesh(s, &json!({ "body": flatten::region_scan(s, p) }), cmd)?;
     let scan = mesh.scan();
+    let has = |key: &str| p.get(key).is_some_and(|v| !v.is_null());
+    // Round the click: the shape grown from the click no further than the radius, so the faces
+    // round a small feature within it are left out; as it is when nothing grows (too few on it).
+    let round = has("radius") && !has("triangles") && !has("saved") && !has("grow");
     let fitted = match flatten::chosen_region(s, p, &mesh, cmd, true)? {
+        Some(region) if round => {
+            let seed = point
+                .or_else(|| picked_point(s, &mesh.body))
+                .and_then(|at| base::nearest_triangle(&scan, at))
+                .filter(|t| region.contains(t))
+                .or_else(|| region.first().copied());
+            seed.and_then(|seed| fit::fit_within(&scan, seed, kind, tolerance, &region).ok())
+                .map_or_else(|| fit::fit_region(&scan, &region, kind), Ok)
+        }
         Some(region) => fit::fit_region(&scan, &region, kind),
         None => {
             let point =
@@ -1497,6 +1736,7 @@ pub mod flatten;
 
 #[path = "scan_free_form.rs"]
 pub mod free_form;
+
 
 #[path = "scan_made_from.rs"]
 pub mod made_from;

@@ -20,7 +20,7 @@ use crate::pbr;
 mod ao;
 pub use ao::GroundAo;
 mod clouds;
-pub use clouds::{CELL_SIZE, Cell, CloudFilter, CloudStyle, ColorMode, FILTERS, GpuCloud, cloud_cell};
+pub use clouds::{CELL_SIZE, Cell, CloudFilter, CloudStyle, ColorMode, FILTERS, GpuCloud, LIT_BY_SURFACE, cloud_cell};
 #[cfg(not(target_arch = "wasm32"))]
 mod msaa_check;
 mod oit;
@@ -3618,10 +3618,13 @@ impl Renderer {
         };
         let caps = || (cap(TriSource::Built), cap(TriSource::Planned), cap(TriSource::Instanced));
         let flat = || (solid("sc_tris_instanced_flat", "fs_solid", None, opaque(), TriSource::InstancedFlat), marks(TriSource::InstancedFlat));
+        // A scan painted with its deviation lies on the model it is measured from: pushed back
+        // half as far as faces, it is drawn where the two meet, not speckled with the model.
+        let painted_depth = || pushed(wgpu::CompareFunction::Less, true, PAINT_BIAS);
         let painted = || {
             (
-                solid("sc_tris_instanced_painted", "fs_solid", None, opaque(), TriSource::InstancedPainted),
-                solid("sc_tris_instanced_flat_painted", "fs_solid", None, opaque(), TriSource::InstancedFlatPainted),
+                solid("sc_tris_instanced_painted", "fs_solid", None, painted_depth(), TriSource::InstancedPainted),
+                solid("sc_tris_instanced_flat_painted", "fs_solid", None, painted_depth(), TriSource::InstancedFlatPainted),
             )
         };
         let flat_cap = || cap(TriSource::InstancedFlat);
@@ -3896,6 +3899,10 @@ pub const FACE_STEPS: i32 = 8;
 /// 3.5 px) may lose its outer edge on one side where it lies on a steep face. The section cap,
 /// which writes its own depth, adds the same in the shader.
 pub const FACE_SLOPE: f32 = 1.0;
+/// A painted scan (coloured by deviation, Scan Deviation's map) is pushed back half as far as
+/// [`FACE_BIAS`]: still behind the lines and edges drawn on it, but in front of a model's face it
+/// coincides with, which it would otherwise tie with pixel by pixel.
+const PAINT_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState { constant: FACE_STEPS / 2, slope_scale: FACE_SLOPE / 2.0, clamp: 0.0 };
 /// The removed material of a preview, drawn translucent: behind the faces it shares with the new
 /// shape, so twice [`FACE_BIAS`].
 const GHOST_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState { constant: 2 * FACE_STEPS, slope_scale: 2.0 * FACE_SLOPE, clamp: 0.0 };
@@ -6771,6 +6778,50 @@ mod glass_tests {
         let img = draw(2, segments, Vec::new());
         assert!(green(&img, ahead.0, ahead.1), "the bead ahead");
         assert!(!green(&img, below.0, below.1), "no wedge of bead below the eye");
+    }
+
+    /// Two painted triangles of one surface, one flat and one tilted as a fine scan's noise tilts
+    /// them: lit each by its own normal they differ (a painted area sparkled), lit by the surface's
+    /// way out given with [`LIT_BY_SURFACE`] they are the same.
+    #[test]
+    fn a_triangle_lit_by_its_surface_ignores_its_own_tilt() {
+        let Some((_, device, queue)) = crate::open_headless(crate::test_env::policy()).ok() else { return };
+        let depth = crate::depth_format(&device, true);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let target = GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false };
+        let mut renderer = Renderer::new(&device, target, None);
+        // Looking along -z from the origin: a point shows at x/d, y/d at distance d = -z.
+        let (near, far) = (0.1f32, 1000.0f32);
+        let (a, b) = (-far / (far - near), -far * near / (far - near));
+        let view_proj = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, a, -1.0], [0.0, 0.0, b, 0.0]];
+        let flat = [[-2.7, -2.0, -3.0], [-0.3, -2.0, -3.0], [-0.3, 2.0, -3.0]];
+        let tilted = [[0.3, -2.0, -3.0], [2.7, -2.0, -1.8], [0.3, 2.0, -3.0]];
+        let mut draw = |version: u64, lit_by_surface: bool| {
+            let mut triangles = Vec::new();
+            for corners in [flat, tilted] {
+                let (neighbours, has) = if lit_by_surface { ([[0.0, 0.0, 1.0], [0.0; 3]], LIT_BY_SURFACE) } else { ([[0.0; 3]; 2], 0) };
+                cloud_cell(&mut triangles, &Cell { corners, neighbours, rgb: [200, 200, 200], has, ..Default::default() });
+            }
+            let mut frame = test_frame(GpuScene::default(), 1.0);
+            frame.view_proj = view_proj;
+            let style = CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: 1.0 };
+            frame.clouds.push(GpuCloud {
+                id: 1,
+                version,
+                dots: Arc::new(Vec::new()),
+                segments: Arc::new(Vec::new()),
+                triangles: Arc::new(triangles),
+                style,
+            });
+            render_frame(&mut renderer, &device, &queue, &frame, true)
+        };
+        // Pixel 22 of row 32 is on the flat triangle (x = -0.9 at d = 3), pixel 40 on the tilted one.
+        let at = |img: &[u8], x: usize| img.get((32 * 64 + x) * 4..(32 * 64 + x) * 4 + 3).map(|p| [p[0], p[1], p[2]]).unwrap_or_default();
+        let own = draw(1, false);
+        assert_ne!(at(&own, 22), at(&own, 40), "lit by their own normals the two differ");
+        let surface = draw(2, true);
+        assert!(at(&surface, 22).iter().all(|&c| c > 40), "the flat one is drawn: {:?}", at(&surface, 22));
+        assert_eq!(at(&surface, 22), at(&surface, 40), "lit by the surface's way out they are the same");
     }
 
     /// A still view shows the picture it drew last: a reused frame (whose filtered picture is

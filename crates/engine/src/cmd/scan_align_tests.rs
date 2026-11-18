@@ -162,8 +162,11 @@ fn three_passes_are_combined_into_one_scan_in_one_undo_step() {
     assert!(r["fused"]["new_rms"].as_f64().unwrap() < 0.2, "the fused surface keeps to the passes: {r}");
     for body in [&b, &c] {
         assert!(worst_off(&s, body, &p) < 0.05, "{body} was laid on the part: {r}");
+        assert!(!s.body_visible(body), "{body}, fused in, is hidden: one scan shows");
     }
+    assert!(s.body_visible(&a), "the scan they are fused into shows");
     run(&mut s, "edit.undo", json!({}));
+    assert!(s.body_visible(&b) && s.body_visible(&c), "one undo shows the passes again");
     assert_eq!(positions_of(&s, &b), before_b, "one undo puts every pass back");
     assert_eq!(positions_of(&s, &a), before_a, "and the first's triangles");
 }

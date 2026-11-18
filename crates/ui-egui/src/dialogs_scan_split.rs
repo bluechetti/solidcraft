@@ -227,13 +227,11 @@ fn marks(planned: &Planned, keep: usize, colours: &Colours) -> Vec<u8> {
     // At most the most a colouring paints: every so many triangles past that.
     let step = painted.div_ceil(crate::scan_dots::PAINT_MOST).max(1);
     let mut out = Vec::new();
-    let at = |i: u32| cut.positions.get(i as usize).copied();
+    let lifts = crate::scan_dots::PaintLifts::of(&cut.positions, &cut.triangles);
     let sides = cut.triangles.iter().zip(&cut.side).filter(|(_, side)| **side == marked || **side == 0);
     for (tri, &side) in sides.step_by(step) {
         let rgb = if side == 0 { colours.slab } else { colour };
-        if let (Some(a), Some(b), Some(c)) = (at(tri[0]), at(tri[1]), at(tri[2])) {
-            crate::scan_dots::cloud_painted(&mut out, [a, b, c], 0.0, rgb);
-        }
+        lifts.paint(&mut out, &cut.positions, *tri, 0.0, rgb);
     }
     out
 }

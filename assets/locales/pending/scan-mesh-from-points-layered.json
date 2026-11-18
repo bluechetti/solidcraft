@@ -1,0 +1,34 @@
+{
+  "en": {
+    "ui.scan_run_layer": "Layer of points",
+    "ui.scan_run_layered": "The points lie in layers: passes that don't line up. One surface is made through the middle; align the passes before merging them for a finer one."
+  },
+  "de": {
+    "ui.scan_run_layer": "Punktschicht",
+    "ui.scan_run_layered": "Die Punkte liegen in Schichten: Durchgänge, die nicht aufeinanderliegen. Eine Fläche wird durch die Mitte gelegt; die Durchgänge vor dem Zusammenführen ausrichten, um sie feiner zu erhalten."
+  },
+  "ja": {
+    "ui.scan_run_layer": "点の層",
+    "ui.scan_run_layered": "点が層になっています。位置の合っていないパスです。中央に1つの面を作ります。より細かくするには、結合する前にパスを位置合わせしてください。"
+  },
+  "ko": {
+    "ui.scan_run_layer": "점의 층",
+    "ui.scan_run_layered": "점들이 여러 층으로 놓여 있습니다. 서로 맞지 않는 패스입니다. 가운데를 지나는 면 하나를 만듭니다. 더 세밀하게 하려면 합치기 전에 패스를 정렬하세요."
+  },
+  "zh": {
+    "ui.scan_run_layer": "点层",
+    "ui.scan_run_layered": "点分成了多层：各次扫描没有对齐。将在中间生成一个曲面；如需更精细，请先对齐各次扫描再合并。"
+  },
+  "ar": {
+    "ui.scan_run_layer": "طبقة النقاط",
+    "ui.scan_run_layered": "النقاط موزعة في طبقات: مرّات مسح غير متطابقة. يُصنع سطح واحد عبر المنتصف؛ حاذِ المرّات قبل دمجها للحصول على سطح أدق."
+  },
+  "he": {
+    "ui.scan_run_layer": "שכבת נקודות",
+    "ui.scan_run_layered": "הנקודות מונחות בשכבות: מעברים שאינם מתיישרים. נוצר משטח אחד דרך האמצע; ישרו את המעברים לפני מיזוגם לקבלת משטח עדין יותר."
+  },
+  "vi": {
+    "ui.scan_run_layer": "Lớp điểm",
+    "ui.scan_run_layered": "Các điểm nằm thành nhiều lớp: các lượt quét không khớp nhau. Một bề mặt được tạo qua giữa; hãy căn các lượt trước khi gộp để có bề mặt mịn hơn."
+  }
+}

@@ -475,7 +475,8 @@ pub(crate) fn colours_the_scan(app: &SolveApp) -> bool {
     matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(_)))
 }
 
-/// Whether a Free Form dialog is open (New Free Form, Wrap Surface, Fit Surface, Edit Surface) and
+/// Whether a scan dialog that marks the scan itself is open (the Free Form ones, Fit Shape, Flatten,
+/// Stand on Base, Split Mesh, Symmetry) and
 /// the scan is drawn plain under it (Preferences › Tools, on by default): the scan clicked is not
 /// painted in the selection colour, which would hide the surface's lines and points and the
 /// scan's colouring by distance.
@@ -490,6 +491,17 @@ pub(crate) fn plain_scan(app: &SolveApp) -> bool {
                     | Kind::ScanEditSurface(_)
                     | Kind::ScanFitPatches(_)
                     | Kind::ScanFlatTemplate(_)
+                    // The scan dialogs that mark the scan themselves (the area fitted, the base,
+                    // the side cut, the mirror plane): the whole scan in the selection colour hid
+                    // their marks.
+                    | Kind::ScanFit(_)
+                    | Kind::ScanFlatten(_)
+                    | Kind::ScanBase(_)
+                    | Kind::ScanSplit(_)
+                    | Kind::ScanSymmetry(_)
+                    // Select on Scan paints what it selects; a click's whole scan in the
+                    // selection colour hid it.
+                    | Kind::ScanSelect(_)
             )
         )
 }
@@ -611,8 +623,10 @@ pub struct WrapSurface {
     pub axis: usize,
     /// How far round the net goes, in degrees; 0 for the part's own reach.
     pub arc: f64,
-    /// 0 (the net follows the scan) to 1 (it keeps nearly to its cylinder).
+    /// 0 (the net follows the scan) to 1 (it keeps nearly to its cylinder): the one set, else (while
+    /// `stiffness_set` is false) the one the wrap chose, the least that does not fold.
     pub stiffness: f64,
+    pub stiffness_set: bool,
     shown: Option<Box<WrapShown>>,
 }
 
@@ -662,14 +676,21 @@ fn wrap(app: &SolveApp, k: &mut WrapSurface, inputs: &[crate::selection::SelInpu
     };
     // The selection is not in the design's revision: its stamp stands for it.
     let selection = solidcraft_engine::cmd::scan::select::stamp(&app.session);
-    let key = format!("{p}|{}|{}|{}|{}|{}|{selection}", k.details, k.axis, k.arc, k.stiffness, app.session.revision);
+    let set = k.stiffness_set.then_some(k.stiffness);
+    let key = format!("{p}|{}|{}|{}|{:?}|{}|{selection}", k.details, k.axis, k.arc, set, app.session.revision);
     if k.shown.as_ref().is_some_and(|s| s.key == key) {
         return;
     }
     let axis = [None, Some(Vec3::X), Some(Vec3::Y), Some(Vec3::Z)][k.axis.min(3)];
     let arc = (k.arc > 0.0).then(|| k.arc.to_radians());
-    let wrap = Wrap { axis, details: k.details.min(2), arc, stiffness: k.stiffness };
-    let result = free_form::wrapped_for(&app.session, &p, point, wrap).map(|(_, w)| w).map_err(|e| e.to_string());
+    let wrap = Wrap { axis, details: k.details.min(2), arc, stiffness: 0.0 };
+    let result = free_form::wrapped_auto(&app.session, &p, point, wrap, set)
+        .map(|(_, w, used)| {
+            // Shown as chosen until it is set by hand.
+            k.stiffness = used;
+            w
+        })
+        .map_err(|e| e.to_string());
     let trouble = result.as_ref().map_or([0; 3], |w| w.trouble);
     k.shown = Some(Box::new(WrapShown { key, result, trouble }));
 }
@@ -684,7 +705,11 @@ pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs:
     choice_row(ui, tr("ui.scan_wrap_axis"), "scan_wrap_axis", &mut k.axis, &axes);
     form_row(ui, tr("ui.scan_wrap_arc"), |ui| ui_kit::angle_field(ui, &mut k.arc));
     k.arc = k.arc.clamp(0.0, 360.0);
+    let before = k.stiffness;
     stiffness_row(ui, &mut k.stiffness);
+    if k.stiffness != before {
+        k.stiffness_set = true;
+    }
     match k.shown.as_ref().map(|s| (&s.result, s.trouble)) {
         Some((Ok(w), [folds, pinches, crossings])) => {
             let [nu, nv] = w.made.surface.count();
@@ -733,9 +758,8 @@ pub fn wrap_commands(app: &SolveApp, k: &WrapSurface, inputs: &[crate::selection
     if k.arc > 0.0 {
         p["arc"] = json!(format!("{} deg", k.arc));
     }
-    if k.stiffness > 0.0 {
-        p["stiffness"] = json!(k.stiffness);
-    }
+    // As chosen for the net shown, or as set: OK makes the net the dialog shows.
+    p["stiffness"] = json!(k.stiffness);
     Ok(vec![("scan.wrap_surface".into(), p)])
 }
 

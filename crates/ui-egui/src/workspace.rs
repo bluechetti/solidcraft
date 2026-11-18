@@ -565,6 +565,8 @@ pub const SECTIONS: &[Section] = &[
             "inspect.check_measure",
             // Labels places on the deviation map with their distances.
             "scan.deviation_pin",
+            // The scan's own triangles drawn, to see what Reduce Mesh or Remesh made of it.
+            "view.scan_triangles",
             "inspect.hole_table",
             "inspect.surface_check",
             "inspect.zebra",

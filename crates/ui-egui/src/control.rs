@@ -211,6 +211,7 @@ fn execute(app: &mut SolveApp, id: &str, params: Value) -> Result<Value, String>
             | "view.visual_style"
             | "view.grid"
             | "view.ground_shadow"
+            | "view.scan_triangles"
             | "view.navigation_bar"
             | "view.ribbon_tabs_only"
             | "view.next_tab"

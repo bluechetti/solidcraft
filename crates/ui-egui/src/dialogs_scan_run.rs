@@ -6,9 +6,24 @@
 //! changeable with a click; for Roll onto Scan, the Flat Pattern the design keeps) and shows its
 //! few choices; OK runs it. Nothing is guessed out of sight: OK passes what is shown, so what runs
 //! is what was seen.
+//!
+//! The tools that move scans (Align to Scan, Align All Scans, Align to Model, and Combine Scans'
+//! laying together) show where OK will put them before OK: the command OK runs is run on a copy of
+//! the design beside the window as soon as the dialog names what to move, each scan it moved is
+//! painted where it went, and the dialog says how well it fits. Pressing the button and seeing
+//! nothing for seconds (Align to Model on the holes plate took 8 s) told nothing.
+//!
+//! OK keeps what was shown: the preview is worked out as OK works it out (the commands computed
+//! whole on a copy of the design), and OK takes that copy when nothing has changed since, so the
+//! search is not run a second time (seconds to half a minute on a van's passes) and what lands is
+//! exactly what was seen.
+
+use std::cell::Cell;
+use std::sync::Arc;
 
 use serde_json::{Value, json};
 use solidcraft_engine::Sel;
+use solidcraft_viewport_gpu::view::{CloudStyle, ColorMode, GpuCloud};
 
 use crate::SolveApp;
 use crate::dialogs::{Kind, check, form_row};
@@ -30,6 +45,69 @@ pub const COMMANDS: &[&str] = &[
     "scan.reconstruct_rest",
     "scan.roll_onto_scan",
 ];
+
+/// The tools whose OK moves scans: where they go is worked out and shown before OK. The others show
+/// what OK makes or changes, worked out the same way.
+const PLACING: &[&str] = &["scan.register", "scan.align_all", "scan.align_to_model", "scan.combine"];
+
+/// The most triangles (of the scans a tool works on) whose result is worked out before OK. A
+/// preview does all of OK's work on a copy, so past this it would double the wait and the memory
+/// on a vast scan (Combine of 31 million triangles peaked at 30 GB): the dialog says so and OK
+/// works it out. Laying scans together is worked out at any size: OK needs the same search.
+pub(crate) const PREVIEW_MOST: usize = 2_000_000;
+
+thread_local! {
+    /// For tests: a lower [`PREVIEW_MOST`].
+    static PREVIEW_CAP: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+/// The most triangles previewed: [`PREVIEW_MOST`], or what a test set.
+pub(crate) fn preview_most() -> usize {
+    PREVIEW_CAP.with(Cell::get).unwrap_or(PREVIEW_MOST)
+}
+
+/// Previews stop past `most` triangles (tests only; `None` puts [`PREVIEW_MOST`] back).
+#[cfg(test)]
+pub(crate) fn cap_previews(most: Option<usize>) {
+    PREVIEW_CAP.with(|c| c.set(most));
+}
+
+/// The preview's id among the clouds the viewport draws.
+const CLOUD_ID: u64 = u64::MAX - 13;
+
+thread_local! {
+    static VERSION: Cell<u64> = const { Cell::new(0) };
+}
+
+/// What OK would do: what the command replied on a copy of the design, and what it moved, made or
+/// changed, painted where it is then.
+#[derive(Clone, Debug)]
+pub struct Placed {
+    reply: Value,
+    /// How many bodies it painted (the scans it moved, or what it made or changed).
+    moved: usize,
+    /// The triangles of the scan it changed, before and after (a mesh it remade or repaired).
+    count: Option<(usize, usize)>,
+    version: u64,
+    triangles: Arc<Vec<u8>>,
+    /// The commands it ran, and what they made, for OK to take ([`kept_for_ok`]) while they are
+    /// still what OK would run on the design as it is.
+    ran: Vec<(String, Value)>,
+    computed: Computed,
+}
+
+/// What a preview computed, taken once by OK.
+#[derive(Clone, Default)]
+struct Computed(Arc<std::sync::Mutex<Option<solidcraft_engine::ComputedCommands>>>);
+
+impl std::fmt::Debug for Computed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Computed")
+    }
+}
+
+/// A preview being worked out, for the values in its key.
+type Placing = Arc<crate::scan_job::Job<String, Result<Placed, String>>>;
 
 /// The dialog's values; the bodies it works on are its selection inputs.
 #[derive(Clone, Debug)]
@@ -60,6 +138,13 @@ pub struct ScanRun {
     pub area: crate::scan_area::Area,
     pub kept: Option<Value>,
     pub marks: crate::dialogs_scan_clean::AreaMarks,
+    /// The tools that move scans ([`PLACING`]): where OK would put them, for the values in the key,
+    /// and the one being worked out.
+    placed: Option<(String, Result<Placed, String>)>,
+    placing: Option<Placing>,
+    /// The tool's result is not worked out before OK: the scans it works on have this many
+    /// triangles, past [`PREVIEW_MOST`].
+    too_large: Option<usize>,
 }
 
 impl ScanRun {
@@ -79,12 +164,22 @@ impl ScanRun {
             area: crate::scan_area::Area::clean(),
             kept: None,
             marks: crate::dialogs_scan_clean::AreaMarks::default(),
+            placed: None,
+            placing: None,
+            too_large: None,
         }
     }
 
     /// The command runs through the whole scan: OK works beside the window.
     pub fn heavy(&self) -> bool {
         !matches!(self.id, "scan.close_surface" | "scan.make_flat")
+    }
+
+    /// What OK would do is drawn (where the moved scans go, what is made or changed): the bodies
+    /// the dialog names are not lit then, or the model a scan lands on, lit over it, hides where
+    /// it lands.
+    pub fn shows_placement(&self) -> bool {
+        matches!(&self.placed, Some((_, Ok(p))) if p.moved > 0)
     }
 
     pub fn title(&self) -> &'static str {
@@ -235,10 +330,342 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanRun, inputs: &[SelInp
         }
         _ => {}
     }
+    place(app, k, inputs);
+    placed_rows(app, ui, k);
     if let Some(help) = crate::command_help::help(k.id) {
         ui_kit::text(ui, &help, ui_kit::Text::Hint("scan_run_help"));
     }
     false
+}
+
+/// The triangles of the scans the dialog names (all its inputs), or of the design's largest scan
+/// when it names none (Mesh from Points, a surface tool fitting to a scan).
+fn work_size(app: &SolveApp, inputs: &[SelInput]) -> usize {
+    let state = app.session.model.state();
+    let named: usize = (0..inputs.len())
+        .flat_map(|i| items(inputs, i).body_names())
+        .filter_map(|n| state.body(&n).and_then(|b| b.body.kept_mesh()).map(|m| m.triangles.len()))
+        .sum();
+    if named > 0 { named } else { crate::scan_job::biggest_scan(app) }
+}
+
+/// What is run on the copy to show what OK does: the command OK runs; for Combine Scans past
+/// [`PREVIEW_MOST`] only its laying together (the fusing is not shown). With the flag, the result
+/// past the cap is not shown (`too_large`).
+fn preview_command(app: &SolveApp, k: &ScanRun, inputs: &[SelInput]) -> (Option<(String, Value)>, Option<usize>) {
+    let Some((id, p)) = commands(app, k, inputs).ok().and_then(|c| c.into_iter().next()) else { return (None, None) };
+    let size = work_size(app, inputs);
+    let large = (size > preview_most()).then_some(size);
+    match id.as_str() {
+        "scan.combine" if large.is_some() => {
+            if !k.align {
+                return (None, large);
+            }
+            let laid = || -> Option<(String, Value)> {
+                let base = p.get("body")?.clone();
+                let mut bodies = vec![base.clone()];
+                bodies.extend(p.get("with")?.as_array()?.iter().cloned());
+                Some(("scan.align_all".to_owned(), json!({"bodies": bodies, "hold": [base]})))
+            };
+            (laid(), large)
+        }
+        "scan.register" | "scan.align_all" | "scan.align_to_model" => (Some((id, p)), None),
+        _ if large.is_some() => (None, large),
+        _ => (Some((id, p)), None),
+    }
+}
+
+/// Work out again what OK would do when the bodies, the choices or the design have changed:
+/// beside the window, the last one staying shown until the new one is there.
+fn place(app: &SolveApp, k: &mut ScanRun, inputs: &[SelInput]) {
+    let (command, too_large) = preview_command(app, k, inputs);
+    k.too_large = too_large;
+    let Some((id, p)) = command else {
+        k.placed = None;
+        k.placing = None;
+        return;
+    };
+    let key = format!("{id}|{p}|{}", app.session.revision);
+    if k.placed.as_ref().is_some_and(|(shown, _)| *shown == key) {
+        k.placing = None;
+        return;
+    }
+    // The colour is read here: the theme is the window thread's.
+    let rgb = solidcraft_theme::Tokens::get().analysis.draft[1].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
+    if let Some(job) = k.placing.clone() {
+        match job.poll() {
+            crate::scan_job::Poll::Working if job.key == key => return,
+            crate::scan_job::Poll::Done(result) if job.key == key => {
+                k.placing = None;
+                k.placed = Some((key, result));
+                return;
+            }
+            _ => k.placing = None,
+        }
+    }
+    // Always beside the window: a search over the scan takes a second or more even on a small one.
+    let (given, command) = (p.clone(), id.clone());
+    if let Some(job) = crate::scan_job::spawn(app, key.clone(), move |s| placed_on_copy(s, &command, &given, rgb)) {
+        k.placing = Some(Arc::new(job));
+        return;
+    }
+    k.placed = Some((key, placed_on_copy(&app.session, &id, &p, rgb)));
+}
+
+/// `id` run with `p` on a copy of `s`: what it replied, and what it moved (the laying tools), else
+/// the body it names in its reply (`body`, `surface`: the scan remade, the mesh or surface made),
+/// painted where it is then (past the most a colouring paints, every so many of its triangles).
+fn placed_on_copy(s: &solidcraft_engine::Session, id: &str, p: &Value, rgb: [u8; 3]) -> Result<Placed, String> {
+    let ran = vec![(id.to_owned(), p.clone())];
+    let prepared = s.scratch().compute_commands(&ran, None).map_err(|e| e.to_string())?;
+    let reply = prepared.steps().last().map(|(_, _, reply)| reply.clone()).unwrap_or(Value::Null);
+    let copy = prepared.computed();
+    let laying = PLACING.contains(&id) && id != "scan.combine";
+    let named =
+        || -> Vec<String> { ["body", "surface"].iter().find_map(|k| reply.get(*k).and_then(Value::as_str)).map(str::to_owned).into_iter().collect() };
+    let moved: Vec<String> = if !laying {
+        named()
+    } else {
+        match reply.get("passes").and_then(Value::as_array) {
+            Some(passes) => passes
+                .iter()
+                .filter(|pass| pass.get("moved").and_then(Value::as_bool) == Some(true))
+                .filter_map(|pass| pass.get("body").and_then(Value::as_str).map(str::to_owned))
+                .collect(),
+            None => reply
+                .get("moved")
+                .and_then(Value::as_bool)
+                .filter(|m| *m)
+                .and(reply.get("body").and_then(Value::as_str))
+                .map(str::to_owned)
+                .into_iter()
+                .collect(),
+        }
+    };
+    let state = copy.model.state();
+    // A scan as triangles; a surface or solid as its display mesh.
+    let meshes: Vec<(Vec<solidcore_record::Vec3>, Vec<[u32; 3]>)> = moved
+        .iter()
+        .filter_map(|name| Some((name, state.body(name)?)))
+        .map(|(name, b)| match b.body.is_mesh().then(|| solidcraft_engine::cmd::scan::shown_mesh(copy, name)).flatten() {
+            // Where the scan shows (in a placed component, moved with it).
+            Some(m) => (m.positions.clone(), m.triangles.clone()),
+            None => {
+                let m = b.mesh();
+                (m.positions.clone(), m.triangles.clone())
+            }
+        })
+        .collect();
+    let total: usize = meshes.iter().map(|(_, t)| t.len()).sum();
+    let step = total.div_ceil(crate::scan_dots::PAINT_MOST).max(1);
+    let mut out = Vec::with_capacity((total / step + 1) * crate::scan_dots::DOT_SIZE);
+    for (positions, triangles) in &meshes {
+        let lifts = crate::scan_dots::PaintLifts::of(positions, triangles);
+        for tri in triangles.iter().step_by(step) {
+            lifts.paint(&mut out, positions, *tri, 0.0, rgb);
+        }
+    }
+    // A scan it remade: its triangles before and after.
+    let count = (!laying)
+        .then(|| moved.first())
+        .flatten()
+        .and_then(|b| Some((s.model.state().body(b)?.body.kept_mesh()?.triangles.len(), state.body(b)?.body.kept_mesh()?.triangles.len())));
+    let version = VERSION.with(|v| {
+        v.set(v.get() + 1);
+        v.get()
+    });
+    drop(state);
+    Ok(Placed {
+        reply,
+        moved: moved.len(),
+        count,
+        version,
+        triangles: Arc::new(out),
+        ran,
+        computed: Computed(Arc::new(std::sync::Mutex::new(Some(prepared)))),
+    })
+}
+
+/// What the preview computed, for OK to take in place of computing it again: only when it ran
+/// exactly the commands OK would run now and the design is as it was then (else `None`, and OK
+/// works it out as usual).
+pub(crate) fn kept_for_ok(app: &SolveApp, k: &ScanRun, cmds: &[(String, Value)]) -> Option<solidcraft_engine::ComputedCommands> {
+    let (_, Ok(placed)) = k.placed.as_ref()? else { return None };
+    if placed.ran != cmds {
+        return None;
+    }
+    let mut slot = placed.computed.0.lock().ok()?;
+    if !slot.as_ref().is_some_and(|prepared| prepared.is_current(&app.session)) {
+        return None;
+    }
+    slot.take()
+}
+
+/// The rows saying where OK would put the scans and how well they fit, or that it is being worked
+/// out, or why it cannot be.
+fn placed_rows(app: &SolveApp, ui: &mut egui::Ui, k: &ScanRun) {
+    let len = |v: f64| crate::prefs::show_mm(app, v, 1);
+    let row = |ui: &mut egui::Ui, label: &str, text: &str| form_row(ui, label, |ui| ui_kit::text(ui, text, ui_kit::Text::Cell));
+    let num = |r: &Value, key: &str| r.get(key).and_then(Value::as_f64);
+    match k.placed.as_ref().map(|(_, r)| r) {
+        Some(Err(why)) => {
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_run_place_error", true));
+        }
+        Some(Ok(placed)) => {
+            let r = &placed.reply;
+            // Combine Scans run whole: its laying together is in `aligned`.
+            let laid_reply = r.get("aligned").filter(|a| a.is_object()).unwrap_or(r);
+            if let Some(passes) = laid_reply.get("passes").and_then(Value::as_array) {
+                let r = laid_reply;
+                let laid = passes.iter().filter(|p| p.get("placed").and_then(Value::as_bool) == Some(true)).count();
+                let count = solidcraft_ui_text::format("ui.scan_run_laid_count", &[("laid", &laid.to_string()), ("all", &passes.len().to_string())]);
+                row(ui, tr("ui.scan_run_laid"), &count);
+                let links = r.get("links").and_then(Value::as_array).cloned().unwrap_or_default();
+                let worst = links
+                    .iter()
+                    .filter(|l| l.get("accepted").and_then(Value::as_bool) == Some(true))
+                    .filter_map(|l| num(l, "rms_after"))
+                    .fold(None, |w: Option<f64>, v| Some(w.map_or(v, |w| w.max(v))));
+                if let Some(worst) = worst {
+                    row(ui, tr("ui.scan_run_worst_after"), &len(worst));
+                }
+                // A pairing left out says why only when a pass is left out with it: with every pass
+                // laid, another pairing placed it.
+                if let Some(note) = links.iter().filter(|_| laid < passes.len()).find_map(|l| l.get("note").and_then(Value::as_str)) {
+                    ui_kit::text(ui, note, ui_kit::Text::Report("scan_run_place_note", true));
+                }
+            } else if PLACING.contains(&k.id) {
+                if let Some(v) = num(r, "rms_before") {
+                    row(ui, tr("ui.scan_run_off_before"), &len(v));
+                }
+                if let Some(v) = num(r, "rms_after") {
+                    row(ui, tr("ui.scan_run_off_after"), &len(v));
+                }
+                for key in ["note", "rival"] {
+                    if let Some(text) = r.get(key).and_then(Value::as_str) {
+                        ui_kit::text(ui, text, ui_kit::Text::Report("scan_run_place_note", true));
+                    }
+                }
+            }
+            if !PLACING.contains(&k.id) || r.get("fused").is_some() {
+                result_rows(app, ui, k.id, placed);
+            }
+            // While the next one is worked out, its note takes this line: a line more, then one
+            // less when it arrived, moved OK under the pointer (a click aimed at it missed).
+            let what = match (k.placing.is_some(), PLACING.contains(&k.id) && r.get("fused").is_none(), placed.moved) {
+                (true, ..) => "ui.scan_run_placing",
+                (false, true, 0) => "ui.scan_run_stays",
+                (false, true, _) => "ui.scan_run_placed_hint",
+                (false, false, 0) => "ui.scan_run_nothing_changes",
+                (false, false, _) => "ui.scan_run_result_hint",
+            };
+            let id = if k.placing.is_some() { "scan_run_placing" } else { "scan_run_placed" };
+            ui_kit::text(ui, tr(what), ui_kit::Text::Hint(id));
+        }
+        None => {}
+    }
+    if let Some(count) = k.too_large {
+        let text = solidcraft_ui_text::format("ui.scan_run_too_large", &[("triangles", &count.to_string())]);
+        ui_kit::text(ui, &text, ui_kit::Text::Hint("scan_run_too_large"));
+    }
+    if k.placing.is_some() {
+        if !matches!(k.placed.as_ref().map(|(_, r)| r), Some(Ok(_))) {
+            ui_kit::text(ui, tr("ui.scan_run_placing"), ui_kit::Text::Hint("scan_run_placing"));
+        }
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+    }
+}
+
+/// What a tool that makes or changes a body would do, from its reply on the copy: the scan's
+/// triangles before and after, and the one or two numbers that say how it went.
+fn result_rows(app: &SolveApp, ui: &mut egui::Ui, id: &str, placed: &Placed) {
+    let r = &placed.reply;
+    let len = |v: f64| crate::prefs::show_mm(app, v, 1);
+    let row = |ui: &mut egui::Ui, label: &str, text: &str| form_row(ui, label, |ui| ui_kit::text(ui, text, ui_kit::Text::Cell));
+    let int = |r: &Value, key: &str| r.get(key).and_then(Value::as_u64).map(|v| v as usize);
+    let part_of =
+        |part: usize, all: usize| solidcraft_ui_text::format("ui.scan_run_laid_count", &[("laid", &part.to_string()), ("all", &all.to_string())]);
+    let fused = r.get("fused").filter(|f| f.is_object());
+    let counted = placed.count.or_else(|| fused.and_then(|f| Some((int(f, "before")?, int(f, "triangles")?))));
+    match counted {
+        Some((before, after)) if before != after => {
+            let change =
+                solidcraft_ui_text::format("ui.scan_run_triangles_change", &[("before", &before.to_string()), ("after", &after.to_string())]);
+            row(ui, tr("ui.scan_run_triangles"), &change);
+        }
+        Some((_, after)) => {
+            row(ui, tr("ui.scan_run_triangles"), &after.to_string());
+        }
+        None => {
+            if let Some(t) = int(r, "triangles") {
+                row(ui, tr("ui.scan_run_triangles"), &t.to_string());
+            }
+        }
+    }
+    match id {
+        "scan.repair" => {
+            // Points written twice a hair apart, joined (the YCB mug's cracks), apart from the faces
+            // mended.
+            if let Some(joined) = int(r, "joined").filter(|j| *j > 0) {
+                row(ui, tr("ui.scan_run_joined"), &joined.to_string());
+            }
+            let fixed: usize = ["duplicates", "non_manifold", "slivers", "crossing_faces", "refilled"].iter().filter_map(|k| int(r, k)).sum();
+            row(ui, tr("ui.scan_run_fixed"), &fixed.to_string());
+        }
+        "scan.mesh_from_points" => {
+            if let (Some(used), Some(all)) = (int(r, "points_used"), int(r, "points")) {
+                row(ui, tr("ui.scan_run_points_used"), &part_of(used, all));
+            }
+            // Passes merged without lying on each other: said, with what was done about it.
+            if r.get("warning").is_some_and(|w| !w.is_null())
+                && let Some(t) = r.get("thickness").and_then(Value::as_f64)
+            {
+                row(ui, tr("ui.scan_run_layer"), &len(t));
+                ui_kit::text(ui, tr("ui.scan_run_layered"), ui_kit::Text::Hint("scan_run_layered"));
+            }
+        }
+        "scan.remesh" | "scan.combine" => {
+            if let Some(v) = fused.unwrap_or(r).get("new_rms").and_then(Value::as_f64) {
+                row(ui, tr("ui.scan_run_off_scan"), &len(v));
+            }
+        }
+        "scan.make_flat" => {
+            if let Some(v) = r.get("rms").and_then(Value::as_f64) {
+                row(ui, tr("ui.scan_run_off_scan"), &len(v));
+            }
+        }
+        "scan.close_surface" => {
+            if let Some(v) = int(r, "caps") {
+                row(ui, tr("ui.scan_run_closed"), &v.to_string());
+            }
+            if let Some(v) = int(r, "open") {
+                row(ui, tr("ui.scan_run_left_open"), &v.to_string());
+            }
+        }
+        "scan.refit" => {
+            if let Some(v) = int(r, "faces") {
+                row(ui, tr("ui.scan_run_faces"), &v.to_string());
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Where OK would put the scans, for the GPU viewport: the moved scans painted there.
+pub(crate) fn gpu_preview(app: &SolveApp) -> Option<GpuCloud> {
+    let Some(Kind::ScanRun(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    let Some((_, Ok(placed))) = k.placed.as_ref() else { return None };
+    if placed.triangles.is_empty() {
+        return None;
+    }
+    Some(GpuCloud {
+        id: CLOUD_ID,
+        version: placed.version,
+        dots: crate::scan_dots::none(),
+        segments: crate::scan_dots::none(),
+        triangles: placed.triangles.clone(),
+        style: CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: 3.0 },
+    })
 }
 
 /// The one body of input `i`.
@@ -373,6 +800,132 @@ mod tests {
             _ => None,
         });
         assert!(matches!(step, Some(solidcraft_engine::doc::scan_clean::CleanStep::Remesh { area: Some(_), .. })), "{step:?}");
+    }
+
+    /// A 20 x 10 x 10 box scan, `shift` along X, each face cut into a grid of `n` by `n` cells
+    /// (twelve triangles leave too little to lay onto a model).
+    fn fine_box_scan(h: &mut crate::scenario::Harness, name: &str, shift: f64, n: usize) {
+        let path = h.dir.join(format!("{name}.obj"));
+        let (size, mut obj, mut count) = ([20.0, 10.0, 10.0], String::new(), 0usize);
+        // Each face: the axis it faces along, which side, and its two in-plane axes.
+        for (axis, side) in [(0, 0.0), (0, 1.0), (1, 0.0), (1, 1.0), (2, 0.0), (2, 1.0)] {
+            let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+            let at = |i: usize, j: usize| {
+                let mut p = [0.0; 3];
+                p[axis] = side * size[axis];
+                p[u] = size[u] * i as f64 / n as f64;
+                p[v] = size[v] * j as f64 / n as f64;
+                p
+            };
+            for j in 0..=n {
+                for i in 0..=n {
+                    let p = at(i, j);
+                    obj.push_str(&format!("v {} {} {}\n", p[0] + shift, p[1], p[2]));
+                }
+            }
+            for j in 0..n {
+                for i in 0..n {
+                    let k = |i: usize, j: usize| count + j * (n + 1) + i + 1;
+                    obj.push_str(&format!("f {} {} {}\nf {} {} {}\n", k(i, j), k(i + 1, j), k(i + 1, j + 1), k(i, j), k(i + 1, j + 1), k(i, j + 1)));
+                }
+            }
+            count += (n + 1) * (n + 1);
+        }
+        std::fs::write(&path, obj).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+    }
+
+    /// Align to Model works out where the scan goes beside the window as soon as it opens (saying
+    /// so meanwhile, the design untouched), then says how far off the scan is now and after, paints
+    /// it where OK puts it, and stops lighting the two bodies (lit, the model hid where it lands).
+    #[test]
+    fn align_to_model_shows_where_the_scan_goes_before_ok() {
+        let mut h = crate::scenario::Harness::new();
+        fine_box_scan(&mut h, "part", 0.0, 16);
+        // The model where the scan is (wherever inserting put it), 3 mm along X from it.
+        let lo = crate::viewport::model_bounds(&h.app).min;
+        h.app
+            .run(
+                "solid.box",
+                json!({"body_name": "Model", "operation": "new", "length": 20, "width": 10, "height": 10, "corner": [lo.x - 3.0, lo.y, lo.z]}),
+            )
+            .unwrap();
+        h.app.run("select.clear", json!({})).unwrap();
+        let features = h.app.session.doc.features.len();
+        let gate = crate::scan_job::hold();
+        h.app.start("scan.align_to_model");
+        h.frames(2);
+        let working = matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanRun(k)) if k.placing.is_some() && k.placed.is_none());
+        gate.open();
+        for _ in 0..1000 {
+            h.frames(1);
+            if matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanRun(k)) if k.placed.is_some()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(working, "worked out beside the window, saying so");
+        assert_eq!(h.app.session.doc.features.len(), features, "nothing in the design moves before OK");
+        let Some(d) = h.app.dialog.as_ref() else { panic!("the dialog stays open") };
+        let Kind::ScanRun(k) = &d.kind else { panic!() };
+        let Some((_, Ok(placed))) = &k.placed else { panic!("where it goes: {:?}", k.placed.as_ref().map(|(_, r)| r.as_ref().err())) };
+        let (before, after) = (placed.reply["rms_before"].as_f64().unwrap(), placed.reply["rms_after"].as_f64().unwrap());
+        assert!(before > 0.5 && after < 0.1 * before, "3 mm off, then on it: {before} -> {after}");
+        assert!(k.shows_placement() && placed.moved == 1);
+        assert!(super::gpu_preview(&h.app).is_some_and(|c| !c.triangles.is_empty()), "painted where OK puts it");
+        assert!(h.app.highlighted().iter().all(|x| !matches!(x, solidcraft_engine::Sel::Body { .. })), "the two bodies are not lit over it");
+        // OK takes what the preview computed instead of searching again, and lands where shown.
+        let kept = placed.computed.clone();
+        let shown = placed.reply["rms_after"].as_f64().unwrap();
+        assert!(kept.0.lock().unwrap().is_some());
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        assert!(kept.0.lock().unwrap().is_none(), "OK took the preview's result");
+        assert_eq!(h.app.session.doc.features.len(), features + 1, "one Move");
+        let check = h.app.session.scratch().execute("scan.align_to_model", &json!({"body": "part", "model": "Model", "search": false})).unwrap();
+        assert!(check["rms_before"].as_f64().unwrap() <= shown + 1e-6, "the scan lies where the preview put it: {check} vs {shown}");
+    }
+
+    /// The tools that make or change a body show it before OK too: Remesh works out the new mesh on
+    /// a copy beside the window and says its triangles before and after; past the cap it says the
+    /// scan is too large to preview and works nothing out (OK still runs it).
+    #[test]
+    fn remesh_shows_what_it_makes_before_ok_up_to_the_cap() {
+        let mut h = crate::scenario::Harness::new();
+        fine_box_scan(&mut h, "part", 0.0, 8);
+        let triangles = 6 * 8 * 8 * 2;
+        let wait = |h: &mut crate::scenario::Harness| {
+            for _ in 0..1000 {
+                h.frames(1);
+                if matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanRun(k)) if k.placed.is_some() || k.too_large.is_some()) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        let features = h.app.session.doc.features.len();
+        h.app.start("scan.remesh");
+        if let Some(Kind::ScanRun(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.cell = Some(1.0);
+        }
+        wait(&mut h);
+        assert_eq!(h.app.session.doc.features.len(), features, "nothing changes before OK");
+        let Some(Kind::ScanRun(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!() };
+        let Some((_, Ok(placed))) = &k.placed else { panic!("the remeshed scan: {:?}", k.placed.as_ref().map(|(_, r)| r.as_ref().err())) };
+        let (before, after) = placed.count.expect("its triangles before and after");
+        assert_eq!(before, triangles);
+        assert!(after > before, "1 mm cells on a 20 mm box make more triangles: {after}");
+        assert!(super::gpu_preview(&h.app).is_some(), "what OK makes is painted");
+        h.app.dialog = None;
+        super::cap_previews(Some(triangles - 1));
+        h.app.start("scan.remesh");
+        wait(&mut h);
+        super::cap_previews(None);
+        let Some(Kind::ScanRun(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!() };
+        assert_eq!(k.too_large, Some(triangles), "past the cap: said, not worked out");
+        assert!(k.placed.is_none() && k.placing.is_none());
+        assert!(super::commands(&h.app, k, &h.app.dialog.as_ref().unwrap().inputs).is_ok(), "OK still runs it");
     }
 
     /// With two scans, Align to Scan starts with the one made last laid onto the other, and

@@ -197,6 +197,11 @@ fn ray_hit(app: &SolveApp, proj: &Proj, at: egui::Pos2, only: Option<&str>) -> O
     let mut best: Option<(f64, String, Vec3, usize)> = None;
     for b in state.bodies.iter().filter(|b| b.body.is_mesh() && only.is_none_or(|n| n == b.name) && app.body_visible(&b.name)) {
         let (m, place) = b.mesh_in_place();
+        // In a component placed in the world the scan shows moved with it: the ray meets it there.
+        let place = match solidcraft_engine::cmd::scan::scan_frame(&app.session, &b.name) {
+            Some(world) => solidcraft_engine::doc::mat_mul(&world, &place),
+            None => place,
+        };
         let Some((lo, ld)) = crate::viewport::local_ray(&place, o, d) else { continue };
         let index = app.viewport.pick_index.of(&m);
         if let Some((t, triangle)) = crate::pick_index::raycast(index.as_deref(), &m, lo, ld)

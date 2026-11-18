@@ -93,10 +93,10 @@ fn look(app: &SolveApp, k: &mut Flatten, inputs: &[SelInput]) {
         return;
     }
     let result = flattened(&app.session, &p, "scan.flatten").map_err(|e| e.to_string()).map(|(body, flat, shift)| {
-        let state = app.session.model.state();
         let rgb = solidcraft_theme::Tokens::get().accent.to_array();
         let mut dots = Vec::new();
-        if let Some((positions, _)) = state.body(&body).and_then(|b| b.body.triangle_mesh()) {
+        let shown = solidcraft_engine::cmd::scan::shown_mesh(&app.session, &body);
+        if let Some(positions) = shown.as_ref().map(|m| m.positions.as_slice()) {
             // At most a few hundred thousand marks: every so many points on a vast region.
             let step = (flat.vertices.len() / 400_000).max(1);
             for &v in flat.vertices.iter().step_by(step) {

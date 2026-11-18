@@ -76,9 +76,25 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                         }
                     });
                     ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.edit_surface_drags_onto_scan_note");
+                        let response = setting::edit_surface_drags_onto_scan(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:edit_surface_drags_onto_scan", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
                         let note = app.tr("prefs.free_form_plain_scan_note");
                         let response = setting::free_form_plain_scan(app, ui).backing_on_hover_text(note);
                         crate::scenario::publish_target("prefs:free_form_plain_scan", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.flat_template_short_note");
+                        let response = setting::flat_template_short(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:flat_template_short", response.rect);
                         if !crate::ui_kit::settings_search::suppress_chrome(ui) {
                             ui_kit::help_icon(ui, note);
                         }

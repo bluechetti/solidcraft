@@ -39,7 +39,7 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.survey", "Survey 
     .contract(&CONTRACT)
     .output(output_schema_for::<ScanSurveyResult>)
     .noundo()
-    .params("body?: mesh body (default: the selected or only one): a first look at the scan, changing nothing: its size (own_size along its own directions, longest first), fineness, noise and the Denoise strength it would take, holes, rims, floating pieces, open edges no hole closes, how much of it is broad flat faces, whether it is sheet-like, what Find All read off it (once it has run), the design's other scans and models, and `next`: the commands to run next with why and parameters to start from, in the order the work goes → body, triangles, points, unusable, low, high, center, own_size, area, typical_edge, units_hint, noise, smoothing, tolerance, tolerance_set, holes, longest_hole, rims, open_edges, tangled_edges, pieces, floating, floating_share, flat_share, sheet_like, shapes{in_shapes, planes, cylinders, spheres, cones, tori, freeform, regions}, other_scans, models, next[{command, why, params}]")];
+    .params("body?: mesh body (default: the selected or only one): a first look at the scan, changing nothing: its size (own_size along its own directions, longest first), fineness, noise and the Denoise strength it would take, holes, rims, floating pieces, open edges no hole closes, how much of it is broad flat faces, whether it is sheet-like, what Find All read off it (once it has run), the design's other scans and models (those shown), and `next`: the commands to run next with why and parameters to start from, in the order the work goes → body, triangles, points, unusable, low, high, center, own_size, area, typical_edge, units_hint, noise, smoothing, tolerance, tolerance_set, holes, longest_hole, rims, open_edges, tangled_edges, crack_edges, pieces, floating, floating_share, flat_share, sheet_like, shapes{in_shapes, planes, cylinders, spheres, cones, tori, freeform, regions}, other_scans, models, next[{command, why, params}]")];
 
 /// A survey kept for the Survey dialog: the reply, for the scan as it was read.
 #[derive(Debug)]
@@ -56,11 +56,10 @@ impl KeptSurvey {
     /// Whether it is of the scan as it is now: the same mesh, and Find All's reading in it when
     /// there is one now (a survey read before Find All ran is read again after).
     pub fn current(&self, s: &Session) -> bool {
-        let state = s.model.state();
-        let same = state
-            .body(&self.scan)
-            .and_then(|b| b.body.triangle_mesh())
-            .is_some_and(|(p, t)| super::reconstruct::held(p, t) == self.held || super::reconstruct::fingerprint(p, t) == self.fingerprint);
+        let same = super::with_shown(s, &self.scan, |p, t| {
+            super::reconstruct::held(p, t) == self.held || super::reconstruct::fingerprint(p, t) == self.fingerprint
+        })
+        .unwrap_or(false);
         same && self.had_shapes == shapes_now(s, &self.scan)
     }
 }
@@ -76,10 +75,19 @@ fn survey(s: &mut Session, p: &Value) -> Result<Value> {
     let (found, other_scans, models, held, fingerprint) = {
         let state = s.model.state();
         let b = state.body(&body).ok_or_else(|| bad(cmd, format!("no body `{body}`")))?;
-        let (positions, triangles) = b.body.triangle_mesh().ok_or_else(|| bad(cmd, format!("`{body}` is not a scan (a mesh body)")))?;
-        let found = look(&Scan::new(positions, triangles), FLOATING_SHARE);
-        let (held, fingerprint) = (super::reconstruct::held(positions, triangles), super::reconstruct::fingerprint(positions, triangles));
-        let (scans, models): (Vec<_>, Vec<_>) = state.bodies.iter().filter(|b| b.name != body).partition(|b| b.body.is_mesh());
+        if !b.body.is_mesh() {
+            return Err(bad(cmd, format!("`{body}` is not a scan (a mesh body)")));
+        }
+        // Where the scan shows: its box and the places it names are the world's.
+        let (found, held, fingerprint) = super::with_shown(s, &body, |positions, triangles| {
+            let found = look(&Scan::new(positions, triangles), FLOATING_SHARE);
+            (found, super::reconstruct::held(positions, triangles), super::reconstruct::fingerprint(positions, triangles))
+        })
+        .ok_or_else(|| bad(cmd, format!("`{body}` is not a scan (a mesh body)")))?;
+        // Only what shows: a hidden scan (another part's, put away) is no pass to lay on this one,
+        // and a hidden model none to check it against.
+        let (scans, models): (Vec<_>, Vec<_>) =
+            state.bodies.iter().filter(|b| b.name != body && s.body_visible(&b.name)).partition(|b| b.body.is_mesh());
         (
             found,
             scans.iter().map(|b| b.name.clone()).collect::<Vec<_>>(),
@@ -131,6 +139,7 @@ fn survey(s: &mut Session, p: &Value) -> Result<Value> {
         rims: found.rims,
         open_edges: found.open_edges,
         tangled_edges: found.tangled_edges,
+        crack_edges: found.crack_edges,
         pieces: found.pieces,
         floating: found.floating,
         floating_share: found.floating_share.max(0.0),
@@ -201,10 +210,18 @@ fn next_steps(plan: &Plan) -> Vec<ScanSurveyStep> {
     if look.tangled_edges > 0 || look.unusable > 0 {
         step(
             "scan.repair",
-            format!(
-                "{} open edges belong to no hole (pinches, edges of three triangles) and {} triangles are unusable",
-                look.tangled_edges, look.unusable
-            ),
+            match (look.crack_edges, look.tangled_edges - look.crack_edges.min(look.tangled_edges)) {
+                (0, tangled) => {
+                    format!("{tangled} open edges belong to no hole (edges of three triangles) and {} triangles are unusable", look.unusable)
+                }
+                (cracks, 0) => {
+                    format!("{cracks} open edges are cracks between points a hair apart (a file's two copies of one point): Repair Mesh joins them")
+                }
+                (cracks, tangled) => format!(
+                    "{cracks} open edges are cracks between points a hair apart, {tangled} belong to no hole and {} triangles are unusable",
+                    look.unusable
+                ),
+            },
             json!({"body": body}),
         );
     }
@@ -420,6 +437,12 @@ mod tests {
         assert_eq!(s.doc.features.len(), features, "a survey changes nothing");
         assert!(s.execute("scan.survey", &json!({"body": "nope"})).is_err());
         assert!(s.execute("scan.survey", &json!({"body": 3})).is_err());
+        // The other scan and the model hidden (put away): no longer passes to align, nor a model.
+        let others: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).filter(|n| *n != scan).collect();
+        run(&mut s, "browser.visibility", json!({"items": others, "visible": false}));
+        let r = run(&mut s, "scan.survey", json!({"body": scan}));
+        assert!(!commands(&r).contains(&"scan.align_all") && !commands(&r).contains(&"scan.deviation"), "{r}");
+        assert_eq!((r["other_scans"].as_array().unwrap().len(), r["models"].as_array().unwrap().len()), (0, 0), "{r}");
     }
 
     /// A scan a few millimetres across is flagged as read in the wrong unit, and mesh.units is
@@ -473,6 +496,7 @@ mod tests {
             longest_hole: 12.0,
             open_edges: 30,
             tangled_edges: 0,
+            crack_edges: 0,
             pieces: 1,
             floating: 0,
             floating_share: 0.0,

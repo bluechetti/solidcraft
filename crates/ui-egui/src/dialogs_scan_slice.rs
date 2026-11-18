@@ -20,13 +20,17 @@ use crate::ui_kit::{self, choice_row};
 pub struct SliceSurface {
     /// 0: the side the plane faces; 1: the other.
     pub keep: usize,
+    /// Cap the cut: until it is set by hand (`cap_set`), on when the cut closes round the surface
+    /// and there is a loop to cap, off when it does not (an open Free Form, where capping could
+    /// only be refused).
     pub cap: bool,
+    pub cap_set: bool,
     shown: Option<Box<Shown>>,
 }
 
 impl Default for SliceSurface {
     fn default() -> Self {
-        SliceSurface { keep: 0, cap: true, shown: None }
+        SliceSurface { keep: 0, cap: true, cap_set: false, shown: None }
     }
 }
 
@@ -97,7 +101,16 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut SliceSurface, inputs: &[S
     look(app, k, inputs);
     let sides = [tr("ui.scan_slice_front"), tr("ui.scan_slice_back")];
     choice_row(ui, tr("ui.scan_slice_keep"), "scan_slice_keep", &mut k.keep, &sides);
+    if !k.cap_set
+        && let Some(Ok((found, _))) = k.shown.as_ref().map(|s| &s.result)
+    {
+        k.cap = !found.loops.is_empty();
+    }
+    let before = k.cap;
     form_row(ui, tr("ui.scan_slice_cap"), |ui| check(ui, &mut k.cap));
+    if k.cap != before {
+        k.cap_set = true;
+    }
     match k.shown.as_ref().map(|s| &s.result) {
         Some(Ok((found, _))) => {
             let loops = found.loops.len().to_string();

@@ -304,7 +304,7 @@ pub enum Report {
     Floating { pieces: usize, removed: usize, removed_triangles: usize },
     Holes { holes: usize, filled: usize, failed: usize, larger: usize, added_triangles: usize, unfillable_edges: usize },
     Reduce { before: usize, collapses: usize, stopped: &'static str, largest_error: f64 },
-    Repair { duplicates: usize, non_manifold: usize, slivers: usize, crossings: usize, crossing_faces: usize, refilled: usize },
+    Repair { joined: usize, duplicates: usize, non_manifold: usize, slivers: usize, crossings: usize, crossing_faces: usize, refilled: usize },
     Denoise { strength: f64, suggested: Option<f64>, noise: f64, roughness: f64, rms_moved: f64, max_moved: f64 },
     Remesh { before: usize, cell: f64, new_rms: f64, new_max: f64, scan_rms: f64, scan_p95: f64, uncovered: f64 },
     Markers { markers: usize, removed_triangles: usize, filled: usize, failed: usize },
@@ -527,11 +527,12 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
             let fixed = repair::repair(&on, *crossings);
             if !fixed.changed() {
                 return Err(Refused::Nothing(
-                    "the scan needs no repair: no copied triangles, no edge of three or more faces, no slivers, no faces passing through others"
+                    "the scan needs no repair: no points a hair apart, no copied triangles, no edge of three or more faces, no slivers, no faces passing through others"
                         .into(),
                 ));
             }
             let report = Report::Repair {
+                joined: fixed.joined,
                 duplicates: fixed.duplicates,
                 non_manifold: fixed.non_manifold,
                 slivers: fixed.slivers,

@@ -31,7 +31,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("dots")
         .contract(&FROM_POINTS_CONTRACT)
         .output(output_schema_for::<ScanMeshFromPointsResult>)
-        .params("cloud?: point cloud id or name (default: the only one); depth?: 5–10 (the finest grid is 2^depth cells across; default: about the points' spacing); trim?: 0–1 (default 0.3: where the points are sparse the surface stops; 0 keeps it closed); name?: the body's name: a mesh body made from the points by screened Poisson reconstruction (their normals estimated and turned to agree where the cloud states none), one undo step → body, triangles, vertices, depth, trim, points, points_used, estimated_normals, cell, spacing, trimmed, rms, p95, max, feature"),
+        .params("cloud?: point cloud id or name (default: the only one); depth?: 5–10 (the finest grid is 2^depth cells across; default: about the points' spacing, and no finer than twice the layer of points is thick, so passes merged apart make one surface); trim?: 0–1 (default 0.3: where the points are sparse the surface stops; 0 keeps it closed); name?: the body's name: a mesh body made from the points by screened Poisson reconstruction (their normals estimated and turned to agree where the cloud states none), one undo step → body, triangles, vertices, depth, trim, points, points_used, estimated_normals, cell, spacing, trimmed, rms, p95, max, thickness, warning? (the points lie in a layer thicker than they are apart: passes that do not lie on each other), feature"),
     CommandSpec::new("scan.denoise", "Denoise", crate::checked!("scan.denoise", denoise_scan))
         .at("SCAN", "CLEAN")
         .icon("c_smooth")
@@ -116,6 +116,7 @@ pub(super) fn register_scan(s: &mut Session, p: &Value) -> Result<Value> {
         matched: found.matched,
         start: found.start.to_string(),
         converged: found.converged,
+        note: found.note(),
         rival: found.rival,
         feature,
         param_warnings: Vec::new(),
@@ -163,9 +164,7 @@ pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
 /// (shared, not copied), for a dialog to study off the window thread.
 pub fn denoise_mesh(s: &Session, body: Option<&str>) -> Result<(String, std::sync::Arc<solidcraft_geom::Mesh>)> {
     let name = super::mesh_body_name(s, body, "scan.denoise")?;
-    let state = s.model.state();
-    let kept =
-        state.body(&name).and_then(|b| b.body.kept_mesh()).ok_or_else(|| bad("scan.denoise", format!("`{name}` is not a scan (a mesh body)")))?;
+    let kept = super::shown_mesh(s, &name).ok_or_else(|| bad("scan.denoise", format!("`{name}` is not a scan (a mesh body)")))?;
     Ok((name, kept))
 }
 
@@ -238,6 +237,9 @@ pub(super) fn mesh_from_points(s: &mut Session, p: &Value) -> Result<Value> {
     if !(0.0..=1.0).contains(&trim) {
         return Err(bad(cmd, "`trim` is a share from 0 to 1"));
     }
+    let spacing = poisson::typical_spacing(&points);
+    let thickness = poisson::layer_thickness(&points, spacing);
+    let layered = thickness > poisson::LAYERED * spacing;
     let depth = match p.get("depth").filter(|v| !v.is_null()) {
         Some(v) => {
             let d = v
@@ -251,7 +253,7 @@ pub(super) fn mesh_from_points(s: &mut Session, p: &Value) -> Result<Value> {
                 .iter()
                 .fold((points[0], points[0]), |(lo, hi), q| (solidcraft_geom::Vec3Geom::min(lo, *q), solidcraft_geom::Vec3Geom::max(hi, *q)));
             let d = hi - lo;
-            poisson::Settings::suggested(d.x.max(d.y).max(d.z), poisson::typical_spacing(&points)).depth
+            poisson::Settings::suggested_for(d.x.max(d.y).max(d.z), spacing, thickness).depth
         }
     };
     let made = poisson::reconstruct(&points, normals.as_deref(), &poisson::Settings { depth, trim }).map_err(|e| bad(cmd, e.to_string()))?;
@@ -287,6 +289,14 @@ pub(super) fn mesh_from_points(s: &mut Session, p: &Value) -> Result<Value> {
         rms: made.distances.rms,
         p95: made.distances.p95,
         max: made.distances.max,
+        thickness,
+        warning: layered.then(|| {
+            format!(
+                "the points lie in a layer {thickness:.2} mm thick, {:.1} times as far as they are apart: passes merged without lying on each other; the surface is made through the middle of the layer with cells of {:.2} mm, align the passes (Align All Scans) before merging them for a finer one",
+                thickness / spacing.max(1e-12),
+                made.cell
+            )
+        }),
         feature,
         param_warnings: Vec::new(),
     })

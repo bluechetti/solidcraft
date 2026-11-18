@@ -16,6 +16,15 @@ use crate::{Scan, par, welded};
 
 /// No triangle.
 const NONE: u32 = u32::MAX;
+/// The most triangles a piece closed in by a grown region may have and still be taken into it as
+/// noise (specks of a few triangles each); a blind hole or a pocket is many more.
+const CLOSED_IN: usize = 64;
+/// A piece closed in by a grown region this small is a speck of noise whichever way it faces.
+const SPECK: usize = 8;
+/// How many rings of triangles round each one its settled direction is read from, and how many
+/// times it is settled to its side of a crease (see `Topology::settled_facing`).
+const RINGS: usize = 3;
+const SETTLE: usize = 4;
 
 /// The most cells across a polygon's depth picture.
 const RASTER: usize = 1024;
@@ -367,12 +376,143 @@ impl Topology {
         let cos = angle.cos();
         let Some(facing) = self.smooth(seed) else { return vec![false; self.corners().len()] };
         let mut taken = self.flood([seed], |_, n| self.smooth(n).is_some_and(|s| facing.dot(s) >= cos));
-        // A triangle the noise turned, closed in by the region, is part of it.
-        let holes: Vec<usize> = (0..taken.len()).filter(|&t| !taken[t] && self.across[t].iter().all(|&n| n != NONE && taken[n as usize])).collect();
-        for t in holes {
-            taken[t] = true;
-        }
+        // Triangles the noise turned, closed in by the region, are part of it.
+        self.close_in(&mut taken, CLOSED_IN, |t| self.smooth(t).unwrap_or(Vec3::ZERO), angle);
         taken
+    }
+
+    /// The smooth region round triangle `seed`: grown across edges while the scan turns less than
+    /// `angle` (radians) from one triangle to the next, so up to its creases: a whole hole's wall,
+    /// a fillet with the faces it runs into, where [`Self::region`], held to the seed's facing,
+    /// takes a strip of a round wall. Each triangle's direction is its own averaged with the
+    /// triangles beside it that face within `angle` of it, `SMOOTHING_PASSES` times: the scan's
+    /// noise is evened out, but a crease is not (averaged with the faces across it too, a block's
+    /// 90° edges blurred into turns small enough to cross, and a click on one face took the whole
+    /// block).
+    ///
+    /// A triangle is taken only when it faces within `angle` of the one it is reached from and of
+    /// every taken triangle beside that one: a scan's meshing cuts a crease's corner with a row of
+    /// triangles between its faces, so a 45° crease turns twice by about 22° and, step by step, was
+    /// crossed at 30°. Pieces the region closes in that the noise turned too far (`CLOSED_IN`) are
+    /// taken too.
+    pub fn smooth_region(&self, seed: usize, angle: f64) -> Vec<bool> {
+        let n = self.corners().len();
+        if seed >= n {
+            return vec![false; n];
+        }
+        let cos = angle.cos();
+        let scan = self.scan();
+        let facing = self.settled_facing(&scan, angle);
+        let mut taken = vec![false; n];
+        taken[seed] = true;
+        let mut queue = vec![seed];
+        while let Some(t) = queue.pop() {
+            for m in self.neighbours(t).collect::<Vec<_>>() {
+                if taken[m] || facing[t].dot(facing[m]) < cos {
+                    continue;
+                }
+                if self.neighbours(t).any(|k| taken[k] && facing[k].dot(facing[m]) < cos) {
+                    continue;
+                }
+                taken[m] = true;
+                queue.push(m);
+            }
+        }
+        self.close_in(&mut taken, CLOSED_IN, |t| facing[t], angle);
+        taken
+    }
+
+    /// Each triangle's direction with the scan's noise taken out and its creases kept: from its
+    /// own, `SETTLE` times the area-weighted average of the triangles within `RINGS` edges of it
+    /// that face within `angle` of the direction so far (the first time), then within half of it
+    /// (a mean shift). Averaged across a crease it would lean over it; each triangle settles on the
+    /// side it is on instead, so a crease stays one sharp turn, and a fine scan's noise (0.015 mm on
+    /// 0.1 mm triangles tilts single triangles by 30°) no longer lets a region walk across a 45°
+    /// crease in steps under 30°.
+    fn settled_facing(&self, scan: &Scan, angle: f64) -> Vec<Vec3> {
+        let n = self.corners().len();
+        let (wide, near) = (angle.cos(), (angle / 2.0).cos());
+        let weighted: Vec<Vec3> = par::map(n, |t| {
+            let (_, normal, area) = face_of(scan, t);
+            normal * area
+        });
+        par::map(n, |t| {
+            let mut ring = vec![t];
+            let mut from = 0;
+            for _ in 0..RINGS {
+                let to = ring.len();
+                for i in from..to {
+                    for m in self.neighbours(ring[i]) {
+                        if !ring.contains(&m) {
+                            ring.push(m);
+                        }
+                    }
+                }
+                from = to;
+            }
+            let mut facing = weighted[t].normalized().unwrap_or(Vec3::Z);
+            for k in 0..SETTLE {
+                let within = if k == 0 { wide } else { near };
+                let sum = ring
+                    .iter()
+                    .filter_map(|&m| weighted[m].normalized().filter(|u| u.dot(facing) >= within).map(|_| weighted[m]))
+                    .fold(Vec3::ZERO, |s, w| s + w);
+                facing = sum.normalized().unwrap_or(facing);
+            }
+            facing
+        })
+    }
+
+    /// Take the pieces of the scan that `taken` closes in (every edge round them onto it, none on
+    /// the scan's rim) of at most `SPECK` triangles, or of at most `most` that face, on the whole
+    /// (`facing`), within `angle` of the region round them: the noise turned them too far to be grown into, and left
+    /// as specks they would be holes in what a tool is given. A small face of its own (a can's
+    /// end, closed in by its wall) faces another way and is left out.
+    fn close_in(&self, taken: &mut [bool], most: usize, facing: impl Fn(usize) -> Vec3, angle: f64) {
+        let cos = angle.cos();
+        let mut seen = vec![false; taken.len()];
+        for s in 0..taken.len() {
+            if taken[s] || seen[s] {
+                continue;
+            }
+            seen[s] = true;
+            let mut piece = vec![s];
+            // Closed: no edge on the scan's rim; and beside the region (a loose closed speck
+            // elsewhere touches nothing taken).
+            let (mut closed, mut beside, mut round) = (true, false, Vec3::ZERO);
+            let mut i = 0;
+            while let Some(&t) = piece.get(i) {
+                i += 1;
+                for &m in self.across.get(t).into_iter().flatten() {
+                    if m == NONE {
+                        closed = false;
+                        continue;
+                    }
+                    let m = m as usize;
+                    if taken[m] {
+                        beside = true;
+                        round += facing(m);
+                    } else if !seen[m] {
+                        seen[m] = true;
+                        piece.push(m);
+                    }
+                }
+            }
+            if !closed || !beside || piece.len() > most {
+                continue;
+            }
+            // A speck of a few triangles is noise whichever way it faces; a larger piece only when
+            // it faces with the region.
+            let along = || match (round.normalized(), piece.iter().fold(Vec3::ZERO, |s, &t| s + facing(t)).normalized()) {
+                (Some(round), Some(own)) => round.dot(own) >= cos,
+                _ => false,
+            };
+            if piece.len() <= SPECK || along() {
+                for t in piece {
+                    taken[t] = true;
+                }
+            }
+        }
     }
 
     /// The triangles inside the polygon `ring` (world places), as the view sees them: their
@@ -952,6 +1092,82 @@ mod tests {
         let corner = fine.snap(Vec3::new(1.2, 1.1, 0.0), 2.0, 30.0).expect("the sheet's corner within reach");
         assert_eq!(corner.kind, SnapKind::Corner);
         assert!(corner.at.dist(Vec3::ZERO) < 1e-9, "{:?}", corner.at);
+    }
+
+    /// A can (a cylinder of radius 10, flat ends): from a click on its round wall, the region held to
+    /// the click's facing takes a strip of the wall; the smooth region takes the whole wall, round
+    /// to where it meets the ends, and neither end.
+    #[test]
+    fn a_smooth_region_takes_a_whole_round_wall() {
+        let (positions, triangles) = crate::test_meshes::revolved(&[[0.0, 0.0], [0.0, 10.0], [20.0, 10.0], [20.0, 0.0]], 64, false);
+        let scan = Scan::new(&positions, &triangles);
+        let topology = Topology::new(&scan);
+        let seed = topology.nearest(Vec3::new(10.0, 0.0, 10.0)).unwrap().0;
+        let wall = (0..topology.triangle_count()).filter(|&t| {
+            let m = topology.middle(t);
+            m.z > 1e-6 && m.z < 20.0 - 1e-6
+        });
+        let on_wall = wall.count();
+        let strip = topology.region(seed, 30f64.to_radians());
+        let whole = topology.smooth_region(seed, 30f64.to_radians());
+        assert!(count(&strip) < on_wall / 2, "facing: a strip, {} of {on_wall}", count(&strip));
+        assert_eq!(count(&whole), on_wall, "up to the creases: the whole wall");
+        assert!((0..topology.triangle_count()).all(|t| !whole[t] || (topology.middle(t).z > 1e-6 && topology.middle(t).z < 20.0 - 1e-6)), "no end");
+    }
+
+    /// A finely meshed box: the smooth region from a click on its top takes the top and stops at
+    /// its 90° edges (with directions averaged across the edges too, it took the whole box).
+    #[test]
+    fn a_smooth_region_stops_at_a_box_edge() {
+        let (positions, triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(30.0, 20.0, 10.0), 30);
+        let scan = Scan::new(&positions, &triangles);
+        let topology = Topology::new(&scan);
+        let top = topology.smooth_region(topology.nearest(Vec3::new(15.0, 10.0, 10.0)).unwrap().0, 30f64.to_radians());
+        let on_top = (0..topology.triangle_count()).filter(|&t| topology.middle(t).z > 10.0 - 1e-9).count();
+        assert_eq!(count(&top), on_top, "the top and nothing else");
+    }
+
+    /// A countersunk part as a fine scan would have it: a flat top (Z = 10, out to R20), a 45° cone
+    /// down to a drilled wall (R2), every point jittered by up to 0.03 mm. The noise tilts single
+    /// triangles by up to 30° or so; from a click on the top the smooth region takes the whole top
+    /// (no specks left out of it) and stops at the cone's 45° crease (it walked across it in steps
+    /// under 30° and took the cone and the drilled wall); from the cone, the cone alone.
+    #[test]
+    fn a_smooth_region_on_a_noisy_scan_stops_at_a_countersink() {
+        use crate::test_meshes::steps;
+        let mut profile = steps([10.0, 20.0], [10.0, 6.0], 56);
+        profile.extend(steps([10.0, 6.0], [6.0, 2.0], 22).into_iter().skip(1));
+        profile.extend(steps([6.0, 2.0], [0.0, 2.0], 24).into_iter().skip(1));
+        let (mut positions, triangles) = revolved(&profile, 256, false);
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut jitter = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64 * 0.06 - 0.03
+        };
+        for p in &mut positions {
+            *p += Vec3::new(jitter(), jitter(), jitter());
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let topology = Topology::new(&scan);
+        let radius = |t: usize| {
+            let m = topology.middle(t);
+            m.x.hypot(m.y)
+        };
+        let angle = 30f64.to_radians();
+        let top = topology.smooth_region(topology.nearest(Vec3::new(13.0, 0.0, 10.0)).unwrap().0, angle);
+        let on_top: Vec<usize> = (0..topology.triangle_count()).filter(|&t| radius(t) > 6.2).collect();
+        let below = (0..topology.triangle_count()).filter(|&t| top[t] && radius(t) < 5.8).count();
+        let left_out = on_top.iter().filter(|&&t| !top[t]).count();
+        assert_eq!(below, 0, "the cone and the drilled wall are not the top");
+        assert_eq!(left_out, 0, "no specks of the top are left out, of {}", on_top.len());
+        let cone = topology.smooth_region(topology.nearest(Vec3::new(4.0, 0.0, 8.0)).unwrap().0, angle);
+        assert!(
+            (0..topology.triangle_count()).all(|t| !cone[t] || (radius(t) > 1.8 && radius(t) < 6.2 && topology.middle(t).z > 5.8)),
+            "the cone alone"
+        );
+        assert!(count(&cone) > 22 * 256, "the whole cone: {}", count(&cone));
     }
 
     /// A brush on a box's top takes a disc of it, never the bottom; the smooth region from the top

@@ -34,11 +34,18 @@ thread_local! {
 struct Key {
     shapes: Arc<ScanShapes>,
     freeform: [u8; 3],
+    /// What is selected on the scan: its points are left to the selection's colour.
+    selected: Option<Arc<solidcraft_engine::cmd::scan::select::ScanSelected>>,
 }
 
 impl PartialEq for Key {
     fn eq(&self, other: &Key) -> bool {
-        Arc::ptr_eq(&self.shapes, &other.shapes) && self.freeform == other.freeform
+        let same_selection = match (&self.selected, &other.selected) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        Arc::ptr_eq(&self.shapes, &other.shapes) && self.freeform == other.freeform && same_selection
     }
 }
 
@@ -68,7 +75,8 @@ fn colour(shapes: &ScanShapes, k: u32, freeform: [u8; 3]) -> [u8; 3] {
 /// The regions as a cloud for the GPU viewport, or nothing when none are shown.
 pub(crate) fn gpu_cloud(app: &SolveApp) -> Option<GpuCloud> {
     let shapes = current(app)?;
-    let key = Key { shapes: shapes.clone(), freeform: freeform() };
+    let selected = solidcraft_engine::cmd::scan::select::selected(&app.session).filter(|s| s.scan == shapes.scan);
+    let key = Key { shapes: shapes.clone(), freeform: freeform(), selected };
     let (version, dots) = BUILT.with(|b| {
         let mut b = b.borrow_mut();
         if let Some((k, version, dots)) = b.as_ref()
@@ -76,7 +84,7 @@ pub(crate) fn gpu_cloud(app: &SolveApp) -> Option<GpuCloud> {
         {
             return Some((*version, dots.clone()));
         }
-        let dots = Arc::new(records(app, &shapes, key.freeform)?);
+        let dots = Arc::new(records(app, &shapes, key.freeform, key.selected.as_deref())?);
         let version = VERSION.with(|v| {
             v.set(v.get() + 1);
             v.get()
@@ -94,10 +102,19 @@ pub(crate) fn gpu_cloud(app: &SolveApp) -> Option<GpuCloud> {
     })
 }
 
-/// One dot per point of the scan, in the colour of the first region a triangle of it is in.
-fn records(app: &SolveApp, shapes: &ScanShapes, freeform: [u8; 3]) -> Option<Vec<u8>> {
+/// One dot per point of the scan, in the colour of the first region a triangle of it is in; none
+/// for the points of what is selected, so the selection's colour shows there (Find All's dots over
+/// it speckled it, and Select's Shape tool needs Find All).
+fn records(
+    app: &SolveApp,
+    shapes: &ScanShapes,
+    freeform: [u8; 3],
+    selected: Option<&solidcraft_engine::cmd::scan::select::ScanSelected>,
+) -> Option<Vec<u8>> {
     let state = app.session.model.state();
-    let (positions, triangles) = state.body(&shapes.scan)?.body.triangle_mesh()?;
+    state.body(&shapes.scan)?;
+    let shown = solidcraft_engine::cmd::scan::shown_mesh(&app.session, &shapes.scan)?;
+    let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
     let mut region = vec![u32::MAX; positions.len()];
     for (t, tri) in triangles.iter().enumerate() {
         let k = shapes.regions.get(t).copied().unwrap_or(u32::MAX);
@@ -107,8 +124,18 @@ fn records(app: &SolveApp, shapes: &ScanShapes, freeform: [u8; 3]) -> Option<Vec
             }
         }
     }
+    let mut taken = vec![false; positions.len()];
+    if let Some(sel) = selected {
+        for (tri, _) in triangles.iter().zip(sel.selected.iter()).filter(|(_, s)| **s) {
+            for &v in tri {
+                if let Some(t) = taken.get_mut(v as usize) {
+                    *t = true;
+                }
+            }
+        }
+    }
     let mut out = Vec::with_capacity(positions.len() * crate::scan_dots::DOT_SIZE);
-    for (p, &k) in positions.iter().zip(&region) {
+    for ((p, &k), _) in positions.iter().zip(&region).zip(&taken).filter(|(_, t)| !**t) {
         let dot = Dot { at: [p.x as f32, p.y as f32, p.z as f32], value: k as f32, rgb: colour(shapes, k, freeform) };
         cloud_dot(&mut out, &dot);
     }

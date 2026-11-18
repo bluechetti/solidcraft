@@ -11,10 +11,10 @@
 //! made, one face or a Free Form's network of faces sharing whole sides, edited in the view.
 //!
 //! - Points on the surface (the default): a dot on the surface for each control point, spread
-//!   evenly over its face. A dot dragged takes the surface through where it is let go: onto the scan under the
-//!   pointer with Snap to scan on (the default), else in the plane of the screen. The other dots
-//!   stay where they are (the surface still runs through them) or, with Neighbours set to Follow,
-//!   go with it smoothly. Faces that share a side move together and stay tangent where they met
+//!   evenly over its face. A dot dragged takes the surface through where it is let go: in the
+//!   plane of the screen, lifted off the scan (the default), or onto the scan under the pointer
+//!   with Snap to scan on. The dots round it go with it smoothly (Neighbours set to Follow, the
+//!   default), or stay where they are (the surface still runs through them). Faces that share a side move together and stay tangent where they met
 //!   smoothly. Snap All to Scan puts every dot on the scan; Fit to Scan fits every face to it.
 //! - Lines: a click on a line of the grid chooses the points at its ends, a double-click the
 //!   whole line across the faces to the edge, and a drag on a line moves it like a point.
@@ -99,7 +99,7 @@ pub const NEIGHBOURS_FOLLOW: usize = 1;
 pub(crate) const DEEPEST: f64 = 8.0;
 
 /// The colouring's id among the clouds the viewport draws, and a dot's size on the screen.
-const SHADE_CLOUD_ID: u64 = u64::MAX - 7;
+const SHADE_CLOUD_ID: u64 = u64::MAX - 23;
 const SHADE_PIXELS: f32 = 4.0;
 
 thread_local! {
@@ -231,13 +231,15 @@ impl Default for EditSurface {
     fn default() -> Self {
         EditSurface {
             handles: HANDLES_DOTS,
-            snap: SNAP_POINTER,
+            // A dragged point lifts off the scan, the points round it following; the preference
+            // `edit_surface_drags_onto_scan` puts it onto the scan with the rest held, as before.
+            snap: SNAP_OFF,
             snap_reach: 0.0,
-            neighbours: NEIGHBOURS_HOLD,
+            neighbours: NEIGHBOURS_FOLLOW,
             line: None,
             note: None,
             told: None,
-            refit: REFIT_AROUND,
+            refit: 0,
             target: None,
             loaded: None,
             faces: Vec::new(),
@@ -373,10 +375,13 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::Se
         "scan.edit_surface" => {
             // The preference `edit_surface_on_surface` off opens on the control net with snapping
             // off, as Edit Surface did before its points moved onto the surface.
-            let k = if app.preferences.edit_surface_on_surface {
-                EditSurface::default()
+            let k = if !app.preferences.edit_surface_on_surface {
+                EditSurface { handles: HANDLES_NET, snap: SNAP_OFF, neighbours: NEIGHBOURS_HOLD, refit: REFIT_AROUND, ..EditSurface::default() }
+            } else if app.preferences.edit_surface_drags_onto_scan {
+                // As before: a dragged point onto the scan under the pointer, the rest held.
+                EditSurface { snap: SNAP_POINTER, neighbours: NEIGHBOURS_HOLD, refit: REFIT_AROUND, ..EditSurface::default() }
             } else {
-                EditSurface { handles: HANDLES_NET, snap: SNAP_OFF, ..EditSurface::default() }
+                EditSurface::default()
             };
             Some((Kind::ScanEditSurface(k), Vec::new()))
         }
@@ -1297,7 +1302,73 @@ fn dot_preview(k: &EditSurface, moves: &[(usize, Vec3)]) -> Option<Vec<NurbsSurf
         }
         _ => Vec::new(),
     };
+    // Following, with nothing refitted (the default): the dots near the one moved go the same way,
+    // less the farther they are, and the rest stay. Left to the solver alone, every dot in the
+    // ring was free, so on a small Free Form the whole sheet tipped and its far corners flew out.
+    // A corner going onto another to be welded takes only itself: the sides it is sewn along must
+    // stay where they are.
+    let welding = k.drag.as_ref().is_some_and(|d| d.weld.is_some());
+    if !hold && k.refit == 0 && !welding {
+        return bumped(k, moves);
+    }
     network::dots_moved(&k.faces, &k.joins, moves, network::DOT_RING, hold, &extra)
+}
+
+/// The faces with each dot of `moves` taken to its place by moving the control points under it
+/// and near it, weighted by [`softly`]: a smooth bump, nothing far away moved. (Solved through
+/// every dot held, the surface overshot between them and dipped under the scan on the far side.)
+/// The steps are scaled so the dragged dot lands where it is put: a control point moved carries
+/// the surface less than itself.
+fn bumped(k: &EditSurface, moves: &[(usize, Vec3)]) -> Option<Vec<NurbsSurface>> {
+    let dots = network::dots(&k.faces, &k.joins);
+    let carried = softly(k, moves);
+    let at = |i: usize| dots.get(i).map(|d| d.at);
+    let steps: Vec<(usize, Vec3)> = carried.iter().filter_map(|&(i, to)| Some((i, to - at(i)?))).collect();
+    let net_at = |scale: f64| -> Vec<(usize, Vec3)> { steps.iter().filter_map(|&(i, d)| Some((i, *k.net.get(i)? + d * scale))).collect() };
+    let first = net_moved(k, &net_at(1.0))?;
+    // How far the dragged dot went for a step of one, along the way it was asked to go.
+    let (m, want) = moves.first().and_then(|&(m, to)| Some((m, to - at(m)?)))?;
+    let wanted = want.dot(want);
+    if wanted < 1e-18 {
+        return Some(first);
+    }
+    let moved_to = network::dots(&first, &k.joins).get(m).map(|d| d.at)?;
+    let got = (moved_to - at(m)?).dot(want) / wanted;
+    if !(got > 0.05) {
+        return Some(first);
+    }
+    net_moved(k, &net_at((1.0 / got).min(6.0)))
+}
+
+/// `moves` with the dots near each moved one carried along: by the same step, weighted
+/// `(1 - (d / reach)²)²` by their distance `d`, out to one and a half times the dots' spacing.
+fn softly(k: &EditSurface, moves: &[(usize, Vec3)]) -> Vec<(usize, Vec3)> {
+    let dots = network::dots(&k.faces, &k.joins);
+    // The dots' spacing: the median of each dot's nearest neighbour.
+    let mut nearest: Vec<f64> = dots
+        .iter()
+        .enumerate()
+        .filter_map(|(i, a)| dots.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, b)| a.at.dist(b.at)).min_by(f64::total_cmp))
+        .collect();
+    nearest.sort_by(f64::total_cmp);
+    let Some(&spacing) = nearest.get(nearest.len() / 2) else { return moves.to_vec() };
+    let reach = 1.5 * spacing;
+    let mut out = moves.to_vec();
+    for (i, dot) in dots.iter().enumerate() {
+        if moves.iter().any(|m| m.0 == i) {
+            continue;
+        }
+        // The nearest moved dot carries it.
+        let carried = moves.iter().filter_map(|&(m, to)| dots.get(m).map(|d| (d.at.dist(dot.at), to - d.at))).min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((d, step)) = carried
+            && d < reach
+            && reach > 0.0
+        {
+            let w = (1.0 - (d / reach).powi(2)).powi(2);
+            out.push((i, dot.at + step * w));
+        }
+    }
+    out
 }
 
 /// The faces a move of the points `around` changes: those that hold a point within the ring.
@@ -2041,8 +2112,11 @@ pub fn commands(k: &EditSurface) -> Result<Vec<(String, Value)>, String> {
 fn surface_commands(k: &EditSurface) -> Result<Vec<(String, Value)>, String> {
     let l = k.loaded.as_ref().ok_or("still loading the surface")?.as_ref().map_err(Clone::clone)?;
     let kept = kept_changed(k, l);
+    // Nothing changed: OK keeps the surface as it is and closes (opened on a surface New Free Form
+    // or Wrap Surface had just made, OK stayed disabled until a point was dragged, and the dialog
+    // could only be left by Cancel).
     if k.faces == l.target.faces && !k.reshaped && !kept {
-        return Err(solidcraft_ui_text::tr("ui.scan_edit_nothing").into());
+        return Ok(Vec::new());
     }
     let net_of = |s: &NurbsSurface| {
         let points: Vec<[f64; 3]> = edit::control_points(s).iter().map(|p| [p.x, p.y, p.z]).collect();
@@ -2857,6 +2931,29 @@ pub(crate) fn release(app: &mut SolveApp) {
     show_faces(k, shown, false, None);
 }
 
+/// Which dots are on the far side of the surface from the view: those whose surface faces the
+/// other way from where the dot nearest the eye faces. A surface wrapped round a part showed its
+/// back points as boldly as its front ones, a cage of dots; a flat one faces one way throughout.
+fn far_side(k: &EditSurface, proj: &crate::viewport::Proj) -> Vec<bool> {
+    let facing: Vec<Option<(f64, f64)>> = k
+        .shown_dots
+        .iter()
+        .map(|d| {
+            let face = k.shown.get(d.face)?;
+            let [[u0, u1], [v0, v1]] = face.domain();
+            let (du, dv) = ((u1 - u0) * 1e-3, (v1 - v0) * 1e-3);
+            let at = |u: f64, v: f64| face.eval(u.clamp(u0, u1), v.clamp(v0, v1)).ok();
+            let n = (at(d.u + du, d.v)? - at(d.u - du, d.v)?).cross(at(d.u, d.v + dv)? - at(d.u, d.v - dv)?).normalized()?;
+            let (o, dir) = proj.ray(proj.to_screen(d.at)?);
+            Some((n.dot(dir), (d.at - o).dot(dir)))
+        })
+        .collect();
+    let Some(front) = facing.iter().flatten().min_by(|a, b| a.1.total_cmp(&b.1)).map(|f| f.0.signum()) else {
+        return vec![false; k.shown_dots.len()];
+    };
+    facing.iter().map(|f| f.is_some_and(|(n, _)| n.signum() != front && n.abs() > 0.05)).collect()
+}
+
 /// The colouring of the scan under the surface, as a cloud for the GPU viewport: in wireframe, or
 /// where it is not painted on the scan's own triangles ([`edit_painting`]).
 pub(crate) fn gpu_shade(app: &SolveApp) -> Option<GpuCloud> {
@@ -2967,7 +3064,15 @@ pub(crate) fn shade_dots(shade: &network::Shade, values: &[f32], tolerance: f64,
         for t in &shade.paint {
             let Some(&v) = values.get(t.point as usize) else { continue };
             let Some(rgb) = rgb(v) else { continue };
-            let cell = solidcraft_viewport_gpu::view::Cell { corners: t.corners, value: [v; 3], rgb, ..Default::default() };
+            // Lit by the scan's way out, not each triangle's own tilt (a noisy scan sparkled).
+            let cell = solidcraft_viewport_gpu::view::Cell {
+                corners: t.corners,
+                neighbours: [t.up, [0.0; 3]],
+                value: [v; 3],
+                rgb,
+                has: solidcraft_viewport_gpu::view::LIT_BY_SURFACE,
+                ..Default::default()
+            };
             solidcraft_viewport_gpu::view::cloud_cell(&mut out, &cell);
         }
         return Shaded { dots: crate::scan_dots::none(), triangles: Arc::new(out), scale: vertex_scale(shade, values, tolerance) };
@@ -3141,9 +3246,14 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     };
     if k.handles == HANDLES_DOTS {
         if k.adding.is_none() {
+            let far = far_side(k, proj);
             for (i, d) in k.shown_dots.iter().enumerate() {
                 let Some(s) = proj.to_screen(d.at) else { continue };
-                cased_dot(painter, s, HANDLE, fill_of(i, false));
+                if far.get(i).copied().unwrap_or(false) && k.chosen != Some(i) && !k.picked.contains(&i) {
+                    painter.circle_filled(s, HANDLE * 0.6, fill_of(i, false).gamma_multiply(0.35));
+                } else {
+                    cased_dot(painter, s, HANDLE, fill_of(i, false));
+                }
             }
         }
     } else {
@@ -3366,6 +3476,8 @@ mod tests {
         h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
         h.app.run("scan.fit_surface", json!({"point": [30, 30, 8], "radius": 25, "controls": 6})).unwrap();
         h.step(&json!({"view_anim": "front"})).unwrap();
+        // Dragged onto the scan with the rest held, as these were written for.
+        h.app.preferences.edit_surface_drags_onto_scan = true;
         h.app.start("scan.edit_surface");
         h.frames(3);
         assert!(editing(&h.app), "handles shown");
@@ -3495,9 +3607,15 @@ mod tests {
         h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
         h.app.run("scan.free_form", json!({"corners": [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]], "count": 6})).unwrap();
         h.step(&json!({"view_anim": "front"})).unwrap();
+        // Dragged onto the scan with the rest held, as these were written for.
+        h.app.preferences.edit_surface_drags_onto_scan = true;
         h.app.start("scan.edit_surface");
         h.frames(3);
-        assert_eq!((kind(&h).handles, kind(&h).snap), (HANDLES_DOTS, SNAP_POINTER), "points on the surface, snapped to the scan, by default");
+        assert_eq!(
+            (kind(&h).handles, kind(&h).snap),
+            (HANDLES_DOTS, SNAP_POINTER),
+            "points on the surface, snapped to the scan, with the preference"
+        );
         let cloud = gpu_shade(&h.app).expect("the scan under the surface coloured");
         assert!(cloud.dots.is_empty(), "painted, not dotted");
         assert!(cloud.triangles.len() > 100 * crate::scan_dots::DOT_SIZE, "the scan's triangles under it painted: {}", cloud.triangles.len());
@@ -3699,13 +3817,92 @@ mod tests {
         assert!(h.app.preferences.edit_surface_on_surface, "on by default");
         h.app.start("scan.edit_surface");
         h.frames(2);
-        assert_eq!((kind(&h).handles, kind(&h).snap), (HANDLES_DOTS, SNAP_POINTER), "the new default");
+        let k = kind(&h);
+        assert_eq!(
+            (k.handles, k.snap, k.neighbours, k.refit),
+            (HANDLES_DOTS, SNAP_OFF, NEIGHBOURS_FOLLOW, 0),
+            "the default: lifted off the scan, the rest following"
+        );
+        h.step(&json!({"click": {"handle": "dialog:cancel"}})).unwrap();
+        h.settle();
+        assert!(!h.app.preferences.edit_surface_drags_onto_scan, "off by default");
+        h.app.preferences.edit_surface_drags_onto_scan = true;
+        h.app.start("scan.edit_surface");
+        h.frames(2);
+        let k = kind(&h);
+        assert_eq!(
+            (k.handles, k.snap, k.neighbours, k.refit),
+            (HANDLES_DOTS, SNAP_POINTER, NEIGHBOURS_HOLD, REFIT_AROUND),
+            "onto the scan, the rest held, as before"
+        );
         h.step(&json!({"click": {"handle": "dialog:cancel"}})).unwrap();
         h.settle();
         h.app.preferences.edit_surface_on_surface = false;
         h.app.start("scan.edit_surface");
         h.frames(2);
         assert_eq!((kind(&h).handles, kind(&h).snap), (HANDLES_NET, SNAP_OFF), "the old default, kept behind the preference");
+    }
+
+    /// By default a point of a Free Form dragged up in the front view lifts off the scan, and the
+    /// points round it rise with it, less the farther they are: the surface bulges up rather than
+    /// the point sliding along the scan (it used to slide, and the grid was pulled sideways).
+    #[test]
+    fn a_point_dragged_up_lifts_off_the_scan_and_its_neighbours_follow() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]], "count": 6})).unwrap();
+        h.step(&json!({"view_anim": "front"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        let before = kind(&h).shown_dots.clone();
+        let k = before
+            .iter()
+            .enumerate()
+            .min_by(|a, b| a.1.at.dist(Vec3::new(30.0, 30.0, 0.0)).total_cmp(&b.1.at.dist(Vec3::new(30.0, 30.0, 0.0))))
+            .map(|(i, _)| i)
+            .unwrap();
+        let (from, to) = (before[k].at, before[k].at + Vec3::new(0.0, 0.0, 6.0));
+        h.step(&json!({"drag": [{"world": [from.x, from.y, from.z]}, {"world": [to.x, to.y, to.z]}], "steps": 6})).unwrap();
+        h.frames(2);
+        let after = kind(&h).shown_dots.clone();
+        assert!(after[k].at.z - from.z > 4.0, "lifted with the pointer: {:?} → {:?}", from, after[k].at);
+        let risen = (0..after.len()).filter(|&i| i != k && after[i].at.z - before[i].at.z > 0.2).count();
+        assert!(risen >= 4, "the points round it rose with it: {risen}");
+        let far = before.iter().enumerate().max_by(|a, b| a.1.at.dist(from).total_cmp(&b.1.at.dist(from))).map(|(i, _)| i).unwrap();
+        assert!((after[far].at.z - before[far].at.z).abs() < 0.5 * (after[k].at.z - from.z), "less the farther they are");
+    }
+
+    /// With the defaults, a point chosen and its Z guide dragged up: the point rises along Z, is
+    /// counted as moved, and the drag is kept (the faces edited are the faces shown), so the next
+    /// drag and Undo start from it.
+    #[test]
+    fn a_guide_drag_is_kept_and_counted() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]], "count": 6})).unwrap();
+        h.step(&json!({"view_anim": "front"})).unwrap();
+        h.app.start("scan.edit_surface");
+        h.frames(3);
+        let dots = kind(&h).shown_dots.clone();
+        let world = |p: Vec3| json!({"world": [p.x, p.y, p.z]});
+        let k = 2 * 6 + 2;
+        h.step(&json!({"click": world(dots[k].at)})).unwrap();
+        assert_eq!(kind(&h).picked.iter().copied().collect::<Vec<_>>(), vec![k], "chosen");
+        let centre = select::centre(kind(&h)).unwrap();
+        let proj = crate::viewport::projection(&h.app, h.app.viewport.rect.unwrap());
+        let on_z = centre + Vec3::new(0.0, 0.0, crate::gizmo::mm_per_px(&proj, centre).unwrap() * 45.0);
+        h.step(&json!({"drag": [world(on_z), world(on_z + Vec3::new(0.0, 0.0, 5.0))], "steps": 6})).unwrap();
+        h.frames(2);
+        let after = kind(&h).clone();
+        let d = after.shown_dots[k].at - dots[k].at;
+        assert!((d.z - 5.0).abs() < 0.6 && d.x.abs() < 0.3, "up along Z: {d:?}");
+        assert!(after.moved[k], "counted as moved by hand");
+        assert!(after.faces == after.shown, "kept: the faces edited are the faces shown");
+        assert_eq!(after.history.len(), 1, "one step to undo");
     }
 
     /// The lines of a face's grid and the dots a user drags are one grid: every dot lies where a
@@ -3909,6 +4106,8 @@ mod tests {
         h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
         h.app.run("scan.free_form", json!({"corners": [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]], "count": 5})).unwrap();
         h.step(&json!({"view_anim": "top"})).unwrap();
+        // Dragged onto the scan with the rest held, as these were written for.
+        h.app.preferences.edit_surface_drags_onto_scan = true;
         h.app.start("scan.edit_surface");
         h.frames(3);
         let dome = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
@@ -4022,6 +4221,8 @@ mod tests {
         h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
         h.app.run("scan.free_form", json!({"corners": [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]], "count": 6})).unwrap();
         h.step(&json!({"view_anim": "top"})).unwrap();
+        // Dragged onto the scan with the rest held, as these were written for.
+        h.app.preferences.edit_surface_drags_onto_scan = true;
         h.app.start("scan.edit_surface");
         h.frames(3);
         let dots = kind(&h).shown_dots.clone();
@@ -4168,6 +4369,8 @@ mod tests {
         std::fs::write(&path, dome_stl(40)).unwrap();
         h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
         h.app.run("scan.free_form", json!({"corners": [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]], "count": 6})).unwrap();
+        // Dragged onto the scan with the rest held, as these were written for.
+        h.app.preferences.edit_surface_drags_onto_scan = true;
         h.app.start("scan.edit_surface");
         h.frames(3);
         let Some(Kind::ScanEditSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) else { panic!("the dialog") };

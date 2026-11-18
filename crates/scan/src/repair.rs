@@ -3,21 +3,25 @@
 //! slivers (three corners, next to no area) put right by joining their neighbours the other way
 //! across. With `crossings`, faces that pass through others they share no edge with are taken off
 //! with the ring of faces round them (which the fold has bent), and each hole so made is closed
-//! with a smooth patch. (Equal points welded, triangles gone to a line or a point, and the winding
-//! of each piece are put right when the scan is built, so they need no step here.)
+//! with a smooth patch. Points a hair apart (a file's two copies of one point, differing in their
+//! last digits) are joined first, closing the crack between them. (Equal points welded, triangles
+//! gone to a line or a point, and the winding of each piece are put right when the scan is built,
+//! so they need no step here.)
 
 use std::collections::{HashMap, HashSet};
 
 use solidcore_record::Vec3;
 use solidcraft_geom::prelude::*;
 
-use crate::{Scan, welded};
+use crate::{Scan, welded_within};
 
 /// A repaired scan and what was done.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Repaired {
     pub positions: Vec<Vec3>,
     pub triangles: Vec<[u32; 3]>,
+    /// Points joined to another a hair away, closing the cracks between them.
+    pub joined: usize,
     /// Copies of another triangle taken off.
     pub duplicates: usize,
     /// Faces taken off edges that three or more met along.
@@ -34,7 +38,7 @@ pub struct Repaired {
 impl Repaired {
     /// Whether anything was done.
     pub fn changed(&self) -> bool {
-        self.duplicates + self.non_manifold + self.slivers + self.crossing_faces > 0
+        self.joined + self.duplicates + self.non_manifold + self.slivers + self.crossing_faces > 0
     }
 }
 
@@ -47,7 +51,7 @@ const SLIVER: f64 = 1e-6;
 
 /// Repairs the scan; with `crossings`, its faces that pass through others too.
 pub fn repair(scan: &Scan, crossings: bool) -> Repaired {
-    let weld = welded(scan.positions);
+    let (weld, joined) = welded_within(scan.positions);
     let at = |v: u32| scan.positions[v as usize];
     // The triangles on welded points; those gone to a line or a point are not triangles.
     let mut tris: Vec<[u32; 3]> = (0..scan.triangle_count())
@@ -214,7 +218,7 @@ pub fn repair(scan: &Scan, crossings: bool) -> Repaired {
             triangles = filled.triangles;
         }
     }
-    Repaired { positions, triangles, duplicates, non_manifold, slivers, crossings: pairs, crossing_faces: gone.len(), refilled }
+    Repaired { positions, triangles, joined, duplicates, non_manifold, slivers, crossings: pairs, crossing_faces: gone.len(), refilled }
 }
 
 /// The faces among `live` (on welded points) that pass through another face they share no edge
@@ -397,6 +401,41 @@ fn segment_crosses(p: Vec3, q: Vec3, t: [Vec3; 3]) -> bool {
 mod tests {
     use super::*;
 
+    /// A 100 mm plate of two halves whose shared column of points the file wrote twice, the second
+    /// copies a hundred-millionth of a millimetre off (as 32-bit rounding leaves them): an open
+    /// crack down the middle until Repair joins the copies, and none after; Survey counts the
+    /// crack as edges to repair, not as a hole.
+    #[test]
+    fn points_a_hair_apart_are_joined_and_their_crack_closed() {
+        let n = 10usize;
+        let mut positions = Vec::new();
+        let mut triangles = Vec::new();
+        for (half, x0) in [(0usize, 0.0f64), (1, 50.0)] {
+            let base = positions.len() as u32;
+            for y in 0..=n {
+                for x in 0..=n {
+                    let shift = if half == 1 && x == 0 { 1e-8 } else { 0.0 };
+                    positions.push(Vec3::new(x0 + 5.0 * x as f64 + shift, 10.0 * y as f64, 0.0));
+                }
+            }
+            let v = |x: usize, y: usize| base + (y * (n + 1) + x) as u32;
+            for y in 0..n {
+                for x in 0..n {
+                    triangles.push([v(x, y), v(x + 1, y), v(x + 1, y + 1)]);
+                    triangles.push([v(x, y), v(x + 1, y + 1), v(x, y + 1)]);
+                }
+            }
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let before = crate::survey::look(&scan, 0.01).unwrap();
+        assert_eq!((before.holes, before.crack_edges), (0, 2 * n), "{before:?}");
+        let fixed = repair(&scan, false);
+        assert_eq!(fixed.joined, n + 1);
+        assert!(fixed.changed());
+        let after = crate::holes::survey(&Scan::new(&fixed.positions, &fixed.triangles));
+        assert_eq!((after.rings.len(), after.unfillable_edges), (1, 0), "only the plate's own rim: {after:?}");
+    }
+
     /// A strip of two squares with a copy of a triangle, a fin standing up from the middle edge,
     /// and a sliver: the copy and the fin go, the sliver is flipped away.
     #[test]
@@ -469,7 +508,7 @@ mod tests {
         let fixed = repair(&scan, true);
         assert!(fixed.crossings > 0 && fixed.crossing_faces > 0, "{:?}", (fixed.crossings, fixed.crossing_faces));
         let live: Vec<usize> = (0..fixed.triangles.len()).collect();
-        let weld = welded(&fixed.positions);
+        let weld = crate::welded(&fixed.positions);
         let tris: Vec<[u32; 3]> = fixed.triangles.iter().map(|t| t.map(|v| weld[v as usize])).collect();
         assert_eq!(crossing_faces(&fixed.positions, &tris, &live).1, 0, "nothing crosses after");
         assert!(fixed.refilled >= 1, "the hole the crossing left is closed");

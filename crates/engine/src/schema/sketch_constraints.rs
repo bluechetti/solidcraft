@@ -228,6 +228,11 @@ pub struct AutoConstrainParams {
     /// Add dimensions (lengths, radii, diameters, distances from the datum). Default: true.
     #[serde(default)]
     pub dimensions: Option<bool>,
+    /// Read the dimensions added as designed: each within this of a whole, a half or a tenth of
+    /// the design's length unit takes that size, when no point of the sketch moves farther than
+    /// this; its parameter's comment keeps the value measured. Default: none (as measured).
+    #[serde(default)]
+    pub round: Option<f64>,
     /// The point the position dimensions are measured from: a point id or a name the sketch
     /// resolves (as `sketch.auto_constrain_from_datum` takes it). Default: the sketch origin.
     #[serde(default)]
@@ -253,6 +258,11 @@ pub struct AutoConstrainDatumParams {
     /// Add dimensions (lengths, radii, diameters, distances from the datum). Default: true.
     #[serde(default)]
     pub dimensions: Option<bool>,
+    /// Read the dimensions added as designed: each within this of a whole, a half or a tenth of
+    /// the design's length unit takes that size, when no point of the sketch moves farther than
+    /// this; its parameter's comment keeps the value measured. Default: none (as measured).
+    #[serde(default)]
+    pub round: Option<f64>,
     /// The point the position dimensions are measured from: a point id or a name the sketch
     /// resolves. Default: the sketch origin.
     #[serde(default)]
@@ -277,6 +287,11 @@ pub struct FinishAutoConstrainParams {
     /// Add dimensions (lengths, radii, diameters, distances from the datum). Default: true.
     #[serde(default)]
     pub dimensions: Option<bool>,
+    /// Read the dimensions added as designed: each within this of a whole, a half or a tenth of
+    /// the design's length unit takes that size, when no point of the sketch moves farther than
+    /// this; its parameter's comment keeps the value measured. Default: none (as measured).
+    #[serde(default)]
+    pub round: Option<f64>,
     /// The point the position dimensions are measured from: a point id or a name the sketch
     /// resolves. Default: the sketch origin.
     #[serde(default)]

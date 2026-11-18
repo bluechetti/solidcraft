@@ -194,16 +194,16 @@ pub fn shade(s: &Session, scan: Option<&str>, faces: &[NurbsSurface], cmd: &str)
 /// surface knows to look for the scan under it again; `None` when there is no such scan.
 pub fn scan_print(s: &Session, scan: &str) -> Option<u64> {
     use std::hash::{Hash, Hasher};
-    let state = s.model.state();
-    let (positions, triangles) = state.body(scan)?.body.triangle_mesh()?;
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    (positions.len(), triangles.len()).hash(&mut h);
-    const SAMPLES: usize = 64;
-    let step = positions.len() / SAMPLES + 1;
-    for p in positions.iter().step_by(step) {
-        [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()].hash(&mut h);
-    }
-    Some(h.finish())
+    super::with_shown(s, scan, |positions, triangles| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (positions.len(), triangles.len()).hash(&mut h);
+        const SAMPLES: usize = 64;
+        let step = positions.len() / SAMPLES + 1;
+        for p in positions.iter().step_by(step) {
+            [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()].hash(&mut h);
+        }
+        h.finish()
+    })
 }
 
 /// The network maths a dialog edits a Free Form of several faces with, as the commands do.

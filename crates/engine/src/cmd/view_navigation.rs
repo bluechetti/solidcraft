@@ -8,8 +8,8 @@ use crate::params::{bad, num, req_vec2, req_vec3, vec3};
 use crate::schema::view_navigation::{
     AmbientOcclusionParams, AmbientOcclusionResult, CameraReply, GraphicsPreset, GraphicsPresetParams, GraphicsPresetResult, HistoryDock,
     HistoryLayoutParams, HistoryLayoutResult, LayoutMode, LayoutParams, LayoutResult, NavigateParams, NavigateResult, NavigatorParams,
-    NormalToParams, PresetQuality, RenderBrowser, RenderFocus, RenderLive, RenderSelect, RibbonTabsOnly, RibbonTabsOnlyParams, StandardViewParams,
-    TabStep, TabStepParams, ZoomTool,
+    NormalToParams, PresetQuality, RenderBrowser, RenderFocus, RenderLive, RenderSelect, RibbonTabsOnly, RibbonTabsOnlyParams, ScanTriangles,
+    ScanTrianglesParams, StandardViewParams, TabStep, TabStepParams, ZoomTool,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{Result, Sel, Session};
@@ -23,6 +23,7 @@ const TAB_STEP_CONTRACT: TypedContract<TabStepParams> = TypedContract::new();
 const STANDARD_VIEW_CONTRACT: TypedContract<StandardViewParams> = TypedContract::new();
 const NORMAL_TO_CONTRACT: TypedContract<NormalToParams> = TypedContract::new();
 const RIBBON_TABS_ONLY_CONTRACT: TypedContract<RibbonTabsOnlyParams> = TypedContract::new();
+const SCAN_TRIANGLES_CONTRACT: TypedContract<ScanTrianglesParams> = TypedContract::new();
 const LAYOUT_CONTRACT: TypedContract<LayoutParams> = TypedContract::new();
 const HISTORY_LAYOUT_CONTRACT: TypedContract<HistoryLayoutParams> = TypedContract::new();
 const GRAPHICS_PRESET_CONTRACT: TypedContract<GraphicsPresetParams> = TypedContract::new();
@@ -88,6 +89,10 @@ CommandSpec::new("view.navigator", "Custom View Navigator", crate::checked!("vie
 CommandSpec::new("view.ribbon_tabs_only", "Ribbon Tabs Only", crate::checked!("view.ribbon_tabs_only", ribbon_tabs_only))
     .icon("chevron").noundo().doc_only().contract(&RIBBON_TABS_ONLY_CONTRACT).output(output_schema_for::<RibbonTabsOnly>)
     .params("on?: bool (omitted: switch) → on?; fold the ribbon to its tab row, a tab click shows its panels over the view (window setting)"),
+CommandSpec::new("view.scan_triangles", "Scan Triangles", crate::checked!("view.scan_triangles", scan_triangles))
+    .at("SCAN", "CHECK")
+    .icon("mesh_body").noundo().doc_only().contract(&SCAN_TRIANGLES_CONTRACT).output(output_schema_for::<ScanTriangles>)
+    .params("on?: bool (omitted: switch) → on?; draw the triangles of the scans shown as lines over them, to see how fine a scan is and what Reduce Mesh or Remesh made of it; a scan of more than 500 000 triangles shows those of the simplified copy the window draws (window setting, never saved in the design)"),
 CommandSpec::new("view.render_focus", "Render Focus View", crate::checked!("view.render_focus", render_focus))
     .icon("render_scene").noundo().doc_only()
     .contract(&FOCUS_CONTRACT).output(output_schema_for::<RenderFocus>)
@@ -361,6 +366,17 @@ fn ground_shadow(_s: &mut Session, p: &Value) -> Result<Value> {
 }
 fn navigation_bar(_s: &mut Session, p: &Value) -> Result<Value> {
     view_toggle(p, "view.navigation_bar", "visible")
+}
+
+fn scan_triangles(_s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "view.scan_triangles";
+    let p = match p {
+        Value::Null => json!({}),
+        Value::Object(_) => p.clone(),
+        _ => return Err(bad(cmd, "parameters must be an object")),
+    };
+    let request: ScanTrianglesParams = serde_json::from_value(p).map_err(|e| bad(cmd, e.to_string()))?;
+    serde_json::to_value(ScanTriangles { on: request.on, param_warnings: Vec::new() }).map_err(|e| crate::EngineError::Other(e.to_string()))
 }
 
 fn ribbon_tabs_only(_s: &mut Session, p: &Value) -> Result<Value> {

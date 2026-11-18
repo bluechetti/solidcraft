@@ -101,6 +101,24 @@ fn run(s: &mut Session, id: &str, p: Value) -> Result<Value> {
     super::super::find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?.run_nested(s, &p)
 }
 
+/// Finishes the sketch being edited as Finish with AutoConstrain does when `dimensions`: its
+/// lines and arcs held where the scan put them by dimensions measured from the sketch's origin,
+/// each a parameter, so the profile follows a changed parameter as a sketch drawn by hand does.
+/// With `round`, each dimension within it of a round size takes that size (AutoConstrain's
+/// `round`). A sketch AutoConstrain cannot settle, or `dimensions` false, is finished as it is. The degrees
+/// of freedom left; `None` when it was finished undimensioned.
+pub(super) fn finish_dimensioned(s: &mut Session, dimensions: bool, round: Option<f64>) -> Result<Option<usize>> {
+    let asked = match round {
+        Some(reach) => json!({"round": reach}),
+        None => json!({}),
+    };
+    if dimensions && let Ok(reply) = run(s, "sketch.finish_auto_constrain", asked) {
+        return Ok(reply.get("dof").and_then(Value::as_u64).and_then(|d| usize::try_from(d).ok()));
+    }
+    run(s, "sketch.finish", json!({}))?;
+    Ok(None)
+}
+
 /// What was added to the sketch.
 #[derive(Default)]
 pub(super) struct Added {
@@ -206,13 +224,14 @@ pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
     if s.model.state().sketch(sketch).is_none() {
         s.refresh();
     }
-    let finish = |s: &mut Session| if made { run(s, "sketch.finish", json!({})).map(|_| ()) } else { Ok(()) };
+    // A sketch the user is editing is left to them; one made here is finished dimensioned.
+    let dimensions = bool_(p, "dimensions").unwrap_or(true);
+    let finish = |s: &mut Session, round: f64| if made { finish_dimensioned(s, dimensions, Some(round)) } else { Ok(None) };
     let runs = {
         let state = s.model.state();
         let plane = state.sketch(sketch).map(|ss| ss.plane).ok_or_else(|| bad(cmd, "the sketch is not evaluated"))?;
-        let (positions, triangles) =
-            state.body(&scan).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{scan}` is not a scan")))?;
-        solidcraft_scan::section::section(&Scan::new(positions, triangles), &plane)
+        super::with_shown(s, &scan, |p, t| solidcraft_scan::section::section(&Scan::new(p, t), &plane))
+            .ok_or_else(|| bad(cmd, format!("`{scan}` is not a scan")))?
     };
     let tolerance = asked.unwrap_or_else(|| noise_tolerance(&runs));
     let outlines = fitted(&runs, tolerance);
@@ -231,7 +250,9 @@ pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
         }
         return Err(e);
     }
-    finish(s)?;
+    // Sizes within a quarter of the cut's tolerance of a round size are read as designed, as
+    // Hole It reads a hole's.
+    let dof = finish(s, solidcraft_scan::hole_form::SNAP_SHARE * tolerance)?;
     let reply = ScanSectionResult {
         body: scan,
         sketch,
@@ -241,6 +262,7 @@ pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
         circles: added.circles,
         tangents: added.tangents,
         tolerance,
+        dof,
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
@@ -292,10 +314,11 @@ pub fn along_path(s: &Session, sketch: Option<&Value>, curves: &[String], cmd: &
 
 /// The sections of the scan `body` along `path`, as Sections Along Curve cuts them.
 pub fn along_cut(s: &Session, body: &str, path: &[solidcore_record::Vec3], count: usize, every: bool, cmd: &str) -> Result<Vec<Along>> {
-    let state = s.model.state();
-    let (positions, triangles) = state.body(body).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{body}` is not a scan")))?;
-    let scan = Scan::new(positions, triangles);
-    Ok(solidcraft_scan::section::along(&scan, path, count, every, ALONG_REACH * scan.extent()))
+    super::with_shown(s, body, |p, t| {
+        let scan = Scan::new(p, t);
+        solidcraft_scan::section::along(&scan, path, count, every, ALONG_REACH * scan.extent())
+    })
+    .ok_or_else(|| bad(cmd, format!("`{body}` is not a scan")))
 }
 
 /// What the command would cut, for a dialog's preview: the scan, the curve's points, and the
@@ -422,8 +445,8 @@ pub fn preview(
     let scan = mesh_name(s, &json!({ "body": body }), cmd)?;
     let state = s.model.state();
     let plane = super::super::sketch_store::active(s).and_then(|id| state.sketch(id)).map_or(plane, |ss| ss.plane);
-    let (positions, triangles) = state.body(&scan).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{scan}` is not a scan")))?;
-    let runs = solidcraft_scan::section::section(&Scan::new(positions, triangles), &plane);
+    let runs = super::with_shown(s, &scan, |p, t| solidcraft_scan::section::section(&Scan::new(p, t), &plane))
+        .ok_or_else(|| bad(cmd, format!("`{scan}` is not a scan")))?;
     let tolerance = tolerance.unwrap_or_else(|| noise_tolerance(&runs));
     let outlines = runs
         .iter()

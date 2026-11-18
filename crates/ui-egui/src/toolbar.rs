@@ -72,6 +72,7 @@ pub(crate) fn shows_pressed(app: &SolveApp, id: &str) -> bool {
         || (id == "inspect.check_add" && crate::inspection_plan::adding(app))
         || (id == "inspect.check_measure" && crate::inspection_plan::shown(app))
         || (id == "scan.find_all" && crate::scan_shapes::shown(app))
+        || (id == "view.scan_triangles" && app.ui.scan_triangles)
 }
 
 /// [`shows_pressed`] for a ribbon button: a command with a persistent effect is pressed only while

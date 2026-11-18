@@ -68,7 +68,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("import")
         .contract(&INSERT_MESH_CONTRACT)
         .output(output_schema_for::<MeshInserted>)
-        .params("path: .3mf, .stl, .obj, .ply (with faces, or a raw range scan's grid: its neighbouring cells are joined, never across a jump in depth), .glb or .gltf file (its meshes join the design as mesh bodies in a new component named after the file → component, component_name, occurrence; a glTF file's node tree becomes nested components held as one rigid group until component.unlock, a mesh placed again another occurrence, its materials the bodies' appearances, and its metres millimetres); name?; up?: z|y for a glTF file (default y: glTF has Y up, so the import's component is turned a quarter turn about X, Y becoming Z → stand_up: its occurrence; z: the file's axes are kept); units?: mm|cm|m|in|ft for an STL or OBJ file, or a PLY file with faces or a range grid (default mm): the unit its coordinates are in, scaled to millimetres as the file is read (a 3MF or glTF file states its own) → units. The design keeps the millimetre mesh and not the unit: insert the file again, or run mesh.units on the import, to try another; origin?: bool (default false: the mesh keeps its file's coordinates; true: once read, scaled and stood up, the import's occurrence is moved so the box around its bodies is centred on X and Y of the active component with its lowest point on Z = 0 → moved_to_origin: [x, y, z], the shift made); crease_angle_degrees?: 0..180 (0 clears imported shading normals for the previous flat-shading behavior; positive angles regenerate angle-weighted normals across manifold edges below this crease angle; omitted keeps authored OBJ normals/smoothing groups, or flat shading when absent; geometry stays unchanged)"),
+        .params("path: .3mf, .stl, .obj, .ply (with faces, or a raw range scan's grid: its neighbouring cells are joined, never across a jump in depth), .glb or .gltf file (its meshes join the design as mesh bodies in a new component named after the file → component, component_name, occurrence; a glTF file's node tree becomes nested components held as one rigid group until component.unlock, a mesh placed again another occurrence, its materials the bodies' appearances, and its metres millimetres); name?; up?: z|y for a glTF file (default y: glTF has Y up, so the import's component is turned a quarter turn about X, Y becoming Z → stand_up: its occurrence; z: the file's axes are kept); units?: mm|cm|m|in|ft for an STL or OBJ file, or a PLY file with faces or a range grid (default mm): the unit its coordinates are in, scaled to millimetres as the file is read (a 3MF or glTF file states its own) → units. The design keeps the millimetre mesh and not the unit: insert the file again, or run mesh.units on the import, to try another; origin?: bool (default false: the mesh keeps its file's coordinates; true: once read, scaled and stood up, the import is moved so the box around its bodies is centred on X and Y of the active component with its lowest point on Z = 0: an STL, OBJ, PLY or 3MF file's points into the design's own frame, else the import's occurrence → moved_to_origin: [x, y, z], the shift made); crease_angle_degrees?: 0..180 (0 clears imported shading normals for the previous flat-shading behavior; positive angles regenerate angle-weighted normals across manifold edges below this crease angle; omitted keeps authored OBJ normals/smoothing groups, or flat shading when absent; geometry stays unchanged)"),
     CommandSpec::new("file.save", "Save", crate::checked!("file.save", save))
         .icon("save")
         .key("Ctrl+S")
@@ -599,6 +599,33 @@ fn created_bodies(s: &Session, feature: u64) -> Vec<String> {
     s.model.state().bodies.iter().filter(|b| b.feature == feature).map(|b| b.name.clone()).collect()
 }
 
+/// Moves a MeshImport's meshes so the box round their used points is centred on X and Y with its
+/// lowest point on Z = 0, and gives the shift; `None` for one with no points (or not a mesh).
+fn mesh_to_origin(kind: &mut solidcraft_doc::FeatureKind) -> Option<solidcore_record::Vec3> {
+    let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = kind else { return None };
+    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for mesh in meshes.iter() {
+        for &v in mesh.triangles.iter() {
+            let i = v as usize * 3;
+            let Some(q) = mesh.positions.get(i..i + 3) else { continue };
+            for k in 0..3 {
+                lo[k] = lo[k].min(q[k]);
+                hi[k] = hi[k].max(q[k]);
+            }
+        }
+    }
+    let shift = solidcore_record::Vec3::new(-(lo[0] + hi[0]) / 2.0, -(lo[1] + hi[1]) / 2.0, -lo[2]);
+    if ![shift.x, shift.y, shift.z].iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    for mesh in meshes.iter_mut() {
+        let moved: Vec<f64> =
+            mesh.positions.chunks(3).flat_map(|q| q.iter().zip([shift.x, shift.y, shift.z]).map(|(v, d)| v + d).collect::<Vec<_>>()).collect();
+        mesh.positions = moved.into();
+    }
+    Some(shift)
+}
+
 /// Add a MeshImport feature for a 3MF, STL, OBJ or glTF file, in a new component named after the
 /// file. A glTF file's nodes become components in it, and its materials the bodies' looks; it is
 /// in metres with Y up, so unless `y_up` is false its component is turned to Z up (#1505).
@@ -643,6 +670,13 @@ fn add_mesh(
     }
     // Read: the file's bytes (a scan's are gigabytes) go before the design is worked out.
     drop(bytes);
+    // To the origin, in the mesh's own points where the import goes into an unmoved frame (a
+    // file's meshes, not a glTF tree, whose component is turned): the scan tools read a scan's
+    // points as they are, so a scan whose component had been moved there instead was drawn in
+    // one place and clicked, brushed and fitted in another (a bunny's brush stroke landed on its
+    // shoulder, its import shift away).
+    let at_root = s.active_occurrence_path.as_ref().is_none_or(Vec::is_empty) && s.active_component == 0;
+    let baked = if origin && !gltf && at_root { mesh_to_origin(&mut mf.kind) } else { None };
     let fname = name.filter(|n| !n.trim().is_empty()).unwrap_or(&mf.name).to_string();
     let cname = import::component_name(path, name);
     let tree = match &plan {
@@ -662,7 +696,11 @@ fn add_mesh(
     }
     let turned = if gltf && y_up.unwrap_or(true) { turn_up(s, &placed)? } else { None };
     // After the turn, so it is the stood-up mesh that sits on Z = 0.
-    let moved = if origin { import::move_to_origin(s, &placed)? } else { None };
+    let moved = match baked {
+        Some(shift) => Some(shift),
+        None if origin => import::move_to_origin(s, &placed)?,
+        None => None,
+    };
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
     let reply = MeshInserted {
         path: path.to_string(),

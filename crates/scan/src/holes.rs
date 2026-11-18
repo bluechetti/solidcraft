@@ -68,7 +68,11 @@ impl Survey {
 
 /// The scan's rings.
 pub fn survey(scan: &Scan) -> Survey {
-    let weld = welded(scan.positions);
+    survey_with(scan, &welded(scan.positions))
+}
+
+/// The scan's rings with its points joined as `weld` says (each position's representative).
+pub(crate) fn survey_with(scan: &Scan, weld: &[u32]) -> Survey {
     let tri = |t: usize| -> Option<[u32; 3]> {
         scan.corners(t)?;
         let [a, b, c] = scan.triangles.get(t)?.map(|i| weld[i as usize]);
@@ -95,50 +99,16 @@ pub fn survey(scan: &Scan) -> Survey {
     // A triangle that runs an open edge from a to b leaves the missing one to run it from b to a,
     // so a hole's own ring follows the edges reversed.
     let mut following: HashMap<u32, Vec<u32>> = HashMap::new();
-    let mut arriving: HashMap<u32, usize> = HashMap::new();
     for [a, b, c] in (0..scan.triangle_count()).filter_map(tri) {
         for (from, to) in [(a, b), (b, c), (c, a)] {
             if open.contains(&pair(from, to)) {
                 following.entry(to).or_default().push(from);
-                *arriving.entry(from).or_insert(0) += 1;
             }
         }
     }
-    let simple = |v: u32| following.get(&v).map(Vec::len) == Some(1) && arriving.get(&v) == Some(&1);
     let mut rings: Vec<Ring> = Vec::new();
-    let mut consumed: HashSet<u32> = HashSet::new();
     let mut ring_edges = 0;
-    let mut firsts: Vec<u32> = following.keys().copied().collect();
-    firsts.sort_unstable();
-    for first in firsts {
-        if consumed.contains(&first) {
-            continue;
-        }
-        let mut ring = vec![first];
-        let mut seen: HashSet<u32> = HashSet::from([first]);
-        let mut closed = simple(first);
-        let mut current = first;
-        while closed {
-            let Some(&next) = following.get(&current).and_then(|f| f.first()) else {
-                closed = false;
-                break;
-            };
-            if next == first {
-                break;
-            }
-            if !simple(next) || seen.contains(&next) {
-                closed = false;
-                break;
-            }
-            seen.insert(next);
-            ring.push(next);
-            current = next;
-        }
-        // A walk that fails has passed only points no ring can have.
-        consumed.extend(ring.iter().copied());
-        if !(closed && ring.len() >= 3) {
-            continue;
-        }
+    for ring in loops(following) {
         let at = |v: u32| scan.positions[v as usize];
         let perimeter = (0..ring.len()).map(|k| at(ring[k]).dist(at(ring[(k + 1) % ring.len()]))).sum();
         ring_edges += ring.len();
@@ -177,6 +147,43 @@ pub fn survey(scan: &Scan) -> Survey {
         rings[k].rim = spans(&rings[k]) >= 0.25 * area;
     }
     Survey { rings, unfillable_edges: open.len() - ring_edges }
+}
+
+/// The open edges' rings: each closed walk along them, `following[v]` naming the points a walk
+/// may go on to from `v`. Where holes touch at a point (a pinch, more than one way on), the walk
+/// is cut into simple loops at the point it comes back to, so each hole is a ring of its own. Edges
+/// no closed walk takes (a dead end, a loop of two) are left out.
+fn loops(mut following: HashMap<u32, Vec<u32>>) -> Vec<Vec<u32>> {
+    let mut found = Vec::new();
+    let mut firsts: Vec<u32> = following.keys().copied().collect();
+    firsts.sort_unstable();
+    for first in firsts {
+        let mut path = vec![first];
+        let mut at: HashMap<u32, usize> = HashMap::from([(first, 0)]);
+        while let Some(&current) = path.last() {
+            let Some(next) = following.get_mut(&current).and_then(Vec::pop) else {
+                // A dead end: the path's edges are in no ring. Start again from its first point.
+                if path.len() == 1 {
+                    break;
+                }
+                path.truncate(1);
+                at.retain(|_, k| *k == 0);
+                continue;
+            };
+            if let Some(&k) = at.get(&next) {
+                let ring: Vec<u32> = path.split_off(k + 1);
+                let ring: Vec<u32> = std::iter::once(next).chain(ring).collect();
+                at.retain(|_, i| *i <= k);
+                if ring.len() >= 3 {
+                    found.push(ring);
+                }
+            } else {
+                at.insert(next, path.len());
+                path.push(next);
+            }
+        }
+    }
+    found
 }
 
 /// A scan with holes closed.
@@ -264,6 +271,16 @@ impl Surroundings {
     }
 }
 
+/// The unit normal of the ring `points` winds about (Newell's), `None` for one with no area.
+fn ring_normal(points: &[Vec3]) -> Option<Vec3> {
+    let mut n = Vec3::ZERO;
+    for (i, a) in points.iter().enumerate() {
+        let b = points[(i + 1) % points.len()];
+        n += Vec3::new((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y));
+    }
+    n.normalized()
+}
+
 /// The triangulation of the polygon `points` (in order) with the least total area, by dynamic
 /// programming over its sub-polygons, every triangle on three of its own points; a diagonal
 /// `forbidden` refuses is not used. `None` when nothing triangulates it.
@@ -277,6 +294,10 @@ fn least_area(points: &[Vec3], forbidden: impl Fn(usize, usize) -> bool) -> Opti
     }
     // A little for being long and thin breaks ties between equal areas toward compact triangles.
     let compactness = 0.01;
+    // The way the ring winds (its Newell normal): a triangle turned against it (on a flat ring
+    // that is not convex, the least area can take one, folded over its neighbours) costs as if it
+    // were a hundred times its size.
+    let winding = ring_normal(points);
     let mut cost = vec![0f64; n * n];
     let mut split = vec![usize::MAX; n * n];
     for span in 2..n {
@@ -297,7 +318,9 @@ fn least_area(points: &[Vec3], forbidden: impl Fn(usize, usize) -> bool) -> Opti
                     if !(area > 1e-10 * edges) {
                         continue;
                     }
-                    let total = inner + area + compactness * (edges / (4.0 * 3.0f64.sqrt()) - area);
+                    let against = winding.is_some_and(|w| ik.cross(ij).dot(w) < 0.0);
+                    let area_cost = if against { 100.0 * area } else { area };
+                    let total = inner + area_cost + compactness * (edges / (4.0 * 3.0f64.sqrt()) - area);
                     if total < best.0 {
                         best = (total, k);
                     }
@@ -373,7 +396,20 @@ fn patch(ring: &Ring, positions: &[Vec3], around: &Surroundings, fair: bool) -> 
     let mut mesh = PatchMesh::new(&points, coarse);
     mesh.refine(&forbidden);
     if fair && mesh.points.len() > points.len() {
+        // Faired only where that turns no triangle over: on a ragged flat ring fairing pulled
+        // points past the ring's dents and folded the patch (marker holes on a CAD plate drew
+        // crescents of folded triangles).
+        let before = mesh.points.clone();
+        let folded = |m: &PatchMesh| {
+            ring_normal(&points).map_or(0, |w| {
+                m.triangles.iter().filter(|t| (m.points[t[1]] - m.points[t[0]]).cross(m.points[t[2]] - m.points[t[0]]).dot(w) < 0.0).count()
+            })
+        };
+        let was = folded(&mesh);
         mesh.fair(&ring.points, positions, around);
+        if folded(&mesh) > was {
+            mesh.points = before;
+        }
     }
     let added = mesh.points[points.len()..].to_vec();
     added.iter().all(|p| p.is_finite()).then_some(Patch { added, triangles: mesh.triangles })
@@ -700,6 +736,23 @@ mod tests {
         let (positions, triangles) = plate(10, |_, _| false);
         let whole = survey(&Scan::new(&positions, &triangles));
         assert!(whole.rings.len() == 1 && whole.rings[0].rim);
+    }
+
+    /// Two square holes touching at one corner (a pinch, as fused scans leave them) are two holes,
+    /// both closed, with no open edge left over for Repair to be sent to.
+    #[test]
+    fn holes_touching_at_a_corner_are_two_holes() {
+        let (positions, triangles) = plate(10, |x, y| (x, y) == (3, 3) || (x, y) == (4, 4));
+        let scan = Scan::new(&positions, &triangles);
+        let found = survey(&scan);
+        assert_eq!(found.unfillable_edges, 0, "every open edge is in a ring");
+        let holes: Vec<_> = found.holes(300).collect();
+        assert_eq!(holes.len(), 2, "{:?}", found.rings);
+        assert!(holes.iter().all(|h| h.points.len() == 4));
+        let done = fill(&scan, &found, 300, true).unwrap();
+        assert_eq!((done.filled, done.failed), (2, 0));
+        let after = survey(&Scan::new(&done.positions, &done.triangles));
+        assert_eq!((after.rings.len(), after.unfillable_edges), (1, 0), "only the rim is left");
     }
 
     /// A sphere with a cap cut off: the patch carries the sphere's curve across, close to it.

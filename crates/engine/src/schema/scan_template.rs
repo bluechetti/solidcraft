@@ -616,6 +616,13 @@ pub struct ScanFlatTemplateResult {
     /// With `outline: "scan"` and `round`: the most a corner was moved by the tidying (mm).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub moved: Option<f64>,
+    /// With `outline: "scan"`: the stretches of the outline with no scan near them (a tear bridged,
+    /// a side drawn where the scan stops short), guessed rather than read: how many, and how long
+    /// they are together (mm). Measure these by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guessed: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guessed_length: Option<f64>,
     /// With `panel`: what the straight panel came to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub panel: Option<PanelMade>,

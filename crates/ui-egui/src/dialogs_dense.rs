@@ -1194,7 +1194,7 @@ fn additional_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> boo
         Kind::Plastic(k) => enter |= crate::dialogs_plastic::rows(app, ui, k, &d.inputs),
         Kind::Frame(k) => enter |= crate::dialogs_frame::rows(app, ui, k, &d.inputs),
         Kind::ScanBase(k) => enter |= crate::dialogs_scan::rows(app, ui, k, &d.inputs),
-        Kind::ScanSymmetry(k) => enter |= crate::dialogs_scan::symmetry_rows(app, ui, k),
+        Kind::ScanSymmetry(k) => enter |= crate::dialogs_scan::symmetry_rows(app, ui, k, &d.inputs),
         Kind::ScanEditSurface(k) => enter |= crate::dialogs_scan_surface::rows(app, ui, k),
         Kind::ScanFitSurface(k) => enter |= crate::dialogs_scan_surface::fit_rows(app, ui, k, &d.inputs),
         Kind::ScanCurve(k) => enter |= crate::dialogs_scan_curve::rows(app, ui, k),

@@ -1320,6 +1320,9 @@ fn vs_cloud_triangle(@builtin(vertex_index) vi: u32, i: CIn) -> COut {
     let w = vec3<f32>(f32(vi == 0u), f32(vi == 1u), f32(vi == 2u));
     let wp = i.a * w.x + i.b * w.y + i.c * w.z;
     var n = cross(i.b - i.a, i.c - i.a);
+    // Bit 5: lit by the surface's own way out (in `before`), not its corners': a fine noisy scan's
+    // triangles tilt every way, and each lit by its own normal sparkled.
+    if ((u32(round(i.rgb.a * 255.0)) & 32u) != 0u && length(i.before) > 0.0) { n = i.before; }
     if (length(n) > 0.0) { n = normalize(n); }
     // The true clip-space corner, even behind the eye: the rasteriser clips a triangle exactly.
     return cloud_out(i, w, wp, u.vp * vec4<f32>(wp, 1.0), n);

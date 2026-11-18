@@ -350,3 +350,17 @@ fn a_cancelled_computation_stops_promptly_and_is_never_cached() {
     assert_eq!(again.computed.model.recomputed, session.model.recomputed + 1, "nothing of the cancelled run was cached");
     assert!(again.computed.model.results.iter().all(|r| r.error.is_none()), "OK again finishes the cut");
 }
+
+/// A body the computed commands hid themselves (Combine Scans hides the passes it fused) stays
+/// hidden once they are taken: the live view's hides used to replace the copy's whole.
+#[test]
+fn bodies_hidden_by_the_computation_stay_hidden_when_it_is_taken() {
+    let mut session = Session::default();
+    session.execute("solid.box", &json!({"length":1,"width":1,"height":1,"body_name":"A"})).unwrap();
+    session.execute("solid.box", &json!({"length":1,"width":1,"height":1,"center":[5,0,0],"operation":"new","body_name":"B"})).unwrap();
+    let batch = vec![("browser.visibility".to_owned(), json!({"visible": false, "items": ["B"]}))];
+    let prepared = session.scratch().compute_commands(&batch, None).unwrap();
+    session.accept_commands(prepared).unwrap();
+    assert!(!session.body_visible("B"), "hidden by the computation");
+    assert!(session.body_visible("A"));
+}

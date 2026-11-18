@@ -38,7 +38,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("align")
         .contract(&COMBINE_CONTRACT)
         .output(output_schema_for::<ScanCombineResult>)
-        .params("body?: the scan the others are fused into and held where it is (default: the first selected scan, else the first); with?: [the other passes] (default: the other selected scans, else every other scan); align?: bool (default true: the passes laid on `body` first, as scan.align_all lays them; false when they already lie together); search?, overlap?: as scan.align_all; cell?: length, sharp?: bool as scan.remesh: the passes laid together and fused into `body` as one even surface (the other passes stay as they are, laid on it), one undo step → body, with, aligned? (scan.align_all's reply), fused (scan.remesh's reply)"),
+        .params("body?: the scan the others are fused into and held where it is (default: the first selected scan, else the first); with?: [the other passes] (default: the other selected scans, else every other scan); align?: bool (default true: the passes laid on `body` first, as scan.align_all lays them; false when they already lie together); search?, overlap?: as scan.align_all; cell?: length, sharp?: bool as scan.remesh: the passes laid together and fused into `body` as one even surface (the other passes stay as they are, laid on it), the passes fused in are hidden (shown again from the browser); one undo step → body, with, aligned? (scan.align_all's reply), fused (scan.remesh's reply)"),
     CommandSpec::new("scan.align_all", "Align All Scans", crate::checked!("scan.align_all", align_all))
         .at("SCAN", "ALIGN")
         .icon("align")
@@ -311,6 +311,7 @@ fn align_to_model(s: &mut Session, p: &Value) -> Result<Value> {
         matched: found.matched,
         start: found.start.to_string(),
         converged: found.converged,
+        note: found.note(),
         rival: found.rival,
         feature,
         param_warnings: Vec::new(),
@@ -373,5 +374,8 @@ fn combine(s: &mut Session, p: &Value) -> Result<Value> {
     given.insert("body".into(), json!(base));
     given.insert("with".into(), json!(with));
     let fused = command("scan.remesh")?.run_nested(s, &pass_on(&["cell", "sharp"], given))?;
+    // The passes fused in are hidden, not deleted: left showing, they lay over the one scan made
+    // of them, which then looked like the passes still apart.
+    command("browser.visibility")?.run_nested(s, &json!({"visible": false, "items": with}))?;
     reply(ScanCombineResult { body: base, with, aligned, fused, param_warnings: Vec::new() })
 }

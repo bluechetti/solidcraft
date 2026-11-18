@@ -30,6 +30,23 @@ pub enum Shape {
 }
 
 impl Shape {
+    /// Whether `other` is a shape like this one, as a part repeats its features: a cylinder or
+    /// sphere of the same radius (within 2 %, or 0.05 mm for a small one: holes of one size), a
+    /// cone of the same half angle (within 1°: countersinks), a torus of the same radii, a plane
+    /// facing the same way (within 2°: parallel faces, the tops of steps). Where they are, and
+    /// which way a cylinder's axis runs, does not matter.
+    pub fn like(&self, other: &Shape) -> bool {
+        let same = |a: f64, b: f64| (a - b).abs() <= (0.02 * a.abs()).max(0.05);
+        match (*self, *other) {
+            (Shape::Plane { normal: a, .. }, Shape::Plane { normal: b, .. }) => a.dot(b) >= (2.0f64).to_radians().cos(),
+            (Shape::Cylinder { radius: a, .. }, Shape::Cylinder { radius: b, .. }) => same(a, b),
+            (Shape::Sphere { radius: a, .. }, Shape::Sphere { radius: b, .. }) => same(a, b),
+            (Shape::Cone { half_angle: a, .. }, Shape::Cone { half_angle: b, .. }) => (a - b).abs() <= (1.0f64).to_radians(),
+            (Shape::Torus { major: a, minor: c, .. }, Shape::Torus { major: b, minor: d, .. }) => same(a, b) && same(c, d),
+            _ => false,
+        }
+    }
+
     /// The signed distance of `p` from the shape (outside a cylinder is positive).
     pub fn distance(&self, p: Vec3) -> f64 {
         match *self {
@@ -181,6 +198,28 @@ const RINGS: usize = 3;
 /// triangle may be from the shape and still be on it (default: [`tolerance`] of the scan, or three
 /// times its noise round the pick where that is more).
 pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Result<Fitted, FitError> {
+    fit_in(scan, seed, kind, tolerance, None)
+}
+
+/// As [`fit`], grown from `seed` no further than the triangles `within` (Round the click: the scan
+/// within a radius of the click). The shape is still only what lies on it: a click in a small
+/// countersink with the plate's top within the radius fits the countersink's cone, not one
+/// through both.
+pub fn fit_within(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>, within: &[usize]) -> Result<Fitted, FitError> {
+    let mut open = vec![false; scan.triangle_count()];
+    for &t in within {
+        if let Some(slot) = open.get_mut(t) {
+            *slot = true;
+        }
+    }
+    if !open.get(seed).copied().unwrap_or(false) {
+        return Err(FitError::NotOnTheScan);
+    }
+    fit_in(scan, seed, kind, tolerance, Some(&open))
+}
+
+fn fit_in(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>, open: Option<&[bool]>) -> Result<Fitted, FitError> {
+    let allowed = |t: usize| open.is_none_or(|o| o.get(t).copied().unwrap_or(false));
     let [a, b, c] = scan.corners(seed).ok_or(FitError::NotOnTheScan)?;
     let pick = (a + b + c) / 3.0;
     let extent = scan.extent();
@@ -192,7 +231,9 @@ pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Resu
         Kind::Plane => 0.01 * extent,
         Kind::Cylinder | Kind::Sphere | Kind::Cone | Kind::Torus => 0.03 * extent,
     };
-    let near = |reach: f64| connected(scan, &neighbours, seed, |t| scan.corners(t).is_some_and(|[a, b, c]| ((a + b + c) / 3.0).dist(pick) <= reach));
+    let near = |reach: f64| {
+        connected(scan, &neighbours, seed, |t| allowed(t) && scan.corners(t).is_some_and(|[a, b, c]| ((a + b + c) / 3.0).dist(pick) <= reach))
+    };
     let mut start = near(reach);
     while start.len() < 12 && reach < 0.1 * extent {
         reach *= 2.0;
@@ -212,32 +253,54 @@ pub fn fit(scan: &Scan, seed: usize, kind: Kind, tolerance: Option<f64>) -> Resu
     let start = if smooth.len() >= START_LEAST || (clean && kind == Kind::Plane && !smooth.is_empty()) { smooth } else { start };
     // The shape read with the directions growth reads: a noisy scan's own normals mislead an axis.
     let solve = |region: &[usize], kind: Kind| solve_facing(scan, region, kind, SOLVE_LIMIT, &facings);
-    let mut shape = solve(&start, kind).ok_or(FitError::NoFit)?;
-    let rules = |region: &[usize], shape: &Shape| Growth { tolerance, lean: MAX_LEAN, bend: Some(bend_slack(&facings, region, shape)) };
+    let shape = solve(&start, kind).ok_or(FitError::NoFit)?;
+    let rules =
+        |region: &[usize], shape: &Shape, tolerance: f64| Growth { tolerance, lean: MAX_LEAN, bend: Some(bend_slack(&facings, region, shape)) };
     // Grow against the shape, fitting again while the region grows by a tenth, then once more
     // against the final shape; the turn allowed is read again from each fit.
-    let mut region = start;
-    for _ in 0..24 {
-        // Early only once the region is wide enough to tell: a small patch of a wide shaft looks flat too.
-        if flat_cylinder(scan, &region, &shape, 0.1 * extent) {
+    let grown = |start: Vec<usize>, shape: Shape, tolerance: f64| -> Result<(Vec<usize>, Shape), FitError> {
+        let (mut region, mut shape) = (start, shape);
+        for _ in 0..24 {
+            // Early only once the region is wide enough to tell: a small patch of a wide shaft looks flat too.
+            if flat_cylinder(scan, &region, &shape, 0.1 * extent) {
+                return Err(FitError::NoFit);
+            }
+            let wider = grow_by(&facings, &[seed], &shape, &rules(&region, &shape, tolerance), open);
+            let more = wider.len() * 10 >= region.len() * 11;
+            region = wider;
+            shape = solve(&region, kind).unwrap_or(shape);
+            if !more {
+                break;
+            }
+        }
+        let region = grow_by(&facings, &[seed], &shape, &rules(&region, &shape, tolerance), open);
+        let shape = solve(&region, kind).unwrap_or(shape);
+        if region.len() < 3 || flat_cylinder(scan, &region, &shape, 0.0) {
             return Err(FitError::NoFit);
         }
-        let grown = grow_by(&facings, &[seed], &shape, &rules(&region, &shape), None);
-        let more = grown.len() * 10 >= region.len() * 11;
-        region = grown;
-        shape = solve(&region, kind).unwrap_or(shape);
-        if !more {
-            break;
+        Ok((region, shape))
+    };
+    // A shape read off a small start can be too rough to grow from at a tight tolerance: a torus's
+    // first fit, off by a fraction of a millimetre, let an exact torus grow at 0.2 mm no further than
+    // its start. Then it grows at eight, four and twice the tolerance first, fitted again each time,
+    // and is finished at the tolerance asked.
+    // Only for the shapes whose first fit off a small start is unsure (a torus, a cone): a plane
+    // or a cylinder refused at the tolerance is no such shape, and growing loose first would
+    // find a strip of a tube that a plane fits.
+    let unsure = matches!(kind, Kind::Torus | Kind::Cone);
+    let (region, shape) = match grown(start.clone(), shape, tolerance) {
+        Ok(found) => found,
+        Err(why) if !unsure => return Err(why),
+        Err(_) => {
+            let (mut region, mut shape) = (start, shape);
+            for loose in [8.0, 4.0, 2.0] {
+                if let Ok(found) = grown(region.clone(), shape, loose * tolerance) {
+                    (region, shape) = found;
+                }
+            }
+            grown(region, shape, tolerance)?
         }
-    }
-    let region = grow_by(&facings, &[seed], &shape, &rules(&region, &shape), None);
-    let shape = solve(&region, kind).unwrap_or(shape);
-    if region.len() < 3 {
-        return Err(FitError::NoFit);
-    }
-    if flat_cylinder(scan, &region, &shape, 0.0) {
-        return Err(FitError::NoFit);
-    }
+    };
     summarize(scan, region, shape)
 }
 
@@ -1487,6 +1550,31 @@ mod tests {
         assert!(fitted.rms < 0.05, "{}", fitted.rms);
     }
 
+    /// Round the click on the chamfer, with the shaft and the end face within the radius: the cone
+    /// is the chamfer's, grown no further than the radius, not one through all three. Fitted as
+    /// it is, all the triangles within 12 mm give a cone far off the chamfer.
+    #[test]
+    fn a_cone_round_a_click_is_the_chamfer_within_the_radius() {
+        let (positions, triangles, turn, shift) = turned_part();
+        let scan = Scan::new(&positions, &triangles);
+        let place = |p: Vec3| turn.turned(p) + shift;
+        let at = place(Vec3::new(17.5, 0.0, 22.5));
+        let seed = nearest_triangle(&scan, at).unwrap();
+        let within = around(&scan, seed, at, 12.0);
+        let whole = fit_region(&scan, &within, Kind::Cone).map_or(f64::INFINITY, |f| f.rms);
+        assert!(whole > 0.5, "all of it as it is fits no cone well: {whole}");
+        let fitted = fit_within(&scan, seed, Kind::Cone, None, &within).unwrap();
+        let Shape::Cone { apex, half_angle, .. } = fitted.shape else { panic!() };
+        assert!((half_angle.to_degrees() - 45.0).abs() < 0.2, "{}", half_angle.to_degrees());
+        assert!(apex.dist(place(Vec3::new(0.0, 0.0, 40.0))) < 0.2, "{apex:?}");
+        assert!(fitted.rms < 0.05, "{}", fitted.rms);
+        assert!(fitted.triangles.iter().all(|t| within.contains(t)), "no further than the radius");
+        // A radius tighter than the chamfer keeps to it.
+        let small = around(&scan, seed, at, 3.0);
+        let tight = fit_within(&scan, seed, Kind::Cone, None, &small).unwrap();
+        assert!(tight.triangles.len() < fitted.triangles.len() && tight.triangles.iter().all(|t| small.contains(t)));
+    }
+
     #[test]
     fn a_torus_fits_the_round_picked() {
         let (positions, triangles, turn, shift) = turned_part();
@@ -1508,6 +1596,28 @@ mod tests {
         let Some(Shape::Torus { major, minor, .. }) = shape_of(&scan, &own, Kind::Torus) else { panic!() };
         assert!((minor - 4.0).abs() < 1e-6 && (major - 16.0).abs() < 1e-6, "{major} {minor}");
         assert!(axis.dot(turn.turned(Vec3::Z)).abs() > 1.0 - 1e-5, "{axis:?}");
+    }
+
+    /// A whole ring (R30 round a 6 mm tube, 96 × 32 facets, its corners exactly on it) picked on
+    /// its outside at the tolerance a dialog sends: the first fit off a small start is too rough to
+    /// grow from at 0.1 mm, and it was refused as no torus; grown loose first, it fits exactly.
+    #[test]
+    fn a_whole_ring_fits_at_a_tight_tolerance() {
+        let (n, m, major, minor) = (96u32, 32u32, 30.0, 6.0);
+        let at = |i: u32, j: u32| {
+            let (u, v) = (std::f64::consts::TAU * f64::from(i % n) / f64::from(n), std::f64::consts::TAU * f64::from(j % m) / f64::from(m));
+            Vec3::new((major + minor * v.cos()) * u.cos(), (major + minor * v.cos()) * u.sin(), minor * v.sin())
+        };
+        let positions: Vec<Vec3> = (0..n).flat_map(|i| (0..m).map(move |j| (i, j))).map(|(i, j)| at(i, j)).collect();
+        let id = |i: u32, j: u32| (i % n) * m + j % m;
+        let triangles: Vec<[u32; 3]> = (0..n)
+            .flat_map(|i| (0..m).flat_map(move |j| [[id(i, j), id(i + 1, j), id(i + 1, j + 1)], [id(i, j), id(i + 1, j + 1), id(i, j + 1)]]))
+            .collect();
+        let scan = Scan::new(&positions, &triangles);
+        let seed = nearest_triangle(&scan, Vec3::new(0.0, -36.0, 0.0)).unwrap();
+        let fitted = fit(&scan, seed, Kind::Torus, Some(0.1)).unwrap();
+        let Shape::Torus { major: r, minor: t, .. } = fitted.shape else { panic!("{:?}", fitted.shape) };
+        assert!((r - major).abs() < 0.05 && (t - minor).abs() < 0.05, "{r} {t}");
     }
 
     #[test]

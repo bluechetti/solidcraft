@@ -39,7 +39,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanSliceSurfaceParams>(), &["cap", "keep", "plane", "surface"]);
     assert_keys(input_schema_for::<ScanHolesParams>(), &["at", "body", "fair", "in_place", "max_edges"]);
     assert_keys(input_schema_for::<ScanRepairParams>(), &["body", "crossings", "in_place"]);
-    assert_keys(input_schema_for::<ScanSectionParams>(), &["body", "offset", "plane", "tolerance"]);
+    assert_keys(input_schema_for::<ScanSectionParams>(), &["body", "dimensions", "offset", "plane", "tolerance"]);
     assert_keys(input_schema_for::<ScanSectionsAlongParams>(), &["body", "count", "curves", "every", "sketch", "tolerance"]);
     assert_keys(
         input_schema_for::<ScanReduceParams>(),

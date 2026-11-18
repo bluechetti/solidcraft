@@ -211,9 +211,8 @@ fn view(s: &mut Session, p: &Value, cmd: &str, show: bool) -> Result<View> {
         return Ok(View { found, region: Some(region) });
     }
     let region = {
-        let state = s.model.state();
-        let (positions, triangles) =
-            state.body(&found.scan).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
+        let shown = super::shown_mesh(s, &found.scan).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
+        let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
         reconstruct::read_region(&Scan::new(positions, triangles), &found.outcome, &selection.selected)
             .ok_or_else(|| bad(cmd, format!("too little is selected on `{}` to read: select at least 50 of its triangles", found.scan)))?
     };
@@ -227,11 +226,10 @@ impl ScanShapes {
     /// Whether it was found on `scan` as it is now: the same storage (asked every frame, at no
     /// cost), else the same fingerprint.
     pub fn current(&self, s: &Session) -> bool {
-        let state = s.model.state();
-        state
-            .body(&self.scan)
-            .and_then(|b| b.body.triangle_mesh())
-            .is_some_and(|(p, t)| held(p, t) == self.held || fingerprint(p, t) == self.fingerprint)
+        super::shown_mesh(s, &self.scan).is_some_and(|m| {
+            let (p, t) = (m.positions.as_slice(), m.triangles.as_slice());
+            held(p, t) == self.held || fingerprint(p, t) == self.fingerprint
+        })
     }
 
     /// What Reconstruct read off the part of the scan selected now, if it has read it.
@@ -314,7 +312,12 @@ fn shapes(s: &mut Session, p: &Value, cmd: &str, show: bool) -> Result<Arc<ScanS
     let (outcome, reading, print, at, regions) = {
         let state = s.model.state();
         let body = state.body(&name).ok_or_else(|| bad(cmd, format!("no body `{name}`")))?;
-        let (positions, triangles) = body.body.triangle_mesh().ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+        if !body.body.is_mesh() {
+            return Err(bad(cmd, format!("`{name}` is not a scan (a mesh body)")));
+        }
+        // Where the scan shows: what is read off it and built from it is where it is drawn.
+        let shown = super::shown_mesh(s, &name).ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+        let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
         if triangles.is_empty() {
             return Err(bad(cmd, format!("`{name}` has no triangles")));
         }
@@ -370,11 +373,10 @@ fn shape_found(s: &Session, found: &ScanShapes, index: usize) -> Option<ScanShap
         Shape::Plane { point, normal } => (out.point, out.direction) = (at(point), Some(at(normal))),
         Shape::Cylinder { point, axis, radius } => {
             (out.point, out.direction, out.radius) = (at(point), Some(at(axis)), Some(radius));
-            let state = s.model.state();
-            out.hole = state
-                .body(&found.scan)
-                .and_then(|b| b.body.triangle_mesh())
-                .map(|(p, t)| reconstruct::is_round_hole(&Scan::new(p, t), segment, reconstruct::outward(&Scan::new(p, t))));
+            out.hole = super::shown_mesh(s, &found.scan).map(|m| {
+                let scan = Scan::new(&m.positions, &m.triangles);
+                reconstruct::is_round_hole(&scan, segment, reconstruct::outward(&scan))
+            });
         }
         Shape::Sphere { center, radius } => (out.point, out.radius) = (at(center), Some(radius)),
         Shape::Cone { apex, axis, half_angle } => {
@@ -796,8 +798,47 @@ fn draw(sk: &mut Sketch, outline: &Outline, level: &Level<'_>, drawn: &mut Drawn
     Ok(())
 }
 
-/// A sketch on `plane` named `name`, with `outlines` drawn in; its id.
-fn sketch_outlines(s: &mut Session, plane: &Plane, name: &str, outlines: &[Outline], level: &Level<'_>, drawn: &mut Drawn) -> Result<u64> {
+/// `plane` slid in itself so its origin is where the world's origin falls on it (along its X
+/// only when `x_only`: a turned profile's X is its axis), and `outlines` moved with it, so the
+/// profile's place is measured from the part's own origin, not from where the scan was read.
+fn at_world_origin(plane: &Plane, outlines: &[Outline], x_only: bool) -> (Plane, Vec<Outline>) {
+    let d = Vec3::ZERO - plane.origin;
+    let by = Vec2::new(d.dot(plane.x), if x_only { 0.0 } else { d.dot(plane.y) });
+    let moved = Plane { origin: plane.origin + plane.x * by.x + plane.y * by.y, ..*plane };
+    let outlines = outlines
+        .iter()
+        .map(|o| Outline {
+            corners: o.corners.iter().map(|c| *c - by).collect(),
+            pieces: o
+                .pieces
+                .iter()
+                .map(|p| match *p {
+                    Piece::Arc { center, ccw } => Piece::Arc { center: center - by, ccw },
+                    Piece::Line => Piece::Line,
+                })
+                .collect(),
+            faces: o.faces.clone(),
+        })
+        .collect();
+    (moved, outlines)
+}
+
+/// A sketch on `plane` named `name`, with `outlines` drawn in, its origin where the world's falls
+/// on the plane (`x_only`: along the plane's X only), dimensioned from it, each size within `round`
+/// of a round one read as designed; its id.
+#[allow(clippy::too_many_arguments)]
+fn sketch_outlines(
+    s: &mut Session,
+    plane: &Plane,
+    name: &str,
+    outlines: &[Outline],
+    level: &Level<'_>,
+    drawn: &mut Drawn,
+    round: f64,
+    x_only: bool,
+) -> Result<u64> {
+    let (plane, outlines) = at_world_origin(plane, outlines, x_only);
+    let (plane, outlines) = (&plane, outlines.as_slice());
     let create = json!({"plane": {"origin": at(plane.origin), "x_dir": at(plane.x), "y_dir": at(plane.y)}, "name": name});
     let made = run(s, "sketch.create", create)?;
     let id = made.get("sketch").and_then(Value::as_u64).ok_or_else(|| EngineError::Other("the sketch was not made".into()))?;
@@ -814,7 +855,8 @@ fn sketch_outlines(s: &mut Session, plane: &Plane, name: &str, outlines: &[Outli
         run(s, "sketch.cancel", json!({}))?;
         return Err(e);
     }
-    run(s, "sketch.finish", json!({}))?;
+    // Dimensioned from its origin, as a profile drawn by hand is: its sizes are parameters.
+    super::section::finish_dimensioned(s, true, Some(round))?;
     Ok(id)
 }
 
@@ -1000,9 +1042,8 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         .get(index)
         .ok_or_else(|| bad(cmd, format!("there are {} prisms: `prism` is 0 to {}", reading.prisms.len(), reading.prisms.len() - 1)))?;
     let (plane, outlines) = {
-        let state = s.model.state();
-        let (positions, triangles) =
-            state.body(&found.scan).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
+        let shown = super::shown_mesh(s, &found.scan).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
+        let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
         profile::prism_profile(&view.scan(positions, triangles), view.outcome(), reading, prism).map_err(|e| bad(cmd, e))?
     };
     let (operation, solid, how) = into_params(s, &found.scan, p, cmd)?;
@@ -1013,8 +1054,11 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         snap_to_body(s, &solid, &plane, &mut outlines, view.outcome().tolerance, prism.draft == 0.0);
     }
     let mut drawn = Drawn::default();
-    let sketch = sketch_outlines(s, &plane, &format!("Prism Profile {}", index + 1), &outlines, &|_, _, _| None, &mut drawn)?;
-    let depth = prism.depth();
+    // Sizes within a quarter of the scan's tolerance of a round size are read as designed, as
+    // Hole It reads a hole's.
+    let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
+    let sketch = sketch_outlines(s, &plane, &format!("Prism Profile {}", index + 1), &outlines, &|_, _, _| None, &mut drawn, round, false)?;
+    let depth = solidcraft_scan::hole_form::snapped(prism.depth(), round);
     let mut extrude = if prism.draft == 0.0 {
         json!({"sketch": sketch, "distance": depth, "direction": "symmetric", "name": format!("Extrude It {}", index + 1)})
     } else {
@@ -1048,9 +1092,8 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
     let view = view(s, p, cmd, false)?;
     let found = &view.found;
     let (plane, outline, held) = {
-        let state = s.model.state();
-        let (positions, triangles) =
-            state.body(&found.scan).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
+        let shown = super::shown_mesh(s, &found.scan).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
+        let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
         profile::turned_profile(&view.scan(positions, triangles), view.outcome(), view.reading()).map_err(|e| bad(cmd, e))?
     };
     let (operation, solid, how) = into_params(s, &found.scan, p, cmd)?;
@@ -1064,7 +1107,8 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => None,
     };
     let mut drawn = Drawn::default();
-    let sketch = sketch_outlines(s, &plane, "Turned Profile", std::slice::from_ref(&outline), &level, &mut drawn)?;
+    let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
+    let sketch = sketch_outlines(s, &plane, "Turned Profile", std::slice::from_ref(&outline), &level, &mut drawn, round, true)?;
     let revolve = merged(json!({"sketch": sketch, "axis": "x", "name": "Revolve It"}), operation);
     let feature = run(s, "solid.revolve", revolve)?;
     reply(ScanBuildResult {
@@ -1354,7 +1398,8 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
         faces: vec![None; 2],
     };
     let mut drawn = Drawn::default();
-    let sketch = sketch_outlines(s, &plane, &format!("Hole {}", index + 1), &[circle], &|_, _, _| None, &mut drawn)?;
+    let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
+    let sketch = sketch_outlines(s, &plane, &format!("Hole {}", index + 1), &[circle], &|_, _, _| None, &mut drawn, round, false)?;
     // The sketch's normal (x × y) points into the hole.
     let depth = hole.depth() + margin;
     let feature = run(

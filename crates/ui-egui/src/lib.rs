@@ -296,6 +296,7 @@ pub(crate) mod scan_paint;
 pub(crate) mod scan_selection;
 pub(crate) mod scan_shapes;
 pub(crate) mod scan_snap;
+pub(crate) mod scan_triangles;
 pub mod scan_workspace;
 pub mod scenario;
 pub(crate) mod scene_palette;
@@ -439,6 +440,9 @@ pub struct UiState {
     pub show_browser: bool,
     pub show_timeline: bool,
     pub show_grid: bool,
+    /// Draw the triangles of the scans shown (`view.scan_triangles`); off whenever the window opens.
+    #[serde(skip)]
+    pub scan_triangles: bool,
     pub show_navigation_bar: bool,
     pub perspective: bool,
     /// Perspective while orbiting, orthographic when the camera faces a standard axis view
@@ -500,6 +504,7 @@ impl Default for UiState {
             show_browser: true,
             show_timeline: true,
             show_grid: true,
+            scan_triangles: false,
             show_navigation_bar: true,
             perspective: false,
             auto_ortho_faces: false,
@@ -1622,6 +1627,7 @@ impl SolveApp {
                 "diagnostics.validation" => self.preferences.validation = self.session.validation(),
                 "view.grid" => self.ui.show_grid = v.get("on").and_then(Value::as_bool).unwrap_or(!self.ui.show_grid),
                 "view.ground_shadow" => self.ui.ground_shadow = v.get("on").and_then(Value::as_bool).unwrap_or(!self.ui.ground_shadow),
+                "view.scan_triangles" => self.ui.scan_triangles = v.get("on").and_then(Value::as_bool).unwrap_or(!self.ui.scan_triangles),
                 "view.navigation_bar" => {
                     self.ui.show_navigation_bar = v.get("visible").and_then(Value::as_bool).unwrap_or(!self.ui.show_navigation_bar)
                 }
@@ -2111,6 +2117,7 @@ impl SolveApp {
                 | "view.spin"
                 | "view.grid"
                 | "view.ground_shadow"
+                | "view.scan_triangles"
                 | "view.navigation_bar"
                 | "view.next_tab"
                 | "view.previous_tab"
@@ -2909,6 +2916,11 @@ impl SolveApp {
     pub fn highlighted(&self) -> Vec<solidcraft_engine::Sel> {
         let mut v = self.session.selection.clone();
         if let Some(d) = &self.dialog {
+            // Bodies picked before a scan tool that shows where it puts them are not lit either.
+            if d.shows_placement() {
+                let named = d.items();
+                v.retain(|x| !named.iter().any(|n| crate::selection::same_item(x, n)));
+            }
             v.extend(d.highlighted(&self.session));
         }
         v.extend(agent_chat::hovered_chip(self).iter().cloned());

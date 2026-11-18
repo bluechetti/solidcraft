@@ -169,3 +169,49 @@ fn a_region_grown_from_the_click_keeps_to_the_way_the_scan_faces_there() {
     let patches = run(&mut s, "scan.fit_patches", json!({"body": scan, "point": [0.3, 15, 0], "grow": true, "controls": 6}));
     assert!(patches["points"].as_u64().is_some_and(|p| p > 0), "{patches}");
 }
+
+/// The scan moved and turned after it was flattened: a line drawn on the pattern still rolls onto
+/// the scan where it is now, at the place on it the pattern was flattened from.
+#[test]
+fn a_line_rolls_onto_a_scan_moved_after_it_was_flattened() {
+    let mut s = Session::default();
+    let scan = bent_scan(&mut s);
+    let r = run(&mut s, "scan.flatten", json!({"body": scan, "point": [10, 15, 2]}));
+    let sketch = r["sketch"].as_u64().unwrap();
+    let state = s.model.state();
+    let solved = state.sketch(sketch).unwrap();
+    let (lo, hi) =
+        solved.sketch.curves.iter().enumerate().flat_map(|(i, _)| solved.sketch.segs(i)).fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), seg| {
+            use solidcraft_geom::prelude::*;
+            let (a, b) = (seg.point_at(0.0), seg.point_at(1.0));
+            ([lo[0].min(a.x).min(b.x), lo[1].min(a.y).min(b.y)], [hi[0].max(a.x).max(b.x), hi[1].max(a.y).max(b.y)])
+        });
+    drop(state);
+    // A line across the middle of the pattern.
+    let (y0, y1) = (lo[1] + 0.25 * (hi[1] - lo[1]), lo[1] + 0.75 * (hi[1] - lo[1]));
+    let x = 0.5 * (lo[0] + hi[0]);
+    run(&mut s, "sketch.edit", json!({"sketch": sketch}));
+    run(&mut s, "sketch.line", json!({"points": [[x, y0], [x, y1]]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let before = run(&mut s, "scan.roll_onto_scan", json!({"sketch": sketch}));
+    assert_eq!((before["pieces"].as_u64(), before["off_pattern"].as_u64()), (Some(1), Some(0)), "{before}");
+    let wire_of = |s: &Session| -> Vec<Vec3> {
+        let state = s.model.state();
+        let rolled: Vec<_> = state.sketches.iter().filter(|sk| sk.name.starts_with(super::ROLLED_NAME)).collect();
+        rolled.last().and_then(|sk| sk.sketch.wires.first()).expect("a rolled curve").pts.clone()
+    };
+    let first = wire_of(&s);
+    // Turned 30 degrees about Z and moved, then rolled again.
+    run(&mut s, "solid.move", json!({"bodies": [scan], "axis": [0, 0, 1], "angle": "30 deg", "translate": [100, -40, 20]}));
+    let after = run(&mut s, "scan.roll_onto_scan", json!({"sketch": sketch}));
+    assert_eq!((after["pieces"].as_u64(), after["off_pattern"].as_u64()), (Some(1), Some(0)), "{after}");
+    let moved = wire_of(&s);
+    let (c, sn) = (30f64.to_radians().cos(), 30f64.to_radians().sin());
+    let carried = |q: Vec3| Vec3::new(c * q.x - sn * q.y + 100.0, sn * q.x + c * q.y - 40.0, q.z + 20.0);
+    // The same curve, carried with the scan: each end where the first roll's end went.
+    for (a, b) in [(first[0], moved[0]), (first[first.len() - 1], moved[moved.len() - 1])] {
+        let at = carried(a);
+        let gap = ((at.x - b.x).powi(2) + (at.y - b.y).powi(2) + (at.z - b.z).powi(2)).sqrt();
+        assert!(gap < 0.2, "{at:?} {b:?}");
+    }
+}

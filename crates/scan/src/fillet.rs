@@ -567,6 +567,26 @@ fn finish(f: Found, step: f64) -> Result<Tapped, TapError> {
     })
 }
 
+/// The span of `angles` (radians) round a circle as [`span`] reads it, less the outermost
+/// [`SPAN_TRIM`] at each end: on a scan the directions at a round's two edges scatter with the
+/// noise, and the farthest of them each added several degrees to its turn (an R5 corner turning a
+/// right angle read 107°).
+fn trimmed_span(angles: Vec<f64>) -> Option<(f64, f64)> {
+    let (start, _) = span(angles.clone())?;
+    let mut along: Vec<f64> = angles.iter().filter(|a| a.is_finite()).map(|a| (a - start).rem_euclid(2.0 * PI)).collect();
+    along.sort_by(f64::total_cmp);
+    let n = along.len();
+    if n < 20 {
+        return span(angles);
+    }
+    let cut = ((n as f64) * SPAN_TRIM).floor() as usize;
+    let (low, high) = (along[cut], along[n - 1 - cut]);
+    Some((start + low, high - low))
+}
+
+/// The share of a round's directions left out at each end of its turn (see [`trimmed_span`]).
+const SPAN_TRIM: f64 = 0.02;
+
 /// The span of `angles` (radians) round a circle: where it starts and how far it turns, across
 /// the widest gap between them.
 fn span(mut angles: Vec<f64>) -> Option<(f64, f64)> {
@@ -672,7 +692,7 @@ fn straight(
     // The turn read from the directions, not the places: the flat faces' first stretch, kept
     // within the lean, adds no turn.
     let sign = if convex { 1.0 } else { -1.0 };
-    let (from, swept) = span(region.iter().filter_map(|&t| smooth(t)).map(|n| n * sign).map(|n| n.dot(v).atan2(n.dot(u))).collect())?;
+    let (from, swept) = trimmed_span(region.iter().filter_map(|&t| smooth(t)).map(|n| n * sign).map(|n| n.dot(v).atan2(n.dot(u))).collect())?;
     let along: Vec<f64> = points.iter().map(|&p| (p - centre).dot(axis)).collect();
     let (low, high) = along.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), &t| (l.min(t), h.max(t)));
     let half = from + swept / 2.0;
@@ -714,7 +734,7 @@ fn torus_round(f: crate::fit::Fitted, facet: &Facet) -> Option<Found> {
             t.atan2((d - axis * t).len() - major)
         })
         .collect();
-    let (start, swept) = span(meridian)?;
+    let (start, swept) = trimmed_span(meridian)?;
     let half = start + swept / 2.0;
     let mid = w * half.cos() + axis * half.sin();
     let convex = points
@@ -772,7 +792,7 @@ mod tests {
             assert!((m.fitted - 5.0).abs() < close, "noise {noise}: {m:?}");
             assert_eq!(m.radius, 5.0);
             assert!(m.convex, "{m:?}");
-            assert!((m.swept.to_degrees() - 90.0).abs() < 8.0, "{}", m.swept.to_degrees());
+            assert!((m.swept.to_degrees() - 90.0).abs() < 4.0, "noise {noise}: turns {}°", m.swept.to_degrees());
             assert!(m.axis.z.abs() > 0.99 && m.length > 15.0, "{m:?}");
             let corner = m.corner.unwrap();
             assert!(corner.x > 59.0 && corner.y < 1.0, "{corner:?}");

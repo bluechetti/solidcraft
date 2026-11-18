@@ -381,20 +381,19 @@ struct Painted {
 /// The scan's triangles painted, each by the mean of its corners the model measured (one with
 /// none is not drawn); past [`PAINT_LIMIT`] triangles, one dot per measured point instead.
 fn records(app: &SolveApp, map: &DeviationMap, colours: Colours) -> Option<Painted> {
-    let state = app.session.model.state();
-    let (positions, triangles) = state.body(&map.scan)?.body.triangle_mesh()?;
+    let shown = solidcraft_engine::cmd::scan::shown_mesh(&app.session, &map.scan)?;
+    let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
     if triangles.len() <= PAINT_LIMIT {
         let mut out = Vec::with_capacity(triangles.len() * crate::scan_dots::DOT_SIZE);
+        let lifts = crate::scan_dots::PaintLifts::of(positions, triangles);
         for tri in triangles {
-            let corner = |i: u32| positions.get(i as usize).copied();
-            let (Some(a), Some(b), Some(c)) = (corner(tri[0]), corner(tri[1]), corner(tri[2])) else { continue };
             let measured: Vec<f32> = tri.iter().filter_map(|i| map.values.get(*i as usize).copied()).filter(|v| map.scale(*v).is_some()).collect();
             if measured.is_empty() {
                 continue;
             }
             let v = measured.iter().sum::<f32>() / measured.len() as f32;
             let Some(s) = map.scale(v) else { continue };
-            crate::scan_dots::cloud_painted(&mut out, [a, b, c], v, colour(colours, s));
+            lifts.paint(&mut out, positions, *tri, v, colour(colours, s));
         }
         return Some(Painted { dots: crate::scan_dots::none(), triangles: Arc::new(out) });
     }
@@ -465,8 +464,8 @@ pub(crate) fn track(app: &mut SolveApp, proj: &crate::viewport::Proj, pointer: O
         let map = current(app)?;
         let at = pointer?;
         let (_, q, triangle) = crate::scan_snap::scan_hit_triangle(app, proj, at, Some(&map.scan))?;
-        let state = app.session.model.state();
-        let (positions, triangles) = state.body(&map.scan)?.body.triangle_mesh()?;
+        let shown = solidcraft_engine::cmd::scan::shown_mesh(&app.session, &map.scan)?;
+        let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
         use solidcraft_engine::geom::Vec3Geom as _;
         // The pick's point lies on the triangle hit; its nearest measured corner gives the value
         // (not a walk over every point of the scan each time the pointer moves).

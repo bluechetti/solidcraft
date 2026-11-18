@@ -70,6 +70,8 @@ pub struct FlatTemplate {
     /// With the whole scan: which scan, when the design has more than one (the one selected when the
     /// dialog opened, or chosen in it).
     pub scan: Option<String>,
+    /// The tuning rows unfolded (More), with the preference `flat_template_short` on.
+    pub more: bool,
     review: Review,
     /// Where the view is to frame next (done each frame by [`tick`]).
     focus: Option<Aabb3>,
@@ -105,6 +107,7 @@ impl Default for FlatTemplate {
             confirm_with: None,
             square_to: 0,
             scan: None,
+            more: false,
             review: Review::default(),
             focus: None,
             export_asked: false,
@@ -167,6 +170,8 @@ struct Marked {
     step: Option<f64>,
     /// With the whole scan rounded: the most a corner moved (mm).
     moved: Option<f64>,
+    /// With the whole scan: the stretches of the outline with no scan near them, guessed.
+    guessed: Vec<Vec<Vec3>>,
     fitted: bool,
     kept: usize,
     under: usize,
@@ -366,6 +371,7 @@ fn compute(s: &solidcraft_engine::Session, p: &Value) -> Computed {
             tolerance: m.tolerance,
             step: m.step,
             moved: m.moved,
+            guessed: m.guessed.clone(),
             fitted: m.fitted,
             kept: m.kept,
             under: m.under,
@@ -389,8 +395,8 @@ fn inside(ring: &[Vec2], p: Vec2) -> bool {
 /// The scan's points over the template's outline and how far each stands off its plane: thinned
 /// evenly to [`SHADE_POINTS`].
 fn under_of(s: &solidcraft_engine::Session, m: &solidcraft_engine::cmd::scan::template::Prepared) -> Option<Under> {
-    let state = s.model.state();
-    let (positions, triangles) = state.body(&m.body)?.body.triangle_mesh()?;
+    let shown = solidcraft_engine::cmd::scan::shown_mesh(s, &m.body)?;
+    let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
     let t = &m.made;
     let normal = t.frame.x.cross(t.frame.y).normalized()?;
     let step = (positions.len() / SHADE_POINTS).max(1);
@@ -542,12 +548,23 @@ fn gridded(
     out
 }
 
+/// The span the wall is coloured over: the stand-off the template uses (green: the wall it covers;
+/// warm: what stands out of it, cut out; cool: what lies deeper, a bay or a pocket), not the scan's
+/// tolerance, a tenth of a millimetre against which a whole van wall read the deepest blue. At least
+/// the scan's tolerance.
+fn colour_span(app: &SolveApp, k: &FlatTemplate, scan: &str) -> f64 {
+    let tolerance = crate::scan_fidelity::effective(app, Some(scan), k.scan_tolerance);
+    let standoff = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).map_or(0.0, |m| m.tolerance);
+    tolerance.max(standoff)
+}
+
 /// The scan's colouring made again when the tolerance or the colours have changed: its triangles
 /// painted, or its points as dots where too many lie over the template.
 fn colour(app: &SolveApp, k: &mut FlatTemplate) {
     let colours = crate::scan_deviation::colours();
+    let Some(scan) = k.shown.as_ref().and_then(|s| s.under.as_ref()).map(|u| u.scan.clone()) else { return };
+    let tolerance = colour_span(app, k, &scan);
     let Some(under) = k.shown.as_mut().and_then(|s| s.under.as_mut()) else { return };
-    let tolerance = crate::scan_fidelity::effective(app, Some(&under.scan), k.scan_tolerance);
     if under.dots.as_ref().is_some_and(|(t, c, _, _)| *t == tolerance.to_bits() && *c == colours) {
         return;
     }
@@ -560,18 +577,21 @@ fn colour(app: &SolveApp, k: &mut FlatTemplate) {
         }
         crate::dialogs_scan_surface::Shaded { dots: Arc::new(out), triangles: crate::scan_dots::none(), scale: None }
     } else {
-        let mut out = Vec::with_capacity(under.paint.len() * crate::scan_dots::DOT_SIZE);
-        for (corners, v) in &under.paint {
-            let Some(rgb) = rgb(*v) else { continue };
-            crate::scan_dots::cloud_painted(&mut out, *corners, *v, rgb);
-        }
+        let mut out = Vec::new();
+        crate::scan_dots::paint_corners(&mut out, under.paint.iter().filter_map(|(corners, v)| rgb(*v).map(|rgb| (*corners, *v, rgb))));
         crate::dialogs_scan_surface::Shaded { dots: crate::scan_dots::none(), triangles: Arc::new(out), scale: None }
     };
     under.dots = Some((tolerance.to_bits(), colours, crate::dialogs_scan_surface::next_shade_version(), shaded));
 }
 
+/// The span of the colours on the wall, for the viewport's key (see [`colour_span`]).
+pub(crate) fn key_span(app: &SolveApp, k: &FlatTemplate) -> Option<f64> {
+    let under = k.shown.as_ref()?.under.as_ref()?;
+    k.colours.then(|| colour_span(app, k, &under.scan))
+}
+
 /// How flat the wall is under the template, and the tolerance: the points outside the cut-outs,
-/// for the viewport's key and the dialog's line.
+/// for the dialog's line.
 pub(crate) fn fidelity(app: &SolveApp, k: &FlatTemplate) -> Option<(crate::scan_fidelity::Stats, f64)> {
     if !k.colours {
         return None;
@@ -599,7 +619,7 @@ pub(crate) fn painting(app: &SolveApp) -> Option<crate::scan_paint::Painting> {
         return None;
     }
     let under = k.shown.as_ref()?.under.as_ref()?;
-    let tolerance = crate::scan_fidelity::effective(app, Some(&under.scan), k.scan_tolerance);
+    let tolerance = colour_span(app, k, &under.scan);
     let colours = crate::scan_deviation::colours();
     let (key, scale) = PAINTED.with(|p| {
         let mut p = p.borrow_mut();
@@ -641,9 +661,39 @@ pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view:
     Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, shaded))
 }
 
+/// With the whole scan: how its edge is read (tears bridged, notches smoothed, the grid it is
+/// rounded to, fingers cut off).
+fn whole_scan_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate) {
+    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+    form_row(ui, tr("ui.scan_template_gap"), |ui| ui_kit::length_field(ui, &mut k.gap, &units, decimals));
+    k.gap = k.gap.max(0.0);
+    form_row(ui, tr("ui.scan_template_smooth"), |ui| ui_kit::length_field(ui, &mut k.smooth, &units, decimals));
+    k.smooth = k.smooth.max(0.0);
+    form_row(ui, tr("ui.scan_template_round"), |ui| ui_kit::length_field(ui, &mut k.round, &units, decimals));
+    k.round = k.round.max(0.0);
+    form_row(ui, tr("ui.scan_template_finger"), |ui| ui_kit::length_field(ui, &mut k.finger, &units, decimals));
+    k.finger = k.finger.max(0.0);
+}
+
+/// The More row: an arrow that folds and unfolds the tuning rows under it.
+fn more_row(ui: &mut egui::Ui, open: &mut bool) {
+    let label = tr("ui.scan_template_more");
+    form_row(ui, label, |ui| {
+        let t = solidcraft_theme::Tokens::get();
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(t.control_height, t.control_height), egui::Sense::hover());
+        let arrow = ui_kit::disclosure_button_at(ui, rect, *open, label);
+        crate::scenario::publish_handle("dialog:scan_template_more", arrow.rect.center());
+        if arrow.clicked() {
+            *open = !*open;
+        }
+        arrow
+    });
+}
+
 /// The dialog's rows.
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[SelInput]) -> bool {
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+    let short = app.preferences.flat_template_short;
     let was = k.outline;
     choice_row(
         ui,
@@ -669,14 +719,9 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
                 k.confirm_with = None;
             }
         }
-        form_row(ui, tr("ui.scan_template_gap"), |ui| ui_kit::length_field(ui, &mut k.gap, &units, decimals));
-        k.gap = k.gap.max(0.0);
-        form_row(ui, tr("ui.scan_template_smooth"), |ui| ui_kit::length_field(ui, &mut k.smooth, &units, decimals));
-        k.smooth = k.smooth.max(0.0);
-        form_row(ui, tr("ui.scan_template_round"), |ui| ui_kit::length_field(ui, &mut k.round, &units, decimals));
-        k.round = k.round.max(0.0);
-        form_row(ui, tr("ui.scan_template_finger"), |ui| ui_kit::length_field(ui, &mut k.finger, &units, decimals));
-        k.finger = k.finger.max(0.0);
+        if !short {
+            whole_scan_rows(app, ui, k);
+        }
         let was_panel = k.panel;
         form_row(ui, tr("ui.scan_panel"), |ui| check(ui, &mut k.panel));
         if k.panel && !was_panel {
@@ -732,18 +777,27 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
     }
     let sides = [tr("ui.scan_template_both"), tr("ui.scan_template_out"), tr("ui.scan_template_in")];
     choice_row(ui, tr("ui.scan_template_side"), "scan_template_side", &mut k.side, &sides);
-    let ways = [tr("ui.scan_fit_detail_auto"), tr("ui.scan_fit_detail_set")];
-    crate::dialogs_scan_surface::own_or_set(
-        app,
-        ui,
-        "scan_template_standoff",
-        tr("ui.scan_template_standoff"),
-        ways,
-        tr("ui.scan_template_stands_off"),
-        &mut k.tolerance,
-        1.0,
-    );
-    form_row(ui, tr("ui.scan_template_edge"), |ui| check(ui, &mut k.edge));
+    // Shorter: the tuning values folded under More, unfolded as one block when asked for.
+    if short {
+        more_row(ui, &mut k.more);
+    }
+    if !short || k.more {
+        if short && k.outline == 1 {
+            whole_scan_rows(app, ui, k);
+        }
+        let ways = [tr("ui.scan_fit_detail_auto"), tr("ui.scan_fit_detail_set")];
+        crate::dialogs_scan_surface::own_or_set(
+            app,
+            ui,
+            "scan_template_standoff",
+            tr("ui.scan_template_standoff"),
+            ways,
+            tr("ui.scan_template_stands_off"),
+            &mut k.tolerance,
+            1.0,
+        );
+        form_row(ui, tr("ui.scan_template_edge"), |ui| check(ui, &mut k.edge));
+    }
     look(app, k, inputs);
     if k.shown.as_ref().is_some_and(|s| s.under.is_some()) {
         crate::dialogs_scan_surface::colours_row(ui, &mut k.colours);
@@ -777,6 +831,14 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut FlatTemplate, inputs: &[S
                 let how = solidcraft_ui_text::format("ui.scan_template_whole_hint", &[("step", &format!("{step:.1}"))]);
                 ui_kit::text(ui, &how, ui_kit::Text::Note("scan_template_whole_hint"));
                 ui_kit::text(ui, tr("ui.scan_template_cover_hint"), ui_kit::Text::Hint("scan_template_cover_hint"));
+                if !m.guessed.is_empty() {
+                    let length: f64 = m.guessed.iter().map(|run| run.windows(2).map(|w| w[0].dist(w[1])).sum::<f64>()).sum();
+                    let guessed = solidcraft_ui_text::format(
+                        "ui.scan_template_guessed",
+                        &[("count", &m.guessed.len().to_string()), ("length", &crate::prefs::show_mm(app, length, 1))],
+                    );
+                    ui_kit::text(ui, &guessed, ui_kit::Text::Note("scan_template_guessed"));
+                }
                 if let Some(moved) = m.moved {
                     let tidied = solidcraft_ui_text::format(
                         "ui.scan_template_tidied",
@@ -897,6 +959,10 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
         line(ring, true, egui::Stroke::new(1.5, tokens.error));
     }
     line(&m.outline, true, egui::Stroke::new(2.0, tokens.accent));
+    // Where the outline was guessed (no scan near it): drawn over it, to be measured by hand.
+    for run in &m.guessed {
+        line(run, false, egui::Stroke::new(4.0, tokens.warning));
+    }
     for (at, mm) in &m.sides {
         label(painter, proj, *at, *mm);
     }
@@ -1582,6 +1648,38 @@ mod tests {
         h.settle();
         assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
         assert!(h.app.session.doc.features.iter().any(|f| f.name == "Wall Template"), "the template's sketch");
+    }
+
+    /// Shorter (the default): Whole Scan shows Outline, Straight Panel and the side cut out, with
+    /// the tuning rows folded under More until it is opened; the preference off shows every row.
+    #[test]
+    fn the_tuning_rows_fold_under_more() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("wall.stl");
+        std::fs::write(&path, wall_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("select.clear", json!({})).unwrap();
+        let row = |label: &'static str| crate::scenario::rect_of(&format!("dialog:row:{}", tr(label))).is_some();
+        assert!(h.app.preferences.flat_template_short, "on by default");
+        h.app.start("scan.flat_template");
+        if let Some(Kind::ScanFlatTemplate(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.outline = 1;
+        }
+        h.frames(3);
+        assert!(row("ui.scan_template_outline") && row("ui.scan_panel") && row("ui.scan_template_side"));
+        assert!(!row("ui.scan_template_gap") && !row("ui.scan_template_edge"), "tuning folded");
+        h.step(&json!({"click": {"handle": "dialog:scan_template_more"}})).unwrap();
+        h.frames(2);
+        assert!(row("ui.scan_template_gap") && row("ui.scan_template_finger") && row("ui.scan_template_edge"), "unfolded");
+        h.app.dialog = None;
+        h.app.preferences.flat_template_short = false;
+        h.app.start("scan.flat_template");
+        if let Some(Kind::ScanFlatTemplate(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.outline = 1;
+        }
+        h.frames(3);
+        assert!(row("ui.scan_template_gap") && row("ui.scan_template_edge"), "every row, as before");
+        assert!(crate::scenario::rect_of("dialog:scan_template_more").is_none(), "no More");
     }
 
     /// Straight Panel: the proposal is looked through one thing at a time (the four edges, then the

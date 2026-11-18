@@ -153,19 +153,17 @@ fn mark(app: &SolveApp, k: &mut Floating, inputs: &[crate::selection::SelInput])
                 if *f { &mut remove } else { &mut keep }.push([a.x, a.y, a.z]);
             }
         }
-        let state = app.session.model.state();
-        let (positions, triangles) = state.body(&body).and_then(|b| b.body.triangle_mesh()).ok_or("the scan is gone")?;
+        let shown = solidcraft_engine::cmd::scan::shown_mesh(&app.session, &body).ok_or("the scan is gone")?;
+        let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
         let rgb = solidcraft_theme::Tokens::get().analysis.draft[2].map(|x| (x.clamp(0.0, 1.0) * 255.0).round() as u8);
         let mut dots = Vec::new();
         let going = |t: usize| found.of.get(t).is_some_and(|&p| p != u32::MAX && floating.get(p as usize) == Some(&true));
         let count = (0..triangles.len()).filter(|&t| going(t)).count();
         // Every so many past the most a colouring paints.
         let step = count.div_ceil(crate::scan_dots::PAINT_MOST).max(1);
-        let at = |i: u32| positions.get(i as usize).copied();
+        let lifts = crate::scan_dots::PaintLifts::of(positions, triangles);
         for tri in triangles.iter().enumerate().filter(|(t, _)| going(*t)).step_by(step).map(|(_, tri)| tri) {
-            if let (Some(a), Some(b), Some(c)) = (at(tri[0]), at(tri[1]), at(tri[2])) {
-                crate::scan_dots::cloud_painted(&mut dots, [a, b, c], 0.0, rgb);
-            }
+            lifts.paint(&mut dots, positions, *tri, 0.0, rgb);
         }
         let version = VERSION.with(|v| {
             v.set(v.get() + 1);
@@ -334,8 +332,8 @@ fn find_holes(app: &SolveApp, k: &mut Holes) {
         return;
     }
     let result = clean::holes_of(&app.session, None, "scan.fill_holes").map_err(|e| e.to_string()).and_then(|(body, found)| {
-        let state = app.session.model.state();
-        let (positions, _) = state.body(&body).and_then(|b| b.body.triangle_mesh()).ok_or("the scan is gone")?;
+        let shown = solidcraft_engine::cmd::scan::shown_mesh(&app.session, &body).ok_or("the scan is gone")?;
+        let positions = shown.positions.as_slice();
         let outlines: Vec<Outline> = found
             .rings
             .iter()
@@ -485,16 +483,96 @@ pub struct CleanUp {
     pub reduce: bool,
     /// The share of the triangles Reduce keeps, in percent.
     pub percent: f64,
+    /// What OK would do, worked out on a copy of the design beside the window (Clean Up's reply),
+    /// for the values in the key, and the one being worked out: pressing the button showed
+    /// nothing of what each tool would do until OK had done it.
+    shown: Option<(String, Result<Value, String>)>,
+    pending: Option<std::sync::Arc<crate::scan_job::Job<String, Result<Value, String>>>>,
 }
 
 impl Default for CleanUp {
     fn default() -> Self {
-        CleanUp { repair: true, floating: true, holes: true, reduce: false, percent: 50.0 }
+        CleanUp { repair: true, floating: true, holes: true, reduce: false, percent: 50.0, shown: None, pending: None }
+    }
+}
+
+/// Work out again what Clean Up would do when its ticks or the design have changed, beside the
+/// window, up to [`crate::dialogs_scan_run::PREVIEW_MOST`] triangles (past that, how many).
+fn clean_up_preview(app: &SolveApp, k: &mut CleanUp) -> Option<usize> {
+    let size = crate::scan_job::biggest_scan(app);
+    let Ok(Some((id, p))) = clean_up_commands(k).map(|c| c.into_iter().next()) else {
+        k.shown = None;
+        k.pending = None;
+        return None;
+    };
+    if size > crate::dialogs_scan_run::preview_most() {
+        k.shown = None;
+        k.pending = None;
+        return Some(size);
+    }
+    let key = format!("{p}|{}", app.session.revision);
+    if k.shown.as_ref().is_some_and(|(shown, _)| *shown == key) {
+        k.pending = None;
+        return None;
+    }
+    if let Some(job) = k.pending.clone() {
+        match job.poll() {
+            crate::scan_job::Poll::Working if job.key == key => return None,
+            crate::scan_job::Poll::Done(result) if job.key == key => {
+                k.pending = None;
+                k.shown = Some((key, result));
+                return None;
+            }
+            _ => k.pending = None,
+        }
+    }
+    let (given, command) = (p.clone(), id.clone());
+    let work = move |s: &solidcraft_engine::Session| s.scratch().execute(&command, &given).map_err(|e| e.to_string());
+    match crate::scan_job::spawn(app, key.clone(), work) {
+        Some(job) => k.pending = Some(std::sync::Arc::new(job)),
+        None => k.shown = Some((key, app.session.scratch().execute(&id, &p).map_err(|e| e.to_string()))),
+    }
+    None
+}
+
+/// What each tool of Clean Up would do (its note), and the scan's triangles before and after.
+fn clean_up_result_rows(app: &SolveApp, ui: &mut egui::Ui, k: &CleanUp, too_large: Option<usize>) {
+    let tr = solidcraft_ui_text::tr;
+    match k.shown.as_ref().map(|(_, r)| r) {
+        Some(Err(why)) => {
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_clean_up_error", true));
+        }
+        Some(Ok(r)) => {
+            for step in r.get("steps").and_then(Value::as_array).into_iter().flatten() {
+                let (Some(command), Some(note)) = (step.get("command").and_then(Value::as_str), step.get("note").and_then(Value::as_str)) else {
+                    continue;
+                };
+                let key = format!("cmd.{}", command.replace('.', "_"));
+                let label = tr(&key);
+                ui_kit::text(ui, &format!("{label}: {note}"), ui_kit::Text::Hint("scan_clean_up_step"));
+            }
+            let body = r.get("body").and_then(Value::as_str);
+            let before = body.and_then(|b| app.session.model.state().body(b).and_then(|b| b.body.kept_mesh()).map(|m| m.triangles.len()));
+            if let (Some(before), Some(after)) = (before, r.get("triangles").and_then(Value::as_u64)) {
+                let change =
+                    solidcraft_ui_text::format("ui.scan_run_triangles_change", &[("before", &before.to_string()), ("after", &after.to_string())]);
+                form_row(ui, tr("ui.scan_run_triangles"), |ui| ui_kit::text(ui, &change, ui_kit::Text::Cell));
+            }
+        }
+        None => {}
+    }
+    if k.pending.is_some() {
+        ui_kit::text(ui, tr("ui.scan_run_working"), ui_kit::Text::Hint("scan_clean_up_refining"));
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+    }
+    if let Some(count) = too_large {
+        let text = solidcraft_ui_text::format("ui.scan_run_too_large", &[("triangles", &count.to_string())]);
+        ui_kit::text(ui, &text, ui_kit::Text::Hint("scan_clean_up_too_large"));
     }
 }
 
 /// The Clean Up dialog's rows: a tick for each tool, in the order they run.
-pub fn clean_up_rows(_app: &SolveApp, ui: &mut egui::Ui, k: &mut CleanUp) -> bool {
+pub fn clean_up_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut CleanUp) -> bool {
     let tr = solidcraft_ui_text::tr;
     form_row(ui, tr("cmd.scan_repair"), |ui| check(ui, &mut k.repair));
     form_row(ui, tr("cmd.scan_remove_floating"), |ui| check(ui, &mut k.floating));
@@ -506,6 +584,8 @@ pub fn clean_up_rows(_app: &SolveApp, ui: &mut egui::Ui, k: &mut CleanUp) -> boo
             ui_kit::slider(ui, &mut k.percent, 5.0..=95.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
         });
     }
+    let too_large = clean_up_preview(app, k);
+    clean_up_result_rows(app, ui, k, too_large);
     ui_kit::text(ui, tr("ui.scan_clean_up_hint"), ui_kit::Text::Hint("scan_clean_up_hint"));
     false
 }
@@ -624,8 +704,9 @@ pub(crate) fn mark_area_at(
     let rgb = solidcraft_theme::Tokens::get().mesh_accent.to_array();
     let work = move || {
         let made = solidcraft_engine::cmd::scan::flatten::step_area(&copy, &p, &body, "scan.denoise").map_err(|e| e.to_string()).map(|chosen| {
-            let state = copy.model.state();
-            let (Some(chosen), Some((positions, triangles))) = (chosen, state.body(&body).and_then(|b| b.body.triangle_mesh())) else {
+            let shown = solidcraft_engine::cmd::scan::shown_mesh(&copy, &body);
+            let (Some(chosen), Some((positions, triangles))) = (chosen, shown.as_ref().map(|m| (m.positions.as_slice(), m.triangles.as_slice())))
+            else {
                 return (0, crate::scan_dots::none());
             };
             let flags = chosen.flags();

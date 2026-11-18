@@ -107,6 +107,16 @@ fn a_rounded_block_is_extruded_back_from_its_scan() {
     assert_eq!(solid, format!("{scan} Reconstructed"));
     let v = volume(&s, &solid);
     assert!((v - expected).abs() < 0.005 * expected, "{v} against {expected}");
+    // Its profile is dimensioned from the sketch's origin, as one drawn by hand: nothing free.
+    let profile = run(&mut s, "sketch.inspect", json!({"sketch": built["sketch"].clone()}));
+    assert_eq!(profile["dof"].as_u64(), Some(0), "{profile}");
+    // Its sizes read as designed and placed from the part's origin: the straight sides 30 and 20,
+    // the rounds R 5, the corners at whole millimetres from the origin, each with its measure.
+    let sizes: Vec<f64> = s.doc.params.iter().filter(|q| q.model && q.comment.starts_with("measured ")).map(|q| s.doc.eval(&q.expr, solidcraft_doc::expr::Kind::Length).unwrap()).collect();
+    for size in [30.0, 20.0, 5.0] {
+        assert!(sizes.iter().any(|v| (v - size).abs() < 1e-9), "{size} in {sizes:?}");
+    }
+    assert!(sizes.iter().all(|v| (v - v.round()).abs() < 1e-9), "{sizes:?}");
     // One undo takes it all back; the shapes found stay, the scan being as it was.
     run(&mut s, "edit.undo", json!({}));
     assert!(s.model.state().body(&solid).is_none());

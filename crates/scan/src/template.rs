@@ -109,6 +109,62 @@ impl Template {
     }
 }
 
+/// The stretches of `outline` (closed, on the plane) with no point of `points` (the scan's, laid
+/// on the plane) within `reach`: where the template's edge was not read off the scan but guessed
+/// (a tear bridged, a side drawn across where the scan stops short), to be measured by hand.
+/// Each stretch is a run of the outline at least `reach` long, in order along it.
+pub fn guessed(outline: &[Vec2], points: impl Iterator<Item = Vec2>, reach: f64) -> Vec<Vec<Vec2>> {
+    if outline.len() < 3 || !(reach > 0.0 && reach.is_finite()) {
+        return Vec::new();
+    }
+    // Which cells of a quarter of the reach hold a point: the scan's millions of points, kept as
+    // the cells they fill.
+    let cell = reach / 4.0;
+    let key = |q: Vec2| ((q.x / cell).floor() as i64, (q.y / cell).floor() as i64);
+    let filled: std::collections::HashSet<(i64, i64)> = points.filter(|q| q.x.is_finite() && q.y.is_finite()).map(key).collect();
+    let near = |q: Vec2| {
+        let (i, j) = key(q);
+        (-4..=4).any(|di: i64| (-4..=4).any(|dj: i64| di * di + dj * dj <= 20 && filled.contains(&(i + di, j + dj))))
+    };
+    // Along the outline every quarter of the reach.
+    let mut samples: Vec<(Vec2, bool)> = Vec::new();
+    for (a, b) in edges_of(outline) {
+        let steps = (a.dist(b) / cell).ceil().max(1.0) as usize;
+        for k in 0..steps {
+            let q = a + (b - a) * (k as f64 / steps as f64);
+            samples.push((q, !near(q)));
+        }
+    }
+    let n = samples.len();
+    // Start the walk at a sample on the scan, so a run is not split where the ring closes.
+    let Some(start) = samples.iter().position(|(_, off)| !off) else {
+        let mut all: Vec<Vec2> = samples.iter().map(|(q, _)| *q).collect();
+        all.push(all[0]);
+        return vec![all];
+    };
+    let mut runs = Vec::new();
+    let mut run: Vec<Vec2> = Vec::new();
+    for k in 0..=n {
+        let (q, off) = samples[(start + k) % n];
+        if off {
+            if run.is_empty()
+                && let Some(&(before, _)) = samples.get((start + k + n - 1) % n)
+            {
+                run.push(before);
+            }
+            run.push(q);
+        } else if !run.is_empty() {
+            run.push(q);
+            let length: f64 = run.windows(2).map(|w| w[0].dist(w[1])).sum();
+            if length >= reach {
+                runs.push(std::mem::take(&mut run));
+            }
+            run.clear();
+        }
+    }
+    runs
+}
+
 /// The frame of the plane through `point` square to `normal`, its x along the first outline edge
 /// that lies in the plane (so a rectangle comes out square to the axes).
 fn frame_of(point: Vec3, normal: Vec3, outline: &[Vec3]) -> Option<Plane> {
@@ -428,6 +484,23 @@ pub fn template(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 400 × 300 outline over a scan that stops 60 mm short of its right side: that side and the
+    /// last of the top and bottom are guessed; the rest lies on the scan.
+    #[test]
+    fn the_edge_drawn_where_the_scan_stops_short_is_guessed() {
+        let outline = vec![Vec2::new(0.0, 0.0), Vec2::new(400.0, 0.0), Vec2::new(400.0, 300.0), Vec2::new(0.0, 300.0)];
+        let points = (0..=340).flat_map(|x| (0..=300).step_by(2).map(move |y| Vec2::new(f64::from(x), f64::from(y))));
+        let runs = guessed(&outline, points, 10.0);
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        let length: f64 = runs[0].windows(2).map(|w| w[0].dist(w[1])).sum();
+        // The right side (300) and about 50 of each of the bottom and top (60 less the reach).
+        assert!((length - 400.0).abs() < 15.0, "{length}");
+        assert!(runs[0].iter().all(|q| q.x > 340.0), "only past where the scan stops");
+        // A scan over all of it: nothing guessed.
+        let whole = (0..=400).flat_map(|x| (0..=300).step_by(2).map(move |y| Vec2::new(f64::from(x), f64::from(y))));
+        assert!(guessed(&outline, whole, 10.0).is_empty());
+    }
 
     /// A wall in the XY plane, 400 × 300 mm, `n` squares a side, `z = f(x, y)`.
     fn wall_mesh(n: u32, f: impl Fn(f64, f64) -> f64) -> (Vec<Vec3>, Vec<[u32; 3]>) {

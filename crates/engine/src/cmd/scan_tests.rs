@@ -87,8 +87,8 @@ fn a_scan_stands_on_its_steadiest_base_in_one_undo_step() {
 fn a_scan_stands_on_the_face_picked_on_it() {
     let (mut s, body) = session_with_a_scan("pick");
     run(&mut s, "scan.quick_align", json!({}));
-    // Laid along its axes about the origin: 80 along X, so its end at X = 40 is a face.
-    let reply = run(&mut s, "scan.stand_on_base", json!({"point": [40.0, 0.0, 0.0]}));
+    // Laid along its axes over the origin, on the grid: 80 along X, so its end at X = 40 is a face.
+    let reply = run(&mut s, "scan.stand_on_base", json!({"point": [40.0, 0.0, 5.0]}));
     assert_eq!(reply["base"]["kind"], "grown", "{reply}");
     let (lo, hi) = bounds(&s, &body);
     assert!(lo.z.abs() < STL && (hi.z - 80.0).abs() < STL, "standing on its end: {lo:?} {hi:?}");
@@ -102,7 +102,7 @@ fn a_scan_stands_on_the_plane_through_points_picked_on_it() {
     let (mut s, body) = session_with_a_scan("points");
     run(&mut s, "scan.quick_align", json!({}));
     // The end at X = 40: three of its corners.
-    let reply = run(&mut s, "scan.stand_on_base", json!({"points": [[40.0, -25.0, -5.0], [40.0, 25.0, -5.0], [40.0, 25.0, 5.0]]}));
+    let reply = run(&mut s, "scan.stand_on_base", json!({"points": [[40.0, -25.0, 0.0], [40.0, 25.0, 0.0], [40.0, 25.0, 10.0]]}));
     assert_eq!(reply["moved"], true, "{reply}");
     let (lo, hi) = bounds(&s, &body);
     assert!(lo.z.abs() < 1e-3 && (hi.z - 80.0).abs() < 1e-3, "standing on its end, the part above: {lo:?} {hi:?}");
@@ -132,8 +132,10 @@ fn quick_align_rest_and_centre_place_the_scan() {
     run(&mut s, "scan.quick_align", json!({}));
     let (lo, hi) = bounds(&s, &body);
     assert!(((hi - lo) - Vec3::new(80.0, 50.0, 10.0)).len() < STL, "{:?}", hi - lo);
-    assert!(((lo + hi) / 2.0).len() < STL, "about the origin");
+    let middle = (lo + hi) / 2.0;
+    assert!(middle.x.abs() < STL && middle.y.abs() < STL && lo.z.abs() < STL, "over the origin, on the grid");
 
+    run(&mut s, "solid.move", json!({"bodies": [body], "translate": [0, 0, 12]}));
     let rest = run(&mut s, "scan.rest_on_grid", json!({}));
     assert_eq!(rest["moved"], true);
     let (lo, _) = bounds(&s, &body);
@@ -143,6 +145,40 @@ fn quick_align_rest_and_centre_place_the_scan() {
     let (lo, hi) = bounds(&s, &body);
     let middle = (lo + hi) / 2.0;
     assert!(middle.x.abs() < STL && middle.y.abs() < STL && lo.z.abs() < STL, "centred, its height kept: {middle:?}");
+}
+
+/// A scan inserted at the origin sits in a component lifted into place. Resting, centring and
+/// standing it go by the world's grid and origin, where it shows, not by its component's own.
+#[test]
+fn a_scan_inserted_at_the_origin_rests_and_stands_on_the_world_grid() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-placed-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("slab.stl");
+    let axis = Vec3::new(0.6, -0.3, 0.74).normalized().unwrap();
+    std::fs::write(&path, box_stl(Vec3::new(80.0, 50.0, 10.0), axis, 1.2, Vec3::new(40.0, -25.0, 60.0))).unwrap();
+    let mut s = Session::default();
+    let inserted = run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy(), "origin": true}));
+    assert!(inserted["moved_to_origin"].is_array(), "lifted into place: {inserted}");
+    let body = s.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
+    let shown = |s: &mut Session| {
+        let m = run(s, "inspect.measure", json!({"bodies": [body]}));
+        let b = &m["bodies"][0]["bbox"];
+        let v = |k: &str| Vec3::new(b[k][0].as_f64().unwrap(), b[k][1].as_f64().unwrap(), b[k][2].as_f64().unwrap());
+        (v("min"), v("max"))
+    };
+    run(&mut s, "solid.move", json!({"bodies": [body], "axis": [1, 0, 0], "angle": "90 deg"}));
+    run(&mut s, "scan.rest_on_grid", json!({}));
+    let (lo, _) = shown(&mut s);
+    assert!(lo.z.abs() < 1e-3, "its lowest point on the grid: {lo:?}");
+    run(&mut s, "scan.center", json!({}));
+    let (lo, hi) = shown(&mut s);
+    assert!(((lo + hi) / 2.0).x.abs() < 1e-3 && ((lo + hi) / 2.0).y.abs() < 1e-3 && lo.z.abs() < 1e-3, "over the origin: {lo:?} {hi:?}");
+    run(&mut s, "scan.stand_on_base", json!({"base": 0}));
+    let (lo, hi) = shown(&mut s);
+    assert!(lo.z.abs() < 1e-3 && (hi.z - 10.0).abs() < 1e-3, "flat on the grid, a broad face down: {lo:?} {hi:?}");
+    let again = run(&mut s, "scan.stand_on_base", json!({"base": 0}));
+    assert_eq!(again["moved"], false, "already standing there: {again}");
 }
 
 /// Without a scan, or with a solid named, the commands say what is wrong; the tools not built
@@ -563,7 +599,7 @@ fn stand_on_base_cycles_and_stands_on_a_picked_face() {
 
     // Lying flat (base 0, a broad face down), the slab's end is picked and stood on: 80 high.
     run(&mut s, "scan.quick_align", json!({}));
-    run(&mut s, "select.set", json!({"items": [{"type": "face", "body": body, "point": [40, 0, 0]}]}));
+    run(&mut s, "select.set", json!({"items": [{"type": "face", "body": body, "point": [40, 0, 5]}]}));
     let picked = run(&mut s, "scan.stand_on_base", json!({}));
     assert_eq!(picked["base"]["kind"], "grown", "{picked}");
     assert!(picked.get("base_index").is_none());
@@ -1181,9 +1217,15 @@ fn section_sketch_fits_the_cut_with_lines_and_circles() {
     let sk = super::super::sketch_store::read(&s.doc, id).unwrap();
     let Some(solidcraft_sketch::CurveKind::Circle { r, .. }) = sk.curves.first().map(|c| &c.kind) else { panic!("a circle") };
     assert!((r - 10.0).abs() < 0.05, "the boss's radius: {r}");
+    // Finished dimensioned from its origin, as a sketch drawn by hand: nothing left free.
+    assert_eq!(boss["dof"].as_u64(), Some(0), "{boss}");
 
     let plate = run(&mut s, "scan.section_sketch", json!({"plane": "XY", "offset": "4 mm"}));
     assert_eq!((plate["lines"].as_u64(), plate["arcs"].as_u64(), plate["outlines"].as_u64()), (Some(4), Some(0), Some(1)), "{plate}");
+    assert_eq!(plate["dof"].as_u64(), Some(0), "{plate}");
+    // Asked not to, it is left as drawn.
+    let loose = run(&mut s, "scan.section_sketch", json!({"plane": "XY", "offset": "4 mm", "dimensions": false}));
+    assert!(loose.get("dof").is_none(), "{loose}");
     let refused = s.execute("scan.section_sketch", &json!({"plane": "XY", "offset": "80 mm"})).unwrap_err().to_string();
     assert!(refused.contains("does not cut"), "{refused}");
     assert!(s.active_sketch.is_none(), "a refused cut leaves no sketch open");
@@ -2221,6 +2263,7 @@ fn flat_template_finds_the_whole_outline_from_the_scan() {
     let cuts = r["cutouts"].as_array().unwrap();
     assert_eq!(cuts.len(), 1, "{r}");
     assert!((cuts[0]["area"].as_f64().unwrap() - 60.0 * 80.0).abs() < 0.2 * 4800.0 && cuts[0]["side"] == "out", "{r}");
+    assert_eq!(r["guessed"], 0, "the outline lies on the scan all round: {r}");
     let face = r["face"].as_str().unwrap_or_else(|| panic!("a face: {r}")).to_owned();
     let made = solidcraft_kernel::measure(&s.world_state().unwrap().body(&face).unwrap().body).unwrap().area;
     let want = area - r["cut_area"].as_f64().unwrap();
@@ -2800,4 +2843,126 @@ fn remove_markers_finds_them_all_from_one_and_keeps_a_step() {
     assert!(err.contains("not a sphere"), "the floor: {err}");
     let given = run(&mut s, "scan.remove_markers", json!({"body": scan, "centres": [[70, 30, 0]], "radius": 3}));
     assert_eq!(given["filled"], 1, "a marker given by its centre: {given}");
+}
+
+/// A sheet `size` mm square of `n` × `n` squares at height `z`, as an STL.
+fn sheet_stl(size: f64, n: usize, z: f64) -> String {
+    let at = |i: usize, j: usize| Vec3::new(size * i as f64 / n as f64, size * j as f64 / n as f64, z);
+    let mut stl = String::from("solid sheet\n");
+    for i in 0..n {
+        for j in 0..n {
+            for tri in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                stl += "facet normal 0 0 0\nouter loop\n";
+                for p in tri {
+                    stl += &format!("vertex {} {} {}\n", p.x, p.y, p.z);
+                }
+                stl += "endloop\nendfacet\n";
+            }
+        }
+    }
+    stl + "endsolid sheet\n"
+}
+
+/// A scan in a component whose occurrence was turned and moved after it was inserted: the scan
+/// tools read it where it shows. A point picked on it as shown is on it, and what is fitted there
+/// is where it shows (#scan-in-a-moved-component).
+#[test]
+fn a_scan_in_a_moved_component_is_worked_on_where_it_shows() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-moved-component-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("sheet.stl");
+    std::fs::write(&path, sheet_stl(40.0, 20, 5.0)).unwrap();
+    let mut s = Session::default();
+    let made = run(&mut s, "component.create", json!({"name": "Scanned", "grounded": false}));
+    let component = made["component"].clone();
+    run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    let occurrence = s.doc.occurrences.iter().find(|o| Some(o.component) == component.as_u64()).map(|o| o.id).expect("its occurrence");
+    // Stood on its edge (turned a quarter about X) and moved 100 along X.
+    run(
+        &mut s,
+        "occurrence.move",
+        json!({"occurrence": occurrence, "space": "world", "axis": [1, 0, 0], "angle": "90 deg", "translate": [100, 0, 0]}),
+    );
+    let body = s.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
+    // The sheet now shows upright: x 100…140, z 0…40, at y = -5.
+    let m = run(&mut s, "inspect.measure", json!({"bodies": [body]}));
+    let lo = &m["bodies"][0]["bbox"]["min"];
+    assert!((lo[0].as_f64().unwrap() - 100.0).abs() < 1e-6 && (lo[1].as_f64().unwrap() + 5.0).abs() < 1e-6, "shown upright: {m}");
+    let fitted = run(&mut s, "scan.fit_plane", json!({"body": body, "point": [120, -5, 20], "keep": false}));
+    let n = &fitted["plane"]["normal"];
+    assert!(n[1].as_f64().unwrap().abs() > 1.0 - 1e-6, "the plane faces along Y, as the sheet shows: {fitted}");
+    let at = &fitted["plane"]["point"];
+    assert!((at[1].as_f64().unwrap() + 5.0).abs() < 1e-6 && at[0].as_f64().unwrap() > 99.0, "where it shows: {fitted}");
+}
+
+/// Scan Deviation with nothing selected: a model put away (hidden) is not the one meant when
+/// another shows, and with a scan and its CAD model as a mesh (an STL) both shown, the noisy one
+/// is the scan, the clean one the model.
+#[test]
+fn deviation_takes_the_shown_model_and_tells_a_scan_from_its_cad_mesh() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-deviation-defaults-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // The CAD: an exact sheet at z = 5. The scan: the same sheet, its points 0.05 mm up or down.
+    std::fs::write(dir.join("cad.stl"), sheet_stl(40.0, 20, 5.0)).unwrap();
+    let noisy = sheet_stl(40.0, 40, 5.0)
+        .lines()
+        .map(|l| match l.strip_prefix("vertex ") {
+            Some(rest) => {
+                let v: Vec<f64> = rest.split_whitespace().map(|x| x.parse().unwrap()).collect();
+                // The same jitter for the same point, so the sheet stays one piece.
+                let k = ((v[0] * 12.9898 + v[1] * 78.233).sin() * 43758.5453).rem_euclid(1.0);
+                format!("vertex {} {} {}", v[0], v[1], v[2] + 0.1 * (k - 0.5))
+            }
+            None => l.to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(dir.join("scan.stl"), noisy).unwrap();
+    let mut s = Session::default();
+    run(&mut s, "file.insert_mesh", json!({"path": dir.join("cad.stl").to_string_lossy()}));
+    run(&mut s, "file.insert_mesh", json!({"path": dir.join("scan.stl").to_string_lossy()}));
+    run(&mut s, "select.clear", json!({}));
+    let r = run(&mut s, "scan.deviation", json!({}));
+    assert_eq!((r["scan"].as_str(), r["body"].as_str()), (Some("scan"), Some("cad")), "{r}");
+    // A solid model, hidden, and another shown: the shown one.
+    run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 5, "corner": [0, 0, 0], "body_name": "Old"}));
+    run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 5, "corner": [0, 0, 0], "body_name": "New", "operation": "new"}));
+    run(&mut s, "browser.visibility", json!({"items": ["Old", "cad"], "visible": false}));
+    run(&mut s, "select.clear", json!({}));
+    let r = run(&mut s, "scan.deviation", json!({"scan": "scan"}));
+    assert_eq!(r["body"].as_str(), Some("New"), "{r}");
+    // Every solid hidden, the CAD mesh shown again: the CAD mesh, not a hidden solid.
+    run(&mut s, "browser.visibility", json!({"items": ["New"], "visible": false}));
+    run(&mut s, "browser.visibility", json!({"items": ["cad"], "visible": true}));
+    run(&mut s, "select.clear", json!({}));
+    let r = run(&mut s, "scan.deviation", json!({}));
+    assert_eq!((r["scan"].as_str(), r["body"].as_str()), (Some("scan"), Some("cad")), "{r}");
+}
+
+/// Flat Template's whole outline across a tear: a wall 400 × 300 with a slot 40 wide and 100 deep
+/// torn into its bottom edge. The outline bridges the slot (narrower than the 50 mm gap), and the
+/// stretch across its mouth, with no scan near it, is said to be guessed.
+#[test]
+fn flat_template_says_where_the_outline_was_guessed() {
+    let n = 100;
+    let at = |i: u32, j: u32| Vec3::new(400.0 * f64::from(i) / f64::from(n), 300.0 * f64::from(j) / f64::from(n), 0.0);
+    let mut tris = Vec::new();
+    for j in 0..n {
+        for i in 0..n {
+            let (x, y) = (400.0 * (f64::from(i) + 0.5) / f64::from(n), 300.0 * (f64::from(j) + 0.5) / f64::from(n));
+            if (180.0..220.0).contains(&x) && y < 100.0 {
+                continue;
+            }
+            tris.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+            tris.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+        }
+    }
+    let (mut s, body) = session_with_triangles("flat-template-guessed", &tris);
+    let r = run(&mut s, "scan.flat_template", json!({"body": body, "outline": "scan", "smooth": 0, "round": 0}));
+    assert_eq!(r["guessed"], 1, "the slot's mouth: {r}");
+    let length = r["guessed_length"].as_f64().unwrap();
+    assert!((10.0..45.0).contains(&length), "across the mouth, less the reach each side: {length}");
 }

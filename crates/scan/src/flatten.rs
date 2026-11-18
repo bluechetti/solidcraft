@@ -167,7 +167,13 @@ pub fn flatten(scan: &Scan, region: &[usize], relax: bool) -> Result<Flat, Flatt
     let mut local: HashMap<u32, u32> = HashMap::new();
     let mut vertices: Vec<u32> = Vec::new();
     let mut triangles: Vec<[u32; 3]> = Vec::with_capacity(region.len());
-    for &t in region {
+    // In the scan's own order, not the order the region was found in (grown from the triangle
+    // nearest a click): the pattern is then laid the same way whatever click found the region, so
+    // one flattened again after the scan was moved lines up with what was drawn on it.
+    let mut region = region.to_vec();
+    region.sort_unstable();
+    region.dedup();
+    for &t in &region {
         if scan.corners(t).is_none() {
             continue;
         }
@@ -325,8 +331,13 @@ fn conformal(at: &[Vec3], triangles: &[[u32; 3]], sheet: &Sheet, relax: bool, st
         r
     };
     // Pins: two rim points far apart, laid along X at their distance on the scan.
+    // Of points as far as the farthest within a hair (a rectangle's two corners across from one,
+    // equal but for rounding), the first: rounding is not to choose, or the same region moved or
+    // turned is laid out turned over and what was drawn on its pattern no longer lines up.
     let far_from = |from: u32| {
-        *rim.iter().max_by(|&&a, &&b| at[a as usize].dist(at[from as usize]).total_cmp(&at[b as usize].dist(at[from as usize]))).unwrap_or(&from)
+        let reach = |a: u32| at[a as usize].dist(at[from as usize]);
+        let most = rim.iter().map(|&a| reach(a)).fold(0.0, f64::max);
+        *rim.iter().find(|&&a| reach(a) >= most * (1.0 - 1e-9)).unwrap_or(&from)
     };
     let pa = far_from(rim[0]);
     let pb = far_from(pa);

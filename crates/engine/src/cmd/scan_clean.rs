@@ -128,9 +128,8 @@ pub fn pieces_of(s: &Session, body: Option<&str>, cmd: &str) -> Result<(String, 
 /// The piece of `found` (the pieces of the scan `body`) under `point`: the piece of the
 /// triangle nearest it.
 pub fn piece_at(s: &Session, body: &str, found: &Pieces, point: Vec3) -> Option<usize> {
-    let state = s.model.state();
-    let (positions, triangles) = state.body(body).and_then(|b| b.body.triangle_mesh())?;
-    let t = solidcraft_scan::base::nearest_triangle(&Scan::new(positions, triangles), point)?;
+    let shown = super::shown_mesh(s, body)?;
+    let t = solidcraft_scan::base::nearest_triangle(&Scan::new(&shown.positions, &shown.triangles), point)?;
     found.of.get(t).copied().filter(|&k| k != u32::MAX).map(|k| k as usize)
 }
 
@@ -153,9 +152,9 @@ static SURVEY: std::sync::Mutex<Option<CachedSurvey>> = std::sync::Mutex::new(No
 /// kept while the scan is unchanged.
 pub fn holes_of(s: &Session, body: Option<&str>, cmd: &str) -> Result<(String, Arc<Survey>)> {
     let name = mesh_name(s, &json!({ "body": body }), cmd)?;
-    let state = s.model.state();
-    let (positions, triangles) =
-        state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+    // Where the scan shows: the holes are marked and clicked there.
+    let shown = super::shown_mesh(s, &name).ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+    let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
     let key = (positions.as_ptr() as usize, positions.len());
     if let Ok(cached) = SURVEY.lock()
         && let Some((n, ptr, len, found)) = cached.as_ref()
@@ -227,11 +226,24 @@ fn points(p: &Value, key: &str, cmd: &str) -> Result<Vec<[f64; 3]>> {
     list.iter().map(|v| crate::params::vec3(v).map(|q| [q.x, q.y, q.z]).ok_or_else(why)).collect()
 }
 
+/// Points given where the scan shows, as the step keeps them: in the scan's own frame (the step
+/// is made again on the scan in its component, wherever the component is placed).
+fn kept_points(s: &Session, body: &str, points: Vec<[f64; 3]>) -> Vec<[f64; 3]> {
+    let Some(back) = super::scan_frame(s, body).and_then(|w| solidcraft_doc::mat_inverse(&w)) else { return points };
+    points
+        .into_iter()
+        .map(|q| {
+            let l = solidcraft_doc::apply_point(&back, Vec3::new(q[0], q[1], q[2]));
+            [l.x, l.y, l.z]
+        })
+        .collect()
+}
+
 pub(super) fn remove_floating(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.remove_floating";
     let below = share(p, cmd)?;
     let name = mesh_name(s, p, cmd)?;
-    let (keep, remove) = (points(p, "keep", cmd)?, points(p, "remove", cmd)?);
+    let (keep, remove) = (kept_points(s, &name, points(p, "keep", cmd)?), kept_points(s, &name, points(p, "remove", cmd)?));
     let (done, feature) = apply(s, p, &name, CleanStep::RemoveFloating { below, keep, remove }, cmd)?;
     let Report::Floating { pieces, removed, removed_triangles } = done.report else { return Err(bad(cmd, "the step did something else")) };
     let reply =
@@ -247,7 +259,7 @@ pub(super) fn fill_holes(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let fair = crate::params::bool_(p, "fair").unwrap_or(true);
     let name = mesh_name(s, p, cmd)?;
-    let at = points(p, "at", cmd)?;
+    let at = kept_points(s, &name, points(p, "at", cmd)?);
     let (done, feature) = apply(s, p, &name, CleanStep::FillHoles { max_edges, fair, at }, cmd)?;
     let Report::Holes { holes, filled, failed, larger, added_triangles, unfillable_edges } = done.report else {
         return Err(bad(cmd, "the step did something else"));
@@ -277,11 +289,10 @@ pub(super) fn remove_markers(s: &mut Session, p: &Value) -> Result<Value> {
                 Some(_) => Some(length(s, p, "tolerance", 0.1, cmd)?),
                 None => None,
             };
+            // Found where the scan shows, as the marker was clicked; kept in its own frame below.
             let found = {
-                let state = s.model.state();
-                let scan = state.body(&name).ok_or_else(|| bad(cmd, format!("no body `{name}`")))?;
-                let (positions, triangles) = scan.body.triangle_mesh().ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
-                solidcraft_scan::markers::find(&Scan::new(positions, triangles), q, tolerance).map_err(|e| bad(cmd, e.to_string()))?
+                let shown = super::shown_mesh(s, &name).ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+                solidcraft_scan::markers::find(&Scan::new(&shown.positions, &shown.triangles), q, tolerance).map_err(|e| bad(cmd, e.to_string()))?
             };
             (found.radius, found.centres.iter().map(|c| [c.x, c.y, c.z]).collect())
         }
@@ -300,6 +311,7 @@ pub(super) fn remove_markers(s: &mut Session, p: &Value) -> Result<Value> {
     if crate::params::bool_(p, "preview") == Some(true) {
         return serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()));
     }
+    let centres = kept_points(s, &name, centres);
     let (done, feature) = apply(s, p, &name, CleanStep::RemoveMarkers { radius, centres, fair }, cmd)?;
     let Report::Markers { removed_triangles, filled, failed, .. } = done.report else { return Err(bad(cmd, "the step did something else")) };
     reply.removed_triangles = Some(removed_triangles);
@@ -352,11 +364,12 @@ pub(super) fn repair(s: &mut Session, p: &Value) -> Result<Value> {
     let crossings = crate::params::bool_(p, "crossings").unwrap_or(true);
     let (done, feature) = apply(s, p, &name, CleanStep::Repair { crossings }, cmd)?;
     let count = done.triangles();
-    let Report::Repair { duplicates, non_manifold, slivers, crossings, crossing_faces, refilled } = done.report else {
+    let Report::Repair { joined, duplicates, non_manifold, slivers, crossings, crossing_faces, refilled } = done.report else {
         return Err(bad(cmd, "the step did something else"));
     };
     let reply = ScanRepairResult {
         body: name,
+        joined,
         duplicates,
         non_manifold,
         slivers,
@@ -403,8 +416,8 @@ pub(super) fn clean_up(s: &mut Session, p: &Value) -> Result<Value> {
             Ok(reply) => {
                 let note = match id {
                     "scan.repair" => format!(
-                        "{} copies, {} over-shared edges, {} slivers, {} crossings put right",
-                        reply["duplicates"], reply["non_manifold"], reply["slivers"], reply["crossings"]
+                        "{} cracks joined, {} copies, {} over-shared edges, {} slivers, {} crossings put right",
+                        reply["joined"], reply["duplicates"], reply["non_manifold"], reply["slivers"], reply["crossings"]
                     ),
                     "scan.remove_floating" => format!("{} of {} pieces taken off", reply["removed"], reply["pieces"]),
                     "scan.fill_holes" => format!("{} of {} holes closed", reply["filled"], reply["holes"]),

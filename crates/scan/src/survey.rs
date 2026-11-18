@@ -51,7 +51,10 @@ pub struct Look {
     pub holes: usize,
     pub longest_hole: f64,
     pub open_edges: usize,
+    /// Open edges Repair Mesh closes (cracks between points a hair apart) and those it leaves in
+    /// no ring.
     pub tangled_edges: usize,
+    pub crack_edges: usize,
     /// The pieces not joined to each other, those that float (far smaller than the largest, see
     /// [`pieces::Pieces::floating`]) and their share of the scan's area.
     pub pieces: usize,
@@ -82,9 +85,14 @@ pub fn look(scan: &Scan, floating: f64) -> Option<Look> {
     let noise = middle(read.iter().map(|r| r.0).collect());
     let smoothing = middle(read.iter().map(|r| r.1).collect());
 
-    let rings = holes::survey(scan);
+    // Holes and rims are read as Repair Mesh leaves the scan: a crack between a file's two copies
+    // of one point is no hole, but edges to repair.
+    let open = |s: &holes::Survey| s.rings.iter().map(|r| r.points.len()).sum::<usize>() + s.unfillable_edges;
+    let (hair, _) = crate::welded_within(scan.positions);
+    let rings = holes::survey_with(scan, &hair);
+    let crack_edges = open(&holes::survey(scan)).saturating_sub(open(&rings));
     let hole_rings: Vec<&holes::Ring> = rings.rings.iter().filter(|r| !r.rim).collect();
-    let open_edges = rings.rings.iter().map(|r| r.points.len()).sum::<usize>() + rings.unfillable_edges;
+    let open_edges = open(&rings) + crack_edges;
     let found = pieces::pieces(scan);
     let floats = found.floating(floating);
     let floating_area: f64 = found.areas.iter().zip(&floats).filter(|(_, f)| **f).map(|(a, _)| a).sum();
@@ -107,7 +115,8 @@ pub fn look(scan: &Scan, floating: f64) -> Option<Look> {
         holes: hole_rings.len(),
         longest_hole: hole_rings.iter().map(|r| r.perimeter).fold(0.0, f64::max),
         open_edges,
-        tangled_edges: rings.unfillable_edges,
+        tangled_edges: rings.unfillable_edges + crack_edges,
+        crack_edges,
         pieces: found.sizes.len(),
         floating: floats.iter().filter(|f| **f).count(),
         floating_share: floating_area / area,

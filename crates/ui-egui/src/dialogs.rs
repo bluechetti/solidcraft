@@ -763,6 +763,10 @@ pub(crate) fn begin_applying(app: &SolveApp, d: &Dialog) -> Option<Applying> {
     }
     let computation = DialogComputation::new(app, d).ok()?;
     let cmds = computation.cmds.clone();
+    // A scan tool whose preview already computed what OK runs: OK takes it, not a second search.
+    if let Some(prepared) = kept_preview(app, d) {
+        return warm_applying(app, prepared, cmds, crate::now_ms());
+    }
     #[cfg(test)]
     let gate = app.apply_gate.clone();
     Some(start_applying(cmds, display_quality(app), crate::now_ms(), wait, move || {
@@ -773,6 +777,12 @@ pub(crate) fn begin_applying(app: &SolveApp, d: &Dialog) -> Option<Applying> {
         }
         result
     }))
+}
+
+/// What a scan tool's preview computed, when it is what OK would run on the design as it is.
+fn kept_preview(app: &SolveApp, d: &Dialog) -> Option<solidcraft_engine::ComputedCommands> {
+    let Kind::ScanRun(k) = &d.kind else { return None };
+    crate::dialogs_scan_run::kept_for_ok(app, k, &apply_commands(app, d).ok()?)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1722,13 +1732,23 @@ impl Dialog {
     }
 
     pub(crate) fn highlighted(&self, s: &Session) -> Vec<Sel> {
+        if self.shows_placement() {
+            return Vec::new();
+        }
         self.shell_faces(s).unwrap_or_else(|| self.items())
+    }
+
+    /// A scan tool's preview of where it puts scans is drawn (`ScanRun::shows_placement`): its
+    /// bodies are not lit.
+    pub(crate) fn shows_placement(&self) -> bool {
+        matches!(&self.kind, Kind::ScanRun(k) if k.shows_placement())
     }
 
     pub fn highlight_key(&self) -> u64 {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         serde_json::to_string(&self.items()).unwrap_or_default().hash(&mut h);
         self.active.hash(&mut h);
+        self.shows_placement().hash(&mut h);
         h.finish()
     }
 
@@ -4559,7 +4579,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     app.applying = Some(job);
                     None
                 }
-                None => Some(run_primed(app, &d)),
+                // On the window thread too (no apply off it): a scan tool's previewed result is
+                // taken, not computed again.
+                None => Some(match kept_preview(app, &d) {
+                    Some(prepared) => adopt_dialog(app, prepared, &d),
+                    None => run_primed(app, &d),
+                }),
             },
         };
         match run {

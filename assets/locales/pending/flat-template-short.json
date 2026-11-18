@@ -1,0 +1,50 @@
+{
+  "en": {
+    "prefs.flat_template_short": "Shorter Flat Template dialog",
+    "prefs.flat_template_short_note": "Flat Template shows the rows most templates need and folds the tuning values (gap, smoothing, rounding, finger gap, stand-off, scan edge) under More. Off: every row shows, as before.",
+    "ui.scan_template_more": "More",
+    "ui.scan_template_guessed": "Guessed, no scan there ({count}, {length} in all, in orange): measure by hand."
+  },
+  "de": {
+    "prefs.flat_template_short": "Kürzerer Dialog für Flachschablone",
+    "prefs.flat_template_short_note": "Flachschablone zeigt die Zeilen, die die meisten Schablonen brauchen, und klappt die Feinwerte (Spalt, Glätten, Runden, Fingerspalt, Abstand, Scankante) unter Mehr ein. Aus: Alle Zeilen werden wie bisher gezeigt.",
+    "ui.scan_template_more": "Mehr",
+    "ui.scan_template_guessed": "Geschätzt, dort kein Scan ({count}, zusammen {length}, orange): von Hand messen."
+  },
+  "ja": {
+    "prefs.flat_template_short": "短いフラットテンプレートダイアログ",
+    "prefs.flat_template_short_note": "フラットテンプレートは多くのテンプレートに必要な行だけを表示し、調整値（隙間、平滑化、丸め、指幅、浮き、スキャン縁）を［その他］にまとめます。オフ：従来どおりすべての行を表示します。",
+    "ui.scan_template_more": "その他",
+    "ui.scan_template_guessed": "推定（スキャンなし、{count} 箇所、合計 {length}、オレンジ）：手で測ってください。"
+  },
+  "ko": {
+    "prefs.flat_template_short": "짧은 평면 템플릿 대화 상자",
+    "prefs.flat_template_short_note": "평면 템플릿은 대부분의 템플릿에 필요한 행만 보여 주고 조정 값(간격, 다듬기, 반올림, 손가락 간격, 이격, 스캔 가장자리)은 [더 보기] 아래에 접습니다. 끄기: 이전처럼 모든 행을 표시합니다.",
+    "ui.scan_template_more": "더 보기",
+    "ui.scan_template_guessed": "추정(스캔 없음, {count}곳, 합계 {length}, 주황색): 직접 재세요."
+  },
+  "zh": {
+    "prefs.flat_template_short": "更简短的平面模板对话框",
+    "prefs.flat_template_short_note": "平面模板只显示多数模板需要的行，并把调整值（间隙、平滑、取整、指缝、离面、扫描边缘）收在“更多”下。关闭：像以前一样显示所有行。",
+    "ui.scan_template_more": "更多",
+    "ui.scan_template_guessed": "推测（该处无扫描，{count} 处，共 {length}，橙色）：请手工测量。"
+  },
+  "ar": {
+    "prefs.flat_template_short": "مربع حوار أقصر للقالب المسطح",
+    "prefs.flat_template_short_note": "يعرض القالب المسطح الصفوف التي تحتاجها معظم القوالب ويطوي قيم الضبط (الفجوة، التنعيم، التقريب، فجوة الأصابع، البروز، حافة المسح) تحت «المزيد». عند الإيقاف: تظهر كل الصفوف كما كانت.",
+    "ui.scan_template_more": "المزيد",
+    "ui.scan_template_guessed": "مُقدَّر، لا مسح هناك ({count}، {length} إجمالًا، بالبرتقالي): قِسه يدويًا."
+  },
+  "he": {
+    "prefs.flat_template_short": "חלון קצר יותר לתבנית שטוחה",
+    "prefs.flat_template_short_note": "תבנית שטוחה מציגה את השורות שרוב התבניות צריכות ומקפלת את ערכי הכוונון (מרווח, החלקה, עיגול, מרווח אצבעות, בליטה, קצה הסריקה) תחת „עוד”. כבוי: כל השורות מוצגות, כמו קודם.",
+    "ui.scan_template_more": "עוד",
+    "ui.scan_template_guessed": "משוער, אין סריקה שם ({count}, {length} בסך הכול, בכתום): למדוד ביד."
+  },
+  "vi": {
+    "prefs.flat_template_short": "Hộp thoại Mẫu phẳng ngắn hơn",
+    "prefs.flat_template_short_note": "Mẫu phẳng chỉ hiện các hàng mà hầu hết mẫu cần và gập các giá trị tinh chỉnh (khe hở, làm mịn, làm tròn, khe ngón, độ nhô, mép quét) vào mục Thêm. Tắt: hiện mọi hàng như trước.",
+    "ui.scan_template_more": "Thêm",
+    "ui.scan_template_guessed": "Ước đoán, không có dữ liệu quét ({count}, tổng {length}, màu cam): hãy đo bằng tay."
+  }
+}

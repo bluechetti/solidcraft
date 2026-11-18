@@ -34,7 +34,8 @@ fn curves(reply: &Value) -> Vec<String> {
 fn drawing<T>(s: &mut Session, draw: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
     match draw(s) {
         Ok(done) => {
-            run(s, "sketch.finish", json!({}))?;
+            // Dimensioned from its origin, as a profile drawn by hand is.
+            super::super::section::finish_dimensioned(s, true, None)?;
             Ok(done)
         }
         Err(e) => {

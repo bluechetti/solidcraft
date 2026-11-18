@@ -616,7 +616,8 @@ pub struct ScanFitSurfaceResult {
     pub folds: usize,
     pub pinches: usize,
     pub crossings: usize,
-    /// Said when the surface folds, pinches or crosses itself: what to do instead.
+    /// Said when the surface folds, pinches or crosses itself (what to do instead), or when it was
+    /// asked to be trimmed and is kept untrimmed (the kernel refused every outline tried).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
     /// The feature that keeps it, as a feature command replies.
@@ -1092,6 +1093,8 @@ pub struct ScanWrapSurfaceParams {
 pub struct ScanWrapSurfaceResult {
     /// The scan wrapped on.
     pub body: String,
+    /// The stiffness used: the one given, else the least that keeps the net from folding.
+    pub stiffness: f64,
     /// The surface body made, and its points each way.
     pub surface: String,
     pub controls: [usize; 2],
@@ -1118,7 +1121,8 @@ pub struct ScanWrapSurfaceResult {
     pub folds: usize,
     pub pinches: usize,
     pub crossings: usize,
-    /// Said when the surface folds, pinches or crosses itself: what to do instead.
+    /// Said when the surface folds, pinches or crosses itself (what to do instead), or when it was
+    /// asked to be trimmed and is kept untrimmed (the kernel refused every outline tried).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
     /// The feature that keeps it, as a feature command replies.
@@ -1635,6 +1639,9 @@ pub struct ScanRepairParams {
 pub struct ScanRepairResult {
     /// The scan.
     pub body: String,
+    /// Points joined to another a hair away (a file's two copies of one point), closing the
+    /// cracks between them.
+    pub joined: usize,
     /// Copies taken off, faces taken off edges of three or more, slivers put right.
     pub duplicates: usize,
     pub non_manifold: usize,
@@ -1673,6 +1680,10 @@ pub struct ScanSectionParams {
     /// least 0.1 mm and at most 1 % of the cut's size.
     #[serde(default)]
     pub tolerance: Option<LengthExpr>,
+    /// Whether a new sketch is finished dimensioned from its origin (each dimension a
+    /// parameter, nothing left free). Default: true. A sketch being edited is left as it is.
+    #[serde(default)]
+    pub dimensions: Option<bool>,
 }
 
 /// What `scan.section_sketch` returns.
@@ -1690,6 +1701,10 @@ pub struct ScanSectionResult {
     pub tangents: usize,
     /// The tolerance used, in mm.
     pub tolerance: f64,
+    /// Degrees of freedom the new sketch was left with once dimensioned (0: fully defined);
+    /// absent when it was not dimensioned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dof: Option<usize>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,

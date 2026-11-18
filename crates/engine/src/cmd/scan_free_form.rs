@@ -476,10 +476,8 @@ pub fn wrapped(s: &Session, body: Option<&str>, part: WrapOn, wrap: Wrap) -> Res
         }
     }
     let (name, on) = super::curve::projector(s, body, cmd)?;
-    let state = s.model.state();
-    let (positions, triangles) =
-        state.body(&name).and_then(|b| b.body.triangle_mesh()).ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
-    let scan = solidcraft_scan::Scan::new(positions, triangles);
+    let shown = super::shown_mesh(s, &name).ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+    let scan = super::scan_of(&shown);
     let snap = |ps: &[Vec3], limit: f64| ps.iter().map(|p| on.nearest(*p).filter(|(_, d)| *d <= limit).map(|(q, _)| q)).collect::<Vec<_>>();
     let w = match part {
         WrapOn::Round { point, reach } => {
@@ -529,6 +527,28 @@ pub fn round_seam(surface: &NurbsSurface, c: &Cylinder) -> Option<f64> {
 /// The net `scan.wrap_surface` with the parameters `p` would wrap (`point` read from them), and its
 /// scan: on a part chosen by hand (triangles, a kept selection, grown from the point, or what is
 /// selected with no point), else on the part within the reach of the point.
+/// The stiffnesses tried, least first, when none is given: a net that follows the scan closely can
+/// fold over itself on a plain tube (a 16 mm bar's net crossed itself 132 times at 0).
+const STIFFNESS_TRIED: [f64; 5] = [0.0, 0.05, 0.1, 0.2, 0.4];
+
+/// [`wrapped_for`], with `stiffness` given, or (`None`) the least of [`STIFFNESS_TRIED`] whose net
+/// neither folds, pinches nor crosses itself (the stiffest tried when each does). The stiffness
+/// used is returned with it.
+pub fn wrapped_auto(s: &Session, p: &Value, point: Option<Vec3>, wrap: Wrap, stiffness: Option<f64>) -> Result<(String, Wrapped, f64)> {
+    if let Some(stiffness) = stiffness {
+        return wrapped_for(s, p, point, Wrap { stiffness, ..wrap }).map(|(b, w)| (b, w, stiffness));
+    }
+    let mut last = None;
+    for stiffness in STIFFNESS_TRIED {
+        let (body, w) = wrapped_for(s, p, point, Wrap { stiffness, ..wrap })?;
+        if w.trouble.iter().all(|n| *n == 0) {
+            return Ok((body, w, stiffness));
+        }
+        last = Some((body, w, stiffness));
+    }
+    last.ok_or_else(|| bad("scan.wrap_surface", "no stiffness to try"))
+}
+
 pub fn wrapped_for(s: &Session, p: &Value, point: Option<Vec3>, wrap: Wrap) -> Result<(String, Wrapped)> {
     let cmd = "scan.wrap_surface";
     let body = super::mesh_body_name(s, crate::params::str_(p, "body"), cmd)?;
@@ -598,10 +618,10 @@ pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let stiffness = match p.get("stiffness").filter(|v| !v.is_null()) {
-        Some(v) => v.as_f64().filter(|x| (0.0..=1.0).contains(x)).ok_or_else(|| bad(cmd, "`stiffness` must be a number from 0 to 1"))?,
-        None => 0.0,
+        Some(v) => Some(v.as_f64().filter(|x| (0.0..=1.0).contains(x)).ok_or_else(|| bad(cmd, "`stiffness` must be a number from 0 to 1"))?),
+        None => None,
     };
-    let (body, w) = wrapped_for(s, p, point, Wrap { axis, details, arc, stiffness })?;
+    let (body, w, stiffness) = wrapped_auto(s, p, point, Wrap { axis, details, arc, stiffness: 0.0 }, stiffness)?;
     let trouble = w.trouble;
     let (name, feature) = super::surface::keep_surface(s, &w.made.surface, "FreeForm", "Wrap Surface", &format!("{body} (wrap)"), None, cmd)?;
     let at = |v: Vec3| [v.x, v.y, v.z];
@@ -621,6 +641,7 @@ pub(super) fn wrap_surface(s: &mut Session, p: &Value) -> Result<Value> {
         folds: trouble[0],
         pinches: trouble[1],
         crossings: trouble[2],
+        stiffness,
         warning: wrap_warning(trouble, stiffness),
         feature,
         param_warnings: Vec::new(),

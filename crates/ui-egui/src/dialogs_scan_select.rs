@@ -52,6 +52,9 @@ pub struct ScanSelect {
     pub radius: f64,
     /// Polygon and Lasso take what is behind the near side too.
     pub through: bool,
+    /// Shape: every shape Find All found like the one clicked (holes of its size, faces facing
+    /// its way), not that one alone.
+    pub like: bool,
     /// How sharply a region may bend between neighbouring triangles, in degrees.
     pub angle: f64,
     /// The name to keep the selection by.
@@ -77,6 +80,7 @@ impl Default for ScanSelect {
             mode: 0,
             radius: 0.0,
             through: false,
+            like: false,
             angle: engine_select::REGION_ANGLE,
             name: String::new(),
             keys: None,
@@ -189,6 +193,9 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect) -> bool {
         }
         REGION => {
             form_row(ui, tr("ui.scan_select_angle"), |ui| ui_kit::number_field(ui, &mut k.angle, 1.0..=90.0, 0.5, "°"));
+        }
+        SHAPE => {
+            form_row(ui, tr("ui.scan_select_like"), |ui| check(ui, &mut k.like));
         }
         _ => {}
     }
@@ -366,8 +373,9 @@ pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::
             let Some((body, point)) = scan_at(app, proj, at) else { return };
             let place = json!([point.x, point.y, point.z]);
             let p = match k.tool {
-                REGION => json!({"body": body, "region": {"point": place, "angle": k.angle}, "mode": mode_now(&k)}),
-                SHAPE => json!({"body": body, "shape": {"point": place}, "mode": mode_now(&k)}),
+                // Up to the creases sharper than the angle, as its hint says: a whole hole's wall.
+                REGION => json!({"body": body, "region": {"point": place, "angle": k.angle, "until": "crease"}, "mode": mode_now(&k)}),
+                SHAPE => json!({"body": body, "shape": {"point": place, "like": k.like}, "mode": mode_now(&k)}),
                 _ => json!({"body": body, "brush": {"points": [place], "radius": format!("{} mm", k.radius)}, "mode": mode_now(&k)}),
             };
             run(app, "scan.select", p);

@@ -63,6 +63,86 @@ struct Hit {
 
 /// The reflected triangles that land where the scan has nothing, `None` when nothing is missing
 /// (or the plane has no direction). `reach` defaults to [`automatic_reach`].
+/// For a scan cut short across its mirror plane (one end never scanned), the plane to complete
+/// it in: square to the plane of its open edge (the cut), at the place along that direction where
+/// the largest share of the scan, reflected, lands back on the scan; each place judged only on
+/// the reflections that land within the scan's own reach along the direction, since those past
+/// it fall where the scan was never made. (Judged on the whole scan, every place matched about
+/// half: T-LESS object 5 cut short at X = 15 scored 0.5 from X = -20 to 0; on the reach alone its
+/// plane at X = 0 scores 0.87, the middle of what was scanned 0.53.) `None` for a scan with no open edge lying near a plane,
+/// or no place that matches.
+pub fn plane_across_cut(scan: &Scan) -> Option<Mirror> {
+    let survey = crate::holes::survey(scan);
+    // The longest open ring: the cut.
+    let ring = survey.rings.iter().max_by(|a, b| a.perimeter.total_cmp(&b.perimeter))?;
+    let edge: Vec<Vec3> = ring.points.iter().filter_map(|&i| scan.positions.get(i as usize).copied()).collect();
+    if edge.len() < 8 {
+        return None;
+    }
+    let mid = edge.iter().fold(Vec3::ZERO, |s, q| s + *q) / edge.len() as f64;
+    let mut spread = [[0.0f64; 3]; 3];
+    for q in &edge {
+        let d = *q - mid;
+        let d = [d.x, d.y, d.z];
+        for (row, di) in spread.iter_mut().zip(d) {
+            for (cell, dj) in row.iter_mut().zip(d) {
+                *cell += di * dj;
+            }
+        }
+    }
+    let (values, axes) = solidcraft_geom::inertia::principal(&spread, 0.0)?;
+    let normal = axes[0].normalized()?;
+    // An edge that does not lie near a plane is no cut.
+    if !(values[0] < 0.05 * values[1]) {
+        return None;
+    }
+    let points: Vec<Vec3> = crate::thinned(scan.positions, 4000);
+    let along: Vec<f64> = points.iter().map(|q| q.dot(normal)).collect();
+    let (lo, hi) = along.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), v| (a.min(*v), b.max(*v)));
+    if !(hi > lo) {
+        return None;
+    }
+    let tree = TriangleTree::new(&Mesh { positions: scan.positions.to_vec(), triangles: scan.triangles.to_vec(), ..Mesh::default() });
+    let near = 2.0 * typical_edge(scan).max(1e-6);
+    // A place's share of the reflections in reach that land on the scan, and how far they land
+    // from it on average.
+    let score = |c: f64| -> (f64, f64) {
+        let (mut landed, mut within, mut off) = (0usize, 0usize, 0.0);
+        for (q, a) in points.iter().zip(&along) {
+            let r = 2.0 * c - a;
+            if r < lo || r > hi {
+                continue;
+            }
+            within += 1;
+            let reflected = *q + normal * (r - a);
+            if let Some((d, _)) = tree.nearest(reflected).filter(|(d, _)| *d <= near) {
+                landed += 1;
+                off += d;
+            }
+        }
+        // From a fifth of the scan at least: near either end only a sliver of it is in reach, and
+        // any sliver matches.
+        if within * 5 < points.len() || landed == 0 {
+            return (0.0, f64::INFINITY);
+        }
+        (landed as f64 / within as f64, off / landed as f64)
+    };
+    // Whole steps across the scan, then finer round the best; of the places scoring near the best
+    // share (it has a flat top), the one whose reflections land closest.
+    let steps = 48;
+    let step = (hi - lo) / steps as f64;
+    let coarse = (1..steps).map(|k| lo + step * k as f64).map(|c| (c, score(c))).max_by(|a, b| a.1.0.total_cmp(&b.1.0))?;
+    let fine: Vec<(f64, (f64, f64))> = (-20..=20).map(|k| coarse.0 + step * k as f64 / 10.0).map(|c| (c, score(c))).collect();
+    let top = fine.iter().map(|f| f.1.0).fold(coarse.1.0, f64::max);
+    if !(top > 0.0) {
+        return None;
+    }
+    let best = fine.iter().filter(|f| f.1.0 >= 0.97 * top).min_by(|a, b| a.1.1.total_cmp(&b.1.1)).map_or(coarse.0, |f| f.0);
+    let best = (top, best);
+    let on = normal * best.1;
+    crate::symmetry::measure(scan, on + (mid - normal * mid.dot(normal)), normal)
+}
+
 pub fn complete(scan: &Scan, mirror: &Mirror, reach: Option<f64>) -> Option<MirrorFill> {
     let normal = mirror.normal.normalized()?;
     let plane = Mirror { normal, ..*mirror };
@@ -305,6 +385,25 @@ mod tests {
         let whole = Scan::new(&positions, &triangles);
         assert!(complete(&whole, &plane_x(), None).is_none(), "a whole sphere is missing nothing");
         assert!(complete(&scan, &Mirror { normal: Vec3::ZERO, ..plane_x() }, None).is_none(), "a plane with no direction");
+    }
+
+    /// An egg-shaped part, 80 x 40 x 24 mm, mirrors in all three planes; cut short across X (its
+    /// +X end missing) it still mirrors whole front to back, but the plane to complete it in is the
+    /// one across the cut, through the part's middle, and the fill lands on the missing end.
+    #[test]
+    fn the_plane_across_a_cut_is_found_through_the_parts_middle() {
+        let (ball, triangles) = sphere(1.0, 48, 96);
+        let positions: Vec<Vec3> = ball.iter().map(|p| Vec3::new(p.x * 40.0, p.y * 20.0, p.z * 12.0)).collect();
+        let kept: Vec<[u32; 3]> = triangles.iter().copied().filter(|t| t.iter().all(|&i| positions[i as usize].x < 15.0)).collect();
+        let scan = Scan::new(&positions, &kept);
+        let plane = plane_across_cut(&scan).expect("a plane across the cut");
+        assert!(plane.normal.x.abs() > 0.99, "across the cut: {plane:?}");
+        assert!(plane.point.dot(plane.normal).abs() < 1.0, "through the middle: {plane:?}");
+        let fill = complete(&scan, &plane, None).expect("the end is missing");
+        let middles: Vec<f64> = fill.triangles.iter().map(|t| t.iter().map(|&i| fill.positions[i as usize].x).sum::<f64>() / 3.0).collect();
+        assert!(!middles.is_empty() && middles.iter().filter(|x| **x < 12.0).count() * 20 < middles.len(), "on the missing end");
+        // A whole scan has no cut.
+        assert!(plane_across_cut(&Scan::new(&positions, &triangles)).is_none());
     }
 
     #[test]

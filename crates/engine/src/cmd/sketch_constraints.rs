@@ -50,21 +50,21 @@ pub static COMMANDS: &[CommandSpec] = &[
         .enabled(in_sketch)
         .contract(&AUTO_CONSTRAIN_CONTRACT)
         .output(output_schema_for::<AutoConstrainResult>)
-        .params("tolerance?: mm (default 0.01), angle_tolerance?: deg (default 1), dimensions?: bool (default true): infer constraints, then dimension until fully constrained"),
+        .params("tolerance?: mm (default 0.01), angle_tolerance?: deg (default 1), dimensions?: bool (default true): infer constraints, then dimension until fully constrained; round?: mm: each dimension within this of a whole, half or tenth of the design unit takes it, when no point moves farther than this (the value measured kept in its parameter's comment)"),
     CommandSpec::new("sketch.auto_constrain_from_datum", "AutoConstrain from Datum", crate::checked!("sketch.auto_constrain_from_datum", auto_constrain_datum))
         .at("SKETCH", "CONSTRAINTS")
         .icon("auto_constrain")
         .enabled(in_sketch)
         .contract(&AUTO_CONSTRAIN_DATUM_CONTRACT)
         .output(output_schema_for::<AutoConstrainResult>)
-        .params("datum: point ref (default origin); like AutoConstrain with positions measured from the datum"),
+        .params("datum: point ref (default origin); like AutoConstrain with positions measured from the datum; round?: mm: each dimension within this of a whole, half or tenth of the design unit takes it, when no point moves farther than this (the value measured kept in its parameter's comment)"),
     CommandSpec::new("sketch.finish_auto_constrain", "Finish with AutoConstrain", crate::checked!("sketch.finish_auto_constrain", auto_constrain_finish))
         .at("SKETCH", "FINISH SKETCH")
         .icon("finish")
         .enabled(in_sketch)
         .contract(&FINISH_AUTO_CONSTRAIN_CONTRACT)
         .output(output_schema_for::<AutoConstrainResult>)
-        .params("like AutoConstrain, then Finish Sketch"),
+        .params("like AutoConstrain, then Finish Sketch; round?: mm: each dimension within this of a whole, half or tenth of the design unit takes it, when no point moves farther than this (the value measured kept in its parameter's comment)"),
     CommandSpec::new("sketch.constrainer", "Sketch Constrainer", crate::checked!("sketch.constrainer", smart_constrain))
         .at("SKETCH", "CREATE")
         .icon("constrainer")
@@ -302,8 +302,59 @@ fn run_auto(sk: &mut Sketch, doc: &mut solidcraft_doc::Document, p: &Value, datu
             attempt(sk, doc, DistanceY { p: datum, q: i, value: (q.y - d.y).abs() }, true, &mut dof);
         }
     }
+    if let Some(reach) = num(p, "round").filter(|r| *r > 0.0 && *r < 1e9) {
+        round_dimensions(sk, doc, n0, reach);
+    }
     let added = sk.constraints.iter().skip(n0).map(|c| c.id.clone()).collect();
     (added, dof)
+}
+
+/// The dimensions from constraint `from` on read as designed: each set to the roundest of a
+/// whole, a half and a tenth of the design's length unit within `reach` of it, when the sketch
+/// still solves the same way round and no point of it ends farther than `reach` from where it
+/// was. Its parameter's comment keeps the value measured. How many were rounded.
+fn round_dimensions(sk: &mut Sketch, doc: &mut solidcraft_doc::Document, from: usize, reach: f64) -> usize {
+    let per_unit = match solidcraft_doc::expr::unit_info(doc.units.trim()) {
+        Some((solidcraft_doc::expr::Kind::Length, s)) if s.is_finite() && s > 0.0 => s,
+        _ => 1.0,
+    };
+    let was: Vec<Option<Vec2>> = (0..sk.points.len()).map(|i| sk.point(i)).collect();
+    let mut rounded = 0;
+    for k in from..sk.constraints.len() {
+        let Some(c) = sk.constraints.get(k) else { continue };
+        let (Some(name), Some(value)) = (c.param.clone(), c.kind.value()) else { continue };
+        if c.driven || c.kind.is_angle() {
+            continue;
+        }
+        let designed = [1.0, 2.0, 10.0]
+            .into_iter()
+            .map(|per| (value / per_unit * per).round() / per * per_unit)
+            .find(|v| (v - value).abs() <= reach)
+            .filter(|v| *v > 0.0 && (v - value).abs() > 1e-9);
+        let Some(designed) = designed else { continue };
+        let Some(at) = doc.params.iter().position(|q| q.name == name) else { continue };
+        let saved = sk.clone();
+        if let Some(c) = sk.constraints.get_mut(k) {
+            c.kind.set_value(designed);
+        }
+        let rep = solidcraft_sketch::solve_with(sk, &solidcraft_sketch::Hold::default(), None, solidcraft_sketch::Analysis::StatusOnly, None);
+        let stays = was.iter().enumerate().all(|(i, a)| a.zip(sk.point(i)).is_none_or(|(a, b)| a.dist(b) <= reach));
+        if !(rep.ok() && rep.keeps_orientation() && stays) {
+            *sk = saved;
+            continue;
+        }
+        // The parameter is written in place: Document::set_param copies the whole design, scans
+        // and all, for each one.
+        let (unit, expr) = doc.design_length(designed);
+        let measured = doc.design_length(value).1;
+        if let Some(q) = doc.params.get_mut(at) {
+            q.expr = expr;
+            q.unit = unit;
+            q.comment = format!("measured {measured}");
+        }
+        rounded += 1;
+    }
+    rounded
 }
 
 fn auto(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {

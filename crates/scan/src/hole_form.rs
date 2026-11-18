@@ -23,7 +23,7 @@ const SAME_DIRECTION: f64 = 0.9994;
 /// are one axis.
 const SAME_AXIS: f64 = 0.2;
 /// A size within this share of the scan's tolerance of a round size is that size.
-const SNAP_SHARE: f64 = 0.25;
+pub const SNAP_SHARE: f64 = 0.25;
 /// An angle within this of a usual one (radians, about 3°) is that one.
 const SNAP_ANGLE: f64 = 0.0524;
 /// The angles a drill's point or a countersink is usually ground to (degrees, the full angle).
