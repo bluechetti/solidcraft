@@ -362,6 +362,14 @@ fn compare_bodies(s: &mut Session, p: &Value) -> Result<Value> {
     let identical = c.regions.is_empty() && c.unlisted == 0;
     let mut warnings = warnings([(na.as_str(), &measure_a, &mesh_a), (nb.as_str(), &measure_b, &mesh_b)], chord);
     warnings.extend(exact_notes);
+    // An open mesh is a scan: Scan Deviation measures one against a model, within its tolerance.
+    for (name, b) in [(&na, ba), (&nb, bb)] {
+        if b.body.is_mesh() && !super::inspect::encloses_volume(&b.body) {
+            warnings.push(format!(
+                "`{name}` is an open mesh (a scan): to measure a scan against a model use scan.deviation {{\"scan\": \"{name}\"}}, which reads each point's distance within the scan's tolerance"
+            ));
+        }
+    }
     let mut verdict = if identical {
         format!("identical within {tolerance} mm (largest deviation {worst:.4} mm)")
     } else {

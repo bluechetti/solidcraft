@@ -1599,11 +1599,16 @@ pub fn selected_count(app: &mut SolveApp) -> usize {
         && *at == doc
         && *selection == app.session.selection
     {
-        return *count;
+        return *count + scan_selected(app);
     }
     let count = context::selection_count(&app.session, &app.session.selection);
     app.agent_chat.selected_count = Some((app.session.selection.clone(), doc, count));
-    count
+    count + scan_selected(app)
+}
+
+/// One for a selection on a scan that goes with the message too, else none.
+fn scan_selected(app: &SolveApp) -> usize {
+    usize::from(app.session.scan_selection.as_ref().is_some_and(|k| k.count > 0 && k.current(&app.session)))
 }
 
 /// Open the picker for a pill in the next message, which goes at character `at` of the box (its end
@@ -1700,6 +1705,12 @@ pub fn send(app: &mut SolveApp, ctx: &egui::Context, text: String) {
         }
         selected.items.retain(|i| !context.items.iter().any(|c| c.same_item(i)));
         context.merge(selected);
+        // Where the user is: the tab, the dialog open and what its OK would run, a scan's colours.
+        let dialog = app.dialog.as_ref().filter(|d| !matches!(d.kind, crate::dialogs::Kind::ChatContext)).map(|d| {
+            let label = d.command().map(crate::command_label).unwrap_or("Command").to_string();
+            (solidcraft_ui_text::tr_label(&label).to_string(), crate::dialogs::apply_commands(app, d))
+        });
+        context.merge(context::on_screen(&app.session, &app.ui.tab, dialog));
     }
     if app.agent_chat.state() == State::Busy {
         let chat = &mut app.agent_chat;

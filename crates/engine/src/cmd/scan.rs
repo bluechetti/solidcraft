@@ -606,7 +606,7 @@ fn find_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     let found = chosen_mirror(s, &mesh, p, cmd, true, false)?;
     let plane = if keep {
         // Three points of the plane, a quarter of the scan apart, make an ordinary construction plane.
-        let (u, v) = found.normal.any_perp().normalized().map(|u| (u, found.normal.cross(u))).unwrap_or((Vec3::X, Vec3::Y));
+        let (u, v) = plane_axes(found.normal);
         let reach = (found.size / 4.0).max(1.0);
         let (a, b, c) = (found.point, found.point + u * reach, found.point + v * reach);
         let maker =
@@ -1697,6 +1697,17 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
+/// Two directions square to `normal` and to each other, `normal` along the first × the second:
+/// the first along the world axis that lies most nearly in the plane (X before Y before Z on a
+/// tie), so a sketch on a plane kept from the scan runs the way one on the world plane nearest it
+/// does, its X along X on a face square to Z, not along any direction.
+fn plane_axes(normal: Vec3) -> (Vec3, Vec3) {
+    let Some(n) = normal.normalized() else { return (Vec3::X, Vec3::Y) };
+    let axis = [Vec3::X, Vec3::Y, Vec3::Z].into_iter().min_by(|a, b| a.dot(n).abs().total_cmp(&b.dot(n).abs())).unwrap_or(Vec3::X);
+    let u = (axis - n * axis.dot(n)).normalized().or_else(|| n.any_perp().normalized()).unwrap_or(Vec3::X);
+    (u, n.cross(u))
+}
+
 /// Keeps a fitted shape as an ordinary construction feature: a plane through three of its points,
 /// an axis through two, or a sphere's centre as a point.
 fn keep_shape(s: &mut Session, fitted: &Fitted, extent: f64) -> Result<Value> {
@@ -1707,8 +1718,7 @@ fn keep_shape(s: &mut Session, fitted: &Fitted, extent: f64) -> Result<Value> {
     let reach = (extent / 8.0).max(1.0);
     match fitted.shape {
         Shape::Plane { normal, .. } => {
-            let u = normal.any_perp().normalized().unwrap_or(Vec3::X);
-            let v = normal.cross(u);
+            let (u, v) = plane_axes(normal);
             let m = fitted.middle;
             run(s, "construct.plane.three_points", json!({"a": at(m), "b": at(m + u * reach), "c": at(m + v * reach)}))
         }
@@ -1748,6 +1758,8 @@ pub mod flatten;
 #[path = "scan_free_form.rs"]
 pub mod free_form;
 
+#[path = "scan_furring.rs"]
+pub mod furring;
 
 #[path = "scan_made_from.rs"]
 pub mod made_from;

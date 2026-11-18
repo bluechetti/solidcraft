@@ -261,7 +261,7 @@ fn auto_constrain_dimensions_a_sketch_past_the_trial_limit() {
 #[test]
 fn auto_constrain_rounds_measured_dimensions_to_designed_ones() {
     let mut s = new_sketch();
-    run(&mut s, "sketch.line", json!({"points": [[1.02, 0.98], [40.97, 0.98], [40.97, 30.53], [1.02, 30.53]], "closed": true}));
+    run(&mut s, "sketch.line", json!({"points": [[1.02, 0.98], [40.99, 0.98], [40.99, 30.46], [1.02, 30.46]], "closed": true}));
     run(&mut s, "sketch.circle.center", json!({"center": [20.03, 15.0], "radius": 3.137}));
     let r = run(&mut s, "sketch.auto_constrain", json!({"round": 0.05}));
     assert_eq!(r["dof"], 0, "{r}");
@@ -273,7 +273,7 @@ fn auto_constrain_rounds_measured_dimensions_to_designed_ones() {
         .map(|q| (s.doc.eval(&q.expr, solidcraft_doc::expr::Kind::Length).unwrap(), q.comment.clone()))
         .collect();
     let has = |v: f64| params.iter().any(|(x, _)| (x - v).abs() < 1e-9);
-    // The sides 39.95 and 29.55 read 40 and 29.5; the corner's place 1.02, 0.98 reads 1, 1.
+    // The sides 39.97 and 29.48 read 40 and 29.5; the corner's place 1.02, 0.98 reads 1, 1.
     assert!(has(40.0) && has(29.5) && has(1.0) && has(20.0), "{params:?}");
     // Ø 6.274 lies 0.026 off 6.3, within the reach: 6.3. Every rounded one says what was measured.
     assert!(has(6.3), "{params:?}");

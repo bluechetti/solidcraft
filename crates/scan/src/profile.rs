@@ -995,7 +995,8 @@ pub fn turned_plane(axis: &Axis) -> Plane {
 /// outline (`faces` index `reading.faces`) and each face as held (by face index); why not.
 pub fn turned_profile(scan: &Scan, outcome: &Outcome, reading: &Reading) -> Result<(Plane, Outline, BTreeMap<usize, Turned>), String> {
     let revolve = reading.revolve.as_ref().ok_or("the part is not turned: no axis holds most of its faces")?;
-    let (plane, outline, held) = turned_profile_of(scan, outcome, &reading.faces, &reading.same, reading.size, revolve)?;
+    let between = reading.spokes.as_ref().map(|sp| between_spokes(&sp.angles)).unwrap_or_default();
+    let (plane, outline, held) = turned_profile_of(scan, outcome, &reading.faces, &reading.same, reading.size, revolve, &between)?;
     Ok((plane, without_slivers(outline, SLIVER_SHARE * reading.size, true), held))
 }
 
@@ -1063,6 +1064,7 @@ pub(crate) fn turned_profile_of(
     same: &[usize],
     size: f64,
     revolve: &Revolve,
+    between: &[f64],
 ) -> Result<(Plane, Outline, BTreeMap<usize, Turned>), String> {
     let axis = &revolve.axis;
     let polar_of = |p: Vec3| polar(p, axis);
@@ -1144,7 +1146,7 @@ pub(crate) fn turned_profile_of(
         // Numbered by the reading's faces.
         Ok(outline) => Outline { faces: outline.faces.iter().map(|f| f.map(|i| numbered[i])).collect(), ..outline },
         // Where the faces' meetings go round no one profile, a slice through the axis may.
-        Err(refusal) => turned_sliced(scan, axis, &faces, &numbered, &owner, 0.005 * size, outcome.tolerance).ok_or_else(|| match refusal {
+        Err(refusal) => turned_sliced(scan, axis, &faces, &numbered, &owner, 0.005 * size, outcome.tolerance, between).ok_or_else(|| match refusal {
             Refusal::TooFew => "fewer than two faces about the turning axis meet on the scan, so there is no profile to turn".to_string(),
             Refusal::Meets(k, n) => format!("face {} meets {n} other faces about the turning axis, where a profile has each meet two: a face between them is missing, or one too many is found", numbered[k] + 1),
             Refusal::Apart => "the faces about the turning axis make more than one outline, so there is no one profile to turn".to_string(),
@@ -1152,6 +1154,18 @@ pub(crate) fn turned_profile_of(
         })?,
     };
     Ok((turned_plane(axis), outline, held_faces))
+}
+
+/// The angles halfway between neighbouring spokes at `angles` (low to high, radians): where a
+/// slice through a wheel's axis meets no spoke.
+pub fn between_spokes(angles: &[f64]) -> Vec<f64> {
+    let n = angles.len();
+    (0..n)
+        .map(|k| {
+            let (a, b) = (angles[k], if k + 1 < n { angles[k + 1] } else { angles[0] + TAU });
+            (0.5 * (a + b)).rem_euclid(TAU)
+        })
+        .collect()
 }
 
 /// How many planes through the axis [`turned_sliced`] cuts the scan with, evenly round half a turn;
@@ -1268,6 +1282,7 @@ fn turned_sliced(
     owner: &[usize],
     reach: f64,
     tolerance: f64,
+    between: &[f64],
 ) -> Option<Outline> {
     let mut walls: Vec<(usize, Wall)> = faces.iter().zip(numbered).filter_map(|(f, &k)| turned_wall(&f.face).map(|w| (k, w))).collect();
     // Each face's place among the walls (a face with no wall has none).
@@ -1280,12 +1295,18 @@ fn turned_sliced(
     let weld = crate::welded(scan.positions);
     let (u, v) = crate::in_plane(axis.direction);
     let mut best: Option<(f64, Outline)> = None;
-    for i in 0..TURNED_SLICES {
-        let angle = PI * i as f64 / TURNED_SLICES as f64;
+    // A wheel is cut only between its spokes, each half-section on its own side of the axis: a
+    // slice through a spoke draws the spoke into the turned profile.
+    let slices: Vec<(f64, &[f64])> = if between.is_empty() {
+        (0..TURNED_SLICES).map(|i| (PI * i as f64 / TURNED_SLICES as f64, &[1.0, -1.0][..])).collect()
+    } else {
+        between.iter().map(|&a| (a, &[1.0][..])).collect()
+    };
+    for (angle, sides) in slices {
         let plane = Plane { origin: axis.point, x: axis.direction, y: u * angle.cos() + v * angle.sin() };
         for run in crate::section::section_welded(scan, &weld, &plane) {
             let on: Vec<Option<usize>> = run.triangles.iter().map(|&t| owner.get(t).and_then(|&f| place.get(f).copied().flatten())).collect();
-            for side in [1.0, -1.0] {
+            for &side in sides {
                 let flipped: Vec<Vec2> = run.points.iter().map(|p| Vec2::new(p.x, side * p.y)).collect();
                 // A closed loop's half above the axis; an open run's (the scan's edge, or where the
                 // part selected stops), closed down to the axis.
@@ -1640,6 +1661,17 @@ mod tests {
         }
         assert_eq!(outline.faces.iter().filter(|f| f.is_none()).count(), 1, "one closing line: {outline:?}");
         assert_eq!(outline.faces.last(), Some(&None), "the closing line last: {outline:?}");
+    }
+
+    /// Halfway between neighbouring spokes, round past a full turn too: five spokes at 18°, 90°,
+    /// 162°, 234° and 306° are sliced at 54°, 126°, 198°, 270° and 342°.
+    #[test]
+    fn slices_between_spokes_fall_halfway() {
+        let spokes: Vec<f64> = [18.0_f64, 90.0, 162.0, 234.0, 306.0].iter().map(|a| a.to_radians()).collect();
+        let between: Vec<f64> = between_spokes(&spokes).iter().map(|a| a.to_degrees()).collect();
+        for (got, want) in between.iter().zip([54.0, 126.0, 198.0, 270.0, 342.0]) {
+            assert!((got - want).abs() < 1e-9, "{between:?}");
+        }
     }
 
     /// An arc whose ends all but meet (a round 2 mm across, cut where it touches the axis) is a

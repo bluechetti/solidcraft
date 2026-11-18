@@ -367,7 +367,7 @@ builds it.
 | `pending` | — | Bridged: the result of a request that was still running when its call returned (an error starting `still running:`), waiting up to 60 s for it; `done: false` while it runs (call again), `pending: null` when nothing runs. See [Long-running requests](#long-running-requests). |
 | `crash_reports` | `id?`, `limit?` | The crash reports on this computer, newest first; with `id`, the whole report (backtrace, command, recent commands, `design_path`/`replay_path`). See [crash-reports.md](crash-reports.md). |
 | `skill_reference` | `skill`, `file?` (default `reference.md`) | Read a bundled skill document. Skills: `solidcraft-modeling`, `solidcraft-mechanisms`, `solidcraft-editing`, `solidcraft-checking`, `solidcraft-scan-to-cad`. |
-| `running` | - | What the app is running or has queued, for every client (`control.running`, see [control-protocol.md](control-protocol.md#limits)): each request's connection and id, method, command id or a batch's step count, `running_s` and `queued`, never its parameters. Answers at once while the app is busy, also while another call from this client, such as a long `batch`, is still waiting for its reply: bridged, it is then asked on a connection of its own (its `self` marks no request) and its reply comes before that call's. Ask it when a call timed out before sending a change again. Headless: always `{"running": []}`. |
+| `running` | - | What the app is running or has queued, for every client (`control.running`, see [control-protocol.md](control-protocol.md#limits)): each request's connection and id, method, command id or a batch's step count, `running_s`, `queued` and, when its work reports it, `progress` (how far it is, in words), never its parameters. Answers at once while the app is busy, also while another call from this client, such as a long `batch`, is still waiting for its reply: bridged, it is then asked on a connection of its own (its `self` marks no request) and its reply comes before that call's. Ask it when a call timed out before sending a change again. Headless: always `{"running": []}`. |
 | `new_design` | `name?` | Start an empty design. |
 | `cancel` | — | Bridged: cancel this server's request that was still running in the app when its call returned (`control.cancel`, see [Cancelling a request](#cancelling-a-request)). Headless: an error, as nothing is ever left running. Not a `batch` step. |
 | `open` | `path` | Open a `.sc` design (or a `.solidcraft` one from an earlier release), a STEP file (`.step`/`.stp`) as a new design holding its bodies (an Import base feature), or a 3MF/STL file as mesh bodies. |
@@ -428,6 +428,20 @@ edit the design. Use `describe_command` for the input and output schemas.
 
 Resources: `solidcraft://design` (inspect JSON with measurements) and `solidcraft://commands`
 (the catalog).
+
+Progress: a `tools/call` sent with `_meta.progressToken` hears `notifications/progress` while it
+runs, about once a second after the first second (an unchanged message every 5 s): `progress` is
+the seconds it has run, so it only grows, and `message` what it is doing (the command's name, a
+scan command's step and share, the timeline's feature count). All come before the call's reply.
+Headless they come from the work itself; bridged, from the app's `control.running` (`progress`),
+which reports work computing off the window thread; a request the app runs on its window thread,
+such as a scan command, is heard as `working`.
+
+Prompts (a client shows them as slash commands, such as `/mcp__solidcraft__scan_to_cad` in Claude
+Code): `scan_to_cad` (`path?`, `accuracy?` in mm, `goal?`), `model_part` (`part`) and
+`edit_design` (`change`, `path?`). Each puts your words into a short request that points the
+agent at the bundled skill with the workflow (`skill_reference`), so it starts the way the skill
+says and checks its work.
 
 Errors: an unknown tool or arguments that don't match the tool's schema are JSON-RPC
 `-32602` errors (an unknown argument's error lists the tool's arguments); an engine failure

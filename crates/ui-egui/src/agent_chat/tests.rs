@@ -3754,6 +3754,48 @@ fn an_attached_selection_goes_as_text_for_the_agent_and_as_chips_in_the_conversa
     assert_eq!(script.calls().pop().as_deref(), Some("prompt: nothing"));
 }
 
+/// On a scan, what the user selected on it and the dialog they have open (with what its OK would
+/// run) go with the message too, so "fit this" names what is meant; the checkbox counts the scan's
+/// selection.
+#[test]
+fn a_scan_selection_and_the_open_dialog_go_with_the_message() {
+    let (mut app, script, ctx) = app_with_script();
+    let dir = std::env::temp_dir().join(format!("solidcraft-chat-scan-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // A flat plate 40 × 40 of small triangles round the origin: a scan.
+    let mut stl = String::from("solid p\n");
+    for i in 0..20 {
+        for j in 0..20 {
+            let (x, y) = (2.0 * f64::from(i) - 20.0, 2.0 * f64::from(j) - 20.0);
+            for tri in [[(x, y), (x + 2.0, y), (x + 2.0, y + 2.0)], [(x, y), (x + 2.0, y + 2.0), (x, y + 2.0)]] {
+                stl += "facet normal 0 0 1\nouter loop\n";
+                for (a, b) in tri {
+                    stl += &format!("vertex {a} {b} 0\n");
+                }
+                stl += "endloop\nendfacet\n";
+            }
+        }
+    }
+    stl += "endsolid p\n";
+    let path = dir.join("plate.stl");
+    std::fs::write(&path, stl).unwrap();
+    let scan = app.run("file.insert_mesh", json!({"path": path})).unwrap()["name"].as_str().unwrap().to_owned();
+    app.run("scan.select", json!({"brush": {"points": [[0, 0, 0]], "radius": 5}})).unwrap();
+    assert_eq!(selected_count(&mut app), 1, "the scan's selection counts");
+    app.start("scan.fit_plane");
+    assert!(app.dialog.is_some(), "Fit Plane is open");
+    app.agent_chat.attach_selection = true;
+    send(&mut app, &ctx, "fit this".into());
+    let prompt = script.calls().pop().expect("a prompt");
+    for want in [format!("triangles · {scan}"), "\"selected\": true".into(), "Fit Plane dialog: open".into()] {
+        assert!(prompt.contains(&want), "{want:?} missing from {prompt}");
+    }
+    let Some(Item::User { context, .. }) = app.agent_chat.items.last() else { panic!("a sent message") };
+    let kinds: Vec<_> = context.items.iter().map(|i| i.kind).collect();
+    assert_eq!(kinds, [context::Kind::Element, context::Kind::Other], "a chip each");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A queued message keeps the selection of the moment it was typed; queued messages go as one
 /// prompt with all their items.
 #[test]

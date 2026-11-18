@@ -1838,10 +1838,22 @@ impl Session {
         }
         // The scan a scan command works on, so what it makes is noted as made from it.
         let made_from = if outermost { cmd::scan::made_from::source(self, spec.id, params) } else { None };
+        // Whoever watches this work (an MCP client waiting on it, a control request) hears which
+        // command it is on and how far a scan command's long step is.
+        let watch = if outermost { solidcraft_kernel::watch::current() } else { None };
+        if let Some(w) = &watch {
+            w.progress(spec.label, 0, 1);
+        }
         let scope = crash::Scope::enter();
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match live {
-            Some(run) => run(self, params),
-            None => (spec.run)(self, params).map(|v| (v, None)),
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut run = || match live {
+                Some(run) => run(self, params),
+                None => (spec.run)(self, params).map(|v| (v, None)),
+            };
+            match watch {
+                Some(w) => solidcraft_scan::progress::reporting(std::sync::Arc::new(move |stage, done, total| w.progress(stage, done, total)), run),
+                None => run(),
+            }
         }));
         drop(scope);
         let r = match r {
@@ -2151,7 +2163,10 @@ impl Session {
             colored_components: None,
             analysis: None,
             continuity: Vec::new(),
-            scan_deviation: None,
+            // The scan's view state goes with the copy, so a scan command computed there finds it
+            // as the window has it, and what the command changes of it comes back
+            // ([`Session::accept_commands`]).
+            scan_deviation: self.scan_deviation.clone(),
             hole_table: None,
             inspection: None,
             // What Find All read is kept, so a copy computing a scan tool beside the window
@@ -2159,7 +2174,7 @@ impl Session {
             scan_shapes: self.scan_shapes.clone(),
             scan_survey: None,
             scan_selection: self.scan_selection.clone(),
-            scan_base_cycle: None,
+            scan_base_cycle: self.scan_base_cycle.clone(),
             isocurves: Vec::new(),
             comb: None,
             status_order: Vec::new(),
@@ -2298,6 +2313,17 @@ impl Session {
         let replies = prepared.steps.into_iter().map(|step| (step.id, step.reply)).collect();
         let shapes = prepared.computed.scan_shapes.take();
         let survey = prepared.computed.scan_survey.take();
+        // What the commands did to the scan's view state on the copy (a deviation map measured or
+        // taken away, a selection made or cleared, the base a scan was stood on) they did here
+        // too; what they left alone stays as the window has it now.
+        let moved = |a: Option<*const ()>, b: Option<*const ()>| a != b;
+        let at = |x: &Option<Arc<cmd::scan::DeviationMap>>| x.as_ref().map(|m| Arc::as_ptr(m).cast::<()>());
+        let deviation =
+            moved(at(&prepared.source.scan_deviation), at(&prepared.computed.scan_deviation)).then(|| prepared.computed.scan_deviation.take());
+        let picked = |x: &Option<Arc<cmd::scan::select::ScanSelected>>| x.as_ref().map(|m| Arc::as_ptr(m).cast::<()>());
+        let selection = moved(picked(&prepared.source.scan_selection), picked(&prepared.computed.scan_selection))
+            .then(|| prepared.computed.scan_selection.take());
+        let base_cycle = (prepared.source.scan_base_cycle != prepared.computed.scan_base_cycle).then(|| prepared.computed.scan_base_cycle.take());
         // Bodies the computation itself hid (Combine Scans hides the passes it fused) stay hidden;
         // the live view's own hides are kept as they are now.
         let newly_hidden: Vec<_> =
@@ -2319,6 +2345,15 @@ impl Session {
         // The survey a copy read (Survey Scan computed beside the window), of the scan as it is.
         if let Some(survey) = survey.filter(|k| k.current(self)) {
             self.scan_survey = Some(survey);
+        }
+        if let Some(deviation) = deviation {
+            self.scan_deviation = deviation;
+        }
+        if let Some(selection) = selection {
+            self.scan_selection = selection;
+        }
+        if let Some(base_cycle) = base_cycle {
+            self.scan_base_cycle = base_cycle;
         }
         Ok(replies)
     }

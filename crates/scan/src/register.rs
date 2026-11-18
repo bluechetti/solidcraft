@@ -920,6 +920,7 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
         let mut scored: Vec<(f64, Rigid, Rule, usize)> = Vec::new();
         let score = |starts: &[(&'static str, Rigid, Option<f64>)], from: usize, scored: &mut Vec<(f64, Rigid, Rule, usize)>| {
             for (index, (_, start, seam)) in starts.iter().enumerate().skip(from) {
+                crate::progress::stage("trying starting places", index, starts.len());
                 if let Some(seam_gate) = *seam {
                     let rule = Rule::strict(seam_gate);
                     let held = refine(&few, *start, &theirs, ignored, 12, &mine, &reverse_few, rule).moved;
@@ -940,6 +941,7 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
         // model). Only when no other start lays most of what may be fitted onto the reference.
         let enough = ENOUGH_LAID * (1.0 - ignored) * few.len() as f64;
         if settings.search && scored.iter().all(|s| s.0 < enough) {
+            crate::progress::stage("matching flat faces", 0, 1);
             let (seams, cell) = frames::starts(&mine, &theirs);
             let from = starts.len();
             starts.extend(seams.into_iter().map(|t| ("its flat faces", t, Some(2.0 * cell))));

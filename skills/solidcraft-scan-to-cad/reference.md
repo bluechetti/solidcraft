@@ -22,8 +22,17 @@ Command shapes and replies for the scan workflow in `SKILL.md`. Every command ta
 - **About an axis, not built:** a part Reconstruct cannot revolve (a wheel, its spokes flat; an open scan of a disc) gives the axis (`turned`, or `partly_turned` when round shapes cover only part of it) and in `note` the route by hand as commands with their numbers: a sketch on a plane through the axis, Section to Sketch into it, close one side's profile, `solid.revolve` about the axis. A wheel (round about an axis, the rest repeated evenly round it) reads as turned with `spokes`: `scan.revolve_it {}` turns the rim and hub, then cuts one opening between the spokes and patterns it round the axis (`openings` in its reply says what was cut).
 - **Organic part:** `scan.fit_patches {"point": [x,y,z], "radius": 30}` over a region, or `scan.free_form {"corners": [[…],[…],[…],[…]]}` for faces laid by hand. Read each reply's `rms`, `max` and `warning`; Fit Patches' `worst_off` is the other way round (the surface's distance from the scan), and a grid patch whose corners hang past a short or curving region says so in `warning`. A surface that folds is kept, but it is wrong: use a smaller region or a higher `smoothing` instead.
 - **By hand:** fit construction planes and axes at points on the scan with `scan.fit_plane {"point": [x,y,z]}` and `scan.fit_cylinder {"point": [x,y,z]}`; their replies give exact sizes. Cut the scan with `scan.section_sketch {"plane":"XY","offset":12}` to get a sketch of lines and arcs. Then model as `solidcraft-modeling` says, using those sizes as parameters.
-- **Sketches are dimensioned:** the profiles Extrude It, Revolve It and Hole It sketch, and a new sketch from `scan.section_sketch {}`, are finished as Finish with AutoConstrain does: dimensioned from the sketch's origin, each dimension a parameter, dof 0 (`dof` in the section reply). Round a measured size to the designed one with `parameters.change`, and `check_parameters {}` works on a reconstructed part as on one built by hand. `"dimensions": false` leaves a section sketch as drawn. A section that could not be dimensioned says so in `warning` (why, the solve status, the dof left); joins the solver cannot hold tangent without folding (shallow arcs a degree or two off tangent, as on a car panel) are left as shared ends, and `tangents` counts only the ones kept.
+- **Sketches are dimensioned:** the profiles Extrude It, Revolve It and Hole It sketch, and a new sketch from `scan.section_sketch {}`, are finished as Finish with AutoConstrain does: dimensioned from the sketch's origin (for a Reconstruct profile, where the world's origin falls on its plane, so place the scan first), each dimension a parameter, dof 0 (`dof` in the section reply). Sizes, Extrude It's depth and draft are read as designed: within a quarter of the tolerance of a whole, half or tenth of a millimetre (0.05° for a draft) they take it, and the parameter's comment keeps `measured …`. A size left with many decimals was too far from a round one: set it with `parameters.change` if you know the design value. `check_parameters {}` works on a reconstructed part as on one built by hand. `"dimensions": false` leaves a section sketch as drawn. A section that could not be dimensioned says so in `warning` (why, the solve status, the dof left); joins the solver cannot hold tangent without folding (shallow arcs a degree or two off tangent, as on a car panel) are left as shared ends, and `tangents` counts only the ones kept.
 - **Points on the scan:** every shape in `scan.find_all {}`'s reply has a `point` on it. Use those, not guesses, for `point` parameters.
+
+## Scans and native features together
+A scan and the model built on it are one design: everything the Scan tab makes is an ordinary feature (sketches, construction planes and axes, solids, surfaces), so `solidcraft-modeling` and `solidcraft-editing` apply to it unchanged.
+- **Place the scan first** (`SKILL.md`, step 5), then model. Things a scan command makes move with the scan; a sketch you draw on `XY` does not.
+- **By hand on a scan:** read the sizes off the scan (`scan.fit_plane`, `scan.fit_cylinder`, `own_size`), put them in user parameters, then model as `solidcraft-modeling` says. Sketch on a world plane with an offset (`{"plane":"XY","offset":"T"}`), not on a fitted plane: a sketch on a fitted plane has its origin where the fit was made, so a dimension to `"origin"` measures from there. Its X runs along the world axis nearest the plane.
+- **Section into your own sketch:** in an open sketch, `sketch.fit_curves_to_section {"body":"<scan>"}` fits the cut as `scan.section_sketch` does, and leaves the sketch to you.
+- **Reconstructed sizes are parameters:** Reconstruct's sketches are dimensioned and rounded to design values (`reference.md`, "Sketches are dimensioned"). Edit them as `solidcraft-editing` says; a parameter whose comment reads `measured …` was rounded from that value.
+- **Check against the scan, not only by volume:** after each stage or edit, `scan.deviation {"body":"<model>"}` as well as `measure {}`. Material not modelled yet (a hole not cut) shows as `max_below` and `unmatched`. `inspect.compare` compares two closed bodies; on a scan it says to use `scan.deviation`.
+- **A new scan of the same part:** `scan.align_to_model {"model":"<model>"}`, then `scan.deviation`; a Free Form or Fit Patches surface follows it with `scan.refit {}`, hand edits kept.
 
 ## Verify
 `scan.deviation {"body": "<model>"}` measures the scan against the model:
@@ -79,7 +88,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | `scan.fit_cylinder {"point": [x,y,z]}` | construction axis; reply `cylinder {point, axis, radius, diameter, length}` |
 | `scan.fit_sphere {}`, `scan.fit_cone {}`, `scan.fit_torus {}` | the same for those shapes |
 | `scan.fillet {}` | the radius of a round measured from the scan |
-| `scan.section_sketch {"plane":"XY","offset":12}` | a sketch of lines and arcs fitted where the plane cuts the scan |
+| `scan.section_sketch {"plane":"XY","offset":12}` | a sketch of lines and arcs fitted where the plane cuts the scan; in a sketch being edited, `sketch.fit_curves_to_section {"body": "<scan>"}` does the same |
 | `scan.sections_along_curve {}` | sections at stations along a curve |
 | `scan.curve_on_scan {}` | a 3D spline laid on the scan through points |
 | `scan.fit_patches {"point": [x,y,z], "radius": 30}` | a smooth surface over a region; `layout` grid, blocks or quads |
@@ -94,7 +103,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | Command | Reply |
 |---|---|
 | `scan.tolerance {"tolerance": 0.2}` | the scan's tolerance, kept in the design |
-| `scan.deviation {"body": "<model>"}` | `rms`, `mean`, `max_above` (material the model lacks), `max_below` (material it should not have), `within`, `passes` (95% within the tolerance), `measured`, `unmatched` |
+| `scan.deviation {"body": "<model>"}` (not `inspect.compare`, which compares two closed bodies and warns on a scan) | `rms`, `mean`, `max_above` (material the model lacks), `max_below` (material it should not have), `within`, `passes` (95% within the tolerance), `measured`, `unmatched` |
 | `inspect.surface_check {}` | folds, pinches and crossings of a surface |
 
 ## Known problems

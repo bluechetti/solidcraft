@@ -53,6 +53,7 @@ pub const SKIPPED_MODULES: &[(&str, &str)] = &[
     ("crates/engine/src/cmd/scan_fit_face.rs", "mesh bodies: a fitted shape's region of a scan outlined and spanned, for the face kept"),
     ("crates/engine/src/cmd/scan_clean.rs", "mesh bodies: a scan's own triangles cleaned and written back"),
     ("crates/engine/src/cmd/scan_flatten.rs", "mesh bodies: a region of a scan unrolled, and a drawing rolled back onto it"),
+    ("crates/engine/src/cmd/scan_furring.rs", "mesh bodies: furring strips read off a scan and made as printable mesh bodies"),
     ("crates/engine/src/cmd/scan_mesh.rs", "mesh bodies: a scan's mesh laid onto another, remeshed, smoothed or made from points"),
     ("crates/engine/src/cmd/scan_patches.rs", "mesh bodies: smooth patches fitted over a region of a scan"),
     ("crates/engine/src/cmd/scan_reconstruct.rs", "mesh bodies: a scan cut into the shapes it is, and what Reconstruct reads off them"),

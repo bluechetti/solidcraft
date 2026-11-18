@@ -955,6 +955,7 @@ pub fn reconstruct(points: &[Vec3], normals: Option<&[Vec3]>, settings: &Setting
     let mut field = Field { levels: Vec::new() };
     let base = BASE_DEPTH.min(depth);
     for level in base..=depth {
+        crate::progress::stage("solving the surface", (level - base) as usize, (depth - base + 1) as usize);
         let solved = solve_level(&samples, level, level == base, &field)?;
         field.levels.push(solved);
     }

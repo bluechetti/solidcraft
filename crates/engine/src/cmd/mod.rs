@@ -381,6 +381,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(scan::align::COMMANDS.iter());
     v.extend(scan::fillet::COMMANDS.iter());
     v.extend(scan::flatten::COMMANDS.iter());
+    v.extend(scan::furring::COMMANDS.iter());
     v.extend(scan::patches::COMMANDS.iter());
     v.extend(scan::reconstruct::COMMANDS.iter());
     v.extend(scan::refit::COMMANDS.iter());

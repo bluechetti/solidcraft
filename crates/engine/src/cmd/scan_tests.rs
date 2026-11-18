@@ -438,6 +438,12 @@ fn fitted_shapes_are_kept_as_construction_features() {
     assert!((plane["plane"]["point"][2].as_f64().unwrap() - 8.0).abs() < STL, "{plane}");
     assert!((plane["area"].as_f64().unwrap() - 2400.0).abs() < 1.0, "the whole top: {plane}");
     assert!(plane["feature"]["feature"].is_u64(), "kept: {plane}");
+    // A sketch on it runs as one on XY does: its X along the world's X, not any direction.
+    let sketch = run(&mut s, "sketch.create", json!({"plane": plane["feature"]["name"].clone()}));
+    run(&mut s, "sketch.finish", json!({}));
+    s.refresh();
+    let x = s.model.state().sketch(sketch["sketch"].as_u64().unwrap()).map(|k| k.plane.x).unwrap();
+    assert!(x.x.abs() > 1.0 - 1e-6, "{x:?}");
 
     let boss = run(&mut s, "scan.fit_cylinder", json!({"point": [40, 20, 15]}));
     let c = &boss["cylinder"];
@@ -1312,6 +1318,54 @@ fn a_section_holds_tangent_only_the_joins_it_can_solve() {
     assert!(rep.ok() && rep.folded.is_empty(), "{rep:?}");
     assert!(added.tangents > 0 && added.tangents < 5, "some joins stay tangent: {}", added.tangents);
     assert_eq!(added.tangents, sk.constraints.len());
+}
+
+/// The Sketch tab's Fit Curves to Mesh Section on a scan cuts it as Section to Sketch does: the
+/// boss's 96-sided ring is one circle of its radius in the sketch being edited, not 96 lines.
+#[test]
+fn fit_curves_to_mesh_section_cuts_a_scan_as_section_to_sketch_does() {
+    let (mut s, scan) = session_with_a_plate_and_boss("fit-section");
+    run(&mut s, "sketch.create", json!({"plane": "XY", "offset": "15 mm"}));
+    let fitted = run(&mut s, "sketch.fit_curves_to_section", json!({"body": scan}));
+    assert_eq!(fitted["curves"].as_array().map(Vec::len), Some(1), "{fitted}");
+    let id = super::super::sketch_store::active(&s).unwrap();
+    let sk = super::super::sketch_store::read(&s.doc, id).unwrap();
+    let Some(solidcraft_sketch::CurveKind::Circle { r, .. }) = sk.curves.first().map(|c| &c.kind) else { panic!("a circle") };
+    assert!((r - 10.0).abs() < 0.05, "the boss's radius: {r}");
+    assert!(s.active_sketch.is_some(), "the sketch stays open for the user");
+}
+
+/// A scan command computed on a copy and adopted (an agent's, off the window thread) leaves the
+/// scan's view state as running it here would: the selection it made, the deviation map it
+/// measured or took away; what it left alone stays as the session has it.
+#[test]
+fn a_scan_command_computed_on_a_copy_brings_back_what_it_did_to_the_view() {
+    let (mut s, _) = session_with_a_plate_and_boss("adopt-view");
+    let made = run(&mut s, "solid.box", json!({"length": 60, "width": 40, "height": 8}));
+    let model = made["created_bodies"][0].as_str().unwrap().to_owned();
+    let adopt = |s: &mut Session, id: &str, p: Value| {
+        let prepared = s.scratch().compute_commands(&[(id.into(), p)], None).unwrap();
+        s.accept_commands(prepared).unwrap();
+    };
+    adopt(&mut s, "scan.select", json!({"brush": {"points": [[30, 20, 8]], "radius": 5}}));
+    let picked = s.scan_selection.clone().expect("the selection made on the copy");
+    assert!(picked.count > 0);
+    adopt(&mut s, "scan.deviation", json!({"body": model}));
+    assert!(s.scan_deviation.is_some(), "the map measured on the copy");
+    assert!(s.scan_selection.as_ref().is_some_and(|k| std::sync::Arc::ptr_eq(k, &picked)), "the selection it left alone");
+    adopt(&mut s, "scan.deviation", json!({"show": false}));
+    assert!(s.scan_deviation.is_none(), "the map taken away on the copy");
+}
+
+/// Compare Bodies with a scan (an open mesh) among them says to measure it with Scan Deviation.
+#[test]
+fn compare_bodies_on_a_scan_points_to_scan_deviation() {
+    let (mut s, scan) = session_with_a_plate_and_boss("compare-scan");
+    let made = run(&mut s, "solid.box", json!({"length": 60, "width": 40, "height": 8}));
+    let model = made["created_bodies"][0].as_str().unwrap().to_owned();
+    let compared = run(&mut s, "inspect.compare", json!({"a": model, "b": scan}));
+    let warnings = compared["warnings"].to_string();
+    assert!(warnings.contains("scan.deviation") && warnings.contains(&scan), "{compared}");
 }
 
 /// Left to the cut, the tolerance is three times its noise and never under 0.1 mm: the clean plate

@@ -571,7 +571,10 @@ since closed:
 turn behind another. `command` is the command id of `engine.execute` (a known one only) and
 `steps` the length of `engine.batch` or `engine.script`; parameters are never shown, so file
 paths and expressions stay with the connection that sent them. `self` marks the asking
-connection's own request. `{"running": []}` when the app is idle.
+connection's own request. `progress` says in a few words how far a request computing off the
+window thread is (`"finding shapes, the scan in shapes so far 35 %"`, `"Extrude"`, `"building the
+model, feature 12 of 40"`), when its work reports it; it is absent otherwise. `{"running": []}`
+when the app is idle.
 
 `control.capabilities` says what this app's control channel does beyond the methods every
 version has, so a client can find out before it relies on it: `{"param_check": ["off", "warn",

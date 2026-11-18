@@ -2,7 +2,7 @@
 //! (`solidcraft-mcp-server`), with the agent's folders and the output options around each call.
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Mutex, mpsc};
 
@@ -99,6 +99,78 @@ fn side_probe(side: &Mutex<Option<(Remote, Options)>>) -> Option<(Remote, Option
     Some((template.side_channel()?, *options))
 }
 
+/// The `progressToken` a `tools/call` asks its progress under (`params._meta.progressToken`, a
+/// string or a number); `None` for any other message.
+#[cfg(not(target_arch = "wasm32"))]
+fn progress_token(line: &str) -> Option<Value> {
+    let msg: Value = serde_json::from_str(line.trim()).ok()?;
+    if msg.get("method").and_then(Value::as_str) != Some("tools/call") {
+        return None;
+    }
+    msg.pointer("/params/_meta/progressToken").filter(|t| t.is_string() || t.is_number()).cloned()
+}
+
+/// How often a progress message that hasn't changed is said again: a client that keeps a call
+/// alive while it hears progress keeps waiting.
+#[cfg(not(target_arch = "wasm32"))]
+const SAY_AGAIN: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Until `done`, tell the client how far the call that sent `token` is, about once a second, as
+/// `notifications/progress`: `progress` the seconds it has run (it only grows), `message` what it
+/// is doing. That comes from the work in this process (headless), else from the app's
+/// `control.running` (bridged), else it is just "working". The first comes after a second, so a
+/// quick call hears nothing.
+#[cfg(not(target_arch = "wasm32"))]
+fn tell_progress(
+    token: &Value,
+    progress: &solidcraft_engine::doc::progress::Progress,
+    done: &AtomicBool,
+    mut app: Option<(Remote, Options)>,
+    output: &Mutex<impl std::io::Write>,
+) {
+    let start = std::time::Instant::now();
+    let mut said: Option<(String, std::time::Instant)> = None;
+    loop {
+        // Woken often, so it stops soon after the reply is ready.
+        for _ in 0..10 {
+            if done.load(Ordering::SeqCst) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let message = progress
+            .summary()
+            .or_else(|| app.as_mut().and_then(|(remote, _)| app_progress(remote, start.elapsed().as_secs_f64())))
+            .unwrap_or_else(|| "working".into());
+        let now = std::time::Instant::now();
+        if said.as_ref().is_some_and(|(m, at)| *m == message && now.duration_since(*at) < SAY_AGAIN) {
+            continue;
+        }
+        let seconds = (start.elapsed().as_secs_f64() * 10.0).round() / 10.0;
+        let note = json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": {"progressToken": token, "progress": seconds, "message": message}});
+        // The reply is written only after this thread ends, so no note comes after it.
+        if done.load(Ordering::SeqCst) || write_line(output, &note.to_string()).is_err() {
+            return;
+        }
+        said = Some((message, now));
+    }
+}
+
+/// How far the app is with the request this server sent it, from `control.running` on a
+/// connection of its own: the started request that reports its progress, the one that has run
+/// closest to `elapsed` seconds when several do (another client's may be running too).
+#[cfg(not(target_arch = "wasm32"))]
+fn app_progress(remote: &mut Remote, elapsed: f64) -> Option<String> {
+    let running = Backend::call(remote, "control.running", json!({})).ok()?;
+    running["running"]
+        .as_array()?
+        .iter()
+        .filter(|r| r["queued"] != true)
+        .filter_map(|r| Some((r["progress"].as_str()?.to_string(), (r["running_s"].as_f64().unwrap_or(0.0) - elapsed).abs())))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(p, _)| p)
+}
+
 /// Write one reply line and flush it, whole, whichever thread sends it.
 #[cfg(not(target_arch = "wasm32"))]
 fn write_line(output: &Mutex<impl std::io::Write>, reply: &str) -> std::io::Result<()> {
@@ -175,6 +247,14 @@ impl Tools for Agent {
             json!({"uri": "solidcraft://design", "name": "Active design", "description": "document.inspect with measurements", "mimeType": "application/json"}),
             json!({"uri": "solidcraft://commands", "name": "Command catalog", "description": "every command with its parameter docs", "mimeType": "application/json"}),
         ]
+    }
+
+    fn prompts(&self) -> Vec<Value> {
+        crate::prompts::list()
+    }
+
+    fn get_prompt(&mut self, name: &str, args: &Value) -> Result<Value, String> {
+        crate::prompts::get(name, args)
     }
 
     fn read_resource(&mut self, uri: &str) -> Option<Result<Contents, String>> {
@@ -273,7 +353,24 @@ impl Server {
                     *s = self.side();
                 }
                 let reply = match incoming {
-                    Incoming::Line(line) => self.inner.handle_line(&line),
+                    Incoming::Line(line) => match progress_token(&line) {
+                        None => self.inner.handle_line(&line),
+                        // A call that asks for its progress hears it while it runs.
+                        Some(token) => {
+                            let progress = std::sync::Arc::new(solidcraft_engine::doc::progress::Progress::default());
+                            let done = AtomicBool::new(false);
+                            let app = side_probe(side);
+                            std::thread::scope(|inner| {
+                                let (token, watched, done) = (&token, &*progress, &done);
+                                let teller = inner.spawn(move || tell_progress(token, watched, done, app, output));
+                                let reply =
+                                    solidcraft_engine::doc::progress::watch(std::sync::Arc::clone(&progress), || self.inner.handle_line(&line));
+                                done.store(true, Ordering::SeqCst);
+                                let _ = teller.join();
+                                reply
+                            })
+                        }
+                    },
                     Incoming::Refused(reply) => Some(reply),
                 };
                 let sent = reply.map_or(Ok(()), |reply| write_line(output, &reply));

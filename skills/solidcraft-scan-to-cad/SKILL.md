@@ -27,6 +27,7 @@ A scan is a mesh body. Read it with `scan.survey {}`, clean and place it, choose
    - `sheet_like`: `scan.flat_template {"outline":"scan"}`.
    - Reconstruct misreads: fit by hand with `scan.fit_plane {}`, `scan.fit_cylinder {}` and `scan.section_sketch {}`, then model.
 7. **Verify** each stage with `scan.deviation {"body": "<model>"}`: `passes` (95% within the tolerance), `max_above` (material missing), `max_below` (extra material), `unmatched` (regions missing). Compare `measure {}` with `own_size`.
+8. **Model by hand or edit:** `reference.md`, "Scans and native features together".
 
 ## Red flags
 
@@ -37,3 +38,4 @@ A scan is a mesh body. Read it with `scan.survey {}`, clean and place it, choose
 | "Fill the holes, it's cleaner" | Read `sheet_like` first. |
 | "The scan is tiny" | `units_hint`: saved in metres or inches. |
 | "Guess a point on the scan" | Use a `point` from `scan.find_all {}` shapes. |
+| "`measure` matches" | `scan.deviation {}` too. |

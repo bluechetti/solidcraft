@@ -112,7 +112,13 @@ fn a_rounded_block_is_extruded_back_from_its_scan() {
     assert_eq!(profile["dof"].as_u64(), Some(0), "{profile}");
     // Its sizes read as designed and placed from the part's origin: the straight sides 30 and 20,
     // the rounds R 5, the corners at whole millimetres from the origin, each with its measure.
-    let sizes: Vec<f64> = s.doc.params.iter().filter(|q| q.model && q.comment.starts_with("measured ")).map(|q| s.doc.eval(&q.expr, solidcraft_doc::expr::Kind::Length).unwrap()).collect();
+    let sizes: Vec<f64> = s
+        .doc
+        .params
+        .iter()
+        .filter(|q| q.model && q.comment.starts_with("measured "))
+        .map(|q| s.doc.eval(&q.expr, solidcraft_doc::expr::Kind::Length).unwrap())
+        .collect();
     for size in [30.0, 20.0, 5.0] {
         assert!(sizes.iter().any(|v| (v - size).abs() < 1e-9), "{size} in {sizes:?}");
     }
@@ -478,6 +484,9 @@ fn a_drafted_shelled_housing_is_extruded_shelled_and_filleted_back_from_its_scan
         let done = run(&mut s, step["command"].as_str().unwrap(), step["params"].clone());
         assert_ne!(done["fit"]["verdict"], "worse", "{done}");
     }
+    // Its draft and depth read as designed: 2° and 30, not the hundredths the scan measures.
+    let extrude = s.doc.features.iter().find(|f| f.name.starts_with("Extrude It")).map(|f| serde_json::to_string(f).unwrap()).unwrap();
+    assert!(extrude.contains("\"-2 deg\"") && extrude.contains("30"), "{extrude}");
     let v = volume(&s, &format!("{scan} Reconstructed"));
     assert!((v - expected).abs() < 0.01 * expected, "{v} against the housing's {expected}");
 }

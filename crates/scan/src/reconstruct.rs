@@ -194,6 +194,9 @@ pub struct Revolve {
 pub struct Spokes {
     pub count: usize,
     pub faces: Vec<usize>,
+    /// Where the spokes lie round the axis (a face of each), radians, low to high (about the axis
+    /// in [`crate::in_plane`]'s directions square to it).
+    pub angles: Vec<f64>,
     /// The share of the shapes' area they cover.
     pub share: f64,
 }
@@ -904,7 +907,12 @@ pub fn spokes_about(faces: &[Face], axis: &Axis, members: &[usize]) -> Option<Sp
     let mut chosen: Vec<usize> = groups.iter().filter(|g| g.0 == count || g.0 == 2 * count).flat_map(|g| g.1.iter().copied()).collect();
     chosen.sort_unstable();
     let area: f64 = chosen.iter().map(|&k| faces[k].area).sum();
-    Some(Spokes { count, faces: chosen, share: area / total.max(1e-300) })
+    // Where the spokes are: one face of each, the largest group with one per spoke (a group of
+    // twice as many has a spoke's two flanks, and halfway between those is inside the spoke).
+    let one_each = groups.iter().filter(|g| g.0 == count).max_by(|a, b| a.2.total_cmp(&b.2))?;
+    let mut angles: Vec<f64> = seen.iter().filter(|f| one_each.1.contains(&f.k)).map(|f| f.angle).collect();
+    angles.sort_by(f64::total_cmp);
+    Some(Spokes { count, faces: chosen, angles, share: area / total.max(1e-300) })
 }
 
 /// What a shape is, for telling alike from unlike: its kind, its size, the direction it holds.
@@ -1857,7 +1865,8 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     let prisms = shared(prisms, &faces, outcome.tolerance);
     let inner: BTreeSet<usize> = shell.iter().flat_map(|w| w.inner.iter().copied()).collect();
     let repeats = repeats(&faces);
-    let turned = revolve.as_ref().map(|r| crate::profile::turned_profile_of(scan, outcome, &faces, &same, size, r));
+    let between = spokes.as_ref().map(|sp| crate::profile::between_spokes(&sp.angles)).unwrap_or_default();
+    let turned = revolve.as_ref().map(|r| crate::profile::turned_profile_of(scan, outcome, &faces, &same, size, r, &between));
     let turned_unread = turned.as_ref().and_then(|t| t.as_ref().err().cloned());
     // The faces the turned profile runs along. A bore about the axis the profile does not run
     // along (one read off a slice that comes down to the axis there) is no part of the revolved

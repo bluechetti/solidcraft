@@ -13,6 +13,8 @@ pub struct Ticket {
     writes_file: AtomicBool,
     /// Tells its worker to stop: set by the window when it hands the request to one.
     stopper: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    /// Says how far its work is, in a few words (`control.running`): set with the stopper.
+    reporter: Mutex<Option<Box<dyn Fn() -> Option<String> + Send + Sync>>>,
 }
 
 impl std::fmt::Debug for Ticket {
@@ -81,6 +83,16 @@ impl Ticket {
         if self.is_cancelled() {
             self.stop_worker();
         }
+    }
+
+    /// How far the work computing it is reads from `report` ([`Ticket::progress`]).
+    pub fn on_progress(&self, report: impl Fn() -> Option<String> + Send + Sync + 'static) {
+        *self.reporter.lock().unwrap_or_else(PoisonError::into_inner) = Some(Box::new(report));
+    }
+
+    /// How far its work is, in a few words; `None` when nothing reports it.
+    pub fn progress(&self) -> Option<String> {
+        self.reporter.lock().unwrap_or_else(PoisonError::into_inner).as_ref().and_then(|report| report())
     }
 
     /// The window hands it to a worker (`writes_file`: an export on a copy).

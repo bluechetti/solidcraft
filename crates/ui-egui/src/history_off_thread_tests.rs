@@ -579,6 +579,66 @@ fn second_hole() -> serde_json::Value {
     json!({"command": "solid.cylinder", "params": {"base": [50, 10, -1], "axis": [0, 0, 1], "radius": 3, "height": 20, "operation": "cut"}})
 }
 
+/// An agent's scan command computes once on a copy, off the window thread, and its result is
+/// adopted: the window keeps answering meanwhile, the chip names the command, and what it read
+/// (Find All's shapes) is the window's once it is in.
+#[test]
+fn an_agents_scan_command_computes_on_a_copy_and_is_adopted() {
+    let (mut h, tx) = agent_harness();
+    let dir = std::env::temp_dir().join(format!("solidcraft-adopt-scan-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // A box 20 mm a side of small triangles: a scan.
+    let mut stl = String::from("solid b\n");
+    let n = 8;
+    let at = |i: u32| -10.0 + 20.0 * f64::from(i) / f64::from(n);
+    for axis in 0..3 {
+        for side in [-10.0, 10.0] {
+            for i in 0..n {
+                for j in 0..n {
+                    let corner = |a: u32, b: u32| {
+                        let (u, v) = (at(a), at(b));
+                        match axis {
+                            0 => [side, u, v],
+                            1 => [u, side, v],
+                            _ => [u, v, side],
+                        }
+                    };
+                    for tri in [[corner(i, j), corner(i + 1, j), corner(i + 1, j + 1)], [corner(i, j), corner(i + 1, j + 1), corner(i, j + 1)]] {
+                        stl += "facet normal 0 0 0\nouter loop\n";
+                        for p in tri {
+                            stl += &format!("vertex {} {} {}\n", p[0] + 40.0, p[1], p[2] + 60.0);
+                        }
+                        stl += "endloop\nendfacet\n";
+                    }
+                }
+            }
+        }
+    }
+    stl += "endsolid b\n";
+    let path = dir.join("box.stl");
+    std::fs::write(&path, stl).unwrap();
+    h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+    assert!(h.app.session.scan_shapes.is_none());
+    let (release, gate) = std::sync::mpsc::channel();
+    h.app.apply_gate = Some(std::sync::Arc::new(std::sync::Mutex::new(gate)));
+    let found = ask(&tx, "engine.execute", json!({"command": "scan.find_all", "params": {}}));
+    h.frames(1);
+    let (_, label) = h.app.agent_computing().expect("Find All computes off the window thread");
+    assert_eq!(label, "Find All");
+    // The window answers while it computes.
+    let ui = ask(&tx, "ui.inspect", json!({}));
+    assert_eq!(reply_to(&mut h, &ui)["ok"], true);
+    assert!(h.app.session.scan_shapes.is_none(), "nothing adopted before it is in");
+    release.send(()).unwrap();
+    let reply = reply_to(&mut h, &found);
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert!(reply["result"]["shapes"].as_array().is_some_and(|s| !s.is_empty()), "{reply}");
+    let shapes = h.app.session.scan_shapes.clone().expect("what it read is the window's");
+    assert!(shapes.shown && shapes.current(&h.app.session));
+    assert!(h.app.agent_computing().is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// While an agent's batch computes, the chip says which step it is on, of how many, and that
 /// step's command (`2/3 · Cylinder`); a single command shows just its name. The chip is what
 /// shows with the operations panel off.

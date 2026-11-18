@@ -322,7 +322,9 @@ fn shapes(s: &mut Session, p: &Value, cmd: &str, show: bool) -> Result<Arc<ScanS
             return Err(bad(cmd, format!("`{name}` has no triangles")));
         }
         let scan = Scan::new(positions, triangles);
-        let outcome = segment::find_all(&scan, &segment::Options { least_tolerance: least, ..segment::Options::default() }, &|| false);
+        // Cancel (control.cancel, the app's Cancel) stops it at its next region.
+        let stop = || solidcraft_kernel::watch::current().is_some_and(|w| w.cancelled());
+        let outcome = segment::find_all(&scan, &segment::Options { least_tolerance: least, ..segment::Options::default() }, &stop);
         let reading = reconstruct::read(&scan, &outcome);
         let mut regions = vec![u32::MAX; triangles.len()];
         for (k, segment) in outcome.segments.iter().enumerate() {
@@ -846,6 +848,12 @@ fn draw(sk: &mut Sketch, outline: &Outline, level: &Level<'_>, drawn: &mut Drawn
     Ok(())
 }
 
+/// A draft of `radians` in degrees as designed: within 0.05° of a whole, half or tenth of a degree,
+/// that.
+fn drafted(radians: f64) -> f64 {
+    solidcraft_scan::hole_form::snapped(radians.to_degrees(), 0.05)
+}
+
 /// `plane` slid in itself so its origin is where the world's origin falls on it (along its X
 /// only when `x_only`: a turned profile's X is its axis), and `outlines` moved with it, so the
 /// profile's place is measured from the part's own origin, not from where the scan was read.
@@ -1111,7 +1119,7 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         json!({"sketch": sketch, "distance": depth, "direction": "symmetric", "name": format!("Extrude It {}", index + 1)})
     } else {
         // Sketched at the low end, the walls leaning in (a positive draft) as it goes up.
-        json!({"sketch": sketch, "distance": depth, "direction": "positive", "taper": format!("{} deg", -prism.draft.to_degrees()),
+        json!({"sketch": sketch, "distance": depth, "direction": "positive", "taper": format!("{} deg", -drafted(prism.draft)),
             "corner": "preserve_curvature", "name": format!("Extrude It {}", index + 1)})
     };
     if let Some(material) = material_profiles(s, sketch) {

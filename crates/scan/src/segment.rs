@@ -841,6 +841,9 @@ fn shapes_on(
             stopped = true;
             break;
         }
+        // How much of the scan the shapes found so far take, in tenths of a percent: not how far
+        // the search is (an organic part never reaches 100), so the step says so.
+        crate::progress::stage("finding shapes, the scan in shapes so far", (1000.0 * found_area / total.max(f64::MIN_POSITIVE)) as usize, 1000);
         seeds += 1;
         let patch = reading.seed_patch(seed, reach, options);
         for &t in &patch {
