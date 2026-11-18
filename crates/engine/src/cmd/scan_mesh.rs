@@ -132,11 +132,24 @@ pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let sharp = bool_(p, "sharp").unwrap_or(false);
+    let offset = match crate::params::expr(p, "offset") {
+        Some(e) => {
+            let v = s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("offset: {e}")))?;
+            if !v.is_finite() {
+                return Err(bad(cmd, "`offset` must be a length"));
+            }
+            Some(v)
+        }
+        None => None,
+    };
     let area = super::flatten::step_area(s, p, &body, cmd)?;
     if area.is_some() && !with.is_empty() {
         return Err(bad(cmd, "`with` fuses other scans in over the whole scan, not an area: give one or the other"));
     }
-    let step = CleanStep::Remesh { cell, sharp, with: with.iter().cloned().map(Into::into).collect(), area };
+    if area.is_some() && offset.is_some() {
+        return Err(bad(cmd, "`offset` makes the whole scan again that far off it, not an area: give one or the other"));
+    }
+    let step = CleanStep::Remesh { cell, sharp, offset, with: with.iter().cloned().map(Into::into).collect(), area };
     let (done, feature) = super::clean::apply(s, p, &body, step, cmd)?;
     let (vertices, triangles) = done.body.triangle_mesh().map_or((0, 0), |(p, t)| (p.len(), t.len()));
     let Report::Remesh { before, cell, new_rms, new_max, scan_rms, scan_p95, uncovered } = done.report else {
@@ -150,6 +163,7 @@ pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
         vertices,
         cell,
         sharp,
+        offset: offset.unwrap_or(0.0),
         new_rms,
         new_max,
         scan_rms,

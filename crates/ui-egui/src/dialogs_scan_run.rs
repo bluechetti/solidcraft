@@ -118,6 +118,9 @@ pub struct ScanRun {
     pub cell: Option<f64>,
     /// Remesh, Combine Scans: sharp edges and corners stay sharp.
     pub sharp: bool,
+    /// Remesh: how far off the scan the step being edited makes it (kept as it was; the dialog
+    /// has no control for it yet), in mm.
+    pub offset: Option<f64>,
     /// Repair Mesh: faces passing through each other are taken off and the holes closed.
     pub crossings: bool,
     /// Mesh from Points: 0 closes the surface over sparse places, 1 leaves them open.
@@ -153,6 +156,7 @@ impl ScanRun {
             id,
             cell: None,
             sharp: false,
+            offset: None,
             crossings: true,
             sparse: 1,
             align: true,
@@ -685,6 +689,9 @@ pub fn commands(app: &SolveApp, k: &ScanRun, inputs: &[SelInput]) -> Result<Vec<
                 p["cell"] = c.clone();
             }
             p["sharp"] = json!(k.sharp);
+            if let Some(o) = k.offset {
+                p["offset"] = json!(format!("{o} mm"));
+            }
             p
         }
         "scan.repair" => json!({"body": need(0, "ui.scan_run_pick_scan")?, "crossings": k.crossings}),

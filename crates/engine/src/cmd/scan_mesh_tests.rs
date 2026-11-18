@@ -142,6 +142,40 @@ fn a_scan_is_remeshed_in_place_keeping_its_shape() {
     assert_eq!(mesh_of(&s, &scan).1.len(), before_triangles.len());
 }
 
+/// The block with its boss made again a parameter off its surface (the step keeps the length the
+/// parameter had, as a Clean step keeps its numbers): grown by about its area times the offset,
+/// shrunk by about as much with a negative one, the reply saying how far off it is and how near
+/// that its surface lies; an offset of an area is refused.
+#[test]
+fn a_scan_is_offset_off_its_surface() {
+    let (positions, triangles) = part_mesh();
+    let mut s = Session::default();
+    let scan = insert(&mut s, &positions, &triangles, "offset");
+    let (before, before_triangles) = mesh_of(&s, &scan);
+    let v0 = volume(&before, &before_triangles);
+    let area: f64 = before_triangles
+        .iter()
+        .map(|t| {
+            let [a, b, c] = t.map(|i| before[i as usize]);
+            0.5 * (b - a).cross(c - a).len()
+        })
+        .sum();
+    run(&mut s, "parameters.add", json!({"name": "gap", "expression": "1.5 mm"}));
+    let reply = run(&mut s, "scan.remesh", json!({"cell": "0.75 mm", "offset": "gap"}));
+    assert!((reply["offset"].as_f64().unwrap() - 1.5).abs() < 1e-9, "{reply}");
+    assert!(reply["new_rms"].as_f64().unwrap() < 0.05 && reply["new_max"].as_f64().unwrap() < 0.3, "1.5 mm off the scan: {reply}");
+    let (grown, grown_triangles) = mesh_of(&s, &scan);
+    let v = volume(&grown, &grown_triangles);
+    assert!(v > v0 + area * 1.5 && v < v0 + area * 1.5 * 1.15, "grown: {v} from {v0}, area {area}");
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "scan.remesh", json!({"cell": "0.75 mm", "offset": "-gap"}));
+    let (shrunk, shrunk_triangles) = mesh_of(&s, &scan);
+    let v = volume(&shrunk, &shrunk_triangles);
+    assert!(v < v0 - area * 1.5 * 0.9 && v > v0 - area * 1.5 * 1.1, "shrunk: {v} from {v0}, area {area}");
+    let refused = s.execute("scan.remesh", &json!({"offset": "1 mm", "point": [15, 10, 10], "radius": 6})).unwrap_err().to_string();
+    assert!(refused.contains("not an area"), "{refused}");
+}
+
 /// Two passes of the block, each of part of it and laid where they belong, fused into the first.
 #[test]
 fn two_passes_are_fused_into_one_scan() {

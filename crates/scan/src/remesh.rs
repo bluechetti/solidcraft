@@ -67,6 +67,8 @@ impl std::fmt::Display for RemeshError {
 const BAND: i64 = 2;
 /// The most grid points read.
 const MOST_NODES: usize = 40_000_000;
+/// The farthest an offset reaches, in cells: past it the band is mostly empty space.
+const MOST_OFFSET_CELLS: f64 = 200.0;
 /// The most scan vertices the error is measured at.
 const MEASURED: usize = 200_000;
 /// A piece with fewer than this share of the triangles is looked at: it stays only if it lies on a
@@ -282,10 +284,28 @@ fn meeting(points: &[Vec3], normals: &[Vec3]) -> Option<Vec3> {
 
 /// `sources` made again as one surface at `settings`.
 pub fn remesh(sources: &[Scan], settings: &Settings) -> Result<Remeshed, RemeshError> {
+    remesh_at(sources, settings, 0.0)
+}
+
+/// The scans made again `offset` off their surface (positive the way their faces point, out of
+/// a closed part; negative into it): the surface where the averaged distance is `offset`, read as
+/// [`remesh`] reads the one where it is 0, the band of grid points widened by the offset. A
+/// distance can't cross itself, so an offset into a hollow or round a tight bend comes out whole
+/// where moving each point along its normal would fold. Sharp edges are not kept sharp (an edge
+/// grown outward is rounded, as an offset of it is); a scan's open rim is offset as a rim. The
+/// errors reported are how far the new surface is from `|offset|` off the scans.
+pub fn remesh_at(sources: &[Scan], settings: &Settings, offset: f64) -> Result<Remeshed, RemeshError> {
     let cell = settings.cell;
-    if !(cell.is_finite() && cell > 0.0) || sources.iter().all(|s| s.triangle_count() == 0) {
+    if !(cell.is_finite() && cell > 0.0) || !offset.is_finite() || sources.iter().all(|s| s.triangle_count() == 0) {
         return Err(RemeshError::Empty);
     }
+    // How many cells the offset reaches past the band round the scans.
+    let extra = (offset.abs() / cell).ceil();
+    if extra > MOST_OFFSET_CELLS {
+        return Err(RemeshError::TooFine);
+    }
+    let extra = extra as i64;
+    let sharp = settings.sharp && offset == 0.0;
     // The cells the scans' surfaces pass through: each triangle's points at half a cell apart,
     // along two of its sides. How many that is is known first, so a cell far too fine is refused
     // before anything is read.
@@ -326,13 +346,13 @@ pub fn remesh(sources: &[Scan], settings: &Settings) -> Result<Remeshed, RemeshE
     // The grid points read: the corners of those cells and round them.
     let mut nodes = occupied.clone();
     for axis in 0..3 {
-        nodes = dilated(&nodes, axis, BAND);
+        nodes = dilated(&nodes, axis, BAND + extra);
         if nodes.len() > MOST_NODES {
             return Err(RemeshError::TooFine);
         }
     }
     let prepared: Vec<Source> = sources.iter().map(|s| Source::new(*s)).collect();
-    let reach = BAND as f64 * cell;
+    let reach = (BAND + extra) as f64 * cell;
     let point = |k: u64| {
         let (i, j, l) = unpack(k);
         Vec3::new(i as f64 * cell, j as f64 * cell, l as f64 * cell)
@@ -347,7 +367,7 @@ pub fn remesh(sources: &[Scan], settings: &Settings) -> Result<Remeshed, RemeshE
                 count += 1;
             }
         }
-        if count > 0 { (sum / count as f64) as f32 } else { f32::NAN }
+        if count > 0 { (sum / count as f64 - offset) as f32 } else { f32::NAN }
     });
     let index: HashMap<u64, u32> = nodes.iter().enumerate().map(|(i, &k)| (k, i as u32)).collect();
     let value = |i: i64, j: i64, k: i64| index.get(&pack(i, j, k)).map(|&at| values[at as usize]).filter(|v| v.is_finite());
@@ -357,7 +377,7 @@ pub fn remesh(sources: &[Scan], settings: &Settings) -> Result<Remeshed, RemeshE
     // its cells read alike), so two sheets that pass through one cell are not glued together.
     let mut candidates: Vec<u64> = occupied.clone();
     for axis in 0..3 {
-        candidates = dilated(&candidates, axis, 1);
+        candidates = dilated(&candidates, axis, 1 + extra);
     }
     let made: Vec<Vec<(u16, Vec3)>> = par::map(candidates.len(), |c| {
         let (i, j, k) = unpack(candidates[c]);
@@ -439,7 +459,7 @@ pub fn remesh(sources: &[Scan], settings: &Settings) -> Result<Remeshed, RemeshE
             .into_iter()
             .map(|(_, mask, crossings)| {
                 let mean = crossings.iter().fold(Vec3::ZERO, |s, p| s + *p) / crossings.len() as f64;
-                if !settings.sharp {
+                if !sharp {
                     return (mask, mean);
                 }
                 // Where the planes of the surfaces at the crossings meet, kept within the cell: each
@@ -546,6 +566,7 @@ pub fn remesh(sources: &[Scan], settings: &Settings) -> Result<Remeshed, RemeshE
             let mut gaps: Vec<f64> = vertices
                 .iter()
                 .filter_map(|&v| prepared.iter().filter_map(|s| s.tree.nearest(*positions.get(v as usize)?)).map(|(d, _)| d).min_by(f64::total_cmp))
+                .map(|d| (d - offset.abs()).abs())
                 .collect();
             gaps.sort_by(f64::total_cmp);
             gaps.get(gaps.len() / 2).is_some_and(|middle| *middle <= ON_SCAN * cell)
@@ -594,22 +615,23 @@ pub fn remesh(sources: &[Scan], settings: &Settings) -> Result<Remeshed, RemeshE
         let mended = crate::repair::repair(&Scan::new(&out_positions, &out_triangles), false);
         (mended.positions, mended.triangles)
     };
-    let (new_rms, new_max, scan_rms, scan_p95, uncovered) = measure(&out_positions, &out_triangles, &prepared, cell);
+    let (new_rms, new_max, scan_rms, scan_p95, uncovered) = measure(&out_positions, &out_triangles, &prepared, cell, offset.abs());
     Ok(Remeshed { positions: out_positions, triangles: out_triangles, new_rms, new_max, scan_rms, scan_p95, uncovered, dropped })
 }
 
-/// How far the new surface is from the scans, both ways.
-fn measure(positions: &[Vec3], triangles: &[[u32; 3]], sources: &[Source], cell: f64) -> (f64, f64, f64, f64, f64) {
+/// How far the new surface is from `off` off the scans, both ways.
+fn measure(positions: &[Vec3], triangles: &[[u32; 3]], sources: &[Source], cell: f64, off: f64) -> (f64, f64, f64, f64, f64) {
     let sampled = crate::thinned(positions, MEASURED);
-    let to_scans: Vec<f64> =
-        par::map(sampled.len(), |i| sources.iter().filter_map(|s| s.tree.nearest(sampled[i]).map(|h| h.0)).fold(f64::INFINITY, f64::min));
+    let to_scans: Vec<f64> = par::map(sampled.len(), |i| {
+        (sources.iter().filter_map(|s| s.tree.nearest(sampled[i]).map(|h| h.0)).fold(f64::INFINITY, f64::min) - off).abs()
+    });
     let rms = |d: &[f64]| (d.iter().filter(|x| x.is_finite()).map(|x| x * x).sum::<f64>() / d.len().max(1) as f64).sqrt();
     let new_max = to_scans.iter().copied().filter(|x| x.is_finite()).fold(0.0, f64::max);
     let mesh = solidcraft_geom::Mesh { positions: positions.to_vec(), triangles: triangles.to_vec(), ..Default::default() };
     let tree = TriangleTree::new(&mesh);
     let vertices: Vec<Vec3> = sources.iter().flat_map(|s| s.scan.points()).collect();
     let picked = crate::thinned(&vertices, MEASURED);
-    let mut from_scans: Vec<f64> = par::map(picked.len(), |i| tree.nearest(picked[i]).map_or(f64::INFINITY, |h| h.0));
+    let mut from_scans: Vec<f64> = par::map(picked.len(), |i| tree.nearest(picked[i]).map_or(f64::INFINITY, |h| (h.0 - off).abs()));
     let uncovered = from_scans.iter().filter(|d| **d > 2.0 * cell).count() as f64 / from_scans.len().max(1) as f64;
     from_scans.sort_by(f64::total_cmp);
     let p95 = from_scans.get((from_scans.len() * 95 / 100).min(from_scans.len().saturating_sub(1))).copied().unwrap_or(0.0);
@@ -673,6 +695,35 @@ mod tests {
         assert!(near > 0.999 && sharp.new_max < 0.25, "{near} within 0.02, {} at most", sharp.new_max);
         let smooth = remesh(&[scan], &Settings { cell: 0.5, sharp: false }).unwrap();
         assert!(smooth.new_max > sharp.new_max, "smooth edges stand off the box's own: {} {}", smooth.new_max, sharp.new_max);
+    }
+
+    /// A box offset outward is the box grown round, its edges quarter cylinders and its corners
+    /// eighths of a sphere of the offset; inward it is the box shrunk, edges still sharp: each
+    /// closed, its volume as those shapes', and its points the offset off the scan.
+    #[test]
+    fn a_box_offset_out_is_rounded_and_in_is_a_smaller_box() {
+        let (positions, triangles) = fine_cuboid(Vec3::new(0.3, 0.1, 0.2), Vec3::new(30.3, 20.1, 10.2), 6);
+        let axis = Vec3::new(0.2, 0.3, 0.9).normalized().unwrap();
+        let moved = turned(&positions, axis, 0.4, Vec3::ZERO);
+        let scan = Scan::new(&moved, &triangles);
+        let d = 2.0;
+        let out = remesh_at(&[scan], &Settings { cell: 0.4, sharp: false }, d).unwrap();
+        assert!(is_closed(&out.triangles));
+        let area = 2.0 * (30.0 * 20.0 + 30.0 * 10.0 + 20.0 * 10.0);
+        let edges = 4.0 * (30.0 + 20.0 + 10.0);
+        let grown = 6000.0 + area * d + edges * std::f64::consts::PI * d * d / 4.0 + 4.0 / 3.0 * std::f64::consts::PI * d.powi(3);
+        let v = volume(&out.positions, &out.triangles);
+        assert!((v - grown).abs() < 0.01 * grown, "grown round: {v} against {grown}");
+        assert!(out.new_rms < 0.05 && out.new_max < 0.2, "{d} mm off the box: {} {}", out.new_rms, out.new_max);
+        let inner = remesh_at(&[scan], &Settings { cell: 0.4, sharp: false }, -d).unwrap();
+        assert!(is_closed(&inner.triangles));
+        let shrunk = 26.0 * 16.0 * 6.0;
+        let v = volume(&inner.positions, &inner.triangles);
+        assert!((v - shrunk).abs() < 0.02 * shrunk, "shrunk: {v} against {shrunk}");
+        // Sharp is not kept on an offset, and hostile offsets are refused.
+        assert_eq!(remesh_at(&[scan], &Settings { cell: 0.4, sharp: true }, d).unwrap().positions.len(), out.positions.len());
+        assert_eq!(remesh_at(&[scan], &Settings { cell: 0.4, sharp: false }, f64::NAN), Err(RemeshError::Empty));
+        assert_eq!(remesh_at(&[scan], &Settings { cell: 0.01, sharp: false }, 50.0), Err(RemeshError::TooFine));
     }
 
     /// Two passes of a shaft, each of half of it overlapping in the middle, fused into one closed

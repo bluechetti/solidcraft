@@ -143,6 +143,11 @@ pub struct ScanRemeshParams {
     /// false.
     #[serde(default)]
     pub sharp: Option<bool>,
+    /// Make the scan again this far off its surface, positive the way its faces point (out of a
+    /// closed part), negative into it: a limb grown for a liner, shrunk for a socket's fit. The
+    /// whole scan only (not with an area); edges are not kept sharp. Default: 0, on the scan.
+    #[serde(default)]
+    pub offset: Option<super::types::LengthExpr>,
     /// Only part of the scan (its triangles made again as even triangles of about `cell`, the
     /// rest kept; not with `with`), a point on it with `grow` (true or degrees) or `radius` (mm).
     #[serde(default)]
@@ -172,11 +177,13 @@ pub struct ScanRemeshResult {
     pub before: usize,
     pub triangles: usize,
     pub vertices: usize,
-    /// The cell and whether edges were kept sharp.
+    /// The cell, whether edges were kept sharp, and how far off the scan it was made (0: on it).
     pub cell: f64,
     pub sharp: bool,
-    /// The new vertices' distance from the scans (rms, largest) and the scans' from the new surface
-    /// (rms, 95th percentile), in mm; the share of the scans more than two cells from it.
+    pub offset: f64,
+    /// How far the new vertices are from `offset` off the scans (rms, largest) and the scans from
+    /// `offset` off the new surface (rms, 95th percentile), in mm; the share of the scans more than
+    /// two cells from that.
     pub new_rms: f64,
     pub new_max: f64,
     pub scan_rms: f64,
