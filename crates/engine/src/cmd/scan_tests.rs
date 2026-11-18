@@ -3116,6 +3116,16 @@ fn thicken_makes_a_free_form_network_of_curved_faces_a_solid() {
     run(&mut s, "parameters.change", json!({"name": "wall", "expression": "5 mm"}));
     let v5 = volume(&s);
     assert!(near(v5, 5.0), "it follows the wall: {v5}");
+    // A boss extruded down to the cup's curved top joins it (the faces Thicken sews face out of
+    // the solid, as SMLib's cut of the tool by the cup needs): a cylinder r 10 from z 60 down to
+    // the sphere of radius 45.
+    run(&mut s, "sketch.create", json!({"plane": "XY", "offset": 60, "name": "Top"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "diameter": 20}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Top", "to": [0, 0, radius + 5.0], "operation": "join", "targets": ["Cup"]}));
+    let boss = std::f64::consts::PI * 100.0 * 60.0 - 2.0 * std::f64::consts::PI / 3.0 * (45f64.powi(3) - (45f64.powi(2) - 100.0).powf(1.5));
+    let v = volume(&s);
+    assert!((v - v5 - boss).abs() < 0.02 * boss, "the boss up to the curved face: {} against {boss}", v - v5);
 }
 
 /// A Free Form faces out of the scan it is made on, whichever way round its corners are clicked or

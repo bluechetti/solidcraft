@@ -1611,14 +1611,28 @@ pub fn thickened(faces: &[NurbsSurface], near: f64, far: f64) -> Result<Vec<Nurb
     let inner = offset_network(faces, &joins, near).ok_or(NetworkError::Failed)?;
     let outer = offset_network(faces, &joins, far).ok_or(NetworkError::Failed)?;
     let (a, b) = (network_points(&inner, &joins), network_points(&outer, &joins));
-    let mut out = inner;
-    out.extend(outer);
+    // Every face turned to face out of the solid, as a solid's faces do: the `far` network the way
+    // it moved, the `near` one against it, each strip away from its face.
+    let way = orientations(faces, &joins);
+    let up = if far > near { 1.0 } else { -1.0 };
+    let turned = |s: NurbsSurface, flip: bool| if flip { crate::free_form::turned_over(&s).unwrap_or(s) } else { s };
+    let mut out: Vec<NurbsSurface> = inner.into_iter().enumerate().map(|(f, s)| turned(s, up * way[f] > 0.0)).collect();
+    out.extend(outer.into_iter().enumerate().map(|(f, s)| turned(s, up * way[f] < 0.0)));
     for &(f, side) in &joins.open {
         let ids = joins.side(faces, f, side);
-        let knots = faces.get(f).map(|s| s.knots()[side.along()].clone()).ok_or(NetworkError::Failed)?;
+        let face = faces.get(f).ok_or(NetworkError::Failed)?;
+        let knots = face.knots()[side.along()].clone();
         let near_side: Vec<Vec3> = ids.iter().map(|p| a[*p]).collect();
         let far_side: Vec<Vec3> = ids.iter().map(|p| b[*p]).collect();
-        out.push(ruled_strip(&near_side, &far_side, &knots).ok_or(NetworkError::Failed)?);
+        let strip = ruled_strip(&near_side, &far_side, &knots).ok_or(NetworkError::Failed)?;
+        // Out of the solid: from the face's middle toward its open side.
+        let [[u0, u1], [v0, v1]] = face.domain();
+        let away = match (side.at(face, 0.5), face.eval(0.5 * (u0 + u1), 0.5 * (v0 + v1)).ok()) {
+            (Some(edge), Some(middle)) => edge - middle,
+            _ => Vec3::ZERO,
+        };
+        let facing = frame(&strip, &points(&strip), 0.5, 0.5).map(|(_, su, sv)| su.cross(sv).dot(away)).unwrap_or(0.0);
+        out.push(turned(strip, facing < 0.0));
     }
     Ok(out)
 }
