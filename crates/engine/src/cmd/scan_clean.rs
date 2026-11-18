@@ -181,6 +181,8 @@ fn in_place(p: &Value) -> bool {
 /// `in_place` written back into the scan's Mesh Import. What it did, and the feature that keeps it.
 pub(super) fn apply(s: &mut Session, p: &Value, body: &str, step: CleanStep, cmd: &str) -> Result<(Cleaned, u64)> {
     step.check().map_err(|e| bad(cmd, e.to_string()))?;
+    // Run with its expressions worked out now; the timeline keeps them as written.
+    let resolved = step.resolved(|e| s.doc.eval(e.as_str(), solidcraft_doc::expr::Kind::Length)).map_err(|e| bad(cmd, e.to_string()))?;
     let (done, component) = {
         let state = s.model.state();
         let scan = state.body(body).ok_or_else(|| bad(cmd, format!("no body `{body}`")))?;
@@ -198,7 +200,7 @@ pub(super) fn apply(s: &mut Session, p: &Value, body: &str, step: CleanStep, cmd
             }
             with.push(&other.body);
         }
-        (scan_clean::clean(&step, &scan.body, &with).map_err(|e| bad(cmd, e.why()))?, s.doc.model_body_component(scan))
+        (scan_clean::clean(&resolved, &scan.body, &with).map_err(|e| bad(cmd, e.why()))?, s.doc.model_body_component(scan))
     };
     if in_place(p) {
         let (positions, triangles) = done.body.triangle_mesh().ok_or_else(|| bad(cmd, "the cleaned scan has no triangles"))?;

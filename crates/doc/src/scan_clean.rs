@@ -79,14 +79,16 @@ pub enum CleanStep {
     /// Remesh: on a grid of `cell` (the scan's typical edge when none), fusing in the scans
     /// `with`; `sharp` keeps edges and corners sharp. Within `area` only when it has one: its
     /// triangles made again as even triangles of about `cell` on the scan as it was, everything
-    /// outside it kept (no scans fused in). With `offset`, the surface made that far off the scan
-    /// (positive the way its faces point; not with an area, not sharp).
+    /// outside it kept (no scans fused in). With `offset` (a length expression, which may name
+    /// parameters: the step follows them), the surface made that far off the scan (positive the
+    /// way its faces point; not with an area, not sharp).
     Remesh {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cell: Option<f64>,
         sharp: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        offset: Option<f64>,
+        #[walk(length = "Offset")]
+        offset: Option<crate::Expr>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         with: Vec<BodyName>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -236,7 +238,7 @@ impl CleanStep {
             CleanStep::Remesh { cell, sharp, offset, with, area } => {
                 let mut p = json!({ "sharp": sharp });
                 if let Some(o) = offset {
-                    p["offset"] = json!(o);
+                    p["offset"] = json!(o.as_str());
                 }
                 if let Some(a) = area {
                     p["area"] = json!(a);
@@ -261,6 +263,26 @@ impl CleanStep {
         }
     }
 
+    /// Whether the step names parameters (a Remesh offset that is not a length written out): it is
+    /// run only from a copy [`CleanStep::resolved`] by the design's values.
+    pub fn needs_values(&self) -> bool {
+        matches!(self, CleanStep::Remesh { offset: Some(e), .. } if !crate::expr::is_literal(e.as_str()))
+    }
+
+    /// The step with its expressions worked out by `length` (a Remesh offset, as a length in mm
+    /// written out), as [`clean`] runs it. An offset that is not a finite length is refused.
+    pub fn resolved(&self, length: impl Fn(&crate::Expr) -> crate::Result<f64>) -> crate::Result<CleanStep> {
+        let mut out = self.clone();
+        if let CleanStep::Remesh { offset: Some(e), .. } = &mut out {
+            let v = length(e)?;
+            if !v.is_finite() {
+                return Err(crate::DocError::Invalid(format!("a Remesh step needs an offset that is a length, not `{}`", e.as_str())));
+            }
+            *e = crate::Expr::new(format!("{v} mm"));
+        }
+        Ok(out)
+    }
+
     /// Settings a step can be run with: numbers that are numbers, within their tool's range.
     pub fn check(&self) -> crate::Result<()> {
         let bad = |why: &str| Err(crate::DocError::Invalid(format!("a {} step {why}", self.title())));
@@ -277,7 +299,6 @@ impl CleanStep {
                 bad("needs an area of the scan's triangles, in order")
             }
             CleanStep::Remesh { area: Some(_), with, .. } if !with.is_empty() => bad("fuses other scans in only over the whole scan, not an area"),
-            CleanStep::Remesh { offset: Some(o), .. } if !o.is_finite() => bad("needs an offset that is a length"),
             CleanStep::Remesh { area: Some(_), offset: Some(_), .. } => bad("offsets only the whole scan, not an area"),
             CleanStep::Reduce { ratio, triangles, max_error, .. } => {
                 if ratio.is_some_and(|r| !(r > 0.0 && r <= 1.0)) {
@@ -374,6 +395,15 @@ fn points_ok(points: &[[f64; 3]]) -> bool {
 
 /// The step done on the scan `scan` (a mesh body), fusing in `with` for a Remesh: worked out once
 /// for the same scans and settings, however many times it is asked for in a row.
+/// A length written out (`-1.2 mm`, `3`), in mm; `None` for one that names anything.
+fn literal_length(e: &crate::Expr) -> Option<f64> {
+    if !crate::expr::is_literal(e.as_str()) {
+        return None;
+    }
+    let none = |_: &str| -> std::result::Result<crate::expr::Value, crate::DocError> { Err(crate::DocError::Invalid("no names".into())) };
+    crate::expr::eval_with(e.as_str(), &none).ok()?.to_kind(crate::expr::Kind::Length).ok().filter(|v| v.is_finite())
+}
+
 pub fn clean(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refused> {
     if let Ok(last) = LAST.lock()
         && let Some(l) = last.as_ref()
@@ -574,6 +604,14 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
             made(&done.positions, triangles, report)
         }
         CleanStep::Remesh { cell, sharp, offset, area, .. } => {
+            // Resolved by the caller (`CleanStep::resolved`): a length written out.
+            let offset = match offset {
+                Some(e) => Some(
+                    literal_length(e)
+                        .ok_or_else(|| Refused::Failed(format!("the offset `{}` was not worked out from the design's parameters", e.as_str())))?,
+                ),
+                None => None,
+            };
             let flags = within(area.as_ref(), on.triangle_count())?;
             let cell = match cell {
                 Some(c) => *c,
@@ -663,11 +701,10 @@ mod tests {
                 with: vec!["other".into()],
                 area: Some(StepArea { triangles: 10, runs: vec![[0, 4]] }),
             },
-            CleanStep::Remesh { cell: None, sharp: false, offset: Some(f64::NAN), with: Vec::new(), area: None },
             CleanStep::Remesh {
                 cell: None,
                 sharp: false,
-                offset: Some(1.0),
+                offset: Some("1 mm".into()),
                 with: Vec::new(),
                 area: Some(StepArea { triangles: 10, runs: vec![[0, 4]] }),
             },
@@ -675,6 +712,15 @@ mod tests {
         for s in &steps {
             assert!(s.check().is_err(), "{s:?}");
         }
+        // A Remesh offset is kept as written, a parameter's name and all, and worked out by the values.
+        let offset = CleanStep::Remesh { cell: None, sharp: false, offset: Some("-gap".into()), with: Vec::new(), area: None };
+        let text = serde_json::to_string(&offset).unwrap();
+        assert_eq!(text, r#"{"op":"remesh","sharp":false,"offset":"-gap"}"#);
+        assert_eq!(serde_json::from_str::<CleanStep>(&text).unwrap(), offset);
+        assert!(offset.needs_values());
+        let resolved = offset.resolved(|_| Ok(-1.5)).unwrap();
+        assert!(!resolved.needs_values() && matches!(&resolved, CleanStep::Remesh { offset: Some(e), .. } if literal_length(e) == Some(-1.5)));
+        assert!(offset.resolved(|_| Ok(f64::NAN)).is_err());
         let fine = CleanStep::Reduce { ratio: Some(0.5), triangles: None, max_error: 0.1, keep_rim: false, area: None };
         fine.check().unwrap();
         let text = serde_json::to_string(&fine).unwrap();

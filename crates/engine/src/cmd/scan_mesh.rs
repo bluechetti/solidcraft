@@ -132,15 +132,17 @@ pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     let sharp = bool_(p, "sharp").unwrap_or(false);
-    let offset = match crate::params::expr(p, "offset") {
+    // Kept as written, so a step whose offset names a parameter follows it; worked out now to say
+    // what it is and refuse what is no length.
+    let (offset, offset_mm) = match crate::params::expr(p, "offset") {
         Some(e) => {
             let v = s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("offset: {e}")))?;
             if !v.is_finite() {
                 return Err(bad(cmd, "`offset` must be a length"));
             }
-            Some(v)
+            (Some(solidcraft_doc::Expr::new(e)), v)
         }
-        None => None,
+        None => (None, 0.0),
     };
     let area = super::flatten::step_area(s, p, &body, cmd)?;
     if area.is_some() && !with.is_empty() {
@@ -163,7 +165,7 @@ pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
         vertices,
         cell,
         sharp,
-        offset: offset.unwrap_or(0.0),
+        offset: offset_mm,
         new_rms,
         new_max,
         scan_rms,

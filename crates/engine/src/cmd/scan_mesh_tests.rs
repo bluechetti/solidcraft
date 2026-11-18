@@ -142,12 +142,12 @@ fn a_scan_is_remeshed_in_place_keeping_its_shape() {
     assert_eq!(mesh_of(&s, &scan).1.len(), before_triangles.len());
 }
 
-/// The block with its boss made again a parameter off its surface (the step keeps the length the
-/// parameter had, as a Clean step keeps its numbers): grown by about its area times the offset,
-/// shrunk by about as much with a negative one, the reply saying how far off it is and how near
-/// that its surface lies; an offset of an area is refused.
+/// The block with its boss made again a parameter off its surface: grown by about its area times
+/// the offset, shrunk by about as much when the parameter turns negative (the step keeps the
+/// expression and follows it), the reply saying how far off it is and how near that its surface
+/// lies; an offset of an area is refused.
 #[test]
-fn a_scan_is_offset_off_its_surface() {
+fn a_scan_is_offset_by_a_parameter() {
     let (positions, triangles) = part_mesh();
     let mut s = Session::default();
     let scan = insert(&mut s, &positions, &triangles, "offset");
@@ -167,8 +167,12 @@ fn a_scan_is_offset_off_its_surface() {
     let (grown, grown_triangles) = mesh_of(&s, &scan);
     let v = volume(&grown, &grown_triangles);
     assert!(v > v0 + area * 1.5 && v < v0 + area * 1.5 * 1.15, "grown: {v} from {v0}, area {area}");
-    run(&mut s, "edit.undo", json!({}));
-    run(&mut s, "scan.remesh", json!({"cell": "0.75 mm", "offset": "-gap"}));
+    let step = s.doc.features.iter().rev().find_map(|f| match &f.kind {
+        solidcraft_doc::FeatureKind::ScanClean { step, .. } => Some(step.clone()),
+        _ => None,
+    });
+    assert!(matches!(&step, Some(solidcraft_doc::scan_clean::CleanStep::Remesh { offset: Some(e), .. }) if e.as_str() == "gap"), "{step:?}");
+    run(&mut s, "parameters.change", json!({"name": "gap", "expression": "-1.5 mm"}));
     let (shrunk, shrunk_triangles) = mesh_of(&s, &scan);
     let v = volume(&shrunk, &shrunk_triangles);
     assert!(v < v0 - area * 1.5 * 0.9 && v > v0 - area * 1.5 * 1.1, "shrunk: {v} from {v0}, area {area}");

@@ -102,7 +102,8 @@ pub fn refill(kind: &mut Kind, step: &CleanStep) {
         (Kind::ScanRun(k), CleanStep::Remesh { cell, sharp, offset, area, .. }) if k.id == "scan.remesh" => {
             k.cell = *cell;
             k.sharp = *sharp;
-            k.offset = *offset;
+            k.offset = None;
+            k.offset_expr = offset.as_ref().map(|e| e.as_str().to_owned());
             k.kept = area.as_ref().and_then(|a| serde_json::to_value(a).ok());
         }
         (Kind::ScanDenoise(k), CleanStep::Denoise { strength, area }) => {

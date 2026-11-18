@@ -10323,6 +10323,10 @@ fn eval_feature(
         }
         FeatureKind::ScanClean { body, step } => {
             step.check()?;
+            // Its expressions (a Remesh offset) worked out from the design's values: the step
+            // follows them, and a scan's run keeps this copy to make the scan again from.
+            let resolved = step.resolved(|e| val(vals, e.as_str(), Kind::Length))?;
+            let step = &resolved;
             let index = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let source = st.bodies.get(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let (input, color, made_by) = (source.body.clone(), source.body.color(), source.feature);

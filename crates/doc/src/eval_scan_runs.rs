@@ -161,6 +161,10 @@ pub(crate) fn whole_last(results: &mut [FeatureResult]) {
 /// or as a run's thinned scan.
 pub(crate) fn stand_in(before: &ModelState, f: &Feature) -> Option<ModelState> {
     let FeatureKind::ScanClean { body, step } = &f.kind else { return None };
+    // A step that names parameters is run from the values of the design: none stand in for it.
+    if step.needs_values() {
+        return None;
+    }
     let name = body.0.as_str();
     let scan = before.body(name)?;
     let mut with = Vec::new();
