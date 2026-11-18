@@ -104,6 +104,8 @@ struct Source<'a> {
     /// triangle) between such copies, lowest first.
     weld: Vec<u32>,
     open: HashSet<(u32, u32)>,
+    /// The ends of those open edges.
+    rim: HashSet<u32>,
 }
 
 impl<'a> Source<'a> {
@@ -130,8 +132,9 @@ impl<'a> Source<'a> {
                 *uses.entry((p.min(q), p.max(q))).or_default() += 1;
             }
         }
-        let open = uses.into_iter().filter(|(_, n)| *n == 1).map(|(e, _)| e).collect();
-        Source { tree: TriangleTree::new(&mesh), normals, weld, open, scan }
+        let open: HashSet<(u32, u32)> = uses.into_iter().filter(|(_, n)| *n == 1).map(|(e, _)| e).collect();
+        let rim = open.iter().flat_map(|&(a, b)| [a, b]).collect();
+        Source { tree: TriangleTree::new(&mesh), normals, weld, open, rim, scan }
     }
 
     /// The point of the surface nearest `p` within `reach`: its distance, where it is, and the
@@ -143,6 +146,40 @@ impl<'a> Source<'a> {
         }
         let [a, b, c] = self.scan.corners(t as usize)?;
         Some((distance, closest_on_triangle(p, a, b, c), (b - a).cross(c - a).normalized()?))
+    }
+
+    /// Whether the scan's nearest point to `p` is on its rim (an open edge, or a vertex one ends at):
+    /// `p` lies past where the scan was scanned.
+    fn past_rim(&self, p: Vec3) -> bool {
+        if self.open.is_empty() {
+            return false;
+        }
+        let Some((_, t)) = self.tree.nearest(p) else { return false };
+        let (Some([a, b, c]), Some(tri)) = (self.scan.corners(t as usize), self.scan.triangles.get(t as usize)) else { return false };
+        let q = closest_on_triangle(p, a, b, c);
+        let near = 1e-9 * (1.0 + a.dist(b).max(b.dist(c)).max(c.dist(a)));
+        let corners = [a, b, c];
+        let weld = |v: u32| self.weld.get(v as usize).copied().unwrap_or(v);
+        for k in 0..3 {
+            let (x, y) = (k, (k + 1) % 3);
+            let (u, v) = (corners[x], corners[y]);
+            let along = (q - u).dot(v - u) / (v - u).dot(v - u).max(1e-300);
+            let foot = u + (v - u) * along.clamp(0.0, 1.0);
+            if q.dist(foot) > near {
+                continue;
+            }
+            // On this edge: an open one, or at a corner of it some open edge ends at.
+            if self.is_open(tri[x], tri[y]) {
+                return true;
+            }
+            for (w, at) in [(tri[x], u), (tri[y], v)] {
+                let w = weld(w);
+                if q.dist(at) <= near && self.rim.contains(&w) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Whether the edge from vertex `a` to `b` is one of the scan's open edges.
@@ -615,8 +652,180 @@ pub fn remesh_at(sources: &[Scan], settings: &Settings, offset: f64) -> Result<R
         let mended = crate::repair::repair(&Scan::new(&out_positions, &out_triangles), false);
         (mended.positions, mended.triangles)
     };
+    // An offset's rim taken out to where the scan's rim moved by the offset is: the grid reads
+    // nothing past a scan's open edge, so the surface stops a cell short of it.
+    let (out_positions, out_triangles) =
+        if offset != 0.0 { out_to_rims(out_positions, out_triangles, &prepared, offset, cell) } else { (out_positions, out_triangles) };
     let (new_rms, new_max, scan_rms, scan_p95, uncovered) = measure(&out_positions, &out_triangles, &prepared, cell, offset.abs());
     Ok(Remeshed { positions: out_positions, triangles: out_triangles, new_rms, new_max, scan_rms, scan_p95, uncovered, dropped })
+}
+
+/// How far an open loop of the new surface may lie from a scan's rim moved by the offset, in cells,
+/// for the strip between them to be made.
+const RIM_REACH: f64 = 2.5;
+/// The most pairs of points a loop of the new surface and a rim are compared at: past it the loop
+/// is left where it ends.
+const MOST_RIM_PAIRS: usize = 50_000_000;
+
+/// Closed loops of directed edges, each edge `(a, b)` once, chained from `a` to `b`; a vertex with
+/// more than one edge leaving it, or a chain that does not close, is left out.
+fn loops_of(edges: &[(u32, u32)]) -> Vec<Vec<u32>> {
+    let mut next: HashMap<u32, u32> = HashMap::new();
+    let mut forked: HashSet<u32> = HashSet::new();
+    for &(a, b) in edges {
+        if next.insert(a, b).is_some() {
+            forked.insert(a);
+        }
+    }
+    let mut seen: HashSet<u32> = HashSet::new();
+    let mut out = Vec::new();
+    for &(start, _) in edges {
+        if seen.contains(&start) || forked.contains(&start) {
+            continue;
+        }
+        let mut chain = vec![start];
+        seen.insert(start);
+        let mut at = start;
+        let closed = loop {
+            let Some(&b) = next.get(&at) else { break false };
+            if b == start {
+                break true;
+            }
+            if forked.contains(&b) || !seen.insert(b) {
+                break false;
+            }
+            chain.push(b);
+            at = b;
+        };
+        if closed && chain.len() >= 3 {
+            out.push(chain);
+        }
+    }
+    out
+}
+
+/// Each scan's rims (its open edges' loops) moved by `offset` along the scan's vertex normals:
+/// where the offset surface's rims belong.
+fn moved_rims(sources: &[Source], offset: f64) -> Vec<Vec<Vec3>> {
+    let mut out = Vec::new();
+    for src in sources {
+        if src.open.is_empty() {
+            continue;
+        }
+        let weld = |v: u32| src.weld.get(v as usize).copied().unwrap_or(v);
+        let mut normal: HashMap<u32, Vec3> = HashMap::new();
+        let mut edges = Vec::new();
+        for (t, tri) in src.scan.triangles.iter().enumerate() {
+            let Some([a, b, c]) = src.scan.corners(t) else { continue };
+            let n = (b - a).cross(c - a);
+            let w = tri.map(weld);
+            for k in 0..3 {
+                *normal.entry(w[k]).or_insert(Vec3::ZERO) += n;
+                let (p, q) = (w[k], w[(k + 1) % 3]);
+                if src.open.contains(&(p.min(q), p.max(q))) {
+                    edges.push((p, q));
+                }
+            }
+        }
+        for chain in loops_of(&edges) {
+            let rim: Vec<Vec3> = chain
+                .iter()
+                .filter_map(|&v| {
+                    let p = *src.scan.positions.get(v as usize)?;
+                    Some(p + normal.get(&v).and_then(|n| n.normalized()).unwrap_or(Vec3::ZERO) * offset)
+                })
+                .collect();
+            if rim.len() == chain.len() {
+                out.push(rim);
+            }
+        }
+    }
+    out
+}
+
+/// The surface's open loops each joined by a strip to the scan rim moved by `offset` that it
+/// stops short of (within [`RIM_REACH`] cells on average), so an offset reaches the scan's rims;
+/// a loop no such rim lies along is left as it is.
+fn out_to_rims(mut positions: Vec<Vec3>, mut triangles: Vec<[u32; 3]>, sources: &[Source], offset: f64, cell: f64) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+    let rims = moved_rims(sources, offset);
+    if rims.is_empty() {
+        return (positions, triangles);
+    }
+    // What lies past a rim goes first (a vertex of a cell the rim crosses, half a cell beyond it,
+    // read where the nearest scan is its open edge): the strip takes the surface out to the rim.
+    let past: Vec<bool> = positions
+        .iter()
+        .map(|p| {
+            sources
+                .iter()
+                .filter_map(|s| s.tree.nearest(*p).map(|(d, _)| (d, s)))
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .is_some_and(|(_, s)| s.past_rim(*p))
+        })
+        .collect();
+    triangles.retain(|t| t.iter().all(|&v| !past[v as usize]));
+    let mut uses: HashMap<(u32, u32), u32> = HashMap::new();
+    for t in &triangles {
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            *uses.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    let open: Vec<(u32, u32)> = triangles
+        .iter()
+        .flat_map(|t| (0..3).map(move |k| (t[k], t[(k + 1) % 3])))
+        .filter(|(a, b)| uses.get(&((*a).min(*b), (*a).max(*b))) == Some(&1))
+        .collect();
+    let nearest = |p: Vec3, rim: &[Vec3]| -> (usize, f64) {
+        rim.iter().enumerate().map(|(j, q)| (j, p.dist(*q))).min_by(|a, b| a.1.total_cmp(&b.1)).unwrap_or((0, f64::INFINITY))
+    };
+    for chain in loops_of(&open) {
+        let Some(rim) = rims
+            .iter()
+            .filter(|rim| chain.len() * rim.len() <= MOST_RIM_PAIRS)
+            .map(|rim| (rim, chain.iter().map(|&v| nearest(positions[v as usize], rim).1).sum::<f64>() / chain.len() as f64))
+            .filter(|(_, mean)| *mean <= RIM_REACH * cell)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(rim, _)| rim)
+        else {
+            continue;
+        };
+        // The rim run the way the loop runs, from the point of it nearest the loop's first.
+        let (n, m) = (chain.len(), rim.len());
+        let at: Vec<Vec3> = chain.iter().map(|&v| positions[v as usize]).collect();
+        let p = |i: usize| at[i % n];
+        let (j0, _) = nearest(p(0), rim);
+        let ahead = (p(1) - p(0)).dot(rim[(j0 + 1) % m] - rim[(j0 + m - 1) % m]) >= 0.0;
+        let q = |j: usize| if ahead { rim[(j0 + j) % m] } else { rim[(j0 + m - j % m) % m] };
+        let base = positions.len() as u32;
+        positions.extend((0..m).map(q));
+        let qi = |j: usize| base + (j % m) as u32;
+        // Zipped: the loop's edges each taken the other way round by a triangle, and the rim's.
+        let (mut i, mut j) = (0usize, 0usize);
+        while i < n || j < m {
+            let take_loop = j >= m || (i < n && p(i + 1).dist(q(j)) <= p(i).dist(q(j + 1)));
+            if take_loop {
+                triangles.push([chain[(i + 1) % n], chain[i % n], qi(j)]);
+                i += 1;
+            } else {
+                triangles.push([chain[i % n], qi(j), qi(j + 1)]);
+                j += 1;
+            }
+        }
+    }
+    // Numbered again without the vertices no triangle uses now.
+    let mut number = vec![u32::MAX; positions.len()];
+    let mut kept = Vec::new();
+    for t in &mut triangles {
+        for v in t.iter_mut() {
+            if number[*v as usize] == u32::MAX {
+                number[*v as usize] = kept.len() as u32;
+                kept.push(positions[*v as usize]);
+            }
+            *v = number[*v as usize];
+        }
+    }
+    (kept, triangles)
 }
 
 /// How far the new surface is from `off` off the scans, both ways.
@@ -801,6 +1010,47 @@ mod tests {
         }
         let roots: HashSet<usize> = made.triangles.iter().map(|t| pieces.find(t[0] as usize)).collect();
         assert_eq!(roots.len(), 1);
+    }
+
+    /// An open tube offset in and out: the new surface reaches both of the tube's open ends (each
+    /// rim moved by the offset, not a cell short of it), its points the offset off the tube, all of it
+    /// one piece, every rim edge on one triangle and every other on two.
+    #[test]
+    fn an_offset_reaches_the_scans_open_rims() {
+        let (r, h, around, along) = (10.0, 30.0, 96u32, 60u32);
+        let mut positions = Vec::new();
+        for j in 0..=along {
+            for i in 0..around {
+                let a = std::f64::consts::TAU * f64::from(i) / f64::from(around);
+                positions.push(Vec3::new(r * a.cos(), r * a.sin(), h * f64::from(j) / f64::from(along)));
+            }
+        }
+        let mut triangles = Vec::new();
+        for j in 0..along {
+            for i in 0..around {
+                let (a, b) = (j * around + i, j * around + (i + 1) % around);
+                triangles.push([a, b, b + around]);
+                triangles.push([a, b + around, a + around]);
+            }
+        }
+        let scan = Scan::new(&positions, &triangles);
+        for d in [-1.0, 1.0] {
+            let made = remesh_at(&[scan], &Settings { cell: 0.5, sharp: false }, d).unwrap();
+            let (lo, hi) = made.positions.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p.z), hi.max(p.z)));
+            assert!(lo.abs() < 1e-6 && (hi - h).abs() < 1e-6, "offset {d}: from {lo} to {hi}, the tube's ends");
+            let worst = made.positions.iter().map(|p| ((p.x * p.x + p.y * p.y).sqrt() - (r + d)).abs()).fold(0.0, f64::max);
+            assert!(worst < 0.15, "offset {d}: {worst} off the radius {}", r + d);
+            let (open, many) = edge_uses(&made.triangles);
+            assert_eq!(many, 0, "offset {d}: no edge of three faces");
+            assert_eq!(open, 2 * around as usize, "offset {d}: only the two rims are open");
+            let mut pieces = crate::UnionFind::new(made.positions.len());
+            for t in &made.triangles {
+                pieces.join(t[0] as usize, t[1] as usize);
+                pieces.join(t[1] as usize, t[2] as usize);
+            }
+            let roots: HashSet<usize> = made.triangles.iter().map(|t| pieces.find(t[0] as usize)).collect();
+            assert_eq!(roots.len(), 1, "offset {d}: one piece");
+        }
     }
 
     /// A small fragment of the scan apart from the rest (far fewer triangles than a five-hundredth of
