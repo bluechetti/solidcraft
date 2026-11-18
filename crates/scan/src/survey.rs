@@ -55,6 +55,9 @@ pub struct Look {
     /// no ring.
     pub tangled_edges: usize,
     pub crack_edges: usize,
+    /// Faces that pass through another face (folds, overlapping passes): Repair Mesh takes them
+    /// out and fills round them, and a fit or a Boolean on them goes wrong.
+    pub crossing_faces: usize,
     /// The pieces not joined to each other, those that float (far smaller than the largest, see
     /// [`pieces::Pieces::floating`]) and their share of the scan's area.
     pub pieces: usize,
@@ -117,6 +120,7 @@ pub fn look(scan: &Scan, floating: f64) -> Option<Look> {
         open_edges,
         tangled_edges: rings.unfillable_edges + crack_edges,
         crack_edges,
+        crossing_faces: crate::repair::crossing_count(scan),
         pieces: found.sizes.len(),
         floating: floats.iter().filter(|f| **f).count(),
         floating_share: floating_area / area,

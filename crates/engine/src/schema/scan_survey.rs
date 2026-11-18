@@ -78,6 +78,9 @@ pub struct ScanSurveyResult {
     /// Of those, the cracks between points a hair apart (a file's two copies of one point), which
     /// Repair Mesh joins.
     pub crack_edges: usize,
+    /// Faces passing through another face (folds, overlapping passes), which Repair Mesh takes out
+    /// and fills round.
+    pub crossing_faces: usize,
     /// Pieces not joined to each other, those far smaller than the largest, and their area share.
     pub pieces: usize,
     pub floating: usize,

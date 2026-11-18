@@ -6,7 +6,7 @@ Command shapes and replies for the scan workflow in `SKILL.md`. Every command ta
 `scan.survey {}` reads the scan in about a second per 2 million triangles and changes nothing. Its reply:
 - **Size:** `own_size` (along its own directions, longest first), `low`, `high`, `center`, `area`, `typical_edge`. `units_hint` appears when the scan is under 3 mm across.
 - **Noise:** `noise` (mm), read at a few places, and `smoothing`, the Denoise strength it would take (0: leave it).
-- **Faults:** `holes` and `longest_hole` (holes inside the rims), `rims` (a scan seen from one side ends at one), `tangled_edges` (open edges no hole closes: run Repair), `pieces` and `floating` (scraps far smaller than the part).
+- **Faults:** `holes` and `longest_hole` (holes inside the rims), `rims` (a scan seen from one side ends at one), `tangled_edges` (open edges no hole closes: run Repair), `crossing_faces` (faces passing through each other: run Repair), `pieces` and `floating` (scraps far smaller than the part).
 - **Kind:** `flat_share` (area in broad flat faces), `sheet_like` (a wall or a panel at least a metre long), and `shapes` (area shares by kind, once Find All has run on the scan as it is now).
 - **Context:** `tolerance` and `tolerance_set`, `other_scans`, `models` (solid and surface bodies to check against).
 - **`next`:** `[{command, why, params}]` in the order the work goes: units, clean, align, denoise, holes, tolerance, place, route, check. Each `why` names the number that triggered it.
@@ -49,7 +49,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 ## Read
 | Command | Use | Reply worth reading |
 |---|---|---|
-| `scan.survey {}` | first look, changes nothing | `own_size`, `noise`, `smoothing`, `holes`, `floating`, `tangled_edges`, `sheet_like`, `shapes`, `next[{command, why, params}]` |
+| `scan.survey {}` | first look, changes nothing | `own_size`, `noise`, `smoothing`, `holes`, `floating`, `tangled_edges`, `crossing_faces`, `sheet_like`, `shapes`, `next[{command, why, params}]` |
 | `scan.find_all {}` | regions of the scan read as planes, cylinders, spheres, cones, tori or freeform (a view, no undo step) | `shapes[{index, kind, area, point, direction?, radius?, hole?}]`, `in_shapes`, `noise` |
 | `scan.reconstruct {}` | what the shapes make: prisms, a turned part, holes, repeats, fillets (reads only) | `prisms`, `turned`, `holes`, `repeats`, `proposals[{command, params}]`, `note` |
 | `scan.symmetry {}` | the mirror plane, kept as a construction plane | `mirror {point, normal, rms, coverage, symmetric}` |

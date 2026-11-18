@@ -39,7 +39,7 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.survey", "Survey 
     .contract(&CONTRACT)
     .output(output_schema_for::<ScanSurveyResult>)
     .noundo()
-    .params("body?: mesh body (default: the selected or only one): a first look at the scan, changing nothing: its size (own_size along its own directions, longest first), fineness, noise and the Denoise strength it would take, holes, rims, floating pieces, open edges no hole closes, how much of it is broad flat faces, whether it is sheet-like, what Find All read off it (once it has run), the design's other scans and models (those shown), and `next`: the commands to run next with why and parameters to start from, in the order the work goes → body, triangles, points, unusable, low, high, center, own_size, area, typical_edge, units_hint, noise, smoothing, tolerance, tolerance_set, holes, longest_hole, rims, open_edges, tangled_edges, crack_edges, pieces, floating, floating_share, flat_share, sheet_like, shapes{in_shapes, planes, cylinders, spheres, cones, tori, freeform, regions}, other_scans, models, next[{command, why, params}]")];
+    .params("body?: mesh body (default: the selected or only one): a first look at the scan, changing nothing: its size (own_size along its own directions, longest first), fineness, noise and the Denoise strength it would take, holes, rims, floating pieces, open edges no hole closes, how much of it is broad flat faces, whether it is sheet-like, what Find All read off it (once it has run), the design's other scans and models (those shown), and `next`: the commands to run next with why and parameters to start from, in the order the work goes → body, triangles, points, unusable, low, high, center, own_size, area, typical_edge, units_hint, noise, smoothing, tolerance, tolerance_set, holes, longest_hole, rims, open_edges, tangled_edges, crack_edges, crossing_faces, pieces, floating, floating_share, flat_share, sheet_like, shapes{in_shapes, planes, cylinders, spheres, cones, tori, freeform, regions}, other_scans, models, next[{command, why, params}]")];
 
 /// A survey kept for the Survey dialog: the reply, for the scan as it was read.
 #[derive(Debug)]
@@ -140,6 +140,7 @@ fn survey(s: &mut Session, p: &Value) -> Result<Value> {
         open_edges: found.open_edges,
         tangled_edges: found.tangled_edges,
         crack_edges: found.crack_edges,
+        crossing_faces: found.crossing_faces,
         pieces: found.pieces,
         floating: found.floating,
         floating_share: found.floating_share.max(0.0),
@@ -207,23 +208,27 @@ fn next_steps(plan: &Plan) -> Vec<ScanSurveyStep> {
             json!({"body": body, "units": "m"}),
         );
     }
-    if look.tangled_edges > 0 || look.unusable > 0 {
-        step(
-            "scan.repair",
-            match (look.crack_edges, look.tangled_edges - look.crack_edges.min(look.tangled_edges)) {
-                (0, tangled) => {
-                    format!("{tangled} open edges belong to no hole (edges of three triangles) and {} triangles are unusable", look.unusable)
-                }
-                (cracks, 0) => {
-                    format!("{cracks} open edges are cracks between points a hair apart (a file's two copies of one point): Repair Mesh joins them")
-                }
-                (cracks, tangled) => format!(
-                    "{cracks} open edges are cracks between points a hair apart, {tangled} belong to no hole and {} triangles are unusable",
-                    look.unusable
-                ),
-            },
-            json!({"body": body}),
-        );
+    if look.tangled_edges > 0 || look.unusable > 0 || look.crossing_faces > 0 {
+        let edges = match (look.crack_edges, look.tangled_edges - look.crack_edges.min(look.tangled_edges)) {
+            (0, tangled) => {
+                format!("{tangled} open edges belong to no hole (edges of three triangles) and {} triangles are unusable", look.unusable)
+            }
+            (cracks, 0) => {
+                format!("{cracks} open edges are cracks between points a hair apart (a file's two copies of one point): Repair Mesh joins them")
+            }
+            (cracks, tangled) => format!(
+                "{cracks} open edges are cracks between points a hair apart, {tangled} belong to no hole and {} triangles are unusable",
+                look.unusable
+            ),
+        };
+        let why = match (look.tangled_edges > 0 || look.unusable > 0, look.crossing_faces) {
+            (true, 0) => edges,
+            (false, crossing) => {
+                format!("{crossing} faces pass through other faces (folds or overlapping passes): Repair Mesh takes them out and fills round them")
+            }
+            (true, crossing) => format!("{edges}; {crossing} faces pass through other faces"),
+        };
+        step("scan.repair", why, json!({"body": body}));
     }
     if look.floating > 0 {
         step(
@@ -497,6 +502,7 @@ mod tests {
             open_edges: 30,
             tangled_edges: 0,
             crack_edges: 0,
+            crossing_faces: 0,
             pieces: 1,
             floating: 0,
             floating_share: 0.0,
@@ -530,5 +536,24 @@ mod tests {
         assert_eq!(run(None), ["scan.find_all"]);
         assert_eq!(run(Some(&shares(0.1))), ["scan.denoise", "scan.fill_holes", "scan.fit_patches"]);
         assert_eq!(run(Some(&shares(0.9))), ["scan.reconstruct"]);
+
+        // Faces passing through each other are worth a Repair even with every edge in a ring: a
+        // scan-like block with 253 such pairs lost a step of Reconstruct to the kernel's join.
+        let crossing = solidcraft_scan::survey::Look { crossing_faces: 507, ..look.clone() };
+        let plan = super::Plan {
+            body: "s",
+            sizes: crossing.own_size,
+            look: &crossing,
+            tiny: false,
+            sheet_like: false,
+            shapes: None,
+            tolerance: 0.2,
+            tolerance_set: true,
+            other_scans: &[],
+            models: &[],
+        };
+        let next = super::next_steps(&plan);
+        assert_eq!(next.first().map(|n| n.command.as_str()), Some("scan.repair"));
+        assert!(next[0].why.contains("507 faces pass through"), "{}", next[0].why);
     }
 }

@@ -221,6 +221,21 @@ pub fn repair(scan: &Scan, crossings: bool) -> Repaired {
     Repaired { positions, triangles, joined, duplicates, non_manifold, slivers, crossings: pairs, crossing_faces: gone.len(), refilled }
 }
 
+/// How many of `scan`'s faces pass through another face (on points welded as Repair Mesh welds
+/// them), changing nothing: the faces Repair Mesh would take out and fill round.
+pub fn crossing_count(scan: &Scan) -> usize {
+    let (weld, _) = welded_within(scan.positions);
+    let tris: Vec<[u32; 3]> = (0..scan.triangle_count())
+        .filter_map(|t| {
+            scan.corners(t)?;
+            let tri = scan.triangles.get(t)?.map(|i| weld[i as usize]);
+            (tri[0] != tri[1] && tri[1] != tri[2] && tri[2] != tri[0]).then_some(tri)
+        })
+        .collect();
+    let live: Vec<usize> = (0..tris.len()).collect();
+    crossing_faces(scan.positions, &tris, &live).0.len()
+}
+
 /// The faces among `live` (on welded points) that pass through another face they share no edge
 /// with, and how many pairs cross. A grid of cells about a face across finds the pairs to test.
 fn crossing_faces(positions: &[Vec3], tris: &[[u32; 3]], live: &[usize]) -> (Vec<usize>, usize) {
