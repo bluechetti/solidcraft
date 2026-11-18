@@ -415,6 +415,48 @@ pub fn fitted(corners: [Vec3; 4], fitting: &Fitting, snap: impl Fn(&[Vec3], Opti
     Some(Fitted { surface: made, places, met, kept: used, rms })
 }
 
+/// `s` turned over: its u the other way (each row's points reversed, its u knots mirrored), the
+/// same surface facing the other way. `None` when it cannot be made.
+pub fn turned_over(s: &NurbsSurface) -> Option<NurbsSurface> {
+    let [nu, nv] = s.count();
+    let ctrl = s.homogeneous();
+    let flipped: Vec<_> = (0..nv).flat_map(|j| (0..nu).rev().map(move |i| ctrl[j * nu + i])).collect();
+    let [ku, kv] = s.knots().clone();
+    let (first, last) = (*ku.first()?, *ku.last()?);
+    let ku: Vec<f64> = ku.iter().rev().map(|k| first + last - k).collect();
+    NurbsSurface::from_homogeneous(s.degree(), [ku, kv], flipped).ok()
+}
+
+/// How many places across `s` (a grid of `PLACES` each way, inside it) face the way the scan
+/// faces under them, less how many face against it; `normal` gives the scan's unit normal nearest
+/// a point (`None` where there is no scan).
+fn facing_score(s: &NurbsSurface, normal: &impl Fn(Vec3) -> Option<Vec3>) -> i64 {
+    const PLACES: usize = 5;
+    let net = crate::surface_edit::points(s);
+    let [[u0, u1], [v0, v1]] = s.domain();
+    let mut score = 0i64;
+    for j in 0..PLACES {
+        for i in 0..PLACES {
+            let (u, v) = (u0 + (u1 - u0) * (i as f64 + 0.5) / PLACES as f64, v0 + (v1 - v0) * (j as f64 + 0.5) / PLACES as f64);
+            let Some((p, su, sv)) = crate::surface_edit::frame(s, &net, u, v) else { continue };
+            let (Some(n), Some(m)) = (su.cross(sv).normalized(), normal(p)) else { continue };
+            score += if n.dot(m) >= 0.0 { 1 } else { -1 };
+        }
+    }
+    score
+}
+
+/// `s` facing as the scan under it faces (out of a scanned part, toward where it was scanned
+/// from): turned over when more of it faces against the scan than with it. A face made on a scan
+/// then thickens and offsets outward with a positive length, whichever way round its corners or
+/// sides were given.
+pub fn facing_the_scan(s: NurbsSurface, normal: impl Fn(Vec3) -> Option<Vec3>) -> NurbsSurface {
+    if facing_score(&s, &normal) < 0 {
+        return turned_over(&s).unwrap_or(s);
+    }
+    s
+}
+
 /// More points each way must bring the face at least this much nearer the scan at worst to be
 /// worth them: short of that the face is down to the scan's own noise or a spike in it.
 const WORTH_MORE: f64 = 0.75;
@@ -646,6 +688,32 @@ mod tests {
         let net = points(&fit.surface);
         let off = (0..6).map(|i| (net[i].y - 10.0).abs()).fold(0.0, f64::max);
         assert!(off < 1.0, "the edge's points keep to y = 10: {off}");
+    }
+
+    /// A face fitted with its corners clicked either way round faces as the dome does (up, out of
+    /// it) once turned to the scan; turned over it is the same surface, facing the other way.
+    #[test]
+    fn a_face_is_turned_to_face_as_the_scan_does() {
+        let (positions, triangles) = field(60, dome);
+        let scan = Scan::new(&positions, &triangles);
+        let on = Projector::new(&scan);
+        let snap = |ps: &[Vec3], along: Option<Vec3>| ps.iter().map(|p| snapped(&on, *p, along)).collect::<Vec<_>>();
+        let round = [Vec3::new(10.0, 10.0, 0.0), Vec3::new(50.0, 10.0, 0.0), Vec3::new(50.0, 50.0, 0.0), Vec3::new(10.0, 50.0, 0.0)];
+        let facing_up = |s: &NurbsSurface| {
+            let (_, su, sv) = crate::surface_edit::frame(s, &points(s), 0.5, 0.5).unwrap();
+            su.cross(sv).z > 0.0
+        };
+        let mut ways = Vec::new();
+        for corners in [round, [round[0], round[3], round[2], round[1]]] {
+            let fit = fitted(corners, &Fitting { count: 5, ..Fitting::default() }, snap).unwrap().surface;
+            ways.push(facing_up(&fit));
+            let over = turned_over(&fit).unwrap();
+            assert_ne!(facing_up(&over), facing_up(&fit), "turned over, it faces the other way");
+            let (a, b) = (fit.eval(0.3, 0.7).unwrap(), over.eval(0.7, 0.7).unwrap());
+            assert!(a.dist(b) < 1e-9, "the same surface: {a:?} {b:?}");
+            assert!(facing_up(&facing_the_scan(fit, |p| on.normal(p))), "out of the dome");
+        }
+        assert_ne!(ways[0], ways[1], "the two orders fit faces facing opposite ways before they are turned");
     }
 
     /// Four corners clicked round a dome: the face fitted to the scan lies on it (not only its

@@ -47,7 +47,18 @@ pub fn recipe_of(s: &Session, id: u64) -> Option<ScanRecipe> {
 /// The faces the recipe's command makes now.
 fn fresh(s: &Session, r: &ScanRecipe, cmd: &str) -> Result<Vec<solidcraft_geom::bspline::NurbsSurface>> {
     match r.command.as_str() {
-        "scan.free_form" => Ok(vec![super::free_form::made_from_params(s, &r.params)?.surface]),
+        "scan.free_form" => {
+            // Turned as the face it fits again was (a face made before new faces were turned out of
+            // the scan may face into it): its points are laid on the baseline's one for one.
+            let fit = super::free_form::made_from_params(s, &r.params)?.surface;
+            let first = r.baseline.first().and_then(|b| b.first()).map(|p| Vec3::new(p[0], p[1], p[2]));
+            let over = solidcraft_scan::free_form::turned_over(&fit);
+            let start = |f: &solidcraft_geom::bspline::NurbsSurface| points(f).first().copied();
+            Ok(vec![match (first, over) {
+                (Some(b), Some(o)) if start(&o).zip(start(&fit)).is_some_and(|(po, pf)| po.dist(b) < pf.dist(b)) => o,
+                _ => fit,
+            }])
+        }
         "scan.fit_patches" => {
             // A region kept as triangle numbers means the same triangles only while the scan has the
             // same number of them: cleaning or splitting it numbers them anew.

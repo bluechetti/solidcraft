@@ -92,8 +92,10 @@ pub fn make(s: &Session, body: Option<&str>, corners: [Vec3; 4], fit: Fit, fitti
     if fitted.met == 0 {
         return Err(bad(cmd, "the scan is nowhere near those corners within the snap distance"));
     }
-    let (rms, max) = scan_distance(s, &scan, &fitted.surface, fitted.rms, cmd);
-    Ok(Made { scan: Some(scan), surface: fitted.surface, places: fitted.places, met: fitted.met, kept: fitted.kept, rms, max, bow })
+    // Facing out of the scan, however its corners were clicked: Thicken grows it outward.
+    let surface = free_form::facing_the_scan(fitted.surface, |p| on.normal(p));
+    let (rms, max) = scan_distance(s, &scan, &surface, fitted.rms, cmd);
+    Ok(Made { scan: Some(scan), surface, places: fitted.places, met: fitted.met, kept: fitted.kept, rms, max, bow })
 }
 
 /// `p` put on the scan no farther than `reach`: along `along` where that line meets the scan,
@@ -147,6 +149,9 @@ pub fn made_from_curves(s: &Session, body: Option<&str>, curves: &[Vec<Vec3>], c
     let reach = reach.unwrap_or_else(|| super::surface::default_reach(&flat));
     let covered = super::surface::covered(s, body, &flat, reach, cmd)?;
     let surface = solidcraft_scan::boundary_face::face(&boundary, &covered.points, [count, count]).map_err(|e| bad(cmd, e.to_string()))?;
+    // Facing out of the scan, whichever way round its sides were given.
+    let (_, on) = super::curve::projector(s, Some(&covered.scan), cmd)?;
+    let surface = free_form::facing_the_scan(surface, |p| on.normal(p));
     let (rms, max) = if covered.points.is_empty() { (0.0, 0.0) } else { solidcraft_scan::surface_edit::distance(&surface, &covered.points) };
     let places = covered.points.len();
     Ok(Made { scan: Some(covered.scan), surface, places, met: places, kept: places, rms, max, bow: 0.0 })

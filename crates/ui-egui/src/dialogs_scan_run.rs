@@ -118,8 +118,7 @@ pub struct ScanRun {
     pub cell: Option<f64>,
     /// Remesh, Combine Scans: sharp edges and corners stay sharp.
     pub sharp: bool,
-    /// Remesh: how far off the scan the step being edited makes it (kept as it was; the dialog
-    /// has no control for it yet), in mm.
+    /// Remesh: how far off the scan it is made again (positive outward), in mm; `None` on it.
     pub offset: Option<f64>,
     /// Repair Mesh: faces passing through each other are taken off and the holes closed.
     pub crossings: bool,
@@ -303,8 +302,15 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanRun, inputs: &[SelInp
             }
             form_row(ui, tr("ui.scan_run_sharp"), |ui| check(ui, &mut k.sharp));
             if k.id == "scan.remesh" {
-                crate::dialogs_scan_clean::area_row(app, ui, "scan_remesh_area", &mut k.area, k.kept.as_ref());
-                crate::dialogs_scan_clean::mark_area_at(app, &k.area, k.kept.as_ref(), inputs, 1, &mut k.marks);
+                // How far off the scan it is made again: out (+) for a liner, in (-) for a socket's fit.
+                let mut offset = k.offset.unwrap_or(0.0);
+                form_row(ui, tr("ui.scan_run_offset"), |ui| ui_kit::length_field(ui, &mut offset, &units, decimals));
+                k.offset = (offset.is_finite() && offset != 0.0).then_some(offset);
+                // An offset makes the whole scan again: no area to choose.
+                if k.offset.is_none() {
+                    crate::dialogs_scan_clean::area_row(app, ui, "scan_remesh_area", &mut k.area, k.kept.as_ref());
+                    crate::dialogs_scan_clean::mark_area_at(app, &k.area, k.kept.as_ref(), inputs, 1, &mut k.marks);
+                }
             }
         }
         "scan.repair" => {
@@ -683,7 +689,8 @@ pub fn commands(app: &SolveApp, k: &ScanRun, inputs: &[SelInput]) -> Result<Vec<
     let cell = k.cell.map(|c| json!(format!("{c} mm")));
     let p = match k.id {
         "scan.remesh" => {
-            let mut p = crate::dialogs_scan_clean::area_params_at(app, &k.area, k.kept.as_ref(), inputs, 1)?;
+            let mut p =
+                if k.offset.is_some() { json!({}) } else { crate::dialogs_scan_clean::area_params_at(app, &k.area, k.kept.as_ref(), inputs, 1)? };
             p["body"] = json!(need(0, "ui.scan_run_pick_scan")?);
             if let Some(c) = &cell {
                 p["cell"] = c.clone();
@@ -892,6 +899,35 @@ mod tests {
         assert_eq!(h.app.session.doc.features.len(), features + 1, "one Move");
         let check = h.app.session.scratch().execute("scan.align_to_model", &json!({"body": "part", "model": "Model", "search": false})).unwrap();
         assert!(check["rms_before"].as_f64().unwrap() <= shown + 1e-6, "the scan lies where the preview put it: {check} vs {shown}");
+    }
+
+    /// An offset chosen in Remesh goes to the command, the whole scan (no area): OK makes the scan
+    /// again that far off it, the step keeps it, and editing the step brings it back.
+    #[test]
+    fn remesh_takes_an_offset_for_the_whole_scan() {
+        let mut h = crate::scenario::Harness::new();
+        fine_box_scan(&mut h, "part", 0.0, 8);
+        h.app.start("scan.remesh");
+        if let Some(Kind::ScanRun(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.cell = Some(1.0);
+            k.offset = Some(-1.5);
+        }
+        let d = h.app.dialog.as_ref().unwrap();
+        let Kind::ScanRun(k) = &d.kind else { panic!() };
+        let sent = super::commands(&h.app, k, &d.inputs).unwrap();
+        let (id, p) = &sent[0];
+        assert_eq!(id, "scan.remesh");
+        assert_eq!(p["offset"], json!("-1.5 mm"), "{p}");
+        assert!(p.get("area").is_none() && p.get("point").is_none() && p.get("saved").is_none(), "the whole scan: {p}");
+        let mut refilled = super::ScanRun::new("scan.remesh");
+        let step =
+            solidcraft_engine::doc::scan_clean::CleanStep::Remesh { cell: Some(1.0), sharp: false, offset: Some(-1.5), with: Vec::new(), area: None };
+        let mut kind = Kind::ScanRun(refilled.clone());
+        crate::dialogs_scan_clean::refill(&mut kind, &step);
+        if let Kind::ScanRun(k) = kind {
+            refilled = k;
+        }
+        assert_eq!(refilled.offset, Some(-1.5), "editing the step keeps its offset");
     }
 
     /// The tools that make or change a body show it before OK too: Remesh works out the new mesh on

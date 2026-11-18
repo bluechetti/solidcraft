@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_run_offset": "Offset (+ out, − in)"
+  },
+  "de": {
+    "ui.scan_run_offset": "Versatz (+ außen, − innen)"
+  },
+  "ja": {
+    "ui.scan_run_offset": "オフセット（+ 外側、− 内側）"
+  },
+  "ko": {
+    "ui.scan_run_offset": "오프셋 (+ 바깥, − 안쪽)"
+  },
+  "zh": {
+    "ui.scan_run_offset": "偏移（+ 向外，− 向内）"
+  },
+  "ar": {
+    "ui.scan_run_offset": "الإزاحة (+ للخارج، − للداخل)"
+  },
+  "he": {
+    "ui.scan_run_offset": "היסט (+ החוצה, − פנימה)"
+  },
+  "vi": {
+    "ui.scan_run_offset": "Độ lệch (+ ra ngoài, − vào trong)"
+  }
+}

@@ -3109,10 +3109,33 @@ fn thicken_makes_a_free_form_network_of_curved_faces_a_solid() {
     // Five sixths of the shell between the sphere and the sphere grown (or shrunk) by the wall.
     let shell = |r0: f64, r1: f64| 5.0 / 6.0 * 4.0 / 3.0 * std::f64::consts::PI * (r1.powi(3) - r0.powi(3)).abs();
     let volume = |s: &Session| s.model.state().body("Cup").and_then(|b| b.body.volume_at(0.0)).unwrap_or(0.0);
-    let near = |v: f64, t: f64| [shell(radius, radius + t), shell(radius - t, radius)].iter().any(|w| (v - w).abs() < 0.02 * w);
+    // Outward: a Free Form faces out of the scan it is made on, however its sides were given.
+    let near = |v: f64, t: f64| (v - shell(radius, radius + t)).abs() < 0.02 * shell(radius, radius + t);
     let v3 = volume(&s);
     assert!(near(v3, 3.0), "a closed solid 3 mm thick: {v3}");
     run(&mut s, "parameters.change", json!({"name": "wall", "expression": "5 mm"}));
     let v5 = volume(&s);
     assert!(near(v5, 5.0), "it follows the wall: {v5}");
+}
+
+/// A Free Form faces out of the scan it is made on, whichever way round its corners are clicked or
+/// its sides given: on the dome (which faces up) it faces up, so Thicken grows it upward.
+#[test]
+fn a_free_form_faces_out_of_the_scan_whichever_way_its_corners_go() {
+    let (mut s, _) = session_with_triangles("free-form-facing", &dome_triangles(40));
+    let round = [[10, 10, 0], [50, 10, 0], [50, 50, 0], [10, 50, 0]];
+    for (k, corners) in [round, [round[0], round[3], round[2], round[1]]].into_iter().enumerate() {
+        let made = run(&mut s, "scan.free_form", json!({"corners": corners, "count": 5}));
+        let name = made["surface"].as_str().unwrap().to_owned();
+        let face = super::surface::editable(&s, Some(&name), "test").unwrap().surface;
+        let ([[u0, u1], [v0, v1]], at) = (face.domain(), 0.5);
+        let (u, v) = (u0 + (u1 - u0) * at, v0 + (v1 - v0) * at);
+        let d = |du: f64, dv: f64| face.eval(u + du, v + dv).unwrap();
+        let normal = (d(1e-4, 0.0) - d(-1e-4, 0.0)).cross(d(0.0, 1e-4) - d(0.0, -1e-4));
+        assert!(normal.z > 0.0, "order {k}: faces up, out of the dome: {normal:?}");
+        let body = format!("Slab{k}");
+        run(&mut s, "surface.thicken", json!({"bodies": [name], "thickness": 2, "body_name": body}));
+        let top = s.model.state().body(&body).unwrap().body.exact_bounds().unwrap().max.z;
+        assert!(top > 9.5, "order {k}: grown upward from the dome's top at 8: {top}");
+    }
 }
