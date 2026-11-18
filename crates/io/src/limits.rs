@@ -16,29 +16,51 @@ pub const CEILING: u64 = 16 * GB;
 /// Whether this build lets the limits rise: not in the browser.
 pub const ADJUSTABLE: bool = cfg!(not(target_arch = "wasm32"));
 
-/// The two kinds of file with a size limit.
+/// The size the Scan workspace fork reads scans and designs up to on the desktop: in effect no
+/// limit (2^62 bytes; `vfs::read` adds one to its limit, so not `u64::MAX`). A scan is as large
+/// as the scanner made it, and the design holding it must save and open again.
+pub const UNLIMITED: u64 = 1 << 62;
+
+/// The kinds of file with a size limit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// STEP, IGES and the other CAD files read as an Import feature.
     Step,
     /// Design files (`.sc`, older `.solidcraft`, JSON).
     Design,
+    /// Scans: mesh files (STL, OBJ, PLY, glTF) and point clouds (PLY, XYZ, PTS).
+    Scan,
 }
 
 impl Kind {
-    /// The limit in force for this kind, in bytes.
+    /// The limit in force for this kind, in bytes. Scans and designs have none on the desktop
+    /// (the Scan workspace fork); in the browser they keep the import and design defaults.
     pub fn limit(self) -> u64 {
+        if self.unlimited() {
+            return UNLIMITED;
+        }
         let l = effective();
         match self {
-            Kind::Step => l.step,
+            Kind::Step | Kind::Scan => l.step,
             Kind::Design => l.design,
         }
+    }
+
+    /// The limit in force as a length in memory.
+    pub fn bytes(self) -> usize {
+        usize::try_from(self.limit()).unwrap_or(usize::MAX)
+    }
+
+    /// Whether this kind is read whatever its size here: scans and designs, on the desktop.
+    pub fn unlimited(self) -> bool {
+        ADJUSTABLE && matches!(self, Kind::Scan | Kind::Design)
     }
 
     fn what(self) -> &'static str {
         match self {
             Kind::Step => "STEP and import files",
             Kind::Design => "design files",
+            Kind::Scan => "scans",
         }
     }
 }
@@ -174,8 +196,14 @@ pub fn max_step_bytes() -> usize {
     usize::try_from(effective().step).unwrap_or(usize::MAX)
 }
 
-/// The largest design file read (and written) now.
+/// The largest design file read (and written) now: no limit on the desktop.
 pub fn max_design_bytes() -> usize {
+    Kind::Design.bytes()
+}
+
+/// The design file size set in Preferences or by `--max-file-size`. The desktop no longer
+/// refuses a design past it; a mesh larger than it is still saved compressed.
+pub fn configured_design_bytes() -> usize {
     usize::try_from(effective().design).unwrap_or(usize::MAX)
 }
 
@@ -282,7 +310,11 @@ mod tests {
     fn the_defaults_are_the_limits_there_always_were() {
         assert_eq!(FileLimits::default(), FileLimits { step: 512 * MB, design: 256 * MB });
         // Nothing in this test binary raises the limits: the read sites see the defaults.
-        assert_eq!((max_step_bytes(), max_design_bytes()), (crate::MAX_STEP_BYTES, crate::MAX_DESIGN_BYTES));
+        assert_eq!((max_step_bytes(), configured_design_bytes()), (crate::MAX_STEP_BYTES, crate::MAX_DESIGN_BYTES));
+        // The Scan workspace fork reads scans and designs whatever their size on the desktop.
+        let unlimited = if ADJUSTABLE { UNLIMITED as usize } else { crate::MAX_DESIGN_BYTES };
+        assert_eq!(max_design_bytes(), unlimited);
+        assert_eq!(Kind::Scan.bytes(), if ADJUSTABLE { UNLIMITED as usize } else { crate::MAX_STEP_BYTES });
         assert_eq!(FileLimits::from_mb(512, 256), FileLimits::DEFAULT);
         assert!(FileLimits::DEFAULT.validate().is_ok());
     }
@@ -325,7 +357,9 @@ mod tests {
         if ADJUSTABLE {
             assert!(message.contains("Preferences > General > Largest file to open") && message.contains("--max-file-size"), "{message}");
         }
-        assert!(check(Kind::Design, 256 * MB).is_ok() && check(Kind::Design, 256 * MB + 1).is_err());
+        assert!(check(Kind::Design, 256 * MB).is_ok() && check(Kind::Design, 256 * MB + 1).is_err() == !ADJUSTABLE);
+        assert!(check(Kind::Scan, 512 * MB + 1).is_err() == !ADJUSTABLE && check(Kind::Scan, 64 * GB).is_err() == !ADJUSTABLE);
+        assert!(check(Kind::Step, 512 * MB + 1).is_err(), "STEP keeps its limit");
         assert_eq!(describe(2 * GB), "2 GB");
         assert_eq!(describe(1536 * MB), "1.5 GB");
     }

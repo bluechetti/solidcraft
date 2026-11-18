@@ -31,10 +31,21 @@ use crate::{IoError, MAX_3MF_BYTES, MeshFeature, Result};
 
 /// Largest `.glb` / `.gltf` file read.
 pub const MAX_GLTF_BYTES: usize = MAX_3MF_BYTES;
-/// Most bytes of external and embedded buffers read for one file.
+/// Most bytes of external and embedded buffers read for one file. A scan has no size limit on
+/// the desktop (the Scan workspace fork); the browser keeps 1 GB.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_BUFFER_BYTES: usize = crate::limits::UNLIMITED as usize;
+#[cfg(target_arch = "wasm32")]
 const MAX_BUFFER_BYTES: usize = 1 << 30;
-/// Most vertices and triangles, over all bodies.
+/// Most vertices and triangles, over all bodies: on the desktop as many as a mesh body holds
+/// (as for STL, OBJ and PLY), in the browser 20 million.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_VERTICES: usize = solidcraft_kernel::MAX_VERTICES;
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_TRIANGLES: usize = solidcraft_kernel::MAX_TRIANGLES;
+#[cfg(target_arch = "wasm32")]
 const MAX_VERTICES: usize = 20_000_000;
+#[cfg(target_arch = "wasm32")]
 const MAX_TRIANGLES: usize = 20_000_000;
 /// Most node placements followed (a node tree that shares or loops is cut off here).
 const MAX_PLACEMENTS: usize = 100_000;
@@ -125,7 +136,9 @@ pub type Loader<'a> = &'a mut dyn FnMut(&str) -> std::result::Result<Vec<u8>, St
 /// Read a `.glb` or `.gltf` file (`file` names it; its stem names the meshes when nothing in the
 /// file does). External buffers are read through `load`.
 pub fn read_gltf(bytes: &[u8], file: &str, load: Loader<'_>) -> Result<GltfImport> {
-    if bytes.len() > MAX_GLTF_BYTES {
+    // A scan: no size limit on the desktop; the browser keeps [`MAX_GLTF_BYTES`].
+    let limit = if crate::limits::Kind::Scan.unlimited() { crate::limits::Kind::Scan.bytes() } else { MAX_GLTF_BYTES };
+    if bytes.len() > limit {
         return Err(IoError::Invalid(format!("glTF file too large ({} MB)", bytes.len() >> 20)));
     }
     let (json, blob) = if bytes.starts_with(b"glTF") { split_glb(bytes)? } else { (bytes, None) };

@@ -639,14 +639,15 @@ fn add_mesh(
     crease_angle: Option<f64>,
 ) -> Result<Value> {
     let err = |e: solidcraft_io::IoError| EngineError::Other(format!("{path}: {e}"));
-    // An import file: `--max-file-size` and the preference raise its limit, as a STEP file's (a
-    // large scan is gigabytes), and the refusal says by how much and how.
-    let bytes = solidcraft_io::limits::read(path, solidcraft_io::limits::Kind::Step).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    // A scan: no size limit on the desktop (a large scan is gigabytes); the browser keeps the
+    // import limit, and its refusal says by how much.
+    let bytes = solidcraft_io::limits::read(path, solidcraft_io::limits::Kind::Scan).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let gltf = solidcraft_io::is_gltf_path(path);
     let (mut mf, plan, looks) = if gltf {
         let dir = std::path::Path::new(path).parent().map(std::path::Path::to_path_buf).unwrap_or_default();
-        let mut load =
-            |name: &str| solidcraft_io::vfs::read(&dir.join(name).to_string_lossy(), solidcraft_io::MAX_GLTF_BYTES).map_err(|e| e.to_string());
+        let mut load = |name: &str| {
+            solidcraft_io::vfs::read(&dir.join(name).to_string_lossy(), solidcraft_io::limits::Kind::Scan.bytes()).map_err(|e| e.to_string())
+        };
         let mut g = solidcraft_io::read_gltf(&bytes, path, &mut load).map_err(err)?;
         if !import::mesh_plan_fits(&g.plan) {
             g.flatten();

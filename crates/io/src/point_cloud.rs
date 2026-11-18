@@ -76,8 +76,10 @@ impl Keep {
 /// Read a PLY or XYZ file (by `file`'s extension; a file starting with `ply` is PLY whatever its
 /// name) whose lengths are `scale` millimetres each, keeping at most `max_points` points.
 pub fn read_point_cloud(bytes: &[u8], file: &str, scale: f64, max_points: usize) -> Result<CloudFile> {
-    if bytes.len() > MAX_POINT_CLOUD_BYTES {
-        return Err(IoError::Invalid(format!("point cloud file too large ({} MB, limit {} MB)", bytes.len() >> 20, MAX_POINT_CLOUD_BYTES >> 20)));
+    // A scan: no size limit on the desktop; the browser keeps [`MAX_POINT_CLOUD_BYTES`].
+    let limit = if crate::limits::Kind::Scan.unlimited() { crate::limits::Kind::Scan.bytes() } else { MAX_POINT_CLOUD_BYTES };
+    if bytes.len() > limit {
+        return Err(IoError::Invalid(format!("point cloud file too large ({} MB, limit {} MB)", bytes.len() >> 20, limit >> 20)));
     }
     if !(scale.is_finite() && scale > 0.0 && scale <= 1e6) {
         return Err(IoError::Invalid("the point cloud's scale must be positive".into()));

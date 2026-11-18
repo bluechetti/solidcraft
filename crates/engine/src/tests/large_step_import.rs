@@ -140,17 +140,18 @@ fn raised_file_limits_let_larger_step_and_design_files_be_read() {
     let design = sparse("big.solidcraft", 256 * MB + 1);
     let mut s = Session::default();
     assert_eq!(limits::effective(), FileLimits::DEFAULT);
-    for path in [&step, &design] {
-        let error = s.execute("doc.open", &json!({"path": path})).unwrap_err().to_string();
-        assert!(error.contains("too large") && error.contains("Largest file to open") && error.contains("--max-file-size"), "{error}");
-    }
-    // A mesh file (a scan) is an import file too: the same limit, raised the same ways.
+    let error = s.execute("doc.open", &json!({"path": step})).unwrap_err().to_string();
+    assert!(error.contains("too large") && error.contains("Largest file to open") && error.contains("--max-file-size"), "{error}");
+    // The Scan workspace fork reads a design and a mesh file (a scan) whatever their size.
+    let error = s.execute("doc.open", &json!({"path": design})).unwrap_err().to_string();
+    assert!(!error.contains("too large"), "{error}");
     let scan = sparse("big.stl", 512 * MB + 1);
-    let error = s.execute("file.insert_mesh", &json!({"path": scan})).unwrap_err().to_string();
-    assert!(error.contains("too large") && error.contains("--max-file-size"), "{error}");
+    if let Err(error) = s.execute("file.insert_mesh", &json!({"path": scan})) {
+        assert!(!error.to_string().contains("too large"), "{error}");
+    }
     // The preference raises both limits; the design is now read (and refused only for not being one).
     limits::set_preferred(FileLimits { step: GB, design: GB }).unwrap();
-    assert_eq!((limits::max_step_bytes(), limits::max_design_bytes()), (1 << 30, 1 << 30));
+    assert_eq!((limits::max_step_bytes(), limits::configured_design_bytes()), (1 << 30, 1 << 30));
     // The STEP parser's own cap follows, so it doesn't refuse what the size check let in (#13329).
     assert_eq!(solidcraft_kernel::step_max_bytes(), 1 << 30);
     assert!(limits::check(Kind::Step, 512 * MB + 1).is_ok());

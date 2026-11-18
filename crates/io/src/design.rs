@@ -49,7 +49,12 @@ const STEP_LEVEL: i64 = 2;
 /// stored Deflate-compressed, so a compressible large import can be saved (#6600). The file
 /// itself stays within the design file limit.
 fn max_mesh_part() -> usize {
-    crate::limits::max_step_bytes()
+    crate::limits::Kind::Scan.bytes()
+}
+/// The size past which a mesh is saved compressed: the configured design file size, so saving
+/// stores meshes as it did before the fork lifted the design file limit.
+fn compress_past() -> usize {
+    crate::limits::configured_design_bytes()
 }
 /// Every other part is bounded by the file size limit.
 fn max_part() -> usize {
@@ -131,7 +136,7 @@ const LIMITS: Limits = Limits {
 /// limit: level 1 of a large payload leaves more on disk, and that part exists only because
 /// compression is what makes it fit. Everything else is level 1.
 fn part_level(name: &str, length: usize) -> i64 {
-    if name.ends_with(".step") || (name.ends_with(".mesh") && length > max_part()) { STEP_LEVEL } else { 1 }
+    if name.ends_with(".step") || (name.ends_with(".mesh") && length > compress_past()) { STEP_LEVEL } else { 1 }
 }
 
 /// A design container being written, within [`LIMITS`].
@@ -268,7 +273,7 @@ fn write_container(
                     let bytes = encode_mesh(mesh)?;
                     // Fast saves store a mesh that fits. One past the file limit is deflated,
                     // or it could never be saved (#6600). Compact deflates every mesh.
-                    let compress = compression == DesignCompression::Compact || bytes.len() > max_part();
+                    let compress = compression == DesignCompression::Compact || bytes.len() > compress_past();
                     let blob = writer.blob(&bytes, "mesh", compress)?;
                     let mut value = replace(mesh, fields([("positions", json!([])), ("triangles", json!([])), ("corner_normals", json!([]))]))
                         .map_err(invalid)?;
@@ -1509,6 +1514,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), ignore = "the Scan workspace fork reads designs and scans whatever their size on the desktop")]
     fn seekable_reader_rejects_oversized_source_before_reading() {
         struct Oversized;
         impl Read for Oversized {
@@ -2914,6 +2920,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), ignore = "the Scan workspace fork reads designs and scans whatever their size on the desktop")]
     fn mesh_archives_keep_expansion_and_repeated_reference_limits() {
         // Change only the declared sizes in a tiny archive: admission must reject these
         // without allocating or decompressing a half-gigabyte payload.
@@ -2984,6 +2991,7 @@ mod tests {
     /// design is saved: the import limit governs the import and the design file limit governs
     /// the design (#2721).
     #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), ignore = "the Scan workspace fork reads designs and scans whatever their size on the desktop")]
     fn step_that_cannot_be_saved_even_compressed_is_refused_when_the_design_is_saved() {
         let step = padded_step(crate::MAX_DESIGN_BYTES + (80 << 20), true);
         let mut doc = Document::new("Noisy import");

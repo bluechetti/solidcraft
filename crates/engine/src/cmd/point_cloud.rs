@@ -240,7 +240,7 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     let size = point_size(p, cmd)?.unwrap_or(2.0);
     let colors = (color_by(p, cmd)?, color(p, cmd)?, height_range(p, cmd)?);
     let center = bool_(p, "center").unwrap_or(false);
-    let bytes = solidcraft_io::vfs::read(path, solidcraft_io::MAX_POINT_CLOUD_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let bytes = solidcraft_io::limits::read(path, solidcraft_io::limits::Kind::Scan).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let read = solidcraft_io::read_point_cloud(&bytes, path, scale, max_points).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let mut warnings = read.warnings;
     // The cloud draws a PLY's faces, but the Scan workspace's tools work on a mesh body.
@@ -390,7 +390,7 @@ fn reload(s: &mut Session, p: &Value) -> Result<Value> {
     let path = c.source.clone();
     let scale = unit_scale(&c.units).unwrap_or(1.0);
     let max_points = reload_limit(&c);
-    let bytes = solidcraft_io::vfs::read_design_path(&path, s.path.as_deref(), solidcraft_io::MAX_POINT_CLOUD_BYTES)
+    let bytes = solidcraft_io::vfs::read_design_path(&path, s.path.as_deref(), solidcraft_io::limits::Kind::Scan.bytes())
         .map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let read = solidcraft_io::read_point_cloud(&bytes, &path, scale, max_points).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     c.origin = read.origin;
