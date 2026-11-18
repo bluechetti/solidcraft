@@ -3,8 +3,12 @@
 The **SCAN** tab turns a scan (a mesh or a point cloud made by measuring a real part) into
 ordinary parametric geometry: planes and cylinders fitted to it, sketches cut from it, smooth
 surfaces drawn over it, and a check of the result against the scan. Its panels run in the order
-the work goes: INSERT, CLEAN, ALIGN, FIT, RECONSTRUCT, FREEFORM, SKETCH, SELECT and
-CHECK.
+the work goes: INSERT, CLEAN, ALIGN, RECONSTRUCT, FREEFORM, SKETCH and CHECK. A panel shows its
+most used tools as buttons; the rest are in its drop-down.
+
+Each panel has a page of its own with a short clip of every tool at work:
+[Clean](scan-clean.md), [Align](scan-align.md), [Reconstruct](scan-reconstruct.md),
+[Freeform](scan-freeform.md), [Sketch](scan-sketch.md) and [Check](scan-check.md).
 
 A scan stays a mesh body. Everything built from it is a normal feature on the timeline, so
 changing the scan's position or a fitted dimension rebuilds what depends on it.
@@ -33,7 +37,7 @@ the full scan. A few things help:
 Clouds** reads clouds. A part that comes in tiny was probably measured in another unit: the import asks, or says
 so in a note.
 
-**2. Clean it.** **Repair Mesh** closes cracks and removes faces that pass through each other,
+**2. Clean it.** ([Clean a scan](scan-clean.md) shows each tool at work.) **Repair Mesh** closes cracks and removes faces that pass through each other,
 **Fill Holes** closes gaps, **Floating** removes stray pieces, **Denoise** smooths measurement
 noise, and **Reduce Mesh** and **Remesh** change the triangle count.
 
