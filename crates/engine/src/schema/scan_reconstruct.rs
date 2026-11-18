@@ -147,6 +147,15 @@ pub struct ScanTurned {
     pub share: f64,
 }
 
+/// Faces repeated evenly round a turned part's axis.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanSpokes {
+    pub count: usize,
+    pub faces: Vec<usize>,
+    /// The share of the shapes' area they cover.
+    pub share: f64,
+}
+
 /// A round hole no profile holds, to cut.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct ScanHole {
@@ -244,6 +253,10 @@ pub struct ScanReconstructResult {
     /// says how).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partly_turned: Option<ScanTurned>,
+    /// A turned part's faces repeated evenly round its axis (a wheel's spokes), left out of its
+    /// profile: how many places, and the faces (by Find All's numbers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spokes: Option<ScanSpokes>,
     pub holes: Vec<ScanHole>,
     pub repeats: Vec<ScanRepeat>,
     /// The body Reconstruct builds, once Extrude It or Revolve It has made it.
@@ -597,9 +610,14 @@ pub struct ScanBuildResult {
     /// The depth extruded or cut, in mm.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depth: Option<f64>,
-    /// How many places a pattern makes.
+    /// How many places a pattern makes (for Revolve It on a wheel: the openings cut between its
+    /// spokes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<usize>,
+    /// Revolve It on a wheel: the openings between its spokes, cut and patterned round the axis,
+    /// or why they were not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openings: Option<String>,
     /// How close the body is to the scan before and after the step (absent when it could not be
     /// measured).
     #[serde(default, skip_serializing_if = "Option::is_none")]

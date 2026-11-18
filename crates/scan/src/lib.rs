@@ -105,6 +105,7 @@ pub mod symmetric;
 pub mod symmetry;
 pub mod template;
 pub mod wall_outline;
+pub mod wheel;
 pub mod wrap;
 
 use std::collections::HashMap;

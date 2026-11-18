@@ -27,7 +27,7 @@ use crate::schema::scan_reconstruct::{
     ScanBuildResult, ScanChamferItParams, ScanChamferItResult, ScanChamfered, ScanCutItParams, ScanEdgeChamfer, ScanEdgeRound, ScanExtrudeItParams,
     ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams, ScanFindAllResult, ScanHole, ScanHoleForm, ScanHoleItParams,
     ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat, ScanRestParams,
-    ScanRestResult, ScanRevolveItParams, ScanShapeFound, ScanShapeItParams, ScanShell, ScanShellItParams, ScanTurned,
+    ScanRestResult, ScanRevolveItParams, ScanShapeFound, ScanShapeItParams, ScanShell, ScanShellItParams, ScanSpokes, ScanTurned,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -641,6 +641,7 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let turned = reading.revolve.as_ref().map(as_turned);
     let partly_turned = reading.partly_turned.as_ref().map(as_turned);
+    let spokes = reading.spokes.as_ref().map(|sp| ScanSpokes { count: sp.count, faces: sp.faces.clone(), share: sp.share });
     let body = found.scan.clone();
     let proposals =
         proposals(reading, built.is_some()).iter().map(|p| json!({"command": p.command(), "params": p.params(&body, view.selected())})).collect();
@@ -649,6 +650,19 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
     } else if let (true, Some(why)) = (reading.prisms.is_empty(), &reading.turned_unread) {
         let route = reading.revolve.as_ref().map(|r| by_hand(&found.scan, &at(r.axis.point), &at(r.axis.direction))).unwrap_or_default();
         Some(format!("the part turns about one axis, but Revolve It cannot read its profile: {why}{route}"))
+    } else if let (Some(sp), Some(r)) = (&reading.spokes, &reading.revolve) {
+        Some(format!(
+            "a wheel: {} spokes (`spokes`) repeat round the turned part's axis, {:.0}% of the shapes; Revolve It turns the rim and hub, then cuts one opening between the spokes (read off the scan seen along the axis) and patterns it {} times round the axis (`solid.pattern.circular`, axis {{\"origin\": [{:.3}, {:.3}, {:.3}], \"dir\": [{:.4}, {:.4}, {:.4}]}}); its reply's `openings` says what was cut",
+            sp.count,
+            100.0 * sp.share,
+            sp.count,
+            r.axis.point.x,
+            r.axis.point.y,
+            r.axis.point.z,
+            r.axis.direction.x,
+            r.axis.direction.y,
+            r.axis.direction.z
+        ))
     } else if let (true, Some(r)) = (reading.prisms.is_empty(), &reading.partly_turned) {
         Some(format!(
             "no turned part: round shapes share an axis (`partly_turned`) but cover only {:.0}% of the shapes, the rest flat or free (a wheel's spokes){}",
@@ -677,6 +691,7 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         prisms,
         turned,
         partly_turned,
+        spokes,
         holes,
         repeats,
         built,
@@ -793,6 +808,12 @@ fn draw(sk: &mut Sketch, outline: &Outline, level: &Level<'_>, drawn: &mut Drawn
                 match level(outline.faces.get(k).copied().flatten(), from, to) {
                     Some(true) => {
                         sk.add_constraint(ConstraintKind::Horizontal { l: line }, None)?;
+                        // A line along the turning axis is held on it, level with the sketch's
+                        // origin there: held only level, rounding the sizes above it moved it a
+                        // hair across, and Revolve refused the profile as crossing its axis.
+                        if a != 0 && from.y.abs() < 1e-9 && to.y.abs() < 1e-9 {
+                            sk.add_constraint(ConstraintKind::HorizontalPoints { p: 0, q: a }, None)?;
+                        }
                     }
                     Some(false) => {
                         sk.add_constraint(ConstraintKind::Vertical { l: line }, None)?;
@@ -1109,6 +1130,7 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         tangents: drawn.tangents,
         depth: Some(depth),
         count: None,
+        openings: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1118,10 +1140,19 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.revolve_it";
     let view = view(s, p, cmd, false)?;
     let found = &view.found;
-    let (plane, outline, held) = {
+    let spokes = view.reading().spokes.as_ref().map(|sp| sp.count);
+    let axis = view.reading().revolve.as_ref().map(|r| r.axis);
+    let (plane, outline, held, opening) = {
         let shown = super::shown_mesh(s, &found.scan).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
         let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
-        profile::turned_profile(&view.scan(positions, triangles), view.outcome(), view.reading()).map_err(|e| bad(cmd, e))?
+        let scan = view.scan(positions, triangles);
+        let (plane, outline, held) = profile::turned_profile(&scan, view.outcome(), view.reading()).map_err(|e| bad(cmd, e))?;
+        // A wheel: one opening between its spokes, read off the scan seen along the axis.
+        let opening = match (spokes, &axis) {
+            (Some(count), Some(axis)) => Some(solidcraft_scan::wheel::opening(&scan, axis, count).ok_or(count)),
+            _ => None,
+        };
+        (plane, outline, held, opening)
     };
     let (operation, solid, how) = into_params(s, &found.scan, p, cmd)?;
     // A cylinder's piece runs level along the axis, an end's upright, the axis's own along it. A
@@ -1138,6 +1169,16 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
     let sketch = sketch_outlines(s, &plane, "Turned Profile", std::slice::from_ref(&outline), &level, &mut drawn, round, true)?;
     let revolve = merged(json!({"sketch": sketch, "axis": "x", "name": "Revolve It"}), operation);
     let feature = run(s, "solid.revolve", revolve)?;
+    let (count, openings) = match (opening, axis) {
+        (Some(Ok(opening)), Some(axis)) => match cut_openings(s, &opening, &axis, spokes.unwrap_or(opening.alike), &solid) {
+            Ok(n) => (Some(n), Some(format!("{n} openings between the spokes cut through it and patterned round the axis"))),
+            Err(e) => (None, Some(format!("the openings between the spokes were not cut: {e}"))),
+        },
+        (Some(Err(count)), _) => {
+            (None, Some(format!("the scan seen along the axis does not show {count} openings alike between the spokes, so none were cut")))
+        }
+        _ => (None, None),
+    };
     reply(ScanBuildResult {
         body: found.scan.clone(),
         sketch: Some(sketch),
@@ -1148,10 +1189,54 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
         arcs: drawn.arcs,
         tangents: drawn.tangents,
         depth: None,
-        count: None,
+        count,
+        openings,
         fit: None,
         param_warnings: Vec::new(),
     })
+}
+
+/// One opening between a wheel's spokes cut through `solid`: its outline fitted with lines and
+/// arcs in a sketch square to the axis at the scan's front, cut through the wheel, and patterned
+/// `count` times round the axis. How many there are after.
+fn cut_openings(
+    s: &mut Session,
+    opening: &solidcraft_scan::wheel::Opening,
+    axis: &solidcraft_scan::reconstruct::Axis,
+    count: usize,
+    solid: &str,
+) -> Result<usize> {
+    let cmd = "scan.revolve_it";
+    let size = opening.outline.iter().map(|p| p.len()).fold(0.0_f64, f64::max);
+    let tolerance = (0.004 * size).max(0.05);
+    let fitted =
+        solidcraft_scan::chain::chain(&opening.outline, true, tolerance).ok_or_else(|| bad(cmd, "the opening's outline could not be fitted"))?;
+    let origin = axis.point + axis.direction * opening.front;
+    let made =
+        run(s, "sketch.create", json!({"plane": {"origin": at(origin), "x_dir": at(opening.x), "y_dir": at(opening.y)}, "name": "Spoke Opening"}))?;
+    let sketch = made.get("sketch").and_then(Value::as_u64).ok_or_else(|| EngineError::Other("the sketch was not made".into()))?;
+    if s.model.state().sketch(sketch).is_none() {
+        s.refresh();
+    }
+    let mut added = super::section::Added::default();
+    if let Err(e) = super::super::sketch_store::update(s, sketch, |_, _, sk| super::section::draw(sk, &[(fitted, true)], &mut added)) {
+        run(s, "sketch.cancel", json!({}))?;
+        return Err(e);
+    }
+    super::section::finish_dimensioned(s, true, None)?;
+    let through = 2.0 * (opening.front - opening.back).abs() + 2.0 * tolerance;
+    let cut = run(
+        s,
+        "solid.extrude",
+        json!({"sketch": sketch, "distance": format!("{through} mm"), "direction": "symmetric", "operation": "cut", "targets": [solid], "name": "Spoke Opening"}),
+    )?;
+    let name = cut.get("name").and_then(Value::as_str).unwrap_or("Spoke Opening").to_owned();
+    run(
+        s,
+        "solid.pattern.circular",
+        json!({"features": [name], "axis": {"origin": at(axis.point), "dir": at(axis.direction)}, "count": count, "name": "Spoke Openings"}),
+    )?;
+    Ok(count)
 }
 
 /// The body to cut a hole into or pattern in: `into`, else the body Reconstruct builds.
@@ -1190,6 +1275,7 @@ pub(super) fn shell_it(s: &mut Session, p: &Value) -> Result<Value> {
         tangents: 0,
         depth: Some(shell.thickness),
         count: None,
+        openings: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1379,6 +1465,7 @@ pub(super) fn hole_it(s: &mut Session, p: &Value) -> Result<Value> {
         tangents: 0,
         depth: Some(form.depth.unwrap_or_else(|| form.mouth.dist(form.bottom))),
         count: None,
+        openings: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1445,6 +1532,7 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
         tangents: 0,
         depth: Some(depth),
         count: None,
+        openings: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1481,6 +1569,7 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
             tangents: 0,
             depth: None,
             count: Some(count),
+            openings: None,
             fit: None,
             param_warnings: Vec::new(),
         });
@@ -1513,6 +1602,7 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
         tangents: 0,
         depth: None,
         count: Some(count),
+        openings: None,
         fit: None,
         param_warnings: Vec::new(),
     })

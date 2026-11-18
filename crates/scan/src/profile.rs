@@ -16,7 +16,7 @@
 //!   profile, the corners where their curves cross nearest where the scan has them meet; a face
 //!   that comes down to the axis meets the axis itself, which closes the profile there.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::{PI, TAU};
 
 use solidcore_record::{Plane, Vec2, Vec3};
@@ -681,6 +681,9 @@ pub struct ProfileFace {
     pub middle: Vec2,
     /// Where the scan has it nearest the axis, when it comes down to the axis.
     pub at_axis: Option<Vec2>,
+    /// The two ends of what the scan has of it (its two points farthest apart), in height and
+    /// radius: where a face the scan has only one neighbour of stops.
+    pub extent: [Vec2; 2],
 }
 
 /// Two faces meeting on the scan, and the middle of where they meet, in height and radius.
@@ -789,6 +792,24 @@ pub fn turned_outline(faces: &[ProfileFace], meetings: &[Meeting], reach: f64) -
     if beside.keys().filter(|&&k| k != axis).count() < 2 {
         return Err(Refusal::TooFew);
     }
+    // One run of faces open at both ends (a scan that missed the faces between them: the hidden
+    // side of a mounted disc) is closed by a line across from end to end, one more node.
+    let closing = faces.len() + 1;
+    let ends: Vec<usize> = beside.iter().filter(|(k, others)| **k != axis && others.len() == 1).map(|(k, _)| *k).collect();
+    if let [a, b] = ends[..]
+        && beside.iter().all(|(k, others)| others.len() == 2 || *k == a || *k == b)
+        && connected(&beside, a, b)
+    {
+        for end in [a, b] {
+            let meeting = beside[&end][0];
+            let at = met[&(end.min(meeting), end.max(meeting))];
+            let [p, q] = faces[end].extent;
+            met.insert((end, closing), if p.dist(at) >= q.dist(at) { p } else { q });
+        }
+        beside.entry(a).or_default().push(closing);
+        beside.entry(b).or_default().push(closing);
+        beside.insert(closing, vec![a, b]);
+    }
     if let Some((&k, others)) = beside.iter().find(|(_, others)| others.len() != 2) {
         return Err(if k == axis { Refusal::Apart } else { Refusal::Meets(k, others.len()) });
     }
@@ -809,13 +830,24 @@ pub fn turned_outline(faces: &[ProfileFace], meetings: &[Meeting], reach: f64) -
     if order.len() != beside.len() {
         return Err(Refusal::Apart);
     }
-    let face_of = |k: usize| (k != axis).then(|| &faces[k].face);
+    // The closing line last: a sketch is dimensioned line by line in order, so by its turn its ends
+    // are already held, and the bridge across what the scan never saw follows the faces' sizes
+    // rather than holding one of its own (which made a brake disc's profile refuse a longer face).
+    if let Some(i) = order.iter().position(|&k| k == closing) {
+        order.rotate_left(i + 1);
+    }
+    let face_of = |k: usize| faces.get(k).map(|f| &f.face);
     let n = order.len();
     let mut corners = Vec::with_capacity(n);
     for k in 0..n {
         let (before, after) = (order[(k + n - 1) % n], order[k]);
         let at = met[&(before.min(after), before.max(after))];
-        let corner = crossing(curve(face_of(before)), curve(face_of(after)), at);
+        // Where the closing line meets a face: the end of the face, on its curve.
+        let corner = if before == closing || after == closing {
+            onto(curve(face_of(if before == closing { after } else { before })), at)
+        } else {
+            crossing(curve(face_of(before)), curve(face_of(after)), at)
+        };
         if corner.dist(at) > reach {
             return Err(Refusal::Corner(before.min(after), before.max(after)));
         }
@@ -833,7 +865,29 @@ pub fn turned_outline(faces: &[ProfileFace], meetings: &[Meeting], reach: f64) -
             }
         })
         .collect();
-    Ok(Outline { corners, pieces, faces: order.iter().map(|&k| (k != axis).then_some(k)).collect() })
+    Ok(Outline { corners, pieces, faces: order.iter().map(|&k| (k < faces.len()).then_some(k)).collect() })
+}
+
+/// Whether `a` and `b` are joined through `beside`.
+fn connected(beside: &BTreeMap<usize, Vec<usize>>, a: usize, b: usize) -> bool {
+    let mut seen = BTreeSet::from([a]);
+    let mut next = vec![a];
+    while let Some(k) = next.pop() {
+        for &j in beside.get(&k).map_or(&[][..], Vec::as_slice) {
+            if seen.insert(j) {
+                next.push(j);
+            }
+        }
+    }
+    seen.contains(&b) && seen.len() == beside.len()
+}
+
+/// The point of `curve` nearest `p`.
+fn onto(curve: Curve, p: Vec2) -> Vec2 {
+    match curve {
+        Curve::Line { point, direction } => point + direction * (p - point).dot(direction),
+        Curve::Circle { center, radius } => center + (p - center).normalized().unwrap_or(Vec2::X) * radius,
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -954,6 +1008,16 @@ pub const SLIVER_SHARE: f64 = 0.002;
 /// while three pieces or more are left. With `axis` (a turned profile, the axis along x), corners
 /// within `least` of the axis or across it are put on it, so the profile never crosses it.
 pub fn without_slivers(mut outline: Outline, least: f64, axis: bool) -> Outline {
+    // An arc whose ends all but meet is a sliver too, and read the long way round it would be
+    // nearly a whole circle (crossing the axis, on a wheel's hub): a line, to go with the rest.
+    let n = outline.corners.len();
+    if outline.pieces.len() == n {
+        for k in 0..n {
+            if matches!(outline.pieces[k], Piece::Arc { .. }) && outline.corners[k].dist(outline.corners[(k + 1) % n]) < least {
+                outline.pieces[k] = Piece::Line;
+            }
+        }
+    }
     if axis {
         for c in &mut outline.corners {
             if c.y < least {
@@ -983,6 +1047,12 @@ pub fn without_slivers(mut outline: Outline, least: f64, axis: bool) -> Outline 
         outline.faces.remove(k);
     }
 }
+
+/// A face about the axis with no more than this share of their area, meeting only one other, is
+/// left out of the profile as a misfit sliver ([`turned_profile_of`]) ...
+const SMALL_FACE_SHARE: f64 = 0.03;
+/// ... at most this many of them.
+const MOST_DROPPED: usize = 3;
 
 /// [`turned_profile`] of `revolve` from the shapes `found` and the part's size, so that
 /// Reconstruct can ask it before it proposes Revolve It.
@@ -1016,12 +1086,15 @@ pub(crate) fn turned_profile_of(
         let nearest = points.iter().map(|(p, _)| *p).min_by(|a, b| a.y.total_cmp(&b.y));
         // A face comes down to the axis when the scan has it within a hundredth of the part.
         let at_axis = nearest.filter(|n| n.y <= 0.01 * size);
+        let far = |from: Vec2| points.iter().map(|(p, _)| *p).max_by(|a, b| a.dist(from).total_cmp(&b.dist(from))).unwrap_or(from);
+        let one = far(middle);
+        let extent = [one, far(one)];
         for &t in &triangles {
             if let Some(slot) = owner.get_mut(t) {
                 *slot = faces.len();
             }
         }
-        faces.push(ProfileFace { face: turned, middle, at_axis });
+        faces.push(ProfileFace { face: turned, middle, at_axis, extent });
         numbered.push(k);
         held_faces.insert(k, turned);
     }
@@ -1049,9 +1122,25 @@ pub(crate) fn turned_profile_of(
             }
         }
     }
-    let meetings: Vec<Meeting> =
+    let mut meetings: Vec<Meeting> =
         shared.into_iter().filter(|(_, (_, n))| *n >= 2).map(|((a, b), (sum, n))| Meeting { faces: [a, b], at: sum / n as f64 }).collect();
-    let outline = match turned_outline(&faces, &meetings, 0.05 * size) {
+    // A small face hanging off the profile by one meeting (a sliver of an edge fitted as a ball or
+    // a torus, 1 % of a brake disc) is one face too many, not a missing one: left out, the rest may
+    // go round. Its triangles stay unowned, as freeform.
+    let area_of = |i: usize| numbered.get(i).and_then(|&k| found.get(k)).map_or(0.0, |f| f.area);
+    let total: f64 = (0..faces.len()).map(area_of).sum();
+    let mut dropped: BTreeSet<usize> = BTreeSet::new();
+    while dropped.len() < MOST_DROPPED {
+        let meets = |k: usize| meetings.iter().filter(|m| m.faces.contains(&k)).count() + usize::from(faces[k].at_axis.is_some());
+        let Some(k) = (0..faces.len()).find(|&k| !dropped.contains(&k) && meets(k) == 1 && area_of(k) <= SMALL_FACE_SHARE * total) else { break };
+        dropped.insert(k);
+        meetings.retain(|m| !m.faces.contains(&k));
+        if let Some(face) = faces.get_mut(k) {
+            face.at_axis = None;
+        }
+    }
+    let read = turned_outline(&faces, &meetings, 0.05 * size);
+    let outline = match read {
         // Numbered by the reading's faces.
         Ok(outline) => Outline { faces: outline.faces.iter().map(|f| f.map(|i| numbered[i])).collect(), ..outline },
         // Where the faces' meetings go round no one profile, a slice through the axis may.
@@ -1484,11 +1573,21 @@ mod tests {
     #[test]
     fn a_stepped_shafts_faces_go_round_its_profile() {
         let faces = vec![
-            ProfileFace { face: Turned::Plane { height: 0.0 }, middle: Vec2::new(0.0, 10.0), at_axis: Some(Vec2::new(0.0, 0.0)) },
-            ProfileFace { face: Turned::Cylinder { radius: 20.0 }, middle: Vec2::new(15.0, 20.0), at_axis: None },
-            ProfileFace { face: Turned::Plane { height: 30.0 }, middle: Vec2::new(30.0, 15.0), at_axis: None },
-            ProfileFace { face: Turned::Cylinder { radius: 10.0 }, middle: Vec2::new(40.0, 10.0), at_axis: None },
-            ProfileFace { face: Turned::Plane { height: 50.0 }, middle: Vec2::new(50.0, 5.0), at_axis: Some(Vec2::new(50.0, 0.0)) },
+            ProfileFace {
+                face: Turned::Plane { height: 0.0 },
+                middle: Vec2::new(0.0, 10.0),
+                at_axis: Some(Vec2::new(0.0, 0.0)),
+                extent: [Vec2::new(0.0, 10.0); 2],
+            },
+            ProfileFace { face: Turned::Cylinder { radius: 20.0 }, middle: Vec2::new(15.0, 20.0), at_axis: None, extent: [Vec2::new(15.0, 20.0); 2] },
+            ProfileFace { face: Turned::Plane { height: 30.0 }, middle: Vec2::new(30.0, 15.0), at_axis: None, extent: [Vec2::new(30.0, 15.0); 2] },
+            ProfileFace { face: Turned::Cylinder { radius: 10.0 }, middle: Vec2::new(40.0, 10.0), at_axis: None, extent: [Vec2::new(40.0, 10.0); 2] },
+            ProfileFace {
+                face: Turned::Plane { height: 50.0 },
+                middle: Vec2::new(50.0, 5.0),
+                at_axis: Some(Vec2::new(50.0, 0.0)),
+                extent: [Vec2::new(50.0, 5.0); 2],
+            },
         ];
         let meetings = vec![
             Meeting { faces: [0, 1], at: Vec2::new(0.0, 20.0) },
@@ -1506,6 +1605,55 @@ mod tests {
         assert!(outline.pieces.iter().all(|p| *p == Piece::Line));
         // A face missing between two is refused.
         assert!(matches!(turned_outline(&faces[..3], &meetings[..2], 1.0), Err(Refusal::Apart | Refusal::Meets(..))));
+    }
+
+    /// A ring scanned from one side (a brake disc on its hub, its bore never seen): its front face,
+    /// rim and back face meet in a run open at both ends. The run is closed by a line from the
+    /// front face's inner end (R 30) to the back face's (R 40), across where the scan has nothing.
+    #[test]
+    fn a_run_of_faces_open_at_both_ends_is_closed_across() {
+        let faces = vec![
+            ProfileFace {
+                face: Turned::Plane { height: 0.0 },
+                middle: Vec2::new(0.0, 45.0),
+                at_axis: None,
+                extent: [Vec2::new(0.0, 30.0), Vec2::new(0.0, 60.0)],
+            },
+            ProfileFace {
+                face: Turned::Cylinder { radius: 60.0 },
+                middle: Vec2::new(5.0, 60.0),
+                at_axis: None,
+                extent: [Vec2::new(0.0, 60.0), Vec2::new(10.0, 60.0)],
+            },
+            ProfileFace {
+                face: Turned::Plane { height: 10.0 },
+                middle: Vec2::new(10.0, 50.0),
+                at_axis: None,
+                extent: [Vec2::new(10.0, 60.0), Vec2::new(10.0, 40.0)],
+            },
+        ];
+        let meetings = vec![Meeting { faces: [0, 1], at: Vec2::new(0.0, 60.0) }, Meeting { faces: [1, 2], at: Vec2::new(10.0, 60.0) }];
+        let outline = turned_outline(&faces, &meetings, 1.0).unwrap();
+        assert_eq!(outline.corners.len(), 4, "{outline:?}");
+        for corner in [Vec2::new(0.0, 30.0), Vec2::new(0.0, 60.0), Vec2::new(10.0, 60.0), Vec2::new(10.0, 40.0)] {
+            assert!(outline.corners.iter().any(|c| c.dist(corner) < 1e-9), "{corner:?} in {:?}", outline.corners);
+        }
+        assert_eq!(outline.faces.iter().filter(|f| f.is_none()).count(), 1, "one closing line: {outline:?}");
+        assert_eq!(outline.faces.last(), Some(&None), "the closing line last: {outline:?}");
+    }
+
+    /// An arc whose ends all but meet (a round 2 mm across, cut where it touches the axis) is a
+    /// line among the slivers, not a circle the long way round.
+    #[test]
+    fn an_arc_whose_ends_meet_is_a_sliver() {
+        let outline = Outline {
+            corners: vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0), Vec2::new(5.0, 10.0), Vec2::new(5.01, 10.0)],
+            pieces: vec![Piece::Line, Piece::Line, Piece::Line, Piece::Arc { center: Vec2::new(5.005, 8.0), ccw: false }, Piece::Line],
+            faces: vec![None; 5],
+        };
+        let kept = without_slivers(outline, 0.1, false);
+        assert_eq!(kept.pieces.len(), 4, "{kept:?}");
+        assert!(kept.pieces.iter().all(|p| *p == Piece::Line), "{kept:?}");
     }
 
     #[test]

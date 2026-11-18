@@ -68,6 +68,21 @@ const SAME_AXIS: f64 = 0.05;
 const LEAST_ROUND: usize = 2;
 /// Faces about the axis cover at least this share of what the shapes cover.
 const MOSTLY_TURNED: f64 = 0.75;
+/// Round shapes about an axis covering at least this share, with faces repeated evenly round it
+/// ([`spokes_about`]) covering the rest up to [`MOSTLY_TURNED`], are a turned part with spokes.
+const SPOKED_TURNED: f64 = 0.5;
+/// ... of which faces that turn (cylinders, cones, tori, balls: not the flat faces square to the
+/// axis) cover at least this share: a block's four sides lie evenly round a boss on it, but its
+/// flat top and bottom do not make it turned.
+const SPOKED_ROUND: f64 = 0.3;
+/// Alike faces round an axis: sizes within this share, tilts to the axis within this (as the
+/// cosine), distances from it within this share of the largest.
+const SPOKE_SIZE: f64 = 0.12;
+const SPOKE_TILT: f64 = 0.05;
+const SPOKE_REACH: f64 = 0.08;
+/// Places round the axis within this share of the step from where an even ring puts them.
+const SPOKE_EVEN: f64 = 0.15;
+
 /// Round shapes about one axis covering at least this share are reported as an axis to rebuild
 /// about by hand, though the part is no turned part.
 const PARTLY_TURNED: f64 = 0.25;
@@ -170,6 +185,16 @@ pub struct Revolve {
     /// As indices into the faces.
     pub members: Vec<usize>,
     /// The share of the faces' area they cover.
+    pub share: f64,
+}
+
+/// Faces repeated evenly round a turned part's axis (a wheel's spokes): `count` places, and the
+/// faces at them, which the turned profile leaves out.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Spokes {
+    pub count: usize,
+    pub faces: Vec<usize>,
+    /// The share of the shapes' area they cover.
     pub share: f64,
 }
 
@@ -803,6 +828,85 @@ pub fn round_axis(faces: &[Face], size: f64) -> Option<Revolve> {
     (on.iter().filter(|m| m.1).count() >= LEAST_ROUND).then_some(Revolve { axis, members, share })
 }
 
+/// The faces of `faces` not in `members` that repeat evenly round `axis` (a wheel's spokes, a
+/// hub's bosses): grouped by kind, size, tilt to the axis and distance from it, each group's
+/// places round the axis evenly spaced. The count most of their area repeats at (a group of twice
+/// as many, a spoke's two mirrored sides, counts too). `None` with fewer than three places.
+pub fn spokes_about(faces: &[Face], axis: &Axis, members: &[usize]) -> Option<Spokes> {
+    let (across, other) = crate::in_plane(axis.direction);
+    struct Seen {
+        k: usize,
+        kind: Kind,
+        size: f64,
+        tilt: f64,
+        reach: f64,
+        angle: f64,
+    }
+    let seen: Vec<Seen> = faces
+        .iter()
+        .enumerate()
+        .filter(|(k, f)| f.area > 0.0 && !members.contains(k))
+        .map(|(k, f)| {
+            let (kind, size, direction, place) = match f.shape {
+                Shape::Plane { point, normal } => (Kind::Plane, f.area, Some(normal), point),
+                Shape::Cylinder { point, axis, radius } => (Kind::Cylinder, radius, Some(axis), point),
+                Shape::Sphere { center, radius } => (Kind::Sphere, radius, None, center),
+                Shape::Cone { apex, axis, half_angle } => (Kind::Cone, half_angle, Some(axis), apex),
+                Shape::Torus { center, axis, minor, .. } => (Kind::Torus, minor, Some(axis), center),
+            };
+            let d = place - axis.point;
+            let off = d - axis.direction * d.dot(axis.direction);
+            let tilt = direction.and_then(|v| v.normalized()).map_or(0.0, |v| v.dot(axis.direction).abs());
+            Seen { k, kind, size, tilt, reach: off.len(), angle: off.dot(other).atan2(off.dot(across)).rem_euclid(TAU) }
+        })
+        .collect();
+    let total: f64 = faces.iter().map(|f| f.area).sum();
+    let mut used = vec![false; seen.len()];
+    // (count, faces, area) of each even group.
+    let mut groups: Vec<(usize, Vec<usize>, f64)> = Vec::new();
+    for i in 0..seen.len() {
+        if used[i] {
+            continue;
+        }
+        let a = &seen[i];
+        let group: Vec<usize> = (i..seen.len())
+            .filter(|&j| {
+                let b = &seen[j];
+                !used[j]
+                    && a.kind == b.kind
+                    && (a.size - b.size).abs() <= SPOKE_SIZE * a.size.max(b.size)
+                    && (a.tilt - b.tilt).abs() <= SPOKE_TILT
+                    && (a.reach - b.reach).abs() <= SPOKE_REACH * a.reach.max(b.reach).max(1e-9)
+            })
+            .collect();
+        if group.len() < 3 || a.reach <= 0.0 {
+            continue;
+        }
+        let mut angles: Vec<f64> = group.iter().map(|&j| seen[j].angle).collect();
+        angles.sort_by(f64::total_cmp);
+        let step = TAU / angles.len() as f64;
+        let even = (0..angles.len()).all(|n| {
+            let gap = if n + 1 < angles.len() { angles[n + 1] - angles[n] } else { angles[0] + TAU - angles[n] };
+            (gap - step).abs() <= SPOKE_EVEN * step
+        });
+        if even {
+            for &j in &group {
+                used[j] = true;
+            }
+            groups.push((group.len(), group.iter().map(|&j| seen[j].k).collect(), group.iter().map(|&j| faces[seen[j].k].area).sum()));
+        }
+    }
+    // The count most area repeats at; a group of twice as many counts towards it.
+    let count = groups.iter().map(|g| g.0).filter(|&n| n >= 3).max_by(|&x, &y| {
+        let area = |n: usize| groups.iter().filter(|g| g.0 == n || g.0 == 2 * n).map(|g| g.2).sum::<f64>();
+        area(x).total_cmp(&area(y)).then(y.cmp(&x))
+    })?;
+    let mut chosen: Vec<usize> = groups.iter().filter(|g| g.0 == count || g.0 == 2 * count).flat_map(|g| g.1.iter().copied()).collect();
+    chosen.sort_unstable();
+    let area: f64 = chosen.iter().map(|&k| faces[k].area).sum();
+    Some(Spokes { count, faces: chosen, share: area / total.max(1e-300) })
+}
+
 /// What a shape is, for telling alike from unlike: its kind, its size, the direction it holds.
 struct Likeness {
     kind: Kind,
@@ -1329,6 +1433,9 @@ pub struct Reading {
     /// With no turned part: the axis round shapes still share ([`round_axis`]), when they cover at
     /// least [`PARTLY_TURNED`] of the shapes (a wheel, a hub with spokes or bosses).
     pub partly_turned: Option<Revolve>,
+    /// A turned part's faces repeated evenly round its axis (a wheel's spokes), left out of its
+    /// profile: Revolve It turns the part with the openings between them filled.
+    pub spokes: Option<Spokes>,
     /// Why the turned part's profile cannot be read (a face about the axis missing, or one too
     /// many), when there is a turned part and Revolve It could not build it.
     pub turned_unread: Option<String>,
@@ -1643,7 +1750,20 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     let hole = |k: usize| holes_at.get(k).copied().unwrap_or(false);
     // A hole's floor is the hole's: a flat face on its axis, square to it, about as big as its end.
     let floors: BTreeSet<usize> = (0..faces.len()).filter(|&j| (0..faces.len()).any(|k| hole(k) && is_floor_of(&faces[k], &faces[j]))).collect();
-    let revolve = revolve(&faces, size);
+    let mut revolve = revolve(&faces, size);
+    // A wheel: round about an axis, the rest repeated evenly round it.
+    let mut spokes = None;
+    if revolve.is_none()
+        && let Some(round) = round_axis(&faces, size).filter(|r| {
+            let total: f64 = faces.iter().map(|f| f.area).sum();
+            let turning: f64 = r.members.iter().filter(|&&k| !matches!(faces[k].shape, Shape::Plane { .. })).map(|&k| faces[k].area).sum();
+            r.share >= SPOKED_TURNED && turning >= SPOKED_ROUND * total
+        })
+        && let Some(found) = spokes_about(&faces, &round.axis, &round.members).filter(|sp| round.share + sp.share >= MOSTLY_TURNED)
+    {
+        revolve = Some(round);
+        spokes = Some(found);
+    }
     let partly_turned = if revolve.is_none() { round_axis(&faces, size).filter(|r| r.share >= PARTLY_TURNED) } else { None };
     // Holes as a Hole feature makes them (a counterbore, a countersink, a blind hole's point, a
     // tap drill): Hole It drills each whole, so none of their faces is a prism's wall or end, whose
@@ -1806,6 +1926,7 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         unread_prisms,
         revolve,
         partly_turned,
+        spokes,
         turned_unread,
         repeats,
         plans,
@@ -1872,6 +1993,25 @@ mod tests {
 
     fn cylinder(point: Vec3, axis: Vec3, radius: f64) -> Face {
         Face { shape: Shape::Cylinder { point, axis, radius }, area: 100.0 }
+    }
+
+    /// A wheel's spokes: five alike faces evenly round the axis (each a spoke's flank, tilted to it)
+    /// are found as five places; the same faces strewn unevenly are none.
+    #[test]
+    fn spokes_evenly_round_the_axis_are_found() {
+        let axis = Axis { point: Vec3::ZERO, direction: Vec3::Z };
+        let flank = |degrees: f64| {
+            let (s, c) = degrees.to_radians().sin_cos();
+            plane_at(Vec3::new(60.0 * c, 60.0 * s, 10.0), Vec3::new(-s, c, 0.3), 400.0)
+        };
+        let round = vec![cylinder(Vec3::ZERO, Vec3::Z, 100.0), cylinder(Vec3::ZERO, Vec3::Z, 30.0)];
+        let mut faces = round.clone();
+        faces.extend([0.0, 72.0, 144.0, 216.0, 288.0].map(flank));
+        let found = spokes_about(&faces, &axis, &[0, 1]).expect("five spokes");
+        assert_eq!((found.count, found.faces.clone()), (5, vec![2, 3, 4, 5, 6]), "{found:?}");
+        let mut strewn = round;
+        strewn.extend([0.0, 30.0, 100.0, 200.0, 250.0].map(flank));
+        assert!(spokes_about(&strewn, &axis, &[0, 1]).is_none());
     }
 
     /// How far a box from `low` to `high` runs along `direction`, least and most.

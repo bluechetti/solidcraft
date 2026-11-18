@@ -242,6 +242,7 @@ fn reconstruct_proposes_no_cut_with_nothing_to_cut() {
         unread_prisms: 0,
         revolve: None,
         partly_turned: None,
+        spokes: None,
         turned_unread: None,
         repeats: Vec::new(),
         plans: Vec::new(),
