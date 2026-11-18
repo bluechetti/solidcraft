@@ -105,6 +105,10 @@ pub struct ScanSquareParams {
     /// The mirror plane itself, to use as it is (the plane a dialog shows). Instead of `guide`.
     #[serde(default)]
     pub plane: Option<ScanPlane>,
+    /// The origin plane the mirror plane is laid on: `YZ` (the default: X = 0) or `XZ` (Y = 0,
+    /// as cars, vans and aircraft are drawn: once stood on its wheels the length runs along X).
+    #[serde(default)]
+    pub onto: Option<String>,
 }
 
 /// A mirror plane given by a point and the way it faces.
@@ -1701,10 +1705,14 @@ pub struct ScanSectionResult {
     pub tangents: usize,
     /// The tolerance used, in mm.
     pub tolerance: f64,
-    /// Degrees of freedom the new sketch was left with once dimensioned (0: fully defined);
-    /// absent when it was not dimensioned.
+    /// Degrees of freedom the new sketch was left with once dimensioned (0: fully defined), or
+    /// as drawn when it could not be dimensioned (see `warning`); absent when `dimensions` was
+    /// false or the sketch was one already being edited.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dof: Option<usize>,
+    /// Set when the new sketch could not be dimensioned: why, and the solve status it was left in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,

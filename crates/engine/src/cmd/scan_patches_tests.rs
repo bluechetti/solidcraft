@@ -127,3 +127,47 @@ fn a_clicks_radius_bounds_the_region() {
     let near = run(&mut s, "scan.fit_patches", json!({"body": scan, "point": [0, 15, 0], "radius": 6}));
     assert!(near["points"].as_u64().unwrap() < whole["points"].as_u64().unwrap() / 2, "{near} against {whole}");
 }
+
+/// The surface's own distance from the scan is reported too (`worst_off`): over the bent sheet it
+/// is as small as the fit; over a flat right triangle the grid patch spans the triangle's square
+/// box, its far corner hanging 14 mm past the scan, and the reply says so though every scan point
+/// lies on the surface (a car's trunk lid read rms 1.3 mm while its patch hung 81 mm off).
+#[test]
+fn a_patch_hanging_past_the_scan_is_told_of() {
+    let mut s = Session::default();
+    let scan = bent_scan(&mut s);
+    let sheet = run(&mut s, "scan.fit_patches", json!({"body": scan, "point": [0, 15, 0]}));
+    let off = sheet["worst_off"].as_f64().unwrap();
+    assert!(off < 1.0 && sheet.get("warning").is_none(), "{sheet}");
+
+    let mut s = Session::default();
+    let n = 40u32;
+    let at = |i: u32, j: u32| Vec3::new(f64::from(i), f64::from(j), 0.0);
+    let mut stl = String::from("solid t\n");
+    for j in 0..n {
+        for i in 0..n - j {
+            let mut tris = vec![[at(i, j), at(i + 1, j), at(i, j + 1)]];
+            if i + j + 1 < n {
+                tris.push([at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)]);
+            }
+            for tri in tris {
+                stl.push_str("facet normal 0 0 1\nouter loop\n");
+                for q in tri {
+                    stl.push_str(&format!("vertex {} {} {}\n", q.x, q.y, q.z));
+                }
+                stl.push_str("endloop\nendfacet\n");
+            }
+        }
+    }
+    stl.push_str("endsolid t\n");
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-patches-tri-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("triangle.stl");
+    std::fs::write(&path, stl).unwrap();
+    run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    let r = run(&mut s, "scan.fit_patches", json!({"point": [10, 10, 0], "radius": 100}));
+    assert!(r["max"].as_f64().unwrap() < 0.5, "{r}");
+    assert!(r["worst_off"].as_f64().unwrap() > 10.0, "{r}");
+    assert!(r["warning"].as_str().is_some_and(|w| w.contains("hang past")), "{r}");
+}

@@ -239,6 +239,11 @@ pub struct ScanReconstructResult {
     pub prisms: Vec<ScanPrism>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turned: Option<ScanTurned>,
+    /// With no turned part: the axis round shapes still share when they cover a quarter of the
+    /// shapes or more (a wheel's rim and hub, its spokes flat), to rebuild it about by hand (`note`
+    /// says how).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partly_turned: Option<ScanTurned>,
     pub holes: Vec<ScanHole>,
     pub repeats: Vec<ScanRepeat>,
     /// The body Reconstruct builds, once Extrude It or Revolve It has made it.

@@ -36,6 +36,57 @@ impl Mat {
     }
 }
 
+/// The Cholesky factor `L` (lower, `A = L Lᵀ`) of a symmetric positive definite `A`, for many
+/// solves with one matrix. `None` when `A` is not square or not positive definite.
+pub fn cholesky(mut a: Mat) -> Option<Mat> {
+    let n = a.rows;
+    if a.cols != n {
+        return None;
+    }
+    for j in 0..n {
+        let mut d = a.get(j, j);
+        for k in 0..j {
+            let l = a.get(j, k);
+            d -= l * l;
+        }
+        if !(d.is_finite() && d > 0.0) {
+            return None;
+        }
+        let d = d.sqrt();
+        a.set(j, j, d);
+        for i in j + 1..n {
+            let mut v = a.get(i, j);
+            for k in 0..j {
+                v -= a.get(i, k) * a.get(j, k);
+            }
+            a.set(i, j, v / d);
+        }
+    }
+    for i in 0..n {
+        for j in i + 1..n {
+            a.set(i, j, 0.0);
+        }
+    }
+    Some(a)
+}
+
+/// Solves `L Lᵀ x = b` in place with the factor from [`cholesky`].
+pub fn cholesky_solve(l: &Mat, b: &mut [f64]) {
+    let n = l.rows.min(b.len());
+    for i in 0..n {
+        let sum: f64 = b.iter().take(i).enumerate().map(|(k, bk)| l.get(i, k) * bk).sum();
+        if let Some(bi) = b.get_mut(i) {
+            *bi = (*bi - sum) / l.get(i, i);
+        }
+    }
+    for i in (0..n).rev() {
+        let sum: f64 = b.iter().enumerate().take(n).skip(i + 1).map(|(k, bk)| l.get(k, i) * bk).sum();
+        if let Some(bi) = b.get_mut(i) {
+            *bi = (*bi - sum) / l.get(i, i);
+        }
+    }
+}
+
 /// Solve `A x = b` (A square). Returns `None` when singular.
 pub fn solve(mut a: Mat, mut b: Vec<f64>) -> Option<Vec<f64>> {
     let n = a.rows;

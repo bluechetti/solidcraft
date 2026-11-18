@@ -68,6 +68,9 @@ const SAME_AXIS: f64 = 0.05;
 const LEAST_ROUND: usize = 2;
 /// Faces about the axis cover at least this share of what the shapes cover.
 const MOSTLY_TURNED: f64 = 0.75;
+/// Round shapes about one axis covering at least this share are reported as an axis to rebuild
+/// about by hand, though the part is no turned part.
+const PARTLY_TURNED: f64 = 0.25;
 /// A face this close to the axis lies on it, as a share of the part's size.
 const ON_THE_AXIS: f64 = 0.05;
 /// How far short of the plane at its end a wall may stop and still run to it (a fillet, the
@@ -781,6 +784,14 @@ pub fn turning_axis(shapes: &[(Shape, f64)], size: f64) -> Option<Axis> {
 
 /// The part as turned, if most of what the shapes cover lies about one axis. `size` is the part's.
 pub fn revolve(faces: &[Face], size: f64) -> Option<Revolve> {
+    round_axis(faces, size).filter(|r| r.share >= MOSTLY_TURNED)
+}
+
+/// The axis round shapes share ([`LEAST_ROUND`] of them or more), with the faces about it and
+/// their share, however little of the part it is: a wheel's rim and hub turn about it while its
+/// flat spokes do not, so it is no turned part [`revolve`] reads, but the axis is what a person
+/// rebuilding it by hand needs first.
+pub fn round_axis(faces: &[Face], size: f64) -> Option<Revolve> {
     let weighted: Vec<(Shape, f64)> = faces.iter().map(|f| (f.shape, f.area)).collect();
     let axis = turning_axis(&weighted, size)?;
     // A piece of another face's surface (no area of its own) is read with that face.
@@ -789,7 +800,7 @@ pub fn revolve(faces: &[Face], size: f64) -> Option<Revolve> {
     let total: f64 = faces.iter().map(|f| f.area).sum();
     let members: Vec<usize> = on.iter().map(|m| m.0).collect();
     let share = members.iter().map(|&k| faces[k].area).sum::<f64>() / total.max(1e-300);
-    (on.iter().filter(|m| m.1).count() >= LEAST_ROUND && share >= MOSTLY_TURNED).then_some(Revolve { axis, members, share })
+    (on.iter().filter(|m| m.1).count() >= LEAST_ROUND).then_some(Revolve { axis, members, share })
 }
 
 /// What a shape is, for telling alike from unlike: its kind, its size, the direction it holds.
@@ -1315,6 +1326,9 @@ pub struct Reading {
     /// walls of theirs, so Extrude It could not build them: left out of `prisms`.
     pub unread_prisms: usize,
     pub revolve: Option<Revolve>,
+    /// With no turned part: the axis round shapes still share ([`round_axis`]), when they cover at
+    /// least [`PARTLY_TURNED`] of the shapes (a wheel, a hub with spokes or bosses).
+    pub partly_turned: Option<Revolve>,
     /// Why the turned part's profile cannot be read (a face about the axis missing, or one too
     /// many), when there is a turned part and Revolve It could not build it.
     pub turned_unread: Option<String>,
@@ -1630,6 +1644,7 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     // A hole's floor is the hole's: a flat face on its axis, square to it, about as big as its end.
     let floors: BTreeSet<usize> = (0..faces.len()).filter(|&j| (0..faces.len()).any(|k| hole(k) && is_floor_of(&faces[k], &faces[j]))).collect();
     let revolve = revolve(&faces, size);
+    let partly_turned = if revolve.is_none() { round_axis(&faces, size).filter(|r| r.share >= PARTLY_TURNED) } else { None };
     // Holes as a Hole feature makes them (a counterbore, a countersink, a blind hole's point, a
     // tap drill): Hole It drills each whole, so none of their faces is a prism's wall or end, whose
     // levels would cut the prism into slabs at a counterbore's step or a blind hole's end.
@@ -1790,6 +1805,7 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         prisms,
         unread_prisms,
         revolve,
+        partly_turned,
         turned_unread,
         repeats,
         plans,

@@ -30,7 +30,7 @@ pub use cursor::{move_line_towards, move_point_towards};
 
 #[path = "redundancy.rs"]
 mod redundancy;
-pub use redundancy::{CONSISTENT, constraint_residual, determined_by};
+pub use redundancy::{CONSISTENT, MAX_ADDS_RANK_VARS, MAX_MOVES_VARS, adds_rank, constraint_residual, determined_by, first_order_moves};
 
 const MAX_ITERS: usize = 500;
 /// Variables in one connected component. Each component is solved as a dense system: an n by n

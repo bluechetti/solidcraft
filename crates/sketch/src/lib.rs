@@ -81,9 +81,9 @@ pub use profiles3d::{Profile3D, find_planar_3d_profiles};
 pub use shape::{Shape, intersections, intersections_within, nearest_crossing, nearest_curve_intersection};
 pub use solver::solve_after_edit_with_analysis;
 pub use solver::{
-    Analysis, CONSISTENT, DrivingValues, Hold, MAX_COMPONENT_VARS, SolveReport, SolveStatus, constraint_residual, determined_by, fillets_kept,
-    flips_from_stored, measure_dimension, move_line_towards, move_point_towards, point_along, solve, solve_after_edit, solve_after_link_move,
-    solve_after_value_edit, solve_holding, solve_with,
+    Analysis, CONSISTENT, DrivingValues, Hold, MAX_ADDS_RANK_VARS, MAX_COMPONENT_VARS, MAX_MOVES_VARS, SolveReport, SolveStatus, adds_rank,
+    constraint_residual, determined_by, fillets_kept, first_order_moves, flips_from_stored, measure_dimension, move_line_towards, move_point_towards,
+    point_along, solve, solve_after_edit, solve_after_link_move, solve_after_value_edit, solve_holding, solve_with,
 };
 pub use text::{MAX_TEXT_CHARS, TextAlign, TextMetrics, TextStyle, TextVerticalAlign, text_geometry, text_geometry_in, text_geometry_styled};
 pub use thin::{MAX_THIN_SEGMENTS, thin_wall_regions};

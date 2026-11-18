@@ -6,6 +6,8 @@
 //! Scan Surface feature, so a design opens anywhere.
 
 use serde_json::{Value, json};
+use solidcore_record::Vec3;
+use solidcraft_geom::prelude::*;
 use solidcraft_scan::patches::{self, Layout, Patches};
 
 use super::{CommandSpec, mesh};
@@ -124,9 +126,51 @@ fn recipe_params(s: &Session, p: &Value, body: &str) -> Option<Value> {
     Some(params)
 }
 
+/// Places each way a patch is looked at for [`surface_off`].
+const OFF_PLACES: usize = 32;
+
+/// How far the surfaces lie from the scan at worst, and the diagonal of the box round them: each
+/// looked at on an even grid of places, edges and corners too, each to the scan's nearest place.
+/// Unlike Free Form's `worst_off`, a place whose nearest scan lies to its side counts too: past
+/// the region's edge that is the patch hanging off the scan, which is what this is for.
+fn surface_off(on: &solidcraft_scan::curve::Projector, surfaces: &[solidcraft_geom::bspline::NurbsSurface]) -> (f64, f64) {
+    let mut worst = 0.0_f64;
+    let (mut lo, mut hi) =
+        (Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY), Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY));
+    for surface in surfaces {
+        let [[u0, u1], [v0, v1]] = surface.domain();
+        for j in 0..=OFF_PLACES {
+            for i in 0..=OFF_PLACES {
+                let (a, b) = (i as f64 / OFF_PLACES as f64, j as f64 / OFF_PLACES as f64);
+                let Ok(q) = surface.eval(u0 + a * (u1 - u0), v0 + b * (v1 - v0)) else { continue };
+                lo = lo.min(q);
+                hi = hi.max(q);
+                if let Some((_, d)) = on.nearest(q).filter(|(_, d)| d.is_finite()) {
+                    worst = worst.max(d);
+                }
+            }
+        }
+    }
+    (worst, if lo.x <= hi.x { (hi - lo).len() } else { 0.0 })
+}
+
+/// A surface reaching past the scan farther than this many times the fit's own largest distance,
+/// [`OFF_LEAST`] mm and [`OFF_SHARE`] of its size is said to: a grid patch's corners a few
+/// millimetres off a 600 mm roof are the patch's way, 80 mm off a trunk lid are a wrong surface.
+const OFF_TIMES: f64 = 4.0;
+const OFF_LEAST: f64 = 2.0;
+const OFF_SHARE: f64 = 0.02;
+
 fn fit_patches(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.fit_patches";
     let (body, layout, controls, found) = fitted(s, p, cmd)?;
+    let (worst_off, size) = super::curve::projector(s, Some(&body), cmd).map(|(_, on)| surface_off(&on, &found.surfaces)).unwrap_or((0.0, 0.0));
+    let overhang = (worst_off > (OFF_TIMES * found.max).max(OFF_LEAST).max(OFF_SHARE * size)).then(|| {
+        format!(
+            "the surface reaches up to {worst_off:.1} mm from the scan, though the scan's points lie within {:.2} mm of it: a grid patch spans the region's flattened box, and here its corners hang past the region; use layout quads, or fit a region shaped more like a rectangle",
+            found.max
+        )
+    });
     // The recipe keeps how the region was chosen (a click, or the triangles selected), so
     // `scan.refit` can fit it again.
     let recipe = recipe_params(s, p, &body).map(|params| super::refit::recipe(&body, "scan.fit_patches", params, &found.surfaces));
@@ -184,7 +228,11 @@ fn fit_patches(s: &mut Session, p: &Value) -> Result<Value> {
         folds: found.trouble[0],
         pinches: found.trouble[1],
         crossings: found.trouble[2],
-        warning: super::surface::fold_warning(found.trouble),
+        worst_off,
+        warning: match (super::surface::fold_warning(found.trouble), overhang) {
+            (Some(a), Some(b)) => Some(format!("{a}; {b}")),
+            (a, b) => a.or(b),
+        },
         feature,
         param_warnings: Vec::new(),
     })

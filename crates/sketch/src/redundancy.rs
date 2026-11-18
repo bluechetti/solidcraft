@@ -11,7 +11,7 @@
 //! conflict.
 
 use super::{Block, Hold, Layout, State, block_residuals, build_blocks, columns, initial_x, layout, local_system, max_abs, points_on_curves};
-use crate::linalg::{Mat, solve as lin_solve};
+use crate::linalg::{Mat, cholesky, cholesky_solve, solve as lin_solve};
 use crate::model::Sketch;
 #[cfg(feature = "solver-profiling")]
 use crate::profiling::{self, Phase};
@@ -241,4 +241,187 @@ pub fn determined_by(sk: &Sketch, ci: usize) -> Vec<usize> {
     out.sort_unstable();
     out.dedup();
     out
+}
+
+/// Variables in one component past which [`adds_rank`] gives up: its walk is dense in the worst
+/// case, rows × rank × variables.
+pub const MAX_ADDS_RANK_VARS: usize = 6000;
+
+/// For each constraint from index `from` on, in order: whether it removes a degree of freedom
+/// from the sketch made of everything before it, where the sketch is now (its equations add
+/// rank to the curves' own relations and the constraints before it). This is what adding the
+/// constraints one at a time and solving after each would find for constraints that already
+/// hold (dimensions measured where the sketch is), in one walk over the Jacobian's rows instead
+/// of a solve per constraint. A driven dimension, or one reading only fixed geometry, is
+/// `false`. `None` when a component has more than [`MAX_ADDS_RANK_VARS`] variables.
+pub fn adds_rank(sk: &Sketch, from: usize) -> Option<Vec<bool>> {
+    let lay = layout(sk, &Hold::default());
+    let mut x = initial_x(sk, &lay);
+    let on_curve = points_on_curves(sk);
+    let (blocks, _) = build_blocks(sk, &lay, &on_curve);
+    let mut parent: Vec<usize> = (0..lay.n).collect();
+    for (_, vars) in &blocks {
+        if let Some(&first) = vars.first() {
+            for &v in vars.iter().skip(1) {
+                union(&mut parent, first, v);
+            }
+        }
+    }
+    // The blocks of each component, in order.
+    let mut groups: Vec<(usize, Vec<usize>)> = Vec::new();
+    for (bi, (_, vars)) in blocks.iter().enumerate() {
+        let Some(&first) = vars.first() else { continue };
+        let root = find(&mut parent, first);
+        match groups.iter_mut().find(|(r, _)| *r == root) {
+            Some((_, members)) => members.push(bi),
+            None => groups.push((root, vec![bi])),
+        }
+    }
+    let mut out = vec![false; sk.constraints.len().saturating_sub(from)];
+    for (root, members) in groups {
+        // Only components that hold a constraint asked about.
+        if !members.iter().any(|bi| blocks.get(*bi).and_then(|(b, _)| block_constraint(b)).is_some_and(|ci| ci >= from)) {
+            continue;
+        }
+        let vars: Vec<usize> = (0..lay.n).filter(|v| find(&mut parent, *v) == root).collect();
+        if vars.len() > MAX_ADDS_RANK_VARS {
+            return None;
+        }
+        let sub: Vec<(Block, Vec<usize>)> = members.iter().filter_map(|bi| blocks.get(*bi).map(|(b, v)| (super::copy_block(b), v.clone()))).collect();
+        let mut col = vec![usize::MAX; lay.n];
+        columns(&mut col, &vars, &vars);
+        let (_, j, owner) = local_system(sk, &lay, &sub, &mut x, &col, vars.len());
+        let added = rank_adding_blocks(&j, &owner, sub.len());
+        for ((b, _), adds) in sub.iter().zip(added) {
+            if let Some(slot) = block_constraint(b).and_then(|ci| ci.checked_sub(from)).and_then(|k| out.get_mut(k)) {
+                *slot = adds;
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Per block: whether one of its rows adds rank to the rows before it (rows in order, `owner`
+/// naming each row's block).
+fn rank_adding_blocks(j: &Mat, owner: &[usize], block_count: usize) -> Vec<bool> {
+    let n = j.cols;
+    let mut q: Vec<Direction> = Vec::new();
+    let mut adds = vec![false; block_count];
+    for k in 0..j.rows {
+        let Some(&b) = owner.get(k) else { continue };
+        let v = j.data.get(k * n..(k + 1) * n).unwrap_or_default();
+        let norm = dot(v, v).sqrt();
+        if !(norm.is_finite() && norm > 0.0) {
+            continue;
+        }
+        let mut w = v.to_vec();
+        for _ in 0..2 {
+            for qi in &q {
+                qi.remove_from(&mut w);
+            }
+        }
+        let left = dot(&w, &w).sqrt();
+        if left.is_finite() && left > DEPENDENT * norm {
+            q.push(Direction::new(&w, left));
+            if let Some(a) = adds.get_mut(b) {
+                *a = true;
+            }
+        }
+    }
+    adds
+}
+
+/// Variables past which [`first_order_moves`] gives up (its normal matrix is dense).
+pub const MAX_MOVES_VARS: usize = 4000;
+
+/// For each change (constraint index, new value) on its own: how far the farthest point of the
+/// sketch would move, to first order, if that constraint took that value and the sketch were
+/// solved again from where it is now (one Gauss–Newton step, the least change that meets the
+/// new value). A change no small move can meet (a shallow arc whose centre must swing far to
+/// follow a hundredth of a millimetre at its end) reads as a large move, so a caller can skip
+/// it without a solve that would crawl to its iteration limit. One factorisation serves every
+/// change. `None` when the sketch has more than [`MAX_MOVES_VARS`] variables or its normal
+/// matrix cannot be factored.
+pub fn first_order_moves(sk: &Sketch, changes: &[(usize, f64)]) -> Option<Vec<f64>> {
+    let lay = layout(sk, &Hold::default());
+    let n = lay.n;
+    if n == 0 {
+        return Some(vec![0.0; changes.len()]);
+    }
+    if n > MAX_MOVES_VARS {
+        return None;
+    }
+    let mut x = initial_x(sk, &lay);
+    let on_curve = points_on_curves(sk);
+    let (blocks, _) = build_blocks(sk, &lay, &on_curve);
+    let all: Vec<usize> = (0..n).collect();
+    let mut col = vec![usize::MAX; n];
+    columns(&mut col, &all, &all);
+    let (r0, j, owner) = local_system(sk, &lay, &blocks, &mut x, &col, n);
+    // Jᵀ J from the rows' few nonzeros, damped by a hair so a direction no row fixes stays put.
+    let mut a = Mat::zeros(n, n);
+    let mut nz: Vec<(usize, f64)> = Vec::new();
+    for k in 0..j.rows {
+        nz.clear();
+        nz.extend((0..n).filter_map(|c| Some(j.get(k, c)).filter(|v| *v != 0.0 && v.is_finite()).map(|v| (c, v))));
+        for &(c1, v1) in &nz {
+            for &(c2, v2) in &nz {
+                a.add(c1, c2, v1 * v2);
+            }
+        }
+    }
+    let scale = (0..n).map(|i| a.get(i, i)).fold(0.0_f64, f64::max).max(1.0);
+    for i in 0..n {
+        a.add(i, i, 1e-10 * scale);
+    }
+    let l = cholesky(a)?;
+    // Each block's first row.
+    let mut first = vec![usize::MAX; blocks.len()];
+    for (row, b) in owner.iter().enumerate() {
+        if let Some(f) = first.get_mut(*b)
+            && *f == usize::MAX
+        {
+            *f = row;
+        }
+    }
+    let mut out = Vec::with_capacity(changes.len());
+    for &(ci, value) in changes {
+        let Some(bi) = blocks.iter().position(|(b, _)| block_constraint(b) == Some(ci)) else {
+            out.push(0.0);
+            continue;
+        };
+        let mut changed = sk.clone();
+        if let Some(c) = changed.constraints.get_mut(ci) {
+            c.kind.set_value(value);
+        }
+        let (moved_blocks, _) = build_blocks(&changed, &lay, &on_curve);
+        let Some((b, _)) = moved_blocks.get(bi) else {
+            out.push(f64::INFINITY);
+            continue;
+        };
+        let mut r1 = Vec::new();
+        block_residuals(&State { sk: &changed, lay: &lay, x: &x }, b, &mut r1);
+        // g = Jᵀ (r1 − r0) over the block's rows; the step solves (JᵀJ) dx = −g.
+        let mut g = vec![0.0; n];
+        for (k, v) in r1.iter().enumerate() {
+            let row = first[bi] + k;
+            let d = v - r0.get(row).copied().unwrap_or(0.0);
+            if d == 0.0 {
+                continue;
+            }
+            for (c, gc) in g.iter_mut().enumerate() {
+                *gc -= j.get(row, c) * d;
+            }
+        }
+        cholesky_solve(&l, &mut g);
+        let far = sk
+            .points
+            .iter()
+            .enumerate()
+            .filter_map(|(i, _)| lay.pvar.get(i).copied().flatten())
+            .map(|v| g.get(v).copied().unwrap_or(0.0).hypot(g.get(v + 1).copied().unwrap_or(0.0)))
+            .fold(0.0_f64, |m, d| if d.is_finite() { m.max(d) } else { f64::INFINITY });
+        out.push(far);
+    }
+    Some(out)
 }

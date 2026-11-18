@@ -70,13 +70,18 @@ pub struct ScanPatchesResult {
     pub rms: f64,
     pub max: f64,
     pub points: usize,
+    /// The other way round: how far the surface lies from the scan at worst, in mm, looked at
+    /// across the whole surface. A grid patch spans the region's flattened box, so on a short or
+    /// curving region its corners can hang far past the scan while `max` stays small.
+    pub worst_off: f64,
     /// Where the surface is wrong (Surface Check on it): folds (it doubles back), pinches (it
     /// narrows to nothing) and crossings (it passes through itself). A region too intricate for one
     /// surface, with deep crevices or curling over itself, folds.
     pub folds: usize,
     pub pinches: usize,
     pub crossings: usize,
-    /// Said when the surface folds, pinches or crosses itself: what to do instead.
+    /// Said when the surface folds, pinches or crosses itself, or reaches far past the scan
+    /// (`worst_off`): what to do instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
     /// The Import feature that keeps the surface.

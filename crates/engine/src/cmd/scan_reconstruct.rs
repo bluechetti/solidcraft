@@ -550,6 +550,23 @@ pub fn is_built(s: &Session, scan: &str) -> bool {
     s.model.state().body(&built_name(scan)).is_some()
 }
 
+/// The route by hand to a turned part about the axis through `point` along `direction`, as
+/// commands with their numbers: a sketch on a plane through the axis, the scan's section drawn in
+/// it, and a revolve about the axis once one side's profile is closed.
+fn by_hand(scan: &str, point: &[f64; 3], direction: &[f64; 3]) -> String {
+    let d = Vec3::new(direction[0], direction[1], direction[2]);
+    let helper = if d.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    let Some(across) = d.cross(helper).normalized() else { return String::new() };
+    let v = |q: Vec3| format!("[{:.4}, {:.4}, {:.4}]", q.x, q.y, q.z);
+    let p = format!("[{:.3}, {:.3}, {:.3}]", point[0], point[1], point[2]);
+    format!(
+        ". Build it by hand: `sketch.create {{\"plane\": {{\"origin\": {p}, \"x_dir\": {}, \"y_dir\": {}}}}}` (a plane through the axis), `scan.section_sketch {{\"body\": \"{scan}\"}}` to draw the scan's cut in it, close one side's profile, then `solid.revolve {{\"axis\": {{\"origin\": {p}, \"dir\": {}}}}}`",
+        v(d),
+        v(across),
+        v(d)
+    )
+}
+
 fn layout_name(layout: &Layout) -> &'static str {
     match layout {
         Layout::Linear { .. } => "linear",
@@ -616,19 +633,28 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         })
         .collect();
     let repeats = reading.repeats.iter().map(scan_repeat).collect();
-    let turned = reading.revolve.as_ref().map(|r| ScanTurned {
+    let as_turned = |r: &solidcraft_scan::reconstruct::Revolve| ScanTurned {
         point: at(r.axis.point),
         direction: at(r.axis.direction),
         faces: r.members.clone(),
         share: r.share,
-    });
+    };
+    let turned = reading.revolve.as_ref().map(as_turned);
+    let partly_turned = reading.partly_turned.as_ref().map(as_turned);
     let body = found.scan.clone();
     let proposals =
         proposals(reading, built.is_some()).iter().map(|p| json!({"command": p.command(), "params": p.params(&body, view.selected())})).collect();
     let note = if reading.faces.is_empty() {
         Some("Find All found no shape on the scan: it is all freeform".to_string())
     } else if let (true, Some(why)) = (reading.prisms.is_empty(), &reading.turned_unread) {
-        Some(format!("the part turns about one axis, but Revolve It cannot read its profile: {why}"))
+        let route = reading.revolve.as_ref().map(|r| by_hand(&found.scan, &at(r.axis.point), &at(r.axis.direction))).unwrap_or_default();
+        Some(format!("the part turns about one axis, but Revolve It cannot read its profile: {why}{route}"))
+    } else if let (true, Some(r)) = (reading.prisms.is_empty(), &reading.partly_turned) {
+        Some(format!(
+            "no turned part: round shapes share an axis (`partly_turned`) but cover only {:.0}% of the shapes, the rest flat or free (a wheel's spokes){}",
+            100.0 * r.share,
+            by_hand(&found.scan, &at(r.axis.point), &at(r.axis.direction))
+        ))
     } else if reading.prisms.is_empty() && reading.revolve.is_none() {
         let unread = match reading.unread_prisms {
             0 => String::new(),
@@ -650,6 +676,7 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         in_shapes: reading.in_shapes,
         prisms,
         turned,
+        partly_turned,
         holes,
         repeats,
         built,

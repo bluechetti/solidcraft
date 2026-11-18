@@ -140,7 +140,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("c_symmetry")
         .contract(&SQUARE_CONTRACT)
         .output(output_schema_for::<ScanPlaceResult>)
-        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z]}; plane?: {point, normal}: the smallest turn that lays the mirror plane along YZ, then sideways to X = 0, so the origin's YZ plane is the mirror plane; a plane given or guided to is used however much matches, the best one found unasked is refused when the scan is no mirror image about it → body, moved, mirror, feature (the Move)"),
+        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z]}; plane?: {point, normal}; onto?: YZ (default) | XZ (a vehicle: Y = 0, so stood on its wheels its length runs along X): the smallest turn that lays the mirror plane along that origin plane, then sideways onto it, so it is the mirror plane; a plane given or guided to is used however much matches, the best one found unasked is refused when the scan is no mirror image about it → body, moved, mirror, feature (the Move)"),
     CommandSpec::new("scan.complete_by_mirroring", "Complete by Mirroring", crate::checked!("scan.complete_by_mirroring", complete_by_mirroring))
         .at("SCAN", "CLEAN")
         .icon("scan_mirror_fill")
@@ -581,9 +581,15 @@ fn chosen_mirror(s: &Session, mesh: &Mesh, p: &Value, cmd: &str, refuse: bool, f
         return Err(bad(
             cmd,
             format!(
-                "the scan is not a mirror image about the best plane found: only {:.0} % of it matches its reflection (typically {:.2} mm off); give the plane, or draw a guide along it, to use it anyway",
+                "the scan is not a mirror image about the best plane found: only {:.0} % of it matches its reflection (typically {:.2} mm off); to use that plane anyway pass it back as `plane`: {{\"point\": [{:.3}, {:.3}, {:.3}], \"normal\": [{:.6}, {:.6}, {:.6}]}} (a vehicle's underbody and exhaust are no mirror image, so a car stops short of the 85 % even about its true plane), or draw a guide along the plane you mean",
                 100.0 * found.coverage,
-                found.rms
+                found.rms,
+                found.point.x,
+                found.point.y,
+                found.point.z,
+                found.normal.x,
+                found.normal.y,
+                found.normal.z
             ),
         ));
     }
@@ -625,9 +631,14 @@ fn square_to_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     // The parameters first, so a malformed call is told so before anything else.
     guide(p, cmd)?;
     plane_param(p, cmd)?;
+    let axis = match str_(p, "onto").map(str::to_ascii_uppercase).as_deref() {
+        None | Some("YZ") => Vec3::X,
+        Some("XZ") => Vec3::Y,
+        Some(other) => return Err(bad(cmd, format!("`onto` is YZ or XZ, not `{other}`"))),
+    };
     let mesh = mesh(s, p, cmd)?;
     let found = chosen_mirror(s, &mesh, p, cmd, true, false)?;
-    let by = symmetry::square_to(&found).ok_or_else(|| bad(cmd, "the mirror plane has no direction"))?;
+    let by = symmetry::square_onto(&found, axis).ok_or_else(|| bad(cmd, "the mirror plane has no direction"))?;
     let feature = move_by(s, &mesh, &by)?;
     let reply = ScanPlaceResult {
         body: mesh.body,

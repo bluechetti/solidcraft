@@ -351,6 +351,38 @@ fn square_to_symmetry_puts_the_mirror_plane_on_yz() {
     assert!((lo - before.0).len() < 1e-9 && (hi - before.1).len() < 1e-9);
 }
 
+/// Onto XZ, as a vehicle is drawn, the block lies evenly either side of Y = 0 instead, its mirror
+/// plane turned a quarter turn from where YZ lays it; anything else for `onto` is refused.
+#[test]
+fn square_to_symmetry_onto_xz_puts_the_mirror_plane_on_y_zero() {
+    let (mut s, body, _) = session_with_a_symmetric_scan("square-xz");
+    let reply = run(&mut s, "scan.square_to_symmetry", json!({"onto": "XZ"}));
+    assert_eq!(reply["moved"], true, "{reply}");
+    let (lo, hi) = bounds(&s, &body);
+    assert!((lo.y + hi.y).abs() < STL * 10.0 && hi.y > 5.0, "evenly either side of Y = 0: {lo:?} {hi:?}");
+    assert_eq!(run(&mut s, "scan.square_to_symmetry", json!({"onto": "xz"}))["moved"], false, "already square");
+    let err = s.execute("scan.square_to_symmetry", &json!({"onto": "XY"})).unwrap_err().to_string();
+    assert!(err.contains("YZ or XZ"), "{err}");
+}
+
+/// Refused unasked (as a car is, its underbody being no mirror image), Find
+/// Symmetry gives the plane it found in the refusal, ready to pass back as `plane`, so an agent
+/// needs no guide drawn on screen.
+#[test]
+fn a_refused_symmetry_gives_its_plane_to_pass_back() {
+    // A slab with two blocks of different sizes off its corners: no plane mirrors it.
+    let mut triangles = fine_box(Vec3::ZERO, Vec3::new(60.0, 20.0, 4.0), 8);
+    triangles.extend(fine_box(Vec3::new(4.0, 0.0, 4.0), Vec3::new(24.0, 13.0, 34.0), 12));
+    triangles.extend(fine_box(Vec3::new(38.0, 11.0, 4.0), Vec3::new(56.0, 20.0, 20.0), 12));
+    let (mut s, _) = session_with_triangles("symmetry-pass-back", &triangles);
+    let refused = s.execute("scan.symmetry", &json!({"keep": false})).unwrap_err().to_string();
+    let at = refused.find("{\"point\"").unwrap_or_else(|| panic!("no plane in: {refused}"));
+    let end = at + refused[at..].find('}').unwrap() + 1;
+    let plane: Value = serde_json::from_str(&refused[at..end]).unwrap();
+    let reply = run(&mut s, "scan.symmetry", json!({"plane": plane, "keep": false}));
+    assert!(reply["mirror"]["coverage"].as_f64().unwrap() > 0.5, "{reply}");
+}
+
 /// A guide with no length, or with an end missing, is refused before anything is searched.
 #[test]
 fn a_guide_needs_two_ends_apart() {
@@ -1229,6 +1261,57 @@ fn section_sketch_fits_the_cut_with_lines_and_circles() {
     let refused = s.execute("scan.section_sketch", &json!({"plane": "XY", "offset": "80 mm"})).unwrap_err().to_string();
     assert!(refused.contains("does not cut"), "{refused}");
     assert!(s.active_sketch.is_none(), "a refused cut leaves no sketch open");
+}
+
+/// A car panel's section: shallow arcs (radius 800 and 550 mm) a degree or two off tangent to a
+/// 14 mm line between them. Held tangent, each touch point slides by the radius times that
+/// angle, the line runs backwards and the solver refuses the fold, which left the whole
+/// section unsolved and AutoConstrain refused it with dof 540 (the DrivAer car cut at x =
+/// 1500). The joins it cannot hold are left as shared ends, so the drawn sketch solves.
+#[test]
+fn a_section_holds_tangent_only_the_joins_it_can_solve() {
+    use super::section::{Outline, Piece};
+    use solidcore_record::Vec2;
+    let v = Vec2::new;
+    let pieces = vec![
+        Piece::Line { from: v(-853.706, 554.078), to: v(-854.3678, 556.2459) },
+        Piece::Arc { center: v(-847.3821, 560.0361), radius: 7.9476, from: v(-854.3678, 556.2459), to: v(-854.4377, 563.6945), ccw: false },
+        Piece::Arc { center: v(-815.9996, 554.2557), radius: 39.58, from: v(-854.4377, 563.6945), to: v(-852.5849, 569.3585), ccw: false },
+        Piece::Arc { center: v(-108.535, 262.0971), radius: 804.9968, from: v(-852.5849, 569.3585), to: v(-835.0874, 608.7112), ccw: false },
+        Piece::Line { from: v(-835.0874, 608.7112), to: v(-828.6539, 621.1606) },
+        Piece::Arc { center: v(-347.2827, 359.1716), radius: 548.0478, from: v(-828.6539, 621.1606), to: v(-794.2433, 676.3194), ccw: false },
+        Piece::Line { from: v(-794.2433, 676.3194), to: v(-781.7778, 694.0004) },
+        Piece::Arc { center: v(-776.2255, 692.1857), radius: 5.8413, from: v(-781.7778, 694.0004), to: v(-777.9452, 697.7682), ccw: false },
+        Piece::Line { from: v(-777.9452, 697.7682), to: v(-771.3709, 699.774) },
+    ];
+    let solve = |sk: &mut solidcraft_sketch::Sketch| {
+        solidcraft_sketch::solve_with(sk, &solidcraft_sketch::Hold::default(), None, solidcraft_sketch::Analysis::Freedom, None)
+    };
+    // Every smooth join held tangent, as before: the solve folds and is refused.
+    let mut all = solidcraft_sketch::Sketch::new();
+    let mut ends: Vec<usize> = pieces.iter().map(|p| all.add_point(p.from(), None).unwrap()).collect();
+    ends.push(all.add_point(pieces[8].to(), None).unwrap());
+    let mut curves = Vec::new();
+    for (k, piece) in pieces.iter().enumerate() {
+        curves.push(match *piece {
+            Piece::Arc { center, from, to, .. } => all.add_arc(center, to, from, [None, Some(ends[k + 1]), Some(ends[k])], None).unwrap(),
+            Piece::Line { .. } => all.add_line_pts(ends[k], ends[k + 1], None).unwrap(),
+        });
+    }
+    // The joins within Section to Sketch's 3° (the car's tangents k42 to k46).
+    for (a, b) in [(2, 3), (3, 4), (4, 5), (5, 6), (7, 8)] {
+        all.add_constraint(solidcraft_sketch::ConstraintKind::Tangent { a: curves[a], b: curves[b] }, None).unwrap();
+    }
+    let folded = solve(&mut all);
+    assert!(!folded.folded.is_empty(), "{folded:?}");
+
+    let mut sk = solidcraft_sketch::Sketch::new();
+    let mut added = super::section::Added::default();
+    super::section::draw(&mut sk, &[(Outline::Chain(pieces), false)], &mut added).unwrap();
+    let rep = solve(&mut sk);
+    assert!(rep.ok() && rep.folded.is_empty(), "{rep:?}");
+    assert!(added.tangents > 0 && added.tangents < 5, "some joins stay tangent: {}", added.tangents);
+    assert_eq!(added.tangents, sk.constraints.len());
 }
 
 /// Left to the cut, the tolerance is three times its noise and never under 0.1 mm: the clean plate

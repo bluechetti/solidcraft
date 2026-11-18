@@ -212,18 +212,94 @@ fn try_add(sk: &mut Sketch, doc: &mut solidcraft_doc::Document, k: ConstraintKin
     None
 }
 
+/// Adds the dimensions `sizes` (each holding where the sketch is) that remove a degree of
+/// freedom, in order and until none is left, as one [`try_add`] after another would, but with
+/// one rank walk ([`solidcraft_sketch::adds_rank`]) and one solve to confirm. The sizes still to
+/// try one at a time: none when the solve agrees with the walk, those not kept when it leaves
+/// degrees of freedom the walk counted as removed. `None`, with the sketch and parameters as
+/// they were, when the walk cannot say or the confirming solve fails, so the caller tries them
+/// all one at a time.
+fn dimension_at_once(sk: &mut Sketch, doc: &mut solidcraft_doc::Document, sizes: &[ConstraintKind], dof: &mut usize) -> Option<Vec<ConstraintKind>> {
+    if *dof == 0 || sizes.is_empty() {
+        return Some(Vec::new());
+    }
+    let saved = sk.clone();
+    let from = sk.constraints.len();
+    // (constraint id, parameter) of each one added.
+    let mut made: Vec<(String, String)> = Vec::new();
+    let forget = |doc: &mut solidcraft_doc::Document, made: &[(String, String)]| {
+        for (_, pn) in made {
+            let _ = doc.remove_param(pn);
+        }
+    };
+    // The size each constraint added stands for.
+    let mut of_size: Vec<usize> = Vec::new();
+    for (i, k) in sizes.iter().enumerate() {
+        let Some(v) = k.value() else { continue };
+        let (unit, e) = if k.is_angle() { ("deg".into(), format!("{} deg", (v.to_degrees() * 1e6).round() / 1e6)) } else { doc.design_length(v) };
+        let pn = doc.new_model_param(&e, &unit);
+        match sk.add_constraint(k.clone(), Some(pn.clone())) {
+            Ok(id) => {
+                made.push((id, pn));
+                of_size.push(i);
+            }
+            Err(_) => {
+                let _ = doc.remove_param(&pn);
+            }
+        }
+    }
+    let Some(adds) = solidcraft_sketch::adds_rank(sk, from) else {
+        *sk = saved;
+        forget(doc, &made);
+        return None;
+    };
+    // Kept in order until the degrees of freedom run out.
+    let mut keep = vec![false; made.len()];
+    let mut kept = 0;
+    for (k, slot) in keep.iter_mut().enumerate() {
+        if kept == *dof {
+            break;
+        }
+        if adds.get(k).copied().unwrap_or(false) {
+            *slot = true;
+            kept += 1;
+        }
+    }
+    let dropped: Vec<(String, String)> = made.iter().zip(&keep).filter(|(_, k)| !**k).map(|(m, _)| m.clone()).collect();
+    sk.constraints.retain(|c| !dropped.iter().any(|(id, _)| *id == c.id));
+    let mut trial = sk.clone();
+    let rep = solidcraft_sketch::solve_with(&mut trial, &solidcraft_sketch::Hold::default(), None, solidcraft_sketch::Analysis::Freedom, None);
+    if !(rep.ok() && rep.dof < *dof) {
+        *sk = saved;
+        forget(doc, &made);
+        return None;
+    }
+    // Where the rows are nearly dependent (a near-degenerate join of a CAD outline) the solver's
+    // rank can leave a degree of freedom the walk counted as removed: the sizes not kept are
+    // then tried one at a time, and the solver's count is the one that stands.
+    let rest: Vec<ConstraintKind> = if rep.dof + kept == *dof {
+        Vec::new()
+    } else {
+        made.iter().zip(&keep).zip(&of_size).filter(|((_, k), _)| !**k).filter_map(|(_, i)| sizes.get(*i).cloned()).collect()
+    };
+    forget(doc, &dropped);
+    *sk = trial;
+    *dof = rep.dof;
+    Some(rest)
+}
+
 fn run_auto(sk: &mut Sketch, doc: &mut solidcraft_doc::Document, p: &Value, datum: usize, mut dof: usize) -> (Vec<String>, usize) {
     use ConstraintKind::*;
     let tol = num(p, "tolerance").filter(|t| *t > 0.0).unwrap_or(0.01);
     let atol = num(p, "angle_tolerance").filter(|t| *t > 0.0).unwrap_or(1.0).to_radians();
     let dims = crate::params::bool_(p, "dimensions").unwrap_or(true);
     let n0 = sk.constraints.len();
-    let mut trials = 0;
-    let mut attempt = |sk: &mut Sketch, doc: &mut solidcraft_doc::Document, k: ConstraintKind, dim: bool, dof: &mut usize| {
-        if *dof == 0 || trials >= MAX_TRIALS {
+    let trials = std::cell::Cell::new(0_usize);
+    let attempt = |sk: &mut Sketch, doc: &mut solidcraft_doc::Document, k: ConstraintKind, dim: bool, dof: &mut usize| {
+        if *dof == 0 || trials.get() >= MAX_TRIALS {
             return;
         }
-        trials += 1;
+        trials.set(trials.get() + 1);
         if let Some(d) = try_add(sk, doc, k, *dof, dim) {
             *dof = d;
         }
@@ -282,6 +358,7 @@ fn run_auto(sk: &mut Sketch, doc: &mut solidcraft_doc::Document, p: &Value, datu
     if dims {
         // Construction curves have degrees of freedom too: locating a circle's centre
         // does not constrain its radius. Dimension them just like profile curves.
+        let mut sizes = Vec::new();
         for i in 0..nc {
             let k = match sk.curves.get(i).map(|c| c.kind.clone()) {
                 Some(CurveKind::Circle { r, .. }) => Diameter { c: i, value: 2.0 * r },
@@ -289,7 +366,7 @@ fn run_auto(sk: &mut Sketch, doc: &mut solidcraft_doc::Document, p: &Value, datu
                 Some(CurveKind::Line { a, b }) => Length { l: i, value: sk.point(a).zip(sk.point(b)).map(|(x, y)| x.dist(y)).unwrap_or(1.0) },
                 _ => continue,
             };
-            attempt(sk, doc, k, true, &mut dof);
+            sizes.push(k);
         }
         // Positions from the datum.
         let d = sk.point(datum).unwrap_or_default();
@@ -298,8 +375,16 @@ fn run_auto(sk: &mut Sketch, doc: &mut solidcraft_doc::Document, p: &Value, datu
                 continue;
             }
             let Some(q) = sk.point(i) else { continue };
-            attempt(sk, doc, DistanceX { p: datum, q: i, value: (q.x - d.x).abs() }, true, &mut dof);
-            attempt(sk, doc, DistanceY { p: datum, q: i, value: (q.y - d.y).abs() }, true, &mut dof);
+            sizes.push(DistanceX { p: datum, q: i, value: (q.x - d.x).abs() });
+            sizes.push(DistanceY { p: datum, q: i, value: (q.y - d.y).abs() });
+        }
+        // Each holds where the sketch is, so which of them remove a degree of freedom is one
+        // walk over the Jacobian rather than a solve each (minutes on a long scan section). The
+        // walk costs no trials: MAX_TRIALS bounds solves, and a section of 600 curves has more
+        // sizes than that, which left it hundreds of degrees of freedom short.
+        let rest = dimension_at_once(sk, doc, &sizes, &mut dof).unwrap_or(sizes);
+        for k in rest {
+            attempt(sk, doc, k, true, &mut dof);
         }
     }
     if let Some(reach) = num(p, "round").filter(|r| *r > 0.0 && *r < 1e9) {
@@ -313,13 +398,20 @@ fn run_auto(sk: &mut Sketch, doc: &mut solidcraft_doc::Document, p: &Value, datu
 /// whole, a half and a tenth of the design's length unit within `reach` of it, when the sketch
 /// still solves the same way round and no point of it ends farther than `reach` from where it
 /// was. Its parameter's comment keeps the value measured. How many were rounded.
+/// Work the rounding of one AutoConstrain may spend, as solver iterations times the cube of the
+/// sketch's coordinates (what a dense iteration costs): about ten seconds. A hand-drawn sketch
+/// of 50 points rounds every size well inside it; a scan section of 1000 points rounds what a
+/// few dozen iterations allow, and the rest keep their measured values.
+const ROUND_WORK: f64 = 4e11;
+
 fn round_dimensions(sk: &mut Sketch, doc: &mut solidcraft_doc::Document, from: usize, reach: f64) -> usize {
     let per_unit = match solidcraft_doc::expr::unit_info(doc.units.trim()) {
         Some((solidcraft_doc::expr::Kind::Length, s)) if s.is_finite() && s > 0.0 => s,
         _ => 1.0,
     };
     let was: Vec<Option<Vec2>> = (0..sk.points.len()).map(|i| sk.point(i)).collect();
-    let mut rounded = 0;
+    // Each dimension within `reach` of a round size: (constraint, round size, measured, parameter).
+    let mut asked: Vec<(usize, f64, f64, String)> = Vec::new();
     for k in from..sk.constraints.len() {
         let Some(c) = sk.constraints.get(k) else { continue };
         let (Some(name), Some(value)) = (c.param.clone(), c.kind.value()) else { continue };
@@ -331,30 +423,56 @@ fn round_dimensions(sk: &mut Sketch, doc: &mut solidcraft_doc::Document, from: u
             .map(|per| (value / per_unit * per).round() / per * per_unit)
             .find(|v| (v - value).abs() <= reach)
             .filter(|v| *v > 0.0 && (v - value).abs() > 1e-9);
-        let Some(designed) = designed else { continue };
-        let Some(at) = doc.params.iter().position(|q| q.name == name) else { continue };
+        if let Some(designed) = designed
+            && doc.params.iter().any(|q| q.name == name)
+        {
+            asked.push((k, designed, value, name));
+        }
+    }
+    // A size whose rounding would move the sketch more than `reach` even to first order is left
+    // as measured without a solve: on a long scan section (shallow arcs, hundreds of sizes) such
+    // a solve crawls to its iteration limit, and those took most of a quarter of an hour.
+    let cube = ((2 * sk.points.len()).max(1) as f64).powi(3);
+    if cube > ROUND_WORK {
+        return 0;
+    }
+    if let Some(moves) = solidcraft_sketch::first_order_moves(sk, &asked.iter().map(|(k, d, ..)| (*k, *d)).collect::<Vec<_>>()) {
+        let mut near = moves.into_iter();
+        asked.retain(|_| near.next().is_some_and(|m| m <= reach));
+    }
+    let mut kept: Vec<&(usize, f64, f64, String)> = Vec::new();
+    let mut spent = 0.0_f64;
+    for one in &asked {
+        // What is left is kept as measured once the rounding has had its share of the solver.
+        if spent >= ROUND_WORK {
+            break;
+        }
+        let (k, designed, ..) = one;
         let saved = sk.clone();
-        if let Some(c) = sk.constraints.get_mut(k) {
-            c.kind.set_value(designed);
+        if let Some(c) = sk.constraints.get_mut(*k) {
+            c.kind.set_value(*designed);
         }
         let rep = solidcraft_sketch::solve_with(sk, &solidcraft_sketch::Hold::default(), None, solidcraft_sketch::Analysis::StatusOnly, None);
+        spent += rep.iterations.max(1) as f64 * cube;
         let stays = was.iter().enumerate().all(|(i, a)| a.zip(sk.point(i)).is_none_or(|(a, b)| a.dist(b) <= reach));
-        if !(rep.ok() && rep.keeps_orientation() && stays) {
+        if rep.ok() && rep.keeps_orientation() && stays {
+            kept.push(one);
+        } else {
             *sk = saved;
-            continue;
         }
+    }
+    for (_, designed, value, name) in &kept {
         // The parameter is written in place: Document::set_param copies the whole design, scans
         // and all, for each one.
-        let (unit, expr) = doc.design_length(designed);
-        let measured = doc.design_length(value).1;
-        if let Some(q) = doc.params.get_mut(at) {
+        let (unit, expr) = doc.design_length(*designed);
+        let measured = doc.design_length(*value).1;
+        if let Some(q) = doc.params.iter_mut().find(|q| q.name == *name) {
             q.expr = expr;
             q.unit = unit;
             q.comment = format!("measured {measured}");
         }
-        rounded += 1;
     }
-    rounded
+    kept.len()
 }
 
 fn auto(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
@@ -374,6 +492,9 @@ fn auto(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         // its freedom whenever they change constraints; no separate initial solve is needed.
         Ok(run_auto(sk, doc, p, datum, rep.dof))
     })?;
+    // The degrees of freedom of the sketch as stored (the edit's own solve, after rounding),
+    // which is what Inspect reports later; the trials' count stands in when it did not solve.
+    let dof = info.get("dof").and_then(Value::as_u64).and_then(|d| usize::try_from(d).ok()).unwrap_or(dof);
     reply(cmd, AutoConstrainResult { added, dof, sketch: info, created: None, param_warnings: Vec::new() })
 }
 

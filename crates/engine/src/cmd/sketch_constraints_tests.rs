@@ -241,6 +241,20 @@ fn auto_constrain_fully_constrains_a_rough_sketch() {
     assert!(r["added"].as_array().unwrap().len() >= 3, "{r}");
 }
 
+/// A sketch with more sizes to dimension than AutoConstrain's trial limit (a scan section of
+/// hundreds of curves) is still fully dimensioned: the sizes are judged in one rank walk, which
+/// costs no trials. A 1100-segment zigzag needs 2202 sizes kept, past the 2000 trials; the
+/// limit used to stop it hundreds of degrees of freedom short.
+#[test]
+fn auto_constrain_dimensions_a_sketch_past_the_trial_limit() {
+    let mut s = new_sketch();
+    let points: Vec<[f64; 2]> = (0..=1100).map(|i| [f64::from(i) * 3.0, if i % 2 == 0 { 0.0 } else { 2.0 + 0.001 * f64::from(i) }]).collect();
+    run(&mut s, "sketch.line", json!({"points": points}));
+    let r = run(&mut s, "sketch.auto_constrain", json!({}));
+    assert_eq!(r["dof"], 0, "{}", r["sketch"]);
+    assert_eq!(run(&mut s, "sketch.inspect", json!({}))["fully_constrained"], true);
+}
+
 /// With `round`, a sketch drawn off a measurement reads as designed: each dimension within the
 /// reach of a whole, half or tenth of a millimetre takes it, the value measured kept in its
 /// parameter's comment; one farther from any is left as measured.

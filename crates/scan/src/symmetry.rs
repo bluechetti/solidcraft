@@ -885,11 +885,19 @@ pub(crate) fn solve3(a: &[[f64; 3]; 3], b: [f64; 3]) -> Option<[f64; 3]> {
 /// X (whichever way it is nearer), then sideways along X until the plane is the YZ plane (X = 0).
 /// Height and the place along Y are kept.
 pub fn square_to(mirror: &Mirror) -> Option<Rigid> {
+    square_onto(mirror, Vec3::X)
+}
+
+/// [`square_to`] onto the origin plane square to `axis` (X: the YZ plane; Y: the XZ plane, as a
+/// vehicle is drawn): the smallest turn that makes the mirror plane's normal lie along `axis`
+/// (whichever way is nearer), then along `axis` until the plane passes through the origin.
+pub fn square_onto(mirror: &Mirror, axis: Vec3) -> Option<Rigid> {
     let n = mirror.normal.normalized()?;
-    let target = if n.x >= 0.0 { Vec3::X } else { -Vec3::X };
+    let axis = axis.normalized()?;
+    let target = if n.dot(axis) >= 0.0 { axis } else { -axis };
     let mut by = crate::place::turn_onto(n, target);
     let on = by.apply(mirror.point);
-    by.translation.x -= on.x;
+    by.translation -= axis * on.dot(axis);
     Some(by)
 }
 

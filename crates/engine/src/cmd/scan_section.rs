@@ -101,22 +101,42 @@ fn run(s: &mut Session, id: &str, p: Value) -> Result<Value> {
     super::super::find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?.run_nested(s, &p)
 }
 
+/// How [`finish_dimensioned`] left the sketch.
+#[derive(Debug, Default)]
+pub(super) struct Finished {
+    /// The degrees of freedom left: after AutoConstrain, or as the sketch solved when it could
+    /// not be dimensioned; `None` when it was finished undimensioned as asked.
+    pub(super) dof: Option<usize>,
+    /// Why it was not dimensioned, and what it was left with.
+    pub(super) warning: Option<String>,
+}
+
 /// Finishes the sketch being edited as Finish with AutoConstrain does when `dimensions`: its
 /// lines and arcs held where the scan put them by dimensions measured from the sketch's origin,
 /// each a parameter, so the profile follows a changed parameter as a sketch drawn by hand does.
 /// With `round`, each dimension within it of a round size takes that size (AutoConstrain's
-/// `round`). A sketch AutoConstrain cannot settle, or `dimensions` false, is finished as it is. The degrees
-/// of freedom left; `None` when it was finished undimensioned.
-pub(super) fn finish_dimensioned(s: &mut Session, dimensions: bool, round: Option<f64>) -> Result<Option<usize>> {
+/// `round`). A sketch AutoConstrain cannot settle is finished as it is, with its degrees of
+/// freedom and a warning saying why; with `dimensions` false it is finished as it is.
+pub(super) fn finish_dimensioned(s: &mut Session, dimensions: bool, round: Option<f64>) -> Result<Finished> {
+    if !dimensions {
+        run(s, "sketch.finish", json!({}))?;
+        return Ok(Finished::default());
+    }
     let asked = match round {
         Some(reach) => json!({"round": reach}),
         None => json!({}),
     };
-    if dimensions && let Ok(reply) = run(s, "sketch.finish_auto_constrain", asked) {
-        return Ok(reply.get("dof").and_then(Value::as_u64).and_then(|d| usize::try_from(d).ok()));
-    }
+    let why = match run(s, "sketch.finish_auto_constrain", asked) {
+        Ok(reply) => return Ok(Finished { dof: reply.get("dof").and_then(Value::as_u64).and_then(|d| usize::try_from(d).ok()), warning: None }),
+        Err(e) => e.to_string(),
+    };
+    // Said, not swallowed: a caller reading only the reply must see it is not dimensioned.
+    let solved = run(s, "sketch.solve", json!({})).ok();
+    let dof = solved.as_ref().and_then(|r| r.get("dof")).and_then(Value::as_u64).and_then(|d| usize::try_from(d).ok());
+    let status = solved.as_ref().and_then(|r| r.get("status")).and_then(Value::as_str).unwrap_or("unknown").to_owned();
     run(s, "sketch.finish", json!({}))?;
-    Ok(None)
+    let left = dof.map_or_else(String::new, |d| format!(", {d} degrees of freedom left"));
+    Ok(Finished { dof, warning: Some(format!("not dimensioned ({why}); finished as drawn, solve status {status}{left}")) })
 }
 
 /// What was added to the sketch.
@@ -184,6 +204,7 @@ fn add_chain(sk: &mut Sketch, pieces: &[Piece], closed: bool, added: &mut Added)
 
 /// The outlines of a cut, each closed or not, drawn into the sketch.
 pub(super) fn draw(sk: &mut Sketch, outlines: &[(Outline, bool)], added: &mut Added) -> Result<()> {
+    let from = sk.constraints.len();
     for (outline, closed) in outlines {
         match outline {
             Outline::Circle { center, radius } => {
@@ -193,7 +214,38 @@ pub(super) fn draw(sk: &mut Sketch, outlines: &[(Outline, bool)], added: &mut Ad
             Outline::Chain(pieces) => add_chain(sk, pieces, *closed, added)?,
         }
     }
+    added.tangents = added.tangents.saturating_sub(unfold(sk, from));
     Ok(())
+}
+
+/// Most rounds [`unfold`] solves.
+const UNFOLD_ROUNDS: usize = 8;
+
+/// Drops the tangents from constraint `from` on that the sketch cannot hold without folding over:
+/// a fitted join a degree or two off tangent between long shallow arcs (a car panel's section)
+/// is made tangent by sliding its touch points by the radius times that angle, which can run a
+/// short line between them backwards. The solver refuses that fold and leaves the whole sketch
+/// unsolved, so AutoConstrain cannot dimension it; such a join stays a shared end instead. How
+/// many were dropped.
+fn unfold(sk: &mut Sketch, from: usize) -> usize {
+    let mut dropped = 0;
+    for _ in 0..UNFOLD_ROUNDS {
+        let mut trial = sk.clone();
+        let rep = solidcraft_sketch::solve_with(&mut trial, &solidcraft_sketch::Hold::default(), None, solidcraft_sketch::Analysis::StatusOnly, None);
+        let ours = |c: &solidcraft_sketch::Constraint| matches!(c.kind, ConstraintKind::Tangent { .. }) && rep.folded.contains(&c.id);
+        let before = sk.constraints.len();
+        let mut k = 0;
+        sk.constraints.retain(|c| {
+            k += 1;
+            k <= from || !ours(c)
+        });
+        let gone = before - sk.constraints.len();
+        if gone == 0 {
+            break;
+        }
+        dropped += gone;
+    }
+    dropped
 }
 
 /// The outlines fitted to a cut's runs, leaving out specks shorter than a few tolerances.
@@ -226,7 +278,7 @@ pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // A sketch the user is editing is left to them; one made here is finished dimensioned.
     let dimensions = bool_(p, "dimensions").unwrap_or(true);
-    let finish = |s: &mut Session, round: f64| if made { finish_dimensioned(s, dimensions, Some(round)) } else { Ok(None) };
+    let finish = |s: &mut Session, round: f64| if made { finish_dimensioned(s, dimensions, Some(round)) } else { Ok(Finished::default()) };
     let runs = {
         let state = s.model.state();
         let plane = state.sketch(sketch).map(|ss| ss.plane).ok_or_else(|| bad(cmd, "the sketch is not evaluated"))?;
@@ -252,7 +304,7 @@ pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Sizes within a quarter of the cut's tolerance of a round size are read as designed, as
     // Hole It reads a hole's.
-    let dof = finish(s, solidcraft_scan::hole_form::SNAP_SHARE * tolerance)?;
+    let finished = finish(s, solidcraft_scan::hole_form::SNAP_SHARE * tolerance)?;
     let reply = ScanSectionResult {
         body: scan,
         sketch,
@@ -262,7 +314,8 @@ pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
         circles: added.circles,
         tangents: added.tangents,
         tolerance,
-        dof,
+        dof: finished.dof,
+        warning: finished.warning,
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
