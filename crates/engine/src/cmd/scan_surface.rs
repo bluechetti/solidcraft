@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use solidcore_record::Vec3;
 use solidcore_record::brep as b;
 use solidcraft_geom::Vec3Geom as _;
-use solidcraft_geom::bspline::{HPoint, NurbsSurface};
+use solidcraft_geom::bspline::NurbsSurface;
 pub use solidcraft_scan::merge::Side;
 use solidcraft_scan::net;
 pub use solidcraft_scan::net::{Line, NetError};
@@ -60,26 +60,7 @@ fn faces_of(record: &b::Brep) -> Option<Vec<NurbsSurface>> {
 
 /// A B-spline record surface (rational or not) as a NURBS surface, on the same (u, v); `None` for
 /// any other kind of surface.
-pub fn nurbs_of_surface(surface: &b::Surface) -> Option<NurbsSurface> {
-    let (u_knots, v_knots, rows): (&Vec<f64>, &Vec<f64>, Vec<Vec<HPoint>>) = match surface {
-        b::Surface::Spline { u_knots, v_knots, points } => {
-            (u_knots, v_knots, points.iter().map(|row| row.iter().map(|p| HPoint::weighted(Vec3::new(p[0], p[1], p[2]), 1.0)).collect()).collect())
-        }
-        b::Surface::RationalSpline { u_knots, v_knots, homogeneous } => {
-            (u_knots, v_knots, homogeneous.iter().map(|row| row.iter().map(|h| HPoint { x: h[0], y: h[1], z: h[2], w: h[3] }).collect()).collect())
-        }
-        _ => return None,
-    };
-    // The record's rows run along u (`rows[i][j]`, i along u); the surface's points go u fastest.
-    let nu = rows.len();
-    let nv = rows.first()?.len();
-    if nu == 0 || nv == 0 || rows.iter().any(|r| r.len() != nv) {
-        return None;
-    }
-    let degree = [u_knots.len().checked_sub(nu + 1)?, v_knots.len().checked_sub(nv + 1)?];
-    let ctrl = (0..nv).flat_map(|j| rows.iter().map(move |row| row[j])).collect();
-    NurbsSurface::from_homogeneous(degree, [u_knots.clone(), v_knots.clone()], ctrl).ok()
-}
+pub use solidcraft_doc::surface_nets::nurbs_of_surface;
 
 /// The surface body named, or the selected one, or the design's only one: a body of one B-spline
 /// face, as it was imported or only moved since (nothing later has reshaped it).

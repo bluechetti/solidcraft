@@ -96,6 +96,7 @@ pub mod scan_selection;
 pub mod scan_tolerance;
 pub mod sheet;
 pub mod sketch_equation;
+pub mod surface_nets;
 pub mod text_params;
 pub mod thread_forms;
 pub mod tolerance;

@@ -3049,3 +3049,70 @@ fn flat_template_says_where_the_outline_was_guessed() {
     let length = r["guessed_length"].as_f64().unwrap();
     assert!((10.0..45.0).contains(&length), "across the mouth, less the reach each side: {length}");
 }
+
+/// A sphere scanned, `radius` round the origin: a cube's sides, `n` × `n` each, pushed out onto it.
+fn sphere_triangles(radius: f64, n: u32) -> Vec<[Vec3; 3]> {
+    let on = |p: Vec3| p.normalized().map_or(Vec3::ZERO, |d| d * radius);
+    let sides = [
+        (Vec3::new(-1.0, -1.0, -1.0), Vec3::new(2.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 2.0)),
+        (Vec3::new(-1.0, 1.0, -1.0), Vec3::new(0.0, 0.0, 2.0), Vec3::new(2.0, 0.0, 0.0)),
+        (Vec3::new(-1.0, -1.0, -1.0), Vec3::new(0.0, 2.0, 0.0), Vec3::new(2.0, 0.0, 0.0)),
+        (Vec3::new(-1.0, -1.0, 1.0), Vec3::new(2.0, 0.0, 0.0), Vec3::new(0.0, 2.0, 0.0)),
+        (Vec3::new(-1.0, -1.0, -1.0), Vec3::new(0.0, 0.0, 2.0), Vec3::new(0.0, 2.0, 0.0)),
+        (Vec3::new(1.0, -1.0, -1.0), Vec3::new(0.0, 2.0, 0.0), Vec3::new(0.0, 0.0, 2.0)),
+    ];
+    let mut out = Vec::new();
+    for (o, du, dv) in sides {
+        let at = |i: u32, j: u32| on(o + du * (f64::from(i) / f64::from(n)) + dv * (f64::from(j) / f64::from(n)));
+        for i in 0..n {
+            for j in 0..n {
+                out.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+                out.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+            }
+        }
+    }
+    out
+}
+
+/// A Free Form cup of five faces round a sphere (its top over four great circles' arcs, four
+/// faces added round it) thickened by Thicken, which SMLib alone refuses for several doubly
+/// curved faces: a closed solid the thickness thick over five sixths of the sphere, that follows
+/// the thickness parameter.
+#[test]
+fn thicken_makes_a_free_form_network_of_curved_faces_a_solid() {
+    let radius = 40.0;
+    let (mut s, _) = session_with_triangles("thicken-network", &sphere_triangles(radius, 30));
+    let c = radius / 3.0f64.sqrt();
+    let p = |x: f64, y: f64, z: f64| Vec3::new(x * c, y * c, z * c);
+    let arc = |a: Vec3, b: Vec3| -> Vec<[f64; 3]> {
+        (0..=24).filter_map(|k| (a + (b - a) * (f64::from(k) / 24.0)).normalized().map(|d| d * radius)).map(|q| [q.x, q.y, q.z]).collect()
+    };
+    let corners = [p(-1.0, -1.0, 1.0), p(1.0, -1.0, 1.0), p(1.0, 1.0, 1.0), p(-1.0, 1.0, 1.0)];
+    let curves: Vec<Vec<[f64; 3]>> = (0..4).map(|k| arc(corners[k], corners[(k + 1) % 4])).collect();
+    run(&mut s, "scan.free_form", json!({"curves": curves, "count": 8}));
+    let xyz = |q: Vec3| [q.x, q.y, q.z];
+    for (edge, far) in [
+        ([p(-1.0, -1.0, 1.0), p(1.0, -1.0, 1.0)], [p(-1.0, -1.0, -1.0), p(1.0, -1.0, -1.0)]),
+        ([p(1.0, -1.0, 1.0), p(1.0, 1.0, 1.0)], [p(1.0, -1.0, -1.0), p(1.0, 1.0, -1.0)]),
+        ([p(1.0, 1.0, 1.0), p(-1.0, 1.0, 1.0)], [p(1.0, 1.0, -1.0), p(-1.0, 1.0, -1.0)]),
+        ([p(-1.0, 1.0, 1.0), p(-1.0, -1.0, 1.0)], [p(-1.0, 1.0, -1.0), p(-1.0, -1.0, -1.0)]),
+    ] {
+        let added = run(
+            &mut s,
+            "scan.add_face",
+            json!({"surface": "FreeForm1", "edge": [xyz(edge[0]), xyz(edge[1])], "far": [xyz(far[0]), xyz(far[1])], "rows": 8, "symmetry": "none"}),
+        );
+        assert!(added["rms"].as_f64().unwrap() < 0.1, "{added}");
+    }
+    run(&mut s, "parameters.add", json!({"name": "wall", "expression": "3 mm"}));
+    run(&mut s, "surface.thicken", json!({"bodies": ["FreeForm1"], "thickness": "wall", "body_name": "Cup"}));
+    // Five sixths of the shell between the sphere and the sphere grown (or shrunk) by the wall.
+    let shell = |r0: f64, r1: f64| 5.0 / 6.0 * 4.0 / 3.0 * std::f64::consts::PI * (r1.powi(3) - r0.powi(3)).abs();
+    let volume = |s: &Session| s.model.state().body("Cup").and_then(|b| b.body.volume_at(0.0)).unwrap_or(0.0);
+    let near = |v: f64, t: f64| [shell(radius, radius + t), shell(radius - t, radius)].iter().any(|w| (v - w).abs() < 0.02 * w);
+    let v3 = volume(&s);
+    assert!(near(v3, 3.0), "a closed solid 3 mm thick: {v3}");
+    run(&mut s, "parameters.change", json!({"name": "wall", "expression": "5 mm"}));
+    let v5 = volume(&s);
+    assert!(near(v5, 5.0), "it follows the wall: {v5}");
+}

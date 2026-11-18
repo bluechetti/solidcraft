@@ -73,7 +73,13 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                 let b = st.body(n).cloned().ok_or_else(|| DocError::Unknown(format!("body `{n}`")))?;
                 // Kept face, offset and edge walls. Carry that history so a sketch can attach
                 // to the solid's faces and follow the thickness (#7641).
-                let thickened = kernel::thicken(&b.body, t, *symmetric)?;
+                // A Free Form network of several faces is thickened from its own nets: SMLib's
+                // thicken refuses it (its faces' offsets miss at their corners by a hair), and
+                // takes seconds to. Anything else, or a network that does not sew shut, is SMLib's.
+                let thickened = match crate::surface_nets::thickened_network(&b.body, t, *symmetric) {
+                    Some(made) => made,
+                    None => kernel::thicken(&b.body, t, *symmetric)?,
+                };
                 tools.push(Traced::step(thickened, &[&b.traced()]));
             }
             if tools.is_empty() {

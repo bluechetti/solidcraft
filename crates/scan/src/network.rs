@@ -141,6 +141,8 @@ pub enum NetworkError {
     LastFace,
     /// Taking the face away would leave the faces in two pieces.
     WouldSplit,
+    /// The faces close on themselves: thickened they would be two shells, not one solid.
+    Closed,
 }
 
 impl std::fmt::Display for NetworkError {
@@ -154,6 +156,7 @@ impl std::fmt::Display for NetworkError {
             NetworkError::FlatCorner => "that face would have a corner as flat as a straight line, where two sides it shares run on from each other (a single face over a smooth rim): close the opening with several faces, a middle one and one on each side, so that every face meets the rim at a corner",
             NetworkError::LastFace => "a Free Form keeps one face at least: delete the surface body to take it all away",
             NetworkError::WouldSplit => "taking that face away would leave the Free Form in two pieces: take away a face on its edge",
+            NetworkError::Closed => "the Free Form closes on itself, so thickened it would be two shells: hollow the solid it makes with Shell instead",
         })
     }
 }
@@ -1482,6 +1485,144 @@ pub fn across_seam(faces: &[NurbsSurface], joins: &Joins, seam: usize) -> Vec<Ac
     out
 }
 
+/// Which way round each face of a network runs, as one surface: +1 for a face whose normal is
+/// the first face's way, -1 for one turned over against it. Read from the seams, not the normals:
+/// two faces agree when their shared side runs opposite ways round them (as on any surface that
+/// has two sides), which holds at a crease of 90° as well as on a smooth seam. A face no seam
+/// reaches keeps +1.
+fn orientations(faces: &[NurbsSurface], joins: &Joins) -> Vec<f64> {
+    // How a side runs round its face, counterclockwise in (u, v), against its points' order.
+    let round = |side: Side| -> f64 {
+        match side {
+            Side::FirstRow | Side::LastColumn => 1.0,
+            Side::LastRow | Side::FirstColumn => -1.0,
+        }
+    };
+    let mut way: Vec<Option<f64>> = vec![None; faces.len()];
+    for start in 0..faces.len() {
+        if way[start].is_some() {
+            continue;
+        }
+        way[start] = Some(1.0);
+        let mut todo = vec![start];
+        while let Some(f) = todo.pop() {
+            let Some(here) = way[f] else { continue };
+            for seam in &joins.seams {
+                let (other, mine, theirs) = if seam.a == f {
+                    (seam.b, seam.a_side, seam.b_side)
+                } else if seam.b == f {
+                    (seam.a, seam.b_side, seam.a_side)
+                } else {
+                    continue;
+                };
+                if way[other].is_some() {
+                    continue;
+                }
+                let along = if seam.reversed { -1.0 } else { 1.0 };
+                let agree = round(mine) * round(theirs) * along < 0.0;
+                way[other] = Some(if agree { here } else { -here });
+                todo.push(other);
+            }
+        }
+    }
+    way.into_iter().map(|w| w.unwrap_or(1.0)).collect()
+}
+
+/// The network `faces` moved `distance` along its normals (the first face's way, the others
+/// turned to agree with it): one network of the same faces, points and seams, fitted as a whole
+/// to places across each face moved that far along its normal there, so its faces share their
+/// sides as the network's do and stay tangent where it is. `None` when it cannot be made.
+fn offset_network(faces: &[NurbsSurface], joins: &Joins, distance: f64) -> Option<Vec<NurbsSurface>> {
+    if distance == 0.0 {
+        return Some(faces.to_vec());
+    }
+    let way = orientations(faces, joins);
+    let normal_at = |f: usize, u: f64, v: f64| -> Option<(Vec3, Vec3)> {
+        let face = faces.get(f)?;
+        let (p, su, sv) = frame(face, &points(face), u, v)?;
+        Some((p, su.cross(sv).normalized()? * way[f]))
+    };
+    // A first guess: each point moved along the normals at its places' Greville points.
+    let start = network_points(faces, joins);
+    let mut sum = vec![Vec3::ZERO; start.len()];
+    for (f, face) in faces.iter().enumerate() {
+        for (k, (u, v)) in greville_places(face).into_iter().enumerate() {
+            if let (Some(&p), Some((_, n))) = (joins.of.get(f).and_then(|of| of.get(k)), normal_at(f, u, v)) {
+                sum[p] += n;
+            }
+        }
+    }
+    let guess: Vec<Vec3> = start.iter().zip(&sum).map(|(p, n)| *p + n.normalized().unwrap_or(Vec3::ZERO) * distance).collect();
+    let mut moved_faces = with_network_points(faces, joins, &guess)?;
+    // Places across each face, moved along its normal: where the offset surface runs.
+    let mut goals = Vec::new();
+    for (f, face) in faces.iter().enumerate() {
+        let [cu, cv] = face.count();
+        let (nu, nv) = (ADD_PLACES * cu, ADD_PLACES * cv);
+        let [[u0, u1], [v0, v1]] = face.domain();
+        for j in 0..=nv {
+            for i in 0..=nu {
+                let (u, v) = (u0 + (u1 - u0) * i as f64 / nu as f64, v0 + (v1 - v0) * j as f64 / nv as f64);
+                if let Some((p, n)) = normal_at(f, u, v) {
+                    goals.push(Goal { face: f, u, v, to: p + n * distance, weight: 1.0 });
+                }
+            }
+        }
+    }
+    let free = vec![true; joins.len()];
+    for _ in 0..OFFSET_ROUNDS {
+        let moves = Moves { free: &free, goals: &goals, tangent: 40.0, even: 0.0, bend: 1e-6, also_smooth: &[] };
+        moved_faces = moved(&moved_faces, joins, &moves)?;
+    }
+    Some(moved_faces)
+}
+
+/// Rounds of the whole offset network's fit (the seams' ratios are read again each round).
+const OFFSET_ROUNDS: usize = 2;
+
+/// A strip of four rows ruled between two sides of the same points' count (`near` and `far`, in
+/// order), a cubic in both ways on `knots` along them: it shares each side exactly with the face
+/// it is, and its short sides with the strips beside it.
+fn ruled_strip(near: &[Vec3], far: &[Vec3], knots: &[f64]) -> Option<NurbsSurface> {
+    let m = near.len();
+    if m < 4 || far.len() != m {
+        return None;
+    }
+    let rows = 4;
+    let net: Vec<Vec3> = (0..rows).flat_map(|r| (0..m).map(move |k| near[k] + (far[k] - near[k]) * (r as f64 / (rows - 1) as f64))).collect();
+    NurbsSurface::new([3, 3], [knots.to_vec(), clamped_knots(rows)], &net, &vec![1.0; net.len()]).ok()
+}
+
+/// The network `faces` thickened into the faces of a solid: the network moved `near` along its
+/// normals (0: the network itself) and moved `far`, and a ruled strip along each open side
+/// between the two; each strip shares its sides exactly with them and with the strips beside it,
+/// so the faces sew shut. The normals are the first face's way, the others turned to agree. A
+/// network with no open side (it closes on itself) is refused: what it would make is two shells.
+/// Made from the faces' own nets, so the kernel's offset of the faces (which leaves the
+/// corners where faces meet a hair apart) is not needed.
+pub fn thickened(faces: &[NurbsSurface], near: f64, far: f64) -> Result<Vec<NurbsSurface>, NetworkError> {
+    if !(near.is_finite() && far.is_finite()) || (far - near).abs() <= 0.0 {
+        return Err(NetworkError::Failed);
+    }
+    let joins = joins(faces)?;
+    if joins.open.is_empty() {
+        return Err(NetworkError::Closed);
+    }
+    let inner = offset_network(faces, &joins, near).ok_or(NetworkError::Failed)?;
+    let outer = offset_network(faces, &joins, far).ok_or(NetworkError::Failed)?;
+    let (a, b) = (network_points(&inner, &joins), network_points(&outer, &joins));
+    let mut out = inner;
+    out.extend(outer);
+    for &(f, side) in &joins.open {
+        let ids = joins.side(faces, f, side);
+        let knots = faces.get(f).map(|s| s.knots()[side.along()].clone()).ok_or(NetworkError::Failed)?;
+        let near_side: Vec<Vec3> = ids.iter().map(|p| a[*p]).collect();
+        let far_side: Vec<Vec3> = ids.iter().map(|p| b[*p]).collect();
+        out.push(ruled_strip(&near_side, &far_side, &knots).ok_or(NetworkError::Failed)?);
+    }
+    Ok(out)
+}
+
 /// Whether a smooth seam's end at a corner is held in a line with the points next to it either
 /// side (`a`, the corner `e`, `b`): never at an irregular corner (its faces would pull against each
 /// other), always at a grid's corner inside the network, and at a corner on its edge only where the
@@ -2174,6 +2315,82 @@ mod tests {
         }
         let kink = worst_kink(&all, &closed);
         assert!(kink < 1.0, "tangent along the seams: {kink}°");
+    }
+
+    /// A cup of five faces round a sphere (the top and the four round it) thickened: the network
+    /// moved along its normals is the sphere grown by the thickness, its faces' sides shared as
+    /// the cup's are, and a strip along each open side joins the two exactly, so every side of
+    /// every face is shared: the faces close into one solid. A closed network is refused.
+    #[test]
+    fn a_cup_of_faces_thickens_into_faces_that_close() {
+        let radius = 40.0;
+        let (positions, triangles) = sphere_scan(radius, 40);
+        let scan = Scan::new(&positions, &triangles);
+        let on = Projector::new(&scan);
+        let c = radius / 3.0f64.sqrt();
+        let p = |x: f64, y: f64, z: f64| Vec3::new(x * c, y * c, z * c);
+        let arc = |a: Vec3, b: Vec3| -> Vec<Vec3> {
+            (0..=24).filter_map(|k| (a + (b - a) * (f64::from(k) / 24.0)).normalized().map(|d| d * radius)).collect()
+        };
+        let corners = [p(-1.0, -1.0, 1.0), p(1.0, -1.0, 1.0), p(1.0, 1.0, 1.0), p(-1.0, 1.0, 1.0)];
+        let sides: Vec<Vec<Vec3>> = (0..4).map(|k| arc(corners[k], corners[(k + 1) % 4])).collect();
+        let boundary = crate::boundary_face::order(&sides, 0.0).unwrap();
+        let flat = crate::boundary_face::face(&boundary, &[], [8, 8]).unwrap();
+        let under = surface_edit::covered(&scan, &flat, 10.0, 5_000);
+        let mut cup = vec![crate::boundary_face::face(&boundary, &under, [8, 8]).unwrap()];
+        for (edge, far) in [
+            ([p(-1.0, -1.0, 1.0), p(1.0, -1.0, 1.0)], [p(-1.0, -1.0, -1.0), p(1.0, -1.0, -1.0)]),
+            ([p(1.0, -1.0, 1.0), p(1.0, 1.0, 1.0)], [p(1.0, -1.0, -1.0), p(1.0, 1.0, -1.0)]),
+            ([p(1.0, 1.0, 1.0), p(-1.0, 1.0, 1.0)], [p(1.0, 1.0, -1.0), p(-1.0, 1.0, -1.0)]),
+            ([p(-1.0, 1.0, 1.0), p(-1.0, -1.0, 1.0)], [p(-1.0, 1.0, -1.0), p(-1.0, -1.0, -1.0)]),
+        ] {
+            let jn = joins(&cup).unwrap();
+            let ((f, side), _) = open_side_near(&cup, &jn, edge[0], edge[1]).unwrap();
+            cup = with_face(&cup, &jn, f, side, far, 8, snapper(&on)).unwrap();
+        }
+        let cj = joins(&cup).unwrap();
+        assert_eq!((cup.len(), cj.seams.len(), cj.open.len()), (5, 8, 4));
+        let way = orientations(&cup, &cj);
+        // Which way the first face faces: out of the sphere or into it.
+        let (pt, su, sv) = frame(&cup[0], &points(&cup[0]), 0.5, 0.5).unwrap();
+        let out = if su.cross(sv).dot(pt) > 0.0 { 1.0 } else { -1.0 };
+        let t = 3.0;
+        let solid = thickened(&cup, 0.0, t * out).unwrap();
+        assert_eq!(solid.len(), 5 + 5 + 4, "the cup, its offset and a strip on each open side");
+        let sj = joins(&solid).unwrap();
+        assert_eq!(sj.open.len(), 0, "every side shared: the faces close");
+        assert_eq!(sj.seams.len(), 8 + 8 + 4 * 2 + 4);
+        // Each offset face runs the thickness off its cup face, along the cup face's normal (turned
+        // as the first face's), at the same places.
+        let mut worst = 0.0f64;
+        for k in 0..5 {
+            let (face, moved) = (&cup[k], &solid[5 + k]);
+            for i in 0..=20 {
+                for j in 0..=20 {
+                    let (u, v) = (f64::from(i) / 20.0, f64::from(j) / 20.0);
+                    let (p0, su, sv) = frame(face, &points(face), u, v).unwrap();
+                    let (q, _, _) = frame(moved, &points(moved), u, v).unwrap();
+                    let n = su.cross(sv).normalized().unwrap() * way[k] * out;
+                    worst = worst.max(q.dist(p0 + n * t));
+                }
+            }
+        }
+        // Worst at the corners of three faces, where the cup's faces' normals differ a little and
+        // the one point the offset faces share there cannot be off each of them by the thickness.
+        assert!(worst < 0.15, "the offset {t} mm off the cup everywhere: {worst}");
+        let kink = worst_kink(&solid[5..10], &joins(&solid[5..10]).unwrap());
+        assert!(kink < 1.0, "the offset as smooth as the cup: {kink}°");
+        // Symmetric: both moved, by half each way.
+        let both = thickened(&cup, -1.5 * out, 1.5 * out).unwrap();
+        let (q, _, _) = frame(&both[0], &points(&both[0]), 0.5, 0.5).unwrap();
+        assert!((q.dist(Vec3::ZERO) - (radius - 1.5)).abs() < 0.05, "{}", q.dist(Vec3::ZERO));
+        // Refused: a closed network, no thickness, and hostile values.
+        let jn = joins(&cup).unwrap();
+        let ((f, side), _) = open_side_near(&cup, &jn, p(-1.0, -1.0, -1.0), p(1.0, -1.0, -1.0)).unwrap();
+        let closed = with_face(&cup, &jn, f, side, [p(-1.0, 1.0, -1.0), p(1.0, 1.0, -1.0)], 8, snapper(&on)).unwrap();
+        assert_eq!(thickened(&closed, 0.0, 3.0), Err(NetworkError::Closed));
+        assert_eq!(thickened(&cup, 1.0, 1.0), Err(NetworkError::Failed));
+        assert_eq!(thickened(&cup, 0.0, f64::NAN), Err(NetworkError::Failed));
     }
 
     /// A face over a rim that runs on smoothly through its corners would have flat corners: refused in
