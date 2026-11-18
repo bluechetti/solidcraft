@@ -289,11 +289,13 @@ pub fn joins(faces: &[NurbsSurface]) -> Result<Joins, NetworkError> {
         corner_faces.into_iter().map(|(point, fs)| Corner { point, faces: fs.len(), border: on_open.contains(&point) }).collect();
     corners.sort_by_key(|c| c.point);
     let irregular: std::collections::HashSet<usize> = corners.iter().filter(|c| c.irregular()).map(|c| c.point).collect();
+    let border_corners: std::collections::HashSet<usize> = corners.iter().filter(|c| c.border).map(|c| c.point).collect();
     // Tangency held across seams that are smooth: along them, and at their ends where the corner
     // is as a grid's (an irregular corner cannot be held so: its faces would pull against each
-    // other). A seam is one thing: smooth when most of its points meet straight (the few that do
-    // not are held straight too), a crease when most meet at an angle (none is held: a crease's
-    // ends, on the network's edge, often still meet smoothly, and must not round it over again).
+    // other; one on the network's edge only where its open sides run on: see [`end_held`]). A
+    // seam is one thing: smooth when most of its points meet straight (the few that do not are
+    // held straight too), a crease when most meet at an angle (none is held: a crease's ends, on
+    // the network's edge, often still meet smoothly, and must not round it over again).
     let mut smooth = Vec::new();
     for (index, seam) in seams.iter().enumerate() {
         let (ca, cb) = (faces[seam.a].count(), faces[seam.b].count());
@@ -305,14 +307,14 @@ pub fn joins(faces: &[NurbsSurface]) -> Result<Joins, NetworkError> {
         let (mut straight_points, mut sharp_points) = (0usize, 0usize);
         for (n, (&pa, &pb)) in ka.iter().zip(&kb).enumerate() {
             let e = of[seam.a][pa];
-            if (n == 0 || n + 1 == ka.len()) && irregular.contains(&e) {
-                continue;
-            }
             let (ia, ib) = (of[seam.a][inward(seam.a_side, ca, pa)], of[seam.b][inward(seam.b_side, cb, pb)]);
             if ia == ib {
                 continue;
             }
             let (pe, pia, pib) = (nets[seam.a][pa], nets[seam.a][inward(seam.a_side, ca, pa)], nets[seam.b][inward(seam.b_side, cb, pb)]);
+            if (n == 0 || n + 1 == ka.len()) && !end_held(irregular.contains(&e), border_corners.contains(&e), pia, pe, pib) {
+                continue;
+            }
             let (da, db) = (pia - pe, pe - pib);
             let straight = match (da.normalized(), db.normalized()) {
                 (Some(a), Some(b)) => a.dot(b) >= SMOOTH_DEGREES.to_radians().cos(),
@@ -548,6 +550,21 @@ pub fn moved(faces: &[NurbsSurface], joins: &Joins, moves: &Moves) -> Option<Vec
         let r = near / far;
         rows.push(Row { cols: vec![(a, 1.0), (b, r), (e, -(1.0 + r))], to: Vec3::ZERO, weight: moves.tangent * per_point });
     }
+    // At an irregular corner inside the network whose seams are all held smooth: the points next to
+    // it along its seams in one plane with it, the plane the faces there face now (each row asks
+    // for its point's way from the corner as it is, less its part off that plane). The rows across
+    // the seams leave such a corner out, so without this the faces round it would meet at an angle
+    // there and kink along each seam for a span from it.
+    let held: std::collections::HashSet<usize> = across.iter().map(|t| t.seam).collect();
+    for (corner, next, normal) in corner_planes(faces, joins, &start, &held) {
+        for p in next {
+            if !(moves.free[p] || moves.free[corner]) {
+                continue;
+            }
+            let way = start[p] - start[corner];
+            rows.push(Row { cols: vec![(p, 1.0), (corner, -1.0)], to: way - normal * way.dot(normal), weight: moves.tangent * per_point });
+        }
+    }
     // Even moves, and a straight net, along each face's rows and columns.
     for (face, ids) in faces.iter().zip(&joins.of) {
         let [nu, nv] = face.count();
@@ -590,6 +607,68 @@ pub fn moved(faces: &[NurbsSurface], joins: &Joins, moves: &Moves) -> Option<Vec
         }
     }
     with_network_points(faces, joins, &places)
+}
+
+/// Each irregular corner inside the network all of whose seams are in `held`: the corner, the
+/// points next to it along its seams, and the plane its faces face there (the mean of their
+/// normals at it, each turned to agree with the first's), `places` the network's points.
+fn corner_planes(faces: &[NurbsSurface], joins: &Joins, places: &[Vec3], held: &std::collections::HashSet<usize>) -> Vec<(usize, Vec<usize>, Vec3)> {
+    let mut out = Vec::new();
+    for c in joins.corners.iter().filter(|c| c.irregular() && !c.border) {
+        let mut next = Vec::new();
+        let mut all_held = true;
+        for (index, seam) in joins.seams.iter().enumerate() {
+            let ids = joins.side(faces, seam.a, seam.a_side);
+            let (Some(&first), Some(&last)) = (ids.first(), ids.last()) else { continue };
+            let n = if first == c.point {
+                ids.get(1)
+            } else if last == c.point {
+                ids.len().checked_sub(2).and_then(|k| ids.get(k))
+            } else {
+                continue;
+            };
+            all_held &= held.contains(&index);
+            next.extend(n.copied());
+        }
+        if !all_held || next.len() < 3 {
+            continue;
+        }
+        let mut sum = Vec3::ZERO;
+        let mut first: Option<Vec3> = None;
+        for &(f, k) in joins.at.get(c.point).map(Vec::as_slice).unwrap_or(&[]) {
+            let Some(face) = faces.get(f) else { continue };
+            let [nu, nv] = face.count();
+            let [[u0, u1], [v0, v1]] = face.domain();
+            let (u, v) = if k == 0 {
+                (u0, v0)
+            } else if k == nu - 1 {
+                (u1, v0)
+            } else if k == nu * nv - 1 {
+                (u1, v1)
+            } else {
+                (u0, v1)
+            };
+            let Some((_, su, sv)) = frame(face, &points(face), u, v) else { continue };
+            let Some(n) = su.cross(sv).normalized() else { continue };
+            let n = match first {
+                Some(f) if f.dot(n) < 0.0 => -n,
+                Some(_) => n,
+                None => {
+                    first = Some(n);
+                    n
+                }
+            };
+            sum += n;
+        }
+        if let Some(normal) = sum.normalized()
+            && places.get(c.point).is_some()
+        {
+            next.sort_unstable();
+            next.dedup();
+            out.push((c.point, next, normal));
+        }
+    }
+    out
 }
 
 /// The free points (`slot` numbers them) that bring the rows nearest, the others where `at` has them.
@@ -1165,6 +1244,16 @@ pub fn with_face(
             net[r * m..(r + 1) * m].reverse();
         }
     }
+    // The ruled net put on the scan at its nearest places, its edge row kept: the sides it runs
+    // out along and its far side start where the scan is square under them (a sphere's great
+    // circles). Put on along the flat net's one facing instead, they would be a plane's cut
+    // through a part that curves round, which the fit along the face's own normals then keeps.
+    let found = snap(&net[m..], None);
+    for (p, q) in net[m..].iter_mut().zip(found) {
+        if let Some(q) = q {
+            *p = q;
+        }
+    }
     let new = make(&net).ok_or(NetworkError::Failed)?;
     // Its other sides one with open sides of the network that run between the same points.
     let mut held = vec![false; m * rows];
@@ -1266,9 +1355,13 @@ fn joins_after(faces: &[NurbsSurface]) -> Result<Joins, NetworkError> {
     joins(faces)
 }
 
-/// Places across the faces `which` put on the scan by `snap` along the way each face faces as a
-/// whole, never across it (on a rough scan the nearest point is often off to one side, which would
-/// drag the places, and the net with them, across the face): goals of weight 1.
+/// Places across the faces `which` put on the scan by `snap` along the way the face faces at each
+/// place (turned as the face faces as a whole), never across it (on a rough scan the nearest point
+/// is often off to one side, which would drag the places, and the net with them, across the face):
+/// goals of weight 1. Along the face's own normal, not one way for the whole face: a face that
+/// curves round (a sixth of a sphere) has its sides put where the scan is square under them, so
+/// they run as the scan's own lines do (a sphere's great circles), not as a plane's cut through it,
+/// which runs on smoothly into the next face's side and leaves the face closing that corner flat.
 fn snapped_places(all: &[NurbsSurface], which: &[usize], snap: &impl Fn(&[Vec3], Option<Vec3>) -> Vec<Option<Vec3>>) -> Vec<Goal> {
     let mut goals = Vec::new();
     for &f in which {
@@ -1282,14 +1375,23 @@ fn snapped_places(all: &[NurbsSurface], which: &[usize], snap: &impl Fn(&[Vec3],
         for j in 0..=nv {
             for i in 0..=nu {
                 let (u, v) = (u0 + (u1 - u0) * i as f64 / nu as f64, v0 + (v1 - v0) * j as f64 / nv as f64);
-                if let Some((p, _, _)) = frame(surface, &snet, u, v) {
+                if let Some((p, su, sv)) = frame(surface, &snet, u, v) {
                     uv.push((u, v));
-                    on.push(p);
+                    on.push((p, su.cross(sv).normalized()));
                 }
             }
         }
-        let found = snap(&on, mean_normal(surface));
-        goals.extend(uv.iter().zip(found).filter_map(|(&(u, v), p)| Some(Goal { face: f, u, v, to: p?, weight: 1.0 })));
+        let whole = mean_normal(surface);
+        for (&(u, v), (p, n)) in uv.iter().zip(on) {
+            let along = match (n, whole) {
+                (Some(n), Some(w)) if n.dot(w) < 0.0 => Some(-n),
+                (Some(n), _) => Some(n),
+                (None, w) => w,
+            };
+            if let Some(to) = snap(&[p], along).into_iter().next().flatten() {
+                goals.push(Goal { face: f, u, v, to, weight: 1.0 });
+            }
+        }
     }
     goals
 }
@@ -1347,9 +1449,11 @@ fn tangency_across(faces: &[NurbsSurface], joins: &Joins, at: usize) -> Vec<Acro
 }
 
 /// Across seam `seam`: each point on it and the points next to it either side, as tangency across
-/// it holds them (whether or not the faces meet smoothly there now); none at an irregular corner.
+/// it holds them (whether or not the faces meet smoothly there now); at its ends only where
+/// [`end_held`] holds them.
 pub fn across_seam(faces: &[NurbsSurface], joins: &Joins, seam: usize) -> Vec<Across> {
     let irregular: std::collections::HashSet<usize> = joins.irregular().map(|c| c.point).collect();
+    let border: std::collections::HashSet<usize> = joins.corners.iter().filter(|c| c.border).map(|c| c.point).collect();
     let Some(s) = joins.seams.get(seam) else { return Vec::new() };
     let (Some(fa), Some(fb), Some(oa), Some(ob)) = (faces.get(s.a), faces.get(s.b), joins.of.get(s.a), joins.of.get(s.b)) else {
         return Vec::new();
@@ -1362,14 +1466,41 @@ pub fn across_seam(faces: &[NurbsSurface], joins: &Joins, seam: usize) -> Vec<Ac
     let mut out = Vec::new();
     for (n, (&pa, &pb)) in ka.iter().zip(&kb).enumerate() {
         let (Some(&e), Some(&ia), Some(&ib)) = (oa.get(pa), oa.get(inward(s.a_side, ca, pa)), ob.get(inward(s.b_side, cb, pb))) else { continue };
-        if (n == 0 || n + 1 == ka.len()) && irregular.contains(&e) {
-            continue;
+        if n == 0 || n + 1 == ka.len() {
+            let (na, nb) = (points(fa), points(fb));
+            let (Some(&pe), Some(&pia), Some(&pib)) = (na.get(pa), na.get(inward(s.a_side, ca, pa)), nb.get(inward(s.b_side, cb, pb))) else {
+                continue;
+            };
+            if !end_held(irregular.contains(&e), border.contains(&e), pia, pe, pib) {
+                continue;
+            }
         }
         if ia != ib {
             out.push(Across { seam, e, a: ia, b: ib });
         }
     }
     out
+}
+
+/// Whether a smooth seam's end at a corner is held in a line with the points next to it either
+/// side (`a`, the corner `e`, `b`): never at an irregular corner (its faces would pull against each
+/// other), always at a grid's corner inside the network, and at a corner on its edge only where the
+/// two faces' open sides there run on from each other within [`CONTINUES_DEGREES`] (a grid's edge:
+/// a panel of faces side by side, or a corner a fourth face will make a grid's). A corner on the edge
+/// whose sides turn there is left free: the faces still to come close it as one of three (a cube's
+/// corner on a sphere, a limb's end), and held in a line before they do it would be a flat corner of
+/// the face that closes it.
+fn end_held(irregular: bool, border: bool, a: Vec3, e: Vec3, b: Vec3) -> bool {
+    if irregular {
+        return false;
+    }
+    if !border {
+        return true;
+    }
+    match ((e - a).normalized(), (b - e).normalized()) {
+        (Some(da), Some(db)) => da.dot(db) >= CONTINUES_DEGREES.to_radians().cos(),
+        _ => false,
+    }
 }
 
 /// Whether each seam is a crease: the faces are not held tangent across it (they met sharply when
@@ -1984,6 +2115,65 @@ mod tests {
             assert!(surface_edit::distance(face, &under).0 < 0.05);
             assert!(flattest_corner(face) > 45.0);
         }
+    }
+
+    /// A sphere scanned, `radius` round the origin: a box's sides, `n` × `n` each, pushed out onto it.
+    fn sphere_scan(radius: f64, n: u32) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+        let (positions, triangles) = box_scan(2.0, n);
+        let middle = Vec3::new(1.0, 1.0, 1.0);
+        let on = positions.iter().map(|p| (*p - middle).normalized().map_or(Vec3::ZERO, |d| d * radius)).collect();
+        (on, triangles)
+    }
+
+    /// Faces built round a sphere as round a box (the cube's six, each corner one of three faces):
+    /// the seams are smooth, so each is held tangent, yet a corner on the network's edge whose sides
+    /// turn is not held in a line before its faces are all there, and each face's free sides go onto the sphere
+    /// square to it (great circles, not a plane's cut, which runs on through the corner): the third
+    /// face round a corner closes it at the sphere's own angle instead of a flat one, and the
+    /// network closes on the sphere.
+    #[test]
+    fn faces_round_a_sphere_close_with_three_at_each_corner() {
+        let radius = 40.0;
+        let (positions, triangles) = sphere_scan(radius, 40);
+        let scan = Scan::new(&positions, &triangles);
+        let on = Projector::new(&scan);
+        let c = radius / 3.0f64.sqrt();
+        let p = |x: f64, y: f64, z: f64| Vec3::new(x * c, y * c, z * c);
+        // The top over four great circles' arcs, as a cube's layout on the sphere draws them.
+        let arc = |a: Vec3, b: Vec3| -> Vec<Vec3> {
+            (0..=24).filter_map(|k| (a + (b - a) * (f64::from(k) / 24.0)).normalized().map(|d| d * radius)).collect()
+        };
+        let corners = [p(-1.0, -1.0, 1.0), p(1.0, -1.0, 1.0), p(1.0, 1.0, 1.0), p(-1.0, 1.0, 1.0)];
+        let sides: Vec<Vec<Vec3>> = (0..4).map(|k| arc(corners[k], corners[(k + 1) % 4])).collect();
+        let boundary = crate::boundary_face::order(&sides, 0.0).unwrap();
+        let flat = crate::boundary_face::face(&boundary, &[], [8, 8]).unwrap();
+        let under = surface_edit::covered(&scan, &flat, 10.0, 5_000);
+        let top = crate::boundary_face::face(&boundary, &under, [8, 8]).unwrap();
+        let mut all = vec![top];
+        // The four round the top, then the bottom (sharing all four of its sides).
+        for (edge, far) in [
+            ([p(-1.0, -1.0, 1.0), p(1.0, -1.0, 1.0)], [p(-1.0, -1.0, -1.0), p(1.0, -1.0, -1.0)]),
+            ([p(1.0, -1.0, 1.0), p(1.0, 1.0, 1.0)], [p(1.0, -1.0, -1.0), p(1.0, 1.0, -1.0)]),
+            ([p(1.0, 1.0, 1.0), p(-1.0, 1.0, 1.0)], [p(1.0, 1.0, -1.0), p(-1.0, 1.0, -1.0)]),
+            ([p(-1.0, 1.0, 1.0), p(-1.0, -1.0, 1.0)], [p(-1.0, 1.0, -1.0), p(-1.0, -1.0, -1.0)]),
+            ([p(-1.0, -1.0, -1.0), p(1.0, -1.0, -1.0)], [p(-1.0, 1.0, -1.0), p(1.0, 1.0, -1.0)]),
+        ] {
+            let jn = joins(&all).unwrap();
+            let ((f, side), _) = open_side_near(&all, &jn, edge[0], edge[1]).unwrap();
+            all = with_face(&all, &jn, f, side, far, 8, snapper(&on)).unwrap_or_else(|e| panic!("face {} refused: {e}", all.len()));
+        }
+        let closed = joins(&all).unwrap();
+        assert_eq!((all.len(), closed.seams.len(), closed.open.len()), (6, 12, 0), "closed round the sphere");
+        assert_eq!(closed.irregular().count(), 8, "a corner of three faces at each of the cube's");
+        assert_eq!(creased(&closed).iter().filter(|c| **c).count(), 0, "every seam smooth");
+        for face in &all {
+            let under = surface_edit::covered(&scan, face, 2.0, 5_000);
+            let (rms, max) = surface_edit::distance(face, &under);
+            assert!(rms < 0.1 && max < 0.5, "on the sphere: {rms} {max}");
+            assert!(flattest_corner(face) > 45.0, "no flat corner: {}", flattest_corner(face));
+        }
+        let kink = worst_kink(&all, &closed);
+        assert!(kink < 1.0, "tangent along the seams: {kink}°");
     }
 
     /// A face over a rim that runs on smoothly through its corners would have flat corners: refused in
