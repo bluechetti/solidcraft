@@ -486,6 +486,34 @@ fn a_chamfer_strip_no_curved_shape_fits_is_still_the_flat_face_it_lies_on() {
     assert_eq!(read["chamfers"].as_array().map(Vec::len), Some(4), "{read}");
 }
 
+/// A block 40 × 30 × 10 with its upright edges rounded R 5, scanned with 0.02 mm of noise, against
+/// the block modelled with R 4, R 5 and R 6: Scan Deviation is least at R 5 (0.020 root mean
+/// square, the noise, against 0.093 and 0.108) and passes that one only. A radius 1 mm out leaves the corner 0.41 mm off ((√2 − 1) × 1), four times the
+/// tolerance.
+#[test]
+fn deviation_tells_the_fillet_radius_the_scan_has_from_one_a_millimetre_out() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 40, "width": 30, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    let uprights = json!([[0, 0, 5], [40, 0, 5], [40, 30, 5], [0, 30, 5]]);
+    run(&mut part, "solid.fillet", json!({"edges": uprights, "radius": 5}));
+    let (mut s, scan) = scanned_with_noise(&part, &body, 0.02, "fillet-radius");
+    let mut read = Vec::new();
+    for radius in [4, 5, 6] {
+        let name = format!("R{radius}");
+        run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 10, "body_name": name, "operation": "new"}));
+        run(&mut s, "solid.fillet", json!({"edges": uprights, "radius": radius, "body": name}));
+        let d = run(&mut s, "scan.deviation", json!({"scan": scan, "body": name}));
+        read.push((d["rms"].as_f64().unwrap(), d["model_max"].as_f64().unwrap(), d["passes"] == true, d["why_not"].clone()));
+        run(&mut s, "scan.deviation", json!({"show": false}));
+    }
+    assert!(read[1].0 < 0.5 * read[0].0 && read[1].0 < 0.5 * read[2].0, "least at R 5: {read:?}");
+    // At R 5 the model is nowhere far from the scan (under three tolerances: 0.2, where the scan's
+    // 0.5 mm triangles cut the block's sharp edges); a millimetre out, the corner is.
+    assert!(read[1].1 < 0.3 && read[0].1 > 0.35 && read[2].1 > 0.35, "the corner (√2 − 1) off: {read:?}");
+    assert_eq!((read[0].2, read[1].2, read[2].2), (false, true, false), "{read:?}");
+}
+
 /// A plate 60 × 40 × 8 with a hole Ø 8, scanned with 0.1 mm of noise, and the plate built without
 /// its hole: Reconstruct the Rest reads the hole off what the plate leaves unexplained and cuts
 /// it. The hole's wall beside each face of the plate lies within the tolerance of that face and
