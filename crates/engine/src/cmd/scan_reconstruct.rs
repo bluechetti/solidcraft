@@ -1343,7 +1343,9 @@ pub(super) fn shell_it(s: &mut Session, p: &Value) -> Result<Value> {
         .ok_or_else(|| bad(cmd, "Reconstruct reads no walls of one thickness open at an end: the part is solid, or its inside is not scanned"))?;
     let solid = built_body(s, &found.scan, p, cmd)?;
     let faces: Vec<[f64; 3]> = shell.points.iter().map(|q| at(*q)).collect();
-    let made = run(s, "solid.shell", json!({"faces": faces, "thickness": format!("{} mm", shell.thickness), "body": solid, "name": "Shell It"}))
+    // Read as designed, as Extrude It reads its depth: 2 mm, not the 2.000021 the scan measures.
+    let thickness = solidcraft_scan::hole_form::snapped(shell.thickness, solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance);
+    let made = run(s, "solid.shell", json!({"faces": faces, "thickness": format!("{thickness} mm"), "body": solid, "name": "Shell It"}))
         .map_err(|e| super::refusal::refused(cmd, "the kernel could not hollow the body to the scan's walls", &e.to_string()))?;
     reply(ScanBuildResult {
         body: found.scan.clone(),
@@ -1354,7 +1356,7 @@ pub(super) fn shell_it(s: &mut Session, p: &Value) -> Result<Value> {
         lines: 0,
         arcs: 0,
         tangents: 0,
-        depth: Some(shell.thickness),
+        depth: Some(thickness),
         count: None,
         openings: None,
         fit: None,

@@ -491,10 +491,20 @@ fn a_drafted_shelled_housing_is_extruded_shelled_and_filleted_back_from_its_scan
     for step in read["proposals"].as_array().unwrap() {
         let done = run(&mut s, step["command"].as_str().unwrap(), step["params"].clone());
         assert_ne!(done["fit"]["verdict"], "worse", "{done}");
+        if step["command"] == "scan.extrude_it" {
+            assert_eq!((done["lines"].as_u64(), done["arcs"].as_u64()), (Some(4), Some(0)), "the profile is drawn sharp: {done}");
+        }
     }
     // Its draft and depth read as designed: 2° and 30, not the hundredths the scan measures.
     let extrude = s.doc.features.iter().find(|f| f.name.starts_with("Extrude It")).map(|f| serde_json::to_string(f).unwrap()).unwrap();
     assert!(extrude.contains("\"-2 deg\"") && extrude.contains("30"), "{extrude}");
+    // So does the wall: 2 mm, not the 2.00002 the scan's two skins measure.
+    let shell = s.doc.features.iter().find(|f| f.name == "Shell It").map(|f| serde_json::to_string(f).unwrap()).unwrap();
+    assert!(shell.contains("\"2 mm\""), "{shell}");
+    // The corners, drafted and then rounded with one radius: extruded sharp and filleted R 6, not
+    // sketched as arcs that would taper with the walls.
+    let names: Vec<&str> = s.doc.features.iter().map(|f| f.name.as_str()).collect();
+    assert!(names.contains(&"Extrude It 1 Rounds"), "one Fillet for the four corners' one radius: {names:?}");
     let v = volume(&s, &format!("{scan} Reconstructed"));
     assert!((v - expected).abs() < 0.01 * expected, "{v} against the housing's {expected}");
 }
