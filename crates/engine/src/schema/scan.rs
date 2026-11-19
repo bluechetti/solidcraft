@@ -495,9 +495,31 @@ pub struct ScanDeviationResult {
     /// The share of the points within reach that are within the tolerance, 0 to 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub within: Option<f64>,
-    /// Whether the fit passes: at least 95 % of the measured points are within the tolerance.
+    /// The share of all the scan's points within the tolerance, those too far from the model to
+    /// count (`unmatched`) taken as not within, 0 to 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within_all: Option<f64>,
+    /// The other way round, the model against the scan: the share of the model's surface with the
+    /// scan within the tolerance of it (`model_within`), the share with any scan within reach
+    /// (`model_covered`), the largest distance where there is (`model_max`, mm) and the place on
+    /// the model farthest from the scan (`model_farthest_at`). Material the scan does not have (a
+    /// hole filled in, a boss made up) shows only here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_within: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_covered: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_farthest_at: Option<[f64; 3]>,
+    /// Whether the fit passes, both ways: at least 95 % of all the scan's points are within the
+    /// tolerance of the model (`within_all`), and at least 95 % of the model's surface has the
+    /// scan within the tolerance of it (`model_within`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub passes: Option<bool>,
+    /// Why it does not pass, in words; absent when it does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why_not: Option<String>,
     /// How many scan points were measured, and how many were too far from the model to count.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub measured: Option<usize>,

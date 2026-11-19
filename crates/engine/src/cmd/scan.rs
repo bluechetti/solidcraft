@@ -258,7 +258,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&DEVIATION_CONTRACT)
         .output(output_schema_for::<ScanDeviationResult>)
-        .params("scan?: mesh body (default: the selected or only one); body?: the model: a solid or surface body, or a mesh body (a CAD model that came as an STL) (default: the selected or only solid or surface body, else with none the only other mesh body); tolerance?: length (default: the scan's, see scan.tolerance, else 0.1 mm); limit?: length (default 0.5 mm, at least five tolerances); auto_limit?: bool (default false: true reads the limit from the scan, the distance 99 % of its measured points lie within; not with limit); bands?: 0 | 2–12 (default 0, a smooth scale: the colours in that many steps each side of within); pins?: [[x, y, z]] (places labelled with their distance, each read at the scan point nearest it); show?: bool (false takes the map away): colours the scan by its distance from the model in the viewport, its largest distance above and below labelled, a view and not an undo step → shown, scan, body, rms, mean, max_above, max_below, max_above_at, max_below_at, within, measured, unmatched, tolerance, limit, bands, pins"),
+        .params("scan?: mesh body (default: the selected or only one); body?: the model: a solid or surface body, or a mesh body (a CAD model that came as an STL) (default: the selected or only solid or surface body, else with none the only other mesh body); tolerance?: length (default: the scan's, see scan.tolerance, else 0.1 mm); limit?: length (default 0.5 mm, at least five tolerances); auto_limit?: bool (default false: true reads the limit from the scan, the distance 99 % of its measured points lie within; not with limit); bands?: 0 | 2–12 (default 0, a smooth scale: the colours in that many steps each side of within); pins?: [[x, y, z]] (places labelled with their distance, each read at the scan point nearest it); show?: bool (false takes the map away): colours the scan by its distance from the model in the viewport, its largest distance above and below labelled, a view and not an undo step; the model is measured against the scan too, since material the scan does not have (a hole filled, a boss made up) shows only that way round → shown, scan, body, rms, mean, max_above, max_below, max_above_at, max_below_at, within (of the points within reach), within_all (of all the scan's points), measured, unmatched, model_within, model_covered, model_max, model_farthest_at, passes (95 % both ways: within_all and model_within), why_not?, tolerance, limit, bands, pins"),
     CommandSpec::new("scan.deviation_pin", "Pin Deviation", crate::checked!("scan.deviation_pin", deviation_pin))
         .at("SCAN", "CHECK")
         .icon("curvature_map")
@@ -1141,7 +1141,13 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         max_above: None,
         max_below: None,
         within: None,
+        within_all: None,
+        model_within: None,
+        model_covered: None,
+        model_max: None,
+        model_farthest_at: None,
         passes: None,
+        why_not: None,
         measured: None,
         unmatched: None,
         tolerance: None,
@@ -1230,17 +1236,16 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "measure the scan against another body, not itself"));
     }
     let model = state.body(&model_name).ok_or_else(|| bad(cmd, format!("no body `{model_name}`")))?;
-    let d = match model.body.display_mesh().filter(|_| model.body.is_mesh()) {
-        // A mesh body (the model as an STL) is measured against as it is, its triangles shared.
-        Some(triangles) => solidcraft_scan::deviation::measure(&mesh.positions, &triangles, tolerance, 4.0 * limit),
-        None => {
-            // Meshed within a quarter of the tolerance, as Compare Bodies does, so the mesh agrees
-            // with the surface well within what is measured.
-            let surface =
-                model.body.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance / 4.0)).map_err(|e| bad(cmd, format!("`{model_name}`: {e}")))?;
-            solidcraft_scan::deviation::measure(&mesh.positions, &surface, tolerance, 4.0 * limit)
-        }
+    // A mesh body (the model as an STL) is measured against as it is, its triangles shared. A
+    // solid or surface is meshed within a quarter of the tolerance, as Compare Bodies does, so
+    // the mesh agrees with the surface well within what is measured.
+    let surface: std::sync::Arc<solidcraft_geom::Mesh> = match model.body.display_mesh().filter(|_| model.body.is_mesh()) {
+        Some(triangles) => triangles,
+        None => std::sync::Arc::new(
+            model.body.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance / 4.0)).map_err(|e| bad(cmd, format!("`{model_name}`: {e}")))?,
+        ),
     };
+    let d = solidcraft_scan::deviation::measure(&mesh.positions, &surface, tolerance, 4.0 * limit);
     if d.measured == 0 {
         return Err(bad(cmd, format!("the scan is nowhere near `{model_name}`: no point is within {:.3} mm of it", 4.0 * limit)));
     }
@@ -1249,6 +1254,14 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         Some(spread) => spread.max(tolerance * 1.05).max(tolerance + 1e-6),
         None => limit,
     };
+    // The other way round: the model's surface against the scan, which alone shows material the
+    // scan does not have.
+    let borne = shown_mesh(s, &mesh.body).map(|scan| {
+        let places = solidcraft_scan::deviation::places(&surface, solidcraft_scan::deviation::MOST_PLACES);
+        solidcraft_scan::deviation::borne_out(&places, &select::scan_tree(&scan), tolerance, 4.0 * limit)
+    });
+    let within_all = d.within * d.measured as f64 / (d.measured + d.unmatched).max(1) as f64;
+    let why_not = why_not(within_all, d.unmatched, d.measured + d.unmatched, borne.as_ref(), &model_name);
     let at = |i: Option<usize>| i.and_then(|i| Some((*mesh.positions.get(i)?, *d.values.get(i)?)));
     let (max_above_at, max_below_at) = (at(d.max_above_at), at(d.max_below_at));
     let pins: Vec<(Vec3, f32)> =
@@ -1278,7 +1291,13 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         max_above: Some(d.max_above),
         max_below: Some(d.max_below),
         within: Some(d.within),
-        passes: Some(d.within >= PASS_SHARE),
+        within_all: Some(within_all),
+        model_within: borne.as_ref().map(|b| b.within),
+        model_covered: borne.as_ref().map(|b| b.covered),
+        model_max: borne.as_ref().map(|b| b.max),
+        model_farthest_at: borne.as_ref().and_then(|b| b.farthest_at).map(|q| [q.x, q.y, q.z]),
+        passes: Some(why_not.is_none()),
+        why_not,
         measured: Some(d.measured),
         unmatched: Some(d.unmatched),
         tolerance: Some(tolerance),
@@ -1289,6 +1308,35 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         pins: shown_pins,
         ..empty
     })
+}
+
+/// Why a scan and its model do not agree both ways, in words; `None` when they do: at least
+/// [`PASS_SHARE`] of all the scan's points within the tolerance of the model, and as much of the
+/// model's surface with the scan within the tolerance of it.
+fn why_not(within_all: f64, unmatched: usize, points: usize, borne: Option<&solidcraft_scan::deviation::Borne>, model: &str) -> Option<String> {
+    let percent = |share: f64| format!("{:.1} %", 100.0 * share);
+    let mut why = Vec::new();
+    if !(within_all >= PASS_SHARE) {
+        let far = unmatched as f64 / points.max(1) as f64;
+        why.push(if far > 1.0 - PASS_SHARE {
+            format!("{} of the scan is too far from `{model}` to measure: the model is missing what the scan has there", percent(far))
+        } else {
+            format!("only {} of the scan is within the tolerance of `{model}`", percent(within_all))
+        });
+    }
+    match borne {
+        Some(b) if !(b.within >= PASS_SHARE) => why.push(if 1.0 - b.covered > 1.0 - PASS_SHARE {
+            format!(
+                "{} of `{model}` has no scan near it: the scan does not cover it, or the model has material the scan does not (see model_farthest_at)",
+                percent(1.0 - b.covered)
+            )
+        } else {
+            format!("only {} of `{model}` has the scan within the tolerance of it", percent(b.within))
+        }),
+        Some(_) => {}
+        None => why.push("the model could not be measured against the scan".to_owned()),
+    }
+    (!why.is_empty()).then(|| why.join("; "))
 }
 
 fn deviation_pin(s: &mut Session, p: &Value) -> Result<Value> {

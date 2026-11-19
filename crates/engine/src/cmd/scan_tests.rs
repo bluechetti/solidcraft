@@ -543,6 +543,61 @@ fn scan_deviation_measures_the_scan_against_the_model() {
     assert!(err.contains("more than"), "{err}");
 }
 
+/// A scan of a block 60 × 40 × 20 passes against the block, both ways. A model with a boss the
+/// scan does not have has every scan point on it or hidden inside it, so the scan's side alone
+/// would pass it: the model's side, measured against the scan, fails it and says where. A model
+/// half as tall is failed from the scan's side.
+#[test]
+fn scan_deviation_fails_a_model_with_material_the_scan_lacks_or_lacking_what_it_has() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-both-ways-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut stl = String::from("solid b\n");
+    for t in fine_box(Vec3::ZERO, Vec3::new(60.0, 40.0, 20.0), 40) {
+        stl += "facet normal 0 0 0\nouter loop\n";
+        for p in t {
+            stl += &format!("vertex {} {} {}\n", p.x, p.y, p.z);
+        }
+        stl += "endloop\nendfacet\n";
+    }
+    let path = dir.join("block.stl");
+    std::fs::write(&path, stl + "endsolid b\n").unwrap();
+    let mut s = Session::default();
+    run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    let _ = std::fs::remove_dir_all(&dir);
+
+    run(&mut s, "solid.box", json!({"body_name": "Block", "operation": "new", "length": 60, "width": 40, "height": 20}));
+    let right = run(&mut s, "scan.deviation", json!({"tolerance": "0.1 mm"}));
+    assert_eq!(right["passes"], true, "{right}");
+    assert!(right.get("why_not").is_none(), "{right}");
+    assert!((right["within_all"].as_f64().unwrap() - 1.0).abs() < 1e-9 && (right["model_within"].as_f64().unwrap() - 1.0).abs() < 1e-9, "{right}");
+    assert!(right["model_max"].as_f64().unwrap() < STL, "{right}");
+
+    // A boss Ø 20 × 15 on top that the scan does not have. The scan's points under it (π 100 of
+    // the scan's 8800 mm², 3.6 %) are too deep inside to measure and the rest lie on the model:
+    // 96.4 % of all its points are within, which alone would pass. Of the model's 9742 mm², the
+    // boss's top and all but the foot of its wall have no scan within the tolerance: 12.8 %.
+    run(&mut s, "solid.cylinder", json!({"base": [30, 20, 20], "radius": 10, "height": 15, "operation": "join", "targets": ["Block"]}));
+    let made_up = run(&mut s, "scan.deviation", json!({"tolerance": "0.1 mm"}));
+    assert!(made_up["within_all"].as_f64().unwrap() > 0.95, "the scan's side alone would pass: {made_up}");
+    let borne = made_up["model_within"].as_f64().unwrap();
+    let expected = 1.0 - (std::f64::consts::PI * 100.0 + std::f64::consts::TAU * 10.0 * 14.9) / (8800.0 + std::f64::consts::TAU * 10.0 * 15.0);
+    assert!((borne - expected).abs() < 0.01, "{borne} against {expected}: {made_up}");
+    assert_eq!(made_up["passes"], false, "{made_up}");
+    assert!(made_up["why_not"].as_str().unwrap().contains("has no scan near it"), "{made_up}");
+    let at = made_up["model_farthest_at"].as_array().unwrap();
+    assert!(at[2].as_f64().unwrap() > 22.0, "the farthest place is on the boss: {made_up}");
+    run(&mut s, "edit.undo", json!({}));
+    run(&mut s, "edit.undo", json!({}));
+
+    // A block half as tall: the scan's top and the upper half of its sides are not on it.
+    run(&mut s, "solid.box", json!({"body_name": "Block", "operation": "new", "length": 60, "width": 40, "height": 10}));
+    let short = run(&mut s, "scan.deviation", json!({"tolerance": "0.1 mm"}));
+    assert_eq!(short["passes"], false, "{short}");
+    assert!(short["within_all"].as_f64().unwrap() < 0.7, "{short}");
+    assert!(short["why_not"].as_str().unwrap().contains("missing what the scan has"), "{short}");
+}
+
 /// The model as an STL (as a part's CAD often comes, T-LESS's among them): the scan is measured
 /// against the mesh as against the solid it was made from, and with no solid in the design the
 /// other mesh is the model; a scan is not measured against itself.
