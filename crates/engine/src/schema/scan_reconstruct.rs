@@ -122,6 +122,25 @@ pub struct ScanPrism {
     /// How far its walls lean in from its low end to its high end, in degrees (a moulded part's
     /// draft): Extrude It sketches it at its low end and extrudes it tapered. 0 for square walls.
     pub draft: f64,
+    /// When its outline repeats round its middle (a gear's teeth, a knob's lobes): how.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotational: Option<ScanRotational>,
+}
+
+/// How a prism's outline repeats round its middle.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanRotational {
+    /// How many times it repeats in one turn: a gear's tooth count.
+    pub order: usize,
+    /// The middle it repeats about, in the design (on the prism's middle slice).
+    pub centre: [f64; 3],
+    /// Twice its largest and its least distance from the middle, in mm: a gear's tip and root
+    /// diameters.
+    pub tip_diameter: f64,
+    pub root_diameter: f64,
+    /// Were it a spur gear of standard proportions, its module: the tip diameter over the tooth
+    /// count plus two.
+    pub module: f64,
 }
 
 /// Walls of one thickness, open at an end (a moulded housing, a tray): the prisms are read off
@@ -315,6 +334,12 @@ pub struct ScanExtrudeItParams {
     /// when there is none.
     #[serde(default)]
     pub into: Option<String>,
+    /// A prism whose outline repeats round its middle (a gear's teeth, a knob's lobes;
+    /// `scan.reconstruct`'s `rotational`) is built as its tip circle extruded, one gap cut through
+    /// it and the cut patterned round (`count` in the reply; the pattern's count is a number in
+    /// the design). False draws the whole outline in one sketch. Default: true.
+    #[serde(default)]
+    pub pattern: Option<bool>,
 }
 
 /// Revolve It: the turned part Reconstruct reads, built as an ordinary sketch of its profile on a
@@ -333,6 +358,11 @@ pub struct ScanRevolveItParams {
     /// The body to join. Default: the body Reconstruct builds, made new when there is none.
     #[serde(default)]
     pub into: Option<String>,
+    /// For a skin scanned from one side (the profile is open at both ends; `skin` in the reply
+    /// says so): its wall thickness in mm. The profile is then revolved as a surface and thickened
+    /// by this much away from the scanned side, instead of closed straight across into a solid.
+    #[serde(default)]
+    pub wall: Option<f64>,
 }
 
 /// Cut It: a round hole Reconstruct reads, cut into the body it builds: a circle sketched square
@@ -397,6 +427,34 @@ pub struct ScanLoft {
     /// How many sections, and how long it is end to end, in mm.
     pub sections: usize,
     pub length: f64,
+    /// Each section that is longer than it is thick, as a wing's or a blade's is described: a
+    /// wing's chord, twist and thickness from root to tip.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stations: Vec<ScanLoftStation>,
+}
+
+/// One section of a lofted part, read as a wing's.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanLoftStation {
+    /// How far along the part from its first section, in mm.
+    pub at: f64,
+    /// The section's chord (its two points farthest apart), in mm, and the angle of its chord line
+    /// about the part's direction, in degrees from the first station's.
+    pub chord: f64,
+    pub twist: f64,
+    /// The most it measures across its chord, in mm and as a share of the chord, and where along
+    /// the chord from the leading edge that is (0–1).
+    pub thickness: f64,
+    pub thickness_share: f64,
+    pub thickest_at: f64,
+    /// The most its middle lies off the chord line, as a share of the chord (0 for a section alike
+    /// both sides).
+    pub camber_share: f64,
+    /// The leading edge, in the design.
+    pub leading: [f64; 3],
+    /// The NACA four-digit section it is, within the scan's tolerance, when it is one ("0015").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub naca: Option<String>,
 }
 
 /// Loft It, Pipe It or Coil It: the part as sections lofted, as a bar swept along its path, or as
@@ -555,6 +613,12 @@ pub struct ScanFilletItResult {
     pub set_aside: usize,
     /// The Fillet features made.
     pub features: Vec<Value>,
+    /// `false` when no round the scan shows fits better than the body's sharp edge: the body is as
+    /// it was, and `note` says why. Left out when a fillet was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// How close the body is to the scan before and after the step (absent when it could not be
     /// measured).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -591,6 +655,44 @@ pub struct ScanStepFit {
     pub note: Option<String>,
 }
 
+/// Nest: a block with a pocket the scanned part seats in, from the prism Reconstruct reads: the
+/// prism's outline sketched, offset outward by `clearance` (an offset the sketch keeps, so the
+/// pocket follows the clearance) and cut into a block drawn round it. An ordinary solid: it
+/// fillets, shells and takes pins. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanNestParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Build from the reading of the part of the scan selected. Default: false, the whole scan's.
+    #[serde(default)]
+    pub selected: Option<bool>,
+    /// Which of `scan.reconstruct`'s prisms, from 0. Default: the first.
+    #[serde(default)]
+    pub prism: Option<usize>,
+    /// The gap left round the part and under it: a length in mm, or an expression (a parameter's
+    /// name, so that changing the parameter rebuilds the nest). Default: 0.3 mm. The pocket follows
+    /// it up to twice what it is built with: pieces of the outline that an offset that far would
+    /// close to nothing (tight inside corners) are cut square, where the gap is the smaller by up
+    /// to 0.42 of the corner's own round.
+    #[serde(default)]
+    #[schemars(with = "Option<Value>")]
+    pub clearance: Option<Value>,
+    /// How much more than the clearance the pocket is cut, round the part and under it, in mm,
+    /// for scan standing proud of the prism fitted to it. Default: measured, the furthest the
+    /// scan lies outside the outline offset or past the end it sits on (replied as `allowance`),
+    /// so the least gap is the clearance and the usual gap that much more. 0: the clearance alone.
+    #[serde(default)]
+    pub allowance: Option<f64>,
+    /// How much block is left round the part and under it, in mm. Default: 10.
+    #[serde(default)]
+    pub margin: Option<f64>,
+    /// The share of the part's depth the pocket holds, above 0 to 1. Default: 0.5.
+    #[serde(default)]
+    pub deep: Option<f64>,
+}
+
 /// What Extrude It, Revolve It, Cut It and Pattern It return.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanBuildResult {
@@ -618,6 +720,14 @@ pub struct ScanBuildResult {
     /// or why they were not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openings: Option<String>,
+    /// Revolve It on a profile open at both ends (one side of a skin): how it was built, the
+    /// profile closed straight across into a solid or (`wall`) revolved as a surface and thickened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin: Option<String>,
+    /// Nest: how far the scan stands proud of the outline the pocket is offset from or of the end
+    /// it sits on, in mm, added to the clearance so the gap is the clearance there too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowance: Option<f64>,
     /// How close the body is to the scan before and after the step (absent when it could not be
     /// measured).
     #[serde(default, skip_serializing_if = "Option::is_none")]

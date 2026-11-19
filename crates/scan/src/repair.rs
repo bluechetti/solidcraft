@@ -224,7 +224,12 @@ pub fn repair(scan: &Scan, crossings: bool) -> Repaired {
 /// How many of `scan`'s faces pass through another face (on points welded as Repair Mesh welds
 /// them), changing nothing: the faces Repair Mesh would take out and fill round.
 pub fn crossing_count(scan: &Scan) -> usize {
-    let (weld, _) = welded_within(scan.positions);
+    crossing_count_welded(scan, &welded_within(scan.positions).0)
+}
+
+/// [`crossing_count`] on points already welded as Repair Mesh welds them (`weld`, as
+/// [`welded_within`] gives it): a caller that has welded them does not weld them again.
+pub(crate) fn crossing_count_welded(scan: &Scan, weld: &[u32]) -> usize {
     let tris: Vec<[u32; 3]> = (0..scan.triangle_count())
         .filter_map(|t| {
             scan.corners(t)?;

@@ -113,7 +113,7 @@ pub(super) fn open_sketch(s: &mut Session, p: &Value, cmd: &str) -> Result<(u64,
             if s.active_sketch.is_some() {
                 return Err(bad(cmd, "the sketch being edited is not a 3D sketch: turn on 3D Sketch, or finish it"));
             }
-            let made = run(s, "sketch.create", json!({"plane": "XY", "name": SKETCH_NAME}))?;
+            let made = super::new_sketch(s, json!({"plane": "XY", "name": SKETCH_NAME}))?;
             let id = made.get("sketch").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "the sketch for the curves was not made"))?;
             run(s, "sketch.options", json!({"sketch": id, "sketch_3d": true}))?;
             Ok((id, true))

@@ -357,7 +357,7 @@ mod tests {
     }
 
     fn plane_x() -> Mirror {
-        Mirror { point: Vec3::ZERO, normal: Vec3::X, rms: 0.0, coverage: 1.0, size: 40.0, spacing: 1.0 }
+        Mirror { point: Vec3::ZERO, normal: Vec3::X, rms: 0.0, coverage: 1.0, size: 40.0, spacing: 1.0, both_sides: 1.0 }
     }
 
     /// Half a sphere gets its other half back, in one piece of about the half's area, joined to the

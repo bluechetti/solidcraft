@@ -15,7 +15,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
 use solidcraft_doc::FeatureKind;
-use solidcraft_doc::scan_clean::{self, CleanStep, Cleaned, Report};
+use solidcraft_doc::scan_clean::{self, CleanStep, Refused, Report};
 use solidcraft_scan::Scan;
 use solidcraft_scan::holes::{self, Survey};
 use solidcraft_scan::pieces::{self, Pieces};
@@ -177,10 +177,32 @@ fn in_place(p: &Value) -> bool {
     crate::params::bool_(p, "in_place").unwrap_or(false)
 }
 
+/// What a clean step did on a scan.
+pub(super) struct Applied {
+    /// What the step did, or with nothing to do, what it found.
+    pub report: Report,
+    /// The scan's triangles and points after it.
+    pub triangles: usize,
+    pub vertices: usize,
+    /// The feature that keeps the step; none when there was nothing to do.
+    pub feature: Option<u64>,
+    /// Why there was nothing to do: the scan is as it was and no step was added.
+    pub nothing: Option<String>,
+}
+
+impl Applied {
+    /// `false` in the reply when there was nothing to do; left out when the step was done.
+    pub fn changed(&self) -> Option<bool> {
+        self.nothing.as_ref().map(|_| false)
+    }
+}
+
 /// `step` done on the scan `body`: as a Scan Clean step added to the timeline (its settings only;
 /// the scan is made again from the one before it each time the design is evaluated), or with
-/// `in_place` written back into the scan's Mesh Import. What it did, and the feature that keeps it.
-pub(super) fn apply(s: &mut Session, p: &Value, body: &str, step: CleanStep, cmd: &str) -> Result<(Cleaned, u64)> {
+/// `in_place` written back into the scan's Mesh Import. What it did, and the feature that keeps
+/// it. A scan that needs nothing of the step is no failure: the scan stays as it is, no step is
+/// added, and what comes back says why (`nothing`), so a batch of steps goes on.
+pub(super) fn apply(s: &mut Session, p: &Value, body: &str, step: CleanStep, cmd: &str) -> Result<Applied> {
     step.check().map_err(|e| bad(cmd, e.to_string()))?;
     // Run with its expressions worked out now; the timeline keeps them as written.
     let resolved = step.resolved(|e| s.doc.eval(e.as_str(), solidcraft_doc::expr::Kind::Length)).map_err(|e| bad(cmd, e.to_string()))?;
@@ -201,13 +223,23 @@ pub(super) fn apply(s: &mut Session, p: &Value, body: &str, step: CleanStep, cmd
             }
             with.push(&other.body);
         }
-        (scan_clean::clean(&resolved, &scan.body, &with).map_err(|e| bad(cmd, e.why()))?, s.doc.model_body_component(scan))
+        let done = match scan_clean::clean(&resolved, &scan.body, &with) {
+            Ok(done) => done,
+            Err(Refused::Nothing(why, report)) => {
+                let (vertices, triangles) = scan.body.triangle_mesh().map_or((0, 0), |(p, t)| (p.len(), t.len()));
+                return Ok(Applied { report, triangles, vertices, feature: None, nothing: Some(why) });
+            }
+            Err(e) => return Err(bad(cmd, e.why())),
+        };
+        (done, s.doc.model_body_component(scan))
     };
+    let (vertices, count) = done.body.triangle_mesh().map_or((0, 0), |(p, t)| (p.len(), t.len()));
+    let applied = |feature: u64| Applied { report: done.report.clone(), triangles: count, vertices, feature: Some(feature), nothing: None };
     if in_place(p) {
         let (positions, triangles) = done.body.triangle_mesh().ok_or_else(|| bad(cmd, "the cleaned scan has no triangles"))?;
         let (positions, triangles) = (positions.to_vec(), triangles.to_vec());
         let feature = replace_mesh(s, body, &positions, &triangles, cmd)?;
-        return Ok((done, feature));
+        return Ok(applied(feature));
     }
     let mut params = json!({});
     if let Some(name) = crate::params::str_(p, "name") {
@@ -218,7 +250,7 @@ pub(super) fn apply(s: &mut Session, p: &Value, body: &str, step: CleanStep, cmd
     let added = super::super::features::add_feature_in(s, &params, FeatureKind::ScanClean { body: body.into(), step }, false);
     s.active_component = active;
     let feature = added?.get("feature").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "the step was not added"))?;
-    Ok((done, feature))
+    Ok(applied(feature))
 }
 
 /// Points clicked on the scan, `key` a list of [x, y, z]; none when not given.
@@ -247,10 +279,19 @@ pub(super) fn remove_floating(s: &mut Session, p: &Value) -> Result<Value> {
     let below = share(p, cmd)?;
     let name = mesh_name(s, p, cmd)?;
     let (keep, remove) = (kept_points(s, &name, points(p, "keep", cmd)?), kept_points(s, &name, points(p, "remove", cmd)?));
-    let (done, feature) = apply(s, p, &name, CleanStep::RemoveFloating { below, keep, remove }, cmd)?;
+    let done = apply(s, p, &name, CleanStep::RemoveFloating { below, keep, remove }, cmd)?;
     let Report::Floating { pieces, removed, removed_triangles } = done.report else { return Err(bad(cmd, "the step did something else")) };
-    let reply =
-        ScanFloatingResult { body: name, pieces, removed, removed_triangles, triangles: done.triangles(), feature, param_warnings: Vec::new() };
+    let reply = ScanFloatingResult {
+        body: name,
+        pieces,
+        removed,
+        removed_triangles,
+        triangles: done.triangles,
+        feature: done.feature,
+        changed: done.changed(),
+        note: done.nothing,
+        param_warnings: Vec::new(),
+    };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -263,11 +304,27 @@ pub(super) fn fill_holes(s: &mut Session, p: &Value) -> Result<Value> {
     let fair = crate::params::bool_(p, "fair").unwrap_or(true);
     let name = mesh_name(s, p, cmd)?;
     let at = kept_points(s, &name, points(p, "at", cmd)?);
-    let (done, feature) = apply(s, p, &name, CleanStep::FillHoles { max_edges, fair, at }, cmd)?;
-    let Report::Holes { holes, filled, failed, larger, added_triangles, unfillable_edges } = done.report else {
+    let done = apply(s, p, &name, CleanStep::FillHoles { max_edges, fair, at }, cmd)?;
+    let Report::Holes { holes, filled, failed, larger, added_triangles, unfillable_edges, ref left } = done.report else {
         return Err(bad(cmd, "the step did something else"));
     };
-    let reply = ScanHolesResult { body: name, holes, filled, failed, larger, added_triangles, unfillable_edges, feature, param_warnings: Vec::new() };
+    let reply = ScanHolesResult {
+        body: name,
+        holes,
+        filled,
+        failed,
+        left: left
+            .iter()
+            .map(|u| crate::schema::scan::ScanHoleLeft { at: [u.at.x, u.at.y, u.at.z], edges: u.edges, why: u.why.to_owned() })
+            .collect(),
+        larger,
+        added_triangles,
+        unfillable_edges,
+        feature: done.feature,
+        changed: done.changed(),
+        note: done.nothing,
+        param_warnings: Vec::new(),
+    };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -309,19 +366,23 @@ pub(super) fn remove_markers(s: &mut Session, p: &Value) -> Result<Value> {
         failed: None,
         triangles: None,
         feature: None,
+        changed: None,
+        note: None,
         param_warnings: Vec::new(),
     };
     if crate::params::bool_(p, "preview") == Some(true) {
         return serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()));
     }
     let centres = kept_points(s, &name, centres);
-    let (done, feature) = apply(s, p, &name, CleanStep::RemoveMarkers { radius, centres, fair }, cmd)?;
+    let done = apply(s, p, &name, CleanStep::RemoveMarkers { radius, centres, fair }, cmd)?;
     let Report::Markers { removed_triangles, filled, failed, .. } = done.report else { return Err(bad(cmd, "the step did something else")) };
     reply.removed_triangles = Some(removed_triangles);
     reply.filled = Some(filled);
     reply.failed = Some(failed);
-    reply.triangles = Some(done.triangles());
-    reply.feature = Some(feature);
+    reply.triangles = Some(done.triangles);
+    reply.feature = done.feature;
+    reply.changed = done.changed();
+    reply.note = done.nothing;
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -331,8 +392,10 @@ pub(super) fn remove_and_fill(s: &mut Session, p: &Value) -> Result<Value> {
     let fair = crate::params::bool_(p, "fair").unwrap_or(true);
     let area = super::flatten::step_area(s, p, &name, cmd)?
         .ok_or_else(|| bad(cmd, "choose the part to take off: `point` with `grow` or `radius`, `saved`, `selected: true` or `area`"))?;
-    let (done, feature) = apply(s, p, &name, CleanStep::RemoveAndFill { area, fair }, cmd)?;
-    let triangles = done.triangles();
+    let done = apply(s, p, &name, CleanStep::RemoveAndFill { area, fair }, cmd)?;
+    let triangles = done.triangles;
+    // Taking a part off always changes the scan: there is no "nothing to do" for it.
+    let feature = done.feature.ok_or_else(|| bad(cmd, "the step was not added"))?;
     let Report::RemoveAndFill { removed_triangles, filled, failed, added_triangles, open_to_edge } = done.report else {
         return Err(bad(cmd, "the step did something else"));
     };
@@ -370,8 +433,8 @@ pub(super) fn reduce(s: &mut Session, p: &Value) -> Result<Value> {
     let keep_rim = crate::params::bool_(p, "keep_rim").unwrap_or(true);
     let name = mesh_name(s, p, cmd)?;
     let area = super::flatten::step_area(s, p, &name, cmd)?;
-    let (done, feature) = apply(s, p, &name, CleanStep::Reduce { ratio, triangles, max_error, keep_rim, area }, cmd)?;
-    let count = done.triangles();
+    let done = apply(s, p, &name, CleanStep::Reduce { ratio, triangles, max_error, keep_rim, area }, cmd)?;
+    let count = done.triangles;
     let Report::Reduce { before, collapses, stopped, largest_error } = done.report else { return Err(bad(cmd, "the step did something else")) };
     let reply = ScanReduceResult {
         body: name,
@@ -380,7 +443,9 @@ pub(super) fn reduce(s: &mut Session, p: &Value) -> Result<Value> {
         collapses,
         stopped: stopped.into(),
         largest_error,
-        feature,
+        feature: done.feature,
+        changed: done.changed(),
+        note: done.nothing,
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
@@ -390,8 +455,8 @@ pub(super) fn repair(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.repair";
     let name = mesh_name(s, p, cmd)?;
     let crossings = crate::params::bool_(p, "crossings").unwrap_or(true);
-    let (done, feature) = apply(s, p, &name, CleanStep::Repair { crossings }, cmd)?;
-    let count = done.triangles();
+    let done = apply(s, p, &name, CleanStep::Repair { crossings }, cmd)?;
+    let count = done.triangles;
     let Report::Repair { joined, duplicates, non_manifold, slivers, crossings, crossing_faces, refilled } = done.report else {
         return Err(bad(cmd, "the step did something else"));
     };
@@ -405,7 +470,9 @@ pub(super) fn repair(s: &mut Session, p: &Value) -> Result<Value> {
         crossing_faces,
         refilled,
         triangles: count,
-        feature,
+        feature: done.feature,
+        changed: done.changed(),
+        note: done.nothing,
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
@@ -441,6 +508,11 @@ pub(super) fn clean_up(s: &mut Session, p: &Value) -> Result<Value> {
     for (id, params) in plan {
         let spec = super::super::find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
         match spec.run_nested(s, &params) {
+            // Nothing to do: left out, saying why; the rest go on.
+            Ok(reply) if reply.get("changed") == Some(&Value::Bool(false)) => {
+                let note = reply.get("note").and_then(Value::as_str).unwrap_or("nothing to do").to_owned();
+                steps.push(ScanCleanUpStep { command: id.into(), done: false, note, feature: None });
+            }
             Ok(reply) => {
                 let note = match id {
                     "scan.repair" => format!(
@@ -453,7 +525,7 @@ pub(super) fn clean_up(s: &mut Session, p: &Value) -> Result<Value> {
                 };
                 steps.push(ScanCleanUpStep { command: id.into(), done: true, note, feature: reply["feature"].as_u64() });
             }
-            // Nothing to do (or it could not be done): left out, saying why; the rest go on.
+            // It could not be done: left out, saying why; the rest go on.
             Err(e) => steps.push(ScanCleanUpStep { command: id.into(), done: false, note: e.to_string(), feature: None }),
         }
     }

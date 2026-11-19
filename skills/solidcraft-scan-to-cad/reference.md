@@ -3,7 +3,7 @@
 Command shapes and replies for the scan workflow in `SKILL.md`. Every command takes `body` (the scan) and defaults to the selected or only mesh body. Run a command with `execute {"command":"scan.survey","params":{}}` or as a `batch` step. `describe_command {"id": "scan.fit_patches"}` gives one command's full parameters and schemas.
 
 ## What the survey says
-`scan.survey {}` reads the scan in about a second per 2 million triangles and changes nothing. Its reply:
+`scan.survey {}` reads the scan in about two seconds per million triangles (19 s at 10 million) and changes nothing. Its reply:
 - **Size:** `own_size` (along its own directions, longest first), `low`, `high`, `center`, `area`, `typical_edge`. `units_hint` appears when the scan is under 3 mm across.
 - **Noise:** `noise` (mm), read at a few places, and `smoothing`, the Denoise strength it would take (0: leave it).
 - **Faults:** `holes` and `longest_hole` (holes inside the rims), `rims` (a scan seen from one side ends at one), `tangled_edges` (open edges no hole closes: run Repair), `crossing_faces` (faces passing through each other: run Repair), `pieces` and `floating` (scraps far smaller than the part).
@@ -21,7 +21,7 @@ Command shapes and replies for the scan workflow in `SKILL.md`. Every command ta
 - **Refusals:** a build step the kernel refuses says why in words and what to try. Every later step then has no body, so undo to the last step that came back better and go on from there.
 - **About an axis, not built:** a part Reconstruct cannot revolve (a wheel, its spokes flat; an open scan of a disc) gives the axis (`turned`, or `partly_turned` when round shapes cover only part of it) and in `note` the route by hand as commands with their numbers: a sketch on a plane through the axis, Section to Sketch into it, close one side's profile, `solid.revolve` about the axis. A wheel (round about an axis, the rest repeated evenly round it) reads as turned with `spokes`: `scan.revolve_it {}` turns the rim and hub, then cuts one opening between the spokes and patterns it round the axis (`openings` in its reply says what was cut).
 - **Organic part:** `scan.fit_patches {"point": [x,y,z], "radius": 30}` over a region, or `scan.free_form {"corners": [[…],[…],[…],[…]]}` for faces laid by hand. Read each reply's `rms`, `max` and `warning`; Fit Patches' `worst_off` is the other way round (the surface's distance from the scan), and a grid patch whose corners hang past a short or curving region says so in `warning`. A surface that folds is kept, but it is wrong: use a smaller region or a higher `smoothing` instead.
-- **By hand:** fit construction planes and axes at points on the scan with `scan.fit_plane {"point": [x,y,z]}` and `scan.fit_cylinder {"point": [x,y,z]}`; their replies give exact sizes. Cut the scan with `scan.section_sketch {"plane":"XY","offset":12}` to get a sketch of lines and arcs. Then model as `solidcraft-modeling` says, using those sizes as parameters.
+- **By hand:** fit construction planes and axes at points on the scan with `scan.fit_plane {"point": [x,y,z]}` and `scan.fit_cylinder {"point": [x,y,z]}`; their replies give exact sizes. Cut the scan with `scan.section_sketch {"plane":"XY","offset":12}` to get a sketch of lines and arcs. For a part's outline seen along a plane's normal (a tool's shape for a foam pocket, which a section at one height misses where the part is wider elsewhere): `scan.section_sketch {"plane":"XY","outline":true}`, one closed outline round all the scan covers, dimensioned; `outside` in the reply is how far the farthest scan point lies outside it (keep a pocket's clearance above that). For a turned part's half profile: `scan.section_sketch {"axis": {"origin": [x,y,z], "dir": [x,y,z]}}` (the axis from `scan.reconstruct`'s `turned`/`partly_turned`, or from a `scan.bases` base of kind `end`: its `anchor` and `normal`) draws one side of the cut through the axis, closed along it; `angle` turns the plane clear of a handle; then `solid.revolve {"sketch": id, "axis": "x"}`. Then model as `solidcraft-modeling` says, using those sizes as parameters.
 - **Sketches are dimensioned:** the profiles Extrude It, Revolve It and Hole It sketch, and a new sketch from `scan.section_sketch {}`, are finished as Finish with AutoConstrain does: dimensioned from the sketch's origin (for a Reconstruct profile, where the world's origin falls on its plane, so place the scan first), each dimension a parameter, dof 0 (`dof` in the section reply). Sizes, Extrude It's depth and draft are read as designed: within a quarter of the tolerance of a whole, half or tenth of a millimetre (0.05° for a draft) they take it, and the parameter's comment keeps `measured …`. A size left with many decimals was too far from a round one: set it with `parameters.change` if you know the design value. `check_parameters {}` works on a reconstructed part as on one built by hand. `"dimensions": false` leaves a section sketch as drawn. A section that could not be dimensioned says so in `warning` (why, the solve status, the dof left); joins the solver cannot hold tangent without folding (shallow arcs a degree or two off tangent, as on a car panel) are left as shared ends, and `tangents` counts only the ones kept.
 - **Points on the scan:** every shape in `scan.find_all {}`'s reply has a `point` on it. Use those, not guesses, for `point` parameters.
 
@@ -52,7 +52,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | `scan.survey {}` | first look, changes nothing | `own_size`, `noise`, `smoothing`, `holes`, `floating`, `tangled_edges`, `crossing_faces`, `sheet_like`, `shapes`, `next[{command, why, params}]` |
 | `scan.find_all {}` | regions of the scan read as planes, cylinders, spheres, cones, tori or freeform (a view, no undo step) | `shapes[{index, kind, area, point, direction?, radius?, hole?}]`, `in_shapes`, `noise` |
 | `scan.reconstruct {}` | what the shapes make: prisms, a turned part, holes, repeats, fillets (reads only) | `prisms`, `turned`, `holes`, `repeats`, `proposals[{command, params}]`, `note` |
-| `scan.symmetry {}` | the mirror plane, kept as a construction plane | `mirror {point, normal, rms, coverage, symmetric}` |
+| `scan.symmetry {}` | the mirror plane, kept as a construction plane | `mirror {point, normal, rms, coverage, symmetric, partly?}`: `partly` says how much of a mirror image has no match (one-sided parts, not noise) |
 | `scan.bases {}` | the ways the scan could stand, for `scan.stand_on_base {"base": n}` | `bases[{kind, normal, area, share}]` |
 
 ## Clean (each rewrites the scan, one undo step)
@@ -72,8 +72,8 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 ## Build
 | Command | Makes |
 |---|---|
-| `scan.extrude_it {"prism": 0}` | the prism's profile sketched off its walls and extruded, into `<scan> Reconstructed` |
-| `scan.revolve_it {}` | the turned part's profile revolved |
+| `scan.extrude_it {"prism": 0}` | the prism's profile sketched off its walls and extruded, into `<scan> Reconstructed`; a gear (an outline that repeats round its middle, lands on its tip circle) is the tip circle extruded, one gap cut and patterned: `count` in the reply, the pattern's Quantity a parameter (`pattern: false` for one outline) |
+| `scan.revolve_it {}` | the turned part's profile revolved; a one-sided skin (a rim, a spun cover: `skin` in the reply) is closed straight across into a solid unless `wall` (mm) is given, then it is a surface revolved and thickened inward |
 | `scan.shell_it {}` | the body hollowed to the scan's wall thickness, open where `shell.open` says |
 | `scan.cut_it {"hole": 0}` | a round hole cut as deep as the scan has it |
 | `scan.hole_it {"hole": 0}` | a hole with a `form` (counterbore, countersink, drill point, tap drill) drilled with Hole, sizes read as designed |
@@ -81,9 +81,10 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | `scan.reconstruct_rest {}` | what the built body leaves of the scan unexplained, read and built piece by piece |
 | `scan.pipe_it {}` | a bar bent along a flat path (`pipe`): the path's lines and arcs swept |
 | `scan.coil_it {}` | a coil spring (`coil`): the wire wound at the pitch and turns read |
-| `scan.loft_it {}` | no prism, turned part, pipe or coil (`loft`): slices from end to end lofted |
+| `scan.loft_it {}` | no prism, turned part, pipe or coil (`loft`): slices from end to end lofted; for a wing or a blade, `scan.reconstruct`'s `loft.stations` give each section's `chord`, `twist` (degrees from the first), `thickness_share`, `thickest_at`, `camber_share` and `naca` ("0015" when it is one within the scan's tolerance); the sections' splines are held as scanned, with no size for each point |
 | `scan.fillet_it {}` | rounds measured off the scan, one Fillet per radius |
 | `scan.chamfer_it {}` | chamfers read off the scan |
+| `scan.nest {"clearance": "clearance"}` | a block (`<scan> Nest`) with a pocket the part seats in: the prism's outline offset by the clearance (a sketch offset, so a parameter named there rebuilds it) and cut `deep` (0.5) of the part's depth; `margin` of block round it. The pocket is cut the clearance and an `allowance` larger (replied; measured unless given: how far the scan stands proud of the fitted outline or of the end it sits on), so the least gap is the clearance. Square-walled prisms only. Check it with `scan.deviation {"body": "<scan> Nest"}` → `clearance.gap` |
 | `scan.fit_plane {"point": [x,y,z]}` | construction plane; reply `plane`, `rms`, `max` |
 | `scan.fit_cylinder {"point": [x,y,z]}` | construction axis; reply `cylinder {point, axis, radius, diameter, length}` |
 | `scan.fit_sphere {}`, `scan.fit_cone {}`, `scan.fit_torus {}` | the same for those shapes |
@@ -103,10 +104,15 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | Command | Reply |
 |---|---|
 | `scan.tolerance {"tolerance": 0.2}` | the scan's tolerance, kept in the design |
-| `scan.deviation {"body": "<model>"}` (not `inspect.compare`, which compares two closed bodies and warns on a scan) | `rms`, `mean`, `max_above` (material the model lacks), `max_below` (material it should not have), `within`, `passes` (95% within the tolerance), `measured`, `unmatched` |
+| `scan.deviation {"body": "<model>"}` (not `inspect.compare`, which compares two closed bodies and warns on a scan) | `rms`, `mean`, `max_above` (material the model lacks), `max_below` (material it should not have), `within`, `passes` (95% within the tolerance), `measured`, `unmatched`; against a solid also `clearance {fits, gap, gap_at, inside, deepest}`: whether the scanned thing clears it (a tool in its foam pocket), measured on the solid's exact faces |
 | `inspect.surface_check {}` | folds, pinches and crossings of a surface |
 
 ## Known problems
+- Wear or damage against a model: `scan.deviation {}` replies `volume_below` and `volume_above` (mm³ beyond the tolerance, inside and outside the model), `area_below`/`area_above`, and `regions` (each patch with its `side`, `area`, `volume`, `deepest` and `at`). Beside a wall or a step the distance is to the nearest surface, so a dent there reads small.
+- A gear, a knob, a spline: each prism in `scan.reconstruct`'s reply says how its outline repeats round its middle in `rotational` (`order`: the tooth count; `tip_diameter`, `root_diameter`; `module` were it a spur gear). Extrude It still draws the whole outline; build one tooth and `solid.pattern.circular` it yourself when the count must be a parameter.
+- A clean tool with nothing to do (Repair, Fill Holes, Remove Floating, Reduce, Denoise; Fillet It with no round that fits) is no error: it replies `changed: false` with `note`, and a `batch` goes on.
+- A parameter a command does not take is ignored in silence unless the MCP server was started with `--param-check warn` (replies then list it in `param_warnings`) or `strict` (it is refused): when a call seems to ignore a setting, check its name with `describe_command`.
+- `solid.move` refuses a `matrix` whose rotation is rounded to a few digits (`not rigid … above the tolerance 1e-9`): pass `"tolerance": 1e-6` with a matrix copied at seven digits; it is made exactly rigid.
 - A metre or inch file inserted without `units` is 1000 or 25.4 times too small. `scan.survey {}` flags anything under 3 mm across.
 - Find All reads less on very fine, noisy scans and on faceted CAD STLs. On the latter it works on a subdivided copy and takes longer. Reconstruct needs Find All's shapes, so a low `in_shapes` makes its proposals unreliable.
 - Reconstruct reads multi-feature prismatic parts worst: shells, open-bottom parts and many small features can come out several millimetres off with material missing. Read what is left with `scan.select {"unexplained": …}` and `scan.reconstruct_selection {}`, or build from fits and sections.

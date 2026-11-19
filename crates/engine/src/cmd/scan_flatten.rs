@@ -249,8 +249,11 @@ fn flatten_scan(s: &mut Session, p: &Value) -> Result<Value> {
             chain::chain(&pts, true, tolerance).map(|o| (o, true))
         })
         .collect();
-    let name = str_(p, "name").filter(|n| !n.trim().is_empty()).unwrap_or(PATTERN_NAME).to_owned();
-    let made = run(s, "sketch.create", json!({"plane": "XY", "name": name}))?;
+    // A name asked for is used as asked (a clash is said); the tool's own is the first one free.
+    let made = match str_(p, "name").filter(|n| !n.trim().is_empty()) {
+        Some(name) => run(s, "sketch.create", json!({"plane": "XY", "name": name}))?,
+        None => super::new_sketch(s, json!({"plane": "XY", "name": PATTERN_NAME}))?,
+    };
     let sketch = made.get("sketch").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "the pattern's sketch was not made"))?;
     let mut added = super::section::Added::default();
     let drawn = super::super::sketch_store::update(s, sketch, |_, _, sk| super::section::draw(sk, &outlines, &mut added));
@@ -493,7 +496,7 @@ fn roll_onto_scan(s: &mut Session, p: &Value) -> Result<Value> {
     if s.active_sketch.is_some() {
         run(s, "sketch.finish", json!({}))?;
     }
-    let made = run(s, "sketch.create", json!({"plane": "XY", "name": ROLLED_NAME}))?;
+    let made = super::new_sketch(s, json!({"plane": "XY", "name": ROLLED_NAME}))?;
     let sketch = made.get("sketch").cloned().ok_or_else(|| bad(cmd, "the sketch for the rolled curves was not made"))?;
     run(s, "sketch.options", json!({"sketch": sketch, "sketch_3d": true}))?;
     let mut curves = Vec::new();

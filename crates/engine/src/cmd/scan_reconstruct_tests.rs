@@ -14,6 +14,10 @@ fn run(s: &mut Session, id: &str, p: Value) -> Value {
 }
 
 /// The mesh with every triangle cut into four `levels` times, the cuts shared along each edge.
+fn run_err(s: &mut Session, id: &str, p: Value) -> String {
+    s.execute(id, &p).err().map(|e| e.to_string()).unwrap_or_default()
+}
+
 fn subdivided(mut positions: Vec<Vec3>, mut triangles: Vec<[u32; 3]>, levels: u32) -> (Vec<Vec3>, Vec<[u32; 3]>) {
     for _ in 0..levels {
         let mut middles: HashMap<(u32, u32), u32> = HashMap::new();
@@ -36,12 +40,18 @@ fn subdivided(mut positions: Vec<Vec3>, mut triangles: Vec<[u32; 3]>, levels: u3
 /// The solid `body` of `s`, meshed finely and cut `levels` times, inserted as the only body of a
 /// new design: a scan of it.
 fn scanned(s: &Session, body: &str, levels: u32, tag: &str) -> (Session, String) {
+    scanned_where(s, body, levels, tag, |_| true)
+}
+
+/// [`scanned`], of the triangles `seen` keeps only: what a scanner saw of the part.
+fn scanned_where(s: &Session, body: &str, levels: u32, tag: &str, seen: impl Fn([Vec3; 3]) -> bool) -> (Session, String) {
     let mesh = {
         let state = s.model.state();
         let b = state.body(body).unwrap_or_else(|| panic!("no {body}"));
         b.body.mesh(&solidcraft_kernel::MeshTolerance { chord: 0.005, angle: Some(4f64.to_radians()) }).unwrap()
     };
     let (positions, triangles) = subdivided(mesh.positions, mesh.triangles, levels);
+    let triangles: Vec<[u32; 3]> = triangles.into_iter().filter(|t| seen(t.map(|i| positions[i as usize]))).collect();
     // Binary STL: a header, the count, then each triangle's normal (left zero), corners and a
     // spare word.
     let mut stl = vec![0u8; 80];
@@ -310,6 +320,14 @@ fn a_drilled_disc_is_extruded_cut_and_patterned_back_from_its_scan() {
     let again = run(&mut s, "scan.cut_it", json!({"hole": 0}));
     assert_eq!(again["fit"]["verdict"], "same", "{again}");
     assert!(again["fit"].get("note").is_none(), "{again}");
+    // No round to fillet is nothing to do, not a failure: the body is as it was, and a batch of
+    // steps with Fillet It among them goes on.
+    let before = volume(&s, &solid);
+    let none = run(&mut s, "scan.fillet_it", json!({}));
+    assert_eq!((none["changed"].as_bool(), none["fillets"].as_array().map(Vec::len)), (Some(false), Some(0)), "{none}");
+    assert!(none["note"].as_str().is_some_and(|n| n.contains("reads no round")), "{none}");
+    assert_eq!(none["fit"]["verdict"], "same", "{none}");
+    assert_eq!(volume(&s, &solid), before);
 }
 
 /// A block 80 × 60 × 20 whose four top edges are rounded R 2: the rounds run across the prism
@@ -483,12 +501,236 @@ fn a_drafted_shelled_housing_is_extruded_shelled_and_filleted_back_from_its_scan
     for step in read["proposals"].as_array().unwrap() {
         let done = run(&mut s, step["command"].as_str().unwrap(), step["params"].clone());
         assert_ne!(done["fit"]["verdict"], "worse", "{done}");
+        if step["command"] == "scan.extrude_it" {
+            assert_eq!((done["lines"].as_u64(), done["arcs"].as_u64()), (Some(4), Some(0)), "the profile is drawn sharp: {done}");
+        }
     }
     // Its draft and depth read as designed: 2° and 30, not the hundredths the scan measures.
     let extrude = s.doc.features.iter().find(|f| f.name.starts_with("Extrude It")).map(|f| serde_json::to_string(f).unwrap()).unwrap();
     assert!(extrude.contains("\"-2 deg\"") && extrude.contains("30"), "{extrude}");
+    // So does the wall: 2 mm, not the 2.00002 the scan's two skins measure.
+    let shell = s.doc.features.iter().find(|f| f.name == "Shell It").map(|f| serde_json::to_string(f).unwrap()).unwrap();
+    assert!(shell.contains("\"2 mm\""), "{shell}");
+    // The corners, drafted and then rounded with one radius: extruded sharp and filleted R 6, not
+    // sketched as arcs that would taper with the walls.
+    let names: Vec<&str> = s.doc.features.iter().map(|f| f.name.as_str()).collect();
+    assert!(names.iter().any(|n| n.starts_with("Extrude It 1 Rounds")), "the corners are filleted: {names:?}");
     let v = volume(&s, &format!("{scan} Reconstructed"));
     assert!((v - expected).abs() < 0.01 * expected, "{v} against the housing's {expected}");
+}
+
+/// A square bar's outline repeats four times round its middle, and Reconstruct says so of its
+/// prism (`rotational`: the order, the middle, the diameters across its corners and its flats); a
+/// bar 40 × 30 repeats only twice, which is no pattern, and says nothing.
+#[test]
+fn reconstruct_says_how_a_prisms_outline_repeats_round_its_middle() {
+    let read_of = |length: f64, width: f64| {
+        let mut part = Session::default();
+        let made = run(&mut part, "solid.box", json!({"length": length, "width": width, "height": 12, "center": [7, -3, 6]}));
+        let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+        let (mut s, _) = scanned(&part, &body, 3, "bar");
+        run(&mut s, "scan.reconstruct", json!({}))
+    };
+    let square = read_of(30.0, 30.0);
+    let prism = &square["prisms"][0];
+    assert!((prism["depth"].as_f64().unwrap() - 12.0).abs() < 0.05, "upright: {square}");
+    let repeats = &prism["rotational"];
+    assert_eq!(repeats["order"], 4, "{square}");
+    let centre: Vec<f64> = repeats["centre"].as_array().unwrap().iter().filter_map(Value::as_f64).collect();
+    assert!((centre[0] - 7.0).abs() < 0.05 && (centre[1] + 3.0).abs() < 0.05 && (centre[2] - 6.0).abs() < 0.05, "{square}");
+    let (tip, root) = (repeats["tip_diameter"].as_f64().unwrap(), repeats["root_diameter"].as_f64().unwrap());
+    assert!((tip - 30.0 * std::f64::consts::SQRT_2).abs() < 0.1 && (root - 30.0).abs() < 0.1, "across corners and across flats: {square}");
+    let oblong = read_of(40.0, 30.0);
+    assert!((oblong["prisms"][0]["depth"].as_f64().unwrap() - 12.0).abs() < 0.05, "{oblong}");
+    assert!(oblong["prisms"][0].get("rotational").is_none(), "{oblong}");
+}
+
+/// A nest for the slotted disc (R 20 × 10, eight slots in its rim): a block 10 mm wider than the
+/// disc all round, with a pocket half the disc deep that is the disc's outline grown by the
+/// clearance, and that much deeper. No point of the scan is in the nest's material, and the least
+/// gap between them is the clearance. `clearance` a parameter: changed from 0.3 to 0.5 the nest
+/// rebuilds, with less material and the wider gap.
+#[test]
+fn a_nest_is_cut_from_a_prisms_outline_and_follows_its_clearance() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.cylinder", json!({"radius": 20, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(
+        &mut part,
+        "solid.box",
+        json!({"length": 12, "width": 8, "height": 10, "center": [20, 0, 5], "operation": "cut", "targets": [body], "name": "Slot"}),
+    );
+    run(&mut part, "solid.pattern.circular", json!({"features": ["Slot"], "axis": "Z", "count": 8}));
+    let (mut s, scan) = scanned(&part, &body, 3, "nest");
+    run(&mut s, "parameters.add", json!({"name": "clearance", "expression": "0.3 mm"}));
+    let built = run(&mut s, "scan.nest", json!({"clearance": "clearance"}));
+    let nest = built["solid"].as_str().unwrap().to_owned();
+    assert_eq!(nest, format!("{scan} Nest"), "{built}");
+    assert!((built["depth"].as_f64().unwrap() - 5.0).abs() < 0.05, "{built}");
+    let gap_at = |s: &mut Session| {
+        let d = run(s, "scan.deviation", json!({"body": nest, "tolerance": "0.02 mm", "limit": 2}));
+        assert_eq!(d["clearance"]["fits"], true, "{d}");
+        d["clearance"]["gap"].as_f64().unwrap()
+    };
+    let tight = volume(&s, &nest);
+    let gap = gap_at(&mut s);
+    assert!((gap - 0.3).abs() < 0.03, "the gap is the clearance: {gap}");
+    // The scan lies on the outline read from it, so nothing to speak of is allowed for; and the
+    // gap is no less than the clearance for what is.
+    let allowed = built["allowance"].as_f64().unwrap();
+    assert!((0.0..0.02).contains(&allowed) && gap > 0.3 + allowed - 0.01, "{built}, gap {gap}");
+    // The block: 10 wider all round than the disc is across its tips beside the slots (a slot lies
+    // on each axis, 8 wide, so that is 2 × √(20² − 4²)), 15 tall. Less the pocket: the disc's
+    // outline grown by 0.3, 5.3 deep (its own section is a tenth of its volume, its outline about
+    // 250 long with the slots).
+    let across = 2.0 * (20.0f64 * 20.0 - 4.0 * 4.0).sqrt() + 20.0;
+    let (block, section) = (across * across * 15.0, volume(&part, &body) / 10.0);
+    let pocket = block - tight;
+    assert!(pocket > section * 5.3 && pocket < (section + 250.0 * 0.3) * 5.3 * 1.05, "{pocket} for a section of {section}");
+    run(&mut s, "parameters.change", json!({"name": "clearance", "expression": "0.5 mm"}));
+    let loose = volume(&s, &nest);
+    assert!(loose < tight - 20.0, "a wider pocket leaves less: {loose} against {tight}");
+    let gap = gap_at(&mut s);
+    assert!((gap - 0.5).abs() < 0.03, "{gap}");
+    // A second nest of the same scan is refused in words, as is a clearance that is none.
+    assert!(run_err(&mut s, "scan.nest", json!({})).contains("already"));
+    assert!(run_err(&mut s, "scan.nest", json!({"clearance": 0})).contains("`clearance`"));
+    assert!(run_err(&mut s, "scan.nest", json!({"allowance": -0.1})).contains("`allowance`"));
+    // An allowance given is added to the clearance, round the part and under it: 0.3 and 0.2 cut
+    // the pocket the clearance of 0.5 did (less what that one allowed for by itself).
+    let (mut s, _) = scanned(&part, &body, 3, "nest-allowed");
+    let built = run(&mut s, "scan.nest", json!({"allowance": 0.2}));
+    assert_eq!(built["allowance"], 0.2, "{built}");
+    let same = volume(&s, built["solid"].as_str().unwrap());
+    assert!((same - loose).abs() < (section + 250.0 * 5.5) * (allowed + 0.001), "{same} against {loose}");
+    let d = run(&mut s, "scan.deviation", json!({"body": built["solid"], "tolerance": "0.02 mm", "limit": 2}));
+    assert!((d["clearance"]["gap"].as_f64().unwrap() - 0.5).abs() < 0.03, "{d}");
+}
+
+/// A plate 50 × 30 × 8 centred on the origin, from its scan: its outline is its own mirror image
+/// both ways, so the sketch holds each corner to its image across a centre line and the profile
+/// has two sizes, its length and its width, where four corners placed one by one had eight.
+/// Changing the length moves both ends.
+#[test]
+fn a_symmetric_prism_is_sketched_with_one_size_for_both_sides() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 50, "width": 30, "height": 8, "center": [0, 0, 4]}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    let (mut s, _) = scanned(&part, &body, 3, "plate");
+    let built = run(&mut s, "scan.extrude_it", json!({}));
+    let solid = built["solid"].as_str().unwrap().to_owned();
+    let listed = run(&mut s, "parameters.list", json!({"filter": "sketch"}));
+    let sizes: Vec<(String, f64)> =
+        listed["parameters"].as_array().unwrap().iter().map(|p| (p["name"].as_str().unwrap().to_owned(), p["value"].as_f64().unwrap())).collect();
+    assert_eq!(sizes.len(), 2, "{listed}");
+    let length = sizes.iter().find(|(_, v)| (v - 50.0).abs() < 0.05).unwrap_or_else(|| panic!("the length is a size: {listed}"));
+    assert!(sizes.iter().any(|(_, v)| (v - 30.0).abs() < 0.05), "the width is a size: {listed}");
+    assert!((volume(&s, &solid) - 50.0 * 30.0 * 8.0).abs() < 30.0, "{built}");
+    run(&mut s, "parameters.change", json!({"name": length.0, "expression": "60 mm"}));
+    let state = s.model.state();
+    let bbox = solidcraft_kernel::measure(&state.body(&solid).unwrap().body).unwrap().bbox;
+    assert!((bbox.min.x + 30.0).abs() < 0.05 && (bbox.max.x - 30.0).abs() < 0.05, "both ends moved: {bbox:?}");
+    assert!((bbox.min.y + 15.0).abs() < 0.05 && (bbox.max.y - 15.0).abs() < 0.05, "{bbox:?}");
+}
+
+/// A disc R 20 × 10 with eight slots cut into its rim (8 wide, 6 deep) comes back from its scan
+/// as the disc extruded, one slot cut through it and the cut patterned eight times: the count is
+/// a number in the design. With `pattern` false it is one outline extruded; the same solid.
+#[test]
+fn a_prism_that_repeats_round_its_middle_is_one_gap_cut_and_patterned() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.cylinder", json!({"radius": 20, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(
+        &mut part,
+        "solid.box",
+        json!({"length": 12, "width": 8, "height": 10, "center": [20, 0, 5], "operation": "cut", "targets": [body], "name": "Slot"}),
+    );
+    run(&mut part, "solid.pattern.circular", json!({"features": ["Slot"], "axis": "Z", "count": 8}));
+    let expected = volume(&part, &body);
+    let (mut s, _) = scanned(&part, &body, 3, "slotted");
+    let built = run(&mut s, "scan.extrude_it", json!({}));
+    assert_eq!(built["count"], 8, "{built}");
+    let solid = built["solid"].as_str().unwrap().to_owned();
+    let got = volume(&s, &solid);
+    assert!((got - expected).abs() < 0.005 * expected, "{got} against {expected}: {built}");
+    let listed = run(&mut s, "parameters.list", json!({"filter": "feature"}));
+    let count = listed["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["feature"] == "Extrude It 1 Pattern" && p["input"] == "Quantity")
+        .unwrap_or_else(|| panic!("the pattern's count is a parameter: {listed}"));
+    assert_eq!(count["value"].as_f64(), Some(8.0), "{listed}");
+    // Asked not to: the whole outline in one sketch.
+    let (mut s, _) = scanned(&part, &body, 3, "slotted-plain");
+    let plain = run(&mut s, "scan.extrude_it", json!({"pattern": false}));
+    assert!(plain.get("count").is_none_or(Value::is_null), "{plain}");
+    let got = volume(&s, plain["solid"].as_str().unwrap());
+    assert!((got - expected).abs() < 0.005 * expected, "{got} against {expected}: {plain}");
+}
+
+/// A spun cover scanned from outside only: of a tube R 30 × 20 with a bore R 12 and its top edge
+/// chamfered 5, the scanner saw the outer wall, the chamfer and the top, not the bore or the
+/// underside. Revolve It closes what it saw straight across into a solid and says it is one side
+/// of a skin; given the skin's `wall`, it revolves what was seen as a surface and thickens it
+/// inward: the outside stays where the scan has it, and the body is a shell, far lighter.
+#[test]
+fn one_side_of_a_skin_is_revolved_as_a_surface_and_thickened() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.cylinder", json!({"radius": 30, "height": 20}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.chamfer", json!({"edges": [[30, 0, 20]], "distance": 5}));
+    run(&mut part, "solid.hole", json!({"position": [0, 0, 20], "diameter": 24}));
+    let outside = |[a, b, c]: [Vec3; 3]| {
+        let m = (a + b + c) / 3.0;
+        m.z > 1e-3 && m.x.hypot(m.y) > 12.5
+    };
+    let (mut drum, _) = scanned_where(&part, &body, 3, "skin-drum", outside);
+    let closed = run(&mut drum, "scan.revolve_it", json!({}));
+    assert!(closed["skin"].as_str().is_some_and(|t| t.contains("`wall`")), "{closed}");
+    let solid = volume(&drum, closed["solid"].as_str().unwrap());
+    let (mut s, _) = scanned_where(&part, &body, 3, "skin-wall", outside);
+    let built = run(&mut s, "scan.revolve_it", json!({"wall": 2}));
+    assert!(built["skin"].as_str().is_some_and(|t| t.contains("thickened 2 mm")), "{built}");
+    let name = built["solid"].as_str().unwrap().to_owned();
+    let shell = volume(&s, &name);
+    assert!(shell < 0.5 * solid && shell > 0.1 * solid, "a shell of the solid: {shell} against {solid}");
+    // Thickened inward: no wider or taller than the part.
+    let state = s.model.state();
+    let bbox = solidcraft_kernel::measure(&state.body(&name).unwrap().body).unwrap().bbox;
+    assert!(bbox.max.x < 30.05 && bbox.max.z < 20.05 && bbox.min.x > -30.05, "{bbox:?}");
+    assert!(run_err(&mut s, "scan.revolve_it", json!({"wall": -1})).contains("`wall`"));
+}
+
+/// A cup (a cylinder R 30 × 60, shelled 3 thick, open at the top) from its scan in two calls:
+/// Section to Sketch about its axis draws the half of the cut on one side of it, closed along the
+/// axis through the bottom's thickness and fully dimensioned, and a Revolve about the sketch's X
+/// turns it back into the cup. Either side gives the same cup; `side` and `angle` go with `axis`,
+/// which gives the plane itself.
+#[test]
+fn a_cups_half_profile_about_its_axis_revolves_back_into_the_cup() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.cylinder", json!({"radius": 30, "height": 60}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.shell", json!({"faces": [[0, 0, 60]], "thickness": 3}));
+    let expected = volume(&part, &body);
+    let (mut s, _) = scanned(&part, &body, 1, "cup");
+    let axis = json!({"origin": [0, 0, 0], "dir": [0, 0, 1]});
+    for (side, name) in [("positive", "Cup"), ("negative", "Other Side")] {
+        let half = run(&mut s, "scan.section_sketch", json!({"axis": axis, "side": side, "angle": 30}));
+        assert_eq!((half["outlines"].as_u64(), half["closed_on_axis"].as_u64(), half["left_open"].as_u64()), (Some(1), Some(1), Some(0)), "{half}");
+        assert_eq!((half["lines"].as_u64(), half["arcs"].as_u64(), half["dof"].as_u64()), (Some(6), Some(0), Some(0)), "{half}");
+        run(&mut s, "solid.revolve", json!({"sketch": half["sketch"], "axis": "x", "operation": "new", "body_name": name}));
+        let v = volume(&s, name);
+        assert!((v - expected).abs() < 0.01 * expected, "{side}: {v} against the cup's {expected}");
+    }
+    let with_plane = s.execute("scan.section_sketch", &json!({"axis": axis, "plane": "XY"})).unwrap_err().to_string();
+    assert!(with_plane.contains("leave `plane`"), "{with_plane}");
+    let no_axis = s.execute("scan.section_sketch", &json!({"side": "negative"})).unwrap_err().to_string();
+    assert!(no_axis.contains("go with `axis`"), "{no_axis}");
+    let off = s.execute("scan.section_sketch", &json!({"axis": {"origin": [500, 0, 0], "dir": [0, 0, 1]}})).unwrap_err().to_string();
+    assert!(off.contains("does not cut the scan"), "{off}");
 }
 
 /// A plate 100 × 60 × 12 drilled as a designer drills one: two counterbores (Ø 6.6, Ø 11 × 6.5),
@@ -616,9 +858,30 @@ fn a_twisted_blade_is_lofted_back_with_loft_it() {
     let read = run(&mut s, "scan.reconstruct", json!({}));
     assert_eq!(read["loft"]["capped"], true, "between its flat ends: {read}");
     assert!((read["loft"]["length"].as_f64().unwrap() - 100.0).abs() < 0.1, "{read}");
+    // Each section as a blade's is described: the chord 60 at one end and 40 at the other (read a
+    // hundredth of the way in from each: 59.8 and 40.2), turned 30° between them (29.4° between
+    // the slices), 24 % thick at mid chord, alike both sides of its chord, and no NACA section.
+    let stations = read["loft"]["stations"].as_array().unwrap();
+    assert_eq!(stations.len(), 5, "{read}");
+    let number = |k: usize, key: &str| stations[k][key].as_f64().unwrap();
+    let (first, last) = (number(0, "chord"), number(4, "chord"));
+    let (wide, narrow) = (first.max(last), first.min(last));
+    assert!((wide - 59.8).abs() < 0.3 && (narrow - 40.2).abs() < 0.3, "{read}");
+    assert!((number(2, "chord") - 50.0).abs() < 0.3, "{read}");
+    assert!(
+        number(0, "twist").abs() < 1e-9 && (number(4, "twist").abs() - 29.4).abs() < 0.3 && (number(2, "twist").abs() - 14.7).abs() < 0.3,
+        "{read}"
+    );
+    for k in 0..5 {
+        assert!((number(k, "thickness_share") - 0.24).abs() < 0.005 && (number(k, "thickest_at") - 0.5).abs() < 0.05, "{read}");
+        assert!(number(k, "camber_share") < 0.003 && stations[k].get("naca").is_none(), "{read}");
+    }
     assert_eq!(build_all(&mut s), ["scan.loft_it"], "{read}");
     let v = volume(&s, &format!("{scan} Reconstructed"));
     assert!((v - expected).abs() < 0.02 * expected, "{v} against the blade's {expected}");
+    // The sections' splines are held where the scan has them: no size for each of their points.
+    let listed = run(&mut s, "parameters.list", json!({"filter": "sketch"}));
+    assert_eq!(listed["parameters"].as_array().map(Vec::len), Some(0), "{listed}");
 }
 
 /// A plate 60 × 40 × 10 with a block 20 × 14 × 12 on its top: with only the plate built, Reconstruct

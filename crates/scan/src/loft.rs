@@ -32,6 +32,231 @@ const SPECK: f64 = 0.05;
 pub struct Section {
     pub plane: Plane,
     pub points: Vec<Vec2>,
+    /// The section as a wing's or a blade's is described, when it is longer than it is thick.
+    pub shape: Option<Aerofoil>,
+}
+
+/// A section as a wing's or a blade's is described: by its chord and what stands on it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Aerofoil {
+    /// The two points of the section farthest apart, in the section's plane: its leading edge
+    /// (the blunter end) and its trailing edge. Alike at both ends (an ellipse), the leading edge
+    /// is the one further along the plane's x.
+    pub leading: Vec2,
+    pub trailing: Vec2,
+    /// Their distance, in mm.
+    pub chord: f64,
+    /// The angle of the chord line (trailing to leading edge) from the plane's x, in radians,
+    /// within a quarter turn either way of the section before's.
+    pub twist: f64,
+    /// The most the section measures across its chord line, in mm, and how far along the chord
+    /// from the leading edge that is (0–1).
+    pub thickness: f64,
+    pub thickest_at: f64,
+    /// The most the middle of the section lies off its chord line, in mm (0 for a section alike
+    /// both sides of it).
+    pub camber: f64,
+    /// The NACA four-digit section it is within the tolerance asked of, when it is one.
+    pub naca: Option<[u8; 3]>,
+}
+
+/// The stations along the chord a section is measured at.
+const STATIONS: usize = 100;
+/// A section whose middle lies off its chord line by less than this share of the chord is alike
+/// both sides of it.
+const FLAT: f64 = 0.005;
+/// A section is described by its chord when it is at least this many times longer than thick.
+const SLENDER: f64 = 2.0;
+
+/// The stations along the chord an outline is laid out at ([`enveloped`]), closer toward its ends.
+const OUTLINE_STATIONS: usize = 120;
+
+/// The outline of the closed `ring` and the `specks` beside it (each closed or not) taken
+/// together, as a slender section's is: from its two points farthest apart, the least and the
+/// most it reaches across the line between them at each station along it. Counter-clockwise.
+/// `None` when they have no length.
+fn enveloped(ring: &[Vec2], specks: &[(&[Vec2], bool)]) -> Option<Vec<Vec2>> {
+    let all: Vec<Vec2> = ring.iter().chain(specks.iter().flat_map(|(points, _)| points.iter())).copied().collect();
+    // The two points farthest apart: among a thinned set, then among those near them.
+    let step = (all.len() / 400).max(1);
+    let coarse: Vec<Vec2> = all.iter().step_by(step).copied().collect();
+    let (mut a, mut b, mut far) = (all[0], all[0], -1.0);
+    for (i, p) in coarse.iter().enumerate() {
+        for q in &coarse[i + 1..] {
+            if p.dist(*q) > far {
+                (a, b, far) = (*p, *q, p.dist(*q));
+            }
+        }
+    }
+    let (near_a, near_b): (Vec<Vec2>, Vec<Vec2>) =
+        (all.iter().copied().filter(|p| p.dist(a) <= 0.05 * far).collect(), all.iter().copied().filter(|p| p.dist(b) <= 0.05 * far).collect());
+    for p in &near_a {
+        for q in &near_b {
+            if p.dist(*q) > far {
+                (a, b, far) = (*p, *q, p.dist(*q));
+            }
+        }
+    }
+    let chord = far;
+    if !(chord > 0.0) {
+        return None;
+    }
+    let along = (b - a) / chord;
+    let up = Vec2::new(-along.y, along.x);
+    let stations: Vec<f64> = (1..OUTLINE_STATIONS).map(|j| 0.5 * (1.0 - (std::f64::consts::PI * j as f64 / OUTLINE_STATIONS as f64).cos())).collect();
+    let (mut most, mut least) = (vec![f64::NEG_INFINITY; stations.len()], vec![f64::INFINITY; stations.len()]);
+    let mut span = |p: Vec2, q: Vec2| {
+        let ((x0, v0), (x1, v1)) = (((p - a).dot(along) / chord, (p - a).dot(up)), ((q - a).dot(along) / chord, (q - a).dot(up)));
+        let (lo, hi) = (x0.min(x1), x0.max(x1));
+        for (j, &x) in stations.iter().enumerate().filter(|(_, x)| **x >= lo && **x <= hi) {
+            let v = if (x1 - x0).abs() > 1e-15 { v0 + (v1 - v0) * (x - x0) / (x1 - x0) } else { v0 };
+            most[j] = most[j].max(v);
+            least[j] = least[j].min(v);
+        }
+    };
+    for (points, closed) in std::iter::once((ring, true)).chain(specks.iter().copied()) {
+        let n = points.len();
+        for i in 0..n.saturating_sub(usize::from(!closed)) {
+            span(points[i], points[(i + 1) % n]);
+        }
+    }
+    let at = |x: f64, v: f64| a + along * (x * chord) + up * v;
+    let mut out = vec![a];
+    out.extend(stations.iter().zip(&least).filter(|(_, v)| v.is_finite()).map(|(x, v)| at(*x, *v)));
+    out.push(b);
+    out.extend(stations.iter().zip(&most).rev().filter(|(_, v)| v.is_finite()).map(|(x, v)| at(*x, *v)));
+    (out.len() >= 8).then_some(out)
+}
+
+/// The closed `ring` (counter-clockwise) read as a wing's section, `None` for one not at least
+/// [`SLENDER`] times longer than it is thick. `tolerance` (mm) is what a NACA four-digit section
+/// must fit it within to be named.
+pub fn aerofoil(ring: &[Vec2], tolerance: f64) -> Option<Aerofoil> {
+    let n = ring.len();
+    if n < 8 {
+        return None;
+    }
+    // The two points farthest apart: among a thinned ring first, then among their neighbours.
+    let step = (n / 360).max(1);
+    let coarse: Vec<usize> = (0..n).step_by(step).collect();
+    let (mut a, mut b, mut far) = (0, 0, -1.0);
+    for (i, &p) in coarse.iter().enumerate() {
+        for &q in &coarse[i + 1..] {
+            let d = ring[p].dist(ring[q]);
+            if d > far {
+                (a, b, far) = (p, q, d);
+            }
+        }
+    }
+    let near = |k: usize| (0..=2 * step).map(move |i| (k + n + i - step) % n);
+    for p in near(a) {
+        for q in near(b) {
+            let d = ring[p].dist(ring[q]);
+            if d > far {
+                (a, b, far) = (p, q, d);
+            }
+        }
+    }
+    let chord = far;
+    if !(chord > 0.0) {
+        return None;
+    }
+    // Along the chord from one end (0) to the other (1), and across it: the most and the least
+    // across at each station, each of the ring's sides read where it crosses the station.
+    let (from, along) = (ring[a], (ring[b] - ring[a]) / chord);
+    let place = |p: Vec2| ((p - from).dot(along) / chord, along.cross(p - from));
+    let (mut most, mut least) = (vec![f64::NEG_INFINITY; STATIONS + 1], vec![f64::INFINITY; STATIONS + 1]);
+    for i in 0..n {
+        let ((x0, v0), (x1, v1)) = (place(ring[i]), place(ring[(i + 1) % n]));
+        let (lo, hi) = (x0.min(x1), x0.max(x1));
+        let first = (lo * STATIONS as f64).ceil().max(0.0) as usize;
+        let last = ((hi * STATIONS as f64).floor().max(-1.0) as isize).min(STATIONS as isize);
+        for k in first as isize..=last {
+            let x = k as f64 / STATIONS as f64;
+            let v = if (x1 - x0).abs() > 1e-15 { v0 + (v1 - v0) * (x - x0) / (x1 - x0) } else { v0 };
+            most[k as usize] = most[k as usize].max(v);
+            least[k as usize] = least[k as usize].min(v);
+        }
+    }
+    let across: Vec<Option<(f64, f64)>> = (0..=STATIONS).map(|k| (most[k] >= least[k]).then_some((most[k], least[k]))).collect();
+    let thick = |k: usize| across.get(k).copied().flatten().map_or(0.0, |(hi, lo)| hi - lo);
+    let thickest = (0..=STATIONS).max_by(|&i, &j| thick(i).total_cmp(&thick(j)))?;
+    let thickness = thick(thickest);
+    if !(thickness > 0.0) || chord < SLENDER * thickness {
+        return None;
+    }
+    // The blunter end leads: the thicker a twentieth of the chord in. Alike, the end further along x.
+    let (at_a, at_b) = (thick(STATIONS / 20), thick(STATIONS - STATIONS / 20));
+    let a_leads = if (at_a - at_b).abs() > 0.1 * at_a.max(at_b) { at_a > at_b } else { ring[a].x >= ring[b].x };
+    let (leading, trailing) = if a_leads { (ring[a], ring[b]) } else { (ring[b], ring[a]) };
+    let from_leading = |k: usize| if a_leads { k as f64 / STATIONS as f64 } else { 1.0 - k as f64 / STATIONS as f64 };
+    let camber = across.iter().flatten().map(|(hi, lo)| ((hi + lo) / 2.0).abs()).fold(0.0, f64::max);
+    let direction = leading - trailing;
+    // A section alike both sides of its chord has its chord line down its middle: the line through
+    // the middles of its stations (from a tenth to nine tenths along) says which way that runs
+    // better than its two end points do, one of which is a thin edge a scan wears short or bends.
+    let level = if camber <= FLAT * chord {
+        let middles: Vec<(f64, f64)> = (STATIONS / 10..=STATIONS - STATIONS / 10)
+            .filter_map(|k| across[k].map(|(hi, lo)| (chord * k as f64 / STATIONS as f64, (hi + lo) / 2.0)))
+            .collect();
+        let count = middles.len().max(1) as f64;
+        let (mx, my) = (middles.iter().map(|m| m.0).sum::<f64>() / count, middles.iter().map(|m| m.1).sum::<f64>() / count);
+        let (sxx, sxy) = middles.iter().fold((0.0, 0.0), |(sxx, sxy), (x, v)| (sxx + (x - mx) * (x - mx), sxy + (x - mx) * (v - my)));
+        if sxx > 0.0 { (sxy / sxx).atan() } else { 0.0 }
+    } else {
+        0.0
+    };
+    let mut found = Aerofoil {
+        leading,
+        trailing,
+        chord,
+        twist: direction.y.atan2(direction.x) + level,
+        thickness,
+        thickest_at: from_leading(thickest),
+        camber,
+        naca: None,
+    };
+    // A NACA four-digit section of that thickness, its camber line two parabolas meeting at the
+    // camber's crest: named when every station is within the tolerance of it.
+    let crest = (0..=STATIONS).max_by(|&i, &j| {
+        let mid = |k: usize| across[k].map_or(0.0, |(hi, lo)| ((hi + lo) / 2.0).abs());
+        mid(i).total_cmp(&mid(j))
+    })?;
+    let signed = across[crest].map_or(0.0, |(hi, lo)| (hi + lo) / 2.0);
+    let (t, m) = (thickness / chord, signed / chord);
+    let p = if m.abs() * chord > tolerance { from_leading(crest).clamp(0.1, 0.9) } else { 0.0 };
+    let half = |x: f64| 5.0 * t * (0.2969 * x.sqrt() - 0.1260 * x - 0.3516 * x * x + 0.2843 * x.powi(3) - 0.1015 * x.powi(4));
+    // The standard section is 20 % thick where its formula's `t` is 20 %, at 30 % of the chord.
+    let line = |x: f64| {
+        if p <= 0.0 {
+            0.0
+        } else if x < p {
+            m / (p * p) * (2.0 * p * x - x * x)
+        } else {
+            m / ((1.0 - p) * (1.0 - p)) * ((1.0 - 2.0 * p) + 2.0 * p * x - x * x)
+        }
+    };
+    // Measured from the line between the two points farthest apart, which on a cambered section
+    // is a hair off the line the formula is written on: that line's own offset and slope against
+    // ours (a straight line through what the middles differ by) is taken out first.
+    let differ: Vec<(f64, f64, f64)> = (1..STATIONS)
+        .filter_map(|k| {
+            let (hi, lo) = across[k]?;
+            let x = from_leading(k);
+            Some((x, hi - (line(x) + half(x)) * chord, lo - (line(x) - half(x)) * chord))
+        })
+        .collect();
+    let count = differ.len().max(1) as f64;
+    let (sx, sy) = differ.iter().fold((0.0, 0.0), |(sx, sy), (x, hi, lo)| (sx + x, sy + (hi + lo) / 2.0));
+    let (mx, my) = (sx / count, sy / count);
+    let (sxx, sxy) = differ.iter().fold((0.0, 0.0), |(sxx, sxy), (x, hi, lo)| (sxx + (x - mx) * (x - mx), sxy + (x - mx) * ((hi + lo) / 2.0 - my)));
+    let slope = if sxx > 0.0 { sxy / sxx } else { 0.0 };
+    let off = differ.iter().map(|(x, hi, lo)| (hi - my - slope * (x - mx)).abs().max((lo - my - slope * (x - mx)).abs())).fold(0.0, f64::max);
+    if off <= tolerance {
+        let digit = |v: f64, most: f64| v.round().clamp(0.0, most) as u8;
+        found.naca = Some([digit(100.0 * m.abs(), 9.0), digit(10.0 * p, 9.0), digit(100.0 * t, 99.0)]);
+    }
+    Some(found)
 }
 
 /// A part read as sections lofted along `direction`.
@@ -43,9 +268,9 @@ pub struct Loft {
     pub sections: Vec<Section>,
 }
 
-/// The direction two planes among `faces` face apart along, each at an end of the scan; `None`
-/// without such a pair.
-fn capped_direction(scan: &Scan, faces: &[Face]) -> Option<Vec3> {
+/// The direction two planes among `faces` face apart along, each at an end of the scan, and
+/// where along it the two planes lie (the lower first); `None` without such a pair.
+fn capped_direction(scan: &Scan, faces: &[Face]) -> Option<(Vec3, [f64; 2])> {
     let planes: Vec<(Vec3, Vec3, f64)> = faces
         .iter()
         .filter_map(|f| match f.shape {
@@ -53,7 +278,7 @@ fn capped_direction(scan: &Scan, faces: &[Face]) -> Option<Vec3> {
             _ => None,
         })
         .collect();
-    let mut best: Option<(f64, Vec3)> = None;
+    let mut best: Option<(f64, Vec3, [f64; 2])> = None;
     for (i, a) in planes.iter().enumerate() {
         for b in &planes[i + 1..] {
             if a.1.dot(b.1) > -SAME_DIRECTION {
@@ -66,13 +291,13 @@ fn capped_direction(scan: &Scan, faces: &[Face]) -> Option<Vec3> {
             let ends = |x: f64| (x - low).abs() <= AT_THE_END * length || (high - x).abs() <= AT_THE_END * length;
             if length > 0.0 && ends(la) && ends(lb) && (la - lb).abs() >= 0.5 * length {
                 let weight = a.2.min(b.2);
-                if best.is_none_or(|(w, _)| weight > w) {
-                    best = Some((weight, d));
+                if best.is_none_or(|(w, _, _)| weight > w) {
+                    best = Some((weight, d, [la.min(lb), la.max(lb)]));
                 }
             }
         }
     }
-    best.map(|(_, d)| d)
+    best.map(|(_, d, levels)| (d, levels))
 }
 
 /// The loop's points evenly spaced along it, `count` of them from the point at `start`.
@@ -109,11 +334,17 @@ fn middle(points: &[Vec2]) -> Vec2 {
 
 /// The scan read as `count` sections lofted (see the module); why not, when it cannot be.
 pub fn read(scan: &Scan, faces: &[Face], count: usize) -> Result<Loft, String> {
+    read_within(scan, faces, count, 0.0)
+}
+
+/// [`read`], each section also read as a wing's ([`aerofoil`]) and named as a NACA section when
+/// it is one within `tolerance` (mm).
+pub fn read_within(scan: &Scan, faces: &[Face], count: usize, tolerance: f64) -> Result<Loft, String> {
     let count = count.clamp(LEAST_SECTIONS, MOST_SECTIONS);
     let points: Vec<Vec3> = crate::thinned(&scan.points().collect::<Vec<_>>(), 200_000);
     let (centre, axes, _) = crate::register::principal(&points).ok_or("the scan has no extent")?;
     let capped = capped_direction(scan, faces);
-    let direction = capped.unwrap_or(axes[0]);
+    let direction = capped.map_or(axes[0], |(d, _)| d);
     let (low, high) = points.iter().map(|p| p.dot(direction)).fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), x| (l.min(x), h.max(x)));
     let length = high - low;
     if !(length > 0.0) {
@@ -123,6 +354,9 @@ pub fn read(scan: &Scan, faces: &[Face], count: usize) -> Result<Loft, String> {
     let weld = crate::welded(scan.positions);
     let mut sections: Vec<Section> = Vec::with_capacity(count);
     let mut previous: Option<Vec2> = None;
+    let mut twist_before: Option<f64> = None;
+    let mut rings: Vec<Vec<Vec2>> = Vec::with_capacity(count);
+    let mut sliced: Vec<f64> = Vec::with_capacity(count);
     for k in 0..count {
         let share = k as f64 / (count - 1) as f64;
         let at = low + length * (END_MARGIN + (1.0 - 2.0 * END_MARGIN) * share);
@@ -149,6 +383,19 @@ pub fn read(scan: &Scan, faces: &[Face], count: usize) -> Result<Loft, String> {
         if signed_area(&ring) < 0.0 {
             ring.reverse();
         }
+        // A thin trailing edge a scan's noise has tangled (its two sides cross, and the slice
+        // closes short of it, the tip a loop of its own): the specks that lie against the loop
+        // are part of the section, taken in by its outline along the chord.
+        let against = SPECK * longest;
+        let specks: Vec<(&[Vec2], bool)> = runs
+            .iter()
+            .filter(|r| !std::ptr::eq(*r, *only) && r.points.len() >= 2)
+            .filter(|r| r.points.iter().any(|q| ring.iter().any(|p| p.dist(*q) <= 0.2 * against)))
+            .map(|r| (r.points.as_slice(), r.closed))
+            .collect();
+        if !specks.is_empty() && aerofoil(&ring, tolerance).is_some() {
+            ring = enveloped(&ring, &specks).unwrap_or(ring);
+        }
         let m = middle(&ring);
         // Start where the one before started, as seen from the middle; the first at its furthest
         // point along x.
@@ -156,16 +403,95 @@ pub fn read(scan: &Scan, faces: &[Face], count: usize) -> Result<Loft, String> {
         let start = (0..ring.len()).max_by(|&a, &b| (ring[a] - m).dot(toward).total_cmp(&(ring[b] - m).dot(toward))).unwrap_or(0);
         let laid = resampled(&ring, start, POINTS);
         previous = (laid[0] - m).normalized();
-        // The ends' sections lie at the end faces, when there are such.
-        let plane = if capped.is_some() && (k == 0 || k + 1 == count) {
-            let end = if k == 0 { low } else { high };
+        // The ends' sections lie at the end faces, when there are such: where the faces were
+        // fitted, not at the scan's outermost point (its noise stands a little proud of them).
+        let plane = if let (Some((_, levels)), true) = (capped, k == 0 || k + 1 == count) {
+            let end = if k == 0 { levels[0] } else { levels[1] };
             Plane { origin: centre + direction * (end - centre.dot(direction)), x, y }
         } else {
             plane
         };
-        sections.push(Section { plane, points: laid });
+        // Its chord line the same way round as the section before's.
+        let shape = aerofoil(&ring, tolerance).map(|found| {
+            let Some(before) = twist_before else { return found };
+            let turn = (found.twist - before + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+            if turn.abs() > std::f64::consts::FRAC_PI_2 {
+                Aerofoil {
+                    leading: found.trailing,
+                    trailing: found.leading,
+                    twist: before + turn - turn.signum() * std::f64::consts::PI,
+                    thickest_at: 1.0 - found.thickest_at,
+                    ..found
+                }
+            } else {
+                Aerofoil { twist: before + turn, ..found }
+            }
+        });
+        twist_before = shape.map(|f| f.twist).or(twist_before);
+        rings.push(ring);
+        sliced.push(at);
+        sections.push(Section { plane, points: laid, shape });
+    }
+    // Wing sections, all of them: laid out along their chords instead, from the trailing edge
+    // round, closer toward both edges, so the loft keeps its edges where even steps round the
+    // loop would round them off (a blade's trailing edge came out 1.3 mm short).
+    if sections.iter().all(|s| s.shape.is_some()) {
+        let laid: Vec<Option<Vec<Vec2>>> =
+            sections.iter().zip(&rings).map(|(section, ring)| section.shape.and_then(|shape| by_chord(ring, &shape))).collect();
+        if laid.iter().all(Option::is_some) {
+            for (section, points) in sections.iter_mut().zip(laid.into_iter().flatten()) {
+                section.points = points;
+            }
+            // An end's section was sliced a little in from the end face it is drawn on, and a blade
+            // tapers and twists in that little: each of its points is carried on to the face along
+            // the line from the next section's same point (they are laid out alike).
+            if let (Some((_, levels)), true) = (capped, count >= 2) {
+                for (end, next, level) in [(0, 1, levels[0]), (count - 1, count - 2, levels[1])] {
+                    let step = sliced[end] - sliced[next];
+                    if step.abs() > 1e-9 {
+                        let on = (level - sliced[end]) / step;
+                        let from = sections[next].points.clone();
+                        for (p, q) in sections[end].points.iter_mut().zip(from) {
+                            *p = *p + (*p - q) * on;
+                        }
+                    }
+                }
+            }
+        }
     }
     Ok(Loft { direction, capped: capped.is_some(), sections })
+}
+
+/// The counter-clockwise `ring` of a wing's section laid out along its chord with [`POINTS`]
+/// points: the trailing edge, the side below the chord line (as it runs to the leading edge) at
+/// stations closer toward both edges, the leading edge, and the other side back. `None` when a
+/// station finds no side.
+fn by_chord(ring: &[Vec2], shape: &Aerofoil) -> Option<Vec<Vec2>> {
+    let side = POINTS / 2 - 1;
+    let along = (shape.leading - shape.trailing).normalized()?;
+    let up = Vec2::new(-along.y, along.x);
+    let stations: Vec<f64> = (1..=side).map(|j| 0.5 * (1.0 - (std::f64::consts::PI * j as f64 / (side + 1) as f64).cos())).collect();
+    let (mut most, mut least) = (vec![f64::NEG_INFINITY; side], vec![f64::INFINITY; side]);
+    let n = ring.len();
+    for i in 0..n {
+        let place = |p: Vec2| ((p - shape.trailing).dot(along) / shape.chord, (p - shape.trailing).dot(up));
+        let ((x0, v0), (x1, v1)) = (place(ring[i]), place(ring[(i + 1) % n]));
+        let (lo, hi) = (x0.min(x1), x0.max(x1));
+        for (j, &x) in stations.iter().enumerate().filter(|(_, x)| **x >= lo && **x <= hi) {
+            let v = if (x1 - x0).abs() > 1e-15 { v0 + (v1 - v0) * (x - x0) / (x1 - x0) } else { v0 };
+            most[j] = most[j].max(v);
+            least[j] = least[j].min(v);
+        }
+    }
+    if most.iter().chain(&least).any(|v| !v.is_finite()) {
+        return None;
+    }
+    let at = |x: f64, v: f64| shape.trailing + along * (x * shape.chord) + up * v;
+    let mut out = vec![shape.trailing];
+    out.extend(stations.iter().zip(&least).map(|(x, v)| at(*x, *v)));
+    out.push(shape.leading);
+    out.extend(stations.iter().zip(&most).rev().map(|(x, v)| at(*x, *v)));
+    Some(out)
 }
 
 #[cfg(test)]
@@ -201,6 +527,44 @@ mod tests {
         // Without end faces, along its longest direction, 1% in from each end.
         let free = read(&scan, &[], 3).unwrap();
         assert!(!free.capped && free.direction.z.abs() > 0.999, "{free:?}");
+    }
+
+    /// A NACA 2412 section of chord 80, turned 12° and moved off: read with that chord and twist,
+    /// 12 % thick at 30 % of its chord, cambered 2 %, and named. An ellipse 60 × 14.4 is read by
+    /// its chord and thickness and is no NACA section; a square is no wing's section at all.
+    #[test]
+    fn a_wings_section_is_read_by_its_chord_twist_and_thickness() {
+        let (chord, turn) = (80.0, 12f64.to_radians());
+        let half = |x: f64| 5.0 * 0.12 * (0.2969 * x.sqrt() - 0.1260 * x - 0.3516 * x * x + 0.2843 * x.powi(3) - 0.1015 * x.powi(4));
+        let line = |x: f64| if x < 0.4 { 0.02 / 0.16 * (0.8 * x - x * x) } else { 0.02 / 0.36 * (0.2 + 0.8 * x - x * x) };
+        // From the trailing edge forward along the top, then back along the bottom; x from the
+        // leading edge, the section's leading edge toward +x once turned half round.
+        let stations: Vec<f64> = (0..=200).map(|i| 0.5 * (1.0 - (std::f64::consts::PI * f64::from(i) / 200.0).cos())).collect();
+        let mut ring: Vec<Vec2> = stations.iter().rev().map(|&x| Vec2::new(-x, line(x) + half(x))).collect();
+        ring.extend(stations.iter().skip(1).take(199).map(|&x| Vec2::new(-x, line(x) - half(x))));
+        let placed: Vec<Vec2> = ring
+            .iter()
+            .rev()
+            .map(|q| {
+                let q = *q * chord;
+                Vec2::new(q.x * turn.cos() - q.y * turn.sin() + 7.0, q.x * turn.sin() + q.y * turn.cos() - 3.0)
+            })
+            .collect();
+        assert!(signed_area(&placed) > 0.0, "counter-clockwise");
+        let found = aerofoil(&placed, 0.05).expect("a wing's section");
+        assert!((found.chord - chord).abs() < 0.002 * chord, "{found:?}");
+        assert!((found.twist - turn).abs() < 0.1f64.to_radians(), "{} deg", found.twist.to_degrees());
+        assert!((found.thickness - 0.12 * chord).abs() < 0.05 && (found.thickest_at - 0.3).abs() < 0.03, "{found:?}");
+        assert!((found.camber - 0.02 * chord).abs() < 0.05 && found.leading.dist(Vec2::new(7.0, -3.0)) < 0.05, "{found:?}");
+        assert_eq!(found.naca, Some([2, 4, 12]), "{found:?}");
+        let ellipse: Vec<Vec2> = (0..360).map(|k| f64::from(k).to_radians()).map(|a| Vec2::new(30.0 * a.cos(), 7.2 * a.sin())).collect();
+        let found = aerofoil(&ellipse, 0.05).unwrap();
+        assert!((found.chord - 60.0).abs() < 0.01 && (found.thickness - 14.4).abs() < 0.01 && found.camber < 0.01, "{found:?}");
+        assert!(found.twist.abs() < 1e-3 && found.naca.is_none(), "{found:?}");
+        let square = [Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0), Vec2::new(0.0, 10.0)];
+        let fine: Vec<Vec2> =
+            (0..40).map(|k| square[k / 10] + (square[(k / 10 + 1) % 4] - square[k / 10]) * (f64::from((k % 10) as u8) / 10.0)).collect();
+        assert_eq!(aerofoil(&fine, 0.05), None);
     }
 
     #[test]

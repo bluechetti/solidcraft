@@ -180,6 +180,8 @@ pub struct ScanAlignModelResult {
     pub rms_before: f64,
     pub rms_after: f64,
     pub matched: f64,
+    /// The root mean square of the distances of the share that lies on the model (`matched`), mm.
+    pub rms_matched: f64,
     pub start: String,
     pub converged: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

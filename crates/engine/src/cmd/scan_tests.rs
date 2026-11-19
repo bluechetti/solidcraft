@@ -383,6 +383,31 @@ fn a_refused_symmetry_gives_its_plane_to_pass_back() {
     assert!(reply["mirror"]["coverage"].as_f64().unwrap() > 0.5, "{reply}");
 }
 
+/// A body 100 × 40 × 20 with a long box slung under one side of it: a mirror image about its
+/// middle with both sides there, though the box has none. Find Symmetry says how much of the scan
+/// that is; of a whole mirror image it says nothing more.
+#[test]
+fn find_symmetry_says_how_much_of_a_mirror_image_has_no_match() {
+    let mut triangles = fine_box(Vec3::ZERO, Vec3::new(100.0, 40.0, 20.0), 40);
+    triangles.extend(fine_box(Vec3::new(5.0, 2.0, -14.0), Vec3::new(70.0, 16.0, 0.0), 26));
+    let (mut s, _) = session_with_triangles("symmetry-partly", &triangles);
+    let reply = run(&mut s, "scan.symmetry", json!({"plane": {"point": [50, 20, 10], "normal": [0, 1, 0]}, "keep": false}));
+    let mirror = &reply["mirror"];
+    assert_eq!(mirror["symmetric"], true, "{reply}");
+    let coverage = mirror["coverage"].as_f64().unwrap();
+    assert!(coverage > 0.6 && coverage < 0.85, "{reply}");
+    let said = mirror["partly"].as_str().unwrap_or_else(|| panic!("nothing said: {reply}"));
+    assert!(said.starts_with(&format!("{:.0} % of the scan has no mirror image", 100.0 * (1.0 - coverage))), "{said}");
+    // Completed by mirroring, the box would get an image the thing has not: warned of, and no
+    // mirror image there.
+    let done = run(&mut s, "scan.complete_by_mirroring", json!({"plane": {"point": [50, 20, 10], "normal": [0, 1, 0]}}));
+    assert_eq!(done["mirror"]["symmetric"], false, "{done}");
+    assert!(done["warning"].as_str().is_some_and(|w| w.contains("matches its reflection")) && done["mirror"].get("partly").is_none(), "{done}");
+    let (mut s, _, _) = session_with_a_symmetric_scan("symmetry-whole");
+    let reply = run(&mut s, "scan.symmetry", json!({"keep": false}));
+    assert!(reply["mirror"]["symmetric"] == true && reply["mirror"].get("partly").is_none(), "{reply}");
+}
+
 /// A guide with no length, or with an end missing, is refused before anything is searched.
 #[test]
 fn a_guide_needs_two_ends_apart() {
@@ -543,6 +568,94 @@ fn scan_deviation_measures_the_scan_against_the_model() {
     assert!(err.contains("more than"), "{err}");
 }
 
+/// A plate's scan with a dent 1.5 deep over a round patch of radius 8, against the plate's solid:
+/// Deviation gives the volume worn off (π R² D / 2 for the dent's bowl) and the one region it is,
+/// below the model, deepest at its middle; nothing above. Neither the scan nor a closed pair of
+/// them is needed for it.
+#[test]
+fn scan_deviation_measures_the_volume_and_the_region_of_a_dent() {
+    let (radius, depth) = (8.0, 1.5);
+    let triangles: Vec<[Vec3; 3]> = fine_box(Vec3::ZERO, Vec3::new(40.0, 40.0, 10.0), 80)
+        .into_iter()
+        .map(|t| {
+            t.map(|p| {
+                let r = (p.x - 20.0).hypot(p.y - 20.0) / radius;
+                if (p.z - 10.0).abs() < 1e-9 && r < 1.0 { Vec3::new(p.x, p.y, p.z - depth * (1.0 - r * r)) } else { p }
+            })
+        })
+        .collect();
+    let (mut s, _) = session_with_triangles("dent", &triangles);
+    run(&mut s, "solid.box", json!({"body_name": "Plate", "operation": "new", "length": 40, "width": 40, "height": 10, "center": [20, 20, 5]}));
+    let reply = run(&mut s, "scan.deviation", json!({"tolerance": "0.05 mm", "limit": 2}));
+    let expected = std::f64::consts::PI * radius * radius * depth / 2.0;
+    let lost = reply["volume_below"].as_f64().unwrap();
+    assert!((lost - expected).abs() < 0.03 * expected, "{lost} against {expected}: {reply}");
+    assert!(reply["volume_above"].as_f64().unwrap() < 0.01 * expected && reply["area_above"].as_f64().unwrap() < 1.0, "{reply}");
+    assert_eq!((reply["regions_found"].as_u64(), reply["regions"].as_array().map(Vec::len)), (Some(1), Some(1)), "{reply}");
+    let dent = &reply["regions"][0];
+    assert_eq!(dent["side"], "below", "{reply}");
+    assert!((dent["deepest"].as_f64().unwrap() - depth).abs() < 1e-3 && (dent["volume"].as_f64().unwrap() - lost).abs() < 1e-9, "{reply}");
+    let at: Vec<f64> = dent["at"].as_array().unwrap().iter().filter_map(Value::as_f64).collect();
+    assert!((at[0] - 20.0).abs() < 1e-3 && (at[1] - 20.0).abs() < 1e-3 && (at[2] - 8.5).abs() < 1e-3, "{reply}");
+}
+
+/// A tool (a scanned block 28 × 18 × 8) in the pocket of its foam (a block 60 × 40 × 20 with a
+/// pocket 30 × 20 × 10 in its top): 1 mm clear all round and of the floor, it fits, and the least
+/// gap is that 1 mm, measured on the foam's exact faces. Sunk 3 mm lower it is 2 mm into the
+/// floor, and does not fit. Sunk 14 mm lower, most of it is far inside the foam, further from any
+/// face than Deviation measures: it still does not fit.
+#[test]
+fn scan_deviation_says_whether_a_scanned_thing_clears_a_solid() {
+    let reply_at = |bottom: f64| {
+        let tool = fine_box(Vec3::new(16.0, 11.0, bottom), Vec3::new(44.0, 29.0, bottom + 8.0), 24);
+        let (mut s, _) = session_with_triangles("clearance", &tool);
+        run(&mut s, "solid.box", json!({"body_name": "Foam", "operation": "new", "length": 60, "width": 40, "height": 20, "center": [30, 20, 10]}));
+        run(&mut s, "solid.box", json!({"length": 30, "width": 20, "height": 10, "center": [30, 20, 15], "operation": "cut", "targets": ["Foam"]}));
+        run(&mut s, "scan.deviation", json!({"body": "Foam", "tolerance": "0.1 mm", "limit": 2}))
+    };
+    let seated = reply_at(11.0);
+    let clear = &seated["clearance"];
+    assert_eq!(clear["fits"], true, "{seated}");
+    assert!((clear["gap"].as_f64().unwrap() - 1.0).abs() < 1e-6 && clear["inside"].as_f64() == Some(0.0), "{seated}");
+    assert!(clear.get("deepest").is_none(), "{seated}");
+    let pressed = reply_at(8.0);
+    let clear = &pressed["clearance"];
+    assert_eq!(clear["fits"], false, "{pressed}");
+    assert!((clear["deepest"].as_f64().unwrap() - 2.0).abs() < 1e-6 && clear["inside"].as_f64().unwrap() > 0.05, "{pressed}");
+    assert!((clear["deepest_at"][2].as_f64().unwrap() - 8.0).abs() < 1e-6, "{pressed}");
+    let buried = reply_at(-3.0);
+    assert_eq!(buried["clearance"]["fits"], false, "{buried}");
+    assert!(buried["clearance"]["deepest"].as_f64().unwrap() > 2.5, "{buried}");
+}
+
+/// A block 60 × 20 × 10 with a boss 20 × 30 on its middle, wider than the block: its outline seen
+/// from above (Section to Sketch with `outline`) is the plus of all it covers, one closed outline
+/// that a cut through the block alone would not draw, dimensioned, with no point of the scan
+/// outside it by more than the tolerance.
+#[test]
+fn section_sketch_draws_a_scans_whole_outline_seen_along_the_plane() {
+    let mut triangles = fine_box(Vec3::new(-30.0, -10.0, 0.0), Vec3::new(30.0, 10.0, 10.0), 24);
+    triangles.extend(fine_box(Vec3::new(-10.0, -15.0, 10.0), Vec3::new(10.0, 15.0, 16.0), 16));
+    let (mut s, _) = session_with_triangles("outline", &triangles);
+    let cut = run(&mut s, "scan.section_sketch", json!({"plane": "XY", "offset": "5 mm", "name": "Cut"}));
+    assert_eq!((cut["outlines"].as_u64(), cut["lines"].as_u64()), (Some(1), Some(4)), "a cut through the block is its rectangle: {cut}");
+    assert!(cut.get("outside").is_none(), "{cut}");
+    run(&mut s, "edit.undo", json!({}));
+    let outline = run(&mut s, "scan.section_sketch", json!({"plane": "XY", "outline": true}));
+    assert_eq!((outline["outlines"].as_u64(), outline["circles"].as_u64(), outline["dof"].as_u64()), (Some(1), Some(0), Some(0)), "{outline}");
+    let curves = outline["lines"].as_u64().unwrap() + outline["arcs"].as_u64().unwrap();
+    assert!((12..=20).contains(&curves), "the plus's twelve sides, a corner perhaps eased: {outline}");
+    let (outside, tolerance) = (outline["outside"].as_f64().unwrap(), outline["tolerance"].as_f64().unwrap());
+    assert!(outside <= tolerance, "{outline}");
+    // Extruded a millimetre, it holds the plus's area: the block's and the boss's overhang.
+    run(&mut s, "solid.extrude", json!({"sketch": outline["sketch"], "distance": 1, "operation": "new", "body_name": "Foot"}));
+    let area = s.model.state().body("Foot").and_then(|b| b.body.volume_at(0.01)).unwrap();
+    let plus = 60.0 * 20.0 + 2.0 * 20.0 * 5.0;
+    assert!((area - plus).abs() < 0.03 * plus, "{area} against {plus}");
+    let both = s.execute("scan.section_sketch", &json!({"outline": true, "axis": {"origin": [0, 0, 0], "dir": [0, 0, 1]}})).unwrap_err().to_string();
+    assert!(both.contains("ask for one"), "{both}");
+}
+
 /// The model as an STL (as a part's CAD often comes, T-LESS's among them): the scan is measured
 /// against the mesh as against the solid it was made from, and with no solid in the design the
 /// other mesh is the model; a scan is not measured against itself.
@@ -643,6 +756,29 @@ fn stand_on_base_cycles_and_stands_on_a_picked_face() {
     assert!(picked.get("base_index").is_none());
     let (lo, hi) = bounds(&s, &body);
     assert!(lo.z.abs() < STL && (hi.z - 80.0).abs() < STL, "on its end: {lo:?} {hi:?}");
+}
+
+/// A part brought in standing is left standing. A slab lying on a broad face, off the grid: the
+/// first press keeps that face down (its two broad faces tie, and it was turned over or laid on
+/// its side, the base after the one it stood on) and only puts it on the grid over the origin;
+/// the press after that goes on to the next base, as pressing again does.
+#[test]
+fn a_scan_already_standing_on_a_good_base_is_left_standing() {
+    let (mut s, body) = session_with_triangles("standing", &fine_box(Vec3::new(5.0, 3.0, 2.0), Vec3::new(85.0, 53.0, 12.0), 4));
+    let first = run(&mut s, "scan.stand_on_base", json!({}));
+    assert!(first["base"]["normal"][2].as_f64().is_some_and(|z| z < -0.999), "the face that was down: {first}");
+    let (lo, hi) = bounds(&s, &body);
+    assert!(lo.z.abs() < STL && (hi.z - 10.0).abs() < STL, "flat on the grid: {lo:?} {hi:?}");
+    assert!((lo.x + hi.x).abs() < 1e-3 && (lo.y + hi.y).abs() < 1e-3, "over the origin: {lo:?} {hi:?}");
+    let (index, count) = (first["base_index"].as_u64().unwrap(), first["base_count"].as_u64().unwrap());
+    // Standing where it should already, the same press changes nothing more...
+    let mut copy = s.scratch();
+    copy.scan_base_cycle = None;
+    let again = run(&mut copy, "scan.stand_on_base", json!({}));
+    assert_eq!((again["base_index"].as_u64(), again["moved"].as_bool()), (Some(index), Some(false)), "{again}");
+    // ...and pressed again here, it goes on to the next base.
+    let second = run(&mut s, "scan.stand_on_base", json!({}));
+    assert_eq!((second["base_index"].as_u64(), second["moved"].as_bool()), (Some((index + 1) % count), Some(true)), "{second}");
 }
 
 /// A face picked part way up the L block (the raised part's side at X = 40) lies flat on the grid
@@ -998,8 +1134,13 @@ fn remove_floating_takes_the_speck_off_where_the_scan_lies() {
     assert!(lo.z.abs() < STL && (hi.z - 10.0).abs() < STL && hi.x < 30.0 + STL, "the block, resting on the grid: {lo:?} {hi:?}");
     run(&mut s, "edit.undo", json!({}));
     assert!((bounds(&s, &body).1.x - 51.0).abs() < STL, "one undo brings the speck back");
-    let refused = s.execute("scan.remove_floating", &json!({"below": 0.0})).unwrap_err().to_string();
-    assert!(refused.contains("no piece floats"), "{refused}");
+    // Nothing to take off is no failure (a batch goes on): the scan and the timeline are as they
+    // were, and the reply says so and why.
+    let features = s.doc.features.len();
+    let nothing = run(&mut s, "scan.remove_floating", json!({"below": 0.0}));
+    assert_eq!((nothing["changed"].as_bool(), nothing["removed"].as_u64(), nothing["pieces"].as_u64()), (Some(false), Some(0), Some(2)), "{nothing}");
+    assert!(nothing["note"].as_str().is_some_and(|n| n.contains("no piece floats")) && nothing.get("feature").is_none(), "{nothing}");
+    assert_eq!(s.doc.features.len(), features, "no step is added");
 }
 
 /// A plate with a hole and a speck beside it: Clean Up takes the speck off and closes the hole,
@@ -1063,16 +1204,20 @@ fn fill_holes_closes_a_hole_in_a_plate() {
     assert_eq!(count(&s), 192 + reply["added_triangles"].as_u64().unwrap() as usize);
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(count(&s), 192, "one undo step");
-    let refused = s.execute("scan.fill_holes", &json!({"max_edges": 4})).unwrap_err().to_string();
-    assert!(refused.contains("the smallest has 8"), "{refused}");
+    // No hole within the limit is nothing to do, not a failure: the hole is counted as larger.
+    let nothing = run(&mut s, "scan.fill_holes", json!({"max_edges": 4}));
+    assert_eq!((nothing["changed"].as_bool(), nothing["filled"].as_u64(), nothing["larger"].as_u64()), (Some(false), Some(0), Some(1)), "{nothing}");
+    assert!(nothing["note"].as_str().is_some_and(|n| n.contains("the smallest has 8")) && nothing.get("feature").is_none(), "{nothing}");
+    assert_eq!(count(&s), 192, "the scan is as it was");
 
     let (mut closed, _) = session_with_triangles("fill-closed", &fine_box(Vec3::ZERO, Vec3::new(10.0, 10.0, 10.0), 4));
-    let refused = closed.execute("scan.fill_holes", &json!({})).unwrap_err().to_string();
-    assert!(refused.contains("it is closed"), "{refused}");
+    let nothing = run(&mut closed, "scan.fill_holes", json!({}));
+    assert_eq!((nothing["changed"].as_bool(), nothing["holes"].as_u64()), (Some(false), Some(0)), "{nothing}");
+    assert!(nothing["note"].as_str().is_some_and(|n| n.contains("it is closed")), "{nothing}");
 }
 
 /// A finely cut box reduced to a tenth keeps its shape, one undo step; asking for more than it has
-/// is refused.
+/// is nothing to do.
 #[test]
 fn reduce_keeps_a_fine_box_its_shape() {
     let (mut s, body) = session_with_triangles("reduce", &fine_box(Vec3::ZERO, Vec3::new(30.0, 20.0, 10.0), 12));
@@ -1083,8 +1228,14 @@ fn reduce_keeps_a_fine_box_its_shape() {
     assert!(lo.dist(Vec3::ZERO) < STL && hi.dist(Vec3::new(30.0, 20.0, 10.0)) < STL, "the box kept: {lo:?} {hi:?}");
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(s.model.state().body(&body).and_then(|b| b.body.triangle_mesh()).map(|(_, t)| t.len()), Some(1728), "one undo step");
-    let refused = s.execute("scan.reduce", &json!({"triangles": 5000})).unwrap_err().to_string();
-    assert!(refused.contains("already"), "{refused}");
+    // Asked for more triangles than it has: nothing to do, not a failure.
+    let nothing = run(&mut s, "scan.reduce", json!({"triangles": 5000}));
+    assert_eq!(
+        (nothing["changed"].as_bool(), nothing["collapses"].as_u64(), nothing["triangles"].as_u64()),
+        (Some(false), Some(0), Some(1728)),
+        "{nothing}"
+    );
+    assert!(nothing["note"].as_str().is_some_and(|n| n.contains("already")) && nothing.get("feature").is_none(), "{nothing}");
     let refused = s.execute("scan.reduce", &json!({"ratio": 0.5, "triangles": 10})).unwrap_err().to_string();
     assert!(refused.contains("not both"), "{refused}");
 }
@@ -1100,8 +1251,11 @@ fn repair_takes_a_copied_triangle_off() {
     let before = count(&s);
     let reply = run(&mut s, "scan.repair", json!({}));
     assert_eq!((reply["duplicates"].as_u64(), reply["triangles"].as_u64()), (Some(1), Some(before as u64 - 1)), "{reply}");
-    let refused = s.execute("scan.repair", &json!({})).unwrap_err().to_string();
-    assert!(refused.contains("needs no repair"), "{refused}");
+    // Repaired, it needs no repair: no failure, nothing changed, no undo step of its own.
+    let nothing = run(&mut s, "scan.repair", json!({}));
+    assert_eq!((nothing["changed"].as_bool(), nothing["triangles"].as_u64()), (Some(false), Some(before as u64 - 1)), "{nothing}");
+    assert!(nothing["note"].as_str().is_some_and(|n| n.contains("needs no repair")) && nothing.get("feature").is_none(), "{nothing}");
+    assert!(reply.get("changed").is_none() && reply.get("note").is_none(), "a repair that was done says neither: {reply}");
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(count(&s), before, "one undo step");
 }

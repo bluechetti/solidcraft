@@ -393,7 +393,7 @@ fn keep_curves(s: &mut Session, cut: &Cut, cmd: &str) -> Result<(Value, Vec<Stri
     if runs.is_empty() {
         return Err(bad(cmd, "the cut has no crossing to keep"));
     }
-    let made = run(s, "sketch.create", json!({"plane": "XY", "name": SKETCH_NAME}))?;
+    let made = super::new_sketch(s, json!({"plane": "XY", "name": SKETCH_NAME}))?;
     let sketch = made.get("sketch").cloned().ok_or_else(|| bad(cmd, "the sketch for the curves was not made"))?;
     run(s, "sketch.options", json!({"sketch": sketch, "sketch_3d": true}))?;
     let mut curves = Vec::new();

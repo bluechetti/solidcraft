@@ -26,8 +26,9 @@ use crate::params::{bad, bool_, str_};
 use crate::schema::scan_reconstruct::{
     ScanBuildResult, ScanChamferItParams, ScanChamferItResult, ScanChamfered, ScanCutItParams, ScanEdgeChamfer, ScanEdgeRound, ScanExtrudeItParams,
     ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams, ScanFindAllResult, ScanHole, ScanHoleForm, ScanHoleItParams,
-    ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat, ScanRestParams,
-    ScanRestResult, ScanRevolveItParams, ScanShapeFound, ScanShapeItParams, ScanShell, ScanShellItParams, ScanSpokes, ScanTurned,
+    ScanNestParams, ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat,
+    ScanRestParams, ScanRestResult, ScanRevolveItParams, ScanRotational, ScanShapeFound, ScanShapeItParams, ScanShell, ScanShellItParams, ScanSpokes,
+    ScanTurned,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -44,6 +45,10 @@ const REST_CONTRACT: TypedContract<ScanRestParams> = TypedContract::new();
 const PATTERN_IT_CONTRACT: TypedContract<ScanPatternItParams> = TypedContract::new();
 const FILLET_IT_CONTRACT: TypedContract<ScanFilletItParams> = TypedContract::new();
 const CHAMFER_IT_CONTRACT: TypedContract<ScanChamferItParams> = TypedContract::new();
+/// How far outside a prism's outline scan is still that prism's wall astray, as a share of the
+/// part's size: further out it is another part of the thing, and Nest does not allow for it.
+const NEST_ASTRAY: f64 = 0.01;
+const NEST_CONTRACT: TypedContract<ScanNestParams> = TypedContract::new();
 const SHELL_IT_CONTRACT: TypedContract<ScanShellItParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
@@ -78,12 +83,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("extrude")
         .contract(&EXTRUDE_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); prism?: index of scan.reconstruct's prisms (default 0); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the prism's profile sketched halfway along it off its walls exactly as fitted (lines and arcs from crossing to crossing, joins held tangent) and extruded symmetric to its depth; a drafted prism (its `draft` not 0) sketched at its low end and extruded tapered by its draft; one undo step → sketch, feature, solid, operation, lines, arcs, tangents, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); prism?: index of scan.reconstruct's prisms (default 0); into?: body to join (default: `<scan> Reconstructed`, made new when there is none); pattern?: bool (default true: a new prism whose outline repeats round its middle with lands on its tip circle, a gear, is the circle extruded, one gap cut through and the cut patterned, `count` in the reply; false: the whole outline in one sketch): the prism's profile sketched halfway along it off its walls exactly as fitted (lines and arcs from crossing to crossing, joins held tangent) and extruded symmetric to its depth; a drafted prism (its `draft` not 0) sketched at its low end and extruded tapered by its draft; one undo step → sketch, feature, solid, operation, lines, arcs, tangents, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
     CommandSpec::new("scan.revolve_it", "Revolve It", crate::checked!("scan.revolve_it", fitted_revolve_it))
         .icon("revolve")
         .contract(&REVOLVE_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the turned part's profile sketched on a plane through its axis, each face held to the axis (cylinders level, ends upright, rounds tangent), and revolved all the way round, one undo step → sketch, feature, solid, operation, lines, arcs, tangents, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); wall?: mm (one side of a skin, a profile open at both ends, `skin` in the reply: revolved as a surface and thickened this much away from the scanned side, not closed into a solid); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the turned part's profile sketched on a plane through its axis, each face held to the axis (cylinders level, ends upright, rounds tangent), and revolved all the way round, one undo step → sketch, feature, solid, operation, lines, arcs, tangents, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
     CommandSpec::new("scan.cut_it", "Cut It", crate::checked!("scan.cut_it", fitted_cut_it))
         .icon("hole")
         .contract(&CUT_IT_CONTRACT)
@@ -124,6 +129,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&SHELL_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
         .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to hollow (default: `<scan> Reconstructed`): the body hollowed to the thickness of the walls scan.reconstruct reads (its `shell`: planes in pairs facing apart, one behind the other, the same distance apart), the faces with no inner face behind them left open; run it after Extrude It and before Fillet It; one undo step → feature, solid, operation, depth (the thickness), fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.nest", "Nest", crate::checked!("scan.nest", nest))
+        .icon("extrude")
+        .contract(&NEST_CONTRACT)
+        .output(output_schema_for::<ScanBuildResult>)
+        .params("body?: mesh body; selected?: bool; prism?: index of scan.reconstruct's prisms (default 0; a prism with square walls: a drafted one is refused); clearance?: mm or a length expression such as a parameter's name (default 0.3 mm: the gap round the part and under it; the pocket follows it up to twice what it is built with, tight inside corners being cut square for that); allowance?: mm added to the clearance (default: measured, how far the scan stands proud of the fitted outline and of the end it sits on, so the least gap is the clearance; 0 for the clearance alone); margin?: mm of block round the part and under it (default 10); deep?: share of the part's depth the pocket holds (default 0.5): the prism's outline sketched (`Nest Pocket`), offset outward by the clearance as a sketch offset (so the pocket follows it), and cut into a block (`<scan> Nest`) drawn round it; one undo step → sketch, feature (the cut), solid, depth (of the pocket, less the clearance), allowance, lines, arcs"),
     CommandSpec::new("scan.chamfer_it", "Chamfer It", crate::checked!("scan.chamfer_it", fitted_chamfer_it))
         .icon("chamfer")
         .contract(&CHAMFER_IT_CONTRACT)
@@ -602,11 +612,36 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
     let reading = view.reading();
     let built = built_name(&found.scan);
     let built = s.model.state().body(&built).is_some().then_some(built);
+    // How each prism's outline repeats round its middle (a gear's teeth), read off its profile.
+    let repeating: Vec<Option<ScanRotational>> = {
+        let shown = super::shown_mesh(s, &found.scan);
+        reading
+            .prisms
+            .iter()
+            .map(|prism| {
+                let shown = shown.as_ref()?;
+                let scan = view.scan(shown.positions.as_slice(), shown.triangles.as_slice());
+                let (plane, outlines) = profile::prism_profile(&scan, view.outcome(), reading, prism).ok()?;
+                let found = profile::rotational(&profile::ring(outlines.first()?), view.outcome().tolerance)?;
+                // On the middle slice, where the profile was read (a drafted prism is sketched at its low end).
+                let on_plane = plane.origin + plane.x * found.centre.x + plane.y * found.centre.y;
+                let centre = on_plane + prism.direction * (prism.middle() - on_plane).dot(prism.direction);
+                Some(ScanRotational {
+                    order: found.order,
+                    centre: at(centre),
+                    tip_diameter: 2.0 * found.tip,
+                    root_diameter: 2.0 * found.root,
+                    module: 2.0 * found.tip / (found.order as f64 + 2.0),
+                })
+            })
+            .collect()
+    };
     let prisms: Vec<ScanPrism> = reading
         .prisms
         .iter()
+        .zip(repeating)
         .enumerate()
-        .map(|(index, prism)| ScanPrism {
+        .map(|(index, (prism, rotational))| ScanPrism {
             index,
             direction: at(prism.direction),
             middle: at(prism.middle()),
@@ -615,6 +650,7 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
             ends: prism.ends,
             open: prism.open,
             draft: prism.draft.to_degrees(),
+            rotational,
         })
         .collect();
     let holes: Vec<ScanHole> = reading
@@ -740,6 +776,17 @@ struct Drawn {
     lines: usize,
     arcs: usize,
     tangents: usize,
+    /// Corners held to their mirror images.
+    mirrored: usize,
+}
+
+impl Drawn {
+    fn add(&mut self, more: &Drawn) {
+        self.lines += more.lines;
+        self.arcs += more.arcs;
+        self.tangents += more.tangents;
+        self.mirrored += more.mirrored;
+    }
 }
 
 /// A piece's direction at its start (`at_end` false) or its end, along the outline.
@@ -761,11 +808,15 @@ type Level<'a> = dyn Fn(Option<usize>, Vec2, Vec2) -> Option<bool> + 'a;
 /// Outline `outline` drawn into the sketch: its corners shared by the pieces either side, each
 /// line a line and each arc an arc, smooth joins held tangent. `level` holds each line level (along
 /// the sketch's X) or upright, by its face and its two ends: for a turned profile.
-fn draw(sk: &mut Sketch, outline: &Outline, level: &Level<'_>, drawn: &mut Drawn) -> Result<()> {
+fn draw(sk: &mut Sketch, outline: &Outline, level: &Level<'_>, drawn: &mut Drawn, mirror: Option<f64>) -> Result<()> {
     let n = outline.corners.len();
     if n < 2 {
         return Ok(());
     }
+    // An outline that is its own mirror image (within `mirror`) is drawn so: a centre line, and
+    // each corner held to its image across it, so one size moves both sides.
+    let mirrors = mirror.map(|tolerance| profile::mirrored(outline, tolerance)).unwrap_or_default();
+    let mirror_tolerance = mirror.unwrap_or(0.0);
     // Corners that come together are one point, and the piece between them none.
     let mut ids: Vec<usize> = Vec::with_capacity(n);
     for k in 0..n {
@@ -845,6 +896,44 @@ fn draw(sk: &mut Sketch, outline: &Outline, level: &Level<'_>, drawn: &mut Drawn
             drawn.tangents += 1;
         }
     }
+    if !mirrors.is_empty() {
+        let (lo, hi) = outline.corners.iter().fold((outline.corners[0], outline.corners[0]), |(lo, hi), c| {
+            (Vec2::new(lo.x.min(c.x), lo.y.min(c.y)), Vec2::new(hi.x.max(c.x), hi.y.max(c.y)))
+        });
+        for mirror in mirrors {
+            let (from, to) = if mirror.across {
+                (Vec2::new(mirror.at, lo.y), Vec2::new(mirror.at, hi.y))
+            } else {
+                (Vec2::new(lo.x, mirror.at), Vec2::new(hi.x, mirror.at))
+            };
+            // The centre line brings no sizes of its own: its ends go as far as the outline's
+            // lowest and highest corners (or leftmost and rightmost), and it lies on the sketch's
+            // origin when the outline is centred there; else its place is one size.
+            let along = |c: Vec2| if mirror.across { c.y } else { c.x };
+            let least = (0..n).min_by(|&i, &j| along(outline.corners[i]).total_cmp(&along(outline.corners[j]))).unwrap_or(0);
+            let most = (0..n).max_by(|&i, &j| along(outline.corners[i]).total_cmp(&along(outline.corners[j]))).unwrap_or(0);
+            let (a, b) = (sk.add_point(from, None)?, sk.add_point(to, None)?);
+            let line = sk.add_line_pts(a, b, None)?;
+            if let Some(curve) = sk.curves.get_mut(line) {
+                curve.construction = true;
+            }
+            let level =
+                |p: usize, q: usize| if mirror.across { ConstraintKind::HorizontalPoints { p, q } } else { ConstraintKind::VerticalPoints { p, q } };
+            let in_line =
+                |p: usize, q: usize| if mirror.across { ConstraintKind::VerticalPoints { p, q } } else { ConstraintKind::HorizontalPoints { p, q } };
+            sk.add_constraint(if mirror.across { ConstraintKind::Vertical { l: line } } else { ConstraintKind::Horizontal { l: line } }, None)?;
+            sk.add_constraint(level(ids[least], a), None)?;
+            sk.add_constraint(level(ids[most], b), None)?;
+            if mirror.at.abs() <= mirror_tolerance {
+                sk.add_constraint(in_line(0, a), None)?;
+            }
+            for (a, b) in mirror.pairs {
+                if ids[a] != ids[b] && sk.add_constraint(ConstraintKind::Symmetric { p: ids[a], q: ids[b], l: line }, None).is_ok() {
+                    drawn.mirrored += 1;
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -893,17 +982,56 @@ fn sketch_outlines(
     round: f64,
     x_only: bool,
 ) -> Result<u64> {
+    // A prism's outline that is its own mirror image is first drawn held so (one size for both
+    // sides); as before when the sketch does not come out fully held that way. Alike within the
+    // scan's tolerance, of which `round` is the share sizes are read as designed within.
+    if !x_only {
+        let before = s.doc.clone();
+        let mut tried = Drawn::default();
+        let alike = round / solidcraft_scan::hole_form::SNAP_SHARE;
+        match sketch_outlines_as(s, plane, name, outlines, level, &mut tried, round, x_only, Some(alike)) {
+            Ok((id, finished)) if tried.mirrored > 0 && finished.dof == Some(0) && finished.warning.is_none() => {
+                drawn.add(&tried);
+                return Ok(id);
+            }
+            Ok((id, _)) if tried.mirrored == 0 => {
+                drawn.add(&tried);
+                return Ok(id);
+            }
+            _ => {
+                s.doc = before;
+                s.refresh();
+            }
+        }
+    }
+    sketch_outlines_as(s, plane, name, outlines, level, drawn, round, x_only, None).map(|(id, _)| id)
+}
+
+/// [`sketch_outlines`], with `mirror` (a tolerance) each outline that is its own mirror image
+/// held so; the sketch's id and how it was finished.
+#[allow(clippy::too_many_arguments)]
+fn sketch_outlines_as(
+    s: &mut Session,
+    plane: &Plane,
+    name: &str,
+    outlines: &[Outline],
+    level: &Level<'_>,
+    drawn: &mut Drawn,
+    round: f64,
+    x_only: bool,
+    mirror: Option<f64>,
+) -> Result<(u64, super::section::Finished)> {
     let (plane, outlines) = at_world_origin(plane, outlines, x_only);
     let (plane, outlines) = (&plane, outlines.as_slice());
     let create = json!({"plane": {"origin": at(plane.origin), "x_dir": at(plane.x), "y_dir": at(plane.y)}, "name": name});
-    let made = run(s, "sketch.create", create)?;
+    let made = super::new_sketch(s, create)?;
     let id = made.get("sketch").and_then(Value::as_u64).ok_or_else(|| EngineError::Other("the sketch was not made".into()))?;
     if s.model.state().sketch(id).is_none() {
         s.refresh();
     }
     let result = super::super::sketch_store::update(s, id, |_, _, sk| {
         for outline in outlines {
-            draw(sk, outline, level, drawn)?;
+            draw(sk, outline, level, drawn, mirror)?;
         }
         Ok(())
     });
@@ -912,8 +1040,8 @@ fn sketch_outlines(
         return Err(e);
     }
     // Dimensioned from its origin, as a profile drawn by hand is: its sizes are parameters.
-    super::section::finish_dimensioned(s, true, Some(round))?;
-    Ok(id)
+    let finished = super::section::finish_dimensioned(s, true, Some(round))?;
+    Ok((id, finished))
 }
 
 /// The profiles of sketch `id` that are material, when some are not: a profile inside a hole of
@@ -1064,11 +1192,11 @@ fn snap_to_body(s: &Session, solid: &str, plane: &Plane, outlines: &mut [Outline
             }
         }
         let read = (o.corners.clone(), o.pieces.clone());
-        for k in 0..n {
-            if let Piece::Arc { center, ccw } = o.pieces[k]
+        for (k, piece) in o.pieces.iter_mut().enumerate().take(n) {
+            if let Piece::Arc { center, ccw } = *piece
                 && let Some(by) = offset(k, &moved)
             {
-                o.pieces[k] = Piece::Arc { center: center + by, ccw };
+                *piece = Piece::Arc { center: center + by, ccw };
             }
         }
         for (k, to) in moved.iter().enumerate() {
@@ -1113,20 +1241,123 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
     // Sizes within a quarter of the scan's tolerance of a round size are read as designed, as
     // Hole It reads a hole's.
     let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
-    let sketch = sketch_outlines(s, &plane, &format!("Prism Profile {}", index + 1), &outlines, &|_, _, _| None, &mut drawn, round, false)?;
     let depth = solidcraft_scan::hole_form::snapped(prism.depth(), round);
-    let mut extrude = if prism.draft == 0.0 {
-        json!({"sketch": sketch, "distance": depth, "direction": "symmetric", "name": format!("Extrude It {}", index + 1)})
-    } else {
-        // Sketched at the low end, the walls leaning in (a positive draft) as it goes up.
-        json!({"sketch": sketch, "distance": depth, "direction": "positive", "taper": format!("{} deg", -drafted(prism.draft)),
-            "corner": "preserve_curvature", "name": format!("Extrude It {}", index + 1)})
+    let (draft, name) = (prism.draft, format!("Extrude It {}", index + 1));
+    // The outlines sketched and extruded.
+    let build = |s: &mut Session, outlines: &[Outline], drawn: &mut Drawn| -> Result<(u64, Value)> {
+        let sketch = sketch_outlines(s, &plane, &format!("Prism Profile {}", index + 1), outlines, &|_, _, _| None, drawn, round, false)?;
+        let mut extrude = if draft == 0.0 {
+            json!({"sketch": sketch, "distance": depth, "direction": "symmetric", "name": name})
+        } else {
+            // Sketched at the low end, the walls leaning in (a positive draft) as it goes up.
+            json!({"sketch": sketch, "distance": depth, "direction": "positive", "taper": format!("{} deg", -drafted(draft)),
+                "corner": "preserve_curvature", "name": name})
+        };
+        if let Some(material) = material_profiles(s, sketch) {
+            extrude["profiles"] = json!(material);
+        }
+        let feature = run(s, "solid.extrude", merged(extrude, operation.clone()))?;
+        Ok((sketch, feature))
     };
-    if let Some(material) = material_profiles(s, sketch) {
-        extrude["profiles"] = json!(material);
-    }
-    let extrude = merged(extrude, operation);
-    let feature = run(s, "solid.extrude", extrude)?;
+    // A prism whose outline repeats round its middle (a gear, a knob, a spline) is its tip circle
+    // extruded, the gap between two teeth cut through it and the cut patterned round, so that the
+    // count is a number in the design; as its whole outline when the kernel refuses any of that.
+    let repeat = (draft == 0.0 && how == "new" && bool_(p, "pattern").unwrap_or(true))
+        .then(|| outlines.first().and_then(|o| profile::repeated(o, view.outcome().tolerance, |r| solidcraft_scan::hole_form::snapped(r, round))))
+        .flatten();
+    let mut count = None;
+    let patterned = match repeat {
+        Some(repeat) => {
+            let before = s.doc.clone();
+            let mut tried = Drawn::default();
+            let made = (|| -> Result<(u64, Value)> {
+                let disc = Outline {
+                    corners: vec![repeat.centre + Vec2::X * repeat.tip, repeat.centre - Vec2::X * repeat.tip],
+                    pieces: vec![profile::Piece::Arc { center: repeat.centre, ccw: true }; 2],
+                    faces: vec![None; 2],
+                };
+                let whole: Vec<Outline> = std::iter::once(disc).chain(outlines.iter().skip(1).cloned()).collect();
+                let made = build(s, &whole, &mut tried)?;
+                let gap = sketch_outlines(
+                    s,
+                    &plane,
+                    &format!("Prism Profile {} Gap", index + 1),
+                    std::slice::from_ref(&repeat.gap),
+                    &|_, _, _| None,
+                    &mut tried,
+                    round,
+                    false,
+                )?;
+                let through = depth + 8.0 * view.outcome().tolerance;
+                let cut = run(
+                    s,
+                    "solid.extrude",
+                    json!({"sketch": gap, "distance": format!("{through} mm"), "direction": "symmetric", "operation": "cut", "targets": [solid], "name": format!("{name} Gap")}),
+                )?;
+                let cut =
+                    cut.get("name").and_then(Value::as_str).map(str::to_owned).ok_or_else(|| EngineError::Other("the gap was not cut".into()))?;
+                let middle = plane.origin + plane.x * repeat.centre.x + plane.y * repeat.centre.y;
+                run(
+                    s,
+                    "solid.pattern.circular",
+                    json!({"features": [cut], "axis": {"origin": at(middle), "dir": at(prism.direction)}, "count": repeat.order, "name": format!("{name} Pattern")}),
+                )?;
+                Ok(made)
+            })();
+            match made {
+                Ok(made) => {
+                    drawn = tried;
+                    count = Some(repeat.order);
+                    Some(made)
+                }
+                Err(_) => {
+                    s.doc = before;
+                    s.refresh();
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+    // A drafted prism's rounds that the scan shows as cylinders (one radius all the way up: the
+    // part was drafted, then filleted) are not sketched: tapered with the walls each would narrow
+    // to a cone as it rises. The corners are extruded sharp and rounded by a Fillet of that
+    // radius. A round the scan shows as a cone keeps its taper; so do all of them when the kernel
+    // refuses the fillets.
+    let sharp = (draft != 0.0)
+        .then(|| {
+            profile::sharpened(&outlines, |face| match reading.faces.get(face).map(|f| &f.shape) {
+                Some(Shape::Cylinder { radius, .. }) => Some(*radius),
+                _ => None,
+            })
+        })
+        .filter(|(_, corners)| !corners.is_empty());
+    let sharply = match sharp {
+        Some((sharpened, corners)) => {
+            let before = s.doc.clone();
+            let mut tried = Drawn::default();
+            let made = build(s, &sharpened, &mut tried).and_then(|made| {
+                round_corners(s, &solid, &plane, &corners, draft, depth, round, &format!("{name} Rounds"))?;
+                Ok(made)
+            });
+            match made {
+                Ok(made) => {
+                    drawn = tried;
+                    Some(made)
+                }
+                Err(_) => {
+                    s.doc = before;
+                    s.refresh();
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+    let (sketch, feature) = match patterned.or(sharply) {
+        Some(made) => made,
+        None => build(s, &outlines, &mut drawn)?,
+    };
     reply(ScanBuildResult {
         body: found.scan.clone(),
         sketch: Some(sketch),
@@ -1137,11 +1368,215 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         arcs: drawn.arcs,
         tangents: drawn.tangents,
         depth: Some(depth),
-        count: None,
+        count,
         openings: None,
+        skin: None,
+        allowance: None,
         fit: None,
         param_warnings: Vec::new(),
     })
+}
+
+/// Nest (`scan.nest`): see [`ScanNestParams`].
+pub(super) fn nest(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.nest";
+    let view = view(s, p, cmd, false)?;
+    let found = &view.found;
+    let reading = view.reading();
+    if reading.prisms.is_empty() {
+        return Err(bad(
+            cmd,
+            "Reconstruct reads no prism on the scan, and a nest is cut from a prism's outline: for another shape, section it (scan.section_sketch), offset the sketch and cut that from a block",
+        ));
+    }
+    let index = p.get("prism").and_then(Value::as_u64).map_or(0, |k| k as usize);
+    let prism = reading
+        .prisms
+        .get(index)
+        .ok_or_else(|| bad(cmd, format!("there are {} prisms: `prism` is 0 to {}", reading.prisms.len(), reading.prisms.len() - 1)))?;
+    if prism.draft != 0.0 {
+        return Err(bad(
+            cmd,
+            format!(
+                "prism {index} has drafted walls ({:.1} deg), and a nest's pocket is cut square: extrude its sketch tapered by hand",
+                drafted(prism.draft)
+            ),
+        ));
+    }
+    let clearance = match p.get("clearance").filter(|v| !v.is_null()) {
+        None => "0.3 mm".to_owned(),
+        Some(Value::String(text)) if !text.trim().is_empty() => text.trim().to_owned(),
+        Some(v) => match v.as_f64().filter(|c| c.is_finite() && *c > 0.0) {
+            Some(c) => format!("{c} mm"),
+            None => return Err(bad(cmd, "`clearance` is a length above 0, in mm or as an expression")),
+        },
+    };
+    let number = |key: &str, default: f64, most: f64| match p.get(key).filter(|v| !v.is_null()) {
+        None => Ok(default),
+        Some(v) => v
+            .as_f64()
+            .filter(|x| x.is_finite() && *x > 0.0 && *x <= most)
+            .ok_or_else(|| bad(cmd, format!("`{key}` is a number above 0, at most {most}"))),
+    };
+    let (margin, deep) = (number("margin", 10.0, 1.0e4)?, number("deep", 0.5, 1.0)?);
+    let (plane, outlines) = {
+        let shown = super::shown_mesh(s, &found.scan).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
+        let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
+        profile::prism_profile(&view.scan(positions, triangles), view.outcome(), reading, prism).map_err(|e| bad(cmd, e))?
+    };
+    // The pocket's outline is offset in its sketch, and an offset cannot be made once a piece of
+    // it has closed to nothing: the pieces that would by twice the clearance asked (short pieces at
+    // tight inside corners) are left out, their neighbours run on to meet, so the pocket follows
+    // the clearance up to twice what it is built with.
+    let asked = s.doc.eval(&clearance, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("clearance: {e}")))?;
+    if !(asked > 0.0) {
+        return Err(bad(cmd, "`clearance` is a length above 0, in mm or as an expression"));
+    }
+    // The scan does not lie on the prism everywhere: where it stands proud of the outline (a flank
+    // the fitted curve cuts inside of, a corner cut square just above) or of the end it sits on,
+    // the pocket would be that much tighter than the clearance, so the offset and the depth are
+    // the clearance and that allowance, measured here unless it is given. A larger offset closes more pieces, which may leave the scan prouder:
+    // settled in a few turns.
+    let given = match p.get("allowance").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => Some(
+            v.as_f64().filter(|a| a.is_finite() && *a >= 0.0 && *a <= 1.0e4).ok_or_else(|| bad(cmd, "`allowance` is a number of mm, 0 or more"))?,
+        ),
+    };
+    let base = outlines.first().ok_or_else(|| bad(cmd, "the prism has no outline"))?;
+    let half = 0.5 * prism.depth();
+    // The part sits on the prism's low end: below the plane's origin (halfway along) when the
+    // plane faces the way the prism runs.
+    let seat = if plane.normal().dot(prism.direction) > 0.0 { (-half, 1.0) } else { (half, -1.0) };
+    let reach = (NEST_ASTRAY * reading.size).max(4.0 * view.outcome().tolerance);
+    let mut allowance = given.unwrap_or(0.0);
+    let mut outline = profile::roomy(base, 2.0 * asked + allowance);
+    if given.is_none() {
+        let shown = super::shown_mesh(s, &found.scan).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
+        let scan = view.scan(shown.positions.as_slice(), shown.triangles.as_slice());
+        for _ in 0..4 {
+            // Up to the next thousandth of a millimetre: the number is in the design's expressions.
+            let proud = (profile::proud(&scan, &plane, &outline, -half, half, Some(seat), reach) * 1000.0).ceil() / 1000.0;
+            if proud <= allowance {
+                break;
+            }
+            allowance = proud;
+            outline = profile::roomy(base, 2.0 * asked + allowance);
+        }
+    }
+    let outline = &outline;
+    let offset = if allowance > 0.0 { format!("({clearance}) + {allowance} mm") } else { format!("({clearance})") };
+    let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
+    let depth = solidcraft_scan::hole_form::snapped(prism.depth(), round);
+    let held = deep * depth;
+    // Both sketches on the plane of the block's top: the profile's own plane (halfway along the
+    // prism) slid along the prism to where the pocket opens. The pocket goes down from there
+    // toward the prism's low end, and the clearance further.
+    let normal = plane.x.cross(plane.y).normalized().ok_or_else(|| EngineError::Other("the profile's plane has no normal".into()))?;
+    let top = Plane { origin: plane.origin + prism.direction * ((deep - 0.5) * depth), ..plane };
+    let down = if normal.dot(prism.direction) > 0.0 { "negative" } else { "positive" };
+    let ring = profile::ring(outline);
+    let (lo, hi) =
+        ring.iter().fold((ring[0], ring[0]), |(lo, hi), q| (Vec2::new(lo.x.min(q.x), lo.y.min(q.y)), Vec2::new(hi.x.max(q.x), hi.y.max(q.y))));
+    let solid = format!("{} Nest", found.scan);
+    if s.model.state().body(&solid).is_some() {
+        return Err(bad(cmd, format!("`{solid}` is in the design already: change its clearance, or remove it first")));
+    }
+    let mut drawn = Drawn::default();
+    // The block.
+    let wall = Vec2::new(margin, margin);
+    let (a, b) = (lo - wall, hi + wall);
+    let block = Outline { corners: vec![a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)], pieces: vec![Piece::Line; 4], faces: vec![None; 4] };
+    let (block_sketch, _) = sketch_outlines_as(s, &top, "Nest Block", &[block], &|_, _, _| None, &mut Drawn::default(), round, false, None)?;
+    run(
+        s,
+        "solid.extrude",
+        json!({"sketch": block_sketch, "distance": format!("{} mm", held + margin), "direction": down, "operation": "new", "body_name": solid, "name": "Nest Block"}),
+    )?;
+    // The pocket: the outline, and round it its offset by the clearance, kept as an offset.
+    let (sketch, _) = sketch_outlines_as(s, &top, "Nest Pocket", std::slice::from_ref(outline), &|_, _, _| None, &mut drawn, round, false, None)?;
+    let first = super::super::sketch_store::read(&s.doc, sketch)?
+        .curves
+        .iter()
+        .find(|c| !c.construction)
+        .map(|c| c.id.clone())
+        .ok_or_else(|| EngineError::Other("the pocket's outline was not drawn".into()))?;
+    // A point well outside the outline, in the sketch (which is measured from the world's origin).
+    let outside = {
+        let moved = at_world_origin(&top, std::slice::from_ref(outline), false).1;
+        let far = moved[0].corners.iter().fold(Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY), |m, c| Vec2::new(m.x.max(c.x), m.y.max(c.y)));
+        far + (hi - lo) + Vec2::new(10.0 * margin, 10.0 * margin)
+    };
+    run(s, "sketch.edit", json!({"sketch": sketch}))?;
+    if let Err(e) = run(s, "sketch.offset", json!({"curves": [first], "distance": offset, "side": [outside.x, outside.y], "chain": true})) {
+        run(s, "sketch.cancel", json!({}))?;
+        return Err(e);
+    }
+    run(s, "sketch.finish", json!({}))?;
+    let feature = run(
+        s,
+        "solid.extrude",
+        json!({"sketch": sketch, "distance": format!("{held} mm + {offset}"), "direction": down, "operation": "cut", "targets": [solid], "name": "Nest Pocket"}),
+    )?;
+    reply(ScanBuildResult {
+        body: found.scan.clone(),
+        sketch: Some(sketch),
+        feature,
+        solid,
+        operation: "new".into(),
+        lines: drawn.lines,
+        arcs: drawn.arcs,
+        tangents: drawn.tangents,
+        depth: Some(held),
+        count: None,
+        openings: None,
+        skin: None,
+        allowance: Some(allowance),
+        fit: None,
+        param_warnings: Vec::new(),
+    })
+}
+
+/// The sharp `corners` of a drafted prism just extruded (`depth` up from `plane`, its walls
+/// leaning in by `draft` radians) rounded on `solid`: one Fillet for each radius, read as designed
+/// within `round`, each corner's edge found halfway up, where the lean has moved it in.
+fn round_corners(
+    s: &mut Session,
+    solid: &str,
+    plane: &Plane,
+    corners: &[profile::SharpCorner],
+    draft: f64,
+    depth: f64,
+    round: f64,
+    name: &str,
+) -> Result<()> {
+    let up = plane.x.cross(plane.y).normalized().ok_or_else(|| EngineError::Other("the profile's plane has no normal".into()))?;
+    // Rounds whose radii the scan reads within a little of each other are one radius, as the
+    // rounds a profile holds are (`profile::SAME_ROUND`): their mean, read as designed.
+    let mut sorted: Vec<&profile::SharpCorner> = corners.iter().collect();
+    sorted.sort_by(|a, b| a.radius.total_cmp(&b.radius));
+    let mut groups: Vec<Vec<&profile::SharpCorner>> = Vec::new();
+    for corner in sorted {
+        match groups.last_mut() {
+            Some(group) if corner.radius <= group[0].radius * (1.0 + profile::SAME_ROUND) => group.push(corner),
+            _ => groups.push(vec![corner]),
+        }
+    }
+    let several = groups.len() > 1;
+    for (n, group) in groups.into_iter().enumerate() {
+        let mean = group.iter().map(|c| c.radius).sum::<f64>() / group.len() as f64;
+        let radius = solidcraft_scan::hole_form::snapped(mean, round);
+        let edges: Vec<[f64; 3]> = group
+            .iter()
+            .map(|corner| {
+                let halfway = corner.moved(0.5 * depth * draft.tan());
+                at(plane.origin + plane.x * halfway.x + plane.y * halfway.y + up * (0.5 * depth))
+            })
+            .collect();
+        let name = if several { format!("{name} {}", n + 1) } else { name.to_owned() };
+        run(s, "solid.fillet", json!({"edges": edges, "radius": format!("{radius} mm"), "body": solid, "tangent_chain": false, "name": name}))?;
+    }
+    Ok(())
 }
 
 pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1150,17 +1585,21 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
     let found = &view.found;
     let spokes = view.reading().spokes.as_ref().map(|sp| sp.count);
     let axis = view.reading().revolve.as_ref().map(|r| r.axis);
-    let (plane, outline, held, opening) = {
+    let (plane, outline, held, opening, closing) = {
         let shown = super::shown_mesh(s, &found.scan).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
         let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
         let scan = view.scan(positions, triangles);
-        let (plane, outline, held) = profile::turned_profile(&scan, view.outcome(), view.reading()).map_err(|e| bad(cmd, e))?;
+        let (plane, outline, held, closing) = profile::turned_profile_open(&scan, view.outcome(), view.reading()).map_err(|e| bad(cmd, e))?;
         // A wheel: one opening between its spokes, read off the scan seen along the axis.
         let opening = match (spokes, &axis) {
             (Some(count), Some(axis)) => Some(solidcraft_scan::wheel::opening(&scan, axis, count).ok_or(count)),
             _ => None,
         };
-        (plane, outline, held, opening)
+        (plane, outline, held, opening, closing)
+    };
+    let wall = match p.get("wall").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => Some(v.as_f64().filter(|w| w.is_finite() && *w > 0.0).ok_or_else(|| bad(cmd, "`wall` is a thickness in mm, above 0"))?),
     };
     let (operation, solid, how) = into_params(s, &found.scan, p, cmd)?;
     // A cylinder's piece runs level along the axis, an end's upright, the axis's own along it. A
@@ -1175,8 +1614,42 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
     let mut drawn = Drawn::default();
     let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
     let sketch = sketch_outlines(s, &plane, "Turned Profile", std::slice::from_ref(&outline), &level, &mut drawn, round, true)?;
-    let revolve = merged(json!({"sketch": sketch, "axis": "x", "name": "Revolve It"}), operation);
-    let feature = run(s, "solid.revolve", revolve)?;
+    // One side of a skin, its thickness given: the profile without the line that closes it,
+    // revolved as a surface and thickened away from the scanned side. Of the two ways to thicken,
+    // that is the one whose body is the smaller across (the scanned side is the outside of the
+    // closed profile: thickened that way the body grows past it). The solid when any of it fails.
+    let ends = closing.map(|k| {
+        let moved = at_world_origin(&plane, std::slice::from_ref(&outline), true).1;
+        let corners = &moved[0].corners;
+        [corners[k], corners[(k + 1) % corners.len()]]
+    });
+    let skinned = match (wall, ends) {
+        (Some(wall), Some(ends)) => {
+            let before = s.doc.clone();
+            let built = skin(s, sketch, ends, wall, &solid, &operation);
+            if built.is_err() {
+                s.doc = before;
+                s.refresh();
+            }
+            Some(built)
+        }
+        _ => None,
+    };
+    let (feature, skin) = match skinned {
+        Some(Ok(feature)) => {
+            (feature, Some(format!("one side of a skin: revolved as a surface and thickened {} mm away from the scanned side", wall.unwrap_or(0.0))))
+        }
+        other => {
+            let revolve = merged(json!({"sketch": sketch, "axis": "x", "name": "Revolve It"}), operation);
+            let feature = run(s, "solid.revolve", revolve)?;
+            let skin = match (other, closing) {
+                (Some(Err(e)), _) => Some(format!("one side of a skin, but it could not be thickened ({e}): closed straight across into a solid")),
+                (_, Some(_)) => Some("one side of a skin: closed straight across what the scan never saw into a solid; `wall` (its thickness in mm) builds it as a thickened surface".to_owned()),
+                _ => None,
+            };
+            (feature, skin)
+        }
+    };
     let (count, openings) = match (opening, axis) {
         (Some(Ok(opening)), Some(axis)) => match cut_openings(s, &opening, &axis, spokes.unwrap_or(opening.alike), &solid) {
             Ok(n) => (Some(n), Some(format!("{n} openings between the spokes cut through it and patterned round the axis"))),
@@ -1199,9 +1672,58 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
         depth: None,
         count,
         openings,
+        skin,
+        allowance: None,
         fit: None,
         param_warnings: Vec::new(),
     })
+}
+
+/// The turned profile in `sketch` without its closing line (the line whose ends are `ends`, in the
+/// sketch), revolved as a surface about the sketch's X and thickened by `wall` into `solid`, on
+/// the side that leaves the body smaller across. The thickened feature's reply.
+fn skin(s: &mut Session, sketch: u64, ends: [Vec2; 2], wall: f64, solid: &str, operation: &Value) -> Result<Value> {
+    let cmd = "scan.revolve_it";
+    let curves: Vec<String> = {
+        let drawn = super::super::sketch_store::read(&s.doc, sketch)?;
+        let off = |c: &solidcraft_sketch::Curve| match c.kind {
+            solidcraft_sketch::CurveKind::Line { a, b } => match (drawn.point(a), drawn.point(b)) {
+                (Some(p), Some(q)) => (p.dist(ends[0]) + q.dist(ends[1])).min(p.dist(ends[1]) + q.dist(ends[0])),
+                _ => f64::INFINITY,
+            },
+            _ => f64::INFINITY,
+        };
+        let live: Vec<&solidcraft_sketch::Curve> = drawn.curves.iter().filter(|c| !c.construction).collect();
+        let closing = live.iter().copied().min_by(|a, b| off(a).total_cmp(&off(b))).filter(|c| off(c) <= 0.02 * ends[0].dist(ends[1]).max(1.0));
+        let closing = closing.ok_or_else(|| bad(cmd, "the line closing the profile is not in its sketch"))?;
+        live.iter().filter(|c| c.id != closing.id).map(|c| c.id.clone()).collect()
+    };
+    let sheet = format!("{solid} Skin");
+    let across = |s: &mut Session, thickness: f64| -> Result<(f64, Value)> {
+        run(s, "surface.revolve", json!({"sketch": sketch, "curves": curves, "axis": "x", "name": "Revolve It", "body_name": sheet}))?;
+        let made = run(
+            s,
+            "surface.thicken",
+            merged(json!({"bodies": [sheet], "thickness": format!("{thickness} mm"), "name": "Revolve It Wall"}), operation.clone()),
+        )?;
+        let state = s.model.state();
+        let body = state.body(solid).ok_or_else(|| bad(cmd, "the skin was not thickened into a body"))?;
+        let bbox = solidcraft_kernel::measure(&body.body).map_err(|e| EngineError::Other(e.to_string()))?.bbox;
+        Ok(((bbox.max - bbox.min).len(), made))
+    };
+    let before = s.doc.clone();
+    let (one, made) = across(s, wall)?;
+    let kept = s.doc.clone();
+    s.doc = before;
+    s.refresh();
+    match across(s, -wall) {
+        Ok((other, made)) if other < one => Ok(made),
+        _ => {
+            s.doc = kept;
+            s.refresh();
+            Ok(made)
+        }
+    }
 }
 
 /// One opening between a wheel's spokes cut through `solid`: its outline fitted with lines and
@@ -1221,7 +1743,7 @@ fn cut_openings(
         solidcraft_scan::chain::chain(&opening.outline, true, tolerance).ok_or_else(|| bad(cmd, "the opening's outline could not be fitted"))?;
     let origin = axis.point + axis.direction * opening.front;
     let made =
-        run(s, "sketch.create", json!({"plane": {"origin": at(origin), "x_dir": at(opening.x), "y_dir": at(opening.y)}, "name": "Spoke Opening"}))?;
+        super::new_sketch(s, json!({"plane": {"origin": at(origin), "x_dir": at(opening.x), "y_dir": at(opening.y)}, "name": "Spoke Opening"}))?;
     let sketch = made.get("sketch").and_then(Value::as_u64).ok_or_else(|| EngineError::Other("the sketch was not made".into()))?;
     if s.model.state().sketch(sketch).is_none() {
         s.refresh();
@@ -1270,7 +1792,9 @@ pub(super) fn shell_it(s: &mut Session, p: &Value) -> Result<Value> {
         .ok_or_else(|| bad(cmd, "Reconstruct reads no walls of one thickness open at an end: the part is solid, or its inside is not scanned"))?;
     let solid = built_body(s, &found.scan, p, cmd)?;
     let faces: Vec<[f64; 3]> = shell.points.iter().map(|q| at(*q)).collect();
-    let made = run(s, "solid.shell", json!({"faces": faces, "thickness": format!("{} mm", shell.thickness), "body": solid, "name": "Shell It"}))
+    // Read as designed, as Extrude It reads its depth: 2 mm, not the 2.000021 the scan measures.
+    let thickness = solidcraft_scan::hole_form::snapped(shell.thickness, solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance);
+    let made = run(s, "solid.shell", json!({"faces": faces, "thickness": format!("{thickness} mm"), "body": solid, "name": "Shell It"}))
         .map_err(|e| super::refusal::refused(cmd, "the kernel could not hollow the body to the scan's walls", &e.to_string()))?;
     reply(ScanBuildResult {
         body: found.scan.clone(),
@@ -1281,9 +1805,11 @@ pub(super) fn shell_it(s: &mut Session, p: &Value) -> Result<Value> {
         lines: 0,
         arcs: 0,
         tangents: 0,
-        depth: Some(shell.thickness),
+        depth: Some(thickness),
         count: None,
         openings: None,
+        skin: None,
+        allowance: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1474,6 +2000,8 @@ pub(super) fn hole_it(s: &mut Session, p: &Value) -> Result<Value> {
         depth: Some(form.depth.unwrap_or_else(|| form.mouth.dist(form.bottom))),
         count: None,
         openings: None,
+        skin: None,
+        allowance: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1541,6 +2069,8 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
         depth: Some(depth),
         count: None,
         openings: None,
+        skin: None,
+        allowance: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1578,6 +2108,8 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
             depth: None,
             count: Some(count),
             openings: None,
+            skin: None,
+            allowance: None,
             fit: None,
             param_warnings: Vec::new(),
         });
@@ -1611,6 +2143,8 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
         depth: None,
         count: Some(count),
         openings: None,
+        skin: None,
+        allowance: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1651,10 +2185,25 @@ pub(super) fn fillet_it(s: &mut Session, p: &Value) -> Result<Value> {
     let view = view(s, p, cmd, false)?;
     let found = &view.found;
     let rounds = view.reading().fillets.clone();
-    if rounds.is_empty() {
-        return Err(bad(cmd, "Reconstruct reads no round along an edge that its other steps leave sharp"));
-    }
     let solid = built_body(s, &found.scan, p, cmd)?;
+    // Nothing to fillet is no failure: the body stays as it is, and the steps after this one in a
+    // batch still run.
+    let nothing = |solid: String, set_aside: usize, note: String| {
+        reply(ScanFilletItResult {
+            body: found.scan.clone(),
+            solid,
+            fillets: Vec::new(),
+            set_aside,
+            features: Vec::new(),
+            changed: Some(false),
+            note: Some(note),
+            fit: None,
+            param_warnings: Vec::new(),
+        })
+    };
+    if rounds.is_empty() {
+        return nothing(solid, 0, "Reconstruct reads no round along an edge that its other steps leave sharp".into());
+    }
     // The body's edges as Fillet from Scan reads them, for their tangent chains.
     let surface = {
         let state = s.model.state();
@@ -1679,10 +2228,8 @@ pub(super) fn fillet_it(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     if chains.is_empty() {
-        return Err(bad(
-            cmd,
-            format!("none of the {} rounds Reconstruct reads fits the scan better than a sharp edge of `{solid}` there", rounds.len()),
-        ));
+        let note = format!("none of the {} rounds Reconstruct reads fits the scan better than a sharp edge of `{solid}` there", rounds.len());
+        return nothing(solid, rounds.len(), note);
     }
     // The radius measured most often along each chain (the smaller of a tie), and the chains by it.
     let key = |r: f64| (r * 1e6).round() as i64;
@@ -1742,6 +2289,8 @@ pub(super) fn fillet_it(s: &mut Session, p: &Value) -> Result<Value> {
         fillets,
         set_aside: set_aside + refused,
         features,
+        changed: None,
+        note: None,
         fit: None,
         param_warnings: Vec::new(),
     })

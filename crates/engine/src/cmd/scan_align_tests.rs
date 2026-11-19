@@ -219,5 +219,32 @@ fn a_scan_is_laid_onto_its_model() {
     assert!(r["moved"] == true && r["rms_after"].as_f64().unwrap() < 0.01, "{r}");
     assert!(worst_off(&s, &scan, &p) < 0.05);
     let e = s.execute("scan.align_to_model", &json!({"body": scan, "model": scan})).unwrap_err().to_string();
-    assert!(e.contains("is a scan"), "{e}");
+    assert!(e.contains("is the scan to move"), "{e}");
+}
+
+/// The model may be a mesh when it is the CAD saved as one (its corners on faces drawn exactly
+/// flat): a customer's STL is laid onto as a solid is. A real scan (noise on every point) named as
+/// the model is still refused, with Align to Scan named.
+#[test]
+fn a_scan_is_laid_onto_a_model_that_came_as_a_mesh() {
+    let (_, _, p, t) = part();
+    let mut s = Session::default();
+    let cad = insert(&mut s, &p, &t, "cad");
+    // The scan: the part seen from one side, turned and moved off, a little noise on each point.
+    let axis = Vec3::new(0.1, -0.3, 0.95).normalized().unwrap();
+    let noisy: Vec<Vec3> = turned(&p, axis, 0.6, Vec3::new(8.0, -5.0, 3.0))
+        .iter()
+        .enumerate()
+        .map(|(i, q)| {
+            let wave = |k: f64| 0.004 * (k * i as f64).sin();
+            *q + Vec3::new(wave(12.9898), wave(78.233), wave(37.719))
+        })
+        .collect();
+    let scan = insert(&mut s, &noisy, &seen(&p, &t, Vec3::new(0.2, -0.3, 0.9)), "scan");
+    let r = run(&mut s, "scan.align_to_model", json!({"body": scan, "model": cad}));
+    assert_eq!(r["model"], cad.as_str());
+    assert!(r["moved"] == true && r["rms_after"].as_f64().unwrap() < 0.02, "{r}");
+    assert!(worst_off(&s, &scan, &p) < 0.1, "{}", worst_off(&s, &scan, &p));
+    let e = s.execute("scan.align_to_model", &json!({"body": cad, "model": scan})).unwrap_err().to_string();
+    assert!(e.contains("is a scan") && e.contains("Align to Scan"), "{e}");
 }
