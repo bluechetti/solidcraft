@@ -69,6 +69,30 @@ fn scanned(s: &Session, body: &str, levels: u32, tag: &str) -> (Session, String)
     (scan, name)
 }
 
+/// The solid `body` of `s` as a scanner would give it: triangles about half a millimetre each
+/// way, every point moved along the surface's normal by noise of standard deviation `sigma` (the
+/// testkit's seeded degrader), inserted as the only body of a new design.
+fn scanned_with_noise(s: &Session, body: &str, sigma: f64, tag: &str) -> (Session, String) {
+    use solidcraft_testkit::scan_degrade::{Degrade, Scan, degraded};
+    let mesh = {
+        let state = s.model.state();
+        let b = state.body(body).unwrap_or_else(|| panic!("no {body}"));
+        b.body.mesh(&solidcraft_kernel::MeshTolerance { chord: 0.002, angle: None }).unwrap()
+    };
+    let clean = Scan { points: mesh.positions.iter().map(|p| [p.x, p.y, p.z]).collect(), triangles: mesh.triangles.clone() };
+    let scan = degraded(&clean, &Degrade { seed: 20_261_118, edge: 0.5, sigma, ..Degrade::default() });
+    let dir = std::env::temp_dir().join(format!("solidcraft-reconstruct-noise-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("part.stl");
+    std::fs::write(&path, scan.stl()).unwrap();
+    let mut out = Session::default();
+    run(&mut out, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    let _ = std::fs::remove_dir_all(&dir);
+    let name = out.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
+    (out, name)
+}
+
 fn volume(s: &Session, body: &str) -> f64 {
     s.model.state().body(body).and_then(|b| b.body.volume_at(0.01)).unwrap_or_else(|| panic!("no volume for {body}"))
 }
@@ -373,6 +397,30 @@ fn chamfers_across_a_prism_are_chamfered_back_from_its_scan() {
     assert!((distances[0] - 2.0).abs() < 0.1, "{chamfered}");
     let v = volume(&s, &solid);
     assert!(v < sharp && (v - expected).abs() < 0.01 * expected, "{v} against {expected} (sharp {sharp})");
+}
+
+/// The same chamfered block scanned with 0.02 mm of noise: each of the four chamfers reads a few
+/// microns off 2 (2.007, 2.000, 2.005, 2.004), and they are still one Chamfer of the distance as
+/// designed, 2, all four edges built. Grouped to the micron they were four Chamfers of an edge
+/// each, and the kernel refused two of them once the edges they end on were cut.
+#[test]
+fn a_noisy_scans_chamfers_that_read_alike_are_one_chamfer_as_designed() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 80, "width": 60, "height": 20}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.chamfer", json!({"edges": [[40, 0, 20], [80, 30, 20], [40, 60, 20], [0, 30, 20]], "distance": 2, "tangent_chain": false}));
+    let expected = volume(&part, &body);
+    let (mut s, scan) = scanned_with_noise(&part, &body, 0.02, "chamfered");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let cuts = read["chamfers"].as_array().unwrap();
+    assert_eq!(cuts.len(), 4, "{read}");
+    assert!(cuts.iter().any(|c| c["distance"].as_f64().unwrap() != 2.0), "the noise shows in what is read: {read}");
+    run(&mut s, "scan.extrude_it", read["proposals"][0]["params"].clone());
+    let chamfered = run(&mut s, "scan.chamfer_it", json!({}));
+    assert_eq!(chamfered["set_aside"], 0, "{chamfered}");
+    assert_eq!(chamfered["chamfers"], json!([{"distance": 2.0, "edges": 4}]), "{chamfered}");
+    let v = volume(&s, &format!("{scan} Reconstructed"));
+    assert!((v - expected).abs() < 0.002 * expected, "{v} against {expected}");
 }
 
 /// A block 60 × 40 × 10 with a turned boss on top, R 8 for 10 and coned in to R 5 over 3 more:

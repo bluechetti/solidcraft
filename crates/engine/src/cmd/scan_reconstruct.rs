@@ -1763,12 +1763,21 @@ pub(super) fn chamfer_it(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "Reconstruct reads no chamfer along an edge that its other steps leave sharp"));
     }
     let solid = built_body(s, &found.scan, p, cmd)?;
-    // The distance read most often is not needed: each chamfer's own, grouped to the micron so a
-    // row of the same chamfer is one Chamfer.
-    let key = |d: f64| (d * 1e3).round() as i64;
-    let mut by_distance: std::collections::BTreeMap<i64, (f64, Vec<[f64; 3]>)> = std::collections::BTreeMap::new();
-    for c in &chamfers {
-        by_distance.entry(key(c.distance)).or_insert((c.distance, Vec::new())).1.push(at(c.edge));
+    // Chamfers that read alike are one Chamfer of one distance, as drawn: each distance is taken
+    // as designed (the roundest of a whole, a half and a tenth of a millimetre within a quarter
+    // of the scan's tolerance, as a hole's sizes are), and those still within that reach of each
+    // other share the least of them. Read to the micron instead, a scan's noise made every edge
+    // of one chamfer its own feature, and the kernel refuses an edge once the edges it ends on
+    // are cut.
+    let reach = solidcraft_scan::hole_form::SNAP_SHARE * found.outcome.tolerance;
+    let mut read: Vec<(f64, [f64; 3])> = chamfers.iter().map(|c| (solidcraft_scan::hole_form::snapped(c.distance, reach), at(c.edge))).collect();
+    read.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut groups: Vec<(f64, Vec<[f64; 3]>)> = Vec::new();
+    for (distance, edge) in read {
+        match groups.last_mut() {
+            Some((kept, edges)) if distance - *kept <= reach => edges.push(edge),
+            _ => groups.push((distance, vec![edge])),
+        }
     }
     let run_chamfer = super::super::find_command("solid.chamfer").ok_or_else(|| EngineError::UnknownCommand("solid.chamfer".into()))?;
     let chamfer = |s: &mut Session, distance: f64, edges: &[[f64; 3]]| -> Result<Value> {
@@ -1781,7 +1790,7 @@ pub(super) fn chamfer_it(s: &mut Session, p: &Value) -> Result<Value> {
         made
     };
     let (mut done, mut features, mut refused, mut first_refusal) = (Vec::new(), Vec::new(), 0, None);
-    for (distance, edges) in by_distance.into_values() {
+    for (distance, edges) in groups {
         // All the edges of one distance as one Chamfer; if the kernel refuses that, each alone.
         let tries: Vec<Vec<[f64; 3]>> = match chamfer(s, distance, &edges) {
             Ok(made) => {
