@@ -548,7 +548,13 @@ pub(crate) fn legend(app: &SolveApp) -> Option<(String, Vec<(egui::Color32, Stri
         "ui.scan_deviation_summary",
         &[("rms", &crate::prefs::show_mm(app, map.rms, 1)), ("within", &format!("{:.0} %", 100.0 * map.within)), ("tolerance", &tol)],
     );
-    let summary = format!("{summary} · {}", crate::scan_fidelity::verdict(map.within));
+    // Passing takes both ways (the model on the scan too): a map that fails though enough of the
+    // scan is within says why in the command's own words.
+    let verdict = match &map.why_not {
+        Some(why) if map.within >= solidcraft_engine::cmd::scan::PASS_SHARE => why.clone(),
+        _ => crate::scan_fidelity::verdict(map.within),
+    };
+    let summary = format!("{summary} · {verdict}");
     Some((summary, crate::scan_fidelity::key_rows(app, map.tolerance, map.limit)))
 }
 

@@ -1028,6 +1028,8 @@ pub struct DeviationMap {
     pub limit: f64,
     pub rms: f64,
     pub within: f64,
+    /// Why the scan and the model do not agree both ways, in words; `None` when they do.
+    pub why_not: Option<String>,
     /// The colour steps each side of within, 0 for a smooth scale.
     pub bands: u32,
     /// Whether the limit was read from the scan (`auto_limit`), so a new measurement reads it again.
@@ -1051,10 +1053,9 @@ pub const STRAY_SHARE: f64 = 0.001;
 const FINE_CHORD: f64 = 0.001;
 
 impl DeviationMap {
-    /// Whether the fit passes: at least [`PASS_SHARE`] of the measured points are within the
-    /// tolerance.
+    /// Whether the fit passes, both ways: the scan on the model and the model on the scan.
     pub fn passes(&self) -> bool {
-        self.within >= PASS_SHARE
+        self.why_not.is_none()
     }
 
     /// Whether it still stands for the design: nothing has changed since it was measured.
@@ -1284,6 +1285,7 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         limit,
         rms: d.rms,
         within: d.within,
+        why_not: why_not.clone(),
         bands,
         auto_limit,
         max_above: max_above_at,

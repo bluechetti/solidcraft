@@ -13,7 +13,7 @@ model built the same way but with its corners left sharp.
 
 **Scan Deviation** colours the scan by how far it is from the model: green within the scan
 tolerance, warm colours above the model and cool ones below. The corner key says the bands, how
-much of the scan is within the tolerance, and whether it passes (95 % within). The most above and
+much of the scan is within the tolerance, and whether it passes: 95 % within both ways (the scan on the model and the model on the scan), and nothing but a stray speck farther apart than the limit, so a hole or a boss missing or made up fails it. The most above and
 most below are labelled, and the reading under the pointer follows it. Press it again to take the
 colours away. The map follows the model when it changes.
 
