@@ -112,6 +112,8 @@ const MANY: usize = 8_000;
 const FEATURE_POINTS: usize = 4_000;
 /// The most vertices the last pass and the matched share are read at.
 const VERTEX_LIMIT: usize = 200_000;
+/// The most of the scan's vertices the fit is taken to its end on ([`polish`]).
+const POLISH_POINTS: usize = 40_000;
 /// How many widths of the surfaces' roughness two surfaces of one part may lie apart.
 const ROUGHNESS_REACH: f64 = 5.0;
 /// Two placements are two when one turns more than this from the other (5°), or moves the scan's
@@ -392,6 +394,90 @@ struct Refined {
     converged: bool,
 }
 
+/// One point-to-plane step for `kept`: the move that takes the pairs' points nearest their
+/// targets along the pairs' normals (by their weights), how far it moves (a slide plus a turn at
+/// the pairs' spread), and the pairs' weighted rms before it. Directions the pairs do not pin (a
+/// plane slides along itself) are not moved. `None` for pairs that pin nothing.
+fn step(kept: &[Pair], reach: f64) -> Option<(Rigid, f64, f64)> {
+    let centroid = kept.iter().fold(Vec3::ZERO, |s, p| s + p.point) / kept.len() as f64;
+    let scale = (kept.iter().map(|p| (p.point - centroid).len2()).sum::<f64>() / kept.len() as f64).sqrt().max(1e-9 * reach);
+    let (mut h, mut g, mut sum) = ([[0.0f64; 6]; 6], [0.0f64; 6], 0.0);
+    for p in kept {
+        let c = (p.point - centroid).cross(p.normal) / scale;
+        let row = [c.x, c.y, c.z, p.normal.x, p.normal.y, p.normal.z];
+        let residual = (p.point - p.target).dot(p.normal);
+        sum += p.weight * residual * residual;
+        for i in 0..6 {
+            g[i] -= p.weight * row[i] * residual;
+            for j in 0..6 {
+                h[i][j] += p.weight * row[i] * row[j];
+            }
+        }
+    }
+    let (values, vectors) = eigen6(h);
+    let largest = values.iter().copied().fold(0.0, f64::max);
+    if !(largest > 0.0) {
+        return None;
+    }
+    let mut x = [0.0; 6];
+    for k in 0..6 {
+        if !(values[k] > 1e-4 * largest) {
+            continue;
+        }
+        let along = (0..6).map(|i| vectors[i][k] * g[i]).sum::<f64>() / values[k];
+        for (i, xi) in x.iter_mut().enumerate() {
+            *xi += vectors[i][k] * along;
+        }
+    }
+    let turn = Vec3::new(x[0], x[1], x[2]) / scale;
+    let slide = Vec3::new(x[3], x[4], x[5]);
+    let angle = turn.len();
+    let rotation = match turn.normalized() {
+        Some(axis) if angle > 1e-15 => Rigid::turn(axis, angle),
+        _ => Rigid::shift(Vec3::ZERO),
+    };
+    let step = Rigid { translation: centroid - rotation.turned(centroid) + slide, ..rotation };
+    Some((step, slide.len() + angle * scale, (sum / kept.len() as f64).sqrt()))
+}
+
+/// The trimmed fit to its end, by the measure the fit is judged by ([`trimmed_rms`]): from `start`,
+/// round after round the nearest `1 - ignored` share of `points` (those `rule` pairs) stepped
+/// onto `reference`, all counting alike, and the place of least trimmed rms met on the way. The
+/// two-way fit weighs its pairs anew each round and pairs the reference back onto the scan, so it
+/// can rest a little off where the scan lies nearest (a scan 0.6 mm proud of its model, open
+/// underneath, rested 2 mm up it: 1.078 mm rms where 1.043 was to be had). Never further off than
+/// `start` by that measure.
+fn polish(points: &[Vec3], start: Rigid, reference: &Surface, ignored: f64, rule: Rule, own: &[Vec3]) -> Rigid {
+    const ROUNDS: usize = 80;
+    const PATIENCE: usize = 6;
+    let reach = reference.diagonal;
+    let mut best = (trimmed_rms(points, &start, reference, ignored), start);
+    let (mut moved, mut since) = (start, 0);
+    for _ in 0..ROUNDS {
+        let mut pairs: Vec<Pair> =
+            pairs_to(points, &moved, reference, rule, own).into_iter().filter(|p| p.distance.is_finite() && p.distance <= rule.gate).collect();
+        pairs.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+        let keep = ((points.len() as f64 * (1.0 - ignored)).round() as usize).min(pairs.len());
+        pairs.truncate(keep);
+        if pairs.len() < 6 {
+            break;
+        }
+        let Some((by, far, _)) = step(&pairs, reach) else { break };
+        moved = moved.then(&by);
+        let rms = trimmed_rms(points, &moved, reference, ignored);
+        if rms < best.0 - 1e-9 * reach {
+            best = (rms, moved);
+            since = 0;
+        } else {
+            since += 1;
+        }
+        if far < 1e-7 * reach || since >= PATIENCE {
+            break;
+        }
+    }
+    best.1
+}
+
 /// Point-to-plane ICP from `start`, both ways, at most `rounds` rounds, pairs `rule` leaves out
 /// left out. Directions the pairs do not pin (a plane slides along itself) are not moved.
 #[allow(clippy::too_many_arguments)]
@@ -429,47 +515,9 @@ fn refine(
         }
         forward.extend(backward);
         let kept = forward;
-        let centroid = kept.iter().fold(Vec3::ZERO, |s, p| s + p.point) / kept.len() as f64;
-        let scale = (kept.iter().map(|p| (p.point - centroid).len2()).sum::<f64>() / kept.len() as f64).sqrt().max(1e-9 * reach);
-        let (mut h, mut g, mut sum) = ([[0.0f64; 6]; 6], [0.0f64; 6], 0.0);
-        for p in &kept {
-            let c = (p.point - centroid).cross(p.normal) / scale;
-            let row = [c.x, c.y, c.z, p.normal.x, p.normal.y, p.normal.z];
-            let residual = (p.point - p.target).dot(p.normal);
-            sum += p.weight * residual * residual;
-            for i in 0..6 {
-                g[i] -= p.weight * row[i] * residual;
-                for j in 0..6 {
-                    h[i][j] += p.weight * row[i] * row[j];
-                }
-            }
-        }
-        let (values, vectors) = eigen6(h);
-        let largest = values.iter().copied().fold(0.0, f64::max);
-        if !(largest > 0.0) {
-            break;
-        }
-        let mut x = [0.0; 6];
-        for k in 0..6 {
-            if !(values[k] > 1e-4 * largest) {
-                continue;
-            }
-            let along = (0..6).map(|i| vectors[i][k] * g[i]).sum::<f64>() / values[k];
-            for (i, xi) in x.iter_mut().enumerate() {
-                *xi += vectors[i][k] * along;
-            }
-        }
-        let turn = Vec3::new(x[0], x[1], x[2]) / scale;
-        let slide = Vec3::new(x[3], x[4], x[5]);
-        let angle = turn.len();
-        let rotation = match turn.normalized() {
-            Some(axis) if angle > 1e-15 => Rigid::turn(axis, angle),
-            _ => Rigid::shift(Vec3::ZERO),
-        };
-        let step = Rigid { translation: centroid - rotation.turned(centroid) + slide, ..rotation };
-        moved = moved.then(&step);
-        let rms = (sum / kept.len() as f64).sqrt();
-        if slide.len() + angle * scale < 1e-7 * reach || (previous - rms).abs() < 1e-9 * reach {
+        let Some((by, far, rms)) = step(&kept, reach) else { break };
+        moved = moved.then(&by);
+        if far < 1e-7 * reach || (previous - rms).abs() < 1e-9 * reach {
             converged = true;
             break;
         }
@@ -913,6 +961,9 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
     let mut best = (starts[0].0, starts[0].1);
     let mut gated: Option<(Rigid, f64)> = None;
     let mut rival = None;
+    // The placements that lay nearly as much of the scan on the reference as the best (a part
+    // nearly alike turned half round): each is fitted to its end and the nearest taken.
+    let mut rivals: Vec<(&'static str, Rigid, Option<f64>)> = Vec::new();
     if starts.len() > 1 {
         let reach = (ROUGHNESS_REACH * rough).max(2e-3 * theirs.diagonal);
         let normals: Vec<Vec3> = few.iter().map(|p| mine.nearest(*p).and_then(|h| h.normal).unwrap_or(Vec3::ZERO)).collect();
@@ -978,6 +1029,11 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
             if rule.gate.is_finite() {
                 gated = Some((fitted, rule.gate));
             }
+            rivals = judged
+                .iter()
+                .filter(|j| distinct(&fitted, &j.1) && score > 0.0 && j.0 >= RIVAL_SHARE * score)
+                .map(|j| (starts[j.3].0, j.1, j.2.gate.is_finite().then_some(j.2.gate)))
+                .collect();
             let other = judged.iter().filter(|j| distinct(&fitted, &j.1)).max_by(|a, b| a.0.total_cmp(&b.0));
             if let Some(&(theirs_score, at, _, _)) = other.filter(|j| score > 0.0 && j.0 >= RIVAL_SHARE * score) {
                 let away = fitted.apply(middle).dist(at.apply(middle));
@@ -990,51 +1046,7 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
             }
         }
     }
-    let (from, rough_gate, fine_gate) = match gated {
-        Some((t, gate)) => (t, gate / 2.0, gate / 4.0),
-        None => (best.1, f64::INFINITY, f64::INFINITY),
-    };
     let reference_vertices = every(&reference.points().collect::<Vec<_>>(), VERTEX_LIMIT);
-    // The fit from `from` to the end: strict, so that a thin overlap is not drawn off by the rim of
-    // one pass, and loose where the surfaces leave too few pairs that agree.
-    let finish = |strict: bool| -> Result<(Refined, Refined, Refined), RegisterError> {
-        let rule = |gate: f64| if strict { Rule::strict(gate) } else { Rule::loose(gate) };
-        let (own, reverse_own) =
-            if strict { (normals_at(&vertices, &mine), normals_at(&reference_vertices, &theirs)) } else { (Vec::new(), Vec::new()) };
-        let first = refine(&few, from, &theirs, ignored, 40, &mine, &reverse_few, rule(rough_gate));
-        let fine = refine(&samples, first.moved, &theirs, ignored, 20, &mine, &reference_samples, rule(fine_gate));
-        // The last pass on the scan's own vertices that lie on the reference.
-        let inliers: Vec<Vec3> = robust(
-            pairs_to(&vertices, &fine.moved, &theirs, rule(fine_gate), &own),
-            ignored,
-            theirs.diagonal,
-            fine_gate,
-            strict.then_some(vertices.len()),
-        )
-        .iter()
-        .map(|p| fine.moved.inverse().apply(p.point))
-        .collect();
-        let reverse: Vec<Vec3> = robust(
-            pairs_from(&reference_vertices, &fine.moved, &mine, rule(fine_gate), &reverse_own),
-            ignored,
-            theirs.diagonal,
-            fine_gate,
-            strict.then_some(reference_vertices.len()),
-        )
-        .iter()
-        .map(|p| p.target)
-        .collect();
-        if inliers.len() < 12 || reverse.len() < 12 {
-            return Err(RegisterError::NoOverlap);
-        }
-        let last =
-            refine(&every(&inliers, VERTEX_LIMIT / 4), fine.moved, &theirs, 0.0, 40, &mine, &every(&reverse, VERTEX_LIMIT / 4), rule(fine_gate));
-        Ok((first, fine, last))
-    };
-    let (first, fine, last) = match finish(true) {
-        Ok(done) => done,
-        Err(_) => finish(false)?,
-    };
     let measure = |moved: &Rigid, rms: f64| -> f64 {
         let least = 1e-3 * theirs.diagonal;
         let near = if 3.0 * rms > least {
@@ -1045,7 +1057,76 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
         };
         vertices.iter().filter(|p| theirs.nearest(moved.apply(**p)).is_some_and(|h| h.distance <= near)).count() as f64 / vertices.len().max(1) as f64
     };
-    let rms_after = trimmed_rms(&vertices, &last.moved, &theirs, ignored);
+    let polish_points = every(&vertices, POLISH_POINTS);
+    // From a placement to the end: where it comes to rest, its trimmed rms, whether it settled,
+    // the rounds it took, and whether the scan lies whole on the reference there (all of it that
+    // is not ignored within the surfaces' own roughness of it, as `matched` counts). Only then is its trimmed rms a measure of the placement: a pass that
+    // overlaps the other in part lies "nearer" by it wherever more of it happens to be near.
+    let settle = |from: Rigid, gate: Option<f64>| -> Result<(Rigid, f64, bool, usize, bool), RegisterError> {
+        let (rough_gate, fine_gate) = gate.map_or((f64::INFINITY, f64::INFINITY), |g| (g / 2.0, g / 4.0));
+        // The fit from `from` to the end: strict, so that a thin overlap is not drawn off by the rim of
+        // one pass, and loose where the surfaces leave too few pairs that agree.
+        let finish = |strict: bool| -> Result<(Refined, Refined, Refined), RegisterError> {
+            let rule = |gate: f64| if strict { Rule::strict(gate) } else { Rule::loose(gate) };
+            let (own, reverse_own) =
+                if strict { (normals_at(&vertices, &mine), normals_at(&reference_vertices, &theirs)) } else { (Vec::new(), Vec::new()) };
+            let first = refine(&few, from, &theirs, ignored, 40, &mine, &reverse_few, rule(rough_gate));
+            let fine = refine(&samples, first.moved, &theirs, ignored, 20, &mine, &reference_samples, rule(fine_gate));
+            // The last pass on the scan's own vertices that lie on the reference.
+            let inliers: Vec<Vec3> = robust(
+                pairs_to(&vertices, &fine.moved, &theirs, rule(fine_gate), &own),
+                ignored,
+                theirs.diagonal,
+                fine_gate,
+                strict.then_some(vertices.len()),
+            )
+            .iter()
+            .map(|p| fine.moved.inverse().apply(p.point))
+            .collect();
+            let reverse: Vec<Vec3> = robust(
+                pairs_from(&reference_vertices, &fine.moved, &mine, rule(fine_gate), &reverse_own),
+                ignored,
+                theirs.diagonal,
+                fine_gate,
+                strict.then_some(reference_vertices.len()),
+            )
+            .iter()
+            .map(|p| p.target)
+            .collect();
+            if inliers.len() < 12 || reverse.len() < 12 {
+                return Err(RegisterError::NoOverlap);
+            }
+            let last =
+                refine(&every(&inliers, VERTEX_LIMIT / 4), fine.moved, &theirs, 0.0, 40, &mine, &every(&reverse, VERTEX_LIMIT / 4), rule(fine_gate));
+            Ok((first, fine, last))
+        };
+        let (first, fine, last) = match finish(true) {
+            Ok(done) => done,
+            Err(_) => finish(false)?,
+        };
+        let fitted_rms = trimmed_rms(&vertices, &last.moved, &theirs, ignored);
+        let rounds = first.rounds + fine.rounds + last.rounds;
+        let whole = measure(&last.moved, fitted_rms) >= 1.0 - ignored;
+        if !whole {
+            return Ok((last.moved, fitted_rms, last.converged, rounds, false));
+        }
+        // Then to the end by the measure it is judged by, kept when the whole scan lies nearer for it.
+        let polished = polish(&polish_points, last.moved, &theirs, ignored, Rule::loose(f64::INFINITY), &[]);
+        let polished_rms = trimmed_rms(&vertices, &polished, &theirs, ignored);
+        Ok(if polished_rms < fitted_rms {
+            (polished, polished_rms, true, rounds, true)
+        } else {
+            (last.moved, fitted_rms, last.converged, rounds, true)
+        })
+    };
+    let (mut placed, mut rms_after, mut settled, mut rounds, whole) = settle(best.1, gated.map(|g| g.1))?;
+    // A rival is taken when the scan lies whole on the reference both ways and clearly nearer its way.
+    for (name, from, gate) in rivals.into_iter().filter(|_| whole) {
+        if let Some(other) = settle(from, gate).ok().filter(|other| other.4 && other.1 + 1e-6 * theirs.diagonal < rms_after) {
+            (placed, rms_after, settled, rounds, _) = other;
+            best.0 = name;
+        }
+    }
     // A fit that leaves the scan further from the reference than it lay is not taken: the scan
     // stays where it was (a good placement by hand, a thin overlap the fit could not hold).
     if rms_after > rms_before + 1e-6 * theirs.diagonal {
@@ -1054,7 +1135,7 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
             rms_before,
             rms_after: rms_before,
             matched: measure(&identity, rms_before),
-            rounds: first.rounds + fine.rounds + last.rounds,
+            rounds,
             converged: false,
             start: "where it was",
             rival,
@@ -1063,12 +1144,12 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
         });
     }
     Ok(Registration {
-        moved: last.moved,
+        moved: placed,
         rms_before,
         rms_after,
-        matched: measure(&last.moved, rms_after),
-        rounds: first.rounds + fine.rounds + last.rounds,
-        converged: last.converged,
+        matched: measure(&placed, rms_after),
+        rounds,
+        converged: settled,
         start: best.0,
         rival,
         kept: None,
@@ -1116,6 +1197,47 @@ mod tests {
         let back = moved.iter().map(|p| found.moved.apply(*p)).zip(&positions).map(|(a, b)| a.dist(*b)).fold(0.0, f64::max);
         assert!(back < 1e-2, "{back} from {} ({found:?})", found.start);
         assert!(found.matched > 0.99, "{found:?}");
+    }
+
+    /// A scan of the whole part that is not the part exactly, as a fused scan is against its CAD
+    /// model: a little proud of it, lumpy, and open underneath. Wherever it starts (where it lies, a
+    /// little off, or turned and far off) it comes to rest at one place, and nowhere further from
+    /// the model than where it lay. (T-LESS 09's scan rested 2 mm up its model, 1.078 mm rms, where
+    /// 1.008 was to be had; a second fit from there said it could do no better.)
+    #[test]
+    fn a_scan_proud_of_its_model_comes_to_rest_at_one_place_from_any_start() {
+        let (positions, triangles) = part();
+        let middle = Vec3::new(30.0, 20.0, 12.0);
+        let lumpy: Vec<Vec3> = positions
+            .iter()
+            .map(|p| {
+                let out = *p - middle;
+                // Proud by about 0.3 mm, and rough from point to point as a scan is.
+                let lump = 0.5 * ((0.37 * p.x).sin() * (0.53 * p.y).cos() + (0.41 * p.z).sin());
+                let grain = (12.9898 * p.x + 78.233 * p.y + 37.719 * p.z).sin();
+                *p + out * (0.012 + 0.006 * lump + 0.008 * grain)
+            })
+            .collect();
+        let open: Vec<[u32; 3]> = triangles.iter().copied().filter(|t| t.iter().any(|&v| positions[v as usize].z > 1e-9)).collect();
+        let reference = Scan::new(&positions, &triangles);
+        let rest = |start: &[Vec3], search: bool| {
+            let found = register(&Scan::new(start, &open), &reference, &Settings { search, ignored: 0.2 }).unwrap();
+            (start.iter().map(|p| found.moved.apply(*p)).collect::<Vec<Vec3>>(), found)
+        };
+        let (here, lay) = rest(&lumpy, false);
+        assert!(lay.rms_after <= lay.rms_before, "{lay:?}");
+        let near = turned(&lumpy, Vec3::new(0.2, -0.5, 0.8).normalized().unwrap(), 0.05, Vec3::new(0.8, -0.6, 1.5));
+        let far = turned(&lumpy, Vec3::new(0.0, 0.1, 1.0).normalized().unwrap(), 0.35, Vec3::new(10.0, -8.0, 6.0));
+        for (name, start, search) in [("near", &near, false), ("far", &far, true)] {
+            let (there, found) = rest(start, search);
+            let apart = here.iter().zip(&there).map(|(a, b)| a.dist(*b)).fold(0.0, f64::max);
+            assert!(apart < 0.05, "from {name}: {apart} mm from where it rests from its own place ({found:?})");
+            assert!((found.rms_after - lay.rms_after).abs() < 1e-3, "from {name}: {} against {}", found.rms_after, lay.rms_after);
+        }
+        // A second fit from where it rests leaves it there.
+        let again = register(&Scan::new(&here, &open), &reference, &Settings { search: false, ignored: 0.2 }).unwrap();
+        let stays = here.iter().map(|p| again.moved.apply(*p).dist(*p)).fold(0.0, f64::max);
+        assert!(stays < 0.01, "{stays} ({again:?})");
     }
 
     /// A pass that covers only part of the part (its top and two sides cut away) is laid onto the
