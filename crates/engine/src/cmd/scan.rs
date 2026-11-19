@@ -634,7 +634,7 @@ fn chosen_mirror(s: &Session, mesh: &Mesh, p: &Value, cmd: &str, refuse: bool, f
         return Err(bad(
             cmd,
             format!(
-                "the scan is not a mirror image about the best plane found: only {:.0} % of it matches its reflection (typically {:.2} mm off); to use that plane anyway pass it back as `plane`: {{\"point\": [{:.3}, {:.3}, {:.3}], \"normal\": [{:.6}, {:.6}, {:.6}]}} (a vehicle's underbody and exhaust are no mirror image, so a car stops short of the 85 % even about its true plane), or draw a guide along the plane you mean",
+                "the scan is not a mirror image about the best plane found: only {:.0} % of it matches its reflection (typically {:.2} mm off); to use that plane anyway pass it back as `plane`: {{\"point\": [{:.3}, {:.3}, {:.3}], \"normal\": [{:.6}, {:.6}, {:.6}]}} (85 % must match, or 60 % when both sides of the thing are there and match out to their ends; a scan of one side is no mirror image), or draw a guide along the plane you mean",
                 100.0 * found.coverage,
                 found.rms,
                 found.point.x,
