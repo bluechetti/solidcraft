@@ -346,30 +346,31 @@ impl Fans {
     }
 }
 
+/// What the cage's tests and the fit's share: small cages, and how two patches meet.
 #[cfg(test)]
-mod tests {
+pub(crate) mod kit {
     use super::*;
 
-    type V = [f64; 3];
+    pub(crate) type V = [f64; 3];
 
-    fn sub(a: V, b: V) -> V {
+    pub(crate) fn sub(a: V, b: V) -> V {
         [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
     }
 
-    fn dot(a: V, b: V) -> f64 {
+    pub(crate) fn dot(a: V, b: V) -> f64 {
         a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
     }
 
-    fn cross(a: V, b: V) -> V {
+    pub(crate) fn cross(a: V, b: V) -> V {
         [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
     }
 
-    fn length(a: V) -> f64 {
+    pub(crate) fn length(a: V) -> f64 {
         dot(a, a).sqrt()
     }
 
     /// The Bernstein polynomials of degree `n` at `t`, or their `r`-th derivatives.
-    fn bernstein(n: usize, t: f64, r: usize) -> Vec<f64> {
+    pub(crate) fn bernstein(n: usize, t: f64, r: usize) -> Vec<f64> {
         let mut b = vec![1.0];
         for _ in 0..n - r {
             b = (0..=b.len()).map(|i| (if i > 0 { b[i - 1] * t } else { 0.0 }) + (if i < b.len() { b[i] * (1.0 - t) } else { 0.0 })).collect();
@@ -381,7 +382,7 @@ mod tests {
     }
 
     /// A patch's point or derivative at (u, v).
-    fn at(points: &[Vec3], degree: usize, (u, v): (f64, f64), (ru, rv): (usize, usize)) -> V {
+    pub(crate) fn at(points: &[Vec3], degree: usize, (u, v): (f64, f64), (ru, rv): (usize, usize)) -> V {
         let (bu, bv) = (bernstein(degree, u, ru), bernstein(degree, v, rv));
         let mut s = [0.0; 3];
         for b in 0..=degree {
@@ -397,7 +398,7 @@ mod tests {
     /// Where a patch is, which way it faces and how it curves at (u, v): its point, its unit
     /// normal and its second fundamental form as a tensor in space, which two surfaces that meet
     /// in curvature share whatever their parameters.
-    fn shape(points: &[Vec3], degree: usize, uv: (f64, f64)) -> (V, V, [[f64; 3]; 3]) {
+    pub(crate) fn shape(points: &[Vec3], degree: usize, uv: (f64, f64)) -> (V, V, [[f64; 3]; 3]) {
         let d = |r| at(points, degree, uv, r);
         let (su, sv, suu, suv, svv) = (d((1, 0)), d((0, 1)), d((2, 0)), d((1, 1)), d((0, 2)));
         let normal = cross(su, sv);
@@ -428,7 +429,7 @@ mod tests {
 
     /// The place a share `t` of the way along side `side` of a patch's square, the side running
     /// counter-clockwise from corner `side`.
-    fn on_side(side: usize, t: f64) -> (f64, f64) {
+    pub(crate) fn on_side(side: usize, t: f64) -> (f64, f64) {
         match side {
             0 => (t, 0.0),
             1 => (1.0, t),
@@ -439,7 +440,7 @@ mod tests {
 
     /// The most two patches differ along any edge two faces with patches share: in place, in
     /// the way they face and in how they curve; and how many such edges there are.
-    fn worst_join(cage: &Cage, patches: &Patches) -> (f64, f64, f64, usize) {
+    pub(crate) fn worst_join(cage: &Cage, patches: &Patches) -> (f64, f64, f64, usize) {
         let of: HashMap<usize, (usize, Vec<Vec3>)> = patches.patches.iter().map(|p| (p.face, (p.degree, p.points(cage.points())))).collect();
         let mut worst = (0.0_f64, 0.0_f64, 0.0_f64, 0);
         for (&(from, to), &(f, k)) in &cage.along {
@@ -463,7 +464,7 @@ mod tests {
 
     /// A cage round a torus: `around` faces the long way and `across` the short way, every point
     /// plain.
-    fn torus(around: u32, across: u32) -> Cage {
+    pub(crate) fn torus(around: u32, across: u32) -> Cage {
         let mut points = Vec::new();
         for i in 0..around {
             for j in 0..across {
@@ -478,7 +479,7 @@ mod tests {
 
     /// A cage round a ball: a cube of `k` × `k` faces a side, its points pushed out onto the
     /// unit sphere. Three faces meet at each of the cube's eight corners.
-    fn ball(k: u32) -> Cage {
+    pub(crate) fn ball(k: u32) -> Cage {
         let mut ids: HashMap<[i64; 3], u32> = HashMap::new();
         let mut points = Vec::new();
         let mut faces = Vec::new();
@@ -510,6 +511,12 @@ mod tests {
         }
         Cage::new(points, faces).unwrap()
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::kit::*;
+    use super::*;
 
     /// Where four faces meet everywhere, every face is a bicubic patch and all of them meet in
     /// curvature: one B-spline surface.
