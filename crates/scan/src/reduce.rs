@@ -671,6 +671,58 @@ mod tests {
         );
     }
 
+    /// An open cap of a sphere R 80, 100 mm across, in 60,000 triangles, reduced to a tenth of
+    /// them. Measured both ways against the cap as it was (every point of the one against the
+    /// other's triangles, the rim's included), nothing is farther than 0.02 mm (0.010 each way);
+    /// and the error reported is of that size, not a rim's penalty and not nothing.
+    #[test]
+    fn a_cap_reduced_to_a_tenth_stays_within_two_hundredths_rim_included() {
+        let (rings, spokes, radius) = (100u32, 300u32, 80.0f64);
+        let open = (50.0 / radius).asin();
+        let mut positions = vec![Vec3::new(0.0, 0.0, radius)];
+        for i in 1..=rings {
+            let down = open * f64::from(i) / f64::from(rings);
+            for j in 0..spokes {
+                let round = std::f64::consts::TAU * f64::from(j) / f64::from(spokes);
+                positions.push(Vec3::new(radius * down.sin() * round.cos(), radius * down.sin() * round.sin(), radius * down.cos()));
+            }
+        }
+        let at = |i: u32, j: u32| 1 + (i - 1) * spokes + j % spokes;
+        let mut triangles = Vec::new();
+        for j in 0..spokes {
+            triangles.push([0, at(1, j), at(1, j + 1)]);
+            for i in 1..rings {
+                triangles.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+                triangles.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+            }
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let done = reduce(&scan, Settings { target: triangles.len() / 10, max_error: 0.0, keep_rim: true }).unwrap();
+        assert!(done.triangles.len() <= triangles.len() / 10 && done.stopped == Stopped::Target, "{} {:?}", done.triangles.len(), done.stopped);
+        // Every corner and every triangle's middle of the one, against the other.
+        let sampled = |positions: &[Vec3], triangles: &[[u32; 3]]| -> Vec<Vec3> {
+            let middles = triangles.iter().map(|t| (positions[t[0] as usize] + positions[t[1] as usize] + positions[t[2] as usize]) / 3.0);
+            positions.iter().copied().chain(middles).collect()
+        };
+        let farthest = |points: &[Vec3], positions: &[Vec3], triangles: &[[u32; 3]]| {
+            let mesh = solidcraft_geom::Mesh { positions: positions.to_vec(), triangles: triangles.to_vec(), ..Default::default() };
+            let d = crate::deviation::measure(points, &mesh, 0.02, 10.0);
+            assert_eq!(d.unmatched, 0);
+            d.max_above.abs().max(d.max_below.abs())
+        };
+        let was_to_now = farthest(&sampled(&positions, &triangles), &done.positions, &done.triangles);
+        let now_to_was = farthest(&sampled(&done.positions, &done.triangles), &positions, &triangles);
+        assert!(was_to_now <= 0.02 && now_to_was <= 0.02, "{was_to_now} {now_to_was}");
+        // The rim is where it was: every point of the old rim within 0.02 of the reduced cap is
+        // part of the above; and the new rim's points are on the old rim's circle.
+        let rim = |p: &Vec3| ((p.x.hypot(p.y) - 50.0).abs() < 1e-6) && (p.z - radius * open.cos()).abs() < 1e-6;
+        assert!(done.positions.iter().filter(|p| rim(p)).count() >= 30, "the rim keeps its points");
+        // The error reported is the worst collapse's root mean square, so a little under the
+        // farthest point measured (0.0083 against 0.0101 here), and never a different size.
+        let worst = was_to_now.max(now_to_was);
+        assert!(done.largest_error <= worst && done.largest_error >= 0.75 * worst, "{} against {worst}", done.largest_error);
+    }
+
     /// A curved surface stops where the error allows; a limit that allows nothing collapses nothing
     /// that bends.
     #[test]
