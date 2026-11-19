@@ -1113,20 +1113,63 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
     // Sizes within a quarter of the scan's tolerance of a round size are read as designed, as
     // Hole It reads a hole's.
     let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
-    let sketch = sketch_outlines(s, &plane, &format!("Prism Profile {}", index + 1), &outlines, &|_, _, _| None, &mut drawn, round, false)?;
     let depth = solidcraft_scan::hole_form::snapped(prism.depth(), round);
-    let mut extrude = if prism.draft == 0.0 {
-        json!({"sketch": sketch, "distance": depth, "direction": "symmetric", "name": format!("Extrude It {}", index + 1)})
-    } else {
-        // Sketched at the low end, the walls leaning in (a positive draft) as it goes up.
-        json!({"sketch": sketch, "distance": depth, "direction": "positive", "taper": format!("{} deg", -drafted(prism.draft)),
-            "corner": "preserve_curvature", "name": format!("Extrude It {}", index + 1)})
+    let (draft, name) = (prism.draft, format!("Extrude It {}", index + 1));
+    // The outlines sketched and extruded.
+    let build = |s: &mut Session, outlines: &[Outline], drawn: &mut Drawn| -> Result<(u64, Value)> {
+        let sketch = sketch_outlines(s, &plane, &format!("Prism Profile {}", index + 1), outlines, &|_, _, _| None, drawn, round, false)?;
+        let mut extrude = if draft == 0.0 {
+            json!({"sketch": sketch, "distance": depth, "direction": "symmetric", "name": name})
+        } else {
+            // Sketched at the low end, the walls leaning in (a positive draft) as it goes up.
+            json!({"sketch": sketch, "distance": depth, "direction": "positive", "taper": format!("{} deg", -drafted(draft)),
+                "corner": "preserve_curvature", "name": name})
+        };
+        if let Some(material) = material_profiles(s, sketch) {
+            extrude["profiles"] = json!(material);
+        }
+        let feature = run(s, "solid.extrude", merged(extrude, operation.clone()))?;
+        Ok((sketch, feature))
     };
-    if let Some(material) = material_profiles(s, sketch) {
-        extrude["profiles"] = json!(material);
-    }
-    let extrude = merged(extrude, operation);
-    let feature = run(s, "solid.extrude", extrude)?;
+    // A drafted prism's rounds that the scan shows as cylinders (one radius all the way up: the
+    // part was drafted, then filleted) are not sketched: tapered with the walls each would narrow
+    // to a cone as it rises. The corners are extruded sharp and rounded by a Fillet of that
+    // radius. A round the scan shows as a cone keeps its taper; so do all of them when the kernel
+    // refuses the fillets.
+    let sharp = (draft != 0.0)
+        .then(|| {
+            profile::sharpened(&outlines, |face| match reading.faces.get(face).map(|f| &f.shape) {
+                Some(Shape::Cylinder { radius, .. }) => Some(*radius),
+                _ => None,
+            })
+        })
+        .filter(|(_, corners)| !corners.is_empty());
+    let sharply = match sharp {
+        Some((sharpened, corners)) => {
+            let before = s.doc.clone();
+            let mut tried = Drawn::default();
+            let made = build(s, &sharpened, &mut tried).and_then(|made| {
+                round_corners(s, &solid, &plane, &corners, draft, depth, round, &format!("{name} Rounds"))?;
+                Ok(made)
+            });
+            match made {
+                Ok(made) => {
+                    drawn = tried;
+                    Some(made)
+                }
+                Err(_) => {
+                    s.doc = before;
+                    s.refresh();
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+    let (sketch, feature) = match sharply {
+        Some(made) => made,
+        None => build(s, &outlines, &mut drawn)?,
+    };
     reply(ScanBuildResult {
         body: found.scan.clone(),
         sketch: Some(sketch),
@@ -1142,6 +1185,36 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         fit: None,
         param_warnings: Vec::new(),
     })
+}
+
+/// The sharp `corners` of a drafted prism just extruded (`depth` up from `plane`, its walls
+/// leaning in by `draft` radians) rounded on `solid`: one Fillet for each radius, read as designed
+/// within `round`, each corner's edge found halfway up, where the lean has moved it in.
+fn round_corners(
+    s: &mut Session,
+    solid: &str,
+    plane: &Plane,
+    corners: &[profile::SharpCorner],
+    draft: f64,
+    depth: f64,
+    round: f64,
+    name: &str,
+) -> Result<()> {
+    let up = plane.x.cross(plane.y).normalized().ok_or_else(|| EngineError::Other("the profile's plane has no normal".into()))?;
+    let key = |r: f64| (r * 1e6).round() as i64;
+    let mut by_radius: std::collections::BTreeMap<i64, (f64, Vec<[f64; 3]>)> = std::collections::BTreeMap::new();
+    for corner in corners {
+        let radius = solidcraft_scan::hole_form::snapped(corner.radius, round);
+        let halfway = corner.moved(0.5 * depth * draft.tan());
+        let edge = plane.origin + plane.x * halfway.x + plane.y * halfway.y + up * (0.5 * depth);
+        by_radius.entry(key(radius)).or_insert((radius, Vec::new())).1.push(at(edge));
+    }
+    let several = by_radius.len() > 1;
+    for (n, (radius, edges)) in by_radius.into_values().enumerate() {
+        let name = if several { format!("{name} {}", n + 1) } else { name.to_owned() };
+        run(s, "solid.fillet", json!({"edges": edges, "radius": format!("{radius} mm"), "body": solid, "tangent_chain": false, "name": name}))?;
+    }
+    Ok(())
 }
 
 pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {

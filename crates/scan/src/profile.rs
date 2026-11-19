@@ -1339,15 +1339,27 @@ fn above_axis(points: &[Vec2], on: &[Option<usize>], axis: usize) -> Option<(Vec
     (kept.len() >= 3).then_some((kept, walls))
 }
 
+/// How many steps the line closing an open run straight across is walked in.
+const CLOSING_POINTS: usize = 16;
+
 /// The parts of the open run `points` (each point on the wall `on` names; its ends where the scan,
 /// or the part of it selected, stops) with radius at least 0, each closed as a profile is: a part
 /// that comes down to the axis at one end runs on `overlap` past its other end, the way the run
 /// was going there, and along the axis from that height, so what was cut off there (a boss
 /// selected without the block it stands on) stands a little into it: joined to it, the two meet in
 /// material, not in two faces a hair apart, which the kernel's boolean refuses. A part with neither
-/// end on the axis is closed straight across.
-fn above_axis_open(points: &[Vec2], on: &[Option<usize>], axis: usize, overlap: f64) -> Vec<(Vec<Vec2>, Vec<Option<usize>>)> {
-    let finish = |mut kept: Vec<Vec2>, mut walls: Vec<Option<usize>>| -> Option<(Vec<Vec2>, Vec<Option<usize>>)> {
+/// end on the axis (a rim's skin, the scan stopping at both lips) is closed straight across, from
+/// where it ends to where it began: the closing line is a wall of its own (returned; `closing` is
+/// its place among the walls, and the points along it are on it), so the faces at the run's two
+/// ends are never taken for one stretch running on across what the scan did not see.
+fn above_axis_open(
+    points: &[Vec2],
+    on: &[Option<usize>],
+    axis: usize,
+    closing: usize,
+    overlap: f64,
+) -> Vec<(Vec<Vec2>, Vec<Option<usize>>, Option<Wall>)> {
+    let finish = |mut kept: Vec<Vec2>, mut walls: Vec<Option<usize>>| -> Option<(Vec<Vec2>, Vec<Option<usize>>, Option<Wall>)> {
         if kept.len() < 3 {
             return None;
         }
@@ -1371,9 +1383,21 @@ fn above_axis_open(points: &[Vec2], on: &[Option<usize>], axis: usize, overlap: 
                 kept.push(Vec2::new(end.x, 0.0));
                 walls.push(Some(axis));
             }
-            _ => {}
+            (false, false) => {
+                let (from, to) = (kept[n - 1], kept[0]);
+                let Some(direction) = (to - from).normalized() else { return Some((kept, walls, None)) };
+                // The run's own two ends are the closing line's ends: what the scan shows up to
+                // each (a lip no face holds) is then drawn right up to it.
+                (walls[0], walls[n - 1]) = (Some(closing), Some(closing));
+                for i in 1..CLOSING_POINTS {
+                    kept.push(from + (to - from) * (i as f64 / CLOSING_POINTS as f64));
+                    walls.push(Some(closing));
+                }
+                return Some((kept, walls, Some(Wall::Line { point: from, direction })));
+            }
+            (true, true) => {}
         }
-        Some((kept, walls))
+        Some((kept, walls, None))
     };
     let mut parts = Vec::new();
     let (mut kept, mut walls) = (Vec::new(), Vec::new());
@@ -1445,12 +1469,21 @@ fn turned_sliced(
                 // A closed loop's half above the axis; an open run's (the scan's edge, or where the
                 // part selected stops), closed down to the axis.
                 let halves = if run.closed {
-                    above_axis(&flipped, &on, axis_wall).into_iter().collect()
+                    above_axis(&flipped, &on, axis_wall).map(|(points, on)| (points, on, None)).into_iter().collect()
                 } else {
-                    above_axis_open(&flipped, &on, axis_wall, 2.0 * reach)
+                    above_axis_open(&flipped, &on, axis_wall, axis_wall + 1, 2.0 * reach)
                 };
-                for (points, on) in halves {
-                    let Some(outline) = outline_of(&walls, &points, &on, reach, Some((tolerance, None))) else { continue };
+                for (points, on, closing) in halves {
+                    // The line closing a run open at both ends is a wall for this run alone.
+                    let closed: Vec<(usize, Wall)>;
+                    let walls = match closing {
+                        Some(line) => {
+                            closed = walls.iter().copied().chain([(usize::MAX, line)]).collect();
+                            &closed
+                        }
+                        None => &walls,
+                    };
+                    let Some(outline) = outline_of(walls, &points, &on, reach, Some((tolerance, None))) else { continue };
                     let ring = ring(&outline);
                     if !is_simple_ring(&ring) || ring.iter().any(|p| p.y < -reach) {
                         continue;
@@ -1899,6 +1932,65 @@ mod tests {
         assert_eq!(differs, [[false, false]]);
         // Too short a prism to slice elsewhere: by facing alone.
         assert_eq!(runs_along(&scan, &cut, Vec3::Z, 0.0, &[], 0.1), [[true, false]]);
+    }
+
+    /// An open half-section with neither end on the axis (a wheel rim's skin: the scan stops at
+    /// both lips, on the same barrel face) is closed straight across from end to end, the closing
+    /// line a wall of its own: not round that face's circle, which bulged far past the scan.
+    #[test]
+    fn an_open_run_is_closed_straight_across_not_along_its_end_wall() {
+        let center = Vec2::new(15.0, 40.0);
+        let radius = (15.0f64 * 15.0 + 30.0 * 30.0).sqrt();
+        let mut walls = vec![
+            (0, Wall::Circle { center, radius }),
+            (1, Wall::Line { point: Vec2::new(6.0, 0.0), direction: Vec2::Y }),
+            (2, Wall::Line { point: Vec2::new(0.0, 4.0), direction: Vec2::X }),
+            (3, Wall::Line { point: Vec2::new(24.0, 0.0), direction: Vec2::Y }),
+            // The axis.
+            (usize::MAX, Wall::Line { point: Vec2::ZERO, direction: Vec2::X }),
+        ];
+        // The lips at the two ends are the highest of it: the barrel face dips between them.
+        let on_circle = |x: f64| Vec2::new(x, center.y - (radius * radius - (x - center.x) * (x - center.x)).sqrt());
+        let (mut points, mut on) = (Vec::new(), Vec::new());
+        let mut add = |p: Vec2, wall: usize| {
+            points.push(p);
+            on.push(Some(wall));
+        };
+        for i in 0..=12 {
+            add(on_circle(0.5 * f64::from(i)), 0);
+        }
+        let top = on_circle(6.0).y;
+        for i in 1..12 {
+            add(Vec2::new(6.0, top + (4.0 - top) * f64::from(i) / 12.0), 1);
+        }
+        for i in 0..=18 {
+            add(Vec2::new(6.0 + f64::from(i), 4.0), 2);
+        }
+        for i in 1..12 {
+            add(Vec2::new(24.0, 4.0 + (top - 4.0) * f64::from(i) / 12.0), 3);
+        }
+        for i in 0..=12 {
+            add(on_circle(24.0 + 0.5 * f64::from(i)), 0);
+        }
+        // Read as a closed loop, its two ends on the circle are one stretch: the circle closes it
+        // from one side to the other, and the lips at the run's ends are lost.
+        let round = outline_of(&walls, &points, &on, 0.2, Some((0.05, None))).expect("an outline");
+        assert!(round.pieces.len() == 4 && ring(&round).iter().all(|p| p.y < 9.0), "the barrel's circle drawn across: {round:?}");
+        // As the open run it is: one part, with the line that closes it.
+        let parts = above_axis_open(&points, &on, 4, 5, 0.4);
+        assert_eq!(parts.len(), 1);
+        let (closed, closed_on, line) = &parts[0];
+        walls.push((usize::MAX, line.expect("closed straight across")));
+        let o = outline_of(&walls, closed, closed_on, 0.2, Some((0.05, None))).expect("an outline");
+        let n = o.corners.len();
+        let closing = (0..n).find(|&k| o.corners[k].dist(Vec2::new(30.0, 10.0)) < 0.05 && o.corners[(k + 1) % n].dist(Vec2::new(0.0, 10.0)) < 0.05);
+        assert!(closing.is_some_and(|k| o.pieces[k] == Piece::Line), "{o:?}");
+        let r = ring(&o);
+        assert!(is_simple_ring(&r) && r.iter().all(|p| p.y <= 10.05 && p.y >= 3.95), "within the run's own reach: {r:?}");
+        // A run that comes down to the axis is closed along the axis, as before: no closing line.
+        let grounded: Vec<Vec2> = std::iter::once(Vec2::new(0.0, -1.0)).chain(points.iter().copied()).collect();
+        let walls_on: Vec<Option<usize>> = std::iter::once(Some(0)).chain(on.iter().copied()).collect();
+        assert!(above_axis_open(&grounded, &walls_on, 4, 5, 0.4).iter().all(|part| part.2.is_none()));
     }
 
     /// A box slice: four walls, a loop round them with its corners cut by noise, comes out as the
