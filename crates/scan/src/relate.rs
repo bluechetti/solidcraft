@@ -65,6 +65,13 @@ pub enum Kind {
     Angle(f64),
     /// A cylinder's or sphere's radius held at this, mm.
     Radius(f64),
+    /// Touching: a plane (or a world plane) and a sphere or a cylinder (its axis along the plane,
+    /// a radius off it), two spheres, or two parallel cylinders, outside or inside each other,
+    /// whichever they are nearer.
+    Tangent,
+    /// `a` and `b`, of one kind, each other's reflection in the plane `about` (a fitted plane or a
+    /// world plane): planes, spheres, cylinders, cones or tori.
+    Mirror(Side),
 }
 
 impl Kind {
@@ -77,6 +84,8 @@ impl Kind {
             Kind::Distance(_) => "distance",
             Kind::Angle(_) => "angle",
             Kind::Radius(_) => "radius",
+            Kind::Tangent => "tangent",
+            Kind::Mirror(_) => "mirror",
         }
     }
 }
@@ -213,6 +222,31 @@ fn side_of(shapes: &[Shape], side: Side) -> (Option<Vec3>, Vec3, Option<f64>) {
     }
 }
 
+/// The plane of `side`: a fitted plane's point and normal, or a world plane's.
+fn plane_of(shapes: &[Shape], side: Side) -> Option<(Vec3, Vec3)> {
+    match side {
+        Side::Shape(i) => match shapes.get(i)? {
+            Shape::Plane { point, normal } => Some((*point, *normal)),
+            _ => None,
+        },
+        Side::Datum(d @ (Datum::PlaneXy | Datum::PlaneYz | Datum::PlaneZx)) => Some((Vec3::ZERO, axis_of(d))),
+        Side::Datum(_) => None,
+    }
+}
+
+/// Whether `a` and `b` (a shape, or a world plane when `b` is none) can touch: a plane and a
+/// sphere or a cylinder (either way round), two spheres, two cylinders.
+fn touchable(a: &Shape, b: Option<&Shape>, plane_b: bool) -> bool {
+    let ball_or_tube = |s: &Shape| matches!(s, Shape::Sphere { .. } | Shape::Cylinder { .. });
+    match (a, b) {
+        (Shape::Plane { .. }, Some(b)) => ball_or_tube(b),
+        (a, Some(Shape::Plane { .. })) => ball_or_tube(a),
+        (a, None) => plane_b && ball_or_tube(a),
+        (Shape::Sphere { .. }, Some(Shape::Sphere { .. })) | (Shape::Cylinder { .. }, Some(Shape::Cylinder { .. })) => true,
+        _ => false,
+    }
+}
+
 /// Checks a relation can be held by the shapes it names.
 fn check(relations: &[Relation], shapes: &[Shape]) -> Result<(), RelateError> {
     for (k, r) in relations.iter().enumerate() {
@@ -261,6 +295,19 @@ fn check(relations: &[Relation], shapes: &[Shape]) -> Result<(), RelateError> {
                     return unfit("needs a cylinder or a sphere, and a radius above 0");
                 }
             }
+            Kind::Tangent => {
+                let plane_b = r.b.is_some_and(|side| plane_of(shapes, side).is_some());
+                if r.b.is_none() || !touchable(a, b.as_ref(), plane_b) {
+                    return unfit("needs a plane and a sphere or a cylinder, two spheres or two cylinders");
+                }
+            }
+            Kind::Mirror(about) => {
+                let same = b.is_some_and(|b| b.kind() == a.kind());
+                let names = |side: Side| matches!(side, Side::Shape(i) if i == r.a || Some(Side::Shape(i)) == r.b);
+                if !same || plane_of(shapes, about).is_none() || names(about) {
+                    return unfit("needs two shapes of one kind and a third plane (or a world plane) to mirror them in");
+                }
+            }
         }
         if let Kind::Angle(v) = r.kind
             && !(0.0..=std::f64::consts::FRAC_PI_2).contains(&v)
@@ -298,6 +345,87 @@ fn off(r: &Relation, shapes: &[Shape]) -> Vec<f64> {
             let gap = if matches!(a, Shape::Plane { .. }) { w.dot(x).abs() } else { (w - x * w.dot(x)).len() };
             let mut out = cross(x, y);
             out.push(gap - v);
+            out
+        }
+        (Kind::Tangent, ..) => r.b.map_or_else(Vec::new, |side| touching(a, side, shapes)),
+        (Kind::Mirror(about), ..) => match (r.b, plane_of(shapes, about)) {
+            (Some(Side::Shape(j)), Some(m)) => shapes.get(j).map_or_else(Vec::new, |b| mirrored(a, b, m)),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// How far `a` and the other `side` are from touching (see [`Kind::Tangent`]).
+fn touching(a: &Shape, side: Side, shapes: &[Shape]) -> Vec<f64> {
+    // The nearer of touching outside and inside, at the gap `d` between centres or axes.
+    let nearer = |d: f64, ra: f64, rb: f64| {
+        let (outside, inside) = (ra + rb, (ra - rb).abs());
+        if (d - outside).abs() <= (d - inside).abs() { d - outside } else { d - inside }
+    };
+    let plane_and = |(p, n): (Vec3, Vec3), s: &Shape| match *s {
+        Shape::Sphere { center, radius } => vec![(center - p).dot(n).abs() - radius],
+        Shape::Cylinder { point, axis, radius } => vec![axis.dot(n), (point - p).dot(n).abs() - radius],
+        _ => Vec::new(),
+    };
+    match (a, side) {
+        (Shape::Plane { point, normal }, Side::Shape(j)) => shapes.get(j).map_or_else(Vec::new, |b| plane_and((*point, *normal), b)),
+        (_, side) if plane_of(shapes, side).is_some() => plane_of(shapes, side).map_or_else(Vec::new, |m| plane_and(m, a)),
+        (Shape::Sphere { center: ca, radius: ra }, Side::Shape(j)) => match shapes.get(j) {
+            Some(Shape::Sphere { center: cb, radius: rb }) => vec![nearer(ca.dist(*cb), *ra, *rb)],
+            _ => Vec::new(),
+        },
+        (Shape::Cylinder { point: pa, axis: da, radius: ra }, Side::Shape(j)) => match shapes.get(j) {
+            Some(Shape::Cylinder { point: pb, axis: db, radius: rb }) => {
+                let w = *pb - *pa;
+                let c = da.cross(*db);
+                vec![c.x, c.y, c.z, nearer((w - *da * w.dot(*da)).len(), *ra, *rb)]
+            }
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// How far `b` is from `a`'s reflection in the plane `(m, n)`.
+fn mirrored(a: &Shape, b: &Shape, (m, n): (Vec3, Vec3)) -> Vec<f64> {
+    let point = |p: Vec3| p - n * (2.0 * (p - m).dot(n));
+    let dir = |d: Vec3| d - n * (2.0 * d.dot(n));
+    let v = |d: Vec3| vec![d.x, d.y, d.z];
+    // A reflected axis lies along `b`'s and through it.
+    let on_axis = |pa: Vec3, da: Vec3, pb: Vec3, db: Vec3| {
+        let (q, e) = (point(pa), dir(da));
+        let w = q - pb;
+        let mut out = v(e.cross(db));
+        out.extend(v(w - db * w.dot(db)));
+        out
+    };
+    match (*a, *b) {
+        (Shape::Plane { point: pa, normal: na }, Shape::Plane { point: pb, normal: nb }) => {
+            let mut out = v(dir(na).cross(nb));
+            out.push((point(pa) - pb).dot(nb));
+            out
+        }
+        (Shape::Sphere { center: ca, radius: ra }, Shape::Sphere { center: cb, radius: rb }) => {
+            let mut out = v(point(ca) - cb);
+            out.push(ra - rb);
+            out
+        }
+        (Shape::Cylinder { point: pa, axis: da, radius: ra }, Shape::Cylinder { point: pb, axis: db, radius: rb }) => {
+            let mut out = on_axis(pa, da, pb, db);
+            out.push(ra - rb);
+            out
+        }
+        (Shape::Cone { apex: pa, axis: da, half_angle: ha }, Shape::Cone { apex: pb, axis: db, half_angle: hb }) => {
+            let mut out = v(dir(da).cross(db));
+            out.extend(v(point(pa) - pb));
+            out.push(ha - hb);
+            out
+        }
+        (Shape::Torus { center: ca, axis: da, major: ma, minor: na2 }, Shape::Torus { center: cb, axis: db, major: mb, minor: nb2 }) => {
+            let mut out = v(dir(da).cross(db));
+            out.extend(v(point(ca) - cb));
+            out.extend([ma - mb, na2 - nb2]);
             out
         }
         _ => Vec::new(),
@@ -512,9 +640,80 @@ pub fn suggest(shapes: &[Shape]) -> Vec<Relation> {
             {
                 out.push(Relation { kind: Kind::EqualRadius, a: i, b: Some(Side::Shape(j)) });
             }
+            if nearly_touching(a, Side::Shape(j), shapes) {
+                out.push(Relation { kind: Kind::Tangent, a: i, b: Some(Side::Shape(j)) });
+            }
+            // Mirror images in a fitted plane among the others, or a world plane.
+            if a.like(b) {
+                let planes = shapes
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, s)| *k != i && *k != j && matches!(s, Shape::Plane { .. }))
+                    .map(|(k, _)| Side::Shape(k))
+                    .chain([Datum::PlaneXy, Datum::PlaneYz, Datum::PlaneZx].map(Side::Datum));
+                for about in planes {
+                    let Some(m) = plane_of(shapes, about) else { continue };
+                    if nearly_mirrored(a, b, m) {
+                        out.push(Relation { kind: Kind::Mirror(about), a: i, b: Some(Side::Shape(j)) });
+                    }
+                }
+            }
+        }
+        for d in [Datum::PlaneXy, Datum::PlaneYz, Datum::PlaneZx] {
+            if nearly_touching(a, Side::Datum(d), shapes) {
+                out.push(Relation { kind: Kind::Tangent, a: i, b: Some(Side::Datum(d)) });
+            }
         }
     }
     out
+}
+
+/// How near is near for a shape of size `r`: 5 % of it, at least 0.5 mm.
+fn near_for(r: f64) -> f64 {
+    (0.05 * r).max(0.5)
+}
+
+/// Whether `a` and `side` nearly touch: the directions within [`SUGGEST_DEGREES`] of what
+/// touching needs, the gap within [`near_for`] the smaller radius.
+fn nearly_touching(a: &Shape, side: Side, shapes: &[Shape]) -> bool {
+    let b = match side {
+        Side::Shape(j) => shapes.get(j),
+        Side::Datum(_) => None,
+    };
+    if !touchable(a, b, plane_of(shapes, side).is_some()) {
+        return false;
+    }
+    let r = radius(a).into_iter().chain(b.and_then(radius)).fold(f64::INFINITY, f64::min);
+    let off = touching(a, side, shapes);
+    let sin = SUGGEST_DEGREES.to_radians().sin();
+    // The direction rows (a cylinder's axis against a plane's normal, two axes crossed) are
+    // sines; the last row is the gap.
+    match off.split_last() {
+        Some((gap, dirs)) => gap.abs() <= near_for(r) && dirs.iter().all(|x| x.abs() <= sin),
+        None => false,
+    }
+}
+
+/// Whether `b` is nearly `a` reflected in the plane `m`.
+fn nearly_mirrored(a: &Shape, b: &Shape, m: (Vec3, Vec3)) -> bool {
+    let size = radius(a).unwrap_or(10.0);
+    let sin = SUGGEST_DEGREES.to_radians().sin();
+    let off = mirrored(a, b, m);
+    if off.is_empty() {
+        return false;
+    }
+    // Rows: direction sines (three) where the kind has a direction, then lengths; a sphere's
+    // and a torus's sizes and a cone's angle are left to `like`, which `a` and `b` passed.
+    let (dirs, rest): (&[f64], &[f64]) = match a {
+        Shape::Plane { .. } | Shape::Cylinder { .. } | Shape::Cone { .. } | Shape::Torus { .. } => off.split_at(3.min(off.len())),
+        Shape::Sphere { .. } => (&[], &off[..]),
+    };
+    // A plane's one offset; the others' first three lengths (a centre, an apex, an axis's offset).
+    let lengths: Vec<f64> = match a {
+        Shape::Plane { .. } => rest.to_vec(),
+        _ => rest.iter().take(3).copied().collect(),
+    };
+    dirs.iter().all(|x| x.abs() <= sin) && length(&lengths) <= near_for(size)
 }
 
 #[cfg(test)]
@@ -603,6 +802,58 @@ mod tests {
         assert!(((p1 - p0).dot(n0).abs() - 25.0).abs() < 1e-6);
         // The tilted face, held square, is off its points by about its tilt over its half width.
         assert!(solved.max[0] > 0.2 && solved.max[0] < 0.5, "{}", solved.max[0]);
+    }
+
+    /// A cylinder lying 0.08 mm up off the plane it rests on, held tangent to it (suggested so),
+    /// lies on it: its axis a radius above the plane, along it.
+    #[test]
+    fn a_cylinder_held_tangent_rests_on_its_plane() {
+        let tube = cylinder(Vec3::new(0.0, 0.0, 5.08), Vec3::new(1.0, 0.0, 0.0), 5.0, -10.0, 10.0, 0.005);
+        let floor = plane(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), 40.0, 0.005);
+        let held = [
+            Held { shape: Shape::Cylinder { point: Vec3::new(0.0, 0.0, 5.08), axis: Vec3::new(1.0, 0.0, 0.0), radius: 5.0 }, points: tube },
+            Held { shape: Shape::Plane { point: Vec3::ZERO, normal: Vec3::new(0.0, 0.0, 1.0) }, points: floor },
+        ];
+        let shapes: Vec<Shape> = held.iter().map(|h| h.shape).collect();
+        assert!(suggest(&shapes).iter().any(|r| r.kind == Kind::Tangent && r.a == 0 && r.b == Some(Side::Shape(1))), "{:?}", suggest(&shapes));
+        let solved = solve(&held, &[Relation { kind: Kind::Tangent, a: 0, b: Some(Side::Shape(1)) }]).unwrap();
+        assert!(solved.off[0] < 1e-6, "{:?}", solved.off);
+        let (Shape::Cylinder { point, axis, radius }, Shape::Plane { point: q, normal: n }) = (solved.shapes[0], solved.shapes[1]) else { panic!() };
+        assert!(((point - q).dot(n).abs() - radius).abs() < 1e-6 && axis.dot(n).abs() < 1e-6);
+        assert!((radius - 5.0).abs() < 0.05 && (point.z - 5.0).abs() < 0.06, "{point:?} r {radius}");
+    }
+
+    /// Two spheres scanned a hair off each other's reflection in the YZ plane, held mirrored in
+    /// it (suggested so): their centres are each other's reflection and their radii one.
+    #[test]
+    fn two_spheres_held_mirrored_are_each_others_reflection() {
+        let ball = |c: Vec3, r: f64| -> Vec<Vec3> {
+            let mut out = Vec::new();
+            for i in 0..20 {
+                for j in 1..20 {
+                    let (t, p) = (std::f64::consts::TAU * f64::from(i) / 20.0, std::f64::consts::PI * f64::from(j) / 20.0);
+                    out.push(c + Vec3::new(p.sin() * t.cos(), p.sin() * t.sin(), p.cos()) * r);
+                }
+            }
+            out
+        };
+        let (ca, cb) = (Vec3::new(-20.1, 0.0, 0.0), Vec3::new(19.9, 0.05, 0.0));
+        let held = [
+            Held { shape: Shape::Sphere { center: ca, radius: 5.0 }, points: ball(ca, 5.0) },
+            Held { shape: Shape::Sphere { center: cb, radius: 5.04 }, points: ball(cb, 5.04) },
+        ];
+        let shapes: Vec<Shape> = held.iter().map(|h| h.shape).collect();
+        let mirror = Relation { kind: Kind::Mirror(Side::Datum(Datum::PlaneYz)), a: 0, b: Some(Side::Shape(1)) };
+        assert!(suggest(&shapes).contains(&mirror), "{:?}", suggest(&shapes));
+        let solved = solve(&held, &[mirror]).unwrap();
+        assert!(solved.off[0] < 1e-6, "{:?}", solved.off);
+        let (Shape::Sphere { center: a, radius: ra }, Shape::Sphere { center: b, radius: rb }) = (solved.shapes[0], solved.shapes[1]) else {
+            panic!()
+        };
+        assert!(a.dist(Vec3::new(-b.x, b.y, b.z)) < 1e-6 && (ra - rb).abs() < 1e-6, "{a:?} {b:?}");
+        // Mirrored in their own sphere is refused: the plane must be a plane.
+        let wrong = [Relation { kind: Kind::Mirror(Side::Shape(0)), a: 0, b: Some(Side::Shape(1)) }];
+        assert!(matches!(solve(&held, &wrong), Err(RelateError::Unfit { .. })));
     }
 
     #[test]

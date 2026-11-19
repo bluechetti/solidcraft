@@ -1,0 +1,42 @@
+{
+  "en": {
+    "ui.scan_together_mirror": "Mirrored",
+    "ui.scan_together_relation_about": "{kind}: {a} and {b} in {about}",
+    "ui.scan_together_tangent": "Touching"
+  },
+  "ar": {
+    "ui.scan_together_mirror": "متناظران",
+    "ui.scan_together_relation_about": "{kind}: {a} و{b} في {about}",
+    "ui.scan_together_tangent": "متماسّان"
+  },
+  "de": {
+    "ui.scan_together_mirror": "Gespiegelt",
+    "ui.scan_together_relation_about": "{kind}: {a} und {b} an {about}",
+    "ui.scan_together_tangent": "Berührend"
+  },
+  "he": {
+    "ui.scan_together_mirror": "משתקפים",
+    "ui.scan_together_relation_about": "{kind}: {a} ו-{b} ב-{about}",
+    "ui.scan_together_tangent": "משיקים"
+  },
+  "ja": {
+    "ui.scan_together_mirror": "鏡像",
+    "ui.scan_together_relation_about": "{kind}: {a} と {b} ({about} で)",
+    "ui.scan_together_tangent": "接する"
+  },
+  "ko": {
+    "ui.scan_together_mirror": "대칭",
+    "ui.scan_together_relation_about": "{kind}: {a}와 {b} ({about} 기준)",
+    "ui.scan_together_tangent": "접함"
+  },
+  "vi": {
+    "ui.scan_together_mirror": "Đối xứng",
+    "ui.scan_together_relation_about": "{kind}: {a} và {b} qua {about}",
+    "ui.scan_together_tangent": "Tiếp xúc"
+  },
+  "zh": {
+    "ui.scan_together_mirror": "镜像",
+    "ui.scan_together_relation_about": "{kind}：{a} 和 {b}，关于 {about}",
+    "ui.scan_together_tangent": "相切"
+  }
+}
