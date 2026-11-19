@@ -512,9 +512,18 @@ pub struct ScanDeviationResult {
     pub model_max: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_farthest_at: Option<[f64; 3]>,
+    /// The shares farther apart than the limit: of all the scan's points from the model
+    /// (`beyond_limit`, those too far to measure among them) and of the model's surface from the
+    /// scan (`model_beyond_limit`). A feature missing or made up is a small share of the whole,
+    /// and far off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beyond_limit: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_beyond_limit: Option<f64>,
     /// Whether the fit passes, both ways: at least 95 % of all the scan's points are within the
-    /// tolerance of the model (`within_all`), and at least 95 % of the model's surface has the
-    /// scan within the tolerance of it (`model_within`).
+    /// tolerance of the model (`within_all`) and at least 95 % of the model's surface has the
+    /// scan within the tolerance of it (`model_within`), and no more than 0.1 % of either is
+    /// farther than the limit from the other (`beyond_limit`, `model_beyond_limit`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub passes: Option<bool>,
     /// Why it does not pass, in words; absent when it does.

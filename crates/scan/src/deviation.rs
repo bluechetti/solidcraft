@@ -119,6 +119,9 @@ pub struct Borne {
     pub within: f64,
     /// The share of the model's surface with any scan within reach of it.
     pub covered: f64,
+    /// The share of the model's surface farther than the limit from the scan (a place with no
+    /// scan within reach among them): a feature made up, however small beside the whole.
+    pub beyond: f64,
     /// Over the places with scan within reach: the largest distance and the root mean square.
     pub max: f64,
     pub rms: f64,
@@ -131,6 +134,16 @@ pub struct Borne {
 
 /// The most places a model is measured at.
 pub const MOST_PLACES: usize = 200_000;
+
+/// The share of `values` (a scan's distances from its model, NaN where too far to measure) that
+/// are farther than `limit` or too far to measure, 0 to 1: what the model does not have, however
+/// small beside the whole scan.
+pub fn beyond(values: &[f32], limit: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.iter().filter(|v| !(f64::from(v.abs()) <= limit)).count() as f64 / values.len() as f64
+}
 
 /// Places spread evenly over `model`'s surface, each with the area it stands for: every triangle
 /// cut into n x n alike, n chosen so each piece is about a `most`th of the whole, a place at each
@@ -171,12 +184,15 @@ pub fn places(model: &Mesh, most: usize) -> Vec<(Vec3, f64)> {
 const MOST_ACROSS: usize = 1024;
 
 /// `places` on the model (each with its area) measured to the scan `scan`: see [`Borne`].
-pub fn borne_out(places: &[(Vec3, f64)], scan: &TriangleTree, tolerance: f64, reach: f64) -> Borne {
+pub fn borne_out(places: &[(Vec3, f64)], scan: &TriangleTree, tolerance: f64, limit: f64, reach: f64) -> Borne {
     let distances: Vec<f64> = crate::par::map(places.len(), |i| places.get(i).and_then(|(p, _)| scan.nearest(*p)).map_or(f64::INFINITY, |(d, _)| d));
-    let (mut all, mut within, mut covered, mut squares, mut max) = (0.0, 0.0, 0.0, 0.0, 0.0_f64);
+    let (mut all, mut within, mut covered, mut beyond, mut squares, mut max) = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0_f64);
     let (mut farthest, mut uncovered): (Option<usize>, Option<usize>) = (None, None);
     for (i, ((_, area), d)) in places.iter().zip(&distances).enumerate() {
         all += area;
+        if !(*d <= limit) {
+            beyond += area;
+        }
         if !(*d <= reach) {
             uncovered = uncovered.or(Some(i));
             continue;
@@ -194,6 +210,7 @@ pub fn borne_out(places: &[(Vec3, f64)], scan: &TriangleTree, tolerance: f64, re
     Borne {
         within: share(within),
         covered: share(covered),
+        beyond: share(beyond),
         max,
         rms: if covered > 0.0 { (squares / covered).sqrt() } else { 0.0 },
         places: places.len(),
@@ -251,20 +268,23 @@ mod tests {
         assert!((area - 600.0).abs() < 1e-9, "the places stand for the whole surface: {area}");
         assert!(spread.len() >= 6000 && spread.len() < 7000, "{}", spread.len());
         assert_eq!(places(&model, 6000), spread, "the same places each time");
-        let whole = borne_out(&spread, &TriangleTree::new(&model), 0.1, 2.0);
+        let whole = borne_out(&spread, &TriangleTree::new(&model), 0.1, 0.5, 2.0);
         assert!((whole.within - 1.0).abs() < 1e-12 && (whole.covered - 1.0).abs() < 1e-12 && whole.max < 1e-9, "{whole:?}");
         // The scan: the box's bottom and four sides, a tray standing 0.05 above where the model's top is not.
         let mut open = model.clone();
         open.triangles.retain(|t| !t.iter().all(|&i| open.positions[i as usize].z == 10.0));
-        let partly = borne_out(&spread, &TriangleTree::new(&open), 0.1, 2.0);
+        let partly = borne_out(&spread, &TriangleTree::new(&open), 0.1, 0.5, 2.0);
         // Of the top (100 of 600), only the strip within 0.1 of a side's rim has the scan within
         // the tolerance: 100 - 9.8 * 9.8 = 3.96. Within 2 of it: 100 - 6 * 6 = 64.
         // The places are some 0.4 apart, so they find between none and all of that strip.
         assert!(partly.within > 500.0 / 600.0 - 1e-9 && partly.within < 503.96 / 600.0 + 1e-9, "{partly:?}");
         assert!((partly.covered - (500.0 + 64.0) / 600.0).abs() < 0.01, "{partly:?}");
+        // Farther than 0.5 from the scan: the top less the 0.5 strip round it, 9 * 9 of 600.
+        assert!((partly.beyond - 81.0 / 600.0).abs() < 0.01 && whole.beyond == 0.0, "{partly:?}");
+        assert!((beyond(&[0.1, -0.6, f32::NAN, 0.5], 0.5) - 0.5).abs() < 1e-12 && beyond(&[], 0.5) == 0.0);
         assert!(partly.farthest_at.is_some_and(|p| (p.z - 10.0).abs() < 1e-9), "{partly:?}");
         assert!(partly.max <= 2.0 && partly.max > 1.5, "the farthest place with scan within reach: {partly:?}");
-        assert_eq!(borne_out(&[], &TriangleTree::new(&model), 0.1, 2.0).places, 0);
+        assert_eq!(borne_out(&[], &TriangleTree::new(&model), 0.1, 0.5, 2.0).places, 0);
     }
 
     #[test]
