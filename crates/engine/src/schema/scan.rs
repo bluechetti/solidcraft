@@ -600,6 +600,9 @@ pub struct ScanDeviationResult {
     /// What lies beyond the tolerance, as area on the scan (mm²) and volume between the scan and
     /// the model (mm³; each scan point's distance times the area it stands for): `below` inside
     /// the model (material missing: wear, a dent), `above` outside it. Neither needs to be closed.
+    /// For these, and for `regions`, a point's distance is to the model face it faces, so a dent
+    /// beside a wall or a step is not measured against the wall (`max_below` and the colours are
+    /// still to the nearest of the model).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub area_below: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

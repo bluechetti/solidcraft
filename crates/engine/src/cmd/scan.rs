@@ -1291,15 +1291,22 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "measure the scan against another body, not itself"));
     }
     let model = state.body(&model_name).ok_or_else(|| bad(cmd, format!("no body `{model_name}`")))?;
-    let d = match model.body.display_mesh().filter(|_| model.body.is_mesh()) {
+    // The distances, and for what was worn off or added, each point's distance to the model face
+    // it faces (beside a wall the nearest surface is the wall, not the face the material left).
+    let measured = |surface: &solidcraft_geom::Mesh| {
+        let d = solidcraft_scan::deviation::measure(&mesh.positions, surface, tolerance, 4.0 * limit);
+        let faced = solidcraft_scan::deviation::facing(&mesh.positions, &mesh.triangles, surface, &d.values, tolerance, 4.0 * limit);
+        (d, faced)
+    };
+    let (d, faced) = match model.body.display_mesh().filter(|_| model.body.is_mesh()) {
         // A mesh body (the model as an STL) is measured against as it is, its triangles shared.
-        Some(triangles) => solidcraft_scan::deviation::measure(&mesh.positions, &triangles, tolerance, 4.0 * limit),
+        Some(triangles) => measured(&triangles),
         None => {
             // Meshed within a quarter of the tolerance, as Compare Bodies does, so the mesh agrees
             // with the surface well within what is measured.
             let surface =
                 model.body.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance / 4.0)).map_err(|e| bad(cmd, format!("`{model_name}`: {e}")))?;
-            solidcraft_scan::deviation::measure(&mesh.positions, &surface, tolerance, 4.0 * limit)
+            measured(&surface)
         }
     };
     if d.measured == 0 {
@@ -1313,7 +1320,7 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
     let at = |i: Option<usize>| i.and_then(|i| Some((*mesh.positions.get(i)?, *d.values.get(i)?)));
     let (max_above_at, max_below_at) = (at(d.max_above_at), at(d.max_below_at));
     // How much lies beyond the tolerance, and where: the volume worn off or added, region by region.
-    let beyond = solidcraft_scan::deviation::beyond(&mesh.positions, &mesh.triangles, &d.values, tolerance);
+    let beyond = solidcraft_scan::deviation::beyond(&mesh.positions, &mesh.triangles, &faced, tolerance);
     let regions: Vec<ScanDeviationRegion> = beyond
         .regions
         .iter()
