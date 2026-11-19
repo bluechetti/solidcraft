@@ -615,7 +615,10 @@ impl Gpu {
             let l = egui::Rgba::from(c);
             [l.r(), l.g(), l.b()]
         };
-        let style = Style { body: linear(t.app_bar), body_held: linear(t.form_primary), ray: linear(t.form_primary), ray_pressed: linear(t.accent) };
+        // Most themes give the accent and the primary form colour the same value, so the pressed ray is
+        // the ray's own colour brought most of the way to white, not a second token.
+        let ray = linear(t.form_primary);
+        let style = Style { body: linear(t.app_bar), body_held: linear(t.form_primary), ray, ray_pressed: ray.map(|c| c + (1.0 - c) * 0.7) };
         let vertices = marks::marks(scene.hands, scene.held, &style);
         let count = vertices.len().min(marks::MAX_VERTICES);
         if count > 0 {
