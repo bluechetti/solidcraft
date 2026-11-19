@@ -800,20 +800,26 @@ fn refitted(
                 (kind_of, closest) = (other, rms);
             }
         }
-        let Some(refit) = fit::refined(&reading.scan, &region, &kind_of, GROWING_POINTS) else { continue };
-        if reading.rms(&region, &refit) > tolerance || degenerate(&refit, at, across, size) {
-            continue;
-        }
         // Smoothing rounds a narrow flat face over at its edges (a chamfer a few triangles wide),
         // and on the copy it reads as a strip of cylinder or cone. The scan itself says which it
         // is: a plane that lies on the region's own points within half the tolerance (the
-        // tolerance is three times the noise: the noise and half as much again) is the shape.
-        // Only a plane: a band of a cone lies that near a sphere too, and is the cone.
-        let simpler = (refit.kind() != Kind::Plane)
+        // tolerance is three times the noise: the noise and half as much again) is the shape,
+        // also where the curved kind, fitted to the scan, is no shape at all. Only a plane: a
+        // band of a cone lies that near a sphere too, and is the cone.
+        let flat = (kind_of.kind() != Kind::Plane)
             .then(|| fit::shape_of_sampled(&reading.scan, &region, Kind::Plane, GROWING_POINTS))
             .flatten()
-            .filter(|flat| reading.rms(&region, flat) <= FLAT_WITHIN * tolerance && !degenerate(flat, at, across, size));
-        let refit = simpler.unwrap_or(refit);
+            .filter(|flat| reading.rms(&region, flat) <= FLAT_WITHIN * tolerance);
+        let refit = match flat {
+            Some(flat) => flat,
+            None => {
+                let Some(refit) = fit::refined(&reading.scan, &region, &kind_of, GROWING_POINTS) else { continue };
+                if reading.rms(&region, &refit) > tolerance || degenerate(&refit, at, across, size) {
+                    continue;
+                }
+                refit
+            }
+        };
         let id = kept.len() as u32;
         for &t in &region {
             reading.label[t] = id;

@@ -466,6 +466,26 @@ fn a_narrow_chamfer_under_noise_is_read_flat_as_the_scan_has_it() {
     assert!((v - expected).abs() < 0.002 * expected, "{v} against {expected}");
 }
 
+/// The same block and noise, tidied and given the tolerance Survey advises (Repair, then three
+/// times the noise). Repair moves a few triangles, and on the smoothed copy parts of two chamfers
+/// then read as strips of a cone that, fitted to the scan itself, is no cone at all (as steep as
+/// a plane). Such a strip is not dropped: it is the plane its own points lie on, and all four
+/// chamfers are read.
+#[test]
+fn a_chamfer_strip_no_curved_shape_fits_is_still_the_flat_face_it_lies_on() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 80, "width": 60, "height": 20}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.chamfer", json!({"edges": [[40, 0, 20], [80, 30, 20], [40, 60, 20], [0, 30, 20]], "distance": 2, "tangent_chain": false}));
+    let (mut s, scan) = scanned_with_noise(&part, &body, 0.1, "chamfered-tidied");
+    run(&mut s, "scan.repair", json!({"body": scan}));
+    run(&mut s, "scan.tolerance", json!({"scan": scan, "tolerance": 0.3}));
+    let found = run(&mut s, "scan.find_all", json!({}));
+    assert!(found["in_shapes"].as_f64().is_some_and(|share| share > 0.995), "{}", found["in_shapes"]);
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    assert_eq!(read["chamfers"].as_array().map(Vec::len), Some(4), "{read}");
+}
+
 /// A plate 60 × 40 × 8 with a hole Ø 8, scanned with 0.1 mm of noise, and the plate built without
 /// its hole: Reconstruct the Rest reads the hole off what the plate leaves unexplained and cuts
 /// it. The hole's wall beside each face of the plate lies within the tolerance of that face and
