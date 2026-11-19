@@ -2760,18 +2760,19 @@ fn panel_export_writes_the_pieces_the_sheets_and_the_lists() {
     // The full-size print: each piece about 300 × 195 over 2 × 2 Letter pages, with its map, after the cover.
     assert_eq!(w["full_size_pages"].as_u64(), Some(1 + 4 * (1 + 4)), "{w}");
     let full = String::from_utf8_lossy(&std::fs::read(dir.join("wall-full-size.pdf")).unwrap()).into_owned();
-    assert_eq!(full.matches("/Type /Page ").count(), 21, "the full-size pages");
-    assert!(full.contains("P1-A1") && full.contains("P4-B2") && full.contains("100 mm: check it"), "the pages named, the scale bar");
+    // The sheet's PDF writer deflates each page, and labels are drawn as letter outlines (the
+    // page writer's own test), so the file is read for its page objects only.
+    let pages = |pdf: &str| pdf.matches("/Type /Page").count() - pdf.matches("/Type /Pages").count();
+    assert_eq!(pages(&full), 21, "the full-size pages");
     let none = run(&mut s, "scan.panel_export", json!({"body": body, "panel": {"sheet": [400, 250]}, "paper": "none"}));
     assert_eq!(none["full_size_pages"].as_u64(), Some(0), "{none}");
     let a4 = run(&mut s, "scan.panel_export", json!({"body": body, "panel": {"sheet": [400, 250]}, "paper": "a4"}));
     assert!(a4["full_size_pages"].as_u64().is_some_and(|n| n > 1), "{a4}");
     assert!(s.execute("scan.panel_export", &json!({"body": body, "paper": "A0"})).is_err());
     let pdf = std::fs::read(dir.join("wall.pdf")).unwrap();
-    assert!(pdf.starts_with(b"%PDF-1.4") && pdf.ends_with(b"%%EOF\n"), "a PDF");
+    assert!(pdf.starts_with(b"%PDF-1.") && pdf.trim_ascii_end().ends_with(b"%%EOF"), "a PDF");
     let pdf_text = String::from_utf8_lossy(&pdf);
-    assert_eq!(pdf_text.matches("/Type /Page ").count(), 6, "six pages");
-    assert!(pdf_text.contains("(Piece 1 of 4) Tj") && pdf_text.contains("Measure in the van before cutting"), "the drawings' text");
+    assert_eq!(pages(&pdf_text), 6, "six pages");
     assert!(files.iter().all(|f| std::path::Path::new(f.as_str().unwrap()).exists()), "{w}");
     assert!(w.get("pieces_dxf").is_none(), "{w}");
     let _ = std::fs::remove_dir_all(&dir);
