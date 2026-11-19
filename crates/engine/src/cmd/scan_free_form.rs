@@ -61,12 +61,20 @@ fn scan_distance(s: &Session, scan: &str, surface: &NurbsSurface, fallback: f64,
     }
 }
 
+/// Said when the four corners enclose no area (a corner clicked twice, all four in a line, or
+/// taken in a crossed order), which no face can be made over.
+const NO_AREA: &str =
+    "the corners enclose no area (two are in one place, all lie in a line, or they cross over): click four different corners in order round a face";
+
 /// The face over `corners`: fitted to the scan `body` (or the selected or only one) unless `fit`
 /// is off, places met no farther than `reach` from it when given.
 pub fn make(s: &Session, body: Option<&str>, corners: [Vec3; 4], fit: Fit, fitting: Fitting, reach: Option<f64>) -> Result<Made> {
     let cmd = "scan.free_form";
     if corners.iter().any(|c| !c.is_finite()) {
         return Err(bad(cmd, "the corners must be finite points"));
+    }
+    if !free_form::encloses_area(corners) {
+        return Err(bad(cmd, NO_AREA));
     }
     let count = fitting.count.clamp(free_form::LEAST_POINTS, free_form::MOST_POINTS);
     if fit == Fit::Off {
