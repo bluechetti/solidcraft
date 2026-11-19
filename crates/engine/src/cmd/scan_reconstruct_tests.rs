@@ -614,6 +614,29 @@ fn a_flange_with_bolt_holes_is_revolved_and_cut_not_extruded_again() {
     assert!((v - expected).abs() < 0.005 * expected, "{v} against {expected}");
 }
 
+/// A shaft R 20 × 25 with a spigot, and three flat-bottomed holes Ø 6 drilled 13 deep into its
+/// side, their bottoms 8 from the axis; scanned with 0.1 mm of noise. A hole's wall ends, on the
+/// scan, at the farthest of its corners, which the noise at the bottom's rim carries past the
+/// bottom (the hole read 13.22 deep). The bottom is read at its flat face: 8 from the axis within
+/// 0.05, half the noise.
+#[test]
+fn a_blind_holes_bottom_is_at_its_flat_face_not_the_noisiest_corner_of_its_wall() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.cylinder", json!({"radius": 20, "height": 25}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.cylinder", json!({"radius": 12, "height": 15, "base": [0, 0, 25], "operation": "join", "targets": [body]}));
+    run(&mut part, "solid.cylinder", json!({"base": [21, 0, 12.5], "radius": 3, "height": 13, "axis": [-1, 0, 0], "operation": "cut", "targets": [body], "name": "Hole"}));
+    run(&mut part, "solid.pattern.circular", json!({"features": ["Hole"], "axis": "Z", "count": 3}));
+    let (mut s, _) = scanned_with_noise(&part, &body, 0.1, "blind-bottom");
+    run(&mut s, "scan.find_all", json!({}));
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let holes = read["holes"].as_array().unwrap();
+    assert_eq!(holes.len(), 1, "one hole, repeated: {read}");
+    let bottom: Vec<f64> = holes[0]["bottom"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let from_axis = bottom[0].hypot(bottom[1]);
+    assert!((from_axis - 8.0).abs() < 0.05, "{from_axis}: {read}");
+}
+
 /// A moulded housing: an 80 × 60 × 30 box, its sides drafted 2° in toward the top, its upright
 /// corners R 6, shelled 2 mm open at the bottom, its outer top rim R 3. Reconstruct reads one
 /// drafted prism off the outside (the inside set aside as the shell's), walls 2 mm thick open at

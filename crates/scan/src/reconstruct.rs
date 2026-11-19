@@ -1296,7 +1296,9 @@ fn in_a_grid(members: &[usize], places: &[Vec3], kind: Kind) -> Option<Repeat> {
 
 /// The round holes among the faces (`is_hole` tells them) that `explained` (what a prism's
 /// profile or the turned profile holds) leaves out; where holes repeat, only the first is kept,
-/// with the repeat. `span` is how far a face runs along a direction; `middle` the scan's.
+/// with the repeat. `span` is how far a face runs along a direction; `middle` the scan's, and
+/// `tolerance` the scan's. A blind hole's bottom is at its flat face, where it has one
+/// ([`flat_bottom`]).
 pub fn holes(
     faces: &[Face],
     is_hole: &dyn Fn(usize) -> bool,
@@ -1304,6 +1306,7 @@ pub fn holes(
     repeats: &[Repeat],
     span: &dyn Fn(usize, Vec3) -> Option<(f64, f64)>,
     middle: Vec3,
+    tolerance: f64,
 ) -> Vec<Hole> {
     let hole = |k: usize| !explained.contains(&k) && is_hole(k);
     let mut repeated: BTreeMap<usize, (usize, Layout)> = BTreeMap::new();
@@ -1324,9 +1327,40 @@ pub fn holes(
             let at = |t: f64| point + axis * (t - point.dot(axis));
             let (a, b) = (at(least), at(most));
             let (mouth, bottom) = if a.dist(middle) >= b.dist(middle) { (a, b) } else { (b, a) };
+            let bottom = flat_bottom(faces, k, bottom, axis, radius, tolerance).unwrap_or(bottom);
             Some(Hole { face: k, mouth, bottom, radius, repeat: repeated.get(&k).copied(), form: None })
         })
         .collect()
+}
+
+/// Two directions within 2° are one.
+const SQUARE_TO_BORE: f64 = 0.9994;
+
+/// Where the flat bottom of the bore `bore` (about `axis`, its wall ending at `end`) crosses the
+/// axis: a plane square to the axis, its middle within half the radius of the axis, no larger
+/// than a bottom is (six times the bore's own section), and within a tenth of the radius or two
+/// tolerances of the wall's end. The wall's own end is the farthest of its corners, which the
+/// noise of the bottom's rim carries past the bottom: a Ø 6 hole 13 deep read 13.22 at 0.1 mm of
+/// noise, and its flat face read 13.00.
+fn flat_bottom(faces: &[Face], bore: usize, end: Vec3, axis: Vec3, radius: f64, tolerance: f64) -> Option<Vec3> {
+    let near = (0.1 * radius).max(2.0 * tolerance);
+    faces
+        .iter()
+        .enumerate()
+        .filter(|(j, face)| *j != bore && face.area > 0.0 && face.area <= 6.0 * std::f64::consts::PI * radius * radius)
+        .filter_map(|(_, face)| {
+            let Shape::Plane { point, normal } = face.shape else { return None };
+            let normal = normal.normalized()?;
+            let off = point - end;
+            if normal.dot(axis).abs() < SQUARE_TO_BORE || (off - axis * off.dot(axis)).len() > 0.5 * radius {
+                return None;
+            }
+            // Along the axis from the wall's end to the plane.
+            let along = off.dot(normal) / axis.dot(normal);
+            (along.abs() <= near).then_some((along, end + axis * along))
+        })
+        .min_by(|a, b| a.0.abs().total_cmp(&b.0.abs()))
+        .map(|(_, at)| at)
 }
 
 /// The holes a Hole feature makes, as holes: where the bores of several repeat (a row or a ring
@@ -1921,7 +1955,7 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         None => prisms.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).chain(&inner).copied().collect(),
     };
     let plain_explained: BTreeSet<usize> = explained.union(&in_formed).copied().collect();
-    let mut holes = holes(&faces, &hole, &plain_explained, &repeats, &span_of, centre);
+    let mut holes = holes(&faces, &hole, &plain_explained, &repeats, &span_of, centre, outcome.tolerance);
     holes.extend(formed_holes(formed, &repeats));
     let plans = pattern_plans(&faces, &repeats, &rounds);
     // The rounds no profile holds: not a wall of a prism, nor a face of a turned part that is read.
