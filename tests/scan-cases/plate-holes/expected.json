@@ -1,0 +1,39 @@
+{
+ "source": "analytic",
+ "solids": 1,
+ "volume": 18395.752280681012,
+ "volume_by": "60*40*8 - 2*pi*4^2*8",
+ "holes": 2,
+ "cylinders": [
+  {
+   "name": "hole 1",
+   "kind": "hole",
+   "radius": 4,
+   "point": [
+    15,
+    20,
+    0
+   ],
+   "axis": [
+    0,
+    0,
+    1
+   ]
+  },
+  {
+   "name": "hole 2",
+   "kind": "hole",
+   "radius": 4,
+   "point": [
+    45,
+    20,
+    0
+   ],
+   "axis": [
+    0,
+    0,
+    1
+   ]
+  }
+ ]
+}

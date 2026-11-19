@@ -1,0 +1,99 @@
+{
+ "source": "analytic",
+ "solids": 1,
+ "volume": 31139.46638238203,
+ "volume_by": "pi*(30^2*8 + 10^2*30) - 4*pi*3^2*8",
+ "holes": 4,
+ "cylinders": [
+  {
+   "name": "disc",
+   "kind": "boss",
+   "radius": 30,
+   "point": [
+    0,
+    0,
+    0
+   ],
+   "axis": [
+    0,
+    0,
+    1
+   ]
+  },
+  {
+   "name": "hub",
+   "kind": "boss",
+   "radius": 10,
+   "point": [
+    0,
+    0,
+    0
+   ],
+   "axis": [
+    0,
+    0,
+    1
+   ]
+  },
+  {
+   "name": "bolt hole 1",
+   "kind": "hole",
+   "radius": 3,
+   "point": [
+    22.0,
+    0.0,
+    0
+   ],
+   "axis": [
+    0,
+    0,
+    1
+   ]
+  },
+  {
+   "name": "bolt hole 2",
+   "kind": "hole",
+   "radius": 3,
+   "point": [
+    0.0,
+    22.0,
+    0
+   ],
+   "axis": [
+    0,
+    0,
+    1
+   ]
+  },
+  {
+   "name": "bolt hole 3",
+   "kind": "hole",
+   "radius": 3,
+   "point": [
+    -22.0,
+    0.0,
+    0
+   ],
+   "axis": [
+    0,
+    0,
+    1
+   ]
+  },
+  {
+   "name": "bolt hole 4",
+   "kind": "hole",
+   "radius": 3,
+   "point": [
+    -0.0,
+    -22.0,
+    0
+   ],
+   "axis": [
+    0,
+    0,
+    1
+   ]
+  }
+ ]
+}

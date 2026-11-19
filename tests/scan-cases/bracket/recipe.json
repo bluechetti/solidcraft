@@ -1,0 +1,72 @@
+{
+ "id": "bracket",
+ "class": "prismatic",
+ "description": "An L bracket: a base 60 x 40 x 10 with an upright 10 x 40 x 30 on one end, a hole D8 through the base at (40, 20) and one through the upright at height 25.",
+ "units": "mm",
+ "body": "Part",
+ "commands": [
+  {
+   "command": "solid.box",
+   "params": {
+    "length": 60,
+    "width": 40,
+    "height": 10,
+    "body_name": "Part"
+   }
+  },
+  {
+   "command": "solid.box",
+   "params": {
+    "corner": [
+     0,
+     0,
+     10
+    ],
+    "length": 10,
+    "width": 40,
+    "height": 30,
+    "operation": "join",
+    "targets": [
+     "Part"
+    ]
+   }
+  },
+  {
+   "command": "solid.cylinder",
+   "params": {
+    "base": [
+     40,
+     20,
+     -1
+    ],
+    "radius": 4,
+    "height": 12,
+    "operation": "cut",
+    "targets": [
+     "Part"
+    ]
+   }
+  },
+  {
+   "command": "solid.cylinder",
+   "params": {
+    "base": [
+     -1,
+     20,
+     25
+    ],
+    "radius": 4,
+    "height": 12,
+    "operation": "cut",
+    "targets": [
+     "Part"
+    ],
+    "axis": [
+     1,
+     0,
+     0
+    ]
+   }
+  }
+ ]
+}

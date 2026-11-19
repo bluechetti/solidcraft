@@ -1,0 +1,47 @@
+{
+ "id": "chamfered-prism",
+ "class": "prismatic",
+ "description": "A block 80 x 60 x 20 with its four top edges chamfered 2.",
+ "units": "mm",
+ "body": "Part",
+ "commands": [
+  {
+   "command": "solid.box",
+   "params": {
+    "length": 80,
+    "width": 60,
+    "height": 20,
+    "body_name": "Part"
+   }
+  },
+  {
+   "command": "solid.chamfer",
+   "params": {
+    "edges": [
+     [
+      40,
+      0,
+      20
+     ],
+     [
+      80,
+      30,
+      20
+     ],
+     [
+      40,
+      60,
+      20
+     ],
+     [
+      0,
+      30,
+      20
+     ]
+    ],
+    "distance": 2,
+    "tangent_chain": false
+   }
+  }
+ ]
+}

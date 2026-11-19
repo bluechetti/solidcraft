@@ -78,6 +78,8 @@ solidcraft-io = { workspace = true, features = ["dxf-legacy-baseline-tests", "tr
 solidcraft-sketch = { workspace = true, features = ["solver-profiling"] }
 # Sheet metal tests read the joints of a sheet made from surfaces.
 solidcraft-develop = { workspace = true }
+# The scan benchmark's example (examples/scan_bench.rs) makes its scans with the seeded degrader.
+solidcraft-testkit = { workspace = true }
 
 [[example]]
 name = "render_resource_workflow"

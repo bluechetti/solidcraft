@@ -1,0 +1,41 @@
+# The bars a model rebuilt from a scan is held to, by class of part and by the scan's noise.
+#
+# Calibrated once on the first full run (recorded under [calibration]), then only tightened:
+# a bar is never loosened to make a failing case pass. Lengths in mm, angles in degrees, shares
+# 0 to 1. `sigma` is the standard deviation of the noise added along the scan's normals.
+#
+# within / rms / max are held each way: the scan against the model and the model against the scan.
+# The tolerance "within" is read at is tolerance_sigmas x sigma, at least tolerance_least.
+
+[levels]
+sigma = [0.02, 0.1, 0.3]
+seed = 20261118
+# The scan's triangles: the truth mesh is cut until its edges are no longer than this.
+edge = 0.5
+
+[prismatic]
+tolerance_sigmas = 3.0
+tolerance_least = 0.1
+bars = [
+  { sigma = 0.02, within = 0.99, rms = 0.03, max = 0.15, radius = 0.05, position = 0.05, angle = 0.1, volume = 0.005, scale = 0.005, features = "exact" },
+  { sigma = 0.1, within = 0.97, rms = 0.12, max = 0.5, radius = 0.15, position = 0.15, angle = 0.3, volume = 0.01, scale = 0.005, features = "exact" },
+  { sigma = 0.3, within = 0.95, rms = 0.35, max = 1.5, radius = 0.4, position = 0.4, angle = 1.0, volume = 0.02, scale = 0.01, features = "pass or refuse" },
+]
+
+[turned]
+tolerance_sigmas = 3.0
+tolerance_least = 0.1
+bars = [
+  { sigma = 0.02, within = 0.99, rms = 0.03, max = 0.15, radius = 0.025, position = 0.05, angle = 0.1, volume = 0.005, scale = 0.005, features = "exact" },
+  { sigma = 0.1, within = 0.97, rms = 0.12, max = 0.5, radius = 0.1, position = 0.15, angle = 0.3, volume = 0.01, scale = 0.005, features = "exact" },
+  { sigma = 0.3, within = 0.95, rms = 0.35, max = 1.5, radius = 0.3, position = 0.4, angle = 1.0, volume = 0.02, scale = 0.01, features = "pass or refuse" },
+]
+
+# The rule above every bar: a case either meets its bars, or its commands refuse or warn. A case
+# that returns ok with `passes: true` and fails the scorer is silently wrong; none is allowed.
+[rules]
+silent_wrong_allowed = 0
+
+[calibration]
+# Filled by the first full run: its date and commit, and what each bar measured before it was set.
+done = false

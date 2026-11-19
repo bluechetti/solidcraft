@@ -1,0 +1,65 @@
+{
+ "id": "drilled-shaft",
+ "class": "turned",
+ "description": "A turned shaft: D40 x 25 with a D24 x 15 spigot, and three blind holes D6 drilled 12 deep into its side, 120 degrees apart.",
+ "units": "mm",
+ "body": "Part",
+ "commands": [
+  {
+   "command": "solid.cylinder",
+   "params": {
+    "radius": 20,
+    "height": 25,
+    "body_name": "Part"
+   }
+  },
+  {
+   "command": "solid.cylinder",
+   "params": {
+    "radius": 12,
+    "height": 15,
+    "base": [
+     0,
+     0,
+     25
+    ],
+    "operation": "join",
+    "targets": [
+     "Part"
+    ]
+   }
+  },
+  {
+   "command": "solid.cylinder",
+   "params": {
+    "base": [
+     21,
+     0,
+     12.5
+    ],
+    "radius": 3,
+    "height": 13,
+    "operation": "cut",
+    "targets": [
+     "Part"
+    ],
+    "axis": [
+     -1,
+     0,
+     0
+    ],
+    "name": "Hole"
+   }
+  },
+  {
+   "command": "solid.pattern.circular",
+   "params": {
+    "features": [
+     "Hole"
+    ],
+    "axis": "Z",
+    "count": 3
+   }
+  }
+ ]
+}
