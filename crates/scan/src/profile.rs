@@ -449,6 +449,62 @@ pub fn rotational(ring: &[Vec2], tolerance: f64) -> Option<Rotational> {
     Some(Rotational { order, centre, tip, root })
 }
 
+/// How an outline is its own mirror image in a line along its plane's X or Y.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mirrored {
+    /// The line: `across` true for one along Y (at X = `at`, left and right alike), false for one
+    /// along X (at Y = `at`, top and bottom alike).
+    pub across: bool,
+    pub at: f64,
+    /// The corners that are each other's image, by their places in the outline (the lower first).
+    pub pairs: Vec<(usize, usize)>,
+}
+
+/// The lines along X or Y through the middle of `outline`'s box in which it is its own mirror
+/// image within `tolerance`: every corner has its image among the corners (or lies on the line),
+/// and every piece its image among the pieces (a line a line, an arc an arc about the image of
+/// its centre). A part drawn symmetric and scanned comes out so to within the scan's rounding; a
+/// sketch that holds the images to each other then needs one size where it had two.
+pub fn mirrored(outline: &Outline, tolerance: f64) -> Vec<Mirrored> {
+    let n = outline.corners.len();
+    if n < 3 || outline.pieces.len() != n {
+        return Vec::new();
+    }
+    let ring = ring(outline);
+    let (lo, hi) =
+        ring.iter().fold((ring[0], ring[0]), |(lo, hi), p| (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y))));
+    let middle = (lo + hi) * 0.5;
+    let mut found = Vec::new();
+    for across in [true, false] {
+        let at = if across { middle.x } else { middle.y };
+        let image = |p: Vec2| if across { Vec2::new(2.0 * at - p.x, p.y) } else { Vec2::new(p.x, 2.0 * at - p.y) };
+        // Each corner's image among the corners.
+        let partner: Option<Vec<usize>> = (0..n).map(|k| (0..n).find(|&j| outline.corners[j].dist(image(outline.corners[k])) <= tolerance)).collect();
+        let Some(partner) = partner else { continue };
+        if (0..n).any(|k| partner[partner[k]] != k) {
+            continue;
+        }
+        // Each piece's image runs between its ends' images, the other way round.
+        let alike = (0..n).all(|k| {
+            let (a, b) = (partner[k], partner[(k + 1) % n]);
+            let j = if (b + 1) % n == a { b } else { return false };
+            match (outline.pieces[k], outline.pieces[j]) {
+                (Piece::Line, Piece::Line) => true,
+                (Piece::Arc { center, ccw }, Piece::Arc { center: other, ccw: turns }) => other.dist(image(center)) <= tolerance && ccw == turns,
+                _ => false,
+            }
+        });
+        if !alike {
+            continue;
+        }
+        let pairs: Vec<(usize, usize)> = (0..n).filter(|&k| k < partner[k]).map(|k| (k, partner[k])).collect();
+        if !pairs.is_empty() {
+            found.push(Mirrored { across, at, pairs });
+        }
+    }
+    found
+}
+
 /// An outline that repeats round its middle, as a disc with one gap cut out of it and repeated:
 /// a gear as its tip circle and the space between two teeth.
 #[derive(Clone, Debug, PartialEq)]
@@ -2311,6 +2367,40 @@ mod tests {
             let sharp = prism_outlines(&walls, &loops, 0.2, fill.as_ref());
             assert!(sharp.len() == 1 && sharp[0].corners.len() == 4 && has(&sharp[0], corner), "{sharp:?}");
         }
+    }
+
+    /// A slot 40 × 20 with round ends, a hair off true as a scan leaves it, is its own image left
+    /// to right and top to bottom; with one corner cut off it is neither; an L is neither.
+    #[test]
+    fn an_outline_drawn_symmetric_is_read_as_its_own_mirror_image() {
+        let slot = |nudge: f64| Outline {
+            corners: vec![Vec2::new(10.0, 0.0), Vec2::new(30.0 + nudge, 0.0), Vec2::new(30.0, 20.0), Vec2::new(10.0, 20.0 - nudge)],
+            pieces: vec![
+                Piece::Line,
+                Piece::Arc { center: Vec2::new(30.0, 10.0), ccw: true },
+                Piece::Line,
+                Piece::Arc { center: Vec2::new(10.0, 10.0 + nudge), ccw: true },
+            ],
+            faces: vec![None; 4],
+        };
+        let found = mirrored(&slot(0.004), 0.02);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(found[0].across && (found[0].at - 20.0).abs() < 0.01 && found[0].pairs == [(0, 1), (2, 3)], "{found:?}");
+        assert!(!found[1].across && (found[1].at - 10.0).abs() < 0.01 && found[1].pairs == [(0, 3), (1, 2)], "{found:?}");
+        assert!(mirrored(&slot(0.2), 0.02).is_empty(), "off by more than the tolerance");
+        let ell = Outline {
+            corners: vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(30.0, 0.0),
+                Vec2::new(30.0, 8.0),
+                Vec2::new(8.0, 8.0),
+                Vec2::new(8.0, 20.0),
+                Vec2::new(0.0, 20.0),
+            ],
+            pieces: vec![Piece::Line; 6],
+            faces: vec![None; 6],
+        };
+        assert!(mirrored(&ell, 0.02).is_empty());
     }
 
     /// A gear outline in lines and arcs (12 teeth: a tip land on the circle of radius 20, straight

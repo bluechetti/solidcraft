@@ -766,6 +766,17 @@ struct Drawn {
     lines: usize,
     arcs: usize,
     tangents: usize,
+    /// Corners held to their mirror images.
+    mirrored: usize,
+}
+
+impl Drawn {
+    fn add(&mut self, more: &Drawn) {
+        self.lines += more.lines;
+        self.arcs += more.arcs;
+        self.tangents += more.tangents;
+        self.mirrored += more.mirrored;
+    }
 }
 
 /// A piece's direction at its start (`at_end` false) or its end, along the outline.
@@ -787,11 +798,15 @@ type Level<'a> = dyn Fn(Option<usize>, Vec2, Vec2) -> Option<bool> + 'a;
 /// Outline `outline` drawn into the sketch: its corners shared by the pieces either side, each
 /// line a line and each arc an arc, smooth joins held tangent. `level` holds each line level (along
 /// the sketch's X) or upright, by its face and its two ends: for a turned profile.
-fn draw(sk: &mut Sketch, outline: &Outline, level: &Level<'_>, drawn: &mut Drawn) -> Result<()> {
+fn draw(sk: &mut Sketch, outline: &Outline, level: &Level<'_>, drawn: &mut Drawn, mirror: Option<f64>) -> Result<()> {
     let n = outline.corners.len();
     if n < 2 {
         return Ok(());
     }
+    // An outline that is its own mirror image (within `mirror`) is drawn so: a centre line, and
+    // each corner held to its image across it, so one size moves both sides.
+    let mirrors = mirror.map(|tolerance| profile::mirrored(outline, tolerance)).unwrap_or_default();
+    let mirror_tolerance = mirror.unwrap_or(0.0);
     // Corners that come together are one point, and the piece between them none.
     let mut ids: Vec<usize> = Vec::with_capacity(n);
     for k in 0..n {
@@ -871,6 +886,44 @@ fn draw(sk: &mut Sketch, outline: &Outline, level: &Level<'_>, drawn: &mut Drawn
             drawn.tangents += 1;
         }
     }
+    if !mirrors.is_empty() {
+        let (lo, hi) = outline.corners.iter().fold((outline.corners[0], outline.corners[0]), |(lo, hi), c| {
+            (Vec2::new(lo.x.min(c.x), lo.y.min(c.y)), Vec2::new(hi.x.max(c.x), hi.y.max(c.y)))
+        });
+        for mirror in mirrors {
+            let (from, to) = if mirror.across {
+                (Vec2::new(mirror.at, lo.y), Vec2::new(mirror.at, hi.y))
+            } else {
+                (Vec2::new(lo.x, mirror.at), Vec2::new(hi.x, mirror.at))
+            };
+            // The centre line brings no sizes of its own: its ends go as far as the outline's
+            // lowest and highest corners (or leftmost and rightmost), and it lies on the sketch's
+            // origin when the outline is centred there; else its place is one size.
+            let along = |c: Vec2| if mirror.across { c.y } else { c.x };
+            let least = (0..n).min_by(|&i, &j| along(outline.corners[i]).total_cmp(&along(outline.corners[j]))).unwrap_or(0);
+            let most = (0..n).max_by(|&i, &j| along(outline.corners[i]).total_cmp(&along(outline.corners[j]))).unwrap_or(0);
+            let (a, b) = (sk.add_point(from, None)?, sk.add_point(to, None)?);
+            let line = sk.add_line_pts(a, b, None)?;
+            if let Some(curve) = sk.curves.get_mut(line) {
+                curve.construction = true;
+            }
+            let level =
+                |p: usize, q: usize| if mirror.across { ConstraintKind::HorizontalPoints { p, q } } else { ConstraintKind::VerticalPoints { p, q } };
+            let in_line =
+                |p: usize, q: usize| if mirror.across { ConstraintKind::VerticalPoints { p, q } } else { ConstraintKind::HorizontalPoints { p, q } };
+            sk.add_constraint(if mirror.across { ConstraintKind::Vertical { l: line } } else { ConstraintKind::Horizontal { l: line } }, None)?;
+            sk.add_constraint(level(ids[least], a), None)?;
+            sk.add_constraint(level(ids[most], b), None)?;
+            if mirror.at.abs() <= mirror_tolerance {
+                sk.add_constraint(in_line(0, a), None)?;
+            }
+            for (a, b) in mirror.pairs {
+                if ids[a] != ids[b] && sk.add_constraint(ConstraintKind::Symmetric { p: ids[a], q: ids[b], l: line }, None).is_ok() {
+                    drawn.mirrored += 1;
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -919,6 +972,45 @@ fn sketch_outlines(
     round: f64,
     x_only: bool,
 ) -> Result<u64> {
+    // A prism's outline that is its own mirror image is first drawn held so (one size for both
+    // sides); as before when the sketch does not come out fully held that way. Alike within the
+    // scan's tolerance, of which `round` is the share sizes are read as designed within.
+    if !x_only {
+        let before = s.doc.clone();
+        let mut tried = Drawn::default();
+        let alike = round / solidcraft_scan::hole_form::SNAP_SHARE;
+        match sketch_outlines_as(s, plane, name, outlines, level, &mut tried, round, x_only, Some(alike)) {
+            Ok((id, finished)) if tried.mirrored > 0 && finished.dof == Some(0) && finished.warning.is_none() => {
+                drawn.add(&tried);
+                return Ok(id);
+            }
+            Ok((id, _)) if tried.mirrored == 0 => {
+                drawn.add(&tried);
+                return Ok(id);
+            }
+            _ => {
+                s.doc = before;
+                s.refresh();
+            }
+        }
+    }
+    sketch_outlines_as(s, plane, name, outlines, level, drawn, round, x_only, None).map(|(id, _)| id)
+}
+
+/// [`sketch_outlines`], with `mirror` (a tolerance) each outline that is its own mirror image
+/// held so; the sketch's id and how it was finished.
+#[allow(clippy::too_many_arguments)]
+fn sketch_outlines_as(
+    s: &mut Session,
+    plane: &Plane,
+    name: &str,
+    outlines: &[Outline],
+    level: &Level<'_>,
+    drawn: &mut Drawn,
+    round: f64,
+    x_only: bool,
+    mirror: Option<f64>,
+) -> Result<(u64, super::section::Finished)> {
     let (plane, outlines) = at_world_origin(plane, outlines, x_only);
     let (plane, outlines) = (&plane, outlines.as_slice());
     let create = json!({"plane": {"origin": at(plane.origin), "x_dir": at(plane.x), "y_dir": at(plane.y)}, "name": name});
@@ -929,7 +1021,7 @@ fn sketch_outlines(
     }
     let result = super::super::sketch_store::update(s, id, |_, _, sk| {
         for outline in outlines {
-            draw(sk, outline, level, drawn)?;
+            draw(sk, outline, level, drawn, mirror)?;
         }
         Ok(())
     });
@@ -938,8 +1030,8 @@ fn sketch_outlines(
         return Err(e);
     }
     // Dimensioned from its origin, as a profile drawn by hand is: its sizes are parameters.
-    super::section::finish_dimensioned(s, true, Some(round))?;
-    Ok(id)
+    let finished = super::section::finish_dimensioned(s, true, Some(round))?;
+    Ok((id, finished))
 }
 
 /// The profiles of sketch `id` that are material, when some are not: a profile inside a hole of

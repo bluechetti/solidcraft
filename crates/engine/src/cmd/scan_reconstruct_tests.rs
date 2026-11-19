@@ -545,6 +545,32 @@ fn reconstruct_says_how_a_prisms_outline_repeats_round_its_middle() {
     assert!(oblong["prisms"][0].get("rotational").is_none(), "{oblong}");
 }
 
+/// A plate 50 × 30 × 8 centred on the origin, from its scan: its outline is its own mirror image
+/// both ways, so the sketch holds each corner to its image across a centre line and the profile
+/// has two sizes, its length and its width, where four corners placed one by one had eight.
+/// Changing the length moves both ends.
+#[test]
+fn a_symmetric_prism_is_sketched_with_one_size_for_both_sides() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 50, "width": 30, "height": 8, "center": [0, 0, 4]}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    let (mut s, _) = scanned(&part, &body, 3, "plate");
+    let built = run(&mut s, "scan.extrude_it", json!({}));
+    let solid = built["solid"].as_str().unwrap().to_owned();
+    let listed = run(&mut s, "parameters.list", json!({"filter": "sketch"}));
+    let sizes: Vec<(String, f64)> =
+        listed["parameters"].as_array().unwrap().iter().map(|p| (p["name"].as_str().unwrap().to_owned(), p["value"].as_f64().unwrap())).collect();
+    assert_eq!(sizes.len(), 2, "{listed}");
+    let length = sizes.iter().find(|(_, v)| (v - 50.0).abs() < 0.05).unwrap_or_else(|| panic!("the length is a size: {listed}"));
+    assert!(sizes.iter().any(|(_, v)| (v - 30.0).abs() < 0.05), "the width is a size: {listed}");
+    assert!((volume(&s, &solid) - 50.0 * 30.0 * 8.0).abs() < 30.0, "{built}");
+    run(&mut s, "parameters.change", json!({"name": length.0, "expression": "60 mm"}));
+    let state = s.model.state();
+    let bbox = solidcraft_kernel::measure(&state.body(&solid).unwrap().body).unwrap().bbox;
+    assert!((bbox.min.x + 30.0).abs() < 0.05 && (bbox.max.x - 30.0).abs() < 0.05, "both ends moved: {bbox:?}");
+    assert!((bbox.min.y + 15.0).abs() < 0.05 && (bbox.max.y - 15.0).abs() < 0.05, "{bbox:?}");
+}
+
 /// A disc R 20 × 10 with eight slots cut into its rim (8 wide, 6 deep) comes back from its scan
 /// as the disc extruded, one slot cut through it and the cut patterned eight times: the count is
 /// a number in the design. With `pattern` false it is one outline extruded; the same solid.
