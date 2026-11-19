@@ -732,7 +732,11 @@ fn read(scan: &Scan, options: &Options, cancelled: &dyn Fn() -> bool) -> Outcome
 
 /// A scan that finds less than this share of its area in shapes, and is noisy against its
 /// triangles (noise above [`SMOOTH_ABOVE`] of the typical edge), is read again on a smoothed copy.
-const FOUND_ENOUGH: f64 = 0.5;
+/// Nearly all of it: noise that tilts the triangles breaks a plate's faces into dozens of small
+/// planes, cones and tori that together still hold over half of it (a plate at 0.1 mm noise on
+/// 0.5 mm triangles read 59 planes, 11 cones and 16 tori over 55 %; on the copy, 6 planes and its
+/// holes over 99 %).
+const FOUND_ENOUGH: f64 = 0.9;
 const SMOOTH_ABOVE: f64 = 0.05;
 /// A noisy scan's first reading stops after this many seeds when they have found less than
 /// [`FOUND_NOTHING`] of its area in shapes: it is read on the copy.
