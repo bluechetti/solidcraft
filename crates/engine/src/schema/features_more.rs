@@ -231,6 +231,26 @@ pub struct LaminateResult {
     pub plies: Vec<LaminateLaid>,
 }
 
+/// Deform a body: bend it along a length, twist it about an axis, or move it with a cage of
+/// points. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct DeformParams {
+    /// The body.
+    pub body: String,
+    /// `{origin, along, up, angle, length?}`: bent round a circle towards `up`.
+    #[serde(default)]
+    pub bend: Option<Value>,
+    /// `{origin, axis, angle, length?}`: twisted about the axis.
+    #[serde(default)]
+    pub twist: Option<Value>,
+    /// `{counts?, lo?, hi?, moves: [{index, by}]}`: moved with a cage of points.
+    #[serde(default)]
+    pub cage: Option<Value>,
+    #[serde(flatten, deserialize_with = "feature_common")]
+    pub common: FeatureCommon,
+}
+
 /// Remove's `bodies`: 1 to 10 000 names.
 fn remove_bodies<'de, D: Deserializer<'de>>(d: D) -> Result<Option<NameList>, D::Error> {
     names_in(d, 1..=MAX_STRING_LIST, "`bodies` must list bodies")

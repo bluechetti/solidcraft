@@ -16,7 +16,8 @@ use crate::params::{bad, bool_, expr, req_expr, str_, string_list, vec3};
 use crate::schema::align::AlignParams;
 use crate::schema::features::FeatureResult;
 use crate::schema::features_more::{
-    BoundaryFillParams, CoilParams, EmbossParams, LaminateParams, LaminateResult, RemoveParams, ReplaceFaceParams, RibParams, TiltFaceParams,
+    BoundaryFillParams, CoilParams, DeformParams, EmbossParams, LaminateParams, LaminateResult, RemoveParams, ReplaceFaceParams, RibParams,
+    TiltFaceParams,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{Result, Session};
@@ -31,6 +32,7 @@ const EMBOSS_CONTRACT: TypedContract<EmbossParams> = TypedContract::new();
 const REPLACE_FACE_CONTRACT: TypedContract<ReplaceFaceParams> = TypedContract::new();
 const TILT_FACE_CONTRACT: TypedContract<TiltFaceParams> = TypedContract::new();
 const LAMINATE_CONTRACT: TypedContract<LaminateParams> = TypedContract::new();
+const DEFORM_CONTRACT: TypedContract<DeformParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.boundary_fill", "Boundary Fill", crate::checked!("solid.boundary_fill", boundary_fill))
@@ -83,6 +85,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "CREATE")
         .icon("thicken")
         .params("faces: [[x,y,z] points on the faces to lay up]; body?; plies: [{thickness: expr, material?: name (material.list), name?}, …] 1 to 50, the first against the faces; side?: out|in (default out: the plies stand off the faces the way they face; in: into the body, a mould's skin); chain?: bool (each pick's whole smooth chain of faces): each ply a body of its own, the layer between the faces offset by the plies before it and by its own thickness more (each kept as Offset Surface and Thicken features, following the thicknesses' expressions); one undo step → plies [{name, body, thickness, material?}]"),
+    CommandSpec::new("solid.deform", "Deform", crate::checked!("solid.deform", deform))
+        .contract(&DEFORM_CONTRACT)
+        .output(output_schema_for::<FeatureResult>)
+        .at("SOLID", "MODIFY")
+        .icon("scale")
+        .params("body: the body; one of bend: {origin: [x,y,z] where the bend starts, along: [x,y,z] the length's direction, up: [x,y,z] the way it bends (towards the circle's centre), angle: expr, length?: expr (default: as far as the body reaches along `along` from `origin`)} | twist: {origin: [x,y,z] on the axis, axis: [x,y,z], angle: expr, length?: expr (default: as far as the body reaches along the axis)} | cage: {counts?: [l,m,n] lattice points each way, 2 to 8 (default [3,3,3]), lo?, hi?: the box (default: the body's, a hair larger), moves: [{index: [i,j,k] from the low corner, by: [dx,dy,dz] mm}]}; name?: the body carried through the map, every face and edge a cubic B-spline within 0.001 mm of it, its faces and trims its own; before a bend or twist nothing moves, past it the rest goes on rigidly; the lengths and angles follow the parameters; one undo step"),
     CommandSpec::new("solid.align", "Align", crate::checked!("solid.align", align))
         .at("SOLID", "MODIFY")
         .icon("align")
@@ -428,6 +436,112 @@ fn face_points(s: &Session, p: &Value, k: &str, cmd: &str) -> Result<Vec<Vec3>> 
         return Err(bad(cmd, format!("`{k}` must list 1…1000 points")));
     }
     a.iter().map(|v| super::face::face_ref(s, v, str_(p, "body"), cmd)).collect()
+}
+
+/// How far the body reaches along `dir` from `origin`: its box's farthest corner.
+fn reach(s: &Session, body: &str, origin: Vec3, dir: Vec3) -> Option<f64> {
+    let state = s.model.state();
+    let b = state.body(body)?.body.exact_bounds().ok()?;
+    let mut most = f64::NEG_INFINITY;
+    for x in [b.min.x, b.max.x] {
+        for y in [b.min.y, b.max.y] {
+            for z in [b.min.z, b.max.z] {
+                most = most.max((Vec3::new(x, y, z) - origin).dot(dir.normalized()?));
+            }
+        }
+    }
+    (most > 0.0).then_some(most)
+}
+
+fn deform(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "solid.deform";
+    let body = str_(p, "body").map(str::to_owned).ok_or_else(|| bad(cmd, "`body`: the body to deform"))?;
+    if s.model.state().body(&body).is_none() {
+        return Err(bad(cmd, format!("no body `{body}`")));
+    }
+    let given: Vec<&str> = ["bend", "twist", "cage"].into_iter().filter(|k| p.get(*k).is_some_and(|v| !v.is_null())).collect();
+    let [way] = given.as_slice() else { return Err(bad(cmd, "give one of `bend`, `twist` or `cage`")) };
+    let q = p.get(*way).cloned().unwrap_or(Value::Null);
+    let point =
+        |key: &str| q.get(key).and_then(vec3).filter(|v| v.is_finite()).ok_or_else(|| bad(cmd, format!("`{way}.{key}` is a point [x, y, z]")));
+    let direction =
+        |key: &str| q.get(key).and_then(vec3).and_then(|v| v.normalized()).ok_or_else(|| bad(cmd, format!("`{way}.{key}` is a direction [x, y, z]")));
+    let angle = |s: &Session| -> Result<solidcraft_doc::Expr> {
+        let a = req_expr(cmd, &q, "angle")?;
+        check_expr(s, &a, Kind::Angle, cmd, "angle")?;
+        Ok(a)
+    };
+    let length = |s: &Session, origin: Vec3, dir: Vec3| -> Result<solidcraft_doc::Expr> {
+        match expr(&q, "length") {
+            Some(l) => {
+                check_expr(s, &l, Kind::Length, cmd, "length")?;
+                Ok(l)
+            }
+            None => reach(s, &body, origin, dir)
+                .map(|r| format!("{r} mm").into())
+                .ok_or_else(|| bad(cmd, format!("the body does not reach past `{way}.origin` along the direction: give `length`"))),
+        }
+    };
+    let map = match *way {
+        "bend" => {
+            let (origin, along, up) = (point("origin")?, direction("along")?, direction("up")?);
+            if along.cross(up).len() < 1e-6 {
+                return Err(bad(cmd, "`bend.up` must not run along `bend.along`"));
+            }
+            solidcraft_doc::DeformMap::Bend {
+                origin: Position(origin),
+                along: Dir(along),
+                up: Dir(up),
+                length: length(s, origin, along)?,
+                angle: angle(s)?,
+            }
+        }
+        "twist" => {
+            let (origin, axis) = (point("origin")?, direction("axis")?);
+            solidcraft_doc::DeformMap::Twist { origin: Position(origin), axis: Dir(axis), length: length(s, origin, axis)?, angle: angle(s)? }
+        }
+        _ => {
+            let counts = match q.get("counts").filter(|v| !v.is_null()) {
+                None => [3, 3, 3],
+                Some(v) => {
+                    let c: Vec<usize> = v.as_array().map(|a| a.iter().filter_map(Value::as_u64).map(|n| n as usize).collect()).unwrap_or_default();
+                    match c.as_slice() {
+                        [a, b, c] if [a, b, c].iter().all(|n| (2..=8).contains(*n)) => [*a, *b, *c],
+                        _ => return Err(bad(cmd, "`cage.counts` is [l, m, n], each 2 to 8")),
+                    }
+                }
+            };
+            let bounds = s.model.state().body(&body).and_then(|b| b.body.exact_bounds().ok()).ok_or_else(|| bad(cmd, "the body has no size"))?;
+            let pad = (bounds.max - bounds.min) * 0.01 + Vec3::new(1e-3, 1e-3, 1e-3);
+            let lo = match q.get("lo").filter(|v| !v.is_null()) {
+                Some(_) => point("lo")?,
+                None => bounds.min - pad,
+            };
+            let hi = match q.get("hi").filter(|v| !v.is_null()) {
+                Some(_) => point("hi")?,
+                None => bounds.max + pad,
+            };
+            let mut moves = Vec::new();
+            for m in q.get("moves").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default() {
+                let index: Vec<usize> = m
+                    .get("index")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_u64).map(|n| n as usize).collect())
+                    .unwrap_or_default();
+                let by = m.get("by").and_then(vec3).filter(|v| v.is_finite()).ok_or_else(|| bad(cmd, "a cage move's `by` is [dx, dy, dz]"))?;
+                let [i, j, k] = index.as_slice() else { return Err(bad(cmd, "a cage move's `index` is [i, j, k]")) };
+                if *i >= counts[0] || *j >= counts[1] || *k >= counts[2] {
+                    return Err(bad(cmd, format!("the cage has no point [{i}, {j}, {k}]: it has {counts:?} each way")));
+                }
+                moves.push(solidcraft_doc::CageMove { index: [*i, *j, *k], by: [by.x, by.y, by.z] });
+            }
+            if moves.len() > 512 {
+                return Err(bad(cmd, "at most 512 cage moves"));
+            }
+            solidcraft_doc::DeformMap::Cage { lo: Position(lo), hi: Position(hi), counts, moves }
+        }
+    };
+    add_feature(s, p, FeatureKind::Deform { body: BodyName(body), map })
 }
 
 /// The most plies a Laminate lays.

@@ -74,6 +74,8 @@ fn relation_label(r: &Value) -> String {
         "parallel" => tr("ui.scan_together_parallel"),
         "perpendicular" => tr("ui.scan_together_perpendicular"),
         "coaxial" => tr("ui.scan_together_coaxial"),
+        "tangent" => tr("ui.scan_together_tangent"),
+        "mirror" => tr("ui.scan_together_mirror"),
         _ => tr("ui.scan_together_equal_radius"),
     };
     let side = |v: &Value| match v {
@@ -81,6 +83,10 @@ fn relation_label(r: &Value) -> String {
         Value::String(s) => s.to_uppercase(),
         _ => String::new(),
     };
+    if r.get("about").is_some_and(|a| !a.is_null()) {
+        let about = [("kind", kind), ("a", &side(&r["a"])), ("b", &side(&r["b"])), ("about", &side(&r["about"]))];
+        return solidcraft_ui_text::format("ui.scan_together_relation_about", &about);
+    }
     solidcraft_ui_text::format("ui.scan_together_relation", &[("kind", kind), ("a", &side(&r["a"])), ("b", &side(&r["b"]))])
 }
 
@@ -156,8 +162,10 @@ pub fn commands(_app: &SolveApp, k: &Together, inputs: &[SelInput]) -> Result<Ve
         .iter()
         .map(|r| {
             let mut out = json!({"kind": r["kind"], "a": r["a"]});
-            if !r["b"].is_null() {
-                out["b"] = r["b"].clone();
+            for key in ["b", "about"] {
+                if !r[key].is_null() {
+                    out[key] = r[key].clone();
+                }
             }
             out
         })

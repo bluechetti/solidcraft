@@ -3265,6 +3265,15 @@ fn fit_together_holds_two_bores_on_one_axis_with_one_radius() {
     assert_eq!(s.doc.features.len(), features + 2, "two construction axes");
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(s.doc.features.len(), features, "one undo step");
+    // Mirrored in XY, two upright bores are on one axis (an axis up the Z axis reflects into
+    // itself) with one radius: held so, the relation holds.
+    let relations = json!([{"kind": "mirror", "a": 0, "b": 1, "about": "xy"}]);
+    let mirrored = run(&mut s, "scan.fit_together", json!({"body": scan, "shapes": shapes, "keep": false, "relations": relations}));
+    assert_eq!(mirrored["relations"][0]["about"], "xy", "{mirrored}");
+    assert!(mirrored["relations"][0]["off"].as_f64().unwrap() < 1e-6, "{mirrored}");
+    let unplaced = json!([{"kind": "mirror", "a": 0, "b": 1}]);
+    let err = s.execute("scan.fit_together", &json!({"body": scan, "shapes": shapes, "relations": unplaced})).unwrap_err();
+    assert!(err.to_string().contains("needs `about`"), "{err}");
     let err =
         s.execute("scan.fit_together", &json!({"body": scan, "shapes": shapes, "relations": [{"kind": "coaxial", "a": 0, "b": 5}]})).unwrap_err();
     assert!(err.to_string().contains("there are 2 shapes"), "{err}");

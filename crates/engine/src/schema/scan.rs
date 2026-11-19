@@ -1638,8 +1638,9 @@ pub struct ScanTogetherParams {
     /// saved?, triangles?, selected?}`, its region chosen as that kind's Fit tool chooses it.
     pub shapes: Vec<Value>,
     /// The relations to hold, each `{kind: parallel|perpendicular|coaxial|equal_radius|distance|
-    /// angle|radius, a: shape number from 0, b?: shape number or x|y|z|xy|yz|zx|origin, value?:
-    /// length for distance and radius, angle for angle}`. Default: the relations the shapes nearly
+    /// angle|radius|tangent|mirror, a: shape number from 0, b?: shape number or x|y|z|xy|yz|zx|
+    /// origin, value?: length for distance and radius, angle for angle, about?: a mirror's plane,
+    /// a shape number or xy|yz|zx}`. Default: the relations the shapes nearly
     /// hold already (within 3°, radii within 3 %, axes within 5 % of the radius).
     #[serde(default)]
     pub relations: Option<Vec<Value>>,
@@ -1683,6 +1684,9 @@ pub struct ScanTogetherRelation {
     pub a: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub b: Option<Value>,
+    /// A mirror's plane: a shape number, or xy, yz or zx.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub about: Option<Value>,
     /// The distance or radius (mm) or angle (degrees) held.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<f64>,

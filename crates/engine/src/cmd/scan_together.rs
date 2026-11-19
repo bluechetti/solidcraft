@@ -103,9 +103,28 @@ fn relation(s: &Session, v: &Value, count: usize, cmd: &str) -> Result<Relation>
         "equal_radius" => Rel::EqualRadius,
         "distance" => Rel::Distance(value(solidcraft_doc::expr::Kind::Length)?),
         "radius" => Rel::Radius(value(solidcraft_doc::expr::Kind::Length)?),
+        "tangent" => Rel::Tangent,
+        "mirror" => {
+            let about = match v.get("about") {
+                Some(Value::String(name)) => {
+                    Side::Datum(datum(name).ok_or_else(|| bad(cmd, format!("`about` `{name}`: a plane's shape number, or xy, yz or zx")))?)
+                }
+                Some(x) => Side::Shape(
+                    x.as_u64()
+                        .map(|i| i as usize)
+                        .filter(|i| *i < count)
+                        .ok_or_else(|| bad(cmd, format!("`about`: a plane's shape number below {count}, or xy, yz or zx")))?,
+                ),
+                None => return Err(bad(cmd, "a `mirror` relation needs `about`: the plane to mirror in (a shape number, or xy, yz or zx)")),
+            };
+            Rel::Mirror(about)
+        }
         "angle" => Rel::Angle(value(solidcraft_doc::expr::Kind::Angle)?),
         other => {
-            return Err(bad(cmd, format!("`kind` `{other}`: parallel, perpendicular, coaxial, equal_radius, distance, angle or radius")));
+            return Err(bad(
+                cmd,
+                format!("`kind` `{other}`: parallel, perpendicular, coaxial, equal_radius, distance, angle, radius, tangent or mirror"),
+            ));
         }
     };
     Ok(Relation { kind, a, b })
@@ -226,6 +245,11 @@ pub(super) fn fit_together(s: &mut Session, p: &Value) -> Result<Value> {
                 Side::Shape(i) => json!(i),
                 Side::Datum(d) => json!(datum_name(d)),
             }),
+            about: match r.kind {
+                Rel::Mirror(Side::Shape(i)) => Some(json!(i)),
+                Rel::Mirror(Side::Datum(d)) => Some(json!(datum_name(d))),
+                _ => None,
+            },
             value: match r.kind {
                 Rel::Distance(v) | Rel::Radius(v) => Some(v),
                 Rel::Angle(v) => Some(v.to_degrees()),
