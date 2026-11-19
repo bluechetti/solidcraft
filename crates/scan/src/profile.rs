@@ -345,6 +345,77 @@ fn runs_along(scan: &Scan, loops: &[(&[Vec2], &[usize])], direction: Vec3, draft
         .collect()
 }
 
+/// A round of an outline taken out for a sharp corner ([`sharpened`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SharpCorner {
+    /// Where the two lines either side of the round cross.
+    pub at: Vec2,
+    /// Each line's unit normal toward the material (the side the outline's walls lean to when the
+    /// prism is drafted).
+    pub inward: [Vec2; 2],
+    /// The round's radius.
+    pub radius: f64,
+}
+
+impl SharpCorner {
+    /// The corner where the two lines have each moved `by` toward the material: a drafted prism's
+    /// corner that far up its walls' lean.
+    pub fn moved(&self, by: f64) -> Vec2 {
+        let [a, b] = self.inward;
+        let meet = 1.0 + a.dot(b);
+        if meet.abs() < 1e-9 { self.at } else { self.at + (a + b) * (by / meet) }
+    }
+}
+
+/// `outlines` with each round between two straight lines taken out, the lines run on to where they
+/// cross, for the rounds `constant` gives a radius (by the face the round lies on: a round the
+/// scan shows with one radius all the way along, where a drafted prism's tapered walls would
+/// narrow it). The corners made, for a fillet of each one's radius to round again. `outlines[0]`
+/// is the material's outer loop: which side of each line the material is on is read off it.
+pub fn sharpened(outlines: &[Outline], constant: impl Fn(usize) -> Option<f64>) -> (Vec<Outline>, Vec<SharpCorner>) {
+    let material = outlines.first().map_or(1.0, |o| area(&ring(o)).signum());
+    let mut corners = Vec::new();
+    let sharp = outlines
+        .iter()
+        .map(|o| {
+            let n = o.pieces.len();
+            let line = |k: usize| matches!(o.pieces[k % n], Piece::Line);
+            // The corner each round is taken out for, by the round's place.
+            let made: Vec<Option<Vec2>> = (0..n)
+                .map(|k| {
+                    let radius = match (o.pieces[k], o.faces.get(k).copied().flatten()) {
+                        (Piece::Arc { .. }, Some(face)) => constant(face)?,
+                        _ => return None,
+                    };
+                    if n < 5 || !line(k + n - 1) || !line(k + 1) {
+                        return None;
+                    }
+                    let (before, after) = (unit2(o.corners[k] - o.corners[(k + n - 1) % n]), unit2(o.corners[(k + 2) % n] - o.corners[(k + 1) % n]));
+                    let turn = before.cross(after);
+                    if turn.abs() < CROSSING {
+                        return None;
+                    }
+                    let at = o.corners[k] + before * ((o.corners[(k + 1) % n] - o.corners[k]).cross(after) / turn);
+                    let inward = |d: Vec2| Vec2::new(-d.y, d.x) * material;
+                    corners.push(SharpCorner { at, inward: [inward(before), inward(after)], radius });
+                    Some(at)
+                })
+                .collect();
+            let mut out = Outline { corners: Vec::new(), pieces: Vec::new(), faces: Vec::new() };
+            for k in 0..n {
+                if made[k].is_some() {
+                    continue;
+                }
+                out.corners.push(made[(k + n - 1) % n].unwrap_or(o.corners[k]));
+                out.pieces.push(o.pieces[k]);
+                out.faces.push(o.faces.get(k).copied().flatten());
+            }
+            out
+        })
+        .collect();
+    (sharp, corners)
+}
+
 /// Whether `p` is inside the closed ring (even-odd).
 pub fn contains(ring: &[Vec2], p: Vec2) -> bool {
     let mut inside = false;
@@ -1991,6 +2062,67 @@ mod tests {
         let grounded: Vec<Vec2> = std::iter::once(Vec2::new(0.0, -1.0)).chain(points.iter().copied()).collect();
         let walls_on: Vec<Option<usize>> = std::iter::once(Some(0)).chain(on.iter().copied()).collect();
         assert!(above_axis_open(&grounded, &walls_on, 4, 5, 0.4).iter().all(|part| part.2.is_none()));
+    }
+
+    /// A rounded rectangle 40 × 30, corners R 5, two of whose rounds have one radius all the way
+    /// along: those two are taken out for sharp corners (the lines run on to where they cross), the
+    /// other two stay; each corner knows which way the material lies, so where its lines have moved
+    /// in by a draft it has moved in along both.
+    #[test]
+    fn rounds_of_one_radius_are_taken_out_for_sharp_corners_to_fillet() {
+        let (w, h, r) = (40.0, 30.0, 5.0);
+        let corner = |x: f64, y: f64| Vec2::new(x, y);
+        // Counter-clockwise from the bottom side: line, round, line, round, ...
+        let outline = Outline {
+            corners: vec![
+                corner(r, 0.0),
+                corner(w - r, 0.0),
+                corner(w, r),
+                corner(w, h - r),
+                corner(w - r, h),
+                corner(r, h),
+                corner(0.0, h - r),
+                corner(0.0, r),
+            ],
+            pieces: vec![
+                Piece::Line,
+                Piece::Arc { center: corner(w - r, r), ccw: true },
+                Piece::Line,
+                Piece::Arc { center: corner(w - r, h - r), ccw: true },
+                Piece::Line,
+                Piece::Arc { center: corner(r, h - r), ccw: true },
+                Piece::Line,
+                Piece::Arc { center: corner(r, r), ccw: true },
+            ],
+            faces: (0..8).map(Some).collect(),
+        };
+        let (sharp, corners) = sharpened(std::slice::from_ref(&outline), |face| matches!(face, 1 | 5).then_some(r));
+        assert_eq!(corners.len(), 2, "{corners:?}");
+        assert!(corners[0].at.dist(corner(w, 0.0)) < 1e-9 && corners[1].at.dist(corner(0.0, h)) < 1e-9, "{corners:?}");
+        assert!(corners.iter().all(|c| c.radius == r));
+        let o = &sharp[0];
+        assert_eq!((o.pieces.len(), o.pieces.iter().filter(|p| matches!(p, Piece::Arc { .. })).count()), (6, 2), "{o:?}");
+        assert!(o.corners.iter().any(|c| c.dist(corner(w, 0.0)) < 1e-9) && o.corners.iter().any(|c| c.dist(corner(0.0, h)) < 1e-9), "{o:?}");
+        assert_eq!(o.faces, [Some(0), Some(2), Some(3), Some(4), Some(6), Some(7)]);
+        // Both walls lean in by 1: the corner moves in by 1 along each.
+        assert!(corners[0].moved(1.0).dist(corner(w - 1.0, 1.0)) < 1e-9, "{:?}", corners[0].moved(1.0));
+        assert!(corners[1].moved(1.0).dist(corner(1.0, h - 1.0)) < 1e-9, "{:?}", corners[1].moved(1.0));
+        // Walked the other way round, the material is still inside.
+        let reversed = Outline {
+            corners: outline.corners.iter().rev().copied().collect(),
+            pieces: (0..8)
+                .map(|k| match outline.pieces[(14 - k) % 8] {
+                    Piece::Arc { center, ccw } => Piece::Arc { center, ccw: !ccw },
+                    Piece::Line => Piece::Line,
+                })
+                .collect(),
+            faces: (0..8).map(|k| Some((14 - k) % 8)).collect(),
+        };
+        let (_, back) = sharpened(std::slice::from_ref(&reversed), |face| (face == 1).then_some(r));
+        assert!(back.len() == 1 && back[0].at.dist(corner(w, 0.0)) < 1e-9 && back[0].moved(1.0).dist(corner(w - 1.0, 1.0)) < 1e-9, "{back:?}");
+        // No round of one radius: nothing changes.
+        let (same, none) = sharpened(std::slice::from_ref(&outline), |_| None);
+        assert!(none.is_empty() && same[0] == outline);
     }
 
     /// A box slice: four walls, a loop round them with its corners cut by noise, comes out as the
