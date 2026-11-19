@@ -16,7 +16,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanShapeItParams>(), &["body", "into", "selected"]);
     assert_keys(input_schema_for::<ScanRestParams>(), &["body", "rounds"]);
     assert_keys(input_schema_for::<ScanHoleItParams>(), &["body", "hole", "into", "selected", "thread"]);
-    assert_keys(input_schema_for::<ScanNestParams>(), &["body", "clearance", "deep", "margin", "prism", "selected"]);
+    assert_keys(input_schema_for::<ScanNestParams>(), &["allowance", "body", "clearance", "deep", "margin", "prism", "selected"]);
     assert_keys(input_schema_for::<ScanPatternItParams>(), &["body", "feature", "hole", "prism", "selected"]);
     assert_keys(input_schema_for::<ScanFilletItParams>(), &["body", "into", "selected"]);
     assert_keys(input_schema_for::<ScanShellItParams>(), &["body", "into", "selected"]);

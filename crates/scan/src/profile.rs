@@ -449,6 +449,101 @@ pub fn rotational(ring: &[Vec2], tolerance: f64) -> Option<Rotational> {
     Some(Rotational { order, centre, tip, root })
 }
 
+/// How far outside the closed `outline` the point `p` is: its distance from the nearest piece
+/// where it is on the side of that piece away from the inside, 0 inside. `around` is 1 for an
+/// outline that goes round counter-clockwise, -1 for the other way.
+fn outside_of(outline: &Outline, around: f64, p: Vec2) -> f64 {
+    let n = outline.corners.len();
+    let mut best = (f64::INFINITY, 0.0);
+    for k in 0..n {
+        let (a, b) = (outline.corners[k], outline.corners[(k + 1) % n]);
+        let (distance, out) = match outline.pieces[k] {
+            Piece::Line => (segment_distance(p, a, b), -around * (b - a).cross(p - a)),
+            Piece::Arc { center, ccw } => {
+                let radius = a.dist(center);
+                let turn = |to: Vec2| {
+                    let t = angle_to(a - center, to - center);
+                    if ccw && t < 0.0 {
+                        t + TAU
+                    } else if !ccw && t > 0.0 {
+                        t - TAU
+                    } else {
+                        t
+                    }
+                };
+                let (sweep, at) = (turn(b), turn(p));
+                let sweep = if sweep == 0.0 { if ccw { TAU } else { -TAU } } else { sweep };
+                let off = p.dist(center) - radius;
+                let distance = if at.abs() <= sweep.abs() { off.abs() } else { p.dist(a).min(p.dist(b)) };
+                (distance, around * if ccw { off } else { -off })
+            }
+        };
+        if distance < best.0 {
+            best = (distance, out);
+        }
+    }
+    if best.1 > 0.0 { best.0 } else { 0.0 }
+}
+
+/// How far the scan stands proud of a prism: of its `outline` (in `plane`, its normal along the
+/// prism) between the levels `low` and `high` along the plane's normal from its origin, and of
+/// the end it is sat on (`seat`: the level of that end, and 1 when the prism lies above it, -1
+/// below). The greater of: the greatest distance outside the outline of a corner of a scan
+/// triangle that runs along the prism (its normal within 30 degrees of the plane) between the
+/// levels; and the greatest distance past the seat of a corner of a triangle that faces along the
+/// prism, over the outline. A pocket offset from the outline by a clearance, and that much deeper
+/// than the prism, is this much tighter there, so a nest adds it. A corner further out than
+/// `reach` is another part of the thing, not this prism astray, and is not counted. 0 for an
+/// outline with no pieces.
+pub fn proud(scan: &Scan, plane: &Plane, outline: &Outline, low: f64, high: f64, seat: Option<(f64, f64)>, reach: f64) -> f64 {
+    let n = outline.corners.len();
+    if n < 2 || outline.pieces.len() != n || !(reach > 0.0) {
+        return 0.0;
+    }
+    let around = if area(&ring(outline)) >= 0.0 { 1.0 } else { -1.0 };
+    let (lo, hi) = outline.corners.iter().fold((outline.corners[0], outline.corners[0]), |(lo, hi), c| {
+        (Vec2::new(lo.x.min(c.x), lo.y.min(c.y)), Vec2::new(hi.x.max(c.x), hi.y.max(c.y)))
+    });
+    // An arc's circle may bulge past its ends' box by up to its diameter.
+    let bulge = (0..n).fold(0.0f64, |m, k| match outline.pieces[k] {
+        Piece::Arc { center, .. } => m.max(2.0 * outline.corners[k].dist(center)),
+        Piece::Line => m,
+    });
+    let pad = bulge + reach;
+    let normal = plane.normal();
+    let mut worst = 0.0f64;
+    for t in 0..scan.triangle_count() {
+        let Some(corners) = scan.corners(t) else { continue };
+        let Some(facing) = (corners[1] - corners[0]).cross(corners[2] - corners[0]).normalized() else { continue };
+        let along = facing.dot(normal).abs() <= 0.5;
+        for c in corners {
+            let d = c - plane.origin;
+            let level = d.dot(normal);
+            let p = Vec2::new(d.dot(plane.x), d.dot(plane.y));
+            if p.x < lo.x - pad || p.x > hi.x + pad || p.y < lo.y - pad || p.y > hi.y + pad {
+                continue;
+            }
+            let out = if along {
+                if level < low || level > high {
+                    continue;
+                }
+                outside_of(outline, around, p)
+            } else {
+                let Some((end, above)) = seat else { continue };
+                let past = (end - level) * above;
+                if !(past > 0.0 && past <= reach) || outside_of(outline, around, p) > 0.0 {
+                    continue;
+                }
+                past
+            };
+            if out <= reach {
+                worst = worst.max(out);
+            }
+        }
+    }
+    worst
+}
+
 /// `outline` without the pieces an offset outward by `reach` would close to nothing, their
 /// neighbours run on to where they meet: the outline a pocket round the part is offset from. A
 /// piece between two inside corners gets shorter as it is offset outward (each end by the reach
@@ -2478,6 +2573,85 @@ mod tests {
         // The other way round, the same.
         let back = Outline { corners: outline.corners.iter().rev().copied().collect(), ..outline.clone() };
         assert_eq!(roomy(&back, 0.5).corners.len(), 9);
+    }
+
+    /// A slot 40 × 20 with round ends, 10 tall, its outline drawn 0.1 small all round (R 9.9, the
+    /// flats 19.8 apart): the scan stands 0.1 proud of it, on the flats and on the rounds alike.
+    /// Drawn true it stands proud by nothing; a flange 5 further out is not the slot's wall and is
+    /// not counted, nor are the slot's ends, which face along it: those count against the end the
+    /// slot is sat on.
+    #[test]
+    fn a_scan_outside_its_outline_is_measured_proud_of_it() {
+        let slot = |r: f64| Outline {
+            corners: vec![Vec2::new(10.0, 10.0 - r), Vec2::new(30.0, 10.0 - r), Vec2::new(30.0, 10.0 + r), Vec2::new(10.0, 10.0 + r)],
+            pieces: vec![
+                Piece::Line,
+                Piece::Arc { center: Vec2::new(30.0, 10.0), ccw: true },
+                Piece::Line,
+                Piece::Arc { center: Vec2::new(10.0, 10.0), ccw: true },
+            ],
+            faces: vec![None; 4],
+        };
+        // The slot's wall as strips of triangles from z = -5 to 5, and its two ends as fans.
+        let mut rim: Vec<Vec2> = (0..=20).map(|i| Vec2::new(10.0 + f64::from(i), 0.0)).collect();
+        rim.extend((1..48).map(|i| Vec2::new(30.0, 10.0) + rotated(Vec2::new(0.0, -10.0), PI * f64::from(i) / 48.0)));
+        rim.extend((0..=20).map(|i| Vec2::new(30.0 - f64::from(i), 20.0)));
+        rim.extend((1..48).map(|i| Vec2::new(10.0, 10.0) + rotated(Vec2::new(0.0, 10.0), PI * f64::from(i) / 48.0)));
+        let wall = |rim: &[Vec2], positions: &mut Vec<Vec3>, triangles: &mut Vec<[u32; 3]>| {
+            let (base, n) = (positions.len() as u32, rim.len() as u32);
+            for q in rim {
+                positions.push(Vec3::new(q.x, q.y, -5.0));
+                positions.push(Vec3::new(q.x, q.y, 5.0));
+            }
+            for i in 0..n {
+                let (a, b) = (base + 2 * i, base + 2 * ((i + 1) % n));
+                triangles.push([a, b, a + 1]);
+                triangles.push([b, b + 1, a + 1]);
+            }
+        };
+        let (mut positions, mut triangles) = (Vec::new(), Vec::new());
+        wall(&rim, &mut positions, &mut triangles);
+        for z in [-5.0, 5.0] {
+            let centre = positions.len() as u32;
+            positions.push(Vec3::new(20.0, 10.0, z));
+            let first = positions.len() as u32;
+            // An end's rim reaches 3 past the wall: a face along the prism, not counted.
+            positions.extend(rim.iter().map(|q| Vec3::new(20.0 + (q.x - 20.0) * 1.3, 10.0 + (q.y - 10.0) * 1.3, z)));
+            let n = rim.len() as u32;
+            triangles.extend((0..n).map(|i| [centre, first + i, first + (i + 1) % n]));
+        }
+        let plane = Plane { origin: Vec3::ZERO, x: Vec3::new(1.0, 0.0, 0.0), y: Vec3::new(0.0, 1.0, 0.0) };
+        let scan = Scan::new(&positions, &triangles);
+        let small = proud(&scan, &plane, &slot(9.9), -5.0, 5.0, None, 1.0);
+        assert!((small - 0.1).abs() < 1e-9, "{small}");
+        assert!(proud(&scan, &plane, &slot(10.0), -5.0, 5.0, None, 1.0) < 1e-9);
+        // The other way round, the same.
+        let back = |o: Outline| Outline {
+            corners: vec![o.corners[0], o.corners[3], o.corners[2], o.corners[1]],
+            pieces: vec![
+                Piece::Arc { center: Vec2::new(10.0, 10.0), ccw: false },
+                Piece::Line,
+                Piece::Arc { center: Vec2::new(30.0, 10.0), ccw: false },
+                Piece::Line,
+            ],
+            ..o
+        };
+        let small = proud(&scan, &plane, &back(slot(9.9)), -5.0, 5.0, None, 1.0);
+        assert!((small - 0.1).abs() < 1e-9, "{small}");
+        // A flange round it, 5 out: beyond the reach.
+        let flange: Vec<Vec2> = rim.iter().map(|q| Vec2::new(20.0 + (q.x - 20.0) * 1.5, 10.0 + (q.y - 10.0) * 1.5)).collect();
+        wall(&flange, &mut positions, &mut triangles);
+        let scan = Scan::new(&positions, &triangles);
+        let small = proud(&scan, &plane, &slot(9.9), -5.0, 5.0, None, 1.0);
+        assert!((small - 0.1).abs() < 1e-9, "{small}");
+        // Above the levels asked, nothing.
+        assert!(proud(&scan, &plane, &slot(9.9), 6.0, 8.0, None, 1.0) < 1e-9);
+        // Sat on its lower end, taken to be at z = -4.8: the end's scan, at -5, is 0.2 past it,
+        // more than the wall is proud of the outline. On its upper end, taken at 4.7, 0.3; an
+        // end the scan does not pass, nothing more than the wall.
+        let sat = |seat| proud(&scan, &plane, &slot(9.9), -5.0, 5.0, Some(seat), 1.0);
+        assert!((sat((-4.8, 1.0)) - 0.2).abs() < 1e-9 && (sat((4.7, -1.0)) - 0.3).abs() < 1e-9, "{} {}", sat((-4.8, 1.0)), sat((4.7, -1.0)));
+        assert!((sat((-5.0, 1.0)) - 0.1).abs() < 1e-9 && (sat((-5.5, 1.0)) - 0.1).abs() < 1e-9);
     }
 
     /// A slot 40 × 20 with round ends, a hair off true as a scan leaves it, is its own image left

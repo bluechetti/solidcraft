@@ -575,6 +575,10 @@ fn a_nest_is_cut_from_a_prisms_outline_and_follows_its_clearance() {
     let tight = volume(&s, &nest);
     let gap = gap_at(&mut s);
     assert!((gap - 0.3).abs() < 0.03, "the gap is the clearance: {gap}");
+    // The scan lies on the outline read from it, so nothing to speak of is allowed for; and the
+    // gap is no less than the clearance for what is.
+    let allowed = built["allowance"].as_f64().unwrap();
+    assert!((0.0..0.02).contains(&allowed) && gap > 0.3 + allowed - 0.01, "{built}, gap {gap}");
     // The block: 10 wider all round than the disc is across its tips beside the slots (a slot lies
     // on each axis, 8 wide, so that is 2 × √(20² − 4²)), 15 tall. Less the pocket: the disc's
     // outline grown by 0.3, 5.3 deep (its own section is a tenth of its volume, its outline about
@@ -591,6 +595,16 @@ fn a_nest_is_cut_from_a_prisms_outline_and_follows_its_clearance() {
     // A second nest of the same scan is refused in words, as is a clearance that is none.
     assert!(run_err(&mut s, "scan.nest", json!({})).contains("already"));
     assert!(run_err(&mut s, "scan.nest", json!({"clearance": 0})).contains("`clearance`"));
+    assert!(run_err(&mut s, "scan.nest", json!({"allowance": -0.1})).contains("`allowance`"));
+    // An allowance given is added to the clearance, round the part and under it: 0.3 and 0.2 cut
+    // the pocket the clearance of 0.5 did (less what that one allowed for by itself).
+    let (mut s, _) = scanned(&part, &body, 3, "nest-allowed");
+    let built = run(&mut s, "scan.nest", json!({"allowance": 0.2}));
+    assert_eq!(built["allowance"], 0.2, "{built}");
+    let same = volume(&s, built["solid"].as_str().unwrap());
+    assert!((same - loose).abs() < (section + 250.0 * 5.5) * (allowed + 0.001), "{same} against {loose}");
+    let d = run(&mut s, "scan.deviation", json!({"body": built["solid"], "tolerance": "0.02 mm", "limit": 2}));
+    assert!((d["clearance"]["gap"].as_f64().unwrap() - 0.5).abs() < 0.03, "{d}");
 }
 
 /// A plate 50 × 30 × 8 centred on the origin, from its scan: its outline is its own mirror image

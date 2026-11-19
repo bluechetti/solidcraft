@@ -59,6 +59,7 @@ fn built(view: &View, sketch: Option<u64>, feature: Value, solid: String, how: &
         count: None,
         openings: None,
         skin: None,
+        allowance: None,
         fit: None,
         param_warnings: Vec::new(),
     })

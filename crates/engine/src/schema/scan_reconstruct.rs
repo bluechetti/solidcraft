@@ -679,6 +679,12 @@ pub struct ScanNestParams {
     #[serde(default)]
     #[schemars(with = "Option<Value>")]
     pub clearance: Option<Value>,
+    /// How much more than the clearance the pocket is cut, round the part and under it, in mm,
+    /// for scan standing proud of the prism fitted to it. Default: measured, the furthest the
+    /// scan lies outside the outline offset or past the end it sits on (replied as `allowance`),
+    /// so the least gap is the clearance and the usual gap that much more. 0: the clearance alone.
+    #[serde(default)]
+    pub allowance: Option<f64>,
     /// How much block is left round the part and under it, in mm. Default: 10.
     #[serde(default)]
     pub margin: Option<f64>,
@@ -718,6 +724,10 @@ pub struct ScanBuildResult {
     /// profile closed straight across into a solid or (`wall`) revolved as a surface and thickened.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skin: Option<String>,
+    /// Nest: how far the scan stands proud of the outline the pocket is offset from or of the end
+    /// it sits on, in mm, added to the clearance so the gap is the clearance there too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowance: Option<f64>,
     /// How close the body is to the scan before and after the step (absent when it could not be
     /// measured).
     #[serde(default, skip_serializing_if = "Option::is_none")]
