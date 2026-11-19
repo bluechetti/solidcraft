@@ -178,6 +178,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.fit_plane",
     "scan.fit_sphere",
     "scan.fit_surface",
+    "scan.fit_together",
     "scan.fit_torus",
     "scan.flat_template",
     "scan.flatten",

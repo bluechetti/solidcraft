@@ -1588,6 +1588,82 @@ pub struct ScanUnseenResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Shapes fitted to their regions of a scan and to relations between them at once. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanTogetherParams {
+    /// The scan. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The shapes, 2 to 20, each `{kind: plane|cylinder|sphere|cone|torus, point?, grow?, radius?,
+    /// saved?, triangles?, selected?}`, its region chosen as that kind's Fit tool chooses it.
+    pub shapes: Vec<Value>,
+    /// The relations to hold, each `{kind: parallel|perpendicular|coaxial|equal_radius|distance|
+    /// angle|radius, a: shape number from 0, b?: shape number or x|y|z|xy|yz|zx|origin, value?:
+    /// length for distance and radius, angle for angle}`. Default: the relations the shapes nearly
+    /// hold already (within 3°, radii within 3 %, axes within 5 % of the radius).
+    #[serde(default)]
+    pub relations: Option<Vec<Value>>,
+    /// How far from a shape a point may lie and be part of its region. Default: from the scan.
+    #[serde(default)]
+    pub tolerance: Option<LengthExpr>,
+    /// Keep each shape as a construction plane, axis or point. Default: true.
+    #[serde(default)]
+    pub keep: Option<bool>,
+}
+
+/// A shape fitted together with the others.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanTogetherShape {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane: Option<ScanFittedPlane>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cylinder: Option<ScanFittedCylinder>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sphere: Option<ScanFittedSphere>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cone: Option<ScanFittedCone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub torus: Option<ScanFittedTorus>,
+    /// Its region's points' distance from it held (root mean square, largest) and fitted alone.
+    pub rms: f64,
+    pub max: f64,
+    pub free_rms: f64,
+    pub free_max: f64,
+    /// The construction feature that keeps it, unless `keep` was false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<FeatureResult>")]
+    pub feature: Option<Value>,
+}
+
+/// A relation held.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanTogetherRelation {
+    pub kind: String,
+    pub a: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub b: Option<Value>,
+    /// The distance or radius (mm) or angle (degrees) held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    /// How far it is from holding (mm, or the sine of the angle off for directions): 0 holds.
+    pub off: f64,
+}
+
+/// What `scan.fit_together` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanTogetherResult {
+    pub body: String,
+    pub shapes: Vec<ScanTogetherShape>,
+    pub relations: Vec<ScanTogetherRelation>,
+    /// The relations were the suggested ones (none were given).
+    pub suggested: bool,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// Take the floating pieces off a scan: the pieces (triangles joined through their corners) far
 /// smaller than the largest. A Scan Clean step in the timeline keeps the settings; one undo step.
 #[derive(Debug, Deserialize, JsonSchema)]

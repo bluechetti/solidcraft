@@ -662,6 +662,8 @@ pub const SECTIONS: &[Section] = &[
             "scan.fit_sphere",
             "scan.fit_cone",
             "scan.fit_torus",
+            // Shapes fitted to the scan and to each other: on one axis, square, a distance apart.
+            "scan.fit_together",
             "mesh.convert",
             "scan.reconstruct_selection",
             "scan.reconstruct_rest",

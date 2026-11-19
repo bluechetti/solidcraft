@@ -27,8 +27,8 @@ use crate::schema::scan::{
     ScanMarkersParams, ScanMarkersResult, ScanMeasureLineParams, ScanMeasureLineResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror,
     ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRemoveFillParams,
     ScanRemoveFillResult, ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult,
-    ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanUnseenParams,
-    ScanUnseenResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
+    ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanTogetherParams,
+    ScanTogetherResult, ScanUnseenParams, ScanUnseenResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -48,6 +48,7 @@ const EDIT_SURFACE_CONTRACT: TypedContract<ScanEditSurfaceParams> = TypedContrac
 const CURVE_CONTRACT: TypedContract<ScanCurveParams> = TypedContract::new();
 const MEASURE_LINE_CONTRACT: TypedContract<ScanMeasureLineParams> = TypedContract::new();
 const UNSEEN_CONTRACT: TypedContract<ScanUnseenParams> = TypedContract::new();
+const TOGETHER_CONTRACT: TypedContract<ScanTogetherParams> = TypedContract::new();
 const EDIT_NET_CONTRACT: TypedContract<ScanEditNetParams> = TypedContract::new();
 const FREE_FORM_CONTRACT: TypedContract<ScanFreeFormParams> = TypedContract::new();
 const ADD_FACE_CONTRACT: TypedContract<ScanAddFaceParams> = TypedContract::new();
@@ -157,6 +158,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&COMPLETE_CONTRACT)
         .output(output_schema_for::<ScanCompleteResult>)
         .params("body?: mesh body (default: the selected mesh body, else the design's only one); plane?: {point, normal: [x,y,z]} to reflect in (default: found near guide, else the best found; a one-sided scan is not refused for matching little, but `warning` says so); guide?: {from, to, toward?}; reach?: length a reflected triangle must lie from the scan to count as missing (default 1.5 typical edges or 3 × the plane's mismatch): the reflected triangles where the scan has nothing, as an amber mesh body `<scan> Mirror Fill` beside it (one undo step); a scan missing nothing is refused → body, fill, mirror, pieces, triangles, area, joined, reach, warning?, feature"),
+    CommandSpec::new("scan.fit_together", "Fit Together", crate::checked!("scan.fit_together", together::fit_together))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("c_parallel")
+        .contract(&TOGETHER_CONTRACT)
+        .output(output_schema_for::<ScanTogetherResult>)
+        .params("body?: the scan (default: the selected or only one); shapes: [{kind: plane|cylinder|sphere|cone|torus, point?, grow?, radius?, saved?, triangles?, selected?}, …] 2 to 20, each region chosen as its Fit tool chooses; relations?: [{kind: parallel|perpendicular|coaxial|equal_radius|distance|angle|radius, a: shape number from 0, b?: shape number or x|y|z|xy|yz|zx|origin, value?: length (distance, radius) or angle}, …] (default: the relations the shapes nearly hold already: within 3° of parallel or perpendicular, to each other or a world axis, on one axis within 5 % of the smaller radius (0.5 mm at least), radii within 3 %); tolerance?: length; keep?: bool (default true: each shape kept as its Fit tool keeps it, a construction plane, axis or point): the shapes fitted to their regions and to the relations at once, so each is the best fit that holds them, one undo step → body, shapes [{kind, plane|cylinder|sphere|cone|torus, rms, max, free_rms, free_max, feature?}], relations [{kind, a, b?, value?, off}], suggested"),
     CommandSpec::new("scan.fit_plane", "Fit Plane", crate::checked!("scan.fit_plane", fit_plane))
         .at("SCAN", "RECONSTRUCT")
         .icon("plane")
@@ -1818,6 +1825,9 @@ pub mod reconstruct;
 
 #[path = "scan_refit.rs"]
 pub mod refit;
+
+#[path = "scan_together.rs"]
+pub mod together;
 
 #[path = "scan_unseen.rs"]
 pub mod unseen;

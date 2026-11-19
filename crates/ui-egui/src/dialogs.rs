@@ -467,6 +467,7 @@ crate::dialog_descriptor::dialog_descriptors! {
             ScanSection(crate::dialogs_scan_section::SectionSketch),
             ScanSections(crate::dialogs_scan_sections::SectionsAlong),
             ScanDenoise(crate::dialogs_scan_denoise::Denoise),
+            ScanTogether(crate::dialogs_scan_together::Together),
             ScanSelect(crate::dialogs_scan_select::ScanSelect),
             ScanEdgeCurve(crate::dialogs_scan_edge::EdgeCurve),
             ScanReconstruct(crate::dialogs_scan_reconstruct::Reconstruct),
@@ -1269,6 +1270,7 @@ impl Dialog {
                     .or_else(|| crate::dialogs_scan_section::start(app, id))
                     .or_else(|| crate::dialogs_scan_sections::start(app, id))
                     .or_else(|| crate::dialogs_scan_denoise::start(app, id))
+                    .or_else(|| crate::dialogs_scan_together::start(app, id))
                     .or_else(|| crate::dialogs_scan_select::start(app, id))
                     .or_else(|| crate::dialogs_scan_edge::start(app, id))
                     .or_else(|| crate::dialogs_scan_slice::start(app, id))
@@ -1575,6 +1577,7 @@ impl Dialog {
                 | Kind::ScanSection(_)
                 | Kind::ScanSections(_)
                 | Kind::ScanDenoise(_)
+                | Kind::ScanTogether(_)
                 | Kind::ScanReconstruct(_)
         )
     }
@@ -3118,6 +3121,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::ScanSection(_) => "SECTION TO SKETCH",
         Kind::ScanSections(_) => "SECTIONS ALONG CURVE",
         Kind::ScanDenoise(_) => "DENOISE",
+        Kind::ScanTogether(_) => "FIT TOGETHER",
         Kind::ScanSelect(_) => "SELECT ON SCAN",
         Kind::ScanEdgeCurve(_) => "CURVE FROM SELECTION EDGE",
         Kind::ScanReconstruct(_) => "RECONSTRUCT",
@@ -4437,6 +4441,7 @@ fn scan_card(kind: &Kind) -> bool {
             | Kind::ScanSection(_)
             | Kind::ScanSections(_)
             | Kind::ScanDenoise(_)
+            | Kind::ScanTogether(_)
             | Kind::ScanSelect(_)
             | Kind::ScanEdgeCurve(_)
             | Kind::ScanReconstruct(_)
@@ -7243,6 +7248,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::ScanSection(k) => return crate::dialogs_scan_section::commands(app, k),
         Kind::ScanSections(k) => return crate::dialogs_scan_sections::commands(k),
         Kind::ScanDenoise(k) => return crate::dialogs_scan_denoise::commands(app, k, &d.inputs),
+        Kind::ScanTogether(k) => return crate::dialogs_scan_together::commands(app, k, &d.inputs),
         Kind::ScanSelect(k) => return crate::dialogs_scan_select::commands(k),
         Kind::ScanEdgeCurve(k) => return crate::dialogs_scan_edge::commands(k),
         Kind::ScanReconstruct(k) => return crate::dialogs_scan_reconstruct::commands(app, k),

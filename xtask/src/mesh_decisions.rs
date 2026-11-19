@@ -62,6 +62,7 @@ pub const SKIPPED_MODULES: &[(&str, &str)] = &[
     ("crates/engine/src/cmd/scan_select.rs", "mesh bodies: part of a scan's triangles selected, kept, and its outline laid on the scan"),
     ("crates/engine/src/cmd/scan_split.rs", "mesh bodies: a scan cut by a plane, a shape, another body or scan, a curve or a sketch"),
     ("crates/engine/src/cmd/scan_step_fit.rs", "mesh bodies: a sample of a scan's points measured against the body built from it"),
+    ("crates/engine/src/cmd/scan_together.rs", "mesh bodies: shapes fitted to their regions of a scan and to each other"),
     ("crates/engine/src/cmd/scan_unseen.rs", "mesh bodies: a scan's triangles read against the scan as it came in, for what its scanner never saw"),
     ("crates/engine/src/cmd/silhouette.rs", "a picture's view-aligned silhouette of the display meshes"),
     ("crates/engine/src/cmd/surface_analysis.rs", "view analyses: zebra, draft and curvature shading of the display mesh"),

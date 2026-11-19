@@ -80,6 +80,7 @@ pub(crate) mod dialogs_scan_split;
 pub(crate) mod dialogs_scan_surface;
 pub(crate) mod dialogs_scan_survey;
 pub(crate) mod dialogs_scan_template;
+pub(crate) mod dialogs_scan_together;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
 pub(crate) mod dialogs_surface_check;

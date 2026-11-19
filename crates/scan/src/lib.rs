@@ -92,6 +92,7 @@ pub mod progress;
 pub mod reconstruct;
 pub mod reduce;
 pub mod register;
+pub mod relate;
 pub mod remesh;
 pub mod remesh_area;
 pub mod repair;

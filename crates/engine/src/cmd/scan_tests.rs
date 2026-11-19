@@ -3120,6 +3120,56 @@ fn unseen_surface_finds_a_filled_hole_and_a_fit_over_it_says_so() {
     assert!(fit["warning"].as_str().is_some_and(|w| w.contains("never saw")), "{fit}");
 }
 
+/// Fit Together: two bores scanned a hair off one axis and one size, fitted with the relations
+/// they nearly hold (none given), come out on one axis with one radius, each kept as a construction
+/// axis, one undo step; a relation naming a shape that is not there is refused.
+#[test]
+fn fit_together_holds_two_bores_on_one_axis_with_one_radius() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-together-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("bores.stl");
+    let mut stl = String::from("solid bores\n");
+    // A tube of radius `r` about the vertical line through (cx, 0), from z0 to z1.
+    let mut tube = |cx: f64, r: f64, z0: f64, z1: f64| {
+        let (around, along) = (48, 10);
+        let at = |i: usize, j: usize| {
+            let a = std::f64::consts::TAU * i as f64 / around as f64;
+            Vec3::new(cx + r * a.cos(), r * a.sin(), z0 + (z1 - z0) * j as f64 / along as f64)
+        };
+        for i in 0..around {
+            for j in 0..along {
+                for [a, b, c] in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                    stl += &format!(
+                        "facet normal 0 0 0\nouter loop\nvertex {} {} {}\nvertex {} {} {}\nvertex {} {} {}\nendloop\nendfacet\n",
+                        a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z
+                    );
+                }
+            }
+        }
+    };
+    tube(0.0, 5.0, 0.0, 10.0);
+    tube(0.05, 5.04, 30.0, 40.0);
+    std::fs::write(&path, stl + "endsolid bores\n").unwrap();
+    let mut s = Session::default();
+    let scan = run(&mut s, "file.insert_mesh", json!({"path": path}))["created_bodies"][0].as_str().unwrap().to_owned();
+    let features = s.doc.features.len();
+    let shapes = json!([{"kind": "cylinder", "point": [5, 0, 5]}, {"kind": "cylinder", "point": [5.09, 0, 35]}]);
+    let done = run(&mut s, "scan.fit_together", json!({"body": scan, "shapes": shapes}));
+    assert_eq!(done["suggested"], true, "{done}");
+    let kinds: Vec<&str> = done["relations"].as_array().unwrap().iter().filter_map(|r| r["kind"].as_str()).collect();
+    assert!(kinds.contains(&"coaxial") && kinds.contains(&"equal_radius"), "{kinds:?}");
+    assert!(done["relations"].as_array().unwrap().iter().all(|r| r["off"].as_f64().unwrap() < 1e-6), "{done}");
+    let (r0, r1) = (done["shapes"][0]["cylinder"]["radius"].as_f64().unwrap(), done["shapes"][1]["cylinder"]["radius"].as_f64().unwrap());
+    assert!((r0 - r1).abs() < 1e-6 && r0 > 4.99 && r0 < 5.04, "{r0} {r1}");
+    assert_eq!(s.doc.features.len(), features + 2, "two construction axes");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.features.len(), features, "one undo step");
+    let err =
+        s.execute("scan.fit_together", &json!({"body": scan, "shapes": shapes, "relations": [{"kind": "coaxial", "a": 0, "b": 5}]})).unwrap_err();
+    assert!(err.to_string().contains("there are 2 shapes"), "{err}");
+}
+
 /// A sheet `size` mm square of `n` × `n` squares at height `z`, as an STL.
 fn sheet_stl(size: f64, n: usize, z: f64) -> String {
     let at = |i: usize, j: usize| Vec3::new(size * i as f64 / n as f64, size * j as f64 / n as f64, z);
