@@ -78,6 +78,9 @@ const SPOKED_ROUND: f64 = 0.3;
 /// Alike faces round an axis: sizes within this share, tilts to the axis within this (as the
 /// cosine), distances from it within this share of the largest.
 const SPOKE_SIZE: f64 = 0.12;
+/// Prisms open at one end with leaning walls that hold less than this share of the scan's area
+/// are the ends of a lofted part, not the part (the test blade's two hold 28 %).
+const MOST_WEAK_SHARE: f64 = 0.5;
 const SPOKE_TILT: f64 = 0.05;
 const SPOKE_REACH: f64 = 0.08;
 /// Places round the axis within this share of the step from where an even ring puts them.
@@ -1914,10 +1917,21 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     if let Some(pipe) = &pipe {
         prisms.retain(|p| !p.walls.iter().all(|w| pipe.faces.contains(w)));
     }
-    let prism_repeats = prism_repeats(&faces, &prisms);
-    let loft = (prisms.is_empty() && revolve.is_none() && coil.is_none() && pipe.is_none())
+    // A part of sections lofted (a blade) is locally a drafted prism at each flat end: a cap and
+    // the walls leaning in from it. Such prisms, each with one end only and leaning walls, that
+    // together hold less than half of the scan give way to the loft when the scan reads as one.
+    let weak = !prisms.is_empty() && prisms.iter().all(|p| p.open && p.draft != 0.0) && {
+        let held: BTreeSet<usize> = prisms.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).copied().collect();
+        let (held, all) = (held.iter().map(|&k| faces[k].area).sum::<f64>(), faces.iter().map(|f| f.area).sum::<f64>());
+        held < MOST_WEAK_SHARE * all
+    };
+    let loft = ((prisms.is_empty() || weak) && revolve.is_none() && coil.is_none() && pipe.is_none())
         .then(|| crate::loft::read(scan, &faces, LOFT_SECTIONS).ok())
         .flatten();
+    if weak && loft.is_some() {
+        prisms.clear();
+    }
+    let prism_repeats = prism_repeats(&faces, &prisms);
     // A coil's or a loft's pieces, and a pipe's bends, are no rounds along an edge.
     let (mut fillets, mut chamfers) = (fillets, chamfers);
     if coil.is_some() || loft.is_some() {
