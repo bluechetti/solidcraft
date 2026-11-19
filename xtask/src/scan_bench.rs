@@ -18,7 +18,7 @@
 //!
 //! `--scorer CMD` adds a second judge that shares no code with SolidCraft: CMD is run as
 //! `CMD <run folder> <bar.json> <expected.json>` and prints `{"pass": bool, "failed": [..]}`; a
-//! run then passes only when both judges pass it.
+//! run then passes only when both judges pass it (a run the bars already fail is not sent to it).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -228,7 +228,10 @@ fn one(root: &Path, config: &Value, bin: &Path, scorer: Option<&str>, out: &Path
     let has = |flag: &str| level.flags.iter().any(|f| f == flag);
     let checks = checks(config, &bar, &result, &expected, has("--missing"), has("--scale"));
     let mut failed: Vec<String> = checks.iter().filter(|(_, c)| c["ok"] == false).map(|(name, _)| name.clone()).collect();
-    if let Some(command) = scorer {
+    let own = failed.is_empty();
+    // The second judge can only fail what the bars passed: a run already outside a bar keeps its
+    // result whatever it says, and a badly wrong model is the slowest for it to measure.
+    if let Some(command) = scorer.filter(|_| own) {
         let mut held = bar.clone();
         held["tolerance"] = json!((config[class]["tolerance_sigmas"].as_f64().unwrap_or(3.0) * level.sigma).max(config[class]["tolerance_least"].as_f64().unwrap_or(0.1)));
         held["edge_allowance"] = json!(config["levels"]["edge_allowance"].as_f64().unwrap_or(0.0) * config["levels"]["edge"].as_f64().unwrap_or(0.0));
@@ -248,15 +251,17 @@ fn one(root: &Path, config: &Value, bin: &Path, scorer: Option<&str>, out: &Path
         row["second_judge"] = verdict;
     }
     let passes = in_app["passes"] == true;
-    row["status"] = json!(match (failed.is_empty(), passes) {
+    let status = |within: bool| match (within, passes) {
         (true, true) => "pass",
         (true, false) => "missed pass",
         (false, true) => "SILENT WRONG",
         (false, false) => "fail",
-    });
-    // What the lock holds: the verdicts and each measured value, to a nanometre. Not the times.
+    };
+    row["status"] = json!(status(failed.is_empty()));
+    // What the lock holds: SolidCraft's own verdict (the same with or without a second judge)
+    // and each measured value, to a nanometre. Not the times.
     let values: BTreeMap<&String, Value> = checks.iter().map(|(name, c)| (name, json!(c["value"].as_f64().map(|v| (v * 1e6).round() / 1e6)))).collect();
-    row["numbers"] = json!({"status": row["status"], "in_app_passes": passes, "ran": row["ran"], "values": values});
+    row["numbers"] = json!({"status": status(own), "in_app_passes": passes, "ran": row["ran"], "values": values});
     row["failed"] = json!(failed);
     row["checks"] = json!(checks);
     Ok(row)
