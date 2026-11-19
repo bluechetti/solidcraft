@@ -3009,6 +3009,94 @@ shot("scan-tour/align-to-model", "clip", setup=plate_and_model(moved=True))(tour
 shot("scan-tour/flat-template", "clip", setup=van_open)(tour_plain("scan.flat_template", first="Flat Template: a van's side wall (10.7M triangles)", ok=None))
 
 
+# scan-e2e: scan to CAD end to end, as a user drives it: the scan read into shapes, Rebuild's
+# steps built as features, the solid looked at alone, then checked against the scan.
+RIM = CORPUS / "cars/drivaerml/scan/rim_left_scan.stl"
+
+
+def eye(d, name):
+    """Show or hide the body `name` with its eye in the browser."""
+    handle = next((h["name"] for h in d.ui("ui.handles") if h["name"].startswith(f"eye:{name}:")), None)
+    if handle is None:
+        raise RuntimeError(f"no eye for {name}")
+    hidden = lambda: name in json.dumps((d.ui("ui.inspect").get("visibility") or {}))
+    was = hidden()
+    d.click(d.at(handle=handle), dur=0.6, settle=1.0)
+    if hidden() == was:
+        # The click didn't take: the same change as the browser's eye makes.
+        d.execute("browser.visibility", {"items": [name], "visible": was})
+    d.settle_camera()
+
+
+def no_dialog(d, timeout=240):
+    """Wait until a tool that closes itself (Find All, Scan Deviation) has done."""
+    for _ in range(timeout * 4):
+        if not d.ui("ui.inspect").get("dialog"):
+            break
+        time.sleep(0.25)
+    d.settle_camera()
+
+
+def e2e(scan, what, first, edit=None, untick=()):
+    """Find All, Rebuild and OK, the solid alone, then Scan Deviation; `edit` (caption, parameter's
+    feature, its input, new value) changes one reconstructed size and checks again."""
+
+    def run(d):
+        d.caption(f"A scan of {what}: only triangles, no features yet")
+        d.wait(2.5)
+        d.caption("Find All reads the scan into planes, cylinders, cones and freeform")
+        d.tool("scan.find_all")
+        no_dialog(d)
+        d.wait(2.5)
+        d.caption(first)
+        d.tool("scan.reconstruct")
+        dialog_ready(d, timeout=600)
+        d.wait(3.5)
+        for row, why in untick:
+            d.caption(why)
+            # Reconstruct's step boxes have no name of their own: the row'th unnamed one.
+            boxes = [(h["x"], h["y"]) for h in d.ui("ui.handles") if h["name"] == "dialog:"]
+            d.click(boxes[row], dur=0.5, settle=0.6)
+            dialog_ready(d)
+            d.wait(2.0)
+        d.caption("OK builds each step as a feature: sketches dimensioned, sizes as parameters")
+        ok_and_wait(d, hold=1.5)
+        d.caption("The scan hidden: the solid, with its steps in the timeline")
+        eye(d, scan)
+        d.ui("ui.view", {"view": "fit"})
+        d.settle_camera()
+        d.wait(3.5)
+        eye(d, scan)
+        d.caption("Scan Deviation: the scan coloured by how far it is from the solid")
+        d.tool("scan.deviation")
+        no_dialog(d)
+        d.wait(4.0)
+        if edit:
+            caption, feature, field, value = edit
+            listed = d.execute("parameters.list", {})
+            params = (listed or {}).get("parameters") or ((listed or {}).get("result") or {}).get("parameters") or []
+            name = next((p["name"] for p in params if p.get("feature") == feature and p.get("input") == field), None)
+            if name is None:
+                raise RuntimeError(f"no parameter for {feature} {field}")
+            d.caption(caption)
+            d.execute("parameters.change", {"name": name, "expression": value})
+            d.wait(1.5)
+            d.execute("scan.deviation", {"body": f"{scan} Reconstructed", "scan": scan})
+            d.wait(4.5)
+
+    return run
+
+
+shot("scan-e2e/holes-plate", "clip", setup=scan_open(PLATE, origin=False))(
+    e2e("holes", "a plate with six holes", "Rebuild lists the steps that build it: one extrude, six holes of their kinds",
+        edit=("Hole It 6's diameter is a parameter: 8 mm made 12, the scan shows where it no longer fits", "Hole It 6", "Diameter", "12 mm")))
+shot("scan-e2e/housing", "clip", setup=scan_open(HOUSING, origin=False))(
+    e2e("housing", "a drafted, shelled housing", "Rebuild lists the steps: an extrude with its draft, the shell, the fillets"))
+shot("scan-e2e/wheel", "clip", setup=scan_open(RIM, origin=False))(
+    e2e("rim_left_scan", "a car's wheel rim (DrivAerML, 1.2M triangles)", "Rebuild reads a wheel: turned about its axis, 5 spokes; Revolve It cuts the openings",
+        untick=[(1, "Fillet It unticked: none of its rounds fits better than a sharp edge, and it would stop OK")]))
+
+
 @shot("scan-tour/curve", "clip", setup=scan_open(BLADE, origin=False))
 def tour_curve(d):
     """Curve on Scan up the blade: points clicked, then every option."""
