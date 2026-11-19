@@ -1467,6 +1467,54 @@ fn nearly_closed(points: &[Vec2]) -> bool {
     points.len() >= 3 && first.dist(*last) <= NEARLY_CLOSED * length
 }
 
+/// The runs of a cut that are loops: the closed ones, those whose ends nearly meet, and the open
+/// pieces of one loop that patches the scanner missed broke apart, joined end to end in the order
+/// they go round (each to the nearest end still free, until the nearest is the first piece's own
+/// start) where the gaps between them are together no more than [`NEARLY_CLOSED`] of their length.
+fn loops_of(runs: Vec<crate::section::Run>) -> Vec<crate::section::Run> {
+    let (mut loops, mut open): (Vec<_>, Vec<_>) = runs.into_iter().partition(|r| r.closed || nearly_closed(&r.points));
+    let length = |points: &[Vec2]| points.windows(2).map(|w| w[0].dist(w[1])).sum::<f64>();
+    // The longest pieces first: each starts a loop the shorter ones may belong to.
+    open.retain(|r| r.points.len() >= 2);
+    open.sort_by(|a, b| length(&b.points).total_cmp(&length(&a.points)));
+    while !open.is_empty() {
+        let mut chain = open.remove(0);
+        let Some(&start) = chain.points.first() else { continue };
+        let (mut gaps, mut on_scan) = (0.0, length(&chain.points));
+        loop {
+            let Some(&end) = chain.points.last() else { break };
+            // The nearest end of a piece still free, and whether that is the piece's last point.
+            let nearest = open
+                .iter()
+                .enumerate()
+                .filter_map(|(k, r)| Some((k, *r.points.first()?, *r.points.last()?)))
+                .flat_map(|(k, first, last)| [(k, false, end.dist(first)), (k, true, end.dist(last))])
+                .min_by(|a, b| a.2.total_cmp(&b.2));
+            match nearest {
+                Some((k, backwards, gap)) if gap < end.dist(start) => {
+                    let mut next = open.remove(k);
+                    if backwards {
+                        next.points.reverse();
+                        next.triangles.reverse();
+                    }
+                    gaps += gap;
+                    on_scan += length(&next.points);
+                    chain.points.append(&mut next.points);
+                    chain.triangles.append(&mut next.triangles);
+                }
+                _ => {
+                    gaps += end.dist(start);
+                    break;
+                }
+            }
+        }
+        if chain.points.len() >= 3 && gaps <= NEARLY_CLOSED * on_scan {
+            loops.push(chain);
+        }
+    }
+    loops
+}
+
 /// Prism `prism`'s profile off its walls: the scan sliced halfway along it, each loop that runs on
 /// its walls the curves of those walls, exactly as fitted, from crossing to crossing. The plane it
 /// lies in and its outlines (`faces` index `reading.faces`); why not, when no loop goes round its
@@ -1538,8 +1586,7 @@ pub(crate) fn prism_profile_from(
     // points, or over a patch the scanner missed, comes out as a run just short of closed.
     let sliced = |level: f64| -> (Vec<Outline>, usize) {
         let at = |by: f64| Plane { origin: plane.origin + prism.direction * (level + by), ..plane };
-        let runs: Vec<crate::section::Run> =
-            crate::section::section_welded(scan, weld, &at(0.0)).into_iter().filter(|r| r.closed || nearly_closed(&r.points)).collect();
+        let runs: Vec<crate::section::Run> = loops_of(crate::section::section_welded(scan, weld, &at(0.0)));
         let loops: Vec<(Vec<Vec2>, Vec<Option<usize>>)> = runs
             .iter()
             .map(|r| {
@@ -2031,6 +2078,46 @@ mod tests {
     }
 
     use super::*;
+
+    /// A square 40 on a side cut where three patches are missing comes as three open pieces, in no
+    /// order and one of them backwards. They are one loop, joined in the order they go round; the
+    /// same pieces with half a side missing between two of them are not (the gaps are over a fifth
+    /// of what the scan holds), and a closed run stays as it is.
+    #[test]
+    fn the_pieces_of_a_cut_that_missing_patches_broke_apart_are_one_loop() {
+        // The square's outline from `from` to `to` along it (0 to 160 round), a point each 1 mm.
+        let at = |d: f64| match d.rem_euclid(160.0) {
+            d if d < 40.0 => Vec2::new(d, 0.0),
+            d if d < 80.0 => Vec2::new(40.0, d - 40.0),
+            d if d < 120.0 => Vec2::new(120.0 - d, 40.0),
+            d => Vec2::new(0.0, 160.0 - d),
+        };
+        let piece = |from: u32, to: u32, backwards: bool| {
+            let mut points: Vec<Vec2> = (from..=to).map(|d| at(f64::from(d))).collect();
+            if backwards {
+                points.reverse();
+            }
+            let triangles = vec![0; points.len()];
+            crate::section::Run { points, triangles, closed: false }
+        };
+        let joined = loops_of(vec![piece(100, 150, false), piece(5, 50, true), piece(55, 95, false)]);
+        assert_eq!(joined.len(), 1, "one loop");
+        let points = &joined[0].points;
+        assert_eq!(points.len(), 51 + 46 + 41);
+        // Round it once, one way: the turn about the square's middle adds up to a whole turn.
+        let middle = Vec2::new(20.0, 20.0);
+        let turn: f64 = (0..points.len())
+            .map(|k| {
+                let (a, b) = (points[k] - middle, points[(k + 1) % points.len()] - middle);
+                (a.x * b.y - a.y * b.x).atan2(a.x * b.x + a.y * b.y)
+            })
+            .sum();
+        assert!((turn.abs() - std::f64::consts::TAU).abs() < 1e-6, "{turn}");
+        // Half a side missing twice over: 40 of gaps on 120 of scan.
+        assert!(loops_of(vec![piece(100, 150, false), piece(5, 50, true), piece(70, 85, false)]).is_empty());
+        let closed = crate::section::Run { points: (0..160).map(|d| at(f64::from(d))).collect(), triangles: vec![0; 160], closed: true };
+        assert_eq!(loops_of(vec![closed.clone()]), vec![closed]);
+    }
 
     use crate::reconstruct::read;
     use crate::segment::{Options, find_all};
