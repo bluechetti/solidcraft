@@ -16,7 +16,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanBasesParams>(), &["body"]);
     assert_keys(input_schema_for::<ScanPlaceParams>(), &["body"]);
     assert_keys(input_schema_for::<ScanStandParams>(), &["base", "body", "point", "points"]);
-    assert_keys(input_schema_for::<ScanSymmetryParams>(), &["body", "guide", "keep", "plane"]);
+    assert_keys(input_schema_for::<ScanSymmetryParams>(), &["body", "guide", "keep", "plane", "saved", "triangles"]);
     assert_keys(input_schema_for::<ScanSquareParams>(), &["body", "guide", "onto", "plane"]);
     assert_keys(input_schema_for::<ScanFitParams>(), &["body", "keep", "make", "point", "radius", "saved", "tolerance", "triangles"]);
     assert_keys(input_schema_for::<ScanDeviationParams>(), &["auto_limit", "bands", "body", "limit", "pins", "scan", "show", "tolerance"]);
