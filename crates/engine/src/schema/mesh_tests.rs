@@ -137,7 +137,7 @@ fn units_replies_match_the_output_schema() {
     std::fs::write(&path, "solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 0.01 0 0\nvertex 0 0.01 0\nendloop\nendfacet\nendsolid t\n")
         .unwrap();
     let mut s = Session::default();
-    s.execute("file.insert_mesh", &json!({"path": path.to_string_lossy()})).unwrap();
+    s.execute("file.insert_mesh", &json!({"path": path.to_string_lossy(), "units": "mm"})).unwrap();
     s.param_check = ParamCheck::Warn;
     for p in [json!({"units": "m"}), json!({"units": "MM", "from": "m", "body": "tri"}), json!({"units": "in"})] {
         let reply = s.execute("mesh.units", &p).unwrap_or_else(|e| panic!("{p}: {e}"));

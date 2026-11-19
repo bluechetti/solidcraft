@@ -43,6 +43,48 @@ fn session_with_a_scan(tag: &str) -> (Session, String) {
     (s, body)
 }
 
+/// An STL file states no unit. Read with none given, the reply says it was taken as millimetres
+/// and how big that made it; a file that comes out under 3 across is refused until the caller says
+/// which unit, millimetres among them. A part 4 x 2 x 1 inches reads as a plausible 4 x 2 x 1 mm
+/// part, so no size rule can refuse it: the reply's size is what tells.
+#[test]
+fn insert_mesh_says_the_unit_it_took_and_refuses_a_tiny_file_until_told() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-units-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |name: &str, size: Vec3| {
+        let path = dir.join(name);
+        std::fs::write(&path, box_stl(size, Vec3::Z, 0.0, Vec3::ZERO)).unwrap();
+        path.to_string_lossy().into_owned()
+    };
+    // A part 100 x 50 x 25 mm saved in millimetres, in inches and in metres.
+    let (mm, inches, metres) =
+        (write("mm.stl", Vec3::new(100.0, 50.0, 25.0)), write("in.stl", Vec3::new(100.0, 50.0, 25.0) / 25.4), write("m.stl", Vec3::new(0.1, 0.05, 0.025)));
+    let mut s = Session::default();
+    let read = run(&mut s, "file.insert_mesh", json!({"path": mm}));
+    assert_eq!(read["units_assumed"], "mm", "{read}");
+    assert_eq!(read["size"], json!([100.0, 50.0, 25.0]), "{read}");
+    assert!(read.get("units").is_none(), "{read}");
+    // Inches read as millimetres: let in, 3.94 across, and said so.
+    let read = run(&mut s, "file.insert_mesh", json!({"path": inches}));
+    assert_eq!(read["units_assumed"], "mm", "{read}");
+    assert!((read["size"][0].as_f64().unwrap() - 100.0 / 25.4).abs() < STL, "{read}");
+    let read = run(&mut s, "file.insert_mesh", json!({"path": inches, "units": "in"}));
+    assert!(read.get("units_assumed").is_none() && read["units"] == "in", "{read}");
+    assert!((read["size"][0].as_f64().unwrap() - 100.0).abs() < 1e-3, "{read}");
+    // Metres read as millimetres would be 0.1 across: refused, with what each unit would make it.
+    let before = s.doc.features.len();
+    let err = s.execute("file.insert_mesh", &json!({"path": metres})).unwrap_err().to_string();
+    assert!(err.contains("give `units`") && err.contains("as m it is 100.0 mm") && err.contains("as in 2.5 mm"), "{err}");
+    assert_eq!(s.doc.features.len(), before, "nothing was inserted");
+    let read = run(&mut s, "file.insert_mesh", json!({"path": metres, "units": "m"}));
+    assert!((read["size"][0].as_f64().unwrap() - 100.0).abs() < 1e-3, "{read}");
+    // Told it is millimetres, a tiny part is a tiny part.
+    let read = run(&mut s, "file.insert_mesh", json!({"path": metres, "units": "mm"}));
+    assert!((read["size"][0].as_f64().unwrap() - 0.1).abs() < STL && read.get("units_assumed").is_none(), "{read}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// STL keeps single-precision coordinates, so a scan read from one is exact to about 1e-5 mm.
 const STL: f64 = 1e-4;
 

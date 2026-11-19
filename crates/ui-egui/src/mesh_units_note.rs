@@ -37,8 +37,9 @@ pub struct Offer {
 }
 
 /// After a file was inserted or opened (its command's `result`), offer to read it in another unit
-/// when it is a mesh read in millimetres (the unit's dialog left on them, or no unit given) that
-/// came in under [`TINY_MM`] across. A file read in another unit is as it was asked for.
+/// when it is a mesh read in millimetres (the unit's dialog left on them, or no unit given): the
+/// note says how big that made it, in other words for one under [`TINY_MM`] across, which is
+/// surely wrong. A file read in another unit is as it was asked for.
 pub fn offer(app: &mut SolveApp, path: &str, result: Option<&Value>) {
     app.mesh_units_note = None;
     let io = &solidcraft_engine::io::is_mesh_path;
@@ -65,7 +66,9 @@ pub fn offer(app: &mut SolveApp, path: &str, result: Option<&Value>) {
     }
     let across = (0..3).map(|k| hi[k] - lo[k]).fold(0.0, f64::max);
     let (Some(body), Some(feature)) = (bodies.first(), feature) else { return };
-    if across.is_finite() && across > 0.0 && across < TINY_MM {
+    // Any size: a part saved in inches comes in a plausible few millimetres across, and only the
+    // person knows its real size. The note's words differ for one that is surely wrong.
+    if across.is_finite() && across > 0.0 {
         app.mesh_units_note = Some(Offer { body: (*body).to_string(), feature, across, revision: None, since: None });
     }
 }
@@ -104,7 +107,8 @@ pub(crate) fn note_due(app: &mut SolveApp, ctx: &egui::Context) -> Option<String
         return None;
     }
     let size = format!("{} mm", two_figures(offer.across));
-    Some(solidcraft_ui_text::format("ui.mesh_units_note", &[("size", &size)]))
+    let id = if offer.across < TINY_MM { "ui.mesh_units_note" } else { "ui.mesh_units_read" };
+    Some(solidcraft_ui_text::format(id, &[("size", &size)]))
 }
 
 /// `v` to two significant figures: 0.16, 2.5, 0.0042.
@@ -211,13 +215,18 @@ mod tests {
     }
 
     #[test]
-    fn no_note_for_a_mesh_of_a_real_size_given_units_or_after_a_change() {
+    fn a_mesh_of_a_real_size_is_told_its_size_and_none_given_units_or_after_a_change() {
         let mut h = crate::scenario::Harness::new();
         h.app.home.open = false;
-        // A mesh 20 mm across is as it should be.
+        // A mesh 20 mm across may be as it should be, or a part 20 inches across: only the person
+        // knows, so the note says how it was read and how big that made it.
         h.app.insert_path(&triangle(&h.dir, "part.stl", 20.0));
         h.frames(2);
-        assert!(h.app.mesh_units_note.is_none());
+        let offer = h.app.mesh_units_note.clone().expect("a note for a mesh read in millimetres");
+        assert!((offer.across - 20.0).abs() < 1e-6);
+        let said = super::note_due(&mut h.app, &h.ctx).expect("its words");
+        assert!(said.starts_with("Read in milli") && said.contains("20 mm"), "{said}");
+        super::leave(&mut h.app);
         // Read in another unit its caller chose (0.015 cm is 0.15 mm): as it was asked for.
         let tiny = triangle(&h.dir, "tiny.stl", 0.015);
         let r = h.app.run("file.insert_mesh", json!({"path": tiny, "units": "cm"})).unwrap();

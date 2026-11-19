@@ -458,7 +458,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut s = Session::new(solidcraft_doc::Document::new("t"));
-        run(&mut s, "file.insert_mesh", json!({"path": box_stl(&dir, "m.stl", [0.4, 0.2, 0.1], [-0.2, -0.1, 0.0])}));
+        run(&mut s, "file.insert_mesh", json!({"path": box_stl(&dir, "m.stl", [0.4, 0.2, 0.1], [-0.2, -0.1, 0.0]), "units": "mm"}));
         let r = run(&mut s, "scan.survey", json!({}));
         assert!(r["units_hint"].is_string(), "{r}");
         assert_eq!(commands(&r).first(), Some(&"mesh.units"), "{r}");

@@ -162,7 +162,17 @@ impl Request {
                 params.insert("set".into(), json!(self.path));
                 ("file.insert_gerber", Value::Object(params))
             }
-            Kind::Insert if self.mesh || solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", self.params()),
+            Kind::Insert if self.mesh || solidcraft_engine::io::is_mesh_path(&self.path) => {
+                // The window reads a file that states no unit in millimetres and says so in a
+                // note with the other units to try; the command alone refuses a tiny one unasked.
+                let mut params = self.params();
+                let states_its_unit = solidcraft_engine::io::is_gltf_path(&self.path)
+                    || std::path::Path::new(&self.path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("3mf"));
+                if let (false, Some(keys)) = (states_its_unit, params.as_object_mut()) {
+                    keys.entry("units").or_insert(json!("mm"));
+                }
+                ("file.insert_mesh", params)
+            }
             Kind::Insert if solidcraft_engine::io::is_point_cloud_path(&self.path) => ("pointcloud.insert", self.params()),
             Kind::Insert => (insert_command(&self.path), self.params()),
             Kind::InsertDesign => ("component.insert_design", self.params()),
@@ -529,6 +539,13 @@ fn default_reuse_import(app: &SolveApp, request: &mut Request) {
 /// Rhino file is read by cadmpeg straight into records).
 pub(crate) fn preferred_options(app: &SolveApp, path: &str) -> serde_json::Map<String, Value> {
     let mut out = serde_json::Map::new();
+    // An STL or OBJ file states no unit: the window reads it in millimetres and says so in a note
+    // that offers the other units (`mesh_units_note`); the command alone refuses a tiny one unasked.
+    let states_its_unit = solidcraft_engine::io::is_gltf_path(path)
+        || std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("3mf"));
+    if solidcraft_engine::io::is_mesh_path(path) && !states_its_unit {
+        out.insert("units".into(), json!("mm"));
+    }
     let freecad = std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("fcstd"));
     if freecad && !app.preferences.freecad_history {
         out.insert("history".into(), json!("solids"));

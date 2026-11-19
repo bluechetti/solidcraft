@@ -362,6 +362,13 @@ pub struct MeshInserted {
     /// The unit the file's coordinates were read in, when `units` was given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub units: Option<String>,
+    /// `mm` when the file states no unit (STL, OBJ, PLY) and none was given: it was read as
+    /// millimetres. Check `size` is the part's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub units_assumed: Option<String>,
+    /// The size of the box round what was read, [x, y, z] in mm, for a file that states no unit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<[f64; 3]>,
     /// For a glTF file stood up from Y up to Z up: the occurrence that was turned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stand_up: Option<u64>,

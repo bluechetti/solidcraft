@@ -2974,7 +2974,7 @@ fn a_mesh_in_metres_or_inches_comes_in_at_its_size() {
     assert!(rel(volume(&mut s), 1000.0) < 1e-6, "{}", volume(&mut s));
     // As before, without `units` the file is read as millimetres.
     let mut mm = Session::default();
-    run(&mut mm, "file.insert_mesh", json!({"path": path("cube.stl")}));
+    run(&mut mm, "file.insert_mesh", json!({"path": path("cube.stl"), "units": "mm"}));
     assert!(size(&mut mm, 0).iter().all(|d| (d - 0.01).abs() < 1e-8));
     // doc.open takes it too; the same cube as an OBJ in inches.
     let mut opened = Session::default();
@@ -3040,7 +3040,7 @@ fn mesh_units_reads_an_import_again_in_its_files_unit() {
         m["bodies"].as_array().unwrap().iter().find(|b| b["name"] == body).unwrap()["area_mm2"].as_f64().unwrap()
     };
     let mut s = Session::default();
-    run(&mut s, "file.insert_mesh", json!({"path": path("square.obj")}));
+    run(&mut s, "file.insert_mesh", json!({"path": path("square.obj"), "units": "mm"}));
     assert!(rel(area(&mut s, "square"), 1e-4) < 1e-9);
     let r = run(&mut s, "mesh.units", json!({"units": "m"}));
     assert_eq!((r["scale"].as_f64(), r["units"].as_str(), r["from"].as_str()), (Some(1000.0), Some("m"), Some("mm")), "{r}");
