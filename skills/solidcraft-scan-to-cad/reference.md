@@ -52,7 +52,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | `scan.survey {}` | first look, changes nothing | `own_size`, `noise`, `smoothing`, `holes`, `floating`, `tangled_edges`, `crossing_faces`, `sheet_like`, `shapes`, `next[{command, why, params}]` |
 | `scan.find_all {}` | regions of the scan read as planes, cylinders, spheres, cones, tori or freeform (a view, no undo step) | `shapes[{index, kind, area, point, direction?, radius?, hole?}]`, `in_shapes`, `noise` |
 | `scan.reconstruct {}` | what the shapes make: prisms, a turned part, holes, repeats, fillets (reads only) | `prisms`, `turned`, `holes`, `repeats`, `proposals[{command, params}]`, `note` |
-| `scan.symmetry {}` | the mirror plane, kept as a construction plane | `mirror {point, normal, rms, coverage, symmetric}` |
+| `scan.symmetry {}` (`"saved"` or `"triangles"`: the mirror plane of that region alone) | the mirror plane, kept as a construction plane | `mirror {point, normal, rms, coverage, symmetric}`, `region` |
 | `scan.bases {}` | the ways the scan could stand, for `scan.stand_on_base {"base": n}` | `bases[{kind, normal, area, share}]` |
 
 ## Clean (each rewrites the scan, one undo step)

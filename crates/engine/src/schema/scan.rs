@@ -68,7 +68,9 @@ pub struct ScanGuide {
 /// Find the plane a scan is a mirror image about and keep it as a construction plane, named
 /// `Symmetry Plane` (`Symmetry Plane 2`, … when that is taken), to sketch on. A plane given, or the
 /// one near a guide, is kept however much of the scan matches it (the reply says how much); the
-/// best plane found unasked is refused when the scan is no mirror image about it.
+/// best plane found unasked is refused when the scan is no mirror image about it. With a region
+/// chosen (`triangles`, `saved`, or what is selected on the scan), the plane is that region's:
+/// found on it and measured on it alone, whatever the rest of the scan does.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ScanSymmetryParams {
@@ -85,6 +87,13 @@ pub struct ScanSymmetryParams {
     /// Keep the plane as a construction plane. Default: true; false only reports it.
     #[serde(default)]
     pub keep: Option<bool>,
+    /// The region whose mirror plane is wanted: the scan's triangle numbers. Default: what is
+    /// selected on the scan, else the whole scan.
+    #[serde(default)]
+    pub triangles: Option<Vec<u64>>,
+    /// The region whose mirror plane is wanted: a kept selection (Keep Selection).
+    #[serde(default)]
+    pub saved: Option<String>,
 }
 
 /// Square a scan to its mirror plane: the smallest turn that lays the plane along the YZ plane,
@@ -196,6 +205,10 @@ pub struct ScanSymmetryResult {
     pub body: String,
     /// The plane found.
     pub mirror: ScanMirror,
+    /// With a region chosen: how many triangles it holds. The plane was found and measured on
+    /// those alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<usize>,
     /// The construction plane that keeps it, as `construct.plane.three_points` replies, unless
     /// `keep` was false.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -330,6 +330,46 @@ fn find_symmetry_keeps_the_mirror_plane_as_a_construction_plane() {
     assert!(s.doc.features.iter().any(|f| f.name == "Symmetry Plane 2"), "a second plane, named apart");
 }
 
+/// A scan that missed the block's end beyond X = 45 is a mirror image front to back only (about
+/// Y = 10), and that is the plane Find Symmetry finds on it. Its tower (20..40 across, above the
+/// slab) with its back wall left out is a mirror image side to side only: given those triangles,
+/// the plane found is the region's own, X = 30, and the reply says how many triangles it was
+/// read on.
+#[test]
+fn find_symmetry_on_a_region_finds_that_regions_plane() {
+    let (mut s, body, place) = session_with_part_of_the_block("symmetry-region", |t| (t[0] + t[1] + t[2]).x / 3.0 < 45.0);
+    let (origin, x, y, z) = (place(Vec3::ZERO), place(Vec3::X) - place(Vec3::ZERO), place(Vec3::Y) - place(Vec3::ZERO), place(Vec3::Z) - place(Vec3::ZERO));
+    let normal_of = |reply: &Value| {
+        let v: Vec<f64> = reply["mirror"]["normal"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        Vec3::new(v[0], v[1], v[2])
+    };
+    let whole = run(&mut s, "scan.symmetry", json!({"keep": false}));
+    assert!(normal_of(&whole).dot(y).abs() > 1.0 - 1e-4, "front to back: {whole}");
+    assert!(whole.get("region").is_none(), "{whole}");
+
+    // The triangles whose middle, put back where the block was made, is above the slab and not
+    // on the tower's back wall (Y = 20).
+    let region: Vec<usize> = {
+        let mesh = super::shown_mesh(&s, &body).unwrap();
+        (0..mesh.triangles.len())
+            .filter(|&t| {
+                let [a, b, c] = mesh.triangles[t].map(|i| mesh.positions[i as usize]);
+                let middle = (a + b + c) / 3.0 - origin;
+                middle.dot(z) > 10.01 && middle.dot(y) < 19.99
+            })
+            .collect()
+    };
+    assert!(region.len() > 100, "{}", region.len());
+    let reply = run(&mut s, "scan.symmetry", json!({"triangles": region, "keep": false}));
+    assert_eq!(reply["mirror"]["symmetric"], true, "{reply}");
+    assert_eq!(reply["region"].as_u64(), Some(region.len() as u64), "{reply}");
+    let normal = normal_of(&reply);
+    assert!(normal.dot(x).abs() > 1.0 - 1e-4, "side to side: {reply}");
+    let point: Vec<f64> = reply["mirror"]["point"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    let off = (Vec3::new(point[0], point[1], point[2]) - (origin + x * 30.0)).dot(normal);
+    assert!(off.abs() < 0.05, "through X = 30: {off} {reply}");
+}
+
 /// A scan that missed the block's end beyond X = 45 gets that end back from the other side, as an
 /// amber mesh body of its own, in one undo step; the whole block is missing nothing.
 #[test]

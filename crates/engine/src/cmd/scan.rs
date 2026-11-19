@@ -620,8 +620,11 @@ fn plane_to_fill(scan: &solidcraft_scan::Scan) -> Option<Mirror> {
         .or_else(|| symmetry::find(scan))
 }
 
-fn chosen_mirror(s: &Session, mesh: &Mesh, p: &Value, cmd: &str, refuse: bool, fill: bool) -> Result<Mirror> {
-    let scan = mesh.scan();
+fn chosen_mirror(s: &Session, mesh: &Mesh, p: &Value, cmd: &str, refuse: bool, fill: bool, only: Option<&[usize]>) -> Result<Mirror> {
+    // With a region chosen, the plane is that region's: found on it and measured on it alone, so
+    // the rest of the scan (a part mirrored only in its body, its handle to one side) has no say.
+    let part = only.map(|region| part_of(mesh, region));
+    let scan = part.as_ref().map_or_else(|| mesh.scan(), |(points, triangles)| Scan::new(points, triangles));
     if let Some((point, normal)) = plane_param(p, cmd)? {
         return symmetry::measure(&scan, point, normal).ok_or_else(|| bad(cmd, "the plane has no direction, or the scan is too small"));
     }
@@ -649,6 +652,30 @@ fn chosen_mirror(s: &Session, mesh: &Mesh, p: &Value, cmd: &str, refuse: bool, f
     Ok(found)
 }
 
+/// The triangles of `region` as a scan of their own: their corners, and no other point.
+fn part_of(mesh: &Mesh, region: &[usize]) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+    let mut number = std::collections::BTreeMap::new();
+    let (mut points, mut triangles) = (Vec::new(), Vec::with_capacity(region.len()));
+    for corners in region.iter().filter_map(|&t| mesh.triangles.get(t)) {
+        let mut own = [0u32; 3];
+        let mut whole = true;
+        for (slot, &corner) in own.iter_mut().zip(corners) {
+            let Some(&point) = mesh.positions.get(corner as usize) else {
+                whole = false;
+                break;
+            };
+            *slot = *number.entry(corner).or_insert_with(|| {
+                points.push(point);
+                (points.len() - 1) as u32
+            });
+        }
+        if whole {
+            triangles.push(own);
+        }
+    }
+    (points, triangles)
+}
+
 fn find_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.symmetry";
     // The parameters first, so a malformed call is told so before anything else.
@@ -656,7 +683,11 @@ fn find_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     plane_param(p, cmd)?;
     let keep = crate::params::bool_(p, "keep").unwrap_or(true);
     let mesh = mesh(s, p, cmd)?;
-    let found = chosen_mirror(s, &mesh, p, cmd, true, false)?;
+    let region = flatten::chosen_region(s, p, &mesh, cmd, false)?;
+    if region.as_ref().is_some_and(Vec::is_empty) {
+        return Err(bad(cmd, "the region holds none of the scan's triangles"));
+    }
+    let found = chosen_mirror(s, &mesh, p, cmd, true, false, region.as_deref())?;
     let plane = if keep {
         // Three points of the plane, a quarter of the scan apart, make an ordinary construction plane.
         let (u, v) = plane_axes(found.normal);
@@ -675,7 +706,7 @@ fn find_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         None
     };
-    let reply = ScanSymmetryResult { body: mesh.body, mirror: mirror_reply(&found), plane, param_warnings: Vec::new() };
+    let reply = ScanSymmetryResult { body: mesh.body, mirror: mirror_reply(&found), region: region.map(|r| r.len()), plane, param_warnings: Vec::new() };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -690,7 +721,7 @@ fn square_to_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
         Some(other) => return Err(bad(cmd, format!("`onto` is YZ or XZ, not `{other}`"))),
     };
     let mesh = mesh(s, p, cmd)?;
-    let found = chosen_mirror(s, &mesh, p, cmd, true, false)?;
+    let found = chosen_mirror(s, &mesh, p, cmd, true, false, None)?;
     let by = symmetry::square_onto(&found, axis).ok_or_else(|| bad(cmd, "the mirror plane has no direction"))?;
     let feature = move_by(s, &mesh, &by)?;
     let reply = ScanPlaceResult {
@@ -851,7 +882,7 @@ fn complete_by_mirroring(s: &mut Session, p: &Value) -> Result<Value> {
         None => None,
     };
     // A scan seen from one side matches little of itself: the plane is used however little.
-    let plane = chosen_mirror(s, &mesh, p, cmd, false, true)?;
+    let plane = chosen_mirror(s, &mesh, p, cmd, false, true, None)?;
     let fill = solidcraft_scan::mirror_fill::complete(&scan, &plane, reach)
         .ok_or_else(|| bad(cmd, "nothing is missing: every reflected triangle lands on the scan (a smaller reach finds smaller gaps)"))?;
     let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
