@@ -30,14 +30,37 @@ pub struct Mirror {
     /// The diagonal of the scan's box and the spacing of its points (mm).
     pub size: f64,
     pub spacing: f64,
+    /// How far out from the plane the part that matches reaches, as a share of how far the scan
+    /// itself reaches, on the side where that is less (0–1): near 1 when both sides of the thing
+    /// are there and match out to their ends; low for a scan of one side and a little past the
+    /// middle, whose only match is the strip about the plane. 0 when not judged.
+    pub both_sides: f64,
 }
 
 impl Mirror {
     /// Whether the scan is a mirror image about the plane: most of it (85 %) lands on itself, and
     /// typically within 2 % of its size or two point spacings (a coarse mesh's spacing counted as
-    /// at most [`SPACING_SHARE`] of its size).
+    /// at most [`SPACING_SHARE`] of its size). A thing with parts that are no mirror image (a
+    /// car's underbody and exhaust: 76 % about its true plane) still counts from
+    /// [`MOSTLY_MIRRORED`] when both its sides are there and match out to their ends
+    /// ([`Mirror::both_sides`]); a scan of one side does not.
     pub fn is_symmetric(&self) -> bool {
-        self.coverage >= 0.85 && self.rms <= (0.02 * self.size).max(2.0 * judged_spacing(self.spacing, self.size))
+        let enough = self.coverage >= MIRRORED || (self.coverage >= MOSTLY_MIRRORED && self.both_sides >= BOTH_SIDES);
+        enough && self.rms <= (0.02 * self.size).max(2.0 * judged_spacing(self.spacing, self.size))
+    }
+
+    /// For a mirror image only most of which is one ([`MOSTLY_MIRRORED`], under [`MIRRORED`]): the
+    /// share of the scan that has no match. That part is the thing's own (pipes down one side),
+    /// not noise, and whoever halves or mirrors the scan has to be told.
+    pub fn unmatched(&self) -> Option<f64> {
+        (self.is_symmetric() && self.coverage < MIRRORED).then_some(1.0 - self.coverage)
+    }
+
+    /// Whether the whole scan is a mirror image about the plane, with no part that is on one side
+    /// only ([`Mirror::unmatched`]): what completing a scan by mirroring asks, since the reflection
+    /// of a one-sided part (a post on one corner, the pipes down one side) is not the thing.
+    pub fn is_whole(&self) -> bool {
+        self.is_symmetric() && self.coverage >= MIRRORED
     }
 
     /// Lower is better: how far off, weighted by how much of the scan has no match.
@@ -50,6 +73,15 @@ impl Mirror {
         reflect(p, self.normal, self.point)
     }
 }
+
+/// The share of a scan that must match its reflection for it to count as a mirror image outright.
+const MIRRORED: f64 = 0.85;
+/// The share of a scan that must match its reflection for it to count as a mirror image when both
+/// its sides are there ([`Mirror::is_symmetric`]).
+const MOSTLY_MIRRORED: f64 = 0.6;
+/// The matching part reaches this share of the way out the scan does, on both sides, for both
+/// sides to count as there.
+const BOTH_SIDES: f64 = 0.9;
 
 /// A coarse mesh's points lie far apart, a sizeable share of the part (948 triangles of the
 /// Stanford bunny lie 11.5 mm apart, and "within three spacings" of them matched 95 % of a part
@@ -696,6 +728,7 @@ fn assess(normal: Vec3, point: Vec3, scene: &Scene) -> Mirror {
         coverage: matched as f64 / distances.len().max(1) as f64,
         size: scene.size,
         spacing: scene.spacing,
+        both_sides: 0.0,
     }
 }
 
@@ -707,7 +740,7 @@ fn judge(found: Mirror, scene: &Scene) -> Mirror {
     let reach = 3.0 * scene.surface_table.cell;
     // Judged on every point, those reflected out of the scan's box too: the verdict says how much
     // of the scan is a mirror image, whatever the search left aside.
-    let mut distances: Vec<f64> = scene
+    let each: Vec<f64> = scene
         .surface_samples
         .iter()
         .map(|p| {
@@ -715,11 +748,33 @@ fn judge(found: Mirror, scene: &Scene) -> Mirror {
             scene.surface_table.nearest(m, reach).map_or(reach, |q| q.dist(m))
         })
         .collect();
+    // How far out from the plane the scan reaches on each side, and how far what matches does:
+    // all but the outermost fiftieth of each, so that a stray point is no side.
+    let out = |p: &Vec3| (*p - found.point).dot(found.normal);
+    let reach_of = |side: f64, only_matched: bool| {
+        let mut far: Vec<f64> = scene
+            .surface_samples
+            .iter()
+            .zip(&each)
+            .filter(|(p, d)| side * out(p) > 0.0 && (!only_matched || **d <= 3.0 * scene.judged))
+            .map(|(p, _)| side * out(p))
+            .collect();
+        far.sort_by(f64::total_cmp);
+        far.get(far.len().saturating_sub(1) * 49 / 50).copied().unwrap_or(0.0)
+    };
+    let both_sides = [1.0, -1.0]
+        .into_iter()
+        .map(|side| {
+            let all = reach_of(side, false);
+            if all > 0.0 { reach_of(side, true) / all } else { 0.0 }
+        })
+        .fold(f64::INFINITY, f64::min);
+    let mut distances = each;
     distances.sort_by(f64::total_cmp);
     let matched = distances.iter().filter(|&&d| d <= 3.0 * scene.judged).count();
     let core = &distances[..(distances.len() * 4 / 5).clamp(1, distances.len().max(1))];
     let rms = (core.iter().map(|d| d * d).sum::<f64>() / core.len().max(1) as f64).sqrt();
-    Mirror { rms, coverage: matched as f64 / distances.len().max(1) as f64, ..found }
+    Mirror { rms, coverage: matched as f64 / distances.len().max(1) as f64, both_sides: both_sides.clamp(0.0, 1.0), ..found }
 }
 
 /// Settles a plane against the surface: each sample's reflection measured along the surface's
@@ -939,6 +994,35 @@ mod tests {
         let mirror = find(&scan).unwrap();
         assert!(mirror.is_symmetric(), "{mirror:?}");
         assert!(mirror.rms < 0.005 * mirror.size && mirror.coverage > 0.95, "{mirror:?}");
+    }
+
+    /// A body 100 × 40 × 20 with a long box slung under one side of it (as a car's exhaust is): a
+    /// quarter of it is no mirror image about the body's middle, but both its sides are there and
+    /// match out to their ends, so it is a mirror image. The same body scanned from one side and a
+    /// little past the middle matches about as much of itself, all of it in the strip about the
+    /// plane: it is not (Complete by Mirroring fills its other side).
+    #[test]
+    fn a_thing_with_both_sides_there_is_a_mirror_image_though_part_of_it_is_not() {
+        let (mut positions, mut triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(100.0, 40.0, 20.0), 40);
+        let (under, more) = fine_cuboid(Vec3::new(5.0, 2.0, -14.0), Vec3::new(70.0, 16.0, 0.0), 26);
+        let base = positions.len() as u32;
+        positions.extend(under);
+        triangles.extend(more.iter().map(|t| t.map(|i| i + base)));
+        let (point, normal) = (Vec3::new(50.0, 20.0, 10.0), Vec3::Y);
+        let whole = measure(&Scan::new(&positions, &triangles), point, normal).unwrap();
+        assert!(whole.coverage > 0.6 && whole.coverage < 0.85, "part of it is no mirror image: {whole:?}");
+        assert!(whole.both_sides > 0.9 && whole.is_symmetric(), "{whole:?}");
+        // What does not match is said, as a share: the box under one side.
+        assert!(!whole.is_whole());
+        assert!(whole.unmatched().is_some_and(|share| (share - (1.0 - whole.coverage)).abs() < 1e-12 && share > 0.15), "{whole:?}");
+        let (positions, triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(100.0, 40.0, 20.0), 40);
+        assert_eq!(measure(&Scan::new(&positions, &triangles), point, normal).unwrap().unmatched(), None);
+        // One side and a little past the middle (to Y = 30 of 40), with no box under it.
+        let (positions, triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(100.0, 40.0, 20.0), 40);
+        let one_side: Vec<[u32; 3]> =
+            triangles.iter().copied().filter(|t| t.iter().map(|&i| positions[i as usize].y).sum::<f64>() / 3.0 < 30.0).collect();
+        let part = measure(&Scan::new(&positions, &one_side), point, normal).unwrap();
+        assert!(part.coverage > 0.5 && part.both_sides < 0.7 && !part.is_symmetric() && part.unmatched().is_none(), "{part:?}");
     }
 
     /// The block is symmetric about X = 30 and about Y = 10: found wherever it lies, to within a

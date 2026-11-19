@@ -55,6 +55,7 @@ pub mod status_details;
 pub mod status_items;
 pub mod timing;
 pub mod title_block_text;
+pub mod upright_image;
 pub mod view;
 
 use solidcraft_geom::prelude::*;
@@ -268,7 +269,7 @@ impl Sel {
     pub(crate) fn body_name(&self) -> Option<&str> {
         match self {
             Sel::Body { name } => Some(name),
-            Sel::Face { body, .. } | Sel::Edge { body, .. } | Sel::Vertex { body, .. } => Some(body),
+            Sel::Face { body, .. } | Sel::Edge { body, .. } | Sel::Vertex { body, .. } if !body.is_empty() => Some(body),
             _ => None,
         }
     }
@@ -488,6 +489,23 @@ pub struct Preview {
     pub after: Arc<ModelState>,
     /// What each command replied (as `execute` returns it).
     pub replies: Vec<Value>,
+    /// The joints the commands posed, with their effective values now: the ones they drove and
+    /// the ones they moved (a motion link's follower, a joint a closed loop moved). Their values
+    /// are as the solver placed them, after motion links and limits, as `joint.inspect` and
+    /// `joint.drive` give them. Empty when the commands posed no joint.
+    pub joints: Vec<crate::schema::joints::ReachedJoint>,
+}
+
+impl Preview {
+    fn visible_world(before: &Session, after: &Session, replies: Vec<Value>) -> Result<Self> {
+        let visible = |session: &Session| -> Result<Arc<ModelState>> {
+            let world = session.world_state()?;
+            let mut shown = (*world).clone();
+            shown.bodies.retain(|body| session.body_visible(&body.name));
+            Ok(Arc::new(shown))
+        };
+        Ok(Self { before: visible(before)?, after: visible(after)?, joints: cmd::joints::posed_joints(before, after, &replies), replies })
+    }
 }
 
 /// Prepared world geometry depends on design/model identity and placement context, not
@@ -531,6 +549,8 @@ pub struct ComputedCommands {
     computed: Session,
     steps: Vec<ComputedCommand>,
     editor_original: Option<Arc<Document>>,
+    /// Commands refused and left out ([`Session::compute_commands_apart`]): each one's id and why.
+    left_out: Vec<(String, String)>,
 }
 
 struct ComputedCommand {
@@ -564,6 +584,23 @@ impl ComputedCommands {
     /// The commands run, in order, with what each replied.
     pub fn steps(&self) -> impl Iterator<Item = (&str, &Value, &Value)> {
         self.steps.iter().map(|step| (step.id.as_str(), &step.params, &step.reply))
+    }
+
+    /// The commands that were refused and left out, in order, each with why: only
+    /// [`Session::compute_commands_apart`] leaves any out.
+    pub fn left_out(&self) -> &[(String, String)] {
+        &self.left_out
+    }
+
+    /// Whether the resulting document differs in content from its source.
+    pub fn changes_document(&self) -> bool {
+        self.source.doc != self.computed.doc
+    }
+
+    /// Show the prepared model in occurrence coordinates, with visibility applied, and return
+    /// the replies from its evaluation.
+    pub fn preview_visible_world(&self) -> Result<Preview> {
+        Preview::visible_world(&self.source, &self.computed, self.steps.iter().map(|step| step.reply.clone()).collect())
     }
 
     /// Prepare display tessellation before returning the transaction to the window; a model that
@@ -2870,7 +2907,16 @@ impl Session {
     /// `marker` restores an editor's original marker before recording its undo snapshot.
     /// The source remains untouched, including its history and recovery journal.
     pub fn compute_commands(self, commands: &[(String, Value)], marker: Option<Option<usize>>) -> Result<ComputedCommands> {
-        self.compute_commands_inner(commands, marker, None)
+        self.compute_commands_inner(commands, marker, None, None)
+    }
+
+    /// [`Session::compute_commands`] for commands that each stand apart (the steps Reconstruct
+    /// proposes): one that is refused is left out, the design as it was before it, and the rest
+    /// still run ([`ComputedCommands::left_out`] names it and why). `needs[i]` is the earlier
+    /// command that command `i` builds on, left out with it. When every command is refused the
+    /// first refusal is the error, and a cancel ends them all.
+    pub fn compute_commands_apart(self, commands: &[(String, Value)], needs: &[Option<usize>]) -> Result<ComputedCommands> {
+        self.compute_commands_inner(commands, None, None, Some(needs))
     }
 
     /// Start an edit from its pinned original model, so restoring the original marker cannot
@@ -2912,7 +2958,7 @@ impl Session {
         if expected != *source.doc {
             return Err(EngineError::Other("the original editor model does not match its source design".into()));
         }
-        self.compute_commands_inner(commands, Some(original.doc.marker), Some(original))
+        self.compute_commands_inner(commands, Some(original.doc.marker), Some(original), None)
     }
 
     fn compute_commands_inner(
@@ -2920,9 +2966,10 @@ impl Session {
         commands: &[(String, Value)],
         marker: Option<Option<usize>>,
         original: Option<Session>,
+        apart: Option<&[Option<usize>]>,
     ) -> Result<ComputedCommands> {
         let stop = self.stop.clone();
-        stop.within(|| self.compute_commands_under(commands, marker, original))
+        stop.within(|| self.compute_commands_under(commands, marker, original, apart))
     }
 
     fn compute_commands_under(
@@ -2930,6 +2977,7 @@ impl Session {
         commands: &[(String, Value)],
         marker: Option<Option<usize>>,
         original: Option<Session>,
+        apart: Option<&[Option<usize>]>,
     ) -> Result<ComputedCommands> {
         let editor_original = original.as_ref().map(|session| session.doc.clone());
         let mut computed = self.scratch();
@@ -2955,13 +3003,31 @@ impl Session {
             let changed = !Arc::ptr_eq(&before, &computed.doc);
             steps.push(ComputedCommand { id: "timeline.roll_to".into(), params, before, after: computed.doc.clone(), changed, reply });
         }
-        for (id, params) in commands {
+        // Commands left out (their place, why), and the first refusal as it came.
+        let mut left_out: Vec<(usize, String)> = Vec::new();
+        let mut first_refusal = None;
+        let ran_before = steps.len();
+        for (index, (id, params)) in commands.iter().enumerate() {
+            let needed = apart.and_then(|needs| needs.get(index).copied().flatten()).filter(|on| left_out.iter().any(|(k, _)| k == on));
+            if let Some((needed, _)) = needed.and_then(|on| commands.get(on)) {
+                left_out.push((index, format!("it builds on what `{needed}` makes, which was left out")));
+                continue;
+            }
             let before = computed.doc.clone();
             let active_sketch = computed.active_sketch;
             let active_sheet_sketch = computed.active_sheet_sketch.clone();
             let open_drawing = computed.open_drawing;
             let pending_moves = computed.pending_moves.clone();
-            let reply = computed.execute(id, params)?;
+            let reply = match computed.execute(id, params) {
+                Ok(reply) => reply,
+                // A refused command left the copy as it was (`execute`): the next runs on that.
+                Err(refusal) if apart.is_some() && !matches!(refusal, EngineError::Cancelled(_)) => {
+                    left_out.push((index, refusal.to_string()));
+                    first_refusal.get_or_insert(refusal);
+                    continue;
+                }
+                Err(refusal) => return Err(refusal),
+            };
             let changed = !Arc::ptr_eq(&before, &computed.doc)
                 || active_sketch != computed.active_sketch
                 || active_sheet_sketch != computed.active_sheet_sketch
@@ -2972,7 +3038,11 @@ impl Session {
         }
         // What the source was primed with stays out of the session that is adopted (#6901).
         computed.unprime();
-        Ok(ComputedCommands { source: self, computed, steps, editor_original })
+        if let (true, Some(refusal)) = (steps.len() == ran_before, first_refusal) {
+            return Err(refusal);
+        }
+        let left_out = left_out.into_iter().filter_map(|(index, why)| Some((commands.get(index)?.0.clone(), why))).collect();
+        Ok(ComputedCommands { source: self, computed, steps, editor_original, left_out })
     }
 
     /// Adopt evaluated commands only if their document and authoring context are still current.
@@ -3209,29 +3279,23 @@ impl Session {
     /// A `timeline.redefine` is shown even while the timeline is rolled back to the feature
     /// being edited.
     pub fn preview(&self, commands: &[(String, Value)]) -> Result<Preview> {
-        self.scratch().preview_in_place(commands, None).map(|(after, replies)| Preview {
-            before: self.model.state(),
-            after: after.model.state(),
-            replies,
+        self.scratch().preview_in_place(commands, None).map(|(after, replies)| {
+            let joints = cmd::joints::posed_joints(self, &after, &replies);
+            Preview { before: self.model.state(), after: after.model.state(), replies, joints }
         })
     }
 
     /// The same evaluated preview in occurrence coordinates, including uncaptured moves.
     pub fn preview_world(&self, commands: &[(String, Value)]) -> Result<Preview> {
         let (after, replies) = self.scratch().preview_in_place(commands, None)?;
-        Ok(Preview { before: self.world_state()?, after: after.world_state()?, replies })
+        let joints = cmd::joints::posed_joints(self, &after, &replies);
+        Ok(Preview { before: self.world_state()?, after: after.world_state()?, replies, joints })
     }
 
     /// World preview with each session's visibility applied, including new body placements.
     pub fn preview_visible_world(&self, commands: &[(String, Value)]) -> Result<Preview> {
-        let visible = |session: &Session| -> Result<Arc<solidcraft_doc::ModelState>> {
-            let world = session.world_state()?;
-            let mut shown = (*world).clone();
-            shown.bodies.retain(|body| session.body_visible(&body.name));
-            Ok(Arc::new(shown))
-        };
         let (after, replies) = self.scratch().preview_in_place(commands, None)?;
-        Ok(Preview { before: visible(self)?, after: visible(&after)?, replies })
+        Preview::visible_world(self, &after, replies)
     }
 
     /// Run `commands` on a [`Session::scratch`] copy that keeps the undo and redo stacks: what

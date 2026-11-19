@@ -123,7 +123,10 @@ impl Quadric {
 
 #[derive(Clone, Copy, Debug)]
 struct Entry {
+    /// What the collapse is ranked by: the surface's part and, at an open rim, the rim's penalty.
     cost: f64,
+    /// The surface's part alone, a distance squared: what is reported and held to `max_error`.
+    error: f64,
     a: u32,
     b: u32,
     version_a: u32,
@@ -139,6 +142,9 @@ struct Reducer {
     settings: Settings,
     pos: Vec<Vec3>,
     quadric: Vec<Quadric>,
+    /// Each point's quadric of its faces alone, without the penalty that keeps an open rim: how
+    /// far a collapse moves the surface, whatever it does to the rim's outline.
+    surface: Vec<Quadric>,
     weight: Vec<f64>,
     tris: Vec<[u32; 3]>,
     alive: Vec<bool>,
@@ -205,6 +211,7 @@ impl Reducer {
             settings,
             pos,
             quadric: vec![Quadric::default(); n],
+            surface: Vec::new(),
             weight: vec![0.0; n],
             alive: vec![true; count],
             tris,
@@ -262,6 +269,7 @@ impl Reducer {
             }
             start = end;
         }
+        self.surface.clone_from(&self.quadric);
         if !self.settings.keep_rim {
             return;
         }
@@ -349,9 +357,9 @@ impl Reducer {
         }
     }
 
-    /// What collapsing edge (a, b) costs, where the point goes and which end it keeps; `None` when
-    /// it may not be collapsed.
-    fn candidate(&self, a: u32, b: u32) -> Option<(f64, Vec3, u32)> {
+    /// What collapsing edge (a, b) costs (to rank it by, and the surface's part of that alone),
+    /// where the point goes and which end it keeps; `None` when it may not be collapsed.
+    fn candidate(&self, a: u32, b: u32) -> Option<(f64, f64, Vec3, u32)> {
         let (ia, ib) = (a as usize, b as usize);
         if self.locked[ia] || self.locked[ib] {
             return None;
@@ -381,7 +389,8 @@ impl Reducer {
                 }
             },
         };
-        Some((q.value(position) / w, position, keeps))
+        let surface = self.surface[ia].plus(self.surface[ib]);
+        Some((q.value(position) / w, surface.value(position).max(0.0) / w, position, keeps))
     }
 
     fn run(&mut self) -> Reduced {
@@ -395,8 +404,15 @@ impl Reducer {
                 for other in tri {
                     if other as usize > v && self.mark[other as usize] != self.stamp {
                         self.mark[other as usize] = self.stamp;
-                        if let Some((cost, _, _)) = self.candidate(v as u32, other) {
-                            self.push(Entry { cost, a: v as u32, b: other, version_a: self.version[v], version_b: self.version[other as usize] });
+                        if let Some((cost, error, _, _)) = self.candidate(v as u32, other) {
+                            self.push(Entry {
+                                cost,
+                                error,
+                                a: v as u32,
+                                b: other,
+                                version_a: self.version[v],
+                                version_b: self.version[other as usize],
+                            });
                         }
                     }
                 }
@@ -418,13 +434,16 @@ impl Reducer {
                 stale += 1;
                 continue;
             }
-            if entry.cost > limit {
+            // Held to the error allowed, and reported, by how far the surface moves: the penalty
+            // that keeps an open rim ranks a collapse there later but is no distance (a hundred
+            // times an edge's length squared read as one made the error ten times too large).
+            if entry.error > limit {
                 stopped = Stopped::Error;
                 break;
             }
             if self.collapse(entry) {
                 collapses += 1;
-                largest = largest.max(entry.cost.sqrt());
+                largest = largest.max(entry.error.sqrt());
             }
         }
         if stopped == Stopped::Done && target > 0 && self.alive_count <= target {
@@ -445,7 +464,7 @@ impl Reducer {
         if self.rim[ia] && self.rim[ib] && shared != 1 {
             return false;
         }
-        let Some((_, p, keep)) = self.candidate(a, b) else { return false };
+        let Some((_, _, p, keep)) = self.candidate(a, b) else { return false };
         let gone = if keep == a { b } else { a };
         let (ik, ig) = (keep as usize, gone as usize);
         // The link condition: the two may share no neighbours but those opposite the edge.
@@ -528,6 +547,7 @@ impl Reducer {
         }
         self.pos[ik] = p;
         self.quadric[ik] = self.quadric[ia].plus(self.quadric[ib]);
+        self.surface[ik] = self.surface[ia].plus(self.surface[ib]);
         self.weight[ik] = self.weight[ia] + self.weight[ib];
         self.rim[ik] = self.rim[ia] || self.rim[ib];
         self.locked[ik] = self.locked[ia] || self.locked[ib];
@@ -541,8 +561,8 @@ impl Reducer {
                 if other != keep && self.mark[other as usize] != self.stamp {
                     self.mark[other as usize] = self.stamp;
                     let (lo, hi) = (keep.min(other), keep.max(other));
-                    if let Some((cost, _, _)) = self.candidate(lo, hi) {
-                        self.push(Entry { cost, a: lo, b: hi, version_a: self.version[lo as usize], version_b: self.version[hi as usize] });
+                    if let Some((cost, error, _, _)) = self.candidate(lo, hi) {
+                        self.push(Entry { cost, error, a: lo, b: hi, version_a: self.version[lo as usize], version_b: self.version[hi as usize] });
                     }
                 }
             }
@@ -589,6 +609,38 @@ mod tests {
         // Every point still on the box's surface.
         let on = |p: &Vec3| [p.x, p.y, p.z].iter().zip([30.0, 20.0, 10.0]).any(|(c, s)| c.abs() < 1e-9 || (c - s).abs() < 1e-9);
         assert!(done.positions.iter().all(on));
+    }
+
+    /// A flat disc reduced to a few triangles: its rim is cut across, as it must be, but every
+    /// point stays in the disc's plane, so the surface has not moved and the error says so. The
+    /// rim's penalty still ranks the collapses (the rim goes last) but is no part of the error.
+    #[test]
+    fn a_flat_sheets_error_is_how_far_its_surface_moved_not_its_rim() {
+        let (rings, spokes, radius) = (8u32, 48u32, 50.0);
+        let mut positions = vec![Vec3::ZERO];
+        for i in 1..=rings {
+            for j in 0..spokes {
+                let (r, a) = (radius * f64::from(i) / f64::from(rings), std::f64::consts::TAU * f64::from(j) / f64::from(spokes));
+                positions.push(Vec3::new(r * a.cos(), r * a.sin(), 0.0));
+            }
+        }
+        let at = |i: u32, j: u32| 1 + (i - 1) * spokes + j % spokes;
+        let mut triangles = Vec::new();
+        for j in 0..spokes {
+            triangles.push([0, at(1, j), at(1, j + 1)]);
+            for i in 1..rings {
+                triangles.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+                triangles.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+            }
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let done = reduce(&scan, Settings { target: 8, max_error: 0.0, keep_rim: true }).unwrap();
+        assert!(done.triangles.len() <= 8 && done.stopped == Stopped::Target, "{} {:?}", done.triangles.len(), done.stopped);
+        assert!(done.positions.iter().all(|p| p.z.abs() < 1e-9), "still in its plane");
+        assert!(done.largest_error < 1e-6, "nothing left the plane: {}", done.largest_error);
+        // Held to an error, the same: a flat sheet is within any error, down to the target.
+        let held = reduce(&scan, Settings { target: 8, max_error: 0.01, keep_rim: true }).unwrap();
+        assert!(held.triangles.len() <= 8 && held.stopped == Stopped::Target, "{} {:?}", held.triangles.len(), held.stopped);
     }
 
     /// Within an area (the box's top), only the area is reduced: every triangle outside it comes

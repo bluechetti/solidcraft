@@ -196,6 +196,37 @@ pub struct Filled {
     /// Holes within the limit that could not be closed.
     pub failed: usize,
     pub added_triangles: usize,
+    /// Each of those: where, how long round, and why.
+    pub left: Vec<Unfilled>,
+}
+
+/// A hole that could not be closed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Unfilled {
+    /// The middle of its ring, and how many edges it has.
+    pub at: Vec3,
+    pub edges: usize,
+    /// Why no patch closes it.
+    pub why: &'static str,
+}
+
+/// Why no patch closes a ring.
+const IN_A_LINE: &str = "its points lie in one line, so no triangle closes it";
+const BLOCKED: &str = "every way across it would join two of its points the scan already joins by an edge";
+const FOLDS: &str = "no flat patch closes it without folding";
+const NOT_FINITE: &str = "the patch across it came out with a point that is no number";
+
+/// The rings among `holes` that [`fill_rings`] cannot close, each with why: for saying so when
+/// none could be (it returns nothing then).
+pub fn unfillable(scan: &Scan, holes: &[&Ring], fair: bool) -> Vec<Unfilled> {
+    let weld = welded(scan.positions);
+    let around = Surroundings::new(scan, &weld, holes);
+    holes.iter().filter_map(|ring| patch(ring, scan.positions, &around, fair).err().map(|why| unfilled(ring, scan.positions, why))).collect()
+}
+
+fn unfilled(ring: &Ring, positions: &[Vec3], why: &'static str) -> Unfilled {
+    let n = ring.points.len().max(1) as f64;
+    Unfilled { at: ring.points.iter().fold(Vec3::ZERO, |s, &v| s + positions[v as usize]) / n, edges: ring.points.len(), why }
 }
 
 /// Closes every hole of at most `limit` edges; `fair` shapes each patch to carry the surface across
@@ -213,11 +244,14 @@ pub fn fill_rings(scan: &Scan, holes: &[&Ring], fair: bool) -> Option<Filled> {
     let around = Surroundings::new(scan, &weld, holes);
     let mut positions = scan.positions.to_vec();
     let mut triangles = scan.triangles.to_vec();
-    let (mut filled, mut failed) = (0, 0);
+    let (mut filled, mut left) = (0, Vec::new());
     for &ring in holes {
-        let Some(patch) = patch(ring, scan.positions, &around, fair) else {
-            failed += 1;
-            continue;
+        let patch = match patch(ring, scan.positions, &around, fair) {
+            Ok(patch) => patch,
+            Err(why) => {
+                left.push(unfilled(ring, scan.positions, why));
+                continue;
+            }
         };
         let n = ring.points.len();
         let base = positions.len();
@@ -226,7 +260,7 @@ pub fn fill_rings(scan: &Scan, holes: &[&Ring], fair: bool) -> Option<Filled> {
         triangles.extend(patch.triangles.iter().map(|t| t.map(global)));
         filled += 1;
     }
-    (filled > 0).then(|| Filled { added_triangles: triangles.len() - scan.triangle_count(), positions, triangles, filled, failed })
+    (filled > 0).then(|| Filled { added_triangles: triangles.len() - scan.triangle_count(), positions, triangles, filled, failed: left.len(), left })
 }
 
 /// What the scan looks like round the holes: the triangles touching a ring (how the surface goes on
@@ -389,10 +423,39 @@ struct Patch {
     triangles: Vec<[usize; 3]>,
 }
 
-fn patch(ring: &Ring, positions: &[Vec3], around: &Surroundings, fair: bool) -> Option<Patch> {
+fn patch(ring: &Ring, positions: &[Vec3], around: &Surroundings, fair: bool) -> Result<Patch, &'static str> {
     let points: Vec<Vec3> = ring.points.iter().map(|&v| positions[v as usize]).collect();
     let forbidden = |i: usize, j: usize| around.edges.contains(&pair(ring.points[i], ring.points[j]));
-    let coarse = triangulated(&points, forbidden)?;
+    let Some(coarse) = triangulated(&points, forbidden) else {
+        // Why: no three of its points make a triangle; or they do, but only across a pair of its
+        // points the scan already joins; or neither, and it folds.
+        let n = points.len();
+        // Points in one line wind about nothing, and neither do a few points doubled back on
+        // themselves: the area they go round, against their length squared.
+        let length: f64 = (0..n).map(|k| points[k].dist(points[(k + 1) % n])).sum();
+        let round = (0..n).fold(Vec3::ZERO, |s, k| s + points[k].cross(points[(k + 1) % n])).len() / 2.0;
+        let any_triangle = round > 1e-9 * length * length;
+        let any_blocked = !around.edges.is_empty() && (0..n).any(|i| (i + 2..n).any(|j| !(i == 0 && j == n - 1) && forbidden(i, j)));
+        if !any_triangle {
+            return Err(IN_A_LINE);
+        }
+        if !any_blocked {
+            return Err(FOLDS);
+        }
+        // Blocked every way across: a point put at its middle and a triangle to each of its edges
+        // joins no two of its points, when the middle sees every edge from the same side.
+        let middle = points.iter().fold(Vec3::ZERO, |s, p| s + *p) / n as f64;
+        let winding = ring_normal(&points).ok_or(IN_A_LINE)?;
+        let seen = (0..n).all(|k| {
+            let (a, b) = (points[k], points[(k + 1) % n]);
+            let normal = (b - a).cross(middle - a);
+            normal.dot(winding) > 1e-10 * ((b - a).len2() + (middle - a).len2())
+        });
+        if !seen {
+            return Err(BLOCKED);
+        }
+        return Ok(Patch { added: vec![middle], triangles: (0..n).map(|k| [k, (k + 1) % n, n]).collect() });
+    };
     let mut mesh = PatchMesh::new(&points, coarse);
     mesh.refine(&forbidden);
     if fair && mesh.points.len() > points.len() {
@@ -412,7 +475,7 @@ fn patch(ring: &Ring, positions: &[Vec3], around: &Surroundings, fair: bool) -> 
         }
     }
     let added = mesh.points[points.len()..].to_vec();
-    added.iter().all(|p| p.is_finite()).then_some(Patch { added, triangles: mesh.triangles })
+    if added.iter().all(|p| p.is_finite()) { Ok(Patch { added, triangles: mesh.triangles }) } else { Err(NOT_FINITE) }
 }
 
 /// A patch being made, with the edge length round it each point asks for.
@@ -740,6 +803,38 @@ mod tests {
 
     /// Two square holes touching at one corner (a pinch, as fused scans leave them) are two holes,
     /// both closed, with no open edge left over for Repair to be sent to.
+    /// A square hole whose two diagonals the scan already has as edges (a rib across it either
+    /// way): no triangle on three of its corners closes it, so a point at its middle does, with
+    /// a triangle to each side. Its points in one line, or its middle not seeing every side, and
+    /// it is left, with why.
+    #[test]
+    fn a_hole_blocked_every_way_across_is_closed_from_its_middle() {
+        let positions = vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(4.0, 0.0, 0.0), Vec3::new(4.0, 4.0, 0.0), Vec3::new(0.0, 4.0, 0.0)];
+        let ring = Ring { points: vec![0, 1, 2, 3], perimeter: 16.0, rim: false };
+        let ribs = Surroundings { triangles: Vec::new(), at: HashMap::new(), edges: HashSet::from([pair(0, 2), pair(1, 3)]) };
+        let patch = patch(&ring, &positions, &ribs, true).expect("closed from its middle");
+        assert_eq!(patch.added, vec![Vec3::new(2.0, 2.0, 0.0)]);
+        assert_eq!(patch.triangles, vec![[0, 1, 4], [1, 2, 4], [2, 3, 4], [3, 0, 4]]);
+        // An L of six corners, its two inside corners' way across blocked like every other: its
+        // middle lies outside it, past the inside corner.
+        let ell = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::new(10.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(1.0, 10.0, 0.0),
+            Vec3::new(0.0, 10.0, 0.0),
+        ];
+        let ring = Ring { points: (0..6).collect(), perimeter: 40.0, rim: false };
+        let every: HashSet<u64> = (0..6u32).flat_map(|i| (i + 2..6).map(move |j| pair(i, j))).collect();
+        let blocked = Surroundings { triangles: Vec::new(), at: HashMap::new(), edges: every };
+        assert_eq!(super::patch(&ring, &ell, &blocked, true).err(), Some(BLOCKED));
+        let line = vec![Vec3::ZERO, Vec3::X, Vec3::X * 2.0, Vec3::X * 3.0];
+        let ring = Ring { points: vec![0, 1, 2, 3], perimeter: 6.0, rim: false };
+        let open = Surroundings { triangles: Vec::new(), at: HashMap::new(), edges: HashSet::new() };
+        assert_eq!(super::patch(&ring, &line, &open, true).err(), Some(IN_A_LINE));
+    }
+
     #[test]
     fn holes_touching_at_a_corner_are_two_holes() {
         let (positions, triangles) = plate(10, |x, y| (x, y) == (3, 3) || (x, y) == (4, 4));

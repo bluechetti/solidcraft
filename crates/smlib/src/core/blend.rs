@@ -243,9 +243,9 @@ fn refused(call: &'static str, e: solidcore_ops::Error, detail: Option<String>) 
         // the kernel's refusal of its input (`SM_ERR_INVALID_INPUT`)
         Ops::Refused { .. } => Error::Status(INVALID_INPUT),
         Ops::NoRoom | Ops::SetbackTooLong { .. } => Error::NoRoom,
-        Ops::TooLarge { size, kind, at, why } => Error::TooLarge { size, kind, at, why },
+        Ops::TooLarge { size, kind, at, face, why } => Error::TooLarge { size, kind, at, face, why },
         Ops::SetbackTooShort { least, at, builds, .. } => Error::SetbackTooShort { least, at, builds },
-        Ops::CornerUnsupported => Error::CornerUnsupported,
+        Ops::CornerUnsupported { why, at } => Error::CornerUnsupported { why, at },
         Ops::CornerRefused { corner } => Error::CornerRefused { corner },
         Ops::TurnRefused { room, why, at } => Error::TurnRefused { room, why, at },
         Ops::NoEffect => Error::NoEffect,
@@ -622,6 +622,22 @@ pub(crate) fn fillet_variable(
     knots: &[f64],
     radii: &[f64],
 ) -> Result<Body> {
+    fillet_variable_with(body, point, tolerance, start, degree, knots, radii, false)
+}
+
+/// [`fillet_variable`], with curvature-continuous (G2) sections when `curvature`
+/// ([`solidcore_ops::fillet_variable_curvature_from`]).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fillet_variable_with(
+    body: &Body,
+    point: [f64; 3],
+    tolerance: f64,
+    start: [f64; 3],
+    degree: usize,
+    knots: &[f64],
+    radii: &[f64],
+    curvature: bool,
+) -> Result<Body> {
     if !points_ok(&[point], false) || !start.iter().all(|x| x.is_finite()) || !tolerance_ok(tolerance) || !law_ok(degree, knots, radii) {
         return Err(Error::Argument);
     }
@@ -640,7 +656,11 @@ pub(crate) fn fillet_variable(
     // The round is the union of its balls (smlib#78, solidcore#2262): each ball touches it along
     // the circle shifted -r r'/|c'| from its great circle. A law whose balls fold over one
     // another is refused, [`Error::NoRoom`].
-    ops(CALL, &w, || solidcore_ops::fillet_variable_from(&w, e, start, degree, knots, radii))?;
+    if curvature {
+        ops(CALL, &w, || solidcore_ops::fillet_variable_curvature_from(&w, e, start, degree, knots, radii))?;
+    } else {
+        ops(CALL, &w, || solidcore_ops::fillet_variable_from(&w, e, start, degree, knots, radii))?;
+    }
     Ok(w)
 }
 

@@ -2,8 +2,8 @@
 //! document rebuilds on load and optional display caches remain provisional. Bodies export
 //! as STL (binary or ASCII), OBJ, STEP and 3MF, and assemblies as URDF ([`urdf()`]); STEP, IGES,
 //! FreeCAD and Rhino files import as a base feature (see [`step_import_feature`]), 3MF and
-//! STL files as mesh bodies (see [`mesh_import_feature`]), PLY and XYZ files as point clouds
-//! (see [`read_point_cloud`]), and KiCad boards as a mesh substrate with referenced STEP
+//! STL files as mesh bodies (see [`mesh_import_feature`]), PLY, PCD and XYZ files as point
+//! clouds (see [`read_point_cloud`]), and KiCad boards as a mesh substrate with referenced STEP
 //! component models.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
@@ -38,11 +38,12 @@ pub mod limits;
 mod mutate;
 mod native_cad;
 pub use native_cad::{
-    NATIVE_CAD_EXTS, NativeDesign, cadmpeg_step_records, detects_freecad, is_freecad_path, is_native_cad_path, native_cad_design, native_cad_records,
-    native_cad_to_step,
+    NATIVE_CAD_EXTS, NativeDesign, USD_EXTS, cadmpeg_step_records, detects_freecad, is_freecad_path, is_native_cad_path, is_usd_path,
+    native_cad_design, native_cad_records, native_cad_to_step, read_usd, usd_from_step, usd_records,
 };
 pub mod paper;
 mod pat;
+mod pcd;
 mod ply;
 mod ply_complex;
 pub use ply::{has_range_grid, ply_counts, read_ply_mesh};
@@ -51,6 +52,7 @@ mod point_cloud_formats;
 pub use point_cloud::{CloudFile, DEFAULT_MAX_POINTS, MAX_POINT_CLOUD_BYTES, is_ply_path, is_point_cloud_path, read_point_cloud};
 pub mod safe_write;
 pub mod safe_zip;
+pub mod sdf;
 mod sketch2d;
 mod svg;
 /// Explicit development-test seams; absent from ordinary production builds.
@@ -89,6 +91,7 @@ pub use kicad_in::{
 };
 mod obj;
 pub use obj::read_obj;
+pub use sdf::{SdfDecal, SdfOptions, SdfPackage, sdf_model};
 pub use threemf::{
     MAX_3MF_BYTES, MeshObject, model_xml, model_xml_parts, model_xml_with, read_3mf, weld, write_3mf, write_3mf_parts, write_3mf_with,
 };
@@ -409,6 +412,40 @@ pub fn step_import_feature_read(bytes: &[u8], file: &str, names: StepNames, read
     })
 }
 
+/// What an OpenUSD file's import brings in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum UsdGeometry {
+    /// Its meshes, as mesh bodies ([`read_usd`]): how OpenUSD files have always been read, and
+    /// what most of them hold. A B-rep with no mesh is left out.
+    #[default]
+    Meshes,
+    /// Its exact geometry where it has it ([`usd_records`]): each B-rep (a `BrepArray`'s solids
+    /// and shells) a B-rep body of an Import feature, and each mesh with
+    /// no B-rep beside it a mesh body of that feature.
+    Exact,
+}
+
+impl UsdGeometry {
+    /// `meshes` or `exact` (any case); `None` for anything else.
+    pub fn parse(s: &str) -> Option<UsdGeometry> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "meshes" => Some(UsdGeometry::Meshes),
+            "exact" => Some(UsdGeometry::Exact),
+            _ => None,
+        }
+    }
+}
+
+/// An OpenUSD file (`file` is its name) read for its exact geometry ([`UsdGeometry::Exact`]) into
+/// an Import feature keeping records, as a FreeCAD or Rhino file read by cadmpeg is, with the
+/// bodies named after `names`; and whether the file says Y is up.
+pub fn usd_import_feature(bytes: &[u8], file: &str, names: StepNames) -> Result<(StepFeature, bool)> {
+    let _span = solidcraft_profile::span("import", "usd_import_feature");
+    limits::check(limits::Kind::Step, bytes.len() as u64).map_err(IoError::Invalid)?;
+    let (records, warnings, y_up) = usd_records(bytes, file).map_err(IoError::Invalid)?;
+    Ok((records_import_feature((records, warnings, false), file, names)?, y_up))
+}
+
 /// A file read with [`StepReader::Cadmpeg`] (FreeCAD, Rhino or STEP) into an Import feature that
 /// keeps the B-rep records cadmpeg's neutral model was read into (no STEP text). A FreeCAD body's
 /// hidden intermediate shapes (each pad and pocket, the tool shapes, sketch faces, which FreeCAD
@@ -457,15 +494,17 @@ fn records_import_feature(read: (solidcraft_kernel::ImportRecords, Vec<String>, 
     })
 }
 
-/// Is this a mesh file we import (`.3mf`, `.stl`, `.obj`, `.glb`, `.gltf`, any case)?
+/// Is this a mesh file we import (`.3mf`, `.stl`, `.obj`, `.glb`, `.gltf`, or OpenUSD's `.usd`,
+/// `.usda`, `.usdc` and `.usdz`, any case)?
 pub fn is_mesh_path(path: &str) -> bool {
     std::path::Path::new(path)
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| ["3mf", "stl", "obj", "glb", "gltf"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+        || is_usd_path(path)
 }
 
-/// A 3MF, STL, OBJ or glTF file read as a mesh import feature.
+/// A 3MF, STL, OBJ, glTF or OpenUSD file read as a mesh import feature.
 pub struct MeshFeature {
     /// Timeline name: the only mesh's name, else the file name.
     pub name: String,
@@ -532,6 +571,12 @@ pub fn mesh_import_feature_in(bytes: &[u8], file: &str, mm_per_unit: f64) -> Res
         g.flatten();
         return Ok(g.feature);
     }
+    if is_usd_path(file) {
+        own_units("OpenUSD")?;
+        let (mut g, _) = read_usd(bytes, file)?;
+        g.flatten();
+        return Ok(g.feature);
+    }
     // A scan has no size limit on the desktop (the browser keeps the limit for import files, #17446, #14548); a 3MF's own
     // archive keeps its fixed one.
     limits::check(limits::Kind::Scan, u64::try_from(bytes.len()).unwrap_or(u64::MAX)).map_err(IoError::Invalid)?;
@@ -543,14 +588,14 @@ pub fn mesh_import_feature_in(bytes: &[u8], file: &str, mm_per_unit: f64) -> Res
     } else if ext == "ply" {
         ply::read_ply_mesh(bytes, &stem)?
     } else if ext == "stl" {
-        let tris = read_stl(bytes)?;
+        let (tris, notes) = read_stl_noting(bytes)?;
         if tris.is_empty() {
             return Err(IoError::Invalid("STL has no triangles".into()));
         }
         let positions: Vec<Vec3> = tris.iter().flatten().map(|v| Vec3::new(v[0] as f64, v[1] as f64, v[2] as f64)).collect();
         let n = u32::try_from(tris.len()).map_err(|_| IoError::Invalid("STL too large".into()))?;
         let triangles = (0..n).map(|i| [i * 3, i * 3 + 1, i * 3 + 2]).collect();
-        (vec![MeshObject { name: stem.clone(), positions, triangles, ..Default::default() }], Vec::new())
+        (vec![MeshObject { name: stem.clone(), positions, triangles, ..Default::default() }], notes)
     } else {
         own_units("3MF")?;
         read_3mf(bytes)?
@@ -617,6 +662,12 @@ pub enum Format {
     /// Binary glTF with the bodies' looks ([`export_glb`]); written from the document, which
     /// holds the looks.
     Glb,
+    /// A Gazebo model folder of the design ([`sdf_model`]): `model.config`, `model.sdf`, meshes
+    /// and decal images; written by the engine, since it is several files.
+    Sdf,
+    /// OpenUSD: `.usda` text, `.usdc` (or `.usd`) binary, or a `.usdz` package, chosen by the
+    /// file's extension ([`usd_from_step`]); written by the engine from the STEP it writes.
+    Usd,
 }
 
 impl Format {
@@ -633,6 +684,8 @@ impl Format {
             "3mf-tagged" => Format::ThreeMfTagged,
             "urdf" => Format::Urdf,
             "glb" => Format::Glb,
+            "sdf" => Format::Sdf,
+            "usd" | "usda" | "usdc" | "usdz" => Format::Usd,
             e if e == "json" || is_design_ext(e) => Format::Design,
             _ => return Err(IoError::Format(ext)),
         })
@@ -1371,6 +1424,8 @@ pub fn export_with_parts_noted(
         Format::Design => return Err(IoError::Format("sc (save the document instead)".into())),
         Format::Urdf => return Err(IoError::Format("urdf (an assembly package; use file.export)".into())),
         Format::Glb => return Err(IoError::Format("glb (its looks come from the design; use file.export)".into())),
+        Format::Sdf => return Err(IoError::Format("sdf (a model folder; use file.export)".into())),
+        Format::Usd => return Err(IoError::Format("usd (the file's extension picks its encoding; use file.export)".into())),
     };
     Ok((bytes, notes))
 }
@@ -1487,6 +1542,20 @@ pub fn write_design(doc: &Document) -> Vec<u8> {
 
 /// Parse a binary or ASCII STL (used by tests and round-trip checks): triangles.
 pub fn read_stl(bytes: &[u8]) -> Result<Vec<[[f32; 3]; 3]>> {
+    read_stl_noting(bytes).map(|(triangles, _)| triangles)
+}
+
+/// [`read_stl`], with what the reader noticed about the file that the person should know: a
+/// header that counts more or fewer triangles than the file holds, an ASCII file that ends inside
+/// a facet (both: a file cut short in copying), and triangles left out because a corner is not a
+/// number. The triangles that are there are still read.
+pub fn read_stl_noting(bytes: &[u8]) -> Result<(Vec<[[f32; 3]; 3]>, Vec<String>)> {
+    let mut notes = Vec::new();
+    let left_out = |dropped: usize, notes: &mut Vec<String>| {
+        if dropped > 0 {
+            notes.push(format!("{dropped} triangles of the STL were left out: a corner is not a number (NaN or infinite), or lies beyond 1e9"));
+        }
+    };
     // Binary when the size matches the triangle count in the header (some binary files start
     // with "solid" too); ASCII when the text has facets.
     let count = bytes.get(80..84).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize);
@@ -1498,9 +1567,11 @@ pub fn read_stl(bytes: &[u8]) -> Result<Vec<[[f32; 3]; 3]>> {
     if ascii {
         let s = String::from_utf8_lossy(bytes);
         let mut cur: Vec<[f32; 3]> = Vec::new();
+        let (mut open, mut dropped) = (false, 0usize);
         for l in s.lines() {
             let mut it = l.split_whitespace();
             match it.next() {
+                Some("facet") => open = true,
                 Some("vertex") => {
                     let v: Vec<f32> = it.filter_map(|x| x.parse().ok()).collect();
                     if let [x, y, z] = v[..] {
@@ -1513,8 +1584,11 @@ pub fn read_stl(bytes: &[u8]) -> Result<Vec<[[f32; 3]; 3]>> {
                         && [a, b, c].iter().all(ok)
                     {
                         tris.push([a, b, c]);
+                    } else {
+                        dropped += 1;
                     }
                     cur.clear();
+                    open = false;
                 }
                 _ => {}
             }
@@ -1522,11 +1596,22 @@ pub fn read_stl(bytes: &[u8]) -> Result<Vec<[[f32; 3]; 3]>> {
                 return Err(IoError::Invalid(format!("STL with more than {MAX_STL_TRIANGLES} triangles")));
             }
         }
-        return Ok(tris);
+        if open {
+            notes.push(format!("the ASCII STL ends inside a facet: the file was cut short ({} triangles read)", tris.len()));
+        }
+        left_out(dropped, &mut notes);
+        return Ok((tris, notes));
     }
     let n = count.ok_or_else(|| IoError::Invalid("short STL".into()))?;
     // A wrong count in the header (some writers leave 0): use the triangles that are there.
     let room = bytes.len().saturating_sub(84) / 50;
+    if n > room {
+        notes.push(format!(
+            "the STL's header says {n} triangles and the file holds {room}: it was cut short, or written with a wrong count ({room} read)"
+        ));
+    } else if n != 0 && n < room {
+        notes.push(format!("the STL's header says {n} triangles and the file holds {room}: the {n} it counts were read"));
+    }
     let n = if n == 0 || n > room { room } else { n };
     if n == 0 {
         return Err(IoError::Invalid("STL has no triangles".into()));
@@ -1545,7 +1630,8 @@ pub fn read_stl(bytes: &[u8]) -> Result<Vec<[[f32; 3]; 3]>> {
             tris.push(t);
         }
     }
-    Ok(tris)
+    left_out(n - tris.len(), &mut notes);
+    Ok((tris, notes))
 }
 
 /// Most triangles we read from one STL file: as many as a mesh body holds.
@@ -1695,6 +1781,52 @@ mod tests {
             assert_eq!(corners, want, "{unit}");
             assert_eq!(m.positions.len(), 4 * 3, "{unit}: its four corners, once each");
         }
+    }
+
+    /// An STL cut short or holding corners that are not numbers is still read as far as it goes,
+    /// and the reader says what it found: a header counting more triangles than the file holds,
+    /// an ASCII file ending inside a facet, triangles left out. A sound file gets no note, and
+    /// Insert Mesh's feature carries the notes as its warnings.
+    #[test]
+    fn a_cut_short_or_damaged_stl_is_read_with_a_note_of_what_is_wrong() {
+        let triangle = |z: f32| [[0.0f32, 0.0, z], [1.0, 0.0, z], [0.0, 1.0, z]];
+        let binary = |stated: u32, triangles: &[[[f32; 3]; 3]]| {
+            let mut b = vec![0u8; 80];
+            b.extend(stated.to_le_bytes());
+            for t in triangles {
+                b.extend([0u8; 12]);
+                for v in t {
+                    for c in v {
+                        b.extend(c.to_le_bytes());
+                    }
+                }
+                b.extend([0u8; 2]);
+            }
+            b
+        };
+        let sound = binary(2, &[triangle(0.0), triangle(1.0)]);
+        assert_eq!(read_stl_noting(&sound).unwrap(), (vec![triangle(0.0), triangle(1.0)], Vec::new()));
+        // The header says 1000, the file holds 2.
+        let (read, notes) = read_stl_noting(&binary(1000, &[triangle(0.0), triangle(1.0)])).unwrap();
+        assert_eq!(read.len(), 2);
+        assert!(notes.len() == 1 && notes[0].contains("1000") && notes[0].contains("holds 2") && notes[0].contains("cut short"), "{notes:?}");
+        // A corner that is not a number: that triangle is left out, and said so.
+        let mut broken = triangle(2.0);
+        broken[1][0] = f32::NAN;
+        let (read, notes) = read_stl_noting(&binary(3, &[triangle(0.0), broken, triangle(1.0)])).unwrap();
+        assert_eq!(read.len(), 2);
+        assert!(notes.len() == 1 && notes[0].starts_with("1 triangles") && notes[0].contains("not a number"), "{notes:?}");
+        // An ASCII file that stops inside its second facet.
+        let facet = "facet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\n";
+        let cut = format!("solid t\n{facet}facet normal 0 0 1\nouter loop\nvertex 0 0 1\nvertex 1 0");
+        let (read, notes) = read_stl_noting(cut.as_bytes()).unwrap();
+        assert_eq!(read.len(), 1);
+        assert!(notes.len() == 1 && notes[0].contains("ends inside a facet") && notes[0].contains("1 triangles read"), "{notes:?}");
+        let whole = format!("solid t\n{facet}{facet}endsolid t\n");
+        assert_eq!(read_stl_noting(whole.as_bytes()).unwrap().1, Vec::<String>::new());
+        // The feature made from the file warns with the same words.
+        let made = mesh_import_feature(&binary(1000, &[triangle(0.0), triangle(1.0)]), "part.stl").unwrap();
+        assert!(made.warnings.iter().any(|w| w.contains("cut short")), "{:?}", made.warnings);
     }
 
     /// A PLY with faces, read as a mesh, takes a unit as an STL does: it states none either.

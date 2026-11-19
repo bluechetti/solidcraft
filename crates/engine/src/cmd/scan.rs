@@ -20,16 +20,16 @@ use super::CommandSpec;
 use crate::params::{bad, str_};
 use crate::schema::scan::{
     ScanAddFaceParams, ScanAddFaceResult, ScanBase, ScanBasesParams, ScanBasesResult, ScanCloseSurfaceParams, ScanCloseSurfaceResult,
-    ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams, ScanDeviationPin, ScanDeviationPinParams,
-    ScanDeviationPinResult, ScanDeviationResult, ScanEditNetParams, ScanEditNetResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitMake,
-    ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere,
-    ScanFittedTorus, ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult,
-    ScanMarkersParams, ScanMarkersResult, ScanMeasureLineParams, ScanMeasureLineResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror,
-    ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRemoveFillParams,
-    ScanRemoveFillResult, ScanRepairParams, ScanRepairResult, ScanReportParams, ScanReportResult, ScanSectionParams, ScanSectionResult,
-    ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams,
-    ScanSymmetryParams, ScanSymmetryResult, ScanTogetherParams, ScanTogetherResult, ScanUnseenParams, ScanUnseenResult, ScanWrapSurfaceParams,
-    ScanWrapSurfaceResult,
+    ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationClearance, ScanDeviationParams, ScanDeviationPin,
+    ScanDeviationPinParams, ScanDeviationPinResult, ScanDeviationRegion, ScanDeviationResult, ScanEditNetParams, ScanEditNetResult,
+    ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitMake, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult,
+    ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFittedTorus, ScanFloatingParams, ScanFloatingResult,
+    ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult, ScanMarkersParams, ScanMarkersResult, ScanMeasureLineParams,
+    ScanMeasureLineResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror, ScanMirrorFreeFormParams, ScanMirrorFreeFormResult,
+    ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRemoveFillParams, ScanRemoveFillResult, ScanRepairParams,
+    ScanRepairResult, ScanReportParams, ScanReportResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult,
+    ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanTogetherParams,
+    ScanTogetherResult, ScanUnseenParams, ScanUnseenResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -147,7 +147,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("mirror")
         .contract(&SYMMETRY_CONTRACT)
         .output(output_schema_for::<ScanSymmetryResult>)
-        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z] (the way you looked, default [0,0,1])}: a line along the rough mirror plane, to find that one; plane?: {point, normal: [x,y,z]} to keep as it is; keep?: bool (default true: kept as a construction plane `Symmetry Plane`, `Symmetry Plane 2`, …, to sketch on); a plane given or guided to is used however much matches, the best one found unasked is refused when the scan is no mirror image about it → body, mirror: {point, normal, rms, coverage, symmetric}, plane (the construction plane)"),
+        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z] (the way you looked, default [0,0,1])}: a line along the rough mirror plane, to find that one; plane?: {point, normal: [x,y,z]} to keep as it is; keep?: bool (default true: kept as a construction plane `Symmetry Plane`, `Symmetry Plane 2`, …, to sketch on); a plane given or guided to is used however much matches, the best one found unasked is refused when the scan is no mirror image about it → body, mirror: {point, normal, rms, coverage, symmetric, partly? (a mirror image under 85 % of which matches: how much does not)}, plane (the construction plane)"),
     CommandSpec::new("scan.square_to_symmetry", "Square to Symmetry", crate::checked!("scan.square_to_symmetry", square_to_symmetry))
         .at("SCAN", "ALIGN")
         .icon("c_symmetry")
@@ -409,6 +409,16 @@ pub fn shown_mesh(s: &Session, name: &str) -> Option<std::sync::Arc<solidcraft_g
     Some(moved)
 }
 
+/// A sketch a scan tool makes (`sketch.create` with `create`), under the first free form of the
+/// name it asks for: `Section`, then `Section (2)`, `Section (3)`. A design holds no two sketches
+/// of one name, and a tool used a second time makes a second sketch, not a refusal.
+pub(super) fn new_sketch(s: &mut Session, mut create: Value) -> Result<Value> {
+    if let Some(name) = create.get("name").and_then(Value::as_str).map(|name| s.doc.free_sketch_name(name)) {
+        create["name"] = Value::String(name);
+    }
+    super::find_command("sketch.create").ok_or_else(|| EngineError::UnknownCommand("sketch.create".into()))?.run_nested(s, &create)
+}
+
 /// `f` given the points and triangles of the scan `name` where it shows ([`shown_mesh`]).
 pub fn with_shown<R>(s: &Session, name: &str, f: impl FnOnce(&[Vec3], &[[u32; 3]]) -> R) -> Option<R> {
     let shown = shown_mesh(s, name)?;
@@ -533,13 +543,21 @@ fn place_reply(body: String, base: Option<&Base>, feature: Option<Value>) -> Res
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
-fn mirror_reply(m: &Mirror) -> ScanMirror {
+/// `whole`: for completing a scan by mirroring, where a mirror image with a part on one side only
+/// ([`Mirror::unmatched`]) is no mirror image, since that part's reflection is not the thing.
+fn mirror_reply(m: &Mirror, whole: bool) -> ScanMirror {
     ScanMirror {
         point: [m.point.x, m.point.y, m.point.z],
         normal: [m.normal.x, m.normal.y, m.normal.z],
         rms: m.rms,
         coverage: m.coverage,
-        symmetric: m.is_symmetric(),
+        symmetric: if whole { m.is_whole() } else { m.is_symmetric() },
+        partly: m.unmatched().filter(|_| !whole).map(|share| {
+            format!(
+                "{:.0} % of the scan has no mirror image in this plane: that part is on one side of the thing only, not noise; keep it when halving or mirroring the scan",
+                100.0 * share
+            )
+        }),
     }
 }
 
@@ -624,7 +642,7 @@ fn chosen_mirror(s: &Session, mesh: &Mesh, p: &Value, cmd: &str, refuse: bool, f
         return Err(bad(
             cmd,
             format!(
-                "the scan is not a mirror image about the best plane found: only {:.0} % of it matches its reflection (typically {:.2} mm off); to use that plane anyway pass it back as `plane`: {{\"point\": [{:.3}, {:.3}, {:.3}], \"normal\": [{:.6}, {:.6}, {:.6}]}} (a vehicle's underbody and exhaust are no mirror image, so a car stops short of the 85 % even about its true plane), or draw a guide along the plane you mean",
+                "the scan is not a mirror image about the best plane found: only {:.0} % of it matches its reflection (typically {:.2} mm off); to use that plane anyway pass it back as `plane`: {{\"point\": [{:.3}, {:.3}, {:.3}], \"normal\": [{:.6}, {:.6}, {:.6}]}} (85 % must match, or 60 % when both sides of the thing are there and match out to their ends; a scan of one side is no mirror image), or draw a guide along the plane you mean",
                 100.0 * found.coverage,
                 found.rms,
                 found.point.x,
@@ -665,7 +683,7 @@ fn find_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         None
     };
-    let reply = ScanSymmetryResult { body: mesh.body, mirror: mirror_reply(&found), plane, param_warnings: Vec::new() };
+    let reply = ScanSymmetryResult { body: mesh.body, mirror: mirror_reply(&found, false), plane, param_warnings: Vec::new() };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -689,7 +707,7 @@ fn square_to_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
         base: None,
         base_index: None,
         base_count: None,
-        mirror: Some(mirror_reply(&found)),
+        mirror: Some(mirror_reply(&found, false)),
         feature,
         param_warnings: Vec::new(),
     };
@@ -741,7 +759,7 @@ fn stand_on_base(s: &mut Session, p: &Value) -> Result<Value> {
             let i = match index {
                 Some(i) => usize::try_from(i).unwrap_or(usize::MAX),
                 // The next base while the scan still stands on the last one (nothing has moved it).
-                None => next_after(&mesh, &found),
+                None => next_after(s, &mesh, &found),
             };
             let base = found.get(i).copied().ok_or_else(|| bad(cmd, format!("`base` must be below {count}, the number of bases found")))?;
             (base, Some((i, count)))
@@ -775,7 +793,8 @@ pub fn scan_box(s: &Session, body: Option<&str>) -> Result<(String, Vec3, Vec3)>
 /// What the Symmetry dialog shows: the mirror plane found (near `guide`, a line from, to and the
 /// way it was seen from, when one is drawn) and how well the scan matches itself in it. A scan
 /// that is no mirror image is shown as such, not refused. `fill`: for completing the scan, the
-/// plane across its cut when it has one ([`plane_to_fill`]).
+/// plane across its cut when it has one ([`plane_to_fill`]), and a scan with a part on one side
+/// only is no mirror image.
 pub fn symmetry_preview(s: &Session, body: Option<&str>, guide: Option<[Vec3; 3]>, fill: bool) -> Result<ScanMirror> {
     let cmd = "scan.symmetry";
     let mesh = mesh(s, &json!({ "body": body }), cmd)?;
@@ -785,7 +804,7 @@ pub fn symmetry_preview(s: &Session, body: Option<&str>, guide: Option<[Vec3; 3]
         None if fill => plane_to_fill(&scan),
         None => symmetry::find(&scan),
     };
-    found.map(|m| mirror_reply(&m)).ok_or_else(|| bad(cmd, "no plane found: draw a guide with some length, not end-on"))
+    found.map(|m| mirror_reply(&m, fill)).ok_or_else(|| bad(cmd, "no plane found: draw a guide with some length, not end-on"))
 }
 
 /// An origin plane (XY, XZ, YZ) or a construction plane by name: a point of it and its normal, the
@@ -795,12 +814,13 @@ pub fn named_plane(s: &Session, name: &str) -> Option<(Vec3, Vec3)> {
 }
 
 /// How well the scan matches its reflection in the plane through `point` square to `normal`, for
-/// the Symmetry dialog when a plane is picked: the plane as it is, not searched near.
-pub fn mirror_preview(s: &Session, body: Option<&str>, point: Vec3, normal: Vec3) -> Result<ScanMirror> {
+/// the Symmetry dialog when a plane is picked: the plane as it is, not searched near. `fill`: for
+/// completing the scan, where a part on one side only makes it no mirror image.
+pub fn mirror_preview(s: &Session, body: Option<&str>, point: Vec3, normal: Vec3, fill: bool) -> Result<ScanMirror> {
     let cmd = "scan.symmetry";
     let mesh = mesh(s, &json!({ "body": body }), cmd)?;
     symmetry::measure(&mesh.scan(), point, normal)
-        .map(|m| mirror_reply(&m))
+        .map(|m| mirror_reply(&m, fill))
         .ok_or_else(|| bad(cmd, "the plane has no direction, or the scan is too small"))
 }
 
@@ -861,13 +881,13 @@ fn complete_by_mirroring(s: &mut Session, p: &Value) -> Result<Value> {
     let reply = ScanCompleteResult {
         body: mesh.body,
         fill: name,
-        mirror: mirror_reply(&plane),
+        mirror: mirror_reply(&plane, true),
         pieces: fill.pieces,
         triangles: fill.triangles.len(),
         area: fill.area,
         joined: fill.joined,
         reach: fill.reach,
-        warning: (!plane.is_symmetric()).then(|| unlike(&plane)),
+        warning: (!plane.is_whole()).then(|| unlike(&plane)),
         feature,
         param_warnings: Vec::new(),
     };
@@ -945,17 +965,23 @@ fn stand_move(b: &Base) -> Option<Rigid> {
     place::stand(b.normal, b.anchor)
 }
 
-/// The base a press of Stand on Base with none named stands the scan on: the next after the one it
-/// stands on now, else the steadiest. Read off the scan, not remembered: a dialog's OK runs on a
-/// copy of the session, which keeps nothing.
-fn next_after(mesh: &Mesh, found: &[Base]) -> usize {
-    found.iter().position(|b| stand_move(b).is_some_and(|m| still_standing(&m, mesh.reach()))).map_or(0, |i| (i + 1) % found.len())
+/// The base a press of Stand on Base with none named stands the scan on. Pressed again while the
+/// scan still stands on the base the last press gave it (kept with the session, and with the copy
+/// a dialog's OK runs on): the next one, so pressing goes through them. Else the one it already
+/// stands on when that is among the best ([`base::preferred`]: a part brought in standing is not
+/// turned over for a tie, tipped onto a lump, or laid on its side), else the steadiest.
+fn next_after(s: &Session, mesh: &Mesh, found: &[Base]) -> usize {
+    let standing = |b: &Base| stand_move(b).is_some_and(|m| still_standing(&m, mesh.reach()));
+    match &s.scan_base_cycle {
+        Some((body, last)) if *body == mesh.body && found.get(*last).is_some_and(standing) => (last + 1) % found.len().max(1),
+        _ => base::preferred(found, -Vec3::Z),
+    }
 }
 
 /// The base the Stand on Base dialog opens on: the one pressing it again would stand the scan on.
 pub fn next_base(s: &Session, body: Option<&str>) -> usize {
     let Ok(mesh) = mesh(s, &json!({ "body": body }), "scan.stand_on_base") else { return 0 };
-    next_after(&mesh, &base::bases(&mesh.scan()))
+    next_after(s, &mesh, &base::bases(&mesh.scan()))
 }
 
 /// Whether standing the scan on a base again would hardly move it: a scan's bases are read again
@@ -1135,6 +1161,9 @@ fn length(s: &Session, p: &Value, key: &str, default: f64, cmd: &str) -> Result<
     Ok(v)
 }
 
+/// The most regions beyond the tolerance a Deviation reply lists (the largest volumes).
+const DEVIATION_REGIONS: usize = 8;
+
 /// The share of a mesh's corners drawn (on exact flat faces) from which it reads as a CAD model's.
 const DRAWN_CAD: f64 = 0.05;
 
@@ -1191,6 +1220,13 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         limit: None,
         max_above_at: None,
         max_below_at: None,
+        area_below: None,
+        area_above: None,
+        volume_below: None,
+        volume_above: None,
+        regions: Vec::new(),
+        clearance: None,
+        regions_found: None,
         bands: None,
         pins: Vec::new(),
         unseen: None,
@@ -1275,15 +1311,22 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "measure the scan against another body, not itself"));
     }
     let model = state.body(&model_name).ok_or_else(|| bad(cmd, format!("no body `{model_name}`")))?;
-    let d = match model.body.display_mesh().filter(|_| model.body.is_mesh()) {
+    // The distances, and for what was worn off or added, each point's distance to the model face
+    // it faces (beside a wall the nearest surface is the wall, not the face the material left).
+    let measured = |surface: &solidcraft_geom::Mesh| {
+        let d = solidcraft_scan::deviation::measure(&mesh.positions, surface, tolerance, 4.0 * limit);
+        let faced = solidcraft_scan::deviation::facing(&mesh.positions, &mesh.triangles, surface, &d.values, tolerance, 4.0 * limit);
+        (d, faced)
+    };
+    let (d, faced) = match model.body.display_mesh().filter(|_| model.body.is_mesh()) {
         // A mesh body (the model as an STL) is measured against as it is, its triangles shared.
-        Some(triangles) => solidcraft_scan::deviation::measure(&mesh.positions, &triangles, tolerance, 4.0 * limit),
+        Some(triangles) => measured(&triangles),
         None => {
             // Meshed within a quarter of the tolerance, as Compare Bodies does, so the mesh agrees
             // with the surface well within what is measured.
             let surface =
                 model.body.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance / 4.0)).map_err(|e| bad(cmd, format!("`{model_name}`: {e}")))?;
-            solidcraft_scan::deviation::measure(&mesh.positions, &surface, tolerance, 4.0 * limit)
+            measured(&surface)
         }
     };
     if d.measured == 0 {
@@ -1296,6 +1339,24 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let at = |i: Option<usize>| i.and_then(|i| Some((*mesh.positions.get(i)?, *d.values.get(i)?)));
     let (max_above_at, max_below_at) = (at(d.max_above_at), at(d.max_below_at));
+    // How much lies beyond the tolerance, and where: the volume worn off or added, region by region.
+    let beyond = solidcraft_scan::deviation::beyond(&mesh.positions, &mesh.triangles, &faced, tolerance);
+    let regions: Vec<ScanDeviationRegion> = beyond
+        .regions
+        .iter()
+        .take(DEVIATION_REGIONS)
+        .filter_map(|r| {
+            let q = mesh.positions.get(r.at)?;
+            Some(ScanDeviationRegion {
+                side: if r.below { "below" } else { "above" }.into(),
+                area: r.area,
+                volume: r.volume,
+                deepest: r.deepest,
+                at: [q.x, q.y, q.z],
+            })
+        })
+        .collect();
+    let clearance = clearance_to(&model.body, &mesh.positions, &d.values, tolerance);
     let pins: Vec<(Vec3, f32)> =
         pins.into_iter().filter_map(|q| nearest_point(&mesh.positions, q)).filter_map(|(i, q)| Some((q, *d.values.get(i)?))).collect();
     let shown_pins = pins.iter().copied().map(pin_of).collect();
@@ -1332,11 +1393,96 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         limit: Some(limit),
         max_above_at: max_above_at.map(|(q, _)| [q.x, q.y, q.z]),
         max_below_at: max_below_at.map(|(q, _)| [q.x, q.y, q.z]),
+        area_below: Some(beyond.area_below),
+        area_above: Some(beyond.area_above),
+        volume_below: Some(beyond.volume_below),
+        volume_above: Some(beyond.volume_above),
+        regions_found: Some(beyond.regions.len()),
+        regions,
+        clearance,
         bands: Some(bands),
         pins: shown_pins,
         unseen: unseen_share,
         warning: unseen_share.and_then(|share| unseen::warning(share, "of the scan measured")),
         ..empty
+    })
+}
+
+/// The scan points nearest a solid, and deepest in it, that are measured on its exact faces.
+const CLEARANCE_EXACT: usize = 32;
+/// The most scan points too far off to be measured that are asked whether they are in the solid.
+const CLEARANCE_FAR: usize = 2_000;
+
+/// Whether the scan (`positions`, each with its distance from the model's mesh in `values`: below
+/// 0 inside it, not a number when too far off to be measured) clears the solid `model`: the
+/// points the mesh has nearest outside it and deepest inside it are measured again on the solid's
+/// exact faces and asked exactly which side they are on, and a sample of those too far off to be
+/// measured are asked too (a thing sunk deep in the solid is far from its faces). `None` for a
+/// mesh body, or when the kernel cannot say.
+fn clearance_to(model: &solidcraft_kernel::Body, positions: &[Vec3], values: &[f32], tolerance: f64) -> Option<ScanDeviationClearance> {
+    use solidcraft_kernel::PointClass;
+    if model.is_mesh() || positions.is_empty() {
+        return None;
+    }
+    let n = positions.len().min(values.len());
+    let measured: Vec<usize> = (0..n).filter(|&i| values[i].is_finite()).collect();
+    let far: Vec<usize> = (0..n).filter(|&i| !values[i].is_finite() && positions[i].is_finite()).collect();
+    let mut outside: Vec<usize> = measured.iter().copied().filter(|&i| values[i] >= 0.0).collect();
+    outside.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
+    outside.truncate(CLEARANCE_EXACT);
+    let below: Vec<usize> = measured.iter().copied().filter(|&i| f64::from(values[i]) < -tolerance).collect();
+    let mut deepest = below.clone();
+    deepest.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
+    deepest.truncate(CLEARANCE_EXACT);
+    let sample: Vec<usize> = far.iter().copied().step_by(far.len() / CLEARANCE_FAR + 1).collect();
+    // Exactly: which side each is on, and how far from the nearest face.
+    let asked: Vec<usize> = outside.iter().chain(&deepest).chain(&sample).copied().collect();
+    let points: Vec<Vec3> = asked.iter().map(|&i| positions[i]).collect();
+    let classes = match points.len() {
+        0 => Vec::new(),
+        1 => vec![model.classify_point(points[0]).ok()?],
+        _ => model.classify_points(&points).ok()?,
+    };
+    let class_of = |k: usize| classes.get(k).copied();
+    let exact = |i: usize| model.nearest_face(positions[i]).map(|(d, _)| d);
+    let place = |i: usize| [positions[i].x, positions[i].y, positions[i].z];
+    // The least gap: over the nearest points that are outside or on it.
+    let gap = outside
+        .iter()
+        .enumerate()
+        .filter(|(k, _)| class_of(*k) != Some(PointClass::Inside))
+        .filter_map(|(k, &i)| Some((if class_of(k) == Some(PointClass::OnBoundary) { 0.0 } else { exact(i)? }, i)))
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    // The deepest: over the deepest points that are in it, by more than the tolerance.
+    let sunk = deepest
+        .iter()
+        .enumerate()
+        .filter(|(k, _)| class_of(outside.len() + *k) == Some(PointClass::Inside))
+        .filter_map(|(_, &i)| Some((exact(i)?, i)))
+        .filter(|(d, _)| *d > tolerance)
+        .max_by(|a, b| a.0.total_cmp(&b.0));
+    // Of those too far off to measure, the share in its material stands for them all; the
+    // deepest of the sample is at least as deep as the deepest measured.
+    let far_in: Vec<usize> = sample
+        .iter()
+        .enumerate()
+        .filter(|(k, _)| class_of(outside.len() + deepest.len() + *k) == Some(PointClass::Inside))
+        .map(|(_, &i)| i)
+        .collect();
+    let far_share = if sample.is_empty() { 0.0 } else { far_in.len() as f64 / sample.len() as f64 };
+    let far_deepest = far_in.iter().filter_map(|&i| Some((exact(i)?, i))).max_by(|a, b| a.0.total_cmp(&b.0));
+    let sunk = match (sunk, far_deepest) {
+        (Some(a), Some(b)) => Some(if b.0 > a.0 { b } else { a }),
+        (a, b) => a.or(b),
+    };
+    let inside = (below.len() as f64 + far_share * far.len() as f64) / n as f64;
+    Some(ScanDeviationClearance {
+        fits: sunk.is_none(),
+        gap: gap.map(|g| g.0),
+        gap_at: gap.map(|g| place(g.1)),
+        inside: if sunk.is_some() { inside.max(1.0 / n as f64) } else { 0.0 },
+        deepest: sunk.map(|d| d.0),
+        deepest_at: sunk.map(|d| place(d.1)),
     })
 }
 

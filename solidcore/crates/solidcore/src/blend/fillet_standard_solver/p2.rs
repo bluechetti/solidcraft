@@ -2988,6 +2988,196 @@ pub struct LawBall {
     pub span: Option<Extent1d>,
 }
 
+/// A variable-radius solver's round as a ball rolls it (0d43b4c): the edge's curve cut to the
+/// solver's stations (the leader), the law over its parameter, the stations the round keeps
+/// and, for one piece of a law-cornered round (#430), the t it runs over. `None` where the
+/// round has no such ball: no edge, too few stations, or a law that does not stay above
+/// `approx_tol_3d` over them. The circle's definition and the G^n section's (a curvature
+/// fillet whose size varies) are both built on it.
+///
+/// # Errors
+/// The kernel's refusal of the trims and the law's enclosure.
+#[allow(clippy::type_complexity)]
+pub(crate) fn law_round_curves(
+    k: &Kernel,
+    lb: &LawBall,
+    points: &[TsectPnt],
+    approx_tol_3d: f64,
+) -> Result<Option<(BSplineCurve, BSplineCurve, Vec<TsectPnt>, Option<Extent1d>)>> {
+    use crate::blend::fillet_section::certificate::{curve_derivs_over, NurbsCurve};
+    use crate::blend::fillet_section::interval::Ivl;
+    let Some(edge) = &lb.edge else {
+        return Ok(None);
+    };
+    if points.len() < 2 {
+        return Ok(None);
+    }
+    let mut leader = edge.copy();
+    // The edge's curve cut to where the stations are: an unbounded line is held as a
+    // NURB a million times the part's size, whose control points round at about
+    // 1e-9 mm, and every move of the round's frame (its recertificate is taken in its
+    // own) carries that rounding into the leader, past the round's bound. Cut, its
+    // control points are of the part's size; the round is built on the cut curve.
+    let station_ts = points
+        .iter()
+        .filter_map(|p| p.user_doubles.first().copied())
+        .filter(|t| t.is_finite());
+    let (lo, hi) = station_ts.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| {
+        (lo.min(t), hi.max(t))
+    });
+    let whole = leader.natural_interval();
+    if lo < hi {
+        let mut cut = Extent1d::from_min_max(lo.max(whole.min()), hi.min(whole.max()));
+        if cut.length() > 0.0 && cut != whole {
+            leader.trim(
+                k,
+                &mut cut,
+                crate::nurbs::b_spline_curve_n_lib::TrimMode::Notify,
+            )?;
+        }
+    }
+    leader.set_out_of_bounds_enabled(true);
+    let Some(mut law) = law_in_parameter(lb)? else {
+        return Ok(None);
+    };
+    // (the law's own parameters, the edge's, before any piece's cut)
+    let own = law.natural_interval();
+    // (one piece of a law-cornered round: the law cut at the piece's corners, so
+    // carried on past them with the piece's own end spans, as past the law's own
+    // ends, which the stations run beyond)
+    if let Some(span) = lb.span {
+        let whole = own;
+        let mut cut =
+            Extent1d::from_min_max(span.min().max(whole.min()), span.max().min(whole.max()));
+        if cut.length() <= 0.0 {
+            return Ok(None);
+        }
+        if cut != whole {
+            law.trim(
+                k,
+                &mut cut,
+                crate::nurbs::b_spline_curve_n_lib::TrimMode::Notify,
+            )?;
+            law.set_out_of_bounds_enabled(true);
+        }
+    }
+    // the solver's stations run past the edge's ends, the law continued there:
+    // a ball of the law's radius exists over them only where it stays positive
+    // (an enclosure of the law). A whole round, the fork's, asks it over all of
+    // them. One piece of a law-cornered round (not the fork's, #430) asks it over
+    // each span between two stations: the piece is the stations on the law's own
+    // parameters, the edge's, over which it must stay positive, and the stations
+    // on from them until it does not, the end faces cutting the rest away. Into
+    // the span where it stops, the piece runs on halfway to where the law falls
+    // to the tolerance: past its last station, which is at or past its ends there
+    // (the corners' rail ends are stations, where a ball touches), so that the end
+    // face's cut is inside it, as it is inside the solver's rails, and clear of
+    // where the ball fades to a point
+    let law_n = NurbsCurve::of(&law)?;
+    let t_of = |p: &TsectPnt| p.user_doubles.first().copied().unwrap_or(f64::NAN);
+    let mut by_t: Vec<&TsectPnt> = points.iter().collect();
+    by_t.sort_by(|a, b| t_of(a).total_cmp(&t_of(b)));
+    // the law above the tolerance over t from `t0` to `t1` (t0 <= t1)
+    let stays = |t0: f64, t1: f64| {
+        t0 <= t1
+            && curve_derivs_over(&law_n, Ivl::new(t0, t1), 0, None)
+                .ok()
+                .and_then(|r| r.first().map(|r0| r0.x.lo > approx_tol_3d))
+                .unwrap_or(false)
+    };
+    if lb.span.is_none() {
+        // a whole round, the fork's (0d43b4c): its law above the tolerance over
+        // all the solver's stations
+        let (Some(&a), Some(&b)) = (by_t.first(), by_t.last()) else {
+            return Ok(None);
+        };
+        let (t0, t1) = (t_of(a), t_of(b));
+        let whole = t1 > t0 && stays(t0, t1);
+        if !whole {
+            return Ok(None);
+        }
+        return Ok(Some((leader, law, points.to_vec(), None)));
+    }
+    {
+        let positive = |a: &TsectPnt, b: &TsectPnt| stays(t_of(a), t_of(b));
+        let on_edge = |p: &&TsectPnt| own.contains_value(t_of(p), 0.0);
+        let (Some(first), Some(last)) = (
+            by_t.iter().position(on_edge),
+            by_t.iter().rposition(on_edge),
+        ) else {
+            return Ok(None);
+        };
+        let span_positive = |i: usize| match (by_t.get(i), by_t.get(i + 1)) {
+            (Some(a), Some(b)) => positive(a, b),
+            _ => false,
+        };
+        if (first..last).any(|i| !span_positive(i)) {
+            return Ok(None);
+        }
+        let mut lo = first;
+        while lo > 0 && span_positive(lo - 1) {
+            lo -= 1;
+        }
+        let mut hi = last;
+        while span_positive(hi) {
+            hi += 1;
+        }
+        let (Some(&a), Some(&b)) = (by_t.get(lo), by_t.get(hi)) else {
+            return Ok(None);
+        };
+        // the round's end t into the span from `from` to `beyond`, over which the law
+        // is not positive: halfway from `from` to the law's crossing of the tolerance
+        // there (by bisection); `None` where the law does not fall to it at `beyond`
+        // or does not stay above it up to that end
+        let run_on = |from: &TsectPnt, beyond: Option<&&TsectPnt>| {
+            let t = t_of(from);
+            let Some(beyond) = beyond else {
+                return Some(t);
+            };
+            let (mut inside, mut outside) = (t, t_of(beyond));
+            if stays(outside, outside) {
+                return None;
+            }
+            for _ in 0..CROSSING_STEPS {
+                let mid = 0.5 * (inside + outside);
+                if mid == inside || mid == outside {
+                    break;
+                }
+                if stays(mid, mid) {
+                    inside = mid;
+                } else {
+                    outside = mid;
+                }
+            }
+            let end = 0.5 * (t + inside);
+            stays(t.min(end), t.max(end)).then_some(end)
+        };
+        let before = lo.checked_sub(1).and_then(|i| by_t.get(i));
+        let after = by_t.get(hi + 1);
+        let (Some(start), Some(end)) = (run_on(a, before), run_on(b, after)) else {
+            return Ok(None);
+        };
+        let range = Extent1d::from_min_max(start, end);
+        if range.length() <= 0.0 {
+            return Ok(None);
+        }
+        // (the stations beyond a run-on end seed the round's end station there)
+        let first_kept = match before {
+            Some(_) if range.min() < t_of(a) => lo - 1,
+            _ => lo,
+        };
+        let last_kept = match after {
+            Some(_) if range.max() > t_of(b) => hi + 1,
+            _ => hi,
+        };
+        let kept = by_t
+            .get(first_kept..=last_kept)
+            .map(|run| run.iter().map(|&p| p.clone()).collect())
+            .unwrap_or_default();
+        Ok(Some((leader, law, kept, Some(range))))
+    }
+}
+
 /// `sm_LawInParameter` (the fork's 0d43b4c): the variable radius solver's law as a curve
 /// over the edge's parameter t, the radius its x, exactly the solver's (its law curve
 /// mapped by the law's interval, edge map and orientation, all affine in t; a linear law
@@ -3133,9 +3323,7 @@ impl CircularCrossSectionFsg {
         uv: [&mut BSplineCurve; 2],
         ball: &CircleBall,
     ) -> Result<Option<Surface>> {
-        use crate::blend::fillet_section::certificate::{curve_derivs_over, NurbsCurve};
         use crate::blend::fillet_section::definition_box::definition_enclosable;
-        use crate::blend::fillet_section::interval::Ivl;
         use crate::blend::fillet_section::section::{
             rolled_on, ArcSection, GnLawRound, GnSectionFsg,
         };
@@ -3202,178 +3390,10 @@ impl CircularCrossSectionFsg {
             // (an edge's round: a variable ball a corner rolls about its own curve stays
             // the corner's, b8e3594)
             (FilletSolverType::VariableRadius, _, Some(lb)) if lb.has_edgeuse => {
-                let Some(edge) = &lb.edge else {
+                let Some(curves) = law_round_curves(k, lb, points, approx_tol_3d)? else {
                     return Ok(None);
                 };
-                if points.len() < 2 {
-                    return Ok(None);
-                }
-                let mut leader = edge.copy();
-                // The edge's curve cut to where the stations are: an unbounded line is held as a
-                // NURB a million times the part's size, whose control points round at about
-                // 1e-9 mm, and every move of the round's frame (its recertificate is taken in its
-                // own) carries that rounding into the leader, past the round's bound. Cut, its
-                // control points are of the part's size; the round is built on the cut curve.
-                let station_ts = points
-                    .iter()
-                    .filter_map(|p| p.user_doubles.first().copied())
-                    .filter(|t| t.is_finite());
-                let (lo, hi) = station_ts
-                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), t| {
-                        (lo.min(t), hi.max(t))
-                    });
-                let whole = leader.natural_interval();
-                if lo < hi {
-                    let mut cut = Extent1d::from_min_max(lo.max(whole.min()), hi.min(whole.max()));
-                    if cut.length() > 0.0 && cut != whole {
-                        leader.trim(
-                            k,
-                            &mut cut,
-                            crate::nurbs::b_spline_curve_n_lib::TrimMode::Notify,
-                        )?;
-                    }
-                }
-                leader.set_out_of_bounds_enabled(true);
-                let Some(mut law) = law_in_parameter(lb)? else {
-                    return Ok(None);
-                };
-                // (the law's own parameters, the edge's, before any piece's cut)
-                let own = law.natural_interval();
-                // (one piece of a law-cornered round: the law cut at the piece's corners, so
-                // carried on past them with the piece's own end spans, as past the law's own
-                // ends, which the stations run beyond)
-                if let Some(span) = lb.span {
-                    let whole = own;
-                    let mut cut = Extent1d::from_min_max(
-                        span.min().max(whole.min()),
-                        span.max().min(whole.max()),
-                    );
-                    if cut.length() <= 0.0 {
-                        return Ok(None);
-                    }
-                    if cut != whole {
-                        law.trim(
-                            k,
-                            &mut cut,
-                            crate::nurbs::b_spline_curve_n_lib::TrimMode::Notify,
-                        )?;
-                        law.set_out_of_bounds_enabled(true);
-                    }
-                }
-                // the solver's stations run past the edge's ends, the law continued there:
-                // a ball of the law's radius exists over them only where it stays positive
-                // (an enclosure of the law). A whole round, the fork's, asks it over all of
-                // them. One piece of a law-cornered round (not the fork's, #430) asks it over
-                // each span between two stations: the piece is the stations on the law's own
-                // parameters, the edge's, over which it must stay positive, and the stations
-                // on from them until it does not, the end faces cutting the rest away. Into
-                // the span where it stops, the piece runs on halfway to where the law falls
-                // to the tolerance: past its last station, which is at or past its ends there
-                // (the corners' rail ends are stations, where a ball touches), so that the end
-                // face's cut is inside it, as it is inside the solver's rails, and clear of
-                // where the ball fades to a point
-                let law_n = NurbsCurve::of(&law)?;
-                let t_of = |p: &TsectPnt| p.user_doubles.first().copied().unwrap_or(f64::NAN);
-                let mut by_t: Vec<&TsectPnt> = points.iter().collect();
-                by_t.sort_by(|a, b| t_of(a).total_cmp(&t_of(b)));
-                // the law above the tolerance over t from `t0` to `t1` (t0 <= t1)
-                let stays = |t0: f64, t1: f64| {
-                    t0 <= t1
-                        && curve_derivs_over(&law_n, Ivl::new(t0, t1), 0, None)
-                            .ok()
-                            .and_then(|r| r.first().map(|r0| r0.x.lo > approx_tol_3d))
-                            .unwrap_or(false)
-                };
-                if lb.span.is_none() {
-                    // a whole round, the fork's (0d43b4c): its law above the tolerance over
-                    // all the solver's stations
-                    let (Some(&a), Some(&b)) = (by_t.first(), by_t.last()) else {
-                        return Ok(None);
-                    };
-                    let (t0, t1) = (t_of(a), t_of(b));
-                    let whole = t1 > t0 && stays(t0, t1);
-                    if !whole {
-                        return Ok(None);
-                    }
-                    law_curves = Some((leader, law, points.to_vec(), None));
-                } else {
-                    let positive = |a: &TsectPnt, b: &TsectPnt| stays(t_of(a), t_of(b));
-                    let on_edge = |p: &&TsectPnt| own.contains_value(t_of(p), 0.0);
-                    let (Some(first), Some(last)) = (
-                        by_t.iter().position(on_edge),
-                        by_t.iter().rposition(on_edge),
-                    ) else {
-                        return Ok(None);
-                    };
-                    let span_positive = |i: usize| match (by_t.get(i), by_t.get(i + 1)) {
-                        (Some(a), Some(b)) => positive(a, b),
-                        _ => false,
-                    };
-                    if (first..last).any(|i| !span_positive(i)) {
-                        return Ok(None);
-                    }
-                    let mut lo = first;
-                    while lo > 0 && span_positive(lo - 1) {
-                        lo -= 1;
-                    }
-                    let mut hi = last;
-                    while span_positive(hi) {
-                        hi += 1;
-                    }
-                    let (Some(&a), Some(&b)) = (by_t.get(lo), by_t.get(hi)) else {
-                        return Ok(None);
-                    };
-                    // the round's end t into the span from `from` to `beyond`, over which the law
-                    // is not positive: halfway from `from` to the law's crossing of the tolerance
-                    // there (by bisection); `None` where the law does not fall to it at `beyond`
-                    // or does not stay above it up to that end
-                    let run_on = |from: &TsectPnt, beyond: Option<&&TsectPnt>| {
-                        let t = t_of(from);
-                        let Some(beyond) = beyond else {
-                            return Some(t);
-                        };
-                        let (mut inside, mut outside) = (t, t_of(beyond));
-                        if stays(outside, outside) {
-                            return None;
-                        }
-                        for _ in 0..CROSSING_STEPS {
-                            let mid = 0.5 * (inside + outside);
-                            if mid == inside || mid == outside {
-                                break;
-                            }
-                            if stays(mid, mid) {
-                                inside = mid;
-                            } else {
-                                outside = mid;
-                            }
-                        }
-                        let end = 0.5 * (t + inside);
-                        stays(t.min(end), t.max(end)).then_some(end)
-                    };
-                    let before = lo.checked_sub(1).and_then(|i| by_t.get(i));
-                    let after = by_t.get(hi + 1);
-                    let (Some(start), Some(end)) = (run_on(a, before), run_on(b, after)) else {
-                        return Ok(None);
-                    };
-                    let range = Extent1d::from_min_max(start, end);
-                    if range.length() <= 0.0 {
-                        return Ok(None);
-                    }
-                    // (the stations beyond a run-on end seed the round's end station there)
-                    let first_kept = match before {
-                        Some(_) if range.min() < t_of(a) => lo - 1,
-                        _ => lo,
-                    };
-                    let last_kept = match after {
-                        Some(_) if range.max() > t_of(b) => hi + 1,
-                        _ => hi,
-                    };
-                    let kept = by_t
-                        .get(first_kept..=last_kept)
-                        .map(|run| run.iter().map(|&p| p.clone()).collect())
-                        .unwrap_or_default();
-                    law_curves = Some((leader, law, kept, Some(range)));
-                }
+                law_curves = Some(curves);
             }
             _ => return Ok(None),
         }

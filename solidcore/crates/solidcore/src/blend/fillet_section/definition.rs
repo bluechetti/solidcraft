@@ -43,7 +43,10 @@ use super::interval::Ivl;
 use super::section::gn_equal_area_w;
 use super::series::{Ser, Trunc, VSer, MAX_E, MAX_K, MAX_S};
 use super::station::{feet_on_knots, gn_solve_station_with, GnStation, StationOptions};
-use super::tay::{gn_area_sum, gn_half_angle, gn_invert, gn_target, gn_wedge_cos, Ring, Tay, TAY};
+use super::tay::{
+    gn_area_sum, gn_half_angle, gn_invert, gn_target, gn_wedge_cos, gn_wedge_cos_over, Ring, Tay,
+    TAY,
+};
 use crate::error::{Result, SolidError};
 use crate::geom::vector3d::Vec3;
 use crate::kernel::Kernel;
@@ -640,11 +643,22 @@ pub fn evaluate_definition(
         }
         // (kept with the station: the root is the costly part, and a row of points
         // shares it)
-        let [r0, r1] = def.offsets;
+        // the product of the ball's radii to its contacts: its offsets', or with a law (not
+        // the fork's) the law's square as a series in s
         let ws = if let Some(w) = memo_w {
             w
         } else {
-            let u = gn_half_angle(&gn_wedge_cos::<f64>(&at.f, &at.v, r0 * r1, ls));
+            let x = match law {
+                Some(l) => {
+                    let mut t = Tay::<f64>::zero();
+                    for i in 0..=TAY {
+                        t.set(i, l.at(i, 0));
+                    }
+                    gn_wedge_cos_over::<f64>(&at.f, &at.v, &(t * t), ls)
+                }
+                None => gn_wedge_cos::<f64>(&at.f, &at.v, r[0] * r[1], ls),
+            };
+            let u = gn_half_angle(&x);
             let w0 = gn_equal_area_w(k, n, u.at(0))?;
             let d = gn_area_sum(n, Tay::of_terms(w0, 1.0));
             if d.at(1).partial_cmp(&0.0) != Some(Ordering::Less) {

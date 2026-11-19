@@ -746,6 +746,16 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
                         }
                         d.extra.insert("radii".into(), json!(radii));
                     }
+                    if rtype == 2 || rtype == 4 {
+                        // The sections: circular arcs, or a Curvature fillet's (G2), whose size
+                        // follows the radius along the edge.
+                        let was = d.extra.get("curvature").and_then(Value::as_bool).unwrap_or(false);
+                        let mut curvature = was;
+                        ui_kit::checkbox_grid(ui, &mut [("ui.fillet_variable_curvature", &mut curvature)], 1);
+                        if curvature != was {
+                            d.extra.insert("curvature".into(), json!(curvature));
+                        }
+                    }
                 });
             }
         }

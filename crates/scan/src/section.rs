@@ -28,6 +28,96 @@ pub struct Run {
     pub closed: bool,
 }
 
+/// How many steps the stretch of the axis that closes a half-section is walked in, so that a
+/// fitter of the outline sees it as the straight run it is.
+const AXIS_STEPS: usize = 12;
+
+/// One side of a cut through a turned part's axis: the parts of `runs` (in a plane whose X runs
+/// along the axis, Y the distance from it) with `side` × y at least 0, each as points and whether
+/// it is closed. A loop that crosses the axis is cut there and closed along it, from where it
+/// comes back to the axis to where it left (a solid part's half profile, ready to revolve); a loop
+/// wholly on the side is kept as it is (a ring's section); an open run gives its stretches on the
+/// side, closed along the axis when both ends come down to it (within `reach`: a scan's last
+/// triangles stop short of it), else left open.
+pub fn half(runs: &[Run], side: f64, reach: f64) -> Vec<(Vec<Vec2>, bool)> {
+    let side = if side < 0.0 { -1.0 } else { 1.0 };
+    let mut out = Vec::new();
+    // A stretch closed along the axis: the axis walked from its last point back to its first.
+    let along_axis = |mut points: Vec<Vec2>| {
+        let (Some(&first), Some(&last)) = (points.first(), points.last()) else { return points };
+        for i in 1..AXIS_STEPS {
+            points.push(Vec2::new(last.x + (first.x - last.x) * i as f64 / AXIS_STEPS as f64, 0.0));
+        }
+        points
+    };
+    let crossing = |p: Vec2, q: Vec2| Vec2::new(p.x + (q.x - p.x) * (p.y / (p.y - q.y)), 0.0);
+    for run in runs {
+        let points: Vec<Vec2> = run.points.iter().map(|p| Vec2::new(p.x, side * p.y)).collect();
+        let n = points.len();
+        if n < 2 {
+            continue;
+        }
+        if run.closed {
+            if points.iter().all(|p| p.y >= 0.0) {
+                out.push((points, true));
+                continue;
+            }
+            // From a point below the axis, round once: each stretch above it, crossing to crossing.
+            let Some(start) = points.iter().position(|p| p.y < 0.0) else { continue };
+            let mut kept: Vec<Vec2> = Vec::new();
+            for k in 0..n {
+                let (p, q) = (points[(start + k) % n], points[(start + k + 1) % n]);
+                if p.y >= 0.0 {
+                    kept.push(p);
+                }
+                if (p.y >= 0.0) != (q.y >= 0.0) {
+                    kept.push(crossing(p, q));
+                    if p.y >= 0.0 {
+                        if kept.len() >= 3 {
+                            out.push((along_axis(std::mem::take(&mut kept)), true));
+                        }
+                        kept.clear();
+                    }
+                }
+            }
+            continue;
+        }
+        let mut kept: Vec<Vec2> = Vec::new();
+        let mut finish = |mut kept: Vec<Vec2>| {
+            if kept.len() < 2 {
+                return;
+            }
+            // An end that stops within reach of the axis is taken down to it.
+            let last = kept.len() - 1;
+            for end in [0, last] {
+                if kept[end].y > 0.0 && kept[end].y <= reach {
+                    kept[end].y = 0.0;
+                }
+            }
+            if kept[0].y == 0.0 && kept[last].y == 0.0 && kept.len() >= 3 {
+                out.push((along_axis(kept), true));
+            } else {
+                out.push((kept, false));
+            }
+        };
+        for k in 0..n {
+            let p = points[k];
+            if p.y >= 0.0 {
+                kept.push(p);
+            }
+            let Some(&q) = points.get(k + 1) else { continue };
+            if (p.y >= 0.0) != (q.y >= 0.0) {
+                kept.push(crossing(p, q));
+                if p.y >= 0.0 {
+                    finish(std::mem::take(&mut kept));
+                }
+            }
+        }
+        finish(kept);
+    }
+    out
+}
+
 fn pair(a: u32, b: u32) -> u64 {
     (u64::from(a.min(b)) << 32) | u64::from(a.max(b))
 }
@@ -270,6 +360,53 @@ pub fn along(scan: &Scan, path: &[Vec3], count: usize, every: bool, reach: f64) 
 
 #[cfg(test)]
 mod tests {
+    /// A cup's section through its axis (one loop round the thickness of its wall and bottom,
+    /// crossing the axis twice): one side of it is the wall's half, closed along the axis through
+    /// the bottom's thickness. A ring's section (two loops, neither on the axis) keeps the loop on
+    /// that side. An open run that comes down to the axis at both ends is closed along it; one
+    /// that does not is left open.
+    #[test]
+    fn one_side_of_a_cut_through_an_axis_is_closed_along_it() {
+        use super::*;
+        let loop_of = |points: &[[f64; 2]]| Run {
+            points: points.iter().map(|p| Vec2::new(p[0], p[1])).collect(),
+            triangles: vec![0; points.len()],
+            closed: true,
+        };
+        // Height along x, radius y: bottom from x 0 to 3 thick, wall from radius 27 to 30, 60 high.
+        let cup = loop_of(&[[0.0, -30.0], [0.0, 30.0], [60.0, 30.0], [60.0, 27.0], [3.0, 27.0], [3.0, -27.0], [60.0, -27.0], [60.0, -30.0]]);
+        for side in [1.0, -1.0] {
+            let found = half(std::slice::from_ref(&cup), side, 0.1);
+            assert_eq!(found.len(), 1, "{found:?}");
+            let (points, closed) = &found[0];
+            assert!(*closed && points.iter().all(|p| p.y >= 0.0), "{points:?}");
+            // The wall's corners are all there, and the axis from the inside of the bottom to its outside.
+            for corner in [[0.0, 30.0], [60.0, 30.0], [60.0, 27.0], [3.0, 27.0], [3.0, 0.0], [0.0, 0.0]] {
+                assert!(points.iter().any(|p| p.dist(Vec2::new(corner[0], corner[1])) < 1e-9), "{corner:?} of {points:?}");
+            }
+            let on_axis = points.iter().filter(|p| p.y == 0.0).count();
+            assert!(on_axis > 2, "the axis is walked, not jumped: {points:?}");
+            let twice_area: f64 = (0..points.len()).map(|i| points[i].cross(points[(i + 1) % points.len()])).sum();
+            assert!((twice_area.abs() / 2.0 - (60.0 * 3.0 + 3.0 * 27.0)).abs() < 1e-9, "the wall's half section: {twice_area}");
+        }
+        let ring =
+            [loop_of(&[[0.0, 10.0], [5.0, 10.0], [5.0, 14.0], [0.0, 14.0]]), loop_of(&[[0.0, -10.0], [0.0, -14.0], [5.0, -14.0], [5.0, -10.0]])];
+        let found = half(&ring, 1.0, 0.1);
+        assert!(found.len() == 1 && found[0].1 && found[0].0.len() == 4 && found[0].0.iter().all(|p| p.y >= 10.0), "{found:?}");
+        // A cone's open skin: from near the axis out and back down to near it.
+        let open = |points: &[[f64; 2]]| Run {
+            points: points.iter().map(|p| Vec2::new(p[0], p[1])).collect(),
+            triangles: vec![0; points.len()],
+            closed: false,
+        };
+        let skin = open(&[[0.0, 0.05], [0.0, 20.0], [30.0, 10.0], [30.0, 0.02]]);
+        let found = half(std::slice::from_ref(&skin), 1.0, 0.1);
+        assert!(found.len() == 1 && found[0].1 && found[0].0[0] == Vec2::new(0.0, 0.0), "taken down to the axis and closed: {found:?}");
+        let short = open(&[[0.0, 5.0], [0.0, 20.0], [30.0, 10.0]]);
+        let found = half(std::slice::from_ref(&short), 1.0, 0.1);
+        assert!(found.len() == 1 && !found[0].1 && found[0].0.len() == 3, "{found:?}");
+    }
+
     use super::*;
     use crate::test_meshes::{fine_cuboid, revolved};
 

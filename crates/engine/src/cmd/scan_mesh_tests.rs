@@ -238,8 +238,17 @@ fn a_noisy_scan_is_denoised_and_a_clean_one_left_alone() {
     let (positions, triangles) = grid_box(50);
     let mut s = Session::default();
     let clean = insert(&mut s, &positions, &triangles, "clean");
-    let refused = s.execute("scan.denoise", &json!({"body": clean})).unwrap_err().to_string();
-    assert!(refused.contains("as smooth as it can be read"), "{refused}");
+    // A clean scan needs no smoothing: no failure, nothing changed, and the reply says why.
+    let features = s.doc.features.len();
+    let nothing = s.execute("scan.denoise", &json!({"body": clean})).unwrap();
+    assert_eq!(
+        (nothing["changed"].as_bool(), nothing["strength"].as_f64(), nothing["max_moved"].as_f64()),
+        (Some(false), Some(0.0), Some(0.0)),
+        "{nothing}"
+    );
+    assert!(nothing["note"].as_str().is_some_and(|n| n.contains("as smooth as it can be read")) && nothing.get("feature").is_none(), "{nothing}");
+    assert_eq!(s.doc.features.len(), features, "no step is added");
+    // Asking for no smoothing at all is a mistake in the call, and stays one.
     let refused = s.execute("scan.denoise", &json!({"body": clean, "strength": 0})).unwrap_err().to_string();
     assert!(refused.contains("smooths nothing"), "{refused}");
     // Each place moved alike (its copies on the box's edges too), along the face it lies on.

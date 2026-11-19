@@ -137,6 +137,11 @@ fn label(app: &SolveApp, reading: &Reading, step: &Proposal) -> String {
     }
 }
 
+/// The handle of step `n`'s row: `scan_reconstruct:<n>:<command>`.
+pub fn step_handle(n: usize, step: &Proposal) -> String {
+    format!("scan_reconstruct:{n}:{}", step.command())
+}
+
 /// The dialog's rows.
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reconstruct) -> bool {
     let Some((found, (reading, in_shapes))) = found(app).and_then(|f| reading_of(app, &f, k.selected).map(|r| (f, r))) else {
@@ -156,11 +161,15 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reconstruct) -> bool {
     if steps.is_empty() {
         ui_kit::text(ui, tr("ui.scan_reconstruct_nothing"), ui_kit::Text::Report("scan_reconstruct_nothing", true));
     }
-    for (step, ticked) in steps.iter().zip(k.ticked.iter_mut()) {
-        ui_kit::checkbox(ui, &label(app, &reading, step), ticked);
+    // Each row has a handle of its own (its place and its command), so a script or a test ticks
+    // the step it means: the rows' labels carry the scan's numbers and say nothing stable.
+    for (n, (step, ticked)) in steps.iter().zip(k.ticked.iter_mut()).enumerate() {
+        let row = ui_kit::checkbox(ui, &label(app, &reading, step), ticked);
+        crate::scenario::publish_handle(&step_handle(n, step), row.rect.center());
     }
     if !k.selected && (!steps.is_empty() || reconstruct::is_built(&app.session, &found.scan)) {
-        ui_kit::checkbox(ui, tr("ui.scan_reconstruct_rest"), &mut k.rest);
+        let row = ui_kit::checkbox(ui, tr("ui.scan_reconstruct_rest"), &mut k.rest);
+        crate::scenario::publish_handle("scan_reconstruct:rest", row.rect.center());
     }
     ui_kit::text(ui, tr("ui.scan_reconstruct_hint"), ui_kit::Text::Hint("scan_reconstruct_hint"));
     false
@@ -184,6 +193,36 @@ pub fn commands(app: &SolveApp, k: &Reconstruct) -> Result<Vec<(String, Value)>,
         return Err(tr("ui.scan_reconstruct_none_ticked").into());
     }
     Ok(chosen)
+}
+
+/// For each of the commands OK runs, the earlier one it builds on: Pattern It repeats the cut,
+/// hole or extrusion of the same hole or prism, and is left out with it.
+pub fn needs(commands: &[(String, Value)]) -> Vec<Option<usize>> {
+    let same = |a: &Value, b: &Value, key: &str| a.get(key).is_some_and(|k| !k.is_null() && b.get(key) == Some(k));
+    commands
+        .iter()
+        .enumerate()
+        .map(|(i, (id, p))| {
+            if id != "scan.pattern_it" {
+                return None;
+            }
+            commands[..i].iter().rposition(|(made, q)| match made.as_str() {
+                "scan.cut_it" | "scan.hole_it" => same(p, q, "hole"),
+                "scan.extrude_it" => same(p, q, "prism"),
+                _ => false,
+            })
+        })
+        .collect()
+}
+
+/// What the status line says when OK left steps out: how many were built, and each step left out
+/// with why.
+pub fn left_out_note(built: usize, left_out: &[(String, String)]) -> String {
+    let steps: Vec<String> = left_out.iter().map(|(id, why)| crate::friendly_error(id, why)).collect();
+    solidcraft_ui_text::format(
+        "ui.scan_reconstruct_left_out",
+        &[("built", &built.to_string()), ("asked", &(built + left_out.len()).to_string()), ("steps", &steps.join("; "))],
+    )
 }
 
 #[cfg(test)]
@@ -222,6 +261,127 @@ mod tests {
         let path = h.dir.join("slab.stl");
         std::fs::write(&path, stl + "endsolid s\n").unwrap();
         h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+    }
+
+    /// A block 80 × 60 × 20 with its four top edges rounded R 2, meshed finely (each triangle cut
+    /// in four, twice) and inserted as a scan.
+    fn rounded_block(h: &mut crate::scenario::Harness) {
+        h.app.run("solid.box", json!({"length": 80, "width": 60, "height": 20, "body_name": "Rounded"})).unwrap();
+        h.app
+            .run(
+                "solid.fillet",
+                json!({"edges": [[40, 0, 20], [80, 30, 20], [40, 60, 20], [0, 30, 20]], "radius": 2, "tangent_chain": false, "body": "Rounded"}),
+            )
+            .unwrap();
+        let mesh = {
+            let state = h.app.session.model.state();
+            let body = state.body("Rounded").unwrap();
+            body.body.mesh(&solidcraft_engine::kernel::MeshTolerance { chord: 0.005, angle: Some(4f64.to_radians()) }).unwrap()
+        };
+        let mut triangles: Vec<[solidcore_record::Vec3; 3]> = mesh.triangles.iter().map(|t| t.map(|i| mesh.positions[i as usize])).collect();
+        for _ in 0..2 {
+            triangles = triangles
+                .into_iter()
+                .flat_map(|[a, b, c]| {
+                    let (ab, bc, ca) = ((a + b) * 0.5, (b + c) * 0.5, (c + a) * 0.5);
+                    [[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]]
+                })
+                .collect();
+        }
+        let mut stl = String::from("solid r\n");
+        for t in &triangles {
+            stl += "facet normal 0 0 0\nouter loop\n";
+            for p in t {
+                stl += &format!("vertex {} {} {}\n", p.x, p.y, p.z);
+            }
+            stl += "endloop\nendfacet\n";
+        }
+        h.app.run("edit.undo", json!({})).unwrap();
+        h.app.run("edit.undo", json!({})).unwrap();
+        let path = h.dir.join("rounded.stl");
+        std::fs::write(&path, stl + "endsolid r\n").unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+    }
+
+    /// Each step's row has a handle of its own, by its place and its command, and so has
+    /// Reconstruct the Rest: clicking one ticks or unticks that row and no other.
+    #[test]
+    fn each_step_has_a_handle_of_its_own_to_click() {
+        let mut h = crate::scenario::Harness::new();
+        rounded_block(&mut h);
+        h.app.start("scan.reconstruct");
+        h.settle();
+        h.frames(2);
+        let ticked = |h: &crate::scenario::Harness| match h.app.dialog.as_ref().map(|d| &d.kind) {
+            Some(Kind::ScanReconstruct(k)) => (k.ticked.clone(), k.rest),
+            _ => panic!("the Reconstruct dialog"),
+        };
+        assert_eq!(ticked(&h), (vec![true, true], false));
+        let handles = ["scan_reconstruct:0:scan.extrude_it", "scan_reconstruct:1:scan.fillet_it", "scan_reconstruct:rest"];
+        let places: Vec<[f64; 2]> = handles.iter().map(|name| h.at(&json!({"handle": name})).unwrap_or_else(|e| panic!("{name}: {e}"))).collect();
+        assert!(places[0] != places[1] && places[1] != places[2] && places[0] != places[2], "{places:?}");
+        h.step(&json!({"click": {"handle": handles[1]}})).unwrap();
+        h.frames(2);
+        assert_eq!(ticked(&h), (vec![true, false], false), "Fillet It unticked, the rest as they were");
+        h.step(&json!({"click": {"handle": handles[2]}})).unwrap();
+        h.frames(2);
+        assert_eq!(ticked(&h), (vec![true, false], true));
+        h.step(&json!({"click": {"handle": handles[0]}})).unwrap();
+        h.frames(2);
+        assert_eq!(ticked(&h), (vec![false, false], true));
+    }
+
+    /// One refused step does not stop the rest: the block with rounded top edges lists Extrude It
+    /// and Fillet It; with Fillet It refused, OK still builds the block, closes, and the status
+    /// line names the step left out and why. With every step refused, the dialog stays and says so.
+    #[test]
+    fn ok_builds_the_steps_it_can_and_names_the_one_refused() {
+        let mut h = crate::scenario::Harness::new();
+        rounded_block(&mut h);
+        h.app.start("scan.reconstruct");
+        h.settle();
+        let found = found(&h.app).expect("read");
+        let steps = reconstruct::proposals(&found.reading, false);
+        assert!(matches!(steps[..], [Proposal::Extrude(0), Proposal::Fillet]), "{steps:?}");
+        let refuse = |refused: &'static [&'static str]| -> solidcraft_engine::CommandCheck {
+            std::sync::Arc::new(move |id, _, _| if refused.contains(&id) { Err("the kernel refused it".to_string()) } else { Ok(()) })
+        };
+        // Everything refused: nothing is built, and the dialog stays open with the refusal.
+        h.app.session.set_command_check(Some(refuse(&["scan.extrude_it", "scan.fillet_it"])));
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        let refused = h.app.dialog.as_ref().and_then(|d| d.error.clone());
+        assert!(refused.as_ref().is_some_and(|e| e.contains("the kernel refused it")), "{refused:?}");
+        assert!(!reconstruct::is_built(&h.app.session, &found.scan));
+        // Only the fillet refused: the block is built.
+        h.app.session.set_command_check(Some(refuse(&["scan.fillet_it"])));
+        let undo = h.app.session.undo.len();
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        let built = h.app.session.model.state().bodies.iter().find(|b| b.name.ends_with("Reconstructed")).and_then(|b| b.body.volume_at(0.01));
+        assert!(built.is_some_and(|v| (v - 96000.0).abs() < 100.0), "the sharp block: {built:?}");
+        assert_eq!(h.app.session.undo.len(), undo + 1, "one undo step for the one step built");
+        let said = h.app.status.as_ref().map(|s| s.0.clone()).unwrap_or_default();
+        assert!(said.contains("1 of 2") && said.contains("Fillet It") && said.contains("the kernel refused it"), "{said}");
+    }
+
+    /// Pattern It builds on the cut, hole or extrusion of its own hole or prism, and on nothing
+    /// else: left out with that step when OK leaves it out.
+    #[test]
+    fn a_pattern_builds_on_its_own_cut_or_extrusion() {
+        let step = |id: &str, p: Value| (id.to_string(), p);
+        let commands = [
+            step("scan.extrude_it", json!({"body": "s", "prism": 0})),
+            step("scan.pattern_it", json!({"body": "s", "prism": 0})),
+            step("scan.extrude_it", json!({"body": "s", "prism": 2})),
+            step("scan.cut_it", json!({"body": "s", "hole": 0})),
+            step("scan.hole_it", json!({"body": "s", "hole": 1})),
+            step("scan.pattern_it", json!({"body": "s", "hole": 1})),
+            step("scan.pattern_it", json!({"body": "s", "hole": 0})),
+            step("scan.fillet_it", json!({"body": "s"})),
+        ];
+        assert_eq!(needs(&commands), [None, Some(0), None, None, None, Some(4), Some(3), None]);
     }
 
     /// A rounded slab as a scan: Reconstruct's button reads it and lists one Extrude It, ticked;

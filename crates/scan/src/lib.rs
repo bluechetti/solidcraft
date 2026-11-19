@@ -99,6 +99,7 @@ pub mod repair;
 pub mod section;
 pub mod segment;
 pub mod selection;
+pub mod silhouette;
 pub mod split;
 mod subdivide;
 pub mod surface;
@@ -218,27 +219,47 @@ pub(crate) fn welded_within(positions: &[Vec3]) -> (Vec<u32>, usize) {
     if !(reach > 0.0 && reach.is_finite()) {
         return (exact, 0);
     }
-    let cell = |p: Vec3| [(p.x / reach).floor() as i64, (p.y / reach).floor() as i64, (p.z / reach).floor() as i64];
-    let mut grid: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
+    // Cells two reaches wide: whatever lies within reach of a point is in the cells its own
+    // reach touches, one or two along each axis (eight at most, where cells one reach wide meant
+    // twenty-seven for every point). Each cell holds its points as a chain through `next`, so a
+    // scan of tens of millions of points makes no list for each of them.
+    let side = 2.0 * reach;
+    let along = |v: f64| ((v - reach) / side).floor() as i64..=((v + reach) / side).floor() as i64;
+    let cell = |p: Vec3| [(p.x / side).floor() as i64, (p.y / side).floor() as i64, (p.z / side).floor() as i64];
+    const END: u32 = u32::MAX;
+    let mut grid: HashMap<[i64; 3], u32> = HashMap::with_capacity(positions.len() / 2);
+    let mut next = vec![END; positions.len()];
     let mut rep = exact.clone();
     let mut joined = 0;
     for (i, p) in positions.iter().enumerate() {
         if exact[i] as usize != i || !(p.x.is_finite() && p.y.is_finite() && p.z.is_finite()) {
             continue;
         }
-        let [x, y, z] = cell(*p);
-        let near = (-1..=1)
-            .flat_map(|dx| (-1..=1).flat_map(move |dy| (-1..=1).map(move |dz| [x + dx, y + dy, z + dz])))
-            .filter_map(|k| grid.get(&k))
-            .flatten()
-            .copied()
-            .find(|&j| positions[j as usize].dist(*p) <= reach);
+        let mut near = None;
+        'cells: for x in along(p.x) {
+            for y in along(p.y) {
+                for z in along(p.z) {
+                    let mut j = grid.get(&[x, y, z]).copied().unwrap_or(END);
+                    while j != END {
+                        if positions[j as usize].dist(*p) <= reach {
+                            near = Some(j);
+                            break 'cells;
+                        }
+                        j = next[j as usize];
+                    }
+                }
+            }
+        }
         match near {
             Some(j) => {
                 rep[i] = j;
                 joined += 1;
             }
-            None => grid.entry([x, y, z]).or_default().push(i as u32),
+            None => {
+                let head = grid.entry(cell(*p)).or_insert(END);
+                next[i] = *head;
+                *head = i as u32;
+            }
         }
     }
     // A copy of a joined point goes where its first went.

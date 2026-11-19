@@ -31,6 +31,33 @@ fn acceptance_preserves_file_history_and_prepared_world_without_evaluation() {
 }
 
 #[test]
+fn prepared_preview_includes_visibility_and_command_replies() {
+    let mut session = Session::default();
+    session.execute("solid.box", &json!({"length":1,"width":1,"height":1,"body_name":"Hidden"})).unwrap();
+    session.execute("browser.visibility", &json!({"items":["Hidden"],"visible":false})).unwrap();
+    let history = session.undo.len();
+    let document = session.doc.clone();
+    let prepared = session.scratch().compute_commands(&commands(), None).unwrap();
+
+    let preview = prepared.preview_visible_world().unwrap();
+    assert!(preview.before.bodies.is_empty());
+    assert_eq!(preview.after.bodies.len(), 1);
+    assert_eq!(preview.replies.as_slice(), std::slice::from_ref(&prepared.steps[0].reply));
+    assert!(prepared.changes_document());
+    assert!(Arc::ptr_eq(&document, &session.doc));
+    assert_eq!(session.undo.len(), history);
+}
+
+#[test]
+fn an_equal_document_in_a_new_allocation_is_unchanged() {
+    let session = Session::default();
+    let mut prepared = session.scratch().compute_commands(&[], None).unwrap();
+    prepared.computed.doc = Arc::new((*prepared.computed.doc).clone());
+    assert!(!Arc::ptr_eq(&prepared.source.doc, &prepared.computed.doc));
+    assert!(!prepared.changes_document());
+}
+
+#[test]
 fn failure_discards_the_entire_batch() {
     let session = Session::default();
     let document = session.doc.clone();
@@ -39,6 +66,36 @@ fn failure_discards_the_entire_batch() {
     assert!(session.scratch().compute_commands(&batch, None).is_err());
     assert!(Arc::ptr_eq(&document, &session.doc));
     assert!(session.undo.is_empty());
+}
+
+/// Commands that stand apart (the steps Reconstruct proposes): a refused one is left out with
+/// why, one that builds on it goes with it, and the rest are built, each its own undo step. When
+/// all of them are refused, that is the refusal.
+#[test]
+fn commands_that_stand_apart_leave_out_a_refused_one_and_what_builds_on_it() {
+    let mut session = Session::default();
+    let batch: Vec<(String, serde_json::Value)> = vec![
+        ("solid.box".into(), json!({"length":2,"width":3,"height":4})),
+        ("solid.box".into(), json!({"length":-1})),
+        ("solid.sphere".into(), json!({"radius":1})),
+        ("solid.cylinder".into(), json!({"radius":1,"height":1,"base":[10,0,0]})),
+    ];
+    let prepared = session.scratch().compute_commands_apart(&batch, &[None, None, Some(1), None]).unwrap();
+    let ran: Vec<&str> = prepared.steps().map(|(id, _, _)| id).collect();
+    assert_eq!(ran, ["solid.box", "solid.cylinder"]);
+    let left_out = prepared.left_out();
+    assert_eq!(left_out.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["solid.box", "solid.sphere"]);
+    assert!(left_out[0].1.contains("`solid.box`") && left_out[0].1.contains("must be"), "the refusal's own words: {left_out:?}");
+    assert!(left_out[1].1.contains("`solid.box`") && left_out[1].1.contains("left out"), "{left_out:?}");
+    session.accept_commands(prepared).unwrap();
+    assert_eq!(session.undo.len(), 2, "each built step is its own undo step");
+    assert_eq!(session.model.state().bodies.len(), 2);
+    // Without the refused step in the way nothing is left out.
+    let clean = session.scratch().compute_commands_apart(&batch[..1], &[None]).unwrap();
+    assert!(clean.left_out().is_empty());
+    // Nothing built: the first refusal is the error, as it came.
+    let refused = session.scratch().compute_commands_apart(&batch[1..3], &[None, Some(0)]);
+    assert!(refused.err().is_some_and(|e| e.to_string().contains("`solid.box`")));
 }
 
 #[test]

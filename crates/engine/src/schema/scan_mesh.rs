@@ -42,8 +42,11 @@ pub struct ScanRegisterResult {
     /// distances, its worst share left out, in mm.
     pub rms_before: f64,
     pub rms_after: f64,
-    /// The share of it lying on the other after, 0–1.
+    /// The share of it lying on the other after, 0–1, and the root mean square of that share's
+    /// distances (mm): how well what overlaps fits. Read this, not `rms_after`, for passes that
+    /// overlap in part: `rms_after` counts what has no partner too.
     pub matched: f64,
+    pub rms_matched: f64,
     /// Where the winning start came from, and whether the fit settled.
     pub start: String,
     pub converged: bool,
@@ -246,8 +249,15 @@ pub struct ScanDenoiseResult {
     /// How far its vertices moved: root mean square and largest, in mm.
     pub rms_moved: f64,
     pub max_moved: f64,
-    /// The scan's feature, changed.
-    pub feature: u64,
+    /// The scan's feature, changed. None when there was nothing to do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<u64>,
+    /// `false` when the scan needed nothing of this step: it is as it was, no step was added, and
+    /// `note` says why. Left out when the step was done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }

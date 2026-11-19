@@ -185,8 +185,15 @@ pub struct ScanMirror {
     pub rms: f64,
     /// The share of the scan whose reflection lands on the scan, 0 to 1.
     pub coverage: f64,
-    /// Whether the scan is a mirror image about it: 85 % matched, typically within 2 % of its size.
+    /// Whether the scan is a mirror image about it: 85 % matched (or 60 % with both sides of the
+    /// thing there and matching out to their ends), typically within 2 % of its size. From
+    /// Complete by Mirroring: 85 % matched, since a part on one side only would get an image the
+    /// thing has not.
     pub symmetric: bool,
+    /// For a mirror image under 85 % of which matches: how much does not, in words. That part is
+    /// the thing's own, on one side only, and is not to be taken for noise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partly: Option<String>,
 }
 
 /// What `scan.symmetry` returns.
@@ -473,9 +480,49 @@ pub struct ScanMarkersResult {
     /// The Scan Clean step (or Insert Mesh feature, `in_place`) that keeps it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feature: Option<u64>,
+    /// `false` when the scan needed nothing of this step: it is as it was, no step was added, and
+    /// `note` says why. Left out when the step was done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
+}
+
+/// Whether the scanned thing clears a solid, measured on the solid's exact faces.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanDeviationClearance {
+    /// No point of the scan lies in the solid's material by more than the tolerance.
+    pub fits: bool,
+    /// The least gap between the scan and the solid where the scan is outside it (mm), and the
+    /// scan point there. 0 where they touch. None when no point of the scan is outside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap_at: Option<[f64; 3]>,
+    /// The share of the scan's points in the solid's material by more than the tolerance (0–1),
+    /// how deep the deepest is (mm) and where. Deeper than Deviation measures (four times its
+    /// `limit`) the depth is read off a sample of the points there: at least this deep.
+    pub inside: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deepest: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deepest_at: Option<[f64; 3]>,
+}
+
+/// A patch of the scan beyond the tolerance on one side of the model.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanDeviationRegion {
+    /// `below` (inside the model) or `above` (outside it).
+    pub side: String,
+    /// Its area on the scan (mm²), the volume between it and the model (mm³), and its largest
+    /// distance from the model (mm) with the place.
+    pub area: f64,
+    pub volume: f64,
+    pub deepest: f64,
+    pub at: [f64; 3],
 }
 
 /// Parameters of `scan.remove_and_fill`: part of the scan taken off (a stamp, a boss, a sprue, a
@@ -578,6 +625,32 @@ pub struct ScanDeviationResult {
     pub max_above_at: Option<[f64; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_below_at: Option<[f64; 3]>,
+    /// What lies beyond the tolerance, as area on the scan (mm²) and volume between the scan and
+    /// the model (mm³; each scan point's distance times the area it stands for): `below` inside
+    /// the model (material missing: wear, a dent), `above` outside it. Neither needs to be closed.
+    /// For these, and for `regions`, a point's distance is to the model face it faces, so a dent
+    /// beside a wall or a step is not measured against the wall (`max_below` and the colours are
+    /// still to the nearest of the model).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub area_below: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub area_above: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_below: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_above: Option<f64>,
+    /// The patches beyond the tolerance (joined along the scan's edges, one side of the model
+    /// each), the largest volumes first, at most 8, and how many there are in all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<ScanDeviationRegion>,
+    /// Against a solid body: whether the scanned thing clears it (a tool in its foam pocket, a
+    /// part in its nest), and by how much. The scan's points are sorted by the model's mesh and
+    /// the nearest and the deepest of them measured on the solid's exact faces; points too far
+    /// off to be measured are still asked whether they are in its material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clearance: Option<ScanDeviationClearance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regions_found: Option<usize>,
     /// The colour steps on each side of within, 0 for a smooth scale.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bands: Option<u32>,
@@ -1738,8 +1811,15 @@ pub struct ScanFloatingResult {
     /// The triangles the scan has left.
     pub triangles: usize,
     /// The Scan Clean step that keeps the settings (with `in_place`, the Insert Mesh feature the
-    /// scan was written back into).
-    pub feature: u64,
+    /// scan was written back into). None when there was nothing to do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<u64>,
+    /// `false` when the scan needed nothing of this step: it is as it was, no step was added, and
+    /// `note` says why. Left out when the step was done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
@@ -1780,17 +1860,37 @@ pub struct ScanHolesResult {
     pub holes: usize,
     pub filled: usize,
     pub failed: usize,
+    /// Each hole within the limit that could not be closed: where, how many edges, and why.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left: Vec<ScanHoleLeft>,
     pub larger: usize,
     /// The triangles the patches added.
     pub added_triangles: usize,
     /// Open edges in no simple ring (a pinch, a dead end), left alone.
     pub unfillable_edges: usize,
     /// The Scan Clean step that keeps the settings (with `in_place`, the Insert Mesh feature the
-    /// scan was written back into).
-    pub feature: u64,
+    /// scan was written back into). None when there was nothing to do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<u64>,
+    /// `false` when the scan needed nothing of this step: it is as it was, no step was added, and
+    /// `note` says why. Left out when the step was done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
+}
+
+/// A hole Fill Holes could not close.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanHoleLeft {
+    /// The middle of its ring, and how many edges it has.
+    pub at: [f64; 3],
+    pub edges: usize,
+    /// Why no patch closes it.
+    pub why: String,
 }
 
 /// Reduce a scan's triangles: edges collapsed cheapest first, where a collapse costs how far it
@@ -1855,8 +1955,15 @@ pub struct ScanReduceResult {
     /// The largest error of any collapse made, root mean square, in mm.
     pub largest_error: f64,
     /// The Scan Clean step that keeps the settings (with `in_place`, the Insert Mesh feature the
-    /// scan was written back into).
-    pub feature: u64,
+    /// scan was written back into). None when there was nothing to do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<u64>,
+    /// `false` when the scan needed nothing of this step: it is as it was, no step was added, and
+    /// `note` says why. Left out when the step was done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
@@ -1952,8 +2059,15 @@ pub struct ScanRepairResult {
     /// The triangles the scan has now.
     pub triangles: usize,
     /// The Scan Clean step that keeps the settings (with `in_place`, the Insert Mesh feature the
-    /// scan was written back into).
-    pub feature: u64,
+    /// scan was written back into). None when there was nothing to do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<u64>,
+    /// `false` when the scan needed nothing of this step: it is as it was, no step was added, and
+    /// `note` says why. Left out when the step was done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
@@ -1982,6 +2096,39 @@ pub struct ScanSectionParams {
     /// parameter, nothing left free). Default: true. A sketch being edited is left as it is.
     #[serde(default)]
     pub dimensions: Option<bool>,
+    /// Draw the scan's outline seen along the plane's normal instead of a cut: everything the
+    /// scan covers of the plane, whatever its height (a tool's shape for a foam pocket, a part's
+    /// footprint), one closed outline round each piece and each hole through it. `offset` only
+    /// places the sketch. No point of the scan lies more than the tolerance outside it (`outside`
+    /// in the reply). Default: false.
+    #[serde(default)]
+    pub outline: Option<bool>,
+    /// A turned part's axis, `{origin: [x, y, z], dir: [x, y, z]}` (as `scan.reconstruct`'s
+    /// `turned` or `partly_turned` gives it, or a `scan.bases` base of kind `end`): the new sketch
+    /// is on a plane through it, its X along the axis from `origin`, and only one side of the
+    /// cut is drawn, closed along the axis where it comes down to it: a half profile ready for
+    /// `solid.revolve {"sketch": …, "axis": "x"}`. Not with `plane`, `offset` or a sketch being
+    /// edited.
+    #[serde(default)]
+    pub axis: Option<ScanSectionAxis>,
+    /// With `axis`: which side of it is drawn, `positive` (default) or `negative` along the
+    /// sketch's Y.
+    #[serde(default)]
+    pub side: Option<String>,
+    /// With `axis`: how far, in degrees, the plane is turned about the axis from the one nearest
+    /// level (to cut clear of a handle, a spoke or a keyway). Default: 0.
+    #[serde(default)]
+    pub angle: Option<f64>,
+}
+
+/// The axis `scan.section_sketch` cuts a half profile about.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanSectionAxis {
+    /// A point on the axis, in mm.
+    pub origin: Point3,
+    /// Its direction.
+    pub dir: Point3,
 }
 
 /// What `scan.section_sketch` returns.
@@ -2007,6 +2154,16 @@ pub struct ScanSectionResult {
     /// Set when the new sketch could not be dimensioned: why, and the solve status it was left in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
+    /// With `outline`: how far (mm) the farthest point of the scan lies outside the outline drawn
+    /// (0: all of it is inside), read on a sample of its points.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outside: Option<f64>,
+    /// With `axis`: how many of the outlines are closed along the axis (profiles to revolve) and
+    /// how many are left open (the cut stops short of the axis there: close them by hand).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed_on_axis: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_open: Option<usize>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,

@@ -200,10 +200,10 @@ mod tests {
     fn same_surface_closed(scan: &Scan, cut_up: &Finer, longest: f64) {
         let cut = cut_up.scan();
         assert!((area(&cut) - area(scan)).abs() < 1e-9 * area(scan).max(1.0), "{} {}", area(&cut), area(scan));
-        for t in 0..cut.triangle_count() {
+        for (t, &parent) in cut_up.parent.iter().enumerate().take(cut.triangle_count()) {
             let [a, b, c] = cut.corners(t).unwrap();
             assert!(a.dist(b) <= longest && b.dist(c) <= longest && c.dist(a) <= longest);
-            let [p, q, r] = scan.corners(cut_up.parent[t] as usize).unwrap();
+            let [p, q, r] = scan.corners(parent as usize).unwrap();
             let n = (q - p).cross(r - p).normalized().unwrap();
             assert!([a, b, c].iter().all(|x| (*x - p).dot(n).abs() < 1e-9), "in its parent's plane");
             assert!((b - a).cross(c - a).normalized().unwrap().dot(n) > 0.999, "wound as its parent");

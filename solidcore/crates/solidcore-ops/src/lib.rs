@@ -61,6 +61,7 @@ pub mod file;
 pub mod fit_projection;
 pub mod hatch;
 pub mod heal;
+pub mod hlr;
 pub mod import_geometry;
 pub mod joint_turn;
 pub mod label;
@@ -68,6 +69,7 @@ pub mod measure;
 pub mod network;
 pub mod offset;
 pub mod order;
+pub mod outline;
 pub mod path_export;
 pub mod pcurve;
 pub mod pick;
@@ -93,10 +95,10 @@ pub use blend::{
     band_room, blend, blend_ordered, blend_with, carried_faces, carried_faces_ordered,
     chamfer_sides, chamfer_sides_facing, chamfer_sides_facing_with, chamfer_sides_ordered,
     chamfer_sides_ordered_with, chamfer_sides_with, edge_faces_along, edge_faces_along_ordered,
-    edges_share_wedge, fillet_variable, fillet_variable_from, fillet_variable_from_with,
-    fillet_variable_ordered, fillet_variable_ordered_with, fillet_variable_with, tangent_chain,
-    BandRoom, Blend, BlendOptions, Blended, CarriedFace, ChamferCorner, ChamferSecond, Corners,
-    EndRoom, Hole, HoleEdge, Room, SetBack, Turn,
+    edges_share_wedge, fillet_variable, fillet_variable_curvature_from, fillet_variable_from,
+    fillet_variable_from_with, fillet_variable_ordered, fillet_variable_ordered_with,
+    fillet_variable_with, tangent_chain, BandRoom, Blend, BlendOptions, Blended, CarriedFace,
+    ChamferCorner, ChamferSecond, Corners, EndRoom, Hole, HoleEdge, Room, SetBack, Turn,
 };
 pub use body::{
     make_box, make_cone, make_cylinder, make_sphere, make_torus, Body, Contract, TurnedOver,
@@ -105,8 +107,8 @@ pub use boolean::BooleanOp;
 pub use check::{CheckLevel, CheckReport};
 pub use contact::Gap;
 pub use error::{
-    Error, FitKind, OffsetRefusal, RecordEntity, Result, RoomReason, SolidTest, Unblendable,
-    Unsoundness,
+    Error, FailureCode, FitKind, OffsetRefusal, RecordEntity, Result, RoomReason, SolidTest,
+    Unblendable, Unsoundness,
 };
 pub use measure::{
     point_displacement, point_distance, point_set_summary, points_meet, Distance, EdgeCurve,

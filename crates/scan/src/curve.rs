@@ -252,8 +252,8 @@ pub fn fit(laid: &Laid, tolerance: f64) -> Fitted {
             let Some(piece) = spline.get(first..=last) else { continue };
             let (from, to) = (at[span], at[span + 1]);
             let mut far = (from, 0.0f64);
-            for i in from + 1..to {
-                let d = piece.windows(2).map(|w| to_segment(laid.path[i], w[0], w[1])).fold(f64::INFINITY, f64::min);
+            for (i, &point) in laid.path.iter().enumerate().take(to).skip(from + 1) {
+                let d = piece.windows(2).map(|w| to_segment(point, w[0], w[1])).fold(f64::INFINITY, f64::min);
                 if d > far.1 {
                     far = (i, d);
                 }
