@@ -326,7 +326,7 @@ fn search(app: &SolveApp, k: &mut Symmetry, inputs: &[SelInput]) {
     let body = scan_box(&app.session, None).ok();
     let on = body.as_ref().map(|b| b.0.as_str());
     let mirror = match &picked {
-        Some((_, point, normal)) => solidcraft_engine::cmd::scan::mirror_preview(&app.session, on, *point, *normal),
+        Some((_, point, normal)) => solidcraft_engine::cmd::scan::mirror_preview(&app.session, on, *point, *normal, k.square == COMPLETE),
         None => symmetry_preview(&app.session, on, k.guide, k.square == COMPLETE),
     }
     .map_err(|e| e.to_string());

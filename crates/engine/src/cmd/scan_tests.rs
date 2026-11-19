@@ -398,6 +398,11 @@ fn find_symmetry_says_how_much_of_a_mirror_image_has_no_match() {
     assert!(coverage > 0.6 && coverage < 0.85, "{reply}");
     let said = mirror["partly"].as_str().unwrap_or_else(|| panic!("nothing said: {reply}"));
     assert!(said.starts_with(&format!("{:.0} % of the scan has no mirror image", 100.0 * (1.0 - coverage))), "{said}");
+    // Completed by mirroring, the box would get an image the thing has not: warned of, and no
+    // mirror image there.
+    let done = run(&mut s, "scan.complete_by_mirroring", json!({"plane": {"point": [50, 20, 10], "normal": [0, 1, 0]}}));
+    assert_eq!(done["mirror"]["symmetric"], false, "{done}");
+    assert!(done["warning"].as_str().is_some_and(|w| w.contains("matches its reflection")) && done["mirror"].get("partly").is_none(), "{done}");
     let (mut s, _, _) = session_with_a_symmetric_scan("symmetry-whole");
     let reply = run(&mut s, "scan.symmetry", json!({"keep": false}));
     assert!(reply["mirror"]["symmetric"] == true && reply["mirror"].get("partly").is_none(), "{reply}");

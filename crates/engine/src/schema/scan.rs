@@ -186,7 +186,9 @@ pub struct ScanMirror {
     /// The share of the scan whose reflection lands on the scan, 0 to 1.
     pub coverage: f64,
     /// Whether the scan is a mirror image about it: 85 % matched (or 60 % with both sides of the
-    /// thing there and matching out to their ends), typically within 2 % of its size.
+    /// thing there and matching out to their ends), typically within 2 % of its size. From
+    /// Complete by Mirroring: 85 % matched, since a part on one side only would get an image the
+    /// thing has not.
     pub symmetric: bool,
     /// For a mirror image under 85 % of which matches: how much does not, in words. That part is
     /// the thing's own, on one side only, and is not to be taken for noise.

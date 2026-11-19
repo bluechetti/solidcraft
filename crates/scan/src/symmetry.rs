@@ -56,6 +56,13 @@ impl Mirror {
         (self.is_symmetric() && self.coverage < MIRRORED).then_some(1.0 - self.coverage)
     }
 
+    /// Whether the whole scan is a mirror image about the plane, with no part that is on one side
+    /// only ([`Mirror::unmatched`]): what completing a scan by mirroring asks, since the reflection
+    /// of a one-sided part (a post on one corner, the pipes down one side) is not the thing.
+    pub fn is_whole(&self) -> bool {
+        self.is_symmetric() && self.coverage >= MIRRORED
+    }
+
     /// Lower is better: how far off, weighted by how much of the scan has no match.
     fn score(&self) -> f64 {
         self.rms * (2.0 - self.coverage)
@@ -1006,6 +1013,7 @@ mod tests {
         assert!(whole.coverage > 0.6 && whole.coverage < 0.85, "part of it is no mirror image: {whole:?}");
         assert!(whole.both_sides > 0.9 && whole.is_symmetric(), "{whole:?}");
         // What does not match is said, as a share: the box under one side.
+        assert!(!whole.is_whole());
         assert!(whole.unmatched().is_some_and(|share| (share - (1.0 - whole.coverage)).abs() < 1e-12 && share > 0.15), "{whole:?}");
         let (positions, triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(100.0, 40.0, 20.0), 40);
         assert_eq!(measure(&Scan::new(&positions, &triangles), point, normal).unwrap().unmatched(), None);
