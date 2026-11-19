@@ -78,7 +78,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("extrude")
         .contract(&EXTRUDE_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); prism?: index of scan.reconstruct's prisms (default 0); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the prism's profile sketched halfway along it off its walls exactly as fitted (lines and arcs from crossing to crossing, joins held tangent) and extruded symmetric to its depth; a drafted prism (its `draft` not 0) sketched at its low end and extruded tapered by its draft; one undo step → sketch, feature, solid, operation, lines, arcs, tangents, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); prism?: index of scan.reconstruct's prisms (default 0); into?: body to join (default: `<scan> Reconstructed`, made new when there is none); pattern?: bool (default true: a new prism whose outline repeats round its middle with lands on its tip circle, a gear, is the circle extruded, one gap cut through and the cut patterned, `count` in the reply; false: the whole outline in one sketch): the prism's profile sketched halfway along it off its walls exactly as fitted (lines and arcs from crossing to crossing, joins held tangent) and extruded symmetric to its depth; a drafted prism (its `draft` not 0) sketched at its low end and extruded tapered by its draft; one undo step → sketch, feature, solid, operation, lines, arcs, tangents, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
     CommandSpec::new("scan.revolve_it", "Revolve It", crate::checked!("scan.revolve_it", fitted_revolve_it))
         .icon("revolve")
         .contract(&REVOLVE_IT_CONTRACT)
@@ -1157,6 +1157,66 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         let feature = run(s, "solid.extrude", merged(extrude, operation.clone()))?;
         Ok((sketch, feature))
     };
+    // A prism whose outline repeats round its middle (a gear, a knob, a spline) is its tip circle
+    // extruded, the gap between two teeth cut through it and the cut patterned round, so that the
+    // count is a number in the design; as its whole outline when the kernel refuses any of that.
+    let repeat = (draft == 0.0 && how == "new" && bool_(p, "pattern").unwrap_or(true))
+        .then(|| outlines.first().and_then(|o| profile::repeated(o, view.outcome().tolerance, |r| solidcraft_scan::hole_form::snapped(r, round))))
+        .flatten();
+    let mut count = None;
+    let patterned = match repeat {
+        Some(repeat) => {
+            let before = s.doc.clone();
+            let mut tried = Drawn::default();
+            let made = (|| -> Result<(u64, Value)> {
+                let disc = Outline {
+                    corners: vec![repeat.centre + Vec2::X * repeat.tip, repeat.centre - Vec2::X * repeat.tip],
+                    pieces: vec![profile::Piece::Arc { center: repeat.centre, ccw: true }; 2],
+                    faces: vec![None; 2],
+                };
+                let whole: Vec<Outline> = std::iter::once(disc).chain(outlines.iter().skip(1).cloned()).collect();
+                let made = build(s, &whole, &mut tried)?;
+                let gap = sketch_outlines(
+                    s,
+                    &plane,
+                    &format!("Prism Profile {} Gap", index + 1),
+                    &[repeat.gap.clone()],
+                    &|_, _, _| None,
+                    &mut tried,
+                    round,
+                    false,
+                )?;
+                let through = depth + 8.0 * view.outcome().tolerance;
+                let cut = run(
+                    s,
+                    "solid.extrude",
+                    json!({"sketch": gap, "distance": format!("{through} mm"), "direction": "symmetric", "operation": "cut", "targets": [solid], "name": format!("{name} Gap")}),
+                )?;
+                let cut =
+                    cut.get("name").and_then(Value::as_str).map(str::to_owned).ok_or_else(|| EngineError::Other("the gap was not cut".into()))?;
+                let middle = plane.origin + plane.x * repeat.centre.x + plane.y * repeat.centre.y;
+                run(
+                    s,
+                    "solid.pattern.circular",
+                    json!({"features": [cut], "axis": {"origin": at(middle), "dir": at(prism.direction)}, "count": repeat.order, "name": format!("{name} Pattern")}),
+                )?;
+                Ok(made)
+            })();
+            match made {
+                Ok(made) => {
+                    drawn = tried;
+                    count = Some(repeat.order);
+                    Some(made)
+                }
+                Err(_) => {
+                    s.doc = before;
+                    s.refresh();
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     // A drafted prism's rounds that the scan shows as cylinders (one radius all the way up: the
     // part was drafted, then filleted) are not sketched: tapered with the walls each would narrow
     // to a cone as it rises. The corners are extruded sharp and rounded by a Fillet of that
@@ -1192,7 +1252,7 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => None,
     };
-    let (sketch, feature) = match sharply {
+    let (sketch, feature) = match patterned.or(sharply) {
         Some(made) => made,
         None => build(s, &outlines, &mut drawn)?,
     };
@@ -1206,7 +1266,7 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         arcs: drawn.arcs,
         tangents: drawn.tangents,
         depth: Some(depth),
-        count: None,
+        count,
         openings: None,
         fit: None,
         param_warnings: Vec::new(),

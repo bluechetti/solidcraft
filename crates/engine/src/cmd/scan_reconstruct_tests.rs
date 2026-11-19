@@ -535,6 +535,43 @@ fn reconstruct_says_how_a_prisms_outline_repeats_round_its_middle() {
     assert!(oblong["prisms"][0].get("rotational").is_none(), "{oblong}");
 }
 
+/// A disc R 20 × 10 with eight slots cut into its rim (8 wide, 6 deep) comes back from its scan
+/// as the disc extruded, one slot cut through it and the cut patterned eight times: the count is
+/// a number in the design. With `pattern` false it is one outline extruded; the same solid.
+#[test]
+fn a_prism_that_repeats_round_its_middle_is_one_gap_cut_and_patterned() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.cylinder", json!({"radius": 20, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(
+        &mut part,
+        "solid.box",
+        json!({"length": 12, "width": 8, "height": 10, "center": [20, 0, 5], "operation": "cut", "targets": [body], "name": "Slot"}),
+    );
+    run(&mut part, "solid.pattern.circular", json!({"features": ["Slot"], "axis": "Z", "count": 8}));
+    let expected = volume(&part, &body);
+    let (mut s, _) = scanned(&part, &body, 3, "slotted");
+    let built = run(&mut s, "scan.extrude_it", json!({}));
+    assert_eq!(built["count"], 8, "{built}");
+    let solid = built["solid"].as_str().unwrap().to_owned();
+    let got = volume(&s, &solid);
+    assert!((got - expected).abs() < 0.005 * expected, "{got} against {expected}: {built}");
+    let listed = run(&mut s, "parameters.list", json!({"filter": "feature"}));
+    let count = listed["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["feature"] == "Extrude It 1 Pattern" && p["input"] == "Quantity")
+        .unwrap_or_else(|| panic!("the pattern's count is a parameter: {listed}"));
+    assert_eq!(count["value"].as_f64(), Some(8.0), "{listed}");
+    // Asked not to: the whole outline in one sketch.
+    let (mut s, _) = scanned(&part, &body, 3, "slotted-plain");
+    let plain = run(&mut s, "scan.extrude_it", json!({"pattern": false}));
+    assert!(plain.get("count").is_none_or(Value::is_null), "{plain}");
+    let got = volume(&s, plain["solid"].as_str().unwrap());
+    assert!((got - expected).abs() < 0.005 * expected, "{got} against {expected}: {plain}");
+}
+
 /// A cup (a cylinder R 30 × 60, shelled 3 thick, open at the top) from its scan in two calls:
 /// Section to Sketch about its axis draws the half of the cut on one side of it, closed along the
 /// axis through the bottom's thickness and fully dimensioned, and a Revolve about the sketch's X

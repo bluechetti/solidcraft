@@ -334,6 +334,12 @@ pub struct ScanExtrudeItParams {
     /// when there is none.
     #[serde(default)]
     pub into: Option<String>,
+    /// A prism whose outline repeats round its middle (a gear's teeth, a knob's lobes;
+    /// `scan.reconstruct`'s `rotational`) is built as its tip circle extruded, one gap cut through
+    /// it and the cut patterned round (`count` in the reply; the pattern's count is a number in
+    /// the design). False draws the whole outline in one sketch. Default: true.
+    #[serde(default)]
+    pub pattern: Option<bool>,
 }
 
 /// Revolve It: the turned part Reconstruct reads, built as an ordinary sketch of its profile on a

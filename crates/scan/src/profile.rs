@@ -449,6 +449,113 @@ pub fn rotational(ring: &[Vec2], tolerance: f64) -> Option<Rotational> {
     Some(Rotational { order, centre, tip, root })
 }
 
+/// An outline that repeats round its middle, as a disc with one gap cut out of it and repeated:
+/// a gear as its tip circle and the space between two teeth.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Repeated {
+    /// How many gaps there are round it.
+    pub order: usize,
+    /// The middle, and the radius of the circle the outline's outermost stretches lie on.
+    pub centre: Vec2,
+    pub tip: f64,
+    /// One gap, closed outside the circle: the outline from where it leaves the circle to where
+    /// it comes back to it, then out, round and back in.
+    pub gap: Outline,
+}
+
+/// `outline` as a circle with one gap repeated round it, when it [`rotational`]ly repeats and has
+/// as many gaps as it repeats: a gap is a run of pieces that dip more than twice `tolerance`
+/// below the outermost radius, between stretches that stay up there (a gear's tip lands). The gap whose width is the middle one of them all is taken; its
+/// first and last pieces run on to the circle where they come within four tolerances of it. The
+/// circle's radius is the middle one of what stays up, as `read` reads it (a size read as
+/// designed). `None` for an outline that does not repeat, or whose gaps are not one for each
+/// repeat.
+pub fn repeated(outline: &Outline, tolerance: f64, read: impl Fn(f64) -> f64) -> Option<Repeated> {
+    let n = outline.corners.len();
+    if n < 4 || outline.pieces.len() != n {
+        return None;
+    }
+    let found = rotational(&ring(outline), tolerance)?;
+    let centre = found.centre;
+    let radius = |p: Vec2| p.dist(centre);
+    // A piece's own points: its ends, and for an arc seven between.
+    let points_of = |k: usize| -> Vec<Vec2> {
+        let (a, b) = (outline.corners[k], outline.corners[(k + 1) % n]);
+        let mut points = vec![a];
+        if let Piece::Arc { center, ccw } = outline.pieces[k] {
+            let mut turn = angle_to(a - center, b - center);
+            if ccw && turn <= 0.0 {
+                turn += TAU;
+            } else if !ccw && turn >= 0.0 {
+                turn -= TAU;
+            }
+            points.extend((1..8).map(|i| center + rotated(a - center, turn * f64::from(i) / 8.0)));
+        }
+        points.push(b);
+        points
+    };
+    let margin = 2.0 * tolerance;
+    let up = |p: Vec2| radius(p) >= found.tip - margin;
+    let land: Vec<bool> = (0..n).map(|k| points_of(k).into_iter().all(up)).collect();
+    // The circle is the part's own only where stretches of the outline lie on it, one between each
+    // two gaps (a square's corners touch a circle too, and a square is not a disc cut four times).
+    let lands = (0..n).filter(|&k| land[k] && !land[(k + n - 1) % n]).count();
+    if lands != found.order {
+        return None;
+    }
+    // Its radius: the middle one of the lands' points.
+    let mut high: Vec<f64> = (0..n).filter(|&k| land[k]).flat_map(|k| points_of(k)).map(radius).collect();
+    high.sort_by(f64::total_cmp);
+    let tip = read(*high.get(high.len() / 2)?);
+    // The gaps: runs of pieces that are not land, each from a corner up at the circle to the next.
+    let first = (0..n).find(|&k| !land[k] && (land[(k + n - 1) % n] || up(outline.corners[k])))?;
+    let mut gaps: Vec<(usize, usize)> = Vec::new();
+    let mut k = 0;
+    while k < n {
+        let from = (first + k) % n;
+        if land[from] {
+            k += 1;
+            continue;
+        }
+        let mut count = 1;
+        while k + count < n && !land[(first + k + count) % n] && !up(outline.corners[(first + k + count) % n]) {
+            count += 1;
+        }
+        gaps.push((from, count));
+        k += count;
+    }
+    if gaps.len() != found.order || gaps.iter().any(|&(from, count)| !up(outline.corners[from]) || !up(outline.corners[(from + count) % n])) {
+        return None;
+    }
+    let width = |&(from, count): &(usize, usize)| outline.corners[from].dist(outline.corners[(from + count) % n]);
+    let mut by_width = gaps.clone();
+    by_width.sort_by(|a, b| width(a).total_cmp(&width(b)));
+    let (from, count) = by_width[by_width.len() / 2];
+    let circle = Wall::Circle { center: centre, radius: tip };
+    // A piece's own line or circle, run on to the tip circle near `end`.
+    let run_on = |k: usize, end: Vec2| {
+        let (a, b) = (outline.corners[k], outline.corners[(k + 1) % n]);
+        let own = match outline.pieces[k] {
+            Piece::Line => Wall::Line { point: a, direction: unit2(b - a) },
+            Piece::Arc { center, .. } => Wall::Circle { center, radius: a.dist(center) },
+        };
+        cross(&own, &circle, end).filter(|c| c.dist(end) <= 4.0 * tolerance).unwrap_or(end)
+    };
+    let (start, end) = (run_on(from, outline.corners[from]), run_on((from + count - 1) % n, outline.corners[(from + count) % n]));
+    let mut corners = vec![start];
+    corners.extend((1..count).map(|i| outline.corners[(from + i) % n]));
+    corners.push(end);
+    let mut pieces: Vec<Piece> = (0..count).map(|i| outline.pieces[(from + i) % n]).collect();
+    // Out past the circle, back round to above the start, and in.
+    let outside = tip + (0.1 * tip).max(8.0 * tolerance);
+    let out = |p: Vec2| centre + unit2(p - centre) * outside;
+    let forward = angle_to(start - centre, end - centre) > 0.0;
+    corners.extend([out(end), out(start)]);
+    pieces.extend([Piece::Line, Piece::Arc { center: centre, ccw: !forward }, Piece::Line]);
+    let faces = vec![None; pieces.len()];
+    Some(Repeated { order: found.order, centre, tip, gap: Outline { corners, pieces, faces } })
+}
+
 /// A round of an outline taken out for a sharp corner ([`sharpened`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SharpCorner {
@@ -2173,6 +2280,48 @@ mod tests {
             let sharp = prism_outlines(&walls, &loops, 0.2, fill.as_ref());
             assert!(sharp.len() == 1 && sharp[0].corners.len() == 4 && has(&sharp[0], corner), "{sharp:?}");
         }
+    }
+
+    /// A gear outline in lines and arcs (12 teeth: a tip land on the circle of radius 20, straight
+    /// flanks, a root land at 16), anywhere on the plane: read as that circle with 12 gaps, the gap
+    /// two flanks and a root closed outside the circle. A plain circle does not repeat.
+    #[test]
+    fn a_gears_outline_is_a_circle_and_one_gap_repeated() {
+        let (teeth, centre) = (12usize, Vec2::new(7.0, -3.0));
+        let (mut corners, mut pieces) = (Vec::new(), Vec::new());
+        for tooth in 0..teeth {
+            let at = |part: f64, radius: f64| {
+                let angle = TAU * (tooth as f64 + part) / teeth as f64;
+                centre + Vec2::new(angle.cos(), angle.sin()) * radius
+            };
+            // Tip land, flank down, root land, flank up.
+            corners.extend([at(0.0, 20.0), at(0.3, 20.0), at(0.45, 16.0), at(0.85, 16.0)]);
+            pieces.extend([Piece::Arc { center: centre, ccw: true }, Piece::Line, Piece::Arc { center: centre, ccw: true }, Piece::Line]);
+        }
+        let faces = vec![None; pieces.len()];
+        let found = repeated(&Outline { corners, pieces, faces }, 0.05, |r| r).expect("a gear");
+        assert_eq!(found.order, 12);
+        assert!(found.centre.dist(centre) < 0.02 && (found.tip - 20.0).abs() < 1e-6, "{found:?}");
+        let gap = &found.gap;
+        assert_eq!(gap.pieces.len(), 6, "{gap:?}");
+        assert_eq!(gap.pieces[..3], [Piece::Line, Piece::Arc { center: centre, ccw: true }, Piece::Line]);
+        assert!(matches!(gap.pieces[4], Piece::Arc { ccw: false, .. }), "back round the outside: {gap:?}");
+        let radii: Vec<f64> = gap.corners.iter().map(|c| c.dist(found.centre)).collect();
+        assert!((radii[0] - 20.0).abs() < 0.02 && (radii[3] - 20.0).abs() < 0.02 && radii[4] > 21.0 && radii[5] > 21.0, "{radii:?}");
+        assert!(is_simple_ring(&ring(gap)), "{gap:?}");
+        let circle = Outline {
+            corners: vec![Vec2::new(5.0, 0.0), Vec2::new(-5.0, 0.0)],
+            pieces: vec![Piece::Arc { center: Vec2::ZERO, ccw: true }; 2],
+            faces: vec![None; 2],
+        };
+        assert_eq!(repeated(&circle, 0.05, |r| r), None);
+        // A square's corners lie on a circle, but none of its outline does.
+        let square = Outline {
+            corners: vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0), Vec2::new(0.0, 10.0)],
+            pieces: vec![Piece::Line; 4],
+            faces: vec![None; 4],
+        };
+        assert_eq!(repeated(&square, 0.05, |r| r), None);
     }
 
     /// A slot shape 30 long with a round end of radius 10 about (30, 10), whose face was fitted as

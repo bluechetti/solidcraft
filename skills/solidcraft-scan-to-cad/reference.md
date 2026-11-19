@@ -72,7 +72,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 ## Build
 | Command | Makes |
 |---|---|
-| `scan.extrude_it {"prism": 0}` | the prism's profile sketched off its walls and extruded, into `<scan> Reconstructed` |
+| `scan.extrude_it {"prism": 0}` | the prism's profile sketched off its walls and extruded, into `<scan> Reconstructed`; a gear (an outline that repeats round its middle, lands on its tip circle) is the tip circle extruded, one gap cut and patterned: `count` in the reply, the pattern's Quantity a parameter (`pattern: false` for one outline) |
 | `scan.revolve_it {}` | the turned part's profile revolved |
 | `scan.shell_it {}` | the body hollowed to the scan's wall thickness, open where `shell.open` says |
 | `scan.cut_it {"hole": 0}` | a round hole cut as deep as the scan has it |
