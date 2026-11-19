@@ -43,6 +43,10 @@ pub struct Registration {
     /// the nearest distances), in mm.
     pub rms_before: f64,
     pub rms_after: f64,
+    /// The rms of the distances of the share of the scan that lies on the reference (`matched`):
+    /// how well what overlaps fits. `rms_after` counts all of the scan that is not ignored, so
+    /// for passes that overlap in part it is as large as what has no partner is far off.
+    pub rms_matched: f64,
     /// The share of the scan within a few widths of the surfaces' roughness of the reference after.
     pub matched: f64,
     pub rounds: usize,
@@ -1047,7 +1051,7 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
         }
     }
     let reference_vertices = every(&reference.points().collect::<Vec<_>>(), VERTEX_LIMIT);
-    let measure = |moved: &Rigid, rms: f64| -> f64 {
+    let measure = |moved: &Rigid, rms: f64| -> (f64, f64) {
         let least = 1e-3 * theirs.diagonal;
         let near = if 3.0 * rms > least {
             let r = if rough > 0.0 { (3.0 * rms).min(ROUGHNESS_REACH * rough) } else { 3.0 * rms };
@@ -1055,7 +1059,11 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
         } else {
             least
         };
-        vertices.iter().filter(|p| theirs.nearest(moved.apply(**p)).is_some_and(|h| h.distance <= near)).count() as f64 / vertices.len().max(1) as f64
+        // The share of the scan within that reach of the reference, and the rms of that share's
+        // distances: how well what overlaps fits, whatever else of the scan there is.
+        let on: Vec<f64> = vertices.iter().filter_map(|p| theirs.nearest(moved.apply(*p)).map(|h| h.distance)).filter(|d| *d <= near).collect();
+        let rms = if on.is_empty() { 0.0 } else { (on.iter().map(|d| d * d).sum::<f64>() / on.len() as f64).sqrt() };
+        (on.len() as f64 / vertices.len().max(1) as f64, rms)
     };
     let polish_points = every(&vertices, POLISH_POINTS);
     // From a placement to the end: where it comes to rest, its trimmed rms, whether it settled,
@@ -1106,7 +1114,7 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
         };
         let fitted_rms = trimmed_rms(&vertices, &last.moved, &theirs, ignored);
         let rounds = first.rounds + fine.rounds + last.rounds;
-        let whole = measure(&last.moved, fitted_rms) >= 1.0 - ignored;
+        let whole = measure(&last.moved, fitted_rms).0 >= 1.0 - ignored;
         if !whole {
             return Ok((last.moved, fitted_rms, last.converged, rounds, false));
         }
@@ -1134,7 +1142,8 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
             moved: identity,
             rms_before,
             rms_after: rms_before,
-            matched: measure(&identity, rms_before),
+            matched: measure(&identity, rms_before).0,
+            rms_matched: measure(&identity, rms_before).1,
             rounds,
             converged: false,
             start: "where it was",
@@ -1147,7 +1156,8 @@ pub fn register(moving: &Scan, reference: &Scan, settings: &Settings) -> Result<
         moved: placed,
         rms_before,
         rms_after,
-        matched: measure(&placed, rms_after),
+        matched: measure(&placed, rms_after).0,
+        rms_matched: measure(&placed, rms_after).1,
         rounds,
         converged: settled,
         start: best.0,
@@ -1252,6 +1262,8 @@ mod tests {
         let found = register(&pass, &reference, &Settings::default()).unwrap();
         let back = kept.iter().flatten().map(|&v| found.moved.apply(moved[v as usize]).dist(positions[v as usize])).fold(0.0, f64::max);
         assert!(back < 1e-2, "{back} ({found:?})");
+        // What lies on the whole fits it; the figure for that is the matched share's own.
+        assert!(found.rms_matched < 1e-3 && found.matched > 0.5, "{found:?}");
     }
 
     /// A closed box scanned in two passes that share only a thin band round its middle, as a van's
@@ -1353,6 +1365,7 @@ mod tests {
             rms_before: 3.0,
             rms_after: 3.0,
             matched,
+            rms_matched: 0.0,
             rounds: 3,
             converged: true,
             start: "where it was",

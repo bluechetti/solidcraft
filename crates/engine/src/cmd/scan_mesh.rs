@@ -114,6 +114,7 @@ pub(super) fn register_scan(s: &mut Session, p: &Value) -> Result<Value> {
         rms_before: found.rms_before,
         rms_after: found.rms_after,
         matched: found.matched,
+        rms_matched: found.rms_matched,
         start: found.start.to_string(),
         converged: found.converged,
         note: found.note(),

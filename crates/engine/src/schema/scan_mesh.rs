@@ -42,8 +42,11 @@ pub struct ScanRegisterResult {
     /// distances, its worst share left out, in mm.
     pub rms_before: f64,
     pub rms_after: f64,
-    /// The share of it lying on the other after, 0–1.
+    /// The share of it lying on the other after, 0–1, and the root mean square of that share's
+    /// distances (mm): how well what overlaps fits. Read this, not `rms_after`, for passes that
+    /// overlap in part: `rms_after` counts what has no partner too.
     pub matched: f64,
+    pub rms_matched: f64,
     /// Where the winning start came from, and whether the fit settled.
     pub start: String,
     pub converged: bool,
