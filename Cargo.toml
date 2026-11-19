@@ -51,24 +51,27 @@ solidcraft-control = { path = "crates/control" }
 solidcraft-control-egui = { path = "crates/control-egui" }
 solidcraft-derive = { path = "crates/derive" }
 solidcraft-3dx-client = { path = "crates/threedx-client" }
+# LOCAL FORK (branch `surfacing` only): the six solidcore crates below build from the owner's local
+# kernel fork beside this checkout, `../solidcore-fork` (its FORK.md says what it is), not from
+# the vendored `solidcore/` tree, which this branch leaves in place and does not build.
 # The Rust port of NVIDIA's SMLib (Apache-2.0), the B-rep kernel behind crates/smlib. Vendored with
 # `git subtree` at solidcore: that tree is the source of truth, and
 # .github/workflows/solidcore-mirror.yml pushes changes in it back to its own repository (#13153).
-solidcore = { path = "solidcore/crates/solidcore" }
+solidcore = { path = "../solidcore-fork/crates/solidcore" }
 # Geometry as data (solidcore's layers §1, "Record"): the B-rep record, its structural validation
 # and the native body file. Vendored with solidcore, in the same subtree.
-solidcore-record = { path = "solidcore/crates/solidcore-record" }
+solidcore-record = { path = "../solidcore-fork/crates/solidcore-record" }
 # The modelling layer (solidcore's layers §1, "Ops"): the record-level calls SolidCraft makes into the
 # kernel, converting through solidcore-convert.
-solidcore-ops = { path = "solidcore/crates/solidcore-ops" }
+solidcore-ops = { path = "../solidcore-fork/crates/solidcore-ops" }
 # STEP import and export (vendored with solidcore): the Part 21 parser is solidcore-record's.
-solidcore-step = { path = "solidcore/crates/solidcore-step" }
+solidcore-step = { path = "../solidcore-fork/crates/solidcore-step" }
 # CADIR (cadmpeg's neutral CAD model) read into B-rep records, as the STEP reader assembles them.
-solidcore-cadir = { path = "solidcore/crates/solidcore-cadir" }
+solidcore-cadir = { path = "../solidcore-fork/crates/solidcore-cadir" }
 # Geometry made drawable (solidcore's layers §3): the one mesher, SolidCraft's, moved into the
 # subtree (RFC 0003, item 1.1), with the display mesh and its levels of detail, the types
 # SolidCraft's meshes are. Vendored with solidcore, in the same subtree.
-solidcore-tess = { path = "solidcore/crates/solidcore-tess" }
+solidcore-tess = { path = "../solidcore-fork/crates/solidcore-tess" }
 # test tooling: a dev-dependency only (xtask/src/layers.rs)
 solidcraft-testkit = { path = "crates/testkit" }
 
