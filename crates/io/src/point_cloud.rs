@@ -1,8 +1,9 @@
-//! Point cloud files read for a design's point cloud (#5151): PLY ([`crate::ply`]) and XYZ text
+//! Point cloud files read for a design's point cloud (#5151): PLY ([`crate::ply`]), XYZ text
 //! (`x y z` per line, optionally followed by `r g b`, or by an intensity and then `r g b` as PTS
-//! files write it; spaces, tabs, commas or semicolons between the values). A file with more
-//! points than asked for is thinned evenly (every n-th point). The points are kept relative to
-//! the first one, in single precision.
+//! files write it; spaces, tabs, commas or semicolons between the values), and the scanner
+//! formats PCD, PTX, E57 and LAS/LAZ ([`crate::point_cloud_formats`]). A file with more points
+//! than asked for is thinned evenly (every n-th point). The points are kept relative to the first
+//! one, in single precision.
 
 use solidcore_record::Vec3;
 use solidcraft_doc::point_cloud::{MAX_COORD, MAX_POINTS};
@@ -14,9 +15,22 @@ use crate::{IoError, Result};
 pub const MAX_POINT_CLOUD_BYTES: usize = 1 << 30;
 /// Points kept from a file unless asked for another number.
 pub const DEFAULT_MAX_POINTS: usize = 5_000_000;
-/// Is this a point cloud file we read (`.ply`, `.xyz`, `.pts`, any case)?
+/// The most points a scanner file (PCD, PTX, E57, LAS) is read in whole before it is thinned.
+pub const MAX_SCANNER_POINTS: usize = 200_000_000;
+
+/// Is this a point cloud file we read (`.ply`, `.xyz`, `.pts`, `.pcd`, `.ptx`, `.e57`, `.las`,
+/// `.laz`, any case)?
 pub fn is_point_cloud_path(path: &str) -> bool {
-    std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| ["ply", "xyz", "pts"].iter().any(|x| e.eq_ignore_ascii_case(x)))
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| ["ply", "xyz", "pts"].iter().chain(crate::point_cloud_formats::EXTENSIONS.iter()).any(|x| e.eq_ignore_ascii_case(x)))
+}
+
+/// The scanner format of `file` (one of [`crate::point_cloud_formats::EXTENSIONS`]), lower case.
+fn scanner_format(file: &str) -> Option<String> {
+    let ext = std::path::Path::new(file).extension()?.to_str()?.to_ascii_lowercase();
+    crate::point_cloud_formats::EXTENSIONS.contains(&ext.as_str()).then_some(ext)
 }
 
 /// Is this a PLY file (`.ply`, any case)?
@@ -86,7 +100,29 @@ pub fn read_point_cloud(bytes: &[u8], file: &str, scale: f64, max_points: usize)
     let mut keep = Keep { scale, origin: None, out: CloudFile::default(), colored: false, bad: 0, max };
     let ply = crate::ply::is_ply(bytes) || (is_ply_path(file) && !bytes.is_empty());
     let stride;
-    if ply {
+    if let Some(ext) = scanner_format(file).filter(|_| !ply) {
+        let read = crate::point_cloud_formats::read(bytes, &ext, MAX_SCANNER_POINTS)?;
+        let count = read.points.len();
+        keep.out.source_points = count as u64;
+        keep.colored = read.colors.is_some();
+        let every = count.div_ceil(max).max(1);
+        for i in (0..count).step_by(every) {
+            keep.push(read.points[i], read.colors.as_ref().and_then(|c| c.get(i).copied()));
+        }
+        let every = every as u64;
+        let mut out = keep.out;
+        if out.points.is_empty() {
+            return Err(IoError::Invalid("the file has no points SolidCraft can read".into()));
+        }
+        if keep.bad > 0 {
+            out.warnings.push(format!("{} point(s) could not be read and were left out", keep.bad));
+        }
+        if every > 1 {
+            out.warnings.push(format!("{} of the file's {} points kept (one in {every})", out.points.len() / 3, out.source_points));
+        }
+        out.origin = keep.origin.unwrap_or(Vec3::ZERO);
+        return Ok(out);
+    } else if ply {
         let r = crate::ply_complex::read_ply_cloud(bytes, max)?;
         stride = r.vertices.div_ceil(r.positions.len().max(1) as u64).max(1);
         keep.colored = r.colors.is_some();
@@ -334,5 +370,24 @@ mod tests {
             assert_eq!(r.ok(), Some(false), "{:?}", String::from_utf8_lossy(b));
         }
         assert!(is_point_cloud_path("x.PLY") && is_point_cloud_path("y.xyz") && is_point_cloud_path("z.pts") && !is_point_cloud_path("w.stl"));
+    }
+
+    /// A scanner file is read in whole and thinned evenly to the points asked for, its colours
+    /// kept, relative to the first point kept.
+    #[test]
+    fn a_scanner_file_is_thinned_to_the_points_asked_for() {
+        let mut pcd =
+            String::from("VERSION 0.7\nFIELDS x y z rgb\nSIZE 4 4 4 4\nTYPE F F F U\nCOUNT 1 1 1 1\nWIDTH 10\nHEIGHT 1\nPOINTS 10\nDATA ascii\n");
+        for i in 0..10 {
+            pcd += &format!("{i} 0 0 255\n");
+        }
+        let read = read_point_cloud(pcd.as_bytes(), "scan.PCD", 1.0, 5).unwrap();
+        assert_eq!(read.source_points, 10);
+        assert_eq!(read.points.len() / 3, 5, "one in two kept");
+        assert_eq!(read.origin, Vec3::new(0.0, 0.0, 0.0));
+        assert_eq!(&read.points[3..6], &[2.0, 0.0, 0.0]);
+        assert_eq!(read.colors.len(), 15);
+        assert!(read.warnings.iter().any(|w| w.contains("one in 2")), "{:?}", read.warnings);
+        assert!(is_point_cloud_path("a.e57") && is_point_cloud_path("b.LAZ") && is_point_cloud_path("c.ptx") && is_point_cloud_path("d.pcd"));
     }
 }

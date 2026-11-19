@@ -39,7 +39,7 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.survey", "Survey 
     .contract(&CONTRACT)
     .output(output_schema_for::<ScanSurveyResult>)
     .noundo()
-    .params("body?: mesh body (default: the selected or only one): a first look at the scan, changing nothing: its size (own_size along its own directions, longest first), fineness, noise and the Denoise strength it would take, holes, rims, floating pieces, open edges no hole closes, how much of it is broad flat faces, whether it is sheet-like, what Find All read off it (once it has run), the design's other scans and models (those shown), and `next`: the commands to run next with why and parameters to start from, in the order the work goes → body, triangles, points, unusable, low, high, center, own_size, area, typical_edge, units_hint, noise, smoothing, tolerance, tolerance_set, holes, longest_hole, rims, open_edges, tangled_edges, crack_edges, crossing_faces, pieces, floating, floating_share, flat_share, sheet_like, shapes{in_shapes, planes, cylinders, spheres, cones, tori, freeform, regions}, other_scans, models, next[{command, why, params}]")];
+    .params("body?: mesh body (default: the selected or only one): a first look at the scan, changing nothing: its size (own_size along its own directions, longest first), fineness, noise and the Denoise strength it would take, holes, rims, floating pieces, open edges no hole closes, how much of it is broad flat faces, whether it is sheet-like, what Find All read off it (once it has run), the design's other scans and models (those shown), and `next`: the commands to run next with why and parameters to start from, in the order the work goes → body, triangles, points, unusable, low, high, center, own_size, area, typical_edge, units_hint, noise, smoothing, tolerance, tolerance_set, holes, longest_hole, rims, open_edges, tangled_edges, crack_edges, crossing_faces, pieces, floating, floating_share, flat_share, unseen_share (of the surface its scanner never saw: filled, mirrored, made from sparse points; scan.unseen shows where), sheet_like, shapes{in_shapes, planes, cylinders, spheres, cones, tori, freeform, regions}, other_scans, models, next[{command, why, params}]")];
 
 /// A survey kept for the Survey dialog: the reply, for the scan as it was read.
 #[derive(Debug)]
@@ -118,6 +118,7 @@ fn survey(s: &mut Session, p: &Value) -> Result<Value> {
         models: &models,
     });
     let xyz = |v: solidcore_record::Vec3| [v.x, v.y, v.z];
+    let unseen_share = super::unseen::unseen_of(s, &body).ok().and_then(|(_, u)| u).map_or(0.0, |u| u.share());
     let reply = ScanSurveyResult {
         body,
         triangles: found.triangle_count,
@@ -145,6 +146,7 @@ fn survey(s: &mut Session, p: &Value) -> Result<Value> {
         floating: found.floating,
         floating_share: found.floating_share.max(0.0),
         flat_share: found.flat_share.max(0.0),
+        unseen_share,
         sheet_like,
         shapes,
         other_scans,
@@ -179,6 +181,10 @@ fn shares(outcome: &solidcraft_scan::segment::Outcome) -> ScanSurveyShapes {
         regions: outcome.segments.len(),
     }
 }
+
+/// Pieces apart from the largest holding more than this share of the scan's area are the scan
+/// itself in parts, not dust floating round it.
+const MOSTLY_FLOATING: f64 = 0.5;
 
 /// What the next steps are worked out from.
 struct Plan<'a> {
@@ -230,7 +236,19 @@ fn next_steps(plan: &Plan) -> Vec<ScanSurveyStep> {
         };
         step("scan.repair", why, json!({"body": body}));
     }
-    if look.floating > 0 {
+    // Pieces that are most of the scan are no dust to take off: its triangles share no points (an
+    // unwelded soup, or a scan in parts), and Remove Floating would delete nearly all of it.
+    if look.floating > 0 && look.floating_share > MOSTLY_FLOATING {
+        step(
+            "scan.repair",
+            format!(
+                "the scan is in {} pieces that share no points ({:.0}% of its area lies outside the largest): an unwelded triangle soup, not dust, so Remove Floating would delete most of it. Repair Mesh joins points a hair apart; if the pieces still share none, the file needs meshing again from its points",
+                look.pieces,
+                100.0 * look.floating_share
+            ),
+            json!({"body": body}),
+        );
+    } else if look.floating > 0 {
         step(
             "scan.remove_floating",
             format!(
@@ -448,6 +466,43 @@ mod tests {
         let r = run(&mut s, "scan.survey", json!({"body": scan}));
         assert!(!commands(&r).contains(&"scan.align_all") && !commands(&r).contains(&"scan.deviation"), "{r}");
         assert_eq!((r["other_scans"].as_array().unwrap().len(), r["models"].as_array().unwrap().len()), (0, 0), "{r}");
+    }
+
+    /// Triangles that share no points (a file written as soup: here a plate of 300 needles laid
+    /// over each other) are each a piece of their own, and nearly all of the area is outside the
+    /// largest. That is the scan itself, not dust: Remove Floating, which would delete all but one
+    /// triangle, is not proposed, and the step that is says what the file is.
+    #[test]
+    fn a_soup_of_unjoined_triangles_is_not_called_floating_dust() {
+        let dir = std::env::temp_dir().join(format!("solidcraft-scan-survey-soup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut text = String::from("solid s\n");
+        for i in 0..300 {
+            // Spread without a pattern over a 50 mm square: no two triangles share a corner.
+            let (x, y) = (50.0 * (0.618_034 * f64::from(i)).fract(), 50.0 * (0.754_878 * f64::from(i)).fract());
+            text += &format!(
+                "facet normal 0 0 1\nouter loop\nvertex {x} {y} 0\nvertex {} {y} 0\nvertex {} {} 0\nendloop\nendfacet\n",
+                x + 50.0,
+                x + 25.0,
+                y + 0.05
+            );
+        }
+        let path = dir.join("soup.stl");
+        std::fs::write(&path, text + "endsolid s\n").unwrap();
+        let mut s = Session::new(solidcraft_doc::Document::new("t"));
+        run(&mut s, "file.insert_mesh", json!({"path": path}));
+        let r = run(&mut s, "scan.survey", json!({}));
+        assert_eq!((r["pieces"].as_u64(), r["floating"].as_u64()), (Some(300), Some(299)), "{r}");
+        assert!(r["floating_share"].as_f64().unwrap() > 0.9, "{r}");
+        assert!(!commands(&r).contains(&"scan.remove_floating"), "most of the scan is not dust: {r}");
+        let said = r["next"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|n| n["why"].as_str())
+            .any(|why| why.contains("share no points") && why.contains("not dust"));
+        assert!(said, "{r}");
     }
 
     /// A scan a few millimetres across is flagged as read in the wrong unit, and mesh.units is

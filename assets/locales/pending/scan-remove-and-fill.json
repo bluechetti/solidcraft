@@ -1,0 +1,34 @@
+{
+  "en": {
+    "cmd.scan_remove_and_fill": "Remove and Fill",
+    "help.scan.remove_and_fill": "Takes part of a scan off (a stamp, a boss, a sticker) and closes the hole so the surface runs on across. Holes the scan already had stay open."
+  },
+  "ar": {
+    "cmd.scan_remove_and_fill": "إزالة وسدّ",
+    "help.scan.remove_and_fill": "يزيل جزءاً من المسح (ختماً أو بروزاً أو ملصقاً) ويسد الثقب ليمتد السطح عبره. تبقى ثقوب المسح الأصلية مفتوحة."
+  },
+  "de": {
+    "cmd.scan_remove_and_fill": "Entfernen und füllen",
+    "help.scan.remove_and_fill": "Entfernt einen Teil des Scans (Stempel, Dom, Aufkleber) und schließt das Loch, sodass die Fläche darüber weiterläuft. Löcher, die der Scan schon hatte, bleiben offen."
+  },
+  "he": {
+    "cmd.scan_remove_and_fill": "הסרה ומילוי",
+    "help.scan.remove_and_fill": "מסיר חלק מהסריקה (חותמת, בליטה, מדבקה) וסוגר את החור כך שהמשטח ממשיך מעליו. חורים שהיו בסריקה נשארים פתוחים."
+  },
+  "ja": {
+    "cmd.scan_remove_and_fill": "除去して埋める",
+    "help.scan.remove_and_fill": "スキャンの一部 (刻印、ボス、シール) を除去し、面がそのまま続くように穴を閉じます。もともとあった穴は開いたままです。"
+  },
+  "ko": {
+    "cmd.scan_remove_and_fill": "제거 후 채우기",
+    "help.scan.remove_and_fill": "스캔의 일부(각인, 보스, 스티커)를 제거하고 면이 이어지도록 구멍을 닫습니다. 원래 있던 구멍은 열린 채로 둡니다."
+  },
+  "vi": {
+    "cmd.scan_remove_and_fill": "Xóa và lấp",
+    "help.scan.remove_and_fill": "Xóa một phần của bản quét (dấu dập, vấu, nhãn dán) và lấp lỗ để bề mặt liền qua. Các lỗ vốn có vẫn để mở."
+  },
+  "zh": {
+    "cmd.scan_remove_and_fill": "移除并填补",
+    "help.scan.remove_and_fill": "移除扫描的一部分（印记、凸台、贴纸）并封闭留下的孔，使曲面连续延伸过去。扫描原有的孔保持开放。"
+  }
+}

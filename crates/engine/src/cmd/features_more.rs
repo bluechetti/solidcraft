@@ -15,7 +15,10 @@ use super::features::{
 use crate::params::{bad, bool_, expr, req_expr, str_, string_list, vec3};
 use crate::schema::align::AlignParams;
 use crate::schema::features::FeatureResult;
-use crate::schema::features_more::{BoundaryFillParams, CoilParams, EmbossParams, RemoveParams, ReplaceFaceParams, RibParams};
+use crate::schema::features_more::{
+    BoundaryFillParams, CoilParams, DeformParams, EmbossParams, LaminateParams, LaminateResult, RemoveParams, ReplaceFaceParams, RibParams,
+    TiltFaceParams,
+};
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{Result, Session};
 
@@ -27,6 +30,9 @@ const BOUNDARY_FILL_CONTRACT: TypedContract<BoundaryFillParams> = TypedContract:
 const COIL_CONTRACT: TypedContract<CoilParams> = TypedContract::new();
 const EMBOSS_CONTRACT: TypedContract<EmbossParams> = TypedContract::new();
 const REPLACE_FACE_CONTRACT: TypedContract<ReplaceFaceParams> = TypedContract::new();
+const TILT_FACE_CONTRACT: TypedContract<TiltFaceParams> = TypedContract::new();
+const LAMINATE_CONTRACT: TypedContract<LaminateParams> = TypedContract::new();
+const DEFORM_CONTRACT: TypedContract<DeformParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.boundary_fill", "Boundary Fill", crate::checked!("solid.boundary_fill", boundary_fill))
@@ -67,6 +73,24 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "MODIFY")
         .icon("replace_face")
         .params("faces: [[x,y,z] points on planar faces, or face names from model.faces]; target: plane (XY|XZ|YZ|construction plane|{origin, normal}) | target_face: [x,y,z] on a parallel planar face; body?"),
+    CommandSpec::new("solid.tilt_face", "Tilt Face", crate::checked!("solid.tilt_face", tilt_face))
+        .contract(&TILT_FACE_CONTRACT)
+        .output(output_schema_for::<FeatureResult>)
+        .at("SOLID", "MODIFY")
+        .icon("draft")
+        .params("face: [x,y,z] a point on a planar face; axis: X|Y|Z|construction axis name|{edge: [x,y,z]} (a straight edge of the model)|{origin, dir}: the hinge, running along the face; angle: expr (turned about the axis the right-handed way); body?; name?: the face turned about the axis by the angle, its neighbours meeting it where it now lies, kept as a Draft whose neutral plane is the face's own plane turned a right angle about the axis, pulling the way that plane faces: the face and the axis are found again when the design is made again (a hinge edge moved by an earlier feature, a construction axis moved, a parameter changed), so the tilt follows them; one undo step"),
+    CommandSpec::new("solid.laminate", "Laminate", crate::checked!("solid.laminate", laminate))
+        .contract(&LAMINATE_CONTRACT)
+        .output(output_schema_for::<LaminateResult>)
+        .at("SOLID", "CREATE")
+        .icon("thicken")
+        .params("faces: [[x,y,z] points on the faces to lay up]; body?; plies: [{thickness: expr, material?: name (material.list), name?}, …] 1 to 50, the first against the faces; side?: out|in (default out: the plies stand off the faces the way they face; in: into the body, a mould's skin); chain?: bool (each pick's whole smooth chain of faces): each ply a body of its own, the layer between the faces offset by the plies before it and by its own thickness more (each kept as Offset Surface and Thicken features, following the thicknesses' expressions); one undo step → plies [{name, body, thickness, material?}]"),
+    CommandSpec::new("solid.deform", "Deform", crate::checked!("solid.deform", deform))
+        .contract(&DEFORM_CONTRACT)
+        .output(output_schema_for::<FeatureResult>)
+        .at("SOLID", "MODIFY")
+        .icon("scale")
+        .params("body: the body; one of bend: {origin: [x,y,z] where the bend starts, along: [x,y,z] the length's direction, up: [x,y,z] the way it bends (towards the circle's centre), angle: expr, length?: expr (default: as far as the body reaches along `along` from `origin`)} | twist: {origin: [x,y,z] on the axis, axis: [x,y,z], angle: expr, length?: expr (default: as far as the body reaches along the axis)} | cage: {counts?: [l,m,n] lattice points each way, 2 to 8 (default [3,3,3]), lo?, hi?: the box (default: the body's, a hair larger), moves: [{index: [i,j,k] from the low corner, by: [dx,dy,dz] mm}]}; name?: the body carried through the map, every face and edge a cubic B-spline within 0.001 mm of it, its faces and trims its own; before a bend or twist nothing moves, past it the rest goes on rigidly; the lengths and angles follow the parameters; one undo step"),
     CommandSpec::new("solid.align", "Align", crate::checked!("solid.align", align))
         .at("SOLID", "MODIFY")
         .icon("align")
@@ -412,6 +436,237 @@ fn face_points(s: &Session, p: &Value, k: &str, cmd: &str) -> Result<Vec<Vec3>> 
         return Err(bad(cmd, format!("`{k}` must list 1…1000 points")));
     }
     a.iter().map(|v| super::face::face_ref(s, v, str_(p, "body"), cmd)).collect()
+}
+
+/// How far the body reaches along `dir` from `origin`: its box's farthest corner.
+fn reach(s: &Session, body: &str, origin: Vec3, dir: Vec3) -> Option<f64> {
+    let state = s.model.state();
+    let b = state.body(body)?.body.exact_bounds().ok()?;
+    let mut most = f64::NEG_INFINITY;
+    for x in [b.min.x, b.max.x] {
+        for y in [b.min.y, b.max.y] {
+            for z in [b.min.z, b.max.z] {
+                most = most.max((Vec3::new(x, y, z) - origin).dot(dir.normalized()?));
+            }
+        }
+    }
+    (most > 0.0).then_some(most)
+}
+
+fn deform(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "solid.deform";
+    let body = str_(p, "body").map(str::to_owned).ok_or_else(|| bad(cmd, "`body`: the body to deform"))?;
+    if s.model.state().body(&body).is_none() {
+        return Err(bad(cmd, format!("no body `{body}`")));
+    }
+    let given: Vec<&str> = ["bend", "twist", "cage"].into_iter().filter(|k| p.get(*k).is_some_and(|v| !v.is_null())).collect();
+    let [way] = given.as_slice() else { return Err(bad(cmd, "give one of `bend`, `twist` or `cage`")) };
+    let q = p.get(*way).cloned().unwrap_or(Value::Null);
+    let point =
+        |key: &str| q.get(key).and_then(vec3).filter(|v| v.is_finite()).ok_or_else(|| bad(cmd, format!("`{way}.{key}` is a point [x, y, z]")));
+    let direction =
+        |key: &str| q.get(key).and_then(vec3).and_then(|v| v.normalized()).ok_or_else(|| bad(cmd, format!("`{way}.{key}` is a direction [x, y, z]")));
+    let angle = |s: &Session| -> Result<solidcraft_doc::Expr> {
+        let a = req_expr(cmd, &q, "angle")?;
+        check_expr(s, &a, Kind::Angle, cmd, "angle")?;
+        Ok(a)
+    };
+    let length = |s: &Session, origin: Vec3, dir: Vec3| -> Result<solidcraft_doc::Expr> {
+        match expr(&q, "length") {
+            Some(l) => {
+                check_expr(s, &l, Kind::Length, cmd, "length")?;
+                Ok(l)
+            }
+            None => reach(s, &body, origin, dir)
+                .map(|r| format!("{r} mm").into())
+                .ok_or_else(|| bad(cmd, format!("the body does not reach past `{way}.origin` along the direction: give `length`"))),
+        }
+    };
+    let map = match *way {
+        "bend" => {
+            let (origin, along, up) = (point("origin")?, direction("along")?, direction("up")?);
+            if along.cross(up).len() < 1e-6 {
+                return Err(bad(cmd, "`bend.up` must not run along `bend.along`"));
+            }
+            solidcraft_doc::DeformMap::Bend {
+                origin: Position(origin),
+                along: Dir(along),
+                up: Dir(up),
+                length: length(s, origin, along)?,
+                angle: angle(s)?,
+            }
+        }
+        "twist" => {
+            let (origin, axis) = (point("origin")?, direction("axis")?);
+            solidcraft_doc::DeformMap::Twist { origin: Position(origin), axis: Dir(axis), length: length(s, origin, axis)?, angle: angle(s)? }
+        }
+        _ => {
+            let counts = match q.get("counts").filter(|v| !v.is_null()) {
+                None => [3, 3, 3],
+                Some(v) => {
+                    let c: Vec<usize> = v.as_array().map(|a| a.iter().filter_map(Value::as_u64).map(|n| n as usize).collect()).unwrap_or_default();
+                    match c.as_slice() {
+                        [a, b, c] if [a, b, c].iter().all(|n| (2..=8).contains(*n)) => [*a, *b, *c],
+                        _ => return Err(bad(cmd, "`cage.counts` is [l, m, n], each 2 to 8")),
+                    }
+                }
+            };
+            let bounds = s.model.state().body(&body).and_then(|b| b.body.exact_bounds().ok()).ok_or_else(|| bad(cmd, "the body has no size"))?;
+            let pad = (bounds.max - bounds.min) * 0.01 + Vec3::new(1e-3, 1e-3, 1e-3);
+            let lo = match q.get("lo").filter(|v| !v.is_null()) {
+                Some(_) => point("lo")?,
+                None => bounds.min - pad,
+            };
+            let hi = match q.get("hi").filter(|v| !v.is_null()) {
+                Some(_) => point("hi")?,
+                None => bounds.max + pad,
+            };
+            let mut moves = Vec::new();
+            for m in q.get("moves").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default() {
+                let index: Vec<usize> = m
+                    .get("index")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(Value::as_u64).map(|n| n as usize).collect())
+                    .unwrap_or_default();
+                let by = m.get("by").and_then(vec3).filter(|v| v.is_finite()).ok_or_else(|| bad(cmd, "a cage move's `by` is [dx, dy, dz]"))?;
+                let [i, j, k] = index.as_slice() else { return Err(bad(cmd, "a cage move's `index` is [i, j, k]")) };
+                if *i >= counts[0] || *j >= counts[1] || *k >= counts[2] {
+                    return Err(bad(cmd, format!("the cage has no point [{i}, {j}, {k}]: it has {counts:?} each way")));
+                }
+                moves.push(solidcraft_doc::CageMove { index: [*i, *j, *k], by: [by.x, by.y, by.z] });
+            }
+            if moves.len() > 512 {
+                return Err(bad(cmd, "at most 512 cage moves"));
+            }
+            solidcraft_doc::DeformMap::Cage { lo: Position(lo), hi: Position(hi), counts, moves }
+        }
+    };
+    add_feature(s, p, FeatureKind::Deform { body: BodyName(body), map })
+}
+
+/// The most plies a Laminate lays.
+const MOST_PLIES: usize = 50;
+
+fn laminate(s: &mut Session, p: &Value) -> Result<Value> {
+    use serde_json::json;
+    let cmd = "solid.laminate";
+    let faces = p
+        .get("faces")
+        .and_then(Value::as_array)
+        .filter(|f| !f.is_empty())
+        .ok_or_else(|| bad(cmd, "`faces`: points on the faces to lay the plies on"))?
+        .clone();
+    let plies = p.get("plies").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`plies`: [{thickness, material?, name?}, …]"))?.clone();
+    if plies.is_empty() || plies.len() > MOST_PLIES {
+        return Err(bad(cmd, format!("lay 1 to {MOST_PLIES} plies")));
+    }
+    let inward = match str_(p, "side") {
+        None | Some("out") => false,
+        Some("in") => true,
+        Some(other) => return Err(bad(cmd, format!("`side` is out or in, not `{other}`"))),
+    };
+    let mut thicknesses = Vec::with_capacity(plies.len());
+    for (k, ply) in plies.iter().enumerate() {
+        let t = expr(ply, "thickness").ok_or_else(|| bad(cmd, format!("ply {}: `thickness`", k + 1)))?;
+        check_expr(s, &t, Kind::Length, cmd, "thickness")?;
+        let v = s.doc.eval(&t, Kind::Length).map_err(|e| bad(cmd, format!("ply {}: {e}", k + 1)))?;
+        if !(v.is_finite() && v > 0.0) {
+            return Err(bad(cmd, format!("ply {}: the thickness must be above 0", k + 1)));
+        }
+        thicknesses.push(t);
+    }
+    let run = |s: &mut Session, id: &str, q: Value| -> Result<Value> {
+        super::find_command(id).ok_or_else(|| crate::EngineError::UnknownCommand(id.into()))?.run_nested(s, &q)
+    };
+    let sign = if inward { "-" } else { "" };
+    let mut out = Vec::with_capacity(plies.len());
+    let mut hidden: Vec<String> = Vec::new();
+    for (k, ply) in plies.iter().enumerate() {
+        let name = ply.get("name").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| format!("Ply {}", k + 1));
+        // The faces offset by the plies before this one: the surface the ply is laid on.
+        let before = if k == 0 {
+            "0 mm".to_owned()
+        } else {
+            format!("{sign}({})", thicknesses[..k].iter().map(|t| format!("({})", t.as_str())).collect::<Vec<_>>().join(" + "))
+        };
+        let mut q = json!({"faces": faces, "distance": before, "name": format!("{name} surface")});
+        for key in ["body", "chain"] {
+            if let Some(v) = p.get(key).filter(|v| !v.is_null()) {
+                q[key] = v.clone();
+            }
+        }
+        let laid = run(s, "surface.offset", q)?;
+        let surface = laid["created_bodies"]
+            .get(0)
+            .and_then(Value::as_str)
+            .ok_or_else(|| bad(cmd, format!("ply {}: the faces could not be offset", k + 1)))?
+            .to_owned();
+        let thickness = if inward { format!("-({})", thicknesses[k].as_str()) } else { thicknesses[k].as_str().to_owned() };
+        let made =
+            run(s, "surface.thicken", json!({"bodies": [surface], "thickness": thickness, "operation": "new", "name": name, "body_name": name}))?;
+        let made_body = made["created_bodies"]
+            .get(0)
+            .and_then(Value::as_str)
+            .ok_or_else(|| bad(cmd, format!("ply {}: the surface could not be thickened", k + 1)))?
+            .to_owned();
+        // The surface it was laid on is only the ply's start: hidden, with the rest, at the end.
+        hidden.push(surface);
+        let material = ply.get("material").and_then(Value::as_str).map(str::to_owned);
+        if let Some(m) = &material {
+            run(s, "material.assign", json!({"bodies": [made_body], "material": m}))?;
+        }
+        let body = made_body;
+        out.push(json!({"name": name, "body": body, "thickness": thicknesses[k].as_str(), "material": material}));
+    }
+    run(s, "browser.visibility", json!({"visible": false, "items": hidden}))?;
+    Ok(json!({"plies": out}))
+}
+
+/// The most a tilt's hinge may be off running along its face (the sine of the angle).
+const HINGE_ALONG: f64 = 0.0175;
+
+fn tilt_face(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "solid.tilt_face";
+    let at = p.get("face").and_then(vec3).ok_or_else(|| bad(cmd, "`face`: a point [x, y, z] on the planar face to tilt"))?;
+    let mut picks = serde_json::json!({"faces": [[at.x, at.y, at.z]]});
+    if let Some(b) = p.get("body").filter(|b| !b.is_null()) {
+        picks["body"] = b.clone();
+    }
+    let faces = face_points(s, &picks, "faces", cmd)?;
+    let refs = picks.get("faces").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    let picked = super::face::faces_body(s, &picks, refs, &faces);
+    let normal =
+        faces.first().and_then(|f| super::face::face_normal_in(s, *f, picked.lookup())).ok_or_else(|| bad(cmd, "the face to tilt must be planar"))?;
+    let (axis_origin, axis_dir, line, axis_feature) = super::features::axis_line_exprs(s, p, cmd)?;
+    let line = line.or_else(|| axis_feature.map(|name| solidcraft_doc::construct::GeoRef::Axis { name }));
+    let off = axis_dir.normalized().map_or(1.0, |d| d.dot(normal).abs());
+    if off > HINGE_ALONG {
+        return Err(bad(cmd, format!("the axis must run along the face, as a hinge: it is {:.1}° off", off.clamp(-1.0, 1.0).asin().to_degrees())));
+    }
+    let angle = req_expr(cmd, p, "angle")?;
+    check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
+    // The neutral plane: the face's own plane, attached to it exactly, turned a right angle about
+    // the hinge. The draft turns the face about where the two meet (the hinge), pulling along
+    // the neutral plane's normal as it is each time (a pull of zero), so the tilt follows the
+    // face and the hinge.
+    let mut face = serde_json::json!({"face": [at.x, at.y, at.z]});
+    if let Some(b) = p.get("body").filter(|b| !b.is_null()) {
+        face["body"] = b.clone();
+    }
+    let base = super::sketch::face::capture(s, &face, cmd)?;
+    super::sketch::face::capture_positions(s, &base)?;
+    let neutral = solidcraft_doc::PlaneRef::AtAngle {
+        base: Box::new(base),
+        axis_origin,
+        axis_dir,
+        angle: "90 deg".into(),
+        line: line.map(Box::new),
+        direction_only: false,
+        pivot: None,
+    };
+    let body = picked.body.clone().map(BodyName);
+    let kind = FeatureKind::Draft { faces: faces.into_iter().map(FacePick).collect(), angle, neutral, pull: Dir(Vec3::ZERO), body };
+    super::features::add_face_feature(&picked, s, p, kind)
 }
 
 fn replace_face(s: &mut Session, p: &Value) -> Result<Value> {

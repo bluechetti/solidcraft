@@ -106,6 +106,10 @@ pub fn refill(kind: &mut Kind, step: &CleanStep) {
             k.offset_expr = offset.as_ref().map(|e| e.as_str().to_owned());
             k.kept = area.as_ref().and_then(|a| serde_json::to_value(a).ok());
         }
+        (Kind::ScanRun(k), CleanStep::RemoveAndFill { area, fair }) if k.id == "scan.remove_and_fill" => {
+            k.fair = *fair;
+            k.kept = serde_json::to_value(area).ok();
+        }
         (Kind::ScanDenoise(k), CleanStep::Denoise { strength, area }) => {
             *k = strength.map_or_else(crate::dialogs_scan_denoise::Denoise::default, crate::dialogs_scan_denoise::Denoise::chosen);
             k.kept = area.as_ref().and_then(|a| serde_json::to_value(a).ok());
@@ -746,7 +750,7 @@ pub(crate) fn gpu_area_marks(app: &SolveApp) -> Option<GpuCloud> {
     let marks = match app.dialog.as_ref().map(|d| &d.kind)? {
         Kind::ScanReduce(k) => &k.marks,
         Kind::ScanDenoise(k) => &k.marks,
-        Kind::ScanRun(k) if k.id == "scan.remesh" => &k.marks,
+        Kind::ScanRun(k) if matches!(k.id, "scan.remesh" | "scan.remove_and_fill") => &k.marks,
         _ => return None,
     };
     let dots = marks.found.lock().ok()?.as_ref()?.as_ref().ok()?.1.clone();
@@ -867,7 +871,7 @@ pub fn reduce_commands(app: &SolveApp, k: &Reduce, inputs: &[crate::selection::S
 
 /// The clean tools that add a Scan Clean step, or write the scan back with `in_place`.
 pub(crate) fn is_clean_step(id: &str) -> bool {
-    matches!(id, "scan.remove_floating" | "scan.fill_holes" | "scan.reduce" | "scan.repair" | "scan.denoise" | "scan.remesh")
+    matches!(id, "scan.remove_floating" | "scan.fill_holes" | "scan.reduce" | "scan.repair" | "scan.denoise" | "scan.remesh" | "scan.remove_and_fill")
 }
 
 /// With the preference to clean scans in place (the way before), a clean tool's run from the

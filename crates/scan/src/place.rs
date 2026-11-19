@@ -211,9 +211,13 @@ pub fn quick_align(scan: &Scan) -> Option<Rigid> {
         }
         _ => [Vec3::X, Vec3::Y, Vec3::Z],
     };
-    // The scan's points, a sample, about its centre in those axes.
-    let used: Vec<Vec3> = (0..scan.triangle_count()).filter_map(|t| scan.corners(t)).flatten().collect();
-    let sample = crate::thinned(&used, 20_000);
+    // The scan's points, a sample (every k-th corner of its triangles, as `thinned` takes them,
+    // without a list of all the corners of a scan of tens of millions first), about its centre in
+    // those axes.
+    const SAMPLE: usize = 20_000;
+    let corners = 3 * (0..scan.triangle_count()).filter(|&t| scan.corners(t).is_some()).count();
+    let every = if corners <= SAMPLE { 1 } else { corners / SAMPLE + 1 };
+    let sample: Vec<Vec3> = (0..scan.triangle_count()).filter_map(|t| scan.corners(t)).flatten().step_by(every).collect();
     let mut frame = first;
     let local = |frame: &[Vec3; 3], p: Vec3| {
         let d = p - centre;
@@ -270,10 +274,9 @@ pub fn quick_align(scan: &Scan) -> Option<Rigid> {
     let x = y.cross(z).normalized()?;
     let turn = Rigid { rotation: [[x.x, x.y, x.z], [y.x, y.y, y.z], [z.x, z.y, z.z]], translation: Vec3::ZERO };
     // Centred over the origin, resting on the grid.
-    let placed: Vec<Vec3> = used.iter().map(|p| turn.turned(*p)).collect();
-    let (lo, hi) = placed.iter().fold(
+    let (lo, hi) = (0..scan.triangle_count()).filter_map(|t| scan.corners(t)).flatten().map(|p| turn.turned(p)).fold(
         (Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY), Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY)),
-        |(lo, hi), p| (lo.min(*p), hi.max(*p)),
+        |(lo, hi), p| (lo.min(p), hi.max(p)),
     );
     Some(Rigid { translation: Vec3::new(-(lo.x + hi.x) / 2.0, -(lo.y + hi.y) / 2.0, -lo.z), ..turn })
 }

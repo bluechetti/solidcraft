@@ -1,0 +1,66 @@
+{
+  "en": {
+    "cmd.scan_report": "Inspection Report",
+    "cmd.solid_laminate": "Laminate",
+    "cmd.solid_tilt_face": "Tilt Face",
+    "help.scan.report": "Writes one HTML file of the scan: what it is, what was done to it, what its scanner never saw, the deviation, and pictures inside. Opens in any browser.",
+    "help.solid.laminate": "Lays plies of set thicknesses over faces, one on another, each a body of its own with its material. Use it for composite lay-ups and mould skins.",
+    "help.solid.tilt_face": "Turns a flat face about a hinge running along it (an edge or an axis) by an angle. The tilt follows the face, the hinge and the parameters."
+  },
+  "ar": {
+    "cmd.scan_report": "تقرير الفحص",
+    "cmd.solid_laminate": "تصفيح",
+    "cmd.solid_tilt_face": "إمالة وجه",
+    "help.scan.report": "يكتب ملف HTML واحداً للمسح: ما هو، وما أُجري عليه، وما لم يره الماسح، والانحراف، والصور بداخله. يفتح في أي متصفح.",
+    "help.solid.laminate": "يضع طبقات بسماكات محددة فوق الأوجه، واحدة فوق الأخرى، كل منها جسم مستقل بمادته. للتشكيلات المركّبة وقشور القوالب.",
+    "help.solid.tilt_face": "يدير وجهاً مستوياً حول مفصل يمتد عليه (حافة أو محور) بزاوية. تتبع الإمالة الوجه والمفصل والمعاملات."
+  },
+  "de": {
+    "cmd.scan_report": "Prüfbericht",
+    "cmd.solid_laminate": "Laminieren",
+    "cmd.solid_tilt_face": "Fläche kippen",
+    "help.scan.report": "Schreibt eine HTML-Datei zum Scan: was er ist, was mit ihm gemacht wurde, was der Scanner nie sah, die Abweichung, mit Bildern darin. Öffnet in jedem Browser.",
+    "help.solid.laminate": "Legt Lagen fester Dicke übereinander auf Flächen, jede ein eigener Körper mit ihrem Werkstoff. Für Verbundaufbauten und Formhäute.",
+    "help.solid.tilt_face": "Dreht eine ebene Fläche um ein Scharnier entlang ihr (eine Kante oder Achse) um einen Winkel. Die Neigung folgt der Fläche, dem Scharnier und den Parametern."
+  },
+  "he": {
+    "cmd.scan_report": "דוח בדיקה",
+    "cmd.solid_laminate": "למינציה",
+    "cmd.solid_tilt_face": "הטיית פאה",
+    "help.scan.report": "כותב קובץ HTML אחד של הסריקה: מה היא, מה נעשה בה, מה הסורק לא ראה, הסטייה, ותמונות בתוכו. נפתח בכל דפדפן.",
+    "help.solid.laminate": "מניח שכבות בעוביים קבועים על פאות, אחת על השנייה, כל אחת גוף משלה עם החומר שלה. לשכבות מרוכבות ולעורות תבניות.",
+    "help.solid.tilt_face": "מסובב פאה שטוחה סביב ציר שלאורכה (קצה או ציר) בזווית. ההטיה עוקבת אחרי הפאה, הציר והפרמטרים."
+  },
+  "ja": {
+    "cmd.scan_report": "検査レポート",
+    "cmd.solid_laminate": "積層",
+    "cmd.solid_tilt_face": "面を傾ける",
+    "help.scan.report": "スキャンの HTML ファイルを 1 つ書き出します: 内容、行った処理、スキャナーが見ていない面、偏差、画像を含みます。どのブラウザーでも開けます。",
+    "help.solid.laminate": "指定した厚さの層を面の上に重ねて置きます。各層は材料付きの独立したボディです。複合材の積層や型の表皮に。",
+    "help.solid.tilt_face": "平面を、その上に沿うヒンジ (エッジまたは軸) の周りに角度だけ回します。傾きは面、ヒンジ、パラメーターに追従します。"
+  },
+  "ko": {
+    "cmd.scan_report": "검사 보고서",
+    "cmd.solid_laminate": "적층",
+    "cmd.solid_tilt_face": "면 기울이기",
+    "help.scan.report": "스캔의 HTML 파일 하나를 씁니다: 무엇인지, 무엇을 했는지, 스캐너가 보지 못한 부분, 편차, 그림 포함. 어느 브라우저에서나 열립니다.",
+    "help.solid.laminate": "정해진 두께의 층을 면 위에 차례로 쌓고, 각 층을 재질이 있는 별도 바디로 만듭니다. 복합재 적층과 금형 표피에.",
+    "help.solid.tilt_face": "평면을 그 위를 따라가는 힌지(모서리 또는 축)를 중심으로 각도만큼 돌립니다. 기울기는 면, 힌지, 매개변수를 따릅니다."
+  },
+  "vi": {
+    "cmd.scan_report": "Báo cáo kiểm tra",
+    "cmd.solid_laminate": "Ghép lớp",
+    "cmd.solid_tilt_face": "Nghiêng mặt",
+    "help.scan.report": "Ghi một tệp HTML về bản quét: nó là gì, đã làm gì với nó, phần máy quét chưa thấy, độ lệch, kèm hình bên trong. Mở được trong mọi trình duyệt.",
+    "help.solid.laminate": "Đặt các lớp có độ dày cho trước lên các mặt, lớp này chồng lớp kia, mỗi lớp là một thân riêng với vật liệu của nó. Cho lớp composite và vỏ khuôn.",
+    "help.solid.tilt_face": "Xoay một mặt phẳng quanh bản lề nằm dọc theo nó (một cạnh hoặc trục) một góc. Độ nghiêng bám theo mặt, bản lề và tham số."
+  },
+  "zh": {
+    "cmd.scan_report": "检测报告",
+    "cmd.solid_laminate": "层压",
+    "cmd.solid_tilt_face": "倾斜面",
+    "help.scan.report": "写出扫描的一个 HTML 文件：它是什么、对它做了什么、扫描仪未看到的部分、偏差，并内嵌图片。可在任何浏览器中打开。",
+    "help.solid.laminate": "在面上逐层铺设给定厚度的铺层，每层是带材料的独立实体。用于复合材料铺层和模具表皮。",
+    "help.solid.tilt_face": "将平面绕沿其延伸的铰链（边或轴）转动一个角度。倾斜跟随该面、铰链和参数。"
+  }
+}

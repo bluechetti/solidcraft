@@ -1,0 +1,58 @@
+{
+  "en": {
+    "cmd.scan_measure_line": "Length on Scan",
+    "help.scan.measure_line": "Click along the scan: the line between the dots follows the surface and reads its length along it, not through the air. Use it for panels, templates and wraps.",
+    "ui.scan_line_pick": "Click along the scan to add dots; press the button again to end",
+    "ui.scan_line_round": "Round R{radius}, {angle}°",
+    "ui.scan_line_tag": "{length} along the surface ({straight} straight)"
+  },
+  "ar": {
+    "cmd.scan_measure_line": "الطول على المسح",
+    "help.scan.measure_line": "انقر على طول المسح: يتبع الخط بين النقاط السطح ويقرأ طوله عليه لا عبر الهواء. استخدمه للألواح والقوالب واللف.",
+    "ui.scan_line_pick": "انقر على طول المسح لإضافة نقاط؛ اضغط الزر مرة أخرى للإنهاء",
+    "ui.scan_line_round": "دائري نصف قطره {radius}، {angle}°",
+    "ui.scan_line_tag": "{length} على السطح ({straight} مستقيماً)"
+  },
+  "de": {
+    "cmd.scan_measure_line": "Länge auf Scan",
+    "help.scan.measure_line": "Entlang des Scans klicken: Die Linie zwischen den Punkten folgt der Fläche und misst ihre Länge darauf, nicht durch die Luft. Für Platten, Schablonen und Bezüge.",
+    "ui.scan_line_pick": "Entlang des Scans klicken, um Punkte zu setzen; Schaltfläche erneut drücken zum Beenden",
+    "ui.scan_line_round": "Rund R{radius}, {angle}°",
+    "ui.scan_line_tag": "{length} entlang der Fläche ({straight} gerade)"
+  },
+  "he": {
+    "cmd.scan_measure_line": "אורך על הסריקה",
+    "help.scan.measure_line": "לחצו לאורך הסריקה: הקו בין הנקודות עוקב אחרי המשטח ומודד את אורכו עליו, לא דרך האוויר. לפנלים, תבניות ועטיפות.",
+    "ui.scan_line_pick": "לחצו לאורך הסריקה כדי להוסיף נקודות; לחצו שוב על הכפתור כדי לסיים",
+    "ui.scan_line_round": "עגול R{radius}, ‏{angle}°",
+    "ui.scan_line_tag": "{length} לאורך המשטח ({straight} בקו ישר)"
+  },
+  "ja": {
+    "cmd.scan_measure_line": "スキャン上の長さ",
+    "help.scan.measure_line": "スキャンに沿ってクリックします。点の間の線は面に沿い、空中ではなく面上の長さを測ります。パネル、型紙、巻き付けに。",
+    "ui.scan_line_pick": "スキャンに沿ってクリックして点を追加。もう一度ボタンを押すと終了",
+    "ui.scan_line_round": "円弧 R{radius}、{angle}°",
+    "ui.scan_line_tag": "面に沿って {length} (直線 {straight})"
+  },
+  "ko": {
+    "cmd.scan_measure_line": "스캔 위 길이",
+    "help.scan.measure_line": "스캔을 따라 클릭합니다. 점 사이의 선이 면을 따라가며 공중이 아닌 면 위의 길이를 잽니다. 패널, 형판, 감싸기에 사용합니다.",
+    "ui.scan_line_pick": "스캔을 따라 클릭해 점을 추가하고, 버튼을 다시 누르면 끝납니다",
+    "ui.scan_line_round": "원호 R{radius}, {angle}°",
+    "ui.scan_line_tag": "면을 따라 {length} (직선 {straight})"
+  },
+  "vi": {
+    "cmd.scan_measure_line": "Độ dài trên bản quét",
+    "help.scan.measure_line": "Nhấp dọc bản quét: đường giữa các điểm bám theo bề mặt và đo độ dài trên đó, không xuyên qua không khí. Dùng cho tấm, dưỡng và bọc.",
+    "ui.scan_line_pick": "Nhấp dọc bản quét để thêm điểm; nhấn nút lần nữa để kết thúc",
+    "ui.scan_line_round": "Cung R{radius}, {angle}°",
+    "ui.scan_line_tag": "{length} dọc bề mặt ({straight} thẳng)"
+  },
+  "zh": {
+    "cmd.scan_measure_line": "扫描上的长度",
+    "help.scan.measure_line": "沿扫描单击：点之间的线贴着曲面，测量沿曲面的长度，而不是穿过空中。用于面板、样板和包覆。",
+    "ui.scan_line_pick": "沿扫描单击以添加点；再次按下按钮结束",
+    "ui.scan_line_round": "圆弧 R{radius}，{angle}°",
+    "ui.scan_line_tag": "沿曲面 {length}（直线 {straight}）"
+  }
+}

@@ -47,6 +47,7 @@ pub mod dialogs_appearance;
 pub mod dialogs_assembly;
 pub mod dialogs_constrain;
 pub mod dialogs_coupling;
+pub(crate) mod dialogs_deform;
 pub mod dialogs_end_cap;
 pub mod dialogs_frame;
 mod dialogs_hole;
@@ -80,6 +81,7 @@ pub(crate) mod dialogs_scan_split;
 pub(crate) mod dialogs_scan_surface;
 pub(crate) mod dialogs_scan_survey;
 pub(crate) mod dialogs_scan_template;
+pub(crate) mod dialogs_scan_together;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
 pub(crate) mod dialogs_surface_check;
@@ -316,11 +318,13 @@ pub(crate) mod scan_dots;
 pub(crate) mod scan_fidelity;
 pub(crate) mod scan_how;
 pub(crate) mod scan_job;
+pub(crate) mod scan_line;
 pub(crate) mod scan_paint;
 pub(crate) mod scan_selection;
 pub(crate) mod scan_shapes;
 pub(crate) mod scan_snap;
 pub(crate) mod scan_triangles;
+pub(crate) mod scan_unseen;
 pub mod scan_workspace;
 pub mod scenario;
 pub(crate) mod scene_palette;
@@ -1752,6 +1756,13 @@ impl SolveApp {
             r => r,
         };
         if let Ok(v) = &r {
+            // A scan tool that found nothing to do says so: it is no failure, and nothing changed.
+            if id.starts_with("scan.")
+                && v.get("changed") == Some(&Value::Bool(false))
+                && let Some(note) = v.get("note").and_then(Value::as_str)
+            {
+                self.set_status(friendly_error(id, note), false);
+            }
             if id.eq_ignore_ascii_case("plugin.inspect")
                 && let Some(id) = v.pointer("/manifest/id").and_then(Value::as_str)
             {

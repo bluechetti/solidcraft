@@ -242,9 +242,20 @@ pub fn groups(tab: &str, panel: &str) -> &'static [CommandGroup] {
             CommandGroup { label: "Edges", ids: &["solid.fillet", "solid.chamfer"] },
             CommandGroup {
                 label: "Faces",
-                ids: &["solid.press_pull", "solid.draft", "solid.offset_face", "solid.replace_face", "solid.split_face", "face.delete"],
+                ids: &[
+                    "solid.press_pull",
+                    "solid.draft",
+                    "solid.tilt_face",
+                    "solid.offset_face",
+                    "solid.replace_face",
+                    "solid.split_face",
+                    "face.delete",
+                ],
             },
-            CommandGroup { label: "Bodies", ids: &["solid.shell", "solid.combine", "solid.split_body", "solid.scale", "solid.remove"] },
+            CommandGroup {
+                label: "Bodies",
+                ids: &["solid.shell", "solid.combine", "solid.split_body", "solid.scale", "solid.deform", "solid.remove"],
+            },
             CommandGroup { label: "Specialise", ids: &["sheet.convert"] },
         ],
         _ => &[],
@@ -618,6 +629,8 @@ pub const SECTIONS: &[Section] = &[
             "scan.fill_holes",
             // Reference spheres off the scan, the holes they leave closed.
             "scan.remove_markers",
+            // A stamp, a boss or a sticker off the scan, the hole it leaves closed.
+            "scan.remove_and_fill",
             "scan.repair",
             "scan.reduce",
             "scan.denoise",
@@ -660,6 +673,8 @@ pub const SECTIONS: &[Section] = &[
             "scan.fit_sphere",
             "scan.fit_cone",
             "scan.fit_torus",
+            // Shapes fitted to the scan and to each other: on one axis, square, a distance apart.
+            "scan.fit_together",
             "mesh.convert",
             "scan.reconstruct_selection",
             "scan.reconstruct_rest",
@@ -718,6 +733,12 @@ pub const SECTIONS: &[Section] = &[
             "inspect.check_measure",
             // Labels places on the deviation map with their distances.
             "scan.deviation_pin",
+            // A line of clicks along the scan, its length along the surface.
+            "scan.measure_line",
+            // What the scanner never saw: filled, mirrored or made from sparse points.
+            "scan.unseen",
+            // One HTML file of the scan, what was done to it and what was read off it.
+            "scan.report",
             // The scan's own triangles drawn, to see what Reduce Mesh or Remesh made of it.
             "view.scan_triangles",
             "inspect.hole_table",
@@ -1523,6 +1544,7 @@ mod tests {
                 "solid.chamfer",
                 "solid.press_pull",
                 "solid.draft",
+                "solid.tilt_face",
                 "solid.offset_face",
                 "solid.replace_face",
                 "solid.split_face",
@@ -1531,6 +1553,7 @@ mod tests {
                 "solid.combine",
                 "solid.split_body",
                 "solid.scale",
+                "solid.deform",
                 "solid.remove",
                 "sheet.convert",
                 "timeline.delete",

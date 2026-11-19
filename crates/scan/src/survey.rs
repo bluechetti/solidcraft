@@ -120,7 +120,7 @@ pub fn look(scan: &Scan, floating: f64) -> Option<Look> {
         open_edges,
         tangled_edges: rings.unfillable_edges + crack_edges,
         crack_edges,
-        crossing_faces: crate::repair::crossing_count(scan),
+        crossing_faces: crate::repair::crossing_count_welded(scan, &hair),
         pieces: found.sizes.len(),
         floating: floats.iter().filter(|f| **f).count(),
         floating_share: floating_area / area,

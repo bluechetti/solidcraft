@@ -122,6 +122,25 @@ pub struct ScanPrism {
     /// How far its walls lean in from its low end to its high end, in degrees (a moulded part's
     /// draft): Extrude It sketches it at its low end and extrudes it tapered. 0 for square walls.
     pub draft: f64,
+    /// When its outline repeats round its middle (a gear's teeth, a knob's lobes): how.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotational: Option<ScanRotational>,
+}
+
+/// How a prism's outline repeats round its middle.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanRotational {
+    /// How many times it repeats in one turn: a gear's tooth count.
+    pub order: usize,
+    /// The middle it repeats about, in the design (on the prism's middle slice).
+    pub centre: [f64; 3],
+    /// Twice its largest and its least distance from the middle, in mm: a gear's tip and root
+    /// diameters.
+    pub tip_diameter: f64,
+    pub root_diameter: f64,
+    /// Were it a spur gear of standard proportions, its module: the tip diameter over the tooth
+    /// count plus two.
+    pub module: f64,
 }
 
 /// Walls of one thickness, open at an end (a moulded housing, a tray): the prisms are read off
@@ -315,6 +334,12 @@ pub struct ScanExtrudeItParams {
     /// when there is none.
     #[serde(default)]
     pub into: Option<String>,
+    /// A prism whose outline repeats round its middle (a gear's teeth, a knob's lobes;
+    /// `scan.reconstruct`'s `rotational`) is built as its tip circle extruded, one gap cut through
+    /// it and the cut patterned round (`count` in the reply; the pattern's count is a number in
+    /// the design). False draws the whole outline in one sketch. Default: true.
+    #[serde(default)]
+    pub pattern: Option<bool>,
 }
 
 /// Revolve It: the turned part Reconstruct reads, built as an ordinary sketch of its profile on a
@@ -333,6 +358,11 @@ pub struct ScanRevolveItParams {
     /// The body to join. Default: the body Reconstruct builds, made new when there is none.
     #[serde(default)]
     pub into: Option<String>,
+    /// For a skin scanned from one side (the profile is open at both ends; `skin` in the reply
+    /// says so): its wall thickness in mm. The profile is then revolved as a surface and thickened
+    /// by this much away from the scanned side, instead of closed straight across into a solid.
+    #[serde(default)]
+    pub wall: Option<f64>,
 }
 
 /// Cut It: a round hole Reconstruct reads, cut into the body it builds: a circle sketched square
@@ -555,6 +585,12 @@ pub struct ScanFilletItResult {
     pub set_aside: usize,
     /// The Fillet features made.
     pub features: Vec<Value>,
+    /// `false` when no round the scan shows fits better than the body's sharp edge: the body is as
+    /// it was, and `note` says why. Left out when a fillet was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// How close the body is to the scan before and after the step (absent when it could not be
     /// measured).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -618,6 +654,10 @@ pub struct ScanBuildResult {
     /// or why they were not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openings: Option<String>,
+    /// Revolve It on a profile open at both ends (one side of a skin): how it was built, the
+    /// profile closed straight across into a solid or (`wall`) revolved as a surface and thickened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin: Option<String>,
     /// How close the body is to the scan before and after the step (absent when it could not be
     /// measured).
     #[serde(default, skip_serializing_if = "Option::is_none")]

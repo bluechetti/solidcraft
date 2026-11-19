@@ -152,6 +152,7 @@ pub(crate) fn computed_whole(id: &str) -> bool {
             // A first look reads every triangle: seconds on ten million.
             | "scan.survey"
             | "scan.remesh"
+            | "scan.remove_and_fill"
             | "scan.mesh_from_points"
             | "scan.keep_selection"
             | "scan.delete_selection"

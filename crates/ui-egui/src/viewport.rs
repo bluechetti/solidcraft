@@ -7095,6 +7095,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 .chain(crate::scan_selection::gpu_cloud(app))
                 .chain(crate::dialogs_scan_run::gpu_preview(app))
                 .chain(crate::scan_deviation::gpu_cloud(app))
+                .chain(crate::scan_unseen::gpu_cloud(app))
                 .chain(crate::scan_shapes::gpu_cloud(app))
                 .chain(crate::dialogs_scan::gpu_marks(app))
                 .chain(crate::dialogs_scan::gpu_mismatch(app))
@@ -7869,6 +7870,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     {
         crate::scan_markers::click(app, &proj, p);
     }
+    // Length on Scan: a click on the scan adds a dot to the line measured on it.
+    if crate::scan_line::picking(app)
+        && resp.clicked()
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        crate::scan_line::click(app, &proj, p);
+    }
     // Radius from Scan: a tap on the scan reads the round under it.
     if crate::scan_radius::picking(app)
         && resp.clicked()
@@ -7994,6 +8002,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::hole_table::draw(app, &painter, &proj);
     crate::scan_markers::draw(app, &painter, &proj);
     crate::scan_radius::draw(app, &painter, &proj);
+    crate::scan_line::draw(app, &painter, &proj);
     crate::inspection_plan::draw(app, &painter, &proj);
     crate::dim_view::show(app, ui, &painter, &proj);
     crate::sketch_text_handles::show(app, ui, &painter, &proj, hover);
@@ -8722,6 +8731,7 @@ fn takes_scan_clicks(app: &SolveApp) -> bool {
         || crate::scan_deviation::pinning(app)
         || crate::scan_markers::picking(app)
         || crate::scan_radius::picking(app)
+        || crate::scan_line::picking(app)
         || crate::inspection_plan::adding(app)
 }
 

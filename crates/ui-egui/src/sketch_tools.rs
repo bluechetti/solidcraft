@@ -325,6 +325,21 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
     if id == "scan.remove_markers" {
         return crate::scan_markers::toggle(app);
     }
+    // Inspection Report's button asks where to write the report, then writes it.
+    if id == "scan.report" {
+        let body = solidcraft_engine::cmd::scan::mesh_body_name(&app.session, None, id).unwrap_or_default();
+        let name = if body.is_empty() { "report.html".to_owned() } else { format!("{body} report.html") };
+        app.pick_save_command(&name, &["html"], id, serde_json::json!({"body": body}));
+        return false;
+    }
+    // Unseen Surface's button paints what the scanner never saw, or takes the paint away.
+    if id == "scan.unseen" {
+        return crate::scan_unseen::toggle(app);
+    }
+    // Length on Scan's button starts a line of clicks along the scan, or ends it.
+    if id == "scan.measure_line" {
+        return crate::scan_line::toggle(app);
+    }
     // Radius from Scan's button asks for taps on rounds, or ends asking.
     if id == "scan.radius" {
         return crate::scan_radius::toggle(app);

@@ -43,7 +43,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("grid")
         .contract(&REMESH_CONTRACT)
         .output(output_schema_for::<ScanRemeshResult>)
-        .params("body?: the scan (default: the selected or only one); with?: [other passes, laid on it] fused in; cell?: length (default the scan's typical edge: the new mesh's edge); sharp?: bool (default false: each vertex where the planes of its cell meet, so sharp edges and corners stay sharp); area: point?: [x,y,z] with grow?: true|degrees or radius?: mm, saved?: kept selection, selected?: true, or area?: {triangles, runs} (default the whole scan; within an area its triangles are made again as even triangles of about cell on the scan, the rest and the area's edge kept, sharp keeping its sharp edges; not with `with`): the scan made again as one even surface from the signed distances of the scans in a narrow band of a grid (overlaps averaged), kept as a Scan Clean step in the timeline (its settings only; in_place?: bool writes the scan back instead), one undo step → body, with, before, triangles, vertices, cell, sharp, new_rms, new_max, scan_rms, scan_p95, uncovered, feature"),
+        .params("body?: the scan (default: the selected or only one); with?: [other passes, laid on it] fused in; cell?: length (default the scan's typical edge: the new mesh's edge); sharp?: bool (default false: each vertex where the planes of its cell meet, so sharp edges and corners stay sharp); offset?: length or expression (default 0: the surface made that far off the scan, positive the way its faces point, negative into it, following the design's parameters: a liner, a socket, a nest's clearance; the whole scan only); area: point?: [x,y,z] with grow?: true|degrees or radius?: mm, saved?: kept selection, selected?: true, or area?: {triangles, runs} (default the whole scan; within an area its triangles are made again as even triangles of about cell on the scan, the rest and the area's edge kept, sharp keeping its sharp edges; not with `with`): the scan made again as one even surface from the signed distances of the scans in a narrow band of a grid (overlaps averaged), kept as a Scan Clean step in the timeline (its settings only; in_place?: bool writes the scan back instead), one undo step → body, with, before, triangles, vertices, cell, sharp, new_rms, new_max, scan_rms, scan_p95, uncovered, feature"),
     CommandSpec::new("scan.register", "Align to Scan", crate::checked!("scan.register", register_scan))
     .at("SCAN", "ALIGN")
     .icon("align")
@@ -114,6 +114,7 @@ pub(super) fn register_scan(s: &mut Session, p: &Value) -> Result<Value> {
         rms_before: found.rms_before,
         rms_after: found.rms_after,
         matched: found.matched,
+        rms_matched: found.rms_matched,
         start: found.start.to_string(),
         converged: found.converged,
         note: found.note(),
@@ -152,8 +153,9 @@ pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "`offset` makes the whole scan again that far off it, not an area: give one or the other"));
     }
     let step = CleanStep::Remesh { cell, sharp, offset, with: with.iter().cloned().map(Into::into).collect(), area };
-    let (done, feature) = super::clean::apply(s, p, &body, step, cmd)?;
-    let (vertices, triangles) = done.body.triangle_mesh().map_or((0, 0), |(p, t)| (p.len(), t.len()));
+    let done = super::clean::apply(s, p, &body, step, cmd)?;
+    let (vertices, triangles) = (done.vertices, done.triangles);
+    let feature = done.feature.ok_or_else(|| bad(cmd, "the step was not added"))?;
     let Report::Remesh { before, cell, new_rms, new_max, scan_rms, scan_p95, uncovered } = done.report else {
         return Err(bad(cmd, "the step did something else"));
     };
@@ -201,12 +203,28 @@ pub(super) fn denoise_scan(s: &mut Session, p: &Value) -> Result<Value> {
     if strength.is_some_and(|k| !(0.0..=denoise::MOST_PASSES as f64).contains(&k)) {
         return Err(bad(cmd, "`strength` is a number of passes from 0 to 8"));
     }
+    // Asked to smooth by nothing: a mistake in the call, not a scan with nothing to do.
+    if strength == Some(0.0) {
+        return Err(bad(cmd, "a `strength` of 0 smooths nothing: give 0.05 to 8 passes"));
+    }
     let area = super::flatten::step_area(s, p, &body, cmd)?;
-    let (done, feature) = super::clean::apply(s, p, &body, CleanStep::Denoise { strength, area }, cmd)?;
+    let done = super::clean::apply(s, p, &body, CleanStep::Denoise { strength, area }, cmd)?;
     let Report::Denoise { strength, suggested, noise, roughness, rms_moved, max_moved } = done.report else {
         return Err(bad(cmd, "the step did something else"));
     };
-    reply(ScanDenoiseResult { body, strength, suggested, noise, roughness, rms_moved, max_moved, feature, param_warnings: Vec::new() })
+    reply(ScanDenoiseResult {
+        body,
+        strength,
+        suggested,
+        noise,
+        roughness,
+        rms_moved,
+        max_moved,
+        feature: done.feature,
+        changed: done.changed(),
+        note: done.nothing,
+        param_warnings: Vec::new(),
+    })
 }
 
 /// The cloud `p` names (or the only one): its name, its points in the design, and the normals it

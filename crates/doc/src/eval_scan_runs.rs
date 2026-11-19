@@ -37,6 +37,16 @@ impl ScanRun {
     }
 }
 
+impl ModelState {
+    /// The scan `name` as it was before its run of Scan Clean steps, and the mesh the run's last
+    /// step made (while anything still holds it): what the scan looked like as it came in beside
+    /// what the steps made of it. `None` when no Scan Clean step has worked on it.
+    pub fn scan_before_cleaning(&self, name: &str) -> Option<(Body, Option<Arc<solidcraft_geom::Mesh>>)> {
+        let run = self.scan_runs.get(name)?;
+        Some((run.base.clone(), run.latest.upgrade()))
+    }
+}
+
 /// The run `st`'s scan `name` is in after a step (`step`, fusing in `with`) read `input` and made
 /// `output`: the run `input` ended, one step longer, or a new run from `input`.
 pub(crate) fn note_step(st: &mut ModelState, name: &str, input: &Body, output: &Body, step: &CleanStep, with: &[&Body]) {
@@ -61,7 +71,7 @@ pub(crate) fn materialized(st: &ModelState) -> ModelState {
             let with: Vec<&Body> = with.iter().collect();
             match scan_clean::clean(step, &body, &with) {
                 Ok(done) => body = done.body,
-                Err(Refused::Nothing(_)) => {}
+                Err(Refused::Nothing(..)) => {}
                 // It was done before on this same scan: it cannot fail now. Should it, the scan is
                 // left as far as it got rather than as it was before the run.
                 Err(Refused::Failed(why)) => {

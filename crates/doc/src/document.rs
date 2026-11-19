@@ -1268,6 +1268,13 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<BodyName>,
     },
+    /// Deform: `body` carried through a map of space (a bend, a twist, a cage of points), its
+    /// faces and edges made cubic B-splines that follow the map within 0.001 mm
+    /// (`kernel::deform`); its topology and trims stay its own.
+    Deform {
+        body: BodyName,
+        map: DeformMap,
+    },
     /// A construction plane (sketch placement, split tool).
     ConstructionPlane {
         plane: PlaneRef,
@@ -2533,6 +2540,51 @@ pub enum ExtendTo {
 }
 
 /// How a fillet's size is given.
+/// How a Deform carries its body through space.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DeformMap {
+    /// The stretch from `origin` along `along` for `length` bent round a circle towards `up`,
+    /// turning by `angle` over it; before it nothing moves, past it the rest goes round rigidly.
+    Bend {
+        origin: Position,
+        along: Dir,
+        up: Dir,
+        #[walk(length = "Length")]
+        length: Expr,
+        #[walk(angle = "Angle")]
+        angle: Expr,
+    },
+    /// A twist about the line through `origin` along `axis` by `angle` over `length`, growing
+    /// evenly; before it nothing turns, past it everything turns by the whole angle.
+    Twist {
+        origin: Position,
+        axis: Dir,
+        #[walk(length = "Length")]
+        length: Expr,
+        #[walk(angle = "Angle")]
+        angle: Expr,
+    },
+    /// A box from `lo` to `hi` with `counts` lattice points each way (2 to 8); `moves` shifts
+    /// some of them (`[i, j, k]` from the box's low corner, by `[dx, dy, dz]` mm), and the box's
+    /// inside follows the moved lattice (free-form deformation); outside it nothing moves.
+    Cage {
+        lo: Position,
+        hi: Position,
+        counts: [usize; 3],
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        moves: Vec<CageMove>,
+    },
+}
+
+/// A Deform cage's lattice point `index` (`[i, j, k]` from the box's low corner) moved `by`
+/// `[dx, dy, dz]` mm.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+pub struct CageMove {
+    pub index: [usize; 3],
+    pub by: [f64; 3],
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FilletStyle {
@@ -3139,6 +3191,7 @@ impl FeatureKind {
             FeatureKind::Sweep { .. } => "SweepFeature",
             FeatureKind::Shell { .. } => "ShellFeature",
             FeatureKind::Draft { .. } => "DraftFeature",
+            FeatureKind::Deform { .. } => "DeformFeature",
             FeatureKind::Split { .. } => "SplitBodyFeature",
             FeatureKind::SplitFace { .. } => "SplitFaceFeature",
             FeatureKind::ConstructionAxis { .. } => "ConstructionAxis",
@@ -3228,6 +3281,7 @@ impl FeatureKind {
             FeatureKind::Sweep { .. } => "sweep",
             FeatureKind::Shell { .. } => "shell",
             FeatureKind::Draft { .. } => "draft",
+            FeatureKind::Deform { .. } => "deform",
             FeatureKind::ConstructionPlane { .. } => "construction_plane",
             FeatureKind::Split { .. } => "split",
             FeatureKind::ConstructionAxis { .. } => "construction_axis",
@@ -3406,6 +3460,7 @@ impl FeatureKind {
             FeatureKind::Sweep { .. } => "Sweep",
             FeatureKind::Shell { .. } => "Shell",
             FeatureKind::Draft { .. } => "Draft",
+            FeatureKind::Deform { .. } => "Deform",
             FeatureKind::Split { .. } => "Split",
             FeatureKind::SplitFace { .. } => "SplitFace",
             FeatureKind::ConstructionAxis { .. } => "Axis",

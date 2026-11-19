@@ -115,6 +115,10 @@ encoding_rs = "0.8"
 # glTF 2.0 import (MIT OR Apache-2.0): the document model and GLB container only; buffers are
 # read by crates/io itself, so no image decoding or file access comes with it.
 gltf = { version = "1.4", default-features = false, features = ["names"] }
+# Scanner point clouds: E57 (ASTM E2807; MIT) and LAS/LAZ (ASPRS; las MIT, its pure-Rust LAZ
+# decompression laz Apache-2.0). Both pure Rust, so they build for wasm.
+e57 = "=0.11.13"
+las = { version = "=0.11.1", features = ["laz"] }
 # The computer's name in a design's "open elsewhere" lock file (MIT OR Apache-2.0; already in the
 # tree through x11rb).
 gethostname = "1"

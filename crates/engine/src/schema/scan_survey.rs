@@ -87,6 +87,9 @@ pub struct ScanSurveyResult {
     pub floating_share: f64,
     /// The share of the surface in broad flat faces.
     pub flat_share: f64,
+    /// The share of the surface its scanner never saw (filled, mirrored, made from sparse points;
+    /// `scan.unseen` shows where), 0 for a scan as it came in.
+    pub unseen_share: f64,
     /// Thin for its size and broad: a wall, a panel or a sheet.
     pub sheet_like: bool,
     /// What Find All read, when it has read this scan as it is now.

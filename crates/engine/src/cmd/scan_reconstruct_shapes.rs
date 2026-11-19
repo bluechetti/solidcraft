@@ -21,7 +21,7 @@ fn in_plane(plane: &Plane, p: Vec3) -> [f64; 2] {
 
 /// A new sketch on `plane`, left open for drawing; its id.
 fn open_sketch(s: &mut Session, plane: &Plane, name: &str) -> Result<u64> {
-    let made = run(s, "sketch.create", json!({"plane": {"origin": at(plane.origin), "x_dir": at(plane.x), "y_dir": at(plane.y)}, "name": s.doc.free_sketch_name(name)}))?;
+    let made = super::super::new_sketch(s, json!({"plane": {"origin": at(plane.origin), "x_dir": at(plane.x), "y_dir": at(plane.y)}, "name": name}))?;
     made.get("sketch").and_then(Value::as_u64).ok_or_else(|| EngineError::Other("the sketch was not made".into()))
 }
 
@@ -58,6 +58,7 @@ fn built(view: &View, sketch: Option<u64>, feature: Value, solid: String, how: &
         depth,
         count: None,
         openings: None,
+        skin: None,
         fit: None,
         param_warnings: Vec::new(),
     })

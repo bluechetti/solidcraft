@@ -531,6 +531,8 @@ pub struct ComputedCommands {
     computed: Session,
     steps: Vec<ComputedCommand>,
     editor_original: Option<Arc<Document>>,
+    /// Commands refused and left out ([`Session::compute_commands_apart`]): each one's id and why.
+    left_out: Vec<(String, String)>,
 }
 
 struct ComputedCommand {
@@ -564,6 +566,12 @@ impl ComputedCommands {
     /// The commands run, in order, with what each replied.
     pub fn steps(&self) -> impl Iterator<Item = (&str, &Value, &Value)> {
         self.steps.iter().map(|step| (step.id.as_str(), &step.params, &step.reply))
+    }
+
+    /// The commands that were refused and left out, in order, each with why: only
+    /// [`Session::compute_commands_apart`] leaves any out.
+    pub fn left_out(&self) -> &[(String, String)] {
+        &self.left_out
     }
 
     /// Prepare display tessellation before returning the transaction to the window; a model that
@@ -2870,7 +2878,16 @@ impl Session {
     /// `marker` restores an editor's original marker before recording its undo snapshot.
     /// The source remains untouched, including its history and recovery journal.
     pub fn compute_commands(self, commands: &[(String, Value)], marker: Option<Option<usize>>) -> Result<ComputedCommands> {
-        self.compute_commands_inner(commands, marker, None)
+        self.compute_commands_inner(commands, marker, None, None)
+    }
+
+    /// [`Session::compute_commands`] for commands that each stand apart (the steps Reconstruct
+    /// proposes): one that is refused is left out, the design as it was before it, and the rest
+    /// still run ([`ComputedCommands::left_out`] names it and why). `needs[i]` is the earlier
+    /// command that command `i` builds on, left out with it. When every command is refused the
+    /// first refusal is the error, and a cancel ends them all.
+    pub fn compute_commands_apart(self, commands: &[(String, Value)], needs: &[Option<usize>]) -> Result<ComputedCommands> {
+        self.compute_commands_inner(commands, None, None, Some(needs))
     }
 
     /// Start an edit from its pinned original model, so restoring the original marker cannot
@@ -2912,7 +2929,7 @@ impl Session {
         if expected != *source.doc {
             return Err(EngineError::Other("the original editor model does not match its source design".into()));
         }
-        self.compute_commands_inner(commands, Some(original.doc.marker), Some(original))
+        self.compute_commands_inner(commands, Some(original.doc.marker), Some(original), None)
     }
 
     fn compute_commands_inner(
@@ -2920,9 +2937,10 @@ impl Session {
         commands: &[(String, Value)],
         marker: Option<Option<usize>>,
         original: Option<Session>,
+        apart: Option<&[Option<usize>]>,
     ) -> Result<ComputedCommands> {
         let stop = self.stop.clone();
-        stop.within(|| self.compute_commands_under(commands, marker, original))
+        stop.within(|| self.compute_commands_under(commands, marker, original, apart))
     }
 
     fn compute_commands_under(
@@ -2930,6 +2948,7 @@ impl Session {
         commands: &[(String, Value)],
         marker: Option<Option<usize>>,
         original: Option<Session>,
+        apart: Option<&[Option<usize>]>,
     ) -> Result<ComputedCommands> {
         let editor_original = original.as_ref().map(|session| session.doc.clone());
         let mut computed = self.scratch();
@@ -2955,13 +2974,31 @@ impl Session {
             let changed = !Arc::ptr_eq(&before, &computed.doc);
             steps.push(ComputedCommand { id: "timeline.roll_to".into(), params, before, after: computed.doc.clone(), changed, reply });
         }
-        for (id, params) in commands {
+        // Commands left out (their place, why), and the first refusal as it came.
+        let mut left_out: Vec<(usize, String)> = Vec::new();
+        let mut first_refusal = None;
+        let ran_before = steps.len();
+        for (index, (id, params)) in commands.iter().enumerate() {
+            let needed = apart.and_then(|needs| needs.get(index).copied().flatten()).filter(|on| left_out.iter().any(|(k, _)| k == on));
+            if let Some((needed, _)) = needed.and_then(|on| commands.get(on)) {
+                left_out.push((index, format!("it builds on what `{needed}` makes, which was left out")));
+                continue;
+            }
             let before = computed.doc.clone();
             let active_sketch = computed.active_sketch;
             let active_sheet_sketch = computed.active_sheet_sketch.clone();
             let open_drawing = computed.open_drawing;
             let pending_moves = computed.pending_moves.clone();
-            let reply = computed.execute(id, params)?;
+            let reply = match computed.execute(id, params) {
+                Ok(reply) => reply,
+                // A refused command left the copy as it was (`execute`): the next runs on that.
+                Err(refusal) if apart.is_some() && !matches!(refusal, EngineError::Cancelled(_)) => {
+                    left_out.push((index, refusal.to_string()));
+                    first_refusal.get_or_insert(refusal);
+                    continue;
+                }
+                Err(refusal) => return Err(refusal),
+            };
             let changed = !Arc::ptr_eq(&before, &computed.doc)
                 || active_sketch != computed.active_sketch
                 || active_sheet_sketch != computed.active_sheet_sketch
@@ -2972,7 +3009,11 @@ impl Session {
         }
         // What the source was primed with stays out of the session that is adopted (#6901).
         computed.unprime();
-        Ok(ComputedCommands { source: self, computed, steps, editor_original })
+        if let (true, Some(refusal)) = (steps.len() == ran_before, first_refusal) {
+            return Err(refusal);
+        }
+        let left_out = left_out.into_iter().filter_map(|(index, why)| Some((commands.get(index)?.0.clone(), why))).collect();
+        Ok(ComputedCommands { source: self, computed, steps, editor_original, left_out })
     }
 
     /// Adopt evaluated commands only if their document and authoring context are still current.
