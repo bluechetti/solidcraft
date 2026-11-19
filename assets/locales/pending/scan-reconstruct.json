@@ -17,6 +17,7 @@
     "help.scan.pattern_it": "Repeats a hole cut with Cut It as its row or ring of holes is laid out, with their count and spacing.",
     "help.scan.reconstruct": "Reads what Find All's shapes make (prisms, turned parts, holes and their repeats) and lists the steps to build it as editable features.",
     "help.scan.revolve_it": "Builds a turned part Reconstruct reads: its profile sketched on a plane through its axis, each face held to the axis, and revolved all the way round.",
+    "ui.ribbon_reconstruct": "Rebuild",
     "ui.scan_find_all_cone": "Cone",
     "ui.scan_find_all_cylinder": "Cylinder",
     "ui.scan_find_all_freeform": "Freeform",
@@ -29,12 +30,12 @@
     "ui.scan_reconstruct_extrude": "Extrude It {number}: {depth} deep, {walls} walls",
     "ui.scan_reconstruct_found": "{shapes} shapes cover {share} of the scan.",
     "ui.scan_reconstruct_hint": "OK builds the ticked steps in order, each its own undo step; the first body is new and the rest join it.",
+    "ui.scan_reconstruct_left_out": "Built {built} of {asked} steps. Left out: {steps}",
     "ui.scan_reconstruct_none_ticked": "Tick a step to build.",
     "ui.scan_reconstruct_nothing": "The shapes make no prism, turned part or hole to build: fit planes and cylinders, or sketch a section, and build by hand.",
     "ui.scan_reconstruct_pattern": "Pattern It {number}: {count} in all",
     "ui.scan_reconstruct_revolve": "Revolve It: {faces} faces about one axis",
-    "ui.scan_reconstruct_unread": "The scan has not been read: press Reconstruct again.",
-    "ui.ribbon_reconstruct": "Rebuild"
+    "ui.scan_reconstruct_unread": "The scan has not been read: press Reconstruct again."
   },
   "de": {
     "RECONSTRUCT": "REKONSTRUIEREN",
@@ -54,6 +55,7 @@
     "help.scan.pattern_it": "Wiederholt eine mit Bohrung schneiden erzeugte Bohrung so, wie ihre Reihe oder ihr Kreis angeordnet ist, mit Anzahl und Abstand.",
     "help.scan.reconstruct": "Liest, was die Formen von „Alle finden“ ergeben (Prismen, Drehteile, Löcher und ihre Wiederholungen), und listet die Schritte auf, um es als bearbeitbare Features zu bauen.",
     "help.scan.revolve_it": "Baut ein erkanntes Drehteil auf: sein Profil auf einer Ebene durch die Achse skizziert, jede Fläche an der Achse gehalten, und ganz herum gedreht.",
+    "ui.ribbon_reconstruct": "Neu aufbauen",
     "ui.scan_find_all_cone": "Kegel",
     "ui.scan_find_all_cylinder": "Zylinder",
     "ui.scan_find_all_freeform": "Freiform",
@@ -66,12 +68,12 @@
     "ui.scan_reconstruct_extrude": "Prisma {number}: {depth} tief, {walls} Wände",
     "ui.scan_reconstruct_found": "{shapes} Formen decken {share} des Scans ab.",
     "ui.scan_reconstruct_hint": "OK baut die angehakten Schritte der Reihe nach, jeden als eigenen Rückgängig-Schritt; der erste Körper ist neu, die übrigen werden vereinigt.",
+    "ui.scan_reconstruct_left_out": "{built} von {asked} Schritten gebaut. Ausgelassen: {steps}",
     "ui.scan_reconstruct_none_ticked": "Einen Schritt zum Aufbauen anhaken.",
     "ui.scan_reconstruct_nothing": "Die Formen ergeben kein Prisma, kein Drehteil und keine Bohrung: Ebenen und Zylinder einpassen oder einen Schnitt skizzieren und von Hand aufbauen.",
     "ui.scan_reconstruct_pattern": "Muster {number}: {count} insgesamt",
     "ui.scan_reconstruct_revolve": "Drehteil: {faces} Flächen um eine Achse",
-    "ui.scan_reconstruct_unread": "Der Scan wurde nicht gelesen: Rekonstruieren erneut drücken.",
-    "ui.ribbon_reconstruct": "Neu aufbauen"
+    "ui.scan_reconstruct_unread": "Der Scan wurde nicht gelesen: Rekonstruieren erneut drücken."
   },
   "ja": {
     "RECONSTRUCT": "再構築",
@@ -91,6 +93,7 @@
     "help.scan.pattern_it": "穴をカットで作った穴を、その列や円周の配置どおりに個数と間隔で繰り返します。",
     "help.scan.reconstruct": "「すべて検出」の形状が作るもの（角柱、旋削部品、穴とその繰り返し）を読み取り、編集可能なフィーチャーとして作るステップを一覧にします。",
     "help.scan.revolve_it": "再構築が読み取った回転体を作成します。軸を通る平面にプロファイルをスケッチし、各面を軸にそろえ、一周回転させます。",
+    "ui.ribbon_reconstruct": "再構築",
     "ui.scan_find_all_cone": "円錐",
     "ui.scan_find_all_cylinder": "円柱",
     "ui.scan_find_all_freeform": "自由曲面",
@@ -103,12 +106,12 @@
     "ui.scan_reconstruct_extrude": "角柱 {number}: 深さ {depth}、壁 {walls} 面",
     "ui.scan_reconstruct_found": "{shapes} 個の形状がスキャンの {share} を占めます。",
     "ui.scan_reconstruct_hint": "OKでチェックしたステップを順に作ります。各ステップは個別に元に戻せます。最初のボディは新規、残りは結合します。",
+    "ui.scan_reconstruct_left_out": "{asked} ステップ中 {built} を作成しました。除外: {steps}",
     "ui.scan_reconstruct_none_ticked": "作成する手順にチェックしてください。",
     "ui.scan_reconstruct_nothing": "形状から作れる角柱・回転体・穴がありません。平面や円柱をフィットするか断面をスケッチして手で作成してください。",
     "ui.scan_reconstruct_pattern": "パターン {number}: 全 {count} 個",
     "ui.scan_reconstruct_revolve": "回転体: 一つの軸の周りの {faces} 面",
-    "ui.scan_reconstruct_unread": "スキャンが読み取られていません。もう一度再構築を押してください。",
-    "ui.ribbon_reconstruct": "再構築"
+    "ui.scan_reconstruct_unread": "スキャンが読み取られていません。もう一度再構築を押してください。"
   },
   "ko": {
     "RECONSTRUCT": "재구성",
@@ -128,6 +131,7 @@
     "help.scan.pattern_it": "구멍 자르기로 만든 구멍을 그 줄이나 원형 배치대로 개수와 간격에 맞춰 반복합니다.",
     "help.scan.reconstruct": "모두 찾기의 형상이 이루는 것(각기둥, 선삭 부품, 구멍과 그 반복)을 읽고 편집 가능한 피처로 만드는 단계를 나열합니다.",
     "help.scan.revolve_it": "재구성이 읽은 회전체를 만듭니다. 축을 지나는 평면에 프로파일을 스케치하고 각 면을 축에 맞추어 한 바퀴 회전합니다.",
+    "ui.ribbon_reconstruct": "재구성",
     "ui.scan_find_all_cone": "원뿔",
     "ui.scan_find_all_cylinder": "원통",
     "ui.scan_find_all_freeform": "자유곡면",
@@ -140,12 +144,12 @@
     "ui.scan_reconstruct_extrude": "각기둥 {number}: 깊이 {depth}, 벽 {walls}개",
     "ui.scan_reconstruct_found": "형상 {shapes}개가 스캔의 {share}를 덮습니다.",
     "ui.scan_reconstruct_hint": "확인을 누르면 체크한 단계를 순서대로 만들며, 각각 따로 실행 취소할 수 있습니다. 첫 바디는 새로 만들고 나머지는 합칩니다.",
+    "ui.scan_reconstruct_left_out": "{asked}개 단계 중 {built}개를 만들었습니다. 제외됨: {steps}",
     "ui.scan_reconstruct_none_ticked": "만들 단계를 체크하세요.",
     "ui.scan_reconstruct_nothing": "형상으로 만들 각기둥, 회전체, 구멍이 없습니다. 평면과 원통을 맞추거나 단면을 스케치해 직접 만드세요.",
     "ui.scan_reconstruct_pattern": "패턴 {number}: 모두 {count}개",
     "ui.scan_reconstruct_revolve": "회전체: 한 축 둘레의 면 {faces}개",
-    "ui.scan_reconstruct_unread": "스캔을 읽지 않았습니다. 재구성을 다시 누르세요.",
-    "ui.ribbon_reconstruct": "재구성"
+    "ui.scan_reconstruct_unread": "스캔을 읽지 않았습니다. 재구성을 다시 누르세요."
   },
   "zh": {
     "RECONSTRUCT": "重建",
@@ -165,6 +169,7 @@
     "help.scan.pattern_it": "按孔所在行或圆周的布局，以其数量和间距重复用切出孔切出的孔。",
     "help.scan.reconstruct": "读取“全部识别”的形状所构成的内容（棱柱、回转件、孔及其阵列），并列出将其构建为可编辑特征的步骤。",
     "help.scan.revolve_it": "构建重建识别出的回转体：在通过轴的平面上草绘轮廓，每个面都对齐到轴，并旋转一整圈。",
+    "ui.ribbon_reconstruct": "重建",
     "ui.scan_find_all_cone": "圆锥",
     "ui.scan_find_all_cylinder": "圆柱",
     "ui.scan_find_all_freeform": "自由曲面",
@@ -177,12 +182,12 @@
     "ui.scan_reconstruct_extrude": "棱柱 {number}：深 {depth}，{walls} 个侧壁",
     "ui.scan_reconstruct_found": "{shapes} 个形状覆盖了扫描的 {share}。",
     "ui.scan_reconstruct_hint": "确定按顺序构建勾选的步骤，每步可单独撤销；第一个实体为新建，其余与之合并。",
+    "ui.scan_reconstruct_left_out": "已生成 {asked} 个步骤中的 {built} 个。未执行：{steps}",
     "ui.scan_reconstruct_none_ticked": "请勾选要构建的步骤。",
     "ui.scan_reconstruct_nothing": "这些形状构不成棱柱、回转体或孔：请拟合平面和圆柱，或草绘截面后手动构建。",
     "ui.scan_reconstruct_pattern": "阵列 {number}：共 {count} 个",
     "ui.scan_reconstruct_revolve": "回转体：绕一个轴的 {faces} 个面",
-    "ui.scan_reconstruct_unread": "扫描尚未读取：请再按一次重建。",
-    "ui.ribbon_reconstruct": "重建"
+    "ui.scan_reconstruct_unread": "扫描尚未读取：请再按一次重建。"
   },
   "ar": {
     "RECONSTRUCT": "إعادة البناء",
@@ -202,6 +207,7 @@
     "help.scan.pattern_it": "يكرر ثقبًا قُص بقص الثقب كما يترتب صفه أو حلقته من الثقوب، بعددها وتباعدها.",
     "help.scan.reconstruct": "يقرأ ما تشكّله أشكال إيجاد الكل (منشورات، أجزاء مخروطة، ثقوب وتكراراتها) ويسرد خطوات بنائها كميزات قابلة للتحرير.",
     "help.scan.revolve_it": "يبني جسمًا دورانيًا قرأته إعادة البناء: يُرسم مقطعه على مستوٍ يمر بمحوره، كل وجه مثبت على المحور، ثم يُدار دورة كاملة.",
+    "ui.ribbon_reconstruct": "إعادة البناء",
     "ui.scan_find_all_cone": "مخروط",
     "ui.scan_find_all_cylinder": "أسطوانة",
     "ui.scan_find_all_freeform": "شكل حر",
@@ -214,12 +220,12 @@
     "ui.scan_reconstruct_extrude": "منشور {number}: بعمق {depth}، {walls} جدران",
     "ui.scan_reconstruct_found": "{shapes} أشكال تغطي {share} من المسح.",
     "ui.scan_reconstruct_hint": "يبني موافق الخطوات المحددة بالترتيب، كلٌّ خطوة تراجع مستقلة؛ الجسم الأول جديد والباقي ينضم إليه.",
+    "ui.scan_reconstruct_left_out": "بُني {built} من {asked} خطوات. تُرك: {steps}",
     "ui.scan_reconstruct_none_ticked": "حدد خطوة لبنائها.",
     "ui.scan_reconstruct_nothing": "لا تكوّن الأشكال منشورًا أو جسمًا دورانيًا أو ثقبًا للبناء: لائم مستويات وأسطوانات أو ارسم مقطعًا وابنِ يدويًا.",
     "ui.scan_reconstruct_pattern": "نمط {number}: {count} في المجموع",
     "ui.scan_reconstruct_revolve": "جسم دوراني: {faces} وجوه حول محور واحد",
-    "ui.scan_reconstruct_unread": "لم يُقرأ المسح: اضغط إعادة البناء مرة أخرى.",
-    "ui.ribbon_reconstruct": "إعادة البناء"
+    "ui.scan_reconstruct_unread": "لم يُقرأ المسح: اضغط إعادة البناء مرة أخرى."
   },
   "he": {
     "RECONSTRUCT": "שחזור",
@@ -239,6 +245,7 @@
     "help.scan.pattern_it": "חוזר על חור שנחתך בחיתוך חור לפי סידור השורה או הטבעת של החורים, במספר ובמרווח שלהם.",
     "help.scan.reconstruct": "קורא מה הצורות של מצא הכול יוצרות (מנסרות, חלקים מחורטים, חורים וחזרותיהם) ומפרט את השלבים לבנות אותן כתכונות ניתנות לעריכה.",
     "help.scan.revolve_it": "בונה גוף סיבובי ששחזור זיהה: הפרופיל שלו משורטט על מישור העובר בצירו, כל פאה מוחזקת לציר, ומסובב סיבוב שלם.",
+    "ui.ribbon_reconstruct": "שחזור",
     "ui.scan_find_all_cone": "חרוט",
     "ui.scan_find_all_cylinder": "גליל",
     "ui.scan_find_all_freeform": "צורה חופשית",
@@ -251,12 +258,12 @@
     "ui.scan_reconstruct_extrude": "מנסרה {number}: בעומק {depth}, {walls} דפנות",
     "ui.scan_reconstruct_found": "{shapes} צורות מכסות {share} מהסריקה.",
     "ui.scan_reconstruct_hint": "אישור בונה את השלבים המסומנים לפי הסדר, כל אחד כשלב ביטול נפרד; הגוף הראשון חדש והשאר מצטרפים אליו.",
+    "ui.scan_reconstruct_left_out": "נבנו {built} מתוך {asked} שלבים. הושמטו: {steps}",
     "ui.scan_reconstruct_none_ticked": "סמן צעד לבנייה.",
     "ui.scan_reconstruct_nothing": "הצורות אינן יוצרות מנסרה, גוף סיבובי או חור לבנייה: התאם מישורים וגלילים, או שרטט חתך, ובנה ידנית.",
     "ui.scan_reconstruct_pattern": "תבנית {number}: {count} בסך הכול",
     "ui.scan_reconstruct_revolve": "גוף סיבובי: {faces} פאות סביב ציר אחד",
-    "ui.scan_reconstruct_unread": "הסריקה לא נקראה: לחץ שוב על שחזור.",
-    "ui.ribbon_reconstruct": "שחזור"
+    "ui.scan_reconstruct_unread": "הסריקה לא נקראה: לחץ שוב על שחזור."
   },
   "vi": {
     "RECONSTRUCT": "TÁI DỰNG",
@@ -276,6 +283,7 @@
     "help.scan.pattern_it": "Lặp lại một lỗ đã cắt bằng Cắt lỗ theo cách hàng hoặc vòng lỗ được bố trí, với số lượng và khoảng cách của chúng.",
     "help.scan.reconstruct": "Đọc những gì các hình của Tìm tất cả tạo nên (lăng trụ, chi tiết tiện, lỗ và các lặp lại) và liệt kê các bước dựng thành tính năng sửa được.",
     "help.scan.revolve_it": "Dựng một vật tròn xoay mà Tái dựng đọc được: biên dạng vẽ trên mặt phẳng đi qua trục, mỗi mặt được giữ theo trục, rồi xoay trọn một vòng.",
+    "ui.ribbon_reconstruct": "Tái dựng",
     "ui.scan_find_all_cone": "Nón",
     "ui.scan_find_all_cylinder": "Trụ",
     "ui.scan_find_all_freeform": "Mặt tự do",
@@ -288,12 +296,12 @@
     "ui.scan_reconstruct_extrude": "Lăng trụ {number}: sâu {depth}, {walls} thành",
     "ui.scan_reconstruct_found": "{shapes} hình phủ {share} bản quét.",
     "ui.scan_reconstruct_hint": "OK dựng các bước đã đánh dấu theo thứ tự, mỗi bước hoàn tác riêng; thân đầu là mới, các thân sau nhập vào.",
+    "ui.scan_reconstruct_left_out": "Đã dựng {built} trên {asked} bước. Bỏ qua: {steps}",
     "ui.scan_reconstruct_none_ticked": "Đánh dấu một bước để dựng.",
     "ui.scan_reconstruct_nothing": "Các hình không tạo thành lăng trụ, vật tròn xoay hay lỗ nào để dựng: hãy khớp mặt phẳng và trụ, hoặc vẽ một mặt cắt, rồi dựng thủ công.",
     "ui.scan_reconstruct_pattern": "Mảng {number}: tổng {count}",
     "ui.scan_reconstruct_revolve": "Vật tròn xoay: {faces} mặt quanh một trục",
-    "ui.scan_reconstruct_unread": "Bản quét chưa được đọc: hãy nhấn Tái dựng lần nữa.",
-    "ui.ribbon_reconstruct": "Tái dựng"
+    "ui.scan_reconstruct_unread": "Bản quét chưa được đọc: hãy nhấn Tái dựng lần nữa."
   },
   "en-GB": {
     "help.scan.find_all": "Divides the scan into planes, cylinders, spheres, cones, tori and freeform regions, and colours it by them. Press again to take the colours away."

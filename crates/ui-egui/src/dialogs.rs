@@ -681,6 +681,9 @@ struct DialogComputation {
     cmds: Vec<(String, Value)>,
     marker: Option<Option<usize>>,
     editing: Option<EditingState>,
+    /// The commands stand apart (Reconstruct's steps): a refused one is left out and the rest
+    /// still build. For each command, the earlier one it builds on.
+    apart: Option<Vec<Option<usize>>>,
 }
 
 impl DialogComputation {
@@ -696,6 +699,7 @@ impl DialogComputation {
         }
         Ok(Self {
             session,
+            apart: matches!(d.kind, Kind::ScanReconstruct(_)).then(|| crate::dialogs_scan_reconstruct::needs(&cmds)),
             cmds,
             marker: d.editing.map(|(_, marker)| marker),
             // The editor's pinned original is for a dialog that previews (as `open_feature_edit`
@@ -709,9 +713,10 @@ impl DialogComputation {
     }
 
     fn compute(self) -> Result<solidcraft_engine::ComputedCommands, String> {
-        match self.editing {
-            Some(state) => self.session.compute_editor_commands(&self.cmds, &state.source, state.original),
-            None => self.session.compute_commands(&self.cmds, self.marker),
+        match (self.editing, self.apart) {
+            (Some(state), _) => self.session.compute_editor_commands(&self.cmds, &state.source, state.original),
+            (None, Some(needs)) => self.session.compute_commands_apart(&self.cmds, &needs),
+            (None, None) => self.session.compute_commands(&self.cmds, self.marker),
         }
         .map_err(|e| e.to_string())
     }
@@ -721,7 +726,9 @@ fn adopt_dialog(app: &mut SolveApp, prepared: solidcraft_engine::ComputedCommand
     if app.file_load_holds() || app.file_picker_busy() {
         return Err("a file operation is in progress".into());
     }
+    let left_out = prepared.left_out().to_vec();
     let replies = app.session.accept_commands(prepared).map_err(|e| e.to_string())?;
+    let built = replies.len();
     app.big_operation = true;
     let made = crate::hole_place::holes_made(&replies);
     for (id, reply) in replies {
@@ -732,6 +739,10 @@ fn adopt_dialog(app: &mut SolveApp, prepared: solidcraft_engine::ComputedCommand
         }
     }
     crate::hole_place::group_made(app, d, made);
+    // Reconstruct's steps that were refused: the rest are built, and it says which were not.
+    if !left_out.is_empty() {
+        app.set_status(crate::dialogs_scan_reconstruct::left_out_note(built, &left_out), true);
+    }
     Ok(())
 }
 
@@ -5876,7 +5887,7 @@ pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
         return crate::dialogs_save_mesh::run(app, k, &d.inputs);
     }
     let multiple_threads = matches!(d.kind, Kind::Thread { .. }) && sels(d, 0).len() > 1;
-    if d.previews() || multiple_threads {
+    if d.previews() || multiple_threads || matches!(d.kind, Kind::ScanReconstruct(_)) {
         let prepared = DialogComputation::new(app, d)?.compute()?;
         return adopt_dialog(app, prepared, d);
     }
