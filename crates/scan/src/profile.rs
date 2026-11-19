@@ -154,7 +154,7 @@ fn squared_to_walls(plane: Plane, sketch: Plane, faces: &[Face], walls: &[usize]
 /// Lines within this of square or parallel to the largest wall are made so (radians: about 0.5°).
 const SNAP_SQUARE: f64 = 0.0087;
 /// Rounds whose radii are within this share of each other are given one radius.
-const SAME_ROUND: f64 = 0.015;
+pub const SAME_ROUND: f64 = 0.015;
 
 /// The walls as they were designed, as far as the scan leaves no doubt: each line within
 /// [`SNAP_SQUARE`] of parallel or square to the line of the largest face turned to be exactly so,

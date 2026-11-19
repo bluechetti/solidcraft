@@ -1201,16 +1201,28 @@ fn round_corners(
     name: &str,
 ) -> Result<()> {
     let up = plane.x.cross(plane.y).normalized().ok_or_else(|| EngineError::Other("the profile's plane has no normal".into()))?;
-    let key = |r: f64| (r * 1e6).round() as i64;
-    let mut by_radius: std::collections::BTreeMap<i64, (f64, Vec<[f64; 3]>)> = std::collections::BTreeMap::new();
-    for corner in corners {
-        let radius = solidcraft_scan::hole_form::snapped(corner.radius, round);
-        let halfway = corner.moved(0.5 * depth * draft.tan());
-        let edge = plane.origin + plane.x * halfway.x + plane.y * halfway.y + up * (0.5 * depth);
-        by_radius.entry(key(radius)).or_insert((radius, Vec::new())).1.push(at(edge));
+    // Rounds whose radii the scan reads within a little of each other are one radius, as the
+    // rounds a profile holds are (`profile::SAME_ROUND`): their mean, read as designed.
+    let mut sorted: Vec<&profile::SharpCorner> = corners.iter().collect();
+    sorted.sort_by(|a, b| a.radius.total_cmp(&b.radius));
+    let mut groups: Vec<Vec<&profile::SharpCorner>> = Vec::new();
+    for corner in sorted {
+        match groups.last_mut() {
+            Some(group) if corner.radius <= group[0].radius * (1.0 + profile::SAME_ROUND) => group.push(corner),
+            _ => groups.push(vec![corner]),
+        }
     }
-    let several = by_radius.len() > 1;
-    for (n, (radius, edges)) in by_radius.into_values().enumerate() {
+    let several = groups.len() > 1;
+    for (n, group) in groups.into_iter().enumerate() {
+        let mean = group.iter().map(|c| c.radius).sum::<f64>() / group.len() as f64;
+        let radius = solidcraft_scan::hole_form::snapped(mean, round);
+        let edges: Vec<[f64; 3]> = group
+            .iter()
+            .map(|corner| {
+                let halfway = corner.moved(0.5 * depth * draft.tan());
+                at(plane.origin + plane.x * halfway.x + plane.y * halfway.y + up * (0.5 * depth))
+            })
+            .collect();
         let name = if several { format!("{name} {}", n + 1) } else { name.to_owned() };
         run(s, "solid.fillet", json!({"edges": edges, "radius": format!("{radius} mm"), "body": solid, "tangent_chain": false, "name": name}))?;
     }
