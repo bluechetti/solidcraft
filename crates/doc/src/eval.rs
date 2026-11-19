@@ -11704,10 +11704,25 @@ fn eval_feature_kind(
         }
         FeatureKind::Draft { faces, angle, neutral, pull, body } => {
             let a = val(vals, angle, Kind::Angle)?;
-            let pl = doc.resolve_plane_in(vals, neutral, 0, f.component, Some(st))?;
+            // A neutral plane attached to a body face (Tilt Face's: the face's own plane turned
+            // about its hinge) follows the face as it is now, as a construction plane on it does.
+            let pl = match crate::face_anchor::plane_face_anchor(neutral) {
+                Some(anchor) => {
+                    let fst = crate::state_in_face_anchor_frame(doc, st, anchor, f.component)?;
+                    let (pl, note) = doc.resolve_attached_plane_noted(vals, neutral, f.component, st, &fst)?;
+                    if let Some(note) = note {
+                        append_warning(warning, note);
+                    }
+                    pl
+                }
+                None => doc.resolve_plane_in(vals, neutral, 0, f.component, Some(st))?,
+            };
             let i = body_at(st, body, &crate::plain(faces))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let nb = Traced::step(kernel::draft(&mb.body, &crate::plain(faces), &pl, pull.0, a)?, &[&mb.traced()]);
+            // No pull (zero): the neutral plane's normal as it is now, so a draft whose neutral
+            // plane turns with a hinge (Tilt Face) pulls the way it now faces.
+            let pull = if pull.0.len() > 0.0 { pull.0 } else { pl.normal() };
+            let nb = Traced::step(kernel::draft(&mb.body, &crate::plain(faces), &pl, pull, a)?, &[&mb.traced()]);
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = mb.remade(nb);
             }

@@ -3170,6 +3170,34 @@ fn fit_together_holds_two_bores_on_one_axis_with_one_radius() {
     assert!(err.to_string().contains("there are 2 shapes"), "{err}");
 }
 
+/// Inspection Report: one HTML file naming the scan, its Fill Holes step and the surface its
+/// scanner never saw; no renderer is installed in tests, so it says it has no pictures; the
+/// design is unchanged; a path that is not .html is refused.
+#[test]
+fn report_writes_one_html_file_of_the_scan_and_what_was_done_to_it() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-report-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("sheet.stl");
+    std::fs::write(&path, sheet_stl(40.0, 20, 0.0)).unwrap();
+    let mut s = Session::default();
+    let scan = run(&mut s, "file.insert_mesh", json!({"path": path}))["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut s, "scan.remove_and_fill", json!({"body": scan, "point": [20, 20, 0], "radius": 5}));
+    let (revision, features) = (s.revision, s.doc.features.len());
+    let out = dir.join("report.html");
+    let done = run(&mut s, "scan.report", json!({"body": scan, "path": out, "title": "Sheet <1>"}));
+    let html = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(done["bytes"].as_u64().unwrap() as usize, html.len());
+    assert!(html.starts_with("<!doctype html>") && html.contains("<title>Sheet &lt;1&gt;</title>"), "the title, escaped");
+    for part in ["The scan", "What was done to it", "Remove and Fill", "Surface the scanner never saw", "Pictures"] {
+        assert!(html.contains(part), "{part}");
+    }
+    assert!(done["no_pictures"].as_str().is_some() && html.contains("No pictures"), "{done}");
+    assert_eq!((s.revision, s.doc.features.len()), (revision, features), "nothing changes");
+    let err = s.execute("scan.report", &json!({"body": scan, "path": dir.join("report.txt")})).unwrap_err();
+    assert!(err.to_string().contains(".html"), "{err}");
+}
+
 /// A sheet `size` mm square of `n` × `n` squares at height `z`, as an STL.
 fn sheet_stl(size: f64, n: usize, z: f64) -> String {
     let at = |i: usize, j: usize| Vec3::new(size * i as f64 / n as f64, size * j as f64 / n as f64, z);

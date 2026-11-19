@@ -138,6 +138,7 @@ mod tests {
             "scan.measure_line",
             "scan.unseen",
             "scan.fit_together",
+            "scan.report",
             "scan.fill_holes",
             "scan.reduce",
             "scan.repair",
