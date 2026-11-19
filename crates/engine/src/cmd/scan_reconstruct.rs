@@ -1877,7 +1877,17 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
     let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
     let sketch = sketch_outlines(s, &plane, &format!("Hole {}", index + 1), &[circle], &|_, _, _| None, &mut drawn, round, false)?;
     // The sketch's normal (x × y) points into the hole.
-    let depth = hole.depth() + margin;
+    // A hole read off what the body leaves unexplained is short at its ends: the wall's last
+    // stretch beside each face of the body lies within the tolerance of that face and counts as
+    // explained by it. So a hole whose bottom is within two tolerances of coming out of the body
+    // goes through: cut to its bottom alone, it kept a skin a fraction of a millimetre thick.
+    let skin = 2.0 * view.outcome().tolerance;
+    let through = s
+        .model
+        .state()
+        .body(&solid)
+        .is_some_and(|b| matches!(b.body.classify_point(hole.bottom + inward * skin), Ok(solidcraft_kernel::PointClass::Outside)));
+    let depth = hole.depth() + margin + if through { skin + margin } else { 0.0 };
     let feature = run(
         s,
         "solid.extrude",

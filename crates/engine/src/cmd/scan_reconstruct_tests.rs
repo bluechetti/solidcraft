@@ -466,6 +466,32 @@ fn a_narrow_chamfer_under_noise_is_read_flat_as_the_scan_has_it() {
     assert!((v - expected).abs() < 0.002 * expected, "{v} against {expected}");
 }
 
+/// A plate 60 × 40 × 8 with a hole Ø 8, scanned with 0.1 mm of noise, and the plate built without
+/// its hole: Reconstruct the Rest reads the hole off what the plate leaves unexplained and cuts
+/// it. The hole's wall beside each face of the plate lies within the tolerance of that face and
+/// is not left over, so the hole reads a little short at both ends; it is cut through all the
+/// same, with no skin left over its mouth at either face.
+#[test]
+fn a_hole_read_off_what_the_body_leaves_is_cut_through_not_left_with_a_skin() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 60, "width": 40, "height": 8}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.cylinder", json!({"base": [20, 20, -1], "radius": 4, "height": 10, "operation": "cut", "targets": [body]}));
+    let (mut s, scan) = scanned_with_noise(&part, &body, 0.1, "skin");
+    let solid = format!("{scan} Reconstructed");
+    run(&mut s, "solid.box", json!({"length": 60, "width": 40, "height": 8, "body_name": solid, "operation": "new"}));
+    run(&mut s, "scan.find_all", json!({}));
+    let rest = run(&mut s, "scan.reconstruct_rest", json!({}));
+    assert!(rest["kept"].as_u64().is_some_and(|k| k >= 1), "{rest}");
+    let state = s.model.state();
+    let built = &state.body(&solid).unwrap().body;
+    for z in [0.05, 4.0, 7.95] {
+        let at = Vec3::new(20.0, 20.0, z);
+        assert!(matches!(built.classify_point(at), Ok(solidcraft_kernel::PointClass::Outside)), "the hole is open at z = {z}: {rest}");
+    }
+    assert!(matches!(built.classify_point(Vec3::new(40.0, 20.0, 4.0)), Ok(solidcraft_kernel::PointClass::Inside)), "the plate is there");
+}
+
 /// A plate 60 × 40 × 8 with two holes Ø 8, scanned with 0.1 mm of noise on half-millimetre
 /// triangles: noise that tilts each triangle some twenty degrees. Read as it is, its faces break
 /// into dozens of small planes, cones and tori that still hold over half of it; Find All reads it
