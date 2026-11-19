@@ -85,6 +85,84 @@ fn asked_tolerance(s: &Session, p: &Value, cmd: &str) -> Result<Option<f64>> {
 /// The name of a sketch Section to Sketch makes.
 const SKETCH_NAME: &str = "Section";
 
+/// Unasked, an outline is fitted to within this share of the scan's size ...
+const OUTLINE_SHARE: f64 = 0.002;
+/// ... and how far the scan reaches outside it is read on this many of its points.
+const OUTLINE_SAMPLE: usize = 50_000;
+
+/// A fitted outline as a ring of points, each arc as sixteen chords.
+fn ring_of(outline: &Outline) -> Vec<solidcore_record::Vec2> {
+    use solidcore_record::Vec2;
+    match outline {
+        Outline::Circle { center, radius } => {
+            (0..64).map(|k| std::f64::consts::TAU * f64::from(k) / 64.0).map(|a| *center + Vec2::new(a.cos(), a.sin()) * *radius).collect()
+        }
+        Outline::Chain(pieces) => pieces
+            .iter()
+            .flat_map(|piece| match *piece {
+                Piece::Line { from, .. } => vec![from],
+                Piece::Arc { center, from, to, ccw, .. } => {
+                    let (u, v) = (from - center, to - center);
+                    let mut turn = u.cross(v).atan2(u.dot(v));
+                    if ccw && turn <= 0.0 {
+                        turn += std::f64::consts::TAU;
+                    } else if !ccw && turn >= 0.0 {
+                        turn -= std::f64::consts::TAU;
+                    }
+                    (0..16)
+                        .map(|k| {
+                            let a = turn * f64::from(k) / 16.0;
+                            center + Vec2::new(u.x * a.cos() - u.y * a.sin(), u.x * a.sin() + u.y * a.cos())
+                        })
+                        .collect()
+                }
+            })
+            .collect(),
+    }
+}
+
+/// A half profile's outline kept on its side of the axis (the sketch's X, y = 0), so that a
+/// Revolve about it takes it: the fit moves joins by up to its tolerance, which can put a corner
+/// meant to be on the axis a hair off it or below it, and bulge an arc across it. Each join within
+/// `reach` of the axis, or below it, is put on it, and an arc that still dips below it is drawn
+/// straight.
+fn held_to_axis(outline: &mut Outline, reach: f64) {
+    let Outline::Chain(pieces) = outline else { return };
+    let onto = |p: &mut solidcore_record::Vec2| {
+        if p.y <= reach {
+            p.y = 0.0;
+        }
+    };
+    for piece in pieces.iter_mut() {
+        match piece {
+            Piece::Line { from, to } | Piece::Arc { from, to, .. } => {
+                onto(from);
+                onto(to);
+            }
+        }
+    }
+    for piece in pieces.iter_mut() {
+        let Piece::Arc { center, from, to, ccw, .. } = *piece else { continue };
+        let (u, v) = (from - center, to - center);
+        let mut turn = u.cross(v).atan2(u.dot(v));
+        if ccw && turn <= 0.0 {
+            turn += std::f64::consts::TAU;
+        } else if !ccw && turn >= 0.0 {
+            turn -= std::f64::consts::TAU;
+        }
+        let dips = (1..16).any(|k| {
+            let a = turn * f64::from(k) / 16.0;
+            center.y + u.x * a.sin() + u.y * a.cos() < -1e-9
+        });
+        if dips {
+            *piece = Piece::Line { from, to };
+        }
+    }
+}
+
+/// The name of the sketch it makes of a turned part's half profile.
+const HALF_NAME: &str = "Half Profile";
+
 /// What Sections Along Curve names its sketches, before their number.
 const ALONG_NAME: &str = "Curve Section";
 
@@ -257,13 +335,59 @@ fn fitted(runs: &[solidcraft_scan::section::Run], tolerance: f64) -> Vec<(Outlin
         .collect()
 }
 
+/// The half profile's plane and side, when `p` gives a turned part's `axis`: the plane through
+/// the axis as `sketch.create` takes one (its origin the axis's, its X along it, its Y the
+/// direction square to it nearest level, turned about it by `angle` degrees), and the side of it
+/// to draw (1 or -1 along Y).
+fn half_plane(s: &Session, p: &Value, cmd: &str) -> Result<Option<(Value, f64)>> {
+    let Some(axis) = p.get("axis").filter(|v| !v.is_null()) else {
+        if p.get("side").is_some_and(|v| !v.is_null()) || p.get("angle").is_some_and(|v| !v.is_null()) {
+            return Err(bad(cmd, "`side` and `angle` go with `axis` (a turned part's half profile)"));
+        }
+        return Ok(None);
+    };
+    if super::super::sketch_store::active(s).is_some() {
+        return Err(bad(cmd, "`axis` makes a sketch of its own on a plane through the axis: finish the sketch being edited first"));
+    }
+    if p.get("plane").is_some_and(|v| !v.is_null()) || p.get("offset").is_some_and(|v| !v.is_null()) {
+        return Err(bad(cmd, "`axis` gives the plane (through the axis): leave `plane` and `offset` out, and turn it with `angle`"));
+    }
+    let point = |key: &str| axis.get(key).and_then(crate::params::vec3).filter(|v| v.is_finite());
+    let origin = point("origin").ok_or_else(|| bad(cmd, "`axis.origin` must be a point [x, y, z] of numbers"))?;
+    let along = point("dir").and_then(|d| d.normalized()).ok_or_else(|| bad(cmd, "`axis.dir` must be a direction [x, y, z], not zero"))?;
+    let side = match crate::params::str_(p, "side") {
+        None | Some("positive") => 1.0,
+        Some("negative") => -1.0,
+        Some(other) => return Err(bad(cmd, format!("`side` is `positive` or `negative`, not `{other}`"))),
+    };
+    let angle = match p.get("angle").filter(|v| !v.is_null()) {
+        Some(v) => v
+            .as_f64()
+            .filter(|a| a.is_finite() && a.abs() <= 360.0)
+            .ok_or_else(|| bad(cmd, "`angle` is a number of degrees, at most 360"))?
+            .to_radians(),
+        None => 0.0,
+    };
+    // Square to the axis and as level as that allows; for an upright axis, along the world's X.
+    let level = solidcore_record::Vec3::Z.cross(along).normalized().unwrap_or(solidcore_record::Vec3::X);
+    let across = level * angle.cos() + along.cross(level) * angle.sin();
+    let at = |v: solidcore_record::Vec3| [v.x, v.y, v.z];
+    Ok(Some((json!({"origin": at(origin), "x_dir": at(along), "y_dir": at(across)}), side)))
+}
+
 pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.section_sketch";
     let asked = asked_tolerance(s, p, cmd)?;
     let scan = mesh_name(s, p, cmd)?;
+    let half = half_plane(s, p, cmd)?;
     // The sketch being edited, or a new one on the plane asked for.
     let (sketch, made) = match super::super::sketch_store::active(s) {
         Some(id) => (id, false),
+        None if half.is_some() => {
+            let plane = half.as_ref().map(|(plane, _)| plane.clone()).unwrap_or_default();
+            let reply = super::new_sketch(s, json!({"plane": plane, "name": HALF_NAME}))?;
+            (reply.get("sketch").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "the sketch was not made"))?, true)
+        }
         None => {
             let mut create = json!({"plane": p.get("plane").cloned().unwrap_or(json!("XY")), "name": SKETCH_NAME});
             if let Some(offset) = p.get("offset").filter(|v| !v.is_null()) {
@@ -285,15 +409,80 @@ pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
         super::with_shown(s, &scan, |p, t| solidcraft_scan::section::section(&Scan::new(p, t), &plane))
             .ok_or_else(|| bad(cmd, format!("`{scan}` is not a scan")))?
     };
-    let tolerance = asked.unwrap_or_else(|| noise_tolerance(&runs));
-    let outlines = fitted(&runs, tolerance);
+    // The outline of all the scan covers of the plane, not where the plane cuts it.
+    let whole = bool_(p, "outline").unwrap_or(false);
+    if whole && half.is_some() {
+        return Err(bad(cmd, "`outline` and `axis` are two different sketches: ask for one"));
+    }
+    let (runs, outline_tolerance) = if whole {
+        let state = s.model.state();
+        let plane = state.sketch(sketch).map(|ss| ss.plane).ok_or_else(|| bad(cmd, "the sketch is not evaluated"))?;
+        let covered = super::with_shown(s, &scan, |p, t| {
+            let scan = Scan::new(p, t);
+            // As fine as the tolerance asked for; unasked, a five-hundredth of the scan's size.
+            let tolerance = asked.unwrap_or_else(|| (OUTLINE_SHARE * scan.extent()).max(TOLERANCE));
+            let (runs, cell) = solidcraft_scan::silhouette::outline(&scan, &plane, 0.5 * tolerance);
+            // The outline runs along cells: fitted no finer than two of them, their steps are averaged.
+            (runs, tolerance.max(2.0 * cell))
+        })
+        .ok_or_else(|| bad(cmd, format!("`{scan}` is not a scan")))?;
+        (covered.0, Some(covered.1))
+    } else {
+        (runs, None)
+    };
+    let tolerance = outline_tolerance.unwrap_or_else(|| asked.unwrap_or_else(|| noise_tolerance(&runs)));
+    // About an axis: one side of the cut, closed along the axis where it comes down to it.
+    let (runs, sides) = match &half {
+        Some((_, side)) => {
+            let kept = solidcraft_scan::section::half(&runs, *side, 2.0 * tolerance);
+            let (closed, open) = (kept.iter().filter(|k| k.1).count(), kept.iter().filter(|k| !k.1).count());
+            let runs =
+                kept.into_iter().map(|(points, closed)| solidcraft_scan::section::Run { triangles: vec![0; points.len()], points, closed }).collect();
+            (runs, Some((closed, open)))
+        }
+        None => (runs, None),
+    };
+    let mut outlines = fitted(&runs, tolerance);
+    if half.is_some() {
+        for (outline, _) in &mut outlines {
+            held_to_axis(outline, tolerance);
+        }
+    }
     if outlines.is_empty() {
-        let note = if runs.is_empty() { "the plane does not cut the scan" } else { "the cut is too small to sketch" };
+        let note = match (runs.is_empty(), half.is_some()) {
+            (true, true) => "the plane through the axis does not cut the scan on that side: check the axis, or try the other `side`",
+            (true, false) => "the plane does not cut the scan",
+            (false, _) => "the cut is too small to sketch",
+        };
         if made {
             run(s, "sketch.cancel", json!({}))?;
         }
         return Err(bad(cmd, note));
     }
+    // How far the scan reaches outside the outline as fitted (its lines and arcs average the
+    // cells' steps, so a little of it can): read on a sample of its points.
+    let outside = whole
+        .then(|| {
+            let state = s.model.state();
+            let plane = state.sketch(sketch).map(|ss| ss.plane)?;
+            let rings: Vec<Vec<solidcore_record::Vec2>> = outlines.iter().map(|(o, _)| ring_of(o)).collect();
+            let outer = rings.first()?;
+            super::with_shown(s, &scan, |p, _| {
+                let step = (p.len() / OUTLINE_SAMPLE).max(1);
+                let flat: Vec<solidcore_record::Vec2> = p
+                    .iter()
+                    .step_by(step)
+                    .map(|q| {
+                        let d = *q - plane.origin;
+                        solidcore_record::Vec2::new(d.dot(plane.x), d.dot(plane.y))
+                    })
+                    // A scrap beside the part has an outline of its own: its points are in that one.
+                    .filter(|q| !rings.iter().skip(1).any(|r| solidcraft_scan::profile::area(r) > 0.0 && solidcraft_scan::profile::contains(r, *q)))
+                    .collect();
+                solidcraft_scan::silhouette::farthest_outside(outer, &flat)
+            })
+        })
+        .flatten();
     let mut added = Added::default();
     let drawn = super::super::sketch_store::update(s, sketch, |_, _, sk| draw(sk, &outlines, &mut added));
     if let Err(e) = drawn {
@@ -316,6 +505,9 @@ pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
         tolerance,
         dof: finished.dof,
         warning: finished.warning,
+        outside,
+        closed_on_axis: sides.map(|(closed, _)| closed),
+        left_open: sides.map(|(_, open)| open),
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))

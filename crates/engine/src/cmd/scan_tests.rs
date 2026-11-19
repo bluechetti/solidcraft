@@ -574,6 +574,34 @@ fn scan_deviation_measures_the_volume_and_the_region_of_a_dent() {
     assert!((at[0] - 20.0).abs() < 1e-3 && (at[1] - 20.0).abs() < 1e-3 && (at[2] - 8.5).abs() < 1e-3, "{reply}");
 }
 
+/// A block 60 × 20 × 10 with a boss 20 × 30 on its middle, wider than the block: its outline seen
+/// from above (Section to Sketch with `outline`) is the plus of all it covers, one closed outline
+/// that a cut through the block alone would not draw, dimensioned, with no point of the scan
+/// outside it by more than the tolerance.
+#[test]
+fn section_sketch_draws_a_scans_whole_outline_seen_along_the_plane() {
+    let mut triangles = fine_box(Vec3::new(-30.0, -10.0, 0.0), Vec3::new(30.0, 10.0, 10.0), 24);
+    triangles.extend(fine_box(Vec3::new(-10.0, -15.0, 10.0), Vec3::new(10.0, 15.0, 16.0), 16));
+    let (mut s, _) = session_with_triangles("outline", &triangles);
+    let cut = run(&mut s, "scan.section_sketch", json!({"plane": "XY", "offset": "5 mm", "name": "Cut"}));
+    assert_eq!((cut["outlines"].as_u64(), cut["lines"].as_u64()), (Some(1), Some(4)), "a cut through the block is its rectangle: {cut}");
+    assert!(cut.get("outside").is_none(), "{cut}");
+    run(&mut s, "edit.undo", json!({}));
+    let outline = run(&mut s, "scan.section_sketch", json!({"plane": "XY", "outline": true}));
+    assert_eq!((outline["outlines"].as_u64(), outline["circles"].as_u64(), outline["dof"].as_u64()), (Some(1), Some(0), Some(0)), "{outline}");
+    let curves = outline["lines"].as_u64().unwrap() + outline["arcs"].as_u64().unwrap();
+    assert!((12..=20).contains(&curves), "the plus's twelve sides, a corner perhaps eased: {outline}");
+    let (outside, tolerance) = (outline["outside"].as_f64().unwrap(), outline["tolerance"].as_f64().unwrap());
+    assert!(outside <= tolerance, "{outline}");
+    // Extruded a millimetre, it holds the plus's area: the block's and the boss's overhang.
+    run(&mut s, "solid.extrude", json!({"sketch": outline["sketch"], "distance": 1, "operation": "new", "body_name": "Foot"}));
+    let area = s.model.state().body("Foot").and_then(|b| b.body.volume_at(0.01)).unwrap();
+    let plus = 60.0 * 20.0 + 2.0 * 20.0 * 5.0;
+    assert!((area - plus).abs() < 0.03 * plus, "{area} against {plus}");
+    let both = s.execute("scan.section_sketch", &json!({"outline": true, "axis": {"origin": [0, 0, 0], "dir": [0, 0, 1]}})).unwrap_err().to_string();
+    assert!(both.contains("ask for one"), "{both}");
+}
+
 /// The model as an STL (as a part's CAD often comes, T-LESS's among them): the scan is measured
 /// against the mesh as against the solid it was made from, and with no solid in the design the
 /// other mesh is the model; a scan is not measured against itself.

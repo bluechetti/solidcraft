@@ -1752,6 +1752,39 @@ pub struct ScanSectionParams {
     /// parameter, nothing left free). Default: true. A sketch being edited is left as it is.
     #[serde(default)]
     pub dimensions: Option<bool>,
+    /// Draw the scan's outline seen along the plane's normal instead of a cut: everything the
+    /// scan covers of the plane, whatever its height (a tool's shape for a foam pocket, a part's
+    /// footprint), one closed outline round each piece and each hole through it. `offset` only
+    /// places the sketch. No point of the scan lies more than the tolerance outside it (`outside`
+    /// in the reply). Default: false.
+    #[serde(default)]
+    pub outline: Option<bool>,
+    /// A turned part's axis, `{origin: [x, y, z], dir: [x, y, z]}` (as `scan.reconstruct`'s
+    /// `turned` or `partly_turned` gives it, or a `scan.bases` base of kind `end`): the new sketch
+    /// is on a plane through it, its X along the axis from `origin`, and only one side of the
+    /// cut is drawn, closed along the axis where it comes down to it: a half profile ready for
+    /// `solid.revolve {"sketch": …, "axis": "x"}`. Not with `plane`, `offset` or a sketch being
+    /// edited.
+    #[serde(default)]
+    pub axis: Option<ScanSectionAxis>,
+    /// With `axis`: which side of it is drawn, `positive` (default) or `negative` along the
+    /// sketch's Y.
+    #[serde(default)]
+    pub side: Option<String>,
+    /// With `axis`: how far, in degrees, the plane is turned about the axis from the one nearest
+    /// level (to cut clear of a handle, a spoke or a keyway). Default: 0.
+    #[serde(default)]
+    pub angle: Option<f64>,
+}
+
+/// The axis `scan.section_sketch` cuts a half profile about.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanSectionAxis {
+    /// A point on the axis, in mm.
+    pub origin: Point3,
+    /// Its direction.
+    pub dir: Point3,
 }
 
 /// What `scan.section_sketch` returns.
@@ -1777,6 +1810,16 @@ pub struct ScanSectionResult {
     /// Set when the new sketch could not be dimensioned: why, and the solve status it was left in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
+    /// With `outline`: how far (mm) the farthest point of the scan lies outside the outline drawn
+    /// (0: all of it is inside), read on a sample of its points.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outside: Option<f64>,
+    /// With `axis`: how many of the outlines are closed along the axis (profiles to revolve) and
+    /// how many are left open (the cut stops short of the axis there: close them by hand).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed_on_axis: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_open: Option<usize>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,

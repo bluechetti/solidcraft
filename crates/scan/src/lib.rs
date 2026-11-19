@@ -97,6 +97,7 @@ pub mod repair;
 pub mod section;
 pub mod segment;
 pub mod selection;
+pub mod silhouette;
 pub mod split;
 mod subdivide;
 pub mod surface;

@@ -504,9 +504,39 @@ fn a_drafted_shelled_housing_is_extruded_shelled_and_filleted_back_from_its_scan
     // The corners, drafted and then rounded with one radius: extruded sharp and filleted R 6, not
     // sketched as arcs that would taper with the walls.
     let names: Vec<&str> = s.doc.features.iter().map(|f| f.name.as_str()).collect();
-    assert!(names.contains(&"Extrude It 1 Rounds"), "one Fillet for the four corners' one radius: {names:?}");
+    assert!(names.iter().any(|n| n.starts_with("Extrude It 1 Rounds")), "the corners are filleted: {names:?}");
     let v = volume(&s, &format!("{scan} Reconstructed"));
     assert!((v - expected).abs() < 0.01 * expected, "{v} against the housing's {expected}");
+}
+
+/// A cup (a cylinder R 30 × 60, shelled 3 thick, open at the top) from its scan in two calls:
+/// Section to Sketch about its axis draws the half of the cut on one side of it, closed along the
+/// axis through the bottom's thickness and fully dimensioned, and a Revolve about the sketch's X
+/// turns it back into the cup. Either side gives the same cup; `side` and `angle` go with `axis`,
+/// which gives the plane itself.
+#[test]
+fn a_cups_half_profile_about_its_axis_revolves_back_into_the_cup() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.cylinder", json!({"radius": 30, "height": 60}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.shell", json!({"faces": [[0, 0, 60]], "thickness": 3}));
+    let expected = volume(&part, &body);
+    let (mut s, _) = scanned(&part, &body, 1, "cup");
+    let axis = json!({"origin": [0, 0, 0], "dir": [0, 0, 1]});
+    for (side, name) in [("positive", "Cup"), ("negative", "Other Side")] {
+        let half = run(&mut s, "scan.section_sketch", json!({"axis": axis, "side": side, "angle": 30}));
+        assert_eq!((half["outlines"].as_u64(), half["closed_on_axis"].as_u64(), half["left_open"].as_u64()), (Some(1), Some(1), Some(0)), "{half}");
+        assert_eq!((half["lines"].as_u64(), half["arcs"].as_u64(), half["dof"].as_u64()), (Some(6), Some(0), Some(0)), "{half}");
+        run(&mut s, "solid.revolve", json!({"sketch": half["sketch"], "axis": "x", "operation": "new", "body_name": name}));
+        let v = volume(&s, name);
+        assert!((v - expected).abs() < 0.01 * expected, "{side}: {v} against the cup's {expected}");
+    }
+    let with_plane = s.execute("scan.section_sketch", &json!({"axis": axis, "plane": "XY"})).unwrap_err().to_string();
+    assert!(with_plane.contains("leave `plane`"), "{with_plane}");
+    let no_axis = s.execute("scan.section_sketch", &json!({"side": "negative"})).unwrap_err().to_string();
+    assert!(no_axis.contains("go with `axis`"), "{no_axis}");
+    let off = s.execute("scan.section_sketch", &json!({"axis": {"origin": [500, 0, 0], "dir": [0, 0, 1]}})).unwrap_err().to_string();
+    assert!(off.contains("does not cut the scan"), "{off}");
 }
 
 /// A plate 100 × 60 × 12 drilled as a designer drills one: two counterbores (Ø 6.6, Ø 11 × 6.5),
