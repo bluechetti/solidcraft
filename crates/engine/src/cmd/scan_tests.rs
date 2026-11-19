@@ -1093,6 +1093,81 @@ fn a_fitted_surface_is_extended_past_its_area_and_trimmed_by_the_face_beside_it(
     assert!(trimmed < extended - 1.0 && trimmed > fitted, "{trimmed} of {extended}, the fit {fitted}");
 }
 
+/// Every scan command on meshes a file can hold and no scanner makes: one triangle, a triangle
+/// with no area, the same triangle twice (once each way round), three triangles on one edge,
+/// corners a light year apart, a part too small to see, a strip of needles, a closed tetrahedron,
+/// a not-a-number corner, an infinite one, a file that says 1000 triangles and holds one, and an
+/// empty file. Each command is called with nothing, and with a point; it does its work or refuses,
+/// and none panics inside or takes more than 20 seconds.
+#[test]
+fn every_scan_command_survives_meshes_no_scanner_makes() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-hostile-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let stl = |triangles: &[[[f32; 3]; 3]], said: Option<u32>| {
+        let mut bytes = vec![0u8; 80];
+        bytes.extend(said.unwrap_or(triangles.len() as u32).to_le_bytes());
+        for t in triangles {
+            bytes.extend([0u8; 12]);
+            for corner in t {
+                for v in corner {
+                    bytes.extend(v.to_le_bytes());
+                }
+            }
+            bytes.extend([0u8; 2]);
+        }
+        bytes
+    };
+    let one = [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0]];
+    let far = 9.4e18f32;
+    let tetra = |k: f32| {
+        let (a, b, c, d) = ([0.0, 0.0, 0.0], [k, 0.0, 0.0], [0.0, k, 0.0], [0.0, 0.0, k]);
+        vec![[a, c, b], [a, b, d], [b, c, d], [a, d, c]]
+    };
+    let needles: Vec<[[f32; 3]; 3]> = (0..40).map(|i| [[i as f32, 0.0, 0.0], [i as f32 + 1.0, 0.0, 0.0], [i as f32 + 0.5, 1e-7, 0.0]]).collect();
+    let files: Vec<(&str, Vec<u8>)> = vec![
+        ("one triangle", stl(&[one], None)),
+        ("no area", stl(&[[[1.0, 1.0, 1.0]; 3]], None)),
+        ("twice", stl(&[one, [one[0], one[2], one[1]]], None)),
+        ("three on an edge", stl(&[one, [one[0], one[1], [0.0, 0.0, 10.0]], [one[0], one[1], [0.0, -10.0, -10.0]]], None)),
+        ("far apart", stl(&[[[0.0, 0.0, 0.0], [far, 0.0, 0.0], [0.0, far, 0.0]]], None)),
+        ("too small", stl(&tetra(1e-30), None)),
+        ("needles", stl(&needles, None)),
+        ("tetrahedron", stl(&tetra(10.0), None)),
+        ("not a number", stl(&[[one[0], one[1], [f32::NAN, 1.0, 1.0]]], None)),
+        ("infinite", stl(&[[one[0], one[1], [f32::INFINITY, 1.0, 1.0]]], None)),
+        ("cut short", stl(&[one], Some(1000))),
+        ("empty", stl(&[], None)),
+    ];
+    let ids: Vec<&str> = crate::command_specs().iter().map(|spec| spec.id).filter(|id| id.starts_with("scan.")).collect();
+    assert!(ids.len() > 80, "the scan commands: {}", ids.len());
+    let mut wrong = Vec::new();
+    for (name, bytes) in &files {
+        let path = dir.join("hostile.stl");
+        std::fs::write(&path, bytes).unwrap();
+        let mut start = Session::default();
+        if let Err(crate::EngineError::Internal(_, said)) = start.execute("file.insert_mesh", &json!({"path": path.to_string_lossy(), "units": "mm"})) {
+            wrong.push(format!("{name}: file.insert_mesh: {said}"));
+        }
+        let saved = start.doc.to_json();
+        for id in &ids {
+            for params in [json!({}), json!({"point": [1, 1, 0]})] {
+                // Each call on the file as it came in, whatever the calls before did to it.
+                let mut s = Session::new(solidcraft_doc::Document::from_json(&saved).unwrap());
+                let began = std::time::Instant::now();
+                if let Err(crate::EngineError::Internal(_, said)) = s.execute(id, &params) {
+                    wrong.push(format!("{name}: {id} {params}: {said}"));
+                }
+                if began.elapsed().as_secs() >= 20 {
+                    wrong.push(format!("{name}: {id} {params}: took {} s", began.elapsed().as_secs()));
+                }
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(wrong.is_empty(), "{} of them:\n{}", wrong.len(), wrong.join("\n"));
+}
+
 /// A Fit Surface trimmed to its area is still edited by Edit Surface: a control point moved moves
 /// the surface, which stays trimmed to the area, and the edit is one undo step.
 #[test]
