@@ -910,6 +910,19 @@ pub fn prism_sketch_plane(prism: &Prism) -> Plane {
     Plane { origin: prism.origin + prism.direction * prism.low, ..plane }
 }
 
+/// The levels a square prism is sliced at when the slice halfway along misses one of its walls,
+/// as shares of its depth from halfway, nearest first.
+const OTHER_LEVELS: [f64; 6] = [0.125, -0.125, 0.25, -0.25, 0.375, -0.375];
+/// A run of the cut is a loop when its ends are no further apart than this share of its length.
+const NEARLY_CLOSED: f64 = 0.2;
+
+/// Whether an open run of a cut all but comes back to where it began.
+fn nearly_closed(points: &[Vec2]) -> bool {
+    let (Some(first), Some(last)) = (points.first(), points.last()) else { return false };
+    let length: f64 = points.windows(2).map(|w| w[0].dist(w[1])).sum();
+    points.len() >= 3 && first.dist(*last) <= NEARLY_CLOSED * length
+}
+
 /// Prism `prism`'s profile off its walls: the scan sliced halfway along it, each loop that runs on
 /// its walls the curves of those walls, exactly as fitted, from crossing to crossing. The plane it
 /// lies in and its outlines (`faces` index `reading.faces`); why not, when no loop goes round its
@@ -966,17 +979,45 @@ pub(crate) fn prism_profile_from(
     let walls: Vec<(usize, Wall)> =
         prism.walls.iter().filter_map(|&k| faces.get(k).and_then(|f| wall_of(&f.shape, &walls_at)).map(|w| (k, w))).collect();
     let place: BTreeMap<usize, usize> = walls.iter().enumerate().map(|(i, (k, _))| (*k, i)).collect();
-    let loops: Vec<(Vec<Vec2>, Vec<Option<usize>>)> = crate::section::section_welded(scan, weld, &plane)
-        .into_iter()
-        .filter(|r| r.closed)
-        .map(|r| {
-            let on = r.triangles.iter().map(|&t| owner.get(t).and_then(|&k| place.get(&(k as usize)).copied())).collect();
-            (r.points, on)
-        })
-        .collect();
     let areas: Vec<f64> = walls.iter().map(|(k, _)| faces.get(*k).map_or(0.0, |f| f.area)).collect();
-    let walls = as_designed(&walls, &areas, &loops);
-    let outlines = prism_outlines(&walls, &loops, 0.005 * size);
+    // The outlines the slice at `level` (along the prism from halfway) gives, and how many of the
+    // prism's walls they run on. A run of the cut whose ends nearly meet is a loop too: the
+    // outline is drawn from the walls' own crossings, so it needs the order the cut meets the
+    // walls in, not every point of it, and a cut that passes a hair from a row of the scan's
+    // points, or over a patch the scanner missed, comes out as a run just short of closed.
+    let reach = 0.005 * size;
+    let sliced = |level: f64| -> (Vec<Outline>, usize) {
+        let at = Plane { origin: plane.origin + plane.normal() * level, ..plane };
+        let loops: Vec<(Vec<Vec2>, Vec<Option<usize>>)> = crate::section::section_welded(scan, weld, &at)
+            .into_iter()
+            .filter(|r| r.closed || nearly_closed(&r.points))
+            .map(|r| {
+                let on = r.triangles.iter().map(|&t| owner.get(t).and_then(|&k| place.get(&(k as usize)).copied())).collect();
+                (r.points, on)
+            })
+            .collect();
+        let designed = as_designed(&walls, &areas, &loops);
+        let outlines = prism_outlines(&designed, &loops, reach);
+        let on: BTreeSet<usize> = outlines.iter().flat_map(|o| o.faces.iter().flatten().copied()).collect();
+        (outlines, prism.walls.iter().filter(|k| on.contains(k)).count())
+    };
+    // Halfway along, as the profile has always been read. When that slice misses a wall (a hole
+    // whose cut broke up, a side under a missing patch), a square prism's is the same at any
+    // level, so the levels on either side are tried and the one that runs on most walls kept:
+    // the nearest halfway among equals.
+    let (mut outlines, mut most) = sliced(0.0);
+    if most < prism.walls.len() && prism.draft == 0.0 {
+        let depth = prism.high - prism.low;
+        for share in OTHER_LEVELS {
+            let (found, count) = sliced(share * depth);
+            if count > most {
+                (outlines, most) = (found, count);
+            }
+            if most == prism.walls.len() {
+                break;
+            }
+        }
+    }
     if outlines.is_empty() {
         return Err("no loop of the scan's slice halfway along the prism runs round its walls".into());
     }

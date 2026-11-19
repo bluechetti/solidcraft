@@ -423,6 +423,35 @@ fn a_noisy_scans_chamfers_that_read_alike_are_one_chamfer_as_designed() {
     assert!((v - expected).abs() < 0.002 * expected, "{v} against {expected}");
 }
 
+/// A plate 60 × 40 × 8 with two holes Ø 8, scanned with 0.1 mm of noise on half-millimetre
+/// triangles: noise that tilts each triangle some twenty degrees. Read as it is, its faces break
+/// into dozens of small planes, cones and tori that still hold over half of it; Find All reads it
+/// again on a smoothed copy and fits the shapes found there to the scan itself: its six faces and
+/// two holes, all of it, and Extrude It builds the plate with its holes back.
+#[test]
+fn a_plate_under_noise_that_tilts_its_triangles_reads_as_its_faces_and_holes() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 60, "width": 40, "height": 8}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    for x in [15, 45] {
+        run(&mut part, "solid.cylinder", json!({"base": [x, 20, -1], "radius": 4, "height": 10, "operation": "cut", "targets": [body]}));
+    }
+    let expected = 19200.0 - 2.0 * std::f64::consts::PI * 16.0 * 8.0;
+    assert!((volume(&part, &body) - expected).abs() < 1e-3 * expected);
+    let (mut s, scan) = scanned_with_noise(&part, &body, 0.1, "plate");
+    let found = run(&mut s, "scan.find_all", json!({}));
+    let kinds: Vec<&str> = found["shapes"].as_array().unwrap().iter().map(|f| f["kind"].as_str().unwrap()).collect();
+    assert_eq!((kinds.iter().filter(|k| **k == "plane").count(), kinds.iter().filter(|k| **k == "cylinder").count(), kinds.len()), (6, 2, 8), "{kinds:?}");
+    assert!(found["in_shapes"].as_f64().unwrap() > 0.99, "{found}");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    assert_eq!(read["proposals"].as_array().map(Vec::len), Some(1), "{read}");
+    let built = run(&mut s, "scan.extrude_it", read["proposals"][0]["params"].clone());
+    // The outline's four sides, and each hole two half circles.
+    assert_eq!((built["lines"].as_u64(), built["arcs"].as_u64()), (Some(4), Some(4)), "{built} {read}");
+    let v = volume(&s, &format!("{scan} Reconstructed"));
+    assert!((v - expected).abs() < 0.005 * expected, "{v} against {expected}");
+}
+
 /// A block 60 × 40 × 10 with a turned boss on top, R 8 for 10 and coned in to R 5 over 3 more:
 /// read whole, the boss is a disc extruded and its cone is lost (no prism has a cone for a wall).
 /// The block built from the whole reading, then the boss selected and read alone (Reconstruct
