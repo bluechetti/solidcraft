@@ -5,7 +5,8 @@
 #   implemented-untested a command exists; no test named here was run and passed
 #   partial              works in part; `finding` or `note` says what is missing
 #   missing              no command does it
-#   n/a                  not a capability SolidCraft should have; `note` says why
+#   n/a                  not a capability SolidCraft should have, or put out of scope by the owner;
+#                        `note` says why, and the report lists each under what may not be claimed
 #
 # "proven" here means capability only: the command does the job on a clean generated part.
 # Accuracy under noise and against truth is Phase 3 (tests/scan-bench.toml), not this file.
@@ -13,9 +14,9 @@
 # docs/parity/matrix.md is made from this file; edit this one.
 
 [run]
-sha = "8138b307c"
+sha = "3bae9824d"
 date = "2026-11-18"
-tree = "clean worktree of main (branch scan-parity), without the other session's uncommitted changes"
+tree = "clean worktree, branch scan-parity"
 commands = [
   "sctest -p solidcraft-scan",
   "sctest -p solidcraft-engine scan",
@@ -23,17 +24,12 @@ commands = [
 ]
 # results are filled in from the run; see docs/parity/matrix.md
 results_table = [
-  ["sctest -p solidcraft-scan", "318 run, 318 passed"],
-  ["sctest -p solidcraft-engine scan", "185 run, 177 passed, 8 failed (none in tests/KNOWN_FAILING_TESTS)"],
-  ["sctest -p solidcraft-ui-egui scan", "131 run, 130 passed, 1 failed (not in tests/KNOWN_FAILING_TESTS)"],
+  ["sctest -p solidcraft-scan", "317 run, 317 passed, 1 skipped by sctest as slow"],
+  ["sctest -p solidcraft-engine scan", "186 run, 186 passed"],
+  ["sctest -p solidcraft-ui-egui scan", "131 run, 131 passed"],
 ]
-# Failures of this run, named P1..P5 and cited by the rows they touch:
-#   P1 "another feature is called `X`": scan.section_sketch, scan.flatten, scan.roll_onto_scan and
-#      scan.cut_it refuse the default name of their second feature (5 tests)
-#   P2 a_twisted_blade_is_lofted_back_with_loft_it: the blade's prism reads no `open`
-#   P3 reconstruct_the_rest_builds_what_the_body_leaves_unexplained: keeps 0 pieces
-#   P4 panel_export_writes_the_pieces_the_sheets_and_the_lists: 0 full-size pages, 21 expected
-#   P5 the_scan_tab_shows_its_layout_with_planned_tools_greyed: scan.furring_proposals not in its built list
+# The first run, at 8138b307c, had 9 failures (8 engine, 1 UI): fixed in 8a6fcc5b0, d4c787cdb,
+# e61add2b9 and 3bae9824d on this branch.
 
 [[row]]
 id = "QS-001"
@@ -49,7 +45,7 @@ commands = ["pointcloud.insert"]
 handler = "crates/io/src/point_cloud.rs"
 tests = []
 status = "missing"
-note = "point clouds read PLY, XYZ and PTS only; no PTX reader"
+note = "To build (port plan A3). Was: point clouds read PLY, XYZ and PTS only; no PTX reader"
 
 [[row]]
 id = "QS-003"
@@ -133,9 +129,7 @@ id = "QS-013"
 commands = ["scan.select", "scan.select_inside_curve", "scan.keep_selection"]
 handler = "crates/engine/src/cmd/scan_select.rs"
 tests = ["cmd::scan::select::tests::a_ball_is_selected_kept_and_opened_again", "cmd::scan::select::tests::shapes_like_the_one_clicked_are_selected_together"]
-finding = "P1"
-status = "partial"
-note = "one selection test (a selection as the region Flatten takes) failed in this run"
+status = "proven"
 
 [[row]]
 id = "QS-014"
@@ -159,7 +153,7 @@ commands = []
 handler = ""
 tests = []
 status = "missing"
-note = "fits take no relation to another fit; Reconstruct squares directions internally only"
+note = "To build (port plan B5). Was: fits take no relation to another fit; Reconstruct squares directions internally only"
 
 [[row]]
 id = "QS-017"
@@ -167,7 +161,7 @@ commands = []
 handler = ""
 tests = []
 status = "missing"
-note = "no fit held to a given direction (only Wrap Surface takes axis x|y|z)"
+note = "To build (port plan B5). Was: no fit held to a given direction (only Wrap Surface takes axis x|y|z)"
 
 [[row]]
 id = "QS-018"
@@ -222,16 +216,14 @@ commands = ["scan.symmetry"]
 handler = "crates/engine/src/cmd/scan.rs"
 tests = []
 status = "missing"
-note = "takes a guide line or a plane, not a selected region"
+note = "To build: Symmetry scored on a selected or kept region. Was: takes a guide line or a plane, not a selected region"
 
 [[row]]
 id = "QS-025"
 commands = ["scan.section_sketch", "sketch.fit_curves_to_section", "inspect.section"]
 handler = "crates/engine/src/cmd/scan_section.rs"
 tests = ["cmd::scan::tests::section_sketch_fits_the_cut_with_lines_and_circles"]
-finding = "P1"
-status = "partial"
-note = "its test failed in this run: a second section is refused for its name"
+status = "proven"
 
 [[row]]
 id = "QS-026"
@@ -247,8 +239,8 @@ commands = ["scan.sections_along_curve", "scan.loft_it"]
 handler = "crates/engine/src/cmd/scan_reconstruct_shapes.rs"
 tests = ["cmd::scan::reconstruct::tests::a_twisted_blade_is_lofted_back_with_loft_it"]
 status = "partial"
-finding = "U4, P2"
-note = "the Loft It test failed in this run; Loft It leaves raw spline sections; no 'N parallel sections' option on Section to Sketch"
+finding = "U4"
+note = "Loft It leaves raw spline sections; no 'N parallel sections' option on Section to Sketch"
 
 [[row]]
 id = "QS-028"
@@ -278,9 +270,7 @@ id = "QS-031"
 commands = ["scan.section_sketch"]
 handler = "crates/scan/src/section.rs"
 tests = ["cmd::scan::tests::section_sketch_fits_the_cut_with_lines_and_circles", "cmd::scan::tests::a_section_left_to_itself_is_fitted_at_three_times_its_noise"]
-finding = "P1"
-status = "partial"
-note = "one of its two tests failed in this run"
+status = "proven"
 
 [[row]]
 id = "QS-032"
@@ -310,16 +300,16 @@ id = "QS-035"
 commands = []
 handler = ""
 tests = []
-status = "missing"
-note = "3D G2 blend curves were not ported (sketch.blend_curve is 2D)"
+status = "n/a"
+note = "Out of scope by the owner's decision of 2026-11-18: a surfacing-only tool, to come with automatic surfacing. Was: 3D G2 blend curves were not ported (sketch.blend_curve is 2D)"
 
 [[row]]
 id = "QS-036"
 commands = []
 handler = ""
 tests = []
-status = "missing"
-note = "no continuity setting where 3D curves join"
+status = "n/a"
+note = "Out of scope by the owner's decision of 2026-11-18: a surfacing-only tool, to come with automatic surfacing. Was: no continuity setting where 3D curves join"
 
 [[row]]
 id = "QS-037"
@@ -403,16 +393,16 @@ id = "QS-047"
 commands = ["scan.fit_patches", "scan.wrap_surface"]
 handler = "crates/engine/src/cmd/scan_patches.rs"
 tests = ["cmd::scan::patches::tests::a_curving_scan_fits_as_a_grid_as_blocks_and_as_a_quad"]
-status = "missing"
-note = "Fit Patches covers a chosen region in a grid; nothing lays patches out over a whole scan by itself, and no G2 across patches is claimed or measured (auto layout was not ported)"
+status = "n/a"
+note = "Out of scope by the owner's decision of 2026-11-18: the parity claim covers mechanical parts; organic shapes are done by guided Free Form. Next project after mechanical parity (template layouts first). Was: Fit Patches covers a chosen region in a grid; nothing lays patches out over a whole scan by itself, and no G2 across patches is claimed or measured (auto layout was not ported)"
 
 [[row]]
 id = "QS-048"
 commands = []
 handler = ""
 tests = []
-status = "missing"
-note = "depends on QS-047"
+status = "n/a"
+note = "Out of scope by the owner's decision of 2026-11-18: goes with QS-047. Was: depends on QS-047"
 
 [[row]]
 id = "QS-049"
@@ -542,9 +532,8 @@ id = "QS-065"
 commands = ["scan.pattern_it", "solid.pattern.circular", "solid.pattern.rectangular", "solid.mirror"]
 handler = "crates/engine/src/cmd/scan_reconstruct.rs"
 tests = ["cmd::scan::reconstruct::tests::a_drilled_disc_is_extruded_cut_and_patterned_back_from_its_scan"]
-finding = "P1"
-status = "partial"
-note = "its test failed in this run: Cut It refuses the name `Hole 1`; U2: no tooth count on gears"
+status = "proven"
+note = "U2: no tooth count on gears"
 
 [[row]]
 id = "QS-066"
@@ -560,7 +549,6 @@ id = "QS-067"
 commands = ["scan.*_it (reply `fit`)"]
 handler = "crates/engine/src/cmd/scan_step_fit.rs"
 tests = ["cmd::scan::step_fit::tests", "cmd::scan::reconstruct::tests::reconstruct_the_rest_builds_what_the_body_leaves_unexplained"]
-finding = "P3"
 status = "partial"
 note = "each step reports better/same/worse on deviation; a 'worse' step stays unless undone; no curvature or draft cue per feature"
 
@@ -577,9 +565,8 @@ id = "QS-069"
 commands = ["scan.flatten", "scan.roll_onto_scan", "scan.flat_template"]
 handler = "crates/engine/src/cmd/scan_flatten.rs"
 tests = ["cmd::scan::flatten::tests::a_bent_sheet_flattens_and_a_line_on_the_pattern_rolls_back_onto_it"]
-finding = "P1"
-status = "partial"
-note = "its test failed in this run: a second Rolled Curves feature is refused for its name; strain_rms and strain_max are in the reply [code]; strain is not painted"
+status = "proven"
+note = "strain_rms and strain_max are in the reply [code]; strain is not painted"
 
 [[row]]
 id = "QS-070"
@@ -594,8 +581,8 @@ id = "QS-071"
 commands = []
 handler = ""
 tests = []
-status = "missing"
-note = "no IGES reader or writer in the repo"
+status = "n/a"
+note = "Out of scope by the owner's decision of 2026-11-18: STEP is the export; every CAD system the vendor names reads it. Was: no IGES reader or writer in the repo"
 
 [[row]]
 id = "QS-072"
@@ -610,9 +597,8 @@ id = "QS-073"
 commands = ["sketch.export_dxf", "scan.panel_export"]
 handler = "crates/engine/src/cmd/scan_panel_export.rs"
 tests = ["cmd::scan::tests::panel_export_writes_the_pieces_the_sheets_and_the_lists"]
-finding = "P4"
 status = "partial"
-note = "the Export Panel test failed in this run; Export Panel proven; DXF of a Flat Pattern not tested"
+note = "Export Panel proven; DXF of a Flat Pattern not tested"
 
 [[row]]
 id = "QS-074"
@@ -620,8 +606,8 @@ commands = ["scan.survey", "scan.reconstruct", "scan.reconstruct_rest"]
 handler = "crates/engine/src/cmd/scan_reconstruct_rest.rs"
 tests = ["cmd::scan::reconstruct::tests::reconstruct_the_rest_builds_what_the_body_leaves_unexplained", "cmd::scan::reconstruct::tests::a_rounded_block_is_extruded_back_from_its_scan"]
 status = "partial"
-finding = "E1, U1, E2, P3"
-note = "the Reconstruct the Rest test failed in this run; works on clean generated parts; one refused step stops the dialog's OK; T-LESS 05/18/27 read no prism"
+finding = "E1, U1, E2"
+note = "works on clean generated parts; one refused step stops the dialog's OK; T-LESS 05/18/27 read no prism"
 
 [[row]]
 id = "QS-075"
