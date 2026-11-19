@@ -849,6 +849,10 @@ pub struct FilletParams {
     /// `type: variable`: smooth instead of straight between the radii. Default: false.
     #[serde(default)]
     pub smooth: Option<bool>,
+    /// `type: variable` or `spline`: curvature-continuous (G2) sections, a curvature fillet's,
+    /// whose size follows the radius along the edge, instead of circular arcs. Default: false.
+    #[serde(default)]
+    pub curvature: Option<bool>,
     /// `type: spline`: the control radii after `radius`. At most 100 are read.
     #[serde(default)]
     pub radii: Option<Vec<LengthExpr>>,

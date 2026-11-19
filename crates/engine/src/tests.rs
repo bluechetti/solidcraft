@@ -3879,6 +3879,26 @@ fn chord_and_variable_fillets() {
         )
         .is_err()
     );
+    // Curvature-continuous sections, 2 → 5: each section square to the edge is the G2 section
+    // with the ball's circle's area, (1 − π/4) r², so the round takes off the integral of that,
+    // (1 − π/4) · 20 · (4 + 10 + 25) / 3; and it follows a parameter like the circular one.
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 20, "height": 30, "body_name": "B"}));
+    run(&mut s, "parameters.add", json!({"name": "far", "expression": "5 mm"}));
+    run(
+        &mut s,
+        "solid.fillet",
+        json!({"edges": [[10, 10, 30]], "radius": 2, "type": "variable", "radius2": "far", "start": [10, 0, 30], "curvature": true, "name": "Round"}),
+    );
+    let removed = (1.0 - PI / 4.0) * 20.0 * (4.0 + 10.0 + 25.0) / 3.0;
+    assert!((6000.0 - vol(&s) - removed).abs() < 1e-3, "{} removed vs {removed}", 6000.0 - vol(&s));
+    assert!(matches!(
+        &s.doc.find_feature("Round").unwrap().kind,
+        solidcraft_doc::FeatureKind::Fillet { style: solidcraft_doc::FilletStyle::Variable { curvature: true, .. }, .. }
+    ));
+    run(&mut s, "parameters.change", json!({"name": "far", "expression": "3 mm"}));
+    let removed = (1.0 - PI / 4.0) * 20.0 * (4.0 + 6.0 + 9.0) / 3.0;
+    assert!((6000.0 - vol(&s) - removed).abs() < 1e-3, "{} removed vs {removed}", 6000.0 - vol(&s));
 }
 
 /// Components export as a STEP assembly: products, occurrences, placements.

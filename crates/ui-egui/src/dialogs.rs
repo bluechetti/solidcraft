@@ -5049,7 +5049,7 @@ fn remembered_extra_keys(kind: &Kind) -> &'static [&'static str] {
         Some("solid.extrude") => &["convention"],
         Some("solid.revolve") => &["angle2", "direction"],
         Some("solid.shell") => &["direction", "tangent_chain"],
-        Some("solid.fillet") => &["type", "fit", "corner", "radius2", "mid", "radii", "swap_ends", "smooth"],
+        Some("solid.fillet") => &["type", "fit", "corner", "radius2", "mid", "radii", "swap_ends", "smooth", "curvature"],
         Some("solid.mirror") => &["combine"],
         Some("solid.pattern.rectangular") => &["alignment", "reversed", "alignment2", "reversed2"],
         Some("solid.pattern.circular") => &["alignment", "reversed"],
@@ -6457,6 +6457,9 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                     let swap = d.extra.get("swap_ends").and_then(Value::as_bool).unwrap_or(false);
                     if let Some((a, b)) = ends {
                         p["start"] = pt(if swap { b } else { a });
+                    }
+                    if d.extra.get("curvature").and_then(Value::as_bool).unwrap_or(false) {
+                        p["curvature"] = json!(true);
                     }
                     let mids = mid_points(&d.extra);
                     if style == Some("variable") && !mids.is_empty() {
@@ -8299,16 +8302,18 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     }
                     FilletStyle::Variable { start, .. } | FilletStyle::Spline { start, .. } => {
                         match style {
-                            FilletStyle::Variable { radius2, mid, smooth, .. } => {
+                            FilletStyle::Variable { radius2, mid, smooth, curvature, .. } => {
                                 d.extra.insert("type".into(), json!("variable"));
                                 d.extra.insert("radius2".into(), json!(radius2));
                                 d.extra.insert("mid".into(), json!(mid.iter().map(|(t, r)| json!([t, r])).collect::<Vec<_>>()));
                                 d.extra.insert("smooth".into(), json!(smooth));
+                                d.extra.insert("curvature".into(), json!(curvature));
                             }
-                            FilletStyle::Spline { knots, radii, .. } => {
+                            FilletStyle::Spline { knots, radii, curvature, .. } => {
                                 d.extra.insert("type".into(), json!("spline"));
                                 d.extra.insert("knots".into(), json!(knots));
                                 d.extra.insert("radii".into(), json!(radii));
+                                d.extra.insert("curvature".into(), json!(curvature));
                             }
                             FilletStyle::Constant | FilletStyle::Chord | FilletStyle::Curvature => {}
                         }

@@ -6752,21 +6752,29 @@ fn blend_raw(
             }
         }
         FeatureKind::Fillet { style: crate::FilletStyle::Chord, .. } => (kernel::fillet_chord(&mb.body, edges, r)?, input),
-        FeatureKind::Fillet { style: crate::FilletStyle::Variable { radius2, start, mid, smooth }, .. } => {
+        FeatureKind::Fillet { style: crate::FilletStyle::Variable { radius2, start, mid, smooth, curvature }, .. } => {
             let r2 = val(vals, radius2, Kind::Length)?;
             let mut pts = vec![(0.0, r), (1.0, r2)];
             for (t, e) in mid {
                 pts.push((*t, val(vals, e, Kind::Length)?));
             }
-            one_by_one(input, edges, |b, p| kernel::fillet_variable_points(b, p, start.0, &pts, *smooth))?
+            one_by_one(input, edges, |b, p| {
+                if *curvature {
+                    kernel::fillet_variable_points_g2(b, p, start.0, &pts, *smooth)
+                } else {
+                    kernel::fillet_variable_points(b, p, start.0, &pts, *smooth)
+                }
+            })?
         }
-        FeatureKind::Fillet { style: crate::FilletStyle::Spline { start, knots, radii }, .. } => {
+        FeatureKind::Fillet { style: crate::FilletStyle::Spline { start, knots, radii, curvature }, .. } => {
             let mut values = vec![r];
             for e in radii {
                 values.push(val(vals, e, Kind::Length)?);
             }
             let law = crate::FilletStyle::spline(knots, values);
-            one_by_one(input, edges, |b, p| kernel::fillet_variable_spline(b, p, start.0, &law))?
+            one_by_one(input, edges, |b, p| {
+                if *curvature { kernel::fillet_variable_spline_g2(b, p, start.0, &law) } else { kernel::fillet_variable_spline(b, p, start.0, &law) }
+            })?
         }
         FeatureKind::Fillet { fit: crate::FilletFit::Taper, .. } => {
             let (b, tapers) = kernel::fillet_tapered(&mb.body, edges, r)?;
@@ -14223,6 +14231,7 @@ mod chain_tests {
                 start: crate::Position(Vec3::new(-15.0, -20.0, 10.0)),
                 mid: Vec::new(),
                 smooth: false,
+                curvature: false,
             };
         }
         let warning = build(variable);

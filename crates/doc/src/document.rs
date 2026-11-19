@@ -2606,6 +2606,9 @@ pub enum FilletStyle {
         mid: Vec<(f64, Expr)>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         smooth: bool,
+        /// Curvature-continuous (G2) sections, a Curvature fillet's, instead of circular arcs.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        curvature: bool,
     },
     /// The radius along each edge as a clamped B-spline of the position from the end nearest
     /// `start` (0) to the other (1): `radius` is its first control radius and `radii` the rest,
@@ -2615,6 +2618,9 @@ pub enum FilletStyle {
         knots: Vec<f64>,
         #[walk(length = |i: usize, n: usize| if i + 1 == n { "End radius" } else { "Control radius" })]
         radii: Vec<Expr>,
+        /// Curvature-continuous (G2) sections, a Curvature fillet's, instead of circular arcs.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        curvature: bool,
     },
 }
 

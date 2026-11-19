@@ -173,7 +173,10 @@ pub use blend::{
     without_fit_note,
 };
 pub use blend_corner::fillet_radii;
-pub use blend_variable::{RadiusSpline, Taper, fillet_chord, fillet_tapered, fillet_variable, fillet_variable_points, fillet_variable_spline, taper};
+pub use blend_variable::{
+    RadiusSpline, Taper, fillet_chord, fillet_tapered, fillet_variable, fillet_variable_points, fillet_variable_points_g2, fillet_variable_spline,
+    fillet_variable_spline_g2, taper,
+};
 pub use body::{
     Body, COLOUR_NAME_MAX, CapSignature, DISPLAY_ANGLE, DisplayShare, EdgeInfo, FaceInfo, FacePaint, FaceSource, MESH_MIN_ANGLE, MeshSpec,
     MeshTolerance, Paint, PlanStats, PointClass, RayPick, Refusal, SurfaceKind, colour_name, lazy_moves_made, placed_mesh,

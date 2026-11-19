@@ -1777,6 +1777,12 @@ fn variable_fillet_mid_radii_round_trip() {
     let e = crate::dialogs::for_feature(&app, id, None).unwrap();
     assert_eq!(e.extra.get("mid"), Some(&json!([[0.5, "4 mm"]])));
     assert_eq!(e.extra.get("smooth"), Some(&json!(true)));
+    assert_eq!(e.extra.get("curvature"), Some(&json!(false)));
+    // Curvature-continuous sections: sent, and read back on editing.
+    let mut g = e.clone();
+    g.extra.insert("curvature".into(), json!(true));
+    let p = apply_commands(&app, &g).unwrap().remove(0).1;
+    assert_eq!(p["params"]["curvature"], json!(true), "{p}");
     // All middle radii removed: a plain two-radius fillet again.
     let mut d = e;
     d.extra.insert("mid".into(), json!([]));
