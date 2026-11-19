@@ -645,6 +645,29 @@ fn stand_on_base_cycles_and_stands_on_a_picked_face() {
     assert!(lo.z.abs() < STL && (hi.z - 80.0).abs() < STL, "on its end: {lo:?} {hi:?}");
 }
 
+/// A part brought in standing is left standing. A slab lying on a broad face, off the grid: the
+/// first press keeps that face down (its two broad faces tie, and it was turned over or laid on
+/// its side, the base after the one it stood on) and only puts it on the grid over the origin;
+/// the press after that goes on to the next base, as pressing again does.
+#[test]
+fn a_scan_already_standing_on_a_good_base_is_left_standing() {
+    let (mut s, body) = session_with_triangles("standing", &fine_box(Vec3::new(5.0, 3.0, 2.0), Vec3::new(85.0, 53.0, 12.0), 4));
+    let first = run(&mut s, "scan.stand_on_base", json!({}));
+    assert!(first["base"]["normal"][2].as_f64().is_some_and(|z| z < -0.999), "the face that was down: {first}");
+    let (lo, hi) = bounds(&s, &body);
+    assert!(lo.z.abs() < STL && (hi.z - 10.0).abs() < STL, "flat on the grid: {lo:?} {hi:?}");
+    assert!((lo.x + hi.x).abs() < 1e-3 && (lo.y + hi.y).abs() < 1e-3, "over the origin: {lo:?} {hi:?}");
+    let (index, count) = (first["base_index"].as_u64().unwrap(), first["base_count"].as_u64().unwrap());
+    // Standing where it should already, the same press changes nothing more...
+    let mut copy = s.scratch();
+    copy.scan_base_cycle = None;
+    let again = run(&mut copy, "scan.stand_on_base", json!({}));
+    assert_eq!((again["base_index"].as_u64(), again["moved"].as_bool()), (Some(index), Some(false)), "{again}");
+    // ...and pressed again here, it goes on to the next base.
+    let second = run(&mut s, "scan.stand_on_base", json!({}));
+    assert_eq!((second["base_index"].as_u64(), second["moved"].as_bool()), (Some((index + 1) % count), Some(true)), "{second}");
+}
+
 /// A face picked part way up the L block (the raised part's side at X = 40) lies flat on the grid
 /// with its middle over the origin, though the rest of the block reaches 20 below it.
 #[test]

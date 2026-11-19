@@ -19,6 +19,8 @@ pub enum BaseKind {
     Resting,
     /// Lying along one of its own axes: on its broad side, its edge or its end.
     Axis,
+    /// Standing on an end of the axis it is turned about (a mug, a shaft, a wheel).
+    End,
     /// A flat face grown from a clicked triangle.
     Grown,
 }
@@ -29,6 +31,7 @@ impl BaseKind {
             BaseKind::Flat => "flat",
             BaseKind::Resting => "resting",
             BaseKind::Axis => "axis",
+            BaseKind::End => "end",
             BaseKind::Grown => "grown",
         }
     }
@@ -53,6 +56,31 @@ pub struct Base {
     pub rms: f64,
 }
 
+impl Base {
+    /// How good a base it is, for ranking: how far it is from tipping, a flat face the more the
+    /// more of the scan it is.
+    pub fn score(&self) -> f64 {
+        match self.kind {
+            BaseKind::Flat => self.tip * (1.0 + 4.0 * self.share),
+            _ => self.tip,
+        }
+    }
+}
+
+/// A scan stands on a base already when the base faces down within this (radians).
+const STANDING: f64 = 2.0 * PI / 180.0;
+/// A base at least this share as good as the best is among the best.
+const NEAR_BEST: f64 = 0.8;
+
+/// The base a press of Stand on Base with none named stands the scan on, of `found` (as [`bases`]
+/// gives them): the one it stands on already (facing `down` within 2°) when that is among the
+/// best (an end of the axis it is turned about, or nearly as steady as the steadiest), so a part
+/// that stands well is not turned over or tipped for a tie or a hair's difference; else the first.
+pub fn preferred(found: &[Base], down: Vec3) -> usize {
+    let best = found.iter().map(Base::score).fold(0.0, f64::max);
+    found.iter().position(|b| b.normal.dot(down) >= STANDING.cos() && (b.kind == BaseKind::End || b.score() >= NEAR_BEST * best)).unwrap_or(0)
+}
+
 /// The most bases [`bases`] gives.
 pub const MAX_BASES: usize = 8;
 
@@ -74,8 +102,10 @@ fn touch_tolerance(extent: f64) -> f64 {
     (0.0015 * extent).max(1e-6)
 }
 
-/// The ways the scan could stand, at most [`MAX_BASES`], no two the same way: flat faces and
-/// resting poses ranked together, the steadiest first, then the directions of its own axes.
+/// The ways the scan could stand, at most [`MAX_BASES`], no two the same way: for a turned part
+/// the ends of its axis first ([`turned_about`]: a mug stands on its bottom or its rim before any
+/// pose its lumps or its handle would rest it in); then flat faces and resting poses ranked
+/// together, the steadiest first; then the directions of its own axes.
 pub fn bases(scan: &Scan) -> Vec<Base> {
     let extent = scan.extent();
     if !(extent > 0.0 && extent.is_finite()) {
@@ -94,14 +124,177 @@ pub fn bases(scan: &Scan) -> Vec<Base> {
     let resting = resting_poses(&points, &samples, centroid, extent).into_iter().take(5).map(|p| (p, p.tip));
     let mut ranked: Vec<(Base, f64)> = faces.chain(resting).collect();
     ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let ends = turned_about(scan).map(|(on, axis)| end_bases(on, axis, &points, centroid, tolerance)).unwrap_or_default();
     let mut kept: Vec<Base> = Vec::new();
     let same = same_way();
-    for base in ranked.into_iter().map(|(b, _)| b).chain(axis_bases(&samples, centroid, extent)) {
+    for base in ends.into_iter().chain(ranked.into_iter().map(|(b, _)| b)).chain(axis_bases(&samples, centroid, extent)) {
         if kept.len() < MAX_BASES && !kept.iter().any(|k| k.normal.dot(base.normal) > same) {
             kept.push(base);
         }
     }
     kept
+}
+
+/// The share of the area of a scan's sides whose normals must pass the axis for it to be a turned
+/// part, and how near (the sine of the angle between a normal and the plane through the axis and
+/// its point). A triangle facing along the axis within [`TURNED_END`] (a cosine) is an end, not a
+/// side; the sides must be at least [`TURNED_SIDES`] of the scan.
+const TURNED_SHARE: f64 = 0.6;
+const TURNED_NEAR: f64 = 0.17;
+const TURNED_END: f64 = 0.9;
+const TURNED_SIDES: f64 = 0.2;
+/// How many times the axis is fitted, each time on the triangles that turned about the last.
+const TURNED_ROUNDS: usize = 3;
+/// The fit is one axis when the next best line is this many times worse.
+const TURNED_SHARP: f64 = 4.0;
+/// The triangles the turning axis is read from, at most.
+const TURNED_SAMPLE: usize = 60_000;
+
+/// The axis the scan is turned about (a point on it and its unit direction), when most of its
+/// surface is a surface of revolution about one: every normal of such a surface passes through
+/// the axis, so the axis is the line that the normals' lines come nearest to all together
+/// (Pottmann and Randrup's line-geometry fit: the line `(l, m)` least in `Σ w (n · m + (p × n) · l)²`
+/// with `|l| = 1`, an eigenvector of a 3 × 3 matrix). What does not turn about it (a mug's handle,
+/// the lumps of a rough scan) pulls the first fit a few degrees off, so it is fitted again on the
+/// triangles that do, [`TURNED_ROUNDS`] times. `None` for a part that is not turned: its normals
+/// do not pass one line (a block), or pass too many (a ball, a flat plate).
+pub fn turned_about(scan: &Scan) -> Option<(Vec3, Vec3)> {
+    let step = (scan.triangle_count() / TURNED_SAMPLE).max(1);
+    let middle = scan.bounds().map(|(lo, hi)| (lo + hi) / 2.0)?;
+    let extent = scan.extent();
+    if !(extent > 0.0 && extent.is_finite()) {
+        return None;
+    }
+    // About the middle and at the scan's own size, so the numbers are of one scale.
+    let samples: Vec<(Vec3, Vec3, f64)> = (0..scan.triangle_count())
+        .step_by(step)
+        .filter_map(|t| {
+            let [a, b, c] = scan.corners(t)?;
+            let cross = (b - a).cross(c - a);
+            let normal = cross.normalized()?;
+            let at = ((a + b + c) / 3.0 - middle) / extent;
+            (at.is_finite() && normal.is_finite()).then_some((at, normal, cross.len() / 2.0))
+        })
+        .collect();
+    let total: f64 = samples.iter().map(|s| s.2).sum();
+    if samples.len() < 16 || !(total > 0.0) {
+        return None;
+    }
+    // A side triangle turns about the axis when its normal lies within a few degrees of the plane
+    // through the axis and its own point; an end (facing along the axis) says nothing either way.
+    let side = |n: Vec3, direction: Vec3| n.dot(direction).abs() < TURNED_END;
+    let about = |p: Vec3, n: Vec3, point: Vec3, direction: Vec3| {
+        let out = p - point;
+        let radial = out - direction * out.dot(direction);
+        radial.normalized().is_some_and(|r| n.dot(direction.cross(r)).abs() <= TURNED_NEAR)
+    };
+    let mut used = vec![true; samples.len()];
+    let mut found = None;
+    for _ in 0..TURNED_ROUNDS {
+        let (point, direction, sharp) = axis_of_normals(&samples, &used)?;
+        found = Some((point, direction, sharp));
+        for (slot, (p, n, _)) in used.iter_mut().zip(&samples) {
+            *slot = !side(*n, direction) || about(*p, *n, point, direction);
+        }
+    }
+    let (point, direction, sharp) = found?;
+    // Most of its sides must turn about it. Its ends alone do not make it a turned part (a slab's
+    // two broad faces pass any line square to them), and a part with hardly any side is none to
+    // stand on an end.
+    let sides: Vec<&(Vec3, Vec3, f64)> = samples.iter().filter(|(_, n, _)| side(*n, direction)).collect();
+    let side_area: f64 = sides.iter().map(|s| s.2).sum();
+    let turning: f64 = sides.iter().filter(|(p, n, _)| about(*p, *n, point, direction)).map(|s| s.2).sum();
+    (sharp && side_area >= TURNED_SIDES * total && turning >= TURNED_SHARE * side_area).then(|| (middle + point * extent, direction))
+}
+
+/// The line the normals of the `used` samples (place, unit normal, area) come nearest to all
+/// together: a point on it, its unit direction, and whether it is one line and no other (a ball's
+/// normals pass every line through its middle). `None` when the normals do not spread in all
+/// three directions (any line square to them all would do).
+fn axis_of_normals(samples: &[(Vec3, Vec3, f64)], used: &[bool]) -> Option<(Vec3, Vec3, bool)> {
+    // Σ w v vᵀ for v = (p × n, n), in blocks: a (moments), b (mixed), c (normals).
+    let (mut a, mut b, mut c) = ([[0.0f64; 3]; 3], [[0.0f64; 3]; 3], [[0.0f64; 3]; 3]);
+    let mut total = 0.0;
+    for ((p, n, w), _) in samples.iter().zip(used).filter(|(_, used)| **used) {
+        let m = p.cross(*n);
+        let (m, n) = ([m.x, m.y, m.z], [n.x, n.y, n.z]);
+        total += w;
+        for i in 0..3 {
+            for j in 0..3 {
+                a[i][j] += w * m[i] * m[j];
+                b[i][j] += w * m[i] * n[j];
+                c[i][j] += w * n[i] * n[j];
+            }
+        }
+    }
+    let inverse = inverse3(&c)?;
+    let spread = solidcraft_geom::inertia::principal(&c, 0.0)?.0;
+    if !(total > 0.0 && spread[0] > 0.02 * total) {
+        return None;
+    }
+    // a − b c⁻¹ bᵀ: its eigenvector of the least eigenvalue is the axis's direction.
+    let mut reduced = a;
+    for i in 0..3 {
+        for j in 0..3 {
+            for k in 0..3 {
+                for l in 0..3 {
+                    reduced[i][j] -= b[i][k] * inverse[k][l] * b[j][l];
+                }
+            }
+        }
+    }
+    let (values, axes) = solidcraft_geom::inertia::principal(&reduced, 0.0)?;
+    let direction = axes[0].normalized()?;
+    let sharp = values[1] > TURNED_SHARP * values[0].max(0.0) + 1e-12 * total;
+    // The moment m = −c⁻¹ bᵀ l, and the point of the line nearest the origin, l × m.
+    let l = [direction.x, direction.y, direction.z];
+    let mut moment = [0.0f64; 3];
+    for (k, slot) in moment.iter_mut().enumerate() {
+        for i in 0..3 {
+            for j in 0..3 {
+                *slot -= inverse[k][j] * b[i][j] * l[i];
+            }
+        }
+    }
+    Some((direction.cross(Vec3::new(moment[0], moment[1], moment[2])), direction, sharp))
+}
+
+/// The inverse of a symmetric 3 × 3 matrix; `None` when it has none to speak of.
+fn inverse3(m: &[[f64; 3]; 3]) -> Option<[[f64; 3]; 3]> {
+    let cofactor = |r: usize, c: usize| {
+        let (r1, r2, c1, c2) = ((r + 1) % 3, (r + 2) % 3, (c + 1) % 3, (c + 2) % 3);
+        m[r1][c1] * m[r2][c2] - m[r1][c2] * m[r2][c1]
+    };
+    let det = m[0][0] * cofactor(0, 0) + m[0][1] * cofactor(0, 1) + m[0][2] * cofactor(0, 2);
+    let scale = m.iter().flatten().fold(0.0f64, |s, x| s.max(x.abs()));
+    if !(det.abs() > 1e-12 * scale * scale * scale) {
+        return None;
+    }
+    let mut out = [[0.0; 3]; 3];
+    for (r, row) in out.iter_mut().enumerate() {
+        for (c, cell) in row.iter_mut().enumerate() {
+            *cell = cofactor(c, r) / det;
+        }
+    }
+    Some(out)
+}
+
+/// A turned part standing on each end of its axis (through `on` along `axis`), the axis over the
+/// middle of the base: how steady it is there when it would stay (a mug on its bottom or its
+/// rim), else simply that end down (a top's point: it is still the way the part is looked at).
+/// The end with more of the part touching first.
+fn end_bases(on: Vec3, axis: Vec3, points: &[Vec3], centroid: Vec3, tolerance: f64) -> Vec<Base> {
+    let mut ends: Vec<Base> = [axis, -axis]
+        .into_iter()
+        .filter_map(|normal| {
+            let lowest = points.iter().map(|p| p.dot(normal)).fold(f64::NEG_INFINITY, f64::max);
+            let anchor = on + normal * (lowest - on.dot(normal));
+            let (area, tip) = rest(normal, points, centroid, tolerance).map_or((0.0, 0.0), |r| (r.area, r.tip));
+            lowest.is_finite().then_some(Base { kind: BaseKind::End, normal, anchor, area, share: 0.0, tip, rms: 0.0 })
+        })
+        .collect();
+    ends.sort_by(|a, b| b.area.total_cmp(&a.area));
+    ends
 }
 
 #[derive(Clone, Copy)]
@@ -712,6 +905,65 @@ mod tests {
         let (grown, faces) = grow_face(&scan, seed).unwrap();
         assert_eq!(faces.len(), 32);
         assert!(grown.normal.dot(normal) > 0.999);
+    }
+
+    /// A cup turned and moved anywhere is read as turned about its own axis; a box, a slab (whose
+    /// broad faces alone would pass any line square to them) and a ball (which has no one axis)
+    /// are not.
+    #[test]
+    fn a_turned_part_is_read_about_its_axis_and_a_box_a_slab_and_a_ball_are_not() {
+        use crate::test_meshes::revolved;
+        // A cup: its bottom, its wall leaning out, open at the top.
+        let profile: Vec<[f64; 2]> =
+            [[0.0, 0.0], [0.0, 30.0]].into_iter().chain((1..=12).map(|i| [5.0 * f64::from(i), 30.0 + 0.4 * f64::from(i)])).collect();
+        let (positions, triangles) = revolved(&profile, 64, false);
+        let (axis, shift) = (Vec3::new(0.3, -0.5, 0.8).normalized().unwrap(), Vec3::new(40.0, -12.0, 7.0));
+        let moved = turned(&positions, axis, 0.7, shift);
+        let (on, direction) = turned_about(&Scan::new(&moved, &triangles)).expect("turned");
+        let its_axis = turned(&[Vec3::ZERO, Vec3::Z], axis, 0.7, shift);
+        let along = its_axis[1] - its_axis[0];
+        assert!(direction.dot(along).abs() > 0.5f64.to_radians().cos(), "{direction:?} against {along:?}");
+        let off = on - its_axis[0];
+        assert!((off - along * off.dot(along)).len() < 0.05, "on the axis: {on:?}");
+        for size in [Vec3::new(40.0, 40.0, 40.0), Vec3::new(80.0, 50.0, 10.0), Vec3::new(30.0, 20.0, 60.0)] {
+            let (p, t) = fine_cuboid(Vec3::ZERO, size, 8);
+            assert!(turned_about(&Scan::new(&p, &t)).is_none(), "a box {size:?}");
+        }
+        let ball: Vec<[f64; 2]> = (0..=24).map(|i| std::f64::consts::PI * f64::from(i) / 24.0).map(|a| [-20.0 * a.cos(), 20.0 * a.sin()]).collect();
+        let (p, t) = revolved(&ball, 48, false);
+        assert!(turned_about(&Scan::new(&p, &t)).is_none(), "a ball has no one axis");
+    }
+
+    /// A cup's first bases are the two ends of its axis, and a part that already stands on one of
+    /// the best is left standing on it: the cup upright or upside down stays so, a slab on either
+    /// broad face (they tie) is not turned over; lying on a worse side, each goes to the first.
+    #[test]
+    fn a_part_that_stands_well_is_left_as_it_stands() {
+        use crate::test_meshes::revolved;
+        let profile: Vec<[f64; 2]> =
+            [[0.0, 0.0], [0.0, 30.0]].into_iter().chain((1..=12).map(|i| [5.0 * f64::from(i), 30.0 + 0.4 * f64::from(i)])).collect();
+        let (positions, triangles) = revolved(&profile, 64, false);
+        let cup = bases(&Scan::new(&positions, &triangles));
+        assert!(cup.len() >= 2 && cup[0].kind == BaseKind::End && cup[1].kind == BaseKind::End, "{cup:?}");
+        assert!(cup[0].normal.dot(cup[1].normal) < -0.999 && cup[0].normal.z.abs() > 0.999, "{cup:?}");
+        for down in [-Vec3::Z, Vec3::Z] {
+            let chosen = &cup[preferred(&cup, down)];
+            assert!(chosen.kind == BaseKind::End && chosen.normal.dot(down) > 0.999, "{down:?}: {chosen:?}");
+        }
+        assert_eq!(preferred(&cup, Vec3::X), 0, "lying on its side: stood on the first");
+        // Standing on an end puts the axis over the origin.
+        let stood = crate::place::stand(cup[0].normal, cup[0].anchor).unwrap();
+        let foot = stood.apply(Vec3::ZERO);
+        assert!(foot.x.abs() < 1e-6 && foot.y.abs() < 1e-6, "{foot:?}");
+
+        let (positions, triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(80.0, 50.0, 10.0), 4);
+        let slab = bases(&Scan::new(&positions, &triangles));
+        assert!(slab.iter().all(|b| b.kind != BaseKind::End), "{slab:?}");
+        for down in [-Vec3::Z, Vec3::Z] {
+            assert!(slab[preferred(&slab, down)].normal.dot(down) > 0.999, "the broad face it stands on, either way up");
+        }
+        assert_eq!(preferred(&slab, Vec3::X), 0, "on its end it is stood on a broad face");
+        assert!(slab[0].normal.z.abs() > 0.999);
     }
 
     /// A scan of more than 100 000 triangles is read a sample at a time: a face's area is still

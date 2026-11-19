@@ -698,7 +698,7 @@ fn stand_on_base(s: &mut Session, p: &Value) -> Result<Value> {
             let i = match index {
                 Some(i) => usize::try_from(i).unwrap_or(usize::MAX),
                 // The next base while the scan still stands on the last one (nothing has moved it).
-                None => next_after(&mesh, &found),
+                None => next_after(s, &mesh, &found),
             };
             let base = found.get(i).copied().ok_or_else(|| bad(cmd, format!("`base` must be below {count}, the number of bases found")))?;
             (base, Some((i, count)))
@@ -902,17 +902,23 @@ fn stand_move(b: &Base) -> Option<Rigid> {
     place::stand(b.normal, b.anchor)
 }
 
-/// The base a press of Stand on Base with none named stands the scan on: the next after the one it
-/// stands on now, else the steadiest. Read off the scan, not remembered: a dialog's OK runs on a
-/// copy of the session, which keeps nothing.
-fn next_after(mesh: &Mesh, found: &[Base]) -> usize {
-    found.iter().position(|b| stand_move(b).is_some_and(|m| still_standing(&m, mesh.reach()))).map_or(0, |i| (i + 1) % found.len())
+/// The base a press of Stand on Base with none named stands the scan on. Pressed again while the
+/// scan still stands on the base the last press gave it (kept with the session, and with the copy
+/// a dialog's OK runs on): the next one, so pressing goes through them. Else the one it already
+/// stands on when that is among the best ([`base::preferred`]: a part brought in standing is not
+/// turned over for a tie, tipped onto a lump, or laid on its side), else the steadiest.
+fn next_after(s: &Session, mesh: &Mesh, found: &[Base]) -> usize {
+    let standing = |b: &Base| stand_move(b).is_some_and(|m| still_standing(&m, mesh.reach()));
+    match &s.scan_base_cycle {
+        Some((body, last)) if *body == mesh.body && found.get(*last).is_some_and(standing) => (last + 1) % found.len().max(1),
+        _ => base::preferred(found, -Vec3::Z),
+    }
 }
 
 /// The base the Stand on Base dialog opens on: the one pressing it again would stand the scan on.
 pub fn next_base(s: &Session, body: Option<&str>) -> usize {
     let Ok(mesh) = mesh(s, &json!({ "body": body }), "scan.stand_on_base") else { return 0 };
-    next_after(&mesh, &base::bases(&mesh.scan()))
+    next_after(s, &mesh, &base::bases(&mesh.scan()))
 }
 
 /// Whether standing the scan on a base again would hardly move it: a scan's bases are read again
