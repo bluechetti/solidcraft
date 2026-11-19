@@ -1,0 +1,647 @@
+# Parity matrix: each capability of tests/parity/quicksurface-spec.toml against SolidCraft.
+#
+# status:
+#   proven               a named test of the capability exists and passed in the run below
+#   implemented-untested a command exists; no test named here was run and passed
+#   partial              works in part; `finding` or `note` says what is missing
+#   missing              no command does it
+#   n/a                  not a capability SolidCraft should have; `note` says why
+#
+# "proven" here means capability only: the command does the job on a clean generated part.
+# Accuracy under noise and against truth is Phase 3 (tests/scan-bench.toml), not this file.
+#
+# docs/parity/matrix.md is made from this file; edit this one.
+
+[run]
+sha = "8138b307c"
+date = "2026-11-18"
+tree = "clean worktree of main (branch scan-parity), without the other session's uncommitted changes"
+commands = [
+  "sctest -p solidcraft-scan",
+  "sctest -p solidcraft-engine scan",
+  "sctest -p solidcraft-ui-egui scan",
+]
+# results are filled in from the run; see docs/parity/matrix.md
+results_table = [
+  ["sctest -p solidcraft-scan", "318 run, 318 passed"],
+  ["sctest -p solidcraft-engine scan", "185 run, 177 passed, 8 failed (none in tests/KNOWN_FAILING_TESTS)"],
+  ["sctest -p solidcraft-ui-egui scan", "131 run, 130 passed, 1 failed (not in tests/KNOWN_FAILING_TESTS)"],
+]
+# Failures of this run, named P1..P5 and cited by the rows they touch:
+#   P1 "another feature is called `X`": scan.section_sketch, scan.flatten, scan.roll_onto_scan and
+#      scan.cut_it refuse the default name of their second feature (5 tests)
+#   P2 a_twisted_blade_is_lofted_back_with_loft_it: the blade's prism reads no `open`
+#   P3 reconstruct_the_rest_builds_what_the_body_leaves_unexplained: keeps 0 pieces
+#   P4 panel_export_writes_the_pieces_the_sheets_and_the_lists: 0 full-size pages, 21 expected
+#   P5 the_scan_tab_shows_its_layout_with_planned_tools_greyed: scan.furring_proposals not in its built list
+
+[[row]]
+id = "QS-001"
+commands = ["file.insert_mesh"]
+handler = "crates/engine/src/cmd/file.rs"
+tests = ["engine scan tests insert binary and ASCII STL throughout"]
+status = "partial"
+note = "STL proven by use; no test that STL, OBJ, PLY and 3MF give the same body"
+
+[[row]]
+id = "QS-002"
+commands = ["pointcloud.insert"]
+handler = "crates/io/src/point_cloud.rs"
+tests = []
+status = "missing"
+note = "point clouds read PLY, XYZ and PTS only; no PTX reader"
+
+[[row]]
+id = "QS-003"
+commands = ["file.insert_mesh"]
+handler = "crates/kernel/src/meshbody.rs"
+tests = []
+status = "implemented-untested"
+note = "cap is 250M triangles [code]; 28M measured in the lab [notes]; no test at 10M or more"
+
+[[row]]
+id = "QS-004"
+commands = ["scan.reduce"]
+handler = "crates/engine/src/cmd/scan.rs"
+tests = ["cmd::scan::tests::reduce_keeps_a_fine_box_its_shape"]
+status = "partial"
+finding = "U15"
+note = "reported error is wrong at open rims"
+
+[[row]]
+id = "QS-005"
+commands = ["scan.fill_holes"]
+handler = "crates/engine/src/cmd/scan.rs"
+tests = ["cmd::scan::tests::fill_holes_closes_a_hole_in_a_plate"]
+status = "partial"
+finding = "U8"
+note = "some rings fail without a reason in the reply"
+
+[[row]]
+id = "QS-006"
+commands = ["scan.remove_floating"]
+handler = "crates/engine/src/cmd/scan.rs"
+tests = ["cmd::scan::tests::remove_floating_takes_the_speck_off_where_the_scan_lies"]
+status = "proven"
+
+[[row]]
+id = "QS-007"
+commands = ["scan.clean_up", "scan.repair", "scan.fill_holes", "scan.remesh"]
+handler = "crates/engine/src/cmd/scan_clean.rs"
+tests = ["cmd::scan::tests::clean_up_runs_the_tools_each_as_a_step"]
+status = "implemented-untested"
+note = "no test asserts the result is closed and manifold"
+
+[[row]]
+id = "QS-008"
+commands = ["scan.remove_markers"]
+handler = "crates/engine/src/cmd/scan.rs"
+tests = ["cmd::scan::tests::remove_markers_finds_them_all_from_one_and_keeps_a_step"]
+status = "proven"
+
+[[row]]
+id = "QS-009"
+commands = ["scan.split", "scan.curve_from_selection"]
+handler = "crates/engine/src/cmd/scan_split.rs"
+tests = ["cmd::scan::split::tests::another_body_cuts_the_scan_where_it_reaches", "cmd::scan::select::tests::inside_a_curve_and_the_curve_round_a_selection"]
+status = "proven"
+
+[[row]]
+id = "QS-010"
+commands = ["scan.split"]
+handler = "crates/engine/src/cmd/scan_split.rs"
+tests = ["cmd::scan::split::tests::a_closed_curve_on_the_top_with_an_offset_cuts_only_under_it", "cmd::scan::split::tests::a_sketch_circle_cuts_and_only_the_crossing_can_be_kept_as_curves"]
+status = "proven"
+
+[[row]]
+id = "QS-011"
+commands = ["inspect.curvature_map"]
+handler = "crates/engine/src/cmd"
+tests = []
+status = "implemented-untested"
+note = "exists for models; whether it colours a mesh body is not verified"
+
+[[row]]
+id = "QS-012"
+commands = ["scan.split"]
+handler = "crates/engine/src/cmd/scan_split.rs"
+tests = ["cmd::scan::split::tests::a_plane_splits_the_scan_into_two_scans_in_one_undo_step", "cmd::scan::split::tests::a_cylinder_cuts_a_disc_out_of_the_top_and_bottom_and_an_envelope_makes_a_slab"]
+status = "proven"
+
+[[row]]
+id = "QS-013"
+commands = ["scan.select", "scan.select_inside_curve", "scan.keep_selection"]
+handler = "crates/engine/src/cmd/scan_select.rs"
+tests = ["cmd::scan::select::tests::a_ball_is_selected_kept_and_opened_again", "cmd::scan::select::tests::shapes_like_the_one_clicked_are_selected_together"]
+finding = "P1"
+status = "partial"
+note = "one selection test (a selection as the region Flatten takes) failed in this run"
+
+[[row]]
+id = "QS-014"
+commands = ["scan.fit_plane", "scan.fit_cylinder", "scan.fit_sphere", "scan.fit_cone", "scan.fit_torus"]
+handler = "crates/engine/src/cmd/scan.rs"
+tests = ["cmd::scan::tests::fitted_shapes_are_kept_as_construction_features", "cmd::scan::tests::fit_sphere_keeps_the_centre"]
+status = "partial"
+note = "plane, cylinder, sphere proven; no command-level test of the cone fit"
+
+[[row]]
+id = "QS-015"
+commands = ["scan.find_all"]
+handler = "crates/engine/src/cmd/scan_reconstruct.rs"
+tests = ["cmd::scan::reconstruct::tests::a_rounded_block_is_extruded_back_from_its_scan"]
+status = "proven"
+note = "pose invariance not tested"
+
+[[row]]
+id = "QS-016"
+commands = []
+handler = ""
+tests = []
+status = "missing"
+note = "fits take no relation to another fit; Reconstruct squares directions internally only"
+
+[[row]]
+id = "QS-017"
+commands = []
+handler = ""
+tests = []
+status = "missing"
+note = "no fit held to a given direction (only Wrap Surface takes axis x|y|z)"
+
+[[row]]
+id = "QS-018"
+commands = ["scan.fit_cylinder", "scan.fit_sphere", "construct.axis", "construct.point"]
+handler = "crates/engine/src/cmd/scan.rs"
+tests = ["cmd::scan::tests::fitted_shapes_are_kept_as_construction_features"]
+status = "proven"
+
+[[row]]
+id = "QS-019"
+commands = ["scan.stand_on_base", "scan.square_to_symmetry", "scan.center"]
+handler = "crates/engine/src/cmd/scan.rs"
+tests = ["cmd::scan::tests::a_scan_stands_on_the_face_picked_on_it", "cmd::scan::tests::square_to_symmetry_puts_the_mirror_plane_on_yz"]
+status = "partial"
+finding = "U7"
+note = "no one command that takes plane, axis and point as the three datums"
+
+[[row]]
+id = "QS-020"
+commands = ["scan.quick_align"]
+handler = "crates/engine/src/cmd/scan.rs"
+tests = ["cmd::scan::tests::quick_align_rest_and_centre_place_the_scan"]
+status = "proven"
+
+[[row]]
+id = "QS-021"
+commands = ["scan.align_pairs"]
+handler = "crates/engine/src/cmd/scan_align.rs"
+tests = ["cmd::scan::align::tests::points_picked_in_pairs_lay_the_scan_and_the_fit_finishes_it"]
+status = "proven"
+
+[[row]]
+id = "QS-022"
+commands = ["scan.align_all", "scan.register", "scan.combine"]
+handler = "crates/engine/src/cmd/scan_align.rs"
+tests = ["cmd::scan::align::tests::three_passes_are_laid_together_in_one_undo_step", "cmd::scan::align::tests::three_passes_are_combined_into_one_scan_in_one_undo_step"]
+status = "partial"
+finding = "U10, F6"
+note = "stops about 2 mm off on fused scans; rms misleads at low overlap"
+
+[[row]]
+id = "QS-023"
+commands = ["scan.symmetry", "scan.square_to_symmetry", "scan.complete_by_mirroring"]
+handler = "crates/engine/src/cmd/scan.rs"
+tests = ["cmd::scan::tests::find_symmetry_keeps_the_mirror_plane_as_a_construction_plane", "cmd::scan::tests::complete_by_mirroring_warns_when_the_scan_is_no_mirror_image"]
+status = "proven"
+note = "F3: refuses cars unless a plane is given"
+
+[[row]]
+id = "QS-024"
+commands = ["scan.symmetry"]
+handler = "crates/engine/src/cmd/scan.rs"
+tests = []
+status = "missing"
+note = "takes a guide line or a plane, not a selected region"
+
+[[row]]
+id = "QS-025"
+commands = ["scan.section_sketch", "sketch.fit_curves_to_section", "inspect.section"]
+handler = "crates/engine/src/cmd/scan_section.rs"
+tests = ["cmd::scan::tests::section_sketch_fits_the_cut_with_lines_and_circles"]
+finding = "P1"
+status = "partial"
+note = "its test failed in this run: a second section is refused for its name"
+
+[[row]]
+id = "QS-026"
+commands = ["scan.sections_along_curve"]
+handler = "crates/engine/src/cmd/scan_curve.rs"
+tests = ["cmd::scan::tests::sections_along_a_curve_over_a_ring_are_its_tube"]
+status = "proven"
+note = "these sections are not dimensioned"
+
+[[row]]
+id = "QS-027"
+commands = ["scan.sections_along_curve", "scan.loft_it"]
+handler = "crates/engine/src/cmd/scan_reconstruct_shapes.rs"
+tests = ["cmd::scan::reconstruct::tests::a_twisted_blade_is_lofted_back_with_loft_it"]
+status = "partial"
+finding = "U4, P2"
+note = "the Loft It test failed in this run; Loft It leaves raw spline sections; no 'N parallel sections' option on Section to Sketch"
+
+[[row]]
+id = "QS-028"
+commands = ["scan.section_sketch", "sketch.auto_constrain"]
+handler = "crates/engine/src/cmd/scan_section.rs"
+tests = ["cmd::scan::tests::a_section_holds_tangent_only_the_joins_it_can_solve", "cmd::scan::reconstruct::tests::a_rounded_block_is_extruded_back_from_its_scan"]
+status = "proven"
+
+[[row]]
+id = "QS-029"
+commands = ["sketch.offset", "sketch.pattern.rectangular", "sketch.pattern.circular"]
+handler = "crates/engine/src/cmd"
+tests = []
+status = "implemented-untested"
+note = "native sketch commands; their own tests were not part of this run"
+
+[[row]]
+id = "QS-030"
+commands = ["scan.section_sketch"]
+handler = "crates/ui-egui/src/dialogs_scan_section.rs"
+tests = []
+status = "partial"
+note = "the section's fit error is reported once; no live colour between a hand-drawn sketch and the section"
+
+[[row]]
+id = "QS-031"
+commands = ["scan.section_sketch"]
+handler = "crates/scan/src/section.rs"
+tests = ["cmd::scan::tests::section_sketch_fits_the_cut_with_lines_and_circles", "cmd::scan::tests::a_section_left_to_itself_is_fitted_at_three_times_its_noise"]
+finding = "P1"
+status = "partial"
+note = "one of its two tests failed in this run"
+
+[[row]]
+id = "QS-032"
+commands = ["surface.boundary", "surface.patch"]
+handler = "crates/engine/src/cmd"
+tests = []
+status = "implemented-untested"
+note = "native; not run here"
+
+[[row]]
+id = "QS-033"
+commands = ["scan.coil_it", "solid.coil", "solid.thread"]
+handler = "crates/engine/src/cmd/scan_reconstruct_shapes.rs"
+tests = ["cmd::scan::reconstruct::tests::a_spring_is_wound_back_with_coil_it"]
+status = "partial"
+note = "a spring's pitch is read; no tool reads a thread's pitch off a scan"
+
+[[row]]
+id = "QS-034"
+commands = ["scan.curve_on_scan"]
+handler = "crates/engine/src/cmd/scan_curve.rs"
+tests = ["cmd::scan::tests::curve_on_scan_keeps_a_3d_spline_in_scan_curves"]
+status = "proven"
+
+[[row]]
+id = "QS-035"
+commands = []
+handler = ""
+tests = []
+status = "missing"
+note = "3D G2 blend curves were not ported (sketch.blend_curve is 2D)"
+
+[[row]]
+id = "QS-036"
+commands = []
+handler = ""
+tests = []
+status = "missing"
+note = "no continuity setting where 3D curves join"
+
+[[row]]
+id = "QS-037"
+commands = ["scan.curve_from_selection"]
+handler = "crates/engine/src/cmd/scan_select.rs"
+tests = ["cmd::scan::select::tests::inside_a_curve_and_the_curve_round_a_selection"]
+status = "proven"
+
+[[row]]
+id = "QS-038"
+commands = ["scan.extrude_it", "scan.revolve_it", "solid.extrude", "solid.revolve"]
+handler = "crates/engine/src/cmd/scan_reconstruct.rs"
+tests = ["cmd::scan::reconstruct::tests::a_rounded_block_is_extruded_back_from_its_scan", "cmd::scan::reconstruct::tests::a_drilled_shaft_is_revolved_cut_and_patterned_back_from_its_scan", "cmd::scan::reconstruct::tests::a_drafted_shelled_housing_is_extruded_shelled_and_filleted_back_from_its_scan"]
+status = "proven"
+note = "U1 gear teeth, E2 open rims, E5 drafted corners are accuracy findings for Phase 3"
+
+[[row]]
+id = "QS-039"
+commands = ["scan.extrude_it", "solid.extrude"]
+handler = "crates/engine/src/cmd/scan_reconstruct.rs"
+tests = ["cmd::scan::reconstruct::tests::a_drafted_shelled_housing_is_extruded_shelled_and_filleted_back_from_its_scan"]
+status = "partial"
+note = "draft and depth are parameters (proven); no UI scenario of the live drag"
+
+[[row]]
+id = "QS-040"
+commands = ["surface.loft", "solid.loft", "surface.blend"]
+handler = "crates/engine/src/cmd"
+tests = []
+status = "implemented-untested"
+note = "surface.loft takes continuity g0..g3 per end [code]; not run here"
+
+[[row]]
+id = "QS-041"
+commands = ["solid.sweep", "surface.sweep"]
+handler = "crates/engine/src/cmd"
+tests = []
+status = "implemented-untested"
+note = "native; no scan workflow test uses a general sweep"
+
+[[row]]
+id = "QS-042"
+commands = ["scan.pipe_it", "solid.pipe"]
+handler = "crates/engine/src/cmd/scan_reconstruct_shapes.rs"
+tests = ["cmd::scan::reconstruct::tests::a_bent_bar_is_swept_back_along_its_path_with_pipe_it"]
+status = "proven"
+
+[[row]]
+id = "QS-043"
+commands = ["scan.fit_surface", "surface.extend"]
+handler = "crates/engine/src/cmd/scan.rs"
+tests = ["cmd::scan::tests::fit_surface_keeps_a_surface_body", "cmd::scan::tests::fit_surface_chooses_its_detail_and_trims_to_the_area"]
+status = "partial"
+note = "fit proven; the untrimmed fit spans the area's rectangle but nothing asserts it reaches past the area for trimming"
+
+[[row]]
+id = "QS-044"
+commands = ["scan.edit_surface", "scan.edit_net"]
+handler = "crates/engine/src/cmd/scan_surface.rs"
+tests = ["cmd::scan::tests::edit_surface_moves_control_points_and_refits_to_the_scan", "cmd::scan::tests::edit_surface_edits_a_trimmed_fit_surface"]
+status = "proven"
+
+[[row]]
+id = "QS-045"
+commands = ["scan.free_form", "scan.close_surface", "surface.patch"]
+handler = "crates/engine/src/cmd/scan_free_form.rs"
+tests = ["cmd::scan::tests::free_form_from_four_boundary_curves_follows_them_and_lies_on_the_scan", "cmd::scan::tests::close_surface_lists_and_closes_the_openings_of_a_tube"]
+status = "partial"
+note = "four-sided fill and closing openings proven; 3- and 5-or-more-sided G2 fill not ported"
+
+[[row]]
+id = "QS-046"
+commands = ["surface.extend"]
+handler = "crates/engine/src/cmd"
+tests = []
+status = "implemented-untested"
+note = "native; not run here"
+
+[[row]]
+id = "QS-047"
+commands = ["scan.fit_patches", "scan.wrap_surface"]
+handler = "crates/engine/src/cmd/scan_patches.rs"
+tests = ["cmd::scan::patches::tests::a_curving_scan_fits_as_a_grid_as_blocks_and_as_a_quad"]
+status = "missing"
+note = "Fit Patches covers a chosen region in a grid; nothing lays patches out over a whole scan by itself, and no G2 across patches is claimed or measured (auto layout was not ported)"
+
+[[row]]
+id = "QS-048"
+commands = []
+handler = ""
+tests = []
+status = "missing"
+note = "depends on QS-047"
+
+[[row]]
+id = "QS-049"
+commands = ["scan.fillet", "scan.radius", "scan.fillet_it"]
+handler = "crates/engine/src/cmd/scan_fillet.rs"
+tests = ["cmd::scan::fillet::tests::the_round_the_scan_shows_is_measured_and_filleted", "cmd::scan::reconstruct::tests::rounds_across_a_prism_are_filleted_back_from_its_scan"]
+status = "proven"
+note = "E1c: spurious large rounds proposed on spokes"
+
+[[row]]
+id = "QS-050"
+commands = ["scan.free_form", "scan.add_face", "scan.mirror_free_form"]
+handler = "crates/engine/src/cmd/scan_free_form.rs"
+tests = ["cmd::scan::tests::free_form_makes_a_surface_on_the_scan_and_its_net_changes", "cmd::scan::tests::add_face_closes_a_free_form_round_a_box"]
+status = "proven"
+
+[[row]]
+id = "QS-051"
+commands = ["scan.free_form", "scan.edit_surface"]
+handler = "crates/ui-egui/src/dialogs_scan_free_form.rs"
+tests = ["dialogs_scan_free_form::tests (7)", "dialogs_scan_surface::tests (23)"]
+status = "implemented-untested"
+note = "the dialogs' 30 UI tests passed; none asserts the live deviation readout against a known value"
+
+[[row]]
+id = "QS-052"
+commands = ["scan.edit_surface", "scan.refit"]
+handler = "crates/engine/src/cmd/scan_refit.rs"
+tests = ["cmd::scan::tests::a_surface_made_from_a_scan_moves_with_it", "cmd::scan::tests::edit_surface_works_where_a_later_move_put_the_surface"]
+status = "proven"
+
+[[row]]
+id = "QS-053"
+commands = ["surface.thicken", "surface.offset"]
+handler = "crates/doc/src/surface_nets.rs"
+tests = ["cmd::scan::tests::thicken_makes_a_free_form_network_of_curved_faces_a_solid"]
+status = "proven"
+
+[[row]]
+id = "QS-054"
+commands = ["timeline", "parameters.change", "Scan Clean steps"]
+handler = "crates/doc/src/scan_clean.rs"
+tests = ["cmd::scan::tests::a_clean_step_keeps_settings_and_makes_the_scan_again", "cmd::scan::tests::planes_and_curves_made_from_a_scan_move_with_it", "cmd::scan::reconstruct::tests::a_reconstructed_solid_moves_with_its_scan_once"]
+status = "proven"
+
+[[row]]
+id = "QS-055"
+commands = ["scan.merge_surfaces", "scan.slice_surface", "scan.close_surface"]
+handler = "crates/engine/src/cmd/scan_slice.rs"
+tests = ["cmd::scan::tests::a_whole_wrap_merged_and_sliced_at_both_ends_is_a_solid", "cmd::scan::tests::slice_surface_caps_a_tube_into_a_solid"]
+status = "proven"
+
+[[row]]
+id = "QS-056"
+commands = []
+handler = ""
+tests = []
+status = "n/a"
+note = "a plug-in for another CAD product; SolidCraft is the CAD, and the ground rules forbid driving commercial CAD. STEP export (QS-070) is the transfer"
+
+[[row]]
+id = "QS-057"
+commands = ["surface.trim", "surface.stitch"]
+handler = "crates/engine/src/cmd"
+tests = []
+status = "implemented-untested"
+note = "native; not run here on fitted surfaces"
+
+[[row]]
+id = "QS-058"
+commands = ["solid.combine", "inspect.interference"]
+handler = "crates/engine/src/cmd"
+tests = []
+status = "implemented-untested"
+note = "native; U12: a box minus a faceted solid worked 6 of 28 times and gave a raw kernel error"
+
+[[row]]
+id = "QS-059"
+commands = ["solid.split_body", "solid.split_face"]
+handler = "crates/engine/src/cmd"
+tests = []
+status = "implemented-untested"
+note = "native; not run here"
+
+[[row]]
+id = "QS-060"
+commands = ["scan.fillet", "scan.radius", "solid.chamfer"]
+handler = "crates/ui-egui/src/dialogs_scan_fillet.rs"
+tests = ["cmd::scan::fillet::tests::a_tap_on_the_scan_reads_the_round_and_fillets_its_edge"]
+status = "partial"
+note = "radius read from the scan (proven); no deviation that follows a dragged radius, and none for chamfers"
+
+[[row]]
+id = "QS-061"
+commands = ["solid.fillet"]
+handler = "crates/engine/src/schema/features.rs"
+tests = []
+status = "implemented-untested"
+note = "type variable exists [code]; a three-face (full round) fillet was not found"
+
+[[row]]
+id = "QS-062"
+commands = ["scan.shell_it", "solid.shell"]
+handler = "crates/engine/src/cmd/scan_reconstruct.rs"
+tests = ["cmd::scan::reconstruct::tests::a_drafted_shelled_housing_is_extruded_shelled_and_filleted_back_from_its_scan"]
+status = "proven"
+note = "U3: thickness not rounded"
+
+[[row]]
+id = "QS-063"
+commands = ["solid.draft"]
+handler = "crates/engine/src/cmd"
+tests = []
+status = "implemented-untested"
+note = "native; not run here"
+
+[[row]]
+id = "QS-064"
+commands = ["solid.offset_face", "solid.press_pull"]
+handler = "crates/engine/src/cmd"
+tests = []
+status = "implemented-untested"
+note = "native; not run here"
+
+[[row]]
+id = "QS-065"
+commands = ["scan.pattern_it", "solid.pattern.circular", "solid.pattern.rectangular", "solid.mirror"]
+handler = "crates/engine/src/cmd/scan_reconstruct.rs"
+tests = ["cmd::scan::reconstruct::tests::a_drilled_disc_is_extruded_cut_and_patterned_back_from_its_scan"]
+finding = "P1"
+status = "partial"
+note = "its test failed in this run: Cut It refuses the name `Hole 1`; U2: no tooth count on gears"
+
+[[row]]
+id = "QS-066"
+commands = ["scan.deviation", "scan.deviation_pin", "inspect.compare"]
+handler = "crates/engine/src/cmd/scan.rs"
+tests = ["cmd::scan::tests::scan_deviation_measures_the_scan_against_the_model", "cmd::scan::tests::scan_deviation_labels_its_extremes_and_pinned_places"]
+status = "partial"
+finding = "risk 1"
+note = "one way only (scan to model); `passes` leaves unmatched points out, so a model missing a feature can pass"
+
+[[row]]
+id = "QS-067"
+commands = ["scan.*_it (reply `fit`)"]
+handler = "crates/engine/src/cmd/scan_step_fit.rs"
+tests = ["cmd::scan::step_fit::tests", "cmd::scan::reconstruct::tests::reconstruct_the_rest_builds_what_the_body_leaves_unexplained"]
+finding = "P3"
+status = "partial"
+note = "each step reports better/same/worse on deviation; a 'worse' step stays unless undone; no curvature or draft cue per feature"
+
+[[row]]
+id = "QS-068"
+commands = ["inspect.draft"]
+handler = "crates/engine/src/cmd"
+tests = []
+status = "implemented-untested"
+note = "native; not run here"
+
+[[row]]
+id = "QS-069"
+commands = ["scan.flatten", "scan.roll_onto_scan", "scan.flat_template"]
+handler = "crates/engine/src/cmd/scan_flatten.rs"
+tests = ["cmd::scan::flatten::tests::a_bent_sheet_flattens_and_a_line_on_the_pattern_rolls_back_onto_it"]
+finding = "P1"
+status = "partial"
+note = "its test failed in this run: a second Rolled Curves feature is refused for its name; strain_rms and strain_max are in the reply [code]; strain is not painted"
+
+[[row]]
+id = "QS-070"
+commands = ["file.export_step", "file.insert_step"]
+handler = "crates/engine/src/cmd/file.rs"
+tests = []
+status = "implemented-untested"
+note = "native; never tested on a solid rebuilt from a scan"
+
+[[row]]
+id = "QS-071"
+commands = []
+handler = ""
+tests = []
+status = "missing"
+note = "no IGES reader or writer in the repo"
+
+[[row]]
+id = "QS-072"
+commands = ["file.export_stl", "file.export_3mf", "file.export_obj"]
+handler = "crates/engine/src/cmd/file.rs"
+tests = []
+status = "implemented-untested"
+note = "native; not run here on a cleaned scan"
+
+[[row]]
+id = "QS-073"
+commands = ["sketch.export_dxf", "scan.panel_export"]
+handler = "crates/engine/src/cmd/scan_panel_export.rs"
+tests = ["cmd::scan::tests::panel_export_writes_the_pieces_the_sheets_and_the_lists"]
+finding = "P4"
+status = "partial"
+note = "the Export Panel test failed in this run; Export Panel proven; DXF of a Flat Pattern not tested"
+
+[[row]]
+id = "QS-074"
+commands = ["scan.survey", "scan.reconstruct", "scan.reconstruct_rest"]
+handler = "crates/engine/src/cmd/scan_reconstruct_rest.rs"
+tests = ["cmd::scan::reconstruct::tests::reconstruct_the_rest_builds_what_the_body_leaves_unexplained", "cmd::scan::reconstruct::tests::a_rounded_block_is_extruded_back_from_its_scan"]
+status = "partial"
+finding = "E1, U1, E2, P3"
+note = "the Reconstruct the Rest test failed in this run; works on clean generated parts; one refused step stops the dialog's OK; T-LESS 05/18/27 read no prism"
+
+[[row]]
+id = "QS-075"
+commands = ["MCP server", "prompt scan_to_cad", "skill solidcraft-scan-to-cad"]
+handler = "crates/mcp/src/prompts.rs"
+tests = ["tests::prompts_start_scan_to_cad_modeling_and_editing"]
+status = "implemented-untested"
+note = "the mcp crate's tests were not in this run; no scripted end-to-end client test"
+
+[[row]]
+id = "QS-076"
+commands = ["scan.hole_it", "scan.fillet_it", "scan.chamfer_it", "scan.revolve_it", "scan.extrude_it"]
+handler = "crates/engine/src/cmd/scan_reconstruct.rs"
+tests = ["cmd::scan::reconstruct::tests::a_plate_with_counterbores_countersinks_and_blind_holes_is_drilled_back_with_hole_it", "cmd::scan::reconstruct::tests::chamfers_across_a_prism_are_chamfered_back_from_its_scan", "cmd::scan::reconstruct::tests::a_flange_with_bolt_holes_is_revolved_and_cut_not_extruded_again"]
+status = "proven"
+
+[[row]]
+id = "QS-077"
+commands = []
+handler = ""
+tests = []
+status = "n/a"
+note = "a time-saving claim with no public baseline cannot be compared; our wall time per workflow is recorded in Phase 4"

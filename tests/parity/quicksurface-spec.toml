@@ -1,0 +1,667 @@
+# What QUICKSURFACE Pro says it does, from its public pages only, in our own words.
+#
+# Nobody ran, installed or took output from QUICKSURFACE to write this (ground rules:
+# behaviour comes from public documentation). Each entry names the page it was read on.
+# `measurable_claim` is the vendor's own statement, not a measurement of ours.
+# `acceptance` is how SolidCraft will be tested against truth, never against QUICKSURFACE output.
+#
+# Sources (all read 2026-11-18):
+#   PRO  = https://www.quicksurface.com/quicksurface-pro/
+#   HOME = https://www.quicksurface.com/
+#   N27  = https://www.quicksurface.com/whats-new-quicksurface-2027/
+#   N26  = https://www.quicksurface.com/whats-new-qs2026
+#   AI   = https://www.quicksurface.com/quicksurface-ai/
+#   CS   = https://www.central-scanning.co.uk/product/quicksurface/   (reseller)
+#
+# Not read (HTTP 429 or 404 on 2026-11-18): the tutorial index (?p=QS7_quickstart), Novedge,
+# Revopoint, CDG, the product comparison page. Rows the prompt expected that no page read
+# supports are listed at the end under [unsourced] and are not counted.
+
+version = "QUICKSURFACE 2027"
+read_on = "2026-11-18"
+
+# ---------------------------------------------------------------- import
+[[capability]]
+id = "QS-001"
+area = "import"
+capability = "Reads meshes from any scanner as STL, OBJ or PLY"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "three formats named"
+acceptance = "one generated part written as binary STL, ASCII STL, OBJ and PLY; file.insert_mesh gives the same body (points, triangles, volume) from each"
+
+[[capability]]
+id = "QS-002"
+area = "import"
+capability = "Reads PTX point clouds from long-range scanners"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "a generated PTX grid of a plane and a cylinder imports as a point cloud; scan.mesh_from_points meshes it within 2 sigma of the truth surface"
+
+[[capability]]
+id = "QS-003"
+area = "import"
+capability = "Loads a mesh of any size"
+source = "https://www.quicksurface.com/"
+measurable_claim = "handles about 100 million triangles (HOME, Q&A 4); 'any size' (PRO); minimum machine 16 GB RAM"
+acceptance = "generated meshes of 10M, 50M and 100M triangles: insert, survey, fit a plane, save; time and peak memory recorded against scan-bench.toml budgets"
+
+# ---------------------------------------------------------------- mesh
+[[capability]]
+id = "QS-004"
+area = "mesh"
+capability = "Reduces the triangle count while keeping accuracy"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "'without loss of accuracy', no number"
+acceptance = "scan.reduce to 10 %: two-way distance reduced-to-original max under our bar (0.02 mm on a 100 mm part), rims included (finding U15); reported largest_error within 10 % of the independent measure"
+
+[[capability]]
+id = "QS-005"
+area = "mesh"
+capability = "Fills holes"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "holes cut from a sphere and a plate: every hole closed or named in the reply with a reason (U8); filled patch within 3 sigma of truth"
+
+[[capability]]
+id = "QS-006"
+area = "mesh"
+capability = "Removes outliers (stray pieces)"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "seeded specks added to a part: scan.remove_floating removes all of them and no triangle of the part"
+
+[[capability]]
+id = "QS-007"
+area = "mesh"
+capability = "Makes a watertight mesh for printing or reverse engineering"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "watertight"
+acceptance = "a holed, cracked part after scan.clean_up (or scan.remesh): zero open edges, zero non-manifold edges, volume within 0.5 % of truth, judged by the independent scorer"
+
+[[capability]]
+id = "QS-008"
+area = "mesh"
+capability = "Removes stamps, markers and similar small features in one click"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "one click"
+acceptance = "a plate with 12 marker dots: one scan.remove_markers call from one point removes all 12; surface under them within 3 sigma of the plane"
+
+[[capability]]
+id = "QS-009"
+area = "mesh"
+capability = "Trims a mesh with surfaces and makes 3D sketch curves from the cut edges"
+source = "https://www.quicksurface.com/whats-new-quicksurface-2027/"
+measurable_claim = "none stated"
+acceptance = "scan.split by a surface body, then scan.curve_from_selection on the piece: curve lies on the cut within tolerance"
+
+[[capability]]
+id = "QS-010"
+area = "mesh"
+capability = "Splits a mesh with a curve or profile sketched in 3D"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "none stated"
+acceptance = "scan.split with a closed Curve on Scan and with a sketch circle: two scans whose areas sum to the original"
+
+[[capability]]
+id = "QS-011"
+area = "mesh"
+capability = "Colours the scan mesh by curvature"
+source = "https://www.quicksurface.com/whats-new-quicksurface-2027/"
+measurable_claim = "none stated"
+acceptance = "a curvature view on a mesh body of a sphere R25 and a cylinder R10 reads 1/25 and 1/10 (principal) within 5 %"
+
+[[capability]]
+id = "QS-012"
+area = "mesh"
+capability = "Trims a mesh with CAD primitives before surfacing"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "scan.split with a plane, a cylinder and an envelope: pieces' areas match closed-form values within 1 %"
+
+# ---------------------------------------------------------------- selection
+[[capability]]
+id = "QS-013"
+area = "selection"
+capability = "Interactive selection of mesh regions that shapes are then fitted to"
+source = "https://www.quicksurface.com/"
+measurable_claim = "none stated"
+acceptance = "scan.select by brush, polygon, region and shape on a holes plate: region area matches the CAD face within 2 %, no spill over a 45 degree crease at sigma 0.02"
+
+# ---------------------------------------------------------------- primitives
+[[capability]]
+id = "QS-014"
+area = "primitives"
+capability = "Extracts planes, cylinders, cones and spheres from selected mesh"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "each fit on a generated part at sigma 0.02 / 0.1 / 0.3: radius, axis angle, plane offset and apex angle within scan-bench.toml bars"
+
+[[capability]]
+id = "QS-015"
+area = "primitives"
+capability = "Finds the planes, cylinders and cones of a scan automatically"
+source = "https://www.central-scanning.co.uk/product/quicksurface/"
+measurable_claim = "none stated"
+acceptance = "scan.find_all on each prismatic and turned case: shape count and kinds equal the recipe's; same result after a random rigid move (pose invariance)"
+
+[[capability]]
+id = "QS-016"
+area = "primitives"
+capability = "Relations between extracted primitives: parallel, perpendicular, coincident, offset"
+source = "https://www.quicksurface.com/"
+measurable_claim = "none stated"
+acceptance = "two planes fitted on a noisy block with 'perpendicular' asked are square to 1e-9 rad and each still within tolerance of its points"
+
+[[capability]]
+id = "QS-017"
+area = "primitives"
+capability = "Constrained best fit (a fit held to a direction or to another shape)"
+source = "https://www.quicksurface.com/"
+measurable_claim = "none stated"
+acceptance = "a cylinder fitted with its axis held to Z has axis exactly Z and radius within the bar"
+
+[[capability]]
+id = "QS-018"
+area = "primitives"
+capability = "Reference lines and points for aligning"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "a fitted cylinder's axis and a fitted sphere's centre are kept as construction features usable by a later command"
+
+# ---------------------------------------------------------------- align
+[[capability]]
+id = "QS-019"
+area = "align"
+capability = "Places the object in world coordinates from extracted primitives with an interactive coordinate system"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "a part moved by a random pose: plane to XY, axis to Z, point to origin restores the recipe pose within 0.01 mm and 0.01 degree"
+
+[[capability]]
+id = "QS-020"
+area = "align"
+capability = "Quick Align: one step onto the coordinate system"
+source = "https://www.quicksurface.com/whats-new-quicksurface-2027/"
+measurable_claim = "'quickly and accurately', no number"
+acceptance = "scan.quick_align on boxy parts at a random pose: faces square to the axes within 0.1 degree; already placed parts not flipped (U7)"
+
+[[capability]]
+id = "QS-021"
+area = "align"
+capability = "Aligns scan to scan or scan to CAD from three or more matching points"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "three or more points"
+acceptance = "scan.align_pairs with 3 point pairs (1 mm pick error) onto a scan and onto a CAD body: final pose within 0.05 mm and 0.05 degree of truth"
+
+[[capability]]
+id = "QS-022"
+area = "align"
+capability = "Global fine alignment of two or more overlapping scans into one"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "three passes from separate remeshes at 60 % and 30 % overlap: pose error under 0.05 mm / 0.05 degree, or a refusal; reported rms agrees with the independent scorer (U10, F6)"
+
+# ---------------------------------------------------------------- symmetry
+[[capability]]
+id = "QS-023"
+area = "symmetry"
+capability = "Finds the symmetry plane, shows how well it fits and lets it be adjusted"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "scan.symmetry on a mirrored part at a random pose: plane within 0.05 degree and 0.05 mm; mismatch reported; a part that is no mirror image is said so"
+
+[[capability]]
+id = "QS-024"
+area = "symmetry"
+capability = "Symmetry plane fitted to a chosen region only"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "none stated"
+acceptance = "a part symmetric except one damaged end: plane from the selected sound region within 0.05 degree of truth"
+
+# ---------------------------------------------------------------- section, 2D sketch
+[[capability]]
+id = "QS-025"
+area = "section"
+capability = "Interactive section planes aligned to world or CAD planes"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "scan.section_sketch on XY, on a fitted plane and on a model face: the cut's lines and circles match the recipe profile within the bar"
+
+[[capability]]
+id = "QS-026"
+area = "section"
+capability = "Sections along a curve"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "scan.sections_along_curve on a bent pipe: each section a circle of the pipe's radius within the bar, square to the path"
+
+[[capability]]
+id = "QS-027"
+area = "section"
+capability = "Several sections made at once, for lofting"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "N sections of a tapered blade in one call, lofted: two-way deviation of the loft within the freeform bar"
+
+[[capability]]
+id = "QS-028"
+area = "sketch2d"
+capability = "Constrained 2D sketching with dimensions over the section"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "the section sketch finishes at 0 degrees of freedom with dimensions rounded to designed values only within the snap reach"
+
+[[capability]]
+id = "QS-029"
+area = "sketch2d"
+capability = "Offset and linear or circular patterns inside the 2D sketch"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "sketch.offset and sketch.pattern.* on a section sketch: closed-form areas"
+
+[[capability]]
+id = "QS-030"
+area = "sketch2d"
+capability = "Deviation colours between the sketch and the section while sketching"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "'real-time'"
+acceptance = "a line drawn 0.3 mm off the section reads 0.3 mm in the sketch's deviation readout within one frame budget (UI scenario)"
+
+[[capability]]
+id = "QS-031"
+area = "sketch2d"
+capability = "Sketch assistant: profiles rebuilt from the mesh as best-fit lines, arcs and circles"
+source = "https://www.quicksurface.com/whats-new-quicksurface-2027/"
+measurable_claim = "none stated"
+acceptance = "rounded block section: 4 lines and 4 arcs, tangent, radii within the bar at each noise level"
+
+[[capability]]
+id = "QS-032"
+area = "sketch2d"
+capability = "Planar surface from a 2D sketch, snapping within a tolerance"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "none stated"
+acceptance = "a closed section profile becomes a planar face of the profile's closed-form area"
+
+[[capability]]
+id = "QS-033"
+area = "sketch2d"
+capability = "Helix curve for threads: pitch measured, start, end and axis set"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "a scanned M12x1.75 thread: pitch read within 0.02 mm, helix kept as a curve, thread or coil built on it"
+
+# ---------------------------------------------------------------- 3D sketch
+[[capability]]
+id = "QS-034"
+area = "sketch3d"
+capability = "Free-form curves drawn directly on the mesh"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "scan.curve_on_scan through clicked points on a noisy dome: every curve point within 3 sigma of the truth surface"
+
+[[capability]]
+id = "QS-035"
+area = "sketch3d"
+capability = "Blend curves between 3D curves, used by fill and free-form surfaces"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "a blend between two 3D curves is tangent (G1) and curvature-continuous (G2) at both ends to 1e-6"
+
+[[capability]]
+id = "QS-036"
+area = "sketch3d"
+capability = "Control of curvature and of continuity where 3D curves join"
+source = "https://www.quicksurface.com/whats-new-quicksurface-2027/"
+measurable_claim = "none stated"
+acceptance = "a join set to G0, G1, G2 measures that continuity to 1e-6"
+
+[[capability]]
+id = "QS-037"
+area = "sketch3d"
+capability = "3D sketch curves from existing boundaries"
+source = "https://www.quicksurface.com/whats-new-quicksurface-2027/"
+measurable_claim = "none stated"
+acceptance = "scan.curve_from_selection round a selected face and a curve from a surface's edge: on the boundary within tolerance"
+
+# ---------------------------------------------------------------- surfacing
+[[capability]]
+id = "QS-038"
+area = "surfacing"
+capability = "Extruded and revolved surfaces or solids, with draft and snapping"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "rounded block, drilled shaft, drafted housing rebuilt: volume within 0.5 %, draft within 0.1 degree, two-way deviation within the prismatic bar"
+
+[[capability]]
+id = "QS-039"
+area = "surfacing"
+capability = "Interactive draft extrusion with live draft, direction and depth"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "'live'"
+acceptance = "command: draft and depth are parameters that rebuild; UI scenario: dragging the handle changes the preview"
+
+[[capability]]
+id = "QS-040"
+area = "surfacing"
+capability = "Loft and blend with G0, G1 or G2 and section weighting"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "G0 / G1 / G2"
+acceptance = "a loft joined to a neighbour at each setting measures that continuity (normal angle under 0.1 degree for G1, curvature ratio within 5 % for G2)"
+
+[[capability]]
+id = "QS-041"
+area = "surfacing"
+capability = "Sweep"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "a section swept along a Curve on Scan: two-way deviation to the swept truth part within the bar"
+
+[[capability]]
+id = "QS-042"
+area = "surfacing"
+capability = "Pipe"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "bent bar scan: scan.pipe_it gives radius within the bar and the path within tolerance"
+
+[[capability]]
+id = "QS-043"
+area = "surfacing"
+capability = "Fit Surface over a selected area, extended for trimming, with deviation colours"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "'extended for trimming'; 'real-time' deviation"
+acceptance = "scan.fit_surface on a dome region: rms under 1.5 sigma; the surface reaches past the region on every side by a stated margin and a trim by a neighbouring face succeeds"
+
+[[capability]]
+id = "QS-044"
+area = "surfacing"
+capability = "A fitted surface re-edited later: degree, UV layout, continuity"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "none stated"
+acceptance = "scan.edit_surface / scan.edit_net change the net's counts and degree; the surface stays within tolerance without a refit from scratch"
+
+[[capability]]
+id = "QS-045"
+area = "surfacing"
+capability = "Fill Surface bounded by 3D sketch curves, following the scan, with chosen continuity to neighbours; closes holes"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "selectable continuity (N26)"
+acceptance = "3-, 4- and 5-sided fills on a dome: boundary gap under 1e-3 mm, asked continuity measured, inside within 3 sigma of the scan"
+
+[[capability]]
+id = "QS-046"
+area = "surfacing"
+capability = "Extend surfaces with tangent or curvature continuity"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "tangent or curvature"
+acceptance = "surface.extend on a fitted surface: the extension measures the asked continuity at the old edge"
+
+[[capability]]
+id = "QS-047"
+area = "surfacing"
+capability = "Automatic surfacing: one click covers the mesh with few NURBS patches"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "G2 everywhere, G1 at extraordinary points; patch count minimised; no user interaction"
+acceptance = "one command on closed organic scans (bunny, sphere, cup): closed solid, patch count reported, G2 across regular seams and G1 at irregular corners measured, two-way deviation within the freeform bar"
+
+[[capability]]
+id = "QS-048"
+area = "surfacing"
+capability = "The automatic surface can be edited afterwards"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "a patch of the automatic result is moved with scan.edit_surface and the body stays closed"
+
+[[capability]]
+id = "QS-049"
+area = "surfacing"
+capability = "Fillet radius read from the scan and made a true fillet"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "none stated"
+acceptance = "block with R3, R5, R8 rounds at each noise level: scan.fillet radius within 0.1 mm or 5 %"
+
+# ---------------------------------------------------------------- freeform
+[[capability]]
+id = "QS-050"
+area = "freeform"
+capability = "Free-form modelling with quad surfaces that snap to the mesh"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "scan.free_form and scan.add_face round a box and a sphere: network closes, rms under 1.5 sigma, no folds"
+
+[[capability]]
+id = "QS-051"
+area = "freeform"
+capability = "Deviation shown live while a free-form surface is edited"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "'real-time'"
+acceptance = "UI scenario: a control point dragged 1 mm changes the painted deviation within the frame budget; the readout agrees with the independent scorer"
+
+[[capability]]
+id = "QS-052"
+area = "freeform"
+capability = "Free-form surfaces stay editable inside a parametric model"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "a Free Form edited after later features exist: the features rebuild"
+
+[[capability]]
+id = "QS-053"
+area = "freeform"
+capability = "Thicken or offset surfaces into watertight solids"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "watertight"
+acceptance = "a fitted network thickened 2 mm inside, outside and both: valid closed solid, volume within 1 % of area times thickness"
+
+# ---------------------------------------------------------------- hybrid
+[[capability]]
+id = "QS-054"
+area = "hybrid"
+capability = "Hybrid parametric history: prismatic features and free-form surfaces in one editable model"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "a rebuilt part's parameter changed by 1 mm rebuilds with no error and the expected volume"
+
+[[capability]]
+id = "QS-055"
+area = "hybrid"
+capability = "Quick Solidify: reconstructed surfaces to a solid in few steps"
+source = "https://www.quicksurface.com/whats-new-quicksurface-2027/"
+measurable_claim = "none stated"
+acceptance = "a wrapped tube merged, sliced and capped is a valid solid in at most 3 commands"
+
+[[capability]]
+id = "QS-056"
+area = "hybrid"
+capability = "A plug-in edition that works inside SOLIDWORKS"
+source = "https://www.quicksurface.com/"
+measurable_claim = "none stated"
+acceptance = "n/a: SolidCraft is the CAD; STEP export is the transfer (QS-070)"
+
+# ---------------------------------------------------------------- solid operations
+[[capability]]
+id = "QS-057"
+area = "solid_ops"
+capability = "Mutual trim of surfaces"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "two crossing fitted surfaces trimmed by each other and stitched: closed-form area"
+
+[[capability]]
+id = "QS-058"
+area = "solid_ops"
+capability = "Booleans on solids, with colours and diagnostics that show what went wrong"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "a boolean between a reconstructed solid and a fitted solid gives the closed-form volume; a failing one names the place in words"
+
+[[capability]]
+id = "QS-059"
+area = "solid_ops"
+capability = "Trim or split a solid with a solid, a surface body or a sketch"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "none stated"
+acceptance = "solid.split_body by a fitted surface: two solids whose volumes sum to the original"
+
+[[capability]]
+id = "QS-060"
+area = "solid_ops"
+capability = "Fillet and chamfer with a dragged radius and deviation to the mesh shown live"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "'real-time'"
+acceptance = "the dialog's deviation at R4, R5, R6 on an R5 scan is least at R5 and equals the independent scorer's number within 1e-3 mm"
+
+[[capability]]
+id = "QS-061"
+area = "solid_ops"
+capability = "Variable-radius and three-face fillets"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "none stated"
+acceptance = "solid.fillet type variable R2 to R6 and a full round across a rib: valid solid, radii measured at ends"
+
+[[capability]]
+id = "QS-062"
+area = "solid_ops"
+capability = "Shell to a wall thickness with several faces removed"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "none stated"
+acceptance = "shelled housing scan: scan.shell_it thickness within 0.05 mm, rounded to the designed value only within reach (U3)"
+
+[[capability]]
+id = "QS-063"
+area = "solid_ops"
+capability = "Draft on chosen faces about a pull direction"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "none stated"
+acceptance = "solid.draft 2 degrees on a reconstructed block: wall angle measured 2 degrees"
+
+[[capability]]
+id = "QS-064"
+area = "solid_ops"
+capability = "Move or offset a face keeping its neighbours"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "none stated"
+acceptance = "solid.offset_face 1 mm on a reconstructed block: volume by closed form"
+
+[[capability]]
+id = "QS-065"
+area = "solid_ops"
+capability = "Linear and circular patterns, and mirror"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "drilled flange: scan.pattern_it gives the hole count as a parameter; mirror of a half part matches the whole"
+
+# ---------------------------------------------------------------- analysis
+[[capability]]
+id = "QS-066"
+area = "analysis"
+capability = "Deviation colour map of the CAD model against the mesh at any stage"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "'real-time', 'speed optimised'"
+acceptance = "scan.deviation agrees with the independent scorer within 1e-3 mm on 10 cases, both ways; fails every known-wrong fixture; time on 1M and 10M recorded"
+
+[[capability]]
+id = "QS-067"
+area = "analysis"
+capability = "Pass or fail shown on each feature as it is made (deviation, curvature, draft)"
+source = "https://www.quicksurface.com/whats-new-qs2026"
+measurable_claim = "'live pass/fail'"
+acceptance = "every Reconstruct step's reply carries a fit verdict; a step that worsens the fit is not kept silently"
+
+[[capability]]
+id = "QS-068"
+area = "analysis"
+capability = "Draft analysis for moulding"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "inspect.draft on a housing with 2 degree walls and one undercut: the undercut face is the only one flagged"
+
+[[capability]]
+id = "QS-069"
+area = "analysis"
+capability = "Flatten a surface to a 2D sketch, with strain shown"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "exports DXF or IGES"
+acceptance = "scan.flatten of a bent sheet (developable): pattern lengths within 0.1 %, strain_max under 1e-3; of a dome: strain reported non-zero"
+
+# ---------------------------------------------------------------- export
+[[capability]]
+id = "QS-070"
+area = "export"
+capability = "Exports surfaces or solids as STEP"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "'clean' output, stable in other CAD"
+acceptance = "every rebuilt case: file.export_step, file.insert_step back, same volume within 1e-6 relative and same face count; valid in the independent scorer's reader"
+
+[[capability]]
+id = "QS-071"
+area = "export"
+capability = "Exports IGES"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "an IGES file of a rebuilt case reads back in the independent scorer's reader with the same surface area"
+
+[[capability]]
+id = "QS-072"
+area = "export"
+capability = "Exports a watertight mesh for printing"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "watertight"
+acceptance = "file.export_stl / export_3mf of a cleaned scan: closed and manifold in the independent scorer"
+
+[[capability]]
+id = "QS-073"
+area = "export"
+capability = "Exports a flattened outline as DXF"
+source = "https://www.quicksurface.com/quicksurface-pro/"
+measurable_claim = "none stated"
+acceptance = "sketch.export_dxf of a Flat Pattern: outline length equals the sketch's"
+
+# ---------------------------------------------------------------- ai (moving target: launched 2026-11-17)
+[[capability]]
+id = "QS-074"
+area = "ai"
+capability = "One step from a suitable mechanical scan to editable parametric CAD: feature tree, sketches, dimensions"
+source = "https://www.quicksurface.com/quicksurface-ai/"
+measurable_claim = "'even from incomplete or noisy data'; prismatic and mechanical parts only, no organic shapes"
+acceptance = "scan.reconstruct plus scan.reconstruct_rest with no per-case parameters on every prismatic and turned case: within the class bar or a refusal; sketches at 0 degrees of freedom"
+
+[[capability]]
+id = "QS-075"
+area = "ai"
+capability = "Driven by the user's own AI assistant over the Model Context Protocol"
+source = "https://www.quicksurface.com/quicksurface-ai/"
+measurable_claim = "none stated"
+acceptance = "the MCP scan_to_cad prompt and skill let a scripted client rebuild the holes plate within the bar"
+
+[[capability]]
+id = "QS-076"
+area = "ai"
+capability = "Recognises holes, fillets, chamfers, revolved features and drafts"
+source = "https://www.quicksurface.com/quicksurface-ai/"
+measurable_claim = "none stated"
+acceptance = "feature counts and kinds on the counterbore plate, rounded block, chamfered prism, flange and drafted housing equal the recipes'"
+
+[[capability]]
+id = "QS-077"
+area = "ai"
+capability = "Time saved by the AI tools"
+source = "https://www.quicksurface.com/"
+measurable_claim = "more than 50 % of time and effort (vendor's internal testing, no baseline published)"
+acceptance = "n/a as a comparison: no public baseline. Our wall time per workflow is recorded in Phase 4"
+
+# ---------------------------------------------------------------- unsourced
+# Expected by the brief, found on no page read on 2026-11-18: not counted, re-check when the
+# tutorial index and reseller tables load.
+[unsourced]
+rows = [
+  "smoothing / repolygonize as named mesh tools",
+  "clipping box",
+  "magic wand and freeform (lasso) selection by name; automatic mesh segmentation by name",
+  "stacked sections; mesh contour",
+  "roll a 2D or 3D sketch onto the mesh",
+  "import of external STEP or IGES",
+  "Parasolid export (the kernel is Parasolid; no export format beyond STEP, IGES and DXF is named)",
+  "transfer of the feature history to SOLIDWORKS (only the plug-in edition is named)",
+]
