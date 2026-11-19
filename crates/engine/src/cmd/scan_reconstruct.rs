@@ -1090,11 +1090,11 @@ fn snap_to_body(s: &Session, solid: &str, plane: &Plane, outlines: &mut [Outline
             }
         }
         let read = (o.corners.clone(), o.pieces.clone());
-        for k in 0..n {
-            if let Piece::Arc { center, ccw } = o.pieces[k]
+        for (k, piece) in o.pieces.iter_mut().enumerate().take(n) {
+            if let Piece::Arc { center, ccw } = *piece
                 && let Some(by) = offset(k, &moved)
             {
-                o.pieces[k] = Piece::Arc { center: center + by, ccw };
+                *piece = Piece::Arc { center: center + by, ccw };
             }
         }
         for (k, to) in moved.iter().enumerate() {

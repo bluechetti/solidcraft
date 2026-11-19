@@ -982,8 +982,7 @@ fn retaken(
         for (_, region) in shapes.iter_mut() {
             region.clear();
         }
-        for t in 0..reading.count() {
-            let owner = reading.label[t];
+        for (t, &owner) in reading.label.iter().enumerate().take(reading.count()) {
             if owner != OPEN {
                 shapes[owner as usize].1.push(t);
             }
