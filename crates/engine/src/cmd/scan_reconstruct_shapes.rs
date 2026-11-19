@@ -11,7 +11,7 @@ use solidcraft_scan::pipe::Piece;
 
 use super::{View, at, into_params, merged, reply, run, view};
 use crate::params::bad;
-use crate::schema::scan_reconstruct::{ScanBuildResult, ScanCoil, ScanLoft, ScanPipe};
+use crate::schema::scan_reconstruct::{ScanBuildResult, ScanCoil, ScanLoft, ScanLoftStation, ScanPipe};
 use crate::{EngineError, Result, Session};
 
 fn in_plane(plane: &Plane, p: Vec3) -> [f64; 2] {
@@ -112,7 +112,28 @@ pub(super) fn loft_of(l: &solidcraft_scan::loft::Loft) -> ScanLoft {
         (Some(a), Some(b)) => (b.plane.origin - a.plane.origin).dot(l.direction).abs(),
         _ => 0.0,
     };
-    ScanLoft { direction: at(l.direction), capped: l.capped, sections: l.sections.len(), length }
+    let first = l.sections.first().map(|s| s.plane.origin);
+    let base = l.sections.iter().find_map(|s| s.shape).map(|f| f.twist);
+    let stations = l
+        .sections
+        .iter()
+        .filter_map(|section| {
+            let found = section.shape?;
+            let plane = &section.plane;
+            Some(ScanLoftStation {
+                at: first.map_or(0.0, |o| (plane.origin - o).dot(l.direction).abs()),
+                chord: found.chord,
+                twist: (found.twist - base.unwrap_or(found.twist)).to_degrees(),
+                thickness: found.thickness,
+                thickness_share: found.thickness / found.chord,
+                thickest_at: found.thickest_at,
+                camber_share: found.camber / found.chord,
+                leading: at(plane.origin + plane.x * found.leading.x + plane.y * found.leading.y),
+                naca: found.naca.map(|[m, p, t]| format!("{m}{p}{t:02}")),
+            })
+        })
+        .collect();
+    ScanLoft { direction: at(l.direction), capped: l.capped, sections: l.sections.len(), length, stations }
 }
 
 /// Loft It: each section sketched as a closed spline through its points, lofted in order.
@@ -128,7 +149,20 @@ pub(super) fn loft_it(s: &mut Session, p: &Value) -> Result<Value> {
     for (k, section) in loft.sections.iter().enumerate() {
         let id = open_sketch(s, &section.plane, &format!("Loft Section {}", k + 1))?;
         let points: Vec<[f64; 2]> = section.points.iter().map(|q: &Vec2| [q.x, q.y]).collect();
-        drawing(s, |s| run(s, "sketch.spline.fit_point", json!({"points": points, "periodic": true})))?;
+        // The spline's points are held where the scan has them, not each given two sizes of its
+        // own (72 to a section, none of them a number of the design): what a section measures is
+        // in Reconstruct's `loft.stations`.
+        if let Err(e) = run(s, "sketch.spline.fit_point", json!({"points": points, "periodic": true})) {
+            let _ = run(s, "sketch.cancel", json!({}));
+            return Err(e);
+        }
+        super::super::super::sketch_store::update(s, id, |_, _, sk| {
+            for point in 1..sk.points.len() {
+                sk.add_constraint(solidcraft_sketch::ConstraintKind::Fix { p: point }, None)?;
+            }
+            Ok(())
+        })?;
+        run(s, "sketch.finish", json!({}))?;
         sketches.push(json!({"sketch": id}));
     }
     let feature = run(s, "solid.loft", merged(json!({"sections": sketches, "name": "Loft It"}), operation))

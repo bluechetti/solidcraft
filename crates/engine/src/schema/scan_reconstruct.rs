@@ -427,6 +427,34 @@ pub struct ScanLoft {
     /// How many sections, and how long it is end to end, in mm.
     pub sections: usize,
     pub length: f64,
+    /// Each section that is longer than it is thick, as a wing's or a blade's is described: a
+    /// wing's chord, twist and thickness from root to tip.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stations: Vec<ScanLoftStation>,
+}
+
+/// One section of a lofted part, read as a wing's.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanLoftStation {
+    /// How far along the part from its first section, in mm.
+    pub at: f64,
+    /// The section's chord (its two points farthest apart), in mm, and the angle of its chord line
+    /// about the part's direction, in degrees from the first station's.
+    pub chord: f64,
+    pub twist: f64,
+    /// The most it measures across its chord, in mm and as a share of the chord, and where along
+    /// the chord from the leading edge that is (0–1).
+    pub thickness: f64,
+    pub thickness_share: f64,
+    pub thickest_at: f64,
+    /// The most its middle lies off the chord line, as a share of the chord (0 for a section alike
+    /// both sides).
+    pub camber_share: f64,
+    /// The leading edge, in the design.
+    pub leading: [f64; 3],
+    /// The NACA four-digit section it is, within the scan's tolerance, when it is one ("0015").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub naca: Option<String>,
 }
 
 /// Loft It, Pipe It or Coil It: the part as sections lofted, as a bar swept along its path, or as

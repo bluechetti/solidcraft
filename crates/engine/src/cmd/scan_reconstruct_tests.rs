@@ -844,9 +844,30 @@ fn a_twisted_blade_is_lofted_back_with_loft_it() {
     let read = run(&mut s, "scan.reconstruct", json!({}));
     assert_eq!(read["loft"]["capped"], true, "between its flat ends: {read}");
     assert!((read["loft"]["length"].as_f64().unwrap() - 100.0).abs() < 0.1, "{read}");
+    // Each section as a blade's is described: the chord 60 at one end and 40 at the other (read a
+    // hundredth of the way in from each: 59.8 and 40.2), turned 30° between them (29.4° between
+    // the slices), 24 % thick at mid chord, alike both sides of its chord, and no NACA section.
+    let stations = read["loft"]["stations"].as_array().unwrap();
+    assert_eq!(stations.len(), 5, "{read}");
+    let number = |k: usize, key: &str| stations[k][key].as_f64().unwrap();
+    let (first, last) = (number(0, "chord"), number(4, "chord"));
+    let (wide, narrow) = (first.max(last), first.min(last));
+    assert!((wide - 59.8).abs() < 0.3 && (narrow - 40.2).abs() < 0.3, "{read}");
+    assert!((number(2, "chord") - 50.0).abs() < 0.3, "{read}");
+    assert!(
+        number(0, "twist").abs() < 1e-9 && (number(4, "twist").abs() - 29.4).abs() < 0.3 && (number(2, "twist").abs() - 14.7).abs() < 0.3,
+        "{read}"
+    );
+    for k in 0..5 {
+        assert!((number(k, "thickness_share") - 0.24).abs() < 0.005 && (number(k, "thickest_at") - 0.5).abs() < 0.05, "{read}");
+        assert!(number(k, "camber_share") < 0.003 && stations[k].get("naca").is_none(), "{read}");
+    }
     assert_eq!(build_all(&mut s), ["scan.loft_it"], "{read}");
     let v = volume(&s, &format!("{scan} Reconstructed"));
     assert!((v - expected).abs() < 0.02 * expected, "{v} against the blade's {expected}");
+    // The sections' splines are held where the scan has them: no size for each of their points.
+    let listed = run(&mut s, "parameters.list", json!({"filter": "sketch"}));
+    assert_eq!(listed["parameters"].as_array().map(Vec::len), Some(0), "{listed}");
 }
 
 /// A plate 60 × 40 × 10 with a block 20 × 14 × 12 on its top: with only the plate built, Reconstruct

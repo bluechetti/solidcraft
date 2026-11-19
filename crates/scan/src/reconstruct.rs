@@ -1967,7 +1967,7 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         held < MOST_WEAK_SHARE * all
     };
     let loft = ((prisms.is_empty() || weak) && revolve.is_none() && coil.is_none() && pipe.is_none())
-        .then(|| crate::loft::read(scan, &faces, LOFT_SECTIONS).ok())
+        .then(|| crate::loft::read_within(scan, &faces, LOFT_SECTIONS, outcome.tolerance).ok())
         .flatten();
     if weak && loft.is_some() {
         prisms.clear();

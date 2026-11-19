@@ -81,7 +81,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | `scan.reconstruct_rest {}` | what the built body leaves of the scan unexplained, read and built piece by piece |
 | `scan.pipe_it {}` | a bar bent along a flat path (`pipe`): the path's lines and arcs swept |
 | `scan.coil_it {}` | a coil spring (`coil`): the wire wound at the pitch and turns read |
-| `scan.loft_it {}` | no prism, turned part, pipe or coil (`loft`): slices from end to end lofted |
+| `scan.loft_it {}` | no prism, turned part, pipe or coil (`loft`): slices from end to end lofted; for a wing or a blade, `scan.reconstruct`'s `loft.stations` give each section's `chord`, `twist` (degrees from the first), `thickness_share`, `thickest_at`, `camber_share` and `naca` ("0015" when it is one within the scan's tolerance); the sections' splines are held as scanned, with no size for each point |
 | `scan.fillet_it {}` | rounds measured off the scan, one Fillet per radius |
 | `scan.chamfer_it {}` | chamfers read off the scan |
 | `scan.nest {"clearance": "clearance"}` | a block (`<scan> Nest`) with a pocket the part seats in: the prism's outline offset by the clearance (a sketch offset, so a parameter named there rebuilds it) and cut `deep` (0.5) of the part's depth; `margin` of block round it. Square-walled prisms only. Check it with `scan.deviation {"body": "<scan> Nest"}` → `clearance.gap` |
