@@ -108,6 +108,7 @@ pub mod survey;
 pub mod symmetric;
 pub mod symmetry;
 pub mod template;
+pub mod unseen;
 pub mod wall_outline;
 pub mod wheel;
 pub mod wrap;

@@ -27,8 +27,8 @@ use crate::schema::scan::{
     ScanMarkersParams, ScanMarkersResult, ScanMeasureLineParams, ScanMeasureLineResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror,
     ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRemoveFillParams,
     ScanRemoveFillResult, ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult,
-    ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams,
-    ScanWrapSurfaceResult,
+    ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanUnseenParams,
+    ScanUnseenResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -47,6 +47,7 @@ const COMPLETE_CONTRACT: TypedContract<ScanCompleteParams> = TypedContract::new(
 const EDIT_SURFACE_CONTRACT: TypedContract<ScanEditSurfaceParams> = TypedContract::new();
 const CURVE_CONTRACT: TypedContract<ScanCurveParams> = TypedContract::new();
 const MEASURE_LINE_CONTRACT: TypedContract<ScanMeasureLineParams> = TypedContract::new();
+const UNSEEN_CONTRACT: TypedContract<ScanUnseenParams> = TypedContract::new();
 const EDIT_NET_CONTRACT: TypedContract<ScanEditNetParams> = TypedContract::new();
 const FREE_FORM_CONTRACT: TypedContract<ScanFreeFormParams> = TypedContract::new();
 const ADD_FACE_CONTRACT: TypedContract<ScanAddFaceParams> = TypedContract::new();
@@ -269,6 +270,14 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&MEASURE_LINE_CONTRACT)
         .output(output_schema_for::<ScanMeasureLineResult>)
         .params("body?: mesh body (default: the selected or only one); points: [[x,y,z], …] dots on the scan in order (2 to 1000); view?: [x,y,z] the direction looked from (default: the way the scan faces at each stretch's dots); path?: bool (default false: the way each stretch takes as points): between each two dots the way across the scan the cut of the plane through both (and the view) takes, the short way between them, so the length is along the surface, not through the air; where no cut joins them (a hole, two pieces) the straight line is laid on the scan and counted as not followed; changes nothing → body, dots, length, straight, under_read, worst_gap, rms_gap (the surface off the straight lines between dots), ends, delta [dx,dy,dz], stretches [{length, followed, path?}], not_followed, round? {radius, centre, turned (deg), within} when the line is an arc"),
+    CommandSpec::new("scan.unseen", "Unseen Surface", crate::checked!("scan.unseen", unseen::unseen_command))
+        .at("SCAN", "CHECK")
+        .icon("surface_patch")
+        .read_only()
+        .noundo()
+        .contract(&UNSEEN_CONTRACT)
+        .output(output_schema_for::<ScanUnseenResult>)
+        .params("body?: mesh body (default: the selected or only one): the surface of the scan its scanner never saw, read from the geometry: triangles whose middle lies more than 1.5 scanned triangle sides from the scan as it came in (before its Scan Clean steps; a later Move carries it along), all of a mirror fill, or, for a surface made from points, from every point; something thinner than that taken off (a sticker) reads as seen; fits and the deviation map warn when they lean on it; changes nothing → body, source (as_scanned|cleaned|mirror_fill|mesh_from_points|changed), triangles, area, share, patches [{centre, area, triangles}] largest first"),
     CommandSpec::new("scan.deviation", "Scan Deviation", crate::checked!("scan.deviation", deviation))
         .at("SCAN", "CHECK")
         .icon("curvature_map")
@@ -1167,6 +1176,8 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         max_below_at: None,
         bands: None,
         pins: Vec::new(),
+        unseen: None,
+        warning: None,
         param_warnings: Vec::new(),
     };
     if crate::params::bool_(p, "show") == Some(false) {
@@ -1286,6 +1297,8 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         max_below: max_below_at,
         pins,
     }));
+    // Measured on surface the scanner never saw: said, with the share of the scan's area.
+    let unseen_share = unseen::unseen_of(s, &mesh.body).ok().and_then(|(_, u)| u).map(|u| u.share()).filter(|x| *x > 0.0);
     reply(ScanDeviationResult {
         shown: true,
         scan: Some(mesh.body),
@@ -1304,6 +1317,8 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         max_below_at: max_below_at.map(|(q, _)| [q.x, q.y, q.z]),
         bands: Some(bands),
         pins: shown_pins,
+        unseen: unseen_share,
+        warning: unseen_share.and_then(|share| unseen::warning(share, "of the scan measured")),
         ..empty
     })
 }
@@ -1696,6 +1711,9 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
         Shape::Cone { apex, axis, half_angle } => cone = Some(ScanFittedCone { apex: at(apex), axis: at(axis), half_angle: half_angle.to_degrees() }),
         Shape::Torus { center, axis, major, minor } => torus = Some(ScanFittedTorus { center: at(center), axis: at(axis), major, minor }),
     }
+    // Fitted to surface the scanner never saw: said, with the share.
+    let unseen =
+        unseen::unseen_of(s, &mesh.body).ok().and_then(|(_, found)| found).map(|u| u.share_of(&scan, &fitted.triangles)).filter(|x| *x > 0.0);
     let reply = ScanFitResult {
         body: mesh.body,
         plane,
@@ -1707,6 +1725,8 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
         area: fitted.area,
         rms: fitted.rms,
         max: fitted.max,
+        unseen,
+        warning: unseen.and_then(|share| unseen::warning(share, "fitted")),
         feature,
         face,
         param_warnings: Vec::new(),
@@ -1798,6 +1818,9 @@ pub mod reconstruct;
 
 #[path = "scan_refit.rs"]
 pub mod refit;
+
+#[path = "scan_unseen.rs"]
+pub mod unseen;
 
 #[path = "scan_refusal.rs"]
 pub mod refusal;

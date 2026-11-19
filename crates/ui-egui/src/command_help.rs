@@ -218,6 +218,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.stand_on_base",
     "scan.survey",
     "scan.symmetry",
+    "scan.unseen",
     "scan.wrap_surface",
     "sheet.convert",
     "sheet.export_bend_table",

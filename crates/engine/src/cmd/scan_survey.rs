@@ -39,7 +39,7 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.survey", "Survey 
     .contract(&CONTRACT)
     .output(output_schema_for::<ScanSurveyResult>)
     .noundo()
-    .params("body?: mesh body (default: the selected or only one): a first look at the scan, changing nothing: its size (own_size along its own directions, longest first), fineness, noise and the Denoise strength it would take, holes, rims, floating pieces, open edges no hole closes, how much of it is broad flat faces, whether it is sheet-like, what Find All read off it (once it has run), the design's other scans and models (those shown), and `next`: the commands to run next with why and parameters to start from, in the order the work goes → body, triangles, points, unusable, low, high, center, own_size, area, typical_edge, units_hint, noise, smoothing, tolerance, tolerance_set, holes, longest_hole, rims, open_edges, tangled_edges, crack_edges, crossing_faces, pieces, floating, floating_share, flat_share, sheet_like, shapes{in_shapes, planes, cylinders, spheres, cones, tori, freeform, regions}, other_scans, models, next[{command, why, params}]")];
+    .params("body?: mesh body (default: the selected or only one): a first look at the scan, changing nothing: its size (own_size along its own directions, longest first), fineness, noise and the Denoise strength it would take, holes, rims, floating pieces, open edges no hole closes, how much of it is broad flat faces, whether it is sheet-like, what Find All read off it (once it has run), the design's other scans and models (those shown), and `next`: the commands to run next with why and parameters to start from, in the order the work goes → body, triangles, points, unusable, low, high, center, own_size, area, typical_edge, units_hint, noise, smoothing, tolerance, tolerance_set, holes, longest_hole, rims, open_edges, tangled_edges, crack_edges, crossing_faces, pieces, floating, floating_share, flat_share, unseen_share (of the surface its scanner never saw: filled, mirrored, made from sparse points; scan.unseen shows where), sheet_like, shapes{in_shapes, planes, cylinders, spheres, cones, tori, freeform, regions}, other_scans, models, next[{command, why, params}]")];
 
 /// A survey kept for the Survey dialog: the reply, for the scan as it was read.
 #[derive(Debug)]
@@ -118,6 +118,7 @@ fn survey(s: &mut Session, p: &Value) -> Result<Value> {
         models: &models,
     });
     let xyz = |v: solidcore_record::Vec3| [v.x, v.y, v.z];
+    let unseen_share = super::unseen::unseen_of(s, &body).ok().and_then(|(_, u)| u).map_or(0.0, |u| u.share());
     let reply = ScanSurveyResult {
         body,
         triangles: found.triangle_count,
@@ -145,6 +146,7 @@ fn survey(s: &mut Session, p: &Value) -> Result<Value> {
         floating: found.floating,
         floating_share: found.floating_share.max(0.0),
         flat_share: found.flat_share.max(0.0),
+        unseen_share,
         sheet_like,
         shapes,
         other_scans,

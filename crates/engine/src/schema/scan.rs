@@ -337,6 +337,12 @@ pub struct ScanFitResult {
     /// The region's points' distance from the shape: root mean square and largest, in mm.
     pub rms: f64,
     pub max: f64,
+    /// The share of the region's area that is surface the scanner never saw (filled, mirrored,
+    /// made from sparse points), when any is, and what that means.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unseen: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     /// The construction plane, axis or point that keeps it, as the construction command replies,
     /// unless `keep` was false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -578,6 +584,12 @@ pub struct ScanDeviationResult {
     /// The labelled places, each with its distance.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pins: Vec<ScanDeviationPin>,
+    /// The share of the scan's area that is surface its scanner never saw (measured all the same),
+    /// when any is, and what that means.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unseen: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
@@ -1533,6 +1545,44 @@ pub struct ScanMeasureLineResult {
     /// The circle the line goes round, when it is an arc (within 1.5% of its radius, flat, round 30° or more).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub round: Option<ScanLineRound>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// What of a scan the scanner never saw: the surface filled, mirrored or made from points away
+/// from anything scanned. Changes nothing.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanUnseenParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+/// One joined patch of unseen surface.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanUnseenPatch {
+    pub centre: [f64; 3],
+    /// mm².
+    pub area: f64,
+    pub triangles: usize,
+}
+
+/// What `scan.unseen` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanUnseenResult {
+    pub body: String,
+    /// Where the scan's surface came from: as_scanned (nothing changed it), cleaned (read against
+    /// the scan before its Scan Clean steps), mirror_fill (all of it), mesh_from_points (read
+    /// against its cloud's points), or changed (reshaped by a later feature: not read).
+    pub source: String,
+    /// The unseen triangles, their area (mm²) and its share of the scan's.
+    pub triangles: usize,
+    pub area: f64,
+    pub share: f64,
+    /// The largest joined patches, largest first (at most 20).
+    pub patches: Vec<ScanUnseenPatch>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,

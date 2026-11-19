@@ -722,6 +722,8 @@ pub const SECTIONS: &[Section] = &[
             "scan.deviation_pin",
             // A line of clicks along the scan, its length along the surface.
             "scan.measure_line",
+            // What the scanner never saw: filled, mirrored or made from sparse points.
+            "scan.unseen",
             // The scan's own triangles drawn, to see what Reduce Mesh or Remesh made of it.
             "view.scan_triangles",
             "inspect.hole_table",

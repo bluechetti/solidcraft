@@ -7095,6 +7095,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 .chain(crate::scan_selection::gpu_cloud(app))
                 .chain(crate::dialogs_scan_run::gpu_preview(app))
                 .chain(crate::scan_deviation::gpu_cloud(app))
+                .chain(crate::scan_unseen::gpu_cloud(app))
                 .chain(crate::scan_shapes::gpu_cloud(app))
                 .chain(crate::dialogs_scan::gpu_marks(app))
                 .chain(crate::dialogs_scan::gpu_mismatch(app))

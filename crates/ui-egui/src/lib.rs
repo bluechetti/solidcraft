@@ -322,6 +322,7 @@ pub(crate) mod scan_selection;
 pub(crate) mod scan_shapes;
 pub(crate) mod scan_snap;
 pub(crate) mod scan_triangles;
+pub(crate) mod scan_unseen;
 pub mod scan_workspace;
 pub mod scenario;
 pub(crate) mod scene_palette;

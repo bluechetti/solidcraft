@@ -136,6 +136,7 @@ mod tests {
             "scan.remove_markers",
             "scan.remove_and_fill",
             "scan.measure_line",
+            "scan.unseen",
             "scan.fill_holes",
             "scan.reduce",
             "scan.repair",

@@ -3068,6 +3068,58 @@ fn measure_line_reads_the_length_along_the_scan_and_changes_nothing() {
     assert!(err.contains("2 to 1000"), "{err}");
 }
 
+/// Unseen Surface: a scan as it came in has none; a hole closed by Fill Holes is a patch where
+/// the hole was; moved afterwards, the patch moves with it; a plane fitted over the plate says
+/// how much of it leans on the patch.
+#[test]
+fn unseen_surface_finds_a_filled_hole_and_a_fit_over_it_says_so() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-unseen-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("holed.stl");
+    // A plate 40 mm square of 1 mm cells, a hole 8 mm square in its middle.
+    let n = 40;
+    let at = |i: usize, j: usize| Vec3::new(i as f64, j as f64, 0.0);
+    let mut stl = String::from("solid holed\n");
+    for i in 0..n {
+        for j in 0..n {
+            if (16..24).contains(&i) && (16..24).contains(&j) {
+                continue;
+            }
+            for [a, b, c] in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                stl += &format!(
+                    "facet normal 0 0 1\nouter loop\nvertex {} {} {}\nvertex {} {} {}\nvertex {} {} {}\nendloop\nendfacet\n",
+                    a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z
+                );
+            }
+        }
+    }
+    std::fs::write(&path, stl + "endsolid holed\n").unwrap();
+    let mut s = Session::default();
+    let scan = run(&mut s, "file.insert_mesh", json!({"path": path}))["created_bodies"][0].as_str().unwrap().to_owned();
+    let fresh = run(&mut s, "scan.unseen", json!({"body": scan}));
+    assert_eq!((fresh["source"].as_str(), fresh["area"].as_f64()), (Some("as_scanned"), Some(0.0)), "{fresh}");
+
+    run(&mut s, "scan.fill_holes", json!({"body": scan}));
+    let filled = run(&mut s, "scan.unseen", json!({"body": scan}));
+    assert_eq!(filled["source"], "cleaned", "{filled}");
+    let area = filled["area"].as_f64().unwrap();
+    assert!(area > 10.0 && area < 64.0, "the middle of the 64 mm² hole: {filled}");
+    let centre = &filled["patches"][0]["centre"];
+    assert!((centre[0].as_f64().unwrap() - 20.0).abs() < 1.0 && (centre[1].as_f64().unwrap() - 20.0).abs() < 1.0, "{filled}");
+
+    run(&mut s, "solid.move", json!({"bodies": [scan], "translate": [100, 0, 0]}));
+    let moved = run(&mut s, "scan.unseen", json!({"body": scan}));
+    assert_eq!(moved["source"], "cleaned", "the move carries the scan before the steps along: {moved}");
+    assert!((moved["area"].as_f64().unwrap() - area).abs() < 1e-6, "{moved}");
+    assert!((moved["patches"][0]["centre"][0].as_f64().unwrap() - 120.0).abs() < 1.0, "{moved}");
+
+    let fit = run(&mut s, "scan.fit_plane", json!({"body": scan, "point": [105, 5, 0], "keep": false}));
+    let share = fit["unseen"].as_f64().expect("the fit leans on the patch");
+    assert!(share > 0.0 && share < 0.1, "{fit}");
+    assert!(fit["warning"].as_str().is_some_and(|w| w.contains("never saw")), "{fit}");
+}
+
 /// A sheet `size` mm square of `n` × `n` squares at height `z`, as an STL.
 fn sheet_stl(size: f64, n: usize, z: f64) -> String {
     let at = |i: usize, j: usize| Vec3::new(size * i as f64 / n as f64, size * j as f64 / n as f64, z);

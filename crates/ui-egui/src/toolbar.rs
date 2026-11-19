@@ -83,6 +83,7 @@ pub(crate) fn shows_pressed(app: &SolveApp, id: &str) -> bool {
         || (id == "scan.remove_markers" && crate::scan_markers::active(app))
         || (id == "scan.radius" && crate::scan_radius::picking(app))
         || (id == "scan.measure_line" && crate::scan_line::picking(app))
+        || (id == "scan.unseen" && crate::scan_unseen::shown(app))
         || (id == "inspect.check_add" && crate::inspection_plan::adding(app))
         || (id == "inspect.check_measure" && crate::inspection_plan::shown(app))
         || (id == "scan.find_all" && crate::scan_shapes::shown(app))
