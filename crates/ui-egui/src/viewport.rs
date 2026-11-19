@@ -6277,6 +6277,13 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     if !(hover_frozen && inside) {
         app.viewport.hover = cand.as_ref().map(|c| c.0.clone());
     }
+    // A headset's controller points at a face (#2172): it lights up as under the mouse, in the
+    // window and so in the headset, which draws the window's scenes.
+    if app.viewport.stereo.on
+        && let Some(p) = &app.viewport.stereo.pointed
+    {
+        app.viewport.hover = Some(Hit::Face { body: p.body.clone(), index: p.face, point: Vec3::new(p.point[0], p.point[1], p.point[2]) });
+    }
     wake_centre(app, &hits, hover, &proj);
 
     let keep = crate::tool_modifiers::keep_snap_points(crate::tool_modifiers::Held::new(

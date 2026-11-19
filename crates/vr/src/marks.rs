@@ -40,15 +40,21 @@ pub struct Style {
 /// The most vertices [`marks`] makes: two boxes for each hand.
 pub const MAX_VERTICES: usize = 2 * 2 * 36;
 
+/// The shortest a ray is drawn (metres), so a controller held against the model still shows one.
+pub const MIN_RAY: f64 = 0.02;
+
 /// The marks for both hands. A hand whose pose is not tracked has no mark for it; `held` says,
-/// per hand, whether its grip is held and its trigger pressed.
-pub fn marks(hands: &[HandInput; 2], held: [[bool; 2]; 2], style: &Style) -> Vec<Vertex> {
+/// per hand, whether its grip is held and its trigger pressed; `reach`, per hand, how far its ray
+/// goes before it hits the model (metres), `None` where it hits nothing.
+pub fn marks(hands: &[HandInput; 2], held: [[bool; 2]; 2], reach: [Option<f64>; 2], style: &Style) -> Vec<Vertex> {
     let mut out = Vec::with_capacity(MAX_VERTICES);
-    for (hand, [grip, trigger]) in hands.iter().zip(held) {
+    for ((hand, [grip, trigger]), reach) in hands.iter().zip(held).zip(reach) {
         if let Some(aim) = &hand.aim {
-            // From just in front of the controller, down its −Z.
-            let ray = [RAY_HALF_WIDTH, RAY_HALF_WIDTH, RAY_LENGTH * 0.5];
-            cuboid(&mut out, aim, [0.0, 0.0, -RAY_LENGTH * 0.5], ray, if trigger { style.ray_pressed } else { style.ray });
+            // From just in front of the controller, down its −Z, as far as what it points at
+            // (`reach`, metres), else its whole length.
+            let length = reach.filter(|r| r.is_finite()).map_or(RAY_LENGTH, |r| r.clamp(MIN_RAY, RAY_LENGTH));
+            let ray = [RAY_HALF_WIDTH, RAY_HALF_WIDTH, length * 0.5];
+            cuboid(&mut out, aim, [0.0, 0.0, -length * 0.5], ray, if trigger { style.ray_pressed } else { style.ray });
         }
         if let Some(body) = &hand.grip {
             cuboid(&mut out, body, [0.0; 3], BODY, if grip { style.body_held } else { style.body });
@@ -112,13 +118,30 @@ mod tests {
     #[test]
     fn each_tracked_hand_has_a_body_and_a_ray() {
         let left = HandInput { grip: Some(pose([-0.2, 1.0, -0.3])), aim: Some(pose([-0.2, 1.0, -0.35])), ..HandInput::NONE };
-        let all = marks(&[left, left], [[false; 2]; 2], &STYLE);
+        let all = marks(&[left, left], [[false; 2]; 2], [None; 2], &STYLE);
         assert_eq!(all.len(), MAX_VERTICES);
-        assert_eq!(marks(&[left, HandInput::NONE], [[false; 2]; 2], &STYLE).len(), 2 * 36);
-        assert!(marks(&[HandInput::NONE; 2], [[true; 2]; 2], &STYLE).is_empty());
+        assert_eq!(marks(&[left, HandInput::NONE], [[false; 2]; 2], [None; 2], &STYLE).len(), 2 * 36);
+        assert!(marks(&[HandInput::NONE; 2], [[true; 2]; 2], [None; 2], &STYLE).is_empty());
         let lost = HandInput { grip: Some(Pose { position: [0.0; 3], orientation: [0.0; 4] }), ..HandInput::NONE };
-        assert!(marks(&[lost, HandInput::NONE], [[false; 2]; 2], &STYLE).is_empty());
+        assert!(marks(&[lost, HandInput::NONE], [[false; 2]; 2], [None; 2], &STYLE).is_empty());
         assert!(all.iter().all(|v| v.position.iter().chain(&v.colour).all(|x| x.is_finite())));
+    }
+
+    /// A ray that hits the model stops there; one held against it keeps [`MIN_RAY`], and a reach
+    /// that is no length is not used.
+    #[test]
+    fn the_ray_stops_at_what_it_hits() {
+        let aim = Pose { position: [0.0, 1.0, 0.0], orientation: [0.0, 0.0, 0.0, 1.0] };
+        let hand = HandInput { aim: Some(aim), ..HandInput::NONE };
+        let far = |reach: Option<f64>| {
+            let ray = marks(&[hand, HandInput::NONE], [[false; 2]; 2], [reach, None], &STYLE);
+            ray.iter().map(|v| v.position[2]).fold(f32::MAX, f32::min)
+        };
+        assert!((far(Some(0.5)) + 0.5).abs() < 1e-6);
+        assert!((far(Some(0.0)) + MIN_RAY as f32).abs() < 1e-6);
+        assert!((far(Some(100.0)) + RAY_LENGTH as f32).abs() < 1e-6);
+        assert!((far(Some(f64::NAN)) + RAY_LENGTH as f32).abs() < 1e-6);
+        assert!((far(None) + RAY_LENGTH as f32).abs() < 1e-6);
     }
 
     /// The ray reaches [`RAY_LENGTH`] down the controller's −Z; the body sits about the grip.
@@ -126,7 +149,7 @@ mod tests {
     fn the_ray_points_where_the_controller_points() {
         let aim = Pose { position: [0.0, 1.0, 0.0], orientation: [0.0, 0.0, 0.0, 1.0] };
         let hand = HandInput { aim: Some(aim), ..HandInput::NONE };
-        let ray = marks(&[hand, HandInput::NONE], [[false; 2]; 2], &STYLE);
+        let ray = marks(&[hand, HandInput::NONE], [[false; 2]; 2], [None; 2], &STYLE);
         let z: Vec<f32> = ray.iter().map(|v| v.position[2]).collect();
         let (near, far) = z.iter().fold((f32::MIN, f32::MAX), |(hi, lo), &v| (hi.max(v), lo.min(v)));
         assert_eq!(near, 0.0);
@@ -139,7 +162,7 @@ mod tests {
     #[test]
     fn triangles_face_out_of_their_box() {
         let hand = HandInput { grip: Some(pose([0.3, 1.1, -0.2])), aim: Some(pose([0.3, 1.1, -0.25])), ..HandInput::NONE };
-        let all = marks(&[hand, HandInput::NONE], [[false; 2]; 2], &STYLE);
+        let all = marks(&[hand, HandInput::NONE], [[false; 2]; 2], [None; 2], &STYLE);
         for cuboid in all.chunks(36) {
             let n = cuboid.len() as f64;
             let middle = [0, 1, 2].map(|k| cuboid.iter().map(|v| f64::from(v.position[k])).sum::<f64>() / n);
@@ -157,7 +180,7 @@ mod tests {
     fn held_buttons_change_the_colour() {
         let hand = HandInput { grip: Some(pose([0.0; 3])), aim: Some(pose([0.0; 3])), ..HandInput::NONE };
         let colours = |held| {
-            let m = marks(&[hand, HandInput::NONE], [held, [false; 2]], &STYLE);
+            let m = marks(&[hand, HandInput::NONE], [held, [false; 2]], [None; 2], &STYLE);
             (m[0].colour, m[36].colour)
         };
         let (ray, body) = colours([false, false]);

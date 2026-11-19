@@ -38,11 +38,26 @@ impl Source {
     }
 }
 
+/// The face a headset's controller points at: the design view lights it up as it does the face
+/// under the mouse.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pointed {
+    pub body: String,
+    /// The face's index in the body.
+    pub face: usize,
+    /// Where the ray meets it (model units).
+    pub point: [f64; 3],
+}
+
 /// Whether a host shows the design view in a headset, and this frame's [`Source`] for it.
 #[derive(Default)]
 pub struct Stereo {
     /// A host draws the design view for a headset: the view leaves its [`Source`] each frame.
     pub on: bool,
+    /// What the headset's controller points at, set by the host each frame while [`Stereo::on`].
+    /// It takes the place of the mouse's hover, so the headset and the window light up the same
+    /// face.
+    pub pointed: Option<Pointed>,
     source: Option<Source>,
 }
 

@@ -12,7 +12,7 @@
 
 use eframe::egui_wgpu::{self, wgpu};
 use solidcraft_ui_egui::SolveApp;
-use solidcraft_ui_egui::stereo::Source;
+use solidcraft_ui_egui::stereo::{Pointed, Source};
 use solidcraft_viewport_gpu::view::{Renderer, ViewTarget};
 use solidcraft_vr::grab::WorldGrab;
 use solidcraft_vr::marks::{self, Style, Vertex};
@@ -275,8 +275,37 @@ impl Vr {
         }
         self.real_size = real_size;
         let held = self.buttons.map(|[grip, trigger, _]| [grip.down, trigger.down]);
+        // Pointing: each free hand's ray stops at the face it hits. The right hand's lights up
+        // (the left's when the right points at nothing), and a trigger pressed selects the part
+        // its hand points at, in the window too, or clears the selection over nothing.
+        let mut reach = [None; 2];
+        let mut pointed: [Option<Pointed>; 2] = [None, None];
+        if let Some(transform) = self.transform.as_ref().filter(|_| !self.grab.holding()) {
+            for hand in Hand::BOTH {
+                let i = hand.index();
+                if let Some((hit, metres)) = hands[i].aim.as_ref().and_then(|aim| pointed_at(app, transform, aim)) {
+                    reach[i] = Some(metres);
+                    pointed[i] = Some(hit);
+                }
+            }
+            for hand in Hand::BOTH {
+                let i = hand.index();
+                if self.buttons[i][1].pressed {
+                    match &pointed[i] {
+                        Some(hit) => {
+                            app.session.selection = vec![solidcraft_engine::Sel::Body { name: hit.body.clone() }];
+                            app.set_status(hit.body.clone(), false);
+                            session.pulse(hand, Pulse::TICK);
+                        }
+                        None => app.session.selection.clear(),
+                    }
+                }
+            }
+        }
+        let [left, right] = pointed;
+        app.viewport.stereo.pointed = right.or(left);
         let floor = session.floor_height(&frame);
-        let scene = Scene { source, transform: self.transform.as_ref(), hands: &hands, held, floor };
+        let scene = Scene { source, transform: self.transform.as_ref(), hands: &hands, held, reach, floor };
         let drawn = if frame.should_render { gpu.draw(session, rs, &frame, &scene) } else { Ok(false) };
         // A begun frame is ended whatever happened in it.
         let ended = session.end_frame(&frame, *drawn.as_ref().unwrap_or(&false));
@@ -290,6 +319,26 @@ impl Vr {
 fn model_direction(transform: &Transform, room: [f64; 3]) -> [f32; 3] {
     let dot = |a: [f64; 3]| a[0] * room[0] + a[1] * room[1] + a[2] * room[2];
     transform.axes.map(|axis| dot(axis) as f32)
+}
+
+/// The face of the placed model that the ray down `aim`'s −Z hits first, and how far along the ray
+/// it is (metres). The pick is `view.pick`'s, the one the mouse uses, with the ray taken into the
+/// model's space; `None` when it hits nothing, or `aim` is no pose.
+fn pointed_at(app: &mut SolveApp, transform: &Transform, aim: &Pose) -> Option<(Pointed, f64)> {
+    let [_, _, back] = aim.axes()?;
+    // A room vector in the model's axes: the transform's turn, undone.
+    let to_model = |v: [f64; 3]| transform.axes.map(|axis| axis[0] * v[0] + axis[1] * v[1] + axis[2] * v[2]);
+    let origin = to_model([0, 1, 2].map(|k| (aim.position[k] - transform.translation[k]) / transform.scale));
+    let dir = to_model(back.map(|x| -x));
+    let request = serde_json::json!({ "frame": "model", "edges": false, "rays": [{ "origin": origin, "dir": dir }] });
+    let reply = solidcraft_ui_egui::view_pick::pick_command(app, &request).ok()?;
+    let hit = reply.get("hits")?.get(0)?;
+    let body = hit.get("body")?.as_str()?.to_string();
+    let face = usize::try_from(hit.get("face")?.as_u64()?).ok()?;
+    let at = hit.get("point")?;
+    let point = [at.get(0)?.as_f64()?, at.get(1)?.as_f64()?, at.get(2)?.as_f64()?];
+    let depth = hit.get("depth")?.as_f64()?;
+    Some((Pointed { body, face, point }, depth * transform.scale))
 }
 
 /// The model's box (least and greatest corner, model units), or `None` for an empty design.
@@ -321,6 +370,8 @@ struct Scene<'a> {
     hands: &'a [HandInput; 2],
     /// Each hand's grip and trigger held, left first.
     held: [[bool; 2]; 2],
+    /// How far each hand's ray goes before it hits the model (metres), left first.
+    reach: [Option<f64>; 2],
     /// The floor's height in the room, where the runtime knows it: a grid is drawn there.
     floor: Option<f64>,
 }
@@ -619,7 +670,7 @@ impl Gpu {
         // the ray's own colour brought most of the way to white, not a second token.
         let ray = linear(t.form_primary);
         let style = Style { body: linear(t.app_bar), body_held: linear(t.form_primary), ray, ray_pressed: ray.map(|c| c + (1.0 - c) * 0.7) };
-        let vertices = marks::marks(scene.hands, scene.held, &style);
+        let vertices = marks::marks(scene.hands, scene.held, scene.reach, &style);
         let count = vertices.len().min(marks::MAX_VERTICES);
         if count > 0 {
             rs.queue.write_buffer(&self.mark_vertices, 0, &mark_bytes(&vertices[..count]));

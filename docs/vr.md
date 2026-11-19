@@ -21,7 +21,11 @@ Off by default. Nothing of it runs, and no VR software is touched, unless it is 
 | One grip held | You hold the model like a thing in your hand: it moves and turns with your hand. |
 | Both grips held | The model grows or shrinks as your hands move apart or together, and moves with the point between them. It does not turn. Brought near its real size, it snaps to real size with a tick in both hands, and stays there until your hands take it clearly away. |
 | Stick click (either hand) | The model goes back in front of you, at its first size. Resetting the view in the VR software does the same. |
-| Trigger | Nothing yet; the ray brightens while it is held. |
+| Trigger | Selects the part the ray points at, in the window too; over nothing it clears the selection. The ray brightens while it is held. |
+
+A ray stops at the model where it hits, and the face there lights up as it does under the mouse
+(the right hand's, or the left's when the right points at nothing). A hand that holds the model
+does not point.
 
 The room never moves, only the model does. The floor is drawn where the VR software says it is
 (`XR_EXT_local_floor`, else the play area), as a grid fixed under you; the design's own grid and
@@ -129,8 +133,8 @@ headset.
 
 Viewing first, then assemblies, each step tried in the headset on its own:
 
-- Pick with the ray: the part under it highlighted and named, the trigger selects it (the
-  desktop's selection too); the ray stopping at what it hits.
+- Pointing: the part under the ray named in the headset (its name is on the window's status line
+  for now), and the whole part lit instead of one face.
 - Hide, isolate, show all; a section plane held in the hand; exploding an assembly.
 - Assemblies: grab a part and it moves as its joints allow, with a buzz at limits and contact;
   play and scrub motion studies; make joints by picking on two parts.
