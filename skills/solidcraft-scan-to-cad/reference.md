@@ -36,7 +36,7 @@ A scan and the model built on it are one design: everything the Scan tab makes i
 
 ## Verify
 `scan.deviation {"body": "<model>"}` measures the scan against the model:
-- `passes`: both ways. At least 95% of all the scan's points are within the tolerance of the model (`within_all`) and 95% of the model's surface has the scan within the tolerance of it (`model_within`), and no more than 0.1% of either is farther than the limit from the other (`beyond_limit`, `model_beyond_limit`: a hole or boss missing, made up or out of place). `why_not` says in words what failed; a scan that covers only part of the model fails with how much has no scan near it.
+- `passes`: both ways. At least 95% of all the scan's points are within the tolerance of the model (`within_all`) and 95% of the model's surface has the scan within the tolerance of it (`model_within`), and no more than 0.1% of either is far off, more than three tolerances from the other (`far_off`, `model_far_off`: a hole or boss missing, made up or out of place, a chamfer built as a round). `why_not` says in words what failed; a scan that covers only part of the model fails with how much has no scan near it.
 - `max_above`: the scan stands outside the model, so the model lacks material there.
 - `max_below`: the model stands outside the scan, so it has material it should not.
 - `unmatched`: points too far from the model to count. A large share means a whole region is missing.

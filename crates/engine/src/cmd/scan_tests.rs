@@ -639,10 +639,12 @@ fn scan_deviation_fails_a_model_with_material_the_scan_lacks_or_lacking_what_it_
     run(&mut s, "solid.cylinder", json!({"base": [15, 20, -1], "radius": 3, "height": 22, "operation": "cut", "targets": ["Block"]}));
     let drilled = run(&mut s, "scan.deviation", json!({"tolerance": "0.1 mm"}));
     assert!(drilled["within_all"].as_f64().unwrap() > 0.95 && drilled["model_within"].as_f64().unwrap() > 0.95, "{drilled}");
-    // Of the model, the wall farther than 0.5 from an end: 2 π 3 × 19 of 8800 − 2 π 9 + 2 π 3 × 20.
+    // Far off is three tolerances, 0.3. Of the model, the wall farther than that from an end:
+    // 2 π 3 × 19.4 of 8800 − 2 π 9 + 2 π 3 × 20.
+    assert!((drilled["far"].as_f64().unwrap() - 0.3).abs() < 1e-12, "{drilled}");
     let wall = std::f64::consts::TAU * 3.0;
-    let expected = wall * 19.0 / (8800.0 - 2.0 * std::f64::consts::PI * 9.0 + wall * 20.0);
-    assert!((drilled["model_beyond_limit"].as_f64().unwrap() - expected).abs() < 0.002, "{expected}: {drilled}");
+    let expected = wall * 19.4 / (8800.0 - 2.0 * std::f64::consts::PI * 9.0 + wall * 20.0);
+    assert!((drilled["model_far_off"].as_f64().unwrap() - expected).abs() < 0.002, "{expected}: {drilled}");
     assert_eq!(drilled["passes"], false, "{drilled}");
     assert!(drilled["why_not"].as_str().unwrap().contains("the model has something there the scan does not"), "{drilled}");
     run(&mut s, "edit.undo", json!({}));
