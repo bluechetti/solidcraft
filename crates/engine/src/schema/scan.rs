@@ -1853,6 +1853,9 @@ pub struct ScanHolesResult {
     pub holes: usize,
     pub filled: usize,
     pub failed: usize,
+    /// Each hole within the limit that could not be closed: where, how many edges, and why.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left: Vec<ScanHoleLeft>,
     pub larger: usize,
     /// The triangles the patches added.
     pub added_triangles: usize,
@@ -1871,6 +1874,16 @@ pub struct ScanHolesResult {
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
+}
+
+/// A hole Fill Holes could not close.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanHoleLeft {
+    /// The middle of its ring, and how many edges it has.
+    pub at: [f64; 3],
+    pub edges: usize,
+    /// Why no patch closes it.
+    pub why: String,
 }
 
 /// Reduce a scan's triangles: edges collapsed cheapest first, where a collapse costs how far it
