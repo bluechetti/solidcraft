@@ -22,6 +22,128 @@ fn about_z(origin: [f64; 3], down: bool) -> Frame {
         if down { [0., -1., 0.] } else { [0., 1., 0.] },
     )
 }
+
+/// A face's inward ray is normal × tangent, reversed with the loop. Every
+/// permutation must give the same cyclic order, including an oblique edge.
+#[test]
+fn radial_order_uses_exact_face_directions_in_every_input_order() {
+    for (axis, x) in [
+        (Vec3::new(0., 0., 1.), Vec3::new(1., 0., 0.)),
+        (Vec3::new(1., 0., 0.), Vec3::new(0., 1., 0.)),
+        (Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.)),
+        (Vec3::new(1., 2., 3.), Vec3::new(2., -1., 0.)),
+    ] {
+        let point = |v: Vec3| [v.x, v.y, v.z];
+        let y = axis.cross(x);
+        let surfaces: Vec<_> = [x, y, -x, -y]
+            .into_iter()
+            .enumerate()
+            .map(|(i, ray)| Surface::Plane {
+                origin: [0.; 3],
+                u_axis: point(axis),
+                v_axis: point(if i & 1 == 0 { ray } else { -ray }),
+            })
+            .collect();
+        let curve = Curve::Line {
+            start: [0.; 3],
+            end: point(axis),
+        };
+        let pc = Curve2::Spline {
+            knots: vec![0., 0., 1., 1.],
+            points: vec![[0., 0.], [1., 0.]],
+        };
+        for a in 0..4 {
+            for b in 0..4 {
+                for c in 0..4 {
+                    for d in 0..4 {
+                        let input = [a, b, c, d];
+                        let mut distinct = input;
+                        distinct.sort_unstable();
+                        if distinct != [0, 1, 2, 3] {
+                            continue;
+                        }
+                        let faces: Vec<_> = input
+                            .iter()
+                            .map(|&i| RadialFace {
+                                surface: &surfaces[i],
+                                pcurve: &pc,
+                                forward: i & 1 == 0,
+                            })
+                            .collect();
+                        let order = radial_order(&curve, [0., 1.], &faces).unwrap();
+                        let rays: Vec<_> = order.into_iter().map(|i| input[i]).collect();
+                        let expected: Vec<_> = (0..4).map(|i| (a + i) % 4).collect();
+                        assert_eq!(rays, expected, "{axis:?}, {input:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn radial_order_refuses_undefined_and_indistinguishable_directions() {
+    let curve = Curve::Line {
+        start: [0.; 3],
+        end: [0., 0., 1.],
+    };
+    let surface = Surface::Plane {
+        origin: [0.; 3],
+        u_axis: [0., 0., 1.],
+        v_axis: [1., 0., 0.],
+    };
+    let pc = Curve2::Spline {
+        knots: vec![0., 0., 1., 1.],
+        points: vec![[0., 0.], [1., 0.]],
+    };
+    let face = RadialFace {
+        surface: &surface,
+        pcurve: &pc,
+        forward: true,
+    };
+    assert!(
+        matches!(radial_order(&curve, [0., 1.], &[face, face]), Err(Error::Failed(m)) if m.contains("tangent faces"))
+    );
+    for interval in [[0., 0.], [1., 0.], [f64::NAN, 1.], [0., f64::INFINITY]] {
+        assert!(matches!(
+            radial_order(&curve, interval, &[face]),
+            Err(Error::Invalid(_))
+        ));
+    }
+    let collapsed = Curve::Line {
+        start: [0.; 3],
+        end: [0.; 3],
+    };
+    assert!(radial_order(&collapsed, [0., 1.], &[face]).is_err());
+    let singular = Surface::Plane {
+        origin: [0.; 3],
+        u_axis: [0., 0., 1.],
+        v_axis: [0., 0., 1.],
+    };
+    assert!(radial_order(
+        &curve,
+        [0., 1.],
+        &[RadialFace {
+            surface: &singular,
+            ..face
+        }]
+    )
+    .is_err());
+    let bad_pc = Curve2::Spline {
+        knots: vec![0., 0., 1., 1.],
+        points: vec![[f64::NAN, 0.], [1., 0.]],
+    };
+    assert!(radial_order(
+        &curve,
+        [0., 1.],
+        &[RadialFace {
+            pcurve: &bad_pc,
+            ..face
+        }]
+    )
+    .is_err());
+}
+
 fn one(curve: &Curve, interval: [f64; 2]) -> Vec<Vec<EdgeUse<'_>>> {
     vec![vec![EdgeUse {
         edge: 0,
@@ -1260,6 +1382,60 @@ fn a_curve_weaving_across_a_thread_flank_is_refused() {
     assert!(
         matches!(pcurves(&surface, &one(&weave, [a, b]), 1e-3), Err(Error::Failed(m)) if m.contains("no exact pcurve"))
     );
+}
+
+/// A short cubic edge on a cylinder's NURBS form, its angle not moving at a steady pace (θ
+/// quadratic in its parameter), ending on the form's seam. Its end there projects to either side
+/// of the seam; on the far side the segment between its ends ran the wrong way round, and the one
+/// through its middle at its middle's pace was taken, within half a tolerance of 0.02 of the edge
+/// but with its ends 5 um round the axis from the edge's: the loop's pcurves did not meet at the
+/// vertices once healing set the edge tolerances to the edges' own gaps (`SmTrimmingTools` test
+/// 0). The ends are taken on the middle's sheet, so the segment between them is the one taken,
+/// ending where the edge ends, as off the seam.
+#[test]
+fn a_spline_edge_ending_on_a_closed_forms_seam_gets_the_segment_between_its_ends() {
+    let r = 20.;
+    let (surface, _) = form::surface(
+        &Surface::Cylinder {
+            frame: about_z([0.; 3], false),
+            radius: r,
+        },
+        [[0., TAU], [0., 1.]],
+    )
+    .unwrap();
+    let s = SurfaceEval::new(&surface).unwrap();
+    for end in [TAU, 3.0] {
+        // The cubic Bézier with the ends and end tangents of the curve at angle θ(t) and height
+        // 0.35·t, 0.05 rad round the axis (5e-4 rad of it from the quadratic term). The segment
+        // between its ends and the one through its middle each come within 5.0e-3 of it.
+        let start = end - 0.05;
+        let theta = |t: f64| start + 0.0495 * t + 0.0005 * t * t;
+        let dtheta = |t: f64| 0.0495 + 0.001 * t;
+        let at = |t: f64| [r * theta(t).cos(), r * theta(t).sin(), 0.35 * t];
+        let tangent = |t: f64| {
+            let (a, w) = (theta(t), dtheta(t));
+            [-r * w * a.sin(), r * w * a.cos(), 0.35]
+        };
+        let (p0, p3, d0, d3) = (at(0.), at(1.), tangent(0.), tangent(1.));
+        let edge = Curve::Spline {
+            knots: vec![0., 0., 0., 0., 1., 1., 1., 1.],
+            points: vec![
+                p0,
+                [0, 1, 2].map(|k| p0[k] + d0[k] / 3.),
+                [0, 1, 2].map(|k| p3[k] - d3[k] / 3.),
+                p3,
+            ],
+        };
+        let pc = &pcurves(&surface, &one(&edge, [0., 1.]), 0.02).unwrap()[0][0];
+        for (t, p) in [(0., p0), (1., p3)] {
+            let lifted = s.point(eval(pc, t).unwrap()).unwrap();
+            assert!(
+                lifted.dist(v3(p)) < 1e-9,
+                "ending at {end}: the pcurve at {t} lifts to {lifted:?}, the edge is at {p:?}"
+            );
+        }
+        assert!(lift_error(&surface, &edge, [0., 1.], pc) <= 0.01);
+    }
 }
 
 /// The B-spline of degree `p` through `points` at `params` (knots by averaging, NURBS Book §9.2.1).
