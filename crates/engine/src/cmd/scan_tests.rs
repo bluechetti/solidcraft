@@ -1067,6 +1067,32 @@ fn fit_surface_chooses_its_detail_and_trims_to_the_area() {
     assert!(face["rms"].as_f64().unwrap() < 0.05, "still the flat top, not round the boss: {face}");
 }
 
+/// A surface fitted to an area of the plate's top, 8 mm round a point 12 mm in from two of its
+/// sides, is extended for trimming: Extend Surface pushes its four edges out 5 mm, so it is larger
+/// by a 5 mm margin all round (a rectangle w × h becomes (w + 10) × (h + 10), at least
+/// 20 √area + 100 more), and it now passes the plate's side wall at X = 0, where Trim Surface cuts
+/// it: less than the extended surface, still more than the fit.
+#[test]
+fn a_fitted_surface_is_extended_past_its_area_and_trimmed_by_the_face_beside_it() {
+    let (mut s, _) = session_with_a_plate_and_boss("fit-surface-extend");
+    let fit = run(&mut s, "scan.fit_surface", json!({"point": [12, 12, 8], "radius": 8, "controls": 6}));
+    let surface = fit["surface"].as_str().unwrap().to_owned();
+    let fitted = area_of(&s, &surface);
+    // Its four edges, each by its middle.
+    let edges: Vec<[f64; 3]> = {
+        let state = s.world_state().unwrap();
+        state.body(&surface).unwrap().body.edges(0.01).unwrap().iter().map(|e| [e.mid.x, e.mid.y, e.mid.z]).collect()
+    };
+    assert_eq!(edges.len(), 4, "a rectangle: {edges:?}");
+    run(&mut s, "surface.extend", json!({"body": surface, "edges": edges, "distance": "5 mm"}));
+    let extended = area_of(&s, &surface);
+    let margin = 20.0 * fitted.sqrt() + 100.0;
+    assert!(extended >= fitted + 0.99 * margin, "{extended} from {fitted}: 5 mm more all round is {margin} more");
+    run(&mut s, "surface.trim", json!({"body": surface, "plane": {"origin": [0, 0, 0], "normal": [1, 0, 0]}, "keep": [12, 12, 8]}));
+    let trimmed = area_of(&s, &surface);
+    assert!(trimmed < extended - 1.0 && trimmed > fitted, "{trimmed} of {extended}, the fit {fitted}");
+}
+
 /// A Fit Surface trimmed to its area is still edited by Edit Surface: a control point moved moves
 /// the surface, which stays trimmed to the area, and the edit is one undo step.
 #[test]
