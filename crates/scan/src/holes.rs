@@ -435,7 +435,7 @@ fn patch(ring: &Ring, positions: &[Vec3], around: &Surroundings, fair: bool) -> 
         let length: f64 = (0..n).map(|k| points[k].dist(points[(k + 1) % n])).sum();
         let round = (0..n).fold(Vec3::ZERO, |s, k| s + points[k].cross(points[(k + 1) % n])).len() / 2.0;
         let any_triangle = round > 1e-9 * length * length;
-        let any_blocked = around.edges.len() > 0 && (0..n).any(|i| (i + 2..n).any(|j| !(i == 0 && j == n - 1) && forbidden(i, j)));
+        let any_blocked = !around.edges.is_empty() && (0..n).any(|i| (i + 2..n).any(|j| !(i == 0 && j == n - 1) && forbidden(i, j)));
         if !any_triangle {
             return Err(IN_A_LINE);
         }

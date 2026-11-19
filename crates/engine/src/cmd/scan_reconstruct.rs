@@ -1282,7 +1282,7 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
                     s,
                     &plane,
                     &format!("Prism Profile {} Gap", index + 1),
-                    &[repeat.gap.clone()],
+                    std::slice::from_ref(&repeat.gap),
                     &|_, _, _| None,
                     &mut tried,
                     round,

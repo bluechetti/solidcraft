@@ -734,7 +734,7 @@ pub fn repeated(outline: &Outline, tolerance: f64, read: impl Fn(f64) -> f64) ->
         return None;
     }
     // Its radius: the middle one of the lands' points.
-    let mut high: Vec<f64> = (0..n).filter(|&k| land[k]).flat_map(|k| points_of(k)).map(radius).collect();
+    let mut high: Vec<f64> = (0..n).filter(|&k| land[k]).flat_map(points_of).map(radius).collect();
     high.sort_by(f64::total_cmp);
     let tip = read(*high.get(high.len() / 2)?);
     // The gaps: runs of pieces that are not land, each from a corner up at the circle to the next.
@@ -1193,7 +1193,7 @@ fn circle_through(points: &[Vec2]) -> Option<(Vec2, f64)> {
         if !(step.x.is_finite() && step.y.is_finite()) {
             break;
         }
-        center = center + step;
+        center += step;
         if step.dist(Vec2::ZERO) < 1e-12 * radius.max(1.0) {
             break;
         }
