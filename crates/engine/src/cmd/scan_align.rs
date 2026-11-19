@@ -257,8 +257,18 @@ fn model_name(s: &Session, p: &Value, cmd: &str) -> Result<String> {
     let state = s.model.state();
     if let Some(name) = str_(p, "model").filter(|n| !n.trim().is_empty()) {
         let body = state.body(name).ok_or_else(|| bad(cmd, format!("no body `{name}`")))?;
+        // A model that came as a mesh (the CAD saved as STL or PLY) is a model too: its corners lie
+        // on faces drawn exactly flat, as a scan's never do (what Deviation tells them apart by).
         if body.body.is_mesh() {
-            return Err(bad(cmd, format!("`{name}` is a scan: lay one scan on another with Align to Scan")));
+            let drawn = super::with_shown(s, name, |p, t| solidcraft_scan::denoise::drawn_share(&solidcraft_scan::Scan::new(p, t))).unwrap_or(0.0);
+            if drawn < super::DRAWN_CAD {
+                return Err(bad(
+                    cmd,
+                    format!(
+                        "`{name}` is a scan (none of it is drawn exactly flat, as a model saved as a mesh is): lay one scan on another with Align to Scan"
+                    ),
+                ));
+            }
         }
         return Ok(name.to_owned());
     }
@@ -297,6 +307,9 @@ fn align_to_model(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let model = model_name(s, p, cmd)?;
     let body = scan_name(s, p, cmd)?;
+    if model == body {
+        return Err(bad(cmd, format!("`{body}` is the scan to move: name the model to lay it on with `model`")));
+    }
     let scan = mesh(s, &json!({ "body": body }), cmd)?;
     let reference = surface_of(s, &model, cmd)?;
     let settings = Settings { search: bool_(p, "search").unwrap_or(true), ignored };
