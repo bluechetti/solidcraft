@@ -45,8 +45,15 @@ impl Mirror {
     /// [`MOSTLY_MIRRORED`] when both its sides are there and match out to their ends
     /// ([`Mirror::both_sides`]); a scan of one side does not.
     pub fn is_symmetric(&self) -> bool {
-        let enough = self.coverage >= 0.85 || (self.coverage >= MOSTLY_MIRRORED && self.both_sides >= BOTH_SIDES);
+        let enough = self.coverage >= MIRRORED || (self.coverage >= MOSTLY_MIRRORED && self.both_sides >= BOTH_SIDES);
         enough && self.rms <= (0.02 * self.size).max(2.0 * judged_spacing(self.spacing, self.size))
+    }
+
+    /// For a mirror image only most of which is one ([`MOSTLY_MIRRORED`], under [`MIRRORED`]): the
+    /// share of the scan that has no match. That part is the thing's own (pipes down one side),
+    /// not noise, and whoever halves or mirrors the scan has to be told.
+    pub fn unmatched(&self) -> Option<f64> {
+        (self.is_symmetric() && self.coverage < MIRRORED).then_some(1.0 - self.coverage)
     }
 
     /// Lower is better: how far off, weighted by how much of the scan has no match.
@@ -60,6 +67,8 @@ impl Mirror {
     }
 }
 
+/// The share of a scan that must match its reflection for it to count as a mirror image outright.
+const MIRRORED: f64 = 0.85;
 /// The share of a scan that must match its reflection for it to count as a mirror image when both
 /// its sides are there ([`Mirror::is_symmetric`]).
 const MOSTLY_MIRRORED: f64 = 0.6;
@@ -996,12 +1005,16 @@ mod tests {
         let whole = measure(&Scan::new(&positions, &triangles), point, normal).unwrap();
         assert!(whole.coverage > 0.6 && whole.coverage < 0.85, "part of it is no mirror image: {whole:?}");
         assert!(whole.both_sides > 0.9 && whole.is_symmetric(), "{whole:?}");
+        // What does not match is said, as a share: the box under one side.
+        assert!(whole.unmatched().is_some_and(|share| (share - (1.0 - whole.coverage)).abs() < 1e-12 && share > 0.15), "{whole:?}");
+        let (positions, triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(100.0, 40.0, 20.0), 40);
+        assert_eq!(measure(&Scan::new(&positions, &triangles), point, normal).unwrap().unmatched(), None);
         // One side and a little past the middle (to Y = 30 of 40), with no box under it.
         let (positions, triangles) = fine_cuboid(Vec3::ZERO, Vec3::new(100.0, 40.0, 20.0), 40);
         let one_side: Vec<[u32; 3]> =
             triangles.iter().copied().filter(|t| t.iter().map(|&i| positions[i as usize].y).sum::<f64>() / 3.0 < 30.0).collect();
         let part = measure(&Scan::new(&positions, &one_side), point, normal).unwrap();
-        assert!(part.coverage > 0.5 && part.both_sides < 0.7 && !part.is_symmetric(), "{part:?}");
+        assert!(part.coverage > 0.5 && part.both_sides < 0.7 && !part.is_symmetric() && part.unmatched().is_none(), "{part:?}");
     }
 
     /// The block is symmetric about X = 30 and about Y = 10: found wherever it lies, to within a

@@ -147,7 +147,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("mirror")
         .contract(&SYMMETRY_CONTRACT)
         .output(output_schema_for::<ScanSymmetryResult>)
-        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z] (the way you looked, default [0,0,1])}: a line along the rough mirror plane, to find that one; plane?: {point, normal: [x,y,z]} to keep as it is; keep?: bool (default true: kept as a construction plane `Symmetry Plane`, `Symmetry Plane 2`, …, to sketch on); a plane given or guided to is used however much matches, the best one found unasked is refused when the scan is no mirror image about it → body, mirror: {point, normal, rms, coverage, symmetric}, plane (the construction plane)"),
+        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z] (the way you looked, default [0,0,1])}: a line along the rough mirror plane, to find that one; plane?: {point, normal: [x,y,z]} to keep as it is; keep?: bool (default true: kept as a construction plane `Symmetry Plane`, `Symmetry Plane 2`, …, to sketch on); a plane given or guided to is used however much matches, the best one found unasked is refused when the scan is no mirror image about it → body, mirror: {point, normal, rms, coverage, symmetric, partly? (a mirror image under 85 % of which matches: how much does not)}, plane (the construction plane)"),
     CommandSpec::new("scan.square_to_symmetry", "Square to Symmetry", crate::checked!("scan.square_to_symmetry", square_to_symmetry))
         .at("SCAN", "ALIGN")
         .icon("c_symmetry")
@@ -550,6 +550,12 @@ fn mirror_reply(m: &Mirror) -> ScanMirror {
         rms: m.rms,
         coverage: m.coverage,
         symmetric: m.is_symmetric(),
+        partly: m.unmatched().map(|share| {
+            format!(
+                "{:.0} % of the scan has no mirror image in this plane: that part is on one side of the thing only, not noise; keep it when halving or mirroring the scan",
+                100.0 * share
+            )
+        }),
     }
 }
 

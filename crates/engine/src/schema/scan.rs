@@ -185,8 +185,13 @@ pub struct ScanMirror {
     pub rms: f64,
     /// The share of the scan whose reflection lands on the scan, 0 to 1.
     pub coverage: f64,
-    /// Whether the scan is a mirror image about it: 85 % matched, typically within 2 % of its size.
+    /// Whether the scan is a mirror image about it: 85 % matched (or 60 % with both sides of the
+    /// thing there and matching out to their ends), typically within 2 % of its size.
     pub symmetric: bool,
+    /// For a mirror image under 85 % of which matches: how much does not, in words. That part is
+    /// the thing's own, on one side only, and is not to be taken for noise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partly: Option<String>,
 }
 
 /// What `scan.symmetry` returns.
