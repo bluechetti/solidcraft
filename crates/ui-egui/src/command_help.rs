@@ -190,6 +190,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.measure_line",
     "scan.merge_surfaces",
     "scan.mesh_from_points",
+    "scan.nest",
     "scan.pattern_it",
     "scan.pipe_it",
     "scan.quick_align",

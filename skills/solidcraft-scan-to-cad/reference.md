@@ -84,6 +84,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | `scan.loft_it {}` | no prism, turned part, pipe or coil (`loft`): slices from end to end lofted |
 | `scan.fillet_it {}` | rounds measured off the scan, one Fillet per radius |
 | `scan.chamfer_it {}` | chamfers read off the scan |
+| `scan.nest {"clearance": "clearance"}` | a block (`<scan> Nest`) with a pocket the part seats in: the prism's outline offset by the clearance (a sketch offset, so a parameter named there rebuilds it) and cut `deep` (0.5) of the part's depth; `margin` of block round it. Square-walled prisms only. Check it with `scan.deviation {"body": "<scan> Nest"}` → `clearance.gap` |
 | `scan.fit_plane {"point": [x,y,z]}` | construction plane; reply `plane`, `rms`, `max` |
 | `scan.fit_cylinder {"point": [x,y,z]}` | construction axis; reply `cylinder {point, axis, radius, diameter, length}` |
 | `scan.fit_sphere {}`, `scan.fit_cone {}`, `scan.fit_torus {}` | the same for those shapes |

@@ -1,0 +1,34 @@
+{
+  "ar": {
+    "cmd.scan_nest": "عشّ للقطعة",
+    "help.scan.nest": "يصنع كتلة بها جيب تستقر فيه القطعة الممسوحة: محيط المنشور مُزاحًا بمقدار الخلوص ومقطوعًا في الكتلة. يتبع الجيب الخلوص عند تغييره."
+  },
+  "de": {
+    "cmd.scan_nest": "Aufnahme",
+    "help.scan.nest": "Erstellt einen Block mit einer Tasche, in der das gescannte Teil sitzt: der Umriss des Prismas, um das Spiel versetzt und in den Block geschnitten. Die Tasche folgt dem Spiel, wenn es sich ändert."
+  },
+  "en": {
+    "cmd.scan_nest": "Nest",
+    "help.scan.nest": "Makes a block with a pocket the scanned part seats in: the prism's outline, offset by the clearance and cut in. The pocket follows the clearance when it changes."
+  },
+  "he": {
+    "cmd.scan_nest": "קן לחלק",
+    "help.scan.nest": "יוצר בלוק עם כיס שבו החלק הסרוק יושב: מתאר המנסרה, מוסט במרווח וחתוך לתוך הבלוק. הכיס עוקב אחרי המרווח כשהוא משתנה."
+  },
+  "ja": {
+    "cmd.scan_nest": "ネスト",
+    "help.scan.nest": "スキャンした部品が収まるポケット付きのブロックを作ります。角柱の輪郭をクリアランス分オフセットしてブロックから切り取ります。クリアランスを変えるとポケットも追従します。"
+  },
+  "ko": {
+    "cmd.scan_nest": "네스트",
+    "help.scan.nest": "스캔한 부품이 안착하는 포켓이 있는 블록을 만듭니다. 각기둥의 윤곽을 여유만큼 오프셋하여 블록에서 잘라냅니다. 여유를 바꾸면 포켓도 따라갑니다."
+  },
+  "vi": {
+    "cmd.scan_nest": "Khuôn đỡ",
+    "help.scan.nest": "Tạo một khối có hốc để chi tiết đã quét nằm vào: đường bao của lăng trụ, dời ra theo khe hở và cắt vào khối. Hốc thay đổi theo khe hở."
+  },
+  "zh": {
+    "cmd.scan_nest": "嵌座",
+    "help.scan.nest": "生成一个带凹槽的块体，扫描的零件可放入其中：将棱柱轮廓按间隙偏移后从块体中切出。间隙改变时凹槽随之更新。"
+  }
+}

@@ -627,6 +627,38 @@ pub struct ScanStepFit {
     pub note: Option<String>,
 }
 
+/// Nest: a block with a pocket the scanned part seats in, from the prism Reconstruct reads: the
+/// prism's outline sketched, offset outward by `clearance` (an offset the sketch keeps, so the
+/// pocket follows the clearance) and cut into a block drawn round it. An ordinary solid: it
+/// fillets, shells and takes pins. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanNestParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Build from the reading of the part of the scan selected. Default: false, the whole scan's.
+    #[serde(default)]
+    pub selected: Option<bool>,
+    /// Which of `scan.reconstruct`'s prisms, from 0. Default: the first.
+    #[serde(default)]
+    pub prism: Option<usize>,
+    /// The gap left round the part and under it: a length in mm, or an expression (a parameter's
+    /// name, so that changing the parameter rebuilds the nest). Default: 0.3 mm. The pocket follows
+    /// it up to twice what it is built with: pieces of the outline that an offset that far would
+    /// close to nothing (tight inside corners) are cut square, where the gap is the smaller by up
+    /// to 0.42 of the corner's own round.
+    #[serde(default)]
+    #[schemars(with = "Option<Value>")]
+    pub clearance: Option<Value>,
+    /// How much block is left round the part and under it, in mm. Default: 10.
+    #[serde(default)]
+    pub margin: Option<f64>,
+    /// The share of the part's depth the pocket holds, above 0 to 1. Default: 0.5.
+    #[serde(default)]
+    pub deep: Option<f64>,
+}
+
 /// What Extrude It, Revolve It, Cut It and Pattern It return.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanBuildResult {

@@ -449,6 +449,85 @@ pub fn rotational(ring: &[Vec2], tolerance: f64) -> Option<Rotational> {
     Some(Rotational { order, centre, tip, root })
 }
 
+/// `outline` without the pieces an offset outward by `reach` would close to nothing, their
+/// neighbours run on to where they meet: the outline a pocket round the part is offset from. A
+/// piece between two inside corners gets shorter as it is offset outward (each end by the reach
+/// times the tangent of half the corner's turn), and an offset that has to keep every piece
+/// cannot be made once one is gone: a scanned gear's roots are short pieces a few tenths long. Cut
+/// square there, the outline lies inside the part's by less than 0.42 of the dropped corner's
+/// round, which is under the reach. Counter-clockwise or clockwise alike; an outline with fewer
+/// than four pieces, or whose neighbours would not meet near a piece, is left as it is there.
+pub fn roomy(outline: &Outline, reach: f64) -> Outline {
+    let mut out = outline.clone();
+    if !(reach > 0.0) {
+        return out;
+    }
+    let ring = ring(outline);
+    let area: f64 = (0..ring.len()).map(|i| ring[i].cross(ring[(i + 1) % ring.len()])).sum();
+    let around = if area >= 0.0 { 1.0 } else { -1.0 };
+    loop {
+        let n = out.corners.len();
+        if n < 4 || out.pieces.len() != n {
+            return out;
+        }
+        // A piece's direction as it leaves its first corner and as it reaches its second.
+        let tangents = |k: usize| -> Option<(Vec2, Vec2)> {
+            let (a, b) = (out.corners[k], out.corners[(k + 1) % n]);
+            match out.pieces[k] {
+                Piece::Line => (b - a).normalized().map(|d| (d, d)),
+                Piece::Arc { center, ccw } => {
+                    let turn = if ccw { 1.0 } else { -1.0 };
+                    Some(((a - center).perp().normalized()? * turn, (b - center).perp().normalized()? * turn))
+                }
+            }
+        };
+        // How long each piece is once offset: its own length (an arc's on its new radius), less at
+        // an inside corner and more at an outside one.
+        let after = |k: usize| -> Option<f64> {
+            let (a, b) = (out.corners[k], out.corners[(k + 1) % n]);
+            let (leaves, arrives) = tangents(k)?;
+            let length = match out.pieces[k] {
+                Piece::Line => a.dist(b),
+                Piece::Arc { center, ccw } => {
+                    let radius = a.dist(center);
+                    let mut sweep = angle_to(a - center, b - center);
+                    if ccw && sweep <= 0.0 {
+                        sweep += TAU;
+                    } else if !ccw && sweep >= 0.0 {
+                        sweep -= TAU;
+                    }
+                    // An arc bulging out of the outline grows with the offset, one bulging in shrinks.
+                    let grown = radius + reach * around * if ccw { 1.0 } else { -1.0 };
+                    grown.max(0.0) * sweep.abs()
+                }
+            };
+            let before = tangents((k + n - 1) % n)?.1;
+            let next = tangents((k + 1) % n)?.0;
+            // A corner's turn, positive the way the outline goes round (an outside corner).
+            let corner = |from: Vec2, to: Vec2| reach * (around * angle_to(from, to) / 2.0).clamp(-1.5, 1.5).tan();
+            Some(length + corner(before, leaves) + corner(arrives, next))
+        };
+        let gone = (0..n).filter_map(|k| Some((after(k)?, k))).filter(|(left, _)| *left <= 0.0).min_by(|a, b| a.0.total_cmp(&b.0));
+        let Some((_, k)) = gone else { return out };
+        // Its neighbours' own line or circle, run on to where they meet near it.
+        let carrier = |j: usize| {
+            let (a, b) = (out.corners[j], out.corners[(j + 1) % n]);
+            match out.pieces[j] {
+                Piece::Line => Wall::Line { point: a, direction: unit2(b - a) },
+                Piece::Arc { center, .. } => Wall::Circle { center, radius: a.dist(center) },
+            }
+        };
+        let (before, next) = ((k + n - 1) % n, (k + 1) % n);
+        let (a, b) = (out.corners[k], out.corners[next]);
+        let middle = (a + b) * 0.5;
+        let Some(meet) = cross(&carrier(before), &carrier(next), middle).filter(|c| c.dist(middle) <= a.dist(b) + 4.0 * reach) else { return out };
+        out.corners[next] = meet;
+        out.corners.remove(k);
+        out.pieces.remove(k);
+        out.faces.remove(k);
+    }
+}
+
 /// How an outline is its own mirror image in a line along its plane's X or Y.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mirrored {
@@ -2367,6 +2446,38 @@ mod tests {
             let sharp = prism_outlines(&walls, &loops, 0.2, fill.as_ref());
             assert!(sharp.len() == 1 && sharp[0].corners.len() == 4 && has(&sharp[0], corner), "{sharp:?}");
         }
+    }
+
+    /// A block 40 × 30 with a notch in its top whose two inside corners are each cut by a short
+    /// piece 0.4 long (as a scan's fit leaves a tight inside round): offset outward by 0.5 those
+    /// pieces would close to nothing, so the outline a pocket is offset from has the corners square
+    /// instead; offset by 0.1 they stay; an outside corner's short piece stays either way.
+    #[test]
+    fn pieces_an_offset_would_close_are_cut_square() {
+        let t = 0.4 / std::f64::consts::SQRT_2;
+        let corners = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(40.0, 0.0),
+            Vec2::new(40.0, 30.0 - t),
+            Vec2::new(40.0 - t, 30.0),
+            Vec2::new(28.0, 30.0),
+            Vec2::new(28.0, 20.0 + t),
+            Vec2::new(28.0 - t, 20.0),
+            Vec2::new(12.0 + t, 20.0),
+            Vec2::new(12.0, 20.0 + t),
+            Vec2::new(12.0, 30.0),
+            Vec2::new(0.0, 30.0),
+        ];
+        let outline = Outline { pieces: vec![Piece::Line; corners.len()], faces: vec![None; corners.len()], corners };
+        let wide = roomy(&outline, 0.5);
+        assert_eq!(wide.corners.len(), 9, "the notch's two inside corners are square: {wide:?}");
+        let has = |o: &Outline, p: Vec2| o.corners.iter().any(|c| c.dist(p) < 1e-9);
+        assert!(has(&wide, Vec2::new(28.0, 20.0)) && has(&wide, Vec2::new(12.0, 20.0)), "{wide:?}");
+        assert!(has(&wide, Vec2::new(40.0, 30.0 - t)) && has(&wide, Vec2::new(40.0 - t, 30.0)), "the outside corner keeps its chamfer: {wide:?}");
+        assert_eq!(roomy(&outline, 0.1), outline);
+        // The other way round, the same.
+        let back = Outline { corners: outline.corners.iter().rev().copied().collect(), ..outline.clone() };
+        assert_eq!(roomy(&back, 0.5).corners.len(), 9);
     }
 
     /// A slot 40 × 20 with round ends, a hair off true as a scan leaves it, is its own image left

@@ -545,6 +545,54 @@ fn reconstruct_says_how_a_prisms_outline_repeats_round_its_middle() {
     assert!(oblong["prisms"][0].get("rotational").is_none(), "{oblong}");
 }
 
+/// A nest for the slotted disc (R 20 × 10, eight slots in its rim): a block 10 mm wider than the
+/// disc all round, with a pocket half the disc deep that is the disc's outline grown by the
+/// clearance, and that much deeper. No point of the scan is in the nest's material, and the least
+/// gap between them is the clearance. `clearance` a parameter: changed from 0.3 to 0.5 the nest
+/// rebuilds, with less material and the wider gap.
+#[test]
+fn a_nest_is_cut_from_a_prisms_outline_and_follows_its_clearance() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.cylinder", json!({"radius": 20, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(
+        &mut part,
+        "solid.box",
+        json!({"length": 12, "width": 8, "height": 10, "center": [20, 0, 5], "operation": "cut", "targets": [body], "name": "Slot"}),
+    );
+    run(&mut part, "solid.pattern.circular", json!({"features": ["Slot"], "axis": "Z", "count": 8}));
+    let (mut s, scan) = scanned(&part, &body, 3, "nest");
+    run(&mut s, "parameters.add", json!({"name": "clearance", "expression": "0.3 mm"}));
+    let built = run(&mut s, "scan.nest", json!({"clearance": "clearance"}));
+    let nest = built["solid"].as_str().unwrap().to_owned();
+    assert_eq!(nest, format!("{scan} Nest"), "{built}");
+    assert!((built["depth"].as_f64().unwrap() - 5.0).abs() < 0.05, "{built}");
+    let gap_at = |s: &mut Session| {
+        let d = run(s, "scan.deviation", json!({"body": nest, "tolerance": "0.02 mm", "limit": 2}));
+        assert_eq!(d["clearance"]["fits"], true, "{d}");
+        d["clearance"]["gap"].as_f64().unwrap()
+    };
+    let tight = volume(&s, &nest);
+    let gap = gap_at(&mut s);
+    assert!((gap - 0.3).abs() < 0.03, "the gap is the clearance: {gap}");
+    // The block: 10 wider all round than the disc is across its tips beside the slots (a slot lies
+    // on each axis, 8 wide, so that is 2 × √(20² − 4²)), 15 tall. Less the pocket: the disc's
+    // outline grown by 0.3, 5.3 deep (its own section is a tenth of its volume, its outline about
+    // 250 long with the slots).
+    let across = 2.0 * (20.0f64 * 20.0 - 4.0 * 4.0).sqrt() + 20.0;
+    let (block, section) = (across * across * 15.0, volume(&part, &body) / 10.0);
+    let pocket = block - tight;
+    assert!(pocket > section * 5.3 && pocket < (section + 250.0 * 0.3) * 5.3 * 1.05, "{pocket} for a section of {section}");
+    run(&mut s, "parameters.change", json!({"name": "clearance", "expression": "0.5 mm"}));
+    let loose = volume(&s, &nest);
+    assert!(loose < tight - 20.0, "a wider pocket leaves less: {loose} against {tight}");
+    let gap = gap_at(&mut s);
+    assert!((gap - 0.5).abs() < 0.03, "{gap}");
+    // A second nest of the same scan is refused in words, as is a clearance that is none.
+    assert!(run_err(&mut s, "scan.nest", json!({})).contains("already"));
+    assert!(run_err(&mut s, "scan.nest", json!({"clearance": 0})).contains("`clearance`"));
+}
+
 /// A plate 50 × 30 × 8 centred on the origin, from its scan: its outline is its own mirror image
 /// both ways, so the sketch holds each corner to its image across a centre line and the profile
 /// has two sizes, its length and its width, where four corners placed one by one had eight.
