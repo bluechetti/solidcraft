@@ -2,7 +2,7 @@
 
 # Scan to CAD: what is proven
 
-Made at `ccdf6add9` with uncommitted changes by `cargo xtask scan-bench --full`.
+Made at `f49728234` by `cargo xtask scan-bench --full`.
 
 No head-to-head run against another product exists: nothing here says SolidCraft's output matches any other program's. Every number is against a part whose exact answer is known.
 
@@ -64,8 +64,6 @@ Judges: SolidCraft's own measurements against the scan and the true part, and a 
 | rounded-block | s0.02-missing-30 | refused |  |  |
 | rounded-block | s0.02-turned-25 | pass | scan.extrude_it |  |
 | rounded-block | s0.02-specks | pass | scan.extrude_it |  |
-
-Runs not yet in the lock (`tests/scan-bench.lock.json`): bracket/s0.02-missing-10, bracket/s0.02-missing-30, bracket/s0.02-specks, bracket/s0.02-turned-25, bracket/s0.3, chamfered-prism/s0.02-missing-10, chamfered-prism/s0.02-missing-30, chamfered-prism/s0.02-specks, chamfered-prism/s0.02-turned-25, chamfered-prism/s0.3, drilled-shaft/s0.02-missing-10, drilled-shaft/s0.02-missing-30, drilled-shaft/s0.02-specks, drilled-shaft/s0.02-turned-25, drilled-shaft/s0.3, flange/s0.02-missing-10, flange/s0.02-missing-30, flange/s0.02-specks, flange/s0.02-turned-25, flange/s0.3, plate-holes/s0.02-missing-10, plate-holes/s0.02-missing-30, plate-holes/s0.02-specks, plate-holes/s0.02-turned-25, plate-holes/s0.3, rounded-block/s0.02-missing-10, rounded-block/s0.02-missing-30, rounded-block/s0.02-specks, rounded-block/s0.02-turned-25, rounded-block/s0.3.
 
 ## Capabilities
 
