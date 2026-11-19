@@ -38,9 +38,9 @@ use solidcore_record::brep::Brep as Record;
 use solidcore_ops::sweep::{extrude, Curve, DraftCorner, SweepFrame};
 use solidcore_ops::{
     blend, blend_ordered, blend_with, chamfer_sides, chamfer_sides_facing, edge_faces_along,
-    edges_share_wedge, fillet_variable, fillet_variable_from, make_box, make_cone, make_cylinder,
-    tangent_chain, Blend, BlendOptions, Body, ChamferSecond, CheckLevel, Corners, Error, FitKind,
-    Order, SetBack, Turn, Unblendable,
+    edges_share_wedge, fillet_variable, fillet_variable_curvature_from, fillet_variable_from,
+    make_box, make_cone, make_cylinder, tangent_chain, Blend, BlendOptions, Body, ChamferSecond,
+    CheckLevel, Corners, Error, FitKind, Order, SetBack, Turn, Unblendable,
 };
 
 /// The block's top front edge, 30 long, between the top (z = 10) and the front (y = 0).
@@ -997,6 +997,37 @@ fn a_variable_round_runs_from_the_end_nearest_a_point() {
         fillet_variable_from(&b, 99, [0.0; 3], 1, &knots, &radii),
         Err(Error::Argument)
     );
+}
+
+/// [`fillet_variable_curvature_from`]: a curvature-continuous round whose size runs from 1 to 2
+/// along the block's top front edge (30 long, between the top and the front, square). Each
+/// section square to the edge is the G2 section of the ball there at its own wedge's equal area
+/// thumbweight, which takes off what the ball's circle does, (1 − π/4) r², so the round takes off
+/// (1 − π/4) · 30 · (1 + 2 + 4) / 3; with a law of one radius, (1 − π/4) · 30. The circular round
+/// of the same law takes off its balls' union, a little less than the integral.
+#[test]
+fn a_curvature_round_whose_size_varies_takes_off_the_circles_area() {
+    all_fixes();
+    let knots = [0.0, 0.0, 1.0, 1.0];
+    let near = [0.0, 0.0, 10.0];
+    let cut = 1.0 - PI / 4.0;
+    for (radii, want) in [
+        ([1.0, 1.0], cut * 30.0),
+        ([1.0, 2.0], cut * 30.0 * 7.0 / 3.0),
+    ] {
+        let b = block();
+        fillet_variable_curvature_from(&b, top_front(&b), near, 1, &knots, &radii).unwrap();
+        assert!(b.check(CheckLevel::All).unwrap().is_valid(), "{radii:?}");
+        let removed = ABC - volume(&b);
+        assert!(
+            (removed - want).abs() < 1e-4,
+            "{radii:?}: {removed} vs {want}"
+        );
+    }
+    let round = block();
+    fillet_variable_from(&round, top_front(&round), near, 1, &knots, &[1.0, 2.0]).unwrap();
+    let removed = ABC - volume(&round);
+    assert!(removed < cut * 70.0 && removed > cut * 69.9, "{removed}");
 }
 
 #[test]

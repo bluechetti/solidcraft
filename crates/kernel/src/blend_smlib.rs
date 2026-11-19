@@ -102,6 +102,11 @@ pub(crate) fn fillet_variable(body: &Body, edge_at: Vec3, start: Vec3, spline: &
     imp::variable(body, edge_at, start, spline)
 }
 
+/// [`fillet_variable`] with curvature-continuous (G2) sections.
+pub(crate) fn fillet_variable_g2(body: &Body, edge_at: Vec3, start: Vec3, spline: &RadiusSpline) -> Result<Body> {
+    imp::variable_with(body, edge_at, start, spline, true)
+}
+
 /// The edges `picks` select, in the body's edge order, as a blend resolves them, and per edge
 /// whether a pick passes it over (a seam or a smooth join: never a blend's edge), for a caller
 /// that selects edges to blend ([`crate::tangent_chain`]).
@@ -418,6 +423,11 @@ mod imp {
     }
 
     pub(super) fn variable(body: &Body, edge_at: Vec3, start: Vec3, spline: &RadiusSpline) -> Result<Body> {
+        variable_with(body, edge_at, start, spline, false)
+    }
+
+    /// [`variable`], with curvature-continuous (G2) sections when `curvature`.
+    pub(super) fn variable_with(body: &Body, edge_at: Vec3, start: Vec3, spline: &RadiusSpline, curvature: bool) -> Result<Body> {
         body.require_brep("fillet")?;
         if !start.is_finite() {
             return Err(KernelError::Invalid("the start point must be finite".into()));
@@ -426,8 +436,14 @@ mod imp {
         let next = crate::blend::unfinished_chain(body, &[edge_at], &picked.edges, &picked.hidden)?;
         let [at] = picked.points[..] else { return Err(KernelError::Invalid("one edge".into())) };
         let tol = pick_tolerance(body);
-        run(body, "variable fillet", &picked.edges, |b| {
-            b.fillet_variable(at, tol, [start.x, start.y, start.z], spline.degree, &spline.knots, &spline.radii)
+        let what = if curvature { "G2 variable fillet" } else { "variable fillet" };
+        run(body, what, &picked.edges, |b| {
+            let start = [start.x, start.y, start.z];
+            if curvature {
+                b.fillet_variable_g2(at, tol, start, spline.degree, &spline.knots, &spline.radii)
+            } else {
+                b.fillet_variable(at, tol, start, spline.degree, &spline.knots, &spline.radii)
+            }
         })
         .map_err(|e| crate::blend::with_continuation(e, next))
     }

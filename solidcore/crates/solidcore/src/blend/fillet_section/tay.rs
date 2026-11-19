@@ -351,6 +351,22 @@ pub fn gn_wedge_cos<S: Ring + GnScalar>(
     x
 }
 
+/// Not the fork's: [`gn_wedge_cos`] for a ball whose radius varies along s, `rr` the series
+/// of the product of its radii to the two contacts (a radius law's square), to `order`.
+#[must_use]
+pub fn gn_wedge_cos_over<S: Ring + GnScalar>(
+    f: &[VSer<S>; 2],
+    v: &VSer<S>,
+    rr: &Tay<S>,
+    order: usize,
+) -> Tay<S> {
+    let mut x = gn_wedge_cos(f, v, 1.0, order) / *rr;
+    for i in order + 1..=TAY {
+        x.set(i, S::lift(0.0));
+    }
+    x
+}
+
 /// `sm_GnHalfAngle`: `u = acos(x) / 2`, `u' = -x' / (2 sqrt(1 - x^2))`.
 #[must_use]
 pub fn gn_half_angle<S: TayScalar>(x: &Tay<S>) -> Tay<S> {
