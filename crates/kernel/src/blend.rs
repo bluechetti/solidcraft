@@ -2904,6 +2904,40 @@ mod tests {
         assert_eq!(out.face_count(), body.face_count() + 2);
     }
 
+    /// Two top edges of a 20 × 20 × 10 box rounded curvature-continuously r 1.5 where the upright
+    /// edge between them stays sharp: they meet in a mitre on the plane x = y, which used to be
+    /// refused as "not a closed solid" (the rounds touch the top face to second order where
+    /// their rails cross, and their traced intersection stopped short of that point). Each
+    /// round takes off its section's area A = (1 − π/4) r² (the circle's) along its 20 mm,
+    /// less the section's first moment M about the side wall past the mitre: 2 (20 A − M), with
+    /// 0 < M < A r (the section's centroid lies within r of the wall; solidcore's
+    /// `two_curvature_rounds_meet_in_a_mitre_where_the_third_edge_stays_sharp` integrates M
+    /// from the section and holds the volume to 1e-9). The round's own corner, M = (10 − 3π)
+    /// r³ / 12, is the same formula exactly. The G2 rounds meet the top and the sides with no
+    /// jump in curvature.
+    #[test]
+    fn two_g2_rounds_meet_in_a_mitre_where_the_third_edge_stays_sharp() {
+        let body = crate::build::box_solid(Vec3::ZERO, Vec3::new(20.0, 20.0, 10.0)).unwrap();
+        let edges = [Vec3::new(10.0, 0.0, 10.0), Vec3::new(0.0, 10.0, 10.0)];
+        let r = 1.5;
+        let a = (1.0 - std::f64::consts::FRAC_PI_4) * r * r;
+        let round = fillet(&body, &edges, r).unwrap();
+        let m = (10.0 - 3.0 * std::f64::consts::PI) * r * r * r / 12.0;
+        let off = 4000.0 - crate::measure(&round).unwrap().volume;
+        assert!((off - 2.0 * (20.0 * a - m)).abs() < 1e-6, "round: {off}");
+        let g2 = fillet_g2(&body, &edges, r).unwrap();
+        assert!(g2.validity().is_empty(), "{:?}", g2.validity());
+        assert_eq!(g2.face_count(), body.face_count() + 2);
+        let off = 4000.0 - crate::measure(&g2).unwrap().volume;
+        assert!(off > 2.0 * (20.0 * a - a * r) && off < 40.0 * a, "G2: {off}");
+        let seams = crate::seam_diagnostics(&g2, &[], 33, crate::ContinuityTolerances::default()).unwrap().seams;
+        let tangent: Vec<_> = seams.iter().filter(|s| s.normal_angle_deg.value < 0.01).collect();
+        assert_eq!(tangent.len(), 4, "{seams:?}");
+        for s in tangent {
+            assert!(s.curvature_jump_per_mm.value < 1e-3, "jump {}", s.curvature_jump_per_mm.value);
+        }
+    }
+
     #[test]
     fn g2_fillet_refuses_sections_crossing_a_cap_hole() {
         // The hole lies inside the setback without touching either side face.

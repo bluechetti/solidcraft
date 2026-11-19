@@ -367,22 +367,25 @@ fn interpolate(knots: &[f64], params: &[f64], values: &[[f64; 3]]) -> SplineResu
                     a[r][rc] -= f * a[k][kc];
                 }
             }
-            for d in 0..3 {
-                x[r][d] -= f * x[k][d];
+            let xk = x[k];
+            for (xr, xk) in x[r].iter_mut().zip(xk) {
+                *xr -= f * xk;
             }
         }
     }
     for k in (0..n).rev() {
         for c in k + 1..(k + 4).min(n) {
             if let Some(kc) = col(k, c) {
-                for d in 0..3 {
-                    x[k][d] -= a[k][kc] * x[c][d];
+                let (akc, xc) = (a[k][kc], x[c]);
+                for (xk, xc) in x[k].iter_mut().zip(xc) {
+                    *xk -= akc * xc;
                 }
             }
         }
         let Some(kk) = col(k, k) else { return Err(SplineError::Invalid("collocation".into())) };
-        for d in 0..3 {
-            x[k][d] /= a[k][kk];
+        let akk = a[k][kk];
+        for xk in &mut x[k] {
+            *xk /= akk;
         }
     }
     if x.iter().flatten().any(|v| !v.is_finite()) {
