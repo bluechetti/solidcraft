@@ -896,7 +896,7 @@ fn sketch_outlines(
     let (plane, outlines) = at_world_origin(plane, outlines, x_only);
     let (plane, outlines) = (&plane, outlines.as_slice());
     let create = json!({"plane": {"origin": at(plane.origin), "x_dir": at(plane.x), "y_dir": at(plane.y)}, "name": name});
-    let made = run(s, "sketch.create", create)?;
+    let made = super::new_sketch(s, create)?;
     let id = made.get("sketch").and_then(Value::as_u64).ok_or_else(|| EngineError::Other("the sketch was not made".into()))?;
     if s.model.state().sketch(id).is_none() {
         s.refresh();
@@ -1306,7 +1306,7 @@ fn cut_openings(
         solidcraft_scan::chain::chain(&opening.outline, true, tolerance).ok_or_else(|| bad(cmd, "the opening's outline could not be fitted"))?;
     let origin = axis.point + axis.direction * opening.front;
     let made =
-        run(s, "sketch.create", json!({"plane": {"origin": at(origin), "x_dir": at(opening.x), "y_dir": at(opening.y)}, "name": "Spoke Opening"}))?;
+        super::new_sketch(s, json!({"plane": {"origin": at(origin), "x_dir": at(opening.x), "y_dir": at(opening.y)}, "name": "Spoke Opening"}))?;
     let sketch = made.get("sketch").and_then(Value::as_u64).ok_or_else(|| EngineError::Other("the sketch was not made".into()))?;
     if s.model.state().sketch(sketch).is_none() {
         s.refresh();

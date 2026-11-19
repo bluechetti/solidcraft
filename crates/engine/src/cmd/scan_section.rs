@@ -269,7 +269,7 @@ pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(offset) = p.get("offset").filter(|v| !v.is_null()) {
                 create["offset"] = offset.clone();
             }
-            let reply = run(s, "sketch.create", create)?;
+            let reply = super::new_sketch(s, create)?;
             (reply.get("sketch").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "the sketch was not made"))?, true)
         }
     };
@@ -445,7 +445,7 @@ pub(super) fn sections_along_curve(s: &mut Session, p: &Value) -> Result<Value> 
     let at = |v: solidcore_record::Vec3| [v.x, v.y, v.z];
     for ((plane, outlines), name) in planned.iter().zip(&names) {
         let create = json!({"plane": {"origin": at(plane.origin), "x_dir": at(plane.x), "y_dir": at(plane.y)}, "name": name});
-        let made = run(s, "sketch.create", create)?;
+        let made = super::new_sketch(s, create)?;
         let id = made.get("sketch").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "the sketch was not made"))?;
         if s.model.state().sketch(id).is_none() {
             s.refresh();

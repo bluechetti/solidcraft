@@ -366,6 +366,16 @@ pub fn shown_mesh(s: &Session, name: &str) -> Option<std::sync::Arc<solidcraft_g
     Some(moved)
 }
 
+/// A sketch a scan tool makes (`sketch.create` with `create`), under the first free form of the
+/// name it asks for: `Section`, then `Section (2)`, `Section (3)`. A design holds no two sketches
+/// of one name, and a tool used a second time makes a second sketch, not a refusal.
+pub(super) fn new_sketch(s: &mut Session, mut create: Value) -> Result<Value> {
+    if let Some(name) = create.get("name").and_then(Value::as_str).map(|name| s.doc.free_sketch_name(name)) {
+        create["name"] = Value::String(name);
+    }
+    super::find_command("sketch.create").ok_or_else(|| EngineError::UnknownCommand("sketch.create".into()))?.run_nested(s, &create)
+}
+
 /// `f` given the points and triangles of the scan `name` where it shows ([`shown_mesh`]).
 pub fn with_shown<R>(s: &Session, name: &str, f: impl FnOnce(&[Vec3], &[[u32; 3]]) -> R) -> Option<R> {
     let shown = shown_mesh(s, name)?;
