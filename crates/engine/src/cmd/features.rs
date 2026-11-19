@@ -2962,7 +2962,11 @@ fn pattern_rect(s: &mut Session, p: &Value) -> Result<Value> {
 /// The line a circular pattern or a plane at an angle turns about, as [`axis_line`] reads it,
 /// except that the origin of `{origin, dir}` may be length expressions, kept so the feature
 /// follows them (#10852).
-fn axis_line_exprs(s: &Session, p: &Value, cmd: &str) -> Result<(PointExpr, Vec3, Option<solidcraft_doc::construct::GeoRef>, Option<FeatureName>)> {
+pub(super) fn axis_line_exprs(
+    s: &Session,
+    p: &Value,
+    cmd: &str,
+) -> Result<(PointExpr, Vec3, Option<solidcraft_doc::construct::GeoRef>, Option<FeatureName>)> {
     if let Some(a @ Value::Object(o)) = p.get("axis")
         && o.contains_key("origin")
         && !super::is_model_axis(a)

@@ -1703,6 +1703,40 @@ pub struct ScanTogetherResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Write an inspection report of a scan: one HTML file, pictures inside it. Changes nothing.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanReportParams {
+    /// The scan. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Where to write it: an .html file.
+    pub path: String,
+    /// Its title. Default: the scan's name.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Draw pictures of the design from three sides into it. Default: true.
+    #[serde(default)]
+    pub pictures: Option<bool>,
+}
+
+/// What `scan.report` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanReportResult {
+    pub path: String,
+    pub body: String,
+    pub bytes: usize,
+    /// The report's sections, in order.
+    pub sections: Vec<String>,
+    /// How many pictures it holds, and why none when it holds none.
+    pub pictures: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub no_pictures: Option<String>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// Take the floating pieces off a scan: the pieces (triangles joined through their corners) far
 /// smaller than the largest. A Scan Clean step in the timeline keeps the settings; one undo step.
 #[derive(Debug, Deserialize, JsonSchema)]

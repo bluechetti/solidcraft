@@ -242,7 +242,15 @@ pub fn groups(tab: &str, panel: &str) -> &'static [CommandGroup] {
             CommandGroup { label: "Edges", ids: &["solid.fillet", "solid.chamfer"] },
             CommandGroup {
                 label: "Faces",
-                ids: &["solid.press_pull", "solid.draft", "solid.offset_face", "solid.replace_face", "solid.split_face", "face.delete"],
+                ids: &[
+                    "solid.press_pull",
+                    "solid.draft",
+                    "solid.tilt_face",
+                    "solid.offset_face",
+                    "solid.replace_face",
+                    "solid.split_face",
+                    "face.delete",
+                ],
             },
             CommandGroup { label: "Bodies", ids: &["solid.shell", "solid.combine", "solid.split_body", "solid.scale", "solid.remove"] },
             CommandGroup { label: "Specialise", ids: &["sheet.convert"] },
@@ -726,6 +734,8 @@ pub const SECTIONS: &[Section] = &[
             "scan.measure_line",
             // What the scanner never saw: filled, mirrored or made from sparse points.
             "scan.unseen",
+            // One HTML file of the scan, what was done to it and what was read off it.
+            "scan.report",
             // The scan's own triangles drawn, to see what Reduce Mesh or Remesh made of it.
             "view.scan_triangles",
             "inspect.hole_table",
@@ -1531,6 +1541,7 @@ mod tests {
                 "solid.chamfer",
                 "solid.press_pull",
                 "solid.draft",
+                "solid.tilt_face",
                 "solid.offset_face",
                 "solid.replace_face",
                 "solid.split_face",

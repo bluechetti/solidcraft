@@ -15,7 +15,9 @@ use super::features::{
 use crate::params::{bad, bool_, expr, req_expr, str_, string_list, vec3};
 use crate::schema::align::AlignParams;
 use crate::schema::features::FeatureResult;
-use crate::schema::features_more::{BoundaryFillParams, CoilParams, EmbossParams, RemoveParams, ReplaceFaceParams, RibParams};
+use crate::schema::features_more::{
+    BoundaryFillParams, CoilParams, EmbossParams, LaminateParams, LaminateResult, RemoveParams, ReplaceFaceParams, RibParams, TiltFaceParams,
+};
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{Result, Session};
 
@@ -27,6 +29,8 @@ const BOUNDARY_FILL_CONTRACT: TypedContract<BoundaryFillParams> = TypedContract:
 const COIL_CONTRACT: TypedContract<CoilParams> = TypedContract::new();
 const EMBOSS_CONTRACT: TypedContract<EmbossParams> = TypedContract::new();
 const REPLACE_FACE_CONTRACT: TypedContract<ReplaceFaceParams> = TypedContract::new();
+const TILT_FACE_CONTRACT: TypedContract<TiltFaceParams> = TypedContract::new();
+const LAMINATE_CONTRACT: TypedContract<LaminateParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.boundary_fill", "Boundary Fill", crate::checked!("solid.boundary_fill", boundary_fill))
@@ -67,6 +71,18 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "MODIFY")
         .icon("replace_face")
         .params("faces: [[x,y,z] points on planar faces, or face names from model.faces]; target: plane (XY|XZ|YZ|construction plane|{origin, normal}) | target_face: [x,y,z] on a parallel planar face; body?"),
+    CommandSpec::new("solid.tilt_face", "Tilt Face", crate::checked!("solid.tilt_face", tilt_face))
+        .contract(&TILT_FACE_CONTRACT)
+        .output(output_schema_for::<FeatureResult>)
+        .at("SOLID", "MODIFY")
+        .icon("draft")
+        .params("face: [x,y,z] a point on a planar face; axis: X|Y|Z|construction axis name|{edge: [x,y,z]} (a straight edge of the model)|{origin, dir}: the hinge, running along the face; angle: expr (turned about the axis the right-handed way); body?; name?: the face turned about the axis by the angle, its neighbours meeting it where it now lies, kept as a Draft whose neutral plane is the face's own plane turned a right angle about the axis, pulling the way that plane faces: the face and the axis are found again when the design is made again (a hinge edge moved by an earlier feature, a construction axis moved, a parameter changed), so the tilt follows them; one undo step"),
+    CommandSpec::new("solid.laminate", "Laminate", crate::checked!("solid.laminate", laminate))
+        .contract(&LAMINATE_CONTRACT)
+        .output(output_schema_for::<LaminateResult>)
+        .at("SOLID", "CREATE")
+        .icon("thicken")
+        .params("faces: [[x,y,z] points on the faces to lay up]; body?; plies: [{thickness: expr, material?: name (material.list), name?}, …] 1 to 50, the first against the faces; side?: out|in (default out: the plies stand off the faces the way they face; in: into the body, a mould's skin); chain?: bool (each pick's whole smooth chain of faces): each ply a body of its own, the layer between the faces offset by the plies before it and by its own thickness more (each kept as Offset Surface and Thicken features, following the thicknesses' expressions); one undo step → plies [{name, body, thickness, material?}]"),
     CommandSpec::new("solid.align", "Align", crate::checked!("solid.align", align))
         .at("SOLID", "MODIFY")
         .icon("align")
@@ -412,6 +428,131 @@ fn face_points(s: &Session, p: &Value, k: &str, cmd: &str) -> Result<Vec<Vec3>> 
         return Err(bad(cmd, format!("`{k}` must list 1…1000 points")));
     }
     a.iter().map(|v| super::face::face_ref(s, v, str_(p, "body"), cmd)).collect()
+}
+
+/// The most plies a Laminate lays.
+const MOST_PLIES: usize = 50;
+
+fn laminate(s: &mut Session, p: &Value) -> Result<Value> {
+    use serde_json::json;
+    let cmd = "solid.laminate";
+    let faces = p
+        .get("faces")
+        .and_then(Value::as_array)
+        .filter(|f| !f.is_empty())
+        .ok_or_else(|| bad(cmd, "`faces`: points on the faces to lay the plies on"))?
+        .clone();
+    let plies = p.get("plies").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`plies`: [{thickness, material?, name?}, …]"))?.clone();
+    if plies.is_empty() || plies.len() > MOST_PLIES {
+        return Err(bad(cmd, format!("lay 1 to {MOST_PLIES} plies")));
+    }
+    let inward = match str_(p, "side") {
+        None | Some("out") => false,
+        Some("in") => true,
+        Some(other) => return Err(bad(cmd, format!("`side` is out or in, not `{other}`"))),
+    };
+    let mut thicknesses = Vec::with_capacity(plies.len());
+    for (k, ply) in plies.iter().enumerate() {
+        let t = expr(ply, "thickness").ok_or_else(|| bad(cmd, format!("ply {}: `thickness`", k + 1)))?;
+        check_expr(s, &t, Kind::Length, cmd, "thickness")?;
+        let v = s.doc.eval(&t, Kind::Length).map_err(|e| bad(cmd, format!("ply {}: {e}", k + 1)))?;
+        if !(v.is_finite() && v > 0.0) {
+            return Err(bad(cmd, format!("ply {}: the thickness must be above 0", k + 1)));
+        }
+        thicknesses.push(t);
+    }
+    let run = |s: &mut Session, id: &str, q: Value| -> Result<Value> {
+        super::find_command(id).ok_or_else(|| crate::EngineError::UnknownCommand(id.into()))?.run_nested(s, &q)
+    };
+    let sign = if inward { "-" } else { "" };
+    let mut out = Vec::with_capacity(plies.len());
+    let mut hidden: Vec<String> = Vec::new();
+    for (k, ply) in plies.iter().enumerate() {
+        let name = ply.get("name").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| format!("Ply {}", k + 1));
+        // The faces offset by the plies before this one: the surface the ply is laid on.
+        let before = if k == 0 {
+            "0 mm".to_owned()
+        } else {
+            format!("{sign}({})", thicknesses[..k].iter().map(|t| format!("({})", t.as_str())).collect::<Vec<_>>().join(" + "))
+        };
+        let mut q = json!({"faces": faces, "distance": before, "name": format!("{name} surface")});
+        for key in ["body", "chain"] {
+            if let Some(v) = p.get(key).filter(|v| !v.is_null()) {
+                q[key] = v.clone();
+            }
+        }
+        let laid = run(s, "surface.offset", q)?;
+        let surface = laid["created_bodies"]
+            .get(0)
+            .and_then(Value::as_str)
+            .ok_or_else(|| bad(cmd, format!("ply {}: the faces could not be offset", k + 1)))?
+            .to_owned();
+        let thickness = if inward { format!("-({})", thicknesses[k].as_str()) } else { thicknesses[k].as_str().to_owned() };
+        let made =
+            run(s, "surface.thicken", json!({"bodies": [surface], "thickness": thickness, "operation": "new", "name": name, "body_name": name}))?;
+        let made_body = made["created_bodies"]
+            .get(0)
+            .and_then(Value::as_str)
+            .ok_or_else(|| bad(cmd, format!("ply {}: the surface could not be thickened", k + 1)))?
+            .to_owned();
+        // The surface it was laid on is only the ply's start: hidden, with the rest, at the end.
+        hidden.push(surface);
+        let material = ply.get("material").and_then(Value::as_str).map(str::to_owned);
+        if let Some(m) = &material {
+            run(s, "material.assign", json!({"bodies": [made_body], "material": m}))?;
+        }
+        let body = made_body;
+        out.push(json!({"name": name, "body": body, "thickness": thicknesses[k].as_str(), "material": material}));
+    }
+    run(s, "browser.visibility", json!({"visible": false, "items": hidden}))?;
+    Ok(json!({"plies": out}))
+}
+
+/// The most a tilt's hinge may be off running along its face (the sine of the angle).
+const HINGE_ALONG: f64 = 0.0175;
+
+fn tilt_face(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "solid.tilt_face";
+    let at = p.get("face").and_then(vec3).ok_or_else(|| bad(cmd, "`face`: a point [x, y, z] on the planar face to tilt"))?;
+    let mut picks = serde_json::json!({"faces": [[at.x, at.y, at.z]]});
+    if let Some(b) = p.get("body").filter(|b| !b.is_null()) {
+        picks["body"] = b.clone();
+    }
+    let faces = face_points(s, &picks, "faces", cmd)?;
+    let refs = picks.get("faces").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    let picked = super::face::faces_body(s, &picks, refs, &faces);
+    let normal =
+        faces.first().and_then(|f| super::face::face_normal_in(s, *f, picked.lookup())).ok_or_else(|| bad(cmd, "the face to tilt must be planar"))?;
+    let (axis_origin, axis_dir, line, axis_feature) = super::features::axis_line_exprs(s, p, cmd)?;
+    let line = line.or_else(|| axis_feature.map(|name| solidcraft_doc::construct::GeoRef::Axis { name }));
+    let off = axis_dir.normalized().map_or(1.0, |d| d.dot(normal).abs());
+    if off > HINGE_ALONG {
+        return Err(bad(cmd, format!("the axis must run along the face, as a hinge: it is {:.1}° off", off.clamp(-1.0, 1.0).asin().to_degrees())));
+    }
+    let angle = req_expr(cmd, p, "angle")?;
+    check_expr(s, &angle, Kind::Angle, cmd, "angle")?;
+    // The neutral plane: the face's own plane, attached to it exactly, turned a right angle about
+    // the hinge. The draft turns the face about where the two meet (the hinge), pulling along
+    // the neutral plane's normal as it is each time (a pull of zero), so the tilt follows the
+    // face and the hinge.
+    let mut face = serde_json::json!({"face": [at.x, at.y, at.z]});
+    if let Some(b) = p.get("body").filter(|b| !b.is_null()) {
+        face["body"] = b.clone();
+    }
+    let base = super::sketch::face::capture(s, &face, cmd)?;
+    super::sketch::face::capture_positions(s, &base)?;
+    let neutral = solidcraft_doc::PlaneRef::AtAngle {
+        base: Box::new(base),
+        axis_origin,
+        axis_dir,
+        angle: "90 deg".into(),
+        line: line.map(Box::new),
+        direction_only: false,
+        pivot: None,
+    };
+    let body = picked.body.clone().map(BodyName);
+    let kind = FeatureKind::Draft { faces: faces.into_iter().map(FacePick).collect(), angle, neutral, pull: Dir(Vec3::ZERO), body };
+    super::features::add_face_feature(&picked, s, p, kind)
 }
 
 fn replace_face(s: &mut Session, p: &Value) -> Result<Value> {

@@ -26,10 +26,10 @@ use crate::schema::scan::{
     ScanFittedPlane, ScanFittedSphere, ScanFittedTorus, ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult,
     ScanHolesParams, ScanHolesResult, ScanMarkersParams, ScanMarkersResult, ScanMeasureLineParams, ScanMeasureLineResult, ScanMergeSurfacesParams,
     ScanMergeSurfacesResult, ScanMirror, ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams,
-    ScanReduceResult, ScanRemoveFillParams, ScanRemoveFillResult, ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult,
-    ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams,
-    ScanSymmetryParams, ScanSymmetryResult, ScanTogetherParams, ScanTogetherResult, ScanUnseenParams, ScanUnseenResult, ScanWrapSurfaceParams,
-    ScanWrapSurfaceResult,
+    ScanReduceResult, ScanRemoveFillParams, ScanRemoveFillResult, ScanRepairParams, ScanRepairResult, ScanReportParams, ScanReportResult,
+    ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult,
+    ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanTogetherParams, ScanTogetherResult, ScanUnseenParams,
+    ScanUnseenResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -49,6 +49,7 @@ const EDIT_SURFACE_CONTRACT: TypedContract<ScanEditSurfaceParams> = TypedContrac
 const CURVE_CONTRACT: TypedContract<ScanCurveParams> = TypedContract::new();
 const MEASURE_LINE_CONTRACT: TypedContract<ScanMeasureLineParams> = TypedContract::new();
 const UNSEEN_CONTRACT: TypedContract<ScanUnseenParams> = TypedContract::new();
+const REPORT_CONTRACT: TypedContract<ScanReportParams> = TypedContract::new();
 const TOGETHER_CONTRACT: TypedContract<ScanTogetherParams> = TypedContract::new();
 const EDIT_NET_CONTRACT: TypedContract<ScanEditNetParams> = TypedContract::new();
 const FREE_FORM_CONTRACT: TypedContract<ScanFreeFormParams> = TypedContract::new();
@@ -286,6 +287,14 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&UNSEEN_CONTRACT)
         .output(output_schema_for::<ScanUnseenResult>)
         .params("body?: mesh body (default: the selected or only one): the surface of the scan its scanner never saw, read from the geometry: triangles whose middle lies more than 1.5 scanned triangle sides from the scan as it came in (before its Scan Clean steps; a later Move carries it along), all of a mirror fill, or, for a surface made from points, from every point; something thinner than that taken off (a sticker) reads as seen; fits and the deviation map warn when they lean on it; changes nothing → body, source (as_scanned|cleaned|mirror_fill|mesh_from_points|changed), triangles, area, share, patches [{centre, area, triangles}] largest first"),
+    CommandSpec::new("scan.report", "Inspection Report", crate::checked!("scan.report", report::report))
+        .at("SCAN", "CHECK")
+        .icon("export")
+        .read_only()
+        .noundo()
+        .contract(&REPORT_CONTRACT)
+        .output(output_schema_for::<ScanReportResult>)
+        .params("body?: the scan (default: the selected or only one); path: an .html file; title?: text (default: the scan's name); pictures?: bool (default true: the design from three sides, drawn by the installed renderer): one HTML file, pictures inside it, that opens in any browser and prints to PDF: what the scan is (size, fineness, noise, holes, pieces, what its scanner never saw), what was done to it (its Scan Clean steps and what was made from it), the surface its scanner never saw, the deviation map when one is shown for it, the construction features, the pictures; changes nothing → path, body, bytes, sections, pictures, no_pictures?"),
     CommandSpec::new("scan.deviation", "Scan Deviation", crate::checked!("scan.deviation", deviation))
         .at("SCAN", "CHECK")
         .icon("curvature_map")
@@ -1881,6 +1890,9 @@ pub mod reconstruct;
 
 #[path = "scan_refit.rs"]
 pub mod refit;
+
+#[path = "scan_report.rs"]
+pub mod report;
 
 #[path = "scan_together.rs"]
 pub mod together;
