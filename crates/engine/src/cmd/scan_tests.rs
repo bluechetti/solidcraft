@@ -543,6 +543,37 @@ fn scan_deviation_measures_the_scan_against_the_model() {
     assert!(err.contains("more than"), "{err}");
 }
 
+/// A plate's scan with a dent 1.5 deep over a round patch of radius 8, against the plate's solid:
+/// Deviation gives the volume worn off (π R² D / 2 for the dent's bowl) and the one region it is,
+/// below the model, deepest at its middle; nothing above. Neither the scan nor a closed pair of
+/// them is needed for it.
+#[test]
+fn scan_deviation_measures_the_volume_and_the_region_of_a_dent() {
+    let (radius, depth) = (8.0, 1.5);
+    let triangles: Vec<[Vec3; 3]> = fine_box(Vec3::ZERO, Vec3::new(40.0, 40.0, 10.0), 80)
+        .into_iter()
+        .map(|t| {
+            t.map(|p| {
+                let r = (p.x - 20.0).hypot(p.y - 20.0) / radius;
+                if (p.z - 10.0).abs() < 1e-9 && r < 1.0 { Vec3::new(p.x, p.y, p.z - depth * (1.0 - r * r)) } else { p }
+            })
+        })
+        .collect();
+    let (mut s, _) = session_with_triangles("dent", &triangles);
+    run(&mut s, "solid.box", json!({"body_name": "Plate", "operation": "new", "length": 40, "width": 40, "height": 10, "center": [20, 20, 5]}));
+    let reply = run(&mut s, "scan.deviation", json!({"tolerance": "0.05 mm", "limit": 2}));
+    let expected = std::f64::consts::PI * radius * radius * depth / 2.0;
+    let lost = reply["volume_below"].as_f64().unwrap();
+    assert!((lost - expected).abs() < 0.03 * expected, "{lost} against {expected}: {reply}");
+    assert!(reply["volume_above"].as_f64().unwrap() < 0.01 * expected && reply["area_above"].as_f64().unwrap() < 1.0, "{reply}");
+    assert_eq!((reply["regions_found"].as_u64(), reply["regions"].as_array().map(Vec::len)), (Some(1), Some(1)), "{reply}");
+    let dent = &reply["regions"][0];
+    assert_eq!(dent["side"], "below", "{reply}");
+    assert!((dent["deepest"].as_f64().unwrap() - depth).abs() < 1e-3 && (dent["volume"].as_f64().unwrap() - lost).abs() < 1e-9, "{reply}");
+    let at: Vec<f64> = dent["at"].as_array().unwrap().iter().filter_map(Value::as_f64).collect();
+    assert!((at[0] - 20.0).abs() < 1e-3 && (at[1] - 20.0).abs() < 1e-3 && (at[2] - 8.5).abs() < 1e-3, "{reply}");
+}
+
 /// The model as an STL (as a part's CAD often comes, T-LESS's among them): the scan is measured
 /// against the mesh as against the solid it was made from, and with no solid in the design the
 /// other mesh is the model; a scan is not measured against itself.

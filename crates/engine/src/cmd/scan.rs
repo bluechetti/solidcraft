@@ -21,13 +21,13 @@ use crate::params::{bad, str_};
 use crate::schema::scan::{
     ScanAddFaceParams, ScanAddFaceResult, ScanBase, ScanBasesParams, ScanBasesResult, ScanCloseSurfaceParams, ScanCloseSurfaceResult,
     ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams, ScanDeviationPin, ScanDeviationPinParams,
-    ScanDeviationPinResult, ScanDeviationResult, ScanEditNetParams, ScanEditNetResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitMake,
-    ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere,
-    ScanFittedTorus, ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult,
-    ScanMarkersParams, ScanMarkersResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror, ScanMirrorFreeFormParams,
-    ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams, ScanRepairResult,
-    ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult,
-    ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
+    ScanDeviationPinResult, ScanDeviationRegion, ScanDeviationResult, ScanEditNetParams, ScanEditNetResult, ScanEditSurfaceParams,
+    ScanEditSurfaceResult, ScanFitMake, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder,
+    ScanFittedPlane, ScanFittedSphere, ScanFittedTorus, ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult,
+    ScanHolesParams, ScanHolesResult, ScanMarkersParams, ScanMarkersResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror,
+    ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams,
+    ScanRepairResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams,
+    ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -1108,6 +1108,9 @@ fn length(s: &Session, p: &Value, key: &str, default: f64, cmd: &str) -> Result<
     Ok(v)
 }
 
+/// The most regions beyond the tolerance a Deviation reply lists (the largest volumes).
+const DEVIATION_REGIONS: usize = 8;
+
 /// The share of a mesh's corners drawn (on exact flat faces) from which it reads as a CAD model's.
 const DRAWN_CAD: f64 = 0.05;
 
@@ -1164,6 +1167,12 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         limit: None,
         max_above_at: None,
         max_below_at: None,
+        area_below: None,
+        area_above: None,
+        volume_below: None,
+        volume_above: None,
+        regions: Vec::new(),
+        regions_found: None,
         bands: None,
         pins: Vec::new(),
         param_warnings: Vec::new(),
@@ -1267,6 +1276,23 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let at = |i: Option<usize>| i.and_then(|i| Some((*mesh.positions.get(i)?, *d.values.get(i)?)));
     let (max_above_at, max_below_at) = (at(d.max_above_at), at(d.max_below_at));
+    // How much lies beyond the tolerance, and where: the volume worn off or added, region by region.
+    let beyond = solidcraft_scan::deviation::beyond(&mesh.positions, &mesh.triangles, &d.values, tolerance);
+    let regions: Vec<ScanDeviationRegion> = beyond
+        .regions
+        .iter()
+        .take(DEVIATION_REGIONS)
+        .filter_map(|r| {
+            let q = mesh.positions.get(r.at)?;
+            Some(ScanDeviationRegion {
+                side: if r.below { "below" } else { "above" }.into(),
+                area: r.area,
+                volume: r.volume,
+                deepest: r.deepest,
+                at: [q.x, q.y, q.z],
+            })
+        })
+        .collect();
     let pins: Vec<(Vec3, f32)> =
         pins.into_iter().filter_map(|q| nearest_point(&mesh.positions, q)).filter_map(|(i, q)| Some((q, *d.values.get(i)?))).collect();
     let shown_pins = pins.iter().copied().map(pin_of).collect();
@@ -1301,6 +1327,12 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         limit: Some(limit),
         max_above_at: max_above_at.map(|(q, _)| [q.x, q.y, q.z]),
         max_below_at: max_below_at.map(|(q, _)| [q.x, q.y, q.z]),
+        area_below: Some(beyond.area_below),
+        area_above: Some(beyond.area_above),
+        volume_below: Some(beyond.volume_below),
+        volume_above: Some(beyond.volume_above),
+        regions_found: Some(beyond.regions.len()),
+        regions,
         bands: Some(bands),
         pins: shown_pins,
         ..empty

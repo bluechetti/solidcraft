@@ -478,6 +478,19 @@ pub struct ScanMarkersResult {
     pub param_warnings: Vec<String>,
 }
 
+/// A patch of the scan beyond the tolerance on one side of the model.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanDeviationRegion {
+    /// `below` (inside the model) or `above` (outside it).
+    pub side: String,
+    /// Its area on the scan (mm²), the volume between it and the model (mm³), and its largest
+    /// distance from the model (mm) with the place.
+    pub area: f64,
+    pub volume: f64,
+    pub deepest: f64,
+    pub at: [f64; 3],
+}
+
 /// What `scan.deviation` returns.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanDeviationResult {
@@ -519,6 +532,23 @@ pub struct ScanDeviationResult {
     pub max_above_at: Option<[f64; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_below_at: Option<[f64; 3]>,
+    /// What lies beyond the tolerance, as area on the scan (mm²) and volume between the scan and
+    /// the model (mm³; each scan point's distance times the area it stands for): `below` inside
+    /// the model (material missing: wear, a dent), `above` outside it. Neither needs to be closed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub area_below: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub area_above: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_below: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_above: Option<f64>,
+    /// The patches beyond the tolerance (joined along the scan's edges, one side of the model
+    /// each), the largest volumes first, at most 8, and how many there are in all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<ScanDeviationRegion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regions_found: Option<usize>,
     /// The colour steps on each side of within, 0 for a smooth scale.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bands: Option<u32>,

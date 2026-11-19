@@ -78,6 +78,132 @@ pub fn measure(points: &[Vec3], model: &Mesh, tolerance: f64, reach: f64) -> Dev
     }
 }
 
+/// A patch of the scan beyond the tolerance on one side of the model: a dent, a worn place, a
+/// lump of extra material.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Region {
+    /// Inside the model (material missing: wear, a dent) or outside it (material added).
+    pub below: bool,
+    /// The area of the model it lies over (mm²) and the volume between it and the model (mm³):
+    /// each scan point's distance times the area it stands for.
+    pub area: f64,
+    pub volume: f64,
+    /// Its largest distance from the model (mm, unsigned) and the scan point where.
+    pub deepest: f64,
+    pub at: usize,
+}
+
+/// What of the scan lies beyond the tolerance: areas (mm²) and volumes (mm³) above and below the
+/// model, and the regions they fall into, the largest volume first.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Beyond {
+    pub area_above: f64,
+    pub area_below: f64,
+    pub volume_above: f64,
+    pub volume_below: f64,
+    pub regions: Vec<Region>,
+}
+
+/// What of the scan (`positions`, `triangles`) lies beyond `tolerance` of the model, from each
+/// point's distance (`values`, as [`measure`] gives them for the scan's points). Each point stands
+/// for a third of the area of its triangles as the model sees them (a triangle leaning against the
+/// model's surface counts by what it covers of it), and the volume between scan and model there is
+/// that area times its distance. Neither scan nor model needs to be closed. A region is points beyond the tolerance on one side, joined along the
+/// scan's edges.
+pub fn beyond(positions: &[Vec3], triangles: &[[u32; 3]], values: &[f32], tolerance: f64) -> Beyond {
+    let n = positions.len().min(values.len());
+    let mut area = vec![0.0f64; n];
+    for t in triangles {
+        let [a, b, c] = t.map(|i| i as usize);
+        if a >= n || b >= n || c >= n {
+            continue;
+        }
+        let (u, v) = (positions[b] - positions[a], positions[c] - positions[a]);
+        let cross = u.cross(v);
+        let twice = cross.len();
+        if !(twice > 0.0 && twice.is_finite()) {
+            continue;
+        }
+        // The triangle's area as the model sees it: a triangle leaning against the model's
+        // surface (a dent's wall) covers less of it than its own area, by the cosine of the lean.
+        // The distance changes along the triangle at the sine of that lean, so its slope across
+        // the triangle (from the three corners' distances) gives the cosine.
+        let (da, db, dc) = (f64::from(values[a]), f64::from(values[b]), f64::from(values[c]));
+        let facing = if da.is_finite() && db.is_finite() && dc.is_finite() {
+            let normal = cross / twice;
+            let slope = (normal.cross(v) * (db - da) + u.cross(normal) * (dc - da)) / twice;
+            (1.0 - slope.len2().min(1.0)).sqrt()
+        } else {
+            1.0
+        };
+        let third = facing * twice / 6.0;
+        area[a] += third;
+        area[b] += third;
+        area[c] += third;
+    }
+    // Which side each point is beyond the tolerance on: 1 above, -1 below, 0 within or unmeasured.
+    let side: Vec<i8> = values[..n]
+        .iter()
+        .map(|&v| {
+            let v = f64::from(v);
+            if !v.is_finite() || v.abs() <= tolerance {
+                0
+            } else if v > 0.0 {
+                1
+            } else {
+                -1
+            }
+        })
+        .collect();
+    // Points of one side joined along the scan's edges are one region.
+    let mut parent: Vec<u32> = (0..n as u32).collect();
+    fn root(parent: &mut [u32], mut i: u32) -> u32 {
+        while parent[i as usize] != i {
+            let up = parent[parent[i as usize] as usize];
+            parent[i as usize] = up;
+            i = up;
+        }
+        i
+    }
+    for t in triangles {
+        let [a, b, c] = *t;
+        for (x, y) in [(a, b), (b, c), (c, a)] {
+            let (i, j) = (x as usize, y as usize);
+            if i < n && j < n && side[i] != 0 && side[i] == side[j] {
+                let (ri, rj) = (root(&mut parent, x), root(&mut parent, y));
+                if ri != rj {
+                    parent[ri.max(rj) as usize] = ri.min(rj);
+                }
+            }
+        }
+    }
+    let mut out = Beyond::default();
+    let mut regions: std::collections::HashMap<u32, Region> = std::collections::HashMap::new();
+    for i in 0..n {
+        if side[i] == 0 {
+            continue;
+        }
+        let (distance, below) = (f64::from(values[i]).abs(), side[i] < 0);
+        let volume = area[i] * distance;
+        if below {
+            out.area_below += area[i];
+            out.volume_below += volume;
+        } else {
+            out.area_above += area[i];
+            out.volume_above += volume;
+        }
+        let region = regions.entry(root(&mut parent, i as u32)).or_insert(Region { below, area: 0.0, volume: 0.0, deepest: 0.0, at: i });
+        region.area += area[i];
+        region.volume += volume;
+        if distance > region.deepest {
+            (region.deepest, region.at) = (distance, i);
+        }
+    }
+    out.regions = regions.into_values().collect();
+    out.regions.sort_by(|a, b| b.volume.total_cmp(&a.volume).then(a.at.cmp(&b.at)));
+    out
+}
+
 /// Where a deviation sits on the colour scale, -1 to 1: 0 within the tolerance, rising to ±1 at the
 /// limit and held there beyond it; `None` for a point the model leaves out.
 pub fn scale(value: f32, tolerance: f64, limit: f64) -> Option<f64> {
@@ -120,6 +246,57 @@ pub fn banded(s: f64, bands: u32) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    /// A flat 40 × 40 scan with a dent 1.5 deep over a round patch of radius 8, against the flat
+    /// model: the volume lost is the dent's (π R² D / 2 for its parabolic bowl), one region below
+    /// the model, deepest at its middle; nothing above. The scan is open, and so is the model.
+    #[test]
+    fn a_dents_volume_and_region_are_read_off_an_open_scan() {
+        use super::*;
+        let (n, size, radius, depth) = (160u32, 40.0, 8.0, 1.5);
+        let at = |i: u32, j: u32| {
+            let (x, y) = (size * f64::from(i) / f64::from(n) - size / 2.0, size * f64::from(j) / f64::from(n) - size / 2.0);
+            let r = x.hypot(y) / radius;
+            Vec3::new(x, y, if r < 1.0 { -depth * (1.0 - r * r) } else { 0.0 })
+        };
+        let index = |i: u32, j: u32| i * (n + 1) + j;
+        let positions: Vec<Vec3> = (0..=n).flat_map(|i| (0..=n).map(move |j| at(i, j))).collect();
+        let mut triangles = Vec::new();
+        for i in 0..n {
+            for j in 0..n {
+                triangles.push([index(i, j), index(i + 1, j), index(i + 1, j + 1)]);
+                triangles.push([index(i, j), index(i + 1, j + 1), index(i, j + 1)]);
+            }
+        }
+        let half = size / 2.0;
+        let model = Mesh {
+            positions: vec![Vec3::new(-half, -half, 0.0), Vec3::new(half, -half, 0.0), Vec3::new(half, half, 0.0), Vec3::new(-half, half, 0.0)],
+            triangles: vec![[0, 1, 2], [0, 2, 3]],
+            ..Mesh::default()
+        };
+        let d = measure(&positions, &model, 0.05, 10.0);
+        let found = beyond(&positions, &triangles, &d.values, 0.05);
+        let expected = std::f64::consts::PI * radius * radius * depth / 2.0;
+        assert!((found.volume_below - expected).abs() < 0.02 * expected, "{} against {expected}", found.volume_below);
+        assert!(found.volume_above == 0.0 && found.area_above == 0.0, "{found:?}");
+        assert_eq!(found.regions.len(), 1, "{:?}", found.regions);
+        let dent = found.regions[0];
+        assert!(dent.below && (dent.deepest - depth).abs() < 1e-6 && positions[dent.at].x.hypot(positions[dent.at].y) < 1e-9, "{dent:?}");
+        let patch = std::f64::consts::PI * radius * radius;
+        assert!((dent.area - patch).abs() < 0.1 * patch && (dent.volume - found.volume_below).abs() < 1e-9, "{dent:?}");
+        // Two dents apart are two regions, the larger volume first.
+        let mut twice = positions.clone();
+        for p in &mut twice {
+            let r = (p.x - 14.0).hypot(p.y - 14.0) / 3.0;
+            if r < 1.0 {
+                p.z = -0.6 * (1.0 - r * r);
+            }
+        }
+        let d = measure(&twice, &model, 0.05, 10.0);
+        let found = beyond(&twice, &triangles, &d.values, 0.05);
+        assert_eq!(found.regions.len(), 2, "{:?}", found.regions);
+        assert!(found.regions[0].volume > found.regions[1].volume && (found.regions[1].deepest - 0.6).abs() < 0.02, "{:?}", found.regions);
+    }
+
     use super::*;
 
     /// A closed box mesh from `lo` to `hi`, wound outward.
