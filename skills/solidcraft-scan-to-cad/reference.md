@@ -52,7 +52,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | `scan.survey {}` | first look, changes nothing | `own_size`, `noise`, `smoothing`, `holes`, `floating`, `tangled_edges`, `crossing_faces`, `sheet_like`, `shapes`, `next[{command, why, params}]` |
 | `scan.find_all {}` | regions of the scan read as planes, cylinders, spheres, cones, tori or freeform (a view, no undo step) | `shapes[{index, kind, area, point, direction?, radius?, hole?}]`, `in_shapes`, `noise` |
 | `scan.reconstruct {}` | what the shapes make: prisms, a turned part, holes, repeats, fillets (reads only) | `prisms`, `turned`, `holes`, `repeats`, `proposals[{command, params}]`, `note` |
-| `scan.symmetry {}` (`"saved"` or `"triangles"`: the mirror plane of that region alone) | the mirror plane, kept as a construction plane | `mirror {point, normal, rms, coverage, symmetric}`, `region` |
+| `scan.symmetry {}` (`"saved"` or `"triangles"`: the mirror plane of that region alone) | the mirror plane, kept as a construction plane | `mirror {point, normal, rms, coverage, symmetric, partly?}`: `partly` says how much of a mirror image has no match (one-sided parts, not noise); `region` |
 | `scan.bases {}` | the ways the scan could stand, for `scan.stand_on_base {"base": n}` | `bases[{kind, normal, area, share}]` |
 
 ## Clean (each rewrites the scan, one undo step)
@@ -81,9 +81,10 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | `scan.reconstruct_rest {}` | what the built body leaves of the scan unexplained, read and built piece by piece |
 | `scan.pipe_it {}` | a bar bent along a flat path (`pipe`): the path's lines and arcs swept |
 | `scan.coil_it {}` | a coil spring (`coil`): the wire wound at the pitch and turns read |
-| `scan.loft_it {}` | no prism, turned part, pipe or coil (`loft`): slices from end to end lofted |
+| `scan.loft_it {}` | no prism, turned part, pipe or coil (`loft`): slices from end to end lofted; for a wing or a blade, `scan.reconstruct`'s `loft.stations` give each section's `chord`, `twist` (degrees from the first), `thickness_share`, `thickest_at`, `camber_share` and `naca` ("0015" when it is one within the scan's tolerance); the sections' splines are held as scanned, with no size for each point |
 | `scan.fillet_it {}` | rounds measured off the scan, one Fillet per radius |
 | `scan.chamfer_it {}` | chamfers read off the scan |
+| `scan.nest {"clearance": "clearance"}` | a block (`<scan> Nest`) with a pocket the part seats in: the prism's outline offset by the clearance (a sketch offset, so a parameter named there rebuilds it) and cut `deep` (0.5) of the part's depth; `margin` of block round it. The pocket is cut the clearance and an `allowance` larger (replied; measured unless given: how far the scan stands proud of the fitted outline or of the end it sits on), so the least gap is the clearance. Square-walled prisms only. Check it with `scan.deviation {"body": "<scan> Nest"}` → `clearance.gap` |
 | `scan.fit_plane {"point": [x,y,z]}` | construction plane; reply `plane`, `rms`, `max` |
 | `scan.fit_cylinder {"point": [x,y,z]}` | construction axis; reply `cylinder {point, axis, radius, diameter, length}` |
 | `scan.fit_sphere {}`, `scan.fit_cone {}`, `scan.fit_torus {}` | the same for those shapes |

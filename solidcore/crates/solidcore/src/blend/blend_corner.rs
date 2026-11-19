@@ -48,19 +48,28 @@ use crate::blend::fillet_corner::p1::{
 use crate::blend::fillet_corner::p3::FilletCorner;
 use crate::blend::fillet_corner::topology::check_tangential_edgeuse_at_vertex;
 use crate::blend::fillet_exact::{classify_exact_blend, BlendQuadric, BlendSpine, QuadricKind};
-use crate::blend::fillet_geom::p1::{FilletBrep, FilletEdgeType, FilletSolverId, FilletVertexType};
+use crate::blend::fillet_geom::p1::{
+    FilletBrep, FilletEdgeType, FilletGeomId, FilletSolverId, FilletVertexType,
+};
 use crate::blend::fillet_geom::p4::set_edge_curve;
-use crate::blend::fillet_solver::p1::{FilletSolverOps, FilletSurfaceGeneratorType};
+use crate::blend::fillet_solver::p1::{
+    FilletSolverOps, FilletSurfaceGenerator, FilletSurfaceGeneratorType,
+};
 use crate::curve::curve::Curve;
 use crate::error::{EntityRef, Result, SolidError};
+use crate::geom::extent1d::Extent1d;
 use crate::geom::global_solver::SolverOperation;
 use crate::intersect::surface_intersector::p1::SrfIndex;
 use crate::kernel::Kernel;
 use crate::math::{Point2, Point3, Vec3, EFF_ZERO};
 use crate::nurbs::b_spline_curve::p1::{BSplineCurveForm, CanonicalData, KnotType};
+use crate::nurbs::b_spline_curve::p2::ControlPointForm;
 use crate::nurbs::b_spline_curve::BSplineCurve;
+use crate::nurbs::b_spline_surface::p1::SurfParamType;
+use crate::nurbs::b_spline_surface::p2::IsoCurveOptions;
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
 use crate::nurbs::knots::Side;
+use crate::surface::procedural_blend::BlendRef;
 use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::Surface;
 use crate::topology::edgeuse::p1 as eu1;
@@ -577,6 +586,7 @@ pub fn exact_mitre_curve(
     let mut axis = [Vec3::default(); 2];
     let mut radius = [0.0_f64; 2];
     let mut geoms = [None; 2];
+    let mut kinds = [None; 2];
     for ii in 0..2 {
         let eu = eus.get(ii).copied().ok_or_else(nul)?;
         let g = pseudo.fillet_edgeuse(eu)?.fillet_geom().ok_or_else(nul)?;
@@ -589,14 +599,33 @@ pub fn exact_mitre_curve(
             .ok_or_else(nul)?;
         let tsect = pseudo.fillet_vertexuse(vu)?.tsect_pnt().clone();
         let ops = solvers.ops(solver_id)?;
-        let blend = classify_exact_blend(&mut *ops, k, target, &tsect)?;
-        // Open gap: a round on a circular spine (a torus) has no exact mitre here yet; the
-        // mitre is then the rounds' certified SSI curve
-        let circular = ops.solver().fsg.as_ref().is_some_and(|f| {
-            f.fillet_surface_generator_type() == FilletSurfaceGeneratorType::Circular
-        });
-        if blend.spine != BlendSpine::Line || !circular {
-            return Ok(false);
+        let kind = ops
+            .solver()
+            .fsg
+            .as_ref()
+            .map(FilletSurfaceGenerator::fillet_surface_generator_type);
+        // Not the fork's: two G^n sections (curvature rounds) of one constant size on
+        // straight spines between planes are each one section swept along a line, so the
+        // mitre is that section's affine image too ([`gn_mitre_curve`])
+        let ball_radius = match kind {
+            Some(FilletSurfaceGeneratorType::Circular) => {
+                let blend = classify_exact_blend(&mut *ops, k, target, &tsect)?;
+                // Open gap: a round on a circular spine (a torus) has no exact mitre here
+                // yet; the mitre is then the rounds' certified SSI curve
+                if blend.spine != BlendSpine::Line {
+                    return Ok(false);
+                }
+                blend.radius
+            }
+            Some(FilletSurfaceGeneratorType::BlendCurve) => {
+                let mut r = 0.0;
+                ops.setup_offset_values(&tsect, Some(&mut r))?;
+                r.abs()
+            }
+            _ => return Ok(false),
+        };
+        if let Some(slot) = kinds.get_mut(ii) {
+            *slot = kind;
         }
         let solver = ops.solver();
         let mut on = [Point3::default(); 2];
@@ -626,9 +655,14 @@ pub fn exact_mitre_curve(
         {
             *c = on0;
             *a = dir;
-            *r = blend.radius;
+            *r = ball_radius;
         }
     }
+    let [kind0, kind1] = kinds;
+    if kind0 != kind1 {
+        return Ok(false); // a circle and a G^n section are not mirror images
+    }
+    let gn = kind0 == Some(FilletSurfaceGeneratorType::BlendCurve);
     let [geom0, geom1] = geoms;
     let geoms = [geom0.ok_or_else(nul)?, geom1.ok_or_else(nul)?];
     // Open gap: two cylinders of unequal radii meet in a quartic, not a plane conic
@@ -741,6 +775,29 @@ pub fn exact_mitre_curve(
     let am = a.dot(m);
     if am.abs() <= EFF_ZERO {
         return Ok(false);
+    }
+
+    if gn {
+        let Some((curve, uvs)) =
+            gn_mitre_curve(k, pseudo, geoms, [a, m], c, [x_pnt, s_pnt], from_s, tol)?
+        else {
+            return Ok(false);
+        };
+        install_mitre(
+            k,
+            target,
+            pseudo,
+            mitre,
+            [x, s],
+            [x_pnt, s_pnt],
+            (side_edge, side_curve),
+            eus,
+            geoms,
+            curve,
+            uvs,
+            tol,
+        )?;
+        return Ok(true);
     }
 
     // the arc on cylinder 1 from X (t = 0) to S
@@ -904,6 +961,197 @@ pub fn exact_mitre_curve(
         }
     }
 
+    let [uv0, uv1] = uvs;
+    install_mitre(
+        k,
+        target,
+        pseudo,
+        mitre,
+        [x, s],
+        [x_pnt, s_pnt],
+        (side_edge, side_curve),
+        eus,
+        geoms,
+        curve,
+        [uv0.map(Curve::from), uv1.map(Curve::from)],
+        tol,
+    )?;
+    Ok(true)
+}
+
+/// Not the fork's: the mitre of two G^n sections (curvature rounds) of one constant size on
+/// straight spines between planes, from X to S, running as the edge does (from S when
+/// `from_s`), and each round's UV curve of it.
+///
+/// Each round is then one section swept along its spine's direction `a`, `P(s, t) = Q(t) +
+/// s a`, so where the plane through C with normal `m` (the rounds' plane of symmetry) cuts
+/// it, `s = -(Q(t) - C).m / a.m` and the cut is `A(Q(t))`, `A(p) = p - ((p - C).m / a.m) a`:
+/// an affine image of the section, a rational B-spline with the section's weights and its
+/// control points mapped. The section is round 1's iso curve across it at X (its net's,
+/// within the net's certified bound of the definition); X stays on the plane and the
+/// section's other end, the foot on the side wall, maps to S. By the symmetry the same curve
+/// lies on round 2. Both are checked: the curve drops onto each round within `tol`, and those
+/// drops are its UV curves. `None` where any of this does not hold (the rounds' certified
+/// intersection is the mitre then).
+///
+/// # Errors
+///
+/// Those of the evaluations, the iso curve, the control point edits and the drops.
+#[allow(clippy::too_many_arguments)] // the mitre's frame, as exact_mitre_curve has it
+fn gn_mitre_curve(
+    k: &Kernel,
+    pseudo: &FilletBrep,
+    geoms: [FilletGeomId; 2],
+    [a, m]: [Vec3; 2],
+    c: Point3,
+    [x_pnt, s_pnt]: [Point3; 2],
+    from_s: bool,
+    tol: f64,
+) -> Result<Option<(Curve, [Option<Curve>; 2])>> {
+    // (a round without its surface has no exact mitre: its certified intersection)
+    let [g0, _] = geoms;
+    let Some(surface) = pseudo.geom(g0)?.fillet_surface(None)?.cloned() else {
+        return Ok(None);
+    };
+    let Some(BlendRef::Procedural(blend)) = surface.procedural_blend() else {
+        return Ok(None);
+    };
+    let net = &blend.net;
+    let domain = net.natural_uv_domain();
+
+    // X on round 1: the nearest point of a grid over the net, then its foot
+    let mut best = (f64::INFINITY, domain.mid());
+    for i in 0..=16_u8 {
+        for j in 0..=16_u8 {
+            let uv = domain.evaluate(f64::from(i) / 16.0, f64::from(j) / 16.0);
+            let d = net.evaluate_point(uv)?.distance(x_pnt);
+            if d < best.0 {
+                best = (d, uv);
+            }
+        }
+    }
+    let Some(uv_x) = foot_on_surface(k, &surface, x_pnt, best.1)? else {
+        return Ok(None);
+    };
+    if surface.evaluate_point(k, uv_x)?.distance(x_pnt) > tol {
+        return Ok(None);
+    }
+    // the section runs across the round: X, on a rail, is at an end of that parameter
+    let at_end = |p: f64, ivl: Extent1d| {
+        let near = (p - ivl.min()).abs().min((p - ivl.max()).abs());
+        near <= 1e-6 * (ivl.max() - ivl.min()).abs().max(EFF_ZERO)
+    };
+    let (across_v, iso_at) = if at_end(uv_x.y, domain.v_interval()) {
+        (true, domain.u_interval().clamp_value(uv_x.x))
+    } else if at_end(uv_x.x, domain.u_interval()) {
+        (false, domain.v_interval().clamp_value(uv_x.y))
+    } else {
+        return Ok(None);
+    };
+    let param = if across_v {
+        SurfParamType::U
+    } else {
+        SurfParamType::V
+    };
+    let options = IsoCurveOptions {
+        domain: None,
+        uv_iso_curve: false,
+    };
+    let mut section = net
+        .create_iso_parametric_curve(k, param, iso_at, options)?
+        .curve;
+
+    // A: each control point slid along a onto the plane
+    let am = a.dot(m);
+    if am.abs() <= EFF_ZERO {
+        return Ok(None);
+    }
+    let n = section.number_control_points()?;
+    if n < 2 {
+        return Ok(None);
+    }
+    let rational = section.is_rational()?;
+    let form = if rational {
+        ControlPointForm::EuclideanRational
+    } else {
+        ControlPointForm::NonRational
+    };
+    for j in 0..n {
+        let (p, w) = section.control_point(form, j)?;
+        let mapped = p - a * ((p - c).dot(m) / am);
+        section.set_control_point(form, j, mapped, w)?;
+    }
+    // its ends X and S (within the net's bound), set to them exactly
+    let ivl = section.natural_interval();
+    let first = section.evaluate_point(ivl.min())?;
+    let last = section.evaluate_point(ivl.max())?;
+    let x_first = first.distance(x_pnt) <= tol && last.distance(s_pnt) <= tol;
+    let x_last = last.distance(x_pnt) <= tol && first.distance(s_pnt) <= tol;
+    if x_first == x_last {
+        return Ok(None);
+    }
+    let (start_pnt, end_pnt) = if x_first {
+        (x_pnt, s_pnt)
+    } else {
+        (s_pnt, x_pnt)
+    };
+    for (j, p) in [(0, start_pnt), (n - 1, end_pnt)] {
+        let (_, w) = section.control_point(form, j)?;
+        section.set_control_point(form, j, p, w)?;
+    }
+    // the curve runs as the edge does
+    if x_first == from_s {
+        section.reverse_parameterization(&ivl)?;
+    }
+    let curve = Curve::from(section);
+    let curve_ivl = curve.natural_interval();
+
+    // on both rounds, its drops their UV curves
+    let mut uvs: [Option<Curve>; 2] = [None, None];
+    for (slot, &g) in uvs.iter_mut().zip(&geoms) {
+        let Some(round) = pseudo.geom(g)?.fillet_surface(None)?.cloned() else {
+            return Ok(None);
+        };
+        let round_domain = round.natural_uv_domain_with_nurb(k)?;
+        let dropped = round.drop_curve::<NoObject>(
+            k,
+            &round_domain,
+            &curve,
+            &curve_ivl,
+            tol,
+            false,
+            None,
+            true,
+        )?;
+        if dropped.uv_curves.len() != 1 || dropped.max_drop_to_surf > tol {
+            return Ok(None);
+        }
+        *slot = dropped.uv_curves.into_iter().next();
+    }
+    Ok(Some((curve, uvs)))
+}
+
+/// The mitre `mitre` made: its curve, X and S at their exact points (S's parameter on the
+/// side edge), each edge use's UV curve on its round and the edge precomputed.
+///
+/// # Errors
+///
+/// Those of the B-rep edits and of the side edge's drop.
+#[allow(clippy::too_many_arguments)] // the mitre's parts, as exact_mitre_curve has them
+fn install_mitre(
+    k: &Kernel,
+    target: &Brep,
+    pseudo: &mut FilletBrep,
+    mitre: EdgeId,
+    [x, s]: [VertexId; 2],
+    [x_pnt, s_pnt]: [Point3; 2],
+    (side_edge, side_curve): (EdgeId, &Curve),
+    eus: [EdgeuseId; 2],
+    geoms: [FilletGeomId; 2],
+    curve: Curve,
+    uvs: [Option<Curve>; 2],
+    tol: f64,
+) -> Result<()> {
     set_edge_curve(pseudo.brep_mut(), mitre, Some(curve))?;
     pseudo.set_vertex_point(x, x_pnt)?;
     pseudo.set_vertex_point(s, s_pnt)?;
@@ -917,15 +1165,14 @@ pub fn exact_mitre_curve(
                 .set_original_t_param(dropped.parameter);
         }
     }
-    let [uv0, uv1] = uvs;
-    for ((eu, g), uv) in eus.into_iter().zip(geoms).zip([uv0, uv1]) {
-        pseudo.set_edgeuse_uv_curve(eu, uv.map(Curve::from), true, true)?;
+    for ((eu, g), uv) in eus.into_iter().zip(geoms).zip(uvs) {
+        pseudo.set_edgeuse_uv_curve(eu, uv, true, true)?;
         pseudo.geom_mut(g)?.add_side_fillet_edgeuse(eu);
     }
     pseudo
         .fillet_edge_mut(mitre)?
         .set_fillet_edge_type(FilletEdgeType::Precomputed);
-    Ok(true)
+    Ok(())
 }
 
 #[cfg(test)]

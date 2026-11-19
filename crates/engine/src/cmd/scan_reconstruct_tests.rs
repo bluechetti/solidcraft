@@ -744,6 +744,68 @@ fn reconstruct_says_how_a_prisms_outline_repeats_round_its_middle() {
     assert!(oblong["prisms"][0].get("rotational").is_none(), "{oblong}");
 }
 
+/// A nest for the slotted disc (R 20 × 10, eight slots in its rim): a block 10 mm wider than the
+/// disc all round, with a pocket half the disc deep that is the disc's outline grown by the
+/// clearance, and that much deeper. No point of the scan is in the nest's material, and the least
+/// gap between them is the clearance. `clearance` a parameter: changed from 0.3 to 0.5 the nest
+/// rebuilds, with less material and the wider gap.
+#[test]
+fn a_nest_is_cut_from_a_prisms_outline_and_follows_its_clearance() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.cylinder", json!({"radius": 20, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(
+        &mut part,
+        "solid.box",
+        json!({"length": 12, "width": 8, "height": 10, "center": [20, 0, 5], "operation": "cut", "targets": [body], "name": "Slot"}),
+    );
+    run(&mut part, "solid.pattern.circular", json!({"features": ["Slot"], "axis": "Z", "count": 8}));
+    let (mut s, scan) = scanned(&part, &body, 3, "nest");
+    run(&mut s, "parameters.add", json!({"name": "clearance", "expression": "0.3 mm"}));
+    let built = run(&mut s, "scan.nest", json!({"clearance": "clearance"}));
+    let nest = built["solid"].as_str().unwrap().to_owned();
+    assert_eq!(nest, format!("{scan} Nest"), "{built}");
+    assert!((built["depth"].as_f64().unwrap() - 5.0).abs() < 0.05, "{built}");
+    let gap_at = |s: &mut Session| {
+        let d = run(s, "scan.deviation", json!({"body": nest, "tolerance": "0.02 mm", "limit": 2}));
+        assert_eq!(d["clearance"]["fits"], true, "{d}");
+        d["clearance"]["gap"].as_f64().unwrap()
+    };
+    let tight = volume(&s, &nest);
+    let gap = gap_at(&mut s);
+    assert!((gap - 0.3).abs() < 0.03, "the gap is the clearance: {gap}");
+    // The scan lies on the outline read from it, so nothing to speak of is allowed for; and the
+    // gap is no less than the clearance for what is.
+    let allowed = built["allowance"].as_f64().unwrap();
+    assert!((0.0..0.02).contains(&allowed) && gap > 0.3 + allowed - 0.01, "{built}, gap {gap}");
+    // The block: 10 wider all round than the disc is across its tips beside the slots (a slot lies
+    // on each axis, 8 wide, so that is 2 × √(20² − 4²)), 15 tall. Less the pocket: the disc's
+    // outline grown by 0.3, 5.3 deep (its own section is a tenth of its volume, its outline about
+    // 250 long with the slots).
+    let across = 2.0 * (20.0f64 * 20.0 - 4.0 * 4.0).sqrt() + 20.0;
+    let (block, section) = (across * across * 15.0, volume(&part, &body) / 10.0);
+    let pocket = block - tight;
+    assert!(pocket > section * 5.3 && pocket < (section + 250.0 * 0.3) * 5.3 * 1.05, "{pocket} for a section of {section}");
+    run(&mut s, "parameters.change", json!({"name": "clearance", "expression": "0.5 mm"}));
+    let loose = volume(&s, &nest);
+    assert!(loose < tight - 20.0, "a wider pocket leaves less: {loose} against {tight}");
+    let gap = gap_at(&mut s);
+    assert!((gap - 0.5).abs() < 0.03, "{gap}");
+    // A second nest of the same scan is refused in words, as is a clearance that is none.
+    assert!(run_err(&mut s, "scan.nest", json!({})).contains("already"));
+    assert!(run_err(&mut s, "scan.nest", json!({"clearance": 0})).contains("`clearance`"));
+    assert!(run_err(&mut s, "scan.nest", json!({"allowance": -0.1})).contains("`allowance`"));
+    // An allowance given is added to the clearance, round the part and under it: 0.3 and 0.2 cut
+    // the pocket the clearance of 0.5 did (less what that one allowed for by itself).
+    let (mut s, _) = scanned(&part, &body, 3, "nest-allowed");
+    let built = run(&mut s, "scan.nest", json!({"allowance": 0.2}));
+    assert_eq!(built["allowance"], 0.2, "{built}");
+    let same = volume(&s, built["solid"].as_str().unwrap());
+    assert!((same - loose).abs() < (section + 250.0 * 5.5) * (allowed + 0.001), "{same} against {loose}");
+    let d = run(&mut s, "scan.deviation", json!({"body": built["solid"], "tolerance": "0.02 mm", "limit": 2}));
+    assert!((d["clearance"]["gap"].as_f64().unwrap() - 0.5).abs() < 0.03, "{d}");
+}
+
 /// A plate 50 × 30 × 8 centred on the origin, from its scan: its outline is its own mirror image
 /// both ways, so the sketch holds each corner to its image across a centre line and the profile
 /// has two sizes, its length and its width, where four corners placed one by one had eight.
@@ -995,9 +1057,30 @@ fn a_twisted_blade_is_lofted_back_with_loft_it() {
     let read = run(&mut s, "scan.reconstruct", json!({}));
     assert_eq!(read["loft"]["capped"], true, "between its flat ends: {read}");
     assert!((read["loft"]["length"].as_f64().unwrap() - 100.0).abs() < 0.1, "{read}");
+    // Each section as a blade's is described: the chord 60 at one end and 40 at the other (read a
+    // hundredth of the way in from each: 59.8 and 40.2), turned 30° between them (29.4° between
+    // the slices), 24 % thick at mid chord, alike both sides of its chord, and no NACA section.
+    let stations = read["loft"]["stations"].as_array().unwrap();
+    assert_eq!(stations.len(), 5, "{read}");
+    let number = |k: usize, key: &str| stations[k][key].as_f64().unwrap();
+    let (first, last) = (number(0, "chord"), number(4, "chord"));
+    let (wide, narrow) = (first.max(last), first.min(last));
+    assert!((wide - 59.8).abs() < 0.3 && (narrow - 40.2).abs() < 0.3, "{read}");
+    assert!((number(2, "chord") - 50.0).abs() < 0.3, "{read}");
+    assert!(
+        number(0, "twist").abs() < 1e-9 && (number(4, "twist").abs() - 29.4).abs() < 0.3 && (number(2, "twist").abs() - 14.7).abs() < 0.3,
+        "{read}"
+    );
+    for k in 0..5 {
+        assert!((number(k, "thickness_share") - 0.24).abs() < 0.005 && (number(k, "thickest_at") - 0.5).abs() < 0.05, "{read}");
+        assert!(number(k, "camber_share") < 0.003 && stations[k].get("naca").is_none(), "{read}");
+    }
     assert_eq!(build_all(&mut s), ["scan.loft_it"], "{read}");
     let v = volume(&s, &format!("{scan} Reconstructed"));
     assert!((v - expected).abs() < 0.02 * expected, "{v} against the blade's {expected}");
+    // The sections' splines are held where the scan has them: no size for each of their points.
+    let listed = run(&mut s, "parameters.list", json!({"filter": "sketch"}));
+    assert_eq!(listed["parameters"].as_array().map(Vec::len), Some(0), "{listed}");
 }
 
 /// A plate 60 × 40 × 10 with a block 20 × 14 × 12 on its top: with only the plate built, Reconstruct

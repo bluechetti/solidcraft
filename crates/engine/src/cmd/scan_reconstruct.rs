@@ -26,8 +26,9 @@ use crate::params::{bad, bool_, str_};
 use crate::schema::scan_reconstruct::{
     ScanBuildResult, ScanChamferItParams, ScanChamferItResult, ScanChamfered, ScanCutItParams, ScanEdgeChamfer, ScanEdgeRound, ScanExtrudeItParams,
     ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams, ScanFindAllResult, ScanHole, ScanHoleForm, ScanHoleItParams,
-    ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat, ScanRestParams,
-    ScanRestResult, ScanRevolveItParams, ScanRotational, ScanShapeFound, ScanShapeItParams, ScanShell, ScanShellItParams, ScanSpokes, ScanTurned,
+    ScanNestParams, ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat,
+    ScanRestParams, ScanRestResult, ScanRevolveItParams, ScanRotational, ScanShapeFound, ScanShapeItParams, ScanShell, ScanShellItParams, ScanSpokes,
+    ScanTurned,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -44,6 +45,10 @@ const REST_CONTRACT: TypedContract<ScanRestParams> = TypedContract::new();
 const PATTERN_IT_CONTRACT: TypedContract<ScanPatternItParams> = TypedContract::new();
 const FILLET_IT_CONTRACT: TypedContract<ScanFilletItParams> = TypedContract::new();
 const CHAMFER_IT_CONTRACT: TypedContract<ScanChamferItParams> = TypedContract::new();
+/// How far outside a prism's outline scan is still that prism's wall astray, as a share of the
+/// part's size: further out it is another part of the thing, and Nest does not allow for it.
+const NEST_ASTRAY: f64 = 0.01;
+const NEST_CONTRACT: TypedContract<ScanNestParams> = TypedContract::new();
 const SHELL_IT_CONTRACT: TypedContract<ScanShellItParams> = TypedContract::new();
 
 pub static COMMANDS: &[CommandSpec] = &[
@@ -124,6 +129,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&SHELL_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
         .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to hollow (default: `<scan> Reconstructed`): the body hollowed to the thickness of the walls scan.reconstruct reads (its `shell`: planes in pairs facing apart, one behind the other, the same distance apart), the faces with no inner face behind them left open; run it after Extrude It and before Fillet It; one undo step → feature, solid, operation, depth (the thickness), fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.nest", "Nest", crate::checked!("scan.nest", nest))
+        .icon("extrude")
+        .contract(&NEST_CONTRACT)
+        .output(output_schema_for::<ScanBuildResult>)
+        .params("body?: mesh body; selected?: bool; prism?: index of scan.reconstruct's prisms (default 0; a prism with square walls: a drafted one is refused); clearance?: mm or a length expression such as a parameter's name (default 0.3 mm: the gap round the part and under it; the pocket follows it up to twice what it is built with, tight inside corners being cut square for that); allowance?: mm added to the clearance (default: measured, how far the scan stands proud of the fitted outline and of the end it sits on, so the least gap is the clearance; 0 for the clearance alone); margin?: mm of block round the part and under it (default 10); deep?: share of the part's depth the pocket holds (default 0.5): the prism's outline sketched (`Nest Pocket`), offset outward by the clearance as a sketch offset (so the pocket follows it), and cut into a block (`<scan> Nest`) drawn round it; one undo step → sketch, feature (the cut), solid, depth (of the pocket, less the clearance), allowance, lines, arcs"),
     CommandSpec::new("scan.chamfer_it", "Chamfer It", crate::checked!("scan.chamfer_it", fitted_chamfer_it))
         .icon("chamfer")
         .contract(&CHAMFER_IT_CONTRACT)
@@ -1272,7 +1282,7 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
                     s,
                     &plane,
                     &format!("Prism Profile {} Gap", index + 1),
-                    &[repeat.gap.clone()],
+                    std::slice::from_ref(&repeat.gap),
                     &|_, _, _| None,
                     &mut tried,
                     round,
@@ -1361,6 +1371,167 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         count,
         openings: None,
         skin: None,
+        allowance: None,
+        fit: None,
+        param_warnings: Vec::new(),
+    })
+}
+
+/// Nest (`scan.nest`): see [`ScanNestParams`].
+pub(super) fn nest(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.nest";
+    let view = view(s, p, cmd, false)?;
+    let found = &view.found;
+    let reading = view.reading();
+    if reading.prisms.is_empty() {
+        return Err(bad(
+            cmd,
+            "Reconstruct reads no prism on the scan, and a nest is cut from a prism's outline: for another shape, section it (scan.section_sketch), offset the sketch and cut that from a block",
+        ));
+    }
+    let index = p.get("prism").and_then(Value::as_u64).map_or(0, |k| k as usize);
+    let prism = reading
+        .prisms
+        .get(index)
+        .ok_or_else(|| bad(cmd, format!("there are {} prisms: `prism` is 0 to {}", reading.prisms.len(), reading.prisms.len() - 1)))?;
+    if prism.draft != 0.0 {
+        return Err(bad(
+            cmd,
+            format!(
+                "prism {index} has drafted walls ({:.1} deg), and a nest's pocket is cut square: extrude its sketch tapered by hand",
+                drafted(prism.draft)
+            ),
+        ));
+    }
+    let clearance = match p.get("clearance").filter(|v| !v.is_null()) {
+        None => "0.3 mm".to_owned(),
+        Some(Value::String(text)) if !text.trim().is_empty() => text.trim().to_owned(),
+        Some(v) => match v.as_f64().filter(|c| c.is_finite() && *c > 0.0) {
+            Some(c) => format!("{c} mm"),
+            None => return Err(bad(cmd, "`clearance` is a length above 0, in mm or as an expression")),
+        },
+    };
+    let number = |key: &str, default: f64, most: f64| match p.get(key).filter(|v| !v.is_null()) {
+        None => Ok(default),
+        Some(v) => v
+            .as_f64()
+            .filter(|x| x.is_finite() && *x > 0.0 && *x <= most)
+            .ok_or_else(|| bad(cmd, format!("`{key}` is a number above 0, at most {most}"))),
+    };
+    let (margin, deep) = (number("margin", 10.0, 1.0e4)?, number("deep", 0.5, 1.0)?);
+    let (plane, outlines) = {
+        let shown = super::shown_mesh(s, &found.scan).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
+        let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
+        profile::prism_profile(&view.scan(positions, triangles), view.outcome(), reading, prism).map_err(|e| bad(cmd, e))?
+    };
+    // The pocket's outline is offset in its sketch, and an offset cannot be made once a piece of
+    // it has closed to nothing: the pieces that would by twice the clearance asked (short pieces at
+    // tight inside corners) are left out, their neighbours run on to meet, so the pocket follows
+    // the clearance up to twice what it is built with.
+    let asked = s.doc.eval(&clearance, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("clearance: {e}")))?;
+    if !(asked > 0.0) {
+        return Err(bad(cmd, "`clearance` is a length above 0, in mm or as an expression"));
+    }
+    // The scan does not lie on the prism everywhere: where it stands proud of the outline (a flank
+    // the fitted curve cuts inside of, a corner cut square just above) or of the end it sits on,
+    // the pocket would be that much tighter than the clearance, so the offset and the depth are
+    // the clearance and that allowance, measured here unless it is given. A larger offset closes more pieces, which may leave the scan prouder:
+    // settled in a few turns.
+    let given = match p.get("allowance").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => Some(
+            v.as_f64().filter(|a| a.is_finite() && *a >= 0.0 && *a <= 1.0e4).ok_or_else(|| bad(cmd, "`allowance` is a number of mm, 0 or more"))?,
+        ),
+    };
+    let base = outlines.first().ok_or_else(|| bad(cmd, "the prism has no outline"))?;
+    let half = 0.5 * prism.depth();
+    // The part sits on the prism's low end: below the plane's origin (halfway along) when the
+    // plane faces the way the prism runs.
+    let seat = if plane.normal().dot(prism.direction) > 0.0 { (-half, 1.0) } else { (half, -1.0) };
+    let reach = (NEST_ASTRAY * reading.size).max(4.0 * view.outcome().tolerance);
+    let mut allowance = given.unwrap_or(0.0);
+    let mut outline = profile::roomy(base, 2.0 * asked + allowance);
+    if given.is_none() {
+        let shown = super::shown_mesh(s, &found.scan).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
+        let scan = view.scan(shown.positions.as_slice(), shown.triangles.as_slice());
+        for _ in 0..4 {
+            // Up to the next thousandth of a millimetre: the number is in the design's expressions.
+            let proud = (profile::proud(&scan, &plane, &outline, -half, half, Some(seat), reach) * 1000.0).ceil() / 1000.0;
+            if proud <= allowance {
+                break;
+            }
+            allowance = proud;
+            outline = profile::roomy(base, 2.0 * asked + allowance);
+        }
+    }
+    let outline = &outline;
+    let offset = if allowance > 0.0 { format!("({clearance}) + {allowance} mm") } else { format!("({clearance})") };
+    let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
+    let depth = solidcraft_scan::hole_form::snapped(prism.depth(), round);
+    let held = deep * depth;
+    // Both sketches on the plane of the block's top: the profile's own plane (halfway along the
+    // prism) slid along the prism to where the pocket opens. The pocket goes down from there
+    // toward the prism's low end, and the clearance further.
+    let normal = plane.x.cross(plane.y).normalized().ok_or_else(|| EngineError::Other("the profile's plane has no normal".into()))?;
+    let top = Plane { origin: plane.origin + prism.direction * ((deep - 0.5) * depth), ..plane };
+    let down = if normal.dot(prism.direction) > 0.0 { "negative" } else { "positive" };
+    let ring = profile::ring(outline);
+    let (lo, hi) =
+        ring.iter().fold((ring[0], ring[0]), |(lo, hi), q| (Vec2::new(lo.x.min(q.x), lo.y.min(q.y)), Vec2::new(hi.x.max(q.x), hi.y.max(q.y))));
+    let solid = format!("{} Nest", found.scan);
+    if s.model.state().body(&solid).is_some() {
+        return Err(bad(cmd, format!("`{solid}` is in the design already: change its clearance, or remove it first")));
+    }
+    let mut drawn = Drawn::default();
+    // The block.
+    let wall = Vec2::new(margin, margin);
+    let (a, b) = (lo - wall, hi + wall);
+    let block = Outline { corners: vec![a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)], pieces: vec![Piece::Line; 4], faces: vec![None; 4] };
+    let (block_sketch, _) = sketch_outlines_as(s, &top, "Nest Block", &[block], &|_, _, _| None, &mut Drawn::default(), round, false, None)?;
+    run(
+        s,
+        "solid.extrude",
+        json!({"sketch": block_sketch, "distance": format!("{} mm", held + margin), "direction": down, "operation": "new", "body_name": solid, "name": "Nest Block"}),
+    )?;
+    // The pocket: the outline, and round it its offset by the clearance, kept as an offset.
+    let (sketch, _) = sketch_outlines_as(s, &top, "Nest Pocket", std::slice::from_ref(outline), &|_, _, _| None, &mut drawn, round, false, None)?;
+    let first = super::super::sketch_store::read(&s.doc, sketch)?
+        .curves
+        .iter()
+        .find(|c| !c.construction)
+        .map(|c| c.id.clone())
+        .ok_or_else(|| EngineError::Other("the pocket's outline was not drawn".into()))?;
+    // A point well outside the outline, in the sketch (which is measured from the world's origin).
+    let outside = {
+        let moved = at_world_origin(&top, std::slice::from_ref(outline), false).1;
+        let far = moved[0].corners.iter().fold(Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY), |m, c| Vec2::new(m.x.max(c.x), m.y.max(c.y)));
+        far + (hi - lo) + Vec2::new(10.0 * margin, 10.0 * margin)
+    };
+    run(s, "sketch.edit", json!({"sketch": sketch}))?;
+    if let Err(e) = run(s, "sketch.offset", json!({"curves": [first], "distance": offset, "side": [outside.x, outside.y], "chain": true})) {
+        run(s, "sketch.cancel", json!({}))?;
+        return Err(e);
+    }
+    run(s, "sketch.finish", json!({}))?;
+    let feature = run(
+        s,
+        "solid.extrude",
+        json!({"sketch": sketch, "distance": format!("{held} mm + {offset}"), "direction": down, "operation": "cut", "targets": [solid], "name": "Nest Pocket"}),
+    )?;
+    reply(ScanBuildResult {
+        body: found.scan.clone(),
+        sketch: Some(sketch),
+        feature,
+        solid,
+        operation: "new".into(),
+        lines: drawn.lines,
+        arcs: drawn.arcs,
+        tangents: drawn.tangents,
+        depth: Some(held),
+        count: None,
+        openings: None,
+        skin: None,
+        allowance: Some(allowance),
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1502,6 +1673,7 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
         count,
         openings,
         skin,
+        allowance: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1637,6 +1809,7 @@ pub(super) fn shell_it(s: &mut Session, p: &Value) -> Result<Value> {
         count: None,
         openings: None,
         skin: None,
+        allowance: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1828,6 +2001,7 @@ pub(super) fn hole_it(s: &mut Session, p: &Value) -> Result<Value> {
         count: None,
         openings: None,
         skin: None,
+        allowance: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1906,6 +2080,7 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
         count: None,
         openings: None,
         skin: None,
+        allowance: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1944,6 +2119,7 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
             count: Some(count),
             openings: None,
             skin: None,
+            allowance: None,
             fit: None,
             param_warnings: Vec::new(),
         });
@@ -1978,6 +2154,7 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
         count: Some(count),
         openings: None,
         skin: None,
+        allowance: None,
         fit: None,
         param_warnings: Vec::new(),
     })

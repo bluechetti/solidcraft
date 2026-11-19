@@ -147,7 +147,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("mirror")
         .contract(&SYMMETRY_CONTRACT)
         .output(output_schema_for::<ScanSymmetryResult>)
-        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z] (the way you looked, default [0,0,1])}: a line along the rough mirror plane, to find that one; plane?: {point, normal: [x,y,z]} to keep as it is; keep?: bool (default true: kept as a construction plane `Symmetry Plane`, `Symmetry Plane 2`, …, to sketch on); a plane given or guided to is used however much matches, the best one found unasked is refused when the scan is no mirror image about it → body, mirror: {point, normal, rms, coverage, symmetric}, plane (the construction plane)"),
+        .params("body?: mesh body (default: the selected mesh body, else the design's only one); guide?: {from, to: [x,y,z], toward?: [x,y,z] (the way you looked, default [0,0,1])}: a line along the rough mirror plane, to find that one; plane?: {point, normal: [x,y,z]} to keep as it is; keep?: bool (default true: kept as a construction plane `Symmetry Plane`, `Symmetry Plane 2`, …, to sketch on); a plane given or guided to is used however much matches, the best one found unasked is refused when the scan is no mirror image about it → body, mirror: {point, normal, rms, coverage, symmetric, partly? (a mirror image under 85 % of which matches: how much does not)}, plane (the construction plane)"),
     CommandSpec::new("scan.square_to_symmetry", "Square to Symmetry", crate::checked!("scan.square_to_symmetry", square_to_symmetry))
         .at("SCAN", "ALIGN")
         .icon("c_symmetry")
@@ -543,13 +543,21 @@ fn place_reply(body: String, base: Option<&Base>, feature: Option<Value>) -> Res
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
-fn mirror_reply(m: &Mirror) -> ScanMirror {
+/// `whole`: for completing a scan by mirroring, where a mirror image with a part on one side only
+/// ([`Mirror::unmatched`]) is no mirror image, since that part's reflection is not the thing.
+fn mirror_reply(m: &Mirror, whole: bool) -> ScanMirror {
     ScanMirror {
         point: [m.point.x, m.point.y, m.point.z],
         normal: [m.normal.x, m.normal.y, m.normal.z],
         rms: m.rms,
         coverage: m.coverage,
-        symmetric: m.is_symmetric(),
+        symmetric: if whole { m.is_whole() } else { m.is_symmetric() },
+        partly: m.unmatched().filter(|_| !whole).map(|share| {
+            format!(
+                "{:.0} % of the scan has no mirror image in this plane: that part is on one side of the thing only, not noise; keep it when halving or mirroring the scan",
+                100.0 * share
+            )
+        }),
     }
 }
 
@@ -637,7 +645,7 @@ fn chosen_mirror(s: &Session, mesh: &Mesh, p: &Value, cmd: &str, refuse: bool, f
         return Err(bad(
             cmd,
             format!(
-                "the scan is not a mirror image about the best plane found: only {:.0} % of it matches its reflection (typically {:.2} mm off); to use that plane anyway pass it back as `plane`: {{\"point\": [{:.3}, {:.3}, {:.3}], \"normal\": [{:.6}, {:.6}, {:.6}]}} (a vehicle's underbody and exhaust are no mirror image, so a car stops short of the 85 % even about its true plane), or draw a guide along the plane you mean",
+                "the scan is not a mirror image about the best plane found: only {:.0} % of it matches its reflection (typically {:.2} mm off); to use that plane anyway pass it back as `plane`: {{\"point\": [{:.3}, {:.3}, {:.3}], \"normal\": [{:.6}, {:.6}, {:.6}]}} (85 % must match, or 60 % when both sides of the thing are there and match out to their ends; a scan of one side is no mirror image), or draw a guide along the plane you mean",
                 100.0 * found.coverage,
                 found.rms,
                 found.point.x,
@@ -706,7 +714,7 @@ fn find_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         None
     };
-    let reply = ScanSymmetryResult { body: mesh.body, mirror: mirror_reply(&found), region: region.map(|r| r.len()), plane, param_warnings: Vec::new() };
+    let reply = ScanSymmetryResult { body: mesh.body, mirror: mirror_reply(&found, false), region: region.map(|r| r.len()), plane, param_warnings: Vec::new() };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -730,7 +738,7 @@ fn square_to_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
         base: None,
         base_index: None,
         base_count: None,
-        mirror: Some(mirror_reply(&found)),
+        mirror: Some(mirror_reply(&found, false)),
         feature,
         param_warnings: Vec::new(),
     };
@@ -816,7 +824,8 @@ pub fn scan_box(s: &Session, body: Option<&str>) -> Result<(String, Vec3, Vec3)>
 /// What the Symmetry dialog shows: the mirror plane found (near `guide`, a line from, to and the
 /// way it was seen from, when one is drawn) and how well the scan matches itself in it. A scan
 /// that is no mirror image is shown as such, not refused. `fill`: for completing the scan, the
-/// plane across its cut when it has one ([`plane_to_fill`]).
+/// plane across its cut when it has one ([`plane_to_fill`]), and a scan with a part on one side
+/// only is no mirror image.
 pub fn symmetry_preview(s: &Session, body: Option<&str>, guide: Option<[Vec3; 3]>, fill: bool) -> Result<ScanMirror> {
     let cmd = "scan.symmetry";
     let mesh = mesh(s, &json!({ "body": body }), cmd)?;
@@ -826,7 +835,7 @@ pub fn symmetry_preview(s: &Session, body: Option<&str>, guide: Option<[Vec3; 3]
         None if fill => plane_to_fill(&scan),
         None => symmetry::find(&scan),
     };
-    found.map(|m| mirror_reply(&m)).ok_or_else(|| bad(cmd, "no plane found: draw a guide with some length, not end-on"))
+    found.map(|m| mirror_reply(&m, fill)).ok_or_else(|| bad(cmd, "no plane found: draw a guide with some length, not end-on"))
 }
 
 /// An origin plane (XY, XZ, YZ) or a construction plane by name: a point of it and its normal, the
@@ -836,12 +845,13 @@ pub fn named_plane(s: &Session, name: &str) -> Option<(Vec3, Vec3)> {
 }
 
 /// How well the scan matches its reflection in the plane through `point` square to `normal`, for
-/// the Symmetry dialog when a plane is picked: the plane as it is, not searched near.
-pub fn mirror_preview(s: &Session, body: Option<&str>, point: Vec3, normal: Vec3) -> Result<ScanMirror> {
+/// the Symmetry dialog when a plane is picked: the plane as it is, not searched near. `fill`: for
+/// completing the scan, where a part on one side only makes it no mirror image.
+pub fn mirror_preview(s: &Session, body: Option<&str>, point: Vec3, normal: Vec3, fill: bool) -> Result<ScanMirror> {
     let cmd = "scan.symmetry";
     let mesh = mesh(s, &json!({ "body": body }), cmd)?;
     symmetry::measure(&mesh.scan(), point, normal)
-        .map(|m| mirror_reply(&m))
+        .map(|m| mirror_reply(&m, fill))
         .ok_or_else(|| bad(cmd, "the plane has no direction, or the scan is too small"))
 }
 
@@ -902,13 +912,13 @@ fn complete_by_mirroring(s: &mut Session, p: &Value) -> Result<Value> {
     let reply = ScanCompleteResult {
         body: mesh.body,
         fill: name,
-        mirror: mirror_reply(&plane),
+        mirror: mirror_reply(&plane, true),
         pieces: fill.pieces,
         triangles: fill.triangles.len(),
         area: fill.area,
         joined: fill.joined,
         reach: fill.reach,
-        warning: (!plane.is_symmetric()).then(|| unlike(&plane)),
+        warning: (!plane.is_whole()).then(|| unlike(&plane)),
         feature,
         param_warnings: Vec::new(),
     };

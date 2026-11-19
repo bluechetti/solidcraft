@@ -305,7 +305,7 @@ pub(super) fn fill_holes(s: &mut Session, p: &Value) -> Result<Value> {
     let name = mesh_name(s, p, cmd)?;
     let at = kept_points(s, &name, points(p, "at", cmd)?);
     let done = apply(s, p, &name, CleanStep::FillHoles { max_edges, fair, at }, cmd)?;
-    let Report::Holes { holes, filled, failed, larger, added_triangles, unfillable_edges } = done.report else {
+    let Report::Holes { holes, filled, failed, larger, added_triangles, unfillable_edges, ref left } = done.report else {
         return Err(bad(cmd, "the step did something else"));
     };
     let reply = ScanHolesResult {
@@ -313,6 +313,10 @@ pub(super) fn fill_holes(s: &mut Session, p: &Value) -> Result<Value> {
         holes,
         filled,
         failed,
+        left: left
+            .iter()
+            .map(|u| crate::schema::scan::ScanHoleLeft { at: [u.at.x, u.at.y, u.at.z], edges: u.edges, why: u.why.to_owned() })
+            .collect(),
         larger,
         added_triangles,
         unfillable_edges,

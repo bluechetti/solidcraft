@@ -437,7 +437,7 @@ impl ProceduralBlend {
     /// # Errors
     ///
     /// [`SolidError::InvalidInput`] (`SM_ERR_INVALID_INPUT`, named) for an order out of
-    /// 1 to 4, n >= 2 with a law or an invalid thumbweight, sides other than +-1,
+    /// 1 to 4, n >= 2 with an invalid thumbweight, sides other than +-1,
     /// offsets or a bound not finite and positive, a circle's offsets that differ, and
     /// supports nested deeper than [`BLEND_MAX_DEPTH`]; those of copying a support.
     pub fn create(
@@ -465,10 +465,12 @@ impl ProceduralBlend {
                 "a chord is a chamfer of two offsets its sizes give, and only a chord is",
             ));
         }
-        if order >= 2 && (input.law.is_some() || !thumbweight_is_valid(order, input.thumbweight)) {
+        // (not the fork's: a G^n section on a law, a curvature-continuous round whose size
+        // varies; its stations are solved on the law's ball as the circle's are)
+        if order >= 2 && !thumbweight_is_valid(order, input.thumbweight) {
             return Err(SolidError::invalid_input(
                 OP_CREATE,
-                "a G^n section needs a ball of one radius and a thumbweight below 1 or the equal area rule",
+                "a G^n section needs a thumbweight below 1 or the equal area rule",
             ));
         }
         for side in input.sides {

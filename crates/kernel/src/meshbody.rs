@@ -544,6 +544,14 @@ pub(crate) fn is_closed(triangles: &[[u32; 3]]) -> bool {
 }
 
 impl Body {
+    /// Build from the packed coordinates and corner normals stored in a design.
+    pub fn from_packed_mesh(positions: &[[f64; 3]], triangles: &[[u32; 3]], normals: &[[f64; 9]]) -> Result<Self> {
+        // The fork's builder (threaded weld, no copy of the points) under upstream's entry point.
+        let normals: Vec<[Vec3; 3]> =
+            normals.iter().map(|&[ax, ay, az, bx, by, bz, cx, cy, cz]| [[ax, ay, az], [bx, by, bz], [cx, cy, cz]].map(Vec3::from)).collect();
+        body_from(|i| positions.get(i).copied().map_or(Vec3::ZERO, Vec3::from), positions.len(), triangles, &normals)
+    }
+
     /// Shared-vertex triangles of a mesh body.
     pub fn triangle_mesh(&self) -> Option<(&[Vec3], &[[u32; 3]])> {
         self.mesh.as_ref().map(|m| (m.positions.as_slice(), m.triangles.as_slice()))

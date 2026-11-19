@@ -167,6 +167,7 @@ mod tests {
             "scan.pattern_it",
             "scan.fillet_it",
             "scan.chamfer_it",
+            "scan.nest",
             "scan.register",
             "scan.mesh_from_points",
             "scan.remesh",

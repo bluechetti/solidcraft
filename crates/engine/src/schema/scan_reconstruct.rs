@@ -427,6 +427,34 @@ pub struct ScanLoft {
     /// How many sections, and how long it is end to end, in mm.
     pub sections: usize,
     pub length: f64,
+    /// Each section that is longer than it is thick, as a wing's or a blade's is described: a
+    /// wing's chord, twist and thickness from root to tip.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stations: Vec<ScanLoftStation>,
+}
+
+/// One section of a lofted part, read as a wing's.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanLoftStation {
+    /// How far along the part from its first section, in mm.
+    pub at: f64,
+    /// The section's chord (its two points farthest apart), in mm, and the angle of its chord line
+    /// about the part's direction, in degrees from the first station's.
+    pub chord: f64,
+    pub twist: f64,
+    /// The most it measures across its chord, in mm and as a share of the chord, and where along
+    /// the chord from the leading edge that is (0–1).
+    pub thickness: f64,
+    pub thickness_share: f64,
+    pub thickest_at: f64,
+    /// The most its middle lies off the chord line, as a share of the chord (0 for a section alike
+    /// both sides).
+    pub camber_share: f64,
+    /// The leading edge, in the design.
+    pub leading: [f64; 3],
+    /// The NACA four-digit section it is, within the scan's tolerance, when it is one ("0015").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub naca: Option<String>,
 }
 
 /// Loft It, Pipe It or Coil It: the part as sections lofted, as a bar swept along its path, or as
@@ -627,6 +655,44 @@ pub struct ScanStepFit {
     pub note: Option<String>,
 }
 
+/// Nest: a block with a pocket the scanned part seats in, from the prism Reconstruct reads: the
+/// prism's outline sketched, offset outward by `clearance` (an offset the sketch keeps, so the
+/// pocket follows the clearance) and cut into a block drawn round it. An ordinary solid: it
+/// fillets, shells and takes pins. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanNestParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Build from the reading of the part of the scan selected. Default: false, the whole scan's.
+    #[serde(default)]
+    pub selected: Option<bool>,
+    /// Which of `scan.reconstruct`'s prisms, from 0. Default: the first.
+    #[serde(default)]
+    pub prism: Option<usize>,
+    /// The gap left round the part and under it: a length in mm, or an expression (a parameter's
+    /// name, so that changing the parameter rebuilds the nest). Default: 0.3 mm. The pocket follows
+    /// it up to twice what it is built with: pieces of the outline that an offset that far would
+    /// close to nothing (tight inside corners) are cut square, where the gap is the smaller by up
+    /// to 0.42 of the corner's own round.
+    #[serde(default)]
+    #[schemars(with = "Option<Value>")]
+    pub clearance: Option<Value>,
+    /// How much more than the clearance the pocket is cut, round the part and under it, in mm,
+    /// for scan standing proud of the prism fitted to it. Default: measured, the furthest the
+    /// scan lies outside the outline offset or past the end it sits on (replied as `allowance`),
+    /// so the least gap is the clearance and the usual gap that much more. 0: the clearance alone.
+    #[serde(default)]
+    pub allowance: Option<f64>,
+    /// How much block is left round the part and under it, in mm. Default: 10.
+    #[serde(default)]
+    pub margin: Option<f64>,
+    /// The share of the part's depth the pocket holds, above 0 to 1. Default: 0.5.
+    #[serde(default)]
+    pub deep: Option<f64>,
+}
+
 /// What Extrude It, Revolve It, Cut It and Pattern It return.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanBuildResult {
@@ -658,6 +724,10 @@ pub struct ScanBuildResult {
     /// profile closed straight across into a solid or (`wall`) revolved as a surface and thickened.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skin: Option<String>,
+    /// Nest: how far the scan stands proud of the outline the pocket is offset from or of the end
+    /// it sits on, in mm, added to the clearance so the gap is the clearance there too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowance: Option<f64>,
     /// How close the body is to the scan before and after the step (absent when it could not be
     /// measured).
     #[serde(default, skip_serializing_if = "Option::is_none")]

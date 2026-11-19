@@ -175,6 +175,14 @@ pub fn center_on_grid(scan: &Scan) -> Option<Rigid> {
     Some(Rigid::shift(Vec3::new(-middle.x, -middle.y, 0.0)))
 }
 
+/// A base's normal within this of the thin direction (a cosine: about 25°) is a base along it.
+const ALONG_THIN: f64 = 0.9;
+/// A part is about as thick as it is wide when its thinnest extent is this share of its middle one.
+const CHUNKY: f64 = 0.6;
+/// A base elsewhere is taken over the thin side only when no base along the thin direction is
+/// this share as steady.
+const FAR_STEADIER: f64 = 0.6;
+
 /// Lays the scan along its own directions, square to its own faces: longest along X, thinnest
 /// along Z, centred over the origin and resting on the grid. Its spread gives the first guess;
 /// then each axis is turned to where the box round the scan is smallest, so a part of flat faces
@@ -270,6 +278,26 @@ pub fn quick_align(scan: &Scan) -> Option<Rigid> {
     if z.z < 0.0 {
         z = -z;
     }
+    // A part that stands far steadier on a base of its own than on its thin side stands on that
+    // base (the Stanford bunny is thinnest front to back, and was laid on its back): the base it
+    // would take the most tipping off, when none along the thin direction comes near it.
+    // Only a part about as thick as it is wide: a disc or a plate lies on its side whatever its
+    // rim would bear (a wheel's one-sided scan stood on its tread, a brake disc on its edge).
+    let chunky = extent(order[2]) >= CHUNKY * extent(order[1]);
+    let bases = if chunky { crate::base::bases(scan) } else { Vec::new() };
+    let steady = |b: &&crate::base::Base| matches!(b.kind, crate::base::BaseKind::Flat | crate::base::BaseKind::Resting);
+    if let Some(best) = bases.iter().filter(steady).max_by(|a, b| a.score().total_cmp(&b.score())) {
+        let along_thin = bases.iter().filter(steady).filter(|b| b.normal.dot(z).abs() >= ALONG_THIN).map(|b| b.score()).fold(0.0, f64::max);
+        if best.normal.dot(z).abs() < ALONG_THIN && along_thin < FAR_STEADIER * best.score() {
+            let up = -best.normal;
+            // Longest across what is left, square to the new up.
+            let across = order.iter().copied().filter_map(|a| (a - up * a.dot(up)).normalized().map(|flat| (extent(flat), flat)));
+            if let Some((_, flat)) = across.max_by(|a, b| a.0.total_cmp(&b.0)) {
+                z = up;
+                x = if flat.x < 0.0 { -flat } else { flat };
+            }
+        }
+    }
     let y = z.cross(x).normalized()?;
     let x = y.cross(z).normalized()?;
     let turn = Rigid { rotation: [[x.x, x.y, x.z], [y.x, y.y, y.z], [z.x, z.y, z.z]], translation: Vec3::ZERO };
@@ -285,6 +313,43 @@ pub fn quick_align(scan: &Scan) -> Option<Rigid> {
 mod tests {
     use super::*;
     use crate::test_meshes::{cuboid, turned};
+
+    /// A block 60 × 50 × 44 with a wide foot under one of its long narrow sides (80 × 44 × 6, so
+    /// it stands on a base 80 × 44, steadier than on its broad side): about as thick as it is
+    /// wide, and laid by its box alone it would lie on a broad side with the foot sticking out
+    /// sideways; it stands on its foot. A plate with a small foot on its edge still lies flat.
+    #[test]
+    fn a_chunky_part_stands_on_its_own_steadiest_base() {
+        let both = |part: (Vec<Vec3>, Vec<[u32; 3]>), foot: (Vec<Vec3>, Vec<[u32; 3]>)| {
+            let (mut positions, mut triangles) = part;
+            let base = positions.len() as u32;
+            positions.extend(foot.0);
+            triangles.extend(foot.1.iter().map(|t| t.map(|i| i + base)));
+            (positions, triangles)
+        };
+        let (positions, triangles) = both(
+            crate::test_meshes::fine_cuboid(Vec3::new(0.0, 0.0, 0.0), Vec3::new(60.0, 44.0, 50.0), 12),
+            crate::test_meshes::fine_cuboid(Vec3::new(-25.0, -18.0, -6.0), Vec3::new(85.0, 62.0, 0.0), 12),
+        );
+        // Turned over onto a broad side and moved off, as a scan comes.
+        let moved = turned(&positions, Vec3::new(1.0, 0.2, 0.1).normalized().unwrap(), 1.3, Vec3::new(40.0, -20.0, 15.0));
+        let scan = Scan::new(&moved, &triangles);
+        let lay = quick_align(&scan).unwrap();
+        let placed: Vec<Vec3> = moved.iter().map(|p| lay.apply(*p)).collect();
+        // The foot's underside (the part's z = -6) is on the grid, the top (z = 50) 56 above it.
+        let foot: Vec<f64> = positions.iter().zip(&placed).filter(|(p, _)| p.z < -5.9).map(|(_, q)| q.z).collect();
+        let top: Vec<f64> = positions.iter().zip(&placed).filter(|(p, _)| p.z > 49.9).map(|(_, q)| q.z).collect();
+        assert!(foot.iter().all(|z| z.abs() < 0.05) && top.iter().all(|z| (z - 56.0).abs() < 0.05), "{:?} {:?}", &foot[..2], &top[..2]);
+        // A plate 100 × 60 × 8 with a foot along one long edge lies flat all the same.
+        let (positions, triangles) = both(
+            crate::test_meshes::fine_cuboid(Vec3::new(0.0, 0.0, 0.0), Vec3::new(100.0, 8.0, 60.0), 12),
+            crate::test_meshes::fine_cuboid(Vec3::new(0.0, -6.0, -3.0), Vec3::new(100.0, 14.0, 0.0), 12),
+        );
+        let lay = quick_align(&Scan::new(&positions, &triangles)).unwrap();
+        let heights: Vec<f64> = positions.iter().map(|p| lay.apply(*p).z).collect();
+        let tall = heights.iter().copied().fold(0.0, f64::max);
+        assert!(tall < 21.0, "it lies on its broad side: {tall} tall");
+    }
 
     fn close(a: Vec3, b: Vec3, tol: f64) -> bool {
         (a - b).len() <= tol

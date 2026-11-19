@@ -194,8 +194,15 @@ pub struct ScanMirror {
     pub rms: f64,
     /// The share of the scan whose reflection lands on the scan, 0 to 1.
     pub coverage: f64,
-    /// Whether the scan is a mirror image about it: 85 % matched, typically within 2 % of its size.
+    /// Whether the scan is a mirror image about it: 85 % matched (or 60 % with both sides of the
+    /// thing there and matching out to their ends), typically within 2 % of its size. From
+    /// Complete by Mirroring: 85 % matched, since a part on one side only would get an image the
+    /// thing has not.
     pub symmetric: bool,
+    /// For a mirror image under 85 % of which matches: how much does not, in words. That part is
+    /// the thing's own, on one side only, and is not to be taken for noise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partly: Option<String>,
 }
 
 /// What `scan.symmetry` returns.
@@ -1899,6 +1906,9 @@ pub struct ScanHolesResult {
     pub holes: usize,
     pub filled: usize,
     pub failed: usize,
+    /// Each hole within the limit that could not be closed: where, how many edges, and why.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left: Vec<ScanHoleLeft>,
     pub larger: usize,
     /// The triangles the patches added.
     pub added_triangles: usize,
@@ -1917,6 +1927,16 @@ pub struct ScanHolesResult {
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
+}
+
+/// A hole Fill Holes could not close.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanHoleLeft {
+    /// The middle of its ring, and how many edges it has.
+    pub at: [f64; 3],
+    pub edges: usize,
+    /// Why no patch closes it.
+    pub why: String,
 }
 
 /// Reduce a scan's triangles: edges collapsed cheapest first, where a collapse costs how far it

@@ -466,6 +466,31 @@ fn a_refused_symmetry_gives_its_plane_to_pass_back() {
     assert!(reply["mirror"]["coverage"].as_f64().unwrap() > 0.5, "{reply}");
 }
 
+/// A body 100 × 40 × 20 with a long box slung under one side of it: a mirror image about its
+/// middle with both sides there, though the box has none. Find Symmetry says how much of the scan
+/// that is; of a whole mirror image it says nothing more.
+#[test]
+fn find_symmetry_says_how_much_of_a_mirror_image_has_no_match() {
+    let mut triangles = fine_box(Vec3::ZERO, Vec3::new(100.0, 40.0, 20.0), 40);
+    triangles.extend(fine_box(Vec3::new(5.0, 2.0, -14.0), Vec3::new(70.0, 16.0, 0.0), 26));
+    let (mut s, _) = session_with_triangles("symmetry-partly", &triangles);
+    let reply = run(&mut s, "scan.symmetry", json!({"plane": {"point": [50, 20, 10], "normal": [0, 1, 0]}, "keep": false}));
+    let mirror = &reply["mirror"];
+    assert_eq!(mirror["symmetric"], true, "{reply}");
+    let coverage = mirror["coverage"].as_f64().unwrap();
+    assert!(coverage > 0.6 && coverage < 0.85, "{reply}");
+    let said = mirror["partly"].as_str().unwrap_or_else(|| panic!("nothing said: {reply}"));
+    assert!(said.starts_with(&format!("{:.0} % of the scan has no mirror image", 100.0 * (1.0 - coverage))), "{said}");
+    // Completed by mirroring, the box would get an image the thing has not: warned of, and no
+    // mirror image there.
+    let done = run(&mut s, "scan.complete_by_mirroring", json!({"plane": {"point": [50, 20, 10], "normal": [0, 1, 0]}}));
+    assert_eq!(done["mirror"]["symmetric"], false, "{done}");
+    assert!(done["warning"].as_str().is_some_and(|w| w.contains("matches its reflection")) && done["mirror"].get("partly").is_none(), "{done}");
+    let (mut s, _, _) = session_with_a_symmetric_scan("symmetry-whole");
+    let reply = run(&mut s, "scan.symmetry", json!({"keep": false}));
+    assert!(reply["mirror"]["symmetric"] == true && reply["mirror"].get("partly").is_none(), "{reply}");
+}
+
 /// A guide with no length, or with an end missing, is refused before anything is searched.
 #[test]
 fn a_guide_needs_two_ends_apart() {

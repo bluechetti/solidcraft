@@ -456,6 +456,50 @@ impl FilletSurfaceGenerator {
         if let Self::GnSection(g) = self {
             let center =
                 center_line.ok_or_else(|| SolidError::invalid_input(OP, "NULL centre line"))?;
+            // (not the fork's) a variable radius solver's round: the section on its law's
+            // ball, a curvature-continuous round whose size varies
+            let law_ball = match (solver_type, ball.and_then(|b| b.law.as_ref())) {
+                (FilletSolverType::VariableRadius, Some(lb)) if lb.has_edgeuse => Some(lb),
+                _ => None,
+            };
+            if let Some(lb) = law_ball {
+                let Some((leader, law, kept, range)) =
+                    crate::blend::fillet_standard_solver::p2::law_round_curves(
+                        k,
+                        lb,
+                        points,
+                        approx_tol_3d,
+                    )?
+                else {
+                    return Err(SolidError::invalid_input(
+                        OP,
+                        "the radius law has no ball over the round's stations",
+                    ));
+                };
+                let round = crate::blend::fillet_section::section::GnLawRound {
+                    leader: &leader,
+                    law: &law,
+                    points: &kept,
+                    range,
+                };
+                return g
+                    .create_surface_on_law(
+                        k,
+                        approx_tol_3d,
+                        center,
+                        [rail1, rail2],
+                        surfaces,
+                        uv,
+                        &round,
+                    )?
+                    .map(|s| (s, None))
+                    .ok_or_else(|| {
+                        SolidError::invalid_input(
+                            OP,
+                            "the round's rails are not its radius law's ball's feet",
+                        )
+                    });
+            }
             return g
                 .create_surface(k, approx_tol_3d, center, [rail1, rail2], surfaces, uv)
                 .map(|s| (s, None));
@@ -3637,7 +3681,9 @@ pub fn trim_rail(k: &Kernel, b: &mut Brep, rail: EdgeId, trim_interval: &Extent1
 
 #[path = "p1/rails.rs"]
 pub(crate) mod rails;
-pub use rails::{compute_support_edge, split_rail, RailOwnership, RetainedRailOwnership};
+pub use rails::{
+    compute_support_edge, split_rail, split_rail_along, RailOwnership, RetainedRailOwnership,
+};
 
 #[cfg(test)]
 mod tests {
