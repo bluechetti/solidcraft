@@ -17,7 +17,7 @@ pub struct Scan {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Degrade {
     pub seed: u64,
-    /// Triangles are cut in four until their edges are no longer than this (0: left as they are).
+    /// The scan's triangles are made about this long each way (0: the mesh as it is).
     pub edge: f64,
     /// Standard deviation of the noise along each point's normal, in the mesh's unit.
     pub sigma: f64,
@@ -41,8 +41,8 @@ impl Default for Degrade {
     }
 }
 
-/// The most times a mesh is cut in four: 4^6 triangles for each one it came with.
-const MOST_CUTS: u32 = 6;
+/// The most rounds of cutting: an edge 2^16 times the length asked is still cut down to it.
+const MOST_CUTS: u32 = 16;
 
 fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
@@ -120,16 +120,72 @@ impl Scan {
     }
 }
 
-/// `mesh` with every triangle cut in four, the cuts shared along each edge, until no edge is
-/// longer than `edge` (or [`MOST_CUTS`] times): neighbours still share whole edges.
+/// `mesh` as a scanner's triangles: about `edge` long each way, every point one of the mesh's
+/// own surface. The mesh is first cut until no edge is longer than half of `edge` ([`cut`]), then
+/// its points are gathered by the cells of a grid `edge` wide: each cell keeps the point nearest
+/// its middle, and a triangle whose corners fall in three different cells stays, on those points.
+/// Neighbours share whole edges; a wall thinner than `edge` would close up.
 pub fn even(mesh: &Scan, edge: f64) -> Scan {
+    if !(edge > 0.0) {
+        return mesh.clone();
+    }
+    let fine = cut(mesh, edge / 2.0);
+    // The grid is set off the origin, so a face lying on a whole number is not on a cell's wall.
+    let cell = |p: &[f64; 3]| [0, 1, 2].map(|k| (p[k] / edge + 0.37 + 0.11 * k as f64).floor() as i64);
+    let off_middle = |p: &[f64; 3], c: &[i64; 3]| (0..3).map(|k| (p[k] / edge + 0.37 + 0.11 * k as f64 - c[k] as f64 - 0.5).powi(2)).sum::<f64>();
+    let mut kept: std::collections::BTreeMap<[i64; 3], (f64, u32)> = std::collections::BTreeMap::new();
+    for (i, p) in fine.points.iter().enumerate() {
+        let c = cell(p);
+        let d = off_middle(p, &c);
+        let slot = kept.entry(c).or_insert((f64::INFINITY, i as u32));
+        if d < slot.0 {
+            *slot = (d, i as u32);
+        }
+    }
+    let mut out = Scan::default();
+    let mut index: std::collections::BTreeMap<[i64; 3], u32> = std::collections::BTreeMap::new();
+    for (c, (_, i)) in &kept {
+        if let Some(p) = fine.points.get(*i as usize) {
+            index.insert(*c, out.points.len() as u32);
+            out.points.push(*p);
+        }
+    }
+    let mut seen: std::collections::BTreeSet<[u32; 3]> = std::collections::BTreeSet::new();
+    for t in &fine.triangles {
+        let Some(corners) = fine.corners(t) else { continue };
+        let ids = corners.map(|p| index.get(&cell(&p)).copied());
+        let [Some(a), Some(b), Some(c)] = ids else { continue };
+        if a == b || b == c || c == a {
+            continue;
+        }
+        let mut key = [a, b, c];
+        key.sort_unstable();
+        if seen.insert(key) {
+            out.triangles.push([a, b, c]);
+        }
+    }
+    out
+}
+
+/// `mesh` with every edge longer than `edge` cut in two, again and again until none is (or
+/// [`MOST_CUTS`] times). A cut edge is cut for both triangles that share it, so neighbours still
+/// share whole edges.
+pub fn cut(mesh: &Scan, edge: f64) -> Scan {
     let mut out = mesh.clone();
-    let mut cuts = 0;
-    while edge > 0.0 && out.longest_edge() > edge && cuts < MOST_CUTS {
+    if !(edge > 0.0) {
+        return out;
+    }
+    for _ in 0..MOST_CUTS {
+        let long = |i: u32, j: u32, points: &[[f64; 3]]| match (points.get(i as usize), points.get(j as usize)) {
+            (Some(p), Some(q)) => len(sub(*q, *p)) > edge,
+            _ => false,
+        };
         let mut middles: std::collections::BTreeMap<(u32, u32), u32> = std::collections::BTreeMap::new();
-        let mut next = Vec::with_capacity(out.triangles.len() * 4);
+        let mut next = Vec::with_capacity(out.triangles.len() * 2);
         let triangles = std::mem::take(&mut out.triangles);
+        let mut cut_any = false;
         for [a, b, c] in triangles {
+            let marked = [long(a, b, &out.points), long(b, c, &out.points), long(c, a, &out.points)];
             let mut middle = |i: u32, j: u32, points: &mut Vec<[f64; 3]>| -> u32 {
                 *middles.entry((i.min(j), i.max(j))).or_insert_with(|| {
                     let (p, q) = (points.get(i as usize).copied().unwrap_or_default(), points.get(j as usize).copied().unwrap_or_default());
@@ -137,11 +193,38 @@ pub fn even(mesh: &Scan, edge: f64) -> Scan {
                     (points.len() - 1) as u32
                 })
             };
-            let (ab, bc, ca) = (middle(a, b, &mut out.points), middle(b, c, &mut out.points), middle(c, a, &mut out.points));
-            next.extend([[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]]);
+            // Turned so the marked edges come first: (a, b) alone, or (a, b) and (b, c).
+            let (a, b, c, count) = match marked {
+                [false, false, false] => {
+                    next.push([a, b, c]);
+                    continue;
+                }
+                [true, true, true] => (a, b, c, 3),
+                [true, false, false] => (a, b, c, 1),
+                [false, true, false] => (b, c, a, 1),
+                [false, false, true] => (c, a, b, 1),
+                [true, true, false] => (a, b, c, 2),
+                [false, true, true] => (b, c, a, 2),
+                [true, false, true] => (c, a, b, 2),
+            };
+            cut_any = true;
+            let ab = middle(a, b, &mut out.points);
+            match count {
+                1 => next.extend([[a, ab, c], [ab, b, c]]),
+                2 => {
+                    let bc = middle(b, c, &mut out.points);
+                    next.extend([[ab, b, bc], [a, ab, bc], [a, bc, c]]);
+                }
+                _ => {
+                    let (bc, ca) = (middle(b, c, &mut out.points), middle(c, a, &mut out.points));
+                    next.extend([[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]]);
+                }
+            }
         }
         out.triangles = next;
-        cuts += 1;
+        if !cut_any {
+            break;
+        }
     }
     out
 }
@@ -209,21 +292,30 @@ mod tests {
         Scan { points, triangles }
     }
 
-    /// Cut even, a cube keeps its 600 of area, has no edge longer than asked, and stays closed:
-    /// every edge is still shared by two triangles.
+    /// Cut, a cube keeps its 600 of area exactly, has no edge longer than asked and stays closed.
+    /// Made even, it has triangles about as long as asked on its own surface: closed still, its
+    /// area a little under 600 where triangles cut across its edges, and some 600 / (1 x 1 / 2)
+    /// triangles.
     #[test]
     fn a_cube_cut_even_keeps_its_area_and_stays_closed() {
-        let fine = even(&cube(), 1.0);
-        assert!((fine.area() - 600.0).abs() < 1e-9, "{}", fine.area());
-        assert!(fine.longest_edge() <= 1.0 && fine.triangles.len() == 12 * 4usize.pow(4), "{} {}", fine.longest_edge(), fine.triangles.len());
-        let mut sides = std::collections::BTreeMap::new();
-        for t in &fine.triangles {
-            for k in 0..3 {
-                let (a, b) = (t[k], t[(k + 1) % 3]);
-                *sides.entry((a.min(b), a.max(b))).or_insert(0) += 1;
+        let closed = |m: &Scan| {
+            let mut sides = std::collections::BTreeMap::new();
+            for t in &m.triangles {
+                for k in 0..3 {
+                    let (a, b) = (t[k], t[(k + 1) % 3]);
+                    *sides.entry((a.min(b), a.max(b))).or_insert(0) += 1;
+                }
             }
-        }
-        assert!(sides.values().all(|&n| n == 2), "closed: each edge twice");
+            sides.values().all(|&n| n == 2)
+        };
+        let fine = cut(&cube(), 1.0);
+        assert!((fine.area() - 600.0).abs() < 1e-9 && fine.longest_edge() <= 1.0 && closed(&fine), "{} {}", fine.area(), fine.longest_edge());
+        let scan = even(&cube(), 1.0);
+        assert!(closed(&scan), "each edge twice");
+        assert!(scan.area() > 0.97 * 600.0 && scan.area() <= 600.0 + 1e-9, "{}", scan.area());
+        assert!(scan.longest_edge() < 3.5 && scan.triangles.len() > 800 && scan.triangles.len() < 2000, "{} {}", scan.longest_edge(), scan.triangles.len());
+        // Every point is on the cube's surface.
+        assert!(scan.points.iter().all(|p| p.iter().any(|c| c.abs() < 1e-12 || (c - 10.0).abs() < 1e-12)));
         assert_eq!(even(&cube(), 0.0), cube(), "no edge asked: as it came");
     }
 
@@ -267,7 +359,8 @@ mod tests {
         assert!((p[0] - 1.0 / 25.4).abs() < 1e-12 && (p[1] - 12.0 / 25.4).abs() < 1e-12 && (p[2] - 3.0 / 25.4).abs() < 1e-12, "{p:?}");
         assert!((turned.area() - 600.0 / (25.4 * 25.4)).abs() < 1e-9);
         let specked = degraded(&cube(), &Degrade { edge: 1.0, specks: 0.01, ..Degrade::default() });
-        assert_eq!(specked.triangles.len(), whole_count(1.0) + 31, "one in a hundred of 3072");
+        let clean = whole_count(1.0);
+        assert_eq!(specked.triangles.len(), clean + (clean as f64 * 0.01).round() as usize, "one in a hundred");
         let stl = cube().stl();
         assert_eq!(stl.len(), 84 + 12 * 50);
     }

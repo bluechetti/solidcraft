@@ -108,7 +108,8 @@ fn main() -> Result<()> {
         truth.execute(command, &step["params"]).map_err(|e| format!("the recipe's {command}: {e}"))?;
     }
     truth.execute("file.export_step", &json!({"path": path("truth.step")}))?;
-    truth.execute("file.export_stl", &json!({"path": path("truth.stl"), "quality": "finest"}))?;
+    // Fine: curved faces within 5e-5 of the part's size, a few microns, well under the noise.
+    truth.execute("file.export_stl", &json!({"path": path("truth.stl"), "quality": "fine"}))?;
     let scan = degraded(&read_stl(&std::fs::read(out.join("truth.stl"))?)?, &how);
     std::fs::write(out.join("scan.stl"), scan.stl())?;
 
@@ -121,14 +122,20 @@ fn main() -> Result<()> {
     let body = inserted.as_ref().and_then(|r| r["bodies"][0].as_str()).map(str::to_owned);
     let mut built = None;
     let mut in_app = Value::Null;
+    let mut advice = Value::Null;
     if let Some(body) = &body {
+        // Survey reads the scan and names what to run first, each with its parameters: its
+        // tidying and its tolerance are taken as it gives them, and its placing when the scan
+        // lies askew. Nothing here is chosen for the case.
         let survey = log.run(&mut s, "scan.survey", json!({}));
-        log.run(&mut s, "scan.repair", json!({}));
-        if how.specks > 0.0 {
-            log.run(&mut s, "scan.remove_floating", json!({}));
-        }
-        if flag("--turn").is_some() {
-            log.run(&mut s, "scan.quick_align", json!({}));
+        advice = survey.as_ref().map(|r| json!({"noise": r["noise"], "tolerance": r["tolerance"], "next": r["next"].as_array().map(|n| n.iter().map(|x| x["command"].clone()).collect::<Vec<_>>())})).unwrap_or(Value::Null);
+        let tidying = ["scan.repair", "scan.remove_floating", "scan.denoise", "scan.fill_holes", "scan.tolerance"];
+        let placing = ["scan.stand_on_base", "scan.quick_align"];
+        for step in survey.iter().flat_map(|r| r["next"].as_array().into_iter().flatten()) {
+            let Some(command) = step["command"].as_str() else { continue };
+            if tidying.contains(&command) || (flag("--turn").is_some() && placing.contains(&command)) {
+                log.run(&mut s, command, step["params"].clone());
+            }
         }
         log.run(&mut s, "scan.find_all", json!({}));
         if let Some(read) = log.run(&mut s, "scan.reconstruct", json!({})) {
@@ -149,9 +156,8 @@ fn main() -> Result<()> {
                 built = Some(model);
             }
         }
-        log.run(&mut s, "file.export_stl", json!({"path": path("placed.stl"), "bodies": [body], "quality": "finest"}));
+        log.run(&mut s, "file.export_stl", json!({"path": path("placed.stl"), "bodies": [body]}));
         log.run(&mut s, "scan.deviation", json!({"show": false}));
-        let _ = survey;
     }
     let result = json!({
         "case": recipe["id"],
@@ -160,6 +166,7 @@ fn main() -> Result<()> {
         "scan": {"points": scan.points.len(), "triangles": scan.triangles.len()},
         "built": built,
         "seconds": started.elapsed().as_secs_f64(),
+        "survey": advice,
         "in_app": in_app,
         "refused": log.steps.iter().filter(|s| s["ok"] == false).map(|s| s["command"].clone()).collect::<Vec<_>>(),
         "steps": log.steps,

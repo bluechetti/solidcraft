@@ -10,16 +10,21 @@
 [levels]
 sigma = [0.02, 0.1, 0.3]
 seed = 20261118
-# The scan's triangles: the truth mesh is cut until its edges are no longer than this.
+# The scan's triangles are about this long each way.
 edge = 0.5
+# A scan cannot hold a sharp edge better than its triangles: one that crosses the edge cuts the
+# corner by up to half its length. This share of `edge` is added to the `max` bar the model's
+# surface is held to against the scan (not to the scan's points against the model, which lie on
+# the part). Set at calibration: the five cases built right at sigma 0.02 read 0.21 to 0.26.
+edge_allowance = 0.5
 
 [prismatic]
 tolerance_sigmas = 3.0
 tolerance_least = 0.1
 bars = [
   { sigma = 0.02, within = 0.99, rms = 0.03, max = 0.15, radius = 0.05, position = 0.05, angle = 0.1, volume = 0.005, scale = 0.005, features = "exact" },
-  { sigma = 0.1, within = 0.97, rms = 0.12, max = 0.5, radius = 0.15, position = 0.15, angle = 0.3, volume = 0.01, scale = 0.005, features = "exact" },
-  { sigma = 0.3, within = 0.95, rms = 0.35, max = 1.5, radius = 0.4, position = 0.4, angle = 1.0, volume = 0.02, scale = 0.01, features = "pass or refuse" },
+  { sigma = 0.1, within = 0.97, rms = 0.12, max = 0.6, radius = 0.15, position = 0.15, angle = 0.3, volume = 0.01, scale = 0.005, features = "exact" },
+  { sigma = 0.3, within = 0.95, rms = 0.35, max = 1.8, radius = 0.4, position = 0.4, angle = 1.0, volume = 0.02, scale = 0.01, features = "pass or refuse" },
 ]
 
 [turned]
@@ -27,8 +32,8 @@ tolerance_sigmas = 3.0
 tolerance_least = 0.1
 bars = [
   { sigma = 0.02, within = 0.99, rms = 0.03, max = 0.15, radius = 0.025, position = 0.05, angle = 0.1, volume = 0.005, scale = 0.005, features = "exact" },
-  { sigma = 0.1, within = 0.97, rms = 0.12, max = 0.5, radius = 0.1, position = 0.15, angle = 0.3, volume = 0.01, scale = 0.005, features = "exact" },
-  { sigma = 0.3, within = 0.95, rms = 0.35, max = 1.5, radius = 0.3, position = 0.4, angle = 1.0, volume = 0.02, scale = 0.01, features = "pass or refuse" },
+  { sigma = 0.1, within = 0.97, rms = 0.12, max = 0.6, radius = 0.1, position = 0.15, angle = 0.3, volume = 0.01, scale = 0.005, features = "exact" },
+  { sigma = 0.3, within = 0.95, rms = 0.35, max = 1.8, radius = 0.3, position = 0.4, angle = 1.0, volume = 0.02, scale = 0.01, features = "pass or refuse" },
 ]
 
 # The rule above every bar: a case either meets its bars, or its commands refuse or warn. A case
@@ -37,5 +42,9 @@ bars = [
 silent_wrong_allowed = 0
 
 [calibration]
-# Filled by the first full run: its date and commit, and what each bar measured before it was set.
-done = false
+# The one calibration, on the first full run (2026-11-18, branch scan-parity, 18 cases).
+done = true
+changes = [
+  "levels.edge_allowance = 0.5: the five cases built right at sigma 0.02 read 0.21 to 0.26 model-to-scan max, the scan's own corner cutting",
+  "max at sigma 0.1: 0.5 -> 0.6, at sigma 0.3: 1.5 -> 1.8. A bar of 5 sigma leaves nothing for the model: the scan's noisiest of some 60,000 points is 4.5 sigma off a perfect model (flange at 0.1: 0.42; drilled shaft, its holes 0.06 out of place: 0.52). Six sigma.",
+]
