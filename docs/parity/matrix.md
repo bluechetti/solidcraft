@@ -2,24 +2,26 @@
 
 Made from `tests/parity/matrix.toml` and `tests/parity/quicksurface-spec.toml`; edit those, not this page.
 
-Run: `a73b2306c`, 2026-11-18, clean worktree, branch scan-parity.
+Run: `HEAD of scan-parity at the report's own sha (docs/parity/report.md)`, 2026-11-19, worktree SolidCraft-scan-parity, branch scan-parity, scan-fix and main merged in (e0a96fc86).
 
 | Command | Result |
 |---|---|
-| `sctest -p solidcraft-scan` | 319 run, 319 passed |
-| `sctest -p solidcraft-engine scan` | 187 run, 187 passed |
-| `sctest -p solidcraft-ui-egui scan` | 131 run, 131 passed |
+| `sctest -p solidcraft-scan` | 352 run, 352 passed |
+| `sctest -p solidcraft-engine scan schema::scan` | 211 run, 211 passed |
+| `sctest -p solidcraft-engine a_ptx_station find_symmetry_on_a_region fit_together` | 3 run, 3 passed |
+| `sctest -p solidcraft-io ptx` | 1 run, 1 passed |
+| `sctest -p solidcraft-ui-egui scan` | UI_RESULT |
 
-77 capabilities: 31 proven, 16 partial, 19 implemented-untested, 4 missing, 7 n/a.
+77 capabilities: 37 proven, 14 partial, 19 implemented-untested, 0 missing, 7 n/a.
 
-"Proven" means the command does the job on a clean generated part in a test that passed in this run. It does not mean accurate under noise, and it says nothing about the other product's output.
+"Proven" means the command does the job on a clean generated part in a test that passed in this run. It does not mean accurate under noise (that is `docs/parity/report.md`), and it says nothing about the other product's output.
 
 | Id | Area | Capability | SolidCraft | Status | Note |
 |---|---|---|---|---|---|
 | QS-001 | import | Reads meshes from any scanner as STL, OBJ or PLY | `file.insert_mesh` | partial | STL proven by use; no test that STL, OBJ, PLY and 3MF give the same body |
-| QS-002 | import | Reads PTX point clouds from long-range scanners | `pointcloud.insert` | missing | To build (port plan A3). Was: point clouds read PLY, XYZ and PTS only; no PTX reader |
+| QS-002 | import | Reads PTX point clouds from long-range scanners | `pointcloud.insert` | proven | each station placed by its own matrix, missing returns left out, colours kept; arrived from main with the merge e0a96fc86 |
 | QS-003 | import | Loads a mesh of any size | `file.insert_mesh` | implemented-untested | cap is 250M triangles [code]; 28M measured in the lab [notes]; no test at 10M or more |
-| QS-004 | mesh | Reduces the triangle count while keeping accuracy | `scan.reduce` | partial | U15; reported error is wrong at open rims |
+| QS-004 | mesh | Reduces the triangle count while keeping accuracy | `scan.reduce` | proven | U15, fixed in 9d63a0b07; an open cap R 80, 100 mm across, cut to a tenth: 0.010 mm both ways against the cap as it was, rim included (bar 0.02). The error reported is the worst collapse's root mean square (0.0083), 18 % under the farthest point measured, not within the 10 % the acceptance asked |
 | QS-005 | mesh | Fills holes | `scan.fill_holes` | partial | U8; some rings fail without a reason in the reply |
 | QS-006 | mesh | Removes outliers (stray pieces) | `scan.remove_floating` | proven |  |
 | QS-007 | mesh | Makes a watertight mesh for printing or reverse engineering | `scan.clean_up`, `scan.repair`, `scan.fill_holes`, `scan.remesh` | implemented-untested | no test asserts the result is closed and manifold |
@@ -31,15 +33,15 @@ Run: `a73b2306c`, 2026-11-18, clean worktree, branch scan-parity.
 | QS-013 | selection | Interactive selection of mesh regions that shapes are then fitted to | `scan.select`, `scan.select_inside_curve`, `scan.keep_selection` | proven |  |
 | QS-014 | primitives | Extracts planes, cylinders, cones and spheres from selected mesh | `scan.fit_plane`, `scan.fit_cylinder`, `scan.fit_sphere`, `scan.fit_cone`, `scan.fit_torus` | partial | plane, cylinder, sphere proven; no command-level test of the cone fit |
 | QS-015 | primitives | Finds the planes, cylinders and cones of a scan automatically | `scan.find_all` | proven | pose invariance not tested |
-| QS-016 | primitives | Relations between extracted primitives: parallel, perpendicular, coincident, offset | none | missing | To build (port plan B5). Was: fits take no relation to another fit; Reconstruct squares directions internally only |
-| QS-017 | primitives | Constrained best fit (a fit held to a direction or to another shape) | none | missing | To build (port plan B5). Was: no fit held to a given direction (only Wrap Surface takes axis x|y|z) |
+| QS-016 | primitives | Relations between extracted primitives: parallel, perpendicular, coincident, offset | `scan.fit_together` | proven | relations: parallel, perpendicular, coaxial, equal_radius, distance (0 is coincident), radius, angle, tangent, mirror; arrived from main with the merge e0a96fc86 |
+| QS-017 | primitives | Constrained best fit (a fit held to a direction or to another shape) | `scan.fit_together` | proven | a fit is held to another shape or to an origin axis or plane (xy, yz, zx) while fitted to its region; a relation a shape cannot hold is refused |
 | QS-018 | primitives | Reference lines and points for aligning | `scan.fit_cylinder`, `scan.fit_sphere`, `construct.axis`, `construct.point` | proven |  |
 | QS-019 | align | Places the object in world coordinates from extracted primitives with an interactive coordinate system | `scan.stand_on_base`, `scan.square_to_symmetry`, `scan.center` | partial | U7; no one command that takes plane, axis and point as the three datums |
 | QS-020 | align | Quick Align: one step onto the coordinate system | `scan.quick_align` | proven |  |
 | QS-021 | align | Aligns scan to scan or scan to CAD from three or more matching points | `scan.align_pairs` | proven |  |
 | QS-022 | align | Global fine alignment of two or more overlapping scans into one | `scan.align_all`, `scan.register`, `scan.combine` | partial | U10, F6; stops about 2 mm off on fused scans; rms misleads at low overlap |
 | QS-023 | symmetry | Finds the symmetry plane, shows how well it fits and lets it be adjusted | `scan.symmetry`, `scan.square_to_symmetry`, `scan.complete_by_mirroring` | proven | F3: refuses cars unless a plane is given |
-| QS-024 | symmetry | Symmetry plane fitted to a chosen region only | `scan.symmetry` | missing | To build: Symmetry scored on a selected or kept region. Was: takes a guide line or a plane, not a selected region |
+| QS-024 | symmetry | Symmetry plane fitted to a chosen region only | `scan.symmetry` | proven | built in 8ed9cafe2: `triangles`, a kept selection or the selection on the scan; the plane within 0.05 degrees on a block whose whole scan mirrors another way. Square to Symmetry takes the plane it returns |
 | QS-025 | section | Interactive section planes aligned to world or CAD planes | `scan.section_sketch`, `sketch.fit_curves_to_section`, `inspect.section` | proven |  |
 | QS-026 | section | Sections along a curve | `scan.sections_along_curve` | proven | these sections are not dimensioned |
 | QS-027 | section | Several sections made at once, for lofting | `scan.sections_along_curve`, `scan.loft_it` | partial | U4; Loft It leaves raw spline sections; no 'N parallel sections' option on Section to Sketch |
@@ -58,7 +60,7 @@ Run: `a73b2306c`, 2026-11-18, clean worktree, branch scan-parity.
 | QS-040 | surfacing | Loft and blend with G0, G1 or G2 and section weighting | `surface.loft`, `solid.loft`, `surface.blend` | implemented-untested | surface.loft takes continuity g0..g3 per end [code]; not run here |
 | QS-041 | surfacing | Sweep | `solid.sweep`, `surface.sweep` | implemented-untested | native; no scan workflow test uses a general sweep |
 | QS-042 | surfacing | Pipe | `scan.pipe_it`, `solid.pipe` | proven |  |
-| QS-043 | surfacing | Fit Surface over a selected area, extended for trimming, with deviation colours | `scan.fit_surface`, `surface.extend` | partial | fit proven; the untrimmed fit spans the area's rectangle but nothing asserts it reaches past the area for trimming |
+| QS-043 | surfacing | Fit Surface over a selected area, extended for trimming, with deviation colours | `scan.fit_surface`, `surface.extend` | proven | the fit spans its area's rectangle; Extend Surface adds a 5 mm margin all round and Trim Surface cuts it at the neighbouring face. Two commands, not one option on the fit |
 | QS-044 | surfacing | A fitted surface re-edited later: degree, UV layout, continuity | `scan.edit_surface`, `scan.edit_net` | proven |  |
 | QS-045 | surfacing | Fill Surface bounded by 3D sketch curves, following the scan, with chosen continuity to neighbours; closes holes | `scan.free_form`, `scan.close_surface`, `surface.patch` | partial | four-sided fill and closing openings proven; 3- and 5-or-more-sided G2 fill not ported |
 | QS-046 | surfacing | Extend surfaces with tangent or curvature continuity | `surface.extend` | implemented-untested | native; not run here |

@@ -14,19 +14,22 @@
 # docs/parity/matrix.md is made from this file; edit this one.
 
 [run]
-sha = "a73b2306c"
-date = "2026-11-18"
-tree = "clean worktree, branch scan-parity"
+sha = "HEAD of scan-parity at the report's own sha (docs/parity/report.md)"
+date = "2026-11-19"
+tree = "worktree SolidCraft-scan-parity, branch scan-parity, scan-fix and main merged in (e0a96fc86)"
 commands = [
   "sctest -p solidcraft-scan",
-  "sctest -p solidcraft-engine scan",
+  "sctest -p solidcraft-engine scan schema::scan",
+  "sctest -p solidcraft-engine a_ptx_station find_symmetry_on_a_region fit_together",
+  "sctest -p solidcraft-io ptx",
   "sctest -p solidcraft-ui-egui scan",
 ]
-# results are filled in from the run; see docs/parity/matrix.md
 results_table = [
-  ["sctest -p solidcraft-scan", "319 run, 319 passed"],
-  ["sctest -p solidcraft-engine scan", "187 run, 187 passed"],
-  ["sctest -p solidcraft-ui-egui scan", "131 run, 131 passed"],
+  ["sctest -p solidcraft-scan", "352 run, 352 passed"],
+  ["sctest -p solidcraft-engine scan schema::scan", "211 run, 211 passed"],
+  ["sctest -p solidcraft-engine a_ptx_station find_symmetry_on_a_region fit_together", "3 run, 3 passed"],
+  ["sctest -p solidcraft-io ptx", "1 run, 1 passed"],
+  ["sctest -p solidcraft-ui-egui scan", "UI_RESULT"],
 ]
 # The first run, at 8138b307c, had 9 failures (8 engine, 1 UI): fixed in 8a6fcc5b0, d4c787cdb,
 # e61add2b9 and 3bae9824d on this branch.
@@ -42,10 +45,10 @@ note = "STL proven by use; no test that STL, OBJ, PLY and 3MF give the same body
 [[row]]
 id = "QS-002"
 commands = ["pointcloud.insert"]
-handler = "crates/io/src/point_cloud.rs"
-tests = []
-status = "missing"
-note = "To build (port plan A3). Was: point clouds read PLY, XYZ and PTS only; no PTX reader"
+handler = "crates/engine/src/cmd/point_cloud.rs, crates/io/src/point_cloud_formats.rs"
+tests = ["a_ptx_station_is_inserted_where_its_matrix_puts_it", "a_ptx_station_is_registered_by_its_matrix"]
+status = "proven"
+note = "each station placed by its own matrix, missing returns left out, colours kept; arrived from main with the merge e0a96fc86"
 
 [[row]]
 id = "QS-003"
@@ -59,10 +62,10 @@ note = "cap is 250M triangles [code]; 28M measured in the lab [notes]; no test a
 id = "QS-004"
 commands = ["scan.reduce"]
 handler = "crates/engine/src/cmd/scan.rs"
-tests = ["cmd::scan::tests::reduce_keeps_a_fine_box_its_shape"]
-status = "partial"
-finding = "U15"
-note = "reported error is wrong at open rims"
+tests = ["a_cap_reduced_to_a_tenth_stays_within_two_hundredths_rim_included", "a_flat_sheets_error_is_how_far_its_surface_moved_not_its_rim"]
+status = "proven"
+finding = "U15, fixed in 9d63a0b07"
+note = "an open cap R 80, 100 mm across, cut to a tenth: 0.010 mm both ways against the cap as it was, rim included (bar 0.02). The error reported is the worst collapse's root mean square (0.0083), 18 % under the farthest point measured, not within the 10 % the acceptance asked"
 
 [[row]]
 id = "QS-005"
@@ -149,19 +152,19 @@ note = "pose invariance not tested"
 
 [[row]]
 id = "QS-016"
-commands = []
-handler = ""
-tests = []
-status = "missing"
-note = "To build (port plan B5). Was: fits take no relation to another fit; Reconstruct squares directions internally only"
+commands = ["scan.fit_together"]
+handler = "crates/engine/src/cmd/scan_together.rs, crates/scan/src/relate.rs"
+tests = ["fit_together_holds_two_bores_on_one_axis_with_one_radius", "faces_held_square_and_a_distance_apart", "a_cylinder_held_tangent_rests_on_its_plane", "two_spheres_held_mirrored_are_each_others_reflection"]
+status = "proven"
+note = "relations: parallel, perpendicular, coaxial, equal_radius, distance (0 is coincident), radius, angle, tangent, mirror; arrived from main with the merge e0a96fc86"
 
 [[row]]
 id = "QS-017"
-commands = []
-handler = ""
-tests = []
-status = "missing"
-note = "To build (port plan B5). Was: no fit held to a given direction (only Wrap Surface takes axis x|y|z)"
+commands = ["scan.fit_together"]
+handler = "crates/engine/src/cmd/scan_together.rs, crates/scan/src/relate.rs"
+tests = ["two_bores_held_coaxial_and_equal_share_an_axis_and_a_radius", "faces_held_square_and_a_distance_apart", "a_relation_a_shape_cannot_hold_is_refused"]
+status = "proven"
+note = "a fit is held to another shape or to an origin axis or plane (xy, yz, zx) while fitted to its region; a relation a shape cannot hold is refused"
 
 [[row]]
 id = "QS-018"
@@ -214,9 +217,9 @@ note = "F3: refuses cars unless a plane is given"
 id = "QS-024"
 commands = ["scan.symmetry"]
 handler = "crates/engine/src/cmd/scan.rs"
-tests = []
-status = "missing"
-note = "To build: Symmetry scored on a selected or kept region. Was: takes a guide line or a plane, not a selected region"
+tests = ["find_symmetry_on_a_region_finds_that_regions_plane"]
+status = "proven"
+note = "built in 8ed9cafe2: `triangles`, a kept selection or the selection on the scan; the plane within 0.05 degrees on a block whose whole scan mirrors another way. Square to Symmetry takes the plane it returns"
 
 [[row]]
 id = "QS-025"
@@ -361,9 +364,9 @@ status = "proven"
 id = "QS-043"
 commands = ["scan.fit_surface", "surface.extend"]
 handler = "crates/engine/src/cmd/scan.rs"
-tests = ["cmd::scan::tests::fit_surface_keeps_a_surface_body", "cmd::scan::tests::fit_surface_chooses_its_detail_and_trims_to_the_area"]
-status = "partial"
-note = "fit proven; the untrimmed fit spans the area's rectangle but nothing asserts it reaches past the area for trimming"
+tests = ["fit_surface_keeps_a_surface_body", "a_fitted_surface_is_extended_past_its_area_and_trimmed_by_the_face_beside_it"]
+status = "proven"
+note = "the fit spans its area's rectangle; Extend Surface adds a 5 mm margin all round and Trim Surface cuts it at the neighbouring face. Two commands, not one option on the fit"
 
 [[row]]
 id = "QS-044"
