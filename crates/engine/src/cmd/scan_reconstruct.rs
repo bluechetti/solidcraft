@@ -27,7 +27,7 @@ use crate::schema::scan_reconstruct::{
     ScanBuildResult, ScanChamferItParams, ScanChamferItResult, ScanChamfered, ScanCutItParams, ScanEdgeChamfer, ScanEdgeRound, ScanExtrudeItParams,
     ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams, ScanFindAllResult, ScanHole, ScanHoleForm, ScanHoleItParams,
     ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat, ScanRestParams,
-    ScanRestResult, ScanRevolveItParams, ScanShapeFound, ScanShapeItParams, ScanShell, ScanShellItParams, ScanSpokes, ScanTurned,
+    ScanRestResult, ScanRevolveItParams, ScanRotational, ScanShapeFound, ScanShapeItParams, ScanShell, ScanShellItParams, ScanSpokes, ScanTurned,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -602,11 +602,36 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
     let reading = view.reading();
     let built = built_name(&found.scan);
     let built = s.model.state().body(&built).is_some().then_some(built);
+    // How each prism's outline repeats round its middle (a gear's teeth), read off its profile.
+    let repeating: Vec<Option<ScanRotational>> = {
+        let shown = super::shown_mesh(s, &found.scan);
+        reading
+            .prisms
+            .iter()
+            .map(|prism| {
+                let shown = shown.as_ref()?;
+                let scan = view.scan(shown.positions.as_slice(), shown.triangles.as_slice());
+                let (plane, outlines) = profile::prism_profile(&scan, view.outcome(), reading, prism).ok()?;
+                let found = profile::rotational(&profile::ring(outlines.first()?), view.outcome().tolerance)?;
+                // On the middle slice, where the profile was read (a drafted prism is sketched at its low end).
+                let on_plane = plane.origin + plane.x * found.centre.x + plane.y * found.centre.y;
+                let centre = on_plane + prism.direction * (prism.middle() - on_plane).dot(prism.direction);
+                Some(ScanRotational {
+                    order: found.order,
+                    centre: at(centre),
+                    tip_diameter: 2.0 * found.tip,
+                    root_diameter: 2.0 * found.root,
+                    module: 2.0 * found.tip / (found.order as f64 + 2.0),
+                })
+            })
+            .collect()
+    };
     let prisms: Vec<ScanPrism> = reading
         .prisms
         .iter()
+        .zip(repeating)
         .enumerate()
-        .map(|(index, prism)| ScanPrism {
+        .map(|(index, (prism, rotational))| ScanPrism {
             index,
             direction: at(prism.direction),
             middle: at(prism.middle()),
@@ -615,6 +640,7 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
             ends: prism.ends,
             open: prism.open,
             draft: prism.draft.to_degrees(),
+            rotational,
         })
         .collect();
     let holes: Vec<ScanHole> = reading

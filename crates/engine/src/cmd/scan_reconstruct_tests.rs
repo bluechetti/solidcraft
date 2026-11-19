@@ -509,6 +509,32 @@ fn a_drafted_shelled_housing_is_extruded_shelled_and_filleted_back_from_its_scan
     assert!((v - expected).abs() < 0.01 * expected, "{v} against the housing's {expected}");
 }
 
+/// A square bar's outline repeats four times round its middle, and Reconstruct says so of its
+/// prism (`rotational`: the order, the middle, the diameters across its corners and its flats); a
+/// bar 40 × 30 repeats only twice, which is no pattern, and says nothing.
+#[test]
+fn reconstruct_says_how_a_prisms_outline_repeats_round_its_middle() {
+    let read_of = |length: f64, width: f64| {
+        let mut part = Session::default();
+        let made = run(&mut part, "solid.box", json!({"length": length, "width": width, "height": 12, "center": [7, -3, 6]}));
+        let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+        let (mut s, _) = scanned(&part, &body, 3, "bar");
+        run(&mut s, "scan.reconstruct", json!({}))
+    };
+    let square = read_of(30.0, 30.0);
+    let prism = &square["prisms"][0];
+    assert!((prism["depth"].as_f64().unwrap() - 12.0).abs() < 0.05, "upright: {square}");
+    let repeats = &prism["rotational"];
+    assert_eq!(repeats["order"], 4, "{square}");
+    let centre: Vec<f64> = repeats["centre"].as_array().unwrap().iter().filter_map(Value::as_f64).collect();
+    assert!((centre[0] - 7.0).abs() < 0.05 && (centre[1] + 3.0).abs() < 0.05 && (centre[2] - 6.0).abs() < 0.05, "{square}");
+    let (tip, root) = (repeats["tip_diameter"].as_f64().unwrap(), repeats["root_diameter"].as_f64().unwrap());
+    assert!((tip - 30.0 * std::f64::consts::SQRT_2).abs() < 0.1 && (root - 30.0).abs() < 0.1, "across corners and across flats: {square}");
+    let oblong = read_of(40.0, 30.0);
+    assert!((oblong["prisms"][0]["depth"].as_f64().unwrap() - 12.0).abs() < 0.05, "{oblong}");
+    assert!(oblong["prisms"][0].get("rotational").is_none(), "{oblong}");
+}
+
 /// A cup (a cylinder R 30 × 60, shelled 3 thick, open at the top) from its scan in two calls:
 /// Section to Sketch about its axis draws the half of the cut on one side of it, closed along the
 /// axis through the bottom's thickness and fully dimensioned, and a Revolve about the sketch's X

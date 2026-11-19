@@ -122,6 +122,25 @@ pub struct ScanPrism {
     /// How far its walls lean in from its low end to its high end, in degrees (a moulded part's
     /// draft): Extrude It sketches it at its low end and extrudes it tapered. 0 for square walls.
     pub draft: f64,
+    /// When its outline repeats round its middle (a gear's teeth, a knob's lobes): how.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotational: Option<ScanRotational>,
+}
+
+/// How a prism's outline repeats round its middle.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanRotational {
+    /// How many times it repeats in one turn: a gear's tooth count.
+    pub order: usize,
+    /// The middle it repeats about, in the design (on the prism's middle slice).
+    pub centre: [f64; 3],
+    /// Twice its largest and its least distance from the middle, in mm: a gear's tip and root
+    /// diameters.
+    pub tip_diameter: f64,
+    pub root_diameter: f64,
+    /// Were it a spur gear of standard proportions, its module: the tip diameter over the tooth
+    /// count plus two.
+    pub module: f64,
 }
 
 /// Walls of one thickness, open at an end (a moulded housing, a tray): the prisms are read off

@@ -345,6 +345,110 @@ fn runs_along(scan: &Scan, loops: &[(&[Vec2], &[usize])], direction: Vec3, draft
         .collect()
 }
 
+/// How an outline repeats round its middle: a gear's teeth, a knob's lobes, a spline's keys.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rotational {
+    /// How many times it repeats in one turn (at least 3).
+    pub order: usize,
+    /// The middle it repeats about, and its largest and least distance from it (a gear's tip and
+    /// root radii).
+    pub centre: Vec2,
+    pub tip: f64,
+    pub root: f64,
+}
+
+/// The directions round the middle an outline's distance is read in.
+const SIGNATURE: usize = 2880;
+/// The most times round an outline is tried to repeat.
+const MOST_ORDER: usize = 360;
+/// Turned by one repeat, the outline lies on itself within this share of how far it rises and
+/// falls (or within the tolerance, when that is more).
+const REPEATS_WITHIN: f64 = 0.1;
+
+/// How the closed `ring` repeats round its middle, when it does at least 3 times: the least turn
+/// that lays the ring on itself again, read off its distance from its middle in [`SIGNATURE`]
+/// directions (the mean difference between the distances and the same turned, within `tolerance`
+/// or [`REPEATS_WITHIN`] of the rise and fall). `None` for a ring that
+/// does not rise and fall by more than the tolerance (a circle repeats any number of times) or
+/// repeats fewer than 3 times.
+pub fn rotational(ring: &[Vec2], tolerance: f64) -> Option<Rotational> {
+    let n = ring.len();
+    if n < 3 {
+        return None;
+    }
+    // The middle of the area the ring holds.
+    let (mut twice, mut sum) = (0.0, Vec2::ZERO);
+    for i in 0..n {
+        let (a, b) = (ring[i], ring[(i + 1) % n]);
+        let cross = a.cross(b);
+        twice += cross;
+        sum += (a + b) * cross;
+    }
+    if !(twice.abs() > 1e-12) {
+        return None;
+    }
+    let centre = sum / (3.0 * twice);
+    // The ring's distance from the middle in each direction: the farthest place the ray meets it.
+    let mut reach = vec![0.0f64; SIGNATURE];
+    for i in 0..n {
+        let (a, b) = (ring[i] - centre, ring[(i + 1) % n] - centre);
+        let (from, to) = (a.y.atan2(a.x), b.y.atan2(b.x));
+        let mut sweep = to - from;
+        if sweep > PI {
+            sweep -= TAU;
+        } else if sweep < -PI {
+            sweep += TAU;
+        }
+        let (low, high) = if sweep >= 0.0 { (from, from + sweep) } else { (from + sweep, from) };
+        let step = TAU / SIGNATURE as f64;
+        let (first, last) = ((low / step).ceil() as i64, (high / step).floor() as i64);
+        for k in first..=last {
+            let angle = k as f64 * step;
+            let ray = Vec2::new(angle.cos(), angle.sin());
+            // Where the ray from the middle crosses the line through a and b.
+            let across = ray.cross(b - a);
+            if across.abs() < 1e-15 {
+                continue;
+            }
+            let distance = a.cross(b - a) / across;
+            let slot = k.rem_euclid(SIGNATURE as i64) as usize;
+            if distance.is_finite() && distance > reach[slot] {
+                reach[slot] = distance;
+            }
+        }
+    }
+    if reach.iter().any(|r| !(*r > 0.0)) {
+        return None;
+    }
+    let (tip, root) = (reach.iter().copied().fold(0.0, f64::max), reach.iter().copied().fold(f64::INFINITY, f64::min));
+    let mean = reach.iter().sum::<f64>() / SIGNATURE as f64;
+    let rise = reach.iter().map(|r| (r - mean).abs()).sum::<f64>() / SIGNATURE as f64;
+    if !(rise > tolerance) {
+        return None;
+    }
+    let within = tolerance.max(REPEATS_WITHIN * rise);
+    // The distance in a direction between two of those read, taken in a line between them.
+    let at = |turn: f64| {
+        let place = turn.rem_euclid(SIGNATURE as f64);
+        let (low, part) = (place.floor() as usize % SIGNATURE, place.fract());
+        reach[low] * (1.0 - part) + reach[(low + 1) % SIGNATURE] * part
+    };
+    // How far the ring is from itself turned by a share of a turn: nothing unturned, rising as it
+    // is turned, and back to nothing when it has turned by one repeat. The first turn at which it
+    // comes back, once it has left, is one repeat (a smooth outline is near itself for any small
+    // turn, which is no repeat).
+    let off = |shift: f64| (0..SIGNATURE).map(|j| (reach[j] - at(j as f64 + shift)).abs()).sum::<f64>() / SIGNATURE as f64;
+    let turned: Vec<f64> = (0..=SIGNATURE / 3).map(|j| off(j as f64)).collect();
+    let most = turned.iter().copied().fold(0.0, f64::max);
+    let left = turned.iter().position(|e| *e > (3.0 * within).max(0.5 * most))?;
+    let back = (left..turned.len()).find(|&j| turned[j] <= within && turned.get(j + 1).is_none_or(|next| *next >= turned[j]))?;
+    let order = (SIGNATURE as f64 / back as f64).round() as usize;
+    if !((3..=MOST_ORDER).contains(&order) && off(SIGNATURE as f64 / order as f64) <= within) {
+        return None;
+    }
+    Some(Rotational { order, centre, tip, root })
+}
+
 /// A round of an outline taken out for a sharp corner ([`sharpened`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SharpCorner {
@@ -2123,6 +2227,35 @@ mod tests {
         // No round of one radius: nothing changes.
         let (same, none) = sharpened(std::slice::from_ref(&outline), |_| None);
         assert!(none.is_empty() && same[0] == outline);
+    }
+
+    /// A gear's outline (20 teeth, tips at 22, roots at 17.5, each tooth a little off the others as
+    /// a scan's fit leaves them) repeats 20 times round its middle, wherever it lies; a square 4
+    /// times; a circle and an L do not repeat.
+    #[test]
+    fn a_gears_outline_repeats_once_for_each_tooth() {
+        let gear = |teeth: usize, shift: Vec2| -> Vec<Vec2> {
+            let mut ring = Vec::new();
+            for tooth in 0..teeth {
+                // Root, flank up, tip, flank down: eight places a tooth, the tooth a hair off true.
+                let wobble = 0.02 * ((tooth * 7 % 5) as f64 - 2.0);
+                for (part, radius) in [(0.0, 17.5), (0.2, 17.5), (0.3, 20.0), (0.4, 22.0 + wobble), (0.6, 22.0 + wobble), (0.7, 20.0), (0.8, 17.5)] {
+                    let angle = TAU * (tooth as f64 + part) / teeth as f64;
+                    ring.push(shift + Vec2::new(angle.cos(), angle.sin()) * radius);
+                }
+            }
+            ring
+        };
+        let found = rotational(&gear(20, Vec2::new(31.0, -8.0)), 0.08).expect("a gear");
+        assert_eq!(found.order, 20, "{found:?}");
+        assert!(found.centre.dist(Vec2::new(31.0, -8.0)) < 0.05 && (found.tip - 22.0).abs() < 0.06 && (found.root - 17.5).abs() < 0.3, "{found:?}");
+        assert_eq!(rotational(&gear(37, Vec2::ZERO), 0.08).map(|r| r.order), Some(37));
+        let square = [Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0), Vec2::new(0.0, 10.0)];
+        assert_eq!(rotational(&square, 0.05).map(|r| r.order), Some(4));
+        let circle: Vec<Vec2> = (0..96).map(|k| TAU * f64::from(k) / 96.0).map(|a| Vec2::new(a.cos(), a.sin()) * 12.0).collect();
+        assert_eq!(rotational(&circle, 0.05), None, "a circle repeats any number of times");
+        let ell = [Vec2::new(0.0, 0.0), Vec2::new(30.0, 0.0), Vec2::new(30.0, 8.0), Vec2::new(8.0, 8.0), Vec2::new(8.0, 20.0), Vec2::new(0.0, 20.0)];
+        assert_eq!(rotational(&ell, 0.05), None);
     }
 
     /// A box slice: four walls, a loop round them with its corners cut by noise, comes out as the
