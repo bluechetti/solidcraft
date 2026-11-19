@@ -618,6 +618,8 @@ pub const SECTIONS: &[Section] = &[
             "scan.fill_holes",
             // Reference spheres off the scan, the holes they leave closed.
             "scan.remove_markers",
+            // A stamp, a boss or a sticker off the scan, the hole it leaves closed.
+            "scan.remove_and_fill",
             "scan.repair",
             "scan.reduce",
             "scan.denoise",
@@ -660,6 +662,8 @@ pub const SECTIONS: &[Section] = &[
             "scan.fit_sphere",
             "scan.fit_cone",
             "scan.fit_torus",
+            // Shapes fitted to the scan and to each other: on one axis, square, a distance apart.
+            "scan.fit_together",
             "mesh.convert",
             "scan.reconstruct_selection",
             "scan.reconstruct_rest",
@@ -718,6 +722,10 @@ pub const SECTIONS: &[Section] = &[
             "inspect.check_measure",
             // Labels places on the deviation map with their distances.
             "scan.deviation_pin",
+            // A line of clicks along the scan, its length along the surface.
+            "scan.measure_line",
+            // What the scanner never saw: filled, mirrored or made from sparse points.
+            "scan.unseen",
             // The scan's own triangles drawn, to see what Reduce Mesh or Remesh made of it.
             "view.scan_triangles",
             "inspect.hole_table",

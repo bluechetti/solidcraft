@@ -1,5 +1,6 @@
 //! Cleaning a scan as a step of the timeline: a Scan Clean feature keeps one clean tool's settings
-//! (Remove Floating Pieces, Fill Holes, Reduce Mesh, Repair Mesh, Denoise, Remesh, Remove Markers), never the
+//! (Remove Floating Pieces, Fill Holes, Reduce Mesh, Repair Mesh, Denoise, Remesh, Remove Markers,
+//! Remove and Fill), never the
 //! triangles it makes. The scan itself is kept once, in the Mesh Import that brought it in; each
 //! step reads the scan as the steps before it left it and makes it again, so the cleaned scan is
 //! worked out when the design opens and again from a step that is edited, suppressed or deleted.
@@ -76,6 +77,10 @@ pub enum CleanStep {
     /// Remove Markers: the reference spheres of `radius` at `centres` (found when the step was
     /// made) taken off, and the holes they leave closed, shaped to the surface when `fair`.
     RemoveMarkers { radius: f64, centres: Vec<[f64; 3]>, fair: bool },
+    /// Remove and Fill: the triangles of `area` taken off (a stamp, a boss, a sticker) and the holes
+    /// that leaves closed, shaped to the surface round them when `fair`; holes the scan had
+    /// already stay open.
+    RemoveAndFill { area: StepArea, fair: bool },
     /// Remesh: on a grid of `cell` (the scan's typical edge when none), fusing in the scans
     /// `with`; `sharp` keeps edges and corners sharp. Within `area` only when it has one: its
     /// triangles made again as even triangles of about `cell` on the scan as it was, everything
@@ -161,6 +166,7 @@ impl CleanStep {
             CleanStep::Denoise { .. } => "scan.denoise",
             CleanStep::Remesh { .. } => "scan.remesh",
             CleanStep::RemoveMarkers { .. } => "scan.remove_markers",
+            CleanStep::RemoveAndFill { .. } => "scan.remove_and_fill",
         }
     }
 
@@ -174,6 +180,7 @@ impl CleanStep {
             CleanStep::Denoise { .. } => "Denoise",
             CleanStep::Remesh { .. } => "Remesh",
             CleanStep::RemoveMarkers { .. } => "Remove Markers",
+            CleanStep::RemoveAndFill { .. } => "Remove and Fill",
         }
     }
 
@@ -187,6 +194,7 @@ impl CleanStep {
             CleanStep::Denoise { .. } => "Denoise",
             CleanStep::Remesh { .. } => "Remesh",
             CleanStep::RemoveMarkers { .. } => "RemoveMarkers",
+            CleanStep::RemoveAndFill { .. } => "RemoveAndFill",
         }
     }
 
@@ -252,6 +260,7 @@ impl CleanStep {
                 p
             }
             CleanStep::RemoveMarkers { radius, centres, fair } => json!({ "radius": radius, "centres": centres, "fair": fair }),
+            CleanStep::RemoveAndFill { area, fair } => json!({ "area": area, "fair": fair }),
         }
     }
 
@@ -298,6 +307,7 @@ impl CleanStep {
             {
                 bad("needs an area of the scan's triangles, in order")
             }
+            CleanStep::RemoveAndFill { area, .. } if !area.ok() || area.count() == 0 => bad("needs an area of the scan's triangles, in order"),
             CleanStep::Remesh { area: Some(_), with, .. } if !with.is_empty() => bad("fuses other scans in only over the whole scan, not an area"),
             CleanStep::Remesh { area: Some(_), offset: Some(_), .. } => bad("offsets only the whole scan, not an area"),
             CleanStep::Reduce { ratio, triangles, max_error, .. } => {
@@ -337,6 +347,7 @@ pub enum Report {
     Denoise { strength: f64, suggested: Option<f64>, noise: f64, roughness: f64, rms_moved: f64, max_moved: f64 },
     Remesh { before: usize, cell: f64, new_rms: f64, new_max: f64, scan_rms: f64, scan_p95: f64, uncovered: f64 },
     Markers { markers: usize, removed_triangles: usize, filled: usize, failed: usize },
+    RemoveAndFill { removed_triangles: usize, filled: usize, failed: usize, added_triangles: usize, open_to_edge: usize },
 }
 
 /// Why a step made nothing.
@@ -572,6 +583,19 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
                 )
             })?;
             let report = Report::Markers { markers: at.len(), removed_triangles: done.removed, filled: done.filled, failed: done.failed };
+            made(&done.positions, &done.triangles, report)
+        }
+        CleanStep::RemoveAndFill { area, fair } => {
+            let flags = within(Some(area), on.triangle_count())?.unwrap_or_default();
+            let done = solidcraft_scan::defeature::remove_and_fill(&on, &flags, *fair)
+                .ok_or_else(|| Refused::Failed("the area takes the whole scan or none of it: choose the part to take off".into()))?;
+            let report = Report::RemoveAndFill {
+                removed_triangles: done.removed,
+                filled: done.filled,
+                failed: done.failed,
+                added_triangles: done.added_triangles,
+                open_to_edge: done.open_to_edge,
+            };
             made(&done.positions, &done.triangles, report)
         }
         CleanStep::Repair { crossings } => {

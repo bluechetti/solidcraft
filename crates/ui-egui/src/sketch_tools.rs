@@ -325,6 +325,14 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
     if id == "scan.remove_markers" {
         return crate::scan_markers::toggle(app);
     }
+    // Unseen Surface's button paints what the scanner never saw, or takes the paint away.
+    if id == "scan.unseen" {
+        return crate::scan_unseen::toggle(app);
+    }
+    // Length on Scan's button starts a line of clicks along the scan, or ends it.
+    if id == "scan.measure_line" {
+        return crate::scan_line::toggle(app);
+    }
     // Radius from Scan's button asks for taps on rounds, or ends asking.
     if id == "scan.radius" {
         return crate::scan_radius::toggle(app);

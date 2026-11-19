@@ -34,6 +34,7 @@ use crate::ui_kit::{self, choice_row};
 pub const COMMANDS: &[&str] = &[
     "scan.remesh",
     "scan.repair",
+    "scan.remove_and_fill",
     "scan.mesh_from_points",
     "scan.combine",
     "scan.register",
@@ -71,6 +72,9 @@ pub(crate) fn preview_most() -> usize {
 pub(crate) fn cap_previews(most: Option<usize>) {
     PREVIEW_CAP.with(|c| c.set(most));
 }
+
+/// The radius Remove and Fill's Round the click starts at, mm: a stamp or a boss.
+const REMOVE_RADIUS: f64 = 5.0;
 
 /// The preview's id among the clouds the viewport draws.
 const CLOUD_ID: u64 = u64::MAX - 13;
@@ -125,6 +129,8 @@ pub struct ScanRun {
     pub offset_expr: Option<String>,
     /// Repair Mesh: faces passing through each other are taken off and the holes closed.
     pub crossings: bool,
+    /// Remove and Fill: each patch carries the surface round it across (else it stays flat).
+    pub fair: bool,
     /// Mesh from Points: 0 closes the surface over sparse places, 1 leaves them open.
     pub sparse: usize,
     /// Combine Scans: the passes are laid together before they are fused.
@@ -161,6 +167,7 @@ impl ScanRun {
             offset: None,
             offset_expr: None,
             crossings: true,
+            fair: true,
             sparse: 1,
             align: true,
             meet: 0,
@@ -193,6 +200,7 @@ impl ScanRun {
         match self.id {
             "scan.remesh" => "REMESH",
             "scan.repair" => "REPAIR MESH",
+            "scan.remove_and_fill" => "REMOVE AND FILL",
             "scan.mesh_from_points" => "MESH FROM POINTS",
             "scan.combine" => "COMBINE SCANS",
             "scan.register" => "ALIGN TO SCAN",
@@ -251,7 +259,7 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
     let the_surface = || solidcraft_engine::cmd::scan::slice::slice_target(s, None, id).ok();
     let inputs = match id {
         // Remesh's second input: a click on the scan, for its area.
-        "scan.remesh" => vec![input("Body", false, the_scan()), SelInput::new("Point", crate::selection::FACES, false)],
+        "scan.remesh" | "scan.remove_and_fill" => vec![input("Body", false, the_scan()), SelInput::new("Point", crate::selection::FACES, false)],
         "scan.repair" | "scan.reconstruct_rest" => vec![input("Body", false, the_scan())],
         // The cloud is the design's only one; there is nothing to choose yet.
         "scan.mesh_from_points" => Vec::new(),
@@ -279,6 +287,10 @@ pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         _ => vec![input("Surface", false, the_surface())],
     };
     let mut k = ScanRun::new(id);
+    if id == "scan.remove_and_fill" {
+        // Part of the scan, never the whole: what is selected on it, else round the click.
+        k.area = crate::scan_area::Area::opening_round(app, REMOVE_RADIUS);
+    }
     if id == "scan.roll_onto_scan" {
         // Each Flat Pattern whose sketch is still there; the one being edited, else the last, first chosen.
         k.patterns = s.doc.scan_flat_patterns.iter().filter_map(|p| s.doc.feature(p.sketch).map(|f| (p.sketch, f.name.clone()))).collect();
@@ -326,6 +338,11 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanRun, inputs: &[SelInp
         }
         "scan.repair" => {
             form_row(ui, tr("ui.scan_run_crossings"), |ui| check(ui, &mut k.crossings));
+        }
+        "scan.remove_and_fill" => {
+            crate::dialogs_scan_clean::area_row(app, ui, "scan_remove_fill_area", &mut k.area, k.kept.as_ref());
+            crate::dialogs_scan_clean::mark_area_at(app, &k.area, k.kept.as_ref(), inputs, 1, &mut k.marks);
+            form_row(ui, tr("ui.scan_holes_fair"), |ui| check(ui, &mut k.fair));
         }
         "scan.mesh_from_points" => {
             let options = [tr("ui.scan_run_sparse_close"), tr("ui.scan_run_sparse_open")];
@@ -639,6 +656,15 @@ fn result_rows(app: &SolveApp, ui: &mut egui::Ui, id: &str, placed: &Placed) {
             let fixed: usize = ["duplicates", "non_manifold", "slivers", "crossing_faces", "refilled"].iter().filter_map(|k| int(r, k)).sum();
             row(ui, tr("ui.scan_run_fixed"), &fixed.to_string());
         }
+        "scan.remove_and_fill" => {
+            if let Some(v) = int(r, "filled") {
+                row(ui, tr("ui.scan_run_closed"), &v.to_string());
+            }
+            let open = int(r, "failed").unwrap_or(0) + int(r, "open_to_edge").unwrap_or(0);
+            if open > 0 {
+                row(ui, tr("ui.scan_run_left_open"), &open.to_string());
+            }
+        }
         "scan.mesh_from_points" => {
             if let (Some(used), Some(all)) = (int(r, "points_used"), int(r, "points")) {
                 row(ui, tr("ui.scan_run_points_used"), &part_of(used, all));
@@ -724,6 +750,12 @@ pub fn commands(app: &SolveApp, k: &ScanRun, inputs: &[SelInput]) -> Result<Vec<
             p
         }
         "scan.repair" => json!({"body": need(0, "ui.scan_run_pick_scan")?, "crossings": k.crossings}),
+        "scan.remove_and_fill" => {
+            let mut p = crate::dialogs_scan_clean::area_params_at(app, &k.area, k.kept.as_ref(), inputs, 1)?;
+            p["body"] = json!(need(0, "ui.scan_run_pick_scan")?);
+            p["fair"] = json!(k.fair);
+            p
+        }
         "scan.reconstruct_rest" => json!({"body": need(0, "ui.scan_run_pick_scan")?, "rounds": k.rounds}),
         "scan.mesh_from_points" => json!({"trim": if k.sparse == 0 { 0.0 } else { 0.3 }}),
         "scan.combine" | "scan.align_all" => {
@@ -959,6 +991,69 @@ mod tests {
         sent_again.cell = Some(1.0);
         let (_, p) = &super::commands(&h.app, &sent_again, &d.inputs).unwrap()[0];
         assert_eq!(p["offset"], json!("-gap"), "and sends it back as written: {p}");
+    }
+
+    /// Remove and Fill opens on Round the click (nothing is selected), sends the click with its
+    /// radius and `fair`, shows how many holes it closes before OK, and OK keeps one Scan Clean
+    /// step that the dialog opens again with its area kept as it was.
+    #[test]
+    fn remove_and_fill_takes_the_part_round_the_click() {
+        let mut h = crate::scenario::Harness::new();
+        fine_box_scan(&mut h, "part", 0.0, 8);
+        let features = h.app.session.doc.features.len();
+        h.app.start("scan.remove_and_fill");
+        let opened = |h: &crate::scenario::Harness| match h.app.dialog.as_ref() {
+            Some(d) => match &d.kind {
+                Kind::ScanRun(k) => (k.clone(), d.inputs.clone()),
+                _ => panic!("Scan Run"),
+            },
+            None => panic!("the dialog"),
+        };
+        let (k, inputs) = opened(&h);
+        assert_eq!(k.area.way, crate::scan_area::ROUND, "part of the scan, round the click");
+        assert!(super::commands(&h.app, &k, &inputs).is_err(), "nothing to take off before a click");
+        if let Some(d) = h.app.dialog.as_mut() {
+            if let Kind::ScanRun(k) = &mut d.kind {
+                k.area.radius = 3.0;
+            }
+            // The middle of the box's top face.
+            let point = solidcore_record::Vec3::new(10.0, 5.0, 10.0);
+            d.inputs[1].items.push(solidcraft_engine::Sel::Face { body: "part".into(), index: 0, point });
+        }
+        let (k, inputs) = opened(&h);
+        let (id, p) = super::commands(&h.app, &k, &inputs).unwrap().remove(0);
+        assert_eq!(id, "scan.remove_and_fill");
+        assert_eq!((p["body"].as_str(), p["radius"].as_f64(), p["fair"].as_bool()), (Some("part"), Some(3.0), Some(true)), "{p}");
+        for _ in 0..1000 {
+            h.frames(1);
+            if matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanRun(k)) if k.placed.is_some()) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let Some(Kind::ScanRun(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!() };
+        let Some((_, Ok(placed))) = &k.placed else { panic!("the preview: {:?}", k.placed.as_ref().map(|(_, r)| r.as_ref().err())) };
+        assert_eq!(placed.reply["filled"], 1, "one hole closed: {}", placed.reply);
+        assert_eq!(h.app.session.doc.features.len(), features, "nothing changes before OK");
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        for _ in 0..1000 {
+            if h.app.dialog.is_none() {
+                break;
+            }
+            h.frames(1);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        assert_eq!(h.app.session.doc.features.len(), features + 1, "one Scan Clean step");
+        let step = match &h.app.session.doc.features.last().map(|f| &f.kind) {
+            Some(solidcraft_engine::doc::FeatureKind::ScanClean { step, .. }) => step.clone(),
+            other => panic!("a Scan Clean step: {other:?}"),
+        };
+        let mut kind = Kind::ScanRun(super::ScanRun::new("scan.remove_and_fill"));
+        crate::dialogs_scan_clean::refill(&mut kind, &step);
+        let Kind::ScanRun(k) = kind else { panic!() };
+        assert!(k.kept.as_ref().is_some_and(|a| a.get("runs").is_some()) && k.fair, "edited, it keeps its area: {:?}", k.kept);
     }
 
     /// The tools that make or change a body show it before OK too: Remesh works out the new mesh on

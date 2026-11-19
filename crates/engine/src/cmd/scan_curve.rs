@@ -13,7 +13,7 @@ use solidcraft_scan::curve::{self, Fitted, Laid, Projector};
 
 use super::{length, mesh_name};
 use crate::params::bad;
-use crate::schema::scan::ScanCurveResult;
+use crate::schema::scan::{ScanCurveResult, ScanLineRound, ScanLineStretch, ScanMeasureLineResult};
 use crate::{EngineError, Result, Session};
 
 /// The 3D sketch the curves go in when none is being edited.
@@ -161,6 +161,62 @@ pub(super) fn curve_on_scan(s: &mut Session, p: &Value) -> Result<Value> {
         length,
         max: fitted.max,
         off_scan: off,
+        param_warnings: Vec::new(),
+    };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// The most points of the ways a measured line's stretches take that a reply gives.
+const MOST_PATH_POINTS: usize = 200_000;
+
+/// Measure a line on the scan: its length along the surface, and how that compares with the
+/// straight lines between its dots. Changes nothing.
+pub(super) fn measure_line(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.measure_line";
+    let point = |v: &Value| crate::params::vec3(v).filter(|q| q.is_finite()).ok_or_else(|| bad(cmd, "a point must be [x, y, z] of numbers"));
+    let dots: Vec<Vec3> = p
+        .get("points")
+        .and_then(Value::as_array)
+        .ok_or_else(|| bad(cmd, "`points` must list the dots on the scan, [[x, y, z], …]"))?
+        .iter()
+        .map(point)
+        .collect::<Result<_>>()?;
+    let view = match p.get("view").filter(|v| !v.is_null()) {
+        Some(v) => Some(point(v)?).filter(|v| v.len() > 0.0),
+        None => None,
+    };
+    let with_path = crate::params::bool_(p, "path").unwrap_or(false);
+    let body = crate::params::str_(p, "body").map(str::to_owned);
+    let (name, on) = projector(s, body.as_deref(), cmd)?;
+    let mesh = super::shown_mesh(s, &name).ok_or_else(|| bad(cmd, format!("`{name}` is not a scan (a mesh body)")))?;
+    let scan = solidcraft_scan::Scan::new(&mesh.positions, &mesh.triangles);
+    let line = solidcraft_scan::surface_line::measure(&scan, &on, &dots, view).map_err(|e| bad(cmd, e.to_string()))?;
+    let xyz = |q: Vec3| [q.x, q.y, q.z];
+    let mut budget = MOST_PATH_POINTS;
+    let stretches = line
+        .stretches
+        .iter()
+        .map(|st| {
+            let path = (with_path && st.path.len() <= budget).then(|| {
+                budget -= st.path.len();
+                st.path.iter().map(|q| xyz(*q)).collect()
+            });
+            ScanLineStretch { length: st.length(), followed: st.followed, path }
+        })
+        .collect();
+    let reply = ScanMeasureLineResult {
+        body: name,
+        dots: line.dots.iter().map(|q| xyz(*q)).collect(),
+        length: line.along,
+        straight: line.straight,
+        under_read: line.along - line.straight,
+        worst_gap: line.worst_gap,
+        rms_gap: line.rms_gap,
+        ends: line.ends,
+        delta: xyz(line.delta),
+        stretches,
+        not_followed: line.not_followed,
+        round: line.round.map(|r| ScanLineRound { radius: r.radius, centre: xyz(r.centre), turned: r.turned, within: r.within }),
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))

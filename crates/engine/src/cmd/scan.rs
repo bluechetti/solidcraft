@@ -24,10 +24,12 @@ use crate::schema::scan::{
     ScanDeviationPinResult, ScanDeviationRegion, ScanDeviationResult, ScanEditNetParams, ScanEditNetResult, ScanEditSurfaceParams,
     ScanEditSurfaceResult, ScanFitMake, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder,
     ScanFittedPlane, ScanFittedSphere, ScanFittedTorus, ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult,
-    ScanHolesParams, ScanHolesResult, ScanMarkersParams, ScanMarkersResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror,
-    ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams,
-    ScanRepairResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams,
-    ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
+    ScanHolesParams, ScanHolesResult, ScanMarkersParams, ScanMarkersResult, ScanMeasureLineParams, ScanMeasureLineResult, ScanMergeSurfacesParams,
+    ScanMergeSurfacesResult, ScanMirror, ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams,
+    ScanReduceResult, ScanRemoveFillParams, ScanRemoveFillResult, ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult,
+    ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams,
+    ScanSymmetryParams, ScanSymmetryResult, ScanTogetherParams, ScanTogetherResult, ScanUnseenParams, ScanUnseenResult, ScanWrapSurfaceParams,
+    ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -45,6 +47,9 @@ const SURFACE_CONTRACT: TypedContract<ScanFitSurfaceParams> = TypedContract::new
 const COMPLETE_CONTRACT: TypedContract<ScanCompleteParams> = TypedContract::new();
 const EDIT_SURFACE_CONTRACT: TypedContract<ScanEditSurfaceParams> = TypedContract::new();
 const CURVE_CONTRACT: TypedContract<ScanCurveParams> = TypedContract::new();
+const MEASURE_LINE_CONTRACT: TypedContract<ScanMeasureLineParams> = TypedContract::new();
+const UNSEEN_CONTRACT: TypedContract<ScanUnseenParams> = TypedContract::new();
+const TOGETHER_CONTRACT: TypedContract<ScanTogetherParams> = TypedContract::new();
 const EDIT_NET_CONTRACT: TypedContract<ScanEditNetParams> = TypedContract::new();
 const FREE_FORM_CONTRACT: TypedContract<ScanFreeFormParams> = TypedContract::new();
 const ADD_FACE_CONTRACT: TypedContract<ScanAddFaceParams> = TypedContract::new();
@@ -56,6 +61,7 @@ const WRAP_SURFACE_CONTRACT: TypedContract<ScanWrapSurfaceParams> = TypedContrac
 const FLOATING_CONTRACT: TypedContract<ScanFloatingParams> = TypedContract::new();
 const HOLES_CONTRACT: TypedContract<ScanHolesParams> = TypedContract::new();
 const MARKERS_CONTRACT: TypedContract<ScanMarkersParams> = TypedContract::new();
+const REMOVE_FILL_CONTRACT: TypedContract<ScanRemoveFillParams> = TypedContract::new();
 const REDUCE_CONTRACT: TypedContract<ScanReduceParams> = TypedContract::new();
 const REPAIR_CONTRACT: TypedContract<ScanRepairParams> = TypedContract::new();
 const CLEAN_UP_CONTRACT: TypedContract<crate::schema::scan::ScanCleanUpParams> = TypedContract::new();
@@ -87,6 +93,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&MARKERS_CONTRACT)
         .output(output_schema_for::<ScanMarkersResult>)
         .params("body?: mesh body (default: the selected or only one); at?: [x,y,z] on one marker (a reference sphere): fitted there, and every other sphere of its radius on the scan found; or centres: [[x,y,z],…] with radius: length; tolerance?: length (default: from the fit); fair?: bool (default true); preview?: bool (true: finds them and changes nothing): the markers taken off and the holes they leave closed, kept as a Scan Clean step in the timeline (the centres found, made again on the scan before it; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, radius, centres, removed_triangles, filled, failed, triangles, feature"),
+    CommandSpec::new("scan.remove_and_fill", "Remove and Fill", crate::checked!("scan.remove_and_fill", clean::remove_and_fill))
+        .at("SCAN", "CLEAN")
+        .icon("delete")
+        .contract(&REMOVE_FILL_CONTRACT)
+        .output(output_schema_for::<ScanRemoveFillResult>)
+        .params("body?: mesh body (default: the selected or only one); area: point: [x,y,z] with grow?: true|degrees or radius?: mm, saved?: kept selection, selected?: true (what is selected; a selection is never taken unasked), or area?: {triangles, runs} as the step keeps it (one is needed); fair?: bool (default true: each patch carries the surface round it across; false leaves it flat): the part taken off (a stamp, a boss, a sprue stub, a sticker) and the holes that leaves closed; holes the scan had already stay open, and where the part reached the scan's own edge the bite is left open (open_to_edge); kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, removed_triangles, filled, failed, added_triangles, open_to_edge, triangles, feature"),
     CommandSpec::new("scan.reduce", "Reduce Mesh", crate::checked!("scan.reduce", clean::reduce))
         .at("SCAN", "CLEAN")
         .icon("scale")
@@ -147,6 +159,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&COMPLETE_CONTRACT)
         .output(output_schema_for::<ScanCompleteResult>)
         .params("body?: mesh body (default: the selected mesh body, else the design's only one); plane?: {point, normal: [x,y,z]} to reflect in (default: found near guide, else the best found; a one-sided scan is not refused for matching little, but `warning` says so); guide?: {from, to, toward?}; reach?: length a reflected triangle must lie from the scan to count as missing (default 1.5 typical edges or 3 × the plane's mismatch): the reflected triangles where the scan has nothing, as an amber mesh body `<scan> Mirror Fill` beside it (one undo step); a scan missing nothing is refused → body, fill, mirror, pieces, triangles, area, joined, reach, warning?, feature"),
+    CommandSpec::new("scan.fit_together", "Fit Together", crate::checked!("scan.fit_together", together::fit_together))
+        .at("SCAN", "RECONSTRUCT")
+        .icon("c_parallel")
+        .contract(&TOGETHER_CONTRACT)
+        .output(output_schema_for::<ScanTogetherResult>)
+        .params("body?: the scan (default: the selected or only one); shapes: [{kind: plane|cylinder|sphere|cone|torus, point?, grow?, radius?, saved?, triangles?, selected?}, …] 2 to 20, each region chosen as its Fit tool chooses; relations?: [{kind: parallel|perpendicular|coaxial|equal_radius|distance|angle|radius, a: shape number from 0, b?: shape number or x|y|z|xy|yz|zx|origin, value?: length (distance, radius) or angle}, …] (default: the relations the shapes nearly hold already: within 3° of parallel or perpendicular, to each other or a world axis, on one axis within 5 % of the smaller radius (0.5 mm at least), radii within 3 %); tolerance?: length; keep?: bool (default true: each shape kept as its Fit tool keeps it, a construction plane, axis or point): the shapes fitted to their regions and to the relations at once, so each is the best fit that holds them, one undo step → body, shapes [{kind, plane|cylinder|sphere|cone|torus, rms, max, free_rms, free_max, feature?}], relations [{kind, a, b?, value?, off}], suggested"),
     CommandSpec::new("scan.fit_plane", "Fit Plane", crate::checked!("scan.fit_plane", fit_plane))
         .at("SCAN", "RECONSTRUCT")
         .icon("plane")
@@ -252,6 +270,22 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&EDIT_NET_CONTRACT)
         .output(output_schema_for::<ScanEditNetResult>)
         .params("surface?: the surface body (default: the selected one, else the one made last); op: refine (in?: u|v|both) | split | duplicate (after?: bool, default true) | remove | crease | uncrease | extend (distance?: length, default 10 mm); line?: {row: j} | {column: i}: the net changed as a whole (refine and split leave the surface as it was; a crease makes the surface run sharp along the line, needing three lines each side), one undo step → surface, controls, line, creases, feature"),
+    CommandSpec::new("scan.measure_line", "Length on Scan", crate::checked!("scan.measure_line", curve::measure_line))
+        .at("SCAN", "CHECK")
+        .icon("measure")
+        .read_only()
+        .noundo()
+        .contract(&MEASURE_LINE_CONTRACT)
+        .output(output_schema_for::<ScanMeasureLineResult>)
+        .params("body?: mesh body (default: the selected or only one); points: [[x,y,z], …] dots on the scan in order (2 to 1000); view?: [x,y,z] the direction looked from (default: the way the scan faces at each stretch's dots); path?: bool (default false: the way each stretch takes as points): between each two dots the way across the scan the cut of the plane through both (and the view) takes, the short way between them, so the length is along the surface, not through the air; where no cut joins them (a hole, two pieces) the straight line is laid on the scan and counted as not followed; changes nothing → body, dots, length, straight, under_read, worst_gap, rms_gap (the surface off the straight lines between dots), ends, delta [dx,dy,dz], stretches [{length, followed, path?}], not_followed, round? {radius, centre, turned (deg), within} when the line is an arc"),
+    CommandSpec::new("scan.unseen", "Unseen Surface", crate::checked!("scan.unseen", unseen::unseen_command))
+        .at("SCAN", "CHECK")
+        .icon("surface_patch")
+        .read_only()
+        .noundo()
+        .contract(&UNSEEN_CONTRACT)
+        .output(output_schema_for::<ScanUnseenResult>)
+        .params("body?: mesh body (default: the selected or only one): the surface of the scan its scanner never saw, read from the geometry: triangles whose middle lies more than 1.5 scanned triangle sides from the scan as it came in (before its Scan Clean steps; a later Move carries it along), all of a mirror fill, or, for a surface made from points, from every point; something thinner than that taken off (a sticker) reads as seen; fits and the deviation map warn when they lean on it; changes nothing → body, source (as_scanned|cleaned|mirror_fill|mesh_from_points|changed), triangles, area, share, patches [{centre, area, triangles}] largest first"),
     CommandSpec::new("scan.deviation", "Scan Deviation", crate::checked!("scan.deviation", deviation))
         .at("SCAN", "CHECK")
         .icon("curvature_map")
@@ -1175,6 +1209,8 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         regions_found: None,
         bands: None,
         pins: Vec::new(),
+        unseen: None,
+        warning: None,
         param_warnings: Vec::new(),
     };
     if crate::params::bool_(p, "show") == Some(false) {
@@ -1311,6 +1347,8 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         max_below: max_below_at,
         pins,
     }));
+    // Measured on surface the scanner never saw: said, with the share of the scan's area.
+    let unseen_share = unseen::unseen_of(s, &mesh.body).ok().and_then(|(_, u)| u).map(|u| u.share()).filter(|x| *x > 0.0);
     reply(ScanDeviationResult {
         shown: true,
         scan: Some(mesh.body),
@@ -1335,6 +1373,8 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         regions,
         bands: Some(bands),
         pins: shown_pins,
+        unseen: unseen_share,
+        warning: unseen_share.and_then(|share| unseen::warning(share, "of the scan measured")),
         ..empty
     })
 }
@@ -1727,6 +1767,9 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
         Shape::Cone { apex, axis, half_angle } => cone = Some(ScanFittedCone { apex: at(apex), axis: at(axis), half_angle: half_angle.to_degrees() }),
         Shape::Torus { center, axis, major, minor } => torus = Some(ScanFittedTorus { center: at(center), axis: at(axis), major, minor }),
     }
+    // Fitted to surface the scanner never saw: said, with the share.
+    let unseen =
+        unseen::unseen_of(s, &mesh.body).ok().and_then(|(_, found)| found).map(|u| u.share_of(&scan, &fitted.triangles)).filter(|x| *x > 0.0);
     let reply = ScanFitResult {
         body: mesh.body,
         plane,
@@ -1738,6 +1781,8 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
         area: fitted.area,
         rms: fitted.rms,
         max: fitted.max,
+        unseen,
+        warning: unseen.and_then(|share| unseen::warning(share, "fitted")),
         feature,
         face,
         param_warnings: Vec::new(),
@@ -1829,6 +1874,12 @@ pub mod reconstruct;
 
 #[path = "scan_refit.rs"]
 pub mod refit;
+
+#[path = "scan_together.rs"]
+pub mod together;
+
+#[path = "scan_unseen.rs"]
+pub mod unseen;
 
 #[path = "scan_refusal.rs"]
 pub mod refusal;

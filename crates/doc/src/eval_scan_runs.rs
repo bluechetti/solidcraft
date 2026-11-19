@@ -37,6 +37,16 @@ impl ScanRun {
     }
 }
 
+impl ModelState {
+    /// The scan `name` as it was before its run of Scan Clean steps, and the mesh the run's last
+    /// step made (while anything still holds it): what the scan looked like as it came in beside
+    /// what the steps made of it. `None` when no Scan Clean step has worked on it.
+    pub fn scan_before_cleaning(&self, name: &str) -> Option<(Body, Option<Arc<solidcraft_geom::Mesh>>)> {
+        let run = self.scan_runs.get(name)?;
+        Some((run.base.clone(), run.latest.upgrade()))
+    }
+}
+
 /// The run `st`'s scan `name` is in after a step (`step`, fusing in `with`) read `input` and made
 /// `output`: the run `input` ended, one step longer, or a new run from `input`.
 pub(crate) fn note_step(st: &mut ModelState, name: &str, input: &Body, output: &Body, step: &CleanStep, with: &[&Body]) {

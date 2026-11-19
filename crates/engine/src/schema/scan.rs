@@ -337,6 +337,12 @@ pub struct ScanFitResult {
     /// The region's points' distance from the shape: root mean square and largest, in mm.
     pub rms: f64,
     pub max: f64,
+    /// The share of the region's area that is surface the scanner never saw (filled, mirrored,
+    /// made from sparse points), when any is, and what that means.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unseen: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     /// The construction plane, axis or point that keeps it, as the construction command replies,
     /// unless `keep` was false.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -491,6 +497,65 @@ pub struct ScanDeviationRegion {
     pub at: [f64; 3],
 }
 
+/// Parameters of `scan.remove_and_fill`: part of the scan taken off (a stamp, a boss, a sprue, a
+/// sticker) and the holes that leaves closed. Kept as a Scan Clean step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanRemoveFillParams {
+    /// The scan (mesh body). Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The part to take off, a point on it with `grow` or `radius`: the face grown from the point
+    /// as Select on Scan's Region grows it (degrees, 1 to 90; `true`: 30), or the scan within
+    /// `radius` mm of it.
+    #[serde(default)]
+    pub point: Option<Point3>,
+    #[serde(default)]
+    pub grow: Option<Value>,
+    #[serde(default)]
+    pub radius: Option<f64>,
+    /// A kept selection's triangles (Keep Selection).
+    #[serde(default)]
+    pub saved: Option<String>,
+    /// What is selected on the scan. A selection is never taken unless asked.
+    #[serde(default)]
+    pub selected: Option<bool>,
+    /// The area as the step keeps it: `{triangles: the scan's count, runs: [[first, count], …]}`.
+    #[serde(default)]
+    pub area: Option<Value>,
+    /// Shape each patch to carry the surface round it across. Default: true.
+    #[serde(default)]
+    pub fair: Option<bool>,
+    /// Write the scan back into its Insert Mesh feature instead of adding a step.
+    #[serde(default)]
+    pub in_place: Option<bool>,
+    /// The step's name.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// What `scan.remove_and_fill` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanRemoveFillResult {
+    pub body: String,
+    /// Triangles taken off.
+    pub removed_triangles: usize,
+    /// Holes the removal opened that were closed, and those that could not be.
+    pub filled: usize,
+    pub failed: usize,
+    /// Triangles the patches added.
+    pub added_triangles: usize,
+    /// Places where the removal reached the scan's own edge: a bite out of the rim, left open.
+    pub open_to_edge: usize,
+    /// The scan's triangles after.
+    pub triangles: usize,
+    /// The Scan Clean step (or Insert Mesh feature, `in_place`) that keeps it.
+    pub feature: u64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// What `scan.deviation` returns.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanDeviationResult {
@@ -555,6 +620,12 @@ pub struct ScanDeviationResult {
     /// The labelled places, each with its distance.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pins: Vec<ScanDeviationPin>,
+    /// The share of the scan's area that is surface its scanner never saw (measured all the same),
+    /// when any is, and what that means.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unseen: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
@@ -1439,6 +1510,191 @@ pub struct ScanCurveResult {
     /// The farthest the curve strays from the line on the scan, and from the scan itself, in mm.
     pub max: f64,
     pub off_scan: f64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// Measure a line on the scan: dots on it, and between each two the way across the scan the cut
+/// of a plane through both takes (the plane holds `view`, the direction looked from, else the way
+/// the scan faces at the two dots). Changes nothing.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanMeasureLineParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The dots, in order, on the scan, in mm (2 to 1000).
+    pub points: Vec<Point3>,
+    /// The direction the line is looked at from (the view it was drawn in). Default: the way the
+    /// scan faces at each stretch's two dots.
+    #[serde(default)]
+    pub view: Option<Point3>,
+    /// Give the way each stretch takes, as points. Default: false.
+    #[serde(default)]
+    pub path: Option<bool>,
+}
+
+/// One stretch of a measured line.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanLineStretch {
+    /// Along the surface, mm.
+    pub length: f64,
+    /// It follows the scan; false: draped across a hole or between pieces.
+    pub followed: bool,
+    /// The way it takes, with `path: true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<Vec<[f64; 3]>>,
+}
+
+/// The circle a measured line goes round, when it is an arc.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanLineRound {
+    pub radius: f64,
+    pub centre: [f64; 3],
+    /// How far round, degrees.
+    pub turned: f64,
+    /// The most the line is off the circle, mm.
+    pub within: f64,
+}
+
+/// What `scan.measure_line` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanMeasureLineResult {
+    pub body: String,
+    /// The dots, on the scan.
+    pub dots: Vec<[f64; 3]>,
+    /// Along the surface from the first dot to the last, mm.
+    pub length: f64,
+    /// Straight from dot to dot, and how much less that reads.
+    pub straight: f64,
+    pub under_read: f64,
+    /// The most and the root mean square the surface is off the straight lines between the dots.
+    pub worst_gap: f64,
+    pub rms_gap: f64,
+    /// From the first dot to the last, straight, and its parts along x, y and z.
+    pub ends: f64,
+    pub delta: [f64; 3],
+    pub stretches: Vec<ScanLineStretch>,
+    /// Stretches that could not follow the surface (draped across a hole or between pieces).
+    pub not_followed: usize,
+    /// The circle the line goes round, when it is an arc (within 1.5% of its radius, flat, round 30° or more).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub round: Option<ScanLineRound>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// What of a scan the scanner never saw: the surface filled, mirrored or made from points away
+/// from anything scanned. Changes nothing.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanUnseenParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+/// One joined patch of unseen surface.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanUnseenPatch {
+    pub centre: [f64; 3],
+    /// mm².
+    pub area: f64,
+    pub triangles: usize,
+}
+
+/// What `scan.unseen` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanUnseenResult {
+    pub body: String,
+    /// Where the scan's surface came from: as_scanned (nothing changed it), cleaned (read against
+    /// the scan before its Scan Clean steps), mirror_fill (all of it), mesh_from_points (read
+    /// against its cloud's points), or changed (reshaped by a later feature: not read).
+    pub source: String,
+    /// The unseen triangles, their area (mm²) and its share of the scan's.
+    pub triangles: usize,
+    pub area: f64,
+    pub share: f64,
+    /// The largest joined patches, largest first (at most 20).
+    pub patches: Vec<ScanUnseenPatch>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// Shapes fitted to their regions of a scan and to relations between them at once. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanTogetherParams {
+    /// The scan. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The shapes, 2 to 20, each `{kind: plane|cylinder|sphere|cone|torus, point?, grow?, radius?,
+    /// saved?, triangles?, selected?}`, its region chosen as that kind's Fit tool chooses it.
+    pub shapes: Vec<Value>,
+    /// The relations to hold, each `{kind: parallel|perpendicular|coaxial|equal_radius|distance|
+    /// angle|radius, a: shape number from 0, b?: shape number or x|y|z|xy|yz|zx|origin, value?:
+    /// length for distance and radius, angle for angle}`. Default: the relations the shapes nearly
+    /// hold already (within 3°, radii within 3 %, axes within 5 % of the radius).
+    #[serde(default)]
+    pub relations: Option<Vec<Value>>,
+    /// How far from a shape a point may lie and be part of its region. Default: from the scan.
+    #[serde(default)]
+    pub tolerance: Option<LengthExpr>,
+    /// Keep each shape as a construction plane, axis or point. Default: true.
+    #[serde(default)]
+    pub keep: Option<bool>,
+}
+
+/// A shape fitted together with the others.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanTogetherShape {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane: Option<ScanFittedPlane>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cylinder: Option<ScanFittedCylinder>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sphere: Option<ScanFittedSphere>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cone: Option<ScanFittedCone>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub torus: Option<ScanFittedTorus>,
+    /// Its region's points' distance from it held (root mean square, largest) and fitted alone.
+    pub rms: f64,
+    pub max: f64,
+    pub free_rms: f64,
+    pub free_max: f64,
+    /// The construction feature that keeps it, unless `keep` was false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<FeatureResult>")]
+    pub feature: Option<Value>,
+}
+
+/// A relation held.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanTogetherRelation {
+    pub kind: String,
+    pub a: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub b: Option<Value>,
+    /// The distance or radius (mm) or angle (degrees) held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    /// How far it is from holding (mm, or the sine of the angle off for directions): 0 holds.
+    pub off: f64,
+}
+
+/// What `scan.fit_together` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanTogetherResult {
+    pub body: String,
+    pub shapes: Vec<ScanTogetherShape>,
+    pub relations: Vec<ScanTogetherRelation>,
+    /// The relations were the suggested ones (none were given).
+    pub suggested: bool,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
