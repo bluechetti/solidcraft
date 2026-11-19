@@ -605,6 +605,7 @@ mod tests {
             samples: 1,
             tess: false,
             oit: false,
+            edges: false,
         });
         let mut stl = String::from("solid c\n");
         let corner = |i: usize| [if i & 1 == 0 { 0 } else { 10 }, if i & 2 == 0 { 0 } else { 10 }, if i & 4 == 0 { 0 } else { 10 }];

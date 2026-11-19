@@ -521,6 +521,18 @@ fn with_corner_normals(kept: &Mesh, normals: &[[Vec3; 3]]) -> Mesh {
     out
 }
 
+/// Where the ray from `o` along unit `d` first meets the mesh body's kept mesh `mesh` (its
+/// triangles are its exact shape): the distance along the ray and the hit triangle's own unit
+/// normal. A closed mesh is wound outward, so its normal is the outward one, also where a ray
+/// from inside leaves it; an open mesh has no outside, so its normal is turned against the ray.
+/// `None` where it meets nothing.
+pub(crate) fn mesh_ray(mesh: &Mesh, o: Vec3, d: Vec3) -> Option<(f64, Vec3)> {
+    let (t, ti) = mesh.raycast(o, d)?;
+    let [a, b, c] = mesh.tri(mesh.triangles.get(ti)?)?;
+    let n = (b - a).cross(c - a).normalized()?;
+    Some((t, if !is_closed(&mesh.triangles) && n.dot(d) > 0.0 { n * -1.0 } else { n }))
+}
+
 /// Distinct undirected triangle sides.
 pub(crate) fn edge_count(triangles: &[[u32; 3]]) -> usize {
     sorted_sides(triangles).chunk_by(|x, y| (x.0, x.1) == (y.0, y.1)).count()

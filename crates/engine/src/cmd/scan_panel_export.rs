@@ -10,9 +10,8 @@ use std::fmt::Write as _;
 use serde_json::{Value, json};
 use solidcore_record::Seg2;
 use solidcore_record::Vec2;
-use solidcraft_geom::paper::{Anchor, Group, Item, ObjectKind, Scene};
 use solidcraft_geom::prelude::*;
-use solidcraft_io::{DxfEntity, DxfLayer, DxfShape, write_dxf_drawing};
+use solidcraft_io::{DxfEntity, DxfLayer, DxfShape, write_dxf_drawing_units};
 
 use super::CommandSpec;
 use super::template::{fixing_hole, hole_size, hole_sizes, panel, panel_keep_checked, prepare_panel};
@@ -23,6 +22,13 @@ use crate::{EngineError, Result, Session};
 
 #[path = "scan_panel_full_size.rs"]
 mod full_size;
+#[path = "scan_panel_paper.rs"]
+mod paper;
+
+use paper::{Anchor, Item, Page};
+
+/// The DXF files are in millimetres (`$INSUNITS` 4).
+const DXF_MM: i32 = 4;
 
 const CONTRACT: TypedContract<ScanPanelExportParams> = TypedContract::new();
 
@@ -217,7 +223,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         DxfLayer::new("LABELS", 2),
         DxfLayer::new("DIMENSIONS", 8),
     ];
-    let pieces_dxf = write_dxf_drawing(&layers, &ents)?;
+    let pieces_dxf = write_dxf_drawing_units(&layers, &ents, DXF_MM)?;
 
     // --- The sheets: each sheet's outline and the blanks on it, side by side.
     let sheet = pp.proposal.sheet;
@@ -269,7 +275,8 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
             count(panel::PointKind::Fixing)
         );
     }
-    let sheets_dxf = write_dxf_drawing(&[DxfLayer::new("SHEETS", 7), DxfLayer::new("PANEL", 1), DxfLayer::new("LABELS", 2)], &sheet_ents)?;
+    let sheets_dxf =
+        write_dxf_drawing_units(&[DxfLayer::new("SHEETS", 7), DxfLayer::new("PANEL", 1), DxfLayer::new("LABELS", 2)], &sheet_ents, DXF_MM)?;
 
     // --- Distances to check in the van.
     let checks = panel::checks(&pieces);
@@ -292,9 +299,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let seen_of = |q: Vec2| seen(q);
     let pages =
         drawings(&pieces, &inserts, &plans, &checks, pp.proposal.sheet, &sizes, fixing, pp.proposal.clearance, confirm_line.as_deref(), &seen_of);
-    let prepared: Vec<_> =
-        pages.iter().map(|page| page.prepare()).collect::<std::result::Result<_, _>>().map_err(|e| EngineError::Other(e.to_string()))?;
-    let pdf = solidcraft_io::paper::paper_pdf(&prepared)?;
+    let pdf = paper::pdf(&pages)?;
     // --- The same pieces and the insert pieces at full size, tiled over pages.
     let paper = match full_size::paper_of(str_(p, "paper")) {
         None => None,
@@ -314,9 +319,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
                 note: Some(i.how()),
             }));
             let scenes = full_size::pages(&parts, paper, &sizes, fixing).map_err(|e| crate::params::bad(cmd, &e))?;
-            let prepared: Vec<_> =
-                scenes.iter().map(|page| page.prepare()).collect::<std::result::Result<_, _>>().map_err(|e| EngineError::Other(e.to_string()))?;
-            Some((solidcraft_io::paper::paper_pdf(&prepared)?, scenes.len()))
+            Some((paper::pdf(&scenes)?, scenes.len()))
         }
         None => None,
     };
@@ -486,11 +489,8 @@ impl Fit {
 }
 
 /// One page's items, as one group of each kind.
-fn page(view: Vec<Item>, notes: Vec<Item>) -> Scene {
-    Scene {
-        size_mm: Vec2::new(PAGE[0], PAGE[1]),
-        groups: vec![Group { object: 1, kind: ObjectKind::View, items: view }, Group { object: 2, kind: ObjectKind::Annotation, items: notes }],
-    }
+fn page(view: Vec<Item>, notes: Vec<Item>) -> Page {
+    Page { size_mm: Vec2::new(PAGE[0], PAGE[1]), view, notes }
 }
 
 /// The drawing pages: the whole panel with the lists, a page for each piece, the sheets.
@@ -506,7 +506,7 @@ fn drawings(
     clearance: f64,
     confirm: Option<&str>,
     seen: &dyn Fn(Vec2) -> &'static str,
-) -> Vec<Scene> {
+) -> Vec<Page> {
     let mut pages = Vec::new();
     let sheet_of = |n: usize| plans.iter().position(|plan| plan.pieces.iter().any(|pl| pl.piece + 1 == n)).map_or(0, |i| i + 1);
     let (long, short) = (sheet[0].max(sheet[1]), sheet[0].min(sheet[1]));
@@ -711,7 +711,7 @@ fn drawings(
 
 /// A piece's page: `title` and `note` over it, its outline to scale with its corners lettered (or
 /// numbered when it has many) and its blank's size, the corners and its holes as tables.
-fn piece_page(p: &panel::Piece, title: String, note: &str, sizes: &[f64], fixing: f64, seen: &dyn Fn(Vec2) -> &'static str) -> Scene {
+fn piece_page(p: &panel::Piece, title: String, note: &str, sizes: &[f64], fixing: f64, seen: &dyn Fn(Vec2) -> &'static str) -> Page {
     let top = PAGE[1] - MARGIN;
     let (mut view, mut notes) = (Vec::new(), Vec::new());
     let [w, h] = p.blank;

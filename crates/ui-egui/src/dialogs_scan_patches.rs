@@ -443,6 +443,7 @@ pub(crate) mod tests {
             samples: 1,
             tess: false,
             oit: false,
+            edges: false,
         });
         let path = h.dir.join("bent.stl");
         std::fs::write(&path, bent_stl()).unwrap();

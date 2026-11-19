@@ -33,24 +33,16 @@ pub fn enter(app: &mut SolveApp, scan: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Go to a workspace by name: design, scan or render.
+/// Go to a workspace by name: design, scan, render or drawing ([`crate::workspace::enter`]).
 pub fn switch(app: &mut SolveApp, workspace: &str) -> Result<(), String> {
-    match workspace {
-        "scan" => enter(app, true),
-        "render" => {
-            crate::render_workspace::enter(app, true)?;
-            // Leaving Render goes back to Design.
-            app.ui.scan_workspace = false;
-            Ok(())
-        }
-        _ if crate::render_workspace::active(app) => crate::render_workspace::enter(app, false),
-        _ => enter(app, false),
-    }
+    crate::workspace::enter(app, workspace)
 }
 
 /// The open workspace's name, as `switch` takes it.
 pub fn current(app: &SolveApp) -> &'static str {
-    if crate::render_workspace::active(app) {
+    if crate::drawing_workspace::active(app) {
+        "drawing"
+    } else if crate::render_workspace::active(app) {
         "render"
     } else if active(app) {
         "scan"

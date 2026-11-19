@@ -311,6 +311,18 @@ pub(crate) enum Workspace {
     Design,
     Scan,
     Render,
+    Drawing,
+}
+
+impl Workspace {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Workspace::Design => "design",
+            Workspace::Scan => "scan",
+            Workspace::Render => "render",
+            Workspace::Drawing => "drawing",
+        }
+    }
 }
 
 /// `ui.workspace {workspace?}`: without one, the workspace shown.

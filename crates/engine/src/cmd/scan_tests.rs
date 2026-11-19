@@ -737,7 +737,13 @@ fn a_nurbs_surface_round_trips_through_an_import_feature() {
     let reply = super::super::features::add_feature(
         &mut s,
         &json!({"body_name": "Fitted"}),
-        solidcraft_doc::FeatureKind::Import { file: "fitted surface".into(), step: step.into(), components: Vec::new(), skip: Vec::new() },
+        solidcraft_doc::FeatureKind::Import {
+            file: "fitted surface".into(),
+            step: step.into(),
+            components: Vec::new(),
+            skip: Vec::new(),
+            records: None,
+        },
     )
     .unwrap();
     let state = s.model.state();

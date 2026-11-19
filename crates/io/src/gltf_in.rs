@@ -27,10 +27,8 @@ use solidcore_record::Vec3;
 use solidcraft_doc::appearance::Look;
 use solidcraft_doc::{Mat, MeshData, mat_mul};
 
-use crate::{IoError, MAX_3MF_BYTES, MeshFeature, Result};
+use crate::{IoError, MeshFeature, Result};
 
-/// Largest `.glb` / `.gltf` file read.
-pub const MAX_GLTF_BYTES: usize = MAX_3MF_BYTES;
 /// Most bytes of external and embedded buffers read for one file. A scan has no size limit on
 /// the desktop (the Scan workspace fork); the browser keeps 1 GB.
 #[cfg(not(target_arch = "wasm32"))]
@@ -134,13 +132,11 @@ impl GltfImport {
 pub type Loader<'a> = &'a mut dyn FnMut(&str) -> std::result::Result<Vec<u8>, String>;
 
 /// Read a `.glb` or `.gltf` file (`file` names it; its stem names the meshes when nothing in the
-/// file does). External buffers are read through `load`.
+/// file does). External buffers are read through `load`. The file may be as large as the limit for
+/// STEP and import files ([`crate::limits`], #17446).
 pub fn read_gltf(bytes: &[u8], file: &str, load: Loader<'_>) -> Result<GltfImport> {
-    // A scan: no size limit on the desktop; the browser keeps [`MAX_GLTF_BYTES`].
-    let limit = if crate::limits::Kind::Scan.unlimited() { crate::limits::Kind::Scan.bytes() } else { MAX_GLTF_BYTES };
-    if bytes.len() > limit {
-        return Err(IoError::Invalid(format!("glTF file too large ({} MB)", bytes.len() >> 20)));
-    }
+    // A scan: no size limit on the desktop; the browser keeps the import limit.
+    crate::limits::check(crate::limits::Kind::Scan, bytes.len() as u64).map_err(|e| IoError::Invalid(format!("glTF {e}")))?;
     let (json, blob) = if bytes.starts_with(b"glTF") { split_glb(bytes)? } else { (bytes, None) };
     let doc = parse_document(json)?;
     let stem = std::path::Path::new(file)

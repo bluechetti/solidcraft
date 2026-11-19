@@ -11,7 +11,9 @@
 #![forbid(unsafe_code)]
 
 mod backend;
+mod mesh_warnings;
 mod options;
+mod plugin_tools;
 mod prompts;
 mod server;
 mod skill_reference;

@@ -21,20 +21,28 @@ thread_local! {
 #[derive(Clone, PartialEq)]
 struct Key {
     revision: u64,
-    plane: [u64; 6],
+    /// Each plane on show: its origin and normal, as bits.
+    planes: Vec<[u64; 6]>,
     hidden: Vec<String>,
 }
 
 /// The cuts through the shown scans for the section shown now, read again only when the design,
-/// the plane or what is hidden changes; `None` with no section or with the preference off.
+/// the planes or what is hidden changes; `None` with no section or with the preference off.
 fn cuts(app: &SolveApp) -> Option<Cuts> {
     if !app.preferences.section_scan_outline {
         return None;
     }
-    let (o, n) = app.session.section?;
+    if app.session.section.is_empty() {
+        return None;
+    }
     let key = Key {
         revision: app.session.revision,
-        plane: [o.x, o.y, o.z, n.x, n.y, n.z].map(f64::to_bits),
+        planes: app
+            .session
+            .section
+            .iter()
+            .map(|c| [c.origin.x, c.origin.y, c.origin.z, c.normal.x, c.normal.y, c.normal.z].map(f64::to_bits))
+            .collect(),
         hidden: app.session.visibility.hidden_bodies.clone(),
     };
     CUT.with(|c| {

@@ -50,6 +50,8 @@ impl Walk for crate::scan_recipe::ScanRecipe {}
 impl Walk for solidcraft_sketch::Sketch {}
 impl Walk for solidcraft_sketch::PatternAlignment {}
 impl Walk for solidcraft_kernel::StepNode {}
+// An import kept as records holds no expressions, references or names to walk.
+impl Walk for Option<std::sync::Arc<solidcraft_kernel::ImportRecords>> {}
 impl Walk for crate::document::Operation {}
 impl Walk for solidcraft_kernel::Continuity {}
 impl Walk for solidcraft_kernel::DraftCorner {}
@@ -66,10 +68,12 @@ impl Walk for crate::document::RevolveConvention {}
 impl Walk for crate::document::RailFit {}
 impl Walk for crate::document::CoilSection {}
 impl Walk for crate::document::ThinSide {}
+impl Walk for crate::document::PickedPlacement {}
 impl Walk for crate::document::ExtendMode {}
 impl Walk for crate::document::RuledMode {}
 impl Walk for crate::document::RuledCorners {}
 impl Walk for crate::document::ExtrudeConvention {}
+impl Walk for crate::document::FoldSide {}
 impl Walk for crate::thread_forms::ThreadForm {}
 impl Walk for crate::thread_forms::ThreadHand {}
 impl Walk for crate::thread_forms::ThreadTip {}
@@ -344,8 +348,11 @@ impl Walk for PlaneRef {
                     f(("Offset", distance, Kind::Length, ExprRole::Input));
                     p = base;
                 }
-                PlaneRef::AtAngle { base, angle, .. } => {
+                PlaneRef::AtAngle { base, angle, axis_origin, .. } => {
                     f(("Angle", angle, Kind::Angle, ExprRole::Input));
+                    for (label, e) in ["Axis X", "Axis Y", "Axis Z"].into_iter().zip(axis_origin) {
+                        f((label, e, Kind::Length, ExprRole::Placement));
+                    }
                     p = base;
                 }
                 PlaneRef::AlongPath { t, .. } => return f(("Distance (0 to 1)", t, Kind::Unitless, ExprRole::Input)),
@@ -371,8 +378,11 @@ impl Walk for PlaneRef {
                     f(("Offset", distance, Kind::Length, ExprRole::Input));
                     p = base;
                 }
-                PlaneRef::AtAngle { base, angle, .. } => {
+                PlaneRef::AtAngle { base, angle, axis_origin, .. } => {
                     f(("Angle", angle, Kind::Angle, ExprRole::Input));
+                    for (label, e) in ["Axis X", "Axis Y", "Axis Z"].into_iter().zip(axis_origin) {
+                        f((label, e, Kind::Length, ExprRole::Placement));
+                    }
                     p = base;
                 }
                 PlaneRef::AlongPath { t, .. } => return f(("Distance (0 to 1)", t, Kind::Unitless, ExprRole::Input)),
@@ -410,7 +420,7 @@ impl PlaneRef {
             return;
         }
         match self {
-            Self::Construction { feature } => f(Ref::Feature(feature)),
+            Self::Construction { feature, .. } => f(Ref::Feature(feature)),
             Self::Offset { base, .. } | Self::Flipped { base, .. } => base.walk_feature_refs(f, depth + 1),
             Self::ThroughPoint { base, point } => {
                 base.walk_feature_refs(f, depth + 1);
@@ -450,7 +460,7 @@ impl PlaneRef {
             return;
         }
         match self {
-            Self::Construction { feature } => f(Ref::Feature(feature)),
+            Self::Construction { feature, .. } => f(Ref::Feature(feature)),
             Self::Offset { base, .. } | Self::Flipped { base, .. } => base.walk_feature_refs_mut(f, depth + 1),
             Self::ThroughPoint { base, point } => {
                 base.walk_feature_refs_mut(f, depth + 1);

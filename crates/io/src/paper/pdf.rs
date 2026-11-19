@@ -1,287 +1,463 @@
-//! Paper scenes as one PDF, a page each (PDF 1.4): one point a 72nd of an inch, the scene's
-//! millimetres scaled to it; y up as the scene has it, so nothing is flipped.
+//! A paper scene as a vector PDF (#4890, P1): one page the sheet's size, its lines and fills,
+//! geometry and optional-content layers (text follows with P2); several scenes as the pages of
+//! one document ([`paper_pdf_pages`]), each its sheet's size, sharing one set of layers.
 //!
-//! - **Curves:** lines `l`; circular arcs as cubics, in pieces of at most a quarter turn (the
-//!   usual 4/3·tan(θ/4) handles, within 3e-4 of the radius); cubics `c`; parabolas raised to
-//!   cubics. Ellipses, hyperbolas and Béziers above degree 3 are refused, as the SVG writer does.
-//! - **Paint:** strokes with butt caps, miter joins and a miter limit of 4; fills black,
-//!   even-odd (`f*`).
-//! - **Text:** Helvetica, one of the fonts every PDF reader has, WinAnsi-encoded: ASCII and the
-//!   Latin-1 letters as they are, anything else written `?`. A centred or right-anchored text is
-//!   placed by an estimate of its width (its letters' average widths), not the font's metrics.
-//! - **Structure:** the catalogue, the page tree, the font, then each page and its content
-//!   stream (not compressed), the cross-reference table and the trailer.
+//! - **The file** comes from `pdf-writer`: a catalog, one page whose MediaBox is the sheet in
+//!   points, its content deflated, and an Info dictionary with the Producer, the Title when there
+//!   is one (ISO 32000-1 14.3.3: leave out what isn't known) and dates only from
+//!   [`PdfOptions::output_time`], never the clock, so a scene always gives the same bytes.
+//! - **Numbers** are the scene on a 10 nm grid ([`PER_MM`] steps a millimetre, whose walk gives the
+//!   joints, closures and merges SVG and PNG draw), written as millimetres with up to five
+//!   decimals (Annex C's precision) inside one `cm` that scales millimetres to points. y is up on
+//!   the page as in the scene, so nothing flips.
+//! - **Curves:** lines `l` and cubics `c` as they are; a parabola raised to a cubic; an arc's
+//!   pieces (each about a quarter turn, never a half) cut into cubics that stay within [`ARC_TOLERANCE_MM`],
+//!   their rounding onto the grid included.
+//! - **Paint:** strokes at their width `w` (the walk never gives 0, which 8.4.3.2 says is a device
+//!   pixel and shouldn't be used), butt caps, miter joins and a miter limit of 4, dashed by `d`;
+//!   fills black, even-odd (`f*`). Black on no background, as SVG.
+//! - **Geometry only:** the scene's text runs and pictures are passed over; text follows with P2.
+//! - **Layers:** nonempty groups share one PDF optional-content group for each
+//!   distinct paper object kind. Group order remains the original paint order,
+//!   and each kind's PDF layer uses ObjectKind::layer, as in DXF. Empty
+//!   groups do not invent layers. Consecutive painted groups of the same kind
+//!   share one marked-content run; empty groups do not interrupt it. All present
+//!   layers start visible.
+//!   Set [`PdfOptions::layers`] to false for the same vector marks without layers.
+//! - **Content size:** every append checks the cumulative byte limit before growing the
+//!   buffer, including inside a path/arc and the final graphics-state restore. Allocation
+//!   failure is an error. The limit is for uncompressed content, not total export memory.
 
-use std::fmt::Write as _;
+use std::f64::consts::FRAC_PI_2;
+use std::io::Write as _;
 
+use flate2::Compression;
+use flate2::write::ZlibEncoder;
+use pdf_writer::{Date, Filter, Name, Pdf, Rect, Ref, TextStr};
 use solidcore_record::{Seg2, Vec2};
-use solidcraft_geom::paper::{Anchor, Item, Prepared, arc_pieces};
+use solidcraft_geom::paper::{Grid, GridDashes, GridGroup, GridItem, GridPath, GridPoint, GridReport, Group, Item, ObjectKind, Piece, Prepared};
 use solidcraft_geom::prelude::*;
 
+use super::TEN_NANOMETRES;
+use super::flatten::{seg, vec};
 use crate::{IoError, MAX_DRAWING_BYTES, Result};
 
+/// How far an arc's cubics may stray from the arc, rounding onto the grid included.
+pub const ARC_TOLERANCE_MM: f64 = 1e-4;
 /// Points a millimetre.
-const PT: f64 = 72.0 / 25.4;
+const PT_PER_MM: f64 = 72.0 / 25.4;
+/// The smallest page side, in points (Annex C).
+const MIN_PAGE_PT: f64 = 3.0;
+/// The most pages a sheet PDF may have: a drawing's sheets.
+const MAX_PAGES: usize = solidcraft_doc::drawing::MAX_SHEETS;
+/// The most characters a title may have.
+const MAX_TITLE_CHARS: usize = 1000;
+/// The last second a PDF date can hold: 9999-12-31 23:59:59 UTC.
+const MAX_OUTPUT_TIME: u64 = 253_402_300_799;
+/// Steps a millimetre on the grid: 10 nm steps, five decimals (Annex C's precision).
+const PER_MM: f64 = TEN_NANOMETRES.per_mm();
 
-/// A number in points, to the hundredth (a thirtieth of a millimetre... finer than a printer).
-fn num(out: &mut String, v: f64) {
-    let v = (v * 100.0).round() / 100.0;
-    let v = if v == 0.0 { 0.0 } else { v };
-    let _ = write!(out, "{v}");
+/// The grid the scene is written on.
+fn grid() -> Result<Grid> {
+    TEN_NANOMETRES.grid()
 }
 
-fn point(out: &mut String, p: Vec2) {
-    num(out, p.x * PT);
-    out.push(' ');
-    num(out, p.y * PT);
+/// What a sheet PDF says beyond the scene.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PdfOptions {
+    /// The document's title, left out when `None` or empty.
+    pub title: Option<String>,
+    /// When the PDF was made, in seconds since 1970 (UTC): its creation and modification dates.
+    /// Without it the file has no dates.
+    pub output_time: Option<u64>,
+    /// Include optional-content layers by object kind (default true). False writes
+    /// the same vector marks in paint order, without layer objects or markers.
+    pub layers: bool,
 }
 
-/// A piece of a path, from where the path is.
-fn piece(out: &mut String, seg: &Seg2) -> Result<()> {
-    match *seg {
-        Seg2::Line { b, .. } => {
-            point(out, b);
-            out.push_str(" l\n");
+impl Default for PdfOptions {
+    fn default() -> Self {
+        Self { title: None, output_time: None, layers: true }
+    }
+}
+
+/// What writing a scene did that the scene didn't say: the grid's report.
+pub type PdfReport = GridReport;
+
+/// A scene's PDF document, and what writing it did: [`paper_pdf_pages`] with one page.
+pub fn paper_pdf(scene: &Prepared, options: &PdfOptions) -> Result<(Vec<u8>, PdfReport)> {
+    let (bytes, mut reports) = paper_pdf_pages(std::slice::from_ref(scene), options)?;
+    let report = reports.pop().ok_or_else(|| IoError::Invalid("the sheet PDF has no page".into()))?;
+    Ok((bytes, report))
+}
+
+/// Scenes as the pages of one PDF document, in order, each page its scene's size, and what
+/// writing each page did. The pages share one allowance of content, [`MAX_DRAWING_BYTES`].
+pub fn paper_pdf_pages(scenes: &[Prepared], options: &PdfOptions) -> Result<(Vec<u8>, Vec<PdfReport>)> {
+    let title = options.title.as_deref().filter(|t| !t.is_empty());
+    if title.is_some_and(|t| t.chars().count() > MAX_TITLE_CHARS) {
+        return Err(IoError::Invalid(format!("a sheet PDF's title is at most {MAX_TITLE_CHARS} characters")));
+    }
+    if !(1..=MAX_PAGES).contains(&scenes.len()) {
+        return Err(IoError::Invalid(format!("a sheet PDF has 1 to {MAX_PAGES} pages")));
+    }
+    let date = options.output_time.map(date).transpose()?;
+    let grid = grid()?;
+    // The pages' sizes from the scenes, as the grid will make them. Each page is put on the grid
+    // only when it is written, so one page's grid is held at a time.
+    let mut sizes = Vec::with_capacity(scenes.len());
+    for scene in scenes {
+        let size = grid.point(scene.size_mm()).map_err(|e| IoError::Invalid(e.to_string()))?;
+        let page = [size.x, size.y].map(|n| n as f64 / PER_MM * PT_PER_MM);
+        if page.iter().any(|side| *side < MIN_PAGE_PT) {
+            return Err(IoError::Invalid(format!("a sheet PDF's page is at least {MIN_PAGE_PT} pt (about 1.06 mm) a side")));
         }
-        Seg2::Arc { center, radius, start, sweep } => {
-            let mut from = start;
-            let n = ((sweep.abs() / std::f64::consts::FRAC_PI_2) - 1e-9).ceil().clamp(1.0, 4.0);
-            let step = sweep / n;
-            for end in arc_pieces(center, radius, start, sweep) {
-                let to = from + step;
-                let k = 4.0 / 3.0 * (step / 4.0).tan() * radius;
-                let (s0, c0) = from.sin_cos();
-                let (s1, c1) = to.sin_cos();
-                let p0 = center + Vec2::new(c0, s0) * radius;
-                let h0 = p0 + Vec2::new(-s0, c0) * k;
-                let h1 = end - Vec2::new(-s1, c1) * k;
-                point(out, h0);
-                out.push(' ');
-                point(out, h1);
-                out.push(' ');
-                point(out, end);
-                out.push_str(" c\n");
-                from = to;
-            }
-        }
-        Seg2::Cubic { p1, p2, p3, .. } => {
-            point(out, p1);
-            out.push(' ');
-            point(out, p2);
-            out.push(' ');
-            point(out, p3);
-            out.push_str(" c\n");
-        }
-        Seg2::Conic { a, apex, b, w } if (w - 1.0).abs() <= 1e-12 => {
-            let c1 = a + (apex - a) * (2.0 / 3.0);
-            let c2 = b + (apex - b) * (2.0 / 3.0);
-            point(out, c1);
-            out.push(' ');
-            point(out, c2);
-            out.push(' ');
-            point(out, b);
-            out.push_str(" c\n");
-        }
-        Seg2::Conic { .. } | Seg2::Bezier { .. } => {
-            return Err(IoError::Invalid("not supported yet: PDF of ellipses, hyperbolas and Béziers above degree 3".into()));
+        sizes.push(page);
+    }
+
+    // Object numbers in the order the objects are written: the catalog, the page tree, each page
+    // and its content, the Info dictionary, then the layers. One page keeps 1 to 5 and layers
+    // from 6.
+    let mut refs = Refs(1);
+    let (catalog, tree) = (refs.next()?, refs.next()?);
+    let mut pages = Vec::with_capacity(sizes.len());
+    for _ in &sizes {
+        pages.push((refs.next()?, refs.next()?));
+    }
+    let info = refs.next()?;
+    let painted_kinds = scenes.iter().flat_map(|scene| scene.groups()).filter(|group| painted(group)).map(|group| group.kind);
+    let layers = if options.layers { collect_layers(painted_kinds, &mut refs)? } else { Vec::new() };
+
+    let mut pdf = Pdf::new();
+    {
+        let mut root = pdf.catalog(catalog);
+        root.pages(tree);
+        if !layers.is_empty() {
+            // PDF 1.5 optional content: one group per used paper object kind.
+            // The default configuration orders all layers and starts them ON.
+            let mut properties = root.insert(Name(b"OCProperties")).dict();
+            properties.insert(Name(b"OCGs")).array().items(layers.iter().map(|l| l.reference));
+            let mut default = properties.insert(Name(b"D")).dict();
+            default.insert(Name(b"Order")).array().items(layers.iter().map(|l| l.reference));
+            default.insert(Name(b"ON")).array().items(layers.iter().map(|l| l.reference));
+            default.pair(Name(b"BaseState"), Name(b"ON"));
         }
     }
-    Ok(())
-}
-
-fn path(out: &mut String, segs: &[Seg2]) -> Result<()> {
-    let Some(first) = segs.first() else { return Ok(()) };
-    point(out, first.start());
-    out.push_str(" m\n");
-    for seg in segs {
-        piece(out, seg)?;
-    }
-    Ok(())
-}
-
-/// A text's width, roughly, in its own height: Helvetica's letters run about this wide on average.
-fn width_estimate(text: &str) -> f64 {
-    text.chars()
-        .map(|c| match c {
-            ' ' | 'i' | 'j' | 'l' | '.' | ',' | ':' | ';' | '\'' | '|' | '!' => 0.28,
-            'f' | 't' | 'r' | 'I' | '(' | ')' | '-' | '/' => 0.33,
-            'm' | 'w' | 'M' | 'W' => 0.83,
-            c if c.is_ascii_uppercase() => 0.67,
-            c if c.is_ascii_digit() => 0.556,
-            _ => 0.52,
-        })
-        .sum()
-}
-
-/// A text as a PDF string in WinAnsi: ASCII and Latin-1 as they are, the rest `?`.
-fn pdf_string(out: &mut String, text: &str) {
-    out.push('(');
-    for c in text.chars() {
-        match c {
-            '(' | ')' | '\\' => {
-                out.push('\\');
-                out.push(c);
-            }
-            ' '..='~' => out.push(c),
-            '\u{a0}'..='\u{ff}' => {
-                let _ = write!(out, "\\{:03o}", u32::from(c));
-            }
-            _ => out.push('?'),
+    let count = i32::try_from(pages.len()).map_err(|_| IoError::Invalid("too many PDF pages".into()))?;
+    pdf.pages(tree).kids(pages.iter().map(|(page, _)| *page)).count(count);
+    let (mut used, mut reports) = (0usize, Vec::with_capacity(scenes.len()));
+    for ((scene, page), (page_id, contents)) in scenes.iter().zip(sizes).zip(pages) {
+        // This page alone on the grid, written, then dropped. The grid keeps one group for each of
+        // the scene's, in order, so the scene says which of them are painted.
+        let on = scene.on_grid(grid).map_err(|e| IoError::Invalid(e.to_string()))?;
+        if on.groups.len() != scene.groups().len() {
+            return Err(IoError::Invalid("the sheet PDF: a page's groups changed on the grid".into()));
         }
+        let groups = scene.groups().iter().zip(&on.groups).filter(|(group, _)| painted(group)).map(|(_, on)| on);
+        let content = content_with_limit_and_layers(groups, options.layers.then_some(layers.as_slice()), MAX_DRAWING_BYTES - used)?;
+        used += content.len();
+        let mut deflate = ZlibEncoder::new(Vec::new(), Compression::default());
+        let compressed = deflate.write_all(content.as_bytes()).and_then(|()| deflate.finish());
+        let compressed = compressed.map_err(|e| IoError::Invalid(format!("the sheet PDF: {e}")))?;
+        let mut writer = pdf.page(page_id);
+        writer.parent(tree).media_box(Rect::new(0.0, 0.0, page[0] as f32, page[1] as f32)).contents(contents);
+        {
+            // This page's layers: the kinds it paints.
+            let mut resources = writer.resources();
+            let mut on_page = layers.iter().filter(|layer| scene.groups().iter().any(|g| painted(g) && g.kind == layer.kind)).peekable();
+            if on_page.peek().is_some() {
+                let mut properties = resources.insert(Name(b"Properties")).dict();
+                for layer in on_page {
+                    properties.pair(Name(layer.tag.as_bytes()), layer.reference);
+                }
+            }
+        }
+        drop(writer);
+        pdf.stream(contents, &compressed).filter(Filter::FlateDecode);
+        reports.push(on.report);
     }
-    out.push(')');
+    let mut doc = pdf.document_info(info);
+    doc.producer(TextStr(concat!("SolidCraft ", env!("CARGO_PKG_VERSION"))));
+    if let Some(title) = title {
+        doc.title(TextStr(title));
+    }
+    if let Some(date) = date {
+        doc.creation_date(date).modified_date(date);
+    }
+    drop(doc);
+    for layer in &layers {
+        let mut group = pdf.indirect(layer.reference).dict();
+        group.pair(Name(b"Type"), Name(b"OCG"));
+        group.pair(Name(b"Name"), TextStr(layer.kind.layer()));
+    }
+    Ok((pdf.finish(), reports))
 }
 
-/// The content stream of one page.
-fn content(scene: &Prepared) -> Result<String> {
-    let mut out = String::from("0 J 0 j 4 M 0 g 0 G\n");
-    for group in scene.groups() {
+/// The next object numbers of one document, each handed out once (pdf-writer panics on a number
+/// written twice).
+struct Refs(i32);
+
+impl Refs {
+    fn next(&mut self) -> Result<Ref> {
+        let next = self.0.checked_add(1).ok_or_else(|| IoError::Invalid("too many PDF objects".into()))?;
+        Ok(Ref::new(std::mem::replace(&mut self.0, next)))
+    }
+}
+
+/// `secs` since 1970 as a PDF date in UTC, refused past the year 9999.
+fn date(secs: u64) -> Result<Date> {
+    if secs > MAX_OUTPUT_TIME {
+        return Err(IoError::Invalid("a sheet PDF's date is at most the year 9999".into()));
+    }
+    let (year, month, day, hour, minute, second) = crate::civil(secs);
+    let (month, day) = (u8::try_from(month).unwrap_or(1), u8::try_from(day).unwrap_or(1));
+    let [hour, minute, second] = [hour, minute, second].map(|v| u8::try_from(v).unwrap_or(0));
+    Ok(Date::new(u16::try_from(year).unwrap_or(0)).month(month).day(day).hour(hour).minute(minute).second(second).utc_offset_hour(0))
+}
+
+/// One PDF layer for every kind with actual paper marks, in first paint order.
+struct Layer {
+    kind: ObjectKind,
+    reference: Ref,
+    tag: String,
+}
+
+/// The layers of the painted groups' `kinds` (every page's, in page order): one a kind, numbered
+/// from `refs` and tagged `L0`, `L1`… as the kinds are first painted, so a kind is the same layer on
+/// every page.
+fn collect_layers(kinds: impl IntoIterator<Item = ObjectKind>, refs: &mut Refs) -> Result<Vec<Layer>> {
+    let mut layers: Vec<Layer> = Vec::new();
+    for kind in kinds {
+        if layers.iter().any(|layer| layer.kind == kind) {
+            continue;
+        }
+        layers.try_reserve(1).map_err(|_| IoError::Invalid("the sheet PDF: cannot allocate its layer list".into()))?;
+        layers.push(Layer { kind, reference: refs.next()?, tag: format!("L{}", layers.len()) });
+    }
+    Ok(layers)
+}
+
+/// Whether `group` puts any mark on this PDF's page: a stroke or a fill (text and pictures are
+/// passed over). A group with none invents no layer and doesn't interrupt a run. Asked of the
+/// prepared scene, whose strokes and fills each stay one on the grid.
+fn painted(group: &Group) -> bool {
+    group.items.iter().any(|item| matches!(item, Item::Stroke { .. } | Item::Fill { .. }))
+}
+
+/// The page's content stream: the scene in millimetres, scaled to points once.
+#[cfg(test)]
+fn content(groups: &[GridGroup]) -> Result<String> {
+    content_with_limit(groups, MAX_DRAWING_BYTES)
+}
+
+// The private seam permits smaller test limits, never a higher production cap. The tests give it
+// painted groups only.
+#[cfg(test)]
+fn content_with_limit(groups: &[GridGroup], max_bytes: usize) -> Result<String> {
+    // Numbered as a one-page document's, from 6.
+    let layers = collect_layers(groups.iter().map(|group| group.kind), &mut Refs(6))?;
+    content_with_limit_and_layers(groups, Some(&layers), max_bytes)
+}
+
+/// The content of a page's painted groups ([`painted`]), in paint order.
+fn content_with_limit_and_layers<'a>(groups: impl IntoIterator<Item = &'a GridGroup>, layers: Option<&[Layer]>, max_bytes: usize) -> Result<String> {
+    let mut w = Content::new(max_bytes)?;
+    w.append(&format!("q {PT_PER_MM:.9} 0 0 {PT_PER_MM:.9} 0 0 cm 0 J 0 j 4 M\n"))?;
+    let mut active_kind = None;
+    for group in groups {
+        if let Some(layers) = layers {
+            let layer = layers.iter().find(|layer| layer.kind == group.kind).ok_or_else(|| IoError::Invalid("missing paper PDF layer".into()))?;
+            if active_kind != Some(group.kind) {
+                if active_kind.is_some() {
+                    w.append("EMC\n")?;
+                }
+                w.append("/OC /")?;
+                w.append(&layer.tag)?;
+                w.append(" BDC\n")?;
+                active_kind = Some(group.kind);
+            }
+        }
         for item in &group.items {
             match item {
-                Item::Stroke { path: segs, closed, width_mm } => {
-                    num(&mut out, width_mm * PT);
-                    out.push_str(" w\n");
-                    path(&mut out, segs)?;
-                    out.push_str(if *closed { "h S\n" } else { "S\n" });
-                }
-                Item::Fill { region } => {
-                    for l in region.loops() {
-                        path(&mut out, &l.segs)?;
-                        out.push_str("h\n");
+                GridItem::Stroke { width, path, dashes } => {
+                    if w.width != Some(*width) {
+                        w.number(*width)?;
+                        w.append(" w\n")?;
+                        w.width = Some(*width);
                     }
-                    out.push_str("f*\n");
-                }
-                Item::Text { at, height_mm, angle, anchor, text } => {
-                    let size = height_mm * PT;
-                    let shift = match anchor {
-                        Anchor::Start => 0.0,
-                        Anchor::Middle => width_estimate(text) * height_mm / 2.0,
-                        Anchor::End => width_estimate(text) * height_mm,
-                    };
-                    let (s, c) = angle.sin_cos();
-                    let start = *at - Vec2::new(c, s) * shift;
-                    out.push_str("BT /F1 ");
-                    num(&mut out, size);
-                    out.push_str(" Tf ");
-                    for v in [c, s, -s, c] {
-                        let _ = write!(out, "{:.6} ", if v.abs() < 1e-12 { 0.0 } else { v });
+                    if w.dashes.as_ref() != dashes.as_ref() {
+                        w.dashes(dashes.as_ref())?;
+                        w.dashes.clone_from(dashes);
                     }
-                    point(&mut out, start);
-                    out.push_str(" Tm ");
-                    pdf_string(&mut out, text);
-                    out.push_str(" Tj ET\n");
+                    w.path(path)?;
+                    // A closed path's closing line, then the stroke: `s`.
+                    w.append(if path.closed { "s\n" } else { "S\n" })?;
                 }
-            }
-            if out.len() > MAX_DRAWING_BYTES {
-                return Err(IoError::Invalid(format!("the PDF would be over {} MiB", MAX_DRAWING_BYTES >> 20)));
+                GridItem::Fill { loops } => {
+                    for l in loops {
+                        w.path(l)?;
+                        w.append("h\n")?;
+                    }
+                    w.append("f*\n")?;
+                }
+                GridItem::Text { .. } | GridItem::Picture { .. } => {}
             }
         }
     }
-    Ok(out)
+    if active_kind.is_some() {
+        w.append("EMC\n")?;
+    }
+    w.append("Q\n")?;
+    Ok(w.out)
 }
 
-/// The scenes as one PDF, a page each in order.
-pub fn paper_pdf(pages: &[Prepared]) -> Result<Vec<u8>> {
-    if pages.is_empty() {
-        return Err(IoError::Invalid("a PDF needs at least one page".into()));
+// One growth path for every operand/operator. Reserve geometrically, capped at
+// the allowance, rather than repeatedly reallocating for individual numbers.
+fn append_bounded(out: &mut String, text: &str, max_bytes: usize) -> Result<()> {
+    let length = out
+        .len()
+        .checked_add(text.len())
+        .filter(|&n| n <= max_bytes)
+        .ok_or_else(|| IoError::Invalid(format!("the PDF's drawing would be over {max_bytes} bytes")))?;
+    if length > out.capacity() {
+        let capacity = out.capacity().saturating_mul(2).max(length).min(max_bytes);
+        out.try_reserve_exact(capacity - out.len())
+            .map_err(|_| IoError::Invalid("the sheet PDF: cannot allocate its bounded content buffer".into()))?;
     }
-    let mut objects: Vec<String> = Vec::new();
-    // 1 catalogue, 2 page tree, 3 font; then each page and its content.
-    let kids: Vec<String> = (0..pages.len()).map(|i| format!("{} 0 R", 4 + 2 * i)).collect();
-    objects.push("<< /Type /Catalog /Pages 2 0 R >>".into());
-    objects.push(format!("<< /Type /Pages /Kids [{}] /Count {} >>", kids.join(" "), pages.len()));
-    objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".into());
-    let mut total = 0usize;
-    for (i, page) in pages.iter().enumerate() {
-        let size = page.size_mm();
-        let mut media = String::new();
-        num(&mut media, size.x * PT);
-        media.push(' ');
-        num(&mut media, size.y * PT);
-        objects.push(format!(
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {media}] /Resources << /Font << /F1 3 0 R >> >> /Contents {} 0 R >>",
-            5 + 2 * i
-        ));
-        let body = content(page)?;
-        total += body.len();
-        if total > MAX_DRAWING_BYTES {
-            return Err(IoError::Invalid(format!("the PDF would be over {} MiB", MAX_DRAWING_BYTES >> 20)));
+    out.push_str(text);
+    Ok(())
+}
+
+struct Content {
+    out: String,
+    max_bytes: usize,
+    // Reuse a small buffer for the existing shared integer formatter. Any i64
+    // on this grid needs at most 21 bytes, including a minus sign and point.
+    number_text: String,
+    /// The stroke width and dash pattern last set, so each is written only when it changes.
+    width: Option<i64>,
+    dashes: Option<GridDashes>,
+}
+
+impl Content {
+    fn new(max_bytes: usize) -> Result<Self> {
+        let mut number_text = String::new();
+        number_text.try_reserve_exact(32).map_err(|_| IoError::Invalid("the sheet PDF: cannot allocate its number buffer".into()))?;
+        Ok(Self { out: String::new(), max_bytes: max_bytes.min(MAX_DRAWING_BYTES), number_text, width: None, dashes: None })
+    }
+
+    fn append(&mut self, text: &str) -> Result<()> {
+        append_bounded(&mut self.out, text, self.max_bytes)
+    }
+
+    fn number(&mut self, n: i64) -> Result<()> {
+        self.number_text.clear();
+        TEN_NANOMETRES.push(&mut self.number_text, n);
+        append_bounded(&mut self.out, &self.number_text, self.max_bytes)
+    }
+
+    fn point(&mut self, p: GridPoint) -> Result<()> {
+        self.number(p.x)?;
+        self.append(" ")?;
+        self.number(p.y)?;
+        self.append(" ")
+    }
+
+    /// `p` in steps, rounded onto the grid.
+    fn near(&mut self, p: Vec2) -> Result<()> {
+        if !p.is_finite() {
+            return Err(IoError::Invalid("the sheet PDF: a curve point is not a number".into()));
         }
-        objects.push(format!("<< /Length {} >>\nstream\n{body}endstream", body.len()));
+        self.point(GridPoint { x: p.x.round() as i64, y: p.y.round() as i64 })
     }
-    let mut out = String::from("%PDF-1.4\n");
-    let mut offsets = Vec::with_capacity(objects.len());
-    for (k, obj) in objects.iter().enumerate() {
-        offsets.push(out.len());
-        let _ = write!(out, "{} 0 obj\n{obj}\nendobj\n", k + 1);
+
+    /// A dash pattern `[on off ...] phase d`, or a solid line `[] 0 d`.
+    fn dashes(&mut self, dashes: Option<&GridDashes>) -> Result<()> {
+        self.append("[")?;
+        if let Some(d) = dashes {
+            for (i, length) in d.lengths.iter().enumerate() {
+                if i > 0 {
+                    self.append(" ")?;
+                }
+                self.number(*length)?;
+            }
+        }
+        self.append("] ")?;
+        self.number(dashes.map_or(0, |d| d.phase))?;
+        self.append(" d\n")
     }
-    let xref = out.len();
-    let _ = write!(out, "xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1);
-    for o in offsets {
-        let _ = writeln!(out, "{o:010} 00000 n ");
+
+    /// A path from its start; a closed one's closing line is left to the caller's `h` or `s`.
+    fn path(&mut self, path: &GridPath) -> Result<()> {
+        self.point(path.start)?;
+        self.append("m\n")?;
+        let mut at = path.start;
+        for piece in &path.pieces {
+            match *piece {
+                Piece::Line { to } => {
+                    self.point(to)?;
+                    self.append("l\n")?;
+                }
+                Piece::Cubic { c1, c2, to } => {
+                    self.point(c1)?;
+                    self.point(c2)?;
+                    self.point(to)?;
+                    self.append("c\n")?;
+                }
+                // A parabola is the cubic with its control points two thirds of the way to `c`.
+                Piece::Quadratic { c, to } => {
+                    let (a, c, b) = (vec(at), vec(c), vec(to));
+                    self.near(a + (c - a) * (2.0 / 3.0))?;
+                    self.near(b + (c - b) * (2.0 / 3.0))?;
+                    self.point(to)?;
+                    self.append("c\n")?;
+                }
+                Piece::Arc { .. } => self.arc(seg(piece, at), piece.to())?,
+            }
+            at = piece.to();
+        }
+        Ok(())
     }
-    let _ = write!(out, "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1);
-    Ok(out.into_bytes())
+
+    /// An arc piece as cubics within [`ARC_TOLERANCE_MM`], ending exactly on `to`.
+    fn arc(&mut self, arc: Seg2, to: GridPoint) -> Result<()> {
+        let Seg2::Arc { center, radius, start, sweep } = arc else {
+            return Err(IoError::Invalid("the sheet PDF: an arc piece isn't an arc".into()));
+        };
+        let n = cubics_for(radius, sweep).ok_or_else(|| IoError::Invalid("the sheet PDF: an arc needs too many cubics".into()))?;
+        let h = sweep / n as f64;
+        let k = 4.0 / 3.0 * (h / 4.0).tan() * radius;
+        let tangent = |a: f64| Vec2::new(-a.sin(), a.cos());
+        for i in 0..n {
+            let (a0, a1) = (start + h * i as f64, start + h * (i + 1) as f64);
+            let (p0, p3) = (center + Vec2::from_angle(a0) * radius, center + Vec2::from_angle(a1) * radius);
+            self.near(p0 + tangent(a0) * k)?;
+            self.near(p3 - tangent(a1) * k)?;
+            if i + 1 == n {
+                self.point(to)?
+            } else {
+                self.near(p3)?
+            }
+            self.append("c\n")?;
+        }
+        Ok(())
+    }
+}
+
+/// How many equal cubics keep an arc of `radius` steps and `sweep` (at most a half turn, see
+/// [`Piece::Arc`]) within the tolerance, each spanning at most a quarter turn. The 4/3·tan(θ/4)
+/// cubic of a θ arc strays at most r·(2/27)·sin⁶(θ/4)/cos²(θ/4) from it, outward; each control
+/// point rounded onto the grid moves the curve at most half a step's diagonal more.
+fn cubics_for(radius: f64, sweep: f64) -> Option<usize> {
+    let tolerance = ARC_TOLERANCE_MM * PER_MM - std::f64::consts::FRAC_1_SQRT_2;
+    let strays = |theta: f64| radius * (2.0 / 27.0) * (theta / 4.0).sin().powi(6) / (theta / 4.0).cos().powi(2);
+    // A quarter turn or less starts at one cubic, as it always has, so those arcs write the same bytes.
+    let least = (sweep.abs() / FRAC_PI_2 - 1e-9).ceil().max(1.0);
+    (sweep.is_finite() && sweep.abs() <= std::f64::consts::PI + 1e-9 && radius.is_finite())
+        .then(|| (least as usize..=128).find(|&n| strays(sweep.abs() / n as f64) <= tolerance))
+        .flatten()
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use solidcraft_geom::paper::{Group, ObjectKind, Scene};
-
-    fn p(x: f64, y: f64) -> Vec2 {
-        Vec2::new(x, y)
-    }
-
-    fn page(items: Vec<Item>) -> Scene {
-        Scene { size_mm: p(279.4, 215.9), groups: vec![Group { object: 1, kind: ObjectKind::View, items }] }
-    }
-
-    /// Two pages: a square, a circle and a centred label on one, a filled square on the other. The
-    /// file has both pages at Letter size, the font, every object where the cross-reference says,
-    /// and the text and paths in points.
-    #[test]
-    fn scenes_become_a_pdf_a_page_each() {
-        let square = vec![
-            Seg2::Line { a: p(10.0, 10.0), b: p(110.0, 10.0) },
-            Seg2::Line { a: p(110.0, 10.0), b: p(110.0, 110.0) },
-            Seg2::Line { a: p(110.0, 110.0), b: p(10.0, 110.0) },
-            Seg2::Line { a: p(10.0, 110.0), b: p(10.0, 10.0) },
-        ];
-        let one = page(vec![
-            Item::Stroke { path: square.clone(), closed: true, width_mm: 0.35 },
-            Item::Stroke {
-                path: vec![Seg2::Arc { center: p(60.0, 60.0), radius: 4.0, start: 0.0, sweep: std::f64::consts::TAU }],
-                closed: true,
-                width_mm: 0.25,
-            },
-            Item::Text {
-                at: p(60.0, 120.0),
-                height_mm: 5.0,
-                angle: 0.0,
-                anchor: Anchor::Middle,
-                text: "PIECE 1 (2440 x 407) \u{d7} \u{2014}".into(),
-            },
-        ]);
-        let two = page(vec![Item::Fill { region: solidcore_record::Region2 { outer: solidcore_record::Loop2 { segs: square }, holes: vec![] } }]);
-        let pdf = paper_pdf(&[one.prepare().unwrap(), two.prepare().unwrap()]).unwrap();
-        let text = String::from_utf8(pdf.clone()).unwrap();
-        assert!(text.starts_with("%PDF-1.4\n") && text.ends_with("%%EOF\n"));
-        assert_eq!(text.matches("/Type /Page ").count(), 2);
-        assert!(text.contains("/MediaBox [0 0 792 612]"), "Letter landscape in points");
-        assert!(text.contains("/BaseFont /Helvetica"));
-        // 10 mm is 28.35 pt; a quarter circle is one cubic, so four for the hole.
-        assert!(text.contains("28.35 28.35 m"), "{text}");
-        assert_eq!(text.matches(" c\n").count(), 4);
-        // The text escaped: parentheses, the times sign as Latin-1, the dash as `?`.
-        assert!(text.contains("(PIECE 1 \\(2440 x 407\\) \\327 ?) Tj"), "{text}");
-        assert!(text.contains("f*"));
-        // Each object where the cross-reference says it is.
-        let xref = text.rfind("xref\n").unwrap();
-        for (k, line) in text[xref..].lines().skip(3).take(7).enumerate() {
-            let at: usize = line[..10].parse().unwrap();
-            assert!(text[at..].starts_with(&format!("{} 0 obj", k + 1)), "object {}", k + 1);
-        }
-        assert!(paper_pdf(&[]).is_err());
-    }
-}
+#[path = "pdf_tests.rs"]
+mod tests;

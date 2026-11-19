@@ -6,8 +6,8 @@
 //! own coordinates (so a page can also be placed by measuring from the piece's 0, 0) and a
 //! 100 mm bar to check the print's scale.
 
+use super::paper::{Anchor, Item, Page};
 use solidcore_record::{Seg2, Vec2};
-use solidcraft_geom::paper::{Anchor, Group, Item, ObjectKind, Scene};
 use solidcraft_geom::prelude::*;
 
 use super::panel;
@@ -114,11 +114,8 @@ fn text(at: Vec2, height_mm: f64, anchor: Anchor, text: impl Into<String>) -> It
     Item::Text { at, height_mm, angle: 0.0, anchor, text }
 }
 
-fn scene(paper: [f64; 2], view: Vec<Item>, notes: Vec<Item>) -> Scene {
-    Scene {
-        size_mm: Vec2::new(paper[0], paper[1]),
-        groups: vec![Group { object: 1, kind: ObjectKind::View, items: view }, Group { object: 2, kind: ObjectKind::Annotation, items: notes }],
-    }
+fn scene(paper: [f64; 2], view: Vec<Item>, notes: Vec<Item>) -> Page {
+    Page { size_mm: Vec2::new(paper[0], paper[1]), view, notes }
 }
 
 /// A row's letter, counted from the top (A, B, …; past Z by number).
@@ -176,7 +173,7 @@ fn tiles(part: &Part, d: &Drawn, paper: [f64; 2]) -> Option<Tiles> {
 }
 
 /// A page of one tile at full size.
-fn tile_page(part: &Part, d: &Drawn, t: &Tiles, c: usize, r: usize, paper: [f64; 2]) -> Scene {
+fn tile_page(part: &Part, d: &Drawn, t: &Tiles, c: usize, r: usize, paper: [f64; 2]) -> Page {
     let (a, b) = (t.corner(c, r), t.corner(c, r) + t.size);
     let on_page = |q: Vec2| q - a + Vec2::new(MARGIN, MARGIN);
     let (mut view, mut notes) = (Vec::new(), Vec::new());
@@ -248,7 +245,7 @@ fn tile_page(part: &Part, d: &Drawn, t: &Tiles, c: usize, r: usize, paper: [f64;
 }
 
 /// A map of one part's pages: its outline small, each printed page's box and name.
-fn map_page(part: &Part, d: &Drawn, t: &Tiles, paper: [f64; 2]) -> Scene {
+fn map_page(part: &Part, d: &Drawn, t: &Tiles, paper: [f64; 2]) -> Page {
     let (mut view, mut notes) = (Vec::new(), Vec::new());
     let top = paper[1] - MARGIN;
     let [w, h] = part.piece.blank;
@@ -294,7 +291,7 @@ fn map_page(part: &Part, d: &Drawn, t: &Tiles, paper: [f64; 2]) -> Scene {
 }
 
 /// The print's first page: what it is and each part's pages.
-fn cover_page(parts: &[(&Part, usize)], paper: [f64; 2]) -> Scene {
+fn cover_page(parts: &[(&Part, usize)], paper: [f64; 2]) -> Page {
     let top = paper[1] - MARGIN;
     let mut notes = vec![text(Vec2::new(MARGIN, top - 6.0), 7.0, Anchor::Start, "Full-size print of the panel's pieces")];
     let mut lines = vec![
@@ -321,7 +318,7 @@ fn cover_page(parts: &[(&Part, usize)], paper: [f64; 2]) -> Scene {
 
 /// The print's pages: a cover, then for each part a map of its pages (when it has more than one)
 /// and its pages, top row first. `Err` when it would be more pages than [`MOST_PAGES`].
-pub(super) fn pages(parts: &[Part], paper: [f64; 2], sizes: &[f64], fixing: f64) -> Result<Vec<Scene>, String> {
+pub(super) fn pages(parts: &[Part], paper: [f64; 2], sizes: &[f64], fixing: f64) -> Result<Vec<Page>, String> {
     let mut out = Vec::new();
     let mut counts = Vec::new();
     let mut body = Vec::new();
@@ -379,7 +376,7 @@ mod tests {
         let paper = paper_of(None).unwrap().unwrap();
         let pages = pages(&[part], paper, &[], 8.0).unwrap();
         assert_eq!(pages.len(), 1 + 1 + 6);
-        assert!(pages.iter().all(|p| p.validate().is_ok()));
+        assert!(super::super::paper::pdf(&pages).is_ok());
         let huge = panel::Piece { outline: vec![Vec2::new(0.0, 0.0), Vec2::new(1e6, 0.0), Vec2::new(1e6, 1e6)], blank: [1e6, 1e6], ..piece.clone() };
         let part = Part { name: "Piece 2".into(), short: "P2".into(), piece: &huge, note: None };
         assert!(super::pages(&[part], paper, &[], 8.0).is_err());
