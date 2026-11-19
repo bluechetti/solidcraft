@@ -235,11 +235,17 @@ pub fn as_designed(walls: &[(usize, Wall)], areas: &[f64], loops: &[(Vec<Vec2>, 
 /// loop that runs on three walls or more, or round one circle. A stretch on a wall shorter than
 /// `reach` is passed over. An outline that would cross itself is left out, and of two that cross
 /// each other the smaller; a loop the other way from the largest is a hole, kept only inside an
-/// outline of the prism's (one outside them all is in what another prism makes).
-pub fn prism_outlines(walls: &[(usize, Wall)], loops: &[(Vec<Vec2>, Vec<Option<usize>>)], reach: f64) -> Vec<Outline> {
+/// outline of the prism's (one outside them all is in what another prism makes). With `fill`, a
+/// gap between two walls where the scan mostly runs along the prism is drawn as the slice runs there
+/// ([`Fill`]); without it, the walls either side run on to where they cross.
+pub fn prism_outlines(walls: &[(usize, Wall)], loops: &[(Vec<Vec2>, Vec<Option<usize>>)], reach: f64, fill: Option<&Fill<'_>>) -> Vec<Outline> {
     let mut found: Vec<(Outline, Vec<Vec2>)> = loops
         .iter()
-        .filter_map(|(points, on)| outline_of(walls, points, on, reach, None))
+        .enumerate()
+        .filter_map(|(k, (points, on))| {
+            let fill = fill.map(|f| (f.tolerance, f.along.get(k).map(Vec::as_slice)));
+            outline_of(walls, points, on, reach, fill)
+        })
         .map(|o| {
             let r = ring(&o);
             (o, r)
@@ -258,6 +264,84 @@ pub fn prism_outlines(walls: &[(usize, Wall)], loops: &[(Vec<Vec2>, Vec<Option<u
     kept.into_iter()
         .filter(|(_, r)| area(r).signum() == material || outer.iter().any(|o| r.iter().all(|p| contains(o, *p))))
         .map(|(o, _)| o)
+        .collect()
+}
+
+/// Where a prism's slice may be drawn as it runs between two walls: a gap that strays from where
+/// the walls would meet by more than `tolerance` allows is drawn as the slice runs, when every
+/// point of it is on scan that runs along the prism (`along`, for each loop each point). A gear's
+/// tip and root lands, which Find All leaves as freeform between the flanks, are; a hole or a slot
+/// across the prism, met by the slice, is not, and must not be extruded along it.
+pub struct Fill<'a> {
+    pub tolerance: f64,
+    pub along: &'a [Vec<bool>],
+}
+
+/// A wall of a prism faces square to it within this (radians), over and above its draft.
+const RUNS_ALONG: f64 = 0.1745;
+/// The share of a gap's points that must be on scan running along the prism for the gap to be
+/// drawn as the slice runs.
+const MOSTLY_ALONG: f64 = 0.8;
+/// The slices a prism's gaps are checked against lie this share of its depth either side of the
+/// middle one.
+const OTHER_LEVELS: f64 = 0.25;
+
+/// For each point of each loop of a prism's middle slice, whether the scan there runs along the
+/// prism: its triangle (`triangles`, as [`crate::section::Run::triangles`]) faces square to the
+/// prism's `direction` (within [`RUNS_ALONG`] and the `draft`), and the slices at `others` (other
+/// levels along the prism, each its runs' points) pass within `reach` of it, so the same outline
+/// is there too. A prism too short for other levels to tell (`others` empty) goes by facing alone.
+fn runs_along(scan: &Scan, loops: &[(&[Vec2], &[usize])], direction: Vec3, draft: f64, others: &[Vec<Vec<Vec2>>], reach: f64) -> Vec<Vec<bool>> {
+    let lean = (RUNS_ALONG + draft.abs()).sin();
+    // The other levels' segments in a grid of cells `reach` wide or wider, so each point looks
+    // only at the segments near it.
+    let segments: Vec<Vec<(Vec2, Vec2)>> =
+        others.iter().map(|runs| runs.iter().flat_map(|r| (0..r.len()).map(move |i| (r[i], r[(i + 1) % r.len()]))).collect()).collect();
+    let all = segments.iter().flatten();
+    let (low, high) =
+        all.clone().fold((Vec2::new(f64::INFINITY, f64::INFINITY), Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY)), |(l, h), (a, b)| {
+            (Vec2::new(l.x.min(a.x).min(b.x), l.y.min(a.y).min(b.y)), Vec2::new(h.x.max(a.x).max(b.x), h.y.max(a.y).max(b.y)))
+        });
+    let cell = reach.max((high.x - low.x).max(high.y - low.y) / 512.0).max(1e-9);
+    let key = |p: Vec2| (((p.x - low.x) / cell).floor() as i64, ((p.y - low.y) / cell).floor() as i64);
+    let grids: Vec<std::collections::HashMap<(i64, i64), Vec<u32>>> = segments
+        .iter()
+        .map(|level| {
+            let mut grid: std::collections::HashMap<(i64, i64), Vec<u32>> = std::collections::HashMap::new();
+            for (k, (a, b)) in level.iter().enumerate() {
+                let ((ax, ay), (bx, by)) = (key(*a), key(*b));
+                for x in ax.min(bx)..=ax.max(bx) {
+                    for y in ay.min(by)..=ay.max(by) {
+                        grid.entry((x, y)).or_default().push(k as u32);
+                    }
+                }
+            }
+            grid
+        })
+        .collect();
+    let near = |p: Vec2, level: usize| {
+        let (x, y) = key(p);
+        (-1..=1).any(|dx| {
+            (-1..=1).any(|dy| {
+                grids[level].get(&(x + dx, y + dy)).is_some_and(|cell| {
+                    cell.iter().any(|&k| segments[level].get(k as usize).is_some_and(|(a, b)| segment_distance(p, *a, *b) <= reach))
+                })
+            })
+        })
+    };
+    loops
+        .iter()
+        .map(|(points, triangles)| {
+            points
+                .iter()
+                .zip(triangles.iter())
+                .map(|(&p, &t)| {
+                    let square =
+                        scan.corners(t).and_then(|[a, b, c]| (b - a).cross(c - a).normalized()).is_some_and(|n| n.dot(direction).abs() <= lean);
+                    square && (0..segments.len()).all(|level| near(p, level))
+                })
+                .collect()
+        })
         .collect()
 }
 
@@ -334,8 +418,9 @@ struct Stretch {
 /// The loop's outline on the walls (see [`prism_outlines`]). With `fill` (a tolerance), a gap
 /// between two walls whose points stray further from where the walls would meet than the
 /// tolerance allows (faces Find All did not find) is drawn as the loop runs there instead, in
-/// lines and arcs fitted to it (SurfaceCraft's chain fitter), no face holding them.
-fn outline_of(walls: &[(usize, Wall)], points: &[Vec2], on: &[Option<usize>], reach: f64, fill: Option<f64>) -> Option<Outline> {
+/// lines and arcs fitted to it (SurfaceCraft's chain fitter), no face holding them; with the
+/// fill's flags (one for each point), only a gap whose points are all flagged ([`Fill`]).
+fn outline_of(walls: &[(usize, Wall)], points: &[Vec2], on: &[Option<usize>], reach: f64, fill: Option<(f64, Option<&[bool]>)>) -> Option<Outline> {
     let n = points.len();
     if n < 3 || on.len() != n {
         return None;
@@ -423,9 +508,18 @@ fn outline_of(walls: &[(usize, Wall)], points: &[Vec2], on: &[Option<usize>], re
         // The loop's own points between the two stretches, when they stray from where the walls
         // would meet: drawn as the loop runs.
         let (from, to) = (a.foot(here.last), b.foot(next.first));
-        let filled = fill.and_then(|tolerance| {
+        let filled = fill.and_then(|(tolerance, flags)| {
             let end = if next.first_at > here.last_at { next.first_at } else { next.first_at + n };
             let between: Vec<Vec2> = (here.last_at..=end).map(|i| points[(start + i) % n]).collect();
+            // Most of what the gap runs on must run along the prism: a scan's noise tilts single
+            // small triangles tens of degrees, a hole's wall across the prism nearly all of them.
+            if let Some(flags) = flags {
+                let off_walls: Vec<usize> = (here.last_at + 1..end).map(|i| (start + i) % n).filter(|&i| on[i].is_none()).collect();
+                let along = off_walls.iter().filter(|&&i| flags.get(i) == Some(&true)).count();
+                if (along as f64) < MOSTLY_ALONG * off_walls.len() as f64 {
+                    return None;
+                }
+            }
             let path: Vec<Vec2> = match crossing {
                 Some(c) => vec![from, c, to],
                 None => vec![from, to],
@@ -436,29 +530,46 @@ fn outline_of(walls: &[(usize, Wall)], points: &[Vec2], on: &[Option<usize>], re
                 return None;
             }
             match crate::chain::chain(&between, false, tolerance)? {
-                crate::chain::Outline::Chain(chain) if !chain.is_empty() => Some(chain),
+                crate::chain::Outline::Chain(chain) if !chain.is_empty() => Some((chain, tolerance)),
                 _ => None,
             }
         });
-        if let Some(chain) = filled {
+        if let Some((mut chain, tolerance)) = filled {
             let kind = |p: &crate::chain::Piece| match *p {
                 crate::chain::Piece::Line { .. } => Piece::Line,
                 crate::chain::Piece::Arc { center, ccw, .. } => Piece::Arc { center, ccw },
             };
-            // From the wall's end to the chain's start, along the chain, and on to the next wall.
+            let straight = |p: &crate::chain::Piece| matches!(p, crate::chain::Piece::Line { .. });
+            // A straight piece of the chain that still runs on the wall it leaves, or already on
+            // the one it comes to (the faces found stop a little short of their edges), is that
+            // wall's: the wall runs on to its end.
+            let on_wall =
+                |wall: &Wall, p: &crate::chain::Piece| straight(p) && [p.from(), p.to()].iter().all(|q| wall.foot(*q).dist(*q) <= tolerance);
+            let (mut from, mut to) = (from, to);
+            while chain.len() > 1 && chain.first().is_some_and(|p| on_wall(&a, p)) {
+                from = a.foot(chain.remove(0).to());
+            }
+            while chain.len() > 1 && chain.last().is_some_and(|p| on_wall(&b, p)) {
+                to = b.foot(chain.pop().map_or(to, |p| p.from()));
+            }
+            // From the wall's end to the chain's start, along the chain, and on to the next wall. A
+            // straight piece starts or ends on the wall when it comes within the tolerance of it;
+            // an arc keeps its own ends (they are on its circle), joined by a line.
+            let near = |p: Vec2, q: Vec2| p.dist(q) <= 2.0 * tolerance;
             let mut at = from;
             for p in &chain {
-                if at.dist(p.from()) > 1e-9 {
+                if at.dist(p.from()) > 1e-9 && !(straight(p) && near(at, p.from())) {
                     corners.push(at);
                     pieces.push(Piece::Line);
                     faces.push(None);
+                    at = p.from();
                 }
-                corners.push(p.from());
+                corners.push(at);
                 pieces.push(kind(p));
                 faces.push(None);
                 at = p.to();
             }
-            if at.dist(to) > 1e-9 {
+            if at.dist(to) > 1e-9 && !(chain.last().is_some_and(straight) && near(at, to)) {
                 corners.push(at);
                 pieces.push(Piece::Line);
                 faces.push(None);
@@ -966,17 +1077,40 @@ pub(crate) fn prism_profile_from(
     let walls: Vec<(usize, Wall)> =
         prism.walls.iter().filter_map(|&k| faces.get(k).and_then(|f| wall_of(&f.shape, &walls_at)).map(|w| (k, w))).collect();
     let place: BTreeMap<usize, usize> = walls.iter().enumerate().map(|(i, (k, _))| (*k, i)).collect();
-    let loops: Vec<(Vec<Vec2>, Vec<Option<usize>>)> = crate::section::section_welded(scan, weld, &plane)
-        .into_iter()
-        .filter(|r| r.closed)
+    let runs: Vec<crate::section::Run> = crate::section::section_welded(scan, weld, &plane).into_iter().filter(|r| r.closed).collect();
+    let loops: Vec<(Vec<Vec2>, Vec<Option<usize>>)> = runs
+        .iter()
         .map(|r| {
             let on = r.triangles.iter().map(|&t| owner.get(t).and_then(|&k| place.get(&(k as usize)).copied())).collect();
-            (r.points, on)
+            (r.points.clone(), on)
         })
         .collect();
     let areas: Vec<f64> = walls.iter().map(|(k, _)| faces.get(*k).map_or(0.0, |f| f.area)).collect();
     let walls = as_designed(&walls, &areas, &loops);
-    let outlines = prism_outlines(&walls, &loops, 0.005 * size);
+    let reach = 0.005 * size;
+    // Between two walls the slice may run on scan Find All left as freeform (a gear's tip and
+    // root lands): drawn as it runs, where that scan runs along the prism as its walls do.
+    let tolerance = outcome.tolerance;
+    let step = OTHER_LEVELS * prism.depth();
+    let others: Vec<Vec<Vec<Vec2>>> = if step > 4.0 * tolerance {
+        [-step, step]
+            .into_iter()
+            .map(|by| {
+                let level = Plane { origin: plane.origin + prism.direction * by, ..plane };
+                crate::section::section_welded(scan, weld, &level).into_iter().filter(|r| r.closed).map(|r| r.points).collect()
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let cut: Vec<(&[Vec2], &[usize])> = runs.iter().map(|r| (r.points.as_slice(), r.triangles.as_slice())).collect();
+    // A drafted prism's outline at another level is this much in or out of the middle one's.
+    let level_reach = (4.0 * tolerance).max(reach) + step * prism.draft.abs().tan();
+    let along = runs_along(scan, &cut, prism.direction, prism.draft, &others, level_reach);
+    // A drafted prism is sliced halfway up but drawn at its low end, where its walls stand further
+    // out than the slice by the draft: the slice does not say how a gap runs there.
+    let fill = (prism.draft == 0.0).then_some(Fill { tolerance, along: &along });
+    let outlines = prism_outlines(&walls, &loops, reach, fill.as_ref());
     if outlines.is_empty() {
         return Err("no loop of the scan's slice halfway along the prism runs round its walls".into());
     }
@@ -1316,7 +1450,7 @@ fn turned_sliced(
                     above_axis_open(&flipped, &on, axis_wall, 2.0 * reach)
                 };
                 for (points, on) in halves {
-                    let Some(outline) = outline_of(&walls, &points, &on, reach, Some(tolerance)) else { continue };
+                    let Some(outline) = outline_of(&walls, &points, &on, reach, Some((tolerance, None))) else { continue };
                     let ring = ring(&outline);
                     if !is_simple_ring(&ring) || ring.iter().any(|p| p.y < -reach) {
                         continue;
@@ -1459,7 +1593,7 @@ mod tests {
                 on.push(Some(4 + k));
             }
         }
-        let outlines = prism_outlines(&walls, &[(points, on)], 0.2);
+        let outlines = prism_outlines(&walls, &[(points, on)], 0.2, None);
         assert_eq!(outlines.len(), 1, "{outlines:?}");
         let o = &outlines[0];
         assert_eq!(o.pieces.len(), 8, "{o:?}");
@@ -1699,6 +1833,74 @@ mod tests {
         assert!((major - 12.0).abs() < 1e-9 && (height - 5.0).abs() < 1e-9 && (minor - 3.0).abs() < 1e-9);
     }
 
+    /// A block 30 × 20 whose top right corner is cut by a land no wall holds (Find All left it as
+    /// freeform, as it leaves a gear's tip lands): where the scan there runs along the prism, the
+    /// land is drawn as the slice runs; where it does not (a hole or a slot across the prism), or
+    /// with no fill, the walls run on to their corner.
+    #[test]
+    fn a_gap_between_walls_is_drawn_as_the_slice_runs_only_where_the_scan_runs_along_the_prism() {
+        let walls = vec![
+            (0, Wall::Line { point: Vec2::new(0.0, 0.0), direction: Vec2::X }),
+            (1, Wall::Line { point: Vec2::new(30.0, 0.0), direction: Vec2::Y }),
+            (2, Wall::Line { point: Vec2::new(0.0, 20.0), direction: Vec2::X }),
+            (3, Wall::Line { point: Vec2::new(0.0, 0.0), direction: Vec2::Y }),
+        ];
+        let (mut points, mut on) = (Vec::new(), Vec::new());
+        let mut side = |from: Vec2, to: Vec2, wall: Option<usize>| {
+            for i in 0..20 {
+                points.push(from + (to - from) * (f64::from(i) / 20.0));
+                on.push(wall);
+            }
+        };
+        side(Vec2::new(0.0, 0.0), Vec2::new(30.0, 0.0), Some(0));
+        side(Vec2::new(30.0, 0.0), Vec2::new(30.0, 15.0), Some(1));
+        side(Vec2::new(30.0, 15.0), Vec2::new(25.0, 20.0), None);
+        side(Vec2::new(25.0, 20.0), Vec2::new(0.0, 20.0), Some(2));
+        side(Vec2::new(0.0, 20.0), Vec2::new(0.0, 0.0), Some(3));
+        let land: Vec<bool> = on.iter().map(Option::is_none).collect();
+        let loops = [(points, on)];
+        let corner = Vec2::new(30.0, 20.0);
+        let has = |o: &Outline, p: Vec2| o.corners.iter().any(|c| c.dist(p) < 0.05);
+        // The land's scan runs along the prism: drawn, one line no face holds.
+        let along = vec![vec![true; land.len()]];
+        let filled = prism_outlines(&walls, &loops, 0.2, Some(&Fill { tolerance: 0.05, along: &along }));
+        assert_eq!(filled.len(), 1, "{filled:?}");
+        let o = &filled[0];
+        assert!(!has(o, corner) && has(o, Vec2::new(30.0, 15.0)) && has(o, Vec2::new(25.0, 20.0)), "{o:?}");
+        assert_eq!((o.pieces.len(), o.faces.iter().filter(|f| f.is_none()).count()), (5, 1), "{o:?}");
+        // It runs across the prism there: not drawn along it.
+        let across = vec![land.iter().map(|l| !l).collect::<Vec<bool>>()];
+        for fill in [Some(Fill { tolerance: 0.05, along: &across }), None] {
+            let sharp = prism_outlines(&walls, &loops, 0.2, fill.as_ref());
+            assert!(sharp.len() == 1 && sharp[0].corners.len() == 4 && has(&sharp[0], corner), "{sharp:?}");
+        }
+    }
+
+    /// The scan at a slice's point runs along the prism where its triangle faces square to the
+    /// prism and the slices at other levels pass there too.
+    #[test]
+    fn scan_runs_along_a_prism_where_it_faces_square_and_other_levels_agree() {
+        let square = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+        let (positions, triangles) = extruded(&square, 0.0, 10.0, 4);
+        let scan = Scan::new(&positions, &triangles);
+        let normal = |t: usize| scan.corners(t).and_then(|[a, b, c]| (b - a).cross(c - a).normalized()).unwrap();
+        let side = (0..triangles.len()).find(|&t| normal(t).z.abs() < 1e-9).expect("a side triangle");
+        let cap = (0..triangles.len()).find(|&t| normal(t).z.abs() > 0.99).expect("a cap triangle");
+        let at = [Vec2::new(5.0, 0.0), Vec2::new(5.0, 0.0)];
+        let tris = [side, cap];
+        let ring: Vec<Vec2> = square.iter().map(|c| Vec2::new(c[0], c[1])).collect();
+        let cut = [(&at[..], &tris[..])];
+        // Other levels show the same outline: the side point runs along, the cap's does not.
+        let same = runs_along(&scan, &cut, Vec3::Z, 0.0, &[vec![ring.clone()], vec![ring.clone()]], 0.1);
+        assert_eq!(same, [[true, false]]);
+        // One level has nothing there (a slot across the prism at the middle only).
+        let moved: Vec<Vec2> = ring.iter().map(|p| *p + Vec2::new(0.0, 3.0)).collect();
+        let differs = runs_along(&scan, &cut, Vec3::Z, 0.0, &[vec![ring], vec![moved]], 0.1);
+        assert_eq!(differs, [[false, false]]);
+        // Too short a prism to slice elsewhere: by facing alone.
+        assert_eq!(runs_along(&scan, &cut, Vec3::Z, 0.0, &[], 0.1), [[true, false]]);
+    }
+
     /// A box slice: four walls, a loop round them with its corners cut by noise, comes out as the
     /// walls' own square.
     #[test]
@@ -1724,7 +1926,7 @@ mod tests {
         side(Vec2::new(30.0, 0.0), Vec2::new(30.0, 20.0), 1, &mut points, &mut on);
         side(Vec2::new(30.0, 20.0), Vec2::new(0.0, 20.0), 2, &mut points, &mut on);
         side(Vec2::new(0.0, 20.0), Vec2::new(0.0, 0.0), 3, &mut points, &mut on);
-        let outlines = prism_outlines(&walls, &[(points, on)], 0.5);
+        let outlines = prism_outlines(&walls, &[(points, on)], 0.5, None);
         assert_eq!(outlines.len(), 1);
         let o = &outlines[0];
         assert_eq!(o.corners.len(), 4);
