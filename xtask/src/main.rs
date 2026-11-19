@@ -25,6 +25,7 @@ mod pending;
 mod plugin_examples;
 mod render_assets;
 mod rustfmt;
+mod scan_bench;
 mod shared;
 mod skills;
 mod solidcore_paths;
@@ -100,6 +101,13 @@ commands:
                   on a test that failed and is not listed, and on a listed test that passed
                   (fixed: take its line off); a listed test that did not run is neither. CI's
                   test jobs run it after nextest
+  scan-bench [--full] [--bless] [--cases a,b] [--bin PATH] [--scorer CMD] [--out DIR]
+                  the scan-to-CAD accuracy benchmark: each part of tests/scan-cases/ made into a
+                  seeded scan, built back by the scan commands and held to tests/scan-bench.toml;
+                  writes target/parity/report.json and docs/parity/report.md, and fails on a run
+                  that came back wrong and marked good, or whose numbers differ from
+                  tests/scan-bench.lock.json (--bless writes it). --full adds the heaviest noise
+                  and the variants (missing surface, a pose, specks); --scorer adds a second judge
   action-matrix [--bless] [--results FILE] [--from DIR]
                   try every ordinary action on every face, edge, vertex and body of the design
                   corpus and compare with tests/action_matrix/baseline.json (--bless rewrites it;
@@ -183,6 +191,7 @@ fn main() -> ExitCode {
         Some("i18n") => i18n::run(&root(), &rest),
         Some("kernel-cases") => kernel_cases::run(&rest),
         Some("known-failing") => known_failing::run(&root(), &rest),
+        Some("scan-bench") => scan_bench::run(&root(), &rest),
         Some("oracle") => cmd_oracle(rest.iter().position(|a| *a == "--cli").and_then(|i| rest.get(i + 1)).copied()),
         Some("action-matrix") => {
             let arg = |name: &str| rest.iter().position(|a| *a == name).and_then(|i| rest.get(i + 1)).copied();

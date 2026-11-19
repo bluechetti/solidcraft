@@ -4,12 +4,15 @@
 //!
 //!   scan_bench <tests/scan-cases/NAME> --out DIR [--sigma 0.02] [--seed N] [--edge 0.5]
 //!              [--missing 0.1] [--specks 0.001] [--turn DEGREES] [--scale K]
+//!              [--truth-tolerance 0.05]
 //!
 //! Writes into DIR: truth.step (the part), scan.stl (what the scan commands were given),
 //! placed.stl (the scan where the rebuilt model stands), model.step (what was built, when
 //! anything was) and result.json: every command run with its time and its refusal or warning,
-//! and Scan Deviation's own verdict. Scoring against the truth is the benchmark's, not this
-//! program's: it only rebuilds and records.
+//! Scan Deviation's own verdict against the scan, and what the built model measures against the
+//! truth (its volume, and the part's fine mesh against it both ways, where the scan was left
+//! where the part was drawn). Holding those to the bars is the benchmark's, not this program's:
+//! it only rebuilds, measures and records.
 
 use std::{collections::BTreeMap, error::Error, path::PathBuf, time::Instant};
 
@@ -123,6 +126,8 @@ fn main() -> Result<()> {
     let mut built = None;
     let mut in_app = Value::Null;
     let mut advice = Value::Null;
+    let mut against_truth = Value::Null;
+    let truth_tolerance = number("--truth-tolerance", 0.05)?;
     if let Some(body) = &body {
         // Survey reads the scan and names what to run first, each with its parameters: its
         // tidying and its tolerance are taken as it gives them, and its placing when the scan
@@ -157,6 +162,23 @@ fn main() -> Result<()> {
             }
         }
         log.run(&mut s, "file.export_stl", json!({"path": path("placed.stl"), "bodies": [body]}));
+        if let Some(model) = &built {
+            let volume = log.run(&mut s, "inspect.measure", json!({"bodies": [model]})).map(|r| r["total"]["volume_mm3"].clone());
+            against_truth = json!({"volume": volume});
+            // The part's own fine mesh against the model, both ways: only where the model stands
+            // where the part was drawn.
+            if flag("--turn").is_none() && how.scale == 1.0 {
+                let read = log.run(&mut s, "file.insert_mesh", json!({"path": path("truth.stl"), "units": "mm"}));
+                if let Some(part) = read.as_ref().and_then(|r| r["bodies"][0].as_str()) {
+                    log.run(&mut s, "scan.tolerance", json!({"scan": part, "tolerance": truth_tolerance}));
+                    if let Some(reply) = log.run(&mut s, "scan.deviation", json!({"scan": part, "body": model})) {
+                        for key in ["within_all", "rms", "max_above", "max_below", "max_above_at", "max_below_at", "model_within", "model_covered", "model_max", "model_farthest_at", "tolerance"] {
+                            against_truth[key] = reply[key].clone();
+                        }
+                    }
+                }
+            }
+        }
         log.run(&mut s, "scan.deviation", json!({"show": false}));
     }
     let result = json!({
@@ -168,6 +190,7 @@ fn main() -> Result<()> {
         "seconds": started.elapsed().as_secs_f64(),
         "survey": advice,
         "in_app": in_app,
+        "against_truth": against_truth,
         "refused": log.steps.iter().filter(|s| s["ok"] == false).map(|s| s["command"].clone()).collect::<Vec<_>>(),
         "steps": log.steps,
     });
