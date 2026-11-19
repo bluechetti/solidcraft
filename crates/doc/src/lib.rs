@@ -32,6 +32,7 @@ pub mod drafting_profile;
 pub mod drawing;
 pub mod drawing_view;
 pub mod end_cap;
+mod envelope;
 mod eval;
 pub mod expr;
 pub mod face_anchor;
@@ -46,6 +47,7 @@ pub mod gpu_plan;
 mod history_names;
 pub mod hole_reference;
 pub mod ids;
+pub mod import_defects;
 mod inline_params;
 pub use format_offsets::whole_profile_selection_from_value;
 pub use inline_params::Defined;
@@ -70,6 +72,7 @@ pub mod plugin_data;
 pub mod point_cloud;
 mod point_cloud_complex;
 pub mod point_cloud_distribution;
+mod point_expr;
 mod points;
 mod profile_refs;
 pub mod progress;
@@ -78,7 +81,9 @@ pub use thread_catalog::{
     DRILL_ALLOWANCE, TaperDrill, TappedThread, TappedThreadFamily, metric_tap_drill, parse_tapped_thread, tapped_thread_sizes, untabulated_taper_tap,
 };
 mod walk;
-pub use profile_refs::{capture_profile_selection, profile_fallback_notes, profile_selection_indices, profile_selection_indices_lenient};
+pub use profile_refs::{
+    WHOLE_PROFILE_TOO_MANY_CURVES, capture_profile_selection, profile_fallback_notes, profile_selection_indices, profile_selection_indices_lenient,
+};
 pub mod plastic;
 mod print_face;
 pub use print_face::PrintFace;
@@ -98,6 +103,7 @@ pub mod scan_recipe;
 pub mod scan_selection;
 pub mod scan_tolerance;
 pub mod sheet;
+pub mod sheet_library;
 mod sheet_surface;
 mod sheet_surface_convert;
 mod sheet_surface_cuts;
@@ -301,6 +307,8 @@ mod feature_walk_tests;
 mod named_projection_tests;
 #[cfg(test)]
 mod old_cap_anchor_tests;
+#[cfg(test)]
+mod saved_text_font_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
