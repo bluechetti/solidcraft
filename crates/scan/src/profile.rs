@@ -668,7 +668,38 @@ fn outline_of(walls: &[(usize, Wall)], points: &[Vec2], on: &[Option<usize>], re
     }
     let (mut corners, mut pieces, mut faces) = (Vec::new(), Vec::new(), Vec::new());
     let count = stretches.len();
-    let wall = |r: usize| walls[stretches[r % count].wall].1;
+    // Each stretch's wall as the loop runs on it. A round wall is the face's cylinder, fitted over
+    // all of the face; where the loop's own points on it stray from that by more than the
+    // tolerance allows (a gear's flank is no arc of a circle, and the cylinder fitted to one sat
+    // 0.1 mm off its middle), the circle is fitted to those points instead, when they do lie on
+    // one within the tolerance.
+    let mut own: Vec<Wall> = stretches.iter().map(|s| walls[s.wall].1).collect();
+    if let Some((tolerance, _)) = fill {
+        for (stretch, wall) in stretches.iter_mut().zip(&mut own) {
+            if !matches!(wall, Wall::Circle { .. }) {
+                continue;
+            }
+            let end = if stretch.last_at >= stretch.first_at { stretch.last_at } else { stretch.last_at + n };
+            let run: Vec<Vec2> =
+                (stretch.first_at..=end).map(|i| (start + i) % n).filter(|&i| on[i] == Some(stretch.wall)).map(|i| points[i]).collect();
+            let strays = |wall: &Wall| {
+                let mut off: Vec<f64> = run.iter().map(|q| wall.foot(*q).dist(*q)).collect();
+                off.sort_by(f64::total_cmp);
+                off.get(off.len() * 9 / 10).copied().unwrap_or(0.0)
+            };
+            if run.len() < REFIT_POINTS || strays(wall) <= tolerance {
+                continue;
+            }
+            let Some((center, radius)) = circle_through(&run) else { continue };
+            let fitted = Wall::Circle { center, radius };
+            let turn: f64 = run.windows(2).map(|w| angle_to(w[0] - center, w[1] - center)).sum();
+            if strays(&fitted) <= tolerance && turn * stretch.turn > 0.0 {
+                *wall = fitted;
+                stretch.turn = turn;
+            }
+        }
+    }
+    let wall = |r: usize| own[r % count];
     let laid: Vec<Wall> = (0..count).map(|r| laid_tangent(wall(r + count - 1), wall(r), wall(r + 1))).collect();
     for r in 0..count {
         let (here, next) = (stretches[r], stretches[(r + 1) % count]);
@@ -772,6 +803,66 @@ fn outline_of(walls: &[(usize, Wall)], points: &[Vec2], on: &[Option<usize>], re
         }
     }
     Some(Outline { corners, pieces, faces })
+}
+
+/// The fewest points of a loop on a round wall for the wall to be fitted to them ([`outline_of`]).
+const REFIT_POINTS: usize = 8;
+
+/// The circle nearest `points` (least squares of the distances to it): its centre and radius.
+/// `None` for fewer than three points or points in a line.
+fn circle_through(points: &[Vec2]) -> Option<(Vec2, f64)> {
+    let n = points.len() as f64;
+    if points.len() < 3 {
+        return None;
+    }
+    let middle = points.iter().fold(Vec2::ZERO, |s, p| s + *p) / n;
+    // First by the squares of the distances (a linear fit), about the points' middle.
+    let (mut xx, mut xy, mut yy, mut xz, mut yz) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for p in points {
+        let d = *p - middle;
+        let z = d.x * d.x + d.y * d.y;
+        xx += d.x * d.x;
+        xy += d.x * d.y;
+        yy += d.y * d.y;
+        xz += d.x * z;
+        yz += d.y * z;
+    }
+    let det = xx * yy - xy * xy;
+    if !(det.abs() > 1e-12 * (xx + yy).powi(2)) {
+        return None;
+    }
+    let mut center = middle + Vec2::new((xz * yy - yz * xy) / det, (xx * yz - xy * xz) / det) * 0.5;
+    let mean_radius = |c: Vec2| points.iter().map(|p| p.dist(c)).sum::<f64>() / n;
+    // Then by the distances themselves: a few steps of Gauss and Newton on the centre.
+    for _ in 0..8 {
+        let radius = mean_radius(center);
+        let (mut a, mut b, mut c, mut gx, mut gy) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        let mean = points.iter().fold(Vec2::ZERO, |s, p| s + unit2(*p - center)) / n;
+        for p in points {
+            let u = unit2(*p - center);
+            let (jx, jy) = (mean.x - u.x, mean.y - u.y);
+            let residual = p.dist(center) - radius;
+            a += jx * jx;
+            b += jx * jy;
+            c += jy * jy;
+            gx += jx * residual;
+            gy += jy * residual;
+        }
+        let det = a * c - b * b;
+        if !(det.abs() > 1e-18) {
+            break;
+        }
+        let step = Vec2::new(-(gx * c - gy * b) / det, -(a * gy - b * gx) / det);
+        if !(step.x.is_finite() && step.y.is_finite()) {
+            break;
+        }
+        center = center + step;
+        if step.dist(Vec2::ZERO) < 1e-12 * radius.max(1.0) {
+            break;
+        }
+    }
+    let radius = mean_radius(center);
+    (radius.is_finite() && radius > 0.0 && center.x.is_finite() && center.y.is_finite()).then_some((center, radius))
 }
 
 /// A round between two flat walls that it touches or nearly (as [`cross`] reads touching), laid
@@ -2082,6 +2173,58 @@ mod tests {
             let sharp = prism_outlines(&walls, &loops, 0.2, fill.as_ref());
             assert!(sharp.len() == 1 && sharp[0].corners.len() == 4 && has(&sharp[0], corner), "{sharp:?}");
         }
+    }
+
+    /// A slot shape 30 long with a round end of radius 10 about (30, 10), whose face was fitted as
+    /// a cylinder a little off it (about (29.6, 10), radius 10.2: as a gear's flank is fitted over
+    /// more than the slice sees). The slice's own points on the round lie on one circle within the
+    /// tolerance, so the outline's arc is that circle; with no tolerance to judge by, the face's.
+    #[test]
+    fn a_round_wall_the_slice_strays_from_is_fitted_to_the_slice() {
+        let walls = vec![
+            (0, Wall::Line { point: Vec2::new(0.0, 0.0), direction: Vec2::X }),
+            (1, Wall::Circle { center: Vec2::new(29.6, 10.0), radius: 10.2 }),
+            (2, Wall::Line { point: Vec2::new(0.0, 20.0), direction: Vec2::X }),
+            (3, Wall::Line { point: Vec2::new(0.0, 0.0), direction: Vec2::Y }),
+        ];
+        let (mut points, mut on) = (Vec::new(), Vec::new());
+        for i in 0..30 {
+            points.push(Vec2::new(f64::from(i), 0.0));
+            on.push(Some(0));
+        }
+        for i in 0..40 {
+            // A hair of noise on the round, well inside the tolerance.
+            let a: f64 = -PI / 2.0 + PI * f64::from(i) / 40.0;
+            let r = 10.0 + 0.01 * (7.0 * a).sin();
+            points.push(Vec2::new(30.0 + r * a.cos(), 10.0 + r * a.sin()));
+            on.push(Some(1));
+        }
+        for i in 0..30 {
+            points.push(Vec2::new(30.0 - f64::from(i), 20.0));
+            on.push(Some(2));
+        }
+        for i in 0..20 {
+            points.push(Vec2::new(0.0, 20.0 - f64::from(i)));
+            on.push(Some(3));
+        }
+        let along = vec![vec![true; points.len()]];
+        let loops = [(points, on)];
+        let centre = |fill: Option<&Fill<'_>>| {
+            let found = prism_outlines(&walls, &loops, 0.2, fill);
+            assert_eq!(found.len(), 1, "{found:?}");
+            let arcs: Vec<Vec2> =
+                found[0].pieces.iter().filter_map(|p| if let Piece::Arc { center, .. } = p { Some(*center) } else { None }).collect();
+            assert_eq!((found[0].pieces.len(), arcs.len()), (4, 1), "{found:?}");
+            arcs[0]
+        };
+        let fitted = centre(Some(&Fill { tolerance: 0.05, along: &along }));
+        assert!(fitted.dist(Vec2::new(30.0, 10.0)) < 0.02, "{fitted:?}");
+        let as_found = centre(None);
+        assert!(as_found.dist(Vec2::new(30.0, 10.0)) > 0.2, "{as_found:?}");
+        // A round the slice lies on is left as its face has it.
+        let exact = circle_through(&[Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0), Vec2::new(0.6, -0.8)]).unwrap();
+        assert!(exact.0.dist(Vec2::ZERO) < 1e-9 && (exact.1 - 1.0).abs() < 1e-9, "{exact:?}");
+        assert_eq!(circle_through(&[Vec2::ZERO, Vec2::X, Vec2::X * 2.0]), None);
     }
 
     /// The scan at a slice's point runs along the prism where its triangle faces square to the
