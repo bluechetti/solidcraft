@@ -321,9 +321,11 @@ fn chamfers(faces: &[Face], middles: &[Vec3], size: f64, skip: &BTreeSet<usize>)
 }
 
 /// Where the sharp edge a round cylinder (`segment`) rounds lies: where the two flat faces it is
-/// tangent to meet, level with the middle of the round; with no such two faces, as far out from
-/// its axis through the round's middle as a square edge would be (√2 radii). `faces` are the
-/// reading's (a face of no area is a piece of another and is passed by).
+/// tangent to meet, level with the middle of the round. `None` with no such two faces: a round
+/// joins two faces, and a cylinder with none tangent to it either side is a curved face of the
+/// part in its own right (a wheel spoke's flank, 64 mm in radius, was proposed as a fillet at an
+/// edge guessed √2 radii out, which no fillet could be measured at). `faces` are the reading's (a
+/// face of no area is a piece of another and is passed by).
 fn edge_of_round(scan: &Scan, segment: &Segment, faces: &[Face]) -> Option<Vec3> {
     let Some(Shape::Cylinder { point, axis, radius }) = segment.shape else { return None };
     let axis = axis.normalized()?;
@@ -355,7 +357,46 @@ fn edge_of_round(scan: &Scan, segment: &Segment, faces: &[Face]) -> Option<Vec3>
             }
         }
     }
-    Some(foot + out * (radius * std::f64::consts::SQRT_2))
+    None
+}
+
+#[cfg(test)]
+mod edge_of_round_tests {
+    use super::*;
+
+    /// A quarter round of radius 5 along Z between the planes x = 5 and y = 5 (tangent to both)
+    /// rounds the edge where they meet; the same strip with no flat face tangent to it either side
+    /// (a curved face of the part, as a wheel spoke's flank is) rounds no edge, and with only one
+    /// of the two it rounds none either.
+    #[test]
+    fn a_round_is_an_edges_only_between_two_faces_tangent_to_it() {
+        let (around, along, radius) = (12u32, 4u32, 5.0);
+        let mut positions = Vec::new();
+        for i in 0..=around {
+            let a = std::f64::consts::FRAC_PI_2 * f64::from(i) / f64::from(around);
+            for j in 0..=along {
+                positions.push(Vec3::new(radius * a.cos(), radius * a.sin(), 10.0 * f64::from(j)));
+            }
+        }
+        let at = |i: u32, j: u32| i * (along + 1) + j;
+        let mut triangles = Vec::new();
+        for i in 0..around {
+            for j in 0..along {
+                triangles.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+                triangles.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+            }
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let round = Shape::Cylinder { point: Vec3::ZERO, axis: Vec3::Z, radius };
+        let segment = Segment { triangles: (0..triangles.len()).collect(), shape: Some(round), area: 300.0, rms: 0.0 };
+        let face = |shape: Shape| Face { shape, area: 100.0 };
+        let (right, top) =
+            (Shape::Plane { point: Vec3::new(5.0, 0.0, 0.0), normal: Vec3::X }, Shape::Plane { point: Vec3::new(0.0, 5.0, 0.0), normal: Vec3::Y });
+        let edge = edge_of_round(&scan, &segment, &[face(round), face(right), face(top)]).expect("between its two faces");
+        assert!((edge.x - 5.0).abs() < 1e-9 && (edge.y - 5.0).abs() < 1e-9, "where the two faces meet: {edge:?}");
+        assert_eq!(edge_of_round(&scan, &segment, &[face(round)]), None, "a curved face on its own");
+        assert_eq!(edge_of_round(&scan, &segment, &[face(round), face(right)]), None, "one face is no edge");
+    }
 }
 
 fn plane(face: &Face) -> Option<(Vec3, Vec3)> {
