@@ -137,6 +137,11 @@ fn label(app: &SolveApp, reading: &Reading, step: &Proposal) -> String {
     }
 }
 
+/// The handle of step `n`'s row: `scan_reconstruct:<n>:<command>`.
+pub fn step_handle(n: usize, step: &Proposal) -> String {
+    format!("scan_reconstruct:{n}:{}", step.command())
+}
+
 /// The dialog's rows.
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reconstruct) -> bool {
     let Some((found, (reading, in_shapes))) = found(app).and_then(|f| reading_of(app, &f, k.selected).map(|r| (f, r))) else {
@@ -156,11 +161,15 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut Reconstruct) -> bool {
     if steps.is_empty() {
         ui_kit::text(ui, tr("ui.scan_reconstruct_nothing"), ui_kit::Text::Report("scan_reconstruct_nothing", true));
     }
-    for (step, ticked) in steps.iter().zip(k.ticked.iter_mut()) {
-        ui_kit::checkbox(ui, &label(app, &reading, step), ticked);
+    // Each row has a handle of its own (its place and its command), so a script or a test ticks
+    // the step it means: the rows' labels carry the scan's numbers and say nothing stable.
+    for (n, (step, ticked)) in steps.iter().zip(k.ticked.iter_mut()).enumerate() {
+        let row = ui_kit::checkbox(ui, &label(app, &reading, step), ticked);
+        crate::scenario::publish_handle(&step_handle(n, step), row.rect.center());
     }
     if !k.selected && (!steps.is_empty() || reconstruct::is_built(&app.session, &found.scan)) {
-        ui_kit::checkbox(ui, tr("ui.scan_reconstruct_rest"), &mut k.rest);
+        let row = ui_kit::checkbox(ui, tr("ui.scan_reconstruct_rest"), &mut k.rest);
+        crate::scenario::publish_handle("scan_reconstruct:rest", row.rect.center());
     }
     ui_kit::text(ui, tr("ui.scan_reconstruct_hint"), ui_kit::Text::Hint("scan_reconstruct_hint"));
     false
@@ -292,6 +301,34 @@ mod tests {
         let path = h.dir.join("rounded.stl");
         std::fs::write(&path, stl + "endsolid r\n").unwrap();
         h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+    }
+
+    /// Each step's row has a handle of its own, by its place and its command, and so has
+    /// Reconstruct the Rest: clicking one ticks or unticks that row and no other.
+    #[test]
+    fn each_step_has_a_handle_of_its_own_to_click() {
+        let mut h = crate::scenario::Harness::new();
+        rounded_block(&mut h);
+        h.app.start("scan.reconstruct");
+        h.settle();
+        h.frames(2);
+        let ticked = |h: &crate::scenario::Harness| match h.app.dialog.as_ref().map(|d| &d.kind) {
+            Some(Kind::ScanReconstruct(k)) => (k.ticked.clone(), k.rest),
+            _ => panic!("the Reconstruct dialog"),
+        };
+        assert_eq!(ticked(&h), (vec![true, true], false));
+        let handles = ["scan_reconstruct:0:scan.extrude_it", "scan_reconstruct:1:scan.fillet_it", "scan_reconstruct:rest"];
+        let places: Vec<[f64; 2]> = handles.iter().map(|name| h.at(&json!({"handle": name})).unwrap_or_else(|e| panic!("{name}: {e}"))).collect();
+        assert!(places[0] != places[1] && places[1] != places[2] && places[0] != places[2], "{places:?}");
+        h.step(&json!({"click": {"handle": handles[1]}})).unwrap();
+        h.frames(2);
+        assert_eq!(ticked(&h), (vec![true, false], false), "Fillet It unticked, the rest as they were");
+        h.step(&json!({"click": {"handle": handles[2]}})).unwrap();
+        h.frames(2);
+        assert_eq!(ticked(&h), (vec![true, false], true));
+        h.step(&json!({"click": {"handle": handles[0]}})).unwrap();
+        h.frames(2);
+        assert_eq!(ticked(&h), (vec![false, false], true));
     }
 
     /// One refused step does not stop the rest: the block with rounded top edges lists Extrude It
