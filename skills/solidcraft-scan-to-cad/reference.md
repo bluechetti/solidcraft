@@ -103,7 +103,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | Command | Reply |
 |---|---|
 | `scan.tolerance {"tolerance": 0.2}` | the scan's tolerance, kept in the design |
-| `scan.deviation {"body": "<model>"}` (not `inspect.compare`, which compares two closed bodies and warns on a scan) | `rms`, `mean`, `max_above` (material the model lacks), `max_below` (material it should not have), `within`, `passes` (95% within the tolerance), `measured`, `unmatched` |
+| `scan.deviation {"body": "<model>"}` (not `inspect.compare`, which compares two closed bodies and warns on a scan) | `rms`, `mean`, `max_above` (material the model lacks), `max_below` (material it should not have), `within`, `passes` (95% within the tolerance), `measured`, `unmatched`; against a solid also `clearance {fits, gap, gap_at, inside, deepest}`: whether the scanned thing clears it (a tool in its foam pocket), measured on the solid's exact faces |
 | `inspect.surface_check {}` | folds, pinches and crossings of a surface |
 
 ## Known problems

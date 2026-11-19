@@ -574,6 +574,35 @@ fn scan_deviation_measures_the_volume_and_the_region_of_a_dent() {
     assert!((at[0] - 20.0).abs() < 1e-3 && (at[1] - 20.0).abs() < 1e-3 && (at[2] - 8.5).abs() < 1e-3, "{reply}");
 }
 
+/// A tool (a scanned block 28 × 18 × 8) in the pocket of its foam (a block 60 × 40 × 20 with a
+/// pocket 30 × 20 × 10 in its top): 1 mm clear all round and of the floor, it fits, and the least
+/// gap is that 1 mm, measured on the foam's exact faces. Sunk 3 mm lower it is 2 mm into the
+/// floor, and does not fit. Sunk 14 mm lower, most of it is far inside the foam, further from any
+/// face than Deviation measures: it still does not fit.
+#[test]
+fn scan_deviation_says_whether_a_scanned_thing_clears_a_solid() {
+    let reply_at = |bottom: f64| {
+        let tool = fine_box(Vec3::new(16.0, 11.0, bottom), Vec3::new(44.0, 29.0, bottom + 8.0), 24);
+        let (mut s, _) = session_with_triangles("clearance", &tool);
+        run(&mut s, "solid.box", json!({"body_name": "Foam", "operation": "new", "length": 60, "width": 40, "height": 20, "center": [30, 20, 10]}));
+        run(&mut s, "solid.box", json!({"length": 30, "width": 20, "height": 10, "center": [30, 20, 15], "operation": "cut", "targets": ["Foam"]}));
+        run(&mut s, "scan.deviation", json!({"body": "Foam", "tolerance": "0.1 mm", "limit": 2}))
+    };
+    let seated = reply_at(11.0);
+    let clear = &seated["clearance"];
+    assert_eq!(clear["fits"], true, "{seated}");
+    assert!((clear["gap"].as_f64().unwrap() - 1.0).abs() < 1e-6 && clear["inside"].as_f64() == Some(0.0), "{seated}");
+    assert!(clear.get("deepest").is_none(), "{seated}");
+    let pressed = reply_at(8.0);
+    let clear = &pressed["clearance"];
+    assert_eq!(clear["fits"], false, "{pressed}");
+    assert!((clear["deepest"].as_f64().unwrap() - 2.0).abs() < 1e-6 && clear["inside"].as_f64().unwrap() > 0.05, "{pressed}");
+    assert!((clear["deepest_at"][2].as_f64().unwrap() - 8.0).abs() < 1e-6, "{pressed}");
+    let buried = reply_at(-3.0);
+    assert_eq!(buried["clearance"]["fits"], false, "{buried}");
+    assert!(buried["clearance"]["deepest"].as_f64().unwrap() > 2.5, "{buried}");
+}
+
 /// A block 60 × 20 × 10 with a boss 20 × 30 on its middle, wider than the block: its outline seen
 /// from above (Section to Sketch with `outline`) is the plus of all it covers, one closed outline
 /// that a cut through the block alone would not draw, dimensioned, with no point of the scan

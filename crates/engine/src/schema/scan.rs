@@ -484,6 +484,27 @@ pub struct ScanMarkersResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Whether the scanned thing clears a solid, measured on the solid's exact faces.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanDeviationClearance {
+    /// No point of the scan lies in the solid's material by more than the tolerance.
+    pub fits: bool,
+    /// The least gap between the scan and the solid where the scan is outside it (mm), and the
+    /// scan point there. 0 where they touch. None when no point of the scan is outside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gap_at: Option<[f64; 3]>,
+    /// The share of the scan's points in the solid's material by more than the tolerance (0–1),
+    /// how deep the deepest is (mm) and where. Deeper than Deviation measures (four times its
+    /// `limit`) the depth is read off a sample of the points there: at least this deep.
+    pub inside: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deepest: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deepest_at: Option<[f64; 3]>,
+}
+
 /// A patch of the scan beyond the tolerance on one side of the model.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanDeviationRegion {
@@ -615,6 +636,12 @@ pub struct ScanDeviationResult {
     /// each), the largest volumes first, at most 8, and how many there are in all.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub regions: Vec<ScanDeviationRegion>,
+    /// Against a solid body: whether the scanned thing clears it (a tool in its foam pocket, a
+    /// part in its nest), and by how much. The scan's points are sorted by the model's mesh and
+    /// the nearest and the deepest of them measured on the solid's exact faces; points too far
+    /// off to be measured are still asked whether they are in its material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clearance: Option<ScanDeviationClearance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub regions_found: Option<usize>,
     /// The colour steps on each side of within, 0 for a smooth scale.

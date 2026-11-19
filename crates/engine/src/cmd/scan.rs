@@ -20,16 +20,16 @@ use super::CommandSpec;
 use crate::params::{bad, str_};
 use crate::schema::scan::{
     ScanAddFaceParams, ScanAddFaceResult, ScanBase, ScanBasesParams, ScanBasesResult, ScanCloseSurfaceParams, ScanCloseSurfaceResult,
-    ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationParams, ScanDeviationPin, ScanDeviationPinParams,
-    ScanDeviationPinResult, ScanDeviationRegion, ScanDeviationResult, ScanEditNetParams, ScanEditNetResult, ScanEditSurfaceParams,
-    ScanEditSurfaceResult, ScanFitMake, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder,
-    ScanFittedPlane, ScanFittedSphere, ScanFittedTorus, ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult,
-    ScanHolesParams, ScanHolesResult, ScanMarkersParams, ScanMarkersResult, ScanMeasureLineParams, ScanMeasureLineResult, ScanMergeSurfacesParams,
-    ScanMergeSurfacesResult, ScanMirror, ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams,
-    ScanReduceResult, ScanRemoveFillParams, ScanRemoveFillResult, ScanRepairParams, ScanRepairResult, ScanReportParams, ScanReportResult,
-    ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult,
-    ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanTogetherParams, ScanTogetherResult, ScanUnseenParams,
-    ScanUnseenResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
+    ScanCompleteParams, ScanCompleteResult, ScanCurveParams, ScanCurveResult, ScanDeviationClearance, ScanDeviationParams, ScanDeviationPin,
+    ScanDeviationPinParams, ScanDeviationPinResult, ScanDeviationRegion, ScanDeviationResult, ScanEditNetParams, ScanEditNetResult,
+    ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitMake, ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult,
+    ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere, ScanFittedTorus, ScanFloatingParams, ScanFloatingResult,
+    ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult, ScanMarkersParams, ScanMarkersResult, ScanMeasureLineParams,
+    ScanMeasureLineResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror, ScanMirrorFreeFormParams, ScanMirrorFreeFormResult,
+    ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRemoveFillParams, ScanRemoveFillResult, ScanRepairParams,
+    ScanRepairResult, ScanReportParams, ScanReportResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult,
+    ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanTogetherParams,
+    ScanTogetherResult, ScanUnseenParams, ScanUnseenResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -1215,6 +1215,7 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         volume_below: None,
         volume_above: None,
         regions: Vec::new(),
+        clearance: None,
         regions_found: None,
         bands: None,
         pins: Vec::new(),
@@ -1345,6 +1346,7 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
             })
         })
         .collect();
+    let clearance = clearance_to(&model.body, &mesh.positions, &d.values, tolerance);
     let pins: Vec<(Vec3, f32)> =
         pins.into_iter().filter_map(|q| nearest_point(&mesh.positions, q)).filter_map(|(i, q)| Some((q, *d.values.get(i)?))).collect();
     let shown_pins = pins.iter().copied().map(pin_of).collect();
@@ -1387,11 +1389,90 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         volume_above: Some(beyond.volume_above),
         regions_found: Some(beyond.regions.len()),
         regions,
+        clearance,
         bands: Some(bands),
         pins: shown_pins,
         unseen: unseen_share,
         warning: unseen_share.and_then(|share| unseen::warning(share, "of the scan measured")),
         ..empty
+    })
+}
+
+/// The scan points nearest a solid, and deepest in it, that are measured on its exact faces.
+const CLEARANCE_EXACT: usize = 32;
+/// The most scan points too far off to be measured that are asked whether they are in the solid.
+const CLEARANCE_FAR: usize = 2_000;
+
+/// Whether the scan (`positions`, each with its distance from the model's mesh in `values`: below
+/// 0 inside it, not a number when too far off to be measured) clears the solid `model`: the
+/// points the mesh has nearest outside it and deepest inside it are measured again on the solid's
+/// exact faces and asked exactly which side they are on, and a sample of those too far off to be
+/// measured are asked too (a thing sunk deep in the solid is far from its faces). `None` for a
+/// mesh body, or when the kernel cannot say.
+fn clearance_to(model: &solidcraft_kernel::Body, positions: &[Vec3], values: &[f32], tolerance: f64) -> Option<ScanDeviationClearance> {
+    use solidcraft_kernel::PointClass;
+    if model.is_mesh() || positions.is_empty() {
+        return None;
+    }
+    let n = positions.len().min(values.len());
+    let measured: Vec<usize> = (0..n).filter(|&i| values[i].is_finite()).collect();
+    let far: Vec<usize> = (0..n).filter(|&i| !values[i].is_finite() && positions[i].is_finite()).collect();
+    let mut outside: Vec<usize> = measured.iter().copied().filter(|&i| values[i] >= 0.0).collect();
+    outside.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
+    outside.truncate(CLEARANCE_EXACT);
+    let below: Vec<usize> = measured.iter().copied().filter(|&i| f64::from(values[i]) < -tolerance).collect();
+    let mut deepest = below.clone();
+    deepest.sort_by(|&a, &b| values[a].total_cmp(&values[b]));
+    deepest.truncate(CLEARANCE_EXACT);
+    let sample: Vec<usize> = far.iter().copied().step_by(far.len() / CLEARANCE_FAR + 1).collect();
+    // Exactly: which side each is on, and how far from the nearest face.
+    let asked: Vec<usize> = outside.iter().chain(&deepest).chain(&sample).copied().collect();
+    let points: Vec<Vec3> = asked.iter().map(|&i| positions[i]).collect();
+    let classes = match points.len() {
+        0 => Vec::new(),
+        1 => vec![model.classify_point(points[0]).ok()?],
+        _ => model.classify_points(&points).ok()?,
+    };
+    let class_of = |k: usize| classes.get(k).copied();
+    let exact = |i: usize| model.nearest_face(positions[i]).map(|(d, _)| d);
+    let place = |i: usize| [positions[i].x, positions[i].y, positions[i].z];
+    // The least gap: over the nearest points that are outside or on it.
+    let gap = outside
+        .iter()
+        .enumerate()
+        .filter(|(k, _)| class_of(*k) != Some(PointClass::Inside))
+        .filter_map(|(k, &i)| Some((if class_of(k) == Some(PointClass::OnBoundary) { 0.0 } else { exact(i)? }, i)))
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    // The deepest: over the deepest points that are in it, by more than the tolerance.
+    let sunk = deepest
+        .iter()
+        .enumerate()
+        .filter(|(k, _)| class_of(outside.len() + *k) == Some(PointClass::Inside))
+        .filter_map(|(_, &i)| Some((exact(i)?, i)))
+        .filter(|(d, _)| *d > tolerance)
+        .max_by(|a, b| a.0.total_cmp(&b.0));
+    // Of those too far off to measure, the share in its material stands for them all; the
+    // deepest of the sample is at least as deep as the deepest measured.
+    let far_in: Vec<usize> = sample
+        .iter()
+        .enumerate()
+        .filter(|(k, _)| class_of(outside.len() + deepest.len() + *k) == Some(PointClass::Inside))
+        .map(|(_, &i)| i)
+        .collect();
+    let far_share = if sample.is_empty() { 0.0 } else { far_in.len() as f64 / sample.len() as f64 };
+    let far_deepest = far_in.iter().filter_map(|&i| Some((exact(i)?, i))).max_by(|a, b| a.0.total_cmp(&b.0));
+    let sunk = match (sunk, far_deepest) {
+        (Some(a), Some(b)) => Some(if b.0 > a.0 { b } else { a }),
+        (a, b) => a.or(b),
+    };
+    let inside = (below.len() as f64 + far_share * far.len() as f64) / n as f64;
+    Some(ScanDeviationClearance {
+        fits: sunk.is_none(),
+        gap: gap.map(|g| g.0),
+        gap_at: gap.map(|g| place(g.1)),
+        inside: if sunk.is_some() { inside.max(1.0 / n as f64) } else { 0.0 },
+        deepest: sunk.map(|d| d.0),
+        deepest_at: sunk.map(|d| place(d.1)),
     })
 }
 
