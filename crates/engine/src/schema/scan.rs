@@ -467,6 +467,12 @@ pub struct ScanMarkersResult {
     /// The Scan Clean step (or Insert Mesh feature, `in_place`) that keeps it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feature: Option<u64>,
+    /// `false` when the scan needed nothing of this step: it is as it was, no step was added, and
+    /// `note` says why. Left out when the step was done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
@@ -1444,8 +1450,15 @@ pub struct ScanFloatingResult {
     /// The triangles the scan has left.
     pub triangles: usize,
     /// The Scan Clean step that keeps the settings (with `in_place`, the Insert Mesh feature the
-    /// scan was written back into).
-    pub feature: u64,
+    /// scan was written back into). None when there was nothing to do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<u64>,
+    /// `false` when the scan needed nothing of this step: it is as it was, no step was added, and
+    /// `note` says why. Left out when the step was done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
@@ -1492,8 +1505,15 @@ pub struct ScanHolesResult {
     /// Open edges in no simple ring (a pinch, a dead end), left alone.
     pub unfillable_edges: usize,
     /// The Scan Clean step that keeps the settings (with `in_place`, the Insert Mesh feature the
-    /// scan was written back into).
-    pub feature: u64,
+    /// scan was written back into). None when there was nothing to do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<u64>,
+    /// `false` when the scan needed nothing of this step: it is as it was, no step was added, and
+    /// `note` says why. Left out when the step was done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
@@ -1561,8 +1581,15 @@ pub struct ScanReduceResult {
     /// The largest error of any collapse made, root mean square, in mm.
     pub largest_error: f64,
     /// The Scan Clean step that keeps the settings (with `in_place`, the Insert Mesh feature the
-    /// scan was written back into).
-    pub feature: u64,
+    /// scan was written back into). None when there was nothing to do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<u64>,
+    /// `false` when the scan needed nothing of this step: it is as it was, no step was added, and
+    /// `note` says why. Left out when the step was done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
@@ -1658,8 +1685,15 @@ pub struct ScanRepairResult {
     /// The triangles the scan has now.
     pub triangles: usize,
     /// The Scan Clean step that keeps the settings (with `in_place`, the Insert Mesh feature the
-    /// scan was written back into).
-    pub feature: u64,
+    /// scan was written back into). None when there was nothing to do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<u64>,
+    /// `false` when the scan needed nothing of this step: it is as it was, no step was added, and
+    /// `note` says why. Left out when the step was done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,

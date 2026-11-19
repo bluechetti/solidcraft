@@ -12442,7 +12442,7 @@ fn eval_feature_kind(
                     Ok(())
                 }
                 // Nothing to do on the scan as the steps before left it: it stays as it is.
-                Err(crate::scan_clean::Refused::Nothing(why)) => {
+                Err(crate::scan_clean::Refused::Nothing(why, _)) => {
                     scan_runs::note_step(st, body, &input, &input, step, &with);
                     *warning = Some(why);
                     Ok(())

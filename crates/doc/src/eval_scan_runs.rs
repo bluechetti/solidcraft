@@ -61,7 +61,7 @@ pub(crate) fn materialized(st: &ModelState) -> ModelState {
             let with: Vec<&Body> = with.iter().collect();
             match scan_clean::clean(step, &body, &with) {
                 Ok(done) => body = done.body,
-                Err(Refused::Nothing(_)) => {}
+                Err(Refused::Nothing(..)) => {}
                 // It was done before on this same scan: it cannot fail now. Should it, the scan is
                 // left as far as it got rather than as it was before the run.
                 Err(Refused::Failed(why)) => {

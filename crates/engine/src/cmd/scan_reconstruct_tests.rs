@@ -310,6 +310,14 @@ fn a_drilled_disc_is_extruded_cut_and_patterned_back_from_its_scan() {
     let again = run(&mut s, "scan.cut_it", json!({"hole": 0}));
     assert_eq!(again["fit"]["verdict"], "same", "{again}");
     assert!(again["fit"].get("note").is_none(), "{again}");
+    // No round to fillet is nothing to do, not a failure: the body is as it was, and a batch of
+    // steps with Fillet It among them goes on.
+    let before = volume(&s, &solid);
+    let none = run(&mut s, "scan.fillet_it", json!({}));
+    assert_eq!((none["changed"].as_bool(), none["fillets"].as_array().map(Vec::len)), (Some(false), Some(0)), "{none}");
+    assert!(none["note"].as_str().is_some_and(|n| n.contains("reads no round")), "{none}");
+    assert_eq!(none["fit"]["verdict"], "same", "{none}");
+    assert_eq!(volume(&s, &solid), before);
 }
 
 /// A block 80 × 60 × 20 whose four top edges are rounded R 2: the rounds run across the prism

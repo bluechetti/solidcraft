@@ -1651,10 +1651,25 @@ pub(super) fn fillet_it(s: &mut Session, p: &Value) -> Result<Value> {
     let view = view(s, p, cmd, false)?;
     let found = &view.found;
     let rounds = view.reading().fillets.clone();
-    if rounds.is_empty() {
-        return Err(bad(cmd, "Reconstruct reads no round along an edge that its other steps leave sharp"));
-    }
     let solid = built_body(s, &found.scan, p, cmd)?;
+    // Nothing to fillet is no failure: the body stays as it is, and the steps after this one in a
+    // batch still run.
+    let nothing = |solid: String, set_aside: usize, note: String| {
+        reply(ScanFilletItResult {
+            body: found.scan.clone(),
+            solid,
+            fillets: Vec::new(),
+            set_aside,
+            features: Vec::new(),
+            changed: Some(false),
+            note: Some(note),
+            fit: None,
+            param_warnings: Vec::new(),
+        })
+    };
+    if rounds.is_empty() {
+        return nothing(solid, 0, "Reconstruct reads no round along an edge that its other steps leave sharp".into());
+    }
     // The body's edges as Fillet from Scan reads them, for their tangent chains.
     let surface = {
         let state = s.model.state();
@@ -1679,10 +1694,8 @@ pub(super) fn fillet_it(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     if chains.is_empty() {
-        return Err(bad(
-            cmd,
-            format!("none of the {} rounds Reconstruct reads fits the scan better than a sharp edge of `{solid}` there", rounds.len()),
-        ));
+        let note = format!("none of the {} rounds Reconstruct reads fits the scan better than a sharp edge of `{solid}` there", rounds.len());
+        return nothing(solid, rounds.len(), note);
     }
     // The radius measured most often along each chain (the smaller of a tie), and the chains by it.
     let key = |r: f64| (r * 1e6).round() as i64;
@@ -1742,6 +1755,8 @@ pub(super) fn fillet_it(s: &mut Session, p: &Value) -> Result<Value> {
         fillets,
         set_aside: set_aside + refused,
         features,
+        changed: None,
+        note: None,
         fit: None,
         param_warnings: Vec::new(),
     })

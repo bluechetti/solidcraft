@@ -246,8 +246,15 @@ pub struct ScanDenoiseResult {
     /// How far its vertices moved: root mean square and largest, in mm.
     pub rms_moved: f64,
     pub max_moved: f64,
-    /// The scan's feature, changed.
-    pub feature: u64,
+    /// The scan's feature, changed. None when there was nothing to do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<u64>,
+    /// `false` when the scan needed nothing of this step: it is as it was, no step was added, and
+    /// `note` says why. Left out when the step was done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }

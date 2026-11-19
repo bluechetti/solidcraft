@@ -555,6 +555,12 @@ pub struct ScanFilletItResult {
     pub set_aside: usize,
     /// The Fillet features made.
     pub features: Vec<Value>,
+    /// `false` when no round the scan shows fits better than the body's sharp edge: the body is as
+    /// it was, and `note` says why. Left out when a fillet was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// How close the body is to the scan before and after the step (absent when it could not be
     /// measured).
     #[serde(default, skip_serializing_if = "Option::is_none")]

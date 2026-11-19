@@ -152,8 +152,9 @@ pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, "`offset` makes the whole scan again that far off it, not an area: give one or the other"));
     }
     let step = CleanStep::Remesh { cell, sharp, offset, with: with.iter().cloned().map(Into::into).collect(), area };
-    let (done, feature) = super::clean::apply(s, p, &body, step, cmd)?;
-    let (vertices, triangles) = done.body.triangle_mesh().map_or((0, 0), |(p, t)| (p.len(), t.len()));
+    let done = super::clean::apply(s, p, &body, step, cmd)?;
+    let (vertices, triangles) = (done.vertices, done.triangles);
+    let feature = done.feature.ok_or_else(|| bad(cmd, "the step was not added"))?;
     let Report::Remesh { before, cell, new_rms, new_max, scan_rms, scan_p95, uncovered } = done.report else {
         return Err(bad(cmd, "the step did something else"));
     };
@@ -201,12 +202,28 @@ pub(super) fn denoise_scan(s: &mut Session, p: &Value) -> Result<Value> {
     if strength.is_some_and(|k| !(0.0..=denoise::MOST_PASSES as f64).contains(&k)) {
         return Err(bad(cmd, "`strength` is a number of passes from 0 to 8"));
     }
+    // Asked to smooth by nothing: a mistake in the call, not a scan with nothing to do.
+    if strength == Some(0.0) {
+        return Err(bad(cmd, "a `strength` of 0 smooths nothing: give 0.05 to 8 passes"));
+    }
     let area = super::flatten::step_area(s, p, &body, cmd)?;
-    let (done, feature) = super::clean::apply(s, p, &body, CleanStep::Denoise { strength, area }, cmd)?;
+    let done = super::clean::apply(s, p, &body, CleanStep::Denoise { strength, area }, cmd)?;
     let Report::Denoise { strength, suggested, noise, roughness, rms_moved, max_moved } = done.report else {
         return Err(bad(cmd, "the step did something else"));
     };
-    reply(ScanDenoiseResult { body, strength, suggested, noise, roughness, rms_moved, max_moved, feature, param_warnings: Vec::new() })
+    reply(ScanDenoiseResult {
+        body,
+        strength,
+        suggested,
+        noise,
+        roughness,
+        rms_moved,
+        max_moved,
+        feature: done.feature,
+        changed: done.changed(),
+        note: done.nothing,
+        param_warnings: Vec::new(),
+    })
 }
 
 /// The cloud `p` names (or the only one): its name, its points in the design, and the normals it

@@ -342,8 +342,9 @@ pub enum Report {
 /// Why a step made nothing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Refused {
-    /// The scan needs nothing of this step as it now is: it is left as it is.
-    Nothing(String),
+    /// The scan needs nothing of this step as it now is: it is left as it is. Why, and what the
+    /// step found (its report with nothing done).
+    Nothing(String, Report),
     /// The step cannot be done on this scan.
     Failed(String),
 }
@@ -351,7 +352,7 @@ pub enum Refused {
 impl Refused {
     pub fn why(&self) -> &str {
         match self {
-            Refused::Nothing(why) | Refused::Failed(why) => why,
+            Refused::Nothing(why, _) | Refused::Failed(why) => why,
         }
     }
 }
@@ -465,11 +466,10 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
             }
             let removed = floating.iter().filter(|f| **f).count();
             if removed == 0 {
-                return Err(Refused::Nothing(format!(
-                    "no piece floats: all {} are at least {:.1} % of the largest",
-                    found.sizes.len(),
-                    100.0 * below
-                )));
+                return Err(Refused::Nothing(
+                    format!("no piece floats: all {} are at least {:.1} % of the largest", found.sizes.len(), 100.0 * below),
+                    Report::Floating { pieces: found.sizes.len(), removed: 0, removed_triangles: 0 },
+                ));
             }
             let (p, t) = pieces::keeping(&on, |t| found.of.get(t).is_some_and(|&k| k != u32::MAX && !floating[k as usize]));
             let removed_triangles = found.sizes.iter().zip(&floating).filter(|(_, f)| **f).map(|(n, _)| n).sum();
@@ -498,7 +498,9 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
             let count = found.rings.iter().filter(|r| !r.rim).count();
             let within = found.holes(limit).count();
             if within == 0 {
-                return Err(Refused::Nothing(if count == 0 {
+                let nothing =
+                    Report::Holes { holes: count, filled: 0, failed: 0, larger: count, added_triangles: 0, unfillable_edges: found.unfillable_edges };
+                let why = if count == 0 {
                     let pinched = if found.unfillable_edges > 0 {
                         format!(" ({} open edges pinch or dead-end, so they make no ring to close)", found.unfillable_edges)
                     } else {
@@ -514,7 +516,8 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
                         "no hole has {limit} edges or fewer: the smallest has {}",
                         found.rings.iter().filter(|r| !r.rim).map(|r| r.points.len()).min().unwrap_or(0)
                     )
-                }));
+                };
+                return Err(Refused::Nothing(why, nothing));
             }
             let done = holes::fill(&on, &found, limit, *fair)
                 .ok_or_else(|| Refused::Failed("no hole could be closed: each ring folds or crosses the scan".into()))?;
@@ -543,12 +546,18 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
                 _ => outside + (inside / 2).max(1),
             };
             if target >= before && *max_error == 0.0 {
-                return Err(Refused::Nothing(format!("the scan has {before} triangles already: ask for fewer")));
+                return Err(Refused::Nothing(
+                    format!("the scan has {before} triangles already: ask for fewer"),
+                    Report::Reduce { before, collapses: 0, stopped: reduce::Stopped::Target.name(), largest_error: 0.0 },
+                ));
             }
             let reduced = reduce::reduce_within(&on, reduce::Settings { target, max_error: *max_error, keep_rim: *keep_rim }, flags.as_deref())
                 .ok_or_else(|| Refused::Failed("the scan has no triangles to reduce".into()))?;
             if reduced.collapses == 0 {
-                return Err(Refused::Nothing("nothing could be collapsed within the error allowed".into()));
+                return Err(Refused::Nothing(
+                    "nothing could be collapsed within the error allowed".into(),
+                    Report::Reduce { before, collapses: 0, stopped: reduced.stopped.name(), largest_error: 0.0 },
+                ));
             }
             let report =
                 Report::Reduce { before, collapses: reduced.collapses, stopped: reduced.stopped.name(), largest_error: reduced.largest_error };
@@ -556,8 +565,12 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
         }
         CleanStep::RemoveMarkers { radius, centres, fair } => {
             let at: Vec<Vec3> = centres.iter().map(|c| Vec3::new(c[0], c[1], c[2])).collect();
-            let done = solidcraft_scan::markers::remove(&on, &at, *radius, *fair)
-                .ok_or_else(|| Refused::Nothing("no marker is on the scan any more: nothing to take off".into()))?;
+            let done = solidcraft_scan::markers::remove(&on, &at, *radius, *fair).ok_or_else(|| {
+                Refused::Nothing(
+                    "no marker is on the scan any more: nothing to take off".into(),
+                    Report::Markers { markers: at.len(), removed_triangles: 0, filled: 0, failed: 0 },
+                )
+            })?;
             let report = Report::Markers { markers: at.len(), removed_triangles: done.removed, filled: done.filled, failed: done.failed };
             made(&done.positions, &done.triangles, report)
         }
@@ -567,6 +580,7 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
                 return Err(Refused::Nothing(
                     "the scan needs no repair: no points a hair apart, no copied triangles, no edge of three or more faces, no slivers, no faces passing through others"
                         .into(),
+                    Report::Repair { joined: 0, duplicates: 0, non_manifold: 0, slivers: 0, crossings: 0, crossing_faces: 0, refilled: 0 },
                 ));
             }
             let report = Report::Repair {
@@ -585,13 +599,22 @@ fn work(step: &CleanStep, scan: &Body, with: &[&Body]) -> Result<Cleaned, Refuse
             let done = denoise::denoise_within(&on, *strength, flags.as_deref())
                 .ok_or_else(|| Refused::Failed("the scan has no triangles to smooth".into()))?;
             if !(done.strength > 0.0) {
-                return Err(Refused::Nothing(match strength {
+                let why = match strength {
                     Some(_) => "a `strength` of 0 smooths nothing: give 0.05 to 8 passes".to_owned(),
                     None => format!(
                         "smoothing would not lower the scan's error: it is as smooth as it can be read (noise {:.4} mm); give a `strength` to smooth it anyway",
                         done.noise
                     ),
-                }));
+                };
+                let nothing = Report::Denoise {
+                    strength: 0.0,
+                    suggested: done.suggested,
+                    noise: done.noise,
+                    roughness: done.roughness,
+                    rms_moved: 0.0,
+                    max_moved: 0.0,
+                };
+                return Err(Refused::Nothing(why, nothing));
             }
             let report = Report::Denoise {
                 strength: done.strength,
@@ -761,6 +784,7 @@ mod tests {
         // Asked again for the same scan: the same result, not worked out again.
         let again = clean(&step, &scan, &[]).unwrap();
         assert!(Arc::ptr_eq(&again.body.kept_mesh().unwrap(), &done.body.kept_mesh().unwrap()));
-        assert!(matches!(clean(&step, &done.body, &[]), Err(Refused::Nothing(_))));
+        let nothing = Report::Floating { pieces: 1, removed: 0, removed_triangles: 0 };
+        assert!(matches!(clean(&step, &done.body, &[]), Err(Refused::Nothing(_, found)) if found == nothing));
     }
 }

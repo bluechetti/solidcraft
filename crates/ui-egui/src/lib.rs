@@ -1752,6 +1752,13 @@ impl SolveApp {
             r => r,
         };
         if let Ok(v) = &r {
+            // A scan tool that found nothing to do says so: it is no failure, and nothing changed.
+            if id.starts_with("scan.")
+                && v.get("changed") == Some(&Value::Bool(false))
+                && let Some(note) = v.get("note").and_then(Value::as_str)
+            {
+                self.set_status(friendly_error(id, note), false);
+            }
             if id.eq_ignore_ascii_case("plugin.inspect")
                 && let Some(id) = v.pointer("/manifest/id").and_then(Value::as_str)
             {

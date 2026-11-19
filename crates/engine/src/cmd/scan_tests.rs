@@ -998,8 +998,13 @@ fn remove_floating_takes_the_speck_off_where_the_scan_lies() {
     assert!(lo.z.abs() < STL && (hi.z - 10.0).abs() < STL && hi.x < 30.0 + STL, "the block, resting on the grid: {lo:?} {hi:?}");
     run(&mut s, "edit.undo", json!({}));
     assert!((bounds(&s, &body).1.x - 51.0).abs() < STL, "one undo brings the speck back");
-    let refused = s.execute("scan.remove_floating", &json!({"below": 0.0})).unwrap_err().to_string();
-    assert!(refused.contains("no piece floats"), "{refused}");
+    // Nothing to take off is no failure (a batch goes on): the scan and the timeline are as they
+    // were, and the reply says so and why.
+    let features = s.doc.features.len();
+    let nothing = run(&mut s, "scan.remove_floating", json!({"below": 0.0}));
+    assert_eq!((nothing["changed"].as_bool(), nothing["removed"].as_u64(), nothing["pieces"].as_u64()), (Some(false), Some(0), Some(2)), "{nothing}");
+    assert!(nothing["note"].as_str().is_some_and(|n| n.contains("no piece floats")) && nothing.get("feature").is_none(), "{nothing}");
+    assert_eq!(s.doc.features.len(), features, "no step is added");
 }
 
 /// A plate with a hole and a speck beside it: Clean Up takes the speck off and closes the hole,
@@ -1063,16 +1068,20 @@ fn fill_holes_closes_a_hole_in_a_plate() {
     assert_eq!(count(&s), 192 + reply["added_triangles"].as_u64().unwrap() as usize);
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(count(&s), 192, "one undo step");
-    let refused = s.execute("scan.fill_holes", &json!({"max_edges": 4})).unwrap_err().to_string();
-    assert!(refused.contains("the smallest has 8"), "{refused}");
+    // No hole within the limit is nothing to do, not a failure: the hole is counted as larger.
+    let nothing = run(&mut s, "scan.fill_holes", json!({"max_edges": 4}));
+    assert_eq!((nothing["changed"].as_bool(), nothing["filled"].as_u64(), nothing["larger"].as_u64()), (Some(false), Some(0), Some(1)), "{nothing}");
+    assert!(nothing["note"].as_str().is_some_and(|n| n.contains("the smallest has 8")) && nothing.get("feature").is_none(), "{nothing}");
+    assert_eq!(count(&s), 192, "the scan is as it was");
 
     let (mut closed, _) = session_with_triangles("fill-closed", &fine_box(Vec3::ZERO, Vec3::new(10.0, 10.0, 10.0), 4));
-    let refused = closed.execute("scan.fill_holes", &json!({})).unwrap_err().to_string();
-    assert!(refused.contains("it is closed"), "{refused}");
+    let nothing = run(&mut closed, "scan.fill_holes", json!({}));
+    assert_eq!((nothing["changed"].as_bool(), nothing["holes"].as_u64()), (Some(false), Some(0)), "{nothing}");
+    assert!(nothing["note"].as_str().is_some_and(|n| n.contains("it is closed")), "{nothing}");
 }
 
 /// A finely cut box reduced to a tenth keeps its shape, one undo step; asking for more than it has
-/// is refused.
+/// is nothing to do.
 #[test]
 fn reduce_keeps_a_fine_box_its_shape() {
     let (mut s, body) = session_with_triangles("reduce", &fine_box(Vec3::ZERO, Vec3::new(30.0, 20.0, 10.0), 12));
@@ -1083,8 +1092,14 @@ fn reduce_keeps_a_fine_box_its_shape() {
     assert!(lo.dist(Vec3::ZERO) < STL && hi.dist(Vec3::new(30.0, 20.0, 10.0)) < STL, "the box kept: {lo:?} {hi:?}");
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(s.model.state().body(&body).and_then(|b| b.body.triangle_mesh()).map(|(_, t)| t.len()), Some(1728), "one undo step");
-    let refused = s.execute("scan.reduce", &json!({"triangles": 5000})).unwrap_err().to_string();
-    assert!(refused.contains("already"), "{refused}");
+    // Asked for more triangles than it has: nothing to do, not a failure.
+    let nothing = run(&mut s, "scan.reduce", json!({"triangles": 5000}));
+    assert_eq!(
+        (nothing["changed"].as_bool(), nothing["collapses"].as_u64(), nothing["triangles"].as_u64()),
+        (Some(false), Some(0), Some(1728)),
+        "{nothing}"
+    );
+    assert!(nothing["note"].as_str().is_some_and(|n| n.contains("already")) && nothing.get("feature").is_none(), "{nothing}");
     let refused = s.execute("scan.reduce", &json!({"ratio": 0.5, "triangles": 10})).unwrap_err().to_string();
     assert!(refused.contains("not both"), "{refused}");
 }
@@ -1100,8 +1115,11 @@ fn repair_takes_a_copied_triangle_off() {
     let before = count(&s);
     let reply = run(&mut s, "scan.repair", json!({}));
     assert_eq!((reply["duplicates"].as_u64(), reply["triangles"].as_u64()), (Some(1), Some(before as u64 - 1)), "{reply}");
-    let refused = s.execute("scan.repair", &json!({})).unwrap_err().to_string();
-    assert!(refused.contains("needs no repair"), "{refused}");
+    // Repaired, it needs no repair: no failure, nothing changed, no undo step of its own.
+    let nothing = run(&mut s, "scan.repair", json!({}));
+    assert_eq!((nothing["changed"].as_bool(), nothing["triangles"].as_u64()), (Some(false), Some(before as u64 - 1)), "{nothing}");
+    assert!(nothing["note"].as_str().is_some_and(|n| n.contains("needs no repair")) && nothing.get("feature").is_none(), "{nothing}");
+    assert!(reply.get("changed").is_none() && reply.get("note").is_none(), "a repair that was done says neither: {reply}");
     run(&mut s, "edit.undo", json!({}));
     assert_eq!(count(&s), before, "one undo step");
 }

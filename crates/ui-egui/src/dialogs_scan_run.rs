@@ -606,6 +606,12 @@ fn result_rows(app: &SolveApp, ui: &mut egui::Ui, id: &str, placed: &Placed) {
     let int = |r: &Value, key: &str| r.get(key).and_then(Value::as_u64).map(|v| v as usize);
     let part_of =
         |part: usize, all: usize| solidcraft_ui_text::format("ui.scan_run_laid_count", &[("laid", &part.to_string()), ("all", &all.to_string())]);
+    // Nothing to do on this scan: said, in the tool's own words (OK then changes nothing).
+    if r.get("changed") == Some(&Value::Bool(false))
+        && let Some(note) = r.get("note").and_then(Value::as_str)
+    {
+        ui_kit::text(ui, &crate::dialogs::shown_error(note), ui_kit::Text::Report("scan_run_nothing", false));
+    }
     let fused = r.get("fused").filter(|f| f.is_object());
     let counted = placed.count.or_else(|| fused.and_then(|f| Some((int(f, "before")?, int(f, "triangles")?))));
     match counted {
