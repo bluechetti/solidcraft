@@ -3468,3 +3468,23 @@ fn zz_debug_offset_thicken_replies() {
     eprintln!("THICKEN {th}");
     eprintln!("BODIES {:?}", s.model.state().bodies.iter().map(|b| b.name.clone()).collect::<Vec<_>>());
 }
+
+/// A curvature-continuous (G2) fillet of the three edges at a box's corner closes the corner with
+/// a patch G2 to its three blends: a closed solid, whose blends take the round's section area
+/// (the G2 blend keeps the round's setback and area), so it is within a hair of the same
+/// fillet's round of the three edges, corner patches apart (before, the corner patch missed its
+/// neighbours' curvature by 5.4e-3 against a 2.5e-3 tolerance and the fillet was refused).
+#[test]
+fn a_g2_fillet_of_three_edges_closes_their_corner() {
+    let corner = |kind: &str| {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "body_name": "B"}));
+        run(&mut s, "solid.fillet", json!({"edges": [[10, 0, 10], [0, 10, 10], [0, 0, 5]], "radius": 1.5, "type": kind}));
+        body_volume(&s, "B")
+    };
+    let (round, g2) = (corner("constant"), corner("curvature"));
+    // Three edges, 20 + 20 + 10 mm, each losing (1 - pi/4) r^2 per mm, less what the corner shares.
+    let most = (1.0 - std::f64::consts::FRAC_PI_4) * 1.5 * 1.5 * 50.0;
+    assert!(4000.0 - g2 > 0.8 * most && 4000.0 - g2 < most, "{g2}");
+    assert!((g2 - round).abs() < 0.05 * (4000.0 - round), "G2 {g2} against round {round}");
+}
