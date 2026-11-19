@@ -249,7 +249,8 @@ fn flatten_scan(s: &mut Session, p: &Value) -> Result<Value> {
             chain::chain(&pts, true, tolerance).map(|o| (o, true))
         })
         .collect();
-    let name = str_(p, "name").filter(|n| !n.trim().is_empty()).unwrap_or(PATTERN_NAME).to_owned();
+    // A name asked for is used as given (taken: refused); left out, the first free one.
+    let name = str_(p, "name").filter(|n| !n.trim().is_empty()).map_or_else(|| s.doc.free_sketch_name(PATTERN_NAME), str::to_owned);
     let made = run(s, "sketch.create", json!({"plane": "XY", "name": name}))?;
     let sketch = made.get("sketch").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "the pattern's sketch was not made"))?;
     let mut added = super::section::Added::default();
@@ -493,7 +494,7 @@ fn roll_onto_scan(s: &mut Session, p: &Value) -> Result<Value> {
     if s.active_sketch.is_some() {
         run(s, "sketch.finish", json!({}))?;
     }
-    let made = run(s, "sketch.create", json!({"plane": "XY", "name": ROLLED_NAME}))?;
+    let made = run(s, "sketch.create", json!({"plane": "XY", "name": s.doc.free_sketch_name(ROLLED_NAME)}))?;
     let sketch = made.get("sketch").cloned().ok_or_else(|| bad(cmd, "the sketch for the rolled curves was not made"))?;
     run(s, "sketch.options", json!({"sketch": sketch, "sketch_3d": true}))?;
     let mut curves = Vec::new();

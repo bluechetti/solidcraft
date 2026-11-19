@@ -265,7 +265,7 @@ pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
     let (sketch, made) = match super::super::sketch_store::active(s) {
         Some(id) => (id, false),
         None => {
-            let mut create = json!({"plane": p.get("plane").cloned().unwrap_or(json!("XY")), "name": SKETCH_NAME});
+            let mut create = json!({"plane": p.get("plane").cloned().unwrap_or(json!("XY")), "name": s.doc.free_sketch_name(SKETCH_NAME)});
             if let Some(offset) = p.get("offset").filter(|v| !v.is_null()) {
                 create["offset"] = offset.clone();
             }
@@ -444,7 +444,7 @@ pub(super) fn sections_along_curve(s: &mut Session, p: &Value) -> Result<Value> 
     let mut sketches = Vec::with_capacity(planned.len());
     let at = |v: solidcore_record::Vec3| [v.x, v.y, v.z];
     for ((plane, outlines), name) in planned.iter().zip(&names) {
-        let create = json!({"plane": {"origin": at(plane.origin), "x_dir": at(plane.x), "y_dir": at(plane.y)}, "name": name});
+        let create = json!({"plane": {"origin": at(plane.origin), "x_dir": at(plane.x), "y_dir": at(plane.y)}, "name": s.doc.free_sketch_name(name)});
         let made = run(s, "sketch.create", create)?;
         let id = made.get("sketch").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "the sketch was not made"))?;
         if s.model.state().sketch(id).is_none() {

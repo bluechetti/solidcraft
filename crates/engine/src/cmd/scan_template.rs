@@ -836,7 +836,7 @@ fn flat_template(s: &mut Session, p: &Value) -> Result<Value> {
         "construct.plane.three_points",
         json!({"a": at(corner), "b": at(corner + made.frame.x), "c": at(corner + made.frame.y), "name": plane_name}),
     )?;
-    let created = run(s, "sketch.create", json!({"plane": plane_name, "name": name}))?;
+    let created = run(s, "sketch.create", json!({"plane": plane_name, "name": s.doc.free_sketch_name(&name)}))?;
     let sketch = created.get("sketch").and_then(Value::as_u64).ok_or_else(|| bad(cmd, "the template's sketch was not made"))?;
     let mut added = super::section::Added::default();
     let counts = std::cell::Cell::new((0usize, 0usize));
