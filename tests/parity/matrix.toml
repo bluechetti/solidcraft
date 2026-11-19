@@ -14,7 +14,7 @@
 # docs/parity/matrix.md is made from this file; edit this one.
 
 [run]
-sha = "3bae9824d"
+sha = "a73b2306c"
 date = "2026-11-18"
 tree = "clean worktree, branch scan-parity"
 commands = [
@@ -24,8 +24,8 @@ commands = [
 ]
 # results are filled in from the run; see docs/parity/matrix.md
 results_table = [
-  ["sctest -p solidcraft-scan", "317 run, 317 passed, 1 skipped by sctest as slow"],
-  ["sctest -p solidcraft-engine scan", "186 run, 186 passed"],
+  ["sctest -p solidcraft-scan", "319 run, 319 passed"],
+  ["sctest -p solidcraft-engine scan", "187 run, 187 passed"],
   ["sctest -p solidcraft-ui-egui scan", "131 run, 131 passed"],
 ]
 # The first run, at 8138b307c, had 9 failures (8 engine, 1 UI): fixed in 8a6fcc5b0, d4c787cdb,
@@ -539,10 +539,9 @@ note = "U2: no tooth count on gears"
 id = "QS-066"
 commands = ["scan.deviation", "scan.deviation_pin", "inspect.compare"]
 handler = "crates/engine/src/cmd/scan.rs"
-tests = ["cmd::scan::tests::scan_deviation_measures_the_scan_against_the_model", "cmd::scan::tests::scan_deviation_labels_its_extremes_and_pinned_places"]
-status = "partial"
-finding = "risk 1"
-note = "one way only (scan to model); `passes` leaves unmatched points out, so a model missing a feature can pass"
+tests = ["cmd::scan::tests::scan_deviation_measures_the_scan_against_the_model", "cmd::scan::tests::scan_deviation_labels_its_extremes_and_pinned_places", "cmd::scan::tests::scan_deviation_fails_a_model_with_material_the_scan_lacks_or_lacking_what_it_has"]
+status = "proven"
+note = "both ways since d8ce78e67 and its follow-up: agrees with the independent scorer within 0.00095 mm on 10 cases and fails all six known-wrong fixtures (lab: harness/parity); time on 1M and 10M not yet recorded"
 
 [[row]]
 id = "QS-067"

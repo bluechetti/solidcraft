@@ -2,15 +2,15 @@
 
 Made from `tests/parity/matrix.toml` and `tests/parity/quicksurface-spec.toml`; edit those, not this page.
 
-Run: `3bae9824d`, 2026-11-18, clean worktree, branch scan-parity.
+Run: `a73b2306c`, 2026-11-18, clean worktree, branch scan-parity.
 
 | Command | Result |
 |---|---|
-| `sctest -p solidcraft-scan` | 317 run, 317 passed, 1 skipped by sctest as slow |
-| `sctest -p solidcraft-engine scan` | 186 run, 186 passed |
+| `sctest -p solidcraft-scan` | 319 run, 319 passed |
+| `sctest -p solidcraft-engine scan` | 187 run, 187 passed |
 | `sctest -p solidcraft-ui-egui scan` | 131 run, 131 passed |
 
-77 capabilities: 30 proven, 17 partial, 19 implemented-untested, 4 missing, 7 n/a.
+77 capabilities: 31 proven, 16 partial, 19 implemented-untested, 4 missing, 7 n/a.
 
 "Proven" means the command does the job on a clean generated part in a test that passed in this run. It does not mean accurate under noise, and it says nothing about the other product's output.
 
@@ -81,7 +81,7 @@ Run: `3bae9824d`, 2026-11-18, clean worktree, branch scan-parity.
 | QS-063 | solid_ops | Draft on chosen faces about a pull direction | `solid.draft` | implemented-untested | native; not run here |
 | QS-064 | solid_ops | Move or offset a face keeping its neighbours | `solid.offset_face`, `solid.press_pull` | implemented-untested | native; not run here |
 | QS-065 | solid_ops | Linear and circular patterns, and mirror | `scan.pattern_it`, `solid.pattern.circular`, `solid.pattern.rectangular`, `solid.mirror` | proven | U2: no tooth count on gears |
-| QS-066 | analysis | Deviation colour map of the CAD model against the mesh at any stage | `scan.deviation`, `scan.deviation_pin`, `inspect.compare` | partial | risk 1; one way only (scan to model); `passes` leaves unmatched points out, so a model missing a feature can pass |
+| QS-066 | analysis | Deviation colour map of the CAD model against the mesh at any stage | `scan.deviation`, `scan.deviation_pin`, `inspect.compare` | proven | both ways since d8ce78e67 and its follow-up: agrees with the independent scorer within 0.00095 mm on 10 cases and fails all six known-wrong fixtures (lab: harness/parity); time on 1M and 10M not yet recorded |
 | QS-067 | analysis | Pass or fail shown on each feature as it is made (deviation, curvature, draft) | `scan.*_it (reply `fit`)` | partial | each step reports better/same/worse on deviation; a 'worse' step stays unless undone; no curvature or draft cue per feature |
 | QS-068 | analysis | Draft analysis for moulding | `inspect.draft` | implemented-untested | native; not run here |
 | QS-069 | analysis | Flatten a surface to a 2D sketch, with strain shown | `scan.flatten`, `scan.roll_onto_scan`, `scan.flat_template` | proven | strain_rms and strain_max are in the reply [code]; strain is not painted |
