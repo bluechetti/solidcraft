@@ -83,7 +83,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("revolve")
         .contract(&REVOLVE_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the turned part's profile sketched on a plane through its axis, each face held to the axis (cylinders level, ends upright, rounds tangent), and revolved all the way round, one undo step → sketch, feature, solid, operation, lines, arcs, tangents, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); wall?: mm (one side of a skin, a profile open at both ends, `skin` in the reply: revolved as a surface and thickened this much away from the scanned side, not closed into a solid); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the turned part's profile sketched on a plane through its axis, each face held to the axis (cylinders level, ends upright, rounds tangent), and revolved all the way round, one undo step → sketch, feature, solid, operation, lines, arcs, tangents, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
     CommandSpec::new("scan.cut_it", "Cut It", crate::checked!("scan.cut_it", fitted_cut_it))
         .icon("hole")
         .contract(&CUT_IT_CONTRACT)
@@ -1268,6 +1268,7 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         depth: Some(depth),
         count,
         openings: None,
+        skin: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1321,17 +1322,21 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
     let found = &view.found;
     let spokes = view.reading().spokes.as_ref().map(|sp| sp.count);
     let axis = view.reading().revolve.as_ref().map(|r| r.axis);
-    let (plane, outline, held, opening) = {
+    let (plane, outline, held, opening, closing) = {
         let shown = super::shown_mesh(s, &found.scan).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
         let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
         let scan = view.scan(positions, triangles);
-        let (plane, outline, held) = profile::turned_profile(&scan, view.outcome(), view.reading()).map_err(|e| bad(cmd, e))?;
+        let (plane, outline, held, closing) = profile::turned_profile_open(&scan, view.outcome(), view.reading()).map_err(|e| bad(cmd, e))?;
         // A wheel: one opening between its spokes, read off the scan seen along the axis.
         let opening = match (spokes, &axis) {
             (Some(count), Some(axis)) => Some(solidcraft_scan::wheel::opening(&scan, axis, count).ok_or(count)),
             _ => None,
         };
-        (plane, outline, held, opening)
+        (plane, outline, held, opening, closing)
+    };
+    let wall = match p.get("wall").filter(|v| !v.is_null()) {
+        None => None,
+        Some(v) => Some(v.as_f64().filter(|w| w.is_finite() && *w > 0.0).ok_or_else(|| bad(cmd, "`wall` is a thickness in mm, above 0"))?),
     };
     let (operation, solid, how) = into_params(s, &found.scan, p, cmd)?;
     // A cylinder's piece runs level along the axis, an end's upright, the axis's own along it. A
@@ -1346,8 +1351,42 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
     let mut drawn = Drawn::default();
     let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
     let sketch = sketch_outlines(s, &plane, "Turned Profile", std::slice::from_ref(&outline), &level, &mut drawn, round, true)?;
-    let revolve = merged(json!({"sketch": sketch, "axis": "x", "name": "Revolve It"}), operation);
-    let feature = run(s, "solid.revolve", revolve)?;
+    // One side of a skin, its thickness given: the profile without the line that closes it,
+    // revolved as a surface and thickened away from the scanned side. Of the two ways to thicken,
+    // that is the one whose body is the smaller across (the scanned side is the outside of the
+    // closed profile: thickened that way the body grows past it). The solid when any of it fails.
+    let ends = closing.map(|k| {
+        let moved = at_world_origin(&plane, std::slice::from_ref(&outline), true).1;
+        let corners = &moved[0].corners;
+        [corners[k], corners[(k + 1) % corners.len()]]
+    });
+    let skinned = match (wall, ends) {
+        (Some(wall), Some(ends)) => {
+            let before = s.doc.clone();
+            let built = skin(s, sketch, ends, wall, &solid, &operation);
+            if built.is_err() {
+                s.doc = before;
+                s.refresh();
+            }
+            Some(built)
+        }
+        _ => None,
+    };
+    let (feature, skin) = match skinned {
+        Some(Ok(feature)) => {
+            (feature, Some(format!("one side of a skin: revolved as a surface and thickened {} mm away from the scanned side", wall.unwrap_or(0.0))))
+        }
+        other => {
+            let revolve = merged(json!({"sketch": sketch, "axis": "x", "name": "Revolve It"}), operation);
+            let feature = run(s, "solid.revolve", revolve)?;
+            let skin = match (other, closing) {
+                (Some(Err(e)), _) => Some(format!("one side of a skin, but it could not be thickened ({e}): closed straight across into a solid")),
+                (_, Some(_)) => Some("one side of a skin: closed straight across what the scan never saw into a solid; `wall` (its thickness in mm) builds it as a thickened surface".to_owned()),
+                _ => None,
+            };
+            (feature, skin)
+        }
+    };
     let (count, openings) = match (opening, axis) {
         (Some(Ok(opening)), Some(axis)) => match cut_openings(s, &opening, &axis, spokes.unwrap_or(opening.alike), &solid) {
             Ok(n) => (Some(n), Some(format!("{n} openings between the spokes cut through it and patterned round the axis"))),
@@ -1370,9 +1409,57 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
         depth: None,
         count,
         openings,
+        skin,
         fit: None,
         param_warnings: Vec::new(),
     })
+}
+
+/// The turned profile in `sketch` without its closing line (the line whose ends are `ends`, in the
+/// sketch), revolved as a surface about the sketch's X and thickened by `wall` into `solid`, on
+/// the side that leaves the body smaller across. The thickened feature's reply.
+fn skin(s: &mut Session, sketch: u64, ends: [Vec2; 2], wall: f64, solid: &str, operation: &Value) -> Result<Value> {
+    let cmd = "scan.revolve_it";
+    let curves: Vec<String> = {
+        let drawn = super::super::sketch_store::read(&s.doc, sketch)?;
+        let off = |c: &solidcraft_sketch::Curve| match c.kind {
+            solidcraft_sketch::CurveKind::Line { a, b } => match (drawn.point(a), drawn.point(b)) {
+                (Some(p), Some(q)) => (p.dist(ends[0]) + q.dist(ends[1])).min(p.dist(ends[1]) + q.dist(ends[0])),
+                _ => f64::INFINITY,
+            },
+            _ => f64::INFINITY,
+        };
+        let live: Vec<&solidcraft_sketch::Curve> = drawn.curves.iter().filter(|c| !c.construction).collect();
+        let closing = live.iter().copied().min_by(|a, b| off(a).total_cmp(&off(b))).filter(|c| off(c) <= 0.02 * ends[0].dist(ends[1]).max(1.0));
+        let closing = closing.ok_or_else(|| bad(cmd, "the line closing the profile is not in its sketch"))?;
+        live.iter().filter(|c| c.id != closing.id).map(|c| c.id.clone()).collect()
+    };
+    let sheet = format!("{solid} Skin");
+    let across = |s: &mut Session, thickness: f64| -> Result<(f64, Value)> {
+        run(s, "surface.revolve", json!({"sketch": sketch, "curves": curves, "axis": "x", "name": "Revolve It", "body_name": sheet}))?;
+        let made = run(
+            s,
+            "surface.thicken",
+            merged(json!({"bodies": [sheet], "thickness": format!("{thickness} mm"), "name": "Revolve It Wall"}), operation.clone()),
+        )?;
+        let state = s.model.state();
+        let body = state.body(solid).ok_or_else(|| bad(cmd, "the skin was not thickened into a body"))?;
+        let bbox = solidcraft_kernel::measure(&body.body).map_err(|e| EngineError::Other(e.to_string()))?.bbox;
+        Ok(((bbox.max - bbox.min).len(), made))
+    };
+    let before = s.doc.clone();
+    let (one, made) = across(s, wall)?;
+    let kept = s.doc.clone();
+    s.doc = before;
+    s.refresh();
+    match across(s, -wall) {
+        Ok((other, made)) if other < one => Ok(made),
+        _ => {
+            s.doc = kept;
+            s.refresh();
+            Ok(made)
+        }
+    }
 }
 
 /// One opening between a wheel's spokes cut through `solid`: its outline fitted with lines and
@@ -1457,6 +1544,7 @@ pub(super) fn shell_it(s: &mut Session, p: &Value) -> Result<Value> {
         depth: Some(thickness),
         count: None,
         openings: None,
+        skin: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1647,6 +1735,7 @@ pub(super) fn hole_it(s: &mut Session, p: &Value) -> Result<Value> {
         depth: Some(form.depth.unwrap_or_else(|| form.mouth.dist(form.bottom))),
         count: None,
         openings: None,
+        skin: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1714,6 +1803,7 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
         depth: Some(depth),
         count: None,
         openings: None,
+        skin: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1751,6 +1841,7 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
             depth: None,
             count: Some(count),
             openings: None,
+            skin: None,
             fit: None,
             param_warnings: Vec::new(),
         });
@@ -1784,6 +1875,7 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
         depth: None,
         count: Some(count),
         openings: None,
+        skin: None,
         fit: None,
         param_warnings: Vec::new(),
     })

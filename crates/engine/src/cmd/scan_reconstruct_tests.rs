@@ -14,6 +14,10 @@ fn run(s: &mut Session, id: &str, p: Value) -> Value {
 }
 
 /// The mesh with every triangle cut into four `levels` times, the cuts shared along each edge.
+fn run_err(s: &mut Session, id: &str, p: Value) -> String {
+    s.execute(id, &p).err().map(|e| e.to_string()).unwrap_or_default()
+}
+
 fn subdivided(mut positions: Vec<Vec3>, mut triangles: Vec<[u32; 3]>, levels: u32) -> (Vec<Vec3>, Vec<[u32; 3]>) {
     for _ in 0..levels {
         let mut middles: HashMap<(u32, u32), u32> = HashMap::new();
@@ -36,12 +40,18 @@ fn subdivided(mut positions: Vec<Vec3>, mut triangles: Vec<[u32; 3]>, levels: u3
 /// The solid `body` of `s`, meshed finely and cut `levels` times, inserted as the only body of a
 /// new design: a scan of it.
 fn scanned(s: &Session, body: &str, levels: u32, tag: &str) -> (Session, String) {
+    scanned_where(s, body, levels, tag, |_| true)
+}
+
+/// [`scanned`], of the triangles `seen` keeps only: what a scanner saw of the part.
+fn scanned_where(s: &Session, body: &str, levels: u32, tag: &str, seen: impl Fn([Vec3; 3]) -> bool) -> (Session, String) {
     let mesh = {
         let state = s.model.state();
         let b = state.body(body).unwrap_or_else(|| panic!("no {body}"));
         b.body.mesh(&solidcraft_kernel::MeshTolerance { chord: 0.005, angle: Some(4f64.to_radians()) }).unwrap()
     };
     let (positions, triangles) = subdivided(mesh.positions, mesh.triangles, levels);
+    let triangles: Vec<[u32; 3]> = triangles.into_iter().filter(|t| seen(t.map(|i| positions[i as usize]))).collect();
     // Binary STL: a header, the count, then each triangle's normal (left zero), corners and a
     // spare word.
     let mut stl = vec![0u8; 80];
@@ -570,6 +580,39 @@ fn a_prism_that_repeats_round_its_middle_is_one_gap_cut_and_patterned() {
     assert!(plain.get("count").is_none_or(Value::is_null), "{plain}");
     let got = volume(&s, plain["solid"].as_str().unwrap());
     assert!((got - expected).abs() < 0.005 * expected, "{got} against {expected}: {plain}");
+}
+
+/// A spun cover scanned from outside only: of a tube R 30 × 20 with a bore R 12 and its top edge
+/// chamfered 5, the scanner saw the outer wall, the chamfer and the top, not the bore or the
+/// underside. Revolve It closes what it saw straight across into a solid and says it is one side
+/// of a skin; given the skin's `wall`, it revolves what was seen as a surface and thickens it
+/// inward: the outside stays where the scan has it, and the body is a shell, far lighter.
+#[test]
+fn one_side_of_a_skin_is_revolved_as_a_surface_and_thickened() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.cylinder", json!({"radius": 30, "height": 20}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.chamfer", json!({"edges": [[30, 0, 20]], "distance": 5}));
+    run(&mut part, "solid.hole", json!({"position": [0, 0, 20], "diameter": 24}));
+    let outside = |[a, b, c]: [Vec3; 3]| {
+        let m = (a + b + c) / 3.0;
+        m.z > 1e-3 && m.x.hypot(m.y) > 12.5
+    };
+    let (mut drum, _) = scanned_where(&part, &body, 3, "skin-drum", outside);
+    let closed = run(&mut drum, "scan.revolve_it", json!({}));
+    assert!(closed["skin"].as_str().is_some_and(|t| t.contains("`wall`")), "{closed}");
+    let solid = volume(&drum, closed["solid"].as_str().unwrap());
+    let (mut s, _) = scanned_where(&part, &body, 3, "skin-wall", outside);
+    let built = run(&mut s, "scan.revolve_it", json!({"wall": 2}));
+    assert!(built["skin"].as_str().is_some_and(|t| t.contains("thickened 2 mm")), "{built}");
+    let name = built["solid"].as_str().unwrap().to_owned();
+    let shell = volume(&s, &name);
+    assert!(shell < 0.5 * solid && shell > 0.1 * solid, "a shell of the solid: {shell} against {solid}");
+    // Thickened inward: no wider or taller than the part.
+    let state = s.model.state();
+    let bbox = solidcraft_kernel::measure(&state.body(&name).unwrap().body).unwrap().bbox;
+    assert!(bbox.max.x < 30.05 && bbox.max.z < 20.05 && bbox.min.x > -30.05, "{bbox:?}");
+    assert!(run_err(&mut s, "scan.revolve_it", json!({"wall": -1})).contains("`wall`"));
 }
 
 /// A cup (a cylinder R 30 × 60, shelled 3 thick, open at the top) from its scan in two calls:

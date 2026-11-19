@@ -1501,10 +1501,33 @@ pub fn turned_plane(axis: &Axis) -> Plane {
 /// neighbours' curves cross nearest where they meet on the scan. The plane it lies in, the
 /// outline (`faces` index `reading.faces`) and each face as held (by face index); why not.
 pub fn turned_profile(scan: &Scan, outcome: &Outcome, reading: &Reading) -> Result<(Plane, Outline, BTreeMap<usize, Turned>), String> {
+    turned_profile_open(scan, outcome, reading).map(|(plane, outline, held, _)| (plane, outline, held))
+}
+
+/// [`turned_profile`], and which of the outline's pieces (if any) is the line that closes a run
+/// of faces open at both ends: what the scan never saw (the inside of a skin scanned from one
+/// side), across which there is no face.
+#[allow(clippy::type_complexity)]
+pub fn turned_profile_open(
+    scan: &Scan,
+    outcome: &Outcome,
+    reading: &Reading,
+) -> Result<(Plane, Outline, BTreeMap<usize, Turned>, Option<usize>), String> {
     let revolve = reading.revolve.as_ref().ok_or("the part is not turned: no axis holds most of its faces")?;
     let between = reading.spokes.as_ref().map(|sp| between_spokes(&sp.angles)).unwrap_or_default();
-    let (plane, outline, held) = turned_profile_of(scan, outcome, &reading.faces, &reading.same, reading.size, revolve, &between)?;
-    Ok((plane, without_slivers(outline, SLIVER_SHARE * reading.size, true), held))
+    let (plane, outline, held, closing) = turned_profile_of(scan, outcome, &reading.faces, &reading.same, reading.size, revolve, &between)?;
+    let sliver = SLIVER_SHARE * reading.size;
+    let outline = without_slivers(outline, sliver, true);
+    let n = outline.corners.len();
+    let closing = closing.and_then(|[from, to]| {
+        (0..n).find(|&k| {
+            outline.pieces[k] == Piece::Line
+                && outline.faces[k].is_none()
+                && outline.corners[k].dist(from) <= sliver
+                && outline.corners[(k + 1) % n].dist(to) <= sliver
+        })
+    });
+    Ok((plane, outline, held, closing))
 }
 
 /// A line of a profile shorter than this share of the part is a sliver between two faces that
@@ -1572,7 +1595,7 @@ pub(crate) fn turned_profile_of(
     size: f64,
     revolve: &Revolve,
     between: &[f64],
-) -> Result<(Plane, Outline, BTreeMap<usize, Turned>), String> {
+) -> Result<(Plane, Outline, BTreeMap<usize, Turned>, Option<[Vec2; 2]>), String> {
     let axis = &revolve.axis;
     let polar_of = |p: Vec3| polar(p, axis);
     // Each member held to the axis, and which member each triangle is on.
@@ -1649,9 +1672,15 @@ pub(crate) fn turned_profile_of(
         }
     }
     let read = turned_outline(&faces, &meetings, 0.05 * size);
-    let outline = match read {
-        // Numbered by the reading's faces.
-        Ok(outline) => Outline { faces: outline.faces.iter().map(|f| f.map(|i| numbered[i])).collect(), ..outline },
+    let (outline, closing) = match read {
+        // Numbered by the reading's faces. A run open at both ends was closed by a line of no
+        // face, put last, off the axis.
+        Ok(outline) => {
+            let n = outline.corners.len();
+            let closing = (n >= 3 && outline.faces.last() == Some(&None) && (outline.corners[n - 1].y.abs() > 1e-9 || outline.corners[0].y.abs() > 1e-9))
+                .then(|| [outline.corners[n - 1], outline.corners[0]]);
+            (Outline { faces: outline.faces.iter().map(|f| f.map(|i| numbered[i])).collect(), ..outline }, closing)
+        }
         // Where the faces' meetings go round no one profile, a slice through the axis may.
         Err(refusal) => turned_sliced(scan, axis, &faces, &numbered, &owner, 0.005 * size, outcome.tolerance, between).ok_or_else(|| match refusal {
             Refusal::TooFew => "fewer than two faces about the turning axis meet on the scan, so there is no profile to turn".to_string(),
@@ -1660,7 +1689,7 @@ pub(crate) fn turned_profile_of(
             Refusal::Corner(a, b) => format!("faces {} and {} meet on the scan where their shapes do not cross: one of them is fitted wrong", numbered[a] + 1, numbered.get(b).map_or(0, |k| k + 1)),
         })?,
     };
-    Ok((turned_plane(axis), outline, held_faces))
+    Ok((turned_plane(axis), outline, held_faces, closing))
 }
 
 /// The angles halfway between neighbouring spokes at `angles` (low to high, radians): where a
@@ -1814,7 +1843,7 @@ fn turned_sliced(
     reach: f64,
     tolerance: f64,
     between: &[f64],
-) -> Option<Outline> {
+) -> Option<(Outline, Option<[Vec2; 2]>)> {
     let mut walls: Vec<(usize, Wall)> = faces.iter().zip(numbered).filter_map(|(f, &k)| turned_wall(&f.face).map(|w| (k, w))).collect();
     // Each face's place among the walls (a face with no wall has none).
     let place: Vec<Option<usize>> = {
@@ -1876,9 +1905,11 @@ fn turned_sliced(
         }
     }
     let (_, outline) = best?;
-    let corners = outline.corners.iter().map(|c| Vec2::new(c.x, c.y.max(0.0))).collect();
+    let corners: Vec<Vec2> = outline.corners.iter().map(|c| Vec2::new(c.x, c.y.max(0.0))).collect();
+    // The line that closed a run open at both ends, by its ends.
+    let closing = outline.faces.iter().position(|f| *f == Some(usize::MAX)).map(|k| [corners[k], corners[(k + 1) % corners.len()]]);
     let faces = outline.faces.iter().map(|f| f.filter(|&k| k != usize::MAX)).collect();
-    Some(Outline { corners, faces, ..outline })
+    Some((Outline { corners, faces, ..outline }, closing))
 }
 
 #[cfg(test)]

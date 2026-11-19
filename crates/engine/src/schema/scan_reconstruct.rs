@@ -358,6 +358,11 @@ pub struct ScanRevolveItParams {
     /// The body to join. Default: the body Reconstruct builds, made new when there is none.
     #[serde(default)]
     pub into: Option<String>,
+    /// For a skin scanned from one side (the profile is open at both ends; `skin` in the reply
+    /// says so): its wall thickness in mm. The profile is then revolved as a surface and thickened
+    /// by this much away from the scanned side, instead of closed straight across into a solid.
+    #[serde(default)]
+    pub wall: Option<f64>,
 }
 
 /// Cut It: a round hole Reconstruct reads, cut into the body it builds: a circle sketched square
@@ -649,6 +654,10 @@ pub struct ScanBuildResult {
     /// or why they were not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openings: Option<String>,
+    /// Revolve It on a profile open at both ends (one side of a skin): how it was built, the
+    /// profile closed straight across into a solid or (`wall`) revolved as a surface and thickened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skin: Option<String>,
     /// How close the body is to the scan before and after the step (absent when it could not be
     /// measured).
     #[serde(default, skip_serializing_if = "Option::is_none")]

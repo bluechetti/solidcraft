@@ -1912,7 +1912,7 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     // The faces the turned profile runs along. A bore about the axis the profile does not run
     // along (one read off a slice that comes down to the axis there) is no part of the revolved
     // body: it is cut, as a hole is, or the revolve fills it.
-    let in_profile: Option<BTreeSet<usize>> = turned.and_then(|t| t.ok()).map(|(_, outline, _)| outline.faces.iter().flatten().copied().collect());
+    let in_profile: Option<BTreeSet<usize>> = turned.and_then(|t| t.ok()).map(|(_, outline, _, _)| outline.faces.iter().flatten().copied().collect());
     let explained: BTreeSet<usize> = match &revolve {
         Some(revolve) => revolve.members.iter().copied().filter(|&k| !hole(k) || in_profile.as_ref().is_none_or(|p| p.contains(&k))).collect(),
         None => prisms.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).chain(&inner).copied().collect(),
