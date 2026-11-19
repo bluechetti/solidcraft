@@ -47,6 +47,7 @@ pub mod dialogs_appearance;
 pub mod dialogs_assembly;
 pub mod dialogs_constrain;
 pub mod dialogs_coupling;
+pub(crate) mod dialogs_deform;
 pub mod dialogs_end_cap;
 pub mod dialogs_frame;
 mod dialogs_hole;

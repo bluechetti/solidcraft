@@ -135,6 +135,8 @@ struct Cut {
     left: Option<Traced>,
 }
 
+/// How far a Deform's faces and edges may be from the map of the body, mm.
+const DEFORM_TOLERANCE: f64 = 1e-3;
 /// Cuts a body remembers.
 const CUTS_KEPT: usize = 2;
 
@@ -11723,6 +11725,42 @@ fn eval_feature_kind(
             // plane turns with a hinge (Tilt Face) pulls the way it now faces.
             let pull = if pull.0.len() > 0.0 { pull.0 } else { pl.normal() };
             let nb = Traced::step(kernel::draft(&mb.body, &crate::plain(faces), &pl, pull, a)?, &[&mb.traced()]);
+            if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = mb.remade(nb);
+            }
+            Ok(())
+        }
+        FeatureKind::Deform { body, map } => {
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let space = match map {
+                crate::DeformMap::Bend { origin, along, up, length, angle } => kernel::SpaceMap::Bend {
+                    origin: origin.0,
+                    along: along.0,
+                    up: up.0,
+                    length: val(vals, length, Kind::Length)?,
+                    angle: val(vals, angle, Kind::Angle)?,
+                },
+                crate::DeformMap::Twist { origin, axis, length, angle } => kernel::SpaceMap::Twist {
+                    origin: origin.0,
+                    axis: axis.0,
+                    length: val(vals, length, Kind::Length)?,
+                    angle: val(vals, angle, Kind::Angle)?,
+                },
+                crate::DeformMap::Cage { lo, hi, counts, moves } => {
+                    let mut points = solidcraft_geom::deform::SpaceMap::lattice(lo.0, hi.0, *counts);
+                    for crate::CageMove { index: [a, b, c], by } in moves {
+                        let k = (c * counts[1] + b) * counts[0] + a;
+                        let slot = points
+                            .get_mut(k)
+                            .filter(|_| *a < counts[0] && *b < counts[1] && *c < counts[2])
+                            .ok_or_else(|| DocError::Invalid(format!("the cage has no point [{a}, {b}, {c}]")))?;
+                        *slot += Vec3::new(by[0], by[1], by[2]);
+                    }
+                    kernel::SpaceMap::Cage { lo: lo.0, hi: hi.0, counts: *counts, points }
+                }
+            };
+            let nb = Traced::step(kernel::deform(&mb.body, &space, DEFORM_TOLERANCE)?, &[&mb.traced()]);
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = mb.remade(nb);
             }

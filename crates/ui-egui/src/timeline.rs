@@ -282,6 +282,7 @@ pub(crate) fn icon_of(k: &FeatureKind) -> &'static str {
         FeatureKind::Sweep { .. } => "sweep",
         FeatureKind::Shell { .. } => "shell",
         FeatureKind::Draft { .. } => "draft",
+        FeatureKind::Deform { .. } => "scale",
         FeatureKind::Split { .. } => "split",
         FeatureKind::Move { .. } => "move",
         FeatureKind::Import { .. } | FeatureKind::MeshImport { .. } | FeatureKind::MeshConvert { .. } => "import",

@@ -3488,3 +3488,36 @@ fn a_g2_fillet_of_three_edges_closes_their_corner() {
     assert!(4000.0 - g2 > 0.8 * most && 4000.0 - g2 < most, "{g2}");
     assert!((g2 - round).abs() < 0.05 * (4000.0 - round), "G2 {g2} against round {round}");
 }
+
+/// Deform: a bar 100 x 10 x 10 bent a quarter round about the line of its bottom edge keeps the
+/// volume the bend gives it, 100 * 10 * (10 - 10^2 / (2r)) for r = 100 / (pi/2); its length and
+/// angle follow the parameters; twisted, a bar keeps its volume; a cage left as it is changes
+/// nothing; a call naming two ways is refused.
+#[test]
+fn deform_bends_twists_and_cages_a_body() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "turn", "expression": "90 deg"}));
+    run(&mut s, "solid.box", json!({"length": 100, "width": 10, "height": 10, "body_name": "Bar"}));
+    run(&mut s, "solid.deform", json!({"body": "Bar", "bend": {"origin": [0, 0, 0], "along": [1, 0, 0], "up": [0, 0, 1], "angle": "turn"}}));
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+    let bent = |turn: f64| {
+        let r = 100.0 / turn;
+        100.0 * 10.0 * (10.0 - 100.0 / (2.0 * r))
+    };
+    let v = body_volume(&s, "Bar");
+    assert!((v - bent(std::f64::consts::FRAC_PI_2)).abs() < 0.05, "{v}");
+    run(&mut s, "parameters.change", json!({"name": "turn", "expression": "45 deg"}));
+    let v = body_volume(&s, "Bar");
+    assert!((v - bent(std::f64::consts::FRAC_PI_4)).abs() < 0.05, "the angle followed: {v}");
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 100, "width": 10, "height": 10, "body_name": "Bar"}));
+    run(&mut s, "solid.deform", json!({"body": "Bar", "twist": {"origin": [0, 5, 5], "axis": [1, 0, 0], "angle": "90 deg"}}));
+    assert!((body_volume(&s, "Bar") - 10_000.0).abs() < 0.5, "{}", body_volume(&s, "Bar"));
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 20, "body_name": "Cube"}));
+    run(&mut s, "solid.deform", json!({"body": "Cube", "cage": {"moves": []}}));
+    assert!((body_volume(&s, "Cube") - 8000.0).abs() < 1e-3, "{}", body_volume(&s, "Cube"));
+    let err =
+        s.execute("solid.deform", &json!({"body": "Cube", "twist": {"origin": [0, 0, 0], "axis": [0, 0, 1], "angle": 1}, "cage": {}})).unwrap_err();
+    assert!(err.to_string().contains("one of"), "{err}");
+}
