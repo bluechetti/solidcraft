@@ -54,6 +54,7 @@
 pub mod align;
 pub mod base;
 pub mod boundary_face;
+pub mod cage;
 pub mod chain;
 pub mod coil;
 pub mod constrain;
