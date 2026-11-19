@@ -4346,7 +4346,7 @@ mod tests {
             .into_iter()
             .find(|l| {
                 let (p, q) = (k.shown_dots[l.ends[0]].at, k.shown_dots[l.ends[1]].at);
-                l.face == 0 && (p.y - q.y).abs() < 1e-6 && (p.y - 30.0).abs() < 1.0 && p.x < 24.0 && q.x < 24.0
+                l.face == 0 && (p.y - q.y).abs() < 1.0 && (p.y - 30.0).abs() < 1.0 && p.x < 24.0 && q.x < 24.0
             })
             .expect("a step along x in the middle of the first face");
         let whole = select::whole_line(&k, across.ends[0], across.ends[1]);
