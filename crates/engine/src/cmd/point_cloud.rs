@@ -567,6 +567,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(d);
     }
 
+    /// A PTX station (a long-range scanner's export) of 2 × 2 points, one of them no return: its
+    /// three points come in where the station's matrix puts them (10 along x), in metres.
+    #[test]
+    fn a_ptx_station_is_inserted_where_its_matrix_puts_it() {
+        let d = dir("ptx");
+        let path = d.join("station.ptx");
+        let ptx = "2\n2\n0 0 0\n1 0 0\n0 1 0\n0 0 1\n1 0 0 0\n0 1 0 0\n0 0 1 0\n10 0 0 1\n1 2 3 0.5 255 0 0\n0 0 0 0 0 0 0\n4 5 6 0.5 0 255 0\n7 8 9 0.5 0 0 255\n";
+        std::fs::write(&path, ptx).unwrap();
+        let mut s = Session::default();
+        let r = s.execute("pointcloud.insert", &json!({"path": path.to_string_lossy(), "units": "m"})).unwrap();
+        assert_eq!((r["name"].as_str(), r["points"].as_u64()), (Some("station"), Some(3)), "{r}");
+        assert_eq!(r["bounds"], json!([[11000.0, 2000.0, 3000.0], [17000.0, 8000.0, 9000.0]]));
+        assert_eq!(s.doc.point_clouds[0].colors.get(0), Some([255, 0, 0]));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn a_scan_with_normals_saves_and_opens_with_them() {
         let d = dir("normals");

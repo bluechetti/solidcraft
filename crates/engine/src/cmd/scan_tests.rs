@@ -364,7 +364,8 @@ fn find_symmetry_on_a_region_finds_that_regions_plane() {
     assert_eq!(reply["mirror"]["symmetric"], true, "{reply}");
     assert_eq!(reply["region"].as_u64(), Some(region.len() as u64), "{reply}");
     let normal = normal_of(&reply);
-    assert!(normal.dot(x).abs() > 1.0 - 1e-4, "side to side: {reply}");
+    // Within 0.05° of the block's own X.
+    assert!(normal.dot(x).abs() > 0.05f64.to_radians().cos(), "side to side: {reply}");
     let point: Vec<f64> = reply["mirror"]["point"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
     let off = (Vec3::new(point[0], point[1], point[2]) - (origin + x * 30.0)).dot(normal);
     assert!(off.abs() < 0.05, "through X = 30: {off} {reply}");
