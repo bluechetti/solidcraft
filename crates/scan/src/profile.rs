@@ -303,7 +303,11 @@ fn runs_along(scan: &Scan, loops: &[(&[Vec2], &[usize])], direction: Vec3, draft
             (Vec2::new(l.x.min(a.x).min(b.x), l.y.min(a.y).min(b.y)), Vec2::new(h.x.max(a.x).max(b.x), h.y.max(a.y).max(b.y)))
         });
     let cell = reach.max((high.x - low.x).max(high.y - low.y) / 512.0).max(1e-9);
-    let key = |p: Vec2| (((p.x - low.x) / cell).floor() as i64, ((p.y - low.y) / cell).floor() as i64);
+    // A level with no loop at all (a slice over a patch the scanner missed) leaves `low` without
+    // a value: its cells are then all one, and nothing is near, instead of a cell number past
+    // the end of the numbers.
+    let cell_of = |v: f64| if v.is_finite() { v.floor().clamp(-1e15, 1e15) as i64 } else { 0 };
+    let key = |p: Vec2| (cell_of((p.x - low.x) / cell), cell_of((p.y - low.y) / cell));
     let grids: Vec<std::collections::HashMap<(i64, i64), Vec<u32>>> = segments
         .iter()
         .map(|level| {
@@ -2558,6 +2562,9 @@ mod tests {
         assert_eq!(differs, [[false, false]]);
         // Too short a prism to slice elsewhere: by facing alone.
         assert_eq!(runs_along(&scan, &cut, Vec3::Z, 0.0, &[], 0.1), [[true, false]]);
+        // The other levels were sliced and gave no loop at all (the scan has a patch missing
+        // there): nothing is there to agree, and nothing overflows finding that out.
+        assert_eq!(runs_along(&scan, &cut, Vec3::Z, 0.0, &[Vec::new(), Vec::new()], 0.1), [[false, false]]);
     }
 
     /// An open half-section with neither end on the axis (a wheel rim's skin: the scan stops at
