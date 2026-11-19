@@ -441,6 +441,31 @@ fn a_noisy_scans_chamfers_that_read_alike_are_one_chamfer_as_designed() {
     assert!((v - expected).abs() < 0.002 * expected, "{v} against {expected}");
 }
 
+/// The chamfered block under 0.1 mm of noise, which Find All reads on a smoothed copy: smoothing
+/// rounds a chamfer 2.8 mm wide over at its edges, and on the copy it read as strips of cylinder
+/// and cone. Each is the flat face the scan's own points lie on, so all four chamfers are read
+/// and built as the one Chamfer.
+#[test]
+fn a_narrow_chamfer_under_noise_is_read_flat_as_the_scan_has_it() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 80, "width": 60, "height": 20}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.chamfer", json!({"edges": [[40, 0, 20], [80, 30, 20], [40, 60, 20], [0, 30, 20]], "distance": 2, "tangent_chain": false}));
+    let expected = volume(&part, &body);
+    let (mut s, scan) = scanned_with_noise(&part, &body, 0.1, "chamfered-noisy");
+    let found = run(&mut s, "scan.find_all", json!({}));
+    let kinds: Vec<&str> = found["shapes"].as_array().unwrap().iter().map(|f| f["kind"].as_str().unwrap()).collect();
+    assert!(kinds.iter().all(|k| *k == "plane"), "a block of flat faces: {kinds:?}");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    assert_eq!(read["chamfers"].as_array().map(Vec::len), Some(4), "{read}");
+    run(&mut s, "scan.extrude_it", read["proposals"][0]["params"].clone());
+    let chamfered = run(&mut s, "scan.chamfer_it", json!({}));
+    assert_eq!(chamfered["set_aside"], 0, "{chamfered}");
+    assert_eq!(chamfered["chamfers"], json!([{"distance": 2.0, "edges": 4}]), "{chamfered}");
+    let v = volume(&s, &format!("{scan} Reconstructed"));
+    assert!((v - expected).abs() < 0.002 * expected, "{v} against {expected}");
+}
+
 /// A plate 60 × 40 × 8 with two holes Ø 8, scanned with 0.1 mm of noise on half-millimetre
 /// triangles: noise that tilts each triangle some twenty degrees. Read as it is, its faces break
 /// into dozens of small planes, cones and tori that still hold over half of it; Find All reads it

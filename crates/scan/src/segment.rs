@@ -769,6 +769,9 @@ fn smoothed(reading: &Reading, options: &Options, noise: f64, edge: f64, size: f
 /// freer, follows the little the smoothing left.
 const CLOSER: f64 = 0.9;
 const OFF_BY: f64 = 0.25;
+/// A plane takes a region found curved on the copy when it lies on the scan's own points there
+/// within this share of the tolerance.
+const FLAT_WITHIN: f64 = 0.5;
 
 /// The shapes found on the smoothed `copy`, each of the kind that lies closest there (a more
 /// complex one only when it is clearly closer) and fitted again on the scan itself: kept, its
@@ -801,6 +804,16 @@ fn refitted(
         if reading.rms(&region, &refit) > tolerance || degenerate(&refit, at, across, size) {
             continue;
         }
+        // Smoothing rounds a narrow flat face over at its edges (a chamfer a few triangles wide),
+        // and on the copy it reads as a strip of cylinder or cone. The scan itself says which it
+        // is: a plane that lies on the region's own points within half the tolerance (the
+        // tolerance is three times the noise: the noise and half as much again) is the shape.
+        // Only a plane: a band of a cone lies that near a sphere too, and is the cone.
+        let simpler = (refit.kind() != Kind::Plane)
+            .then(|| fit::shape_of_sampled(&reading.scan, &region, Kind::Plane, GROWING_POINTS))
+            .flatten()
+            .filter(|flat| reading.rms(&region, flat) <= FLAT_WITHIN * tolerance && !degenerate(flat, at, across, size));
+        let refit = simpler.unwrap_or(refit);
         let id = kept.len() as u32;
         for &t in &region {
             reading.label[t] = id;
