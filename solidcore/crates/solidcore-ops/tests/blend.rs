@@ -2085,6 +2085,100 @@ fn curvature_rounds_over_mixed_wedges_each_take_their_own_balls_area() {
     assert!((ab - ba).abs() < 1e-7, "{ab} {ba}");
 }
 
+/// Two top edges of a 20 x 20 x 10 box that meet where the upright edge stays sharp, rounded
+/// curvature-continuously r 1.5 in one call: the rounds meet in a mitre on the corner's plane
+/// of symmetry, x = y. Each round is one G2 section swept along its edge, so the material off
+/// is the section's region D (in y, z for the round along x) swept from the mitre to the far
+/// end, `2 (L A - M)`: L = 20, A the area of D and M its first moment about the side wall y = 0.
+/// By Green's theorem over D, bounded by the section and the two walls (where y = 0 or dz = 0),
+/// A = |∫ y dz| and M = |∫ y^2 / 2 dz| along the section, integrated here (Gauss-Legendre) from
+/// the round's own definition; A is the circle's, (1 - pi/4) r^2, the equal-area rule. The
+/// circular rounds' M = (10 - 3 pi) r^3 / 12 checks the formula. The two G2 rounds touch the
+/// top face to second order at X, where their rails cross, so their traced intersection
+/// stopped short of X and the round's face was closed past the corner ("not a solid"): the
+/// mitre is now the section's image on that plane, ending at X.
+#[test]
+fn two_curvature_rounds_meet_in_a_mitre_where_the_third_edge_stays_sharp() {
+    all_fixes();
+    let (r, l) = (1.5, 20.0);
+    let a = (1.0 - PI / 4.0) * r * r;
+    let made = |kind| {
+        let b = make_box([0.0; 3], [l, l, 10.0]).unwrap();
+        let edges = [
+            edge_at(&b, [10.0, 0.0, 10.0]),
+            edge_at(&b, [0.0, 10.0, 10.0]),
+        ];
+        blend(&b, kind, &edges, &[r], &[], Corners::Filled)
+            .unwrap_or_else(|e| panic!("{kind:?}: {e:?}"));
+        assert!(b.check(CheckLevel::All).unwrap().is_valid(), "{kind:?}");
+        b
+    };
+    let circle = made(Blend::Round);
+    let m = (10.0 - 3.0 * PI) * r * r * r / 12.0;
+    let off = l * l * 10.0 - volume(&circle);
+    assert!(rel(off, 2.0 * (l * a - m)) < 1e-9, "round: {off}");
+
+    let b = made(Blend::Curvature);
+    let (k, brep) = kernel_copy(&b);
+    // Gauss-Legendre on 8 points, over 16 panels of the section
+    let nodes = [
+        (0.183_434_642_495_649_8, 0.362_683_783_378_362),
+        (0.525_532_409_916_329, 0.313_706_645_877_887_3),
+        (0.796_666_477_413_626_7, 0.222_381_034_453_374_5),
+        (0.960_289_856_497_536_3, 0.101_228_536_290_376_3),
+    ];
+    let mut sections = Vec::new();
+    for &f in brep.face_list() {
+        let s = brep.face(f).unwrap().surface.as_ref().unwrap();
+        let Some(BlendRef::Procedural(pb)) = s.procedural_blend() else {
+            continue;
+        };
+        let d = pb.net().natural_uv_domain();
+        let (lo, hi) = (
+            pb.definition_parameters(d.min()),
+            pb.definition_parameters(d.max()),
+        );
+        let s_mid = 0.5 * (lo.x + hi.x);
+        // the round along x: its section at the middle of the edge
+        let p = |t: f64| pb.evaluate_definition(&k, s_mid, t, 0, 1).unwrap();
+        let along = (pb.evaluate_definition(&k, lo.x, lo.y, 0, 0).unwrap()[0][0]
+            - pb.evaluate_definition(&k, hi.x, lo.y, 0, 0).unwrap()[0][0])
+            .x
+            .abs();
+        if along < 1.0 {
+            continue;
+        }
+        let (mut area, mut moment) = (0.0, 0.0);
+        let panels = 16;
+        for i in 0..panels {
+            let t0 = lo.y + (hi.y - lo.y) * f64::from(i) / f64::from(panels);
+            let h = 0.5 * (hi.y - lo.y) / f64::from(panels);
+            for &(x, w) in &nodes {
+                for t in [t0 + h * (1.0 - x), t0 + h * (1.0 + x)] {
+                    let d = p(t);
+                    let (y, dz) = (d[0][0].y, d[0][1].z);
+                    area += w * h * y * dz;
+                    moment += w * h * 0.5 * y * y * dz;
+                }
+            }
+        }
+        sections.push((area.abs(), moment.abs()));
+    }
+    let [(area, moment)] = sections[..] else {
+        panic!("one G2 round along x: {sections:?}")
+    };
+    assert!(
+        (area - a).abs() < 1e-9,
+        "the section's area {area}, want {a}"
+    );
+    let off = l * l * 10.0 - volume(&b);
+    let want = 2.0 * (l * area - moment);
+    assert!(
+        rel(off, want) < 1e-9,
+        "curvature: {off} off, want {want} (M {moment})"
+    );
+}
+
 /// #3145: a chamfer too large for its faces is refused with the distance that builds, which the
 /// kernel reads through the chamfer's definition (its offsets linear in its sizes at the edge's
 /// wedge), and that distance builds. A 2 thick wall, both its top edges chamfered 1.5 at
