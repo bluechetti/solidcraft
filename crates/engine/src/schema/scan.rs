@@ -472,6 +472,65 @@ pub struct ScanMarkersResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Parameters of `scan.remove_and_fill`: part of the scan taken off (a stamp, a boss, a sprue, a
+/// sticker) and the holes that leaves closed. Kept as a Scan Clean step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanRemoveFillParams {
+    /// The scan (mesh body). Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The part to take off, a point on it with `grow` or `radius`: the face grown from the point
+    /// as Select on Scan's Region grows it (degrees, 1 to 90; `true`: 30), or the scan within
+    /// `radius` mm of it.
+    #[serde(default)]
+    pub point: Option<Point3>,
+    #[serde(default)]
+    pub grow: Option<Value>,
+    #[serde(default)]
+    pub radius: Option<f64>,
+    /// A kept selection's triangles (Keep Selection).
+    #[serde(default)]
+    pub saved: Option<String>,
+    /// What is selected on the scan. A selection is never taken unless asked.
+    #[serde(default)]
+    pub selected: Option<bool>,
+    /// The area as the step keeps it: `{triangles: the scan's count, runs: [[first, count], …]}`.
+    #[serde(default)]
+    pub area: Option<Value>,
+    /// Shape each patch to carry the surface round it across. Default: true.
+    #[serde(default)]
+    pub fair: Option<bool>,
+    /// Write the scan back into its Insert Mesh feature instead of adding a step.
+    #[serde(default)]
+    pub in_place: Option<bool>,
+    /// The step's name.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// What `scan.remove_and_fill` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanRemoveFillResult {
+    pub body: String,
+    /// Triangles taken off.
+    pub removed_triangles: usize,
+    /// Holes the removal opened that were closed, and those that could not be.
+    pub filled: usize,
+    pub failed: usize,
+    /// Triangles the patches added.
+    pub added_triangles: usize,
+    /// Places where the removal reached the scan's own edge: a bite out of the rim, left open.
+    pub open_to_edge: usize,
+    /// The scan's triangles after.
+    pub triangles: usize,
+    /// The Scan Clean step (or Insert Mesh feature, `in_place`) that keeps it.
+    pub feature: u64,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// What `scan.deviation` returns.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanDeviationResult {

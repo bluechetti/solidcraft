@@ -25,9 +25,10 @@ use crate::schema::scan::{
     ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere,
     ScanFittedTorus, ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult,
     ScanMarkersParams, ScanMarkersResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror, ScanMirrorFreeFormParams,
-    ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRepairParams, ScanRepairResult,
-    ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult, ScanSliceSurfaceParams, ScanSliceSurfaceResult,
-    ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams, ScanWrapSurfaceResult,
+    ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRemoveFillParams, ScanRemoveFillResult,
+    ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult,
+    ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams,
+    ScanWrapSurfaceResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -56,6 +57,7 @@ const WRAP_SURFACE_CONTRACT: TypedContract<ScanWrapSurfaceParams> = TypedContrac
 const FLOATING_CONTRACT: TypedContract<ScanFloatingParams> = TypedContract::new();
 const HOLES_CONTRACT: TypedContract<ScanHolesParams> = TypedContract::new();
 const MARKERS_CONTRACT: TypedContract<ScanMarkersParams> = TypedContract::new();
+const REMOVE_FILL_CONTRACT: TypedContract<ScanRemoveFillParams> = TypedContract::new();
 const REDUCE_CONTRACT: TypedContract<ScanReduceParams> = TypedContract::new();
 const REPAIR_CONTRACT: TypedContract<ScanRepairParams> = TypedContract::new();
 const CLEAN_UP_CONTRACT: TypedContract<crate::schema::scan::ScanCleanUpParams> = TypedContract::new();
@@ -87,6 +89,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&MARKERS_CONTRACT)
         .output(output_schema_for::<ScanMarkersResult>)
         .params("body?: mesh body (default: the selected or only one); at?: [x,y,z] on one marker (a reference sphere): fitted there, and every other sphere of its radius on the scan found; or centres: [[x,y,z],…] with radius: length; tolerance?: length (default: from the fit); fair?: bool (default true); preview?: bool (true: finds them and changes nothing): the markers taken off and the holes they leave closed, kept as a Scan Clean step in the timeline (the centres found, made again on the scan before it; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, radius, centres, removed_triangles, filled, failed, triangles, feature"),
+    CommandSpec::new("scan.remove_and_fill", "Remove and Fill", crate::checked!("scan.remove_and_fill", clean::remove_and_fill))
+        .at("SCAN", "CLEAN")
+        .icon("delete")
+        .contract(&REMOVE_FILL_CONTRACT)
+        .output(output_schema_for::<ScanRemoveFillResult>)
+        .params("body?: mesh body (default: the selected or only one); area: point: [x,y,z] with grow?: true|degrees or radius?: mm, saved?: kept selection, selected?: true (what is selected; a selection is never taken unasked), or area?: {triangles, runs} as the step keeps it (one is needed); fair?: bool (default true: each patch carries the surface round it across; false leaves it flat): the part taken off (a stamp, a boss, a sprue stub, a sticker) and the holes that leaves closed; holes the scan had already stay open, and where the part reached the scan's own edge the bite is left open (open_to_edge); kept as a Scan Clean step in the timeline (its settings only, made again on the scan before it, editable later; one undo step; in_place?: bool writes the scan back in its Insert Mesh feature instead) → body, removed_triangles, filled, failed, added_triangles, open_to_edge, triangles, feature"),
     CommandSpec::new("scan.reduce", "Reduce Mesh", crate::checked!("scan.reduce", clean::reduce))
         .at("SCAN", "CLEAN")
         .icon("scale")

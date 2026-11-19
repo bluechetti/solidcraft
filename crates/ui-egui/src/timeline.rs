@@ -293,7 +293,7 @@ pub(crate) fn icon_of(k: &FeatureKind) -> &'static str {
             CleanStep::Repair { .. } => "mesh_body",
             CleanStep::Denoise { .. } => "c_smooth",
             CleanStep::Remesh { .. } => "grid",
-            CleanStep::RemoveMarkers { .. } => "delete",
+            CleanStep::RemoveMarkers { .. } | CleanStep::RemoveAndFill { .. } => "delete",
         },
         FeatureKind::BodyTransfer { .. } => "move",
         FeatureKind::Thread { .. } => "thread",

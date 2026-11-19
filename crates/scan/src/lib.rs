@@ -58,6 +58,7 @@ pub mod chain;
 pub mod coil;
 pub mod constrain;
 pub mod curve;
+pub mod defeature;
 pub mod denoise;
 pub mod deviation;
 pub mod face_options;

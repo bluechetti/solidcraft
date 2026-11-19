@@ -2988,6 +2988,58 @@ fn remove_markers_finds_them_all_from_one_and_keeps_a_step() {
     assert_eq!(given["filled"], 1, "a marker given by its centre: {given}");
 }
 
+/// Remove and Fill: a ball standing on a floor, taken off round a click, leaves the floor closed
+/// flat where it stood, as one Scan Clean step that undo takes back; with no part chosen the
+/// command says what it needs.
+#[test]
+fn remove_and_fill_takes_a_boss_off_and_closes_the_floor() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-remove-fill-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("boss.stl");
+    let boss = Vec3::new(50.0, 50.0, 0.0);
+    // A floor 100 mm square with a cone-shaped boss 4 mm high and 6 mm round, of one piece with it.
+    let n = 60;
+    let at = |i: usize, j: usize| {
+        let (x, y) = (100.0 * i as f64 / n as f64, 100.0 * j as f64 / n as f64);
+        let r = Vec3::new(x, y, 0.0).dist(boss);
+        Vec3::new(x, y, if r < 6.0 { 4.0 * (1.0 - r / 6.0) } else { 0.0 })
+    };
+    let mut stl = String::from("solid boss\n");
+    for i in 0..n {
+        for j in 0..n {
+            for [a, b, c] in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                stl += &format!(
+                    "facet normal 0 0 0\nouter loop\nvertex {} {} {}\nvertex {} {} {}\nvertex {} {} {}\nendloop\nendfacet\n",
+                    a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z
+                );
+            }
+        }
+    }
+    std::fs::write(&path, stl + "endsolid boss\n").unwrap();
+    let mut s = Session::default();
+    let scan = run(&mut s, "file.insert_mesh", json!({"path": path}))["created_bodies"][0].as_str().unwrap().to_owned();
+    let triangles = |s: &Session| s.model.state().body(&scan).and_then(|b| b.body.triangle_mesh().map(|(_, t)| t.len())).unwrap();
+    let before = triangles(&s);
+    let features = s.doc.features.len();
+
+    let err = s.execute("scan.remove_and_fill", &json!({"body": scan})).unwrap_err().to_string();
+    assert!(err.contains("choose the part"), "{err}");
+
+    let done = run(&mut s, "scan.remove_and_fill", json!({"body": scan, "point": [50, 50, 3.5], "radius": 9}));
+    assert!(done["removed_triangles"].as_u64().unwrap() > 0, "{done}");
+    assert_eq!((done["filled"].as_u64(), done["failed"].as_u64(), done["open_to_edge"].as_u64()), (Some(1), Some(0), Some(0)), "{done}");
+    assert_eq!(s.doc.features.len(), features + 1, "one Scan Clean step");
+    let state = s.model.state();
+    let (positions, _) = state.body(&scan).and_then(|b| b.body.triangle_mesh()).unwrap();
+    let highest = positions.iter().filter(|p| Vec3::new(p.x, p.y, 0.0).dist(boss) < 7.0).map(|p| p.z.abs()).fold(0.0, f64::max);
+    assert!(highest < 1e-6, "the floor is closed flat where the boss stood: {highest}");
+    drop(state);
+
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!((triangles(&s), s.doc.features.len()), (before, features), "undone");
+}
+
 /// A sheet `size` mm square of `n` × `n` squares at height `z`, as an STL.
 fn sheet_stl(size: f64, n: usize, z: f64) -> String {
     let at = |i: usize, j: usize| Vec3::new(size * i as f64 / n as f64, size * j as f64 / n as f64, z);

@@ -199,6 +199,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.refit",
     "scan.register",
     "scan.remesh",
+    "scan.remove_and_fill",
     "scan.remove_floating",
     "scan.remove_markers",
     "scan.repair",

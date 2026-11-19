@@ -618,6 +618,8 @@ pub const SECTIONS: &[Section] = &[
             "scan.fill_holes",
             // Reference spheres off the scan, the holes they leave closed.
             "scan.remove_markers",
+            // A stamp, a boss or a sticker off the scan, the hole it leaves closed.
+            "scan.remove_and_fill",
             "scan.repair",
             "scan.reduce",
             "scan.denoise",

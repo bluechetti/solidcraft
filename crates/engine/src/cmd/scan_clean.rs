@@ -24,7 +24,8 @@ use solidcraft_scan::place::Rigid;
 use super::{length, mesh_name};
 use crate::params::bad;
 use crate::schema::scan::{
-    ScanCleanUpResult, ScanCleanUpStep, ScanFloatingResult, ScanHolesResult, ScanMarkersResult, ScanReduceResult, ScanRepairResult,
+    ScanCleanUpResult, ScanCleanUpStep, ScanFloatingResult, ScanHolesResult, ScanMarkersResult, ScanReduceResult, ScanRemoveFillResult,
+    ScanRepairResult,
 };
 use crate::{EngineError, Result, Session};
 
@@ -321,6 +322,31 @@ pub(super) fn remove_markers(s: &mut Session, p: &Value) -> Result<Value> {
     reply.failed = Some(failed);
     reply.triangles = Some(done.triangles());
     reply.feature = Some(feature);
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+pub(super) fn remove_and_fill(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.remove_and_fill";
+    let name = mesh_name(s, p, cmd)?;
+    let fair = crate::params::bool_(p, "fair").unwrap_or(true);
+    let area = super::flatten::step_area(s, p, &name, cmd)?
+        .ok_or_else(|| bad(cmd, "choose the part to take off: `point` with `grow` or `radius`, `saved`, `selected: true` or `area`"))?;
+    let (done, feature) = apply(s, p, &name, CleanStep::RemoveAndFill { area, fair }, cmd)?;
+    let triangles = done.triangles();
+    let Report::RemoveAndFill { removed_triangles, filled, failed, added_triangles, open_to_edge } = done.report else {
+        return Err(bad(cmd, "the step did something else"));
+    };
+    let reply = ScanRemoveFillResult {
+        body: name,
+        removed_triangles,
+        filled,
+        failed,
+        added_triangles,
+        open_to_edge,
+        triangles,
+        feature,
+        param_warnings: Vec::new(),
+    };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
