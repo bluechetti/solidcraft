@@ -135,6 +135,7 @@ mod tests {
             "scan.remove_floating",
             "scan.remove_markers",
             "scan.remove_and_fill",
+            "scan.measure_line",
             "scan.fill_holes",
             "scan.reduce",
             "scan.repair",

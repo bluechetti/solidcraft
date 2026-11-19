@@ -24,9 +24,9 @@ use crate::schema::scan::{
     ScanDeviationPinResult, ScanDeviationResult, ScanEditNetParams, ScanEditNetResult, ScanEditSurfaceParams, ScanEditSurfaceResult, ScanFitMake,
     ScanFitParams, ScanFitResult, ScanFitSurfaceParams, ScanFitSurfaceResult, ScanFittedCone, ScanFittedCylinder, ScanFittedPlane, ScanFittedSphere,
     ScanFittedTorus, ScanFloatingParams, ScanFloatingResult, ScanFreeFormParams, ScanFreeFormResult, ScanHolesParams, ScanHolesResult,
-    ScanMarkersParams, ScanMarkersResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror, ScanMirrorFreeFormParams,
-    ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRemoveFillParams, ScanRemoveFillResult,
-    ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult,
+    ScanMarkersParams, ScanMarkersResult, ScanMeasureLineParams, ScanMeasureLineResult, ScanMergeSurfacesParams, ScanMergeSurfacesResult, ScanMirror,
+    ScanMirrorFreeFormParams, ScanMirrorFreeFormResult, ScanPlaceParams, ScanPlaceResult, ScanReduceParams, ScanReduceResult, ScanRemoveFillParams,
+    ScanRemoveFillResult, ScanRepairParams, ScanRepairResult, ScanSectionParams, ScanSectionResult, ScanSectionsAlongParams, ScanSectionsAlongResult,
     ScanSliceSurfaceParams, ScanSliceSurfaceResult, ScanSquareParams, ScanStandParams, ScanSymmetryParams, ScanSymmetryResult, ScanWrapSurfaceParams,
     ScanWrapSurfaceResult,
 };
@@ -46,6 +46,7 @@ const SURFACE_CONTRACT: TypedContract<ScanFitSurfaceParams> = TypedContract::new
 const COMPLETE_CONTRACT: TypedContract<ScanCompleteParams> = TypedContract::new();
 const EDIT_SURFACE_CONTRACT: TypedContract<ScanEditSurfaceParams> = TypedContract::new();
 const CURVE_CONTRACT: TypedContract<ScanCurveParams> = TypedContract::new();
+const MEASURE_LINE_CONTRACT: TypedContract<ScanMeasureLineParams> = TypedContract::new();
 const EDIT_NET_CONTRACT: TypedContract<ScanEditNetParams> = TypedContract::new();
 const FREE_FORM_CONTRACT: TypedContract<ScanFreeFormParams> = TypedContract::new();
 const ADD_FACE_CONTRACT: TypedContract<ScanAddFaceParams> = TypedContract::new();
@@ -260,6 +261,14 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&EDIT_NET_CONTRACT)
         .output(output_schema_for::<ScanEditNetResult>)
         .params("surface?: the surface body (default: the selected one, else the one made last); op: refine (in?: u|v|both) | split | duplicate (after?: bool, default true) | remove | crease | uncrease | extend (distance?: length, default 10 mm); line?: {row: j} | {column: i}: the net changed as a whole (refine and split leave the surface as it was; a crease makes the surface run sharp along the line, needing three lines each side), one undo step → surface, controls, line, creases, feature"),
+    CommandSpec::new("scan.measure_line", "Length on Scan", crate::checked!("scan.measure_line", curve::measure_line))
+        .at("SCAN", "CHECK")
+        .icon("measure")
+        .read_only()
+        .noundo()
+        .contract(&MEASURE_LINE_CONTRACT)
+        .output(output_schema_for::<ScanMeasureLineResult>)
+        .params("body?: mesh body (default: the selected or only one); points: [[x,y,z], …] dots on the scan in order (2 to 1000); view?: [x,y,z] the direction looked from (default: the way the scan faces at each stretch's dots); path?: bool (default false: the way each stretch takes as points): between each two dots the way across the scan the cut of the plane through both (and the view) takes, the short way between them, so the length is along the surface, not through the air; where no cut joins them (a hole, two pieces) the straight line is laid on the scan and counted as not followed; changes nothing → body, dots, length, straight, under_read, worst_gap, rms_gap (the surface off the straight lines between dots), ends, delta [dx,dy,dz], stretches [{length, followed, path?}], not_followed, round? {radius, centre, turned (deg), within} when the line is an arc"),
     CommandSpec::new("scan.deviation", "Scan Deviation", crate::checked!("scan.deviation", deviation))
         .at("SCAN", "CHECK")
         .icon("curvature_map")

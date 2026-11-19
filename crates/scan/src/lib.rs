@@ -103,6 +103,7 @@ mod subdivide;
 pub mod surface;
 pub mod surface_check;
 pub mod surface_edit;
+pub mod surface_line;
 pub mod survey;
 pub mod symmetric;
 pub mod symmetry;

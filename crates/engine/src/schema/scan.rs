@@ -1467,6 +1467,77 @@ pub struct ScanCurveResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Measure a line on the scan: dots on it, and between each two the way across the scan the cut
+/// of a plane through both takes (the plane holds `view`, the direction looked from, else the way
+/// the scan faces at the two dots). Changes nothing.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanMeasureLineParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The dots, in order, on the scan, in mm (2 to 1000).
+    pub points: Vec<Point3>,
+    /// The direction the line is looked at from (the view it was drawn in). Default: the way the
+    /// scan faces at each stretch's two dots.
+    #[serde(default)]
+    pub view: Option<Point3>,
+    /// Give the way each stretch takes, as points. Default: false.
+    #[serde(default)]
+    pub path: Option<bool>,
+}
+
+/// One stretch of a measured line.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanLineStretch {
+    /// Along the surface, mm.
+    pub length: f64,
+    /// It follows the scan; false: draped across a hole or between pieces.
+    pub followed: bool,
+    /// The way it takes, with `path: true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<Vec<[f64; 3]>>,
+}
+
+/// The circle a measured line goes round, when it is an arc.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanLineRound {
+    pub radius: f64,
+    pub centre: [f64; 3],
+    /// How far round, degrees.
+    pub turned: f64,
+    /// The most the line is off the circle, mm.
+    pub within: f64,
+}
+
+/// What `scan.measure_line` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanMeasureLineResult {
+    pub body: String,
+    /// The dots, on the scan.
+    pub dots: Vec<[f64; 3]>,
+    /// Along the surface from the first dot to the last, mm.
+    pub length: f64,
+    /// Straight from dot to dot, and how much less that reads.
+    pub straight: f64,
+    pub under_read: f64,
+    /// The most and the root mean square the surface is off the straight lines between the dots.
+    pub worst_gap: f64,
+    pub rms_gap: f64,
+    /// From the first dot to the last, straight, and its parts along x, y and z.
+    pub ends: f64,
+    pub delta: [f64; 3],
+    pub stretches: Vec<ScanLineStretch>,
+    /// Stretches that could not follow the surface (draped across a hole or between pieces).
+    pub not_followed: usize,
+    /// The circle the line goes round, when it is an arc (within 1.5% of its radius, flat, round 30° or more).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub round: Option<ScanLineRound>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// Take the floating pieces off a scan: the pieces (triangles joined through their corners) far
 /// smaller than the largest. A Scan Clean step in the timeline keeps the settings; one undo step.
 #[derive(Debug, Deserialize, JsonSchema)]

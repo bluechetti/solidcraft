@@ -316,6 +316,7 @@ pub(crate) mod scan_dots;
 pub(crate) mod scan_fidelity;
 pub(crate) mod scan_how;
 pub(crate) mod scan_job;
+pub(crate) mod scan_line;
 pub(crate) mod scan_paint;
 pub(crate) mod scan_selection;
 pub(crate) mod scan_shapes;

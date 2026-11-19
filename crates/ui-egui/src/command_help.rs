@@ -186,6 +186,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.keep_selection",
     "scan.loft_it",
     "scan.make_flat",
+    "scan.measure_line",
     "scan.merge_surfaces",
     "scan.mesh_from_points",
     "scan.pattern_it",

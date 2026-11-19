@@ -3040,6 +3040,34 @@ fn remove_and_fill_takes_a_boss_off_and_closes_the_floor() {
     assert_eq!((triangles(&s), s.doc.features.len()), (before, features), "undone");
 }
 
+/// Length on Scan: on a flat sheet the line along the surface is the straight one, with its
+/// way given when asked; nothing in the design changes; a dot off the scan is refused.
+#[test]
+fn measure_line_reads_the_length_along_the_scan_and_changes_nothing() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-scan-measure-line-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("sheet.stl");
+    std::fs::write(&path, sheet_stl(40.0, 20, 0.0)).unwrap();
+    let mut s = Session::default();
+    let scan = run(&mut s, "file.insert_mesh", json!({"path": path}))["created_bodies"][0].as_str().unwrap().to_owned();
+    let (revision, features) = (s.revision, s.doc.features.len());
+    let line = run(&mut s, "scan.measure_line", json!({"body": scan, "points": [[5, 5, 0], [35, 5, 0], [35, 25, 0]], "path": true}));
+    assert!((line["length"].as_f64().unwrap() - 50.0).abs() < 1e-9, "{line}");
+    assert!(line["under_read"].as_f64().unwrap().abs() < 1e-9 && line["not_followed"] == 0, "{line}");
+    assert!((line["ends"].as_f64().unwrap() - (30.0f64 * 30.0 + 20.0 * 20.0).sqrt()).abs() < 1e-9);
+    assert_eq!(line["delta"], json!([30.0, 20.0, 0.0]));
+    let stretches = line["stretches"].as_array().unwrap();
+    assert_eq!(stretches.len(), 2);
+    assert!(stretches.iter().all(|st| st["path"].as_array().is_some_and(|p| p.len() >= 2)), "{line}");
+    assert!(line.get("round").is_none(), "a straight line is no arc");
+    assert_eq!((s.revision, s.doc.features.len()), (revision, features), "nothing changes");
+    let err = s.execute("scan.measure_line", &json!({"body": scan, "points": [[5, 5, 0], [5, 5, 30]]})).unwrap_err().to_string();
+    assert!(err.contains("dot 2 is not on the scan"), "{err}");
+    let err = s.execute("scan.measure_line", &json!({"body": scan, "points": [[5, 5, 0]]})).unwrap_err().to_string();
+    assert!(err.contains("2 to 1000"), "{err}");
+}
+
 /// A sheet `size` mm square of `n` × `n` squares at height `z`, as an STL.
 fn sheet_stl(size: f64, n: usize, z: f64) -> String {
     let at = |i: usize, j: usize| Vec3::new(size * i as f64 / n as f64, size * j as f64 / n as f64, z);
