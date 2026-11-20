@@ -301,7 +301,7 @@ impl Painter {
         profiling::scope!("Painter::set_window"); // profile_function gives bad names for async functions
 
         if let Some(window) = window {
-            let size = window.inner_size();
+            let size = surface_size(&window);
             if !self.surfaces.contains_key(&viewport_id) {
                 crate::startup_step(crate::STEP_SURFACE, ""); // SolidCraft
                 let surface = self.instance.create_surface(window)?;
@@ -328,7 +328,7 @@ impl Painter {
         profiling::scope!("Painter::set_window_unsafe"); // profile_function gives bad names for async functions
 
         if let Some(window) = window {
-            let size = window.inner_size();
+            let size = surface_size(window);
             if !self.surfaces.contains_key(&viewport_id) {
                 let surface = unsafe {
                     self.instance
@@ -763,7 +763,7 @@ impl Painter {
         };
         // SolidCraft: a minimized native window may retain a clamped 1x1 surface.
         if let Some(effect) = &render_state.renderer.read().frame_compositor {
-            let extent = window.inner_size();
+            let extent = surface_size(window);
             if extent.width == 0 || extent.height == 0 {
                 effect.suspend();
                 return vsync_sec;
@@ -1116,4 +1116,12 @@ impl Painter {
     pub fn destroy(&mut self) {
         // TODO(emilk): something here?
     }
+}
+
+/// SolidCraft: the size a window's surface is drawn at. On iOS egui lays out the whole screen
+/// (`egui_winit::screen_size_in_pixels` uses `outer_size`, behind the status bar and home
+/// indicator), while winit's `inner_size` is only the safe area: a surface that size would cut
+/// off the bottom of every frame and iOS would stretch the rest to fill the screen.
+pub fn surface_size(window: &winit::window::Window) -> winit::dpi::PhysicalSize<u32> {
+    if cfg!(target_os = "ios") { window.outer_size() } else { window.inner_size() }
 }
