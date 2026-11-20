@@ -175,9 +175,10 @@ public func sc_ar_coaching() -> Int32 { (bridge?.overlay?.isActive ?? false) ? 1
 ///   ARKit's depth (the app puts its own depth row in), for the screen's orientation;
 /// - `camera` (16): the camera's pose in the world;
 /// - `display` (6): view point (0..1) to camera picture point (0..1), as a, b, c, d, tx, ty;
-/// - `info` (8 ints): tracking state (0 not available, 1 limited, 2 normal), the limited reason
+/// - `info` (9 ints): tracking state (0 not available, 1 limited, 2 normal), the limited reason
 ///   (0 none, 1 initializing, 2 excessive motion, 3 insufficient features, 4 relocalizing),
-///   interrupted, picture width, height, luma row bytes, chroma row bytes, light (lumens);
+///   interrupted, picture width, height, luma row bytes, chroma row bytes, light (lumens, 1000
+///   for a well-lit room), its colour temperature (kelvin, 6500 neutral);
 /// - `planes` (2 pointers): the picture's luma (R8) and chroma (RG8, half size) bytes, filled
 ///   only for a new picture and readable until `sc_ar_frame_done`.
 /// Returns 0 with no frame, 1 with a new picture, 2 for the same picture as before.
@@ -213,6 +214,7 @@ public func sc_ar_frame(
     }
     info[2] = b.interrupted ? 1 : 0
     info[7] = Int32(frame.lightEstimate?.ambientIntensity ?? 1000)
+    info[8] = Int32(frame.lightEstimate?.ambientColorTemperature ?? 6500)
     let pixels = frame.capturedImage
     info[3] = Int32(CVPixelBufferGetWidthOfPlane(pixels, 0))
     info[4] = Int32(CVPixelBufferGetHeightOfPlane(pixels, 0))

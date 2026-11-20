@@ -111,6 +111,8 @@ struct Seen {
     display: [f32; 6],
     tracking: i32,
     reason: i32,
+    /// What the room's light does to the model's colours (red, green, blue gains).
+    light: [f32; 3],
 }
 
 /// The model in the room: room point = translation + scale · axes · model point.
@@ -342,7 +344,7 @@ impl State {
         let total_ms = started.elapsed().as_secs_f64() * 1e3;
         self.timing = [self.timing[0] + camera_ms, self.timing[1] + total_ms];
         if self.frames % 300 == 299 {
-            crate::note(&format!("ar: per frame {:.2} ms camera, {:.2} ms camera + model ({} px), model {}", self.timing[0] / 300.0, self.timing[1] / 300.0, size_px[0] * size_px[1], model_drawn));
+            crate::note(&format!("ar: per frame {:.2} ms camera, {:.2} ms camera + model ({} px), model {}, light {:?}", self.timing[0] / 300.0, self.timing[1] / 300.0, size_px[0] * size_px[1], model_drawn, seen.as_ref().map(|s| s.light)));
             self.timing = [0.0; 2];
         }
         if let Some(seen) = seen.as_ref() {
@@ -376,7 +378,7 @@ impl State {
         let mut proj = [0f32; 16];
         let mut camera = [0f32; 16];
         let mut display = [0f32; 6];
-        let mut info = [0i32; 8];
+        let mut info = [0i32; 9];
         let mut planes: [*const u8; 2] = [std::ptr::null(); 2];
         let got = frame_fn(
             view_pt[0],
@@ -438,6 +440,7 @@ impl State {
             display,
             tracking: info[0],
             reason: info[1],
+            light: light_gain(info[7], info[8]),
         })
     }
 }
@@ -826,7 +829,7 @@ fn ensure_gpu(rs: &egui_wgpu::RenderState) {
     });
     let uniform = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("sc_ar"),
-        size: 160,
+        size: 176,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -979,7 +982,7 @@ fn write_uniform(rs: &egui_wgpu::RenderState, seen: &Seen, model: bool, shadow: 
     let linear = if rs.target_format.is_srgb() { 1.0 } else { 0.0 };
     let inverse = invert(&seen.view_proj);
     let shadow = shadow.filter(|_| model && inverse.is_some());
-    let mut values = [0f32; 40];
+    let mut values = [0f32; 44];
     values[..8].copy_from_slice(&[d[0], d[1], d[2], d[3], d[4], d[5], if model { 1.0 } else { 0.0 }, linear]);
     if let Some(inv) = inverse {
         for (c, column) in inv.iter().enumerate() {
@@ -996,6 +999,7 @@ fn write_uniform(rs: &egui_wgpu::RenderState, seen: &Seen, model: bool, shadow: 
         values[32..36].copy_from_slice(&[e[0], e[1], e[2], if occlude { 1.0 } else { 0.0 }]);
         values[36..40].copy_from_slice(&[-b[0], -b[1], -b[2], 0.0]);
     }
+    values[40..44].copy_from_slice(&[seen.light[0], seen.light[1], seen.light[2], 1.0]);
     let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
     rs.queue.write_buffer(&gpu.uniform, 0, &bytes);
 }
@@ -1031,6 +1035,8 @@ struct U {
     eye: vec4<f32>,
     // The way the camera looks (xyz).
     forward: vec4<f32>,
+    // The room's light on the model: red, green and blue gains (linear light).
+    light: vec4<f32>,
 };
 @group(0) @binding(0) var luma: texture_2d<f32>;
 @group(0) @binding(1) var chroma: texture_2d<f32>;
@@ -1131,10 +1137,45 @@ fn fs(i: O) -> @location(0) vec4<f32> {
                 m = m * (1.0 - hidden);
             }
         }
+        // The room's light, in linear light: on an sRGB target the picture is linear already;
+        // on another its colours are as the screen shows them.
+        if (u.rest.w > 0.5) {
+            m = vec4<f32>(m.rgb * u.light.rgb, m.a);
+        } else {
+            m = vec4<f32>(m.rgb * pow(u.light.rgb, vec3<f32>(1.0 / 2.2)), m.a);
+        }
     }
     return vec4<f32>(m.rgb + camera * (1.0 - m.a), 1.0);
 }
 "#;
+
+/// The model's colours under the room's light: ARKit's ambient intensity (lumens, 1000 for a
+/// well-lit room) as brightness, its colour temperature (kelvin) as a tint, both held back
+/// (a CAD model should stay readable in a dim room, and a white part should stay near white).
+fn light_gain(lumens: i32, kelvin: i32) -> [f32; 3] {
+    let lumens = if lumens > 0 { lumens as f32 } else { 1000.0 };
+    let bright = (lumens / 1000.0).clamp(0.55, 1.15).powf(0.6);
+    let tint = kelvin_rgb(if kelvin > 0 { kelvin as f32 } else { 6500.0 });
+    let white = kelvin_rgb(6500.0);
+    // Half way between neutral and the room's colour.
+    std::array::from_fn(|k| bright * (0.5 + 0.5 * tint[k] / white[k].max(1e-3)))
+}
+
+/// The colour of a black body at `kelvin` (1000..40000), each channel 0..1: the usual curve
+/// fit (Tanner Helland's), close enough for a tint.
+fn kelvin_rgb(kelvin: f32) -> [f32; 3] {
+    let t = kelvin.clamp(1000.0, 40000.0) / 100.0;
+    let r = if t <= 66.0 { 255.0 } else { 329.698_73 * (t - 60.0).powf(-0.133_204_76) };
+    let g = if t <= 66.0 { 99.470_8 * t.ln() - 161.119_57 } else { 288.122_16 * (t - 60.0).powf(-0.075_514_85) };
+    let b = if t >= 66.0 {
+        255.0
+    } else if t <= 19.0 {
+        0.0
+    } else {
+        138.517_73 * (t - 10.0).ln() - 305.044_8
+    };
+    [r, g, b].map(|c| (c / 255.0).clamp(0.0, 1.0))
+}
 
 fn mul(a: &Mat4, b: &Mat4) -> Mat4 {
     std::array::from_fn(|c| std::array::from_fn(|r| (0..4).map(|k| a[k][r] * b[c][k]).sum()))
@@ -1250,6 +1291,19 @@ mod tests {
         assert!(close(sh.middle, [0.3, 0.75, -0.5]), "{sh:?}");
         let r: Vec<f64> = sh.axes.iter().map(|a| (a[0] * a[0] + a[1] * a[1]).sqrt()).collect();
         assert!(r.iter().any(|r| *r > 0.1 && *r < 0.13) && r.iter().any(|r| *r > 0.06 && *r < 0.09), "{r:?}");
+    }
+
+    /// A well-lit neutral room leaves the model's colours as they are; a dim warm one darkens
+    /// them and warms them, within bounds.
+    #[test]
+    fn the_rooms_light() {
+        let neutral = light_gain(1000, 6500);
+        assert!(neutral.iter().all(|g| (g - 1.0).abs() < 0.02), "{neutral:?}");
+        let warm = light_gain(300, 3000);
+        assert!(warm[0] > warm[2], "{warm:?}");
+        assert!(warm.iter().all(|g| *g > 0.3 && *g < 1.0), "{warm:?}");
+        let dark = light_gain(0, 0);
+        assert!(dark.iter().all(|g| (g - 1.0).abs() < 0.02), "no estimate is neutral: {dark:?}");
     }
 
     /// The placement matrix moves model points as `Placed` says.
