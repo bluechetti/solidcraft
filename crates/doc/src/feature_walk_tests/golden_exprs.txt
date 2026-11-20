@@ -227,6 +227,17 @@ scale
     Y scale = scale.y (Unitless)
     Z scale = scale.z (Unitless)
   expressions: scale.factor, scale.x, scale.y, scale.z
+deform_bend
+  inputs:
+    Length = bend.length (Length)
+    Angle = bend.angle (Angle)
+  expressions: bend.length, bend.angle
+deform_twist
+  inputs:
+    Length = twist.length (Length)
+    Angle = twist.angle (Angle)
+  expressions: twist.length, twist.angle
+deform_cage
 offset_face
   inputs:
     Distance = offset_face.distance (Length)

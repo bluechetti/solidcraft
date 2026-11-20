@@ -1,0 +1,34 @@
+{
+  "en": {
+    "cmd.scan.furring": "Furring Strips",
+    "cmd.scan.furring_proposals": "Furring Proposals"
+  },
+  "de": {
+    "cmd.scan.furring": "Traglatten",
+    "cmd.scan.furring_proposals": "Traglatten-Vorschläge"
+  },
+  "ja": {
+    "cmd.scan.furring": "胴縁",
+    "cmd.scan.furring_proposals": "胴縁の提案"
+  },
+  "ko": {
+    "cmd.scan.furring": "띠장",
+    "cmd.scan.furring_proposals": "띠장 제안"
+  },
+  "zh": {
+    "cmd.scan.furring": "垫条",
+    "cmd.scan.furring_proposals": "垫条方案"
+  },
+  "ar": {
+    "cmd.scan.furring": "شرائح التبطين",
+    "cmd.scan.furring_proposals": "مقترحات شرائح التبطين"
+  },
+  "he": {
+    "cmd.scan.furring": "סרגלי ריפוד",
+    "cmd.scan.furring_proposals": "הצעות לסרגלי ריפוד"
+  },
+  "vi": {
+    "cmd.scan.furring": "Thanh nẹp đệm",
+    "cmd.scan.furring_proposals": "Đề xuất thanh nẹp đệm"
+  }
+}

@@ -396,14 +396,18 @@ mod tests {
         assert_eq!(describe(1536 * MB), "1.5 GB");
     }
 
+    /// In the browser a point cloud file follows the import limit and keeps the 1 GiB it has always
+    /// had; on the desktop this fork reads it whatever its size, as it does scans and designs
+    /// (`Kind::unlimited`: the owner's scans pass 512 MB).
     #[test]
     fn a_point_cloud_file_follows_the_import_limit_and_keeps_the_1_gib_it_has_always_had() {
         assert_eq!(point_cloud_limit(512 * MB), crate::MAX_POINT_CLOUD_BYTES as u64, "never under the 1 GiB it has always had");
         assert_eq!(point_cloud_limit(2 * GB), 2 * GB, "the preference raises it");
-        let message = too_large(Kind::PointCloud, 2 * GB);
-        assert!(message.contains("point cloud files") && message.contains("1 GB"), "{message}");
         if ADJUSTABLE {
-            assert!(message.contains("Preferences > General > Largest file to open") && message.contains("--max-file-size"), "{message}");
+            assert!(Kind::PointCloud.unlimited() && check(Kind::PointCloud, 64 * GB).is_ok(), "the desktop reads any size");
+        } else {
+            let message = too_large(Kind::PointCloud, 2 * GB);
+            assert!(message.contains("point cloud files") && message.contains("1 GB"), "{message}");
         }
     }
 

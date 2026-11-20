@@ -1379,7 +1379,8 @@ fn repair_from_the_ribbon_is_computed_beside_the_window() {
     ];
     let path = h.dir.join("copied.stl");
     std::fs::write(&path, format!("solid s\n{}endsolid s\n", tris.iter().map(|t| facet(*t)).collect::<String>())).unwrap();
-    h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+    // In millimetres by name: a file 2 units across that states no unit is refused until it is given.
+    h.app.run("file.insert_mesh", json!({"path": path, "units": "mm"})).unwrap();
     let triangles =
         |h: &Harness| h.app.session.model.state().bodies.iter().find(|b| b.body.is_mesh()).and_then(|b| b.body.triangle_mesh()).map(|(_, t)| t.len());
     assert_eq!(triangles(&h), Some(5));

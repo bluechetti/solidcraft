@@ -102,6 +102,12 @@ split_face
   remap_bodies: body, tool.body
 scale
   remap_bodies: bodies[0]
+deform_bend
+  remap_bodies: body
+deform_twist
+  remap_bodies: body
+deform_cage
+  remap_bodies: body
 offset_face
   remap_bodies: body
 delete_face

@@ -118,6 +118,18 @@ pub(super) fn fixtures() -> Vec<(&'static str, Value)> {
         ),
         ("split_face", json!({"type": "split_face", "faces": [o], "plane": plane("split_face")})),
         ("scale", json!({"type": "scale", "bodies": ["B"], "factor": "scale.factor", "factors": ["scale.x", "scale.y", "scale.z"]})),
+        (
+            "deform_bend",
+            json!({"type": "deform", "body": "B", "map": {"type": "bend", "origin": [1, 2, 3], "along": [1, 0, 0], "up": [0, 0, 1], "length": "bend.length", "angle": "bend.angle"}}),
+        ),
+        (
+            "deform_twist",
+            json!({"type": "deform", "body": "B", "map": {"type": "twist", "origin": [1, 2, 3], "axis": [0, 0, 1], "length": "twist.length", "angle": "twist.angle"}}),
+        ),
+        (
+            "deform_cage",
+            json!({"type": "deform", "body": "B", "map": {"type": "cage", "lo": [0, 0, 0], "hi": [10, 10, 10], "counts": [2, 2, 2], "moves": [{"index": [1, 1, 1], "by": [0, 0, 2]}]}}),
+        ),
         ("offset_face", json!({"type": "offset_face", "faces": [o], "distance": "offset_face.distance"})),
         ("delete_face", json!({"type": "delete_face", "faces": [o]})),
         ("bounding_solid", json!({"type": "bounding_solid", "bodies": ["B"], "margin": "bounding.margin"})),

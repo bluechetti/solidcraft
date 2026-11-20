@@ -1,5 +1,20 @@
 {
   "en": {
     "ui.fillet_variable_curvature": "Curvature continuous (G2)"
+  },
+  "ar": {
+    "ui.fillet_variable_curvature": "استمرارية الانحناء (G2)"
+  },
+  "he": {
+    "ui.fillet_variable_curvature": "רציפות עקמומיות (G2)"
+  },
+  "ja": {
+    "ui.fillet_variable_curvature": "曲率連続 (G2)"
+  },
+  "vi": {
+    "ui.fillet_variable_curvature": "Liên tục độ cong (G2)"
+  },
+  "zh": {
+    "ui.fillet_variable_curvature": "曲率连续 (G2)"
   }
 }

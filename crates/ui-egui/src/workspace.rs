@@ -719,6 +719,7 @@ pub const SECTIONS: &[Section] = &[
             "sketch.fit_curves_to_section",
             "scan.flatten",
             "scan.roll_onto_scan",
+            "scan.furring",
         ],
     },
     Section {
