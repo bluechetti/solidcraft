@@ -15,6 +15,9 @@ until it finds a surface.
 | Twist (two fingers) | Turns it about the vertical. |
 | Pencil tap | Selects the part under the tip (`select.set`), or clears the selection over nothing. |
 | Done / Real size / Pick up | Leave AR / back to 100% / take the model off the surface. |
+| Section | A cut through the model facing you; drag up and down to move it; Apply keeps it in the design. |
+| Explode | The design's exploded views in turn, then assembled again. |
+| Measure | Two Pencil taps on the model: the distance in mm, drawn in the room. |
 
 Leaving the app and coming back keeps the model where it was: ARKit relocalizes, and the model is
 hidden until it has. The app's own touch handling (long press menu, orbit) is off while AR shows.

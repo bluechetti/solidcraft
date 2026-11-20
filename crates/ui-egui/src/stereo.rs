@@ -85,7 +85,11 @@ pub(crate) fn test_frame() -> Frame {
         turned_depth: None,
         back: [0.0, 0.0, 1.0],
         size_px: [640.0, 480.0],
-        clip: { let mut c = [[0.0; 4]; solidcraft_viewport_gpu::view::MAX_SECTION_PLANES]; c[0] = [1.0, 0.0, 0.0, 5.0]; c },
+        clip: {
+            let mut c = [[0.0; 4]; solidcraft_viewport_gpu::view::MAX_SECTION_PLANES];
+            c[0] = [1.0, 0.0, 0.0, 5.0];
+            c
+        },
         clip_hatch: [0; solidcraft_viewport_gpu::view::MAX_SECTION_PLANES],
         cap: [0.0; 4],
         images: Vec::new(),
