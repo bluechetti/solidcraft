@@ -53,9 +53,10 @@ solidcraft-control = { path = "crates/control" }
 solidcraft-control-egui = { path = "crates/control-egui" }
 solidcraft-derive = { path = "crates/derive" }
 solidcraft-3dx-client = { path = "crates/threedx-client" }
-# LOCAL FORK (branch `surfacing` only): the six solidcore crates below build from the owner's local
-# kernel fork beside this checkout, `../solidcore-fork` (its FORK.md says what it is), not from
-# the vendored `solidcore/` tree, which this branch leaves in place and does not build.
+# LOCAL FORK: the six solidcore crates below build from the owner's local kernel fork beside this
+# checkout, `../solidcore-fork` (its FORK.md says what it is), not from the vendored `solidcore/`
+# tree, which stays in place, takes upstream's kernel at each sync, and is not built. The two hold
+# the same kernel but for the fork's own modules: a kernel change goes into both.
 # The Rust port of NVIDIA's SMLib (Apache-2.0), the B-rep kernel behind crates/smlib. Vendored with
 # `git subtree` at solidcore: that tree is the source of truth, and
 # .github/workflows/solidcore-mirror.yml pushes changes in it back to its own repository (#13153).
