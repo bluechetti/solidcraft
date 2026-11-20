@@ -932,6 +932,41 @@ fn reconstruct_says_how_a_prisms_outline_repeats_round_its_middle() {
     assert!(oblong["prisms"][0].get("rotational").is_none(), "{oblong}");
 }
 
+/// A nest for a turned part: a shaft Ø 20 × 40 with a step Ø 12 × 20 on it lies on its side in
+/// a cradle. Its profile is revolved, every face offset by the clearance, and cut from a block
+/// 10 mm beyond it all round whose top is at the axis (half the part held). No point of the scan
+/// is in the nest's material and the least gap is the clearance, which follows its parameter.
+#[test]
+fn a_turned_part_is_nested_on_its_side_with_its_clearance() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.cylinder", json!({"radius": 10, "height": 40}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.cylinder", json!({"base": [0, 0, 40], "radius": 6, "height": 20, "operation": "join", "targets": [body]}));
+    let (mut s, scan) = scanned(&part, &body, 2, "nest-turned");
+    run(&mut s, "parameters.add", json!({"name": "clearance", "expression": "0.3 mm"}));
+    let built = run(&mut s, "scan.nest", json!({"clearance": "clearance", "turned": true}));
+    let nest = built["solid"].as_str().unwrap().to_owned();
+    assert_eq!(nest, format!("{scan} Nest"), "{built}");
+    assert!(s.model.state().body(&format!("{scan} Nest Part")).is_none(), "the part is cut from the block, not left: {built}");
+    let gap_at = |s: &mut Session| {
+        let d = run(s, "scan.deviation", json!({"body": nest, "tolerance": "0.02 mm", "limit": 2}));
+        assert_eq!(d["clearance"]["fits"], true, "{d}");
+        d["clearance"]["gap"].as_f64().unwrap()
+    };
+    let gap = gap_at(&mut s);
+    assert!((gap - 0.3).abs() < 0.03, "the gap is the clearance: {gap}");
+    // The block: 60 + 2 × 10.3 along the axis, 2 × (10 + 10.3) across, 10 + 10.3 deep below the
+    // axis; less half the part grown by 0.3 (Ø 20.6 × 40.3 and Ø 12.6 × 20.3, end to end).
+    let pi = std::f64::consts::PI;
+    let block = 80.6 * 40.6 * 20.3;
+    let pocket = 0.5 * pi * (10.3f64.powi(2) * 40.3 + 6.3f64.powi(2) * 20.3);
+    let v = volume(&s, &nest);
+    assert!((v - (block - pocket)).abs() < 0.01 * (block - pocket), "{v} against {}", block - pocket);
+    run(&mut s, "parameters.change", json!({"name": "clearance", "expression": "0.5 mm"}));
+    let gap = gap_at(&mut s);
+    assert!((gap - 0.5).abs() < 0.03, "{gap}");
+}
+
 /// A nest for the slotted disc (R 20 × 10, eight slots in its rim): a block 10 mm wider than the
 /// disc all round, with a pocket half the disc deep that is the disc's outline grown by the
 /// clearance, and that much deeper. No point of the scan is in the nest's material, and the least

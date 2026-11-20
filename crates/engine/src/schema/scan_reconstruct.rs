@@ -711,6 +711,11 @@ pub struct ScanNestParams {
     /// The share of the part's depth the pocket holds, above 0 to 1. Default: 0.5.
     #[serde(default)]
     pub deep: Option<f64>,
+    /// Nest the turned part Reconstruct reads, lying on its side: its profile revolved, every
+    /// face offset by the clearance, cut from a block. Default: true when Reconstruct reads a
+    /// turned part and no prism.
+    #[serde(default)]
+    pub turned: Option<bool>,
 }
 
 /// What Extrude It, Revolve It, Cut It and Pattern It return.

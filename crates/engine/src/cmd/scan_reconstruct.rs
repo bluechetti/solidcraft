@@ -138,7 +138,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("extrude")
         .contract(&NEST_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; selected?: bool; prism?: index of scan.reconstruct's prisms (default 0; a prism with square walls: a drafted one is refused); clearance?: mm or a length expression such as a parameter's name (default 0.3 mm: the gap round the part and under it; the pocket follows it up to twice what it is built with, tight inside corners being cut square for that); allowance?: mm added to the clearance (default: measured, how far the scan stands proud of the fitted outline and of the end it sits on, so the least gap is the clearance; 0 for the clearance alone); margin?: mm of block round the part and under it (default 10); deep?: share of the part's depth the pocket holds (default 0.5): the prism's outline sketched (`Nest Pocket`), offset outward by the clearance as a sketch offset (so the pocket follows it), and cut into a block (`<scan> Nest`) drawn round it; one undo step → sketch, feature (the cut), solid, depth (of the pocket, less the clearance), allowance, lines, arcs"),
+        .params("body?: mesh body; selected?: bool; prism?: index of scan.reconstruct's prisms (default 0; a prism with square walls: a drafted one is refused); clearance?: mm or a length expression such as a parameter's name (default 0.3 mm: the gap round the part and under it; the pocket follows it up to twice what it is built with, tight inside corners being cut square for that); allowance?: mm added to the clearance (default: measured, how far the scan stands proud of the fitted outline and of the end it sits on, so the least gap is the clearance; 0 for the clearance alone); margin?: mm of block round the part and under it (default 10); deep?: share of the part's depth the pocket holds (default 0.5); turned?: bool (default: true when Reconstruct reads a turned part and no prism): the prism's outline sketched (`Nest Pocket`), offset outward by the clearance as a sketch offset (so the pocket follows it), and cut into a block (`<scan> Nest`) drawn round it; a turned part (turned: true) lies on its side in a cradle instead: its profile revolved (`<scan> Nest Part`), every face of it offset outward by the clearance, and cut from a block whose top holds that share of the part's diameter (allowance 0); one undo step → sketch, feature (the cut), solid, depth (of the pocket, less the clearance), allowance, lines, arcs"),
     CommandSpec::new("scan.chamfer_it", "Chamfer It", crate::checked!("scan.chamfer_it", fitted_chamfer_it))
         .icon("chamfer")
         .contract(&CHAMFER_IT_CONTRACT)
@@ -1476,10 +1476,17 @@ pub(super) fn nest(s: &mut Session, p: &Value) -> Result<Value> {
     let view = view(s, p, cmd, false)?;
     let found = &view.found;
     let reading = view.reading();
+    let turned = match p.get("turned").filter(|v| !v.is_null()) {
+        None => reading.prisms.is_empty() && reading.revolve.is_some() && reading.turned_unread.is_none(),
+        Some(v) => v.as_bool().ok_or_else(|| bad(cmd, "`turned` is true or false"))?,
+    };
+    if turned {
+        return nest_turned(s, p, &view);
+    }
     if reading.prisms.is_empty() {
         return Err(bad(
             cmd,
-            "Reconstruct reads no prism on the scan, and a nest is cut from a prism's outline: for another shape, section it (scan.section_sketch), offset the sketch and cut that from a block",
+            "Reconstruct reads no prism on the scan, and a nest is cut from a prism's outline (or, `turned`, a turned part's profile): for another shape, section it (scan.section_sketch), offset the sketch and cut that from a block",
         ));
     }
     let index = p.get("prism").and_then(Value::as_u64).map_or(0, |k| k as usize);
@@ -1496,22 +1503,7 @@ pub(super) fn nest(s: &mut Session, p: &Value) -> Result<Value> {
             ),
         ));
     }
-    let clearance = match p.get("clearance").filter(|v| !v.is_null()) {
-        None => "0.3 mm".to_owned(),
-        Some(Value::String(text)) if !text.trim().is_empty() => text.trim().to_owned(),
-        Some(v) => match v.as_f64().filter(|c| c.is_finite() && *c > 0.0) {
-            Some(c) => format!("{c} mm"),
-            None => return Err(bad(cmd, "`clearance` is a length above 0, in mm or as an expression")),
-        },
-    };
-    let number = |key: &str, default: f64, most: f64| match p.get(key).filter(|v| !v.is_null()) {
-        None => Ok(default),
-        Some(v) => v
-            .as_f64()
-            .filter(|x| x.is_finite() && *x > 0.0 && *x <= most)
-            .ok_or_else(|| bad(cmd, format!("`{key}` is a number above 0, at most {most}"))),
-    };
-    let (margin, deep) = (number("margin", 10.0, 1.0e4)?, number("deep", 0.5, 1.0)?);
+    let (clearance, margin, deep) = nest_sizes(p, cmd)?;
     let (plane, outlines) = {
         let shown = super::shown_mesh(s, &found.scan).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
         let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
@@ -1632,6 +1624,129 @@ pub(super) fn nest(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Nest's clearance (an expression), margin and depth share, as given or by default.
+fn nest_sizes(p: &Value, cmd: &str) -> Result<(String, f64, f64)> {
+    let clearance = match p.get("clearance").filter(|v| !v.is_null()) {
+        None => "0.3 mm".to_owned(),
+        Some(Value::String(text)) if !text.trim().is_empty() => text.trim().to_owned(),
+        Some(v) => match v.as_f64().filter(|c| c.is_finite() && *c > 0.0) {
+            Some(c) => format!("{c} mm"),
+            None => return Err(bad(cmd, "`clearance` is a length above 0, in mm or as an expression")),
+        },
+    };
+    let number = |key: &str, default: f64, most: f64| match p.get(key).filter(|v| !v.is_null()) {
+        None => Ok(default),
+        Some(v) => v
+            .as_f64()
+            .filter(|x| x.is_finite() && *x > 0.0 && *x <= most)
+            .ok_or_else(|| bad(cmd, format!("`{key}` is a number above 0, at most {most}"))),
+    };
+    Ok((clearance, number("margin", 10.0, 1.0e4)?, number("deep", 0.5, 1.0)?))
+}
+
+/// Nest for a turned part: it lies on its side in a cradle. Its profile is revolved into a body
+/// of its own (`<scan> Nest Part`), every face of that offset outward by the clearance (so the
+/// pocket follows it), and the body cut from a block drawn round the axis, its top where the
+/// pocket holds `deep` of the part's diameter, `margin` of block round and under it.
+fn nest_turned(s: &mut Session, p: &Value, view: &View) -> Result<Value> {
+    let cmd = "scan.nest";
+    let found = &view.found;
+    let reading = view.reading();
+    if reading.revolve.is_none() {
+        return Err(bad(cmd, "Reconstruct reads no turned part on the scan, and `turned` nests one"));
+    }
+    let (clearance, margin, deep) = nest_sizes(p, cmd)?;
+    let asked = s.doc.eval(&clearance, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("clearance: {e}")))?;
+    if !(asked > 0.0) {
+        return Err(bad(cmd, "`clearance` is a length above 0, in mm or as an expression"));
+    }
+    let (plane, outline, held) = {
+        let shown = super::shown_mesh(s, &found.scan).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
+        let scan = view.scan(shown.positions.as_slice(), shown.triangles.as_slice());
+        profile::turned_profile(&scan, view.outcome(), reading).map_err(|e| bad(cmd, e))?
+    };
+    let solid = format!("{} Nest", found.scan);
+    let part = format!("{} Nest Part", found.scan);
+    for name in [&solid, &part] {
+        if s.model.state().body(name).is_some() {
+            return Err(bad(cmd, format!("`{name}` is in the design already: change its clearance, or remove it first")));
+        }
+    }
+    // The part's reach along the axis and out from it, in the profile's plane (X along the axis).
+    let ring = profile::ring(&outline);
+    let (lo, hi, radius) =
+        ring.iter().fold((f64::INFINITY, f64::NEG_INFINITY, 0.0_f64), |(lo, hi, r), q| (lo.min(q.x), hi.max(q.x), r.max(q.y.abs())));
+    if !(hi > lo && radius > 0.0) {
+        return Err(bad(cmd, "the turned profile has no length or no radius"));
+    }
+    let level = turned_level(&held);
+    let mut drawn = Drawn::default();
+    let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
+    let sketch = sketch_outlines(s, &plane, "Nest Part Profile", std::slice::from_ref(&outline), &level, &mut drawn, round, true)?;
+    run(s, "solid.revolve", json!({"sketch": sketch, "axis": "x", "operation": "new", "body_name": part, "name": "Nest Part"}))?;
+    let faces: Vec<Value> = run(s, "model.faces", json!({"body": part}))?
+        .get("faces")
+        .and_then(Value::as_array)
+        .map(|f| f.iter().filter_map(|face| face.get("name").cloned()).filter(|n| !n.is_null()).collect())
+        .unwrap_or_default();
+    if faces.is_empty() {
+        return Err(EngineError::Other("the turned part's faces have no names to offset".into()));
+    }
+    run(s, "solid.offset_face", json!({"faces": faces, "distance": format!("({clearance})"), "body": part, "name": "Nest Clearance"}))?;
+    // The block: square to the way down (the world's -Z, or across the profile when the axis is
+    // upright), its top where the pocket holds `deep` of the diameter.
+    let axis = plane.x;
+    let down = (-Vec3::Z - axis * (-Vec3::Z).dot(axis)).normalized().unwrap_or(-plane.y);
+    let up = -down;
+    let across = up.cross(axis).normalized().ok_or_else(|| EngineError::Other("the axis has no way across".into()))?;
+    let top = Plane { origin: plane.origin + up * ((2.0 * deep - 1.0) * radius), x: axis, y: across };
+    let room = margin + asked;
+    let (a, b) = (Vec2::new(lo - room, -(radius + room)), Vec2::new(hi + room, radius + room));
+    let block = Outline { corners: vec![a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)], pieces: vec![Piece::Line; 4], faces: vec![None; 4] };
+    let (block_sketch, _) = sketch_outlines_as(s, &top, "Nest Block", &[block], &|_, _, _| None, &mut Drawn::default(), round, false, None)?;
+    let normal = axis.cross(across);
+    let way = if normal.dot(up) > 0.0 { "negative" } else { "positive" };
+    let depth = 2.0 * deep * radius;
+    run(
+        s,
+        "solid.extrude",
+        json!({"sketch": block_sketch, "distance": format!("{} mm + ({clearance})", depth + margin), "direction": way, "operation": "new", "body_name": solid, "name": "Nest Block"}),
+    )?;
+    let feature = run(s, "solid.combine", json!({"target": solid, "tools": [part], "operation": "cut", "name": "Nest Pocket"}))?;
+    reply(ScanBuildResult {
+        body: found.scan.clone(),
+        sketch: Some(sketch),
+        feature,
+        solid,
+        operation: "new".into(),
+        lines: drawn.lines,
+        arcs: drawn.arcs,
+        tangents: drawn.tangents,
+        depth: Some(depth),
+        count: None,
+        openings: None,
+        skin: None,
+        allowance: Some(0.0),
+        changed: None,
+        note: None,
+        fit: None,
+        param_warnings: Vec::new(),
+    })
+}
+
+/// How a turned profile's pieces are held, by the faces they are on (`held`): a cylinder's piece
+/// level along the axis, an end's upright, the axis's own along it; a piece with no face off the
+/// axis bridges a gap the scan's faces leave, and is held neither way.
+fn turned_level(held: &std::collections::BTreeMap<usize, Turned>) -> impl Fn(Option<usize>, Vec2, Vec2) -> Option<bool> + '_ {
+    move |face: Option<usize>, from: Vec2, to: Vec2| match face.and_then(|k| held.get(&k)) {
+        None if face.is_none() => (from.y.abs() < 1e-9 && to.y.abs() < 1e-9).then_some(true),
+        None => Some(true),
+        Some(Turned::Cylinder { .. }) => Some(true),
+        Some(Turned::Plane { .. }) => Some(false),
+        Some(_) => None,
+    }
+}
+
 /// The sharp `corners` of a drafted prism just extruded (`depth` up from `plane`, its walls
 /// leaning in by `draft` radians) rounded on `solid`: one Fillet for each radius, read as designed
 /// within `round`, each corner's edge found halfway up, where the lean has moved it in.
@@ -1697,15 +1812,7 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(v.as_f64().filter(|w| w.is_finite() && *w > 0.0).ok_or_else(|| bad(cmd, "`wall` is a thickness in mm, above 0"))?),
     };
     let (operation, solid, how) = into_params(s, &found.scan, p, cmd)?;
-    // A cylinder's piece runs level along the axis, an end's upright, the axis's own along it. A
-    // piece with no face off the axis bridges a gap the scan's faces leave, and is held neither way.
-    let level = |face: Option<usize>, from: Vec2, to: Vec2| match face.and_then(|k| held.get(&k)) {
-        None if face.is_none() => (from.y.abs() < 1e-9 && to.y.abs() < 1e-9).then_some(true),
-        None => Some(true),
-        Some(Turned::Cylinder { .. }) => Some(true),
-        Some(Turned::Plane { .. }) => Some(false),
-        Some(_) => None,
-    };
+    let level = turned_level(&held);
     let mut drawn = Drawn::default();
     let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
     let sketch = sketch_outlines(s, &plane, "Turned Profile", std::slice::from_ref(&outline), &level, &mut drawn, round, true)?;
