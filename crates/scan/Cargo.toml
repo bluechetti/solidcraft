@@ -9,6 +9,8 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+# The kernel's patches for irregular corners of a cage (cage.rs), through its modelling layer.
+solidcore-ops = { workspace = true }
 solidcore-record = { workspace = true }
 solidcraft-geom = { workspace = true }
 

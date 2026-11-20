@@ -6435,6 +6435,7 @@ name = "solidcraft-scan"
 version = "0.45.0"
 dependencies = [
  "rayon",
+ "solidcore-ops",
  "solidcore-record",
  "solidcraft-geom",
 ]
