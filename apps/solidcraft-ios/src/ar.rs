@@ -54,6 +54,8 @@ struct Bridge {
     set_device: extern "C" fn(*mut std::ffi::c_void) -> i32,
     metal_planes: extern "C" fn(*mut *mut std::ffi::c_void, *mut *mut std::ffi::c_void) -> i32,
     release: extern "C" fn(*mut std::ffi::c_void),
+    save_photo: extern "C" fn(*const u8, i32, i32) -> i32,
+    photo_result: extern "C" fn() -> *mut c_char,
 }
 
 // The function types come from `Bridge`'s fields, which each transmute fills.
@@ -93,6 +95,8 @@ fn load() -> Result<Bridge, String> {
             set_device: std::mem::transmute(sym(c"sc_ar_set_device")?),
             metal_planes: std::mem::transmute(sym(c"sc_ar_metal_planes")?),
             release: std::mem::transmute(sym(c"sc_ar_release")?),
+            save_photo: std::mem::transmute(sym(c"sc_ar_save_photo")?),
+            photo_result: std::mem::transmute(sym(c"sc_ar_photo_result")?),
         })
     }
 }
@@ -243,6 +247,8 @@ impl Placed {
 /// The GPU side, kept in egui's callback resources so the paint callback can draw it.
 struct Gpu {
     pipeline: wgpu::RenderPipeline,
+    /// The same pass for a photo (see [`photo`]).
+    capture: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     uniform: wgpu::Buffer,
@@ -313,6 +319,8 @@ pub struct State {
     exploded: usize,
     /// Pull is on: the Pencil pushes and pulls faces (`solid.press_pull`).
     pull_mode: bool,
+    /// Photo was asked for: taken after this frame's AR pass is set up.
+    pub take_photo: bool,
     /// Where the AR panel was last drawn (screen points).
     panel: Option<egui::Rect>,
     /// The face being pulled.
@@ -452,6 +460,14 @@ impl State {
             write_uniform(rs, seen, model_drawn, self.placed.and_then(|p| p.contact_shadow()), self.has_depth);
         }
         self.bind(rs, model_drawn);
+        if std::mem::take(&mut self.take_photo) {
+            self.save_photo(rs, size_px);
+        }
+        // The photo library's answer, when it comes.
+        if let Some(said) = self.bridge().ok().and_then(|b| take_string((b.photo_result)())) {
+            crate::note(&format!("ar: {said}"));
+            self.message = said;
+        }
 
         // The whole screen: the picture, and the touches (they go to AR, not the app below).
         let coaching = self.bridge().map(|b| (b.coaching)() == 1).unwrap_or(false);
@@ -935,6 +951,28 @@ impl State {
         painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
     }
 
+    /// Photo: the AR view without the panel, saved to Photos.
+    fn save_photo(&mut self, rs: &egui_wgpu::RenderState, size: [u32; 2]) {
+        // At the screen's resolution, or the camera's own when the model is drawn smaller (heat).
+        let result = photo(rs, size).and_then(|rgba| {
+            let b = self.bridge()?;
+            match (b.save_photo)(rgba.as_ptr(), size[0] as i32, size[1] as i32) {
+                1 => Ok(()),
+                _ => Err("the photo could not be saved".to_string()),
+            }
+        });
+        match result {
+            Ok(()) => {
+                self.message = "Saving the photo…".into();
+                if let Ok(b) = self.bridge() {
+                    (b.tick)();
+                }
+            }
+            Err(e) => self.message = e,
+        }
+        crate::note(&format!("ar: photo {}x{}: {}", size[0], size[1], self.message));
+    }
+
     /// The design's next exploded view (`explode.show`: shown only, the design keeps its
     /// placements), and after the last, the assembly as it is.
     fn next_exploded_view(&mut self, app: &mut SolveApp) {
@@ -1021,6 +1059,9 @@ impl State {
                 ui.horizontal(|ui| {
                     if button(ui, "Done", Button::Small).clicked() {
                         leave = true;
+                    }
+                    if button(ui, "Photo", Button::Small).backing_on_hover_text("Save the room and the model to Photos").clicked() {
+                        self.take_photo = true;
                     }
                     // The design's own undo history: a pull, a section applied, anything.
                     for (label, command) in [("Undo", "edit.undo"), ("Redo", "edit.redo")] {
@@ -1290,6 +1331,24 @@ fn ensure_gpu(rs: &egui_wgpu::RenderState) {
         multiview_mask: None,
         cache: None,
     });
+    // The same pass into a picture of its own, for a photo: no depth, one sample, in a format
+    // that keeps the colours as the screen shows them.
+    let capture = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("sc_ar_photo"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState { format: photo_format(rs), blend: None, write_mask: wgpu::ColorWrites::ALL })],
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("sc_ar"),
         mag_filter: wgpu::FilterMode::Linear,
@@ -1360,6 +1419,7 @@ fn ensure_gpu(rs: &egui_wgpu::RenderState) {
     };
     renderer.callback_resources.insert(Gpu {
         pipeline,
+        capture,
         layout,
         sampler,
         uniform,
@@ -1372,6 +1432,84 @@ fn ensure_gpu(rs: &egui_wgpu::RenderState) {
         room_depth,
         far_room,
     });
+}
+
+/// The photo's format: the AR pass writes linear light into an sRGB target and the screen's
+/// colours into another, so the photo is sRGB-encoded either way.
+fn photo_format(rs: &egui_wgpu::RenderState) -> wgpu::TextureFormat {
+    if rs.target_format.is_srgb() { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm }
+}
+
+/// The AR view as it is now, without the panel (the camera picture, the model, its shadow), as
+/// `size` RGBA rows: the AR pass drawn again into a picture of its own and read back.
+fn photo(rs: &egui_wgpu::RenderState, size: [u32; 2]) -> Result<Vec<u8>, String> {
+    let renderer = rs.renderer.read();
+    let gpu = renderer.callback_resources.get::<Gpu>().ok_or("AR is not drawing yet")?;
+    let bind = gpu.bind.as_ref().ok_or("no camera picture yet")?;
+    let [width, height] = size;
+    let extent = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+    let target = rs.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sc_ar_photo"),
+        size: extent,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: photo_format(rs),
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = target.create_view(&Default::default());
+    let mut encoder = rs.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("sc_ar_photo") });
+    {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("sc_ar_photo"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&gpu.capture);
+        pass.set_bind_group(0, bind, &[]);
+        pass.draw(0..3, 0..1);
+    }
+    let row = width * 4;
+    let padded = row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let read = rs.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("sc_ar_photo_read"),
+        size: u64::from(padded) * u64::from(height),
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    encoder.copy_texture_to_buffer(
+        target.as_image_copy(),
+        wgpu::TexelCopyBufferInfo { buffer: &read, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padded), rows_per_image: Some(height) } },
+        extent,
+    );
+    let submission = rs.queue.submit([encoder.finish()]);
+    let slice = read.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    rs.device
+        .poll(wgpu::PollType::Wait { submission_index: Some(submission), timeout: Some(std::time::Duration::from_secs(5)) })
+        .map_err(|e| format!("waiting for the photo: {e}"))?;
+    rx.recv().map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
+    let data = slice.get_mapped_range().map_err(|e| format!("reading the photo: {e}"))?;
+    let mut rgba = Vec::with_capacity((row * height) as usize);
+    for r in data.chunks(padded as usize).take(height as usize) {
+        rgba.extend_from_slice(r.get(..row as usize).unwrap_or_default());
+    }
+    if rgba.len() != (row * height) as usize {
+        return Err("the photo read back short".into());
+    }
+    Ok(rgba)
 }
 
 /// A 32-bit float texture of `size` to write into and read in a shader.

@@ -6,6 +6,7 @@
 import ARKit
 import CoreVideo
 import Metal
+import Photos
 import UIKit
 
 private final class Bridge: NSObject, ARSessionDelegate, ARCoachingOverlayViewDelegate {
@@ -337,4 +338,41 @@ public func sc_ar_metal_planes(_ textures: UnsafeMutablePointer<UnsafeMutableRaw
 @_cdecl("sc_ar_release")
 public func sc_ar_release(_ keep: UnsafeMutableRawPointer) {
     Unmanaged<CVMetalTexture>.fromOpaque(keep).release()
+}
+
+// MARK: Photos
+
+/// Save a picture (`width` x `height`, 8-bit RGBA rows, opaque) to the photo library. iPadOS asks
+/// once for permission to add photos. Returns 1 when it was handed over.
+@_cdecl("sc_ar_save_photo")
+public func sc_ar_save_photo(_ bytes: UnsafePointer<UInt8>, _ width: Int32, _ height: Int32) -> Int32 {
+    let w = Int(width), h = Int(height)
+    guard w > 0, h > 0 else { return 0 }
+    let data = Data(bytes: bytes, count: w * h * 4)
+    guard let provider = CGDataProvider(data: data as CFData),
+          let image = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                              space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                              bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                              provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return 0 }
+    let photo = UIImage(cgImage: image)
+    photoResult = nil
+    PHPhotoLibrary.shared().performChanges({
+        PHAssetChangeRequest.creationRequestForAsset(from: photo)
+    }) { ok, error in
+        DispatchQueue.main.async {
+            photoResult = ok ? "Photo saved to Photos." : (error.map { "The photo was not saved: \($0.localizedDescription)" }
+                ?? "The photo was not saved: SolidCraft may not add photos (Settings › Privacy › Photos).")
+        }
+    }
+    return 1
+}
+
+nonisolated(unsafe) private var photoResult: String?
+
+/// What became of the last photo (a string to free), once: null until the library has answered.
+@_cdecl("sc_ar_photo_result")
+public func sc_ar_photo_result() -> UnsafeMutablePointer<CChar>? {
+    guard let r = photoResult else { return nil }
+    photoResult = nil
+    return strdup(r)
 }
