@@ -187,6 +187,45 @@ fn main() -> Result<()> {
                         ] {
                             against_truth[key] = reply[key].clone();
                         }
+                        // How far the scan is from where the model and the part part most: a part
+                        // the scanner never saw there (a hole wholly in a patch it missed) is not
+                        // the commands' to build, and the benchmark says so.
+                        let gap = |at: &Value| -> Option<f64> {
+                            let p: Vec<f64> = at.as_array()?.iter().filter_map(Value::as_f64).collect();
+                            let [x, y, z] = p[..] else { return None };
+                            scan.points.iter().map(|q| ((q[0] - x).powi(2) + (q[1] - y).powi(2) + (q[2] - z).powi(2)).sqrt()).reduce(f64::min)
+                        };
+                        against_truth["scan_gaps"] =
+                            json!([gap(&reply["max_below_at"]), gap(&reply["max_above_at"]), gap(&reply["model_farthest_at"])]);
+                        // Over the part's surface the scan covers (within four of its triangles'
+                        // edges), how far the part lies from the model and the model from the
+                        // part: what is off only where nothing was scanned is no command's to
+                        // build (a hole wholly in a patch the scanner missed).
+                        let model_stl = log.run(&mut s, "file.export_stl", json!({"path": path("model.stl"), "bodies": [model], "quality": "fine"}));
+                        if model_stl.is_some()
+                            && let (Ok(part), Ok(made)) = (read_stl(&std::fs::read(out.join("truth.stl"))?), read_stl(&std::fs::read(out.join("model.stl"))?))
+                        {
+                            let v = |p: &[f64; 3]| solidcore_record::Vec3::new(p[0], p[1], p[2]);
+                            let tree = |m: &Scan| {
+                                let points: Vec<solidcore_record::Vec3> = m.points.iter().map(v).collect();
+                                solidcraft_geom::compare::TriangleTree::of(&points, &m.triangles)
+                            };
+                            let (on_scan, on_part, on_model) = (tree(&scan), tree(&part), tree(&made));
+                            let near = 4.0 * how.edge;
+                            let scanned_max = |of: &Scan, other: &solidcraft_geom::compare::TriangleTree| {
+                                of.triangles
+                                    .iter()
+                                    .filter_map(|t| {
+                                        let [a, b, c] = t.map(|k| of.points.get(k as usize).map(v));
+                                        let middle = (a? + b? + c?) / 3.0;
+                                        let scanned = on_scan.nearest(middle).is_some_and(|(d, _)| d <= near);
+                                        scanned.then(|| other.nearest(middle).map(|(d, _)| d)).flatten()
+                                    })
+                                    .fold(0.0, f64::max)
+                            };
+                            against_truth["scanned_part_max"] = json!(scanned_max(&part, &on_model));
+                            against_truth["scanned_model_max"] = json!(scanned_max(&made, &on_part));
+                        }
                     }
                 }
             }

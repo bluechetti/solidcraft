@@ -9,8 +9,8 @@
     "status": "pass",
     "values": {
       "model to part: max": 0.003832,
-      "model to scan: max": 0.156629,
-      "model to scan: within": 0.999493,
+      "model to scan: max": 0.295375,
+      "model to scan: within": 0.999463,
       "part to model: max": 0.000923,
       "scan to model: max": 0.084196,
       "scan to model: rms": 0.01988,
@@ -49,7 +49,7 @@
       "scan to model: max": 0.085227,
       "scan to model: rms": 0.019834,
       "scan to model: within": 1.0,
-      "volume": 7e-06
+      "volume": 7e-6
     }
   },
   "bracket/s0.02-specks": {
@@ -62,8 +62,8 @@
     "status": "pass",
     "values": {
       "model to part: max": 0.003832,
-      "model to scan: max": 0.156629,
-      "model to scan: within": 0.999493,
+      "model to scan: max": 0.295375,
+      "model to scan: within": 0.999463,
       "part to model: max": 0.000923,
       "scan to model: max": 0.084196,
       "scan to model: rms": 0.01988,
@@ -80,10 +80,10 @@
     ],
     "status": "pass",
     "values": {
-      "model to scan: max": 0.16038,
-      "model to scan: within": 0.999318,
+      "model to scan: max": 0.279096,
+      "model to scan: within": 0.999265,
       "scan to model: max": 0.093769,
-      "scan to model: rms": 0.022387,
+      "scan to model: rms": 0.022386,
       "scan to model: within": 1.0,
       "volume": 0.0
     }
@@ -98,8 +98,8 @@
     "status": "pass",
     "values": {
       "model to part: max": 0.006956,
-      "model to scan: max": 0.271976,
-      "model to scan: within": 1.0,
+      "model to scan: max": 0.307777,
+      "model to scan: within": 0.999997,
       "part to model: max": 0.007021,
       "scan to model: max": 0.417863,
       "scan to model: rms": 0.099456,
@@ -117,13 +117,13 @@
     ],
     "status": "fail",
     "values": {
-      "model to part: max": 1.999983,
-      "model to scan: max": 5.456697,
-      "model to scan: within": 0.727436,
-      "part to model: max": 1.999853,
-      "scan to model: max": 4.999202,
-      "scan to model: rms": 0.633845,
-      "scan to model: within": 0.837069,
+      "model to part: max": 1.99998,
+      "model to scan: max": 5.405252,
+      "model to scan: within": 0.752327,
+      "part to model: max": 1.999171,
+      "scan to model: max": 4.999612,
+      "scan to model: rms": 0.638752,
+      "scan to model: within": 0.953062,
       "volume": 0.028559
     }
   },
@@ -241,12 +241,12 @@
     ],
     "status": "pass",
     "values": {
-      "model to part: max": 0.027563,
-      "model to scan: max": 0.273055,
-      "model to scan: within": 0.997,
-      "part to model: max": 0.026604,
-      "scan to model: max": 0.085796,
-      "scan to model: rms": 0.020101,
+      "model to part: max": 0.024081,
+      "model to scan: max": 0.350822,
+      "model to scan: within": 0.996823,
+      "part to model: max": 0.023173,
+      "scan to model: max": 0.08589,
+      "scan to model: rms": 0.02006,
       "scan to model: within": 1.0
     }
   },
@@ -261,8 +261,8 @@
     "values": {
       "model to part: max": 0.016159,
       "part to model: max": 0.015701,
-      "scan to model: max": 0.086214,
-      "scan to model: rms": 0.019933,
+      "scan to model: max": 0.086139,
+      "scan to model: rms": 0.019929,
       "scan to model: within": 1.0
     }
   },
@@ -271,14 +271,14 @@
     "ran": [
       "scan.revolve_it",
       "scan.cut_it",
-      "scan.cut_it"
+      "scan.pattern_it"
     ],
-    "status": "fail",
+    "status": "missed pass",
     "values": {
-      "model to part: max": 1.994882,
-      "part to model: max": 1.999569,
-      "scan to model: max": 0.086309,
-      "scan to model: rms": 0.019999,
+      "model to part: max": 0.01548,
+      "part to model: max": 0.015,
+      "scan to model: max": 0.088906,
+      "scan to model: rms": 0.019957,
       "scan to model: within": 1.0
     }
   },
@@ -291,12 +291,12 @@
     ],
     "status": "pass",
     "values": {
-      "model to part: max": 0.027563,
-      "model to scan: max": 0.273055,
-      "model to scan: within": 0.997,
-      "part to model: max": 0.026604,
-      "scan to model: max": 0.085796,
-      "scan to model: rms": 0.020101,
+      "model to part: max": 0.024081,
+      "model to scan: max": 0.350822,
+      "model to scan: within": 0.996823,
+      "part to model: max": 0.023173,
+      "scan to model: max": 0.08589,
+      "scan to model: rms": 0.02006,
       "scan to model: within": 1.0
     }
   },
@@ -309,10 +309,10 @@
     ],
     "status": "pass",
     "values": {
-      "model to scan: max": 0.268682,
-      "model to scan: within": 0.997063,
-      "scan to model: max": 0.085856,
-      "scan to model: rms": 0.020075,
+      "model to scan: max": 0.35746,
+      "model to scan: within": 0.996923,
+      "scan to model: max": 0.085561,
+      "scan to model: rms": 0.019962,
       "scan to model: within": 1.0
     }
   },
@@ -325,13 +325,13 @@
     ],
     "status": "pass",
     "values": {
-      "model to part: max": 0.064502,
-      "model to scan: max": 0.343966,
-      "model to scan: within": 0.999995,
-      "part to model: max": 0.063925,
-      "scan to model: max": 0.424756,
-      "scan to model: rms": 0.099588,
-      "scan to model: within": 0.995712
+      "model to part: max": 0.064599,
+      "model to scan: max": 0.429521,
+      "model to scan: within": 0.99995,
+      "part to model: max": 0.064025,
+      "scan to model: max": 0.424076,
+      "scan to model: rms": 0.099591,
+      "scan to model: within": 0.995771
     }
   },
   "drilled-shaft/s0.3": {
@@ -343,17 +343,18 @@
       "scan.extrude_it",
       "scan.extrude_it",
       "scan.extrude_it",
+      "scan.extrude_it",
       "scan.chamfer_it"
     ],
     "status": "fail",
     "values": {
-      "model to part: max": 1.999956,
-      "model to scan: max": 8.599263,
-      "model to scan: within": 0.340234,
-      "part to model: max": 1.999892,
-      "scan to model: max": 6.083255,
-      "scan to model: rms": 1.488408,
-      "scan to model: within": 0.423974
+      "model to part: max": 1.999985,
+      "model to scan: max": 17.599652,
+      "model to scan: within": 0.432824,
+      "part to model: max": 1.99994,
+      "scan to model: max": 6.727219,
+      "scan to model: rms": 1.608092,
+      "scan to model: within": 0.554846
     }
   },
   "flange/s0.02": {
@@ -365,12 +366,12 @@
     ],
     "status": "pass",
     "values": {
-      "model to part: max": 0.007303,
-      "model to scan: max": 0.228727,
-      "model to scan: within": 0.998293,
-      "part to model: max": 0.005028,
-      "scan to model: max": 0.085034,
-      "scan to model: rms": 0.019911,
+      "model to part: max": 0.007504,
+      "model to scan: max": 0.238283,
+      "model to scan: within": 0.998039,
+      "part to model: max": 0.004886,
+      "scan to model: max": 0.083153,
+      "scan to model: rms": 0.019914,
       "scan to model: within": 1.0,
       "volume": 0.0
     }
@@ -380,17 +381,16 @@
     "ran": [
       "scan.revolve_it",
       "scan.cut_it",
-      "scan.cut_it",
-      "scan.cut_it"
+      "scan.pattern_it"
     ],
-    "status": "fail",
+    "status": "missed pass",
     "values": {
-      "model to part: max": 1.995495,
-      "part to model: max": 1.998252,
-      "scan to model: max": 1.993789,
-      "scan to model: rms": 0.14211,
-      "scan to model: within": 0.974205,
-      "volume": 0.007264
+      "model to part: max": 0.004591,
+      "part to model: max": 0.002437,
+      "scan to model: max": 0.084168,
+      "scan to model: rms": 0.019891,
+      "scan to model: within": 1.0,
+      "volume": 0.0
     }
   },
   "flange/s0.02-missing-30": {
@@ -398,17 +398,16 @@
     "ran": [
       "scan.revolve_it",
       "scan.cut_it",
-      "scan.cut_it",
-      "scan.cut_it"
+      "scan.pattern_it"
     ],
-    "status": "fail",
+    "status": "missed pass",
     "values": {
-      "model to part: max": 1.999404,
-      "part to model: max": 1.998337,
+      "model to part: max": 0.005182,
+      "part to model: max": 0.003291,
       "scan to model: max": 0.084886,
       "scan to model: rms": 0.019914,
       "scan to model: within": 1.0,
-      "volume": 0.007264
+      "volume": 0.0
     }
   },
   "flange/s0.02-specks": {
@@ -420,12 +419,12 @@
     ],
     "status": "pass",
     "values": {
-      "model to part: max": 0.007303,
-      "model to scan: max": 0.228727,
-      "model to scan: within": 0.998293,
-      "part to model: max": 0.005028,
-      "scan to model: max": 0.085034,
-      "scan to model: rms": 0.019911,
+      "model to part: max": 0.007504,
+      "model to scan: max": 0.238283,
+      "model to scan: within": 0.998039,
+      "part to model: max": 0.004886,
+      "scan to model: max": 0.083153,
+      "scan to model: rms": 0.019914,
       "scan to model: within": 1.0,
       "volume": 0.0
     }
@@ -439,10 +438,10 @@
     ],
     "status": "pass",
     "values": {
-      "model to scan: max": 0.205924,
-      "model to scan: within": 0.998269,
-      "scan to model: max": 0.095568,
-      "scan to model: rms": 0.022042,
+      "model to scan: max": 0.24404,
+      "model to scan: within": 0.998209,
+      "scan to model: max": 0.095832,
+      "scan to model: rms": 0.021843,
       "scan to model: within": 1.0,
       "volume": 0.0
     }
@@ -456,13 +455,13 @@
     ],
     "status": "pass",
     "values": {
-      "model to part: max": 0.019125,
-      "model to scan: max": 0.316858,
-      "model to scan: within": 0.999982,
-      "part to model: max": 0.017205,
-      "scan to model: max": 0.419619,
-      "scan to model: rms": 0.099412,
-      "scan to model: within": 0.995865,
+      "model to part: max": 0.019424,
+      "model to scan: max": 0.329559,
+      "model to scan: within": 0.999989,
+      "part to model: max": 0.017392,
+      "scan to model: max": 0.422279,
+      "scan to model: rms": 0.099417,
+      "scan to model: within": 0.995816,
       "volume": 0.0
     }
   },
@@ -506,14 +505,14 @@
     "ran": [
       "scan.extrude_it"
     ],
-    "status": "fail",
+    "status": "not scanned",
     "values": {
-      "model to part: max": 1.999989,
+      "model to part: max": 1.994678,
       "part to model: max": 1.999989,
-      "scan to model: max": 1.996529,
-      "scan to model: rms": 0.100762,
-      "scan to model: within": 0.986279,
-      "volume": 0.102842
+      "scan to model: max": 0.08975,
+      "scan to model: rms": 0.019775,
+      "scan to model: within": 1.0,
+      "volume": 0.02186
     }
   },
   "plate-holes/s0.02-specks": {
@@ -568,18 +567,19 @@
   "plate-holes/s0.3": {
     "in_app_passes": false,
     "ran": [
+      "scan.extrude_it",
       "scan.extrude_it"
     ],
     "status": "fail",
     "values": {
-      "model to part: max": 1.997325,
-      "model to scan: max": 3.468398,
-      "model to scan: within": 0.976545,
-      "part to model: max": 1.998243,
-      "scan to model: max": 3.99997,
-      "scan to model: rms": 0.678425,
-      "scan to model: within": 0.831289,
-      "volume": 0.043719
+      "model to part: max": 1.999948,
+      "model to scan: max": 3.437687,
+      "model to scan: within": 0.613085,
+      "part to model: max": 1.745566,
+      "scan to model: max": 1.632696,
+      "scan to model: rms": 0.378321,
+      "scan to model: within": 0.965748,
+      "volume": 0.151978
     }
   },
   "rounded-block/s0.02": {
@@ -602,17 +602,16 @@
   "rounded-block/s0.02-missing-10": {
     "in_app_passes": false,
     "ran": [
-      "scan.extrude_it",
       "scan.extrude_it"
     ],
-    "status": "fail",
+    "status": "missed pass",
     "values": {
-      "model to part: max": 1.999872,
-      "part to model: max": 1.464478,
-      "scan to model: max": 0.609951,
-      "scan to model: rms": 0.023907,
-      "scan to model: within": 0.998734,
-      "volume": 0.006555
+      "model to part: max": 0.003626,
+      "part to model: max": 0.002265,
+      "scan to model: max": 0.08022,
+      "scan to model: rms": 0.019723,
+      "scan to model: within": 1.0,
+      "volume": 0.0
     }
   },
   "rounded-block/s0.02-missing-30": {
@@ -620,14 +619,14 @@
     "ran": [
       "scan.extrude_it"
     ],
-    "status": "fail",
+    "status": "missed pass",
     "values": {
-      "model to part: max": 1.994891,
-      "part to model: max": 1.463034,
+      "model to part: max": 0.00271,
+      "part to model: max": 0.000958,
       "scan to model: max": 0.080097,
       "scan to model: rms": 0.019685,
       "scan to model: within": 1.0,
-      "volume": 0.009105
+      "volume": 0.0
     }
   },
   "rounded-block/s0.02-specks": {
@@ -685,19 +684,18 @@
       "scan.extrude_it",
       "scan.extrude_it",
       "scan.extrude_it",
-      "scan.extrude_it",
       "scan.extrude_it"
     ],
     "status": "fail",
     "values": {
-      "model to part: max": 1.999993,
-      "model to scan: max": 2.735669,
-      "model to scan: within": 0.582047,
-      "part to model: max": 1.999241,
-      "scan to model: max": 2.711973,
-      "scan to model: rms": 0.648712,
-      "scan to model: within": 0.765236,
-      "volume": 0.484506
+      "model to part: max": 1.999999,
+      "model to scan: max": 2.631213,
+      "model to scan: within": 0.607188,
+      "part to model: max": 1.998852,
+      "scan to model: max": 2.719965,
+      "scan to model: rms": 0.762458,
+      "scan to model: within": 0.846939,
+      "volume": 0.54521
     }
   }
 }

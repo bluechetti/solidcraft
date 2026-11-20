@@ -10,6 +10,8 @@
 //!   refused       nothing was built: the commands refused
 //!   SILENT WRONG  built, outside a bar, and Scan Deviation passed it: none is allowed
 //!   missed pass   built and within every bar, though Scan Deviation did not pass it
+//!   not scanned   outside only the part's own bars, and only where the scan holds nothing near:
+//!                 what the model lacks the scanner never saw (no command could build it)
 //!
 //! The numbers of every run are compared with `tests/scan-bench.lock.json` (`--bless` writes it):
 //! the benchmark is seeded, and a number that moves is a change in what SolidCraft builds. It
@@ -94,7 +96,8 @@ pub fn run(root: &Path, rest: &[&str]) -> Result<(), String> {
     let count = |status: &str| rows.iter().filter(|r| r["status"] == status).count();
     let summary = json!({
         "runs": rows.len(), "pass": count("pass"), "fail": count("fail"), "refused": count("refused"),
-        "silent_wrong": count("SILENT WRONG"), "missed_pass": count("missed pass"), "crashed": count("CRASHED"),
+        "silent_wrong": count("SILENT WRONG"), "missed_pass": count("missed pass"), "not_scanned": count("not scanned"),
+        "crashed": count("CRASHED"),
     });
     let locked: BTreeMap<String, Value> =
         rows.iter().map(|r| (format!("{}/{}", text_of(&r["case"]), text_of(&r["level"])), r["numbers"].clone())).collect();
@@ -124,13 +127,14 @@ pub fn run(root: &Path, rest: &[&str]) -> Result<(), String> {
     write(&out.join("report.json"), &(pretty(&report)? + "\n"))?;
     write(&root.join(REPORT), &markdown(root, &config, &report))?;
     println!(
-        "{} runs: {} pass, {} fail, {} refused, {} silently wrong, {} missed pass, {} crashed",
+        "{} runs: {} pass, {} fail, {} refused, {} silently wrong, {} missed pass, {} not scanned, {} crashed",
         rows.len(),
         count("pass"),
         count("fail"),
         count("refused"),
         count("SILENT WRONG"),
         count("missed pass"),
+        count("not scanned"),
         count("CRASHED")
     );
     let mut wrong = Vec::new();
@@ -240,6 +244,7 @@ fn one(root: &Path, config: &Value, bin: &Path, scorer: Option<&str>, out: &Path
     let checks = checks(config, &bar, &result, &expected, has("--missing"), has("--scale"));
     let mut failed: Vec<String> = checks.iter().filter(|(_, c)| c["ok"] == false).map(|(name, _)| name.clone()).collect();
     let own = failed.is_empty();
+    let own_failed = failed.clone();
     // The second judge can only fail what the bars passed: a run already outside a bar keeps its
     // result whatever it says, and a badly wrong model is the slowest for it to measure.
     if let Some(command) = scorer.filter(|_| own) {
@@ -266,18 +271,29 @@ fn one(root: &Path, config: &Value, bin: &Path, scorer: Option<&str>, out: &Path
         row["second_judge"] = verdict;
     }
     let passes = in_app["passes"] == true;
-    let status = |within: bool| match (within, passes) {
+    // Outside only the bars the part itself sets, where the scan holds nothing near: the scanner
+    // never saw what the model lacks (a hole wholly in a patch it missed). No command can build it.
+    let truth_only = |failed: &[String]| {
+        !failed.is_empty() && failed.iter().all(|f| f == "volume" || f.starts_with("part to model") || f.starts_with("model to part"))
+    };
+    // Over the part's surface the scan covers, the part and the model within a feature's place of
+    // each other both ways: what is off lies only where nothing was scanned.
+    let position = bar["position"].as_f64().unwrap_or(0.0);
+    let scanned = |key: &str| result["against_truth"][key].as_f64().is_some_and(|d| d <= position);
+    let unscanned = |failed: &[String]| truth_only(failed) && scanned("scanned_part_max") && scanned("scanned_model_max");
+    let status = |within: bool, failed: &[String]| match (within, passes) {
+        _ if unscanned(failed) => "not scanned",
         (true, true) => "pass",
         (true, false) => "missed pass",
         (false, true) => "SILENT WRONG",
         (false, false) => "fail",
     };
-    row["status"] = json!(status(failed.is_empty()));
+    row["status"] = json!(status(failed.is_empty(), &failed));
     // What the lock holds: SolidCraft's own verdict (the same with or without a second judge)
     // and each measured value, to a nanometre. Not the times.
     let values: BTreeMap<&String, Value> =
         checks.iter().map(|(name, c)| (name, json!(c["value"].as_f64().map(|v| (v * 1e6).round() / 1e6)))).collect();
-    row["numbers"] = json!({"status": status(own), "in_app_passes": passes, "ran": row["ran"], "values": values});
+    row["numbers"] = json!({"status": status(own, &own_failed), "in_app_passes": passes, "ran": row["ran"], "values": values});
     row["failed"] = json!(failed);
     row["checks"] = json!(checks);
     Ok(row)
@@ -336,12 +352,13 @@ fn markdown(root: &Path, config: &Value, report: &Value) -> String {
     );
     let s = &report["summary"];
     md += &format!(
-        "**{} runs: {} pass, {} fail, {} refused, {} silently wrong, {} built right but not proven in-app.**\n\n",
-        s["runs"], s["pass"], s["fail"], s["refused"], s["silent_wrong"], s["missed_pass"]
+        "**{} runs: {} pass, {} fail, {} refused, {} silently wrong, {} built right but not proven in-app, {} not scanned.**\n\n",
+        s["runs"], s["pass"], s["fail"], s["refused"], s["silent_wrong"], s["missed_pass"], s["not_scanned"]
     );
     md += "- pass: built, within every bar, and Scan Deviation passed it\n- fail: built, outside a bar, and Scan Deviation said so\n\
            - refused: the commands refused and nothing was built\n- SILENT WRONG: outside a bar and Scan Deviation passed it (none is allowed)\n\
-           - missed pass: within every bar, but Scan Deviation did not pass it (a scan with surface missing cannot prove the model there)\n\n";
+           - missed pass: within every bar, but Scan Deviation did not pass it (a scan with surface missing cannot prove the model there)\n\
+           - not scanned: outside only the true part's bars, and only where the scan holds nothing near (what the model lacks was never scanned)\n\n";
     md += &match report["second_judge"].as_str() {
         Some(judge) => format!(
             "Judges: SolidCraft's own measurements against the scan and the true part, and a second program that shares no code with it (`{judge}`).\n\n"
