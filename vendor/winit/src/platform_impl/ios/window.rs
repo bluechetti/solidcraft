@@ -80,7 +80,18 @@ impl WinitUIWindow {
         frame: CGRect,
         view_controller: &UIViewController,
     ) -> Retained<Self> {
-        let this: Retained<Self> = unsafe { msg_send_id![mtm.alloc(), initWithFrame: frame] };
+        // SolidCraft: with the UIScene life cycle (required by apps built with the iOS 27 SDK) a
+        // window shows only when it belongs to a scene: attach it to the one iOS connected
+        // (`scene::connected`), and fall back to a screen-based window without one.
+        let this: Retained<Self> = match super::scene::connected() {
+            Some(scene) => {
+                let this: Retained<Self> =
+                    unsafe { msg_send_id![mtm.alloc(), initWithWindowScene: &*scene] };
+                this.setFrame(frame);
+                this
+            },
+            None => unsafe { msg_send_id![mtm.alloc(), initWithFrame: frame] },
+        };
 
         this.setRootViewController(Some(view_controller));
 
