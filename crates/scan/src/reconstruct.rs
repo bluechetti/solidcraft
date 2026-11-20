@@ -1542,8 +1542,35 @@ pub fn holes(
         repeated.insert(repeat.members[0], (repeat.places, repeat.layout));
         rest.extend(repeat.members[1..].iter().copied());
     }
-    (0..faces.len())
+    // One hole read twice (noise broke its wall into two cylinders, a little apart in radius and
+    // tilt: a flange's bolt hole at 0.3 mm of noise, cut twice and left a crescent): the larger is
+    // the hole.
+    let same_hole = |a: usize, b: usize| {
+        let (Shape::Cylinder { point: p, axis: d, radius: r }, Shape::Cylinder { point: q, axis: e, radius: t }) = (faces[a].shape, faces[b].shape)
+        else {
+            return false;
+        };
+        let (d, e) = (unit(d), unit(e));
+        let off = |from: Vec3, to: Vec3, along: Vec3| {
+            let v = to - from;
+            (v - along * v.dot(along)).len()
+        };
+        d.dot(e).abs() >= SAME_HOLE_DIRECTION && (r - t).abs() <= SAME_HOLE_RADIUS * r.max(t) && off(p, q, d).max(off(q, p, e)) <= 0.5 * r.min(t)
+    };
+    let twice: BTreeSet<usize> = (0..faces.len())
         .filter(|&k| hole(k) && !rest.contains(&k))
+        .filter(|&k| {
+            (0..faces.len()).any(|j| {
+                j != k
+                    && hole(j)
+                    && !rest.contains(&j)
+                    && same_hole(j, k)
+                    && (faces[j].area > faces[k].area || (faces[j].area == faces[k].area && j < k))
+            })
+        })
+        .collect();
+    (0..faces.len())
+        .filter(|&k| hole(k) && !rest.contains(&k) && !twice.contains(&k))
         .filter_map(|k| {
             let Shape::Cylinder { point, axis, radius } = faces[k].shape else { return None };
             let axis = axis.normalized()?;
@@ -1559,6 +1586,10 @@ pub fn holes(
 
 /// Two directions within 2° are one.
 const SQUARE_TO_BORE: f64 = 0.9994;
+/// Two holes' cylinders this alike are one hole read twice ([`holes`]): directions within 5°,
+/// radii within 15 %, and each axis within half the radius of the other.
+const SAME_HOLE_DIRECTION: f64 = 0.9962;
+const SAME_HOLE_RADIUS: f64 = 0.15;
 
 /// Where the flat bottom of the bore `bore` (about `axis`, its wall ending at `end`) crosses the
 /// axis: a plane square to the axis, its middle within half the radius of the axis, no larger
@@ -2538,6 +2569,23 @@ mod tests {
         assert_eq!(found.len(), 2, "{found:?}");
         let depths: Vec<f64> = found.iter().map(|p| p.depth()).collect();
         assert!(depths.iter().any(|d| (d - 4.0).abs() < 1e-9) && depths.iter().any(|d| (d - 8.0).abs() < 1e-9), "{depths:?}");
+    }
+
+    /// A bolt hole whose wall noise broke into two cylinders, a little apart in radius and tilt,
+    /// is one hole, read from the larger; a hole of the same size elsewhere is another.
+    #[test]
+    fn a_hole_read_twice_is_one_hole() {
+        let tilted = Vec3::new(0.03, 0.008, 1.0).normalized().unwrap();
+        let mut faces = vec![
+            cylinder(Vec3::new(0.0, -22.0, 4.0), Vec3::Z, 2.94),
+            cylinder(Vec3::new(0.24, -22.1, 3.2), tilted, 2.81),
+            cylinder(Vec3::new(22.0, 0.0, 4.0), Vec3::Z, 2.99),
+        ];
+        faces[1].area = 40.0;
+        let span = |_: usize, _: Vec3| Some((0.0, 8.0));
+        let found = holes(&faces, &|_| true, &BTreeSet::new(), &[], &span, Vec3::new(0.0, 0.0, 20.0), 0.75);
+        let kept: Vec<usize> = found.iter().map(|h| h.face).collect();
+        assert_eq!(kept, vec![0, 2], "{found:?}");
     }
 
     #[test]

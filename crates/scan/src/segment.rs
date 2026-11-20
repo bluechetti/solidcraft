@@ -849,7 +849,11 @@ const FOUND_NOTHING: f64 = 0.01;
 /// The copy is smoothed until it reads this smooth ([`smoothness`]), against the typical edge, or
 /// for at most [`MOST_PASSES`] passes.
 const SMOOTH_TO: f64 = 0.02;
-const MOST_PASSES: usize = 8;
+const MOST_PASSES: usize = 64;
+/// ... or until a pass takes off less than this share of what is left. A scan as noisy as half its
+/// triangles (0.3 mm on 0.5 mm) wants dozens of passes, each taking off 3 to 8 %: after 8 its faces
+/// still broke into dozens of planes (a plate read 41 % in shapes; after 64, 96 %).
+const STALLED: f64 = 0.01;
 /// A copy that keeps more than this share of its roughness ([`smoothness`]) had none to take away: what was measured
 /// was the scan's own shape on triangles too coarse for the patches it is measured on.
 const MOST_NOISE_KEPT: f64 = 0.5;
@@ -860,8 +864,9 @@ fn smoothed(reading: &Reading, options: &Options, edge: f64, size: f64) -> Optio
     let before = smoothness(&mut reading.on(reading.scan.positions), options, size);
     let mut kept = before;
     let (copy, _) = crate::denoise::smoothed_until(&reading.scan, MOST_PASSES, |positions| {
+        let last = kept;
         kept = smoothness(&mut reading.on(positions), options, size);
-        kept <= SMOOTH_TO * edge
+        kept <= SMOOTH_TO * edge || kept > (1.0 - STALLED) * last
     })?;
     (kept <= MOST_NOISE_KEPT * before).then_some(copy)
 }

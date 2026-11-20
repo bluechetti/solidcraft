@@ -239,36 +239,88 @@ pub fn as_designed(walls: &[(usize, Wall)], areas: &[f64], loops: &[(Vec<Vec2>, 
 /// gap between two walls where the scan mostly runs along the prism is drawn as the slice runs there
 /// ([`Fill`]); without it, the walls either side run on to where they cross.
 pub fn prism_outlines(walls: &[(usize, Wall)], loops: &[(Vec<Vec2>, Vec<Option<usize>>)], reach: f64, fill: Option<&Fill<'_>>) -> Vec<Outline> {
-    let mut found: Vec<(Outline, Vec<Vec2>)> = loops
+    prism_outlines_sided(walls, loops, reach, fill, None)
+}
+
+/// [`prism_outlines`], with each loop's `inside` read off the scan where it is known: whether the
+/// part's material lies inside the loop (its outline) or outside it (a hole). A loop the scan says
+/// is a hole is kept only inside an outline, and a slice with no outline gives none: read off the
+/// largest loop instead, a slice that missed the part's rim made its holes' circles the part's
+/// outline (a flange at 0.3 mm of noise: plugs extruded where its bolt holes are).
+fn prism_outlines_sided(
+    walls: &[(usize, Wall)],
+    loops: &[(Vec<Vec2>, Vec<Option<usize>>)],
+    reach: f64,
+    fill: Option<&Fill<'_>>,
+    inside: Option<&[bool]>,
+) -> Vec<Outline> {
+    let mut found: Vec<(Outline, Vec<Vec2>, Option<bool>)> = loops
         .iter()
         .enumerate()
         .filter_map(|(k, (points, on))| {
             let fill = fill.map(|f| (f.tolerance, f.along.get(k).map(Vec::as_slice)));
             let outline = outline_of(walls, points, on, reach, fill)?;
-            Some(match fill {
-                Some((tolerance, _)) => rounded_as_the_rest(outline, points, tolerance),
-                None => outline,
-            })
+            Some((
+                match fill {
+                    Some((tolerance, _)) => rounded_as_the_rest(outline, points, tolerance),
+                    None => outline,
+                },
+                inside.and_then(|i| i.get(k).copied()),
+            ))
         })
-        .map(|o| {
+        .map(|(o, side)| {
             let r = ring(&o);
-            (o, r)
+            (o, r, side)
         })
-        .filter(|(_, r)| is_simple_ring(r))
+        .filter(|(_, r, _)| is_simple_ring(r))
         .collect();
     found.sort_by(|a, b| area(&b.1).abs().total_cmp(&area(&a.1).abs()));
-    let mut kept: Vec<(Outline, Vec<Vec2>)> = Vec::new();
-    for (o, r) in found {
-        if kept.iter().all(|(_, k)| !rings_cross(k, &r)) {
-            kept.push((o, r));
+    let mut kept: Vec<(Outline, Vec<Vec2>, Option<bool>)> = Vec::new();
+    for (o, r, side) in found {
+        if kept.iter().all(|(_, k, _)| !rings_cross(k, &r)) {
+            kept.push((o, r, side));
         }
     }
-    let material = kept.first().map_or(1.0, |(_, r)| area(r).signum());
-    let outer: Vec<Vec<Vec2>> = kept.iter().filter(|(_, r)| area(r).signum() == material).map(|(_, r)| r.clone()).collect();
+    if inside.is_some() {
+        let outer: Vec<Vec<Vec2>> = kept.iter().filter(|(_, _, side)| *side == Some(true)).map(|(_, r, _)| r.clone()).collect();
+        return kept
+            .into_iter()
+            .filter(|(_, r, side)| *side == Some(true) || outer.iter().any(|o| r.iter().all(|p| contains(o, *p))))
+            .map(|(o, _, _)| o)
+            .collect();
+    }
+    let material = kept.first().map_or(1.0, |(_, r, _)| area(r).signum());
+    let outer: Vec<Vec<Vec2>> = kept.iter().filter(|(_, r, _)| area(r).signum() == material).map(|(_, r, _)| r.clone()).collect();
     kept.into_iter()
-        .filter(|(_, r)| area(r).signum() == material || outer.iter().any(|o| r.iter().all(|p| contains(o, *p))))
-        .map(|(o, _)| o)
+        .filter(|(_, r, _)| area(r).signum() == material || outer.iter().any(|o| r.iter().all(|p| contains(o, *p))))
+        .map(|(o, _, _)| o)
         .collect()
+}
+
+/// Whether the part's material lies inside the loop `points` (in `plane`'s coordinates), read off
+/// the scan's triangles it runs through (`triangles`, one for each point): the scan is wound
+/// outward, so each triangle's normal, laid in the plane, points out of the material, to the
+/// right of the way the loop runs where the material is on its left. `None` where the triangles
+/// say nothing (lying in the plane, or as many each way).
+fn material_inside(scan: &Scan, plane: &Plane, points: &[Vec2], triangles: &[usize]) -> Option<bool> {
+    let n = points.len();
+    if n < 3 || triangles.len() != n {
+        return None;
+    }
+    let (x, y) = (plane.x, plane.y);
+    let mut right = 0.0;
+    for i in 0..n {
+        let Some([a, b, c]) = triangles.get(i).and_then(|&t| scan.corners(t)) else { continue };
+        let normal = (b - a).cross(c - a);
+        let flat = Vec2::new(normal.dot(x), normal.dot(y));
+        let along = points[(i + 1) % n] - points[i];
+        right += flat.dot(Vec2::new(along.y, -along.x));
+    }
+    if right == 0.0 {
+        return None;
+    }
+    // Material on the left of the way it runs: inside a counter-clockwise loop.
+    Some((right > 0.0) == (area(points) > 0.0))
 }
 
 /// Rounds of one radius are this near alike (a share of the radius).
@@ -1902,7 +1954,10 @@ pub(crate) fn prism_profile_from(
         // A drafted prism is sliced halfway up but drawn at its low end, where its walls stand
         // further out than the slice by the draft: the slice does not say how a gap runs there.
         let fill = (prism.draft == 0.0).then_some(Fill { tolerance, along: &along });
-        let outlines = prism_outlines(&designed, &loops, reach, fill.as_ref());
+        // Which side of each loop the material is on, from the scan's own winding.
+        let slice = at(0.0);
+        let sides: Option<Vec<bool>> = runs.iter().map(|r| material_inside(scan, &slice, &r.points, &r.triangles)).collect();
+        let outlines = prism_outlines_sided(&designed, &loops, reach, fill.as_ref(), sides.as_deref());
         let on: BTreeSet<usize> = outlines.iter().flat_map(|o| o.faces.iter().flatten().copied()).collect();
         (outlines, prism.walls.iter().filter(|k| on.contains(k)).count())
     };
@@ -2486,6 +2541,29 @@ mod tests {
         let length: f64 = (0..points.len()).map(|i| points[i].dist(points[(i + 1) % points.len()])).sum();
         let expected = 100.0 + std::f64::consts::TAU * 5.0;
         assert!((length - expected).abs() < 0.1, "{length} against {expected}");
+    }
+
+    /// Which side of a slice the material is on, read off the scan's winding: a block's outline
+    /// has it inside; the same walls wound the other way (as a hole's wall faces) have it outside,
+    /// whichever way round the loop runs.
+    #[test]
+    fn a_slices_material_side_is_read_off_the_scans_winding() {
+        let (positions, triangles) = extruded(&rounded_rectangle(40.0, 30.0, 5.0, 0.5), 0.0, 10.0, 4);
+        let flipped: Vec<[u32; 3]> = triangles.iter().map(|&[a, b, c]| [a, c, b]).collect();
+        let plane = Plane { origin: Vec3::new(0.0, 0.0, 5.0), x: Vec3::X, y: Vec3::Y };
+        for (tris, inside) in [(&triangles, true), (&flipped, false)] {
+            let scan = Scan::new(&positions, tris);
+            let runs = crate::section::section_welded(&scan, &crate::welded(&positions), &plane);
+            let run = runs.iter().find(|r| r.closed).expect("a loop");
+            assert_eq!(material_inside(&scan, &plane, &run.points, &run.triangles), Some(inside));
+            let mut points = run.points.clone();
+            let mut on = run.triangles.clone();
+            points.reverse();
+            on.reverse();
+            // Reversed, each point keeps the triangle it lies in; the way round does not matter.
+            on.rotate_left(1);
+            assert_eq!(material_inside(&scan, &plane, &points, &on), Some(inside));
+        }
     }
 
     /// The same block with the lower 6 of one round never scanned: the round's wall ends along the
