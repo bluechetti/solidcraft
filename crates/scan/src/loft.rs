@@ -353,7 +353,7 @@ pub fn read_within(scan: &Scan, faces: &[Face], count: usize, tolerance: f64) ->
     let (x, y) = in_plane(direction);
     let weld = crate::welded(scan.positions);
     let mut sections: Vec<Section> = Vec::with_capacity(count);
-    let mut previous: Option<Vec2> = None;
+    let mut previous: Option<Vec<Vec2>> = None;
     let mut twist_before: Option<f64> = None;
     let mut rings: Vec<Vec<Vec2>> = Vec::with_capacity(count);
     let mut sliced: Vec<f64> = Vec::with_capacity(count);
@@ -397,12 +397,16 @@ pub fn read_within(scan: &Scan, faces: &[Face], count: usize, tolerance: f64) ->
             ring = enveloped(&ring, &specks).unwrap_or(ring);
         }
         let m = middle(&ring);
-        // Start where the one before started, as seen from the middle; the first at its furthest
-        // point along x.
-        let toward = previous.unwrap_or(Vec2::new(1.0, 0.0));
-        let start = (0..ring.len()).max_by(|&a, &b| (ring[a] - m).dot(toward).total_cmp(&(ring[b] - m).dot(toward))).unwrap_or(0);
-        let laid = resampled(&ring, start, POINTS);
-        previous = (laid[0] - m).normalized();
+        // The first starts at its furthest point along x; each after it where it lies nearest the
+        // one before, point for point, seen from each one's middle (where one was started from
+        // the point furthest along the last start's direction, a section that changed shape slid
+        // round, and the loft between them twisted through itself).
+        let start = (0..ring.len()).max_by(|&a, &b| (ring[a] - m).x.total_cmp(&(ring[b] - m).x)).unwrap_or(0);
+        let laid = match &previous {
+            Some(before) => matched(&resampled(&ring, start, POINTS), before),
+            None => resampled(&ring, start, POINTS),
+        };
+        previous = Some(laid.iter().map(|p| *p - m).collect());
         // The ends' sections lie at the end faces, when there are such: where the faces were
         // fitted, not at the scan's outermost point (its noise stands a little proud of them).
         let plane = if let (Some((_, levels)), true) = (capped, k == 0 || k + 1 == count) {
@@ -459,7 +463,70 @@ pub fn read_within(scan: &Scan, faces: &[Face], count: usize, tolerance: f64) ->
             }
         }
     }
+    // A loft only where the part is one: half way between each two sections, the scan's slice
+    // lies near what the loft makes there (about their average, point for point). A part whose
+    // section turns or changes shape between them is no loft, however its slices close.
+    for k in 0..count - 1 {
+        let at = 0.5 * (sliced[k] + sliced[k + 1]);
+        let plane = Plane { origin: centre + direction * (at - centre.dot(direction)), x, y };
+        let runs = crate::section::section_welded(scan, &weld, &plane);
+        let Some(ring) = runs.iter().filter(|r| r.closed && r.points.len() >= 3).max_by(|a, b| {
+            let l = |p: &[Vec2]| (0..p.len()).map(|i| p[i].dist(p[(i + 1) % p.len()])).sum::<f64>();
+            l(&a.points).total_cmp(&l(&b.points))
+        }) else {
+            return Err(format!("the slice {:.0}% along the part does not close round", 100.0 * (at - low) / length));
+        };
+        let mut ring = ring.points.clone();
+        if signed_area(&ring) < 0.0 {
+            ring.reverse();
+        }
+        // Finely, and the slice's distance read to its own outline, not point to point: how the
+        // points fall along a loop is no change of its shape.
+        let (a, b) = (resampled(&rings[k], 0, CHECK_POINTS), resampled(&rings[k + 1], 0, CHECK_POINTS));
+        let b = matched(&b, &a.iter().map(|p| *p - middle(&a)).collect::<Vec<_>>());
+        let average: Vec<Vec2> = a.iter().zip(&b).map(|(p, q)| (*p + *q) * 0.5).collect();
+        let to_ring = |p: Vec2| {
+            (0..ring.len())
+                .map(|i| {
+                    let (u, v) = (ring[i], ring[(i + 1) % ring.len()]);
+                    let d = v - u;
+                    let t = if d.len2() > 0.0 { ((p - u).dot(d) / d.len2()).clamp(0.0, 1.0) } else { 0.0 };
+                    p.dist(u + d * t)
+                })
+                .fold(f64::INFINITY, f64::min)
+        };
+        let off = average.iter().map(|&p| to_ring(p)).fold(0.0, f64::max);
+        let size = average.iter().flat_map(|p| average.iter().map(move |q| p.dist(*q))).fold(0.0, f64::max);
+        if off > (MIDWAY_OFF * size).max(4.0 * tolerance) {
+            return Err(format!(
+                "the part is no loft: half way between two of its sections the scan lies {off:.1} mm off what a loft through them makes ({:.0}% of the section's size): it turns or changes shape between them",
+                100.0 * off / size.max(f64::MIN_POSITIVE)
+            ));
+        }
+    }
     Ok(Loft { direction, capped: capped.is_some(), sections })
+}
+
+/// Points round each loop the check half way between sections reads with.
+const CHECK_POINTS: usize = 360;
+
+/// Half way between two sections, the scan's slice may lie at most this share of the section's
+/// size (or four tolerances) from what the loft through them makes there: a section turning
+/// evenly 15° from one to the next is off by half a percent of its size there; one turning 60°
+/// in a tenth of the length, by nine percent.
+const MIDWAY_OFF: f64 = 0.03;
+
+/// `laid` (evenly spaced round a loop) turned round to start where it lies nearest `before` (a
+/// loop of as many points, each from its middle), point for point, each seen from its own middle.
+fn matched(laid: &[Vec2], before: &[Vec2]) -> Vec<Vec2> {
+    let n = laid.len();
+    if n == 0 || before.len() != n {
+        return laid.to_vec();
+    }
+    let m = middle(laid);
+    let cost = |shift: usize| (0..n).map(|i| ((laid[(i + shift) % n] - m) - before[i]).len2()).sum::<f64>();
+    let best = (0..n).min_by(|&a, &b| cost(a).total_cmp(&cost(b))).unwrap_or(0);
+    (0..n).map(|i| laid[(i + best) % n]).collect()
 }
 
 /// The counter-clockwise `ring` of a wing's section laid out along its chord with [`POINTS`]
@@ -505,6 +572,54 @@ mod tests {
         let triangles =
             vec![[0, 2, 1], [1, 2, 3], [4, 5, 6], [5, 7, 6], [0, 1, 4], [1, 5, 4], [2, 6, 3], [3, 6, 7], [0, 4, 2], [2, 4, 6], [1, 3, 5], [3, 7, 5]];
         (positions, triangles)
+    }
+
+    /// A rounded bar 40 × 20 whose section turns 60° in 4 mm half way up its 60: every slice is
+    /// one closed loop, but half way between two sections the scan lies far from what a loft
+    /// through them makes, so it is no loft (T-LESS 17 was proposed as one, and its loft passed
+    /// through itself). The same bar turning evenly, 60° over its whole length, is one.
+    #[test]
+    fn a_bar_whose_section_turns_suddenly_is_no_loft_and_one_turning_evenly_is() {
+        let outline = crate::test_meshes::rounded_rectangle(40.0, 20.0, 2.0, 1.0);
+        let bar = |angle_at: &dyn Fn(f64) -> f64| {
+            let n = outline.len() as u32;
+            let rows = 60u32;
+            let mut positions = Vec::new();
+            for j in 0..=rows {
+                let z = f64::from(j);
+                let (s, c) = angle_at(z).sin_cos();
+                positions.extend(outline.iter().map(|&[x, y]| {
+                    let (x, y) = (x - 20.0, y - 10.0);
+                    Vec3::new(x * c - y * s, x * s + y * c, z)
+                }));
+            }
+            let mut triangles = Vec::new();
+            for j in 0..rows {
+                for k in 0..n {
+                    let (a, b) = (j * n + k, j * n + (k + 1) % n);
+                    triangles.push([a, b, b + n]);
+                    triangles.push([a, b + n, a + n]);
+                }
+            }
+            for (z, top) in [(0.0, false), (f64::from(rows), true)] {
+                let centre = positions.len() as u32;
+                positions.push(Vec3::new(0.0, 0.0, z));
+                let ring = if top { rows * n } else { 0 };
+                for k in 0..n {
+                    let (a, b) = (ring + k, ring + (k + 1) % n);
+                    triangles.push(if top { [centre, a, b] } else { [centre, b, a] });
+                }
+            }
+            (positions, triangles)
+        };
+        let sudden = |z: f64| (60f64.to_radians() * ((z - 28.0) / 4.0)).clamp(0.0, 60f64.to_radians());
+        let (positions, triangles) = bar(&sudden);
+        let refused = read(&Scan::new(&positions, &triangles), &[], 5).expect_err("no loft");
+        assert!(refused.contains("no loft"), "{refused}");
+        let even = |z: f64| 60f64.to_radians() * z / 60.0;
+        let (positions, triangles) = bar(&even);
+        let loft = read(&Scan::new(&positions, &triangles), &[], 5).expect("a loft");
+        assert_eq!(loft.sections.len(), 5);
     }
 
     #[test]

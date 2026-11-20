@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use solidcore_record::{Plane, Vec2, Vec3};
 use solidcraft_geom::prelude::*;
 use solidcraft_scan::pipe::Piece;
+use solidcraft_scan::tubes::PathPiece;
 
 use super::{View, at, into_params, merged, reply, run, view};
 use crate::params::bad;
@@ -236,7 +237,8 @@ fn tube_points(tube: &solidcraft_scan::tubes::Tube) -> Vec<Vec3> {
     kept
 }
 
-/// Tubes It: each tube's path a 3D spline through points along its axis, in a sketch of its own,
+/// Tubes It: each tube's path as a tube is bent (straight between its corners, an arc of its bend
+/// radius round each; a 3D spline through points along its axis where the corners crowd), in a sketch of its own,
 /// and the tube's circle swept along it, the first into the body asked (or a new one), the rest
 /// joined to it. A tube the kernel cannot sweep is left out and named in the note.
 pub(super) fn tubes_it(s: &mut Session, p: &Value) -> Result<Value> {
@@ -257,9 +259,24 @@ pub(super) fn tubes_it(s: &mut Session, p: &Value) -> Result<Value> {
         let id = open_sketch(s, &Plane { origin: a, x, y }, &format!("Tube {} Path", k + 1))?;
         let drawn = (|| -> Result<Vec<String>> {
             run(s, "sketch.options", json!({"sketch_3d": true}))?;
-            let drawn = run(s, "sketch.spline3d", json!({"points": points.iter().map(|q| at(*q)).collect::<Vec<_>>()}))?;
+            let mut path = Vec::new();
+            match tube.path_pieces() {
+                // As a tube is bent: straight between its corners, an arc of the bend's radius
+                // round each.
+                Some(pieces) => {
+                    for piece in pieces {
+                        let drawn = match piece {
+                            PathPiece::Line(a, b) => run(s, "sketch.line3d", json!({"points": [at(a), at(b)]}))?,
+                            PathPiece::Arc(a, m, b) => run(s, "sketch.arc3d", json!({"start": at(a), "through": at(m), "end": at(b)}))?,
+                        };
+                        path.extend(curves(&drawn));
+                    }
+                }
+                // Corners too crowded for its bends: a curve through the points along its axis.
+                None => path.extend(curves(&run(s, "sketch.spline3d", json!({"points": points.iter().map(|q| at(*q)).collect::<Vec<_>>()}))?)),
+            }
             run(s, "sketch.finish", json!({}))?;
-            Ok(curves(&drawn))
+            Ok(path)
         })();
         let path = match drawn {
             Ok(path) => path,

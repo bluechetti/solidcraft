@@ -46,6 +46,76 @@ pub struct Tube {
     pub straights: usize,
     /// The faces it is made of.
     pub faces: BTreeSet<usize>,
+    /// Its path as a tube is bent: the corners of its centreline from one end to the other, and
+    /// the radius its axis bends round at each corner between ([`Tube::path_pieces`]).
+    pub corners: Vec<Vec3>,
+    pub bend_radii: Vec<f64>,
+}
+
+/// A piece of a tube's path: straight, or an arc from its start through a point on it to its end.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PathPiece {
+    Line(Vec3, Vec3),
+    Arc(Vec3, Vec3, Vec3),
+}
+
+/// The least a bend's radius may come down to where its corners crowd it, against the tube's own:
+/// a bend tighter than the tube folds through itself and cannot be swept.
+const LEAST_BEND: f64 = 1.02;
+
+impl Tube {
+    /// The path as lines and arcs: straight between its corners, round each corner on an arc of
+    /// its bend radius tangent to both, so the path turns smoothly and never tighter than the bend
+    /// (a curve through the points along its axis kinks where two pieces' fits meet, and a sweep
+    /// along it folds through itself wherever it turns tighter than the tube). Where two corners
+    /// leave too little straight between them for both arcs, both are made smaller; `None` when
+    /// one would then bend tighter than [`LEAST_BEND`] of the tube's radius.
+    pub fn path_pieces(&self) -> Option<Vec<PathPiece>> {
+        let c = &self.corners;
+        let n = c.len();
+        if n < 2 || self.bend_radii.len() + 2 != n {
+            return None;
+        }
+        // Each corner's turn and how far back along each side its arc starts.
+        let turn = |k: usize| {
+            let (a, b) = (unit(c[k] - c[k - 1]), unit(c[k + 1] - c[k]));
+            a.dot(b).clamp(-1.0, 1.0).acos()
+        };
+        let back: Vec<f64> = (0..n).map(|k| if k == 0 || k + 1 == n { 0.0 } else { self.bend_radii[k - 1] * (0.5 * turn(k)).tan() }).collect();
+        // Each side's share of what its two arcs ask for, and each corner the smaller of its two.
+        let share: Vec<f64> = (0..n - 1)
+            .map(|k| {
+                let asked = back[k] + back[k + 1];
+                if asked > 0.0 { (c[k].dist(c[k + 1]) / asked).min(1.0) } else { 1.0 }
+            })
+            .collect();
+        let mut pieces = Vec::new();
+        let mut at = c[0];
+        for k in 1..n - 1 {
+            let scale = share[k - 1].min(share[k]);
+            let (radius, t) = (self.bend_radii[k - 1] * scale, back[k] * scale);
+            let (a, b) = (unit(c[k] - c[k - 1]), unit(c[k + 1] - c[k]));
+            if t <= 1e-9 * radius.max(1.0) {
+                continue;
+            }
+            if !(radius >= LEAST_BEND * self.radius) || !(t.is_finite()) {
+                return None;
+            }
+            let (from, to) = (c[k] - a * t, c[k] + b * t);
+            let half = 0.5 * turn(k);
+            let centre = c[k] + unit(b - a) * (radius / half.cos());
+            let through = centre + unit(c[k] - centre) * radius;
+            if at.dist(from) > 1e-9 {
+                pieces.push(PathPiece::Line(at, from));
+            }
+            pieces.push(PathPiece::Arc(from, through, to));
+            at = to;
+        }
+        if at.dist(c[n - 1]) > 1e-9 {
+            pieces.push(PathPiece::Line(at, c[n - 1]));
+        }
+        Some(pieces)
+    }
 }
 
 /// One piece as read: its face, its tube radius, its area, points along its axis from one end
@@ -57,7 +127,24 @@ struct Piece {
     bend: bool,
     points: Vec<Vec3>,
     out: [Vec3; 2],
+    /// A bend's axis: its centre, the unit directions its circle is drawn with (`on` at angle `t`
+    /// is `centre + (u cos t + v sin t) major`), its radius, and the angles it runs from and to.
+    round: Option<Round>,
 }
+
+#[derive(Clone, Copy)]
+struct Round {
+    centre: Vec3,
+    u: Vec3,
+    v: Vec3,
+    major: f64,
+    start: f64,
+    end: f64,
+}
+
+/// The most a bend turns between two corners of its path: a corner is where the lines tangent to
+/// the bend's two ends cross, which runs off to far away as the turn nears a half.
+const MOST_PER_CORNER: f64 = std::f64::consts::FRAC_PI_2;
 
 impl Piece {
     fn end(&self, k: usize) -> Vec3 {
@@ -98,7 +185,8 @@ pub fn read(
                 let on = |t: f64| center + (u * t.cos() + v * t.sin()) * major;
                 let along = |t: f64| v * t.cos() - u * t.sin();
                 let points = (0..=steps).map(|i| on(start + turn * i as f64 / steps as f64)).collect();
-                pieces.push(Piece { face: k, radius: minor, area: face.area, bend: true, points, out: [-along(start), along(end)] });
+                let round = Some(Round { centre: center, u, v, major, start, end });
+                pieces.push(Piece { face: k, radius: minor, area: face.area, bend: true, points, out: [-along(start), along(end)], round });
             }
             Shape::Cylinder { point, axis, radius } if radius > 0.0 && !is_hole(k) => {
                 let axis = unit(axis);
@@ -107,7 +195,7 @@ pub fn read(
                     continue;
                 }
                 let at = |t: f64| point + axis * (t - point.dot(axis));
-                pieces.push(Piece { face: k, radius, area: face.area, bend: false, points: vec![at(a), at(b)], out: [-axis, axis] });
+                pieces.push(Piece { face: k, radius, area: face.area, bend: false, points: vec![at(a), at(b)], out: [-axis, axis], round: None });
             }
             _ => {}
         }
@@ -202,7 +290,31 @@ fn tube_of(pieces: &[Piece], chain: &[(usize, usize)]) -> Option<Tube> {
     if length < SHORTEST * radius {
         return None;
     }
-    Some(Tube { radius, path, length, bends, straights: chain.len() - bends, faces: chain.iter().map(|(i, _)| pieces[*i].face).collect() })
+    // The corners: each bend's, in parts of at most a quarter turn, where the lines tangent to
+    // the part's two ends cross, in the order the chain runs.
+    let (Some(&first), Some(&last)) = (path.first(), path.last()) else { return None };
+    let (mut corners, mut bend_radii) = (vec![first], Vec::new());
+    for &(i, entered) in chain {
+        let Some(round) = pieces[i].round else { continue };
+        let parts = ((round.end - round.start) / MOST_PER_CORNER).ceil().max(1.0) as usize;
+        let step = (round.end - round.start) / parts as f64;
+        let mut at: Vec<Vec3> = (0..parts)
+            .map(|j| {
+                let middle = round.start + step * (j as f64 + 0.5);
+                round.centre + (round.u * middle.cos() + round.v * middle.sin()) * (round.major / (0.5 * step).cos())
+            })
+            .collect();
+        if entered == 1 {
+            at.reverse();
+        }
+        for corner in at {
+            corners.push(corner);
+            bend_radii.push(round.major);
+        }
+    }
+    corners.push(last);
+    let faces = chain.iter().map(|(i, _)| pieces[*i].face).collect();
+    Some(Tube { radius, path, length, bends, straights: chain.len() - bends, faces, corners, bend_radii })
 }
 
 /// `path` with no step back: where neighbouring pieces' ends overlap on the scan (one bend's
@@ -304,6 +416,37 @@ mod tests {
         // 50 straight, then quarters of R 30 and R 40.
         let length = 50.0 + quarter * 30.0 + quarter * 40.0;
         assert!((big.length - length).abs() < 0.01 * length, "{} vs {length}", big.length);
+        // As a tube is bent: straight 50, a quarter of R 30, a quarter of R 40, every arc on its
+        // bend's radius and the path running on smoothly.
+        let pieces = big.path_pieces().expect("a path that sweeps");
+        let arcs: Vec<(Vec3, Vec3, Vec3)> =
+            pieces.iter().filter_map(|p| if let PathPiece::Arc(a, m, b) = *p { Some((a, m, b)) } else { None }).collect();
+        assert_eq!(arcs.len(), 2, "{pieces:?}");
+        let radius_of = |(a, m, b): (Vec3, Vec3, Vec3)| {
+            // the circle through three points: its radius
+            let (x, y) = (a - m, b - m);
+            x.len() * y.len() * (x - y).len() / (2.0 * x.cross(y).len())
+        };
+        let found: Vec<f64> = arcs.iter().map(|&a| radius_of(a)).collect();
+        assert!((found[0] - 30.0).abs() < 0.3 && (found[1] - 40.0).abs() < 0.4, "{found:?}");
+        let swept: f64 = pieces
+            .iter()
+            .map(|p| match *p {
+                PathPiece::Line(a, b) => a.dist(b),
+                PathPiece::Arc(a, m, b) => {
+                    let r = radius_of((a, m, b));
+                    2.0 * r * (0.5 * a.dist(b) / r).asin()
+                }
+            })
+            .sum();
+        assert!((swept - length).abs() < 0.01 * length, "{swept} vs {length}");
+        // Corners crowded so that a bend would turn tighter than the tube: no path.
+        let crowded = Tube {
+            corners: vec![Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0), Vec3::new(10.0, 10.0, 0.0), Vec3::new(20.0, 10.0, 0.0)],
+            bend_radii: vec![30.0, 30.0],
+            ..big.clone()
+        };
+        assert!(crowded.path_pieces().is_none());
         let thin = &tubes[1];
         assert_eq!(thin.faces, BTreeSet::from([3, 4]), "{thin:?}");
         // A ring all the way round is no bend of a tube.
