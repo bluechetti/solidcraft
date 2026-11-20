@@ -17,7 +17,6 @@ mod numpad;
 mod pencil;
 #[cfg(target_os = "ios")]
 mod picker;
-mod touches;
 
 use solidcraft_engine::Session;
 use solidcraft_ui_egui::SolveApp;
@@ -36,7 +35,6 @@ struct App {
     frames: u32,
     synced_at: f64,
     numpad: numpad::Numpad,
-    touches: touches::Touches,
 }
 
 impl eframe::App for App {
@@ -99,19 +97,10 @@ impl eframe::App for App {
             }
             // The squeeze opens the context menu at the tip, as a right click there does.
             if let Some(at) = pencil::take_squeeze() {
-                raw.events.push(egui::Event::PointerMoved(at));
-                for pressed in [true, false] {
-                    raw.events.push(egui::Event::PointerButton {
-                        pos: at,
-                        button: egui::PointerButton::Secondary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    });
-                }
+                self.solve.tablet.open_menu(at);
             }
         }
-        let taps = self.touches.taps(raw);
-        self.solve.raw_input_hook_with_taps(_ctx, raw, taps);
+        self.solve.raw_input_hook(raw);
         // Taps on the number pad become the text and keys they stand for.
         self.numpad.take_presses(raw);
     }
@@ -239,10 +228,12 @@ fn run() -> eframe::Result {
             if let Some(prefs) = cc.storage.and_then(|s| solidcraft_ui_egui::prefs::stored(|k| s.get_string(k))) {
                 app.load_prefs(&prefs);
             }
-            // Apple Pencil selects and draws, fingers move the view (upstream's Pencil mode and
-            // touchscreen navigation, fed by `touches`).
-            app.preferences.pencil_mode = true;
-            app.preferences.touchscreen_navigation = true;
+            // Apple Pencil draws, fingers navigate (from the pencil's first touch on): the iPad's
+            // own touch handling (`solidcraft_ui_egui::tablet`). The web app's Pencil mode and
+            // touchscreen navigation stay off so the two never handle the same touch.
+            app.tablet.enabled = true;
+            app.preferences.pencil_mode = false;
+            app.preferences.touchscreen_navigation = false;
             if let Some(rs) = &cc.wgpu_render_state {
                 app.set_wgpu(rs, DEPTH_BITS, 0, rs.msaa_samples);
                 solidcraft_ui_egui::gpu::install_picture_renderer(rs);
@@ -259,7 +250,6 @@ fn run() -> eframe::Result {
                 frames: 0,
                 synced_at: 0.0,
                 numpad: numpad::Numpad::default(),
-                touches: touches::Touches::default(),
             }))
         }),
     )

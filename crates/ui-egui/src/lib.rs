@@ -257,6 +257,7 @@ pub mod point_clouds;
 pub mod policy;
 pub mod prefs;
 pub mod prefs_notice;
+pub mod tablet;
 pub use solidcraft_ui_kit::prefs_window;
 #[cfg(test)]
 mod preselect_tests;
@@ -909,6 +910,8 @@ pub struct SolveApp {
     pub frame_rate: frame_rate::FrameRate,
     /// The operations under way, in the view's corner ([`operations`]).
     pub operations: operations::Panel,
+    /// Apple Pencil and fingers in the iPad app ([`tablet`]); the iPad app turns it on.
+    pub tablet: tablet::Tablet,
     pub synthetic: Vec<egui::Event>,
     /// The modifiers of the synthetic press in progress (a Ctrl-drag keeps Ctrl while it moves).
     pub synthetic_mods: egui::Modifiers,
@@ -1173,6 +1176,7 @@ impl SolveApp {
             frame_ms: 0.0,
             frame_rate: frame_rate::FrameRate::default(),
             operations: operations::Panel::default(),
+            tablet: Default::default(),
             synthetic: Vec::new(),
             synthetic_mods: egui::Modifiers::default(),
             held_click: Vec::new(),
@@ -4037,6 +4041,10 @@ impl SolveApp {
     /// Process a frame with a platform-identified pen-tip release in egui coordinates.
     pub fn raw_input_hook_with_pen(&mut self, raw: &mut egui::RawInput, pen_release: Option<egui::Pos2>) {
         self.pen_release = pen_release;
+        let mut tablet = std::mem::take(&mut self.tablet);
+        let view = self.viewport.rect;
+        tablet.filter(raw, |p| view.is_some_and(|r| r.contains(p)) && !shell::covered(self, p));
+        self.tablet = tablet;
         self.synthetic_input(raw);
         finite_input(raw);
         self.hold_click_after_typing(raw);
