@@ -248,87 +248,156 @@ pub(crate) fn crossing_count_welded(scan: &Scan, weld: &[u32]) -> usize {
 /// The faces among `live` (on welded points) that pass through another face they share no edge
 /// with, and how many pairs cross. A grid of cells about a face across finds the pairs to test.
 fn crossing_faces(positions: &[Vec3], tris: &[[u32; 3]], live: &[usize]) -> (Vec<usize>, usize) {
+    crossing_faces_in(positions, tris, live, SLAB_FACES)
+}
+
+/// The grid is listed a slab of cells at a time (along x), each slab with about this many faces:
+/// every face in every cell its box covers, all at once, was 130 bytes a face (3 GB for a scan of
+/// 23 million faces, 12 GB for 92 million: the most memory Survey Scan took).
+const SLAB_FACES: usize = 4_000_000;
+
+/// [`crossing_faces`], the grid listed in slabs of about `per_slab` faces. Each cell lies in one
+/// slab and each pair is tried in one cell (where both boxes begin), so the slabs find what the
+/// whole grid does.
+fn crossing_faces_in(positions: &[Vec3], tris: &[[u32; 3]], live: &[usize], per_slab: usize) -> (Vec<usize>, usize) {
     if live.len() < 2 {
         return (Vec::new(), 0);
     }
     let at = |v: u32| positions[v as usize];
-    let boxes: Vec<(Vec3, Vec3)> = live
+    // Each face's box in single precision, rounded outward: a box a hair larger only tries a pair
+    // more, never one fewer.
+    let down = |x: f64| {
+        let f = x as f32;
+        if f64::from(f) > x { f.next_down() } else { f }
+    };
+    let up = |x: f64| {
+        let f = x as f32;
+        if f64::from(f) < x { f.next_up() } else { f }
+    };
+    let boxes: Vec<([f32; 3], [f32; 3])> = live
         .iter()
         .map(|&t| {
             let [a, b, c] = tris[t].map(at);
-            (a.min(b).min(c), a.max(b).max(c))
+            let (lo, hi) = (a.min(b).min(c), a.max(b).max(c));
+            ([down(lo.x), down(lo.y), down(lo.z)], [up(hi.x), up(hi.y), up(hi.z)])
         })
         .collect();
-    let (low, high) = boxes.iter().fold((boxes[0].0, boxes[0].1), |(lo, hi), (a, b)| (lo.min(*a), hi.max(*b)));
-    let mean_side = boxes.iter().map(|(a, b)| (*b - *a).x.max((*b - *a).y).max((*b - *a).z)).sum::<f64>() / boxes.len() as f64;
+    let v = |p: [f32; 3]| Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+    let (low, high) = boxes.iter().fold((v(boxes[0].0), v(boxes[0].1)), |(lo, hi), (a, b)| (lo.min(v(*a)), hi.max(v(*b))));
+    let mean_side = boxes.iter().map(|(a, b)| (v(*b) - v(*a)).x.max((v(*b) - v(*a)).y).max((v(*b) - v(*a)).z)).sum::<f64>() / boxes.len() as f64;
     let extent = (high - low).x.max((high - low).y).max((high - low).z);
     if !(extent > 0.0 && extent.is_finite()) {
         return (Vec::new(), 0);
     }
     // About a face to a cell, and never so fine that a coordinate runs past its 21 bits.
     let cell = (mean_side * 1.2).max(extent / 1_000_000.0);
-    let cell_of = |p: Vec3| {
-        let g = (p - low) / cell;
+    let cell_of = |p: [f32; 3]| {
+        let g = (v(p) - low) / cell;
         [g.x.max(0.0) as u64, g.y.max(0.0) as u64, g.z.max(0.0) as u64]
     };
     let pack = |c: [u64; 3]| (c[0] << 42) | (c[1] << 21) | c[2];
-    let mut entries: Vec<(u64, u32)> = Vec::with_capacity(live.len() * 4);
-    let mut big: Vec<u32> = Vec::new();
-    for (i, (lo, hi)) in boxes.iter().enumerate() {
-        let (a, b) = (cell_of(*lo), cell_of(*hi));
-        if (b[0] - a[0] + 1) * (b[1] - a[1] + 1) * (b[2] - a[2] + 1) > 64 {
-            big.push(i as u32);
-            continue;
-        }
-        for x in a[0]..=b[0] {
-            for y in a[1]..=b[1] {
-                for z in a[2]..=b[2] {
-                    entries.push((pack([x, y, z]), i as u32));
-                }
-            }
-        }
-    }
-    crate::par::sort_unstable(&mut entries);
+    // Each face's cells, worked out when wanted (kept for every face, they were 48 bytes a face).
+    let range = |i: usize| boxes.get(i).map_or(([0; 3], [0; 3]), |(lo, hi)| (cell_of(*lo), cell_of(*hi)));
+    let is_big: Vec<bool> = (0..boxes.len())
+        .map(|i| {
+            let (a, b) = range(i);
+            (b[0] - a[0] + 1) * (b[1] - a[1] + 1) * (b[2] - a[2] + 1) > 64
+        })
+        .collect();
+    let big: Vec<u32> = (0..live.len()).filter(|&i| is_big[i]).map(|i| i as u32).collect();
+    // Each face's first and last column of cells along x: what each slab asks of every face.
+    let spans: Vec<[u32; 2]> = (0..boxes.len())
+        .map(|i| {
+            let (a, b) = range(i);
+            [u32::try_from(a[0]).unwrap_or(u32::MAX), u32::try_from(b[0]).unwrap_or(u32::MAX)]
+        })
+        .collect();
     let overlap = |i: usize, j: usize| {
         let ((a0, a1), (b0, b1)) = (boxes[i], boxes[j]);
-        a0.x <= b1.x && a0.y <= b1.y && a0.z <= b1.z && b0.x <= a1.x && b0.y <= a1.y && b0.z <= a1.z
+        (0..3).all(|k| a0[k] <= b1[k] && b0[k] <= a1[k])
     };
     let crossing = |i: usize, j: usize| overlap(i, j) && faces_cross(tris[live[i]], tris[live[j]], positions);
-    // Each cell's faces tried against each other, the cells in runs side by side on the threads:
-    // each run gives the faces it found crossing (both of each pair) and how many pairs.
-    let mut cells = Vec::new();
-    let mut start = 0;
-    while start < entries.len() {
-        let end = start + entries[start..].iter().take_while(|e| e.0 == entries[start].0).count();
-        cells.push((start, end));
-        start = end;
-    }
-    let run = cells.len().div_ceil(1024).max(1);
-    let found = crate::par::map(cells.len().div_ceil(run), |r| {
-        let (mut hits, mut pairs) = (Vec::new(), 0usize);
-        for &(start, end) in cells.iter().skip(r * run).take(run) {
-            for x in start..end {
-                for y in x + 1..end {
-                    let (i, j) = (entries[x].1 as usize, entries[y].1 as usize);
-                    // A pair sharing several cells is tested in one: where both boxes begin.
-                    if pack(cell_of(boxes[i].0.max(boxes[j].0))) == entries[start].0 && crossing(i, j) {
-                        pairs += 1;
-                        hits.extend([i as u32, j as u32]);
+    // A large face is tried against the faces in the cells its box covers, when those are few
+    // against all the faces; else against every face.
+    let near_path: Vec<bool> = big
+        .iter()
+        .map(|&b| {
+            let (lo, hi) = range(b as usize);
+            (hi[0] - lo[0] + 1).saturating_mul(hi[1] - lo[1] + 1).saturating_mul(64) < live.len() as u64
+        })
+        .collect();
+    let mut near: Vec<Vec<u32>> = vec![Vec::new(); big.len()];
+    let columns = cell_of(boxes.iter().fold(boxes[0].1, |m, (_, b)| [m[0].max(b[0]), m[1].max(b[1]), m[2].max(b[2])]))[0] + 1;
+    let slabs = (live.len().div_ceil(per_slab.max(1)) as u64).clamp(1, columns.max(1));
+    let width = columns.div_ceil(slabs).max(1);
+    let mut found: Vec<(Vec<u32>, usize)> = Vec::new();
+    for slab in 0..slabs {
+        let (x0, x1) = (slab * width, ((slab + 1) * width).min(columns));
+        if x0 >= x1 {
+            continue;
+        }
+        let mut entries: Vec<(u64, u32)> = Vec::new();
+        for (i, &[from, to]) in spans.iter().enumerate() {
+            if is_big[i] || u64::from(to) < x0 || u64::from(from) >= x1 {
+                continue;
+            }
+            let (a, b) = range(i);
+            for x in a[0].max(x0)..=b[0].min(x1 - 1) {
+                for y in a[1]..=b[1] {
+                    for z in a[2]..=b[2] {
+                        entries.push((pack([x, y, z]), i as u32));
                     }
                 }
             }
         }
-        (hits, pairs)
-    });
-    // Faces too large for the grid are tried against every face whose box meets theirs: those
-    // in the cells their box covers (each is in every cell its own box covers), else, when that
-    // is more cells than there are faces, against every face; and against each other, each pair
-    // once. Asking whether each face was a large one, for each large one, went through all of
-    // them every time: minutes for a scan of millions of faces with a few thousand large ones.
-    let mut is_big = vec![false; live.len()];
-    for &b in &big {
-        is_big[b as usize] = true;
+        crate::par::sort_unstable(&mut entries);
+        // Each cell's faces tried against each other, the cells in runs side by side on the
+        // threads: each run gives the faces it found crossing (both of each pair) and how many pairs.
+        let mut cells = Vec::new();
+        let mut start = 0;
+        while start < entries.len() {
+            let end = start + entries[start..].iter().take_while(|e| e.0 == entries[start].0).count();
+            cells.push((start, end));
+            start = end;
+        }
+        let run = cells.len().div_ceil(1024).max(1);
+        found.extend(crate::par::map(cells.len().div_ceil(run), |r| {
+            let (mut hits, mut pairs) = (Vec::new(), 0usize);
+            for &(start, end) in cells.iter().skip(r * run).take(run) {
+                for x in start..end {
+                    for y in x + 1..end {
+                        let (i, j) = (entries[x].1 as usize, entries[y].1 as usize);
+                        // A pair sharing several cells is tried in one: where both boxes begin.
+                        let begin = [0, 1, 2].map(|k| boxes[i].0[k].max(boxes[j].0[k]));
+                        if pack(cell_of(begin)) == entries[start].0 && crossing(i, j) {
+                            pairs += 1;
+                            hits.extend([i as u32, j as u32]);
+                        }
+                    }
+                }
+            }
+            (hits, pairs)
+        }));
+        // The large faces' neighbours in this slab's cells.
+        for ((&b, list), &by_cells) in big.iter().zip(near.iter_mut()).zip(&near_path) {
+            if !by_cells {
+                continue;
+            }
+            let (lo, hi) = range(b as usize);
+            for x in lo[0].max(x0)..=hi[0].min(x1 - 1) {
+                if lo[0] > x1 - 1 || hi[0] < x0 {
+                    break;
+                }
+                for y in lo[1]..=hi[1] {
+                    let from = entries.partition_point(|e| e.0 < pack([x, y, lo[2]]));
+                    list.extend(entries[from..].iter().take_while(|e| e.0 <= pack([x, y, hi[2]])).map(|e| e.1));
+                }
+            }
+        }
     }
+    // Faces too large for the grid are tried against every face whose box meets theirs: those
+    // in the cells their box covers, else, when that is more cells than there are faces, against
+    // every face; and against each other, each pair once.
     let found_big = crate::par::map(big.len(), |n| {
         let b = big[n] as usize;
         let (mut hits, mut pairs) = (Vec::new(), 0usize);
@@ -338,19 +407,11 @@ fn crossing_faces(positions: &[Vec3], tris: &[[u32; 3]], live: &[usize]) -> (Vec
                 hits.extend([b as u32, i as u32]);
             }
         };
-        let (lo, hi) = (cell_of(boxes[b].0), cell_of(boxes[b].1));
-        let columns = (hi[0] - lo[0] + 1).saturating_mul(hi[1] - lo[1] + 1);
-        if columns.saturating_mul(64) < live.len() as u64 {
-            let mut near: Vec<u32> = Vec::new();
-            for x in lo[0]..=hi[0] {
-                for y in lo[1]..=hi[1] {
-                    let from = entries.partition_point(|e| e.0 < pack([x, y, lo[2]]));
-                    near.extend(entries[from..].iter().take_while(|e| e.0 <= pack([x, y, hi[2]])).map(|e| e.1));
-                }
-            }
-            near.sort_unstable();
-            near.dedup();
-            near.into_iter().for_each(|i| try_one(i as usize));
+        if near_path[n] {
+            let mut list = near[n].clone();
+            list.sort_unstable();
+            list.dedup();
+            list.into_iter().for_each(|i| try_one(i as usize));
         } else {
             (0..live.len()).filter(|&i| !is_big[i]).for_each(&mut try_one);
         }
@@ -605,6 +666,10 @@ mod tests {
         let want: Vec<usize> = (0..tris.len()).filter(|&i| hit[i]).collect();
         let large = (tris.len() - 6..tris.len()).filter(|&i| hit[i]).count();
         assert!(large >= 4 && every > 10, "the large faces cross: {large} of them, {every} pairs");
-        assert_eq!((found, pairs), (want, every));
+        assert_eq!((found, pairs), (want.clone(), every));
+        // The grid listed in slabs of a few dozen faces (as a scan of millions is): the same.
+        for per_slab in [1, 37, 500] {
+            assert_eq!(crossing_faces_in(&positions, &tris, &live, per_slab), (want.clone(), every), "slabs of {per_slab}");
+        }
     }
 }

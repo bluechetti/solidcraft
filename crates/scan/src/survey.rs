@@ -98,9 +98,11 @@ pub fn look(scan: &Scan, floating: f64) -> Option<Look> {
     // Holes and rims are read as Repair Mesh leaves the scan: a crack between a file's two copies
     // of one point is no hole, but edges to repair.
     let open = |s: &holes::Survey| s.rings.iter().map(|r| r.points.len()).sum::<usize>() + s.unfillable_edges;
-    let (hair, _) = crate::welded_within(scan.positions);
+    let (hair, joined) = crate::welded_within(scan.positions);
     let rings = holes::survey_with(scan, &hair);
-    let crack_edges = open(&holes::survey(scan)).saturating_sub(open(&rings));
+    // Cracks: open edges that close once points a hair apart are joined. Where none are joined the
+    // two readings are one (a second pass over every edge: a minute at 92 million triangles).
+    let crack_edges = if joined == 0 { 0 } else { open(&holes::survey(scan)).saturating_sub(open(&rings)) };
     let hole_rings: Vec<&holes::Ring> = rings.rings.iter().filter(|r| !r.rim).collect();
     let open_edges = open(&rings) + crack_edges;
     let found = pieces::pieces(scan);

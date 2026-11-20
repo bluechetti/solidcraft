@@ -45,6 +45,48 @@ fn main() {
     drop(corner);
     eprintln!("loaded {} tris, {} points in {:.1} s, peak {:.2} GB", triangles.len(), positions.len(), t0.elapsed().as_secs_f64(), peak_gb());
     let scan = Scan::new(&positions, &triangles);
+    if args.get(2).map(String::as_str) == Some("survey") {
+        // Each of Survey's passes on its own: its time and the most memory it took over what was
+        // held before it (the high-water mark reset before each).
+        let held = || {
+            let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+            status
+                .lines()
+                .find(|l| l.starts_with("VmRSS:"))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.0)
+                / 1_048_576.0
+        };
+        let part = |name: &str, f: &dyn Fn()| {
+            let _ = std::fs::write("/proc/self/clear_refs", "5");
+            let (before, t0) = (held(), std::time::Instant::now());
+            f();
+            eprintln!("{name:<16} {:>6.1} s  peak +{:.2} GB", t0.elapsed().as_secs_f64(), peak_gb() - before);
+        };
+        part("typical edge", &|| {
+            std::hint::black_box(solidcraft_scan::remesh::typical_edge(&scan));
+        });
+        part("noise", &|| {
+            std::hint::black_box(solidcraft_scan::survey::noise(&scan));
+        });
+        part("holes", &|| {
+            std::hint::black_box(solidcraft_scan::holes::survey(&scan));
+        });
+        part("pieces", &|| {
+            std::hint::black_box(solidcraft_scan::pieces::pieces(&scan));
+        });
+        part("bases", &|| {
+            std::hint::black_box(solidcraft_scan::base::bases(&scan));
+        });
+        part("crossings", &|| {
+            std::hint::black_box(solidcraft_scan::repair::crossing_count(&scan));
+        });
+        part("whole survey", &|| {
+            std::hint::black_box(solidcraft_scan::survey::look(&scan, 0.01));
+        });
+        return;
+    }
     let options = solidcraft_scan::segment::Options::default();
     let t0 = std::time::Instant::now();
     let out = solidcraft_scan::segment::find_all(&scan, &options, &|| false);
