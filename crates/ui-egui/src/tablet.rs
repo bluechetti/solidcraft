@@ -19,6 +19,10 @@ use egui::{Event, Pos2, TouchId, TouchPhase, Vec2};
 const SLOP: f32 = 10.0;
 /// A finger held still this long (seconds) opens the context menu.
 const LONG_PRESS: f64 = 0.5;
+/// The longest touch that counts as a tap, and the longest gap between a double-tap's two taps.
+const TAP_TIME: f64 = 0.4;
+/// How far apart a double-tap's two taps may land (points).
+const DOUBLE_TAP_SLOP: f32 = 24.0;
 
 #[derive(Default)]
 pub struct Tablet {
@@ -47,6 +51,22 @@ pub struct Tablet {
     pub(crate) busy: bool,
     /// The keyboard's modifiers, as last seen.
     modifiers: egui::Modifiers,
+    /// Where and when the pencil touch in progress began, and whether it moved (a tap or a stroke).
+    pencil_start: Option<(Pos2, f64, bool)>,
+    /// The last pencil tap and the last finger tap on the view: where and when they ended.
+    last_pencil_tap: Option<(Pos2, f64)>,
+    last_finger_tap: Option<(Pos2, f64)>,
+    /// A pencil double-tap: the viewport selects the whole body or sketch under it.
+    pub(crate) pencil_double_tap: Option<Pos2>,
+    /// A finger double-tap on the view: the viewport starts a sketch on the face under it.
+    pub(crate) finger_double_tap: Option<Pos2>,
+}
+
+/// Whether a tap at `at`, `now`, makes a double-tap with the tap before it (and remember it).
+fn double_tap(last: &mut Option<(Pos2, f64)>, at: Pos2, now: f64) -> bool {
+    let double = last.is_some_and(|(p, t)| now - t <= TAP_TIME && p.distance(at) <= DOUBLE_TAP_SLOP);
+    *last = if double { None } else { Some((at, now)) };
+    double
 }
 
 /// Which of egui-winit's emulated pointer events for a touch reach egui.
@@ -113,7 +133,7 @@ impl Tablet {
                         out.push(event);
                     } else if pencil {
                         self.owner = Some((id, Pass::Nothing));
-                        self.pencil_touch(id, phase, pos, mods, &mut out);
+                        self.pencil_touch(id, phase, pos, now, mods, &mut out);
                     } else {
                         self.finger_touch(event, now, mods, &on_view, &mut out);
                     }
@@ -167,7 +187,7 @@ impl Tablet {
         }
     }
 
-    fn pencil_touch(&mut self, id: TouchId, phase: TouchPhase, pos: Pos2, modifiers: egui::Modifiers, out: &mut Vec<Event>) {
+    fn pencil_touch(&mut self, id: TouchId, phase: TouchPhase, pos: Pos2, now: f64, modifiers: egui::Modifiers, out: &mut Vec<Event>) {
         let primary = egui::PointerButton::Primary;
         match phase {
             TouchPhase::Start => {
@@ -175,6 +195,7 @@ impl Tablet {
                     return;
                 }
                 self.pencil = Some(id);
+                self.pencil_start = Some((pos, now, false));
                 // Fingers and the palm already down are let go and ignored until they lift.
                 if let Some(f) = self.finger.take() {
                     if f.on_ui {
@@ -189,10 +210,23 @@ impl Tablet {
                 out.push(Event::PointerMoved(pos));
                 out.push(Event::PointerButton { pos, button: primary, pressed: true, modifiers });
             }
-            TouchPhase::Move => out.push(Event::PointerMoved(pos)),
+            TouchPhase::Move => {
+                if let Some((start, _, moved)) = &mut self.pencil_start {
+                    *moved |= (pos - *start).length() > SLOP;
+                }
+                out.push(Event::PointerMoved(pos));
+            }
             TouchPhase::End | TouchPhase::Cancel => {
                 if self.pencil == Some(id) {
                     self.pencil = None;
+                    if let Some((start, at, moved)) = self.pencil_start.take()
+                        && phase == TouchPhase::End
+                        && !moved
+                        && now - at <= TAP_TIME
+                        && double_tap(&mut self.last_pencil_tap, start, now)
+                    {
+                        self.pencil_double_tap = Some(start);
+                    }
                     out.push(Event::PointerButton { pos, button: primary, pressed: false, modifiers });
                     out.push(Event::PointerGone);
                 }
@@ -241,6 +275,9 @@ impl Tablet {
                     on_ui = f.on_ui;
                     // A tap on the view selects what it landed on, as a click there.
                     if phase == TouchPhase::End && !f.on_ui && !f.moved && !f.multi && !f.held {
+                        if now - f.at <= TAP_TIME && double_tap(&mut self.last_finger_tap, f.start, now) {
+                            self.finger_double_tap = Some(f.start);
+                        }
                         let button = egui::PointerButton::Primary;
                         out.push(Event::PointerMoved(f.start));
                         out.push(Event::PointerButton { pos: f.start, button, pressed: true, modifiers });
@@ -331,6 +368,28 @@ mod tests {
         assert_eq!(out.iter().filter(|e| matches!(e, Event::Touch { .. })).count(), 2, "both fingers reach egui's multi-touch");
         assert!(out.contains(&Event::PointerMoved(egui::pos2(30.0, 100.0))));
         assert_eq!(p.orbit, Vec2::ZERO, "two fingers do not orbit");
+    }
+
+    #[test]
+    fn double_taps_of_the_pencil_and_of_a_finger_are_noted() {
+        let mut p = Tablet { enabled: true, active: true, ..Default::default() };
+        for t in [0.0, 0.2] {
+            run(&mut p, t, vec![touch(9, TouchPhase::Start, 50.0, true)]);
+            run(&mut p, t + 0.05, vec![touch(9, TouchPhase::End, 50.0, true)]);
+        }
+        assert!(p.pencil_double_tap.is_some(), "two quick pencil taps are a double-tap");
+        for t in [1.0, 1.2] {
+            run(&mut p, t, vec![touch(1, TouchPhase::Start, 10.0, false)]);
+            run(&mut p, t + 0.05, vec![touch(1, TouchPhase::End, 10.0, false)]);
+        }
+        assert!(p.finger_double_tap.is_some(), "two quick finger taps are a double-tap");
+        // Two taps far apart in time are two taps.
+        let mut p = Tablet { enabled: true, active: true, ..Default::default() };
+        for t in [0.0, 2.0] {
+            run(&mut p, t, vec![touch(9, TouchPhase::Start, 50.0, true)]);
+            run(&mut p, t + 0.05, vec![touch(9, TouchPhase::End, 50.0, true)]);
+        }
+        assert!(p.pencil_double_tap.is_none());
     }
 
     #[test]

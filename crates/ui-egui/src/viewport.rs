@@ -7222,6 +7222,20 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     {
         crate::pencil::finger_double_tap(app, &proj, p);
     }
+    // The iPad (`tablet`): a finger double-tap on a planar face sketches on it, and a pencil
+    // double-tap with no tool in hand selects the whole body or sketch under it.
+    if let Some(p) = app.tablet.finger_double_tap.take() {
+        crate::pencil::finger_double_tap(app, &proj, p);
+    }
+    if let Some(p) = app.tablet.pencil_double_tap.take()
+        && app.tool.is_none()
+        && app.dialog.is_none()
+        && let hits = pick_cached(app, &proj, p)
+        && let Some((hit, _)) = candidate(app, &hits)
+        && let Some(items) = crate::pencil::whole(app, &hit)
+    {
+        let _ = app.run("select.set", json!({ "items": items }));
+    }
     // A tool's click that moved on the way (#2448) clicks where the button is let go.
     if app.viewport.tool_click && resp.drag_stopped() {
         app.viewport.tool_click = false;
