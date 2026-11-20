@@ -8,7 +8,7 @@ fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<ScanMeshFromPointsParams>(), &["cloud", "depth", "name", "trim"]);
     assert_keys(
         input_schema_for::<ScanRemeshParams>(),
-        &["area", "body", "cell", "grow", "in_place", "offset", "point", "radius", "saved", "selected", "sharp", "with"],
+        &["area", "body", "cell", "grow", "in_place", "offset", "point", "radius", "saved", "selected", "sharp", "shell", "with"],
     );
     assert_keys(input_schema_for::<ScanDenoiseParams>(), &["area", "body", "grow", "in_place", "point", "radius", "saved", "selected", "strength"]);
 }

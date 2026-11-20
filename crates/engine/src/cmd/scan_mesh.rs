@@ -43,7 +43,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("grid")
         .contract(&REMESH_CONTRACT)
         .output(output_schema_for::<ScanRemeshResult>)
-        .params("body?: the scan (default: the selected or only one); with?: [other passes, laid on it] fused in; cell?: length (default the scan's typical edge: the new mesh's edge); sharp?: bool (default false: each vertex where the planes of its cell meet, so sharp edges and corners stay sharp); offset?: length or expression (default 0: the surface made that far off the scan, positive the way its faces point, negative into it, following the design's parameters: a liner, a socket, a nest's clearance; the whole scan only); area: point?: [x,y,z] with grow?: true|degrees or radius?: mm, saved?: kept selection, selected?: true, or area?: {triangles, runs} (default the whole scan; within an area its triangles are made again as even triangles of about cell on the scan, the rest and the area's edge kept, sharp keeping its sharp edges; not with `with`): the scan made again as one even surface from the signed distances of the scans in a narrow band of a grid (overlaps averaged), kept as a Scan Clean step in the timeline (its settings only; in_place?: bool writes the scan back instead), one undo step → body, with, before, triangles, vertices, cell, sharp, new_rms, new_max, scan_rms, scan_p95, uncovered, feature"),
+        .params("body?: the scan (default: the selected or only one); with?: [other passes, laid on it] fused in; cell?: length (default the scan's typical edge: the new mesh's edge); sharp?: bool (default false: each vertex where the planes of its cell meet, so sharp edges and corners stay sharp); offset?: length or expression (default 0: the surface made that far off the scan, positive the way its faces point, negative into it, following the design's parameters: a liner, a socket, a nest's clearance; the whole scan only); shell?: length or expression (a hollow part that thick: the surface at the offset and, inside it, one that much farther in, facing into the hollow, joined along the scan's open rims, closed and printable: a socket, a liner, a cover; the whole scan only); area: point?: [x,y,z] with grow?: true|degrees or radius?: mm, saved?: kept selection, selected?: true, or area?: {triangles, runs} (default the whole scan; within an area its triangles are made again as even triangles of about cell on the scan, the rest and the area's edge kept, sharp keeping its sharp edges; not with `with`): the scan made again as one even surface from the signed distances of the scans in a narrow band of a grid (overlaps averaged), kept as a Scan Clean step in the timeline (its settings only; in_place?: bool writes the scan back instead), one undo step → body, with, before, triangles, vertices, cell, sharp, new_rms, new_max, scan_rms, scan_p95, uncovered, feature"),
     CommandSpec::new("scan.register", "Align to Scan", crate::checked!("scan.register", register_scan))
     .at("SCAN", "ALIGN")
     .icon("align")
@@ -145,14 +145,27 @@ pub(super) fn remesh_scan(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => (None, 0.0),
     };
+    let shell = match crate::params::expr(p, "shell") {
+        Some(e) => {
+            let v = s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("shell: {e}")))?;
+            if !(v.is_finite() && v > 0.0) {
+                return Err(bad(cmd, "`shell` is the wall's thickness: a length above 0"));
+            }
+            Some(solidcraft_doc::Expr::new(e))
+        }
+        None => None,
+    };
     let area = super::flatten::step_area(s, p, &body, cmd)?;
+    if area.is_some() && shell.is_some() {
+        return Err(bad(cmd, "`shell` makes the whole scan hollow, not an area: give one or the other"));
+    }
     if area.is_some() && !with.is_empty() {
         return Err(bad(cmd, "`with` fuses other scans in over the whole scan, not an area: give one or the other"));
     }
     if area.is_some() && offset.is_some() {
         return Err(bad(cmd, "`offset` makes the whole scan again that far off it, not an area: give one or the other"));
     }
-    let step = CleanStep::Remesh { cell, sharp, offset, with: with.iter().cloned().map(Into::into).collect(), area };
+    let step = CleanStep::Remesh { cell, sharp, offset, shell, with: with.iter().cloned().map(Into::into).collect(), area };
     let done = super::clean::apply(s, p, &body, step, cmd)?;
     let (vertices, triangles) = (done.vertices, done.triangles);
     let feature = done.feature.ok_or_else(|| bad(cmd, "the step was not added"))?;

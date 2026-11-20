@@ -113,6 +113,37 @@ fn align_to_scan_says_which_scans_it_needs() {
     assert!(shares.contains("`ignored`"), "{shares}");
 }
 
+/// The block with its boss made a shell whose wall is a parameter: what is left is the band
+/// between its surface and the surface the wall farther in, about its area times the wall; the
+/// wall thickened, the band thickens with it; a shell of an area is refused.
+#[test]
+fn a_scan_is_made_a_shell_whose_wall_follows_a_parameter() {
+    let (positions, triangles) = part_mesh();
+    let mut s = Session::default();
+    let scan = insert(&mut s, &positions, &triangles, "hollow");
+    let (before, before_triangles) = mesh_of(&s, &scan);
+    let area: f64 = before_triangles
+        .iter()
+        .map(|t| {
+            let [a, b, c] = t.map(|i| before[i as usize]);
+            0.5 * (b - a).cross(c - a).len()
+        })
+        .sum();
+    run(&mut s, "parameters.add", json!({"name": "wall", "expression": "1 mm"}));
+    run(&mut s, "scan.remesh", json!({"cell": "0.5 mm", "shell": "wall"}));
+    let band = |s: &Session| {
+        let (p, t) = mesh_of(s, &scan);
+        volume(&p, &t).abs()
+    };
+    let thin = band(&s);
+    assert!(thin > 0.8 * area && thin < 1.05 * area, "a 1 mm wall: {thin} against an area of {area}");
+    run(&mut s, "parameters.change", json!({"name": "wall", "expression": "2 mm"}));
+    let thick = band(&s);
+    assert!(thick > 1.6 * thin && thick < 2.1 * thin, "a 2 mm wall: {thick} against {thin}");
+    let refused = s.execute("scan.remesh", &json!({"shell": "1 mm", "point": [15, 10, 10], "radius": 6})).unwrap_err().to_string();
+    assert!(refused.contains("not an area"), "{refused}");
+}
+
 fn mesh_of(s: &Session, body: &str) -> (Vec<Vec3>, Vec<[u32; 3]>) {
     s.model.state().body(body).and_then(|b| b.body.triangle_mesh()).map(|(p, t)| (p.to_vec(), t.to_vec())).unwrap()
 }

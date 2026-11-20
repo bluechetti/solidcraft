@@ -52,6 +52,8 @@ pub enum RemeshError {
     TooFine,
     /// No surface was read: the scans have no area, or nothing crossed the grid.
     Empty,
+    /// A shell's two skins have open rims that do not pair up to be joined.
+    Rims,
 }
 
 impl std::fmt::Display for RemeshError {
@@ -59,6 +61,9 @@ impl std::fmt::Display for RemeshError {
         f.write_str(match self {
             RemeshError::TooFine => "the grid would be too fine to hold: use a larger cell",
             RemeshError::Empty => "no surface could be read off the scans at this cell",
+            RemeshError::Rims => {
+                "the shell's outside and inside have open rims that do not pair up: fill the scan's holes first, or give a thinner wall"
+            }
         })
     }
 }
@@ -663,6 +668,83 @@ pub fn remesh_at(sources: &[Scan], settings: &Settings, offset: f64) -> Result<R
 /// How far an open loop of the new surface may lie from a scan's rim moved by the offset, in cells,
 /// for the strip between them to be made.
 const RIM_REACH: f64 = 2.5;
+/// The scans made again as a hollow part `wall` thick: the surface `offset` off them (as
+/// [`remesh_at`]) and, inside it, the surface `wall` farther in, facing inward, the two joined by
+/// a strip along each pair of open rims (an open scan's rim, a socket's or a cover's edge), so the
+/// result is closed and can be printed. The errors reported are the outside's.
+pub fn shell(sources: &[Scan], settings: &Settings, offset: f64, wall: f64) -> Result<Remeshed, RemeshError> {
+    if !(wall.is_finite() && wall > 0.0) {
+        return Err(RemeshError::Empty);
+    }
+    let outside = remesh_at(sources, settings, offset)?;
+    let inside = remesh_at(sources, &Settings { sharp: false, ..*settings }, offset - wall)?;
+    let base = outside.positions.len() as u32;
+    let mut positions = outside.positions.clone();
+    positions.extend_from_slice(&inside.positions);
+    let mut triangles = outside.triangles.clone();
+    // The inside faces into the hollow: each of its triangles turned over.
+    triangles.extend(inside.triangles.iter().map(|&[a, b, c]| [a + base, c + base, b + base]));
+    let rims = |tris: &[[u32; 3]]| {
+        let mut uses: HashMap<(u32, u32), u32> = HashMap::new();
+        for &[a, b, c] in tris {
+            for (p, q) in [(a, b), (b, c), (c, a)] {
+                *uses.entry((p.min(q), p.max(q))).or_insert(0) += 1;
+            }
+        }
+        let open: Vec<(u32, u32)> =
+            tris.iter().flat_map(|&[a, b, c]| [(a, b), (b, c), (c, a)]).filter(|&(p, q)| uses.get(&(p.min(q), p.max(q))) == Some(&1)).collect();
+        loops_of(&open)
+    };
+    let (outer, inner) = (rims(&outside.triangles), rims(&triangles[outside.triangles.len()..]));
+    if outer.len() != inner.len() {
+        return Err(RemeshError::Rims);
+    }
+    let at = |v: u32| positions.get(v as usize).copied().unwrap_or(Vec3::ZERO);
+    let middle = |ring: &[u32]| ring.iter().fold(Vec3::ZERO, |s, &v| s + at(v)) / ring.len().max(1) as f64;
+    let mut taken = vec![false; inner.len()];
+    let mut strips = Vec::new();
+    for ring in &outer {
+        let m = middle(ring);
+        let Some(k) = (0..inner.len()).filter(|&k| !taken[k]).min_by(|&a, &b| middle(&inner[a]).dist(m).total_cmp(&middle(&inner[b]).dist(m))) else {
+            return Err(RemeshError::Rims);
+        };
+        taken[k] = true;
+        strips.extend(zipped(ring, &inner[k], &at));
+    }
+    triangles.extend(strips);
+    Ok(Remeshed { positions, triangles, ..outside })
+}
+
+/// Triangles joining two loops of points round one rim, `a` and `b` (each a loop of vertex
+/// numbers): each step goes on along the loop whose next diagonal is shorter, so the strip
+/// neither twists nor folds. `b` is walked the way `a` runs, from its point nearest `a`'s start.
+fn zipped(a: &[u32], b: &[u32], at: &dyn Fn(u32) -> Vec3) -> Vec<[u32; 3]> {
+    let (n, m) = (a.len(), b.len());
+    if n < 2 || m < 2 {
+        return Vec::new();
+    }
+    let start = (0..m).min_by(|&x, &y| at(b[x]).dist(at(a[0])).total_cmp(&at(b[y]).dist(at(a[0])))).unwrap_or(0);
+    let along = at(a[1]) - at(a[0]);
+    let forward = (at(b[(start + 1) % m]) - at(b[start])).dot(along) >= (at(b[(start + m - 1) % m]) - at(b[start])).dot(along);
+    let bv = |j: usize| if forward { b[(start + j) % m] } else { b[(start + m - j % m) % m] };
+    let av = |i: usize| a[i % n];
+    let (mut i, mut j) = (0, 0);
+    let mut out = Vec::with_capacity(n + m);
+    while i < n || j < m {
+        let step_a = i < n && (j >= m || at(av(i + 1)).dist(at(bv(j))) <= at(av(i)).dist(at(bv(j + 1))));
+        // Each runs `a`'s rim edge the other way from the face it ends (`a`'s loops run as its
+        // faces do), and `b`'s as walked (against its faces, `b` being turned inward).
+        if step_a {
+            out.push([av(i + 1), av(i), bv(j)]);
+            i += 1;
+        } else {
+            out.push([bv(j), bv(j + 1), av(i)]);
+            j += 1;
+        }
+    }
+    out
+}
+
 /// The most pairs of points a loop of the new surface and a rim are compared at: past it the loop
 /// is left where it ends.
 const MOST_RIM_PAIRS: usize = 50_000_000;
@@ -880,6 +962,31 @@ pub fn is_closed(triangles: &[[u32; 3]]) -> bool {
 mod tests {
     use super::*;
     use crate::test_meshes::{fine_cuboid, revolved, steps, turned};
+
+    /// A ball R 20 made a shell 2 thick, and a bowl (the ball's lower half, open at the top) the
+    /// same: both closed and every edge shared by two faces, the ball's two skins about the volume
+    /// between spheres of 20 and 18, the bowl's about half of it, the strip at its rim closing it.
+    #[test]
+    fn a_ball_and_an_open_bowl_are_made_hollow_and_closed() {
+        let volume = |p: &[Vec3], t: &[[u32; 3]]| t.iter().map(|&[a, b, c]| p[a as usize].dot(p[b as usize].cross(p[c as usize]))).sum::<f64>() / 6.0;
+        let between = 4.0 / 3.0 * std::f64::consts::PI * (20f64.powi(3) - 18f64.powi(3));
+        let settings = Settings { cell: 0.8, sharp: false };
+        for (half, share) in [(false, 1.0), (true, 0.5)] {
+            let last = if half { 16 } else { 32 };
+            // Profile as (along the axis, radius), from the bottom pole.
+            let profile: Vec<[f64; 2]> = (0..=last)
+                .map(|k| {
+                    let t = std::f64::consts::PI * f64::from(k) / 32.0;
+                    [-20.0 * t.cos(), 20.0 * t.sin()]
+                })
+                .collect();
+            let (positions, triangles) = revolved(&profile, 96, false);
+            let made = shell(&[Scan::new(&positions, &triangles)], &settings, 0.0, 2.0).expect("a shell");
+            assert!(is_closed(&made.triangles) && is_manifold(&made.triangles), "closed and manifold (half {half})");
+            let v = volume(&made.positions, &made.triangles).abs();
+            assert!((v - share * between).abs() < 0.04 * share * between, "half {half}: {v} against {}", share * between);
+        }
+    }
 
     fn volume(positions: &[Vec3], triangles: &[[u32; 3]]) -> f64 {
         triangles.iter().map(|t| positions[t[0] as usize].dot(positions[t[1] as usize].cross(positions[t[2] as usize])) / 6.0).sum()

@@ -151,6 +151,11 @@ pub struct ScanRemeshParams {
     /// whole scan only (not with an area); edges are not kept sharp. Default: 0, on the scan.
     #[serde(default)]
     pub offset: Option<super::types::LengthExpr>,
+    /// A hollow part this thick (a length or an expression of the design's parameters): the
+    /// surface at the offset and, inside it, the one this much farther in, facing into the hollow,
+    /// joined along the scan's open rims, closed and printable. The whole scan only.
+    #[serde(default)]
+    pub shell: Option<super::types::LengthExpr>,
     /// Only part of the scan (its triangles made again as even triangles of about `cell`, the
     /// rest kept; not with `with`), a point on it with `grow` (true or degrees) or `radius` (mm).
     #[serde(default)]
