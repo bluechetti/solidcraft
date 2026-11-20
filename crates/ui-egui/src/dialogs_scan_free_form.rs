@@ -1,5 +1,6 @@
 //! New Free Form (`scan.free_form`): click the four corners of a first face in order round it, or
-//! with Corners Two the ends of a diagonal (a rectangle square to the view). A click lands on the
+//! with Corners Two the ends of a diagonal (a rectangle on the face under the first click, its sides
+//! level along the face and up it, whatever the view looks like). A click lands on the
 //! scan or a body's face under it, or, with nothing there, in the view's plane through the corner
 //! before. As soon as the corners are in, the net fitted to the scan is drawn over the picture,
 //! with how close it comes; Fit to Scan, Snap Distance, Points and Stiffness change it. OK keeps
@@ -51,8 +52,9 @@ pub struct NewFreeForm {
     curves: Vec<(u64, String)>,
     /// Their points, as OK sends them, when the face over them was made.
     shown_curves: Option<Vec<Vec<[f64; 3]>>>,
-    /// The view's right and up when the rectangle's second corner was clicked.
-    view: Option<(Vec3, Vec3)>,
+    /// With Two corners: the directions the rectangle's sides run along, set by the first click
+    /// (see [`face_axes`]).
+    axes: Option<(Vec3, Vec3)>,
     shown: Option<Box<Shown>>,
 }
 
@@ -71,7 +73,7 @@ impl Default for NewFreeForm {
             pending: None,
             curves: Vec::new(),
             shown_curves: None,
-            view: None,
+            axes: None,
             shown: None,
         }
     }
@@ -163,19 +165,46 @@ fn curve_points(app: &SolveApp, k: &NewFreeForm) -> Option<Vec<Vec<Vec3>>> {
         .collect()
 }
 
-/// The four corners, once they are all in: as clicked, or the rectangle on the diagonal clicked,
-/// its sides along the view's right and up.
+/// How much shorter than the other a rectangle's shorter side may be: less is a line, not a face.
+const RECTANGLE_LEAST: f64 = 0.02;
+
+/// The four corners, once they are all in: as clicked, or the rectangle on the diagonal clicked
+/// (its sides along [`face_axes`], the second click one of its corners). None when the two
+/// corners lie along one of those sides, which makes no rectangle.
 fn corners(k: &NewFreeForm) -> Option<[Vec3; 4]> {
     match (k.corners_mode, k.clicks.as_slice()) {
         (0, [a, b, c, d]) => Some([*a, *b, *c, *d]),
         (1, [a, c]) => {
-            let (right, up) = k.view?;
+            let (u, v) = k.axes?;
             let d = *c - *a;
-            let (x, y) = (right * d.dot(right), up * d.dot(up));
-            Some([*a, *a + x, *a + x + y, *a + y])
+            let (x, y) = (u * d.dot(u), v * d.dot(v));
+            let (along, up) = (x.len(), y.len());
+            (along.min(up) > RECTANGLE_LEAST * along.max(up)).then_some([*a, *a + x, *c, *a + y])
         }
         _ => None,
     }
+}
+
+/// The directions a Two-corner rectangle's sides run along on a face with normal `n`: level along
+/// the face, and up it. On a floor or ceiling, which has no up, X and Y. The same from any view,
+/// so two corners of a panel make the panel however the view looks at it.
+fn face_axes(n: Vec3) -> Option<(Vec3, Vec3)> {
+    let n = n.normalized()?;
+    let z = Vec3::new(0.0, 0.0, 1.0);
+    let level = if n.dot(z).abs() < 0.9 { z.cross(n) } else { Vec3::new(1.0, 0.0, 0.0) - n * n.x };
+    let u = level.normalized()?;
+    let v = n.cross(u).normalized()?;
+    Some((u, v))
+}
+
+/// The face's normal where the screen point `at` meets it, from the places four screen points a
+/// few pixels round it meet (None at a silhouette, where some of them meet nothing).
+fn face_normal(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<Vec3> {
+    const STEP: f32 = 6.0;
+    let mut near = |dx: f32, dy: f32| raw_hit(app, proj, at + egui::vec2(dx, dy)).map(|(_, p)| p);
+    let across = near(STEP, 0.0)? - near(-STEP, 0.0)?;
+    let down = near(0.0, STEP)? - near(0.0, -STEP)?;
+    across.cross(down).normalized()
 }
 
 fn fit_mode(k: &NewFreeForm) -> Fit {
@@ -322,7 +351,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
     if k.corners_mode != before {
         k.clicks.clear();
         k.curves.clear();
-        k.view = None;
+        k.axes = None;
         k.shown = None;
     }
     let curves_mode = k.corners_mode == CURVES_MODE;
@@ -370,7 +399,14 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
         } else {
             k.clicks.pop();
         }
-        k.view = None;
+        // The first corner of two sets the rectangle's directions: they stay while it does.
+        if k.clicks.is_empty() {
+            k.axes = None;
+        }
+    }
+    // Two corners along one side of the rectangle make a line: said, so a missing face is not a mystery.
+    if k.corners_mode == 1 && k.clicks.len() == 2 && corners(k).is_none() {
+        ui_kit::text(ui, tr("ui.scan_free_form_level"), ui_kit::Text::Report("scan_free_form_level", true));
     }
     let tolerance =
         crate::scan_fidelity::effective(app, k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.scan.as_deref()), k.tolerance);
@@ -543,14 +579,14 @@ pub(crate) fn click_curve(app: &mut SolveApp, proj: &crate::viewport::Proj, at: 
 
 /// A click at `at`: a corner on what is under it, or in the view's plane through the corner before.
 pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
-    let hit = crate::viewport::pick_cached(app, proj, at)
-        .into_iter()
-        .find_map(|h| match h {
-            crate::viewport::Hit::Face { body, point, .. } => Some((body, point)),
-            _ => None,
-        })
-        // Just past a scan's outline: on the scan, not in the air beyond it.
-        .or_else(|| crate::scan_snap::scan_under(app, proj, at));
+    let hit = raw_hit(app, proj, at);
+    // The first of two corners sets the rectangle's directions: the face's own (or, where the face
+    // cannot be read, the view's right and up).
+    let first_of_two = matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(k)) if k.corners_mode == 1 && k.clicks.is_empty());
+    let axes = first_of_two.then(|| {
+        let (right, up, _) = proj.cam.basis();
+        face_normal(app, proj, at).and_then(face_axes).unwrap_or((right, up))
+    });
     // Where the click lands: on a corner, edge, crease or curve point close to it.
     let hit = hit.map(|(body, point)| {
         if app.session.model.state().body(&body).is_some_and(|b| b.body.is_mesh()) {
@@ -559,7 +595,7 @@ pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::
             point
         }
     });
-    let (right, up, back) = proj.cam.basis();
+    let (_, _, back) = proj.cam.basis();
     let Some(Kind::ScanFreeForm(k)) = app.dialog.as_mut().map(|d| &mut d.kind) else { return };
     if k.clicks.len() >= needed(k) {
         return;
@@ -572,9 +608,21 @@ pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::
     });
     let Some(place) = place else { return };
     k.clicks.push(place);
-    if k.corners_mode == 1 && k.clicks.len() == 2 {
-        k.view = Some((right, up));
+    if axes.is_some() {
+        k.axes = axes;
     }
+}
+
+/// What is under the screen point `at`: a body's face, or a scan (also just past its outline: on
+/// the scan, not in the air beyond it), and the place on it.
+fn raw_hit(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<(String, Vec3)> {
+    crate::viewport::pick_cached(app, proj, at)
+        .into_iter()
+        .find_map(|h| match h {
+            crate::viewport::Hit::Face { body, point, .. } => Some((body, point)),
+            _ => None,
+        })
+        .or_else(|| crate::scan_snap::scan_under(app, proj, at))
 }
 
 /// The corners and the face over them, over the picture.
@@ -1045,6 +1093,110 @@ mod tests {
         let (point, normal, _) = free_form::flat_plane(&net).unwrap();
         let off = net.iter().map(|p| (*p - point).dot(normal).abs()).fold(0.0, f64::max);
         assert!(off < 1e-9, "kept in one plane: {off}");
+    }
+
+    /// A flat plate 60 by 40 mm, its top at z = 10, scanned as a grid of 2 mm squares, as an STL.
+    fn plate_stl() -> String {
+        let at = |i: u32, j: u32| [2.0 * f64::from(i), 2.0 * f64::from(j), 10.0];
+        let mut stl = String::from("solid p\n");
+        for i in 0..30 {
+            for j in 0..20 {
+                for tri in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                    stl += "facet normal 0 0 0\nouter loop\n";
+                    for [x, y, z] in tri {
+                        stl += &format!("vertex {x} {y} {z}\n");
+                    }
+                    stl += "endloop\nendfacet\n";
+                }
+            }
+        }
+        stl + "endsolid p\n"
+    }
+
+    /// New Free Form with Corners Two on the plate, seen from `view`, and the `clicks` made on it.
+    fn plate_two_corners(view: &str, clicks: &[[f64; 3]]) -> crate::scenario::Harness {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("plate.stl");
+        std::fs::write(&path, plate_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": view})).unwrap();
+        h.app.start("scan.free_form");
+        h.frames(2);
+        if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.corners_mode = 1;
+        }
+        h.frames(2);
+        for p in clicks {
+            h.step(&json!({"click": {"world": p}})).unwrap();
+            h.frames(2);
+        }
+        h
+    }
+
+    fn free_form_of(h: &crate::scenario::Harness) -> &NewFreeForm {
+        let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("New Free Form is open") };
+        k
+    }
+
+    /// Two corners make the panel they are the ends of, whatever the view: seen from above, and
+    /// from the corner (where the diagonal runs level across the screen, which used to leave a
+    /// sliver 8 mm wide in the air). The second click is a corner of it.
+    #[test]
+    fn two_corners_make_the_panel_whatever_the_view() {
+        for view in ["top", "iso"] {
+            // Near the middle, clear of the dialog and the panels round the view.
+            let h = plate_two_corners(view, &[[14.0, 10.0, 10.0], [46.0, 30.0, 10.0]]);
+            let k = free_form_of(&h);
+            assert_eq!(k.clicks.len(), 2, "{view}: both corners are in: {:?}", k.clicks);
+            let got = corners(k).unwrap_or_else(|| panic!("a rectangle from {view}: {:?}", k.clicks));
+            let want = [[14.0, 10.0, 10.0], [46.0, 10.0, 10.0], [46.0, 30.0, 10.0], [14.0, 30.0, 10.0]];
+            for (g, w) in got.iter().zip(want) {
+                assert!(g.dist(Vec3::new(w[0], w[1], w[2])) < 1.0, "{view}: corner {g:?} is not {w:?}; all {got:?}");
+            }
+        }
+    }
+
+    /// Two corners along one side of the rectangle make no rectangle: no face is fitted, OK has
+    /// nothing to run, and the dialog says why.
+    #[test]
+    fn two_corners_along_one_side_make_no_rectangle() {
+        let mut h = plate_two_corners("top", &[[6.0, 4.0, 10.0], [54.0, 4.0, 10.0]]);
+        let k = free_form_of(&h);
+        assert_eq!(k.clicks.len(), 2, "both clicks are in");
+        assert!(corners(k).is_none(), "no rectangle on a line");
+        assert!(commands(k).is_err(), "OK has nothing to run");
+        assert!(k.shown.is_none(), "no face is drawn");
+        let note = solidcraft_ui_text::tr("ui.scan_free_form_level");
+        assert!(painted_text(&mut h).iter().any(|t| t.contains(note)), "the dialog says why");
+    }
+
+    /// Taking the second corner back and clicking another still makes a rectangle: the first
+    /// corner's directions are kept.
+    #[test]
+    fn taking_back_the_second_corner_keeps_the_rectangle_directions() {
+        let mut h = plate_two_corners("iso", &[[14.0, 10.0, 10.0], [46.0, 10.0, 10.0]]);
+        assert_eq!(free_form_of(&h).clicks.len(), 2, "both corners are in");
+        assert!(corners(free_form_of(&h)).is_none());
+        h.step(&json!({"click": {"handle": "dialog:button::Remove Last Point"}})).unwrap();
+        h.frames(2);
+        assert_eq!(free_form_of(&h).clicks.len(), 1, "the second corner is taken back");
+        h.step(&json!({"click": {"world": [46.0, 30.0, 10.0]}})).unwrap();
+        h.frames(2);
+        assert_eq!(free_form_of(&h).clicks.len(), 2, "the new second corner is in");
+        assert!(corners(free_form_of(&h)).is_some(), "a rectangle again");
+    }
+
+    /// A face's sides run level and up it; a floor, which has no up, along X and Y.
+    #[test]
+    fn a_two_corner_rectangle_runs_level_and_up_the_face() {
+        let near = |a: Vec3, b: [f64; 3]| a.dist(Vec3::new(b[0], b[1], b[2])) < 1e-9;
+        let (u, v) = face_axes(Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        assert!(near(u, [1.0, 0.0, 0.0]) && near(v, [0.0, 1.0, 0.0]), "a floor: {u:?} {v:?}");
+        let (u, v) = face_axes(Vec3::new(0.0, 2.0, 0.0)).unwrap();
+        assert!(u.z.abs() < 1e-9 && near(v, [0.0, 0.0, 1.0]), "a wall: level {u:?}, up {v:?}");
+        let (u, v) = face_axes(Vec3::new(0.0, 1.0, 1.0)).unwrap();
+        assert!(u.z.abs() < 1e-9 && v.z > 0.5, "a slope: level {u:?}, up the slope {v:?}");
+        assert!(face_axes(Vec3::new(0.0, 0.0, 0.0)).is_none(), "no normal, no directions");
     }
 
     /// Half a tube of radius 20 along Y, 40 long, open at its ends, as an STL.

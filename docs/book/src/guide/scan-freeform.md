@@ -23,7 +23,7 @@ from it, and the dialog says how much of the scan is within the tolerance. OK ke
 
 | Choice in the dialog | Meaning | Example or reason to choose it |
 | --- | --- | --- |
-| Corners | Four corners, or two at a diagonal's ends. | Two for a rectangular panel. |
+| Corners | Four corners, or two at a diagonal's ends: the rectangle lies on the face under the first click, its sides level along the face and up it (on a floor, along X and Y), from any view. | Two for a rectangular panel. Two corners along one side make no rectangle: click opposite corners. |
 | Fit to scan | Follow the scan, or lie flat between the corners. | Flat for a wall panel. |
 | Stiffness | How firmly the surface keeps its shape rather than following every bump. | Raise it on a noisy scan. |
 | Points | The control points each way. | More for a face that curves twice. |

@@ -3840,3 +3840,27 @@ fn a_free_form_faces_out_of_the_scan_whichever_way_its_corners_go() {
         assert!(top > 9.5, "order {k}: grown upward from the dome's top at 8: {top}");
     }
 }
+
+/// Corners that enclose no area make no face in any fit, and say so: a corner clicked twice, four
+/// in a line, a crossed order. They used to reach the STEP writer (a misleading "STEP import: no
+/// bodies") or, in a line, be kept as a face with no width. A corner shared by two ends of one
+/// side (a triangle) still makes a face.
+#[test]
+fn free_form_refuses_corners_that_enclose_no_area() {
+    let (mut s, _) = session_with_triangles("free-form-no-area", &dome_triangles(40));
+    for corners in [
+        json!([[10, 10, 0], [10, 10, 0], [10, 10, 0], [10, 10, 0]]),
+        json!([[10, 10, 0], [50, 10, 0], [50, 50, 0], [50, 10, 0]]),
+        json!([[10, 10, 0], [20, 10, 0], [30, 10, 0], [40, 10, 0]]),
+        json!([[10, 10, 0], [50, 50, 0], [50, 10, 0], [10, 50, 0]]),
+    ] {
+        for fit in ["follow", "flat", "off", "overall"] {
+            let refused = s.execute("scan.free_form", &json!({"corners": corners, "fit": fit})).unwrap_err().to_string();
+            assert!(refused.contains("enclose no area") || (fit == "flat" && refused.contains("no flat face")), "{corners} {fit}: {refused}");
+            assert!(!refused.contains("STEP"), "{corners} {fit}: {refused}");
+        }
+    }
+    let triangle = run(&mut s, "scan.free_form", json!({"corners": [[10, 10, 0], [10, 10, 0], [50, 50, 0], [50, 10, 0]]}));
+    assert_eq!(triangle["surface"], "FreeForm1", "{triangle}");
+    assert_eq!(s.model.state().bodies.len(), 2, "the scan and the one face; the refusals kept nothing");
+}
