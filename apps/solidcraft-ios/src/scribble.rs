@@ -173,6 +173,14 @@ pub fn install(view: &UIView) {
     // SAFETY: a plain colour for the caret.
     unsafe { proxy.setTintColor(Some(&UIColor::clearColor())) };
     proxy.setKeyboardType(UIKeyboardType::NumbersAndPunctuation);
+    // No Scribble shortcut bar (undo, redo, keyboard) over the field, and no system keyboard:
+    // the app's own number pad and buttons stand for them.
+    let assistant = proxy.inputAssistantItem();
+    assistant.setLeadingBarButtonGroups(&NSArray::new());
+    assistant.setTrailingBarButtonGroups(&NSArray::new());
+    let empty = UIView::new(mtm);
+    // SAFETY: an empty view as the input view: the field takes text without a keyboard.
+    unsafe { proxy.setInputView(Some(&empty)) };
     view.addSubview(&proxy);
     let center = NSNotificationCenter::defaultCenter();
     let block = block2::RcBlock::new(move |note: NonNull<NSNotification>| {
