@@ -477,6 +477,79 @@ pub(crate) mod kit {
         Cage::new(points, faces).unwrap()
     }
 
+    /// A cage round a ball with both kinds of irregular corner: an icosahedron, each triangle cut
+    /// into three four-sided faces (from its corners to the middles of its sides and its centre),
+    /// each of those into `k` × `k`, the points pushed out onto the unit sphere. Five faces meet
+    /// at each of the icosahedron's 12 corners, three at each of its 20 triangles' centres; with
+    /// `k` 3 or more each face has one irregular corner at most and they stand apart.
+    pub(crate) fn icosahedral_ball(k: u32) -> Cage {
+        let g = (1.0 + 5f64.sqrt()) / 2.0;
+        let corners: [V; 12] = [
+            [-1.0, g, 0.0],
+            [1.0, g, 0.0],
+            [-1.0, -g, 0.0],
+            [1.0, -g, 0.0],
+            [0.0, -1.0, g],
+            [0.0, 1.0, g],
+            [0.0, -1.0, -g],
+            [0.0, 1.0, -g],
+            [g, 0.0, -1.0],
+            [g, 0.0, 1.0],
+            [-g, 0.0, -1.0],
+            [-g, 0.0, 1.0],
+        ];
+        // Counter-clockwise seen from outside.
+        let triangles: [[usize; 3]; 20] = [
+            [0, 11, 5],
+            [0, 5, 1],
+            [0, 1, 7],
+            [0, 7, 10],
+            [0, 10, 11],
+            [1, 5, 9],
+            [5, 11, 4],
+            [11, 10, 2],
+            [10, 7, 6],
+            [7, 1, 8],
+            [3, 9, 4],
+            [3, 4, 2],
+            [3, 2, 6],
+            [3, 6, 8],
+            [3, 8, 9],
+            [4, 9, 5],
+            [2, 4, 11],
+            [6, 2, 10],
+            [8, 6, 7],
+            [9, 8, 1],
+        ];
+        let mix = |a: V, b: V, t: f64| [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]), a[2] + t * (b[2] - a[2])];
+        let mut ids: HashMap<[i64; 3], u32> = HashMap::new();
+        let mut points = Vec::new();
+        let mut faces = Vec::new();
+        for [a, b, c] in triangles {
+            let (a, b, c) = (corners[a], corners[b], corners[c]);
+            let centre = [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0, (a[2] + b[2] + c[2]) / 3.0];
+            let (ab, bc, ca) = (mix(a, b, 0.5), mix(b, c, 0.5), mix(c, a, 0.5));
+            for quad in [[a, ab, centre, ca], [b, bc, centre, ab], [c, ca, centre, bc]] {
+                let mut point = |i: u32, j: u32| {
+                    let (u, v) = (f64::from(i) / f64::from(k), f64::from(j) / f64::from(k));
+                    let p = mix(mix(quad[0], quad[1], u), mix(quad[3], quad[2], u), v);
+                    let key = [(p[0] * 1e6).round() as i64, (p[1] * 1e6).round() as i64, (p[2] * 1e6).round() as i64];
+                    *ids.entry(key).or_insert_with(|| {
+                        let size = length(p);
+                        points.push(Vec3::new(p[0] / size, p[1] / size, p[2] / size));
+                        points.len() as u32 - 1
+                    })
+                };
+                for i in 0..k {
+                    for j in 0..k {
+                        faces.push([point(i, j), point(i + 1, j), point(i + 1, j + 1), point(i, j + 1)]);
+                    }
+                }
+            }
+        }
+        Cage::new(points, faces).unwrap()
+    }
+
     /// A cage round a ball: a cube of `k` × `k` faces a side, its points pushed out onto the
     /// unit sphere. Three faces meet at each of the cube's eight corners.
     pub(crate) fn ball(k: u32) -> Cage {

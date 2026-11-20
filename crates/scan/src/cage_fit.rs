@@ -423,8 +423,15 @@ pub fn fit(cage: &Cage, patches: &Patches, scan: &Scan, settings: &FitSettings) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cage::kit::{ball, length, shape, torus, worst_join};
+    use crate::cage::kit::{ball, icosahedral_ball, length, shape, torus, worst_join};
     use crate::cage::{Cage, CornerBases};
+    use std::collections::HashMap;
+
+    /// The shape bench's bounds: today's corner construction gave 0.165 at the three-faced
+    /// corners and 0.144 at the five-faced ones (rms 6.1e-5, regular faces 0.058), on 2026-11-19.
+    /// A better construction lowers these; the plan's bar is 0.05.
+    const BENCH_THREE: f64 = 0.18;
+    const BENCH_FIVE: f64 = 0.16;
 
     /// The triangles of a cage's faces, each cut in two: a scan of whatever the cage's points
     /// lie on, as fine as the cage.
@@ -506,6 +513,60 @@ mod tests {
         }
         assert!(off[0] < 0.08, "the bicubic faces curve {} off a unit sphere's", off[0]);
         assert!(off[1] < 0.2, "the corners' faces curve {} off a unit sphere's", off[1]);
+    }
+
+    /// The shape bench of the surfacing plan (item 1 of its next steps): a ball with both kinds
+    /// of irregular corner, five faces meeting at 12 and three at 20, fitted to a fine scan of
+    /// the unit sphere, and how far each kind of face curves off the sphere's curvature of one, a
+    /// fifth in from its edges. It prints the three figures (regular, three-faced, five-faced)
+    /// for a corner construction to be judged on; the plan's bar for both corners is 5 %. Today's
+    /// construction meets in curvature everywhere (the bounds on the joins hold whatever the
+    /// shape), and the figures are held to what it gave when written, so a worse one shows.
+    #[test]
+    fn the_shape_bench_a_ball_with_three_and_five_faced_corners() {
+        let cage = icosahedral_ball(4);
+        let (positions, triangles) = as_scan(&icosahedral_ball(16));
+        let scan = Scan::new(&positions, &triangles);
+        let patches = cage.patches(&mut CornerBases::default()).unwrap();
+        assert!(patches.left_out.is_empty(), "every face has a patch: {:?}", patches.left_out);
+        let (gap, facing, curving, _) = worst_join(&cage, &patches);
+        assert!(gap < 1e-9 && facing < 1e-9 && curving < 1e-7, "{gap:e} apart, facing {facing:e} apart, curving {curving:e} apart");
+        let fit = fit(&cage, &patches, &scan, &FitSettings::default()).unwrap();
+        let moved = Cage::new(fit.points, cage.faces().to_vec()).unwrap();
+        let mut valence: HashMap<u32, usize> = HashMap::new();
+        for face in cage.faces() {
+            for &v in face {
+                *valence.entry(v).or_default() += 1;
+            }
+        }
+        // off[0] the regular faces, off[1] those at a three-faced corner, off[2] at a five-faced one.
+        let mut off = [0.0_f64; 3];
+        let mut seen = [0_usize; 3];
+        for patch in &patches.patches {
+            let corner = cage.faces()[patch.face].iter().map(|v| valence[v]).find(|&n| n != 4);
+            let kind = match corner {
+                None => 0,
+                Some(3) => 1,
+                Some(_) => 2,
+            };
+            seen[kind] += 1;
+            let points = patch.points(moved.points());
+            for i in 2..=8 {
+                for j in 2..=8 {
+                    let (_, _, tensor) = shape(&points, patch.degree, (f64::from(i) / 10.0, f64::from(j) / 10.0));
+                    let (least, most) = principal(&tensor);
+                    off[kind] = off[kind].max((least + 1.0).abs()).max((most + 1.0).abs());
+                }
+            }
+        }
+        eprintln!(
+            "shape bench: rms {:e}; curvature off a sphere's: regular {:.4}, three-faced {:.4}, five-faced {:.4} ({seen:?} faces)",
+            fit.rms, off[0], off[1], off[2]
+        );
+        assert_eq!(seen[1..], [20 * 3, 12 * 5], "a patch at each face of each corner");
+        assert!(fit.rms < 1e-3, "rms {:e}", fit.rms);
+        assert!(off[0] < 0.08, "the bicubic faces curve {} off", off[0]);
+        assert!(off[1] < BENCH_THREE && off[2] < BENCH_FIVE, "three-faced {}, five-faced {}", off[1], off[2]);
     }
 
     /// A torus has no irregular corner: its cage is one B-spline surface, and the fit brings it
