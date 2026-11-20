@@ -42,14 +42,14 @@
       "scan.extrude_it",
       "scan.extrude_it"
     ],
-    "status": "fail",
+    "status": "missed pass",
     "values": {
-      "model to part: max": 1.999788,
-      "part to model: max": 1.983224,
-      "scan to model: max": 1.998852,
-      "scan to model: rms": 0.418142,
-      "scan to model: within": 0.381895,
-      "volume": 0.789
+      "model to part: max": 0.005101,
+      "part to model: max": 0.002224,
+      "scan to model: max": 0.085227,
+      "scan to model: rms": 0.019834,
+      "scan to model: within": 1.0,
+      "volume": 7e-06
     }
   },
   "bracket/s0.02-specks": {
@@ -162,7 +162,20 @@
     }
   },
   "chamfered-prism/s0.02-missing-30": {
-    "status": "refused"
+    "in_app_passes": false,
+    "ran": [
+      "scan.extrude_it",
+      "scan.chamfer_it"
+    ],
+    "status": "missed pass",
+    "values": {
+      "model to part: max": 0.000677,
+      "part to model: max": 0.00071,
+      "scan to model: max": 0.083859,
+      "scan to model: rms": 0.019896,
+      "scan to model: within": 1.0,
+      "volume": 0.0
+    }
   },
   "chamfered-prism/s0.02-specks": {
     "in_app_passes": true,
@@ -478,14 +491,14 @@
     "ran": [
       "scan.extrude_it"
     ],
-    "status": "fail",
+    "status": "missed pass",
     "values": {
-      "model to part: max": 1.994014,
-      "part to model: max": 0.323081,
+      "model to part: max": 0.005731,
+      "part to model: max": 0.003525,
       "scan to model: max": 0.090248,
-      "scan to model: rms": 0.01981,
+      "scan to model: rms": 0.019785,
       "scan to model: within": 1.0,
-      "volume": 0.001758
+      "volume": 0.0
     }
   },
   "plate-holes/s0.02-missing-30": {
@@ -495,12 +508,12 @@
     ],
     "status": "fail",
     "values": {
-      "model to part: max": 1.99992,
-      "part to model: max": 1.995724,
-      "scan to model: max": 1.998262,
-      "scan to model: rms": 0.686072,
-      "scan to model: within": 0.056869,
-      "volume": 0.97814
+      "model to part: max": 1.999989,
+      "part to model: max": 1.999989,
+      "scan to model: max": 1.996529,
+      "scan to model: rms": 0.100762,
+      "scan to model: within": 0.986279,
+      "volume": 0.102842
     }
   },
   "plate-holes/s0.02-specks": {
@@ -603,7 +616,19 @@
     }
   },
   "rounded-block/s0.02-missing-30": {
-    "status": "refused"
+    "in_app_passes": false,
+    "ran": [
+      "scan.extrude_it"
+    ],
+    "status": "fail",
+    "values": {
+      "model to part: max": 1.994891,
+      "part to model: max": 1.463034,
+      "scan to model: max": 0.080097,
+      "scan to model: rms": 0.019685,
+      "scan to model: within": 1.0,
+      "volume": 0.009105
+    }
   },
   "rounded-block/s0.02-specks": {
     "in_app_passes": true,
