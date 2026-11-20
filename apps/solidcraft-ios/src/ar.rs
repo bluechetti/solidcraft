@@ -313,6 +313,8 @@ pub struct State {
     exploded: usize,
     /// Pull is on: the Pencil pushes and pulls faces (`solid.press_pull`).
     pull_mode: bool,
+    /// Where the AR panel was last drawn (screen points).
+    panel: Option<egui::Rect>,
     /// The face being pulled.
     pulling: Option<Pull>,
     /// Whether the design hid its origin before AR, put back after.
@@ -657,6 +659,10 @@ impl State {
             for e in &i.events {
                 if let egui::Event::Touch { id, phase, pos, force, .. } = e {
                     let now = i.time;
+                    // A touch that starts on the panel belongs to its buttons.
+                    if matches!(phase, egui::TouchPhase::Start) && self.panel.is_some_and(|r| r.expand(8.0).contains(*pos)) {
+                        continue;
+                    }
                     let mine = self.pencil.is_some_and(|p| p.0 == *id);
                     if pull_mode {
                         match phase {
@@ -847,10 +853,15 @@ impl State {
             }
         }
         let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
-        self.pulling = pick(app, seen, &placed, u)
+        let grabbed = pick(app, seen, &placed, u)
             .and_then(|(body, point, normal)| Some(Pull { body, point, normal: unit(normal)?, start: at, distance: 0.0, base: 0.0, held: true }));
-        if self.pulling.is_none() {
-            self.message = "Put the Pencil on a face of the model to pull it.".into();
+        match grabbed {
+            Some(p) => {
+                crate::note(&format!("ar: pull grabbed {}", p.body));
+                self.pulling = Some(p);
+            }
+            // Off the model: a pull waiting for Apply stays as it was.
+            None => self.message = "Put the Pencil on a face of the model to pull it.".into(),
         }
     }
 
@@ -878,6 +889,7 @@ impl State {
     fn lift_pull(&mut self) {
         let Some(pull) = self.pulling.as_mut() else { return };
         pull.held = false;
+        crate::note(&format!("ar: pull lifted at {:+.1} mm", pull.distance));
         if pull.distance.abs() < 0.5 {
             self.pulling = None;
         } else {
@@ -1003,7 +1015,7 @@ impl State {
         let safe = ctx.content_rect();
         let mut leave = false;
         let container = Container::new(ctx, Surface::Popup);
-        container.area(egui::Id::unique("ar-controls")).order(egui::Order::Tooltip).fixed_pos(safe.min + egui::vec2(16.0, 16.0)).show(ctx, |ui| {
+        let shown = container.area(egui::Id::unique("ar-controls")).order(egui::Order::Tooltip).fixed_pos(safe.min + egui::vec2(16.0, 16.0)).show(ctx, |ui| {
             let frame = Container::popup_frame(ui.style());
             container.show_frame(ui, frame, safe, |ui| {
                 ui.horizontal(|ui| {
@@ -1113,6 +1125,8 @@ impl State {
                 }
             });
         });
+        // A Pencil touch that starts on the panel is the panel's (its buttons), not the model's.
+        self.panel = Some(shown.response.rect);
         let _ = screen;
         if leave {
             let _ = self.set_on(app, false);
