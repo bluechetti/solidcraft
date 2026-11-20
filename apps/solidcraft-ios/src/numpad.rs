@@ -57,6 +57,9 @@ const KEY_WIDTH: f32 = 64.0;
 /// keyboard slides in the layout moves, and a field may miss its number mark for a frame or
 /// two; following every frame made the keyboard flicker in and out.
 const HOLD: f64 = 0.3;
+/// How long (seconds) a number field keeps the focus, with nothing held down, before the pad
+/// comes up.
+const APPEAR: f64 = 0.25;
 
 #[derive(Default)]
 pub struct Numpad {
@@ -73,6 +76,12 @@ pub struct Numpad {
     /// When a number field last had the focus, and when the ABC field last had it (app time).
     numeric_at: f64,
     abc_at: f64,
+    /// The number field that has the focus and since when (app time): the pad comes up once it
+    /// has kept it a moment with nothing held down, so a drag or a passing focus never flashes it.
+    since: Option<(egui::Id, f64)>,
+    /// Where the pad stands for the field it was opened for: it stays there while that field is
+    /// edited, rather than following each change of the layout around it.
+    placed: Option<(egui::Id, egui::Rect)>,
 }
 
 impl Numpad {
@@ -150,10 +159,27 @@ impl Numpad {
                 self.abc = None;
             }
         }
-        if !numeric || self.abc.is_some() {
+        // Steady before it shows: the same field focused for [`APPEAR`], and no touch held down
+        // (unless it is on the pad itself, which is already up).
+        let shown = self.rect.is_some();
+        let down = ctx.input(|i| i.pointer.any_down());
+        match (numeric.then_some(focused).flatten(), self.since) {
+            (Some(id), Some((was, _))) if id == was => {}
+            (Some(id), _) => self.since = Some((id, now)),
+            (None, _) => self.since = None,
+        }
+        let steady = self.since.is_some_and(|(_, at)| now - at >= APPEAR) && (shown || !down);
+        if !numeric || self.abc.is_some() || !steady {
+            if !numeric {
+                self.placed = None;
+            }
+            if numeric && self.abc.is_none() {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(APPEAR));
+            }
             self.keys.clear();
             self.rect = None;
-            return (false, numeric);
+            // The system keyboard stays away while the pad is about to come up.
+            return (numeric && self.abc.is_none(), numeric);
         }
         let size = egui::vec2(5.0 * KEY_WIDTH + 6.0 * GAP, ROWS.len() as f32 * KEY + (ROWS.len() as f32 + 1.0) * GAP);
         // Beside what the field is in (a dialog, a value box in the view), never over it: left of
@@ -162,7 +188,11 @@ impl Numpad {
         let holder = field
             .as_ref()
             .map(|r| egui::containers::AreaState::load(ctx, r.layer_id.id).map(|a| a.rect()).filter(|a| a.contains_rect(r.rect)).unwrap_or(r.rect));
-        let pad = place(area, size, field.map(|r| r.rect), holder);
+        let pad = match (self.placed, focused) {
+            (Some((id, rect)), Some(f)) if id == f && area.contains_rect(rect) => rect,
+            _ => place(area, size, field.map(|r| r.rect), holder),
+        };
+        self.placed = focused.map(|f| (f, pad));
         let visuals = ctx.global_style().visuals.clone();
         let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Debug, egui::Id::new("sc_numpad")));
         painter.rect(pad, 12.0, visuals.window_fill, visuals.window_stroke, egui::StrokeKind::Inside);
@@ -256,12 +286,37 @@ mod tests {
             ui.memory_mut(|m| m.request_focus(egui::Id::new("field")));
         });
         out.textures_delta.clear();
-        let mut out = ctx.run_ui(egui::RawInput { time: Some(0.0), ..Default::default() }, |ui| {
-            ui.memory_mut(|m| m.request_focus(egui::Id::new("field")));
-            pad.show(ui.ctx(), egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0)), true);
-        });
-        out.textures_delta.clear();
+        // The field keeps the focus past [`APPEAR`]: the pad comes up.
+        for time in [0.0, APPEAR + 0.05] {
+            let mut out = ctx.run_ui(egui::RawInput { time: Some(time), ..Default::default() }, |ui| {
+                ui.memory_mut(|m| m.request_focus(egui::Id::new("field")));
+                pad.show(ui.ctx(), egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0)), true);
+            });
+            out.textures_delta.clear();
+        }
         (pad, ctx)
+    }
+
+    #[test]
+    fn a_field_focused_during_a_drag_brings_no_pad_until_the_touch_lifts() {
+        let ctx = egui::Context::default();
+        let mut pad = Numpad::default();
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        let mut frame = |pad: &mut Numpad, time: f64, events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(egui::RawInput { time: Some(time), events, ..Default::default() }, |ui| {
+                ui.memory_mut(|m| m.request_focus(egui::Id::new("field")));
+                pad.show(ui.ctx(), area, true);
+            });
+            out.textures_delta.clear();
+        };
+        let at = egui::pos2(500.0, 400.0);
+        frame(&mut pad, 0.0, vec![egui::Event::PointerMoved(at), press(at, true)]);
+        assert!(!pad.shown(), "not at once");
+        frame(&mut pad, 1.0, vec![egui::Event::PointerMoved(egui::pos2(520.0, 400.0))]);
+        assert!(!pad.shown(), "not while the drag holds the touch down");
+        frame(&mut pad, 1.1, vec![press(egui::pos2(520.0, 400.0), false)]);
+        frame(&mut pad, 1.2, Vec::new());
+        assert!(pad.shown(), "once the touch has lifted");
     }
 
     fn key(pad: &Numpad, label_action: Action) -> egui::Pos2 {
