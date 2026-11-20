@@ -89,6 +89,17 @@ impl eframe::App for App {
                         let _ = tx.send(request);
                     }
                     self.control_replies.push(reply);
+                } else if let Some(request) = step.strip_prefix("ai:") {
+                    #[cfg(target_os = "ios")]
+                    self.ai.test_ask(request, false);
+                    let _ = request;
+                } else if let Some(request) = step.strip_prefix("claude:") {
+                    #[cfg(target_os = "ios")]
+                    self.ai.test_ask(request, true);
+                    let _ = request;
+                } else if step == "ai-report" {
+                    #[cfg(target_os = "ios")]
+                    note(&format!("ai report: {}", self.ai.test_report()));
                 } else if let Some(at) = step.strip_prefix("menu:") {
                     let mut xy = at.split(',').filter_map(|v| v.trim().parse::<f32>().ok());
                     if let (Some(x), Some(y)) = (xy.next(), xy.next()) {

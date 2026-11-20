@@ -1533,6 +1533,19 @@ impl State {
     }
 
     /// Answer the model's requests and take in its answers (the UI thread, once a frame).
+    /// Test hook: open the window and send `request` as if typed (`claude`: Ask Claude).
+    pub fn test_ask(&mut self, request: &str, claude: bool) {
+        self.open = true;
+        self.input = request.to_string();
+        self.submit(claude);
+    }
+
+    /// Test hook: what the window shows (availability, busy, the newest log lines).
+    pub fn test_report(&self) -> String {
+        let from = self.log.len().saturating_sub(12);
+        format!("availability={} busy={} | {}", self.availability, self.busy, self.log[from..].join(" | "))
+    }
+
     pub fn tick(&mut self, app: &mut SolveApp) {
         for (action, amount) in std::mem::take(&mut self.view_queue) {
             change_view(app, &json!({ "action": action, "amount": amount }));
