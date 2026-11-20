@@ -208,6 +208,14 @@ pub struct State {
     tablet_was: bool,
     /// A tap asked for by the test hook (0..1 across and down the screen), done on the next frame.
     pub test_tap: Option<(f32, f32)>,
+    /// A Pencil tap asked for by the test hook, done on the next frame.
+    pub test_pick: Option<(f32, f32)>,
+    /// The Pencil touch in progress: its id, where and when it began.
+    pencil: Option<(egui::TouchId, egui::Pos2, f64)>,
+    /// When the Pencil last left the glass (a finger's tap just after is the same hand resting).
+    pencil_up_at: f64,
+    /// The part the Pencil selected last, named on the panel.
+    selected: Option<String>,
     /// A one-finger drag in progress: from where the finger first hit a surface to the foot.
     drag: Option<[f64; 3]>,
     /// The device's thermal state as last seen (0 nominal .. 3 critical).
@@ -467,6 +475,37 @@ impl State {
     /// Tap: put the model on the surface there. Pinch: scale about its foot, snapping to real
     /// size. Twist: turn it about the vertical.
     fn gestures(&mut self, ui: &egui::Ui, response: &egui::Response, rect: egui::Rect, seen: &Seen, app: &mut SolveApp) {
+        // The Pencil selects (as in the design view) and fingers place and move: a touch with a
+        // force reading is the Pencil's. Its touches never count as a finger's tap or drag.
+        let mut pencil_tap = self.test_pick.take();
+        ui.input(|i| {
+            for e in &i.events {
+                if let egui::Event::Touch { id, phase, pos, force, .. } = e {
+                    let now = i.time;
+                    match phase {
+                        egui::TouchPhase::Start if force.is_some() => self.pencil = Some((*id, *pos, now)),
+                        egui::TouchPhase::End if self.pencil.is_some_and(|p| p.0 == *id) => {
+                            if let Some((_, start, at)) = self.pencil.take()
+                                && start.distance(*pos) < 12.0
+                                && now - at < 0.5
+                            {
+                                pencil_tap = Some(((pos.x - rect.min.x) / rect.width(), (pos.y - rect.min.y) / rect.height()));
+                            }
+                            self.pencil_up_at = now;
+                        }
+                        egui::TouchPhase::Cancel if self.pencil.is_some_and(|p| p.0 == *id) => self.pencil = None,
+                        _ => {}
+                    }
+                }
+            }
+        });
+        if let Some(u) = pencil_tap {
+            self.select_at(app, seen, u);
+        }
+        let pencil_busy = self.pencil.is_some() || ui.input(|i| i.time) - self.pencil_up_at < 0.3;
+        if pencil_busy {
+            return;
+        }
         let tapped = response.clicked().then(|| response.interact_pointer_pos()).flatten().map(|at| ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height()));
         if let Some(u) = tapped.or_else(|| self.test_tap.take()) {
             let mut hit = [0f32; 16];
@@ -540,6 +579,46 @@ impl State {
         }
     }
 
+    /// Select the part under view point `u` (0..1 across and down), or clear the selection over
+    /// nothing: the design view's own pick (`view.pick`) with the ray from ARKit's camera taken
+    /// into the model's space, and the selection set by `select.set`, so the design view, the
+    /// browser and the next command all see it.
+    fn select_at(&mut self, app: &mut SolveApp, seen: &Seen, u: (f32, f32)) {
+        let Some(placed) = self.placed else { return };
+        let Some(inv) = invert(&seen.view_proj) else { return };
+        let ndc = [f64::from(u.0) * 2.0 - 1.0, 1.0 - f64::from(u.1) * 2.0];
+        let at = |depth: f64| {
+            let v = [ndc[0], ndc[1], depth, 1.0];
+            let p: [f64; 4] = std::array::from_fn(|r| (0..4).map(|c| inv[c][r] * v[c]).sum());
+            [p[0] / p[3], p[1] / p[3], p[2] / p[3]]
+        };
+        let (near, far) = (at(0.0), at(1.0));
+        // A room point or direction in the model's space: the placement undone.
+        let to_model = |v: [f64; 3]| placed.axes.map(|axis| dot(axis, v) / placed.scale);
+        let origin = to_model(sub(near, placed.translation));
+        let Some(dir) = unit(to_model(sub(far, near))) else { return };
+        let request = serde_json::json!({ "frame": "model", "edges": false, "rays": [{ "origin": origin, "dir": dir }] });
+        let hit = solidcraft_ui_egui::view_pick::pick_command(app, &request)
+            .ok()
+            .and_then(|r| r.get("hits")?.get(0)?.get("body")?.as_str().map(str::to_owned));
+        let items = match &hit {
+            Some(name) => serde_json::json!([{ "type": "body", "name": name }]),
+            None => serde_json::json!([]),
+        };
+        match app.run("select.set", serde_json::json!({ "items": items })) {
+            Ok(_) => {
+                self.selected = hit.clone();
+                if hit.is_some()
+                    && let Ok(b) = self.bridge()
+                {
+                    (b.tick)();
+                }
+            }
+            Err(e) => self.message = e,
+        }
+        crate::note(&format!("ar: pencil at {u:?}: {}", hit.as_deref().unwrap_or("nothing")));
+    }
+
     fn controls(&mut self, ctx: &egui::Context, screen: egui::Rect, seen: Option<&Seen>, coaching: bool, app: &mut SolveApp) {
         let safe = ctx.content_rect();
         let mut leave = false;
@@ -557,6 +636,10 @@ impl State {
                             self.placed = Some(p.with_anchor(anchor));
                         }
                         ui.label(format!("{:.0}%", p.scale / REAL_SIZE * 100.0));
+                        if let Some(name) = &self.selected {
+                            ui.separator();
+                            ui.label(name);
+                        }
                         if ui.button("Pick up").clicked() {
                             self.placed = None;
                         }
@@ -577,7 +660,7 @@ impl State {
                             _ => "Finding the room…".into(),
                         },
                         Some(_) if self.placed.is_none() => "Tap a surface to put the model there.".into(),
-                        Some(_) => "Drag to move, pinch to scale, twist to turn.".into(),
+                        Some(_) => "Drag to move, pinch to scale, twist to turn. Tap a part with the Pencil to select it.".into(),
                     }
                 };
                 if !hint.is_empty() {

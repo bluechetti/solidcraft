@@ -114,6 +114,13 @@ impl eframe::App for App {
                         self.ar.test_tap = Some((x, y));
                     }
                     let _ = &mut xy;
+                } else if let Some(at) = step.strip_prefix("ar-pick:") {
+                    let mut xy = at.split(',').filter_map(|v| v.trim().parse::<f32>().ok());
+                    #[cfg(target_os = "ios")]
+                    if let (Some(x), Some(y)) = (xy.next(), xy.next()) {
+                        self.ar.test_pick = Some((x, y));
+                    }
+                    let _ = &mut xy;
                 } else if step == "ai-report" {
                     #[cfg(target_os = "ios")]
                     note(&format!("ai report: {}", self.ai.test_report()));
