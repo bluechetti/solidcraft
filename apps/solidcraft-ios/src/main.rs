@@ -12,7 +12,6 @@ mod ai_data;
 mod files;
 #[cfg(target_os = "ios")]
 mod keyboard;
-mod numpad;
 #[cfg(target_os = "ios")]
 mod pencil;
 #[cfg(target_os = "ios")]
@@ -24,6 +23,9 @@ use solidcraft_ui_egui::SolveApp;
 /// A 32-bit float depth buffer, as on the other apps (reversed-depth viewport).
 const DEPTH_BITS: u8 = 32;
 
+/// How long (seconds) the keyboard keeps its numbers layout after a number field lost the focus.
+const NUMERIC_HOLD: f64 = 0.3;
+
 struct App {
     solve: SolveApp,
     files: files::Files,
@@ -34,7 +36,8 @@ struct App {
     ai_view: Option<(solidcraft_viewport::Camera, solidcraft_viewport::Camera)>,
     frames: u32,
     synced_at: f64,
-    numpad: numpad::Numpad,
+    /// When a number field last had the focus (app time).
+    numeric_at: f64,
     /// Test hook steps still to run (last first) and when the last one ran.
     test_steps: Vec<String>,
     test_at: f64,
@@ -149,8 +152,6 @@ impl eframe::App for App {
             }
         }
         self.solve.raw_input_hook(raw);
-        // Taps on the number pad become the text and keys they stand for.
-        self.numpad.take_presses(raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // Inside the status bar, the home indicator and any rounded corners.
@@ -165,28 +166,25 @@ impl eframe::App for App {
             let covered = (keyboard::covered() - ui.ctx().input(|i| i.safe_area_insets().0.bottom)).max(0.0);
             safe.max.y = (safe.max.y - covered).max(safe.min.y + 200.0);
         }
-        // The number pad (shown last frame) covers the bottom like a docked keyboard; the pad
-        // itself is placed in the area before that, or it would climb a little every frame.
-        let pad_area = safe;
-        if let Some(top) = self.numpad.top() {
-            safe.max.y = (top - 8.0).clamp(safe.min.y + 200.0, safe.max.y);
-        }
-        if safe.max.y < pad_area.max.y {
-            // The tray under the pad, in the panels' colour rather than the bare window.
-            let tray = egui::Rect::from_min_max(egui::pos2(pad_area.min.x, safe.max.y), pad_area.max);
-            ui.painter().rect_filled(tray, 0.0, ui.visuals().panel_fill);
-        }
         let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(safe));
         inner.set_clip_rect(safe);
         self.solve.ui(&mut inner);
-        // Number fields get the app's number pad (an iPad has no number keyboard); ABC on it
-        // gives the field the system keyboard, in its numbers layout.
-        let (_pad, _numeric) = self.numpad.show(ui.ctx(), pad_area, solidcraft_ui_egui::numeric_focus(ui.ctx()));
-        #[cfg(target_os = "ios")]
-        {
-            keyboard::set_numpad(_pad);
-            keyboard::set_numeric(_numeric);
+        // Number fields get the system keyboard in its numbers layout. The flag is held a moment
+        // ([`NUMERIC_HOLD`]) so a field that misses its mark for a frame does not swap layouts.
+        let ctx = ui.ctx().clone();
+        let now = ctx.input(|i| i.time);
+        if solidcraft_ui_egui::numeric_focus(&ctx) {
+            self.numeric_at = now;
         }
+        let _numeric = ctx.memory(|m| m.focused()).is_some() && now - self.numeric_at < NUMERIC_HOLD;
+        // No keyboard while a pencil or finger is down: a drag in the view (an extrude's arrow)
+        // focuses its value box, and a keyboard coming and going would resize the layout under
+        // the drag. It comes up once the touch lifts.
+        if ctx.input(|i| i.pointer.any_down()) {
+            ctx.output_mut(|o| o.ime = None);
+        }
+        #[cfg(target_os = "ios")]
+        keyboard::set_numeric(_numeric);
         self.files.show(ui.ctx());
         #[cfg(target_os = "ios")]
         // The AI window rides above a docked keyboard.
@@ -317,7 +315,7 @@ fn run() -> eframe::Result {
                 ai_view: None,
                 frames: 0,
                 synced_at: 0.0,
-                numpad: numpad::Numpad::default(),
+                numeric_at: f64::NEG_INFINITY,
                 test_steps: Vec::new(),
                 test_at: 0.0,
                 control_tx,
