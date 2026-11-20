@@ -136,8 +136,8 @@ impl Numpad {
     }
 
     /// Draw the pad while a number field (`numeric`) has the focus, inside `area` and clear of
-    /// the field. Returns whether the system keyboard should stay away, and whether a number
-    /// field has the focus (both steadied over [`HOLD`]).
+    /// the field. Returns whether the system keyboard should stay away (always, unless ABC asked
+    /// for it), and whether a number field has the focus (steadied over [`HOLD`]).
     pub fn show(&mut self, ctx: &egui::Context, area: egui::Rect, numeric: bool) -> (bool, bool) {
         let now = ctx.input(|i| i.time);
         let focused = ctx.memory(|m| m.focused());
@@ -178,8 +178,14 @@ impl Numpad {
             }
             self.keys.clear();
             self.rect = None;
-            // The system keyboard stays away while the pad is about to come up.
-            return (numeric && self.abc.is_none(), numeric);
+            // A text field (a name, a search, a formula) gets no keyboard by itself, only a small
+            // ABC beside it to ask for one (or the pencil writes into it).
+            let typing = focused.is_some() && ctx.egui_wants_keyboard_input();
+            if !numeric && typing && self.abc.is_none() && !down {
+                self.chip(ctx, area, focused);
+            }
+            // The system keyboard comes only when asked for (ABC).
+            return (focused.is_some() && self.abc.is_none(), numeric);
         }
         let size = egui::vec2(5.0 * KEY_WIDTH + 6.0 * GAP, ROWS.len() as f32 * KEY + (ROWS.len() as f32 + 1.0) * GAP);
         // Beside what the field is in (a dialog, a value box in the view), never over it: left of
@@ -226,6 +232,26 @@ impl Numpad {
         }
         self.rect = Some(pad);
         (true, true)
+    }
+}
+
+impl Numpad {
+    /// The small ABC beside a focused text field: a tap gives it the system keyboard.
+    fn chip(&mut self, ctx: &egui::Context, area: egui::Rect, focused: Option<egui::Id>) {
+        let Some(field) = focused.and_then(|id| ctx.read_response(id)).map(|r| r.rect) else { return };
+        let size = egui::vec2(KEY_WIDTH, field.height().clamp(28.0, KEY));
+        let y = field.center().y - size.y / 2.0;
+        let right = egui::Rect::from_min_size(egui::pos2(field.right() + 6.0, y), size);
+        let left = egui::Rect::from_min_size(egui::pos2(field.left() - 6.0 - size.x, y), size);
+        let Some(chip) = [right, left].into_iter().find(|r| area.contains_rect(*r)) else { return };
+        let visuals = ctx.global_style().visuals.clone();
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Debug, egui::Id::unique("sc_numpad_chip")));
+        painter.rect(chip, 8.0, visuals.window_fill, visuals.window_stroke, egui::StrokeKind::Inside);
+        let held = self.held == Some(Action::Abc);
+        painter.rect_filled(chip.shrink(3.0), 6.0, if held { visuals.widgets.active.bg_fill } else { visuals.widgets.inactive.weak_bg_fill });
+        painter.text(chip.center(), egui::Align2::CENTER_CENTER, "ABC", egui::FontId::proportional(15.0), visuals.text_color());
+        self.keys.push((chip, Action::Abc));
+        self.rect = Some(chip);
     }
 }
 
@@ -364,7 +390,9 @@ mod tests {
         out.textures_delta.clear();
         let mut out = ctx.run_ui(egui::RawInput { time: Some(1.0), ..Default::default() }, |ui| {
             ui.memory_mut(|m| m.request_focus(field));
-            assert!(!p.show(ui.ctx(), area, false).0, "a field that stays without the mark loses the pad");
+            let (keyboard_away, numeric) = p.show(ui.ctx(), area, false);
+            assert!(!numeric, "a field that stays without the mark loses the pad");
+            assert!(keyboard_away, "and still gets no system keyboard until ABC asks for it");
         });
         out.textures_delta.clear();
         assert!(!p.shown());

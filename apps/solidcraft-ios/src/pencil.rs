@@ -128,12 +128,14 @@ pub fn take_squeeze() -> Option<egui::Pos2> {
 }
 
 /// The pencil's hover since the last call, as the pointer moves and leaves a mouse makes.
-pub fn take_hover(raw: &mut egui::RawInput) {
+pub fn take_hover(raw: &mut egui::RawInput) -> bool {
     let moves = HOVER.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
+    let any = !moves.is_empty();
     for at in moves {
         raw.events.push(match at {
             Some(at) => egui::Event::PointerMoved(at),
             None => egui::Event::PointerGone,
         });
     }
+    any
 }

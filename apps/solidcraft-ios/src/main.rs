@@ -39,6 +39,8 @@ struct App {
     numpad: numpad::Numpad,
     /// Test hook steps still to run (last first) and when the last one ran.
     test_steps: Vec<String>,
+    /// Pencil hovers written to the log (the first few, to show hover arrives).
+    hover_noted: u8,
     test_at: f64,
     /// The test hook's way into the control channel, and the replies it has not read.
     control_tx: Option<std::sync::mpsc::Sender<solidcraft_control::ControlRequest>>,
@@ -148,8 +150,6 @@ impl eframe::App for App {
                 }
             }
             // The squeeze opens the context menu at the tip, as a right click there does.
-            // The pencil hovering just above the glass moves the pointer (tooltips, highlights).
-            pencil::take_hover(raw);
             if let Some(at) = pencil::take_squeeze() {
                 self.solve.tablet.open_menu(at);
             }
@@ -158,6 +158,13 @@ impl eframe::App for App {
         #[cfg(target_os = "ios")]
         scribble::take(_ctx, raw);
         self.solve.raw_input_hook(raw);
+        // The pencil hovering just above the glass moves the pointer (tooltips, highlights). After
+        // the touch sorting, which holds a pencil's pointer moves back between its strokes.
+        #[cfg(target_os = "ios")]
+        if pencil::take_hover(raw) && self.hover_noted < 3 {
+            self.hover_noted += 1;
+            note("pencil hover");
+        }
         // Taps on the number pad become the text and keys they stand for.
         self.numpad.take_presses(raw);
     }
@@ -344,6 +351,7 @@ fn run() -> eframe::Result {
                 synced_at: 0.0,
                 numpad: numpad::Numpad::default(),
                 test_steps: Vec::new(),
+                hover_noted: 0,
                 test_at: 0.0,
                 control_tx,
                 control_replies: Vec::new(),
