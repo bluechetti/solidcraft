@@ -160,6 +160,16 @@ pub fn set_numeric(numeric: bool) {
     }
 }
 
+/// Hold the system keyboard back while the app's number pad is up (and give it back after).
+pub fn set_numpad(on: bool) {
+    if NUMPAD.swap(on, Ordering::Relaxed) == on {
+        return;
+    }
+    if let Some(view) = MainThreadMarker::new().and_then(view) {
+        view.reloadInputViews();
+    }
+}
+
 /// Points of the screen's bottom the keyboard covers.
 pub fn covered() -> f32 {
     f32::from_bits(COVERED.load(Ordering::Relaxed))
