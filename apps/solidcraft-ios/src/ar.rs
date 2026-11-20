@@ -140,6 +140,10 @@ struct Pull {
     start: egui::Pos2,
     /// How far the face goes (model units, positive outward), in half-millimetre steps.
     distance: f64,
+    /// The distance when this stroke began (a pull waiting for Apply is adjusted from it).
+    base: f64,
+    /// The Pencil is on it; once lifted the pull waits for Apply or Cancel.
+    held: bool,
 }
 
 /// A section cut through the model in AR: a plane in the model's own coordinates (so it moves
@@ -676,13 +680,14 @@ impl State {
             self.drag_pull(seen, rect, at);
         }
         if pull_end {
-            self.finish_pull(app);
+            self.lift_pull();
         }
         if let Some([x0, y0, x1, y1]) = self.test_pull.take() {
             let at = |x: f32, y: f32| egui::pos2(rect.min.x + x * rect.width(), rect.min.y + y * rect.height());
             self.start_pull(app, seen, rect, at(x0, y0));
             self.drag_pull(seen, rect, at(x1, y1));
-            self.finish_pull(app);
+            self.lift_pull();
+            self.apply_pull(app);
         }
         let pencil_busy = self.pencil.is_some() || ui.input(|i| i.time) - self.pencil_up_at < 0.3;
         if pencil_busy {
@@ -812,8 +817,20 @@ impl State {
     /// Pull: grab the face under the Pencil.
     fn start_pull(&mut self, app: &mut SolveApp, seen: &Seen, rect: egui::Rect, at: egui::Pos2) {
         let Some(placed) = self.placed else { return };
+        // A pull waiting for Apply: the Pencil back near its arrow takes it up again, from where
+        // it was left.
+        if let Some(p) = self.pulling.as_mut() {
+            let ends = [p.point, add(p.point, scale3(p.normal, p.distance))].map(|q| to_screen(seen, &placed, rect, q));
+            if ends.iter().flatten().any(|e| e.distance(at) < 80.0) {
+                p.base = p.distance;
+                p.start = at;
+                p.held = true;
+                return;
+            }
+        }
         let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
-        self.pulling = pick(app, seen, &placed, u).and_then(|(body, point, normal)| Some(Pull { body, point, normal: unit(normal)?, start: at, distance: 0.0 }));
+        self.pulling = pick(app, seen, &placed, u)
+            .and_then(|(body, point, normal)| Some(Pull { body, point, normal: unit(normal)?, start: at, distance: 0.0, base: 0.0, held: true }));
         if self.pulling.is_none() {
             self.message = "Put the Pencil on a face of the model to pull it.".into();
         }
@@ -834,11 +851,25 @@ impl State {
             return;
         }
         let travel = f64::from((at - pull.start).dot(along) / per_unit);
-        pull.distance = (travel * 2.0).round() / 2.0;
+        pull.distance = pull.base + (travel * 2.0).round() / 2.0;
     }
 
     /// Pull: the face goes where the Pencil let go, as one step in the design's undo history.
-    fn finish_pull(&mut self, app: &mut SolveApp) {
+    /// Pull: the Pencil lifted. The pull waits, drawn where it would go, for Apply or Cancel
+    /// (or the Pencil again near its arrow, to adjust it); one that went nowhere is dropped.
+    fn lift_pull(&mut self) {
+        let Some(pull) = self.pulling.as_mut() else { return };
+        pull.held = false;
+        if pull.distance.abs() < 0.5 {
+            self.pulling = None;
+        } else {
+            self.message.clear();
+        }
+    }
+
+    /// Pull: the face goes as far as the waiting pull says, as one step in the design's undo
+    /// history.
+    fn apply_pull(&mut self, app: &mut SolveApp) {
         let Some(pull) = self.pulling.take() else { return };
         if pull.distance.abs() < 0.5 {
             return;
@@ -961,6 +992,15 @@ impl State {
                     if button(ui, "Done", Button::Small).clicked() {
                         leave = true;
                     }
+                    // The design's own undo history: a pull, a section applied, anything.
+                    for (label, command) in [("Undo", "edit.undo"), ("Redo", "edit.redo")] {
+                        if button(ui, label, Button::Small).clicked() {
+                            self.pulling = None;
+                            if let Err(e) = app.run(command, serde_json::json!({})) {
+                                self.message = e;
+                            }
+                        }
+                    }
                     if let Some(mut p) = self.placed {
                         let real = (p.scale / REAL_SIZE - 1.0).abs() < 1e-9;
                         if solidcraft_ui_kit::text_button(ui, "Real size", !real).clicked() {
@@ -1005,6 +1045,14 @@ impl State {
                                 self.measuring = None;
                             }
                         }
+                        if self.pulling.as_ref().is_some_and(|p| !p.held) {
+                            if button(ui, "Apply", Button::SmallSelected).clicked() {
+                                self.apply_pull(app);
+                            }
+                            if button(ui, "Cancel", Button::Small).clicked() {
+                                self.pulling = None;
+                            }
+                        }
                         let measuring = self.measuring.is_some();
                         if button(ui, "Measure", if measuring { Button::SmallSelected } else { Button::Small }).clicked() {
                             self.measuring = if measuring { None } else { Some(Vec::new()) };
@@ -1034,7 +1082,10 @@ impl State {
                         },
                         Some(_) if self.placed.is_none() => "Tap a surface to put the model there.".into(),
                         Some(_) if self.measuring.as_ref().is_some_and(|m| m.len() < 2) => "Tap two points on the model with the Pencil.".into(),
-                        Some(_) if self.pull_mode => "Press the Pencil on a face and drag to push or pull it; lift to apply.".into(),
+                        Some(_) if self.pulling.as_ref().is_some_and(|p| !p.held) => {
+                            "Apply moves the face; drag its arrow again to change how far.".into()
+                        }
+                        Some(_) if self.pull_mode => "Press the Pencil on a face and drag to push or pull it.".into(),
                         Some(_) if self.cut.is_some() => "Drag up and down to move the cut. Apply keeps it in the design.".into(),
                         Some(_) => "Drag to move, pinch to scale, twist to turn. Tap a part with the Pencil to select it.".into(),
                     }
