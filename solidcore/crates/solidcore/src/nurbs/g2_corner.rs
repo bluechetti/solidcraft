@@ -468,6 +468,32 @@ fn external(n: usize, i: usize, rows: &mut Vec<Row>) -> Result<()> {
     Ok(())
 }
 
+/// The corner itself, where the patches all meet, at five faces and more: the Catmull and Clark
+/// limit point of the two-ring, each spoke's end weighed 4 and each face's far corner 1 against
+/// the corner's `n (n + 5) - 5 n` (Karčiauskas and Peters, *Minimal bi-6 G2 completion of bicubic
+/// spline surfaces*, 2016, step 1 of their algorithm). Left to the energy, the corner sinks below
+/// the faces round it (their Fig. 7: "a noticeable dip"). On the shape bench (a ball fitted to a
+/// sphere, `crates/scan/src/cage_fit.rs`) it takes the five-faced corners' faces from 14.4 % off
+/// the sphere's curvature to 6.0 %, as true as the regular faces there (5.4 %). At three faces it
+/// does not help this construction (16.5 % free, 17.5 % set; their 1/96 more on the far corners,
+/// tuned for their bi-6 patches, 30 %): the corner is left to the energy there. At four faces it
+/// would be the bicubic B-spline's own corner point.
+fn corner_point(n: usize) -> Result<Row> {
+    let faces = f64::from(u32::try_from(n).map_err(|_| bad("too many faces"))?);
+    let whole = faces * (faces + 5.0);
+    let (spoke, far) = (4.0 / whole, 1.0 / whole);
+    let mut row = Row {
+        patches: vec![(0, 1.0)],
+        ring: vec![(0, 1.0 - faces * (spoke + far))],
+    };
+    for i in 0..n {
+        let sector = i64::try_from(i).map_err(|_| bad("too many faces"))?;
+        row.ring.push((ring_index(n, sector, (1, 0))?, spoke));
+        row.ring.push((ring_index(n, sector, (1, 1))?, far));
+    }
+    Ok(row)
+}
+
 /// The paper's internal conditions (equations 8 to 10) between `P_i(0, t)` and `P_{i+1}(t, 0)`.
 fn internal(n: usize, i: usize, rows: &mut Vec<Row>) {
     let c = cosine(n);
@@ -755,6 +781,9 @@ fn solve(n: usize) -> Result<CornerBasis> {
     for i in 0..n {
         external(n, i, &mut conditions)?;
         internal(n, i, &mut conditions);
+    }
+    if n >= 5 {
+        conditions.push(corner_point(n)?);
     }
     let (unknowns, columns) = (n * POINTS, 1 + 6 * n);
     // The conditions as dense rows over the patches' points, each scaled to unit length so that
@@ -1080,12 +1109,13 @@ mod tests {
 
     /// Of the paper's 55 conditions a face, six follow from the rest when all the faces are taken
     /// together (at 5 faces and at 7 or more), and the factorisation tells them apart by many
-    /// orders: the shortest condition taken is far longer than the longest left out.
+    /// orders: the shortest condition taken is far longer than the longest left out. From five
+    /// faces the corner point adds one more, which none of the others implies.
     #[test]
     fn the_repeated_conditions_are_told_from_the_rest() {
         for n in [5, 7, 8] {
             let basis = basis(n);
-            assert_eq!(basis.conditions(), 55 * n - 6, "{n} faces");
+            assert_eq!(basis.conditions(), 55 * n - 6 + 1, "{n} faces");
         }
         for n in MIN_FACES..=QUICK {
             let (taken, left) = basis(n).separation();

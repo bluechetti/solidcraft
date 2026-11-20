@@ -427,11 +427,12 @@ mod tests {
     use crate::cage::{Cage, CornerBases};
     use std::collections::HashMap;
 
-    /// The shape bench's bounds: today's corner construction gave 0.165 at the three-faced
-    /// corners and 0.144 at the five-faced ones (rms 6.1e-5, regular faces 0.058), on 2026-11-19.
-    /// A better construction lowers these; the plan's bar is 0.05.
+    /// The shape bench's bounds: the corner construction gave 0.165 at the three-faced corners
+    /// and 0.144 at the five-faced ones (rms 6.1e-5, regular faces 0.058) on 2026-11-19; with the
+    /// corner point set to the Catmull and Clark limit point from five faces (2026-11-20), 0.165
+    /// and 0.060 (regular 0.054). A better construction lowers these; the plan's bar is 0.05.
     const BENCH_THREE: f64 = 0.18;
-    const BENCH_FIVE: f64 = 0.16;
+    const BENCH_FIVE: f64 = 0.07;
 
     /// The triangles of a cage's faces, each cut in two: a scan of whatever the cage's points
     /// lie on, as fine as the cage.

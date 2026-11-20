@@ -139,7 +139,10 @@ impl Scan {
 /// own surface. The mesh is first cut until no edge is longer than half of `edge` ([`cut`]), then
 /// its points are gathered by the cells of a grid `edge` wide: each cell keeps the point nearest
 /// its middle, and a triangle whose corners fall in three different cells stays, on those points.
-/// Neighbours share whole edges; a wall thinner than `edge` would close up.
+/// Neighbours share whole edges on a flat box; on curved and holed parts gathering by cells folds a
+/// few triangles over, leaving some edges with three triangles and some with one (a plate with two
+/// holes: 213 and 151 of 80 000), which Repair Mesh meets as it meets them in a fused scan. A wall
+/// thinner than `edge` would close up.
 pub fn even(mesh: &Scan, edge: f64) -> Scan {
     if !(edge > 0.0) {
         return mesh.clone();
