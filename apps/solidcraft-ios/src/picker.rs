@@ -28,6 +28,8 @@ type Answer = Rc<RefCell<Option<Option<String>>>>;
 
 struct Ivars {
     answer: Answer,
+    /// A folder is picked (Save As's location): its own path, not a working copy.
+    folder: bool,
 }
 
 define_class!(
@@ -46,7 +48,8 @@ define_class!(
                 // Access to the original lasts as long as the app keeps it.
                 // SAFETY: balanced by never stopping: the grant is held for the app's lifetime.
                 let _granted = unsafe { url.startAccessingSecurityScopedResource() };
-                let local = url.path().and_then(|p| import(&p.to_string()));
+                let folder = self.ivars().folder;
+                let local = url.path().and_then(|p| if folder { Some(p.to_string()) } else { import(&p.to_string()) });
                 SCOPED.with(|s| s.borrow_mut().push(url.clone()));
                 local
             });
@@ -61,8 +64,8 @@ define_class!(
 );
 
 impl Delegate {
-    fn new(mtm: MainThreadMarker, answer: Answer) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(Ivars { answer });
+    fn new(mtm: MainThreadMarker, answer: Answer, folder: bool) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(Ivars { answer, folder });
         // SAFETY: `init` on an allocated NSObject subclass whose ivars are set.
         unsafe { msg_send![super(this), init] }
     }
@@ -87,9 +90,6 @@ thread_local! {
 /// Show the picker for the files with these extensions (any file for none); `None` when it cannot be shown (not on the main thread, or no
 /// window to present from), so the caller can use the in-app browser instead.
 pub fn open(extensions: &[&str]) -> Option<FilePickerFuture> {
-    let mtm = MainThreadMarker::new()?;
-    let answer: Answer = Rc::default();
-    let delegate = Delegate::new(mtm, answer.clone());
     // Only the kinds the command reads (a STEP file for Insert STEP), so the Files sheet does not
     // offer photos and videos; any file when the command names none.
     let mut types: Vec<Retained<UTType>> = extensions
@@ -101,6 +101,21 @@ pub fn open(extensions: &[&str]) -> Option<FilePickerFuture> {
     if types.is_empty() {
         types = ["public.data", "public.item"].iter().filter_map(|id| UTType::typeWithIdentifier(&NSString::from_str(id))).collect();
     }
+    present(types, false)
+}
+
+/// Show the picker for a folder (where Save As writes); `None` when it cannot be shown. The app
+/// keeps access to the folder picked, so a design saved there is written in place (iCloud Drive,
+/// another app's folder).
+pub fn folder() -> Option<FilePickerFuture> {
+    let types: Vec<Retained<UTType>> = UTType::typeWithIdentifier(&NSString::from_str("public.folder")).into_iter().collect();
+    present(types, true)
+}
+
+fn present(types: Vec<Retained<UTType>>, folder: bool) -> Option<FilePickerFuture> {
+    let mtm = MainThreadMarker::new()?;
+    let answer: Answer = Rc::default();
+    let delegate = Delegate::new(mtm, answer.clone(), folder);
     let types = NSArray::from_retained_slice(&types);
     let picker = UIDocumentPickerViewController::initForOpeningContentTypes_asCopy(UIDocumentPickerViewController::alloc(mtm), &types, false);
     picker.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
