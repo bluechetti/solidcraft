@@ -3202,6 +3202,37 @@ mod tests {
         }
     }
 
+    /// The corner of `two_g2_rounds_meet_in_a_mitre_where_the_third_edge_stays_sharp` with its
+    /// front wall drafted 10° inward (a prism along x): the two G2 rounds reach their walls'
+    /// rails at different depths, so the corner is no mirror image and the mitre runs from X to
+    /// where it meets the shallower round's rail. It used to be refused (the rounds' traced
+    /// intersection could not reach X); the solid is closed and valid, both rounds meet the top
+    /// and their walls G2, and it takes off within 0.1 % of what the circular rounds do (each
+    /// section has the circle's area). solidcore's
+    /// `two_curvature_rounds_meet_where_the_corner_is_no_mirror_image` holds the volume to 1e-9
+    /// of its slices' integral.
+    #[test]
+    fn two_g2_rounds_meet_at_a_corner_with_a_drafted_wall() {
+        let foot = 10.0 * 10f64.to_radians().tan();
+        let profile = Loop2::polygon(&[Vec2::new(foot, 0.0), Vec2::new(20.0, 0.0), Vec2::new(20.0, 10.0), Vec2::new(0.0, 10.0)]);
+        let body = crate::build::extrude(&Plane::YZ, &[Region2 { outer: profile, holes: vec![] }], 0.0, 20.0).unwrap().remove(0);
+        let edges = [Vec3::new(10.0, 0.0, 10.0), Vec3::new(0.0, 10.0, 10.0)];
+        let before = crate::measure(&body).unwrap().volume;
+        let round = 4000.0 - crate::measure(&fillet(&body, &edges, 1.5).unwrap()).unwrap().volume;
+        let g2 = fillet_g2(&body, &edges, 1.5).unwrap();
+        assert!(g2.validity().is_empty(), "{:?}", g2.validity());
+        assert_eq!(g2.face_count(), body.face_count() + 2);
+        let off = before - crate::measure(&g2).unwrap().volume;
+        let round = round - (4000.0 - before);
+        assert!((off - round).abs() < 1e-3 * round, "G2 {off} vs round {round}");
+        let seams = crate::seam_diagnostics(&g2, &[], 33, crate::ContinuityTolerances::default()).unwrap().seams;
+        let tangent: Vec<_> = seams.iter().filter(|s| s.normal_angle_deg.value < 0.01).collect();
+        assert_eq!(tangent.len(), 4, "{seams:?}");
+        for s in tangent {
+            assert!(s.curvature_jump_per_mm.value < 1e-3, "jump {}", s.curvature_jump_per_mm.value);
+        }
+    }
+
     #[test]
     fn g2_fillet_refuses_sections_crossing_a_cap_hole() {
         // The hole lies inside the setback without touching either side face.
