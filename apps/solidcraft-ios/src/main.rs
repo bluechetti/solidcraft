@@ -281,16 +281,20 @@ impl eframe::App for App {
             let ctx = ui.ctx().clone();
             if !self.ar.on {
                 let at = safe.right_bottom() - egui::vec2(72.0, 64.0);
-                solidcraft_ui_kit::container::Container::new(&ctx, solidcraft_ui_kit::container::Surface::Popup).area(egui::Id::unique("ar-button")).order(egui::Order::Foreground).fixed_pos(at).show(&ctx, |ui| {
-                    if ui
-                        .add(egui::Button::new(egui::RichText::new("AR").size(18.0)).min_size(egui::vec2(52.0, 44.0)))
-                        .on_hover_text("See the design in the room")
-                        .clicked()
-                        && let Err(e) = self.ar.set_on(&mut self.solve, true)
-                    {
-                        self.solve.set_status(e, true);
-                    }
-                });
+                solidcraft_ui_kit::container::Container::new(&ctx, solidcraft_ui_kit::container::Surface::Popup)
+                    .area(egui::Id::unique("ar-button"))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(at)
+                    .show(&ctx, |ui| {
+                        use solidcraft_ui_kit::container::BackingTooltipExt as _;
+                        if solidcraft_ui_kit::button(ui, egui::RichText::new("AR").size(18.0), solidcraft_ui_kit::Button::Normal)
+                            .backing_on_hover_text("See the design in the room")
+                            .clicked()
+                            && let Err(e) = self.ar.set_on(&mut self.solve, true)
+                        {
+                            self.solve.set_status(e, true);
+                        }
+                    });
             }
             self.ar.show(&ctx, frame, &mut self.solve);
         }

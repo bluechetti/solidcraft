@@ -20,7 +20,8 @@ use std::ffi::{CStr, CString, c_char};
 
 use eframe::{egui_wgpu, wgpu};
 use solidcraft_ui_egui::SolveApp;
-use solidcraft_ui_kit::container::{Container, Surface};
+use solidcraft_ui_kit::container::{BackingTooltipExt, Container, Surface};
+use solidcraft_ui_kit::{Button, button};
 use solidcraft_viewport_gpu::view::{Renderer, ViewTarget};
 
 type Mat4 = [[f64; 4]; 4];
@@ -406,23 +407,28 @@ impl State {
         // The whole screen: the picture, and the touches (they go to AR, not the app below).
         let coaching = self.bridge().map(|b| (b.coaching)() == 1).unwrap_or(false);
         // The whole screen, a canvas of the UI kit's (the one outer container), over the app.
-        Container::new(ctx, Surface::Canvas).area(egui::Id::unique("ar-view")).order(egui::Order::Foreground).constrain(false).fixed_pos(screen.min).show(ctx, |ui| {
-            let (rect, response) = ui.allocate_exact_size(screen.size(), egui::Sense::click_and_drag());
-            // Under the status bar and the home indicator too: egui clips to the safe area.
-            let mut painter = ui.painter().clone();
-            painter.set_clip_rect(screen);
-            painter.add(egui_wgpu::Callback::new_paint_callback(rect, Paint));
-            if !coaching && let Some(seen) = seen.as_ref() {
-                if std::mem::take(&mut self.test_section) {
-                    self.cut = self.placed.and_then(|p| p.cut_facing(seen.back));
+        Container::new(ctx, Surface::Canvas)
+            .area(egui::Id::unique("ar-view"))
+            .order(egui::Order::Foreground)
+            .constrain(false)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                let (rect, response) = ui.allocate_exact_size(screen.size(), egui::Sense::click_and_drag());
+                // Under the status bar and the home indicator too: egui clips to the safe area.
+                let mut painter = ui.painter().clone();
+                painter.set_clip_rect(screen);
+                painter.add(egui_wgpu::Callback::new_paint_callback(rect, Paint));
+                if !coaching && let Some(seen) = seen.as_ref() {
+                    if std::mem::take(&mut self.test_section) {
+                        self.cut = self.placed.and_then(|p| p.cut_facing(seen.back));
+                    }
+                    if std::mem::take(&mut self.test_measure) {
+                        self.measuring = Some(Vec::new());
+                    }
+                    self.gestures(ui, &response, rect, seen, app);
+                    self.draw_measure(ui.painter(), rect, seen);
                 }
-                if std::mem::take(&mut self.test_measure) {
-                    self.measuring = Some(Vec::new());
-                }
-                self.gestures(ui, &response, rect, seen, app);
-                self.draw_measure(ui.painter(), rect, seen);
-            }
-        });
+            });
         self.controls(ctx, screen, seen.as_ref(), coaching, app);
         self.frames += 1;
         // ARKit's camera gives 60 pictures a second; the screen could go to 120.
@@ -803,12 +809,12 @@ impl State {
             let frame = Container::popup_frame(ui.style());
             container.show_frame(ui, frame, safe, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("Done").clicked() {
+                    if button(ui, "Done", Button::Small).clicked() {
                         leave = true;
                     }
                     if let Some(mut p) = self.placed {
                         let real = (p.scale / REAL_SIZE - 1.0).abs() < 1e-9;
-                        if ui.add_enabled(!real, egui::Button::new("Real size")).clicked() {
+                        if solidcraft_ui_kit::text_button(ui, "Real size", !real).clicked() {
                             let anchor = p.anchor();
                             p.scale = REAL_SIZE;
                             self.placed = Some(p.with_anchor(anchor));
@@ -820,11 +826,11 @@ impl State {
                         }
                         ui.separator();
                         let on = self.cut.is_some();
-                        if ui.selectable_label(on, "Section").clicked() {
+                        if button(ui, "Section", if on { Button::SmallSelected } else { Button::Small }).clicked() {
                             self.cut = if on { None } else { seen.and_then(|s| p.cut_facing(s.back)) };
                         }
                         if let Some(c) = self.cut
-                            && ui.button("Apply").on_hover_text("Keep this cut in the design (Section Analysis)").clicked()
+                            && button(ui, "Apply", Button::Small).backing_on_hover_text("Keep this cut in the design (Section Analysis)").clicked()
                         {
                             // One step in the design's undo history, as the design view's own
                             // Section Analysis makes; the plane through the cut's point nearest
@@ -840,11 +846,11 @@ impl State {
                             }
                         }
                         let measuring = self.measuring.is_some();
-                        if ui.selectable_label(measuring, "Measure").clicked() {
+                        if button(ui, "Measure", if measuring { Button::SmallSelected } else { Button::Small }).clicked() {
                             self.measuring = if measuring { None } else { Some(Vec::new()) };
                         }
                         ui.separator();
-                        if ui.button("Pick up").clicked() {
+                        if button(ui, "Pick up", Button::Small).clicked() {
                             self.measuring = None;
                             self.placed = None;
                             self.cut = None;
