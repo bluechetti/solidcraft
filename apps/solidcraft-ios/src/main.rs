@@ -148,6 +148,8 @@ impl eframe::App for App {
                 }
             }
             // The squeeze opens the context menu at the tip, as a right click there does.
+            // The pencil hovering just above the glass moves the pointer (tooltips, highlights).
+            pencil::take_hover(raw);
             if let Some(at) = pencil::take_squeeze() {
                 self.solve.tablet.open_menu(at);
             }

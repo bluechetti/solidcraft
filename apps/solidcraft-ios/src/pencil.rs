@@ -1,4 +1,6 @@
-//! The Apple Pencil's own gestures: a double tap on its side is Escape (it ends the tool in hand,
+//! The Apple Pencil's hover and its own gestures. Held just above the glass (iPad Pro M2 and later,
+//! iPad Air M2 and later), the pencil is a mouse that hovers: tooltips, highlights and anything
+//! else that waits for a hovering pointer work as on the desktop. Its gestures: a double tap on its side is Escape (it ends the tool in hand,
 //! the way a tablet CAD app's pencil switches tools back), and a squeeze (Pencil Pro) opens the
 //! context menu at the pencil's tip. Touches are sorted in `solidcraft_ui_egui::pencil`.
 //!
@@ -14,18 +16,20 @@ use objc2::runtime::ProtocolObject;
 use objc2::{ClassType as _, MainThreadMarker, MainThreadOnly, define_class, msg_send};
 use objc2_foundation::{NSObject, NSObjectProtocol};
 use objc2_ui_kit::{
-    UIApplication, UIPencilInteraction, UIPencilInteractionDelegate, UIPencilInteractionPhase, UIPencilInteractionSqueeze, UIPencilInteractionTap,
-    UIPencilPreferredAction, UIView,
+    UIApplication, UIGestureRecognizerState, UIHoverGestureRecognizer, UIPencilInteraction, UIPencilInteractionDelegate, UIPencilInteractionPhase,
+    UIPencilInteractionSqueeze, UIPencilInteractionTap, UIPencilPreferredAction, UIView,
 };
 
 /// Double taps not yet handed to the UI.
 static TAPS: AtomicUsize = AtomicUsize::new(0);
+/// Hover moves not yet handed to the UI: a position, or `None` when the pencil went away.
+static HOVER: Mutex<Vec<Option<egui::Pos2>>> = Mutex::new(Vec::new());
 /// Where the last squeeze asked for the menu (points), not yet handed to the UI.
 static SQUEEZE: Mutex<Option<egui::Pos2>> = Mutex::new(None);
 static CTX: OnceLock<egui::Context> = OnceLock::new();
 
 thread_local! {
-    static INSTALLED: RefCell<Option<(Retained<Delegate>, Retained<UIPencilInteraction>)>> = const { RefCell::new(None) };
+    static INSTALLED: RefCell<Option<(Retained<Delegate>, Retained<UIPencilInteraction>, Retained<UIHoverGestureRecognizer>)>> = const { RefCell::new(None) };
 }
 
 fn wake() {
@@ -49,6 +53,24 @@ define_class!(
     struct Delegate;
 
     unsafe impl NSObjectProtocol for Delegate {}
+
+    impl Delegate {
+        /// The hover recogniser's action: where the pencil hovers, or that it has gone.
+        #[unsafe(method(hover:))]
+        fn hover(&self, recognizer: &UIHoverGestureRecognizer) {
+            let at = match recognizer.state() {
+                UIGestureRecognizerState::Began | UIGestureRecognizerState::Changed => {
+                    let at = recognizer.locationInView(recognizer.view().as_deref());
+                    Some(egui::pos2(at.x as f32, at.y as f32))
+                }
+                _ => None,
+            };
+            if let Ok(mut queue) = HOVER.lock() {
+                queue.push(at);
+                wake();
+            }
+        }
+    }
 
     unsafe impl UIPencilInteractionDelegate for Delegate {
         #[unsafe(method(pencilInteraction:didReceiveTap:))]
@@ -88,8 +110,11 @@ pub fn install(ctx: &egui::Context) {
     let delegate: Retained<Delegate> = unsafe { msg_send![Delegate::class(), new] };
     let interaction = UIPencilInteraction::initWithDelegate(mtm.alloc(), ProtocolObject::from_ref(&*delegate));
     view.addInteraction(ProtocolObject::from_ref(&*interaction));
-    // The interaction holds its delegate weakly: both are kept for the app's life.
-    INSTALLED.with(|i| *i.borrow_mut() = Some((delegate, interaction)));
+    // SAFETY: the target is kept for the app's life (below), and `hover:` takes the recogniser.
+    let hover = unsafe { UIHoverGestureRecognizer::initWithTarget_action(mtm.alloc(), Some(&delegate), Some(objc2::sel!(hover:))) };
+    view.addGestureRecognizer(&hover);
+    // The interaction holds its delegate weakly: all are kept for the app's life.
+    INSTALLED.with(|i| *i.borrow_mut() = Some((delegate, interaction, hover)));
 }
 
 /// Double taps since the last call.
@@ -100,4 +125,15 @@ pub fn take_taps() -> usize {
 /// A squeeze's position since the last call.
 pub fn take_squeeze() -> Option<egui::Pos2> {
     SQUEEZE.lock().ok().and_then(|mut s| s.take())
+}
+
+/// The pencil's hover since the last call, as the pointer moves and leaves a mouse makes.
+pub fn take_hover(raw: &mut egui::RawInput) {
+    let moves = HOVER.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
+    for at in moves {
+        raw.events.push(match at {
+            Some(at) => egui::Event::PointerMoved(at),
+            None => egui::Event::PointerGone,
+        });
+    }
 }
