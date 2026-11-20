@@ -11,9 +11,9 @@
 #[cfg(target_os = "ios")]
 mod ai;
 #[cfg(any(target_os = "ios", test))]
-mod ar;
-#[cfg(any(target_os = "ios", test))]
 mod ai_data;
+#[cfg(any(target_os = "ios", test))]
+mod ar;
 mod files;
 #[cfg(target_os = "ios")]
 mod keyboard;
@@ -114,6 +114,13 @@ impl eframe::App for App {
                         self.ar.test_tap = Some((x, y));
                     }
                     let _ = &mut xy;
+                } else if step == "ar-section" || step == "ar-measure" {
+                    #[cfg(target_os = "ios")]
+                    if step == "ar-section" {
+                        self.ar.test_section = true;
+                    } else {
+                        self.ar.test_measure = true;
+                    }
                 } else if let Some(at) = step.strip_prefix("ar-pick:") {
                     let mut xy = at.split(',').filter_map(|v| v.trim().parse::<f32>().ok());
                     #[cfg(target_os = "ios")]
@@ -275,7 +282,10 @@ impl eframe::App for App {
             if !self.ar.on {
                 let at = safe.right_bottom() - egui::vec2(72.0, 64.0);
                 egui::Area::new(egui::Id::unique("ar-button")).order(egui::Order::Foreground).fixed_pos(at).show(&ctx, |ui| {
-                    if ui.add(egui::Button::new(egui::RichText::new("AR").size(18.0)).min_size(egui::vec2(52.0, 44.0))).on_hover_text("See the design in the room").clicked()
+                    if ui
+                        .add(egui::Button::new(egui::RichText::new("AR").size(18.0)).min_size(egui::vec2(52.0, 44.0)))
+                        .on_hover_text("See the design in the room")
+                        .clicked()
                         && let Err(e) = self.ar.set_on(&mut self.solve, true)
                     {
                         self.solve.set_status(e, true);

@@ -127,6 +127,16 @@ struct Placed {
     bounds: [[f64; 3]; 2],
 }
 
+/// A section cut through the model in AR: a plane in the model's own coordinates (so it moves
+/// with the model), hiding what lies on its normal's side, as the design view's planes do.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Cut {
+    /// Unit, model space.
+    normal: [f64; 3],
+    /// The plane is normal · p = d (model units).
+    d: f64,
+}
+
 /// A soft contact shadow on the floor under the placed model: an ellipse on the room's
 /// horizontal plane through the model's foot, along the model's footprint.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -138,6 +148,26 @@ struct Shadow {
 }
 
 impl Placed {
+    /// A room direction in the model's axes (unit stays unit: the axes are orthonormal).
+    fn direction_to_model(&self, v: [f64; 3]) -> [f64; 3] {
+        self.axes.map(|axis| dot(axis, v))
+    }
+
+    /// A room point in the model's space.
+    fn point_to_model(&self, p: [f64; 3]) -> [f64; 3] {
+        self.direction_to_model(sub(p, self.translation)).map(|x| x / self.scale)
+    }
+
+    /// A cut through the model's middle, square to the floor and facing `toward` (a room
+    /// direction, the camera's back): the half nearer the camera is hidden, to look inside.
+    fn cut_facing(&self, toward: [f64; 3]) -> Option<Cut> {
+        let n_room = unit([toward[0], 0.0, toward[2]])?;
+        let normal = self.direction_to_model(n_room);
+        let [lo, hi] = self.bounds;
+        let middle = scale3(add(lo, hi), 0.5);
+        Some(Cut { normal, d: dot(normal, middle) })
+    }
+
     /// The contact shadow: the model's footprint (its box seen from above) a little enlarged.
     fn shadow(&self) -> Option<Shadow> {
         let [lo, hi] = self.bounds;
@@ -166,6 +196,11 @@ impl Placed {
         let [x, y, z] = self.axes.map(|a| a.map(|v| v * self.scale));
         let t = self.translation;
         [[x[0], x[1], x[2], 0.0], [y[0], y[1], y[2], 0.0], [z[0], z[1], z[2], 0.0], [t[0], t[1], t[2], 1.0]]
+    }
+
+    /// Where model point `q` is in the room.
+    fn apply_room(&self, q: [f64; 3]) -> [f64; 3] {
+        add(self.translation, scale3(turn(&self.axes, q), self.scale))
     }
 
     /// Where the foot is in the room: what stays put while the model is scaled or turned.
@@ -221,6 +256,9 @@ pub struct State {
     pub test_tap: Option<(f32, f32)>,
     /// A Pencil tap asked for by the test hook, done on the next frame.
     pub test_pick: Option<(f32, f32)>,
+    /// The test hook turns Section on (`ar-section`) or Measure on (`ar-measure`) next frame.
+    pub test_section: bool,
+    pub test_measure: bool,
     /// The Pencil touch in progress: its id, where and when it began.
     pencil: Option<(egui::TouchId, egui::Pos2, f64)>,
     /// When the Pencil last left the glass (a finger's tap just after is the same hand resting).
@@ -233,6 +271,10 @@ pub struct State {
     thermal: i32,
     /// LiDAR depth has arrived since AR started: the model is hidden behind real things.
     has_depth: bool,
+    /// The section cut while Section is on.
+    cut: Option<Cut>,
+    /// The points measured while Measure is on (model units; at most two).
+    measuring: Option<Vec<[f64; 3]>>,
     /// Whether the design hid its origin before AR, put back after.
     origin_was: Option<Option<bool>>,
     /// Milliseconds spent on the CPU (camera upload; camera and model), summed over the frames
@@ -241,7 +283,6 @@ pub struct State {
     /// The picture's camera to clip space for the last frame, for nothing but the log.
     frames: u64,
 }
-
 
 impl State {
     fn bridge(&mut self) -> Result<&Bridge, String> {
@@ -263,6 +304,8 @@ impl State {
             }
             (b.start)();
             self.placed = None;
+            self.cut = None;
+            self.measuring = None;
             self.message.clear();
             self.has_depth = false;
             self.on = true;
@@ -339,12 +382,19 @@ impl State {
         // has, the room's origin is not where the model was put.
         let relocalizing = seen.as_ref().is_some_and(|s| s.tracking == 1 && s.reason == 4);
         if !relocalizing && let (Some(seen), Some(placed), Some(source)) = (seen.as_ref(), self.placed, self.source.as_ref()) {
-            model_drawn = draw_model(rs, source, seen, &placed, size_px, &mut self.target);
+            model_drawn = draw_model(rs, source, seen, &placed, self.cut, size_px, &mut self.target);
         }
         let total_ms = started.elapsed().as_secs_f64() * 1e3;
         self.timing = [self.timing[0] + camera_ms, self.timing[1] + total_ms];
         if self.frames % 300 == 299 {
-            crate::note(&format!("ar: per frame {:.2} ms camera, {:.2} ms camera + model ({} px), model {}, light {:?}", self.timing[0] / 300.0, self.timing[1] / 300.0, size_px[0] * size_px[1], model_drawn, seen.as_ref().map(|s| s.light)));
+            crate::note(&format!(
+                "ar: per frame {:.2} ms camera, {:.2} ms camera + model ({} px), model {}, light {:?}",
+                self.timing[0] / 300.0,
+                self.timing[1] / 300.0,
+                size_px[0] * size_px[1],
+                model_drawn,
+                seen.as_ref().map(|s| s.light)
+            ));
             self.timing = [0.0; 2];
         }
         if let Some(seen) = seen.as_ref() {
@@ -361,7 +411,14 @@ impl State {
             painter.set_clip_rect(screen);
             painter.add(egui_wgpu::Callback::new_paint_callback(rect, Paint));
             if !coaching && let Some(seen) = seen.as_ref() {
+                if std::mem::take(&mut self.test_section) {
+                    self.cut = self.placed.and_then(|p| p.cut_facing(seen.back));
+                }
+                if std::mem::take(&mut self.test_measure) {
+                    self.measuring = Some(Vec::new());
+                }
                 self.gestures(ui, &response, rect, seen, app);
+                self.draw_measure(ui.painter(), rect, seen);
             }
         });
         self.controls(ctx, screen, seen.as_ref(), coaching, app);
@@ -451,6 +508,7 @@ fn draw_model(
     source: &solidcraft_ui_egui::stereo::Source,
     seen: &Seen,
     placed: &Placed,
+    cut: Option<Cut>,
     size: [u32; 2],
     target: &mut Option<ViewTarget>,
 ) -> bool {
@@ -471,6 +529,13 @@ fn draw_model(
         frame.eye = [eye[0] as f32, eye[1] as f32, eye[2] as f32, 1.0];
         frame.back = [back[0] as f32, back[1] as f32, back[2] as f32];
         frame.size_px = [size[0] as f32, size[1] as f32];
+        // AR's own cut, for the view only (the design's section is its own, and each change of
+        // it an undo step): it takes the first plane, with the inside drawn in the body's colour.
+        if let Some(c) = cut {
+            frame.clip = [[0.0; 4]; solidcraft_viewport_gpu::view::MAX_SECTION_PLANES];
+            frame.clip[0] = [c.normal[0] as f32, c.normal[1] as f32, c.normal[2] as f32, c.d as f32];
+            frame.cap = [0.0; 4];
+        }
         let mut renderer = rs.renderer.write();
         let Some(view) = renderer.callback_resources.get_mut::<Renderer>() else { return false };
         // Without the design's grid and ground shadow: the room has its own floor, and the AR
@@ -550,7 +615,11 @@ impl State {
         if pencil_busy {
             return;
         }
-        let tapped = response.clicked().then(|| response.interact_pointer_pos()).flatten().map(|at| ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height()));
+        let tapped = response
+            .clicked()
+            .then(|| response.interact_pointer_pos())
+            .flatten()
+            .map(|at| ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height()));
         if let Some(u) = tapped.or_else(|| self.test_tap.take()) {
             let mut hit = [0f32; 16];
             let found = self.bridge().map(|b| (b.raycast)(u.0, u.1, rect.width(), rect.height(), hit.as_mut_ptr()) == 1).unwrap_or(false);
@@ -579,6 +648,18 @@ impl State {
         }
         let touch = ui.ctx().multi_touch();
         let Some(mut placed) = self.placed else { return };
+        // With Section on, one finger up and down moves the cut: up takes it away from you,
+        // into the model. A point of drag is about a point's width at the model's distance.
+        if let Some(cut) = self.cut.as_mut()
+            && touch.is_none()
+            && response.dragged()
+        {
+            let distance = sub(placed.anchor(), seen.eye);
+            let metres_per_point = dot(distance, distance).sqrt() / f64::from(rect.height().max(1.0));
+            let up = -f64::from(response.drag_delta().y);
+            cut.d -= up * metres_per_point / placed.scale;
+            return;
+        }
         // One finger dragged: the model slides along the surfaces under it, keeping how far its
         // foot was from the finger's first hit, so it does not jump to the finger.
         if touch.is_none()
@@ -607,7 +688,10 @@ impl State {
                 if near_real {
                     s = REAL_SIZE;
                 }
-                if near_real && !at_real && let Ok(b) = self.bridge() {
+                if near_real
+                    && !at_real
+                    && let Ok(b) = self.bridge()
+                {
                     (b.tick)();
                 }
                 if let Some(p) = self.pinch.as_mut() {
@@ -628,23 +712,12 @@ impl State {
     /// into the model's space, and the selection set by `select.set`, so the design view, the
     /// browser and the next command all see it.
     fn select_at(&mut self, app: &mut SolveApp, seen: &Seen, u: (f32, f32)) {
+        if self.measuring.is_some() {
+            self.measure_at(app, seen, u);
+            return;
+        }
         let Some(placed) = self.placed else { return };
-        let Some(inv) = invert(&seen.view_proj) else { return };
-        let ndc = [f64::from(u.0) * 2.0 - 1.0, 1.0 - f64::from(u.1) * 2.0];
-        let at = |depth: f64| {
-            let v = [ndc[0], ndc[1], depth, 1.0];
-            let p: [f64; 4] = std::array::from_fn(|r| (0..4).map(|c| inv[c][r] * v[c]).sum());
-            [p[0] / p[3], p[1] / p[3], p[2] / p[3]]
-        };
-        let (near, far) = (at(0.0), at(1.0));
-        // A room point or direction in the model's space: the placement undone.
-        let to_model = |v: [f64; 3]| placed.axes.map(|axis| dot(axis, v) / placed.scale);
-        let origin = to_model(sub(near, placed.translation));
-        let Some(dir) = unit(to_model(sub(far, near))) else { return };
-        let request = serde_json::json!({ "frame": "model", "edges": false, "rays": [{ "origin": origin, "dir": dir }] });
-        let hit = solidcraft_ui_egui::view_pick::pick_command(app, &request)
-            .ok()
-            .and_then(|r| r.get("hits")?.get(0)?.get("body")?.as_str().map(str::to_owned));
+        let hit = pick(app, seen, &placed, u).map(|h| h.0);
         let items = match &hit {
             Some(name) => serde_json::json!([{ "type": "body", "name": name }]),
             None => serde_json::json!([]),
@@ -661,6 +734,60 @@ impl State {
             Err(e) => self.message = e,
         }
         crate::note(&format!("ar: pencil at {u:?}: {}", hit.as_deref().unwrap_or("nothing")));
+    }
+
+    /// Measure: a Pencil tap on the model marks a point (where the design view's pick meets the
+    /// face); the second gives the distance; a third starts again.
+    fn measure_at(&mut self, app: &mut SolveApp, seen: &Seen, u: (f32, f32)) {
+        let Some(placed) = self.placed else { return };
+        let Some((_, point)) = pick(app, seen, &placed, u) else {
+            self.message = "Tap the model to measure.".into();
+            return;
+        };
+        let points = self.measuring.get_or_insert_with(Vec::new);
+        if points.len() >= 2 {
+            points.clear();
+        }
+        points.push(point);
+        self.message.clear();
+        if let Ok(b) = self.bridge() {
+            (b.tick)();
+        }
+        if let Some(points) = &self.measuring
+            && let [a, b] = points.as_slice()
+        {
+            crate::note(&format!("ar: measured {:.2} mm", dot(sub(*a, *b), sub(*a, *b)).sqrt()));
+        }
+    }
+
+    /// The measured points and the line between them, drawn over the AR view where they are in
+    /// the room, with the distance in the model's units (millimetres) at the middle.
+    fn draw_measure(&self, painter: &egui::Painter, rect: egui::Rect, seen: &Seen) {
+        let (Some(points), Some(placed)) = (&self.measuring, self.placed) else { return };
+        let to_screen = |q: [f64; 3]| {
+            let r = placed.apply_room(q);
+            let c: [f64; 4] = std::array::from_fn(|k| (0..3).map(|j| seen.view_proj[j][k] * r[j]).sum::<f64>() + seen.view_proj[3][k]);
+            (c[3] > 1e-6).then(|| {
+                egui::pos2(rect.min.x + ((c[0] / c[3] + 1.0) * 0.5) as f32 * rect.width(), rect.min.y + ((1.0 - c[1] / c[3]) * 0.5) as f32 * rect.height())
+            })
+        };
+        let ink = egui::Color32::from_rgb(255, 214, 10);
+        let dots: Vec<egui::Pos2> = points.iter().filter_map(|q| to_screen(*q)).collect();
+        if let [a, b] = dots.as_slice() {
+            painter.line_segment([*a, *b], egui::Stroke::new(3.0, ink));
+        }
+        for d in &dots {
+            painter.circle(*d, 7.0, ink, egui::Stroke::new(2.0, egui::Color32::BLACK));
+        }
+        if let ([a, b], [pa, pb]) = (points.as_slice(), dots.as_slice()) {
+            let mm = dot(sub(*a, *b), sub(*a, *b)).sqrt();
+            let at = pa.lerp(*pb, 0.5) + egui::vec2(0.0, -22.0);
+            let text = format!("{mm:.1} mm");
+            let galley = painter.layout_no_wrap(text, egui::FontId::proportional(22.0), egui::Color32::BLACK);
+            let back = egui::Rect::from_center_size(at, galley.size() + egui::vec2(16.0, 8.0));
+            painter.rect_filled(back, 6.0, ink);
+            painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
+        }
     }
 
     fn controls(&mut self, ctx: &egui::Context, screen: egui::Rect, seen: Option<&Seen>, coaching: bool, app: &mut SolveApp) {
@@ -684,8 +811,36 @@ impl State {
                             ui.separator();
                             ui.label(name);
                         }
+                        ui.separator();
+                        let on = self.cut.is_some();
+                        if ui.selectable_label(on, "Section").clicked() {
+                            self.cut = if on { None } else { seen.and_then(|s| p.cut_facing(s.back)) };
+                        }
+                        if let Some(c) = self.cut
+                            && ui.button("Apply").on_hover_text("Keep this cut in the design (Section Analysis)").clicked()
+                        {
+                            // One step in the design's undo history, as the design view's own
+                            // Section Analysis makes; the plane through the cut's point nearest
+                            // the origin.
+                            let origin = scale3(c.normal, c.d);
+                            let plane = serde_json::json!({ "origin": origin, "normal": c.normal });
+                            match app.run("inspect.section", serde_json::json!({ "plane": plane })) {
+                                Ok(_) => {
+                                    self.cut = None;
+                                    self.message = "The cut is in the design now (Section Analysis).".into();
+                                }
+                                Err(e) => self.message = e,
+                            }
+                        }
+                        let measuring = self.measuring.is_some();
+                        if ui.selectable_label(measuring, "Measure").clicked() {
+                            self.measuring = if measuring { None } else { Some(Vec::new()) };
+                        }
+                        ui.separator();
                         if ui.button("Pick up").clicked() {
+                            self.measuring = None;
                             self.placed = None;
+                            self.cut = None;
                         }
                     }
                 });
@@ -704,6 +859,8 @@ impl State {
                             _ => "Finding the room…".into(),
                         },
                         Some(_) if self.placed.is_none() => "Tap a surface to put the model there.".into(),
+                        Some(_) if self.measuring.as_ref().is_some_and(|m| m.len() < 2) => "Tap two points on the model with the Pencil.".into(),
+                        Some(_) if self.cut.is_some() => "Drag up and down to move the cut. Apply keeps it in the design.".into(),
                         Some(_) => "Drag to move, pinch to scale, twist to turn. Tap a part with the Pencil to select it.".into(),
                     }
                 };
@@ -717,6 +874,28 @@ impl State {
             let _ = self.set_on(app, false);
         }
     }
+}
+
+/// The part under view point `u` (0..1 across and down) and where its face is hit (model
+/// units): the design view's own pick (`view.pick`) with the ray from ARKit's camera taken into
+/// the model's space.
+fn pick(app: &mut SolveApp, seen: &Seen, placed: &Placed, u: (f32, f32)) -> Option<(String, [f64; 3])> {
+    let inv = invert(&seen.view_proj)?;
+    let ndc = [f64::from(u.0) * 2.0 - 1.0, 1.0 - f64::from(u.1) * 2.0];
+    let at = |depth: f64| {
+        let v = [ndc[0], ndc[1], depth, 1.0];
+        let p: [f64; 4] = std::array::from_fn(|r| (0..4).map(|c| inv[c][r] * v[c]).sum());
+        [p[0] / p[3], p[1] / p[3], p[2] / p[3]]
+    };
+    let (near, far) = (at(0.0), at(1.0));
+    let origin = placed.point_to_model(near);
+    let dir = unit(placed.direction_to_model(sub(far, near)))?;
+    let request = serde_json::json!({ "frame": "model", "edges": false, "rays": [{ "origin": origin, "dir": dir }] });
+    let reply = solidcraft_ui_egui::view_pick::pick_command(app, &request).ok()?;
+    let hit = reply.get("hits")?.get(0)?;
+    let body = hit.get("body")?.as_str()?.to_owned();
+    let p = hit.get("point")?;
+    Some((body, [p.get(0)?.as_f64()?, p.get(1)?.as_f64()?, p.get(2)?.as_f64()?]))
 }
 
 /// Where the model goes on first tap: its foot (the middle of its underside) on `point`,
@@ -744,7 +923,8 @@ fn first_placement(app: &SolveApp, source: Option<&solidcraft_ui_egui::stereo::S
         add(add(scale3(room_side, s), scale3(room_up, u)), scale3(room_front, f))
     });
     let middle = scale3(add(lo, hi), 0.5);
-    let corners = (0..8).map(|i| [if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] }]);
+    let corners =
+        (0..8).map(|i| [if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] }]);
     let lowest = corners.map(|c| dot(c, model_up)).fold(f64::INFINITY, f64::min);
     let foot = sub(middle, scale3(model_up, dot(middle, model_up) - lowest));
     let extent = (0..3).map(|k| hi[k] - lo[k]).fold(0.0, f64::max);
@@ -768,7 +948,11 @@ fn ensure_gpu(rs: &egui_wgpu::RenderState) {
     let tex = |binding| wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
         count: None,
     };
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -777,7 +961,12 @@ fn ensure_gpu(rs: &egui_wgpu::RenderState) {
             tex(0),
             tex(1),
             tex(2),
-            wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
             wgpu::BindGroupLayoutEntry {
                 binding: 4,
                 visibility: wgpu::ShaderStages::FRAGMENT,
@@ -787,18 +976,30 @@ fn ensure_gpu(rs: &egui_wgpu::RenderState) {
             wgpu::BindGroupLayoutEntry {
                 binding: 5,
                 visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2, multisampled },
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled,
+                },
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 6,
                 visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
                 count: None,
             },
         ],
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("sc_ar"), bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("sc_ar"),
+        bind_group_layouts: &[Some(&layout)],
+        immediate_size: 0,
+    });
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("sc_ar"),
         layout: Some(&pipeline_layout),
@@ -1183,7 +1384,17 @@ fn mul(a: &Mat4, b: &Mat4) -> Mat4 {
 /// The inverse of `m` (Gauss-Jordan with partial pivoting), or `None` when it has none.
 fn invert(m: &Mat4) -> Option<Mat4> {
     // Rows of [m | I], m read by rows.
-    let mut a: [[f64; 8]; 4] = std::array::from_fn(|r| std::array::from_fn(|c| if c < 4 { m[c][r] } else if c - 4 == r { 1.0 } else { 0.0 }));
+    let mut a: [[f64; 8]; 4] = std::array::from_fn(|r| {
+        std::array::from_fn(|c| {
+            if c < 4 {
+                m[c][r]
+            } else if c - 4 == r {
+                1.0
+            } else {
+                0.0
+            }
+        })
+    });
     for col in 0..4 {
         let pivot = (col..4).max_by(|&x, &y| a[x][col].abs().total_cmp(&a[y][col].abs()))?;
         if a[pivot][col].abs() < 1e-12 {
@@ -1251,8 +1462,14 @@ mod tests {
     /// Scaling and turning keep the foot where it was put.
     #[test]
     fn the_foot_stays_put() {
-        let p = Placed { axes: [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]], scale: REAL_SIZE, translation: [0.0; 3], foot: [5.0, 5.0, 0.0], bounds: [[0.0; 3], [10.0, 10.0, 4.0]] }
-            .with_anchor([0.2, 0.7, -0.4]);
+        let p = Placed {
+            axes: [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]],
+            scale: REAL_SIZE,
+            translation: [0.0; 3],
+            foot: [5.0, 5.0, 0.0],
+            bounds: [[0.0; 3], [10.0, 10.0, 4.0]],
+        }
+        .with_anchor([0.2, 0.7, -0.4]);
         assert!(close(p.anchor(), [0.2, 0.7, -0.4]));
         let mut q = p;
         q.scale *= 3.0;
@@ -1306,10 +1523,36 @@ mod tests {
         assert!(dark.iter().all(|g| (g - 1.0).abs() < 0.02), "no estimate is neutral: {dark:?}");
     }
 
+    /// A cut facing the camera goes through the model's middle and hides the near half.
+    #[test]
+    fn a_cut_faces_the_camera() {
+        let p = Placed {
+            axes: [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]],
+            scale: REAL_SIZE,
+            translation: [0.0; 3],
+            foot: [100.0, 60.0, 0.0],
+            bounds: [[0.0; 3], [200.0, 120.0, 80.0]],
+        }
+        .with_anchor([0.0, 0.7, -0.5]);
+        // The camera along the room's +Z from the model: its back points +Z.
+        let Some(c) = p.cut_facing([0.0, 0.3, 1.0]) else { panic!("a cut") };
+        let middle = [100.0, 60.0, 40.0];
+        assert!((dot(c.normal, middle) - c.d).abs() < 1e-9, "through the middle");
+        // A model point nearer the camera is on the hidden side (normal · p > d).
+        let toward_camera = p.point_to_model(add(p.apply_room(middle), [0.0, 0.0, 0.05]));
+        assert!(dot(c.normal, toward_camera) > c.d);
+    }
+
     /// The placement matrix moves model points as `Placed` says.
     #[test]
     fn the_matrix_agrees() {
-        let p = Placed { axes: [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], scale: 0.002, translation: [1.0, 2.0, 3.0], foot: [0.0; 3], bounds: [[0.0; 3]; 2] };
+        let p = Placed {
+            axes: [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            scale: 0.002,
+            translation: [1.0, 2.0, 3.0],
+            foot: [0.0; 3],
+            bounds: [[0.0; 3]; 2],
+        };
         let m = p.matrix();
         let q = [10.0, 20.0, 30.0];
         let by_matrix = [0, 1, 2].map(|r| (0..3).map(|c| m[c][r] * q[c]).sum::<f64>() + m[3][r]);
