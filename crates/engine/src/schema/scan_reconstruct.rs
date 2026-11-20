@@ -728,6 +728,12 @@ pub struct ScanBuildResult {
     /// it sits on, in mm, added to the clearance so the gap is the clearance there too.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowance: Option<f64>,
+    /// Extrude It joining a prism the body already holds: `false`, nothing built, and `note` says
+    /// so (absent when the step built its feature).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// How close the body is to the scan before and after the step (absent when it could not be
     /// measured).
     #[serde(default, skip_serializing_if = "Option::is_none")]

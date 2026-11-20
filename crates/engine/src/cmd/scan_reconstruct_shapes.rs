@@ -60,6 +60,8 @@ fn built(view: &View, sketch: Option<u64>, feature: Value, solid: String, how: &
         openings: None,
         skin: None,
         allowance: None,
+        changed: None,
+        note: None,
         fit: None,
         param_warnings: Vec::new(),
     })

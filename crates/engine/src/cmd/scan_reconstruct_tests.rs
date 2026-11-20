@@ -107,6 +107,100 @@ fn volume(s: &Session, body: &str) -> f64 {
     s.model.state().body(body).and_then(|b| b.body.volume_at(0.01)).unwrap_or_else(|| panic!("no volume for {body}"))
 }
 
+/// The scan benchmark's bracket (tests/scan-cases/bracket): an L of a base 60 × 40 × 10 and an
+/// upright 10 × 40 × 30, a hole Ø 8 through each, scanned with noise 0.02. Reconstruct reads the
+/// L as one prism and each plate, holes and all, as a prism of its own; the L holds both plates,
+/// so Extrude It joining a plate adds nothing and builds nothing (it used to join it a hair off
+/// the L's faces, the slivers' stray faces left a hole cut through the upright with a face loop
+/// the kernel's check fails, and Reconstruct Rest's next cut was refused: 504 mm³ left on). Then
+/// Reconstruct Rest cuts both holes, and the body is the part's own volume, within 0.1 %: each
+/// hole takes 160 π ≈ 503 mm³, the before-upstream sample of this scan built 2.5 mm³ off it.
+#[test]
+fn a_brackets_plates_the_l_already_holds_add_nothing_and_both_holes_are_cut() {
+    let mut part = Session::default();
+    run(&mut part, "solid.box", json!({"length": 60, "width": 40, "height": 10, "body_name": "Part"}));
+    run(&mut part, "solid.box", json!({"corner": [0, 0, 10], "length": 10, "width": 40, "height": 30, "operation": "join", "targets": ["Part"]}));
+    run(&mut part, "solid.cylinder", json!({"base": [40, 20, -1], "radius": 4, "height": 12, "operation": "cut", "targets": ["Part"]}));
+    run(
+        &mut part,
+        "solid.cylinder",
+        json!({"base": [-1, 20, 25], "radius": 4, "height": 12, "axis": [1, 0, 0], "operation": "cut", "targets": ["Part"]}),
+    );
+    let truth = 60.0 * 40.0 * 10.0 + 10.0 * 40.0 * 30.0 - 2.0 * std::f64::consts::PI * 16.0 * 10.0;
+    let (mut s, scan) = scanned_with_noise(&part, "Part", 0.02, "bracket-held");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let mut held = 0;
+    for step in read["proposals"].as_array().unwrap() {
+        let built = run(&mut s, step["command"].as_str().unwrap(), step["params"].clone());
+        assert_ne!(built["fit"]["verdict"], "worse", "{built}");
+        if built["changed"] == false {
+            assert!(built["note"].as_str().is_some_and(|n| n.contains("already holds")) && built["feature"].is_null(), "{built}");
+            held += 1;
+        }
+    }
+    assert!(held >= 1, "a plate the L holds is built again: {read}");
+    let rest = run(&mut s, "scan.reconstruct_rest", json!({}));
+    assert_eq!(rest["kept"], 2, "both holes cut: {rest}");
+    let v = volume(&s, &format!("{scan} Reconstructed"));
+    assert!((v - truth).abs() < 1e-3 * truth, "{v} mm³ against the part's {truth}");
+}
+
+/// The scan benchmark's flange (tests/scan-cases/flange): a disc Ø 60 × 8, a hub Ø 20 × 30 and
+/// four bolt holes Ø 6 on a 44 circle, scanned with noise 0.1 and built as the benchmark builds
+/// it (Survey's tidying, Reconstruct's steps, Reconstruct Rest). A bolt hole is 8 deep: read
+/// through that noise its axis came out 0.1° to 0.6° off square (the benchmark's bar is 0.3°),
+/// and Pattern It turned the copies about a ring axis read from the holes' places, itself off.
+/// Cut It now takes the normal of the face a hole enters, and Pattern It the axis of the bore it
+/// copies, when each is within the scan's tolerance over the hole's depth or the ring's radius,
+/// so every Ø 6 bore is square to the disc, well within the 0.3° bar.
+#[test]
+fn a_flanges_bolt_holes_read_through_noise_are_cut_square_to_the_disc() {
+    let mut part = Session::default();
+    run(&mut part, "solid.cylinder", json!({"radius": 30, "height": 8, "body_name": "Part"}));
+    run(&mut part, "solid.cylinder", json!({"radius": 10, "height": 30, "base": [0, 0, 8], "operation": "join", "targets": ["Part"]}));
+    run(&mut part, "solid.cylinder", json!({"base": [22, 0, 0], "radius": 3, "height": 8, "operation": "cut", "targets": ["Part"], "name": "Bolt"}));
+    run(&mut part, "solid.pattern.circular", json!({"features": ["Bolt"], "axis": "Z", "count": 4}));
+    let (mut s, scan) = scanned_with_noise(&part, "Part", 0.1, "flange-square");
+    let survey = run(&mut s, "scan.survey", json!({}));
+    for step in survey["next"].as_array().into_iter().flatten() {
+        let command = step["command"].as_str().unwrap();
+        if ["scan.repair", "scan.remove_floating", "scan.denoise", "scan.fill_holes", "scan.tolerance"].contains(&command) {
+            run(&mut s, command, step["params"].clone());
+        }
+    }
+    run(&mut s, "scan.find_all", json!({}));
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let commands: Vec<&str> = read["proposals"].as_array().unwrap().iter().map(|p| p["command"].as_str().unwrap()).collect();
+    assert!(commands.contains(&"scan.cut_it") && commands.contains(&"scan.pattern_it"), "one hole cut, then patterned: {read}");
+    for step in read["proposals"].as_array().unwrap() {
+        let built = run(&mut s, step["command"].as_str().unwrap(), step["params"].clone());
+        if built["fit"]["verdict"] == "worse" {
+            run(&mut s, "edit.undo", json!({}));
+        }
+    }
+    run(&mut s, "scan.reconstruct_rest", json!({}));
+    let state = s.model.state();
+    let body = state.body(&format!("{scan} Reconstructed")).unwrap();
+    let bores: Vec<f64> = body
+        .body
+        .record()
+        .faces
+        .iter()
+        .filter_map(|f| match &f.surface {
+            solidcore_record::brep::Surface::Cylinder { frame, radius } if (radius - 3.0).abs() < 0.1 => {
+                let [x, y] = [frame.x_axis, frame.y_axis].map(|a| Vec3::new(a[0], a[1], a[2]));
+                Some(x.cross(y).normalized().unwrap().cross(Vec3::Z).len().asin().to_degrees())
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(bores.len() >= 4, "the four bolt holes: {bores:?}");
+    // Each bore takes the disc face's normal or the first bore's axis, so it is off square only
+    // by the disc's own reading (0.008° in the benchmark); 0.05° is well under the copies turned
+    // about the ring's read axis (0.17° to 0.24° on this scan, 0.35° to 0.49° on the benchmark's).
+    assert!(bores.iter().all(|a| *a <= 0.05), "each bore within 0.05° of square: {bores:?}");
+}
+
 /// A block 40 × 30 × 10 with its four upright edges rounded R 5: Find All finds its two ends,
 /// four sides and four rounds; Reconstruct reads one prism, and Extrude It builds it back as a
 /// sketch of lines and arcs extruded, the part's own volume.

@@ -1243,6 +1243,12 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
     let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
     let depth = solidcraft_scan::hole_form::snapped(prism.depth(), round);
     let (draft, name) = (prism.draft, format!("Extrude It {}", index + 1));
+    // A join is measured: one that adds no more than a skin the scan's tolerance thick over its
+    // outline, a prism the body already holds, is taken back (its walls a hair off the body's
+    // would leave slivers whose stray faces a later cut trips on).
+    let held = |s: &Session| s.model.state().body(&solid).and_then(|b| solidcraft_kernel::measure(&b.body).ok()).map(|m| m.volume);
+    let (before_join, volume_before) = (s.doc.clone(), if how == "join" { held(s) } else { None });
+    let skin = outlines.first().map_or(0.0, |o| profile::area(&o.corners).abs()) * view.outcome().tolerance;
     // The outlines sketched and extruded.
     let build = |s: &mut Session, outlines: &[Outline], drawn: &mut Drawn| -> Result<(u64, Value)> {
         let sketch = sketch_outlines(s, &plane, &format!("Prism Profile {}", index + 1), outlines, &|_, _, _| None, drawn, round, false)?;
@@ -1358,6 +1364,34 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         Some(made) => made,
         None => build(s, &outlines, &mut drawn)?,
     };
+    if let (Some(before), Some(after)) = (volume_before, held(s))
+        && after - before <= skin
+    {
+        s.doc = before_join;
+        s.refresh();
+        return reply(ScanBuildResult {
+            body: found.scan.clone(),
+            sketch: None,
+            feature: Value::Null,
+            solid,
+            operation: how.into(),
+            lines: 0,
+            arcs: 0,
+            tangents: 0,
+            depth: Some(depth),
+            count: None,
+            openings: None,
+            skin: None,
+            allowance: None,
+            changed: Some(false),
+            note: Some(format!(
+                "the body already holds prism {index}: joined, it added {:.3} mm³, no more than a skin the scan's tolerance thick over its outline, so nothing was built",
+                (after - before).max(0.0)
+            )),
+            fit: None,
+            param_warnings: Vec::new(),
+        });
+    }
     reply(ScanBuildResult {
         body: found.scan.clone(),
         sketch: Some(sketch),
@@ -1372,6 +1406,8 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         openings: None,
         skin: None,
         allowance: None,
+        changed: None,
+        note: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1532,6 +1568,8 @@ pub(super) fn nest(s: &mut Session, p: &Value) -> Result<Value> {
         openings: None,
         skin: None,
         allowance: Some(allowance),
+        changed: None,
+        note: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1674,6 +1712,8 @@ pub(super) fn revolve_it(s: &mut Session, p: &Value) -> Result<Value> {
         openings,
         skin,
         allowance: None,
+        changed: None,
+        note: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -1810,6 +1850,8 @@ pub(super) fn shell_it(s: &mut Session, p: &Value) -> Result<Value> {
         openings: None,
         skin: None,
         allowance: None,
+        changed: None,
+        note: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -2002,6 +2044,8 @@ pub(super) fn hole_it(s: &mut Session, p: &Value) -> Result<Value> {
         openings: None,
         skin: None,
         allowance: None,
+        changed: None,
+        note: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -2015,6 +2059,21 @@ fn free_hole_name(s: &Session, index: usize) -> String {
         return base;
     }
     (2..).map(|k| format!("{base}.{k}")).find(|n| !taken(n)).unwrap_or(base)
+}
+
+/// `inward` (a hole's axis read off the scan, into the material) as the body's planar face at the
+/// hole's `mouth` faces into it, when that face is within the scan's `tolerance` of the mouth and
+/// the read axis so near its normal that, over the hole's `depth`, the two part by no more than
+/// the tolerance: a short bore read through noise comes out a few tenths of a degree off its
+/// face's normal (the scan benchmark's flange, its four bolt holes 0.1° to 0.6° off at noise
+/// 0.1), which the scan cannot tell from square. Else `inward` as it is.
+fn square_to_entry(s: &Session, solid: &str, mouth: Vec3, inward: Vec3, depth: f64, tolerance: f64) -> Vec3 {
+    let state = s.model.state();
+    let Some(body) = state.body(solid) else { return inward };
+    let Some((distance, face)) = body.body.nearest_face(mouth) else { return inward };
+    let Some(plane) = body.body.planar_face(face).filter(|_| distance <= tolerance) else { return inward };
+    let Some(into) = plane.y.cross(plane.x).normalized() else { return inward };
+    if inward.dot(into) > 0.0 && inward.cross(into).len() * depth <= tolerance { into } else { inward }
 }
 
 pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
@@ -2034,7 +2093,7 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
     // Along the grid's axis when it is that near it, as Hole It drills: a hole a few thousandths
     // of a degree off leaves the kernel ellipses it cannot convert within its tolerance.
     let inward = (hole.bottom - hole.mouth).normalized().ok_or_else(|| bad(cmd, "the hole has no depth on the scan"))?;
-    let inward = solidcraft_scan::reconstruct::on_grid(inward);
+    let inward = solidcraft_scan::reconstruct::on_grid(square_to_entry(s, &solid, hole.mouth, inward, hole.depth(), view.outcome().tolerance));
     // Started a little outside the mouth, so the cut begins clear of the material.
     let margin = (0.01 * reading.size).max(0.5);
     let (x, y) = {
@@ -2081,6 +2140,8 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
         openings: None,
         skin: None,
         allowance: None,
+        changed: None,
+        note: None,
         fit: None,
         param_warnings: Vec::new(),
     })
@@ -2120,6 +2181,8 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
             openings: None,
             skin: None,
             allowance: None,
+            changed: None,
+            note: None,
             fit: None,
             param_warnings: Vec::new(),
         });
@@ -2140,6 +2203,7 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, format!("there is no `{feature_name}`: cut the hole first with Cut It")));
     }
     let solid = built_body(s, &found.scan, &json!({}), cmd)?;
+    let layout = parallel_to_the_bore(s, &solid, hole.mouth, hole.radius, layout, view.outcome().tolerance);
     let pattern = repeat_feature(s, cmd, &feature_name, count, &layout)?;
     reply(ScanBuildResult {
         body: found.scan.clone(),
@@ -2155,9 +2219,38 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
         openings: None,
         skin: None,
         allowance: None,
+        changed: None,
+        note: None,
         fit: None,
         param_warnings: Vec::new(),
     })
+}
+
+/// A ring of holes turned about the axis of the bore cut for its first (the body's cylinder of
+/// the hole's `radius` whose axis passes the hole's `mouth`, both within the scan's `tolerance`),
+/// when that axis and the ring's read axis part by no more than the tolerance over the ring's
+/// radius: a bolt circle's holes run parallel to its axis, and the ring's axis read from the
+/// holes' places through noise is a few tenths of a degree off, which turned every copy that far
+/// off square (the scan benchmark's flange at noise 0.1, its copies 0.35° to 0.49° off while
+/// the hole they copy was square). Any other layout, or none such bore, as it is.
+fn parallel_to_the_bore(s: &Session, solid: &str, mouth: Vec3, radius: f64, layout: Layout, tolerance: f64) -> Layout {
+    let Layout::Circular { centre, axis, angle } = layout else { return layout };
+    let state = s.model.state();
+    let Some(body) = state.body(solid) else { return layout };
+    let bore = body.body.record().faces.iter().find_map(|f| match &f.surface {
+        solidcore_record::brep::Surface::Cylinder { frame, radius: r } if (r - radius).abs() <= tolerance => {
+            let [x, y, o] = [frame.x_axis, frame.y_axis, frame.origin].map(|a| Vec3::new(a[0], a[1], a[2]));
+            let along = x.cross(y).normalized()?;
+            let off = mouth - o;
+            ((off - along * off.dot(along)).len() <= tolerance).then_some(along)
+        }
+        _ => None,
+    });
+    let Some(bore) = bore else { return layout };
+    let bore = if bore.dot(axis) < 0.0 { -bore } else { bore };
+    let out = mouth - centre;
+    let reach = (out - axis * out.dot(axis)).len();
+    if bore.cross(axis).len() * reach <= tolerance { Layout::Circular { centre, axis: bore, angle } } else { layout }
 }
 
 /// Feature `feature_name` repeated `count` times as `layout` lays them out.
