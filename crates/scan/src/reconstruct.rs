@@ -160,6 +160,10 @@ pub struct Repeat {
     /// As indices into the faces, in order along the layout.
     pub members: Vec<usize>,
     pub layout: Layout,
+    /// How many places the layout has: the members' count, or more where a ring of holes runs on
+    /// across places the scanner never saw ([`with_unscanned_places`]); the first member is at the
+    /// first place.
+    pub places: usize,
 }
 
 /// A repeat a solid can be built with as one feature and a pattern of it.
@@ -426,9 +430,11 @@ fn unit(v: Vec3) -> Vec3 {
 /// Walls that all lean alike from running along a direction (by up to [`MOST_DRAFT`]) are a
 /// drafted prism's; `sign` turns the scan's winding out of its material, which says which way a
 /// wall leans. Without `drafts`, only square walls are read, as before drafts were.
+#[allow(clippy::too_many_arguments)]
 pub fn extrusions(
     faces: &[Face],
     span: &dyn Fn(usize, Vec3) -> Option<(f64, f64)>,
+    open: &dyn Fn(usize, Vec3) -> (bool, bool),
     size: f64,
     ignored: &BTreeSet<usize>,
     unscored: &BTreeSet<usize>,
@@ -446,7 +452,7 @@ pub fn extrusions(
         }
     }
     let mut candidates: Vec<(Prism, Vec<(usize, f64)>)> =
-        directions.iter().flat_map(|&d| stacked(faces, d, span, reach, ignored, sign, drafts)).collect();
+        directions.iter().flat_map(|&d| stacked(faces, d, span, open, reach, ignored, sign, drafts)).collect();
     let total: f64 = faces.iter().map(|f| f.area).sum();
     let mut explained = vec![0.0; faces.len()];
     let gain = |shares: &[(usize, f64)], explained: &[f64]| {
@@ -579,10 +585,17 @@ struct Level {
 }
 
 /// The extrusions along `direction`, low to high, each with what it explains: (face, share).
+///
+/// A wall whose end lies along the edge of the scan (`open` says so of its low and high ends) does
+/// not end there: the scanner missed what lies beyond, and the wall runs on to the nearest plane
+/// past its end. Otherwise a round whose lower half was missed would end the section halfway and
+/// split one block into two prisms, the lower one without the round.
+#[allow(clippy::too_many_arguments)]
 fn stacked(
     faces: &[Face],
     direction: Vec3,
     span: &dyn Fn(usize, Vec3) -> Option<(f64, f64)>,
+    open: &dyn Fn(usize, Vec3) -> (bool, bool),
     reach: f64,
     ignored: &BTreeSet<usize>,
     sign: f64,
@@ -592,8 +605,22 @@ fn stacked(
     let facing = |k: usize| plane(&faces[k]).map(|(point, normal)| (point.dot(direction), normal.dot(direction)));
     let kept = || (0..faces.len()).filter(|k| !ignored.contains(k));
     let caps: Vec<(usize, f64)> = kept().filter_map(|k| facing(k).filter(|f| f.1.abs() >= SAME_DIRECTION).map(|f| (k, f.0))).collect();
-    let walls: Vec<(usize, f64, f64)> =
-        kept().filter(|&k| lean(&faces[k], direction, sign).is_some()).filter_map(|k| span(k, direction).map(|(a, b)| (k, a, b))).collect();
+    // The nearest plane below `a`, and above `b`.
+    let below = |a: f64| caps.iter().map(|c| c.1).filter(|&c| c <= a + noise).max_by(f64::total_cmp);
+    let above = |b: f64| caps.iter().map(|c| c.1).filter(|&c| c >= b - noise).min_by(f64::total_cmp);
+    let walls: Vec<(usize, f64, f64)> = kept()
+        .filter(|&k| lean(&faces[k], direction, sign).is_some())
+        .filter_map(|k| {
+            let (a, b) = span(k, direction)?;
+            // Only an end with no plane at it is asked about (the scan's edges cost a pass).
+            let free_low = !caps.iter().any(|c| c.1 <= a + noise && c.1 >= a - reach);
+            let free_high = !caps.iter().any(|c| c.1 >= b - noise && c.1 <= b + reach);
+            let (low, high) = if free_low || free_high { open(k, direction) } else { (false, false) };
+            let a = if free_low && low { below(a).unwrap_or(a) } else { a };
+            let b = if free_high && high { above(b).unwrap_or(b) } else { b };
+            Some((k, a, b))
+        })
+        .collect();
     // The planes, and where a wall ends with no plane just outside its end.
     let mut ends: Vec<(f64, Option<usize>)> = caps.iter().map(|&(k, at)| (at, Some(k))).collect();
     for &(_, a, b) in &walls {
@@ -1123,8 +1150,10 @@ fn off_the_layout(faces: &[Face], repeat: &Repeat) -> f64 {
     };
     let Some(&start) = places.first() else { return 0.0 };
     let even: Vec<Vec3> = match repeat.layout {
-        Layout::Linear { step } => (0..places.len()).map(|k| start + step * k as f64).collect(),
-        Layout::Circular { centre, axis, angle } => (0..places.len()).map(|k| centre + turned(start - centre, axis, angle * k as f64)).collect(),
+        Layout::Linear { step } => (0..repeat.places.max(places.len())).map(|k| start + step * k as f64).collect(),
+        Layout::Circular { centre, axis, angle } => {
+            (0..repeat.places.max(places.len())).map(|k| centre + turned(start - centre, axis, angle * k as f64)).collect()
+        }
         Layout::Grid { step, across, columns, rows } => {
             (0..rows).flat_map(|row| (0..columns).map(move |column| start + step * column as f64 + across * row as f64)).collect()
         }
@@ -1236,6 +1265,129 @@ fn radial_ring(members: &[usize], likes: &[Option<Likeness>]) -> Option<Repeat> 
     None
 }
 
+/// The most places a ring of holes is read with, however few were found.
+const MOST_PLACES: usize = 36;
+
+/// `repeats` with the rings of holes the scanner saw only part of: holes alike (cylinders of one
+/// radius that `hole` says are holes, in no repeat yet) about the turned part's `axis`, along it
+/// (a bolt circle) or along its radius (holes drilled into a shaft's side), at whole steps of one
+/// angle round it, the fewest places that holds them all. Each place no hole was found at must be
+/// one the scan says nothing against: no point of it within nine tenths of the hole's radius of
+/// where the hole's axis would run there, over the length the found holes' walls run (a face
+/// across the place says there is no hole; a hole there would have shown its wall). And more
+/// holes must be found than places filled so: the ring is what the holes found say, the scan
+/// only not against it. `span` is how far a face runs along a direction.
+pub fn with_unscanned_places(
+    scan: &Scan,
+    faces: &[Face],
+    mut repeats: Vec<Repeat>,
+    axis: Option<Axis>,
+    hole: &dyn Fn(usize) -> bool,
+    span: &dyn Fn(usize, Vec3) -> Option<(f64, f64)>,
+    tolerance: f64,
+) -> Vec<Repeat> {
+    let Some(axis) = axis else { return repeats };
+    let a = unit(axis.direction);
+    if a == Vec3::ZERO {
+        return repeats;
+    }
+    let grouped: BTreeSet<usize> = repeats.iter().flat_map(|r| r.members.iter().copied()).collect();
+    // Each free hole: its radius, axis point and direction, and the way out from the part's axis to
+    // it (along the axis for a bolt circle's hole, its own direction for one along the radius).
+    let free: Vec<(usize, f64, Vec3, Vec3, Vec3)> = (0..faces.len())
+        .filter(|&k| !grouped.contains(&k) && hole(k))
+        .filter_map(|k| {
+            let Shape::Cylinder { point, axis: d, radius } = faces[k].shape else { return None };
+            let d = unit(d);
+            let v = point - axis.point;
+            let out = if d.dot(a).abs() >= SAME_DIRECTION {
+                v - a * v.dot(a)
+            } else if d.dot(a).abs() <= SQUARE {
+                // Along the radius: its axis passes the part's axis.
+                let w = v - a * v.dot(a);
+                let off = w - d * w.dot(d);
+                if off.len() > RADIAL_CROSSING * radius {
+                    return None;
+                }
+                d * w.dot(d).signum()
+            } else {
+                return None;
+            };
+            let out = out.normalized()?;
+            Some((k, radius, point, d, out))
+        })
+        .collect();
+    let mut used = vec![false; free.len()];
+    for i in 0..free.len() {
+        if used[i] {
+            continue;
+        }
+        let (_, radius, _, d0, out0) = free[i];
+        let along = d0.dot(a).abs() >= SAME_DIRECTION;
+        let distance = |p: Vec3| {
+            let v = p - axis.point;
+            (v - a * v.dot(a)).len()
+        };
+        let group: Vec<usize> = (i..free.len())
+            .filter(|&j| {
+                let (_, r, p, d, _) = free[j];
+                !used[j]
+                    && (r - radius).abs() <= SAME_RADIUS * r.max(radius)
+                    && (d.dot(a).abs() >= SAME_DIRECTION) == along
+                    && (!along || (distance(p) - distance(free[i].2)).abs() <= EVEN * distance(free[i].2).max(radius))
+            })
+            .collect();
+        if group.len() < 2 {
+            continue;
+        }
+        // Each one's angle from the first, round the axis, and the fewest even places holding all.
+        let angle_of = |out: Vec3| out0.cross(out).dot(a).atan2(out0.dot(out)).rem_euclid(TAU);
+        let mut angles: Vec<(f64, usize)> = group.iter().map(|&j| (angle_of(free[j].4), j)).collect();
+        angles.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let Some(places) = ((group.len() + 1)..=MOST_PLACES).find(|&n| {
+            let step = TAU / n as f64;
+            let mut at: Vec<usize> = angles.iter().map(|(t, _)| (t / step).round() as usize % n).collect();
+            let even = angles.iter().all(|(t, _)| (t - (t / step).round() * step).abs() <= EVEN * step);
+            at.dedup();
+            even && at.len() == angles.len()
+        }) else {
+            continue;
+        };
+        let step = TAU / places as f64;
+        let taken: BTreeSet<usize> = angles.iter().map(|(t, _)| (t / step).round() as usize % places).collect();
+        let empty: Vec<usize> = (0..places).filter(|k| !taken.contains(k)).collect();
+        if empty.len() >= group.len() {
+            continue;
+        }
+        // Where the first hole's wall runs, turned to each empty place: no point of the scan near.
+        let (first, _, point, d, _) = free[i];
+        let Some((least, most)) = span(first, d) else { continue };
+        let margin = 2.0 * tolerance + 0.1 * radius;
+        let (from, to) = (point + d * (least - margin - point.dot(d)), point + d * (most + margin - point.dot(d)));
+        let near = 0.9 * radius;
+        let clear = |k: usize| {
+            let turn = |p: Vec3| axis.point + turned(p - axis.point, a, step * k as f64);
+            let (p, q) = (turn(from), turn(to));
+            let pq = q - p;
+            let length2 = pq.len2();
+            !scan.positions.iter().any(|&x| {
+                let t = if length2 > 0.0 { ((x - p).dot(pq) / length2).clamp(0.0, 1.0) } else { 0.0 };
+                x.dist(p + pq * t) < near
+            })
+        };
+        if !empty.iter().all(|&k| clear(k)) {
+            continue;
+        }
+        for &(_, j) in &angles {
+            used[j] = true;
+        }
+        let members: Vec<usize> = angles.iter().map(|&(_, j)| free[j].0).collect();
+        repeats.push(Repeat { kind: Kind::Cylinder, members, layout: Layout::Circular { centre: axis.point, axis: a, angle: step }, places });
+    }
+    repeats.sort_by_key(|r| std::cmp::Reverse(r.members.len()));
+    repeats
+}
+
 /// The members, if they lie along a line evenly spaced.
 fn in_a_line(members: &[usize], places: &[Vec3], kind: Kind) -> Option<Repeat> {
     let mut far = (0, 0, 0.0);
@@ -1260,7 +1412,7 @@ fn in_a_line(members: &[usize], places: &[Vec3], kind: Kind) -> Option<Repeat> {
             return None;
         }
     }
-    Some(Repeat { kind, members: order.iter().map(|o| members[o.1]).collect(), layout: Layout::Linear { step: along * step } })
+    Some(Repeat { kind, members: order.iter().map(|o| members[o.1]).collect(), layout: Layout::Linear { step: along * step }, places: members.len() })
 }
 
 /// The members, if they lie round a circle at even angles. `axis` is the direction they hold,
@@ -1298,7 +1450,12 @@ fn round_a_circle(members: &[usize], places: &[Vec3], kind: Kind, axis: Option<V
             return None;
         }
     }
-    Some(Repeat { kind, members: around.iter().map(|a| members[a.1]).collect(), layout: Layout::Circular { centre: middle, axis, angle } })
+    Some(Repeat {
+        kind,
+        members: around.iter().map(|a| members[a.1]).collect(),
+        layout: Layout::Circular { centre: middle, axis, angle },
+        places: members.len(),
+    })
 }
 
 /// The members, if they fill a grid of at least two rows and two columns, every place taken, none
@@ -1353,7 +1510,12 @@ fn in_a_grid(members: &[usize], places: &[Vec3], kind: Kind) -> Option<Repeat> {
     }
     let mut order: Vec<usize> = (0..places.len()).collect();
     order.sort_by_key(|&k| (cells[k].1, cells[k].0));
-    Some(Repeat { kind, members: order.iter().map(|&k| members[k]).collect(), layout: Layout::Grid { step, across, columns, rows } })
+    Some(Repeat {
+        kind,
+        members: order.iter().map(|&k| members[k]).collect(),
+        layout: Layout::Grid { step, across, columns, rows },
+        places: members.len(),
+    })
 }
 
 /// The round holes among the faces (`is_hole` tells them) that `explained` (what a prism's
@@ -1377,7 +1539,7 @@ pub fn holes(
         if repeat.members.iter().any(|k| repeated.contains_key(k) || rest.contains(k)) || matches!(repeat.layout, Layout::Grid { .. }) {
             continue;
         }
-        repeated.insert(repeat.members[0], (repeat.members.len(), repeat.layout));
+        repeated.insert(repeat.members[0], (repeat.places, repeat.layout));
         rest.extend(repeat.members[1..].iter().copied());
     }
     (0..faces.len())
@@ -1441,7 +1603,7 @@ fn formed_holes(formed: Vec<crate::hole_form::Formed>, repeats: &[Repeat]) -> Ve
             })
         };
         if repeat.members.iter().all(alike) && !repeat.members.iter().any(|k| rest.contains(k) || repeated.contains_key(k)) {
-            repeated.insert(repeat.members[0], (repeat.members.len(), repeat.layout));
+            repeated.insert(repeat.members[0], (repeat.places, repeat.layout));
             rest.extend(repeat.members[1..].iter().copied());
         }
     }
@@ -1886,6 +2048,40 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     let span_of = |k: usize, d: Vec3| {
         (0..shaped.len()).filter(|&j| same[j] == k).filter_map(|j| span(scan, shaped[j], d)).reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
     };
+    // Whether face `k`'s low and high ends along `d` lie along the edge of the scan: a quarter or
+    // more of its triangles within two of the scan's edges of the end have an edge no triangle is
+    // across, or a neighbour that has (Find All may leave the last row before a missed patch out
+    // of the face): the scanner missed what lies beyond. A face that ends at another face, found
+    // or not, has no such edge there.
+    let neighbours = std::cell::OnceCell::new();
+    let edge = std::cell::OnceCell::new();
+    let open_of = |k: usize, d: Vec3| -> (bool, bool) {
+        let Some((least, most)) = span_of(k, d) else { return (false, false) };
+        let neighbours = neighbours.get_or_init(|| crate::base::edge_neighbours(scan));
+        let band = 2.0 * *edge.get_or_init(|| crate::remesh::typical_edge(scan));
+        let (mut low, mut high) = ((0usize, 0usize), (0usize, 0usize));
+        for j in (0..shaped.len()).filter(|&j| same[j] == k) {
+            for &t in &shaped[j].triangles {
+                let Some(corners) = scan.corners(t) else { continue };
+                let along = corners.map(|p| p.dot(d));
+                let (lo, hi) = (along.iter().copied().fold(f64::INFINITY, f64::min), along.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+                let (at_low, at_high) = (lo <= least + band, hi >= most - band);
+                if !(at_low || at_high) {
+                    continue;
+                }
+                let open = |t: usize| neighbours.of(scan, t).count() < 3;
+                let on_edge = open(t) || neighbours.of(scan, t).any(open);
+                if at_low {
+                    low = (low.0 + usize::from(on_edge), low.1 + 1);
+                }
+                if at_high {
+                    high = (high.0 + usize::from(on_edge), high.1 + 1);
+                }
+            }
+        }
+        let open = |(edge, all): (usize, usize)| all > 0 && 4 * edge >= all;
+        (open(low), open(high))
+    };
     // A round surface in pieces, its triangles together, for how far round it goes.
     let whole = |k: usize| -> std::borrow::Cow<'_, Segment> {
         if pieces.iter().any(|&j| same[j] == k) {
@@ -1972,7 +2168,7 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     let mut chosen: Option<(Vec<Prism>, usize)> = None;
     if let Some(mut walls) = walled {
         let outside: BTreeSet<usize> = ignored.iter().chain(&walls.inner).copied().collect();
-        let read = extrusions(&faces, &span_of, size, &outside, &unscored, sign, true);
+        let read = extrusions(&faces, &span_of, &open_of, size, &outside, &unscored, sign, true);
         // A shell's outside is all walls with an inner face behind them (its rounds aside); a
         // bent sheet (a bracket) pairs its faces too, but its edges have nothing behind them.
         let closed_round = |p: &Prism| p.walls.iter().all(|&w| plane(&faces[w]).is_none() || walls.outer.contains(&w));
@@ -2003,14 +2199,16 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     // walls do: on a noisy scan, square walls can lean alike by chance into a drafted section whose
     // slice no profile goes round, which would hide the square prism there.
     let (prisms, read_prisms) = chosen.unwrap_or_else(|| {
-        let square = usable(extrusions(&faces, &span_of, size, &ignored, &unscored, sign, false));
-        let drafted = usable(extrusions(&faces, &span_of, size, &ignored, &unscored, sign, true));
+        let square = usable(extrusions(&faces, &span_of, &open_of, size, &ignored, &unscored, sign, false));
+        let drafted = usable(extrusions(&faces, &span_of, &open_of, size, &ignored, &unscored, sign, true));
         if explains(&drafted.0) > explains(&square.0) { drafted } else { square }
     });
     let unread_prisms = read_prisms - prisms.len();
     let prisms = shared(prisms, &faces, outcome.tolerance);
     let inner: BTreeSet<usize> = shell.iter().flat_map(|w| w.inner.iter().copied()).collect();
-    let repeats = repeats(&faces);
+    // A ring of holes the scanner saw only part of runs on round the turned part's axis.
+    let ring_axis = revolve.as_ref().or(partly_turned.as_ref()).map(|r| r.axis);
+    let repeats = with_unscanned_places(scan, &faces, repeats(&faces), ring_axis, &hole, &span_of, outcome.tolerance);
     let between = spokes.as_ref().map(|sp| crate::profile::between_spokes(&sp.angles)).unwrap_or_default();
     let turned = revolve.as_ref().map(|r| crate::profile::turned_profile_of(scan, outcome, &faces, &same, size, r, &between));
     let turned_unread = turned.as_ref().and_then(|t| t.as_ref().err().cloned());
@@ -2237,7 +2435,16 @@ mod tests {
 
     fn read(given: &[(Face, Vec3, Vec3)], size: f64) -> Vec<Prism> {
         let faces: Vec<Face> = given.iter().map(|g| g.0).collect();
-        extrusions(&faces, &|k, d| given.get(k).map(|g| along(g.1, g.2, d)), size, &BTreeSet::new(), &BTreeSet::new(), 1.0, true)
+        extrusions(
+            &faces,
+            &|k, d| given.get(k).map(|g| along(g.1, g.2, d)),
+            &|_, _| (false, false),
+            size,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            1.0,
+            true,
+        )
     }
 
     /// A plane face facing `normal` across the box from `low` to `high`.
@@ -2352,6 +2559,65 @@ mod tests {
         assert!(plans[0].off < 1e-9 && plans[0].rest.len() == 11);
     }
 
+    /// A bolt circle of four whose fourth hole the scanner never saw: three holes found at 0°, 90°
+    /// and 180° are a ring of four places, the fourth filled, while nothing of the scan lies where
+    /// it would be; with the flange's face scanned across that place, there is no hole there and no
+    /// ring. Two holes drilled along a shaft's radius 120° apart, the third place unscanned, are a
+    /// ring of three; one hole is no ring, and two opposite holes would fill as many places as were
+    /// found, which is not enough.
+    #[test]
+    fn a_ring_of_holes_runs_on_across_places_the_scanner_missed() {
+        let axis = Axis { point: Vec3::ZERO, direction: Vec3::Z };
+        let at = |degrees: f64, r: f64, z: f64| {
+            let a = degrees.to_radians();
+            Vec3::new(r * a.cos(), r * a.sin(), z)
+        };
+        // A disc 60 across and 8 thick, scanned on both faces except within 6 of each place given.
+        let faces_points = |missing: &[f64]| -> Vec<Vec3> {
+            let mut points = Vec::new();
+            for i in -30..=30 {
+                for j in -30..=30 {
+                    let (x, y) = (f64::from(i), f64::from(j));
+                    let p = Vec3::new(x, y, 0.0);
+                    if x.hypot(y) < 30.0 && !missing.iter().any(|&d| p.dist(at(d, 22.0, 0.0)) < 6.0) {
+                        points.extend([p, Vec3::new(x, y, 8.0)]);
+                    }
+                }
+            }
+            points
+        };
+        let bolts: Vec<Face> = [0.0, 90.0, 180.0].iter().map(|&d| cylinder(at(d, 22.0, 0.0), Vec3::Z, 3.0)).collect();
+        let span = |_: usize, _: Vec3| Some((0.0, 8.0));
+        let ring = |positions: &[Vec3], faces: &[Face], span: &dyn Fn(usize, Vec3) -> Option<(f64, f64)>| {
+            let scan = Scan::new(positions, &[]);
+            with_unscanned_places(&scan, faces, Vec::new(), Some(axis), &|_| true, span, 0.05)
+        };
+        let unscanned = faces_points(&[0.0, 90.0, 180.0, 270.0]);
+        let found = ring(&unscanned, &bolts, &span);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!((found[0].members.len(), found[0].places), (3, 4));
+        assert!(matches!(found[0].layout, Layout::Circular { angle, .. } if (angle - TAU / 4.0).abs() < 1e-9));
+        let solid = faces_points(&[0.0, 90.0, 180.0]);
+        assert!(ring(&solid, &bolts, &span).is_empty(), "a face across the fourth place: no hole there");
+
+        // A shaft 40 across, scanned all round but near the places given, two holes along its radius.
+        let shaft_points = |missing: &[f64]| -> Vec<Vec3> {
+            (0..360)
+                .flat_map(|d| (0..=25).map(move |z| at(f64::from(d), 20.0, f64::from(z))))
+                .filter(|p| !missing.iter().any(|&d| p.dist(at(d, 20.0, 12.5)) < 6.0))
+                .collect()
+        };
+        let drilled = |degrees: &[f64]| -> Vec<Face> { degrees.iter().map(|&d| cylinder(at(d, 14.0, 12.5), at(d, 1.0, 0.0), 3.0)).collect() };
+        // Each hole's wall from 8 to 20 out along its own axis (its point is 14 out).
+        let along = |_: usize, _: Vec3| Some((8.0, 20.0));
+        let found = ring(&shaft_points(&[0.0, 120.0, 240.0]), &drilled(&[0.0, 120.0]), &along);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!((found[0].members.len(), found[0].places), (2, 3));
+        assert!(ring(&shaft_points(&[0.0, 120.0]), &drilled(&[0.0, 120.0]), &along).is_empty(), "the third place scanned solid");
+        assert!(ring(&shaft_points(&[0.0, 90.0, 180.0, 270.0]), &drilled(&[0.0, 180.0]), &along).is_empty(), "two found, two to fill");
+        assert!(ring(&shaft_points(&[0.0, 120.0, 240.0]), &drilled(&[0.0]), &along).is_empty(), "one hole");
+    }
+
     /// Three holes drilled along the radius round a shaft about Z: a ring about the shaft's axis.
     #[test]
     fn holes_drilled_along_the_radius_are_a_ring() {
@@ -2406,7 +2672,7 @@ mod tests {
         let faces: Vec<Face> = outcome.segments.iter().map(|s| Face { shape: s.shape.unwrap(), area: s.area }).collect();
         let span_of = |k: usize, d: Vec3| outcome.segments.get(k).and_then(|s| span(&scan, s, d));
         assert_eq!(
-            extrusions(&faces, &span_of, scan.extent(), &BTreeSet::new(), &BTreeSet::new(), 1.0, true).len(),
+            extrusions(&faces, &span_of, &|_, _| (false, false), scan.extent(), &BTreeSet::new(), &BTreeSet::new(), 1.0, true).len(),
             1,
             "the shapes alone make a prism"
         );

@@ -201,14 +201,18 @@ pub fn repair(scan: &Scan, crossings: bool) -> Repaired {
     // The repaired scan: its points as they were, those no longer used dropped.
     let kept: Vec<[u32; 3]> = tris.iter().zip(&alive).filter(|(_, a)| **a).map(|(t, _)| *t).collect();
     let (mut positions, mut triangles) = crate::pieces::keeping(&Scan::new(scan.positions, &kept), |_| true);
-    // The holes the crossings left, closed: the rings through a corner of a face taken off.
+    // The holes the crossings left, closed: the rings every point of which is a corner of a face
+    // taken off. A ring that also runs where the scan was already open is a hole the scanner left,
+    // which taking the faces off only widened: closing it would lay an invented surface over a
+    // patch the scanner never saw (a plate's corner rounded off, a hole's wall closed over), and
+    // what a scan is read for must be what was scanned. That is Fill Holes', when asked.
     let mut refilled = 0;
     if !gone.is_empty() {
         let bits = |p: Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
         let corners: HashSet<[u64; 3]> = gone.iter().flat_map(|&t| tris[t]).map(|v| bits(at(v))).collect();
         let repaired = Scan::new(&positions, &triangles);
         let mut found = crate::holes::survey(&repaired);
-        found.rings.retain(|r| r.points.iter().any(|&v| positions.get(v as usize).is_some_and(|p| corners.contains(&bits(*p)))));
+        found.rings.retain(|r| r.points.iter().all(|&v| positions.get(v as usize).is_some_and(|p| corners.contains(&bits(*p)))));
         for ring in &mut found.rings {
             ring.rim = false;
         }
@@ -532,6 +536,26 @@ mod tests {
         let tris: Vec<[u32; 3]> = fixed.triangles.iter().map(|t| t.map(|v| weld[v as usize])).collect();
         assert_eq!(crossing_faces(&fixed.positions, &tris, &live).1, 0, "nothing crosses after");
         assert!(fixed.refilled >= 1, "the hole the crossing left is closed");
+
+        // The same sheet with a patch the scanner missed right beside the fold: taking the fold
+        // off joins its hole to that patch, and the patch, never scanned, stays open (a plate's
+        // corner was rounded off by a surface laid over it). Before, it was closed over.
+        let missed = |t: &[u32; 3]| {
+            let middle = t.iter().fold(Vec3::ZERO, |s, &v| s + positions[v as usize]) / 3.0;
+            (15.0..20.0).contains(&middle.x) && (9.0..15.0).contains(&middle.y)
+        };
+        let open: Vec<[u32; 3]> = triangles.iter().copied().filter(|t| !missed(t)).collect();
+        let fixed = repair(&Scan::new(&positions, &open), true);
+        assert!(fixed.crossing_faces > 0, "the fold is taken off");
+        let laid_over = fixed
+            .triangles
+            .iter()
+            .filter(|t| {
+                let middle = t.iter().fold(Vec3::ZERO, |s, &v| s + fixed.positions[v as usize]) / 3.0;
+                (16.0..19.0).contains(&middle.x) && (10.0..14.0).contains(&middle.y)
+            })
+            .count();
+        assert_eq!(laid_over, 0, "nothing laid over the patch the scanner missed");
     }
 
     /// The faces found crossing, among them faces too large for the grid (needles through the

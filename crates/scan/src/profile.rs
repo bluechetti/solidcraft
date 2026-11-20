@@ -244,7 +244,11 @@ pub fn prism_outlines(walls: &[(usize, Wall)], loops: &[(Vec<Vec2>, Vec<Option<u
         .enumerate()
         .filter_map(|(k, (points, on))| {
             let fill = fill.map(|f| (f.tolerance, f.along.get(k).map(Vec::as_slice)));
-            outline_of(walls, points, on, reach, fill)
+            let outline = outline_of(walls, points, on, reach, fill)?;
+            Some(match fill {
+                Some((tolerance, _)) => rounded_as_the_rest(outline, points, tolerance),
+                None => outline,
+            })
         })
         .map(|o| {
             let r = ring(&o);
@@ -265,6 +269,79 @@ pub fn prism_outlines(walls: &[(usize, Wall)], loops: &[(Vec<Vec2>, Vec<Option<u
         .filter(|(_, r)| area(r).signum() == material || outer.iter().any(|o| r.iter().all(|p| contains(o, *p))))
         .map(|(o, _)| o)
         .collect()
+}
+
+/// Rounds of one radius are this near alike (a share of the radius).
+const ROUNDS_ALIKE: f64 = 0.02;
+
+/// `outline` with a sharp corner between two walls rounded as its other corners are, where the
+/// scanner missed that round: two or more of its rounds between straight walls have one radius
+/// and turn the same way, and no point of the slice (`points`) lies nearer the corner's tip than
+/// half way to where that round would pass. A sharp corner the scanner saw has its slice run into
+/// the tip; a round it saw only a little of, too little for Find All to fit, leaves its few points
+/// on the round and none at the tip, and a corner it never saw leaves none at all. Rounded so, the
+/// corner is what the part's other corners say it is and the scan says nothing against. Where the
+/// round would lie too near the tip to tell (within four `tolerance`s) the corner stays sharp.
+fn rounded_as_the_rest(outline: Outline, points: &[Vec2], tolerance: f64) -> Outline {
+    let n = outline.pieces.len();
+    if n < 5 {
+        return outline;
+    }
+    let line = |k: usize| matches!(outline.pieces[k % n], Piece::Line);
+    let corner = |k: usize| outline.corners[k % n];
+    // The rounds between two straight walls: radius, and which way they turn.
+    let rounds: Vec<(f64, f64)> = (0..n)
+        .filter_map(|k| {
+            let Piece::Arc { center, .. } = outline.pieces[k] else { return None };
+            if !line(k + n - 1) || !line(k + 1) || outline.faces[k].is_none() {
+                return None;
+            }
+            let (before, after) = (unit2(corner(k) - corner(k + n - 1)), unit2(corner(k + 2) - corner(k + 1)));
+            Some((center.dist(corner(k)), before.cross(after).signum()))
+        })
+        .collect();
+    let Some(&(first, turn)) = rounds.first() else { return outline };
+    let radius = rounds.iter().map(|r| r.0).sum::<f64>() / rounds.len() as f64;
+    if rounds.len() < 2 || rounds.iter().any(|&(r, t)| (r - radius).abs() > ROUNDS_ALIKE * radius || t != turn) || !(first > 0.0) {
+        return outline;
+    }
+    let mut out = Outline { corners: Vec::new(), pieces: Vec::new(), faces: Vec::new() };
+    for k in 0..n {
+        let tip = corner(k);
+        // A corner between two walls' straight pieces, turning as the rounds do.
+        let sharp = line(k + n - 1) && line(k) && outline.faces[(k + n - 1) % n].is_some() && outline.faces[k].is_some();
+        let (before, after) = (unit2(tip - corner(k + n - 1)), unit2(corner(k + 1) - tip));
+        let bend = before.cross(after);
+        let rounded = (sharp && bend.signum() == turn && bend.abs() >= CROSSING)
+            .then(|| {
+                // The turn's half angle, how far back along each wall the round starts, and how far
+                // its middle passes from the tip.
+                let half = 0.5 * before.dot(after).clamp(-1.0, 1.0).acos();
+                let back = radius * half.tan();
+                let clear = radius / half.cos() - radius;
+                let room = back < 0.9 * tip.dist(corner(k + n - 1)).min(tip.dist(corner(k + 1)));
+                let at_tip = points.iter().any(|p| p.dist(tip) < 0.5 * clear);
+                (room && clear > 4.0 * tolerance && !at_tip).then(|| {
+                    let (from, to) = (tip - before * back, tip + after * back);
+                    let inward = Vec2::new(-before.y, before.x) * turn;
+                    (from, to, from + inward * radius)
+                })
+            })
+            .flatten();
+        match rounded {
+            Some((from, to, center)) => {
+                out.corners.extend([from, to]);
+                out.pieces.extend([Piece::Arc { center, ccw: turn > 0.0 }, outline.pieces[k]]);
+                out.faces.extend([None, outline.faces[k]]);
+            }
+            None => {
+                out.corners.push(tip);
+                out.pieces.push(outline.pieces[k]);
+                out.faces.push(outline.faces[k]);
+            }
+        }
+    }
+    out
 }
 
 /// Where a prism's slice may be drawn as it runs between two walls: a gap that strays from where
@@ -1647,12 +1724,31 @@ fn nearly_closed(points: &[Vec2]) -> bool {
 /// pieces of one loop that patches the scanner missed broke apart, joined end to end in the order
 /// they go round (each to the nearest end still free, until the nearest is the first piece's own
 /// start) where the gaps between them are together no more than [`NEARLY_CLOSED`] of their length.
-/// A gap whose two ends are on a wall `wall` names (by the scan's triangle) is not counted: the
-/// outline is drawn from the walls, not the cut, so the wall runs on across it; such gaps may
-/// be up to [`BRIDGED_MOST`] of the length the scan holds (a scan with a third of it missing).
-fn loops_of(runs: Vec<crate::section::Run>, wall: &dyn Fn(usize) -> bool) -> Vec<crate::section::Run> {
+/// A gap the walls carry the outline across is not counted: the outline is drawn from the walls,
+/// not the cut, so the walls run on across it. `wall` names the wall a triangle of the scan is on
+/// (its face, and its curve in the slice); a gap is carried when its two ends are on one wall, or
+/// on two that meet within the gap (the corner a missing patch hid), and such gaps may be up to
+/// [`BRIDGED_MOST`] of the length the scan holds (a scan with a third of it missing). Two walls
+/// that do not meet there (a side and a hole near it) are no neighbours in any outline: a piece
+/// never goes on from the one to the other, however near. Where an end is on no wall, the gap is
+/// an ordinary one. Each piece goes on to the end that costs least, a gap the walls carry weighing
+/// as much less as it is allowed to be longer.
+fn loops_of(runs: Vec<crate::section::Run>, wall: &dyn Fn(usize) -> Option<(usize, Wall)>) -> Vec<crate::section::Run> {
     let (mut loops, mut open): (Vec<_>, Vec<_>) = runs.into_iter().partition(|r| r.closed || nearly_closed(&r.points));
     let length = |points: &[Vec2]| points.windows(2).map(|w| w[0].dist(w[1])).sum::<f64>();
+    // Whether the walls carry the outline across the gap from `a` (on the triangle `s`) to `b`
+    // (on `t`): `Some(true)` when they do, `Some(false)` when both ends are on walls that do not
+    // meet there, `None` when an end is on no wall.
+    let carried = |s: Option<&usize>, a: Vec2, t: Option<&usize>, b: Vec2| {
+        let (Some((j, one)), Some((k, other))) = (s.and_then(|&s| wall(s)), t.and_then(|&t| wall(t))) else { return None };
+        if j == k {
+            return Some(true);
+        }
+        let gap = a.dist(b);
+        // A corner as sharp as 30° lies up to about twice the gap from either end.
+        Some(cross(&one, &other, (a + b) * 0.5).is_some_and(|c| c.dist(a) <= 2.0 * gap + 1e-9 && c.dist(b) <= 2.0 * gap + 1e-9))
+    };
+    let weight = NEARLY_CLOSED / BRIDGED_MOST;
     // The longest pieces first: each starts a loop the shorter ones may belong to.
     open.retain(|r| r.points.len() >= 2);
     open.sort_by(|a, b| length(&b.points).total_cmp(&length(&a.points)));
@@ -1660,24 +1756,33 @@ fn loops_of(runs: Vec<crate::section::Run>, wall: &dyn Fn(usize) -> bool) -> Vec
         let mut chain = open.remove(0);
         let Some(&start) = chain.points.first() else { continue };
         let (mut gaps, mut bridged, mut on_scan) = (0.0, 0.0, length(&chain.points));
-        // Both ends of a gap on the walls: the walls bridge it.
-        let on_walls = |a: Option<&usize>, b: Option<&usize>| a.is_some_and(|&t| wall(t)) && b.is_some_and(|&t| wall(t));
         while let Some(&end) = chain.points.last() {
-            // The nearest end of a piece still free, and whether that is the piece's last point.
-            let nearest = open
+            let last = chain.triangles.last();
+            let cost = |to: Vec2, on: Option<&usize>| {
+                let gap = end.dist(to);
+                match carried(last, end, on, to) {
+                    Some(true) => (weight * gap, gap, true),
+                    Some(false) => (f64::INFINITY, gap, false),
+                    None => (gap, gap, false),
+                }
+            };
+            // The end of a piece still free that costs least, and whether that is the piece's last
+            // point; against closing the chain on its own start.
+            let best = open
                 .iter()
                 .enumerate()
-                .filter_map(|(k, r)| Some((k, *r.points.first()?, *r.points.last()?)))
-                .flat_map(|(k, first, last)| [(k, false, end.dist(first)), (k, true, end.dist(last))])
-                .min_by(|a, b| a.2.total_cmp(&b.2));
-            match nearest {
-                Some((k, backwards, gap)) if gap < end.dist(start) => {
+                .filter_map(|(k, r)| Some((k, (*r.points.first()?, r.triangles.first()), (*r.points.last()?, r.triangles.last()))))
+                .flat_map(|(k, first, last)| [(k, false, cost(first.0, first.1)), (k, true, cost(last.0, last.1))])
+                .min_by(|a, b| a.2.0.total_cmp(&b.2.0));
+            let closing = cost(start, chain.triangles.first());
+            match best {
+                Some((k, backwards, (price, gap, carry))) if price < closing.0 => {
                     let mut next = open.remove(k);
                     if backwards {
                         next.points.reverse();
                         next.triangles.reverse();
                     }
-                    if on_walls(chain.triangles.last(), next.triangles.first()) {
+                    if carry {
                         bridged += gap;
                     } else {
                         gaps += gap;
@@ -1687,10 +1792,10 @@ fn loops_of(runs: Vec<crate::section::Run>, wall: &dyn Fn(usize) -> bool) -> Vec
                     chain.triangles.append(&mut next.triangles);
                 }
                 _ => {
-                    if on_walls(chain.triangles.last(), chain.triangles.first()) {
-                        bridged += end.dist(start);
+                    if closing.2 {
+                        bridged += closing.1;
                     } else {
-                        gaps += end.dist(start);
+                        gaps += closing.1;
                     }
                     break;
                 }
@@ -1774,7 +1879,7 @@ pub(crate) fn prism_profile_from(
     // points, or over a patch the scanner missed, comes out as a run just short of closed.
     let sliced = |level: f64| -> (Vec<Outline>, usize) {
         let at = |by: f64| Plane { origin: plane.origin + prism.direction * (level + by), ..plane };
-        let on_wall = |t: usize| owner.get(t).is_some_and(|&k| place.contains_key(&(k as usize)));
+        let on_wall = |t: usize| owner.get(t).and_then(|&k| place.get(&(k as usize))).and_then(|&i| walls.get(i)).copied();
         let runs: Vec<crate::section::Run> = loops_of(crate::section::section_welded(scan, weld, &at(0.0)), &on_wall);
         let loops: Vec<(Vec<Vec2>, Vec<Option<usize>>)> = runs
             .iter()
@@ -2289,7 +2394,9 @@ mod tests {
             let triangles = vec![0; points.len()];
             crate::section::Run { points, triangles, closed: false }
         };
-        let joined = loops_of(vec![piece(100, 150, false), piece(5, 50, true), piece(55, 95, false)], &|_| false);
+        let side = Wall::Line { point: Vec2::ZERO, direction: Vec2::X };
+        let on_side = |t: usize| (t == 0).then_some((0, side));
+        let joined = loops_of(vec![piece(100, 150, false), piece(5, 50, true), piece(55, 95, false)], &|_| None);
         assert_eq!(joined.len(), 1, "one loop");
         let points = &joined[0].points;
         assert_eq!(points.len(), 51 + 46 + 41);
@@ -2304,13 +2411,52 @@ mod tests {
         assert!((turn.abs() - std::f64::consts::TAU).abs() < 1e-6, "{turn}");
         // Half a side missing twice over: 40 of gaps on 120 of scan.
         let broken = || vec![piece(100, 150, false), piece(5, 50, true), piece(70, 85, false)];
-        assert!(loops_of(broken(), &|_| false).is_empty());
+        assert!(loops_of(broken(), &|_| None).is_empty());
         // ... unless the gaps' ends are on the prism's walls, which run on across them.
-        assert_eq!(loops_of(broken(), &|t| t == 0).len(), 1);
+        assert_eq!(loops_of(broken(), &on_side).len(), 1);
         // Two pieces of a side only, the rest of the square missing, are no loop even so.
-        assert!(loops_of(vec![piece(5, 30, false), piece(45, 70, false)], &|t| t == 0).is_empty());
+        assert!(loops_of(vec![piece(5, 30, false), piece(45, 70, false)], &on_side).is_empty());
         let closed = crate::section::Run { points: (0..160).map(|d| at(f64::from(d))).collect(), triangles: vec![0; 160], closed: true };
-        assert_eq!(loops_of(vec![closed.clone()], &|_| false), vec![closed]);
+        assert_eq!(loops_of(vec![closed.clone()], &|_| None), vec![closed]);
+    }
+
+    /// A plate's outline missing at a corner, and a hole beside that corner missing a little of
+    /// its round, the hole's open end nearer the side's than the far side of the corner is. The
+    /// sides meet across the corner and carry the outline over it; a side and the hole do not
+    /// meet, so they carry nothing: two loops, the square and the hole. Joined to the nearest end
+    /// whatever the walls, the hole was taken into the plate's outline and the corner cut off.
+    #[test]
+    fn a_gap_is_bridged_only_by_walls_that_meet_across_it() {
+        let at = |d: f64| match d.rem_euclid(160.0) {
+            d if d < 40.0 => Vec2::new(d, 0.0),
+            d if d < 80.0 => Vec2::new(40.0, d - 40.0),
+            d if d < 120.0 => Vec2::new(120.0 - d, 40.0),
+            d => Vec2::new(0.0, 160.0 - d),
+        };
+        // The square from 20 round to 140 (its corner at the origin missing, too much for a run
+        // nearly closed), each point on the side it lies on (triangles 0 to 3).
+        let points: Vec<Vec2> = (20..=140).map(|d| at(f64::from(d))).collect();
+        let triangles = (20..=140).map(|d| ((d % 160) / 40) as usize).collect();
+        let square = crate::section::Run { points, triangles, closed: false };
+        // The hole about (5, 25), radius 4, from 200° round to 430°: its gap, too wide for a run
+        // nearly closed, faces the corner, its open end 3.8 from the square's (the corner's gap
+        // is 28.3).
+        let (center, radius) = (Vec2::new(5.0, 25.0), 4.0);
+        let points: Vec<Vec2> =
+            (0..=46).map(|i| (200.0 + 5.0 * f64::from(i)).to_radians()).map(|a| center + Vec2::new(a.cos(), a.sin()) * radius).collect();
+        let hole = crate::section::Run { triangles: vec![4; points.len()], points, closed: false };
+        let walls = [
+            Wall::Line { point: Vec2::ZERO, direction: Vec2::X },
+            Wall::Line { point: Vec2::new(40.0, 0.0), direction: Vec2::Y },
+            Wall::Line { point: Vec2::new(0.0, 40.0), direction: Vec2::X },
+            Wall::Line { point: Vec2::ZERO, direction: Vec2::Y },
+            Wall::Circle { center, radius },
+        ];
+        let wall = |t: usize| walls.get(t).map(|w| (t, *w));
+        let loops = loops_of(vec![square, hole], &wall);
+        assert_eq!(loops.len(), 2, "the square and the hole");
+        let sizes: Vec<usize> = loops.iter().map(|l| l.points.len()).collect();
+        assert!(sizes.contains(&121) && sizes.contains(&47), "{sizes:?}");
     }
 
     use crate::reconstruct::read;
@@ -2340,6 +2486,70 @@ mod tests {
         let length: f64 = (0..points.len()).map(|i| points[i].dist(points[(i + 1) % points.len()])).sum();
         let expected = 100.0 + std::f64::consts::TAU * 5.0;
         assert!((length - expected).abs() < 0.1, "{length} against {expected}");
+    }
+
+    /// The same block with the lower 6 of one round never scanned: the round's wall ends along the
+    /// edge of the scan, not at a face, so it runs on to the floor. One prism still, four arcs in its
+    /// profile; before, the round's end split the block into two prisms, the lower one square at
+    /// that corner.
+    #[test]
+    fn a_round_half_missed_still_runs_the_blocks_whole_depth() {
+        let (positions, triangles) = extruded(&rounded_rectangle(40.0, 30.0, 5.0, 0.5), 0.0, 10.0, 16);
+        let missed = |t: &[u32; 3]| {
+            let m = t.iter().fold(Vec3::ZERO, |s, &v| s + positions[v as usize]) / 3.0;
+            m.x > 35.0 && m.y < 5.0 && m.z < 6.0 && (Vec2::new(m.x, m.y).dist(Vec2::new(35.0, 5.0)) - 5.0).abs() < 0.2
+        };
+        let kept: Vec<[u32; 3]> = triangles.iter().copied().filter(|t| !missed(t)).collect();
+        assert!(kept.len() < triangles.len(), "some of the round taken away");
+        let scan = Scan::new(&positions, &kept);
+        let outcome = find_all(&scan, &Options::default(), &|| false);
+        let reading = read(&scan, &outcome);
+        assert_eq!(reading.prisms.len(), 1, "{:?}", reading.prisms);
+        let prism = &reading.prisms[0];
+        assert!((prism.depth() - 10.0).abs() < 0.05, "{prism:?}");
+        let (_, outlines) = prism_profile(&scan, &outcome, &reading, prism).unwrap();
+        let o = &outlines[0];
+        let lines = o.pieces.iter().filter(|p| **p == Piece::Line).count();
+        assert_eq!((lines, o.pieces.len() - lines), (4, 4), "{o:?}");
+    }
+
+    /// The block with one round never scanned at all, top to bottom: the corner there is rounded
+    /// as the other three are, R 5, since no point of the slice lies at its tip. The same block
+    /// made with that corner sharp, and scanned, keeps it sharp: the slice runs into the tip.
+    #[test]
+    fn a_corner_the_scanner_missed_is_rounded_as_the_others_and_a_sharp_one_it_saw_stays_sharp() {
+        let profile_of = |positions: &[Vec3], triangles: &[[u32; 3]]| {
+            let scan = Scan::new(positions, triangles);
+            let outcome = find_all(&scan, &Options::default(), &|| false);
+            let reading = read(&scan, &outcome);
+            let prism = reading.prisms.first().cloned().expect("a prism");
+            let (plane, outlines) = prism_profile(&scan, &outcome, &reading, &prism).unwrap();
+            // The corner's tip, (40, 0), in the sketch's own frame.
+            let tip = plane.to_local(Vec3::new(40.0, 0.0, 5.0));
+            (outlines.into_iter().next().expect("an outline"), tip)
+        };
+        let arcs = |o: &Outline| o.pieces.iter().filter(|p| matches!(p, Piece::Arc { .. })).count();
+        let (positions, triangles) = extruded(&rounded_rectangle(40.0, 30.0, 5.0, 0.5), 0.0, 10.0, 16);
+        let missed = |t: &[u32; 3]| {
+            let m = t.iter().fold(Vec3::ZERO, |s, &v| s + positions[v as usize]) / 3.0;
+            m.x > 35.0 && m.y < 5.0 && (Vec2::new(m.x, m.y).dist(Vec2::new(35.0, 5.0)) - 5.0).abs() < 0.2
+        };
+        let kept: Vec<[u32; 3]> = triangles.iter().copied().filter(|t| !missed(t)).collect();
+        let (o, tip) = profile_of(&positions, &kept);
+        assert_eq!(arcs(&o), 4, "{o:?}");
+        // The rounded corner where the round was: its middle 5 (√2 - 1) in from the tip.
+        let nearest = ring(&o).iter().map(|p| p.dist(tip)).fold(f64::INFINITY, f64::min);
+        assert!((nearest - 5.0 * (2f64.sqrt() - 1.0)).abs() < 0.1, "the corner is rounded R 5: {nearest}");
+
+        // Three corners rounded and the one at (40, 0) sharp, scanned whole.
+        let mut outline: Vec<[f64; 2]> = rounded_rectangle(40.0, 30.0, 5.0, 0.5);
+        let first = outline.iter().position(|p| p[0] > 35.0 + 1e-9 && p[1] < 5.0 - 1e-9).expect("the round's points");
+        outline.retain(|p| !(p[0] > 35.0 + 1e-9 && p[1] < 5.0 - 1e-9));
+        outline.insert(first, [40.0, 0.0]);
+        let (positions, triangles) = extruded(&outline, 0.0, 10.0, 16);
+        let (o, tip) = profile_of(&positions, &triangles);
+        assert_eq!(arcs(&o), 3, "{o:?}");
+        assert!(o.corners.iter().any(|c| c.dist(tip) < 0.05), "the sharp corner kept: {o:?}");
     }
 
     /// Walls a scan leaves slightly off: a side 0.2° off square to the largest, turned about the

@@ -793,6 +793,7 @@ fn scan_repeat(r: &reconstruct::Repeat) -> ScanRepeat {
     let mut out = ScanRepeat {
         kind: format!("{:?}", r.kind).to_lowercase(),
         members: r.members.clone(),
+        places: r.places,
         layout: layout_name(&r.layout).into(),
         step: None,
         angle: None,
@@ -2329,7 +2330,7 @@ pub(super) fn pattern_it(s: &mut Session, p: &Value) -> Result<Value> {
             .or_else(|| s.doc.features.iter().rev().find(|f| f.name == name).map(|f| f.name.clone()))
             .ok_or_else(|| bad(cmd, format!("there is no `{name}`: extrude prism {k} first with Extrude It")))?;
         let solid = built_body(s, &found.scan, &json!({}), cmd)?;
-        let count = repeat.members.len();
+        let count = repeat.places;
         let feature = repeat_feature(s, cmd, &feature_name, count, &repeat.layout)?;
         return reply(ScanBuildResult {
             body: found.scan.clone(),
@@ -2447,6 +2448,21 @@ fn repeat_feature(s: &mut Session, cmd: &str, feature_name: &str, count: usize, 
 /// tangentially into each other (a prism's end, its outline of lines and arcs) are one chain, and
 /// a round cannot stop part way along one, so each chain is filleted whole, at the radius measured
 /// most often along it: one Fillet for each radius, all one undo step.
+/// The point half way along a polyline by its length (a straight edge's line is its two ends,
+/// and either end is where it meets the next edge).
+fn halfway_along(line: &[Vec3]) -> Option<Vec3> {
+    let total: f64 = line.windows(2).map(|w| w[0].dist(w[1])).sum();
+    let mut left = 0.5 * total;
+    for w in line.windows(2) {
+        let step = w[0].dist(w[1]);
+        if step >= left && step > 0.0 {
+            return Some(w[0] + (w[1] - w[0]) * (left / step));
+        }
+        left -= step;
+    }
+    line.first().copied()
+}
+
 pub(super) fn fillet_it(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.fillet_it";
     let view = view(s, p, cmd, false)?;
@@ -2489,9 +2505,13 @@ pub(super) fn fillet_it(s: &mut Session, p: &Value) -> Result<Value> {
             continue;
         };
         let Some(&e) = edges.first() else { continue };
+        // A point on the body's own edge: the one read off the scan's faces is where those faces
+        // meet, which the body's edge may sit a little off, nearer another edge or farther than
+        // Fillet's pick reaches (T-LESS 19: no edge there).
+        let on_edge = surface.edges.get(e).and_then(|line| halfway_along(line)).map_or(edge, at);
         match chains.iter_mut().find(|c| c.0.contains(&e)) {
             Some(chain) => chain.2.push(measured.radius),
-            None => chains.push((surface.tangent_chain(e, 2f64.to_radians()), edge, vec![measured.radius])),
+            None => chains.push((surface.tangent_chain(e, 2f64.to_radians()), on_edge, vec![measured.radius])),
         }
     }
     if chains.is_empty() {

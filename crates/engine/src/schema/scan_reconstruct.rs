@@ -237,6 +237,10 @@ pub struct ScanRepeat {
     /// The kind of shape, and the shapes (by Find All's numbers) in order along the layout.
     pub kind: String,
     pub members: Vec<usize>,
+    /// How many places the layout has: the members' count, or more for a ring of holes that runs
+    /// on across places the scanner never saw (the pattern fills them).
+    #[serde(default)]
+    pub places: usize,
     /// linear, circular or grid.
     pub layout: String,
     /// A linear repeat's step, a circular one's angle (degrees) and axis, a grid's two steps and
