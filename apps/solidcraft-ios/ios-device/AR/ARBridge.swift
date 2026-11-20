@@ -95,12 +95,14 @@ private final class Bridge: NSObject, ARSessionDelegate, ARCoachingOverlayViewDe
     func sessionWasInterrupted(_ session: ARSession) { interrupted = true }
 
     func sessionInterruptionEnded(_ session: ARSession) {
+        // ARKit carries on with the room it knew: it relocalizes (tracking is limited with the
+        // reason .relocalizing until it recognizes where it is), and the world's origin is where
+        // it was, so the model stays where it was put. The coaching overlay asks the user to
+        // point at where they were, and offers a reset if that does not work.
         interrupted = false
-        // Tracking starts again from scratch: what was placed is put down again by the user.
-        if running { start() }
     }
 
-    func sessionShouldAttemptRelocalization(_ session: ARSession) -> Bool { false }
+    func sessionShouldAttemptRelocalization(_ session: ARSession) -> Bool { true }
 
     // MARK: ARCoachingOverlayViewDelegate
 

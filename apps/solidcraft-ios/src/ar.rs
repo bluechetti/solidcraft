@@ -313,7 +313,10 @@ impl State {
         let camera_ms = started.elapsed().as_secs_f64() * 1e3;
         // The model from ARKit's camera.
         let mut model_drawn = false;
-        if let (Some(seen), Some(placed), Some(source)) = (seen.as_ref(), self.placed, self.source.as_ref()) {
+        // Not while ARKit is still finding the room it knew (after an interruption): until it
+        // has, the room's origin is not where the model was put.
+        let relocalizing = seen.as_ref().is_some_and(|s| s.tracking == 1 && s.reason == 4);
+        if !relocalizing && let (Some(seen), Some(placed), Some(source)) = (seen.as_ref(), self.placed, self.source.as_ref()) {
             model_drawn = draw_model(rs, source, seen, &placed, size_px, &mut self.target);
         }
         let total_ms = started.elapsed().as_secs_f64() * 1e3;
@@ -570,6 +573,7 @@ impl State {
                         Some(s) if s.tracking == 1 => match s.reason {
                             2 => "Move the iPad more slowly.".into(),
                             3 => "Point at a surface with more detail or light.".into(),
+                            4 => "Point the iPad at where it was before, to find the model again.".into(),
                             _ => "Finding the room…".into(),
                         },
                         Some(_) if self.placed.is_none() => "Tap a surface to put the model there.".into(),
