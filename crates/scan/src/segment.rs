@@ -128,7 +128,9 @@ struct Reading<'a> {
     /// The triangle across each edge (the edge from corner k to the next), or [`NONE`].
     across: Vec<[u32; 3]>,
     middles: Vec<Vec3>,
-    normals: Vec<Option<Vec3>>,
+    /// Each triangle's unit normal, `Vec3::ZERO` for one gone to a line ([`Reading::normal`]):
+    /// an `Option` each was a third larger (8 bytes a triangle, 0.7 GB at 92 million).
+    normals: Vec<Vec3>,
     areas: Vec<f64>,
     /// Each triangle's segment, or [`OPEN`].
     label: Vec<u32>,
@@ -139,10 +141,12 @@ struct Reading<'a> {
 /// Visits of a scan's triangles, by stamp: a triangle is seen in this visit when its stamp is
 /// `now`. Kept apart from the [`Reading`] so that shapes can be grown from one seed on several
 /// threads at once, each with its own.
+/// Stamps of two bytes (all cleared when the count wraps, a few times on a large scan): four, for
+/// the six of them Find All keeps, were 2.2 GB at 92 million triangles.
 #[derive(Default)]
 struct Visits {
-    stamp: Vec<u32>,
-    now: u32,
+    stamp: Vec<u16>,
+    now: u16,
 }
 
 impl Visits {
@@ -151,7 +155,7 @@ impl Visits {
     }
 
     /// A new visit: no triangle is seen in it yet.
-    fn visit(&mut self) -> u32 {
+    fn visit(&mut self) -> u16 {
         self.now = self.now.wrapping_add(1);
         if self.now == 0 {
             self.stamp.fill(0);
@@ -160,7 +164,7 @@ impl Visits {
         self.now
     }
 
-    fn seen(&mut self, t: usize, visit: u32) -> bool {
+    fn seen(&mut self, t: usize, visit: u16) -> bool {
         match self.stamp.get_mut(t) {
             Some(s) if *s == visit => true,
             Some(s) => {
@@ -208,17 +212,22 @@ impl<'a> Reading<'a> {
         self.middles.len()
     }
 
+    /// Triangle `t`'s unit normal; `None` for a triangle gone to a line.
+    fn normal(&self, t: usize) -> Option<Vec3> {
+        self.normals.get(t).copied().filter(|n| *n != Vec3::ZERO)
+    }
+
     /// The triangles across `t`'s edges.
     fn beside(&self, t: usize) -> impl Iterator<Item = usize> + '_ {
         self.across.get(t).into_iter().flatten().filter(|&&n| n != NONE).map(|&n| n as usize)
     }
 
     /// A new visit: no triangle is seen in it yet.
-    fn visit(&mut self) -> u32 {
+    fn visit(&mut self) -> u16 {
         self.visits.visit()
     }
 
-    fn seen(&mut self, t: usize, visit: u32) -> bool {
+    fn seen(&mut self, t: usize, visit: u16) -> bool {
         self.visits.seen(t, visit)
     }
 
@@ -244,7 +253,7 @@ impl<'a> Reading<'a> {
                     return found;
                 }
                 let crease = smooth
-                    && match (self.normals[t], self.normals[n]) {
+                    && match (self.normal(t), self.normal(n)) {
                         (Some(x), Some(y)) => x.dot(y) < cos,
                         _ => true,
                     };
@@ -292,7 +301,7 @@ impl<'a> Reading<'a> {
         let mut head = 0;
         while let Some(&t) = found.get(head) {
             head += 1;
-            let (from, a) = (self.middles[t], self.normals[t]);
+            let (from, a) = (self.middles[t], self.normal(t));
             for k in 0..3 {
                 let n = self.across[t][k];
                 if n == NONE {
@@ -306,7 +315,7 @@ impl<'a> Reading<'a> {
                 if !corners.iter().all(|p| shape.distance(*p).abs() <= tolerance) {
                     continue;
                 }
-                let (to, b) = (self.middles[n], self.normals[n]);
+                let (to, b) = (self.middles[n], self.normal(n));
                 if let (Some(b), Some(m)) = (b, shape.normal_at(to))
                     && b.dot(m).abs() < cos
                 {
@@ -342,7 +351,7 @@ impl<'a> Reading<'a> {
         let mut offs = Vec::new();
         for &t in region {
             for n in self.beside(t).filter(|&n| n > t && self.visits.stamp.get(n) == Some(&visit)) {
-                let (Some(a), Some(b)) = (self.normals[t], self.normals[n]) else { continue };
+                let (Some(a), Some(b)) = (self.normal(t), self.normal(n)) else { continue };
                 let (Some(u), Some(v)) = (shape.normal_at(self.middles[t]), shape.normal_at(self.middles[n])) else { continue };
                 offs.push((turn(a, b) - turn(u, v)).abs());
             }
@@ -376,8 +385,8 @@ impl<'a> Reading<'a> {
     }
 }
 
-/// Each triangle's middle, unit normal (none for a triangle gone to a line) and area.
-type Geometry = (Vec<Vec3>, Vec<Option<Vec3>>, Vec<f64>);
+/// Each triangle's middle, unit normal (`Vec3::ZERO` for a triangle gone to a line) and area.
+type Geometry = (Vec<Vec3>, Vec<Vec3>, Vec<f64>);
 
 fn geometry(scan: &Scan) -> Geometry {
     let n = scan.triangle_count();
@@ -387,12 +396,12 @@ fn geometry(scan: &Scan) -> Geometry {
             Some([a, b, c]) => {
                 let cross = (b - a).cross(c - a);
                 middles.push((a + b + c) / 3.0);
-                normals.push(cross.normalized());
+                normals.push(cross.normalized().unwrap_or(Vec3::ZERO));
                 areas.push(cross.len() / 2.0);
             }
             None => {
                 middles.push(Vec3::ZERO);
-                normals.push(None);
+                normals.push(Vec3::ZERO);
                 areas.push(0.0);
             }
         }
@@ -580,7 +589,7 @@ fn depths(reading: &Reading) -> Vec<u32> {
     for (t, slot) in depth.iter_mut().enumerate() {
         let edge = reading.across[t].iter().any(|&a| {
             a == NONE
-                || match (reading.normals[t], reading.normals[a as usize]) {
+                || match (reading.normal(t), reading.normal(a as usize)) {
                     (Some(x), Some(y)) => x.dot(y) < cos,
                     _ => true,
                 }
@@ -958,15 +967,16 @@ fn shapes_on(
 
     // Seeds, deepest first.
     let depth = depths(reading);
-    let mut order: Vec<usize> = (0..n).filter(|&t| reading.areas[t] > 0.0).collect();
-    order.sort_by_key(|&t| (std::cmp::Reverse(depth[t]), t));
+    // As u32 (a scan's triangles are numbered so): half the memory of usize, 0.4 GB at 92 million.
+    let mut order: Vec<u32> = (0..n).filter(|&t| reading.areas[t] > 0.0).map(|t| t as u32).collect();
+    order.sort_by_key(|&t| (std::cmp::Reverse(depth[t as usize]), t));
     let mut tried = vec![false; n];
     // Each kind's visits, kept from seed to seed (one stamp array a kind, not one a seed).
     let kind_visits: Vec<std::sync::Mutex<Visits>> = KINDS.iter().map(|_| std::sync::Mutex::new(Visits::new(n))).collect();
     let mut shapes: Vec<(Shape, Vec<usize>)> = Vec::new();
     let mut seeds = 0usize;
     let mut stopped = false;
-    for &seed in &order {
+    for seed in order.iter().map(|&t| t as usize) {
         if seeds >= options.maximum_seeds || give_up.is_some_and(|k| seeds >= k && found_area < FOUND_NOTHING * total) {
             break;
         }
@@ -1075,7 +1085,7 @@ fn finished(
     let outward = crate::reconstruct::outward(&scan);
     for segment in &mut segments {
         if let Some(Shape::Plane { point, normal }) = segment.shape {
-            let facing: f64 = segment.triangles.iter().filter_map(|&t| reading.normals[t].map(|n| n.dot(normal) * reading.areas[t])).sum();
+            let facing: f64 = segment.triangles.iter().filter_map(|&t| reading.normal(t).map(|n| n.dot(normal) * reading.areas[t])).sum();
             if facing * outward < 0.0 {
                 segment.shape = Some(Shape::Plane { point, normal: -normal });
             }
@@ -1112,7 +1122,7 @@ fn retaken(
             let mut front: Vec<usize> = shapes[id].1.clone();
             let mut taken = Vec::new();
             while let Some(t) = front.pop() {
-                let (from, a) = (reading.middles[t], reading.normals[t]);
+                let (from, a) = (reading.middles[t], reading.normal(t));
                 for k in 0..3 {
                     let n = reading.across[t][k];
                     if n == NONE {
@@ -1127,7 +1137,7 @@ fn retaken(
                     if !(here <= tolerance && here < worst(reading, n, &shapes[owner as usize].0)) {
                         continue;
                     }
-                    let (to, b) = (reading.middles[n], reading.normals[n]);
+                    let (to, b) = (reading.middles[n], reading.normal(n));
                     if let (Some(b), Some(m)) = (b, shape.normal_at(to))
                         && b.dot(m).abs() < cos
                     {
