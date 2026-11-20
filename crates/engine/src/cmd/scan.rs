@@ -1157,6 +1157,9 @@ pub const PASS_SHARE: f64 = 0.95;
 pub const STRAY_SHARE: f64 = 0.001;
 /// How many tolerances apart counts as far off.
 const FAR_TOLERANCES: f64 = 3.0;
+/// A region of the scan beyond the tolerance this many of its triangles' edges wide (as a square)
+/// is a feature the model has wrong, not noise ([`why_not`]).
+const FEATURE_EDGES: f64 = 5.0;
 /// The coarsest a model is meshed to be measured against, mm.
 const FINE_CHORD: f64 = 0.001;
 
@@ -1401,11 +1404,23 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
     });
     let within_all = d.within * d.measured as f64 / (d.measured + d.unmatched).max(1) as f64;
     let far_off = solidcraft_scan::deviation::far_share(&d.values, far);
-    let why_not = why_not(within_all, far_off, d.unmatched, d.measured + d.unmatched, borne.as_ref(), far, &model_name);
-    let at = |i: Option<usize>| i.and_then(|i| Some((*mesh.positions.get(i)?, *d.values.get(i)?)));
-    let (max_above_at, max_below_at) = (at(d.max_above_at), at(d.max_below_at));
     // How much lies beyond the tolerance, and where: the volume worn off or added, region by region.
     let beyond = solidcraft_scan::deviation::beyond(&mesh.positions, &mesh.triangles, &faced, tolerance);
+    // A region beyond the tolerance a feature wide: noise past it falls on scattered points, a few
+    // triangles at most (0.64 mm² at the most on the benchmark's scans read right, 0.5 mm
+    // triangles); a feature missing or of another shape, however shallow against the far limit,
+    // lies off all along it (a 2 mm chamfer left out at 0.3 mm of noise: 17.8 mm², 1.4 mm deep
+    // where far is 2.6, passed on its share alone).
+    let edge = solidcraft_scan::remesh::typical_edge(&mesh.scan());
+    let wide = beyond
+        .regions
+        .iter()
+        .filter(|r| r.area > (FEATURE_EDGES * edge).powi(2))
+        .max_by(|a, b| a.area.total_cmp(&b.area))
+        .and_then(|r| Some((r.area, *mesh.positions.get(r.at)?)));
+    let why_not = why_not(within_all, far_off, d.unmatched, d.measured + d.unmatched, borne.as_ref(), far, wide, &model_name);
+    let at = |i: Option<usize>| i.and_then(|i| Some((*mesh.positions.get(i)?, *d.values.get(i)?)));
+    let (max_above_at, max_below_at) = (at(d.max_above_at), at(d.max_below_at));
     let regions: Vec<ScanDeviationRegion> = beyond
         .regions
         .iter()
@@ -1487,6 +1502,7 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
 /// [`PASS_SHARE`] of all the scan's points within the tolerance of the model and as much of the
 /// model's surface with the scan within the tolerance of it, and no more than [`STRAY_SHARE`] of
 /// either farther than `far` from the other.
+#[allow(clippy::too_many_arguments)]
 fn why_not(
     within_all: f64,
     beyond: f64,
@@ -1494,10 +1510,17 @@ fn why_not(
     points: usize,
     borne: Option<&solidcraft_scan::deviation::Borne>,
     far: f64,
+    wide: Option<(f64, Vec3)>,
     model: &str,
 ) -> Option<String> {
     let percent = |share: f64| format!("{:.1} %", 100.0 * share);
     let mut why = Vec::new();
+    if let Some((area, at)) = wide {
+        why.push(format!(
+            "a region of the scan {area:.1} mm² wide, at [{:.2}, {:.2}, {:.2}], lies beyond the tolerance of `{model}` all over: a feature there is missing from the model or of another shape (see regions)",
+            at.x, at.y, at.z
+        ));
+    }
     if !(within_all >= PASS_SHARE) {
         let far = unmatched as f64 / points.max(1) as f64;
         why.push(if far > 1.0 - PASS_SHARE {
