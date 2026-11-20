@@ -20,6 +20,7 @@ use std::ffi::{CStr, CString, c_char};
 
 use eframe::{egui_wgpu, wgpu};
 use solidcraft_ui_egui::SolveApp;
+use solidcraft_ui_kit::container::{Container, Surface};
 use solidcraft_viewport_gpu::view::{Renderer, ViewTarget};
 
 type Mat4 = [[f64; 4]; 4];
@@ -169,7 +170,7 @@ impl Placed {
     }
 
     /// The contact shadow: the model's footprint (its box seen from above) a little enlarged.
-    fn shadow(&self) -> Option<Shadow> {
+    fn contact_shadow(&self) -> Option<Shadow> {
         let [lo, hi] = self.bounds;
         let corners: Vec<[f64; 3]> = (0..8)
             .map(|i| [if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] }])
@@ -398,13 +399,14 @@ impl State {
             self.timing = [0.0; 2];
         }
         if let Some(seen) = seen.as_ref() {
-            write_uniform(rs, seen, model_drawn, self.placed.and_then(|p| p.shadow()), self.has_depth);
+            write_uniform(rs, seen, model_drawn, self.placed.and_then(|p| p.contact_shadow()), self.has_depth);
         }
         self.bind(rs, model_drawn);
 
         // The whole screen: the picture, and the touches (they go to AR, not the app below).
         let coaching = self.bridge().map(|b| (b.coaching)() == 1).unwrap_or(false);
-        egui::Area::new(egui::Id::unique("ar-view")).order(egui::Order::Foreground).constrain(false).fixed_pos(screen.min).show(ctx, |ui| {
+        // The whole screen, a canvas of the UI kit's (the one outer container), over the app.
+        Container::new(ctx, Surface::Canvas).area(egui::Id::unique("ar-view")).order(egui::Order::Foreground).constrain(false).fixed_pos(screen.min).show(ctx, |ui| {
             let (rect, response) = ui.allocate_exact_size(screen.size(), egui::Sense::click_and_drag());
             // Under the status bar and the home indicator too: egui clips to the safe area.
             let mut painter = ui.painter().clone();
@@ -768,7 +770,10 @@ impl State {
             let r = placed.apply_room(q);
             let c: [f64; 4] = std::array::from_fn(|k| (0..3).map(|j| seen.view_proj[j][k] * r[j]).sum::<f64>() + seen.view_proj[3][k]);
             (c[3] > 1e-6).then(|| {
-                egui::pos2(rect.min.x + ((c[0] / c[3] + 1.0) * 0.5) as f32 * rect.width(), rect.min.y + ((1.0 - c[1] / c[3]) * 0.5) as f32 * rect.height())
+                egui::pos2(
+                    rect.min.x + ((c[0] / c[3] + 1.0) * 0.5) as f32 * rect.width(),
+                    rect.min.y + ((1.0 - c[1] / c[3]) * 0.5) as f32 * rect.height(),
+                )
             })
         };
         let ink = egui::Color32::from_rgb(255, 214, 10);
@@ -793,8 +798,10 @@ impl State {
     fn controls(&mut self, ctx: &egui::Context, screen: egui::Rect, seen: Option<&Seen>, coaching: bool, app: &mut SolveApp) {
         let safe = ctx.content_rect();
         let mut leave = false;
-        egui::Area::new(egui::Id::unique("ar-controls")).order(egui::Order::Tooltip).fixed_pos(safe.min + egui::vec2(16.0, 16.0)).show(ctx, |ui| {
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
+        let container = Container::new(ctx, Surface::Popup);
+        container.area(egui::Id::unique("ar-controls")).order(egui::Order::Tooltip).fixed_pos(safe.min + egui::vec2(16.0, 16.0)).show(ctx, |ui| {
+            let frame = Container::popup_frame(ui.style());
+            container.show_frame(ui, frame, safe, |ui| {
                 ui.horizontal(|ui| {
                     if ui.button("Done").clicked() {
                         leave = true;
@@ -1504,7 +1511,7 @@ mod tests {
             bounds: [[0.0; 3], [200.0, 120.0, 80.0]],
         }
         .with_anchor([0.3, 0.75, -0.5]);
-        let Some(sh) = p.shadow() else { panic!("a shadow") };
+        let Some(sh) = p.contact_shadow() else { panic!("a shadow") };
         assert!(close(sh.middle, [0.3, 0.75, -0.5]), "{sh:?}");
         let r: Vec<f64> = sh.axes.iter().map(|a| (a[0] * a[0] + a[1] * a[1]).sqrt()).collect();
         assert!(r.iter().any(|r| *r > 0.1 && *r < 0.13) && r.iter().any(|r| *r > 0.06 && *r < 0.09), "{r:?}");

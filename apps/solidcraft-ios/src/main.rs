@@ -281,7 +281,7 @@ impl eframe::App for App {
             let ctx = ui.ctx().clone();
             if !self.ar.on {
                 let at = safe.right_bottom() - egui::vec2(72.0, 64.0);
-                egui::Area::new(egui::Id::unique("ar-button")).order(egui::Order::Foreground).fixed_pos(at).show(&ctx, |ui| {
+                solidcraft_ui_kit::container::Container::new(&ctx, solidcraft_ui_kit::container::Surface::Popup).area(egui::Id::unique("ar-button")).order(egui::Order::Foreground).fixed_pos(at).show(&ctx, |ui| {
                     if ui
                         .add(egui::Button::new(egui::RichText::new("AR").size(18.0)).min_size(egui::vec2(52.0, 44.0)))
                         .on_hover_text("See the design in the room")

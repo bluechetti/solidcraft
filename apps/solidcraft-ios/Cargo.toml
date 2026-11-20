@@ -25,6 +25,7 @@ path = "src/main.rs"
 [dependencies]
 solidcraft-engine = { workspace = true }
 solidcraft-ui-egui = { workspace = true }
+solidcraft-ui-kit = { workspace = true }
 solidcraft-viewport = { workspace = true }
 solidcraft-viewport-gpu = { workspace = true }
 solidcraft-control = { workspace = true }

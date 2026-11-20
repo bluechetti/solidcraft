@@ -6405,6 +6405,7 @@ dependencies = [
  "solidcraft-control",
  "solidcraft-engine",
  "solidcraft-ui-egui",
+ "solidcraft-ui-kit",
  "solidcraft-viewport",
  "solidcraft-viewport-gpu",
 ]
