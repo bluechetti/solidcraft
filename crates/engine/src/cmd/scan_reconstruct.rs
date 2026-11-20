@@ -109,6 +109,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&SHAPE_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
         .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the bar bent along a flat path scan.reconstruct reads (its `pipe`: cylinders for the straight runs, tori of the same tube for the bends, each running on from the one before): the path through their axes sketched as lines and arcs, joined where a run touches a bend, and the bar's circle swept along it with Pipe; one undo step → sketch, feature, solid, operation, lines, arcs, depth (the path's length), fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+    CommandSpec::new("scan.tubes_it", "Tubes It", crate::checked!("scan.tubes_it", fitted_tubes_it))
+        .icon("pipe")
+        .contract(&SHAPE_IT_CONTRACT)
+        .output(output_schema_for::<ScanBuildResult>)
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to join (default: `<scan> Reconstructed`, made new when there is none): the round tubes bent through space scan.reconstruct reads (its `tubes`: tori of one tube radius for the bends, cylinders for the straight stretches, each running on from the one before, in any direction; a manifold's runners): each tube's path a 3D spline through points along its axis (its own sketch, `Tube N Path`), the tube's circle swept along it with Pipe and joined into one body; one undo step → feature (the last), solid, operation, count (tubes swept), depth (their length together), note? (the tubes the kernel could not sweep), fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?}"),
     CommandSpec::new("scan.coil_it", "Coil It", crate::checked!("scan.coil_it", fitted_coil_it))
         .icon("coil")
         .contract(&SHAPE_IT_CONTRACT)
@@ -456,6 +461,8 @@ pub enum Proposal {
     Coil,
     /// A bar bent along a flat path, swept.
     Pipe,
+    /// Round tubes bent through space, each swept.
+    Tubes,
     /// The part as sections, lofted.
     Loft,
     /// The flat chamfers along edges no profile holds, chamfered.
@@ -475,6 +482,7 @@ impl Proposal {
             Proposal::Fillet => "scan.fillet_it",
             Proposal::Coil => "scan.coil_it",
             Proposal::Pipe => "scan.pipe_it",
+            Proposal::Tubes => "scan.tubes_it",
             Proposal::Loft => "scan.loft_it",
             Proposal::Chamfer => "scan.chamfer_it",
             Proposal::Shell => "scan.shell_it",
@@ -485,7 +493,14 @@ impl Proposal {
     /// scan selected.
     pub fn params(&self, body: &str, selected: bool) -> Value {
         let mut p = match *self {
-            Proposal::Revolve | Proposal::Fillet | Proposal::Chamfer | Proposal::Shell | Proposal::Coil | Proposal::Pipe | Proposal::Loft => {
+            Proposal::Revolve
+            | Proposal::Fillet
+            | Proposal::Chamfer
+            | Proposal::Shell
+            | Proposal::Coil
+            | Proposal::Pipe
+            | Proposal::Tubes
+            | Proposal::Loft => {
                 json!({"body": body})
             }
             Proposal::Extrude(k) | Proposal::PatternPrism(k) => json!({"body": body, "prism": k}),
@@ -509,6 +524,9 @@ pub fn proposals(reading: &Reading, built: bool) -> Vec<Proposal> {
     }
     if reading.pipe.is_some() {
         out.push(Proposal::Pipe);
+    }
+    if !reading.tubes.is_empty() {
+        out.push(Proposal::Tubes);
     }
     if reading.loft.is_some() {
         out.push(Proposal::Loft);
@@ -716,6 +734,13 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         Some(format!(
             "the shapes make no prism and no turned part{unread}: build from Fit Plane, Fit Cylinder and Section to Sketch, or with free forms"
         ))
+    } else if let Some(held) = prisms_hold(reading).filter(|&h| h < FREEFORM_HELD && reading.revolve.is_none() && reading.tubes.is_empty()) {
+        let of = if view.selected() { "what is selected" } else { "the scan" };
+        Some(format!(
+            "the prisms read hold only {:.0}% of {of} ({:.0}% of it is in shapes): it is mostly freeform (a casting's or a moulding's surfaces). Extrude It builds its machined faces only; surface the rest with Fit Patches (`scan.fit_patches` on a region selected), a free form (`scan.free_form`) or Wrap Surface (`scan.wrap_surface`)",
+            100.0 * held,
+            100.0 * reading.in_shapes
+        ))
     } else if view.outcome().in_shapes < 0.5 {
         let of = if view.selected() { "what is selected" } else { "the scan" };
         Some(format!("only {:.0}% of {of} is in shapes: the rest is freeform, for free forms", 100.0 * view.outcome().in_shapes))
@@ -740,10 +765,27 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         prism_repeats: reading.prism_repeats.iter().map(scan_repeat).collect(),
         coil: reading.coil.as_ref().map(shapes::coil_of),
         pipe: reading.pipe.as_ref().map(shapes::pipe_of),
+        tubes: reading.tubes.iter().map(shapes::tube_of).collect(),
         loft: reading.loft.as_ref().map(shapes::loft_of),
         note,
         param_warnings: Vec::new(),
     })
+}
+
+/// Below this share of the scan held by the prisms read, the part is mostly freeform.
+const FREEFORM_HELD: f64 = 0.1;
+
+/// The share of the scan the prisms read hold (their walls and ends), from the shapes' share of
+/// it: `None` with no prism.
+fn prisms_hold(reading: &reconstruct::Reading) -> Option<f64> {
+    if reading.prisms.is_empty() || !(reading.in_shapes > 0.0) {
+        return None;
+    }
+    let held: std::collections::BTreeSet<usize> = reading.prisms.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).copied().collect();
+    let area = |k: &usize| reading.faces.get(*k).map_or(0.0, |f| f.area);
+    let shapes: f64 = reading.faces.iter().map(|f| f.area).sum();
+    let total = shapes / reading.in_shapes;
+    (total > 0.0).then(|| held.iter().map(area).sum::<f64>() / total)
 }
 
 /// A repeat as the reply lists it.
@@ -1231,6 +1273,9 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         profile::prism_profile(&view.scan(positions, triangles), view.outcome(), reading, prism).map_err(|e| bad(cmd, e))?
     };
     let (operation, solid, how) = into_params(s, &found.scan, p, cmd)?;
+    // A prism joined to the body that touches it only along an edge (a cylinder head's boss
+    // meeting its flange at a corner) is kept in the one body, not made a body of its own.
+    let operation = if how == "join" { merged(operation, json!({"touching": "one_body"})) } else { operation };
     // A prism joined to the body already built meets it where the scan has them meet, exactly:
     // corners within the scan's tolerance of the body's put on it.
     let mut outlines = outlines;
@@ -1364,6 +1409,18 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         Some(made) => made,
         None => build(s, &outlines, &mut drawn)?,
     };
+    // A prism whose profile is in pieces (a cylinder head's gasket flange in two lobes) is
+    // extruded into a body for each, and a prism joined to a body it does not touch (a boss the
+    // scan shows apart from the flange, the casting between them freeform) into a body of its
+    // own: each is joined into the one the steps after it build on (a join keeps pieces that
+    // touch nothing in one body), so they are measured against the scan together, not left as
+    // bodies of their own.
+    if let Some(made) = feature.get("created_bodies").and_then(Value::as_array) {
+        let others: Vec<String> = made.iter().filter_map(Value::as_str).filter(|b| *b != solid).map(str::to_owned).collect();
+        if !others.is_empty() && s.model.state().body(&solid).is_some() {
+            run(s, "solid.combine", json!({"operation": "join", "target": solid, "tools": others, "name": format!("{name} Pieces")}))?;
+        }
+    }
     if let (Some(before), Some(after)) = (volume_before, held(s))
         && after - before <= skin
     {
@@ -2503,6 +2560,7 @@ fitted!(
     fitted_hole_it => hole_it,
     fitted_loft_it => loft_it,
     fitted_pipe_it => pipe_it,
+    fitted_tubes_it => tubes_it,
     fitted_coil_it => coil_it,
     fitted_pattern_it => pattern_it,
     fitted_fillet_it => fillet_it,
@@ -2512,7 +2570,7 @@ fitted!(
 
 #[path = "scan_reconstruct_shapes.rs"]
 mod shapes;
-use shapes::{coil_it, loft_it, pipe_it};
+use shapes::{coil_it, loft_it, pipe_it, tubes_it};
 
 #[path = "scan_reconstruct_rest.rs"]
 mod rest;

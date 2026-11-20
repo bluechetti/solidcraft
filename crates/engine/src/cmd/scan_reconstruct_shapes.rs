@@ -11,7 +11,7 @@ use solidcraft_scan::pipe::Piece;
 
 use super::{View, at, into_params, merged, reply, run, view};
 use crate::params::bad;
-use crate::schema::scan_reconstruct::{ScanBuildResult, ScanCoil, ScanLoft, ScanLoftStation, ScanPipe};
+use crate::schema::scan_reconstruct::{ScanBuildResult, ScanCoil, ScanLoft, ScanLoftStation, ScanPipe, ScanTube};
 use crate::{EngineError, Result, Session};
 
 fn in_plane(plane: &Plane, p: Vec3) -> [f64; 2] {
@@ -210,6 +210,104 @@ pub(super) fn pipe_it(s: &mut Session, p: &Value) -> Result<Value> {
     )
     .map_err(|e| super::super::refusal::refused(cmd, "the kernel could not sweep the bar along the path the scan gives", &e.to_string()))?;
     built(&view, Some(sketch), feature, solid, how, Some(pipe_of(&pipe).length), lines, pipe.pieces.len() - lines)
+}
+
+/// The fit points of a tube's spline: its path's points no nearer than its radius to the one
+/// kept before (a bend's points every 15° are many more than its curve needs), both ends kept.
+fn tube_points(tube: &solidcraft_scan::tubes::Tube) -> Vec<Vec3> {
+    let mut kept: Vec<Vec3> = Vec::new();
+    for &p in &tube.path {
+        if kept.last().is_none_or(|q| q.dist(p) >= tube.radius) {
+            kept.push(p);
+        }
+    }
+    if let (Some(&end), Some(last)) = (tube.path.last(), kept.last_mut())
+        && *last != end
+    {
+        // the end itself, in place of a point nearer than the radius to it
+        if kept.len() > 2 && kept[kept.len() - 2].dist(end) < 2.0 * tube.radius {
+            if let Some(l) = kept.last_mut() {
+                *l = end;
+            }
+        } else {
+            kept.push(end);
+        }
+    }
+    kept
+}
+
+/// Tubes It: each tube's path a 3D spline through points along its axis, in a sketch of its own,
+/// and the tube's circle swept along it, the first into the body asked (or a new one), the rest
+/// joined to it. A tube the kernel cannot sweep is left out and named in the note.
+pub(super) fn tubes_it(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.tubes_it";
+    let view = view(s, p, cmd, false)?;
+    let tubes = view.reading().tubes.clone();
+    if tubes.is_empty() {
+        return Err(bad(cmd, "Reconstruct reads no round tube bent through space"));
+    }
+    let (operation, solid, how) = into_params(s, &view.found.scan, p, cmd)?;
+    let (mut feature, mut sketch, mut swept, mut length, mut made) = (Value::Null, None, 0, 0.0, false);
+    let mut failed: Vec<String> = Vec::new();
+    for (k, tube) in tubes.iter().enumerate() {
+        let points = tube_points(tube);
+        let (Some(&a), Some(&b)) = (points.first(), points.get(1)) else { continue };
+        let x = (b - a).normalized().unwrap_or(Vec3::X);
+        let y = x.any_perp().normalized().unwrap_or(Vec3::Y);
+        let id = open_sketch(s, &Plane { origin: a, x, y }, &format!("Tube {} Path", k + 1))?;
+        let drawn = (|| -> Result<Vec<String>> {
+            run(s, "sketch.options", json!({"sketch_3d": true}))?;
+            let drawn = run(s, "sketch.spline3d", json!({"points": points.iter().map(|q| at(*q)).collect::<Vec<_>>()}))?;
+            run(s, "sketch.finish", json!({}))?;
+            Ok(curves(&drawn))
+        })();
+        let path = match drawn {
+            Ok(path) => path,
+            Err(e) => {
+                let _ = run(s, "sketch.cancel", json!({}));
+                failed.push(format!("tube {}: {e}", k + 1));
+                continue;
+            }
+        };
+        // The first tube made into the body asked; the rest joined to it.
+        let op = if made { json!({"operation": "join", "targets": [solid]}) } else { operation.clone() };
+        match run(
+            s,
+            "solid.pipe",
+            merged(json!({"path_sketch": id, "path": path, "diameter": format!("{} mm", 2.0 * tube.radius), "name": format!("Tube {}", k + 1)}), op),
+        ) {
+            Ok(done) => {
+                (feature, sketch, made) = (done, Some(id), true);
+                swept += 1;
+                length += tube.length;
+            }
+            Err(e) => failed.push(format!("tube {}: {e}", k + 1)),
+        }
+    }
+    if swept == 0 {
+        return Err(super::super::refusal::refused(cmd, "the kernel could not sweep any tube the scan gives", &failed.join("; ")));
+    }
+    let mut out = built(&view, sketch, feature, solid, how, Some(length), 0, 0)?;
+    if let Some(map) = out.as_object_mut() {
+        map.insert("count".into(), json!(swept));
+        if !failed.is_empty() {
+            map.insert("note".into(), json!(format!("{} of {} tubes swept; not swept: {}", swept, tubes.len(), failed.join("; "))));
+        }
+    }
+    Ok(out)
+}
+
+/// A tube as the reply lists it.
+pub(super) fn tube_of(t: &solidcraft_scan::tubes::Tube) -> ScanTube {
+    ScanTube {
+        diameter: 2.0 * t.radius,
+        length: t.length,
+        start: at(t.path.first().copied().unwrap_or(Vec3::ZERO)),
+        end: at(t.path.last().copied().unwrap_or(Vec3::ZERO)),
+        bends: t.bends,
+        straights: t.straights,
+        faces: t.faces.iter().copied().collect(),
+    }
 }
 
 /// Coil It: the wire's section sketched where it starts, on the plane through the axis, and

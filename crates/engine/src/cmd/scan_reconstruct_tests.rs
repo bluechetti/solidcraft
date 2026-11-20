@@ -107,6 +107,91 @@ fn volume(s: &Session, body: &str) -> f64 {
     s.model.state().body(body).and_then(|b| b.body.volume_at(0.01)).unwrap_or_else(|| panic!("no volume for {body}"))
 }
 
+/// A table: two posts 20 × 24 × 30, set apart so no wall of one lies in a wall of the other, under
+/// a top 100 × 60 × 10. Reconstruct reads the posts as one
+/// prism whose profile is two squares; extruded new, that made a body for each square, and the
+/// steps after it joined only the first (the Artec cylinder head's gasket flange, in two lobes,
+/// left a second body nothing joined). Extrude It joins the pieces into the one body it builds,
+/// whatever prism it starts from: one Reconstructed body, both posts in it.
+#[test]
+fn a_prism_in_two_pieces_is_built_as_one_body() {
+    let mut part = Session::default();
+    run(&mut part, "solid.box", json!({"corner": [5, 0, 0], "length": 20, "width": 24, "height": 30, "body_name": "Part"}));
+    run(&mut part, "solid.box", json!({"corner": [75, 12, 0], "length": 20, "width": 24, "height": 30, "operation": "join", "targets": ["Part"]}));
+    run(&mut part, "solid.box", json!({"corner": [0, -10, 30], "length": 100, "width": 60, "height": 10, "operation": "join", "targets": ["Part"]}));
+    let (s, scan) = scanned_with_noise(&part, "Part", 0.02, "two-posts");
+    let built = format!("{scan} Reconstructed");
+    let mut s = s;
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let prisms = read["prisms"].as_array().unwrap().len();
+    let mut split = 0;
+    for k in 0..prisms {
+        let mut each = Session::new(solidcraft_doc::Document::clone(&s.doc));
+        each.refresh();
+        let made = run(&mut each, "scan.extrude_it", json!({"prism": k}));
+        let pieces = made["feature"]["created_bodies"].as_array().map_or(0, Vec::len);
+        let reconstructed: Vec<String> = each.model.state().bodies.iter().map(|b| b.name.clone()).filter(|n| n.starts_with(&built)).collect();
+        assert_eq!(reconstructed, std::slice::from_ref(&built), "prism {k}: one body, {pieces} pieces made");
+        if pieces > 1 {
+            split += 1;
+            // Both posts, 2 × 20 × 24 × 30 = 28800, to the scan's noise.
+            let v = volume(&each, &built);
+            assert!((v - 28_800.0).abs() < 0.01 * 28_800.0, "prism {k}: {v}");
+        }
+    }
+    assert!(split > 0, "the posts are read as a prism of two pieces: {read}");
+}
+
+/// A crankshaft's journals: three webs 160 × 160 × 20 joined by two round journals Ø 80, 40
+/// long, each rounded into its webs R 6 (tangent, so no crease parts journal from web), and a
+/// rod Ø 40 running on 560 mm, so the part is 700 long. Find All seeds a patch 4 % of the part's
+/// size round each triangle (28 mm here): round a journal's middle that patch takes in the rounds
+/// and the webs, no shape fits it, and every triangle in it was set aside: the Artec crankshaft's
+/// journals, cylinders to 0.04 mm, were read as freeform (13 % of it in shapes). A seed no shape
+/// fits is tried again at half the reach, down to an eighth, as a cylinder, kept where it is
+/// about the patch's size and grows to the full patch's area: each journal is found, Ø 80.
+#[test]
+fn a_crankshafts_journals_rounded_into_their_webs_are_found_as_cylinders() {
+    let mut part = Session::default();
+    run(&mut part, "solid.box", json!({"corner": [0, -80, -80], "length": 20, "width": 160, "height": 160, "body_name": "Part"}));
+    for x in [60, 120] {
+        run(
+            &mut part,
+            "solid.box",
+            json!({"corner": [x, -80, -80], "length": 20, "width": 160, "height": 160, "operation": "join", "targets": ["Part"]}),
+        );
+    }
+    for x in [20, 80] {
+        run(
+            &mut part,
+            "solid.cylinder",
+            json!({"base": [x, 0, 0], "axis": [1, 0, 0], "radius": 40, "height": 40, "operation": "join", "targets": ["Part"]}),
+        );
+    }
+    run(
+        &mut part,
+        "solid.cylinder",
+        json!({"base": [140, 0, 0], "axis": [1, 0, 0], "radius": 20, "height": 560, "operation": "join", "targets": ["Part"]}),
+    );
+    // the four circles where a journal meets a web
+    let rims: Vec<[f64; 3]> = [20.0, 60.0, 80.0, 120.0].iter().map(|&x| [x, 0.0, 40.0]).collect();
+    run(&mut part, "solid.fillet", json!({"edges": rims, "radius": 6}));
+    let (mut s, _) = scanned_with_noise(&part, "Part", 0.02, "crank-journals");
+    let found = run(&mut s, "scan.find_all", json!({}));
+    let journals: Vec<&Value> = found["shapes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|sh| sh["kind"] == "cylinder" && sh["radius"].as_f64().is_some_and(|r| (r - 40.0).abs() < 0.2))
+        .collect();
+    assert!(
+        journals.len() >= 2,
+        "each journal a cylinder Ø 80: {} found; {}",
+        journals.len(),
+        json!(found["shapes"].as_array().unwrap().iter().map(|s| (s["kind"].clone(), s["radius"].clone(), s["area"].clone())).collect::<Vec<_>>())
+    );
+}
+
 /// The scan benchmark's bracket (tests/scan-cases/bracket): an L of a base 60 × 40 × 10 and an
 /// upright 10 × 40 × 30, a hole Ø 8 through each, scanned with noise 0.02. Reconstruct reads the
 /// L as one prism and each plate, holes and all, as a prism of its own; the L holds both plates,
@@ -389,6 +474,7 @@ fn reconstruct_proposes_no_cut_with_nothing_to_cut() {
         prism_repeats: Vec::new(),
         coil: None,
         pipe: None,
+        tubes: Vec::new(),
         loft: None,
     };
     assert!(super::proposals(&reading, false).is_empty());
@@ -1111,6 +1197,39 @@ fn a_bent_bar_is_swept_back_along_its_path_with_pipe_it() {
     assert_eq!(build_all(&mut s), ["scan.pipe_it"], "{read}");
     let v = volume(&s, &format!("{scan} Reconstructed"));
     assert!((v - expected).abs() < 0.01 * expected, "{v} against the bar's {expected}");
+}
+
+/// A Ø 16 tube bent in two planes (along X, a quarter bend R 30 up, a quarter bend R 40 across,
+/// along Y), as a manifold's runner is: no flat path, so no Pipe It; Reconstruct reads one tube
+/// bent through space, and Tubes It sweeps it back along a 3D spline through its axis.
+#[test]
+fn a_tube_bent_in_two_planes_is_swept_back_with_tubes_it() {
+    let mut part = Session::default();
+    run(&mut part, "sketch.create", json!({"plane": "XY", "name": "Path"}));
+    run(&mut part, "sketch.options", json!({"sketch_3d": true}));
+    let mut path: Vec<Value> = Vec::new();
+    for (command, params) in [
+        ("sketch.line3d", json!({"points": [[0, 0, 0], [50, 0, 0]]})),
+        ("sketch.arc3d", json!({"start": [50, 0, 0], "through": [71.21320343559643, 0, 8.786796564403573], "end": [80, 0, 30]})),
+        ("sketch.arc3d", json!({"start": [80, 0, 30], "through": [80, 11.715728752538098, 58.2842712474619], "end": [80, 40, 70]})),
+        ("sketch.line3d", json!({"points": [[80, 40, 70], [80, 100, 70]]})),
+    ] {
+        path.extend(run(&mut part, command, params)["curves"].as_array().unwrap().iter().cloned());
+    }
+    run(&mut part, "sketch.finish", json!({}));
+    let made = run(&mut part, "solid.pipe", json!({"path_sketch": "Path", "path": path, "diameter": 16}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    let expected = volume(&part, &body);
+    let (mut s, scan) = scanned(&part, &body, 1, "bent-tube");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    assert!(read["pipe"].is_null(), "{read}");
+    let tubes = read["tubes"].as_array().unwrap();
+    assert_eq!(tubes.len(), 1, "{read}");
+    assert!((tubes[0]["diameter"].as_f64().unwrap() - 16.0).abs() < 0.1, "{read}");
+    assert_eq!(tubes[0]["bends"].as_u64(), Some(2), "{read}");
+    assert_eq!(build_all(&mut s), ["scan.tubes_it"], "{read}");
+    let v = volume(&s, &format!("{scan} Reconstructed"));
+    assert!((v - expected).abs() < 0.02 * expected, "{v} against the tube's {expected}");
 }
 
 /// A spring: a Ø 4 wire wound Ø 30, 5 turns at 8 a turn. Find All fits short stretches of it as

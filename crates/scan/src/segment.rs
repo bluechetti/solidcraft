@@ -93,6 +93,12 @@ pub struct Outcome {
 
 /// The kinds tried, simplest first.
 const KINDS: [Kind; 5] = [Kind::Plane, Kind::Cylinder, Kind::Sphere, Kind::Cone, Kind::Torus];
+/// The kinds a seed no shape fits at the full reach is tried as at a smaller one: a shaft's
+/// journal, rounded into its webs.
+const SMALLER_KINDS: [Kind; 1] = [Kind::Cylinder];
+/// A cylinder read at a smaller reach is a journal only up to this many times the full reach in
+/// radius.
+const SMALL_ROUND: f64 = 2.0;
 
 /// The points a seed's patch is fitted to, and a growing region each time it is fitted again.
 const PATCH_POINTS: usize = 3_000;
@@ -123,50 +129,22 @@ struct Reading<'a> {
     areas: Vec<f64>,
     /// Each triangle's segment, or [`OPEN`].
     label: Vec<u32>,
-    /// Visits, by stamp: a triangle is seen in this visit when its stamp is `now`.
+    /// Visits, by stamp ([`Visits`]).
+    visits: Visits,
+}
+
+/// Visits of a scan's triangles, by stamp: a triangle is seen in this visit when its stamp is
+/// `now`. Kept apart from the [`Reading`] so that shapes can be grown from one seed on several
+/// threads at once, each with its own.
+#[derive(Default)]
+struct Visits {
     stamp: Vec<u32>,
     now: u32,
 }
 
-impl<'a> Reading<'a> {
-    fn new(scan: Scan<'a>) -> Self {
-        let n = scan.triangle_count();
-        let neighbours = edge_neighbours(&scan);
-        let mut across = vec![[NONE; 3]; n];
-        for (t, edges) in across.iter_mut().enumerate() {
-            let Some(&[a, b, c]) = scan.triangles.get(t) else { continue };
-            for n in neighbours.of(&scan, t) {
-                let Some(other) = scan.triangles.get(n) else { continue };
-                for (k, (p, q)) in [(a, b), (b, c), (c, a)].into_iter().enumerate() {
-                    if edges[k] == NONE && other.contains(&p) && other.contains(&q) {
-                        edges[k] = n as u32;
-                        break;
-                    }
-                }
-            }
-        }
-        let (middles, normals, areas) = geometry(&scan);
-        Reading { scan, across, middles, normals, areas, label: vec![OPEN; n], stamp: vec![0; n], now: 0 }
-    }
-
-    /// The same triangles at `positions` (one for each of the scan's), nothing taken yet.
-    fn on<'b>(&self, positions: &'b [Vec3]) -> Reading<'b>
-    where
-        'a: 'b,
-    {
-        let scan = Scan::new(positions, self.scan.triangles);
-        let (middles, normals, areas) = geometry(&scan);
-        let n = middles.len();
-        Reading { scan, across: self.across.clone(), middles, normals, areas, label: vec![OPEN; n], stamp: vec![0; n], now: 0 }
-    }
-
-    fn count(&self) -> usize {
-        self.middles.len()
-    }
-
-    /// The triangles across `t`'s edges.
-    fn beside(&self, t: usize) -> impl Iterator<Item = usize> + '_ {
-        self.across.get(t).into_iter().flatten().filter(|&&n| n != NONE).map(|&n| n as usize)
+impl Visits {
+    fn new(n: usize) -> Visits {
+        Visits { stamp: vec![0; n], now: 0 }
     }
 
     /// A new visit: no triangle is seen in it yet.
@@ -188,6 +166,57 @@ impl<'a> Reading<'a> {
             }
             None => true,
         }
+    }
+}
+
+impl<'a> Reading<'a> {
+    fn new(scan: Scan<'a>) -> Self {
+        let n = scan.triangle_count();
+        let neighbours = edge_neighbours(&scan);
+        let mut across = vec![[NONE; 3]; n];
+        for (t, edges) in across.iter_mut().enumerate() {
+            let Some(&[a, b, c]) = scan.triangles.get(t) else { continue };
+            for n in neighbours.of(&scan, t) {
+                let Some(other) = scan.triangles.get(n) else { continue };
+                for (k, (p, q)) in [(a, b), (b, c), (c, a)].into_iter().enumerate() {
+                    if edges[k] == NONE && other.contains(&p) && other.contains(&q) {
+                        edges[k] = n as u32;
+                        break;
+                    }
+                }
+            }
+        }
+        let (middles, normals, areas) = geometry(&scan);
+        Reading { scan, across, middles, normals, areas, label: vec![OPEN; n], visits: Visits::new(n) }
+    }
+
+    /// The same triangles at `positions` (one for each of the scan's), nothing taken yet.
+    fn on<'b>(&self, positions: &'b [Vec3]) -> Reading<'b>
+    where
+        'a: 'b,
+    {
+        let scan = Scan::new(positions, self.scan.triangles);
+        let (middles, normals, areas) = geometry(&scan);
+        let n = middles.len();
+        Reading { scan, across: self.across.clone(), middles, normals, areas, label: vec![OPEN; n], visits: Visits::new(n) }
+    }
+
+    fn count(&self) -> usize {
+        self.middles.len()
+    }
+
+    /// The triangles across `t`'s edges.
+    fn beside(&self, t: usize) -> impl Iterator<Item = usize> + '_ {
+        self.across.get(t).into_iter().flatten().filter(|&&n| n != NONE).map(|&n| n as usize)
+    }
+
+    /// A new visit: no triangle is seen in it yet.
+    fn visit(&mut self) -> u32 {
+        self.visits.visit()
+    }
+
+    fn seen(&mut self, t: usize, visit: u32) -> bool {
+        self.visits.seen(t, visit)
     }
 
     fn is_open(&self, t: usize) -> bool {
@@ -247,12 +276,13 @@ impl<'a> Reading<'a> {
     /// The open triangles reached from `seeds` that lie on `shape`: every corner within
     /// `tolerance`, its direction within [`LEAN`] of the shape's, and the turn from the triangle
     /// it is reached from within `bend` of the shape's turn there.
-    fn grow(&mut self, seeds: &[usize], shape: &Shape, tolerance: f64, bend: f64) -> Vec<usize> {
-        let visit = self.visit();
+    /// With the visits `visits` (a thread's own).
+    fn grow_in(&self, visits: &mut Visits, seeds: &[usize], shape: &Shape, tolerance: f64, bend: f64) -> Vec<usize> {
+        let visit = visits.visit();
         let cos = LEAN.cos();
         let mut found = Vec::new();
         for &s in seeds {
-            if self.is_open(s) && !self.seen(s, visit) {
+            if self.is_open(s) && !visits.seen(s, visit) {
                 found.push(s);
             }
         }
@@ -266,7 +296,7 @@ impl<'a> Reading<'a> {
                     continue;
                 }
                 let n = n as usize;
-                if !self.is_open(n) || self.stamp[n] == visit {
+                if !self.is_open(n) || visits.stamp.get(n) == Some(&visit) {
                     continue;
                 }
                 let Some(corners) = self.scan.corners(n) else { continue };
@@ -285,7 +315,9 @@ impl<'a> Reading<'a> {
                         continue;
                     }
                 }
-                self.stamp[n] = visit;
+                if let Some(st) = visits.stamp.get_mut(n) {
+                    *st = visit;
+                }
                 found.push(n);
             }
         }
@@ -299,14 +331,14 @@ impl<'a> Reading<'a> {
     fn bend_slack(&mut self, region: &[usize], shape: &Shape) -> f64 {
         let visit = self.visit();
         for &t in region {
-            if let Some(s) = self.stamp.get_mut(t) {
+            if let Some(s) = self.visits.stamp.get_mut(t) {
                 *s = visit;
             }
         }
         let turn = |x: Vec3, y: Vec3| x.dot(y).abs().min(1.0).acos();
         let mut offs = Vec::new();
         for &t in region {
-            for n in self.beside(t).filter(|&n| n > t && self.stamp[n] == visit) {
+            for n in self.beside(t).filter(|&n| n > t && self.visits.stamp.get(n) == Some(&visit)) {
                 let (Some(a), Some(b)) = (self.normals[t], self.normals[n]) else { continue };
                 let (Some(u), Some(v)) = (shape.normal_at(self.middles[t]), shape.normal_at(self.middles[n])) else { continue };
                 offs.push((turn(a, b) - turn(u, v)).abs());
@@ -521,7 +553,15 @@ fn depths(reading: &Reading) -> Vec<u32> {
 /// tenth, then once more against the final shape. `None` when no shape of the kind fits the patch.
 /// Grown by distance and direction alone: a shape that runs on over a neighbour in tangency gives
 /// it back when the neighbour's own shape retakes it ([`retaken`]).
-fn grow_kind(reading: &mut Reading, seed: usize, patch: &[usize], kind: Kind, tolerance: f64, size: f64) -> Option<(Shape, Vec<usize>)> {
+fn grow_kind(
+    reading: &Reading,
+    visits: &mut Visits,
+    seed: usize,
+    patch: &[usize],
+    kind: Kind,
+    tolerance: f64,
+    size: f64,
+) -> Option<(Shape, Vec<usize>)> {
     let mut shape = fit::shape_of_sampled(&reading.scan, patch, kind, PATCH_POINTS)?;
     // The patch must be the shape before it is grown: a kind that cannot follow it strays.
     if reading.rms(patch, &shape) > tolerance || degenerate(&shape, reading.middles[seed], reading.across_of(patch), size) && kind != Kind::Plane {
@@ -529,7 +569,7 @@ fn grow_kind(reading: &mut Reading, seed: usize, patch: &[usize], kind: Kind, to
     }
     let mut region = patch.to_vec();
     for _ in 0..16 {
-        let grown = reading.grow(&[seed], &shape, tolerance, f64::INFINITY);
+        let grown = reading.grow_in(visits, &[seed], &shape, tolerance, f64::INFINITY);
         let more = grown.len() * 10 >= region.len() * 11;
         let refit = fit::refined(&reading.scan, &grown, &shape, GROWING_POINTS);
         region = grown;
@@ -540,7 +580,7 @@ fn grow_kind(reading: &mut Reading, seed: usize, patch: &[usize], kind: Kind, to
             break;
         }
     }
-    let region = reading.grow(&[seed], &shape, tolerance, f64::INFINITY);
+    let region = reading.grow_in(visits, &[seed], &shape, tolerance, f64::INFINITY);
     let shape = fit::refined(&reading.scan, &region, &shape, GROWING_POINTS).unwrap_or(shape);
     if degenerate(&shape, reading.middles[seed], reading.across_of(&region), size) {
         return None;
@@ -737,6 +777,13 @@ fn read(scan: &Scan, options: &Options, cancelled: &dyn Fn() -> bool) -> Outcome
 /// 0.5 mm triangles read 59 planes, 11 cones and 16 tori over 55 %; on the copy, 6 planes and its
 /// holes over 99 %).
 const FOUND_ENOUGH: f64 = 0.9;
+
+/// How many times a seed no shape fits is tried again at half the reach before it is given up:
+/// down to an eighth of [`Options::seed_radius_share`] of the scan's size.
+const SMALLER_REACHES: usize = 3;
+/// A shape read off a smaller patch is kept where it grows to at least this share of the full
+/// patch's area.
+const GROWN_SHARE: f64 = 1.0;
 const SMOOTH_ABOVE: f64 = 0.05;
 /// A noisy scan's first reading stops after this many seeds when they have found less than
 /// [`FOUND_NOTHING`] of its area in shapes: it is read on the copy.
@@ -850,6 +897,8 @@ fn shapes_on(
     let mut order: Vec<usize> = (0..n).filter(|&t| reading.areas[t] > 0.0).collect();
     order.sort_by_key(|&t| (std::cmp::Reverse(depth[t]), t));
     let mut tried = vec![false; n];
+    // Each kind's visits, kept from seed to seed (one stamp array a kind, not one a seed).
+    let kind_visits: Vec<std::sync::Mutex<Visits>> = KINDS.iter().map(|_| std::sync::Mutex::new(Visits::new(n))).collect();
     let mut shapes: Vec<(Shape, Vec<usize>)> = Vec::new();
     let mut seeds = 0usize;
     let mut stopped = false;
@@ -868,23 +917,60 @@ fn shapes_on(
         // the search is (an organic part never reaches 100), so the step says so.
         crate::progress::stage("finding shapes, the scan in shapes so far", (1000.0 * found_area / total.max(f64::MIN_POSITIVE)) as usize, 1000);
         seeds += 1;
-        let patch = reading.seed_patch(seed, reach, options);
-        for &t in &patch {
+        // The seed's patch at the full reach; where no shape fits it (a journal of a long shaft,
+        // its patch taking in the rounds and webs it runs into in tangency), at half the reach,
+        // down to an eighth ([`SMALLER_REACHES`]). Where one fits only the patch it fits is set
+        // aside; where none does, the full patch, as without the retry.
+        let mut found: Option<(Shape, Vec<usize>, f64)> = None;
+        let mut full_area = None;
+        let mut first_patch: Option<Vec<usize>> = None;
+        let mut last_patch = Vec::new();
+        let mut at = reach;
+        for _ in 0..=SMALLER_REACHES {
+            let patch = reading.seed_patch(seed, at, options);
+            if patch.len() < options.seed_triangles / 2 {
+                break;
+            }
+            let patch_area = reading.area_of(&patch);
+            let full = *full_area.get_or_insert(patch_area);
+            // Each kind grown; the one that takes most, or a simpler one taking nearly as much.
+            // At a smaller reach only a cylinder, as a shaft's journal between its webs is: a
+            // flat or organic region tried again would only break into pieces. The kinds are
+            // grown side by side, each with its own visits; kept in the kinds' order.
+            let kinds: &[Kind] = if at == reach { &KINDS } else { &SMALLER_KINDS };
+            let shared: &Reading = reading;
+            let grown: Vec<(Shape, Vec<usize>, f64)> = crate::par::map(kinds.len(), |i| {
+                let (kind, slot) = (kinds.get(i)?, kind_visits.get(i)?);
+                let mut visits = slot.lock().ok()?;
+                let (shape, region) = grow_kind(shared, &mut visits, seed, &patch, *kind, tolerance, size)?;
+                let area = shared.area_of(&region);
+                Some((shape, region, area))
+            })
+            .into_iter()
+            .flatten()
+            .collect();
+            if first_patch.is_none() {
+                first_patch = Some(patch.clone());
+            }
+            last_patch = patch;
+            let chosen =
+                grown.iter().map(|g| g.2).max_by(f64::total_cmp).and_then(|most| grown.into_iter().find(|g| g.2 >= options.simpler_share * most));
+            // A shape read off a smaller patch must be a round of about the patch's size (a
+            // journal), not a wide curve any small patch of a freeform surface fits, and grow into
+            // a face of the full patch's scale.
+            let small_round = |shape: &Shape| matches!(*shape, Shape::Cylinder { radius, .. } if radius <= SMALL_ROUND * reach);
+            if let Some(g) = chosen.filter(|g| at == reach || (g.2 >= GROWN_SHARE * full && small_round(&g.0))) {
+                found = Some(g);
+                break;
+            }
+            at *= 0.5;
+        }
+        let set_aside = if found.is_some() { last_patch } else { first_patch.unwrap_or(last_patch) };
+        for &t in &set_aside {
             tried[t] = true;
         }
-        if patch.len() < options.seed_triangles / 2 {
-            continue;
-        }
-        // Each kind grown; the one that takes most, or a simpler one taking nearly as much.
-        let mut grown: Vec<(Shape, Vec<usize>, f64)> = Vec::new();
-        for kind in KINDS {
-            if let Some((shape, region)) = grow_kind(reading, seed, &patch, kind, tolerance, size) {
-                let area = reading.area_of(&region);
-                grown.push((shape, region, area));
-            }
-        }
-        let Some(most) = grown.iter().map(|g| g.2).max_by(f64::total_cmp) else { continue };
-        let Some((shape, region, area)) = grown.into_iter().find(|g| g.2 >= options.simpler_share * most) else { continue };
+        tried[seed] = true;
+        let Some((shape, region, area)) = found else { continue };
         if region.len() < options.minimum_triangles || area < least_area {
             continue;
         }

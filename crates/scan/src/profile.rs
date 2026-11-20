@@ -1633,6 +1633,8 @@ pub fn prism_sketch_plane(prism: &Prism) -> Plane {
 const TRY_LEVELS: [f64; 6] = [0.125, -0.125, 0.25, -0.25, 0.375, -0.375];
 /// A run of the cut is a loop when its ends are no further apart than this share of its length.
 const NEARLY_CLOSED: f64 = 0.2;
+/// The most of a loop's gaps the walls may bridge, as a share of what the scan holds of it.
+const BRIDGED_MOST: f64 = 1.0;
 
 /// Whether an open run of a cut all but comes back to where it began.
 fn nearly_closed(points: &[Vec2]) -> bool {
@@ -1645,7 +1647,10 @@ fn nearly_closed(points: &[Vec2]) -> bool {
 /// pieces of one loop that patches the scanner missed broke apart, joined end to end in the order
 /// they go round (each to the nearest end still free, until the nearest is the first piece's own
 /// start) where the gaps between them are together no more than [`NEARLY_CLOSED`] of their length.
-fn loops_of(runs: Vec<crate::section::Run>) -> Vec<crate::section::Run> {
+/// A gap whose two ends are on a wall `wall` names (by the scan's triangle) is not counted: the
+/// outline is drawn from the walls, not the cut, so the wall runs on across it; such gaps may
+/// be up to [`BRIDGED_MOST`] of the length the scan holds (a scan with a third of it missing).
+fn loops_of(runs: Vec<crate::section::Run>, wall: &dyn Fn(usize) -> bool) -> Vec<crate::section::Run> {
     let (mut loops, mut open): (Vec<_>, Vec<_>) = runs.into_iter().partition(|r| r.closed || nearly_closed(&r.points));
     let length = |points: &[Vec2]| points.windows(2).map(|w| w[0].dist(w[1])).sum::<f64>();
     // The longest pieces first: each starts a loop the shorter ones may belong to.
@@ -1654,7 +1659,9 @@ fn loops_of(runs: Vec<crate::section::Run>) -> Vec<crate::section::Run> {
     while !open.is_empty() {
         let mut chain = open.remove(0);
         let Some(&start) = chain.points.first() else { continue };
-        let (mut gaps, mut on_scan) = (0.0, length(&chain.points));
+        let (mut gaps, mut bridged, mut on_scan) = (0.0, 0.0, length(&chain.points));
+        // Both ends of a gap on the walls: the walls bridge it.
+        let on_walls = |a: Option<&usize>, b: Option<&usize>| a.is_some_and(|&t| wall(t)) && b.is_some_and(|&t| wall(t));
         while let Some(&end) = chain.points.last() {
             // The nearest end of a piece still free, and whether that is the piece's last point.
             let nearest = open
@@ -1670,18 +1677,26 @@ fn loops_of(runs: Vec<crate::section::Run>) -> Vec<crate::section::Run> {
                         next.points.reverse();
                         next.triangles.reverse();
                     }
-                    gaps += gap;
+                    if on_walls(chain.triangles.last(), next.triangles.first()) {
+                        bridged += gap;
+                    } else {
+                        gaps += gap;
+                    }
                     on_scan += length(&next.points);
                     chain.points.append(&mut next.points);
                     chain.triangles.append(&mut next.triangles);
                 }
                 _ => {
-                    gaps += end.dist(start);
+                    if on_walls(chain.triangles.last(), chain.triangles.first()) {
+                        bridged += end.dist(start);
+                    } else {
+                        gaps += end.dist(start);
+                    }
                     break;
                 }
             }
         }
-        if chain.points.len() >= 3 && gaps <= NEARLY_CLOSED * on_scan {
+        if chain.points.len() >= 3 && gaps <= NEARLY_CLOSED * on_scan && bridged <= BRIDGED_MOST * on_scan {
             loops.push(chain);
         }
     }
@@ -1759,7 +1774,8 @@ pub(crate) fn prism_profile_from(
     // points, or over a patch the scanner missed, comes out as a run just short of closed.
     let sliced = |level: f64| -> (Vec<Outline>, usize) {
         let at = |by: f64| Plane { origin: plane.origin + prism.direction * (level + by), ..plane };
-        let runs: Vec<crate::section::Run> = loops_of(crate::section::section_welded(scan, weld, &at(0.0)));
+        let on_wall = |t: usize| owner.get(t).is_some_and(|&k| place.contains_key(&(k as usize)));
+        let runs: Vec<crate::section::Run> = loops_of(crate::section::section_welded(scan, weld, &at(0.0)), &on_wall);
         let loops: Vec<(Vec<Vec2>, Vec<Option<usize>>)> = runs
             .iter()
             .map(|r| {
@@ -2273,7 +2289,7 @@ mod tests {
             let triangles = vec![0; points.len()];
             crate::section::Run { points, triangles, closed: false }
         };
-        let joined = loops_of(vec![piece(100, 150, false), piece(5, 50, true), piece(55, 95, false)]);
+        let joined = loops_of(vec![piece(100, 150, false), piece(5, 50, true), piece(55, 95, false)], &|_| false);
         assert_eq!(joined.len(), 1, "one loop");
         let points = &joined[0].points;
         assert_eq!(points.len(), 51 + 46 + 41);
@@ -2287,9 +2303,14 @@ mod tests {
             .sum();
         assert!((turn.abs() - std::f64::consts::TAU).abs() < 1e-6, "{turn}");
         // Half a side missing twice over: 40 of gaps on 120 of scan.
-        assert!(loops_of(vec![piece(100, 150, false), piece(5, 50, true), piece(70, 85, false)]).is_empty());
+        let broken = || vec![piece(100, 150, false), piece(5, 50, true), piece(70, 85, false)];
+        assert!(loops_of(broken(), &|_| false).is_empty());
+        // ... unless the gaps' ends are on the prism's walls, which run on across them.
+        assert_eq!(loops_of(broken(), &|t| t == 0).len(), 1);
+        // Two pieces of a side only, the rest of the square missing, are no loop even so.
+        assert!(loops_of(vec![piece(5, 30, false), piece(45, 70, false)], &|t| t == 0).is_empty());
         let closed = crate::section::Run { points: (0..160).map(|d| at(f64::from(d))).collect(), triangles: vec![0; 160], closed: true };
-        assert_eq!(loops_of(vec![closed.clone()]), vec![closed]);
+        assert_eq!(loops_of(vec![closed.clone()], &|_| false), vec![closed]);
     }
 
     use crate::reconstruct::read;

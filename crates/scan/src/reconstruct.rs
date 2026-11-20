@@ -877,8 +877,10 @@ pub fn round_axis(faces: &[Face], size: f64) -> Option<Revolve> {
 
 /// The faces of `faces` not in `members` that repeat evenly round `axis` (a wheel's spokes, a
 /// hub's bosses): grouped by kind, size, tilt to the axis and distance from it, each group's
-/// places round the axis evenly spaced. The count most of their area repeats at (a group of twice
-/// as many, a spoke's two mirrored sides, counts too). `None` with fewer than three places.
+/// places round the axis evenly spaced, every place filled or all but one (Find All may read a
+/// face on four spokes of five), faces at no place (a spoke's other face beside it) left out
+/// ([`at_places`]). The count most of their area repeats at (a group of twice as many, a spoke's
+/// two mirrored sides, counts too). `None` with fewer than three places.
 pub fn spokes_about(faces: &[Face], axis: &Axis, members: &[usize]) -> Option<Spokes> {
     let (across, other) = crate::in_plane(axis.direction);
     struct Seen {
@@ -909,8 +911,10 @@ pub fn spokes_about(faces: &[Face], axis: &Axis, members: &[usize]) -> Option<Sp
         .collect();
     let total: f64 = faces.iter().map(|f| f.area).sum();
     let mut used = vec![false; seen.len()];
-    // (count, faces, area) of each even group.
-    let mut groups: Vec<(usize, Vec<usize>, f64)> = Vec::new();
+    // (count, faces, area, places) of each group of alike faces that repeats round the axis: at
+    // the count that takes the most of it ([`at_places`]: every place filled, or all but one),
+    // the fewest places where two take as many (a ring of ten is a ring of five too).
+    let mut groups: Vec<(usize, Vec<usize>, f64, Vec<f64>)> = Vec::new();
     for i in 0..seen.len() {
         if used[i] {
             continue;
@@ -929,34 +933,92 @@ pub fn spokes_about(faces: &[Face], axis: &Axis, members: &[usize]) -> Option<Sp
         if group.len() < 3 || a.reach <= 0.0 {
             continue;
         }
-        let mut angles: Vec<f64> = group.iter().map(|&j| seen[j].angle).collect();
-        angles.sort_by(f64::total_cmp);
-        let step = TAU / angles.len() as f64;
-        let even = (0..angles.len()).all(|n| {
-            let gap = if n + 1 < angles.len() { angles[n + 1] - angles[n] } else { angles[0] + TAU - angles[n] };
-            (gap - step).abs() <= SPOKE_EVEN * step
-        });
-        if even {
-            for &j in &group {
+        let angles: Vec<f64> = group.iter().map(|&j| seen[j].angle).collect();
+        let mut best: Option<(usize, Vec<usize>, Vec<f64>)> = None;
+        for n in 3..=MOST_SPOKES.min(2 * group.len()) {
+            if let Some((at, places)) = at_places(&angles, n)
+                && best.as_ref().is_none_or(|b| at.len() > b.1.len())
+            {
+                best = Some((n, at, places));
+            }
+        }
+        if let Some((n, at, places)) = best {
+            let members: Vec<usize> = at.iter().filter_map(|&m| group.get(m).copied()).collect();
+            for &j in &members {
                 used[j] = true;
             }
-            groups.push((group.len(), group.iter().map(|&j| seen[j].k).collect(), group.iter().map(|&j| faces[seen[j].k].area).sum()));
+            let area = members.iter().map(|&j| faces[seen[j].k].area).sum();
+            groups.push((n, members.iter().map(|&j| seen[j].k).collect(), area, places));
         }
     }
     // The count most area repeats at; a group of twice as many counts towards it.
-    let count = groups.iter().map(|g| g.0).filter(|&n| n >= 3).max_by(|&x, &y| {
+    let count = groups.iter().map(|g| g.0).max_by(|&x, &y| {
         let area = |n: usize| groups.iter().filter(|g| g.0 == n || g.0 == 2 * n).map(|g| g.2).sum::<f64>();
         area(x).total_cmp(&area(y)).then(y.cmp(&x))
     })?;
     let mut chosen: Vec<usize> = groups.iter().filter(|g| g.0 == count || g.0 == 2 * count).flat_map(|g| g.1.iter().copied()).collect();
     chosen.sort_unstable();
-    let area: f64 = chosen.iter().map(|&k| faces[k].area).sum();
-    // Where the spokes are: one face of each, the largest group with one per spoke (a group of
-    // twice as many has a spoke's two flanks, and halfway between those is inside the spoke).
+    // Where the spokes are: the places of the largest group with one per spoke (a group of twice
+    // as many has a spoke's two flanks, and halfway between those is inside the spoke).
     let one_each = groups.iter().filter(|g| g.0 == count).max_by(|a, b| a.2.total_cmp(&b.2))?;
-    let mut angles: Vec<f64> = seen.iter().filter(|f| one_each.1.contains(&f.k)).map(|f| f.angle).collect();
-    angles.sort_by(f64::total_cmp);
+    let angles = one_each.3.clone();
+    let area: f64 = chosen.iter().map(|&k| faces[k].area).sum();
     Some(Spokes { count, faces: chosen, angles, share: area / total.max(1e-300) })
+}
+
+/// The most places round an axis a repeat is read at.
+const MOST_SPOKES: usize = 24;
+/// From this many places a repeat is read with one place not filled.
+const PARTIAL_FROM: usize = 5;
+
+/// Where `angles` (radians round an axis) sit at `n` places evenly round it: the offset that puts
+/// the most of them within [`SPOKE_EVEN`] of a step of a place, one per place (the nearest where
+/// two share one). The indices of those angles and the `n` places (the offset their mean
+/// gives), low to high, where they fill every place, or all but one from [`PARTIAL_FROM`] places
+/// up; `None` otherwise. Angles at no place (a spoke's other face read beside it) are left out.
+fn at_places(angles: &[f64], n: usize) -> Option<(Vec<usize>, Vec<f64>)> {
+    if n < 3 {
+        return None;
+    }
+    let step = TAU / n as f64;
+    let reach = SPOKE_EVEN * step;
+    // signed distance from `x` to the nearest place of the ring through `base`
+    let off = |x: f64, base: f64| {
+        let d = (x - base).rem_euclid(step);
+        if d > 0.5 * step { d - step } else { d }
+    };
+    let mut best: Option<(Vec<usize>, f64)> = None;
+    for &base in angles {
+        // one angle per place: the nearest
+        let mut slot: Vec<Option<(usize, f64)>> = vec![None; n];
+        for (m, &x) in angles.iter().enumerate() {
+            let d = off(x, base);
+            if d.abs() > reach {
+                continue;
+            }
+            let k = (((x - d - base) / step).round() as i64).rem_euclid(n as i64) as usize;
+            if let Some(cell) = slot.get_mut(k)
+                && cell.is_none_or(|(_, e)| d.abs() < e.abs())
+            {
+                *cell = Some((m, d));
+            }
+        }
+        let at: Vec<(usize, f64)> = slot.into_iter().flatten().collect();
+        if best.as_ref().is_none_or(|b| at.len() > b.0.len()) {
+            let mean = at.iter().map(|(_, d)| d).sum::<f64>() / at.len().max(1) as f64;
+            best = Some((at.iter().map(|(m, _)| *m).collect(), (base + mean).rem_euclid(step)));
+        }
+    }
+    let (at, first) = best?;
+    // all but one only from five places up: three of four (or two of three) fall at even places
+    // by chance
+    let least = if n >= PARTIAL_FROM { n - 1 } else { n };
+    if at.len() < least {
+        return None;
+    }
+    let mut places: Vec<f64> = (0..n).map(|k| (first + k as f64 * step).rem_euclid(TAU)).collect();
+    places.sort_by(f64::total_cmp);
+    Some((at, places))
 }
 
 /// What a shape is, for telling alike from unlike: its kind, its size, the direction it holds.
@@ -1549,6 +1611,9 @@ pub struct Reading {
     pub coil: Option<crate::coil::Coil>,
     /// A bar bent along a flat path (cylinders and the tori of its bends), for Pipe It.
     pub pipe: Option<crate::pipe::Pipe>,
+    /// With no pipe, coil or turned part read: round tubes bent through space (a manifold's
+    /// runners), longest first, for Tubes It.
+    pub tubes: Vec<crate::tubes::Tube>,
     /// With no prism, turned part, pipe or coil read: the part as sections lofted, for Loft It.
     pub loft: Option<crate::loft::Loft>,
 }
@@ -1987,11 +2052,21 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
             outcome.tolerance,
         )
     };
-    // A pipe's straight runs read as prisms too: Pipe It builds them.
+    // Round tubes bent through space, where no single route reads the part.
+    let tubes = if coil.is_some() || pipe.is_some() || revolve.is_some() {
+        Vec::new()
+    } else {
+        crate::tubes::read(&faces, &|k| !piece(k) && is_round_hole(scan, &whole(k), sign), &span_of, &|k, centre, axis, u| {
+            crate::tubes::bend_extent(corners_of(k).into_iter(), centre, axis, u)
+        })
+    };
+    // A pipe's or a tube's straight runs read as prisms too: Pipe It and Tubes It build them.
     let mut prisms = prisms;
     if let Some(pipe) = &pipe {
         prisms.retain(|p| !p.walls.iter().all(|w| pipe.faces.contains(w)));
     }
+    let in_tubes: BTreeSet<usize> = tubes.iter().flat_map(|t| t.faces.iter().copied()).collect();
+    prisms.retain(|p| !p.walls.iter().all(|w| in_tubes.contains(w)));
     // A part of sections lofted (a blade) is locally a drafted prism at each flat end: a cap and
     // the walls leaning in from it. Such prisms, each with one end only and leaning walls, that
     // together hold less than half of the scan give way to the loft when the scan reads as one.
@@ -2000,7 +2075,7 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         let (held, all) = (held.iter().map(|&k| faces[k].area).sum::<f64>(), faces.iter().map(|f| f.area).sum::<f64>());
         held < MOST_WEAK_SHARE * all
     };
-    let loft = ((prisms.is_empty() || weak) && revolve.is_none() && coil.is_none() && pipe.is_none())
+    let loft = ((prisms.is_empty() || weak) && revolve.is_none() && coil.is_none() && pipe.is_none() && tubes.is_empty())
         .then(|| crate::loft::read_within(scan, &faces, LOFT_SECTIONS, outcome.tolerance).ok())
         .flatten();
     if weak && loft.is_some() {
@@ -2037,6 +2112,7 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
         prism_repeats,
         coil,
         pipe,
+        tubes,
         loft,
     }
 }
@@ -2110,6 +2186,34 @@ mod tests {
         let mut strewn = round;
         strewn.extend([0.0, 30.0, 100.0, 200.0, 250.0].map(flank));
         assert!(spokes_about(&strewn, &axis, &[0, 1]).is_none());
+    }
+
+    /// The five spokes' flanks, and a second face of each spoke Find All read on four of them
+    /// (a cylinder 20° on from each flank): the four are the spokes' faces too, at four of the
+    /// five places; four faces strewn anywhere else are not, nor three of five.
+    #[test]
+    fn a_spoke_face_found_on_all_but_one_spoke_is_a_spokes_face() {
+        let axis = Axis { point: Vec3::ZERO, direction: Vec3::Z };
+        let flank = |degrees: f64| {
+            let (s, c) = degrees.to_radians().sin_cos();
+            plane_at(Vec3::new(60.0 * c, 60.0 * s, 10.0), Vec3::new(-s, c, 0.3), 400.0)
+        };
+        let side = |degrees: f64| {
+            let (s, c) = degrees.to_radians().sin_cos();
+            Face { shape: Shape::Cylinder { point: Vec3::new(80.0 * c, 80.0 * s, 0.0), axis: Vec3::Z, radius: 12.0 }, area: 300.0 }
+        };
+        let mut faces = vec![cylinder(Vec3::ZERO, Vec3::Z, 100.0), cylinder(Vec3::ZERO, Vec3::Z, 30.0)];
+        faces.extend([0.0, 72.0, 144.0, 216.0, 288.0].map(flank));
+        let mut four = faces.clone();
+        four.extend([20.0, 92.0, 164.0, 236.0].map(side));
+        let found = spokes_about(&four, &axis, &[0, 1]).expect("five spokes");
+        assert_eq!((found.count, found.faces.clone()), (5, vec![2, 3, 4, 5, 6, 7, 8, 9, 10]), "{found:?}");
+        let mut strewn = faces.clone();
+        strewn.extend([20.0, 60.0, 164.0, 250.0].map(side));
+        assert_eq!(spokes_about(&strewn, &axis, &[0, 1]).expect("five spokes").faces, vec![2, 3, 4, 5, 6]);
+        let mut three = faces;
+        three.extend([20.0, 92.0, 164.0].map(side));
+        assert_eq!(spokes_about(&three, &axis, &[0, 1]).expect("five spokes").faces, vec![2, 3, 4, 5, 6]);
     }
 
     /// How far a box from `low` to `high` runs along `direction`, least and most.

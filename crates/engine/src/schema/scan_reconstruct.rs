@@ -304,6 +304,10 @@ pub struct ScanReconstructResult {
     /// A bar bent along a flat path, which Pipe It sweeps.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipe: Option<ScanPipe>,
+    /// Round tubes bent through space (a manifold's runners), longest first, which Tubes It
+    /// sweeps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tubes: Vec<ScanTube>,
     /// With nothing else read: the part as sections lofted, which Loft It lofts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loft: Option<ScanLoft>,
@@ -414,6 +418,22 @@ pub struct ScanPipe {
     pub arcs: usize,
     /// How long the path is, in mm.
     pub length: f64,
+    /// The shapes it is read from, by Find All's numbers.
+    pub faces: Vec<usize>,
+}
+
+/// A round tube bent through space.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct ScanTube {
+    /// The tube's diameter, in mm.
+    pub diameter: f64,
+    /// How long its path is, in mm, and where it starts and ends (on its axis).
+    pub length: f64,
+    pub start: [f64; 3],
+    pub end: [f64; 3],
+    /// How many bends and straight stretches it is read from.
+    pub bends: usize,
+    pub straights: usize,
     /// The shapes it is read from, by Find All's numbers.
     pub faces: Vec<usize>,
 }
