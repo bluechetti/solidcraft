@@ -592,9 +592,17 @@ pub fn mesh_import_feature_in(bytes: &[u8], file: &str, mm_per_unit: f64) -> Res
         if tris.is_empty() {
             return Err(IoError::Invalid("STL has no triangles".into()));
         }
-        let positions: Vec<Vec3> = tris.iter().flatten().map(|v| Vec3::new(v[0] as f64, v[1] as f64, v[2] as f64)).collect();
         let n = u32::try_from(tris.len()).map_err(|_| IoError::Invalid("STL too large".into()))?;
-        let triangles = (0..n).map(|i| [i * 3, i * 3 + 1, i * 3 + 2]).collect();
+        let corners: Vec<[u32; 3]> = (0..n).map(|i| [i * 3, i * 3 + 1, i * 3 + 2]).collect();
+        // Welded as read, each corner taken from the file's own single-precision numbers: a copy
+        // of every corner first was the most memory an insert took (6.6 GB of 15.6 for a scan of
+        // 92 million triangles). The same points, kept in the same order, as welding the copy.
+        let corner = |i: usize| {
+            tris.get(i / 3).and_then(|t| t.get(i % 3)).map_or(Vec3::ZERO, |v| Vec3::new(f64::from(v[0]), f64::from(v[1]), f64::from(v[2])))
+        };
+        let (positions, triangles) =
+            solidcraft_kernel::weld_exact_with(corner, tris.len() * 3, &corners).map_err(|e| IoError::Invalid(format!("mesh `{stem}`: {e}")))?;
+        drop((tris, corners));
         (vec![MeshObject { name: stem.clone(), positions, triangles, ..Default::default() }], notes)
     } else {
         own_units("3MF")?;

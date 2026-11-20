@@ -106,6 +106,13 @@ pub fn weld_exact(positions: &[Vec3], triangles: &[[u32; 3]]) -> Result<(Vec<Vec
     weld(|i| positions.get(i).copied().unwrap_or(Vec3::ZERO), positions.len(), triangles)
 }
 
+/// [`weld_exact`] of `count` points read through `point` (the `i`th): for a file whose points are
+/// another type, so that no copy of every corner is made first (an STL of 92 million triangles
+/// gave 276 million corners, 6.6 GB as `Vec3`, before welding took them to 46 million).
+pub fn weld_exact_with(point: impl Fn(usize) -> Vec3 + Sync, count: usize, triangles: &[[u32; 3]]) -> Result<(Vec<Vec3>, Vec<[u32; 3]>)> {
+    weld(point, count, triangles)
+}
+
 /// The body of `count` points (`point(i)` the `i`th), `triangles` and, when there are any, each
 /// triangle's corner `normals`.
 fn body_from(point: impl Fn(usize) -> Vec3 + Sync, count: usize, triangles: &[[u32; 3]], normals: &[[Vec3; 3]]) -> Result<Body> {
