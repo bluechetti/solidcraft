@@ -3537,6 +3537,34 @@ fn a_g2_fillet_of_three_edges_closes_their_corner() {
     assert!((g2 - round).abs() < 0.05 * (4000.0 - round), "G2 {g2} against round {round}");
 }
 
+/// The fillet command with `type: curvature` on two top edges of a box whose front wall is
+/// drafted 10° (the corner no mirror image; the upright edge between them stays sharp): it
+/// builds, in either pick order, and takes off within 0.1 % of what the round does, each G2
+/// section having the circle's area (the kernel crate's
+/// `two_g2_rounds_meet_at_a_corner_with_a_drafted_wall`). Before, it was refused as "faces
+/// that meet at different angles", and with that lifted, failed in one pick order.
+#[test]
+fn a_g2_fillet_at_a_drafted_walls_corner_builds_in_either_order() {
+    let off = |kind: &str, edges: serde_json::Value| {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "body_name": "B"}));
+        run(&mut s, "solid.draft", json!({"faces": [[10, 0, 5]], "angle": "10 deg", "neutral": "XY", "body": "B"}));
+        let before = body_volume(&s, "B");
+        assert!((before - 4000.0).abs() > 100.0, "the wall drafted: {before}");
+        run(&mut s, "solid.fillet", json!({"edges": edges, "radius": 1.5, "type": kind}));
+        assert!(s.model.results.iter().all(|r| r.error.is_none()), "{kind}: {:?}", s.model.results);
+        before - body_volume(&s, "B")
+    };
+    // the drafted wall's top edge, 10 tan 10° in from y = 0 (the wall turns about its foot)
+    let front = [10.0, 10.0 * 10f64.to_radians().tan(), 10.0];
+    let round = off("constant", json!([front, [0, 10, 10]]));
+    let g2 = off("curvature", json!([front, [0, 10, 10]]));
+    let swapped = off("curvature", json!([[0, 10, 10], front]));
+    assert!(round > 1.0, "{round}");
+    assert!((g2 - round).abs() < 1e-3 * round, "G2 {g2} against round {round}");
+    assert!((swapped - g2).abs() < 1e-6 * round, "{swapped} vs {g2}");
+}
+
 /// Deform: a bar 100 x 10 x 10 bent a quarter round about the line of its bottom edge keeps the
 /// volume the bend gives it, 100 * 10 * (10 - 10^2 / (2r)) for r = 100 / (pi/2); its length and
 /// angle follow the parameters; twisted, a bar keeps its volume; a cage left as it is changes

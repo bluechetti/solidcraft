@@ -1049,25 +1049,52 @@ impl FilletBrep {
             let approx_tol = smin(fs1.approx_tol_3d, fs2.approx_tol_3d);
             let ang_tol = smin(fs1.ang_tol_rad, fs2.ang_tol_rad);
 
+            // Not the fork's: two G^n rounds from X, where their rails cross on a plane, meet
+            // in the mitre by depth (the edge stage's, `exact_mitre_curve`): they touch the
+            // plane to second order at X, and a trace from X reached it or not by the order
+            // the rounds came in (a drafted wall's corner)
+            let kinds = [fs1, fs2].map(|fs| {
+                fs.fsg
+                    .as_ref()
+                    .map(FilletSurfaceGenerator::fillet_surface_generator_type)
+            });
+            let by_depth = crate::blend::blend_corner::gn_mitre_from_x(
+                k,
+                target,
+                self,
+                [g1, g2],
+                kinds,
+                other_fv,
+                approx_tol,
+            )?;
+
             // set sDir = fillet chord (vector connecting intersection endPoints)
             let fv = filleted_vertex.ok_or_else(|| missing(OP_INT_FILLET))?;
             let mut dir = target.vertex(fv)?.point - other_pnt;
 
             // find the surface/surface intersection curve knowing only 1 end-point
-            let result = srf_srf_intersection(
-                k,
-                self,
-                Some(other_fv),
-                None,
-                Some(&mut dir),
-                None,
-                &surface1,
-                &surface2,
-                approx_tol,
-                ang_tol,
-                true,
-                None,
-            );
+            let result = if let Some((curve, [uv_curve1, uv_curve2], _)) = by_depth {
+                Ok(SrfSrfCurves {
+                    curve_3d: Some(curve),
+                    uv_curve1,
+                    uv_curve2,
+                })
+            } else {
+                srf_srf_intersection(
+                    k,
+                    self,
+                    Some(other_fv),
+                    None,
+                    Some(&mut dir),
+                    None,
+                    &surface1,
+                    &surface2,
+                    approx_tol,
+                    ang_tol,
+                    true,
+                    None,
+                )
+            };
             let curves = match result {
                 Err(e) if e.is_unported_or_cancelled() => return Err(e),
                 Ok(SrfSrfCurves {

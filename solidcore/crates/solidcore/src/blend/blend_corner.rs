@@ -1251,7 +1251,66 @@ impl RoundSection {
 }
 
 /// A mitre by depth: its curve, its UV curves on the two rounds and its end away from X.
-type DepthMitre = (Curve, [Option<Curve>; 2], Point3);
+pub(crate) type DepthMitre = (Curve, [Option<Curve>; 2], Point3);
+
+/// Not the fork's: the mitre of the two G^n rounds `geoms` (curvature rounds; `kinds`, their
+/// solvers' generator kinds) from X, the processed vertex `x` where their rails cross on a
+/// plane both roll on, by its depth below that plane ([`gn_mitre_by_depth`]), running from X.
+/// For the vertex stage, which traces the rounds' intersection from X otherwise: there they
+/// touch the plane to second order, and whether a trace reaches X within tolerance depends on
+/// the order the rounds come in. `None` where the rounds are not two G^n sections on straight
+/// spines, X is not on a plane, or the construction does not hold there; the trace is the
+/// mitre then, as before.
+///
+/// # Errors
+///
+/// Those of the topology lookups, the evaluations and [`gn_mitre_by_depth`].
+pub(crate) fn gn_mitre_from_x(
+    k: &Kernel,
+    target: &Brep,
+    pseudo: &FilletBrep,
+    geoms: [FilletGeomId; 2],
+    kinds: [Option<FilletSurfaceGeneratorType>; 2],
+    x: VertexId,
+    tol: f64,
+) -> Result<Option<DepthMitre>> {
+    if kinds
+        .iter()
+        .any(|kind| *kind != Some(FilletSurfaceGeneratorType::BlendCurve))
+    {
+        return Ok(None);
+    }
+    let xv = pseudo.fillet_vertex(x)?;
+    if xv.vertex_type != FilletVertexType::RailXRail || !xv.is_processed() {
+        return Ok(None);
+    }
+    let Some(EntityRef::Face(common)) = xv.point_classification().object() else {
+        return Ok(None);
+    };
+    let Some(surface) = face2::surface(target, common)? else {
+        return Ok(None);
+    };
+    let plane =
+        BlendQuadric::from_surface(k, surface, face2::uv_domain(target, common)?.mid(), tol)?;
+    if plane.kind != QuadricKind::Plane {
+        return Ok(None);
+    }
+    let mut axes = [Vec3::default(); 2];
+    for (slot, g) in axes.iter_mut().zip(geoms) {
+        let Some(spine) = pseudo.geom(g)?.center_line_curve() else {
+            return Ok(None);
+        };
+        let Some((_, dir)) = spine.is_line(10, tol)? else {
+            return Ok(None);
+        };
+        let Ok(dir) = dir.unitize() else {
+            return Ok(None);
+        };
+        *slot = dir;
+    }
+    let x_pnt = pseudo.vertex_point(x)?;
+    gn_mitre_by_depth(k, pseudo, geoms, axes, x_pnt, plane.dir, false, tol)
+}
 
 /// Not the fork's: the mitre of two G^n sections (curvature rounds) of one constant size on
 /// straight spines between planes whose corner is not a mirror image (a drafted wall), from

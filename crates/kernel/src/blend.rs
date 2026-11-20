@@ -3210,7 +3210,7 @@ mod tests {
     /// and their walls G2, and it takes off within 0.1 % of what the circular rounds do (each
     /// section has the circle's area). solidcore's
     /// `two_curvature_rounds_meet_where_the_corner_is_no_mirror_image` holds the volume to 1e-9
-    /// of its slices' integral.
+    /// of its slices' integral. Picked in either order, the edges give the same solid.
     #[test]
     fn two_g2_rounds_meet_at_a_corner_with_a_drafted_wall() {
         let foot = 10.0 * 10f64.to_radians().tan();
@@ -3231,6 +3231,12 @@ mod tests {
         for s in tangent {
             assert!(s.curvature_jump_per_mm.value < 1e-3, "jump {}", s.curvature_jump_per_mm.value);
         }
+        // The same solid with the edges picked the other way round: the mitre's far end is
+        // found by depth, not by a trace from X that reached X in one order only.
+        let swapped = fillet_g2(&body, &[edges[1], edges[0]], 1.5).unwrap();
+        assert!(swapped.validity().is_empty(), "{:?}", swapped.validity());
+        let off_swapped = before - crate::measure(&swapped).unwrap().volume;
+        assert!((off_swapped - off).abs() < 1e-9 * before, "{off_swapped} vs {off}");
     }
 
     #[test]
