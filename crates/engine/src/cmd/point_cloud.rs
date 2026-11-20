@@ -226,7 +226,10 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "pointcloud.insert";
     let path = str_(p, "path").filter(|x| !x.trim().is_empty() && x.len() < 4096).ok_or_else(|| bad(cmd, "`path` is required"))?;
     if !solidcraft_io::is_point_cloud_path(path) {
-        return Err(bad(cmd, "only PLY, PCD, XYZ, PTS, ASC, PTX, E57 and LAS files (.ply, .pcd, .xyz, .pts, .asc, .ptx, .e57, .las, .laz) can be inserted as point clouds"));
+        return Err(bad(
+            cmd,
+            "only PLY, PCD, XYZ, PTS, ASC, PTX, E57 and LAS files (.ply, .pcd, .xyz, .pts, .asc, .ptx, .e57, .las, .laz) can be inserted as point clouds",
+        ));
     }
     let (units, scale) = units_of(p, cmd)?.unwrap_or(("mm", 1.0));
     let max_points = match p.get("max_points") {

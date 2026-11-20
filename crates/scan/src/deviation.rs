@@ -381,10 +381,12 @@ pub fn far_share(values: &[f32], limit: f64) -> f64 {
 /// The same model gives the same places.
 pub fn places(model: &Mesh, most: usize) -> Vec<(Vec3, f64)> {
     let most = most.max(1);
-    let corners = |t: &[u32; 3]| Some([*model.positions.get(t[0] as usize)?, *model.positions.get(t[1] as usize)?, *model.positions.get(t[2] as usize)?]);
+    let corners =
+        |t: &[u32; 3]| Some([*model.positions.get(t[0] as usize)?, *model.positions.get(t[1] as usize)?, *model.positions.get(t[2] as usize)?]);
     let area = |[a, b, c]: [Vec3; 3]| 0.5 * (b - a).cross(c - a).len();
     let stride = model.triangles.len().div_ceil(most).max(1);
-    let kept: Vec<[Vec3; 3]> = model.triangles.iter().step_by(stride).filter_map(corners).filter(|t| area(*t) > 0.0 && area(*t).is_finite()).collect();
+    let kept: Vec<[Vec3; 3]> =
+        model.triangles.iter().step_by(stride).filter_map(corners).filter(|t| area(*t) > 0.0 && area(*t).is_finite()).collect();
     let total: f64 = kept.iter().map(|t| area(*t)).sum();
     if !(total > 0.0) {
         return Vec::new();

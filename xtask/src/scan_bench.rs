@@ -96,10 +96,12 @@ pub fn run(root: &Path, rest: &[&str]) -> Result<(), String> {
         "runs": rows.len(), "pass": count("pass"), "fail": count("fail"), "refused": count("refused"),
         "silent_wrong": count("SILENT WRONG"), "missed_pass": count("missed pass"), "crashed": count("CRASHED"),
     });
-    let locked: BTreeMap<String, Value> = rows.iter().map(|r| (format!("{}/{}", text_of(&r["case"]), text_of(&r["level"])), r["numbers"].clone())).collect();
+    let locked: BTreeMap<String, Value> =
+        rows.iter().map(|r| (format!("{}/{}", text_of(&r["case"]), text_of(&r["level"])), r["numbers"].clone())).collect();
     let lock_path = root.join(LOCK);
     let before: BTreeMap<String, Value> = std::fs::read_to_string(&lock_path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-    let moved: Vec<String> = locked.iter().filter(|(key, numbers)| before.get(*key).is_some_and(|was| was != *numbers)).map(|(key, _)| key.clone()).collect();
+    let moved: Vec<String> =
+        locked.iter().filter(|(key, numbers)| before.get(*key).is_some_and(|was| was != *numbers)).map(|(key, _)| key.clone()).collect();
     let new: Vec<String> = locked.keys().filter(|key| !before.contains_key(*key)).cloned().collect();
     if bless {
         // Runs not made this time (the other tier, other cases) keep their numbers.
@@ -210,8 +212,16 @@ fn one(root: &Path, config: &Value, bin: &Path, scorer: Option<&str>, out: &Path
         return Ok(row);
     };
     let class = result["class"].as_str().unwrap_or("prismatic");
-    let expected: Value = std::fs::read(folder.join("expected.json")).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or(Value::Null);
-    let ran: Vec<&str> = result["steps"].as_array().into_iter().flatten().filter(|s| s["ok"] == true).filter_map(|s| s["command"].as_str()).filter(|c| c.ends_with("_it")).collect();
+    let expected: Value =
+        std::fs::read(folder.join("expected.json")).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or(Value::Null);
+    let ran: Vec<&str> = result["steps"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|s| s["ok"] == true)
+        .filter_map(|s| s["command"].as_str())
+        .filter(|c| c.ends_with("_it"))
+        .collect();
     let in_app = &result["in_app"];
     row["ran"] = json!(ran);
     row["refused"] = result["refused"].clone();
@@ -224,7 +234,8 @@ fn one(root: &Path, config: &Value, bin: &Path, scorer: Option<&str>, out: &Path
         row["numbers"] = json!({"status": "refused"});
         return Ok(row);
     }
-    let bar = config[class]["bars"].as_array().into_iter().flatten().find(|bar| bar["sigma"].as_f64() == Some(level.sigma)).cloned().unwrap_or(Value::Null);
+    let bar =
+        config[class]["bars"].as_array().into_iter().flatten().find(|bar| bar["sigma"].as_f64() == Some(level.sigma)).cloned().unwrap_or(Value::Null);
     let has = |flag: &str| level.flags.iter().any(|f| f == flag);
     let checks = checks(config, &bar, &result, &expected, has("--missing"), has("--scale"));
     let mut failed: Vec<String> = checks.iter().filter(|(_, c)| c["ok"] == false).map(|(name, _)| name.clone()).collect();
@@ -233,7 +244,9 @@ fn one(root: &Path, config: &Value, bin: &Path, scorer: Option<&str>, out: &Path
     // result whatever it says, and a badly wrong model is the slowest for it to measure.
     if let Some(command) = scorer.filter(|_| own) {
         let mut held = bar.clone();
-        held["tolerance"] = json!((config[class]["tolerance_sigmas"].as_f64().unwrap_or(3.0) * level.sigma).max(config[class]["tolerance_least"].as_f64().unwrap_or(0.1)));
+        held["tolerance"] = json!(
+            (config[class]["tolerance_sigmas"].as_f64().unwrap_or(3.0) * level.sigma).max(config[class]["tolerance_least"].as_f64().unwrap_or(0.1))
+        );
         held["edge_allowance"] = json!(config["levels"]["edge_allowance"].as_f64().unwrap_or(0.0) * config["levels"]["edge"].as_f64().unwrap_or(0.0));
         held["against_truth"] = json!(has("--missing"));
         held["placed"] = json!(has("--turn"));
@@ -245,7 +258,9 @@ fn one(root: &Path, config: &Value, bin: &Path, scorer: Option<&str>, out: &Path
         let verdict: Value = second.as_ref().and_then(|o| serde_json::from_slice(&o.stdout).ok()).unwrap_or(Value::Null);
         match verdict["pass"].as_bool() {
             Some(true) => {}
-            Some(false) => failed.extend(verdict["failed"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|f| format!("second judge: {f}"))),
+            Some(false) => {
+                failed.extend(verdict["failed"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|f| format!("second judge: {f}")))
+            }
             None => failed.push("second judge: gave no verdict".into()),
         }
         row["second_judge"] = verdict;
@@ -260,7 +275,8 @@ fn one(root: &Path, config: &Value, bin: &Path, scorer: Option<&str>, out: &Path
     row["status"] = json!(status(failed.is_empty()));
     // What the lock holds: SolidCraft's own verdict (the same with or without a second judge)
     // and each measured value, to a nanometre. Not the times.
-    let values: BTreeMap<&String, Value> = checks.iter().map(|(name, c)| (name, json!(c["value"].as_f64().map(|v| (v * 1e6).round() / 1e6)))).collect();
+    let values: BTreeMap<&String, Value> =
+        checks.iter().map(|(name, c)| (name, json!(c["value"].as_f64().map(|v| (v * 1e6).round() / 1e6)))).collect();
     row["numbers"] = json!({"status": status(own), "in_app_passes": passes, "ran": row["ran"], "values": values});
     row["failed"] = json!(failed);
     row["checks"] = json!(checks);
@@ -327,8 +343,13 @@ fn markdown(root: &Path, config: &Value, report: &Value) -> String {
            - refused: the commands refused and nothing was built\n- SILENT WRONG: outside a bar and Scan Deviation passed it (none is allowed)\n\
            - missed pass: within every bar, but Scan Deviation did not pass it (a scan with surface missing cannot prove the model there)\n\n";
     md += &match report["second_judge"].as_str() {
-        Some(judge) => format!("Judges: SolidCraft's own measurements against the scan and the true part, and a second program that shares no code with it (`{judge}`).\n\n"),
-        None => "Judge: SolidCraft's own measurements against the scan and against the true part. No second, independent judge was used in this run.\n\n".to_owned(),
+        Some(judge) => format!(
+            "Judges: SolidCraft's own measurements against the scan and the true part, and a second program that shares no code with it (`{judge}`).\n\n"
+        ),
+        None => {
+            "Judge: SolidCraft's own measurements against the scan and against the true part. No second, independent judge was used in this run.\n\n"
+                .to_owned()
+        }
     };
     md += "| Part | Scan | Result | Commands run | Outside its bar |\n|---|---|---|---|---|\n";
     for row in report["rows"].as_array().into_iter().flatten() {
@@ -343,7 +364,14 @@ fn markdown(root: &Path, config: &Value, report: &Value) -> String {
                 _ => name.to_owned(),
             })
             .collect();
-        md += &format!("| {} | {} | {} | {} | {} |\n", text_of(&row["case"]), text_of(&row["level"]), text_of(&row["status"]), list(&row["ran"]), outside.join("; "));
+        md += &format!(
+            "| {} | {} | {} | {} | {} |\n",
+            text_of(&row["case"]),
+            text_of(&row["level"]),
+            text_of(&row["status"]),
+            list(&row["ran"]),
+            outside.join("; ")
+        );
     }
     for (key, title) in [("moved_from_lock", "Numbers that differ from the lock"), ("not_in_lock", "Runs not yet in the lock")] {
         let list: Vec<&str> = report[key].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
@@ -356,7 +384,9 @@ fn markdown(root: &Path, config: &Value, report: &Value) -> String {
         for row in matrix.get("row").and_then(|r| r.as_array()).into_iter().flatten() {
             *counts.entry(row.get("status").and_then(|s| s.as_str()).unwrap_or("?").to_owned()).or_default() += 1;
         }
-        md += &format!("\n## Capabilities\n\nFrom `{MATRIX}` (each row with its commands, tests and notes in `docs/parity/matrix.md`):\n\n| Status | Capabilities |\n|---|---|\n");
+        md += &format!(
+            "\n## Capabilities\n\nFrom `{MATRIX}` (each row with its commands, tests and notes in `docs/parity/matrix.md`):\n\n| Status | Capabilities |\n|---|---|\n"
+        );
         for (status, count) in counts {
             md += &format!("| {status} | {count} |\n");
         }

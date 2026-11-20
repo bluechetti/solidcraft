@@ -67,7 +67,12 @@ impl Page {
                         if let Some((runs, fonts)) = set {
                             for run in &runs {
                                 let Some(font) = fonts.iter().find(|f| f.id == run.font) else { continue };
-                                marks.extend(run.outlines(font).map(|l| paper::Item::Stroke { path: l.segs, closed: true, width_mm: LETTER_LINE_MM, pattern: None }));
+                                marks.extend(run.outlines(font).map(|l| paper::Item::Stroke {
+                                    path: l.segs,
+                                    closed: true,
+                                    width_mm: LETTER_LINE_MM,
+                                    pattern: None,
+                                }));
                             }
                         }
                     }
@@ -105,7 +110,9 @@ mod tests {
         let ys: Vec<f64> = marks
             .iter()
             .flat_map(|m| match m {
-                paper::Item::Stroke { path, .. } => path.iter().filter_map(|s| if let Seg2::Line { a, .. } = s { Some(a.y) } else { None }).collect::<Vec<_>>(),
+                paper::Item::Stroke { path, .. } => {
+                    path.iter().filter_map(|s| if let Seg2::Line { a, .. } = s { Some(a.y) } else { None }).collect::<Vec<_>>()
+                }
                 _ => Vec::new(),
             })
             .collect();

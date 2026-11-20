@@ -58,8 +58,11 @@ fn insert_mesh_says_the_unit_it_took_and_refuses_a_tiny_file_until_told() {
         path.to_string_lossy().into_owned()
     };
     // A part 100 x 50 x 25 mm saved in millimetres, in inches and in metres.
-    let (mm, inches, metres) =
-        (write("mm.stl", Vec3::new(100.0, 50.0, 25.0)), write("in.stl", Vec3::new(100.0, 50.0, 25.0) / 25.4), write("m.stl", Vec3::new(0.1, 0.05, 0.025)));
+    let (mm, inches, metres) = (
+        write("mm.stl", Vec3::new(100.0, 50.0, 25.0)),
+        write("in.stl", Vec3::new(100.0, 50.0, 25.0) / 25.4),
+        write("m.stl", Vec3::new(0.1, 0.05, 0.025)),
+    );
     let mut s = Session::default();
     let read = run(&mut s, "file.insert_mesh", json!({"path": mm}));
     assert_eq!(read["units_assumed"], "mm", "{read}");
@@ -338,7 +341,8 @@ fn find_symmetry_keeps_the_mirror_plane_as_a_construction_plane() {
 #[test]
 fn find_symmetry_on_a_region_finds_that_regions_plane() {
     let (mut s, body, place) = session_with_part_of_the_block("symmetry-region", |t| (t[0] + t[1] + t[2]).x / 3.0 < 45.0);
-    let (origin, x, y, z) = (place(Vec3::ZERO), place(Vec3::X) - place(Vec3::ZERO), place(Vec3::Y) - place(Vec3::ZERO), place(Vec3::Z) - place(Vec3::ZERO));
+    let (origin, x, y, z) =
+        (place(Vec3::ZERO), place(Vec3::X) - place(Vec3::ZERO), place(Vec3::Y) - place(Vec3::ZERO), place(Vec3::Z) - place(Vec3::ZERO));
     let normal_of = |reply: &Value| {
         let v: Vec<f64> = reply["mirror"]["normal"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
         Vec3::new(v[0], v[1], v[2])
@@ -1171,7 +1175,8 @@ fn every_scan_command_survives_meshes_no_scanner_makes() {
         let path = dir.join("hostile.stl");
         std::fs::write(&path, bytes).unwrap();
         let mut start = Session::default();
-        if let Err(crate::EngineError::Internal(_, said)) = start.execute("file.insert_mesh", &json!({"path": path.to_string_lossy(), "units": "mm"})) {
+        if let Err(crate::EngineError::Internal(_, said)) = start.execute("file.insert_mesh", &json!({"path": path.to_string_lossy(), "units": "mm"}))
+        {
             wrong.push(format!("{name}: file.insert_mesh: {said}"));
         }
         let saved = start.doc.to_json();

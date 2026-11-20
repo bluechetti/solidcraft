@@ -714,7 +714,13 @@ fn find_symmetry(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         None
     };
-    let reply = ScanSymmetryResult { body: mesh.body, mirror: mirror_reply(&found, false), region: region.map(|r| r.len()), plane, param_warnings: Vec::new() };
+    let reply = ScanSymmetryResult {
+        body: mesh.body,
+        mirror: mirror_reply(&found, false),
+        region: region.map(|r| r.len()),
+        plane,
+        param_warnings: Vec::new(),
+    };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -1365,7 +1371,10 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
     let surface: std::sync::Arc<solidcraft_geom::Mesh> = match model.body.display_mesh().filter(|_| model.body.is_mesh()) {
         Some(triangles) => triangles,
         None => std::sync::Arc::new(
-            model.body.mesh(&solidcraft_kernel::MeshTolerance::chord((tolerance / 4.0).min(FINE_CHORD))).map_err(|e| bad(cmd, format!("`{model_name}`: {e}")))?,
+            model
+                .body
+                .mesh(&solidcraft_kernel::MeshTolerance::chord((tolerance / 4.0).min(FINE_CHORD)))
+                .map_err(|e| bad(cmd, format!("`{model_name}`: {e}")))?,
         ),
     };
     let d = solidcraft_scan::deviation::measure(&mesh.positions, &surface, tolerance, 4.0 * limit);

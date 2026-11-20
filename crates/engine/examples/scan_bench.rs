@@ -172,7 +172,19 @@ fn main() -> Result<()> {
                 if let Some(part) = read.as_ref().and_then(|r| r["bodies"][0].as_str()) {
                     log.run(&mut s, "scan.tolerance", json!({"scan": part, "tolerance": truth_tolerance}));
                     if let Some(reply) = log.run(&mut s, "scan.deviation", json!({"scan": part, "body": model})) {
-                        for key in ["within_all", "rms", "max_above", "max_below", "max_above_at", "max_below_at", "model_within", "model_covered", "model_max", "model_farthest_at", "tolerance"] {
+                        for key in [
+                            "within_all",
+                            "rms",
+                            "max_above",
+                            "max_below",
+                            "max_above_at",
+                            "max_below_at",
+                            "model_within",
+                            "model_covered",
+                            "model_max",
+                            "model_farthest_at",
+                            "tolerance",
+                        ] {
                             against_truth[key] = reply[key].clone();
                         }
                     }
@@ -195,6 +207,11 @@ fn main() -> Result<()> {
         "steps": log.steps,
     });
     std::fs::write(out.join("result.json"), serde_json::to_string_pretty(&result)? + "\n")?;
-    println!("{} sigma {}: {}", recipe["id"], how.sigma, if result["built"].is_null() { "nothing built".to_owned() } else { format!("built, in-app passes: {}", result["in_app"]["passes"]) });
+    println!(
+        "{} sigma {}: {}",
+        recipe["id"],
+        how.sigma,
+        if result["built"].is_null() { "nothing built".to_owned() } else { format!("built, in-app passes: {}", result["in_app"]["passes"]) }
+    );
     Ok(())
 }

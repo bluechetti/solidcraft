@@ -37,7 +37,18 @@ pub struct Degrade {
 
 impl Default for Degrade {
     fn default() -> Degrade {
-        Degrade { seed: 1, edge: 0.0, sigma: 0.0, missing: 0.0, patches: 3, specks: 0.0, axis: [0.0, 0.0, 1.0], angle: 0.0, shift: [0.0; 3], scale: 1.0 }
+        Degrade {
+            seed: 1,
+            edge: 0.0,
+            sigma: 0.0,
+            missing: 0.0,
+            patches: 3,
+            specks: 0.0,
+            axis: [0.0, 0.0, 1.0],
+            angle: 0.0,
+            shift: [0.0; 3],
+            scale: 1.0,
+        }
     }
 }
 
@@ -80,7 +91,11 @@ impl Scan {
 
     /// The longest edge of any triangle.
     pub fn longest_edge(&self) -> f64 {
-        self.triangles.iter().filter_map(|t| self.corners(t)).map(|[a, b, c]| len(sub(b, a)).max(len(sub(c, b))).max(len(sub(a, c)))).fold(0.0, f64::max)
+        self.triangles
+            .iter()
+            .filter_map(|t| self.corners(t))
+            .map(|[a, b, c]| len(sub(b, a)).max(len(sub(c, b))).max(len(sub(a, c))))
+            .fold(0.0, f64::max)
     }
 
     /// Each point's normal: its triangles' normals, the larger triangle counting for more.
@@ -245,7 +260,8 @@ pub fn degraded(mesh: &Scan, how: &Degrade) -> Scan {
     // point picked on the surface, the reach chosen so the patches together take the share.
     if how.missing > 0.0 && how.patches > 0 && !out.triangles.is_empty() {
         let reach = (how.missing.min(0.9) * out.area() / (how.patches as f64 * std::f64::consts::PI)).sqrt();
-        let middles: Vec<[f64; 3]> = out.triangles.iter().map(|t| out.corners(t).map_or([f64::NAN; 3], |[a, b, c]| times(add(add(a, b), c), 1.0 / 3.0))).collect();
+        let middles: Vec<[f64; 3]> =
+            out.triangles.iter().map(|t| out.corners(t).map_or([f64::NAN; 3], |[a, b, c]| times(add(add(a, b), c), 1.0 / 3.0))).collect();
         let centres: Vec<[f64; 3]> = (0..how.patches).filter_map(|_| middles.get(rng.below(middles.len())).copied()).collect();
         let mut keep = middles.iter().map(|m| !centres.iter().any(|c| len(sub(*m, *c)) <= reach));
         out.triangles.retain(|_| keep.next().unwrap_or(true));
@@ -288,7 +304,8 @@ mod tests {
     /// A closed box 10 x 10 x 10 of twelve triangles, wound outward.
     fn cube() -> Scan {
         let points = (0..8u32).map(|i| [f64::from(i & 1) * 10.0, f64::from((i >> 1) & 1) * 10.0, f64::from((i >> 2) & 1) * 10.0]).collect();
-        let triangles = vec![[0, 2, 1], [1, 2, 3], [4, 5, 6], [5, 7, 6], [0, 1, 4], [1, 5, 4], [2, 6, 3], [3, 6, 7], [0, 4, 2], [2, 4, 6], [1, 3, 5], [3, 7, 5]];
+        let triangles =
+            vec![[0, 2, 1], [1, 2, 3], [4, 5, 6], [5, 7, 6], [0, 1, 4], [1, 5, 4], [2, 6, 3], [3, 6, 7], [0, 4, 2], [2, 4, 6], [1, 3, 5], [3, 7, 5]];
         Scan { points, triangles }
     }
 
@@ -313,7 +330,12 @@ mod tests {
         let scan = even(&cube(), 1.0);
         assert!(closed(&scan), "each edge twice");
         assert!(scan.area() > 0.97 * 600.0 && scan.area() <= 600.0 + 1e-9, "{}", scan.area());
-        assert!(scan.longest_edge() < 3.5 && scan.triangles.len() > 800 && scan.triangles.len() < 2000, "{} {}", scan.longest_edge(), scan.triangles.len());
+        assert!(
+            scan.longest_edge() < 3.5 && scan.triangles.len() > 800 && scan.triangles.len() < 2000,
+            "{} {}",
+            scan.longest_edge(),
+            scan.triangles.len()
+        );
         // Every point is on the cube's surface.
         assert!(scan.points.iter().all(|p| p.iter().any(|c| c.abs() < 1e-12 || (c - 10.0).abs() < 1e-12)));
         assert_eq!(even(&cube(), 0.0), cube(), "no edge asked: as it came");
@@ -353,7 +375,10 @@ mod tests {
         let gone = 1.0 - holed.area() / whole.area();
         // A triangle goes when its middle is in a patch, so up to half an edge more goes all round.
         assert!(gone > 0.08 && gone <= 0.26, "{gone}");
-        let turned = degraded(&cube(), &Degrade { axis: [0.0, 0.0, 2.0], angle: std::f64::consts::FRAC_PI_2, shift: [1.0, 2.0, 3.0], scale: 1.0 / 25.4, ..Degrade::default() });
+        let turned = degraded(
+            &cube(),
+            &Degrade { axis: [0.0, 0.0, 2.0], angle: std::f64::consts::FRAC_PI_2, shift: [1.0, 2.0, 3.0], scale: 1.0 / 25.4, ..Degrade::default() },
+        );
         // (10, 0, 0) a quarter turn about Z is (0, 10, 0); shifted (1, 12, 3); in inches.
         let p = turned.points[1];
         assert!((p[0] - 1.0 / 25.4).abs() < 1e-12 && (p[1] - 12.0 / 25.4).abs() < 1e-12 && (p[2] - 3.0 / 25.4).abs() < 1e-12, "{p:?}");

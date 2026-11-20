@@ -3995,8 +3995,7 @@ mod workspace_menu_tests {
         h.step(&json!({"click":{"handle":"ribbon:workspace"}})).unwrap();
         let opener = rect_of("ribbon:workspace").unwrap();
         // Design, Scan (the fork's), Drawing (the owner's order), Render: no planned workspaces are listed.
-        let rows: Vec<_> =
-            ["design", "scan", "drawing", "render"].iter().map(|slug| rect_of(&format!("workspace:menu:{slug}")).unwrap()).collect();
+        let rows: Vec<_> = ["design", "scan", "drawing", "render"].iter().map(|slug| rect_of(&format!("workspace:menu:{slug}")).unwrap()).collect();
         assert!(rows.windows(2).all(|pair| pair[0].bottom() <= pair[1].top()));
         assert!(rows[0].top() > opener.bottom());
         assert_eq!(rows[0].width(), 450.0);
