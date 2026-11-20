@@ -52,6 +52,11 @@ pub struct ScanPatchesParams {
     /// length, or as close as the scan's noise allows.
     #[serde(default)]
     pub tolerance: Option<super::types::LengthExpr>,
+    /// Whether the surface is trimmed to the region's outline where its corners hang past the
+    /// region (a grid's patch spans the region's flattened box). Default: true; false keeps it
+    /// whole, warned.
+    #[serde(default)]
+    pub trim: Option<bool>,
 }
 
 /// What `scan.fit_patches` returns.
@@ -84,6 +89,10 @@ pub struct ScanPatchesResult {
     /// (`worst_off`): what to do instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
+    /// Where the surface hung past the region: the Trim that cut it to the region's outline, as
+    /// `surface.trim` replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trimmed: Option<Value>,
     /// The Import feature that keeps the surface.
     #[schemars(with = "FeatureResult")]
     pub feature: Value,
@@ -101,7 +110,7 @@ mod tests {
     fn schemas_and_the_key_check_agree() {
         assert_keys(
             input_schema_for::<ScanPatchesParams>(),
-            &["body", "columns", "controls", "grow", "layout", "point", "radius", "rows", "saved", "smoothing", "tolerance", "triangles"],
+            &["body", "columns", "controls", "grow", "layout", "point", "radius", "rows", "saved", "smoothing", "tolerance", "triangles", "trim"],
         );
     }
 }

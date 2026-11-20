@@ -23,7 +23,7 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.fit_patches", "Fi
     .icon("scan_fit_patches")
     .contract(&PATCHES_CONTRACT)
     .output(output_schema_for::<ScanPatchesResult>)
-    .params("body?: the scan (default: what is selected on a scan, else the picked or only one); the region: triangles?: [indices] | saved?: a kept selection (Keep Selection) | point?: [x,y,z] (the piece there; on a piece that wraps round, a closed part, the side of it facing the click) with radius?: length, or grow?: true | degrees (the face there, as far as it faces within 30° or that angle of the way it faces at the point) (default: what is selected, else the point picked); layout?: grid (default: one patch over the region's flattened box) | blocks (that patch cut exactly into `rows` × `columns` faces, sewn into one body) | quads (one patch whose edges follow the region's edge, its corners where the region's are); controls?: 4–30 or [u, v] (default 10: control points each way over the whole); tolerance?: length (with no `controls`: as many control points, 6 to 30, as bring the fit within half of it, or as close as the scan's noise allows); rows?, columns?: blocks (default 2 × 2); smoothing?: 0–1 (default 0.1): fitted in all three directions to the region's points, each starting on the base surface the region fits best (its plane, a cylinder round it, or its flattening, so a region that curves round fits too) and moved to its foot on the surface between rounds; kept as a surface body `Patches1`, … (one undo step); a surface that folds, pinches or passes through itself is kept and said so (warning), and blocks that cannot be sewn because of it are refused → body, surface, layout, patches, rows, columns, controls, rms, max, points, folds, pinches, crossings, warning?, feature")];
+    .params("body?: the scan (default: what is selected on a scan, else the picked or only one); the region: triangles?: [indices] | saved?: a kept selection (Keep Selection) | point?: [x,y,z] (the piece there; on a piece that wraps round, a closed part, the side of it facing the click) with radius?: length, or grow?: true | degrees (the face there, as far as it faces within 30° or that angle of the way it faces at the point) (default: what is selected, else the point picked); layout?: grid (default: one patch over the region's flattened box) | blocks (that patch cut exactly into `rows` × `columns` faces, sewn into one body) | quads (one patch whose edges follow the region's edge, its corners where the region's are); controls?: 4–30 or [u, v] (default 10: control points each way over the whole); tolerance?: length (with no `controls`: as many control points, 6 to 30, as bring the fit within half of it, or as close as the scan's noise allows); rows?, columns?: blocks (default 2 × 2); smoothing?: 0–1 (default 0.1); trim?: bool (default true: where the surface's corners hang past the region, it is trimmed to the region's outline; false keeps it whole, warned): fitted in all three directions to the region's points, each starting on the base surface the region fits best (its plane, a cylinder round it, or its flattening, so a region that curves round fits too) and moved to its foot on the surface between rounds; kept as a surface body `Patches1`, … (one undo step); a surface that folds, pinches or passes through itself is kept and said so (warning), and blocks that cannot be sewn because of it are refused → body, surface, layout, patches, rows, columns, controls, rms, max, points, folds, pinches, crossings, warning?, trimmed?, feature")];
 
 fn reply<T: serde::Serialize>(r: T) -> Result<Value> {
     serde_json::to_value(r).map_err(|e| EngineError::Other(e.to_string()))
@@ -165,7 +165,9 @@ fn fit_patches(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.fit_patches";
     let (body, layout, controls, found) = fitted(s, p, cmd)?;
     let (worst_off, size) = super::curve::projector(s, Some(&body), cmd).map(|(_, on)| surface_off(&on, &found.surfaces)).unwrap_or((0.0, 0.0));
-    let overhang = (worst_off > (OFF_TIMES * found.max).max(OFF_LEAST).max(OFF_SHARE * size)).then(|| {
+    let hangs = worst_off > (OFF_TIMES * found.max).max(OFF_LEAST).max(OFF_SHARE * size);
+    let trim = crate::params::bool_(p, "trim").unwrap_or(true) && hangs;
+    let overhang = (hangs && !trim).then(|| {
         format!(
             "the surface reaches up to {worst_off:.1} mm from the scan, though the scan's points lie within {:.2} mm of it: a grid patch spans the region's flattened box, and here its corners hang past the region; use layout quads, or fit a region shaped more like a rectangle",
             found.max
@@ -209,6 +211,29 @@ fn fit_patches(s: &mut Session, p: &Value) -> Result<Value> {
         let reply = super::super::features::add_feature(s, &json!({ "body_name": name, "name": "Fit Patches" }), kind)?;
         (name, reply)
     };
+    // Hanging past the region: trimmed to its outline, the piece at the region's middle kept.
+    let (trimmed, untrimmed) = if trim {
+        let on = mesh(s, &json!({ "body": body }), cmd)?;
+        let region = super::flatten::region(s, p, &on, cmd)?;
+        let scan = on.scan();
+        let mids: Vec<Vec3> = region.iter().filter_map(|&t| scan.corners(t)).map(|[a, b, c]| (a + b + c) / 3.0).collect();
+        let middle = mids.iter().fold(Vec3::ZERO, |s, m| s + *m) / mids.len().max(1) as f64;
+        let inside = mids.iter().copied().min_by(|a, b| a.dist(middle).total_cmp(&b.dist(middle))).unwrap_or(middle);
+        let keep = found
+            .surfaces
+            .iter()
+            .filter_map(|f| solidcraft_scan::surface_edit::foot(f, inside))
+            .min_by(|a, b| a.point.dist(inside).total_cmp(&b.point.dist(inside)))
+            .map_or(inside, |f| f.point);
+        let within = (2.0 * found.max).max(solidcraft_scan::fit::tolerance(scan.extent()));
+        super::trimmed_to_region(s, &on, &region, &surface, keep, within, "Fit Patches Outline", cmd)?
+    } else {
+        (None, None)
+    };
+    let overhang = match (overhang, untrimmed) {
+        (Some(a), Some(b)) => Some(format!("{a}; {b}")),
+        (a, b) => a.or(b),
+    };
     reply(ScanPatchesResult {
         body,
         surface,
@@ -233,6 +258,7 @@ fn fit_patches(s: &mut Session, p: &Value) -> Result<Value> {
             (Some(a), Some(b)) => Some(format!("{a}; {b}")),
             (a, b) => a.or(b),
         },
+        trimmed,
         feature,
         param_warnings: Vec::new(),
     })

@@ -166,8 +166,17 @@ fn a_patch_hanging_past_the_scan_is_told_of() {
     let path = dir.join("triangle.stl");
     std::fs::write(&path, stl).unwrap();
     run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    // Kept whole when asked: the patch hangs past the triangle, and the reply says so.
+    let whole = run(&mut s, "scan.fit_patches", json!({"point": [10, 10, 0], "radius": 100, "trim": false}));
+    assert!(whole["max"].as_f64().unwrap() < 0.5, "{whole}");
+    assert!(whole["worst_off"].as_f64().unwrap() > 10.0, "{whole}");
+    assert!(whole["warning"].as_str().is_some_and(|w| w.contains("hang past")), "{whole}");
+    run(&mut s, "edit.undo", json!({}));
+    // By default it is trimmed to the triangle's outline: about the triangle's 800 mm², not the
+    // square box's 1600, and nothing hangs past.
     let r = run(&mut s, "scan.fit_patches", json!({"point": [10, 10, 0], "radius": 100}));
-    assert!(r["max"].as_f64().unwrap() < 0.5, "{r}");
-    assert!(r["worst_off"].as_f64().unwrap() > 10.0, "{r}");
-    assert!(r["warning"].as_str().is_some_and(|w| w.contains("hang past")), "{r}");
+    assert!(r["trimmed"].is_object(), "{r}");
+    assert!(r.get("warning").is_none(), "{r}");
+    let area = run(&mut s, "inspect.measure", json!({"bodies": [r["surface"]]}))["total"]["area_mm2"].as_f64().unwrap();
+    assert!((area - 800.0).abs() < 60.0, "{area}");
 }

@@ -1713,7 +1713,6 @@ fn fit_surface(s: &mut Session, p: &Value) -> Result<Value> {
     // and the piece under the point picked is kept.
     let mut untrimmed = None;
     let trimmed = if trim {
-        let plane = fit_face::region_plane(&mesh, &fitted.region).ok_or_else(|| bad(cmd, "the area has no outline to trim to"))?;
         let within = tolerance.unwrap_or_else(|| fit::tolerance(scan.extent()));
         // Under the point; for a region chosen by hand, its triangle nearest its middle (on the
         // region even where the region is a ring).
@@ -1722,33 +1721,8 @@ fn fit_surface(s: &mut Session, p: &Value) -> Result<Value> {
         let inside = mids.iter().copied().min_by(|a, b| a.dist(middle).total_cmp(&b.dist(middle)));
         let point = if by_hand { point.or(inside) } else { point.or_else(|| picked_point(s, &mesh.body)) }.unwrap_or(middle);
         let keep = solidcraft_scan::surface_edit::foot(&fitted.surface, point).map_or(point, |f| f.point);
-        // The outline as closely as the tolerance asks; where the kernel refuses to trim along it
-        // (a noisy scan's outline is jagged: a helmet's dome failed the face split's own check),
-        // drawn again 4, 16 and 64 times looser, the refused outline's sketch taken away; refused
-        // every time, the surface is kept untrimmed and the reply says so.
-        let mut last = None;
-        let mut reply = None;
-        for loose in [1.0, 4.0, 16.0, 64.0] {
-            let sketch = fit_face::outline_sketch(s, &mesh, &fitted.region, &plane, within * loose, "Fit Surface Outline", cmd)?;
-            let tried = super::find_command("surface.trim")
-                .ok_or_else(|| EngineError::UnknownCommand("surface.trim".into()))?
-                .run_nested(s, &json!({"body": name, "curves": {"sketch": sketch}, "keep": [keep.x, keep.y, keep.z]}));
-            match tried {
-                Ok(r) => {
-                    reply = Some(r);
-                    break;
-                }
-                Err(e) => {
-                    last = Some(e);
-                    super::find_command("timeline.delete")
-                        .ok_or_else(|| EngineError::UnknownCommand("timeline.delete".into()))?
-                        .run_nested(s, &json!({"features": [sketch]}))?;
-                }
-            }
-        }
-        if reply.is_none() {
-            untrimmed = Some(format!("kept untrimmed: it could not be trimmed to the area ({})", last.map(|e| e.to_string()).unwrap_or_default()));
-        }
+        let (reply, refused) = trimmed_to_region(s, &mesh, &fitted.region, &name, keep, within, "Fit Surface Outline", cmd)?;
+        untrimmed = refused;
         reply
     } else {
         None
@@ -1772,6 +1746,43 @@ fn fit_surface(s: &mut Session, p: &Value) -> Result<Value> {
         param_warnings: Vec::new(),
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// The sheet body `name`, fitted to the triangles `region` of `mesh`, trimmed to the region's
+/// outline seen square to the way the region faces, the piece at `keep` kept. The outline as
+/// closely as `within` asks; where the kernel refuses to trim along it (a noisy scan's outline is
+/// jagged: a helmet's dome failed the face split's own check), drawn again 4, 16 and 64 times
+/// looser, the refused outline's sketch taken away. The Trim's reply, or, refused every time, why
+/// the sheet is kept untrimmed.
+#[allow(clippy::too_many_arguments)]
+fn trimmed_to_region(
+    s: &mut Session,
+    mesh: &Mesh,
+    region: &[usize],
+    name: &str,
+    keep: Vec3,
+    within: f64,
+    sketch_name: &str,
+    cmd: &str,
+) -> Result<(Option<Value>, Option<String>)> {
+    let plane = fit_face::region_plane(mesh, region).ok_or_else(|| bad(cmd, "the area has no outline to trim to"))?;
+    let mut last = None;
+    for loose in [1.0, 4.0, 16.0, 64.0] {
+        let sketch = fit_face::outline_sketch(s, mesh, region, &plane, within * loose, sketch_name, cmd)?;
+        let tried = super::find_command("surface.trim")
+            .ok_or_else(|| EngineError::UnknownCommand("surface.trim".into()))?
+            .run_nested(s, &json!({"body": name, "curves": {"sketch": sketch}, "keep": [keep.x, keep.y, keep.z]}));
+        match tried {
+            Ok(r) => return Ok((Some(r), None)),
+            Err(e) => {
+                last = Some(e);
+                super::find_command("timeline.delete")
+                    .ok_or_else(|| EngineError::UnknownCommand("timeline.delete".into()))?
+                    .run_nested(s, &json!({"features": [sketch]}))?;
+            }
+        }
+    }
+    Ok((None, Some(format!("kept untrimmed: it could not be trimmed to the area ({})", last.map(|e| e.to_string()).unwrap_or_default()))))
 }
 
 /// What Fit Surface would make, for its dialog: the surface, how close it comes, and the scan's
