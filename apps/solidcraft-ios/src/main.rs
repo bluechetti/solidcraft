@@ -10,6 +10,8 @@
 
 #[cfg(target_os = "ios")]
 mod ai;
+#[cfg(target_os = "ios")]
+mod ar;
 #[cfg(any(target_os = "ios", test))]
 mod ai_data;
 mod files;
@@ -34,6 +36,9 @@ struct App {
     files: files::Files,
     #[cfg(target_os = "ios")]
     ai: ai::State,
+    /// The design in the room through the camera.
+    #[cfg(target_os = "ios")]
+    ar: ar::State,
     /// The view is moved left to clear the AI window while it is open.
     ai_shifted: bool,
     ai_view: Option<(solidcraft_viewport::Camera, solidcraft_viewport::Camera)>,
@@ -97,6 +102,18 @@ impl eframe::App for App {
                     #[cfg(target_os = "ios")]
                     self.ai.test_ask(request, true);
                     let _ = request;
+                } else if step == "ar" || step == "ar-off" {
+                    #[cfg(target_os = "ios")]
+                    if let Err(e) = self.ar.set_on(&mut self.solve, step == "ar") {
+                        note(&format!("ar: {e}"));
+                    }
+                } else if let Some(at) = step.strip_prefix("ar-tap:") {
+                    let mut xy = at.split(',').filter_map(|v| v.trim().parse::<f32>().ok());
+                    #[cfg(target_os = "ios")]
+                    if let (Some(x), Some(y)) = (xy.next(), xy.next()) {
+                        self.ar.test_tap = Some((x, y));
+                    }
+                    let _ = &mut xy;
                 } else if step == "ai-report" {
                     #[cfg(target_os = "ios")]
                     note(&format!("ai report: {}", self.ai.test_report()));
@@ -164,7 +181,7 @@ impl eframe::App for App {
                 }
             }
             // The squeeze opens the context menu at the tip, as a right click there does.
-            if let Some(at) = pencil::take_squeeze() {
+            if let Some(at) = pencil::take_squeeze().filter(|_| !self.ar.on) {
                 self.solve.tablet.open_menu(at);
             }
         }
@@ -182,7 +199,7 @@ impl eframe::App for App {
         // Taps on the number pad become the text and keys they stand for.
         self.numpad.take_presses(raw);
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // Inside the status bar, the home indicator and any rounded corners.
         #[allow(unused_mut)]
         let mut safe = ui.ctx().content_rect();
@@ -243,6 +260,24 @@ impl eframe::App for App {
                 }
             }
         }
+        // AR: a button at the bottom right of the view while it is off; the AR view over
+        // everything while it is on.
+        #[cfg(target_os = "ios")]
+        {
+            let ctx = ui.ctx().clone();
+            if !self.ar.on {
+                let at = safe.right_bottom() - egui::vec2(72.0, 64.0);
+                egui::Area::new(egui::Id::unique("ar-button")).order(egui::Order::Foreground).fixed_pos(at).show(&ctx, |ui| {
+                    if ui.add(egui::Button::new(egui::RichText::new("AR").size(18.0)).min_size(egui::vec2(52.0, 44.0))).on_hover_text("See the design in the room").clicked()
+                        && let Err(e) = self.ar.set_on(&mut self.solve, true)
+                    {
+                        self.solve.set_status(e, true);
+                    }
+                });
+            }
+            self.ar.show(&ctx, frame, &mut self.solve);
+        }
+        let _ = frame;
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(solidcraft_ui_egui::prefs::STORAGE_KEY, self.solve.prefs());
@@ -359,6 +394,8 @@ fn run() -> eframe::Result {
                 files,
                 #[cfg(target_os = "ios")]
                 ai: ai::State::default(),
+                #[cfg(target_os = "ios")]
+                ar: ar::State::default(),
                 ai_shifted: false,
                 ai_view: None,
                 frames: 0,

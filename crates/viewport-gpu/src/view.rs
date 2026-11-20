@@ -7627,12 +7627,12 @@ mod glass_tests {
         let Some((_, device, queue)) = crate::open_headless(crate::test_env::policy()).ok() else { return };
         let depth = crate::depth_format(&device, true);
         let format = wgpu::TextureFormat::Rgba8Unorm;
-        let scene_target = GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false };
-        let window_target = GpuTarget { format, depth: None, samples: 1, tess: false, oit: false };
+        let scene_target = GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false, edges: false };
+        let window_target = GpuTarget { format, depth: None, samples: 1, tess: false, oit: false, edges: false };
         let mut r = Renderer::with_window_target(&device, scene_target, window_target, None);
         let frame = test_frame(test_scene(), 1.0);
         let window_before = render_frame(&mut r, &device, &queue, &frame, false);
-        let key = r.ss_key;
+        let key = r.pic.ss_key;
         assert!(key.is_some(), "the window's picture is kept");
 
         // The eye: the window's camera half a picture to the left, so the triangle shows in the
@@ -7686,7 +7686,7 @@ mod glass_tests {
         assert!(!r.draw_second_view(&device, &queue, &product, [w, h], [0, 0, w, h], true, &mut target));
 
         // The window's still picture was not drawn over, and is shown again as it was.
-        assert_eq!(r.ss_key, key, "the window's picture is still the one kept");
+        assert_eq!(r.pic.ss_key, key, "the window's picture is still the one kept");
         let window_after = render_frame(&mut r, &device, &queue, &frame, false);
         let max = window_before.iter().zip(&window_after).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
         assert!(max <= 1, "the window shows the same picture (max difference {max})");
@@ -7706,7 +7706,7 @@ mod glass_tests {
         let Some((_, device, queue)) = crate::open_headless(crate::test_env::policy()).ok() else { return };
         let depth = crate::depth_format(&device, true);
         let format = wgpu::TextureFormat::Rgba8Unorm;
-        let window = GpuTarget { format, depth: None, samples: 1, tess: false, oit: false };
+        let window = GpuTarget { format, depth: None, samples: 1, tess: false, oit: false, edges: false };
         let (w, h) = (64_u32, 48_u32);
         let mut target = None;
         for samples in [4, 1, 4] {
@@ -7729,8 +7729,8 @@ mod glass_tests {
         let Some((_, device, queue)) = crate::open_headless(crate::test_env::policy()).ok() else { return };
         let depth = crate::depth_format(&device, true);
         let format = wgpu::TextureFormat::Rgba8Unorm;
-        let scene_target = GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false };
-        let window_target = GpuTarget { format, depth: None, samples: 1, tess: false, oit: false };
+        let scene_target = GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false, edges: false };
+        let window_target = GpuTarget { format, depth: None, samples: 1, tess: false, oit: false, edges: false };
         let mut r = Renderer::with_window_target(&device, scene_target, window_target, None);
         let mut scene = GpuScene::default();
         let blue = scene.color([0, 0, 255, 255]);
