@@ -15,7 +15,7 @@ pub mod agent_cursor;
 pub mod ai_connect;
 pub use solidcraft_ui_kit::app_bar;
 pub use solidcraft_ui_kit::blur;
-pub use solidcraft_ui_kit::numeric_focus;
+pub use solidcraft_ui_kit::{numeric_fields, numeric_focus};
 pub use solidcraft_ui_kit::ribbon::set_touch as ribbon_touch;
 pub mod bom_panel;
 pub mod broken_view_preview;

@@ -16,11 +16,47 @@ const NUMERIC_FOCUS: &str = "solidcraft_numeric_focus";
 /// A number is being typed into `response`: a host with an on-screen keyboard may offer its
 /// number layout ([`numeric_focus`]). Called by the kit's number and expression fields.
 pub fn mark_numeric(ctx: &egui::Context, response: &Response) {
+    // Every number field shown this frame, focused or not: a host may let a pen write into one.
+    // `interact_rect` is clipped to what shows (a scrolled-away field has none).
+    let rect = response.rect.intersect(response.interact_rect);
+    if rect.is_positive() {
+        let frame = ctx.cumulative_frame_nr();
+        let id = response.id;
+        ctx.data_mut(|d| {
+            let shown = d.get_temp_mut_or_default::<NumericFields>(egui::Id::unique(NUMERIC_FIELDS));
+            if shown.frame != frame {
+                shown.previous = std::mem::take(&mut shown.fields);
+                shown.frame = frame;
+            }
+            shown.fields.push((id, rect));
+        });
+    }
     if response.has_focus() {
         // Read the frame number first: the context is locked while `data_mut` runs.
         let frame = ctx.cumulative_frame_nr();
         ctx.data_mut(|d| d.insert_temp(egui::Id::unique(NUMERIC_FOCUS), frame));
     }
+}
+
+/// Context key [`mark_numeric`] writes the number fields shown under.
+const NUMERIC_FIELDS: &str = "solidcraft_numeric_fields";
+
+/// The number fields one frame showed, and the frame before's.
+#[derive(Clone, Default)]
+struct NumericFields {
+    frame: u64,
+    fields: Vec<(egui::Id, egui::Rect)>,
+    previous: Vec<(egui::Id, egui::Rect)>,
+}
+
+/// The number and expression fields shown in the latest whole frame: their ids and screen rects,
+/// for a host that lets a pen write a value into one (the iPad's Scribble). Read it after the
+/// frame's UI has run.
+pub fn numeric_fields(ctx: &egui::Context) -> Vec<(egui::Id, egui::Rect)> {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<NumericFields>(egui::Id::unique(NUMERIC_FIELDS)))
+        .map(|shown| if shown.frame == frame { shown.fields } else { shown.previous })
+        .unwrap_or_default()
 }
 
 /// Whether a number or expression field has keyboard focus in this frame. Read it after the

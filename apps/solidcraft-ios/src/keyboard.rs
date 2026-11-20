@@ -84,7 +84,7 @@ extern "C-unwind" fn keyboard_type(_this: *mut AnyObject, _cmd: Sel) -> isize {
 }
 
 /// The root view (winit's view), when there is a window.
-fn view(mtm: MainThreadMarker) -> Option<Retained<objc2_ui_kit::UIView>> {
+pub(crate) fn view(mtm: MainThreadMarker) -> Option<Retained<objc2_ui_kit::UIView>> {
     #[allow(deprecated)]
     UIApplication::sharedApplication(mtm).keyWindow()?.rootViewController()?.view()
 }

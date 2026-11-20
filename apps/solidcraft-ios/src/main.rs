@@ -16,6 +16,8 @@ mod keyboard;
 mod pencil;
 #[cfg(target_os = "ios")]
 mod picker;
+#[cfg(target_os = "ios")]
+mod scribble;
 
 use solidcraft_engine::Session;
 use solidcraft_ui_egui::SolveApp;
@@ -151,6 +153,9 @@ impl eframe::App for App {
                 self.solve.tablet.open_menu(at);
             }
         }
+        // Values written with the pencil (Scribble) into a number field.
+        #[cfg(target_os = "ios")]
+        scribble::take(_ctx, raw);
         self.solve.raw_input_hook(raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -162,6 +167,9 @@ impl eframe::App for App {
         #[cfg(target_os = "ios")]
         {
             keyboard::install(ui.ctx());
+            if let Some(view) = objc2::MainThreadMarker::new().and_then(keyboard::view) {
+                scribble::install(&view);
+            }
             pencil::install(ui.ctx());
             let covered = (keyboard::covered() - ui.ctx().input(|i| i.safe_area_insets().0.bottom)).max(0.0);
             safe.max.y = (safe.max.y - covered).max(safe.min.y + 200.0);
@@ -169,6 +177,8 @@ impl eframe::App for App {
         let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(safe));
         inner.set_clip_rect(safe);
         self.solve.ui(&mut inner);
+        #[cfg(target_os = "ios")]
+        scribble::set_fields(ui.ctx());
         // Number fields get the system keyboard in its numbers layout. The flag is held a moment
         // ([`NUMERIC_HOLD`]) so a field that misses its mark for a frame does not swap layouts.
         let ctx = ui.ctx().clone();

@@ -411,7 +411,7 @@ mod tests {
         }
         let state = |s: &mut Session, rule: &str| {
             run(s, "view.show_hide", json!({"rule": rule}));
-            let st = s.world_state();
+            let st = s.world_state().unwrap();
             let mut v: Vec<String> = st.bodies.iter().filter(|b| s.body_visible(&b.name)).map(|b| b.name.clone()).collect();
             v.sort();
             v
