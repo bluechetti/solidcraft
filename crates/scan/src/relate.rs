@@ -446,11 +446,12 @@ fn solve_dense(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
         }
         a.swap(col, pivot);
         b.swap(col, pivot);
+        let pivot_row = a[col][col..n].to_vec();
         for row in col + 1..n {
-            let f = a[row][col] / a[col][col];
+            let f = a[row][col] / pivot_row[0];
             if f != 0.0 {
-                for k in col..n {
-                    a[row][k] -= f * a[col][k];
+                for (x, p) in a[row][col..n].iter_mut().zip(&pivot_row) {
+                    *x -= f * p;
                 }
                 b[row] -= f * b[col];
             }

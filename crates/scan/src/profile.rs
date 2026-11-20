@@ -1655,8 +1655,7 @@ fn loops_of(runs: Vec<crate::section::Run>) -> Vec<crate::section::Run> {
         let mut chain = open.remove(0);
         let Some(&start) = chain.points.first() else { continue };
         let (mut gaps, mut on_scan) = (0.0, length(&chain.points));
-        loop {
-            let Some(&end) = chain.points.last() else { break };
+        while let Some(&end) = chain.points.last() {
             // The nearest end of a piece still free, and whether that is the piece's last point.
             let nearest = open
                 .iter()

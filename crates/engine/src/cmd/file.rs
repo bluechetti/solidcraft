@@ -711,7 +711,7 @@ fn mesh_size(kind: &solidcraft_doc::FeatureKind) -> Option<[f64; 3]> {
     let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = kind else { return None };
     let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
     for mesh in meshes.iter() {
-        for q in mesh.positions.chunks_exact(3) {
+        for q in mesh.positions.as_chunks::<3>().0 {
             for k in 0..3 {
                 lo[k] = lo[k].min(q[k]);
                 hi[k] = hi[k].max(q[k]);

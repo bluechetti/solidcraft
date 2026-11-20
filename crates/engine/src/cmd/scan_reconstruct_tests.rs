@@ -558,7 +558,11 @@ fn a_plate_under_noise_that_tilts_its_triangles_reads_as_its_faces_and_holes() {
     let (mut s, scan) = scanned_with_noise(&part, &body, 0.1, "plate");
     let found = run(&mut s, "scan.find_all", json!({}));
     let kinds: Vec<&str> = found["shapes"].as_array().unwrap().iter().map(|f| f["kind"].as_str().unwrap()).collect();
-    assert_eq!((kinds.iter().filter(|k| **k == "plane").count(), kinds.iter().filter(|k| **k == "cylinder").count(), kinds.len()), (6, 2, 8), "{kinds:?}");
+    assert_eq!(
+        (kinds.iter().filter(|k| **k == "plane").count(), kinds.iter().filter(|k| **k == "cylinder").count(), kinds.len()),
+        (6, 2, 8),
+        "{kinds:?}"
+    );
     assert!(found["in_shapes"].as_f64().unwrap() > 0.99, "{found}");
     let read = run(&mut s, "scan.reconstruct", json!({}));
     assert_eq!(read["proposals"].as_array().map(Vec::len), Some(1), "{read}");
@@ -653,7 +657,11 @@ fn a_blind_holes_bottom_is_at_its_flat_face_not_the_noisiest_corner_of_its_wall(
     let made = run(&mut part, "solid.cylinder", json!({"radius": 20, "height": 25}));
     let body = made["created_bodies"][0].as_str().unwrap().to_owned();
     run(&mut part, "solid.cylinder", json!({"radius": 12, "height": 15, "base": [0, 0, 25], "operation": "join", "targets": [body]}));
-    run(&mut part, "solid.cylinder", json!({"base": [21, 0, 12.5], "radius": 3, "height": 13, "axis": [-1, 0, 0], "operation": "cut", "targets": [body], "name": "Hole"}));
+    run(
+        &mut part,
+        "solid.cylinder",
+        json!({"base": [21, 0, 12.5], "radius": 3, "height": 13, "axis": [-1, 0, 0], "operation": "cut", "targets": [body], "name": "Hole"}),
+    );
     run(&mut part, "solid.pattern.circular", json!({"features": ["Hole"], "axis": "Z", "count": 3}));
     let (mut s, _) = scanned_with_noise(&part, &body, 0.1, "blind-bottom");
     run(&mut s, "scan.find_all", json!({}));
@@ -1071,9 +1079,9 @@ fn a_twisted_blade_is_lofted_back_with_loft_it() {
         number(0, "twist").abs() < 1e-9 && (number(4, "twist").abs() - 29.4).abs() < 0.3 && (number(2, "twist").abs() - 14.7).abs() < 0.3,
         "{read}"
     );
-    for k in 0..5 {
+    for (k, station) in stations.iter().enumerate().take(5) {
         assert!((number(k, "thickness_share") - 0.24).abs() < 0.005 && (number(k, "thickest_at") - 0.5).abs() < 0.05, "{read}");
-        assert!(number(k, "camber_share") < 0.003 && stations[k].get("naca").is_none(), "{read}");
+        assert!(number(k, "camber_share") < 0.003 && station.get("naca").is_none(), "{read}");
     }
     assert_eq!(build_all(&mut s), ["scan.loft_it"], "{read}");
     let v = volume(&s, &format!("{scan} Reconstructed"));
