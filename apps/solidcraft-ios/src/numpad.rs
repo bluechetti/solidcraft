@@ -82,6 +82,12 @@ impl Numpad {
         self.rect.is_some()
     }
 
+    /// The top of the pad while it is shown: the app's layout ends above it, as it does above a
+    /// docked keyboard, so the dialog being typed in keeps its buttons in view.
+    pub fn top(&self) -> Option<f32> {
+        self.rect.map(|r| r.top())
+    }
+
     /// Turn presses on the pad's keys into the text and keys they stand for. Run on the input
     /// after the app's own sorting of touch (so pencil and finger presses both arrive as the
     /// pointer's), before egui sees it.

@@ -6399,6 +6399,7 @@ dependencies = [
  "png",
  "serde_json",
  "solidcore-record",
+ "solidcraft-control",
  "solidcraft-engine",
  "solidcraft-ui-egui",
  "solidcraft-viewport",

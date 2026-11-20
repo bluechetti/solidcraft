@@ -35,6 +35,12 @@ struct App {
     frames: u32,
     synced_at: f64,
     numpad: numpad::Numpad,
+    /// Test hook steps still to run (last first) and when the last one ran.
+    test_steps: Vec<String>,
+    test_at: f64,
+    /// The test hook's way into the control channel, and the replies it has not read.
+    control_tx: Option<std::sync::mpsc::Sender<solidcraft_control::ControlRequest>>,
+    control_replies: Vec<std::sync::mpsc::Receiver<solidcraft_control::ControlResponse>>,
 }
 
 impl eframe::App for App {
@@ -47,10 +53,52 @@ impl eframe::App for App {
         // Test hook: `SIMCTL_CHILD_SOLIDCRAFT_IOS_TEST=doc.open` starts that command after start-up.
         if self.frames == 3 {
             self.frames += 1;
-            if let Ok(id) = std::env::var("SOLIDCRAFT_IOS_TEST") {
-                self.solve.start(&id);
+            if let Ok(steps) = std::env::var("SOLIDCRAFT_IOS_TEST") {
+                self.test_steps = steps.split(';').map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect();
+                self.test_steps.reverse();
             }
         }
+        // Test hook steps, one a second: a UI command id (`solid.extrude` opens its dialog),
+        // `run:<command> <json params>` to run a command, or `menu:<x>,<y>` for the context menu.
+        let now = ctx.input(|i| i.time);
+        if !self.test_steps.is_empty() && now - self.test_at >= 1.0 {
+            self.test_at = now;
+            if let Some(step) = self.test_steps.pop() {
+                note(&format!("test step: {step}"));
+                if let Some(rest) = step.strip_prefix("run:") {
+                    let (command, params) = rest.split_once(' ').unwrap_or((rest, "{}"));
+                    let params = serde_json::from_str(params).unwrap_or_else(|_| serde_json::json!({}));
+                    if let Err(e) = self.solve.run(command, params) {
+                        note(&format!("test step failed: {e}"));
+                    }
+                } else if let Some(rest) = step.strip_prefix("ui:") {
+                    // A control-channel call (`ui.menu`, `ui.browser`, `ui.file`), as MCP sends it.
+                    let (method, params) = rest.split_once(' ').unwrap_or((rest, "{}"));
+                    let params = serde_json::from_str(params).unwrap_or_else(|_| serde_json::json!({}));
+                    let (request, reply) = solidcraft_control::ControlRequest::new(method, params);
+                    if let Some(tx) = &self.control_tx {
+                        let _ = tx.send(request);
+                    }
+                    self.control_replies.push(reply);
+                } else if let Some(at) = step.strip_prefix("menu:") {
+                    let mut xy = at.split(',').filter_map(|v| v.trim().parse::<f32>().ok());
+                    if let (Some(x), Some(y)) = (xy.next(), xy.next()) {
+                        self.solve.tablet.open_menu(egui::pos2(x, y));
+                    }
+                } else {
+                    self.solve.start(&step);
+                }
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+        self.control_replies.retain(|reply| match reply.try_recv() {
+            Ok(response) => {
+                note(&format!("test reply: {}", serde_json::to_string(&response).unwrap_or_default().chars().take(600).collect::<String>()));
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+            Err(_) => false,
+        });
         // Saves of a file opened from iCloud Drive (or another folder) are written back to it.
         #[cfg(target_os = "ios")]
         if picker::linked() {
@@ -117,12 +165,23 @@ impl eframe::App for App {
             let covered = (keyboard::covered() - ui.ctx().input(|i| i.safe_area_insets().0.bottom)).max(0.0);
             safe.max.y = (safe.max.y - covered).max(safe.min.y + 200.0);
         }
+        // The number pad (shown last frame) covers the bottom like a docked keyboard; the pad
+        // itself is placed in the area before that, or it would climb a little every frame.
+        let pad_area = safe;
+        if let Some(top) = self.numpad.top() {
+            safe.max.y = (top - 8.0).clamp(safe.min.y + 200.0, safe.max.y);
+        }
+        if safe.max.y < pad_area.max.y {
+            // The tray under the pad, in the panels' colour rather than the bare window.
+            let tray = egui::Rect::from_min_max(egui::pos2(pad_area.min.x, safe.max.y), pad_area.max);
+            ui.painter().rect_filled(tray, 0.0, ui.visuals().panel_fill);
+        }
         let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(safe));
         inner.set_clip_rect(safe);
         self.solve.ui(&mut inner);
         // Number fields get the app's number pad (an iPad has no number keyboard); ABC on it
         // gives the field the system keyboard, in its numbers layout.
-        let (_pad, _numeric) = self.numpad.show(ui.ctx(), safe, solidcraft_ui_egui::numeric_focus(ui.ctx()));
+        let (_pad, _numeric) = self.numpad.show(ui.ctx(), pad_area, solidcraft_ui_egui::numeric_focus(ui.ctx()));
         #[cfg(target_os = "ios")]
         {
             keyboard::set_numpad(_pad);
@@ -225,6 +284,13 @@ fn run() -> eframe::Result {
             solidcraft_ui_egui::fonts::setup_fonts(&cc.egui_ctx);
             let files = files::Files::default();
             let mut app = SolveApp::new(Session::default(), files.services());
+            // The test hook's control channel, only when a test asks for one.
+            let mut control_tx = None;
+            if std::env::var_os("SOLIDCRAFT_IOS_TEST").is_some() {
+                let (tx, rx) = std::sync::mpsc::channel();
+                app = app.with_control(rx);
+                control_tx = Some(tx);
+            }
             if let Some(prefs) = cc.storage.and_then(|s| solidcraft_ui_egui::prefs::stored(|k| s.get_string(k))) {
                 app.load_prefs(&prefs);
             }
@@ -250,6 +316,10 @@ fn run() -> eframe::Result {
                 frames: 0,
                 synced_at: 0.0,
                 numpad: numpad::Numpad::default(),
+                test_steps: Vec::new(),
+                test_at: 0.0,
+                control_tx,
+                control_replies: Vec::new(),
             }))
         }),
     )
