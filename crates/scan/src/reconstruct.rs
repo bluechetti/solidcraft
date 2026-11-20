@@ -1618,6 +1618,9 @@ pub struct Reading {
     pub loft: Option<crate::loft::Loft>,
 }
 
+/// The least share of the shapes' area tubes hold for the part to be read as tubes.
+const TUBES_SHARE: f64 = 0.15;
+
 /// The sign that turns the scan's winding out of its material: the sign of the volume its
 /// triangles bound (most scans are wound outward, even with gaps).
 pub fn outward(scan: &Scan) -> f64 {
@@ -2060,6 +2063,12 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
             crate::tubes::bend_extent(corners_of(k).into_iter(), centre, axis, u)
         })
     };
+    // Tubes that hold little of the shapes are a part's rounds chained (a fillet's torus running
+    // on into a boss), not a part made of tubes: the BMW manifold's hold a fifth of its shapes,
+    // the rounds of T-LESS's connectors and boxes a tenth at most.
+    let shapes_area: f64 = faces.iter().map(|f| f.area).sum();
+    let tubes_area: f64 = tubes.iter().flat_map(|t| t.faces.iter()).filter_map(|&k| faces.get(k)).map(|f| f.area).sum();
+    let tubes = if tubes_area >= TUBES_SHARE * shapes_area { tubes } else { Vec::new() };
     // A pipe's or a tube's straight runs read as prisms too: Pipe It and Tubes It build them.
     let mut prisms = prisms;
     if let Some(pipe) = &pipe {
