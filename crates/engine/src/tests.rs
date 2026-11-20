@@ -3283,7 +3283,8 @@ fn a_unit_on_import_matches_importing_in_millimetres_then_scaling() {
             let mut with_unit = Session::default();
             run(&mut with_unit, "file.insert_mesh", json!({"path": path.to_string_lossy(), "units": units}));
             let mut scaled = Session::default();
-            let inserted = run(&mut scaled, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+            // In millimetres by name: a file one unit across that states no unit is refused until it is given.
+            let inserted = run(&mut scaled, "file.insert_mesh", json!({"path": path.to_string_lossy(), "units": "mm"}));
             let body = inserted["bodies"][0].as_str().unwrap().to_string();
             run(&mut scaled, "solid.scale", json!({"bodies": [body], "factor": mm.to_string()}));
             let (a, b) = (with_unit.model.state().bodies[0].mesh().bounds(), scaled.model.state().bodies[0].mesh().bounds());
