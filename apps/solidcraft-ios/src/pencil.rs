@@ -151,6 +151,11 @@ pub fn take_hover(raw: &mut egui::RawInput) -> bool {
     any
 }
 
+/// Where the pencil hovers just above the glass now, if it does.
+pub fn hovering() -> Option<egui::Pos2> {
+    HOVER_AT.with(std::cell::Cell::get)
+}
+
 /// How far (points) a hovering pencil may drift and still count as resting.
 const HOVER_STILL: f32 = 4.0;
 

@@ -20,6 +20,15 @@ until it finds a surface.
 | Measure | Two Pencil taps on the model: the distance in mm, drawn in the room. |
 | Pull | Press the Pencil on a face and drag: an arrow and the distance follow. Lift, then Apply (`solid.press_pull`, one undo step) or Cancel; the Pencil back on the arrow adjusts it. |
 | Undo / Redo | The design's own undo history. |
+| Photo | Saves the room and the model (without the panel) to Photos. |
+| Joints | Each joint's coordinates with − and + (`joint.drive`, held to its limits). |
+| Check | Finds overlapping parts (`inspect.interference`), selects them and marks each overlap in the room. |
+| Pencil hover | The face under the hovering tip lights up, as under the mouse. |
+| Pencil double tap | Undo. |
+| Pencil squeeze (Pro) | A tool palette at the tip: Select, Pull, Measure, Section, Photo, Undo. |
+
+Snaps, placing and applying play a haptic tick on Apple Pencil Pro (an iPad has no haptic engine
+of its own).
 
 Leaving the app and coming back keeps the model where it was: ARKit relocalizes, and the model is
 hidden until it has. The app's own touch handling (long press menu, orbit) is off while AR shows.
@@ -41,7 +50,8 @@ hidden until it has. The app's own touch handling (long press menu, orbit) is of
 
 ARKit runs on the device only (not the simulator). Test steps (`SOLIDCRAFT_IOS_TEST`, see the
 build notes): `ar`, `ar-off`, `ar-tap:x,y` (a finger tap, 0..1 across and down), `ar-pick:x,y`
-(a Pencil tap), `ar-section`, `ar-measure`, `ar-explode`, `ar-pull:x0,y0,x1,y1` (a Pencil drag). The log (`tmp/solidcraft-last-error.txt`) has an `ar:` line for each tap and pick,
+(a Pencil tap), `ar-section`, `ar-measure`, `ar-explode`, `ar-pull:x0,y0,x1,y1` (a Pencil drag), `ar-photo`, `ar-joints`, `ar-check`, `ar-doubletap`,
+`ar-squeeze:x,y` (points). The log (`tmp/solidcraft-last-error.txt`) has an `ar:` line for each tap and pick,
 the first LiDAR depth map, thermal changes, and every 300 frames the CPU time and light gains.
 
 ## Limits

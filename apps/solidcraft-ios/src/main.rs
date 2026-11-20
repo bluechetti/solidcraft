@@ -124,6 +124,18 @@ impl eframe::App for App {
                         "ar-check" => self.ar.test_check = true,
                         _ => self.ar.test_explode = true,
                     }
+                } else if step == "ar-doubletap" {
+                    #[cfg(target_os = "ios")]
+                    {
+                        self.ar.double_taps += 1;
+                    }
+                } else if let Some(at) = step.strip_prefix("ar-squeeze:") {
+                    let v: Vec<f32> = at.split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect();
+                    #[cfg(target_os = "ios")]
+                    if let [x, y] = v[..] {
+                        self.ar.squeeze = Some(egui::pos2(x, y));
+                    }
+                    let _ = v;
                 } else if let Some(at) = step.strip_prefix("ar-pull:") {
                     let v: Vec<f32> = at.split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect();
                     #[cfg(target_os = "ios")]
@@ -194,6 +206,11 @@ impl eframe::App for App {
         #[cfg(target_os = "ios")]
         {
             for _ in 0..pencil::take_taps() {
+                // In AR the double tap undoes, as drawing apps let it.
+                if self.ar.on {
+                    self.ar.double_taps += 1;
+                    continue;
+                }
                 for pressed in [true, false] {
                     raw.events.push(egui::Event::Key {
                         key: egui::Key::Escape,
@@ -205,8 +222,13 @@ impl eframe::App for App {
                 }
             }
             // The squeeze opens the context menu at the tip, as a right click there does.
-            if let Some(at) = pencil::take_squeeze().filter(|_| !self.ar.on) {
-                self.solve.tablet.open_menu(at);
+            // In AR it opens AR's tool palette there instead.
+            if let Some(at) = pencil::take_squeeze() {
+                if self.ar.on {
+                    self.ar.squeeze = Some(at);
+                } else {
+                    self.solve.tablet.open_menu(at);
+                }
             }
         }
         // Values written with the pencil (Scribble) into a number field.
@@ -306,6 +328,7 @@ impl eframe::App for App {
                         }
                     });
             }
+            self.ar.pencil_hover = pencil::hovering();
             self.ar.show(&ctx, frame, &mut self.solve);
         }
         let _ = frame;

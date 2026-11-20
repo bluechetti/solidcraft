@@ -259,8 +259,13 @@ public func sc_ar_raycast(_ x: Float, _ y: Float, _ width: Float, _ height: Floa
 /// A light tap from the system's haptics (the snap to real size, a placement).
 @_cdecl("sc_ar_tick")
 public func sc_ar_tick() {
-    let g = UIImpactFeedbackGenerator(style: .light)
-    g.impactOccurred()
+    // An iPad has no haptic engine of its own; Apple Pencil Pro does, and a canvas feedback
+    // generator plays there while the Pencil is held (and nowhere otherwise).
+    if let view = bridge?.window() {
+        let g = UICanvasFeedbackGenerator(view: view)
+        g.alignmentOccurred(at: CGPoint(x: view.bounds.midX, y: view.bounds.midY))
+    }
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
 }
 
 /// How hot the device runs: 0 nominal, 1 fair, 2 serious, 3 critical (iPadOS slows it down).

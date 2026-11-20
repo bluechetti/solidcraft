@@ -38,11 +38,25 @@ impl Source {
     }
 }
 
+/// The face a host's own pointer is at (a headset's controller, the iPad's hovering Pencil in
+/// AR): the design view lights it up as it does the face under the mouse.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pointed {
+    pub body: String,
+    /// The face's index in the body.
+    pub face: usize,
+    /// Where the pointer meets it (model units).
+    pub point: [f64; 3],
+}
+
 /// Whether a host shows the design view in a headset, and this frame's [`Source`] for it.
 #[derive(Default)]
 pub struct Stereo {
     /// A host draws the design view for a headset: the view leaves its [`Source`] each frame.
     pub on: bool,
+    /// What the host's pointer is at, set by the host each frame while [`Stereo::on`]. It takes
+    /// the place of the mouse's hover, so the host's view and the window light up the same face.
+    pub pointed: Option<Pointed>,
     source: Option<Source>,
 }
 

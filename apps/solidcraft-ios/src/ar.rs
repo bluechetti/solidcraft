@@ -322,6 +322,18 @@ pub struct State {
     exploded: usize,
     /// Pull is on: the Pencil pushes and pulls faces (`solid.press_pull`).
     pull_mode: bool,
+    /// Where the Pencil hovers above the glass, set by the app each frame.
+    pub pencil_hover: Option<egui::Pos2>,
+    /// Where the hovered face was last picked from (it is picked again once the Pencil moves).
+    hover_picked: Option<egui::Pos2>,
+    /// Pencil double taps not yet acted on (each undoes).
+    pub double_taps: usize,
+    /// A Pencil squeeze not yet acted on: where it was.
+    pub squeeze: Option<egui::Pos2>,
+    /// The tool palette a squeeze opened, and where.
+    palette: Option<egui::Pos2>,
+    /// The camera's back direction last frame (for a cut chosen from the palette).
+    last_back: Option<[f64; 3]>,
     /// The Joints list is open, with the joints as last listed (name; each coordinate's value
     /// and unit).
     joints: Option<Vec<(String, Vec<(f64, String)>)>>,
@@ -444,6 +456,10 @@ impl State {
         let started = std::time::Instant::now();
         let seen = self.next_frame(rs, [screen.width(), screen.height()]);
         let camera_ms = started.elapsed().as_secs_f64() * 1e3;
+        if let Some(s) = seen.as_ref() {
+            self.last_back = Some(s.back);
+        }
+        self.pencil_gestures(app);
         // The model from ARKit's camera.
         let mut model_drawn = false;
         // Not while ARKit is still finding the room it knew (after an interruption): until it
@@ -493,6 +509,7 @@ impl State {
                 painter.set_clip_rect(screen);
                 painter.add(egui_wgpu::Callback::new_paint_callback(rect, Paint));
                 if !coaching && let Some(seen) = seen.as_ref() {
+                    self.hover(app, seen, rect);
                     if std::mem::take(&mut self.test_section) {
                         self.cut = self.placed.and_then(|p| p.cut_facing(seen.back));
                     }
@@ -887,7 +904,7 @@ impl State {
         }
         let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
         let grabbed = pick(app, seen, &placed, u)
-            .and_then(|(body, point, normal)| Some(Pull { body, point, normal: unit(normal)?, start: at, distance: 0.0, base: 0.0, held: true }));
+            .and_then(|(body, point, normal, _)| Some(Pull { body, point, normal: unit(normal)?, start: at, distance: 0.0, base: 0.0, held: true }));
         match grabbed {
             Some(p) => {
                 crate::note(&format!("ar: pull grabbed {}", p.body));
@@ -966,6 +983,101 @@ impl State {
         let back = egui::Rect::from_center_size(b + egui::vec2(0.0, -26.0), galley.size() + egui::vec2(16.0, 8.0));
         painter.rect_filled(back, 6.0, ink);
         painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
+    }
+
+    /// The hovering Pencil lights up the face under its tip, as the mouse does in the design
+    /// view (the design view's own highlight, which the AR view draws).
+    fn hover(&mut self, app: &mut SolveApp, seen: &Seen, rect: egui::Rect) {
+        let at = self.pencil_hover.filter(|_| self.pencil.is_none() && self.pulling.as_ref().is_none_or(|p| !p.held));
+        let Some(at) = at else {
+            app.viewport.stereo.pointed = None;
+            self.hover_picked = None;
+            return;
+        };
+        if self.hover_picked.is_some_and(|p| p.distance(at) < 2.0) {
+            return;
+        }
+        self.hover_picked = Some(at);
+        let Some(placed) = self.placed else { return };
+        let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
+        app.viewport.stereo.pointed = pick(app, seen, &placed, u).map(|(body, point, _, face)| solidcraft_ui_egui::stereo::Pointed { body, face, point });
+    }
+
+    /// Pencil double taps (undo each) and a squeeze (the tool palette at the tip).
+    fn pencil_gestures(&mut self, app: &mut SolveApp) {
+        for _ in 0..std::mem::take(&mut self.double_taps) {
+            self.pulling = None;
+            self.overlaps.clear();
+            match app.run("edit.undo", serde_json::json!({})) {
+                Ok(_) => self.message = "Undone (Pencil double tap).".into(),
+                Err(e) => self.message = e,
+            }
+        }
+        if let Some(at) = self.squeeze.take() {
+            self.palette = if self.palette.is_some() { None } else { Some(at) };
+            if let Ok(b) = self.bridge() {
+                (b.tick)();
+            }
+        }
+    }
+
+    /// The tool palette a Pencil squeeze opened at the tip: the AR tools in one reach.
+    fn palette(&mut self, ctx: &egui::Context) -> Option<egui::Rect> {
+        let at = self.palette?;
+        let mut chosen: Option<&str> = None;
+        let container = Container::new(ctx, Surface::Popup);
+        let tools = [
+            ("Select", !self.pull_mode && self.measuring.is_none()),
+            ("Pull", self.pull_mode),
+            ("Measure", self.measuring.is_some()),
+            ("Section", self.cut.is_some()),
+            ("Photo", false),
+            ("Undo", false),
+        ];
+        let shown = container
+            .area(egui::Id::unique("ar-palette"))
+            .order(egui::Order::Tooltip)
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .fixed_pos(at - egui::vec2(0.0, 24.0))
+            .show(ctx, |ui| {
+                let frame = Container::popup_frame(ui.style());
+                container.show_frame(ui, frame, ctx.content_rect(), |ui| {
+                    ui.horizontal(|ui| {
+                        for (label, on) in tools {
+                            if button(ui, label, if on { Button::SmallSelected } else { Button::Small }).clicked() {
+                                chosen = Some(label);
+                            }
+                        }
+                    });
+                });
+            });
+        if let Some(label) = chosen {
+            self.palette = None;
+            match label {
+                "Select" => {
+                    self.pull_mode = false;
+                    self.measuring = None;
+                    self.pulling = None;
+                }
+                "Pull" => {
+                    self.pull_mode = true;
+                    self.measuring = None;
+                }
+                "Measure" => {
+                    self.measuring = Some(Vec::new());
+                    self.pull_mode = false;
+                }
+                "Section" => {
+                    self.cut = match (self.cut, self.placed, self.last_back) {
+                        (None, Some(p), Some(back)) => p.cut_facing(back),
+                        _ => None,
+                    };
+                }
+                "Photo" => self.take_photo = true,
+                _ => self.double_taps += 1,
+            }
+        }
+        Some(shown.response.rect)
     }
 
     /// Photo: the AR view without the panel, saved to Photos.
@@ -1141,7 +1253,7 @@ impl State {
     /// face); the second gives the distance; a third starts again.
     fn measure_at(&mut self, app: &mut SolveApp, seen: &Seen, u: (f32, f32)) {
         let Some(placed) = self.placed else { return };
-        let Some((_, point, _)) = pick(app, seen, &placed, u) else {
+        let Some((_, point, _, _)) = pick(app, seen, &placed, u) else {
             self.message = "Tap the model to measure.".into();
             return;
         };
@@ -1312,7 +1424,11 @@ impl State {
         });
         // A Pencil touch that starts on the panel is the panel's (its buttons), not the model's.
         let list = self.joints_list(ctx, shown.response.rect.left_bottom() + egui::vec2(0.0, 8.0), app);
-        self.panel = Some(list.map_or(shown.response.rect, |r| r.union(shown.response.rect)));
+        let mut panel = list.map_or(shown.response.rect, |r| r.union(shown.response.rect));
+        if let Some(r) = self.palette(ctx) {
+            panel = panel.union(r);
+        }
+        self.panel = Some(panel);
         let _ = screen;
         if leave {
             let _ = self.set_on(app, false);
@@ -1330,7 +1446,7 @@ fn to_screen(seen: &Seen, placed: &Placed, rect: egui::Rect, q: [f64; 3]) -> Opt
 /// The part under view point `u` (0..1 across and down) and where its face is hit (model
 /// units): the design view's own pick (`view.pick`) with the ray from ARKit's camera taken into
 /// the model's space.
-fn pick(app: &mut SolveApp, seen: &Seen, placed: &Placed, u: (f32, f32)) -> Option<(String, [f64; 3], [f64; 3])> {
+fn pick(app: &mut SolveApp, seen: &Seen, placed: &Placed, u: (f32, f32)) -> Option<(String, [f64; 3], [f64; 3], usize)> {
     let inv = invert(&seen.view_proj)?;
     let ndc = [f64::from(u.0) * 2.0 - 1.0, 1.0 - f64::from(u.1) * 2.0];
     let at = |depth: f64| {
@@ -1349,7 +1465,8 @@ fn pick(app: &mut SolveApp, seen: &Seen, placed: &Placed, u: (f32, f32)) -> Opti
         let p = hit.get(k)?;
         Some([p.get(0)?.as_f64()?, p.get(1)?.as_f64()?, p.get(2)?.as_f64()?])
     };
-    Some((body, v("point")?, v("normal")?))
+    let face = hit.get("face").and_then(|f| f.as_u64()).and_then(|f| usize::try_from(f).ok()).unwrap_or(0);
+    Some((body, v("point")?, v("normal")?, face))
 }
 
 /// Where the model goes on first tap: its foot (the middle of its underside) on `point`,
