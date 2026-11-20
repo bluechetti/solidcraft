@@ -22,6 +22,7 @@ solidcraft-engine::shell_regressions::shell_of_a_box_with_a_lofted_tunnel SMLib'
 solidcraft-engine::tests::chord_and_variable_fillets its 2 → 4 → 2 waist: solidcore refuses a variable fillet whose law has a corner (solidcore#430)
 solidcraft-engine::tests::fillet_fit_taper_closes_to_a_point fillet status 1001 on the taper fit (radius 16 closing to 0), as on C++
 solidcraft-kernel::blend::corner_tests::a_round_ending_in_an_earlier_round_matches_both_together fillet status 1001 on the round that ends in the earlier one, as on C++
+solidcraft-kernel::blend::tests::two_g2_rounds_meet_at_a_corner_with_a_drafted_wall the kernel crate still refuses a curvature-continuous fillet over edges whose faces meet at different angles ("not supported yet"), though solidcore builds the mitre by depth; local work in progress, not upstream's
 solidcraft-kernel::blend_corner::tests::issue2422_vertical_after_separate_bottom_rounds the vertical edge after the separate bottom rounds is refused as smooth ("its faces meet tangentially, so there is nothing to round"): the rounds leave it tangent at solidcore 8ddce9016
 solidcraft-kernel::blend_variable::tests::variable_radius_with_a_corner_through_a_middle_point solidcore refuses a variable fillet whose law has a corner (solidcore#430)
 solidcraft-kernel::coplanar_tests::a_block_flush_within_a_hair_with_a_plate_joins_into_one_solid solidcore's merge refuses a union whose faces are flush within 4e-4 and 2e-5 rad (MakeFaceuse: no radial edge use classifies the face's edge use); the sector tests step off across sliver faces
