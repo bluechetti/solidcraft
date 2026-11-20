@@ -107,6 +107,32 @@ fn main() {
         for (k, face) in reading.faces.iter().enumerate() {
             eprintln!("face {k}: {:?}", face.shape);
         }
+        let kind = |k: usize| {
+            reading.faces.get(k).map_or("?", |f| match f.shape {
+                solidcraft_scan::fit::Shape::Plane { .. } => "plane",
+                solidcraft_scan::fit::Shape::Cylinder { .. } => "cyl",
+                solidcraft_scan::fit::Shape::Sphere { .. } => "sphere",
+                solidcraft_scan::fit::Shape::Cone { .. } => "cone",
+                solidcraft_scan::fit::Shape::Torus { .. } => "torus",
+            })
+        };
+        eprintln!("rounds {:?}", reading.rounds.iter().map(|&k| (k, kind(k), reading.faces[k].area.round())).collect::<Vec<_>>());
+        eprintln!("fillets {:?}", reading.fillets.iter().map(|f| (f.face, (f.radius * 100.0).round() / 100.0)).collect::<Vec<_>>());
+        eprintln!(
+            "chamfers {}, holes {}, repeats {}, revolve {}, partly {}",
+            reading.chamfers.len(),
+            reading.holes.len(),
+            reading.repeats.len(),
+            reading.revolve.is_some(),
+            reading.partly_turned.is_some()
+        );
+        let explained: std::collections::BTreeSet<usize> = reading.prisms.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).copied().collect();
+        let left: Vec<(usize, &str, f64)> = (0..reading.faces.len())
+            .filter(|k| !explained.contains(k) && !reading.rounds.contains(k))
+            .map(|k| (k, kind(k), reading.faces[k].area.round()))
+            .filter(|x| x.2 > 0.0)
+            .collect();
+        eprintln!("faces in no prism and no round {:?}", left);
         for (k, prism) in reading.prisms.iter().enumerate() {
             eprintln!("prism {k}: walls {:?} ends {:?} low {:.3} high {:.3}", prism.walls, prism.ends, prism.low, prism.high);
             match solidcraft_scan::profile::prism_profile(&scan, &out, &reading, prism) {
