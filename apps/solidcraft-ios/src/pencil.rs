@@ -132,10 +132,29 @@ pub fn take_hover(raw: &mut egui::RawInput) -> bool {
     let moves = HOVER.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
     let any = !moves.is_empty();
     for at in moves {
-        raw.events.push(match at {
-            Some(at) => egui::Event::PointerMoved(at),
-            None => egui::Event::PointerGone,
-        });
+        match at {
+            // A hand-held pencil is never quite still: moves within [`HOVER_STILL`] of where the
+            // pointer was put are dropped, so egui sees a resting pointer and shows its tooltip.
+            Some(at) => {
+                let near = HOVER_AT.with(|last| last.get().is_some_and(|p: egui::Pos2| p.distance(at) < HOVER_STILL));
+                if !near {
+                    HOVER_AT.with(|last| last.set(Some(at)));
+                    raw.events.push(egui::Event::PointerMoved(at));
+                }
+            }
+            None => {
+                HOVER_AT.with(|last| last.set(None));
+                raw.events.push(egui::Event::PointerGone);
+            }
+        }
     }
     any
+}
+
+/// How far (points) a hovering pencil may drift and still count as resting.
+const HOVER_STILL: f32 = 4.0;
+
+thread_local! {
+    /// Where the hovering pencil last put the pointer.
+    static HOVER_AT: std::cell::Cell<Option<egui::Pos2>> = const { std::cell::Cell::new(None) };
 }
