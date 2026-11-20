@@ -18,7 +18,8 @@ until it finds a surface.
 | Section | A cut through the model facing you; drag up and down to move it; Apply keeps it in the design. |
 | Explode | The design's exploded views in turn, then assembled again. |
 | Measure | Two Pencil taps on the model: the distance in mm, drawn in the room. |
-| Pull | Press the Pencil on a face and drag: an arrow and the distance follow; lifting it pushes or pulls the face (`solid.press_pull`, one undo step). |
+| Pull | Press the Pencil on a face and drag: an arrow and the distance follow. Lift, then Apply (`solid.press_pull`, one undo step) or Cancel; the Pencil back on the arrow adjusts it. |
+| Undo / Redo | The design's own undo history. |
 
 Leaving the app and coming back keeps the model where it was: ARKit relocalizes, and the model is
 hidden until it has. The app's own touch handling (long press menu, orbit) is off while AR shows.
@@ -45,7 +46,8 @@ the first LiDAR depth map, thermal changes, and every 300 frames the CPU time an
 
 ## Limits
 
-- The camera picture is copied each frame (about 1 ms of CPU); no zero-copy yet.
+- The camera picture is shared with the GPU without a copy (CVMetalTextureCache wrapped by
+  wgpu-hal, about 0.2 ms of CPU a frame); if that cannot be set up it is copied (about 1 ms).
 - LiDAR's depth is 256 x 192, so edges of a hand in front of the model are soft.
 - The contact shadow is not hidden by real things standing on it.
 - At the thermal state "serious" the model is drawn at 60% of the pixels; at "critical" AR stops.

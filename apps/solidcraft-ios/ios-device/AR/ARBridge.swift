@@ -4,6 +4,8 @@
 // (`src/ar.rs`). Swift because ARKit's matrices are SIMD types that Rust bindings cannot pass.
 // Everything here runs on the main thread (the app's UI thread), where ARKit's delegate is called.
 import ARKit
+import CoreVideo
+import Metal
 import UIKit
 
 private final class Bridge: NSObject, ARSessionDelegate, ARCoachingOverlayViewDelegate {
@@ -289,4 +291,50 @@ public func sc_ar_depth(_ bytes: UnsafeMutablePointer<UnsafeRawPointer?>, _ info
     info[2] = Int32(CVPixelBufferGetBytesPerRow(map))
     bytes.pointee = UnsafeRawPointer(CVPixelBufferGetBaseAddress(map))
     return 1
+}
+
+// MARK: The camera picture as Metal textures, without a copy
+
+nonisolated(unsafe) private var textureCache: CVMetalTextureCache?
+
+/// The app's Metal device (an `id<MTLDevice>`, not retained by the caller): camera pictures are
+/// made into textures on it. Returns 1 when the texture cache was made.
+@_cdecl("sc_ar_set_device")
+public func sc_ar_set_device(_ device: UnsafeMutableRawPointer) -> Int32 {
+    let mtl = Unmanaged<AnyObject>.fromOpaque(device).takeUnretainedValue()
+    guard let mtl = mtl as? MTLDevice else { return 0 }
+    var cache: CVMetalTextureCache?
+    guard CVMetalTextureCacheCreate(nil, nil, mtl, nil, &cache) == kCVReturnSuccess, let cache else { return 0 }
+    textureCache = cache
+    return 1
+}
+
+/// The picture `sc_ar_frame` just gave as two Metal textures sharing its memory: luma (R8) and
+/// chroma (RG8, half size). Writes each `id<MTLTexture>` (not retained: the caller retains it)
+/// and a retained handle that keeps the picture's memory alive until `sc_ar_release` is called
+/// with it, after the GPU is done. Returns 1 with both, 0 without (then nothing to release).
+@_cdecl("sc_ar_metal_planes")
+public func sc_ar_metal_planes(_ textures: UnsafeMutablePointer<UnsafeMutableRawPointer?>, _ keeps: UnsafeMutablePointer<UnsafeMutableRawPointer?>) -> Int32 {
+    guard let cache = textureCache, let b = bridge, let pixels = b.locked ?? b.session.currentFrame?.capturedImage,
+          CVPixelBufferGetPlaneCount(pixels) >= 2 else { return 0 }
+    var made: [(MTLTexture, CVMetalTexture)] = []
+    for (plane, format) in [(0, MTLPixelFormat.r8Unorm), (1, MTLPixelFormat.rg8Unorm)] {
+        var cv: CVMetalTexture?
+        let w = CVPixelBufferGetWidthOfPlane(pixels, plane)
+        let h = CVPixelBufferGetHeightOfPlane(pixels, plane)
+        guard CVMetalTextureCacheCreateTextureFromImage(nil, cache, pixels, nil, format, w, h, plane, &cv) == kCVReturnSuccess,
+              let cv, let mtl = CVMetalTextureGetTexture(cv) else { return 0 }
+        made.append((mtl, cv))
+    }
+    for (i, (mtl, cv)) in made.enumerated() {
+        textures[i] = Unmanaged.passUnretained(mtl as AnyObject).toOpaque()
+        keeps[i] = Unmanaged.passRetained(cv).toOpaque()
+    }
+    return 1
+}
+
+/// Lets go of a handle `sc_ar_metal_planes` gave (any thread: the GPU's completion may call it).
+@_cdecl("sc_ar_release")
+public func sc_ar_release(_ keep: UnsafeMutableRawPointer) {
+    Unmanaged<CVMetalTexture>.fromOpaque(keep).release()
 }

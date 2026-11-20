@@ -51,6 +51,9 @@ struct Bridge {
     tick: extern "C" fn(),
     thermal: extern "C" fn() -> i32,
     depth: extern "C" fn(*mut *const u8, *mut i32) -> i32,
+    set_device: extern "C" fn(*mut std::ffi::c_void) -> i32,
+    metal_planes: extern "C" fn(*mut *mut std::ffi::c_void, *mut *mut std::ffi::c_void) -> i32,
+    release: extern "C" fn(*mut std::ffi::c_void),
 }
 
 // The function types come from `Bridge`'s fields, which each transmute fills.
@@ -87,6 +90,9 @@ fn load() -> Result<Bridge, String> {
             tick: std::mem::transmute(sym(c"sc_ar_tick")?),
             thermal: std::mem::transmute(sym(c"sc_ar_thermal")?),
             depth: std::mem::transmute(sym(c"sc_ar_depth")?),
+            set_device: std::mem::transmute(sym(c"sc_ar_set_device")?),
+            metal_planes: std::mem::transmute(sym(c"sc_ar_metal_planes")?),
+            release: std::mem::transmute(sym(c"sc_ar_release")?),
         })
     }
 }
@@ -294,6 +300,11 @@ pub struct State {
     thermal: i32,
     /// LiDAR depth has arrived since AR started: the model is hidden behind real things.
     has_depth: bool,
+    /// The camera picture is shared with the GPU without a copy (the app's Metal device was
+    /// given to ARKit's texture cache); off, its bytes are copied each frame.
+    zero_copy: bool,
+    /// The Metal device was offered to the texture cache (once).
+    device_offered: bool,
     /// The section cut while Section is on.
     cut: Option<Cut>,
     /// The points measured while Measure is on (model units; at most two).
@@ -406,6 +417,11 @@ impl State {
         let ppp = ctx.pixels_per_point() * detail;
         let size_px = [(screen.width() * ppp).round().max(1.0) as u32, (screen.height() * ppp).round().max(1.0) as u32];
         ensure_gpu(rs);
+        if !self.device_offered {
+            self.device_offered = true;
+            self.zero_copy = self.bridge().ok().is_some_and(|b| offer_device(rs, b));
+            crate::note(&format!("ar: camera picture {}", if self.zero_copy { "shared with the GPU" } else { "copied" }));
+        }
         let started = std::time::Instant::now();
         let seen = self.next_frame(rs, [screen.width(), screen.height()]);
         let camera_ms = started.elapsed().as_secs_f64() * 1e3;
@@ -495,7 +511,9 @@ impl State {
         }
         if got == 1 {
             let (w, h, luma_row, chroma_row) = (info[3].max(0) as u32, info[4].max(0) as u32, info[5].max(0) as u32, info[6].max(0) as u32);
-            if !planes[0].is_null() && !planes[1].is_null() && w > 1 && h > 1 {
+            // The picture's own memory as textures (no copy), else a copy of its bytes.
+            let shared = self.zero_copy && planes_without_copy(rs, self.bridge.as_ref().and_then(|b| b.as_ref().ok()), [w, h]);
+            if !shared && !planes[0].is_null() && !planes[1].is_null() && w > 1 && h > 1 {
                 // SAFETY: ARKit's locked pixel buffer: plane 0 is `h` rows of `luma_row` bytes,
                 // plane 1 `h / 2` rows of `chroma_row`, readable until `frame_done` below.
                 let (luma, chroma) = unsafe {
@@ -1373,6 +1391,85 @@ fn upload_depth(rs: &egui_wgpu::RenderState, size: [u32; 2], row: u32, bytes: &[
             wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
         );
     }
+}
+
+/// Give the app's Metal device to the bridge's texture cache. `false` when there is none.
+#[cfg(target_os = "ios")]
+fn offer_device(rs: &egui_wgpu::RenderState, b: &Bridge) -> bool {
+    // SAFETY: the device is wgpu's own Metal device, only read here for its raw handle.
+    let raw = unsafe { rs.device.as_hal::<wgpu::hal::api::Metal>() }.map(|d| objc2::rc::Retained::as_ptr(d.raw_device()) as *mut std::ffi::c_void);
+    match raw {
+        Some(p) if !p.is_null() => (b.set_device)(p) == 1,
+        _ => false,
+    }
+}
+
+/// The current camera picture's planes as wgpu textures sharing its memory. Each keeps the
+/// picture alive until wgpu is done with it (its drop callback lets ARKit have it back).
+/// `false` (nothing changed) when they could not be made; the caller copies the bytes then.
+#[cfg(target_os = "ios")]
+fn planes_without_copy(rs: &egui_wgpu::RenderState, b: Option<&Bridge>, size: [u32; 2]) -> bool {
+    use objc2::rc::Retained;
+    use objc2::runtime::ProtocolObject;
+    use objc2_metal::{MTLTexture, MTLTextureType};
+    let Some(b) = b else { return false };
+    let mut textures: [*mut std::ffi::c_void; 2] = [std::ptr::null_mut(); 2];
+    let mut keeps: [*mut std::ffi::c_void; 2] = [std::ptr::null_mut(); 2];
+    if (b.metal_planes)(textures.as_mut_ptr(), keeps.as_mut_ptr()) != 1 {
+        return false;
+    }
+    let release = b.release;
+    let half = [size[0] / 2, size[1] / 2];
+    let mut made = Vec::new();
+    for (k, (format, size)) in [(wgpu::TextureFormat::R8Unorm, size), (wgpu::TextureFormat::Rg8Unorm, half)].into_iter().enumerate() {
+        let keep = keeps[k] as usize;
+        let drop_keep: wgpu::hal::DropCallback = Box::new(move || release(keep as *mut std::ffi::c_void));
+        // SAFETY: an `id<MTLTexture>` the bridge just made, alive while `keep` is; retained here
+        // for wgpu's texture.
+        let Some(raw) = (unsafe { Retained::retain(textures[k].cast::<ProtocolObject<dyn MTLTexture>>()) }) else {
+            drop_keep();
+            continue;
+        };
+        let extent = wgpu::hal::CopyExtent { width: size[0], height: size[1], depth: 1 };
+        // SAFETY: the texture is 2D, one layer and one mip level, in `format`, of `size`, as made.
+        let hal = unsafe { wgpu::hal::metal::Device::texture_from_raw(raw, format, MTLTextureType::Type2D, 1, 1, extent, Some(drop_keep)) };
+        let desc = wgpu::TextureDescriptor {
+            label: Some("sc_ar_camera_shared"),
+            size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        };
+        // SAFETY: `hal` was made from a texture of exactly this descriptor's shape and format,
+        // which the camera has finished writing: it is ready to be read by a shader.
+        let texture = unsafe { rs.device.create_texture_from_hal::<wgpu::hal::api::Metal>(hal, &desc, wgpu::TextureUses::RESOURCE) };
+        let view = texture.create_view(&Default::default());
+        made.push((texture, view, size));
+    }
+    if made.len() != 2 {
+        // What was made is dropped, and with it the picture it held.
+        return false;
+    }
+    let mut renderer = rs.renderer.write();
+    let Some(gpu) = renderer.callback_resources.get_mut::<Gpu>() else { return false };
+    let mut made = made.into_iter();
+    gpu.luma = made.next();
+    gpu.chroma = made.next();
+    true
+}
+
+/// Off the iPad (the Mac's tests) there is no camera to share.
+#[cfg(not(target_os = "ios"))]
+fn offer_device(_rs: &egui_wgpu::RenderState, _b: &Bridge) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "ios"))]
+fn planes_without_copy(_rs: &egui_wgpu::RenderState, _b: Option<&Bridge>, _size: [u32; 2]) -> bool {
+    false
 }
 
 /// Copy the camera picture's two planes (luma at `size`, chroma at half) into their textures.
