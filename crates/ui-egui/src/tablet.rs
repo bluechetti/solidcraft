@@ -60,6 +60,15 @@ pub struct Tablet {
     pub(crate) pencil_double_tap: Option<Pos2>,
     /// A finger double-tap on the view: the viewport starts a sketch on the face under it.
     pub(crate) finger_double_tap: Option<Pos2>,
+    /// A finger whose long press on a panel opened its menu: its pointer events are dropped
+    /// until it lifts.
+    ui_held: Option<TouchId>,
+}
+
+/// A release of `button` at `pos` (where it clicks nothing).
+fn raw_release(out: &mut Vec<Event>, pos: Pos2, button: egui::PointerButton, modifiers: egui::Modifiers) {
+    out.push(Event::PointerMoved(pos));
+    out.push(Event::PointerButton { pos, button, pressed: false, modifiers });
 }
 
 /// Whether a tap at `at`, `now`, makes a double-tap with the tap before it (and remember it).
@@ -156,10 +165,28 @@ impl Tablet {
                 }
             }
         }
-        // A finger held still opens the context menu where it is.
-        if let Some(f) = &mut self.finger {
-            if !f.moved && !f.multi && !f.held && !f.on_ui && now - f.at >= LONG_PRESS {
-                f.held = true;
+        // A finger held still opens the context menu where it is: in the view through the
+        // camera code, on a panel (a Browser row, a History step) as a right click there. The
+        // panel's own press is let go away from it first, so it neither clicks nor stays down,
+        // and the finger's later lift is dropped.
+        if let Some(f) = &mut self.finger
+            && !f.moved
+            && !f.multi
+            && !f.held
+            && now - f.at >= LONG_PRESS
+        {
+            f.held = true;
+            if f.on_ui {
+                let (at, mods) = (f.start, self.modifiers);
+                let away = egui::pos2(-10_000.0, -10_000.0);
+                raw_release(&mut out, away, egui::PointerButton::Primary, mods);
+                out.push(Event::PointerMoved(at));
+                for pressed in [true, false] {
+                    out.push(Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: mods });
+                }
+                self.owner = Some((f.id, Pass::Nothing));
+                self.ui_held = Some(f.id);
+            } else {
                 self.menu = Some(f.start);
             }
         }
@@ -287,7 +314,20 @@ impl Tablet {
                 }
             }
         }
-        self.owner = Some((id, if on_ui { Pass::All } else { Pass::Moves }));
+        let held = self.ui_held == Some(id);
+        if held && matches!(phase, TouchPhase::End | TouchPhase::Cancel) {
+            self.ui_held = None;
+        }
+        self.owner = Some((
+            id,
+            if held {
+                Pass::Nothing
+            } else if on_ui {
+                Pass::All
+            } else {
+                Pass::Moves
+            },
+        ));
         out.push(event);
     }
 }
@@ -368,6 +408,31 @@ mod tests {
         assert_eq!(out.iter().filter(|e| matches!(e, Event::Touch { .. })).count(), 2, "both fingers reach egui's multi-touch");
         assert!(out.contains(&Event::PointerMoved(egui::pos2(30.0, 100.0))));
         assert_eq!(p.orbit, Vec2::ZERO, "two fingers do not orbit");
+    }
+
+    #[test]
+    fn a_long_press_on_a_panel_is_a_right_click_there_and_no_left_click() {
+        let mut p = Tablet { enabled: true, active: true, ..Default::default() };
+        let mut raw =
+            egui::RawInput { time: Some(0.0), events: vec![touch(1, TouchPhase::Start, 10.0, false), press(10.0, true)], ..Default::default() };
+        p.filter(&mut raw, |_| false);
+        assert_eq!(presses(&raw.events), 1, "a finger on a panel presses there");
+        let out = run_on_panel(&mut p, 0.6, Vec::new());
+        let secondary = out.iter().filter(|e| matches!(e, Event::PointerButton { button: egui::PointerButton::Secondary, .. })).count();
+        assert_eq!(secondary, 2, "held still: a right click where it is");
+        assert!(
+            out.iter()
+                .any(|e| matches!(e, Event::PointerButton { button: egui::PointerButton::Primary, pressed: false, pos, .. } if pos.x < -1000.0)),
+            "its own press is let go away from the panel, so it clicks nothing"
+        );
+        let out = run_on_panel(&mut p, 0.9, vec![touch(1, TouchPhase::End, 10.0, false), press(10.0, false)]);
+        assert!(out.iter().all(|e| !matches!(e, Event::PointerButton { .. })), "the lift afterwards is dropped");
+    }
+
+    fn run_on_panel(p: &mut Tablet, time: f64, events: Vec<Event>) -> Vec<Event> {
+        let mut raw = egui::RawInput { time: Some(time), events, ..Default::default() };
+        p.filter(&mut raw, |_| false);
+        raw.events
     }
 
     #[test]

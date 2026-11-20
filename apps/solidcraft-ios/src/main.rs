@@ -223,6 +223,14 @@ impl eframe::App for App {
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(solidcraft_ui_egui::prefs::STORAGE_KEY, self.solve.prefs());
+        // eframe saves when the app goes to the background (and on its auto-save timer): the
+        // design is kept for recovery too, as iPadOS may end a background app without warning.
+        if self.solve.session.is_dirty()
+            && let Some(autosave) = self.solve.autosave.as_mut()
+            && let Err(e) = autosave.save(&self.solve.session)
+        {
+            note(&format!("recovery save failed: {e}"));
+        }
     }
 }
 
@@ -278,6 +286,7 @@ fn run() -> eframe::Result {
     }
     // Settings live in the app's Library folder (the platform has no data directory std can find).
     let library = std::env::temp_dir().parent().map(|p| p.join("Library"));
+    let recovery_dir = library.as_ref().map(|l| l.join("Application Support/SolidCraft/recovery"));
     if let Some(dir) = &library {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -315,6 +324,13 @@ fn run() -> eframe::Result {
             }
             // The app opens on an empty design (no sample part).
             note("app created");
+            // Autosave and crash recovery, as on the desktop: a design is kept every few minutes
+            // (and whenever the app goes to the background, `save`), and one an iPadOS shutdown or
+            // a crash left behind is offered on the next start. In Library, which iPadOS keeps.
+            if let Some(dir) = recovery_dir.as_deref() {
+                let every = if app.autosave_minutes > 0.0 { app.autosave_minutes * 60.0 } else { f64::MAX / 4.0 };
+                solidcraft_ui_egui::recovery_ui::start(&mut app, dir, std::time::Duration::from_secs_f64(every.min(1e9)));
+            }
             Ok(Box::new(App {
                 solve: app,
                 files,
