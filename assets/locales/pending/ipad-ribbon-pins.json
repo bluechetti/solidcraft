@@ -1,4 +1,10 @@
 {
   "en": { "ui.ribbon_pin_footer_touch": "Pinned commands show on the ribbon. Tap a row's pin to pin or unpin it." },
-  "de": { "ui.ribbon_pin_footer_touch": "Angeheftete Befehle stehen im Menüband. Tippe auf die Nadel einer Zeile, um sie anzuheften oder zu lösen." }
+  "de": { "ui.ribbon_pin_footer_touch": "Angeheftete Befehle stehen im Menüband. Tippe auf die Nadel einer Zeile, um sie anzuheften oder zu lösen." },
+  "ko": { "ui.ribbon_pin_footer_touch": "고정한 명령은 리본에 표시됩니다. 행의 핀을 탭하여 고정하거나 고정 해제하세요." },
+  "ar": { "ui.ribbon_pin_footer_touch": "تظهر الأوامر المثبّتة على الشريط. اضغط على دبوس الصف لتثبيته أو إلغاء تثبيته." },
+  "he": { "ui.ribbon_pin_footer_touch": "פקודות מוצמדות מופיעות ברצועה. הקש על הנעץ של שורה כדי להצמיד או לבטל הצמדה." },
+  "ja": { "ui.ribbon_pin_footer_touch": "ピン留めしたコマンドはリボンに表示されます。行のピンをタップしてピン留めまたは解除します。" },
+  "vi": { "ui.ribbon_pin_footer_touch": "Các lệnh đã ghim hiển thị trên ruy-băng. Chạm vào ghim của một hàng để ghim hoặc bỏ ghim." },
+  "zh": { "ui.ribbon_pin_footer_touch": "已固定的命令显示在功能区上。轻点某行的图钉即可固定或取消固定。" }
 }

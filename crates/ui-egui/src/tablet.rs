@@ -224,11 +224,11 @@ impl Tablet {
                 self.pencil = Some(id);
                 self.pencil_start = Some((pos, now, false));
                 // Fingers and the palm already down are let go and ignored until they lift.
-                if let Some(f) = self.finger.take() {
-                    if f.on_ui {
-                        out.push(Event::PointerButton { pos: f.last, button: primary, pressed: false, modifiers });
-                        out.push(Event::PointerGone);
-                    }
+                if let Some(f) = self.finger.take()
+                    && f.on_ui
+                {
+                    out.push(Event::PointerButton { pos: f.last, button: primary, pressed: false, modifiers });
+                    out.push(Event::PointerGone);
                 }
                 for (id, device_id, pos) in self.fingers.drain(..) {
                     out.push(Event::Touch { device_id, id, phase: TouchPhase::Cancel, pos, force: None });

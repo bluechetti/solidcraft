@@ -179,8 +179,8 @@ pub fn install(view: &UIView) {
     assistant.setLeadingBarButtonGroups(&NSArray::new());
     assistant.setTrailingBarButtonGroups(&NSArray::new());
     let empty = UIView::new(mtm);
-    // SAFETY: an empty view as the input view: the field takes text without a keyboard.
-    unsafe { proxy.setInputView(Some(&empty)) };
+    // An empty view as the input view: the field takes text without a keyboard.
+    proxy.setInputView(Some(&empty));
     view.addSubview(&proxy);
     let center = NSNotificationCenter::defaultCenter();
     let block = block2::RcBlock::new(move |note: NonNull<NSNotification>| {

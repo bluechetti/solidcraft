@@ -200,7 +200,7 @@ impl Numpad {
         };
         self.placed = focused.map(|f| (f, pad));
         let visuals = ctx.global_style().visuals.clone();
-        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Debug, egui::Id::new("sc_numpad")));
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Debug, egui::Id::unique("sc_numpad")));
         painter.rect(pad, 12.0, visuals.window_fill, visuals.window_stroke, egui::StrokeKind::Inside);
         self.keys.clear();
         let mut y = pad.top() + GAP;
@@ -309,13 +309,13 @@ mod tests {
         let ctx = egui::Context::default();
         let mut pad = Numpad::default();
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
-            ui.memory_mut(|m| m.request_focus(egui::Id::new("field")));
+            ui.memory_mut(|m| m.request_focus(egui::Id::unique("field")));
         });
         out.textures_delta.clear();
         // The field keeps the focus past [`APPEAR`]: the pad comes up.
         for time in [0.0, APPEAR + 0.05] {
             let mut out = ctx.run_ui(egui::RawInput { time: Some(time), ..Default::default() }, |ui| {
-                ui.memory_mut(|m| m.request_focus(egui::Id::new("field")));
+                ui.memory_mut(|m| m.request_focus(egui::Id::unique("field")));
                 pad.show(ui.ctx(), egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0)), true);
             });
             out.textures_delta.clear();
@@ -328,9 +328,9 @@ mod tests {
         let ctx = egui::Context::default();
         let mut pad = Numpad::default();
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
-        let mut frame = |pad: &mut Numpad, time: f64, events: Vec<egui::Event>| {
+        let frame = |pad: &mut Numpad, time: f64, events: Vec<egui::Event>| {
             let mut out = ctx.run_ui(egui::RawInput { time: Some(time), events, ..Default::default() }, |ui| {
-                ui.memory_mut(|m| m.request_focus(egui::Id::new("field")));
+                ui.memory_mut(|m| m.request_focus(egui::Id::unique("field")));
                 pad.show(ui.ctx(), area, true);
             });
             out.textures_delta.clear();
@@ -382,7 +382,7 @@ mod tests {
         assert_eq!(raw.events.len(), 1);
         // Held a moment through a missed mark, then gone.
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
-        let field = egui::Id::new("field");
+        let field = egui::Id::unique("field");
         let mut out = ctx.run_ui(egui::RawInput { time: Some(0.1), ..Default::default() }, |ui| {
             ui.memory_mut(|m| m.request_focus(field));
             assert!(p.show(ui.ctx(), area, false).0, "one frame without the mark keeps the pad");

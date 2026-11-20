@@ -3,6 +3,9 @@
 //! Runs the same [`solidcraft_ui_egui::SolveApp`] as the desktop app through eframe's native
 //! runner; winit's iOS backend supplies the UIKit window and touch/Pencil events, wgpu draws with
 //! Metal.
+// Built for the Mac (tests, workspace checks) the UIKit parts are left out, and what only they
+// use would read as unused.
+#![cfg_attr(not(target_os = "ios"), allow(dead_code))]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 #[cfg(target_os = "ios")]

@@ -236,7 +236,7 @@ impl Hints {
         }
         normalise(request).split(' ').any(|w| {
             let w = w.trim_end_matches('s');
-            CLAUDE_KEYWORDS.iter().any(|k| *k == w) || self.claude_keywords.iter().any(|k| k.trim_end_matches('s') == w)
+            CLAUDE_KEYWORDS.contains(&w) || self.claude_keywords.iter().any(|k| k.trim_end_matches('s') == w)
         })
     }
 
@@ -282,7 +282,7 @@ impl Hints {
             }
         }
         pool.retain(|(score, _)| *score > 0);
-        pool.sort_by(|a, b| b.0.cmp(&a.0));
+        pool.sort_by_key(|p| std::cmp::Reverse(p.0));
         let mut text = String::new();
         for line in self.instructions.iter().take(if long { 20 } else { 0 }) {
             text.push_str(line);

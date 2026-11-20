@@ -115,11 +115,14 @@ struct Bridge {
     paste: extern "C" fn() -> *mut c_char,
     local_state: extern "C" fn() -> *mut c_char,
     local_load: extern "C" fn(TextFn),
+    #[allow(dead_code)] // the bridge offers it; the app keeps the local model loaded
     local_unload: extern "C" fn(),
     local_ask: extern "C" fn(*const c_char, DoneFn),
     online: extern "C" fn() -> i32,
 }
 
+// The function types come from `Bridge`'s fields, which each transmute fills.
+#[allow(clippy::missing_transmute_annotations)]
 fn load() -> Result<Bridge, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let path = exe.parent().ok_or("no app folder")?.join("Frameworks/SolidCraftAI.framework/SolidCraftAI");
@@ -1380,10 +1383,10 @@ impl State {
         // The hints are rules for Claude's commands; the local model has its own instructions, and the
         // design is added to the request on the Swift side.
         let prompt = request.to_string();
-        if let Ok(b) = self.bridge() {
-            if let Ok(p) = CString::new(prompt.replace('\0', " ")) {
-                (b.local_ask)(p.as_ptr(), done_cb);
-            }
+        if let Ok(b) = self.bridge()
+            && let Ok(p) = CString::new(prompt.replace('\0', " "))
+        {
+            (b.local_ask)(p.as_ptr(), done_cb);
         }
     }
 
@@ -1405,10 +1408,10 @@ impl State {
             prompt = format!("{prompt}\nAn earlier attempt by the on-device model already applied: {earlier}");
         }
         let model = self.hints.claude_model.clone().unwrap_or_else(|| CLAUDE_MODEL.to_string());
-        if let Ok(b) = self.bridge() {
-            if let (Ok(p), Ok(m)) = (CString::new(prompt.replace('\0', " ")), CString::new(model.replace('\0', " "))) {
-                (b.claude_ask)(p.as_ptr(), m.as_ptr(), done_cb);
-            }
+        if let Ok(b) = self.bridge()
+            && let (Ok(p), Ok(m)) = (CString::new(prompt.replace('\0', " ")), CString::new(model.replace('\0', " ")))
+        {
+            (b.claude_ask)(p.as_ptr(), m.as_ptr(), done_cb);
         }
     }
 
@@ -1643,7 +1646,7 @@ impl State {
             }
         }
         let pulse = if self.listening { 0.55 + 0.45 * (ctx.input(|i| i.time) * 5.0).sin().abs() as f32 } else { 0.0 };
-        egui::Area::new(egui::Id::new("ai_button")).anchor(egui::Align2::RIGHT_BOTTOM, [-16.0, -96.0]).show(ctx, |ui| {
+        egui::Area::new(egui::Id::unique("ai_button")).anchor(egui::Align2::RIGHT_BOTTOM, [-16.0, -96.0]).show(ctx, |ui| {
             let mut ai_button = egui::Button::new("AI");
             if self.listening {
                 ai_button = ai_button.fill(egui::Color32::from_rgb((220.0 * pulse) as u8, 30, 30));
@@ -1764,7 +1767,7 @@ impl State {
             self.pro_panel(ui);
             ui.separator();
             // Enter asks; Shift+Enter is a new line.
-            let id = egui::Id::new("ai_input");
+            let id = egui::Id::unique("ai_input");
             let enter = ui.memory(|m| m.has_focus(id)) && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
             let edit = ui.add(egui::TextEdit::multiline(&mut self.input).id(id).desired_rows(2).desired_width(f32::INFINITY).hint_text("Ask SolidCraft to do something"));
             if edit.changed() {
