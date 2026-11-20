@@ -114,12 +114,12 @@ impl eframe::App for App {
                         self.ar.test_tap = Some((x, y));
                     }
                     let _ = &mut xy;
-                } else if step == "ar-section" || step == "ar-measure" {
+                } else if step == "ar-section" || step == "ar-measure" || step == "ar-explode" {
                     #[cfg(target_os = "ios")]
-                    if step == "ar-section" {
-                        self.ar.test_section = true;
-                    } else {
-                        self.ar.test_measure = true;
+                    match step.as_str() {
+                        "ar-section" => self.ar.test_section = true,
+                        "ar-measure" => self.ar.test_measure = true,
+                        _ => self.ar.test_explode = true,
                     }
                 } else if let Some(at) = step.strip_prefix("ar-pick:") {
                     let mut xy = at.split(',').filter_map(|v| v.trim().parse::<f32>().ok());

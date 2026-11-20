@@ -261,6 +261,8 @@ pub struct State {
     /// The test hook turns Section on (`ar-section`) or Measure on (`ar-measure`) next frame.
     pub test_section: bool,
     pub test_measure: bool,
+    /// The test hook presses Explode (`ar-explode`) next frame.
+    pub test_explode: bool,
     /// The Pencil touch in progress: its id, where and when it began.
     pencil: Option<(egui::TouchId, egui::Pos2, f64)>,
     /// When the Pencil last left the glass (a finger's tap just after is the same hand resting).
@@ -277,6 +279,8 @@ pub struct State {
     cut: Option<Cut>,
     /// The points measured while Measure is on (model units; at most two).
     measuring: Option<Vec<[f64; 3]>>,
+    /// The exploded view AR shows (0: assembled, k: the design's k-th), set by `explode.show`.
+    exploded: usize,
     /// Whether the design hid its origin before AR, put back after.
     origin_was: Option<Option<bool>>,
     /// Milliseconds spent on the CPU (camera upload; camera and model), summed over the frames
@@ -328,6 +332,10 @@ impl State {
             self.pinch = None;
             app.viewport.stereo.on = false;
             app.tablet.enabled = self.tablet_was;
+            if self.exploded > 0 {
+                let _ = app.run("explode.show", serde_json::json!({ "view": "none" }));
+                self.exploded = 0;
+            }
             if let Some(origin) = self.origin_was.take() {
                 app.session.visibility.origin_hidden = origin;
             }
@@ -422,7 +430,10 @@ impl State {
                     if std::mem::take(&mut self.test_section) {
                         self.cut = self.placed.and_then(|p| p.cut_facing(seen.back));
                     }
-                    if std::mem::take(&mut self.test_measure) {
+                    if std::mem::take(&mut self.test_explode) {
+                    self.next_exploded_view(app);
+                }
+                if std::mem::take(&mut self.test_measure) {
                         self.measuring = Some(Vec::new());
                     }
                     self.gestures(ui, &response, rect, seen, app);
@@ -744,6 +755,34 @@ impl State {
         crate::note(&format!("ar: pencil at {u:?}: {}", hit.as_deref().unwrap_or("nothing")));
     }
 
+    /// The design's next exploded view (`explode.show`: shown only, the design keeps its
+    /// placements), and after the last, the assembly as it is.
+    fn next_exploded_view(&mut self, app: &mut SolveApp) {
+        let names: Vec<String> = app
+            .run("explode.list", serde_json::json!({}))
+            .ok()
+            .and_then(|r| r.get("views").and_then(|v| v.as_array()).cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_owned))
+            .collect();
+        if names.is_empty() {
+            self.exploded = 0;
+            self.message = "This design has no exploded views. Make one with Exploded View (an assembly's parts pulled apart).".into();
+            return;
+        }
+        let next = (self.exploded + 1) % (names.len() + 1);
+        let view = if next == 0 { serde_json::json!("none") } else { serde_json::json!(names[next - 1]) };
+        match app.run("explode.show", serde_json::json!({ "view": view })) {
+            Ok(_) => {
+                self.exploded = next;
+                self.message = if next == 0 { "Assembled.".into() } else { format!("Exploded view: {}", names[next - 1]) };
+            }
+            Err(e) => self.message = e,
+        }
+        crate::note(&format!("ar: exploded view {next} of {}", names.len()));
+    }
+
     /// Measure: a Pencil tap on the model marks a point (where the design view's pick meets the
     /// face); the second gives the distance; a third starts again.
     fn measure_at(&mut self, app: &mut SolveApp, seen: &Seen, u: (f32, f32)) {
@@ -844,6 +883,10 @@ impl State {
                                 }
                                 Err(e) => self.message = e,
                             }
+                        }
+                        let explode_label = if self.exploded > 0 { "Exploded" } else { "Explode" };
+                        if button(ui, explode_label, if self.exploded > 0 { Button::SmallSelected } else { Button::Small }).clicked() {
+                            self.next_exploded_view(app);
                         }
                         let measuring = self.measuring.is_some();
                         if button(ui, "Measure", if measuring { Button::SmallSelected } else { Button::Small }).clicked() {
