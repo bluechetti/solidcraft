@@ -589,6 +589,15 @@ pub fn flat_plane(places: &[Vec3]) -> Option<(Vec3, Vec3, usize)> {
     Some((plane.0, plane.1, kept_count))
 }
 
+/// Whether four `corners` taken in order round a face enclose an area: not all in one place, not
+/// in a line, and not crossed over so that the two halves cancel (a bow tie whose diagonals run
+/// parallel). A face over corners that fail this has no outline a surface body could keep.
+pub fn encloses_area(corners: [Vec3; 4]) -> bool {
+    let (d0, d1) = (corners[2] - corners[0], corners[3] - corners[1]);
+    let size = d0.len2().max(d1.len2());
+    size.is_finite() && size > 0.0 && d0.cross(d1).len() > 1e-9 * size
+}
+
 /// The face over `corners` laid flat on the plane through `point` square to `normal`: each corner
 /// put onto the plane (the foot of the line square to it), the net the bilinear patch they make.
 /// `None` for a plane with no direction, or corners that make no face on it.
@@ -599,10 +608,7 @@ pub fn flat_over(corners: [Vec3; 4], count: usize, point: Vec3, normal: Vec3) ->
     }
     let count = count.clamp(LEAST_POINTS, MOST_POINTS);
     let onto = corners.map(|c| c - normal * (c - point).dot(normal));
-    // Corners that enclose no area (all in one place, or in a line) make no face.
-    let (d0, d1) = (onto[2] - onto[0], onto[3] - onto[1]);
-    let size = d0.len2().max(d1.len2());
-    if !(size > 0.0 && d0.cross(d1).len() > 1e-9 * size) {
+    if !encloses_area(onto) {
         return None;
     }
     surface(&net_over(onto, count), count)

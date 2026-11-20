@@ -1,0 +1,26 @@
+{
+  "ar": {
+    "ui.scan_free_form_level": "الزاويتان تقعان على ضلع واحد، لذا لا تكوّنان مستطيلًا. انقر زاويتين متقابلتين."
+  },
+  "de": {
+    "ui.scan_free_form_level": "Die beiden Ecken liegen auf einer Seite und ergeben kein Rechteck. Gegenüberliegende Ecken anklicken."
+  },
+  "en": {
+    "ui.scan_free_form_level": "The two corners lie along one side, so they make no rectangle. Click opposite corners."
+  },
+  "he": {
+    "ui.scan_free_form_level": "שתי הפינות נמצאות על צלע אחת ולכן אינן יוצרות מלבן. לחצו על פינות מנוגדות."
+  },
+  "ja": {
+    "ui.scan_free_form_level": "2つの角が同じ辺上にあるため、長方形になりません。向かい合う角をクリックしてください。"
+  },
+  "ko": {
+    "ui.scan_free_form_level": "두 모서리가 한 변 위에 있어 직사각형이 되지 않습니다. 서로 마주 보는 모서리를 클릭하세요."
+  },
+  "vi": {
+    "ui.scan_free_form_level": "Hai góc nằm trên cùng một cạnh nên không tạo thành hình chữ nhật. Hãy bấm hai góc đối diện."
+  },
+  "zh": {
+    "ui.scan_free_form_level": "两个角点在同一条边上，无法构成矩形。请点击相对的两个角。"
+  }
+}
