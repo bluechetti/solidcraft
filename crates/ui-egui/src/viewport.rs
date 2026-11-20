@@ -182,6 +182,8 @@ pub struct ViewportState {
     /// greys out with it.
     pub(crate) corner_ok: bool,
     pub gpu: Option<GpuTarget>,
+    /// The design view for a headset's eyes (#2172): off unless a host shows it there.
+    pub stereo: crate::stereo::Stereo,
     /// The view's pipelines could not be built (the thread compiling them at start failed): the
     /// view says so where the model would be, instead of staying empty (#1210).
     pub gpu_unavailable: bool,
@@ -7183,6 +7185,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             sky: sky_uniform(crate::safe_graphics::dark_parts_shading(app), crate::safe_graphics::material_finish(app), proj.cam.up),
             moving,
         };
+        app.viewport.stereo.publish(&frame, proj.cam, [t.viewport_top, t.viewport_bottom]);
         match app.viewport.tile {
             // A tile is its own paint callback: it does not go through the blur's source.
             Some(slot) => {
