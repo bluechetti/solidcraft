@@ -46,6 +46,7 @@ pub mod check;
 pub mod conic_projection;
 pub mod contact;
 pub mod continuity;
+pub mod corner_patches;
 pub mod curve;
 pub mod curve_fit;
 pub mod curve_gap;
