@@ -12,8 +12,8 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::SystemTime;
 use std::task::Poll;
+use std::time::SystemTime;
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -90,7 +90,8 @@ pub fn open() -> Option<FilePickerFuture> {
     let mtm = MainThreadMarker::new()?;
     let answer: Answer = Rc::default();
     let delegate = Delegate::new(mtm, answer.clone());
-    let types: Vec<Retained<UTType>> = ["public.data", "public.item"].iter().filter_map(|id| UTType::typeWithIdentifier(&NSString::from_str(id))).collect();
+    let types: Vec<Retained<UTType>> =
+        ["public.data", "public.item"].iter().filter_map(|id| UTType::typeWithIdentifier(&NSString::from_str(id))).collect();
     let types = NSArray::from_retained_slice(&types);
     let picker = UIDocumentPickerViewController::initForOpeningContentTypes_asCopy(UIDocumentPickerViewController::alloc(mtm), &types, false);
     picker.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));

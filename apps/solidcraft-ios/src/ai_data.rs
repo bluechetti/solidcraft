@@ -25,8 +25,27 @@ const MAX_LEARNED: usize = 200;
 /// Words that send a request straight to Claude: the on-device model cannot do these (more can be
 /// added as `claude_keywords` in the hints file).
 const CLAUDE_KEYWORDS: &[&str] = &[
-    "hole", "bore", "boss", "pattern", "mirror", "extrude", "sketch", "combine", "thread", "shell", "loft", "revolve", "rib", "bracket", "cut",
-    "join", "drill", "countersink", "slot", "subtract", "union",
+    "hole",
+    "bore",
+    "boss",
+    "pattern",
+    "mirror",
+    "extrude",
+    "sketch",
+    "combine",
+    "thread",
+    "shell",
+    "loft",
+    "revolve",
+    "rib",
+    "bracket",
+    "cut",
+    "join",
+    "drill",
+    "countersink",
+    "slot",
+    "subtract",
+    "union",
 ];
 
 /// Short follow-ups that only make sense with the request before them: Claude gets that request too.
@@ -95,7 +114,12 @@ pub fn describe_call(call: &Value) -> Option<String> {
     let text = |k: &str| call.get(k).and_then(Value::as_str).unwrap_or("");
     let num = |k: &str| call.get(k).and_then(Value::as_f64).map(|n| format!("{n}")).unwrap_or_default();
     match text("tool") {
-        "round" => Some(format!("{}_edges(size={}, which={}, body=\"\")", if text("kind") == "chamfer" { "chamfer" } else { "fillet" }, num("size"), text("which"))),
+        "round" => Some(format!(
+            "{}_edges(size={}, which={}, body=\"\")",
+            if text("kind") == "chamfer" { "chamfer" } else { "fillet" },
+            num("size"),
+            text("which")
+        )),
         "shape" => match text("kind") {
             "cube" => Some(format!("add_cube(size={})", num("a"))),
             "box" => Some(format!("add_box(length={}, width={}, height={})", num("a"), num("b"), num("c"))),
@@ -155,16 +179,14 @@ impl Hints {
     fn load_hints(&mut self) {
         let Some((v, _)) = read_json("ai-hints.json") else { return };
         let strings = |a: &Value, k1: &str, k2: &str| -> Vec<(String, String)> {
-            a.as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|e| Some((e.get(k1)?.as_str()?.to_string(), e.get(k2)?.as_str()?.to_string())))
-                .collect()
+            a.as_array().into_iter().flatten().filter_map(|e| Some((e.get(k1)?.as_str()?.to_string(), e.get(k2)?.as_str()?.to_string()))).collect()
         };
         self.claude_model = v.get("claude_model").and_then(Value::as_str).map(str::to_string);
-        self.claude_keywords = v.get("claude_keywords").and_then(Value::as_array).into_iter().flatten().filter_map(|k| k.as_str().map(|k| k.to_lowercase())).collect();
+        self.claude_keywords =
+            v.get("claude_keywords").and_then(Value::as_array).into_iter().flatten().filter_map(|k| k.as_str().map(|k| k.to_lowercase())).collect();
         self.rewrites = strings(v.get("rewrites").unwrap_or(&Value::Null), "from", "to").into_iter().map(|(a, b)| (a.to_lowercase(), b)).collect();
-        self.instructions = v.get("instructions").and_then(Value::as_array).into_iter().flatten().filter_map(|s| s.as_str().map(str::to_string)).collect();
+        self.instructions =
+            v.get("instructions").and_then(Value::as_array).into_iter().flatten().filter_map(|s| s.as_str().map(str::to_string)).collect();
         self.examples = strings(v.get("examples").unwrap_or(&Value::Null), "request", "call");
         self.recipes = v
             .get("recipes")
@@ -378,7 +400,11 @@ mod tests {
         assert_eq!(calls[0]["size"], json!(3.5));
         assert!(h.replay("fillet all edges").is_none());
         assert!(h.replay("fillet some edges 5").is_none());
-        h.learned.push((normalise("hide everything"), "hide everything".into(), vec![json!({"tool": "run", "command": "view.show_hide", "params": {"rule": "-"}})]));
+        h.learned.push((
+            normalise("hide everything"),
+            "hide everything".into(),
+            vec![json!({"tool": "run", "command": "view.show_hide", "params": {"rule": "-"}})],
+        ));
         assert_eq!(h.replay("Hide everything!").unwrap().0, "learned");
     }
 

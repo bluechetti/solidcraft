@@ -5,11 +5,11 @@
 //! Metal.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-mod files;
 #[cfg(target_os = "ios")]
 mod ai;
 #[cfg(any(target_os = "ios", test))]
 mod ai_data;
+mod files;
 #[cfg(target_os = "ios")]
 mod keyboard;
 mod numpad;
@@ -17,6 +17,7 @@ mod numpad;
 mod pencil;
 #[cfg(target_os = "ios")]
 mod picker;
+mod touches;
 
 use solidcraft_engine::Session;
 use solidcraft_ui_egui::SolveApp;
@@ -31,10 +32,11 @@ struct App {
     ai: ai::State,
     /// The view is moved left to clear the AI window while it is open.
     ai_shifted: bool,
-    ai_view: Option<(solidcraft_engine::render::Camera, solidcraft_engine::render::Camera)>,
+    ai_view: Option<(solidcraft_viewport::Camera, solidcraft_viewport::Camera)>,
     frames: u32,
     synced_at: f64,
     numpad: numpad::Numpad,
+    touches: touches::Touches,
 }
 
 impl eframe::App for App {
@@ -95,11 +97,21 @@ impl eframe::App for App {
                     });
                 }
             }
+            // The squeeze opens the context menu at the tip, as a right click there does.
             if let Some(at) = pencil::take_squeeze() {
-                self.solve.pencil.open_menu(at);
+                raw.events.push(egui::Event::PointerMoved(at));
+                for pressed in [true, false] {
+                    raw.events.push(egui::Event::PointerButton {
+                        pos: at,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
             }
         }
-        self.solve.raw_input_hook(raw);
+        let taps = self.touches.taps(raw);
+        self.solve.raw_input_hook_with_taps(_ctx, raw, taps);
         // Taps on the number pad become the text and keys they stand for.
         self.numpad.take_presses(raw);
     }
@@ -214,12 +226,8 @@ fn run() -> eframe::Result {
     if let Some(dir) = &library {
         let _ = std::fs::create_dir_all(dir);
     }
-    let options = eframe::NativeOptions {
-        depth_buffer: DEPTH_BITS,
-        wgpu_options,
-        persistence_path: library.map(|d| d.join("app.ron")),
-        ..Default::default()
-    };
+    let options =
+        eframe::NativeOptions { depth_buffer: DEPTH_BITS, wgpu_options, persistence_path: library.map(|d| d.join("app.ron")), ..Default::default() };
     eframe::run_native(
         "SolidCraft",
         options,
@@ -228,11 +236,13 @@ fn run() -> eframe::Result {
             solidcraft_ui_egui::fonts::setup_fonts(&cc.egui_ctx);
             let files = files::Files::default();
             let mut app = SolveApp::new(Session::default(), files.services());
-            // Apple Pencil draws, fingers navigate (from the pencil's first touch on).
-            app.pencil.enabled = true;
             if let Some(prefs) = cc.storage.and_then(|s| solidcraft_ui_egui::prefs::stored(|k| s.get_string(k))) {
                 app.load_prefs(&prefs);
             }
+            // Apple Pencil selects and draws, fingers move the view (upstream's Pencil mode and
+            // touchscreen navigation, fed by `touches`).
+            app.preferences.pencil_mode = true;
+            app.preferences.touchscreen_navigation = true;
             if let Some(rs) = &cc.wgpu_render_state {
                 app.set_wgpu(rs, DEPTH_BITS, 0, rs.msaa_samples);
                 solidcraft_ui_egui::gpu::install_picture_renderer(rs);
@@ -249,6 +259,7 @@ fn run() -> eframe::Result {
                 frames: 0,
                 synced_at: 0.0,
                 numpad: numpad::Numpad::default(),
+                touches: touches::Touches::default(),
             }))
         }),
     )

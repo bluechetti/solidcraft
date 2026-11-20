@@ -15,6 +15,9 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use solidcraft_ui_egui::SolveApp;
 
+/// The last screenshot egui handed back (`request_screenshot`), until the Pro request takes it.
+static SHOT: std::sync::Mutex<Option<std::sync::Arc<egui::ColorImage>>> = std::sync::Mutex::new(None);
+
 use crate::ai_data::{self, Hints};
 
 type ExecFn = extern "C" fn(*const c_char) -> *mut c_char;
@@ -162,7 +165,8 @@ fn load() -> Result<Bridge, String> {
 
 /// A command's result in few words: what it made or changed, else its start.
 fn short_result(r: &Value) -> String {
-    let list = |k: &str| r.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+    let list =
+        |k: &str| r.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")).unwrap_or_default();
     let (made, changed) = (list("created_bodies"), list("changed_bodies"));
     if made.is_empty() && changed.is_empty() { clip(format!("ok {r}")) } else { format!("ok; created: [{made}]; changed: [{changed}]") }
 }
@@ -175,8 +179,17 @@ fn round_edges(app: &mut SolveApp, v: &Value) -> String {
     let Some(size) = size else { return "error: size must be a positive number of millimetres".to_string() };
     // A named body when there is one; "newest", "last", an empty or an unknown name mean the newest.
     let named = text("body");
-    let state = app.session.world_state();
-    let body = state.bodies.iter().find(|x| !named.is_empty() && x.name.to_lowercase() == named).or_else(|| state.bodies.iter().rev().find(|x| app.session.body_visible(&x.name))).or(state.bodies.last()).map(|x| x.name.clone());
+    let state = match app.session.world_state() {
+        Ok(state) => state,
+        Err(e) => return format!("Error: the model cannot be read ({e})."),
+    };
+    let body = state
+        .bodies
+        .iter()
+        .find(|x| !named.is_empty() && x.name.to_lowercase() == named)
+        .or_else(|| state.bodies.iter().rev().find(|x| app.session.body_visible(&x.name)))
+        .or(state.bodies.last())
+        .map(|x| x.name.clone());
     let Some(body) = body else { return "error: no such body (use inspect_design for the names)".to_string() };
     let listed = match app.run("model.edges", json!({ "body": body })) {
         Ok(l) => l,
@@ -270,7 +283,9 @@ fn loop_guard(request: &str) -> Option<String> {
     if calls.len() >= 30 {
         return Some(STOP.to_string());
     }
-    if !matches!(tool(&this).as_str(), "inspect" | "find") && calls.iter().any(|(c, r)| *c == this && (r.starts_with("error") || r.starts_with("refused"))) {
+    if !matches!(tool(&this).as_str(), "inspect" | "find")
+        && calls.iter().any(|(c, r)| *c == this && (r.starts_with("error") || r.starts_with("refused")))
+    {
         return Some(format!("{STOP} This exact call already failed."));
     }
     None
@@ -278,7 +293,7 @@ fn loop_guard(request: &str) -> Option<String> {
 
 /// Moves the camera: pan, zoom, rotate or a standard view. The model does not change.
 fn change_view(app: &mut SolveApp, v: &Value) -> String {
-    use solidcraft_engine::render::StandardView;
+    use solidcraft_viewport::StandardView;
     let action = v.get("action").and_then(Value::as_str).unwrap_or("").trim().to_lowercase().replace([' ', '-'], "_");
     // A negative amount goes the other way.
     let signed = v.get("amount").and_then(Value::as_f64).filter(|a| a.is_finite() && *a != 0.0);
@@ -321,7 +336,7 @@ fn change_view(app: &mut SolveApp, v: &Value) -> String {
 /// What the user has selected, with a point on each face or edge to pass to commands (`faces: [[x,y,z]]`).
 fn describe_selection(app: &SolveApp) -> String {
     use solidcraft_engine::Sel;
-    let p = |v: &solidcraft_engine::geom::Vec3| format!("[{:.2}, {:.2}, {:.2}]", v.x, v.y, v.z);
+    let p = |v: &solidcore_record::Vec3| format!("[{:.2}, {:.2}, {:.2}]", v.x, v.y, v.z);
     let items: Vec<String> = app
         .session
         .selection
@@ -338,7 +353,10 @@ fn describe_selection(app: &SolveApp) -> String {
     if items.is_empty() {
         "nothing is selected".to_string()
     } else {
-        format!("selected: {}. For a face use faces: [[x,y,z]] with that point (and body: its body); for a body use bodies: [name].", items.join("; "))
+        format!(
+            "selected: {}. For a face use faces: [[x,y,z]] with that point (and body: its body); for a body use bodies: [name].",
+            items.join("; ")
+        )
     }
 }
 
@@ -374,8 +392,10 @@ fn answer(app: &mut SolveApp, request: &str) -> String {
                     let params = c.get("params").and_then(Value::as_str).unwrap_or("");
                     let name = format!("{id} {label}").to_lowercase();
                     let params_lc = params.to_lowercase();
-                    let score: usize = words.iter().map(|w| if name.contains(w.as_str()) { 3 } else { usize::from(params_lc.contains(w.as_str())) }).sum();
-                    (score > 0).then(|| (std::cmp::Reverse(score), id.len(), format!("{id} | {label} | {}", params.chars().take(220).collect::<String>())))
+                    let score: usize =
+                        words.iter().map(|w| if name.contains(w.as_str()) { 3 } else { usize::from(params_lc.contains(w.as_str())) }).sum();
+                    (score > 0)
+                        .then(|| (std::cmp::Reverse(score), id.len(), format!("{id} | {label} | {}", params.chars().take(220).collect::<String>())))
                 })
                 .collect();
             hits.sort();
@@ -402,10 +422,12 @@ fn answer(app: &mut SolveApp, request: &str) -> String {
             // A new design opens in its own tab: the one on screen stays open, so nothing is lost.
             if command == "file.new" {
                 let asked = APPLE_REQUEST.lock().ok().and_then(|a| a.clone());
-                if asked.is_some_and(|r| !r.split(' ').any(|w| matches!(w, "new" | "clear" | "reset" | "start" | "restart" | "empty" | "blank" | "fresh" | "wipe"))) {
+                if asked.is_some_and(|r| {
+                    !r.split(' ').any(|w| matches!(w, "new" | "clear" | "reset" | "start" | "restart" | "empty" | "blank" | "fresh" | "wipe"))
+                }) {
                     return "refused: the user did not ask for a new design. Do not call again.".to_string();
                 }
-                if app.session.is_dirty() || !app.session.world_state().bodies.is_empty() {
+                if app.session.is_dirty() || app.session.world_state().is_ok_and(|s| !s.bodies.is_empty()) {
                     solidcraft_ui_egui::documents::new_tab(app);
                     return "ok: a new design opened in a new tab; the previous design is still open in its own tab. If the user asked for nothing else, call no more tools and reply in one sentence.".to_string();
                 }
@@ -421,13 +443,18 @@ fn answer(app: &mut SolveApp, request: &str) -> String {
         }
         Some("view") => change_view(app, &v),
         Some("selection") => describe_selection(app),
-        Some("escalate") => "no tool can do this request: it needs a more capable assistant. Call no more tools and reply \"Handing over.\"".to_string(),
+        Some("escalate") => {
+            "no tool can do this request: it needs a more capable assistant. Call no more tools and reply \"Handing over.\"".to_string()
+        }
         Some("round") => round_edges(app, &v),
         Some("move") => {
             // A number, or text holding one (a replayed recipe writes "-20").
             let n = |k: &str| v.get(k).and_then(|x| x.as_f64().or_else(|| x.as_str()?.trim().parse().ok())).filter(|x| x.is_finite()).unwrap_or(0.0);
             let named = v.get("body").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
-            let state = app.session.world_state();
+            let state = match app.session.world_state() {
+                Ok(state) => state,
+                Err(e) => return format!("Error: the model cannot be read ({e})."),
+            };
             let body = state
                 .bodies
                 .iter()
@@ -444,7 +471,9 @@ fn answer(app: &mut SolveApp, request: &str) -> String {
         Some("shape") => {
             // The on-device model adds a cube for "move the cube": shapes only come from add/create/make.
             let asked = APPLE_REQUEST.lock().ok().and_then(|a| a.clone());
-            if asked.is_some_and(|r| !r.split(' ').any(|w| matches!(w, "add" | "create" | "make" | "build" | "new" | "draw" | "insert" | "place" | "put" | "another"))) {
+            if asked.is_some_and(|r| {
+                !r.split(' ').any(|w| matches!(w, "add" | "create" | "make" | "build" | "new" | "draw" | "insert" | "place" | "put" | "another"))
+            }) {
                 return "refused: the user did not ask to add a shape. Moving means move_body on the existing body and rounding means fillet_edges: call that tool, with the body name from inspect_design if you need it.".to_string();
             }
             let n = |k: &str| v.get(k).and_then(Value::as_f64).filter(|x| x.is_finite() && *x > 0.0);
@@ -458,7 +487,9 @@ fn answer(app: &mut SolveApp, request: &str) -> String {
                     ("solid.box", json!({ "length": l, "width": w, "height": h }))
                 }
                 k if ["cylinder", "rod", "tube"].contains(&k) => {
-                    let (Some(r), Some(h)) = (n("a"), n("b")) else { return "error: a cylinder needs a radius and a height in millimetres".to_string() };
+                    let (Some(r), Some(h)) = (n("a"), n("b")) else {
+                        return "error: a cylinder needs a radius and a height in millimetres".to_string();
+                    };
                     ("solid.cylinder", json!({ "radius": r, "height": h }))
                 }
                 k if ["sphere", "ball"].contains(&k) => {
@@ -484,7 +515,10 @@ fn answer(app: &mut SolveApp, request: &str) -> String {
             let operation = v.get("operation").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
             if ["join", "cut", "intersect"].contains(&operation.as_str()) {
                 let named = v.get("target").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
-                let state = app.session.world_state();
+                let state = match app.session.world_state() {
+                    Ok(state) => state,
+                    Err(e) => return format!("Error: the model cannot be read ({e})."),
+                };
                 let target = state
                     .bodies
                     .iter()
@@ -503,7 +537,10 @@ fn answer(app: &mut SolveApp, request: &str) -> String {
             }
         }
         Some("inspect") => {
-            let state = app.session.world_state();
+            let state = match app.session.world_state() {
+                Ok(state) => state,
+                Err(e) => return format!("Error: the model cannot be read ({e})."),
+            };
             // Each body's extent, so a request like "beside the plate" can be worked out.
             let extents: std::collections::HashMap<String, String> = app
                 .run("component.properties", json!({}))
@@ -527,7 +564,14 @@ fn answer(app: &mut SolveApp, request: &str) -> String {
                 .bodies
                 .iter()
                 .take(40)
-                .map(|b| format!("{}{}{}", b.name, extents.get(&b.name).map(String::as_str).unwrap_or(""), if app.session.body_visible(&b.name) { "" } else { " (hidden)" }))
+                .map(|b| {
+                    format!(
+                        "{}{}{}",
+                        b.name,
+                        extents.get(&b.name).map(String::as_str).unwrap_or(""),
+                        if app.session.body_visible(&b.name) { "" } else { " (hidden)" }
+                    )
+                })
                 .collect();
             // The timeline: feature names and kinds, so a feature can be inspected or edited by name.
             let features: Vec<String> = app
@@ -557,7 +601,13 @@ fn answer(app: &mut SolveApp, request: &str) -> String {
                 .collect();
             let selected = if app.session.selection.is_empty() { String::new() } else { format!("\n{}", describe_selection(app)) };
             clip_to(
-                format!("bodies ({}): {}{selected}\nfeatures: {}\nparameters: {}", state.bodies.len(), bodies.join(", "), features.join(" "), params.join("; ")),
+                format!(
+                    "bodies ({}): {}{selected}\nfeatures: {}\nparameters: {}",
+                    state.bodies.len(),
+                    bodies.join(", "),
+                    features.join(" "),
+                    params.join("; ")
+                ),
                 1800,
             )
         }
@@ -883,18 +933,21 @@ impl State {
     }
 
     /// Whether a finished call changed the design in a way `edit.undo` takes back.
-fn undoable(call: &Value, reply: &str) -> bool {
-    if !reply.starts_with("ok") {
-        return false;
+    fn undoable(call: &Value, reply: &str) -> bool {
+        if !reply.starts_with("ok") {
+            return false;
+        }
+        match call.get("tool").and_then(Value::as_str) {
+            Some("shape" | "round" | "move") => true,
+            Some("run") => call
+                .get("command")
+                .and_then(Value::as_str)
+                .is_some_and(|c| ["solid.", "sketch.", "parameters.", "body.", "appearance.", "timeline."].iter().any(|p| c.starts_with(p))),
+            _ => false,
+        }
     }
-    match call.get("tool").and_then(Value::as_str) {
-        Some("shape" | "round" | "move") => true,
-        Some("run") => call.get("command").and_then(Value::as_str).is_some_and(|c| ["solid.", "sketch.", "parameters.", "body.", "appearance.", "timeline."].iter().any(|p| c.starts_with(p))),
-        _ => false,
-    }
-}
 
-/// Start playing `Documents/ai/ai-script.txt`.
+    /// Start playing `Documents/ai/ai-script.txt`.
     fn start_script(&mut self) {
         let text = std::fs::read_to_string(ai_data::dir().join("ai-script.txt")).unwrap_or_default();
         let items = parse_script(&text);
@@ -907,7 +960,8 @@ fn undoable(call: &Value, reply: &str) -> bool {
         self.input.clear();
         ai_data::log(&json!({ "kind": "script", "event": "start", "t": ai_data::now_millis() / 1000 }));
         self.log.push(format!("· Playing the script ({} lines)", items.len()));
-        let mut run = ScriptRun { items, index: 0, typed: 0, phase: ScriptPhase::Gap, until: ai_data::now_millis() + 800, collapse: false, views: Vec::new() };
+        let mut run =
+            ScriptRun { items, index: 0, typed: 0, phase: ScriptPhase::Gap, until: ai_data::now_millis() + 800, collapse: false, views: Vec::new() };
         Self::script_skip(&mut run);
         self.script_actions(&mut run);
         self.script = Some(run);
@@ -918,7 +972,9 @@ fn undoable(call: &Value, reply: &str) -> bool {
         while let Some(item) = run.items.get(run.index) {
             match item {
                 ScriptItem::Pause(ms) => run.until = run.until.max(ai_data::now_millis()) + ms,
-                ScriptItem::Take(name) => ai_data::log(&json!({ "kind": "take", "name": name, "t": ai_data::now_millis() / 1000, "id": ai_data::now_millis() })),
+                ScriptItem::Take(name) => {
+                    ai_data::log(&json!({ "kind": "take", "name": name, "t": ai_data::now_millis() / 1000, "id": ai_data::now_millis() }))
+                }
                 ScriptItem::Collapse => run.collapse = true,
                 ScriptItem::View(action, amount) => run.views.push((action.clone(), *amount)),
                 ScriptItem::Say { .. } => break,
@@ -1035,7 +1091,18 @@ fn undoable(call: &Value, reply: &str) -> bool {
         });
         let _ = std::fs::write(pro_dir(id).join("request.json"), serde_json::to_string_pretty(&request).unwrap_or_default());
         self.log.push(format!("You (Claude on the Mac): {prompt}"));
-        self.pro = Some(Pro { id, prompt, stage: ProStage::Collect, title: String::new(), explanation: String::new(), steps: Vec::new(), results: Vec::new(), undoable: 0, wait_until: 0, shot_sent: false });
+        self.pro = Some(Pro {
+            id,
+            prompt,
+            stage: ProStage::Collect,
+            title: String::new(),
+            explanation: String::new(),
+            steps: Vec::new(),
+            results: Vec::new(),
+            undoable: 0,
+            wait_until: 0,
+            shot_sent: false,
+        });
         repaint();
     }
 
@@ -1103,7 +1170,7 @@ fn undoable(call: &Value, reply: &str) -> bool {
     /// The parts of a Pro request that need the window: screenshots, and looking for the Mac's reply.
     fn pro_step(&mut self, ctx: &egui::Context) {
         let now = ai_data::now_millis();
-        let shot = ctx.input(|i| i.events.iter().find_map(|e| if let egui::Event::Screenshot { image, .. } = e { Some(image.clone()) } else { None }));
+        let shot = SHOT.lock().ok().and_then(|mut s| s.take());
         if self.pro.is_none() {
             // A reply that is waiting for a request this app no longer remembers (it was restarted) is offered again.
             if now.saturating_sub(self.pro_poll) > 4000 && self.open {
@@ -1117,7 +1184,13 @@ fn undoable(call: &Value, reply: &str) -> bool {
         match pro.stage {
             ProStage::AwaitShot | ProStage::AwaitAfter => {
                 if !pro.shot_sent && now >= pro.wait_until {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+                    let repaint = ctx.clone();
+                    ctx.request_screenshot(move |image| {
+                        if let Ok(mut s) = SHOT.lock() {
+                            *s = Some(image);
+                        }
+                        repaint.request_repaint();
+                    });
                     pro.shot_sent = true;
                 }
                 if let (true, Some(image)) = (pro.shot_sent, shot) {
@@ -1130,10 +1203,15 @@ fn undoable(call: &Value, reply: &str) -> bool {
                     } else {
                         let _ = write_png(&dir.join("after.png"), &image);
                         let failed = pro.results.iter().any(|r| r.get("ok").and_then(Value::as_bool) == Some(false));
-                        let summary = json!({ "id": pro.id, "prompt": pro.prompt, "ok": !failed, "steps": pro.results, "files": ["after.json", "after.png"] });
+                        let summary =
+                            json!({ "id": pro.id, "prompt": pro.prompt, "ok": !failed, "steps": pro.results, "files": ["after.json", "after.png"] });
                         let _ = std::fs::write(dir.join("results.json"), serde_json::to_string_pretty(&summary).unwrap_or_default());
                         let _ = std::fs::write(dir.join("results-ready.txt"), "ready\n");
-                        self.log.push(if failed { "· Ran the steps and one failed: results saved for Claude on the Mac".to_string() } else { "· Ran the steps: results saved for Claude on the Mac".to_string() });
+                        self.log.push(if failed {
+                            "· Ran the steps and one failed: results saved for Claude on the Mac".to_string()
+                        } else {
+                            "· Ran the steps: results saved for Claude on the Mac".to_string()
+                        });
                         pro.stage = ProStage::Done;
                     }
                     pro.shot_sent = false;
@@ -1173,10 +1251,24 @@ fn undoable(call: &Value, reply: &str) -> bool {
                 let _ = std::fs::create_dir_all(pro_dir(id));
                 let request = pro_dir(id).join("request.json");
                 if !request.exists() {
-                    let _ = std::fs::write(request, json!({ "id": id, "prompt": if title.is_empty() { "(started on the Mac)" } else { title.as_str() } }).to_string());
+                    let _ = std::fs::write(
+                        request,
+                        json!({ "id": id, "prompt": if title.is_empty() { "(started on the Mac)" } else { title.as_str() } }).to_string(),
+                    );
                 }
                 self.log.push(format!("· Claude on the Mac replied: {} steps", steps.len()));
-                self.pro = Some(Pro { id, prompt, stage: ProStage::Review, title, explanation, steps, results: Vec::new(), undoable: 0, wait_until: 0, shot_sent: false });
+                self.pro = Some(Pro {
+                    id,
+                    prompt,
+                    stage: ProStage::Review,
+                    title,
+                    explanation,
+                    steps,
+                    results: Vec::new(),
+                    undoable: 0,
+                    wait_until: 0,
+                    shot_sent: false,
+                });
                 return;
             }
         }
@@ -1419,7 +1511,8 @@ fn undoable(call: &Value, reply: &str) -> bool {
             "good" => {
                 if matches!(r.tier, "apple" | "claude" | "local") && r.clean {
                     // Only the calls that changed something: looking things up is not part of a recipe.
-                    let changing: Vec<Value> = r.calls.iter().filter(|c| !matches!(c.get("tool").and_then(Value::as_str), Some("find" | "inspect"))).cloned().collect();
+                    let changing: Vec<Value> =
+                        r.calls.iter().filter(|c| !matches!(c.get("tool").and_then(Value::as_str), Some("find" | "inspect"))).cloned().collect();
                     self.hints.learn(&r.request, &changing);
                     self.log.push("· Good: remembered, the same request now runs at once".to_string());
                 } else {

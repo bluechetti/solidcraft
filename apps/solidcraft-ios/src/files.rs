@@ -48,8 +48,7 @@ fn listing(dir: &Path, exts: &[String]) -> Vec<String> {
         .filter_map(|e| e.file_name().into_string().ok())
         .filter(|n| !n.starts_with('.'))
         .filter(|n| {
-            exts.is_empty()
-                || Path::new(n).extension().and_then(|x| x.to_str()).is_some_and(|x| exts.iter().any(|e| e.eq_ignore_ascii_case(x)))
+            exts.is_empty() || Path::new(n).extension().and_then(|x| x.to_str()).is_some_and(|x| exts.iter().any(|e| e.eq_ignore_ascii_case(x)))
         })
         .collect();
     names.sort_by_key(|n| n.to_lowercase());
@@ -121,7 +120,9 @@ impl Files {
                 ui.text_edit_singleline(name);
                 if ui.add_enabled(!name.trim().is_empty(), egui::Button::new("Save")).clicked() {
                     let mut file = name.trim().to_owned();
-                    if let Some(ext) = exts.first().filter(|e| Path::new(&file).extension().is_none_or(|x| !x.to_string_lossy().eq_ignore_ascii_case(e))) {
+                    if let Some(ext) =
+                        exts.first().filter(|e| Path::new(&file).extension().is_none_or(|x| !x.to_string_lossy().eq_ignore_ascii_case(e)))
+                    {
                         file = format!("{file}.{ext}");
                     }
                     done = Some(Some(dir.join(file).to_string_lossy().into_owned()));

@@ -1,7 +1,8 @@
 use std::f64::consts::{PI, TAU};
 
 use super::*;
-use crate::{MAX_BEZIER_CTRL, bezier};
+use crate::bezier;
+use solidcore_record::MAX_BEZIER_CTRL;
 
 const TOL: f64 = 1e-6;
 
@@ -420,4 +421,11 @@ fn an_accuracy_scales_with_its_curve() {
         CurveAccuracy::Sampled { max_sample_deviation_mm: 0.0 },
         "a sampled zero stays sampled"
     );
+}
+
+/// A drawing's hidden lines (solidcore's) take as many items as a section: one aggregate limit.
+#[test]
+fn hidden_lines_share_the_section_item_limit() {
+    assert_eq!(crate::hlr::MAX_ITEMS, MAX_ITEMS);
+    assert_eq!(crate::hlr::Options::default().max_tracks, MAX_ITEMS);
 }

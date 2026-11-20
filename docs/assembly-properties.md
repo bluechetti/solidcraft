@@ -28,6 +28,12 @@ several instances of its parent; supply `path` (the complete list of occurrence 
 root) to choose one of those placements. An ambiguous occurrence without a path returns an
 error. Both commands accept `descendants: false` to measure only directly owned bodies.
 
+A placement inside the one measured that counts as a reference in the bill of materials (its
+occurrence's `bom_type`, else its component's: a fixture shown for context) adds nothing, nor
+does anything inside it: its bodies are not in `bodies`, the totals or `placement_count`. The
+placement measured counts whatever its type, so a reference fixture's own Properties still
+measure it, as a component's own bill of materials lists what it holds.
+
 Results contain a `bodies` list and a `total` object. Each body's entry identifies the original
 body name, owning component and occurrence path. Physical material density is resolved from
 that original body, so copies keep their material and mass. Values use millimetres, square
@@ -39,6 +45,16 @@ kernel's tessellation-based body measurement. An empty component reports zero to
 null center of mass and bounding box. A failed body measurement returns an error instead of
 presenting an incomplete assembly total. These commands leave geometry, pending placements
 and undo history unchanged.
+
+Sheet-metal perforation fields contribute their physical holes to volume, mass, surface area
+and center of mass even though they do not cut the B-rep. Hole centers follow the panels when
+folded or unfolded and follow each occurrence's placement. Measure and component/occurrence
+Properties use the same correction. Bounding boxes and B-rep topology still describe the
+uncut body. A failed perforation calculation returns an error rather than an uncorrected total.
+The inertia tensor also removes each analytic hole cylinder, including its offset from the
+sheet's center of mass.
+Measuring a perforated sheet after scaling or shearing its metadata is not supported and
+returns an error. Rigid and mirrored placements preserve the analytic hole dimensions.
 
 ## Moment of inertia
 

@@ -4,12 +4,13 @@
 //! tooltip. Text only for now; pictures and animations are a later step. A new toolbar command
 //! ships with its help: `every_toolbar_command_has_help` fails otherwise.
 
-use crate::i18n;
+use crate::ui_kit::BackingTooltipExt as _;
 
 /// The commands that have help text. Each one needs a `help.<id>` message in the catalogs.
 pub const DOCUMENTED: &[&str] = &[
     "appearance.assign",
     "assembly.bom",
+    "assembly.constraint.create",
     "canvas.decal",
     "canvas.edit",
     "canvas.insert",
@@ -26,20 +27,24 @@ pub const DOCUMENTED: &[&str] = &[
     "config.preview",
     "config.rules",
     "config.table",
+    "construct.axis",
     "construct.axis.edge",
     "construct.axis.normal_to_face",
     "construct.axis.through_cylinder",
     "construct.axis.two_planes",
     "construct.axis.two_points",
+    "construct.plane",
     "construct.plane.along_path",
     "construct.plane.at_angle",
     "construct.plane.axis_point",
     "construct.plane.midplane",
     "construct.plane.offset",
     "construct.plane.perpendicular",
+    "construct.plane.square_to_line",
     "construct.plane.tangent",
     "construct.plane.three_points",
     "construct.plane.two_edges",
+    "construct.point",
     "construct.point.along_path",
     "construct.point.center",
     "construct.point.edge_plane",
@@ -55,15 +60,22 @@ pub const DOCUMENTED: &[&str] = &[
     "contact.list",
     "document.inspect",
     "document.units",
+    "drawing.export",
+    "drawing.print",
+    "drawing.table.edit",
+    "drawing.view.detail",
     "edit.checkpoint",
     "edit.restore_checkpoint",
     "explode.create",
     "face.delete",
+    "file.insert_gerber",
     "file.insert_mesh",
     "file.insert_step",
     "file.save_mesh",
     "file.send_to_slicer",
+    "frame.end_cap",
     "frame.member",
+    "frame.rotate_member",
     "inspect.accessibility",
     "inspect.center_of_mass",
     "inspect.colored_components",
@@ -91,6 +103,11 @@ pub const DOCUMENTED: &[&str] = &[
     "joint.reach",
     "joint.rigid_group",
     "joint.screw",
+    "layout.apply",
+    "layout.get",
+    "layout.reset",
+    "layout.save",
+    "layout.workspace.select",
     "library.apply",
     "library.export",
     "library.inspect",
@@ -101,6 +118,21 @@ pub const DOCUMENTED: &[&str] = &[
     "motion.trace",
     "occurrence.ground",
     "occurrence.move",
+    "panel.activate",
+    "panel.close",
+    "panel.collapse",
+    "panel.dismiss",
+    "panel.float",
+    "panel.focus",
+    "panel.list",
+    "panel.move",
+    "panel.native_close",
+    "panel.open",
+    "panel.peek",
+    "panel.popout",
+    "panel.reset_pair",
+    "panel.resize",
+    "panel.resize_pair",
     "parameters.change",
     "parameters.export",
     "parameters.graph",
@@ -127,6 +159,7 @@ pub const DOCUMENTED: &[&str] = &[
     "sheet.manage_rules",
     "sheet.path_flange",
     "sheet.perforate",
+    "sheet.recognize",
     "sheet.refold",
     "sheet.unfold",
     "sketch.arc.center_point",
@@ -187,6 +220,7 @@ pub const DOCUMENTED: &[&str] = &[
     "sketch.fit_curves_to_section",
     "sketch.include_3d",
     "sketch.infinite",
+    "sketch.insert_airfoil",
     "sketch.insert_dxf",
     "sketch.insert_svg",
     "sketch.inspect",
@@ -203,6 +237,7 @@ pub const DOCUMENTED: &[&str] = &[
     "sketch.pattern.circular",
     "sketch.pattern.rectangular",
     "sketch.point",
+    "sketch.point.divide",
     "sketch.point3d",
     "sketch.polygon.circumscribed",
     "sketch.polygon.edge",
@@ -219,6 +254,7 @@ pub const DOCUMENTED: &[&str] = &[
     "sketch.slot.center_point",
     "sketch.slot.center_to_center",
     "sketch.slot.overall",
+    "sketch.spline.control_knots",
     "sketch.spline.control_point",
     "sketch.spline.control_point_5",
     "sketch.spline.fit_point",
@@ -295,6 +331,7 @@ pub const DOCUMENTED: &[&str] = &[
     "view.navigate",
     "view.navigation_bar",
     "view.rename",
+    "view.ribbon_tabs_only",
     "view.save",
     "view.spin",
     "view.tool",
@@ -307,7 +344,7 @@ pub fn help(command: &str) -> Option<String> {
         return None;
     }
     let key = format!("help.{command}");
-    let text = i18n::tr(&key);
+    let text = solidcraft_ui_text::tr(&key);
     (text != key).then(|| text.to_owned())
 }
 
@@ -315,7 +352,7 @@ pub fn help(command: &str) -> Option<String> {
 /// with the help of `command` below it when there is one.
 pub fn tooltip(response: egui::Response, command: &str, tip: String) -> egui::Response {
     let help = help(command);
-    response.on_hover_ui(move |ui| {
+    response.backing_on_hover_ui(move |ui| {
         ui.set_max_width(300.0);
         ui.label(tip);
         if let Some(help) = help {
@@ -409,6 +446,7 @@ mod tests {
 
     #[test]
     fn a_documented_command_has_help_and_others_do_not() {
+        crate::i18n::install();
         for id in DOCUMENTED {
             assert!(help(id).is_some_and(|text| !text.is_empty()), "{id}");
         }
@@ -417,6 +455,7 @@ mod tests {
 
     #[test]
     fn a_drop_down_row_has_a_tip_only_for_a_reason_or_help() {
+        crate::i18n::install();
         assert_eq!(row_tip("solid.shell", "Shell", Some("S"), None).as_deref(), Some("Shell  (S)"));
         assert_eq!(row_tip("solid.hole", "Hole", None, None).as_deref(), Some("Hole"));
         assert_eq!(row_tip("solid.hole", "Hole", None, Some("Select a face")).as_deref(), Some("Select a face"));

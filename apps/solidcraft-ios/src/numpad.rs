@@ -19,10 +19,34 @@ enum Action {
 
 /// The keys, row by row: label, action, width in key units.
 const ROWS: &[&[(&str, Action, f32)]] = &[
-    &[("7", Action::Text("7"), 1.0), ("8", Action::Text("8"), 1.0), ("9", Action::Text("9"), 1.0), ("(", Action::Text("("), 1.0), (")", Action::Text(")"), 1.0)],
-    &[("4", Action::Text("4"), 1.0), ("5", Action::Text("5"), 1.0), ("6", Action::Text("6"), 1.0), ("×", Action::Text("*"), 1.0), ("÷", Action::Text("/"), 1.0)],
-    &[("1", Action::Text("1"), 1.0), ("2", Action::Text("2"), 1.0), ("3", Action::Text("3"), 1.0), ("+", Action::Text("+"), 1.0), ("−", Action::Text("-"), 1.0)],
-    &[("0", Action::Text("0"), 1.0), (".", Action::Text("."), 1.0), ("mm", Action::Text(" mm"), 1.0), ("in", Action::Text(" in"), 1.0), ("°", Action::Text("°"), 1.0)],
+    &[
+        ("7", Action::Text("7"), 1.0),
+        ("8", Action::Text("8"), 1.0),
+        ("9", Action::Text("9"), 1.0),
+        ("(", Action::Text("("), 1.0),
+        (")", Action::Text(")"), 1.0),
+    ],
+    &[
+        ("4", Action::Text("4"), 1.0),
+        ("5", Action::Text("5"), 1.0),
+        ("6", Action::Text("6"), 1.0),
+        ("×", Action::Text("*"), 1.0),
+        ("÷", Action::Text("/"), 1.0),
+    ],
+    &[
+        ("1", Action::Text("1"), 1.0),
+        ("2", Action::Text("2"), 1.0),
+        ("3", Action::Text("3"), 1.0),
+        ("+", Action::Text("+"), 1.0),
+        ("−", Action::Text("-"), 1.0),
+    ],
+    &[
+        ("0", Action::Text("0"), 1.0),
+        (".", Action::Text("."), 1.0),
+        ("mm", Action::Text(" mm"), 1.0),
+        ("in", Action::Text(" in"), 1.0),
+        ("°", Action::Text("°"), 1.0),
+    ],
     &[("ABC", Action::Abc, 1.0), ("", Action::Key(egui::Key::Backspace), 1.0), ("", Action::Key(egui::Key::Enter), 3.0)],
 ];
 /// A key's height and the gap between keys (points).

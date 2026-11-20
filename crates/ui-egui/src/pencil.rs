@@ -1,350 +1,321 @@
-//! Apple Pencil and fingers on a tablet, sorted the way tablet CAD apps do it: once a pencil has
-//! touched the screen, the pencil is the mouse (it selects, sketches and drags) and fingers move
-//! the camera. One finger orbits, two pan, pinch and twist (`navigation::handle`), a finger's tap
-//! still selects and a long press opens the context menu. While the pencil is down, fingers and
-//! the palm resting on the glass are ignored.
+//! Pencil mode (Preferences › Sketch, web app): a pen selects and fingers move the view.
 //!
-//! The host turns this on ([`Pencil::enabled`], the iPad app). Before a pencil is used nothing
-//! changes, so a finger alone works as before. A pencil is told from a finger by its force: on an
-//! iPad only the pencil reports one.
+//! With the preference on:
+//! - a pen tap adds an item to the selection or takes it out, and a pen tap on empty space
+//!   clears the selection (`viewport::show`, `pen_select`);
+//! - a pen double-tap selects the whole body, or the whole sketch, of the item under it
+//!   ([`whole`]);
+//! - a finger that goes down in the open view never clicks there: the press the browser makes
+//!   for it is taken out of the frame ([`filter`]), and the touch itself is left for navigation
+//!   (touchscreen orbit, pan and pinch read the touch events, not the press). A finger on a
+//!   panel, a window, a button over the view or the view's axes still clicks as usual;
+//! - a finger double-tap on a planar face selects the face and starts a sketch on it
+//!   ([`finger_double_tap`]).
 //!
-//! It works on the input before egui sees it ([`crate::SolveApp::raw_input_hook`]): egui-winit's
-//! mouse emulation of the first touch is dropped and the pointer is emulated here instead, from
-//! the pencil, or from a finger's tap.
-use egui::{Event, Pos2, TouchId, TouchPhase, Vec2};
+//! The platform says what a contact is: the web app's pointer listeners see `pointerType`
+//! before eframe does ([`PlatformTaps`]). eframe runs a frame on `pointerdown`, before the
+//! browser's touch events arrive, so a finger is known from `finger_down` in that frame and from
+//! its touch events after it.
 
-/// A finger that moves further than this (points) drags rather than taps.
-const SLOP: f32 = 10.0;
-/// A finger held still this long (seconds) opens the context menu.
-const LONG_PRESS: f64 = 0.5;
+use egui::{Event, PointerButton, Pos2, RawInput, TouchPhase};
+use serde_json::json;
 
-#[derive(Default)]
-pub struct Pencil {
-    /// The host has a stylus: sort touches into pencil and finger.
-    pub enabled: bool,
-    /// A pencil has touched the screen: from now on it draws and fingers navigate.
-    pub active: bool,
-    /// The pencil touch in progress.
-    pencil: Option<TouchId>,
-    /// Fingers egui knows are down: id, device, last position.
-    fingers: Vec<(TouchId, egui::TouchDeviceId, Pos2)>,
-    /// Fingers ignored until they lift (they were down with the pencil: a palm).
-    rejected: Vec<TouchId>,
-    /// The one-finger gesture in progress.
-    finger: Option<Finger>,
-    /// The touch whose emulated pointer events egui-winit sends next, and which of them pass.
-    owner: Option<(TouchId, Pass)>,
-    /// Events held back for the next frame (a tap's release).
-    later: Vec<Event>,
-    /// One-finger travel still to orbit by (points) and where the finger landed.
-    pub(crate) orbit: Vec2,
-    pub(crate) orbit_at: Option<Pos2>,
-    /// A long press asked for the context menu here.
-    pub(crate) menu: Option<Pos2>,
-    /// A finger is held still or a release is held back: the next frame must come soon.
-    pub(crate) busy: bool,
-    /// The keyboard's modifiers, as last seen.
-    modifiers: egui::Modifiers,
+use crate::SolveApp;
+use crate::viewport::{Hit, Proj};
+use solidcraft_engine::Sel;
+
+/// The longest touch that still counts as a tap, in seconds.
+const TAP_TIME: f64 = 0.4;
+/// The farthest a finger may move and still tap, in points.
+const TAP_SLOP: f32 = 12.0;
+/// The longest gap between the two taps of a double-tap, in seconds.
+const DOUBLE_TAP_TIME: f64 = 0.4;
+/// The farthest apart the two taps of a double-tap may be, in points.
+const DOUBLE_TAP_SLOP: f32 = 24.0;
+/// A finger reported down whose touch events never come stops holding presses back after this
+/// long, in seconds.
+const ORPHAN_TIME: f64 = 1.0;
+/// The most fingers followed at once.
+const MAX_CONTACTS: usize = 16;
+/// The most pen touches followed at once.
+const MAX_PENS: usize = 16;
+/// How far a pen tip's lift may be from the release egui sees and still be the pen's, in points.
+/// Safari reports an Apple Pencil's lift twice, as `pointerup` and as `touchend`, a few points
+/// apart (3.2 points on an iPad), and eframe makes a release of each, often in one frame.
+pub const PEN_RELEASE_SLOP: f32 = 12.0;
+
+/// Whether the release at `at` is the pen tip's lifted at `pen`.
+pub(crate) fn is_pen_release(pen: Option<Pos2>, at: Pos2) -> bool {
+    pen.is_some_and(|pen| pen.is_finite() && at.is_finite() && pen.distance(at) <= PEN_RELEASE_SLOP)
 }
 
-/// Which of egui-winit's emulated pointer events for a touch reach egui.
-#[derive(Clone, Copy, PartialEq)]
-enum Pass {
-    /// All of them: a finger on a panel (buttons, scrolling lists).
-    All,
-    /// Only where the pointer is: a finger on the view. The camera gestures need the pointer
-    /// over the view (`navigation::handle`), but its press would select or drag.
-    Moves,
-    /// None: the pencil (its pointer is emulated here) and a rejected palm.
-    Nothing,
+/// What the platform knows about this frame's contacts and egui doesn't.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PlatformTaps {
+    /// Where a pen tip was pressed in this frame.
+    pub pen_press: Option<Pos2>,
+    /// Where a pen tip was lifted: the primary release at this point is a pen tap.
+    pub pen_release: Option<Pos2>,
+    /// Where a finger went down on the app's canvas since the last frame.
+    pub finger_down: Option<Pos2>,
+    /// A pen tip is on the screen now.
+    pub pen_down: bool,
+    /// Touches the platform names a stylus's since the last frame. Safari sends touch events for
+    /// an Apple Pencil as well as pen pointer events, and eframe hands them on as egui touches.
+    pub stylus: Vec<egui::TouchId>,
 }
 
-struct Finger {
-    id: TouchId,
+/// One finger on the screen.
+#[derive(Clone, Copy, Debug)]
+struct Contact {
+    device: egui::TouchDeviceId,
+    id: egui::TouchId,
     start: Pos2,
-    last: Pos2,
-    at: f64,
-    /// It travelled past [`SLOP`]: an orbit, not a tap.
+    at: Pos2,
+    since: f64,
     moved: bool,
-    /// A second finger joined: the two-finger gesture, not a tap or an orbit.
-    multi: bool,
-    /// The long press fired.
-    held: bool,
-    /// It landed on a panel, not the view: egui's own mouse emulation drives it (buttons,
-    /// scrolling lists), with its press passed on.
-    on_ui: bool,
 }
 
-impl Pencil {
-    /// Open the view's context menu here (the pencil's squeeze, at its tip).
-    pub fn open_menu(&mut self, at: Pos2) {
-        self.menu = Some(at);
-    }
+/// The fingers on the view while Pencil mode is on.
+#[derive(Debug, Default)]
+pub(crate) struct Fingers {
+    /// A finger that went down in the open view is still down: primary presses are held back.
+    holding: bool,
+    /// When `holding` began, for a finger whose touch events never come.
+    held_since: f64,
+    contacts: Vec<Contact>,
+    /// More than one finger was down during this touch: it is a gesture, not a tap.
+    several: bool,
+    /// The last finger tap in the view: where and when it ended.
+    last_tap: Option<(Pos2, f64)>,
+    /// A finger double-tap in the view, for the viewport to act on.
+    pub(crate) double_tap: Option<Pos2>,
+    /// Touches that are a pen's, not a finger's: they are left out of the frame.
+    pens: Vec<egui::TouchId>,
+}
 
-    /// Sort this frame's touches. `on_view` says whether a point is over the 3D view (not a panel).
-    pub(crate) fn filter(&mut self, raw: &mut egui::RawInput, on_view: impl Fn(Pos2) -> bool) {
-        if !self.enabled {
-            return;
+/// Whether `p` is on the open view: inside it, not under a panel or a window over it, and not on
+/// the view's axes.
+fn in_view(app: &SolveApp, ctx: &egui::Context, p: Pos2) -> bool {
+    let Some(rect) = app.viewport.rect else { return false };
+    p.is_finite()
+        && crate::toolbar::design_shown(app)
+        && rect.contains(p)
+        && !crate::shell::covered(app, p)
+        && !app.viewport.axes.is_some_and(|axes| axes.contains(p))
+        && app.viewport.layer.is_some_and(|layer| ctx.layer_id_at(p).is_none_or(|at| at == layer))
+}
+
+/// Before the frame: while a finger that went down in the open view is down, take the primary
+/// presses and releases the browser makes for it out of the frame, and note finger double-taps.
+/// A pen's touches (Safari's for an Apple Pencil) are not a finger's: they leave the frame, so
+/// neither this nor touchscreen navigation takes the pen for a finger, and its presses stay.
+/// Does nothing with Pencil mode off.
+pub(crate) fn filter(app: &mut SolveApp, ctx: &egui::Context, raw: &mut RawInput, taps: &PlatformTaps) {
+    let finger_down = taps.finger_down;
+    if !app.preferences.pencil_mode {
+        app.viewport.fingers = Fingers::default();
+        return;
+    }
+    let now = raw.time.unwrap_or_else(|| ctx.input(|i| i.time));
+    if let Some(p) = finger_down
+        && in_view(app, ctx, p)
+    {
+        let fingers = &mut app.viewport.fingers;
+        if !fingers.holding {
+            fingers.held_since = now;
         }
-        let now = raw.time.unwrap_or(0.0);
-        // RawInput carries no modifiers of its own: the keyboard's (an iPad's Shift for a
-        // multi-select) come with its key events.
-        if let Some(m) = raw.events.iter().rev().find_map(|e| match e {
-            Event::Key { modifiers, .. } | Event::PointerButton { modifiers, .. } => Some(*modifiers),
+        fingers.holding = true;
+    }
+    let touches: Vec<_> = raw
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Touch { device_id, id, phase, pos, .. } => Some((*device_id, *id, *phase, *pos)),
             _ => None,
-        }) {
-            self.modifiers = m;
-        }
-        let mods = self.modifiers;
-        let mut out = std::mem::take(&mut self.later);
-        for event in std::mem::take(&mut raw.events) {
-            match event {
-                Event::Touch { device_id, id, phase, pos, force } => {
-                    let pencil = force.is_some() || self.pencil == Some(id);
-                    if pencil && !self.active {
-                        self.active = true;
-                        self.lift_fingers(&mut out);
-                    }
-                    if !self.active {
-                        self.owner = None;
-                        self.track_finger(id, device_id, phase, pos);
-                        out.push(event);
-                    } else if pencil {
-                        self.owner = Some((id, Pass::Nothing));
-                        self.pencil_touch(id, phase, pos, mods, &mut out);
-                    } else {
-                        self.finger_touch(event, now, mods, &on_view, &mut out);
-                    }
-                }
-                Event::PointerMoved(_) | Event::PointerButton { .. } | Event::PointerGone if self.owner.is_some() => {
-                    let pass = match (self.owner.map(|(_, p)| p), &event) {
-                        (Some(Pass::All), _) => true,
-                        (Some(Pass::Moves), Event::PointerMoved(_)) => true,
-                        // A tap's click is still to come (`later`): the pointer stays for it.
-                        (Some(Pass::Moves), Event::PointerGone) => self.later.is_empty(),
-                        _ => false,
-                    };
-                    if pass {
-                        out.push(event);
-                    }
-                }
-                _ => {
-                    self.owner = None;
-                    out.push(event);
-                }
+        })
+        .collect();
+    let mut pen_touches = Vec::new();
+    for (device, id, phase, pos) in touches {
+        let fingers = &mut app.viewport.fingers;
+        let pen = if phase == TouchPhase::Start { taps.stylus.contains(&id) } else { fingers.pens.contains(&id) };
+        if pen {
+            match phase {
+                TouchPhase::Start if fingers.pens.len() < MAX_PENS && !fingers.pens.contains(&id) => fingers.pens.push(id),
+                TouchPhase::End | TouchPhase::Cancel => fingers.pens.retain(|p| *p != id),
+                _ => {}
             }
+            pen_touches.push(id);
+            continue;
         }
-        // A finger held still opens the context menu where it is.
-        if let Some(f) = &mut self.finger {
-            if !f.moved && !f.multi && !f.held && !f.on_ui && now - f.at >= LONG_PRESS {
-                f.held = true;
-                self.menu = Some(f.start);
-            }
-        }
-        raw.events = out;
-        self.busy = !self.later.is_empty() || self.finger.as_ref().is_some_and(|f| !f.held && !f.moved);
-    }
-
-    /// Before the pencil's first touch fingers drove the pointer: let its press go.
-    fn lift_fingers(&mut self, out: &mut Vec<Event>) {
-        for (id, device_id, pos) in self.fingers.drain(..) {
-            out.push(Event::Touch { device_id, id, phase: TouchPhase::Cancel, pos, force: None });
-            out.push(Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
-            out.push(Event::PointerGone);
-            self.rejected.push(id);
-        }
-    }
-
-    fn track_finger(&mut self, id: TouchId, device_id: egui::TouchDeviceId, phase: TouchPhase, pos: Pos2) {
-        self.fingers.retain(|f| f.0 != id);
-        if matches!(phase, TouchPhase::Start | TouchPhase::Move) {
-            self.fingers.push((id, device_id, pos));
-        }
-        if matches!(phase, TouchPhase::End | TouchPhase::Cancel) {
-            self.rejected.retain(|r| *r != id);
-        }
-    }
-
-    fn pencil_touch(&mut self, id: TouchId, phase: TouchPhase, pos: Pos2, modifiers: egui::Modifiers, out: &mut Vec<Event>) {
-        let primary = egui::PointerButton::Primary;
+        let starts_in_view = phase == TouchPhase::Start && in_view(app, ctx, pos);
+        let fingers = &mut app.viewport.fingers;
         match phase {
             TouchPhase::Start => {
-                if self.pencil.is_some() {
-                    return;
-                }
-                self.pencil = Some(id);
-                // Fingers and the palm already down are let go and ignored until they lift.
-                if let Some(f) = self.finger.take() {
-                    if f.on_ui {
-                        out.push(Event::PointerButton { pos: f.last, button: primary, pressed: false, modifiers });
-                        out.push(Event::PointerGone);
+                if fingers.contacts.is_empty() {
+                    fingers.several = false;
+                    if starts_in_view {
+                        if !fingers.holding {
+                            fingers.held_since = now;
+                        }
+                        fingers.holding = true;
                     }
+                } else {
+                    fingers.several = true;
                 }
-                for (id, device_id, pos) in self.fingers.drain(..) {
-                    out.push(Event::Touch { device_id, id, phase: TouchPhase::Cancel, pos, force: None });
-                    self.rejected.push(id);
-                }
-                out.push(Event::PointerMoved(pos));
-                out.push(Event::PointerButton { pos, button: primary, pressed: true, modifiers });
-            }
-            TouchPhase::Move => out.push(Event::PointerMoved(pos)),
-            TouchPhase::End | TouchPhase::Cancel => {
-                if self.pencil == Some(id) {
-                    self.pencil = None;
-                    out.push(Event::PointerButton { pos, button: primary, pressed: false, modifiers });
-                    out.push(Event::PointerGone);
-                }
-            }
-        }
-    }
-
-    fn finger_touch(&mut self, event: Event, now: f64, modifiers: egui::Modifiers, on_view: &impl Fn(Pos2) -> bool, out: &mut Vec<Event>) {
-        let Event::Touch { device_id, id, phase, pos, .. } = event else { return };
-        if self.rejected.contains(&id) || (self.pencil.is_some() && phase == TouchPhase::Start) {
-            if phase == TouchPhase::Start {
-                self.rejected.push(id);
-            }
-            if matches!(phase, TouchPhase::End | TouchPhase::Cancel) {
-                self.rejected.retain(|r| *r != id);
-            }
-            self.owner = Some((id, Pass::Nothing));
-            return;
-        }
-        self.track_finger(id, device_id, phase, pos);
-        let mut on_ui = false;
-        match phase {
-            TouchPhase::Start => {
-                if let Some(f) = &mut self.finger {
-                    f.multi = true;
-                } else if self.fingers.len() == 1 {
-                    on_ui = !on_view(pos);
-                    self.finger = Some(Finger { id, start: pos, last: pos, at: now, moved: false, multi: false, held: false, on_ui });
+                if pos.is_finite() && fingers.contacts.len() < MAX_CONTACTS && !fingers.contacts.iter().any(|c| c.device == device && c.id == id) {
+                    fingers.contacts.push(Contact { device, id, start: pos, at: pos, since: now, moved: false });
                 }
             }
             TouchPhase::Move => {
-                if let Some(f) = self.finger.as_mut().filter(|f| f.id == id) {
-                    on_ui = f.on_ui;
-                    if !f.moved && (pos - f.start).length() > SLOP {
-                        f.moved = true;
-                    }
-                    if f.moved && !f.multi && !f.held && !f.on_ui && self.fingers.len() == 1 {
-                        self.orbit += pos - f.last;
-                        self.orbit_at = Some(f.start);
-                    }
-                    f.last = pos;
+                if let Some(c) = fingers.contacts.iter_mut().find(|c| c.device == device && c.id == id)
+                    && pos.is_finite()
+                {
+                    c.moved |=
+                        solidcore_ops::point_distance([f64::from(pos.x), f64::from(pos.y), 0.0], [f64::from(c.start.x), f64::from(c.start.y), 0.0])
+                            .map_or(true, |distance| distance.value > f64::from(TAP_SLOP));
+                    c.at = pos;
                 }
             }
             TouchPhase::End | TouchPhase::Cancel => {
-                if let Some(f) = self.finger.take_if(|f| f.id == id) {
-                    on_ui = f.on_ui;
-                    // A tap on the view selects what it landed on, as a click there.
-                    if phase == TouchPhase::End && !f.on_ui && !f.moved && !f.multi && !f.held {
-                        let button = egui::PointerButton::Primary;
-                        out.push(Event::PointerMoved(f.start));
-                        out.push(Event::PointerButton { pos: f.start, button, pressed: true, modifiers });
-                        self.later.push(Event::PointerButton { pos: f.start, button, pressed: false, modifiers });
-                        self.later.push(Event::PointerGone);
+                let Some(i) = fingers.contacts.iter().position(|c| c.device == device && c.id == id) else { continue };
+                let c = fingers.contacts.remove(i);
+                let end = if pos.is_finite() { pos } else { c.at };
+                let tap = phase == TouchPhase::End
+                    && fingers.holding
+                    && !fingers.several
+                    && !c.moved
+                    && fingers.contacts.is_empty()
+                    && now - c.since <= TAP_TIME
+                    && end.distance(c.start) <= TAP_SLOP;
+                if tap {
+                    match fingers.last_tap.take() {
+                        Some((at, when)) if now - when <= DOUBLE_TAP_TIME && end.distance(at) <= DOUBLE_TAP_SLOP => fingers.double_tap = Some(end),
+                        _ => fingers.last_tap = Some((end, now)),
                     }
+                } else {
+                    // A drag, a hold or a gesture between two taps: they are not a double-tap.
+                    fingers.last_tap = None;
                 }
             }
         }
-        self.owner = Some((id, if on_ui { Pass::All } else { Pass::Moves }));
-        out.push(event);
+    }
+    if !pen_touches.is_empty() {
+        drop_pen_touches(raw, &pen_touches);
+    }
+    let fingers = &mut app.viewport.fingers;
+    if !fingers.holding {
+        return;
+    }
+    // A touch's press is also where egui learns the finger is (eframe sends no move before it):
+    // the press becomes a move there, so the view still knows the finger is over it and
+    // touchscreen navigation can take the gesture, but nothing is clicked.
+    for e in &mut raw.events {
+        if let Event::PointerButton { pos, button: PointerButton::Primary, pressed, .. } = *e {
+            let pen = if pressed { taps.pen_press } else { taps.pen_release };
+            if !is_pen_release(pen, pos) {
+                *e = Event::PointerMoved(pos);
+            }
+        }
+    }
+    // The last finger has lifted (its release was just taken out), or a finger reported down
+    // never sent its touch events: presses are the pointer's again.
+    let lifted =
+        fingers.contacts.is_empty() && raw.events.iter().any(|e| matches!(e, Event::Touch { phase: TouchPhase::End | TouchPhase::Cancel, .. }));
+    let orphaned = fingers.contacts.is_empty() && now - fingers.held_since > ORPHAN_TIME;
+    if lifted || orphaned {
+        fingers.holding = false;
+        fingers.several = false;
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn touch(id: u64, phase: TouchPhase, x: f32, pencil: bool) -> Event {
-        Event::Touch {
-            device_id: egui::TouchDeviceId(0),
-            id: TouchId::from(id),
-            phase,
-            pos: egui::pos2(x, 100.0),
-            force: pencil.then_some(0.5),
+/// Take a pen's touches out of the frame, with what eframe makes of them: for `touchstart` a
+/// primary press just before the touch, for `touchend` a primary release and the pointer gone.
+/// The pen's own pointer events already press and release, so each pen tap is then one click,
+/// not the two (a double-click) that egui would otherwise count, and the hover stays.
+fn drop_pen_touches(raw: &mut RawInput, pen_touches: &[egui::TouchId]) {
+    let mut kept: Vec<Event> = Vec::with_capacity(raw.events.len());
+    for e in raw.events.drain(..) {
+        match &e {
+            Event::Touch { id, phase, .. } if pen_touches.contains(id) => {
+                // eframe pushes what it makes of a touch right before the touch itself: one of
+                // each, so the pen's own press or release before them stays.
+                let pressed = |k: &Event| matches!(k, Event::PointerButton { button: PointerButton::Primary, pressed: true, .. });
+                let released = |k: &Event| matches!(k, Event::PointerButton { button: PointerButton::Primary, pressed: false, .. });
+                match phase {
+                    TouchPhase::Start => {
+                        if kept.last().is_some_and(pressed) {
+                            kept.pop();
+                        }
+                    }
+                    TouchPhase::End | TouchPhase::Cancel => {
+                        if kept.last().is_some_and(|k| matches!(k, Event::PointerGone)) {
+                            kept.pop();
+                        }
+                        if kept.last().is_some_and(released) {
+                            kept.pop();
+                        }
+                    }
+                    TouchPhase::Move => {}
+                }
+            }
+            _ => kept.push(e),
         }
     }
+    raw.events = kept;
+}
 
-    /// egui-winit's emulation of the first touch's mouse.
-    fn press(x: f32, down: bool) -> Event {
-        Event::PointerButton { pos: egui::pos2(x, 100.0), button: egui::PointerButton::Primary, pressed: down, modifiers: egui::Modifiers::NONE }
+/// A finger double-tap at `p`: on a planar face of a body, select the face and start a sketch on
+/// it (the view turns to face it as New Sketch does). Only with nothing else under way: no tool,
+/// window or open sketch. Returns whether a sketch started.
+pub(crate) fn finger_double_tap(app: &mut SolveApp, proj: &Proj, p: Pos2) -> bool {
+    if app.tool.is_some() || app.dialog.is_some() || app.session.active_sketch.is_some() {
+        return false;
     }
-
-    fn run(p: &mut Pencil, time: f64, events: Vec<Event>) -> Vec<Event> {
-        let mut raw = egui::RawInput { time: Some(time), events, ..Default::default() };
-        p.filter(&mut raw, |_| true);
-        raw.events
+    let face = crate::viewport::pick(app, proj, p).into_iter().find_map(|hit| match hit {
+        Hit::Face { body, index, point } => Some(Sel::Face { body, index, point }),
+        _ => None,
+    });
+    let Some(face) = face else { return false };
+    if app.run("select.set", json!({ "items": [face.clone()] })).is_err() {
+        return false;
     }
-
-    fn presses(events: &[Event]) -> usize {
-        events.iter().filter(|e| matches!(e, Event::PointerButton { pressed: true, .. })).count()
+    match crate::dialogs::start_sketch(app, &face) {
+        Ok(()) => true,
+        Err(why) => {
+            app.set_status(why, true);
+            false
+        }
     }
+}
 
-    #[test]
-    fn without_a_pencil_nothing_changes() {
-        let mut p = Pencil { enabled: true, ..Default::default() };
-        let events = vec![touch(1, TouchPhase::Start, 10.0, false), Event::PointerMoved(egui::pos2(10.0, 100.0)), press(10.0, true)];
-        assert_eq!(run(&mut p, 0.0, events.clone()), events);
-        assert!(!p.active);
-    }
-
-    #[test]
-    fn once_the_pencil_is_used_a_finger_drag_orbits_and_presses_nothing() {
-        let mut p = Pencil { enabled: true, ..Default::default() };
-        let out = run(&mut p, 0.0, vec![touch(9, TouchPhase::Start, 50.0, true), press(50.0, true)]);
-        assert!(p.active);
-        assert_eq!(presses(&out), 1, "the pencil presses once (its own, not egui-winit's as well)");
-        run(&mut p, 0.1, vec![touch(9, TouchPhase::End, 50.0, true), press(50.0, false)]);
-        let out = run(&mut p, 1.0, vec![touch(1, TouchPhase::Start, 10.0, false), press(10.0, true)]);
-        assert_eq!(presses(&out), 0, "a finger landing on the view presses nothing");
-        run(&mut p, 1.1, vec![touch(1, TouchPhase::Move, 60.0, false)]);
-        assert!(p.orbit.x > 0.0, "the finger's travel orbits");
-        let out = run(&mut p, 1.2, vec![touch(1, TouchPhase::End, 60.0, false), press(60.0, false)]);
-        assert_eq!(presses(&out), 0, "a drag is no tap");
-    }
-
-    #[test]
-    fn a_finger_tap_clicks_and_a_long_press_opens_the_menu() {
-        let mut p = Pencil { enabled: true, active: true, ..Default::default() };
-        run(&mut p, 0.0, vec![touch(1, TouchPhase::Start, 10.0, false)]);
-        let out = run(&mut p, 0.1, vec![touch(1, TouchPhase::End, 10.0, false)]);
-        assert_eq!(presses(&out), 1, "a tap presses");
-        let next = run(&mut p, 0.12, Vec::new());
-        assert!(next.iter().any(|e| matches!(e, Event::PointerButton { pressed: false, .. })), "and lets go the next frame");
-        run(&mut p, 1.0, vec![touch(2, TouchPhase::Start, 10.0, false)]);
-        run(&mut p, 1.6, Vec::new());
-        assert!(p.menu.is_some(), "holding still opens the menu");
-        let out = run(&mut p, 1.7, vec![touch(2, TouchPhase::End, 10.0, false)]);
-        assert_eq!(presses(&out), 0, "a long press is no tap");
-    }
-
-    #[test]
-    fn a_finger_on_the_view_still_moves_the_pointer_so_two_finger_gestures_work() {
-        let mut p = Pencil { enabled: true, active: true, ..Default::default() };
-        let at = egui::pos2(10.0, 100.0);
-        let out = run(&mut p, 0.0, vec![touch(1, TouchPhase::Start, 10.0, false), Event::PointerMoved(at), press(10.0, true)]);
-        assert!(out.contains(&Event::PointerMoved(at)), "the pointer follows the finger onto the view");
-        assert_eq!(presses(&out), 0, "but presses nothing");
-        let out = run(&mut p, 0.1, vec![touch(2, TouchPhase::Start, 90.0, false), touch(1, TouchPhase::Move, 30.0, false), Event::PointerMoved(egui::pos2(30.0, 100.0))]);
-        assert_eq!(out.iter().filter(|e| matches!(e, Event::Touch { .. })).count(), 2, "both fingers reach egui's multi-touch");
-        assert!(out.contains(&Event::PointerMoved(egui::pos2(30.0, 100.0))));
-        assert_eq!(p.orbit, Vec2::ZERO, "two fingers do not orbit");
-    }
-
-    #[test]
-    fn the_palm_is_ignored_while_the_pencil_is_down() {
-        let mut p = Pencil { enabled: true, active: true, ..Default::default() };
-        run(&mut p, 0.0, vec![touch(9, TouchPhase::Start, 50.0, true)]);
-        let out = run(&mut p, 0.1, vec![touch(1, TouchPhase::Start, 200.0, false), touch(1, TouchPhase::Move, 300.0, false)]);
-        assert!(out.iter().all(|e| !matches!(e, Event::Touch { .. })), "the palm's touches never reach egui");
-        assert_eq!(p.orbit, Vec2::ZERO, "nor orbit");
-        // A palm that landed first is cancelled when the pencil comes down.
-        let mut p = Pencil { enabled: true, active: true, ..Default::default() };
-        run(&mut p, 0.0, vec![touch(1, TouchPhase::Start, 200.0, false)]);
-        let out = run(&mut p, 0.1, vec![touch(9, TouchPhase::Start, 50.0, true)]);
-        assert!(out.iter().any(|e| matches!(e, Event::Touch { phase: TouchPhase::Cancel, .. })));
-        assert_eq!(presses(&out), 1, "the pencil still draws");
+/// What a pen double-tap on `hit` selects: the whole body of a face, edge or vertex; the whole
+/// sketch of a sketch curve, point or profile (every curve of the sketch being edited, or the
+/// sketch itself for another one). Nothing for anything else.
+pub(crate) fn whole(app: &SolveApp, hit: &Hit) -> Option<Vec<Sel>> {
+    match hit {
+        Hit::Face { body, .. } | Hit::Edge { body, .. } | Hit::Vertex { body, .. } => Some(vec![Sel::Body { name: body.clone() }]),
+        Hit::SketchCurve { sketch, .. }
+        | Hit::SketchPoint { sketch, .. }
+        | Hit::SketchPoint3d { sketch, .. }
+        | Hit::SketchMidpoint { sketch, .. }
+        | Hit::Profile { sketch, .. } => {
+            if app.session.active_sketch == Some(*sketch) {
+                let state = crate::open_meshing::session_world(&app.session);
+                let ss = state.sketch(*sketch)?;
+                let curves: Vec<Sel> = ss
+                    .sketch
+                    .curves
+                    .iter()
+                    .map(|c| &c.id)
+                    .chain(ss.sketch.wires.iter().map(|w| &w.id))
+                    .map(|id| Sel::SketchCurve { id: id.clone(), sketch: None })
+                    .collect();
+                (!curves.is_empty()).then_some(curves)
+            } else {
+                Some(vec![Sel::Feature { id: *sketch }])
+            }
+        }
+        _ => None,
     }
 }

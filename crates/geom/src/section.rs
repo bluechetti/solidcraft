@@ -21,10 +21,11 @@
 //! exact or certified measures for conics and freeform curves. Profile values contain geometry
 //! only: callers retain the original result's accuracy declarations and local identities.
 
+use crate::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::profile::coordinates;
-use crate::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
+use solidcore_record::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
 
 /// Aggregate input records/references, and the selected conversion's output items, at most.
 /// Input counts curves, wires, regions, contacts, curve uses and hole references together.
@@ -53,31 +54,9 @@ pub struct SectionCurve {
     pub accuracy: CurveAccuracy,
 }
 
-/// How the producer represents its source; structure validation cannot certify this declaration.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum CurveAccuracy {
-    /// An analytic representation without fitting; not a certificate about the source or topology.
-    Analytic,
-    /// A producer-established bound, not merely a requested fitting tolerance.
-    Bounded { max_deviation_mm: f64 },
-    /// A deviation measured at samples only, with no bound between them. Zero remains sampled.
-    Sampled { max_sample_deviation_mm: f64 },
-}
-
-impl CurveAccuracy {
-    /// The same accuracy for the curve scaled by `factor` (above 0): a deviation scales with it,
-    /// and an analytic curve stays analytic.
-    pub fn scaled(self, factor: f64) -> CurveAccuracy {
-        match self {
-            CurveAccuracy::Analytic => CurveAccuracy::Analytic,
-            CurveAccuracy::Bounded { max_deviation_mm } => CurveAccuracy::Bounded { max_deviation_mm: max_deviation_mm * factor },
-            CurveAccuracy::Sampled { max_sample_deviation_mm } => {
-                CurveAccuracy::Sampled { max_sample_deviation_mm: max_sample_deviation_mm * factor }
-            }
-        }
-    }
-}
+/// How the producer represents its source: the hidden-line drawing's accuracy, which a section
+/// shares.
+pub use solidcore_ops::hlr::CurveAccuracy;
 
 /// An ordered connected chain. `closed` is explicit, never inferred or repaired.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

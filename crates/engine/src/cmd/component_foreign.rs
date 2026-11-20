@@ -25,9 +25,10 @@ pub(super) fn paste_from_design(s: &mut Session, p: &Value) -> Result<Value> {
     let path = match given {
         Some(path) => path,
         None if to == s.active_component => s.active_occurrence_path.clone().unwrap_or_else(|| s.doc.first_path(to)),
-        None => placing::placement_of(s, &s.placed_document(), to, None, "component_path", cmd)?.0,
+        None => placing::placement_of(s, &s.design_document(), to, None, "component_path", cmd)?.0,
     };
-    let frame = s.placed_document().path_transform(to, &path).ok_or_else(|| bad(cmd, "that path is not a placement of the target"))?;
+    // The target as the design places it, without an exploded view shown.
+    let frame = s.design_document().path_transform(to, &path).ok_or_else(|| bad(cmd, "that path is not a placement of the target"))?;
     let into_target = solidcraft_doc::mat_inverse(&frame).ok_or_else(|| bad(cmd, "the target's frame is not invertible"))?;
     if copy.bodies.is_empty() {
         return paste_components(s, &copy, to, path, into_target, p);
@@ -52,7 +53,8 @@ pub(super) fn paste_from_design(s: &mut Session, p: &Value) -> Result<Value> {
     let header = solidcraft_kernel::StepHeader { organization: "SolidCraft".into(), ..Default::default() };
     let step = solidcraft_kernel::step_export_bodies(&list, &header)?;
     let mut scratch = s.scratch();
-    let kind = FeatureKind::Import { file: format!("{} (pasted)", copy.design), step: step.into(), components: Vec::new(), skip: Vec::new() };
+    let kind =
+        FeatureKind::Import { file: format!("{} (pasted)", copy.design), step: step.into(), components: Vec::new(), skip: Vec::new(), records: None };
     // Named as any import is ("Import1"); the design they came from stays on it as its file.
     let id = scratch.doc_mut().add_feature(kind, None)?;
     let feature = scratch.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();

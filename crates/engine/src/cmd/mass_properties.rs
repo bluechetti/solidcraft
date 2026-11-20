@@ -15,12 +15,13 @@
 //! an occurrence inside a subassembly placed more than once is listed at the subassembly's first
 //! placement (a warning says so).
 
+use solidcraft_geom::prelude::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::Value;
+use solidcore_record::Vec3;
 use solidcraft_doc::joints::{self, JointKind, MAX_JOINTS};
 use solidcraft_doc::{Document, IDENTITY, MAX_PLACEMENTS, Mat, ModelState, apply_point, mat_inverse, mat_mul};
-use solidcraft_geom::Vec3;
 use solidcraft_geom::inertia::{self, Tensor3};
 
 use super::CommandSpec;
@@ -208,7 +209,9 @@ pub fn assembly(doc: &Document, state: &ModelState) -> Result<AssemblyMassResult
     let index: HashMap<u64, usize> = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
 
     let mut groups = Groups((0..ids.len()).collect());
-    let live: Vec<_> = doc.assembly.joints.iter().filter(|j| !j.suppressed).take(MAX_JOINTS).collect();
+    // A rigid group holds its parts as rigid joints would.
+    let all = doc.joints_with_rigid_groups();
+    let live: Vec<_> = all.iter().filter(|j| !j.suppressed).take(MAX_JOINTS).collect();
     let jointed: HashSet<u64> = live.iter().flat_map(|j| [j.a.occurrence, j.b.occurrence]).collect();
     for j in live.iter().filter(|j| j.kind == JointKind::Rigid) {
         if let (Some(&a), Some(&b)) = (index.get(&j.a.occurrence), index.get(&j.b.occurrence)) {
@@ -241,9 +244,20 @@ pub fn assembly(doc: &Document, state: &ModelState) -> Result<AssemblyMassResult
         if !closed {
             return Ok(Shape { closed, volume: 0.0, centroid: Vec3::ZERO, gyration: None });
         }
-        let m = solidcraft_kernel::measure_mass(&body.body)?;
-        let gyration = solidcraft_io::mass_properties(&body.body)?.and_then(|p| p.gyration());
-        Ok(Shape { closed, volume: m.volume, centroid: m.centroid, gyration })
+        let sheet = state.surface_sheets.iter().find(|sheet| sheet.body == body.definition_name() && !sheet.perforations.is_empty());
+        let (volume, centroid) = if sheet.is_some() {
+            let measured = super::inspect::measure_body(body, Some(state))?;
+            (measured.volume, measured.centroid)
+        } else {
+            let measured = solidcraft_kernel::measure_mass(&body.body)?;
+            (measured.volume, measured.centroid)
+        };
+        let mut moments = solidcraft_io::mass_properties(&body.body)?;
+        if let (Some(sheet), Some(moments)) = (sheet, moments.as_mut()) {
+            sheet.correct_perforation_mass_properties(moments, &IDENTITY)?;
+        }
+        let gyration = moments.and_then(|p| p.gyration());
+        Ok(Shape { closed, volume, centroid, gyration })
     });
     let mut shape: BTreeMap<usize, Shape> = BTreeMap::new();
     for (i, s) in measured.into_iter().zip(shapes) {

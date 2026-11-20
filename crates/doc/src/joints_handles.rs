@@ -1,10 +1,11 @@
 //! The instantaneous motion a joint value gives a selected occurrence. Probe the same
 //! placement graph and loop solver as a drive, including reversed joints and motion links.
+use solidcraft_geom::prelude::*;
 use std::collections::BTreeSet;
 
 use super::{Analysis, Held, MAX_LOOP_VALUES, Solution, apply_links, build, joint_values, link_chains, solve_holding_with_analysis};
 use crate::{Document, Mat, ModelState, apply_point, apply_vector, mat_inverse, mat_mul};
-use solidcraft_geom::Vec3;
+use solidcore_record::Vec3;
 
 /// A driveable value, expressed as an axis of the selected occurrence in world coordinates.
 #[derive(Clone, Debug)]
@@ -26,7 +27,8 @@ pub fn motion_axes(doc: &Document, st: &ModelState, occurrence: u64) -> Vec<Moti
     let asm = &doc.assembly;
     let values = joint_values(asm);
     let mut report = Solution::default();
-    let built = build(doc, st, &values, &mut report);
+    let held_contents = doc.rigid_group_joints();
+    let built = build(doc, st, &held_contents, &values, &mut report);
     let tree = &built.tree;
     if tree.fixed.contains_key(&occurrence) || !tree.parent.contains_key(&occurrence) || !report.errors.is_empty() {
         return Vec::new();

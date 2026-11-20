@@ -174,9 +174,10 @@ struct Candidate {
     key: String,
 }
 
-fn candidates(s: &Session) -> Vec<Candidate> {
-    let st = s.world_state();
-    st.bodies
+fn candidates(s: &Session) -> Result<Vec<Candidate>> {
+    let st = s.world_state()?;
+    Ok(st
+        .bodies
         .iter()
         .map(|b| {
             let component = s.doc.model_body_component(b);
@@ -186,13 +187,17 @@ fn candidates(s: &Session) -> Vec<Candidate> {
                 .doc
                 .browser_groups
                 .iter()
-                .find(|g| g.folder == "bodies" && g.component == component && g.items.iter().any(|i| matches!(i, solidcraft_doc::BrowserEntry::Item(k) if k == definition)))
+                .find(|g| {
+                    g.folder == "bodies"
+                        && g.component == component
+                        && g.items.iter().any(|i| matches!(i, solidcraft_doc::BrowserEntry::Item(k) if k == definition))
+                })
                 .map(|g| g.name.as_str())
                 .unwrap_or("");
             let appearance = s.doc.model_body_look(b).map(|l| l.name).unwrap_or_default();
             Candidate { name: b.name.clone(), key: format!("{component_name}:{group}:{}:{appearance}", b.name).to_lowercase() }
         })
-        .collect()
+        .collect())
 }
 
 /// The bodies that share volume with any body whose name contains `hull` (the hulls excluded).
@@ -232,7 +237,7 @@ fn show_hide(s: &mut Session, p: &Value) -> Result<Value> {
     flatten(rule, &table, 0, &mut terms).map_err(|e| bad(cmd, e))?;
     let ops: Vec<Op> = terms.iter().flat_map(|t| parse_term(t)).collect();
 
-    let mut cands = candidates(s);
+    let mut cands = candidates(s)?;
     let mut hidden: BTreeSet<String> = s.visibility.hidden_bodies.iter().cloned().collect();
     let mut unhide = false;
     let mut ignored = Vec::new();
@@ -268,7 +273,7 @@ fn show_hide(s: &mut Session, p: &Value) -> Result<Value> {
                             shown_by.insert(c.name.clone());
                         } else {
                             hidden.insert(c.name.clone());
-                            }
+                        }
                     }
                 }
             }
@@ -280,7 +285,7 @@ fn show_hide(s: &mut Session, p: &Value) -> Result<Value> {
                 }
                 s.execute("parameters.change", &json!({ "name": name, "expression": value }))?;
                 // The bodies may have changed with the parameter.
-                cands = candidates(s);
+                cands = candidates(s)?;
             }
             Op::Ignored(t) => ignored.push(t.clone()),
         }

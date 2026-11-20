@@ -7,8 +7,8 @@
 #![allow(unsafe_code)]
 use std::cell::RefCell;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicUsize, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicUsize, Ordering};
 
 use objc2::ffi::{class_addMethod, class_getInstanceMethod, method_setImplementation};
 use objc2::rc::Retained;
