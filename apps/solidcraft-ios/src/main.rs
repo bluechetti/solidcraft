@@ -93,7 +93,7 @@ impl eframe::App for App {
         }
         self.control_replies.retain(|reply| match reply.try_recv() {
             Ok(response) => {
-                note(&format!("test reply: {}", serde_json::to_string(&response).unwrap_or_default().chars().take(600).collect::<String>()));
+                note(&format!("test reply: {}", serde_json::to_string(&response).unwrap_or_default().chars().take(20000).collect::<String>()));
                 false
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => true,
@@ -282,6 +282,8 @@ fn run() -> eframe::Result {
         Box::new(|cc| {
             note("creating app");
             solidcraft_ui_egui::fonts::setup_fonts(&cc.egui_ctx);
+            // A touch screen: drop-down rows show their pins (no pointer hovers them).
+            solidcraft_ui_egui::ribbon_touch(&cc.egui_ctx, true);
             let files = files::Files::default();
             let mut app = SolveApp::new(Session::default(), files.services());
             // The test hook's control channel, only when a test asks for one.

@@ -1852,7 +1852,14 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
                                 let row_w = dropdown_width(app, ui, &cmds);
                                 ui.set_width(row_w);
                                 sketch_create_menu(app, ui, &cmds, row_w, &mut menu, &mut toggle);
-                                ribbon::section_footer(ui, solidcraft_ui_text::tr("ui.ribbon_pin_footer"));
+                                ribbon::section_footer(
+                                    ui,
+                                    solidcraft_ui_text::tr(if ribbon::touch(ui.ctx()) {
+                                        "ui.ribbon_pin_footer_touch"
+                                    } else {
+                                        "ui.ribbon_pin_footer"
+                                    }),
+                                );
                                 return;
                             }
                             let grouped = if *panel == "CONSTRUCT" && !app.preferences.construct_menu_groups {
@@ -1914,7 +1921,10 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
                                     }
                                 }
                             });
-                            ribbon::section_footer(ui, solidcraft_ui_text::tr("ui.ribbon_pin_footer"));
+                            ribbon::section_footer(
+                                ui,
+                                solidcraft_ui_text::tr(if ribbon::touch(ui.ctx()) { "ui.ribbon_pin_footer_touch" } else { "ui.ribbon_pin_footer" }),
+                            );
                         });
                     });
                 popup_rect = Some(area.response.rect);
