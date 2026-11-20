@@ -66,6 +66,8 @@ impl eframe::App for App {
         if !self.test_steps.is_empty() && now - self.test_at >= 1.0 {
             self.test_at = now;
             if let Some(step) = self.test_steps.pop() {
+                // `{docs}` is the app's Documents folder (where Files puts what is copied in).
+                let step = step.replace("{docs}", &files::documents().to_string_lossy());
                 note(&format!("test step: {step}"));
                 if let Some(rest) = step.strip_prefix("run:") {
                     let (command, params) = rest.split_once(' ').unwrap_or((rest, "{}"));

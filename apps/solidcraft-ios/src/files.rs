@@ -72,8 +72,15 @@ impl Files {
 
     /// The system picker where there is one; else the in-app browser.
     fn open_or_browse(&self, exts: &[&str]) -> FilePickerFuture {
+        // No kinds named: every kind the app opens (the format registry, as the desktop's dialog),
+        // plus what installed importer plugins read.
+        let plugins = solidcraft_engine::io::formats::plugin_open_filters();
+        let mut everything: Vec<&str> = solidcraft_engine::io::formats::open_extensions(true);
+        everything.extend(["dxf", "svg"]);
+        everything.extend(plugins.iter().flat_map(|(_, e)| e.iter().map(String::as_str)));
+        let exts = if exts.is_empty() { &everything[..] } else { exts };
         #[cfg(target_os = "ios")]
-        if let Some(future) = crate::picker::open() {
+        if let Some(future) = crate::picker::open(exts) {
             return future;
         }
         self.ask(Request::Open, exts)

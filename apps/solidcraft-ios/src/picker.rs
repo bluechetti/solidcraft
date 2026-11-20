@@ -84,14 +84,23 @@ thread_local! {
     static DELEGATE: RefCell<Option<Retained<Delegate>>> = const { RefCell::new(None) };
 }
 
-/// Show the picker for any file; `None` when it cannot be shown (not on the main thread, or no
+/// Show the picker for the files with these extensions (any file for none); `None` when it cannot be shown (not on the main thread, or no
 /// window to present from), so the caller can use the in-app browser instead.
-pub fn open() -> Option<FilePickerFuture> {
+pub fn open(extensions: &[&str]) -> Option<FilePickerFuture> {
     let mtm = MainThreadMarker::new()?;
     let answer: Answer = Rc::default();
     let delegate = Delegate::new(mtm, answer.clone());
-    let types: Vec<Retained<UTType>> =
-        ["public.data", "public.item"].iter().filter_map(|id| UTType::typeWithIdentifier(&NSString::from_str(id))).collect();
+    // Only the kinds the command reads (a STEP file for Insert STEP), so the Files sheet does not
+    // offer photos and videos; any file when the command names none.
+    let mut types: Vec<Retained<UTType>> = extensions
+        .iter()
+        .map(|e| e.trim_start_matches('.'))
+        .filter(|e| !e.is_empty() && *e != "*")
+        .filter_map(|e| UTType::typeWithFilenameExtension(&NSString::from_str(e)))
+        .collect();
+    if types.is_empty() {
+        types = ["public.data", "public.item"].iter().filter_map(|id| UTType::typeWithIdentifier(&NSString::from_str(id))).collect();
+    }
     let types = NSArray::from_retained_slice(&types);
     let picker = UIDocumentPickerViewController::initForOpeningContentTypes_asCopy(UIDocumentPickerViewController::alloc(mtm), &types, false);
     picker.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
