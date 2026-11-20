@@ -1549,7 +1549,12 @@ fn fs(i: O) -> @location(0) vec4<f32> {
                 let a2 = u.shadow_axes.zw;
                 let q = vec2<f32>(dot(local, a1) / dot(a1, a1), dot(local, a2) / dot(a2, a2));
                 let r = length(q);
-                let dark = 0.5 * (1.0 - smoothstep(0.35, 1.0, r));
+                // The footprint's edge is at about 0.85 of the ellipse. A dark contact band hugs
+                // it (what makes a thing look stood on the floor), and a faint soft shadow spreads
+                // beyond, as under a room's light from above.
+                let contact = 0.55 * (1.0 - smoothstep(0.82, 1.0, r));
+                let soft = 0.2 * (1.0 - smoothstep(0.85, 1.7, r));
+                let dark = max(contact, soft);
                 camera = camera * (1.0 - dark);
             }
         }
