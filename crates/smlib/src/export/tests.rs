@@ -419,7 +419,8 @@ mod native_tests {
                         .collect();
                     let records = loops.iter().map(|_| Vec::new()).collect();
                     let face = Face { nurbs: rf.nurbs.clone(), surface: rf.surface.clone(), domain: rf.domain, agrees: true, loops, records, given };
-                    let now = outer_area(&face, &edges, record.tolerance).unwrap_or_else(|e| panic!("{name}: face {f}: {e}"));
+                    let (now, certified) = outer_area(&face, &edges, record.tolerance).unwrap_or_else(|e| panic!("{name}: face {f}: {e}"));
+                    assert!(certified, "{name}: face {f}: the turn is certified");
                     let before = outer_area_copying_every_edge(&face, &edges, record.tolerance).unwrap();
                     assert_eq!(now.signum(), before.signum(), "{name}: face {f}, trims given {with_given}: {now} against {before}");
                     assert_eq!(now.abs(), 1.0, "{name}: face {f}: the certified turn decides");

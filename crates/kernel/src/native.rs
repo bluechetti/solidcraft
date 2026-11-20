@@ -91,7 +91,8 @@ pub fn body_from_smlib(brep: &solidcraft_smlib::Brep) -> Result<Body> {
 /// edge order ([`crate::history`]).
 ///
 /// Where the mapping turned faces over (decided the record's side of a face apart from SMLib's,
-/// [`solidcraft_smlib::export::Report::reversed_faces`]), the body kept is the record, not the
+/// [`solidcraft_smlib::export::Report::reversed_faces`]), or decided a face's side without a
+/// certified turn ([`solidcraft_smlib::export::Report::unsure_turns`]), the body kept is the record, not the
 /// result SMLib checked, so SMLib's check takes the body as kept, here, unless the evaluation
 /// runs with checks off: a face turned the wrong way (once a thin crescent beside a bore, its
 /// loop's sign misread) is refused at the step that made it, not blamed on the body by the next
@@ -100,13 +101,13 @@ pub(crate) fn body_from_smlib_ordered(brep: &solidcraft_smlib::Brep) -> Result<(
     let _span = solidcraft_profile::span("kernel", "body_from_smlib_ordered");
     let (record, order, report) = brep.to_native_ordered_report().map_err(|e| KernelError::Failed(e.to_string()))?;
     let body = Body::from_smlib_record(record)?;
-    if report.reversed_faces > 0
+    if (report.reversed_faces > 0 || report.unsure_turns > 0)
         && !crate::validation::checks_off()
         && let Some(failure) = crate::validation::failing_check(&body)?
     {
         return Err(KernelError::Failed(format!(
-            "SMLib export: the record of the result turns {} face(s) over, and SMLib's check refuses it as kept: {failure}",
-            report.reversed_faces
+            "SMLib export: SMLib's check refuses the record of the result as kept (faces turned over: {}; sides decided without a certified turn: {}): {failure}",
+            report.reversed_faces, report.unsure_turns
         )));
     }
     Ok((body, Some(order)))

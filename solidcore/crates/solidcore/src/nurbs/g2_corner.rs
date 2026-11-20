@@ -1069,8 +1069,8 @@ mod tests {
             let blend = basis.place_blend(1, 0.3, 0.6).unwrap();
             let mut blended = [0.0; 3];
             for (w, p) in blend.iter().zip(&ring) {
-                for k in 0..3 {
-                    blended[k] += w * v(*p)[k];
+                for (b, x) in blended.iter_mut().zip(v(*p)) {
+                    *b += w * x;
                 }
             }
             let there = evaluate(&patches[POINTS..2 * POINTS], 0.3, 0.6, 0, 0);

@@ -328,6 +328,113 @@ pub fn pcurve_loop_area_sign(uses: &[(&crate::eval::Curve2, bool)]) -> Result<Lo
     loop_area_sign(&Kernel::default(), &refs)
 }
 
+/// [`pcurve_loop_area_sign`] of a loop on a surface closed or periodic in a direction whose
+/// parameter range is `widths[d]` wide: where a pcurve starts a whole number of widths from
+/// where the one before it ends (the loop crosses the surface's seam, which no edge of the face
+/// runs along, and each pcurve lies in the range), it is taken moved by those widths, so the loop
+/// is the continuous one the face bounds ([`lifted_loop_area_sign`]: the translation enclosed,
+/// the curve not rewritten), where that loop closes on its start. A step that is no whole number
+/// of widths, to within a millionth of one, is not moved, nor one where `surface` collapses along
+/// that direction within `reach` (a pole, where the parameter is free: a sphere's seam reaching
+/// its pole at one end of the range and leaving it at the other). Without a width, with no such step, or
+/// where the lifted loop does not close (it goes round the surface: a band's or a cap's
+/// boundary, no disc in (u, v)), it is [`pcurve_loop_area_sign`], the loop as it lies.
+///
+/// # Errors
+///
+/// As [`pcurve_loop_area_sign`].
+pub fn lifted_pcurve_loop_area_sign(
+    uses: &[(&crate::eval::Curve2, bool)],
+    surface: &crate::eval::Surface,
+    widths: [Option<f64>; 2],
+    reach: f64,
+) -> Result<LoopAreaSign> {
+    // where the surface collapses along a direction (a pole, within `reach`), a step along it
+    // is no seam: the parameter is free there
+    let eval = crate::eval::SurfaceEval::new(surface).ok();
+    let pole = |uv: [f64; 2]| -> [bool; 2] {
+        eval.as_ref()
+            .and_then(|e| e.pole_within(uv, reach).ok())
+            .unwrap_or([true, true])
+    };
+    let curves = uses
+        .iter()
+        .map(|&(c, forwards)| Ok((nurbs_of_pcurve(c)?, forwards)))
+        .collect::<Result<Vec<_>>>()?;
+    let refs: Vec<(&NurbsCurve, bool)> = curves.iter().map(|(c, f)| (c, *f)).collect();
+    // each use's start and end in the loop's direction
+    let mut ends: Vec<([f64; 2], [f64; 2])> = Vec::with_capacity(uses.len());
+    for &(c, forwards) in uses {
+        let [a, z] = c
+            .interval()
+            .ok_or_else(|| SolidError::invalid_input(OP, "a pcurve with no interval"))?;
+        let at = |t: f64| {
+            crate::eval::pcurve::eval(c, t)
+                .ok_or_else(|| SolidError::invalid_input(OP, "a pcurve end not evaluated"))
+        };
+        let (s, e) = (at(a)?, at(z)?);
+        ends.push(if forwards { (s, e) } else { (e, s) });
+    }
+    let mut shifts = vec![[0.0_f64; 2]; uses.len()];
+    let mut moved = false;
+    for i in 1..uses.len() {
+        let (Some(&(_, end)), Some(&(start, _)), Some(&before)) =
+            (ends.get(i - 1), ends.get(i), shifts.get(i - 1))
+        else {
+            continue;
+        };
+        let mut shift = before;
+        let at_pole = pole(end);
+        for (d, width) in widths.iter().enumerate() {
+            if at_pole.get(d).copied().unwrap_or(true) {
+                continue;
+            }
+            let (Some(w), Some(e), Some(st), Some(sh)) =
+                (width, end.get(d), start.get(d), shift.get_mut(d))
+            else {
+                continue;
+            };
+            if !(w.is_finite() && *w > 0.0) {
+                continue;
+            }
+            // the shift that puts this start on the end before it: a whole number of widths
+            let gap = e + *sh - st;
+            let turns = (gap / w).round();
+            if (gap - turns * w).abs() <= 1e-6 * w {
+                *sh = turns * w;
+                moved |= turns != 0.0;
+            }
+        }
+        if let Some(slot) = shifts.get_mut(i) {
+            *slot = shift;
+        }
+    }
+    // Lifted, the loop must close on its first start: a loop that goes round the surface (its
+    // last end a whole number of widths from its first start, a band's or a cap's boundary) is
+    // no disc in (u, v), and is taken as it lies.
+    let closes = match (ends.last(), ends.first(), shifts.last()) {
+        (Some(&(_, end)), Some(&(start, _)), Some(last)) => {
+            widths.iter().enumerate().all(|(d, width)| {
+                match (width, end.get(d), start.get(d), last.get(d)) {
+                    (Some(w), Some(e), Some(st), Some(sh)) if w.is_finite() && *w > 0.0 => {
+                        (e + sh - st).abs() <= 1e-6 * w
+                    }
+                    _ => true,
+                }
+            })
+        }
+        _ => false,
+    };
+    if !moved || !closes {
+        return loop_area_sign(&Kernel::default(), &refs);
+    }
+    let lifts: Vec<(Ivl, Ivl)> = shifts
+        .iter()
+        .map(|[x, y]| (Ivl::from(*x), Ivl::from(*y)))
+        .collect();
+    lifted_loop_area_sign(&Kernel::default(), &refs, &lifts)
+}
+
 /// A pcurve held by value as the certificate's curve (`z` 0), checked: its degree from its
 /// knots and points, at least 1, its knots finite and non-decreasing, its weights finite and
 /// positive.
@@ -543,6 +650,74 @@ mod tests {
     /// the first, each a pcurve of rational quadratic pieces, counted with their winding: π (16 −
     /// 3.99914²) ≈ 0.0216. The certificate's enclosure holds it and decides the loop
     /// counter-clockwise, and its reverse clockwise; a malformed pcurve is refused.
+    /// A rectangle 2 wide and 1 high on a surface closed along u, its range [0, 10]: the loop
+    /// crosses the seam at u = 10 (0), so its pcurves come as they lie in the range, the right
+    /// half from 9 to 10 and the left from 0 to 1. Unlifted, the joins jump across the range and
+    /// the loop is the rest of the strip; lifted by the range's width, it is the rectangle,
+    /// counter-clockwise, area 2.
+    #[test]
+    fn a_loop_across_a_closed_seam_is_lifted_by_the_range() {
+        use crate::eval::Curve2;
+        let line = |a: [f64; 2], z: [f64; 2]| Curve2::Spline {
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            points: vec![a, z],
+        };
+        // the (u, v) plane itself: no pole anywhere
+        let plane = crate::eval::Surface::Plane {
+            origin: [0.0; 3],
+            u_axis: [1.0, 0.0, 0.0],
+            v_axis: [0.0, 1.0, 0.0],
+        };
+        // counter-clockwise: bottom from u 9 to 10, then from 0 to 1, up at 1, back along the top
+        // from 1 to 0, then 10 to 9, down at 9
+        let pieces = [
+            line([9.0, 0.0], [10.0, 0.0]),
+            line([0.0, 0.0], [1.0, 0.0]),
+            line([1.0, 0.0], [1.0, 1.0]),
+            line([1.0, 1.0], [0.0, 1.0]),
+            line([10.0, 1.0], [9.0, 1.0]),
+            line([9.0, 1.0], [9.0, 0.0]),
+        ];
+        let uses: Vec<(&Curve2, bool)> = pieces.iter().map(|c| (c, true)).collect();
+        match lifted_pcurve_loop_area_sign(&uses, &plane, [Some(10.0), None], 1e-9).unwrap() {
+            LoopAreaSign::Positive(a) => assert!(a.lo <= 2.0 + 1e-9 && 2.0 - 1e-9 <= a.hi, "{a:?}"),
+            other => panic!("{other:?}"),
+        }
+        // Unlifted, the joins at the seam cross the range: the strip outside the rectangle,
+        // clockwise.
+        assert!(matches!(
+            pcurve_loop_area_sign(&uses).unwrap(),
+            LoopAreaSign::Negative(_)
+        ));
+        // A loop round the surface (the whole circle v = 0.5, from u 5 to 10 and on from 0 to
+        // 5, one boundary of a band) does not close when lifted: it is taken as it lies.
+        let round = [line([5.0, 0.5], [10.0, 0.5]), line([0.0, 0.5], [5.0, 0.5])];
+        let uses: Vec<(&Curve2, bool)> = round.iter().map(|c| (c, true)).collect();
+        assert_eq!(
+            format!(
+                "{:?}",
+                lifted_pcurve_loop_area_sign(&uses, &plane, [Some(10.0), None], 1e-9).unwrap()
+            ),
+            format!("{:?}", pcurve_loop_area_sign(&uses).unwrap())
+        );
+        // A loop inside the range is not moved.
+        let square = [
+            line([2.0, 0.0], [3.0, 0.0]),
+            line([3.0, 0.0], [3.0, 1.0]),
+            line([3.0, 1.0], [2.0, 1.0]),
+            line([2.0, 1.0], [2.0, 0.0]),
+        ];
+        let uses: Vec<(&Curve2, bool)> = square.iter().map(|c| (c, true)).collect();
+        assert_eq!(
+            format!(
+                "{:?}",
+                lifted_pcurve_loop_area_sign(&uses, &plane, [Some(10.0), Some(10.0)], 1e-9)
+                    .unwrap()
+            ),
+            format!("{:?}", pcurve_loop_area_sign(&uses).unwrap())
+        );
+    }
+
     #[test]
     fn a_thin_crescent_of_pcurves_turns_as_it_runs() {
         use crate::eval::Curve2;

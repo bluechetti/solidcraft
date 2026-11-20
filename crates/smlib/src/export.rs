@@ -165,6 +165,10 @@ pub struct Report {
     pub nurbs_edges: usize,
     /// Faces whose loops were reversed (SMLib's natural normal against the record's).
     pub reversed_faces: usize,
+    /// Faces whose outer loop's turn could not be certified (a loop of no area, or one past the
+    /// certificate's work), so a sampled polygon decided their side: a caller that keeps the record
+    /// checks it ([`Report::reversed_faces`] likewise).
+    pub unsure_turns: usize,
 }
 
 /// Why an SMLib body has no schema 4 record.
@@ -923,7 +927,11 @@ fn native_ordered(arrays: &Arrays) -> Res<(b::Brep, Report, Order)> {
         faces.push(Face { nurbs, surface, domain, agrees: true, loops: out, records, given });
     }
     for face in &mut faces {
-        if outer_area(face, &edges, largest)? < 0.0 {
+        let (turn, certified) = outer_area(face, &edges, largest)?;
+        if !certified {
+            report.unsure_turns += 1;
+        }
+        if turn < 0.0 {
             face.agrees = false;
             for l in &mut face.loops {
                 if let Loop::Edges(uses) = l {
@@ -1678,14 +1686,17 @@ fn pcurves<'a>(
 }
 
 /// Which way a face's outer loop turns in the record's parameters, from its pcurves, as a
-/// signed number (positive: counter-clockwise, the record's convention); 0 where it has no edge
-/// loop. The turn is the loop's certified one ([`solidcore_ops::pcurve::loop_turn`], ±1); a
-/// polygon through 33 points of each pcurve only where that is undecided. The polygon alone
-/// turned a thin face over: the chords of a 4 mm half circle cut off 0.041 mm², as much as the
-/// whole crescent a hole left beside a bore 0.004 mm off it, so the face was written facing into
-/// the material and the next operation on the body was refused.
-fn outer_area(face: &Face, edges: &[Edge], tolerance: f64) -> Res<f64> {
-    let Some(Loop::Edges(outer)) = face.loops.first() else { return Ok(0.0) };
+/// signed number (positive: counter-clockwise, the record's convention; 0 where it has no edge
+/// loop), and whether that is certified. The turn is the loop's certified one
+/// ([`solidcore_ops::pcurve::loop_turn`], ±1), the loop lifted across the surface's seam where it
+/// crosses one with no edge there (each direction's width: 2π where the record's surface is
+/// periodic, its range's where finite); a polygon through 33 points of each pcurve only where
+/// that is undecided, and then not certified. The polygon alone turned a thin face over: the
+/// chords of a 4 mm half circle cut off 0.041 mm², as much as the whole crescent a hole left
+/// beside a bore 0.004 mm off it, so the face was written facing into the material and the next
+/// operation on the body was refused.
+fn outer_area(face: &Face, edges: &[Edge], tolerance: f64) -> Res<(f64, bool)> {
+    let Some(Loop::Edges(outer)) = face.loops.first() else { return Ok((0.0, true)) };
     let geometry = |e: u32| {
         let edge = edges.get(e as usize)?;
         Some(EdgeGeometry { curve: edge.nurbs.as_ref().unwrap_or(&edge.curve), interval: edge.interval, tolerance })
@@ -1694,10 +1705,12 @@ fn outer_area(face: &Face, edges: &[Edge], tolerance: f64) -> Res<f64> {
     let curves = pcurves(face.nurbs.as_ref().unwrap_or(&face.surface), face.domain, &[Loop::Edges(outer.clone())], given, geometry, tolerance)?;
     let uses: Vec<(&b::Curve2, bool)> =
         curves.first().map(Vec::as_slice).unwrap_or(&[]).iter().zip(outer).map(|(pc, &(_, forward))| (pc, forward)).collect();
+    let params = face.nurbs.as_ref().unwrap_or(&face.surface);
+    let widths = closed_widths(params, tolerance);
     if uses.len() == outer.len()
-        && let Some(counter_clockwise) = solidcore_ops::pcurve::loop_turn(&uses)
+        && let Some(counter_clockwise) = solidcore_ops::pcurve::loop_turn(&uses, params, widths, tolerance)
     {
-        return Ok(if counter_clockwise { 1.0 } else { -1.0 });
+        return Ok((if counter_clockwise { 1.0 } else { -1.0 }, true));
     }
     let mut pts: Vec<[f64; 2]> = Vec::new();
     for (pc, &(e, forward)) in curves.first().map(Vec::as_slice).unwrap_or(&[]).iter().zip(outer) {
@@ -1710,7 +1723,49 @@ fn outer_area(face: &Face, edges: &[Edge], tolerance: f64) -> Res<f64> {
         pts.extend(run);
     }
     let n = pts.len();
-    Ok(0.5 * (0..n).filter_map(|k| Some((pts.get(k)?, pts.get((k + 1) % n)?))).map(|(p, q)| p[0] * q[1] - q[0] * p[1]).sum::<f64>())
+    Ok((0.5 * (0..n).filter_map(|k| Some((pts.get(k)?, pts.get((k + 1) % n)?))).map(|(p, q)| p[0] * q[1] - q[0] * p[1]).sum::<f64>(), false))
+}
+
+/// Each direction's parameter width where `surface` closes on itself along it, the seam a loop
+/// may cross with no edge: 2π where it is periodic; a spline's knot range where its first and
+/// last rows of control points coincide (within `tolerance`), so the two ends of the range are
+/// one curve on the surface. `None` along a direction that does not close: a sphere's latitude
+/// or a cone's height ends at a pole or an edge, not at its other end.
+fn closed_widths(surface: &b::Surface, tolerance: f64) -> [Option<f64>; 2] {
+    let natural = solidcore_ops::label::surface_natural(surface);
+    // the control net as points, rows along u (i) then v (j)
+    let net: Option<Vec<Vec<[f64; 3]>>> = match surface {
+        b::Surface::Spline { points, .. } => Some(points.clone()),
+        b::Surface::RationalSpline { homogeneous, .. } => Some(
+            homogeneous
+                .iter()
+                .map(|row| row.iter().map(|h| if h[3] != 0.0 { [h[0] / h[3], h[1] / h[3], h[2] / h[3]] } else { [f64::NAN; 3] }).collect())
+                .collect(),
+        ),
+        _ => None,
+    };
+    let near = |p: &[f64; 3], q: &[f64; 3]| (0..3).map(|c| (p[c] - q[c]).powi(2)).sum::<f64>().sqrt() <= tolerance;
+    let closed = |d: usize| -> bool {
+        let Some(net) = &net else { return false };
+        match d {
+            0 => match (net.first(), net.last()) {
+                (Some(a), Some(z)) if net.len() > 1 && a.len() == z.len() => a.iter().zip(z).all(|(p, q)| near(p, q)),
+                _ => false,
+            },
+            _ => {
+                !net.is_empty()
+                    && net.iter().all(|row| match (row.first(), row.last()) {
+                        (Some(p), Some(q)) if row.len() > 1 => near(p, q),
+                        _ => false,
+                    })
+            }
+        }
+    };
+    [0, 1].map(|d| match natural.get(d) {
+        Some(b::Natural::Periodic) => Some(TAU),
+        Some(b::Natural::Range(a, z)) if closed(d) => Some(z - a).filter(|w| w.is_finite() && *w > 0.0),
+        _ => None,
+    })
 }
 
 /// An edge curve's point at `t` within its domain: a line's, or a spline's (de Boor on the
