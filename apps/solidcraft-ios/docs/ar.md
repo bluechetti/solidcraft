@@ -18,6 +18,7 @@ until it finds a surface.
 | Section | A cut through the model facing you; drag up and down to move it; Apply keeps it in the design. |
 | Explode | The design's exploded views in turn, then assembled again. |
 | Measure | Two Pencil taps on the model: the distance in mm, drawn in the room. |
+| Pull | Press the Pencil on a face and drag: an arrow and the distance follow; lifting it pushes or pulls the face (`solid.press_pull`, one undo step). |
 
 Leaving the app and coming back keeps the model where it was: ARKit relocalizes, and the model is
 hidden until it has. The app's own touch handling (long press menu, orbit) is off while AR shows.
@@ -39,7 +40,7 @@ hidden until it has. The app's own touch handling (long press menu, orbit) is of
 
 ARKit runs on the device only (not the simulator). Test steps (`SOLIDCRAFT_IOS_TEST`, see the
 build notes): `ar`, `ar-off`, `ar-tap:x,y` (a finger tap, 0..1 across and down), `ar-pick:x,y`
-(a Pencil tap). The log (`tmp/solidcraft-last-error.txt`) has an `ar:` line for each tap and pick,
+(a Pencil tap), `ar-section`, `ar-measure`, `ar-explode`, `ar-pull:x0,y0,x1,y1` (a Pencil drag). The log (`tmp/solidcraft-last-error.txt`) has an `ar:` line for each tap and pick,
 the first LiDAR depth map, thermal changes, and every 300 frames the CPU time and light gains.
 
 ## Limits

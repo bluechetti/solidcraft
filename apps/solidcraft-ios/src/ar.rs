@@ -129,6 +129,19 @@ struct Placed {
     bounds: [[f64; 3]; 2],
 }
 
+/// A face being pushed or pulled with the Pencil.
+#[derive(Clone, Debug, PartialEq)]
+struct Pull {
+    body: String,
+    /// Where the Pencil landed on the face, and its outward normal (model space).
+    point: [f64; 3],
+    normal: [f64; 3],
+    /// Where the Pencil landed on the screen.
+    start: egui::Pos2,
+    /// How far the face goes (model units, positive outward), in half-millimetre steps.
+    distance: f64,
+}
+
 /// A section cut through the model in AR: a plane in the model's own coordinates (so it moves
 /// with the model), hiding what lies on its normal's side, as the design view's planes do.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -263,6 +276,8 @@ pub struct State {
     pub test_measure: bool,
     /// The test hook presses Explode (`ar-explode`) next frame.
     pub test_explode: bool,
+    /// A Pencil pull asked for by the test hook: from and to (0..1 across and down the screen).
+    pub test_pull: Option<[f32; 4]>,
     /// The Pencil touch in progress: its id, where and when it began.
     pencil: Option<(egui::TouchId, egui::Pos2, f64)>,
     /// When the Pencil last left the glass (a finger's tap just after is the same hand resting).
@@ -281,6 +296,10 @@ pub struct State {
     measuring: Option<Vec<[f64; 3]>>,
     /// The exploded view AR shows (0: assembled, k: the design's k-th), set by `explode.show`.
     exploded: usize,
+    /// Pull is on: the Pencil pushes and pulls faces (`solid.press_pull`).
+    pull_mode: bool,
+    /// The face being pulled.
+    pulling: Option<Pull>,
     /// Whether the design hid its origin before AR, put back after.
     origin_was: Option<Option<bool>>,
     /// Milliseconds spent on the CPU (camera upload; camera and model), summed over the frames
@@ -438,6 +457,7 @@ impl State {
                     }
                     self.gestures(ui, &response, rect, seen, app);
                     self.draw_measure(ui.painter(), rect, seen);
+                self.draw_pull(ui.painter(), rect, seen);
                 }
             });
         self.controls(ctx, screen, seen.as_ref(), coaching, app);
@@ -606,14 +626,33 @@ impl State {
         // The Pencil selects (as in the design view) and fingers place and move: a touch with a
         // force reading is the Pencil's. Its touches never count as a finger's tap or drag.
         let mut pencil_tap = self.test_pick.take();
+        // With Pull on, the Pencil grabs a face where it lands, and lets it go where it lifts.
+        let mut pull_start: Option<egui::Pos2> = None;
+        let mut pull_at: Option<egui::Pos2> = None;
+        let mut pull_end = false;
+        let pull_mode = self.pull_mode;
         ui.input(|i| {
             for e in &i.events {
                 if let egui::Event::Touch { id, phase, pos, force, .. } = e {
                     let now = i.time;
+                    let mine = self.pencil.is_some_and(|p| p.0 == *id);
+                    if pull_mode {
+                        match phase {
+                            egui::TouchPhase::Start if force.is_some() => pull_start = Some(*pos),
+                            egui::TouchPhase::Move if mine => pull_at = Some(*pos),
+                            egui::TouchPhase::End if mine => {
+                                pull_at = Some(*pos);
+                                pull_end = true;
+                            }
+                            egui::TouchPhase::Cancel if mine => self.pulling = None,
+                            _ => {}
+                        }
+                    }
                     match phase {
                         egui::TouchPhase::Start if force.is_some() => self.pencil = Some((*id, *pos, now)),
                         egui::TouchPhase::End if self.pencil.is_some_and(|p| p.0 == *id) => {
                             if let Some((_, start, at)) = self.pencil.take()
+                                && !pull_mode
                                 && start.distance(*pos) < 12.0
                                 && now - at < 0.5
                             {
@@ -629,6 +668,21 @@ impl State {
         });
         if let Some(u) = pencil_tap {
             self.select_at(app, seen, u);
+        }
+        if let Some(at) = pull_start {
+            self.start_pull(app, seen, rect, at);
+        }
+        if let Some(at) = pull_at {
+            self.drag_pull(seen, rect, at);
+        }
+        if pull_end {
+            self.finish_pull(app);
+        }
+        if let Some([x0, y0, x1, y1]) = self.test_pull.take() {
+            let at = |x: f32, y: f32| egui::pos2(rect.min.x + x * rect.width(), rect.min.y + y * rect.height());
+            self.start_pull(app, seen, rect, at(x0, y0));
+            self.drag_pull(seen, rect, at(x1, y1));
+            self.finish_pull(app);
         }
         let pencil_busy = self.pencil.is_some() || ui.input(|i| i.time) - self.pencil_up_at < 0.3;
         if pencil_busy {
@@ -755,6 +809,71 @@ impl State {
         crate::note(&format!("ar: pencil at {u:?}: {}", hit.as_deref().unwrap_or("nothing")));
     }
 
+    /// Pull: grab the face under the Pencil.
+    fn start_pull(&mut self, app: &mut SolveApp, seen: &Seen, rect: egui::Rect, at: egui::Pos2) {
+        let Some(placed) = self.placed else { return };
+        let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
+        self.pulling = pick(app, seen, &placed, u).and_then(|(body, point, normal)| Some(Pull { body, point, normal: unit(normal)?, start: at, distance: 0.0 }));
+        if self.pulling.is_none() {
+            self.message = "Put the Pencil on a face of the model to pull it.".into();
+        }
+    }
+
+    /// Pull: the Pencil's travel along the face's normal as the screen shows it, in model units.
+    fn drag_pull(&mut self, seen: &Seen, rect: egui::Rect, at: egui::Pos2) {
+        let (Some(placed), Some(pull)) = (self.placed, self.pulling.as_mut()) else { return };
+        let (Some(a), Some(b)) = (to_screen(seen, &placed, rect, pull.point), to_screen(seen, &placed, rect, add(pull.point, pull.normal))) else {
+            return;
+        };
+        // Screen points per model unit along the normal.
+        let along = b - a;
+        let per_unit = along.length_sq();
+        if per_unit < 1e-6 {
+            // The normal points at the camera: the screen cannot tell how far.
+            self.message = "Look at the face from the side to pull it.".into();
+            return;
+        }
+        let travel = f64::from((at - pull.start).dot(along) / per_unit);
+        pull.distance = (travel * 2.0).round() / 2.0;
+    }
+
+    /// Pull: the face goes where the Pencil let go, as one step in the design's undo history.
+    fn finish_pull(&mut self, app: &mut SolveApp) {
+        let Some(pull) = self.pulling.take() else { return };
+        if pull.distance.abs() < 0.5 {
+            return;
+        }
+        let params = serde_json::json!({ "face": pull.point, "distance": pull.distance, "body": pull.body });
+        match app.run("solid.press_pull", params) {
+            Ok(_) => {
+                self.message = format!("{} moved {:+.1} mm.", pull.body, pull.distance);
+                if let Ok(b) = self.bridge() {
+                    (b.tick)();
+                }
+            }
+            Err(e) => self.message = e,
+        }
+        crate::note(&format!("ar: pulled {} by {:+.1} mm", pull.body, pull.distance));
+    }
+
+    /// The face being pulled: an arrow from where the Pencil landed along the face's normal, as
+    /// far as the face goes, with the distance.
+    fn draw_pull(&self, painter: &egui::Painter, rect: egui::Rect, seen: &Seen) {
+        let (Some(pull), Some(placed)) = (&self.pulling, self.placed) else { return };
+        let Some(a) = to_screen(seen, &placed, rect, pull.point) else { return };
+        let Some(b) = to_screen(seen, &placed, rect, add(pull.point, scale3(pull.normal, pull.distance))) else { return };
+        let ink = egui::Color32::from_rgb(64, 200, 255);
+        painter.circle(a, 7.0, ink, egui::Stroke::new(2.0, egui::Color32::BLACK));
+        if a.distance(b) > 1.0 {
+            painter.arrow(a, b - a, egui::Stroke::new(4.0, ink));
+        }
+        let text = format!("{:+.1} mm", pull.distance);
+        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(22.0), egui::Color32::BLACK);
+        let back = egui::Rect::from_center_size(b + egui::vec2(0.0, -26.0), galley.size() + egui::vec2(16.0, 8.0));
+        painter.rect_filled(back, 6.0, ink);
+        painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
+    }
+
     /// The design's next exploded view (`explode.show`: shown only, the design keeps its
     /// placements), and after the last, the assembly as it is.
     fn next_exploded_view(&mut self, app: &mut SolveApp) {
@@ -787,7 +906,7 @@ impl State {
     /// face); the second gives the distance; a third starts again.
     fn measure_at(&mut self, app: &mut SolveApp, seen: &Seen, u: (f32, f32)) {
         let Some(placed) = self.placed else { return };
-        let Some((_, point)) = pick(app, seen, &placed, u) else {
+        let Some((_, point, _)) = pick(app, seen, &placed, u) else {
             self.message = "Tap the model to measure.".into();
             return;
         };
@@ -811,16 +930,7 @@ impl State {
     /// the room, with the distance in the model's units (millimetres) at the middle.
     fn draw_measure(&self, painter: &egui::Painter, rect: egui::Rect, seen: &Seen) {
         let (Some(points), Some(placed)) = (&self.measuring, self.placed) else { return };
-        let to_screen = |q: [f64; 3]| {
-            let r = placed.apply_room(q);
-            let c: [f64; 4] = std::array::from_fn(|k| (0..3).map(|j| seen.view_proj[j][k] * r[j]).sum::<f64>() + seen.view_proj[3][k]);
-            (c[3] > 1e-6).then(|| {
-                egui::pos2(
-                    rect.min.x + ((c[0] / c[3] + 1.0) * 0.5) as f32 * rect.width(),
-                    rect.min.y + ((1.0 - c[1] / c[3]) * 0.5) as f32 * rect.height(),
-                )
-            })
-        };
+        let to_screen = |q: [f64; 3]| to_screen(seen, &placed, rect, q);
         let ink = egui::Color32::from_rgb(255, 214, 10);
         let dots: Vec<egui::Pos2> = points.iter().filter_map(|q| to_screen(*q)).collect();
         if let [a, b] = dots.as_slice() {
@@ -888,9 +998,17 @@ impl State {
                         if button(ui, explode_label, if self.exploded > 0 { Button::SmallSelected } else { Button::Small }).clicked() {
                             self.next_exploded_view(app);
                         }
+                        if button(ui, "Pull", if self.pull_mode { Button::SmallSelected } else { Button::Small }).clicked() {
+                            self.pull_mode = !self.pull_mode;
+                            self.pulling = None;
+                            if self.pull_mode {
+                                self.measuring = None;
+                            }
+                        }
                         let measuring = self.measuring.is_some();
                         if button(ui, "Measure", if measuring { Button::SmallSelected } else { Button::Small }).clicked() {
                             self.measuring = if measuring { None } else { Some(Vec::new()) };
+                            self.pull_mode = false;
                         }
                         ui.separator();
                         if button(ui, "Pick up", Button::Small).clicked() {
@@ -916,6 +1034,7 @@ impl State {
                         },
                         Some(_) if self.placed.is_none() => "Tap a surface to put the model there.".into(),
                         Some(_) if self.measuring.as_ref().is_some_and(|m| m.len() < 2) => "Tap two points on the model with the Pencil.".into(),
+                        Some(_) if self.pull_mode => "Press the Pencil on a face and drag to push or pull it; lift to apply.".into(),
                         Some(_) if self.cut.is_some() => "Drag up and down to move the cut. Apply keeps it in the design.".into(),
                         Some(_) => "Drag to move, pinch to scale, twist to turn. Tap a part with the Pencil to select it.".into(),
                     }
@@ -932,10 +1051,17 @@ impl State {
     }
 }
 
+/// Where model point `q` shows on the AR view `rect`, or `None` behind the camera.
+fn to_screen(seen: &Seen, placed: &Placed, rect: egui::Rect, q: [f64; 3]) -> Option<egui::Pos2> {
+    let r = placed.apply_room(q);
+    let c: [f64; 4] = std::array::from_fn(|k| (0..3).map(|j| seen.view_proj[j][k] * r[j]).sum::<f64>() + seen.view_proj[3][k]);
+    (c[3] > 1e-6).then(|| egui::pos2(rect.min.x + ((c[0] / c[3] + 1.0) * 0.5) as f32 * rect.width(), rect.min.y + ((1.0 - c[1] / c[3]) * 0.5) as f32 * rect.height()))
+}
+
 /// The part under view point `u` (0..1 across and down) and where its face is hit (model
 /// units): the design view's own pick (`view.pick`) with the ray from ARKit's camera taken into
 /// the model's space.
-fn pick(app: &mut SolveApp, seen: &Seen, placed: &Placed, u: (f32, f32)) -> Option<(String, [f64; 3])> {
+fn pick(app: &mut SolveApp, seen: &Seen, placed: &Placed, u: (f32, f32)) -> Option<(String, [f64; 3], [f64; 3])> {
     let inv = invert(&seen.view_proj)?;
     let ndc = [f64::from(u.0) * 2.0 - 1.0, 1.0 - f64::from(u.1) * 2.0];
     let at = |depth: f64| {
@@ -950,8 +1076,11 @@ fn pick(app: &mut SolveApp, seen: &Seen, placed: &Placed, u: (f32, f32)) -> Opti
     let reply = solidcraft_ui_egui::view_pick::pick_command(app, &request).ok()?;
     let hit = reply.get("hits")?.get(0)?;
     let body = hit.get("body")?.as_str()?.to_owned();
-    let p = hit.get("point")?;
-    Some((body, [p.get(0)?.as_f64()?, p.get(1)?.as_f64()?, p.get(2)?.as_f64()?]))
+    let v = |k: &str| -> Option<[f64; 3]> {
+        let p = hit.get(k)?;
+        Some([p.get(0)?.as_f64()?, p.get(1)?.as_f64()?, p.get(2)?.as_f64()?])
+    };
+    Some((body, v("point")?, v("normal")?))
 }
 
 /// Where the model goes on first tap: its foot (the middle of its underside) on `point`,

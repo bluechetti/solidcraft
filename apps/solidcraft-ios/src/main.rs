@@ -121,6 +121,13 @@ impl eframe::App for App {
                         "ar-measure" => self.ar.test_measure = true,
                         _ => self.ar.test_explode = true,
                     }
+                } else if let Some(at) = step.strip_prefix("ar-pull:") {
+                    let v: Vec<f32> = at.split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect();
+                    #[cfg(target_os = "ios")]
+                    if let [x0, y0, x1, y1] = v[..] {
+                        self.ar.test_pull = Some([x0, y0, x1, y1]);
+                    }
+                    let _ = v;
                 } else if let Some(at) = step.strip_prefix("ar-pick:") {
                     let mut xy = at.split(',').filter_map(|v| v.trim().parse::<f32>().ok());
                     #[cfg(target_os = "ios")]
