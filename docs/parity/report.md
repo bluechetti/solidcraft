@@ -2,7 +2,7 @@
 
 # Scan to CAD: what is proven
 
-Made at `8c9fe2f12` with uncommitted changes by `cargo xtask scan-bench --full`.
+Made at `b957a4ce7` with uncommitted changes by `cargo xtask scan-bench --full`.
 
 No head-to-head run against another product exists: nothing here says SolidCraft's output matches any other program's. Every number is against a part whose exact answer is known.
 
@@ -10,7 +10,7 @@ No head-to-head run against another product exists: nothing here says SolidCraft
 
 Each part in `tests/scan-cases/` is built from its recipe, meshed, made into a scan (triangles about 0.5 mm, seed 20261118) and built back by the scan commands a person would run, following Survey's advice, with nothing tuned for the case. The bars are in `tests/scan-bench.toml`.
 
-**42 runs: 24 pass, 4 fail, 2 refused, 0 silently wrong, 11 built right but not proven in-app, 1 not scanned.**
+**42 runs: 28 pass, 2 fail, 0 refused, 0 silently wrong, 11 built right but not proven in-app, 1 not scanned.**
 
 - pass: built, within every bar, and Scan Deviation passed it
 - fail: built, outside a bar, and Scan Deviation said so
@@ -25,45 +25,45 @@ Judge: SolidCraft's own measurements against the scan and against the true part.
 |---|---|---|---|---|
 | bracket | s0.02 | pass | scan.extrude_it, scan.extrude_it, scan.extrude_it |  |
 | bracket | s0.1 | pass | scan.extrude_it, scan.extrude_it, scan.extrude_it |  |
-| bracket | s0.3 | fail | scan.extrude_it, scan.extrude_it, scan.extrude_it, scan.extrude_it | model to part: max 2.000 (bar 0.4); model to scan: max 5.405 (bar 2.05); model to scan: within 0.752 (bar 0.95); part to model: max 1.999 (bar 0.4); scan to model: max 5.000 (bar 1.8); scan to model: rms 0.639 (bar 0.35); volume 0.029 (bar 0.02) |
+| bracket | s0.3 | pass | scan.extrude_it, scan.cut_it, scan.cut_it |  |
 | bracket | s0.02-missing-10 | missed pass | scan.extrude_it, scan.extrude_it, scan.extrude_it |  |
 | bracket | s0.02-missing-30 | missed pass | scan.extrude_it, scan.extrude_it, scan.extrude_it |  |
 | bracket | s0.02-turned-25 | pass | scan.extrude_it, scan.extrude_it, scan.extrude_it |  |
 | bracket | s0.02-specks | pass | scan.extrude_it, scan.extrude_it, scan.extrude_it |  |
 | chamfered-prism | s0.02 | pass | scan.extrude_it, scan.chamfer_it |  |
 | chamfered-prism | s0.1 | pass | scan.extrude_it, scan.chamfer_it |  |
-| chamfered-prism | s0.3 | refused |  |  |
+| chamfered-prism | s0.3 | fail | scan.extrude_it, scan.fillet_it, scan.chamfer_it | model to part: max 1.362 (bar 0.4) |
 | chamfered-prism | s0.02-missing-10 | missed pass | scan.extrude_it, scan.chamfer_it |  |
 | chamfered-prism | s0.02-missing-30 | missed pass | scan.extrude_it, scan.chamfer_it |  |
 | chamfered-prism | s0.02-turned-25 | pass | scan.extrude_it, scan.chamfer_it |  |
 | chamfered-prism | s0.02-specks | pass | scan.extrude_it, scan.chamfer_it |  |
 | drilled-shaft | s0.02 | pass | scan.revolve_it, scan.cut_it, scan.pattern_it |  |
 | drilled-shaft | s0.1 | pass | scan.revolve_it, scan.cut_it, scan.pattern_it |  |
-| drilled-shaft | s0.3 | fail | scan.extrude_it, scan.extrude_it, scan.extrude_it, scan.extrude_it, scan.extrude_it, scan.extrude_it, scan.extrude_it, scan.chamfer_it | model to part: max 2.000 (bar 0.4); model to scan: max 17.600 (bar 2.05); model to scan: within 0.433 (bar 0.95); part to model: max 2.000 (bar 0.4); scan to model: max 6.727 (bar 1.8); scan to model: rms 1.608 (bar 0.35); scan to model: within 0.555 (bar 0.95) |
+| drilled-shaft | s0.3 | pass | scan.revolve_it, scan.cut_it, scan.pattern_it |  |
 | drilled-shaft | s0.02-missing-10 | missed pass | scan.revolve_it, scan.cut_it, scan.pattern_it |  |
 | drilled-shaft | s0.02-missing-30 | missed pass | scan.revolve_it, scan.cut_it, scan.pattern_it |  |
 | drilled-shaft | s0.02-turned-25 | pass | scan.revolve_it, scan.cut_it, scan.pattern_it |  |
 | drilled-shaft | s0.02-specks | pass | scan.revolve_it, scan.cut_it, scan.pattern_it |  |
 | flange | s0.02 | pass | scan.revolve_it, scan.cut_it, scan.pattern_it |  |
 | flange | s0.1 | pass | scan.revolve_it, scan.cut_it, scan.pattern_it |  |
-| flange | s0.3 | refused |  |  |
+| flange | s0.3 | pass | scan.revolve_it, scan.cut_it, scan.cut_it, scan.cut_it, scan.cut_it |  |
 | flange | s0.02-missing-10 | missed pass | scan.revolve_it, scan.cut_it, scan.pattern_it |  |
 | flange | s0.02-missing-30 | missed pass | scan.revolve_it, scan.cut_it, scan.pattern_it |  |
 | flange | s0.02-turned-25 | pass | scan.revolve_it, scan.cut_it, scan.pattern_it |  |
 | flange | s0.02-specks | pass | scan.revolve_it, scan.cut_it, scan.pattern_it |  |
 | plate-holes | s0.02 | pass | scan.extrude_it |  |
 | plate-holes | s0.1 | pass | scan.extrude_it |  |
-| plate-holes | s0.3 | fail | scan.extrude_it, scan.extrude_it | model to part: max 2.000 (bar 0.4); model to scan: max 3.438 (bar 2.05); model to scan: within 0.613 (bar 0.95); part to model: max 1.746 (bar 0.4); scan to model: rms 0.378 (bar 0.35); volume 0.152 (bar 0.02) |
+| plate-holes | s0.3 | pass | scan.extrude_it |  |
 | plate-holes | s0.02-missing-10 | missed pass | scan.extrude_it |  |
 | plate-holes | s0.02-missing-30 | not scanned | scan.extrude_it | model to part: max 1.995 (bar 0.05); part to model: max 2.000 (bar 0.05); volume 0.022 (bar 0.005) |
 | plate-holes | s0.02-turned-25 | pass | scan.extrude_it |  |
 | plate-holes | s0.02-specks | pass | scan.extrude_it |  |
 | rounded-block | s0.02 | pass | scan.extrude_it |  |
 | rounded-block | s0.1 | pass | scan.extrude_it |  |
-| rounded-block | s0.3 | fail | scan.extrude_it, scan.extrude_it, scan.extrude_it, scan.extrude_it | model to part: max 2.000 (bar 0.4); model to scan: max 2.631 (bar 2.05); model to scan: within 0.607 (bar 0.95); part to model: max 1.999 (bar 0.4); scan to model: max 2.720 (bar 1.8); scan to model: rms 0.762 (bar 0.35); scan to model: within 0.847 (bar 0.95); volume 0.545 (bar 0.02) |
+| rounded-block | s0.3 | fail | scan.extrude_it, scan.extrude_it | model to part: max 1.999 (bar 0.4); model to scan: max 8.160 (bar 2.05); model to scan: within 0.832 (bar 0.95); part to model: max 1.998 (bar 0.4); scan to model: max 3.769 (bar 1.8); scan to model: rms 0.481 (bar 0.35); scan to model: within 0.949 (bar 0.95); volume 0.057 (bar 0.02) |
 | rounded-block | s0.02-missing-10 | missed pass | scan.extrude_it |  |
 | rounded-block | s0.02-missing-30 | missed pass | scan.extrude_it |  |
 | rounded-block | s0.02-turned-25 | pass | scan.extrude_it |  |
 | rounded-block | s0.02-specks | pass | scan.extrude_it |  |
 
-Numbers that differ from the lock (`tests/scan-bench.lock.json`): bracket/s0.02, bracket/s0.02-specks, bracket/s0.02-turned-25, bracket/s0.1, bracket/s0.3, drilled-shaft/s0.02, drilled-shaft/s0.02-missing-10, drilled-shaft/s0.02-missing-30, drilled-shaft/s0.02-specks, drilled-shaft/s0.02-turned-25, drilled-shaft/s0.1, drilled-shaft/s0.3, flange/s0.02, flange/s0.02-missing-10, flange/s0.02-missing-30, flange/s0.02-specks, flange/s0.02-turned-25, flange/s0.1, plate-holes/s0.02-missing-30, plate-holes/s0.3, rounded-block/s0.02-missing-10, rounded-block/s0.02-missing-30, rounded-block/s0.3.
+Numbers that differ from the lock (`tests/scan-bench.lock.json`): bracket/s0.02-missing-30, bracket/s0.3, chamfered-prism/s0.3, drilled-shaft/s0.3, flange/s0.3, plate-holes/s0.3, rounded-block/s0.3.

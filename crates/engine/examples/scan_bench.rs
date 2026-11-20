@@ -203,7 +203,8 @@ fn main() -> Result<()> {
                         // build (a hole wholly in a patch the scanner missed).
                         let model_stl = log.run(&mut s, "file.export_stl", json!({"path": path("model.stl"), "bodies": [model], "quality": "fine"}));
                         if model_stl.is_some()
-                            && let (Ok(part), Ok(made)) = (read_stl(&std::fs::read(out.join("truth.stl"))?), read_stl(&std::fs::read(out.join("model.stl"))?))
+                            && let (Ok(part), Ok(made)) =
+                                (read_stl(&std::fs::read(out.join("truth.stl"))?), read_stl(&std::fs::read(out.join("model.stl"))?))
                         {
                             let v = |p: &[f64; 3]| solidcore_record::Vec3::new(p[0], p[1], p[2]);
                             let tree = |m: &Scan| {
