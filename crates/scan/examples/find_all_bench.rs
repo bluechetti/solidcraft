@@ -87,7 +87,9 @@ fn main() {
         });
         return;
     }
-    let options = solidcraft_scan::segment::Options::default();
+    // LEAST_TOLERANCE=<mm> floors Find All's tolerance, to see what a part reads as at another one.
+    let least_tolerance = std::env::var("LEAST_TOLERANCE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    let options = solidcraft_scan::segment::Options { least_tolerance, ..Default::default() };
     let t0 = std::time::Instant::now();
     let out = solidcraft_scan::segment::find_all(&scan, &options, &|| false);
     let shapes = out.segments.iter().filter(|s| s.shape.is_some()).count();

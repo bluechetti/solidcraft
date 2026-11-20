@@ -451,10 +451,9 @@ pub fn extrusions(
             directions.push(normal);
         }
     }
-    let mut candidates: Vec<(Prism, Vec<(usize, f64)>)> =
+    let candidates: Vec<(Prism, Vec<(usize, f64)>)> =
         directions.iter().flat_map(|&d| stacked(faces, d, span, open, reach, ignored, sign, drafts)).collect();
     let total: f64 = faces.iter().map(|f| f.area).sum();
-    let mut explained = vec![0.0; faces.len()];
     let gain = |shares: &[(usize, f64)], explained: &[f64]| {
         shares.iter().filter(|(k, _)| !unscored.contains(k)).map(|&(k, s)| faces[k].area * ((explained[k] + s).min(1.0) - explained[k])).sum::<f64>()
     };
@@ -462,24 +461,94 @@ pub fn extrusions(
     // holding fewer is the part as modelled (a block with rounded top edges stands upright, its
     // rounds filleted, rather than lying on its side with two of them in its profile).
     let held = |shares: &[(usize, f64)]| shares.iter().filter(|(k, _)| unscored.contains(k)).count();
-    let mut chosen = Vec::new();
-    loop {
-        let best = candidates.iter().enumerate().map(|(i, c)| (i, gain(&c.1, &explained), held(&c.1))).fold(
-            None,
-            |best: Option<(usize, f64, usize)>, (i, g, h)| match best {
-                Some((_, b, bh)) if b >= g + TIE * total || (b + TIE * total > g && (bh < h || (bh == h && b >= g))) => best,
-                _ => Some((i, g, h)),
-            },
-        );
-        let Some((i, _, _)) = best.filter(|b| b.1 >= LEAST_NEW * total) else { break };
-        let (prism, shares) = candidates.remove(i);
-        for (k, s) in shares {
-            explained[k] = (explained[k] + s).min(1.0);
+    // Chosen greedily, the most new area first; a side view chosen (`side_views`) is left out and
+    // the choice made again, so the main direction's own prisms take what it had held (T-LESS 19's
+    // box between its pockets and its back, held by two side views, was never built).
+    let pick = |left_out: &BTreeSet<usize>| -> Vec<usize> {
+        let mut explained = vec![0.0; faces.len()];
+        let mut order = Vec::new();
+        loop {
+            let best = candidates
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !left_out.contains(i) && !order.contains(i))
+                .map(|(i, c)| (i, gain(&c.1, &explained), held(&c.1)))
+                .fold(None, |best: Option<(usize, f64, usize)>, (i, g, h)| match best {
+                    Some((_, b, bh)) if b >= g + TIE * total || (b + TIE * total > g && (bh < h || (bh == h && b >= g))) => best,
+                    _ => Some((i, g, h)),
+                });
+            let Some((i, _, _)) = best.filter(|b| b.1 >= LEAST_NEW * total) else { break };
+            for &(k, s) in &candidates[i].1 {
+                explained[k] = (explained[k] + s).min(1.0);
+            }
+            order.push(i);
         }
-        chosen.push(prism);
+        order
+    };
+    let mut left_out = BTreeSet::new();
+    loop {
+        let order = pick(&left_out);
+        let chosen: Vec<Prism> = order.iter().map(|&i| candidates[i].0.clone()).collect();
+        let sides = side_views(&chosen, faces, unscored);
+        if sides.is_empty() {
+            return chosen;
+        }
+        left_out.extend(sides.iter().filter_map(|&s| order.get(s).copied()));
     }
-    chosen
 }
+
+/// Which of `prisms` are side views of the part that hold its edge rounds: a prism along a
+/// direction [`SIDE_VIEW_APART`] from the main one (the direction whose prisms hold the most of the
+/// faces' area) whose own faces (no round or chamfer of `rounds`, nothing the main direction's
+/// prisms hold as walls or ends) are at most [`SIDE_VIEW_OWN`] of what it holds, and that holds a
+/// round. Such a prism is the same body seen from the side (a box's outline from the side, its
+/// front and back rounds for corners): joined it loses the other direction's rounds and the kernel
+/// refuses it, and holding those rounds in its profile it kept them from being filleted (T-LESS
+/// 19's front and back rounds). A side view with no round adds what the main stack adds and stays:
+/// where the scan is missing it makes up what the main stack's broken slice loses (an L bracket at
+/// 30 % missing). A prism along another direction with faces of its own (a boss standing out
+/// sideways) is no side view.
+fn side_views(prisms: &[Prism], faces: &[Face], rounds: &BTreeSet<usize>) -> Vec<usize> {
+    let along = |a: Vec3, b: Vec3| unit(a).dot(unit(b)).abs() >= SAME_DIRECTION;
+    let held = |p: &Prism| -> BTreeSet<usize> { p.walls.iter().chain(&p.ends).copied().collect() };
+    let area = |set: &BTreeSet<usize>| set.iter().filter_map(|&k| faces.get(k)).map(|f| f.area).sum::<f64>();
+    // The main direction: the one whose prisms hold the most area of faces that are no round, of
+    // two alike the one holding fewer rounds (a side view holds the same faces and the rounds too).
+    let main = prisms
+        .iter()
+        .map(|p| {
+            let all: BTreeSet<usize> = prisms.iter().filter(|q| along(q.direction, p.direction)).flat_map(held).collect();
+            let (round, plain): (BTreeSet<usize>, BTreeSet<usize>) = all.into_iter().partition(|k| rounds.contains(k));
+            (p.direction, area(&plain), area(&round))
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1).then(b.2.total_cmp(&a.2)))
+        .map(|(d, _, _)| d);
+    let Some(main) = main else { return Vec::new() };
+    let main_held: BTreeSet<usize> = prisms.iter().filter(|p| along(p.direction, main)).flat_map(held).collect();
+    (0..prisms.len())
+        .filter(|&i| {
+            let p = &prisms[i];
+            // Only a prism seen from well to the side: one along nearly the main direction (read a
+            // few degrees off it, or the other way: T-LESS 29's second block) is the main stack's.
+            if unit(p.direction).dot(unit(main)).abs() > SIDE_VIEW_APART {
+                return false;
+            }
+            let all = held(p);
+            let own: BTreeSet<usize> = all.iter().copied().filter(|k| !rounds.contains(k) && !main_held.contains(k)).collect();
+            area(&own) <= SIDE_VIEW_OWN * area(&all) && all.iter().any(|k| rounds.contains(k))
+        })
+        .collect()
+}
+
+/// A prism along another direction is a side view when the faces it holds that are its own (no
+/// round, nothing the main direction's prisms hold) are at most this share of all it holds: on
+/// T-LESS 19's CAD its two side views' were 5.5 % and 4.2 % (a groove the main stack does not
+/// read, a step).
+const SIDE_VIEW_OWN: f64 = 0.1;
+
+/// A side view lies at least 60° from the main direction (the cosine): a side view is square to
+/// it, and a prism read a few degrees off the main direction is still the main stack's.
+const SIDE_VIEW_APART: f64 = 0.5;
 
 /// `prisms` made to meet exactly where they meet on the scan: those read along nearly one
 /// direction (within [`SAME_DIRECTION`]) along exactly one (the first's, on the grid's axis when
@@ -745,8 +814,12 @@ fn extrusion(
         shares.push((k, if most > least { (along / (most - least)).min(1.0) } else { 1.0 }));
     }
     let open = first.is_none() || second.is_none();
-    // An end with no plane is as far as the shortest wall runs, so a slice halfway crosses them all.
-    let (from, to) = (if low.caps.is_empty() { low.reach.1 } else { low.at }, if high.caps.is_empty() { high.reach.0 } else { high.at });
+    // An end with no plane is as far as the shortest wall runs, so a slice halfway crosses them all;
+    // where the part goes on past it (another section), at the level itself, so the two prisms
+    // meet there: each taking its own wall ends, two stacked on T-LESS 19's box stopped 2.8 mm
+    // apart where the pockets' walls end.
+    let end = |level: &Level, beyond: bool, far: f64| if level.caps.is_empty() && !beyond { far } else { level.at };
+    let (from, to) = (end(low, goes_on.0, low.reach.1), end(high, goes_on.1, high.reach.0));
     // A drafted prism lies along the grid's axis when it is that near it: the kernel shells a
     // tapered body reliably only so. A square one is put on one direction with the prisms it
     // stacks with once all are read ([`shared`]).
@@ -2405,6 +2478,46 @@ mod tests {
 
     fn cylinder(point: Vec3, axis: Vec3, radius: f64) -> Face {
         Face { shape: Shape::Cylinder { point, axis, radius }, area: 100.0 }
+    }
+
+    /// A box seen from the side is no prism of its own. Faces: the box's front, back, left, right,
+    /// bottom and top, two rounds along X on its top edges, and a boss's face standing out along X.
+    /// The main stack runs along Z. Along X: the box's outline holding the rounds is a side view;
+    /// with the boss's face it is not, nor is it without a round (it holds no edge round to
+    /// fillet); a prism read 2.4° off Z the other way is the main stack's (T-LESS 29).
+    #[test]
+    fn a_box_seen_from_the_side_holding_its_rounds_is_a_side_view() {
+        let faces = [
+            plane_at(Vec3::new(0.0, -20.0, 0.0), -Vec3::Y, 800.0),
+            plane_at(Vec3::new(0.0, 20.0, 0.0), Vec3::Y, 800.0),
+            plane_at(Vec3::new(-30.0, 0.0, 0.0), -Vec3::X, 600.0),
+            plane_at(Vec3::new(30.0, 0.0, 0.0), Vec3::X, 600.0),
+            plane_at(Vec3::new(0.0, 0.0, -10.0), -Vec3::Z, 2400.0),
+            plane_at(Vec3::new(0.0, 0.0, 10.0), Vec3::Z, 2400.0),
+            cylinder(Vec3::new(0.0, -17.0, 7.0), Vec3::X, 3.0),
+            cylinder(Vec3::new(0.0, 17.0, 7.0), Vec3::X, 3.0),
+            plane_at(Vec3::new(40.0, 0.0, 0.0), Vec3::X, 900.0),
+        ];
+        let rounds: BTreeSet<usize> = [6, 7].into();
+        let prism = |direction: Vec3, walls: Vec<usize>, ends: [usize; 2]| Prism {
+            direction,
+            origin: Vec3::ZERO,
+            low: 0.0,
+            high: 10.0,
+            ends,
+            walls,
+            open: false,
+            draft: 0.0,
+        };
+        let main = prism(Vec3::Z, vec![0, 1, 2, 3], [4, 5]);
+        let side = prism(Vec3::X, vec![0, 1, 4, 5, 6, 7], [2, 3]);
+        assert_eq!(side_views(&[main.clone(), side.clone()], &faces, &rounds), [1]);
+        let boss = prism(Vec3::X, vec![0, 1, 4, 5, 6, 7], [3, 8]);
+        assert!(side_views(&[main.clone(), boss], &faces, &rounds).is_empty());
+        let no_round = prism(Vec3::X, vec![0, 1, 4, 5], [2, 3]);
+        assert!(side_views(&[main.clone(), no_round], &faces, &rounds).is_empty());
+        let off = prism(Vec3::new(0.01, -0.04, -1.0).normalized().unwrap_or(Vec3::Z), vec![0, 1, 2, 3, 6, 7], [5, 5]);
+        assert!(side_views(&[main, off], &faces, &rounds).is_empty());
     }
 
     /// A wheel's spokes: five alike faces evenly round the axis (each a spoke's flank, tilted to it)
