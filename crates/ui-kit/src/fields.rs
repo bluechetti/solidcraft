@@ -19,14 +19,14 @@ pub fn mark_numeric(ctx: &egui::Context, response: &Response) {
     if response.has_focus() {
         // Read the frame number first: the context is locked while `data_mut` runs.
         let frame = ctx.cumulative_frame_nr();
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new(NUMERIC_FOCUS), frame));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(NUMERIC_FOCUS), frame));
     }
 }
 
 /// Whether a number or expression field has keyboard focus in this frame. Read it after the
 /// frame's UI has run.
 pub fn numeric_focus(ctx: &egui::Context) -> bool {
-    ctx.data(|d| d.get_temp::<u64>(egui::Id::new(NUMERIC_FOCUS))) == Some(ctx.cumulative_frame_nr())
+    ctx.data(|d| d.get_temp::<u64>(egui::Id::unique(NUMERIC_FOCUS))) == Some(ctx.cumulative_frame_nr())
 }
 
 /// One alignment policy for every kit text input. Align the galley itself rather than
