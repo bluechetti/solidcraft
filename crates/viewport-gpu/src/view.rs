@@ -5600,6 +5600,12 @@ impl Renderer {
 
     /// Textures for a supersampled frame of `size` pixels.
     fn supersampled(&self, device: &wgpu::Device, size: [u32; 2]) -> Supersampled {
+        self.supersampled_with(device, size, false)
+    }
+
+    /// [`Renderer::supersampled`], with a depth buffer a shader can read when `depth_read` (a
+    /// second view whose host compares the model's depth with the room's: AR's occlusion).
+    fn supersampled_with(&self, device: &wgpu::Device, size: [u32; 2], depth_read: bool) -> Supersampled {
         let t = self.target;
         let texture = |label: &str, format: wgpu::TextureFormat, samples: u32, usage: wgpu::TextureUsages| {
             device
@@ -5622,7 +5628,8 @@ impl Renderer {
         } else {
             (texture("sc_ssaa", t.format, 1, sampled), None)
         };
-        let depth = t.depth.map(|f| texture("sc_ssaa_depth", f, samples, wgpu::TextureUsages::RENDER_ATTACHMENT));
+        let depth_usage = if depth_read { wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING } else { wgpu::TextureUsages::RENDER_ATTACHMENT };
+        let depth = t.depth.map(|f| texture("sc_ssaa_depth", f, samples, depth_usage));
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("sc_ssaa"),
             layout: &self.ss_bgl,

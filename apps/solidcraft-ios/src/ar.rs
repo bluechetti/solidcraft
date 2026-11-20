@@ -48,6 +48,7 @@ struct Bridge {
     raycast: extern "C" fn(f32, f32, f32, f32, *mut f32) -> i32,
     tick: extern "C" fn(),
     thermal: extern "C" fn() -> i32,
+    depth: extern "C" fn(*mut *const u8, *mut i32) -> i32,
 }
 
 // The function types come from `Bridge`'s fields, which each transmute fills.
@@ -83,6 +84,7 @@ fn load() -> Result<Bridge, String> {
             raycast: std::mem::transmute(sym(c"sc_ar_raycast")?),
             tick: std::mem::transmute(sym(c"sc_ar_tick")?),
             thermal: std::mem::transmute(sym(c"sc_ar_thermal")?),
+            depth: std::mem::transmute(sym(c"sc_ar_depth")?),
         })
     }
 }
@@ -186,6 +188,13 @@ struct Gpu {
     chroma: Option<(wgpu::Texture, wgpu::TextureView, [u32; 2])>,
     blank: wgpu::TextureView,
     bind: Option<wgpu::BindGroup>,
+    /// The model picture's sample count the pipeline reads its depth with.
+    samples: u32,
+    /// A model depth with nothing drawn (for frames without a model), at `samples`.
+    blank_depth: wgpu::TextureView,
+    /// The room's depth from LiDAR (metres, 32-bit float), and one far away for frames without.
+    room_depth: Option<(wgpu::Texture, wgpu::TextureView, [u32; 2])>,
+    far_room: wgpu::TextureView,
 }
 
 /// The AR view's state, owned by the app.
@@ -220,6 +229,8 @@ pub struct State {
     drag: Option<[f64; 3]>,
     /// The device's thermal state as last seen (0 nominal .. 3 critical).
     thermal: i32,
+    /// LiDAR depth has arrived since AR started: the model is hidden behind real things.
+    has_depth: bool,
     /// Whether the design hid its origin before AR, put back after.
     origin_was: Option<Option<bool>>,
     /// Milliseconds spent on the CPU (camera upload; camera and model), summed over the frames
@@ -251,6 +262,7 @@ impl State {
             (b.start)();
             self.placed = None;
             self.message.clear();
+            self.has_depth = false;
             self.on = true;
             app.viewport.stereo.on = true;
             self.tablet_was = app.tablet.enabled;
@@ -334,7 +346,7 @@ impl State {
             self.timing = [0.0; 2];
         }
         if let Some(seen) = seen.as_ref() {
-            write_uniform(rs, seen, model_drawn, self.placed.and_then(|p| p.shadow()));
+            write_uniform(rs, seen, model_drawn, self.placed.and_then(|p| p.shadow()), self.has_depth);
         }
         self.bind(rs, model_drawn);
 
@@ -359,7 +371,7 @@ impl State {
     /// Ask ARKit for its frame, upload a new camera picture, and work out the camera.
     fn next_frame(&mut self, rs: &egui_wgpu::RenderState, view_pt: [f32; 2]) -> Option<Seen> {
         let b = self.bridge().ok()?;
-        let (frame_fn, done) = (b.frame, b.frame_done);
+        let (frame_fn, done, depth_fn) = (b.frame, b.frame_done, b.depth);
         let mut view = [0f32; 16];
         let mut proj = [0f32; 16];
         let mut camera = [0f32; 16];
@@ -391,6 +403,21 @@ impl State {
                     )
                 };
                 upload(rs, [w, h], luma_row, luma, chroma_row, chroma);
+            }
+            let mut depth_bytes: *const u8 = std::ptr::null();
+            let mut depth_info = [0i32; 3];
+            if (depth_fn)(&mut depth_bytes, depth_info.as_mut_ptr()) == 1 && !depth_bytes.is_null() {
+                let [dw, dh, row] = depth_info.map(|v| v.max(0) as u32);
+                if dw > 0 && dh > 0 && row >= dw * 4 {
+                    // SAFETY: ARKit's locked depth map: `dh` rows of `row` bytes, readable until
+                    // `frame_done` below.
+                    let bytes = unsafe { std::slice::from_raw_parts(depth_bytes, (row * dh) as usize) };
+                    upload_depth(rs, [dw, dh], row, bytes);
+                    if !self.has_depth {
+                        crate::note(&format!("ar: LiDAR depth {dw} x {dh}"));
+                    }
+                    self.has_depth = true;
+                }
             }
             done();
         }
@@ -453,6 +480,15 @@ impl State {
     fn bind(&mut self, rs: &egui_wgpu::RenderState, model: bool) {
         let mut renderer = rs.renderer.write();
         let picture = self.target.as_ref().filter(|_| model).map(ViewTarget::picture).cloned();
+        // The model's depth, as its own depth-only view (the renderer's buffer may carry a
+        // stencil too), only when its sample count is the one the pipeline reads.
+        let samples = renderer.callback_resources.get::<Gpu>().map(|g| g.samples);
+        let depth = self
+            .target
+            .as_ref()
+            .filter(|t| model && Some(t.samples()) == samples)
+            .and_then(ViewTarget::depth)
+            .map(|v| v.texture().create_view(&wgpu::TextureViewDescriptor { aspect: wgpu::TextureAspect::DepthOnly, ..Default::default() }));
         let Some(gpu) = renderer.callback_resources.get_mut::<Gpu>() else { return };
         let (Some((_, luma, _)), Some((_, chroma, _))) = (&gpu.luma, &gpu.chroma) else {
             gpu.bind = None;
@@ -468,6 +504,11 @@ impl State {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(picture) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&gpu.sampler) },
                 wgpu::BindGroupEntry { binding: 4, resource: gpu.uniform.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(depth.as_ref().unwrap_or(&gpu.blank_depth)) },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(gpu.room_depth.as_ref().map_or(&gpu.far_room, |r| &r.1)),
+                },
             ],
         }));
     }
@@ -710,11 +751,17 @@ fn first_placement(app: &SolveApp, source: Option<&solidcraft_ui_egui::stereo::S
 
 fn ensure_gpu(rs: &egui_wgpu::RenderState) {
     let mut renderer = rs.renderer.write();
-    if renderer.callback_resources.get::<Gpu>().is_some() {
+    // The model's depth is read with the renderer's sample count, which the shader and the
+    // layout are made for: made again if that changes (the renderer drops to one sample when
+    // multisampling fails on a device).
+    let samples = renderer.callback_resources.get::<Renderer>().map_or(1, |r| r.target().samples.max(1));
+    if renderer.callback_resources.get::<Gpu>().is_some_and(|g| g.samples == samples) {
         return;
     }
     let device = &rs.device;
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sc_ar"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
+    let multisampled = samples > 1;
+    let source = SHADER.replace("MODEL_DEPTH", if multisampled { "texture_depth_multisampled_2d" } else { "texture_depth_2d" });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("sc_ar"), source: wgpu::ShaderSource::Wgsl(source.into()) });
     let tex = |binding| wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -732,6 +779,18 @@ fn ensure_gpu(rs: &egui_wgpu::RenderState) {
                 binding: 4,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2, multisampled },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 6,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
                 count: None,
             },
         ],
@@ -767,7 +826,7 @@ fn ensure_gpu(rs: &egui_wgpu::RenderState) {
     });
     let uniform = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("sc_ar"),
-        size: 128,
+        size: 160,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -788,7 +847,92 @@ fn ensure_gpu(rs: &egui_wgpu::RenderState) {
         wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
     );
     let blank = blank.create_view(&Default::default());
-    renderer.callback_resources.insert(Gpu { pipeline, layout, sampler, uniform, luma: None, chroma: None, blank, bind: None });
+    // Nothing drawn: depth 0 (the far plane, reversed), which the first use clears it to.
+    let blank_depth = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sc_ar_blank_depth"),
+        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: samples,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let blank_depth = blank_depth.create_view(&Default::default());
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("sc_ar_blank_depth") });
+    drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("sc_ar_blank_depth"),
+        color_attachments: &[],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: &blank_depth,
+            depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(0.0), store: wgpu::StoreOp::Store }),
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    }));
+    rs.queue.submit([encoder.finish()]);
+    let far_room = r32_texture(rs, [1, 1]);
+    rs.queue.write_texture(
+        wgpu::TexelCopyTextureInfo { texture: &far_room, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+        &1.0e6f32.to_le_bytes(),
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4), rows_per_image: Some(1) },
+        wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+    );
+    let far_room = far_room.create_view(&Default::default());
+    // A new pipeline keeps the camera textures already made.
+    let (luma, chroma, room_depth) = match renderer.callback_resources.get_mut::<Gpu>() {
+        Some(old) => (old.luma.take(), old.chroma.take(), old.room_depth.take()),
+        None => (None, None, None),
+    };
+    renderer.callback_resources.insert(Gpu {
+        pipeline,
+        layout,
+        sampler,
+        uniform,
+        luma,
+        chroma,
+        blank,
+        bind: None,
+        samples,
+        blank_depth,
+        room_depth,
+        far_room,
+    });
+}
+
+/// A 32-bit float texture of `size` to write into and read in a shader.
+fn r32_texture(rs: &egui_wgpu::RenderState, size: [u32; 2]) -> wgpu::Texture {
+    rs.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sc_ar_room_depth"),
+        size: wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    })
+}
+
+/// Copy LiDAR's depth map (`size`, rows of `row` bytes of 32-bit floats) into its texture.
+fn upload_depth(rs: &egui_wgpu::RenderState, size: [u32; 2], row: u32, bytes: &[u8]) {
+    let mut renderer = rs.renderer.write();
+    let Some(gpu) = renderer.callback_resources.get_mut::<Gpu>() else { return };
+    if gpu.room_depth.as_ref().is_none_or(|d| d.2 != size) {
+        let t = r32_texture(rs, size);
+        let v = t.create_view(&Default::default());
+        gpu.room_depth = Some((t, v, size));
+    }
+    if let Some((t, _, _)) = &gpu.room_depth {
+        rs.queue.write_texture(
+            wgpu::TexelCopyTextureInfo { texture: t, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            bytes,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(size[1]) },
+            wgpu::Extent3d { width: size[0], height: size[1], depth_or_array_layers: 1 },
+        );
+    }
 }
 
 /// Copy the camera picture's two planes (luma at `size`, chroma at half) into their textures.
@@ -828,23 +972,29 @@ fn upload(rs: &egui_wgpu::RenderState, size: [u32; 2], luma_row: u32, luma: &[u8
     }
 }
 
-fn write_uniform(rs: &egui_wgpu::RenderState, seen: &Seen, model: bool, shadow: Option<Shadow>) {
+fn write_uniform(rs: &egui_wgpu::RenderState, seen: &Seen, model: bool, shadow: Option<Shadow>, occlude: bool) {
     let renderer = rs.renderer.read();
     let Some(gpu) = renderer.callback_resources.get::<Gpu>() else { return };
     let d = seen.display;
     let linear = if rs.target_format.is_srgb() { 1.0 } else { 0.0 };
     let inverse = invert(&seen.view_proj);
     let shadow = shadow.filter(|_| model && inverse.is_some());
-    let mut values = [0f32; 32];
+    let mut values = [0f32; 40];
     values[..8].copy_from_slice(&[d[0], d[1], d[2], d[3], d[4], d[5], if model { 1.0 } else { 0.0 }, linear]);
-    if let (Some(inv), Some(sh)) = (inverse, shadow) {
+    if let Some(inv) = inverse {
         for (c, column) in inv.iter().enumerate() {
             for (r, v) in column.iter().enumerate() {
                 values[8 + c * 4 + r] = *v as f32;
             }
         }
-        values[24..28].copy_from_slice(&[sh.middle[0] as f32, sh.middle[1] as f32, sh.middle[2] as f32, 1.0]);
-        values[28..32].copy_from_slice(&[sh.axes[0][0] as f32, sh.axes[0][1] as f32, sh.axes[1][0] as f32, sh.axes[1][1] as f32]);
+        if let Some(sh) = shadow {
+            values[24..28].copy_from_slice(&[sh.middle[0] as f32, sh.middle[1] as f32, sh.middle[2] as f32, 1.0]);
+            values[28..32].copy_from_slice(&[sh.axes[0][0] as f32, sh.axes[0][1] as f32, sh.axes[1][0] as f32, sh.axes[1][1] as f32]);
+        }
+        let occlude = occlude && model;
+        let [e, b] = [seen.eye, seen.back].map(|v| v.map(|x| x as f32));
+        values[32..36].copy_from_slice(&[e[0], e[1], e[2], if occlude { 1.0 } else { 0.0 }]);
+        values[36..40].copy_from_slice(&[-b[0], -b[1], -b[2], 0.0]);
     }
     let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
     rs.queue.write_buffer(&gpu.uniform, 0, &bytes);
@@ -877,12 +1027,34 @@ struct U {
     shadow_mid: vec4<f32>,
     // Its two half-axes on the floor (x, z of each).
     shadow_axes: vec4<f32>,
+    // The camera in the room (xyz), and whether the room's depth hides the model (w).
+    eye: vec4<f32>,
+    // The way the camera looks (xyz).
+    forward: vec4<f32>,
 };
 @group(0) @binding(0) var luma: texture_2d<f32>;
 @group(0) @binding(1) var chroma: texture_2d<f32>;
 @group(0) @binding(2) var model: texture_2d<f32>;
 @group(0) @binding(3) var smp: sampler;
 @group(0) @binding(4) var<uniform> u: U;
+// The model's depth (reversed: 1 near, 0 far and where nothing was drawn).
+@group(0) @binding(5) var model_depth: MODEL_DEPTH;
+// The room's depth from LiDAR: metres along the camera's axis, in the camera picture's layout.
+@group(0) @binding(6) var room_depth: texture_2d<f32>;
+
+// The room's depth at camera picture point `p` (0..1), between its four nearest samples.
+fn room_at(p: vec2<f32>) -> f32 {
+    let size = vec2<f32>(textureDimensions(room_depth));
+    let x = clamp(p * size - 0.5, vec2<f32>(0.0), size - 1.0);
+    let i = vec2<i32>(floor(x));
+    let f = x - floor(x);
+    let top = vec2<i32>(size) - 1;
+    let a = textureLoad(room_depth, i, 0).r;
+    let b = textureLoad(room_depth, min(i + vec2<i32>(1, 0), top), 0).r;
+    let c = textureLoad(room_depth, min(i + vec2<i32>(0, 1), top), 0).r;
+    let d = textureLoad(room_depth, min(i + vec2<i32>(1, 1), top), 0).r;
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
 
 struct O { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 
@@ -942,6 +1114,23 @@ fn fs(i: O) -> @location(0) vec4<f32> {
     var m = vec4<f32>(0.0);
     if (u.rest.z > 0.5) {
         m = textureSampleLevel(model, smp, i.uv, 0.0);
+        // Occlusion: where the room is nearer than the model, a real thing stands in front of
+        // it. The model's distance along the camera's axis comes from its depth, turned back
+        // into a room point; a centimetre's grace and a soft two keep LiDAR's noise from
+        // nibbling at the model where it stands on the table.
+        if (u.eye.w > 0.5 && m.a > 0.0) {
+            let dims = vec2<f32>(textureDimensions(model_depth));
+            let texel = vec2<i32>(clamp(i.uv * dims, vec2<f32>(0.0), dims - 1.0));
+            let d = textureLoad(model_depth, texel, 0);
+            if (d > 0.0) {
+                let ndc = vec2<f32>(i.uv.x * 2.0 - 1.0, 1.0 - i.uv.y * 2.0);
+                let w = u.inv * vec4<f32>(ndc, 1.0 - d, 1.0);
+                let model_far = dot(w.xyz / w.w - u.eye.xyz, u.forward.xyz);
+                let room = room_at(p);
+                let hidden = clamp((model_far - room - 0.01) / 0.02, 0.0, 1.0);
+                m = m * (1.0 - hidden);
+            }
+        }
     }
     return vec4<f32>(m.rgb + camera * (1.0 - m.a), 1.0);
 }

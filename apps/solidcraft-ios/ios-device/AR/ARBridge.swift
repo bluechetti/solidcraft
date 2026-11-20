@@ -19,6 +19,8 @@ private final class Bridge: NSObject, ARSessionDelegate, ARCoachingOverlayViewDe
     var lastTimestamp: TimeInterval = -1
     /// The pixel buffer locked for the app to read, unlocked by `sc_ar_frame_done`.
     var locked: CVPixelBuffer?
+    /// The depth map locked with it.
+    var lockedDepth: CVPixelBuffer?
 
     override init() {
         super.init()
@@ -31,6 +33,11 @@ private final class Bridge: NSObject, ARSessionDelegate, ARCoachingOverlayViewDe
         c.planeDetection = [.horizontal, .vertical]
         c.environmentTexturing = .none
         c.isLightEstimationEnabled = true
+        // LiDAR's depth of the room, for occlusion: real things in front of the model hide it.
+        // Smoothed over a few frames, so edges do not flicker.
+        if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
+            c.frameSemantics.insert(.smoothedSceneDepth)
+        }
         return c
     }
 
@@ -55,6 +62,10 @@ private final class Bridge: NSObject, ARSessionDelegate, ARCoachingOverlayViewDe
         if let b = locked {
             CVPixelBufferUnlockBaseAddress(b, .readOnly)
             locked = nil
+        }
+        if let d = lockedDepth {
+            CVPixelBufferUnlockBaseAddress(d, .readOnly)
+            lockedDepth = nil
         }
     }
 
@@ -257,4 +268,23 @@ public func sc_ar_thermal() -> Int32 {
     case .critical: return 3
     @unknown default: return 1
     }
+}
+
+/// The room's depth for the picture `sc_ar_frame` just gave (call it only after a 1 from there,
+/// before `sc_ar_frame_done`): metres from the camera along its axis, 32-bit floats, in the
+/// camera picture's own layout (the same display transform maps to it). Writes the bytes'
+/// address and `info` (width, height, row bytes), readable until `sc_ar_frame_done`; returns 1
+/// with a depth map, 0 without (no LiDAR, or none yet).
+@_cdecl("sc_ar_depth")
+public func sc_ar_depth(_ bytes: UnsafeMutablePointer<UnsafeRawPointer?>, _ info: UnsafeMutablePointer<Int32>) -> Int32 {
+    guard let b = bridge, b.running, b.lockedDepth == nil, let frame = b.session.currentFrame,
+          let map = (frame.smoothedSceneDepth ?? frame.sceneDepth)?.depthMap,
+          CVPixelBufferGetPixelFormatType(map) == kCVPixelFormatType_DepthFloat32,
+          CVPixelBufferLockBaseAddress(map, .readOnly) == kCVReturnSuccess else { return 0 }
+    b.lockedDepth = map
+    info[0] = Int32(CVPixelBufferGetWidth(map))
+    info[1] = Int32(CVPixelBufferGetHeight(map))
+    info[2] = Int32(CVPixelBufferGetBytesPerRow(map))
+    bytes.pointee = UnsafeRawPointer(CVPixelBufferGetBaseAddress(map))
+    return 1
 }

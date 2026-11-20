@@ -29,15 +29,22 @@ impl ViewTarget {
         self.frame.resolve.as_ref().unwrap_or(&self.frame.color)
     }
 
+    /// The model's depth, as the renderer keeps it (reversed: 1 at the near plane, 0 at the far
+    /// one and where nothing was drawn), multisampled with [`ViewTarget::samples`]. A host can
+    /// read it in a shader, to compare the model's depth with another (AR: the room's, from the
+    /// device's depth sensor). `None` for a renderer without a depth buffer.
+    pub fn depth(&self) -> Option<&wgpu::TextureView> {
+        self.frame.depth.as_ref()
+    }
+
     /// The picture bound for the renderer's own copy pipeline (tests read it back through that).
     #[cfg(test)]
     pub(super) fn bind(&self) -> &wgpu::BindGroup {
         &self.frame.bind
     }
 
-    /// The sample count the textures were made with.
-    #[cfg(test)]
-    pub(super) fn samples(&self) -> u32 {
+    /// The sample count the textures were made with (the depth picture's too).
+    pub fn samples(&self) -> u32 {
         self.samples
     }
 }
@@ -74,7 +81,7 @@ impl Renderer {
         if target.as_ref().is_none_or(|t| t.frame.size != size || t.samples != samples) {
             // The old picture goes before the new one is asked for.
             *target = None;
-            match allocated(device, || self.supersampled(device, size)) {
+            match allocated(device, || self.supersampled_with(device, size, true)) {
                 Ok(made) => {
                     clear_resolve_targets(&mut encoder, made.resolve.as_ref());
                     *target = Some(ViewTarget { frame: made, samples, oit: None });
