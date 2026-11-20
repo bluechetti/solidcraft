@@ -406,9 +406,17 @@ pub fn study_within(scan: &Scan, area: Option<&[bool]>) -> Option<Study> {
 /// `scan`'s noise read away from its sharp edges, in mm (0 where it is drawn exactly, as a CAD
 /// mesh is); `None` when no vertex lies off one ([`Study::noise`] reads 0 then).
 pub fn noise_off_creases(scan: &Scan) -> Option<f64> {
+    noise_off_creases_read(scan).map(|(noise, _)| noise)
+}
+
+/// [`noise_off_creases`], and the share of the vertices it could read that it did read (the
+/// rest lie at what reads as a sharp edge). On a part, sharp edges are lines and take few of its
+/// vertices; where most read as sharp, the noise itself tilts the faces that far.
+pub fn noise_off_creases_read(scan: &Scan) -> Option<(f64, f64)> {
     let run = Run::new(scan)?;
     let (noise, read) = run.mesh.roughness_where(&run.original, true);
-    (read > 0).then_some(noise)
+    let free = run.mesh.fixed.iter().filter(|f| !**f).count();
+    (read > 0).then(|| (noise, read as f64 / free.max(1) as f64))
 }
 
 /// The share of `scan`'s vertices with two faces on one exact plane: drawn (a CAD mesh, or a region

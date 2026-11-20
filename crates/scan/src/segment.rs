@@ -22,7 +22,10 @@ use crate::fit::{self, Kind, Shape};
 /// How Find All reads a scan.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Options {
-    /// A shape must lie within this many times the scan's noise of every corner it takes.
+    /// A shape must lie within this many times the scan's noise of every corner it takes: 2.5,
+    /// within which nearly 99 % of the points of a surface with that noise lie. (Until the noise
+    /// was read true on small parts, this was 3 against a noise read a fifth low: about the same
+    /// band.)
     pub noise_multiple: f64,
     /// ... and within at least this share of the scan's size, however clean the scan.
     pub form_share: f64,
@@ -49,7 +52,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Options {
-            noise_multiple: 3.0,
+            noise_multiple: 2.5,
             form_share: 0.001,
             seed_radius_share: 0.04,
             seed_triangles: 48,
@@ -418,6 +421,22 @@ fn degenerate(shape: &Shape, at: Vec3, across: f64, size: f64) -> bool {
 /// the scan, and the lower middle (the 30th in a hundred) of how far their points stray from it,
 /// so that patches across a crease, which stray far, do not count.
 fn noise(reading: &mut Reading, options: &Options, size: f64) -> f64 {
+    spread_read(reading, options, size, true)
+}
+
+/// How smooth a copy smoothed for Find All reads ([`smoothed`]): the quadric's spread as it was
+/// read before the noise was read true (each patch the reach alone, every corner of its triangles,
+/// nothing for the quadric's own share). The copy is smoothed until this is small enough, which
+/// was set against it: read true, a smoothed copy's waves longer than its triangles keep it from
+/// ever reading as small, and the copy is smoothed until its chamfers are rounds.
+fn smoothness(reading: &mut Reading, options: &Options, size: f64) -> f64 {
+    spread_read(reading, options, size, false)
+}
+
+/// The lower middle (the 30th in a hundred) of the quadric's spread over patches all over the
+/// scan; with `true_noise`, each patch holding enough points (each once) for the quadric's six
+/// numbers to take little of their spread, and their share given back.
+fn spread_read(reading: &mut Reading, options: &Options, size: f64, true_noise: bool) -> f64 {
     let n = reading.count();
     if n == 0 {
         return 0.0;
@@ -427,10 +446,21 @@ fn noise(reading: &mut Reading, options: &Options, size: f64) -> f64 {
     let mut spreads = Vec::new();
     for t in (0..n).step_by(step) {
         if reading.areas[t] > 0.0 {
-            let patch = reading.patch(t, reach, 400, false);
-            if let Some(spread) = (patch.len() >= 8).then(|| quadric_spread(&reading.scan, &patch)).flatten() {
-                spreads.push(spread);
-            }
+            let mut patch = reading.patch(t, reach, 400, false);
+            let spread = if true_noise {
+                // Enough points for the quadric's six numbers to take little of their spread: on a
+                // small part the reach holds only a dozen, and the noise read a fifth low.
+                let mut wider = reach;
+                while patch.len() < NOISE_TRIANGLES && wider < 4.0 * reach {
+                    wider *= 2.0;
+                    patch = reading.patch(t, wider, 400, false);
+                }
+                (patch.len() >= 8).then(|| quadric_spread(&reading.scan, &patch)).flatten()
+            } else {
+                let corners: Vec<Vec3> = patch.iter().filter_map(|&t| reading.scan.corners(t)).flatten().collect();
+                (patch.len() >= 8).then(|| quadric_spread_of(&corners)).flatten()
+            };
+            spreads.extend(spread);
         }
     }
     if spreads.is_empty() {
@@ -440,11 +470,36 @@ fn noise(reading: &mut Reading, options: &Options, size: f64) -> f64 {
     spreads[(spreads.len() * 3) / 10]
 }
 
-/// How far the patch's corners stray from the quadric `z = a x² + b xy + c y² + d x + e y + f`
-/// fitted to them in the frame of their plane: the root mean square.
+/// The noise as Find All reads it ([`noise`]) on `scan`, its patches reaching `reach` (widened
+/// to hold enough points): for a piece of a scan, where a share of the piece's own size means
+/// nothing. `None` with nothing to read.
+pub(crate) fn noise_within(scan: &Scan, reach: f64) -> Option<f64> {
+    let mut reading = Reading::new(*scan);
+    let size = scan.extent();
+    if !(size > 0.0 && reach > 0.0) {
+        return None;
+    }
+    let options = Options { noise_radius_share: reach / size, ..Options::default() };
+    let noise = noise(&mut reading, &options, size);
+    (noise > 0.0).then_some(noise)
+}
+
+/// A noise patch is widened (up to four times the reach) until it holds this many triangles.
+const NOISE_TRIANGLES: usize = 80;
+
+/// How far the patch's points stray from the quadric `z = a x² + b xy + c y² + d x + e y + f`
+/// fitted to them in the frame of their plane: the root mean square, each point once (a corner
+/// of six triangles is one point), the quadric's six numbers taking their share of the spread.
 fn quadric_spread(scan: &Scan, patch: &[usize]) -> Option<f64> {
-    let points: Vec<Vec3> = patch.iter().filter_map(|&t| scan.corners(t)).flatten().collect();
-    quadric_spread_of(&points)
+    let mut corners: Vec<u32> = patch.iter().filter_map(|&t| scan.triangles.get(t)).flatten().copied().collect();
+    corners.sort_unstable();
+    corners.dedup();
+    let points: Vec<Vec3> = corners.iter().filter_map(|&v| scan.positions.get(v as usize).copied()).collect();
+    let m = points.len() as f64;
+    if points.len() < 12 {
+        return None;
+    }
+    quadric_spread_of(&points).map(|spread| spread * (m / (m - 6.0)).sqrt())
 }
 
 /// How far `points` stray from the quadric fitted to them in the frame of their plane: the root
@@ -760,7 +815,7 @@ fn read(scan: &Scan, options: &Options, cancelled: &dyn Fn() -> bool) -> Outcome
     if !noisy || first.cancelled || first.in_shapes >= FOUND_ENOUGH {
         return first;
     }
-    let Some(copy) = smoothed(&reading, options, noise, edge, size) else { return first };
+    let Some(copy) = smoothed(&reading, options, edge, size) else { return first };
     // Only the directions are the copy's to give: how close a shape must lie is the scan's.
     let mut on_copy = reading.on(&copy);
     let (found, stopped) = shapes_on(&mut on_copy, options, tolerance, least_area, None, cancelled);
@@ -784,28 +839,31 @@ const SMALLER_REACHES: usize = 3;
 /// A shape read off a smaller patch is kept where it grows to at least this share of the full
 /// patch's area.
 const GROWN_SHARE: f64 = 1.0;
-const SMOOTH_ABOVE: f64 = 0.05;
+/// (Set at 0.05 while the noise was read a fifth low on the small parts it was tried on, 0.81 of
+/// it: the same share of the true noise.)
+const SMOOTH_ABOVE: f64 = 0.06;
 /// A noisy scan's first reading stops after this many seeds when they have found less than
 /// [`FOUND_NOTHING`] of its area in shapes: it is read on the copy.
 const GIVE_UP_AFTER: usize = 100;
 const FOUND_NOTHING: f64 = 0.01;
-/// The copy is smoothed until its noise is at most this, against the typical edge, or for at most
-/// [`MOST_PASSES`] passes.
+/// The copy is smoothed until it reads this smooth ([`smoothness`]), against the typical edge, or
+/// for at most [`MOST_PASSES`] passes.
 const SMOOTH_TO: f64 = 0.02;
 const MOST_PASSES: usize = 8;
-/// A copy that keeps more than this share of the noise had none to take away: what was measured
+/// A copy that keeps more than this share of its roughness ([`smoothness`]) had none to take away: what was measured
 /// was the scan's own shape on triangles too coarse for the patches it is measured on.
 const MOST_NOISE_KEPT: f64 = 0.5;
 
 /// The scan smoothed (its typical edge `edge`) for finding its regions on; `None` when smoothing
 /// does not halve its noise.
-fn smoothed(reading: &Reading, options: &Options, noise: f64, edge: f64, size: f64) -> Option<Vec<Vec3>> {
-    let mut kept = noise;
+fn smoothed(reading: &Reading, options: &Options, edge: f64, size: f64) -> Option<Vec<Vec3>> {
+    let before = smoothness(&mut reading.on(reading.scan.positions), options, size);
+    let mut kept = before;
     let (copy, _) = crate::denoise::smoothed_until(&reading.scan, MOST_PASSES, |positions| {
-        kept = self::noise(&mut reading.on(positions), options, size);
+        kept = smoothness(&mut reading.on(positions), options, size);
         kept <= SMOOTH_TO * edge
     })?;
-    (kept <= MOST_NOISE_KEPT * noise).then_some(copy)
+    (kept <= MOST_NOISE_KEPT * before).then_some(copy)
 }
 
 /// A more complex kind replaces the kind found on the smoothed copy where it lies at most this
@@ -814,8 +872,9 @@ fn smoothed(reading: &Reading, options: &Options, noise: f64, edge: f64, size: f
 /// cone lies near enough a sphere, the simpler kind, for the sphere to take it whole, while on
 /// the copy, its noise gone, the cone lies clearly closer. A plane stays a plane however a torus,
 /// freer, follows the little the smoothing left.
+/// (`OFF_BY` was 0.25 of the noise read a fifth low: the same share of the true noise.)
 const CLOSER: f64 = 0.9;
-const OFF_BY: f64 = 0.25;
+const OFF_BY: f64 = 0.2;
 /// A plane takes a region found curved on the copy when it lies on the scan's own points there
 /// within this share of the tolerance.
 const FLAT_WITHIN: f64 = 0.5;
@@ -1281,6 +1340,49 @@ mod tests {
         assert_eq!(coarse_tolerance(0.3, 80.0), 0.0);
     }
     use crate::test_meshes::{fine_cuboid, revolved, steps, turned};
+
+    /// A flat sheet with noise of a known size along its normal, read by Find All and by Survey:
+    /// both within a tenth of it, on a small part and a large one, with noise small and large
+    /// against the triangles. Before, Find All read a small part's noise a fifth low (a dozen
+    /// points to a quadric of six numbers), and Survey read noise past a fifth of an edge as half
+    /// what it was (0.15 for 0.3 on 0.5 mm triangles), so every tolerance set from it was tight.
+    #[test]
+    fn the_noise_reads_true_on_small_and_large_parts_and_at_any_noise() {
+        let mut seed = 7u64;
+        let mut uniform = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for (size, edge) in [(60.0, 0.5), (300.0, 0.5), (60.0, 0.25)] {
+            for sigma in [0.02, 0.1, 0.3] {
+                let n = (size / edge) as u32;
+                let mut positions = Vec::new();
+                for j in 0..=n {
+                    for i in 0..=n {
+                        let (u, v) = (uniform().max(1e-12), uniform());
+                        let gaussian = (-2.0 * u.ln()).sqrt() * (std::f64::consts::TAU * v).cos();
+                        positions.push(Vec3::new(f64::from(i) * edge, f64::from(j) * edge, sigma * gaussian));
+                    }
+                }
+                let mut triangles = Vec::new();
+                for j in 0..n {
+                    for i in 0..n {
+                        let k = j * (n + 1) + i;
+                        triangles.push([k, k + 1, k + n + 2]);
+                        triangles.push([k, k + n + 2, k + n + 1]);
+                    }
+                }
+                let scan = Scan::new(&positions, &triangles);
+                let found = noise(&mut Reading::new(scan), &Options::default(), scan.extent());
+                let survey = crate::survey::noise(&scan).unwrap_or(f64::NAN);
+                for (who, read) in [("Find All", found), ("Survey", survey)] {
+                    assert!((0.9..=1.1).contains(&(read / sigma)), "{who} on {size} mm, {edge} mm triangles, noise {sigma}: read {read}");
+                }
+            }
+        }
+    }
 
     fn kinds(outcome: &Outcome) -> Vec<(Kind, f64)> {
         outcome.segments.iter().filter_map(|s| s.shape.map(|sh| (sh.kind(), s.area))).collect()

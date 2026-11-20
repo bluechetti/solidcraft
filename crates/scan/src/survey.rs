@@ -17,6 +17,13 @@ const PATCH_TRIANGLES: f64 = 12_000.0;
 const PATCH_MOST: usize = 40_000;
 /// A place with fewer triangles than this is not read.
 const PATCH_LEAST: usize = 200;
+/// A noise read off the neighbours with fewer than this share of a place's points read (the rest
+/// at what reads as a sharp edge) is checked against a quadric's ([`noise_places`]). Read exactly,
+/// a part has 98 % or more of its points read; with the noise tilting faces as far as an edge
+/// does, 58 % (read 0.73 of the noise) down to 6 % (read a quarter of it).
+const READ_ENOUGH: f64 = 0.75;
+/// The quadric's patches reach this many typical edges (some 80 triangles).
+const QUADRIC_EDGES: f64 = 3.0;
 /// The most points sampled for the scan's size along its own directions.
 const SIZE_SAMPLE: usize = 200_000;
 
@@ -188,7 +195,19 @@ fn noise_places(scan: &Scan, area: f64) -> Vec<(f64, f64)> {
             let (positions, triangles) = piece_of(scan, list);
             let piece = Scan::new(&positions, &triangles);
             let study = denoise::study(&piece)?;
-            let noise = denoise::noise_off_creases(&piece)?;
+            let (noise, read) = denoise::noise_off_creases_read(&piece)?;
+            // Read off its neighbours, a point's noise is exact while it is small against the
+            // triangles (every point read), and falls behind once the noise tilts the faces round
+            // a point as far as a sharp edge does: the noisiest points are passed over as edges
+            // (0.3 mm on 0.5 mm triangles read 0.15, with a quarter of the points read). Where
+            // fewer than [`READ_ENOUGH`] were read, the quadric fitted to a few dozen points round
+            // each place is read too (Find All's reading), and the larger kept.
+            let edge = remesh::typical_edge(&piece);
+            let noise = if read < READ_ENOUGH && edge > 0.0 {
+                crate::segment::noise_within(&piece, QUADRIC_EDGES * edge).map_or(noise, |q| q.max(noise))
+            } else {
+                noise
+            };
             (noise.is_finite() && study.suggested.is_finite()).then_some((noise, study.suggested))
         })
         .collect()
