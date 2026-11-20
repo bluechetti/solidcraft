@@ -80,7 +80,8 @@ pub fn decode_native_body(bytes: &[u8]) -> Result<Body> {
 }
 
 /// An SMLib body as a kernel body: SMLib's export mapped by `solidcraft_smlib` (canonical order,
-/// radians, pcurves) is the body's record ([`Body::from_smlib_record`]).
+/// radians, pcurves) is the body's record ([`Body::from_smlib_record`]), checked as kept where the
+/// mapping turned faces over ([`body_from_smlib_ordered`]).
 pub fn body_from_smlib(brep: &solidcraft_smlib::Brep) -> Result<Body> {
     let _span = solidcraft_profile::span("kernel", "body_from_smlib");
     body_from_smlib_ordered(brep).map(|(body, _)| body)
@@ -88,10 +89,27 @@ pub fn body_from_smlib(brep: &solidcraft_smlib::Brep) -> Result<Body> {
 
 /// [`body_from_smlib`], with where each of SMLib's faces and edges is in the body's face and
 /// edge order ([`crate::history`]).
+///
+/// Where the mapping turned faces over (decided the record's side of a face apart from SMLib's,
+/// [`solidcraft_smlib::export::Report::reversed_faces`]), the body kept is the record, not the
+/// result SMLib checked, so SMLib's check takes the body as kept, here, unless the evaluation
+/// runs with checks off: a face turned the wrong way (once a thin crescent beside a bore, its
+/// loop's sign misread) is refused at the step that made it, not blamed on the body by the next
+/// operation. A body none was turned on is the result as SMLib made it.
 pub(crate) fn body_from_smlib_ordered(brep: &solidcraft_smlib::Brep) -> Result<(Body, Option<solidcraft_smlib::history::Order>)> {
     let _span = solidcraft_profile::span("kernel", "body_from_smlib_ordered");
-    let (record, order) = brep.to_native_ordered().map_err(|e| KernelError::Failed(e.to_string()))?;
-    Ok((Body::from_smlib_record(record)?, Some(order)))
+    let (record, order, report) = brep.to_native_ordered_report().map_err(|e| KernelError::Failed(e.to_string()))?;
+    let body = Body::from_smlib_record(record)?;
+    if report.reversed_faces > 0
+        && !crate::validation::checks_off()
+        && let Some(failure) = crate::validation::failing_check(&body)?
+    {
+        return Err(KernelError::Failed(format!(
+            "SMLib export: the record of the result turns {} face(s) over, and SMLib's check refuses it as kept: {failure}",
+            report.reversed_faces
+        )));
+    }
+    Ok((body, Some(order)))
 }
 
 /// `body` in SMLib, with where each of SMLib's faces and edges is in the body's face and edge

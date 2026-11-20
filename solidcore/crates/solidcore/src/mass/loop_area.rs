@@ -307,6 +307,74 @@ pub fn lifted_loop_area_sign(
     area_sign(k, curves, shifts)
 }
 
+/// [`loop_area_sign`] of a loop of pcurves held by value ([`crate::eval::Curve2`], each
+/// `(pcurve, forwards)`, with the straight segments joining each one's end to the next one's
+/// start), on a kernel of its own: for an application that tells a face's outer loop from its
+/// inner ones from its pcurves alone, a record's check or a B-rep exporter (not upstream). A
+/// sampled polygon cannot: the chords of a 4 mm half circle cut off 0.04 mm² of it, as much as
+/// the whole area of a crescent a hole leaves beside a bore 0.004 mm off it, so such a loop came
+/// out turned over.
+///
+/// # Errors
+///
+/// [`SolidError::InvalidInput`] for no pcurves, or one whose knots and points do not agree, a
+/// value that is not finite or a weight that is not positive; those of [`loop_area_sign`].
+pub fn pcurve_loop_area_sign(uses: &[(&crate::eval::Curve2, bool)]) -> Result<LoopAreaSign> {
+    let curves = uses
+        .iter()
+        .map(|&(c, forwards)| Ok((nurbs_of_pcurve(c)?, forwards)))
+        .collect::<Result<Vec<_>>>()?;
+    let refs: Vec<(&NurbsCurve, bool)> = curves.iter().map(|(c, f)| (c, *f)).collect();
+    loop_area_sign(&Kernel::default(), &refs)
+}
+
+/// A pcurve held by value as the certificate's curve (`z` 0), checked: its degree from its
+/// knots and points, at least 1, its knots finite and non-decreasing, its weights finite and
+/// positive.
+fn nurbs_of_pcurve(c: &crate::eval::Curve2) -> Result<NurbsCurve> {
+    use crate::eval::Curve2;
+    let bad = |why: &'static str| SolidError::invalid_input(OP, why);
+    let (knots, pw): (&[f64], Vec<f64>) = match c {
+        Curve2::Spline { knots, points } => (
+            knots,
+            points.iter().flat_map(|q| [q[0], q[1], 0.0, 1.0]).collect(),
+        ),
+        Curve2::RationalSpline { knots, homogeneous } => (
+            knots,
+            homogeneous
+                .iter()
+                .flat_map(|h| [h[0], h[1], 0.0, h[2]])
+                .collect(),
+        ),
+    };
+    let n = pw.len() / 4;
+    let p = knots
+        .len()
+        .checked_sub(n + 1)
+        .filter(|&p| p >= 1 && n > p)
+        .ok_or_else(|| bad("a pcurve whose knots and points do not agree"))?;
+    if !knots.iter().all(|t| t.is_finite()) || knots.windows(2).any(|w| w.first() > w.get(1)) {
+        return Err(bad(
+            "a pcurve whose knots are not finite and non-decreasing",
+        ));
+    }
+    if !pw.iter().all(|x| x.is_finite())
+        || pw
+            .chunks_exact(4)
+            .any(|q| q.get(3).is_none_or(|w| *w <= 0.0))
+    {
+        return Err(bad(
+            "a pcurve with a value not finite or a weight not positive",
+        ));
+    }
+    Ok(NurbsCurve {
+        p,
+        n,
+        u: knots.to_vec(),
+        pw,
+    })
+}
+
 /// `p + s` enclosed, `p` unchanged where `s` is the point interval 0.
 fn shifted(p: [Ivl; 2], s: (Ivl, Ivl)) -> [Ivl; 2] {
     let zero = Ivl::from(0.0);
@@ -468,6 +536,68 @@ fn area_sign(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A thin crescent: the circle of radius 4 about the origin, less the disc of radius 3.99914
+    /// about (0.0039, -0.00095) beside it (the bracket's: a hole cut 0.004 mm off a bore), as the
+    /// whole first circle and back round the whole second inside
+    /// the first, each a pcurve of rational quadratic pieces, counted with their winding: π (16 −
+    /// 3.99914²) ≈ 0.0216. The certificate's enclosure holds it and decides the loop
+    /// counter-clockwise, and its reverse clockwise; a malformed pcurve is refused.
+    #[test]
+    fn a_thin_crescent_of_pcurves_turns_as_it_runs() {
+        use crate::eval::Curve2;
+        let w = std::f64::consts::FRAC_1_SQRT_2;
+        // The full circle of radius r about c as four rational quadratic quarters, on [0, 4].
+        let circle = |c: [f64; 2], r: f64| {
+            let pts = [
+                [1.0, 0.0],
+                [1.0, 1.0],
+                [0.0, 1.0],
+                [-1.0, 1.0],
+                [-1.0, 0.0],
+                [-1.0, -1.0],
+                [0.0, -1.0],
+                [1.0, -1.0],
+                [1.0, 0.0],
+            ];
+            let homogeneous = pts
+                .iter()
+                .enumerate()
+                .map(|(i, q)| {
+                    let wt = if i % 2 == 1 { w } else { 1.0 };
+                    [(c[0] + r * q[0]) * wt, (c[1] + r * q[1]) * wt, wt]
+                })
+                .collect();
+            Curve2::RationalSpline {
+                knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 4.0],
+                homogeneous,
+            }
+        };
+        let big = circle([0.0, 0.0], 4.0);
+        let small = circle([0.0039, -0.00095], 3.99914);
+        // The whole big circle counter-clockwise, then the whole small one clockwise, joined by
+        // the 0.0047 step between their starts: the crescent, counted with its winding (the
+        // region inside the small circle and outside the big one counts against it).
+        let area = |uses: &[(&Curve2, bool)]| pcurve_loop_area_sign(uses).unwrap();
+        let exact = std::f64::consts::PI * (16.0 - 3.99914_f64.powi(2));
+        assert!(exact > 0.02 && exact < 0.03, "{exact}");
+        match area(&[(&big, true), (&small, false)]) {
+            LoopAreaSign::Positive(a) => assert!(
+                a.lo <= exact + 1e-9 && exact - 1e-9 <= a.hi,
+                "{a:?} against {exact}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            area(&[(&small, true), (&big, false)]),
+            LoopAreaSign::Negative(_)
+        ));
+        let bad = Curve2::Spline {
+            knots: vec![0.0, 1.0],
+            points: vec![[0.0, 0.0], [1.0, 1.0]],
+        };
+        assert!(pcurve_loop_area_sign(&[(&bad, true)]).is_err());
+    }
 
     /// The straight segment from `a` to `z` as a degree 1 curve on `[0, 1]`.
     fn segment(a: [f64; 2], z: [f64; 2]) -> NurbsCurve {

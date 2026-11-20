@@ -116,12 +116,19 @@ impl Brep {
     /// SMLib's export lists faces and edges in the body's own order (`SmBrep::GetFaces`,
     /// `GetEdges`), the order its history uses.
     pub fn to_native_ordered(&self) -> std::result::Result<(b::Brep, Order), ExportError> {
+        self.to_native_ordered_report().map(|(brep, order, _)| (brep, order))
+    }
+
+    /// [`Brep::to_native_ordered`], with the mapping's [`Report`]: how many faces it turned over
+    /// ([`Report::reversed_faces`]) says whether the record's sides were decided apart from
+    /// SMLib's, which a caller that keeps the record can check it for.
+    pub fn to_native_ordered_report(&self) -> std::result::Result<(b::Brep, Order, Report), ExportError> {
         let arrays = self.arrays().map_err(ExportError::Smlib)?;
-        let r = native_ordered(&arrays).and_then(|(mut brep, _, order)| {
+        let r = native_ordered(&arrays).and_then(|(mut brep, report, order)| {
             self.with_definitions(&mut brep, &order)?;
-            Ok((brep, order))
+            Ok((brep, order, report))
         });
-        if let Ok((record, _)) = &r {
+        if let Ok((record, _, _)) = &r {
             crate::trace::exported(self, record);
         }
         r
@@ -1670,8 +1677,13 @@ fn pcurves<'a>(
     Ok(curves)
 }
 
-/// The signed area of a face's outer loop in the record's parameters, from its pcurves
-/// (positive: counter-clockwise, the record's convention); 0 where it has no edge loop.
+/// Which way a face's outer loop turns in the record's parameters, from its pcurves, as a
+/// signed number (positive: counter-clockwise, the record's convention); 0 where it has no edge
+/// loop. The turn is the loop's certified one ([`solidcore_ops::pcurve::loop_turn`], ±1); a
+/// polygon through 33 points of each pcurve only where that is undecided. The polygon alone
+/// turned a thin face over: the chords of a 4 mm half circle cut off 0.041 mm², as much as the
+/// whole crescent a hole left beside a bore 0.004 mm off it, so the face was written facing into
+/// the material and the next operation on the body was refused.
 fn outer_area(face: &Face, edges: &[Edge], tolerance: f64) -> Res<f64> {
     let Some(Loop::Edges(outer)) = face.loops.first() else { return Ok(0.0) };
     let geometry = |e: u32| {
@@ -1680,6 +1692,13 @@ fn outer_area(face: &Face, edges: &[Edge], tolerance: f64) -> Res<f64> {
     };
     let given = face.given.first().map(std::slice::from_ref).unwrap_or(&[]);
     let curves = pcurves(face.nurbs.as_ref().unwrap_or(&face.surface), face.domain, &[Loop::Edges(outer.clone())], given, geometry, tolerance)?;
+    let uses: Vec<(&b::Curve2, bool)> =
+        curves.first().map(Vec::as_slice).unwrap_or(&[]).iter().zip(outer).map(|(pc, &(_, forward))| (pc, forward)).collect();
+    if uses.len() == outer.len()
+        && let Some(counter_clockwise) = solidcore_ops::pcurve::loop_turn(&uses)
+    {
+        return Ok(if counter_clockwise { 1.0 } else { -1.0 });
+    }
     let mut pts: Vec<[f64; 2]> = Vec::new();
     for (pc, &(e, forward)) in curves.first().map(Vec::as_slice).unwrap_or(&[]).iter().zip(outer) {
         let edge = edges.get(e as usize).ok_or_else(|| invalid("edge"))?;

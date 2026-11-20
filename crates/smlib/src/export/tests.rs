@@ -369,9 +369,13 @@ mod native_tests {
         Ok(0.5 * (0..n).map(|k| (pts[k], pts[(k + 1) % n])).map(|(p, q)| p[0] * q[1] - q[0] * p[1]).sum::<f64>())
     }
 
-    /// A face's outer area reads only its own loop's edges, and is bit for bit what copying every
-    /// edge of the body gave: the export's face turns, and so its records and numbering, are
-    /// unchanged. Each body's record faces are counter-clockwise by convention, so positive.
+    /// A face's outer loop turn reads only its own loop's edges, and turns as the polygon copying
+    /// every edge of the body gave: the export's face turns, and so its records and numbering, are
+    /// unchanged on these bodies. Each body's record faces are counter-clockwise by convention,
+    /// so positive. (Test change: [`outer_area`] was that polygon's area, compared bit for bit; it
+    /// is now the loop's certified turn, ±1, and the export reads only its sign, which a polygon
+    /// through 33 points of each edge can get wrong on a thin loop, as the thin crescent beside a
+    /// bore in `examples/regressions/thin_crescent_beside_a_bore.json` showed.)
     #[test]
     fn a_faces_outer_area_reads_only_its_own_loop_and_is_unchanged() {
         let block = Brep::make_box([0.0; 3], [31.0, 29.0, 10.0]).unwrap();
@@ -417,7 +421,8 @@ mod native_tests {
                     let face = Face { nurbs: rf.nurbs.clone(), surface: rf.surface.clone(), domain: rf.domain, agrees: true, loops, records, given };
                     let now = outer_area(&face, &edges, record.tolerance).unwrap_or_else(|e| panic!("{name}: face {f}: {e}"));
                     let before = outer_area_copying_every_edge(&face, &edges, record.tolerance).unwrap();
-                    assert_eq!(now.to_bits(), before.to_bits(), "{name}: face {f}, trims given {with_given}: {now} != {before}");
+                    assert_eq!(now.signum(), before.signum(), "{name}: face {f}, trims given {with_given}: {now} against {before}");
+                    assert_eq!(now.abs(), 1.0, "{name}: face {f}: the certified turn decides");
                     assert!(now > 0.0, "{name}: face {f}, trims given {with_given}: area {now}");
                 }
             }

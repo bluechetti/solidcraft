@@ -124,6 +124,12 @@ pub(crate) fn step() -> Step {
     })
 }
 
+/// Whether the kernel work on this thread runs with SMLib's checks off ([`Validation::Off`]).
+/// Asking does not mark a check left for the feature's end, as [`step`] does.
+pub(crate) fn checks_off() -> bool {
+    CURRENT.with(|c| matches!(c.borrow().as_deref(), Some(Scope { mode: Validation::Off, .. })))
+}
+
 /// How a step's own check takes its result.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Checked {

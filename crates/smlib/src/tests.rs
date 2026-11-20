@@ -131,7 +131,7 @@ fn in_own_process(test: &str, f: impl FnOnce()) {
 }
 
 /// Entry points that ask no kernel, so have nothing to say here.
-const NO_KERNEL: [&str; 15] = [
+const NO_KERNEL: [&str; 16] = [
     "inertia_tensor",
     "is_valid",
     "failed_tests",
@@ -141,6 +141,7 @@ const NO_KERNEL: [&str; 15] = [
     "from_record_keeping_splines",
     "to_native_report",
     "to_native_ordered",
+    "to_native_ordered_report",
     "blends",
     "word",
     "words",
@@ -149,7 +150,7 @@ const NO_KERNEL: [&str; 15] = [
     "start",
 ];
 
-const ANSWERING: [&str; 69] = [
+const ANSWERING: [&str; 70] = [
     "set_dump_dir",
     "current_call",
     "crash_test",
@@ -172,6 +173,7 @@ const ANSWERING: [&str; 69] = [
     "blend_setback",
     "blend_setback_open",
     "fillet_variable",
+    "fillet_variable_g2",
     "chamfer_sides",
     "shell",
     "offset_faces",
@@ -307,6 +309,7 @@ fn every_entry_point_answers() {
     says("blend_setback", a.blend_setback(Blend::Round, &three, &[1.0; 3], &corner, &[2.0], 0.1));
     says("blend_setback_open", a.blend_setback_open(Blend::Round, &three, &[1.0; 3], &corner, &[2.0], 0.1));
     says("fillet_variable", a.fillet_variable(edge[0], 0.1, p(0.0, 10.0, 10.0), 1, &[0.0, 0.0, 1.0, 1.0], &[2.0, 1.0]));
+    says("fillet_variable_g2", a.fillet_variable_g2(edge[0], 0.1, p(0.0, 10.0, 10.0), 1, &[0.0, 0.0, 1.0, 1.0], &[2.0, 1.0]));
     says("chamfer_sides", a.chamfer_sides(&edge, 0.1, 1.0, ChamferSecond::Distance(2.0), p(0.0, 0.0, 1.0)));
     says("shell", a.shell(&top, 0.1, 1.0));
     says("offset_faces", a.offset_faces(&top, 0.1, 1.0));

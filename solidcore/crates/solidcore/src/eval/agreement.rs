@@ -8,7 +8,9 @@
 //!
 //! A spot check, not a certificate: a fixed number of evaluations per record (three points of
 //! each edge, [`AREA_SAMPLES`] of each use, one projection per vertex loop), so the work is
-//! linear in the record. Every distance is held to the record's own tolerance:
+//! linear in the record. Which way a loop turns is the one certified answer: its pcurves'
+//! signed area enclosed ([`crate::mass::loop_area::pcurve_loop_area_sign`], bounded work per
+//! loop), the sampled ring's only where that is undecided. Every distance is held to the record's own tolerance:
 //! an edge's for its pcurves, an edge's and its vertex's together where they meet, a vertex's on
 //! its surface. A point that cannot be evaluated is an error, never a panic.
 //!
@@ -18,6 +20,7 @@
 //! builds from a record.
 use super::vec::{v3, VecExt};
 use super::{Curve, Curve2, CurveEval, Surface, SurfaceEval};
+use crate::mass::loop_area::LoopAreaSign;
 
 /// An edge as the check reads it: the curve it is parameterised on (its NURBS form where it has
 /// one), its interval there, its vertices (into the vertex list) and its tolerance.
@@ -399,7 +402,18 @@ pub fn check(brep: &View<'_>) -> Result<()> {
                             })?);
                         }
                     }
-                    let area = signed_area(&ring);
+                    // The ring's area says which way the loop turns only where its chords'
+                    // error is small against it; the sign is the loop's certified one
+                    // ([`crate::mass::loop_area::pcurve_loop_area_sign`]), the ring's where
+                    // that is undecided. A thin crescent beside a bore came out turned over.
+                    let uses: Vec<(&Curve2, bool)> =
+                        edges.iter().map(|u| (u.pcurve, u.forward)).collect();
+                    let area = match crate::mass::loop_area::pcurve_loop_area_sign(&uses) {
+                        Ok(LoopAreaSign::Positive(a) | LoopAreaSign::Negative(a)) => {
+                            0.5 * (a.lo + a.hi)
+                        }
+                        _ => signed_area(&ring),
+                    };
                     let extent = (0..2)
                         .map(|d| {
                             let (lo, hi) = ring.iter().fold(
