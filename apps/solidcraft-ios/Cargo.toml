@@ -34,10 +34,11 @@ eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
 log = { workspace = true }
 serde_json = { workspace = true }
 png = { workspace = true }
+# dlopen of the app's own frameworks (the AR module also builds for tests on the Mac).
+libc = "0.2"
 
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6"
-libc = "0.2"
 objc2-foundation = { version = "0.3", features = ["block2"] }
 block2 = "0.6"
 objc2-ui-kit = { version = "0.3", features = ["objc2-uniform-type-identifiers", "block2", "objc2-core-foundation"] }

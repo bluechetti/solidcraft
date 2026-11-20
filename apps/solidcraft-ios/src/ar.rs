@@ -47,6 +47,7 @@ struct Bridge {
     frame_done: extern "C" fn(),
     raycast: extern "C" fn(f32, f32, f32, f32, *mut f32) -> i32,
     tick: extern "C" fn(),
+    thermal: extern "C" fn() -> i32,
 }
 
 // The function types come from `Bridge`'s fields, which each transmute fills.
@@ -81,6 +82,7 @@ fn load() -> Result<Bridge, String> {
             frame_done: std::mem::transmute(sym(c"sc_ar_frame_done")?),
             raycast: std::mem::transmute(sym(c"sc_ar_raycast")?),
             tick: std::mem::transmute(sym(c"sc_ar_tick")?),
+            thermal: std::mem::transmute(sym(c"sc_ar_thermal")?),
         })
     }
 }
@@ -117,9 +119,45 @@ struct Placed {
     translation: [f64; 3],
     /// The model point that sits on the surface (the middle of its underside).
     foot: [f64; 3],
+    /// The model's box (least and greatest corner, model units), for its shadow.
+    bounds: [[f64; 3]; 2],
+}
+
+/// A soft contact shadow on the floor under the placed model: an ellipse on the room's
+/// horizontal plane through the model's foot, along the model's footprint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Shadow {
+    /// The ellipse's middle (room, metres); its height is the floor's.
+    middle: [f64; 3],
+    /// Its two horizontal half-axes (room, metres): direction times radius.
+    axes: [[f64; 2]; 2],
 }
 
 impl Placed {
+    /// The contact shadow: the model's footprint (its box seen from above) a little enlarged.
+    fn shadow(&self) -> Option<Shadow> {
+        let [lo, hi] = self.bounds;
+        let corners: Vec<[f64; 3]> = (0..8)
+            .map(|i| [if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] }])
+            .map(|c| add(self.translation, scale3(turn(&self.axes, c), self.scale)))
+            .collect();
+        // The model's most level axis gives the footprint's first direction.
+        let level = self.axes.iter().copied().min_by(|a, b| a[1].abs().total_cmp(&b[1].abs()))?;
+        let d1 = unit([level[0], 0.0, level[2]])?;
+        let d2 = [-d1[2], 0.0, d1[0]];
+        let foot = self.anchor();
+        let span = |d: [f64; 3]| {
+            let v: Vec<f64> = corners.iter().map(|c| dot(sub(*c, foot), d)).collect();
+            let (a, b) = (v.iter().copied().fold(f64::INFINITY, f64::min), v.iter().copied().fold(f64::NEG_INFINITY, f64::max));
+            ((a + b) * 0.5, (b - a) * 0.5)
+        };
+        let ((m1, r1), (m2, r2)) = (span(d1), span(d2));
+        let middle = add(foot, add(scale3(d1, m1), scale3(d2, m2)));
+        // Past the edge by a share of the model's size, as a soft shadow under a lamp.
+        let grow = |r: f64| r * 1.12 + 0.08 * r1.max(r2);
+        (r1 > 0.0 && r2 > 0.0).then_some(Shadow { middle, axes: [[d1[0] * grow(r1), d1[2] * grow(r1)], [d2[0] * grow(r2), d2[2] * grow(r2)]] })
+    }
+
     fn matrix(&self) -> Mat4 {
         let [x, y, z] = self.axes.map(|a| a.map(|v| v * self.scale));
         let t = self.translation;
@@ -170,6 +208,15 @@ pub struct State {
     tablet_was: bool,
     /// A tap asked for by the test hook (0..1 across and down the screen), done on the next frame.
     pub test_tap: Option<(f32, f32)>,
+    /// A one-finger drag in progress: from where the finger first hit a surface to the foot.
+    drag: Option<[f64; 3]>,
+    /// The device's thermal state as last seen (0 nominal .. 3 critical).
+    thermal: i32,
+    /// Whether the design hid its origin before AR, put back after.
+    origin_was: Option<Option<bool>>,
+    /// Milliseconds spent on the CPU (camera upload; camera and model), summed over the frames
+    /// since the last log line.
+    timing: [f64; 2],
     /// The picture's camera to clip space for the last frame, for nothing but the log.
     frames: u64,
 }
@@ -200,6 +247,9 @@ impl State {
             app.viewport.stereo.on = true;
             self.tablet_was = app.tablet.enabled;
             app.tablet.enabled = false;
+            // Only the model in the room: the origin's marker stays in the design view.
+            self.origin_was = Some(app.session.visibility.origin_hidden);
+            app.session.visibility.origin_hidden = Some(true);
         } else {
             if let Ok(b) = self.bridge() {
                 (b.stop)();
@@ -211,6 +261,9 @@ impl State {
             self.pinch = None;
             app.viewport.stereo.on = false;
             app.tablet.enabled = self.tablet_was;
+            if let Some(origin) = self.origin_was.take() {
+                app.session.visibility.origin_hidden = origin;
+            }
         }
         Ok(())
     }
@@ -239,17 +292,38 @@ impl State {
         }
         let screen = ctx.content_rect().union(ctx.viewport_rect());
         let screen = ctx.viewport_rect().intersect(screen);
-        let ppp = ctx.pixels_per_point();
+        // A hot device draws the model at fewer pixels (the camera picture is ARKit's either way);
+        // at critical iPadOS is about to slow everything down, so AR stops and says why.
+        let thermal = self.bridge().map(|b| (b.thermal)()).unwrap_or(0);
+        if thermal >= 3 {
+            let _ = self.set_on(app, false);
+            app.set_status("AR stopped: the iPad is too hot. Let it cool down and try again.", true);
+            return;
+        }
+        if thermal != self.thermal {
+            crate::note(&format!("ar: thermal state {thermal}"));
+            self.thermal = thermal;
+        }
+        let detail = if thermal >= 2 { 0.6 } else { 1.0 };
+        let ppp = ctx.pixels_per_point() * detail;
         let size_px = [(screen.width() * ppp).round().max(1.0) as u32, (screen.height() * ppp).round().max(1.0) as u32];
         ensure_gpu(rs);
+        let started = std::time::Instant::now();
         let seen = self.next_frame(rs, [screen.width(), screen.height()]);
+        let camera_ms = started.elapsed().as_secs_f64() * 1e3;
         // The model from ARKit's camera.
         let mut model_drawn = false;
         if let (Some(seen), Some(placed), Some(source)) = (seen.as_ref(), self.placed, self.source.as_ref()) {
             model_drawn = draw_model(rs, source, seen, &placed, size_px, &mut self.target);
         }
+        let total_ms = started.elapsed().as_secs_f64() * 1e3;
+        self.timing = [self.timing[0] + camera_ms, self.timing[1] + total_ms];
+        if self.frames % 300 == 299 {
+            crate::note(&format!("ar: per frame {:.2} ms camera, {:.2} ms camera + model ({} px), model {}", self.timing[0] / 300.0, self.timing[1] / 300.0, size_px[0] * size_px[1], model_drawn));
+            self.timing = [0.0; 2];
+        }
         if let Some(seen) = seen.as_ref() {
-            write_uniform(rs, seen, model_drawn);
+            write_uniform(rs, seen, model_drawn, self.placed.and_then(|p| p.shadow()));
         }
         self.bind(rs, model_drawn);
 
@@ -358,7 +432,8 @@ fn draw_model(
         frame.size_px = [size[0] as f32, size[1] as f32];
         let mut renderer = rs.renderer.write();
         let Some(view) = renderer.callback_resources.get_mut::<Renderer>() else { return false };
-        // Without the design's grid and ground shadow: the room has a floor of its own.
+        // Without the design's grid and ground shadow: the room has its own floor, and the AR
+        // pass puts a contact shadow on it (`Shadow`).
         view.draw_second_view(&rs.device, &rs.queue, &frame, size, [0, 0, size[0], size[1]], false, target)
     }
 }
@@ -418,6 +493,24 @@ impl State {
         }
         let touch = ui.ctx().multi_touch();
         let Some(mut placed) = self.placed else { return };
+        // One finger dragged: the model slides along the surfaces under it, keeping how far its
+        // foot was from the finger's first hit, so it does not jump to the finger.
+        if touch.is_none()
+            && response.dragged()
+            && let Some(at) = response.interact_pointer_pos()
+        {
+            let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
+            let mut hit = [0f32; 16];
+            if self.bridge().map(|b| (b.raycast)(u.0, u.1, rect.width(), rect.height(), hit.as_mut_ptr()) == 1).unwrap_or(false) {
+                let point = [f64::from(hit[12]), f64::from(hit[13]), f64::from(hit[14])];
+                let offset = *self.drag.get_or_insert(sub(placed.anchor(), point));
+                self.placed = Some(placed.with_anchor(add(point, offset)));
+            }
+            return;
+        }
+        if !response.dragged() {
+            self.drag = None;
+        }
         match touch {
             Some(t) if t.num_touches >= 2 => {
                 let anchor = placed.anchor();
@@ -480,7 +573,7 @@ impl State {
                             _ => "Finding the room…".into(),
                         },
                         Some(_) if self.placed.is_none() => "Tap a surface to put the model there.".into(),
-                        Some(_) => "Pinch to scale, twist to turn, tap to move it.".into(),
+                        Some(_) => "Drag to move, pinch to scale, twist to turn.".into(),
                     }
                 };
                 if !hint.is_empty() {
@@ -525,7 +618,7 @@ fn first_placement(app: &SolveApp, source: Option<&solidcraft_ui_egui::stereo::S
     let foot = sub(middle, scale3(model_up, dot(middle, model_up) - lowest));
     let extent = (0..3).map(|k| hi[k] - lo[k]).fold(0.0, f64::max);
     let scale = if extent * REAL_SIZE > LARGEST_FIRST { LARGEST_FIRST / extent } else { REAL_SIZE };
-    Some(Placed { axes, scale, translation: [0.0; 3], foot }.with_anchor(point))
+    Some(Placed { axes, scale, translation: [0.0; 3], foot, bounds: [lo, hi] }.with_anchor(point))
 }
 
 fn ensure_gpu(rs: &egui_wgpu::RenderState) {
@@ -587,7 +680,7 @@ fn ensure_gpu(rs: &egui_wgpu::RenderState) {
     });
     let uniform = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("sc_ar"),
-        size: 32,
+        size: 128,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -648,12 +741,24 @@ fn upload(rs: &egui_wgpu::RenderState, size: [u32; 2], luma_row: u32, luma: &[u8
     }
 }
 
-fn write_uniform(rs: &egui_wgpu::RenderState, seen: &Seen, model: bool) {
+fn write_uniform(rs: &egui_wgpu::RenderState, seen: &Seen, model: bool, shadow: Option<Shadow>) {
     let renderer = rs.renderer.read();
     let Some(gpu) = renderer.callback_resources.get::<Gpu>() else { return };
     let d = seen.display;
     let linear = if rs.target_format.is_srgb() { 1.0 } else { 0.0 };
-    let values: [f32; 8] = [d[0], d[1], d[2], d[3], d[4], d[5], if model { 1.0 } else { 0.0 }, linear];
+    let inverse = invert(&seen.view_proj);
+    let shadow = shadow.filter(|_| model && inverse.is_some());
+    let mut values = [0f32; 32];
+    values[..8].copy_from_slice(&[d[0], d[1], d[2], d[3], d[4], d[5], if model { 1.0 } else { 0.0 }, linear]);
+    if let (Some(inv), Some(sh)) = (inverse, shadow) {
+        for (c, column) in inv.iter().enumerate() {
+            for (r, v) in column.iter().enumerate() {
+                values[8 + c * 4 + r] = *v as f32;
+            }
+        }
+        values[24..28].copy_from_slice(&[sh.middle[0] as f32, sh.middle[1] as f32, sh.middle[2] as f32, 1.0]);
+        values[28..32].copy_from_slice(&[sh.axes[0][0] as f32, sh.axes[0][1] as f32, sh.axes[1][0] as f32, sh.axes[1][1] as f32]);
+    }
     let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
     rs.queue.write_buffer(&gpu.uniform, 0, &bytes);
 }
@@ -679,6 +784,12 @@ struct U {
     abcd: vec4<f32>,
     // tx, ty, a model picture (1), write linear light (1: an sRGB target).
     rest: vec4<f32>,
+    // Clip space to the room, for the contact shadow's rays.
+    inv: mat4x4<f32>,
+    // The shadow's middle on the floor (xyz) and whether there is one (w).
+    shadow_mid: vec4<f32>,
+    // Its two half-axes on the floor (x, z of each).
+    shadow_axes: vec4<f32>,
 };
 @group(0) @binding(0) var luma: texture_2d<f32>;
 @group(0) @binding(1) var chroma: texture_2d<f32>;
@@ -720,6 +831,27 @@ fn fs(i: O) -> @location(0) vec4<f32> {
     if (u.rest.w > 0.5) {
         camera = to_linear(camera);
     }
+    // The contact shadow: where this pixel's ray meets the floor, darker toward the middle of
+    // the footprint. The model is drawn over it, so it shows only around the model.
+    if (u.shadow_mid.w > 0.5) {
+        let ndc = vec2<f32>(i.uv.x * 2.0 - 1.0, 1.0 - i.uv.y * 2.0);
+        let a = u.inv * vec4<f32>(ndc, 0.0, 1.0);
+        let b = u.inv * vec4<f32>(ndc, 1.0, 1.0);
+        let p0 = a.xyz / a.w;
+        let dir = b.xyz / b.w - p0;
+        if (abs(dir.y) > 1e-6) {
+            let t = (u.shadow_mid.y - p0.y) / dir.y;
+            if (t > 0.0) {
+                let local = (p0 + dir * t - u.shadow_mid.xyz).xz;
+                let a1 = u.shadow_axes.xy;
+                let a2 = u.shadow_axes.zw;
+                let q = vec2<f32>(dot(local, a1) / dot(a1, a1), dot(local, a2) / dot(a2, a2));
+                let r = length(q);
+                let dark = 0.5 * (1.0 - smoothstep(0.35, 1.0, r));
+                camera = camera * (1.0 - dark);
+            }
+        }
+    }
     var m = vec4<f32>(0.0);
     if (u.rest.z > 0.5) {
         m = textureSampleLevel(model, smp, i.uv, 0.0);
@@ -731,6 +863,34 @@ fn fs(i: O) -> @location(0) vec4<f32> {
 fn mul(a: &Mat4, b: &Mat4) -> Mat4 {
     std::array::from_fn(|c| std::array::from_fn(|r| (0..4).map(|k| a[k][r] * b[c][k]).sum()))
 }
+/// The inverse of `m` (Gauss-Jordan with partial pivoting), or `None` when it has none.
+fn invert(m: &Mat4) -> Option<Mat4> {
+    // Rows of [m | I], m read by rows.
+    let mut a: [[f64; 8]; 4] = std::array::from_fn(|r| std::array::from_fn(|c| if c < 4 { m[c][r] } else if c - 4 == r { 1.0 } else { 0.0 }));
+    for col in 0..4 {
+        let pivot = (col..4).max_by(|&x, &y| a[x][col].abs().total_cmp(&a[y][col].abs()))?;
+        if a[pivot][col].abs() < 1e-12 {
+            return None;
+        }
+        a.swap(col, pivot);
+        let p = a[col][col];
+        for v in a[col].iter_mut() {
+            *v /= p;
+        }
+        for r in 0..4 {
+            if r != col {
+                let f = a[r][col];
+                let row = a[col];
+                for (v, w) in a[r].iter_mut().zip(row) {
+                    *v -= f * w;
+                }
+            }
+        }
+    }
+    let out: Mat4 = std::array::from_fn(|c| std::array::from_fn(|r| a[r][4 + c]));
+    out.iter().flatten().all(|v| v.is_finite()).then_some(out)
+}
+
 fn to_f32(m: &Mat4) -> [[f32; 4]; 4] {
     m.map(|c| c.map(|v| v as f32))
 }
@@ -774,7 +934,7 @@ mod tests {
     /// Scaling and turning keep the foot where it was put.
     #[test]
     fn the_foot_stays_put() {
-        let p = Placed { axes: [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]], scale: REAL_SIZE, translation: [0.0; 3], foot: [5.0, 5.0, 0.0] }
+        let p = Placed { axes: [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]], scale: REAL_SIZE, translation: [0.0; 3], foot: [5.0, 5.0, 0.0], bounds: [[0.0; 3], [10.0, 10.0, 4.0]] }
             .with_anchor([0.2, 0.7, -0.4]);
         assert!(close(p.anchor(), [0.2, 0.7, -0.4]));
         let mut q = p;
@@ -786,10 +946,40 @@ mod tests {
         assert!(close(p.axes[2], [0.0, 1.0, 0.0]));
     }
 
+    /// The inverse undoes the matrix.
+    #[test]
+    fn the_inverse_undoes() {
+        let m: Mat4 = [[2.0, 0.1, 0.0, 0.0], [0.0, 1.5, 0.3, 0.0], [0.2, 0.0, -1.0, -1.0], [0.5, 0.2, -0.1, 0.0]];
+        let Some(inv) = invert(&m) else { panic!("invertible") };
+        let id = mul(&m, &inv);
+        for (c, column) in id.iter().enumerate() {
+            for (r, v) in column.iter().enumerate() {
+                assert!((v - if c == r { 1.0 } else { 0.0 }).abs() < 1e-9, "{id:?}");
+            }
+        }
+    }
+
+    /// The shadow lies under the model's footprint, on the floor at its foot.
+    #[test]
+    fn the_shadow_is_under_the_footprint() {
+        let p = Placed {
+            axes: [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]],
+            scale: REAL_SIZE,
+            translation: [0.0; 3],
+            foot: [100.0, 60.0, 0.0],
+            bounds: [[0.0; 3], [200.0, 120.0, 80.0]],
+        }
+        .with_anchor([0.3, 0.75, -0.5]);
+        let Some(sh) = p.shadow() else { panic!("a shadow") };
+        assert!(close(sh.middle, [0.3, 0.75, -0.5]), "{sh:?}");
+        let r: Vec<f64> = sh.axes.iter().map(|a| (a[0] * a[0] + a[1] * a[1]).sqrt()).collect();
+        assert!(r.iter().any(|r| *r > 0.1 && *r < 0.13) && r.iter().any(|r| *r > 0.06 && *r < 0.09), "{r:?}");
+    }
+
     /// The placement matrix moves model points as `Placed` says.
     #[test]
     fn the_matrix_agrees() {
-        let p = Placed { axes: [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], scale: 0.002, translation: [1.0, 2.0, 3.0], foot: [0.0; 3] };
+        let p = Placed { axes: [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], scale: 0.002, translation: [1.0, 2.0, 3.0], foot: [0.0; 3], bounds: [[0.0; 3]; 2] };
         let m = p.matrix();
         let q = [10.0, 20.0, 30.0];
         let by_matrix = [0, 1, 2].map(|r| (0..3).map(|c| m[c][r] * q[c]).sum::<f64>() + m[3][r]);

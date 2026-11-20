@@ -10,7 +10,7 @@
 
 #[cfg(target_os = "ios")]
 mod ai;
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", test))]
 mod ar;
 #[cfg(any(target_os = "ios", test))]
 mod ai_data;

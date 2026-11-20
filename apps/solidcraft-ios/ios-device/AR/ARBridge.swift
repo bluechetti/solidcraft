@@ -244,3 +244,15 @@ public func sc_ar_tick() {
     let g = UIImpactFeedbackGenerator(style: .light)
     g.impactOccurred()
 }
+
+/// How hot the device runs: 0 nominal, 1 fair, 2 serious, 3 critical (iPadOS slows it down).
+@_cdecl("sc_ar_thermal")
+public func sc_ar_thermal() -> Int32 {
+    switch ProcessInfo.processInfo.thermalState {
+    case .nominal: return 0
+    case .fair: return 1
+    case .serious: return 2
+    case .critical: return 3
+    @unknown default: return 1
+    }
+}
