@@ -6406,6 +6406,7 @@ dependencies = [
  "solidcraft-engine",
  "solidcraft-ui-egui",
  "solidcraft-viewport",
+ "solidcraft-viewport-gpu",
 ]
 
 [[package]]
