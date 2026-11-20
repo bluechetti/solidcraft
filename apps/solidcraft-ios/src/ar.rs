@@ -292,6 +292,9 @@ pub struct State {
     pub test_measure: bool,
     /// The test hook presses Explode (`ar-explode`) next frame.
     pub test_explode: bool,
+    /// The test hook opens Joints (`ar-joints`) or presses Check (`ar-check`) next frame.
+    pub test_joints: bool,
+    pub test_check: bool,
     /// A Pencil pull asked for by the test hook: from and to (0..1 across and down the screen).
     pub test_pull: Option<[f32; 4]>,
     /// The Pencil touch in progress: its id, where and when it began.
@@ -319,6 +322,12 @@ pub struct State {
     exploded: usize,
     /// Pull is on: the Pencil pushes and pulls faces (`solid.press_pull`).
     pull_mode: bool,
+    /// The Joints list is open, with the joints as last listed (name; each coordinate's value
+    /// and unit).
+    joints: Option<Vec<(String, Vec<(f64, String)>)>>,
+    /// Overlapping parts from the last Check: the two bodies and the overlap's middle (model
+    /// units), marked in the room until the model changes.
+    overlaps: Vec<(String, String, [f64; 3])>,
     /// Photo was asked for: taken after this frame's AR pass is set up.
     pub take_photo: bool,
     /// Where the AR panel was last drawn (screen points).
@@ -487,7 +496,14 @@ impl State {
                     if std::mem::take(&mut self.test_section) {
                         self.cut = self.placed.and_then(|p| p.cut_facing(seen.back));
                     }
-                    if std::mem::take(&mut self.test_explode) {
+                    if std::mem::take(&mut self.test_joints) {
+                    self.joints = Some(Self::list_joints(app));
+                    crate::note(&format!("ar: joints {:?}", self.joints));
+                }
+                if std::mem::take(&mut self.test_check) {
+                    self.check_overlaps(app);
+                }
+                if std::mem::take(&mut self.test_explode) {
                     self.next_exploded_view(app);
                 }
                 if std::mem::take(&mut self.test_measure) {
@@ -496,6 +512,7 @@ impl State {
                     self.gestures(ui, &response, rect, seen, app);
                     self.draw_measure(ui.painter(), rect, seen);
                 self.draw_pull(ui.painter(), rect, seen);
+                self.draw_overlaps(ui.painter(), rect, seen);
                 }
             });
         self.controls(ctx, screen, seen.as_ref(), coaching, app);
@@ -973,6 +990,125 @@ impl State {
         crate::note(&format!("ar: photo {}x{}: {}", size[0], size[1], self.message));
     }
 
+    /// The design's joints, for the Joints list (`joint.list`).
+    fn list_joints(app: &mut SolveApp) -> Vec<(String, Vec<(f64, String)>)> {
+        let reply = app.run("joint.list", serde_json::json!({ "exclude_rigid": true })).unwrap_or_default();
+        let Some(joints) = reply.get("joints").and_then(|j| j.as_array()) else { return Vec::new() };
+        joints
+            .iter()
+            .filter_map(|j| {
+                let name = j.get("name")?.as_str()?.to_owned();
+                let values = j
+                    .get("values")?
+                    .as_array()?
+                    .iter()
+                    .filter_map(|v| Some((v.get("value")?.as_f64()?, v.get("unit").and_then(|u| u.as_str()).unwrap_or("").to_owned())))
+                    .collect::<Vec<_>>();
+                (!values.is_empty()).then_some((name, values))
+            })
+            .collect()
+    }
+
+    /// Move joint `name`'s coordinate `index` to `value` (`joint.drive`, held to its limits),
+    /// and list the joints again to show where it went.
+    fn drive_joint(&mut self, app: &mut SolveApp, name: &str, index: usize, value: f64) {
+        let params = serde_json::json!({ "joint": name, "value": value, "index": index });
+        if let Err(e) = app.run("joint.drive", params) {
+            self.message = e;
+        }
+        self.overlaps.clear();
+        self.joints = Some(Self::list_joints(app));
+    }
+
+    /// Check: which parts overlap (`inspect.interference`, held to a few seconds so the view
+    /// does not stall). The overlapping parts are selected and each overlap is marked in the room.
+    fn check_overlaps(&mut self, app: &mut SolveApp) {
+        let reply = match app.run("inspect.interference", serde_json::json!({ "budget_s": 8 })) {
+            Ok(r) => r,
+            Err(e) => {
+                self.message = e;
+                return;
+            }
+        };
+        self.overlaps = reply
+            .get("interferences")
+            .and_then(|i| i.as_array())
+            .map(|list| {
+                list.iter()
+                    .filter_map(|o| {
+                        let c = o.get("center")?;
+                        Some((
+                            o.get("a")?.as_str()?.to_owned(),
+                            o.get("b")?.as_str()?.to_owned(),
+                            [c.get(0)?.as_f64()?, c.get(1)?.as_f64()?, c.get(2)?.as_f64()?],
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if self.overlaps.is_empty() {
+            self.message = "No parts overlap.".into();
+        } else {
+            let mut names: Vec<&str> = self.overlaps.iter().flat_map(|(a, b, _)| [a.as_str(), b.as_str()]).collect();
+            names.sort_unstable();
+            names.dedup();
+            let items: Vec<serde_json::Value> = names.iter().map(|n| serde_json::json!({ "type": "body", "name": n })).collect();
+            let _ = app.run("select.set", serde_json::json!({ "items": items }));
+            let pairs: Vec<String> = self.overlaps.iter().map(|(a, b, _)| format!("{a} and {b}")).collect();
+            self.message = format!("Overlapping: {}.", pairs.join(", "));
+        }
+        if let Ok(b) = self.bridge() {
+            (b.tick)();
+        }
+        crate::note(&format!("ar: check found {} overlaps", self.overlaps.len()));
+    }
+
+    /// The overlaps from the last Check, marked where they are in the room.
+    fn draw_overlaps(&self, painter: &egui::Painter, rect: egui::Rect, seen: &Seen) {
+        let Some(placed) = self.placed else { return };
+        let red = egui::Color32::from_rgb(235, 64, 52);
+        for (_, _, c) in &self.overlaps {
+            if let Some(at) = to_screen(seen, &placed, rect, *c) {
+                painter.circle(at, 14.0, red.gamma_multiply(0.35), egui::Stroke::new(3.0, red));
+                painter.circle_filled(at, 4.0, red);
+            }
+        }
+    }
+
+    /// The Joints list beside the panel: each joint's coordinates with − and + (5 a step).
+    fn joints_list(&mut self, ctx: &egui::Context, at: egui::Pos2, app: &mut SolveApp) -> Option<egui::Rect> {
+        let joints = self.joints.clone()?;
+        let mut drive: Option<(String, usize, f64)> = None;
+        let container = Container::new(ctx, Surface::Popup);
+        let shown = container.area(egui::Id::unique("ar-joints")).order(egui::Order::Tooltip).fixed_pos(at).show(ctx, |ui| {
+            let frame = Container::popup_frame(ui.style());
+            container.show_frame(ui, frame, ctx.content_rect(), |ui| {
+                if joints.is_empty() {
+                    ui.label("This design has no joints to move.");
+                }
+                for (name, values) in &joints {
+                    for (k, (value, unit)) in values.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            let axis = if values.len() > 1 { format!(" {}", k + 1) } else { String::new() };
+                            ui.label(format!("{name}{axis}"));
+                            if button(ui, "−", Button::Small).clicked() {
+                                drive = Some((name.clone(), k, value - 5.0));
+                            }
+                            ui.label(format!("{value:.1} {unit}"));
+                            if button(ui, "+", Button::Small).clicked() {
+                                drive = Some((name.clone(), k, value + 5.0));
+                            }
+                        });
+                    }
+                }
+            });
+        });
+        if let Some((name, k, v)) = drive {
+            self.drive_joint(app, &name, k, v);
+        }
+        Some(shown.response.rect)
+    }
+
     /// The design's next exploded view (`explode.show`: shown only, the design keeps its
     /// placements), and after the last, the assembly as it is.
     fn next_exploded_view(&mut self, app: &mut SolveApp) {
@@ -1067,6 +1203,7 @@ impl State {
                     for (label, command) in [("Undo", "edit.undo"), ("Redo", "edit.redo")] {
                         if button(ui, label, Button::Small).clicked() {
                             self.pulling = None;
+                            self.overlaps.clear();
                             if let Err(e) = app.run(command, serde_json::json!({})) {
                                 self.message = e;
                             }
@@ -1124,6 +1261,13 @@ impl State {
                                 self.pulling = None;
                             }
                         }
+                        let joints_open = self.joints.is_some();
+                        if button(ui, "Joints", if joints_open { Button::SmallSelected } else { Button::Small }).clicked() {
+                            self.joints = if joints_open { None } else { Some(Self::list_joints(app)) };
+                        }
+                        if button(ui, "Check", Button::Small).backing_on_hover_text("Find parts that overlap").clicked() {
+                            self.check_overlaps(app);
+                        }
                         let measuring = self.measuring.is_some();
                         if button(ui, "Measure", if measuring { Button::SmallSelected } else { Button::Small }).clicked() {
                             self.measuring = if measuring { None } else { Some(Vec::new()) };
@@ -1167,7 +1311,8 @@ impl State {
             });
         });
         // A Pencil touch that starts on the panel is the panel's (its buttons), not the model's.
-        self.panel = Some(shown.response.rect);
+        let list = self.joints_list(ctx, shown.response.rect.left_bottom() + egui::vec2(0.0, 8.0), app);
+        self.panel = Some(list.map_or(shown.response.rect, |r| r.union(shown.response.rect)));
         let _ = screen;
         if leave {
             let _ = self.set_on(app, false);
