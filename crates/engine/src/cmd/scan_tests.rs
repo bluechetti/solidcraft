@@ -3948,6 +3948,58 @@ fn wrap_scan_patches_mesh_at_the_finest_chord() {
     }
     let w = solidcraft_scan::wrap_scan::wrap(&solidcraft_scan::Scan::new(&positions, &triangles), &solidcraft_scan::wrap_scan::Settings::default())
         .unwrap();
+    if std::env::var_os("WRAP_STITCH_ONLY").is_some() {
+        let sheets: Vec<_> = w.faces.iter().map(|f| solidcraft_kernel::nurbs_sheet(f).unwrap()).collect();
+        let mut runs = Vec::new();
+        for (k, run) in sheets.chunks(512).enumerate() {
+            let refs: Vec<_> = run.iter().collect();
+            match solidcraft_kernel::stitch(&refs, std::env::var("WRAP_SEW_TOL").ok().and_then(|t| t.parse().ok()).unwrap_or(0.0)) {
+                Ok(b) => {
+                    eprintln!("run {k}: sewn ({} faces)", run.len());
+                    runs.push(b);
+                }
+                Err(e) => {
+                    eprintln!("run {k}: {}", e.to_string().lines().take(3).collect::<Vec<_>>().join(" | "));
+                    // Bisect to the smallest group that fails, and say how its patches' corners lie.
+                    let base = k * 512;
+                    let mut group: Vec<usize> = (0..run.len()).collect();
+                    while group.len() > 6 {
+                        let (a, b) = group.split_at(group.len() / 2);
+                        let fails = |g: &[usize]| solidcraft_kernel::stitch(&g.iter().map(|&i| &run[i]).collect::<Vec<_>>(), 0.0).is_err();
+                        if fails(a) {
+                            group = a.to_vec();
+                        } else if fails(b) {
+                            group = b.to_vec();
+                        } else {
+                            break;
+                        }
+                    }
+                    for &i in &group {
+                        let net = solidcraft_scan::surface_edit::points(&w.faces[base + i]);
+                        let corner = |o: usize, a: usize, b: usize| {
+                            let (u, v) = (net[a] - net[o], net[b] - net[o]);
+                            (u.dot(v) / (u.len() * v.len()).max(1e-300)).clamp(-1.0, 1.0).acos().to_degrees()
+                        };
+                        eprintln!(
+                            "  patch {}: corner angles {:.1} {:.1} {:.1} {:.1}; sides {:.2} {:.2} {:.2} {:.2}",
+                            base + i,
+                            corner(0, 1, 4),
+                            corner(3, 2, 7),
+                            corner(15, 14, 11),
+                            corner(12, 13, 8),
+                            net[0].dist(net[3]),
+                            net[3].dist(net[15]),
+                            net[15].dist(net[12]),
+                            net[12].dist(net[0])
+                        );
+                    }
+                }
+            }
+        }
+        let refs: Vec<_> = runs.iter().collect();
+        eprintln!("runs joined: {}", solidcraft_kernel::stitch(&refs, 0.0).map_or_else(|e| e.to_string().lines().take(3).collect::<Vec<_>>().join(" | "), |_| "ok".into()));
+        return;
+    }
     let chord: f64 = std::env::var("WRAP_CHORD").ok().and_then(|c| c.parse().ok()).unwrap_or(1e-3);
     let most: usize = std::env::var("WRAP_PATCHES").ok().and_then(|c| c.parse().ok()).unwrap_or(usize::MAX);
     let spec = solidcraft_kernel::MeshSpec::chord(chord);

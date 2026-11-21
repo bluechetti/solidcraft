@@ -51,6 +51,9 @@ const WIDEN: usize = 8;
 /// tolerances is a needle to mend: its patches would be too thin for any tessellation to follow (a
 /// 24 × 0.7 mm face made a patch that needed more than 20,000 nodes on one edge).
 const NEEDLE: f64 = 0.35;
+/// A coarse face whose smallest angle is below this is poor: its patches' corners are too sharp
+/// for the kernel's check (a 4° corner left edges off their faces); 10°.
+const MIN_ANGLE: f64 = 0.1745;
 /// A degenerate face is a cap when its angle at its middle point is above this.
 const CAP_ANGLE: f64 = 2.6; // ≈ 149°
 /// Below this shape a face counts as degenerate: its normal says nothing.
@@ -356,6 +359,17 @@ fn coons(bottom: &[Vec3; 4], top: &[Vec3; 4], left: &[Vec3; 4], right: &[Vec3; 4
     net
 }
 
+/// Does every row and every column of the net run one way (each step along the row's or column's
+/// own direction from end to end)? A net that doubles back makes a folded patch.
+fn monotone(net: &[Vec3; 16]) -> bool {
+    let at = |i: usize, j: usize| net[j * 4 + i];
+    let runs_one_way = |p: [Vec3; 4]| {
+        let way = p[3] - p[0];
+        way.len() > 0.0 && (0..3).all(|k| (p[k + 1] - p[k]).dot(way) > 0.0)
+    };
+    (0..4).all(|j| runs_one_way([at(0, j), at(1, j), at(2, j), at(3, j)])) && (0..4).all(|i| runs_one_way([at(i, 0), at(i, 1), at(i, 2), at(i, 3)]))
+}
+
 fn eval(net: &[Vec3; 16], u: f64, v: f64) -> Vec3 {
     let (bu, bv) = (bern(u), bern(v));
     let mut p = Vec3::ZERO;
@@ -482,7 +496,7 @@ fn patches(under: &Under, positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Nur
             })
         };
         let (mab, mbc, mca) = (m(a, b), m(b, c), m(c, a));
-        points.push((pa + pb + pc) / 3.0);
+        points.push(inner_point(pa, pb, pc));
         let ct = (points.len() - 1) as u32;
         quads.push(([a, mab, ct, mca], facing));
         quads.push(([b, mbc, ct, mab], facing));
@@ -526,8 +540,19 @@ fn patches(under: &Under, positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Nur
     let faces: Vec<Option<NurbsSurface>> = par::map(quads.len(), |k| {
         let ([q0, q1, q2, q3], facing) = quads[k];
         let (bottom, top, left, right) = (along(q0, q1), along(q3, q2), along(q0, q3), along(q1, q2));
-        let mut net = coons(&bottom, &top, &left, &right);
+        let start = coons(&bottom, &top, &left, &right);
+        let mut net = start;
         fit_inner(under, &mut net, facing);
+        // A net that doubles back on itself is a folded patch (the kernel's check refuses it):
+        // then the unfitted Coons net, then one of straight sides.
+        if !monotone(&net) {
+            net = start;
+        }
+        if !monotone(&net) {
+            let straight = |a: Vec3, b: Vec3| [a, a + (b - a) / 3.0, a + (b - a) * (2.0 / 3.0), b];
+            let (c0, c1, c2, c3) = (bottom[0], bottom[3], top[3], top[0]);
+            net = coons(&straight(c0, c1), &straight(c3, c2), &straight(c0, c3), &straight(c1, c2));
+        }
         NurbsSurface::new([3, 3], [knots.clone(), knots.clone()], &net, &[1.0; 16]).ok()
     });
     faces.into_iter().flatten().collect()
@@ -801,12 +826,58 @@ fn remove_caps(positions: &[Vec3], triangles: &mut Vec<[u32; 3]>, tolerance: f64
     true
 }
 
-/// One pass of collapses of degenerate faces' middle points (see [`tidy`]); whether any was made.
-/// A collapse is made only when the mesh stays manifold (the link condition), no face is turned
-/// over or left degenerate that was not, and the faces it changes stay on the scan.
+/// The point inside a coarse triangle its three quads meet at: of the middle, the incentre and
+/// points drawn toward each corner, the one whose quads' worst corner (furthest from a right angle)
+/// is best. The middle of an obtuse triangle gives a quad a corner near 180°, which the kernel's
+/// check refuses (its edges part from its faces there).
+fn inner_point(a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
+    let (la, lb, lc) = (b.dist(c), c.dist(a), a.dist(b));
+    let perimeter = la + lb + lc;
+    let mut candidates = vec![(a + b + c) / 3.0];
+    if perimeter > 0.0 {
+        candidates.push((a * la + b * lb + c * lc) / perimeter);
+    }
+    for (w0, w1, w2) in [(0.5, 0.25, 0.25), (0.25, 0.5, 0.25), (0.25, 0.25, 0.5), (0.4, 0.4, 0.2), (0.4, 0.2, 0.4), (0.2, 0.4, 0.4)] {
+        candidates.push(a * w0 + b * w1 + c * w2);
+    }
+    let (mab, mbc, mca) = ((a + b) / 2.0, (b + c) / 2.0, (c + a) / 2.0);
+    let angle = |o: Vec3, p: Vec3, q: Vec3| {
+        let (u, v) = (p - o, q - o);
+        let l = u.len() * v.len();
+        if l > 0.0 { (u.dot(v) / l).clamp(-1.0, 1.0).acos() } else { 0.0 }
+    };
+    let worst = |g: Vec3| -> f64 {
+        let quads = [[a, mab, g, mca], [b, mbc, g, mab], [c, mca, g, mbc]];
+        quads
+            .iter()
+            .flat_map(|q| (0..4).map(move |k| angle(q[k], q[(k + 1) % 4], q[(k + 3) % 4])))
+            .map(|x| (x - std::f64::consts::FRAC_PI_2).abs())
+            .fold(0.0, f64::max)
+    };
+    candidates.into_iter().min_by(|x, y| worst(*x).total_cmp(&worst(*y))).unwrap_or((a + b + c) / 3.0)
+}
+
+/// A triangle's smallest angle, in radians.
+fn smallest_angle(t: [Vec3; 3]) -> f64 {
+    (0..3)
+        .map(|k| {
+            let (u, v) = (t[(k + 1) % 3] - t[k], t[(k + 2) % 3] - t[k]);
+            let l = u.len() * v.len();
+            if l > 0.0 { (u.dot(v) / l).clamp(-1.0, 1.0).acos() } else { 0.0 }
+        })
+        .fold(std::f64::consts::PI, f64::min)
+}
+
+/// One pass of collapses of poor faces (see [`tidy`]); whether any was made. A face is poor when
+/// its smallest angle is below [`MIN_ANGLE`] (or it is degenerate). A cap (a point near its longest
+/// side) has that point moved onto the nearer end of the side; a needle (a short side) has the short
+/// side collapsed, either way round. A collapse is made only when the mesh stays manifold (the link
+/// condition), no point on the open rim moves, no face is turned over or left poorer than it was,
+/// the faces it changes stay on the scan, and the old point is still covered.
 fn collapse_degenerate(positions: &[Vec3], triangles: &mut Vec<[u32; 3]>, under: &Under, tolerance: f64) -> bool {
     let corners = |t: [u32; 3]| t.map(|i| positions.get(i as usize).copied().unwrap_or(Vec3::ZERO));
     let on_scan = |p: Vec3| under.tree.nearest(p).is_some_and(|(d, _)| d <= tolerance);
+    let point = |v: u32| positions.get(v as usize).copied().unwrap_or(Vec3::ZERO);
     let mut around: Vec<Vec<usize>> = vec![Vec::new(); positions.len()];
     for (t, tri) in triangles.iter().enumerate() {
         for &v in tri {
@@ -824,35 +895,45 @@ fn collapse_degenerate(positions: &[Vec3], triangles: &mut Vec<[u32; 3]>, under:
         }
         let tri = triangles[t];
         let c = corners(tri);
-        if shape(c) >= DEGENERATE {
+        if shape(c) >= DEGENERATE && smallest_angle(c) >= MIN_ANGLE {
             continue;
         }
-        let Some(k) = (0..3).max_by(|&i, &j| c[i].dist(c[(i + 1) % 3]).total_cmp(&c[j].dist(c[(j + 1) % 3]))) else { continue };
-        let (a, b, m) = (tri[k], tri[(k + 1) % 3], tri[(k + 2) % 3]);
-        let pm = c[(k + 2) % 3];
-        let mut ends = [a, b];
-        ends.sort_by(|x, y| {
-            let dx = positions.get(*x as usize).map_or(f64::INFINITY, |p| p.dist(pm));
-            let dy = positions.get(*y as usize).map_or(f64::INFINITY, |p| p.dist(pm));
-            dx.total_cmp(&dy)
-        });
-        let fan = around.get(m as usize).cloned().unwrap_or_default();
-        if fan.iter().any(|&f| touched[f] || gone[f]) {
+        let side = |k: usize| c[k].dist(c[(k + 1) % 3]);
+        let (Some(long), Some(short)) =
+            ((0..3).max_by(|&i, &j| side(i).total_cmp(&side(j))), (0..3).min_by(|&i, &j| side(i).total_cmp(&side(j))))
+        else {
             continue;
-        }
-        // A point on the open rim stays where it is: moving it would move the rim.
-        let mut rim_count: HashMap<u32, usize> = HashMap::new();
-        for &f in &fan {
-            for &x in &triangles[f] {
-                if x != m {
-                    *rim_count.entry(x).or_default() += 1;
+        };
+        // A cap: its middle point onto the nearer end of the longest side. A needle: the short side.
+        let m_cap = tri[(long + 2) % 3];
+        let (u, v) = (point(m_cap) - c[long], point(m_cap) - c[(long + 1) % 3]);
+        let is_cap = u.len() > 0.0 && v.len() > 0.0 && u.dot(v) / (u.len() * v.len()) < CAP_ANGLE.cos();
+        let mut pairs: Vec<(u32, u32)> = if is_cap {
+            let (a, b) = (tri[long], tri[(long + 1) % 3]);
+            vec![(m_cap, a), (m_cap, b)]
+        } else {
+            let (a, b) = (tri[short], tri[(short + 1) % 3]);
+            vec![(a, b), (b, a)]
+        };
+        pairs.sort_by(|x, y| point(x.0).dist(point(x.1)).total_cmp(&point(y.0).dist(point(y.1))));
+        'pairs: for (m, to) in pairs {
+            let pm = point(m);
+            let fan = around.get(m as usize).cloned().unwrap_or_default();
+            if fan.iter().any(|&f| touched[f] || gone[f]) {
+                continue;
+            }
+            // A point on the open rim stays where it is: moving it would move the rim.
+            let mut rim_count: HashMap<u32, usize> = HashMap::new();
+            for &f in &fan {
+                for &x in &triangles[f] {
+                    if x != m {
+                        *rim_count.entry(x).or_default() += 1;
+                    }
                 }
             }
-        }
-        if rim_count.values().any(|&n| n == 1) {
-            continue;
-        }
-        for to in ends {
+            if rim_count.values().any(|&n| n == 1) {
+                continue;
+            }
             // The link condition: m and `to` share no neighbour but the third points of the faces
             // on their side.
             let neighbours = |v: u32| -> Vec<u32> {
@@ -869,7 +950,6 @@ fn collapse_degenerate(positions: &[Vec3], triangles: &mut Vec<[u32; 3]>, under:
             if common != opposite.len() || shared_faces.is_empty() {
                 continue;
             }
-            let mut ok = true;
             let mut new = Vec::new();
             for &f in &fan {
                 if shared_faces.contains(&f) {
@@ -878,15 +958,13 @@ fn collapse_degenerate(positions: &[Vec3], triangles: &mut Vec<[u32; 3]>, under:
                 let before = triangles[f];
                 let after = before.map(|x| if x == m { to } else { x });
                 let (cb, ca) = (corners(before), corners(after));
-                let (qa, qb) = (shape(ca), shape(cb));
                 let turned = match (unit_normal(cb), unit_normal(ca)) {
-                    (Some(nb), Some(na)) => qb >= DEGENERATE && nb.dot(na) < 0.0,
+                    (Some(nb), Some(na)) => shape(cb) >= DEGENERATE && nb.dot(na) < 0.0,
                     _ => false,
                 };
-                let off = !on_scan((ca[0] + ca[1] + ca[2]) / 3.0);
-                if turned || (qa < DEGENERATE && qa < qb) || off {
-                    ok = false;
-                    break;
+                let poorer = smallest_angle(ca) < MIN_ANGLE && smallest_angle(ca) < smallest_angle(cb);
+                if turned || poorer || !on_scan((ca[0] + ca[1] + ca[2]) / 3.0) {
+                    continue 'pairs;
                 }
                 new.push((f, after));
             }
@@ -896,7 +974,7 @@ fn collapse_degenerate(positions: &[Vec3], triangles: &mut Vec<[u32; 3]>, under:
                 let q = corners(*after);
                 closest_on_triangle(pm, q[0], q[1], q[2]).dist(pm) <= tolerance
             });
-            if !ok || !covered {
+            if !covered {
                 continue;
             }
             for f in shared_faces {
@@ -1166,6 +1244,33 @@ mod tests {
         assert!(worst >= DEGENERATE, "{f:?}: worst shape {worst}");
         assert!((area(&f) - before).abs() < 1e-3, "area {} against {before}", area(&f));
         assert!(edge_faces(&f).values().all(|v| v.len() <= 2));
+    }
+
+    #[test]
+    fn a_net_that_doubles_back_is_not_monotone() {
+        let flat: [Vec3; 16] = std::array::from_fn(|k| Vec3::new((k % 4) as f64, (k / 4) as f64, 0.0));
+        assert!(monotone(&flat));
+        let mut folded = flat;
+        folded[5] = Vec3::new(2.5, 1.0, 0.0); // the second point of row 1 past the third
+        assert!(!monotone(&folded));
+    }
+
+    #[test]
+    fn an_obtuse_triangle_meets_its_quads_away_from_its_middle() {
+        // A 150° triangle: at its middle one quad's corner is near 180°; the chosen point is better.
+        let (a, b, c) = (Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0), Vec3::new(5.0 + 10.0, 2.0, 0.0));
+        let g = inner_point(a, b, c);
+        let worst = |g: Vec3| {
+            let (mab, mbc, mca) = ((a + b) / 2.0, (b + c) / 2.0, (c + a) / 2.0);
+            [[a, mab, g, mca], [b, mbc, g, mab], [c, mca, g, mbc]]
+                .iter()
+                .flat_map(|q| (0..4).map(move |k| {
+                    let (u, v) = (q[(k + 1) % 4] - q[k], q[(k + 3) % 4] - q[k]);
+                    (u.dot(v) / (u.len() * v.len())).clamp(-1.0, 1.0).acos().to_degrees()
+                }))
+                .fold(0.0, f64::max)
+        };
+        assert!(worst(g) < worst((a + b + c) / 3.0), "{} against {}", worst(g), worst((a + b + c) / 3.0));
     }
 
     #[test]

@@ -21,28 +21,17 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.wrap_scan", "Wrap
     .output(output_schema_for::<ScanWrapScanResult>)
     .params("body?: the scan (default: what is selected on a scan, else the only one); tolerance?: length (default 0.2 mm: how far the patches may lie from the scan); max_patches?: 300–60000 (default 12000; a scan that needs more is wrapped with this many, short of the tolerance): the whole scan reduced as far as the tolerance allows (checked both ways, detail kept where it misses), three patches laid on each triangle left, each side and each patch fitted to the scan by least squares (so noise averages out), sewn into one body: a solid when the scan is closed, else a surface; refused when that body cannot be drawn (faces too thin for the tessellator, as across a CAD export's long rounded edges: Reconstruct is for those); kept as a surface body `Wrap1`, … (one undo step); position only across the patches' sides (G0) → body, surface, solid, patches, coarse_triangles, rounds, met, capped, within, p99, max (the scan's points to the patches), tolerance, warning?, feature")];
 
-/// Patches sewn at a time: the kernel keeps every sheet it is given as a shell of its own until it
-/// sews them, and a record holds at most 1,024 shells. The wrap gives its patches in an order that
-/// keeps neighbours together, so each run is one connected piece; the runs are then sewn together.
-const RUN: usize = 512;
-
-/// The sheets sewn into one body, a run of [`RUN`] at a time, then the runs (again in runs while
-/// there are more than that).
-fn sewn_in_runs(sheets: &[solidcraft_kernel::Body]) -> solidcraft_kernel::Result<solidcraft_kernel::Body> {
-    let mut level: Vec<solidcraft_kernel::Body> = Vec::new();
-    for run in sheets.chunks(RUN) {
-        let refs: Vec<_> = run.iter().collect();
-        level.push(solidcraft_kernel::stitch(&refs, 0.0)?);
+/// A patch as a face to sew: its bicubic net and its four sides (cubic chains, counter-clockwise
+/// about its natural normal), which neighbouring patches share exactly.
+fn patch_face(f: &solidcraft_geom::bspline::NurbsSurface) -> solidcraft_kernel::FaceSpec {
+    let pts = solidcraft_scan::surface_edit::points(f);
+    let net: [solidcore_record::Vec3; 16] = std::array::from_fn(|k| pts.get(k).copied().unwrap_or(solidcore_record::Vec3::ZERO));
+    let side = |idx: [usize; 4]| solidcraft_kernel::EdgeSpec::Chain { degree: 3, ctrl: idx.iter().map(|&i| net[i]).collect::<Vec<_>>().into() };
+    solidcraft_kernel::FaceSpec {
+        loops: vec![vec![side([0, 1, 2, 3]), side([3, 7, 11, 15]), side([15, 14, 13, 12]), side([12, 8, 4, 0])]],
+        surface: solidcraft_kernel::SurfSpec::Bicubic { net: Box::new(net) },
+        probe: None,
     }
-    while level.len() > 1 {
-        let mut next = Vec::new();
-        for run in level.chunks(RUN) {
-            let refs: Vec<_> = run.iter().collect();
-            next.push(if refs.len() == 1 { run[0].clone() } else { solidcraft_kernel::stitch(&refs, 0.0)? });
-        }
-        level = next;
-    }
-    level.pop().ok_or_else(|| solidcraft_kernel::KernelError::Invalid("nothing to sew".into()))
 }
 
 /// Most patches allowed, and the fewest a cap may ask for.
@@ -72,12 +61,10 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
     if w.faces.is_empty() {
         return Err(bad(cmd, "the scan could not be wrapped: no patch could be laid"));
     }
-    let sheets: Vec<_> = w
-        .faces
-        .iter()
-        .map(|f| solidcraft_kernel::nurbs_sheet(f).map_err(|e| bad(cmd, format!("a patch could not be made into a face: {e}"))))
-        .collect::<Result<_>>()?;
-    let sewn = sewn_in_runs(&sheets).map_err(|e| bad(cmd, format!("the {} patches could not be sewn: {e}", sheets.len())))?;
+    // The patches share their sides exactly, so they are built straight into one body (each side
+    // one edge, laid on its two patches by straight pcurves): no intersection, no gaps.
+    let faces: Vec<solidcraft_kernel::FaceSpec> = w.faces.iter().map(patch_face).collect();
+    let sewn = solidcraft_kernel::sew_network(&faces).map_err(|e| bad(cmd, format!("the {} patches could not be sewn: {e}", faces.len())))?;
     // A body the view and every mesh export can draw, or none: some faces (long thin ones across a
     // CAD export's rounded edges) are more than the tessellator can follow, and a body kept with
     // them would fail to show and could tie up an export.

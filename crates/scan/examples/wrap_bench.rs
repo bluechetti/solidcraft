@@ -62,6 +62,36 @@ fn main() {
                 t0.elapsed().as_secs_f64(),
                 peak_gb()
             );
+            let mut uses = std::collections::HashMap::new();
+            for t in &c.triangles {
+                for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                    *uses.entry((a.min(b), a.max(b))).or_insert(0usize) += 1;
+                }
+            }
+            let smallest_angle = c.triangles.iter().map(|t| {
+                let q = t.map(|i| c.positions[i as usize]);
+                (0..3).map(|k| {
+                    let (u, v) = (q[(k + 1) % 3] - q[k], q[(k + 2) % 3] - q[k]);
+                    (u.dot(v) / (u.len() * v.len()).max(1e-300)).clamp(-1.0, 1.0).acos().to_degrees()
+                }).fold(180.0, f64::min)
+            }).fold(180.0, f64::min);
+            println!(
+                "coarse edges: open {}, of 3+ faces {}; smallest angle {:.2} deg",
+                uses.values().filter(|&&n| n == 1).count(),
+                uses.values().filter(|&&n| n > 2).count(),
+                smallest_angle
+            );
+            let (mut lo, mut hi) = (180.0f64, 0.0f64);
+            for f in &w.faces {
+                let net = solidcraft_scan::surface_edit::points(f);
+                for (o, p, q) in [(0, 1, 4), (3, 2, 7), (15, 14, 11), (12, 13, 8)] {
+                    let (u, v) = (net[p] - net[o], net[q] - net[o]);
+                    let a = (u.dot(v) / (u.len() * v.len()).max(1e-300)).clamp(-1.0, 1.0).acos().to_degrees();
+                    lo = lo.min(a);
+                    hi = hi.max(a);
+                }
+            }
+            println!("patch corners: smallest {lo:.1} deg, largest {hi:.1} deg");
             let coarse_tree = solidcraft_geom::compare::TriangleTree::of(&c.positions, &c.triangles);
             for (p, d) in w.worst.iter().take(4) {
                 let to_coarse = coarse_tree.nearest(*p).map_or(f64::NAN, |(d, _)| d);
