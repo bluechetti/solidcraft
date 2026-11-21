@@ -195,6 +195,30 @@ struct Move {
     held: bool,
 }
 
+/// A hole being drawn with the Pencil: its middle and the face's outward normal (model units),
+/// and its diameter.
+#[derive(Clone, Debug, PartialEq)]
+struct Hole {
+    body: String,
+    center: [f64; 3],
+    normal: [f64; 3],
+    diameter: f64,
+    held: bool,
+    /// The diameter typed or written into the panel's number box while the hole waits.
+    text: String,
+}
+
+/// The Pencil tools: one at a time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Tool {
+    Select,
+    Pull,
+    Move,
+    Hole,
+    Ink,
+    Measure,
+}
+
 /// A section cut through the model in AR: a plane in the model's own coordinates (so it moves
 /// with the model), hiding what lies on its normal's side, as the design view's planes do.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -340,6 +364,8 @@ pub struct State {
     pub test_pull: Option<[f32; 4]>,
     /// The test hook's pull is left waiting for Apply (`ar-pullhold`) instead of applied.
     pub test_pull_hold: bool,
+    /// A tool the test hook switches to (`ar-tool:hole`, `ink`, `pull`, `move`, `measure`).
+    pub test_tool: Option<String>,
     /// The Pencil touch in progress: its id, where and when it began.
     pencil: Option<(egui::TouchId, egui::Pos2, f64)>,
     /// When the Pencil last left the glass (a finger's tap just after is the same hand resting).
@@ -367,6 +393,15 @@ pub struct State {
     pull_mode: bool,
     /// Move is on: the Pencil drags parts to new places (`solid.move`).
     move_mode: bool,
+    /// Hole is on: the Pencil drills holes (`solid.hole`), and the hole being drawn.
+    hole_mode: bool,
+    holing: Option<Hole>,
+    /// Ink is on: the Pencil draws on the model; the strokes (model units, on its surfaces).
+    ink_mode: bool,
+    ink: Vec<Vec<[f64; 3]>>,
+    /// Spin is on: the model turns slowly in place; when the last frame was (seconds).
+    spin: bool,
+    spun_at: f64,
     /// The part being moved.
     moving: Option<Move>,
     /// Where the model was left in this design's room last time, put back once ARKit has
@@ -589,6 +624,7 @@ impl State {
                 }
             }
         }
+        self.spin(ctx.input(|i| i.time));
         self.follow_anchor();
         if std::mem::take(&mut self.release_focus) {
             ctx.memory_mut(|m| {
@@ -656,6 +692,19 @@ impl State {
                 painter.add(egui_wgpu::Callback::new_paint_callback(rect, Paint));
                 if !coaching && let Some(seen) = seen.as_ref() {
                     self.hover(app, seen, rect);
+                    if let Some(t) = self.test_tool.take() {
+                        let tool = match t.as_str() {
+                            "hole" => Tool::Hole,
+                            "ink" => Tool::Ink,
+                            "pull" => Tool::Pull,
+                            "move" => Tool::Move,
+                            "measure" => Tool::Measure,
+                            _ => Tool::Select,
+                        };
+                        if self.tool() != tool {
+                            self.select_tool(tool);
+                        }
+                    }
                     if std::mem::take(&mut self.test_section) {
                         self.cut = self.placed.and_then(|p| p.cut_facing(seen.back));
                     }
@@ -685,6 +734,8 @@ impl State {
                     self.draw_measure(ui.painter(), rect, seen);
                 self.draw_pull(ui.painter(), rect, seen);
                 self.draw_move(ui.painter(), rect, seen);
+                self.draw_hole(ui.painter(), rect, seen);
+                self.draw_ink(ui.painter(), rect, seen);
                 self.draw_overlaps(ui.painter(), rect, seen);
                 self.draw_sizes(app, ui.painter(), rect, seen);
                 }
@@ -862,7 +913,7 @@ impl State {
         let mut pull_at: Option<egui::Pos2> = None;
         let mut pull_end = false;
         // Pull and Move both take the Pencil's press, drag and lift.
-        let pull_mode = self.pull_mode || self.move_mode;
+        let pull_mode = self.pull_mode || self.move_mode || self.hole_mode || self.ink_mode;
         ui.input(|i| {
             for e in &i.events {
                 if let egui::Event::Touch { id, phase, pos, force, .. } = e {
@@ -908,7 +959,27 @@ impl State {
         if let Some(u) = pencil_tap {
             self.select_at(app, seen, u);
         }
-        if self.move_mode {
+        if self.hole_mode {
+            if let Some(at) = pull_start {
+                self.start_hole(app, seen, rect, at);
+            }
+            if let Some(at) = pull_at {
+                self.drag_hole(seen, rect, at);
+            }
+            if pull_end && let Some(h) = self.holing.as_mut() {
+                h.held = false;
+                if h.diameter < 0.5 {
+                    self.holing = None;
+                }
+            }
+        } else if self.ink_mode {
+            if let Some(at) = pull_start {
+                self.ink_at(app, seen, rect, at, true);
+            }
+            if let Some(at) = pull_at {
+                self.ink_at(app, seen, rect, at, false);
+            }
+        } else if self.move_mode {
             if let Some(at) = pull_start {
                 self.start_move(app, seen, rect, at);
             }
@@ -934,11 +1005,32 @@ impl State {
         }
         if let Some([x0, y0, x1, y1]) = self.test_pull.take() {
             let at = |x: f32, y: f32| egui::pos2(rect.min.x + x * rect.width(), rect.min.y + y * rect.height());
-            self.start_pull(app, seen, rect, at(x0, y0));
-            self.drag_pull(seen, rect, at(x1, y1));
-            self.lift_pull();
-            if !std::mem::take(&mut self.test_pull_hold) {
-                self.apply_pull(app);
+            let hold = std::mem::take(&mut self.test_pull_hold);
+            match self.tool() {
+                Tool::Hole => {
+                    self.start_hole(app, seen, rect, at(x0, y0));
+                    self.drag_hole(seen, rect, at(x1, y1));
+                    if let Some(h) = self.holing.as_mut() {
+                        h.held = false;
+                    }
+                    if !hold {
+                        self.apply_hole(app);
+                    }
+                }
+                Tool::Ink => {
+                    for k in 0..=10 {
+                        let t = k as f32 / 10.0;
+                        self.ink_at(app, seen, rect, at(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t), k == 0);
+                    }
+                }
+                _ => {
+                    self.start_pull(app, seen, rect, at(x0, y0));
+                    self.drag_pull(seen, rect, at(x1, y1));
+                    self.lift_pull();
+                    if !hold {
+                        self.apply_pull(app);
+                    }
+                }
             }
         }
         let pencil_busy = self.pencil.is_some() || ui.input(|i| i.time) - self.pencil_up_at < 0.3;
@@ -1247,7 +1339,7 @@ impl State {
             self.anchored = None;
             return;
         };
-        let settling = self.drag.is_some() || self.pinch.is_some();
+        let settling = self.drag.is_some() || self.pinch.is_some() || self.spin;
         if !settling && self.anchored != Some(placed) {
             let f = placed.anchor();
             let pose: Mat4 = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [f[0], f[1], f[2], 1.0]];
@@ -1282,6 +1374,11 @@ impl State {
         self.pulling = None;
         self.moving = None;
         self.move_mode = false;
+        self.holing = None;
+        self.hole_mode = false;
+        self.ink_mode = false;
+        self.ink.clear();
+        self.spin = false;
         self.overlaps.clear();
         self.joints = None;
         self.measuring = None;
@@ -1336,9 +1433,11 @@ impl State {
         let mut chosen: Option<&str> = None;
         let container = Container::new(ctx, Surface::Popup);
         let tools = [
-            ("Select", !self.pull_mode && self.measuring.is_none()),
-            ("Pull", self.pull_mode),
-            ("Measure", self.measuring.is_some()),
+            ("Select", self.tool() == Tool::Select),
+            ("Pull", self.tool() == Tool::Pull),
+            ("Hole", self.tool() == Tool::Hole),
+            ("Ink", self.tool() == Tool::Ink),
+            ("Measure", self.tool() == Tool::Measure),
             ("Section", self.cut.is_some()),
             ("Photo", false),
             ("Undo", false),
@@ -1363,19 +1462,11 @@ impl State {
         if let Some(label) = chosen {
             self.palette = None;
             match label {
-                "Select" => {
-                    self.pull_mode = false;
-                    self.measuring = None;
-                    self.pulling = None;
-                }
-                "Pull" => {
-                    self.pull_mode = true;
-                    self.measuring = None;
-                }
-                "Measure" => {
-                    self.measuring = Some(Vec::new());
-                    self.pull_mode = false;
-                }
+                "Select" => self.select_tool(Tool::Select),
+                "Pull" => self.select_tool(Tool::Pull),
+                "Hole" => self.select_tool(Tool::Hole),
+                "Ink" => self.select_tool(Tool::Ink),
+                "Measure" => self.select_tool(Tool::Measure),
                 "Section" => {
                     self.cut = match (self.cut, self.placed, self.last_back) {
                         (None, Some(p), Some(back)) => p.cut_facing(back),
@@ -1489,7 +1580,8 @@ impl State {
     /// it is now (after a pull too).
     fn draw_sizes(&self, app: &SolveApp, painter: &egui::Painter, rect: egui::Rect, seen: &Seen) {
         let Some(placed) = self.placed.filter(|_| self.sizes) else { return };
-        let b = solidcraft_ui_egui::viewport::model_bounds(app);
+        // The selected part's own size when one is selected, else the whole model's.
+        let b = self.selected.as_deref().and_then(|n| solidcraft_ui_egui::viewport::body_box(app, n)).unwrap_or_else(|| solidcraft_ui_egui::viewport::model_bounds(app));
         if b.is_empty() {
             return;
         }
@@ -1657,6 +1749,153 @@ impl State {
         let back = egui::Rect::from_center_size(b + egui::vec2(0.0, -26.0), galley.size() + egui::vec2(14.0, 6.0));
         painter.rect_filled(back, 5.0, ink);
         painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
+    }
+
+    /// Switch the Pencil to `tool` (Select when it is the one on already): the others go off, with
+    /// anything they had waiting.
+    fn select_tool(&mut self, tool: Tool) {
+        let tool = if self.tool() == tool { Tool::Select } else { tool };
+        self.pull_mode = tool == Tool::Pull;
+        self.move_mode = tool == Tool::Move;
+        self.hole_mode = tool == Tool::Hole;
+        self.ink_mode = tool == Tool::Ink;
+        self.measuring = (tool == Tool::Measure).then(Vec::new);
+        self.pulling = None;
+        self.moving = None;
+        self.holing = None;
+    }
+
+    /// The Pencil tool that is on.
+    fn tool(&self) -> Tool {
+        if self.pull_mode {
+            Tool::Pull
+        } else if self.move_mode {
+            Tool::Move
+        } else if self.hole_mode {
+            Tool::Hole
+        } else if self.ink_mode {
+            Tool::Ink
+        } else if self.measuring.is_some() {
+            Tool::Measure
+        } else {
+            Tool::Select
+        }
+    }
+
+    /// Hole: the Pencil on a face puts the hole's middle there.
+    fn start_hole(&mut self, app: &mut SolveApp, seen: &Seen, rect: egui::Rect, at: egui::Pos2) {
+        let Some(placed) = self.placed else { return };
+        let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
+        match pick(app, seen, &placed, u).and_then(|h| Some((h.body, h.point, unit(h.normal)?))) {
+            Some((body, center, normal)) => self.holing = Some(Hole { body, center, normal, diameter: 0.0, held: true, text: String::new() }),
+            None if self.holing.is_none() => self.message = "Put the Pencil on a face where the hole goes.".into(),
+            None => {}
+        }
+    }
+
+    /// Hole: the diameter is twice how far the Pencil is from the middle, on the face's plane.
+    fn drag_hole(&mut self, seen: &Seen, rect: egui::Rect, at: egui::Pos2) {
+        let (Some(placed), Some(h)) = (self.placed, self.holing.as_mut()) else { return };
+        let Some(inv) = invert(&seen.view_proj) else { return };
+        let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
+        let ndc = [f64::from(u.0) * 2.0 - 1.0, 1.0 - f64::from(u.1) * 2.0];
+        let point = |depth: f64| {
+            let v = [ndc[0], ndc[1], depth, 1.0];
+            let p: [f64; 4] = std::array::from_fn(|r| (0..4).map(|c| inv[c][r] * v[c]).sum());
+            placed.point_to_model([p[0] / p[3], p[1] / p[3], p[2] / p[3]])
+        };
+        // The Pencil's ray in the model's space, met with the face's plane.
+        let (near, far) = (point(0.0), point(1.0));
+        let dir = sub(far, near);
+        let across = dot(dir, h.normal);
+        if across.abs() < 1e-9 {
+            return;
+        }
+        let t = dot(sub(h.center, near), h.normal) / across;
+        let on_face = add(near, scale3(dir, t));
+        let r = sub(on_face, h.center);
+        h.diameter = (dot(r, r).sqrt() * 2.0 * 2.0).round() / 2.0;
+        h.text = format!("{:.1}", h.diameter);
+    }
+
+    /// Hole: drilled through where it was drawn (`solid.hole`, one undo step).
+    fn apply_hole(&mut self, app: &mut SolveApp) {
+        self.release_focus = true;
+        let Some(h) = self.holing.take() else { return };
+        if h.diameter < 0.5 {
+            return;
+        }
+        let params = serde_json::json!({ "position": h.center, "diameter": h.diameter });
+        match app.run("solid.hole", params) {
+            Ok(_) => {
+                self.message = format!("A {:.1} mm hole through {}.", h.diameter, h.body);
+                if let Ok(b) = self.bridge() {
+                    (b.tick)();
+                }
+            }
+            Err(e) => self.message = e,
+        }
+        crate::note(&format!("ar: hole {:.1} mm in {}", h.diameter, h.body));
+    }
+
+    /// The hole being drawn: its circle on the face, and the diameter.
+    fn draw_hole(&self, painter: &egui::Painter, rect: egui::Rect, seen: &Seen) {
+        let (Some(h), Some(placed)) = (&self.holing, self.placed) else { return };
+        let ink = egui::Color32::from_rgb(255, 140, 60);
+        let Some(middle) = to_screen(seen, &placed, rect, h.center) else { return };
+        painter.circle_filled(middle, 4.0, ink);
+        let side = if h.normal[0].abs() < 0.9 { [1.0, 0.0, 0.0] } else { [0.0, 1.0, 0.0] };
+        let (Some(t1), r) = (unit(cross(h.normal, side)), h.diameter / 2.0) else { return };
+        let t2 = cross(h.normal, t1);
+        let ring: Vec<egui::Pos2> = (0..=48)
+            .filter_map(|k| {
+                let a = f64::from(k) / 48.0 * std::f64::consts::TAU;
+                to_screen(seen, &placed, rect, add(h.center, add(scale3(t1, r * a.cos()), scale3(t2, r * a.sin()))))
+            })
+            .collect();
+        painter.add(egui::Shape::line(ring, egui::Stroke::new(3.0, ink)));
+        let galley = painter.layout_no_wrap(format!("Ø {:.1} mm", h.diameter), egui::FontId::proportional(20.0), egui::Color32::BLACK);
+        let back = egui::Rect::from_center_size(middle + egui::vec2(0.0, -30.0), galley.size() + egui::vec2(14.0, 6.0));
+        painter.rect_filled(back, 5.0, ink);
+        painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
+    }
+
+    /// Ink: the Pencil's line, kept on the model's surfaces where it was drawn.
+    fn ink_at(&mut self, app: &mut SolveApp, seen: &Seen, rect: egui::Rect, at: egui::Pos2, new_stroke: bool) {
+        let Some(placed) = self.placed else { return };
+        let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
+        let Some(h) = pick(app, seen, &placed, u) else { return };
+        // A hair off the surface, so the line is not lost in it.
+        let point = add(h.point, scale3(unit(h.normal).unwrap_or([0.0; 3]), 0.2));
+        match self.ink.last_mut() {
+            Some(stroke) if !new_stroke => stroke.push(point),
+            _ => self.ink.push(vec![point]),
+        }
+    }
+
+    /// The ink on the model, where it is in the room.
+    fn draw_ink(&self, painter: &egui::Painter, rect: egui::Rect, seen: &Seen) {
+        let Some(placed) = self.placed else { return };
+        let red = egui::Color32::from_rgb(235, 40, 60);
+        for stroke in &self.ink {
+            let points: Vec<egui::Pos2> = stroke.iter().filter_map(|q| to_screen(seen, &placed, rect, *q)).collect();
+            if points.len() == 1 {
+                painter.circle_filled(points[0], 2.5, red);
+            } else {
+                painter.add(egui::Shape::line(points, egui::Stroke::new(4.0, red)));
+            }
+        }
+    }
+
+    /// Spin: the model turns slowly about the vertical through its foot, as on a turntable.
+    fn spin(&mut self, now: f64) {
+        let dt = (now - self.spun_at).clamp(0.0, 0.1);
+        self.spun_at = now;
+        if let Some(mut p) = self.placed.filter(|_| self.spin) {
+            let foot = p.anchor();
+            p.axes = p.axes.map(|a| rotate_about_y(a, dt * 0.4));
+            self.placed = Some(p.with_anchor(foot));
+        }
     }
 
     /// The design's next exploded view (`explode.show`: shown only, the design keeps its
@@ -1832,14 +2071,10 @@ impl State {
                         if button(ui, explode_label, if self.exploded > 0 { Button::SmallSelected } else { Button::Small }).clicked() {
                             self.next_exploded_view(app);
                         }
-                        if button(ui, "Move", if self.move_mode { Button::SmallSelected } else { Button::Small }).backing_on_hover_text("Drag a part to a new place with the Pencil").clicked() {
-                            self.move_mode = !self.move_mode;
-                            self.moving = None;
-                            if self.move_mode {
-                                self.pull_mode = false;
-                                self.pulling = None;
-                                self.measuring = None;
-                            }
+                        let current = self.tool();
+                        let on = |t: Tool| if current == t { Button::SmallSelected } else { Button::Small };
+                        if button(ui, "Move", on(Tool::Move)).backing_on_hover_text("Drag a part to a new place with the Pencil").clicked() {
+                            self.select_tool(Tool::Move);
                         }
                         if self.moving.as_ref().is_some_and(|m| !m.held) {
                             if button(ui, "Apply", Button::SmallSelected).clicked() {
@@ -1849,14 +2084,43 @@ impl State {
                                 self.moving = None;
                             }
                         }
-                        if button(ui, "Pull", if self.pull_mode { Button::SmallSelected } else { Button::Small }).clicked() {
-                            self.pull_mode = !self.pull_mode;
-                            self.move_mode = false;
-                            self.moving = None;
-                            self.pulling = None;
-                            if self.pull_mode {
-                                self.measuring = None;
+                        if button(ui, "Pull", on(Tool::Pull)).clicked() {
+                            self.select_tool(Tool::Pull);
+                        }
+                        if button(ui, "Hole", on(Tool::Hole)).backing_on_hover_text("Draw a hole on a face with the Pencil").clicked() {
+                            self.select_tool(Tool::Hole);
+                        }
+                        if self.holing.as_ref().is_some_and(|h| !h.held) {
+                            let mut entered = false;
+                            if let Some(h) = self.holing.as_mut() {
+                                ui.label("Ø");
+                                let size = egui::vec2(72.0, ui.spacing().interact_size.y);
+                                entered = ui
+                                    .allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        ui.set_max_width(size.x);
+                                        solidcraft_ui_kit::field(ui, &mut h.text)
+                                    })
+                                    .inner;
+                                if let Some(v) = solidcraft_ui_kit::parse_number(&h.text) {
+                                    h.diameter = v.max(0.0);
+                                }
                             }
+                            if button(ui, "Apply", Button::SmallSelected).clicked() || entered {
+                                self.apply_hole(app);
+                            }
+                            if button(ui, "Cancel", Button::Small).clicked() {
+                                self.holing = None;
+                                self.release_focus = true;
+                            }
+                        }
+                        if button(ui, "Ink", on(Tool::Ink)).backing_on_hover_text("Draw on the model with the Pencil").clicked() {
+                            self.select_tool(Tool::Ink);
+                        }
+                        if !self.ink.is_empty() && button(ui, "Clear ink", Button::Small).clicked() {
+                            self.ink.clear();
+                        }
+                        if button(ui, "Spin", if self.spin { Button::SmallSelected } else { Button::Small }).backing_on_hover_text("Turn the model slowly, as on a turntable").clicked() {
+                            self.spin = !self.spin;
                         }
                         if self.pulling.as_ref().is_some_and(|p| !p.held) {
                             // The exact value, typed or written with the Pencil (Scribble).
@@ -1892,8 +2156,7 @@ impl State {
                         }
                         let measuring = self.measuring.is_some();
                         if button(ui, "Measure", if measuring { Button::SmallSelected } else { Button::Small }).clicked() {
-                            self.measuring = if measuring { None } else { Some(Vec::new()) };
-                            self.pull_mode = false;
+                            self.select_tool(Tool::Measure);
                         }
                         ui.separator();
                         if button(ui, "Pick up", Button::Small).clicked() {
@@ -1924,6 +2187,9 @@ impl State {
                         Some(_) if self.pulling.as_ref().is_some_and(|p| !p.held) => {
                             "Apply moves the face; drag its arrow again to change how far.".into()
                         }
+                        Some(_) if self.holing.as_ref().is_some_and(|h| !h.held) => "Apply drills the hole through; type or write the diameter for an exact one.".into(),
+                        Some(_) if self.hole_mode => "Press the Pencil where the hole goes and drag out its size.".into(),
+                        Some(_) if self.ink_mode => "Draw on the model with the Pencil. Clear ink takes it all away.".into(),
                         Some(_) if self.moving.as_ref().is_some_and(|m| !m.held) => "Apply puts the part there.".into(),
                         Some(_) if self.move_mode => "Press the Pencil on a part and drag it where it goes.".into(),
                         Some(_) if self.pull_mode => "Press the Pencil on a face and drag to push or pull it.".into(),

@@ -3849,6 +3849,13 @@ fn known_body_bounds(app: &SolveApp, st: &std::sync::Arc<solidcraft_engine::doc:
 type BodyBounds = (std::sync::Arc<solidcraft_engine::doc::ModelState>, std::sync::Arc<Vec<(String, solidcraft_engine::geom::Aabb3)>>);
 
 /// The model's extent: bodies (from the cached boxes) and sketches.
+/// The bounding box of the shown body `name` (model units), or `None` when no body of that name is
+/// shown: for a host that shows one part's size (the iPad's AR view).
+pub fn body_box(app: &SolveApp, name: &str) -> Option<solidcraft_engine::geom::Aabb3> {
+    let st = crate::open_meshing::shown_world(app);
+    body_bounds(app, &st).iter().find(|(n, _)| n == name).map(|(_, b)| *b)
+}
+
 pub fn model_bounds(app: &SolveApp) -> solidcraft_engine::geom::Aabb3 {
     let st = crate::open_meshing::shown_world(app);
     let bodies = body_bounds(app, &st).iter().fold(solidcraft_engine::geom::Aabb3::EMPTY, |a, (_, x)| a.union(x));

@@ -129,6 +129,12 @@ impl eframe::App for App {
                     {
                         self.ar.test_record = Some(step == "ar-record");
                     }
+                } else if let Some(tool) = step.strip_prefix("ar-tool:") {
+                    #[cfg(target_os = "ios")]
+                    {
+                        self.ar.test_tool = Some(tool.to_owned());
+                    }
+                    let _ = tool;
                 } else if step == "ar-scales" {
                     #[cfg(target_os = "ios")]
                     {
