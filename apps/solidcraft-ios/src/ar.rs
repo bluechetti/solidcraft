@@ -168,6 +168,12 @@ struct Pull {
     base: f64,
     /// The Pencil is on it; once lifted the pull waits for Apply or Cancel.
     held: bool,
+    /// An edge was grabbed (a point on it): the pull rounds it, `distance` being the radius.
+    edge: Option<[f64; 3]>,
+    /// The 5 mm step the pull was last at (a tick on Apple Pencil Pro at each new one).
+    detent: i64,
+    /// The value typed or written (Scribble) into the panel's field while the pull waits.
+    text: String,
 }
 
 /// A section cut through the model in AR: a plane in the model's own coordinates (so it moves
@@ -936,7 +942,7 @@ impl State {
             return;
         }
         let Some(placed) = self.placed else { return };
-        let hit = pick(app, seen, &placed, u).map(|h| h.0);
+        let hit = pick(app, seen, &placed, u).map(|h| h.body);
         let items = match &hit {
             Some(name) => serde_json::json!([{ "type": "body", "name": name }]),
             None => serde_json::json!([]),
@@ -971,10 +977,15 @@ impl State {
         }
         let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
         let grabbed = pick(app, seen, &placed, u)
-            .and_then(|(body, point, normal, _)| Some(Pull { body, point, normal: unit(normal)?, start: at, distance: 0.0, base: 0.0, held: true }));
+            .and_then(|h| {
+                // On an edge (its nearest point within a fingertip of the Pencil on the screen):
+                // the edge is rounded instead of the face moved.
+                let edge = h.edge.filter(|e| to_screen(seen, &placed, rect, *e).is_some_and(|s| s.distance(at) < 16.0));
+                Some(Pull { body: h.body, point: edge.unwrap_or(h.point), normal: unit(h.normal)?, start: at, distance: 0.0, base: 0.0, held: true, edge, detent: 0, text: String::new() })
+            });
         match grabbed {
             Some(p) => {
-                crate::note(&format!("ar: pull grabbed {}", p.body));
+                crate::note(&format!("ar: pull grabbed {} ({})", p.body, if p.edge.is_some() { "edge" } else { "face" }));
                 self.pulling = Some(p);
             }
             // Off the model: a pull waiting for Apply stays as it was.
@@ -996,16 +1007,33 @@ impl State {
             self.message = "Look at the face from the side to pull it.".into();
             return;
         }
-        let travel = f64::from((at - pull.start).dot(along) / per_unit);
+        let travel = if pull.edge.is_some() {
+            // A radius: how far the Pencil went from where it landed, whichever way.
+            f64::from((at - pull.start).length() / per_unit.sqrt())
+        } else {
+            f64::from((at - pull.start).dot(along) / per_unit)
+        };
         pull.distance = pull.base + (travel * 2.0).round() / 2.0;
+        if pull.edge.is_some() {
+            pull.distance = pull.distance.max(0.0);
+        }
+        pull.text = format!("{:.1}", pull.distance);
+        // A tick on Apple Pencil Pro at every 5 mm, so the distance can be felt.
+        let detent = (pull.distance / 5.0).floor() as i64;
+        if detent != pull.detent {
+            pull.detent = detent;
+            if let Some(Ok(b)) = self.bridge.as_ref() {
+                (b.tick)();
+            }
+        }
     }
 
-    /// Pull: the face goes where the Pencil let go, as one step in the design's undo history.
     /// Pull: the Pencil lifted. The pull waits, drawn where it would go, for Apply or Cancel
     /// (or the Pencil again near its arrow, to adjust it); one that went nowhere is dropped.
     fn lift_pull(&mut self) {
         let Some(pull) = self.pulling.as_mut() else { return };
         pull.held = false;
+        pull.text = format!("{:.1}", pull.distance);
         crate::note(&format!("ar: pull lifted at {:+.1} mm", pull.distance));
         if pull.distance.abs() < 0.5 {
             self.pulling = None;
@@ -1021,17 +1049,24 @@ impl State {
         if pull.distance.abs() < 0.5 {
             return;
         }
-        let params = serde_json::json!({ "face": pull.point, "distance": pull.distance, "body": pull.body });
+        let params = match pull.edge {
+            // press_pull on edges is a fillet of that radius.
+            Some(e) => serde_json::json!({ "edges": [e], "distance": pull.distance, "body": pull.body }),
+            None => serde_json::json!({ "face": pull.point, "distance": pull.distance, "body": pull.body }),
+        };
         match app.run("solid.press_pull", params) {
             Ok(_) => {
-                self.message = format!("{} moved {:+.1} mm.", pull.body, pull.distance);
+                self.message = match pull.edge {
+                    Some(_) => format!("{}: edge rounded {:.1} mm.", pull.body, pull.distance),
+                    None => format!("{} moved {:+.1} mm.", pull.body, pull.distance),
+                };
                 if let Ok(b) = self.bridge() {
                     (b.tick)();
                 }
             }
             Err(e) => self.message = e,
         }
-        crate::note(&format!("ar: pulled {} by {:+.1} mm", pull.body, pull.distance));
+        crate::note(&format!("ar: pulled {} by {:+.1} mm ({})", pull.body, pull.distance, if pull.edge.is_some() { "edge" } else { "face" }));
     }
 
     /// The face being pulled: an arrow from where the Pencil landed along the face's normal, as
@@ -1039,8 +1074,19 @@ impl State {
     fn draw_pull(&self, painter: &egui::Painter, rect: egui::Rect, seen: &Seen) {
         let (Some(pull), Some(placed)) = (&self.pulling, self.placed) else { return };
         let Some(a) = to_screen(seen, &placed, rect, pull.point) else { return };
-        let Some(b) = to_screen(seen, &placed, rect, add(pull.point, scale3(pull.normal, pull.distance))) else { return };
         let ink = egui::Color32::from_rgb(64, 200, 255);
+        if pull.edge.is_some() {
+            // A rounded edge: a ring as wide as the radius is on the screen, and the radius.
+            let per_mm = to_screen(seen, &placed, rect, add(pull.point, pull.normal)).map_or(1.0, |b| (b - a).length());
+            painter.circle(a, 7.0, ink, egui::Stroke::new(2.0, egui::Color32::BLACK));
+            painter.circle_stroke(a, (pull.distance as f32 * per_mm).max(8.0), egui::Stroke::new(3.0, ink));
+            let galley = painter.layout_no_wrap(format!("R {:.1} mm", pull.distance), egui::FontId::proportional(22.0), egui::Color32::BLACK);
+            let back = egui::Rect::from_center_size(a + egui::vec2(0.0, -40.0), galley.size() + egui::vec2(16.0, 8.0));
+            painter.rect_filled(back, 6.0, ink);
+            painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
+            return;
+        }
+        let Some(b) = to_screen(seen, &placed, rect, add(pull.point, scale3(pull.normal, pull.distance))) else { return };
         painter.circle(a, 7.0, ink, egui::Stroke::new(2.0, egui::Color32::BLACK));
         if a.distance(b) > 1.0 {
             painter.arrow(a, b - a, egui::Stroke::new(4.0, ink));
@@ -1067,7 +1113,7 @@ impl State {
         self.hover_picked = Some(at);
         let Some(placed) = self.placed else { return };
         let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
-        app.viewport.stereo.pointed = pick(app, seen, &placed, u).map(|(body, point, _, face)| solidcraft_ui_egui::stereo::Pointed { body, face, point });
+        app.viewport.stereo.pointed = pick(app, seen, &placed, u).map(|h| solidcraft_ui_egui::stereo::Pointed { body: h.body, face: h.face, point: h.point });
     }
 
     /// Pencil double taps (undo each) and a squeeze (the tool palette at the tip).
@@ -1320,7 +1366,7 @@ impl State {
     /// face); the second gives the distance; a third starts again.
     fn measure_at(&mut self, app: &mut SolveApp, seen: &Seen, u: (f32, f32)) {
         let Some(placed) = self.placed else { return };
-        let Some((_, point, _, _)) = pick(app, seen, &placed, u) else {
+        let Some(Hit { point, .. }) = pick(app, seen, &placed, u) else {
             self.message = "Tap the model to measure.".into();
             return;
         };
@@ -1460,7 +1506,16 @@ impl State {
                             }
                         }
                         if self.pulling.as_ref().is_some_and(|p| !p.held) {
-                            if button(ui, "Apply", Button::SmallSelected).clicked() {
+                            // The exact value, typed or written with the Pencil (Scribble).
+                            let mut entered = false;
+                            if let Some(p) = self.pulling.as_mut() {
+                                ui.label(if p.edge.is_some() { "R" } else { "mm" });
+                                entered = solidcraft_ui_kit::field(ui, &mut p.text);
+                                if let Some(v) = solidcraft_ui_kit::parse_number(&p.text) {
+                                    p.distance = if p.edge.is_some() { v.max(0.0) } else { v };
+                                }
+                            }
+                            if button(ui, "Apply", Button::SmallSelected).clicked() || entered {
                                 self.apply_pull(app);
                             }
                             if button(ui, "Cancel", Button::Small).clicked() {
@@ -1541,7 +1596,17 @@ fn to_screen(seen: &Seen, placed: &Placed, rect: egui::Rect, q: [f64; 3]) -> Opt
 /// The part under view point `u` (0..1 across and down) and where its face is hit (model
 /// units): the design view's own pick (`view.pick`) with the ray from ARKit's camera taken into
 /// the model's space.
-fn pick(app: &mut SolveApp, seen: &Seen, placed: &Placed, u: (f32, f32)) -> Option<(String, [f64; 3], [f64; 3], usize)> {
+/// What the design view's pick found under a view point (model units).
+struct Hit {
+    body: String,
+    point: [f64; 3],
+    normal: [f64; 3],
+    face: usize,
+    /// The nearest point on the nearest edge of that face, when the pick found one.
+    edge: Option<[f64; 3]>,
+}
+
+fn pick(app: &mut SolveApp, seen: &Seen, placed: &Placed, u: (f32, f32)) -> Option<Hit> {
     let inv = invert(&seen.view_proj)?;
     let ndc = [f64::from(u.0) * 2.0 - 1.0, 1.0 - f64::from(u.1) * 2.0];
     let at = |depth: f64| {
@@ -1552,7 +1617,9 @@ fn pick(app: &mut SolveApp, seen: &Seen, placed: &Placed, u: (f32, f32)) -> Opti
     let (near, far) = (at(0.0), at(1.0));
     let origin = placed.point_to_model(near);
     let dir = unit(placed.direction_to_model(sub(far, near)))?;
-    let request = serde_json::json!({ "frame": "model", "edges": false, "rays": [{ "origin": origin, "dir": dir }] });
+    // The face's nearest edge at any distance: whether it is near enough is judged on the AR
+    // view's own screen by the caller (the pick's pixels are a model render's, not this view's).
+    let request = serde_json::json!({ "frame": "model", "edges": true, "edge_px": 1.0e6, "rays": [{ "origin": origin, "dir": dir }] });
     let reply = solidcraft_ui_egui::view_pick::pick_command(app, &request).ok()?;
     let hit = reply.get("hits")?.get(0)?;
     let body = hit.get("body")?.as_str()?.to_owned();
@@ -1561,7 +1628,11 @@ fn pick(app: &mut SolveApp, seen: &Seen, placed: &Placed, u: (f32, f32)) -> Opti
         Some([p.get(0)?.as_f64()?, p.get(1)?.as_f64()?, p.get(2)?.as_f64()?])
     };
     let face = hit.get("face").and_then(|f| f.as_u64()).and_then(|f| usize::try_from(f).ok()).unwrap_or(0);
-    Some((body, v("point")?, v("normal")?, face))
+    let edge = hit.get("edge").and_then(|e| {
+        let p = e.get("point")?;
+        Some([p.get(0)?.as_f64()?, p.get(1)?.as_f64()?, p.get(2)?.as_f64()?])
+    });
+    Some(Hit { body, point: v("point")?, normal: v("normal")?, face, edge })
 }
 
 /// This design's saved map of the room and the model's place in it (Library, which iPadOS

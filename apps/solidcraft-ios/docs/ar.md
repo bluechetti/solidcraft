@@ -18,7 +18,7 @@ until it finds a surface.
 | Section | A cut through the model facing you; drag up and down to move it; Apply keeps it in the design. |
 | Explode | The design's exploded views in turn, then assembled again. |
 | Measure | Two Pencil taps on the model: the distance in mm, drawn in the room. |
-| Pull | Press the Pencil on a face and drag: an arrow and the distance follow. Lift, then Apply (`solid.press_pull`, one undo step) or Cancel; the Pencil back on the arrow adjusts it. |
+| Pull | Press the Pencil on a face and drag: an arrow and the distance follow (a tick on Pencil Pro every 5 mm). Lift, then type or write (Scribble) the exact value, Apply (`solid.press_pull`, one undo step) or Cancel; the Pencil back on the arrow adjusts it. On an edge it rounds the edge instead (a fillet, the drag is the radius). |
 | Undo / Redo | The design's own undo history. |
 | Photo | Saves the room and the model (without the panel) to Photos. |
 | Record | A screen video of the session (ReplayKit); Stop shows Apple's preview to save or share it. |
