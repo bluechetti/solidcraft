@@ -190,6 +190,8 @@ struct Move {
     /// How far it goes (model units), in whole millimetres; kept on one model axis when the
     /// drag is nearly along it.
     delta: [f64; 3],
+    /// The model axis the move keeps to, once it has chosen one.
+    axis: Option<usize>,
     held: bool,
 }
 
@@ -372,6 +374,8 @@ pub struct State {
     restore: Option<Placed>,
     /// Sizes is on: the model's overall width, depth and height are drawn on it.
     pub sizes: bool,
+    /// The row of scales under the panel is open.
+    pub scales_open: bool,
     /// The model hangs on a wall (the wall's normal in the room): it is dragged along the wall
     /// and has no floor shadow.
     wall: Option<[f64; 3]>,
@@ -569,6 +573,19 @@ impl State {
                 crate::note("ar: placement restored");
                 if let Ok(b) = self.bridge() {
                     (b.tick)();
+                }
+            }
+        }
+        // The model as it is now (a part moved, a face pulled, an exploded view): its box, which
+        // the contact shadow is drawn under. Its foot stays where it was put.
+        if let Some(mut p) = self.placed {
+            let b = solidcraft_ui_egui::viewport::model_bounds(app);
+            let now = [[b.min.x, b.min.y, b.min.z], [b.max.x, b.max.y, b.max.z]];
+            if !b.is_empty() && now != p.bounds {
+                p.bounds = now;
+                self.placed = Some(p);
+                if self.anchored.is_some() {
+                    self.anchored = Some(p);
                 }
             }
         }
@@ -1511,6 +1528,41 @@ impl State {
         }
     }
 
+    /// The scales a drawing uses, in a row under the panel, over everything else: one tap sets
+    /// the model to it about its foot.
+    fn scales_row(&mut self, ctx: &egui::Context, at: egui::Pos2) -> Option<egui::Rect> {
+        if !self.scales_open {
+            return None;
+        }
+        let Some(mut p) = self.placed else {
+            self.scales_open = false;
+            return None;
+        };
+        let now = p.scale / REAL_SIZE;
+        let mut chosen = None;
+        let container = Container::new(ctx, Surface::Popup);
+        let shown = container.area(egui::Id::unique("ar-scales")).order(egui::Order::Tooltip).fixed_pos(at).show(ctx, |ui| {
+            let frame = Container::popup_frame(ui.style());
+            container.show_frame(ui, frame, ctx.content_rect(), |ui| {
+                ui.horizontal(|ui| {
+                    for (factor, name) in [(2.0, "2:1"), (1.0, "1:1"), (0.5, "1:2"), (0.2, "1:5"), (0.1, "1:10"), (0.05, "1:20")] {
+                        let on = (now / factor - 1.0).abs() < 1e-6;
+                        if button(ui, name, if on { Button::SmallSelected } else { Button::Small }).clicked() {
+                            chosen = Some(factor);
+                        }
+                    }
+                });
+            });
+        });
+        if let Some(factor) = chosen {
+            let anchor = p.anchor();
+            p.scale = REAL_SIZE * factor;
+            self.placed = Some(p.with_anchor(anchor));
+            self.scales_open = false;
+        }
+        Some(shown.response.rect)
+    }
+
     /// The Joints list beside the panel: each joint's coordinates with − and + (5 a step).
     fn joints_list(&mut self, ctx: &egui::Context, at: egui::Pos2, app: &mut SolveApp) -> Option<egui::Rect> {
         let joints = self.joints.clone()?;
@@ -1552,7 +1604,7 @@ impl State {
         match pick(app, seen, &placed, u) {
             Some(h) => {
                 let grab_room = placed.apply_room(h.point);
-                self.moving = Some(Move { body: h.body, grab: h.point, grab_room, delta: [0.0; 3], held: true });
+                self.moving = Some(Move { body: h.body, grab: h.point, grab_room, delta: [0.0; 3], axis: None, held: true });
             }
             None if self.moving.is_none() => self.message = "Put the Pencil on a part to move it.".into(),
             None => {}
@@ -1565,7 +1617,12 @@ impl State {
         let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
         let Some(room) = on_level(seen, u, m.grab_room[1]) else { return };
         let model = placed.direction_to_model(sub(room, m.grab_room)).map(|v| v / placed.scale);
-        m.delta = along_axis(model).map(|v| v.round());
+        m.axis = lock_axis(model, m.axis);
+        let kept = match m.axis {
+            Some(k) => std::array::from_fn(|i| if i == k { model[i] } else { 0.0 }),
+            None => model,
+        };
+        m.delta = kept.map(|v| v.round());
     }
 
     /// Move: the part goes where it was left, as one step in the design's undo history.
@@ -1738,18 +1795,10 @@ impl State {
                             p.scale = REAL_SIZE;
                             self.placed = Some(p.with_anchor(anchor));
                         }
-                        ui.label(scale_name(p.scale / REAL_SIZE));
-                        // A drawing's scales in one tap, about the model's foot.
-                        let mut chosen = 0;
-                        let size = egui::vec2(96.0, ui.spacing().interact_size.y);
-                        ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui.set_max_width(size.x);
-                            solidcraft_ui_kit::dropdown(ui, "ar-scale", &mut chosen, &["Scale", "2:1", "1:1", "1:2", "1:5", "1:10", "1:20"]);
-                        });
-                        if let Some(factor) = [0.0, 2.0, 1.0, 0.5, 0.2, 0.1, 0.05].get(chosen).copied().filter(|f| *f > 0.0) {
-                            let anchor = p.anchor();
-                            p.scale = REAL_SIZE * factor;
-                            self.placed = Some(p.with_anchor(anchor));
+                        // The scale, which opens a drawing's scales in a row under the panel.
+                        let label = format!("{} ▾", scale_name(p.scale / REAL_SIZE));
+                        if button(ui, label, if self.scales_open { Button::SmallSelected } else { Button::Small }).backing_on_hover_text("Scale").clicked() {
+                            self.scales_open = !self.scales_open;
                         }
                         if let Some(name) = &self.selected {
                             ui.separator();
@@ -1888,7 +1937,13 @@ impl State {
             });
         });
         // A Pencil touch that starts on the panel is the panel's (its buttons), not the model's.
-        let list = self.joints_list(ctx, shown.response.rect.left_bottom() + egui::vec2(0.0, 8.0), app);
+        let below = shown.response.rect.left_bottom() + egui::vec2(0.0, 8.0);
+        let scales = self.scales_row(ctx, below);
+        let list = self.joints_list(ctx, scales.map_or(below, |r| r.left_bottom() + egui::vec2(0.0, 8.0)), app);
+        let list = match (list, scales) {
+            (Some(a), Some(b)) => Some(a.union(b)),
+            (a, b) => a.or(b),
+        };
         let mut panel = list.map_or(shown.response.rect, |r| r.union(shown.response.rect));
         if let Some(r) = self.palette(ctx) {
             panel = panel.union(r);
@@ -1901,12 +1956,21 @@ impl State {
     }
 }
 
-/// A move kept on one axis when it is nearly along it (the other parts are under a sixth of the
-/// largest), so a part goes straight; otherwise as it is.
-fn along_axis(v: [f64; 3]) -> [f64; 3] {
-    let big = v.iter().map(|x| x.abs()).fold(0.0, f64::max);
-    let others = v.iter().filter(|x| x.abs() < big).map(|x| x.abs()).fold(0.0, f64::max);
-    if big > 0.0 && others < big / 6.0 { v.map(|x| if x.abs() < big { 0.0 } else { x }) } else { v }
+/// The model axis a move keeps to: a hand's drag is never straight, so once a few millimetres
+/// show its way it keeps to the axis it is most along, unless another clearly takes over (half as
+/// much again) or no axis leads (a diagonal, the parts within a sixth of each other: free).
+fn lock_axis(v: [f64; 3], locked: Option<usize>) -> Option<usize> {
+    let a = v.map(f64::abs);
+    let (best, big) = (0..3).map(|k| (k, a[k])).fold((0, 0.0), |m, x| if x.1 > m.1 { x } else { m });
+    if big < 3.0 {
+        return locked;
+    }
+    let second = (0..3).filter(|k| *k != best).map(|k| a[k]).fold(0.0, f64::max);
+    match locked {
+        Some(k) if a[k] * 1.5 >= big => Some(k),
+        _ if second > big * 5.0 / 6.0 => None,
+        _ => Some(best),
+    }
 }
 
 /// A scale as a drawing names it: "1:1", "1:5", "2:1", or a percentage between those.
@@ -2905,9 +2969,15 @@ mod tests {
     /// A move nearly along one axis is kept on it; a slanting one is left alone.
     #[test]
     fn a_move_keeps_to_an_axis() {
-        assert_eq!(along_axis([40.0, 3.0, -2.0]), [40.0, 0.0, 0.0]);
-        assert_eq!(along_axis([30.0, 20.0, 0.0]), [30.0, 20.0, 0.0]);
-        assert_eq!(along_axis([0.0; 3]), [0.0; 3]);
+        // Mostly along X, with a hand's wobble: kept on X.
+        assert_eq!(lock_axis([40.0, 14.0, -6.0], None), Some(0));
+        // Once on X it stays there through more wobble...
+        assert_eq!(lock_axis([20.0, 25.0, 0.0], Some(0)), Some(0));
+        // ...until Y clearly takes over.
+        assert_eq!(lock_axis([10.0, 30.0, 0.0], Some(0)), Some(1));
+        // A true diagonal is free; a tiny start keeps what it had.
+        assert_eq!(lock_axis([30.0, 28.0, 0.0], None), None);
+        assert_eq!(lock_axis([1.0, 0.5, 0.0], Some(2)), Some(2));
     }
 
     /// The scales a drawing names, and a percentage between them.

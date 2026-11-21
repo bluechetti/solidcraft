@@ -129,6 +129,11 @@ impl eframe::App for App {
                     {
                         self.ar.test_record = Some(step == "ar-record");
                     }
+                } else if step == "ar-scales" {
+                    #[cfg(target_os = "ios")]
+                    {
+                        self.ar.scales_open = !self.ar.scales_open;
+                    }
                 } else if step == "ar-sizes" {
                     #[cfg(target_os = "ios")]
                     {
