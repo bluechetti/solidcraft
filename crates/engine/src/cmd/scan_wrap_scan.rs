@@ -19,7 +19,7 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.wrap_scan", "Wrap
     .icon("scan_free_form")
     .contract(&WRAP_CONTRACT)
     .output(output_schema_for::<ScanWrapScanResult>)
-    .params("body?: the scan (default: what is selected on a scan, else the only one); tolerance?: length (default 0.2 mm: how far the patches may lie from the scan); max_patches?: 300–60000 (default 12000; a scan that needs more is wrapped with this many, short of the tolerance): the whole scan reduced as far as the tolerance allows (checked both ways, detail kept where it misses), three patches laid on each triangle left, each side and each patch fitted to the scan by least squares (so noise averages out), sewn into one body: a solid when the scan is closed, else a surface; kept as a surface body `Wrap1`, … (one undo step); position only across the patches' sides (G0) → body, surface, solid, patches, coarse_triangles, rounds, met, capped, within, p99, max (the scan's points to the patches), tolerance, warning?, feature")];
+    .params("body?: the scan (default: what is selected on a scan, else the only one); tolerance?: length (default 0.2 mm: how far the patches may lie from the scan); max_patches?: 300–60000 (default 12000; a scan that needs more is wrapped with this many, short of the tolerance): the whole scan reduced as far as the tolerance allows (checked both ways, detail kept where it misses), three patches laid on each triangle left, each side and each patch fitted to the scan by least squares (so noise averages out), sewn into one body: a solid when the scan is closed, else a surface; refused when that body cannot be drawn (faces too thin for the tessellator, as across a CAD export's long rounded edges: Reconstruct is for those); kept as a surface body `Wrap1`, … (one undo step); position only across the patches' sides (G0) → body, surface, solid, patches, coarse_triangles, rounds, met, capped, within, p99, max (the scan's points to the patches), tolerance, warning?, feature")];
 
 /// Patches sewn at a time: the kernel keeps every sheet it is given as a shell of its own until it
 /// sews them, and a record holds at most 1,024 shells. The wrap gives its patches in an order that
@@ -78,6 +78,17 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|f| solidcraft_kernel::nurbs_sheet(f).map_err(|e| bad(cmd, format!("a patch could not be made into a face: {e}"))))
         .collect::<Result<_>>()?;
     let sewn = sewn_in_runs(&sheets).map_err(|e| bad(cmd, format!("the {} patches could not be sewn: {e}", sheets.len())))?;
+    // A body the view and every mesh export can draw, or none: some faces (long thin ones across a
+    // CAD export's rounded edges) are more than the tessellator can follow, and a body kept with
+    // them would fail to show and could tie up an export.
+    if let Err(e) = sewn.export_mesh(&solidcraft_io::MeshQuality::Standard.spec(sewn.size())) {
+        return Err(bad(
+            cmd,
+            format!(
+                "the wrap could not be drawn ({e}); a CAD export is built better by Reconstruct, a scan by a larger tolerance or fewer patches"
+            ),
+        ));
+    }
     let step = solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| bad(cmd, format!("the sewn patches could not be kept: {e}")))?;
     let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
     let name = (1..).map(|i| format!("Wrap{i}")).find(|n| !taken.contains(n)).unwrap_or_else(|| "Wrap".into());
