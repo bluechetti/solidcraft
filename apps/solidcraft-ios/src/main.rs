@@ -141,7 +141,11 @@ impl eframe::App for App {
                         self.ar.squeeze = Some(egui::pos2(x, y));
                     }
                     let _ = v;
-                } else if let Some(at) = step.strip_prefix("ar-pull:") {
+                } else if let Some(at) = step.strip_prefix("ar-pull:").or_else(|| step.strip_prefix("ar-pullhold:")) {
+                    #[cfg(target_os = "ios")]
+                    {
+                        self.ar.test_pull_hold = step.starts_with("ar-pullhold:");
+                    }
                     let v: Vec<f32> = at.split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect();
                     #[cfg(target_os = "ios")]
                     if let [x0, y0, x1, y1] = v[..] {

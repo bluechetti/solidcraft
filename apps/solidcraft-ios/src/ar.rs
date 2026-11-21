@@ -323,6 +323,8 @@ pub struct State {
     pub test_record: Option<bool>,
     /// A Pencil pull asked for by the test hook: from and to (0..1 across and down the screen).
     pub test_pull: Option<[f32; 4]>,
+    /// The test hook's pull is left waiting for Apply (`ar-pullhold`) instead of applied.
+    pub test_pull_hold: bool,
     /// The Pencil touch in progress: its id, where and when it began.
     pencil: Option<(egui::TouchId, egui::Pos2, f64)>,
     /// When the Pencil last left the glass (a finger's tap just after is the same hand resting).
@@ -875,7 +877,9 @@ impl State {
             self.start_pull(app, seen, rect, at(x0, y0));
             self.drag_pull(seen, rect, at(x1, y1));
             self.lift_pull();
-            self.apply_pull(app);
+            if !std::mem::take(&mut self.test_pull_hold) {
+                self.apply_pull(app);
+            }
         }
         let pencil_busy = self.pencil.is_some() || ui.input(|i| i.time) - self.pencil_up_at < 0.3;
         if pencil_busy {
@@ -927,16 +931,23 @@ impl State {
             cut.d -= up * metres_per_point / placed.scale;
             return;
         }
-        // One finger dragged: the model slides along the surfaces under it, keeping how far its
-        // foot was from the finger's first hit, so it does not jump to the finger.
+        // One finger dragged: the model slides on the level it stands on, keeping how far its foot
+        // was from where the finger first pointed, so it does not jump to the finger. The finger's
+        // ray meets that level worked out from this frame's camera: exact and steady while the
+        // iPad moves too, where ARKit's surface hits are noisy. A ray above the horizon (it meets
+        // the level behind the camera) falls back to ARKit's hit.
         if touch.is_none()
             && response.dragged()
             && let Some(at) = response.interact_pointer_pos()
         {
             let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
-            let mut hit = [0f32; 16];
-            if self.bridge().map(|b| (b.raycast)(u.0, u.1, rect.width(), rect.height(), hit.as_mut_ptr()) == 1).unwrap_or(false) {
-                let point = [f64::from(hit[12]), f64::from(hit[13]), f64::from(hit[14])];
+            let level = placed.anchor()[1];
+            let point = on_level(seen, u, level).or_else(|| {
+                let mut hit = [0f32; 16];
+                let b = self.bridge().ok()?;
+                ((b.raycast)(u.0, u.1, rect.width(), rect.height(), hit.as_mut_ptr()) == 1).then(|| [f64::from(hit[12]), level, f64::from(hit[14])])
+            });
+            if let Some(point) = point {
                 let offset = *self.drag.get_or_insert(sub(placed.anchor(), point));
                 self.placed = Some(placed.with_anchor(add(point, offset)));
             }
@@ -1613,7 +1624,14 @@ impl State {
                             let mut entered = false;
                             if let Some(p) = self.pulling.as_mut() {
                                 ui.label(if p.edge.is_some() { "R" } else { "mm" });
-                                entered = solidcraft_ui_kit::field(ui, &mut p.text);
+                                // A number box, not the field's full width: the panel stays one short row.
+                                let size = egui::vec2(72.0, ui.spacing().interact_size.y);
+                                entered = ui
+                                    .allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                        ui.set_max_width(size.x);
+                                        solidcraft_ui_kit::field(ui, &mut p.text)
+                                    })
+                                    .inner;
                                 if let Some(v) = solidcraft_ui_kit::parse_number(&p.text) {
                                     p.distance = if p.edge.is_some() { v.max(0.0) } else { v };
                                 }
@@ -1689,6 +1707,26 @@ impl State {
             let _ = self.set_on(app, false);
         }
     }
+}
+
+/// Where the ray through view point `u` (0..1 across and down) meets the room's level plane at
+/// height `level` (metres), or `None` when it meets it behind the camera or runs along it.
+fn on_level(seen: &Seen, u: (f32, f32), level: f64) -> Option<[f64; 3]> {
+    let inv = invert(&seen.view_proj)?;
+    let ndc = [f64::from(u.0) * 2.0 - 1.0, 1.0 - f64::from(u.1) * 2.0];
+    let at = |depth: f64| {
+        let v = [ndc[0], ndc[1], depth, 1.0];
+        let p: [f64; 4] = std::array::from_fn(|r| (0..4).map(|c| inv[c][r] * v[c]).sum());
+        [p[0] / p[3], p[1] / p[3], p[2] / p[3]]
+    };
+    let (near, far) = (at(0.0), at(1.0));
+    let dir = sub(far, near);
+    if dir[1].abs() < 1e-9 {
+        return None;
+    }
+    let t = (level - near[1]) / dir[1];
+    // Not behind the camera, and not past the far plane (a ray grazing the level).
+    (t > 0.0 && t <= 1.0).then(|| add(near, scale3(dir, t)))
 }
 
 /// Where model point `q` shows on the AR view `rect`, or `None` behind the camera.
@@ -2626,6 +2664,22 @@ mod tests {
         let moved = rigid(&m, p).anchor();
         let want = [c * f[0] + s * f[2] + 0.02, f[1] - 0.01, -s * f[0] + c * f[2] + 0.03];
         assert!(close(moved, want), "{moved:?} {want:?}");
+    }
+
+    /// A ray from a camera above the table meets the table's level where the geometry says.
+    #[test]
+    fn a_ray_meets_the_level() {
+        // A camera at 0.5 m looking straight down (−Y): its view turns the room so −Z is down.
+        // Rows right (+X), up (−Z), back (+Y): column k holds each row's k-th component.
+        let view: Mat4 = [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, -0.5, 1.0]];
+        let (n, f) = (NEAR, FAR);
+        let proj: Mat4 = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, f / (n - f), -1.0], [0.0, 0.0, n * f / (n - f), 0.0]];
+        let seen = Seen { view_proj: mul(&proj, &view), eye: [0.0, 0.5, 0.0], back: [0.0, 1.0, 0.0], display: [0.0; 6], tracking: 2, reason: 0, light: [1.0; 3] };
+        let Some(p) = on_level(&seen, (0.5, 0.5), 0.0) else { panic!("straight down meets the table") };
+        assert!(close(p, [0.0, 0.0, 0.0]), "{p:?}");
+        let Some(q) = on_level(&seen, (0.75, 0.5), 0.0) else { panic!("meets it") };
+        assert!((q[0] - 0.25).abs() < 1e-6 && q[1].abs() < 1e-9, "{q:?}");
+        assert_eq!(on_level(&seen, (0.5, 0.5), 1.0), None, "above the camera is behind it");
     }
 
     /// The placement matrix moves model points as `Placed` says.
