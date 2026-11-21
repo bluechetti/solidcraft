@@ -129,6 +129,11 @@ impl eframe::App for App {
                     {
                         self.ar.test_record = Some(step == "ar-record");
                     }
+                } else if step == "ar-sizes" {
+                    #[cfg(target_os = "ios")]
+                    {
+                        self.ar.sizes = !self.ar.sizes;
+                    }
                 } else if step == "ar-doubletap" {
                     #[cfg(target_os = "ios")]
                     {

@@ -180,6 +180,19 @@ struct Pull {
     text: String,
 }
 
+/// A part being moved with the Pencil.
+#[derive(Clone, Debug, PartialEq)]
+struct Move {
+    body: String,
+    /// Where the Pencil grabbed it (model units) and that point in the room.
+    grab: [f64; 3],
+    grab_room: [f64; 3],
+    /// How far it goes (model units), in whole millimetres; kept on one model axis when the
+    /// drag is nearly along it.
+    delta: [f64; 3],
+    held: bool,
+}
+
 /// A section cut through the model in AR: a plane in the model's own coordinates (so it moves
 /// with the model), hiding what lies on its normal's side, as the design view's planes do.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -350,9 +363,18 @@ pub struct State {
     exploded: usize,
     /// Pull is on: the Pencil pushes and pulls faces (`solid.press_pull`).
     pull_mode: bool,
+    /// Move is on: the Pencil drags parts to new places (`solid.move`).
+    move_mode: bool,
+    /// The part being moved.
+    moving: Option<Move>,
     /// Where the model was left in this design's room last time, put back once ARKit has
     /// recognised the room (a tap to place it again drops it).
     restore: Option<Placed>,
+    /// Sizes is on: the model's overall width, depth and height are drawn on it.
+    pub sizes: bool,
+    /// The model hangs on a wall (the wall's normal in the room): it is dragged along the wall
+    /// and has no floor shadow.
+    wall: Option<[f64; 3]>,
     /// The remembered place is relative to the model's anchor (saved in the room's map), not
     /// to the room's origin.
     restore_anchored: bool,
@@ -584,7 +606,7 @@ impl State {
             self.timing = [0.0; 2];
         }
         if let Some(seen) = seen.as_ref() {
-            write_uniform(rs, seen, model_drawn, self.placed.and_then(|p| p.contact_shadow()), self.has_depth);
+            write_uniform(rs, seen, model_drawn, self.placed.filter(|_| self.wall.is_none()).and_then(|p| p.contact_shadow()), self.has_depth);
         }
         self.bind(rs, model_drawn);
         if std::mem::take(&mut self.take_photo) {
@@ -645,7 +667,9 @@ impl State {
                     self.gestures(ui, &response, rect, seen, app);
                     self.draw_measure(ui.painter(), rect, seen);
                 self.draw_pull(ui.painter(), rect, seen);
+                self.draw_move(ui.painter(), rect, seen);
                 self.draw_overlaps(ui.painter(), rect, seen);
+                self.draw_sizes(app, ui.painter(), rect, seen);
                 }
             });
         self.controls(ctx, screen, seen.as_ref(), coaching, app);
@@ -820,7 +844,8 @@ impl State {
         let mut pull_start: Option<egui::Pos2> = None;
         let mut pull_at: Option<egui::Pos2> = None;
         let mut pull_end = false;
-        let pull_mode = self.pull_mode;
+        // Pull and Move both take the Pencil's press, drag and lift.
+        let pull_mode = self.pull_mode || self.move_mode;
         ui.input(|i| {
             for e in &i.events {
                 if let egui::Event::Touch { id, phase, pos, force, .. } = e {
@@ -838,7 +863,10 @@ impl State {
                                 pull_at = Some(*pos);
                                 pull_end = true;
                             }
-                            egui::TouchPhase::Cancel if mine => self.pulling = None,
+                            egui::TouchPhase::Cancel if mine => {
+                                self.pulling = None;
+                                self.moving = None;
+                            }
                             _ => {}
                         }
                     }
@@ -863,14 +891,29 @@ impl State {
         if let Some(u) = pencil_tap {
             self.select_at(app, seen, u);
         }
-        if let Some(at) = pull_start {
-            self.start_pull(app, seen, rect, at);
-        }
-        if let Some(at) = pull_at {
-            self.drag_pull(seen, rect, at);
-        }
-        if pull_end {
-            self.lift_pull();
+        if self.move_mode {
+            if let Some(at) = pull_start {
+                self.start_move(app, seen, rect, at);
+            }
+            if let Some(at) = pull_at {
+                self.drag_move(seen, rect, at);
+            }
+            if pull_end && let Some(m) = self.moving.as_mut() {
+                m.held = false;
+                if m.delta.iter().all(|v| v.abs() < 0.5) {
+                    self.moving = None;
+                }
+            }
+        } else {
+            if let Some(at) = pull_start {
+                self.start_pull(app, seen, rect, at);
+            }
+            if let Some(at) = pull_at {
+                self.drag_pull(seen, rect, at);
+            }
+            if pull_end {
+                self.lift_pull();
+            }
         }
         if let Some([x0, y0, x1, y1]) = self.test_pull.take() {
             let at = |x: f32, y: f32| egui::pos2(rect.min.x + x * rect.width(), rect.min.y + y * rect.height());
@@ -895,12 +938,24 @@ impl State {
             let found = self.bridge().map(|b| (b.raycast)(u.0, u.1, rect.width(), rect.height(), hit.as_mut_ptr()) == 1).unwrap_or(false);
             if found {
                 let point = [f64::from(hit[12]), f64::from(hit[13]), f64::from(hit[14])];
+                // The hit's Y axis is the surface's normal: a steep one is a wall.
+                let normal = [f64::from(hit[4]), f64::from(hit[5]), f64::from(hit[6])];
+                let wall = (normal[1].abs() < 0.5).then_some(normal);
                 match self.placed {
-                    // Already down: it moves there, as it is.
-                    Some(p) => self.placed = Some(p.with_anchor(point)),
+                    // Already down on the same kind of surface: it moves there, as it is.
+                    Some(p) if wall.is_none() && self.wall.is_none() => self.placed = Some(p.with_anchor(point)),
+                    // Onto a wall, off one, or along it: hung (or stood) afresh, at its scale.
+                    Some(p) => {
+                        self.placed = first_placement(app, self.source.as_ref(), seen, point, wall).map(|mut q| {
+                            q.scale = p.scale;
+                            q.with_anchor(point)
+                        });
+                        self.wall = wall;
+                    }
                     None => {
                         self.restore = None;
-                        self.placed = first_placement(app, self.source.as_ref(), seen, point);
+                        self.wall = wall;
+                        self.placed = first_placement(app, self.source.as_ref(), seen, point, wall);
                         if self.placed.is_none() {
                             self.message = "Open a design with a model to place it.".into();
                         }
@@ -942,11 +997,18 @@ impl State {
         {
             let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
             let level = placed.anchor()[1];
-            let point = on_level(seen, u, level).or_else(|| {
+            let ray_hit = |b: &Bridge| -> Option<([f64; 3], [f64; 3])> {
                 let mut hit = [0f32; 16];
-                let b = self.bridge().ok()?;
-                ((b.raycast)(u.0, u.1, rect.width(), rect.height(), hit.as_mut_ptr()) == 1).then(|| [f64::from(hit[12]), level, f64::from(hit[14])])
-            });
+                ((b.raycast)(u.0, u.1, rect.width(), rect.height(), hit.as_mut_ptr()) == 1)
+                    .then(|| ([f64::from(hit[12]), f64::from(hit[13]), f64::from(hit[14])], [f64::from(hit[4]), f64::from(hit[5]), f64::from(hit[6])]))
+            };
+            let point = match self.wall {
+                // On a wall: along it, where ARKit's hit on a wall is.
+                Some(_) => self.bridge().ok().and_then(ray_hit).filter(|(_, n)| n[1].abs() < 0.5).map(|(p, _)| p),
+                // On a table or the floor: on its level, from this frame's camera; ARKit's hit
+                // only when the ray is above the horizon.
+                None => on_level(seen, u, level).or_else(|| self.bridge().ok().and_then(ray_hit).map(|(p, _)| [p[0], level, p[2]])),
+            };
             if let Some(point) = point {
                 let offset = *self.drag.get_or_insert(sub(placed.anchor(), point));
                 self.placed = Some(placed.with_anchor(add(point, offset)));
@@ -1201,6 +1263,8 @@ impl State {
         app.viewport.stereo.pointed = None;
         self.palette = None;
         self.pulling = None;
+        self.moving = None;
+        self.move_mode = false;
         self.overlaps.clear();
         self.joints = None;
         self.measuring = None;
@@ -1209,6 +1273,7 @@ impl State {
         self.message.clear();
         self.anchor_pose = None;
         self.anchored = None;
+        self.wall = None;
         self.release_focus = true;
     }
 
@@ -1402,6 +1467,38 @@ impl State {
         crate::note(&format!("ar: check found {} overlaps", self.overlaps.len()));
     }
 
+    /// Sizes: three lines from the model's box corner nearest the camera along its three
+    /// sides, each with its length in the design's units (millimetres). The box is the model as
+    /// it is now (after a pull too).
+    fn draw_sizes(&self, app: &SolveApp, painter: &egui::Painter, rect: egui::Rect, seen: &Seen) {
+        let Some(placed) = self.placed.filter(|_| self.sizes) else { return };
+        let b = solidcraft_ui_egui::viewport::model_bounds(app);
+        if b.is_empty() {
+            return;
+        }
+        let (lo, hi) = ([b.min.x, b.min.y, b.min.z], [b.max.x, b.max.y, b.max.z]);
+        let corner = |i: usize| [if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] }];
+        let distance = |q: [f64; 3]| {
+            let d = sub(placed.apply_room(q), seen.eye);
+            dot(d, d)
+        };
+        let Some(near) = (0..8).min_by(|a, b| distance(corner(*a)).total_cmp(&distance(corner(*b)))) else { return };
+        let ink = egui::Color32::from_rgb(255, 214, 10);
+        for axis in 0..3 {
+            let (a, b) = (corner(near), corner(near ^ (1 << axis)));
+            let length = (hi[axis] - lo[axis]).abs();
+            let (Some(sa), Some(sb)) = (to_screen(seen, &placed, rect, a), to_screen(seen, &placed, rect, b)) else { continue };
+            painter.line_segment([sa, sb], egui::Stroke::new(3.0, ink));
+            for end in [sa, sb] {
+                painter.circle_filled(end, 4.0, ink);
+            }
+            let galley = painter.layout_no_wrap(format!("{length:.1} mm"), egui::FontId::proportional(20.0), egui::Color32::BLACK);
+            let back = egui::Rect::from_center_size(sa.lerp(sb, 0.5), galley.size() + egui::vec2(14.0, 6.0));
+            painter.rect_filled(back, 5.0, ink);
+            painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
+        }
+    }
+
     /// The overlaps from the last Check, marked where they are in the room.
     fn draw_overlaps(&self, painter: &egui::Painter, rect: egui::Rect, seen: &Seen) {
         let Some(placed) = self.placed else { return };
@@ -1446,6 +1543,63 @@ impl State {
             self.drive_joint(app, &name, k, v);
         }
         Some(shown.response.rect)
+    }
+
+    /// Move: grab the part under the Pencil.
+    fn start_move(&mut self, app: &mut SolveApp, seen: &Seen, rect: egui::Rect, at: egui::Pos2) {
+        let Some(placed) = self.placed else { return };
+        let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
+        match pick(app, seen, &placed, u) {
+            Some(h) => {
+                let grab_room = placed.apply_room(h.point);
+                self.moving = Some(Move { body: h.body, grab: h.point, grab_room, delta: [0.0; 3], held: true });
+            }
+            None if self.moving.is_none() => self.message = "Put the Pencil on a part to move it.".into(),
+            None => {}
+        }
+    }
+
+    /// Move: the part follows the Pencil across the level it was grabbed at.
+    fn drag_move(&mut self, seen: &Seen, rect: egui::Rect, at: egui::Pos2) {
+        let (Some(placed), Some(m)) = (self.placed, self.moving.as_mut()) else { return };
+        let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
+        let Some(room) = on_level(seen, u, m.grab_room[1]) else { return };
+        let model = placed.direction_to_model(sub(room, m.grab_room)).map(|v| v / placed.scale);
+        m.delta = along_axis(model).map(|v| v.round());
+    }
+
+    /// Move: the part goes where it was left, as one step in the design's undo history.
+    fn apply_move(&mut self, app: &mut SolveApp) {
+        self.release_focus = true;
+        let Some(m) = self.moving.take() else { return };
+        let params = serde_json::json!({ "bodies": [m.body], "translate": m.delta });
+        match app.run("solid.move", params) {
+            Ok(_) => {
+                let d = dot(m.delta, m.delta).sqrt();
+                self.message = format!("{} moved {d:.0} mm.", m.body);
+                if let Ok(b) = self.bridge() {
+                    (b.tick)();
+                }
+            }
+            Err(e) => self.message = e,
+        }
+        crate::note(&format!("ar: moved {} by {:?}", m.body, m.delta));
+    }
+
+    /// The part being moved: an arrow from where it was grabbed to where it goes, and how far.
+    fn draw_move(&self, painter: &egui::Painter, rect: egui::Rect, seen: &Seen) {
+        let (Some(m), Some(placed)) = (&self.moving, self.placed) else { return };
+        let (Some(a), Some(b)) = (to_screen(seen, &placed, rect, m.grab), to_screen(seen, &placed, rect, add(m.grab, m.delta))) else { return };
+        let ink = egui::Color32::from_rgb(120, 220, 120);
+        painter.circle(a, 7.0, ink, egui::Stroke::new(2.0, egui::Color32::BLACK));
+        if a.distance(b) > 1.0 {
+            painter.arrow(a, b - a, egui::Stroke::new(4.0, ink));
+        }
+        let d = dot(m.delta, m.delta).sqrt();
+        let galley = painter.layout_no_wrap(format!("{} {d:.0} mm", m.body), egui::FontId::proportional(20.0), egui::Color32::BLACK);
+        let back = egui::Rect::from_center_size(b + egui::vec2(0.0, -26.0), galley.size() + egui::vec2(14.0, 6.0));
+        painter.rect_filled(back, 5.0, ink);
+        painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
     }
 
     /// The design's next exploded view (`explode.show`: shown only, the design keeps its
@@ -1553,7 +1707,9 @@ impl State {
         let shown = container.area(egui::Id::unique("ar-controls")).order(egui::Order::Tooltip).fixed_pos(safe.min + egui::vec2(16.0, 16.0)).show(ctx, |ui| {
             let frame = Container::popup_frame(ui.style());
             container.show_frame(ui, frame, safe, |ui| {
-                ui.horizontal(|ui| {
+                // As wide as the screen allows, so the controls take one or two rows.
+                ui.set_max_width((safe.width() - 32.0).min(1100.0));
+                ui.horizontal_wrapped(|ui| {
                     if button(ui, "Done", Button::Small).clicked() {
                         leave = true;
                     }
@@ -1582,7 +1738,19 @@ impl State {
                             p.scale = REAL_SIZE;
                             self.placed = Some(p.with_anchor(anchor));
                         }
-                        ui.label(format!("{:.0}%", p.scale / REAL_SIZE * 100.0));
+                        ui.label(scale_name(p.scale / REAL_SIZE));
+                        // A drawing's scales in one tap, about the model's foot.
+                        let mut chosen = 0;
+                        let size = egui::vec2(96.0, ui.spacing().interact_size.y);
+                        ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.set_max_width(size.x);
+                            solidcraft_ui_kit::dropdown(ui, "ar-scale", &mut chosen, &["Scale", "2:1", "1:1", "1:2", "1:5", "1:10", "1:20"]);
+                        });
+                        if let Some(factor) = [0.0, 2.0, 1.0, 0.5, 0.2, 0.1, 0.05].get(chosen).copied().filter(|f| *f > 0.0) {
+                            let anchor = p.anchor();
+                            p.scale = REAL_SIZE * factor;
+                            self.placed = Some(p.with_anchor(anchor));
+                        }
                         if let Some(name) = &self.selected {
                             ui.separator();
                             ui.label(name);
@@ -1608,12 +1776,34 @@ impl State {
                                 Err(e) => self.message = e,
                             }
                         }
+                        if button(ui, "Sizes", if self.sizes { Button::SmallSelected } else { Button::Small }).backing_on_hover_text("The model's width, depth and height").clicked() {
+                            self.sizes = !self.sizes;
+                        }
                         let explode_label = if self.exploded > 0 { "Exploded" } else { "Explode" };
                         if button(ui, explode_label, if self.exploded > 0 { Button::SmallSelected } else { Button::Small }).clicked() {
                             self.next_exploded_view(app);
                         }
+                        if button(ui, "Move", if self.move_mode { Button::SmallSelected } else { Button::Small }).backing_on_hover_text("Drag a part to a new place with the Pencil").clicked() {
+                            self.move_mode = !self.move_mode;
+                            self.moving = None;
+                            if self.move_mode {
+                                self.pull_mode = false;
+                                self.pulling = None;
+                                self.measuring = None;
+                            }
+                        }
+                        if self.moving.as_ref().is_some_and(|m| !m.held) {
+                            if button(ui, "Apply", Button::SmallSelected).clicked() {
+                                self.apply_move(app);
+                            }
+                            if button(ui, "Cancel", Button::Small).clicked() {
+                                self.moving = None;
+                            }
+                        }
                         if button(ui, "Pull", if self.pull_mode { Button::SmallSelected } else { Button::Small }).clicked() {
                             self.pull_mode = !self.pull_mode;
+                            self.move_mode = false;
+                            self.moving = None;
                             self.pulling = None;
                             if self.pull_mode {
                                 self.measuring = None;
@@ -1685,6 +1875,8 @@ impl State {
                         Some(_) if self.pulling.as_ref().is_some_and(|p| !p.held) => {
                             "Apply moves the face; drag its arrow again to change how far.".into()
                         }
+                        Some(_) if self.moving.as_ref().is_some_and(|m| !m.held) => "Apply puts the part there.".into(),
+                        Some(_) if self.move_mode => "Press the Pencil on a part and drag it where it goes.".into(),
                         Some(_) if self.pull_mode => "Press the Pencil on a face and drag to push or pull it.".into(),
                         Some(_) if self.cut.is_some() => "Drag up and down to move the cut. Apply keeps it in the design.".into(),
                         Some(_) => "Drag to move, pinch to scale, twist to turn. Tap a part with the Pencil to select it.".into(),
@@ -1707,6 +1899,24 @@ impl State {
             let _ = self.set_on(app, false);
         }
     }
+}
+
+/// A move kept on one axis when it is nearly along it (the other parts are under a sixth of the
+/// largest), so a part goes straight; otherwise as it is.
+fn along_axis(v: [f64; 3]) -> [f64; 3] {
+    let big = v.iter().map(|x| x.abs()).fold(0.0, f64::max);
+    let others = v.iter().filter(|x| x.abs() < big).map(|x| x.abs()).fold(0.0, f64::max);
+    if big > 0.0 && others < big / 6.0 { v.map(|x| if x.abs() < big { 0.0 } else { x }) } else { v }
+}
+
+/// A scale as a drawing names it: "1:1", "1:5", "2:1", or a percentage between those.
+fn scale_name(factor: f64) -> String {
+    for (f, name) in [(2.0, "2:1"), (1.0, "1:1"), (0.5, "1:2"), (0.2, "1:5"), (0.1, "1:10"), (0.05, "1:20")] {
+        if (factor / f - 1.0).abs() < 1e-6 {
+            return name.into();
+        }
+    }
+    format!("{:.0}%", factor * 100.0)
 }
 
 /// Where the ray through view point `u` (0..1 across and down) meets the room's level plane at
@@ -1811,7 +2021,9 @@ impl Placed {
 /// Where the model goes on first tap: its foot (the middle of its underside) on `point`,
 /// upright (the model's up along the room's), the side the window's camera showed toward the
 /// iPad, at real size unless that is larger than [`LARGEST_FIRST`].
-fn first_placement(app: &SolveApp, source: Option<&solidcraft_ui_egui::stereo::Source>, seen: &Seen, point: [f64; 3]) -> Option<Placed> {
+/// On a wall (`wall`: its normal in the room) the model hangs upright with its back against the
+/// wall, facing out, the middle of its back side on `point`.
+fn first_placement(app: &SolveApp, source: Option<&solidcraft_ui_egui::stereo::Source>, seen: &Seen, point: [f64; 3], wall: Option<[f64; 3]>) -> Option<Placed> {
     let bounds = solidcraft_ui_egui::viewport::model_bounds(app);
     if bounds.is_empty() {
         return None;
@@ -1825,7 +2037,8 @@ fn first_placement(app: &SolveApp, source: Option<&solidcraft_ui_egui::stereo::S
     let model_front = level([back.x, back.y, back.z]).or_else(|| level([0.0, -1.0, 0.0])).or_else(|| level([0.0, 0.0, 1.0]))?;
     let model_side = cross(model_up, model_front);
     let room_up = [0.0, 1.0, 0.0];
-    let room_front = unit([seen.eye[0] - point[0], 0.0, seen.eye[2] - point[2]]).unwrap_or([0.0, 0.0, 1.0]);
+    let toward_eye = unit([seen.eye[0] - point[0], 0.0, seen.eye[2] - point[2]]).unwrap_or([0.0, 0.0, 1.0]);
+    let room_front = wall.and_then(|n| unit([n[0], 0.0, n[2]])).unwrap_or(toward_eye);
     let room_side = cross(room_up, room_front);
     // Model axis k in the room: its side, up and front parts carried over.
     let axes = [0, 1, 2].map(|k| {
@@ -1835,8 +2048,15 @@ fn first_placement(app: &SolveApp, source: Option<&solidcraft_ui_egui::stereo::S
     let middle = scale3(add(lo, hi), 0.5);
     let corners =
         (0..8).map(|i| [if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] }]);
-    let lowest = corners.map(|c| dot(c, model_up)).fold(f64::INFINITY, f64::min);
-    let foot = sub(middle, scale3(model_up, dot(middle, model_up) - lowest));
+    let lowest = corners.clone().map(|c| dot(c, model_up)).fold(f64::INFINITY, f64::min);
+    let foot = match wall {
+        // The middle of the back side: the side away from the model's front.
+        Some(_) => {
+            let deepest = corners.clone().map(|c| dot(sub(c, middle), model_front)).fold(0.0, f64::max);
+            sub(middle, scale3(model_front, deepest))
+        }
+        None => sub(middle, scale3(model_up, dot(middle, model_up) - lowest)),
+    };
     let extent = (0..3).map(|k| hi[k] - lo[k]).fold(0.0, f64::max);
     let scale = if extent * REAL_SIZE > LARGEST_FIRST { LARGEST_FIRST / extent } else { REAL_SIZE };
     Some(Placed { axes, scale, translation: [0.0; 3], foot, bounds: [lo, hi] }.with_anchor(point))
@@ -2680,6 +2900,23 @@ mod tests {
         let Some(q) = on_level(&seen, (0.75, 0.5), 0.0) else { panic!("meets it") };
         assert!((q[0] - 0.25).abs() < 1e-6 && q[1].abs() < 1e-9, "{q:?}");
         assert_eq!(on_level(&seen, (0.5, 0.5), 1.0), None, "above the camera is behind it");
+    }
+
+    /// A move nearly along one axis is kept on it; a slanting one is left alone.
+    #[test]
+    fn a_move_keeps_to_an_axis() {
+        assert_eq!(along_axis([40.0, 3.0, -2.0]), [40.0, 0.0, 0.0]);
+        assert_eq!(along_axis([30.0, 20.0, 0.0]), [30.0, 20.0, 0.0]);
+        assert_eq!(along_axis([0.0; 3]), [0.0; 3]);
+    }
+
+    /// The scales a drawing names, and a percentage between them.
+    #[test]
+    fn scales_are_named() {
+        assert_eq!(scale_name(1.0), "1:1");
+        assert_eq!(scale_name(0.2), "1:5");
+        assert_eq!(scale_name(2.0), "2:1");
+        assert_eq!(scale_name(0.37), "37%");
     }
 
     /// The placement matrix moves model points as `Placed` says.

@@ -21,6 +21,10 @@ until it finds a surface.
 | Pull | Press the Pencil on a face and drag: an arrow and the distance follow (a tick on Pencil Pro every 5 mm). Lift, then type or write (Scribble) the exact value, Apply (`solid.press_pull`, one undo step) or Cancel; the Pencil back on the arrow adjusts it. On an edge it rounds the edge instead (a fillet, the drag is the radius). |
 | Undo / Redo | The design's own undo history. |
 | Photo | Saves the room and the model (without the panel) to Photos. |
+| Sizes | The model's width, depth and height drawn along its sides, in mm (as it is now). |
+| Scale | 2:1, 1:1, 1:2, 1:5, 1:10, 1:20 in one tap, about the model's foot; the panel names the scale. |
+| Move | Press the Pencil on a part and drag it across the level it was grabbed at, in whole millimetres (kept on one axis when nearly along it). Lift, then Apply (`solid.move`, one undo step) or Cancel. |
+| Tap a wall | Hangs the model upright with its back against the wall; it is dragged along the wall and has no floor shadow. |
 | Record | A screen video of the session (ReplayKit); Stop shows Apple's preview to save or share it. |
 | Joints | Each joint's coordinates with − and + (`joint.drive`, held to its limits). |
 | Check | Finds overlapping parts (`inspect.interference`), selects them and marks each overlap in the room. |
