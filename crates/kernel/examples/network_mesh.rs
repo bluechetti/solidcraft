@@ -7,7 +7,8 @@
 //! ```
 //!
 //! The file has one patch a line: its 16 control points (u fastest), x y z each, as Wrap Scan's
-//! `wrap_bench` example writes them with `WRAP_DUMP`.
+//! `wrap_bench` example writes them with `WRAP_DUMP`. With `NETWORK_RECORD=path` the sewn body's
+//! record is written there as JSON (a kernel fixture's form, before gzip).
 
 use solidcore_record::Vec3;
 use solidcraft_geom::prelude::*;
@@ -40,6 +41,10 @@ fn run() -> Result<(), String> {
     }
     let faces: Vec<FaceSpec> = nets.iter().map(face).collect();
     let body = sew_network(&faces).map_err(|e| format!("sew: {e}"))?;
+    if let Some(out) = std::env::var_os("NETWORK_RECORD") {
+        let json = serde_json::to_string(body.record()).map_err(|e| format!("record: {e}"))?;
+        std::fs::write(&out, json).map_err(|e| format!("record: {e}"))?;
+    }
     let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
     for p in nets.iter().flatten() {
         for (k, x) in [p.x, p.y, p.z].into_iter().enumerate() {
