@@ -69,6 +69,7 @@ pub mod fit;
 pub mod flatten;
 pub mod free_form;
 pub mod furring;
+pub mod handles;
 pub mod hole_form;
 pub mod holes;
 mod hull;

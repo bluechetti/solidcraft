@@ -4,6 +4,7 @@
 //! so the design opens anywhere. Design: `designs/A1-wrap-and-hybrid.md` in the scan handoff.
 
 use serde_json::{Value, json};
+use solidcraft_scan::handles;
 use solidcraft_scan::wrap_planes;
 use solidcraft_scan::wrap_scan::{self, Settings};
 
@@ -20,11 +21,17 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.wrap_scan", "Wrap
     .icon("scan_free_form")
     .contract(&WRAP_CONTRACT)
     .output(output_schema_for::<ScanWrapScanResult>)
-    .params("body?: the scan (default: what is selected on a scan, else the only one); tolerance?: length (default 0.2 mm: how far the patches may lie from the scan); max_patches?: 300–60000 (default 12000; a scan that needs more is wrapped with this many, short of the tolerance); planes?: bool (default true: where Find All reads a plane over half a percent of the scan, one plane face in place of the patches there, bounded by the sides of the patches round it): the whole scan reduced as far as the tolerance allows (checked both ways, detail kept where it misses), three patches laid on each triangle left (four on two laid as one quad), each side and each patch fitted to the scan by least squares (so noise averages out), sewn into one body: a solid when the scan is closed, else a surface; refused when that body cannot be drawn (faces too thin for the tessellator, as across a CAD export's long rounded edges: Reconstruct is for those); kept as a surface body `Wrap1`, … (one undo step); position only across the patches' sides (G0) → body, surface, solid, patches, coarse_triangles, plane_faces, rounds, met, capped, within, p99, max (the scan's points to the patches), tolerance, warning?, feature")];
+    .params("body?: the scan (default: what is selected on a scan, else the only one); tolerance?: length (default 0.2 mm: how far the patches may lie from the scan); max_patches?: 300–60000 (default 12000; a scan that needs more is wrapped with this many, short of the tolerance); planes?: bool (default true: where Find All reads a plane over half a percent of the scan, fitting as well as the scan's noise lets a plane, one plane face in place of the patches there, bounded by the sides of the patches round it); close_tunnels?: bool (default true: the scan's small tunnels and bridges, a scanner's through thin walls, closed on the copy wrapped); tunnel_size?: length (default 12 median edges: the widest patch a tunnel is closed in): the whole scan reduced as far as the tolerance allows (checked both ways, detail kept where it misses), three patches laid on each triangle left (four on two laid as one quad), each side and each patch fitted to the scan by least squares (so noise averages out), sewn into one body: a solid when the scan is closed, else a surface; refused when that body cannot be drawn (faces too thin for the tessellator, as across a CAD export's long rounded edges: Reconstruct is for those); kept as a surface body `Wrap1`, … (one undo step); position only across the patches' sides (G0) → body, surface, solid, patches, coarse_triangles, plane_faces, tunnels_closed, tunnel_parts, rounds, met, capped, within, p99, max (the scan's points to the patches), tolerance, warning?, feature")];
 
 /// A plane, in place of the patches on it, needs this share of the scan's area (Find All's
 /// smaller planes are a few patches' worth: no face worth having).
 const PLANE_SHARE: f64 = 0.005;
+/// And it must be as flat as the scan's noise lets a plane be: its fit within this many times the
+/// noise Find All read (or this share of the tolerance on a mesh with none). A machined face fits
+/// so; a curved patch Find All reads as a plane only within the tolerance, snapped flat, would
+/// crease the surface round it for nothing (and slow its meshing a hundredfold).
+const PLANE_NOISE: f64 = 2.0;
+const PLANE_FLOOR: f64 = 0.01;
 
 /// A patch's 4 × 4 control points, u fastest.
 fn net_of(f: &solidcraft_geom::bspline::NurbsSurface) -> [solidcore_record::Vec3; 16] {
@@ -83,11 +90,12 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
     let regions: Vec<wrap_planes::PlaneRegion> = if with_planes {
         let found = super::reconstruct::shapes(s, &json!({"body": on.body}), cmd, false)?;
         let total: f64 = found.outcome.segments.iter().map(|g| g.area).sum();
+        let flat = (PLANE_NOISE * found.outcome.noise).max(PLANE_FLOOR * tolerance);
         found
             .outcome
             .segments
             .iter()
-            .filter(|g| g.area >= PLANE_SHARE * total)
+            .filter(|g| g.area >= PLANE_SHARE * total && g.rms <= flat)
             .filter_map(|g| match g.shape.as_ref() {
                 Some(solidcraft_scan::fit::Shape::Plane { point, normal }) => {
                     Some(wrap_planes::PlaneRegion { point: *point, normal: *normal, triangles: g.triangles.clone() })
@@ -99,8 +107,24 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
         Vec::new()
     };
     let snapped = (!regions.is_empty()).then(|| wrap_planes::snapped(&scan, &regions, tolerance));
-    let wrapped_on = snapped.as_deref().map(|positions| solidcraft_scan::Scan::new(positions, scan.triangles));
-    let w = wrap_scan::wrap(wrapped_on.as_ref().unwrap_or(&scan), &settings).map_err(|e| bad(cmd, format!("the scan could not be wrapped: {e}")))?;
+    let snapped_scan = snapped.as_deref().map(|positions| solidcraft_scan::Scan::new(positions, scan.triangles));
+    let base = snapped_scan.as_ref().unwrap_or(&scan);
+    // The scan's small tunnels closed (on the copy wrapped): they would keep the coarse mesh at full
+    // resolution round them.
+    let close_tunnels = p.get("close_tunnels").filter(|v| !v.is_null()).map_or(Ok(true), |v| v.as_bool().ok_or_else(|| bad(cmd, "`close_tunnels` must be true or false")))?;
+    let tunnel_size = match crate::params::expr(p, "tunnel_size") {
+        Some(e) => {
+            let v = s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("tunnel_size: {e}")))?;
+            if !(v.is_finite() && v > 0.0) {
+                return Err(bad(cmd, "`tunnel_size` must be a length above 0"));
+            }
+            v
+        }
+        None => handles::DEFAULT_SIZE_EDGES * handles::median_edge(base.positions, base.triangles),
+    };
+    let closed = if close_tunnels { handles::close(base, &handles::Settings { max_size: tunnel_size, tolerance }) } else { None };
+    let closed_scan = closed.as_ref().map(|c| solidcraft_scan::Scan::new(&c.positions, &c.triangles));
+    let w = wrap_scan::wrap(closed_scan.as_ref().unwrap_or(base), &settings).map_err(|e| bad(cmd, format!("the scan could not be wrapped: {e}")))?;
     if w.faces.is_empty() {
         return Err(bad(cmd, "the scan could not be wrapped: no patch could be laid"));
     }
@@ -173,6 +197,8 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
         patches: patch_count,
         coarse_triangles: w.coarse.triangle_count(),
         plane_faces: plane_count,
+        tunnels_closed: closed.as_ref().map_or(0, |c| c.handles_before.saturating_sub(c.handles_after)),
+        tunnel_parts: closed.as_ref().map_or(0, |c| c.parts),
         rounds: w.coarse.rounds,
         met: w.coarse.met,
         capped: w.coarse.capped,

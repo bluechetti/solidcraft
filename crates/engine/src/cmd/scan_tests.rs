@@ -3965,6 +3965,49 @@ fn wrap_scan_puts_one_plane_face_on_each_plane_find_all_reads() {
     assert!(plain["patches"].as_u64().unwrap() > 0, "{plain}");
 }
 
+/// A plate 20 × 20 × 1 mm with a 1 × 1 mm hole through it (a tunnel through a thin wall), its scan
+/// the surface of 0.25 mm cells. Wrap Scan with tunnels up to 5 mm closed closes the one tunnel
+/// before wrapping (its lining within 0.5 mm of the caps, so a 0.6 mm tolerance); without, none.
+#[test]
+fn wrap_scan_closes_a_tunnel_through_a_thin_wall_first() {
+    let (n, h) = ([80i32, 80, 4], 0.25);
+    let solid = |i: i32, j: i32, k: i32| {
+        (0..n[0]).contains(&i) && (0..n[1]).contains(&j) && (0..n[2]).contains(&k) && !((38..42).contains(&i) && (38..42).contains(&j))
+    };
+    let at = |i: i32, j: i32, k: i32| Vec3::new(f64::from(i) * h, f64::from(j) * h, f64::from(k) * h);
+    let mut plate = Vec::new();
+    for i in 0..n[0] {
+        for j in 0..n[1] {
+            for k in 0..n[2] {
+                if !solid(i, j, k) {
+                    continue;
+                }
+                let faces: [((i32, i32, i32), [(i32, i32, i32); 4]); 6] = [
+                    ((1, 0, 0), [(1, 0, 0), (1, 1, 0), (1, 1, 1), (1, 0, 1)]),
+                    ((-1, 0, 0), [(0, 0, 0), (0, 0, 1), (0, 1, 1), (0, 1, 0)]),
+                    ((0, 1, 0), [(0, 1, 0), (0, 1, 1), (1, 1, 1), (1, 1, 0)]),
+                    ((0, -1, 0), [(0, 0, 0), (1, 0, 0), (1, 0, 1), (0, 0, 1)]),
+                    ((0, 0, 1), [(0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]),
+                    ((0, 0, -1), [(0, 0, 0), (0, 1, 0), (1, 1, 0), (1, 0, 0)]),
+                ];
+                for ((di, dj, dk), q) in faces {
+                    if solid(i + di, j + dj, k + dk) {
+                        continue;
+                    }
+                    let c = q.map(|(a, b, c)| at(i + a, j + b, k + c));
+                    plate.push([c[0], c[1], c[2]]);
+                    plate.push([c[0], c[2], c[3]]);
+                }
+            }
+        }
+    }
+    let (mut s, scan) = session_with_triangles("holed-plate", &plate);
+    let r = run(&mut s, "scan.wrap_scan", json!({"body": scan, "tolerance": 0.6, "tunnel_size": 5, "planes": false}));
+    assert_eq!((r["tunnels_closed"].as_u64(), r["tunnel_parts"].as_u64(), r["solid"].as_bool()), (Some(1), Some(1), Some(true)), "{r}");
+    let kept = run(&mut s, "scan.wrap_scan", json!({"body": scan, "tolerance": 0.6, "close_tunnels": false, "planes": false}));
+    assert_eq!(kept["tunnels_closed"].as_u64(), Some(0), "{kept}");
+}
+
 /// A wrap the most patches hold back says about how many the tolerance asks for, and its verdict's
 /// first next step is the same wrap with that many: 0.001 mm on a sphere of R 20 asks for far more
 /// than 300.

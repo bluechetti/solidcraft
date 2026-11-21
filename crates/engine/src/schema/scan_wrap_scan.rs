@@ -19,10 +19,18 @@ pub struct ScanWrapScanParams {
     /// many, short of the tolerance (said in `capped`).
     #[serde(default)]
     pub max_patches: Option<u64>,
-    /// Where Find All reads a plane (over half a percent of the scan), one plane face in place of
-    /// the patches there, bounded by the sides of the patches round it. Default: true.
+    /// Where Find All reads a plane (over half a percent of the scan, fitting as well as the scan's
+    /// noise lets a plane), one plane face in place of the patches there, bounded by the sides of
+    /// the patches round it. Default: true.
     #[serde(default)]
     pub planes: Option<bool>,
+    /// Close the scan's small tunnels and bridges first (a scanner's through thin walls): they keep
+    /// the coarse mesh from reducing round them. Default: true.
+    #[serde(default)]
+    pub close_tunnels: Option<bool>,
+    /// The widest patch a tunnel is closed in. Default: 12 of the scan's median edges.
+    #[serde(default)]
+    pub tunnel_size: Option<super::types::LengthExpr>,
 }
 
 /// What `scan.wrap_scan` returns.
@@ -39,6 +47,10 @@ pub struct ScanWrapScanResult {
     pub coarse_triangles: usize,
     /// Plane faces in the body (each in place of the patches on one of Find All's planes).
     pub plane_faces: usize,
+    /// Tunnels and bridges of the scan closed before it was wrapped, and the parts cut out and
+    /// filled for them (the scan itself is unchanged; the model is measured against it as it is).
+    pub tunnels_closed: usize,
+    pub tunnel_parts: usize,
     /// Rounds of reduction, and whether the coarse mesh met the tolerance both ways.
     pub rounds: usize,
     pub met: bool,
