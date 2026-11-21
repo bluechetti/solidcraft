@@ -4,6 +4,7 @@
 //! so the design opens anywhere. Design: `designs/A1-wrap-and-hybrid.md` in the scan handoff.
 
 use serde_json::{Value, json};
+use solidcraft_scan::wrap_planes;
 use solidcraft_scan::wrap_scan::{self, Settings};
 
 use super::{CommandSpec, mesh};
@@ -19,13 +20,32 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.wrap_scan", "Wrap
     .icon("scan_free_form")
     .contract(&WRAP_CONTRACT)
     .output(output_schema_for::<ScanWrapScanResult>)
-    .params("body?: the scan (default: what is selected on a scan, else the only one); tolerance?: length (default 0.2 mm: how far the patches may lie from the scan); max_patches?: 300–60000 (default 12000; a scan that needs more is wrapped with this many, short of the tolerance): the whole scan reduced as far as the tolerance allows (checked both ways, detail kept where it misses), three patches laid on each triangle left (four on two laid as one quad), each side and each patch fitted to the scan by least squares (so noise averages out), sewn into one body: a solid when the scan is closed, else a surface; refused when that body cannot be drawn (faces too thin for the tessellator, as across a CAD export's long rounded edges: Reconstruct is for those); kept as a surface body `Wrap1`, … (one undo step); position only across the patches' sides (G0) → body, surface, solid, patches, coarse_triangles, rounds, met, capped, within, p99, max (the scan's points to the patches), tolerance, warning?, feature")];
+    .params("body?: the scan (default: what is selected on a scan, else the only one); tolerance?: length (default 0.2 mm: how far the patches may lie from the scan); max_patches?: 300–60000 (default 12000; a scan that needs more is wrapped with this many, short of the tolerance); planes?: bool (default true: where Find All reads a plane over half a percent of the scan, one plane face in place of the patches there, bounded by the sides of the patches round it): the whole scan reduced as far as the tolerance allows (checked both ways, detail kept where it misses), three patches laid on each triangle left (four on two laid as one quad), each side and each patch fitted to the scan by least squares (so noise averages out), sewn into one body: a solid when the scan is closed, else a surface; refused when that body cannot be drawn (faces too thin for the tessellator, as across a CAD export's long rounded edges: Reconstruct is for those); kept as a surface body `Wrap1`, … (one undo step); position only across the patches' sides (G0) → body, surface, solid, patches, coarse_triangles, plane_faces, rounds, met, capped, within, p99, max (the scan's points to the patches), tolerance, warning?, feature")];
+
+/// A plane, in place of the patches on it, needs this share of the scan's area (Find All's
+/// smaller planes are a few patches' worth: no face worth having).
+const PLANE_SHARE: f64 = 0.005;
+
+/// A patch's 4 × 4 control points, u fastest.
+fn net_of(f: &solidcraft_geom::bspline::NurbsSurface) -> [solidcore_record::Vec3; 16] {
+    let pts = solidcraft_scan::surface_edit::points(f);
+    std::array::from_fn(|k| pts.get(k).copied().unwrap_or(solidcore_record::Vec3::ZERO))
+}
+
+/// A plane face: its loops of the cubic sides the patches round it share.
+fn plane_face(f: &wrap_planes::PlaneFace) -> solidcraft_kernel::FaceSpec {
+    let chain = |s: &[solidcore_record::Vec3; 4]| solidcraft_kernel::EdgeSpec::Chain { degree: 3, ctrl: s.to_vec().into() };
+    solidcraft_kernel::FaceSpec {
+        loops: f.loops.iter().map(|l| l.iter().map(chain).collect()).collect(),
+        surface: solidcraft_kernel::SurfSpec::Plane,
+        probe: None,
+    }
+}
 
 /// A patch as a face to sew: its bicubic net and its four sides (cubic chains, counter-clockwise
 /// about its natural normal), which neighbouring patches share exactly.
-fn patch_face(f: &solidcraft_geom::bspline::NurbsSurface) -> solidcraft_kernel::FaceSpec {
-    let pts = solidcraft_scan::surface_edit::points(f);
-    let net: [solidcore_record::Vec3; 16] = std::array::from_fn(|k| pts.get(k).copied().unwrap_or(solidcore_record::Vec3::ZERO));
+fn patch_face(net: &[solidcore_record::Vec3; 16]) -> solidcraft_kernel::FaceSpec {
+    let net = *net;
     let side = |idx: [usize; 4]| solidcraft_kernel::EdgeSpec::Chain { degree: 3, ctrl: idx.iter().map(|&i| net[i]).collect::<Vec<_>>().into() };
     solidcraft_kernel::FaceSpec {
         loops: vec![vec![side([0, 1, 2, 3]), side([3, 7, 11, 15]), side([15, 14, 13, 12]), side([12, 8, 4, 0])]],
@@ -57,14 +77,51 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
             as usize,
     };
     let settings = Settings { tolerance, max_patches, ..Settings::default() };
-    let w = wrap_scan::wrap(&on.scan(), &settings).map_err(|e| bad(cmd, format!("the scan could not be wrapped: {e}")))?;
+    let with_planes = p.get("planes").filter(|v| !v.is_null()).map_or(Ok(true), |v| v.as_bool().ok_or_else(|| bad(cmd, "`planes` must be true or false")))?;
+    let scan = on.scan();
+    // Find All's planes: the scan is snapped onto them, so the patches laid there lie on them.
+    let regions: Vec<wrap_planes::PlaneRegion> = if with_planes {
+        let found = super::reconstruct::shapes(s, &json!({"body": on.body}), cmd, false)?;
+        let total: f64 = found.outcome.segments.iter().map(|g| g.area).sum();
+        found
+            .outcome
+            .segments
+            .iter()
+            .filter(|g| g.area >= PLANE_SHARE * total)
+            .filter_map(|g| match g.shape.as_ref() {
+                Some(solidcraft_scan::fit::Shape::Plane { point, normal }) => {
+                    Some(wrap_planes::PlaneRegion { point: *point, normal: *normal, triangles: g.triangles.clone() })
+                }
+                _ => None,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let snapped = (!regions.is_empty()).then(|| wrap_planes::snapped(&scan, &regions, tolerance));
+    let wrapped_on = snapped.as_deref().map(|positions| solidcraft_scan::Scan::new(positions, scan.triangles));
+    let w = wrap_scan::wrap(wrapped_on.as_ref().unwrap_or(&scan), &settings).map_err(|e| bad(cmd, format!("the scan could not be wrapped: {e}")))?;
     if w.faces.is_empty() {
         return Err(bad(cmd, "the scan could not be wrapped: no patch could be laid"));
     }
     // The patches share their sides exactly, so they are built straight into one body (each side
-    // one edge, laid on its two patches by straight pcurves): no intersection, no gaps.
-    let faces: Vec<solidcraft_kernel::FaceSpec> = w.faces.iter().map(patch_face).collect();
-    let sewn = solidcraft_kernel::sew_network(&faces).map_err(|e| bad(cmd, format!("the {} patches could not be sewn: {e}", faces.len())))?;
+    // one edge, laid on its two patches by straight pcurves): no intersection, no gaps. The
+    // patches on a plane are one plane face, bounded by the sides of the patches round it.
+    let (kept, plane_faces) = wrap_planes::planes(&w.faces, &regions, scan.extent());
+    let mut faces: Vec<solidcraft_kernel::FaceSpec> = kept.iter().map(patch_face).collect();
+    faces.extend(plane_faces.iter().map(plane_face));
+    let mut planes_note = None;
+    let (sewn, plane_count) = match solidcraft_kernel::sew_network(&faces) {
+        Ok(sewn) => (sewn, plane_faces.len()),
+        Err(e) if !plane_faces.is_empty() => {
+            planes_note = Some(format!("the plane faces could not be sewn ({e}): the wrap is patches only"));
+            let all: Vec<solidcraft_kernel::FaceSpec> = w.faces.iter().map(|f| patch_face(&net_of(f))).collect();
+            let sewn = solidcraft_kernel::sew_network(&all).map_err(|e| bad(cmd, format!("the {} patches could not be sewn: {e}", all.len())))?;
+            (sewn, 0)
+        }
+        Err(e) => return Err(bad(cmd, format!("the {} patches could not be sewn: {e}", faces.len()))),
+    };
+    let patch_count = if plane_count > 0 { kept.len() } else { w.faces.len() };
     // A body the view and every mesh export can draw, or none: some faces (long thin ones across a
     // CAD export's rounded edges) are more than the tessellator can follow, and a body kept with
     // them would fail to show and could tie up an export.
@@ -94,6 +151,10 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
             }
         )
     });
+    let warning = match (warning, planes_note) {
+        (Some(w), Some(n)) => Some(format!("{w}; {n}")),
+        (w, n) => w.or(n),
+    };
     // The verdict on the model, as scan.verdict gives it; a capped wrap's first next step is the
     // same wrap with the patches the tolerance asks for.
     let mut verdict = super::plan::verdict(s, &json!({"scan": on.body, "model": name}))?;
@@ -109,8 +170,9 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
         body: on.body,
         surface: name,
         solid,
-        patches: w.faces.len(),
+        patches: patch_count,
         coarse_triangles: w.coarse.triangle_count(),
+        plane_faces: plane_count,
         rounds: w.coarse.rounds,
         met: w.coarse.met,
         capped: w.coarse.capped,

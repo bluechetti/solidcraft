@@ -310,7 +310,7 @@ fn least_tolerance(s: &Session, p: &Value, scan: &str, cmd: &str) -> Result<f64>
 
 /// Find All on the scan `p` names (or the selected or only one), kept in the session: what was
 /// found before on the same mesh is used again.
-fn shapes(s: &mut Session, p: &Value, cmd: &str, show: bool) -> Result<Arc<ScanShapes>> {
+pub(crate) fn shapes(s: &mut Session, p: &Value, cmd: &str, show: bool) -> Result<Arc<ScanShapes>> {
     let name = super::mesh_body_name(s, str_(p, "body").filter(|b| !b.trim().is_empty()), cmd)?;
     let least = least_tolerance(s, p, &name, cmd)?;
     // Find All reads again when its tolerance changed, Reconstruct only when given one; the build

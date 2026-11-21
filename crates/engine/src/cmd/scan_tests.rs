@@ -3928,6 +3928,43 @@ fn wrap_scan_makes_a_closed_scan_one_solid_within_its_tolerance() {
     assert!(r.get("patches_wanted").is_none(), "an uncapped wrap wants no more patches: {r}");
 }
 
+/// A 20 mm cube's scan (each side cut 8 × 8, two triangles a square). Find All reads its six
+/// sides as planes, and Wrap Scan puts one plane face in place of the patches on each: the body
+/// is the cube itself, six plane faces and no patch, its volume 20³ = 8000. Without planes it is
+/// patches only.
+#[test]
+fn wrap_scan_puts_one_plane_face_on_each_plane_find_all_reads() {
+    let sides = [
+        (Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 20.0, 0.0), Vec3::new(20.0, 0.0, 0.0)),
+        (Vec3::new(0.0, 0.0, 20.0), Vec3::new(20.0, 0.0, 0.0), Vec3::new(0.0, 20.0, 0.0)),
+        (Vec3::new(0.0, 0.0, 0.0), Vec3::new(20.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 20.0)),
+        (Vec3::new(0.0, 20.0, 0.0), Vec3::new(0.0, 0.0, 20.0), Vec3::new(20.0, 0.0, 0.0)),
+        (Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 20.0), Vec3::new(0.0, 20.0, 0.0)),
+        (Vec3::new(20.0, 0.0, 0.0), Vec3::new(0.0, 20.0, 0.0), Vec3::new(0.0, 0.0, 20.0)),
+    ];
+    let n = 8u32;
+    let mut cube = Vec::new();
+    for (o, du, dv) in sides {
+        let at = |i: u32, j: u32| o + du * (f64::from(i) / f64::from(n)) + dv * (f64::from(j) / f64::from(n));
+        for i in 0..n {
+            for j in 0..n {
+                cube.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+                cube.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+            }
+        }
+    }
+    let (mut s, scan) = session_with_triangles("cube", &cube);
+    let r = run(&mut s, "scan.wrap_scan", json!({"body": scan}));
+    assert_eq!((r["solid"].as_bool(), r["plane_faces"].as_u64(), r["patches"].as_u64()), (Some(true), Some(6), Some(0)), "{r}");
+    let surface = r["surface"].as_str().unwrap().to_string();
+    let m = run(&mut s, "inspect.measure", json!({"bodies": [surface]}));
+    let volume = m["bodies"][0]["volume_mm3"].as_f64().unwrap();
+    assert!((volume - 8000.0).abs() < 1e-6, "volume {volume}");
+    let plain = run(&mut s, "scan.wrap_scan", json!({"body": scan, "planes": false}));
+    assert_eq!(plain["plane_faces"].as_u64(), Some(0), "{plain}");
+    assert!(plain["patches"].as_u64().unwrap() > 0, "{plain}");
+}
+
 /// A wrap the most patches hold back says about how many the tolerance asks for, and its verdict's
 /// first next step is the same wrap with that many: 0.001 mm on a sphere of R 20 asks for far more
 /// than 300.

@@ -19,6 +19,10 @@ pub struct ScanWrapScanParams {
     /// many, short of the tolerance (said in `capped`).
     #[serde(default)]
     pub max_patches: Option<u64>,
+    /// Where Find All reads a plane (over half a percent of the scan), one plane face in place of
+    /// the patches there, bounded by the sides of the patches round it. Default: true.
+    #[serde(default)]
+    pub planes: Option<bool>,
 }
 
 /// What `scan.wrap_scan` returns.
@@ -33,6 +37,8 @@ pub struct ScanWrapScanResult {
     /// four to a pair of triangles laid as one quad).
     pub patches: usize,
     pub coarse_triangles: usize,
+    /// Plane faces in the body (each in place of the patches on one of Find All's planes).
+    pub plane_faces: usize,
     /// Rounds of reduction, and whether the coarse mesh met the tolerance both ways.
     pub rounds: usize,
     pub met: bool,
