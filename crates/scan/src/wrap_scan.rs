@@ -168,16 +168,24 @@ pub struct Wrap {
 /// Places reported as the worst.
 pub const WORST: usize = 8;
 
-fn spread(d: &mut [f64], tolerance: f64) -> Spread {
+fn spread(d: &[f64], weight: &[f64], tolerance: f64) -> Spread {
     let n = d.len();
-    if n == 0 {
-        return Spread { samples: 0, within: 1.0, p99: 0.0, max: 0.0 };
+    let w = |k: usize| weight.get(k).copied().filter(|x| x.is_finite() && *x > 0.0).unwrap_or(0.0);
+    let total: f64 = (0..n).map(w).sum();
+    if n == 0 || !(total > 0.0) {
+        return Spread { samples: n, within: 1.0, p99: 0.0, max: 0.0 };
     }
-    let within = d.iter().filter(|&&x| x <= tolerance).count() as f64 / n as f64;
+    let within = (0..n).filter(|&k| d[k] <= tolerance).map(w).sum::<f64>() / total;
     let max = d.iter().copied().fold(0.0, f64::max);
-    let k = ((n as f64 * 0.99).ceil() as usize).clamp(1, n) - 1;
-    d.select_nth_unstable_by(k, f64::total_cmp);
-    Spread { samples: n, within, p99: d[k], max }
+    // The distance below which 99 % of the area lies.
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&x, &y| d[x].total_cmp(&d[y]));
+    let mut acc = 0.0;
+    let p99 = order.iter().find(|&&k| {
+        acc += w(k);
+        acc >= 0.99 * total
+    });
+    Spread { samples: n, within, p99: p99.map_or(max, |&k| d[k]), max }
 }
 
 /// Every `step`-th index below `n`, so at most `most` of them.
@@ -1141,6 +1149,20 @@ pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
     }
     let used: Vec<usize> = (0..n).filter(|&v| used[v]).collect();
     let sampled: Vec<usize> = evenly(used.len(), SAMPLES).into_iter().filter_map(|k| used.get(k).copied()).collect();
+    // Each sampled point stands for a third of its triangles' area, so the share within is a
+    // share of the surface (as a reader measures it), not of the points: a scan's points are
+    // densest where it is detailed, and counting them hid misses on its broad faces.
+    let mut area = vec![0.0; n];
+    for t in scan.triangles {
+        let c = t.map(|v| scan.positions.get(v as usize).copied().unwrap_or(Vec3::ZERO));
+        let third = (c[1] - c[0]).cross(c[2] - c[0]).len() / 6.0;
+        for &v in t {
+            if let Some(a) = area.get_mut(v as usize) {
+                *a += third;
+            }
+        }
+    }
+    let weight: Vec<f64> = sampled.iter().map(|&v| area.get(v).copied().unwrap_or(0.0)).collect();
     let cap = settings.max_patches.max(12);
     let mut budget = vec![START * tol; n];
     let mut mark = vec![0usize; n];
@@ -1153,8 +1175,7 @@ pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
         tidy(&mut r.positions, &mut r.triangles, &under, tol);
         let faces = patches(&under, &r.positions, &r.triangles);
         let d = distances(scan, &faces, &sampled);
-        let mut sorted = d.clone();
-        let spread = spread(&mut sorted, tol);
+        let spread = spread(&d, &weight, tol);
         let mut order: Vec<usize> = (0..d.len()).collect();
         order.sort_by(|&x, &y| d[y].total_cmp(&d[x]));
         let worst: Vec<(Vec3, f64)> =
