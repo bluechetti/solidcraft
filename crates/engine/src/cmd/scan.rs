@@ -486,7 +486,10 @@ fn mesh_name(s: &Session, p: &Value, cmd: &str) -> Result<String> {
             match (selected.as_slice(), meshes.as_slice()) {
                 ([one], _) | ([], [one]) => (*one).to_owned(),
                 ([], []) => return Err(bad(cmd, "the design has no scan: insert one with Insert Mesh")),
-                ([], _) => return Err(bad(cmd, "select the scan (a mesh body) to work on")),
+                ([], several) => {
+                    let names: Vec<String> = several.iter().map(|n| format!("`{n}`")).collect();
+                    return Err(bad(cmd, format!("the design has {} scans ({}): select one, or name it in `body`", several.len(), names.join(", "))));
+                }
                 _ => return Err(bad(cmd, "select one scan (mesh body)")),
             }
         }
@@ -1271,6 +1274,7 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         model_far_off: None,
         passes: None,
         why_not: None,
+        rolled_back: None,
         measured: None,
         unmatched: None,
         tolerance: None,
@@ -1477,6 +1481,7 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         model_far_off: borne.as_ref().map(|b| b.beyond),
         passes: Some(why_not.is_none()),
         why_not,
+        rolled_back: super::file::rolled_back_note(s),
         measured: Some(d.measured),
         unmatched: Some(d.unmatched),
         tolerance: Some(tolerance),
@@ -1994,6 +1999,10 @@ fn fitted_shape(s: &Session, p: &Value, cmd: &str, kind: Kind, tolerance: Option
     Ok((mesh, fitted))
 }
 
+/// A fitted round shape whose radius is more than this many times the size of the region it was
+/// fitted to is said to be untrustworthy.
+const FIT_TOO_LARGE: f64 = 3.0;
+
 fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value> {
     let tolerance = fit_tolerance(s, p, cmd)?;
     let keep = crate::params::bool_(p, "keep").unwrap_or(true);
@@ -2033,6 +2042,28 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
     // Fitted to surface the scanner never saw: said, with the share.
     let unseen =
         unseen::unseen_of(s, &mesh.body).ok().and_then(|(_, found)| found).map(|u| u.share_of(&scan, &fitted.triangles)).filter(|x| *x > 0.0);
+    // A round shape far larger than the region it was fitted to: the region is too small, or too
+    // nearly flat, to tell its shape (on a smooth blended part a torus came back with a tube of
+    // 111 mm off a patch a few millimetres across), however small its rms.
+    let across = {
+        let (mut lo, mut hi) =
+            (Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY), Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY));
+        for c in fitted.triangles.iter().filter_map(|&t| scan.corners(t)).flatten() {
+            lo = Vec3::new(lo.x.min(c.x), lo.y.min(c.y), lo.z.min(c.z));
+            hi = Vec3::new(hi.x.max(c.x), hi.y.max(c.y), hi.z.max(c.z));
+        }
+        (hi - lo).len()
+    };
+    let largest = match fitted.shape {
+        Shape::Cylinder { radius, .. } | Shape::Sphere { radius, .. } => radius,
+        Shape::Torus { major, minor, .. } => major.max(minor),
+        _ => 0.0,
+    };
+    let too_large = (across > 0.0 && largest > FIT_TOO_LARGE * across).then(|| {
+        format!(
+            "its radius ({largest:.1} mm) is over {FIT_TOO_LARGE} times the region it was fitted to ({across:.1} mm across): the region is too small or too flat to tell the shape; fit a larger region, or fit a plane"
+        )
+    });
     let reply = ScanFitResult {
         body: mesh.body,
         plane,
@@ -2045,7 +2076,10 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
         rms: fitted.rms,
         max: fitted.max,
         unseen,
-        warning: unseen.and_then(|share| unseen::warning(share, "fitted")),
+        warning: match (unseen.and_then(|share| unseen::warning(share, "fitted")), too_large) {
+            (Some(a), Some(b)) => Some(format!("{a}; {b}")),
+            (a, b) => a.or(b),
+        },
         feature,
         face,
         param_warnings: Vec::new(),

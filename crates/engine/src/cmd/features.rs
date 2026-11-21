@@ -191,7 +191,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "MODIFY")
         .icon("draft")
         .from_selection(super::model_selection::body_faces)
-        .params("faces: [[x,y,z] points, or face names from model.faces]; angle: expr; neutral: XY|XZ|YZ|plane name|{origin, normal}; pull?: [x,y,z] (default: neutral plane normal); body?"),
+        .params("faces: [[x,y,z] points, or face names from model.faces]; angle: expr (positive: each face leans in going along `pull`, so the part narrows that way and releases from a mould pulled that way; negative: it leans out); neutral: XY|XZ|YZ|plane name|{origin, normal} (each face turns about its line on this plane, which stays where it is); pull?: [x,y,z] (default: neutral plane normal); body?"),
     CommandSpec::new("construct.plane.offset", "Offset Plane", crate::checked!("construct.plane.offset", plane_offset))
         .at("SOLID", "CONSTRUCT")
         .icon("plane")

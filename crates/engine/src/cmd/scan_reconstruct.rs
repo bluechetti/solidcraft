@@ -58,7 +58,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&FIND_ALL_CONTRACT)
         .output(output_schema_for::<ScanFindAllResult>)
-        .params("body?: mesh body (default: the selected or only one); tolerance?: mm (the least distance a shape may lie from the scan and still take it; default: the scan's tolerance when one is set, else three times its noise, and on a coarse scan (triangles over a hundredth of its size long: a fused depth-camera scan) at least 0.4 of a triangle's edge; raise it for a scan smooth but off by more than its noise, as a fused depth-camera scan is); show?: bool (false takes the colouring away): the whole scan cut into regions, each a plane, cylinder, sphere, cone or torus or freeform (the scan's noise sets how close a shape must lie), coloured in the viewport; a view and not an undo step → shapes [{index, kind, area, triangles, rms, point, direction?, radius?, minor?, half_angle?, hole?}], freeform, freeform_area, in_shapes, noise, tolerance"),
+        .params("body?: mesh body (default: the selected or only one); tolerance?: mm (the least distance a shape may lie from the scan and still take it; default: the scan's tolerance when one is set, else three times its noise, and on a coarse scan (triangles over a hundredth of its size long: a fused depth-camera scan) at least 0.4 of a triangle's edge; raise it for a scan smooth but off by more than its noise, as a fused depth-camera scan is); show?: bool (false takes the colouring away): the whole scan cut into regions, each a plane, cylinder, sphere, cone or torus or freeform (the scan's noise sets how close a shape must lie), coloured in the viewport; a view and not an undo step → shapes [{index, kind, area, triangles, rms, point, on_scan, direction?, radius?, minor?, half_angle?, hole?}], freeform, freeform_area, in_shapes, noise, tolerance"),
     CommandSpec::new("scan.reconstruct", "Reconstruct", crate::checked!("scan.reconstruct", read_scan))
         .at("SCAN", "RECONSTRUCT")
         .icon("auto_constrain")
@@ -380,12 +380,27 @@ fn shape_found(s: &Session, found: &ScanShapes, index: usize) -> Option<ScanShap
         triangles: segment.triangles.len(),
         rms: segment.rms,
         point: [0.0; 3],
+        on_scan: [0.0; 3],
         direction: None,
         radius: None,
         minor: None,
         half_angle: None,
         hole: None,
     };
+    // A point on the scan in the region's middle: the middle of the region's triangle nearest the
+    // mean of a sample of its triangles' middles.
+    if let Some(mesh) = super::shown_mesh(s, &found.scan) {
+        let scan = Scan::new(&mesh.positions, &mesh.triangles);
+        let middle_of = |t: usize| scan.corners(t).map(|[a, b, c]| (a + b + c) / 3.0);
+        let step = (segment.triangles.len() / 500).max(1);
+        let sample: Vec<Vec3> = segment.triangles.iter().step_by(step).filter_map(|&t| middle_of(t)).collect();
+        if !sample.is_empty() {
+            let mean = sample.iter().fold(Vec3::ZERO, |a, &p| a + p) / sample.len() as f64;
+            if let Some(nearest) = sample.iter().min_by(|a, b| a.dist(mean).total_cmp(&b.dist(mean))) {
+                out.on_scan = at(*nearest);
+            }
+        }
+    }
     match shape {
         Shape::Plane { point, normal } => (out.point, out.direction) = (at(point), Some(at(normal))),
         Shape::Cylinder { point, axis, radius } => {
@@ -1255,6 +1270,37 @@ fn snap_to_body(s: &Session, solid: &str, plane: &Plane, outlines: &mut [Outline
     }
 }
 
+/// A prism's profile may run past the scan's box by this share of the box's diagonal (a part's
+/// draft, a round read sharp) before it is refused as misread.
+const PROFILE_PAST_SCAN: f64 = 0.05;
+
+/// The corner of `outlines` (in `plane`) farthest outside the box `(lo, hi)` and how far, when that
+/// is more than [`PROFILE_PAST_SCAN`] of the box's diagonal.
+fn past_scan(plane: &Plane, outlines: &[profile::Outline], (lo, hi): (Vec3, Vec3)) -> Option<(Vec3, f64)> {
+    let grow = PROFILE_PAST_SCAN * (hi - lo).len();
+    let off = |v: f64, a: f64, b: f64| (a - v).max(v - b).max(0.0);
+    outlines
+        .iter()
+        .flat_map(|o| o.corners.iter())
+        .map(|c| plane.origin + plane.x * c.x + plane.y * c.y)
+        .map(|w| (w, off(w.x, lo.x, hi.x).max(off(w.y, lo.y, hi.y)).max(off(w.z, lo.z, hi.z))))
+        .filter(|(_, by)| *by > grow)
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+}
+
+/// The scan's box, least and most corner.
+fn scan_box(scan: &Scan) -> (Vec3, Vec3) {
+    let mut lo = Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+    let mut hi = Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for p in scan.positions {
+        if p.x.is_finite() && p.y.is_finite() && p.z.is_finite() {
+            lo = Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+            hi = Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+        }
+    }
+    (lo, hi)
+}
+
 pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.extrude_it";
     let view = view(s, p, cmd, false)?;
@@ -1271,7 +1317,22 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
     let (plane, outlines) = {
         let shown = super::shown_mesh(s, &found.scan).ok_or_else(|| bad(cmd, format!("`{}` is not a scan", found.scan)))?;
         let (positions, triangles) = (shown.positions.as_slice(), shown.triangles.as_slice());
-        profile::prism_profile(&view.scan(positions, triangles), view.outcome(), reading, prism).map_err(|e| bad(cmd, e))?
+        let scan = view.scan(positions, triangles);
+        let (plane, outlines) = profile::prism_profile(&scan, view.outcome(), reading, prism).map_err(|e| bad(cmd, e))?;
+        // A profile that runs well past the scan is misread, not a part of it (T-LESS 06: a stray
+        // corner 75 mm past the part's end, built and replied `first`): refused with where, before
+        // anything is built.
+        let past = past_scan(&plane, &outlines, scan_box(&scan));
+        if let Some((w, by)) = past {
+            return Err(bad(
+                cmd,
+                format!(
+                    "prism {index}'s profile reaches {by:.1} mm past the scan (a corner at [{:.1}, {:.1}, {:.1}]): it was misread; build the others, then this part from a section (scan.section_sketch) and an extrude",
+                    w.x, w.y, w.z
+                ),
+            ));
+        }
+        (plane, outlines)
     };
     let (operation, solid, how) = into_params(s, &found.scan, p, cmd)?;
     // A prism joined to the body that touches it only along an edge (a cylinder head's boss
@@ -1450,6 +1511,15 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
             param_warnings: Vec::new(),
         });
     }
+    // Pieces joined that touch nothing (kept in one body on purpose, so they are measured
+    // together) are said: what holds them was not read, and a user or an agent should know the
+    // body is not one solid yet (T-LESS 06's studs, standing on inner walls no prism holds).
+    let pieces = s.model.state().body(&solid).and_then(|b| b.body.lumps().ok()).map_or(1, |l| l.len());
+    let note = (pieces > 1).then(|| {
+        format!(
+            "`{solid}` is now {pieces} separate pieces: a prism here touches nothing built yet (what joins it to the rest was not read off the scan). Build what joins them (a section or a fit there), or undo this step"
+        )
+    });
     reply(ScanBuildResult {
         body: found.scan.clone(),
         sketch: Some(sketch),
@@ -1465,7 +1535,7 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         skin: None,
         allowance: None,
         changed: None,
-        note: None,
+        note,
         fit: None,
         param_warnings: Vec::new(),
     })

@@ -655,6 +655,31 @@ fn scan_deviation_measures_the_scan_against_the_model() {
     assert!(err.contains("more than"), "{err}");
 }
 
+/// A design rolled back is measured and exported as of the history marker: Scan Deviation's
+/// `rolled_back` and the export's warnings say so (two agents in trials took a rolled-back model
+/// for the built one), and say nothing once the marker is back at the end.
+#[test]
+fn a_rolled_back_design_is_said_when_measured_or_exported() {
+    let (mut s, _) = session_with_a_plate_and_boss("rolled-back");
+    run(&mut s, "solid.box", json!({"body_name": "Plate", "operation": "new", "length": 60, "width": 40, "height": 8}));
+    run(&mut s, "solid.fillet", json!({"edges": [[30, 0, 8]], "radius": 1, "body": "Plate"}));
+    let dir = std::env::temp_dir().join(format!("sc-rolled-back-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("plate.stl");
+    let at_end = run(&mut s, "file.export_stl", json!({"path": path, "bodies": ["Plate"]}));
+    assert!(!at_end.to_string().contains("rolled back"), "{at_end}");
+    assert!(run(&mut s, "scan.deviation", json!({"body": "Plate"}))["rolled_back"].is_null());
+    let total = s.doc.features.len();
+    run(&mut s, "timeline.rollback", json!({"position": total - 1}));
+    let exported = run(&mut s, "file.export_stl", json!({"path": path, "bodies": ["Plate"]}));
+    assert!(exported["warnings"].to_string().contains("rolled back: 1 feature"), "{exported}");
+    let measured = run(&mut s, "scan.deviation", json!({"body": "Plate"}));
+    assert!(measured["rolled_back"].as_str().is_some_and(|n| n.contains("1 feature")), "{measured}");
+    run(&mut s, "timeline.rollback", json!({"position": "end"}));
+    assert!(run(&mut s, "scan.deviation", json!({"body": "Plate"}))["rolled_back"].is_null());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A scan of a block 60 × 40 × 20 passes against the block, both ways. A model with a boss the
 /// scan does not have has every scan point on it or hidden inside it, so the scan's side alone
 /// would pass it: the model's side, measured against the scan, fails it and says where. A model

@@ -19,7 +19,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("curvature_map")
         .contract(&CONTRACT)
         .output(output_schema_for::<ScanToleranceResult>)
-        .params("scan?: mesh body (default: the selected or only one); tolerance?: length above 0; reset?: bool (back to the default, 0.1 mm): how far off the scan's surface still counts as on it, kept in the design for that scan and used by Scan Deviation, Free Form, Edit Surface, Fit Patches and Flat Template; with neither tolerance nor reset it changes nothing; one undo step when it changes → scan, tolerance, set, changed"),
+        .params("scan? (or body?): mesh body (default: the selected or only one); tolerance?: length above 0; reset?: bool (back to the default, 0.1 mm): how far off the scan's surface still counts as on it, kept in the design for that scan and used by Scan Deviation, Free Form, Edit Surface, Fit Patches and Flat Template; with neither tolerance nor reset it changes nothing; one undo step when it changes → scan, tolerance, set, changed"),
 ];
 
 /// A scan's tolerance in mm: the one set for it, else the default.
@@ -49,7 +49,12 @@ pub fn is_set(s: &Session, scan: &str) -> bool {
 
 fn tolerance(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.tolerance";
-    let scan = mesh_name(s, &serde_json::json!({ "body": crate::params::str_(p, "scan") }), cmd)?;
+    // `scan`, or `body` as every other scan command names it.
+    let named = match (crate::params::str_(p, "scan"), crate::params::str_(p, "body")) {
+        (Some(a), Some(b)) if a != b => return Err(bad(cmd, format!("`scan` (`{a}`) and `body` (`{b}`) name different scans: give one"))),
+        (a, b) => a.or(b),
+    };
+    let scan = mesh_name(s, &serde_json::json!({ "body": named }), cmd)?;
     let reset = bool_(p, "reset") == Some(true);
     let given = crate::params::expr(p, "tolerance");
     if reset && given.is_some() {

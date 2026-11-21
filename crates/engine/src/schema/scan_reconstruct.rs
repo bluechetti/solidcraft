@@ -37,6 +37,10 @@ pub struct ScanShapeFound {
     pub rms: f64,
     /// A plane's point, a cylinder's point on its axis, a sphere's or torus's centre, a cone's apex.
     pub point: [f64; 3],
+    /// A point on the scan in the middle of the shape's region (the middle of its triangle nearest
+    /// the region's middle): the one to give a tool's `point`, which `point` is not for a round
+    /// shape (an axis, a centre or an apex lies off the scan).
+    pub on_scan: [f64; 3],
     /// A plane's normal (out of the material), or a round's axis (a cone's toward its widening).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direction: Option<[f64; 3]>,

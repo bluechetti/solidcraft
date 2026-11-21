@@ -142,6 +142,45 @@ fn a_prism_in_two_pieces_is_built_as_one_body() {
     assert!(split > 0, "the posts are read as a prism of two pieces: {read}");
 }
 
+/// The same two posts under a slab: Extrude It of the posts' prism alone, before the slab that joins
+/// them, makes a body of two pieces (kept in one body on purpose, measured together), and its reply
+/// says so in `note`, so a user or an agent knows the body is not one solid yet. Built with the
+/// slab it is one piece and says nothing.
+#[test]
+fn a_prism_that_leaves_the_body_in_pieces_says_so() {
+    let mut part = Session::default();
+    run(&mut part, "solid.box", json!({"corner": [5, 0, 0], "length": 20, "width": 24, "height": 30, "body_name": "Part"}));
+    run(&mut part, "solid.box", json!({"corner": [75, 12, 0], "length": 20, "width": 24, "height": 30, "operation": "join", "targets": ["Part"]}));
+    run(&mut part, "solid.box", json!({"corner": [0, -10, 30], "length": 100, "width": 60, "height": 10, "operation": "join", "targets": ["Part"]}));
+    let (s, _) = scanned_with_noise(&part, "Part", 0.02, "posts-said");
+    let mut s = s;
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let prisms = read["prisms"].as_array().unwrap().len();
+    let mut said = 0;
+    for k in 0..prisms {
+        let mut each = Session::new(solidcraft_doc::Document::clone(&s.doc));
+        each.refresh();
+        let made = run(&mut each, "scan.extrude_it", json!({"prism": k}));
+        let pieces = made["feature"]["created_bodies"].as_array().map_or(0, Vec::len);
+        let note = made["note"].as_str().unwrap_or("");
+        if pieces > 1 {
+            assert!(note.contains("2 separate pieces"), "prism {k}: {made}");
+            said += 1;
+        } else {
+            assert!(!note.contains("separate pieces"), "prism {k}: {made}");
+        }
+    }
+    assert!(said > 0, "the posts are read as a prism of two pieces: {read}");
+    // Every step in order: the slab joins the posts, one piece, nothing said at the end.
+    let mut last = Value::Null;
+    for step in read["proposals"].as_array().unwrap() {
+        if let Ok(r) = s.execute(step["command"].as_str().unwrap(), &step["params"]) {
+            last = r;
+        }
+    }
+    assert!(!last["note"].as_str().unwrap_or("").contains("separate pieces"), "{last}");
+}
+
 /// A crankshaft's journals: three webs 160 × 160 × 20 joined by two round journals Ø 80, 40
 /// long, each rounded into its webs R 6 (tangent, so no crease parts journal from web), and a
 /// rod Ø 40 running on 560 mm, so the part is 700 long. Find All seeds a patch 4 % of the part's
@@ -1459,4 +1498,25 @@ fn hole_it_starts_where_the_axis_enters_the_body() {
         assert!((at.z - 10.0).abs() < 1e-4 && at.x == 10.0 && at.y == 10.0, "{at:?}");
     }
     assert!(super::entry_on_body(&s, "Body", Vec3::new(40.0, 10.0, 10.0), down, 5.0).is_none(), "beside the body: nothing to drill");
+}
+
+/// A prism's profile running well past the scan is misread and refused before anything is built
+/// (T-LESS 06: a stray corner 75 mm past a 92 mm part was built and replied `first`). The check:
+/// a 92 × 54 × 57 box; a profile inside it, or past it by under 5 % of its diagonal, passes; one
+/// corner 75 mm out is named with how far.
+#[test]
+fn a_profile_running_well_past_the_scan_is_refused() {
+    use solidcraft_scan::profile::{Outline, Piece};
+    let plane = solidcore_record::Plane { origin: Vec3::new(0.0, 0.0, 0.0), x: Vec3::X, y: Vec3::Y };
+    let bounds = (Vec3::new(-46.0, -27.0, -28.5), Vec3::new(46.0, 27.0, 28.5));
+    let square =
+        |corners: Vec<solidcore_record::Vec2>| Outline { pieces: vec![Piece::Line; corners.len()], faces: vec![None; corners.len()], corners };
+    let v = solidcore_record::Vec2::new;
+    let inside = square(vec![v(-45.0, -26.0), v(45.0, -26.0), v(45.0, 26.0), v(-45.0, 26.0)]);
+    assert!(super::past_scan(&plane, &[inside], bounds).is_none());
+    let a_little = square(vec![v(-48.0, -26.0), v(45.0, -26.0), v(45.0, 26.0), v(-45.0, 26.0)]);
+    assert!(super::past_scan(&plane, &[a_little], bounds).is_none(), "2 mm past a 132 mm diagonal");
+    let stray = square(vec![v(-121.0, -26.0), v(45.0, -26.0), v(45.0, 26.0), v(-45.0, 26.0)]);
+    let (at, by) = super::past_scan(&plane, &[stray], bounds).expect("refused");
+    assert!((by - 75.0).abs() < 1e-9 && (at.x + 121.0).abs() < 1e-9, "{at:?} {by}");
 }

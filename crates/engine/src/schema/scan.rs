@@ -656,6 +656,10 @@ pub struct ScanDeviationResult {
     /// Why it does not pass, in words; absent when it does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub why_not: Option<String>,
+    /// Set when the design is rolled back: the model measured is the one as of the history
+    /// marker, the features after it not built.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rolled_back: Option<String>,
     /// How many scan points were measured, and how many were too far from the model to count.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub measured: Option<usize>,

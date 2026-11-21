@@ -2628,6 +2628,11 @@ fn export_to(
         bytes
     };
     solidcraft_io::vfs::write(path, &bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    // A design rolled back exports the bodies as of the marker: said, so the later features left
+    // out are not taken for built (an agent's fillets left out of its export without a word).
+    if let Some(note) = rolled_back_note(s) {
+        warnings.push(note);
+    }
     let skipped = skipped_from_warnings(&warnings);
     let reply =
         ExportResult { path: path.to_string(), bytes: bytes.len(), format: format!("{format:?}"), skipped, warnings, ..ExportResult::default() };
@@ -2760,6 +2765,19 @@ fn export_step(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "file.export_step";
     let path = path_arg(p, cmd)?;
     export_to(s, cmd, path, Format::Step, &string_list(cmd, p, "bodies")?, &[], solidcraft_io::MeshQuality::default())
+}
+
+/// When the design's history marker is not at its end: how many features after it are not built,
+/// in words, with the way back to the end. `None` at the end.
+pub(crate) fn rolled_back_note(s: &Session) -> Option<String> {
+    let total = s.doc.features.len();
+    let marker = s.doc.marker.unwrap_or(total).min(total);
+    (marker < total).then(|| {
+        format!(
+            "the design is rolled back: {} feature(s) after the history marker are not built, so this is the model as of the marker (timeline.rollback {{\"position\": \"end\"}} builds them)",
+            total - marker
+        )
+    })
 }
 
 fn export_stl(s: &mut Session, p: &Value) -> Result<Value> {

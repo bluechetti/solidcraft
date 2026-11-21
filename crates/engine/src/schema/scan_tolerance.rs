@@ -15,6 +15,9 @@ pub struct ScanToleranceParams {
     /// The scan (mesh body). Default: the selected mesh body, else the design's only one.
     #[serde(default)]
     pub scan: Option<String>,
+    /// The same as `scan`, the name every other scan command gives the scan.
+    #[serde(default)]
+    pub body: Option<String>,
     /// The tolerance, a length above 0.
     #[serde(default)]
     pub tolerance: Option<LengthExpr>,
@@ -45,6 +48,6 @@ mod tests {
 
     #[test]
     fn scan_tolerance_takes_these_keys() {
-        assert_keys(input_schema_for::<ScanToleranceParams>(), &["reset", "scan", "tolerance"]);
+        assert_keys(input_schema_for::<ScanToleranceParams>(), &["body", "reset", "scan", "tolerance"]);
     }
 }
