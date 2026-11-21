@@ -259,6 +259,9 @@ const CHAMFER_MOST: f64 = 0.08;
 const CHAMFER_LEAST: f64 = 0.002;
 /// How far off square to the edge a chamfer's normal may lean (the dot product).
 const CHAMFER_SQUARE: f64 = 0.05;
+/// A chamfer leans at least 10° from each face it joins (the most its normal may lie along
+/// either's, the dot product).
+const CHAMFER_TILTED: f64 = 0.985;
 /// The most flat faces searched for a chamfer's two neighbours (each is tried against every pair).
 const CHAMFER_PLANES: usize = 120;
 
@@ -281,7 +284,17 @@ fn chamfers(faces: &[Face], middles: &[Vec3], size: f64, skip: &BTreeSet<usize>)
     }
     let mut found = Vec::new();
     for &k in planes.iter().filter(|k| !skip.contains(k)) {
-        let Some((_, nk)) = plane(&faces[k]) else { continue };
+        let Some((pk, nk)) = plane(&faces[k]) else { continue };
+        // A face parallel to a larger face close beside it is a step or a groove's floor, not a
+        // chamfer (T-LESS 19's groove floor, 1 mm in from the side wall).
+        let stepped = planes.iter().any(|&j| {
+            j != k
+                && faces[j].area >= faces[k].area
+                && plane(&faces[j]).is_some_and(|(pj, nj)| nj.dot(nk).abs() > CHAMFER_TILTED && (pj - pk).dot(nk).abs() < CHAMFER_MOST * size)
+        });
+        if stepped {
+            continue;
+        }
         let c = middles[k];
         let mut best: Option<(f64, EdgeChamfer)> = None;
         for (i, &a) in planes.iter().enumerate() {
@@ -291,8 +304,14 @@ fn chamfers(faces: &[Face], middles: &[Vec3], size: f64, skip: &BTreeSet<usize>)
                 }
                 let (Some((pa, na)), Some((pb, nb))) = (plane(&faces[a]), plane(&faces[b])) else { continue };
                 let Some(e) = na.cross(nb).normalized() else { continue };
-                // Two faces that make an edge, not nearly parallel; a chamfer is square to it.
-                if na.cross(nb).len() < 0.2 || nk.dot(e).abs() > CHAMFER_SQUARE {
+                // Two faces that make an edge, not nearly parallel; a chamfer is square to it, and
+                // leans away from both: a face parallel to one of them is a step or a groove's floor
+                // (T-LESS 19's, 1 mm in from its wall, read as a 7.5 mm chamfer the kernel refused).
+                if na.cross(nb).len() < 0.2
+                    || nk.dot(e).abs() > CHAMFER_SQUARE
+                    || nk.dot(na).abs() > CHAMFER_TILTED
+                    || nk.dot(nb).abs() > CHAMFER_TILTED
+                {
                     continue;
                 }
                 let rows = [[na.x, na.y, na.z], [nb.x, nb.y, nb.z], [e.x, e.y, e.z]];
