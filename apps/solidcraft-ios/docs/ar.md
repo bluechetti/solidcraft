@@ -24,7 +24,7 @@ until it finds a surface.
 | Sizes | The model's width, depth and height drawn along its sides, in mm (as it is now); with a part selected, that part's. |
 | Scale | 2:1, 1:1, 1:2, 1:5, 1:10, 1:20 in one tap, about the model's foot; the panel names the scale. |
 | Move | Press the Pencil on a part and drag it across the level it was grabbed at, in whole millimetres (kept on one axis when nearly along it). Lift, then Apply (`solid.move`, one undo step) or Cancel. |
-| Hole | Press the Pencil on a face for the middle and drag out the diameter (a circle follows). Lift, then type or write an exact diameter, Apply (`solid.hole`, through, one undo step) or Cancel. |
+| Hole | Press the Pencil on a face: the hole's middle follows it, with its distances to the face's nearer edges (whole millimetres, or the face's middle). Lift: a row under the panel sets X / Y (typed or written), Simple / Counterbore / Countersink, Through or a depth, and the size (M2–M10 clearance, M2–M10 tapped, or a diameter). Apply drills it held to those two edges (`solid.hole` references, so it follows them), one undo step. The Pencil on it moves it again. |
 | Ink | Draw on the model with the Pencil; the ink stays on its surfaces in the room (and in videos). Clear ink removes it; leaving AR does too. |
 | Spin | The model turns slowly about its foot, as on a turntable. |
 | Tap a wall | Hangs the model upright with its back against the wall; it is dragged along the wall and has no floor shadow. |

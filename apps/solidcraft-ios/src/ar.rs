@@ -200,12 +200,170 @@ struct Move {
 #[derive(Clone, Debug, PartialEq)]
 struct Hole {
     body: String,
+    face: usize,
+    /// The hole's middle and the face's outward normal (model units).
     center: [f64; 3],
     normal: [f64; 3],
-    diameter: f64,
+    /// The Pencil is on it (placing it); once lifted it waits for its options and Apply.
     held: bool,
-    /// The diameter typed or written into the panel's number box while the hole waits.
-    text: String,
+    /// The face's own frame: where the Pencil first landed, and two directions in the face's
+    /// plane along the design's axes, as a drawing dimensions a hole.
+    origin: [f64; 3],
+    axes: [[f64; 3]; 2],
+    /// How far the face goes from `origin` along each direction, back and forth (found once by
+    /// probing where the pick leaves the face); infinite where it did not end.
+    extent: [[f64; 2]; 2],
+    /// Where the middle is in that frame.
+    at: [f64; 2],
+    size: HoleSize,
+    style: HoleStyle,
+    /// None: through all.
+    depth: Option<f64>,
+    /// The panel's boxes: distances along the two directions, a custom diameter, the depth.
+    texts: [String; 4],
+}
+
+/// A hole's size, as a designer names it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum HoleSize {
+    /// Clearance for a metric screw (ISO 273, normal fit).
+    Clearance(&'static str),
+    /// Tapped for a metric thread (the tap maker's drill).
+    Tapped(&'static str),
+    Diameter(f64),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum HoleStyle {
+    Simple,
+    Counterbore,
+    Countersink,
+}
+
+/// Metric screws: size, clearance hole (ISO 273 normal), tap drill.
+const SCREWS: [(&str, f64, f64); 8] = [
+    ("M2", 2.4, 1.6),
+    ("M2.5", 2.9, 2.05),
+    ("M3", 3.4, 2.5),
+    ("M4", 4.5, 3.3),
+    ("M5", 5.5, 4.2),
+    ("M6", 6.6, 5.0),
+    ("M8", 9.0, 6.8),
+    ("M10", 11.0, 8.5),
+];
+
+impl HoleSize {
+    /// The drilled diameter, for drawing it.
+    fn diameter(self) -> f64 {
+        match self {
+            HoleSize::Clearance(m) => SCREWS.iter().find(|s| s.0 == m).map_or(5.5, |s| s.1),
+            HoleSize::Tapped(m) => SCREWS.iter().find(|s| s.0 == m).map_or(4.2, |s| s.2),
+            HoleSize::Diameter(d) => d,
+        }
+    }
+
+    fn name(self) -> String {
+        match self {
+            HoleSize::Clearance(m) => format!("{m} clearance"),
+            HoleSize::Tapped(m) => format!("{m} tapped"),
+            HoleSize::Diameter(d) => format!("Ø {d:.1}"),
+        }
+    }
+}
+
+impl Hole {
+    /// The distance from the middle to the nearer end of the face along direction `k`, and which
+    /// end (0: back, 1: forth); None where the face does not end that way.
+    fn to_edge(&self, k: usize) -> Option<(f64, usize)> {
+        let [lo, hi] = self.extent[k];
+        let (back, forth) = (self.at[k] - lo, hi - self.at[k]);
+        let near = if back <= forth { (back, 0) } else { (forth, 1) };
+        near.0.is_finite().then_some(near)
+    }
+
+    /// A point on the face's edge that `to_edge(k)` measures to: where that end is, level with
+    /// the middle along the other direction.
+    fn edge_point(&self, k: usize) -> Option<[f64; 3]> {
+        let (_, end) = self.to_edge(k)?;
+        let along = self.extent[k][end];
+        let other = 1 - k;
+        Some(add(self.origin, add(scale3(self.axes[k], along), scale3(self.axes[other], self.at[other]))))
+    }
+
+    /// Put the middle at `at` (in the face's frame), held to whole millimetres from the nearer
+    /// edge along each direction, or to the middle of the face when it is near it.
+    fn place(&mut self, at: [f64; 2], snap: bool) {
+        for (k, &wanted) in at.iter().enumerate() {
+            let [lo, hi] = self.extent[k];
+            let mut c = wanted;
+            if lo.is_finite() && hi.is_finite() {
+                c = c.clamp(lo, hi);
+                let middle = (lo + hi) / 2.0;
+                if snap && (c - middle).abs() < 1.5 {
+                    c = middle;
+                } else if snap {
+                    c = if c - lo <= hi - c { lo + (c - lo).round() } else { hi - (hi - c).round() };
+                }
+            } else if snap {
+                c = c.round();
+            }
+            self.at[k] = c;
+        }
+        self.center = add(self.origin, add(scale3(self.axes[0], self.at[0]), scale3(self.axes[1], self.at[1])));
+        for k in 0..2 {
+            self.texts[k] = self.to_edge(k).map_or(String::new(), |(d, _)| format!("{d:.1}"));
+        }
+    }
+
+    /// `solid.hole`'s parameters: at the middle, held to the two edges it is dimensioned from
+    /// (it follows them when the design changes), the size and style as chosen.
+    fn params(&self) -> serde_json::Value {
+        let mut p = serde_json::json!({ "position": self.center });
+        let refs: Vec<serde_json::Value> = (0..2)
+            .filter_map(|k| Some(serde_json::json!({ "edge": self.edge_point(k)?, "distance": self.to_edge(k)?.0 })))
+            .collect();
+        if !refs.is_empty() {
+            p["references"] = serde_json::json!(refs);
+        }
+        let d = self.size.diameter();
+        match self.size {
+            HoleSize::Clearance(m) => {
+                p["clearance"] = serde_json::json!(m);
+                p["fit"] = serde_json::json!("normal");
+                match self.style {
+                    // The screw's socket head sits in it.
+                    HoleStyle::Counterbore => p["head"] = serde_json::json!("ISO 4762"),
+                    HoleStyle::Countersink => {
+                        p["type"] = serde_json::json!("countersink");
+                        p["cs_diameter"] = serde_json::json!(d * 2.0);
+                        p["cs_angle"] = serde_json::json!(90);
+                    }
+                    HoleStyle::Simple => {}
+                }
+            }
+            HoleSize::Tapped(m) => p["thread"] = serde_json::json!(m),
+            HoleSize::Diameter(d) => {
+                p["diameter"] = serde_json::json!(d);
+                match self.style {
+                    HoleStyle::Counterbore => {
+                        p["type"] = serde_json::json!("counterbore");
+                        p["cb_diameter"] = serde_json::json!(d * 1.8);
+                        p["cb_depth"] = serde_json::json!(d * 0.6);
+                    }
+                    HoleStyle::Countersink => {
+                        p["type"] = serde_json::json!("countersink");
+                        p["cs_diameter"] = serde_json::json!(d * 2.0);
+                        p["cs_angle"] = serde_json::json!(90);
+                    }
+                    HoleStyle::Simple => {}
+                }
+            }
+        }
+        if let Some(depth) = self.depth {
+            p["depth"] = serde_json::json!(depth);
+        }
+        p
+    }
 }
 
 /// The Pencil tools: one at a time.
@@ -968,9 +1126,6 @@ impl State {
             }
             if pull_end && let Some(h) = self.holing.as_mut() {
                 h.held = false;
-                if h.diameter < 0.5 {
-                    self.holing = None;
-                }
             }
         } else if self.ink_mode {
             if let Some(at) = pull_start {
@@ -1782,20 +1937,90 @@ impl State {
         }
     }
 
-    /// Hole: the Pencil on a face puts the hole's middle there.
+    /// Hole: the Pencil on a face starts a hole there. The face's ends are found once, by
+    /// probing outward from that point along the face's two directions until the pick leaves
+    /// the face, so placing it then measures without picking again.
     fn start_hole(&mut self, app: &mut SolveApp, seen: &Seen, rect: egui::Rect, at: egui::Pos2) {
         let Some(placed) = self.placed else { return };
-        let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
-        match pick(app, seen, &placed, u).and_then(|h| Some((h.body, h.point, unit(h.normal)?))) {
-            Some((body, center, normal)) => self.holing = Some(Hole { body, center, normal, diameter: 0.0, held: true, text: String::new() }),
-            None if self.holing.is_none() => self.message = "Put the Pencil on a face where the hole goes.".into(),
-            None => {}
+        // The Pencil back on a waiting hole picks it up again, to move it.
+        if let Some(h) = self.holing.as_mut()
+            && to_screen(seen, &placed, rect, h.center).is_some_and(|c| c.distance(at) < 40.0)
+        {
+            h.held = true;
+            return;
         }
+        let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
+        let Some(hit) = pick(app, seen, &placed, u) else {
+            if self.holing.is_none() {
+                self.message = "Put the Pencil on a face where the hole goes.".into();
+            }
+            return;
+        };
+        let Some(normal) = unit(hit.normal) else { return };
+        // The face's directions along the design's axes: the axis most across the normal, and
+        // the one square to both.
+        let axis = (0..3).min_by(|a, b| normal[*a].abs().total_cmp(&normal[*b].abs())).unwrap_or(0);
+        let mut e = [0.0; 3];
+        e[axis] = 1.0;
+        let Some(t1) = unit(sub(e, scale3(normal, dot(e, normal)))) else { return };
+        let t2 = cross(normal, t1);
+        let b = solidcraft_ui_egui::viewport::model_bounds(app);
+        let reach = if b.is_empty() { 1000.0 } else { 2.0 * (0..3).map(|k| [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z][k]).fold(1.0, f64::max) };
+        let mut on_face = |q: [f64; 3]| {
+            pick_model(app, add(q, scale3(normal, 5.0)), scale3(normal, -1.0)).is_some_and(|h| h.body == hit.body && h.face == hit.face)
+        };
+        let mut extent = [[f64::NEG_INFINITY, f64::INFINITY]; 2];
+        for (k, t) in [t1, t2].into_iter().enumerate() {
+            for (side, sign) in [(0, -1.0), (1, 1.0)] {
+                // Double until off the face, then halve the gap to a hundredth of a millimetre.
+                let mut inside = 0.0;
+                let mut out = 1.0;
+                while out < reach && on_face(add(hit.point, scale3(t, sign * out))) {
+                    inside = out;
+                    out *= 2.0;
+                }
+                if out >= reach {
+                    continue;
+                }
+                for _ in 0..14 {
+                    let mid = (inside + out) / 2.0;
+                    if on_face(add(hit.point, scale3(t, sign * mid))) {
+                        inside = mid;
+                    } else {
+                        out = mid;
+                    }
+                }
+                extent[k][side] = sign * inside;
+            }
+        }
+        let size = self.holing.as_ref().map_or(HoleSize::Clearance("M5"), |h| h.size);
+        let mut h = Hole {
+            body: hit.body,
+            face: hit.face,
+            center: hit.point,
+            normal,
+            held: true,
+            origin: hit.point,
+            axes: [t1, t2],
+            extent,
+            at: [0.0; 2],
+            size,
+            style: HoleStyle::Simple,
+            depth: None,
+            texts: Default::default(),
+        };
+        h.place([0.0; 2], true);
+        self.holing = Some(h);
+        crate::note(&format!("ar: hole face extent {extent:?}"));
     }
 
-    /// Hole: the diameter is twice how far the Pencil is from the middle, on the face's plane.
+    /// Hole: the middle follows the Pencil on the face's plane, held to whole millimetres from
+    /// the nearer edges and to the face's middle.
     fn drag_hole(&mut self, seen: &Seen, rect: egui::Rect, at: egui::Pos2) {
         let (Some(placed), Some(h)) = (self.placed, self.holing.as_mut()) else { return };
+        if !h.held {
+            return;
+        }
         let Some(inv) = invert(&seen.view_proj) else { return };
         let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
         let ndc = [f64::from(u.0) * 2.0 - 1.0, 1.0 - f64::from(u.1) * 2.0];
@@ -1804,60 +2029,171 @@ impl State {
             let p: [f64; 4] = std::array::from_fn(|r| (0..4).map(|c| inv[c][r] * v[c]).sum());
             placed.point_to_model([p[0] / p[3], p[1] / p[3], p[2] / p[3]])
         };
-        // The Pencil's ray in the model's space, met with the face's plane.
         let (near, far) = (point(0.0), point(1.0));
         let dir = sub(far, near);
         let across = dot(dir, h.normal);
         if across.abs() < 1e-9 {
             return;
         }
-        let t = dot(sub(h.center, near), h.normal) / across;
-        let on_face = add(near, scale3(dir, t));
-        let r = sub(on_face, h.center);
-        h.diameter = (dot(r, r).sqrt() * 2.0 * 2.0).round() / 2.0;
-        h.text = format!("{:.1}", h.diameter);
+        let t = dot(sub(h.origin, near), h.normal) / across;
+        let q = sub(add(near, scale3(dir, t)), h.origin);
+        h.place([dot(q, h.axes[0]), dot(q, h.axes[1])], true);
     }
 
-    /// Hole: drilled through where it was drawn (`solid.hole`, one undo step).
+    /// Hole: drilled with its size, style and depth, held to the two edges it is dimensioned
+    /// from (`solid.hole`, one undo step).
     fn apply_hole(&mut self, app: &mut SolveApp) {
         self.release_focus = true;
         let Some(h) = self.holing.take() else { return };
-        if h.diameter < 0.5 {
-            return;
-        }
-        let params = serde_json::json!({ "position": h.center, "diameter": h.diameter });
-        match app.run("solid.hole", params) {
+        let params = h.params();
+        match app.run("solid.hole", params.clone()) {
             Ok(_) => {
-                self.message = format!("A {:.1} mm hole through {}.", h.diameter, h.body);
+                self.message = format!("{} hole in {}.", h.size.name(), h.body);
                 if let Ok(b) = self.bridge() {
                     (b.tick)();
                 }
             }
-            Err(e) => self.message = e,
+            Err(e) => {
+                self.message = e;
+                // Kept, so the size or place can be changed and it applied again.
+                self.holing = Some(h);
+            }
         }
-        crate::note(&format!("ar: hole {:.1} mm in {}", h.diameter, h.body));
+        crate::note(&format!("ar: hole {params}"));
     }
 
-    /// The hole being drawn: its circle on the face, and the diameter.
+    /// The hole: its circle on the face, a cross at its middle, and its distances to the face's
+    /// nearer edges as a drawing dimensions them.
     fn draw_hole(&self, painter: &egui::Painter, rect: egui::Rect, seen: &Seen) {
         let (Some(h), Some(placed)) = (&self.holing, self.placed) else { return };
         let ink = egui::Color32::from_rgb(255, 140, 60);
-        let Some(middle) = to_screen(seen, &placed, rect, h.center) else { return };
-        painter.circle_filled(middle, 4.0, ink);
-        let side = if h.normal[0].abs() < 0.9 { [1.0, 0.0, 0.0] } else { [0.0, 1.0, 0.0] };
-        let (Some(t1), r) = (unit(cross(h.normal, side)), h.diameter / 2.0) else { return };
-        let t2 = cross(h.normal, t1);
+        let screen = |q: [f64; 3]| to_screen(seen, &placed, rect, q);
+        let Some(middle) = screen(h.center) else { return };
+        let [t1, t2] = h.axes;
+        let r = h.size.diameter() / 2.0;
         let ring: Vec<egui::Pos2> = (0..=48)
             .filter_map(|k| {
                 let a = f64::from(k) / 48.0 * std::f64::consts::TAU;
-                to_screen(seen, &placed, rect, add(h.center, add(scale3(t1, r * a.cos()), scale3(t2, r * a.sin()))))
+                screen(add(h.center, add(scale3(t1, r * a.cos()), scale3(t2, r * a.sin()))))
             })
             .collect();
         painter.add(egui::Shape::line(ring, egui::Stroke::new(3.0, ink)));
-        let galley = painter.layout_no_wrap(format!("Ø {:.1} mm", h.diameter), egui::FontId::proportional(20.0), egui::Color32::BLACK);
-        let back = egui::Rect::from_center_size(middle + egui::vec2(0.0, -30.0), galley.size() + egui::vec2(14.0, 6.0));
-        painter.rect_filled(back, 5.0, ink);
-        painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
+        for t in [t1, t2] {
+            if let (Some(a), Some(b)) = (screen(add(h.center, scale3(t, r * 1.6))), screen(sub(h.center, scale3(t, r * 1.6)))) {
+                painter.line_segment([a, b], egui::Stroke::new(1.5, ink));
+            }
+        }
+        let label = |text: String, at: egui::Pos2| {
+            let galley = painter.layout_no_wrap(text, egui::FontId::proportional(18.0), egui::Color32::BLACK);
+            let back = egui::Rect::from_center_size(at, galley.size() + egui::vec2(12.0, 6.0));
+            painter.rect_filled(back, 5.0, ink);
+            painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
+        };
+        for k in 0..2 {
+            let (Some((d, _)), Some(edge)) = (h.to_edge(k), h.edge_point(k)) else { continue };
+            if let Some(e) = screen(edge) {
+                painter.line_segment([middle, e], egui::Stroke::new(2.0, ink));
+                painter.circle_filled(e, 3.5, ink);
+                label(format!("{d:.1}"), middle.lerp(e, 0.5));
+            }
+        }
+        label(h.size.name(), middle + egui::vec2(0.0, -34.0));
+    }
+
+    /// The waiting hole's options in a row under the panel: its distances to the edges, its
+    /// size (screw clearance, tapped, or a diameter), its style and depth, Apply.
+    fn hole_row(&mut self, ctx: &egui::Context, at: egui::Pos2, app: &mut SolveApp) -> Option<egui::Rect> {
+        if !self.holing.as_ref().is_some_and(|h| !h.held) {
+            return None;
+        }
+        let mut apply = false;
+        let mut cancel = false;
+        let container = Container::new(ctx, Surface::Popup);
+        let shown = container.area(egui::Id::unique("ar-hole")).order(egui::Order::Tooltip).fixed_pos(at).show(ctx, |ui| {
+            let frame = Container::popup_frame(ui.style());
+            container.show_frame(ui, frame, ctx.content_rect(), |ui| {
+                let Some(h) = self.holing.as_mut() else { return };
+                let boxed = |ui: &mut egui::Ui, text: &mut String| {
+                    let size = egui::vec2(64.0, ui.spacing().interact_size.y);
+                    ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.set_max_width(size.x);
+                        solidcraft_ui_kit::field(ui, text)
+                    })
+                    .inner
+                };
+                ui.horizontal(|ui| {
+                    // Distances from the nearer edges, as typed or written.
+                    for (k, name) in [(0, "X"), (1, "Y")] {
+                        if h.to_edge(k).is_none() {
+                            continue;
+                        }
+                        ui.label(name);
+                        let mut text = h.texts[k].clone();
+                        let entered = boxed(ui, &mut text);
+                        if text != h.texts[k] || entered {
+                            if let (Some(v), Some((_, end))) = (solidcraft_ui_kit::parse_number(&text), h.to_edge(k)) {
+                                let mut at = h.at;
+                                at[k] = if end == 0 { h.extent[k][0] + v } else { h.extent[k][1] - v };
+                                h.place(at, false);
+                            }
+                            h.texts[k] = text;
+                        }
+                    }
+                    ui.separator();
+                    for style in [HoleStyle::Simple, HoleStyle::Counterbore, HoleStyle::Countersink] {
+                        let name = match style {
+                            HoleStyle::Simple => "Simple",
+                            HoleStyle::Counterbore => "Counterbore",
+                            HoleStyle::Countersink => "Countersink",
+                        };
+                        if button(ui, name, if h.style == style { Button::SmallSelected } else { Button::Small }).clicked() {
+                            h.style = style;
+                        }
+                    }
+                    ui.separator();
+                    if button(ui, "Through", if h.depth.is_none() { Button::SmallSelected } else { Button::Small }).clicked() {
+                        h.depth = None;
+                    }
+                    ui.label("Depth");
+                    if boxed(ui, &mut h.texts[3]) || solidcraft_ui_kit::parse_number(&h.texts[3]).is_some_and(|v| Some(v) != h.depth) {
+                        h.depth = solidcraft_ui_kit::parse_number(&h.texts[3]).filter(|v| *v > 0.0);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Clearance");
+                    for (m, _, _) in SCREWS {
+                        if button(ui, m, if h.size == HoleSize::Clearance(m) { Button::SmallSelected } else { Button::Small }).clicked() {
+                            h.size = HoleSize::Clearance(m);
+                        }
+                    }
+                    ui.separator();
+                    ui.label("Tapped");
+                    for (m, _, _) in SCREWS {
+                        if button(ui, m, if h.size == HoleSize::Tapped(m) { Button::SmallSelected } else { Button::Small }).clicked() {
+                            h.size = HoleSize::Tapped(m);
+                        }
+                    }
+                    ui.separator();
+                    ui.label("Ø");
+                    if boxed(ui, &mut h.texts[2])
+                        && let Some(d) = solidcraft_ui_kit::parse_number(&h.texts[2]).filter(|d| *d > 0.0)
+                    {
+                        h.size = HoleSize::Diameter(d);
+                    }
+                    ui.separator();
+                    apply = button(ui, "Apply", Button::SmallSelected).clicked();
+                    cancel = button(ui, "Cancel", Button::Small).clicked();
+                });
+            });
+        });
+        if apply {
+            self.apply_hole(app);
+        }
+        if cancel {
+            self.holing = None;
+            self.release_focus = true;
+        }
+        Some(shown.response.rect)
     }
 
     /// Ink: the Pencil's line, kept on the model's surfaces where it was drawn.
@@ -2090,29 +2426,6 @@ impl State {
                         if button(ui, "Hole", on(Tool::Hole)).backing_on_hover_text("Draw a hole on a face with the Pencil").clicked() {
                             self.select_tool(Tool::Hole);
                         }
-                        if self.holing.as_ref().is_some_and(|h| !h.held) {
-                            let mut entered = false;
-                            if let Some(h) = self.holing.as_mut() {
-                                ui.label("Ø");
-                                let size = egui::vec2(72.0, ui.spacing().interact_size.y);
-                                entered = ui
-                                    .allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                        ui.set_max_width(size.x);
-                                        solidcraft_ui_kit::field(ui, &mut h.text)
-                                    })
-                                    .inner;
-                                if let Some(v) = solidcraft_ui_kit::parse_number(&h.text) {
-                                    h.diameter = v.max(0.0);
-                                }
-                            }
-                            if button(ui, "Apply", Button::SmallSelected).clicked() || entered {
-                                self.apply_hole(app);
-                            }
-                            if button(ui, "Cancel", Button::Small).clicked() {
-                                self.holing = None;
-                                self.release_focus = true;
-                            }
-                        }
                         if button(ui, "Ink", on(Tool::Ink)).backing_on_hover_text("Draw on the model with the Pencil").clicked() {
                             self.select_tool(Tool::Ink);
                         }
@@ -2187,8 +2500,8 @@ impl State {
                         Some(_) if self.pulling.as_ref().is_some_and(|p| !p.held) => {
                             "Apply moves the face; drag its arrow again to change how far.".into()
                         }
-                        Some(_) if self.holing.as_ref().is_some_and(|h| !h.held) => "Apply drills the hole through; type or write the diameter for an exact one.".into(),
-                        Some(_) if self.hole_mode => "Press the Pencil where the hole goes and drag out its size.".into(),
+                        Some(_) if self.holing.as_ref().is_some_and(|h| !h.held) => "Set its size, style and depth below, or its distances to the edges, then Apply. The Pencil on it moves it again.".into(),
+                        Some(_) if self.hole_mode => "Press the Pencil on a face where the hole goes; it measures from the face's edges as you move.".into(),
                         Some(_) if self.ink_mode => "Draw on the model with the Pencil. Clear ink takes it all away.".into(),
                         Some(_) if self.moving.as_ref().is_some_and(|m| !m.held) => "Apply puts the part there.".into(),
                         Some(_) if self.move_mode => "Press the Pencil on a part and drag it where it goes.".into(),
@@ -2205,6 +2518,10 @@ impl State {
         // A Pencil touch that starts on the panel is the panel's (its buttons), not the model's.
         let below = shown.response.rect.left_bottom() + egui::vec2(0.0, 8.0);
         let scales = self.scales_row(ctx, below);
+        let scales = match self.hole_row(ctx, scales.map_or(below, |r| r.left_bottom() + egui::vec2(0.0, 8.0)), app) {
+            Some(r) => Some(scales.map_or(r, |s| s.union(r))),
+            None => scales,
+        };
         let list = self.joints_list(ctx, scales.map_or(below, |r| r.left_bottom() + egui::vec2(0.0, 8.0)), app);
         let list = match (list, scales) {
             (Some(a), Some(b)) => Some(a.union(b)),
@@ -2300,6 +2617,11 @@ fn pick(app: &mut SolveApp, seen: &Seen, placed: &Placed, u: (f32, f32)) -> Opti
     let (near, far) = (at(0.0), at(1.0));
     let origin = placed.point_to_model(near);
     let dir = unit(placed.direction_to_model(sub(far, near)))?;
+    pick_model(app, origin, dir)
+}
+
+/// What a ray from `origin` along `dir` (model units) meets first: the design view's own pick.
+fn pick_model(app: &mut SolveApp, origin: [f64; 3], dir: [f64; 3]) -> Option<Hit> {
     // The face's nearest edge at any distance: whether it is near enough is judged on the AR
     // view's own screen by the caller (the pick's pixels are a model render's, not this view's).
     let request = serde_json::json!({ "frame": "model", "edges": true, "edge_px": 1.0e6, "rays": [{ "origin": origin, "dir": dir }] });
@@ -3253,6 +3575,62 @@ mod tests {
         assert_eq!(scale_name(0.2), "1:5");
         assert_eq!(scale_name(2.0), "2:1");
         assert_eq!(scale_name(0.37), "37%");
+    }
+
+    /// A hole on a 120 x 70 face, first touched 30 mm in from one corner on each side.
+    fn hole() -> Hole {
+        Hole {
+            body: "Box".into(),
+            face: 0,
+            center: [30.0, 30.0, 45.0],
+            normal: [0.0, 0.0, 1.0],
+            held: false,
+            origin: [30.0, 30.0, 45.0],
+            axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            extent: [[-30.0, 90.0], [-30.0, 40.0]],
+            at: [0.0; 2],
+            size: HoleSize::Clearance("M5"),
+            style: HoleStyle::Simple,
+            depth: None,
+            texts: Default::default(),
+        }
+    }
+
+    /// Placing keeps to whole millimetres from the nearer edge, and to the face's middle.
+    #[test]
+    fn a_hole_is_placed_as_a_drawing_dimensions_it() {
+        let mut h = hole();
+        h.place([-17.6, 2.3], true);
+        assert_eq!(h.to_edge(0), Some((12.0, 0)), "12 from the left edge");
+        assert_eq!(h.to_edge(1), Some((32.0, 0)), "32 from the near edge");
+        assert!(close(h.center, [12.0, 32.0, 45.0]), "{:?}", h.center);
+        // Near the middle along X (the face is 120 long: middle 60 from either end).
+        h.place([29.2, 0.0], true);
+        assert!((h.at[0] - 30.0).abs() < 1e-9, "{:?}", h.at);
+        assert_eq!(h.texts[0], "60.0");
+        // The edge point for X is on the left edge, level with the middle.
+        let Some(e) = h.edge_point(1) else { panic!("an edge") };
+        assert!(close(e, [60.0, 0.0, 45.0]), "{e:?}");
+    }
+
+    /// The hole goes to the engine held to its two edges, with its size and style.
+    #[test]
+    fn a_hole_asks_for_what_was_chosen() {
+        let mut h = hole();
+        h.place([-18.0, -18.0], true);
+        h.style = HoleStyle::Counterbore;
+        let p = h.params();
+        assert_eq!(p["clearance"], "M5");
+        assert_eq!(p["head"], "ISO 4762");
+        assert_eq!(p["references"].as_array().map(Vec::len), Some(2));
+        assert_eq!(p["references"][0]["distance"], 12.0);
+        assert!(p.get("depth").is_none(), "through by default");
+        h.size = HoleSize::Tapped("M4");
+        h.depth = Some(10.0);
+        let p = h.params();
+        assert_eq!(p["thread"], "M4");
+        assert_eq!(p["depth"], 10.0);
+        assert!((HoleSize::Tapped("M4").diameter() - 3.3).abs() < 1e-9);
     }
 
     /// The placement matrix moves model points as `Placed` says.
