@@ -99,7 +99,7 @@ const HELD_SLIVER: f64 = 1e-3;
 /// …and one that leaves a needle (shape below this, about a 12° smallest angle, longer than
 /// [`HELD_LONG`] budgets) among faces that bend more than about 10° ([`HELD_CURVED`]) from it.
 const HELD_NEEDLE: f64 = 0.35;
-const HELD_LONG: f64 = 8.0;
+const HELD_LONG: f64 = 16.0;
 const HELD_CURVED: f64 = 0.985;
 
 /// A reduction held to the scan: the scan's surface and each point's budget (see [`reduce_held`]).

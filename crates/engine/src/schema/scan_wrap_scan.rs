@@ -29,7 +29,8 @@ pub struct ScanWrapScanResult {
     pub surface: String,
     /// Whether the patches close into a solid.
     pub solid: bool,
-    /// Patches (faces), and the coarse triangles they were laid on (three patches each).
+    /// Patches (faces), and the coarse triangles they were laid on (three patches to a triangle,
+    /// four to a pair of triangles laid as one quad).
     pub patches: usize,
     pub coarse_triangles: usize,
     /// Rounds of reduction, and whether the coarse mesh met the tolerance both ways.

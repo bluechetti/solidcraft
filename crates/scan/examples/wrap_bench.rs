@@ -82,16 +82,24 @@ fn main() {
                 smallest_angle
             );
             let (mut lo, mut hi) = (180.0f64, 0.0f64);
+            let mut bad = [0usize; 4];
             for f in &w.faces {
                 let net = solidcraft_scan::surface_edit::points(f);
+                let (mut plo, mut phi) = (180.0f64, 0.0f64);
                 for (o, p, q) in [(0, 1, 4), (3, 2, 7), (15, 14, 11), (12, 13, 8)] {
                     let (u, v) = (net[p] - net[o], net[q] - net[o]);
                     let a = (u.dot(v) / (u.len() * v.len()).max(1e-300)).clamp(-1.0, 1.0).acos().to_degrees();
-                    lo = lo.min(a);
-                    hi = hi.max(a);
+                    plo = plo.min(a);
+                    phi = phi.max(a);
                 }
+                lo = lo.min(plo);
+                hi = hi.max(phi);
+                bad[0] += usize::from(plo < 5.0);
+                bad[1] += usize::from(plo < 10.0);
+                bad[2] += usize::from(phi > 170.0);
+                bad[3] += usize::from(phi > 175.0);
             }
-            println!("patch corners: smallest {lo:.1} deg, largest {hi:.1} deg");
+            println!("patch corners: smallest {lo:.1} deg, largest {hi:.1} deg; patches with a corner <5 {} <10 {} >170 {} >175 {}", bad[0], bad[1], bad[2], bad[3]);
             let coarse_tree = solidcraft_geom::compare::TriangleTree::of(&c.positions, &c.triangles);
             for (p, d) in w.worst.iter().take(4) {
                 let to_coarse = coarse_tree.nearest(*p).map_or(f64::NAN, |(d, _)| d);

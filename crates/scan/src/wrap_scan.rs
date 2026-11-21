@@ -52,6 +52,10 @@ const NEAR_CAP: f64 = 0.85;
 /// tolerances is a needle to mend: its patches would be too thin for any tessellation to follow (a
 /// 24 × 0.7 mm face made a patch that needed more than 20,000 nodes on one edge).
 const NEEDLE: f64 = 0.35;
+/// Two triangles pair into a quad only when they bend by less than this (30°), and every corner
+/// of the quad lies between this angle (15°) and 180° less it.
+const PAIR_BEND: f64 = 0.5236;
+const PAIR_CORNER: f64 = 0.2618;
 /// A coarse face whose smallest angle is below this is poor: its patches' corners are too sharp
 /// for the kernel's check (a 4° corner left edges off their faces); 10°.
 const MIN_ANGLE: f64 = 0.1745;
@@ -183,7 +187,7 @@ fn evenly(n: usize, most: usize) -> Vec<usize> {
 }
 
 /// The scan reduced once, every collapse held within `budget` (per scan point); when that leaves
-/// more than `cap` triangles, every budget is scaled up by the factor the first count says (the
+/// more than `cap` patches, every budget is scaled up by the factor the first count says (the
 /// tolerance given up evenly, not where an unheld reduction happens to cut) and corrected up to
 /// [`FIT_TRIES`] times; only then is it reduced to the cap unheld. The bool says whether the cap
 /// bounded it.
@@ -193,21 +197,27 @@ fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> 
         let scaled: Vec<f64> = budget.iter().map(|b| b * scale).collect();
         reduce::reduce_held(scan, held, &scaled, tree).ok_or(WrapError::Reduce)
     };
+    // Patches it would lay: three to a triangle, four to each pair laid as one quad (a little
+    // margin, as the tidy pass may pair a few triangles differently).
+    let count = |r: &reduce::Reduced| {
+        let paired = pairs(&r.positions, &r.triangles).iter().filter(|p| p.is_some()).count();
+        (3 * r.triangles.len()).saturating_sub(paired) + r.triangles.len() / 32
+    };
     let first = at(1.0)?;
-    if first.triangles.len() <= cap {
+    if count(&first) <= cap {
         return Ok((first, false));
     }
     // Triangles fall about as 1 / scale (a held edge grows as √budget across a curved face): start
     // at the scale that estimate gives, then correct by the same law, keeping the largest result
     // that fits. Two or three reductions where doubling took up to a dozen (10M triangles: each
     // reduction is minutes).
-    let mut scale = (first.triangles.len() as f64 / cap as f64) * 1.05;
+    let mut scale = (count(&first) as f64 / cap as f64) * 1.05;
     let mut best: Option<(f64, reduce::Reduced)> = None;
     for _ in 0..FIT_TRIES {
         let r = at(scale)?;
-        let n = r.triangles.len();
+        let n = count(&r);
         if n <= cap {
-            let better = best.as_ref().is_none_or(|(_, b)| n > b.triangles.len());
+            let better = best.as_ref().is_none_or(|(_, b)| r.triangles.len() > b.triangles.len());
             if better {
                 best = Some((scale, r));
             }
@@ -222,7 +232,7 @@ fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> 
     match best {
         Some((_, r)) => Ok((r, true)),
         None => {
-            let to_cap = reduce::Settings { target: cap, max_error: 0.0, keep_rim: false };
+            let to_cap = reduce::Settings { target: (cap / 3).max(4), max_error: 0.0, keep_rim: false };
             Ok((reduce::reduce(scan, to_cap).ok_or(WrapError::Reduce)?, true))
         }
     }
@@ -479,6 +489,7 @@ fn patches(under: &Under, positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Nur
     let mut points: Vec<Vec3> = cp.to_vec();
     let mut mid: HashMap<(u32, u32), u32> = HashMap::new();
     let mut quads: Vec<([u32; 4], Vec3)> = Vec::with_capacity(triangles.len() * 3);
+    let partner = pairs(cp, triangles);
     for t in walked(triangles) {
         let Some(&[a, b, c]) = triangles.get(t) else { continue };
         if [a, b, c].iter().any(|&v| v as usize >= cp.len()) {
@@ -490,19 +501,40 @@ fn patches(under: &Under, positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Nur
         if !(len > 0.0) {
             continue;
         }
-        let facing = n / len;
         let mut m = |x: u32, y: u32| -> u32 {
             *mid.entry((x.min(y), x.max(y))).or_insert_with(|| {
                 points.push((cp[x as usize] + cp[y as usize]) / 2.0);
                 (points.len() - 1) as u32
             })
         };
-        let (mab, mbc, mca) = (m(a, b), m(b, c), m(c, a));
-        points.push(inner_point(pa, pb, pc));
-        let ct = (points.len() - 1) as u32;
-        quads.push(([a, mab, ct, mca], facing));
-        quads.push(([b, mbc, ct, mab], facing));
-        quads.push(([c, mca, ct, mbc], facing));
+        match partner.get(t).copied().flatten() {
+            // The second of a pair: laid with the first.
+            Some((u, _)) if u < t => {}
+            // A pair: the quad a d b c round their shared side a b, cut in four at its middle.
+            Some((u, [qa, qd, qb, qc])) => {
+                let Some(other) = triangles.get(u) else { continue };
+                let n2 = (cp[other[1] as usize] - cp[other[0] as usize]).cross(cp[other[2] as usize] - cp[other[0] as usize]);
+                let sum = n / len + n2 / n2.len().max(1e-300);
+                let facing = sum / sum.len().max(1e-300);
+                let corners = [qa, qd, qb, qc];
+                let (m0, m1, m2, m3) = (m(qa, qd), m(qd, qb), m(qb, qc), m(qc, qa));
+                points.push(corners.iter().fold(Vec3::ZERO, |acc, &v| acc + cp[v as usize]) / 4.0);
+                let centre = (points.len() - 1) as u32;
+                quads.push(([qa, m0, centre, m3], facing));
+                quads.push(([qd, m1, centre, m0], facing));
+                quads.push(([qb, m2, centre, m1], facing));
+                quads.push(([qc, m3, centre, m2], facing));
+            }
+            None => {
+                let facing = n / len;
+                let (mab, mbc, mca) = (m(a, b), m(b, c), m(c, a));
+                points.push(inner_point(pa, pb, pc));
+                let ct = (points.len() - 1) as u32;
+                quads.push(([a, mab, ct, mca], facing));
+                quads.push(([b, mbc, ct, mab], facing));
+                quads.push(([c, mca, ct, mbc], facing));
+            }
+        }
     }
     // Every layout point onto the scan, facing the first quad that uses it.
     let mut facing_of = vec![Vec3::ZERO; points.len()];
@@ -824,6 +856,58 @@ fn remove_caps(positions: &[Vec3], triangles: &mut Vec<[u32; 3]>, tolerance: f64
     true
 }
 
+/// Coarse triangles paired across a shared side into quads (each its partner and the quad's
+/// corners `a d b c`, counter-clockwise, `a b` the side they share): worst-shaped triangles first,
+/// each with the neighbour across its longest side when the two bend by less than [`PAIR_BEND`]
+/// and the quad's corners all lie between [`PAIR_CORNER`] and 180° less it. Two long thin
+/// triangles along a rounded edge make a long rectangle, which four patches follow well, where
+/// three to a triangle would meet at near-zero and near-straight corners.
+fn pairs(cp: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Option<(usize, [u32; 4])>> {
+    let at = |v: u32| cp.get(v as usize).copied().unwrap_or(Vec3::ZERO);
+    let by_edge = edge_faces(triangles);
+    let mut order: Vec<usize> = (0..triangles.len()).collect();
+    order.sort_by(|&x, &y| shape(triangles[x].map(at)).total_cmp(&shape(triangles[y].map(at))));
+    let mut partner: Vec<Option<(usize, [u32; 4])>> = vec![None; triangles.len()];
+    let angle = |o: Vec3, p: Vec3, q: Vec3| {
+        let (u, v) = (p - o, q - o);
+        let l = u.len() * v.len();
+        if l > 0.0 { (u.dot(v) / l).clamp(-1.0, 1.0).acos() } else { 0.0 }
+    };
+    for t in order {
+        if partner[t].is_some() {
+            continue;
+        }
+        let tri = triangles[t];
+        let c3 = tri.map(at);
+        let Some(k) = (0..3).max_by(|&i, &j| c3[i].dist(c3[(i + 1) % 3]).total_cmp(&c3[j].dist(c3[(j + 1) % 3]))) else { continue };
+        let (a, b, c) = (tri[k], tri[(k + 1) % 3], tri[(k + 2) % 3]);
+        let Some(faces) = by_edge.get(&(a.min(b), a.max(b))) else { continue };
+        let &[f1, f2] = faces.as_slice() else { continue };
+        let u = if f1 == t { f2 } else { f1 };
+        if partner[u].is_some() {
+            continue;
+        }
+        let g = triangles[u];
+        let Some(i) = (0..3).find(|&i| g[i] == b && g[(i + 1) % 3] == a) else { continue };
+        let d = g[(i + 2) % 3];
+        let (Some(n1), Some(n2)) = (unit_normal(c3), unit_normal(g.map(at))) else { continue };
+        if n1.dot(n2) < PAIR_BEND.cos() {
+            continue;
+        }
+        let q = [at(a), at(d), at(b), at(c)];
+        let fair = (0..4).all(|k| {
+            let x = angle(q[k], q[(k + 1) % 4], q[(k + 3) % 4]);
+            (PAIR_CORNER..std::f64::consts::PI - PAIR_CORNER).contains(&x)
+        });
+        if !fair {
+            continue;
+        }
+        partner[t] = Some((u, [a, d, b, c]));
+        partner[u] = Some((t, [a, d, b, c]));
+    }
+    partner
+}
+
 /// The point inside a coarse triangle its three quads meet at: of the middle, the incentre and
 /// points drawn toward each corner, the one whose quads' worst corner (furthest from a right angle)
 /// is best. The middle of an obtuse triangle gives a quad a corner near 180°, which the kernel's
@@ -1057,7 +1141,7 @@ pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
     }
     let used: Vec<usize> = (0..n).filter(|&v| used[v]).collect();
     let sampled: Vec<usize> = evenly(used.len(), SAMPLES).into_iter().filter_map(|k| used.get(k).copied()).collect();
-    let cap = (settings.max_patches / 3).max(4);
+    let cap = settings.max_patches.max(12);
     let mut budget = vec![START * tol; n];
     let mut mark = vec![0usize; n];
     let mut best: Option<Wrap> = None;
@@ -1286,7 +1370,9 @@ mod tests {
         let (p, t) = sphere(20.0, 60, 120);
         let scan = Scan::new(&p, &t);
         let w = wrap(&scan, &Settings { tolerance: 0.1, ..Settings::default() }).expect("wrap");
-        assert_eq!(w.faces.len(), w.coarse.triangles.len() * 3);
+        // Three patches to a triangle, four to a pair of them.
+        let n = w.coarse.triangles.len();
+        assert!((2 * n..=3 * n).contains(&w.faces.len()), "{} patches on {n} triangles", w.faces.len());
         assert!(w.scan_to_patches.within >= 0.99, "{:?}", w.scan_to_patches);
         // A UV sphere's cells are needles near its poles, which the held reduction will not make
         // worse ([`crate::reduce::reduce_held`]): still far below 3 × the 14,160 triangles.

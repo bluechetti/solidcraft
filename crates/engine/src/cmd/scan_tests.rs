@@ -3912,7 +3912,8 @@ fn wrap_scan_makes_a_closed_scan_one_solid_within_its_tolerance() {
     let (mut s, scan) = session_with_triangles("wrap-scan", &sphere_triangles(radius, 24));
     let r = run(&mut s, "scan.wrap_scan", json!({"body": scan, "tolerance": 0.1}));
     assert_eq!(r["solid"], true, "{r}");
-    assert_eq!(r["patches"].as_u64().unwrap(), 3 * r["coarse_triangles"].as_u64().unwrap(), "{r}");
+    let (patches, coarse) = (r["patches"].as_u64().unwrap(), r["coarse_triangles"].as_u64().unwrap());
+    assert!((2 * coarse..=3 * coarse).contains(&patches), "three patches to a triangle, four to a pair: {r}");
     assert!(r["within"].as_f64().unwrap() >= 0.99, "{r}");
     let surface = r["surface"].as_str().unwrap().to_string();
     let m = run(&mut s, "inspect.measure", json!({"bodies": [surface]}));
