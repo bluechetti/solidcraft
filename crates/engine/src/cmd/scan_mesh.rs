@@ -287,12 +287,13 @@ pub(super) fn mesh_from_points(s: &mut Session, p: &Value) -> Result<Value> {
     let spacing = poisson::typical_spacing(&points);
     let thickness = poisson::layer_thickness(&points, spacing);
     let layered = thickness > poisson::LAYERED * spacing;
+    let asked = p.get("depth").filter(|v| !v.is_null()).is_some();
     let depth = match p.get("depth").filter(|v| !v.is_null()) {
         Some(v) => {
             let d = v
                 .as_u64()
                 .filter(|d| (u64::from(poisson::LEAST_DEPTH)..=u64::from(poisson::MOST_DEPTH)).contains(d))
-                .ok_or_else(|| bad(cmd, "`depth` is a whole number from 5 to 10"))?;
+                .ok_or_else(|| bad(cmd, format!("`depth` is a whole number from {} to {}", poisson::LEAST_DEPTH, poisson::MOST_DEPTH)))?;
             d as u32
         }
         None => {
@@ -303,7 +304,14 @@ pub(super) fn mesh_from_points(s: &mut Session, p: &Value) -> Result<Value> {
             poisson::Settings::suggested_for(d.x.max(d.y).max(d.z), spacing, thickness).depth
         }
     };
-    let made = poisson::reconstruct(&points, normals.as_deref(), &poisson::Settings { depth, trim }).map_err(|e| bad(cmd, e.to_string()))?;
+    // A suggested depth too fine for the node budget steps down until it fits; one asked for is refused.
+    let mut depth = depth;
+    let made = loop {
+        match poisson::reconstruct(&points, normals.as_deref(), &poisson::Settings { depth, trim }) {
+            Err(poisson::PoissonError::TooFine) if !asked && depth > poisson::LEAST_DEPTH => depth -= 1,
+            other => break other.map_err(|e| bad(cmd, e.to_string()))?,
+        }
+    };
     let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
     let name = match str_(p, "name").filter(|n| !n.trim().is_empty()) {
         Some(n) => n.to_owned(),
