@@ -144,7 +144,19 @@ pub fn facing(positions: &[Vec3], triangles: &[[u32; 3]], model: &Mesh, values: 
                 .map_or(1.0, |(m, foot)| if (p - foot).dot(m) < 0.0 { -1.0 } else { 1.0 });
             best = Some((distance, side));
         }
-        best.map_or(value, |(distance, side)| (side * distance) as f32)
+        // A point clearly in or out of the material (beyond the tolerance of the nearest surface)
+        // keeps that side: a face facing its way but on the other side is across a cavity from it
+        // (a blob a depth camera left inside a hollow part's chamber, 20 mm from the far wall), not
+        // the face this material left; read by it, regions came out on the wrong side and about the
+        // reach deep. A dent's floor beside a slot's wall is on the side the wall says.
+        // A point clearly outside the material (material added, or the blob in a chamber) is
+        // measured to the nearest surface: the face it would have left is a worn point's question.
+        let own = f64::from(value);
+        if own.is_finite() && own > tolerance {
+            return value;
+        }
+        best.filter(|(_, side)| !(own.is_finite() && own.abs() > tolerance && own.signum() != *side))
+            .map_or(value, |(distance, side)| (side * distance) as f32)
     };
     // The points beyond the tolerance first, then round after round the points next to one that
     // came out beyond it.
@@ -462,6 +474,48 @@ pub fn banded(s: f64, bands: u32) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    /// A hollow part's chamber: its floor at z = 0 facing up into it and its roof at z = 20 facing
+    /// down into it, and a scan patch 1 mm above the floor facing down (a blob a depth camera left
+    /// inside, its underside). The patch is outside the material, 1 mm from the floor: it reads 1
+    /// above, not 19 to the roof that faces its way across the chamber (regions on a hollow part came
+    /// out about 20 deep, on the roof's side).
+    #[test]
+    fn a_blob_in_a_chamber_is_measured_to_the_nearest_surface() {
+        use super::*;
+        let model = Mesh {
+            positions: vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(20.0, 0.0, 0.0),
+                Vec3::new(20.0, 20.0, 0.0),
+                Vec3::new(0.0, 20.0, 0.0),
+                Vec3::new(0.0, 0.0, 20.0),
+                Vec3::new(20.0, 0.0, 20.0),
+                Vec3::new(20.0, 20.0, 20.0),
+                Vec3::new(0.0, 20.0, 20.0),
+            ],
+            // The floor facing up, the roof facing down.
+            triangles: vec![[0, 1, 2], [0, 2, 3], [4, 6, 5], [4, 7, 6]],
+            ..Mesh::default()
+        };
+        let cells = 10u32;
+        let index = |i: u32, j: u32| i * (cells + 1) + j;
+        let positions: Vec<Vec3> =
+            (0..=cells).flat_map(|i| (0..=cells).map(move |j| Vec3::new(8.0 + 0.4 * f64::from(i), 8.0 + 0.4 * f64::from(j), 1.0))).collect();
+        let mut triangles = Vec::new();
+        for i in 0..cells {
+            for j in 0..cells {
+                // Facing down.
+                triangles.push([index(i, j), index(i + 1, j + 1), index(i + 1, j)]);
+                triangles.push([index(i, j), index(i, j + 1), index(i + 1, j + 1)]);
+            }
+        }
+        let d = measure(&positions, &model, 0.05, 30.0);
+        let faced = facing(&positions, &triangles, &model, &d.values, 0.05, 30.0);
+        assert!(faced.iter().all(|v| (f64::from(*v) - 1.0).abs() < 1e-6), "{:?}", &faced[..5]);
+        let regions = beyond(&positions, &triangles, &faced, 0.05).regions;
+        assert!(regions.iter().all(|r| !r.below && (r.deepest - 1.0).abs() < 1e-6), "{regions:?}");
+    }
+
     /// A floor with a slot beside it (the slot's wall goes down from the floor's edge), and a scan
     /// of it worn 2 deep in a strip along that edge, rising back to the floor. The nearest of the model to the worn
     /// points by the edge is the slot's wall, half a millimetre away, so the volume read by the
