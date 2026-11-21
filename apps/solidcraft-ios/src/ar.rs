@@ -56,6 +56,10 @@ struct Bridge {
     release: extern "C" fn(*mut std::ffi::c_void),
     save_photo: extern "C" fn(*const u8, i32, i32) -> i32,
     photo_result: extern "C" fn() -> *mut c_char,
+    record_start: extern "C" fn(),
+    record_stop: extern "C" fn(),
+    record_state: extern "C" fn() -> i32,
+    record_message: extern "C" fn() -> *mut c_char,
 }
 
 // The function types come from `Bridge`'s fields, which each transmute fills.
@@ -97,6 +101,10 @@ fn load() -> Result<Bridge, String> {
             release: std::mem::transmute(sym(c"sc_ar_release")?),
             save_photo: std::mem::transmute(sym(c"sc_ar_save_photo")?),
             photo_result: std::mem::transmute(sym(c"sc_ar_photo_result")?),
+            record_start: std::mem::transmute(sym(c"sc_ar_record_start")?),
+            record_stop: std::mem::transmute(sym(c"sc_ar_record_stop")?),
+            record_state: std::mem::transmute(sym(c"sc_ar_record_state")?),
+            record_message: std::mem::transmute(sym(c"sc_ar_record_message")?),
         })
     }
 }
@@ -295,6 +303,8 @@ pub struct State {
     /// The test hook opens Joints (`ar-joints`) or presses Check (`ar-check`) next frame.
     pub test_joints: bool,
     pub test_check: bool,
+    /// The test hook starts (`ar-record`) or stops (`ar-record-stop`) a video next frame.
+    pub test_record: Option<bool>,
     /// A Pencil pull asked for by the test hook: from and to (0..1 across and down the screen).
     pub test_pull: Option<[f32; 4]>,
     /// The Pencil touch in progress: its id, where and when it began.
@@ -488,6 +498,11 @@ impl State {
         if std::mem::take(&mut self.take_photo) {
             self.save_photo(rs, size_px);
         }
+        // What the screen recorder said, when it says something.
+        if let Some(said) = self.bridge().ok().and_then(|b| take_string((b.record_message)())) {
+            crate::note(&format!("ar: {said}"));
+            self.message = said;
+        }
         // The photo library's answer, when it comes.
         if let Some(said) = self.bridge().ok().and_then(|b| take_string((b.photo_result)())) {
             crate::note(&format!("ar: {said}"));
@@ -516,6 +531,15 @@ impl State {
                     if std::mem::take(&mut self.test_joints) {
                     self.joints = Some(Self::list_joints(app));
                     crate::note(&format!("ar: joints {:?}", self.joints));
+                }
+                if let Some(start) = self.test_record.take()
+                    && let Ok(b) = self.bridge()
+                {
+                    if start {
+                        (b.record_start)();
+                    } else {
+                        (b.record_stop)();
+                    }
                 }
                 if std::mem::take(&mut self.test_check) {
                     self.check_overlaps(app);
@@ -1300,7 +1324,29 @@ impl State {
     fn controls(&mut self, ctx: &egui::Context, screen: egui::Rect, seen: Option<&Seen>, coaching: bool, app: &mut SolveApp) {
         let safe = ctx.content_rect();
         let mut leave = false;
+        let recording = self.bridge().map(|b| (b.record_state)()).unwrap_or(0);
         let container = Container::new(ctx, Surface::Popup);
+        if recording != 0 {
+            // While recording, the video shows the room: the panel is one Stop button.
+            let shown = container.area(egui::Id::unique("ar-recording")).order(egui::Order::Tooltip).fixed_pos(safe.min + egui::vec2(16.0, 16.0)).show(ctx, |ui| {
+                let frame = Container::popup_frame(ui.style());
+                container.show_frame(ui, frame, safe, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.painter().circle_filled(ui.cursor().min + egui::vec2(8.0, 10.0), 6.0, egui::Color32::from_rgb(235, 64, 52));
+                        ui.add_space(20.0);
+                        let label = if recording == 2 { "Stop" } else { "…" };
+                        if button(ui, label, Button::Small).clicked()
+                            && recording == 2
+                            && let Ok(b) = self.bridge()
+                        {
+                            (b.record_stop)();
+                        }
+                    });
+                });
+            });
+            self.panel = Some(shown.response.rect);
+            return;
+        }
         let shown = container.area(egui::Id::unique("ar-controls")).order(egui::Order::Tooltip).fixed_pos(safe.min + egui::vec2(16.0, 16.0)).show(ctx, |ui| {
             let frame = Container::popup_frame(ui.style());
             container.show_frame(ui, frame, safe, |ui| {
@@ -1310,6 +1356,11 @@ impl State {
                     }
                     if button(ui, "Photo", Button::Small).backing_on_hover_text("Save the room and the model to Photos").clicked() {
                         self.take_photo = true;
+                    }
+                    if button(ui, "Record", Button::Small).backing_on_hover_text("Record a video of the room and the model").clicked()
+                        && let Ok(b) = self.bridge()
+                    {
+                        (b.record_start)();
                     }
                     // The design's own undo history: a pull, a section applied, anything.
                     for (label, command) in [("Undo", "edit.undo"), ("Redo", "edit.redo")] {

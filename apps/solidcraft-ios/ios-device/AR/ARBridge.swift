@@ -7,6 +7,7 @@ import ARKit
 import CoreVideo
 import Metal
 import Photos
+import ReplayKit
 import UIKit
 
 private final class Bridge: NSObject, ARSessionDelegate, ARCoachingOverlayViewDelegate {
@@ -380,4 +381,72 @@ public func sc_ar_photo_result() -> UnsafeMutablePointer<CChar>? {
     guard let r = photoResult else { return nil }
     photoResult = nil
     return strdup(r)
+}
+
+// MARK: Video
+
+private final class PreviewDelegate: NSObject, RPPreviewViewControllerDelegate {
+    func previewControllerDidFinish(_ previewController: RPPreviewViewController) {
+        previewController.dismiss(animated: true)
+    }
+}
+
+nonisolated(unsafe) private var previewDelegate = PreviewDelegate()
+/// 0 not recording, 1 starting, 2 recording, 3 stopping.
+nonisolated(unsafe) private var recordState: Int32 = 0
+nonisolated(unsafe) private var recordMessage: String?
+
+/// Start a screen video of the app (iPadOS asks once). The state and a message follow through
+/// `sc_ar_record_state` and `sc_ar_record_message`.
+@_cdecl("sc_ar_record_start")
+public func sc_ar_record_start() {
+    let r = RPScreenRecorder.shared()
+    guard r.isAvailable, recordState == 0 else {
+        recordMessage = "Screen recording is not available now."
+        return
+    }
+    r.isMicrophoneEnabled = false
+    recordState = 1
+    r.startRecording { error in
+        DispatchQueue.main.async {
+            if let error {
+                recordState = 0
+                recordMessage = "Recording did not start: \(error.localizedDescription)"
+            } else {
+                recordState = 2
+                recordMessage = "Recording."
+            }
+        }
+    }
+}
+
+/// Stop the video and show Apple's preview, where it is trimmed, saved or shared.
+@_cdecl("sc_ar_record_stop")
+public func sc_ar_record_stop() {
+    guard recordState == 2 else { return }
+    recordState = 3
+    RPScreenRecorder.shared().stopRecording { preview, error in
+        DispatchQueue.main.async {
+            recordState = 0
+            if let preview, let root = bridge?.window()?.rootViewController {
+                preview.previewControllerDelegate = previewDelegate
+                preview.modalPresentationStyle = .fullScreen
+                root.present(preview, animated: true)
+                recordMessage = "Recording stopped: save or share it in the preview."
+            } else {
+                recordMessage = "The recording was lost: \(error?.localizedDescription ?? "no video")."
+            }
+        }
+    }
+}
+
+@_cdecl("sc_ar_record_state")
+public func sc_ar_record_state() -> Int32 { recordState }
+
+/// A message about the recording (a string to free), once, or null.
+@_cdecl("sc_ar_record_message")
+public func sc_ar_record_message() -> UnsafeMutablePointer<CChar>? {
+    guard let m = recordMessage else { return nil }
+    recordMessage = nil
+    return strdup(m)
 }

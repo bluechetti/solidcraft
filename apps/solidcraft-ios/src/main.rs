@@ -124,6 +124,11 @@ impl eframe::App for App {
                         "ar-check" => self.ar.test_check = true,
                         _ => self.ar.test_explode = true,
                     }
+                } else if step == "ar-record" || step == "ar-record-stop" {
+                    #[cfg(target_os = "ios")]
+                    {
+                        self.ar.test_record = Some(step == "ar-record");
+                    }
                 } else if step == "ar-doubletap" {
                     #[cfg(target_os = "ios")]
                     {
