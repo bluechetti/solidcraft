@@ -23,6 +23,8 @@ private final class Bridge: NSObject, ARSessionDelegate, ARCoachingOverlayViewDe
     var lastTimestamp: TimeInterval = -1
     /// A map is being saved on the way out: the session ends once it is.
     var stopAfterSave = false
+    /// The model's anchor as last added (until then, one of that name from a saved map).
+    var modelAnchor: UUID?
     /// The pixel buffer locked for the app to read, unlocked by `sc_ar_frame_done`.
     var locked: CVPixelBuffer?
     /// The depth map locked with it.
@@ -49,6 +51,7 @@ private final class Bridge: NSObject, ARSessionDelegate, ARCoachingOverlayViewDe
 
     func start() {
         stopAfterSave = false
+        modelAnchor = nil
         failure = ""
         session.run(configuration(), options: [.resetTracking, .removeExistingAnchors])
         running = true
@@ -489,6 +492,7 @@ public func sc_ar_start_with_map(_ path: UnsafePointer<CChar>) -> Int32 {
           let map = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: data) else { return 0 }
     let b = shared()
     b.stopAfterSave = false
+    b.modelAnchor = nil
     b.failure = ""
     let c = b.configuration()
     c.initialWorldMap = map
@@ -504,4 +508,36 @@ public func sc_ar_map_message() -> UnsafeMutablePointer<CChar>? {
     guard let m = mapMessage else { return nil }
     mapMessage = nil
     return strdup(m)
+}
+
+// MARK: The model's anchor
+
+private let modelAnchorName = "solidcraft-model"
+
+/// Anchor the model at `m` (16 floats, column-major, a rigid pose in the room): ARKit keeps an
+/// anchor's pose corrected as it learns the room, and saves it with the room's map. Replaces the
+/// model's earlier anchor.
+@_cdecl("sc_ar_set_anchor")
+public func sc_ar_set_anchor(_ m: UnsafePointer<Float>) {
+    guard let b = bridge, b.running else { return }
+    for a in b.session.currentFrame?.anchors ?? [] where a.name == modelAnchorName {
+        b.session.remove(anchor: a)
+    }
+    var t = matrix_identity_float4x4
+    for c in 0..<4 { for r in 0..<4 { t[c][r] = m[c * 4 + r] } }
+    let anchor = ARAnchor(name: modelAnchorName, transform: t)
+    b.modelAnchor = anchor.identifier
+    b.session.add(anchor: anchor)
+}
+
+/// The model's anchor as ARKit has it now (16 floats), 1 when there is one.
+@_cdecl("sc_ar_anchor")
+public func sc_ar_anchor(_ out: UnsafeMutablePointer<Float>) -> Int32 {
+    guard let b = bridge, b.running,
+          let a = b.session.currentFrame?.anchors.first(where: { anchor in
+              if let id = b.modelAnchor { return anchor.identifier == id }
+              return anchor.name == modelAnchorName
+          }) else { return 0 }
+    write(a.transform, out)
+    return 1
 }

@@ -63,6 +63,8 @@ struct Bridge {
     save_map_and_stop: extern "C" fn(*const c_char),
     start_with_map: extern "C" fn(*const c_char) -> i32,
     map_message: extern "C" fn() -> *mut c_char,
+    set_anchor: extern "C" fn(*const f32),
+    anchor: extern "C" fn(*mut f32) -> i32,
 }
 
 // The function types come from `Bridge`'s fields, which each transmute fills.
@@ -111,6 +113,8 @@ fn load() -> Result<Bridge, String> {
             save_map_and_stop: std::mem::transmute(sym(c"sc_ar_save_map_and_stop")?),
             start_with_map: std::mem::transmute(sym(c"sc_ar_start_with_map")?),
             map_message: std::mem::transmute(sym(c"sc_ar_map_message")?),
+            set_anchor: std::mem::transmute(sym(c"sc_ar_set_anchor")?),
+            anchor: std::mem::transmute(sym(c"sc_ar_anchor")?),
         })
     }
 }
@@ -347,6 +351,15 @@ pub struct State {
     /// Where the model was left in this design's room last time, put back once ARKit has
     /// recognised the room (a tap to place it again drops it).
     restore: Option<Placed>,
+    /// The remembered place is relative to the model's anchor (saved in the room's map), not
+    /// to the room's origin.
+    restore_anchored: bool,
+    /// The model's anchor as last seen (a rigid pose in the room), and the placement it was
+    /// last made or moved for: ARKit's corrections to the anchor move the model with it.
+    anchor_pose: Option<Mat4>,
+    anchored: Option<Placed>,
+    /// The number field gave up the keyboard focus after its pull was applied or dropped.
+    release_focus: bool,
     /// Where the Pencil hovers above the glass, set by the app each frame.
     pub pencil_hover: Option<egui::Pos2>,
     /// Where the hovered face was last picked from (it is picked again once the Pencil moves).
@@ -400,12 +413,15 @@ impl State {
             }
             // The room and the model's place from last time, when this design has them.
             let (map, saved) = remembered(app);
-            let restore = std::fs::read_to_string(&saved).ok().and_then(|t| Placed::from_json(&t));
+            let text = std::fs::read_to_string(&saved).ok();
+            let restore = text.as_deref().and_then(Placed::from_json);
+            let anchored = text.as_deref().is_some_and(|t| t.contains("\"anchored\":true"));
             let from_map = restore.is_some() && CString::new(map.to_string_lossy().as_bytes()).is_ok_and(|c| (b.start_with_map)(c.as_ptr()) == 1);
             if !from_map {
                 (b.start)();
             }
             self.restore = restore.filter(|_| from_map);
+            self.restore_anchored = anchored;
             self.placed = None;
             self.cut = None;
             self.measuring = None;
@@ -422,6 +438,7 @@ impl State {
             // Where the model is goes with this design's map of the room, for next time; the map
             // is read while the session still runs, and the session ends once it is saved.
             let placed = self.placed;
+            let anchor_inv = self.anchor_pose.as_ref().and_then(invert);
             let (map, saved) = remembered(app);
             if let Ok(b) = self.bridge() {
                 match (placed, CString::new(map.to_string_lossy().as_bytes())) {
@@ -429,7 +446,12 @@ impl State {
                         if let Some(dir) = saved.parent() {
                             let _ = std::fs::create_dir_all(dir);
                         }
-                        let _ = std::fs::write(&saved, p.to_json());
+                        // Relative to the model's anchor, which the map keeps, when there is one.
+                        let json = match anchor_inv {
+                            Some(inv) => rigid(&inv, p).to_json().replacen('{', "{\"anchored\":true,", 1),
+                            None => p.to_json(),
+                        };
+                        let _ = std::fs::write(&saved, json);
                         (b.save_map_and_stop)(c.as_ptr());
                     }
                     _ => (b.stop)(),
@@ -437,6 +459,7 @@ impl State {
             }
             self.restore = None;
             self.on = false;
+            self.clear_transients(app);
             self.placed = None;
             self.target = None;
             self.source = None;
@@ -504,8 +527,19 @@ impl State {
         let camera_ms = started.elapsed().as_secs_f64() * 1e3;
         if let Some(s) = seen.as_ref() {
             self.last_back = Some(s.back);
-            // The room is recognised: the model is back where it was left.
-            if s.tracking == 2 && self.placed.is_none() && let Some(p) = self.restore.take() {
+            // The room is recognised: the model is back where it was left (on its anchor, once
+            // ARKit has found it in the room; an older save, once tracking is back).
+            let back = match (self.placed, self.restore, self.restore_anchored) {
+                (None, Some(local), true) => self.read_anchor().map(|a| {
+                    self.anchor_pose = Some(a);
+                    rigid(&a, local)
+                }),
+                (None, Some(p), false) if s.tracking == 2 => Some(p),
+                _ => None,
+            };
+            if let Some(p) = back {
+                self.restore = None;
+                self.anchored = Some(p);
                 self.placed = Some(p);
                 self.message = "Back where you left it.".into();
                 crate::note("ar: placement restored");
@@ -513,6 +547,14 @@ impl State {
                     (b.tick)();
                 }
             }
+        }
+        self.follow_anchor();
+        if std::mem::take(&mut self.release_focus) {
+            ctx.memory_mut(|m| {
+                if let Some(id) = m.focused() {
+                    m.surrender_focus(id);
+                }
+            });
         }
         if let Some(said) = self.bridge().ok().and_then(|b| take_string((b.map_message)())) {
             crate::note(&format!("ar: room map {said}"));
@@ -1045,6 +1087,7 @@ impl State {
     /// Pull: the face goes as far as the waiting pull says, as one step in the design's undo
     /// history.
     fn apply_pull(&mut self, app: &mut SolveApp) {
+        self.release_focus = true;
         let Some(pull) = self.pulling.take() else { return };
         if pull.distance.abs() < 0.5 {
             return;
@@ -1096,6 +1139,66 @@ impl State {
         let back = egui::Rect::from_center_size(b + egui::vec2(0.0, -26.0), galley.size() + egui::vec2(16.0, 8.0));
         painter.rect_filled(back, 6.0, ink);
         painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
+    }
+
+    /// The model's anchor as ARKit has it now.
+    fn read_anchor(&mut self) -> Option<Mat4> {
+        let b = self.bridge().ok()?;
+        let mut m = [0f32; 16];
+        ((b.anchor)(m.as_mut_ptr()) == 1).then(|| std::array::from_fn(|c| std::array::from_fn(|r| f64::from(m[c * 4 + r]))))
+    }
+
+    /// Keep the model on its anchor. Once a placement settles (no drag or pinch in progress) the
+    /// model is anchored at its foot; after that, each correction ARKit makes to the anchor moves
+    /// the model with it, so it stays on the table as ARKit learns the room.
+    fn follow_anchor(&mut self) {
+        let Some(placed) = self.placed else {
+            self.anchor_pose = None;
+            self.anchored = None;
+            return;
+        };
+        let settling = self.drag.is_some() || self.pinch.is_some();
+        if !settling && self.anchored != Some(placed) {
+            let f = placed.anchor();
+            let pose: Mat4 = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [f[0], f[1], f[2], 1.0]];
+            let floats: [f32; 16] = std::array::from_fn(|k| pose[k / 4][k % 4] as f32);
+            if let Ok(b) = self.bridge() {
+                (b.set_anchor)(floats.as_ptr());
+            }
+            self.anchor_pose = Some(pose);
+            self.anchored = Some(placed);
+            return;
+        }
+        let (Some(was), Some(now)) = (self.anchor_pose, self.read_anchor()) else { return };
+        let moved = (0..4).any(|c| (0..4).any(|r| (was[c][r] - now[c][r]).abs() > 1e-5));
+        if moved && let Some(inv) = invert(&was) {
+            let p = rigid(&mul(&now, &inv), placed);
+            let shift = sub([now[3][0], now[3][1], now[3][2]], [was[3][0], was[3][1], was[3][2]]);
+            let mm = dot(shift, shift).sqrt() * 1000.0;
+            if mm > 1.0 {
+                crate::note(&format!("ar: anchor corrected by {mm:.1} mm"));
+            }
+            self.placed = Some(p);
+            self.anchored = Some(p);
+            self.anchor_pose = Some(now);
+        }
+    }
+
+    /// Everything that belongs to one look at the model in the room: leaving AR (or picking the
+    /// model up) puts it all away, so nothing lingers in the design view or the next session.
+    fn clear_transients(&mut self, app: &mut SolveApp) {
+        app.viewport.stereo.pointed = None;
+        self.palette = None;
+        self.pulling = None;
+        self.overlaps.clear();
+        self.joints = None;
+        self.measuring = None;
+        self.cut = None;
+        self.drag = None;
+        self.message.clear();
+        self.anchor_pose = None;
+        self.anchored = None;
+        self.release_focus = true;
     }
 
     /// The hovering Pencil lights up the face under its tip, as the mouse does in the design
@@ -1519,6 +1622,7 @@ impl State {
                                 self.apply_pull(app);
                             }
                             if button(ui, "Cancel", Button::Small).clicked() {
+                                self.release_focus = true;
                                 self.pulling = None;
                             }
                         }
@@ -1536,6 +1640,7 @@ impl State {
                         }
                         ui.separator();
                         if button(ui, "Pick up", Button::Small).clicked() {
+                            self.clear_transients(app);
                             self.measuring = None;
                             self.placed = None;
                             self.cut = None;
@@ -2329,6 +2434,13 @@ fn kelvin_rgb(kelvin: f32) -> [f32; 3] {
 fn mul(a: &Mat4, b: &Mat4) -> Mat4 {
     std::array::from_fn(|c| std::array::from_fn(|r| (0..4).map(|k| a[k][r] * b[c][k]).sum()))
 }
+/// `p` carried by the rigid motion `m` (a turn and a move of the room).
+fn rigid(m: &Mat4, p: Placed) -> Placed {
+    let turn3 = |v: [f64; 3]| [0, 1, 2].map(|r| m[0][r] * v[0] + m[1][r] * v[1] + m[2][r] * v[2]);
+    let t = turn3(p.translation);
+    Placed { axes: p.axes.map(turn3), translation: [t[0] + m[3][0], t[1] + m[3][1], t[2] + m[3][2]], ..p }
+}
+
 /// The inverse of `m` (Gauss-Jordan with partial pivoting), or `None` when it has none.
 fn invert(m: &Mat4) -> Option<Mat4> {
     // Rows of [m | I], m read by rows.
@@ -2498,6 +2610,22 @@ mod tests {
         assert_eq!(Placed::from_json(&p.to_json()), Some(p));
         assert_eq!(Placed::from_json("{}"), None);
         assert_eq!(Placed::from_json(&p.to_json().replace("0.002", "-1")), None);
+    }
+
+    /// Carried by a rigid motion and back, a placement is where it was; carried, its foot goes
+    /// where the motion takes it.
+    #[test]
+    fn a_placement_follows_its_anchor() {
+        let p = Placed { axes: [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]], scale: 0.001, translation: [0.1, 0.7, -0.4], foot: [5.0, 6.0, 0.0], bounds: [[0.0; 3], [10.0, 12.0, 4.0]] };
+        let (s, c) = 0.3f64.sin_cos();
+        let m: Mat4 = [[c, 0.0, -s, 0.0], [0.0, 1.0, 0.0, 0.0], [s, 0.0, c, 0.0], [0.02, -0.01, 0.03, 1.0]];
+        let Some(inv) = invert(&m) else { panic!("rigid") };
+        let back = rigid(&inv, rigid(&m, p));
+        assert!(close(back.translation, p.translation) && (0..3).all(|k| close(back.axes[k], p.axes[k])));
+        let f = p.anchor();
+        let moved = rigid(&m, p).anchor();
+        let want = [c * f[0] + s * f[2] + 0.02, f[1] - 0.01, -s * f[0] + c * f[2] + 0.03];
+        assert!(close(moved, want), "{moved:?} {want:?}");
     }
 
     /// The placement matrix moves model points as `Placed` says.
