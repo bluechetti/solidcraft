@@ -44,6 +44,9 @@ A scan and the model built on it are one design: everything the Scan tab makes i
 - `max_above`: the scan stands outside the model, so the model lacks material there.
 - `max_below`: the model stands outside the scan, so it has material it should not.
 - `unmatched`: points too far from the model to count. A large share means a whole region is missing.
+- Each Reconstruct step's `fit` reads both ways, by area: `explained` is the share of the scan the body holds, `added` the share of the body off the scan and outside it (in the air where the part has nothing). A step that explains a little more and adds more reads `worse`.
+- To set the model's section beside the scan's: `sketch.intersect {"refs": [{"body": "<model>"}]}` in a sketch on the plane, read with `sketch.inspect`. `scan.section_sketch` cuts scans only. On a coarse or fused scan give it the scan's accuracy as `tolerance`, or it fits the cut to the scan's waviness.
+- `check_parameters {"set": {…}, "bodies": ["<model>"]}` reports only that body.
 
 When the server is bridged to the app, `screenshot {}` shows the coloured map; `scan.deviation {"show": false}` takes it away. Only `passes: true` and a `measure {}` bbox that matches the scan's `own_size` count. A step that reported `ok` can still be millimetres off.
 
@@ -116,6 +119,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 - Wear or damage against a model: `scan.deviation {}` replies `volume_below` and `volume_above` (mm³ beyond the tolerance, inside and outside the model), `area_below`/`area_above`, and `regions` (each patch with its `side`, `area`, `volume`, `deepest` and `at`). Beside a wall or a step the distance is to the nearest surface, so a dent there reads small.
 - A gear, a knob, a spline: each prism in `scan.reconstruct`'s reply says how its outline repeats round its middle in `rotational` (`order`: the tooth count; `tip_diameter`, `root_diameter`; `module` were it a spur gear). Extrude It still draws the whole outline; build one tooth and `solid.pattern.circular` it yourself when the count must be a parameter.
 - A clean tool with nothing to do (Repair, Fill Holes, Remove Floating, Reduce, Denoise; Fillet It with no round that fits) is no error: it replies `changed: false` with `note`, and a `batch` goes on.
+- A cut with no `targets` cuts every body of the active component: name `targets` when other bodies are there.
 - A parameter a command does not take is ignored in silence unless the MCP server was started with `--param-check warn` (replies then list it in `param_warnings`) or `strict` (it is refused): when a call seems to ignore a setting, check its name with `describe_command`.
 - `solid.move` refuses a `matrix` whose rotation is rounded to a few digits (`not rigid … above the tolerance 1e-9`): pass `"tolerance": 1e-6` with a matrix copied at seven digits; it is made exactly rigid.
 - A metre or inch file inserted without `units` is 1000 or 25.4 times too small. `scan.survey {}` flags anything under 3 mm across.
