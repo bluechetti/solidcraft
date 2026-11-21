@@ -2192,6 +2192,9 @@ pub mod refusal;
 #[path = "scan_section.rs"]
 pub mod section;
 
+#[path = "scan_section_read.rs"]
+pub mod section_read;
+
 #[path = "scan_select.rs"]
 pub mod select;
 
