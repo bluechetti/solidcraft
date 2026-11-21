@@ -6,11 +6,15 @@
 //! is ours: where its patches pass through about ten points of the scan each, ours are fitted to
 //! the scan by least squares, so noise averages out instead of being copied.
 //!
-//! 1. **Coarse mesh** ([`coarse`]): the scan reduced by [`crate::reduce::reduce_held`], every
-//!    collapse held within a budget of the scan; then measured both ways (every scan point to the
-//!    coarse mesh, every coarse point and face middle to the scan). Where a sample is farther than
-//!    the tolerance, the budget of the scan points within two rings of it is halved and the scan
-//!    reduced again from the start, up to [`ROUNDS`] times.
+//! 1. **Coarse mesh**: the scan reduced by [`crate::reduce::reduce_held`], every collapse held
+//!    within a budget of the scan (twice the tolerance to start: the patches are fitted to the scan
+//!    itself, so the coarse mesh may stray further than they may). More triangles than the most
+//!    patches allow: every budget doubled and the scan reduced again, so the tolerance is given up
+//!    evenly.
+//! 5. **Rounds** ([`wrap`]): the patches measured against the scan; where a scan point is farther
+//!    than the tolerance, the budget of the scan points within two rings of it is halved and steps
+//!    1–4 run again from the scan, up to [`ROUNDS`] times, the best kept (d0's rounds, driven by
+//!    the patches rather than by the coarse mesh).
 //! 2. **Layout**: every coarse triangle becomes three quads (a corner, the two edge midpoints
 //!    beside it and the middle), so neighbouring quads share whole sides and no side ends on
 //!    another's middle.
@@ -37,8 +41,13 @@ use crate::{Scan, par, reduce, welded};
 
 /// Rounds of reduction at most (d0's: 7).
 pub const ROUNDS: usize = 7;
-/// The first budget as a share of the tolerance (collapses add up; the rounds fix the rest).
-const START: f64 = 0.8;
+/// The first budget as a multiple of the tolerance: the patches are fitted to the scan, not to the
+/// coarse mesh, so it may stray further than they may (d0 starts at four); the rounds fix the rest.
+const START: f64 = 2.0;
+/// Times the budgets are doubled to keep within the most patches before an unheld reduction.
+const WIDEN: usize = 8;
+/// Halvings (on a log scale) between the last two widened budgets, to end near the cap.
+const NARROW: usize = 3;
 /// A budget's factor round a sample that is too far.
 const TIGHTEN: f64 = 0.5;
 /// Rings of scan points tightened round a sample that is too far.
@@ -99,21 +108,24 @@ pub struct Spread {
     pub max: f64,
 }
 
-/// The coarse mesh and how it measured.
+/// The coarse mesh the patches were laid on, and how the rounds went.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Coarse {
     pub positions: Vec<Vec3>,
     pub triangles: Vec<[u32; 3]>,
-    /// Scan points to the coarse mesh.
-    pub scan_to_coarse: Spread,
-    /// Coarse points and face middles to the scan.
-    pub coarse_to_scan: Spread,
     pub rounds: usize,
-    /// Both ways within the tolerance for the asked share, nothing beyond twice the tolerance.
+    /// The patches met the share within the tolerance, nothing beyond three tolerances.
     pub met: bool,
-    /// The most patches bounded the mesh: the first round was reduced to the cap regardless of the
-    /// tolerance, or a later round that needed more was dropped for the last that fitted.
+    /// The most patches bounded the wrap: the budgets were widened (or, at worst, the scan reduced
+    /// unheld) to stay within the cap, so the tolerance was given up where it had to be.
     pub capped: bool,
+}
+
+impl Coarse {
+    /// Coarse triangles (three patches each).
+    pub fn triangle_count(&self) -> usize {
+        self.triangles.len()
+    }
 }
 
 /// A wrap: its patches and how far they are from the scan.
@@ -143,92 +155,48 @@ fn evenly(n: usize, most: usize) -> Vec<usize> {
     (0..n).step_by(step).collect()
 }
 
-/// The scan reduced as far as it can be within the tolerance (see the module).
-pub fn coarse(scan: &Scan, settings: &Settings) -> Result<Coarse, WrapError> {
-    let tol = settings.tolerance;
-    if !(tol.is_finite() && tol > 0.0) || !(settings.share > 0.0 && settings.share <= 1.0) {
-        return Err(WrapError::Input("the tolerance must be above zero and the share in (0, 1]"));
-    }
-    if scan.triangle_count() == 0 {
-        return Err(WrapError::Input("the scan has no triangles"));
-    }
-    let tree = TriangleTree::of(scan.positions, scan.triangles);
-    let rep = welded(scan.positions);
-    let rings = rings(scan, &rep);
-    let n = scan.positions.len();
-    let used: Vec<usize> = {
-        let mut u = vec![false; n];
-        for t in scan.triangles {
-            for &v in t {
-                if let Some(x) = u.get_mut(v as usize) {
-                    *x = true;
-                }
-            }
-        }
-        (0..n).filter(|&v| u[v]).collect()
+/// The scan reduced once, every collapse held within `budget` (per scan point); when that leaves
+/// more than `cap` triangles, every budget is doubled and the scan reduced again (the tolerance
+/// given up evenly, not where an unheld reduction happens to cut), up to [`WIDEN`] times; only then
+/// is it reduced to the cap unheld. The bool says whether the cap bounded it.
+fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> Result<(reduce::Reduced, bool), WrapError> {
+    let held = reduce::Settings { target: 4, max_error: 0.0, keep_rim: true };
+    let at = |scale: f64| -> Result<reduce::Reduced, WrapError> {
+        let scaled: Vec<f64> = budget.iter().map(|b| b * scale).collect();
+        reduce::reduce_held(scan, held, &scaled, tree).ok_or(WrapError::Reduce)
     };
-    let sampled: Vec<usize> = evenly(used.len(), SAMPLES).into_iter().filter_map(|k| used.get(k).copied()).collect();
-    let mut budget = vec![START * tol; n];
-    let mut mark = vec![0usize; n];
-    let mut best: Option<Coarse> = None;
-    for round in 1..=ROUNDS {
-        let held = reduce::Settings { target: 4, max_error: 0.0, keep_rim: true };
-        let Some(mut r) = reduce::reduce_held(scan, held, &budget, &tree) else { return Err(WrapError::Reduce) };
-        let cap = (settings.max_patches / 3).max(4);
-        let mut capped = false;
-        if r.triangles.len() > cap {
-            if let Some(b) = best.as_mut() {
-                // A later round that would need more patches than allowed: keep the last that fitted.
-                b.capped = true;
-                break;
-            }
-            // The first round already needs more: reduced to the cap, the tolerance given up where
-            // it must be (d0's rule), and measured as it is.
-            let to_cap = reduce::Settings { target: cap, max_error: 0.0, keep_rim: true };
-            r = reduce::reduce(scan, to_cap).ok_or(WrapError::Reduce)?;
-            capped = true;
-        }
-        if r.triangles.is_empty() {
-            return Err(WrapError::Reduce);
-        }
-        let ctree = TriangleTree::of(&r.positions, &r.triangles);
-        let forward: Vec<f64> = par::map(sampled.len(), |k| ctree.nearest(scan.positions[sampled[k]]).map_or(f64::INFINITY, |(d, _)| d));
-        let probes: Vec<Vec3> = r
-            .positions
-            .iter()
-            .copied()
-            .chain(r.triangles.iter().map(|t| (r.positions[t[0] as usize] + r.positions[t[1] as usize] + r.positions[t[2] as usize]) / 3.0))
-            .collect();
-        let backward: Vec<(f64, u32)> = par::map(probes.len(), |k| tree.nearest(probes[k]).unwrap_or((f64::INFINITY, u32::MAX)));
-        let mut fd = forward.clone();
-        let mut bd: Vec<f64> = backward.iter().map(|(d, _)| *d).collect();
-        let (sf, sb) = (spread(&mut fd, tol), spread(&mut bd, tol));
-        let met = sf.within >= settings.share && sb.within >= settings.share && sf.max <= 2.0 * tol && sb.max <= 2.0 * tol;
-        let this = Coarse { positions: r.positions, triangles: r.triangles, scan_to_coarse: sf, coarse_to_scan: sb, rounds: round, met, capped };
-        let done = met || capped || round == ROUNDS;
-        best = Some(this);
-        if done {
+    let first = at(1.0)?;
+    if first.triangles.len() <= cap {
+        return Ok((first, false));
+    }
+    // Doubled until it fits, then narrowed between the last two scales so the wrap ends near the
+    // cap rather than up to half below it.
+    let mut too_fine = 1.0;
+    let mut fits: Option<(f64, reduce::Reduced)> = None;
+    for widen in 1..=WIDEN {
+        let scale = f64::from(1u32 << widen);
+        let r = at(scale)?;
+        if r.triangles.len() <= cap {
+            fits = Some((scale, r));
             break;
         }
-        // Keep detail round every sample that is too far.
-        for (k, &d) in forward.iter().enumerate() {
-            if d > tol
-                && let Some(&v) = sampled.get(k)
-            {
-                tighten(v, &rep, &rings, &mut budget, &mut mark, round);
-            }
-        }
-        for &(d, t) in &backward {
-            if d > tol
-                && let Some(tri) = scan.triangles.get(t as usize)
-            {
-                for &v in tri {
-                    tighten(v as usize, &rep, &rings, &mut budget, &mut mark, round);
-                }
-            }
+        too_fine = scale;
+    }
+    let Some((mut coarse_scale, mut best)) = fits else {
+        let to_cap = reduce::Settings { target: cap, max_error: 0.0, keep_rim: false };
+        return Ok((reduce::reduce(scan, to_cap).ok_or(WrapError::Reduce)?, true));
+    };
+    for _ in 0..NARROW {
+        let mid = (too_fine * coarse_scale).sqrt();
+        let r = at(mid)?;
+        if r.triangles.len() <= cap {
+            coarse_scale = mid;
+            best = r;
+        } else {
+            too_fine = mid;
         }
     }
-    best.ok_or(WrapError::Reduce)
+    Ok((best, true))
 }
 
 /// Each welded point's neighbours (by its representative).
@@ -442,17 +410,20 @@ fn solve4(mut m: [[f64; 4]; 4], r: [Vec3; 4]) -> Option<[Vec3; 4]> {
     Some(x)
 }
 
-/// The whole scan wrapped in patches (see the module).
-pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
-    let coarse = coarse(scan, settings)?;
-    let under = Under { scan, tree: TriangleTree::of(scan.positions, scan.triangles) };
-    let cp = &coarse.positions;
+/// The patches laid on a coarse mesh and fitted to the scan, in an order that keeps neighbours
+/// together (the coarse triangles walked breadth first, three patches each), so a run of them is
+/// one connected piece.
+fn patches(under: &Under, positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<NurbsSurface> {
+    let cp = positions;
     // Layout points: the coarse corners, then each edge's midpoint, then each triangle's middle.
-    let mut points: Vec<Vec3> = cp.clone();
+    let mut points: Vec<Vec3> = cp.to_vec();
     let mut mid: HashMap<(u32, u32), u32> = HashMap::new();
-    let mut quads: Vec<([u32; 4], Vec3)> = Vec::with_capacity(coarse.triangles.len() * 3);
-    for t in &coarse.triangles {
-        let [a, b, c] = *t;
+    let mut quads: Vec<([u32; 4], Vec3)> = Vec::with_capacity(triangles.len() * 3);
+    for t in walked(triangles) {
+        let Some(&[a, b, c]) = triangles.get(t) else { continue };
+        if [a, b, c].iter().any(|&v| v as usize >= cp.len()) {
+            continue;
+        }
         let (pa, pb, pc) = (cp[a as usize], cp[b as usize], cp[c as usize]);
         let n = (pb - pa).cross(pc - pa);
         let len = n.len();
@@ -494,7 +465,7 @@ pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
     let keys: Vec<(u32, u32)> = sides.keys().copied().collect();
     let curves: Vec<[Vec3; 4]> = par::map(keys.len(), |k| {
         let (x, y) = keys[k];
-        side(&under, placed[x as usize], placed[y as usize], sides[&(x, y)])
+        side(under, placed[x as usize], placed[y as usize], sides.get(&(x, y)).copied().unwrap_or(Vec3::Z))
     });
     let curve: HashMap<(u32, u32), [Vec3; 4]> = keys.into_iter().zip(curves).collect();
     let along = |x: u32, y: u32| -> [Vec3; 4] {
@@ -512,16 +483,107 @@ pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
         let ([q0, q1, q2, q3], facing) = quads[k];
         let (bottom, top, left, right) = (along(q0, q1), along(q3, q2), along(q0, q3), along(q1, q2));
         let mut net = coons(&bottom, &top, &left, &right);
-        fit_inner(&under, &mut net, facing);
+        fit_inner(under, &mut net, facing);
         NurbsSurface::new([3, 3], [knots.clone(), knots.clone()], &net, &[1.0; 16]).ok()
     });
-    let faces: Vec<NurbsSurface> = faces.into_iter().flatten().collect();
-    let scan_to_patches = measure(scan, &faces, settings.tolerance);
-    Ok(Wrap { faces, coarse, scan_to_patches })
+    faces.into_iter().flatten().collect()
 }
 
-/// Scan points to the patches, each drawn as a 6 × 6 grid of triangles.
-fn measure(scan: &Scan, faces: &[NurbsSurface], tolerance: f64) -> Spread {
+/// The triangles' indices walked breadth first across shared edges, each piece in turn.
+fn walked(triangles: &[[u32; 3]]) -> Vec<usize> {
+    let mut by_edge: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+    for (t, tri) in triangles.iter().enumerate() {
+        for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
+            by_edge.entry((a.min(b), a.max(b))).or_default().push(t);
+        }
+    }
+    let mut seen = vec![false; triangles.len()];
+    let mut order = Vec::with_capacity(triangles.len());
+    for start in 0..triangles.len() {
+        if seen[start] {
+            continue;
+        }
+        seen[start] = true;
+        let mut queue = std::collections::VecDeque::from([start]);
+        while let Some(t) = queue.pop_front() {
+            order.push(t);
+            let tri = triangles[t];
+            for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
+                for &u in by_edge.get(&(a.min(b), a.max(b))).map_or(&[][..], Vec::as_slice) {
+                    if !seen[u] {
+                        seen[u] = true;
+                        queue.push_back(u);
+                    }
+                }
+            }
+        }
+    }
+    order
+}
+
+/// The whole scan wrapped in patches (see the module): rounds of reduce, lay, fit and measure,
+/// detail kept round the scan points the patches miss, until they meet the share or the cap.
+pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
+    let tol = settings.tolerance;
+    if !(tol.is_finite() && tol > 0.0) || !(settings.share > 0.0 && settings.share <= 1.0) {
+        return Err(WrapError::Input("the tolerance must be above zero and the share in (0, 1]"));
+    }
+    if scan.triangle_count() == 0 {
+        return Err(WrapError::Input("the scan has no triangles"));
+    }
+    let tree = TriangleTree::of(scan.positions, scan.triangles);
+    let under = Under { scan, tree: TriangleTree::of(scan.positions, scan.triangles) };
+    let rep = welded(scan.positions);
+    let rings = rings(scan, &rep);
+    let n = scan.positions.len();
+    let mut used = vec![false; n];
+    for t in scan.triangles {
+        for &v in t {
+            if let Some(x) = used.get_mut(v as usize) {
+                *x = true;
+            }
+        }
+    }
+    let used: Vec<usize> = (0..n).filter(|&v| used[v]).collect();
+    let sampled: Vec<usize> = evenly(used.len(), SAMPLES).into_iter().filter_map(|k| used.get(k).copied()).collect();
+    let cap = (settings.max_patches / 3).max(4);
+    let mut budget = vec![START * tol; n];
+    let mut mark = vec![0usize; n];
+    let mut best: Option<Wrap> = None;
+    for round in 1..=ROUNDS {
+        let (r, capped) = reduce_once(scan, &tree, &budget, cap)?;
+        if r.triangles.is_empty() {
+            return Err(WrapError::Reduce);
+        }
+        let faces = patches(&under, &r.positions, &r.triangles);
+        let d = distances(scan, &faces, &sampled);
+        let mut sorted = d.clone();
+        let spread = spread(&mut sorted, tol);
+        let met = spread.within >= settings.share && spread.max <= 3.0 * tol;
+        let better = best.as_ref().is_none_or(|b| spread.within > b.scan_to_patches.within);
+        let coarse = Coarse { positions: r.positions, triangles: r.triangles, rounds: round, met, capped };
+        if better {
+            best = Some(Wrap { faces, coarse, scan_to_patches: spread });
+        } else if let Some(b) = best.as_mut() {
+            b.coarse.rounds = round;
+        }
+        if met || capped || round == ROUNDS {
+            break;
+        }
+        // Keep detail round every scan point the patches miss.
+        for (k, &dk) in d.iter().enumerate() {
+            if dk > tol
+                && let Some(&v) = sampled.get(k)
+            {
+                tighten(v, &rep, &rings, &mut budget, &mut mark, round);
+            }
+        }
+    }
+    best.ok_or(WrapError::Reduce)
+}
+
+/// The sampled scan points' distances to the patches, each patch drawn as a 6 × 6 grid of triangles.
+fn distances(scan: &Scan, faces: &[NurbsSurface], sampled: &[usize]) -> Vec<f64> {
     const G: usize = 6;
     let mut positions = Vec::with_capacity(faces.len() * (G + 1) * (G + 1));
     let mut triangles = Vec::with_capacity(faces.len() * G * G * 2);
@@ -541,9 +603,7 @@ fn measure(scan: &Scan, faces: &[NurbsSurface], tolerance: f64) -> Spread {
         }
     }
     let tree = TriangleTree::of(&positions, &triangles);
-    let sampled = evenly(scan.positions.len(), SAMPLES);
-    let mut d: Vec<f64> = par::map(sampled.len(), |k| tree.nearest(scan.positions[sampled[k]]).map_or(f64::INFINITY, |(d, _)| d));
-    spread(&mut d, tolerance)
+    par::map(sampled.len(), |k| scan.positions.get(sampled[k]).and_then(|&p| tree.nearest(p)).map_or(f64::INFINITY, |(d, _)| d))
 }
 
 #[cfg(test)]
@@ -581,12 +641,25 @@ mod tests {
     fn a_held_reduction_stays_within_its_budget_and_goes_far() {
         let (p, t) = sphere(20.0, 60, 120);
         let scan = Scan::new(&p, &t);
-        let c = coarse(&scan, &Settings { tolerance: 0.1, ..Settings::default() }).expect("coarse");
-        assert!(c.met, "{c:?}");
-        assert!(c.scan_to_coarse.within >= 0.99 && c.coarse_to_scan.within >= 0.99, "{:?} {:?}", c.scan_to_coarse, c.coarse_to_scan);
-        // Chord sag on R 20 within 0.1 mm allows edges of about 2·sqrt(2·20·0.1) = 4 mm: a few
-        // hundred triangles, far fewer than the 14,160 of the input.
-        assert!(c.triangles.len() < 3_000, "{} triangles", c.triangles.len());
+        let tree = TriangleTree::of(&p, &t);
+        let (r, capped) = reduce_once(&scan, &tree, &vec![0.1; p.len()], usize::MAX).expect("reduce");
+        assert!(!capped);
+        // Every coarse point lies within its budget of the scan, by the guard.
+        let worst = r.positions.iter().map(|q| tree.nearest(*q).map_or(f64::INFINITY, |(d, _)| d)).fold(0.0, f64::max);
+        assert!(worst <= 0.1 + 1e-9, "a coarse point {worst} mm off the scan");
+        // Chord sag on R 20 within 0.1 mm allows edges of about 2·sqrt(2·20·0.1) = 4 mm: far fewer
+        // triangles than the 14,160 of the input.
+        assert!(r.triangles.len() < 3_000, "{} triangles", r.triangles.len());
+    }
+
+    #[test]
+    fn the_patches_come_piece_by_piece() {
+        // Two separate triangles' fans: the walk finishes one piece before it starts the other.
+        let t = [[0, 1, 2], [10, 11, 12], [0, 2, 3], [10, 12, 13], [0, 3, 1]];
+        let order = walked(&t);
+        assert_eq!(order.len(), 5);
+        let first_piece: Vec<bool> = order.iter().map(|&k| t[k][0] == 0).collect();
+        assert_eq!(first_piece, [true, true, true, false, false]);
     }
 
     #[test]

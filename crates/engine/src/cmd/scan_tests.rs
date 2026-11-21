@@ -3900,3 +3900,25 @@ fn free_form_refuses_corners_that_enclose_no_area() {
     assert_eq!(triangle["surface"], "FreeForm1", "{triangle}");
     assert_eq!(s.model.state().bodies.len(), 2, "the scan and the one face; the refusals kept nothing");
 }
+
+/// Wrap Scan on a closed scan of a sphere R 20 (a cube's sides pushed out, 24 × 24 each): one closed
+/// solid of three patches per coarse triangle, every scan point within the tolerance, its volume
+/// that of the sphere, 4/3 π 20³ = 33,510.3 mm³, within 0.5 % (the scan's own facets lie up to the
+/// chord's sag inside the sphere: R(1 − cos(π/48)) ≈ 0.04 mm at this density, about 0.6 % of the
+/// volume at most, and the patches are fitted to the facets). A cap below 300 is refused.
+#[test]
+fn wrap_scan_makes_a_closed_scan_one_solid_within_its_tolerance() {
+    let radius = 20.0;
+    let (mut s, scan) = session_with_triangles("wrap-scan", &sphere_triangles(radius, 24));
+    let r = run(&mut s, "scan.wrap_scan", json!({"body": scan, "tolerance": 0.1}));
+    assert_eq!(r["solid"], true, "{r}");
+    assert_eq!(r["patches"].as_u64().unwrap(), 3 * r["coarse_triangles"].as_u64().unwrap(), "{r}");
+    assert!(r["within"].as_f64().unwrap() >= 0.99, "{r}");
+    let surface = r["surface"].as_str().unwrap().to_string();
+    let m = run(&mut s, "inspect.measure", json!({"bodies": [surface]}));
+    let volume = m["bodies"][0]["volume_mm3"].as_f64().unwrap();
+    let sphere = 4.0 / 3.0 * std::f64::consts::PI * radius.powi(3);
+    assert!((volume - sphere).abs() <= 0.005 * sphere, "volume {volume} against {sphere}");
+    let refused = s.execute("scan.wrap_scan", &json!({"body": scan, "max_patches": 10})).unwrap_err().to_string();
+    assert!(refused.contains("max_patches"), "{refused}");
+}

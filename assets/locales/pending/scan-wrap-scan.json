@@ -1,0 +1,34 @@
+{
+  "en": {
+    "cmd.scan_wrap_scan": "Wrap Scan",
+    "help.scan.wrap_scan": "Wraps the whole scan in patches fitted to it, a solid when the scan is closed. Use it for cast or organic parts Reconstruct cannot build."
+  },
+  "de": {
+    "cmd.scan_wrap_scan": "Scan umhüllen",
+    "help.scan.wrap_scan": "Umhüllt den ganzen Scan mit angepassten Flächenstücken, ein Volumenkörper, wenn der Scan geschlossen ist. Für Guss- oder organische Teile, die Rekonstruieren nicht aufbauen kann."
+  },
+  "ko": {
+    "cmd.scan_wrap_scan": "스캔 감싸기",
+    "help.scan.wrap_scan": "스캔 전체를 맞춘 패치로 감싸며, 스캔이 닫혀 있으면 솔리드가 됩니다. 재구성으로 만들 수 없는 주조품이나 유기적인 부품에 사용하세요."
+  },
+  "ar": {
+    "cmd.scan_wrap_scan": "تغليف المسح",
+    "help.scan.wrap_scan": "يغلّف المسح كله برقع مطابقة له، ويصبح مجسمًا عندما يكون المسح مغلقًا. استخدمه للقطع المصبوبة أو العضوية التي لا تستطيع إعادة البناء إنشاءها."
+  },
+  "he": {
+    "cmd.scan_wrap_scan": "עטיפת סריקה",
+    "help.scan.wrap_scan": "עוטף את כל הסריקה בטלאים המותאמים לה, וגוף מוצק כשהסריקה סגורה. השתמשו בזה לחלקים יצוקים או אורגניים ששחזור אינו יכול לבנות."
+  },
+  "ja": {
+    "cmd.scan_wrap_scan": "スキャンを包む",
+    "help.scan.wrap_scan": "スキャン全体を合わせたパッチで包み、スキャンが閉じていればソリッドにします。再構築で作れない鋳造品や有機的な部品に使います。"
+  },
+  "vi": {
+    "cmd.scan_wrap_scan": "Bọc bản quét",
+    "help.scan.wrap_scan": "Bọc toàn bộ bản quét bằng các mảnh khớp với nó, thành khối đặc khi bản quét kín. Dùng cho chi tiết đúc hoặc hữu cơ mà Tái dựng không dựng được."
+  },
+  "zh": {
+    "cmd.scan_wrap_scan": "包裹扫描",
+    "help.scan.wrap_scan": "用贴合扫描的曲面片包裹整个扫描，扫描封闭时成为实体。用于重建无法构建的铸件或有机形状零件。"
+  }
+}

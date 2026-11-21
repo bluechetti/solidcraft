@@ -38,19 +38,7 @@ fn main() {
     match wrap(&scan, &Settings { tolerance, max_patches, ..Settings::default() }) {
         Ok(w) => {
             let c = &w.coarse;
-            println!(
-                "triangles {} -> coarse {} in {} rounds (met {}, capped {}); scan->coarse within {:.4} p99 {:.3} max {:.3}; coarse->scan within {:.4} p99 {:.3}",
-                triangles.len(),
-                c.triangles.len(),
-                c.rounds,
-                c.met,
-                c.capped,
-                c.scan_to_coarse.within,
-                c.scan_to_coarse.p99,
-                c.scan_to_coarse.max,
-                c.coarse_to_scan.within,
-                c.coarse_to_scan.p99
-            );
+            println!("triangles {} -> coarse {} in {} rounds (met {}, capped {})", triangles.len(), c.triangles.len(), c.rounds, c.met, c.capped);
             println!(
                 "patches {}; scan->patches within {tolerance}: {:.4} p99 {:.3} max {:.3}; {:.1} s, peak {:.2} GB",
                 w.faces.len(),

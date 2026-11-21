@@ -2181,6 +2181,9 @@ pub mod together;
 #[path = "scan_unseen.rs"]
 pub mod unseen;
 
+#[path = "scan_wrap_scan.rs"]
+pub mod wrap_scan;
+
 #[path = "scan_refusal.rs"]
 pub mod refusal;
 

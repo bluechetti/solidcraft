@@ -154,6 +154,7 @@ pub mod scan_split;
 pub mod scan_survey;
 pub mod scan_template;
 pub mod scan_tolerance;
+pub mod scan_wrap_scan;
 pub mod section;
 pub mod select;
 pub mod selection;
