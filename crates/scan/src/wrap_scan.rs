@@ -151,6 +151,9 @@ pub struct Coarse {
     /// The most patches bounded the wrap: the budgets were widened (or, at worst, the scan reduced
     /// unheld) to stay within the cap, so the tolerance was given up where it had to be.
     pub capped: bool,
+    /// The patches its round's budgets would have laid with no cap (more than the cap when
+    /// `capped`): about what the tolerance asks for.
+    pub wanted: usize,
 }
 
 impl Coarse {
@@ -204,8 +207,9 @@ fn evenly(n: usize, most: usize) -> Vec<usize> {
 /// more than `cap` patches, every budget is scaled up by the factor the first count says (the
 /// tolerance given up evenly, not where an unheld reduction happens to cut) and corrected up to
 /// [`FIT_TRIES`] times; only then is it reduced to the cap unheld. The bool says whether the cap
-/// bounded it, the number by how much the budgets were scaled.
-fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> Result<(reduce::Reduced, bool, f64), WrapError> {
+/// bounded it, the first number by how much the budgets were scaled, the second how many patches
+/// the budgets as given would have laid.
+fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> Result<(reduce::Reduced, bool, f64, usize), WrapError> {
     let held = reduce::Settings { target: 4, max_error: 0.0, keep_rim: true };
     let at = |scale: f64| -> Result<reduce::Reduced, WrapError> {
         let scaled: Vec<f64> = budget.iter().map(|b| b * scale).collect();
@@ -218,8 +222,9 @@ fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> 
         (3 * r.triangles.len()).saturating_sub(paired) + r.triangles.len() / 32
     };
     let first = at(1.0)?;
-    if count(&first) <= cap {
-        return Ok((first, false, 1.0));
+    let wanted = count(&first);
+    if wanted <= cap {
+        return Ok((first, false, 1.0, wanted));
     }
     // Triangles fall about as 1 / scale (a held edge grows as √budget across a curved face): start
     // at the scale that estimate gives, then correct by the same law, keeping the largest result
@@ -244,10 +249,10 @@ fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> 
         scale *= ratio;
     }
     match best {
-        Some((k, r)) => Ok((r, true, k)),
+        Some((k, r)) => Ok((r, true, k, wanted)),
         None => {
             let to_cap = reduce::Settings { target: (cap / 3).max(4), max_error: 0.0, keep_rim: false };
-            Ok((reduce::reduce(scan, to_cap).ok_or(WrapError::Reduce)?, true, scale))
+            Ok((reduce::reduce(scan, to_cap).ok_or(WrapError::Reduce)?, true, scale, wanted))
         }
     }
 }
@@ -1231,7 +1236,7 @@ pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
     let mut mark = vec![0usize; n];
     let mut best: Option<Wrap> = None;
     for round in 1..=ROUNDS {
-        let (mut r, capped, scale) = reduce_once(scan, &tree, &budget, cap)?;
+        let (mut r, capped, scale, wanted) = reduce_once(scan, &tree, &budget, cap)?;
         if r.triangles.is_empty() {
             return Err(WrapError::Reduce);
         }
@@ -1251,7 +1256,7 @@ pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
             order.into_iter().take(WORST).filter_map(|k| sampled.get(k).and_then(|&v| scan.positions.get(v)).map(|&p| (p, d[k]))).collect();
         let met = spread.within >= settings.share && spread.max <= 3.0 * tol;
         let better = best.as_ref().is_none_or(|b| spread.within > b.scan_to_patches.within);
-        let coarse = Coarse { positions: r.positions, triangles: r.triangles, rounds: round, met, capped };
+        let coarse = Coarse { positions: r.positions, triangles: r.triangles, rounds: round, met, capped, wanted };
         if better {
             best = Some(Wrap { faces, coarse, scan_to_patches: spread, worst });
         } else if let Some(b) = best.as_mut() {
@@ -1332,7 +1337,7 @@ mod tests {
         let (p, t) = sphere(20.0, 60, 120);
         let scan = Scan::new(&p, &t);
         let tree = TriangleTree::of(&p, &t);
-        let (r, capped, _) = reduce_once(&scan, &tree, &vec![0.1; p.len()], usize::MAX).expect("reduce");
+        let (r, capped, _, _) = reduce_once(&scan, &tree, &vec![0.1; p.len()], usize::MAX).expect("reduce");
         assert!(!capped);
         // Every coarse point lies within its budget of the scan, by the guard.
         let worst = r.positions.iter().map(|q| tree.nearest(*q).map_or(f64::INFINITY, |(d, _)| d)).fold(0.0, f64::max);
@@ -1507,6 +1512,8 @@ mod tests {
         let w = wrap(&scan, &Settings { tolerance: 0.01, max_patches: 600, ..Settings::default() }).expect("wrap");
         assert!(w.coarse.capped && !w.coarse.met, "{:?}", w.coarse);
         assert!(w.faces.len() <= 600, "{} patches", w.faces.len());
+        // At 0.01 mm a sphere of R 20 asks for far more than 600 patches.
+        assert!(w.coarse.wanted > 600, "wants {}", w.coarse.wanted);
     }
 
     #[test]

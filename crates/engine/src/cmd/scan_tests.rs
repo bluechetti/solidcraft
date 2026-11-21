@@ -3922,5 +3922,43 @@ fn wrap_scan_makes_a_closed_scan_one_solid_within_its_tolerance() {
     assert!((volume - sphere).abs() <= 0.005 * sphere, "volume {volume} against {sphere}");
     let refused = s.execute("scan.wrap_scan", &json!({"body": scan, "max_patches": 10})).unwrap_err().to_string();
     assert!(refused.contains("max_patches"), "{refused}");
+    // The reply carries the verdict on the wrap, as scan.verdict gives it.
+    assert_eq!(r["verdict"]["model"], json!(surface), "{r}");
+    assert!(["met", "not_done"].contains(&r["verdict"]["verdict"].as_str().unwrap_or_default()), "{r}");
+    assert!(r.get("patches_wanted").is_none(), "an uncapped wrap wants no more patches: {r}");
+}
+
+/// A wrap the most patches hold back says about how many the tolerance asks for, and its verdict's
+/// first next step is the same wrap with that many: 0.001 mm on a sphere of R 20 asks for far more
+/// than 300.
+#[test]
+fn a_capped_wrap_says_how_many_patches_its_tolerance_asks_for() {
+    let (mut s, scan) = session_with_triangles("wrap-capped", &sphere_triangles(20.0, 24));
+    let r = run(&mut s, "scan.wrap_scan", json!({"body": scan, "tolerance": 0.001, "max_patches": 300}));
+    assert_eq!(r["capped"], true, "{r}");
+    let wanted = r["patches_wanted"].as_u64().unwrap();
+    assert!(wanted > 300, "{r}");
+    assert!(r["warning"].as_str().unwrap().contains("max_patches"), "{r}");
+    let first = &r["verdict"]["next"][0];
+    assert_eq!(first["command"], "scan.wrap_scan", "{r}");
+    assert_eq!(first["params"]["max_patches"].as_u64().unwrap(), wanted.min(60_000), "{r}");
+}
+
+/// A lumpy closed blob (a sphere of R 20 whose radius swings ±20 % with direction) holds no plane,
+/// cylinder, cone, sphere or torus, so Reconstruct has no prism or turned part to propose: it
+/// proposes Wrap Scan on the whole scan, and that wrap is a solid.
+#[test]
+fn reconstruct_proposes_wrap_scan_when_it_has_no_route() {
+    let lump = |p: Vec3| {
+        let d = p.normalized().unwrap_or(Vec3::Z);
+        d * (20.0 * (1.0 + 0.2 * (3.0 * d.x).sin() * (2.0 * d.y + 1.0).cos() + 0.1 * (4.0 * d.z).sin()))
+    };
+    let blob: Vec<[Vec3; 3]> = sphere_triangles(20.0, 24).into_iter().map(|t| t.map(lump)).collect();
+    let (mut s, scan) = session_with_triangles("lump", &blob);
+    let read = run(&mut s, "scan.reconstruct", json!({"body": scan}));
+    let commands: Vec<&str> = read["proposals"].as_array().unwrap().iter().filter_map(|p| p["command"].as_str()).collect();
+    assert_eq!(commands, vec!["scan.wrap_scan"], "{read}");
+    let wrapped = run(&mut s, "scan.wrap_scan", read["proposals"][0]["params"].clone());
+    assert_eq!(wrapped["solid"], true, "{wrapped}");
 }
 

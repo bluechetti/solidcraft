@@ -45,9 +45,16 @@ pub struct ScanWrapScanResult {
     pub max: f64,
     /// The tolerance used, mm.
     pub tolerance: f64,
+    /// When the most patches bounded the wrap: about how many the tolerance asks for (raise
+    /// `max_patches` toward it, up to 60,000).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patches_wanted: Option<usize>,
     /// A sentence when the wrap is short of the tolerance.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
+    /// `scan.verdict` on the scan and the wrap: met or not_done, with its issues and next steps
+    /// (the first of them a wrap with more patches when the cap held it back).
+    pub verdict: serde_json::Value,
     /// The Scan Surface feature that keeps the patches.
     pub feature: serde_json::Value,
 }

@@ -714,8 +714,13 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
     let partly_turned = reading.partly_turned.as_ref().map(as_turned);
     let spokes = reading.spokes.as_ref().map(|sp| ScanSpokes { count: sp.count, faces: sp.faces.clone(), share: sp.share });
     let body = found.scan.clone();
-    let proposals =
+    let mut proposals: Vec<Value> =
         proposals(reading, built.is_some()).iter().map(|p| json!({"command": p.command(), "params": p.params(&body, view.selected())})).collect();
+    // No route to a body on the whole scan (no prism, no turned part, nothing built): wrap it, the
+    // freeform route, so there is always a model to judge.
+    if proposals.is_empty() && built.is_none() && !view.selected() {
+        proposals.push(json!({"command": "scan.wrap_scan", "params": {"body": body}}));
+    }
     let note = if reading.faces.is_empty() {
         Some("Find All found no shape on the scan: it is all freeform".to_string())
     } else if let (true, Some(why)) = (reading.prisms.is_empty(), &reading.turned_unread) {

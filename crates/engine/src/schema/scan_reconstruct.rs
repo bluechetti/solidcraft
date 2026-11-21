@@ -291,7 +291,7 @@ pub struct ScanReconstructResult {
     pub built: Option<String>,
     /// The next steps, as commands with their parameters, the body first: Revolve It for a turned
     /// part, else Extrude It for each prism, then Cut It and Pattern It for the holes, and Fillet
-    /// It last for the rounds no profile holds.
+    /// It last for the rounds no profile holds; Wrap Scan when the whole scan gives none of them.
     pub proposals: Vec<Value>,
     /// The rounds along edges no profile holds, which Fillet It fillets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -232,7 +232,7 @@ fn plan_region(s: &mut Session, p: &Value) -> Result<Value> {
     plan_reply(s, scan, changed)
 }
 
-fn verdict(s: &mut Session, p: &Value) -> Result<Value> {
+pub(crate) fn verdict(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.verdict";
     let scan = scan_of(s, p, cmd)?;
     let model = str_(p, "model").filter(|m| !m.trim().is_empty()).map(str::to_owned);

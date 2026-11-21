@@ -83,13 +83,28 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
     let feature = super::super::features::add_feature(s, &json!({ "body_name": name, "name": "Wrap Scan" }), kind)?;
     let solid = s.model.state().body(&name).is_some_and(|b| b.is_closed());
     let short = w.scan_to_patches.within < settings.share;
+    let wanted = w.coarse.capped.then_some(w.coarse.wanted.max(w.faces.len()));
     let warning = short.then(|| {
         format!(
             "{:.1} % of the scan is within {tolerance} mm of the patches{}",
             100.0 * w.scan_to_patches.within,
-            if w.coarse.capped { ": the most patches bounded the wrap; raise max_patches or the tolerance" } else { "" }
+            match wanted {
+                Some(n) => format!(": the most patches bounded the wrap; the tolerance asks for about {n} (max_patches), or raise the tolerance"),
+                None => String::new(),
+            }
         )
     });
+    // The verdict on the model, as scan.verdict gives it; a capped wrap's first next step is the
+    // same wrap with the patches the tolerance asks for.
+    let mut verdict = super::plan::verdict(s, &json!({"scan": on.body, "model": name}))?;
+    if let (true, Some(n), Some(next)) = (short, wanted, verdict.get_mut("next").and_then(Value::as_array_mut)) {
+        let most = n.min(MOST_PATCHES as usize);
+        next.insert(
+            0,
+            json!({"command": cmd, "why": format!("the most patches held the wrap back: about {n} meet the tolerance"), "params": {"body": on.body, "tolerance": tolerance, "max_patches": most}}),
+        );
+        next.truncate(3);
+    }
     let reply = ScanWrapScanResult {
         body: on.body,
         surface: name,
@@ -103,7 +118,9 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
         p99: w.scan_to_patches.p99,
         max: w.scan_to_patches.max,
         tolerance,
+        patches_wanted: wanted,
         warning,
+        verdict,
         feature,
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
