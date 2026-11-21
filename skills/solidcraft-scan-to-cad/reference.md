@@ -44,7 +44,7 @@ A scan and the model built on it are one design: everything the Scan tab makes i
 - `max_above`: the scan stands outside the model, so the model lacks material there.
 - `max_below`: the model stands outside the scan, so it has material it should not.
 - `unmatched`: points too far from the model to count. A large share means a whole region is missing.
-- Each Reconstruct step's `fit` reads both ways, by area: `explained` is the share of the scan the body holds, `added` the share of the body off the scan and outside it (in the air where the part has nothing). A step that explains a little more and adds more reads `worse`.
+- Each Reconstruct step's `fit` reads both ways, by area: `explained` is the share of the scan the body holds, `added` the share of the body farther than the limit from the scan (material the part does not have, or for now the end of a slab a later step covers). A step that explains a little more and adds more reads `worse`; when it is one of several stacked slabs, try the next steps before undoing it.
 - To set the model's section beside the scan's: `sketch.intersect {"refs": [{"body": "<model>"}]}` in a sketch on the plane, read with `sketch.inspect`. `scan.section_sketch` cuts scans only. On a coarse or fused scan give it the scan's accuracy as `tolerance`, or it fits the cut to the scan's waviness.
 - `check_parameters {"set": {…}, "bodies": ["<model>"]}` reports only that body.
 
