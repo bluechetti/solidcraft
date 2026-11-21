@@ -86,5 +86,7 @@ pub(super) fn reconstruct_rest(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // The selection the rounds made is theirs, not the user's.
     let _ = run(s, "scan.select", json!({"body": scan, "none": true}));
-    reply(ScanRestResult { body: scan, solid, rounds: done, kept: kept_all, stop, param_warnings: Vec::new() })
+    // Whether the body is done: an automatic route ends saying so, not with `ok` alone.
+    let verdict = run(s, "scan.verdict", json!({"body": scan, "model": solid})).ok();
+    reply(ScanRestResult { body: scan, solid, rounds: done, kept: kept_all, stop, verdict, param_warnings: Vec::new() })
 }

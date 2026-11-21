@@ -387,6 +387,58 @@ pub fn far_share(values: &[f32], limit: f64) -> f64 {
     values.iter().filter(|v| !(f64::from(v.abs()) <= limit)).count() as f64 / values.len() as f64
 }
 
+/// What share of a scan lies within `tolerance` of its model and beyond `far`, by area: each point
+/// stands for a third of its triangles' area. Counted point by point, a CAD mesh's long thin
+/// triangles weighed as a tiny one's (T-LESS's CAD meshes: a face of one fan of slivers beside a
+/// finely meshed round). A scan with no triangles (a point cloud) counts its points.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Shares {
+    /// Of the points measured (within reach of the model).
+    pub within: f64,
+    /// Of the whole scan, the points too far to measure counted as not within.
+    pub within_all: f64,
+    /// Of the whole scan: farther than `far` or too far to measure.
+    pub far_off: f64,
+}
+
+/// [`Shares`] of the scan `positions`/`triangles` from its distances `values` (as [`measure`] gives
+/// them, NaN where too far to measure).
+pub fn shares(positions: &[Vec3], triangles: &[[u32; 3]], values: &[f32], tolerance: f64, far: f64) -> Shares {
+    let n = positions.len().min(values.len());
+    let mut area = vec![0.0f64; n];
+    for t in triangles {
+        let [a, b, c] = t.map(|i| i as usize);
+        if a >= n || b >= n || c >= n {
+            continue;
+        }
+        let third = 0.5 * (positions[b] - positions[a]).cross(positions[c] - positions[a]).len() / 3.0;
+        if third.is_finite() {
+            area[a] += third;
+            area[b] += third;
+            area[c] += third;
+        }
+    }
+    if !(area.iter().sum::<f64>() > 0.0) {
+        area.iter_mut().for_each(|a| *a = 1.0);
+    }
+    let (mut all, mut measured, mut within, mut off) = (0.0, 0.0, 0.0, 0.0);
+    for (v, a) in values[..n].iter().zip(&area) {
+        let v = f64::from(*v);
+        all += a;
+        if v.is_finite() {
+            measured += a;
+            if v.abs() <= tolerance {
+                within += a;
+            }
+        }
+        if !(v.abs() <= far) {
+            off += a;
+        }
+    }
+    let of = |x: f64, total: f64| if total > 0.0 { x / total } else { 0.0 };
+    Shares { within: of(within, measured), within_all: of(within, all), far_off: of(off, all) }
+}
+
 /// Places spread evenly over `model`'s surface, each with the area it stands for: every triangle
 /// cut into n x n alike, n chosen so each piece is about a `most`th of the whole, a place at each
 /// piece's middle. A mesh of more triangles than `most` gives the middles of evenly spaced ones.
@@ -474,6 +526,37 @@ pub fn banded(s: f64, bands: u32) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    /// A plate of two triangles beside a fan of a hundred tiny ones the same area all told, the
+    /// fan's points off the model: by points, nearly all of the scan is off; by area, half.
+    #[test]
+    fn shares_weigh_each_point_by_its_area() {
+        use super::*;
+        let mut positions = vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0), Vec3::new(10.0, 10.0, 0.0), Vec3::new(0.0, 10.0, 0.0)];
+        let mut triangles = vec![[0u32, 1, 2], [0, 2, 3]];
+        let mut values = vec![0.0f32; 4];
+        // The fan: a 10 × 10 square at x 20…30 in 10 × 10 cells, every point 1 mm off.
+        let base = positions.len() as u32;
+        for j in 0..=10 {
+            for i in 0..=10 {
+                positions.push(Vec3::new(20.0 + f64::from(i), f64::from(j), 0.0));
+                values.push(1.0);
+            }
+        }
+        for j in 0..10u32 {
+            for i in 0..10u32 {
+                let k = base + j * 11 + i;
+                triangles.push([k, k + 1, k + 12]);
+                triangles.push([k, k + 12, k + 11]);
+            }
+        }
+        let s = shares(&positions, &triangles, &values, 0.1, 0.5);
+        assert!((s.within_all - 0.5).abs() < 1e-9 && (s.far_off - 0.5).abs() < 1e-9, "{s:?}");
+        let by_points = values.iter().filter(|v| v.abs() <= 0.1).count() as f64 / values.len() as f64;
+        assert!(by_points < 0.04, "{by_points}");
+        // A point cloud (no triangles) counts its points.
+        assert!((shares(&positions, &[], &values, 0.1, 0.5).within_all - by_points).abs() < 1e-12);
+    }
+
     /// A hollow part's chamber: its floor at z = 0 facing up into it and its roof at z = 20 facing
     /// down into it, and a scan patch 1 mm above the floor facing down (a blob a depth camera left
     /// inside, its underside). The patch is outside the material, 1 mm from the floor: it reads 1

@@ -267,6 +267,8 @@ fn a_brackets_plates_the_l_already_holds_add_nothing_and_both_holes_are_cut() {
     assert_eq!(rest["kept"], 2, "both holes cut: {rest}");
     let v = volume(&s, &format!("{scan} Reconstructed"));
     assert!((v - truth).abs() < 1e-3 * truth, "{v} mm³ against the part's {truth}");
+    // The route ends saying whether the body is done: the part rebuilt is.
+    assert_eq!(rest["verdict"]["verdict"], "met", "{rest}");
 }
 
 /// The scan benchmark's flange (tests/scan-cases/flange): a disc Ø 60 × 8, a hub Ø 20 × 30 and
@@ -594,6 +596,64 @@ fn a_boss_the_scan_does_not_have_reads_worse() {
     assert!((after.explained - before.explained).abs() < 0.03, "{before:?} {after:?}");
     assert!(after.added.unwrap() > 0.1, "{after:?}");
     assert_eq!(crate::cmd::scan::step_fit::verdict(Some(&before), &after), "worse", "{before:?} {after:?}");
+}
+
+/// A plan and the verdict on a block 40 × 30 × 10 rebuilt from its scan: the rebuild is met (with
+/// no plan, said); a boss the scan does not have makes it not done (material not on the scan, the
+/// place named as extra); a region added open keeps it not done until it is marked built by a
+/// feature; the process sets the target; the verdict leaves the map shown as it was; one undo takes
+/// a plan change back.
+#[test]
+fn a_scan_plan_and_its_verdict() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 40, "width": 30, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    let (mut s, scan) = scanned(&part, &body, 3, "plan");
+    let built = run(&mut s, "scan.extrude_it", json!({}));
+    let solid = built["solid"].as_str().unwrap().to_owned();
+    let feature = built["feature"].as_str().map(str::to_owned).unwrap_or_else(|| s.doc.features.last().unwrap().name.clone());
+    assert!(s.scan_deviation.is_none());
+    let v = run(&mut s, "scan.verdict", json!({"model": solid}));
+    assert_eq!(v["verdict"], "met", "{v}");
+    assert_eq!(v["planned"], false);
+    assert!(v["issues"].as_array().unwrap().iter().any(|i| i["code"] == "no_plan"), "{v}");
+    assert!(s.scan_deviation.is_none(), "the verdict leaves the map shown as it was");
+    // A boss on top where the scan has nothing.
+    let top = s.model.state().body(&solid).and_then(|b| b.body.exact_bounds().ok()).unwrap();
+    let centre = (top.min + top.max) * 0.5;
+    run(
+        &mut s,
+        "solid.cylinder",
+        json!({"radius": 6, "height": 15, "base": [centre.x, centre.y, top.max.z], "operation": "join", "targets": [solid]}),
+    );
+    let v = run(&mut s, "scan.verdict", json!({"model": solid}));
+    assert_eq!(v["verdict"], "not_done", "{v}");
+    assert!(v["issues"].as_array().unwrap().iter().any(|i| i["code"] == "not_on_the_scan"), "{v}");
+    run(&mut s, "edit.undo", json!({}));
+    // A region added open, then built.
+    let added = run(&mut s, "scan.plan_region", json!({"name": "Block", "at": [centre.x, centre.y, top.max.z]}));
+    assert_eq!((added["planned"].as_bool(), added["regions"][0]["state"].as_str()), (Some(true), Some("open")), "{added}");
+    let v = run(&mut s, "scan.verdict", json!({"model": solid}));
+    assert_eq!(v["verdict"], "not_done");
+    assert!(v["issues"][0]["detail"].as_str().unwrap().contains("Block"), "{v}");
+    assert!(s.execute("scan.plan_region", &json!({"name": "Block", "state": "built"})).is_err(), "built names its feature");
+    assert!(s.execute("scan.plan_region", &json!({"name": "Block", "state": "built", "feature": "Nope"})).is_err());
+    assert!(s.execute("scan.plan_region", &json!({"name": "Other"})).is_err(), "a new region needs `at`");
+    run(&mut s, "scan.plan_region", json!({"name": "Block", "state": "built", "feature": feature}));
+    let v = run(&mut s, "scan.verdict", json!({"model": solid}));
+    assert_eq!((v["verdict"].as_str(), v["planned"].as_bool()), (Some("met"), Some(true)), "{v}");
+    // The process sets the target; a target out of range is refused; one undo takes it back.
+    let cast = run(&mut s, "scan.plan", json!({"process": "sand_cast_forged_or_printed"}));
+    assert_eq!((cast["target"].as_f64(), cast["changed"].as_bool()), (Some(0.85), Some(true)), "{cast}");
+    assert!(s.execute("scan.plan", &json!({"target": 0.3})).is_err());
+    assert!(s.execute("scan.plan", &json!({"process": "glued"})).is_err());
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(run(&mut s, "scan.plan", json!({}))["target"].as_f64(), Some(0.9));
+    // The tolerance set through the plan is the scan's.
+    run(&mut s, "scan.plan", json!({"tolerance": 0.2}));
+    assert_eq!(run(&mut s, "scan.tolerance", json!({"body": scan}))["tolerance"].as_f64(), Some(0.2));
+    let gone = run(&mut s, "scan.plan", json!({"reset": true}));
+    assert_eq!((gone["planned"].as_bool(), gone["tolerance"].as_f64()), (Some(false), Some(0.2)), "the tolerance stays");
 }
 
 /// A hexagon with a recessed web (as a gear is, its teeth aside, evenly round its axis): 40 across

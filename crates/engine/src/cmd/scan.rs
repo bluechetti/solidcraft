@@ -1406,8 +1406,10 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         let places = solidcraft_scan::deviation::places(&surface, solidcraft_scan::deviation::MOST_PLACES);
         solidcraft_scan::deviation::borne_out(&places, &select::scan_tree(&scan), tolerance, far, 4.0 * limit)
     });
-    let within_all = d.within * d.measured as f64 / (d.measured + d.unmatched).max(1) as f64;
-    let far_off = solidcraft_scan::deviation::far_share(&d.values, far);
+    // By area, each point a third of its triangles' (counted point by point, a CAD mesh's slivers
+    // weighed as a fine round's points).
+    let shares = solidcraft_scan::deviation::shares(&mesh.positions, &mesh.triangles, &d.values, tolerance, far);
+    let (within_all, far_off) = (shares.within_all, shares.far_off);
     // How much lies beyond the tolerance, and where: the volume worn off or added, region by region.
     let beyond = solidcraft_scan::deviation::beyond(&mesh.positions, &mesh.triangles, &faced, tolerance);
     // A region beyond the tolerance a feature wide: noise past it falls on scattered points, a few
@@ -1452,7 +1454,7 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         tolerance,
         limit,
         rms: d.rms,
-        within: d.within,
+        within: shares.within,
         why_not: why_not.clone(),
         bands,
         auto_limit,
@@ -1470,7 +1472,7 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
         mean: Some(d.mean),
         max_above: Some(d.max_above),
         max_below: Some(d.max_below),
-        within: Some(d.within),
+        within: Some(shares.within),
         within_all: Some(within_all),
         model_within: borne.as_ref().map(|b| b.within),
         model_covered: borne.as_ref().map(|b| b.covered),
@@ -2165,6 +2167,9 @@ pub mod panel_export;
 
 #[path = "scan_patches.rs"]
 pub mod patches;
+
+#[path = "scan_plan.rs"]
+pub mod plan;
 
 #[path = "scan_reconstruct.rs"]
 pub mod reconstruct;

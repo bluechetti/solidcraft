@@ -539,6 +539,9 @@ pub struct ScanRestResult {
     /// How many steps were kept in all, and why it stopped.
     pub kept: usize,
     pub stop: String,
+    /// Whether the body is done, as `scan.verdict` says it (absent when it could not be read).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }

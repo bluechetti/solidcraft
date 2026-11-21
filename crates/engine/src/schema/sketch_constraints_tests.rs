@@ -385,7 +385,9 @@ fn replies_match_the_output_schema() {
     ] {
         let r = run(&mut s, id, p);
         matches(output_schema_for::<AutoConstrainResult>(), &r);
-        assert_eq!(keys(&r), vec!["added", "created", "dof", "sketch"], "{r}");
+        // `moved` is there only when the drawing was moved (how far, and the point moved most).
+        let shown: Vec<_> = keys(&r).into_iter().filter(|k| *k != "moved").collect();
+        assert_eq!(shown, vec!["added", "created", "dof", "sketch"], "{r}");
     }
     let r = run(&mut s, "sketch.finish_auto_constrain", json!({"datum": "d", "tolerance": 0.02}));
     matches(output_schema_for::<AutoConstrainResult>(), &r);

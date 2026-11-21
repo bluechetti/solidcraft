@@ -39,11 +39,16 @@ A scan and the model built on it are one design: everything the Scan tab makes i
 - **A new scan of the same part:** `scan.align_to_model {"model":"<model>"}`, then `scan.deviation`; a Free Form or Fit Patches surface follows it with `scan.refit {}`, hand edits kept.
 
 ## Verify
+**Is it done?** `scan.verdict {"model": "<model>"}` answers `met` or `not_done`, computed from the design: the scan and the model each within the tolerance of the other over the plan's target share, every region of the plan built, skipped or inferred, no feature failed, not rolled back. `issues` says what is open, `places` the worst three, `next` what to run. Hand over a `not_done` model as not done, with its issues. Set the plan first: `scan.plan {"process": "machined"}` (or moulded_or_die_cast, sand_cast_forged_or_printed, sheet, worn, freeform: it sets the target), and name the part's regions as you go, `scan.plan_region {"name": "Boss", "at": [x, y, z]}` then `{"name": "Boss", "state": "built", "feature": "<feature>"}`; a region the scan cannot show is `"state": "inferred"` or `"skipped"` with a `reason`.
+
 `scan.deviation {"body": "<model>"}` measures the scan against the model:
 - `passes`: both ways. At least 95% of all the scan's points are within the tolerance of the model (`within_all`) and 95% of the model's surface has the scan within the tolerance of it (`model_within`), and no more than 0.1% of either is far off, more than three tolerances from the other (`far_off`, `model_far_off`: a hole or boss missing, made up or out of place, a chamfer built as a round). `why_not` says in words what failed; a scan that covers only part of the model fails with how much has no scan near it.
 - `max_above`: the scan stands outside the model, so the model lacks material there.
 - `max_below`: the model stands outside the scan, so it has material it should not.
 - `unmatched`: points too far from the model to count. A large share means a whole region is missing.
+- Each Reconstruct step's `fit` reads both ways, by area: `explained` is the share of the scan the body holds, `added` the share of the body farther than the limit from the scan (material the part does not have, or for now the end of a slab a later step covers). A step that explains a little more and adds more reads `worse`; when it is one of several stacked slabs, try the next steps before undoing it.
+- To set the model's section beside the scan's: `sketch.intersect {"refs": [{"body": "<model>"}]}` in a sketch on the plane, read with `sketch.inspect`. `scan.section_sketch` cuts scans only. On a coarse or fused scan give it the scan's accuracy as `tolerance`, or it fits the cut to the scan's waviness.
+- `check_parameters {"set": {…}, "bodies": ["<model>"]}` reports only that body.
 
 When the server is bridged to the app, `screenshot {}` shows the coloured map; `scan.deviation {"show": false}` takes it away. Only `passes: true` and a `measure {}` bbox that matches the scan's `own_size` count. A step that reported `ok` can still be millimetres off.
 
@@ -116,6 +121,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 - Wear or damage against a model: `scan.deviation {}` replies `volume_below` and `volume_above` (mm³ beyond the tolerance, inside and outside the model), `area_below`/`area_above`, and `regions` (each patch with its `side`, `area`, `volume`, `deepest` and `at`). Beside a wall or a step the distance is to the nearest surface, so a dent there reads small.
 - A gear, a knob, a spline: each prism in `scan.reconstruct`'s reply says how its outline repeats round its middle in `rotational` (`order`: the tooth count; `tip_diameter`, `root_diameter`; `module` were it a spur gear). Extrude It still draws the whole outline; build one tooth and `solid.pattern.circular` it yourself when the count must be a parameter.
 - A clean tool with nothing to do (Repair, Fill Holes, Remove Floating, Reduce, Denoise; Fillet It with no round that fits) is no error: it replies `changed: false` with `note`, and a `batch` goes on.
+- A cut with no `targets` cuts every body of the active component: name `targets` when other bodies are there.
 - A parameter a command does not take is ignored in silence unless the MCP server was started with `--param-check warn` (replies then list it in `param_warnings`) or `strict` (it is refused): when a call seems to ignore a setting, check its name with `describe_command`.
 - `solid.move` refuses a `matrix` whose rotation is rounded to a few digits (`not rigid … above the tolerance 1e-9`): pass `"tolerance": 1e-6` with a matrix copied at seven digits; it is made exactly rigid.
 - A metre or inch file inserted without `units` is 1000 or 25.4 times too small. `scan.survey {}` flags anything under 3 mm across.

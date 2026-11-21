@@ -147,6 +147,7 @@ pub mod scan_flatten;
 pub mod scan_furring;
 pub mod scan_mesh;
 pub mod scan_patches;
+pub mod scan_plan;
 pub mod scan_reconstruct;
 pub mod scan_refit;
 pub mod scan_select;

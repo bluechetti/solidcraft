@@ -636,6 +636,7 @@ pub(crate) fn decode(mut v: Value, version: u32, applied: Option<&[String]>) -> 
     crate::scan_selection::check_all(&d.scan_selections)?;
     crate::free_form::check_all(&d.free_forms)?;
     crate::scan_tolerance::check_all(&d.scan_tolerances)?;
+    crate::scan_plan::check_all(&d.scan_plans)?;
     crate::scan_flat_pattern::check_all(&d.scan_flat_patterns)?;
     for f in &d.features {
         if let crate::FeatureKind::ScanSurface { recipe: Some(r), .. } = &f.kind {

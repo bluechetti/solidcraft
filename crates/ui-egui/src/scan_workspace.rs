@@ -195,11 +195,15 @@ mod tests {
             "scan.mirror_free_form",
             "scan.refit",
             "scan.tolerance",
+            "scan.plan",
+            "scan.plan_region",
+            "scan.verdict",
             "scan.survey",
             "scan.clean_up",
             "scan.align",
             "scan.furring_proposals",
             "scan.furring",
+            "scan.tubes_it",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {

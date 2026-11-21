@@ -1,0 +1,174 @@
+//! Contracts and result types for `scan.plan`, `scan.plan_region` and `scan.verdict` in
+//! `cmd/scan_plan.rs`.
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use super::types::LengthExpr;
+
+/// Set what a scan is being turned into: how the part was made, the share of the scan (and of the
+/// model) that must be within the tolerance of the other, and the tolerance itself (as
+/// `scan.tolerance` sets it). Kept in the design for that scan; one undo step. With nothing given it
+/// changes nothing and says what the scan has.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanPlanParams {
+    /// The scan (mesh body). Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub scan: Option<String>,
+    /// The same as `scan`, the name every other scan command gives the scan.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// How the part was made: machined | moulded_or_die_cast | sand_cast_forged_or_printed | sheet |
+    /// worn | freeform | unknown. It sets the target when none is given (0.90 machined, sheet and
+    /// unknown; 0.85 castings, prints and worn parts; 0.75 freeform).
+    #[serde(default)]
+    pub process: Option<String>,
+    /// The share from 0.5 to 1 that must be within the tolerance both ways.
+    #[serde(default)]
+    pub target: Option<f64>,
+    /// The scan's tolerance, a length above 0 (the same as `scan.tolerance`).
+    #[serde(default)]
+    pub tolerance: Option<LengthExpr>,
+    /// True takes the plan away (the tolerance stays). Alone.
+    #[serde(default)]
+    pub reset: Option<bool>,
+}
+
+/// A region of a plan as replies show it.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanPlanRegionView {
+    pub name: String,
+    pub at: [f64; 3],
+    /// open | built | skipped | inferred.
+    pub state: String,
+    /// The feature that built it (built).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub feature: Option<String>,
+    /// Why (skipped, inferred).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// What `scan.plan` and `scan.plan_region` return.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanPlanResult {
+    pub scan: String,
+    /// Whether the scan has a plan.
+    pub planned: bool,
+    pub process: String,
+    /// The target share (the plan's, else the process's).
+    pub target: f64,
+    /// The scan's tolerance in mm.
+    pub tolerance: f64,
+    pub regions: Vec<ScanPlanRegionView>,
+    /// Whether this call changed the design.
+    pub changed: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// Add a region to a scan's plan, or change one: built by a feature, skipped or inferred with a
+/// reason, open again, or removed. A scan with no plan gets one (process unknown). One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanPlanRegionParams {
+    #[serde(default)]
+    pub scan: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The region's name.
+    pub name: String,
+    /// A point [x, y, z] on the scan inside the region: needed to add one.
+    #[serde(default)]
+    pub at: Option<[f64; 3]>,
+    /// open (the default for a new region) | built (with `feature`) | skipped (with `reason`) |
+    /// inferred (with `reason`) | removed.
+    #[serde(default)]
+    pub state: Option<String>,
+    /// The feature that built it, by name or id (built).
+    #[serde(default)]
+    pub feature: Option<String>,
+    /// Why it was skipped, or what it was inferred from.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Whether the model of a scan is done: Scan Deviation read both ways at the scan's tolerance
+/// against the plan's target (or the default), the plan's regions and the timeline. Changes nothing
+/// (the map shown stays as it was).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanVerdictParams {
+    #[serde(default)]
+    pub scan: Option<String>,
+    /// The same as `scan`.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The model (a solid or surface body). Default: as Scan Deviation picks it.
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+/// One reason the model is not done (or a note: no_plan, unseen).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanVerdictIssue {
+    /// out_of_tolerance | not_on_the_scan | region_open | feature_failed | rolled_back | no_plan | unseen.
+    pub code: String,
+    pub detail: String,
+}
+
+/// A place beyond the tolerance a feature wide.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanVerdictPlace {
+    pub at: [f64; 3],
+    /// How far beyond, at its deepest (mm).
+    pub depth: f64,
+    /// Its area (mm²).
+    pub area: f64,
+    /// extra (the model has material the scan does not) | missing.
+    pub kind: String,
+}
+
+/// A step to take next.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanVerdictStep {
+    pub command: String,
+    pub why: String,
+    pub params: serde_json::Value,
+}
+
+/// What `scan.verdict` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanVerdictResult {
+    /// met | not_done.
+    pub verdict: String,
+    pub scan: String,
+    pub model: String,
+    pub planned: bool,
+    pub target: f64,
+    pub tolerance: f64,
+    /// The share of the scan's surface within the tolerance of the model.
+    pub scan_within: f64,
+    /// The share of the model's surface with the scan within the tolerance of it.
+    pub model_within: f64,
+    pub issues: Vec<ScanVerdictIssue>,
+    pub places: Vec<ScanVerdictPlace>,
+    pub next: Vec<ScanVerdictStep>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::input_schema_for;
+    use crate::schema::tests::assert_keys;
+
+    #[test]
+    fn scan_plan_commands_take_these_keys() {
+        assert_keys(input_schema_for::<ScanPlanParams>(), &["body", "process", "reset", "scan", "target", "tolerance"]);
+        assert_keys(input_schema_for::<ScanPlanRegionParams>(), &["at", "body", "feature", "name", "reason", "scan", "state"]);
+        assert_keys(input_schema_for::<ScanVerdictParams>(), &["body", "model", "scan"]);
+    }
+}
