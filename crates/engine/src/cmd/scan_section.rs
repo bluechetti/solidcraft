@@ -387,6 +387,17 @@ pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.section_sketch";
     let asked = asked_tolerance(s, p, cmd)?;
     let scan = mesh_name(s, p, cmd)?;
+    // A model's own section, to set beside the scan's, is the plane's crossing with the body:
+    // asked of a solid here, the refusal says where that is (an agent went looking in 2026-11-20's
+    // trials).
+    if s.model.state().body(&scan).is_some_and(|b| !b.body.is_mesh()) {
+        return Err(bad(
+            cmd,
+            format!(
+                "`{scan}` is a solid, not a scan (a mesh body): its section is drawn by sketch.intersect {{refs: [{{body: \"{scan}\"}}]}} in a sketch on the plane, and sketch.inspect reads it"
+            ),
+        ));
+    }
     let half = half_plane(s, p, cmd)?;
     // The sketch being edited, or a new one on the plane asked for.
     let (sketch, made) = match super::super::sketch_store::active(s) {

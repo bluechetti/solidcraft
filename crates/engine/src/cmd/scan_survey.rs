@@ -326,7 +326,12 @@ fn next_steps(plan: &Plan) -> Vec<ScanSurveyStep> {
             json!({"body": body, "tolerance": suggested}),
         );
     }
-    let contains_origin = [look.low.x <= 0.0 && look.high.x >= 0.0, look.low.y <= 0.0 && look.high.y >= 0.0, look.low.z <= 0.0 && look.high.z >= 0.0];
+    // Stood on its base or laid by Quick Align, a scan's end lies on the origin's plane to within
+    // rounding (1e-13 one way or the other): that is on it, or the advice to align it came back
+    // after it had been aligned.
+    let margin = 1e-6 * size.max(1.0);
+    let spans = |low: f64, high: f64| low <= margin && high >= -margin;
+    let contains_origin = [spans(look.low.x, look.high.x), spans(look.low.y, look.high.y), spans(look.low.z, look.high.z)];
     if contains_origin.iter().any(|c| !c) && !plan.sheet_like {
         let (command, why) = if look.flat_share > 0.2 {
             ("scan.stand_on_base", "the scan lies away from the origin: stand it on its broadest flat face so sketches and planes line up with it")
@@ -490,6 +495,23 @@ mod tests {
         let r = run(&mut s, "scan.survey", json!({"body": scan}));
         assert!(!commands(&r).contains(&"scan.align_all") && !commands(&r).contains(&"scan.deviation"), "{r}");
         assert_eq!((r["other_scans"].as_array().unwrap().len(), r["models"].as_array().unwrap().len()), (0, 0), "{r}");
+    }
+
+    /// A box whose low end lies a rounding off the origin's plane (1e-9 mm above it, as a scan
+    /// stood on its base or laid by Quick Align comes out) is on it: the survey does not ask to
+    /// place it again. A millimetre off, it does.
+    #[test]
+    fn a_scan_a_rounding_off_the_origin_is_not_placed_again() {
+        let dir = std::env::temp_dir().join(format!("solidcraft-scan-survey-rounding-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (lift, placed) in [(1e-9, false), (1.0, true)] {
+            let mut s = Session::new(solidcraft_doc::Document::new("t"));
+            run(&mut s, "file.insert_mesh", json!({"path": box_stl(&dir, "r.stl", [40.0, 20.0, 10.0], [-20.0, -10.0, lift])}));
+            let r = run(&mut s, "scan.survey", json!({}));
+            let asks = commands(&r).iter().any(|c| *c == "scan.stand_on_base" || *c == "scan.quick_align");
+            assert_eq!(asks, placed, "lifted {lift}: {r}");
+        }
     }
 
     /// Triangles that share no points (a file written as soup: here a plate of 300 needles laid

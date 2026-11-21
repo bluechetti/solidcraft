@@ -839,6 +839,12 @@ fn section_sketch_draws_a_scans_whole_outline_seen_along_the_plane() {
     assert!((area - plus).abs() < 0.03 * plus, "{area} against {plus}");
     let both = s.execute("scan.section_sketch", &json!({"outline": true, "axis": {"origin": [0, 0, 0], "dir": [0, 0, 1]}})).unwrap_err().to_string();
     assert!(both.contains("ask for one"), "{both}");
+    // Asked of the solid, it says where a model's section is drawn, and that works.
+    let solid = s.execute("scan.section_sketch", &json!({"body": "Foot", "plane": "XZ"})).unwrap_err().to_string();
+    assert!(solid.contains("is a solid") && solid.contains("sketch.intersect"), "{solid}");
+    run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "Model Cut"}));
+    let crossed = run(&mut s, "sketch.intersect", json!({"refs": [{"body": "Foot"}]}));
+    assert!(!crossed["created"]["curves"].as_array().is_none_or(Vec::is_empty), "{crossed}");
 }
 
 /// The model as an STL (as a part's CAD often comes, T-LESS's among them): the scan is measured
