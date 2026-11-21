@@ -4,6 +4,7 @@
 //! the judging to whoever reads it, and part of a part gets handed over as finished.
 
 use solidcore_record::Vec3;
+use solidcraft_geom::prelude::*;
 
 /// What the verdict reads.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -25,9 +26,15 @@ pub struct Reading {
     /// Features of the timeline that failed to build, and those after the history marker.
     pub failed: Vec<String>,
     pub rolled_back: Option<String>,
-    /// Places beyond the tolerance a feature wide, worst first: where, how far, and whether the
-    /// model has material there the scan does not (`extra`) or lacks it.
+    /// Places beyond the tolerance, worst first: where, how far, and whether the model has
+    /// material there the scan does not (`extra`) or lacks it.
     pub places: Vec<Place>,
+    /// The area (mm²) a place beyond the tolerance must have to be a feature the model has wrong,
+    /// not noise (Deviation's: a square this many of the scan's triangles' edges wide); 0 for none.
+    pub feature_area: f64,
+    /// The places the plan leaves out on purpose: each skipped or inferred region's point and how
+    /// far round it the region reaches. A feature-sized place within one is accounted for.
+    pub accounted: Vec<(Vec3, f64)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,6 +94,30 @@ pub fn judge(r: &Reading) -> Verdict {
     }
     if let Some(note) = &r.rolled_back {
         issues.push(Issue { code: "rolled_back", detail: note.clone() });
+    }
+    // A place beyond the tolerance a feature wide is a feature the model has wrong, however much
+    // of the scan is within it overall (agent trial r3-19: met at 95.7 % with a 96 mm² patch 1.8 mm
+    // off), unless a region the plan skips or infers holds it.
+    let wrong: Vec<&Place> = r
+        .places
+        .iter()
+        .filter(|p| r.feature_area > 0.0 && p.area >= r.feature_area)
+        .filter(|p| !r.accounted.iter().any(|(at, reach)| at.dist(p.at) <= reach.max(p.area.sqrt())))
+        .collect();
+    if let Some(worst) = wrong.iter().max_by(|a, b| (a.depth * a.area).total_cmp(&(b.depth * b.area))) {
+        issues.push(Issue {
+            code: "feature_off",
+            detail: format!(
+                "{} place(s) a feature wide beyond the tolerance; the worst {:.0} mm², {:.2} mm {} at [{:.1}, {:.1}, {:.1}] (model it, or mark the region skipped or inferred with a reason)",
+                wrong.len(),
+                worst.area,
+                worst.depth,
+                if worst.extra { "extra" } else { "missing" },
+                worst.at.x,
+                worst.at.y,
+                worst.at.z
+            ),
+        });
     }
     let met = issues.is_empty();
     if !r.planned {
@@ -159,6 +190,21 @@ mod tests {
         let v = judge(&Reading { planned: false, unseen: Some(0.12), ..done() });
         assert!(v.met, "{v:?}");
         assert_eq!(codes(&v), ["no_plan", "unseen"]);
+    }
+
+    /// A feature-sized place beyond the tolerance is not done, whatever the shares (trial r3-19);
+    /// one a skipped or inferred region holds is accounted for; a place smaller than a feature is noise.
+    #[test]
+    fn a_feature_sized_place_off_is_not_done_unless_the_plan_accounts_for_it() {
+        let place = Place { at: Vec3::new(2.1, 0.8, -18.3), depth: 1.8, area: 96.0, extra: false };
+        let r = Reading { places: vec![place], feature_area: 40.0, ..done() };
+        let v = judge(&r);
+        assert!(!v.met && codes(&v) == ["feature_off"], "{v:?}");
+        assert!(v.issues[0].detail.contains("96 mm²") && v.issues[0].detail.contains("missing"), "{v:?}");
+        let held = Reading { accounted: vec![(Vec3::new(3.0, 0.0, -17.0), 5.0)], ..r.clone() };
+        assert!(judge(&held).met, "a skipped region round it holds it");
+        let small = Reading { feature_area: 200.0, ..r };
+        assert!(judge(&small).met, "smaller than a feature");
     }
 
     /// The places named are the worst three by depth times area.

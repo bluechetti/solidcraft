@@ -274,12 +274,31 @@ fn verdict(s: &mut Session, p: &Value) -> Result<Value> {
         failed,
         rolled_back: crate::cmd::file::rolled_back_note(s),
         places,
+        // A feature's size as Deviation reads it: a square this many of the scan's triangles' edges wide.
+        feature_area: super::shown_mesh(s, &scan)
+            .map(|m| (super::FEATURE_EDGES * solidcraft_scan::remesh::typical_edge(&solidcraft_scan::Scan::new(&m.positions, &m.triangles))).powi(2))
+            .filter(|a| a.is_finite())
+            .unwrap_or(0.0),
+        // A region the plan skips or infers holds the places within its reach: a tenth of the scan's size.
+        accounted: {
+            let reach = super::shown_mesh(s, &scan).map(|m| 0.1 * solidcraft_scan::Scan::new(&m.positions, &m.triangles).extent()).unwrap_or(0.0);
+            plan.iter()
+                .flat_map(|p| &p.regions)
+                .filter(|r| matches!(r.state, RegionState::Skipped { .. } | RegionState::Inferred { .. }))
+                .map(|r| (solidcore_record::Vec3::new(r.at[0], r.at[1], r.at[2]), reach))
+                .collect()
+        },
     };
     let v = judge(&reading);
     let mut next = Vec::new();
     for issue in &v.issues {
         let step = match issue.code {
             "out_of_tolerance" => Some(("scan.reconstruct_rest", "read and build what the model does not hold yet", json!({"body": scan}))),
+            "feature_off" => Some((
+                "scan.deviation",
+                "see the places a feature wide beyond the tolerance (`regions`), and model them or mark their region skipped or inferred",
+                json!({"scan": scan, "body": model}),
+            )),
             "not_on_the_scan" => Some((
                 "scan.deviation",
                 "see where the model has material the scan does not (`regions` of side below)",
