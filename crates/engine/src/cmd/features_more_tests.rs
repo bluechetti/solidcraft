@@ -3597,3 +3597,22 @@ fn deform_bends_twists_and_cages_a_body() {
         s.execute("solid.deform", &json!({"body": "Cube", "twist": {"origin": [0, 0, 0], "axis": [0, 0, 1], "angle": 1}, "cage": {}})).unwrap_err();
     assert!(err.to_string().contains("one of"), "{err}");
 }
+
+/// A revolve profile whose edge along the axis lies 2 µm off it (a constraint deleted, the line left
+/// free) turns into a body with a hair-thin hole down the middle. The body is kept, and the reply's
+/// warning says so; the same profile on the axis has no warning.
+#[test]
+fn a_profile_edge_a_hair_off_the_axis_is_warned_of() {
+    for (off, warned) in [(0.002, true), (0.0, false)] {
+        let mut s = Session::default();
+        let run = |s: &mut Session, id: &str, p: Value| s.execute(id, &p).unwrap_or_else(|e| panic!("{id} {p}: {e}"));
+        run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "P"}));
+        run(&mut s, "sketch.line", json!({"points": [[off, 0.0], [20.0, 0.0], [20.0, 60.0], [off, 60.0], [off, 0.0]]}));
+        let reply = run(&mut s, "solid.revolve", json!({"sketch": "P", "axis": "y", "name": "Turn"}));
+        let warning = reply["warning"].as_str().unwrap_or("");
+        assert_eq!(warning.contains("µm across along the axis"), warned, "off {off}: {reply}");
+        if warned {
+            assert!(warning.contains("4 µm"), "{warning}");
+        }
+    }
+}

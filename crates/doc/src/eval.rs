@@ -4383,6 +4383,7 @@ impl Model {
                     track_altered_sheets(&state, &mut next, f, &mut warning);
                     note_join_apart(&state, &next, f, &mut warning);
                     note_cut_cavity(&state, &next, f, &mut warning);
+                    note_hair_tube(&state, &next, f, &mut warning);
                 }
                 // What it cut from a sheet made from surfaces goes into the sheet's records (see
                 // `absorb_sheet_cuts`); a cached result already holds them.
@@ -5156,6 +5157,48 @@ fn note_cut_cavity(before: &ModelState, after: &ModelState, f: &Feature, warning
             format!(
                 "the cut leaves a closed cavity inside `{}` that opens on no face{removed} (extend the tool through the face to open it)",
                 now.name
+            ),
+        );
+    }
+}
+
+/// A round face thinner than this (mm) along a revolve's axis is a profile edge a hair off the axis,
+/// not a hole anyone means: 10 µm, a tenth of the finest scan or print.
+const HAIR_RADIUS: f64 = 0.01;
+
+/// Note a revolve whose result gained a cylinder face thinner than [`HAIR_RADIUS`]: a profile edge
+/// drawn along the axis but a little off it turns into a hair-thin tube down the middle (a sketch
+/// line 2 µm off its axis, left free by deleting the constraint that held it, made a hole 2 µm
+/// across and 66 mm deep inside a part, which Deviation then measured as a surface 19 mm from the
+/// scan). The body is valid and is kept; the warning says where to look.
+fn note_hair_tube(before: &ModelState, after: &ModelState, f: &Feature, warning: &mut Option<String>) {
+    if !matches!(f.kind, FeatureKind::Revolve { .. }) {
+        return;
+    }
+    let hairs = |b: &Body| -> Vec<f64> {
+        (0..b.face_count())
+            .filter_map(|fi| match kernel::face_surface(b, fi) {
+                Some(kernel::FaceSurface::Cylinder { radius, .. }) if radius > 0.0 && radius < HAIR_RADIUS => Some(radius),
+                _ => None,
+            })
+            .collect()
+    };
+    for now in &after.bodies {
+        if now.body.is_mesh() || before.body(&now.name).is_some_and(|was| was.body.same_shape(&now.body)) {
+            continue;
+        }
+        let had = before.body(&now.name).map_or(0, |was| hairs(&was.body).len());
+        let found = hairs(&now.body);
+        if found.len() <= had {
+            continue;
+        }
+        let thinnest = found.iter().copied().fold(f64::INFINITY, f64::min);
+        append_warning(
+            warning,
+            format!(
+                "`{}` has a round face {} µm across along the axis: a profile edge runs beside the axis without lying on it (put that edge on the axis, or constrain it there)",
+                now.name,
+                show_mm((thinnest * 2000.0 * 100.0).round() / 100.0)
             ),
         );
     }
