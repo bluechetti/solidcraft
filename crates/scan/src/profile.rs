@@ -2166,6 +2166,34 @@ pub(crate) fn turned_profile_of(
         }
     }
     let read = turned_outline(&faces, &meetings, 0.05 * size);
+    // Where the faces go round, the median section too, and the one that explains more of the scan
+    // is the profile: a chain can go round by closing a straight line across what it skipped
+    // (T-LESS 02's grip lobes between its turned faces).
+    let read = match read {
+        Ok(chain) => {
+            let median = turned_sliced(scan, axis, &faces, &numbered, &owner, 0.005 * size, outcome.tolerance, between);
+            // Triangles' middles, each weighed by its area: a scan's points crowd where it curves
+            // (a CAD mesh's most of all), so counted by points a profile that only follows the
+            // rounds reads as explaining most of it.
+            let points: Vec<(Vec2, f64)> = {
+                let count = scan.triangle_count();
+                let step = (count / EXPLAINED_SAMPLE).max(1);
+                (0..count)
+                    .step_by(step)
+                    .filter_map(|t| scan.corners(t))
+                    .map(|[a, b, c]| (polar_of((a + b + c) / 3.0), 0.5 * (b - a).cross(c - a).len()))
+                    .collect()
+            };
+            let explains = |o: &Outline| explained_share(&points, &ring(o), outcome.tolerance.max(0.005 * size));
+            let chain_numbered =
+                Outline { faces: chain.faces.iter().map(|f| f.map(|i| numbered.get(i).copied().unwrap_or(usize::MAX))).collect(), ..chain.clone() };
+            match median {
+                Some((m, closing)) if explains(&m) > explains(&chain_numbered) + EXPLAINS_MORE => Err(Ok((m, closing))),
+                _ => Ok(chain),
+            }
+        }
+        Err(refusal) => Err(Err(refusal)),
+    };
     let (outline, closing) = match read {
         // Numbered by the reading's faces. A run open at both ends was closed by a line of no
         // face, put last, off the axis.
@@ -2175,8 +2203,10 @@ pub(crate) fn turned_profile_of(
                 .then(|| [outline.corners[n - 1], outline.corners[0]]);
             (Outline { faces: outline.faces.iter().map(|f| f.map(|i| numbered[i])).collect(), ..outline }, closing)
         }
+        // The median section explained more of the scan than the faces' chain.
+        Err(Ok(median)) => median,
         // Where the faces' meetings go round no one profile, a slice through the axis may.
-        Err(refusal) => turned_sliced(scan, axis, &faces, &numbered, &owner, 0.005 * size, outcome.tolerance, between).ok_or_else(|| match refusal {
+        Err(Err(refusal)) => turned_sliced(scan, axis, &faces, &numbered, &owner, 0.005 * size, outcome.tolerance, between).ok_or_else(|| match refusal {
             Refusal::TooFew => "fewer than two faces about the turning axis meet on the scan, so there is no profile to turn".to_string(),
             Refusal::Meets(k, n) => format!("face {} meets {n} other faces about the turning axis, where a profile has each meet two: a face between them is missing, or one too many is found", numbered[k] + 1),
             Refusal::Apart => "the faces about the turning axis make more than one outline, so there is no one profile to turn".to_string(),
@@ -2184,6 +2214,33 @@ pub(crate) fn turned_profile_of(
         })?,
     };
     Ok((turned_plane(axis), outline, held_faces, closing))
+}
+
+/// How many of the scan's points [`turned_profile_of`] scores two profiles on, at most.
+const EXPLAINED_SAMPLE: usize = 20_000;
+/// The median section is taken over the faces' chain when it explains more of the scan by this
+/// share or more.
+const EXPLAINS_MORE: f64 = 0.02;
+
+/// The share of `points` (in the half-plane: along the axis, radius; each with its weight, the
+/// area it stands for) within `tolerance` of the closed `ring`: how much of the scan a revolve of
+/// the profile explains.
+fn explained_share(points: &[(Vec2, f64)], ring: &[Vec2], tolerance: f64) -> f64 {
+    let m = ring.len();
+    let total: f64 = points.iter().map(|p| p.1).sum();
+    if !(total > 0.0) || m < 2 {
+        return 0.0;
+    }
+    let near = |p: Vec2| {
+        (0..m).any(|k| {
+            let (a, b) = (ring[k], ring[(k + 1) % m]);
+            let d = b - a;
+            let len2 = d.dot(d);
+            let t = if len2 > 0.0 { ((p - a).dot(d) / len2).clamp(0.0, 1.0) } else { 0.0 };
+            p.dist(a + d * t) <= tolerance
+        })
+    };
+    points.iter().filter(|p| near(p.0)).map(|p| p.1).sum::<f64>() / total
 }
 
 /// The angles halfway between neighbouring spokes at `angles` (low to high, radians): where a
@@ -2212,6 +2269,180 @@ fn turned_wall(face: &Turned) -> Option<Wall> {
         Turned::Cone { slope, offset } => Wall::Line { point: Vec2::new(0.0, offset), direction: Vec2::new(1.0, slope).normalized()? },
         Turned::Torus { major, height, minor } => Wall::Circle { center: Vec2::new(height, major), radius: minor },
     })
+}
+
+/// How many planes through the axis [`median_section`] cuts the scan with, evenly round half a
+/// turn: each gives two half-sections.
+const MEDIAN_SLICES: usize = 36;
+
+/// The cell of [`median_section`]'s half-plane grid: this share of the tolerance, at least the
+/// part's size over [`MEDIAN_MOST_CELLS`] along each side.
+const MEDIAN_CELL_SHARE: f64 = 0.5;
+/// ... the most cells along a side of the grid.
+const MEDIAN_MOST_CELLS: f64 = 1500.0;
+
+/// An arc on no face in a median section whose radius is more than this many times its chord is
+/// drawn as a line.
+const MEDIAN_STRAIGHT: f64 = 5.0;
+
+/// How far (in cells, each way) [`median_section`] averages the share of the turn a cell is inside.
+const MEDIAN_SMOOTH: usize = 2;
+
+/// Each cell of the `w` × `h` grid `v` (row by row) replaced by the mean of the cells within `r`
+/// of it along a row.
+fn box_mean(v: &[f64], w: usize, h: usize, r: usize) -> Vec<f64> {
+    let mut out = vec![0.0; v.len()];
+    for j in 0..h {
+        for i in 0..w {
+            let (a, b) = (i.saturating_sub(r), (i + r).min(w - 1));
+            out[j * w + i] = (a..=b).map(|k| v[j * w + k]).sum::<f64>() / (b - a + 1) as f64;
+        }
+    }
+    out
+}
+
+/// [`box_mean`] along the grid's columns.
+fn box_mean_t(v: &[f64], w: usize, h: usize, r: usize) -> Vec<f64> {
+    let mut out = vec![0.0; v.len()];
+    for i in 0..w {
+        for j in 0..h {
+            let (a, b) = (j.saturating_sub(r), (j + r).min(h - 1));
+            out[j * w + i] = (a..=b).map(|k| v[k * w + i]).sum::<f64>() / (b - a + 1) as f64;
+        }
+    }
+    out
+}
+
+/// A turned part's median half-section: the scan cut by [`MEDIAN_SLICES`] planes through `axis`,
+/// each half-section filled on a grid of the half-plane (height along the axis, radius from it),
+/// and the cells inside at half the half-sections or more kept: the body the turn makes, whatever
+/// crosses only part of the turn (a thread, grip lobes, a slot, a boss) left out or in by how much
+/// of the turn it covers. Its outer boundary as a closed run of points (and the grid's cell), each on the wall of
+/// `walls` (numbered as in the caller's list, `axis` the axis's own) within the tolerance (or a
+/// cell and a half) of it, else on none. Pieces on no wall are drawn as the run goes
+/// ([`outline_of`]'s fill). Nothing when the scan gives no closed half-section.
+fn median_section(
+    scan: &Scan,
+    weld: &[u32],
+    axis: &Axis,
+    walls: &[(usize, Wall)],
+    axis_wall: usize,
+    reach: f64,
+    tolerance: f64,
+) -> Option<(Vec<Vec2>, Vec<Option<usize>>, f64)> {
+    let (u, v) = crate::in_plane(axis.direction);
+    let mut halves: Vec<Vec<Vec2>> = Vec::new();
+    for i in 0..MEDIAN_SLICES {
+        let angle = PI * (i as f64 + 0.5) / MEDIAN_SLICES as f64;
+        let plane = Plane { origin: axis.point, x: axis.direction, y: u * angle.cos() + v * angle.sin() };
+        for run in crate::section::section_welded(scan, weld, &plane) {
+            if !run.closed {
+                continue;
+            }
+            let none = vec![None; run.points.len()];
+            for side in [1.0, -1.0] {
+                let flipped: Vec<Vec2> = run.points.iter().map(|p| Vec2::new(p.x, side * p.y)).collect();
+                if let Some((points, _)) = above_axis(&flipped, &none, axis_wall) {
+                    halves.push(points);
+                }
+            }
+        }
+    }
+    let count_halves = 2 * MEDIAN_SLICES;
+    if halves.is_empty() {
+        return None;
+    }
+    let (mut low, mut high) = (f64::INFINITY, f64::NEG_INFINITY);
+    let mut far = 0.0_f64;
+    for p in halves.iter().flatten() {
+        low = low.min(p.x);
+        high = high.max(p.x);
+        far = far.max(p.y);
+    }
+    let size = (high - low).max(far);
+    if !(size > 0.0 && size.is_finite()) {
+        return None;
+    }
+    let cell = (MEDIAN_CELL_SHARE * tolerance).max(size / MEDIAN_MOST_CELLS).max(1e-6);
+    // A cell of margin at each end and above; the axis is the grid's bottom edge.
+    let x0 = low - cell;
+    let w = ((high - low) / cell).ceil() as usize + 3;
+    let h = (far / cell).ceil() as usize + 2;
+    let mut count = vec![0u16; w * h];
+    for points in &halves {
+        let n = points.len();
+        for j in 0..h {
+            let y = (j as f64 + 0.5) * cell;
+            let mut xs: Vec<f64> = (0..n)
+                .filter_map(|k| {
+                    let (a, b) = (points[k], points[(k + 1) % n]);
+                    ((a.y <= y) != (b.y <= y)).then(|| a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x))
+                })
+                .collect();
+            xs.sort_by(f64::total_cmp);
+            for &[enter, leave] in xs.as_chunks::<2>().0 {
+                let first = (((enter - x0) / cell) - 0.5).ceil().max(0.0) as usize;
+                let last = (((leave - x0) / cell) - 0.5).floor();
+                if last < 0.0 {
+                    continue;
+                }
+                for i in first..=(last as usize).min(w - 1) {
+                    count[j * w + i] = count[j * w + i].saturating_add(1);
+                }
+            }
+        }
+    }
+    // The share of the turn each cell is inside, averaged over the cells within
+    // [`MEDIAN_SMOOTH`] of it: a thread's band sits near a half everywhere, and the slices'
+    // angles beat against its helix, so read cell by cell its edge is a comb.
+    let share: Vec<f64> = count.iter().map(|&c| f64::from(c) / count_halves as f64).collect();
+    let smooth = box_mean(&box_mean_t(&share, w, h, MEDIAN_SMOOTH), w, h, MEDIAN_SMOOTH);
+    let inside: Vec<bool> = smooth.iter().map(|&c| c >= 0.5).collect();
+    // The body: its largest piece, with any hole closed inside it (one the axis or an end does not
+    // open: a void the threshold left), the threshold's specks beside it dropped.
+    let inside = crate::wall_outline::largest(&crate::wall_outline::filled(&inside, w, h), w, h);
+    let rings = crate::wall_outline::boundaries(&inside, w, h);
+    let area = |r: &[(usize, usize)]| {
+        let m = r.len();
+        (0..m)
+            .map(|k| {
+                let (a, b) = (r[k], r[(k + 1) % m]);
+                a.0 as f64 * b.1 as f64 - b.0 as f64 * a.1 as f64
+            })
+            .sum::<f64>()
+            .abs()
+    };
+    let outer = rings.into_iter().max_by(|a, b| area(a).total_cmp(&area(b)))?;
+    let stairs: Vec<Vec2> = outer.iter().map(|&(i, j)| Vec2::new(x0 + i as f64 * cell, j as f64 * cell)).collect();
+    // The cells' staircase taken off (within three quarters of a cell), then points every two
+    // cells along what is left, so each stretch has points to be read on its wall.
+    let corners = crate::wall_outline::simplify_ring(&stairs, 0.75 * cell);
+    let m = corners.len();
+    let mut points = Vec::new();
+    for k in 0..m {
+        let (a, b) = (corners[k], corners[(k + 1) % m]);
+        let steps = ((a.dist(b) / (2.0 * cell)).ceil() as usize).max(1);
+        for t in 0..steps {
+            points.push(a + (b - a) * (t as f64 / steps as f64));
+        }
+    }
+    let near = tolerance.max(1.5 * cell).max(reach.min(tolerance * 2.0));
+    let on: Vec<Option<usize>> = points
+        .iter()
+        .map(|&p| {
+            if p.y <= 0.5 * cell {
+                return Some(axis_wall);
+            }
+            walls
+                .iter()
+                .enumerate()
+                .map(|(k, (_, wall))| (k, wall.foot(p).dist(p)))
+                .filter(|&(_, d)| d <= near)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(k, _)| k)
+        })
+        .collect();
+    Some((points, on, cell))
 }
 
 /// The part of the closed loop `points` (each on the wall `on` names) with radius at least 0: where
@@ -2398,7 +2629,40 @@ fn turned_sliced(
             }
         }
     }
-    let (_, outline) = best?;
+    // The median section where the faces do not go round: a thread, grip lobes or a slot cross
+    // every single half-section, which then draws them in (a zigzag of arcs, or the inner run
+    // closed straight across: T-LESS 01 came out r 10.7 of 17.5). The half-plane region inside
+    // the part at half the turn or more is the turned body itself, the thread its mean cylinder.
+    let median = if between.is_empty() {
+        median_section(scan, &weld, axis, &walls[..axis_wall], axis_wall, reach, tolerance).and_then(|(points, on, cell)| {
+            let outline = outline_of(&walls, &points, &on, reach, Some((tolerance.max(2.0 * cell), None)));
+            let mut outline = outline?;
+            // A piece drawn off the section on no face, an arc nearly straight (its radius many
+            // times its chord), is a line: read the other way round it is nearly a whole circle,
+            // under the axis (T-LESS 03).
+            let n = outline.corners.len();
+            for k in 0..n {
+                if let (Piece::Arc { center, .. }, None) = (outline.pieces[k], outline.faces[k]) {
+                    let (a, b) = (outline.corners[k], outline.corners[(k + 1) % n]);
+                    if center.dist(a) > MEDIAN_STRAIGHT * a.dist(b) {
+                        outline.pieces[k] = Piece::Line;
+                    }
+                }
+            }
+            // Pieces whose ends meet (an arc from a point to itself reads as a whole circle) out,
+            // as the caller takes them out of every turned profile (`reach` is 0.005 of the
+            // part, the slivers' 0.002 of it).
+            let outline = without_slivers(outline, SLIVER_SHARE / 0.005 * reach, true);
+            let ring = ring(&outline);
+            (is_simple_ring(&ring) && ring.iter().all(|p| p.y >= -reach)).then_some(outline)
+        })
+    } else {
+        None
+    };
+    let outline = match median {
+        Some(outline) => outline,
+        None => best?.1,
+    };
     let corners: Vec<Vec2> = outline.corners.iter().map(|c| Vec2::new(c.x, c.y.max(0.0))).collect();
     // The line that closed a run open at both ends, by its ends.
     let closing = outline.faces.iter().position(|f| *f == Some(usize::MAX)).map(|k| [corners[k], corners[(k + 1) % corners.len()]]);
@@ -2753,6 +3017,76 @@ mod tests {
         assert!(outline.faces.iter().any(Option::is_none), "{outline:?}");
         let half = area(&ring(&outline)).abs() / 2.0;
         assert!((half - 600.0).abs() < 0.02 * 600.0, "{half} mm² against 600: {outline:?}");
+    }
+
+    /// A shaft R 15 from z 0 to 20 and 40 to 60, a thread between them (mean R 12, 1 mm deep each
+    /// way, 3 mm pitch) and flat steps where they meet: the thread is no face about the axis, so
+    /// the faces go round no profile (T-LESS 01, its grip and thread). A single slice through the
+    /// axis cuts the thread's helix and draws it as a zigzag of arcs; the median section, inside
+    /// the part at half the turn or more, reads the band as its mean cylinder, R 12, a few pieces.
+    #[test]
+    fn a_threaded_band_is_read_as_its_mean_cylinder() {
+        let n = 180usize;
+        let mut rings: Vec<(f64, Box<dyn Fn(f64) -> f64>)> = Vec::new();
+        let band = |z: f64| -> Box<dyn Fn(f64) -> f64> { Box::new(move |t: f64| 12.0 + (TAU * (z / 3.0 - t / TAU)).sin()) };
+        for k in 0..=80 {
+            let z = 20.0 * k as f64 / 80.0;
+            rings.push((z, Box::new(|_| 15.0)));
+        }
+        for k in 0..=80 {
+            let z = 20.0 + 20.0 * k as f64 / 80.0;
+            rings.push((z, band(z)));
+        }
+        for k in 0..=80 {
+            let z = 40.0 + 20.0 * k as f64 / 80.0;
+            rings.push((z, Box::new(|_| 15.0)));
+        }
+        let mut positions: Vec<Vec3> = Vec::new();
+        for (z, r) in &rings {
+            for j in 0..n {
+                let t = TAU * j as f64 / n as f64;
+                let r = r(t);
+                positions.push(Vec3::new(r * t.cos(), r * t.sin(), *z));
+            }
+        }
+        let mut triangles: Vec<[u32; 3]> = Vec::new();
+        for i in 0..rings.len() - 1 {
+            for j in 0..n {
+                let (a, b) = ((i * n + j) as u32, (i * n + (j + 1) % n) as u32);
+                let (c, d) = (((i + 1) * n + j) as u32, ((i + 1) * n + (j + 1) % n) as u32);
+                triangles.push([a, b, d]);
+                triangles.push([a, d, c]);
+            }
+        }
+        let bottom = positions.len() as u32;
+        positions.push(Vec3::new(0.0, 0.0, 0.0));
+        let top = positions.len() as u32;
+        positions.push(Vec3::new(0.0, 0.0, 60.0));
+        let last = (rings.len() - 1) * n;
+        for j in 0..n {
+            triangles.push([bottom, ((j + 1) % n) as u32, j as u32]);
+            triangles.push([top, (last + j) as u32, (last + (j + 1) % n) as u32]);
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let outcome = find_all(&scan, &Options::default(), &|| false);
+        let reading = read(&scan, &outcome);
+        assert!(reading.revolve.is_some(), "turned: {:?}", reading.turned_unread);
+        let (_, outline, _) = turned_profile(&scan, &outcome, &reading).unwrap();
+        assert!(outline.corners.len() <= 14, "a few pieces, not the thread's zigzag: {outline:?}");
+        let points = ring(&outline);
+        // Along the axis from the profile's own low end: the band is its middle third.
+        let low = points.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        // The profile's radius where it crosses the band's middle, off the axis.
+        let middle = low + 30.0;
+        let m = points.len();
+        let in_band: Vec<f64> = (0..m)
+            .filter_map(|k| {
+                let (a, b) = (points[k], points[(k + 1) % m]);
+                ((a.x - middle) * (b.x - middle) < 0.0).then(|| a.y + (b.y - a.y) * (middle - a.x) / (b.x - a.x))
+            })
+            .filter(|&y| y > 1.0)
+            .collect();
+        assert!(!in_band.is_empty() && in_band.iter().all(|r| (r - 12.0).abs() < 0.6), "the band at its mean R 12: {in_band:?} {outline:?}");
     }
 
     /// A block 40 × 40 × 10 with a turned boss on it, R 8 to 18 high and R 5 to 25: the whole is

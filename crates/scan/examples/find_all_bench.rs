@@ -17,6 +17,35 @@ fn peak_gb() -> f64 {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let t0 = std::time::Instant::now();
+    // An ASCII PLY (T-LESS) is read as the app reads it, in full precision: through an STL its
+    // points are rounded to f32, which moves the noise read and how Find All splits faces.
+    if args[1].ends_with(".ply") {
+        let text = std::fs::read_to_string(&args[1]).unwrap();
+        let mut lines = text.lines();
+        let (mut nv, mut nf) = (0usize, 0usize);
+        for line in lines.by_ref() {
+            if let Some(n) = line.strip_prefix("element vertex ") {
+                nv = n.trim().parse().unwrap();
+            } else if let Some(n) = line.strip_prefix("element face ") {
+                nf = n.trim().parse().unwrap();
+            } else if line.trim() == "end_header" {
+                break;
+            }
+        }
+        let positions: Vec<Vec3> = (0..nv)
+            .map(|_| {
+                let v: Vec<f64> = lines.next().unwrap().split_whitespace().take(3).map(|x| x.parse().unwrap()).collect();
+                Vec3::new(v[0], v[1], v[2])
+            })
+            .collect();
+        let triangles: Vec<[u32; 3]> = (0..nf)
+            .map(|_| {
+                let v: Vec<u32> = lines.next().unwrap().split_whitespace().skip(1).take(3).map(|x| x.parse().unwrap()).collect();
+                [v[0], v[1], v[2]]
+            })
+            .collect();
+        return run(&args, positions, triangles, t0);
+    }
     let data = std::fs::read(&args[1]).unwrap();
     let n = u32::from_le_bytes(data[80..84].try_into().unwrap()) as usize;
     // Weld by sorting the corners' bit patterns (no hash map: 3n corners at 92M).
@@ -43,6 +72,10 @@ fn main() {
     drop(keys);
     let triangles: Vec<[u32; 3]> = (0..n).map(|t| [corner[3 * t], corner[3 * t + 1], corner[3 * t + 2]]).collect();
     drop(corner);
+    run(&args, positions, triangles, t0)
+}
+
+fn run(args: &[String], positions: Vec<Vec3>, triangles: Vec<[u32; 3]>, t0: std::time::Instant) {
     eprintln!("loaded {} tris, {} points in {:.1} s, peak {:.2} GB", triangles.len(), positions.len(), t0.elapsed().as_secs_f64(), peak_gb());
     let scan = Scan::new(&positions, &triangles);
     if args.get(2).map(String::as_str) == Some("survey") {
@@ -128,6 +161,9 @@ fn main() {
             reading.revolve.is_some(),
             reading.partly_turned.is_some()
         );
+        for c in &reading.chamfers {
+            eprintln!("chamfer face {} distance {:.2} edge {:?} {:?}", c.face, c.distance, c.edge, reading.faces.get(c.face).map(|f| f.shape));
+        }
         let explained: std::collections::BTreeSet<usize> = reading.prisms.iter().flat_map(|p| p.walls.iter().chain(&p.ends)).copied().collect();
         let left: Vec<(usize, &str, f64)> = (0..reading.faces.len())
             .filter(|k| !explained.contains(k) && !reading.rounds.contains(k))
@@ -135,6 +171,18 @@ fn main() {
             .filter(|x| x.2 > 0.0)
             .collect();
         eprintln!("faces in no prism and no round {:?}", left);
+        if let Some(revolve) = &reading.revolve {
+            eprintln!("revolve members {:?}", revolve.members);
+            match solidcraft_scan::profile::turned_profile_open(&scan, &out, &reading) {
+                Ok((_, o, _, closing)) => {
+                    eprintln!("turned profile (along the axis, radius), closing {closing:?}:");
+                    for i in 0..o.corners.len() {
+                        eprintln!("   {:>8.3} {:>8.3}  {:?} face {:?}", o.corners[i].x, o.corners[i].y, o.pieces[i], o.faces[i]);
+                    }
+                }
+                Err(e) => eprintln!("   turned profile refused: {e}"),
+            }
+        }
         for (k, prism) in reading.prisms.iter().enumerate() {
             eprintln!("prism {k}: walls {:?} ends {:?} low {:.3} high {:.3}", prism.walls, prism.ends, prism.low, prism.high);
             match solidcraft_scan::profile::prism_profile(&scan, &out, &reading, prism) {

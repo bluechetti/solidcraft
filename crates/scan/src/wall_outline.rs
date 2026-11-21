@@ -204,7 +204,7 @@ pub(crate) fn filled(m: &[bool], w: usize, h: usize) -> Vec<bool> {
 }
 
 /// The largest piece of set cells joined side to side.
-fn largest(m: &[bool], w: usize, h: usize) -> Vec<bool> {
+pub(crate) fn largest(m: &[bool], w: usize, h: usize) -> Vec<bool> {
     let mut label = vec![0u32; w * h];
     let (mut best, mut best_size, mut next) = (0u32, 0usize, 0u32);
     let mut queue = VecDeque::new();
