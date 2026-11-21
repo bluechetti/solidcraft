@@ -12,8 +12,8 @@ use super::{CommandSpec, in_sketch};
 use crate::params::{bad, num, req_vec2, str_, string_list, vec2};
 use crate::schema::sketch_constraints::{
     AutoConstrainDatumParams, AutoConstrainParams, AutoConstrainResult, ConstrainerParams, ConstrainerResult, ConstraintAdded, CurvatureParams,
-    FinishAutoConstrainParams, Glyph, GlyphsParams, GlyphsResult, PolygonParams, PolygonResult, Snap, SnapParams, SnapResult, ToggleDiameterParams,
-    ToggleDiameterResult, ToggleDrivenParams, ToggleDrivenResult,
+    FinishAutoConstrainParams, Glyph, GlyphsParams, GlyphsResult, MovedPoint, PolygonParams, PolygonResult, Snap, SnapParams, SnapResult,
+    ToggleDiameterParams, ToggleDiameterResult, ToggleDrivenParams, ToggleDrivenResult,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -478,6 +478,13 @@ fn round_dimensions(sk: &mut Sketch, doc: &mut solidcraft_doc::Document, from: u
 }
 
 fn auto(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
+    // Where each point (centres too) was, to say how far rounding and solving moved the drawing.
+    let before: Vec<(String, solidcore_record::Vec2)> = super::sketch_store::target(s, p, cmd)
+        .ok()
+        .and_then(|id| super::sketch_store::read(&s.doc, id).ok())
+        .map(|sk| sk.points.iter().map(|q| (q.id.clone(), q.pos)).collect())
+        .unwrap_or_default();
+    let target = super::sketch_store::target(s, p, cmd).ok();
     let ((added, dof), info) = edit(s, p, cmd, false, |sk, doc| {
         let datum = match str_(p, "datum") {
             Some(r) => sk.resolve_point(r).ok_or_else(|| bad(cmd, format!("unknown point `{r}`")))?,
@@ -497,7 +504,15 @@ fn auto(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     // The degrees of freedom of the sketch as stored (the edit's own solve, after rounding),
     // which is what Inspect reports later; the trials' count stands in when it did not solve.
     let dof = info.get("dof").and_then(Value::as_u64).and_then(|d| usize::try_from(d).ok()).unwrap_or(dof);
-    reply(cmd, AutoConstrainResult { added, dof, sketch: info, created: None, param_warnings: Vec::new() })
+    let moved = target.and_then(|id| super::sketch_store::read(&s.doc, id).ok()).and_then(|sk| {
+        sk.points
+            .iter()
+            .filter_map(|q| before.iter().find(|(id, _)| *id == q.id).map(|(_, was)| (q.id.clone(), was.dist(q.pos))))
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .filter(|(_, d)| *d > 1e-9)
+            .map(|(point, distance)| MovedPoint { point, distance })
+    });
+    reply(cmd, AutoConstrainResult { added, dof, sketch: info, moved, created: None, param_warnings: Vec::new() })
 }
 
 fn auto_constrain(s: &mut Session, p: &Value) -> Result<Value> {

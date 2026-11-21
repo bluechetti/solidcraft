@@ -411,6 +411,15 @@ pub struct PolygonResult {
     pub param_warnings: Vec<String>,
 }
 
+/// A point and how far a command moved it.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct MovedPoint {
+    /// The point's id.
+    pub point: String,
+    /// How far it moved, in mm.
+    pub distance: f64,
+}
+
 /// What the Auto Constrain commands return.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct AutoConstrainResult {
@@ -420,6 +429,11 @@ pub struct AutoConstrainResult {
     pub dof: usize,
     /// The sketch's solve: `{solved, dof}`.
     pub sketch: Value,
+    /// The point (a centre too) the command moved farthest, and how far (mm): rounding dimensions
+    /// to whole values moves the drawing, and an arc's centre can move further than its ends.
+    /// Absent when nothing moved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moved: Option<MovedPoint>,
     /// What the command added to its sketch, `{points, curves, constraints, dimensions}` (lists
     /// of ids): the session adds it to the reply of a sketch command, so the handler leaves it out.
     #[serde(default, skip_serializing_if = "Option::is_none")]

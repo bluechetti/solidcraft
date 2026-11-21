@@ -255,6 +255,26 @@ fn auto_constrain_dimensions_a_sketch_past_the_trial_limit() {
     assert_eq!(run(&mut s, "sketch.inspect", json!({}))["fully_constrained"], true);
 }
 
+/// Auto Constrain with `round` says how far it moved the drawing: the point moved farthest and by
+/// how much (an agent saw a floor move 0.1 mm and an arc's centre 0.3 mm with nothing in the
+/// reply). The rectangle's corner at 1.02, 0.98 goes to 1, 1 and its far corner from 40.99, 30.46
+/// to 41, 30.5: the farthest move is the far corners', √(0.01² + 0.04²) ≈ 0.041 mm... with the
+/// sizes 40 and 29.5 the far corner lands at 41, 30.5, 0.0412 from where it was drawn.
+#[test]
+fn auto_constrain_says_how_far_it_moved_the_drawing() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[1.02, 0.98], [40.99, 0.98], [40.99, 30.46], [1.02, 30.46]], "closed": true}));
+    let r = run(&mut s, "sketch.auto_constrain", json!({"round": 0.05}));
+    let moved = r["moved"]["distance"].as_f64().expect("moved");
+    assert!(moved > 0.02 && moved < 0.06, "{r}");
+    assert!(r["moved"]["point"].as_str().is_some(), "{r}");
+    // Drawn on whole values, nothing moves and nothing is said.
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[1.0, 1.0], [41.0, 1.0], [41.0, 30.5], [1.0, 30.5]], "closed": true}));
+    let r = run(&mut s, "sketch.auto_constrain", json!({"round": 0.05}));
+    assert!(r.get("moved").is_none(), "{r}");
+}
+
 /// With `round`, a sketch drawn off a measurement reads as designed: each dimension within the
 /// reach of a whole, half or tenth of a millimetre takes it, the value measured kept in its
 /// parameter's comment; one farther from any is left as measured.
