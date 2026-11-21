@@ -2,6 +2,7 @@
 //! distances, the patches and their distance from the scan.
 //! `cargo run --example wrap_bench -p solidcraft-scan --profile fast -- scan.stl [tolerance] [max_patches]`
 use solidcore_record::Vec3;
+use solidcraft_geom::prelude::*;
 use solidcraft_scan::Scan;
 use solidcraft_scan::wrap_scan::{Settings, wrap};
 
@@ -39,6 +40,19 @@ fn main() {
         Ok(w) => {
             let c = &w.coarse;
             println!("triangles {} -> coarse {} in {} rounds (met {}, capped {})", triangles.len(), c.triangles.len(), c.rounds, c.met, c.capped);
+            let shape = |t: &[u32; 3]| {
+                let q = t.map(|i| c.positions[i as usize]);
+                let area2 = (q[1] - q[0]).cross(q[2] - q[0]).len();
+                let sides = (q[1] - q[0]).dot(q[1] - q[0]) + (q[2] - q[1]).dot(q[2] - q[1]) + (q[0] - q[2]).dot(q[0] - q[2]);
+                if sides > 0.0 { 2.0 * 3f64.sqrt() * area2 / sides } else { 0.0 }
+            };
+            let shapes: Vec<f64> = c.triangles.iter().map(shape).collect();
+            println!(
+                "coarse shapes: below 0.1 {}, below 0.35 {}, worst {:.4}",
+                shapes.iter().filter(|&&q| q < 0.1).count(),
+                shapes.iter().filter(|&&q| q < 0.35).count(),
+                shapes.iter().copied().fold(1.0, f64::min)
+            );
             println!(
                 "patches {}; scan->patches within {tolerance}: {:.4} p99 {:.3} max {:.3}; {:.1} s, peak {:.2} GB",
                 w.faces.len(),
@@ -48,6 +62,11 @@ fn main() {
                 t0.elapsed().as_secs_f64(),
                 peak_gb()
             );
+            let coarse_tree = solidcraft_geom::compare::TriangleTree::of(&c.positions, &c.triangles);
+            for (p, d) in w.worst.iter().take(4) {
+                let to_coarse = coarse_tree.nearest(*p).map_or(f64::NAN, |(d, _)| d);
+                println!("  worst {d:.3} at ({:.2}, {:.2}, {:.2}); to the coarse mesh {to_coarse:.3}", p.x, p.y, p.z);
+            }
         }
         Err(e) => println!("refused: {e}"),
     }

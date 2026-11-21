@@ -3922,3 +3922,68 @@ fn wrap_scan_makes_a_closed_scan_one_solid_within_its_tolerance() {
     let refused = s.execute("scan.wrap_scan", &json!({"body": scan, "max_patches": 10})).unwrap_err().to_string();
     assert!(refused.contains("max_patches"), "{refused}");
 }
+
+/// Wrap Scan's patches meshed at the finest export chord (1 µm) one by one, then sewn, then read
+/// back from STEP: which step makes an edge no tessellation can follow. A mesh named by `WRAP_STL`
+/// (binary STL); ignored by default.
+#[test]
+#[ignore]
+fn wrap_scan_patches_mesh_at_the_finest_chord() {
+    let Ok(path) = std::env::var("WRAP_STL") else { return };
+    let data = std::fs::read(&path).unwrap();
+    let n = u32::from_le_bytes(data[80..84].try_into().unwrap()) as usize;
+    let mut index = std::collections::HashMap::new();
+    let (mut positions, mut triangles) = (Vec::new(), Vec::new());
+    for t in 0..n {
+        let base = 84 + 50 * t + 12;
+        let mut tri = [0u32; 3];
+        for (k, slot) in tri.iter_mut().enumerate() {
+            let f = |o: usize| f32::from_le_bytes(data[base + 12 * k + o..base + 12 * k + o + 4].try_into().unwrap());
+            *slot = *index.entry([f(0).to_bits(), f(4).to_bits(), f(8).to_bits()]).or_insert_with(|| {
+                positions.push(Vec3::new(f(0) as f64, f(4) as f64, f(8) as f64));
+                (positions.len() - 1) as u32
+            });
+        }
+        triangles.push(tri);
+    }
+    let w = solidcraft_scan::wrap_scan::wrap(&solidcraft_scan::Scan::new(&positions, &triangles), &solidcraft_scan::wrap_scan::Settings::default())
+        .unwrap();
+    let chord: f64 = std::env::var("WRAP_CHORD").ok().and_then(|c| c.parse().ok()).unwrap_or(1e-3);
+    let most: usize = std::env::var("WRAP_PATCHES").ok().and_then(|c| c.parse().ok()).unwrap_or(usize::MAX);
+    let spec = solidcraft_kernel::MeshSpec::chord(chord);
+    let sheets: Vec<_> = w.faces.iter().map(|f| solidcraft_kernel::nurbs_sheet(f).unwrap()).collect();
+    let mut bad = 0;
+    for (k, sheet) in sheets.iter().enumerate().take(most) {
+        let t = std::time::Instant::now();
+        let r = sheet.export_mesh(&spec);
+        eprintln!(
+            "patch {k}: {:.2} s {}",
+            t.elapsed().as_secs_f64(),
+            r.as_ref().map_or_else(|e| e.to_string(), |(m, _)| format!("{} triangles", m.triangles.len()))
+        );
+        if let Err(e) = r {
+            bad += 1;
+            if bad <= 5 {
+                eprintln!("patch {k} alone: {e}");
+                let net = solidcraft_scan::surface_edit::points(&w.faces[k]);
+                eprintln!("  net {net:?}");
+            }
+        }
+    }
+    eprintln!("{} of {} patches fail alone", bad, sheets.len().min(most));
+    if most < sheets.len() {
+        return;
+    }
+    let refs: Vec<_> = sheets.iter().collect();
+    let sewn = solidcraft_kernel::stitch(&refs, 0.0).unwrap();
+    eprintln!("sewn: {}", sewn.export_mesh(&spec).map_or_else(|e| e.to_string(), |_| "meshes".into()));
+    let step = solidcraft_kernel::step_export(&[&sewn], "SolidCraft").unwrap();
+    match solidcraft_kernel::step_import(&step) {
+        Ok(back) => {
+            for b in &back.bodies {
+                eprintln!("read back: {}", b.body.export_mesh(&spec).map_or_else(|e| e.to_string(), |_| "meshes".into()));
+            }
+        }
+        Err(e) => eprintln!("read back: {e}"),
+    }
+}

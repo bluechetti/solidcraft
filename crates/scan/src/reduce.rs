@@ -78,7 +78,9 @@ pub fn reduce_within(scan: &Scan, settings: Settings, area: Option<&[bool]>) -> 
 /// [`reduce`] held to the scan itself (after d0pawlus/SurfaceCraft's measured guard, adapted): a
 /// collapse is made only when its new point, and the middle and edge midpoints at that point of every
 /// face it leaves, lie within the smaller `budget` of its two points of `original` (the scan's own
-/// surface, as a tree); the merged point keeps that smaller budget. `budget` is per point of the scan
+/// surface, as a tree), no face shrinks below a thousandth of its area, and the two points merged
+/// stay within the budget of the faces left (the last two after d0's `collapse_within`); the merged
+/// point keeps that smaller budget. `budget` is per point of the scan
 /// (`scan.positions`); points merged as one take the least of theirs, a missing or non-positive one
 /// holds its point. `None` as for [`reduce`].
 pub fn reduce_held(scan: &Scan, settings: Settings, budget: &[f64], original: &TriangleTree) -> Option<Reduced> {
@@ -91,6 +93,14 @@ pub fn reduce_held(scan: &Scan, settings: Settings, budget: &[f64], original: &T
     }
     Some(r.run())
 }
+
+/// A held reduction refuses a collapse that shrinks a face below this share of its area.
+const HELD_SLIVER: f64 = 1e-3;
+/// …and one that leaves a needle (shape below this, about a 12° smallest angle, longer than
+/// [`HELD_LONG`] budgets) among faces that bend more than about 10° ([`HELD_CURVED`]) from it.
+const HELD_NEEDLE: f64 = 0.35;
+const HELD_LONG: f64 = 8.0;
+const HELD_CURVED: f64 = 0.985;
 
 /// A reduction held to the scan: the scan's surface and each point's budget (see [`reduce_held`]).
 struct Held<'a> {
@@ -565,18 +575,54 @@ impl<'a> Reducer<'a> {
                 if far(p) {
                     return false;
                 }
+                let mut fan = Vec::new();
                 for vertex in [ik, ig] {
                     for &t in &self.incident[vertex] {
                         let tri = self.tris[t as usize];
                         if !self.alive[t as usize] || (has(tri, keep) && has(tri, gone)) {
                             continue;
                         }
+                        let before = tri.map(|i| self.pos[i as usize]);
                         let after = tri.map(|i| if i == keep || i == gone { p } else { self.pos[i as usize] });
+                        // No face may shrink to a sliver (d0's rule: a thousandth of its area):
+                        // a coarse mesh of slivers lays patches no tessellation can follow.
+                        let (nb, na) = ((before[1] - before[0]).cross(before[2] - before[0]), (after[1] - after[0]).cross(after[2] - after[0]));
+                        if na.len() < HELD_SLIVER * nb.len() {
+                            return false;
+                        }
                         let middle = (after[0] + after[1] + after[2]) / 3.0;
                         if far(middle) || after.iter().filter(|q| **q != p).any(|q| far((*q + p) / 2.0)) {
                             return false;
                         }
+                        fan.push(after);
                     }
+                }
+                // No long needle where the surface curves (a long thin face across a rounded rim
+                // makes patches no tessellation can follow); on a flat, the wrap's flips mend them.
+                let normal = |t: &[Vec3; 3]| {
+                    let n = (t[1] - t[0]).cross(t[2] - t[0]);
+                    let l = n.len();
+                    (l > 0.0).then(|| n / l)
+                };
+                for t in &fan {
+                    let sides = [t[0].dist(t[1]), t[1].dist(t[2]), t[2].dist(t[0])];
+                    let long = sides.iter().copied().fold(0.0, f64::max);
+                    let squares: f64 = sides.iter().map(|x| x * x).sum();
+                    let area2 = (t[1] - t[0]).cross(t[2] - t[0]).len();
+                    let shape = if squares > 0.0 { 2.0 * 3f64.sqrt() * area2 / squares } else { 0.0 };
+                    if shape >= HELD_NEEDLE || long <= HELD_LONG * bound {
+                        continue;
+                    }
+                    let Some(n) = normal(t) else { return false };
+                    if fan.iter().filter_map(normal).any(|m| m.dot(n) < HELD_CURVED) {
+                        return false;
+                    }
+                }
+                // What the collapse takes away must stay covered: the two points it merges within
+                // the bound of the faces it leaves (d0's rule), so a thin rim is not cut off.
+                let covered = |q: Vec3| fan.iter().any(|t| solidcraft_geom::compare::closest_on_triangle(q, t[0], t[1], t[2]).dist(q) <= bound);
+                if !covered(self.pos[ia]) || !covered(self.pos[ib]) {
+                    return false;
                 }
                 Some(bound)
             }
