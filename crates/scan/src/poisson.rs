@@ -39,7 +39,9 @@ pub const LEAST_DEPTH: u32 = 5;
 /// The finest depth asked for or suggested. The grid is only solved near the points and held to
 /// [`MOST_NODES`], so a cloud too large for a depth gets [`PoissonError::TooFine`], not the memory.
 pub const MOST_DEPTH: u32 = 12;
-pub const DEFAULT_TRIM: f64 = 0.3;
+/// Vertices whose density is below this go. 0.5 against 0.3 on rigil-exscan (door mirror, two van panels):
+/// 1-2 points more of the surface on EXScan's mesh, a fifth less extra area, the scanned surface kept.
+pub const DEFAULT_TRIM: f64 = 0.5;
 
 impl Settings {
     /// The depth whose finest cells are about as wide as the points are apart (at most
