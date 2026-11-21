@@ -45,8 +45,9 @@ pub const ROUNDS: usize = 7;
 /// The first budget as a multiple of the tolerance: the patches are fitted to the scan, not to the
 /// coarse mesh, so it may stray further than they may (d0 starts at four); the rounds fix the rest.
 const START: f64 = 2.0;
-/// Times the budgets are doubled to keep within the most patches before an unheld reduction.
-const WIDEN: usize = 8;
+/// Reductions tried to fit within the most patches, and how near the cap a fit may stop.
+const FIT_TRIES: usize = 5;
+const NEAR_CAP: f64 = 0.85;
 /// A coarse face below this shape ([`shape`]: about a 12° smallest angle) and longer than [`LONG`]
 /// tolerances is a needle to mend: its patches would be too thin for any tessellation to follow (a
 /// 24 × 0.7 mm face made a patch that needed more than 20,000 nodes on one edge).
@@ -68,8 +69,7 @@ const RELAX_ROUNDS: usize = 8;
 const RELAX_STEP: f64 = 0.5;
 const CREASE: f64 = 0.866;
 
-/// Halvings (on a log scale) between the last two widened budgets, to end near the cap.
-const NARROW: usize = 3;
+
 /// A budget's factor round a sample that is too far.
 const TIGHTEN: f64 = 0.5;
 /// Rings of scan points tightened round a sample that is too far.
@@ -183,9 +183,10 @@ fn evenly(n: usize, most: usize) -> Vec<usize> {
 }
 
 /// The scan reduced once, every collapse held within `budget` (per scan point); when that leaves
-/// more than `cap` triangles, every budget is doubled and the scan reduced again (the tolerance
-/// given up evenly, not where an unheld reduction happens to cut), up to [`WIDEN`] times; only then
-/// is it reduced to the cap unheld. The bool says whether the cap bounded it.
+/// more than `cap` triangles, every budget is scaled up by the factor the first count says (the
+/// tolerance given up evenly, not where an unheld reduction happens to cut) and corrected up to
+/// [`FIT_TRIES`] times; only then is it reduced to the cap unheld. The bool says whether the cap
+/// bounded it.
 fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> Result<(reduce::Reduced, bool), WrapError> {
     let held = reduce::Settings { target: 4, max_error: 0.0, keep_rim: true };
     let at = |scale: f64| -> Result<reduce::Reduced, WrapError> {
@@ -196,34 +197,35 @@ fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> 
     if first.triangles.len() <= cap {
         return Ok((first, false));
     }
-    // Doubled until it fits, then narrowed between the last two scales so the wrap ends near the
-    // cap rather than up to half below it.
-    let mut too_fine = 1.0;
-    let mut fits: Option<(f64, reduce::Reduced)> = None;
-    for widen in 1..=WIDEN {
-        let scale = f64::from(1u32 << widen);
+    // Triangles fall about as 1 / scale (a held edge grows as √budget across a curved face): start
+    // at the scale that estimate gives, then correct by the same law, keeping the largest result
+    // that fits. Two or three reductions where doubling took up to a dozen (10M triangles: each
+    // reduction is minutes).
+    let mut scale = (first.triangles.len() as f64 / cap as f64) * 1.05;
+    let mut best: Option<(f64, reduce::Reduced)> = None;
+    for _ in 0..FIT_TRIES {
         let r = at(scale)?;
-        if r.triangles.len() <= cap {
-            fits = Some((scale, r));
-            break;
+        let n = r.triangles.len();
+        if n <= cap {
+            let better = best.as_ref().is_none_or(|(_, b)| n > b.triangles.len());
+            if better {
+                best = Some((scale, r));
+            }
+            if n as f64 >= NEAR_CAP * cap as f64 {
+                break;
+            }
         }
-        too_fine = scale;
+        // Next scale by the same law, bounded so one wrong guess cannot run away.
+        let ratio = (n.max(1) as f64 / (NEAR_CAP * 0.5 + 0.5) / cap as f64).clamp(0.25, 4.0);
+        scale *= ratio;
     }
-    let Some((mut coarse_scale, mut best)) = fits else {
-        let to_cap = reduce::Settings { target: cap, max_error: 0.0, keep_rim: false };
-        return Ok((reduce::reduce(scan, to_cap).ok_or(WrapError::Reduce)?, true));
-    };
-    for _ in 0..NARROW {
-        let mid = (too_fine * coarse_scale).sqrt();
-        let r = at(mid)?;
-        if r.triangles.len() <= cap {
-            coarse_scale = mid;
-            best = r;
-        } else {
-            too_fine = mid;
+    match best {
+        Some((_, r)) => Ok((r, true)),
+        None => {
+            let to_cap = reduce::Settings { target: cap, max_error: 0.0, keep_rim: false };
+            Ok((reduce::reduce(scan, to_cap).ok_or(WrapError::Reduce)?, true))
         }
     }
-    Ok((best, true))
 }
 
 /// Each welded point's neighbours (by its representative).
