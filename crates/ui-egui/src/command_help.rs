@@ -183,6 +183,7 @@ pub const DOCUMENTED: &[&str] = &[
     "scan.flat_template",
     "scan.flatten",
     "scan.free_form",
+    "scan.furring",
     "scan.hole_it",
     "scan.keep_selection",
     "scan.loft_it",
