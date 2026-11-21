@@ -60,6 +60,9 @@ struct Bridge {
     record_stop: extern "C" fn(),
     record_state: extern "C" fn() -> i32,
     record_message: extern "C" fn() -> *mut c_char,
+    save_map_and_stop: extern "C" fn(*const c_char),
+    start_with_map: extern "C" fn(*const c_char) -> i32,
+    map_message: extern "C" fn() -> *mut c_char,
 }
 
 // The function types come from `Bridge`'s fields, which each transmute fills.
@@ -105,6 +108,9 @@ fn load() -> Result<Bridge, String> {
             record_stop: std::mem::transmute(sym(c"sc_ar_record_stop")?),
             record_state: std::mem::transmute(sym(c"sc_ar_record_state")?),
             record_message: std::mem::transmute(sym(c"sc_ar_record_message")?),
+            save_map_and_stop: std::mem::transmute(sym(c"sc_ar_save_map_and_stop")?),
+            start_with_map: std::mem::transmute(sym(c"sc_ar_start_with_map")?),
+            map_message: std::mem::transmute(sym(c"sc_ar_map_message")?),
         })
     }
 }
@@ -136,7 +142,7 @@ struct Seen {
 }
 
 /// The model in the room: room point = translation + scale · axes · model point.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct Placed {
     axes: [[f64; 3]; 3],
     scale: f64,
@@ -332,6 +338,9 @@ pub struct State {
     exploded: usize,
     /// Pull is on: the Pencil pushes and pulls faces (`solid.press_pull`).
     pull_mode: bool,
+    /// Where the model was left in this design's room last time, put back once ARKit has
+    /// recognised the room (a tap to place it again drops it).
+    restore: Option<Placed>,
     /// Where the Pencil hovers above the glass, set by the app each frame.
     pub pencil_hover: Option<egui::Pos2>,
     /// Where the hovered face was last picked from (it is picked again once the Pencil moves).
@@ -383,7 +392,14 @@ impl State {
             if (b.supported)() == 0 {
                 return Err("AR needs world tracking, which this device does not have.".into());
             }
-            (b.start)();
+            // The room and the model's place from last time, when this design has them.
+            let (map, saved) = remembered(app);
+            let restore = std::fs::read_to_string(&saved).ok().and_then(|t| Placed::from_json(&t));
+            let from_map = restore.is_some() && CString::new(map.to_string_lossy().as_bytes()).is_ok_and(|c| (b.start_with_map)(c.as_ptr()) == 1);
+            if !from_map {
+                (b.start)();
+            }
+            self.restore = restore.filter(|_| from_map);
             self.placed = None;
             self.cut = None;
             self.measuring = None;
@@ -397,9 +413,23 @@ impl State {
             self.origin_was = Some(app.session.visibility.origin_hidden);
             app.session.visibility.origin_hidden = Some(true);
         } else {
+            // Where the model is goes with this design's map of the room, for next time; the map
+            // is read while the session still runs, and the session ends once it is saved.
+            let placed = self.placed;
+            let (map, saved) = remembered(app);
             if let Ok(b) = self.bridge() {
-                (b.stop)();
+                match (placed, CString::new(map.to_string_lossy().as_bytes())) {
+                    (Some(p), Ok(c)) => {
+                        if let Some(dir) = saved.parent() {
+                            let _ = std::fs::create_dir_all(dir);
+                        }
+                        let _ = std::fs::write(&saved, p.to_json());
+                        (b.save_map_and_stop)(c.as_ptr());
+                    }
+                    _ => (b.stop)(),
+                }
             }
+            self.restore = None;
             self.on = false;
             self.placed = None;
             self.target = None;
@@ -468,6 +498,18 @@ impl State {
         let camera_ms = started.elapsed().as_secs_f64() * 1e3;
         if let Some(s) = seen.as_ref() {
             self.last_back = Some(s.back);
+            // The room is recognised: the model is back where it was left.
+            if s.tracking == 2 && self.placed.is_none() && let Some(p) = self.restore.take() {
+                self.placed = Some(p);
+                self.message = "Back where you left it.".into();
+                crate::note("ar: placement restored");
+                if let Ok(b) = self.bridge() {
+                    (b.tick)();
+                }
+            }
+        }
+        if let Some(said) = self.bridge().ok().and_then(|b| take_string((b.map_message)())) {
+            crate::note(&format!("ar: room map {said}"));
         }
         self.pencil_gestures(app);
         // The model from ARKit's camera.
@@ -805,6 +847,7 @@ impl State {
                     // Already down: it moves there, as it is.
                     Some(p) => self.placed = Some(p.with_anchor(point)),
                     None => {
+                        self.restore = None;
                         self.placed = first_placement(app, self.source.as_ref(), seen, point);
                         if self.placed.is_none() {
                             self.message = "Open a design with a model to place it.".into();
@@ -1452,6 +1495,7 @@ impl State {
                     match seen {
                         None => "Starting the camera…".into(),
                         Some(s) if s.tracking == 0 => "Tracking is not available.".into(),
+                        Some(_) if self.restore.is_some() => "Point the iPad where the model was to bring it back, or tap a surface to place it again.".into(),
                         Some(s) if s.tracking == 1 => match s.reason {
                             2 => "Move the iPad more slowly.".into(),
                             3 => "Point at a surface with more detail or light.".into(),
@@ -1518,6 +1562,36 @@ fn pick(app: &mut SolveApp, seen: &Seen, placed: &Placed, u: (f32, f32)) -> Opti
     };
     let face = hit.get("face").and_then(|f| f.as_u64()).and_then(|f| usize::try_from(f).ok()).unwrap_or(0);
     Some((body, v("point")?, v("normal")?, face))
+}
+
+/// This design's saved map of the room and the model's place in it (Library, which iPadOS
+/// keeps), by the design's name.
+fn remembered(app: &SolveApp) -> (std::path::PathBuf, std::path::PathBuf) {
+    let name: String = app.session.save_as_name().chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+    let dir = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir).join("Library/Application Support/SolidCraft/ar");
+    (dir.join(format!("{name}.worldmap")), dir.join(format!("{name}.placement.json")))
+}
+
+impl Placed {
+    fn to_json(self) -> String {
+        serde_json::json!({ "axes": self.axes, "scale": self.scale, "translation": self.translation, "foot": self.foot, "bounds": self.bounds }).to_string()
+    }
+
+    fn from_json(text: &str) -> Option<Placed> {
+        let v: serde_json::Value = serde_json::from_str(text).ok()?;
+        let v3 = |x: &serde_json::Value| -> Option<[f64; 3]> { Some([x.get(0)?.as_f64()?, x.get(1)?.as_f64()?, x.get(2)?.as_f64()?]) };
+        let axes = v.get("axes")?;
+        let bounds = v.get("bounds")?;
+        let p = Placed {
+            axes: [v3(axes.get(0)?)?, v3(axes.get(1)?)?, v3(axes.get(2)?)?],
+            scale: v.get("scale")?.as_f64()?,
+            translation: v3(v.get("translation")?)?,
+            foot: v3(v.get("foot")?)?,
+            bounds: [v3(bounds.get(0)?)?, v3(bounds.get(1)?)?],
+        };
+        let finite = p.axes.iter().flatten().chain(&p.translation).chain(&p.foot).chain(p.bounds.iter().flatten()).all(|x| x.is_finite());
+        (finite && p.scale.is_finite() && p.scale > 0.0).then_some(p)
+    }
 }
 
 /// Where the model goes on first tap: its foot (the middle of its underside) on `point`,
@@ -2344,6 +2418,15 @@ mod tests {
         // A model point nearer the camera is on the hidden side (normal · p > d).
         let toward_camera = p.point_to_model(add(p.apply_room(middle), [0.0, 0.0, 0.05]));
         assert!(dot(c.normal, toward_camera) > c.d);
+    }
+
+    /// A placement read back from what it wrote is the same; anything else is refused.
+    #[test]
+    fn a_placement_is_remembered() {
+        let p = Placed { axes: [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]], scale: 0.002, translation: [0.1, 0.7, -0.4], foot: [5.0, 6.0, 0.0], bounds: [[0.0; 3], [10.0, 12.0, 4.0]] };
+        assert_eq!(Placed::from_json(&p.to_json()), Some(p));
+        assert_eq!(Placed::from_json("{}"), None);
+        assert_eq!(Placed::from_json(&p.to_json().replace("0.002", "-1")), None);
     }
 
     /// The placement matrix moves model points as `Placed` says.

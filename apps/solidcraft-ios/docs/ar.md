@@ -21,6 +21,7 @@ until it finds a surface.
 | Pull | Press the Pencil on a face and drag: an arrow and the distance follow. Lift, then Apply (`solid.press_pull`, one undo step) or Cancel; the Pencil back on the arrow adjusts it. |
 | Undo / Redo | The design's own undo history. |
 | Photo | Saves the room and the model (without the panel) to Photos. |
+| Record | A screen video of the session (ReplayKit); Stop shows Apple's preview to save or share it. |
 | Joints | Each joint's coordinates with − and + (`joint.drive`, held to its limits). |
 | Check | Finds overlapping parts (`inspect.interference`), selects them and marks each overlap in the room. |
 | Pencil hover | The face under the hovering tip lights up, as under the mouse. |
@@ -29,6 +30,10 @@ until it finds a surface.
 
 Snaps, placing and applying play a haptic tick on Apple Pencil Pro (an iPad has no haptic engine
 of its own).
+
+Done remembers where the model was: ARKit's map of the room is saved with the placement, by the
+design's name (Library/Application Support/SolidCraft/ar). Next time AR starts on that design it
+recognises the room and puts the model back; a tap to place it again starts afresh.
 
 Leaving the app and coming back keeps the model where it was: ARKit relocalizes, and the model is
 hidden until it has. The app's own touch handling (long press menu, orbit) is off while AR shows.

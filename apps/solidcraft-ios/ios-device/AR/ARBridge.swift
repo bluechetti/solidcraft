@@ -21,6 +21,8 @@ private final class Bridge: NSObject, ARSessionDelegate, ARCoachingOverlayViewDe
     var restarted = false
     var interrupted = false
     var lastTimestamp: TimeInterval = -1
+    /// A map is being saved on the way out: the session ends once it is.
+    var stopAfterSave = false
     /// The pixel buffer locked for the app to read, unlocked by `sc_ar_frame_done`.
     var locked: CVPixelBuffer?
     /// The depth map locked with it.
@@ -46,6 +48,7 @@ private final class Bridge: NSObject, ARSessionDelegate, ARCoachingOverlayViewDe
     }
 
     func start() {
+        stopAfterSave = false
         failure = ""
         session.run(configuration(), options: [.resetTracking, .removeExistingAnchors])
         running = true
@@ -448,5 +451,57 @@ public func sc_ar_record_state() -> Int32 { recordState }
 public func sc_ar_record_message() -> UnsafeMutablePointer<CChar>? {
     guard let m = recordMessage else { return nil }
     recordMessage = nil
+    return strdup(m)
+}
+
+// MARK: Remembering where the model was
+
+nonisolated(unsafe) private var mapMessage: String?
+
+/// Save ARKit's map of the room to `path`, then end the session (the map can only be read while
+/// it runs). Says how it went through `sc_ar_map_message`.
+@_cdecl("sc_ar_save_map_and_stop")
+public func sc_ar_save_map_and_stop(_ path: UnsafePointer<CChar>) {
+    let url = URL(fileURLWithPath: String(cString: path))
+    guard let b = bridge, b.running else { return }
+    b.stopAfterSave = true
+    b.session.getCurrentWorldMap { map, error in
+        DispatchQueue.main.async {
+            if let map, let data = try? NSKeyedArchiver.archivedData(withRootObject: map, requiringSecureCoding: true) {
+                try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                mapMessage = (try? data.write(to: url, options: .atomic)) != nil ? "saved" : "not written"
+            } else {
+                mapMessage = "no map: \(error?.localizedDescription ?? "the room was not seen enough")"
+            }
+            // Ends the session unless AR was turned on again meanwhile.
+            if b.stopAfterSave { b.stop() }
+        }
+    }
+}
+
+/// Start the session from a saved map of the room (`path`): ARKit relocalizes to it, and the
+/// room's origin is where it was when the map was saved. Returns 0 (and starts nothing) when
+/// there is no map there or it cannot be read.
+@_cdecl("sc_ar_start_with_map")
+public func sc_ar_start_with_map(_ path: UnsafePointer<CChar>) -> Int32 {
+    let url = URL(fileURLWithPath: String(cString: path))
+    guard let data = try? Data(contentsOf: url),
+          let map = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: data) else { return 0 }
+    let b = shared()
+    b.stopAfterSave = false
+    b.failure = ""
+    let c = b.configuration()
+    c.initialWorldMap = map
+    b.session.run(c, options: [.resetTracking, .removeExistingAnchors])
+    b.running = true
+    b.restarted = false
+    b.showOverlay()
+    return 1
+}
+
+@_cdecl("sc_ar_map_message")
+public func sc_ar_map_message() -> UnsafeMutablePointer<CChar>? {
+    guard let m = mapMessage else { return nil }
+    mapMessage = nil
     return strdup(m)
 }
