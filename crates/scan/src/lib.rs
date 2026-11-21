@@ -117,6 +117,7 @@ pub mod unseen;
 pub mod wall_outline;
 pub mod wheel;
 pub mod wrap;
+pub mod wrap_scan;
 
 use std::collections::HashMap;
 

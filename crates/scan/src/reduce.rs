@@ -11,6 +11,8 @@
 use solidcore_record::Vec3;
 use solidcraft_geom::prelude::*;
 
+use solidcraft_geom::compare::TriangleTree;
+
 use crate::{Scan, welded};
 
 /// How far to reduce.
@@ -66,11 +68,34 @@ pub fn reduce_within(scan: &Scan, settings: Settings, area: Option<&[bool]>) -> 
     if scan.triangle_count() == 0 || (settings.target == 0 && !(settings.max_error > 0.0)) {
         return None;
     }
-    let mut r = Reducer::new(scan, settings, area);
+    let mut r = Reducer::new(scan, settings, area, None);
     if r.tris.is_empty() {
         return None;
     }
     Some(r.run())
+}
+
+/// [`reduce`] held to the scan itself (after d0pawlus/SurfaceCraft's measured guard, adapted): a
+/// collapse is made only when its new point, and the middle and edge midpoints at that point of every
+/// face it leaves, lie within the smaller `budget` of its two points of `original` (the scan's own
+/// surface, as a tree); the merged point keeps that smaller budget. `budget` is per point of the scan
+/// (`scan.positions`); points merged as one take the least of theirs, a missing or non-positive one
+/// holds its point. `None` as for [`reduce`].
+pub fn reduce_held(scan: &Scan, settings: Settings, budget: &[f64], original: &TriangleTree) -> Option<Reduced> {
+    if scan.triangle_count() == 0 || (settings.target == 0 && !(settings.max_error > 0.0)) {
+        return None;
+    }
+    let mut r = Reducer::new(scan, settings, None, Some((budget, original)));
+    if r.tris.is_empty() {
+        return None;
+    }
+    Some(r.run())
+}
+
+/// A reduction held to the scan: the scan's surface and each point's budget (see [`reduce_held`]).
+struct Held<'a> {
+    tree: &'a TriangleTree,
+    budget: Vec<f64>,
 }
 
 /// The sum of squared distances from some planes, as a quadratic form in (x, y, z, 1): a symmetric
@@ -138,8 +163,9 @@ const ARITY: usize = 4;
 /// The heap is purged of stale entries once this share of its size has come up stale.
 const PURGE_SHARE: usize = 16;
 
-struct Reducer {
+struct Reducer<'a> {
     settings: Settings,
+    held: Option<Held<'a>>,
     pos: Vec<Vec3>,
     quadric: Vec<Quadric>,
     /// Each point's quadric of its faces alone, without the penalty that keeps an open rim: how
@@ -168,8 +194,8 @@ fn has(t: [u32; 3], v: u32) -> bool {
     t.contains(&v)
 }
 
-impl Reducer {
-    fn new(scan: &Scan, settings: Settings, area: Option<&[bool]>) -> Self {
+impl<'a> Reducer<'a> {
+    fn new(scan: &Scan, settings: Settings, area: Option<&[bool]>, guard: Option<(&[f64], &'a TriangleTree)>) -> Self {
         // Points at one place are one point, so a seam the file wrote is not an open edge.
         let weld = welded(scan.positions);
         let mut id = vec![u32::MAX; scan.positions.len()];
@@ -207,8 +233,21 @@ impl Reducer {
             }
         }
         let (n, count) = (pos.len(), tris.len());
+        // Each kept point's budget: the least of the scan points merged into it.
+        let guard = guard.map(|(budget, tree)| {
+            let mut b = vec![f64::INFINITY; n];
+            for (v, &rep) in weld.iter().enumerate() {
+                let k = id[rep as usize] as usize;
+                let own = budget.get(v).copied().filter(|x| x.is_finite() && *x > 0.0).unwrap_or(0.0);
+                if let Some(slot) = b.get_mut(k) {
+                    *slot = slot.min(own);
+                }
+            }
+            Held { tree, budget: b.into_iter().map(|x| if x.is_finite() { x } else { 0.0 }).collect() }
+        });
         Reducer {
             settings,
+            held: guard,
             pos,
             quadric: vec![Quadric::default(); n],
             surface: Vec::new(),
@@ -518,6 +557,31 @@ impl Reducer {
                 }
             }
         }
+        // Held to the scan: the new point and every face it leaves stay within the smaller budget.
+        let bound = match &self.held {
+            Some(h) => {
+                let bound = h.budget[ia].min(h.budget[ib]);
+                let far = |q: Vec3| h.tree.nearest(q).is_none_or(|(d, _)| !(d <= bound));
+                if far(p) {
+                    return false;
+                }
+                for vertex in [ik, ig] {
+                    for &t in &self.incident[vertex] {
+                        let tri = self.tris[t as usize];
+                        if !self.alive[t as usize] || (has(tri, keep) && has(tri, gone)) {
+                            continue;
+                        }
+                        let after = tri.map(|i| if i == keep || i == gone { p } else { self.pos[i as usize] });
+                        let middle = (after[0] + after[1] + after[2]) / 3.0;
+                        if far(middle) || after.iter().filter(|q| **q != p).any(|q| far((*q + p) / 2.0)) {
+                            return false;
+                        }
+                    }
+                }
+                Some(bound)
+            }
+            None => None,
+        };
         // `gone` becomes `keep`, at `p`.
         for slot in 0..self.incident[ig].len() {
             let t = self.incident[ig][slot];
@@ -546,6 +610,9 @@ impl Reducer {
             }
         }
         self.pos[ik] = p;
+        if let (Some(h), Some(bound)) = (self.held.as_mut(), bound) {
+            h.budget[ik] = bound;
+        }
         self.quadric[ik] = self.quadric[ia].plus(self.quadric[ib]);
         self.surface[ik] = self.surface[ia].plus(self.surface[ib]);
         self.weight[ik] = self.weight[ia] + self.weight[ib];
