@@ -366,6 +366,28 @@ impl Hole {
     }
 }
 
+/// One thing done in AR, in the order done, for Undo and Redo.
+#[derive(Clone, Debug, PartialEq)]
+enum Act {
+    /// A step in the design's own history (a pull, a move, a hole, a cut applied, a joint
+    /// moved), named for the panel.
+    Design(String),
+    /// A stroke of ink added.
+    Ink(Vec<[f64; 3]>),
+    /// All the ink cleared (what it was).
+    ClearInk(Vec<Vec<[f64; 3]>>),
+}
+
+impl Act {
+    fn name(&self) -> String {
+        match self {
+            Act::Design(what) => what.clone(),
+            Act::Ink(_) => "ink".into(),
+            Act::ClearInk(_) => "Clear ink".into(),
+        }
+    }
+}
+
 /// The Pencil tools: one at a time.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Tool {
@@ -557,6 +579,14 @@ pub struct State {
     /// Ink is on: the Pencil draws on the model; the strokes (model units, on its surfaces).
     ink_mode: bool,
     ink: Vec<Vec<[f64; 3]>>,
+    /// What was done in AR, last last, and what was undone, for Redo; and how many of the
+    /// design's earlier steps Undo has taken back past them (Redo may bring those back while
+    /// nothing new has been done).
+    done: Vec<Act>,
+    undone: Vec<Act>,
+    design_undone: usize,
+    /// A stroke of ink is being drawn (noted on the history when the Pencil lifts).
+    inking: bool,
     /// Spin is on: the model turns slowly in place; when the last frame was (seconds).
     spin: bool,
     spun_at: f64,
@@ -1128,11 +1158,21 @@ impl State {
                 h.held = false;
             }
         } else if self.ink_mode {
+            let before = self.ink.len();
             if let Some(at) = pull_start {
                 self.ink_at(app, seen, rect, at, true);
             }
             if let Some(at) = pull_at {
                 self.ink_at(app, seen, rect, at, false);
+            }
+            // A stroke that started this frame is the one to note when the Pencil lifts.
+            if self.ink.len() > before {
+                self.inking = true;
+            }
+            if pull_end && std::mem::take(&mut self.inking)
+                && let Some(stroke) = self.ink.last().cloned()
+            {
+                self.record(Act::Ink(stroke));
             }
         } else if self.move_mode {
             if let Some(at) = pull_start {
@@ -1176,6 +1216,9 @@ impl State {
                     for k in 0..=10 {
                         let t = k as f32 / 10.0;
                         self.ink_at(app, seen, rect, at(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t), k == 0);
+                    }
+                    if let Some(stroke) = self.ink.last().cloned() {
+                        self.record(Act::Ink(stroke));
                     }
                 }
                 _ => {
@@ -1436,6 +1479,7 @@ impl State {
         };
         match app.run("solid.press_pull", params) {
             Ok(_) => {
+                self.record(Act::Design(if pull.edge.is_some() { "Round edge".into() } else { "Pull".into() }));
                 self.message = match pull.edge {
                     Some(_) => format!("{}: edge rounded {:.1} mm.", pull.body, pull.distance),
                     None => format!("{} moved {:+.1} mm.", pull.body, pull.distance),
@@ -1533,6 +1577,10 @@ impl State {
         self.hole_mode = false;
         self.ink_mode = false;
         self.ink.clear();
+        // The ink is gone, so its steps go from the history; the design's stay.
+        self.done.retain(|a| matches!(a, Act::Design(_)));
+        self.undone.retain(|a| matches!(a, Act::Design(_)));
+        self.inking = false;
         self.spin = false;
         self.overlaps.clear();
         self.joints = None;
@@ -1567,12 +1615,7 @@ impl State {
     /// Pencil double taps (undo each) and a squeeze (the tool palette at the tip).
     fn pencil_gestures(&mut self, app: &mut SolveApp) {
         for _ in 0..std::mem::take(&mut self.double_taps) {
-            self.pulling = None;
-            self.overlaps.clear();
-            match app.run("edit.undo", serde_json::json!({})) {
-                Ok(_) => self.message = "Undone (Pencil double tap).".into(),
-                Err(e) => self.message = e,
-            }
+            self.undo(app);
         }
         if let Some(at) = self.squeeze.take() {
             self.palette = if self.palette.is_some() { None } else { Some(at) };
@@ -1680,8 +1723,9 @@ impl State {
     /// and list the joints again to show where it went.
     fn drive_joint(&mut self, app: &mut SolveApp, name: &str, index: usize, value: f64) {
         let params = serde_json::json!({ "joint": name, "value": value, "index": index });
-        if let Err(e) = app.run("joint.drive", params) {
-            self.message = e;
+        match app.run("joint.drive", params) {
+            Ok(_) => self.record(Act::Design(format!("move {name}"))),
+            Err(e) => self.message = e,
         }
         self.overlaps.clear();
         self.joints = Some(Self::list_joints(app));
@@ -1879,6 +1923,7 @@ impl State {
         let params = serde_json::json!({ "bodies": [m.body], "translate": m.delta });
         match app.run("solid.move", params) {
             Ok(_) => {
+                self.record(Act::Design(format!("Move {}", m.body)));
                 let d = dot(m.delta, m.delta).sqrt();
                 self.message = format!("{} moved {d:.0} mm.", m.body);
                 if let Ok(b) = self.bridge() {
@@ -1904,6 +1949,95 @@ impl State {
         let back = egui::Rect::from_center_size(b + egui::vec2(0.0, -26.0), galley.size() + egui::vec2(14.0, 6.0));
         painter.rect_filled(back, 5.0, ink);
         painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
+    }
+
+    /// Something new was done: it goes on the history, and what was undone can no longer be
+    /// redone.
+    fn record(&mut self, act: Act) {
+        self.done.push(act);
+        self.undone.clear();
+        self.design_undone = 0;
+    }
+
+    /// Undo the last thing done, whatever it was: ink in place, a design step through the
+    /// design's own undo; with nothing left from AR, the design's earlier steps.
+    fn undo(&mut self, app: &mut SolveApp) {
+        self.pulling = None;
+        self.moving = None;
+        self.holing = None;
+        self.overlaps.clear();
+        let act = self.done.pop();
+        let result = match &act {
+            Some(Act::Ink(_)) => {
+                self.ink.pop();
+                Ok(())
+            }
+            Some(Act::ClearInk(strokes)) => {
+                self.ink = strokes.clone();
+                Ok(())
+            }
+            Some(Act::Design(_)) | None => app.run("edit.undo", serde_json::json!({})).map(|_| ()),
+        };
+        match (result, act) {
+            (Ok(()), Some(act)) => {
+                self.message = format!("Undone: {}.", act.name());
+                self.undone.push(act);
+            }
+            (Ok(()), None) => {
+                self.design_undone += 1;
+                self.message = "Undone.".into();
+            }
+            (Err(e), act) => {
+                // Nothing was undone: what was on the history stays there.
+                if let Some(act) = act {
+                    self.done.push(act);
+                }
+                self.message = e;
+            }
+        }
+    }
+
+    /// Redo what Undo took back last; nothing once something new was done.
+    fn redo(&mut self, app: &mut SolveApp) {
+        self.pulling = None;
+        self.moving = None;
+        self.holing = None;
+        self.overlaps.clear();
+        let Some(act) = self.undone.pop() else {
+            if self.design_undone > 0 {
+                match app.run("edit.redo", serde_json::json!({})) {
+                    Ok(_) => {
+                        self.design_undone -= 1;
+                        self.message = "Redone.".into();
+                    }
+                    Err(e) => self.message = e,
+                }
+            } else {
+                self.message = "Nothing to redo.".into();
+            }
+            return;
+        };
+        let result = match &act {
+            Act::Ink(stroke) => {
+                self.ink.push(stroke.clone());
+                Ok(())
+            }
+            Act::ClearInk(_) => {
+                self.ink.clear();
+                Ok(())
+            }
+            Act::Design(_) => app.run("edit.redo", serde_json::json!({})).map(|_| ()),
+        };
+        match result {
+            Ok(()) => {
+                self.message = format!("Redone: {}.", act.name());
+                self.done.push(act);
+            }
+            Err(e) => {
+                self.undone.push(act);
+                self.message = e;
+            }
+        }
     }
 
     /// Switch the Pencil to `tool` (Select when it is the one on already): the others go off, with
@@ -2048,6 +2182,7 @@ impl State {
         let params = h.params();
         match app.run("solid.hole", params.clone()) {
             Ok(_) => {
+                self.record(Act::Design(format!("{} hole", h.size.name())));
                 self.message = format!("{} hole in {}.", h.size.name(), h.body);
                 if let Ok(b) = self.bridge() {
                     (b.tick)();
@@ -2354,14 +2489,13 @@ impl State {
                         (b.record_start)();
                     }
                     // The design's own undo history: a pull, a section applied, anything.
-                    for (label, command) in [("Undo", "edit.undo"), ("Redo", "edit.redo")] {
-                        if button(ui, label, Button::Small).clicked() {
-                            self.pulling = None;
-                            self.overlaps.clear();
-                            if let Err(e) = app.run(command, serde_json::json!({})) {
-                                self.message = e;
-                            }
-                        }
+                    let undo_tip = self.done.last().map_or("Undo".to_string(), |a| format!("Undo {}", a.name()));
+                    if button(ui, "Undo", Button::Small).backing_on_hover_text(undo_tip).clicked() {
+                        self.undo(app);
+                    }
+                    let redo_tip = self.undone.last().map_or("Redo".to_string(), |a| format!("Redo {}", a.name()));
+                    if button(ui, "Redo", Button::Small).backing_on_hover_text(redo_tip).clicked() {
+                        self.redo(app);
                     }
                     if let Some(mut p) = self.placed {
                         let real = (p.scale / REAL_SIZE - 1.0).abs() < 1e-9;
@@ -2394,6 +2528,7 @@ impl State {
                             let plane = serde_json::json!({ "origin": origin, "normal": c.normal });
                             match app.run("inspect.section", serde_json::json!({ "plane": plane })) {
                                 Ok(_) => {
+                                    self.record(Act::Design("Section".into()));
                                     self.cut = None;
                                     self.message = "The cut is in the design now (Section Analysis).".into();
                                 }
@@ -2430,7 +2565,8 @@ impl State {
                             self.select_tool(Tool::Ink);
                         }
                         if !self.ink.is_empty() && button(ui, "Clear ink", Button::Small).clicked() {
-                            self.ink.clear();
+                            let all = std::mem::take(&mut self.ink);
+                            self.record(Act::ClearInk(all));
                         }
                         if button(ui, "Spin", if self.spin { Button::SmallSelected } else { Button::Small }).backing_on_hover_text("Turn the model slowly, as on a turntable").clicked() {
                             self.spin = !self.spin;
@@ -3575,6 +3711,54 @@ mod tests {
         assert_eq!(scale_name(0.2), "1:5");
         assert_eq!(scale_name(2.0), "2:1");
         assert_eq!(scale_name(0.37), "37%");
+    }
+
+    /// Undo and Redo walk one history of ink and design steps, in order; something new done
+    /// ends what can be redone. (The design's steps need a session: these are ink only.)
+    #[test]
+    fn undo_and_redo_keep_one_order() {
+        let mut ar = State::default();
+        let mut app = solidcraft_ui_egui::SolveApp::new(solidcraft_engine::Session::default(), solidcraft_ui_egui::Services::default());
+        ar.ink.push(vec![[0.0; 3]]);
+        ar.record(Act::Ink(vec![[0.0; 3]]));
+        ar.ink.push(vec![[1.0; 3]]);
+        ar.record(Act::Ink(vec![[1.0; 3]]));
+        let all = std::mem::take(&mut ar.ink);
+        ar.record(Act::ClearInk(all));
+        ar.undo(&mut app);
+        assert_eq!(ar.ink.len(), 2, "Clear ink undone");
+        ar.undo(&mut app);
+        assert_eq!(ar.ink, vec![vec![[0.0; 3]]], "the last stroke undone");
+        ar.redo(&mut app);
+        assert_eq!(ar.ink.len(), 2, "the stroke redone");
+        ar.ink.push(vec![[2.0; 3]]);
+        ar.record(Act::Ink(vec![[2.0; 3]]));
+        ar.redo(&mut app);
+        assert_eq!(ar.ink.len(), 3, "a new stroke ends what could be redone");
+        assert_eq!(ar.message, "Nothing to redo.");
+    }
+
+    /// Design steps and ink interleave: Undo takes back the ink, then the design's step; Redo
+    /// brings them back in the order they were done.
+    #[test]
+    fn undo_mixes_design_and_ink_in_order() {
+        let mut ar = State::default();
+        let mut app = solidcraft_ui_egui::SolveApp::new(solidcraft_engine::Session::default(), solidcraft_ui_egui::Services::default());
+        let made = app.run("solid.box", serde_json::json!({ "length": 10, "width": 10, "height": 10, "body_name": "B" }));
+        assert!(made.is_ok(), "{made:?}");
+        ar.record(Act::Design("Box".into()));
+        ar.ink.push(vec![[0.0; 3]]);
+        ar.record(Act::Ink(vec![[0.0; 3]]));
+        let has_box = |app: &SolveApp| !solidcraft_ui_egui::viewport::model_bounds(app).is_empty();
+        assert!(has_box(&app));
+        ar.undo(&mut app);
+        assert!(ar.ink.is_empty() && has_box(&app), "the ink first");
+        ar.undo(&mut app);
+        assert!(!has_box(&app), "then the box: {}", ar.message);
+        ar.redo(&mut app);
+        assert!(has_box(&app) && ar.ink.is_empty(), "the box back first: {}", ar.message);
+        ar.redo(&mut app);
+        assert_eq!(ar.ink.len(), 1, "then the ink");
     }
 
     /// A hole on a 120 x 70 face, first touched 30 mm in from one corner on each side.
