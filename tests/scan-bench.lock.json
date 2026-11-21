@@ -103,7 +103,7 @@
       "part to model: max": 0.007021,
       "scan to model: max": 0.417863,
       "scan to model: rms": 0.099456,
-      "scan to model: within": 0.996983,
+      "scan to model: within": 0.996329,
       "volume": 0.0
     }
   },
@@ -224,7 +224,7 @@
       "part to model: max": 0.003452,
       "scan to model: max": 0.435924,
       "scan to model: rms": 0.09994,
-      "scan to model: within": 0.996915,
+      "scan to model: within": 0.996247,
       "volume": 0.0
     }
   },
@@ -346,7 +346,7 @@
       "part to model: max": 0.064025,
       "scan to model: max": 0.424076,
       "scan to model: rms": 0.099591,
-      "scan to model: within": 0.995771
+      "scan to model: within": 0.995053
     }
   },
   "drilled-shaft/s0.3": {
@@ -471,7 +471,7 @@
       "part to model: max": 0.017392,
       "scan to model: max": 0.422279,
       "scan to model: rms": 0.099417,
-      "scan to model: within": 0.995816,
+      "scan to model: within": 0.995023,
       "volume": 0.0
     }
   },
@@ -588,7 +588,7 @@
       "part to model: max": 0.004269,
       "scan to model: max": 0.42191,
       "scan to model: rms": 0.099046,
-      "scan to model: within": 0.997189,
+      "scan to model: within": 0.996535,
       "volume": 0.0
     }
   },
@@ -701,7 +701,7 @@
       "part to model: max": 0.047821,
       "scan to model: max": 0.4498,
       "scan to model: rms": 0.099074,
-      "scan to model: within": 0.996441,
+      "scan to model: within": 0.995792,
       "volume": 0.000721
     }
   },
