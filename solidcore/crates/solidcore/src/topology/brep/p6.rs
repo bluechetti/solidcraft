@@ -1758,7 +1758,11 @@ impl SplitShells {
     // other shell's only while every face of the inner shell has one of the split's two
     // regions behind it (see `nest_shells`).
     fn move_shell(&self, rays: RayShells, region: Option<RegionId>) -> ShellId {
-        let inner_region = if rays.inner == self.new_shell { self.new_region } else { self.old_region };
+        let inner_region = if rays.inner == self.new_shell {
+            self.new_region
+        } else {
+            self.old_region
+        };
         match region {
             Some(r) if r == inner_region => rays.inner,
             _ => rays.other,

@@ -136,7 +136,10 @@ fn a_union_on_a_body_with_a_separate_solid_keeps_that_solid_outside() {
     assert_eq!(n, 0, "{lines:?}");
     let infinite = b.infinite_region();
     let outside = b.region(infinite.unwrap()).unwrap().shells.len();
-    assert_eq!(outside, 2, "the outside holds the body's shell and the stud's");
+    assert_eq!(
+        outside, 2,
+        "the outside holds the body's shell and the stud's"
+    );
     let want = 40.0 * 40.0 * 10.0 + 4.0_f64.powi(3) + 25.0 * 25.0 * 10.0;
     let got = volume(&k, &mut b);
     assert!((got - want).abs() <= 1e-9 * want, "{got} vs {want}");
