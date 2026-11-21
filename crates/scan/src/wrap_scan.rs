@@ -543,15 +543,11 @@ fn patches(under: &Under, positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Nur
         let start = coons(&bottom, &top, &left, &right);
         let mut net = start;
         fit_inner(under, &mut net, facing);
-        // A net that doubles back on itself is a folded patch (the kernel's check refuses it):
-        // then the unfitted Coons net, then one of straight sides.
+        // A fitted net that doubles back on itself is a folded patch: then the unfitted Coons net
+        // of its sides. Never other sides: the sides are shared with the neighbouring patches,
+        // and a side of its own would leave the body open there.
         if !monotone(&net) {
             net = start;
-        }
-        if !monotone(&net) {
-            let straight = |a: Vec3, b: Vec3| [a, a + (b - a) / 3.0, a + (b - a) * (2.0 / 3.0), b];
-            let (c0, c1, c2, c3) = (bottom[0], bottom[3], top[3], top[0]);
-            net = coons(&straight(c0, c1), &straight(c3, c2), &straight(c0, c3), &straight(c1, c2));
         }
         NurbsSurface::new([3, 3], [knots.clone(), knots.clone()], &net, &[1.0; 16]).ok()
     });
