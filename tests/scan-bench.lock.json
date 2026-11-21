@@ -616,12 +616,12 @@
     ],
     "status": "pass",
     "values": {
-      "model to part: max": 0.004607,
-      "model to scan: max": 0.188076,
-      "model to scan: within": 0.998927,
-      "part to model: max": 0.003315,
-      "scan to model: max": 0.084878,
-      "scan to model: rms": 0.019733,
+      "model to part: max": 0.004754,
+      "model to scan: max": 0.188065,
+      "model to scan: within": 1.0,
+      "part to model: max": 0.003467,
+      "scan to model: max": 0.084798,
+      "scan to model: rms": 0.019736,
       "scan to model: within": 1.0,
       "volume": 0.0
     }

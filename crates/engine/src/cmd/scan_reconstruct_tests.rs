@@ -573,6 +573,35 @@ fn a_drilled_disc_is_extruded_cut_and_patterned_back_from_its_scan() {
     assert_eq!(volume(&s, &solid), before);
 }
 
+/// A hexagon with a recessed web (as a gear is, its teeth aside, evenly round its axis): 40 across
+/// its corners, 15 thick, bored R 4, a round recess 4 deep between the hub (R 8) and the rim (R 16)
+/// on each face. The rim's inside reads as a hole, and the hexagon's ends and the hub's all lie
+/// square to it, centred on its axis: none of those is its floor but the web, which closes the
+/// recess's low end. Taken for floors, they left no face facing along the axis and no prism was read
+/// (CADENA's gears, nothing proposed); it is a prism along its axis.
+#[test]
+fn a_hexagon_with_a_recessed_web_is_a_prism_along_its_axis() {
+    let mut part = Session::default();
+    run(&mut part, "sketch.create", json!({"plane": "XY", "name": "Hex"}));
+    let corners: Vec<[f64; 2]> = (0..=6).map(|i| f64::from(i % 6) * std::f64::consts::PI / 3.0).map(|a| [20.0 * a.cos(), 20.0 * a.sin()]).collect();
+    run(&mut part, "sketch.line", json!({"points": corners}));
+    run(&mut part, "sketch.finish", json!({}));
+    let made = run(&mut part, "solid.extrude", json!({"sketch": "Hex", "distance": 15, "operation": "new"}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    for (z, h) in [(11.0, 4.0), (0.0, 4.0)] {
+        run(&mut part, "solid.cylinder", json!({"radius": 16, "height": h, "base": [0, 0, z], "operation": "cut", "targets": [body]}));
+        run(&mut part, "solid.cylinder", json!({"radius": 8, "height": h, "base": [0, 0, z], "operation": "join", "targets": [body]}));
+    }
+    run(&mut part, "solid.cylinder", json!({"radius": 4, "height": 15, "operation": "cut", "targets": [body]}));
+    let (mut s, _) = scanned(&part, &body, 3, "web");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let prisms = read["prisms"].as_array().unwrap();
+    let along = |p: &Value| p["direction"].as_array().and_then(|d| d.get(2)).and_then(Value::as_f64).is_some_and(|z| z.abs() > 0.99);
+    assert!(prisms.iter().any(along), "{read}");
+    let first = read["proposals"].as_array().and_then(|p| p.first()).and_then(|p| p["command"].as_str());
+    assert_eq!(first, Some("scan.extrude_it"), "{read}");
+}
+
 /// A block 80 × 60 × 20 whose four top edges are rounded R 2: the rounds run across the prism
 /// Reconstruct reads, so no profile holds them, and it proposes Fillet It after Extrude It. Fillet
 /// It measures each round off the scan at the built block's edge and fillets the four at R 2, one

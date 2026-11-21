@@ -1970,6 +1970,13 @@ fn is_edge_round(scan: &Scan, segment: &Segment, size: f64) -> bool {
     }
 }
 
+/// A prism on a turned part whose walls are this much (by area) the turned faces reads the turned
+/// body again.
+const TURNED_AGAIN: f64 = 0.5;
+
+/// How near the end of a hole's wall its floor lies, as a share of the wall's length.
+const FLOOR_AT_END: f64 = 0.1;
+
 /// Whether `floor` is the floor of the round hole `hole`: a plane square to its axis, its middle
 /// on the axis, no bigger than half as much again as the hole's end.
 fn is_floor_of(hole: &Face, floor: &Face) -> bool {
@@ -2222,7 +2229,20 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     let holes_at: Vec<bool> = (0..shaped.len()).map(|k| !piece(k) && is_hole_to_cut(scan, &whole(k), sign)).collect();
     let hole = |k: usize| holes_at.get(k).copied().unwrap_or(false);
     // A hole's floor is the hole's: a flat face on its axis, square to it, about as big as its end.
-    let floors: BTreeSet<usize> = (0..faces.len()).filter(|&j| (0..faces.len()).any(|k| hole(k) && is_floor_of(&faces[k], &faces[j]))).collect();
+    // It closes the hole's end and faces into it: it lies at the low end of the hole's wall along
+    // the way it faces (out of the material), the wall running on from it toward the mouth. A face
+    // across the middle of a through bore, or at its open end facing away, or anywhere else on its
+    // axis, is not its floor (a gear's web and end faces, all on its bore's axis: taken for floors,
+    // they were left out and no prism along the gear's axis was read, CADENA's gears; a turned
+    // part's bottom faces, T-LESS 13).
+    let faces_into = |k: usize, j: usize| {
+        let Some((point, normal)) = plane(&faces[j]) else { return false };
+        let out = normal * sign;
+        let level = point.dot(out);
+        span_of(k, out).is_some_and(|(low, high)| (level - low).abs() <= FLOOR_AT_END * (high - low).max(outcome.tolerance) && high > level)
+    };
+    let floors: BTreeSet<usize> =
+        (0..faces.len()).filter(|&j| (0..faces.len()).any(|k| hole(k) && is_floor_of(&faces[k], &faces[j]) && faces_into(k, j))).collect();
     let mut revolve = revolve(&faces, size);
     // A wheel: round about an axis, the rest repeated evenly round it.
     let mut spokes = None;
@@ -2397,6 +2417,18 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     }
     let in_tubes: BTreeSet<usize> = tubes.iter().flat_map(|t| t.faces.iter().copied()).collect();
     prisms.retain(|p| !p.walls.iter().all(|w| in_tubes.contains(w)));
+    // On a turned part, a prism whose walls are mostly the turned faces reads the turned body again
+    // from the side (T-LESS 13: across between its two flats, 9 mm, its walls half the revolve's
+    // faces), which Revolve It has built: the flats' own prism stays.
+    if let Some(r) = &revolve {
+        let members: BTreeSet<usize> = r.members.iter().copied().collect();
+        prisms.retain(|p| {
+            let area = |k: &usize| faces.get(*k).map_or(0.0, |f| f.area);
+            let turned: f64 = p.walls.iter().filter(|w| members.contains(w)).map(area).sum();
+            let all: f64 = p.walls.iter().map(area).sum();
+            !(all > 0.0 && turned >= TURNED_AGAIN * all)
+        });
+    }
     // A part of sections lofted (a blade) is locally a drafted prism at each flat end: a cap and
     // the walls leaning in from it. Such prisms, each with one end only and leaning walls, that
     // together hold less than half of the scan give way to the loft when the scan reads as one.
