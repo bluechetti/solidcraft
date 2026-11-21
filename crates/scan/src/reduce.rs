@@ -99,6 +99,8 @@ const HELD_SLIVER: f64 = 1e-3;
 /// …and one that leaves a needle (shape below this, about a 12° smallest angle, longer than
 /// [`HELD_LONG`] budgets) among faces that bend more than about 10° ([`HELD_CURVED`]) from it.
 const HELD_NEEDLE: f64 = 0.35;
+/// The smallest corner (5°, in radians) a held collapse may make anywhere, flat or curved.
+const HELD_FLOOR: f64 = 0.0873;
 const HELD_LONG: f64 = 16.0;
 const HELD_CURVED: f64 = 0.985;
 
@@ -590,6 +592,12 @@ impl<'a> Reducer<'a> {
                         if na.len() < HELD_SLIVER * nb.len() {
                             return false;
                         }
+                        // Nor may a fair face become one with a corner under HELD_FLOOR (a scan's own
+                        // slivers may still be collapsed away): on a flat, collapses cost nothing and
+                        // left fans of long needles that no flip or collapse mends afterwards.
+                        if smallest_corner(&after) < HELD_FLOOR && smallest_corner(&before) >= HELD_FLOOR {
+                            return false;
+                        }
                         let middle = (after[0] + after[1] + after[2]) / 3.0;
                         if far(middle) || after.iter().filter(|q| **q != p).any(|q| far((*q + p) / 2.0)) {
                             return false;
@@ -598,7 +606,7 @@ impl<'a> Reducer<'a> {
                     }
                 }
                 // No long needle where the surface curves (a long thin face across a rounded rim
-                // makes patches no tessellation can follow); on a flat, the wrap's flips mend them.
+                // makes patches no tessellation can follow).
                 let normal = |t: &[Vec3; 3]| {
                     let n = (t[1] - t[0]).cross(t[2] - t[0]);
                     let l = n.len();
@@ -701,6 +709,17 @@ impl<'a> Reducer<'a> {
         }
         Reduced { positions, triangles, collapses, stopped, largest_error }
     }
+}
+
+/// The smallest corner of a triangle (radians; 0 for a degenerate one).
+fn smallest_corner(t: &[Vec3; 3]) -> f64 {
+    (0..3)
+        .map(|k| {
+            let (u, v) = (t[(k + 1) % 3] - t[k], t[(k + 2) % 3] - t[k]);
+            let l = u.len() * v.len();
+            if l > 0.0 { (u.dot(v) / l).clamp(-1.0, 1.0).acos() } else { 0.0 }
+        })
+        .fold(std::f64::consts::PI, f64::min)
 }
 
 #[cfg(test)]

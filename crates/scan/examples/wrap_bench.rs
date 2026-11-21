@@ -38,7 +38,25 @@ fn main() {
     let scan = Scan::new(&positions, &triangles);
     match wrap(&scan, &Settings { tolerance, max_patches, ..Settings::default() }) {
         Ok(w) => {
+            // WRAP_DUMP=path: every patch's 16 control points (u fastest), one patch a line.
+            if let Ok(path) = std::env::var("WRAP_DUMP") {
+                let text: String = w
+                    .faces
+                    .iter()
+                    .map(|f| {
+                        let net = solidcraft_scan::surface_edit::points(f);
+                        net.iter().map(|p| format!("{:.17e} {:.17e} {:.17e}", p.x, p.y, p.z)).collect::<Vec<_>>().join(" ") + "\n"
+                    })
+                    .collect();
+                std::fs::write(&path, text).expect("write the dump");
+            }
             let c = &w.coarse;
+            // WRAP_COARSE=path: the coarse mesh as OBJ.
+            if let Ok(path) = std::env::var("WRAP_COARSE") {
+                let mut text: String = c.positions.iter().map(|p| format!("v {:.17e} {:.17e} {:.17e}\n", p.x, p.y, p.z)).collect();
+                text.extend(c.triangles.iter().map(|t| format!("f {} {} {}\n", t[0] + 1, t[1] + 1, t[2] + 1)));
+                std::fs::write(&path, text).expect("write the coarse mesh");
+            }
             println!("triangles {} -> coarse {} in {} rounds (met {}, capped {})", triangles.len(), c.triangles.len(), c.rounds, c.met, c.capped);
             let shape = |t: &[u32; 3]| {
                 let q = t.map(|i| c.positions[i as usize]);
@@ -75,6 +93,14 @@ fn main() {
                     (u.dot(v) / (u.len() * v.len()).max(1e-300)).clamp(-1.0, 1.0).acos().to_degrees()
                 }).fold(180.0, f64::min)
             }).fold(180.0, f64::min);
+            let thin = c.triangles.iter().filter(|t| {
+                let q = t.map(|i| c.positions[i as usize]);
+                (0..3).any(|k| {
+                    let (u, v) = (q[(k + 1) % 3] - q[k], q[(k + 2) % 3] - q[k]);
+                    (u.dot(v) / (u.len() * v.len()).max(1e-300)).clamp(-1.0, 1.0).acos().to_degrees() < 3.0
+                })
+            }).count();
+            println!("coarse triangles with an angle under 3 deg: {thin}");
             println!(
                 "coarse edges: open {}, of 3+ faces {}; smallest angle {:.2} deg",
                 uses.values().filter(|&&n| n == 1).count(),

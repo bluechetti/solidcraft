@@ -54,8 +54,12 @@ const NEAR_CAP: f64 = 0.85;
 const NEEDLE: f64 = 0.35;
 /// Two triangles pair into a quad only when they bend by less than this (30°), and every corner
 /// of the quad lies between this angle (15°) and 180° less it.
-const PAIR_BEND: f64 = 0.5236;
+const PAIR_BEND: f64 = std::f64::consts::FRAC_PI_6;
 const PAIR_CORNER: f64 = 0.2618;
+/// And every corner of the four quads a pair is cut into lies between this (10°) and 180° less it.
+const SUB_CORNER: f64 = 0.1745;
+/// How much looser than the tolerance the last tidy pass, of poor faces only, may be.
+const POOR_SLACK: f64 = 3.0;
 /// Two fitted sides leaving a patch corner closer than this (8°) are made straight there.
 const SHARP_CORNER: f64 = 0.1396;
 /// A coarse face whose smallest angle is below this is poor: its patches' corners are too sharp
@@ -662,10 +666,14 @@ fn edge_faces(triangles: &[[u32; 3]]) -> HashMap<(u32, u32), Vec<usize>> {
 /// grows (a CAD export's fans of long thin faces become fair triangles of the same points); then
 /// the longest side of each long needle left split at a point of the scan (a thin strip such as a
 /// rounded rim gets points along it). Rounds until nothing changes.
-fn tidy(positions: &mut [Vec3], triangles: &mut Vec<[u32; 3]>, under: &Under, tolerance: f64) {
+fn tidy(positions: &mut [Vec3], triangles: &mut Vec<[u32; 3]>, under: &Under, tolerance: f64, poor_only: bool) {
+    let poor = |c: [Vec3; 3]| shape(c) < DEGENERATE || smallest_angle(c) < MIN_ANGLE;
     let on_scan = |p: Vec3| under.tree.nearest(p).is_some_and(|(d, _)| d <= tolerance);
     let corners = |positions: &[Vec3], t: [u32; 3]| t.map(|i| positions.get(i as usize).copied().unwrap_or(Vec3::ZERO));
-    for _ in 0..TIDY_ROUNDS {
+    // The pass of poor faces only is cheap and a fan of needles (on a flat face) mends a flip at a
+    // time: more rounds.
+    let rounds = if poor_only { 4 * TIDY_ROUNDS } else { TIDY_ROUNDS };
+    for _ in 0..rounds {
         let mut changed = false;
         // Flips, one per face per pass.
         let by_edge = edge_faces(triangles);
@@ -688,6 +696,9 @@ fn tidy(positions: &mut [Vec3], triangles: &mut Vec<[u32; 3]>, under: &Under, to
                 continue;
             }
             let (c1, c2) = (corners(positions, f1), corners(positions, f2));
+            if poor_only && !poor(c1) && !poor(c2) {
+                continue;
+            }
             let (q1, q2) = (shape(c1), shape(c2));
             // The way the pair faces: both normals where both faces are fair; only the fair one's
             // where the other is degenerate (three points nearly in a row: its normal is noise,
@@ -902,7 +913,8 @@ fn remove_caps(positions: &[Vec3], triangles: &mut Vec<[u32; 3]>, tolerance: f64
 
 /// Coarse triangles paired across a shared side into quads (each its partner and the quad's
 /// corners `a d b c`, counter-clockwise, `a b` the side they share): worst-shaped triangles first,
-/// each with the neighbour across its longest side when the two bend by less than [`PAIR_BEND`]
+/// each with the neighbour across its longest side, else across another, when the two bend by
+/// less than [`PAIR_BEND`]
 /// and the quad's corners all lie between [`PAIR_CORNER`] and 180° less it. Two long thin
 /// triangles along a rounded edge make a long rectangle, which four patches follow well, where
 /// three to a triangle would meet at near-zero and near-straight corners.
@@ -923,29 +935,44 @@ fn pairs(cp: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Option<(usize, [u32; 4])>> 
         }
         let tri = triangles[t];
         let c3 = tri.map(at);
-        let Some(k) = (0..3).max_by(|&i, &j| c3[i].dist(c3[(i + 1) % 3]).total_cmp(&c3[j].dist(c3[(j + 1) % 3]))) else { continue };
-        let (a, b, c) = (tri[k], tri[(k + 1) % 3], tri[(k + 2) % 3]);
-        let Some(faces) = by_edge.get(&(a.min(b), a.max(b))) else { continue };
-        let &[f1, f2] = faces.as_slice() else { continue };
-        let u = if f1 == t { f2 } else { f1 };
-        if partner[u].is_some() {
-            continue;
-        }
-        let g = triangles[u];
-        let Some(i) = (0..3).find(|&i| g[i] == b && g[(i + 1) % 3] == a) else { continue };
-        let d = g[(i + 2) % 3];
-        let (Some(n1), Some(n2)) = (unit_normal(c3), unit_normal(g.map(at))) else { continue };
-        if n1.dot(n2) < PAIR_BEND.cos() {
-            continue;
-        }
-        let q = [at(a), at(d), at(b), at(c)];
-        let fair = (0..4).all(|k| {
-            let x = angle(q[k], q[(k + 1) % 4], q[(k + 3) % 4]);
-            (PAIR_CORNER..std::f64::consts::PI - PAIR_CORNER).contains(&x)
+        // Its sides, longest first: the longest makes a rectangle of a strip; the others, next
+        // to a sharp corner, give that corner the neighbour's angle too.
+        let mut sides = [0usize, 1, 2];
+        sides.sort_by(|&i, &j| c3[(j + 1) % 3].dist(c3[j]).total_cmp(&c3[(i + 1) % 3].dist(c3[i])));
+        let found = sides.iter().find_map(|&k| {
+            let (a, b, c) = (tri[k], tri[(k + 1) % 3], tri[(k + 2) % 3]);
+            let faces = by_edge.get(&(a.min(b), a.max(b)))?;
+            let &[f1, f2] = faces.as_slice() else { return None };
+            let u = if f1 == t { f2 } else { f1 };
+            if partner[u].is_some() {
+                return None;
+            }
+            let g = triangles[u];
+            let i = (0..3).find(|&i| g[i] == b && g[(i + 1) % 3] == a)?;
+            let d = g[(i + 2) % 3];
+            let (n1, n2) = (unit_normal(c3)?, unit_normal(g.map(at))?);
+            if n1.dot(n2) < PAIR_BEND.cos() {
+                return None;
+            }
+            let q = [at(a), at(d), at(b), at(c)];
+            let fair = (0..4).all(|k| {
+                let x = angle(q[k], q[(k + 1) % 4], q[(k + 3) % 4]);
+                (PAIR_CORNER..std::f64::consts::PI - PAIR_CORNER).contains(&x)
+            });
+            // The four quads it is cut into (round its middle) must have fair corners too: a
+            // lopsided quad gives sharp ones at its sides' middles.
+            let centre = (q[0] + q[1] + q[2] + q[3]) / 4.0;
+            let mid = |k: usize| (q[k] + q[(k + 1) % 4]) / 2.0;
+            let quarters = (0..4).all(|k| {
+                let sub = [q[k], mid(k), centre, mid((k + 3) % 4)];
+                (0..4).all(|j| {
+                    let x = angle(sub[j], sub[(j + 1) % 4], sub[(j + 3) % 4]);
+                    (SUB_CORNER..std::f64::consts::PI - SUB_CORNER).contains(&x)
+                })
+            });
+            (fair && quarters).then_some((u, [a, d, b, c]))
         });
-        if !fair {
-            continue;
-        }
+        let Some((u, [a, d, b, c])) = found else { continue };
         partner[t] = Some((u, [a, d, b, c]));
         partner[u] = Some((t, [a, d, b, c]));
     }
@@ -1210,7 +1237,11 @@ pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
         }
         // A capped mesh lies off the scan by the scaled budgets: its tidying is held to them too,
         // or every repair of a sliver would look like leaving the scan and none would be made.
-        tidy(&mut r.positions, &mut r.triangles, &under, tol * scale.max(1.0));
+        tidy(&mut r.positions, &mut r.triangles, &under, tol * scale.max(1.0), false);
+        // Slivers it could not mend within that (a needle whose collapse or a cap whose flip
+        // misses the scan by a little) are mended within three times it: they cover next to no
+        // area, and left in, the mesher splits their long sides without end.
+        tidy(&mut r.positions, &mut r.triangles, &under, POOR_SLACK * tol * scale.max(1.0), true);
         let faces = patches(&under, &r.positions, &r.triangles);
         let d = distances(scan, &faces, &sampled);
         let spread = spread(&d, &weight, tol);
@@ -1337,7 +1368,7 @@ mod tests {
         let scan = Scan::new(&p, &t);
         let under = Under { scan: &scan, tree: TriangleTree::of(&p, &t) };
         let (mut q, mut f) = (p.clone(), t.clone());
-        tidy(&mut q, &mut f, &under, 0.2);
+        tidy(&mut q, &mut f, &under, 0.2, false);
         let worst = f.iter().map(|tri| shape(tri.map(|i| q[i as usize]))).fold(1.0, f64::min);
         assert!(worst >= DEGENERATE, "{f:?}: worst shape {worst}");
     }
