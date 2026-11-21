@@ -573,6 +573,29 @@ fn a_drilled_disc_is_extruded_cut_and_patterned_back_from_its_scan() {
     assert_eq!(volume(&s, &solid), before);
 }
 
+/// A step that builds what the scan does not have is worse, measured both ways by area: a block
+/// 40 × 30 × 10 rebuilt from its scan, then a boss R 5, 20 tall joined on top where the scan has
+/// nothing. The scan is explained as well as before (the boss covers a little of the top), so read
+/// one way the step was "same"; the boss's surface is far from the scan.
+#[test]
+fn a_boss_the_scan_does_not_have_reads_worse() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 40, "width": 30, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    let (mut s, scan) = scanned(&part, &body, 3, "boss");
+    let built = run(&mut s, "scan.extrude_it", json!({}));
+    let solid = built["solid"].as_str().unwrap().to_owned();
+    let before = crate::cmd::scan::step_fit::sample(&s, &scan, &solid).unwrap();
+    assert!(before.explained > 0.99 && before.added.is_some_and(|a| a < 0.01), "{before:?}");
+    let top = s.model.state().body(&solid).and_then(|b| b.body.exact_bounds().ok()).map(|b| b.max.z).unwrap();
+    let centre = s.model.state().body(&solid).and_then(|b| b.body.exact_bounds().ok()).map(|b| (b.min + b.max) * 0.5).unwrap();
+    run(&mut s, "solid.cylinder", json!({"radius": 5, "height": 20, "base": [centre.x, centre.y, top], "operation": "join", "targets": [solid]}));
+    let after = crate::cmd::scan::step_fit::sample(&s, &scan, &solid).unwrap();
+    assert!((after.explained - before.explained).abs() < 0.03, "{before:?} {after:?}");
+    assert!(after.added.unwrap() > 0.1, "{after:?}");
+    assert_eq!(crate::cmd::scan::step_fit::verdict(Some(&before), &after), "worse", "{before:?} {after:?}");
+}
+
 /// A hexagon with a recessed web (as a gear is, its teeth aside, evenly round its axis): 40 across
 /// its corners, 15 thick, bored R 4, a round recess 4 deep between the hub (R 8) and the rim (R 16)
 /// on each face. The rim's inside reads as a hole, and the hexagon's ends and the hub's all lie

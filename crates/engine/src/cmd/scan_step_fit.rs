@@ -1,5 +1,5 @@
 //! How each Reconstruct step changed the fit of the body it builds to the scan: the body is
-//! measured against a sample of the scan's points before and after the step, and the reply says
+//! measured against the scan both ways, by area, before and after the step, and the reply says
 //! whether the step brought it closer. An agent (or a person reading the reply) keeps a step that
 //! helps and undoes one that does not, without a deviation map or a picture.
 
@@ -10,9 +10,10 @@ use crate::params::str_;
 use crate::schema::scan_reconstruct::{ScanFitSample, ScanStepFit};
 use crate::{Result, Session};
 
-/// The most scan points read for each measurement.
+/// The most places read on the scan, and on the body, for each measurement.
 const SAMPLE: usize = 100_000;
-/// A change in the share explained smaller than this is no change.
+/// A change in the share explained (less the change in the share added) smaller than this is no
+/// change.
 const EXPLAINED_STEP: f64 = 0.005;
 /// With the share explained the same, a change in rms smaller than this share is no change.
 const RMS_STEP: f64 = 0.05;
@@ -37,7 +38,7 @@ pub(super) fn with_fit(s: &mut Session, p: &Value, cmd: &str, step: fn(&mut Sess
     let after = match sample(s, &scan, &solid) {
         Some(after) => after,
         // A cut that took the whole body away explains none of the scan.
-        None if gone => ScanFitSample { within: 0.0, explained: 0.0, rms: 0.0, points: 0 },
+        None if gone => ScanFitSample { within: 0.0, explained: 0.0, added: None, rms: 0.0, points: 0 },
         None => return Ok(reply),
     };
     let verdict = if gone { "worse" } else { verdict(before.as_ref(), &after) };
@@ -56,10 +57,17 @@ pub(super) fn with_fit(s: &mut Session, p: &Value, cmd: &str, step: fn(&mut Sess
     Ok(reply)
 }
 
-/// Whether the step brought the body closer: the share of the scan explained first, then the rms.
-fn verdict(before: Option<&ScanFitSample>, after: &ScanFitSample) -> &'static str {
+/// Whether the step brought the body closer: the share of the scan it explains, less the share of
+/// its own surface the scan does not have, first; then the rms. Counted one way only, a step that
+/// built a little more of the scan and much the scan does not have read as better (T-LESS 7: an
+/// extrusion past the part).
+pub(super) fn verdict(before: Option<&ScanFitSample>, after: &ScanFitSample) -> &'static str {
     let Some(before) = before else { return "first" };
-    let explained = after.explained - before.explained;
+    let added = match (before.added, after.added) {
+        (Some(was), Some(now)) => now - was,
+        _ => 0.0,
+    };
+    let explained = after.explained - before.explained - added;
     if explained > EXPLAINED_STEP {
         "better"
     } else if explained < -EXPLAINED_STEP {
@@ -80,24 +88,40 @@ pub(super) fn limit(tolerance: f64) -> f64 {
     0.5_f64.max(5.0 * tolerance)
 }
 
-/// `solid` measured against at most [`SAMPLE`] of `scan`'s points, evenly spread through them;
-/// `None` when either is missing, the solid is a mesh or cannot be meshed.
+/// `solid` measured against `scan` both ways: at most [`SAMPLE`] places spread evenly over the
+/// scan's surface, each standing for its share of the area (every k-th point instead weighed a CAD
+/// mesh's long thin triangles as a tiny one's), and as many over the solid's, for the share the scan
+/// does not have; `None` when either is missing, the solid is a mesh or cannot be meshed.
 pub(super) fn sample(s: &Session, scan: &str, solid: &str) -> Option<ScanFitSample> {
+    use solidcraft_scan::deviation;
     let tolerance = tolerance::of(s, scan);
     let limit = limit(tolerance);
-    let state = s.model.state();
-    let model = state.body(solid).filter(|b| !b.body.is_mesh())?;
-    let (positions, _) = state.body(scan)?.body.triangle_mesh()?;
-    let step = (positions.len() / SAMPLE).max(1);
-    let points: Vec<_> = positions.iter().step_by(step).copied().filter(|p| p.is_finite()).collect();
-    if points.is_empty() {
+    let model = {
+        let state = s.model.state();
+        state.body(solid).filter(|b| !b.body.is_mesh())?.body.clone()
+    };
+    let scan_mesh = super::shown_mesh(s, scan)?;
+    let (points, areas): (Vec<_>, Vec<f64>) = deviation::places(&scan_mesh, SAMPLE).into_iter().filter(|(p, _)| p.is_finite()).unzip();
+    let total: f64 = areas.iter().sum();
+    if points.is_empty() || !(total > 0.0) {
         return None;
     }
-    let surface = model.body.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance / 4.0)).ok()?;
-    let d = solidcraft_scan::deviation::measure(&points, &surface, tolerance, 4.0 * limit);
-    let n = d.values.len() as f64;
-    let share = |most: f64| d.values.iter().filter(|v| v.is_finite() && f64::from(v.abs()) <= most).count() as f64 / n;
-    Some(ScanFitSample { within: share(tolerance), explained: share(limit), rms: d.rms, points: d.values.len() })
+    let surface = model.mesh(&solidcraft_kernel::MeshTolerance::chord(tolerance / 4.0)).ok()?;
+    let d = deviation::measure(&points, &surface, tolerance, 4.0 * limit);
+    let share =
+        |most: f64| d.values.iter().zip(&areas).filter(|(v, _)| v.is_finite() && f64::from(v.abs()) <= most).map(|(_, a)| a).sum::<f64>() / total;
+    let (squares, reached) = d.values.iter().zip(&areas).filter(|(v, _)| v.is_finite()).fold((0.0, 0.0), |(sq, ar), (v, a)| {
+        let v = f64::from(*v);
+        (sq + v * v * a, ar + a)
+    });
+    let rms = if reached > 0.0 { (squares / reached).sqrt() } else { 0.0 };
+    // The other way: the solid's surface measured to the scan.
+    let added = {
+        let places = deviation::places(&surface, SAMPLE);
+        let tree = super::select::scan_tree(&scan_mesh);
+        (!places.is_empty()).then(|| deviation::borne_out(&places, &tree, tolerance, limit, 4.0 * limit).beyond)
+    };
+    Some(ScanFitSample { within: share(tolerance), explained: share(limit), added, rms, points: points.len() })
 }
 
 #[cfg(test)]
@@ -105,7 +129,21 @@ mod tests {
     use super::*;
 
     fn at(explained: f64, rms: f64) -> ScanFitSample {
-        ScanFitSample { within: 0.0, explained, rms, points: 10 }
+        ScanFitSample { within: 0.0, explained, added: None, rms, points: 10 }
+    }
+
+    fn adding(explained: f64, added: f64) -> ScanFitSample {
+        ScanFitSample { within: 0.0, explained, added: Some(added), rms: 0.2, points: 10 }
+    }
+
+    /// A step that explains a little more of the scan but builds more the scan does not have is
+    /// worse; one that takes away what the scan does not have, explaining as much, is better.
+    #[test]
+    fn a_step_that_builds_what_the_scan_does_not_have_is_worse() {
+        assert_eq!(verdict(Some(&adding(0.80, 0.05)), &adding(0.81, 0.12)), "worse");
+        assert_eq!(verdict(Some(&adding(0.80, 0.12)), &adding(0.80, 0.05)), "better");
+        assert_eq!(verdict(Some(&adding(0.80, 0.05)), &adding(0.85, 0.05)), "better");
+        assert_eq!(verdict(Some(&adding(0.80, 0.05)), &adding(0.80, 0.052)), "same");
     }
 
     /// More of the scan explained is better whatever the rms; the same share is judged by rms.

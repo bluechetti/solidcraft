@@ -655,16 +655,21 @@ pub struct ScanFilletItResult {
     pub param_warnings: Vec<String>,
 }
 
-/// How close a body is to the scan, read on a sample of the scan's points.
+/// How close a body is to the scan, read both ways on samples spread evenly over the scan's surface
+/// and over the body's, each standing for its share of the area.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanFitSample {
-    /// The share of the points within the scan's tolerance of the body's surface, and within the
-    /// limit (five tolerances, at least 0.5 mm): the part of the scan the body explains.
+    /// The share of the scan's surface within the scan's tolerance of the body's surface, and within
+    /// the limit (five tolerances, at least 0.5 mm): the part of the scan the body explains.
     pub within: f64,
     pub explained: f64,
-    /// Root mean square distance over the points within reach of the body (mm).
+    /// The share of the body's surface farther than the limit from the scan: material, or a face,
+    /// the scan does not have (a face the scanner did not see counts too).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub added: Option<f64>,
+    /// Root mean square distance over the scan within reach of the body (mm), by area.
     pub rms: f64,
-    /// The points read.
+    /// The places on the scan read.
     pub points: usize,
 }
 
