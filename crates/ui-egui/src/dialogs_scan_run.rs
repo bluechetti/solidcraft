@@ -978,6 +978,7 @@ mod tests {
             cell: Some(1.0),
             sharp: false,
             offset: Some("-gap".into()),
+            shell: None,
             with: Vec::new(),
             area: None,
         };

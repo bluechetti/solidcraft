@@ -125,6 +125,7 @@ fn label(app: &SolveApp, reading: &Reading, step: &Proposal) -> String {
             let bends = reconstruct::pipe_bends(reading);
             solidcraft_ui_text::format("ui.scan_reconstruct_pipe", &[("diameter", &mm(diameter)), ("bends", &bends.to_string())])
         }
+        Proposal::Tubes => solidcraft_ui_text::format("ui.scan_reconstruct_tubes", &[("count", &reading.tubes.len().to_string())]),
         Proposal::Loft => {
             let sections = reading.loft.as_ref().map_or(0, |l| l.sections.len());
             solidcraft_ui_text::format("ui.scan_reconstruct_loft", &[("sections", &sections.to_string())])

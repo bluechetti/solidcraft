@@ -1,10 +1,12 @@
 {
   "en": {
     "cmd.scan_tubes_it": "Tubes It",
-    "help.scan.tubes_it": "Sweeps the round tubes Reconstruct reads bent through space, such as a manifold's runners: each tube's path a 3D spline through its bends and straight stretches, the tube's circle swept along it."
+    "help.scan.tubes_it": "Sweeps the round tubes Reconstruct reads bent through space, such as a manifold's runners: each tube's path a 3D spline through its bends and straight stretches, the tube's circle swept along it.",
+    "ui.scan_reconstruct_tubes": "Tubes It: {count} tubes"
   },
   "de": {
     "cmd.scan_tubes_it": "Rohre ziehen",
-    "help.scan.tubes_it": "Zieht die runden Rohre, die Rekonstruieren im Raum gebogen erkennt, etwa die Kanäle eines Krümmers: Der Pfad jedes Rohrs ist ein 3D-Spline durch seine Bögen und Geraden, entlang dem der Rohrquerschnitt gezogen wird."
+    "help.scan.tubes_it": "Zieht die runden Rohre, die Rekonstruieren im Raum gebogen erkennt, etwa die Kanäle eines Krümmers: Der Pfad jedes Rohrs ist ein 3D-Spline durch seine Bögen und Geraden, entlang dem der Rohrquerschnitt gezogen wird.",
+    "ui.scan_reconstruct_tubes": "Rohre ziehen: {count} Rohre"
   }
 }
