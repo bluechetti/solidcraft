@@ -114,3 +114,30 @@ fn issue_388_union_sealing_a_void_passes_test_12() {
         assert!((got - want).abs() <= 1e-6 * want, "{got} vs {want}");
     }
 }
+
+/// A union whose tool stands on the body while a separate solid of the same B-rep lies off
+/// it (T-LESS 06 rebuilt: studs joined below the part, then a block on its top). The tool's
+/// faces split the outside; the outside's other shell, the separate solid's, is placed by a
+/// ray from it fired at the tool's shell. The ray runs up through the body and meets the
+/// tool's bottom, where it stands on the body: that face has the body's solid behind it, and
+/// read as the region the separate solid lies in, it put the separate solid's outside shell
+/// in the body's solid region (test #12). The separate solid is outside the tool, so it stays
+/// outside. Each solid's own volume, added up: the body 40 x 40 x 10, the stud 4 x 4 x 4
+/// below it, the tool 25 x 25 x 10 on it.
+#[test]
+fn a_union_on_a_body_with_a_separate_solid_keeps_that_solid_outside() {
+    let mut k = Kernel::default();
+    let body = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 40.0, 40.0, 10.0).unwrap();
+    let stud = create_box(&mut k, Point3::new(2.0, 2.0, -12.0), 4.0, 4.0, 4.0).unwrap();
+    let apart = boolean_union(&mut k, body, stud).unwrap();
+    let tool = create_box(&mut k, Point3::new(10.0, 10.0, 10.0), 25.0, 25.0, 10.0).unwrap();
+    let mut b = boolean_union(&mut k, apart, tool).unwrap();
+    let (n, lines) = test_12(&mut k, &mut b);
+    assert_eq!(n, 0, "{lines:?}");
+    let infinite = b.infinite_region();
+    let outside = b.region(infinite.unwrap()).unwrap().shells.len();
+    assert_eq!(outside, 2, "the outside holds the body's shell and the stud's");
+    let want = 40.0 * 40.0 * 10.0 + 4.0_f64.powi(3) + 25.0 * 25.0 * 10.0;
+    let got = volume(&k, &mut b);
+    assert!((got - want).abs() <= 1e-9 * want, "{got} vs {want}");
+}
