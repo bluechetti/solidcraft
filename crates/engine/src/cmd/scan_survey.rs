@@ -202,6 +202,10 @@ struct Plan<'a> {
 
 /// The commands worth running next, in the order the work goes: units, clean, align, read,
 /// build, check.
+/// A coarse scan whose noise is more than this share of its typical triangle edge is a fused scan,
+/// smooth but only as accurate as its scanner; one whose noise is less is an exact mesh (a CAD model).
+const FUSED_NOISE_SHARE: f64 = 0.02;
+
 fn next_steps(plan: &Plan) -> Vec<ScanSurveyStep> {
     let mut next = Vec::new();
     let mut step = |command: &str, why: String, params: Value| next.push(ScanSurveyStep { command: command.into(), why, params: Some(params) });
@@ -291,7 +295,27 @@ fn next_steps(plan: &Plan) -> Vec<ScanSurveyStep> {
             json!({"body": body}),
         );
     }
-    if let Some(noise) = look.noise.filter(|n| !plan.tolerance_set && 3.0 * n > plan.tolerance) {
+    // A coarse scan (triangles long against its size: a fused depth-camera scan) is smooth but
+    // only as accurate as the scanner: Find All holds shapes to it no closer than a share of its
+    // triangles, and its accuracy against the real part cannot be read off it (T-LESS 19: noise
+    // 0.05 mm, 0.84 mm off the part). The tolerance offered is at least Find All's, and the reason
+    // says to give the scanner's accuracy.
+    // (A CAD mesh's long triangles are coarse too, but exact: a fused scan's triangles also stray,
+    // its noise a share of their length: T-LESS 19's scan 0.051 mm on 1.3 mm edges, its CAD 0.006.)
+    let size = (look.high - look.low).len();
+    let fused = look.noise.is_some_and(|n| n > FUSED_NOISE_SHARE * look.typical_edge);
+    let coarse = if fused { solidcraft_scan::segment::coarse_tolerance(look.typical_edge, size) } else { 0.0 };
+    if !plan.tolerance_set && coarse > plan.tolerance {
+        let suggested = super::tolerance::for_noise(coarse / 3.0).max(look.noise.map_or(0.0, super::tolerance::for_noise));
+        step(
+            "scan.tolerance",
+            format!(
+                "its triangles are long ({:.2} mm, a fused or thinned scan): smooth as it is, its accuracy against the real part cannot be read off it, and Find All holds shapes no closer than {coarse:.2} mm; this is the least to use, give the scanner's accuracy when it is larger",
+                look.typical_edge
+            ),
+            json!({"body": body, "tolerance": suggested}),
+        );
+    } else if let Some(noise) = look.noise.filter(|n| !plan.tolerance_set && 3.0 * n > plan.tolerance) {
         let suggested = super::tolerance::for_noise(noise);
         step(
             "scan.tolerance",
@@ -299,7 +323,7 @@ fn next_steps(plan: &Plan) -> Vec<ScanSurveyStep> {
                 "its noise ({noise:.3} mm) is more than a third of the {:.2} mm tolerance every check reads against: most of a faithful fit would read as off",
                 plan.tolerance
             ),
-            json!({"scan": body, "tolerance": suggested}),
+            json!({"body": body, "tolerance": suggested}),
         );
     }
     let contains_origin = [look.low.x <= 0.0 && look.high.x >= 0.0, look.low.y <= 0.0 && look.high.y >= 0.0, look.low.z <= 0.0 && look.high.z >= 0.0];
@@ -535,6 +559,61 @@ mod tests {
 
     /// Denoise and Fill Holes wait for Find All: before it a holey, noisy scan is sent to Find All
     /// only; read as mostly freeform it gets both before Fit Patches; read as shapes, neither.
+    /// A fused scan (T-LESS 19's: triangles 1.3 mm long on a part 67 mm across, noise 0.051 mm) is
+    /// told its accuracy cannot be read off it, and offered no less than Find All's own 0.4 of an
+    /// edge; the same mesh with a CAD model's noise (0.006 mm) is exact, and told nothing of it.
+    #[test]
+    fn a_fused_scan_is_told_its_accuracy_is_the_scanners() {
+        use solidcore_record::Vec3;
+        let fused = solidcraft_scan::survey::Look {
+            triangle_count: 23304,
+            points: 11654,
+            unusable: 0,
+            low: Vec3::new(-33.7, -40.2, -24.3),
+            high: Vec3::new(34.0, 20.5, 23.9),
+            centre: Vec3::ZERO,
+            own_size: [67.7, 60.4, 47.9],
+            area: 17267.0,
+            typical_edge: 1.29,
+            noise: Some(0.051),
+            smoothing: Some(1.0),
+            noise_places: 8,
+            rims: 0,
+            holes: 0,
+            longest_hole: 0.0,
+            open_edges: 0,
+            tangled_edges: 0,
+            crack_edges: 0,
+            crossing_faces: 0,
+            pieces: 1,
+            floating: 0,
+            floating_share: 0.0,
+            flat_share: 0.07,
+        };
+        let steps = |look: &solidcraft_scan::survey::Look| {
+            let plan = super::Plan {
+                body: "s",
+                sizes: look.own_size,
+                look,
+                tiny: false,
+                sheet_like: false,
+                shapes: None,
+                tolerance: 0.1,
+                tolerance_set: false,
+                other_scans: &[],
+                models: &[],
+            };
+            super::next_steps(&plan)
+        };
+        let told = steps(&fused);
+        let tolerance = told.iter().find(|n| n.command == "scan.tolerance").expect("a tolerance step");
+        assert!(tolerance.why.contains("cannot be read off it"), "{}", tolerance.why);
+        let offered = tolerance.params.as_ref().and_then(|p| p["tolerance"].as_f64()).unwrap();
+        assert!(offered >= 0.4 * 1.29, "{offered}");
+        let exact = solidcraft_scan::survey::Look { noise: Some(0.006), ..fused.clone() };
+        assert!(steps(&exact).iter().all(|n| !n.why.contains("cannot be read off it")));
+    }
+
     #[test]
     fn smoothing_and_holes_wait_for_the_route() {
         use solidcore_record::Vec3;

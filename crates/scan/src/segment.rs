@@ -662,7 +662,7 @@ const COARSE_TOLERANCE_SHARE: f64 = 0.4;
 
 /// The least tolerance a scan `size` across with triangles `edge` long needs for being coarse
 /// (see [`COARSE_EDGE_SHARE`]): 0 for a fine scan.
-fn coarse_tolerance(edge: f64, size: f64) -> f64 {
+pub fn coarse_tolerance(edge: f64, size: f64) -> f64 {
     if edge > COARSE_EDGE_SHARE * size { COARSE_TOLERANCE_SHARE * edge } else { 0.0 }
 }
 

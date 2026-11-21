@@ -74,6 +74,14 @@ pub fn noise_tolerance(runs: &[solidcraft_scan::section::Run]) -> f64 {
     cut_noise(runs).map_or(TOLERANCE, |noise| (NOISE_TIMES * noise).min(MOST_SHARE * size).max(TOLERANCE))
 }
 
+/// The tolerance a cut of `scan` is fitted at when the call gives none: the scan's own tolerance
+/// when one is set for it (`scan.tolerance`, the accuracy the user asked for), never finer than
+/// the cut's noise ([`noise_tolerance`]), else that. A fused scan is smooth to the touch but wavy
+/// at its accuracy: fitted at its noise, a straight side came out as a dozen arcs.
+fn cut_tolerance(s: &Session, scan: &str, noise: f64) -> f64 {
+    if super::tolerance::is_set(s, scan) { super::tolerance::of(s, scan).max(noise) } else { noise }
+}
+
 /// The tolerance `p` asks for (`tolerance`), `None` when it leaves it to the cut.
 fn asked_tolerance(s: &Session, p: &Value, cmd: &str) -> Result<Option<f64>> {
     match crate::params::expr(p, "tolerance") {
@@ -430,7 +438,7 @@ pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         (runs, None)
     };
-    let tolerance = outline_tolerance.unwrap_or_else(|| asked.unwrap_or_else(|| noise_tolerance(&runs)));
+    let tolerance = outline_tolerance.unwrap_or_else(|| asked.unwrap_or_else(|| cut_tolerance(s, &scan, noise_tolerance(&runs))));
     // About an axis: one side of the cut, closed along the axis where it comes down to it.
     let (runs, sides) = match &half {
         Some((_, side)) => {
@@ -581,7 +589,7 @@ pub fn along_preview(
     let scan = mesh_name(s, &json!({ "body": body }), cmd)?;
     let (_, _, path) = along_path(s, sketch.map(|id| json!(id)).as_ref(), curves, cmd)?;
     let cut = along_cut(s, &scan, &path, count.clamp(1, 60), every, cmd)?;
-    let tolerance = tolerance.unwrap_or_else(|| along_tolerance(&cut));
+    let tolerance = tolerance.unwrap_or_else(|| cut_tolerance(s, &scan, along_tolerance(&cut)));
     let sections = cut
         .into_iter()
         .map(|a| {
@@ -614,7 +622,7 @@ pub(super) fn sections_along_curve(s: &mut Session, p: &Value) -> Result<Value> 
     let (_, _, path) = along_path(s, p.get("sketch"), &string_list_or_default(p, "curves"), cmd)?;
     let length_along: f64 = path.windows(2).map(|w| w[0].dist(w[1])).sum();
     let sections = along_cut(s, &scan, &path, count, every, cmd)?;
-    let tolerance = asked.unwrap_or_else(|| along_tolerance(&sections));
+    let tolerance = asked.unwrap_or_else(|| cut_tolerance(s, &scan, along_tolerance(&sections)));
     let planned: Vec<(solidcore_record::Plane, Vec<(Outline, bool)>)> =
         sections.iter().map(|a| (a.station.plane, fitted(&a.runs, tolerance))).filter(|(_, o)| !o.is_empty()).collect();
     if planned.is_empty() {
@@ -692,7 +700,7 @@ pub fn preview(
     let plane = super::super::sketch_store::active(s).and_then(|id| state.sketch(id)).map_or(plane, |ss| ss.plane);
     let runs = super::with_shown(s, &scan, |p, t| solidcraft_scan::section::section(&Scan::new(p, t), &plane))
         .ok_or_else(|| bad(cmd, format!("`{scan}` is not a scan")))?;
-    let tolerance = tolerance.unwrap_or_else(|| noise_tolerance(&runs));
+    let tolerance = tolerance.unwrap_or_else(|| cut_tolerance(s, &scan, noise_tolerance(&runs)));
     let outlines = runs
         .iter()
         .filter(|r| r.points.windows(2).map(|w| w[0].dist(w[1])).sum::<f64>() > 10.0 * tolerance)
