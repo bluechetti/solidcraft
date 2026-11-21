@@ -56,6 +56,8 @@ const NEEDLE: f64 = 0.35;
 /// of the quad lies between this angle (15°) and 180° less it.
 const PAIR_BEND: f64 = 0.5236;
 const PAIR_CORNER: f64 = 0.2618;
+/// Two fitted sides leaving a patch corner closer than this (8°) are made straight there.
+const SHARP_CORNER: f64 = 0.1396;
 /// A coarse face whose smallest angle is below this is poor: its patches' corners are too sharp
 /// for the kernel's check (a 4° corner left edges off their faces); 10°.
 const MIN_ANGLE: f64 = 0.1745;
@@ -198,8 +200,8 @@ fn evenly(n: usize, most: usize) -> Vec<usize> {
 /// more than `cap` patches, every budget is scaled up by the factor the first count says (the
 /// tolerance given up evenly, not where an unheld reduction happens to cut) and corrected up to
 /// [`FIT_TRIES`] times; only then is it reduced to the cap unheld. The bool says whether the cap
-/// bounded it.
-fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> Result<(reduce::Reduced, bool), WrapError> {
+/// bounded it, the number by how much the budgets were scaled.
+fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> Result<(reduce::Reduced, bool, f64), WrapError> {
     let held = reduce::Settings { target: 4, max_error: 0.0, keep_rim: true };
     let at = |scale: f64| -> Result<reduce::Reduced, WrapError> {
         let scaled: Vec<f64> = budget.iter().map(|b| b * scale).collect();
@@ -213,7 +215,7 @@ fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> 
     };
     let first = at(1.0)?;
     if count(&first) <= cap {
-        return Ok((first, false));
+        return Ok((first, false, 1.0));
     }
     // Triangles fall about as 1 / scale (a held edge grows as √budget across a curved face): start
     // at the scale that estimate gives, then correct by the same law, keeping the largest result
@@ -238,10 +240,10 @@ fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> 
         scale *= ratio;
     }
     match best {
-        Some((_, r)) => Ok((r, true)),
+        Some((k, r)) => Ok((r, true, k)),
         None => {
             let to_cap = reduce::Settings { target: (cap / 3).max(4), max_error: 0.0, keep_rim: false };
-            Ok((reduce::reduce(scan, to_cap).ok_or(WrapError::Reduce)?, true))
+            Ok((reduce::reduce(scan, to_cap).ok_or(WrapError::Reduce)?, true, scale))
         }
     }
 }
@@ -567,7 +569,8 @@ fn patches(under: &Under, positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Nur
         let (x, y) = keys[k];
         side(under, placed[x as usize], placed[y as usize], sides.get(&(x, y)).copied().unwrap_or(Vec3::Z))
     });
-    let curve: HashMap<(u32, u32), [Vec3; 4]> = keys.into_iter().zip(curves).collect();
+    let mut curve: HashMap<(u32, u32), [Vec3; 4]> = keys.into_iter().zip(curves).collect();
+    straighten_sharp_corners(&mut curve, &quads, &placed);
     let along = |x: u32, y: u32| -> [Vec3; 4] {
         match curve.get(&(x.min(y), x.max(y))) {
             Some(c) if x < y => *c,
@@ -594,6 +597,39 @@ fn patches(under: &Under, positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Nur
         NurbsSurface::new([3, 3], [knots.clone(), knots.clone()], &net, &[1.0; 16]).ok()
     });
     faces.into_iter().flatten().collect()
+}
+
+/// Where two fitted sides leave a patch corner at under [`SHARP_CORNER`] and under half the angle
+/// of their straight chords (each side's end tangent swung toward the other, as where a side
+/// crosses a crease), both sides are made straight: the corner keeps its chords' angle, which the
+/// mesher can fill. The sides are shared, so both patches on each side see the same curve.
+fn straighten_sharp_corners(curve: &mut HashMap<(u32, u32), [Vec3; 4]>, quads: &[([u32; 4], Vec3)], placed: &[Vec3]) {
+    let at = |v: u32| placed.get(v as usize).copied().unwrap_or(Vec3::ZERO);
+    let angle = |u: Vec3, v: Vec3| {
+        let l = u.len() * v.len();
+        if l > 0.0 { (u.dot(v) / l).clamp(-1.0, 1.0).acos() } else { 0.0 }
+    };
+    // The side from `x` to `y` as stored, its first leg from `x`.
+    let leg = |curve: &HashMap<(u32, u32), [Vec3; 4]>, x: u32, y: u32| {
+        curve.get(&(x.min(y), x.max(y))).map(|c| if x < y { c[1] - c[0] } else { c[2] - c[3] })
+    };
+    let mut straight: Vec<(u32, u32)> = Vec::new();
+    for (q, _) in quads {
+        for s in 0..4 {
+            let (o, next, prev) = (q[s], q[(s + 1) % 4], q[(s + 3) % 4]);
+            let (Some(t1), Some(t2)) = (leg(curve, o, next), leg(curve, o, prev)) else { continue };
+            let tangent = angle(t1, t2);
+            let chord = angle(at(next) - at(o), at(prev) - at(o));
+            if tangent < SHARP_CORNER && tangent < 0.5 * chord {
+                straight.push((o.min(next), o.max(next)));
+                straight.push((o.min(prev), o.max(prev)));
+            }
+        }
+    }
+    for key in straight {
+        let (a, b) = (at(key.0), at(key.1));
+        curve.insert(key, [a, a + (b - a) / 3.0, a + (b - a) * (2.0 / 3.0), b]);
+    }
 }
 
 /// A triangle's shape: 4√3 × its area over the sum of its sides' squares, 1 for an equilateral
@@ -1168,11 +1204,13 @@ pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
     let mut mark = vec![0usize; n];
     let mut best: Option<Wrap> = None;
     for round in 1..=ROUNDS {
-        let (mut r, capped) = reduce_once(scan, &tree, &budget, cap)?;
+        let (mut r, capped, scale) = reduce_once(scan, &tree, &budget, cap)?;
         if r.triangles.is_empty() {
             return Err(WrapError::Reduce);
         }
-        tidy(&mut r.positions, &mut r.triangles, &under, tol);
+        // A capped mesh lies off the scan by the scaled budgets: its tidying is held to them too,
+        // or every repair of a sliver would look like leaving the scan and none would be made.
+        tidy(&mut r.positions, &mut r.triangles, &under, tol * scale.max(1.0));
         let faces = patches(&under, &r.positions, &r.triangles);
         let d = distances(scan, &faces, &sampled);
         let spread = spread(&d, &weight, tol);
@@ -1263,7 +1301,7 @@ mod tests {
         let (p, t) = sphere(20.0, 60, 120);
         let scan = Scan::new(&p, &t);
         let tree = TriangleTree::of(&p, &t);
-        let (r, capped) = reduce_once(&scan, &tree, &vec![0.1; p.len()], usize::MAX).expect("reduce");
+        let (r, capped, _) = reduce_once(&scan, &tree, &vec![0.1; p.len()], usize::MAX).expect("reduce");
         assert!(!capped);
         // Every coarse point lies within its budget of the scan, by the guard.
         let worst = r.positions.iter().map(|q| tree.nearest(*q).map_or(f64::INFINITY, |(d, _)| d)).fold(0.0, f64::max);

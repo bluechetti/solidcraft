@@ -100,6 +100,21 @@ fn main() {
                 bad[3] += usize::from(phi > 175.0);
             }
             println!("patch corners: smallest {lo:.1} deg, largest {hi:.1} deg; patches with a corner <5 {} <10 {} >170 {} >175 {}", bad[0], bad[1], bad[2], bad[3]);
+            // The same by the straight chords between the corners (the layout's own angles).
+            let mut chord_bad = 0usize;
+            let mut both = 0usize;
+            for f in &w.faces {
+                let net = solidcraft_scan::surface_edit::points(f);
+                let ang = |o: usize, p: usize, q: usize| {
+                    let (u, v) = (net[p] - net[o], net[q] - net[o]);
+                    (u.dot(v) / (u.len() * v.len()).max(1e-300)).clamp(-1.0, 1.0).acos().to_degrees()
+                };
+                let chord = [ang(0, 3, 12), ang(3, 15, 0), ang(15, 12, 3), ang(12, 0, 15)].iter().copied().fold(180.0f64, f64::min);
+                let tangent = [ang(0, 1, 4), ang(3, 2, 7), ang(15, 14, 11), ang(12, 13, 8)].iter().copied().fold(180.0f64, f64::min);
+                chord_bad += usize::from(chord < 5.0);
+                both += usize::from(chord < 5.0 && tangent < 5.0);
+            }
+            println!("by chords: patches with a corner <5 {chord_bad} (of them also by tangents {both})");
             let coarse_tree = solidcraft_geom::compare::TriangleTree::of(&c.positions, &c.triangles);
             for (p, d) in w.worst.iter().take(4) {
                 let to_coarse = coarse_tree.nearest(*p).map_or(f64::NAN, |(d, _)| d);
