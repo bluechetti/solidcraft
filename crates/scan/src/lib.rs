@@ -114,6 +114,7 @@ pub mod symmetry;
 pub mod template;
 pub mod tubes;
 pub mod unseen;
+pub mod verdict;
 pub mod wall_outline;
 pub mod wheel;
 pub mod wrap;

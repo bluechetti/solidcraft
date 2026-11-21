@@ -3936,6 +3936,10 @@ pub struct Document {
     /// tolerance every Scan-tab tool colours and reports against. A scan with none uses the default.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub scan_tolerances: std::collections::BTreeMap<String, f64>,
+    /// What each scan is being turned into (how the part was made, the share the model must hold,
+    /// its regions), per scan (mesh body name): what Scan Verdict reads.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub scan_plans: std::collections::BTreeMap<String, crate::scan_plan::ScanPlan>,
     /// Each Flat Pattern sketch and the flattening that made it, for Roll onto Scan.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scan_flat_patterns: Vec<crate::scan_flat_pattern::FlatPatternKeep>,
@@ -4296,6 +4300,7 @@ impl Document {
             scan_selections: Vec::new(),
             free_forms: Vec::new(),
             scan_tolerances: Default::default(),
+            scan_plans: Default::default(),
             scan_flat_patterns: Vec::new(),
             param_comments: Default::default(),
             browser_groups: Vec::new(),

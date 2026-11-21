@@ -3569,6 +3569,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         scan_selections,
         free_forms,
         scan_tolerances,
+        scan_plans,
         scan_flat_patterns,
         param_comments,
         materials,
@@ -3614,6 +3615,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         && *scan_selections == b.scan_selections
         && *free_forms == b.free_forms
         && *scan_tolerances == b.scan_tolerances
+        && *scan_plans == b.scan_plans
         && *scan_flat_patterns == b.scan_flat_patterns
         && *param_comments == b.param_comments
         && *materials == b.materials

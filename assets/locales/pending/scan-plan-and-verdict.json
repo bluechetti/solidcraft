@@ -1,0 +1,12 @@
+{
+  "de": {
+    "cmd.scan_plan": "Scan-Plan",
+    "cmd.scan_plan_region": "Planbereich",
+    "cmd.scan_verdict": "Scan-Urteil"
+  },
+  "en": {
+    "cmd.scan_plan": "Scan Plan",
+    "cmd.scan_plan_region": "Plan Region",
+    "cmd.scan_verdict": "Scan Verdict"
+  }
+}

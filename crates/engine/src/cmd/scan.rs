@@ -2168,6 +2168,9 @@ pub mod panel_export;
 #[path = "scan_patches.rs"]
 pub mod patches;
 
+#[path = "scan_plan.rs"]
+pub mod plan;
+
 #[path = "scan_reconstruct.rs"]
 pub mod reconstruct;
 
