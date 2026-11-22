@@ -36,12 +36,17 @@ pub struct Settings {
 }
 
 pub const LEAST_DEPTH: u32 = 5;
-pub const MOST_DEPTH: u32 = 10;
-pub const DEFAULT_TRIM: f64 = 0.3;
+/// The finest depth asked for or suggested. The grid is only solved near the points and held to
+/// [`MOST_NODES`], so a cloud too large for a depth gets [`PoissonError::TooFine`], not the memory.
+pub const MOST_DEPTH: u32 = 12;
+/// Vertices whose density is below this go. 0.5 against 0.3 on rigil-exscan (door mirror, two van panels):
+/// 1-2 points more of the surface on EXScan's mesh, a fifth less extra area, the scanned surface kept.
+pub const DEFAULT_TRIM: f64 = 0.5;
 
 impl Settings {
-    /// The depth whose finest cells are about as wide as the points are apart (at most 9), and the
-    /// default trim.
+    /// The depth whose finest cells are about as wide as the points are apart (at most
+    /// [`MOST_DEPTH`]), and the default trim. A 4 m van panel scanned 1.4 mm apart wants depth 11; a
+    /// fixed 9 gave it 10.7 mm cells and averaged a fifth of the scanned surface away (rigil-exscan).
     pub fn suggested(extent: f64, spacing: f64) -> Settings {
         Self::suggested_for(extent, spacing, 0.0)
     }
@@ -52,9 +57,9 @@ impl Settings {
     /// and four times its area at 0.56 mm cells, one mug at 2.2 mm). A clean pass, thinner than
     /// its spacing, is meshed as before.
     pub fn suggested_for(extent: f64, spacing: f64, thickness: f64) -> Settings {
-        let by_spacing = (LEAST_DEPTH..=9).find(|&d| cell_size(extent, d) <= 1.5 * spacing).unwrap_or(9);
+        let by_spacing = (LEAST_DEPTH..=MOST_DEPTH).find(|&d| cell_size(extent, d) <= 1.5 * spacing).unwrap_or(MOST_DEPTH);
         let least = LAYERED_CELLS * thickness;
-        let by_layer = (LEAST_DEPTH..=9).rev().find(|&d| cell_size(extent, d) >= least).unwrap_or(LEAST_DEPTH);
+        let by_layer = (LEAST_DEPTH..=MOST_DEPTH).rev().find(|&d| cell_size(extent, d) >= least).unwrap_or(LEAST_DEPTH);
         Settings { depth: by_spacing.min(by_layer), trim: DEFAULT_TRIM }
     }
 }
@@ -1101,6 +1106,16 @@ mod tests {
         let lowest = made.positions.iter().map(|p| p.z).fold(f64::INFINITY, f64::min);
         assert!(lowest > -2.0, "nothing far below the points: {lowest}");
         assert!(made.trimmed > 0 && made.distances.p95 < 0.3, "{} {:?}", made.trimmed, made.distances);
+    }
+
+    /// A large flat part scanned finely asks for more than the old cap of 9: the cells follow the
+    /// spacing up to [`MOST_DEPTH`] (a 4.4 m van floor, points 1.4 mm apart, was meshed at 10.7 mm).
+    #[test]
+    fn a_large_finely_scanned_part_gets_cells_near_its_spacing() {
+        let settings = Settings::suggested(4400.0, 1.4);
+        assert!(settings.depth > 9, "depth {}", settings.depth);
+        assert!(cell_size(4400.0, settings.depth) <= 4.0, "cell {}", cell_size(4400.0, settings.depth));
+        assert!(Settings::suggested(50.0, 0.4).depth <= 9, "a small part keeps the depth it had");
     }
 
     #[test]

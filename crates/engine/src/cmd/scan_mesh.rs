@@ -31,7 +31,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("dots")
         .contract(&FROM_POINTS_CONTRACT)
         .output(output_schema_for::<ScanMeshFromPointsResult>)
-        .params("cloud?: point cloud id or name (default: the only one); depth?: 5–10 (the finest grid is 2^depth cells across; default: about the points' spacing, and no finer than twice the layer of points is thick, so passes merged apart make one surface); trim?: 0–1 (default 0.3: where the points are sparse the surface stops; 0 keeps it closed); name?: the body's name: a mesh body made from the points by screened Poisson reconstruction (their normals estimated and turned to agree where the cloud states none), one undo step → body, triangles, vertices, depth, trim, points, points_used, estimated_normals, cell, spacing, trimmed, rms, p95, max, thickness, warning? (the points lie in a layer thicker than they are apart: passes that do not lie on each other), feature"),
+        .params("cloud?: point cloud id or name (default: the only one); depth?: 5–12 (the finest grid is 2^depth cells across; default: about the points' spacing, and no finer than twice the layer of points is thick, so passes merged apart make one surface); trim?: 0–1 (default 0.5: where the points are sparse the surface stops; 0 keeps it closed); name?: the body's name: a mesh body made from the points by screened Poisson reconstruction (their normals estimated and turned to agree where the cloud states none), one undo step → body, triangles, vertices, depth, trim, points, points_used, estimated_normals, cell, spacing, trimmed, rms, p95, max, thickness, warning? (the points lie in a layer thicker than they are apart: passes that do not lie on each other), feature"),
     CommandSpec::new("scan.denoise", "Denoise", crate::checked!("scan.denoise", denoise_scan))
         .at("SCAN", "CLEAN")
         .icon("c_smooth")
@@ -287,12 +287,13 @@ pub(super) fn mesh_from_points(s: &mut Session, p: &Value) -> Result<Value> {
     let spacing = poisson::typical_spacing(&points);
     let thickness = poisson::layer_thickness(&points, spacing);
     let layered = thickness > poisson::LAYERED * spacing;
+    let asked = p.get("depth").filter(|v| !v.is_null()).is_some();
     let depth = match p.get("depth").filter(|v| !v.is_null()) {
         Some(v) => {
             let d = v
                 .as_u64()
                 .filter(|d| (u64::from(poisson::LEAST_DEPTH)..=u64::from(poisson::MOST_DEPTH)).contains(d))
-                .ok_or_else(|| bad(cmd, "`depth` is a whole number from 5 to 10"))?;
+                .ok_or_else(|| bad(cmd, format!("`depth` is a whole number from {} to {}", poisson::LEAST_DEPTH, poisson::MOST_DEPTH)))?;
             d as u32
         }
         None => {
@@ -303,7 +304,14 @@ pub(super) fn mesh_from_points(s: &mut Session, p: &Value) -> Result<Value> {
             poisson::Settings::suggested_for(d.x.max(d.y).max(d.z), spacing, thickness).depth
         }
     };
-    let made = poisson::reconstruct(&points, normals.as_deref(), &poisson::Settings { depth, trim }).map_err(|e| bad(cmd, e.to_string()))?;
+    // A suggested depth too fine for the node budget steps down until it fits; one asked for is refused.
+    let mut depth = depth;
+    let made = loop {
+        match poisson::reconstruct(&points, normals.as_deref(), &poisson::Settings { depth, trim }) {
+            Err(poisson::PoissonError::TooFine) if !asked && depth > poisson::LEAST_DEPTH => depth -= 1,
+            other => break other.map_err(|e| bad(cmd, e.to_string()))?,
+        }
+    };
     let taken: Vec<String> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
     let name = match str_(p, "name").filter(|n| !n.trim().is_empty()) {
         Some(n) => n.to_owned(),
