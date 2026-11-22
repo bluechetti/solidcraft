@@ -3915,6 +3915,9 @@ fn wrap_scan_makes_a_closed_scan_one_solid_within_its_tolerance() {
     let (patches, coarse) = (r["patches"].as_u64().unwrap(), r["coarse_triangles"].as_u64().unwrap());
     assert!((2 * coarse..=3 * coarse).contains(&patches), "three patches to a triangle, four to a pair: {r}");
     assert!(r["within"].as_f64().unwrap() >= 0.99, "{r}");
+    // Its own aim, one way, reached; the only `met` is the verdict's.
+    assert_eq!((r["goal"]["share"].as_f64(), r["goal"]["reached"].as_bool()), (Some(0.99), Some(true)), "{r}");
+    assert!(r.get("met").is_none(), "{r}");
     let surface = r["surface"].as_str().unwrap().to_string();
     let m = run(&mut s, "inspect.measure", json!({"bodies": [surface]}));
     let volume = m["bodies"][0]["volume_mm3"].as_f64().unwrap();
@@ -3926,6 +3929,25 @@ fn wrap_scan_makes_a_closed_scan_one_solid_within_its_tolerance() {
     assert_eq!(r["verdict"]["model"], json!(surface), "{r}");
     assert!(["met", "not_done"].contains(&r["verdict"]["verdict"].as_str().unwrap_or_default()), "{r}");
     assert!(r.get("patches_wanted").is_none(), "an uncapped wrap wants no more patches: {r}");
+}
+
+/// Wrap Scan fits to the scan's tolerance when given none (0.3 mm set for this scan), and the
+/// verdict reads it at that. Asked for a looser one (0.5 mm), it builds to that, says so, and the
+/// verdict still reads the scan's 0.3: whether the model is done is the plan's question.
+#[test]
+fn wrap_scan_fits_to_the_scans_tolerance_and_is_judged_at_it() {
+    let (mut s, scan) = session_with_triangles("wrap-tolerance", &sphere_triangles(20.0, 12));
+    run(&mut s, "scan.tolerance", json!({"body": scan, "tolerance": 0.3}));
+    let r = run(&mut s, "scan.wrap_scan", json!({"body": scan}));
+    assert_eq!((r["tolerance"].as_f64(), r["scan_tolerance"].as_f64(), r["verdict"]["tolerance"].as_f64()), (Some(0.3), Some(0.3), Some(0.3)), "{r}");
+    assert!(r.get("warning").is_none_or(|w| !w.as_str().unwrap_or_default().contains("looser")), "{r}");
+    let loose = run(&mut s, "scan.wrap_scan", json!({"body": scan, "tolerance": 0.5}));
+    assert_eq!(
+        (loose["tolerance"].as_f64(), loose["scan_tolerance"].as_f64(), loose["verdict"]["tolerance"].as_f64()),
+        (Some(0.5), Some(0.3), Some(0.3)),
+        "{loose}"
+    );
+    assert!(loose["warning"].as_str().unwrap().contains("looser than the scan's 0.3 mm"), "{loose}");
 }
 
 /// A 20 mm cube's scan (each side cut 8 × 8, two triangles a square). Find All reads its six
@@ -4010,18 +4032,38 @@ fn wrap_scan_closes_a_tunnel_through_a_thin_wall_first() {
 
 /// A wrap the most patches hold back says about how many the tolerance asks for, and its verdict's
 /// first next step is the same wrap with that many: 0.001 mm on a sphere of R 20 asks for far more
-/// than 300.
+/// than 300. Its scan has 24 × 24 × 2 × 6 = 6,912 triangles, and no reduction lays more than three
+/// patches on each, so it asks for at most 20,736: within the 60,000 a wrap may have.
 #[test]
 fn a_capped_wrap_says_how_many_patches_its_tolerance_asks_for() {
     let (mut s, scan) = session_with_triangles("wrap-capped", &sphere_triangles(20.0, 24));
     let r = run(&mut s, "scan.wrap_scan", json!({"body": scan, "tolerance": 0.001, "max_patches": 300}));
-    assert_eq!(r["capped"], true, "{r}");
+    assert_eq!((r["capped"].as_bool(), r["goal"]["reached"].as_bool()), (Some(true), Some(false)), "{r}");
     let wanted = r["patches_wanted"].as_u64().unwrap();
-    assert!(wanted > 300, "{r}");
+    assert!(wanted > 300 && wanted <= 3 * 6_912, "{r}");
     assert!(r["warning"].as_str().unwrap().contains("max_patches"), "{r}");
     let first = &r["verdict"]["next"][0];
     assert_eq!(first["command"], "scan.wrap_scan", "{r}");
-    assert_eq!(first["params"]["max_patches"].as_u64().unwrap(), wanted.min(60_000), "{r}");
+    assert_eq!(first["params"]["max_patches"].as_u64(), Some(wanted), "{r}");
+}
+
+/// When the tolerance asks for more patches than a wrap may have (60,000), the reply says what the
+/// patches laid hold instead (99 % of the scan within p99, rounded up to 0.01 mm), and the first
+/// next step is reading the scan at that, for a part that needs no closer; then the wrap with the
+/// most patches. A sphere R 20 of 100 × 100 × 2 × 6 = 120,000 triangles at 0.001 mm: the facets'
+/// own edges (about 0.3–0.45 mm) are already near the longest a chord across R 20 may be within
+/// 0.001 mm (√(8 × 20 × 0.001) = 0.4 mm), so it reduces little and asks for far more than 60,000.
+#[test]
+fn a_wrap_whose_tolerance_asks_for_more_than_the_most_says_what_its_patches_hold() {
+    let (mut s, scan) = session_with_triangles("wrap-too-fine", &sphere_triangles(20.0, 100));
+    let r = run(&mut s, "scan.wrap_scan", json!({"body": scan, "tolerance": 0.001, "max_patches": 300}));
+    assert!(r["patches_wanted"].as_u64().unwrap() > 60_000, "{r}");
+    let holds = (100.0 * r["p99"].as_f64().unwrap()).ceil() / 100.0;
+    let warning = r["warning"].as_str().unwrap();
+    assert!(warning.contains("more than a wrap may have (60000)") && warning.contains(&format!("within {holds:.2} mm")), "{r}");
+    let next = &r["verdict"]["next"];
+    assert_eq!((next[0]["command"].as_str(), next[0]["params"]["tolerance"].as_f64()), (Some("scan.tolerance"), Some(holds)), "{r}");
+    assert_eq!((next[1]["command"].as_str(), next[1]["params"]["max_patches"].as_u64()), (Some("scan.wrap_scan"), Some(60_000)), "{r}");
 }
 
 /// A lumpy closed blob (a sphere of R 20 whose radius swings ±20 % with direction) holds no plane,
@@ -4041,4 +4083,3 @@ fn reconstruct_proposes_wrap_scan_when_it_has_no_route() {
     let wrapped = run(&mut s, "scan.wrap_scan", read["proposals"][0]["params"].clone());
     assert_eq!(wrapped["solid"], true, "{wrapped}");
 }
-

@@ -12,7 +12,8 @@ pub struct ScanWrapScanParams {
     /// The scan. Default: what is selected on a scan, else the only one.
     #[serde(default)]
     pub body: Option<String>,
-    /// How far the patches may lie from the scan. Default: 0.2 mm.
+    /// How far the patches may lie from the scan. Default: the scan's tolerance (`scan.tolerance`).
+    /// The verdict reads the scan's tolerance whatever this is.
     #[serde(default)]
     pub tolerance: Option<super::types::LengthExpr>,
     /// The most patches, 300 to 60,000. Default: 12,000. A scan that needs more is wrapped with this
@@ -51,9 +52,11 @@ pub struct ScanWrapScanResult {
     /// filled for them (the scan itself is unchanged; the model is measured against it as it is).
     pub tunnels_closed: usize,
     pub tunnel_parts: usize,
-    /// Rounds of reduction, and whether the coarse mesh met the tolerance both ways.
+    /// Rounds of reduction.
     pub rounds: usize,
-    pub met: bool,
+    /// The wrap's own aim, which its rounds work toward: measured one way, the scan to the patches.
+    /// Whether the model is done (both ways, at the scan's tolerance) is `verdict`'s.
+    pub goal: ScanWrapScanGoal,
     /// The most patches bounded the wrap (the tolerance given up where it had to be).
     pub capped: bool,
     /// The scan's points to the patches: the share within the tolerance, the 99th percentile and the
@@ -61,18 +64,32 @@ pub struct ScanWrapScanResult {
     pub within: f64,
     pub p99: f64,
     pub max: f64,
-    /// The tolerance used, mm.
+    /// The tolerance the patches were fitted to, and the scan's (`scan.tolerance`), which the
+    /// verdict reads, mm.
     pub tolerance: f64,
+    pub scan_tolerance: f64,
     /// When the most patches bounded the wrap: about how many the tolerance asks for (raise
-    /// `max_patches` toward it, up to 60,000).
+    /// `max_patches` toward it, up to 60,000; past that, `p99` is what the patches hold).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub patches_wanted: Option<usize>,
-    /// A sentence when the wrap is short of the tolerance.
+    /// Sentences when the wrap is short of its goal, built looser than the scan's tolerance, or
+    /// without the plane faces it was asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
     /// `scan.verdict` on the scan and the wrap: met or not_done, with its issues and next steps
-    /// (the first of them a wrap with more patches when the cap held it back).
+    /// (the first of them a wrap with more patches when the cap held it back, after the scan's
+    /// tolerance at what the patches hold when the tolerance asks for more than a wrap may have).
     pub verdict: serde_json::Value,
     /// The Scan Surface feature that keeps the patches.
     pub feature: serde_json::Value,
+}
+
+/// The wrap's own aim ([`ScanWrapScanResult::goal`]).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanWrapScanGoal {
+    /// The share of the scan's area that must lie within the tolerance of the patches (0.99), with
+    /// none of it farther than three tolerances.
+    pub share: f64,
+    /// Whether the patches reached it.
+    pub reached: bool,
 }

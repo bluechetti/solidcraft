@@ -10,7 +10,7 @@ use solidcraft_scan::wrap_scan::{self, Settings};
 
 use super::{CommandSpec, mesh};
 use crate::params::bad;
-use crate::schema::scan_wrap_scan::{ScanWrapScanParams, ScanWrapScanResult};
+use crate::schema::scan_wrap_scan::{ScanWrapScanGoal, ScanWrapScanParams, ScanWrapScanResult};
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
 
@@ -21,7 +21,7 @@ pub static COMMANDS: &[CommandSpec] = &[CommandSpec::new("scan.wrap_scan", "Wrap
     .icon("scan_free_form")
     .contract(&WRAP_CONTRACT)
     .output(output_schema_for::<ScanWrapScanResult>)
-    .params("body?: the scan (default: what is selected on a scan, else the only one); tolerance?: length (default 0.2 mm: how far the patches may lie from the scan); max_patches?: 300–60000 (default 12000; a scan that needs more is wrapped with this many, short of the tolerance); planes?: bool (default true: where Find All reads a plane over half a percent of the scan, fitting as well as the scan's noise lets a plane, one plane face in place of the patches there, bounded by the sides of the patches round it); close_tunnels?: bool (default true: the scan's small tunnels and bridges, a scanner's through thin walls, closed on the copy wrapped); tunnel_size?: length (default 12 median edges: the widest patch a tunnel is closed in): the whole scan reduced as far as the tolerance allows (checked both ways, detail kept where it misses), three patches laid on each triangle left (four on two laid as one quad), each side and each patch fitted to the scan by least squares (so noise averages out), sewn into one body: a solid when the scan is closed, else a surface; refused when that body cannot be drawn (faces too thin for the tessellator, as across a CAD export's long rounded edges: Reconstruct is for those); kept as a surface body `Wrap1`, … (one undo step); position only across the patches' sides (G0) → body, surface, solid, patches, coarse_triangles, plane_faces, tunnels_closed, tunnel_parts, rounds, met, capped, within, p99, max (the scan's points to the patches), tolerance, warning?, feature")];
+    .params("body?: the scan (default: what is selected on a scan, else the only one); tolerance?: length (default the scan's, see scan.tolerance: how far the patches may lie from the scan; the verdict reads the scan's whatever is given); max_patches?: 300–60000 (default 12000; a scan that needs more is wrapped with this many, short of the tolerance); planes?: bool (default true: where Find All reads a plane over half a percent of the scan, fitting as well as the scan's noise lets a plane, one plane face in place of the patches there, bounded by the sides of the patches round it); close_tunnels?: bool (default true: the scan's small tunnels and bridges, a scanner's through thin walls, closed on the copy wrapped); tunnel_size?: length (default 12 median edges: the widest patch a tunnel is closed in): the whole scan reduced as far as the tolerance allows (checked both ways, detail kept where it misses), three patches laid on each triangle left (four on two laid as one quad), each side and each patch fitted to the scan by least squares (so noise averages out), sewn into one body: a solid when the scan is closed, else a surface; refused when that body cannot be drawn (faces too thin for the tessellator, as across a CAD export's long rounded edges: Reconstruct is for those); kept as a surface body `Wrap1`, … (one undo step); position only across the patches' sides (G0) → body, surface, solid, patches, coarse_triangles, plane_faces, tunnels_closed, tunnel_parts, rounds, goal {share, reached} (the wrap's own aim, one way: that share of the scan within the tolerance of the patches; whether the model is done is the verdict's), capped, within, p99, max (the scan's points to the patches), tolerance, scan_tolerance, patches_wanted?, warning?, verdict, feature")];
 
 /// A plane, in place of the patches on it, needs this share of the scan's area (Find All's
 /// smaller planes are a few patches' worth: no face worth having).
@@ -68,9 +68,12 @@ const FEWEST_PATCHES: u64 = 300;
 fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.wrap_scan";
     let on = mesh(s, p, cmd)?;
+    // One tolerance for the scan: the one every check reads it against (scan.tolerance), unless
+    // the wrap is asked for another.
+    let scan_tolerance = crate::cmd::scan::tolerance::of(s, &on.body);
     let tolerance = match crate::params::expr(p, "tolerance") {
         Some(e) => s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("tolerance: {e}")))?,
-        None => 0.2,
+        None => scan_tolerance,
     };
     if !(tolerance.is_finite() && tolerance > 0.0) {
         return Err(bad(cmd, "`tolerance` must be a length above 0"));
@@ -84,7 +87,8 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
             as usize,
     };
     let settings = Settings { tolerance, max_patches, ..Settings::default() };
-    let with_planes = p.get("planes").filter(|v| !v.is_null()).map_or(Ok(true), |v| v.as_bool().ok_or_else(|| bad(cmd, "`planes` must be true or false")))?;
+    let with_planes =
+        p.get("planes").filter(|v| !v.is_null()).map_or(Ok(true), |v| v.as_bool().ok_or_else(|| bad(cmd, "`planes` must be true or false")))?;
     let scan = on.scan();
     // Find All's planes: the scan is snapped onto them, so the patches laid there lie on them.
     let regions: Vec<wrap_planes::PlaneRegion> = if with_planes {
@@ -111,7 +115,10 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
     let base = snapped_scan.as_ref().unwrap_or(&scan);
     // The scan's small tunnels closed (on the copy wrapped): they would keep the coarse mesh at full
     // resolution round them.
-    let close_tunnels = p.get("close_tunnels").filter(|v| !v.is_null()).map_or(Ok(true), |v| v.as_bool().ok_or_else(|| bad(cmd, "`close_tunnels` must be true or false")))?;
+    let close_tunnels = p
+        .get("close_tunnels")
+        .filter(|v| !v.is_null())
+        .map_or(Ok(true), |v| v.as_bool().ok_or_else(|| bad(cmd, "`close_tunnels` must be true or false")))?;
     let tunnel_size = match crate::params::expr(p, "tunnel_size") {
         Some(e) => {
             let v = s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("tunnel_size: {e}")))?;
@@ -152,9 +159,7 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
     if let Err(e) = sewn.export_mesh(&solidcraft_io::MeshQuality::Standard.spec(sewn.size())) {
         return Err(bad(
             cmd,
-            format!(
-                "the wrap could not be drawn ({e}); a CAD export is built better by Reconstruct, a scan by a larger tolerance or fewer patches"
-            ),
+            format!("the wrap could not be drawn ({e}); a CAD export is built better by Reconstruct, a scan by a larger tolerance or fewer patches"),
         ));
     }
     let step = solidcraft_kernel::step_export(&[&sewn], "SolidCraft").map_err(|e| bad(cmd, format!("the sewn patches could not be kept: {e}")))?;
@@ -163,31 +168,62 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
     let kind = solidcraft_doc::FeatureKind::ScanSurface { file: "wrap".into(), step: step.into(), recipe: None };
     let feature = super::super::features::add_feature(s, &json!({ "body_name": name, "name": "Wrap Scan" }), kind)?;
     let solid = s.model.state().body(&name).is_some_and(|b| b.is_closed());
-    let short = w.scan_to_patches.within < settings.share;
+    let short = !w.coarse.met;
     let wanted = w.coarse.capped.then_some(w.coarse.wanted.max(w.faces.len()));
-    let warning = short.then(|| {
-        format!(
+    let p99 = w.scan_to_patches.p99;
+    // What this many patches holds, as a tolerance: 99 % of the scan lies within it (rounded up
+    // to a hundredth of a millimetre, as scan.tolerance takes it).
+    let holds = ((100.0 * p99).ceil() / 100.0).max(0.01);
+    let most = MOST_PATCHES as usize;
+    let mut notes: Vec<String> = Vec::new();
+    if short {
+        notes.push(format!(
             "{:.1} % of the scan is within {tolerance} mm of the patches{}",
             100.0 * w.scan_to_patches.within,
             match wanted {
-                Some(n) => format!(": the most patches bounded the wrap; the tolerance asks for about {n} (max_patches), or raise the tolerance"),
+                Some(n) if n > most => format!(
+                    ": the most patches bounded the wrap; the tolerance asks for about {n}, more than a wrap may have ({most}); at {patch_count} patches 99 % of the scan lies within {holds:.2} mm"
+                ),
+                Some(n) => format!(
+                    ": the most patches bounded the wrap; the tolerance asks for about {n} (max_patches); at {patch_count} patches 99 % of the scan lies within {holds:.2} mm"
+                ),
                 None => String::new(),
             }
-        )
-    });
-    let warning = match (warning, planes_note) {
-        (Some(w), Some(n)) => Some(format!("{w}; {n}")),
-        (w, n) => w.or(n),
-    };
-    // The verdict on the model, as scan.verdict gives it; a capped wrap's first next step is the
-    // same wrap with the patches the tolerance asks for.
+        ));
+    }
+    // Built looser than the scan's tolerance, it is still judged at the scan's: done is the plan's.
+    if tolerance > scan_tolerance * (1.0 + 1e-9) {
+        notes.push(format!("built to {tolerance} mm, looser than the scan's {scan_tolerance} mm, which the verdict reads it at"));
+    }
+    notes.extend(planes_note);
+    let warning = (!notes.is_empty()).then(|| notes.join("; "));
+    // The verdict on the model, as scan.verdict gives it: the only judgement of whether it is done.
+    // A capped wrap's first next step is the same wrap with the patches the tolerance asks for;
+    // when that is more than a wrap may have, first the scan's tolerance at what these patches
+    // hold (for a part that needs no closer), then the wrap with the most patches.
     let mut verdict = super::plan::verdict(s, &json!({"scan": on.body, "model": name}))?;
     if let (true, Some(n), Some(next)) = (short, wanted, verdict.get_mut("next").and_then(Value::as_array_mut)) {
-        let most = n.min(MOST_PATCHES as usize);
-        next.insert(
-            0,
-            json!({"command": cmd, "why": format!("the most patches held the wrap back: about {n} meet the tolerance"), "params": {"body": on.body, "tolerance": tolerance, "max_patches": most}}),
-        );
+        let more = json!({
+            "command": cmd,
+            "why": if n > most {
+                format!("the most patches held the wrap back: the tolerance asks for about {n}; {most} come nearest")
+            } else {
+                format!("the most patches held the wrap back: about {n} meet the tolerance")
+            },
+            "params": {"body": on.body, "tolerance": tolerance, "max_patches": n.min(most)},
+        });
+        let mut first = vec![more];
+        if n > most {
+            first.insert(
+                0,
+                json!({
+                    "command": "scan.tolerance",
+                    "why": format!("{tolerance} mm asks for about {n} patches, more than a wrap may have ({most}); at {patch_count} patches 99 % of the scan lies within {holds:.2} mm: if the part needs no closer, read it at that"),
+                    "params": {"body": on.body, "tolerance": holds},
+                }),
+            );
+        }
+        next.splice(0..0, first);
         next.truncate(3);
     }
     let reply = ScanWrapScanResult {
@@ -200,12 +236,13 @@ fn wrap_scan(s: &mut Session, p: &Value) -> Result<Value> {
         tunnels_closed: closed.as_ref().map_or(0, |c| c.handles_before.saturating_sub(c.handles_after)),
         tunnel_parts: closed.as_ref().map_or(0, |c| c.parts),
         rounds: w.coarse.rounds,
-        met: w.coarse.met,
+        goal: ScanWrapScanGoal { share: settings.share, reached: w.coarse.met },
         capped: w.coarse.capped,
         within: w.scan_to_patches.within,
         p99: w.scan_to_patches.p99,
         max: w.scan_to_patches.max,
         tolerance,
+        scan_tolerance,
         patches_wanted: wanted,
         warning,
         verdict,
