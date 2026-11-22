@@ -343,9 +343,7 @@ impl Builder {
                 if !net.iter().all(|p| p.is_finite()) {
                     return Err(fail("a patch's control points must be finite"));
                 }
-                let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
-                let points: Vec<Vec<[f64; 3]>> = (0..4).map(|i| (0..4).map(|j| arr(net[j * 4 + i])).collect()).collect();
-                let s = b::Surface::Spline { u_knots: knots.clone(), v_knots: knots, points };
+                let s = bicubic_surface(net);
                 for u in loops.iter_mut().flatten() {
                     let e = self.edges.get(u.edge as usize).ok_or_else(|| fail("edge"))?;
                     u.given = Some(bicubic_pcurve(e, net, tol).ok_or_else(|| fail("an edge that is not a side of its patch"))?);
@@ -575,9 +573,33 @@ pub fn sew(faces: &[FaceSpec]) -> Result<Body> {
 /// Sew a network of faces that share their sides (as [`SurfSpec::Bicubic`] patches do): a solid
 /// where it closes, a surface body where some sides are used by one face only (a scan's open
 /// rim). No side may have more than two faces.
+/// A patch that folds over itself (its normal vanishes inside it) is refused, naming it: it is no
+/// surface a face can lie on, and no tessellation of it settles.
 pub fn sew_network(faces: &[FaceSpec]) -> Result<Body> {
     let _span = solidcraft_profile::span("kernel", "sew_network");
+    let patches: Vec<(usize, b::Surface)> = faces
+        .iter()
+        .enumerate()
+        .filter_map(|(fi, f)| match &f.surface {
+            SurfSpec::Bicubic { net } if net.iter().all(|p| p.is_finite()) => Some((fi, bicubic_surface(net))),
+            _ => None,
+        })
+        .collect();
+    if !patches.is_empty() {
+        let surfaces: Vec<b::Surface> = patches.iter().map(|(_, s)| s.clone()).collect();
+        let regular = solidcore_ops::surface::regular(&surfaces).map_err(|e| KernelError::Failed(format!("sew: a patch's regularity: {e}")))?;
+        if let Some(((fi, _), _)) = patches.iter().zip(&regular).find(|(_, ok)| !**ok) {
+            return Err(KernelError::Invalid(format!("sew: patch {fi} folds over itself (its normal vanishes inside it)")));
+        }
+    }
     sew_impl(faces, false, None, true).map(|(body, _)| body)
+}
+
+/// A bicubic patch's net (u fastest) as the record's surface: one Bézier patch on [0, 1]².
+pub fn bicubic_surface(net: &[Vec3; 16]) -> b::Surface {
+    let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+    let points: Vec<Vec<[f64; 3]>> = (0..4).map(|i| (0..4).map(|j| arr(net[j * 4 + i])).collect()).collect();
+    b::Surface::Spline { u_knots: knots.clone(), v_knots: knots, points }
 }
 
 /// Sew the faces into a closed solid that may touch itself: where four faces meet along a
@@ -1571,6 +1593,22 @@ mod tests {
         }
     }
 
+    /// A patch over the dart (0, 0), (10, 0), (2, 2), (0, 10), its corner at (2, 2) reflex, folds
+    /// over itself: its net is the bilinear map's, whose S_u × S_v is 10 × 10 = +100 along z at
+    /// (0, 0) and (2, −8) × (−8, 2) = 4 − 64 = −60 at (1, 1), so the normal vanishes between them.
+    /// Sewn beside a square it is refused by its place, before anything is built; the square
+    /// alone sews.
+    #[test]
+    fn a_patch_that_folds_over_itself_is_refused_by_its_place() {
+        let p = |x: f64, y: f64| Vec3::new(x, y, 0.0);
+        let z = Vec3::ZERO;
+        let square = patch(p(-10.0, 0.0), p(0.0, 0.0), p(0.0, 10.0), p(-10.0, 10.0), z, 0.0);
+        let dart = patch(p(0.0, 0.0), p(10.0, 0.0), p(2.0, 2.0), p(0.0, 10.0), z, 0.0);
+        let refused = sew_network(&[square.clone(), dart]).unwrap_err().to_string();
+        assert!(refused.contains("patch 1 folds over itself"), "{refused}");
+        assert!(sew_network(&[square]).is_ok());
+    }
+
     /// Six flat bicubic patches round a 2 × 3 × 4 box sew into one solid of volume 24 with no
     /// surface intersection (each side is the patch's own boundary, its pcurve a straight line).
     #[test]
@@ -1619,14 +1657,17 @@ mod tests {
     #[test]
     fn an_open_bicubic_network_is_a_surface() {
         let p = |x: f64, y: f64| Vec3::new(x, y, 0.0);
-        let faces = vec![patch(p(0., 0.), p(1., 0.), p(1., 1.), p(0., 1.), Vec3::ZERO, 0.0), patch(p(1., 0.), p(2., 0.), p(2., 1.), p(1., 1.), Vec3::ZERO, 0.0)];
+        let faces = vec![
+            patch(p(0., 0.), p(1., 0.), p(1., 1.), p(0., 1.), Vec3::ZERO, 0.0),
+            patch(p(1., 0.), p(2., 0.), p(2., 1.), p(1., 1.), Vec3::ZERO, 0.0),
+        ];
         let body = sew_network(&faces).unwrap();
         assert_eq!(body.face_count(), 2);
         assert!(sew(&faces).is_err());
         // A side that is not its patch's own boundary is refused, not guessed.
         let mut bad = faces.clone();
         if let SurfSpec::Bicubic { net } = &mut bad[1].surface {
-            net[0] = net[0] + Vec3::Z;
+            net[0] += Vec3::Z;
         }
         assert!(sew_network(&bad).is_err());
     }
