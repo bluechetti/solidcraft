@@ -364,9 +364,15 @@ const GN_W_MEMO: usize = 65536;
 /// `t_sWMemo` (b8ec238, smlib#109): the equal area thumbweights [`gn_equal_area_w`]
 /// solved, by order and u's bits (the same u, the same root). Emptied as the outermost
 /// [`OperationScope`] opens, and when it grows past [`GN_W_MEMO`].
+///
+/// Not the fork's: it also keeps the area integral as a series at each root
+/// ([`gn_area_series_at`]), by order and w's bits. Every station whose wedge gives a kept
+/// root asks for that series, and it is the costly part of a station (2,049 Simpson points
+/// of series arithmetic): a G2 round's booleans asked for it 302,912 times for 96 roots.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ThumbweightMemo {
     roots: BTreeMap<(usize, u64), f64>,
+    areas: BTreeMap<(usize, u64), Tay<f64>>,
 }
 
 impl ThumbweightMemo {
@@ -431,6 +437,25 @@ pub(crate) fn gn_equal_area_w(k: &Kernel, order: usize, u: f64) -> Result<f64> {
     Ok(w)
 }
 
+/// `gn_area_sum(n, Tay::of_terms(w, 1.0))`: the area integral of the order-n section and
+/// its w-derivatives at the thumbweight w, each order and w computed once in an operation
+/// and kept in the kernel's [`ThumbweightMemo`] (not the fork's, which computes it at every
+/// station). The series is a pure function of exactly the key (the order and w's bits), so
+/// a kept one is the one a fresh computation gives: keeping it cannot change a result.
+pub(crate) fn gn_area_series_at(k: &Kernel, order: usize, w: f64) -> Tay<f64> {
+    let key = (order, w.to_bits());
+    if let Some(&d) = k.blend_w_memo.borrow().areas.get(&key) {
+        return d;
+    }
+    let d = gn_area_sum(order, Tay::of_terms(w, 1.0));
+    let mut memo = k.blend_w_memo.borrow_mut();
+    if memo.areas.len() >= GN_W_MEMO {
+        memo.areas.clear();
+    }
+    memo.areas.insert(key, d);
+    d
+}
+
 /// `sm_GnEqualAreaWSolve`: the thumbweight at which the order-n section takes off what
 /// the ball's circle does, for half the angle u between the ball's radii
 /// ([`GnSectionFsg::equal_area_thumbweight`]): the root of `I(w) = target(u)`.
@@ -484,7 +509,7 @@ fn gn_station_thumbweight(
     };
     let u = gn_half_angle(&x);
     let w = gn_equal_area_w(k, n, u.at(0))?;
-    let d = gn_area_sum(n, Tay::of_terms(w, 1.0));
+    let d = gn_area_series_at(k, n, w);
     let falls = d.at(1) < 0.0;
     if !falls {
         // "the section's area does not fall with its thumbweight"

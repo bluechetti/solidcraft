@@ -40,12 +40,11 @@ use core::cmp::Ordering;
 
 use super::form::{gn_form, gn_form_t, Bern};
 use super::interval::Ivl;
-use super::section::gn_equal_area_w;
+use super::section::{gn_area_series_at, gn_equal_area_w};
 use super::series::{Ser, Trunc, VSer, MAX_E, MAX_K, MAX_S};
 use super::station::{feet_on_knots, gn_solve_station_with, GnStation, StationOptions};
 use super::tay::{
-    gn_area_sum, gn_half_angle, gn_invert, gn_target, gn_wedge_cos, gn_wedge_cos_over, Ring, Tay,
-    TAY,
+    gn_half_angle, gn_invert, gn_target, gn_wedge_cos, gn_wedge_cos_over, Ring, Tay, TAY,
 };
 use crate::error::{Result, SolidError};
 use crate::geom::vector3d::Vec3;
@@ -660,7 +659,7 @@ pub fn evaluate_definition(
             };
             let u = gn_half_angle(&x);
             let w0 = gn_equal_area_w(k, n, u.at(0))?;
-            let d = gn_area_sum(n, Tay::of_terms(w0, 1.0));
+            let d = gn_area_series_at(k, n, w0);
             if d.at(1).partial_cmp(&0.0) != Some(Ordering::Less) {
                 // "the section's area does not fall with its thumbweight"
                 return Err(SolidError::blend_failed(
