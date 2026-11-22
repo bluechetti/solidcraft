@@ -203,6 +203,10 @@ pub struct Body {
     /// The exact box ([`Body::exact_bounds`]), measured on first use and shared by clones
     /// because they share the record.
     pub(crate) bounds: std::sync::Arc<std::sync::Mutex<Option<Aabb3>>>,
+    /// The exact mass measure ([`crate::measure_mass`]), measured on first use and shared by
+    /// clones because they share the record; a moved copy measures its own, as `bounds`. On a
+    /// G2 round each measure is tens of seconds, and `validity` then `measure` asked twice.
+    pub(crate) mass: std::sync::Arc<std::sync::Mutex<Option<crate::MassMeasure>>>,
     /// Set for mesh bodies (`record` is then empty).
     pub(crate) mesh: Option<std::sync::Arc<Mesh>>,
     /// A mesh body's shading normals, three per triangle of `mesh` in its order
@@ -698,6 +702,7 @@ impl Body {
             size,
             volume: Some(std::sync::Arc::new(std::sync::Mutex::new(None))),
             bounds: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            mass: std::sync::Arc::new(std::sync::Mutex::new(None)),
             mesh,
             mesh_normals: None,
             color: None,
@@ -1307,6 +1312,7 @@ impl Body {
             size: self.size,
             volume: self.volume.clone(),
             bounds: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            mass: std::sync::Arc::new(std::sync::Mutex::new(None)),
             mesh: None,
             mesh_normals: None,
             color: self.color,
@@ -1439,6 +1445,19 @@ impl Body {
         let b = Aabb3 { min: v3(lo), max: v3(hi) };
         *slot = Some(b);
         Ok(b)
+    }
+
+    /// Keep `b` as the exact box when none is kept yet: the box SMLib's mass properties were
+    /// centred on, which is the box [`Body::exact_bounds`] measures (the same call on the same
+    /// record), so it is not measured a second time.
+    pub(crate) fn remember_exact_bounds(&self, b: Aabb3) {
+        if self.is_mesh() {
+            return;
+        }
+        let mut slot = self.bounds.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_none() {
+            *slot = Some(b);
+        }
     }
 
     /// The body's volume: measured with exact mass properties via SMLib for B-rep bodies,

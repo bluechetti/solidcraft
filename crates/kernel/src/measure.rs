@@ -102,11 +102,28 @@ pub fn measure_mass(b: &Body) -> Result<MassMeasure> {
         let m = measure(b)?;
         return Ok(MassMeasure { volume: m.volume, area: m.area, centroid: m.centroid, bbox: m.bbox, measured_by: m.measured_by, notes: m.notes });
     }
-    let m = crate::guard("SMLib mass properties", || {
-        b.smlib()?.mass_properties(ACCURACY).map_err(|e| crate::KernelError::smlib("SMLib mass properties", e))
+    // Held while measuring, so callers on other threads wait for this measurement.
+    let mut slot = b.mass.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(m) = &*slot {
+        return Ok(m.clone());
+    }
+    let (m, exact) = crate::guard("SMLib mass properties", || {
+        b.smlib()?.mass_properties_and_bounds(ACCURACY).map_err(|e| crate::KernelError::smlib("SMLib mass properties", e))
     })?;
+    if let Some((lo, hi)) = exact {
+        b.remember_exact_bounds(Aabb3 { min: crate::body::v3(lo), max: crate::body::v3(hi) });
+    }
     let [x, y, z] = m.centroid;
-    Ok(MassMeasure { volume: m.volume, area: m.area, centroid: Vec3::new(x, y, z), bbox: b.exact_bounds()?, measured_by: "smlib", notes: Vec::new() })
+    let m = MassMeasure {
+        volume: m.volume,
+        area: m.area,
+        centroid: Vec3::new(x, y, z),
+        bbox: b.exact_bounds()?,
+        measured_by: "smlib",
+        notes: Vec::new(),
+    };
+    *slot = Some(m.clone());
+    Ok(m)
 }
 
 #[cfg(test)]

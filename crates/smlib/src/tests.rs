@@ -150,7 +150,7 @@ const NO_KERNEL: [&str; 16] = [
     "start",
 ];
 
-const ANSWERING: [&str; 70] = [
+const ANSWERING: [&str; 71] = [
     "set_dump_dir",
     "current_call",
     "crash_test",
@@ -192,6 +192,7 @@ const ANSWERING: [&str; 70] = [
     "classify_point",
     "classify_points",
     "mass_properties",
+    "mass_properties_and_bounds",
     "bounds",
     "edge_face_distance",
     "curve_face_gap_bound",
@@ -333,6 +334,7 @@ fn every_entry_point_answers() {
     says("classify_point", a.classify_point([1.0; 3]));
     says("classify_points", a.classify_points(&[[1.0; 3], [f64::NAN; 3]]));
     says("mass_properties", a.mass_properties(1e-6));
+    says("mass_properties_and_bounds", a.mass_properties_and_bounds(1e-6));
     says("bounds", a.bounds());
     says("edge_face_distance", a.edge_face_distance(0, 0));
     let spline = solidcore_record::brep::Curve::Spline { knots: vec![0.0, 0.0, 1.0, 1.0], points: vec![[0.0; 3], [1.0; 3]] };
