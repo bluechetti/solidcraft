@@ -68,7 +68,7 @@ filter = """
     | test(=thread_tests::a_multi_start_thread_takes_the_volume_of_one_start)
     | test(=thread_tests::a_thread_reaches_a_flat_shoulder_at_every_angle_and_leaves_it_whole)
 ))
-| (package(solidcraft-engine) & (binary(atomic_commands) | binary(step_export_regressions)))
+| (package(solidcraft-engine) & (binary(atomic_commands) | (binary(integration) & test(/^step_export_regressions::/))))
 | (package(solidcraft-kernel) & (
     test(=curveblend::tests::rolling_ball_turns_about_a_rounded_corner_of_its_radius)
     | test(=tests::fillet_tabbed_plate_outer_loop_and_partial_selection_after_hole)
@@ -131,7 +131,7 @@ filter = """
     | test(=cmd::sheet::tests::perforated_sheet_takes_a_thousand_round_holes)
     | test(=boolean_regression_tests::joined_loft_frames_plan_their_display_at_every_quality)
 ))
-| (package(solidcraft-engine) & (binary(atomic_commands) | binary(step_export_regressions)))
+| (package(solidcraft-engine) & (binary(atomic_commands) | (binary(integration) & test(/^step_export_regressions::/))))
 | (package(solidcraft-kernel) & (
     test(=curveblend::tests::rolling_ball_turns_about_a_rounded_corner_of_its_radius)
     | test(=tests::fillet_tabbed_plate_outer_loop_and_partial_selection_after_hole)

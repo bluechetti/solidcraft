@@ -4,6 +4,11 @@ description = "SolidCraft engine: the session, the command registry (everything 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# The integration tests build as two binaries, not one per file: each binary links the whole
+# engine, and twelve of them took 237-261 s to rebuild after a one-line engine edit, against
+# 35-36 s for two. tests/integration.rs lists the files; its every_test_file_is_built test
+# fails when a new file is not listed.
+autotests = false
 
 [lints]
 workspace = true
@@ -82,6 +87,16 @@ solidcraft-sketch = { workspace = true, features = ["solver-profiling"] }
 solidcraft-develop = { workspace = true }
 # The scan benchmark's example (examples/scan_bench.rs) makes its scans with the seeded degrader.
 solidcraft-testkit = { workspace = true }
+
+# The transaction contract on random designs: its own binary, which pull requests skip by name
+# (.config/nextest.toml).
+[[test]]
+name = "atomic_commands"
+path = "tests/atomic_commands.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [[example]]
 name = "render_resource_workflow"
