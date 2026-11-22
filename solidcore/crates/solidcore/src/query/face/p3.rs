@@ -1439,6 +1439,18 @@ fn face_directed_max_with<'b>(
             surface.knots_with_nurb(k, SurfParamType::U, None)?.0,
             surface.knots_with_nurb(k, SurfParamType::V, None)?.0,
         )
+    } else if let SurfaceKind::ProceduralBlend(pb) = surface.kind() {
+        // Not the fork's: a procedural blend's cells are decided on its net's subpatches
+        // ([`cell_monotone`], the #18809 skip), and a rational net's monotone test decides
+        // only a cell within one span. Halved at its middles, the cell holding a knot is
+        // never within one: a G2 round's net has one where the face ends and its run-on
+        // starts, and the search took that cell to its limits (16,385 cells, 12,285 solves,
+        // 27 s) to return the run-on's value outside the face. Divided at the net's knots,
+        // as a B-spline face is (WR-651), the cell on each side is decided.
+        (
+            pb.net().knots(SurfParamType::U, None)?.0,
+            pb.net().knots(SurfParamType::V, None)?.0,
+        )
     } else {
         (Vec::new(), Vec::new())
     };
