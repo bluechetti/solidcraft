@@ -14,7 +14,7 @@ For the reproducible oblique sample, append `-- --oblique-sample`. Its two holes
 and both long edges remain horizontally aligned. The cut angle controls the
 boundary lines; this horizontal fixture always shortens along X.
 
-`cargo test --profile ci -p solidcraft-ui-egui --test broken_view_preview`
+`cargo test --profile ci -p solidcraft-ui-egui --test integration broken_view_preview::`
 renders that actual preview UI without a desktop window to
 `target/broken-view-review/aligned-oblique.png` for visual review.
 
