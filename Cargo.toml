@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/*", "xtask"]
+members = ["crates/*", "apps/*", "crates/workspace-hack", "xtask"]
 # Third-party code kept with local fixes (vendor/), and the vendored SolidCore kernel (solidcore/);
 # neither is linted as ours. See CONTRIBUTING.md, "How the code is laid out".
 exclude = ["solidcore", "vendor"]
@@ -206,6 +206,12 @@ opt-level = 2
 # No line tables for dependencies: they were over a third of the test archive every CI shard
 # downloads. Our own crates keep theirs, so a backtrace still names file:line in them.
 debug = false
+
+# Local checks (`cargo xtask fast`): the ci profile with incremental builds, so an edit rebuilds
+# only what changed. Lints and test results are the same as ci's.
+[profile.fast]
+inherits = "ci"
+incremental = true
 
 [profile.release]
 opt-level = 3
