@@ -57,7 +57,15 @@ fn main() {
                 text.extend(c.triangles.iter().map(|t| format!("f {} {} {}\n", t[0] + 1, t[1] + 1, t[2] + 1)));
                 std::fs::write(&path, text).expect("write the coarse mesh");
             }
-            println!("triangles {} -> coarse {} in {} rounds (met {}, capped {})", triangles.len(), c.triangles.len(), c.rounds, c.met, c.capped);
+            println!(
+                "triangles {} -> coarse {} in {} rounds (met {}, capped {}, unfair {})",
+                triangles.len(),
+                c.triangles.len(),
+                c.rounds,
+                c.met,
+                c.capped,
+                c.unfair
+            );
             let shape = |t: &[u32; 3]| {
                 let q = t.map(|i| c.positions[i as usize]);
                 let area2 = (q[1] - q[0]).cross(q[2] - q[0]).len();
@@ -86,20 +94,30 @@ fn main() {
                     *uses.entry((a.min(b), a.max(b))).or_insert(0usize) += 1;
                 }
             }
-            let smallest_angle = c.triangles.iter().map(|t| {
-                let q = t.map(|i| c.positions[i as usize]);
-                (0..3).map(|k| {
-                    let (u, v) = (q[(k + 1) % 3] - q[k], q[(k + 2) % 3] - q[k]);
-                    (u.dot(v) / (u.len() * v.len()).max(1e-300)).clamp(-1.0, 1.0).acos().to_degrees()
-                }).fold(180.0, f64::min)
-            }).fold(180.0, f64::min);
-            let thin = c.triangles.iter().filter(|t| {
-                let q = t.map(|i| c.positions[i as usize]);
-                (0..3).any(|k| {
-                    let (u, v) = (q[(k + 1) % 3] - q[k], q[(k + 2) % 3] - q[k]);
-                    (u.dot(v) / (u.len() * v.len()).max(1e-300)).clamp(-1.0, 1.0).acos().to_degrees() < 3.0
+            let smallest_angle = c
+                .triangles
+                .iter()
+                .map(|t| {
+                    let q = t.map(|i| c.positions[i as usize]);
+                    (0..3)
+                        .map(|k| {
+                            let (u, v) = (q[(k + 1) % 3] - q[k], q[(k + 2) % 3] - q[k]);
+                            (u.dot(v) / (u.len() * v.len()).max(1e-300)).clamp(-1.0, 1.0).acos().to_degrees()
+                        })
+                        .fold(180.0, f64::min)
                 })
-            }).count();
+                .fold(180.0, f64::min);
+            let thin = c
+                .triangles
+                .iter()
+                .filter(|t| {
+                    let q = t.map(|i| c.positions[i as usize]);
+                    (0..3).any(|k| {
+                        let (u, v) = (q[(k + 1) % 3] - q[k], q[(k + 2) % 3] - q[k]);
+                        (u.dot(v) / (u.len() * v.len()).max(1e-300)).clamp(-1.0, 1.0).acos().to_degrees() < 3.0
+                    })
+                })
+                .count();
             println!("coarse triangles with an angle under 3 deg: {thin}");
             println!(
                 "coarse edges: open {}, of 3+ faces {}; smallest angle {:.2} deg",
@@ -125,7 +143,10 @@ fn main() {
                 bad[2] += usize::from(phi > 170.0);
                 bad[3] += usize::from(phi > 175.0);
             }
-            println!("patch corners: smallest {lo:.1} deg, largest {hi:.1} deg; patches with a corner <5 {} <10 {} >170 {} >175 {}", bad[0], bad[1], bad[2], bad[3]);
+            println!(
+                "patch corners: smallest {lo:.1} deg, largest {hi:.1} deg; patches with a corner <5 {} <10 {} >170 {} >175 {}",
+                bad[0], bad[1], bad[2], bad[3]
+            );
             // The same by the straight chords between the corners (the layout's own angles).
             let mut chord_bad = 0usize;
             let mut both = 0usize;

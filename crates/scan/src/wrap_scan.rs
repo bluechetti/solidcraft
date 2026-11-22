@@ -153,6 +153,9 @@ pub struct Coarse {
     /// The patches its round's budgets would have laid with no cap (more than the cap when
     /// `capped`): about what the tolerance asks for.
     pub wanted: usize,
+    /// Coarse triangles whose patches still have a corner outside the fair corners ([`unfair`])
+    /// after [`fair_corners`]: none where it could mend them all within the tolerance.
+    pub unfair: usize,
 }
 
 impl Coarse {
@@ -1124,6 +1127,406 @@ fn smallest_angle(t: [Vec3; 3]) -> f64 {
         .fold(std::f64::consts::PI, f64::min)
 }
 
+/// The corners every patch of the layout keeps: each between this (10°) and 180° less it. A
+/// patch with a sharper or flatter corner is one no tessellation follows well (its neighbour's
+/// sides are split beside it without end) and no surface an engineer wants.
+const FAIR: f64 = 0.1745;
+/// Rounds of the fair-corner phase ([`fair_corners`]).
+const FAIR_ROUNDS: usize = 8;
+/// Steps of a longest-side propagation path ([`fair_corners`]'s split).
+const LONGEST_STEPS: usize = 16;
+
+/// The angle at `o` between the directions to `p` and `q` (radians; 0 where one is empty).
+fn corner_angle(o: Vec3, p: Vec3, q: Vec3) -> f64 {
+    let (u, v) = (p - o, q - o);
+    let l = u.len() * v.len();
+    if l > 0.0 { (u.dot(v) / l).clamp(-1.0, 1.0).acos() } else { 0.0 }
+}
+
+/// The inner corner at `o` of a polygon running `prev`, `o`, `next` counter-clockwise about `n`
+/// (radians, in (0, 2π)): past half a turn where the polygon is concave there. An unsigned angle
+/// between the two sides reads a reflex 200° corner as 160°, and the patches that do not mesh are
+/// exactly such concave quads (a car rim's slowest patches meshed alone, research H).
+fn inner_corner(prev: Vec3, o: Vec3, next: Vec3, n: Vec3) -> f64 {
+    let (into, out) = (o - prev, next - o);
+    std::f64::consts::PI - into.cross(out).dot(n).atan2(into.dot(out))
+}
+
+/// How far quads (each counter-clockwise about `n`) fall outside the fair corners: 0 when every
+/// inner corner lies within [`FAIR`] and 180° less it, else the largest excess (radians).
+fn quads_unfair(quads: &[[Vec3; 4]], n: Vec3) -> f64 {
+    quads
+        .iter()
+        .flat_map(|q| (0..4).map(move |k| inner_corner(q[(k + 3) % 4], q[k], q[(k + 1) % 4], n)))
+        .map(|x| (FAIR - x).max(x - (std::f64::consts::PI - FAIR)).max(0.0))
+        .fold(0.0, f64::max)
+}
+
+/// How far the three patches a triangle is laid as when it is not paired fall outside the fair
+/// corners ([`quads_unfair`]), judged as they will be laid: its corners, the middles of its sides
+/// and its [`inner_point`] each placed onto the scan along its normal ([`Under::under`]), as
+/// [`patches`] places them. Placing moves a short side's ends by as much as the coarse mesh
+/// strays from the scan, which can make a fair layout quad concave. A triangle's own angles are
+/// three of its patches' corners, so a needle or a cap is never fair alone; paired into a fair
+/// quad it may be ([`pair_unfair`]). A degenerate triangle is unfair by [`FAIR`].
+fn unfair(under: &Under, c: [Vec3; 3]) -> f64 {
+    let [a, b, d] = c;
+    let Some(n) = unit_normal(c) else { return FAIR };
+    let put = |p: Vec3| under.under(p, n).unwrap_or(p);
+    let g = put(inner_point(a, b, d));
+    let (mab, mbd, mda) = (put((a + b) / 2.0), put((b + d) / 2.0), put((d + a) / 2.0));
+    let (a, b, d) = (put(a), put(b), put(d));
+    quads_unfair(&[[a, mab, g, mda], [b, mbd, g, mab], [d, mda, g, mbd]], n)
+}
+
+/// The same for a pair laid as one quad `q` (counter-clockwise, `a d b c` as [`pairs`] gives it)
+/// cut in four round its middle, facing `n`.
+fn pair_unfair(under: &Under, q: [Vec3; 4], n: Vec3) -> f64 {
+    let put = |p: Vec3| under.under(p, n).unwrap_or(p);
+    let centre = put((q[0] + q[1] + q[2] + q[3]) / 4.0);
+    let mid = |k: usize| put((q[k] + q[(k + 1) % 4]) / 2.0);
+    let corner = q.map(put);
+    let quarters: Vec<[Vec3; 4]> = (0..4).map(|k| [corner[k], mid(k), centre, mid((k + 3) % 4)]).collect();
+    quads_unfair(&quarters, n)
+}
+
+/// Each coarse triangle's unfairness as the layout will lay it: alone ([`unfair`]) or with its
+/// pair ([`pair_unfair`], the same for both).
+fn layout_unfair(under: &Under, positions: &[Vec3], triangles: &[[u32; 3]], partner: &[Option<(usize, [u32; 4])>]) -> Vec<f64> {
+    let at = |v: u32| positions.get(v as usize).copied().unwrap_or(Vec3::ZERO);
+    par::map(triangles.len(), |f| {
+        let c = triangles[f].map(at);
+        match partner.get(f).copied().flatten() {
+            Some((u, quad)) => {
+                let other = triangles.get(u).map(|t| t.map(at));
+                let n = unit_normal(c).zip(other.and_then(unit_normal)).map(|(n1, n2)| n1 + n2).filter(|n| n.len() > 0.0).map(|n| n / n.len());
+                n.map_or(FAIR, |n| pair_unfair(under, quad.map(at), n))
+            }
+            None => unfair(under, c),
+        }
+    })
+}
+
+/// The coarse mesh mended until every patch the layout lays on it has fair corners ([`FAIR`]),
+/// held within `tolerance` of the scan: Hu, Yan, Bommes, Alliez and Benes's angle improvement
+/// ("Error-bounded and feature preserving surface remeshing with minimal angle improvement", TVCG
+/// 2017, §3.2), with the patches' corners in place of the triangles' angles. The unfair triangles
+/// (not paired, see [`unfair`]), worst first, each by the first of these that works:
+/// - the side opposite its smallest angle collapsed, either way round (a needle's short side, a
+///   cap's point onto an end of its long side);
+/// - the side opposite its largest angle flipped (a cap's long side: Botsch and Kobbelt's mend,
+///   which subdividing cannot make);
+/// - one of its points moved toward the middle of its neighbours and back onto the scan;
+/// - the longest side along its longest-side path (Rivara) split at the scan's point nearest its
+///   middle, which may mend nothing at once but gives the next round points to work with.
+///
+/// Each is made only when the mesh stays manifold, no point on the open rim moves, no face turns
+/// over, every face it makes lies on the scan within `tolerance` and covers what it replaces, and
+/// the worst patch corner of the faces it changes, as laid ([`unfair`]), becomes fairer than it
+/// was (for the split: no worse): no new corner is worse than the one being mended. Rounds until none is unfair or
+/// [`FAIR_ROUNDS`]; how many triangles are still unfair.
+fn fair_corners(positions: &mut Vec<Vec3>, triangles: &mut Vec<[u32; 3]>, under: &Under, tolerance: f64) -> usize {
+    let on_scan = |p: Vec3| under.tree.nearest(p).is_some_and(|(d, _)| d <= tolerance);
+    let onto_scan =
+        |p: Vec3| under.tree.nearest(p).and_then(|(_, s)| under.scan.corners(s as usize)).map(|[a, b, c]| closest_on_triangle(p, a, b, c));
+    for _ in 0..FAIR_ROUNDS {
+        let partner = pairs(positions, triangles);
+        let corners_of = |positions: &[Vec3], t: [u32; 3]| t.map(|i| positions.get(i as usize).copied().unwrap_or(Vec3::ZERO));
+        // A face's unfairness as laid now: none when it is paired.
+        let status = layout_unfair(under, positions, triangles, &partner);
+        let mut bad: Vec<usize> = (0..triangles.len()).filter(|&f| status[f] > 0.0).collect();
+        if bad.is_empty() {
+            break;
+        }
+        bad.sort_by(|&x, &y| status[y].total_cmp(&status[x]).then(x.cmp(&y)));
+        let by_edge = edge_faces(triangles);
+        let mut around: Vec<Vec<usize>> = vec![Vec::new(); positions.len()];
+        for (f, tri) in triangles.iter().enumerate() {
+            for &v in tri {
+                if let Some(a) = around.get_mut(v as usize) {
+                    a.push(f);
+                }
+            }
+        }
+        // A point on the open rim, or on a crease (two faces bending more than 30°), stays.
+        let mut fixed = vec![false; positions.len()];
+        for ((a, b), faces) in &by_edge {
+            let keep = match faces.as_slice() {
+                [f1, f2] => match (unit_normal(corners_of(positions, triangles[*f1])), unit_normal(corners_of(positions, triangles[*f2]))) {
+                    (Some(n1), Some(n2)) => n1.dot(n2) < CREASE,
+                    _ => false,
+                },
+                _ => true,
+            };
+            if keep {
+                fixed[*a as usize] = true;
+                fixed[*b as usize] = true;
+            }
+        }
+        let mut touched = vec![false; triangles.len()];
+        let mut gone = vec![false; triangles.len()];
+        let mut added: Vec<[u32; 3]> = Vec::new();
+        let mut changed = false;
+        for t in bad {
+            if touched[t] || gone[t] {
+                continue;
+            }
+            let tri = triangles[t];
+            let c = corners_of(positions, tri);
+            let angles = [0, 1, 2].map(|k| corner_angle(c[k], c[(k + 1) % 3], c[(k + 2) % 3]));
+            let smallest = (0..3).min_by(|&i, &j| angles[i].total_cmp(&angles[j])).unwrap_or(0);
+            let largest = (0..3).max_by(|&i, &j| angles[i].total_cmp(&angles[j])).unwrap_or(0);
+            // The faces an operation changes, each with the face it becomes (`None`: taken out),
+            // and the faces it adds; it is made only if `accept` says so.
+            let mut done: Option<(Vec<(usize, Option<[u32; 3]>)>, Vec<[u32; 3]>, Option<(u32, Vec3)>)> = None;
+            // 1. Collapse the side opposite the smallest angle, either way round.
+            let (x, y) = (tri[(smallest + 1) % 3], tri[(smallest + 2) % 3]);
+            for (m, to) in [(x, y), (y, x)] {
+                if done.is_some() || fixed[m as usize] {
+                    continue;
+                }
+                let fan = &around[m as usize];
+                if fan.iter().any(|&f| touched[f] || gone[f]) {
+                    continue;
+                }
+                let neighbours = |v: u32| -> Vec<u32> {
+                    let mut n: Vec<u32> = around[v as usize].iter().flat_map(|&f| triangles[f]).filter(|&w| w != v).collect();
+                    n.sort_unstable();
+                    n.dedup();
+                    n
+                };
+                let shared: Vec<usize> = fan.iter().copied().filter(|&f| triangles[f].contains(&to)).collect();
+                let opposite = shared.iter().flat_map(|&f| triangles[f]).filter(|&w| w != m && w != to).count();
+                let (nm, nt) = (neighbours(m), neighbours(to));
+                if shared.is_empty() || nm.iter().filter(|w| nt.contains(w)).count() != opposite {
+                    continue;
+                }
+                let pm = positions[m as usize];
+                let mut ok = true;
+                let mut ops: Vec<(usize, Option<[u32; 3]>)> = shared.iter().map(|&f| (f, None)).collect();
+                for &f in fan.iter().filter(|f| !shared.contains(f)) {
+                    let after = triangles[f].map(|w| if w == m { to } else { w });
+                    let (cb, ca) = (corners_of(positions, triangles[f]), corners_of(positions, after));
+                    let turned = match (unit_normal(cb), unit_normal(ca)) {
+                        (Some(nb), Some(na)) => nb.dot(na) < 0.0,
+                        (_, None) => true,
+                        (None, Some(_)) => false,
+                    };
+                    if turned || !on_scan((ca[0] + ca[1] + ca[2]) / 3.0) {
+                        ok = false;
+                        break;
+                    }
+                    ops.push((f, Some(after)));
+                }
+                let covered = ops.iter().filter_map(|(_, a)| *a).any(|a| {
+                    let q = corners_of(positions, a);
+                    closest_on_triangle(pm, q[0], q[1], q[2]).dist(pm) <= tolerance
+                });
+                if ok && covered {
+                    done = Some((ops, Vec::new(), None));
+                }
+            }
+            // 2. Flip the side opposite the largest angle.
+            if done.is_none() {
+                let (a, b) = (tri[(largest + 1) % 3], tri[(largest + 2) % 3]);
+                let z = tri[largest];
+                if let Some(&[f1, f2]) = by_edge.get(&(a.min(b), a.max(b))).map(Vec::as_slice) {
+                    let u = if f1 == t { f2 } else { f1 };
+                    let g = triangles[u];
+                    // t runs a → b with z opposite; u runs b → a with w opposite.
+                    let w = (0..3).find(|&i| g[i] == b && g[(i + 1) % 3] == a).map(|i| g[(i + 2) % 3]);
+                    if let Some(w) = w
+                        && !touched[u]
+                        && w != z
+                        && !by_edge.contains_key(&(z.min(w), z.max(w)))
+                    {
+                        let (g1, g2) = ([a, w, z], [w, b, z]);
+                        let (d1, d2) = (corners_of(positions, g1), corners_of(positions, g2));
+                        let (cu, ct) = (corners_of(positions, g), c);
+                        // The way the pair faces: by the fairer of the two (a cap's own normal is noise).
+                        let n = if shape(ct) >= shape(cu) { unit_normal(ct) } else { unit_normal(cu) };
+                        let old_mid = (positions[a as usize] + positions[b as usize]) / 2.0;
+                        let near = |q: [Vec3; 3]| closest_on_triangle(old_mid, q[0], q[1], q[2]).dist(old_mid);
+                        let faces_ok = match (n, unit_normal(d1), unit_normal(d2)) {
+                            (Some(n), Some(m1), Some(m2)) => m1.dot(n) >= FLAT && m2.dot(n) >= FLAT,
+                            _ => false,
+                        };
+                        if faces_ok
+                            && on_scan((d1[0] + d1[1] + d1[2]) / 3.0)
+                            && on_scan((d2[0] + d2[1] + d2[2]) / 3.0)
+                            && near(d1).min(near(d2)) <= tolerance
+                        {
+                            done = Some((vec![(t, Some(g1)), (u, Some(g2))], Vec::new(), None));
+                        }
+                    }
+                }
+            }
+            // 3. Move one of its points toward the middle of its neighbours, onto the scan.
+            if done.is_none() {
+                for &v in &tri {
+                    if done.is_some() || fixed[v as usize] {
+                        continue;
+                    }
+                    let fan = &around[v as usize];
+                    if fan.iter().any(|&f| touched[f] || gone[f]) {
+                        continue;
+                    }
+                    let p = positions[v as usize];
+                    let mut nb: Vec<u32> = fan.iter().flat_map(|&f| triangles[f]).filter(|&w| w != v).collect();
+                    nb.sort_unstable();
+                    nb.dedup();
+                    if nb.is_empty() {
+                        continue;
+                    }
+                    let mid = nb.iter().fold(Vec3::ZERO, |acc, &w| acc + positions[w as usize]) / nb.len() as f64;
+                    let normal = fan.iter().filter_map(|&f| unit_normal(corners_of(positions, triangles[f]))).fold(Vec3::ZERO, |acc, m| acc + m);
+                    let Some(normal) = (normal.len() > 0.0).then(|| normal / normal.len()) else { continue };
+                    for step in [1.0, 0.5] {
+                        let target = p + ((mid - p) - normal * (mid - p).dot(normal)) * step;
+                        let Some(on) = onto_scan(target) else { continue };
+                        let moved = |w: u32| if w == v { on } else { positions[w as usize] };
+                        let mut ok = true;
+                        let mut after_faces = Vec::new();
+                        for &f in fan {
+                            let (before, after) = (corners_of(positions, triangles[f]), triangles[f].map(moved));
+                            let turned = match (unit_normal(before), unit_normal(after)) {
+                                (Some(x), Some(y)) => x.dot(y) < 0.5,
+                                (_, None) => true,
+                                (None, Some(_)) => false,
+                            };
+                            if turned || !on_scan((after[0] + after[1] + after[2]) / 3.0) {
+                                ok = false;
+                                break;
+                            }
+                            after_faces.push(after);
+                        }
+                        let covered = after_faces.iter().any(|q| closest_on_triangle(p, q[0], q[1], q[2]).dist(p) <= tolerance);
+                        let worse_before = fan.iter().map(|&f| status[f]).fold(0.0, f64::max);
+                        let worse_after = after_faces.iter().map(|&q| unfair(under, q)).fold(0.0, f64::max);
+                        if ok && covered && worse_after < worse_before {
+                            done = Some((fan.iter().map(|&f| (f, Some(triangles[f]))).collect(), Vec::new(), Some((v, on))));
+                            break;
+                        }
+                    }
+                }
+            }
+            // Collapses and flips: only when fairer than before (the move checked its own).
+            if let Some((ops, _, None)) = &done {
+                let before = ops.iter().map(|(f, _)| status[*f]).fold(0.0, f64::max);
+                let after = ops.iter().filter_map(|(_, a)| *a).map(|a| unfair(under, corners_of(positions, a))).fold(0.0, f64::max);
+                if !(after < before) {
+                    done = None;
+                }
+            }
+            // 4. Split the longest side along the longest-side path.
+            if done.is_none() {
+                let longest = |f: usize| {
+                    let q = corners_of(positions, triangles[f]);
+                    (0..3).max_by(|&i, &j| q[(i + 1) % 3].dist(q[i]).total_cmp(&q[(j + 1) % 3].dist(q[j]))).map(|k| {
+                        let (x, y) = (triangles[f][k], triangles[f][(k + 1) % 3]);
+                        ((x, y), q[k].dist(q[(k + 1) % 3]))
+                    })
+                };
+                let mut f = t;
+                for _ in 0..LONGEST_STEPS {
+                    let Some(((x, y), len)) = longest(f) else { break };
+                    let across = by_edge.get(&(x.min(y), x.max(y))).and_then(|fs| fs.iter().copied().find(|&g| g != f));
+                    match across.and_then(|g| longest(g).map(|l| (g, l))) {
+                        Some((g, (_, l))) if l > len * (1.0 + 1e-9) => f = g,
+                        _ => break,
+                    }
+                }
+                if let Some(((x, y), _)) = longest(f) {
+                    let faces: Vec<usize> = by_edge.get(&(x.min(y), x.max(y))).cloned().unwrap_or_default();
+                    let mid = (positions[x as usize] + positions[y as usize]) / 2.0;
+                    if faces.iter().all(|&g| !touched[g] && !gone[g])
+                        && let Some(q) = onto_scan(mid)
+                        && let Ok(n) = u32::try_from(positions.len())
+                    {
+                        let mut ops = Vec::new();
+                        let mut new = Vec::new();
+                        let mut ok = true;
+                        for &g in &faces {
+                            let tri_g = triangles[g];
+                            // g runs i → j along the side with o opposite.
+                            let Some(k) = (0..3).find(|&k| {
+                                let (i, j) = (tri_g[k], tri_g[(k + 1) % 3]);
+                                (i == x && j == y) || (i == y && j == x)
+                            }) else {
+                                ok = false;
+                                break;
+                            };
+                            let (i, j, o) = (tri_g[k], tri_g[(k + 1) % 3], tri_g[(k + 2) % 3]);
+                            let old = corners_of(positions, tri_g);
+                            for half in [[i, n, o], [n, j, o]] {
+                                let h = half.map(|w| if w == n { q } else { positions[w as usize] });
+                                let flat = match (unit_normal(old), unit_normal(h)) {
+                                    (Some(a), Some(b)) => a.dot(b) > 0.0,
+                                    _ => false,
+                                };
+                                if !flat || !on_scan((h[0] + h[1] + h[2]) / 3.0) {
+                                    ok = false;
+                                }
+                            }
+                            ops.push((g, Some([i, n, o])));
+                            new.push([n, j, o]);
+                        }
+                        // No face it makes less fair, as laid, than the worst it replaces.
+                        let placed = |f: [u32; 3]| unfair(under, f.map(|w| if w == n { q } else { positions[w as usize] }));
+                        let before = faces.iter().map(|&g| status[g]).fold(0.0, f64::max);
+                        let after = ops.iter().filter_map(|(_, a)| *a).chain(new.iter().copied()).map(placed).fold(0.0, f64::max);
+                        if ok && !faces.is_empty() && after <= before {
+                            done = Some((ops, new, Some((n, q))));
+                        }
+                    }
+                }
+            }
+            let Some((ops, new, point)) = done else { continue };
+            // Every face round a point of a face it changed is taken as changed this round (their
+            // fans are no longer what `around` says).
+            if let Some((v, p)) = point {
+                if v as usize == positions.len() {
+                    positions.push(p);
+                    fixed.push(false);
+                    around.push(Vec::new());
+                } else if let Some(slot) = positions.get_mut(v as usize) {
+                    *slot = p;
+                }
+            }
+            let mut ring: Vec<u32> = ops.iter().flat_map(|(f, _)| triangles[*f]).collect();
+            ring.extend(new.iter().flatten());
+            for (f, after) in &ops {
+                match after {
+                    Some(a) => triangles[*f] = *a,
+                    None => gone[*f] = true,
+                }
+            }
+            for &v in &ring {
+                for &f in around.get(v as usize).map_or(&[][..], Vec::as_slice) {
+                    if let Some(x) = touched.get_mut(f) {
+                        *x = true;
+                    }
+                }
+            }
+            added.extend(new);
+            changed = true;
+        }
+        if !changed {
+            break;
+        }
+        let mut k = 0;
+        triangles.retain(|_| {
+            let keep = !gone[k];
+            k += 1;
+            keep
+        });
+        triangles.extend(added);
+    }
+    // How many are unfair as the mesh is left.
+    let partner = pairs(positions, triangles);
+    layout_unfair(under, positions, triangles, &partner).iter().filter(|&&x| x > 0.0).count()
+}
+
 /// One pass of collapses of poor faces (see [`tidy`]); whether any was made. A face is poor when
 /// its smallest angle is below [`MIN_ANGLE`] (or it is degenerate). A cap (a point near its longest
 /// side) has that point moved onto the nearer end of the side; a needle (a short side) has the short
@@ -1344,6 +1747,8 @@ pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
         // misses the scan by a little) are mended within three times it: they cover next to no
         // area, and left in, the mesher splits their long sides without end.
         tidy(&mut r.positions, &mut r.triangles, &under, POOR_SLACK * tol * scale.max(1.0), true);
+        // Last, every patch the layout will lay given fair corners, held to the scaled budgets.
+        let unfair = fair_corners(&mut r.positions, &mut r.triangles, &under, tol * scale.max(1.0));
         let faces = patches(&under, &r.positions, &r.triangles);
         let d = distances(scan, &faces, &sampled);
         let spread = spread(&d, &weight, tol);
@@ -1353,7 +1758,7 @@ pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
             order.into_iter().take(WORST).filter_map(|k| sampled.get(k).and_then(|&v| scan.positions.get(v)).map(|&p| (p, d[k]))).collect();
         let met = spread.within >= settings.share && spread.max <= 3.0 * tol;
         let better = best.as_ref().is_none_or(|b| spread.within > b.scan_to_patches.within);
-        let coarse = Coarse { positions: r.positions, triangles: r.triangles, rounds: round, met, capped, wanted };
+        let coarse = Coarse { positions: r.positions, triangles: r.triangles, rounds: round, met, capped, wanted, unfair };
         if better {
             best = Some(Wrap { faces, coarse, scan_to_patches: spread, worst });
         } else if let Some(b) = best.as_mut() {
@@ -1453,6 +1858,48 @@ mod tests {
         assert!(!in_order(a, Vec3::new(-1.0, 1.0, 0.0), Vec3::new(7.0, 1.0, 0.0), b));
         assert!(!in_order(a, Vec3::new(3.0, 30.0, 0.0), Vec3::new(7.0, 1.0, 0.0), b));
         assert!(!in_order(a, a, a, a));
+    }
+
+    #[test]
+    fn a_cap_on_the_rim_is_mended_until_every_patch_corner_is_fair() {
+        // The scan: the plane z = 0 over 40 × 40 mm, 1 mm cells.
+        let n = 41u32;
+        let p: Vec<Vec3> = (0..n * n).map(|k| Vec3::new(f64::from(k % n), f64::from(k / n), 0.0)).collect();
+        let mut t = Vec::new();
+        for j in 0..n - 1 {
+            for i in 0..n - 1 {
+                let at = |i: u32, j: u32| j * n + i;
+                t.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+                t.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+            }
+        }
+        let scan = Scan::new(&p, &t);
+        let under = Under { scan: &scan, tree: TriangleTree::of(&p, &t) };
+        // The coarse mesh: the square fanned round its middle E, with F 0.4 mm inside its lower
+        // side, so A B F is a cap of 178° on the rim (its patches' corners 1.1° and 177.7°).
+        let (a, b, c, d, e, f) = (0u32, 1, 2, 3, 4, 5);
+        let mut q = vec![
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(40.0, 0.0, 0.0),
+            Vec3::new(40.0, 40.0, 0.0),
+            Vec3::new(0.0, 40.0, 0.0),
+            Vec3::new(20.0, 20.0, 0.0),
+            Vec3::new(20.0, 0.4, 0.0),
+        ];
+        let mut tris = vec![[a, b, f], [a, f, e], [f, b, e], [b, c, e], [c, d, e], [d, a, e]];
+        assert!(unfair(&under, tris[0].map(|i| q[i as usize])) > 0.0, "the cap starts unfair");
+        let left = fair_corners(&mut q, &mut tris, &under, 0.1);
+        assert_eq!(left, 0, "{tris:?}");
+        for tri in &tris {
+            let c = tri.map(|i| q[i as usize]);
+            assert!(unfair(&under, c) == 0.0, "{tri:?}: corners {}", unfair(&under, c).to_degrees());
+            assert!(unit_normal(c).is_some_and(|m| m.z > 0.99), "{tri:?} turned over");
+        }
+        // The rim stays: the square's corners where they were, its area all covered.
+        assert_eq!(&q[..4], &[Vec3::new(0.0, 0.0, 0.0), Vec3::new(40.0, 0.0, 0.0), Vec3::new(40.0, 40.0, 0.0), Vec3::new(0.0, 40.0, 0.0)]);
+        let area: f64 =
+            tris.iter().map(|tri| 0.5 * (q[tri[1] as usize] - q[tri[0] as usize]).cross(q[tri[2] as usize] - q[tri[0] as usize]).len()).sum();
+        assert!((area - 1600.0).abs() < 1e-9, "area {area}");
     }
 
     #[test]

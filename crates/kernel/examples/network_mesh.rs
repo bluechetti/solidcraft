@@ -54,6 +54,31 @@ fn run() -> Result<(), String> {
     }
     let size = Vec3::new(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]).len();
     let spec = MeshSpec::chord(share * size);
+    // NETWORK_EACH=1: every patch meshed alone at the same chord, the ten slowest named.
+    if std::env::var_os("NETWORK_EACH").is_some() {
+        let mut times: Vec<(f64, usize)> = Vec::new();
+        for (i, net) in nets.iter().enumerate() {
+            let t = std::time::Instant::now();
+            let ok = sew_network(&[face(net)]).map_err(|e| e.to_string()).and_then(|b| b.export_mesh(&spec).map_err(|e| e.to_string())).is_ok();
+            times.push((t.elapsed().as_secs_f64(), if ok { i } else { usize::MAX - i }));
+        }
+        // NETWORK_EACH_OUT=path: every patch's time alone, `index seconds ok` a line.
+        if let Some(out) = std::env::var_os("NETWORK_EACH_OUT") {
+            let text: String = times
+                .iter()
+                .map(|&(t, i)| if i > nets.len() { format!("{} {t:.4} 0\n", usize::MAX - i) } else { format!("{i} {t:.4} 1\n") })
+                .collect();
+            std::fs::write(&out, text).map_err(|e| format!("each out: {e}"))?;
+        }
+        let total: f64 = times.iter().map(|t| t.0).sum();
+        times.sort_by(|a, b| b.0.total_cmp(&a.0));
+        println!("alone: {total:.1} s in all");
+        for &(t, i) in times.iter().take(10) {
+            let (i, ok) = if i > nets.len() { (usize::MAX - i, false) } else { (i, true) };
+            println!("  {t:.2} s{}", if ok { "" } else { " (fails)" });
+            describe("   ", i, &nets);
+        }
+    }
     let started = std::time::Instant::now();
     let meshed = body.export_mesh(&spec);
     let seconds = started.elapsed().as_secs_f64();
@@ -94,9 +119,7 @@ fn neighbours(fi: usize, nets: &[Net]) -> Vec<usize> {
     let Some(me) = nets.get(fi) else { return Vec::new() };
     let corners = |n: &Net| [n[0], n[3], n[15], n[12]];
     let mine = corners(me);
-    (0..nets.len())
-        .filter(|&j| j != fi && corners(&nets[j]).iter().filter(|c| mine.iter().any(|m| m.dist(**c) < 1e-9)).count() >= 2)
-        .collect()
+    (0..nets.len()).filter(|&j| j != fi && corners(&nets[j]).iter().filter(|c| mine.iter().any(|m| m.dist(**c) < 1e-9)).count() >= 2).collect()
 }
 
 fn describe(what: &str, fi: usize, nets: &[Net]) {
@@ -108,5 +131,8 @@ fn describe(what: &str, fi: usize, nets: &[Net]) {
     let chords = [angle(0, 3, 12), angle(3, 15, 0), angle(15, 12, 3), angle(12, 0, 15)];
     let tangents = [angle(0, 1, 4), angle(3, 2, 7), angle(15, 14, 11), angle(12, 13, 8)];
     let sides = [n[0].dist(n[3]), n[3].dist(n[15]), n[15].dist(n[12]), n[12].dist(n[0])];
-    println!("{what} patch {fi}: corners by chords {chords:.1?}, by tangents {tangents:.1?}, sides {sides:.3?}, first corner {:.3?}", [n[0].x, n[0].y, n[0].z]);
+    println!(
+        "{what} patch {fi}: corners by chords {chords:.1?}, by tangents {tangents:.1?}, sides {sides:.3?}, first corner {:.3?}",
+        [n[0].x, n[0].y, n[0].z]
+    );
 }
