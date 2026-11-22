@@ -108,6 +108,9 @@ pub const TABLE: &[(&str, Class)] = &[
     ("cli", Class::Exempt),
     ("web", Class::Exempt),
     ("xtask", Class::Exempt),
+    // build tooling: no code, only the third-party features the whole workspace turns on, so
+    // building any mix of crates compiles them the same way (`cargo hakari generate`)
+    ("workspace-hack", Class::Exempt),
 ];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
