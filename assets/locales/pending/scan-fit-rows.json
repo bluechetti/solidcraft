@@ -1,0 +1,42 @@
+{
+  "en": {
+    "ui.scan_fit_average": "Average off",
+    "ui.scan_fit_raise_tolerance": "Or allow more than {tolerance} in Scan tolerance: the scan there may stray farther than that off any one shape.",
+    "ui.scan_fit_worst": "Worst off"
+  },
+  "ar": {
+    "ui.scan_fit_average": "في المتوسط",
+    "ui.scan_fit_raise_tolerance": "أو اسمح بأكثر من {tolerance} في تفاوت المسح: قد يبتعد المسح هناك أكثر من ذلك عن أي شكل واحد.",
+    "ui.scan_fit_worst": "كحد أقصى"
+  },
+  "de": {
+    "ui.scan_fit_average": "Im Mittel",
+    "ui.scan_fit_raise_tolerance": "Oder erlauben Sie mehr als {tolerance} bei der Scan-Toleranz: Der Scan kann dort weiter als das von jeder einzelnen Form abweichen.",
+    "ui.scan_fit_worst": "Höchstens"
+  },
+  "he": {
+    "ui.scan_fit_average": "בממוצע",
+    "ui.scan_fit_raise_tolerance": "או אפשרו יותר מ-{tolerance} בסבולת הסריקה: הסריקה שם עשויה לסטות יותר מכך מכל צורה אחת.",
+    "ui.scan_fit_worst": "לכל היותר"
+  },
+  "ja": {
+    "ui.scan_fit_average": "平均のずれ",
+    "ui.scan_fit_raise_tolerance": "またはスキャン許容差を {tolerance} より大きくしてください。その場所のスキャンはどの形状からもそれ以上離れている可能性があります。",
+    "ui.scan_fit_worst": "最大のずれ"
+  },
+  "ko": {
+    "ui.scan_fit_average": "평균 편차",
+    "ui.scan_fit_raise_tolerance": "또는 스캔 허용 오차를 {tolerance}보다 크게 하세요. 그 부분의 스캔이 어떤 형상에서도 그보다 더 벗어나 있을 수 있습니다.",
+    "ui.scan_fit_worst": "최대 편차"
+  },
+  "vi": {
+    "ui.scan_fit_average": "Lệch trung bình",
+    "ui.scan_fit_raise_tolerance": "Hoặc cho phép hơn {tolerance} ở Dung sai quét: bản quét ở đó có thể lệch xa hơn mức đó so với mọi hình dạng.",
+    "ui.scan_fit_worst": "Lệch lớn nhất"
+  },
+  "zh": {
+    "ui.scan_fit_average": "平均偏差",
+    "ui.scan_fit_raise_tolerance": "或在扫描公差中允许超过 {tolerance}：该处扫描偏离任何单一形状可能超过这个值。",
+    "ui.scan_fit_worst": "最大偏差"
+  }
+}

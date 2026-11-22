@@ -1,8 +1,9 @@
 //! Point cloud files read for a design's point cloud (#5151): PLY ([`crate::ply`]), PCD
-//! ([`crate::pcd`]), E57 ([`crate::e57`]) and XYZ text (`x y z` per line, optionally followed by
-//! `r g b`, or by an intensity and then `r g b` as PTS files write it; spaces, tabs, commas or
-//! semicolons between the values; an ASC file is the same text). A file with more points than asked for is thinned
-//! evenly (every n-th point). The points are kept relative to the first one, in single precision.
+//! ([`crate::pcd`]), E57 ([`crate::e57`]), XYZ text (`x y z` per line, optionally followed by `r g b`,
+//! or by an intensity and then `r g b` as PTS files write it; spaces, tabs, commas or semicolons
+//! between the values; an ASC file is the same text), and the scanner formats PTX and LAS/LAZ
+//! ([`crate::point_cloud_formats`]). A file with more points than asked for is thinned evenly
+//! (every n-th point). The points are kept relative to the first one, in single precision.
 
 use solidcore_record::Vec3;
 use solidcraft_doc::point_cloud::{MAX_COORD, MAX_POINTS};
@@ -14,9 +15,19 @@ use crate::{IoError, Result};
 pub const MAX_POINT_CLOUD_BYTES: usize = 1 << 30;
 /// Points kept from a file unless asked for another number.
 pub const DEFAULT_MAX_POINTS: usize = 5_000_000;
-/// Is this a point cloud file we read (`.ply`, `.pcd`, `.e57`, `.xyz`, `.pts`, `.asc`, any case)?
+/// The most points a scanner file (PTX, LAS) is read in whole before it is thinned.
+pub const MAX_SCANNER_POINTS: usize = 200_000_000;
+
+/// Is this a point cloud file we read (`.ply`, `.pcd`, `.xyz`, `.pts`, `.asc`, `.ptx`, `.e57`,
+/// `.las`, `.laz`, any case)?
 pub fn is_point_cloud_path(path: &str) -> bool {
-    has_extension(path, &["ply", "pcd", "e57", "xyz", "pts", "asc"])
+    has_extension(path, &["ply", "pcd", "e57", "xyz", "pts", "asc"]) || has_extension(path, &crate::point_cloud_formats::EXTENSIONS)
+}
+
+/// The scanner format of `file` (one of [`crate::point_cloud_formats::EXTENSIONS`]), lower case.
+fn scanner_format(file: &str) -> Option<String> {
+    let ext = std::path::Path::new(file).extension()?.to_str()?.to_ascii_lowercase();
+    crate::point_cloud_formats::EXTENSIONS.contains(&ext.as_str()).then_some(ext)
 }
 
 /// Is this a PLY file (`.ply`, any case)?
@@ -83,6 +94,7 @@ impl Keep {
 /// whatever its name) whose lengths are `scale` millimetres each, keeping at most `max_points`
 /// points.
 pub fn read_point_cloud(bytes: &[u8], file: &str, scale: f64, max_points: usize) -> Result<CloudFile> {
+    // No size limit on the desktop (the Scan workspace fork); the browser keeps upstream's.
     crate::limits::check(crate::limits::Kind::PointCloud, bytes.len() as u64).map_err(IoError::Invalid)?;
     if !(scale.is_finite() && scale > 0.0 && scale <= 1e6) {
         return Err(IoError::Invalid("the point cloud's scale must be positive".into()));
@@ -101,7 +113,29 @@ pub fn read_point_cloud(bytes: &[u8], file: &str, scale: f64, max_points: usize)
         None
     };
     let stride;
-    if let Some(r) = table {
+    if let Some(ext) = scanner_format(file).filter(|_| !ply) {
+        let read = crate::point_cloud_formats::read(bytes, &ext, MAX_SCANNER_POINTS)?;
+        let count = read.points.len();
+        keep.out.source_points = count as u64;
+        keep.colored = read.colors.is_some();
+        let every = count.div_ceil(max).max(1);
+        for i in (0..count).step_by(every) {
+            keep.push(read.points[i], read.colors.as_ref().and_then(|c| c.get(i).copied()));
+        }
+        let every = every as u64;
+        let mut out = keep.out;
+        if out.points.is_empty() {
+            return Err(IoError::Invalid("the file has no points SolidCraft can read".into()));
+        }
+        if keep.bad > 0 {
+            out.warnings.push(format!("{} point(s) could not be read and were left out", keep.bad));
+        }
+        if every > 1 {
+            out.warnings.push(format!("{} of the file's {} points kept (one in {every})", out.points.len() / 3, out.source_points));
+        }
+        out.origin = keep.origin.unwrap_or(Vec3::ZERO);
+        return Ok(out);
+    } else if let Some(r) = table {
         // Points without a position were left out before thinning: they count as unread.
         keep.bad += r.skipped;
         stride = r.vertices.saturating_sub(r.skipped).div_ceil(r.positions.len().max(1) as u64).max(1);
@@ -405,6 +439,26 @@ mod tests {
             assert_eq!(r.ok(), Some(false), "{:?}", String::from_utf8_lossy(b));
         }
         assert!(is_point_cloud_path("x.PLY") && is_point_cloud_path("y.xyz") && is_point_cloud_path("z.pts") && !is_point_cloud_path("w.stl"));
-        assert!(is_point_cloud_path("x.PCD") && is_point_cloud_path("y.asc") && is_point_cloud_path("z.E57") && !is_point_cloud_path("w.las"));
+        // The Scan workspace fork reads the scanner formats too (PTX, E57, LAS/LAZ).
+        assert!(is_point_cloud_path("x.PCD") && is_point_cloud_path("y.asc") && is_point_cloud_path("z.e57") && !is_point_cloud_path("z.rcp"));
+    }
+
+    /// A scanner file is read in whole and thinned evenly to the points asked for, its colours
+    /// kept, relative to the first point kept.
+    #[test]
+    fn a_scanner_file_is_thinned_to_the_points_asked_for() {
+        let mut pcd =
+            String::from("VERSION 0.7\nFIELDS x y z rgb\nSIZE 4 4 4 4\nTYPE F F F U\nCOUNT 1 1 1 1\nWIDTH 10\nHEIGHT 1\nPOINTS 10\nDATA ascii\n");
+        for i in 0..10 {
+            pcd += &format!("{i} 0 0 255\n");
+        }
+        let read = read_point_cloud(pcd.as_bytes(), "scan.PCD", 1.0, 5).unwrap();
+        assert_eq!(read.source_points, 10);
+        assert_eq!(read.points.len() / 3, 5, "one in two kept");
+        assert_eq!(read.origin, Vec3::new(0.0, 0.0, 0.0));
+        assert_eq!(&read.points[3..6], &[2.0, 0.0, 0.0]);
+        assert_eq!(read.colors.len(), 15);
+        assert!(read.warnings.iter().any(|w| w.contains("one in 2")), "{:?}", read.warnings);
+        assert!(is_point_cloud_path("a.e57") && is_point_cloud_path("b.LAZ") && is_point_cloud_path("c.ptx") && is_point_cloud_path("d.pcd"));
     }
 }

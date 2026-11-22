@@ -714,12 +714,10 @@ struct View {
 fn corners(body: &crate::ProductMesh, triangle: usize) -> Result<([Vec3; 3], [Vec3; 3])> {
     let mesh = &body.mesh;
     let indices = mesh.triangles.get(triangle).ok_or_else(|| invalid("missing product triangle"))?;
-    let vertices = indices.map(|i| mesh.positions.get(i as usize).copied());
-    let normals = indices.map(|i| mesh.normals.get(i as usize).copied());
-    let ([Some(a), Some(b), Some(c)], [Some(na), Some(nb), Some(nc)]) = (vertices, normals) else {
+    // A flat mesh (a scan's) has no normals: each triangle is lit with its own.
+    let (Some(world), Some(normals)) = (mesh.tri(indices), mesh.corner_normals(indices)) else {
         return Err(invalid("invalid triangle index or missing normal"));
     };
-    let (world, normals) = ([a, b, c], [na, nb, nc]);
     if world.iter().chain(normals.iter()).any(|v| !v.is_finite()) {
         return Err(invalid("non-finite product triangle"));
     }

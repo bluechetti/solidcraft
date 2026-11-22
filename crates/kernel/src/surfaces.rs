@@ -360,6 +360,13 @@ pub(crate) fn uv_line(a: [f64; 2], z: [f64; 2], [t0, t1]: [f64; 2]) -> Curve2 {
     Curve2::Spline { knots: vec![t0, t0, t1, t1], points: vec![a, z] }
 }
 
+/// A NURBS surface as a surface body of one face, the whole of it: clamped first (the same surface
+/// on the same domain), so its knots may be uneven or repeated (a crease) as a T-spline's may not.
+pub fn nurbs_sheet(n: &NurbsSurface) -> Result<Body> {
+    let clamped = n.clamped().map_err(|e| KernelError::Invalid(format!("the surface: {e}")))?;
+    tensor_sheet(&clamped)
+}
+
 /// One face: the whole of the NURBS surface `n`, bounded by its four boundary curves (each the
 /// boundary row or column of its net on its knots, exact for a clamped surface), as a surface
 /// body with no history.

@@ -1,0 +1,38 @@
+{
+  "en": {
+    "prefs.section_scan_outline": "Section Analysis cuts scans too",
+    "prefs.section_scan_outline_note": "On: where the section plane cuts each shown scan is drawn in the mesh color beside the model's cut. Off: only the model's cut."
+  },
+  "en-GB": {
+    "prefs.section_scan_outline": "Section Analysis cuts scans too",
+    "prefs.section_scan_outline_note": "On: where the section plane cuts each shown scan is drawn in the mesh colour beside the model's cut. Off: only the model's cut."
+  },
+  "ar": {
+    "prefs.section_scan_outline": "تحليل المقطع يقطع المسوحات أيضًا",
+    "prefs.section_scan_outline_note": "تشغيل: يُرسم موضع قطع مستوى المقطع لكل مسح ظاهر بلون الشبكة بجانب قطع النموذج. إيقاف: قطع النموذج فقط."
+  },
+  "de": {
+    "prefs.section_scan_outline": "Schnittanalyse schneidet auch Scans",
+    "prefs.section_scan_outline_note": "Ein: Wo die Schnittebene jeden sichtbaren Scan schneidet, wird in der Netzfarbe neben dem Schnitt des Modells gezeichnet. Aus: nur der Schnitt des Modells."
+  },
+  "he": {
+    "prefs.section_scan_outline": "ניתוח חתך חותך גם סריקות",
+    "prefs.section_scan_outline_note": "מופעל: המקום שבו מישור החתך חותך כל סריקה מוצגת מצויר בצבע הרשת לצד החתך של המודל. כבוי: רק החתך של המודל."
+  },
+  "ja": {
+    "prefs.section_scan_outline": "断面解析でスキャンも切る",
+    "prefs.section_scan_outline_note": "オン: 表示中の各スキャンを断面の平面が切る位置を、モデルの断面の横にメッシュの色で描きます。オフ: モデルの断面のみ。"
+  },
+  "ko": {
+    "prefs.section_scan_outline": "단면 분석에서 스캔도 자르기",
+    "prefs.section_scan_outline_note": "켬: 단면 평면이 보이는 각 스캔을 자르는 곳을 모델의 단면 옆에 메시 색으로 그립니다. 끔: 모델의 단면만."
+  },
+  "vi": {
+    "prefs.section_scan_outline": "Phân tích mặt cắt cắt cả bản quét",
+    "prefs.section_scan_outline_note": "Bật: chỗ mặt phẳng cắt cắt qua mỗi bản quét đang hiện được vẽ bằng màu lưới bên cạnh mặt cắt của mô hình. Tắt: chỉ mặt cắt của mô hình."
+  },
+  "zh": {
+    "prefs.section_scan_outline": "剖面分析也剖切扫描",
+    "prefs.section_scan_outline_note": "开：剖切平面切过每个显示的扫描的位置，以网格颜色画在模型剖面旁。关：只画模型的剖面。"
+  }
+}

@@ -1494,6 +1494,7 @@ fn heavy_fields(kind: &FeatureKind) -> &'static [(&'static str, &'static str)] {
     match kind {
         FeatureKind::Sketch { .. } => &[("sketch", "the sketch geometry (sketch.inspect; edit it with the sketch commands)")],
         FeatureKind::Import { .. } => &[("step", "the imported STEP text"), ("components", "the imported product tree")],
+        FeatureKind::ScanSurface { .. } => &[("step", "the surface's STEP text (change it with Edit Surface)")],
         FeatureKind::MeshImport { .. } => &[("meshes", "the imported meshes")],
         _ => &[],
     }
@@ -2544,6 +2545,13 @@ fn redefine(s: &mut Session, p: &Value) -> Result<Value> {
                 | "plastic.lip"
                 | "plastic.snap_fit"
                 | "plastic.rest"
+                // A Scan Clean step is made again with its tool's new settings.
+                | "scan.remove_floating"
+                | "scan.fill_holes"
+                | "scan.reduce"
+                | "scan.repair"
+                | "scan.denoise"
+                | "scan.remesh"
                 | "frame.end_cap"
                 | "frame.rotate_member"
                 | "frame.member"
@@ -2552,6 +2560,12 @@ fn redefine(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, format!("`{cid}` does not make a feature")));
     }
     let mut params = p.get("params").cloned().unwrap_or_else(|| json!({}));
+    // A step made again stays a step: it never writes the scan back into its Mesh Import.
+    if cid.starts_with("scan.")
+        && let Some(parameters) = params.as_object_mut()
+    {
+        parameters.remove("in_place");
+    }
     let idx = s.doc.feature_index(id).ok_or_else(|| bad(cmd, "feature"))?;
     let old = s.doc.feature(id).cloned().ok_or_else(|| bad(cmd, "feature"))?;
     if let FeatureKind::Extrude { extent, .. } | FeatureKind::SurfaceExtrude { extent, .. } = &old.kind

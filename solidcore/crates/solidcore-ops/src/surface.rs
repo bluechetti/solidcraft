@@ -14,7 +14,12 @@ use solidcore::geom::vector3d::{Point3, Vec3};
 use solidcore::kernel::Kernel;
 use solidcore::nurbs::b_spline_curve::{BSplineCurve, Ends};
 use solidcore::nurbs::b_spline_surface::{BSplineSurface, SurfParamType};
+use solidcore::nurbs::math::{CPoint, NOW};
 use solidcore::nurbs::n_sided::{n_sided as kernel_n_sided, NSidedRefusal, MAX_SIDES, MIN_SIDES};
+use solidcore::nurbs::srf_basic::Surface as Nurb;
+use solidcore::offset::construction::sheets::{
+    certify_regular_within, Regularity, MAX_REGULARITY_PATCHES,
+};
 use solidcore::primitive::api_curve_ops::make_curves_compatible;
 use solidcore::query::api_queries::point_distance;
 use solidcore::surface::surface::Surface;
@@ -23,7 +28,7 @@ use solidcore::topology::brep::p4::stitch_faces;
 use solidcore::topology::brep::sheet::{coons_patch_of_loop, face_on};
 use solidcore::topology::Brep;
 use solidcore::SolidError;
-use solidcore_record::brep::{Brep as Record, Curve, Natural};
+use solidcore_record::brep::{Brep as Record, Curve, Natural, Surface as RecordSurface};
 
 use crate::body::{finish, Body, Expect};
 use crate::error::status;
@@ -367,6 +372,87 @@ pub fn reverse_sheet(sheet: &Record) -> Result<(Record, Vec<u32>)> {
     let (body, order) = Body::from_record(sheet, true)?;
     let turned = body.turn_over(&order)?;
     Ok((turned.record, turned.edges))
+}
+
+/// The most surfaces one [`regular`] call takes.
+pub const REGULAR_MAX_SURFACES: usize = 1_000_000;
+/// The most control points of one surface [`regular`] takes.
+pub const REGULAR_MAX_POINTS: usize = 10_000;
+
+/// A record spline surface as the kernel's NURB.
+fn spline_net(s: &RecordSurface) -> Result<Nurb> {
+    let RecordSurface::Spline {
+        u_knots,
+        v_knots,
+        points,
+    } = s
+    else {
+        return Err(Error::Unsupported("a surface that is not a spline"));
+    };
+    let (nu, nv) = (points.len(), points.first().map_or(0, Vec::len));
+    if nu.saturating_mul(nv) > REGULAR_MAX_POINTS
+        || points.iter().any(|row| row.len() != nv)
+        || !points
+            .iter()
+            .flatten()
+            .flatten()
+            .chain(u_knots)
+            .chain(v_knots)
+            .all(|x| x.is_finite())
+    {
+        return Err(Error::Argument);
+    }
+    let degree = |knots: &[f64], n: usize| knots.len().checked_sub(n + 1).filter(|d| *d > 0);
+    let (Some(du), Some(dv)) = (degree(u_knots, nu), degree(v_knots, nv)) else {
+        return Err(Error::Argument);
+    };
+    let net = points
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|p| CPoint::new(p[0], p[1], p[2], NOW))
+                .collect()
+        })
+        .collect();
+    Nurb::new(net, du, dv, u_knots.clone(), v_knots.clone()).map_err(|_| Error::Argument)
+}
+
+/// Whether each spline surface is regular over its whole domain: its normal `S_u x S_v` never
+/// vanishes there, so it does not fold over itself, as the kernel certifies it
+/// (`offset::construction::sheets::certify_regular` at no offset). `false` where the normal
+/// vanishes somewhere, or the certificate's budget runs out before it is proved. One kernel call
+/// for all of them, in order.
+///
+/// # Errors
+/// [`Error::Unsupported`] for a surface that is not a (non-rational) spline; [`Error::Argument`]
+/// for more than [`REGULAR_MAX_SURFACES`] surfaces, one of more than [`REGULAR_MAX_POINTS`]
+/// points, or knots and points that make no spline; any other kernel error.
+pub fn regular(surfaces: &[RecordSurface]) -> Result<Vec<bool>> {
+    regular_within(surfaces, MAX_REGULARITY_PATCHES)
+}
+
+/// [`regular`], the kernel examining at most `budget` subdivided patches of each surface (at
+/// most its own budget): one it does not certify within that counts as not regular. For a
+/// caller that mends what is not regular, where a surface whose normal comes near vanishing may
+/// be mended too.
+///
+/// # Errors
+/// Those of [`regular`].
+pub fn regular_within(surfaces: &[RecordSurface], budget: usize) -> Result<Vec<bool>> {
+    if surfaces.len() > REGULAR_MAX_SURFACES {
+        return Err(Error::Argument);
+    }
+    let nets = surfaces
+        .iter()
+        .map(spline_net)
+        .collect::<Result<Vec<_>>>()?;
+    run("surface_regular", |k| {
+        let mut out = Vec::with_capacity(nets.len());
+        for net in &nets {
+            out.push(certify_regular_within(k, net, 0.0, None, budget)? == Regularity::Regular);
+        }
+        Ok(out)
+    })
 }
 
 #[cfg(test)]
@@ -733,5 +819,57 @@ mod tests {
             })
             .collect();
         assert!(matches!(n_sided(&arcs), Err(Error::Unsupported(_))));
+    }
+
+    /// A bicubic patch over the square 10 x 10 (its net the square's thirds) is regular; the
+    /// bilinear patch over the dart (0, 0), (10, 0), (2, 2), (0, 10) folds (`S_u x S_v` is +100
+    /// along z at (0, 0), (2, -8) x (-8, 2) = -60 at (1, 1)); a plane is no spline, and a
+    /// ragged net or one its knots do not fit is no surface.
+    #[test]
+    fn a_spline_is_regular_where_its_normal_never_vanishes() {
+        let bicubic = RecordSurface::Spline {
+            u_knots: vec![0., 0., 0., 0., 1., 1., 1., 1.],
+            v_knots: vec![0., 0., 0., 0., 1., 1., 1., 1.],
+            points: (0..4_i32)
+                .map(|i| {
+                    (0..4_i32)
+                        .map(|j| [10.0 * f64::from(i) / 3.0, 10.0 * f64::from(j) / 3.0, 0.0])
+                        .collect()
+                })
+                .collect(),
+        };
+        let dart = RecordSurface::Spline {
+            u_knots: vec![0., 0., 1., 1.],
+            v_knots: vec![0., 0., 1., 1.],
+            points: vec![
+                vec![[0.0, 0.0, 0.0], [0.0, 10.0, 0.0]],
+                vec![[10.0, 0.0, 0.0], [2.0, 2.0, 0.0]],
+            ],
+        };
+        assert_eq!(regular(&[bicubic.clone(), dart]).unwrap(), [true, false]);
+        let plane = RecordSurface::Plane {
+            origin: [0.0; 3],
+            u_axis: [1.0, 0.0, 0.0],
+            v_axis: [0.0, 1.0, 0.0],
+        };
+        assert!(matches!(regular(&[plane]), Err(Error::Unsupported(_))));
+        let ragged = RecordSurface::Spline {
+            u_knots: vec![0., 0., 1., 1.],
+            v_knots: vec![0., 0., 1., 1.],
+            points: vec![vec![[0.0; 3], [0.0, 1.0, 0.0]], vec![[1.0, 0.0, 0.0]]],
+        };
+        assert!(matches!(regular(&[ragged]), Err(Error::Argument)));
+        let RecordSurface::Spline {
+            v_knots, points, ..
+        } = bicubic
+        else {
+            unreachable!()
+        };
+        let short = RecordSurface::Spline {
+            u_knots: vec![0., 1.],
+            v_knots,
+            points,
+        };
+        assert!(matches!(regular(&[short]), Err(Error::Argument)));
     }
 }

@@ -726,6 +726,21 @@ pub(crate) fn extend_sheet(sheet: &Body, point: [f64; 3], tol: f64, distance: f6
     .map(Body::from_kernel)
 }
 
+/// For each point, the face of the body nearest it, as its index in the body's face order (as
+/// [`face_points`]): by the exact closest point on each face, inside its trims
+/// (`SmApiFaceClosestPoint`, as [`face_at`]); `None` where no face answers.
+pub(crate) fn nearest_faces(body: &Body, points: &[[f64; 3]]) -> Result<Vec<Option<usize>>> {
+    super::with_body("smlib_brep_nearest_faces", body, |k, b| {
+        let faces = b.face_list().to_vec();
+        let mut out = Vec::with_capacity(points.len());
+        for p in points {
+            let found = face_at(k, b, p3(*p), f64::INFINITY)?;
+            out.push(found.and_then(|f| faces.iter().position(|g| *g == f)));
+        }
+        Ok(out)
+    })
+}
+
 /// A point inside each face, in the body's face order (`smlib_brep_face_points`:
 /// `SmFace::CalculateAnInternalPoint`).
 pub(crate) fn face_points(body: &Body) -> Result<Vec<[f64; 3]>> {

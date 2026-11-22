@@ -4760,6 +4760,24 @@ fn a_torus_face_round_most_of_its_tube_is_formed_within_one_turn_of_it() {
     }
 }
 
+/// A surface SolidCraft keeps as its own STEP (a surface made on a scan) comes back with no "open
+/// body" note: it is open on purpose. The same surface model from another program still gets one.
+#[test]
+fn own_surface_model_is_open_without_a_note() {
+    use solidcraft_geom::bspline::NurbsSurface;
+    let points: Vec<Vec3> = (0..3).flat_map(|j| (0..3).map(move |i| Vec3::new(f64::from(i) * 10.0, f64::from(j) * 10.0, f64::from(i * j)))).collect();
+    let knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+    let surface = NurbsSurface::new([2, 2], [knots.clone(), knots], &points, &[1.0; 9]).unwrap();
+    let sheet = crate::nurbs_sheet(&surface).unwrap();
+    let text = step_export(&[&sheet], "SolidCraft").unwrap();
+    assert!(text.contains("SHELL_BASED_SURFACE_MODEL"), "written as a surface model");
+    let own = step_import(&text).unwrap();
+    assert_eq!(own.bodies.len(), 1);
+    assert!(!own.warnings.iter().any(|w| w.contains("open body")), "{:?}", own.warnings);
+    let other = step_import(&text.replacen("'SolidCraft','SolidCraft'", "'Other','Other'", 1)).unwrap();
+    assert!(other.warnings.iter().any(|w| w.contains("open body")), "{:?}", other.warnings);
+}
+
 /// A colour comes in with its name in the file: `COLOUR_RGB`'s own, or a pre-defined colour's,
 /// decoded and made safe as a design keeps names (no control characters, at most 128
 /// characters); an empty or blank name is none. A face's over-riding style names the face's

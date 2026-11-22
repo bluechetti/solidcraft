@@ -111,6 +111,9 @@ impl Extend<Vec3> for Aabb3 {
 /// with nothing converted on the way. Its geometry here is [`MeshGeom`].
 pub use solidcore_tess::Mesh;
 
+/// The normal a flat triangle is lit with ([`Mesh::is_flat`]).
+pub use solidcore_tess::flat_normal;
+
 /// A triangle with its bounding box, as [`find_close_pair`] takes them.
 pub type BoxedTriangle = ([Vec3; 3], Aabb3);
 
@@ -339,7 +342,8 @@ pub trait MeshGeom {
     /// Signed volume (divergence theorem), surface area and volume centroid.
     fn measure(&self) -> MeshMeasure;
 
-    /// Append another mesh (face ids offset by `face_offset`).
+    /// Append another mesh (face ids offset by `face_offset`). A flat mesh ([`Mesh::is_flat`])
+    /// and one with normals make one with normals: the flat one's corners each get its own.
     fn append(&mut self, o: &Mesh, face_offset: u32);
 
     /// Number of triangles a ray crosses (for inside/outside tests on closed meshes), each
@@ -727,6 +731,11 @@ impl MeshGeom for Mesh {
     }
 
     fn append(&mut self, o: &Mesh, face_offset: u32) {
+        if self.is_flat() && !o.normals.is_empty() {
+            *self = self.with_normals().into_owned();
+        }
+        let flat_into_lit = o.is_flat() && !self.normals.is_empty();
+        let o = if flat_into_lit { o.with_normals() } else { std::borrow::Cow::Borrowed(o) };
         let base = u32::try_from(self.positions.len()).unwrap_or(u32::MAX);
         self.positions.extend_from_slice(&o.positions);
         self.normals.extend_from_slice(&o.normals);
@@ -863,8 +872,9 @@ fn smooth_seam(mesh: &Mesh, i: usize, cos: f64) -> bool {
             .iter()
             .zip(&mesh.tri_face)
             .filter(|(_, tf)| **tf == f)
-            .flat_map(|(t, _)| t.iter().copied())
-            .filter_map(|v| Some((mesh.positions.get(v as usize)?.dist(q), *mesh.normals.get(v as usize)?)))
+            .filter_map(|(t, _)| Some((mesh.tri(t)?, mesh.corner_normals(t)?)))
+            .flat_map(|(p, n)| p.into_iter().zip(n))
+            .map(|(p, n)| (p.dist(q), n))
             .min_by(|x, y| x.0.total_cmp(&y.0))
             .and_then(|(_, n)| n.normalized())
     };

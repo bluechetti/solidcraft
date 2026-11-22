@@ -70,6 +70,8 @@ interprocess = "2.4"
 
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
 quick-xml = { workspace = true }
+# Who ended the app with a signal (src/native_signal_unix.rs), already in the tree through many crates.
+libc = "0.2"
 # The window events eframe asks the app about before painting (`App::repaint_on_window_event`);
 # already in the tree through eframe.
 winit = { version = "0.30", default-features = false }

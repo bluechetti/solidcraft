@@ -1,0 +1,1378 @@
+//! New Free Form (`scan.free_form`): click the four corners of a first face in order round it, or
+//! with Corners Two the ends of a diagonal (a rectangle on the face under the first click, its sides
+//! level along the face and up it, whatever the view looks like). A click lands on the
+//! scan or a body's face under it, or, with nothing there, in the view's plane through the corner
+//! before. As soon as the corners are in, the net fitted to the scan is drawn over the picture,
+//! with how close it comes; Fit to Scan, Snap Distance, Points and Stiffness change it. OK keeps
+//! it as a surface of its own and opens Edit Surface on it.
+//!
+//! Wrap Surface (`scan.wrap_surface`): click the middle of a tube-like part of the scan; the net
+//! wrapped round it is drawn as it will be kept, with the cylinder it was laid on. Reach, Details,
+//! Axis and Arc change it; OK keeps it and opens Edit Surface on it, as New Free Form does.
+//!
+//! Merge Surfaces (`scan.merge_surfaces`): choose the surfaces (or none, for every one); the sides
+//! that will be made one are drawn over the picture. OK makes them meet and sews them together.
+
+use std::sync::Arc;
+
+use serde_json::{Value, json};
+use solidcore_record::Vec3;
+use solidcraft_engine::cmd::scan::free_form::{self, Fit, Fitting, Made, Merged, Wrap, Wrapped};
+use solidcraft_engine::geom::prelude::*;
+
+use crate::SolveApp;
+use crate::dialogs::{Kind, form_row};
+use crate::scan_job;
+use crate::ui_kit::{self, choice_row};
+
+/// A corner's dot, in pixels across.
+const DOT: f32 = 7.0;
+
+/// The New Free Form dialog's values.
+#[derive(Clone, Debug)]
+pub struct NewFreeForm {
+    /// 0: four corners clicked round the face; 1: two, a rectangle's diagonal.
+    pub corners_mode: usize,
+    /// 0 off, 1 follow the scan, 2 overall shape, 3 flat (one plane fitted to the scan).
+    pub fit: usize,
+    /// The snap distance (mm; 0, no limit).
+    pub reach: f64,
+    pub count: usize,
+    pub stiffness: f64,
+    /// A tolerance tried here instead of the scan's own, mm (0: the scan's, see `scan.tolerance`).
+    pub tolerance: f64,
+    /// The scan's tolerance as changed here, kept by OK.
+    keep_tolerance: Option<(String, f64)>,
+    /// The scan under the face is coloured by how far it is from it (on by default).
+    pub colours: bool,
+    clicks: Vec<Vec3>,
+    /// The fit being worked out beside the window (a large scan), for the values it was begun for.
+    pending: Option<Arc<scan_job::Job<ShownKey, Computed>>>,
+    /// With Four Curves: the 3D curves clicked (their sketch and id), up to four.
+    curves: Vec<(u64, String)>,
+    /// Their points, as OK sends them, when the face over them was made.
+    shown_curves: Option<Vec<Vec<[f64; 3]>>>,
+    /// With Two corners: the directions the rectangle's sides run along, set by the first click
+    /// (see [`face_axes`]).
+    axes: Option<(Vec3, Vec3)>,
+    shown: Option<Box<Shown>>,
+}
+
+impl Default for NewFreeForm {
+    fn default() -> Self {
+        NewFreeForm {
+            corners_mode: 0,
+            fit: 1,
+            reach: 0.0,
+            count: 4,
+            stiffness: 0.0,
+            tolerance: 0.0,
+            keep_tolerance: None,
+            colours: true,
+            clicks: Vec::new(),
+            pending: None,
+            curves: Vec::new(),
+            shown_curves: None,
+            axes: None,
+            shown: None,
+        }
+    }
+}
+
+/// What a fit is for: the corners or curve points, the fit, the points, the reach, the corner mode,
+/// the stiffness and the design's revision.
+type ShownKey = (Vec<[u64; 3]>, usize, usize, u64, usize, u64, u64);
+
+/// The scan under the face and how far each point is from it.
+type Under = (solidcraft_engine::cmd::scan::surface::network::Shade, Vec<f32>);
+
+/// A fit, Surface Check on it, and the scan under it: all that looks over the scan.
+type Computed = (Result<Made, String>, Option<solidcraft_engine::cmd::scan::surface::SurfaceCheck>, Option<Arc<Under>>);
+
+/// `result` with Surface Check and the scan under the face worked out (the part that takes long on a
+/// scan of millions of triangles).
+fn computed(s: &solidcraft_engine::Session, result: Result<Made, String>) -> Computed {
+    let check = result
+        .as_ref()
+        .ok()
+        .and_then(|m| solidcraft_engine::cmd::scan::surface::check_surface(&m.surface, solidcraft_engine::cmd::scan::surface::SURFACE_CHECK_GRID));
+    let under = result.as_ref().ok().and_then(|m| {
+        let faces = [m.surface.clone()];
+        let (_, mut found) = solidcraft_engine::cmd::scan::surface::shade(s, m.scan.as_deref(), &faces, "scan.free_form").ok()?;
+        let mut values = Vec::new();
+        solidcraft_engine::cmd::scan::surface::network::shade_values(&mut found, &faces, None, &mut values);
+        Some(Arc::new((found, values)))
+    });
+    (result, check, under)
+}
+
+#[derive(Clone, Debug)]
+struct Shown {
+    key: ShownKey,
+    result: Result<Made, String>,
+    /// The scan under the face, coloured by how far it is from it: for which tolerance and colours,
+    /// the dots' version, and the dots; and what its distances add up to.
+    shade: Option<(u64, crate::scan_deviation::Colours, u64, crate::dialogs_scan_surface::Shaded)>,
+    stats: Option<crate::scan_fidelity::Stats>,
+    /// The scan under the face and its distances, worked out with the fit.
+    under: Option<Arc<Under>>,
+    /// Surface Check on the face: where it folds, pinches or passes through itself.
+    check: Option<solidcraft_engine::cmd::scan::surface::SurfaceCheck>,
+}
+
+/// The colouring's id among the clouds the viewport draws.
+const SHADE_CLOUD_ID: u64 = u64::MAX - 8;
+
+pub fn start(app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::SelInput>)> {
+    match id {
+        "scan.free_form" => Some((Kind::ScanFreeForm(NewFreeForm::default()), Vec::new())),
+        "scan.merge_surfaces" => Some((
+            Kind::ScanMergeSurfaces(MergeSurfaces::default()),
+            vec![crate::selection::SelInput::new("Surfaces", crate::selection::BODIES, true)],
+        )),
+        "scan.wrap_surface" => {
+            // Details opens on Medium, as the command does when it is not given.
+            let k = WrapSurface { area: crate::scan_area::Area::opening_round(app, 0.0), details: 1, ..WrapSurface::default() };
+            Some((Kind::ScanWrapSurface(k), vec![crate::selection::SelInput::new("Point", crate::selection::FACES, false)]))
+        }
+        _ => None,
+    }
+}
+
+fn tr(id: &'static str) -> &'static str {
+    solidcraft_ui_text::tr(id)
+}
+
+fn needed(k: &NewFreeForm) -> usize {
+    if k.corners_mode == 1 { 2 } else { 4 }
+}
+
+/// The corners mode that takes four curves.
+const CURVES_MODE: usize = 2;
+
+/// The points of the curves clicked, once there are four.
+fn curve_points(app: &SolveApp, k: &NewFreeForm) -> Option<Vec<Vec<Vec3>>> {
+    if k.corners_mode != CURVES_MODE || k.curves.len() != 4 {
+        return None;
+    }
+    let state = app.session.model.state();
+    k.curves
+        .iter()
+        .map(|(sketch, id)| {
+            let wire = state.sketch(*sketch)?.sketch.wires.iter().find(|w| w.id == *id)?;
+            Some(wire.pts.clone())
+        })
+        .collect()
+}
+
+/// How much shorter than the other a rectangle's shorter side may be: less is a line, not a face.
+const RECTANGLE_LEAST: f64 = 0.02;
+
+/// The four corners, once they are all in: as clicked, or the rectangle on the diagonal clicked
+/// (its sides along [`face_axes`], the second click one of its corners). None when the two
+/// corners lie along one of those sides, which makes no rectangle.
+fn corners(k: &NewFreeForm) -> Option<[Vec3; 4]> {
+    match (k.corners_mode, k.clicks.as_slice()) {
+        (0, [a, b, c, d]) => Some([*a, *b, *c, *d]),
+        (1, [a, c]) => {
+            let (u, v) = k.axes?;
+            let d = *c - *a;
+            let (x, y) = (u * d.dot(u), v * d.dot(v));
+            let (along, up) = (x.len(), y.len());
+            (along.min(up) > RECTANGLE_LEAST * along.max(up)).then_some([*a, *a + x, *c, *a + y])
+        }
+        _ => None,
+    }
+}
+
+/// The directions a Two-corner rectangle's sides run along on a face with normal `n`: level along
+/// the face, and up it. On a floor or ceiling, which has no up, X and Y. The same from any view,
+/// so two corners of a panel make the panel however the view looks at it.
+fn face_axes(n: Vec3) -> Option<(Vec3, Vec3)> {
+    let n = n.normalized()?;
+    let z = Vec3::new(0.0, 0.0, 1.0);
+    let level = if n.dot(z).abs() < 0.9 { z.cross(n) } else { Vec3::new(1.0, 0.0, 0.0) - n * n.x };
+    let u = level.normalized()?;
+    let v = n.cross(u).normalized()?;
+    Some((u, v))
+}
+
+/// The face's normal where the screen point `at` meets it, from the places four screen points a
+/// few pixels round it meet (None at a silhouette, where some of them meet nothing).
+fn face_normal(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<Vec3> {
+    const STEP: f32 = 6.0;
+    let mut near = |dx: f32, dy: f32| raw_hit(app, proj, at + egui::vec2(dx, dy)).map(|(_, p)| p);
+    let across = near(STEP, 0.0)? - near(-STEP, 0.0)?;
+    let down = near(0.0, STEP)? - near(0.0, -STEP)?;
+    across.cross(down).normalized()
+}
+
+fn fit_mode(k: &NewFreeForm) -> Fit {
+    match k.fit {
+        0 => Fit::Off,
+        2 => Fit::Overall,
+        3 => Fit::Flat,
+        _ => Fit::Follow,
+    }
+}
+
+/// The fit's name as `scan.free_form` takes it.
+const FIT_NAMES: [&str; 4] = ["off", "follow", "overall", "flat"];
+
+/// The fit for `key`: kept already, or come from the worker, or worked out now. On a large scan it
+/// is begun beside the window, and what was drawn stays until it arrives.
+fn resolve(app: &SolveApp, k: &mut NewFreeForm, key: ShownKey, compute: Arc<dyn Fn(&solidcraft_engine::Session) -> Computed + Send + Sync>) {
+    if k.shown.as_ref().is_some_and(|s| s.key == key) {
+        k.pending = None;
+        return;
+    }
+    if scan_job::beside_window(app) {
+        if let Some(job) = k.pending.clone() {
+            match job.poll() {
+                scan_job::Poll::Working if job.key == key => return,
+                scan_job::Poll::Done((result, check, under)) if job.key == key => {
+                    k.pending = None;
+                    k.shown = Some(Box::new(Shown { key, result, shade: None, stats: None, check, under }));
+                    return;
+                }
+                _ => k.pending = None,
+            }
+        }
+        let work = compute.clone();
+        if let Some(job) = scan_job::spawn(app, key.clone(), move |s| work(s)) {
+            k.pending = Some(Arc::new(job));
+            return;
+        }
+    }
+    let (result, check, under) = compute(&app.session);
+    k.shown = Some(Box::new(Shown { key, result, shade: None, stats: None, check, under }));
+}
+
+/// Fit again when the corners, the settings or the design have changed.
+fn fit(app: &SolveApp, k: &mut NewFreeForm) {
+    if k.corners_mode == CURVES_MODE {
+        fit_curves(app, k);
+        return;
+    }
+    let Some(c) = corners(k) else {
+        k.shown = None;
+        return;
+    };
+    let bits = |v: Vec3| [v.x.to_bits(), v.y.to_bits(), v.z.to_bits()];
+    let key = (c.iter().map(|p| bits(*p)).collect(), k.fit, k.count, k.reach.to_bits(), k.corners_mode, k.stiffness.to_bits(), app.session.revision);
+    if k.shown.as_ref().is_some_and(|s| s.key == key) {
+        k.pending = None;
+        return;
+    }
+    let reach = (k.reach > 0.0).then_some(k.reach);
+    let fitting = Fitting { count: k.count, stiffness: k.stiffness, overall: false };
+    let mode = fit_mode(k);
+    resolve(app, k, key, Arc::new(move |s| computed(s, free_form::make(s, None, c, mode, fitting, reach).map_err(|e| e.to_string()))));
+}
+
+/// The face whose sides follow the four curves clicked, again when they, the settings or the design change.
+fn fit_curves(app: &SolveApp, k: &mut NewFreeForm) {
+    let Some(curves) = curve_points(app, k) else {
+        k.shown = None;
+        k.shown_curves = None;
+        return;
+    };
+    k.shown_curves = Some(curves.iter().map(|c| c.iter().map(|p| [p.x, p.y, p.z]).collect()).collect());
+    let bits = |v: &Vec3| [v.x.to_bits(), v.y.to_bits(), v.z.to_bits()];
+    let key =
+        (curves.iter().flatten().map(bits).collect(), k.fit, k.count, k.reach.to_bits(), k.corners_mode, k.stiffness.to_bits(), app.session.revision);
+    if k.shown.as_ref().is_some_and(|s| s.key == key) {
+        k.pending = None;
+        return;
+    }
+    let reach = (k.reach > 0.0).then_some(k.reach);
+    let count = k.count;
+    resolve(app, k, key, Arc::new(move |s| computed(s, free_form::made_from_curves(s, None, &curves, count, reach).map_err(|e| e.to_string()))));
+}
+
+/// The scan under the face coloured by how far it is from it, again when the face, the tolerance
+/// or the colours have changed.
+fn shade(app: &SolveApp, k: &mut NewFreeForm) {
+    let scan = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.scan.clone());
+    let tolerance = crate::scan_fidelity::effective(app, scan.as_deref(), k.tolerance);
+    let Some(shown) = k.shown.as_mut() else { return };
+    let colours = crate::scan_deviation::colours();
+    if shown.shade.as_ref().is_some_and(|(t, c, _, _)| *t == tolerance.to_bits() && *c == colours) {
+        return;
+    }
+    let Some(under) = shown.under.clone() else { return };
+    let (found, values) = &*under;
+    let dots = crate::dialogs_scan_surface::shade_dots(found, values, tolerance, colours);
+    shown.shade = Some((tolerance.to_bits(), colours, crate::dialogs_scan_surface::next_shade_version(), dots));
+    shown.stats = crate::scan_fidelity::stats(values, tolerance);
+}
+
+/// What the colouring of the scan under the face adds up to, and its tolerance, for the viewport's
+/// key.
+pub(crate) fn fidelity(app: &SolveApp, k: &NewFreeForm) -> Option<(crate::scan_fidelity::Stats, f64)> {
+    if !k.colours {
+        return None;
+    }
+    let shown = k.shown.as_ref()?;
+    let scan = shown.result.as_ref().ok()?.scan.as_deref();
+    Some((shown.stats?, crate::scan_fidelity::effective(app, scan, k.tolerance)))
+}
+
+/// The colouring of the scan under the face, as a cloud for the GPU viewport.
+pub(crate) fn gpu_shade(app: &SolveApp) -> Option<solidcraft_viewport_gpu::view::GpuCloud> {
+    let Some(Kind::ScanFreeForm(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    if !k.colours {
+        return None;
+    }
+    let (_, _, version, dots) = k.shown.as_ref()?.shade.as_ref()?;
+    if crate::scan_paint::on_scan(app) && dots.scale.is_some() {
+        return None;
+    }
+    Some(crate::dialogs_scan_surface::shade_cloud(SHADE_CLOUD_ID, *version, dots))
+}
+
+/// The colouring painted on the scan's own triangles, while it is shown.
+pub(crate) fn painting(app: &SolveApp) -> Option<crate::scan_paint::Painting> {
+    let Some(Kind::ScanFreeForm(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return None };
+    if !k.colours {
+        return None;
+    }
+    let shown = k.shown.as_ref()?;
+    let scan = shown.result.as_ref().ok()?.scan.as_deref()?;
+    let (_, colours, version, dots) = shown.shade.as_ref()?;
+    crate::dialogs_scan_surface::painting(scan, *version, *colours, dots)
+}
+
+/// The dialog's rows.
+pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut NewFreeForm) -> bool {
+    let modes = [tr("ui.scan_free_form_four"), tr("ui.scan_free_form_two"), tr("ui.scan_free_form_curves")];
+    let before = k.corners_mode;
+    choice_row(ui, tr("ui.scan_free_form_corners"), "scan_free_form_corners", &mut k.corners_mode, &modes);
+    if k.corners_mode != before {
+        k.clicks.clear();
+        k.curves.clear();
+        k.axes = None;
+        k.shown = None;
+    }
+    let curves_mode = k.corners_mode == CURVES_MODE;
+    let fits =
+        [tr("ui.scan_free_form_fit_off"), tr("ui.scan_free_form_fit_follow"), tr("ui.scan_free_form_fit_overall"), tr("ui.scan_free_form_fit_flat")];
+    choice_row(ui, tr("ui.scan_free_form_fit"), "scan_free_form_fit", &mut k.fit, &fits);
+    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+    if k.fit != 0 {
+        form_row(ui, tr("ui.scan_edit_snap_reach"), |ui| ui_kit::length_field(ui, &mut k.reach, &units, decimals));
+        k.reach = k.reach.max(0.0);
+        // A flat face is one plane: how much it bends to the scan has no meaning.
+        if k.fit != 3 {
+            stiffness_row(ui, &mut k.stiffness);
+        }
+    }
+    // Follow the Scan adds points where the scan needs them: the row says how many it used.
+    let used = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).map(|m| m.surface.count()[0]).filter(|n| *n > k.count);
+    form_row(ui, tr("ui.scan_free_form_points"), |ui| {
+        use ui_kit::BackingTooltipExt;
+        let field = ui_kit::number_field(ui, &mut k.count, 4..=12, 0.2, "");
+        if let Some(used) = used {
+            let why = solidcraft_ui_text::format("ui.scan_free_form_points_used", &[("count", &used.to_string())]);
+            ui_kit::text(ui, &format!("→ {used}"), ui_kit::Text::Cell).backing_on_hover_text(why);
+        }
+        field
+    });
+    if k.fit != 0 {
+        crate::dialogs_scan_surface::colours_row(ui, &mut k.colours);
+        let scan = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.scan.clone());
+        k.keep_tolerance = crate::scan_fidelity::row(app, ui, scan.as_deref(), &mut k.tolerance).keep;
+    }
+    fit(app, k);
+    if k.pending.is_some() {
+        scan_job::refining_note(ui, "scan_free_form_refining");
+    }
+    shade(app, k);
+    let (have, want) = if curves_mode { (k.curves.len(), 4) } else { (k.clicks.len(), needed(k)) };
+    let count = format!("{have} / {want}");
+    form_row(ui, tr(if curves_mode { "ui.scan_free_form_curves_clicked" } else { "ui.scan_free_form_clicked" }), |ui| {
+        ui_kit::text(ui, &count, ui_kit::Text::Cell)
+    });
+    if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_curve_undo_point"), ui_kit::Button::Enabled(have > 0))).clicked() {
+        if curves_mode {
+            k.curves.pop();
+        } else {
+            k.clicks.pop();
+        }
+        // The first corner of two sets the rectangle's directions: they stay while it does.
+        if k.clicks.is_empty() {
+            k.axes = None;
+        }
+    }
+    // Two corners along one side of the rectangle make a line: said, so a missing face is not a mystery.
+    if k.corners_mode == 1 && k.clicks.len() == 2 && corners(k).is_none() {
+        ui_kit::text(ui, tr("ui.scan_free_form_level"), ui_kit::Text::Report("scan_free_form_level", true));
+    }
+    let tolerance =
+        crate::scan_fidelity::effective(app, k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).and_then(|m| m.scan.as_deref()), k.tolerance);
+    match k.shown.as_ref().map(|s| (&s.result, s.stats, s.check.as_ref())) {
+        Some((Ok(made), stats, check)) if made.scan.is_some() => {
+            // Places the fit could not reach on the scan are worth saying; a full fit is not.
+            if made.met < made.places {
+                let note = solidcraft_ui_text::format(
+                    "ui.scan_free_form_found",
+                    &[("met", &made.met.to_string()), ("places", &made.places.to_string()), ("rms", &crate::prefs::show_mm(app, made.rms, 1))],
+                );
+                ui_kit::text(ui, &note, ui_kit::Text::Note("scan_free_form_found"));
+            }
+            // A face that still bows off the scan past its tolerance with the points it could use
+            // is said so before OK, as `scan.free_form` warns.
+            if made.bow > tolerance {
+                let note = solidcraft_ui_text::format("ui.scan_free_form_bows", &[("off", &crate::prefs::show_mm(app, made.bow, 1))]);
+                ui_kit::text(ui, &note, ui_kit::Text::Note("scan_free_form_bows"));
+            }
+            if let Some(stats) = stats {
+                crate::scan_fidelity::readout(app, ui, "scan_free_form_fidelity", &stats, tolerance, None);
+            }
+            // Surface Check on the face as it will be kept: a fold is seen before OK, not after.
+            if let Some(c) = check {
+                if c.folds + c.pinches + c.crossings == 0 {
+                    form_row(ui, tr("ui.scan_edit_check"), |ui| ui_kit::text(ui, tr("ui.scan_edit_check_clean"), ui_kit::Text::Cell));
+                } else {
+                    let line = crate::dialogs_surface_check::trouble(c.folds, c.pinches, c.crossings);
+                    form_row(ui, tr("ui.scan_edit_check"), |ui| ui_kit::text(ui, &line, ui_kit::Text::Report("scan_free_form_check", true)));
+                    ui_kit::text(ui, tr("ui.scan_free_form_folds_hint"), ui_kit::Text::Hint("scan_free_form_folds_hint"));
+                }
+            }
+        }
+        Some((Err(why), _, _)) => {
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_free_form_error", true));
+        }
+        _ => {}
+    }
+    // How to place the corners, until they are placed.
+    if have < want {
+        let hint = if curves_mode { tr("ui.scan_free_form_curves_hint") } else { tr("ui.scan_free_form_hint") };
+        ui_kit::text(ui, hint, ui_kit::Text::Hint("scan_free_form_hint"));
+    }
+    false
+}
+
+/// Stiffness, 0 to 1, shown and typed as a percentage (10 is 10 %, not ten times the most).
+fn stiffness_row(ui: &mut egui::Ui, stiffness: &mut f64) {
+    let mut percent = 100.0 * *stiffness;
+    let format = |v: f64| format!("{v:.0} %");
+    let changed = form_row(ui, tr("ui.scan_free_form_stiffness"), |ui| {
+        ui_kit::slider(ui, &mut percent, 0.0..=100.0, ui_kit::Slider { format, ..ui_kit::Slider::default() })
+    })
+    .changed();
+    if changed && percent.is_finite() {
+        *stiffness = (percent / 100.0).clamp(0.0, 1.0);
+    }
+}
+
+/// What OK runs: the face made over the corners, and the scan's tolerance if it was changed here.
+pub fn commands(k: &NewFreeForm) -> Result<Vec<(String, Value)>, String> {
+    let mut all = Vec::new();
+    all.extend(crate::scan_fidelity::keep(k.keep_tolerance.as_ref()));
+    all.extend(made_commands(k)?);
+    Ok(all)
+}
+
+fn made_commands(k: &NewFreeForm) -> Result<Vec<(String, Value)>, String> {
+    if k.corners_mode == CURVES_MODE {
+        let made = k.shown.as_ref().ok_or_else(|| tr("ui.scan_free_form_curves_hint").to_owned())?.result.as_ref().map_err(Clone::clone)?;
+        let curves = k.shown_curves.as_ref().ok_or("still fitting")?;
+        let mut p = json!({"curves": curves, "count": k.count});
+        if let Some(scan) = &made.scan {
+            p["body"] = json!(scan);
+        }
+        if k.reach > 0.0 {
+            p["reach"] = json!(format!("{} mm", k.reach));
+        }
+        return Ok(vec![("scan.free_form".into(), p)]);
+    }
+    let c = corners(k).ok_or_else(|| tr("ui.scan_free_form_hint").to_owned())?;
+    let made = k.shown.as_ref().ok_or("still fitting")?.result.as_ref().map_err(Clone::clone)?;
+    let fit = FIT_NAMES[k.fit.min(FIT_NAMES.len() - 1)];
+    let mut p = json!({
+        "corners": c.iter().map(|p| [p.x, p.y, p.z]).collect::<Vec<_>>(),
+        "fit": fit,
+        "count": k.count,
+        "stiffness": k.stiffness,
+    });
+    if let Some(scan) = &made.scan {
+        p["body"] = json!(scan);
+    }
+    if k.reach > 0.0 && k.fit != 0 {
+        p["reach"] = json!(format!("{} mm", k.reach));
+    }
+    Ok(vec![("scan.free_form".into(), p)])
+}
+
+/// Whether New Free Form is open: it colours the scan under the face, which the pointer's
+/// highlight of the scan would hide.
+pub(crate) fn colours_the_scan(app: &SolveApp) -> bool {
+    matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(_)))
+}
+
+/// Whether a scan dialog that marks the scan itself is open (the Free Form ones, Fit Shape, Flatten,
+/// Stand on Base, Split Mesh, Symmetry) and
+/// the scan is drawn plain under it (Preferences › Tools, on by default): the scan clicked is not
+/// painted in the selection colour, which would hide the surface's lines and points and the
+/// scan's colouring by distance.
+pub(crate) fn plain_scan(app: &SolveApp) -> bool {
+    app.preferences.free_form_plain_scan
+        && matches!(
+            app.dialog.as_ref().map(|d| &d.kind),
+            Some(
+                Kind::ScanFreeForm(_)
+                    | Kind::ScanWrapSurface(_)
+                    | Kind::ScanFitSurface(_)
+                    | Kind::ScanEditSurface(_)
+                    | Kind::ScanFitPatches(_)
+                    | Kind::ScanFlatTemplate(_)
+                    // The scan dialogs that mark the scan themselves (the area fitted, the base,
+                    // the side cut, the mirror plane): the whole scan in the selection colour hid
+                    // their marks.
+                    | Kind::ScanFit(_)
+                    | Kind::ScanFlatten(_)
+                    | Kind::ScanBase(_)
+                    | Kind::ScanSplit(_)
+                    | Kind::ScanSymmetry(_)
+                    // Select on Scan paints what it selects; a click's whole scan in the
+                    // selection colour hid it.
+                    | Kind::ScanSelect(_)
+            )
+        )
+}
+
+impl NewFreeForm {
+    /// The corners clicked so far (tests).
+    #[cfg(test)]
+    pub(crate) fn corners_clicked(&self) -> &[Vec3] {
+        &self.clicks
+    }
+}
+
+/// Whether the dialog takes clicks in the view as corners.
+pub(crate) fn drawing(app: &SolveApp) -> bool {
+    matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(k)) if k.corners_mode != CURVES_MODE && k.clicks.len() < needed(k))
+}
+
+/// Whether the dialog takes clicks on 3D curves as the face's sides (Four Curves).
+pub(crate) fn choosing_curves(app: &SolveApp) -> bool {
+    matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(k)) if k.corners_mode == CURVES_MODE)
+}
+
+/// A click at `at` on a 3D curve: it becomes a side of the face (up to four); clicked again, it is let go.
+pub(crate) fn click_curve(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
+    let hit = crate::viewport::pick_cached(app, proj, at).into_iter().find_map(|h| match h {
+        crate::viewport::Hit::SketchCurve { sketch, id, .. } => Some((sketch, id)),
+        _ => None,
+    });
+    let state = app.session.model.state();
+    let wire = hit.filter(|(sketch, id)| state.sketch(*sketch).is_some_and(|ss| ss.sketch.wire_index(id).is_some()));
+    drop(state);
+    let (Some(wire), Some(Kind::ScanFreeForm(k))) = (wire, app.dialog.as_mut().map(|d| &mut d.kind)) else { return };
+    if let Some(at) = k.curves.iter().position(|c| *c == wire) {
+        k.curves.remove(at);
+    } else if k.curves.len() < 4 {
+        k.curves.push(wire);
+    }
+}
+
+/// A click at `at`: a corner on what is under it, or in the view's plane through the corner before.
+pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) {
+    let hit = raw_hit(app, proj, at);
+    // The first of two corners sets the rectangle's directions: the face's own (or, where the face
+    // cannot be read, the view's right and up).
+    let first_of_two = matches!(app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(k)) if k.corners_mode == 1 && k.clicks.is_empty());
+    let axes = first_of_two.then(|| {
+        let (right, up, _) = proj.cam.basis();
+        face_normal(app, proj, at).and_then(face_axes).unwrap_or((right, up))
+    });
+    // Where the click lands: on a corner, edge, crease or curve point close to it.
+    let hit = hit.map(|(body, point)| {
+        if app.session.model.state().body(&body).is_some_and(|b| b.body.is_mesh()) {
+            crate::scan_snap::snapped(app, proj, &body, point)
+        } else {
+            point
+        }
+    });
+    let (_, _, back) = proj.cam.basis();
+    let Some(Kind::ScanFreeForm(k)) = app.dialog.as_mut().map(|d| &mut d.kind) else { return };
+    if k.clicks.len() >= needed(k) {
+        return;
+    }
+    let place = hit.or_else(|| {
+        let last = *k.clicks.last()?;
+        let (o, d) = proj.ray(at);
+        let den = d.dot(back);
+        (den.abs() > 1e-12).then(|| o + d * ((last - o).dot(back) / den))
+    });
+    let Some(place) = place else { return };
+    k.clicks.push(place);
+    if axes.is_some() {
+        k.axes = axes;
+    }
+}
+
+/// What is under the screen point `at`: a body's face, or a scan (also just past its outline: on
+/// the scan, not in the air beyond it), and the place on it.
+fn raw_hit(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<(String, Vec3)> {
+    crate::viewport::pick_cached(app, proj, at)
+        .into_iter()
+        .find_map(|h| match h {
+            crate::viewport::Hit::Face { body, point, .. } => Some((body, point)),
+            _ => None,
+        })
+        .or_else(|| crate::scan_snap::scan_under(app, proj, at))
+}
+
+/// The corners and the face over them, over the picture.
+pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
+    draw_wrap(app, painter, proj);
+    draw_merge(app, painter, proj);
+    let Some(Kind::ScanFreeForm(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
+    let t = solidcraft_theme::Tokens::get();
+    if let Some(Ok(made)) = k.shown.as_ref().map(|s| &s.result) {
+        crate::dialogs_scan_surface::draw_grid(painter, proj, &made.surface, egui::Stroke::new(1.5, t.surface_accent), true);
+    }
+    // The curves clicked, in the accent.
+    if k.corners_mode == CURVES_MODE {
+        let state = app.session.model.state();
+        for (sketch, id) in &k.curves {
+            if let Some(wire) = state.sketch(*sketch).and_then(|ss| ss.sketch.wires.iter().find(|w| w.id == *id)) {
+                let line: Vec<egui::Pos2> = wire.pts.iter().filter_map(|p| proj.to_screen(*p)).collect();
+                crate::dialogs_scan_surface::cased_line(painter, line, egui::Stroke::new(3.0, t.accent));
+            }
+        }
+        return;
+    }
+    let outline: Vec<Vec3> = corners(k).map_or_else(|| k.clicks.clone(), |c| c.to_vec());
+    let on: Vec<egui::Pos2> = outline.iter().filter_map(|p| proj.to_screen(*p)).collect();
+    if on.len() > 1 {
+        let mut closed = on.clone();
+        if corners(k).is_some() {
+            closed.push(on[0]);
+        }
+        crate::dialogs_scan_surface::cased_line(painter, closed, egui::Stroke::new(1.0, t.text_dim));
+    }
+    for (i, p) in on.iter().enumerate() {
+        crate::dialogs_scan_surface::cased_dot(painter, *p, DOT / 2.0, if i == 0 { t.accent } else { t.text });
+    }
+}
+
+/// The Wrap Surface dialog's values (the point clicked is its selection input).
+#[derive(Clone, Debug, Default)]
+pub struct WrapSurface {
+    /// The part wrapped: round the click within a radius (its reach; 0 until the scan's own default
+    /// is known), grown from it, the whole piece, or what is selected.
+    pub area: crate::scan_area::Area,
+    /// 0 Low, 1 Medium, 2 Fine.
+    pub details: usize,
+    /// 0 fitted, 1 X, 2 Y, 3 Z.
+    pub axis: usize,
+    /// How far round the net goes, in degrees; 0 for the part's own reach.
+    pub arc: f64,
+    /// 0 (the net follows the scan) to 1 (it keeps nearly to its cylinder): the one set, else (while
+    /// `stiffness_set` is false) the one the wrap chose, the least that does not fold.
+    pub stiffness: f64,
+    pub stiffness_set: bool,
+    shown: Option<Box<WrapShown>>,
+}
+
+#[derive(Clone, Debug)]
+struct WrapShown {
+    key: String,
+    result: Result<Wrapped, String>,
+    /// Where the net made folds, pinches and crosses itself (Surface Check on it).
+    trouble: [usize; 3],
+}
+
+/// The point clicked on a scan: its scan and the place.
+fn wrap_point(inputs: &[crate::selection::SelInput]) -> Option<(String, Vec3)> {
+    crate::selection::items(inputs, 0).iter().find_map(|s| match s {
+        solidcraft_engine::Sel::Face { body, point, .. } => Some((body.clone(), *point)),
+        _ => None,
+    })
+}
+
+const WRAP_AXES: [&str; 4] = ["fitted", "x", "y", "z"];
+const WRAP_DETAILS: [&str; 3] = ["low", "medium", "fine"];
+
+/// What `scan.wrap_surface` is sent for the part (the area's, its radius as the reach), with the
+/// point clicked. `None` until there is a click, or nothing is selected.
+fn wrap_params(app: &SolveApp, k: &WrapSurface, inputs: &[crate::selection::SelInput]) -> Option<(Value, Option<Vec3>)> {
+    let clicked = wrap_point(inputs);
+    let mut p = k.area.params(app, clicked.as_ref().map(|(b, at)| (b.as_str(), *at)))?;
+    if let Some(r) = p.as_object_mut().and_then(|m| m.remove("radius")) {
+        p["reach"] = json!(format!("{} mm", r.as_f64().unwrap_or(k.area.radius)));
+    }
+    let point = (k.area.needs_click()).then(|| clicked.map(|(_, at)| at)).flatten();
+    Some((p, point))
+}
+
+/// Wrap again when the part, the settings or the design have changed.
+fn wrap(app: &SolveApp, k: &mut WrapSurface, inputs: &[crate::selection::SelInput]) {
+    // The reach starts at the scan's own default: the scan clicked, else the selected or only one.
+    if !(k.area.radius > 0.0) {
+        let body = wrap_point(inputs).map(|(body, _)| body);
+        if let Ok(reach) = free_form::default_wrap_reach(&app.session, body.as_deref()) {
+            k.area.radius = reach;
+        }
+    }
+    let Some((p, point)) = wrap_params(app, k, inputs) else {
+        k.shown = None;
+        return;
+    };
+    // The selection is not in the design's revision: its stamp stands for it.
+    let selection = solidcraft_engine::cmd::scan::select::stamp(&app.session);
+    let set = k.stiffness_set.then_some(k.stiffness);
+    let key = format!("{p}|{}|{}|{}|{:?}|{}|{selection}", k.details, k.axis, k.arc, set, app.session.revision);
+    if k.shown.as_ref().is_some_and(|s| s.key == key) {
+        return;
+    }
+    let axis = [None, Some(Vec3::X), Some(Vec3::Y), Some(Vec3::Z)][k.axis.min(3)];
+    let arc = (k.arc > 0.0).then(|| k.arc.to_radians());
+    let wrap = Wrap { axis, details: k.details.min(2), arc, stiffness: 0.0 };
+    let result = free_form::wrapped_auto(&app.session, &p, point, wrap, set)
+        .map(|(_, w, used)| {
+            // Shown as chosen until it is set by hand.
+            k.stiffness = used;
+            w
+        })
+        .map_err(|e| e.to_string());
+    let trouble = result.as_ref().map_or([0; 3], |w| w.trouble);
+    k.shown = Some(Box::new(WrapShown { key, result, trouble }));
+}
+
+/// The Wrap Surface dialog's rows (after the point input).
+pub fn wrap_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut WrapSurface, inputs: &[crate::selection::SelInput]) -> bool {
+    crate::scan_area::row(app, ui, "scan_wrap_area", &mut k.area);
+    wrap(app, k, inputs);
+    let details = [tr("ui.scan_wrap_low"), tr("ui.scan_wrap_medium"), tr("ui.scan_wrap_fine")];
+    choice_row(ui, tr("ui.scan_wrap_details"), "scan_wrap_details", &mut k.details, &details);
+    let axes = [tr("ui.scan_wrap_fitted"), "X", "Y", "Z"];
+    choice_row(ui, tr("ui.scan_wrap_axis"), "scan_wrap_axis", &mut k.axis, &axes);
+    form_row(ui, tr("ui.scan_wrap_arc"), |ui| ui_kit::angle_field(ui, &mut k.arc));
+    k.arc = k.arc.clamp(0.0, 360.0);
+    let before = k.stiffness;
+    stiffness_row(ui, &mut k.stiffness);
+    if k.stiffness != before {
+        k.stiffness_set = true;
+    }
+    match k.shown.as_ref().map(|s| (&s.result, s.trouble)) {
+        Some((Ok(w), [folds, pinches, crossings])) => {
+            let [nu, nv] = w.made.surface.count();
+            let note = solidcraft_ui_text::format(
+                "ui.scan_wrap_found",
+                &[
+                    ("net", &format!("{nu} × {nv}")),
+                    ("radius", &crate::prefs::show_mm(app, w.cylinder.radius, 1)),
+                    ("off", &crate::prefs::show_mm(app, w.off, 1)),
+                    ("rms", &crate::prefs::show_mm(app, w.made.rms, 1)),
+                ],
+            );
+            ui_kit::text(ui, &note, ui_kit::Text::Note("scan_wrap_found"));
+            if w.off > 0.1 * w.cylinder.radius {
+                ui_kit::text(ui, tr("ui.scan_wrap_poor"), ui_kit::Text::Report("scan_wrap_poor", false));
+            }
+            // The whole way round: open where its ends meet, and whether Merge can close it.
+            if let Some(gap) = w.seam {
+                let closes = gap <= free_form::default_gap(std::slice::from_ref(&w.made.surface));
+                let id = if closes { "ui.scan_wrap_round_closes" } else { "ui.scan_wrap_round_open" };
+                let line = solidcraft_ui_text::format(id, &[("gap", &crate::prefs::show_mm(app, gap, 1))]);
+                ui_kit::text(ui, &line, ui_kit::Text::Report("scan_wrap_round", !closes));
+            }
+            // The net follows rims and ribs it is too coarse for: Stiffness smooths them out.
+            if folds + pinches + crossings > 0 {
+                let trouble = crate::dialogs_surface_check::trouble(folds, pinches, crossings);
+                let line = solidcraft_ui_text::format("ui.scan_wrap_folds", &[("trouble", &trouble)]);
+                ui_kit::text(ui, &line, ui_kit::Text::Report("scan_wrap_folds", true));
+            }
+        }
+        Some((Err(why), _)) => {
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_wrap_error", true));
+        }
+        None => {}
+    }
+    ui_kit::text(ui, crate::scan_area::waiting(&k.area, "ui.scan_wrap_hint"), ui_kit::Text::Hint("scan_wrap_hint"));
+    false
+}
+
+/// What OK runs: the net wrapped round the point clicked.
+pub fn wrap_commands(app: &SolveApp, k: &WrapSurface, inputs: &[crate::selection::SelInput]) -> Result<Vec<(String, Value)>, String> {
+    let (mut p, _) = wrap_params(app, k, inputs).ok_or_else(|| crate::scan_area::waiting(&k.area, "ui.scan_wrap_hint").to_owned())?;
+    k.shown.as_ref().ok_or("still wrapping")?.result.as_ref().map_err(Clone::clone)?;
+    p["axis"] = json!(WRAP_AXES[k.axis.min(3)]);
+    p["details"] = json!(WRAP_DETAILS[k.details.min(2)]);
+    if k.arc > 0.0 {
+        p["arc"] = json!(format!("{} deg", k.arc));
+    }
+    // As chosen for the net shown, or as set: OK makes the net the dialog shows.
+    p["stiffness"] = json!(k.stiffness);
+    Ok(vec![("scan.wrap_surface".into(), p)])
+}
+
+/// The net wrapped, over the picture, and the cylinder's axis.
+pub(crate) fn draw_wrap(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
+    let Some(Kind::ScanWrapSurface(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
+    let Some(Ok(w)) = k.shown.as_ref().map(|s| &s.result) else { return };
+    let t = solidcraft_theme::Tokens::get();
+    crate::dialogs_scan_surface::draw_grid(painter, proj, &w.made.surface, egui::Stroke::new(1.5, t.surface_accent), true);
+    let c = &w.cylinder;
+    let middle = w.made.surface.eval(0.5, 0.5).unwrap_or(c.point);
+    let foot = c.point + c.axis * (middle - c.point).dot(c.axis);
+    let half = c.axis * (2.0 * c.radius);
+    if let (Some(a), Some(b)) = (proj.to_screen(foot - half), proj.to_screen(foot + half)) {
+        crate::dialogs_scan_surface::cased_segment(painter, [a, b], egui::Stroke::new(1.0, t.text_dim));
+    }
+}
+
+/// The Merge Surfaces dialog's values (the surfaces chosen are its selection input).
+#[derive(Clone, Debug)]
+pub struct MergeSurfaces {
+    /// How far apart two sides may be, in mm; 0 until the surfaces' own default is known.
+    pub gap: f64,
+    pub stitch: bool,
+    shown: Option<Box<MergeShown>>,
+}
+
+impl Default for MergeSurfaces {
+    fn default() -> Self {
+        MergeSurfaces { gap: 0.0, stitch: true, shown: None }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct MergeShown {
+    key: (Vec<String>, u64, u64),
+    /// The surfaces, as they will meet, and their names.
+    result: Result<(Merged, Vec<String>), String>,
+}
+
+/// The bodies chosen, each once.
+fn chosen_bodies(inputs: &[crate::selection::SelInput]) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for s in crate::selection::items(inputs, 0) {
+        if let solidcraft_engine::Sel::Body { name }
+        | solidcraft_engine::Sel::Face { body: name, .. }
+        | solidcraft_engine::Sel::Edge { body: name, .. } = s
+            && !names.contains(name)
+        {
+            names.push(name.clone());
+        }
+    }
+    names
+}
+
+/// Merge again when the choice, the gap or the design have changed.
+fn merge(app: &SolveApp, k: &mut MergeSurfaces, inputs: &[crate::selection::SelInput]) {
+    let names = chosen_bodies(inputs);
+    let key = (names.clone(), k.gap.to_bits(), app.session.revision);
+    if k.shown.as_ref().is_some_and(|s| s.key == key) {
+        return;
+    }
+    let named = (!names.is_empty()).then_some(names.as_slice());
+    let result = free_form::merged(&app.session, named, (k.gap > 0.0).then_some(k.gap)).map_err(|e| e.to_string()).map(|(targets, made, gap)| {
+        if !(k.gap > 0.0) {
+            k.gap = gap;
+        }
+        (made, targets.into_iter().map(|t| t.body).collect())
+    });
+    let key = (names, k.gap.to_bits(), app.session.revision);
+    k.shown = Some(Box::new(MergeShown { key, result }));
+}
+
+/// The Merge Surfaces dialog's rows (after the surfaces input).
+pub fn merge_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut MergeSurfaces, inputs: &[crate::selection::SelInput]) -> bool {
+    merge(app, k, inputs);
+    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+    form_row(ui, tr("ui.scan_merge_gap"), |ui| ui_kit::length_field(ui, &mut k.gap, &units, decimals));
+    k.gap = k.gap.max(0.0);
+    form_row(ui, tr("ui.scan_merge_stitch"), |ui| crate::dialogs::check(ui, &mut k.stitch));
+    match k.shown.as_ref().map(|s| &s.result) {
+        Some(Ok((made, names))) => {
+            let widest = made.seams.iter().map(|m| m.gap).fold(0.0, f64::max);
+            let note = solidcraft_ui_text::format(
+                "ui.scan_merge_found",
+                &[("seams", &made.seams.len().to_string()), ("surfaces", &names.len().to_string()), ("gap", &crate::prefs::show_mm(app, widest, 1))],
+            );
+            ui_kit::text(ui, &note, ui_kit::Text::Note("scan_merge_found"));
+        }
+        Some(Err(why)) => {
+            ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_merge_error", true));
+        }
+        None => {}
+    }
+    ui_kit::text(ui, tr("ui.scan_merge_hint"), ui_kit::Text::Hint("scan_merge_hint"));
+    false
+}
+
+/// What OK runs: the surfaces made to meet, and sewn when asked.
+pub fn merge_commands(k: &MergeSurfaces) -> Result<Vec<(String, Value)>, String> {
+    let (_, names) = k.shown.as_ref().ok_or("still merging")?.result.as_ref().map_err(Clone::clone)?;
+    Ok(vec![("scan.merge_surfaces".into(), json!({"surfaces": names, "gap": format!("{} mm", k.gap), "stitch": k.stitch}))])
+}
+
+/// The sides that will be made one, over the picture.
+fn draw_merge(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewport::Proj) {
+    let Some(Kind::ScanMergeSurfaces(k)) = app.dialog.as_ref().map(|d| &d.kind) else { return };
+    let Some(Ok((made, _))) = k.shown.as_ref().map(|s| &s.result) else { return };
+    let t = solidcraft_theme::Tokens::get();
+    for surface in &made.surfaces {
+        crate::dialogs_scan_surface::draw_grid(painter, proj, surface, egui::Stroke::new(1.0, t.surface_accent.gamma_multiply(0.6)), true);
+    }
+    for seam in &made.seams {
+        let Some(surface) = made.surfaces.get(seam.a) else { continue };
+        let line: Vec<egui::Pos2> = (0..=40).filter_map(|i| seam.a_side.at(surface, f64::from(i) / 40.0)).filter_map(|p| proj.to_screen(p)).collect();
+        painter.add(egui::Shape::line(line, egui::Stroke::new(3.0, t.accent)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// The text painted in a frame of the whole window, the dialog's notes among it.
+    fn painted_text(h: &mut crate::scenario::Harness) -> Vec<String> {
+        // The harness clock goes on (a hair) so egui's input history never sees time go backwards.
+        let time = h.ctx.input(|i| i.time) + 1e-4;
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))),
+            time: Some(time),
+            ..Default::default()
+        };
+        let mut output = h.ctx.run_ui(raw, |ui| h.app.ui(ui));
+        output.textures_delta.clear();
+        output.shapes.iter().filter_map(|s| if let egui::Shape::Text(t) = &s.shape { Some(t.galley.text().to_string()) } else { None }).collect()
+    }
+
+    /// A dome scanned as a grid, `n` squares a side over 60 mm, as an STL.
+    fn dome_stl(n: u32) -> String {
+        let z = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+        let at = |i: u32, j: u32| {
+            let (x, y) = (60.0 * f64::from(i) / f64::from(n), 60.0 * f64::from(j) / f64::from(n));
+            [x, y, z(x, y)]
+        };
+        let mut stl = String::from("solid d\n");
+        for i in 0..n {
+            for j in 0..n {
+                for tri in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                    stl += "facet normal 0 0 0\nouter loop\n";
+                    for [x, y, z] in tri {
+                        stl += &format!("vertex {x} {y} {z}\n");
+                    }
+                    stl += "endloop\nendfacet\n";
+                }
+            }
+        }
+        stl + "endsolid d\n"
+    }
+
+    /// Four corners clicked on a dome through the viewport's own input: the face fitted to it is
+    /// previewed close to the scan, OK keeps it as FreeForm1 and opens Edit Surface on it.
+    #[test]
+    fn four_corners_clicked_on_the_scan_make_a_free_form() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.free_form");
+        h.frames(2);
+        assert!(
+            matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanFreeForm(_))),
+            "opened: {:?}",
+            h.app.dialog.as_ref().map(|d| d.error.clone())
+        );
+        let z = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+        // Near the middle, clear of the panels round the view.
+        for [x, y] in [[22.0, 22.0], [38.0, 22.0], [38.0, 38.0], [22.0, 38.0]] {
+            h.step(&json!({"click": {"world": [x, y, z(x, y)]}})).unwrap();
+            h.frames(2);
+            assert!(h.app.dialog.is_some(), "open after the click at {x}, {y}");
+        }
+        let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else {
+            panic!("the dialog: {:?}", h.app.dialog.as_ref().map(|d| format!("{:?}", d.kind).chars().take(80).collect::<String>()))
+        };
+        assert_eq!(k.clicks.len(), 4, "four corners on the scan");
+        // The corners select nothing: a selected scan turns blue over the net's preview.
+        assert!(h.app.session.selection.is_empty(), "{:?}", h.app.session.selection);
+        let Some(Ok(made)) = k.shown.as_ref().map(|s| s.result.clone()) else { panic!("fitted: {:?}", k.shown) };
+        assert!(made.rms < 0.05, "close to the dome: {}", made.rms);
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.session.model.state().body("FreeForm1").is_some(), "kept");
+        assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanEditSurface(_))), "Edit Surface opens on it");
+    }
+
+    /// On a large scan the fit is worked out beside the window: right after the last corner it is
+    /// still under way (the dialog says Refining…), and when it arrives the face, its colouring and
+    /// its fidelity line are those of the fit worked out here.
+    #[test]
+    fn on_a_large_scan_the_fit_is_worked_out_beside_the_window() {
+        crate::scan_job::force(true);
+        // The worker's fit is held back until every corner is in: the dome is small, and its fit
+        // could otherwise come back between two frames, before the dialog is seen waiting for it.
+        let gate = crate::scan_job::hold();
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.free_form");
+        h.frames(2);
+        let z = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+        let mut under_way = false;
+        for [x, y] in [[22.0, 22.0], [38.0, 22.0], [38.0, 38.0], [22.0, 38.0]] {
+            h.step(&json!({"click": {"world": [x, y, z(x, y)]}})).unwrap();
+            if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) {
+                under_way |= k.pending.is_some();
+            }
+        }
+        h.frames(2);
+        if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) {
+            assert!(k.pending.is_some() && k.shown.is_none(), "after the last corner the fit is under way, nothing drawn yet");
+        }
+        gate.open();
+        for _ in 0..500 {
+            h.frames(1);
+            if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) {
+                under_way |= k.pending.is_some();
+                if k.shown.is_some() {
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        h.frames(2);
+        crate::scan_job::force(false);
+        assert!(under_way, "the fit was begun beside the window");
+        let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the dialog") };
+        let Some(Ok(made)) = k.shown.as_ref().map(|s| s.result.clone()) else { panic!("fitted: {:?}", k.shown) };
+        assert!(made.rms < 0.05, "the fit that came back is on the dome: {}", made.rms);
+        assert!(k.pending.is_none(), "nothing left under way");
+        assert!(fidelity(&h.app, k).is_some_and(|(s, _)| s.count > 100), "the scan under the face measured by the worker too");
+    }
+
+    /// Flat in New Free Form: the same four corners clicked on the dome make a face in one plane
+    /// (the dome's top is where it leans away, so it is farther from the scan than Follow the Scan
+    /// is), and OK keeps it as such, sending `fit: flat`. Flat has no Stiffness row.
+    #[test]
+    fn a_flat_face_is_one_plane_on_the_scan() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.free_form");
+        h.frames(2);
+        let z = |x: f64, y: f64| 8.0 - 0.004 * ((x - 30.0).powi(2) + (y - 30.0).powi(2));
+        for [x, y] in [[16.0, 16.0], [44.0, 16.0], [44.0, 44.0], [16.0, 44.0]] {
+            h.step(&json!({"click": {"world": [x, y, z(x, y)]}})).unwrap();
+            h.frames(2);
+        }
+        let rms = |h: &crate::scenario::Harness| match h.app.dialog.as_ref().map(|d| &d.kind) {
+            Some(Kind::ScanFreeForm(k)) => k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).map(|m| m.rms),
+            _ => None,
+        };
+        let follow = rms(&h).expect("fitted to follow the scan");
+        if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.fit = 3;
+        }
+        h.frames(3);
+        let flat = rms(&h).expect("fitted flat");
+        assert!(flat > follow, "flat is farther from the dome than following it: {flat} {follow}");
+        let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the dialog") };
+        assert_eq!(commands(k).unwrap()[0].1["fit"], "flat");
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.as_ref().is_some_and(|d| matches!(d.kind, Kind::ScanEditSurface(_))), "Edit Surface opens on it");
+        let kept = solidcraft_engine::cmd::scan::surface::editable(&h.app.session, Some("FreeForm1"), "test").unwrap().surface;
+        let net = solidcraft_engine::cmd::scan::surface::control_points(&kept);
+        let (point, normal, _) = free_form::flat_plane(&net).unwrap();
+        let off = net.iter().map(|p| (*p - point).dot(normal).abs()).fold(0.0, f64::max);
+        assert!(off < 1e-9, "kept in one plane: {off}");
+    }
+
+    /// A flat plate 60 by 40 mm, its top at z = 10, scanned as a grid of 2 mm squares, as an STL.
+    fn plate_stl() -> String {
+        let at = |i: u32, j: u32| [2.0 * f64::from(i), 2.0 * f64::from(j), 10.0];
+        let mut stl = String::from("solid p\n");
+        for i in 0..30 {
+            for j in 0..20 {
+                for tri in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                    stl += "facet normal 0 0 0\nouter loop\n";
+                    for [x, y, z] in tri {
+                        stl += &format!("vertex {x} {y} {z}\n");
+                    }
+                    stl += "endloop\nendfacet\n";
+                }
+            }
+        }
+        stl + "endsolid p\n"
+    }
+
+    /// New Free Form with Corners Two on the plate, seen from `view`, and the `clicks` made on it.
+    fn plate_two_corners(view: &str, clicks: &[[f64; 3]]) -> crate::scenario::Harness {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("plate.stl");
+        std::fs::write(&path, plate_stl()).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": view})).unwrap();
+        h.app.start("scan.free_form");
+        h.frames(2);
+        if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.corners_mode = 1;
+        }
+        h.frames(2);
+        for p in clicks {
+            h.step(&json!({"click": {"world": p}})).unwrap();
+            h.frames(2);
+        }
+        h
+    }
+
+    fn free_form_of(h: &crate::scenario::Harness) -> &NewFreeForm {
+        let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("New Free Form is open") };
+        k
+    }
+
+    /// Two corners make the panel they are the ends of, whatever the view: seen from above, and
+    /// from the corner (where the diagonal runs level across the screen, which used to leave a
+    /// sliver 8 mm wide in the air). The second click is a corner of it.
+    #[test]
+    fn two_corners_make_the_panel_whatever_the_view() {
+        for view in ["top", "iso"] {
+            // Near the middle, clear of the dialog and the panels round the view.
+            let h = plate_two_corners(view, &[[14.0, 10.0, 10.0], [46.0, 30.0, 10.0]]);
+            let k = free_form_of(&h);
+            assert_eq!(k.clicks.len(), 2, "{view}: both corners are in: {:?}", k.clicks);
+            let got = corners(k).unwrap_or_else(|| panic!("a rectangle from {view}: {:?}", k.clicks));
+            let want = [[14.0, 10.0, 10.0], [46.0, 10.0, 10.0], [46.0, 30.0, 10.0], [14.0, 30.0, 10.0]];
+            for (g, w) in got.iter().zip(want) {
+                assert!(g.dist(Vec3::new(w[0], w[1], w[2])) < 1.0, "{view}: corner {g:?} is not {w:?}; all {got:?}");
+            }
+        }
+    }
+
+    /// Two corners along one side of the rectangle make no rectangle: no face is fitted, OK has
+    /// nothing to run, and the dialog says why.
+    #[test]
+    fn two_corners_along_one_side_make_no_rectangle() {
+        let mut h = plate_two_corners("top", &[[6.0, 4.0, 10.0], [54.0, 4.0, 10.0]]);
+        let k = free_form_of(&h);
+        assert_eq!(k.clicks.len(), 2, "both clicks are in");
+        assert!(corners(k).is_none(), "no rectangle on a line");
+        assert!(commands(k).is_err(), "OK has nothing to run");
+        assert!(k.shown.is_none(), "no face is drawn");
+        let note = solidcraft_ui_text::tr("ui.scan_free_form_level");
+        assert!(painted_text(&mut h).iter().any(|t| t.contains(note)), "the dialog says why");
+    }
+
+    /// Taking the second corner back and clicking another still makes a rectangle: the first
+    /// corner's directions are kept.
+    #[test]
+    fn taking_back_the_second_corner_keeps_the_rectangle_directions() {
+        let mut h = plate_two_corners("iso", &[[14.0, 10.0, 10.0], [46.0, 10.0, 10.0]]);
+        assert_eq!(free_form_of(&h).clicks.len(), 2, "both corners are in");
+        assert!(corners(free_form_of(&h)).is_none());
+        h.step(&json!({"click": {"handle": "dialog:button::Remove Last Point"}})).unwrap();
+        h.frames(2);
+        assert_eq!(free_form_of(&h).clicks.len(), 1, "the second corner is taken back");
+        h.step(&json!({"click": {"world": [46.0, 30.0, 10.0]}})).unwrap();
+        h.frames(2);
+        assert_eq!(free_form_of(&h).clicks.len(), 2, "the new second corner is in");
+        assert!(corners(free_form_of(&h)).is_some(), "a rectangle again");
+    }
+
+    /// A face's sides run level and up it; a floor, which has no up, along X and Y.
+    #[test]
+    fn a_two_corner_rectangle_runs_level_and_up_the_face() {
+        let near = |a: Vec3, b: [f64; 3]| a.dist(Vec3::new(b[0], b[1], b[2])) < 1e-9;
+        let (u, v) = face_axes(Vec3::new(0.0, 0.0, 1.0)).unwrap();
+        assert!(near(u, [1.0, 0.0, 0.0]) && near(v, [0.0, 1.0, 0.0]), "a floor: {u:?} {v:?}");
+        let (u, v) = face_axes(Vec3::new(0.0, 2.0, 0.0)).unwrap();
+        assert!(u.z.abs() < 1e-9 && near(v, [0.0, 0.0, 1.0]), "a wall: level {u:?}, up {v:?}");
+        let (u, v) = face_axes(Vec3::new(0.0, 1.0, 1.0)).unwrap();
+        assert!(u.z.abs() < 1e-9 && v.z > 0.5, "a slope: level {u:?}, up the slope {v:?}");
+        assert!(face_axes(Vec3::new(0.0, 0.0, 0.0)).is_none(), "no normal, no directions");
+    }
+
+    /// Half a tube of radius 20 along Y, 40 long, open at its ends, as an STL.
+    fn half_tube_stl(n: u32) -> String {
+        let at = |i: u32, j: u32| {
+            let a = std::f64::consts::PI * f64::from(i) / f64::from(n);
+            [20.0 * a.cos(), 40.0 * f64::from(j) / f64::from(n), 20.0 * a.sin()]
+        };
+        let mut stl = String::from("solid t\n");
+        for i in 0..n {
+            for j in 0..n {
+                for tri in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
+                    stl += "facet normal 0 0 0\nouter loop\n";
+                    for [x, y, z] in tri {
+                        stl += &format!("vertex {x} {y} {z}\n");
+                    }
+                    stl += "endloop\nendfacet\n";
+                }
+            }
+        }
+        stl + "endsolid t\n"
+    }
+
+    /// The top of a half tube clicked through the viewport's own input: the net wrapped round it is
+    /// previewed on a cylinder of its radius; OK keeps it and opens Edit Surface on it.
+    #[test]
+    fn a_tube_clicked_is_wrapped() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("tube.stl");
+        std::fs::write(&path, half_tube_stl(48)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.wrap_surface");
+        h.frames(2);
+        h.step(&json!({"click": {"world": [0.0, 20.0, 20.0]}})).unwrap();
+        h.frames(3);
+        let Some(Kind::ScanWrapSurface(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the Wrap Surface dialog") };
+        let Some(Ok(w)) = k.shown.as_ref().map(|s| s.result.clone()) else {
+            panic!("wrapped: {:?}", k.shown.as_ref().map(|s| s.result.as_ref().err()))
+        };
+        assert!((w.cylinder.radius - 20.0).abs() < 0.2 && w.made.rms < 0.1, "{:?} {}", w.cylinder, w.made.rms);
+        // Details opens on Medium, as the command does when it is not given.
+        assert_eq!(WRAP_DETAILS[k.details], "medium");
+        // The radius, how far off the part is and the rms are lengths, not areas or volumes.
+        let found = painted_text(&mut h).into_iter().find(|t| t.contains("cylinder of radius")).expect("the note on the net found");
+        assert!(found.contains(" mm") && !found.contains('²') && !found.contains('³'), "{found}");
+        // Stiffness is the dialog's too, and OK passes it.
+        if let Some(Kind::ScanWrapSurface(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.stiffness = 0.1;
+        }
+        h.frames(2);
+        let d = h.app.dialog.as_ref().unwrap();
+        let Kind::ScanWrapSurface(k) = &d.kind else { panic!("the dialog") };
+        assert_eq!(wrap_commands(&h.app, k, &d.inputs).unwrap()[0].1["stiffness"], 0.1);
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.session.model.state().body("FreeForm1").is_some(), "kept");
+        assert!(matches!(h.app.dialog.as_ref().map(|d| &d.kind), Some(Kind::ScanEditSurface(_))), "Edit Surface opens on it");
+    }
+
+    /// Part of the half tube selected first: Wrap Surface opens on What is selected and wraps that
+    /// part with no click, and OK sends no point and no reach, only the scan.
+    #[test]
+    fn what_is_selected_is_wrapped() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("tube.stl");
+        std::fs::write(&path, half_tube_stl(48)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let scan = h.app.session.model.state().bodies[0].name.clone();
+        h.app.run("scan.select", json!({"body": scan, "brush": {"points": [[0, 10, 20], [0, 30, 20]], "radius": 12}})).unwrap();
+        h.app.start("scan.wrap_surface");
+        h.frames(3);
+        let d = h.app.dialog.as_ref().expect("the Wrap Surface dialog");
+        let Kind::ScanWrapSurface(k) = &d.kind else { panic!("the Wrap Surface dialog") };
+        assert_eq!(k.area.way, crate::scan_area::SELECTED);
+        let Some(Ok(w)) = k.shown.as_ref().map(|s| s.result.clone()) else {
+            panic!("wrapped: {:?}", k.shown.as_ref().map(|s| s.result.as_ref().err()))
+        };
+        assert!((w.cylinder.radius - 20.0).abs() < 0.5, "{:?}", w.cylinder);
+        let sent = &wrap_commands(&h.app, k, &d.inputs).unwrap()[0].1;
+        assert!(sent.get("point").is_none() && sent.get("reach").is_none() && sent["body"] == scan.as_str(), "{sent}");
+    }
+
+    /// Two Free Forms side by side: with none chosen the dialog finds the sides to make one; OK
+    /// sews them into the first.
+    #[test]
+    fn merge_finds_the_sides_and_sews_them() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[10, 10, 0], [30, 10, 0], [30, 50, 0], [10, 50, 0]]})).unwrap();
+        h.app.run("scan.free_form", json!({"corners": [[30.5, 10, 0], [50, 10, 0], [50, 50, 0], [30.5, 50, 0]], "count": 5})).unwrap();
+        h.app.run("select.clear", json!({})).unwrap();
+        h.app.start("scan.merge_surfaces");
+        h.frames(3);
+        let Some(Kind::ScanMergeSurfaces(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the Merge Surfaces dialog") };
+        let Some(Ok((made, names))) = k.shown.as_ref().map(|s| s.result.clone()) else {
+            panic!("merged: {:?}", k.shown.as_ref().map(|s| s.result.as_ref().err()))
+        };
+        assert_eq!((made.seams.len(), names.len()), (1, 2));
+        assert!(k.gap > 0.0, "the default gap is shown");
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.dialog.is_none(), "{:?}", h.app.dialog.as_ref().map(|d| d.error.clone()));
+        assert!(h.app.session.model.state().body("FreeForm2").is_none(), "sewn into the first");
+    }
+
+    /// New Free Form with Four Curves: four curves drawn on the dome with Curve on Scan are the
+    /// face's sides; the face is made over them and lies on the scan, and OK keeps it as a Free
+    /// Form. Three curves make no face yet.
+    #[test]
+    fn four_curves_drawn_on_the_scan_make_a_free_form() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("dome.stl");
+        std::fs::write(&path, dome_stl(40)).unwrap();
+        h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
+        let side = |a: [f64; 2], b: [f64; 2]| -> Vec<[f64; 3]> {
+            (0..=6)
+                .map(|i| {
+                    let t = f64::from(i) / 6.0;
+                    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, 4.0]
+                })
+                .collect()
+        };
+        for (a, b) in [([10.0, 10.0], [50.0, 10.0]), ([50.0, 10.0], [50.0, 50.0]), ([50.0, 50.0], [10.0, 50.0]), ([10.0, 50.0], [10.0, 10.0])] {
+            h.app.run("scan.curve_on_scan", json!({"points": side(a, b)})).unwrap();
+        }
+        let wires: Vec<(u64, String)> = {
+            let state = h.app.session.model.state();
+            h.app
+                .session
+                .doc
+                .features
+                .iter()
+                .filter(|f| f.name == "Scan Curves")
+                .flat_map(|f| {
+                    state
+                        .sketch(f.id)
+                        .map(|s| s.sketch.wires.iter().filter(|w| w.pts.len() >= 2).map(|w| (f.id, w.id.clone())).collect::<Vec<_>>())
+                        .unwrap_or_default()
+                })
+                .collect()
+        };
+        assert!(wires.len() >= 4, "four curves drawn: {wires:?}");
+        h.app.start("scan.free_form");
+        h.frames(2);
+        if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.corners_mode = CURVES_MODE;
+            k.count = 6;
+            k.curves = wires[..3].to_vec();
+        }
+        h.frames(2);
+        assert!(commands_of(&h).is_err(), "three curves make no face yet");
+        if let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_mut().map(|d| &mut d.kind) {
+            k.curves = wires[wires.len() - 4..].to_vec();
+        }
+        h.frames(3);
+        let Some(Kind::ScanFreeForm(k)) = h.app.dialog.as_ref().map(|d| &d.kind) else { panic!("the dialog") };
+        let made = k.shown.as_ref().and_then(|s| s.result.as_ref().ok()).expect("the face over the curves");
+        assert!(made.rms < 0.3, "it lies on the scan: {}", made.rms);
+        assert!(commands_of(&h).is_ok_and(|c| c[0].1.get("curves").is_some()), "OK sends the curves");
+        h.step(&json!({"click": {"handle": "dialog:ok"}})).unwrap();
+        h.settle();
+        assert!(
+            h.app.dialog.as_ref().is_none_or(|d| matches!(d.kind, Kind::ScanEditSurface(_))),
+            "{:?}",
+            h.app.dialog.as_ref().map(|d| d.error.clone())
+        );
+        assert!(solidcraft_engine::cmd::scan::surface::editable(&h.app.session, Some("FreeForm1"), "test").is_ok(), "kept as a Free Form");
+    }
+
+    fn commands_of(h: &crate::scenario::Harness) -> Result<Vec<(String, Value)>, String> {
+        match h.app.dialog.as_ref().map(|d| &d.kind) {
+            Some(Kind::ScanFreeForm(k)) => commands(k),
+            _ => Err("no dialog".into()),
+        }
+    }
+}

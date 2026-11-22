@@ -1,0 +1,34 @@
+{
+  "en": {
+    "cmd.view_scan_triangles": "Scan Triangles",
+    "help.view.scan_triangles": "Draws the triangles of the scans shown. Use it to see how fine a scan is and what Reduce Mesh or Remesh made of it."
+  },
+  "de": {
+    "cmd.view_scan_triangles": "Scan-Dreiecke",
+    "help.view.scan_triangles": "Zeigt die Dreiecke der sichtbaren Scans. So sieht man, wie fein ein Scan ist und was Netz reduzieren oder Neu vernetzen daraus gemacht haben."
+  },
+  "ja": {
+    "cmd.view_scan_triangles": "スキャンの三角形",
+    "help.view.scan_triangles": "表示中のスキャンの三角形を描きます。スキャンの細かさや、メッシュの削減・リメッシュの結果を確かめるときに使います。"
+  },
+  "zh": {
+    "cmd.view_scan_triangles": "扫描三角形",
+    "help.view.scan_triangles": "绘制所显示扫描的三角形。用它查看扫描有多精细，以及减少网格或重新网格化的结果。"
+  },
+  "ko": {
+    "cmd.view_scan_triangles": "스캔 삼각형",
+    "help.view.scan_triangles": "표시된 스캔의 삼각형을 그립니다. 스캔이 얼마나 촘촘한지, 메시 줄이기나 리메시가 만든 결과를 볼 때 사용합니다."
+  },
+  "ar": {
+    "cmd.view_scan_triangles": "مثلثات المسح",
+    "help.view.scan_triangles": "يرسم مثلثات المسوح المعروضة. استخدمه لترى دقة المسح وما صنعه تقليل الشبكة أو إعادة التشبيك."
+  },
+  "he": {
+    "cmd.view_scan_triangles": "משולשי הסריקה",
+    "help.view.scan_triangles": "מצייר את המשולשים של הסריקות המוצגות. השתמש בו כדי לראות כמה הסריקה עדינה ומה הקטנת הרשת או בניית הרשת מחדש עשו ממנה."
+  },
+  "vi": {
+    "cmd.view_scan_triangles": "Tam giác bản quét",
+    "help.view.scan_triangles": "Vẽ các tam giác của các bản quét đang hiển thị. Dùng để xem bản quét mịn đến đâu và Giảm lưới hay Chia lưới lại đã làm gì với nó."
+  }
+}

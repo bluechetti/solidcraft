@@ -1,0 +1,83 @@
+{
+ "source": "analytic",
+ "solids": 1,
+ "holes": 3,
+ "volume_by": "read from the truth model's STEP: the holes' mouths on the round side have no short closed form",
+ "cylinders": [
+  {
+   "name": "body",
+   "kind": "boss",
+   "radius": 20,
+   "point": [
+    0,
+    0,
+    0
+   ],
+   "axis": [
+    0,
+    0,
+    1
+   ]
+  },
+  {
+   "name": "spigot",
+   "kind": "boss",
+   "radius": 12,
+   "point": [
+    0,
+    0,
+    0
+   ],
+   "axis": [
+    0,
+    0,
+    1
+   ]
+  },
+  {
+   "name": "side hole 1",
+   "kind": "hole",
+   "radius": 3,
+   "point": [
+    0,
+    0,
+    12.5
+   ],
+   "axis": [
+    1.0,
+    0.0,
+    0
+   ]
+  },
+  {
+   "name": "side hole 2",
+   "kind": "hole",
+   "radius": 3,
+   "point": [
+    0,
+    0,
+    12.5
+   ],
+   "axis": [
+    -0.5,
+    0.866025403784,
+    0
+   ]
+  },
+  {
+   "name": "side hole 3",
+   "kind": "hole",
+   "radius": 3,
+   "point": [
+    0,
+    0,
+    12.5
+   ],
+   "axis": [
+    -0.5,
+    -0.866025403784,
+    0
+   ]
+  }
+ ]
+}

@@ -1749,7 +1749,8 @@ fn rename_one(s: &mut Session, cmd: &str, given: &str, name: &str) -> Result<Bod
     for f in d.features.iter_mut().filter(|f| f.id != fid) {
         // The bodies a join/cut/intersect may change (a primitive's `targets`) are kept beside
         // the feature's kind, not in it (#1108).
-        for b in f.participants.iter_mut().filter(|b| **b == old) {
+        // So are the scans it was made from.
+        for b in f.participants.iter_mut().chain(f.made_from.iter_mut()).filter(|b| **b == old) {
             *b = name.to_string();
         }
         // Every typed body reference, those outside `BODY_KEYS` too: a sweep along a body's

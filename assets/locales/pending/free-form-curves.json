@@ -1,0 +1,42 @@
+{
+  "en": {
+    "ui.scan_free_form_curves": "Four curves",
+    "ui.scan_free_form_curves_clicked": "Curves clicked",
+    "ui.scan_free_form_curves_hint": "Click the face's four sides, curves drawn with Curve on Scan, in any order. They must meet end to end. Click one again to let it go."
+  },
+  "de": {
+    "ui.scan_free_form_curves": "Vier Kurven",
+    "ui.scan_free_form_curves_clicked": "Angeklickte Kurven",
+    "ui.scan_free_form_curves_hint": "Die vier Seiten der Fläche anklicken, mit „Kurve auf Scan“ gezeichnete Kurven, in beliebiger Reihenfolge. Sie müssen Ende an Ende treffen. Erneut klicken gibt sie frei."
+  },
+  "ja": {
+    "ui.scan_free_form_curves": "4 本の曲線",
+    "ui.scan_free_form_curves_clicked": "クリックした曲線",
+    "ui.scan_free_form_curves_hint": "面の4辺（スキャン上の曲線で描いたカーブ）を任意の順にクリックします。端同士がつながっている必要があります。もう一度クリックすると解除します。"
+  },
+  "ko": {
+    "ui.scan_free_form_curves": "곡선 네 개",
+    "ui.scan_free_form_curves_clicked": "클릭한 곡선",
+    "ui.scan_free_form_curves_hint": "면의 네 변(스캔 위 곡선으로 그린 곡선)을 아무 순서로 클릭하세요. 끝과 끝이 맞닿아야 합니다. 다시 클릭하면 해제됩니다."
+  },
+  "zh": {
+    "ui.scan_free_form_curves": "四条曲线",
+    "ui.scan_free_form_curves_clicked": "已点击的曲线",
+    "ui.scan_free_form_curves_hint": "以任意顺序点击面的四条边（用“扫描上的曲线”绘制的曲线）。它们必须首尾相接。再次点击可取消。"
+  },
+  "vi": {
+    "ui.scan_free_form_curves": "Bốn đường cong",
+    "ui.scan_free_form_curves_clicked": "Đường cong đã nhấp",
+    "ui.scan_free_form_curves_hint": "Bấm bốn cạnh của mặt, là các đường vẽ bằng Đường cong trên bản quét, theo thứ tự bất kỳ. Chúng phải nối đầu với đầu. Bấm lại để bỏ."
+  },
+  "ar": {
+    "ui.scan_free_form_curves": "أربعة منحنيات",
+    "ui.scan_free_form_curves_clicked": "المنحنيات المنقورة",
+    "ui.scan_free_form_curves_hint": "انقر جوانب الوجه الأربعة، وهي منحنيات مرسومة بأداة منحنى على المسح، بأي ترتيب. يجب أن تلتقي طرفًا بطرف. انقر أحدها مجددًا لإلغائه."
+  },
+  "he": {
+    "ui.scan_free_form_curves": "ארבע עקומות",
+    "ui.scan_free_form_curves_clicked": "עקומות שנלחצו",
+    "ui.scan_free_form_curves_hint": "לחצו על ארבע צלעות הפאה, עקומות שצוירו בעקומה על הסריקה, בכל סדר. עליהן להיפגש קצה אל קצה. לחיצה נוספת משחררת עקומה."
+  }
+}

@@ -207,7 +207,10 @@ pub fn render(scene: &Scene, cam: &Camera, w: usize, h: usize) -> Canvas {
                 let (Some(Some(a)), Some(Some(b)), Some(Some(cc))) = (pts.get(t[0] as usize), pts.get(t[1] as usize), pts.get(t[2] as usize)) else {
                     continue;
                 };
-                let ns: Vec<Vec3> = t.iter().map(|k| m.normals.get(*k as usize).copied().unwrap_or(Vec3::Z)).collect();
+                let ns: Vec<Vec3> = match m.corner_normals(t) {
+                    Some(n) => n.to_vec(),
+                    None => t.iter().map(|k| m.normals.get(*k as usize).copied().unwrap_or(Vec3::Z)).collect(),
+                };
                 // A curved surface (its normals turn across the triangle) gets a silhouette line
                 // where it turns away from the eye.
                 let curved = ns.iter().any(|n| n.dist(ns[0]) > 1e-6);

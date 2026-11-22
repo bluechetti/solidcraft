@@ -174,7 +174,7 @@ pub(crate) fn on_plane(proj: &Proj, pos: Pos2, o: Vec3, n: Vec3) -> Option<Vec3>
 }
 
 /// Parameter along the line `o + d t` closest to the view ray through `pos`.
-fn along(proj: &Proj, pos: Pos2, o: Vec3, d: Vec3) -> Option<f64> {
+pub(crate) fn along(proj: &Proj, pos: Pos2, o: Vec3, d: Vec3) -> Option<f64> {
     let (ro, r) = proj.ray(pos);
     let w0 = o - ro;
     let (b, dd, e) = (d.dot(r), d.dot(w0), r.dot(w0));
@@ -245,7 +245,7 @@ fn hit(s: &Shapes, p: Pos2) -> Option<Handle> {
 }
 
 /// Millimetres per screen pixel at a point.
-fn mm_per_px(proj: &Proj, c: Vec3) -> Option<f64> {
+pub(crate) fn mm_per_px(proj: &Proj, c: Vec3) -> Option<f64> {
     let (_, view) = proj.ray(proj.to_screen(c)?);
     let u = view.any_perp().normalized()?;
     let (a, b) = (proj.to_screen(c)?, proj.to_screen(c + u)?);

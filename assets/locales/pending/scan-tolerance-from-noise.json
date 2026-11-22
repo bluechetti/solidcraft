@@ -1,0 +1,42 @@
+{
+  "en": {
+    "prefs.scan_tolerance_from_noise": "A scan's noise sets its tolerance",
+    "prefs.scan_tolerance_from_noise_note": "On: a scan with no tolerance of its own is checked against three times its noise, at least 0.1 mm, and OK keeps that for the scan. Off: 0.1 mm.",
+    "ui.scan_tolerance_noise": "Three times the scan's noise ({noise})"
+  },
+  "ar": {
+    "prefs.scan_tolerance_from_noise": "ضجيج المسح يحدد سماحيته",
+    "prefs.scan_tolerance_from_noise_note": "تشغيل: المسح الذي ليس له سماحية خاصة يُقاس مقابل ثلاثة أضعاف ضجيجه، 0.1 مم على الأقل، ويحفظها موافق للمسح. إيقاف: 0.1 مم.",
+    "ui.scan_tolerance_noise": "ثلاثة أضعاف ضجيج المسح ({noise})"
+  },
+  "de": {
+    "prefs.scan_tolerance_from_noise": "Das Rauschen eines Scans bestimmt seine Toleranz",
+    "prefs.scan_tolerance_from_noise_note": "Ein: Ein Scan ohne eigene Toleranz wird gegen das Dreifache seines Rauschens geprüft, mindestens 0,1 mm, und OK behält sie für den Scan. Aus: 0,1 mm.",
+    "ui.scan_tolerance_noise": "Dreifaches Rauschen des Scans ({noise})"
+  },
+  "he": {
+    "prefs.scan_tolerance_from_noise": "הרעש של סריקה קובע את הסבולת שלה",
+    "prefs.scan_tolerance_from_noise_note": "מופעל: סריקה ללא סבולת משלה נבדקת מול פי שלושה מהרעש שלה, לפחות 0.1 מ\"מ, ו'אישור' שומר אותה לסריקה. כבוי: 0.1 מ\"מ.",
+    "ui.scan_tolerance_noise": "פי שלושה מהרעש של הסריקה ({noise})"
+  },
+  "ja": {
+    "prefs.scan_tolerance_from_noise": "スキャンのノイズで許容差を決める",
+    "prefs.scan_tolerance_from_noise_note": "オン: 許容差が設定されていないスキャンは、ノイズの 3 倍 (最小 0.1 mm) で判定され、OK でそのスキャンに保持されます。オフ: 0.1 mm。",
+    "ui.scan_tolerance_noise": "スキャンのノイズの 3 倍 ({noise})"
+  },
+  "ko": {
+    "prefs.scan_tolerance_from_noise": "스캔의 노이즈로 허용 오차 결정",
+    "prefs.scan_tolerance_from_noise_note": "켬: 허용 오차가 없는 스캔은 노이즈의 3배(최소 0.1 mm)로 확인하며, 확인을 누르면 그 스캔에 유지됩니다. 끔: 0.1 mm.",
+    "ui.scan_tolerance_noise": "스캔 노이즈의 3배 ({noise})"
+  },
+  "vi": {
+    "prefs.scan_tolerance_from_noise": "Nhiễu của bản quét đặt dung sai cho nó",
+    "prefs.scan_tolerance_from_noise_note": "Bật: bản quét chưa có dung sai riêng được kiểm tra theo ba lần nhiễu của nó, tối thiểu 0,1 mm, và OK giữ giá trị đó cho bản quét. Tắt: 0,1 mm.",
+    "ui.scan_tolerance_noise": "Ba lần nhiễu của bản quét ({noise})"
+  },
+  "zh": {
+    "prefs.scan_tolerance_from_noise": "扫描的噪声决定其公差",
+    "prefs.scan_tolerance_from_noise_note": "开启：没有自身公差的扫描按其噪声的三倍（至少 0.1 mm）检查，确定后为该扫描保留。关闭：0.1 mm。",
+    "ui.scan_tolerance_noise": "扫描噪声的三倍（{noise}）"
+  }
+}

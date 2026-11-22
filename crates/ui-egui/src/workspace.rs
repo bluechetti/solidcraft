@@ -49,7 +49,8 @@ pub fn tab_label(tab: &str) -> &str {
     }
 }
 
-/// Workspace switching has one lifecycle for menus and automation.
+/// Workspace switching has one lifecycle for menus and automation. The Scan workspace fork adds
+/// `scan`: it shares Design's design and history, so leaving Render or Drawing goes back to Design.
 pub fn enter(app: &mut crate::SolveApp, workspace: &str) -> Result<(), String> {
     if app.preferences.workspace_follows_view {
         return focus_workspace(app, workspace);
@@ -59,18 +60,31 @@ pub fn enter(app: &mut crate::SolveApp, workspace: &str) -> Result<(), String> {
 
 fn enter_legacy(app: &mut crate::SolveApp, workspace: &str) -> Result<(), String> {
     match workspace {
+        "scan" => {
+            if crate::drawing_workspace::active(app) {
+                crate::drawing_workspace::enter(app, false)?;
+            }
+            crate::scan_workspace::enter(app, true)
+        }
         "drawing" => {
             if crate::render_workspace::active(app) {
                 crate::render_workspace::enter(app, false)?;
             }
-            crate::drawing_workspace::enter(app, true)
+            crate::drawing_workspace::enter(app, true)?;
+            app.ui.scan_workspace = false;
+            Ok(())
         }
         "design" if crate::drawing_workspace::active(app) => crate::drawing_workspace::enter(app, false),
+        "design" if crate::scan_workspace::active(app) => crate::scan_workspace::enter(app, false),
         "design" | "render" => {
             crate::drawing_workspace::enter(app, false)?;
-            crate::render_workspace::enter(app, workspace == "render")
+            crate::render_workspace::enter(app, workspace == "render")?;
+            if workspace == "render" {
+                app.ui.scan_workspace = false;
+            }
+            Ok(())
         }
-        _ => Err("workspace must be design, render or drawing".into()),
+        _ => Err("workspace must be design, scan, render or drawing".into()),
     }
 }
 
@@ -291,6 +305,8 @@ pub const TAB_ACCENTS: TabTable = TabTable::new(&[
     tab_style("FORM", AccentRamp::Form, Some("form")),
     tab_style("SHEET METAL", AccentRamp::Sheet, None),
     tab_style("WELDMENTS", AccentRamp::Main, None),
+    // A scan is a mesh or a point cloud: the Scan tab wears the mesh colours.
+    tab_style("SCAN", AccentRamp::Mesh, Some("mesh")),
     tab_style("ASSEMBLE", AccentRamp::Main, None),
     tab_style("INSERT", AccentRamp::Main, None),
     tab_style("INSPECT", AccentRamp::Main, None),
@@ -436,9 +452,20 @@ pub fn groups(tab: &str, panel: &str) -> &'static [CommandGroup] {
             CommandGroup { label: "Edges", ids: &["solid.fillet", "solid.chamfer"] },
             CommandGroup {
                 label: "Faces",
-                ids: &["solid.press_pull", "solid.draft", "solid.offset_face", "solid.replace_face", "solid.split_face", "face.delete"],
+                ids: &[
+                    "solid.press_pull",
+                    "solid.draft",
+                    "solid.tilt_face",
+                    "solid.offset_face",
+                    "solid.replace_face",
+                    "solid.split_face",
+                    "face.delete",
+                ],
             },
-            CommandGroup { label: "Bodies", ids: &["solid.shell", "solid.combine", "solid.split_body", "solid.scale", "solid.remove"] },
+            CommandGroup {
+                label: "Bodies",
+                ids: &["solid.shell", "solid.combine", "solid.split_body", "solid.scale", "solid.deform", "solid.remove"],
+            },
             CommandGroup { label: "Specialise", ids: &["sheet.convert"] },
         ],
         _ => &[],
@@ -639,7 +666,19 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "INSERT", panel: "2D", promoted: 2, ids: &["sketch.insert_dxf", "sketch.insert_svg", "sketch.insert_airfoil"] },
     Section { tab: "INSERT", panel: "LIBRARY", promoted: 3, ids: &["parts.fastener", "parts.library", "parts.resize", "parts.insert"] },
     Section { tab: "INSERT", panel: "LINKS", promoted: 2, ids: &["component.update_links", "component.break_link"] },
-    Section { tab: "INSPECT", panel: "MEASURE", promoted: 3, ids: &["inspect.measure", "inspect.center_of_mass", "component.properties"] },
+    Section {
+        tab: "INSPECT",
+        panel: "MEASURE",
+        promoted: 3,
+        ids: &[
+            "inspect.measure",
+            "inspect.center_of_mass",
+            "component.properties",
+            "inspect.hole_table",
+            "inspect.check_add",
+            "inspect.check_measure",
+        ],
+    },
     Section { tab: "INSPECT", panel: "SECTION", promoted: 1, ids: &["inspect.section"] },
     Section {
         tab: "INSPECT",
@@ -659,6 +698,7 @@ pub const SECTIONS: &[Section] = &[
             "inspect.minimum_radius",
             "inspect.environment_map",
             "inspect.continuity",
+            "inspect.surface_check",
         ],
     },
     Section { tab: "INSPECT", panel: "HISTORY", promoted: 3, ids: &["timeline.play", "timeline.dependents", "document.inspect"] },
@@ -716,6 +756,8 @@ pub const SECTIONS: &[Section] = &[
             "sketch.arc.three_point",
             "sketch.construction_line",
             "sketch.infinite",
+            // In a 3D sketch with a scan in the design: a curve laid along the scan.
+            "scan.curve_on_scan",
         ],
     },
     Section {
@@ -781,6 +823,144 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "WELDMENTS", panel: "CREATE", promoted: 2, ids: &["frame.member", "frame.end_cap"] },
     Section { tab: "WELDMENTS", panel: "MODIFY", promoted: 1, ids: &["frame.rotate_member"] },
     Section { tab: "WELDMENTS", panel: "CONFIGURE", promoted: 2, ids: CONFIGURE },
+    // The Scan workspace's own tab. Scan to CAD (#8615), in the order the work goes: bring the scan
+    // in and look it over, clean it, square it up, build the part from it (as features, or as free
+    // forms), sketch on it, then check the result against it. Each panel shows the two to four
+    // tools most work needs; the rest are in its drop-down. The steps Reconstruct lists (Extrude
+    // It and the rest) run from its dialog, not from buttons that guess which one is meant.
+    Section { tab: "SCAN", panel: "INSERT", promoted: 2, ids: &["file.insert_mesh", "scan.survey", "pointcloud.insert"] },
+    Section {
+        tab: "SCAN",
+        panel: "CLEAN",
+        promoted: 4,
+        ids: &[
+            "scan.clean_up",
+            "scan.select",
+            "scan.remove_floating",
+            "scan.fill_holes",
+            // Reference spheres off the scan, the holes they leave closed.
+            "scan.remove_markers",
+            // A stamp, a boss or a sticker off the scan, the hole it leaves closed.
+            "scan.remove_and_fill",
+            "scan.repair",
+            "scan.reduce",
+            "scan.denoise",
+            "scan.remesh",
+            // It adds what the scan missed, from its mirror image: a repair, not a placing.
+            "scan.complete_by_mirroring",
+            "scan.split",
+            "scan.mesh_from_points",
+        ],
+    },
+    Section {
+        tab: "SCAN",
+        panel: "ALIGN",
+        promoted: 2,
+        ids: &[
+            "scan.stand_on_base",
+            "scan.align",
+            // The ways Align offers, each also a command of its own.
+            "scan.quick_align",
+            "scan.register",
+            "scan.align_all",
+            "scan.align_pairs",
+            "scan.combine",
+            "scan.symmetry",
+            "scan.square_to_symmetry",
+            "scan.rest_on_grid",
+            "scan.center",
+        ],
+    },
+    // The part built as ordinary features: read whole (Find All, Reconstruct) or a shape at a time.
+    Section {
+        tab: "SCAN",
+        panel: "RECONSTRUCT",
+        promoted: 3,
+        ids: &[
+            "scan.reconstruct",
+            "scan.find_all",
+            "scan.fit_plane",
+            "scan.fit_cylinder",
+            "scan.fit_sphere",
+            "scan.fit_cone",
+            "scan.fit_torus",
+            // Shapes fitted to the scan and to each other: on one axis, square, a distance apart.
+            "scan.fit_together",
+            "mesh.convert",
+            "scan.reconstruct_selection",
+            "scan.reconstruct_rest",
+            "scan.fillet",
+            // A round's radius read by tapping it, before or without a model.
+            "scan.radius",
+        ],
+    },
+    Section {
+        tab: "SCAN",
+        panel: "FREEFORM",
+        promoted: 4,
+        ids: &[
+            "scan.free_form",
+            "scan.wrap_surface",
+            "scan.fit_patches",
+            "scan.edit_surface",
+            "scan.fit_surface",
+            "scan.merge_surfaces",
+            "scan.slice_surface",
+            "scan.close_surface",
+            "scan.make_flat",
+            "scan.refit",
+            // The fitted surfaces trimmed, joined, patched and thickened without leaving the Scan tab.
+            "surface.trim",
+            "surface.stitch",
+            "surface.patch",
+            "surface.thicken",
+        ],
+    },
+    Section {
+        tab: "SCAN",
+        panel: "SKETCH",
+        promoted: 3,
+        ids: &[
+            "scan.section_sketch",
+            "scan.curve_on_scan",
+            "scan.flat_template",
+            "sketch.create",
+            "scan.sections_along_curve",
+            "scan.curve_from_selection",
+            "sketch.fit_curves_to_section",
+            "scan.flatten",
+            "scan.roll_onto_scan",
+            "scan.furring",
+        ],
+    },
+    Section {
+        tab: "SCAN",
+        panel: "CHECK",
+        promoted: 2,
+        ids: &[
+            "scan.deviation",
+            "scan.align_to_model",
+            // The inspection plan: checks picked on the model, measured on the scan.
+            "inspect.check_add",
+            "inspect.check_measure",
+            // Labels places on the deviation map with their distances.
+            "scan.deviation_pin",
+            // A line of clicks along the scan, its length along the surface.
+            "scan.measure_line",
+            // What the scanner never saw: filled, mirrored or made from sparse points.
+            "scan.unseen",
+            // One HTML file of the scan, what was done to it and what was read off it.
+            "scan.report",
+            // The scan's own triangles drawn, to see what Reduce Mesh or Remesh made of it.
+            "view.scan_triangles",
+            "inspect.hole_table",
+            "inspect.surface_check",
+            "inspect.zebra",
+            "inspect.curvature_map",
+            "inspect.section",
+            "inspect.compare",
+        ],
+    },
 ];
 
 // Migration data only: Render commands remain registered, but have no live ribbon sections.
@@ -896,6 +1076,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("frame.rotate_member", "Rotate"),
     ("inspect.accessibility", "Access"),
     ("inspect.center_of_mass", "Mass Center"),
+    ("inspect.compare", "Compare"),
     ("inspect.curvature_comb", "Curv. Comb"),
     ("inspect.curvature_map", "Curvature"),
     ("inspect.draft", "Draft"),
@@ -915,6 +1096,22 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("plastic.manage_rules", "Plastic Rules"),
     ("pointcloud.insert", "Point Clouds"),
     ("render.scene", "Scene"),
+    ("scan.align_to_model", "Align to CAD"),
+    ("scan.center", "Center"),
+    ("scan.complete_by_mirroring", "Mirror Fill"),
+    ("scan.curve_on_scan", "Curve on Scan"),
+    ("scan.deviation", "Deviation"),
+    ("scan.flat_template", "Template"),
+    ("scan.free_form", "Free Form"),
+    ("scan.reconstruct", "Rebuild"),
+    ("scan.register", "Align Scans"),
+    ("scan.remove_floating", "Floating"),
+    ("scan.section_sketch", "Cut to Sketch"),
+    ("scan.select", "Select"),
+    ("scan.select_inside_curve", "Inside Curve"),
+    ("scan.square_to_symmetry", "Square Up"),
+    ("scan.stand_on_base", "Stand on Base"),
+    ("scan.symmetry", "Symmetry"),
     ("sheet.export_bend_table", "Bend Table"),
     ("sheet.export_dxf", "Export DXF"),
     ("sheet.flat_pattern", "Flat Pattern"),
@@ -927,6 +1124,7 @@ pub const RIBBON_LABELS: &[(&str, &str)] = &[
     ("sketch.construction_line", "X-Lines"),
     ("sketch.create", "New Sketch"),
     ("sketch.dimension", "Dimension"),
+    ("sketch.fit_curves_to_section", "Fit Curves"),
     ("sketch.finish", "Finish Sketch"),
     ("sketch.inspect", "Sketch Report"),
     ("sketch.pattern.circular", "Circular"),
@@ -1001,6 +1199,10 @@ pub(crate) fn legacy_render_destination(c: &CommandSpec) -> Option<(&'static str
         "sheet.convert" => Some(("MODEL", "MODIFY")),
         "parameters.change" => Some(("MANAGE", "PARAMETERS")),
         "config.table" | "config.configure" => Some(("MANAGE", "CONFIGURATIONS")),
+        // Also on SKETCH while a 3D sketch is edited; its home is the Scan tab.
+        "scan.curve_on_scan" => Some(("SCAN", "SKETCH")),
+        // Also in the Scan tab's SURFACE EDIT panel.
+        "surface.patch" => Some(("SURFACE", "CREATE")),
         _ => None,
     };
     primary
@@ -1039,6 +1241,9 @@ pub fn legacy_panel(tab: &str, panel: &str) -> Option<(&'static str, &'static st
         ("PLASTIC" | "SHEET METAL" | "SURFACE" | "MESH", "INSPECT") => Some(("INSPECT", "CHECK")),
         ("PLASTIC" | "SHEET METAL" | "SURFACE" | "MESH", "INSERT") => Some(("INSERT", "FILES")),
         ("MESH", "CREATE" | "PREPARE") => Some(("SURFACE", "CONVERT")),
+        // The Scan tab's FIT and SELECT panels joined RECONSTRUCT and CLEAN.
+        ("SCAN", "FIT") => Some(("SCAN", "RECONSTRUCT")),
+        ("SCAN", "SELECT") => Some(("SCAN", "CLEAN")),
         ("UTILITIES", "MAKE" | "ADD-INS" | "UTILITY") => Some(("MANAGE", "DESIGN")),
         ("UTILITIES", "INSPECT") => Some(("INSPECT", "CHECK")),
         _ => None,
@@ -1156,6 +1361,13 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
     if crate::render_workspace::active(app) {
         return Vec::new();
     }
+    if crate::scan_workspace::active(app) {
+        let mut tabs = crate::scan_workspace::TABS.to_vec();
+        if app.session.active_sketch.is_some() {
+            tabs.push("SKETCH");
+        }
+        return tabs;
+    }
     let mut tabs: Vec<_> = TABS.iter().copied().filter(|tab| tab_turned_on(app, tab)).collect();
     if app.preferences.sketch_tab_always {
         // Right after MODEL, whether a sketch is open or not (#7904).
@@ -1171,6 +1383,9 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
 /// Where the ribbon goes when the selected tab is not in the row: Model, or the first tab shown
 /// while Model is hidden; none when every tab is hidden.
 fn home_tab(app: &crate::SolveApp) -> &'static str {
+    if crate::scan_workspace::active(app) {
+        return crate::scan_workspace::HOME;
+    }
     let tabs = visible_tabs(app);
     if tabs.contains(&"MODEL") { "MODEL" } else { tabs.first().copied().unwrap_or_default() }
 }
@@ -1235,6 +1450,9 @@ pub fn sync_context(app: &mut crate::SolveApp) {
         } else if let Some(back) = back.as_deref().filter(|t| *t != "SKETCH" && visible_tabs(app).contains(t)) {
             // Finishing a sketch goes back to the tab it came from (#3250).
             visible_tabs(app).into_iter().find(|t| t == &back).unwrap_or_else(|| home_tab(app))
+        } else if crate::scan_workspace::active(app) {
+            // Sheet Metal and Weldments are design tabs: picking such a body here stays put.
+            visible_tabs(app).into_iter().find(|t| *t == app.ui.tab).unwrap_or_else(|| home_tab(app))
         } else if context.as_deref().is_some_and(|c| c.starts_with("frame:")) {
             "WELDMENTS"
         } else if context.is_some() {
@@ -1360,7 +1578,7 @@ mod tests {
         type Slots = fn(&Tokens) -> [egui::Color32; 3];
         let main: Slots = |t| [t.accent, t.selected_ink, t.accent_soft];
         let render: Slots = |t| [t.render_fill, t.render_ink, t.render_soft];
-        let tabs: [(&str, Slots, Option<&str>); 16] = [
+        let tabs: [(&str, Slots, Option<&str>); 17] = [
             ("MODEL", main, None),
             ("SKETCH", |t| [t.sketch_accent, t.sketch_ink, t.sketch_soft], Some("sketch")),
             ("SURFACE", |t| [t.surface_fill, t.surface_ink, t.surface_soft], Some("surface")),
@@ -1368,6 +1586,7 @@ mod tests {
             ("FORM", |t| [t.form_fill, t.form_tab_ink, t.form_soft], Some("form")),
             ("SHEET METAL", |t| [t.sheet_fill, t.sheet_ink, t.sheet_soft], None),
             ("WELDMENTS", main, None),
+            ("SCAN", |t| [t.mesh_fill, t.mesh_ink, t.mesh_soft], Some("mesh")),
             ("ASSEMBLE", main, None),
             ("INSERT", main, None),
             ("INSPECT", main, None),
@@ -1569,6 +1788,7 @@ mod tests {
                 "solid.chamfer",
                 "solid.press_pull",
                 "solid.draft",
+                "solid.tilt_face",
                 "solid.offset_face",
                 "solid.replace_face",
                 "solid.split_face",
@@ -1577,6 +1797,7 @@ mod tests {
                 "solid.combine",
                 "solid.split_body",
                 "solid.scale",
+                "solid.deform",
                 "solid.remove",
                 "sheet.convert",
                 "timeline.delete",

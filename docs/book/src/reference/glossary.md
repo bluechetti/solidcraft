@@ -211,6 +211,21 @@ A sketch entity that is not a point: a line, an arc, a circle, an ellipse, a spl
 - **Elsewhere:** curve, sketch curve, segment.
 - **For translators:** not an edge of a body.
 
+
+### curve on scan
+
+A smooth 3D curve laid along the surface of a scan through points the user clicks, kept as a
+spline in a 3D sketch.
+
+The curve is as fine as the scan's triangles allow, within a tolerance, so it can be swept along,
+lofted through or projected like any sketch curve. Compare *section* (a cut by a plane).
+
+- **In SolidCraft:** `scan.curve_on_scan`; Curve on Scan on the SCAN tab and on the SKETCH tab of
+  a 3D sketch; the 3D sketch `Scan Curves`.
+- **Don't use:** scan curve, projected curve, trace.
+- **Elsewhere:** curve on mesh, draw curve on scan, spline on mesh.
+- **For translators:** the curve lies on the scan; it does not describe a curve of the scan.
+
 ### design
 
 The model that is open in SolidCraft: its timeline, components, bodies, sketches, parameters and
@@ -224,6 +239,7 @@ A design is saved as a *design file*.
 - **Elsewhere:** design, document, model, part file, assembly file.
 - **For translators:** not the *Project* design property and not the sketch Project command.
 
+
 ### design file
 
 A file in which SolidCraft saves one design, with the `.sc` extension (`.solidcraft` in earlier releases; those files still open).
@@ -233,6 +249,16 @@ A file in which SolidCraft saves one design, with the `.sc` extension (`.solidcr
 - **Elsewhere:** design file, model file.
 - **For translators:** "file" is only for what is on disk: opening, saving, importing and
   exporting.
+
+### deviation
+
+How far each point of a scan is from a surface or body it is compared with, shown as colour.
+
+- **In SolidCraft:** `scan.deviation`; Deviation in SCAN › CHECK.
+- **Don't use:** error, difference (for this distance).
+- **Elsewhere:** deviation analysis, colour map, scan-to-CAD comparison.
+- **For translators:** a distance between two shapes, not a statistical deviation.
+
 
 ### dimension
 
@@ -273,6 +299,19 @@ when the design's parameters change. Compare *spline*, whose points are placed b
 - **Elsewhere:** equation-driven curve, curve from equation, function plot.
 - **For translators:** "equation" is a mathematical formula, not a balance or an equality constraint.
 
+### falloff
+
+The distance within which the control points round one moved by hand go with it, each less the
+further it is, none from that distance out.
+
+It makes one drag reshape an area smoothly instead of raising a single spike. Compare *slide*.
+
+- **In SolidCraft:** the `falloff` parameter of `scan.edit_surface`; Falloff in the Edit Surface
+  dialog.
+- **Don't use:** soft selection (for the distance), radius (alone), influence.
+- **Elsewhere:** falloff, soft selection, proportional editing, move neighbours.
+- **For translators:** a distance that fades, not a fall or a drop.
+
 ### feature
 
 One step in the timeline that creates or changes geometry, such as an extrude, a fillet or a
@@ -299,6 +338,34 @@ makes is a *group*.
 - **Elsewhere:** folder, node.
 - **For translators:** not a group and not a folder on disk.
 
+### Free Form
+
+A surface made by hand over a scan: one face or several four-sided faces, each a cubic B-spline,
+that share whole sides, kept as one surface body.
+
+Where two faces share a side they meet exactly, and where they met smoothly they are kept
+tangent as the surface is edited. A face is added on an *open edge* (a side no other face shares).
+The points a user drags lie on the surface; the control net behind them is shown on request.
+Compare *irregular corner*.
+
+Any number of its points can be chosen at once (a click, Shift or Ctrl-click, a box, a
+double-click on a face). A drag of one chosen point moves them all; Snap to Scan, Fit to Scan and
+the shape tools (a plane, line, circle, sphere, cylinder or cone) act on the chosen points, and
+Shift+wheel sizes the soft selection that takes the points near them along. A face can also be
+made from four curves (`curves` of `scan.free_form`).
+
+- **In SolidCraft:** `scan.free_form`, `scan.add_face`, `scan.wrap_surface`,
+  `scan.mirror_free_form`; `scan.edit_surface` (`dots`, `neighbours`, `faces`, `crease`, `smooth`,
+  `delete_face`, `weld`, `keep_half`, `symmetry`); New Free Form, Add Face, Points on the surface
+  and Control net in the Edit Surface dialog; `scan.refit` (fits it again on the scan as it is
+  now, keeping the hand edits); bodies `FreeForm1`, `FreeForm2`, …; the design file's `free_forms`
+  (the edges creased or held smooth by hand, the symmetry plane) and a Scan Surface feature's
+  `recipe` (how it was fitted); `scan.tolerance` and the file's `scan_tolerances` (how far off the
+  scan still counts as on it, per scan).
+- **Don't use:** patch network, quad cage, T-spline, subdivision surface (for the Free Form itself).
+- **Elsewhere:** freeform, quad surface, patch network, NURBS patch layout.
+- **For translators:** a kind of surface the user makes, not "free shape" in general.
+
 ### gather radius
 
 Radius of the surface neighbourhood used to estimate illumination from nearby photon hits.
@@ -319,6 +386,21 @@ features are computed.
 - **Don't use:** feature folder, folder (for a group).
 - **Elsewhere:** folder, group.
 - **For translators:** not a rigid group (a joint) and not a fixed browser *folder*.
+
+### irregular corner
+
+A corner of a *Free Form* where other than four of its faces meet inside it, or more than three on
+its edge.
+
+The faces round such a corner cannot all be tangent to each other there, so the surface is less
+smooth at it. The Edit Surface dialog marks each one in red and counts them.
+
+- **In SolidCraft:** the `irregular` reply of `scan.add_face`; Irregular corners in the Edit
+  Surface dialog.
+- **Don't use:** pole, star point, bad vertex.
+- **Elsewhere:** extraordinary vertex, irregular point, star point.
+- **For translators:** a corner that is unusual in how many faces meet there, not one that is
+  wrong.
 
 ### item number
 
@@ -535,6 +617,44 @@ are kept, not deleted.
 - **For translators:** "history" is the undo history, not the timeline. French had three names
   for this marker while English did.
 
+### scan
+
+A body made of triangles, or a cloud of points, that measures a real object.
+
+A scan stays as it was measured; shapes, sketches and surfaces made from it are separate features
+that refer to it.
+
+- **In SolidCraft:** mesh bodies and point clouds inserted with `file.insert_mesh` and
+  `pointcloud.insert`; the SCAN tab and the `scan.*` commands.
+- **Don't use:** mesh (alone), model, capture, reality capture.
+- **Elsewhere:** scan, mesh, point cloud, STL.
+- **For translators:** the result of measuring, not a scan of a document.
+
+### scan surface
+
+A smooth B-spline surface body fitted to, or drawn over, a scan, kept as its own feature.
+
+It holds one face or a network of faces. It is made by Fit Surface, New Free Form, Wrap Surface,
+Merge Surfaces and Fit Patches, and edited by Edit Surface. Compare *Free Form*.
+
+- **In SolidCraft:** the `scan_surface` feature type (the Scan Surface feature in the history);
+  `scan.fit_surface`, `scan.free_form`, `scan.wrap_surface`, `scan.merge_surfaces`,
+  `scan.fit_patches`, `scan.edit_surface`.
+- **Don't use:** imported surface, STEP surface (for these), scan patch.
+- **Elsewhere:** NURBS surface fitted to a mesh, surface from scan.
+- **For translators:** a surface made from a scan, not the surface of a scan.
+
+### section
+
+The outline where a plane cuts a scan or a body, shown as a line or sketched as lines and arcs
+fitted to the cut.
+
+- **In SolidCraft:** `scan.section_sketch` (Cut to Sketch in SCAN › SKETCH), `inspect.section`
+  (Section in the CHECK panel: a view of the cut, not a sketch).
+- **Don't use:** slice (for the cut), cross-section, profile.
+- **Elsewhere:** cross-section, slice, section to sketch.
+- **For translators:** a cut, not a part of a document.
+
 ### section plane
 
 A plane of a Section Analysis; the view hides what lies beyond any section plane.
@@ -589,6 +709,17 @@ A point or a curve in a sketch.
 - **Elsewhere:** sketch entity, sketch geometry, sketch element.
 - **For translators:** "entity" names both points and curves.
 
+### slide (a control point)
+
+To move a surface's control point along the surface instead of through space, so the net moves
+over the surface and the surface keeps its shape as far as its points allow.
+
+- **In SolidCraft:** the `slide` parameter of `scan.edit_surface` (`points`, `u`, `v`); Drag set
+  to Slide on surface, and Slide, in the Edit Surface dialog.
+- **Don't use:** glide, drift, slip.
+- **Elsewhere:** slide, slide control points.
+- **For translators:** a movement along the surface, not a slide of a presentation or a slider.
+
 ### standard part
 
 A ready-made component, such as a screw, nut, washer, pin or bearing, that SolidCraft builds from
@@ -613,6 +744,21 @@ flange slope.
 - **Don't use:** catalogue profile, library profile (for the size).
 - **Elsewhere:** standard section, section size, section designation.
 - **For translators:** a steel section's size by name, not a dimension and not a standard part.
+
+### surface check
+
+A check of each B-spline face of a body for folds, pinches and places where the surface passes
+through itself, with how square and how even its parameters are.
+
+A *fold* is where the surface doubles back over itself; a *pinch* is where it narrows to no area
+away from a corner of its parameter square; a *crossing* is where two parts of it that are not
+neighbours pass through each other.
+
+- **In SolidCraft:** `inspect.surface_check` (`bodies`, `grid`); the Surface Check line of the
+  Edit Surface dialog.
+- **Don't use:** surface analysis (for this check), surface validation, surface health.
+- **Elsewhere:** surface check, surface diagnostics, check geometry.
+- **For translators:** "pinch" is a narrowing of the surface, not a touch gesture.
 
 ### thin-film interference
 
@@ -679,6 +825,19 @@ A program that shows web pages, such as the one that runs SolidCraft's web build
 - **For translators:** not the *browser* panel. Where a language uses one word for both, use the
   CAD word for the panel.
 
+### weld (Free Form corners)
+
+Two corners on a *Free Form*'s edge made one point, by dropping one on the other.
+
+When the corners at both ends of two open sides have been welded, and the sides have as many
+points, the two sides are sewn into one shared edge: the faces meet there exactly, held tangent
+where they go on from each other.
+
+- **In SolidCraft:** the `weld` parameter of `scan.edit_surface` and its `sewn` reply; dropping a
+  corner on another in the Edit Surface dialog.
+- **Don't use:** merge, snap, join (for two corners made one).
+- **Elsewhere:** weld vertices, merge vertices, stitch.
+- **For translators:** not welding metal parts together.
 ### weld gap
 
 The space left between frame members where they meet, for a weld to fill.

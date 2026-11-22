@@ -96,6 +96,7 @@ pub(super) fn local_geometry(f: &Feature, components: &std::collections::HashMap
         | FeatureKind::Sphere { center: _, radius: _, operation: Operation::NewBody }
         | FeatureKind::Torus { center: _, major: _, minor: _, operation: Operation::NewBody }
         | FeatureKind::Import { file: _, step: _, components: _, skip: _, records: _ }
+        | FeatureKind::ScanSurface { file: _, step: _, recipe: _ }
         | FeatureKind::MeshImport { file: _, meshes: _ } => true,
         FeatureKind::Sketch { plane, sketch } => sketch.links.is_empty() && sketch.wires.is_empty() && local_plane(plane, 0),
         FeatureKind::Extrude { sketch, profiles: _, extent, operation: Operation::NewBody, targets: _, thin: _ } => {
@@ -167,7 +168,13 @@ fn same_geometry_inputs(a: &Document, b: &Document) -> bool {
         named_views,
         visibility,
         point_clouds,
+        scan_selections,
+        free_forms,
+        scan_tolerances,
+        scan_plans,
+        scan_flat_patterns,
         notes: _,
+        checks: _,
         // Plugin data is kept beside the design; no feature reads it.
         plugin_data: _,
     } = a;
@@ -206,6 +213,11 @@ fn same_geometry_inputs(a: &Document, b: &Document) -> bool {
         && *named_views == b.named_views
         && *visibility == b.visibility
         && *point_clouds == b.point_clouds
+        && *scan_selections == b.scan_selections
+        && *free_forms == b.free_forms
+        && *scan_tolerances == b.scan_tolerances
+        && *scan_plans == b.scan_plans
+        && *scan_flat_patterns == b.scan_flat_patterns
 }
 
 /// Compare feature definitions without traversing immutable imported payloads. A replacement
@@ -228,6 +240,8 @@ fn same_feature(a: &Feature, b: &Feature) -> bool {
         pattern_names_in_order,
         inserted,
         link_faces,
+        // Which scans a feature was made from changes nothing it builds.
+        made_from: _,
         link_threads,
         profile_frame,
         kind,

@@ -1,0 +1,42 @@
+{
+  "en": {
+    "prefs.free_form_plain_scan": "Free Form tools draw the scan without the selection colour",
+    "prefs.free_form_plain_scan_note": "While a free-form tool is open, the scan is not painted as selected, so the surface and the scan's colouring stay in sight. Off: painted as selected, as before.",
+    "ui.scan_deviation_colours": "Deviation colours"
+  },
+  "de": {
+    "prefs.free_form_plain_scan": "Freiform-Werkzeuge zeichnen den Scan ohne Auswahlfarbe",
+    "prefs.free_form_plain_scan_note": "Solange ein Freiform-Werkzeug offen ist, wird der Scan nicht als ausgewählt eingefärbt, sodass Fläche und Scanfärbung sichtbar bleiben. Aus: als ausgewählt eingefärbt, wie bisher.",
+    "ui.scan_deviation_colours": "Abweichungsfarben"
+  },
+  "ja": {
+    "prefs.free_form_plain_scan": "フリーフォームツールではスキャンを選択色で表示しない",
+    "prefs.free_form_plain_scan_note": "フリーフォームツールを開いている間はスキャンを選択色で塗らず、サーフェスとスキャンの色分けが見えるようにします。オフ：従来どおり選択色で塗ります。",
+    "ui.scan_deviation_colours": "偏差の色"
+  },
+  "ko": {
+    "prefs.free_form_plain_scan": "자유형 도구에서 스캔을 선택 색 없이 표시",
+    "prefs.free_form_plain_scan_note": "자유 곡면 도구가 열려 있는 동안 스캔을 선택 색으로 칠하지 않아 곡면과 스캔 색칠이 보이게 합니다. 끄면: 이전처럼 선택 색으로 칠합니다.",
+    "ui.scan_deviation_colours": "편차 색상"
+  },
+  "zh": {
+    "prefs.free_form_plain_scan": "自由形状工具绘制扫描时不使用选择颜色",
+    "prefs.free_form_plain_scan_note": "自由曲面工具打开时，扫描不以选中颜色绘制，使曲面和扫描着色保持可见。关闭：与以前一样以选中颜色绘制。",
+    "ui.scan_deviation_colours": "偏差颜色"
+  },
+  "ar": {
+    "prefs.free_form_plain_scan": "ترسم أدوات الشكل الحر المسح بلا لون التحديد",
+    "prefs.free_form_plain_scan_note": "أثناء فتح أداة شكل حر لا يُلوَّن المسح كمحدد، فيبقى السطح وتلوين المسح ظاهرين. عند الإيقاف: يُلوَّن كمحدد كما كان.",
+    "ui.scan_deviation_colours": "ألوان الانحراف"
+  },
+  "he": {
+    "prefs.free_form_plain_scan": "כלי צורה חופשית מציירים את הסריקה בלי צבע הבחירה",
+    "prefs.free_form_plain_scan_note": "כשכלי צורה חופשית פתוח, הסריקה לא נצבעת כנבחרת, כך שהמשטח וצביעת הסריקה נשארים גלויים. כבוי: נצבעת כנבחרת, כמו קודם.",
+    "ui.scan_deviation_colours": "צבעי סטייה"
+  },
+  "vi": {
+    "prefs.free_form_plain_scan": "Công cụ dạng tự do vẽ bản quét không có màu chọn",
+    "prefs.free_form_plain_scan_note": "Khi công cụ bề mặt tự do đang mở, bản quét không tô màu chọn, để bề mặt và màu của bản quét vẫn thấy được. Tắt: tô màu chọn như trước.",
+    "ui.scan_deviation_colours": "Màu độ lệch"
+  }
+}

@@ -343,14 +343,6 @@ pub(crate) enum Corners {
     Open,
 }
 
-/// Why a curvature fillet over edges of different wedge angles is refused: SolidCraft refuses it
-/// since every edge took the equal-area thumbweight of the first one's wedge (in the fork as in
-/// solidcore#2261), so that an edge of another wedge took off another area than its own, and
-/// which one depended on the edges' order.
-pub(crate) const CURVATURE_MIXED_WEDGES: &str = "a curvature-continuous fillet on solidcore over edges whose faces meet at different \
-angles: every edge takes the equal-area thumbweight of the first one's angle, so the others take off the wrong area \
-(https://github.com/tangency-labs/solidcore/issues/2250#issuecomment-6563419897)";
-
 /// [`blend_holes`] without its holes.
 #[allow(clippy::too_many_arguments)] // the capi's blend_call
 pub(crate) fn blend(
@@ -445,11 +437,9 @@ fn blend_call(
         .zip(&at.first)
         .map(|(&vertex, &j)| solidcore_ops::SetBack { vertex, distance: setbacks.get(j).copied().unwrap_or(0.0) })
         .collect();
-    // Edges of other wedges than the first's are not built together curvature-continuously
-    // (solidcore#2250's comment 6563419897).
-    if kind == Blend::Curvature && !ops(CALL, &w, || solidcore_ops::blend::edges_share_wedge(&w, &picked.entities))? {
-        return Err(failed(CALL, &w, Error::Unported(CURVATURE_MIXED_WEDGES)));
-    }
+    // Edges of different wedges go together: the kernel takes each station's equal-area
+    // thumbweight from its own wedge (solidcore-ops'
+    // `curvature_rounds_over_mixed_wedges_each_take_their_own_balls_area`).
     let kind = match kind {
         Blend::Round => solidcore_ops::Blend::Round,
         Blend::Curvature => solidcore_ops::Blend::Curvature,
@@ -583,6 +573,22 @@ pub(crate) fn fillet_variable(
     knots: &[f64],
     radii: &[f64],
 ) -> Result<Body> {
+    fillet_variable_with(body, point, tolerance, start, degree, knots, radii, false)
+}
+
+/// [`fillet_variable`], with curvature-continuous (G2) sections when `curvature`
+/// ([`solidcore_ops::fillet_variable_curvature_from`]).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fillet_variable_with(
+    body: &Body,
+    point: [f64; 3],
+    tolerance: f64,
+    start: [f64; 3],
+    degree: usize,
+    knots: &[f64],
+    radii: &[f64],
+    curvature: bool,
+) -> Result<Body> {
     if !points_ok(&[point], false) || !start.iter().all(|x| x.is_finite()) || !tolerance_ok(tolerance) || !law_ok(degree, knots, radii) {
         return Err(Error::Argument);
     }
@@ -596,7 +602,11 @@ pub(crate) fn fillet_variable(
     // The round is the union of its balls (smlib#78, solidcore#2262): each ball touches it along
     // the circle shifted -r r'/|c'| from its great circle. A law whose balls fold over one
     // another is refused, [`Error::NoRoom`].
-    ops(CALL, &w, || solidcore_ops::fillet_variable_from(&w, e, start, degree, knots, radii))?;
+    if curvature {
+        ops(CALL, &w, || solidcore_ops::fillet_variable_curvature_from(&w, e, start, degree, knots, radii))?;
+    } else {
+        ops(CALL, &w, || solidcore_ops::fillet_variable_from(&w, e, start, degree, knots, radii))?;
+    }
     Ok(w)
 }
 

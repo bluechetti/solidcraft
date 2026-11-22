@@ -1,0 +1,34 @@
+{
+  "en": {
+    "ui.ribbon_scan_curve_on_scan": "Curve on Scan",
+    "ui.ribbon_scan_section_sketch": "Cut to Sketch"
+  },
+  "de": {
+    "ui.ribbon_scan_curve_on_scan": "Kurve auf Scan",
+    "ui.ribbon_scan_section_sketch": "Schnittskizze"
+  },
+  "ja": {
+    "ui.ribbon_scan_curve_on_scan": "スキャン上の曲線",
+    "ui.ribbon_scan_section_sketch": "断面スケッチ"
+  },
+  "ko": {
+    "ui.ribbon_scan_curve_on_scan": "스캔 위 곡선",
+    "ui.ribbon_scan_section_sketch": "단면 스케치"
+  },
+  "zh": {
+    "ui.ribbon_scan_curve_on_scan": "扫描上的曲线",
+    "ui.ribbon_scan_section_sketch": "截面草图"
+  },
+  "ar": {
+    "ui.ribbon_scan_curve_on_scan": "منحنى على المسح",
+    "ui.ribbon_scan_section_sketch": "رسم المقطع"
+  },
+  "he": {
+    "ui.ribbon_scan_curve_on_scan": "עקומה על הסריקה",
+    "ui.ribbon_scan_section_sketch": "סקיצת חתך"
+  },
+  "vi": {
+    "ui.ribbon_scan_curve_on_scan": "Đường cong trên bản quét",
+    "ui.ribbon_scan_section_sketch": "Phác thảo mặt cắt"
+  }
+}

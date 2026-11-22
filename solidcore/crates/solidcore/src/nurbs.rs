@@ -27,6 +27,7 @@ pub mod crv_tool;
 pub(crate) mod fit_arrays;
 pub mod funcs_adv;
 pub mod funcs_basic;
+pub mod g2_corner;
 pub mod geom;
 pub mod gordon;
 pub mod iges;

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Mirror Fill</title>
+  <path d="M32 3L32 8M32 14L32 19M32 25L32 30M32 36L32 41M32 47L32 52M32 58L32 61" fill="none" stroke="#6f879c" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M31 7C31 12 25 14 22 20C19 26 24 31 21 37C18 43 14 46 15 51C16 55 24 56 31 56Z" fill="#b8c3cf"/>
+  <path d="M33 7C33 12 39 14 42 20C45 26 40 31 43 37C46 43 50 46 49 51C48 55 40 56 33 56Z" fill="#b9ddf8"/>
+  <path d="M31 7C31 12 25 14 22 20C19 26 24 31 21 37C18 43 14 46 15 51C16 55 24 56 31 56Z" fill="none" stroke="#34465b" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M33 7C33 12 39 14 42 20C45 26 40 31 43 37C46 43 50 46 49 51C48 55 40 56 33 56Z" fill="none" stroke="#236ead" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="4 3.5"/>
+</svg>

@@ -86,6 +86,38 @@ pub(super) fn command(kind: &Kind) -> Option<&'static str> {
             _ => k.simple_metadata().map(|(command, _)| command),
         },
         Kind::Frame(_) => Some("frame.member"),
+        Kind::ScanBase(_) => Some("scan.stand_on_base"),
+        Kind::ScanSymmetry(k) => Some(crate::dialogs_scan::symmetry_command(k)),
+        Kind::ScanEditSurface(_) => Some("scan.edit_surface"),
+        Kind::ScanFitSurface(_) => Some("scan.fit_surface"),
+        Kind::ScanCurve(_) => Some("scan.curve_on_scan"),
+        Kind::ScanFreeForm(_) => Some("scan.free_form"),
+        Kind::ScanWrapSurface(_) => Some("scan.wrap_surface"),
+        Kind::ScanMergeSurfaces(_) => Some("scan.merge_surfaces"),
+        Kind::ScanSliceSurface(_) => Some("scan.slice_surface"),
+        Kind::ScanSplit(_) => Some("scan.split"),
+        Kind::ScanAlignPairs(_) => Some("scan.align_pairs"),
+        Kind::ScanFillet(_) => Some("scan.fillet"),
+        Kind::SurfaceCheck(_) => Some("inspect.surface_check"),
+        Kind::ScanFlatten(_) => Some("scan.flatten"),
+        Kind::ScanFlatTemplate(_) => Some("scan.flat_template"),
+        Kind::ScanFitPatches(_) => Some("scan.fit_patches"),
+        Kind::ScanFloating(_) => Some("scan.remove_floating"),
+        Kind::ScanHoles(_) => Some("scan.fill_holes"),
+        Kind::ScanFit(k) => crate::dialogs_scan_fit::COMMANDS.get(k.shape).copied(),
+        Kind::ScanCleanUp(_) => Some("scan.clean_up"),
+        Kind::ScanReduce(_) => Some("scan.reduce"),
+        Kind::ScanSection(_) => Some("scan.section_sketch"),
+        Kind::ScanSections(_) => Some("scan.sections_along_curve"),
+        Kind::ScanDenoise(_) => Some("scan.denoise"),
+        Kind::ScanTogether(_) => Some("scan.fit_together"),
+        Kind::Deform(_) => Some("solid.deform"),
+        Kind::ScanSelect(_) => Some("scan.select"),
+        Kind::ScanEdgeCurve(_) => Some("scan.curve_from_selection"),
+        Kind::ScanReconstruct(k) => Some(if k.selected { "scan.reconstruct_selection" } else { "scan.reconstruct" }),
+        Kind::ScanSurvey(_) => Some("scan.survey"),
+        Kind::ScanAlignChoose(_) => Some("scan.align"),
+        Kind::ScanRun(k) => Some(k.id),
         Kind::EndCap(_) => Some("frame.end_cap"),
         Kind::RotateMember(_) => Some("frame.rotate_member"),
         Kind::Plastic(k) => match k {
@@ -734,6 +766,16 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
                         }
                         d.extra.insert("radii".into(), json!(radii));
                     }
+                    if rtype == 2 || rtype == 4 {
+                        // The sections: circular arcs, or a Curvature fillet's (G2), whose size
+                        // follows the radius along the edge.
+                        let was = d.extra.get("curvature").and_then(Value::as_bool).unwrap_or(false);
+                        let mut curvature = was;
+                        ui_kit::checkbox_grid(ui, &mut [("ui.fillet_variable_curvature", &mut curvature)], 1);
+                        if curvature != was {
+                            d.extra.insert("curvature".into(), json!(curvature));
+                        }
+                    }
                 });
             }
         }
@@ -1251,6 +1293,38 @@ fn additional_rows(app: &mut SolveApp, d: &mut Dialog, ui: &mut egui::Ui) -> boo
         Kind::Sheet(k) => enter |= crate::dialogs_sheet::rows(app, ui, k, &mut d.inputs),
         Kind::Plastic(k) => enter |= crate::dialogs_plastic::rows(app, ui, k, &d.inputs),
         Kind::Frame(_) => enter |= crate::dialogs_frame::rows(app, ui, d),
+        Kind::ScanBase(k) => enter |= crate::dialogs_scan::rows(app, ui, k, &d.inputs),
+        Kind::ScanSymmetry(k) => enter |= crate::dialogs_scan::symmetry_rows(app, ui, k, &d.inputs),
+        Kind::ScanEditSurface(k) => enter |= crate::dialogs_scan_surface::rows(app, ui, k),
+        Kind::ScanFitSurface(k) => enter |= crate::dialogs_scan_surface::fit_rows(app, ui, k, &d.inputs),
+        Kind::ScanCurve(k) => enter |= crate::dialogs_scan_curve::rows(app, ui, k),
+        Kind::ScanFreeForm(k) => enter |= crate::dialogs_scan_free_form::rows(app, ui, k),
+        Kind::ScanWrapSurface(k) => enter |= crate::dialogs_scan_free_form::wrap_rows(app, ui, k, &d.inputs),
+        Kind::ScanMergeSurfaces(k) => enter |= crate::dialogs_scan_free_form::merge_rows(app, ui, k, &d.inputs),
+        Kind::ScanSliceSurface(k) => enter |= crate::dialogs_scan_slice::rows(app, ui, k, &d.inputs),
+        Kind::ScanSplit(k) => enter |= crate::dialogs_scan_split::rows(app, ui, k, &d.inputs),
+        Kind::ScanAlignPairs(k) => enter |= crate::dialogs_scan_align::rows(app, ui, k, &d.inputs),
+        Kind::ScanFillet(k) => enter |= crate::dialogs_scan_fillet::rows(app, ui, k, &d.inputs),
+        Kind::SurfaceCheck(k) => enter |= crate::dialogs_surface_check::rows(app, ui, k, &d.inputs),
+        Kind::ScanFlatten(k) => enter |= crate::dialogs_scan_flatten::rows(app, ui, k, &d.inputs),
+        Kind::ScanFlatTemplate(k) => enter |= crate::dialogs_scan_template::rows(app, ui, k, &d.inputs),
+        Kind::ScanFitPatches(k) => enter |= crate::dialogs_scan_patches::rows(app, ui, k, &d.inputs),
+        Kind::ScanFloating(k) => enter |= crate::dialogs_scan_clean::rows(app, ui, k, &d.inputs),
+        Kind::ScanHoles(k) => enter |= crate::dialogs_scan_clean::holes_rows(app, ui, k),
+        Kind::ScanFit(k) => enter |= crate::dialogs_scan_fit::rows(app, ui, k, &d.inputs),
+        Kind::ScanCleanUp(k) => enter |= crate::dialogs_scan_clean::clean_up_rows(app, ui, k),
+        Kind::ScanReduce(k) => enter |= crate::dialogs_scan_clean::reduce_rows(app, ui, k, &d.inputs),
+        Kind::ScanSection(k) => enter |= crate::dialogs_scan_section::rows(app, ui, k),
+        Kind::ScanSections(k) => enter |= crate::dialogs_scan_sections::rows(app, ui, k),
+        Kind::ScanDenoise(k) => enter |= crate::dialogs_scan_denoise::rows(app, ui, k, &d.inputs),
+        Kind::ScanTogether(k) => enter |= crate::dialogs_scan_together::rows(app, ui, k, &d.inputs),
+        Kind::Deform(k) => enter |= crate::dialogs_deform::rows(app, ui, k, &d.inputs),
+        Kind::ScanSelect(k) => enter |= crate::dialogs_scan_select::rows(app, ui, k),
+        Kind::ScanEdgeCurve(k) => enter |= crate::dialogs_scan_edge::rows(app, ui, k),
+        Kind::ScanReconstruct(k) => enter |= crate::dialogs_scan_reconstruct::rows(app, ui, k),
+        Kind::ScanSurvey(k) => enter |= crate::dialogs_scan_survey::rows(app, ui, k),
+        Kind::ScanAlignChoose(k) => enter |= crate::dialogs_scan_align::choose_rows(app, ui, k),
+        Kind::ScanRun(k) => enter |= crate::dialogs_scan_run::rows(app, ui, k, &d.inputs),
         Kind::EndCap(k) => enter |= crate::dialogs_end_cap::rows(app, ui, k, &d.inputs),
         Kind::RotateMember(k) => enter |= crate::dialogs_rotate_member::rows(app, ui, k, &mut d.inputs),
         Kind::Assembly(k) => enter |= crate::dialogs_assembly::rows(app, ui, k, &mut d.inputs, &mut d.active),

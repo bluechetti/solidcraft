@@ -28,9 +28,9 @@ fn index(token: &str, len: usize) -> Option<u32> {
 use crate::threemf::MeshObject;
 use crate::{IoError, Result};
 
-/// Most vertices and triangles we read from one file.
-const MAX_VERTICES: usize = 20_000_000;
-const MAX_TRIANGLES: usize = 20_000_000;
+/// Most vertices and triangles we read from one file: as many as a mesh body holds.
+const MAX_VERTICES: usize = solidcraft_kernel::MAX_VERTICES;
+const MAX_TRIANGLES: usize = solidcraft_kernel::MAX_TRIANGLES;
 
 /// Meshes of an OBJ file and what could not be read.
 pub fn read_obj(bytes: &[u8], default_name: &str) -> Result<(Vec<MeshObject>, Vec<String>)> {

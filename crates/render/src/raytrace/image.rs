@@ -1134,12 +1134,8 @@ impl ImageTask {
             self.face_looks.dedup_by_key(|entry| entry.0);
             self.face_looks_ready = true;
         }
-        let mut vertices = [Vec3::ZERO; 3];
-        let mut normals = [Vec3::ZERO; 3];
-        for ((p, n), i) in vertices.iter_mut().zip(normals.iter_mut()).zip(indices) {
-            *p = *body.mesh.positions.get(*i as usize).ok_or_else(|| invalid("triangle vertex index"))?;
-            *n = body.mesh.normals.get(*i as usize).copied().unwrap_or(Vec3::ZERO);
-        }
+        let vertices = body.mesh.tri(indices).ok_or_else(|| invalid("triangle vertex index"))?;
+        let normals = body.mesh.corner_normals(indices).unwrap_or([Vec3::ZERO; 3]);
         let face = body.mesh.tri_face.get(self.triangle).copied();
         let mut color = body.color;
         let mut surface = body.surface;

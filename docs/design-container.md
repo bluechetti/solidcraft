@@ -34,6 +34,14 @@ Both counts must be divisible by three; the byte length must match exactly. Coor
 must be finite and at most 1e9 mm in magnitude; indices must address an existing vertex.
 Names and colours remain in JSON. Signed zero and full coordinate precision survive.
 
+A mesh with shading normals is written as `SCMESH02`: the same layout with a `u64` normal
+count after the index count and that many `f64` values (x, y, z for each triangle corner)
+at the end. A mesh without them is written as `SCMESH03`: the two counts, one byte that is
+1 when every coordinate is stored as `f32` (each is exactly one) or 0 for `f64`, the
+coordinates, then each index as the zigzag LEB128 of its difference from the index before.
+All three are read; a `SCMESH02` blob whose lengths do not match that layout is read as
+`SCMESH03`'s, which the Scan workspace once saved under that magic.
+
 The default `fast` policy stores STEP and binary meshes without Deflate for faster
 saving and reading. Small document metadata uses Deflate level one; PNG/JPEG are
 stored directly. An explicit `compact` policy compresses STEP and mesh payloads at

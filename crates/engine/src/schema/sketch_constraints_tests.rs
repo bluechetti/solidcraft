@@ -9,7 +9,7 @@ use crate::Session;
 use crate::schema::tests::{assert_keys, assert_strict_keeps_todays_errors, conforms};
 use crate::schema::{ParamCheck, input_schema_for, output_schema_for};
 
-const AUTO_KEYS: [&str; 5] = ["angle_tolerance", "datum", "dimensions", "sketch", "tolerance"];
+const AUTO_KEYS: [&str; 6] = ["angle_tolerance", "datum", "dimensions", "round", "sketch", "tolerance"];
 
 #[test]
 fn schemas_and_the_key_check_agree() {
@@ -385,7 +385,9 @@ fn replies_match_the_output_schema() {
     ] {
         let r = run(&mut s, id, p);
         matches(output_schema_for::<AutoConstrainResult>(), &r);
-        assert_eq!(keys(&r), vec!["added", "created", "dof", "sketch"], "{r}");
+        // `moved` is there only when the drawing was moved (how far, and the point moved most).
+        let shown: Vec<_> = keys(&r).into_iter().filter(|k| *k != "moved").collect();
+        assert_eq!(shown, vec!["added", "created", "dof", "sketch"], "{r}");
     }
     let r = run(&mut s, "sketch.finish_auto_constrain", json!({"datum": "d", "tolerance": 0.02}));
     matches(output_schema_for::<AutoConstrainResult>(), &r);

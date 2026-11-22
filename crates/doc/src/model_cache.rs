@@ -7,7 +7,8 @@
 //! and the solved sketches the states share. Face names are kept as worked out, not as the
 //! history they were worked out from: a model taken from a file names every face as the model
 //! that was saved did. A file without room for every state keeps fewer
-//! ([`SavedModel::thinned`]); opening evaluates the features whose state it left out again.
+//! ([`SavedModel::thinned`]); opening evaluates the features whose state it left out again, but
+//! for a Scan Clean step's, which stands in as a thinned state until something reads it.
 
 use super::*;
 use crate::history_names::{FaceInfo, Names};
@@ -81,11 +82,23 @@ fn bad(what: &str) -> DocError {
 }
 
 /// A design holding a face or edge name saved before format 14 (marked
-/// [`crate::naming::LEGACY_MARK`]): it saves without a model.
-fn has_legacy_names(doc: &Document) -> bool {
+/// [`crate::naming::LEGACY_MARK`]): it saves without a model. A mesh import is read without its
+/// triangles, which hold no names: a scan's 42 million coordinates written out as text took
+/// seconds and gigabytes on every save.
+pub(super) fn has_legacy_names(doc: &Document) -> bool {
     let mark = format!("\"{}", crate::naming::LEGACY_MARK);
     doc.features.iter().any(|f| match &f.kind {
         FeatureKind::Import { .. } => f.face_names.iter().any(|n| n.starts_with(crate::naming::LEGACY_MARK)),
+        FeatureKind::MeshImport { .. } => {
+            let mut bare = f.clone();
+            if let FeatureKind::MeshImport { meshes, .. } = &mut bare.kind {
+                for m in meshes.iter_mut() {
+                    m.positions = Arc::from([]);
+                    m.triangles = Arc::from([]);
+                }
+            }
+            serde_json::to_string(&bare).is_ok_and(|j| j.contains(&mark))
+        }
         _ => serde_json::to_string(f).is_ok_and(|j| j.contains(&mark)),
     })
 }
@@ -445,8 +458,12 @@ impl Model {
                 if let Some(report) = r.import_report.as_ref().filter(|i| !i.checks.is_empty()) {
                     pending.push((k, report.clone()));
                 }
-                let state = w.state(&r.state).ok_or_else(|| kernel::KernelError::Invalid("not kept".into()))?;
-                let mut f = json!({"id": r.id, "fingerprint": hex(r.fingerprint), "ms": r.ms, "skipped": r.skipped, "state": state});
+                let mut f = json!({"id": r.id, "fingerprint": hex(r.fingerprint), "ms": r.ms, "skipped": r.skipped});
+                // A state thinned by a later Scan Clean step does not hold its scan as the step
+                // left it: it is left out, and opening the design makes it again.
+                if r.state.thinned.is_empty() {
+                    f["state"] = json!(w.state(&r.state).ok_or_else(|| kernel::KernelError::Invalid("not kept".into()))?);
+                }
                 // The pose a pose-only feature was evaluated at, which its fingerprint leaves out:
                 // opening finds it the same and keeps the result (#12139).
                 if pose_only(feature)
@@ -787,6 +804,9 @@ impl SavedModel {
                 // legacy split's picks (`lineage::legacy_picks_digest`) finds no pieces in them
                 // and takes them as the design's evaluation they were saved as.
                 legacy_picks: BTreeMap::new(),
+                // Not kept: a step after a saved state starts a run of its own from it.
+                scan_runs: BTreeMap::new(),
+                thinned: Default::default(),
                 // What a cut was drawn as is read by the evaluation that made it.
                 cut_extents: BTreeMap::new(),
             })
@@ -911,7 +931,9 @@ impl SavedModel {
         let mut ms = vec![0.0f64; states.len()];
         let mut last = None;
         for f in features.iter().filter(|f| f.get("skipped").and_then(Json::as_bool) == Some(false)) {
-            let s = at(f.get("state"), states.len())?;
+            // A state the model left out (a Scan Clean step's, thinned) is not kept.
+            let Some(state) = f.get("state") else { continue };
+            let s = at(Some(state), states.len())?;
             if let Some(t) = ms.get_mut(s) {
                 *t += f.get("ms").and_then(Json::as_f64).filter(|t| t.is_finite() && *t > 0.0).unwrap_or(0.0);
             }
@@ -1018,7 +1040,10 @@ impl SavedModel {
         }
         let mut out_features = Vec::with_capacity(features.len());
         for f in features {
-            let state = new(&new_state, at(f.get("state"), states.len())?);
+            let state = match f.get("state") {
+                Some(v) => new(&new_state, at(Some(v), states.len())?),
+                None => None,
+            };
             let mut f = f.clone();
             let o = f.as_object_mut()?;
             match state {
@@ -1138,6 +1163,15 @@ impl Model {
             {
                 poses.insert(f.id, pose);
             }
+            // A Scan Clean step's state left out stands in as the state before it with the step
+            // added to its scan's run: the step is done again only where something reads it, not
+            // on opening, to be thrown away again at once.
+            let stood = match &state {
+                None if exact && r.get("skipped").and_then(Json::as_bool) == Some(false) => scan_runs::stand_in(&before, f).map(Arc::new),
+                _ => None,
+            };
+            let unkept = state.is_none() && stood.is_none();
+            let state = state.or(stood);
             let result = FeatureResult {
                 id: f.id,
                 name: f.name.clone(),
@@ -1155,7 +1189,7 @@ impl Model {
                 skipped: r.get("skipped").and_then(Json::as_bool).ok_or_else(|| bad("saved model: skipped"))?,
                 stale: false,
                 fingerprint: prev,
-                unkept: state.is_none(),
+                unkept,
                 state: state.unwrap_or_else(|| before.clone()),
             };
             if !result.skipped {
@@ -1194,7 +1228,8 @@ impl Model {
             for (f, r) in doc.features.iter().zip(&model.results).filter(|(_, r)| !r.skipped && r.error.is_none()) {
                 // A pose-only feature's fingerprint leaves its pose out, so its saved result may be
                 // from another pose than `doc`'s: it is no result for `doc`'s key (#12139).
-                if pose_only(f) {
+                // A Scan Clean step's result is never cached (each would hold a copy of the scan).
+                if pose_only(f) || matches!(f.kind, FeatureKind::ScanClean { .. }) {
                     before = r.state.clone();
                     continue;
                 }

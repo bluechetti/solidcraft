@@ -48,8 +48,9 @@ mod pat;
 mod pcd;
 mod ply;
 mod ply_complex;
-pub use ply::{ply_counts, read_ply_mesh};
+pub use ply::{has_range_grid, ply_counts, read_ply_mesh};
 mod point_cloud;
+mod point_cloud_formats;
 pub use point_cloud::{CloudFile, DEFAULT_MAX_POINTS, MAX_POINT_CLOUD_BYTES, is_ply_path, is_point_cloud_path, read_point_cloud};
 pub mod safe_write;
 pub mod safe_zip;
@@ -575,6 +576,34 @@ pub struct MeshFeature {
     pub warnings: Vec<String>,
 }
 
+impl MeshFeature {
+    /// Its meshes' points scaled by `k`, the file's length unit in millimetres (1000 for a scan in
+    /// metres), as [`scale_meshes`].
+    pub fn scale(&mut self, k: f64) -> Result<()> {
+        match &mut self.kind {
+            solidcraft_doc::FeatureKind::MeshImport { meshes, .. } => scale_meshes(meshes, k),
+            _ => Ok(()),
+        }
+    }
+}
+
+/// `meshes`' points scaled by `k` about the origin. Refused, with nothing changed, when a point
+/// would land farther out than a mesh body may reach. Points held nowhere else are scaled where
+/// they are.
+pub fn scale_meshes(meshes: &mut [solidcraft_doc::MeshData], k: f64) -> Result<()> {
+    if k == 1.0 {
+        return Ok(());
+    }
+    let max = solidcraft_doc::point_cloud::MAX_COORD;
+    if !k.is_finite() || meshes.iter().flat_map(|m| m.positions.iter()).any(|v| !((v * k).is_finite() && (v * k).abs() < max)) {
+        return Err(IoError::Invalid(format!("in that unit the mesh reaches farther than {max} mm from the origin")));
+    }
+    for v in meshes.iter_mut().flat_map(|m| std::sync::Arc::make_mut(&mut m.positions).iter_mut()) {
+        *v *= k;
+    }
+    Ok(())
+}
+
 /// Read 3MF, STL, OBJ, PLY or glTF bytes (the format from `file`'s extension) into a MeshImport
 /// feature. A glTF file's bodies are all built where they are (see [`read_gltf`] for its node
 /// tree), and it can't read buffers in other files.
@@ -621,9 +650,9 @@ pub fn mesh_import_feature_in_prepared(
         g.flatten();
         return Ok((g.feature, None));
     }
-    // A mesh file is read up to the limit for STEP and import files, which Preferences raise
-    // (#17446, #14548).
-    limits::check(limits::Kind::Step, bytes.len() as u64).map_err(IoError::Invalid)?;
+    // A scan has no size limit on the desktop (the browser keeps the limit for import files, #17446, #14548); a 3MF's own
+    // archive keeps its fixed one.
+    limits::check(limits::Kind::Scan, u64::try_from(bytes.len()).unwrap_or(u64::MAX)).map_err(IoError::Invalid)?;
     let path = std::path::Path::new(file);
     let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "Mesh".into());
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
@@ -632,14 +661,22 @@ pub fn mesh_import_feature_in_prepared(
     } else if ext == "ply" {
         ply::read_ply_mesh(bytes, &stem)?
     } else if ext == "stl" {
-        let tris = read_stl(bytes)?;
+        let (tris, notes) = read_stl_noting(bytes)?;
         if tris.is_empty() {
             return Err(IoError::Invalid("STL has no triangles".into()));
         }
-        let positions: Vec<Vec3> = tris.iter().flatten().map(|v| Vec3::new(v[0] as f64, v[1] as f64, v[2] as f64)).collect();
         let n = u32::try_from(tris.len()).map_err(|_| IoError::Invalid("STL too large".into()))?;
-        let triangles = (0..n).map(|i| [i * 3, i * 3 + 1, i * 3 + 2]).collect();
-        (vec![MeshObject { name: stem.clone(), positions, triangles, ..Default::default() }], Vec::new())
+        let corners: Vec<[u32; 3]> = (0..n).map(|i| [i * 3, i * 3 + 1, i * 3 + 2]).collect();
+        // Welded as read, each corner taken from the file's own single-precision numbers: a copy
+        // of every corner first was the most memory an insert took (6.6 GB of 15.6 for a scan of
+        // 92 million triangles). The same points, kept in the same order, as welding the copy.
+        let corner = |i: usize| {
+            tris.get(i / 3).and_then(|t| t.get(i % 3)).map_or(Vec3::ZERO, |v| Vec3::new(f64::from(v[0]), f64::from(v[1]), f64::from(v[2])))
+        };
+        let (positions, triangles) =
+            solidcraft_kernel::weld_exact_with(corner, tris.len() * 3, &corners).map_err(|e| IoError::Invalid(format!("mesh `{stem}`: {e}")))?;
+        drop((tris, corners));
+        (vec![MeshObject { name: stem.clone(), positions, triangles, ..Default::default() }], notes)
     } else {
         own_units("3MF")?;
         read_3mf(bytes)?
@@ -1190,12 +1227,10 @@ fn mesh_text(mesh: &Mesh, vbase: usize, nbase: usize) -> (String, usize, usize) 
 /// The normals at the corners `at` of a welded piece of triangle `t` of `mesh` (the whole
 /// triangle, or a piece of it split where another face's vertex lies on a side): a corner
 /// within `eps` of one of `t`'s own corners takes that corner's normal; a point a side was split
-/// at takes the normal between the side's ends. `None` when the mesh has no normals there.
+/// at takes the normal between the side's ends (a flat mesh's: its triangle's own). `None` when
+/// the mesh has no normals there.
 fn corner_normals(mesh: &Mesh, t: [u32; 3], at: [Vec3; 3], eps: f64) -> Option<[Vec3; 3]> {
-    let p = t.map(|i| mesh.positions.get(i as usize).copied());
-    let n = t.map(|i| mesh.normals.get(i as usize).copied());
-    let ([Some(p0), Some(p1), Some(p2)], [Some(n0), Some(n1), Some(n2)]) = (p, n) else { return None };
-    let (p, n) = ([p0, p1, p2], [n0, n1, n2]);
+    let (p, n) = (mesh.tri(&t)?, mesh.corner_normals(&t)?);
     Some(at.map(|q| p.iter().zip(n).find(|(c, _)| c.dist(q) <= eps).map_or_else(|| normal_at(p, n, q), |(_, n)| n)))
 }
 
@@ -1745,6 +1780,20 @@ pub fn write_design(doc: &Document) -> Result<Vec<u8>> {
 
 /// Parse a binary or ASCII STL (used by tests and round-trip checks): triangles.
 pub fn read_stl(bytes: &[u8]) -> Result<Vec<[[f32; 3]; 3]>> {
+    read_stl_noting(bytes).map(|(triangles, _)| triangles)
+}
+
+/// [`read_stl`], with what the reader noticed about the file that the person should know: a
+/// header that counts more or fewer triangles than the file holds, an ASCII file that ends inside
+/// a facet (both: a file cut short in copying), and triangles left out because a corner is not a
+/// number. The triangles that are there are still read.
+pub fn read_stl_noting(bytes: &[u8]) -> Result<(Vec<[[f32; 3]; 3]>, Vec<String>)> {
+    let mut notes = Vec::new();
+    let left_out = |dropped: usize, notes: &mut Vec<String>| {
+        if dropped > 0 {
+            notes.push(format!("{dropped} triangles of the STL were left out: a corner is not a number (NaN or infinite), or lies beyond 1e9"));
+        }
+    };
     // Binary when the size matches the triangle count in the header (some binary files start
     // with "solid" too); ASCII when the text has facets.
     let count = bytes.get(80..84).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize);
@@ -1756,9 +1805,11 @@ pub fn read_stl(bytes: &[u8]) -> Result<Vec<[[f32; 3]; 3]>> {
     if ascii {
         let s = String::from_utf8_lossy(bytes);
         let mut cur: Vec<[f32; 3]> = Vec::new();
+        let (mut open, mut dropped) = (false, 0usize);
         for l in s.lines() {
             let mut it = l.split_whitespace();
             match it.next() {
+                Some("facet") => open = true,
                 Some("vertex") => {
                     let v: Vec<f32> = it.filter_map(|x| x.parse().ok()).collect();
                     if let [x, y, z] = v[..] {
@@ -1771,8 +1822,11 @@ pub fn read_stl(bytes: &[u8]) -> Result<Vec<[[f32; 3]; 3]>> {
                         && [a, b, c].iter().all(ok)
                     {
                         tris.push([a, b, c]);
+                    } else {
+                        dropped += 1;
                     }
                     cur.clear();
+                    open = false;
                 }
                 _ => {}
             }
@@ -1780,11 +1834,22 @@ pub fn read_stl(bytes: &[u8]) -> Result<Vec<[[f32; 3]; 3]>> {
                 return Err(IoError::Invalid(format!("STL with more than {MAX_STL_TRIANGLES} triangles")));
             }
         }
-        return Ok(tris);
+        if open {
+            notes.push(format!("the ASCII STL ends inside a facet: the file was cut short ({} triangles read)", tris.len()));
+        }
+        left_out(dropped, &mut notes);
+        return Ok((tris, notes));
     }
     let n = count.ok_or_else(|| IoError::Invalid("short STL".into()))?;
     // A wrong count in the header (some writers leave 0): use the triangles that are there.
     let room = bytes.len().saturating_sub(84) / 50;
+    if n > room {
+        notes.push(format!(
+            "the STL's header says {n} triangles and the file holds {room}: it was cut short, or written with a wrong count ({room} read)"
+        ));
+    } else if n != 0 && n < room {
+        notes.push(format!("the STL's header says {n} triangles and the file holds {room}: the {n} it counts were read"));
+    }
     let n = if n == 0 || n > room { room } else { n };
     if n == 0 {
         return Err(IoError::Invalid("STL has no triangles".into()));
@@ -1803,11 +1868,12 @@ pub fn read_stl(bytes: &[u8]) -> Result<Vec<[[f32; 3]; 3]>> {
             tris.push(t);
         }
     }
-    Ok(tris)
+    left_out(n - tris.len(), &mut notes);
+    Ok((tris, notes))
 }
 
-/// Most triangles we read from one STL file.
-pub const MAX_STL_TRIANGLES: usize = 20_000_000;
+/// Most triangles we read from one STL file: as many as a mesh body holds.
+pub const MAX_STL_TRIANGLES: usize = solidcraft_kernel::MAX_TRIANGLES;
 
 /// `secs` since 1970 as (year, month, day, hour, minute, second) in UTC: crash reports' stamps and
 /// sheet PDFs' dates.
@@ -1958,6 +2024,52 @@ mod tests {
                 .collect();
             assert_eq!(actual, want, "{unit}");
         }
+    }
+
+    /// An STL cut short or holding corners that are not numbers is still read as far as it goes,
+    /// and the reader says what it found: a header counting more triangles than the file holds,
+    /// an ASCII file ending inside a facet, triangles left out. A sound file gets no note, and
+    /// Insert Mesh's feature carries the notes as its warnings.
+    #[test]
+    fn a_cut_short_or_damaged_stl_is_read_with_a_note_of_what_is_wrong() {
+        let triangle = |z: f32| [[0.0f32, 0.0, z], [1.0, 0.0, z], [0.0, 1.0, z]];
+        let binary = |stated: u32, triangles: &[[[f32; 3]; 3]]| {
+            let mut b = vec![0u8; 80];
+            b.extend(stated.to_le_bytes());
+            for t in triangles {
+                b.extend([0u8; 12]);
+                for v in t {
+                    for c in v {
+                        b.extend(c.to_le_bytes());
+                    }
+                }
+                b.extend([0u8; 2]);
+            }
+            b
+        };
+        let sound = binary(2, &[triangle(0.0), triangle(1.0)]);
+        assert_eq!(read_stl_noting(&sound).unwrap(), (vec![triangle(0.0), triangle(1.0)], Vec::new()));
+        // The header says 1000, the file holds 2.
+        let (read, notes) = read_stl_noting(&binary(1000, &[triangle(0.0), triangle(1.0)])).unwrap();
+        assert_eq!(read.len(), 2);
+        assert!(notes.len() == 1 && notes[0].contains("1000") && notes[0].contains("holds 2") && notes[0].contains("cut short"), "{notes:?}");
+        // A corner that is not a number: that triangle is left out, and said so.
+        let mut broken = triangle(2.0);
+        broken[1][0] = f32::NAN;
+        let (read, notes) = read_stl_noting(&binary(3, &[triangle(0.0), broken, triangle(1.0)])).unwrap();
+        assert_eq!(read.len(), 2);
+        assert!(notes.len() == 1 && notes[0].starts_with("1 triangles") && notes[0].contains("not a number"), "{notes:?}");
+        // An ASCII file that stops inside its second facet.
+        let facet = "facet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\n";
+        let cut = format!("solid t\n{facet}facet normal 0 0 1\nouter loop\nvertex 0 0 1\nvertex 1 0");
+        let (read, notes) = read_stl_noting(cut.as_bytes()).unwrap();
+        assert_eq!(read.len(), 1);
+        assert!(notes.len() == 1 && notes[0].contains("ends inside a facet") && notes[0].contains("1 triangles read"), "{notes:?}");
+        let whole = format!("solid t\n{facet}{facet}endsolid t\n");
+        assert_eq!(read_stl_noting(whole.as_bytes()).unwrap().1, Vec::<String>::new());
+        // The feature made from the file warns with the same words.
+        let made = mesh_import_feature(&binary(1000, &[triangle(0.0), triangle(1.0)]), "part.stl").unwrap();
+        assert!(made.warnings.iter().any(|w| w.contains("cut short")), "{:?}", made.warnings);
     }
 
     /// A PLY with faces, read as a mesh, takes a unit as an STL does: it states none either.

@@ -1758,6 +1758,9 @@ preference_settings! {
     /// How the offer is made for a file whose header names no program known to save Y up: a note
     /// over the view (the default), the dialog, or nothing (#7717).
     stand_up_unknown: StandUpUnknown = StandUpUnknown::default(), PAGE_DESIGN;
+    /// After an STL, OBJ or PLY mesh read in millimetres comes in under `mesh_units_note::TINY_MM`
+    /// across, offer to read it in metres or inches (`mesh_units_note`). Off: it stays as it came in.
+    offer_mesh_units: bool = true, PAGE_DESIGN => check_id("prefs.offer_mesh_units");
     /// Dragging Extrude's distance arrow stops at flat faces parallel to the profile over it and
     /// outlines them (`extrude_face_snap`, #2398). Off: the drag moves in round steps only.
     extrude_arrow_face_stops: bool = true, PAGE_TOOLS => check_id("prefs.extrude_arrow_face_stops");
@@ -1790,6 +1793,55 @@ preference_settings! {
     /// With `extrude_view_isometric`: when Extrude closes (OK or Cancel) the view goes back to
     /// where it was before it turned (#9176). Off (the default): it stays isometric.
     extrude_view_return: bool = false, PAGE_TOOLS => check_id("prefs.extrude_view_return");
+    /// Section to Sketch and Sections Along Curve start with a tolerance of three times the cut's
+    /// noise (at least 0.1 mm), so a noisy or very large scan is not traced point by point. Off:
+    /// they start at 0.1 mm, as before.
+    section_tolerance_from_scan: bool = true, PAGE_TOOLS => check_id("prefs.section_tolerance_from_scan");
+    /// Edit Surface opens with its points on the surface (the surface runs through each) and Snap
+    /// set to Under the pointer, as QuickSurface's Free Forms are edited. Off: it opens on the
+    /// control net with snapping off, as before.
+    edit_surface_on_surface: bool = true, PAGE_TOOLS => check_id("prefs.edit_surface_on_surface");
+    /// Edit Surface with points on the surface: a dragged point lifts off the scan, moved in the
+    /// plane of the screen, and the points round it follow smoothly. On: a dragged point goes onto
+    /// the scan under the pointer and the points round it stay put, as before (a point dragged
+    /// up slid along the scan instead of rising).
+    edit_surface_drags_onto_scan: bool = false, PAGE_TOOLS => check_id("prefs.edit_surface_drags_onto_scan");
+    /// While New Free Form, Wrap Surface, Fit Surface or Edit Surface is open, the scan is not
+    /// painted in the selection colour, so the surface, its points and the scan's colouring stay
+    /// in sight. Off: the scan clicked is painted as selected, as before.
+    free_form_plain_scan: bool = true, PAGE_TOOLS => check_id("prefs.free_form_plain_scan");
+    /// Flat Template shows the rows most templates need (Outline, the scan, Straight Panel, which
+    /// side is cut out) and folds the tuning values (gap, smoothing, rounding, finger gap,
+    /// stand-off, scan edge) under More. Off: every row shows, as before.
+    flat_template_short: bool = true, PAGE_TOOLS => check_id("prefs.flat_template_short");
+    /// In Edit Surface, Ctrl+Shift and a drag smooths the surface under the Smoothing Brush's
+    /// circle (no need to turn the brush on), and Ctrl+Shift with the wheel sizes the circle, as
+    /// QuickSurface's brush is used. Off: Ctrl+Shift drags and the wheel with Ctrl+Shift do what
+    /// they do elsewhere (the wheel zooms), as before.
+    edit_surface_brush_keys: bool = true, PAGE_TOOLS => check_id("prefs.edit_surface_brush_keys");
+    /// A click on a scan in a Scan-tab tool (New Free Form, Curve on Scan, Flat Template, Fit
+    /// Patches) lands on the nearest corner, edge or crease of the scan, or point of a curve drawn
+    /// on it, when one is within a few pixels, and the view shows where. Off: the click lands
+    /// exactly where it is, as before.
+    scan_click_snap: bool = true, PAGE_TOOLS => check_id("prefs.scan_click_snap");
+    /// A scan with no tolerance of its own is read against three times its noise (at least
+    /// 0.1 mm) in New Free Form, Edit Surface, Fit Patches and Flat Template, and OK keeps it for
+    /// the scan, so a faithful fit to a noisy scan does not read as off. Off: 0.1 mm, as before.
+    scan_tolerance_from_noise: bool = true, PAGE_TOOLS => check_id("prefs.scan_tolerance_from_noise");
+    /// Scan Deviation's colours reach their end at the distance 99 % of the scan's measured points
+    /// lie within, read from the scan, so a few stray points do not wash out the rest. Off: at
+    /// 0.5 mm or five tolerances, as before.
+    /// Section Analysis draws where its plane cuts each shown scan, in the mesh colour, beside the
+    /// model's cut. Off: only the model's cut, as before.
+    section_scan_outline: bool = true, PAGE_TOOLS => check_id("prefs.section_scan_outline");
+    scan_deviation_auto_range: bool = false, PAGE_TOOLS => check_id("prefs.scan_deviation_auto_range");
+    /// Scan Deviation's colours in this many steps each side of within (2 to 12); 0, as before, a
+    /// smooth scale.
+    scan_deviation_bands: f32 = 0.0, PAGE_TOOLS, accept(0.0..=12.0) => slider("prefs.scan_deviation_bands", 0.0..=12.0, 1.0, |v| format!("{v:.0}"), "prefs:scan_deviation_bands");
+    /// Remove Floating Pieces, Fill Holes, Reduce Mesh, Repair Mesh, Denoise and Remesh write the
+    /// cleaned scan back into its Insert Mesh feature, as before, instead of adding a step to the
+    /// timeline that keeps their settings (and can be edited, suppressed or deleted later).
+    scan_clean_in_place: bool = false, PAGE_TOOLS => check_id("prefs.scan_clean_in_place");
     /// Feature windows choose Join, New Body or Cut from what their material touches (`op_auto`,
     /// #6901). Off: they keep the operation they open with (Extrude its own Join or Cut), as before.
     auto_operation: bool = true, PAGE_TOOLS => check_id("prefs.auto_operation");
@@ -4617,6 +4669,9 @@ pub fn migrate(mut p: Prefs) -> Prefs {
     if !accepted::wheel_zoom_speed(&p) {
         p.wheel_zoom_speed = Prefs::default().wheel_zoom_speed;
     }
+    if !accepted::scan_deviation_bands(&p) {
+        p.scan_deviation_bands = Prefs::default().scan_deviation_bands;
+    }
     if !accepted::home_fit_size(&p) {
         p.home_fit_size = Prefs::default().home_fit_size;
     }
@@ -4859,6 +4914,9 @@ fn prepare_preferences(
     }
     if !accepted::wheel_zoom_speed(&new) {
         return Err("`wheel_zoom_speed` must be 0.25…4".into());
+    }
+    if !accepted::scan_deviation_bands(&new) {
+        return Err("`scan_deviation_bands` must be 0…12".into());
     }
     // Before `migrate`, which puts a template this version doesn't have back to the default.
     for (key, chosen, assembly) in

@@ -67,6 +67,9 @@ pub const FADE_SHARE: f64 = 0.15;
 /// keeps it under the plane but where it passes from a round's curvature to the plane's, and
 /// costs the loop little (2e-5 mm, 0.025° and 4e-4 per mm there).
 const FAIRNESS: f64 = 1e3 * SMOOTHNESS;
+/// The weights the curvature rows are raised by, in turn, on a grid that holds the loop and the
+/// neighbours' tangent planes but not their curvature.
+const G2_BOOSTS: [f64; 3] = [4.0, 16.0, 64.0];
 /// A face beside the loop whose normal is closer than this cosine to square with the plane's
 /// stands along the plane's normal: the height field cannot be tangent to it.
 const MIN_NORMAL_COS: f64 = 0.05;
@@ -313,7 +316,7 @@ fn derivatives(grid: &Grid, heights: &[f64], q: [f64; 2]) -> Option<[f64; 6]> {
 }
 
 /// One grid's fit of the rows: the normal equations of the weighed rows and the energy.
-fn solve(grid: &Grid, rows: &[Row], cell: f64) -> SplineResult<Vec<f64>> {
+fn solve(grid: &Grid, rows: &[Row], cell: f64, g2_boost: f64) -> SplineResult<Vec<f64>> {
     let [cu, cv] = grid.count;
     let n = cu * cv;
     let mut band = Band::new(n, 3 * cu + 3);
@@ -361,7 +364,7 @@ fn solve(grid: &Grid, rows: &[Row], cell: f64) -> SplineResult<Vec<f64>> {
             }
         }
         if let Some(([a, b], second, _)) = row.curvature {
-            let w = cell * cell * fade(row.to_corner) * fade(row.to_clash);
+            let w = g2_boost * cell * cell * fade(row.to_corner) * fade(row.to_clash);
             if w > 0.0 {
                 // a² h_uu + 2ab h_uv + b² h_vv, the three derivatives' terms summed per control
                 // height.
@@ -464,8 +467,23 @@ fn fit_round(all: &[(Station, bool)], spec: &MatchedSpec, level: usize) -> Splin
         }
         let grid = Grid::new(spans, lo, hi);
         let cell = grid.cell(0).max(grid.cell(1));
-        let heights = solve(&grid, &rows, cell)?;
-        let [dev, ang, ang_all, cur, cur_all] = achieved(&grid, &heights, &rows, &frame)?;
+        let mut heights = solve(&grid, &rows, cell, 1.0)?;
+        let [mut dev, mut ang, mut ang_all, mut cur, mut cur_all] = achieved(&grid, &heights, &rows, &frame)?;
+        // On the loop and tangent to its neighbours but short of their curvature: the curvature
+        // rows weighed up on the same grid before a finer one (the fairness energy, which keeps
+        // the surface under a plane it is G2 to, otherwise holds it a little off their
+        // curvature at every grid).
+        for boost in G2_BOOSTS {
+            if !(dev <= spec.tol && ang <= spec.angle_tol && cur > spec.curvature_tol) {
+                break;
+            }
+            let again = solve(&grid, &rows, cell, boost)?;
+            let got = achieved(&grid, &again, &rows, &frame)?;
+            if got[0] <= spec.tol && got[1] <= spec.angle_tol && got[3] < cur {
+                heights = again;
+                [dev, ang, ang_all, cur, cur_all] = got;
+            }
+        }
         let s = Shortfall { deviation: dev, angle: ang, curvature: cur };
         best = best.min(s);
         if dev <= spec.tol && ang <= spec.angle_tol && cur <= spec.curvature_tol && holds {

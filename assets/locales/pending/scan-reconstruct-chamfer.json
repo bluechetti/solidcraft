@@ -1,0 +1,42 @@
+{
+  "ar": {
+    "cmd.scan_chamfer_it": "شطف الحواف",
+    "help.scan.chamfer_it": "يشطف حواف جسم إعادة البناء حيث يُظهر المسح شطفات مستوية، كلٌّ بالمسافة المقروءة من المسح. تُستبعد الحواف التي ترفضها النواة.",
+    "ui.scan_reconstruct_chamfer": "شطف الحواف: {edges} حافة مشطوفة"
+  },
+  "de": {
+    "cmd.scan_chamfer_it": "Kanten fasen",
+    "help.scan.chamfer_it": "Fast die Kanten des rekonstruierten Körpers dort, wo der Scan flache Fasen zeigt, jeweils mit dem aus dem Scan gelesenen Abstand. Kanten, die der Kern ablehnt, werden übergangen.",
+    "ui.scan_reconstruct_chamfer": "Kanten fasen: {edges} gefaste Kanten"
+  },
+  "en": {
+    "cmd.scan_chamfer_it": "Chamfer It",
+    "help.scan.chamfer_it": "Chamfers the edges of Reconstruct's body where the scan shows flat bevels, each at the distance read from the scan. Edges the kernel refuses are set aside.",
+    "ui.scan_reconstruct_chamfer": "Chamfer It: {edges} chamfered edges"
+  },
+  "he": {
+    "cmd.scan_chamfer_it": "חיתוך קצוות בשיפוע",
+    "help.scan.chamfer_it": "משפע את קצוות גוף השחזור היכן שהסריקה מראה שיפועים שטוחים, כל אחד במרחק שנקרא מהסריקה. קצוות שהליבה דוחה נשארים בצד.",
+    "ui.scan_reconstruct_chamfer": "חיתוך קצוות בשיפוע: {edges} קצוות"
+  },
+  "ja": {
+    "cmd.scan_chamfer_it": "エッジを面取り",
+    "help.scan.chamfer_it": "スキャンに平らな面取りが見える所で、再構築のボディのエッジを、スキャンから読んだ距離で面取りします。カーネルが拒むエッジは除外します。",
+    "ui.scan_reconstruct_chamfer": "エッジを面取り: 面取りするエッジ {edges} 本"
+  },
+  "ko": {
+    "cmd.scan_chamfer_it": "모서리 모따기",
+    "help.scan.chamfer_it": "스캔에 평평한 경사가 보이는 곳에서 재구성 바디의 모서리를 스캔에서 읽은 거리로 모따기합니다. 커널이 거부한 모서리는 제외합니다.",
+    "ui.scan_reconstruct_chamfer": "모서리 모따기: 모따기할 모서리 {edges}개"
+  },
+  "vi": {
+    "cmd.scan_chamfer_it": "Vát cạnh",
+    "help.scan.chamfer_it": "Vát các cạnh của thân Tái dựng ở nơi bản quét có mặt vát phẳng, mỗi cạnh theo khoảng cách đọc từ bản quét. Cạnh mà nhân hình học từ chối được bỏ qua.",
+    "ui.scan_reconstruct_chamfer": "Vát cạnh: {edges} cạnh được vát"
+  },
+  "zh": {
+    "cmd.scan_chamfer_it": "倒斜角",
+    "help.scan.chamfer_it": "在扫描显示平面倒角处，按从扫描读出的距离对重建实体的边倒角。内核拒绝的边会被跳过。",
+    "ui.scan_reconstruct_chamfer": "倒斜角：{edges} 条边"
+  }
+}

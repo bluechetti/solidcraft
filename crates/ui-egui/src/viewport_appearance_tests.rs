@@ -327,7 +327,7 @@ fn a_placed_parts_triangles_and_edges_are_uploaded_once_and_a_part_added_alone_a
     // box added after fits in (a part that does not fit makes them again, with every part).
     let meshes: Vec<_> = app.session.model.state().bodies.iter().rev().map(|b| std::sync::Arc::new(crate::gpu::SharedTris::new(&b.mesh()))).collect();
     assert_eq!(meshes.len(), 2, "a cylinder and a box");
-    assert!(meshes[1].vertices.len() * 2 < meshes[0].vertices.len(), "the box is the smaller");
+    assert!(meshes[1].vertex_count() * 2 < meshes[0].vertex_count(), "the box is the smaller");
     let with_edges = frames.target().is_some_and(|t| t.edges);
     let edges: Vec<_> = app
         .session
@@ -339,7 +339,8 @@ fn a_placed_parts_triangles_and_edges_are_uploaded_once_and_a_part_added_alone_a
         .map(|b| std::sync::Arc::new(solidcraft_viewport_gpu::view::SharedEdges::new(&b.mesh(), |_| true, Vec::new())))
         .collect();
     let edge_bytes = |k: usize| if with_edges { edges[k].levels.iter().map(|(r, _)| r.len() as u64).sum() } else { 0 };
-    let bytes = |k: usize| (meshes[k].vertices.len() + meshes[k].indices.len() * 4) as u64 + edge_bytes(k);
+    let bytes =
+        |k: usize| (meshes[k].vertex_count() * solidcraft_viewport_gpu::view::SHARED_SIZE + meshes[k].indices().len() * 4) as u64 + edge_bytes(k);
     // Each part placed three times, close together (all in view).
     let scene = |parts: usize| {
         let mut sc = crate::gpu::GpuScene::default();
@@ -353,6 +354,7 @@ fn a_placed_parts_triangles_and_edges_are_uploaded_once_and_a_part_added_alone_a
                 levels: Vec::new(),
                 closed: true,
                 edges: with_edges.then(|| edges[k].clone()),
+                paint: None,
             };
             for i in 0..3 {
                 inst.place([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.5 * i as f32], [0.0, 0.0, 1.0, 0.0]], red);
@@ -369,7 +371,7 @@ fn a_placed_parts_triangles_and_edges_are_uploaded_once_and_a_part_added_alone_a
         frames.frame(crate::scale_tests::view_frame(&app, SIZE, (key, &slot), (0, &none)));
         (frames.uploads(), frames.stats().triangles)
     };
-    let drawn = |parts: usize| meshes.iter().take(parts).map(|t| 3 * (t.indices.len() as u64 / 3)).sum::<u64>();
+    let drawn = |parts: usize| meshes.iter().take(parts).map(|t| 3 * (t.indices().len() as u64 / 3)).sum::<u64>();
     let (one, triangles) = draw(1);
     assert_eq!(one.geometry, bytes(0), "the first part's triangles and edges, once");
     assert_eq!(triangles, drawn(1), "its three placements are drawn");

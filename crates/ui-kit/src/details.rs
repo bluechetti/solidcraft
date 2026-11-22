@@ -111,6 +111,9 @@ pub struct Details {
     pub findings: Vec<DetailFinding>,
     pub readout: Vec<(String, String)>,
     pub actions: Vec<(String, String)>,
+    /// A small card: as wide as what it shows, no heading over the key, small type. For a colour
+    /// key that sits in a corner of the view while the user works.
+    pub compact: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -249,15 +252,21 @@ pub fn details(ui: &mut Ui, id: &str, description: &Details, max_height: f32, fo
     ui.ctx().data_mut(|data| data.insert_temp(egui::Id::unique(FIELD_FOCUS), Vec::<(egui::Id, egui::Rect)>::new()));
     ui.ctx().data_mut(|data| data.insert_temp(egui::Id::unique(CONTROL_FOCUS), Vec::<egui::Id>::new()));
     ui.ctx().data_mut(|data| data.insert_temp(egui::Id::unique(OWNED_POPUPS), Vec::<egui::Id>::new()));
-    ui.set_width((t.form_card_width + if description.findings.is_empty() { 0.0 } else { t.space_24 * 2.0 }).min(ui.available_width()));
+    let width = (t.form_card_width + if description.findings.is_empty() { 0.0 } else { t.space_24 * 2.0 }).min(ui.available_width());
+    if description.compact {
+        ui.set_max_width(width);
+    } else {
+        ui.set_width(width);
+    }
     // A card's area is as tall as it was last frame: allowed `max_height`, a body that grew
     // after the first frame scrolls instead, and its last row was cut off (#10708).
     ui.set_max_height(max_height);
     super::scope(ui, |ui| {
         let mut caption_height = 0.0;
         if let Some(caption) = &description.caption {
-            let response = ui.add(egui::Label::new(RichText::new(caption).size(t.font_label).color(t.text_dim)).wrap());
-            caption_height = response.rect.height() + t.space_8;
+            let size = if description.compact { t.font_small } else { t.font_label };
+            let response = ui.add(egui::Label::new(RichText::new(caption).size(size).color(t.text_dim)).wrap());
+            caption_height = response.rect.height() + if description.compact { t.space_4 } else { t.space_8 };
             solidcraft_ui_registry::publish_rect("details:caption", response.rect);
         }
         let footer_height = if description.actions.is_empty() { 0.0 } else { t.control_height + t.space_16 };
@@ -265,7 +274,7 @@ pub fn details(ui: &mut Ui, id: &str, description: &Details, max_height: f32, fo
             .id_salt(("details", id))
             .max_height((max_height - caption_height - footer_height - t.space_24).max(0.0))
             .min_scrolled_height(0.0)
-            .auto_shrink([false, true])
+            .auto_shrink([description.compact, true])
             .show(ui, |ui| {
                 if !description.settings.is_empty() {
                     heading(ui, solidcraft_ui_text::tr("ui.details_settings"));
@@ -280,15 +289,28 @@ pub fn details(ui: &mut Ui, id: &str, description: &Details, max_height: f32, fo
                     });
                 }
                 if !description.key.is_empty() {
-                    heading(ui, solidcraft_ui_text::tr("ui.details_key"));
+                    if description.compact {
+                        // Rows as tall as their type, not as a button.
+                        ui.spacing_mut().item_spacing.y = t.space_2;
+                        ui.spacing_mut().interact_size.y = t.space_12.max(t.font_small + t.space_2);
+                    } else {
+                        heading(ui, solidcraft_ui_text::tr("ui.details_key"));
+                    }
                     for row in &description.key {
                         ui.horizontal(|ui| {
                             patterned_swatch(ui, row.colour, row.pattern, row.pattern_colour);
-                            let label = RichText::new(&row.label);
+                            let label = if description.compact { RichText::new(&row.label).size(t.font_small) } else { RichText::new(&row.label) };
                             ui.label(if row.numeric { label.monospace() } else { label });
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.label(RichText::new(&row.value).monospace());
-                            });
+                            // A compact card keeps to its rows' width: a value goes after the label.
+                            if description.compact {
+                                if !row.value.is_empty() {
+                                    ui.label(RichText::new(&row.value).monospace().size(t.font_small));
+                                }
+                            } else {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(&row.value).monospace());
+                                });
+                            }
                         });
                     }
                 }

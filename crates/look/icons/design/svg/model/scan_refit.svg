@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Refit to Scan</title>
+  <path d="M14 33Q23 25.5 32 24.5Q41 25.5 50 33Q41 40.5 32 41.5Q23 40.5 14 33Z" fill="#b9ddf8"/>
+  <path d="M14 33Q23 25.5 32 24.5Q41 25.5 50 33Q41 40.5 32 41.5Q23 40.5 14 33Z" fill="none" stroke="#236ead" stroke-width="2.55" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="24" cy="37.5" r="1.9" fill="#6f879c"/>
+  <circle cx="32" cy="35" r="1.9" fill="#6f879c"/>
+  <circle cx="41" cy="31" r="1.9" fill="#6f879c"/>
+  <path d="M8.33 25.66A24.5 24.5 0 0 1 50.77 16.25" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M54.30 20.46L45.21 18.96L54.40 11.25Z" fill="#236ead" stroke="#236ead" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M55.67 38.34A24.5 24.5 0 0 1 13.23 47.75" fill="none" stroke="#236ead" stroke-width="4.25" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M9.70 43.54L18.79 45.04L9.60 52.75Z" fill="#236ead" stroke="#236ead" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

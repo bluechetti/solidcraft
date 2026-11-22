@@ -13,6 +13,7 @@ Work the part out as numbers first. Then build it in a few large `batch` calls, 
 2. Run `inspect_design {"measure":false,"sketches":false}`, even when you think the session is empty.
    - The SolidCraft server's instructions end with `Backend: connected to the SolidCraft app` when it drives the user's open app, and with `Backend: headless` otherwise.
    - If the design has timeline features, ask before calling `new_design` or `open`, because both discard unsaved work. You can also build into the open design.
+   - A mesh body in the design is a scan: read `skill_reference {"skill":"solidcraft-scan-to-cad"}` ("Scans and native features together") before modeling on it, and check each stage against it with `scan.deviation` as well as `measure`.
 3. Write a plan:
    - the parameters
    - the placement: centre the part on the origin so patterns and mirrors can work from the planes

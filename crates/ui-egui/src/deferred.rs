@@ -43,6 +43,10 @@ pub struct Deferred {
     /// for the run here (a parameter change evaluates twice: the first evaluation is not the
     /// one `evaluated` holds).
     kept: Option<std::sync::Arc<solidcraft_engine::doc::KeptResults>>,
+    /// A command computed whole on a copy of the design ([`computed_whole`]): the copy, for the
+    /// design to take once it is in, in place of `done` and `evaluated`.
+    whole: Option<std::sync::mpsc::Receiver<Result<solidcraft_engine::ComputedCommands, String>>>,
+    computed: Option<Box<Result<solidcraft_engine::ComputedCommands, String>>>,
 }
 
 impl Deferred {
@@ -59,11 +63,25 @@ impl Deferred {
             progress: Default::default(),
             serial: crate::operations::serial(),
             kept: None,
+            whole: None,
+            computed: None,
         };
         (job, tx)
     }
 
     pub(crate) fn finished(&mut self) -> bool {
+        if let Some(whole) = &self.whole {
+            if self.computed.is_none() {
+                match whole.try_recv() {
+                    Ok(result) => self.computed = Some(Box::new(result)),
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        self.computed = Some(Box::new(Err("the computation stopped without a result".into())));
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                }
+            }
+            return self.computed.is_some();
+        }
         if self.evaluated.is_none() {
             match self.done.try_recv() {
                 Ok(evaluated) => self.evaluated = Some(evaluated),
@@ -90,6 +108,8 @@ impl Deferred {
             progress: Default::default(),
             serial: crate::operations::serial(),
             kept: None,
+            whole: None,
+            computed: None,
         };
         (job, tx)
     }
@@ -113,6 +133,38 @@ enum Start {
     Later(Deferred),
     /// It runs now, with what was evaluated for it ahead (if anything).
     Now(Option<solidcraft_engine::Evaluated>, Option<std::sync::Arc<solidcraft_engine::doc::KeptResults>>),
+    /// It was computed whole within the wait ([`computed_whole`]): the design takes it now.
+    Computed(Box<Result<solidcraft_engine::ComputedCommands, String>>),
+}
+
+/// Commands whose own work is the slow part, run from the ribbon with no dialog: a scan of
+/// millions of triangles worked through (Repair took half a minute on the window thread). They
+/// are computed whole on a copy of the design and the design takes that copy, as a dialog's OK
+/// is, rather than evaluated ahead and run again for real, which would do their work twice.
+pub(crate) fn computed_whole(id: &str) -> bool {
+    matches!(
+        id,
+        "scan.repair"
+            | "scan.clean_up"
+            // Find All, and Reconstruct reading the scan with it: 16 s on a 2.7-million-triangle
+            // scan, 45 s on 10 million. What they read comes back with the copy.
+            | "scan.find_all"
+            | "scan.reconstruct"
+            // A first look reads every triangle: seconds on ten million.
+            | "scan.survey"
+            | "scan.remesh"
+            | "scan.remove_and_fill"
+            | "scan.mesh_from_points"
+            | "scan.keep_selection"
+            | "scan.delete_selection"
+            | "scan.rest_on_grid"
+            | "scan.center"
+            | "scan.quick_align"
+            | "scan.register"
+            | "scan.align_all"
+            | "scan.combine"
+            | "scan.align_to_model"
+    )
 }
 
 /// A delete's check computing off the window thread: each check command's reply, in order.
@@ -248,9 +300,10 @@ impl SolveApp {
     }
 
     /// [`Self::run_heavy`], as the operation `serial` (the operations panel's row).
-    fn run_heavy_as(&mut self, id: &str, params: Value, serial: u64) -> Result<Value, String> {
+    fn run_heavy_as(&mut self, id: &str, mut params: Value, serial: u64) -> Result<Value, String> {
         crate::sketch_view::sync(self)?;
         crate::workspace::command_receiver(self, id, &params)?;
+        crate::dialogs_scan_clean::in_place(self, id, &mut params);
         if id == "timeline.play" {
             return self.run(id, params);
         }
@@ -282,7 +335,41 @@ impl SolveApp {
                 crate::operations::ended(self, &format!("history:{serial}"), outcome);
                 r
             }
+            Start::Computed(result) => {
+                let r = self.take_computed(id, params, *result);
+                let outcome = match &r {
+                    Ok(_) => crate::operations::Outcome::Done,
+                    Err(e) => crate::operations::Outcome::Failed(crate::friendly_error(id, e)),
+                };
+                crate::operations::ended(self, &format!("history:{serial}"), outcome);
+                r
+            }
         }
+    }
+
+    /// The design takes `id`, computed whole on a copy of it ([`computed_whole`]), as a dialog's
+    /// OK is taken; a design changed meanwhile computes it again, for the design as it is.
+    fn take_computed(&mut self, id: &str, params: Value, result: Result<solidcraft_engine::ComputedCommands, String>) -> Result<Value, String> {
+        let prepared = result?;
+        if !prepared.is_current(&self.session) {
+            return self.run_heavy(id, params);
+        }
+        if self.file_load.busy() || self.file_picker.is_some() || self.saving.is_some() {
+            return Err("a file operation is in progress".into());
+        }
+        let replies = self.session.accept_commands(prepared).map_err(|e| e.to_string())?;
+        // As a command run here: a big change, an undo note gone, playback stopped.
+        self.big_operation = true;
+        if self.status_undo {
+            self.status_undo = false;
+            self.status = None;
+        }
+        crate::timeline::stop_playback(self);
+        let mut last = Value::Null;
+        for (id, reply) in replies {
+            last = self.command_completed(&id, Ok(reply))?;
+        }
+        Ok(last)
     }
 
     /// Run a command for real, taking the features `evaluated` computed for it ahead, and any
@@ -300,6 +387,11 @@ impl SolveApp {
         let r = self.run_with_kept(kept, |app| app.run(id, params));
         self.session.unprime();
         r
+    }
+
+    /// The command computing off the window thread, if one is.
+    pub(crate) fn computing_command(&self) -> Option<&str> {
+        self.deferred.as_ref().map(|d| d.command.0.as_str())
     }
 
     /// Since when a command, or a delete's check, has been computing off the window thread (ms),
@@ -409,6 +501,17 @@ impl SolveApp {
             }
             if let Some(mut job) = self.deferred.take() {
                 let (id, params) = std::mem::take(&mut job.command);
+                if let Some(result) = job.computed.take() {
+                    let outcome = match self.take_computed(&id, params, *result) {
+                        Ok(_) => crate::operations::Outcome::Done,
+                        Err(why) => {
+                            self.set_status(why.clone(), true);
+                            crate::operations::Outcome::Failed(why)
+                        }
+                    };
+                    crate::operations::ended(self, &format!("history:{}", job.serial), outcome);
+                    return;
+                }
                 let superseded = replaced_by_a_later_one(&id) && self.deferred_queue.first().is_some_and(|(q, _, _)| *q == id);
                 let key = format!("history:{}", job.serial);
                 if job.revision != self.session.revision {
@@ -455,9 +558,40 @@ impl SolveApp {
         if self.file_load_holds() || self.file_picker.is_some() {
             return Start::Now(None, None);
         }
+        let command = (id.to_string(), params.clone());
+        if computed_whole(id) {
+            let copy = self.session.scratch();
+            let commands = vec![command.clone()];
+            let (tx, rx) = std::sync::mpsc::channel();
+            let spawned = std::thread::Builder::new().name("scan".into()).spawn(move || {
+                let _ = tx.send(copy.compute_commands(&commands, None).map_err(|e| e.to_string()));
+            });
+            if spawned.is_err() {
+                return Start::Now(None, None);
+            }
+            if !wait.is_zero() {
+                match rx.recv_timeout(wait) {
+                    Ok(result) => return Start::Computed(Box::new(result)),
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Start::Now(None, None),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                }
+            }
+            let (_, none) = std::sync::mpsc::channel();
+            return Start::Later(Deferred {
+                done: none,
+                evaluated: None,
+                started: crate::now_ms(),
+                command,
+                revision: self.session.revision,
+                progress: Default::default(),
+                serial,
+                kept: None,
+                whole: Some(rx),
+                computed: None,
+            });
+        }
         let ahead = self.session.ahead();
         let kept = ahead.kept();
-        let command = (id.to_string(), params.clone());
         let commands = vec![command.clone()];
         let (tx, rx) = std::sync::mpsc::channel();
         let progress = std::sync::Arc::new(solidcraft_engine::doc::progress::Progress::default());
@@ -499,6 +633,8 @@ impl SolveApp {
             progress,
             serial,
             kept: Some(kept),
+            whole: None,
+            computed: None,
         })
     }
 

@@ -119,6 +119,11 @@ impl PickIndexes {
         Some(index)
     }
 
+    /// How many indexes are still being made.
+    pub(crate) fn building(&self) -> usize {
+        self.0.lock().map(|map| map.values().filter(|(_, index)| index.is_none()).count()).unwrap_or(0)
+    }
+
     /// Drops the indexes of meshes `keep` no longer names (a new model state).
     pub(crate) fn retain(&self, keep: impl Fn(usize) -> bool) {
         if let Ok(mut map) = self.0.lock() {
@@ -137,7 +142,7 @@ impl PickIndexes {
         self.0.lock().map_or(0, |m| m.values().filter(|(_, i)| i.is_none()).count())
     }
 
-    #[cfg(test)]
+    /// How many meshes have an index, or one being made.
     pub(crate) fn len(&self) -> usize {
         self.0.lock().map_or(0, |m| m.len())
     }

@@ -15,6 +15,7 @@ Edit an existing design through its parameters instead of rebuilding it. Every s
    - Match sketch dimensions by expression.
    - If that is ambiguous, `sketch.inspect {sketch}` that one sketch, which also shows its points in world coordinates.
 4. **Baseline:** `measure {}`, so you can predict every change against it.
+5. **A scan in the design** (a mesh body): a parameter whose comment reads `measured …` was read off it and rounded. After the change, `scan.deviation {"body":"<model>"}` shows whether the model still fits the scan; `skill_reference {"skill":"solidcraft-scan-to-cad"}` has the rest.
 
 `timeline.inspect {feature}` is only for two cases:
 - changing more than a number: profiles, direction, operation or edges

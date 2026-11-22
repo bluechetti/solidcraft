@@ -13,6 +13,7 @@ mod body_transfer;
 mod body_transfer_sheet;
 pub mod bom;
 mod browser_tree;
+pub mod inspection;
 pub mod newer_file;
 pub mod pbr_appearance;
 pub use body_transfer::{valid_transfer_matrix, validate_body_transfer};
@@ -45,6 +46,7 @@ pub mod frame;
 pub mod frame_corners;
 pub mod frame_layout;
 mod frame_multi_trim;
+pub mod free_form;
 pub mod gpu_plan;
 mod history_names;
 pub mod hole_reference;
@@ -100,6 +102,12 @@ pub mod render_resources;
 pub mod render_settings;
 pub mod render_surface;
 pub mod render_texture_resources;
+pub mod scan_clean;
+pub mod scan_flat_pattern;
+pub mod scan_plan;
+pub mod scan_recipe;
+pub mod scan_selection;
+pub mod scan_tolerance;
 pub mod sheet;
 pub mod sheet_library;
 mod sheet_surface;
@@ -110,6 +118,7 @@ mod sheet_surface_fold;
 mod sheet_surface_perforation;
 mod sheet_surface_shadow;
 pub mod sketch_equation;
+pub mod surface_nets;
 pub use sheet_surface_convert::{
     ConvertRule, RollEdge, RollInfo, RollLine, SheetFaces, SheetMeasure, SurfaceBendLine, SurfaceConversion, SurfaceSheet, convert_surfaces,
     measure_sheet_body,

@@ -15,6 +15,68 @@ pub fn kernel_thread(name: &str) -> std::thread::Builder {
     std::thread::Builder::new().name(name.to_owned()).stack_size(KERNEL_STACK)
 }
 
+/// The kernel's worker pool, its threads with the kernel's stack; `None` when it cannot start
+/// (the work then runs on the calling thread).
+#[cfg(not(target_arch = "wasm32"))]
+fn pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| rayon::ThreadPoolBuilder::new().thread_name(|i| format!("solidcraft-kernel-{i}")).stack_size(KERNEL_STACK).build().ok())
+        .as_ref()
+}
+
+/// `f` over `items`, results in item order: on the pool when `parallel`, else on the calling
+/// thread. Waking the pool's workers costs tens of microseconds, so callers ask for it only
+/// when the items carry more work than that (decided from the work, not the item count).
+pub(crate) fn map<T: Sync, R: Send>(what: &'static str, items: &[T], parallel: bool, f: impl Fn(&T) -> Result<R> + Sync) -> Vec<Result<R>> {
+    // The workers run under the caller's validation mode (`crate::validation`) and stop token.
+    let scope = crate::validation::current();
+    let stop = solidcraft_smlib::stop::current();
+    let one = |item: &T| solidcraft_smlib::stop::scoped(stop.clone(), || crate::validation::within(scope.clone(), || guard(what, || f(item))));
+    // The browser build has no worker pool: everything runs on the calling thread.
+    #[cfg(target_arch = "wasm32")]
+    let _ = parallel;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use rayon::prelude::*;
+        if parallel && items.len() > 1 {
+            if rayon::current_thread_index().is_some() {
+                // On a pool's worker (the kernel's, or a one-thread pool of
+                // `map_with_local_pools`): that pool's threads, as many as it has.
+                if rayon::current_num_threads() > 1 {
+                    return items.par_iter().map(one).collect();
+                }
+            } else if let Some(pool) = pool()
+                && pool.current_num_threads() > 1
+            {
+                return pool.install(|| items.par_iter().map(one).collect());
+            }
+        }
+    }
+    items.iter().map(one).collect()
+}
+
+/// The fewest items worth sorting on the worker pool.
+#[cfg(not(target_arch = "wasm32"))]
+const PARALLEL_SORT: usize = 1 << 16;
+
+/// `items` sorted (not stably): on the worker pool when there are enough of them, else (and in
+/// the browser build) on the calling thread.
+pub(crate) fn sort_unstable<T: Ord + Send>(items: &mut [T]) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if items.len() >= PARALLEL_SORT {
+        use rayon::prelude::*;
+        if rayon::current_thread_index().is_some() {
+            items.par_sort_unstable();
+            return;
+        }
+        if let Some(pool) = pool() {
+            pool.install(|| items.par_sort_unstable());
+            return;
+        }
+    }
+    items.sort_unstable();
+}
+
 /// Run `f` on every item, spread over plain threads (one per core, at most `max_threads`),
 /// each pulling the next item; on the calling thread in the browser build or when threads
 /// cannot be started. Each call runs under [`crate::guard`] (a panic is that item's loss).

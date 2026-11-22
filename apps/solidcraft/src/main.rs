@@ -40,6 +40,8 @@ mod native_crash_macos;
 mod native_frame;
 #[cfg(any(target_os = "macos", test))]
 mod native_menu;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod native_signal_unix;
 mod nav_bridge;
 #[cfg(target_os = "macos")]
 mod open_documents;
@@ -1568,6 +1570,8 @@ fn main() -> eframe::Result {
     native_crash::install();
     #[cfg(target_os = "macos")]
     native_crash_macos::install();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    native_signal_unix::install();
     // Windows with only OpenGL to start: the system title bar instead of ours (#2063).
     let started = match &wgpu_options.wgpu_setup {
         eframe::egui_wgpu::WgpuSetup::CreateNew(setup) => setup.instance_descriptor.backends,
@@ -2049,11 +2053,15 @@ fn wgpu_options(
         // A float depth buffer with a stencil (see `FLOAT_DEPTH_BITS`), indirect draws that start
         // at an instance (instanced meshes drawn a call per pipeline), and timestamp queries for
         // the GPU time the frame-rate readout shows, wherever the adapter has them.
+        // Buffers as large as the adapter takes: a scan's shared vertices and indices outgrow
+        // the default 256 MiB from about 22 million triangles, and are then drawn unshared, at
+        // three times the size and built again on the window thread.
         let base = setup.device_descriptor.clone();
         setup.device_descriptor = std::sync::Arc::new(move |adapter| {
             let mut d = base(adapter);
             d.required_features |=
                 adapter.features() & (startup::FLOAT_DEPTH_STENCIL | solidcraft_viewport_gpu::INDIRECT_DRAWS | startup::TIMESTAMP_QUERY);
+            d.required_limits.max_buffer_size = d.required_limits.max_buffer_size.max(adapter.limits().max_buffer_size);
             d
         });
     }

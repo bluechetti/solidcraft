@@ -2979,7 +2979,7 @@ impl State {
                     let mut instanced = 0usize;
                     for m in &gpu.instanced {
                         if shared.insert(Arc::as_ptr(&m.tris) as usize) {
-                            instanced = instanced.saturating_add(m.tris.vertices.len() + m.tris.indices.len() * 4);
+                            instanced = instanced.saturating_add(m.tris.vertex_byte_len() + m.tris.indices().len() * 4);
                         }
                         instanced = instanced.saturating_add(m.instances.len());
                     }
@@ -3299,11 +3299,13 @@ enum ProductDraw {
 /// two or more bodies fails the preview instead of drawing partially ([`crate::gpu::SharedTris::new`]
 /// silently drops a triangle with a missing corner).
 fn shared_tris(mesh: &Arc<solidcraft_engine::geom::Mesh>) -> Result<Arc<crate::gpu::SharedTris>, String> {
-    let finite = |i: u32| match (mesh.positions.get(i as usize), mesh.normals.get(i as usize)) {
-        (Some(p), Some(n)) => p.to_f32().into_iter().chain(n.to_f32()).all(|v| v.is_finite()),
+    // A flat mesh (a scan's: no normals, each triangle lit with its own) has its corners' normals
+    // from its triangles.
+    let finite = |t: &[u32; 3]| match (mesh.tri(t), mesh.corner_normals(t)) {
+        (Some(p), Some(n)) => p.iter().chain(&n).flat_map(|v| v.to_f32()).all(|v| v.is_finite()),
         _ => false,
     };
-    if !mesh.triangles.iter().all(|t| t.iter().all(|&i| finite(i))) {
+    if !mesh.triangles.iter().all(finite) {
         return Err(solidcraft_ui_text::tr("render.error_product_triangle").into());
     }
     Ok(Arc::new(crate::gpu::SharedTris::new(mesh)))
@@ -3497,8 +3499,10 @@ pub fn gpu_scene_cached(
                         let ProductDraw::Block(class, slot) = b.draw(t) else { continue };
                         let mut p = [[0.0f32; 3]; 3];
                         let mut n = [[0.0f32; 3]; 3];
+                        // A flat mesh's corners are lit with their triangle's normal.
+                        let normals = b.body.mesh.corner_normals(triangle);
                         for (k, i) in triangle.iter().enumerate() {
-                            let (Some(position), Some(normal)) = (b.body.mesh.positions.get(*i as usize), b.body.mesh.normals.get(*i as usize))
+                            let (Some(position), Some(normal)) = (b.body.mesh.positions.get(*i as usize), normals.as_ref().and_then(|n| n.get(k)))
                             else {
                                 return Err(solidcraft_ui_text::tr("render.error_product_triangle").into());
                             };
@@ -3559,6 +3563,7 @@ pub fn gpu_scene_cached(
                 look,
                 levels: Vec::new(),
                 closed: true,
+                paint: None,
                 edges: None,
             });
             gpu.instanced.len() - 1

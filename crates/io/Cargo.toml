@@ -37,6 +37,8 @@ log = { workspace = true }
 zip = { workspace = true }
 quick-xml = { workspace = true }
 gltf = { workspace = true }
+e57 = { workspace = true }
+las = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2 = { workspace = true }

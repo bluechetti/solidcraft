@@ -208,7 +208,7 @@ impl Drag {
     }
 }
 
-/// `ui.scroll {x, y, delta?, ctrl?, unit?}`: `unit` is checked where it is read, as `point` or `line`.
+/// `ui.scroll {x, y, delta?, ctrl?, shift?, unit?}`: `unit` is checked where it is read, as `point` or `line`.
 #[derive(Deserialize)]
 pub(crate) struct Scroll {
     #[serde(flatten)]
@@ -216,6 +216,8 @@ pub(crate) struct Scroll {
     #[serde(default = "Scroll::default_delta")]
     pub delta: f64,
     pub ctrl: Option<bool>,
+    /// Holds Shift as well (Edit Surface sizes its brush on Ctrl+Shift and the wheel).
+    pub shift: Option<bool>,
     #[serde(default, deserialize_with = "present")]
     pub unit: Option<Value>,
 }
@@ -307,6 +309,7 @@ pub(crate) struct Shortcut {
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Workspace {
     Design,
+    Scan,
     Render,
     Drawing,
 }
@@ -315,6 +318,7 @@ impl Workspace {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Workspace::Design => "design",
+            Workspace::Scan => "scan",
             Workspace::Render => "render",
             Workspace::Drawing => "drawing",
         }

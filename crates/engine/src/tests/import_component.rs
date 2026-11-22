@@ -573,7 +573,7 @@ fn only_box(s: &Session) -> [i64; 6] {
 }
 
 /// Insert Mesh's `origin` (#12543): off, the mesh stays where its file puts it; on, its box is
-/// centred on X and Y with its base on Z = 0, by moving the import's occurrence, and the reply
+/// centred on X and Y with its base on Z = 0, by moving its points, and the reply
 /// says by how much. A unit scales the mesh first, so the scaled box is the one centred.
 #[test]
 fn a_mesh_import_moves_to_the_origin_only_when_asked() {
@@ -588,9 +588,14 @@ fn a_mesh_import_moves_to_the_origin_only_when_asked() {
     let r = run(&mut s, "file.insert_mesh", json!({"path": stl, "origin": true}));
     assert_eq!(only_box(&s), [-5_000, -10_000, 0, 5_000, 10_000, 30_000], "centred on X and Y, base on Z = 0");
     assert_eq!(r["moved_to_origin"], json!([-105.0, -60.0, -7.0]), "{r}");
+    // Into the design's own frame, the mesh's points carry the move, not its occurrence: the scan
+    // tools read a scan's points as they are, so a moved occurrence put them where it is not drawn.
     let occ = r["occurrence"].as_u64().unwrap();
     let placed = s.doc.occurrences.iter().find(|o| o.id == occ).unwrap().transform;
-    assert_eq!(placed[3], [-105.0, -60.0, -7.0, 1.0], "the occurrence carries the move");
+    assert_eq!(placed, solidcraft_doc::IDENTITY, "the occurrence stays put");
+    let name = r["bodies"][0].as_str().unwrap();
+    let local = s.model.state().body(name).unwrap().mesh_bounds();
+    assert!(local.min.z.abs() < 1e-9 && (local.min.x + local.max.x).abs() < 1e-9, "the points moved: {local:?}");
     // One undo step takes the whole import, move and all, away.
     run(&mut s, "edit.undo", json!({}));
     assert!(s.world_state().unwrap().bodies.is_empty());

@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_symmetry_complete_unlike": "{share} of the scan matches its mirror image here: as expected when one side was never scanned. If the part is no mirror image, what OK adds is not the part."
+  },
+  "de": {
+    "ui.scan_symmetry_complete_unlike": "{share} des Scans stimmen hier mit dem Spiegelbild überein: so zu erwarten, wenn eine Seite nie gescannt wurde. Ist das Teil kein Spiegelbild, ist, was OK hinzufügt, nicht das Teil."
+  },
+  "ja": {
+    "ui.scan_symmetry_complete_unlike": "ここではスキャンの {share} が鏡像と一致します。片側を一度もスキャンしていなければ想定どおりです。部品が鏡像でなければ、OK で加わるものは部品ではありません。"
+  },
+  "ko": {
+    "ui.scan_symmetry_complete_unlike": "여기서는 스캔의 {share}가 거울상과 맞습니다. 한쪽을 스캔하지 않았다면 예상된 결과입니다. 부품이 거울상이 아니라면 확인으로 더해지는 것은 부품이 아닙니다."
+  },
+  "zh": {
+    "ui.scan_symmetry_complete_unlike": "此处扫描有 {share} 与其镜像吻合：一侧从未扫描时正是如此。若零件不是镜像，确定所添加的就不是零件。"
+  },
+  "ar": {
+    "ui.scan_symmetry_complete_unlike": "يطابق {share} من المسح صورته المرآتية هنا: وهذا متوقع حين لم يُمسح جانب قط. إن لم يكن الجزء صورة مرآتية فما يضيفه «موافق» ليس الجزء."
+  },
+  "he": {
+    "ui.scan_symmetry_complete_unlike": "{share} מהסריקה תואמים כאן לתמונת המראה שלה: כצפוי כשצד אחד לא נסרק מעולם. אם החלק אינו תמונת מראה, מה שאישור מוסיף אינו החלק."
+  },
+  "vi": {
+    "ui.scan_symmetry_complete_unlike": "{share} bản quét khớp với ảnh gương của nó ở đây: đúng như dự kiến khi một phía chưa từng được quét. Nếu chi tiết không đối xứng gương, phần OK thêm vào không phải là chi tiết."
+  }
+}

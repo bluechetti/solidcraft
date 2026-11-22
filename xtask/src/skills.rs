@@ -21,8 +21,9 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-/// 5600, not 5000, since the router lists every skill on its own line with when to use it.
-pub const ROUTER_MAX_CHARS: usize = 5600;
+/// 5600, not 5000, since the router lists every skill on its own line with when to use it; the
+/// Scan workspace fork adds one row (scan-to-cad), so 5700.
+pub const ROUTER_MAX_CHARS: usize = 5700;
 pub const SKILL_MAX_CHARS: usize = 3600;
 /// Skills written before the size cap (the modelling skills carry their command shapes).
 const LONG_SKILLS: &[&str] =

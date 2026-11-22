@@ -307,11 +307,10 @@ fn face_min_radius(m: &solidcraft_geom::Mesh, face: u32) -> Option<(f64, Vec3)> 
         if m.tri_face.get(ti) != Some(&face) {
             continue;
         }
+        let (Some(corners), Some(normals)) = (m.tri(t), m.corner_normals(t)) else { continue };
         for k in 0..3 {
-            let (i, j) = (t[k] as usize, t[(k + 1) % 3] as usize);
-            let (Some(pi), Some(pj), Some(ni), Some(nj)) = (m.positions.get(i), m.positions.get(j), m.normals.get(i), m.normals.get(j)) else {
-                continue;
-            };
+            let j = (k + 1) % 3;
+            let (Some(pi), Some(pj), Some(ni), Some(nj)) = (corners.get(k), corners.get(j), normals.get(k), normals.get(j)) else { continue };
             let d = *pj - *pi;
             let dd = d.dot(d);
             if dd < 1e-18 {

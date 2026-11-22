@@ -3934,3 +3934,169 @@ fn a_draft_on_a_pocket_wall_beside_rounds_never_fails_with_a_bare_status() {
         Err(e) => assert!(!e.to_string().contains("status 1001"), "{e}"),
     }
 }
+
+/// Tilt Face: the top of a box 20 × 20 × 10 turned 10° about its edge at x = 0 makes a wedge,
+/// 4000 ± 20 · 20²/2 · tan 10° = 4000 ± 705.31 mm³; the tilt follows its parameters (the box's
+/// height, the angle) and its hinge edge; an axis across the face, not along it, is refused.
+#[test]
+fn tilt_face_turns_a_face_about_its_hinge_and_follows_it() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "h", "expression": "10 mm"}));
+    run(&mut s, "parameters.add", json!({"name": "tilt", "expression": "10 deg"}));
+    run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": "h", "body_name": "Block"}));
+    run(&mut s, "solid.tilt_face", json!({"face": [10, 10, 10], "axis": {"edge": [0, 10, 10]}, "angle": "tilt"}));
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+    let wedge = 4000.0 * 10f64.to_radians().tan();
+    let v = body_volume(&s, "Block");
+    assert!((v - 4000.0).abs() > 1.0 && ((v - 4000.0).abs() - wedge).abs() < 1e-3, "{v} against 4000 ± {wedge}");
+    let sign = (v - 4000.0).signum();
+    run(&mut s, "parameters.change", json!({"name": "h", "expression": "15 mm"}));
+    let v = body_volume(&s, "Block");
+    assert!((v - (6000.0 + sign * wedge)).abs() < 1e-3, "the hinge edge followed up to z 15: {v}");
+    run(&mut s, "parameters.change", json!({"name": "tilt", "expression": "5 deg"}));
+    let v = body_volume(&s, "Block");
+    assert!((v - (6000.0 + sign * 4000.0 * 5f64.to_radians().tan())).abs() < 1e-3, "{v}");
+    // The front face (y = 0) with an axis along its normal: across it, not along it.
+    let err = s.execute("solid.tilt_face", &json!({"face": [10, 0, 2], "axis": "Y", "angle": "5 deg"})).unwrap_err();
+    assert!(err.to_string().contains("run along the face"), "{err}");
+}
+
+/// Laminate: two plies of 1 and 2 mm laid on the top of a box 20 × 20 × 10 are two bodies of
+/// 20 × 20 × 1 and 20 × 20 × 2 (400 and 800 mm³), the second on the first (its bottom at z 11);
+/// laid in, the first is inside the box (top at z 10); a material given is kept; one undo step.
+#[test]
+fn laminate_lays_plies_one_on_another() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "body_name": "Mould"}));
+    let features = s.doc.features.len();
+    let laid = run(
+        &mut s,
+        "solid.laminate",
+        json!({"faces": [[10, 10, 10]], "body": "Mould", "plies": [{"thickness": 1, "material": "ABS Plastic"}, {"thickness": "2 mm", "name": "Top coat"}]}),
+    );
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+    let names: Vec<String> = laid["plies"].as_array().unwrap().iter().map(|p| p["body"].as_str().unwrap().to_owned()).collect();
+    assert_eq!(names, vec!["Ply 1".to_owned(), "Top coat".to_owned()], "{laid}");
+    assert!((body_volume(&s, "Ply 1") - 400.0).abs() < 1e-6 && (body_volume(&s, "Top coat") - 800.0).abs() < 1e-6);
+    let low = |s: &Session, b: &str| solidcraft_kernel::measure(&s.model.state().body(b).unwrap().body).unwrap().bbox.min.z;
+    assert!((low(&s, "Top coat") - 11.0).abs() < 1e-6, "on the first ply");
+    assert!((body_volume(&s, "Mould") - 4000.0).abs() < 1e-6, "the mould is left as it was");
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.doc.features.len(), features, "one undo step");
+    run(&mut s, "solid.laminate", json!({"faces": [[10, 10, 10]], "body": "Mould", "plies": [{"thickness": 1}], "side": "in"}));
+    assert!((low(&s, "Ply 1") - 9.0).abs() < 1e-6, "laid in, below the face");
+    let err = s.execute("solid.laminate", &json!({"faces": [[10, 10, 10]], "plies": [{"thickness": 0}]})).unwrap_err();
+    assert!(err.to_string().contains("above 0"), "{err}");
+}
+
+#[test]
+fn zz_debug_offset_thicken_replies() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "body_name": "Mould"}));
+    let off = run(&mut s, "surface.offset", json!({"faces": [[10, 10, 10]], "body": "Mould", "distance": "0 mm", "name": "P surface"}));
+    eprintln!("OFFSET {off}");
+    let sb = off["created_bodies"][0].as_str().unwrap().to_owned();
+    let th = run(&mut s, "surface.thicken", json!({"bodies": [sb], "thickness": "1", "operation": "new", "name": "P"}));
+    eprintln!("THICKEN {th}");
+    eprintln!("BODIES {:?}", s.model.state().bodies.iter().map(|b| b.name.clone()).collect::<Vec<_>>());
+}
+
+/// A curvature-continuous (G2) fillet of the three edges at a box's corner closes the corner with
+/// a patch G2 to its three blends: a closed solid, whose blends take the round's section area
+/// (the G2 blend keeps the round's setback and area), so it is within a hair of the same
+/// fillet's round of the three edges, corner patches apart (before, the corner patch missed its
+/// neighbours' curvature by 5.4e-3 against a 2.5e-3 tolerance and the fillet was refused).
+#[test]
+fn a_g2_fillet_of_three_edges_closes_their_corner() {
+    let corner = |kind: &str| {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "body_name": "B"}));
+        run(&mut s, "solid.fillet", json!({"edges": [[10, 0, 10], [0, 10, 10], [0, 0, 5]], "radius": 1.5, "type": kind}));
+        body_volume(&s, "B")
+    };
+    let (round, g2) = (corner("constant"), corner("curvature"));
+    // Three edges, 20 + 20 + 10 mm, each losing (1 - pi/4) r^2 per mm, less what the corner shares.
+    let most = (1.0 - std::f64::consts::FRAC_PI_4) * 1.5 * 1.5 * 50.0;
+    assert!(4000.0 - g2 > 0.8 * most && 4000.0 - g2 < most, "{g2}");
+    assert!((g2 - round).abs() < 0.05 * (4000.0 - round), "G2 {g2} against round {round}");
+}
+
+/// The fillet command with `type: curvature` on two top edges of a box whose front wall is
+/// drafted 10° (the corner no mirror image; the upright edge between them stays sharp): it
+/// builds, in either pick order, and takes off within 0.1 % of what the round does, each G2
+/// section having the circle's area (the kernel crate's
+/// `two_g2_rounds_meet_at_a_corner_with_a_drafted_wall`). Before, it was refused as "faces
+/// that meet at different angles", and with that lifted, failed in one pick order.
+#[test]
+fn a_g2_fillet_at_a_drafted_walls_corner_builds_in_either_order() {
+    let off = |kind: &str, edges: serde_json::Value| {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 10, "body_name": "B"}));
+        run(&mut s, "solid.draft", json!({"faces": [[10, 0, 5]], "angle": "10 deg", "neutral": "XY", "body": "B"}));
+        let before = body_volume(&s, "B");
+        assert!((before - 4000.0).abs() > 100.0, "the wall drafted: {before}");
+        run(&mut s, "solid.fillet", json!({"edges": edges, "radius": 1.5, "type": kind}));
+        assert!(s.model.results.iter().all(|r| r.error.is_none()), "{kind}: {:?}", s.model.results);
+        before - body_volume(&s, "B")
+    };
+    // the drafted wall's top edge, 10 tan 10° in from y = 0 (the wall turns about its foot)
+    let front = [10.0, 10.0 * 10f64.to_radians().tan(), 10.0];
+    let round = off("constant", json!([front, [0, 10, 10]]));
+    let g2 = off("curvature", json!([front, [0, 10, 10]]));
+    let swapped = off("curvature", json!([[0, 10, 10], front]));
+    assert!(round > 1.0, "{round}");
+    assert!((g2 - round).abs() < 1e-3 * round, "G2 {g2} against round {round}");
+    assert!((swapped - g2).abs() < 1e-6 * round, "{swapped} vs {g2}");
+}
+
+/// Deform: a bar 100 x 10 x 10 bent a quarter round about the line of its bottom edge keeps the
+/// volume the bend gives it, 100 * 10 * (10 - 10^2 / (2r)) for r = 100 / (pi/2); its length and
+/// angle follow the parameters; twisted, a bar keeps its volume; a cage left as it is changes
+/// nothing; a call naming two ways is refused.
+#[test]
+fn deform_bends_twists_and_cages_a_body() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "turn", "expression": "90 deg"}));
+    run(&mut s, "solid.box", json!({"length": 100, "width": 10, "height": 10, "body_name": "Bar"}));
+    run(&mut s, "solid.deform", json!({"body": "Bar", "bend": {"origin": [0, 0, 0], "along": [1, 0, 0], "up": [0, 0, 1], "angle": "turn"}}));
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+    let bent = |turn: f64| {
+        let r = 100.0 / turn;
+        100.0 * 10.0 * (10.0 - 100.0 / (2.0 * r))
+    };
+    let v = body_volume(&s, "Bar");
+    assert!((v - bent(std::f64::consts::FRAC_PI_2)).abs() < 0.05, "{v}");
+    run(&mut s, "parameters.change", json!({"name": "turn", "expression": "45 deg"}));
+    let v = body_volume(&s, "Bar");
+    assert!((v - bent(std::f64::consts::FRAC_PI_4)).abs() < 0.05, "the angle followed: {v}");
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 100, "width": 10, "height": 10, "body_name": "Bar"}));
+    run(&mut s, "solid.deform", json!({"body": "Bar", "twist": {"origin": [0, 5, 5], "axis": [1, 0, 0], "angle": "90 deg"}}));
+    assert!((body_volume(&s, "Bar") - 10_000.0).abs() < 0.5, "{}", body_volume(&s, "Bar"));
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 20, "body_name": "Cube"}));
+    run(&mut s, "solid.deform", json!({"body": "Cube", "cage": {"moves": []}}));
+    assert!((body_volume(&s, "Cube") - 8000.0).abs() < 1e-3, "{}", body_volume(&s, "Cube"));
+    let err =
+        s.execute("solid.deform", &json!({"body": "Cube", "twist": {"origin": [0, 0, 0], "axis": [0, 0, 1], "angle": 1}, "cage": {}})).unwrap_err();
+    assert!(err.to_string().contains("one of"), "{err}");
+}
+
+/// A revolve profile whose edge along the axis lies 2 µm off it (a constraint deleted, the line left
+/// free) turns into a body with a hair-thin hole down the middle. The body is kept, and the reply's
+/// warning says so; the same profile on the axis has no warning.
+#[test]
+fn a_profile_edge_a_hair_off_the_axis_is_warned_of() {
+    for (off, warned) in [(0.002, true), (0.0, false)] {
+        let mut s = Session::default();
+        let run = |s: &mut Session, id: &str, p: Value| s.execute(id, &p).unwrap_or_else(|e| panic!("{id} {p}: {e}"));
+        run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "P"}));
+        run(&mut s, "sketch.line", json!({"points": [[off, 0.0], [20.0, 0.0], [20.0, 60.0], [off, 60.0], [off, 0.0]]}));
+        let reply = run(&mut s, "solid.revolve", json!({"sketch": "P", "axis": "y", "name": "Turn"}));
+        let warning = reply["warning"].as_str().unwrap_or("");
+        assert_eq!(warning.contains("µm across along the axis"), warned, "off {off}: {reply}");
+        if warned {
+            assert!(warning.contains("4 µm"), "{warning}");
+        }
+    }
+}

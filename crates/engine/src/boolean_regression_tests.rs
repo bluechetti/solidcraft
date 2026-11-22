@@ -2451,3 +2451,27 @@ fn a_hole_in_a_notched_cross_cut_large_half_torus_is_cut() {
     let got = volume(&s, "Part");
     assert!((got - want).abs() < 5e-5, "volume {got}, want {want} (notch {notch}, cross {cross}, holes {holes})");
 }
+
+/// examples/regressions/thin_crescent_beside_a_bore.json: an L bracket as Reconstruct built it
+/// from a scan, its plates joined again a hair off its faces (one with the start of a bore of
+/// radius 4), then a hole of radius 3.9991 cut 0.004 mm off that bore, which leaves a crescent of
+/// face 0.04 mm² between the two circles. SMLib's result was valid, but its export read the
+/// crescent's loop turn from a polygon through 33 points of each edge, whose chords cut off as
+/// much as the crescent holds, so it wrote the face facing into the material: the body passed as
+/// made and the next boolean on it was refused ("Face Loop has bad orientation", blamed on the
+/// body as it was). The export now takes the loop's certified turn, and the record's own check
+/// agrees: the body as kept passes SMLib's check and the record's, and the next cut builds.
+#[test]
+fn a_thin_crescent_beside_a_bore_is_kept_facing_out() {
+    let mut s = replay(include_str!("../../../examples/regressions/thin_crescent_beside_a_bore.json"));
+    let body = s.model.state().body("Bracket").expect("the bracket").body.clone();
+    assert_eq!(solidcraft_kernel::failing_check(&body).unwrap(), None, "SMLib's check of the body as kept");
+    let validity = solidcraft_kernel::validity(&body);
+    assert!(validity.ok(), "{validity:?}");
+    let before = volume(&s, "Bracket");
+    s.execute("solid.box", &json!({"length": 1, "width": 1, "height": 1, "corner": [59.5, 39.5, 0.2], "operation": "cut", "targets": ["Bracket"]}))
+        .unwrap();
+    // The corner of the base the box overlaps: 0.5 along x, about 0.5 along y, 1 up.
+    let removed = before - volume(&s, "Bracket");
+    assert!(removed > 0.24 && removed < 0.26, "{removed}");
+}

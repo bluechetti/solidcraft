@@ -104,7 +104,8 @@ pub(super) fn flatten_with_media(scene: &ProductScene, origin: Vec3, cancel: &Ca
     }
     let count = scene.meshes.iter().map(|m| m.mesh.triangles.len()).sum::<usize>();
     let mut triangles = reserved(count)?;
-    let vertex_count = scene.meshes.iter().map(|m| m.mesh.positions.len()).sum::<usize>();
+    // A flat mesh (a mesh body's) is given a corner of its own for each triangle's normal.
+    let vertex_count = scene.meshes.iter().map(|m| if m.mesh.is_flat() { m.mesh.triangles.len() * 3 } else { m.mesh.positions.len() }).sum::<usize>();
     let mut vertices = reserved(vertex_count * 32)?;
     let mut vertex_offset = 0u32;
     let mut media_bounds = reserved::<super::media_hierarchy::Region>(solidcraft_render::job::MAX_GPU_DIELECTRICS)?;
@@ -120,7 +121,7 @@ pub(super) fn flatten_with_media(scene: &ProductScene, origin: Vec3, cancel: &Ca
         if faces.windows(2).any(|f| f[0].face == f[1].face) {
             return Err(invalid("duplicate face appearance"));
         }
-        let mesh = &body.mesh;
+        let mesh = body.mesh.with_normals();
         if mesh.normals.len() != mesh.positions.len() || mesh.tri_face.len() != mesh.triangles.len() {
             return Err(invalid("path tracer requires normals and a face ID for every triangle"));
         }

@@ -488,6 +488,63 @@ pub fn cylinder_face(b: &Body, mesh: &Mesh, face: usize) -> Option<CylinderFace>
     (c.start.is_finite() && c.end.is_finite()).then_some(c)
 }
 
+/// Face `face` of a body as a cylinder, read exactly: its own surface's axis and radius, its side
+/// (a hole when the material is outside the cylinder) and its extent along the axis from the exact
+/// curves of its boundary edges, sampled along each. `None` when the face is not on a cylinder.
+pub fn cylinder_face_exact(b: &Body, face: usize) -> Option<CylinderFace> {
+    const SAMPLES: usize = 32;
+    let faces = Faces::new(b.record(), (b.size() * 1e-4).max(1e-6) * 10.0);
+    let (axis, o, r, internal) = cylinder_of(&faces, face)?;
+    let rec = b.record();
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for l in &rec.faces.get(face)?.loops {
+        let Loop::Edges { edges } = l else { continue };
+        for oe in edges {
+            let Some(e) = rec.edges.get(oe.edge as usize) else { continue };
+            let Ok(c) = solidcraft_geom::brep::eval::CurveEval::new(e.parameters()) else { continue };
+            let [t0, t1] = e.interval;
+            for k in 0..=SAMPLES {
+                if let Some(p) = c.point(t0 + (t1 - t0) * k as f64 / SAMPLES as f64) {
+                    let s = (p - o).dot(axis);
+                    lo = lo.min(s);
+                    hi = hi.max(s);
+                }
+            }
+        }
+    }
+    (lo.is_finite() && hi.is_finite() && hi > lo).then_some(CylinderFace { axis_point: o, axis, radius: r, start: lo, end: hi, internal })
+}
+
+/// The loops of face `face` of a body as closed polygons of points sampled on the exact curves of
+/// their edges, in loop order (its outer loop first, as the record keeps it). Empty for no such face.
+pub fn face_outline(b: &Body, face: usize) -> Vec<Vec<Vec3>> {
+    const SAMPLES: usize = 24;
+    let rec = b.record();
+    let Some(f) = rec.faces.get(face) else { return Vec::new() };
+    let mut out = Vec::new();
+    for l in &f.loops {
+        let Loop::Edges { edges } = l else { continue };
+        let mut poly = Vec::new();
+        for oe in edges {
+            let Some(e) = rec.edges.get(oe.edge as usize) else { continue };
+            let Ok(c) = solidcraft_geom::brep::eval::CurveEval::new(e.parameters()) else { continue };
+            let [t0, t1] = e.interval;
+            // Each edge from its start along the loop, its last point left to the next edge.
+            for k in 0..SAMPLES {
+                let s = k as f64 / SAMPLES as f64;
+                let t = if oe.forward { t0 + (t1 - t0) * s } else { t1 - (t1 - t0) * s };
+                if let Some(p) = c.point(t) {
+                    poly.push(p);
+                }
+            }
+        }
+        if poly.len() >= 3 {
+            out.push(poly);
+        }
+    }
+    out
+}
+
 impl CylinderFace {
     /// How far `p` is from the face: off its cylinder, and past its ends along the axis.
     pub fn off(&self, p: Vec3) -> f64 {
@@ -549,8 +606,8 @@ fn cylinder_extent(mesh: &Mesh, face: u32, axis: UnitVec3, ap: Vec3, r: f64) -> 
         if *f != face {
             continue;
         }
-        for k in t {
-            let (Some(q), Some(n)) = (mesh.positions.get(*k as usize), mesh.normals.get(*k as usize)) else { continue };
+        let (Some(corners), Some(normals)) = (mesh.tri(t), mesh.corner_normals(t)) else { continue };
+        for (q, n) in corners.iter().zip(normals) {
             let s = (*q - ap).dot(axis);
             lo = lo.min(s);
             hi = hi.max(s);

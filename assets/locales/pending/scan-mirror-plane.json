@@ -1,0 +1,34 @@
+{
+  "en": {
+    "ui.scan_symmetry_plane_hint": "Click an origin or construction plane to use it as it is, or draw a guide.",
+    "ui.scan_symmetry_fill_count": "OK adds {triangles} triangles where the scan has nothing, drawn in amber."
+  },
+  "de": {
+    "ui.scan_symmetry_plane_hint": "Klicken Sie eine Ursprungs- oder Konstruktionsebene an, um genau sie zu nutzen, oder zeichnen Sie eine Führungslinie.",
+    "ui.scan_symmetry_fill_count": "OK fügt {triangles} Dreiecke hinzu, wo der Scan nichts hat, in Bernstein gezeigt."
+  },
+  "ja": {
+    "ui.scan_symmetry_plane_hint": "原点平面か作図平面をクリックするとその平面をそのまま使います。ガイドを描くこともできます。",
+    "ui.scan_symmetry_fill_count": "OK でスキャンに何もない所へ {triangles} 個の三角形を加えます（琥珀色で表示）。"
+  },
+  "zh": {
+    "ui.scan_symmetry_plane_hint": "单击原点平面或构造平面即按原样使用它，也可以绘制一条引导线。",
+    "ui.scan_symmetry_fill_count": "确定会在扫描缺失处添加 {triangles} 个三角形，以琥珀色显示。"
+  },
+  "ko": {
+    "ui.scan_symmetry_plane_hint": "원점 평면이나 구성 평면을 클릭하면 그 평면을 그대로 씁니다. 가이드를 그려도 됩니다.",
+    "ui.scan_symmetry_fill_count": "확인을 누르면 스캔이 비어 있는 곳에 삼각형 {triangles}개를 더합니다(호박색으로 표시)."
+  },
+  "ar": {
+    "ui.scan_symmetry_plane_hint": "انقر مستوى أصل أو مستوى إنشاء لاستخدامه كما هو، أو ارسم خطًا إرشاديًا.",
+    "ui.scan_symmetry_fill_count": "يضيف «موافق» {triangles} مثلثًا حيث لا يوجد شيء في المسح، مرسومة بلون كهرماني."
+  },
+  "he": {
+    "ui.scan_symmetry_plane_hint": "לחץ על מישור ראשית או מישור בנייה כדי להשתמש בו כפי שהוא, או צייר קו מנחה.",
+    "ui.scan_symmetry_fill_count": "אישור מוסיף {triangles} משולשים היכן שאין בסריקה דבר, מוצגים בענבר."
+  },
+  "vi": {
+    "ui.scan_symmetry_plane_hint": "Nhấp một mặt phẳng gốc hoặc mặt phẳng dựng để dùng đúng nó, hoặc vẽ một đường dẫn.",
+    "ui.scan_symmetry_fill_count": "OK thêm {triangles} tam giác ở chỗ bản quét không có gì, vẽ màu hổ phách."
+  }
+}

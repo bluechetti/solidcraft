@@ -134,6 +134,77 @@ fn hostile_meshes_never_panic() {
     assert!(made.iter().all(|l| l.triangles.iter().flatten().all(|i| (*i as usize) < l.positions.len())));
 }
 
+/// A mesh too large for one piece is simplified in pieces, side by side: each level comes down to
+/// about its target (the sides the pieces are held still at add a little), closed, every seam
+/// joined again, within the error it reports; and it is the same however many threads made it.
+#[test]
+fn a_mesh_in_pieces_comes_down_closed_within_its_error_on_any_number_of_threads() {
+    let (pos, tris) = sphere(50.0, 100);
+    let full = tris.len();
+    let targets = [full / 4, full / 16, full / 64];
+    let made = levels_in_pieces(&pos, &tris, &targets, 3_000, 4);
+    assert_eq!(made.len(), 3);
+    let exact = 4.0 / 3.0 * std::f64::consts::PI * 50.0f64.powi(3);
+    let sag = 50.0 * (1.0 - (std::f64::consts::PI / 100.0).cos());
+    let mut last = 0.0;
+    for (l, target) in made.iter().zip(targets) {
+        assert!(l.triangles.len() <= target + target / 4, "{} for {target}", l.triangles.len());
+        assert!(closed(l), "closed and consistently wound: the pieces meet");
+        assert!(l.error >= last, "the error grows: {} after {last}", l.error);
+        last = l.error;
+        for p in &l.positions {
+            assert!((p.len() - 50.0).abs() <= l.error + sag + 1e-9, "{} from the centre, error {}", p.len(), l.error);
+        }
+        assert!((volume(l) - exact).abs() < exact * 0.02, "volume {} vs {exact}", volume(l));
+    }
+    let alone = levels_in_pieces(&pos, &tris, &targets, 3_000, 1);
+    assert!(made.iter().zip(&alone).all(|(a, b)| a.triangles == b.triangles && a.positions == b.positions && a.error == b.error));
+}
+
+/// The cuts give every triangle to one piece, and no piece more than its size.
+#[test]
+fn every_triangle_is_in_one_piece() {
+    let centres: Vec<[f32; 3]> = (0..10_000u32).map(|i| [(i % 97) as f32, (i % 89) as f32 * 0.5, (i % 7) as f32]).collect();
+    let mut order: Vec<u32> = (0..10_000).collect();
+    let pieces = cut_into_pieces(&centres, &mut order, 700, 1.0 / 3.0);
+    assert!(pieces.iter().all(|r| r.len() <= 700 && !r.is_empty()));
+    assert_eq!(pieces.iter().map(|r| r.len()).sum::<usize>(), 10_000);
+    assert!(pieces.windows(2).all(|w| w[0].end == w[1].start), "{pieces:?}");
+    order.sort_unstable();
+    assert!(order.iter().copied().eq(0..10_000));
+}
+
+/// A fine sphere clustered for a small picture comes down to about as many triangles as cubes
+/// it crosses, every vertex within a cube of the surface, wound as it was, each triangle naming
+/// the one it came from; nothing that is not a mesh panics or invents triangles.
+#[test]
+fn a_mesh_clustered_for_a_picture_keeps_its_shape_in_far_fewer_triangles() {
+    let (pos, tris) = sphere(10.0, 200);
+    let cell = 1.0;
+    let (points, kept, from) = clustered(&pos, &tris, cell);
+    assert!(kept.len() < tris.len() / 20 && kept.len() > 500, "{} of {}", kept.len(), tris.len());
+    assert_eq!(from.len(), kept.len());
+    let level = Level { positions: points.clone(), triangles: kept.clone(), error: 0.0 };
+    let ball = 4.0 / 3.0 * std::f64::consts::PI * 1000.0;
+    assert!((volume(&level) - ball).abs() < ball * 0.05, "{} against {ball}", volume(&level));
+    for p in &points {
+        assert!((p.len() - 10.0).abs() < cell * 3f64.sqrt(), "{p:?}");
+    }
+    for (t, k) in kept.iter().zip(&from) {
+        let [a, b, c] = t.map(|i| points[i as usize]);
+        let [x, y, z] = tris[*k as usize].map(|i| pos[i as usize]);
+        assert!((b - a).cross(c - a).dot((y - x).cross(z - x)) >= 0.0, "turned over");
+    }
+    // A vertex not finite, a corner out of range, no room for cubes: left out, no panic.
+    let mut bad = pos.clone();
+    bad[0] = Vec3::new(f64::NAN, 0.0, 0.0);
+    let (_, fewer, _) = clustered(&bad, &[[0, 1, 2], [3, 4, 99], [3, 4, 5]], cell);
+    assert!(fewer.len() <= 1);
+    for cell in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert!(clustered(&pos, &tris, cell).1.is_empty());
+    }
+}
+
 /// Timing, not a check (`SOLIDCRAFT_BENCH_STL=part.stl cargo test --release -p solidcraft-geom
 /// --lib simplify_timing -- --ignored --nocapture`): the levels of a binary STL.
 #[test]

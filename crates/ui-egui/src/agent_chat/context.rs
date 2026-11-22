@@ -365,10 +365,83 @@ pub fn with_context(text: &str, context: &Context) -> String {
     if block.is_empty() { text.to_string() } else { format!("{text}\n\n{block}") }
 }
 
-/// Describe what the session has selected, as what was clicked: see [`clicked`].
+/// Describe what the session has selected, as what was clicked: see [`clicked`]; and what is
+/// selected on a scan, as one more item ([`scan_selection`]).
 pub fn describe_selection(session: &mut Session) -> Context {
     let groups = clicked(session, &session.selection.clone());
-    describe_groups(session, &groups)
+    let mut context = describe_groups(session, &groups);
+    if let Some(item) = scan_selection(session) {
+        context.merge(Context { items: vec![item], ..Context::default() });
+    }
+    context
+}
+
+/// What is selected on a scan (painted, brushed or grown on its triangles) as one item, the way
+/// the scan commands take it (`selected: true`), with its size and a place on it where the scan
+/// shows; `None` when nothing is, or the scan changed since.
+pub fn scan_selection(session: &Session) -> Option<Entry> {
+    let picked = session.scan_selection.as_ref().filter(|k| k.count > 0 && k.current(session))?;
+    let mesh = solidcraft_engine::cmd::scan::shown_mesh(session, &picked.scan)?;
+    let corners =
+        || mesh.triangles.iter().zip(picked.selected.iter()).filter(|(_, on)| **on).filter_map(|(t, _)| mesh.positions.get(t[0] as usize).copied());
+    let (sum, n) = corners().fold((Vec3::ZERO, 0.0_f64), |(s, n), p| (s + p, n + 1.0));
+    let middle = sum / n.max(1.0);
+    // A corner of the selection, the one nearest its middle: on the scan, unlike the middle of a
+    // curved patch.
+    let far = |p: &Vec3| {
+        let d = *p - middle;
+        d.x * d.x + d.y * d.y + d.z * d.z
+    };
+    let at = corners().min_by(|a, b| far(a).total_cmp(&far(b)))?;
+    let detail = format!(
+        "selected on the scan, {} mm², around {}; scan commands work on it with `\"selected\": true` (scan.fit_plane, scan.reconstruct_selection, scan.denoise, …), `scan.keep_selection {{}}` keeps it",
+        num(picked.area),
+        point3(&json!([at.x, at.y, at.z]))
+    );
+    let mut entry = Entry::new(Kind::Element, format!("{} triangles · {}", picked.count, picked.scan), detail);
+    entry.sels = vec![Sel::Body { name: picked.scan.clone() }];
+    Some(entry)
+}
+
+/// The rest of what the user is looking at, as items of their own: the dialog open (and on which
+/// ribbon tab) with the commands its OK would run as it is set now, and Find All's shapes coloured
+/// on a scan. Nothing when neither is. `dialog` is the open dialog's label and those commands, or why they are not ready yet.
+pub fn on_screen(session: &Session, tab: &str, dialog: Option<(String, Result<Vec<(String, Value)>, String>)>) -> Context {
+    let mut items = Vec::new();
+    if let Some((label, commands)) = dialog {
+        let open = if tab.is_empty() { "open".to_string() } else { format!("open on the {} tab", capitalised(&tab.to_lowercase())) };
+        let detail = match commands {
+            Ok(commands) if !commands.is_empty() => {
+                let run: Vec<String> = commands.iter().map(|(id, p)| format!("{id} {}", shortened(&p.to_string(), MAX_PARAMS_TEXT))).collect();
+                format!("{open}, set so that OK would run: {}", run.join("; "))
+            }
+            Ok(_) => open,
+            Err(why) => format!("{open}, not ready for OK: {why}"),
+        };
+        items.push(Entry::new(Kind::Other, format!("{label} dialog"), detail));
+    }
+    if let Some(shapes) = session.scan_shapes.as_ref().filter(|k| k.shown && k.current(session)) {
+        let detail = format!(
+            "{} regions of the scan coloured by Find All; `scan.find_all {{}}` lists them, each with a point on it",
+            shapes.outcome.segments.len()
+        );
+        items.push(Entry::new(Kind::Other, format!("Find All · {}", shapes.scan), detail));
+    }
+    Context { items, ..Context::default() }
+}
+
+/// The most characters of a dialog's command parameters the agent is told: a list of picked
+/// triangles or points can run to megabytes.
+const MAX_PARAMS_TEXT: usize = 600;
+
+/// `text` cut to `most` characters, `…` marking the cut.
+fn shortened(text: &str, most: usize) -> String {
+    if text.chars().count() <= most {
+        return text.to_string();
+    }
+    let mut cut: String = text.chars().take(most).collect();
+    cut.push('…');
+    cut
 }
 
 /// How many things were clicked to make a selection: the pieces a click on a rim or on a surface

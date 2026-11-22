@@ -532,7 +532,7 @@ fn sample<T: Copy>(v: &[T], max: usize) -> Vec<T> {
 }
 
 /// An origin plane (XY, XZ, YZ) or a construction plane's point and normal.
-pub(super) fn plane_named(s: &Session, name: &str) -> Option<(Vec3, Vec3)> {
+pub(crate) fn plane_named(s: &Session, name: &str) -> Option<(Vec3, Vec3)> {
     match name {
         "XY" => Some((Vec3::ZERO, Vec3::Z)),
         "XZ" => Some((Vec3::ZERO, Vec3::Y)),

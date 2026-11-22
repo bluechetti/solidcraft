@@ -33,6 +33,7 @@ mod continuity_order;
 mod coplanar_tests;
 mod corner_g2;
 mod curvature_comb;
+mod deform;
 mod delete_face;
 mod distance;
 mod draft_corners;
@@ -105,6 +106,7 @@ mod outline_tests;
 mod par;
 #[cfg(test)]
 mod split_cone_tests;
+pub use deform::{SpaceMap, deform};
 pub use par::{KERNEL_STACK, for_each_on_threads, kernel_thread, map_on_threads, map_with_local_pools};
 #[cfg(test)]
 mod display_plan_tests;
@@ -173,7 +175,10 @@ pub use blend::{
     without_fit_note,
 };
 pub use blend_corner::fillet_radii;
-pub use blend_variable::{RadiusSpline, Taper, fillet_chord, fillet_tapered, fillet_variable, fillet_variable_points, fillet_variable_spline, taper};
+pub use blend_variable::{
+    RadiusSpline, Taper, fillet_chord, fillet_tapered, fillet_variable, fillet_variable_points, fillet_variable_points_g2, fillet_variable_spline,
+    fillet_variable_spline_g2, taper,
+};
 pub use body::{
     Body, COLOUR_NAME_MAX, CapSignature, DISPLAY_ANGLE, DisplayShare, EdgeInfo, FaceInfo, FacePaint, FaceSource, KernelForms, MESH_MIN_ANGLE,
     MeshSpec, MeshTolerance, OUTLINE_TRIM_SAMPLES, Paint, PlanStats, PointClass, RayPick, Refusal, SurfaceKind, colour_name, placed_mesh,
@@ -209,13 +214,13 @@ pub use helix::{loft_to_point, sweep_helix, sweep_helix_mesh, sweep_helix_radial
 pub use iges_in::{MAX_IGES_BYTES, iges_import, iges_to_step};
 pub use iges_out::iges_export_bodies;
 pub use intersection::{MeetingEdge, meeting_edges};
-pub use iso::{IsoLine, MAX_ISO_COUNT, iso_curves, iso_grid};
+pub use iso::{FaceRegion, IsoLine, MAX_ISO_COUNT, face_region, iso_curves, iso_grid};
 pub use lip::{LipRefusal, raise_band, rim_band};
 pub use loft_blend::loft_blend;
 pub use matchsurf::{match_surface, seam_continuity};
 pub use measure::{BodyMeasure, MassMeasure, measure, measure_mass};
 pub use mesh_convert::convert_prismatic_mesh;
-pub use meshbody::{MAX_TRIANGLES, mesh_body, mesh_body_with_normals};
+pub use meshbody::{MAX_TRIANGLES, MAX_VERTICES, check_mesh, mesh_body, mesh_body_flat, mesh_body_with_normals, weld_exact, weld_exact_with};
 pub use native::{body_from_smlib, smlib_body};
 pub use native::{brep_record, decode_native_body, encode_native_body, native_preview_mesh};
 pub use offset::with_same_surface;
@@ -229,8 +234,8 @@ pub use polyhedron::{HalfSpace, convex_polyhedron, draft, offset_faces, shell};
 pub use prism::{PLANAR_FIT_TOL, extrude_planar_regions, planar_regions_boolean};
 pub use prism_curve::{PlanarPiece, PlanarSpline};
 pub use prism_measure::{PrismSection, certified_prism_equivalent, certified_prism_section};
-pub use repair::{Hole, RebuiltFace, RefusedFace, RepairOptions, RepairRefusal, RepairReport, SewnGap, repair};
-pub use sew::{EdgeSpec, FaceSpec, MAX_CHAIN_POINTS, SurfSpec, sew, sew_touching, sew_touching_traced};
+pub use repair::{Hole, RebuiltFace, RefusedFace, RepairOptions, RepairRefusal, RepairReport, SewnGap, free_loops, repair};
+pub use sew::{EdgeSpec, FaceSpec, MAX_CHAIN_POINTS, SurfSpec, sew, sew_network, sew_touching, sew_touching_traced};
 pub use solidcore_ops::member_turn::{ParallelTurnError, parallel_turn};
 pub use solidcraft_smlib::hold_a_kernel;
 pub use solidcraft_smlib::start;
@@ -256,15 +261,18 @@ pub use surface_ruled::{Ruled, RuledCorners, RuledMode, ruled_far_handles, ruled
 pub use surface_trim::{TrimKeep, mutual_trim, trim, trim_keep};
 pub use surface_untrim::{UntrimHoles, untrim};
 pub use surfaces::{
-    copy_faces, extend, extrude_sheet, loft_sheet, loft_sheet_with_rails, patch_edges, patch_region, remove_faces, reverse_faces, revolve_sheet,
-    stitch, sweep_sheet, sweep_sheet_point_path_with, sweep_sheet_points, sweep_sheet_points_with, sweep_sheet_with, thicken, unstitch,
+    copy_faces, extend, extrude_sheet, loft_sheet, loft_sheet_with_rails, nurbs_sheet, patch_edges, patch_region, remove_faces, reverse_faces,
+    revolve_sheet, stitch, sweep_sheet, sweep_sheet_point_path_with, sweep_sheet_points, sweep_sheet_points_with, sweep_sheet_with, thicken,
+    unstitch,
 };
 pub use sweep_path::{RailFit, SweepControl, SweepOrientation, sweep_path, sweep_path_with};
 pub use tolerance_heal::{
     HealFailure, HealPreferenceForTests, ToleranceHeal, heal_preference_for_tests, heal_tolerance_defects, heals_tolerance_defects,
     set_heals_tolerance_defects,
 };
-pub use topo::{CylinderFace, cylinder_between_rims, cylinder_end_at, cylinder_face, cylinder_face_at, material_in_ring};
+pub use topo::{
+    CylinderFace, cylinder_between_rims, cylinder_end_at, cylinder_face, cylinder_face_at, cylinder_face_exact, face_outline, material_in_ring,
+};
 pub use topo::{TopoCounts, merged_topology, seam_flags, whole_edge};
 pub use tspline::tspline_sheet;
 pub use validation::{CheckFailure, FailedTest, KeptCheck, Validation, check_kept, detach_kept, failing_check, validating};

@@ -57,6 +57,106 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                     });
                     extrude_start(app, ui);
                 });
+                // The Scan workspace's tools, found by their names as well as by the group's.
+                let scan_tools = [app.tr("cmd.scan_section_sketch"), app.tr("cmd.scan_edit_surface")].join(" ");
+                create_row(ui, app.tr("ui.tab_scan"), Some(&scan_tools), &["fit_section", "surface_patch"], false, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.section_tolerance_from_scan_note");
+                        let response = setting::section_tolerance_from_scan(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:section_tolerance_from_scan", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.edit_surface_on_surface_note");
+                        let response = setting::edit_surface_on_surface(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:edit_surface_on_surface", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.edit_surface_drags_onto_scan_note");
+                        let response = setting::edit_surface_drags_onto_scan(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:edit_surface_drags_onto_scan", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.free_form_plain_scan_note");
+                        let response = setting::free_form_plain_scan(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:free_form_plain_scan", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.flat_template_short_note");
+                        let response = setting::flat_template_short(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:flat_template_short", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.scan_click_snap_note");
+                        let response = setting::scan_click_snap(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:scan_click_snap", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.scan_tolerance_from_noise_note");
+                        let response = setting::scan_tolerance_from_noise(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:scan_tolerance_from_noise", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.section_scan_outline_note");
+                        let response = setting::section_scan_outline(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:section_scan_outline", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.scan_deviation_auto_range_note");
+                        let response = setting::scan_deviation_auto_range(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:scan_deviation_auto_range", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.scan_deviation_bands_note");
+                        let response = setting::scan_deviation_bands(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:scan_deviation_bands", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.scan_clean_in_place_note");
+                        let response = setting::scan_clean_in_place(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:scan_clean_in_place", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let note = app.tr("prefs.edit_surface_brush_keys_note");
+                        let response = setting::edit_surface_brush_keys(app, ui).backing_on_hover_text(note);
+                        crate::scenario::publish_target("prefs:edit_surface_brush_keys", response.rect);
+                        if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                            ui_kit::help_icon(ui, note);
+                        }
+                    });
+                });
                 // Found by the name of every feature that has the marker, as well as by the label.
                 let placed = PLACED_FEATURES.iter().map(|key| app.tr(key)).collect::<Vec<_>>().join(" ");
                 create_row(ui, app.tr("prefs.design_tools.placement_group"), Some(&placed), &["rest", "boss", "snap_fit"], false, |ui| {

@@ -1,0 +1,8 @@
+{
+ "source": "analytic",
+ "solids": 1,
+ "volume": 95450.66666666667,
+ "volume_by": "80*60*20 - 2*(80 + 60)*(2*2/2) + 4*(8/3): each edge loses a 2 x 2 right prism, and each corner's two prisms share 8/3",
+ "holes": 0,
+ "cylinders": []
+}

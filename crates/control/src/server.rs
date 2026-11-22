@@ -529,6 +529,8 @@ struct InFlight {
     steps: Option<usize>,
     since: Instant,
     started: Arc<AtomicBool>,
+    /// How far it is (`progress`), when the work computing it says.
+    ticket: Arc<crate::Ticket>,
 }
 
 impl Running {
@@ -552,7 +554,8 @@ impl Running {
         };
         let method = req.method.chars().take(64).collect();
         let started = req.started.clone();
-        self.lock().push(InFlight { key, connection, id, method, command, steps, since: Instant::now(), started });
+        let ticket = Arc::clone(&req.ticket);
+        self.lock().push(InFlight { key, connection, id, method, command, steps, since: Instant::now(), started, ticket });
         Listing { running: Arc::clone(self), key }
     }
 
@@ -574,6 +577,9 @@ impl Running {
                 }
                 if let Some(n) = e.steps {
                     r["steps"] = json!(n);
+                }
+                if let Some(p) = e.ticket.progress() {
+                    r["progress"] = json!(p);
                 }
                 if e.connection == asker {
                     r["self"] = json!(true);
@@ -955,6 +961,21 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `control.running` says how far a request is when the work computing it reports, and
+    /// nothing of it otherwise.
+    #[test]
+    fn running_says_how_far_a_request_is() {
+        let running = Arc::new(Running::new());
+        let (quiet, _a) = ControlRequest::new("engine.execute", json!({}));
+        let (busy, _b) = ControlRequest::new("engine.execute", json!({}));
+        busy.ticket.on_progress(|| Some("finding shapes 43 %".into()));
+        let _q = running.add(1, &json!(1), &quiet, None, None);
+        let _r = running.add(1, &json!(2), &busy, None, None);
+        let rows = running.result(2)["running"].clone();
+        assert!(rows[0].get("progress").is_none(), "{rows}");
+        assert_eq!(rows[1]["progress"], "finding shapes 43 %", "{rows}");
+    }
 
     /// The longest request line, as an app might accept.
     const MAX_LINE: usize = 16 << 20;

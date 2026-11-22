@@ -951,6 +951,9 @@ pub struct OpenedFile {
     /// A mesh file opened with `origin`: the shift [x, y, z] that moved it to the origin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub moved_to_origin: Option<Vec<f64>>,
+    /// A mesh file opened with `units`: the unit its coordinates were read in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub units: Option<String>,
     /// STEP and IGES only: the SHA-256 of the file's exact bytes, as lower-case hex.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_sha256: Option<String>,

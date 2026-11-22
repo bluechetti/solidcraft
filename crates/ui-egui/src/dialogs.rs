@@ -455,6 +455,38 @@ crate::dialog_descriptor::dialog_descriptors! {
             Plastic(crate::dialogs_plastic::Pl),
             /// Frame members (`dialogs_frame`).
             Frame(crate::dialogs_frame::Member),
+            ScanBase(crate::dialogs_scan::StandBase),
+            ScanSymmetry(crate::dialogs_scan::Symmetry),
+            ScanEditSurface(crate::dialogs_scan_surface::EditSurface),
+            ScanFitSurface(crate::dialogs_scan_surface::FitSurface),
+            ScanCurve(crate::dialogs_scan_curve::CurveOnScan),
+            ScanFreeForm(crate::dialogs_scan_free_form::NewFreeForm),
+            ScanWrapSurface(crate::dialogs_scan_free_form::WrapSurface),
+            ScanMergeSurfaces(crate::dialogs_scan_free_form::MergeSurfaces),
+            ScanSliceSurface(crate::dialogs_scan_slice::SliceSurface),
+            ScanSplit(crate::dialogs_scan_split::SplitMesh),
+            ScanAlignPairs(crate::dialogs_scan_align::AlignPairs),
+            ScanFillet(crate::dialogs_scan_fillet::FilletScan),
+            SurfaceCheck(crate::dialogs_surface_check::SurfaceCheck),
+            ScanFlatten(crate::dialogs_scan_flatten::Flatten),
+            ScanFlatTemplate(crate::dialogs_scan_template::FlatTemplate),
+            ScanFitPatches(crate::dialogs_scan_patches::FitPatches),
+            ScanFloating(crate::dialogs_scan_clean::Floating),
+            ScanHoles(crate::dialogs_scan_clean::Holes),
+            ScanFit(crate::dialogs_scan_fit::FitShape),
+            ScanCleanUp(crate::dialogs_scan_clean::CleanUp),
+            ScanReduce(crate::dialogs_scan_clean::Reduce),
+            ScanSection(crate::dialogs_scan_section::SectionSketch),
+            ScanSections(crate::dialogs_scan_sections::SectionsAlong),
+            ScanDenoise(crate::dialogs_scan_denoise::Denoise),
+            ScanTogether(crate::dialogs_scan_together::Together),
+            Deform(crate::dialogs_deform::Deform),
+            ScanSelect(crate::dialogs_scan_select::ScanSelect),
+            ScanEdgeCurve(crate::dialogs_scan_edge::EdgeCurve),
+            ScanReconstruct(crate::dialogs_scan_reconstruct::Reconstruct),
+            ScanSurvey(crate::dialogs_scan_survey::Survey),
+            ScanAlignChoose(crate::dialogs_scan_align::AlignChoose),
+            ScanRun(crate::dialogs_scan_run::ScanRun),
             /// End caps on frame members (`dialogs_end_cap`).
             EndCap(crate::dialogs_end_cap::EndCap),
             /// Rotate Member (`dialogs_rotate_member`).
@@ -665,6 +697,9 @@ struct DialogComputation {
     cmds: Vec<(String, Value)>,
     marker: Option<Option<usize>>,
     editing: Option<EditingState>,
+    /// The commands stand apart (Reconstruct's steps): a refused one is left out and the rest
+    /// still build. For each command, the earlier one it builds on.
+    apart: Option<Vec<Option<usize>>>,
 }
 
 impl DialogComputation {
@@ -680,6 +715,7 @@ impl DialogComputation {
         }
         Ok(Self {
             session,
+            apart: matches!(d.kind, Kind::ScanReconstruct(_)).then(|| crate::dialogs_scan_reconstruct::needs(&cmds)),
             cmds,
             marker: d.editing.map(|(_, marker)| marker),
             // The editor's pinned original is for a dialog that previews (as `open_feature_edit`
@@ -693,9 +729,10 @@ impl DialogComputation {
     }
 
     fn compute(self) -> Result<solidcraft_engine::ComputedCommands, String> {
-        match self.editing {
-            Some(state) => self.session.compute_editor_commands(&self.cmds, &state.source, state.original),
-            None => self.session.compute_commands(&self.cmds, self.marker),
+        match (self.editing, self.apart) {
+            (Some(state), _) => self.session.compute_editor_commands(&self.cmds, &state.source, state.original),
+            (None, Some(needs)) => self.session.compute_commands_apart(&self.cmds, &needs),
+            (None, None) => self.session.compute_commands(&self.cmds, self.marker),
         }
         .map_err(|e| e.to_string())
     }
@@ -705,7 +742,9 @@ fn adopt_dialog(app: &mut SolveApp, prepared: solidcraft_engine::ComputedCommand
     if app.file_load_holds() || app.file_picker_busy() {
         return Err("a file operation is in progress".into());
     }
+    let left_out = prepared.left_out().to_vec();
     let replies = app.session.accept_commands(prepared).map_err(|e| e.to_string())?;
+    let built = replies.len();
     app.big_operation = true;
     let made = crate::hole_place::holes_made(&replies);
     for (id, reply) in replies {
@@ -716,6 +755,10 @@ fn adopt_dialog(app: &mut SolveApp, prepared: solidcraft_engine::ComputedCommand
         }
     }
     crate::hole_place::group_made(app, d, made);
+    // Reconstruct's steps that were refused: the rest are built, and it says which were not.
+    if !left_out.is_empty() {
+        app.set_status(crate::dialogs_scan_reconstruct::left_out_note(built, &left_out), true);
+    }
     Ok(())
 }
 
@@ -765,11 +808,15 @@ fn display_quality(app: &SolveApp) -> solidcraft_engine::doc::display_quality::D
 pub(crate) fn begin_applying(app: &SolveApp, d: &Dialog) -> Option<Applying> {
     let wait = app.apply_off_thread?;
     let multiple_threads = matches!(d.kind, Kind::Thread { .. }) && sels(d, 0).len() > 1;
-    if !d.previews() && !multiple_threads && d.editing.is_none() {
+    if !d.previews() && !multiple_threads && d.editing.is_none() && !d.works_on_the_scan() {
         return None;
     }
     let computation = DialogComputation::new(app, d).ok()?;
     let cmds = computation.cmds.clone();
+    // A scan tool whose preview already computed what OK runs: OK takes it, not a second search.
+    if let Some(prepared) = kept_preview(app, d) {
+        return warm_applying(app, prepared, cmds, crate::now_ms());
+    }
     #[cfg(test)]
     let gate = app.apply_gate.clone();
     Some(start_applying(cmds, display_quality(app), crate::now_ms(), wait, move || {
@@ -780,6 +827,12 @@ pub(crate) fn begin_applying(app: &SolveApp, d: &Dialog) -> Option<Applying> {
         }
         result
     }))
+}
+
+/// What a scan tool's preview computed, when it is what OK would run on the design as it is.
+fn kept_preview(app: &SolveApp, d: &Dialog) -> Option<solidcraft_engine::ComputedCommands> {
+    let Kind::ScanRun(k) = &d.kind else { return None };
+    crate::dialogs_scan_run::kept_for_ok(app, k, &apply_commands(app, d).ok()?)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1237,6 +1290,31 @@ impl Dialog {
                     .or_else(|| crate::view_gizmo::start(app, id))
                     .or_else(|| crate::dialogs_plastic::start(app, id))
                     .or_else(|| crate::dialogs_frame::start(app, id))
+                    .or_else(|| crate::dialogs_scan::start(app, id))
+                    .or_else(|| crate::dialogs_scan_surface::start(app, id))
+                    .or_else(|| crate::dialogs_scan_curve::start(app, id))
+                    .or_else(|| crate::dialogs_scan_free_form::start(app, id))
+                    .or_else(|| crate::dialogs_scan_clean::start(app, id))
+                    .or_else(|| crate::dialogs_scan_fit::start(app, id))
+                    .or_else(|| crate::dialogs_scan_section::start(app, id))
+                    .or_else(|| crate::dialogs_scan_sections::start(app, id))
+                    .or_else(|| crate::dialogs_scan_denoise::start(app, id))
+                    .or_else(|| crate::dialogs_scan_together::start(app, id))
+                    .or_else(|| crate::dialogs_deform::start(app, id))
+                    .or_else(|| crate::dialogs_scan_select::start(app, id))
+                    .or_else(|| crate::dialogs_scan_edge::start(app, id))
+                    .or_else(|| crate::dialogs_scan_slice::start(app, id))
+                    .or_else(|| crate::dialogs_scan_split::start(app, id))
+                    .or_else(|| crate::dialogs_scan_align::start(app, id))
+                    .or_else(|| crate::dialogs_scan_align::start_choose(app, id))
+                    .or_else(|| crate::dialogs_scan_fillet::start(app, id))
+                    .or_else(|| crate::dialogs_surface_check::start(app, id))
+                    .or_else(|| crate::dialogs_scan_flatten::start(app, id))
+                    .or_else(|| crate::dialogs_scan_template::start(app, id))
+                    .or_else(|| crate::dialogs_scan_survey::start(app, id))
+                    .or_else(|| crate::dialogs_scan_patches::start(app, id))
+                    .or_else(|| crate::dialogs_scan_reconstruct::start(app, id))
+                    .or_else(|| crate::dialogs_scan_run::start(app, id))
                     .or_else(|| crate::dialogs_end_cap::start(app, id))
                     .or_else(|| crate::dialogs_rotate_member::start(app, id))
                     .or_else(|| crate::dialogs_appearance::start(app, id))
@@ -1517,6 +1595,42 @@ impl Dialog {
     }
 
     /// Does this dialog make a feature that can be previewed live?
+    /// A scan tool whose OK works through the whole scan (a scan of millions of triangles takes
+    /// seconds to a minute: smoothing it, filling its holes, cutting it, fitting to it): its OK
+    /// is computed beside the window like a feature that previews, the dialog saying so, though
+    /// it shows no preview. Not the tools that pick on the scan as they go (selecting, drawing a
+    /// curve, editing a surface, aligning by pairs, a curve from the selection).
+    pub fn works_on_the_scan(&self) -> bool {
+        if let Kind::ScanRun(k) = &self.kind {
+            return k.heavy();
+        }
+        matches!(
+            self.kind,
+            Kind::ScanBase(_)
+                | Kind::ScanSymmetry(_)
+                | Kind::ScanFitSurface(_)
+                | Kind::ScanFreeForm(_)
+                | Kind::ScanWrapSurface(_)
+                | Kind::ScanMergeSurfaces(_)
+                | Kind::ScanSliceSurface(_)
+                | Kind::ScanSplit(_)
+                | Kind::ScanFillet(_)
+                | Kind::ScanFlatten(_)
+                | Kind::ScanFlatTemplate(_)
+                | Kind::ScanFitPatches(_)
+                | Kind::ScanFloating(_)
+                | Kind::ScanHoles(_)
+                | Kind::ScanFit(_)
+                | Kind::ScanCleanUp(_)
+                | Kind::ScanReduce(_)
+                | Kind::ScanSection(_)
+                | Kind::ScanSections(_)
+                | Kind::ScanDenoise(_)
+                | Kind::ScanTogether(_)
+                | Kind::ScanReconstruct(_)
+        )
+    }
+
     pub fn previews(&self) -> bool {
         match &self.kind {
             Kind::Assembly(k) => return k.previews(),
@@ -1717,13 +1831,23 @@ impl Dialog {
     }
 
     pub(crate) fn highlighted(&self, s: &Session) -> Vec<Sel> {
+        if self.shows_placement() {
+            return Vec::new();
+        }
         self.shell_faces(s).unwrap_or_else(|| self.items())
+    }
+
+    /// A scan tool's preview of where it puts scans is drawn (`ScanRun::shows_placement`): its
+    /// bodies are not lit.
+    pub(crate) fn shows_placement(&self) -> bool {
+        matches!(&self.kind, Kind::ScanRun(k) if k.shows_placement())
     }
 
     pub fn highlight_key(&self) -> u64 {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         serde_json::to_string(&self.items()).unwrap_or_default().hash(&mut h);
         self.active.hash(&mut h);
+        self.shows_placement().hash(&mut h);
         h.finish()
     }
 
@@ -2912,11 +3036,20 @@ pub fn planar_face(s: &Session, body: &str, face: usize) -> Option<(Vec3, Vec3)>
     found
 }
 
+/// More triangles than this make a mesh body a scan, not an imported part (see [`face_plane`]).
+const SCAN_TRIANGLES: usize = 1_000_000;
+
 /// [`planar_face`] of one body, without the cache.
 fn face_plane(b: &solidcraft_engine::doc::ModelBody, face: usize) -> Option<(Vec3, Vec3)> {
     use solidcore_record::brep::Surface;
     if let Some(plane) = b.body.planar_face(face) {
         return Some((plane.origin, plane.normal()));
+    }
+    // A scan (a mesh past a million triangles) has no plane face to find: reading its faces
+    // walks every triangle (half a second for ten million, again after every change), for a
+    // drag arrow's direction or a sketch plane it never gives.
+    if b.body.is_mesh() && b.body.kept_mesh().is_some_and(|m| m.triangles.len() > SCAN_TRIANGLES) {
+        return None;
     }
     let surface = if b.body.is_mesh() { None } else { b.body.record().faces.get(face).map(|f| &f.surface) };
     match surface {
@@ -3064,6 +3197,38 @@ fn title(k: &Kind) -> &'static str {
         Kind::InsertAirfoil(_) => crate::dialogs_insert_airfoil::title(),
         Kind::Plastic(k) => k.title(),
         Kind::Frame(_) => "FRAME MEMBER",
+        Kind::ScanBase(_) => "STAND ON BASE",
+        Kind::ScanSymmetry(_) => "SYMMETRY",
+        Kind::ScanEditSurface(_) => "EDIT SURFACE",
+        Kind::ScanFitSurface(_) => "FIT SURFACE",
+        Kind::ScanCurve(_) => "CURVE ON SCAN",
+        Kind::ScanFreeForm(_) => "NEW FREE FORM",
+        Kind::ScanWrapSurface(_) => "WRAP SURFACE",
+        Kind::ScanMergeSurfaces(_) => "MERGE SURFACES",
+        Kind::ScanSliceSurface(_) => "SLICE SURFACE",
+        Kind::ScanSplit(_) => "SPLIT MESH",
+        Kind::ScanAlignPairs(_) => "ALIGN BY POINTS",
+        Kind::ScanFillet(_) => "FILLET FROM SCAN",
+        Kind::SurfaceCheck(_) => "SURFACE CHECK",
+        Kind::ScanFlatten(_) => "FLATTEN",
+        Kind::ScanFlatTemplate(_) => "FLAT TEMPLATE",
+        Kind::ScanFitPatches(_) => "FIT PATCHES",
+        Kind::ScanFloating(_) => "FLOATING PIECES",
+        Kind::ScanHoles(_) => "FILL HOLES",
+        Kind::ScanFit(_) => "FIT SHAPE",
+        Kind::ScanCleanUp(_) => "CLEAN UP",
+        Kind::ScanReduce(_) => "REDUCE MESH",
+        Kind::ScanSection(_) => "SECTION TO SKETCH",
+        Kind::ScanSections(_) => "SECTIONS ALONG CURVE",
+        Kind::ScanDenoise(_) => "DENOISE",
+        Kind::ScanTogether(_) => "FIT TOGETHER",
+        Kind::Deform(_) => "DEFORM",
+        Kind::ScanSelect(_) => "SELECT ON SCAN",
+        Kind::ScanEdgeCurve(_) => "CURVE FROM SELECTION EDGE",
+        Kind::ScanReconstruct(_) => "RECONSTRUCT",
+        Kind::ScanSurvey(_) => "SURVEY SCAN",
+        Kind::ScanAlignChoose(_) => "ALIGN",
+        Kind::ScanRun(k) => k.title(),
         Kind::EndCap(_) => "ui.end_cap_title",
         Kind::RotateMember(_) => "ui.rotate_member_title",
         Kind::Appearance(_) => "APPEARANCE",
@@ -4044,7 +4209,7 @@ fn reveal_refusal(on_ok: bool, typing: bool, shown: Option<&str>, error: &str) -
 /// A refusal as the dialog shows it: without the engine's "invalid parameters for `id`: "
 /// prefix (the dialog already names the command), and in the interface language when the
 /// message is in the catalogs.
-fn shown_error(error: &str) -> String {
+pub(crate) fn shown_error(error: &str) -> String {
     let msg = error.strip_prefix("invalid parameters for `").and_then(|rest| rest.split_once("`: ")).map_or(error, |(_, msg)| msg);
     crate::i18n::tr_diagnostic(solidcraft_ui_text::tr_label(msg))
 }
@@ -4385,11 +4550,15 @@ const CONFIGURATIONS_SIZE: crate::card_resize::CardSize =
     crate::card_resize::CardSize { width: "sc_configurations_width", height: "sc_configurations_height", handle: "config" };
 
 /// The width a dialog's card asks for: the managers' wider form, a study's table, Frame Member's
-/// corner rows, or a card.
+/// corner rows, a scan tool's card, or a card.
 pub(crate) fn card_width(d: &Dialog) -> f32 {
     let t = Tokens::get();
     if matches!(d.kind, Kind::Appearance(_) | Kind::Material { .. }) {
         t.form_card_width + t.form_label_width + t.space_6
+    } else if scan_card(&d.kind) {
+        // Half a label column wider: their choices ("Grow from the click", "Vom Klick aus
+        // wachsen") were cut off at the card's own width.
+        t.form_card_width + t.form_label_width / 2.0
     } else if matches!(&d.kind, Kind::Motion(k) if k.wide()) {
         t.form_card_width * 3.0
     } else if matches!(d.kind, Kind::Frame(_)) {
@@ -4400,11 +4569,47 @@ pub(crate) fn card_width(d: &Dialog) -> f32 {
     }
 }
 
+/// A scan tool's dialog, whose rows choose an area, a shape or a way to fit and read out how close
+/// the fit came (the Survey and the align chooser lay out their own way).
+fn scan_card(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::ScanBase(_)
+            | Kind::ScanSymmetry(_)
+            | Kind::ScanEditSurface(_)
+            | Kind::ScanFitSurface(_)
+            | Kind::ScanCurve(_)
+            | Kind::ScanFreeForm(_)
+            | Kind::ScanWrapSurface(_)
+            | Kind::ScanMergeSurfaces(_)
+            | Kind::ScanSliceSurface(_)
+            | Kind::ScanSplit(_)
+            | Kind::ScanAlignPairs(_)
+            | Kind::ScanFillet(_)
+            | Kind::ScanFlatten(_)
+            | Kind::ScanFlatTemplate(_)
+            | Kind::ScanFitPatches(_)
+            | Kind::ScanFloating(_)
+            | Kind::ScanHoles(_)
+            | Kind::ScanFit(_)
+            | Kind::ScanCleanUp(_)
+            | Kind::ScanReduce(_)
+            | Kind::ScanSection(_)
+            | Kind::ScanSections(_)
+            | Kind::ScanDenoise(_)
+            | Kind::ScanTogether(_)
+            | Kind::ScanSelect(_)
+            | Kind::ScanEdgeCurve(_)
+            | Kind::ScanReconstruct(_)
+            | Kind::ScanRun(_)
+    )
+}
+
 /// A dialog's primary and closing actions. Measure only closes; a deletion's primary action
 /// says what it does.
 pub(crate) fn action_labels(kind: &Kind) -> (&'static str, &'static str) {
     match kind {
-        Kind::Measure { .. } => ("", "Close"),
+        Kind::Measure { .. } | Kind::ScanSurvey(_) | Kind::ScanAlignChoose(_) => ("", "Close"),
         Kind::ConfirmDelete { .. } => ("Delete", "Cancel"),
         Kind::SaveMesh(k) => (crate::dialogs_save_mesh::button(k), "Cancel"),
         Kind::ViewDxf { .. } => ("Export DXF…", "Cancel"),
@@ -4514,7 +4719,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         if d.editing.is_some() { solidcraft_ui_text::format("dialog.edit_title", &[("title", tr(raw_title))]) } else { tr(raw_title).to_string() };
     let frame = crate::ui_kit::Panel::feature_frame(ctx, app.ui.layout, side);
     // OK is offered once the inputs make a feature.
-    let has_ok = !matches!(d.kind, Kind::Sketch | Kind::Measure { .. });
+    let has_ok = !matches!(d.kind, Kind::Sketch | Kind::Measure { .. } | Kind::ScanSurvey(_) | Kind::ScanAlignChoose(_));
     let valid = match &d.kind {
         Kind::Sketch => false,
         // Nothing picked is an answer too: OK adds no pill.
@@ -4805,7 +5010,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     app.applying = Some(job);
                     None
                 }
-                None => Some(run_primed(app, &d)),
+                // On the window thread too (no apply off it): a scan tool's previewed result is
+                // taken, not computed again.
+                None => Some(match kept_preview(app, &d) {
+                    Some(prepared) => adopt_dialog(app, prepared, &d),
+                    None => run_primed(app, &d),
+                }),
             },
         };
         match run {
@@ -4882,6 +5092,10 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         d.refused = None;
         d.repeat_after_apply = false;
         let _ = app.session.execute("select.clear", &json!({}));
+    }
+    // A new free form opens Edit Surface on it, to shape it.
+    if applied && !apply_again && matches!(d.kind, Kind::ScanFreeForm(_) | Kind::ScanWrapSurface(_)) {
+        then_start = Some("scan.edit_surface");
     }
     if applied && d.editing.is_none() {
         remember(app, &d);
@@ -5002,7 +5216,7 @@ fn remembered_extra_keys(kind: &Kind) -> &'static [&'static str] {
         Some("solid.extrude") => &["convention"],
         Some("solid.revolve") => &["angle2", "direction"],
         Some("solid.shell") => &["direction", "tangent_chain"],
-        Some("solid.fillet") => &["type", "fit", "corner", "radius2", "mid", "radii", "swap_ends", "smooth"],
+        Some("solid.fillet") => &["type", "fit", "corner", "radius2", "mid", "radii", "swap_ends", "smooth", "curvature"],
         Some("solid.mirror") => &["combine"],
         Some("solid.pattern.rectangular") => &["alignment", "reversed", "alignment2", "reversed2"],
         Some("solid.pattern.circular") => &["alignment", "reversed"],
@@ -5155,7 +5369,7 @@ fn make_new_body(d: &mut Dialog) {
 }
 
 fn enter_applies(d: &Dialog) -> bool {
-    !matches!(d.kind, Kind::Sketch | Kind::Measure { .. } | Kind::ConfirmDelete { .. })
+    !matches!(d.kind, Kind::Sketch | Kind::Measure { .. } | Kind::ConfirmDelete { .. } | Kind::ScanSurvey(_) | Kind::ScanAlignChoose(_))
         && !matches!(&d.kind, Kind::Motion(k) if k.wide())
         && !matches!(&d.kind, Kind::Material { editor, .. } if editor.editing())
 }
@@ -5879,7 +6093,7 @@ pub(crate) fn run_dialog(app: &mut SolveApp, d: &Dialog) -> Result<(), String> {
         return crate::dialogs_save_mesh::run(app, k, &d.inputs);
     }
     let multiple_threads = matches!(d.kind, Kind::Thread { .. }) && sels(d, 0).len() > 1;
-    if d.previews() || multiple_threads {
+    if d.previews() || multiple_threads || matches!(d.kind, Kind::ScanReconstruct(_)) {
         let prepared = DialogComputation::new(app, d)?.compute()?;
         return adopt_dialog(app, prepared, d);
     }
@@ -6099,6 +6313,11 @@ pub fn apply_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>
     }
     crate::length_input::extra(&mut normalized.extra, |e| crate::length_input::expression(&app.session.doc, e, ValueKind::Length));
     let mut cmds = dialog_commands(app, &normalized)?;
+    if d.editing.is_none() {
+        for (cmd, params) in &mut cmds {
+            crate::dialogs_scan_clean::in_place(app, cmd, params);
+        }
+    }
     exact_regions(d, &mut cmds);
     crate::op_auto::scope_targets(app, d, &mut cmds)?;
     if crate::hole_folder::active(d) {
@@ -6450,6 +6669,9 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                     let swap = d.extra.get("swap_ends").and_then(Value::as_bool).unwrap_or(false);
                     if let Some((a, b)) = ends {
                         p["start"] = pt(if swap { b } else { a });
+                    }
+                    if d.extra.get("curvature").and_then(Value::as_bool).unwrap_or(false) {
+                        p["curvature"] = json!(true);
                     }
                     let mids = mid_points(&d.extra);
                     if style == Some("variable") && !mids.is_empty() {
@@ -7259,6 +7481,37 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::InsertAirfoil(a) => return crate::dialogs_insert_airfoil::commands(a),
         Kind::Plastic(k) => return crate::dialogs_plastic::commands(app, k, &d.inputs, &d.extra),
         Kind::Frame(k) => return crate::dialogs_frame::commands(app, k, &d.inputs, &d.extra),
+        Kind::ScanBase(k) => return crate::dialogs_scan::commands(k, &d.inputs),
+        Kind::ScanSymmetry(k) => return crate::dialogs_scan::symmetry_commands(k),
+        Kind::ScanEditSurface(k) => return crate::dialogs_scan_surface::commands(k),
+        Kind::ScanFitSurface(k) => return crate::dialogs_scan_surface::fit_commands(k, &d.inputs),
+        Kind::ScanCurve(k) => return crate::dialogs_scan_curve::commands(k),
+        Kind::ScanFreeForm(k) => return crate::dialogs_scan_free_form::commands(k),
+        Kind::ScanWrapSurface(k) => return crate::dialogs_scan_free_form::wrap_commands(app, k, &d.inputs),
+        Kind::ScanMergeSurfaces(k) => return crate::dialogs_scan_free_form::merge_commands(k),
+        Kind::ScanSliceSurface(k) => return crate::dialogs_scan_slice::commands(app, k, &d.inputs),
+        Kind::ScanSplit(k) => return crate::dialogs_scan_split::commands(app, k, &d.inputs),
+        Kind::ScanAlignPairs(k) => return crate::dialogs_scan_align::commands(k, &d.inputs),
+        Kind::ScanFillet(k) => return crate::dialogs_scan_fillet::commands(k, &d.inputs),
+        Kind::SurfaceCheck(_) => return crate::dialogs_surface_check::commands(),
+        Kind::ScanFlatten(k) => return crate::dialogs_scan_flatten::commands(app, k, &d.inputs),
+        Kind::ScanFlatTemplate(k) => return crate::dialogs_scan_template::commands(k, &d.inputs),
+        Kind::ScanFitPatches(k) => return crate::dialogs_scan_patches::commands(app, k, &d.inputs),
+        Kind::ScanFloating(k) => return crate::dialogs_scan_clean::commands(k),
+        Kind::ScanHoles(k) => return crate::dialogs_scan_clean::holes_commands(k),
+        Kind::ScanFit(k) => return crate::dialogs_scan_fit::commands(k, &d.inputs),
+        Kind::ScanCleanUp(k) => return crate::dialogs_scan_clean::clean_up_commands(k),
+        Kind::ScanReduce(k) => return crate::dialogs_scan_clean::reduce_commands(app, k, &d.inputs),
+        Kind::ScanSection(k) => return crate::dialogs_scan_section::commands(app, k),
+        Kind::ScanSections(k) => return crate::dialogs_scan_sections::commands(k),
+        Kind::ScanDenoise(k) => return crate::dialogs_scan_denoise::commands(app, k, &d.inputs),
+        Kind::ScanTogether(k) => return crate::dialogs_scan_together::commands(app, k, &d.inputs),
+        Kind::Deform(k) => return crate::dialogs_deform::commands(app, k, &d.inputs),
+        Kind::ScanSelect(k) => return crate::dialogs_scan_select::commands(k),
+        Kind::ScanEdgeCurve(k) => return crate::dialogs_scan_edge::commands(k),
+        Kind::ScanReconstruct(k) => return crate::dialogs_scan_reconstruct::commands(app, k),
+        Kind::ScanSurvey(_) | Kind::ScanAlignChoose(_) => return Ok(Vec::new()),
+        Kind::ScanRun(k) => return crate::dialogs_scan_run::commands(app, k, &d.inputs),
         Kind::EndCap(k) => return crate::dialogs_end_cap::commands(app, k, &d.inputs, &d.extra),
         Kind::RotateMember(k) => return crate::dialogs_rotate_member::commands(app, k, &d.inputs, &d.extra, d.editing.is_some()),
         Kind::Appearance(k) => return Ok(crate::dialogs_appearance::commands(k, &d.inputs)),
@@ -8302,16 +8555,18 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     }
                     FilletStyle::Variable { start, .. } | FilletStyle::Spline { start, .. } => {
                         match style {
-                            FilletStyle::Variable { radius2, mid, smooth, .. } => {
+                            FilletStyle::Variable { radius2, mid, smooth, curvature, .. } => {
                                 d.extra.insert("type".into(), json!("variable"));
                                 d.extra.insert("radius2".into(), json!(radius2));
                                 d.extra.insert("mid".into(), json!(mid.iter().map(|(t, r)| json!([t, r])).collect::<Vec<_>>()));
                                 d.extra.insert("smooth".into(), json!(smooth));
+                                d.extra.insert("curvature".into(), json!(curvature));
                             }
-                            FilletStyle::Spline { knots, radii, .. } => {
+                            FilletStyle::Spline { knots, radii, curvature, .. } => {
                                 d.extra.insert("type".into(), json!("spline"));
                                 d.extra.insert("knots".into(), json!(knots));
                                 d.extra.insert("radii".into(), json!(radii));
+                                d.extra.insert("curvature".into(), json!(curvature));
                             }
                             FilletStyle::Constant | FilletStyle::Chord | FilletStyle::Curvature => {}
                         }
@@ -9237,6 +9492,13 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             if let Some(inp) = d.inputs.first_mut() {
                 inp.items = bodies.iter().map(|n| Sel::Body { name: n.to_string() }).collect();
             }
+            d
+        }
+        // A Scan Clean step opens its tool's dialog with the step's settings, on the scan as the
+        // steps before it left it (the design is rolled back to just before the step).
+        FeatureKind::ScanClean { step, .. } => {
+            let mut d = start(step.command())?;
+            crate::dialogs_scan_clean::refill(&mut d.kind, step);
             d
         }
         kind @ FeatureKind::Move { bodies, copy_frames, .. } => {

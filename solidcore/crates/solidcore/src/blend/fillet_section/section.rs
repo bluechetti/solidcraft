@@ -31,8 +31,8 @@ use super::station::{
     StationOptions,
 };
 use super::tay::{
-    acos_clamped, gn_area_sum, gn_half_angle, gn_invert, gn_target, gn_wedge_cos, GnAreaCells,
-    Ring, Tay,
+    acos_clamped, gn_area_sum, gn_half_angle, gn_invert, gn_target, gn_wedge_cos,
+    gn_wedge_cos_over, GnAreaCells, Ring, Tay, TAY,
 };
 use crate::error::blend::{BlendFailure, SectionDegeneracy, SectionInput, SectionLimit};
 use crate::error::{Result, SolidError};
@@ -364,9 +364,15 @@ const GN_W_MEMO: usize = 65536;
 /// `t_sWMemo` (b8ec238, smlib#109): the equal area thumbweights [`gn_equal_area_w`]
 /// solved, by order and u's bits (the same u, the same root). Emptied as the outermost
 /// [`OperationScope`] opens, and when it grows past [`GN_W_MEMO`].
+///
+/// Not the fork's: it also keeps the area integral as a series at each root
+/// ([`gn_area_series_at`]), by order and w's bits. Every station whose wedge gives a kept
+/// root asks for that series, and it is the costly part of a station (2,049 Simpson points
+/// of series arithmetic): a G2 round's booleans asked for it 302,912 times for 96 roots.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ThumbweightMemo {
     roots: BTreeMap<(usize, u64), f64>,
+    areas: BTreeMap<(usize, u64), Tay<f64>>,
 }
 
 impl ThumbweightMemo {
@@ -431,6 +437,25 @@ pub(crate) fn gn_equal_area_w(k: &Kernel, order: usize, u: f64) -> Result<f64> {
     Ok(w)
 }
 
+/// `gn_area_sum(n, Tay::of_terms(w, 1.0))`: the area integral of the order-n section and
+/// its w-derivatives at the thumbweight w, each order and w computed once in an operation
+/// and kept in the kernel's [`ThumbweightMemo`] (not the fork's, which computes it at every
+/// station). The series is a pure function of exactly the key (the order and w's bits), so
+/// a kept one is the one a fresh computation gives: keeping it cannot change a result.
+pub(crate) fn gn_area_series_at(k: &Kernel, order: usize, w: f64) -> Tay<f64> {
+    let key = (order, w.to_bits());
+    if let Some(&d) = k.blend_w_memo.borrow().areas.get(&key) {
+        return d;
+    }
+    let d = gn_area_sum(order, Tay::of_terms(w, 1.0));
+    let mut memo = k.blend_w_memo.borrow_mut();
+    if memo.areas.len() >= GN_W_MEMO {
+        memo.areas.clear();
+    }
+    memo.areas.insert(key, d);
+    d
+}
+
 /// `sm_GnEqualAreaWSolve`: the thumbweight at which the order-n section takes off what
 /// the ball's circle does, for half the angle u between the ball's radii
 /// ([`GnSectionFsg::equal_area_thumbweight`]): the root of `I(w) = target(u)`.
@@ -470,10 +495,21 @@ fn gn_equal_area_w_solve(order: usize, u: f64) -> Result<f64> {
 /// `sm_GnStationThumbweight`: a station's equal area thumbweight and its s-derivative: x
 /// from the station's feet and V to first order in s, w the root at its u,
 /// `dw/ds = target' / I'(w)`.
-fn gn_station_thumbweight(k: &Kernel, n: usize, rr: f64, st: &mut GnStation) -> Result<()> {
-    let u = gn_half_angle(&gn_wedge_cos::<f64>(&st.f, &st.v, rr, 1));
+/// `rr`: the product of the ball's radii to its two contacts ([`radii_product`]): a constant,
+/// or with a radius law (not the fork's) a series in s.
+fn gn_station_thumbweight(
+    k: &Kernel,
+    n: usize,
+    rr: &RadiiProduct,
+    st: &mut GnStation,
+) -> Result<()> {
+    let x = match rr {
+        RadiiProduct::Constant(rr) => gn_wedge_cos::<f64>(&st.f, &st.v, *rr, 1),
+        RadiiProduct::Law(rr) => gn_wedge_cos_over::<f64>(&st.f, &st.v, rr, 1),
+    };
+    let u = gn_half_angle(&x);
     let w = gn_equal_area_w(k, n, u.at(0))?;
-    let d = gn_area_sum(n, Tay::of_terms(w, 1.0));
+    let d = gn_area_series_at(k, n, w);
     let falls = d.at(1) < 0.0;
     if !falls {
         // "the section's area does not fall with its thumbweight"
@@ -486,6 +522,29 @@ fn gn_station_thumbweight(k: &Kernel, n: usize, rr: f64, st: &mut GnStation) -> 
     st.w = w;
     st.wds = sw.at(1);
     Ok(())
+}
+
+/// Not the fork's: the product of the ball's radii to its two contacts at a station, as a
+/// series in s: the constant `r0 r1`, or with a radius law (its series at the station) the
+/// law's square, so that a curvature-continuous round whose size varies takes its own
+/// wedge's equal area thumbweight at every station.
+fn radii_product(r: [f64; 2], law_r: Option<&Ser<f64>>) -> RadiiProduct {
+    let Some(l) = law_r else {
+        return RadiiProduct::Constant(r[0] * r[1]);
+    };
+    let mut t = Tay::<f64>::zero();
+    for i in 0..=TAY {
+        t.set(i, l.at(i, 0));
+    }
+    RadiiProduct::Law(t * t)
+}
+
+/// The product of a station's ball's radii to its two contacts ([`radii_product`]).
+enum RadiiProduct {
+    /// A ball of one radius (or two offsets): `r0 r1`.
+    Constant(f64),
+    /// A radius law's square, as a series in s.
+    Law(Tay<f64>),
 }
 
 /// The faces' NURBS data for the certificate (`Build`'s): every face a NURBS surface (an
@@ -656,7 +715,8 @@ impl StationSystem<'_> {
             law_r.as_ref(),
         )?;
         if self.equal_area {
-            gn_station_thumbweight(k, self.n, self.r[0] * self.r[1], &mut st)?;
+            let rr = radii_product(self.r, law_r.as_ref());
+            gn_station_thumbweight(k, self.n, &rr, &mut st)?;
         }
         Ok(st)
     }
@@ -684,7 +744,8 @@ impl StationSystem<'_> {
             law_r.as_ref(),
         )?;
         if self.equal_area {
-            gn_station_thumbweight(k, self.n, self.r[0] * self.r[1], &mut before)?;
+            let rr = radii_product(self.r, law_r.as_ref());
+            gn_station_thumbweight(k, self.n, &rr, &mut before)?;
             st.wdsl = before.wds;
         }
         st.xl = before.x;
@@ -1341,6 +1402,40 @@ impl GnSectionFsg {
         }))
     }
 
+    /// Not the fork's: [`Self::create_surface`] on a ball whose radius varies, `law` the
+    /// variable radius solver's round, as [`Self::build_given_ball`] builds the ball's circle:
+    /// a curvature-continuous round whose size follows the law, the rails and uv curves
+    /// replaced by the stations' feet. `None` where the solver's rails are not the law's
+    /// ball's feet.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Self::create_surface`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_surface_on_law(
+        &mut self,
+        k: &Kernel,
+        approx_tol_3d: f64,
+        center_line: &mut BSplineCurve,
+        rails: [&mut BSplineCurve; 2],
+        surfaces: [&Surface; 2],
+        uvs: [&mut BSplineCurve; 2],
+        law: &GnLawRound<'_>,
+    ) -> Result<Option<Surface>> {
+        let [s1, s2] = surfaces;
+        let (f1, f2) = (face_of(s1), face_of(s2));
+        self.build_given_ball(
+            k,
+            center_line,
+            rails,
+            approx_tol_3d,
+            [f1.as_ref(), f2.as_ref()],
+            uvs,
+            0.0,
+            Some(law),
+        )
+    }
+
     /// The chord (order 0, a chamfer; solidcore's, #2486) between the feet of the point at
     /// `offsets` off the two faces, as [`Self::build_given_ball`] builds the ball's circle:
     /// the rails and uv curves replaced by the stations' feet, the surface the chamfer by
@@ -1410,10 +1505,12 @@ impl GnSectionFsg {
         // a ball whose radius varies (the ball's circle only): its law r(t) and the curve
         // whose planes square to it at t hold the ball's centre (the solver's), t the
         // stations' parameter (0d43b4c)
-        if law_round.is_some() && self.order != 1 {
+        // (not the fork's: a section of order 2 and up on a law, a curvature-continuous
+        // round whose size varies, its stations solved on the law's ball as the circle's)
+        if law_round.is_some() && self.order == 0 {
             return Err(SolidError::invalid_input(
                 OP,
-                "a radius law is for the ball's circle",
+                "a radius law is for a ball's section",
             ));
         }
         let gn_law = match law_round {
@@ -2154,10 +2251,11 @@ impl GnSectionFsg {
         // the equal area thumbweight at every station, and I's enclosures on a grid over
         // their range (a little wider: the stations put in later lie between these)
         let n = self.order;
-        let rr = r[0] * r[1];
         if equal_area {
             for st in &mut stations {
-                gn_station_thumbweight(k, n, rr, st)?;
+                let law_r = law_series(law, st.s, tr.s(), false)?;
+                let rr = radii_product(r, law_r.as_ref());
+                gn_station_thumbweight(k, n, &rr, st)?;
             }
         }
         let mut vary = varying(n, r, &stations, equal_area);
@@ -2324,7 +2422,8 @@ impl GnSectionFsg {
                     law_r.as_ref(),
                 )?;
                 if equal_area {
-                    gn_station_thumbweight(k, n, rr, &mut st)?;
+                    let rr = radii_product(r, law_r.as_ref());
+                    gn_station_thumbweight(k, n, &rr, &mut st)?;
                 }
                 next.push(st);
                 next_bounds.push(-1.0);

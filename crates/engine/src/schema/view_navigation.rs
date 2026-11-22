@@ -258,6 +258,27 @@ pub struct RibbonTabsOnly {
     pub param_warnings: Vec<String>,
 }
 
+/// `view.scan_triangles`: draw the triangles of the scans shown, or stop.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScanTrianglesParams {
+    /// True draws them, false stops; omitted switches between the two.
+    #[serde(default)]
+    pub on: Option<bool>,
+}
+
+/// What `view.scan_triangles` returns: the request echoed. The window draws it; the design is
+/// not changed and nothing is added to undo.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanTriangles {
+    /// The requested state; absent when the call asked to switch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on: Option<bool>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// Validated request and echoed result of `view.render_select`.
 #[derive(Debug, Serialize)]
 pub struct RenderSelect {

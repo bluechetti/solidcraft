@@ -1623,6 +1623,14 @@ impl Default for Slider {
     }
 }
 
+/// A number typed into a slider's box, with or without the unit its value is shown with
+/// ("30 %", "12.5 mm", "45°"): spaces ignored, the true minus sign read as a minus.
+fn typed_number(text: &str) -> Option<f64> {
+    let text: String = text.chars().filter(|c| !c.is_whitespace()).map(|c| if c == '\u{2212}' { '-' } else { c }).collect();
+    let number = text.trim_end_matches(|c: char| !(c.is_ascii_digit() || c == '.'));
+    number.parse().ok()
+}
+
 /// The only slider element, including stepped preferences and editor-free timeline controls.
 /// Native input, keyboard routing, enabled state and accessibility; one token-painted track/thumb.
 /// Tokens: control_height, space_24/8/4/2, dialog_rule, control_fill, form_primary.
@@ -1657,7 +1665,9 @@ pub fn slider<T: egui::emath::Numeric>(ui: &mut Ui, value: &mut T, range: std::o
             widget = widget.clamping(egui::SliderClamping::Edits);
         }
         if options.show_value {
-            widget = widget.custom_formatter(move |v, _| (options.format)(v));
+            // The shown value carries its unit ("30 %"): a value typed with the unit still in
+            // the box is read, not refused.
+            widget = widget.custom_formatter(move |v, _| (options.format)(v)).custom_parser(typed_number);
         }
         if let Some(step) = options.step {
             widget = widget.step_by(step);

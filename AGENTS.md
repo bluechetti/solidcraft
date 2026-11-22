@@ -55,6 +55,7 @@ Dev skills: `.agents/skills/` (`.claude/skills` links there; Windows: Developer 
 | `.agents/skills/solidcraft-agent-tools/SKILL.md` | running the app, MCP |
 | `skills/solidcraft-modeling/SKILL.md` | building a part over MCP |
 | `skills/solidcraft-editing/SKILL.md` | changing an existing design |
+| `skills/solidcraft-scan-to-cad/SKILL.md` | a scan into CAD over MCP |
 | `skills/solidcraft-reporting/SKILL.md` | a bug report |
 | `skills/solidcraft-checking/SKILL.md` | checking, porting, designs in git |
 | `skills/solidcraft-mechanisms/SKILL.md` | assemblies, joints, motion |

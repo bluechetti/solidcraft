@@ -144,6 +144,36 @@ fn failure_discards_the_entire_batch() {
     assert!(session.undo.is_empty());
 }
 
+/// Commands that stand apart (the steps Reconstruct proposes): a refused one is left out with
+/// why, one that builds on it goes with it, and the rest are built, each its own undo step. When
+/// all of them are refused, that is the refusal.
+#[test]
+fn commands_that_stand_apart_leave_out_a_refused_one_and_what_builds_on_it() {
+    let mut session = Session::default();
+    let batch: Vec<(String, serde_json::Value)> = vec![
+        ("solid.box".into(), json!({"length":2,"width":3,"height":4})),
+        ("solid.box".into(), json!({"length":-1})),
+        ("solid.sphere".into(), json!({"radius":1})),
+        ("solid.cylinder".into(), json!({"radius":1,"height":1,"base":[10,0,0]})),
+    ];
+    let prepared = session.scratch().compute_commands_apart(&batch, &[None, None, Some(1), None]).unwrap();
+    let ran: Vec<&str> = prepared.steps().map(|(id, _, _)| id).collect();
+    assert_eq!(ran, ["solid.box", "solid.cylinder"]);
+    let left_out = prepared.left_out();
+    assert_eq!(left_out.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["solid.box", "solid.sphere"]);
+    assert!(left_out[0].1.contains("`solid.box`") && left_out[0].1.contains("must be"), "the refusal's own words: {left_out:?}");
+    assert!(left_out[1].1.contains("`solid.box`") && left_out[1].1.contains("left out"), "{left_out:?}");
+    session.accept_commands(prepared).unwrap();
+    assert_eq!(session.undo.len(), 2, "each built step is its own undo step");
+    assert_eq!(session.model.state().bodies.len(), 2);
+    // Without the refused step in the way nothing is left out.
+    let clean = session.scratch().compute_commands_apart(&batch[..1], &[None]).unwrap();
+    assert!(clean.left_out().is_empty());
+    // Nothing built: the first refusal is the error, as it came.
+    let refused = session.scratch().compute_commands_apart(&batch[1..3], &[None, Some(0)]);
+    assert!(refused.err().is_some_and(|e| e.to_string().contains("`solid.box`")));
+}
+
 #[test]
 fn revision_context_selection_and_replaced_document_reject_old_work() {
     for change in 0..5 {
@@ -684,4 +714,18 @@ fn edit_start_component_restore_does_not_evaluate_the_pending_suffix() {
     assert_eq!(s.evaluations, evaluations, "restoring the sketch's original placement leaves suffix rebuilding to the worker");
     assert!(Arc::ptr_eq(&model, &s.model.state()));
     assert!(s.needs_sketch_finish_evaluation());
+}
+
+/// A body the computed commands hid themselves (Combine Scans hides the passes it fused) stays
+/// hidden once they are taken: the live view's hides used to replace the copy's whole.
+#[test]
+fn bodies_hidden_by_the_computation_stay_hidden_when_it_is_taken() {
+    let mut session = Session::default();
+    session.execute("solid.box", &json!({"length":1,"width":1,"height":1,"body_name":"A"})).unwrap();
+    session.execute("solid.box", &json!({"length":1,"width":1,"height":1,"center":[5,0,0],"operation":"new","body_name":"B"})).unwrap();
+    let batch = vec![("browser.visibility".to_owned(), json!({"visible": false, "items": ["B"]}))];
+    let prepared = session.scratch().compute_commands(&batch, None).unwrap();
+    session.accept_commands(prepared).unwrap();
+    assert!(!session.body_visible("B"), "hidden by the computation");
+    assert!(session.body_visible("A"));
 }

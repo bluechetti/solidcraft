@@ -171,3 +171,44 @@ fn point_cloud_index_reports_every_point_within_cone_and_handles_hostile_inputs(
     dirty.visit_near_ray(Vec3::new(1.0, 2.0, 0.0), Vec3::new(0.0, 0.0, 1.0), 0.5, 0.0, &mut cap, |i, _| seen.push(i));
     assert_eq!(seen, vec![1]);
 }
+
+/// Built on threads below the top levels, the hierarchy is the one built on one thread: every
+/// box's items visited in the same order, the same leaves, and the same nearest hit along every
+/// ray (a large scan's index is built so; its picks must not change).
+#[test]
+fn a_hierarchy_built_on_threads_is_the_one_built_on_one() {
+    let mut rng = Lcg(7);
+    let boxes: Vec<Aabb3> = (0..40_000)
+        .map(|k| {
+            // Some empty and some flat boxes among them, and many with the same centre.
+            if k % 997 == 0 {
+                return Aabb3::EMPTY;
+            }
+            let c = if k % 5 == 0 { Vec3::new(1.0, 1.0, 1.0) } else { rng.vec(50.0) };
+            let h = Vec3::new(rng.range(0.0, 2.0), rng.range(0.0, 2.0), if k % 7 == 0 { 0.0 } else { rng.range(0.0, 2.0) });
+            let mut b = Aabb3::EMPTY;
+            b.add(c - h);
+            b.add(c + h);
+            b
+        })
+        .collect();
+    let (one, many) = (Bvh::built(&boxes, false), Bvh::built(&boxes, true));
+    let walk = |b: &Bvh| {
+        let seen = std::cell::RefCell::new(Vec::new());
+        b.visit(
+            |bx| {
+                seen.borrow_mut().push((bx.min.x.to_bits(), bx.max.z.to_bits(), u32::MAX));
+                true
+            },
+            |i| seen.borrow_mut().push((0, 0, i)),
+        );
+        seen.into_inner()
+    };
+    assert_eq!(walk(&one), walk(&many));
+    assert_eq!(one.nodes.len(), many.nodes.len());
+    for _ in 0..500 {
+        let (o, d) = (rng.vec(80.0), rng.vec(1.0));
+        let hit = |i: u32| boxes.get(i as usize).and_then(|b| crate::bvh::ray_box(o, d, Vec3::new(1.0 / d.x, 1.0 / d.y, 1.0 / d.z), b, 0.0));
+        assert_eq!(one.nearest(o, d, hit), many.nearest(o, d, hit));
+    }
+}

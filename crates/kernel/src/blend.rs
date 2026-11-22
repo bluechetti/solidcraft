@@ -260,6 +260,7 @@ pub fn fillet_g2(body: &Body, edges: &[Vec3], radius: f64) -> Result<Body> {
 pub(crate) fn or_carried_on(plain: Result<Body>, body: &Body, edges: &[Vec3], reach: f64, blend: impl Fn(&Body) -> Result<Body>) -> Result<Body> {
     match (plain, edges) {
         (Err(e @ (KernelError::TooLarge(_) | KernelError::Failed(_))), [pick]) => concave_overflow_round(body, *pick, reach, blend)?.ok_or(e),
+        (Err(e), _) if loop_may_carry(&e) => concave_loop_round(body, edges, reach, blend)?.ok_or(e),
         (plain, _) => plain,
     }
 }
@@ -324,6 +325,11 @@ pub fn fillet_removing(body: &Body, edges: &[Vec3], radius: f64, turn: FilletTur
         Ok((b, gone)) => Ok((closed(body, b)?, gone)),
         // Just past the largest round that fits, SMLib fails it as an operation (its status 1001)
         // rather than sizing it as too large, as it does the chamfer ([`chamfer_carrying_face`]).
+        Err(e) if loop_may_carry(&e) && edges.len() > 1 => {
+            concave_loop_round(body, edges, radius, |carried| crate::blend_smlib::fillet(carried, edges, radius, turn))?
+                .map(|b| (b, Vec::new()))
+                .ok_or(e)
+        }
         Err(e @ (KernelError::TooLarge(_) | KernelError::Failed(_))) => match edges {
             [pick] => concave_overflow_round(body, *pick, radius, |carried| crate::blend_smlib::fillet(carried, &[*pick], radius, turn))?
                 .map(|b| (b, Vec::new()))
@@ -479,6 +485,149 @@ fn carried_on_round(body: &Body, pick: Vec3, reach: f64, blend: impl Fn(&Body) -
     Err(KernelError::Failed(format!(
         "the blend runs off the flat face beside its edge, and building it with that face carried on failed {what}: {why}"
     )))
+}
+
+/// Whether a refusal of a round of several edges may be the loop round a boss's foot running off
+/// its flat face ([`concave_loop_round`]): sized as too large, failed as an operation, or "not
+/// supported yet" (the kernel's word for a construction it has not got, which the same shape
+/// gave on one path where it failed as an operation on another). Never a refusal of the input.
+fn loop_may_carry(e: &KernelError) -> bool {
+    match e {
+        KernelError::TooLarge(_) | KernelError::Failed(_) => true,
+        KernelError::Invalid(why) => why.starts_with("not supported yet"),
+        _ => false,
+    }
+}
+
+/// A concave round of a closed loop of edges round a boss standing on a flat face (its foot), whose
+/// contact line runs off that face where the face turns away within the round's width (a boss's
+/// foot near a block's rounded edge: trial r3-19, a D-shaped boss whose flats stand 0.5 mm inside
+/// where the block's face turns into its R6.5 round), which the kernel refuses: [`carried_on_round`]
+/// for a whole loop. The face is carried on behind its plane as a slab over the body's extent, the
+/// loop rounded on that body, and of the material the round adds, what stands over the face's
+/// outline joined to the body; so the round ends where the face ends, carried on square to it. All
+/// the picked edges lie on one inner loop of one flat face (round a boss's foot the round adds
+/// material over that face only, so keeping it within the face's outline loses nothing past the
+/// edges). `Ok(None)` where that does not apply or the round fails on the carried-on body too.
+fn concave_loop_round(body: &Body, picks: &[Vec3], reach: f64, blend: impl Fn(&Body) -> Result<Body>) -> Result<Option<Body>> {
+    crate::validation::validating(crate::Validation::EachStep, || carried_on_loop(body, picks, reach, blend)).0
+}
+
+/// [`concave_loop_round`]'s steps.
+fn carried_on_loop(body: &Body, picks: &[Vec3], reach: f64, blend: impl Fn(&Body) -> Result<Body>) -> Result<Option<Body>> {
+    use solidcore_record::{Loop2, Plane, Region2, Vec2};
+    if picks.len() < 2 {
+        return Ok(None);
+    }
+    let Ok((mut picked, _)) = crate::blend_smlib::picked_edges(body, picks) else { return Ok(None) };
+    // several picks along one edge are that edge once
+    picked.sort_unstable();
+    picked.dedup();
+    let rec = Faces::of(body)?;
+    // The plane every picked edge lies on (each on a flat face in it, the faces facing one way),
+    // and the edges closing on themselves: a loop round a boss's foot, each of its vertices at
+    // two of them. A coplanar cut can split the face the foot stands on (the edges then lie on
+    // several faces of one plane), and the foot's loop need not be a face's inner one.
+    // A flat face's outward normal and a point of its plane.
+    let plane_of = |f: usize| match crate::face_surface(body, f) {
+        Some(crate::FaceSurface::Plane { normal, point }) => Some((Vec3::new(normal.x, normal.y, normal.z), Vec3::new(point.x, point.y, point.z))),
+        _ => None,
+    };
+    let tol = body.size() * 1e-6 + 1e-6;
+    // One plane, facing either way (a small face of the foot's own facing the other way can hold
+    // an edge of the loop where a cut met the face), and facing the same way.
+    let on_plane = |a: (Vec3, Vec3), b: (Vec3, Vec3)| a.0.dot(b.0).abs() > 1.0 - 1e-9 && (b.1 - a.1).dot(a.0).abs() <= tol;
+    let same_plane = |a: (Vec3, Vec3), b: (Vec3, Vec3)| a.0.dot(b.0) > 1.0 - 1e-9 && (b.1 - a.1).dot(a.0).abs() <= tol;
+    let flat_uses = |e: usize| -> Vec<(usize, (Vec3, Vec3))> {
+        rec.rec
+            .edges
+            .get(e)
+            .map_or_else(Vec::new, |edge| edge.uses.iter().filter_map(|u| plane_of(u.face as usize).map(|p| (u.face as usize, p))).collect())
+    };
+    let Some(&first) = picked.first() else { return Ok(None) };
+    let mut found = None;
+    for (_, candidate) in flat_uses(first) {
+        if picked.iter().all(|&e| flat_uses(e).iter().any(|(_, p)| on_plane(candidate, *p))) {
+            found = Some(candidate);
+            break;
+        }
+    }
+    let Some((normal, point)) = found else { return Ok(None) };
+    let mut at_vertex: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
+    for &e in &picked {
+        let Some(edge) = rec.rec.edges.get(e) else { return Ok(None) };
+        if edge.vertices[0] != edge.vertices[1] {
+            for v in edge.vertices {
+                *at_vertex.entry(v).or_default() += 1;
+            }
+        }
+    }
+    if at_vertex.values().any(|&n| n != 2) {
+        return Ok(None);
+    }
+    // Every face of the body in that plane, facing that way: the outline the added material is kept over.
+    let in_plane: Vec<(usize, bool)> =
+        (0..rec.rec.faces.len()).filter(|&f| plane_of(f).is_some_and(|p| same_plane((normal, point), p))).map(|f| (f, false)).collect();
+    if in_plane.is_empty() {
+        return Ok(None);
+    }
+    let n = Vec3::new(normal.x, normal.y, normal.z);
+    let Some(n) = n.normalized() else { return Ok(None) };
+    let x = if n.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    let Some(x) = (x - n * x.dot(n)).normalized() else { return Ok(None) };
+    let y = n.cross(x);
+    let origin = Vec3::new(point.x, point.y, point.z);
+    let plane = Plane { origin, x, y };
+    // The slab: behind the face's plane, over the body's whole extent seen along the face's normal
+    // and the round's reach more; only the added material over the face's outline is kept, so the
+    // slab's size changes nothing but whether the round fits.
+    let bounds = body.exact_bounds()?;
+    let corners = (0..8).map(|i| {
+        Vec3::new(
+            if i & 1 == 0 { bounds.min.x } else { bounds.max.x },
+            if i & 2 == 0 { bounds.min.y } else { bounds.max.y },
+            if i & 4 == 0 { bounds.min.z } else { bounds.max.z },
+        )
+    });
+    let (mut lo, mut hi) = (Vec2::new(f64::INFINITY, f64::INFINITY), Vec2::new(f64::NEG_INFINITY, f64::NEG_INFINITY));
+    for c in corners {
+        let d = c - origin;
+        let q = Vec2::new(d.dot(x), d.dot(y));
+        lo = Vec2::new(lo.x.min(q.x), lo.y.min(q.y));
+        hi = Vec2::new(hi.x.max(q.x), hi.y.max(q.y));
+    }
+    let margin = 2.0 * reach + body.size() * 1e-3 + 1.0;
+    let rect = Loop2::polygon(&[
+        Vec2::new(lo.x - margin, lo.y - margin),
+        Vec2::new(hi.x + margin, lo.y - margin),
+        Vec2::new(hi.x + margin, hi.y + margin),
+        Vec2::new(lo.x - margin, hi.y + margin),
+    ]);
+    let Ok(slab) = crate::build::extrude(&plane, &[Region2 { outer: rect, holes: vec![] }], -(2.0 * reach + 1.0), 0.0) else { return Ok(None) };
+    let Some(slab) = slab.into_iter().next() else { return Ok(None) };
+    let Ok(Some(carried)) = crate::boolean(body, &slab, crate::BoolOp::Union) else { return Ok(None) };
+    let Ok(rounded) = blend(&carried) else { return Ok(None) };
+    let fail = |what: &str, why: String| {
+        KernelError::Failed(format!(
+            "the round runs off the flat face round the boss's foot, and building it with that face carried on failed {what}: {why}"
+        ))
+    };
+    let fill = crate::boolean(&rounded, &carried, crate::BoolOp::Cut)
+        .map_err(|e| fail("cutting the carried-on body from the rounded one", e.to_string()))?
+        .ok_or_else(|| fail("cutting the carried-on body from the rounded one", "it gave no body".into()))?;
+    let sheet = crate::surfaces::taken(body, &rec.rec, &in_plane).map_err(|e| fail("taking the flat faces' sheet", e.to_string()))?;
+    let fb = fill.exact_bounds().map_err(|e| fail("measuring the added material's box", e.to_string()))?;
+    let room = fb.min.dist(fb.max) + body.size() * 1e-3 + 1.0;
+    let prism = crate::thicken(&sheet, 2.0 * room, true).map_err(|e| fail("thickening the flat face's sheet", e.to_string()))?;
+    let kept = crate::boolean(&fill, &prism, crate::BoolOp::Intersect)
+        .map_err(|e| fail("keeping the added material within the face's outline", e.to_string()))?
+        .ok_or_else(|| fail("keeping the added material within the face's outline", "it gave no body".into()))?;
+    let joined = crate::boolean(body, &kept, crate::BoolOp::Union)
+        .map_err(|e| fail("joining the added material to the body", e.to_string()))?
+        .ok_or_else(|| fail("joining the added material to the body", "it gave no body".into()))?;
+    let joined = closed(body, joined)?;
+    let volume = |b: &Body| crate::measure(b).map(|m| m.volume);
+    if volume(&joined)? > volume(body)? { Ok(Some(joined.without_history())) } else { Ok(None) }
 }
 
 /// What a refusal of a setback too short for its corner says before the least that builds (in
@@ -1832,6 +1981,45 @@ mod tests {
             assert!(m.shells == 1 && (full - added).abs() < 0.05, "r {r}: added {added} of {full}");
             assert!(m.bbox.min.dist(before.bbox.min) < 1e-9 && m.bbox.max.dist(before.bbox.max) < 1e-9, "r {r}: {:?}", m.bbox);
         }
+    }
+
+    /// A D-shaped boss (R17.5, flats 16.5 from its axis, 18.5 tall) on a block 67.5 x 40.5 x 47 whose
+    /// face it stands on is rounded R6.5 at its edges, so the face is flat only to 17 from its
+    /// middle (agent trial r3-19). Its whole base rounded R4: the round's contact runs 4 mm out on
+    /// the face, past the flat part along the flats and the arcs' ends, which the kernel refuses;
+    /// carried on round the whole loop it builds. Bounds by hand: no more than the round on an
+    /// unbounded face, A L0 + M x turning = 395.30 (A = (1 - pi/4) 16, M = 64 (5/6 - pi/4), L0 the D
+    /// outline 109.5011, turning 4.9238 rad of arc and four mitres of 2 tan(0.16985)); no less than
+    /// the arcs' stretches whose whole section stays on the flat face, 21.5 |sin phi| <= 17, |phi| <=
+    /// 52.25 deg each side: 4 x 0.91193 x (17.5 A + M) = 230.4. One closed shell, in the block and
+    /// boss's box.
+    #[test]
+    fn a_round_round_a_boss_foot_runs_on_past_where_its_face_turns_into_a_round() {
+        let (cx, cz, back) = (33.75, 23.5, 40.5);
+        let block = crate::box_solid(Vec3::new(0.0, 0.0, 0.0), Vec3::new(67.5, back, 47.0)).unwrap();
+        let block =
+            fillet(&block, &[Vec3::new(cx, back, 0.0), Vec3::new(cx, back, 47.0), Vec3::new(0.0, back, cz), Vec3::new(67.5, back, cz)], 6.5).unwrap();
+        let boss = crate::cylinder(Vec3::new(cx, back, cz), Vec3::Y, 17.5, 18.5).unwrap();
+        let mut body = crate::boolean(&block, &boss, crate::BoolOp::Union).unwrap().unwrap();
+        for (lo, hi) in [(cz + 16.5, cz + 40.0), (cz - 40.0, cz - 16.5)] {
+            let cut = crate::box_solid(Vec3::new(cx - 25.0, back, lo), Vec3::new(cx + 25.0, back + 25.0, hi)).unwrap();
+            body = crate::boolean(&body, &cut, crate::BoolOp::Cut).unwrap().unwrap();
+        }
+        let before = crate::measure(&body).unwrap();
+        let at = |deg: f64| Vec3::new(cx + 17.5 * deg.to_radians().cos(), back, cz + 17.5 * deg.to_radians().sin());
+        // every piece of the loop (the cuts split the base's arcs; the kernel blends the edges
+        // picked, the app adding their tangent chains): points along both arcs, and the flats' lines
+        let mut picks: Vec<Vec3> =
+            (-6..=6).map(|k| at(f64::from(k) * 10.0 + 5.0)).chain((-6..=6).map(|k| at(180.0 + f64::from(k) * 10.0 + 5.0))).collect();
+        picks.retain(|p| (p.z - cz).abs() < 16.0);
+        picks.extend([Vec3::new(cx, back, cz + 16.5), Vec3::new(cx, back, cz - 16.5)]);
+        assert!(crate::blend_smlib::fillet(&body, &picks, 4.0, FilletTurn::Mitre).is_err(), "the kernel alone refuses it");
+        let (rounded, gone) = fillet_removing(&body, &picks, 4.0, FilletTurn::Mitre).unwrap();
+        assert!(gone.is_empty());
+        let m = crate::measure(&rounded).unwrap();
+        let added = m.volume - before.volume;
+        assert!(m.shells == 1 && (230.4..=395.31).contains(&added), "added {added}");
+        assert!(m.bbox.min.dist(before.bbox.min) < 1e-6 && m.bbox.max.dist(before.bbox.max) < 1e-6, "{:?}", m.bbox);
     }
 
     /// The pick on the boss's concave base edge of [`boss_on_rounded_plate`].
@@ -3262,6 +3450,77 @@ mod tests {
         let out = fillet_g2(&body, &[Vec3::new(20.0, 0.0, 10.0), Vec3::new(0.0, 20.0, 10.0)], 2.0).unwrap();
         assert!(out.validity().is_empty(), "{:?}", out.validity());
         assert_eq!(out.face_count(), body.face_count() + 2);
+    }
+
+    /// Two top edges of a 20 × 20 × 10 box rounded curvature-continuously r 1.5 where the upright
+    /// edge between them stays sharp: they meet in a mitre on the plane x = y, which used to be
+    /// refused as "not a closed solid" (the rounds touch the top face to second order where
+    /// their rails cross, and their traced intersection stopped short of that point). Each
+    /// round takes off its section's area A = (1 − π/4) r² (the circle's) along its 20 mm,
+    /// less the section's first moment M about the side wall past the mitre: 2 (20 A − M), with
+    /// 0 < M < A r (the section's centroid lies within r of the wall; solidcore's
+    /// `two_curvature_rounds_meet_in_a_mitre_where_the_third_edge_stays_sharp` integrates M
+    /// from the section and holds the volume to 1e-9). The round's own corner, M = (10 − 3π)
+    /// r³ / 12, is the same formula exactly. The G2 rounds meet the top and the sides with no
+    /// jump in curvature.
+    #[test]
+    fn two_g2_rounds_meet_in_a_mitre_where_the_third_edge_stays_sharp() {
+        let body = crate::build::box_solid(Vec3::ZERO, Vec3::new(20.0, 20.0, 10.0)).unwrap();
+        let edges = [Vec3::new(10.0, 0.0, 10.0), Vec3::new(0.0, 10.0, 10.0)];
+        let r = 1.5;
+        let a = (1.0 - std::f64::consts::FRAC_PI_4) * r * r;
+        let round = fillet(&body, &edges, r).unwrap();
+        let m = (10.0 - 3.0 * std::f64::consts::PI) * r * r * r / 12.0;
+        let off = 4000.0 - crate::measure(&round).unwrap().volume;
+        assert!((off - 2.0 * (20.0 * a - m)).abs() < 1e-6, "round: {off}");
+        let g2 = fillet_g2(&body, &edges, r).unwrap();
+        assert!(g2.validity().is_empty(), "{:?}", g2.validity());
+        assert_eq!(g2.face_count(), body.face_count() + 2);
+        let off = 4000.0 - crate::measure(&g2).unwrap().volume;
+        assert!(off > 2.0 * (20.0 * a - a * r) && off < 40.0 * a, "G2: {off}");
+        let seams = crate::seam_diagnostics(&g2, &[], 33, crate::ContinuityTolerances::default()).unwrap().seams;
+        let tangent: Vec<_> = seams.iter().filter(|s| s.normal_angle_deg.value < 0.01).collect();
+        assert_eq!(tangent.len(), 4, "{seams:?}");
+        for s in tangent {
+            assert!(s.curvature_jump_per_mm.value < 1e-3, "jump {}", s.curvature_jump_per_mm.value);
+        }
+    }
+
+    /// The corner of `two_g2_rounds_meet_in_a_mitre_where_the_third_edge_stays_sharp` with its
+    /// front wall drafted 10° inward (a prism along x): the two G2 rounds reach their walls'
+    /// rails at different depths, so the corner is no mirror image and the mitre runs from X to
+    /// where it meets the shallower round's rail. It used to be refused (the rounds' traced
+    /// intersection could not reach X); the solid is closed and valid, both rounds meet the top
+    /// and their walls G2, and it takes off within 0.1 % of what the circular rounds do (each
+    /// section has the circle's area). solidcore's
+    /// `two_curvature_rounds_meet_where_the_corner_is_no_mirror_image` holds the volume to 1e-9
+    /// of its slices' integral. Picked in either order, the edges give the same solid.
+    #[test]
+    fn two_g2_rounds_meet_at_a_corner_with_a_drafted_wall() {
+        let foot = 10.0 * 10f64.to_radians().tan();
+        let profile = Loop2::polygon(&[Vec2::new(foot, 0.0), Vec2::new(20.0, 0.0), Vec2::new(20.0, 10.0), Vec2::new(0.0, 10.0)]);
+        let body = crate::build::extrude(&Plane::YZ, &[Region2 { outer: profile, holes: vec![] }], 0.0, 20.0).unwrap().remove(0);
+        let edges = [Vec3::new(10.0, 0.0, 10.0), Vec3::new(0.0, 10.0, 10.0)];
+        let before = crate::measure(&body).unwrap().volume;
+        let round = 4000.0 - crate::measure(&fillet(&body, &edges, 1.5).unwrap()).unwrap().volume;
+        let g2 = fillet_g2(&body, &edges, 1.5).unwrap();
+        assert!(g2.validity().is_empty(), "{:?}", g2.validity());
+        assert_eq!(g2.face_count(), body.face_count() + 2);
+        let off = before - crate::measure(&g2).unwrap().volume;
+        let round = round - (4000.0 - before);
+        assert!((off - round).abs() < 1e-3 * round, "G2 {off} vs round {round}");
+        let seams = crate::seam_diagnostics(&g2, &[], 33, crate::ContinuityTolerances::default()).unwrap().seams;
+        let tangent: Vec<_> = seams.iter().filter(|s| s.normal_angle_deg.value < 0.01).collect();
+        assert_eq!(tangent.len(), 4, "{seams:?}");
+        for s in tangent {
+            assert!(s.curvature_jump_per_mm.value < 1e-3, "jump {}", s.curvature_jump_per_mm.value);
+        }
+        // The same solid with the edges picked the other way round: the mitre's far end is
+        // found by depth, not by a trace from X that reached X in one order only.
+        let swapped = fillet_g2(&body, &[edges[1], edges[0]], 1.5).unwrap();
+        assert!(swapped.validity().is_empty(), "{:?}", swapped.validity());
+        let off_swapped = before - crate::measure(&swapped).unwrap().volume;
+        assert!((off_swapped - off).abs() < 1e-9 * before, "{off_swapped} vs {off}");
     }
 
     #[test]

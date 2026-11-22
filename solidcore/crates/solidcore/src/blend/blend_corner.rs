@@ -48,19 +48,29 @@ use crate::blend::fillet_corner::p1::{
 use crate::blend::fillet_corner::p3::FilletCorner;
 use crate::blend::fillet_corner::topology::check_tangential_edgeuse_at_vertex;
 use crate::blend::fillet_exact::{classify_exact_blend, BlendQuadric, BlendSpine, QuadricKind};
-use crate::blend::fillet_geom::p1::{FilletBrep, FilletEdgeType, FilletSolverId, FilletVertexType};
+use crate::blend::fillet_geom::p1::{
+    FilletBrep, FilletEdgeType, FilletGeomId, FilletSolverId, FilletVertexType,
+};
 use crate::blend::fillet_geom::p4::set_edge_curve;
-use crate::blend::fillet_solver::p1::{FilletSolverOps, FilletSurfaceGeneratorType};
+use crate::blend::fillet_solver::p1::{
+    FilletSolverOps, FilletSurfaceGenerator, FilletSurfaceGeneratorType,
+};
 use crate::curve::curve::Curve;
 use crate::error::{EntityRef, Result, SolidError};
+use crate::geom::extent1d::Extent1d;
 use crate::geom::global_solver::SolverOperation;
 use crate::intersect::surface_intersector::p1::SrfIndex;
 use crate::kernel::Kernel;
 use crate::math::{Point2, Point3, Vec3, EFF_ZERO};
 use crate::nurbs::b_spline_curve::p1::{BSplineCurveForm, CanonicalData, KnotType};
+use crate::nurbs::b_spline_curve::p2::ControlPointForm;
 use crate::nurbs::b_spline_curve::BSplineCurve;
+use crate::nurbs::b_spline_surface::p1::SurfParamType;
+use crate::nurbs::b_spline_surface::p2::IsoCurveOptions;
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
+use crate::nurbs::crv_fit::p1::ParamMethod;
 use crate::nurbs::knots::Side;
+use crate::surface::procedural_blend::BlendRef;
 use crate::surface::surface::p4::NoObject;
 use crate::surface::surface::Surface;
 use crate::topology::edgeuse::p1 as eu1;
@@ -567,12 +577,15 @@ pub fn exact_mitre_curve(
     };
     let start = edge::vertex(pseudo.brep(), mitre)?.ok_or_else(nul)?;
     let end = edge::other_vertex(pseudo.brep(), mitre, Some(start))?.ok_or_else(nul)?;
-    let from_s = pseudo.fillet_vertex(start)?.vertex_type == FilletVertexType::RailXEdgeuse;
+    let from_s = pseudo.fillet_vertex(start)?.vertex_type != FilletVertexType::RailXRail;
     let (s, x) = if from_s { (start, end) } else { (end, start) };
+    // S on the side edge; or (G^n rounds only, below) Y, where the mitre meets the
+    // shallower round's rail on its wall, the corner not a mirror image
+    let side_end = pseudo.fillet_vertex(s)?.vertex_type == FilletVertexType::RailXEdgeuse;
     {
         let sv = pseudo.fillet_vertex(s)?;
         let xv = pseudo.fillet_vertex(x)?;
-        if sv.vertex_type != FilletVertexType::RailXEdgeuse
+        if !(side_end || sv.vertex_type == FilletVertexType::FilletXFillet)
             || xv.vertex_type != FilletVertexType::RailXRail
             || !sv.is_processed()
             || !xv.is_processed()
@@ -580,6 +593,9 @@ pub fn exact_mitre_curve(
             return Ok(false);
         }
     }
+    // a mitre traced already (the vertices' stage) is remade for G^n rounds only, whose
+    // traced intersection cannot reach X
+    let traced = pseudo.brep().edge(mitre)?.curve.is_some();
     let prim = eu1::primary_edgeuse(pseudo.brep(), mitre)?.ok_or_else(nul)?;
     let mate = eu1::mate(pseudo.brep(), prim)?.ok_or_else(nul)?;
     let eus = [prim, mate];
@@ -591,6 +607,7 @@ pub fn exact_mitre_curve(
     let mut axis = [Vec3::default(); 2];
     let mut radius = [0.0_f64; 2];
     let mut geoms = [None; 2];
+    let mut kinds = [None; 2];
     for ii in 0..2 {
         let eu = eus.get(ii).copied().ok_or_else(nul)?;
         let g = pseudo.fillet_edgeuse(eu)?.fillet_geom().ok_or_else(nul)?;
@@ -603,14 +620,33 @@ pub fn exact_mitre_curve(
             .ok_or_else(nul)?;
         let tsect = pseudo.fillet_vertexuse(vu)?.tsect_pnt().clone();
         let ops = solvers.ops(solver_id)?;
-        let blend = classify_exact_blend(&mut *ops, k, target, &tsect)?;
-        // Open gap: a round on a circular spine (a torus) has no exact mitre here yet; the
-        // mitre is then the rounds' certified SSI curve
-        let circular = ops.solver().fsg.as_ref().is_some_and(|f| {
-            f.fillet_surface_generator_type() == FilletSurfaceGeneratorType::Circular
-        });
-        if blend.spine != BlendSpine::Line || !circular {
-            return Ok(false);
+        let kind = ops
+            .solver()
+            .fsg
+            .as_ref()
+            .map(FilletSurfaceGenerator::fillet_surface_generator_type);
+        // Not the fork's: two G^n sections (curvature rounds) of one constant size on
+        // straight spines between planes are each one section swept along a line, so the
+        // mitre is that section's affine image too ([`gn_mitre_curve`])
+        let ball_radius = match kind {
+            Some(FilletSurfaceGeneratorType::Circular) => {
+                let blend = classify_exact_blend(&mut *ops, k, target, &tsect)?;
+                // Open gap: a round on a circular spine (a torus) has no exact mitre here
+                // yet; the mitre is then the rounds' certified SSI curve
+                if blend.spine != BlendSpine::Line {
+                    return Ok(false);
+                }
+                blend.radius
+            }
+            Some(FilletSurfaceGeneratorType::BlendCurve) => {
+                let mut r = 0.0;
+                ops.setup_offset_values(&tsect, Some(&mut r))?;
+                r.abs()
+            }
+            _ => return Ok(false),
+        };
+        if let Some(slot) = kinds.get_mut(ii) {
+            *slot = kind;
         }
         let solver = ops.solver();
         let mut on = [Point3::default(); 2];
@@ -640,8 +676,16 @@ pub fn exact_mitre_curve(
         {
             *c = on0;
             *a = dir;
-            *r = blend.radius;
+            *r = ball_radius;
         }
+    }
+    let [kind0, kind1] = kinds;
+    if kind0 != kind1 {
+        return Ok(false); // a circle and a G^n section are not mirror images
+    }
+    let gn = kind0 == Some(FilletSurfaceGeneratorType::BlendCurve);
+    if !gn && (!side_end || traced) {
+        return Ok(false);
     }
     let [geom0, geom1] = geoms;
     let geoms = [geom0.ok_or_else(nul)?, geom1.ok_or_else(nul)?];
@@ -667,6 +711,43 @@ pub fn exact_mitre_curve(
     let c2 = c1 + a1 * s2;
     if c.distance(c2) > tol {
         return Ok(false);
+    }
+
+    // Not the fork's: two G^n rounds whose corner is not a mirror image, their mitre by
+    // depth below the common face ([`gn_mitre_by_depth`])
+    if gn && !side_end {
+        let Some(EntityRef::Face(common)) =
+            pseudo.fillet_vertex(x)?.point_classification().object()
+        else {
+            return Ok(false);
+        };
+        let surface = face2::surface(target, common)?.ok_or_else(nul)?;
+        let plane =
+            BlendQuadric::from_surface(k, surface, face2::uv_domain(target, common)?.mid(), tol)?;
+        if plane.kind != QuadricKind::Plane {
+            return Ok(false);
+        }
+        let x_pnt = foot(c, &plane);
+        let Some((curve, uvs, y_pnt)) =
+            gn_mitre_by_depth(k, pseudo, geoms, [a0, a1], x_pnt, plane.dir, from_s, tol)?
+        else {
+            return Ok(false);
+        };
+        install_mitre(
+            k,
+            target,
+            pseudo,
+            mitre,
+            [x, s],
+            [x_pnt, y_pnt],
+            None,
+            eus,
+            geoms,
+            curve,
+            uvs,
+            tol,
+        )?;
+        return Ok(true);
     }
 
     // X and S exactly: on the planes the rounds roll on, X is the foot of C on the common
@@ -755,6 +836,43 @@ pub fn exact_mitre_curve(
     let am = a.dot(m);
     if am.abs() <= EFF_ZERO {
         return Ok(false);
+    }
+
+    if gn {
+        // the mirror image's exact mitre, else the mitre by depth
+        let mut made = gn_mitre_curve(k, pseudo, geoms, [a, m], c, [x_pnt, s_pnt], from_s, tol)?
+            .map(|(curve, uvs)| (curve, uvs, s_pnt));
+        if made.is_none() {
+            made = gn_mitre_by_depth(
+                k,
+                pseudo,
+                geoms,
+                [a0, a1],
+                x_pnt,
+                common_plane.dir,
+                from_s,
+                tol,
+            )?
+            .filter(|(_, _, end)| end.distance(s_pnt) <= tol);
+        }
+        let Some((curve, uvs, _)) = made else {
+            return Ok(false);
+        };
+        install_mitre(
+            k,
+            target,
+            pseudo,
+            mitre,
+            [x, s],
+            [x_pnt, s_pnt],
+            Some((side_edge, side_curve)),
+            eus,
+            geoms,
+            curve,
+            uvs,
+            tol,
+        )?;
+        return Ok(true);
     }
 
     // the arc on cylinder 1 from X (t = 0) to S
@@ -918,10 +1036,586 @@ pub fn exact_mitre_curve(
         }
     }
 
+    let [uv0, uv1] = uvs;
+    install_mitre(
+        k,
+        target,
+        pseudo,
+        mitre,
+        [x, s],
+        [x_pnt, s_pnt],
+        Some((side_edge, side_curve)),
+        eus,
+        geoms,
+        curve,
+        [uv0.map(Curve::from), uv1.map(Curve::from)],
+        tol,
+    )?;
+    Ok(true)
+}
+
+/// Not the fork's: the mitre of two G^n sections (curvature rounds) of one constant size on
+/// straight spines between planes, from X to S, running as the edge does (from S when
+/// `from_s`), and each round's UV curve of it.
+///
+/// Each round is then one section swept along its spine's direction `a`, `P(s, t) = Q(t) +
+/// s a`, so where the plane through C with normal `m` (the rounds' plane of symmetry) cuts
+/// it, `s = -(Q(t) - C).m / a.m` and the cut is `A(Q(t))`, `A(p) = p - ((p - C).m / a.m) a`:
+/// an affine image of the section, a rational B-spline with the section's weights and its
+/// control points mapped. The section is round 1's iso curve across it at X (its net's,
+/// within the net's certified bound of the definition); X stays on the plane and the
+/// section's other end, the foot on the side wall, maps to S. By the symmetry the same curve
+/// lies on round 2. Both are checked: the curve drops onto each round within `tol`, and those
+/// drops are its UV curves. `None` where any of this does not hold (the rounds' certified
+/// intersection is the mitre then).
+///
+/// # Errors
+///
+/// Those of the evaluations, the iso curve, the control point edits and the drops.
+#[allow(clippy::too_many_arguments)] // the mitre's frame, as exact_mitre_curve has it
+fn gn_mitre_curve(
+    k: &Kernel,
+    pseudo: &FilletBrep,
+    geoms: [FilletGeomId; 2],
+    [a, m]: [Vec3; 2],
+    c: Point3,
+    [x_pnt, s_pnt]: [Point3; 2],
+    from_s: bool,
+    tol: f64,
+) -> Result<Option<(Curve, [Option<Curve>; 2])>> {
+    // (a round without its surface has no exact mitre: its certified intersection)
+    let [g0, _] = geoms;
+    let Some(surface) = pseudo.geom(g0)?.fillet_surface(None)?.cloned() else {
+        return Ok(None);
+    };
+    let Some(RoundSection {
+        surface,
+        across_v,
+        iso: iso_at,
+        ..
+    }) = RoundSection::find(k, surface, x_pnt, tol)?
+    else {
+        return Ok(None);
+    };
+    let Some(BlendRef::Procedural(blend)) = surface.procedural_blend() else {
+        return Ok(None);
+    };
+    let net = &blend.net;
+    let param = if across_v {
+        SurfParamType::U
+    } else {
+        SurfParamType::V
+    };
+    let options = IsoCurveOptions {
+        domain: None,
+        uv_iso_curve: false,
+    };
+    let mut section = net
+        .create_iso_parametric_curve(k, param, iso_at, options)?
+        .curve;
+
+    // A: each control point slid along a onto the plane
+    let am = a.dot(m);
+    if am.abs() <= EFF_ZERO {
+        return Ok(None);
+    }
+    let n = section.number_control_points()?;
+    if n < 2 {
+        return Ok(None);
+    }
+    let rational = section.is_rational()?;
+    let form = if rational {
+        ControlPointForm::EuclideanRational
+    } else {
+        ControlPointForm::NonRational
+    };
+    for j in 0..n {
+        let (p, w) = section.control_point(form, j)?;
+        let mapped = p - a * ((p - c).dot(m) / am);
+        section.set_control_point(form, j, mapped, w)?;
+    }
+    // its ends X and S (within the net's bound), set to them exactly
+    let ivl = section.natural_interval();
+    let first = section.evaluate_point(ivl.min())?;
+    let last = section.evaluate_point(ivl.max())?;
+    let x_first = first.distance(x_pnt) <= tol && last.distance(s_pnt) <= tol;
+    let x_last = last.distance(x_pnt) <= tol && first.distance(s_pnt) <= tol;
+    if x_first == x_last {
+        return Ok(None);
+    }
+    let (start_pnt, end_pnt) = if x_first {
+        (x_pnt, s_pnt)
+    } else {
+        (s_pnt, x_pnt)
+    };
+    for (j, p) in [(0, start_pnt), (n - 1, end_pnt)] {
+        let (_, w) = section.control_point(form, j)?;
+        section.set_control_point(form, j, p, w)?;
+    }
+    // the curve runs as the edge does
+    if x_first == from_s {
+        section.reverse_parameterization(&ivl)?;
+    }
+    let curve = Curve::from(section);
+    let curve_ivl = curve.natural_interval();
+
+    // on both rounds, its drops their UV curves
+    let mut uvs: [Option<Curve>; 2] = [None, None];
+    for (slot, &g) in uvs.iter_mut().zip(&geoms) {
+        let Some(round) = pseudo.geom(g)?.fillet_surface(None)?.cloned() else {
+            return Ok(None);
+        };
+        let round_domain = round.natural_uv_domain_with_nurb(k)?;
+        let dropped = round.drop_curve::<NoObject>(
+            k,
+            &round_domain,
+            &curve,
+            &curve_ivl,
+            tol,
+            false,
+            None,
+            true,
+        )?;
+        if dropped.uv_curves.len() != 1 || dropped.max_drop_to_surf > tol {
+            return Ok(None);
+        }
+        *slot = dropped.uv_curves.into_iter().next();
+    }
+    Ok(Some((curve, uvs)))
+}
+
+/// A round's section through X (`point`), the iso curve across its procedural blend: the
+/// surface, whether the section runs in v, the iso parameter, and the section's parameters at
+/// X and at its other rail. `None` for a round that is not a procedural blend or whose rail
+/// X is not on.
+struct RoundSection {
+    surface: Surface,
+    across_v: bool,
+    iso: f64,
+    at_x: f64,
+    at_wall: f64,
+}
+
+impl RoundSection {
+    fn find(k: &Kernel, surface: Surface, point: Point3, tol: f64) -> Result<Option<Self>> {
+        let Some(BlendRef::Procedural(blend)) = surface.procedural_blend() else {
+            return Ok(None);
+        };
+        let net = &blend.net;
+        let domain = net.natural_uv_domain();
+        // the nearest point of a grid over the net, then its foot
+        let mut best = (f64::INFINITY, domain.mid());
+        for i in 0..=16_u8 {
+            for j in 0..=16_u8 {
+                let uv = domain.evaluate(f64::from(i) / 16.0, f64::from(j) / 16.0);
+                let d = net.evaluate_point(uv)?.distance(point);
+                if d < best.0 {
+                    best = (d, uv);
+                }
+            }
+        }
+        let Some(uv) = foot_on_surface(k, &surface, point, best.1)? else {
+            return Ok(None);
+        };
+        if surface.evaluate_point(k, uv)?.distance(point) > tol {
+            return Ok(None);
+        }
+        // the section runs across the round: X, on a rail, is at an end of that parameter
+        let end_at = |p: f64, ivl: Extent1d| {
+            let span = (ivl.max() - ivl.min()).abs().max(EFF_ZERO);
+            if (p - ivl.min()).abs() <= 1e-6 * span {
+                Some((ivl.min(), ivl.max()))
+            } else if (p - ivl.max()).abs() <= 1e-6 * span {
+                Some((ivl.max(), ivl.min()))
+            } else {
+                None
+            }
+        };
+        let (across_v, iso, (at_x, at_wall)) = if let Some(ends) = end_at(uv.y, domain.v_interval())
+        {
+            (true, domain.u_interval().clamp_value(uv.x), ends)
+        } else if let Some(ends) = end_at(uv.x, domain.u_interval()) {
+            (false, domain.v_interval().clamp_value(uv.y), ends)
+        } else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            surface,
+            across_v,
+            iso,
+            at_x,
+            at_wall,
+        }))
+    }
+
+    /// The section's parameters at `lambda`, 0 at X and 1 at the other rail.
+    fn uv(&self, lambda: f64) -> Point2 {
+        let t = self.at_x + lambda * (self.at_wall - self.at_x);
+        if self.across_v {
+            Point2::new(self.iso, t)
+        } else {
+            Point2::new(t, self.iso)
+        }
+    }
+
+    /// The section's point at `lambda` (the definition's).
+    fn at(&self, k: &Kernel, lambda: f64) -> Result<Point3> {
+        self.surface.evaluate_point(k, self.uv(lambda))
+    }
+}
+
+/// A mitre by depth: its curve, its UV curves on the two rounds and its end away from X.
+pub(crate) type DepthMitre = (Curve, [Option<Curve>; 2], Point3);
+
+/// Not the fork's: the mitre of the two G^n rounds `geoms` (curvature rounds; `kinds`, their
+/// solvers' generator kinds) from X, the processed vertex `x` where their rails cross on a
+/// plane both roll on, by its depth below that plane ([`gn_mitre_by_depth`]), running from X.
+/// For the vertex stage, which traces the rounds' intersection from X otherwise: there they
+/// touch the plane to second order, and whether a trace reaches X within tolerance depends on
+/// the order the rounds come in. `None` where the rounds are not two G^n sections on straight
+/// spines, X is not on a plane, or the construction does not hold there; the trace is the
+/// mitre then, as before.
+///
+/// # Errors
+///
+/// Those of the topology lookups, the evaluations and [`gn_mitre_by_depth`].
+pub(crate) fn gn_mitre_from_x(
+    k: &Kernel,
+    target: &Brep,
+    pseudo: &FilletBrep,
+    geoms: [FilletGeomId; 2],
+    kinds: [Option<FilletSurfaceGeneratorType>; 2],
+    x: VertexId,
+    tol: f64,
+) -> Result<Option<DepthMitre>> {
+    if kinds
+        .iter()
+        .any(|kind| *kind != Some(FilletSurfaceGeneratorType::BlendCurve))
+    {
+        return Ok(None);
+    }
+    let xv = pseudo.fillet_vertex(x)?;
+    if xv.vertex_type != FilletVertexType::RailXRail || !xv.is_processed() {
+        return Ok(None);
+    }
+    let Some(EntityRef::Face(common)) = xv.point_classification().object() else {
+        return Ok(None);
+    };
+    let Some(surface) = face2::surface(target, common)? else {
+        return Ok(None);
+    };
+    let plane =
+        BlendQuadric::from_surface(k, surface, face2::uv_domain(target, common)?.mid(), tol)?;
+    if plane.kind != QuadricKind::Plane {
+        return Ok(None);
+    }
+    let mut axes = [Vec3::default(); 2];
+    for (slot, g) in axes.iter_mut().zip(geoms) {
+        let Some(spine) = pseudo.geom(g)?.center_line_curve() else {
+            return Ok(None);
+        };
+        let Some((_, dir)) = spine.is_line(10, tol)? else {
+            return Ok(None);
+        };
+        let Ok(dir) = dir.unitize() else {
+            return Ok(None);
+        };
+        *slot = dir;
+    }
+    let x_pnt = pseudo.vertex_point(x)?;
+    gn_mitre_by_depth(k, pseudo, geoms, axes, x_pnt, plane.dir, false, tol)
+}
+
+/// Not the fork's: the mitre of two G^n sections (curvature rounds) of one constant size on
+/// straight spines between planes whose corner is not a mirror image (a drafted wall), from
+/// X along its depth below the common face (normal `normal`) to where the shallower round
+/// reaches its wall's rail (Y, or S where both reach it there), running as the edge does (from
+/// that end when `from_end`); each round's UV curve of it; and that end.
+///
+/// The rounds touch the common face to second order at X, so their traced intersection
+/// cannot reach X. By depth it is well posed: each round is one section swept along its
+/// spine's direction, so its points at a depth h are a line along that direction, and the
+/// two rounds' lines at h, not parallel, meet once. The section's depth grows from 0 at X
+/// to the wall's rail; at round 1's section parameter the depth is round 2's at the
+/// parameter false position finds, and the point is where the two lines meet. The points are
+/// interpolated at round 1's section parameter, and so are their feet on each round (the
+/// section's parameters there moved along the spine by its rate at X, else the foot): cubics, more points
+/// until the curve, and each round at its UV curve, hold the construction at the midpoints
+/// within a tenth of `tol`. `None` where any of this does not hold.
+///
+/// # Errors
+///
+/// Those of the evaluations, the interpolation and the drops.
+#[allow(clippy::too_many_arguments)] // the mitre's frame, as exact_mitre_curve has it
+fn gn_mitre_by_depth(
+    k: &Kernel,
+    pseudo: &FilletBrep,
+    geoms: [FilletGeomId; 2],
+    [a0, a1]: [Vec3; 2],
+    x_pnt: Point3,
+    normal: Vec3,
+    from_end: bool,
+    tol: f64,
+) -> Result<Option<DepthMitre>> {
+    let mut sections = Vec::with_capacity(2);
+    for &g in &geoms {
+        let Some(surface) = pseudo.geom(g)?.fillet_surface(None)?.cloned() else {
+            return Ok(None);
+        };
+        let Some(section) = RoundSection::find(k, surface, x_pnt, tol)? else {
+            return Ok(None);
+        };
+        sections.push(section);
+    }
+    let [one, two] = sections.as_slice() else {
+        return Ok(None);
+    };
+    let Ok(n) = normal.unitize() else {
+        return Ok(None);
+    };
+    // depth below the common face, positive into the body
+    let sign = if (x_pnt - one.at(k, 1.0)?).dot(n) >= 0.0 {
+        1.0
+    } else {
+        -1.0
+    };
+    let depth = |section: &RoundSection, lambda: f64| -> Result<f64> {
+        Ok((x_pnt - section.at(k, lambda)?).dot(n) * sign)
+    };
+    // each section's depth grows from X to its wall
+    let samples = 32_u8;
+    let mut deepest = [0.0_f64; 2];
+    for (slot, section) in deepest.iter_mut().zip([one, two]) {
+        let mut last = 0.0;
+        for i in 1..=samples {
+            let h = depth(section, f64::from(i) / f64::from(samples))?;
+            if h <= last {
+                return Ok(None);
+            }
+            last = h;
+        }
+        *slot = last;
+    }
+    let [deep_one, deep_two] = deepest;
+    let h_end = deep_one.min(deep_two);
+    // the section parameter at depth h: the depth grows along the section, from X as the
+    // cube of the distance (the contact is G2), so its cube root is near linear there and
+    // false position (Illinois) on it converges in a few steps; bracketed, it never leaves
+    let at_depth = |section: &RoundSection, h: f64, top: f64| -> Result<f64> {
+        if h >= top {
+            return Ok(1.0);
+        }
+        if h <= 0.0 {
+            return Ok(0.0);
+        }
+        let target = h.cbrt();
+        let f = |lambda: f64| -> Result<f64> { Ok(depth(section, lambda)?.cbrt() - target) };
+        let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
+        let (mut f_lo, mut f_hi) = (-target, top.cbrt() - target);
+        let mut side = 0_i8;
+        for _ in 0..100 {
+            let mid = (lo * f_hi - hi * f_lo) / (f_hi - f_lo);
+            let mid = if mid > lo && mid < hi {
+                mid
+            } else {
+                0.5 * (lo + hi)
+            };
+            let f_mid = f(mid)?;
+            if f_mid == 0.0 || hi - lo <= 4.0 * f64::EPSILON {
+                return Ok(mid);
+            }
+            if f_mid < 0.0 {
+                lo = mid;
+                f_lo = f_mid;
+                if side == -1 {
+                    f_hi *= 0.5;
+                }
+                side = -1;
+            } else {
+                hi = mid;
+                f_hi = f_mid;
+                if side == 1 {
+                    f_lo *= 0.5;
+                }
+                side = 1;
+            }
+            if f_mid.abs() <= 1e-15 * (1.0 + target) {
+                return Ok(mid);
+            }
+        }
+        Ok(0.5 * (lo + hi))
+    };
+    let lambda_end = at_depth(one, h_end, deep_one)?;
+    let ab = a0.dot(a1);
+    let den = 1.0 - ab * ab;
+    if den <= EFF_ZERO {
+        return Ok(None);
+    }
+    // each round's spine parameter per unit length along its direction, at X
+    let flags = EvaluateFlags {
+        u_side: Side::Left,
+        v_side: Side::Left,
+        only_upper_half: false,
+        non_zero_tangents: false,
+    };
+    let mut rates = [0.0_f64; 2];
+    for (slot, (section, a)) in rates.iter_mut().zip([(one, a0), (two, a1)]) {
+        let (du, dv) = if section.across_v { (1, 0) } else { (0, 1) };
+        let d = section
+            .surface
+            .evaluate(k, section.uv(0.0), du, dv, flags)?;
+        let Some(along) = d.get(du).and_then(|row| row.get(dv)).copied() else {
+            return Ok(None);
+        };
+        let speed = along.dot(a);
+        if speed.abs() <= EFF_ZERO {
+            return Ok(None);
+        }
+        *slot = 1.0 / speed;
+    }
+    // the mitre's point at round 1's section parameter, and its UV on each round: the
+    // section's parameters there moved along the spine (the round swept), else the foot
+    let point = |lambda: f64| -> Result<Option<(Point3, [Point2; 2])>> {
+        let lambda2 = if lambda <= 0.0 {
+            0.0
+        } else {
+            let h = depth(one, lambda)?;
+            at_depth(two, h, deep_two)?
+        };
+        let (p1, p2) = (one.at(k, lambda)?, two.at(k, lambda2)?);
+        let w = p1 - p2;
+        let (d, e) = (a0.dot(w), a1.dot(w));
+        let s = (ab * e - d) / den;
+        let sigma = (e - ab * d) / den;
+        let (q1, q2) = (p1 + a0 * s, p2 + a1 * sigma);
+        if q1.distance(q2) > tol {
+            return Ok(None);
+        }
+        let p = if lambda <= 0.0 {
+            x_pnt
+        } else {
+            (q1 + q2) * 0.5
+        };
+        let mut uvs = [Point2::default(); 2];
+        let moves = [(one, lambda, s, rates[0]), (two, lambda2, sigma, rates[1])];
+        for (slot, (section, at, along, rate)) in uvs.iter_mut().zip(moves) {
+            let mut uv = section.uv(at);
+            if section.across_v {
+                uv.x += along * rate;
+            } else {
+                uv.y += along * rate;
+            }
+            // the spine's parameter is not proportional to its length: the foot
+            if section.surface.evaluate_point(k, uv)?.distance(p) > 0.01 * tol {
+                let Some(foot) = foot_on_surface(k, &section.surface, p, uv)? else {
+                    return Ok(None);
+                };
+                uv = foot;
+            }
+            *slot = uv;
+        }
+        Ok(Some((p, uvs)))
+    };
+    let interpolate = |dim: u64, points: &[Point3], params: &[f64]| {
+        BSplineCurve::create_interpolating_curve_with_params(
+            ParamMethod::ChordLength,
+            dim,
+            3,
+            points,
+            &[],
+            None,
+            false,
+            Some(params),
+        )
+    };
+    let mut count = 16_u32;
+    let (curve, uv_curves) = loop {
+        let mut params = Vec::new();
+        let mut points = Vec::new();
+        let mut uv_points = [Vec::new(), Vec::new()];
+        for i in 0..=count {
+            let lambda = lambda_end * f64::from(i) / f64::from(count);
+            let Some((p, uv)) = point(lambda)? else {
+                return Ok(None);
+            };
+            params.push(lambda);
+            points.push(p);
+            for (list, uv) in uv_points.iter_mut().zip(uv) {
+                list.push(Point3::new(uv.x, uv.y, 0.0));
+            }
+        }
+        let curve = interpolate(3, &points, &params)?;
+        let [uv1, uv2] = &uv_points;
+        let uv_curves = [interpolate(2, uv1, &params)?, interpolate(2, uv2, &params)?];
+        // at the midpoints: the curve, and each round at its UV curve, on the construction
+        let mut worst = 0.0_f64;
+        for i in 0..count {
+            let lambda = lambda_end * (f64::from(i) + 0.5) / f64::from(count);
+            let Some((p, _)) = point(lambda)? else {
+                return Ok(None);
+            };
+            worst = worst.max(curve.evaluate_point(lambda)?.distance(p));
+            for (section, uv_curve) in [one, two].into_iter().zip(&uv_curves) {
+                let uv = uv_curve.evaluate_point(lambda)?;
+                let on = section.surface.evaluate_point(k, Point2::new(uv.x, uv.y))?;
+                worst = worst.max(on.distance(p));
+            }
+        }
+        if worst <= 0.1 * tol {
+            break (curve, uv_curves);
+        }
+        if count >= 512 {
+            return Ok(None);
+        }
+        count *= 2;
+    };
+    let ivl = curve.natural_interval();
+    let end_pnt = curve.evaluate_point(ivl.max())?;
+    let (mut curve, mut uv_curves) = (curve, uv_curves);
+    if from_end {
+        curve.reverse_parameterization(&ivl)?;
+        for uv in &mut uv_curves {
+            uv.reverse_parameterization(&ivl)?;
+        }
+    }
+    let [uv1, uv2] = uv_curves;
+    let curve = Curve::from(curve);
+    let uvs = [Some(Curve::from(uv1)), Some(Curve::from(uv2))];
+    Ok(Some((curve, uvs, end_pnt)))
+}
+
+/// The mitre `mitre` made: its curve, X and its other end (S, or Y) at their exact points
+/// (S's parameter on the side edge, when it is on one), each edge use's UV curve on its round
+/// and the edge precomputed.
+///
+/// # Errors
+///
+/// Those of the B-rep edits and of the side edge's drop.
+#[allow(clippy::too_many_arguments)] // the mitre's parts, as exact_mitre_curve has them
+fn install_mitre(
+    k: &Kernel,
+    target: &Brep,
+    pseudo: &mut FilletBrep,
+    mitre: EdgeId,
+    [x, s]: [VertexId; 2],
+    [x_pnt, s_pnt]: [Point3; 2],
+    side: Option<(EdgeId, &Curve)>,
+    eus: [EdgeuseId; 2],
+    geoms: [FilletGeomId; 2],
+    curve: Curve,
+    uvs: [Option<Curve>; 2],
+    tol: f64,
+) -> Result<()> {
+    let ivl = curve.natural_interval();
+    let traced = pseudo.brep().edge(mitre)?.curve.is_some();
     set_edge_curve(pseudo.brep_mut(), mitre, Some(curve))?;
+    if traced {
+        // the traced curve's interval goes with it
+        edge::set_interval(pseudo.brep_mut(), mitre, &ivl)?;
+    }
     pseudo.set_vertex_point(x, x_pnt)?;
     pseudo.set_vertex_point(s, s_pnt)?;
-    {
+    if let Some((side_edge, side_curve)) = side {
         let ivl = edge::interval(target, side_edge)?;
         let dropped =
             side_curve.drop_point(k, &ivl, s_pnt, None, tol, None, SolverOperation::Minimize)?;
@@ -931,15 +1625,14 @@ pub fn exact_mitre_curve(
                 .set_original_t_param(dropped.parameter);
         }
     }
-    let [uv0, uv1] = uvs;
-    for ((eu, g), uv) in eus.into_iter().zip(geoms).zip([uv0, uv1]) {
-        pseudo.set_edgeuse_uv_curve(eu, uv.map(Curve::from), true, true)?;
+    for ((eu, g), uv) in eus.into_iter().zip(geoms).zip(uvs) {
+        pseudo.set_edgeuse_uv_curve(eu, uv, true, true)?;
         pseudo.geom_mut(g)?.add_side_fillet_edgeuse(eu);
     }
     pseudo
         .fillet_edge_mut(mitre)?
         .set_fillet_edge_type(FilletEdgeType::Precomputed);
-    Ok(true)
+    Ok(())
 }
 
 #[cfg(test)]

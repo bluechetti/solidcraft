@@ -429,7 +429,11 @@ impl PointCloud {
         if !rigid(&self.transform) {
             return bad("its placement is not a rigid move");
         }
-        self.complex.check(self.points.len())?;
+        // A design file keeps the points apart from the rest (a blob read in after it), so a cloud
+        // read without them yet is checked against them once they are in.
+        if !self.points.is_empty() {
+            self.complex.check(self.points.len())?;
+        }
         if self.filters.len() > MAX_FILTERS
             || self.filters.iter().any(|f| match &f.keep {
                 Keep::Range { range: [lo, hi] } => !(lo.is_finite() && hi.is_finite() && lo <= hi),

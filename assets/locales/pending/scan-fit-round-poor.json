@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_fit_round_poor": "The area round the click holds more than this shape: make the radius smaller, or grow from the click."
+  },
+  "ar": {
+    "ui.scan_fit_round_poor": "المنطقة حول النقرة تضم أكثر من هذا الشكل: صغّر نصف القطر، أو انمُ من النقرة."
+  },
+  "de": {
+    "ui.scan_fit_round_poor": "Der Bereich um den Klick enthält mehr als diese Form: Radius verkleinern oder vom Klick aus wachsen lassen."
+  },
+  "he": {
+    "ui.scan_fit_round_poor": "האזור סביב הלחיצה מכיל יותר מצורה זו: הקטינו את הרדיוס, או גדלו מהלחיצה."
+  },
+  "ja": {
+    "ui.scan_fit_round_poor": "クリック周辺の範囲にこの形状以外も含まれています。半径を小さくするか、クリックから拡張してください。"
+  },
+  "ko": {
+    "ui.scan_fit_round_poor": "클릭 주변 영역에 이 형상 외의 부분도 들어 있습니다. 반지름을 줄이거나 클릭에서 확장하십시오."
+  },
+  "vi": {
+    "ui.scan_fit_round_poor": "Vùng quanh điểm nhấp chứa nhiều hơn hình này: hãy giảm bán kính, hoặc mở rộng từ điểm nhấp."
+  },
+  "zh": {
+    "ui.scan_fit_round_poor": "点击周围的区域不只包含此形状：请减小半径，或从点击处扩展。"
+  }
+}

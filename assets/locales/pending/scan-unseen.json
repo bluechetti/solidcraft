@@ -1,0 +1,50 @@
+{
+  "en": {
+    "cmd.scan_unseen": "Unseen Surface",
+    "help.scan.unseen": "Paints the parts of a scan its scanner never saw: holes filled, mirror fills, surface made from sparse points. Fits and deviation over them say so.",
+    "ui.scan_unseen_found": "{share} % of {scan} ({area}) is surface the scanner never saw, painted",
+    "ui.scan_unseen_none": "Nothing of {scan} is unseen: it is the surface the scanner saw"
+  },
+  "ar": {
+    "cmd.scan_unseen": "السطح غير المرئي",
+    "help.scan.unseen": "يلوّن أجزاء المسح التي لم يرها الماسح: ثقوب مسدودة، وتعبئة بالمرآة، وسطح مصنوع من نقاط متفرقة. وتنبّه الملاءمات والانحراف فوقها إلى ذلك.",
+    "ui.scan_unseen_found": "{share} % من {scan} ({area}) سطح لم يره الماسح، وقد لُوّن",
+    "ui.scan_unseen_none": "لا شيء من {scan} غير مرئي: إنه السطح الذي رآه الماسح"
+  },
+  "de": {
+    "cmd.scan_unseen": "Ungesehene Fläche",
+    "help.scan.unseen": "Färbt die Teile eines Scans, die der Scanner nie gesehen hat: gefüllte Löcher, Spiegelfüllungen, aus wenigen Punkten erzeugte Fläche. Anpassungen und Abweichung darüber weisen darauf hin.",
+    "ui.scan_unseen_found": "{share} % von {scan} ({area}) ist Fläche, die der Scanner nie gesehen hat, eingefärbt",
+    "ui.scan_unseen_none": "Nichts von {scan} ist ungesehen: Es ist die Fläche, die der Scanner gesehen hat"
+  },
+  "he": {
+    "cmd.scan_unseen": "משטח שלא נראה",
+    "help.scan.unseen": "צובע את חלקי הסריקה שהסורק לא ראה: חורים שמולאו, מילוי במראה, משטח שנבנה מנקודות דלילות. התאמות וסטייה מעליהם מציינות זאת.",
+    "ui.scan_unseen_found": "{share} % מ-{scan} ({area}) הוא משטח שהסורק לא ראה, צבוע",
+    "ui.scan_unseen_none": "שום דבר ב-{scan} אינו בלתי נראה: זה המשטח שהסורק ראה"
+  },
+  "ja": {
+    "cmd.scan_unseen": "未計測の面",
+    "help.scan.unseen": "スキャナーが見ていない部分を塗ります: 埋めた穴、ミラーで補った面、まばらな点から作った面。その上のフィットと偏差は警告します。",
+    "ui.scan_unseen_found": "{scan} の {share} % ({area}) はスキャナーが見ていない面です。塗りました",
+    "ui.scan_unseen_none": "{scan} に未計測の面はありません: スキャナーが見た面です"
+  },
+  "ko": {
+    "cmd.scan_unseen": "보지 못한 면",
+    "help.scan.unseen": "스캐너가 보지 못한 부분을 칠합니다: 메운 구멍, 미러 채우기, 성긴 점으로 만든 면. 그 위의 맞춤과 편차는 이를 알립니다.",
+    "ui.scan_unseen_found": "{scan}의 {share} % ({area})는 스캐너가 보지 못한 면이며 칠했습니다",
+    "ui.scan_unseen_none": "{scan}에 보지 못한 면이 없습니다: 스캐너가 본 면입니다"
+  },
+  "vi": {
+    "cmd.scan_unseen": "Bề mặt không quét được",
+    "help.scan.unseen": "Tô các phần của bản quét mà máy quét chưa từng thấy: lỗ đã lấp, phần lấp bằng đối xứng, bề mặt tạo từ điểm thưa. Phép khớp và độ lệch trên đó sẽ báo.",
+    "ui.scan_unseen_found": "{share} % của {scan} ({area}) là bề mặt máy quét chưa từng thấy, đã tô",
+    "ui.scan_unseen_none": "Không có phần nào của {scan} là không quét được: đó là bề mặt máy quét đã thấy"
+  },
+  "zh": {
+    "cmd.scan_unseen": "未扫到的曲面",
+    "help.scan.unseen": "为扫描仪从未看到的部分着色：填补的孔、镜像填充、由稀疏点生成的曲面。其上的拟合和偏差会提示。",
+    "ui.scan_unseen_found": "{scan} 的 {share} %（{area}）是扫描仪从未看到的曲面，已着色",
+    "ui.scan_unseen_none": "{scan} 没有未扫到的部分：都是扫描仪看到的曲面"
+  }
+}

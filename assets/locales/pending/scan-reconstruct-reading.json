@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_reconstruct_reading": "Reading the scan: its shapes are being found. The steps to build appear here when that is done."
+  },
+  "de": {
+    "ui.scan_reconstruct_reading": "Der Scan wird gelesen: Seine Formen werden gesucht. Die Schritte zum Aufbauen erscheinen hier, sobald das fertig ist."
+  },
+  "ja": {
+    "ui.scan_reconstruct_reading": "スキャンを読み取っています。形状を検出中です。完了すると、作成する手順がここに表示されます。"
+  },
+  "ko": {
+    "ui.scan_reconstruct_reading": "스캔을 읽는 중입니다. 형상을 찾고 있습니다. 끝나면 만들 단계가 여기에 표시됩니다."
+  },
+  "zh": {
+    "ui.scan_reconstruct_reading": "正在读取扫描：正在查找其形状。完成后，要构建的步骤将显示在这里。"
+  },
+  "ar": {
+    "ui.scan_reconstruct_reading": "جارٍ قراءة المسح: يجري العثور على أشكاله. تظهر هنا خطوات البناء عند الانتهاء."
+  },
+  "he": {
+    "ui.scan_reconstruct_reading": "קורא את הסריקה: מאתר את הצורות שלה. השלבים לבנייה יופיעו כאן כשזה יסתיים."
+  },
+  "vi": {
+    "ui.scan_reconstruct_reading": "Đang đọc bản quét: đang tìm các hình dạng của nó. Các bước dựng sẽ hiện ở đây khi xong."
+  }
+}

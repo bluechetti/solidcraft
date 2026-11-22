@@ -46,11 +46,15 @@ use crate::control::ControlRequest;
 
 pub use solidcraft_control::{Cancel, Ticket};
 
-/// A stop flag for the work computing `ticket`'s request, which its cancel sets.
+/// A stop flag for the work computing `ticket`'s request, which its cancel sets, and how far that
+/// work is, which `control.running` reads.
 pub(crate) fn progress_of(ticket: &Ticket) -> Arc<Progress> {
     let progress = Arc::new(Progress::default());
     let stop = Arc::clone(&progress);
     ticket.on_stop(move || stop.cancel());
+    // control.running says how far it is.
+    let report = Arc::clone(&progress);
+    ticket.on_progress(move || report.summary());
     progress
 }
 
@@ -227,6 +231,19 @@ enum Work {
     Ahead { commands: Vec<(String, Value)>, doc: Arc<solidcraft_engine::doc::Document>, revision: u64, tries: u8, kept: Arc<KeptResults> },
     /// Run on a copy; the reply comes from there.
     Answer { inspection: Option<(u64, usize)> },
+    /// A scan command computed once on a copy, its result adopted here when the design is still
+    /// the one it was computed for (`doc`, which the window must still show), else computed again
+    /// (`tries`): its work is
+    /// in the command, not in features the evaluation keeps, so computing it ahead and running it
+    /// here again would do it twice, the second time on the window thread.
+    Adopt {
+        prepared: Receiver<Result<solidcraft_engine::ComputedCommands, String>>,
+        id: &'static str,
+        params: Value,
+        level: Option<solidcraft_engine::schema::ParamCheck>,
+        doc: Arc<solidcraft_engine::doc::Document>,
+        tries: u8,
+    },
     /// External code executes once on its worker. Stale/cancelled results are discarded.
     Plugin {
         prepared: Receiver<Result<solidcraft_engine::ComputedCommands, String>>,
@@ -370,6 +387,43 @@ fn begin_ahead(
 ) -> Option<(Work, Receiver<Option<Value>>, Arc<Steps>)> {
     let (rx, kept, steps) = evaluate_ahead(app, &req.params, &req.ticket, commands.clone())?;
     Some((Work::Ahead { commands, doc: app.session.doc.clone(), revision: app.session.revision, tries, kept }, rx, steps))
+}
+
+/// Whether command `id` (as registered) computes on a copy whose result is adopted
+/// ([`Work::Adopt`]): a Scan tab command that names no file.
+fn adopts(id: &str, params: &Value) -> bool {
+    id.starts_with("scan.") && !names_a_file(params)
+}
+
+/// Start computing scan command `id` on a copy of the session for `req` (`tries`: how often it was
+/// computed before, for a design changed meanwhile). `None` without threads (the web).
+fn begin_adopt(
+    app: &SolveApp,
+    req: &ControlRequest,
+    id: &'static str,
+    params: Value,
+    level: Option<solidcraft_engine::schema::ParamCheck>,
+    tries: u8,
+) -> Option<(Work, Receiver<Option<Value>>)> {
+    let scope = crate::control::request_scope(app, &req.params).ok()?;
+    let mut copy = app.session.scratch();
+    if let Some(level) = level {
+        copy.param_check = level;
+    }
+    let (tx, prepared) = std::sync::mpsc::channel();
+    let asked = params.clone();
+    #[cfg(test)]
+    let gate = app.apply_gate.clone();
+    let done = spawn(scope, progress_of(&req.ticket), move || {
+        #[cfg(test)]
+        if let Some(gate) = gate {
+            let _ = gate.lock().ok()?.recv();
+        }
+        let _ = tx.send(copy.compute_commands(&[(id.to_string(), asked)], None).map_err(|e| e.to_string()));
+        None
+    })?;
+    let work = Work::Adopt { prepared, id, params, level, doc: app.session.doc.clone(), tries };
+    Some((work, done))
 }
 
 impl SolveApp {
@@ -678,6 +732,22 @@ impl SolveApp {
         {
             return self.answer_on_a_copy(req, id, params);
         }
+        // A scan command (Find All, Align, Remesh…): computed once on a copy and adopted, so the
+        // window stays live meanwhile and control.running says how far it is.
+        if matches!(req.method.as_str(), "engine.execute" | "command")
+            && let Some((command, params)) = executed(&req.params)
+            && let Some(id) = spec_id(command).filter(|id| adopts(id, &params))
+        {
+            if self.control_job.is_some() {
+                self.control_held.push_back(req);
+                return None;
+            }
+            let Ok(level) = crate::control::request_param_check(&req.method, &req.params) else { return Some(req) };
+            let Some((work, done)) = begin_adopt(self, &req, id, params, level, 0) else { return Some(req) };
+            req.ticket.computing(false);
+            self.control_job = Some(ControlJob { label: label(self, id), req, work, done, started: crate::now_ms(), steps: None });
+            return None;
+        }
         let commands = ahead_commands(&req.method, &req.params);
         let Some(first) = commands.first().map(|(c, _)| c.clone()) else { return Some(req) };
         let Some((work, rx, steps)) = begin_ahead(self, &req, commands, 0) else { return Some(req) };
@@ -824,7 +894,7 @@ impl SolveApp {
         // The design it computes for has left the window (closed, another tab, a file opened):
         // refused now, however long its computation has left, so the requests behind it, which
         // are for the design shown, don't wait for it.
-        let left = matches!(&job.work, Work::Ahead { doc, .. } if !shows_design(&self.session, doc));
+        let left = matches!(&job.work, Work::Ahead { doc, .. } | Work::Adopt { doc, .. } if !shows_design(&self.session, doc));
         if left {
             if let Some(job) = self.control_job.take() {
                 let _ = job.req.reply.send(design_replaced(&job.label));
@@ -837,6 +907,10 @@ impl SolveApp {
         }
         let Some(job) = self.control_job.take() else { return };
         ctx.request_repaint();
+        if matches!(job.work, Work::Adopt { .. }) {
+            self.adopt(ctx, job);
+            return;
+        }
         if let Work::Plugin { prepared, disabled, grants, limits, level } = &job.work {
             if !job.req.ticket.back() {
                 let _ = job.req.reply.send(stopped_reply(&job.label, true));
@@ -1011,6 +1085,67 @@ impl SolveApp {
             }
             _ => {}
         }
+    }
+}
+
+impl SolveApp {
+    /// A scan command computed on a copy is in ([`Work::Adopt`]): its result becomes the design's,
+    /// as running it here would have made it, with the same undo step and window updates; for a
+    /// design changed meanwhile it is computed again, and after [`MAX_TRIES`] it runs here.
+    fn adopt(&mut self, ctx: &egui::Context, job: ControlJob) {
+        let ControlJob { req, work, label, started, .. } = job;
+        let Work::Adopt { prepared, id, params, level, tries, .. } = work else { return };
+        // A file opening meanwhile: the request waits for it as any design change does.
+        if (self.file_load_holds() || self.file_picker.is_some()) && req.ticket.wait_again() {
+            self.control_held.push_front(req);
+            return;
+        }
+        // Cancelled by its client while it computed: nothing of it is applied.
+        if !req.ticket.back() {
+            let _ = req.reply.send(stopped_reply(&label, false));
+            return;
+        }
+        let computed = match prepared.try_recv() {
+            Ok(Ok(computed)) => computed,
+            // The command's own refusal, as running it here would have given it.
+            Ok(Err(error)) => {
+                let mut reply = json!({"ok": false, "error": error});
+                if let Some(level) = level {
+                    reply["param_check"] = json!(level.name());
+                }
+                let _ = req.reply.send(reply);
+                return;
+            }
+            Err(_) => {
+                self.run_control(ctx, req);
+                return;
+            }
+        };
+        if !computed.is_current(&self.session) {
+            // A person's edit went first: computed again for the design as it is now.
+            if tries < MAX_TRIES
+                && let Some((work, done)) = begin_adopt(self, &req, id, params, level, tries + 1)
+            {
+                req.ticket.computing(false);
+                self.control_job = Some(ControlJob { label, req, work, done, started, steps: None });
+                return;
+            }
+            self.run_control(ctx, req);
+            return;
+        }
+        self.big_operation |= crate::now_ms() - started >= crate::recovery_ui::BIG_OPERATION_MS;
+        let result = self.finish_render_preparation(id, &params, |session| {
+            let replies = session.accept_commands(computed).map_err(|e| e.to_string())?;
+            replies.into_iter().last().map(|(_, reply)| reply).ok_or_else(|| format!("`{id}` gave no reply"))
+        });
+        let mut reply = match result {
+            Ok(result) => json!({"ok": true, "result": result}),
+            Err(error) => json!({"ok": false, "error": error}),
+        };
+        if let Some(level) = level {
+            reply["param_check"] = json!(level.name());
+        }
+        let _ = req.reply.send(reply);
     }
 }
 

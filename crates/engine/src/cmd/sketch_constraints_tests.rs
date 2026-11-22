@@ -302,6 +302,72 @@ fn auto_constrain_fully_constrains_a_rough_sketch() {
     assert!(r["added"].as_array().unwrap().len() >= 3, "{r}");
 }
 
+/// A sketch with more sizes to dimension than AutoConstrain's trial limit (a scan section of
+/// hundreds of curves) is still fully dimensioned: the sizes are judged in one rank walk, which
+/// costs no trials. A 1100-segment zigzag needs 2202 sizes kept, past the 2000 trials; the
+/// limit used to stop it hundreds of degrees of freedom short.
+#[test]
+fn auto_constrain_dimensions_a_sketch_past_the_trial_limit() {
+    let mut s = new_sketch();
+    let points: Vec<[f64; 2]> = (0..=1100).map(|i| [f64::from(i) * 3.0, if i % 2 == 0 { 0.0 } else { 2.0 + 0.001 * f64::from(i) }]).collect();
+    run(&mut s, "sketch.line", json!({"points": points}));
+    let r = run(&mut s, "sketch.auto_constrain", json!({}));
+    assert_eq!(r["dof"], 0, "{}", r["sketch"]);
+    assert_eq!(run(&mut s, "sketch.inspect", json!({}))["fully_constrained"], true);
+}
+
+/// Auto Constrain with `round` says how far it moved the drawing: the point moved farthest and by
+/// how much (an agent saw a floor move 0.1 mm and an arc's centre 0.3 mm with nothing in the
+/// reply). The rectangle's corner at 1.02, 0.98 goes to 1, 1 and its far corner from 40.99, 30.46
+/// to 41, 30.5: the farthest move is the far corners', √(0.01² + 0.04²) ≈ 0.041 mm... with the
+/// sizes 40 and 29.5 the far corner lands at 41, 30.5, 0.0412 from where it was drawn.
+#[test]
+fn auto_constrain_says_how_far_it_moved_the_drawing() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[1.02, 0.98], [40.99, 0.98], [40.99, 30.46], [1.02, 30.46]], "closed": true}));
+    let r = run(&mut s, "sketch.auto_constrain", json!({"round": 0.05}));
+    let moved = r["moved"]["distance"].as_f64().expect("moved");
+    assert!(moved > 0.02 && moved < 0.06, "{r}");
+    assert!(r["moved"]["point"].as_str().is_some(), "{r}");
+    // Drawn on whole values, nothing moves and nothing is said.
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[1.0, 1.0], [41.0, 1.0], [41.0, 30.5], [1.0, 30.5]], "closed": true}));
+    let r = run(&mut s, "sketch.auto_constrain", json!({"round": 0.05}));
+    assert!(r.get("moved").is_none(), "{r}");
+}
+
+/// With `round`, a sketch drawn off a measurement reads as designed: each dimension within the
+/// reach of a whole, half or tenth of a millimetre takes it, the value measured kept in its
+/// parameter's comment; one farther from any is left as measured.
+#[test]
+fn auto_constrain_rounds_measured_dimensions_to_designed_ones() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[1.02, 0.98], [40.99, 0.98], [40.99, 30.46], [1.02, 30.46]], "closed": true}));
+    run(&mut s, "sketch.circle.center", json!({"center": [20.03, 15.0], "radius": 3.137}));
+    let r = run(&mut s, "sketch.auto_constrain", json!({"round": 0.05}));
+    assert_eq!(r["dof"], 0, "{r}");
+    let params: Vec<(f64, String)> = s
+        .doc
+        .params
+        .iter()
+        .filter(|q| q.model)
+        .map(|q| (s.doc.eval(&q.expr, solidcraft_doc::expr::Kind::Length).unwrap(), q.comment.clone()))
+        .collect();
+    let has = |v: f64| params.iter().any(|(x, _)| (x - v).abs() < 1e-9);
+    // The sides 39.97 and 29.48 read 40 and 29.5; the corner's place 1.02, 0.98 reads 1, 1.
+    assert!(has(40.0) && has(29.5) && has(1.0) && has(20.0), "{params:?}");
+    // Ø 6.274 lies 0.026 off 6.3, within the reach: 6.3. Every rounded one says what was measured.
+    assert!(has(6.3), "{params:?}");
+    assert!(params.iter().all(|(x, c)| c.is_empty() || (c.starts_with("measured ") && (x * 10.0 - (x * 10.0).round()).abs() < 1e-9)), "{params:?}");
+    let si = run(&mut s, "sketch.inspect", json!({}));
+    assert_eq!(si["fully_constrained"], true, "{si}");
+    // Without it, as measured.
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[1.02, 0.98], [40.97, 0.98]]}));
+    run(&mut s, "sketch.auto_constrain", json!({}));
+    assert!(s.doc.params.iter().filter(|q| q.model).all(|q| q.comment.is_empty()), "{:?}", s.doc.params);
+}
+
 #[test]
 fn auto_constrain_dimensions_construction_curves_without_moving_them() {
     for command in ["sketch.auto_constrain", "sketch.auto_constrain_from_datum", "sketch.finish_auto_constrain"] {

@@ -185,6 +185,19 @@ impl RadiusSpline {
 /// straight between them or `smooth`. One end's radius may be zero.
 pub fn fillet_variable_points(body: &Body, edge_at: Vec3, start: Vec3, points: &[(f64, f64)], smooth: bool) -> Result<Body> {
     let _span = solidcraft_profile::span("kernel", "fillet_variable_points");
+    fillet_variable_spline(body, edge_at, start, &points_law(points, smooth)?)
+}
+
+/// [`fillet_variable_points`] with curvature-continuous (G2) sections
+/// ([`fillet_variable_spline_g2`]).
+pub fn fillet_variable_points_g2(body: &Body, edge_at: Vec3, start: Vec3, points: &[(f64, f64)], smooth: bool) -> Result<Body> {
+    let _span = solidcraft_profile::span("kernel", "fillet_variable_points_g2");
+    fillet_variable_spline_g2(body, edge_at, start, &points_law(points, smooth)?)
+}
+
+/// The radius law through (position, radius) `points`, checked: 2 to 100 of them, positions 0 to
+/// 1 with both ends given.
+fn points_law(points: &[(f64, f64)], smooth: bool) -> Result<RadiusSpline> {
     if points.len() < 2 || points.len() > 100 {
         return Err(KernelError::Invalid("a variable radius needs 2…100 points".into()));
     }
@@ -197,7 +210,7 @@ pub fn fillet_variable_points(body: &Body, edge_at: Vec3, start: Vec3, points: &
     if pts.first().map(|p| p.0) != Some(0.0) || pts.last().map(|p| p.0) != Some(1.0) || pts.len() < 2 {
         return Err(KernelError::Invalid("give the radius at both ends of the edge".into()));
     }
-    fillet_variable_spline(body, edge_at, start, &RadiusSpline::through(&pts, smooth))
+    Ok(RadiusSpline::through(&pts, smooth))
 }
 
 /// Fillet one edge with the radius `spline` along it, its positions from the end nearest
@@ -211,6 +224,19 @@ pub fn fillet_variable_spline(body: &Body, edge_at: Vec3, start: Vec3, spline: &
         return Err(KernelError::Invalid("the edge pick and the start point must be finite".into()));
     }
     crate::blend_smlib::fillet_variable(body, edge_at, start, spline)
+}
+
+/// [`fillet_variable_spline`] with curvature-continuous (G2) sections: the blend curve a
+/// curvature fillet has (zero curvature at its contacts on planar faces), its size following
+/// the spline; refused, never given circular sections, where the kernel cannot build it.
+pub fn fillet_variable_spline_g2(body: &Body, edge_at: Vec3, start: Vec3, spline: &RadiusSpline) -> Result<Body> {
+    let _span = solidcraft_profile::span("kernel", "fillet_variable_spline_g2");
+    body.require_brep("fillet")?;
+    spline.check()?;
+    if !(edge_at.is_finite() && start.is_finite()) {
+        return Err(KernelError::Invalid("the edge pick and the start point must be finite".into()));
+    }
+    crate::blend_smlib::fillet_variable_g2(body, edge_at, start, spline)
 }
 
 /// A straight edge between two planar faces as the variable blend sees it: the body's record,
@@ -877,6 +903,40 @@ mod tests {
         // circles, which never fold, built it to 726.53 removed against the union's 332.2).
         let big = RadiusSpline { radii: vec![2.0, 2.0, 40.0, 3.0, 2.0], ..law };
         assert!(matches!(fillet_variable_spline(&b, at, start, &big), Err(KernelError::TooLarge(_))));
+    }
+
+    /// A curvature-continuous round whose size runs straight from 2 to 3 along the 40 mm top edge
+    /// of a box. Each section square to the edge is the equal-area G2 section of the ball there,
+    /// which takes off what the ball's circle does, (1 − π/4) r², so the round removes
+    /// (1 − π/4) · 40 · (2² + 2·3 + 3²) / 3 = 54.3658 mm³. It meets both faces with no jump in
+    /// curvature, where the circular round of the same law jumps by 1 / r (1/3 to 1/2 per mm).
+    #[test]
+    fn a_g2_round_whose_size_varies_takes_off_the_circles_area_and_meets_its_faces_g2() {
+        let b = box_solid(Vec3::ZERO, Vec3::new(40.0, 20.0, 10.0)).unwrap();
+        let (at, start) = (Vec3::new(20.0, 0.0, 10.0), Vec3::new(0.0, 0.0, 10.0));
+        let law = RadiusSpline::through(&[(0.0, 2.0), (1.0, 3.0)], false);
+        let g = fillet_variable_spline_g2(&b, at, start, &law).unwrap();
+        let removed = (1.0 - std::f64::consts::FRAC_PI_4) * 40.0 * 19.0 / 3.0;
+        let v = measure(&g).unwrap().volume;
+        assert!(((8000.0 - v) - removed).abs() < 1e-3, "{} removed vs {removed}", 8000.0 - v);
+        // The seams where the round meets the top and the side, tangent (the arcs at its ends meet
+        // the end faces square).
+        let tangent = |body: &Body| {
+            let r = crate::seam_diagnostics(body, &[], 33, crate::ContinuityTolerances::default()).unwrap();
+            r.seams.into_iter().filter(|s| s.normal_angle_deg.value < 0.01).collect::<Vec<_>>()
+        };
+        let seams = tangent(&g);
+        assert_eq!(seams.len(), 2);
+        for s in &seams {
+            assert!(s.curvature_jump_per_mm.value < 1e-3, "jump {}", s.curvature_jump_per_mm.value);
+        }
+        let round = fillet_variable_spline(&b, at, start, &law).unwrap();
+        for s in tangent(&round) {
+            assert!(s.curvature_jump_per_mm.value > 0.3, "jump {}", s.curvature_jump_per_mm.value);
+        }
+        // Run backwards from the other end the law is the same round.
+        let back = fillet_variable_spline_g2(&b, at, Vec3::new(40.0, 0.0, 10.0), &law.reversed()).unwrap();
+        assert!((measure(&back).unwrap().volume - v).abs() < 1e-6 * 8000.0);
     }
 
     #[test]

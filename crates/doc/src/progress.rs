@@ -102,6 +102,21 @@ impl Progress {
     pub fn item(&self) -> Option<(String, usize, usize)> {
         self.item.lock().ok().and_then(|i| i.clone())
     }
+    /// How far the work is, in a few words for someone waiting on it ("finding shapes 43 %",
+    /// "Extrude", "building the model, feature 12 of 40"); `None` before it reports anything.
+    pub fn summary(&self) -> Option<String> {
+        let mut text = match (self.work(), self.features()) {
+            // A step of one unit not started is a name: the command it is on.
+            (Some((stage, 0, 1)), _) => stage.to_string(),
+            (Some((stage, done, total)), _) => format!("{stage} {} %", done.saturating_mul(100) / total.max(1)),
+            (None, (done, total)) if total > 0 => format!("building the model, feature {} of {total}", done.min(total)),
+            (None, _) => return None,
+        };
+        if let Some((name, index, count)) = self.item() {
+            text.push_str(&format!(" ({name}, {} of {count})", (index + 1).min(count)));
+        }
+        Some(text)
+    }
 }
 
 /// Tell a watcher which item a command is on (`name`, `index` from 0 of `count`), such as the
@@ -268,6 +283,27 @@ impl Drop for Evaluation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What a waiting client is told: nothing before anything reports, a command's name, a step's
+    /// share, the timeline's count, with the item worked on after it.
+    #[test]
+    fn a_summary_says_how_far_the_work_is_in_a_few_words() {
+        let p = Arc::new(Progress::default());
+        assert_eq!(p.summary(), None);
+        let kernel = KernelWatch(p.clone());
+        solidcraft_kernel::watch::Watch::progress(&kernel, "Find All", 0, 1);
+        assert_eq!(p.summary().as_deref(), Some("Find All"));
+        solidcraft_kernel::watch::Watch::progress(&kernel, "finding shapes", 433, 1000);
+        assert_eq!(p.summary().as_deref(), Some("finding shapes 43 %"));
+        watch(p.clone(), || item(Some(("Bracket", 1, 3))));
+        assert_eq!(p.summary().as_deref(), Some("finding shapes 43 % (Bracket, 2 of 3)"));
+        let q = Arc::new(Progress::default());
+        watch(q.clone(), || {
+            let e = begin(40);
+            let _ = e.step(12);
+            assert_eq!(q.summary().as_deref(), Some("building the model, feature 12 of 40"));
+        });
+    }
 
     #[test]
     fn unwatched_evaluations_never_stop_and_watched_ones_report_and_stop() {

@@ -219,94 +219,13 @@ pub(super) fn definition_plan(
 
 pub(super) fn reference_mesh(body: &Body, mesh: &OnceLock<Arc<Mesh>>, tolerance: f64) -> Arc<Mesh> {
     mesh.get_or_init(|| {
-        let mut mesh = body.mesh(&solidcraft_kernel::MeshTolerance { chord: tolerance, angle: Some(kernel::DISPLAY_ANGLE) }).unwrap_or_default();
-        if let Some((positions, triangles)) = body.triangle_mesh() {
-            mesh.edges = mesh_outlines(positions, triangles);
-            mesh.display_only_edges = true;
+        // A mesh body's own triangles and outlines, shared with the kernel: a scan is not copied.
+        if let Some(own) = body.display_mesh() {
+            return own;
         }
-        Arc::new(mesh)
+        Arc::new(body.mesh(&solidcraft_kernel::MeshTolerance { chord: tolerance, angle: Some(kernel::DISPLAY_ANGLE) }).unwrap_or_default())
     })
     .clone()
-}
-
-/// Display lines for an imported triangle mesh: open boundaries, non-manifold sides and
-/// creases of at least 30 degrees. The shared vertex indices come from the existing mesh body;
-/// the geometry, winding and triangle topology are left to the importer.
-fn mesh_outlines(positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Vec<Vec3>> {
-    let normal = |index: usize| {
-        let t = triangles.get(index)?;
-        let (a, b, c) = (positions.get(t[0] as usize)?, positions.get(t[1] as usize)?, positions.get(t[2] as usize)?);
-        (*b - *a).cross(*c - *a).normalized()
-    };
-    // One compact record per side, sorted for deterministic output, instead of a map of
-    // separately allocated adjacency lists. Mesh imports already cap the triangle count.
-    let mut sides = Vec::with_capacity(triangles.len().saturating_mul(3));
-    for (i, t) in triangles.iter().enumerate() {
-        let Ok(triangle) = u32::try_from(i) else { continue };
-        if normal(i).is_some() {
-            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
-                sides.push((a.min(b), a.max(b), triangle));
-            }
-        }
-    }
-    sides.sort_unstable();
-    let cos = 30f64.to_radians().cos();
-    let mut edges = Vec::new();
-    for side in sides.chunk_by(|a, b| (a.0, a.1) == (b.0, b.1)) {
-        let Some(&(a, b, _)) = side.first() else { continue };
-        let visible = match side {
-            [(_, _, i), (_, _, j)] => normal(*i as usize).zip(normal(*j as usize)).is_some_and(|(n, m)| n.dot(m) <= cos),
-            _ => true,
-        };
-        if visible && positions.get(a as usize).is_some() && positions.get(b as usize).is_some() {
-            edges.push((a, b));
-        }
-    }
-    straight_runs(positions, &edges)
-}
-
-/// The outline sides `sides` (vertex index pairs) as polylines: sides that run on straight
-/// through a vertex no other outline side meets are one line. A mesh whose straight edges are
-/// in pieces (a box exported at a grid's spacing) then has one outline per edge, as its CAD
-/// model did, and a click on it measures the whole edge.
-fn straight_runs(positions: &[Vec3], sides: &[(u32, u32)]) -> Vec<Vec<Vec3>> {
-    let mut at: std::collections::BTreeMap<u32, Vec<usize>> = std::collections::BTreeMap::new();
-    for (i, &(a, b)) in sides.iter().enumerate() {
-        at.entry(a).or_default().push(i);
-        at.entry(b).or_default().push(i);
-    }
-    let point = |v: u32| positions.get(v as usize).copied().unwrap_or(Vec3::ZERO);
-    let other = |i: usize, v: u32| sides.get(i).map_or(v, |&(a, b)| if a == v { b } else { a });
-    // The side that continues `i` straight on through `v`, when `v` joins exactly two.
-    let next = |i: usize, v: u32| -> Option<usize> {
-        let [p, q] = at.get(&v)?.as_slice() else { return None };
-        let j = if *p == i { *q } else { *p };
-        let (into, out) = ((point(v) - point(other(i, v))).normalized()?, (point(other(j, v)) - point(v)).normalized()?);
-        (into.dot(out) > 1.0 - 1e-9).then_some(j)
-    };
-    let mut used = vec![false; sides.len()];
-    // Marks side `i` used; false when it already was.
-    let mut take = |i: usize| used.get_mut(i).is_some_and(|u| !std::mem::replace(u, true));
-    let mut runs = Vec::new();
-    for (i, &(a, b)) in sides.iter().enumerate() {
-        if !take(i) {
-            continue;
-        }
-        let mut run = std::collections::VecDeque::from([a, b]);
-        for (mut side, mut end, front) in [(i, b, false), (i, a, true)] {
-            while let Some(j) = next(side, end).filter(|j| take(*j)) {
-                end = other(j, end);
-                side = j;
-                if front {
-                    run.push_front(end);
-                } else {
-                    run.push_back(end);
-                }
-            }
-        }
-        runs.push(run.into_iter().map(point).collect());
-    }
-    runs
 }
 
 /// Only proper rotations and translations preserve triangle winding, normal lengths and the
@@ -328,52 +247,6 @@ mod tests {
 
     use super::*;
     use solidcraft_geom::tess::EvaluateMesh as _;
-
-    #[test]
-    fn mesh_outlines_keep_boundaries_and_creases_without_smooth_facet_lines() {
-        // Flat (0 degrees), the sides from Y through the origin to -Y run straight on: one line.
-        for (degrees, expected) in [(0.0f64, 3), (15.0, 4), (30.0, 5), (45.0, 5), (90.0, 5)] {
-            let angle = degrees.to_radians();
-            let p = [Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::new(0., -angle.cos(), angle.sin())];
-            let triangles = [[0, 1, 2], [1, 0, 3]];
-            let edges = mesh_outlines(&p, &triangles);
-            assert_eq!(edges.len(), expected, "hinge angle {degrees}");
-            assert_eq!(edges.iter().any(|e| e == &[Vec3::ZERO, Vec3::X]), degrees >= 30.);
-            assert_eq!(edges, mesh_outlines(&p, &triangles), "deterministic order");
-        }
-        // A third triangle makes the common side non-manifold: keep it once, even if coplanar.
-        let p = [Vec3::ZERO, Vec3::X, Vec3::Y, -Vec3::Y, Vec3::Y * 2.];
-        let edges = mesh_outlines(&p, &[[0, 1, 2], [1, 0, 3], [0, 1, 4]]);
-        assert_eq!(edges.len(), 7);
-        assert_eq!(edges.iter().filter(|e| **e == [Vec3::ZERO, Vec3::X]).count(), 1);
-        // The rings of an open faceted cylinder stay visible, but its smooth wall has no
-        // diagonals or longitudinal facet lines.
-        let n = 36u32;
-        let mut p = Vec::new();
-        for z in [0., 10.] {
-            p.extend((0..n).map(|i| {
-                let a = f64::from(i) * std::f64::consts::TAU / f64::from(n);
-                Vec3::new(a.cos(), a.sin(), z)
-            }));
-        }
-        let triangles: Vec<_> = (0..n)
-            .flat_map(|i| {
-                let j = (i + 1) % n;
-                [[i, j, j + n], [i, j + n, i + n]]
-            })
-            .collect();
-        let edges = mesh_outlines(&p, &triangles);
-        assert_eq!(edges.len(), 2 * n as usize);
-        assert!(edges.iter().all(|e| e[0].z == e[1].z));
-        // A straight edge in pieces (a node at its middle, where the facets of the face meet)
-        // is one outline; its corners stay corners.
-        let p = [Vec3::ZERO, Vec3::X * 2., Vec3::new(2., 1., 0.), Vec3::Y, Vec3::X];
-        let edges = mesh_outlines(&p, &[[0, 4, 3], [4, 1, 2], [4, 2, 3]]);
-        assert_eq!(edges.len(), 4, "{edges:?}");
-        assert!(edges.iter().any(|e| e == &[Vec3::ZERO, Vec3::X, Vec3::X * 2.] || e == &[Vec3::X * 2., Vec3::X, Vec3::ZERO]), "{edges:?}");
-        // Bad indices and zero-area facets do not invent outlines or panic.
-        assert!(mesh_outlines(&[Vec3::ZERO, Vec3::X, Vec3::X * 2.], &[[0, 1, 99], [0, 1, 2]]).is_empty());
-    }
 
     #[test]
     fn placed_mesh_is_lazy_and_composes_from_one_immutable_source() {

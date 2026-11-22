@@ -1,0 +1,34 @@
+{
+  "en": {
+    "prefs.edit_surface_drags_onto_scan": "Edit Surface drags points onto the scan",
+    "prefs.edit_surface_drags_onto_scan_note": "Edit Surface: a dragged point goes onto the scan under the pointer and the points round it stay put, as before. Off (the default): a dragged point lifts off the scan, moved in the plane of the screen, and the points round it follow smoothly."
+  },
+  "de": {
+    "prefs.edit_surface_drags_onto_scan": "Fläche bearbeiten zieht Punkte auf den Scan",
+    "prefs.edit_surface_drags_onto_scan_note": "Fläche bearbeiten: Ein gezogener Punkt geht auf den Scan unter dem Zeiger, und die Punkte um ihn bleiben, wie zuvor. Aus (Standard): Ein gezogener Punkt hebt sich vom Scan ab, in der Bildschirmebene bewegt, und die Punkte um ihn folgen weich."
+  },
+  "ja": {
+    "prefs.edit_surface_drags_onto_scan": "サーフェスを編集で点をスキャン上へドラッグ",
+    "prefs.edit_surface_drags_onto_scan_note": "サーフェスを編集: ドラッグした点はポインターの下のスキャン上に移り、周りの点は以前のようにそのままです。オフ（既定）: ドラッグした点は画面の平面内で動いてスキャンから浮き、周りの点が滑らかに追従します。"
+  },
+  "ko": {
+    "prefs.edit_surface_drags_onto_scan": "표면 편집에서 점을 스캔 위로 끌기",
+    "prefs.edit_surface_drags_onto_scan_note": "표면 편집: 끈 점은 포인터 아래의 스캔 위로 가고 주변 점은 이전처럼 그대로 있습니다. 끔(기본값): 끈 점은 화면 평면에서 움직여 스캔에서 떠오르고 주변 점이 부드럽게 따라옵니다."
+  },
+  "zh": {
+    "prefs.edit_surface_drags_onto_scan": "编辑曲面将点拖到扫描上",
+    "prefs.edit_surface_drags_onto_scan_note": "编辑曲面：拖动的点落到指针下方的扫描上，周围的点像以前一样保持不动。关闭（默认）：拖动的点在屏幕平面内移动，离开扫描，周围的点平滑跟随。"
+  },
+  "ar": {
+    "prefs.edit_surface_drags_onto_scan": "تحرير السطح يسحب النقاط إلى المسح",
+    "prefs.edit_surface_drags_onto_scan_note": "تحرير السطح: تذهب النقطة المسحوبة إلى المسح تحت المؤشر وتبقى النقاط حولها مكانها، كما كان من قبل. إيقاف (الافتراضي): ترتفع النقطة المسحوبة عن المسح متحركة في مستوى الشاشة، وتتبعها النقاط حولها بسلاسة."
+  },
+  "he": {
+    "prefs.edit_surface_drags_onto_scan": "עריכת משטח גוררת נקודות אל הסריקה",
+    "prefs.edit_surface_drags_onto_scan_note": "עריכת משטח: נקודה נגררת עוברת אל הסריקה שמתחת לסמן והנקודות סביבה נשארות במקומן, כמו קודם. כבוי (ברירת מחדל): נקודה נגררת מתרוממת מהסריקה, נעה במישור המסך, והנקודות סביבה עוקבות בצורה חלקה."
+  },
+  "vi": {
+    "prefs.edit_surface_drags_onto_scan": "Sửa bề mặt kéo điểm lên bản quét",
+    "prefs.edit_surface_drags_onto_scan_note": "Sửa bề mặt: điểm được kéo đi lên bản quét dưới con trỏ và các điểm quanh nó giữ nguyên, như trước. Tắt (mặc định): điểm được kéo nhấc khỏi bản quét, di chuyển trong mặt phẳng màn hình, và các điểm quanh nó đi theo mượt mà."
+  }
+}

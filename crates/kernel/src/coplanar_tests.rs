@@ -133,3 +133,55 @@ fn a_cylinder_whose_rim_is_a_great_circle_through_a_sphere_s_poles_joins_it() {
         assert!(joined.validity().is_empty(), "axis {axis:?}: {:?}", joined.validity());
     }
 }
+
+/// A block (x -30 to 0, z 0 to 40) joined to a 60 x 40 x 17 plate whose end x = -30, bottom and long sides it shares, each
+/// within 4e-4 and turned up to 2e-5 rad off the plate's: the stacked prisms Reconstruct reads off a scan, each fitted on
+/// its own (the scan benchmark's block, holes plate and T-LESS parts are refused this way). The union is one solid of what
+/// the two define. Today the merge refuses it (`SmMerge::MakeFaceuse`: no radial edge use classifies the face's edge use):
+/// the block's faces outside the plate are slivers 1e-5 to 5e-4 wide, and the radial sector tests at their edges step off
+/// across them and read both sectors as outside. Listed in tests/KNOWN_FAILING_TESTS.
+#[test]
+fn a_block_flush_within_a_hair_with_a_plate_joins_into_one_solid() {
+    let plate = box_solid(Vec3::new(-30.0, -20.0, 0.0), Vec3::new(30.0, 20.0, 17.0)).unwrap();
+    let (dx0, dy0, dy1, dz0) = (-3.9886887462901903e-4, 2.240459175902066e-4, -6.95679495258017e-5, -5.212622049001841e-5);
+    let mut block = box_solid(Vec3::new(-30.0 + dx0, -20.0 + dy0, dz0), Vec3::new(0.0, 20.0 + dy1, 40.0)).unwrap();
+    for (axis, angle, x) in [
+        (Vec3::new(1.0, 0.0, 0.0), 1.2443302783135992e-5, -9.67994420799224),
+        (Vec3::new(0.0, 1.0, 0.0), 8.790103348743341e-6, 8.880802584155653),
+        (Vec3::new(0.0, 0.0, 1.0), -1.5545852194595098e-5, -3.297317136978714),
+    ] {
+        block = transform(&block, Vec3::ZERO, Vec3::new(x, 0.0, 10.0), axis, angle).unwrap();
+    }
+    let joined = boolean(&plate, &block, BoolOp::Union).unwrap().unwrap();
+    // The plate and the block above it, within the hairs the block's faces stand off the plate's.
+    let v = measure(&joined).unwrap().volume;
+    assert!((v - (60.0 * 40.0 * 17.0 + 30.0 * 40.0 * 23.0)).abs() < 0.5, "{v}");
+    assert_eq!(joined.lumps().unwrap().len(), 1);
+    assert!(joined.validity().is_empty(), "{:?}", joined.validity());
+}
+
+/// A boolean result whose volume no boolean of its operands can have (a cut removing more than
+/// its tool holds, a union smaller than an operand, an intersection larger than one) is refused,
+/// not kept: SMLib's check passes a solid whose faces were kept on the wrong side (the union of
+/// the finding on flush-within-a-hair faces, which came back without the plate). A right result,
+/// and a sheet, pass.
+#[test]
+fn a_boolean_result_of_a_volume_no_boolean_can_have_is_refused() {
+    let plate = box_solid(Vec3::ZERO, Vec3::new(40.0, 30.0, 12.0)).unwrap();
+    let tool = box_solid(Vec3::new(18.0, 13.0, -1.0), Vec3::new(22.0, 17.0, 13.0)).unwrap();
+    let crumb = box_solid(Vec3::new(1.0, 1.0, 1.0), Vec3::new(2.0, 2.0, 2.0)).unwrap();
+    let cut = boolean(&plate, &tool, BoolOp::Cut).unwrap().unwrap();
+    assert!((measure(&cut).unwrap().volume - (14400.0 - 192.0)).abs() < 1e-6);
+    let possible = |op, r: Option<&Body>| crate::ops::volumes_possible(&plate, &tool, op, r);
+    possible(BoolOp::Cut, Some(&cut)).unwrap();
+    // Removing 14399 mm³ with a 224 mm³ tool; everything with it; a union or an intersection
+    // that is a crumb of the plate.
+    for (op, r) in [(BoolOp::Cut, Some(&crumb)), (BoolOp::Cut, None), (BoolOp::Union, Some(&crumb)), (BoolOp::Intersect, Some(&plate))] {
+        let e = possible(op, r).unwrap_err().to_string();
+        assert!(e.contains("no") && e.contains("refused"), "{op:?}: {e}");
+    }
+    // An intersection may be empty; a union the two together.
+    possible(BoolOp::Intersect, None).unwrap();
+    let both = boolean(&plate, &tool, BoolOp::Union).unwrap().unwrap();
+    possible(BoolOp::Union, Some(&both)).unwrap();
+}

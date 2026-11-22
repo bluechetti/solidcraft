@@ -69,6 +69,13 @@ impl Brep {
         core::mass_properties(self.core(), relative_accuracy)
     }
 
+    /// [`Brep::mass_properties`] and [`Brep::bounds`] together, the box computed once: the
+    /// integration is centred on that same exact box. The box is `None` where [`Brep::bounds`]
+    /// would refuse it (it then refuses as before). On curved faces the box is most of the cost.
+    pub fn mass_properties_and_bounds(&self, relative_accuracy: f64) -> Result<(MassProperties, Option<([f64; 3], [f64; 3])>)> {
+        core::mass_properties_and_bounds(self.core(), relative_accuracy)
+    }
+
     /// The exact axis-aligned box, least corner then greatest: the extrema of every vertex, edge
     /// and face on its exact curve or surface, not grown by tolerances or control hulls.
     pub fn bounds(&self) -> Result<([f64; 3], [f64; 3])> {

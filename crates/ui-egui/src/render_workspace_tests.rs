@@ -2231,7 +2231,7 @@ fn preview_upload_bytes_include_instanced_geometry() {
     let mut instanced = 0usize;
     for m in &gpu.instanced {
         if shared.insert(Arc::as_ptr(&m.tris) as usize) {
-            instanced = instanced.saturating_add(m.tris.vertices.len() + m.tris.indices.len() * 4);
+            instanced = instanced.saturating_add(m.tris.vertex_byte_len() + m.tris.indices().len() * 4);
         }
         instanced = instanced.saturating_add(m.instances.len());
     }

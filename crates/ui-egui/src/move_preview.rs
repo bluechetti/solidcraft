@@ -115,12 +115,13 @@ fn drawable(motion: &Mat) -> bool {
 }
 
 /// The points `draw` draws `mesh` with, to `each`: every vertex of a triangle that has a
-/// normal, once.
+/// normal (all of a flat mesh's, a scan's: lit by its triangles), once.
 fn drawn_points(mesh: &Mesh, mut each: impl FnMut(Vec3)) {
     let mut seen = vec![false; mesh.positions.len()];
+    let flat = mesh.is_flat();
     for k in mesh.triangles.iter().flatten() {
         let i = *k as usize;
-        if let (Some(p), Some(_), Some(seen)) = (mesh.positions.get(i), mesh.normals.get(i), seen.get_mut(i))
+        if let (Some(p), true, Some(seen)) = (mesh.positions.get(i), flat || mesh.normals.get(i).is_some(), seen.get_mut(i))
             && !std::mem::replace(seen, true)
         {
             each(*p);
@@ -375,12 +376,8 @@ impl MovePreview {
 /// Where a body was, as the scratch-design preview shows a body moved away: `mesh` where it
 /// stands, as removed material in the colour `removed`.
 fn ghost(scene: &mut GpuScene, mesh: &Mesh, removed: crate::gpu::PaletteIndex) {
-    for t in &mesh.triangles {
-        for k in t {
-            if let (Some(p), Some(n)) = (mesh.positions.get(*k as usize), mesh.normals.get(*k as usize)) {
-                scene.ghost_tri(p.to_f32(), n.to_f32(), removed);
-            }
-        }
+    for (p, n) in mesh.lit_corners().flatten() {
+        scene.ghost_tri(p.to_f32(), n.to_f32(), removed);
     }
 }
 
@@ -396,13 +393,12 @@ fn draw(scene: &mut GpuScene, mesh: &Mesh, look: &Look, m: &Mat, colors: Colors,
     let faces: Vec<_> = look.1.iter().map(|c| scene.color(*c)).collect();
     for (ti, t) in mesh.triangles.iter().enumerate() {
         let colour = mesh.tri_face.get(ti).and_then(|f| faces.get(*f as usize)).copied().unwrap_or(body);
-        for k in t {
-            let i = *k as usize;
-            if let (Some(p), Some(n)) = (mesh.positions.get(i), mesh.normals.get(i)) {
-                let p = apply_point(m, *p);
-                bounds.add(p);
-                scene.tri(p.to_f32(), apply_vector(m, *n).to_f32(), colour);
-            }
+        // A flat mesh (a scan's) has no normals: each triangle is lit with its own.
+        let (Some(corners), Some(normals)) = (mesh.tri(t), mesh.corner_normals(t)) else { continue };
+        for (p, n) in corners.into_iter().zip(normals) {
+            let p = apply_point(m, p);
+            bounds.add(p);
+            scene.tri(p.to_f32(), apply_vector(m, n).to_f32(), colour);
         }
     }
     let edge = scene.color(colors.edge);

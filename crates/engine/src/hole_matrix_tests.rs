@@ -1182,6 +1182,94 @@ fn a_counterbore_on_a_round_bar_drills_its_whole_rim() {
     assert!(solid_at(&s, Vec3::new(99.95, 2.7, 20.0)), "the bar beside the counterbore is cut");
 }
 
+/// A hole drilled on an axis a hair off the plate's normal (as Hole It reads one off a scan:
+/// the axis turned up to 1e-5 rad, the mouth a little off the face, the depth a little off the
+/// plate's): it removes what the same hole square to the face removes, or it is refused and the
+/// plate is left whole. Never a wrong solid: a counterbore drilled ~1e-6 rad off Z was once
+/// reported to remove 8451 mm³ instead of about 805; a boolean result of a volume no boolean of
+/// its operands can have is now refused in the kernel.
+#[test]
+fn a_hole_on_an_axis_a_hair_off_the_normal_cuts_right_or_is_refused() {
+    let plate = rect_extrude(json!("XY"), [0.0, 0.0], [40.0, 30.0], json!({"distance": 12}), "B");
+    let drill = |tilt: f64, dz: f64, depth: f64, kind: &Value| -> (f64, f64, bool) {
+        let mut s = Session::default();
+        for (c, p) in &plate {
+            run(&mut s, c, p.clone()).unwrap();
+        }
+        let (v0, _) = measure(&mut s).unwrap();
+        let mut p = kind.clone();
+        p["position"] = json!([20, 15, 12.0 + dz]);
+        p["direction"] = json!([0.6 * tilt.sin(), 0.8 * tilt.sin(), -tilt.cos()]);
+        if depth > 0.0 {
+            p["depth"] = json!(format!("{} mm", depth + dz));
+        }
+        let made = run(&mut s, "solid.hole", p).is_ok();
+        let (v1, _) = measure(&mut s).unwrap();
+        (v0, v0 - v1, made)
+    };
+    let kinds = [
+        json!({"diameter": "6.6 mm"}),
+        json!({"diameter": "6.6 mm", "type": "counterbore", "cb_diameter": "11 mm", "cb_depth": "6.8 mm"}),
+        json!({"diameter": "6.6 mm", "type": "countersink", "cs_diameter": "12 mm", "cs_angle": "90 deg"}),
+        json!({"diameter": "6.6 mm", "type": "counterbore", "cb_diameter": "11 mm", "cb_depth": "6.8 mm", "tip_angle": "180 deg"}),
+    ];
+    for kind in &kinds {
+        for depth in [0.0, 12.0, 11.999] {
+            let (_, square, made) = drill(0.0, 0.0, depth, kind);
+            assert!(made && square > 100.0, "{kind} {depth}: square to the face {square}");
+            for tilt in [1e-9, 1e-7, 1e-6, 3e-6, 1e-5] {
+                for dz in [0.0, -1e-5, 1e-4] {
+                    let (_, removed, made) = drill(tilt, dz, depth, kind);
+                    if made {
+                        assert!(
+                            (removed - square).abs() < 0.005 * square,
+                            "{kind} depth {depth} tilt {tilt} dz {dz}: removed {removed}, not {square}"
+                        );
+                    } else {
+                        assert!(removed.abs() < 1e-6, "{kind} depth {depth} tilt {tilt} dz {dz}: refused but removed {removed}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A hole aimed a hair off square into its face (as a direction read off a scan or a computed
+/// normal is) is drilled square: a countersink a millionth of a radian off was refused by the
+/// boolean (its rim a few millionths of a millimetre off the face), and a counterbore takes what
+/// it takes square on. A hole tilted on purpose stays tilted.
+#[test]
+fn a_hole_a_hair_off_square_is_drilled_square() {
+    let drill = |kind: &str, dir: [f64; 3]| -> f64 {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 12, "corner": [0, 0, 0], "name": "Plate"})).unwrap();
+        let (before, _) = measure(&mut s).unwrap();
+        let mut p = json!({"position": [20, 20, 12], "direction": dir, "diameter": 6.4, "type": kind, "name": "H"});
+        if kind == "counterbore" {
+            p["cb_diameter"] = json!(11);
+            p["cb_depth"] = json!(6.5);
+        } else {
+            p["cs_diameter"] = json!(12);
+            p["cs_angle"] = json!(90);
+        }
+        run(&mut s, "solid.hole", p).unwrap();
+        let (after, _) = measure(&mut s).unwrap();
+        before - after
+    };
+    for kind in ["counterbore", "countersink"] {
+        let square = drill(kind, [0.0, 0.0, -1.0]);
+        for tilt in [1e-7, 1e-6, 1e-5] {
+            let taken = drill(kind, [tilt, 0.0, -1.0]);
+            assert!((taken - square).abs() < 1e-6, "{kind} {tilt:e} off: {taken} taken, {square} square");
+        }
+    }
+    // 0.01 rad on purpose: the hole leans, so its exit leaves the bore's square footprint.
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 12, "corner": [0, 0, 0]})).unwrap();
+    run(&mut s, "solid.hole", json!({"position": [20, 20, 12], "direction": [0.01, 0, -1], "diameter": 6.4})).unwrap();
+    assert!(!solid_at(&s, Vec3::new(20.0 + 3.2 + 0.05, 20.0, 0.2)), "the leaning bore comes out 0.12 mm over");
+}
+
 /// A Ø0.29 × 1 blind hole drilled down beside the edge of a 2 mm extrusion of a spline outline,
 /// its side 0.00004 mm to 0 inside the outline's point at X = 2. 0.43.0 refused the 0.00002 wall
 /// with "it would remove all of `Base`" and the 0.00001 wall with SMLib's check (#18293). Each

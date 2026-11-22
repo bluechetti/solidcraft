@@ -315,6 +315,38 @@ pub fn folded_pcurve(
         .map(solidcore_convert::record_curve2)
 }
 
+/// Which way the closed loop of pcurves `uses` (each `(pcurve, forwards)`, with the straight
+/// segments joining each one's end to the next one's start) turns in (u, v), certified
+/// ([`solidcore::mass::loop_area::lifted_pcurve_loop_area_sign`]): `Some(true)` counter-clockwise,
+/// `Some(false)` clockwise, `None` where the enclosure of its signed area cannot exclude 0 within
+/// its bounded work (a loop of no area) or a pcurve is malformed. `widths[d]`, where the face's
+/// surface is closed or periodic along `d`, is its parameter range's width: a pcurve that starts
+/// a whole number of widths from where the one before it ends (the loop crosses the seam) is
+/// taken moved by them, except where `surface` collapses within `reach` (a pole). For an
+/// exporter telling a face's outer loop from its inner ones: a sampled
+/// polygon turns a thin loop over.
+#[must_use]
+pub fn loop_turn(
+    uses: &[(&Curve2, bool)],
+    surface: &Surface,
+    widths: [Option<f64>; 2],
+    reach: f64,
+) -> Option<bool> {
+    use solidcore::mass::loop_area::LoopAreaSign;
+    let converted: Vec<(solidcore::eval::Curve2, bool)> = uses
+        .iter()
+        .map(|&(c, forward)| (solidcore_convert::curve2(c), forward))
+        .collect();
+    let refs: Vec<(&solidcore::eval::Curve2, bool)> =
+        converted.iter().map(|(c, f)| (c, *f)).collect();
+    let surface = solidcore_convert::surface(surface).ok()?;
+    match solidcore::mass::loop_area::lifted_pcurve_loop_area_sign(&refs, &surface, widths, reach) {
+        Ok(LoopAreaSign::Positive(_)) => Some(true),
+        Ok(LoopAreaSign::Negative(_)) => Some(false),
+        Ok(LoopAreaSign::Undecided(_)) | Err(_) => None,
+    }
+}
+
 /// The point of pcurve `c` at `t` (`None` outside its interval or for a malformed record)
 /// ([`solidcore::eval::pcurve::eval`]).
 #[must_use]

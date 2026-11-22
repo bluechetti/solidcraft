@@ -182,3 +182,94 @@ fn dense_reference(j: &Mat, owner: &[usize], block_count: usize, support: Option
     }
     (dependent, by)
 }
+
+/// `adds_rank` keeps what adding the constraints one at a time and solving after each keeps
+/// (AutoConstrain's dimensions, measured where the sketch is): a slot of two lines and two
+/// tangent arcs, dimensioned by every size and every point's distances from the origin, many of
+/// them implied by the ones before.
+#[test]
+fn adds_rank_keeps_what_one_solve_per_constraint_keeps() {
+    use crate::model::ConstraintKind::{DistanceX, DistanceY, Length, Radius, Tangent};
+    use crate::model::CurveKind;
+    use crate::solver::{Analysis, solve_with};
+    use solidcore_record::Vec2;
+    use solidcraft_geom::prelude::*;
+    let v = Vec2::new;
+    let mut sk = Sketch::new();
+    let p: Vec<usize> = [v(10.0, 5.0), v(50.0, 5.0), v(50.0, 25.0), v(10.0, 25.0)].into_iter().map(|q| sk.add_point(q, None).unwrap()).collect();
+    let bottom = sk.add_line_pts(p[0], p[1], None).unwrap();
+    let right = sk.add_arc(v(50.0, 15.0), v(50.0, 5.0), v(50.0, 25.0), [None, Some(p[1]), Some(p[2])], None).unwrap();
+    let top = sk.add_line_pts(p[2], p[3], None).unwrap();
+    let left = sk.add_arc(v(10.0, 15.0), v(10.0, 25.0), v(10.0, 5.0), [None, Some(p[3]), Some(p[0])], None).unwrap();
+    for (a, b) in [(bottom, right), (right, top), (top, left), (left, bottom)] {
+        sk.add_constraint(Tangent { a, b }, None).unwrap();
+    }
+    let solved = solve_with(&mut sk, &Hold::default(), None, Analysis::Freedom, None);
+    assert!(solved.ok() && solved.dof > 0, "{solved:?}");
+    let mut sizes = Vec::new();
+    for (i, c) in sk.curves.iter().enumerate() {
+        sizes.push(match c.kind {
+            CurveKind::Line { a, b } => Length { l: i, value: sk.point(a).unwrap().dist(sk.point(b).unwrap()) },
+            _ => Radius { c: i, value: sk.radius(i).unwrap() },
+        });
+    }
+    for q in 1..sk.points.len() {
+        let at = sk.point(q).unwrap();
+        sizes.extend([DistanceX { p: 0, q, value: at.x.abs() }, DistanceY { p: 0, q, value: at.y.abs() }]);
+    }
+    // One at a time, as AutoConstrain did.
+    let mut one = sk.clone();
+    let mut dof = solved.dof;
+    let mut kept_one = Vec::new();
+    for (i, k) in sizes.iter().enumerate() {
+        let before = one.clone();
+        one.add_constraint(k.clone(), None).unwrap();
+        let rep = solve_with(&mut one, &Hold::default(), None, Analysis::Freedom, None);
+        if rep.ok() && rep.dof < dof {
+            dof = rep.dof;
+            kept_one.push(i);
+        } else {
+            one = before;
+        }
+    }
+    assert_eq!(dof, 0);
+    // All at once.
+    let mut all = sk.clone();
+    let from = all.constraints.len();
+    for k in &sizes {
+        all.add_constraint(k.clone(), None).unwrap();
+    }
+    let adds = adds_rank(&all, from).unwrap();
+    let kept_all: Vec<usize> = (0..sizes.len()).filter(|i| adds[*i]).collect();
+    assert_eq!(kept_all, kept_one);
+    assert!(kept_all.len() < sizes.len(), "some are implied: {kept_all:?}");
+}
+
+/// `first_order_moves` predicts what a solve does to a well-conditioned sketch: a rectangle held
+/// at the origin by its width and height moves its far corners by exactly the change, and a
+/// dimension that is not in the sketch moves nothing.
+#[test]
+fn first_order_moves_match_the_solve_on_a_rectangle() {
+    use crate::model::ConstraintKind::{Coincident, Horizontal, Length, Vertical};
+    use crate::solver::{Analysis, solve_with};
+    use solidcore_record::Vec2;
+    use solidcraft_geom::prelude::*;
+    let v = Vec2::new;
+    let mut sk = Sketch::new();
+    let p: Vec<usize> = [v(0.0, 0.0), v(40.0, 0.0), v(40.0, 30.0), v(0.0, 30.0)].into_iter().map(|q| sk.add_point(q, None).unwrap()).collect();
+    let l: Vec<usize> = (0..4).map(|i| sk.add_line_pts(p[i], p[(i + 1) % 4], None).unwrap()).collect();
+    for k in [Horizontal { l: l[0] }, Horizontal { l: l[2] }, Vertical { l: l[1] }, Vertical { l: l[3] }, Coincident { p: p[0], q: 0 }] {
+        sk.add_constraint(k, None).unwrap();
+    }
+    sk.add_constraint(Length { l: l[0], value: 40.0 }, None).unwrap();
+    sk.add_constraint(Length { l: l[1], value: 30.0 }, None).unwrap();
+    let width = sk.constraints.len() - 2;
+    assert_eq!(solve_with(&mut sk, &Hold::default(), None, Analysis::Freedom, None).dof, 0);
+    let moves = first_order_moves(&sk, &[(width, 40.05), (width + 1, 29.98), (99, 1.0)]).unwrap();
+    assert!((moves[0] - 0.05).abs() < 1e-6 && (moves[1] - 0.02).abs() < 1e-6 && moves[2] == 0.0, "{moves:?}");
+    let was: Vec<Vec2> = sk.points.iter().map(|q| q.pos).collect();
+    sk.constraints[width].kind.set_value(40.05);
+    assert!(solve_with(&mut sk, &Hold::default(), None, Analysis::StatusOnly, None).ok());
+    let far = sk.points.iter().zip(&was).map(|(q, w)| q.pos.dist(*w)).fold(0.0_f64, f64::max);
+    assert!((far - moves[0]).abs() < 1e-6, "{far} {moves:?}");
+}

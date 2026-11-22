@@ -1,0 +1,20 @@
+{
+  "description": "A scan of an L bracket built back as Reconstruct built it (each plane tilted a few millionths of a radian by the scan): the L extruded, then each plate extruded again with its hole of radius 4 in its profile, joined (the L already holds the plates, so the joins leave slivers under 0.001 mm thick, one with the start of the radius 4 bore), then a hole of radius 3.9991 cut through the upright 0.004 mm off that bore. The cut leaves a crescent of face 0.04 mm2 between the two circles. SolidCraft's export once read its loop's turn from a polygon through 33 points of each edge, got it backwards, and wrote the face facing into the material: the body passed as made and the next boolean on it was refused.",
+  "commands": [
+    {"command": "sketch.create", "params": {"plane": {"origin": [-1.4331797467542762e-17, 20.000153523193305, 0], "x_dir": [0.9999999999943222, 0, 3.3698001310944527e-06], "y_dir": [-3.3698001310944527e-06, 0, 0.9999999999943222]}, "name": "Profile 1"}},
+    {"command": "sketch.line", "params": {"points": [[60, 10], [10, 10], [10, 40], [0, 40], [0, 0], [60, 0], [60, 10]], "infer": false}},
+    {"command": "sketch.finish", "params": {}},
+    {"command": "solid.extrude", "params": {"sketch": "Profile 1", "distance": 40, "direction": "symmetric", "operation": "new_body", "body_name": "Bracket"}},
+    {"command": "sketch.create", "params": {"plane": {"origin": [5.000222676267932, -5.749090439821636e-15, -7.105427357601002e-15], "x_dir": [0, -0.9999999990709857, 4.3104857884012146e-05], "y_dir": [0, 4.3104857884012146e-05, 0.9999999990709857]}, "name": "Profile 2"}},
+    {"command": "sketch.line", "params": {"points": [[0, 40], [-40, 40], [-40, 0], [0, 0], [0, 40]], "infer": false}},
+    {"command": "sketch.circle.center", "params": {"center": [-20, 25], "radius": 4}},
+    {"command": "sketch.finish", "params": {}},
+    {"command": "solid.extrude", "params": {"sketch": "Profile 2", "profiles": [{"curves": ["l1", "l2", "l3", "l4"]}], "distance": 10, "direction": "symmetric", "operation": "join", "targets": ["Bracket"]}},
+    {"command": "sketch.create", "params": {"plane": {"origin": [-7.105427357601002e-15, -3.066208447083732e-15, 4.999915727874293], "x_dir": [-8.140690070210925e-07, 0.9999999999996687, 0], "y_dir": [0.9999999999996687, 8.140690070210925e-07, 0]}, "name": "Profile 3"}},
+    {"command": "sketch.line", "params": {"points": [[0, 0], [40, 0], [40, 60], [0, 60], [0, 0]], "infer": false}},
+    {"command": "sketch.circle.center", "params": {"center": [20, 40], "radius": 4}},
+    {"command": "sketch.finish", "params": {}},
+    {"command": "solid.extrude", "params": {"sketch": "Profile 3", "profiles": [{"curves": ["l1", "l2", "l3", "l4"]}], "distance": 10, "direction": "symmetric", "operation": "join", "targets": ["Bracket"]}},
+    {"command": "solid.cylinder", "params": {"radius": 3.9991359240868953, "height": 11.854, "base": [-0.03428033066707403, 19.99720177665996, 25.000085714793613], "axis": [1, 0, 0], "operation": "cut", "targets": ["Bracket"], "name": "Hole"}}
+  ]
+}

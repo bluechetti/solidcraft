@@ -1,0 +1,80 @@
+{
+  "en": {
+    "cmd.mesh_units": "Mesh Units",
+    "prefs.offer_mesh_units": "Say what unit a mesh was read in",
+    "prefs.offer_mesh_units_note": "STL, OBJ and PLY files don't say their unit, so they are read in millimeters. A note says how big that made the mesh and offers to read it in meters or inches: scans are often saved in meters.",
+    "ui.mesh_units_inches": "Inches",
+    "ui.mesh_units_meters": "Meters",
+    "ui.mesh_units_note": "This mesh is only {size} across. Was its file in meters or inches?",
+    "ui.mesh_units_read": "Read in millimeters: {size} across. Was its file in meters or inches?"
+  },
+  "en-GB": {
+    "prefs.offer_mesh_units_note": "STL, OBJ and PLY files don't say their unit, so they are read in millimetres. A note says how big that made the mesh and offers to read it in metres or inches: scans are often saved in metres.",
+    "ui.mesh_units_meters": "Metres",
+    "ui.mesh_units_note": "This mesh is only {size} across. Was its file in metres or inches?",
+    "ui.mesh_units_read": "Read in millimetres: {size} across. Was its file in metres or inches?"
+  },
+  "de": {
+    "cmd.mesh_units": "Netzeinheiten",
+    "prefs.offer_mesh_units": "Melden, in welcher Einheit ein Netz gelesen wurde",
+    "prefs.offer_mesh_units_note": "STL-, OBJ- und PLY-Dateien nennen keine Einheit und werden daher in Millimetern gelesen. Ein Hinweis nennt die Größe, die das Netz dadurch hat, und bietet an, es in Metern oder Zoll zu lesen: Scans werden oft in Metern gespeichert.",
+    "ui.mesh_units_inches": "Zoll",
+    "ui.mesh_units_meters": "Meter",
+    "ui.mesh_units_note": "Dieses Netz ist nur {size} groß. War die Datei in Metern oder Zoll?",
+    "ui.mesh_units_read": "In Millimetern gelesen: {size} groß. War die Datei in Metern oder Zoll?"
+  },
+  "ja": {
+    "cmd.mesh_units": "メッシュの単位",
+    "prefs.offer_mesh_units": "メッシュを読み込んだ単位を知らせる",
+    "prefs.offer_mesh_units_note": "STL、OBJ、PLY ファイルには単位が記録されないため、ミリメートルとして読み込まれます。読み込んだメッシュの大きさを通知で示し、メートルまたはインチとして読み直すよう提案します。スキャンはメートルで保存されることがよくあります。",
+    "ui.mesh_units_inches": "インチ",
+    "ui.mesh_units_meters": "メートル",
+    "ui.mesh_units_note": "このメッシュの大きさは {size} しかありません。ファイルの単位はメートルですか、インチですか？",
+    "ui.mesh_units_read": "ミリメートルとして読み込みました：大きさは {size} です。ファイルの単位はメートルですか、インチですか？"
+  },
+  "ko": {
+    "cmd.mesh_units": "메시 단위",
+    "prefs.offer_mesh_units": "메시를 읽은 단위 알림",
+    "prefs.offer_mesh_units_note": "STL, OBJ, PLY 파일에는 단위가 없어 밀리미터로 읽습니다. 그렇게 읽은 메시의 크기를 알림으로 보여 주고 미터나 인치로 다시 읽도록 제안합니다. 스캔은 흔히 미터로 저장됩니다.",
+    "ui.mesh_units_inches": "인치",
+    "ui.mesh_units_meters": "미터",
+    "ui.mesh_units_note": "이 메시의 크기는 {size}에 불과합니다. 파일 단위가 미터였나요, 인치였나요?",
+    "ui.mesh_units_read": "밀리미터로 읽었습니다: 크기 {size}. 파일 단위가 미터였나요, 인치였나요?"
+  },
+  "zh": {
+    "cmd.mesh_units": "网格单位",
+    "prefs.offer_mesh_units": "提示网格按什么单位读取",
+    "prefs.offer_mesh_units_note": "STL、OBJ 和 PLY 文件不记录单位，因此按毫米读取。导入后会显示提示，说明这样读取的网格大小，并建议按米或英寸重新读取：扫描数据常以米保存。",
+    "ui.mesh_units_inches": "英寸",
+    "ui.mesh_units_meters": "米",
+    "ui.mesh_units_note": "此网格只有 {size}。文件的单位是米还是英寸？",
+    "ui.mesh_units_read": "已按毫米读取：大小为 {size}。文件的单位是米还是英寸？"
+  },
+  "ar": {
+    "cmd.mesh_units": "وحدات الشبكة",
+    "prefs.offer_mesh_units": "ذكر الوحدة التي قُرئت بها الشبكة",
+    "prefs.offer_mesh_units_note": "لا تذكر ملفات STL وOBJ وPLY وحدتها، لذا تُقرأ بالمليمتر. تذكر ملاحظة حجم الشبكة الناتج وتعرض قراءتها بالمتر أو البوصة: كثيرًا ما تُحفظ ملفات المسح بالمتر.",
+    "ui.mesh_units_inches": "بوصات",
+    "ui.mesh_units_meters": "أمتار",
+    "ui.mesh_units_note": "حجم هذه الشبكة {size} فقط. هل كان ملفها بالمتر أم بالبوصة؟",
+    "ui.mesh_units_read": "قُرئت بالمليمتر: حجمها {size}. هل كان ملفها بالمتر أم بالبوصة؟"
+  },
+  "he": {
+    "cmd.mesh_units": "יחידות רשת",
+    "prefs.offer_mesh_units": "ציון היחידה שבה נקראה רשת",
+    "prefs.offer_mesh_units_note": "קובצי STL‏, OBJ ו-PLY אינם מציינים את היחידה שלהם, ולכן הם נקראים במילימטרים. הודעה מציינת את גודל הרשת שהתקבל ומציעה לקרוא אותה במטרים או באינצ׳ים: סריקות נשמרות לעיתים קרובות במטרים.",
+    "ui.mesh_units_inches": "אינצ׳ים",
+    "ui.mesh_units_meters": "מטרים",
+    "ui.mesh_units_note": "גודל הרשת הזו הוא {size} בלבד. האם הקובץ היה במטרים או באינצ׳ים?",
+    "ui.mesh_units_read": "נקראה במילימטרים: גודלה {size}. האם הקובץ היה במטרים או באינצ׳ים?"
+  },
+  "vi": {
+    "cmd.mesh_units": "Đơn vị lưới",
+    "prefs.offer_mesh_units": "Cho biết lưới được đọc theo đơn vị nào",
+    "prefs.offer_mesh_units_note": "Tệp STL, OBJ và PLY không ghi đơn vị nên được đọc theo milimét. Một thông báo cho biết kích thước lưới khi đọc như vậy và đề nghị đọc lại theo mét hoặc inch: bản quét thường được lưu theo mét.",
+    "ui.mesh_units_inches": "Inch",
+    "ui.mesh_units_meters": "Mét",
+    "ui.mesh_units_note": "Lưới này chỉ có kích thước {size}. Tệp của nó dùng đơn vị mét hay inch?",
+    "ui.mesh_units_read": "Đã đọc theo milimét: kích thước {size}. Tệp của nó dùng đơn vị mét hay inch?"
+  }
+}

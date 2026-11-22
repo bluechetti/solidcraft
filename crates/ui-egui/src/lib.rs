@@ -52,6 +52,7 @@ pub mod dialogs_appearance;
 pub mod dialogs_assembly;
 pub mod dialogs_constrain;
 pub mod dialogs_coupling;
+pub(crate) mod dialogs_deform;
 pub mod dialogs_end_cap;
 pub mod dialogs_frame;
 mod dialogs_hole;
@@ -65,8 +66,31 @@ pub mod dialogs_parts;
 pub mod dialogs_plastic;
 pub mod dialogs_rotate_member;
 pub mod dialogs_save_mesh;
+pub(crate) mod dialogs_scan;
+pub(crate) mod dialogs_scan_align;
+pub(crate) mod dialogs_scan_clean;
+pub(crate) mod dialogs_scan_curve;
+pub(crate) mod dialogs_scan_denoise;
+pub(crate) mod dialogs_scan_edge;
+pub(crate) mod dialogs_scan_fillet;
+pub(crate) mod dialogs_scan_fit;
+pub(crate) mod dialogs_scan_flatten;
+pub(crate) mod dialogs_scan_free_form;
+pub(crate) mod dialogs_scan_patches;
+pub(crate) mod dialogs_scan_reconstruct;
+pub(crate) mod dialogs_scan_run;
+pub(crate) mod dialogs_scan_section;
+pub(crate) mod dialogs_scan_sections;
+pub(crate) mod dialogs_scan_select;
+pub(crate) mod dialogs_scan_slice;
+pub(crate) mod dialogs_scan_split;
+pub(crate) mod dialogs_scan_surface;
+pub(crate) mod dialogs_scan_survey;
+pub(crate) mod dialogs_scan_template;
+pub(crate) mod dialogs_scan_together;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
+pub(crate) mod dialogs_surface_check;
 pub mod dialogs_sweep;
 mod dialogs_thread;
 pub mod dialogs_view_dxf;
@@ -105,6 +129,7 @@ pub mod hole_presets;
 pub(crate) mod hole_refs;
 #[cfg(test)]
 mod hole_refs_ui_tests;
+pub(crate) mod hole_table;
 pub mod home;
 pub mod i18n;
 #[cfg(test)]
@@ -117,6 +142,7 @@ pub mod icon_svg;
 pub mod icons;
 pub mod inference;
 pub mod insert_handles;
+pub(crate) mod inspection_plan;
 pub mod install;
 pub mod issue_report;
 pub mod joint_drag;
@@ -149,6 +175,7 @@ mod measurement_ui_tests;
 mod menu_tests;
 pub(crate) mod mesh_lod;
 pub mod mesh_units;
+pub mod mesh_units_note;
 pub mod messages;
 pub(crate) mod motion;
 pub mod occurrence_drag;
@@ -158,6 +185,8 @@ mod pattern_arrow_tests;
 mod prompt_cards_tests;
 #[cfg(test)]
 mod scale_tests;
+pub(crate) mod scan_markers;
+pub(crate) mod scan_radius;
 #[cfg(test)]
 mod surface_clamp_tests;
 #[cfg(test)]
@@ -301,8 +330,23 @@ mod rule_editor;
 mod rule_editor_tests;
 pub mod safe_graphics;
 pub mod save_job;
+pub(crate) mod scan_area;
+pub(crate) mod scan_deviation;
+pub(crate) mod scan_dots;
+pub(crate) mod scan_fidelity;
+pub(crate) mod scan_how;
+pub(crate) mod scan_job;
+pub(crate) mod scan_line;
+pub(crate) mod scan_paint;
+pub(crate) mod scan_selection;
+pub(crate) mod scan_shapes;
+pub(crate) mod scan_snap;
+pub(crate) mod scan_triangles;
+pub(crate) mod scan_unseen;
+pub mod scan_workspace;
 pub mod scenario;
 pub(crate) mod scene_palette;
+pub(crate) mod section_scan;
 pub mod select_other;
 pub mod selection;
 pub(crate) mod selection_mode;
@@ -406,6 +450,7 @@ mod view_memory;
 pub mod view_pick;
 mod view_setups;
 mod view_setups_ui;
+pub(crate) mod view_tags;
 mod view_tiles;
 mod view_window_drag;
 mod view_window_scale;
@@ -448,6 +493,9 @@ pub struct UiState {
     /// Not saved: it only lives while a sketch is open.
     #[serde(skip)]
     pub sketch_return_tab: Option<String>,
+    /// The Scan workspace (scan to CAD, #8615) is open: the ribbon shows its tabs instead of the
+    /// design tabs. The Render workspace is told by its tab alone.
+    pub scan_workspace: bool,
     /// The folded ribbon's panels are open over the view (`ribbon_tabs_only`, #10112). Not saved:
     /// a tab click opens them, and a command starting or the pointer leaving closes them.
     #[serde(skip)]
@@ -458,6 +506,9 @@ pub struct UiState {
     pub show_browser: bool,
     pub show_timeline: bool,
     pub show_grid: bool,
+    /// Draw the triangles of the scans shown (`view.scan_triangles`); off whenever the window opens.
+    #[serde(skip)]
+    pub scan_triangles: bool,
     pub show_navigation_bar: bool,
     pub perspective: bool,
     /// Perspective while orbiting, orthographic when the camera faces a standard axis view
@@ -504,10 +555,12 @@ impl Default for UiState {
             tab: "MODEL".into(),
             ribbon_context: None,
             sketch_return_tab: None,
+            scan_workspace: false,
             ribbon_open: false,
             show_browser: true,
             show_timeline: true,
             show_grid: true,
+            scan_triangles: false,
             show_navigation_bar: true,
             perspective: false,
             auto_ortho_faces: false,
@@ -903,6 +956,9 @@ pub struct SolveApp {
     /// When the note was first drawn (the window's clock), or since the pointer was last on it; it
     /// goes after `stand_up::NOTE_SECONDS`.
     pub stand_up_note_since: Option<f64>,
+    /// A mesh file just in that came in tiny, offered to be read in metres or inches
+    /// (`mesh_units_note`).
+    pub mesh_units_note: Option<mesh_units_note::Offer>,
     /// An offer to stand bodies up that waits for their estimate (`stand_up::tick`).
     pub(crate) stand_up_later: Option<stand_up::Later>,
     /// The anti-aliasing sample counts the scene colour/depth formats support (empty without a GPU).
@@ -1206,6 +1262,7 @@ impl SolveApp {
             stand_up_assembly: false,
             stand_up_note: false,
             stand_up_note_since: None,
+            mesh_units_note: None,
             stand_up_later: None,
             msaa_supported: Vec::new(),
             msaa_compatibility: false,
@@ -1841,6 +1898,13 @@ impl SolveApp {
         };
         if let Ok(v) = &r {
             sheet_views::command_opened(self, id, v);
+            // A scan tool that found nothing to do says so: it is no failure, and nothing changed.
+            if id.starts_with("scan.")
+                && v.get("changed") == Some(&Value::Bool(false))
+                && let Some(note) = v.get("note").and_then(Value::as_str)
+            {
+                self.set_status(friendly_error(id, note), false);
+            }
             if id.eq_ignore_ascii_case("plugin.inspect")
                 && let Some(id) = v.pointer("/manifest/id").and_then(Value::as_str)
             {
@@ -1900,6 +1964,7 @@ impl SolveApp {
                 "diagnostics.validation" => self.preferences.validation = self.session.validation(),
                 "view.grid" => self.ui.show_grid = v.get("on").and_then(Value::as_bool).unwrap_or(!self.ui.show_grid),
                 "view.ground_shadow" => self.ui.ground_shadow = v.get("on").and_then(Value::as_bool).unwrap_or(!self.ui.ground_shadow),
+                "view.scan_triangles" => self.ui.scan_triangles = v.get("on").and_then(Value::as_bool).unwrap_or(!self.ui.scan_triangles),
                 "view.navigation_bar" => {
                     self.ui.show_navigation_bar = v.get("visible").and_then(Value::as_bool).unwrap_or(!self.ui.show_navigation_bar)
                 }
@@ -2582,6 +2647,7 @@ impl SolveApp {
                 | "view.spin"
                 | "view.grid"
                 | "view.ground_shadow"
+                | "view.scan_triangles"
                 | "view.navigation_bar"
                 | "view.next_tab"
                 | "view.previous_tab"
@@ -3062,6 +3128,13 @@ impl SolveApp {
             self.restore_command_tab();
             return;
         }
+        // A scan tool that works through the whole scan, with no dialog: beside the window.
+        if deferred::computed_whole(id) {
+            if let Err(why) = self.run_heavy(id, json!({})) {
+                self.set_status(why, true);
+            }
+            return;
+        }
         // The command either runs or starts nothing: a refusal (a missing parameter, nothing to
         // work on) leaves the ribbon on the tab it was started from, as a disabled command does
         // (#10540).
@@ -3170,6 +3243,10 @@ impl SolveApp {
         if let FeatureKind::NewerFileFeature { raw } = &f.kind {
             let why = raw.why();
             self.set_status(why, true);
+            return;
+        }
+        // A surface made on a scan opens Edit Surface on it, without rolling the design back.
+        if self.session.active_sketch.is_none() && dialogs_scan_surface::edit_from_history(self, id) {
             return;
         }
         let Some(idx) = self.session.doc.feature_index(id) else { return };
@@ -3461,6 +3538,10 @@ impl SolveApp {
     /// Visibility in the editor's scene: hidden face-profile sources are temporarily shown
     /// without changing the session's visibility or either history stack.
     pub(crate) fn body_visible(&self, name: &str) -> bool {
+        // The surface Edit Surface edits is drawn by the dialog as it is edited, not as it was.
+        if dialogs_scan_surface::edited_body(self) == Some(name) {
+            return false;
+        }
         self.session.body_visible(name) || self.dialog.as_ref().is_some_and(|d| d.edit_source_bodies.iter().any(|source| source == name))
     }
 
@@ -3468,6 +3549,11 @@ impl SolveApp {
     pub fn highlighted(&self) -> Vec<solidcraft_engine::Sel> {
         let mut v = self.session.selection.clone();
         if let Some(d) = &self.dialog {
+            // Bodies picked before a scan tool that shows where it puts them are not lit either.
+            if d.shows_placement() {
+                let named = d.items();
+                v.retain(|x| !named.iter().any(|n| crate::selection::same_item(x, n)));
+            }
             v.extend(d.highlighted(&self.session));
         }
         v.extend(agent_chat::hovered_chip(self).iter().cloned());
@@ -3674,6 +3760,7 @@ impl SolveApp {
         self.cam.set_view(StandardView::Iso);
         self.fit_view();
         stand_up::offer(self, path, &[], Some(&r));
+        mesh_units_note::offer(self, path, Some(&r));
         // The import's warnings, as the desktop's open says them (`file_load`), before the
         // notices that follow it there too.
         if let Some(summary) = timeline::import_warning_status(self, &r) {
@@ -3768,6 +3855,7 @@ impl SolveApp {
         let r = self.run(cmd, params)?;
         self.fit_view();
         stand_up::offer(self, path, &before, Some(&r));
+        mesh_units_note::offer(self, path, Some(&r));
         if let Some(summary) = timeline::import_warning_status(self, &r) {
             self.set_status(summary, false);
         }
@@ -4509,6 +4597,7 @@ impl SolveApp {
         let mut report_input = None;
         issue_report::CadInput::block(self, ui, &mut report_input);
         semantic_content::begin(self, ui.ctx());
+        scan_deviation::follow(self, ui.ctx());
         self.cad_ui(ui, &mut report_input);
         semantic_content::finalize(self, ui.ctx());
         #[cfg(not(target_arch = "wasm32"))]
@@ -4650,6 +4739,8 @@ impl SolveApp {
         context_menu::show(self, ui.ctx());
         mouse_gesture::show(self, ui.ctx());
         delete::show(self, ui.ctx());
+        scan_markers::show(self, ui.ctx());
+        scan_radius::show(self, ui.ctx());
         easyprint_ui::show(self, ui.ctx());
         plugin_install::show(self, ui.ctx());
         import_report::show(self, ui.ctx());

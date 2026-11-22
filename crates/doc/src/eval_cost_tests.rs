@@ -606,6 +606,53 @@ fn an_imported_file_is_fingerprinted_by_its_text() {
     assert_eq!(model.state().bodies.len(), 3);
 }
 
+/// A scan (a mesh import) is fingerprinted by a digest of its triangles, taken once while it is
+/// unchanged: its text is not millions of numbers, written out and hashed on every evaluation of
+/// any edit. A point moved is another fingerprint.
+#[test]
+fn a_scan_is_fingerprinted_by_a_digest_of_its_triangles() {
+    let mut doc = Document::new("scan");
+    // Ids no other test's design uses: the written texts are shared by the tests beside this one.
+    doc.next_id = 0x0007_5ca0_d16e_0000;
+    let n = 100u32;
+    let positions: Vec<f64> = (0..=n).flat_map(|j| (0..=n).flat_map(move |i| [f64::from(i) * 0.123_457, f64::from(j) * 0.123_457, 0.5])).collect();
+    let at = move |i: u32, j: u32| j * (n + 1) + i;
+    let triangles: Vec<u32> =
+        (0..n).flat_map(|j| (0..n).flat_map(move |i| [at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j), at(i + 1, j + 1), at(i, j + 1)])).collect();
+    let mesh = MeshData {
+        name: "scan".into(),
+        positions: Arc::from(positions),
+        triangles: Arc::from(triangles),
+        corner_normals: Default::default(),
+        color: None,
+    };
+    let id = doc.add_feature(FeatureKind::MeshImport { file: "scan.stl".into(), meshes: vec![mesh] }, None).unwrap();
+    let text = super::feature_json(doc.feature(id).unwrap(), &super::ImportDigests::default());
+    assert!(text.len() < 1000 && !text.contains("0.123457"), "{} bytes: {}", text.len(), &text[..text.len().min(200)]);
+
+    let mut model = Model::new();
+    assert_eq!(counted(|| model.evaluate(&doc)).mesh_digested, 1);
+    assert_eq!(model.state().bodies.len(), 1);
+    let before = model.results[0].fingerprint;
+    assert_eq!(counted(|| model.evaluate(&doc)).mesh_digested, 0, "unchanged, its text is kept");
+    assert_eq!(model.last_recomputed, 0);
+
+    if let Some(FeatureKind::MeshImport { meshes, .. }) = doc.feature_mut(id).map(|f| &mut f.kind) {
+        let mut moved = meshes[0].positions.to_vec();
+        moved[5] += 0.001;
+        meshes[0].positions = Arc::from(moved);
+    }
+    model.evaluate(&doc);
+    assert_ne!(model.results[0].fingerprint, before);
+    assert_eq!(model.last_recomputed, 1);
+
+    // Saving its model reads the feature for names saved before format 14 without the triangles,
+    // and still finds one there.
+    assert!(!super::model_cache::has_legacy_names(&doc) && model.saved(&doc).is_some());
+    doc.feature_mut(id).unwrap().face_names = vec![format!("{}scan:face:0", crate::naming::LEGACY_MARK)];
+    assert!(super::model_cache::has_legacy_names(&doc));
+}
+
 /// An import after a sketch that follows a moved part keeps its result: the file is not read
 /// again. A joint moving a part re-read the imported STEP file, and a large file took seconds to
 /// read, so every move of the joint was as slow as the file was big (#17310).

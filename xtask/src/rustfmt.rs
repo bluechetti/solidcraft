@@ -107,8 +107,12 @@ pub fn run(root: &Path, check: bool) -> Result<(), String> {
 /// workspace has, and the same for each dependency given by `path`, however deep. `metadata` is
 /// `cargo metadata --no-deps` for a manifest, or `None` where there is no such file (a path
 /// dependency that is not checked out). A registry or git dependency has no `path` and is left
-/// alone, as is a `[patch]` (the vendored crates): its dependents name it without one.
+/// alone, as is anything under the workspace's `vendor/` (the vendored crates, such as egui):
+/// their dependents mostly name them through `[patch]`, but `crates/workspace-hack` names them
+/// by path, and following that path reformatted 386 vendored egui files (2026-11-22).
 fn roots(manifest: &Path, metadata: &mut dyn FnMut(&Path) -> Result<Option<serde_json::Value>, String>) -> Result<Roots, String> {
+    let vendor = manifest.parent().map(|d| d.join("vendor"));
+    let vendored = |dir: &Path| vendor.as_deref().is_some_and(|v| dir.starts_with(v));
     let mut roots = Roots::new();
     let mut taken = BTreeSet::new();
     let mut todo = vec![manifest.to_path_buf()];
@@ -129,7 +133,7 @@ fn roots(manifest: &Path, metadata: &mut dyn FnMut(&Path) -> Result<Option<serde
                 roots.entry(edition.to_string()).or_default().insert(PathBuf::from(file));
             }
             for dependency in package["dependencies"].as_array().ok_or_else(|| odd("dependencies"))? {
-                if let Some(dir) = dependency["path"].as_str() {
+                if let Some(dir) = dependency["path"].as_str().filter(|d| !vendored(Path::new(d))) {
                     todo.push(Path::new(dir).join("Cargo.toml"));
                 }
             }
@@ -256,6 +260,29 @@ mod tests {
         // The registry dependency is not asked about, the missing one is skipped, and the
         // dependencies that point back are packages already taken.
         assert_eq!(asked, ["/ws/Cargo.toml", "/gone/Cargo.toml", "/core/a/Cargo.toml"]);
+    }
+
+    /// `crates/workspace-hack` names the vendored egui by path: it is neither asked about nor
+    /// formatted, while the workspace's own packages still are.
+    #[test]
+    fn vendored_crates_named_by_path_are_left_alone() {
+        let mut asked = Vec::new();
+        let roots = roots(Path::new("/ws/Cargo.toml"), &mut |m| {
+            asked.push(m.to_string_lossy().replace('\\', "/"));
+            Ok(match m.to_str().map(|s| s.replace('\\', "/")).as_deref() {
+                Some("/ws/Cargo.toml") => Some(json!({ "packages": [
+                    package("/ws/hack", &[("src/lib.rs", "2024")], &["/ws/vendor/egui/crates/egui"]),
+                ] })),
+                Some("/ws/vendor/egui/crates/egui/Cargo.toml") => Some(json!({ "packages": [
+                    package("/ws/vendor/egui/crates/egui", &[("src/lib.rs", "2021")], &[]),
+                ] })),
+                _ => None,
+            })
+        })
+        .unwrap();
+        let all: Vec<String> = roots.values().flatten().map(|p| p.to_string_lossy().replace('\\', "/")).collect();
+        assert_eq!(all, ["/ws/hack/src/lib.rs"]);
+        assert_eq!(asked, ["/ws/Cargo.toml"]);
     }
 
     #[test]

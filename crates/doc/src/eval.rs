@@ -6,6 +6,8 @@ mod overlap;
 mod placed_mesh;
 #[path = "placement_reuse.rs"]
 mod placement_reuse;
+#[path = "eval_scan_runs.rs"]
+mod scan_runs;
 
 use solidcraft_geom::prelude::*;
 use std::collections::BTreeMap;
@@ -142,6 +144,8 @@ struct Cut {
     left: Option<Traced>,
 }
 
+/// How far a Deform's faces and edges may be from the map of the body, mm.
+const DEFORM_TOLERANCE: f64 = 1e-3;
 /// Cuts a body remembers.
 const CUTS_KEPT: usize = 2;
 
@@ -263,6 +267,23 @@ impl ModelBody {
             // The body was replaced in this cell's holder since: measure it again.
             _ => measure(),
         }
+    }
+
+    /// This body (its name, key, names and component) with other geometry, and nothing worked
+    /// out from the old geometry (meshes, plans, measures).
+    pub(crate) fn with_geometry(&self, body: Body) -> ModelBody {
+        let mut out = ModelBody::new(self.name.clone(), body, self.feature);
+        out.source_name.clone_from(&self.source_name);
+        out.source_transform = self.source_transform;
+        out.key = self.key;
+        out.names = self.names.clone();
+        out.made = self.made.clone();
+        out.component = self.component;
+        out.transferred = self.transferred;
+        out.imported.clone_from(&self.imported);
+        out.bytes = out.body.retained_bytes();
+        out.source_key = self.source_key;
+        out
     }
 
     /// Whether a feature `f` that names no bodies works on this one: a body of its component
@@ -1133,6 +1154,11 @@ pub struct ModelState {
     /// picks its pieces were named by (by feature id, see [`crate::lineage::order_legacy_lumps`]):
     /// the state stands for the feature only while those picks are the same.
     legacy_picks: BTreeMap<u64, u64>,
+    /// The runs of Scan Clean steps the scans are in, by scan (`eval_scan_runs.rs`).
+    scan_runs: BTreeMap<String, Arc<scan_runs::ScanRun>>,
+    /// Scans this state holds as they were before their run of Scan Clean steps, not as the
+    /// steps left them: a later step has read the result, and only the latest is kept.
+    thinned: std::collections::BTreeSet<String>,
     /// Each extrude that cut or intersected a sheet made from surfaces, as drawn (by feature id):
     /// its sketch plane and the interval along the plane's normal it ran over. A pocket it leaves
     /// is as deep as the extrude ran from the panel's face (see `sheet_surface_cuts`).
@@ -1197,6 +1223,8 @@ impl ModelState {
             pattern_left_out,
             legacy_picks,
             cut_extents,
+            scan_runs,
+            thinned,
         } = self;
         ModelState {
             frame_bodies: frame_bodies.clone(),
@@ -1217,6 +1245,8 @@ impl ModelState {
             pattern_left_out: pattern_left_out.clone(),
             legacy_picks: legacy_picks.clone(),
             cut_extents: cut_extents.clone(),
+            scan_runs: scan_runs.clone(),
+            thinned: thinned.clone(),
         }
     }
 
@@ -1976,7 +2006,12 @@ impl ImportDigests {
         let mut out = ImportDigests { heal_off: !heal, ..ImportDigests::default() };
         for f in &doc.features {
             match &f.kind {
-                FeatureKind::Import { step, records, .. } => {
+                FeatureKind::Import { step, .. } | FeatureKind::ScanSurface { step, .. } => {
+                    // A Scan Surface holds no records.
+                    let records = match &f.kind {
+                        FeatureKind::Import { records, .. } => records.as_ref(),
+                        _ => None,
+                    };
                     let digest = known.get(f.id, step).unwrap_or_else(|| step_text_digest(step));
                     out.steps.insert(f.id, (step.clone(), digest));
                     // Kept while the heal preference is on: off, the import is its parts as read.
@@ -2105,7 +2140,7 @@ fn fingerprint_sketch(sk: &mut solidcraft_sketch::Sketch) {
 fn hash_feature_json(f: &Feature, steps: &ImportDigests, h: &mut impl Hasher) {
     type Written = std::collections::HashMap<u64, Arc<(Feature, String)>>;
     static WRITTEN: std::sync::LazyLock<std::sync::Mutex<Written>> = std::sync::LazyLock::new(Default::default);
-    if matches!(f.kind, FeatureKind::Import { .. } | FeatureKind::MeshImport { .. }) {
+    if matches!(f.kind, FeatureKind::Import { .. } | FeatureKind::ScanSurface { .. } | FeatureKind::MeshImport { .. }) {
         feature_json(f, steps).hash(h);
         return;
     }
@@ -2144,13 +2179,20 @@ fn feature_json(f: &Feature, steps: &ImportDigests) -> String {
         // writing the large numeric arrays out again. Equal content in fresh Arcs hashes alike.
         return serde_json::to_string(&(g, digests)).unwrap_or_default();
     }
-    if let FeatureKind::Import { step, records, .. } = &f.kind {
+    if let FeatureKind::Import { step, .. } | FeatureKind::ScanSurface { step, .. } = &f.kind {
+        // A Scan Surface holds no records.
+        let records = match &f.kind {
+            FeatureKind::Import { records, .. } => records.as_ref(),
+            _ => None,
+        };
         let mut g = f.clone();
-        if let FeatureKind::Import { step: text, records: kept, .. } = &mut g.kind {
+        if let FeatureKind::Import { records: kept, .. } = &mut g.kind {
+            *kept = None;
+        }
+        if let FeatureKind::Import { step: text, .. } | FeatureKind::ScanSurface { step: text, .. } = &mut g.kind {
             let digest = steps.get(f.id, step).unwrap_or_else(|| step_text_digest(step));
             // Records stand in by their digest, as the STEP text does.
-            let of_records = records.as_ref().map(|r| steps.records_digest(f.id, r).unwrap_or_else(|| records_digest(r)));
-            *kept = None;
+            let of_records = records.map(|r| steps.records_digest(f.id, r).unwrap_or_else(|| records_digest(r)));
             *text = match of_records {
                 Some(r) => Arc::from(format!("{digest:016x}:{}:records:{r:016x}", step.len())),
                 None => Arc::from(format!("{digest:016x}:{}", step.len())),
@@ -4319,6 +4361,10 @@ impl Model {
                     });
                     continue;
                 }
+                // A scan a later Scan Clean step thinned is made whole before anything reads it.
+                if !state.thinned.is_empty() {
+                    state = Arc::new(scan_runs::materialized(&state));
+                }
                 // The same feature on the same inputs: its earlier result.
                 let key = EvalKey::new(doc, &vals, f, fp, ctx, &state, &self.import_digests, geo_in);
                 let kept = self.kept.0.as_ref().filter(|_| !self.no_cache);
@@ -4543,6 +4589,7 @@ impl Model {
                     track_altered_sheets(&state, &mut next, f, &mut warning);
                     note_join_apart(&state, &next, f, &mut warning);
                     note_cut_cavity(&state, &next, f, &mut warning);
+                    note_hair_tube(&state, &next, f, &mut warning);
                 }
                 // What it cut from a sheet made from surfaces goes into the sheet's records (see
                 // `absorb_sheet_cuts`); a cached result already holds them.
@@ -4625,7 +4672,10 @@ impl Model {
                 let lost_projections = lost_projections.filter(|_| error.is_some());
                 // A panic is no result to reuse: the kernel was replaced after it. Work its watcher
                 // stopped may have been cut short (a boolean that gave up): it is not kept either.
-                if !self.no_cache && !watched.cancelled() && !internal {
+                // A Scan Clean step's result is not cached: the cache would keep every step's copy of
+                // the scan, which the thinning below lets go (the step keeps its own last result).
+                let scan_step = matches!(f.kind, FeatureKind::ScanClean { .. });
+                if !self.no_cache && !watched.cancelled() && !internal && !scan_step {
                     let whole = CachedEval {
                         error: error.clone(),
                         error_code: error_code.clone(),
@@ -4669,6 +4719,10 @@ impl Model {
                     unkept: false,
                     state: state.clone(),
                 });
+                // The step before it on the same scan gives up its copy now, not at the end.
+                if matches!(f.kind, FeatureKind::ScanClean { .. }) {
+                    scan_runs::thin(&mut out, &scan_runs::steps_of(doc));
+                }
             }
             // Every check still running ends before the results stand.
             if let Some(refused) = checks.settle(true, &self.cache, &self.kept) {
@@ -4679,6 +4733,8 @@ impl Model {
         }
         self.placement_local = self.placement_local && out.iter().all(|r| !r.skipped && !r.stale && !r.unkept && r.error.is_none());
         self.poses = poses;
+        scan_runs::thin(&mut out, &scan_runs::steps_of(doc));
+        scan_runs::whole_last(&mut out);
         self.results = out;
         self.note_states();
         // A cached import's result is as its check left it, not as the import first showed.
@@ -5326,6 +5382,48 @@ fn note_cut_cavity(before: &ModelState, after: &ModelState, f: &Feature, warning
             format!(
                 "the cut leaves a closed cavity inside `{}` that opens on no face{removed} (extend the tool through the face to open it)",
                 now.name
+            ),
+        );
+    }
+}
+
+/// A round face thinner than this (mm) along a revolve's axis is a profile edge a hair off the axis,
+/// not a hole anyone means: 10 µm, a tenth of the finest scan or print.
+const HAIR_RADIUS: f64 = 0.01;
+
+/// Note a revolve whose result gained a cylinder face thinner than [`HAIR_RADIUS`]: a profile edge
+/// drawn along the axis but a little off it turns into a hair-thin tube down the middle (a sketch
+/// line 2 µm off its axis, left free by deleting the constraint that held it, made a hole 2 µm
+/// across and 66 mm deep inside a part, which Deviation then measured as a surface 19 mm from the
+/// scan). The body is valid and is kept; the warning says where to look.
+fn note_hair_tube(before: &ModelState, after: &ModelState, f: &Feature, warning: &mut Option<String>) {
+    if !matches!(f.kind, FeatureKind::Revolve { .. }) {
+        return;
+    }
+    let hairs = |b: &Body| -> Vec<f64> {
+        (0..b.face_count())
+            .filter_map(|fi| match kernel::face_surface(b, fi) {
+                Some(kernel::FaceSurface::Cylinder { radius, .. }) if radius > 0.0 && radius < HAIR_RADIUS => Some(radius),
+                _ => None,
+            })
+            .collect()
+    };
+    for now in &after.bodies {
+        if now.body.is_mesh() || before.body(&now.name).is_some_and(|was| was.body.same_shape(&now.body)) {
+            continue;
+        }
+        let had = before.body(&now.name).map_or(0, |was| hairs(&was.body).len());
+        let found = hairs(&now.body);
+        if found.len() <= had {
+            continue;
+        }
+        let thinnest = found.iter().copied().fold(f64::INFINITY, f64::min);
+        append_warning(
+            warning,
+            format!(
+                "`{}` has a round face {} µm across along the axis: a profile edge runs beside the axis without lying on it (put that edge on the axis, or constrain it there)",
+                now.name,
+                show_mm((thinnest * 2000.0 * 100.0).round() / 100.0)
             ),
         );
     }
@@ -6565,6 +6663,10 @@ pub fn hole_direction_at(st: &ModelState, p: Vec3, scope: &[String]) -> Option<V
     first.filter(|(d, _, _)| *d <= reach).map(|(_, n, _)| -n)
 }
 
+/// The cosine of the most a hole's direction may lean off square into its face and still be
+/// drilled square to it: 1e-4 rad (0.006°), far finer than any angle a drawing gives a hole.
+const SQUARE_COS: f64 = 0.999_999_995;
+
 /// A hole placed on a face drills into the material: when its direction leaves every face it
 /// starts on (as designs saved before format 18 can say: their direction was taken from any face
 /// whose plane passed near the point, such as the other side of a thin plate or a face of another
@@ -6572,11 +6674,23 @@ pub fn hole_direction_at(st: &ModelState, p: Vec3, scope: &[String]) -> Option<V
 /// angle. A direction that enters a face there, or a spot on no face, is kept. Where the faces of
 /// the hole's own bodies (`scope`, see [`hole_drill_scope`]) pass through the spot, only they
 /// count: a hole that names the plate it drills, saved with the direction into a body touching
-/// the plate there, drills the plate (#12066).
+/// the plate there, drills the plate (#12066). A direction within [`SQUARE_COS`] of square into a
+/// face there is drilled square to it.
 fn hole_dir_into_face(st: &ModelState, p: Vec3, dir: Vec3, scope: &[String]) -> Vec3 {
     let size = st.bodies.iter().map(|b| b.body.size()).fold(1.0, f64::max);
     let faces: Vec<_> = hole_faces_near(st, p, size * 1e-5, size * 1e-5, scope).into_iter().map(|c| face_through(st, p, c)).collect();
-    if faces.is_empty() || faces.iter().any(|(_, n, _)| n.dot(dir) < -1e-9) {
+    if faces.is_empty() {
+        return dir;
+    }
+    // Within a hair of square into a face it is square: a drill aimed a millionth of a radian off
+    // leaves the countersink's rim a few millionths of a millimetre off the face, which the
+    // boolean can neither join nor tell apart (refused), and no one aims that close on purpose.
+    if let Some(n) = faces.iter().map(|(_, n, _)| *n).min_by(|a, b| a.dot(dir).total_cmp(&b.dot(dir)))
+        && n.dot(dir) < -SQUARE_COS
+    {
+        return -n;
+    }
+    if faces.iter().any(|(_, n, _)| n.dot(dir) < -1e-9) {
         return dir;
     }
     match faces.iter().map(|(_, n, _)| *n).max_by(|a, b| a.dot(dir).total_cmp(&b.dot(dir))) {
@@ -7099,21 +7213,29 @@ fn blend_raw(
             }
         }
         FeatureKind::Fillet { style: crate::FilletStyle::Chord, .. } => (kernel::fillet_chord(&mb.body, edges, r)?, input),
-        FeatureKind::Fillet { style: crate::FilletStyle::Variable { radius2, start, mid, smooth }, .. } => {
+        FeatureKind::Fillet { style: crate::FilletStyle::Variable { radius2, start, mid, smooth, curvature }, .. } => {
             let r2 = val(vals, radius2, Kind::Length)?;
             let mut pts = vec![(0.0, r), (1.0, r2)];
             for (t, e) in mid {
                 pts.push((*t, val(vals, e, Kind::Length)?));
             }
-            one_by_one(input, edges, |b, p| kernel::fillet_variable_points(b, p, start.0, &pts, *smooth))?
+            one_by_one(input, edges, |b, p| {
+                if *curvature {
+                    kernel::fillet_variable_points_g2(b, p, start.0, &pts, *smooth)
+                } else {
+                    kernel::fillet_variable_points(b, p, start.0, &pts, *smooth)
+                }
+            })?
         }
-        FeatureKind::Fillet { style: crate::FilletStyle::Spline { start, knots, radii }, .. } => {
+        FeatureKind::Fillet { style: crate::FilletStyle::Spline { start, knots, radii, curvature }, .. } => {
             let mut values = vec![r];
             for e in radii {
                 values.push(val(vals, e, Kind::Length)?);
             }
             let law = crate::FilletStyle::spline(knots, values);
-            one_by_one(input, edges, |b, p| kernel::fillet_variable_spline(b, p, start.0, &law))?
+            one_by_one(input, edges, |b, p| {
+                if *curvature { kernel::fillet_variable_spline_g2(b, p, start.0, &law) } else { kernel::fillet_variable_spline(b, p, start.0, &law) }
+            })?
         }
         FeatureKind::Fillet { fit: crate::FilletFit::Taper, .. } => {
             let (b, tapers) = kernel::fillet_tapered(&mb.body, edges, r)?;
@@ -12145,8 +12267,9 @@ pub fn tangent_face_chain(b: &ModelBody, picks: &[Vec3]) -> Vec<(usize, Vec3)> {
             .iter()
             .zip(&m.tri_face)
             .filter(|(_, tf)| **tf == f)
-            .flat_map(|(t, _)| t.iter().copied())
-            .filter_map(|i| Some((m.positions.get(i as usize)?.dist(q), *m.normals.get(i as usize)?)))
+            .filter_map(|(t, _)| Some((m.tri(t)?, m.corner_normals(t)?)))
+            .flat_map(|(p, n)| p.into_iter().zip(n))
+            .map(|(p, n)| (p.dist(q), n))
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .and_then(|(_, n)| n.normalized())
     };
@@ -12810,10 +12933,61 @@ fn eval_feature_kind(
         }
         FeatureKind::Draft { faces, angle, neutral, pull, body } => {
             let a = val(vals, angle, Kind::Angle)?;
-            let pl = doc.resolve_plane_in(vals, neutral, 0, f.component, Some(st))?;
+            // A neutral plane attached to a body face (Tilt Face's: the face's own plane turned
+            // about its hinge) follows the face as it is now, as a construction plane on it does.
+            let pl = match crate::face_anchor::plane_face_anchor(neutral) {
+                Some(anchor) => {
+                    let fst = crate::state_in_face_anchor_frame(doc, st, anchor, f.component)?;
+                    let (pl, note) = doc.resolve_attached_plane_noted(vals, neutral, f.component, st, &fst)?;
+                    if let Some(note) = note {
+                        append_warning(warning, note);
+                    }
+                    pl
+                }
+                None => doc.resolve_plane_in(vals, neutral, 0, f.component, Some(st))?,
+            };
             let i = body_at(st, body, &crate::plain(faces))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
-            let nb = Traced::step(kernel::draft(&mb.body, &crate::plain(faces), &pl, pull.0, a)?, &[&mb.traced()]);
+            // No pull (zero): the neutral plane's normal as it is now, so a draft whose neutral
+            // plane turns with a hinge (Tilt Face) pulls the way it now faces.
+            let pull = if pull.0.len() > 0.0 { pull.0 } else { pl.normal() };
+            let nb = Traced::step(kernel::draft(&mb.body, &crate::plain(faces), &pl, pull, a)?, &[&mb.traced()]);
+            if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = mb.remade(nb);
+            }
+            Ok(())
+        }
+        FeatureKind::Deform { body, map } => {
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+            let space = match map {
+                crate::DeformMap::Bend { origin, along, up, length, angle } => kernel::SpaceMap::Bend {
+                    origin: origin.0,
+                    along: along.0,
+                    up: up.0,
+                    length: val(vals, length, Kind::Length)?,
+                    angle: val(vals, angle, Kind::Angle)?,
+                },
+                crate::DeformMap::Twist { origin, axis, length, angle } => kernel::SpaceMap::Twist {
+                    origin: origin.0,
+                    axis: axis.0,
+                    length: val(vals, length, Kind::Length)?,
+                    angle: val(vals, angle, Kind::Angle)?,
+                },
+                crate::DeformMap::Cage { lo, hi, counts, moves } => {
+                    let mut points = solidcraft_geom::deform::SpaceMap::lattice(lo.0, hi.0, *counts);
+                    for crate::CageMove { index: [a, b, c], by } in moves {
+                        let k = (c * counts[1] + b) * counts[0] + a;
+                        let slot = points
+                            .get_mut(k)
+                            .filter(|_| *a < counts[0] && *b < counts[1] && *c < counts[2])
+                            .ok_or_else(|| DocError::Invalid(format!("the cage has no point [{a}, {b}, {c}]")))?;
+                        *slot += Vec3::new(by[0], by[1], by[2]);
+                    }
+                    kernel::SpaceMap::Cage { lo: lo.0, hi: hi.0, counts: *counts, points }
+                }
+            };
+            let nb = Traced::step(kernel::deform(&mb.body, &space, DEFORM_TOLERANCE)?, &[&mb.traced()]);
             if let Some(slot) = st.bodies.get_mut(i) {
                 *slot = mb.remade(nb);
             }
@@ -13618,6 +13792,39 @@ fn eval_feature_kind(
             *target = result;
             Ok(())
         }
+        FeatureKind::ScanClean { body, step } => {
+            step.check()?;
+            // Its expressions (a Remesh offset) worked out from the design's values: the step
+            // follows them, and a scan's run keeps this copy to make the scan again from.
+            let resolved = step.resolved(|e| val(vals, e.as_str(), Kind::Length))?;
+            let step = &resolved;
+            let index = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let source = st.bodies.get(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let (input, color, made_by) = (source.body.clone(), source.body.color(), source.feature);
+            let with: Vec<Body> = step
+                .with()
+                .iter()
+                .map(|w| st.body(w).map(|b| b.body.clone()).ok_or_else(|| DocError::Unknown(format!("body `{w}`"))))
+                .collect::<Result<_>>()?;
+            let with: Vec<&Body> = with.iter().collect();
+            match crate::scan_clean::clean(step, &input, &with) {
+                Ok(done) => {
+                    scan_runs::note_step(st, body, &input, &done.body, step, &with);
+                    // The scan stays the one its Mesh Import brought in, as a Move of it does.
+                    let result = ModelBody::new(body.0.clone(), done.body.with_color(color), made_by);
+                    let target = st.bodies.get_mut(index).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+                    *target = result;
+                    Ok(())
+                }
+                // Nothing to do on the scan as the steps before left it: it stays as it is.
+                Err(crate::scan_clean::Refused::Nothing(why, _)) => {
+                    scan_runs::note_step(st, body, &input, &input, step, &with);
+                    *warning = Some(why);
+                    Ok(())
+                }
+                Err(crate::scan_clean::Refused::Failed(why)) => Err(DocError::Invalid(why)),
+            }
+        }
         FeatureKind::Repair { body, gap, patch_holes } => {
             let gap = val(vals, gap, Kind::Length)?;
             let index = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
@@ -13649,9 +13856,14 @@ fn eval_feature_kind(
             }
             Ok(())
         }
-        FeatureKind::Import { step, skip, records, .. } => {
+        FeatureKind::Import { step, .. } | FeatureKind::ScanSurface { step, .. } => {
             #[cfg(test)]
             cost_tests::count(|c| c.imports_read += 1);
+            // A Scan Surface skips no body of its file, and holds no records.
+            let (skip, records): (&[u64], _) = match &f.kind {
+                FeatureKind::Import { skip, records, .. } => (skip, records.as_ref()),
+                _ => (&[], None),
+            };
             let (imp, digest) = match records {
                 Some(r) => (kernel::records_import_shared(r)?, crate::config::payload_digest(&kernel::records_text(r)?)),
                 None => (kernel::step_import_shared(step)?, crate::config::payload_digest(step)),
@@ -15440,6 +15652,7 @@ mod chain_tests {
                 start: crate::Position(Vec3::new(-15.0, -20.0, 10.0)),
                 mid: Vec::new(),
                 smooth: false,
+                curvature: false,
             };
         }
         let warning = build(variable);

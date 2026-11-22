@@ -192,7 +192,7 @@ fn draw_opaque(pass: &mut wgpu::RenderPass<'_>, pipelines: &OpaquePipelines, lay
         // indirect draws where the device has them. (Drawn one mesh at a time instead, a mesh the
         // indirect draws batch kept the placement lists its last unbatched cull left: every
         // placement at full detail, in view or not, which took longer than the lit pass.)
-        batch.draw_instanced(pass, super::InstanceLook::Opaque, false, &pipelines.instanced, &pipelines.instanced_flat, &uncounted);
+        batch.draw_instanced(pass, super::InstanceLook::Opaque, false, &pipelines.instanced, &pipelines.instanced_flat, None, &uncounted);
     }
 }
 
@@ -237,6 +237,7 @@ impl Resources {
         let built = [Some(tri_layout())];
         let evaluated = [Some(planned_layout()), Some(color_layout())];
         let placed = [Some(shared_layout()), Some(instance_layout())];
+        let painted = [Some(shared_layout()), Some(instance_layout()), Some(super::paint_layout())];
         let target = |format| [Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::RED })];
         // The prepass's depth (as bits) and normal.
         let depth_and_normal = [
@@ -255,6 +256,7 @@ impl Resources {
                             TriSource::Built => &built[..],
                             TriSource::Planned => &evaluated[..],
                             TriSource::Instanced | TriSource::InstancedFlat => &placed[..],
+                            TriSource::InstancedPainted | TriSource::InstancedFlatPainted => &painted[..],
                         },
                         compilation_options: Default::default(),
                     },

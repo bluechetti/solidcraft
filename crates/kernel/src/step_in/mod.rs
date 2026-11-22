@@ -1114,7 +1114,10 @@ impl Reader {
                             };
                             self.note(kind, Some(item), faces, format!("{label}: {f}"));
                         }
-                        if !part.closed && part.refused.is_none() {
+                        // A surface model SolidCraft wrote is open on purpose (a surface made on a
+                        // scan, kept as its own STEP): only another program's is worth a note.
+                        let own_surface = e.name() == "SHELL_BASED_SURFACE_MODEL" && ex.originating_system.trim() == "SolidCraft";
+                        if !part.closed && part.refused.is_none() && !own_surface {
                             self.note(IssueKind::OpenBody, Some(item), 0, format!("{label}: imported as an open body (the shell is not closed)"));
                         }
                     }

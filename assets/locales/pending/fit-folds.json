@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_fit_folds": "This surface folds over itself ({trouble}): take a smaller region. More control points will not stop it."
+  },
+  "de": {
+    "ui.scan_fit_folds": "Diese Fläche faltet sich über sich selbst ({trouble}): einen kleineren Bereich nehmen. Mehr Kontrollpunkte verhindern das nicht."
+  },
+  "ja": {
+    "ui.scan_fit_folds": "このサーフェスは自己交差して折り返しています（{trouble}）。範囲を小さくしてください。制御点を増やしても解消しません。"
+  },
+  "ko": {
+    "ui.scan_fit_folds": "이 곡면이 자기 자신 위로 접힙니다({trouble}). 더 작은 영역을 잡으세요. 제어점을 늘려도 해결되지 않습니다."
+  },
+  "zh": {
+    "ui.scan_fit_folds": "此曲面自身折叠（{trouble}）：请选取更小的区域。增加控制点无法阻止折叠。"
+  },
+  "ar": {
+    "ui.scan_fit_folds": "هذا السطح ينطوي على نفسه ({trouble}): اختر منطقة أصغر. زيادة نقاط التحكم لن توقف ذلك."
+  },
+  "he": {
+    "ui.scan_fit_folds": "המשטח הזה מתקפל על עצמו ({trouble}): בחרו אזור קטן יותר. עוד נקודות בקרה לא יעצרו זאת."
+  },
+  "vi": {
+    "ui.scan_fit_folds": "Bề mặt này gập lên chính nó ({trouble}): hãy lấy vùng nhỏ hơn. Thêm điểm điều khiển sẽ không ngăn được."
+  }
+}

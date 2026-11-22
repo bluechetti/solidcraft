@@ -58,8 +58,8 @@ fn matrix(t: &[[f64; 4]; 4]) -> Vec<f64> {
 /// keeps fewer states, then its final state only ([`SavedModel::thinned`], #3220); an error when
 /// not even that fits.
 pub(super) fn encode_model(model: &SavedModel, document: &[u8], space: usize) -> Result<(Vec<u8>, Vec<u8>)> {
-    let encoded = Encoded::of(model)?;
-    let total = encoded.slices.iter().fold(0usize, |n, s| n.saturating_add(s.len()));
+    let encoded = Encoded::of(model, space)?;
+    let total = encoded.sizes.iter().fold(0usize, |n, s| n.saturating_add(*s));
     let cap = max_manifest();
     // Which limit a cache of this size is over, with the sizes, or none.
     let refusal = |manifest: &[u8], payload: &[u8]| {
@@ -88,7 +88,7 @@ pub(super) fn encode_model(model: &SavedModel, document: &[u8], space: usize) ->
         why = Some(format!("its bodies are {} MB, over the {} MB room in the file", total >> 20, space >> 20));
     }
     // Fewer states. The bodies are encoded already: a state costs the slices it adds.
-    let size = |s: &usize| encoded.slices.get(*s).map_or(0, Vec::len);
+    let size = |s: &usize| encoded.sizes.get(*s).copied().unwrap_or(0);
     let pieces: Vec<Vec<(usize, usize)>> = encoded
         .bodies
         .iter()
@@ -142,9 +142,22 @@ pub(super) fn encode_model(model: &SavedModel, document: &[u8], space: usize) ->
 /// A model's bodies, each encoded once and identical ones stored once (keyed by the SHA-256 of
 /// their encoding), in the order a cache of the whole model stores them: every body, then the part
 /// every placed copy shows.
+/// One body's encoding, or why it has none.
+enum Slice {
+    Bytes(Vec<u8>),
+    /// A mesh body whose slice (at least this many bytes) is larger than the room for the cache.
+    TooLarge(usize),
+    /// Not encoded, or not decoded to the same body.
+    Inexact,
+}
+
 struct Encoded {
     /// Each stored body's encoding (kept apart: only what a cache keeps is copied into its payload).
+    /// Empty for a body too large for the room there is ([`Slice::TooLarge`]).
     slices: Vec<Vec<u8>>,
+    /// Each slice's length, or the least a body too large to encode would take: a state that
+    /// holds it never fits, and the others are kept as they would have been.
+    sizes: Vec<usize>,
     /// Each model body's slice, with the part (its index in `parts`) and the matrix of a placed copy.
     bodies: Vec<(usize, Option<(usize, [[f64; 4]; 4])>)>,
     /// Each placed part's slice.
@@ -271,7 +284,7 @@ fn decode_cached_body(bytes: &[u8]) -> Option<solidcraft_kernel::Body> {
 }
 
 impl Encoded {
-    fn of(model: &SavedModel) -> Result<Self> {
+    fn of(model: &SavedModel, space: usize) -> Result<Self> {
         // What to encode: every body, and the part every placed copy shows.
         let mut shares: Vec<solidcraft_kernel::DisplayShare> = Vec::new();
         let mut share_index = std::collections::HashMap::new();
@@ -286,32 +299,64 @@ impl Encoded {
             }));
         }
         let bodies: Vec<&solidcraft_kernel::Body> = model.bodies.iter().chain(shares.iter().map(|s| s.original())).collect();
+        // A mesh body every later state holds (a scan) is the same body in each: encoded once.
+        let first: Vec<usize> = bodies
+            .iter()
+            .enumerate()
+            .map(|(i, b)| if b.is_mesh() { bodies.get(..i).and_then(|before| before.iter().position(|o| o.same(b))).unwrap_or(i) } else { i })
+            .collect();
+        let unique: Vec<&solidcraft_kernel::Body> =
+            bodies.iter().zip(&first).enumerate().filter(|(i, (_, f))| *i == **f).map(|(_, (b, _))| *b).collect();
         // A body is kept only when it decodes to itself: one the codec gave back with other
         // topology (two loose vertices more on a pattern copy cut by an extrude) would open as
         // another body. Then the model isn't kept, and opening the design evaluates it.
-        let encoded = solidcraft_kernel::map_on_threads(&bodies, 16, |b| {
+        let encoded = solidcraft_kernel::map_on_threads(&unique, 16, |b| {
             if b.is_mesh() {
-                let bytes = encode_mesh_body(b)?;
-                return decode_mesh_body(&bytes).is_some_and(|back| same_mesh(b, &back)).then_some(bytes);
+                // A scan's slice is gigabytes to write and to check by building the body again:
+                // not made when it could never fit.
+                let least =
+                    b.triangle_mesh().map_or(0, |(p, t)| p.len().saturating_mul(24).saturating_add(t.len().saturating_mul(12)).saturating_add(12));
+                if least > space {
+                    return Slice::TooLarge(least);
+                }
+                let Some(bytes) = encode_mesh_body(b) else { return Slice::Inexact };
+                return if decode_mesh_body(&bytes).is_some_and(|back| same_mesh(b, &back)) { Slice::Bytes(bytes) } else { Slice::Inexact };
             }
-            let bytes = solidcraft_kernel::encode_native_body(b).ok()?;
-            let back = solidcraft_kernel::decode_native_body(&bytes).ok()?;
-            same_topology(b, &back).then_some(bytes)
+            let Ok(bytes) = solidcraft_kernel::encode_native_body(b) else { return Slice::Inexact };
+            let Ok(back) = solidcraft_kernel::decode_native_body(&bytes) else { return Slice::Inexact };
+            if same_topology(b, &back) { Slice::Bytes(bytes) } else { Slice::Inexact }
         });
-        let mut slices = Vec::new();
+        let (mut slices, mut sizes) = (Vec::new(), Vec::new());
         let mut by_digest = std::collections::HashMap::new();
-        let mut index = Vec::with_capacity(encoded.len());
-        for bytes in encoded {
-            let bytes = bytes.flatten().ok_or_else(|| invalid("body not stored exactly"))?;
+        let mut unique_index = Vec::with_capacity(encoded.len());
+        for made in encoded {
             let next = slices.len();
-            let i = *by_digest.entry(Sha256::digest(&bytes)).or_insert(next);
-            if i == next {
-                slices.push(bytes);
+            match made {
+                Some(Slice::Bytes(bytes)) => {
+                    let i = *by_digest.entry(Sha256::digest(&bytes)).or_insert(next);
+                    if i == next {
+                        sizes.push(bytes.len());
+                        slices.push(bytes);
+                    }
+                    unique_index.push(i);
+                }
+                Some(Slice::TooLarge(least)) => {
+                    slices.push(Vec::new());
+                    sizes.push(least);
+                    unique_index.push(next);
+                }
+                _ => return Err(invalid("body not stored exactly")),
             }
-            index.push(i);
+        }
+        // Each body's slice: its own, or the first same body's.
+        let mut of_unique = unique_index.into_iter();
+        let mut index: Vec<usize> = Vec::with_capacity(bodies.len());
+        for (i, f) in first.iter().enumerate() {
+            let slice = if *f == i { of_unique.next() } else { index.get(*f).copied() };
+            index.push(slice.ok_or_else(|| invalid("cached body"))?);
         }
         let (body_slices, part_slices) = index.split_at_checked(model.bodies.len()).ok_or_else(|| invalid("cached body count"))?;
-        Ok(Encoded { slices, bodies: body_slices.iter().copied().zip(placed).collect(), parts: part_slices.to_vec() })
+        Ok(Encoded { slices, sizes, bodies: body_slices.iter().copied().zip(placed).collect(), parts: part_slices.to_vec() })
     }
 
     /// The cache of a model with these `records`, whose bodies are these of the model's (indices
@@ -350,6 +395,10 @@ impl Encoded {
         }
         let shares = parts.iter().map(|p| slice(*self.parts.get(*p).ok_or_else(|| invalid("display share"))?)).collect::<Result<Vec<_>>>()?;
         let stored = order.iter().map(|s| self.slices.get(*s).ok_or_else(|| invalid("cached body"))).collect::<Result<Vec<_>>>()?;
+        // A body too large to encode (an empty slice: a made one starts with its tag) is not kept.
+        if stored.iter().any(|bytes| bytes.is_empty()) {
+            return Err(invalid("model cache size"));
+        }
         let length = stored.iter().fold(0usize, |n, bytes| n.saturating_add(bytes.len()));
         if length > max_design() || stored.len() > MAX_UNIQUE {
             return Err(invalid("model cache size"));

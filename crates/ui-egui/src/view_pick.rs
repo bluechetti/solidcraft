@@ -283,7 +283,9 @@ fn refine(m: &Mesh, ti: usize, t: f64, lo: Vec3, ld: Vec3, place: &solidcraft_en
     let (p0, p1, p2) = (m.positions.get(a as usize)?, m.positions.get(b as usize)?, m.positions.get(c as usize)?);
     let lp = lo + ld * t;
     let mesh_normal = || (*p1 - *p0).cross(*p2 - *p0).normalized().or_else(|| (ld * -1.0).normalized());
-    let (point_local, n_local) = match (m.normals.get(a as usize), m.normals.get(b as usize), m.normals.get(c as usize)) {
+    // A flat mesh's (a mesh body's) corners each take their triangle's own normal.
+    let normals = m.corner_normals(&[a, b, c]);
+    let (point_local, n_local) = match normals.as_ref().map(|[na, nb, nc]| (Some(na), Some(nb), Some(nc))).unwrap_or_default() {
         (Some(na), Some(nb), Some(nc)) if nb.dist(*na) < 1e-6 && nc.dist(*na) < 1e-6 && nc.dist(*nb) < 1e-6 => {
             // Flat: the exact ray-plane intersection, on the face's own plane.
             let n = na.normalized()?;

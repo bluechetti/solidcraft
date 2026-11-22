@@ -58,6 +58,8 @@ pub const TABLE: &[(&str, Class)] = &[
     // STEP (ISO 10303) exchange structure and geometry, no modelling backend
     ("step", Class::Layer(1)),
     ("kernel", Class::Layer(1)),
+    // scan to CAD: placing and fitting scanned meshes (geometry only, no modelling backend)
+    ("scan", Class::Layer(1)),
     ("render", Class::Layer(1)),
     // multibody dynamics (rigid bodies, joints, forces, time integration; geom only)
     ("dynamics", Class::Layer(1)),
@@ -110,6 +112,9 @@ pub const TABLE: &[(&str, Class)] = &[
     // the UI kit's component gallery (docs.solidcraft.io/kit/), desktop and browser
     ("ui-kit-gallery", Class::Exempt),
     ("xtask", Class::Exempt),
+    // build tooling: no code, only the third-party features the whole workspace turns on, so
+    // building any mix of crates compiles them the same way (`cargo hakari generate`)
+    ("workspace-hack", Class::Exempt),
 ];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).

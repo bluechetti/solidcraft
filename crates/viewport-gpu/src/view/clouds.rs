@@ -65,7 +65,8 @@ pub enum ColorMode {
 /// and the four filtered values at each corner, a bead's width and height (zero: a line), its own
 /// colour, and which of the four filters and the value it has (bits 0 to 3, and 4, of `has`). A
 /// segment also has the points before and after it on its bead (its own ends where it has none),
-/// so that two beads meet in the plane halfway between their directions.
+/// so that two beads meet in the plane halfway between their directions. A triangle with
+/// [`LIT_BY_SURFACE`] in `has` is lit by the direction in `neighbours[0]` instead of its own.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Cell {
     pub corners: [[f32; 3]; 3],
@@ -76,6 +77,11 @@ pub struct Cell {
     pub rgb: [u8; 3],
     pub has: u8,
 }
+
+/// A triangle [`Cell`]'s `has` bit: lit by the surface's way out given in `neighbours[0]`, not by
+/// its own normal (a fine scan's noise tilts its triangles every way, and painted on it each one
+/// lit by its own sparkled).
+pub const LIT_BY_SURFACE: u8 = 32;
 
 /// Bytes per [`Cell`].
 pub const CELL_SIZE: usize = 132;

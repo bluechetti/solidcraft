@@ -251,8 +251,9 @@ enum Section<'a> {
     Round(&'a [f64]),
     Curvature(&'a [f64]),
     Chord(&'a [f64]),
-    /// A radius law; the size is its larger end radius.
-    Variable(f64),
+    /// A radius law; the size is its larger end radius; curvature-continuous sections (the
+    /// kernel's blend curve, G2 at its contacts) when the flag is set, else circular.
+    Variable(f64, bool),
     /// Chamfers by their sizes, each first size along the face named (empty: the blend edge
     /// use's).
     Chamfer {
@@ -794,10 +795,12 @@ fn prepare(
         (Section::Round(sizes), _) => {
             s.prepare_per_edge_constant_radius(k, edges, sizes, &circular, 1, 1.0)
         }
-        (Section::Variable(size), Some(law)) => {
-            s.prepare_variable_radius_edges(k, edges, size, law, 1, 1)
+        // circular sections at G1 (1, 1), or the kernel's blend curve at G2 (2, 2)
+        (Section::Variable(size, curvature), Some(law)) => {
+            let (xsect, continuity) = if curvature { (2, 2) } else { (1, 1) };
+            s.prepare_variable_radius_edges(k, edges, size, law, xsect, continuity)
         }
-        (Section::Variable(_), None) => Err(SolidError::invalid_input(
+        (Section::Variable(..), None) => Err(SolidError::invalid_input(
             "solidcore-ops blend",
             "a variable round needs its law",
         )),
@@ -2979,6 +2982,7 @@ pub fn fillet_variable_with(
         knots,
         radii,
         contract,
+        false,
     )
 }
 
@@ -3040,6 +3044,7 @@ pub fn fillet_variable_ordered_with(
         knots,
         radii,
         contract,
+        false,
     )
 }
 
@@ -3089,6 +3094,7 @@ pub fn fillet_variable_from_with(
         knots,
         radii,
         contract,
+        false,
     )
 }
 
@@ -3106,6 +3112,34 @@ enum VariableStart {
     Point([f64; 3]),
 }
 
+/// [`fillet_variable_from`] with curvature-continuous sections: the kernel's blend curve, G2 to
+/// the faces at its contacts (as a curvature fillet's), its size following the radius law.
+///
+/// # Errors
+/// As [`fillet_variable_from`].
+pub fn fillet_variable_curvature_from(
+    body: &Body,
+    edge: usize,
+    start: [f64; 3],
+    degree: usize,
+    knots: &[f64],
+    radii: &[f64],
+) -> Result<()> {
+    fillet_variable_impl(
+        body,
+        None,
+        edge,
+        VariableStart::Point(start),
+        BandCheck::Never,
+        degree,
+        knots,
+        radii,
+        Contract::Closed,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 fn fillet_variable_impl(
     body: &Body,
     order: Option<&crate::Order>,
@@ -3116,6 +3150,7 @@ fn fillet_variable_impl(
     knots: &[f64],
     radii: &[f64],
     contract: Contract,
+    curvature: bool,
 ) -> Result<()> {
     if !law_ok(degree, knots, radii) {
         return Err(Error::Argument);
@@ -3182,7 +3217,7 @@ fn fillet_variable_impl(
         );
         let p = Pass {
             edges: &[e],
-            section: Section::Variable(if r0 > r1 { r0 } else { r1 }),
+            section: Section::Variable(if r0 > r1 { r0 } else { r1 }, curvature),
             law: Some(law),
             setbacks: &[],
             earlier: &[],

@@ -199,6 +199,7 @@ let events = ui_kit::details(ui, "draft", &ui_kit::Details {
             ],
             readout: vec![("Pull direction".into(), "+Z".into())],
             actions: vec![("export".into(), "Export report".into())],
+            compact: false,
         };
         ui.set_max_width(420.0);
         for event in ui_kit::details(ui, "gallery_details", &description, 420.0, None) {

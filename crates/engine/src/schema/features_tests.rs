@@ -19,6 +19,7 @@ fn schemas_and_the_key_check_agree() {
         input_schema_for::<MoveParams>(),
         &[
             "about",
+            "alone",
             "angle",
             "axis",
             "bodies",
@@ -153,6 +154,7 @@ fn schemas_and_the_key_check_agree() {
             "body_name",
             "body_names",
             "corner",
+            "curvature",
             "edge_radii",
             "edges",
             "fit",

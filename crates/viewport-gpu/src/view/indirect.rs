@@ -219,7 +219,8 @@ impl Indirect {
     pub(super) fn new(device: &wgpu::Device, draws: &[InstancedDraw], arena: Arc<Arena>) -> Option<Indirect> {
         let mut batched = vec![false; draws.len()];
         for (i, d) in draws.iter().enumerate() {
-            batched[i] = !d.levels.is_empty() && d.levels.iter().all(|l| arena.span(&l.src).is_some());
+            // A painted level (a scan's deviation map) is drawn on its own, with its colours.
+            batched[i] = !d.levels.is_empty() && d.levels.iter().all(|l| l.paint.is_none() && arena.span(&l.src).is_some());
         }
         if !batched.contains(&true) {
             return None;

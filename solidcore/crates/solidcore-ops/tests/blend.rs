@@ -38,9 +38,9 @@ use solidcore_record::brep::Brep as Record;
 use solidcore_ops::sweep::{extrude, loft_to_point, Curve, DraftCorner, SweepFrame};
 use solidcore_ops::{
     blend, blend_ordered, blend_with, chamfer_sides, chamfer_sides_facing, edge_faces_along,
-    edges_share_wedge, fillet_variable, fillet_variable_from, make_box, make_cone, make_cylinder,
-    tangent_chain, Blend, BlendOptions, Body, ChamferSecond, CheckLevel, Corners, Error, FitKind,
-    Order, SetBack, Turn, Unblendable,
+    edges_share_wedge, fillet_variable, fillet_variable_curvature_from, fillet_variable_from,
+    make_box, make_cone, make_cylinder, tangent_chain, Blend, BlendOptions, Body, ChamferSecond,
+    CheckLevel, Corners, Error, FitKind, Order, SetBack, Turn, Unblendable,
 };
 
 /// The block's top front edge, 30 long, between the top (z = 10) and the front (y = 0).
@@ -1079,6 +1079,37 @@ fn a_variable_round_runs_from_the_end_nearest_a_point() {
         fillet_variable_from(&b, 99, [0.0; 3], 1, &knots, &radii),
         Err(Error::Argument)
     );
+}
+
+/// [`fillet_variable_curvature_from`]: a curvature-continuous round whose size runs from 1 to 2
+/// along the block's top front edge (30 long, between the top and the front, square). Each
+/// section square to the edge is the G2 section of the ball there at its own wedge's equal area
+/// thumbweight, which takes off what the ball's circle does, (1 − π/4) r², so the round takes off
+/// (1 − π/4) · 30 · (1 + 2 + 4) / 3; with a law of one radius, (1 − π/4) · 30. The circular round
+/// of the same law takes off its balls' union, a little less than the integral.
+#[test]
+fn a_curvature_round_whose_size_varies_takes_off_the_circles_area() {
+    all_fixes();
+    let knots = [0.0, 0.0, 1.0, 1.0];
+    let near = [0.0, 0.0, 10.0];
+    let cut = 1.0 - PI / 4.0;
+    for (radii, want) in [
+        ([1.0, 1.0], cut * 30.0),
+        ([1.0, 2.0], cut * 30.0 * 7.0 / 3.0),
+    ] {
+        let b = block();
+        fillet_variable_curvature_from(&b, top_front(&b), near, 1, &knots, &radii).unwrap();
+        assert!(b.check(CheckLevel::All).unwrap().is_valid(), "{radii:?}");
+        let removed = ABC - volume(&b);
+        assert!(
+            (removed - want).abs() < 1e-4,
+            "{radii:?}: {removed} vs {want}"
+        );
+    }
+    let round = block();
+    fillet_variable_from(&round, top_front(&round), near, 1, &knots, &[1.0, 2.0]).unwrap();
+    let removed = ABC - volume(&round);
+    assert!(removed < cut * 70.0 && removed > cut * 69.9, "{removed}");
 }
 
 #[test]
@@ -2134,6 +2165,100 @@ fn curvature_rounds_over_mixed_wedges_each_take_their_own_balls_area() {
     assert!((ab - 40.0 * per_length).abs() < 1e-5, "[A, B] took {ab}");
     assert!((ba - 40.0 * per_length).abs() < 1e-5, "[B, A] took {ba}");
     assert!((ab - ba).abs() < 1e-7, "{ab} {ba}");
+}
+
+/// Two top edges of a 20 x 20 x 10 box that meet where the upright edge stays sharp, rounded
+/// curvature-continuously r 1.5 in one call: the rounds meet in a mitre on the corner's plane
+/// of symmetry, x = y. Each round is one G2 section swept along its edge, so the material off
+/// is the section's region D (in y, z for the round along x) swept from the mitre to the far
+/// end, `2 (L A - M)`: L = 20, A the area of D and M its first moment about the side wall y = 0.
+/// By Green's theorem over D, bounded by the section and the two walls (where y = 0 or dz = 0),
+/// A = |∫ y dz| and M = |∫ y^2 / 2 dz| along the section, integrated here (Gauss-Legendre) from
+/// the round's own definition; A is the circle's, (1 - pi/4) r^2, the equal-area rule. The
+/// circular rounds' M = (10 - 3 pi) r^3 / 12 checks the formula. The two G2 rounds touch the
+/// top face to second order at X, where their rails cross, so their traced intersection
+/// stopped short of X and the round's face was closed past the corner ("not a solid"): the
+/// mitre is now the section's image on that plane, ending at X.
+#[test]
+fn two_curvature_rounds_meet_in_a_mitre_where_the_third_edge_stays_sharp() {
+    all_fixes();
+    let (r, l) = (1.5, 20.0);
+    let a = (1.0 - PI / 4.0) * r * r;
+    let made = |kind| {
+        let b = make_box([0.0; 3], [l, l, 10.0]).unwrap();
+        let edges = [
+            edge_at(&b, [10.0, 0.0, 10.0]),
+            edge_at(&b, [0.0, 10.0, 10.0]),
+        ];
+        blend(&b, kind, &edges, &[r], &[], Corners::Filled)
+            .unwrap_or_else(|e| panic!("{kind:?}: {e:?}"));
+        assert!(b.check(CheckLevel::All).unwrap().is_valid(), "{kind:?}");
+        b
+    };
+    let circle = made(Blend::Round);
+    let m = (10.0 - 3.0 * PI) * r * r * r / 12.0;
+    let off = l * l * 10.0 - volume(&circle);
+    assert!(rel(off, 2.0 * (l * a - m)) < 1e-9, "round: {off}");
+
+    let b = made(Blend::Curvature);
+    let (k, brep) = kernel_copy(&b);
+    // Gauss-Legendre on 8 points, over 16 panels of the section
+    let nodes = [
+        (0.183_434_642_495_649_8, 0.362_683_783_378_362),
+        (0.525_532_409_916_329, 0.313_706_645_877_887_3),
+        (0.796_666_477_413_626_7, 0.222_381_034_453_374_5),
+        (0.960_289_856_497_536_3, 0.101_228_536_290_376_3),
+    ];
+    let mut sections = Vec::new();
+    for &f in brep.face_list() {
+        let s = brep.face(f).unwrap().surface.as_ref().unwrap();
+        let Some(BlendRef::Procedural(pb)) = s.procedural_blend() else {
+            continue;
+        };
+        let d = pb.net().natural_uv_domain();
+        let (lo, hi) = (
+            pb.definition_parameters(d.min()),
+            pb.definition_parameters(d.max()),
+        );
+        let s_mid = 0.5 * (lo.x + hi.x);
+        // the round along x: its section at the middle of the edge
+        let p = |t: f64| pb.evaluate_definition(&k, s_mid, t, 0, 1).unwrap();
+        let along = (pb.evaluate_definition(&k, lo.x, lo.y, 0, 0).unwrap()[0][0]
+            - pb.evaluate_definition(&k, hi.x, lo.y, 0, 0).unwrap()[0][0])
+            .x
+            .abs();
+        if along < 1.0 {
+            continue;
+        }
+        let (mut area, mut moment) = (0.0, 0.0);
+        let panels = 16;
+        for i in 0..panels {
+            let t0 = lo.y + (hi.y - lo.y) * f64::from(i) / f64::from(panels);
+            let h = 0.5 * (hi.y - lo.y) / f64::from(panels);
+            for &(x, w) in &nodes {
+                for t in [t0 + h * (1.0 - x), t0 + h * (1.0 + x)] {
+                    let d = p(t);
+                    let (y, dz) = (d[0][0].y, d[0][1].z);
+                    area += w * h * y * dz;
+                    moment += w * h * 0.5 * y * y * dz;
+                }
+            }
+        }
+        sections.push((area.abs(), moment.abs()));
+    }
+    let [(area, moment)] = sections[..] else {
+        panic!("one G2 round along x: {sections:?}")
+    };
+    assert!(
+        (area - a).abs() < 1e-9,
+        "the section's area {area}, want {a}"
+    );
+    let off = l * l * 10.0 - volume(&b);
+    let want = 2.0 * (l * area - moment);
+    assert!(
+        rel(off, want) < 1e-9,
+        "curvature: {off} off, want {want} (M {moment})"
+    );
 }
 
 /// #3145: a chamfer too large for its faces is refused with the distance that builds, which the
@@ -6303,4 +6428,173 @@ fn a_chamfer_between_a_wall_and_a_cone_an_earlier_chamfer_made_builds() {
     assert_eq!(b.counts().unwrap(), [8, 18, 12]);
     let off = before - b.volume(1e-10).unwrap();
     assert!((0.264..=0.445).contains(&off), "the chamfer took off {off}");
+}
+/// A round's section at the middle of its edge on the face of `b` whose round runs along
+/// `axis` (0 x, 1 y): points and their derivative over the section's parameter, and its
+/// parameter range.
+struct MidSection {
+    pb: ProceduralBlend,
+    s: f64,
+    t: (f64, f64),
+}
+
+impl MidSection {
+    fn of(k: &Kernel, brep: &solidcore::topology::Brep, axis: usize) -> Self {
+        let mut found = Vec::new();
+        for &f in brep.face_list() {
+            let surface = brep.face(f).unwrap().surface.as_ref().unwrap();
+            let Some(BlendRef::Procedural(pb)) = surface.procedural_blend() else {
+                continue;
+            };
+            let d = pb.net().natural_uv_domain();
+            let (lo, hi) = (
+                pb.definition_parameters(d.min()),
+                pb.definition_parameters(d.max()),
+            );
+            let p = |s: f64| pb.evaluate_definition(k, s, lo.y, 0, 0).unwrap()[0][0];
+            let run = p(lo.x) - p(hi.x);
+            if [run.x, run.y][axis].abs() < 1.0 {
+                continue;
+            }
+            found.push(MidSection {
+                pb: pb.clone(),
+                s: 0.5 * (lo.x + hi.x),
+                t: (lo.y, hi.y),
+            });
+        }
+        assert_eq!(found.len(), 1, "one round along axis {axis}");
+        found.pop().unwrap()
+    }
+
+    /// The point and its derivative at `t`.
+    fn at(&self, k: &Kernel, t: f64) -> (Vec3, Vec3) {
+        let d = self.pb.evaluate_definition(k, self.s, t, 0, 1).unwrap();
+        (d[0][0], d[0][1])
+    }
+}
+
+/// Gauss-Legendre on 8 points over 32 panels of `(a, b)`.
+fn gauss_panels(a: f64, b: f64, mut f: impl FnMut(f64) -> f64) -> f64 {
+    let nodes = [
+        (0.183_434_642_495_649_8, 0.362_683_783_378_362),
+        (0.525_532_409_916_329, 0.313_706_645_877_887_3),
+        (0.796_666_477_413_626_7, 0.222_381_034_453_374_5),
+        (0.960_289_856_497_536_3, 0.101_228_536_290_376_3),
+    ];
+    let panels = 32;
+    let mut sum = 0.0;
+    for i in 0..panels {
+        let t0 = a + (b - a) * f64::from(i) / f64::from(panels);
+        let h = 0.5 * (b - a) / f64::from(panels);
+        for &(x, w) in &nodes {
+            for t in [t0 + h * (1.0 - x), t0 + h * (1.0 + x)] {
+                sum += w * h * f(t);
+            }
+        }
+    }
+    sum
+}
+
+/// The box of [`two_curvature_rounds_meet_in_a_mitre_where_the_third_edge_stays_sharp`] with
+/// its front wall (y = 0) drafted `draft` degrees inward about its top edge: at depth h below
+/// the top the wall is at y = h tan(draft), so the corner is no mirror image.
+fn drafted_front_box(draft: f64) -> Body {
+    let b = make_box([0.0; 3], [20.0, 20.0, 10.0]).unwrap();
+    let (c, s) = (draft.to_radians().cos(), draft.to_radians().sin());
+    let m = [[1.0, 0.0, 0.0], [0.0, c, s], [0.0, -s, c]];
+    let at = [0.0, 0.0, 10.0];
+    let tr = [0, 1, 2].map(|j| at[j] - (0..3).map(|i| at[i] * m[i][j]).sum::<f64>());
+    let cutter = make_box([-5.0, -30.0, -10.0], [30.0, 30.0, 40.0]).unwrap();
+    cutter
+        .transform(&[
+            [m[0][0], m[0][1], m[0][2], 0.0],
+            [m[1][0], m[1][1], m[1][2], 0.0],
+            [m[2][0], m[2][1], m[2][2], 0.0],
+            [tr[0], tr[1], tr[2], 1.0],
+        ])
+        .unwrap();
+    solidcore_ops::boolean::boolean(b, cutter, solidcore_ops::BooleanOp::Subtract)
+        .unwrap()
+        .unwrap()
+}
+
+/// The drafted box's two top edges at its corner (0, 0, 10) rounded r 1.5 in one call, the
+/// upright edge there sharp: the round along x (on the drafted wall) reaches its wall's rail
+/// deeper than the round along y (on the square wall x = 0), so the corner is no mirror image
+/// and the mitre ends where it meets the shallower round's rail. At depth h below the top each
+/// round is a line along its edge, at y = y1(h) and at x = x2(h), and the box's slice is
+/// x in [0, 20], y in [h tan(draft), 20]: the slice loses 20 (y1 - h tan(draft)) + x2 (20 -
+/// y1) while both rounds are there and 20 (y1 - h tan(draft)) below the shallower one's rail.
+/// The volume off is that area integrated over the depth, from each round's own section
+/// (Gauss-Legendre over its parameter; y1 at x2's depth by bisection): the corner's mitre
+/// is not in it. The circular rounds meet it too. The two G2 rounds touch the top to second
+/// order at X, so their traced intersection could not reach X: the mitre is now built by
+/// depth.
+#[test]
+fn two_curvature_rounds_meet_where_the_corner_is_no_mirror_image() {
+    all_fixes();
+    let (r, draft) = (1.5, 10.0_f64);
+    let slope = draft.to_radians().tan();
+    for kind in [Blend::Round, Blend::Curvature] {
+        let b = drafted_front_box(draft);
+        let before = volume(&b);
+        let edges = [
+            edge_at(&b, [10.0, 0.0, 10.0]),
+            edge_at(&b, [0.0, 10.0, 10.0]),
+        ];
+        blend(&b, kind, &edges, &[r], &[], Corners::Filled)
+            .unwrap_or_else(|e| panic!("{kind:?}: {e:?}"));
+        assert!(b.check(CheckLevel::All).unwrap().is_valid(), "{kind:?}");
+        let off = before - volume(&b);
+        if kind == Blend::Round {
+            // the circles: the ball on the drafted wall stands at depth r, y = r (1 + sin)
+            // / cos, and touches the wall at depth r (1 + sin); the other's centre is at x = r.
+            // At h = r (1 - cos th), y1 = yc - r sin th and x2 = r - r sin th (to th = pi/2)
+            let (sn, cs) = (draft.to_radians().sin(), draft.to_radians().cos());
+            let yc = r * (1.0 + sn) / cs;
+            let alone = gauss_panels(0.0, PI / 2.0 + draft.to_radians(), |th| {
+                let h = r * (1.0 - th.cos());
+                20.0 * (yc - r * th.sin() - h * slope) * r * th.sin()
+            });
+            let both = gauss_panels(0.0, PI / 2.0, |th| {
+                (r - r * th.sin()) * (20.0 - (yc - r * th.sin())) * r * th.sin()
+            });
+            let want = alone + both;
+            assert!(rel(off, want) < 1e-9, "round: {off} off, want {want}");
+            continue;
+        }
+        let (k, brep) = kernel_copy(&b);
+        let one = MidSection::of(&k, &brep, 0);
+        let two = MidSection::of(&k, &brep, 1);
+        let depth = |p: Vec3| 10.0 - p.z;
+        let deep = |m: &MidSection| depth(m.at(&k, m.t.0).0).max(depth(m.at(&k, m.t.1).0));
+        let (deep_one, deep_two) = (deep(&one), deep(&two));
+        assert!(deep_two < deep_one, "{deep_one} {deep_two}");
+        // round 1's y at depth h: bisection over its section (the depth grows from the top)
+        let top_first = depth(one.at(&k, one.t.0).0) < depth(one.at(&k, one.t.1).0);
+        let y1_at = |h: f64| {
+            let (mut lo, mut hi) = if top_first { one.t } else { (one.t.1, one.t.0) };
+            for _ in 0..80 {
+                let mid = 0.5 * (lo + hi);
+                if depth(one.at(&k, mid).0) < h {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            one.at(&k, 0.5 * (lo + hi)).0.y
+        };
+        let alone = gauss_panels(one.t.0, one.t.1, |t| {
+            let (p, d) = one.at(&k, t);
+            20.0 * (p.y - depth(p) * slope) * d.z
+        })
+        .abs();
+        let both = gauss_panels(two.t.0, two.t.1, |t| {
+            let (p, d) = two.at(&k, t);
+            p.x * (20.0 - y1_at(depth(p))) * d.z
+        })
+        .abs();
+        let want = alone + both;
+        assert!(rel(off, want) < 1e-9, "{kind:?}: {off} off, want {want}");
+    }
 }

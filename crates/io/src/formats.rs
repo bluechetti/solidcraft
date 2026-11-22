@@ -127,6 +127,16 @@ const UP_Y: OptionSpec = OptionSpec {
     kind: OptionKind::Choice { choices: &[("y", "The file has Y up"), ("z", "Keep the file's axes (Z up)")], default: 0 },
 };
 
+/// The length unit of a mesh file that doesn't state one (STL, OBJ; see `file.insert_mesh`).
+const MESH_UNITS: OptionSpec = OptionSpec {
+    param: "units",
+    label: "Units",
+    kind: OptionKind::Choice {
+        choices: &[("mm", "Millimetres"), ("cm", "Centimetres"), ("m", "Metres"), ("in", "Inches"), ("ft", "Feet")],
+        default: 0,
+    },
+};
+
 /// What imported bodies are named after (see [`crate::StepNames`]).
 const STEP_NAMES: OptionSpec = OptionSpec {
     param: "names",
@@ -269,7 +279,7 @@ pub static FORMATS: &[FormatSpec] = &[
         label: "STL",
         extensions: &["stl"],
         role: Role::Artifact,
-        import: Some(ImportSpec { target: ImportTarget::Mesh, options: &[], native_only: false }),
+        import: Some(ImportSpec { target: ImportTarget::Mesh, options: &[MESH_UNITS], native_only: false }),
         export: Some(ExportSpec { command: "file.export", format: None, options: &[STL_ENCODING], scope: ExportScope::Bodies, lossless: false }),
     },
     FormatSpec {
@@ -293,7 +303,7 @@ pub static FORMATS: &[FormatSpec] = &[
         label: "OBJ",
         extensions: &["obj"],
         role: Role::Artifact,
-        import: Some(ImportSpec { target: ImportTarget::Mesh, options: &[], native_only: false }),
+        import: Some(ImportSpec { target: ImportTarget::Mesh, options: &[MESH_UNITS], native_only: false }),
         export: Some(ExportSpec { command: "file.export", format: None, options: &[], scope: ExportScope::Bodies, lossless: false }),
     },
     FormatSpec {
@@ -373,6 +383,30 @@ pub static FORMATS: &[FormatSpec] = &[
         id: "asc",
         label: "ASC point cloud",
         extensions: &["asc"],
+        role: Role::Artifact,
+        import: Some(ImportSpec { target: ImportTarget::PointCloud, options: &[], native_only: false }),
+        export: None,
+    },
+    FormatSpec {
+        id: "ptx",
+        label: "PTX point cloud",
+        extensions: &["ptx"],
+        role: Role::Artifact,
+        import: Some(ImportSpec { target: ImportTarget::PointCloud, options: &[], native_only: false }),
+        export: None,
+    },
+    FormatSpec {
+        id: "e57",
+        label: "E57 point cloud",
+        extensions: &["e57"],
+        role: Role::Artifact,
+        import: Some(ImportSpec { target: ImportTarget::PointCloud, options: &[], native_only: false }),
+        export: None,
+    },
+    FormatSpec {
+        id: "las",
+        label: "LAS/LAZ point cloud",
+        extensions: &["las", "laz"],
         role: Role::Artifact,
         import: Some(ImportSpec { target: ImportTarget::PointCloud, options: &[], native_only: false }),
         export: None,
@@ -514,7 +548,7 @@ pub fn import_filters(native: bool) -> Vec<(&'static str, Vec<&'static str>)> {
             // An OpenUSD scene is read as meshes, but it is its own kind of file to most people.
             ImportTarget::Mesh if f.id == "usd" => add(f.label, f.extensions),
             ImportTarget::Mesh => add("Mesh (3MF, STL, OBJ, glTF)", f.extensions),
-            ImportTarget::PointCloud => add("Point cloud (PLY, PCD, E57, XYZ, PTS, ASC)", f.extensions),
+            ImportTarget::PointCloud => add("Point cloud (PLY, PCD, XYZ, PTS, ASC, PTX, E57, LAS)", f.extensions),
             ImportTarget::Sketch => add("Sketch drawings (DXF, SVG)", f.extensions),
         }
     }
@@ -579,7 +613,7 @@ mod tests {
         for e in ["3mf", "stl", "obj", "glb", "gltf"] {
             assert!(with_target(ImportTarget::Mesh).contains(&e), "registry misses mesh .{e}");
         }
-        for e in ["ply", "pcd", "e57", "xyz", "pts", "asc"] {
+        for e in ["ply", "pcd", "xyz", "pts", "asc", "ptx", "e57", "las", "laz"] {
             assert!(with_target(ImportTarget::PointCloud).contains(&e), "registry misses point cloud .{e}");
             assert!(crate::is_point_cloud_path(&format!("scan.{e}")));
             assert!(open_extensions(true).contains(&e));
@@ -654,7 +688,7 @@ mod tests {
         assert_eq!(find("FreeCAD and Rhino"), vec!["fcstd", "3dm"]);
         assert_eq!(find("Mesh (3MF, STL, OBJ, glTF)"), vec!["stl", "3mf", "obj", "glb", "gltf"]);
         assert_eq!(find("OpenUSD"), vec!["usd", "usda", "usdc", "usdz"]);
-        assert_eq!(find("Point cloud (PLY, PCD, E57, XYZ, PTS, ASC)"), vec!["ply", "pcd", "e57", "xyz", "pts", "asc"]);
+        assert_eq!(find("Point cloud (PLY, PCD, XYZ, PTS, ASC, PTX, E57, LAS)"), vec!["ply", "pcd", "xyz", "pts", "asc", "ptx", "e57", "las", "laz"]);
         assert_eq!(find("Sketch drawings (DXF, SVG)"), vec!["dxf", "svg"]);
         assert!(import_filters(false).iter().all(|(l, _)| *l != "FreeCAD and Rhino"));
     }

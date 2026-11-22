@@ -112,7 +112,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .from_selection(super::model_selection::blend_edges)
         .contract(&FILLET_CONTRACT)
         .output(output_schema_for::<FilletResult>)
-        .params("edges: [[x,y,z] point on edge | {body, index}] ; radius: expr; tangent_chain?: bool (default true: each picked edge's tangent chain is rounded with it; false: exactly the picked edges); body?: the body the edges are on (without it, each point is looked up on every placed body, shown or hidden, and a point on edges of 2 bodies is refused, naming them); type?: constant|curvature (alias g2: curvature-continuous quintic between planar faces along straight edges, one planar end face at each end (including sloped ends); radius sets the equivalent circular setback, not constant curvature; exact fit only)|chord (radius is the width across)|variable (radius at the end nearest start, radius2 at the other; one end may be 0, where the round closes to the corner)|spline (the radius along the edge is a clamped B-spline from the end nearest start: radius is its first control radius, radii the rest, knots its knot vector from 0 to 1; one end may be 0); radius2?; start?: [x,y,z]; radii?: [expr, …]; knots?: [number, …]; mid?: [[position 0…1 from start, radius expr], …] (variable radii between the ends); smooth?: bool (smooth instead of straight between the radii); corner?: rolling|g2 (rolling, the default: the corners where three blended edges meet are pieces of the rolling ball's sphere, tangent to each blend; a curvature round's corners are always g2 patches, between its own sections; g2: each corner where three or more rounded edges meet, and every edge there is rounded, is set back (1.5 × the radius along each edge unless `setbacks` names it) and filled with a patch meeting the rounds and the faces round it to the second order (curvature-continuous seams, clear of the points where a round's section ends on a face), constant-radius exact fillets only, refused where it cannot be built); setbacks?: [{vertex: [x,y,z], distance: expr}, …] (corner setbacks: the corner at the vertex nearest `vertex`, where every edge meeting it is rounded, starts its patch `distance` along each of those edges from the vertex, past where the rounds would meet (past the radius at a square corner), so the rounds blend through a larger patch; one distance for all of a corner's edges; constant-radius exact fillets only; with `corner: g2`, the G2 patch's corners); turn?: mitre|swept (where two rounds turn round a sharp, straight, convex side edge square to both on a plane, such as the rounds along a boss's base at its upright edges: mitre, the default, runs them on to meet in a mitre; swept ends them at the side edge and fills the corner with their section revolved about it, a torus; swept takes type: constant, corner: rolling, no setbacks and fit: exact or reduce, and is refused with the reason where the rounds are unequal or the side edge is concave, curved or tangent); fit?: exact|reduce|taper (exact, the default: a radius too large for the geometry around the edges is refused, naming the largest that fits; reduce: where it doesn't fit it is reduced to the largest that does, one radius for edges sharing a face; the smallest used is returned as `radius_applied`, each edge's as `radii_applied: [{edge: [x,y,z], radius}]`, and noted in the feature's warning; taper: along each straight edge between planar faces where it doesn't fit, the radius follows the room there as a smooth spline, down to 0 where a face closes to a point, noted in the feature's warning)"),
+        .params("edges: [[x,y,z] point on edge | {body, index}] ; radius: expr; tangent_chain?: bool (default true: each picked edge's tangent chain is rounded with it; false: exactly the picked edges); body?: the body the edges are on (without it, each point is looked up on every placed body, shown or hidden, and a point on edges of 2 bodies is refused, naming them); type?: constant|curvature (alias g2: curvature-continuous quintic between planar faces along straight edges, one planar end face at each end (including sloped ends); radius sets the equivalent circular setback, not constant curvature; exact fit only)|chord (radius is the width across)|variable (radius at the end nearest start, radius2 at the other; one end may be 0, where the round closes to the corner)|spline (the radius along the edge is a clamped B-spline from the end nearest start: radius is its first control radius, radii the rest, knots its knot vector from 0 to 1; one end may be 0); radius2?; start?: [x,y,z]; radii?: [expr, …]; knots?: [number, …]; mid?: [[position 0…1 from start, radius expr], …] (variable radii between the ends); smooth?: bool (smooth instead of straight between the radii); curvature?: bool (type variable or spline: curvature-continuous (G2) sections, a curvature fillet's, whose size follows the radius along the edge, instead of circular arcs; default false); corner?: rolling|g2 (rolling, the default: the corners where three blended edges meet are pieces of the rolling ball's sphere, tangent to each blend; a curvature round's corners are always g2 patches, between its own sections; g2: each corner where three or more rounded edges meet, and every edge there is rounded, is set back (1.5 × the radius along each edge unless `setbacks` names it) and filled with a patch meeting the rounds and the faces round it to the second order (curvature-continuous seams, clear of the points where a round's section ends on a face), constant-radius exact fillets only, refused where it cannot be built); setbacks?: [{vertex: [x,y,z], distance: expr}, …] (corner setbacks: the corner at the vertex nearest `vertex`, where every edge meeting it is rounded, starts its patch `distance` along each of those edges from the vertex, past where the rounds would meet (past the radius at a square corner), so the rounds blend through a larger patch; one distance for all of a corner's edges; constant-radius exact fillets only; with `corner: g2`, the G2 patch's corners); turn?: mitre|swept (where two rounds turn round a sharp, straight, convex side edge square to both on a plane, such as the rounds along a boss's base at its upright edges: mitre, the default, runs them on to meet in a mitre; swept ends them at the side edge and fills the corner with their section revolved about it, a torus; swept takes type: constant, corner: rolling, no setbacks and fit: exact or reduce, and is refused with the reason where the rounds are unequal or the side edge is concave, curved or tangent); fit?: exact|reduce|taper (exact, the default: a radius too large for the geometry around the edges is refused, naming the largest that fits; reduce: where it doesn't fit it is reduced to the largest that does, one radius for edges sharing a face; the smallest used is returned as `radius_applied`, each edge's as `radii_applied: [{edge: [x,y,z], radius}]`, and noted in the feature's warning; taper: along each straight edge between planar faces where it doesn't fit, the radius follows the room there as a smooth spline, down to 0 where a face closes to a point, noted in the feature's warning)"),
     CommandSpec::new("solid.chamfer", "Chamfer", crate::checked!("solid.chamfer", chamfer)).begins_edit()
         .at("SOLID", "MODIFY")
         .icon("chamfer")
@@ -198,7 +198,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SOLID", "MODIFY")
         .icon("draft")
         .from_selection(super::model_selection::body_faces)
-        .params("faces: [[x,y,z] points, or face names from model.faces]; angle: expr; neutral: XY|XZ|YZ|plane name|{origin, normal}; pull?: [x,y,z] (default: neutral plane normal); body?"),
+        .params("faces: [[x,y,z] points, or face names from model.faces]; angle: expr (positive: each face leans in going along `pull`, so the part narrows that way and releases from a mould pulled that way; negative: it leans out); neutral: XY|XZ|YZ|plane name|{origin, normal} (each face turns about its line on this plane, which stays where it is); pull?: [x,y,z] (default: neutral plane normal); body?"),
     CommandSpec::new("construct.plane.offset", "Offset Plane", crate::checked!("construct.plane.offset", plane_offset)).begins_edit()
         .at("SOLID", "CONSTRUCT")
         .icon("plane")
@@ -236,7 +236,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("solid.move", "Move/Copy", crate::checked!("solid.move", move_bodies)).begins_edit()
         .at("SOLID", "MODIFY").icon("move").key("M")
         .contract(&MOVE_CONTRACT).output(output_schema_for::<MoveResult>)
-        .params("bodies: [names]; translate?: [x,y,z] (length exprs or numbers, applied after rotation); axis?: [x,y,z] (default: world Z with origin, else the body's component's Z, world Z at the root); about?: {edge|face: [x,y,z], body?} (the edge or round face the turn is about, kept as a reference so the turn follows it when an earlier step moves the body; axis and origin give the turn's sense and where it is now); angle?: angle expr; origin?: [x,y,z] (length exprs or numbers in world coordinates; default: the body's component's origin, the world origin at the root); matrix?: rigid row-major 3x4 or 4x4, flat or rows (instead of translate/axis/angle/origin); tolerance?: matrix rotation tolerance (default 1e-9, at most 1e-3); copy?: bool (default false; true keeps originals and transforms copies); occurrences?: [occurrence paths, root first] (only with copy: copies each component independently and transforms the copies in world space; reply lists them in occurrences); name?, body_name?, body_names?"),
+        .params("bodies: [names]; translate?: [x,y,z] (length exprs or numbers, applied after rotation); axis?: [x,y,z] (default: world Z with origin, else the body's component's Z, world Z at the root); about?: {edge|face: [x,y,z], body?} (the edge or round face the turn is about, kept as a reference so the turn follows it when an earlier step moves the body; axis and origin give the turn's sense and where it is now); angle?: angle expr; origin?: [x,y,z] (length exprs or numbers in world coordinates; default: the body's component's origin, the world origin at the root); matrix?: rigid row-major 3x4 or 4x4, flat or rows (instead of translate/axis/angle/origin); tolerance?: matrix rotation tolerance (default 1e-9, at most 1e-3); copy?: bool (default false; true keeps originals and transforms copies); alone?: bool (default false: a scan moved takes along the bodies made from it, listed in carried, and the sketches and construction planes, axes and points made from it, placed again by the same move and listed in placed; true moves only the bodies named); occurrences?: [occurrence paths, root first] (only with copy: copies each component independently and transforms the copies in world space; reply lists them in occurrences); name?, body_name?, body_names?"),
 ];
 
 /// Where an extrude starts and which way is positive: a point inside the (first) profile or
@@ -2417,7 +2417,8 @@ fn fillet(s: &mut Session, p: &Value) -> Result<Value> {
                 mid.push((t, r.into()));
             }
             let smooth = p.get("smooth").and_then(Value::as_bool).unwrap_or(false);
-            solidcraft_doc::FilletStyle::Variable { radius2, start: Position(start), mid, smooth }
+            let curvature = p.get("curvature").and_then(Value::as_bool).unwrap_or(false);
+            solidcraft_doc::FilletStyle::Variable { radius2, start: Position(start), mid, smooth, curvature }
         }
         Some("spline") => {
             let start = p
@@ -2442,7 +2443,8 @@ fn fillet(s: &mut Session, p: &Value) -> Result<Value> {
                     "a spline fillet needs `radii` (the control radii after `radius`) and `knots` (as many as all control radii, the degree 1…3 and one more)",
                 ));
             }
-            solidcraft_doc::FilletStyle::Spline { start: Position(start), knots, radii }
+            let curvature = p.get("curvature").and_then(Value::as_bool).unwrap_or(false);
+            solidcraft_doc::FilletStyle::Spline { start: Position(start), knots, radii, curvature }
         }
         Some(o) => return Err(bad(cmd, format!("unknown fillet type `{o}` (constant, chord, variable, spline or curvature)"))),
     };
@@ -2631,18 +2633,66 @@ fn move_bodies(s: &mut Session, p: &Value) -> Result<Value> {
     if p.get("copy").is_some_and(|v| !v.is_boolean()) {
         return Err(bad(cmd, "copy must be a boolean"));
     }
+    if p.get("alone").is_some_and(|v| !v.is_boolean()) {
+        return Err(bad(cmd, "alone must be a boolean"));
+    }
     if let Some(paths) = copied_components(p)? {
         return copy_components(s, p, paths);
     }
-    if let Some(plan) = crate::frames::placements_moved(s, p) {
-        return move_placements(s, p, plan);
+    // A scan moved takes what was made from it along (a surface fitted to it, a solid
+    // reconstructed from it, a section sketch, a fitted plane), so they stay together; `alone`
+    // moves the scan by itself.
+    let (with_made, carried) = with_made_from_scans(s, p);
+    let p = with_made.as_ref().unwrap_or(p);
+    let mut reply = if let Some(plan) = crate::frames::placements_moved(s, p) {
+        move_placements(s, p, plan)?
+    } else if let Some(moves) = crate::frames::split_move(s, p)? {
+        // Bodies in differently placed frames: one Move feature per frame, each moving its bodies
+        // by the world vector and turn mapped into that frame (#9660).
+        move_split(s, &moves)?
+    } else {
+        move_body_feature(s, p)?
+    };
+    if !carried.placed.is_empty() {
+        // The sketches and constructions made from the scans are placed again by the move itself,
+        // read back from the Move feature it made, in the same undo step.
+        let world = reply.get("feature").and_then(Value::as_u64).and_then(|id| super::scan::made_from::world_move(s, id));
+        match world {
+            Some(world) => super::scan::made_from::place(s, &carried.placed, &world),
+            None => return Err(bad(cmd, "the move of the scan could not be read back to move what was made from it: move it `alone`")),
+        }
+        let names: Vec<String> = carried.placed.iter().filter_map(|id| s.doc.feature(*id).map(|f| f.name.clone())).collect();
+        if let Some(out) = reply.as_object_mut() {
+            out.insert("placed".into(), json!(names));
+        }
     }
-    // Bodies in differently placed frames: one Move feature per frame, each moving its bodies
-    // by the world vector and turn mapped into that frame (#9660).
-    if let Some(moves) = crate::frames::split_move(s, p)? {
-        return move_split(s, &moves);
+    if !carried.bodies.is_empty()
+        && let Some(out) = reply.as_object_mut()
+    {
+        out.insert("carried".into(), json!(carried.bodies));
     }
-    move_body_feature(s, p)
+    Ok(reply)
+}
+
+/// `p` with the bodies made from the scans it moves added to its `bodies`, and what the move
+/// takes along; `None` and nothing when it copies, moves `alone`, or moves no scan anything was
+/// made from.
+fn with_made_from_scans(s: &Session, p: &Value) -> (Option<Value>, super::scan::made_from::Carried) {
+    let none = super::scan::made_from::Carried::default();
+    if p.get("copy").and_then(Value::as_bool) == Some(true) || p.get("alone").and_then(Value::as_bool) == Some(true) {
+        return (None, none);
+    }
+    let Some(bodies) = p.get("bodies").and_then(Value::as_array) else { return (None, none) };
+    let named: Vec<String> = bodies.iter().filter_map(Value::as_str).map(str::to_owned).collect();
+    let carried = super::scan::made_from::carried(s, &named);
+    if carried.bodies.is_empty() {
+        return (None, carried);
+    }
+    let mut with = p.clone();
+    if let Some(list) = with.get_mut("bodies").and_then(Value::as_array_mut) {
+        list.extend(carried.bodies.iter().map(|n| json!(n)));
+    }
+    (Some(with), carried)
 }
 
 /// The moves of `frames::split_move`, in one step, with one reply: the features made, and the
@@ -3082,7 +3132,11 @@ fn pattern_rect(s: &mut Session, p: &Value) -> Result<Value> {
 /// The line a circular pattern or a plane at an angle turns about, as [`axis_line`] reads it,
 /// except that the origin of `{origin, dir}` may be length expressions, kept so the feature
 /// follows them (#10852).
-fn axis_line_exprs(s: &Session, p: &Value, cmd: &str) -> Result<(PointExpr, Vec3, Option<solidcraft_doc::construct::GeoRef>, Option<FeatureName>)> {
+pub(super) fn axis_line_exprs(
+    s: &Session,
+    p: &Value,
+    cmd: &str,
+) -> Result<(PointExpr, Vec3, Option<solidcraft_doc::construct::GeoRef>, Option<FeatureName>)> {
     if let Some(a @ Value::Object(o)) = p.get("axis")
         && o.contains_key("origin")
         && !super::is_model_axis(a)

@@ -477,6 +477,10 @@ The agent reaches the open design only through SolidCraft's own tools (the
   struck through, with a note on hover. At most 64 things go with one message; the
   rest are counted ("+N more"), not dropped silently. The selection is read when you send, also for
   a message that waits in the queue.
+  With a scan in the design, what you selected on the scan (painted, brushed or grown) goes too, as
+  one chip with its size and a place on it, and the agent is told that the scan tools work on it.
+  So does the dialog you have open, with what its OK would run as it is set now, and Find All's
+  colouring when the scan shows it: "fit this" or "why is this off" then says what you mean.
 - **Pick context:** press it to choose what the message is about on purpose. A picker opens with
   three lists, **Elements** (faces, edges, vertices), **Features** (steps of the timeline) and
   **Bodies**. A click in the model goes into the list that is active (click a list to make it

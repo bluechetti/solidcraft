@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_wrap_folds": "This surface folds over itself ({trouble}): raise Stiffness a little (5 to 10 %) or take a smaller reach. Merge Surfaces cannot sew a folded seam."
+  },
+  "de": {
+    "ui.scan_wrap_folds": "Diese Fläche faltet sich über sich selbst ({trouble}): „Steifigkeit“ etwas erhöhen (5 bis 10 %) oder eine kleinere Reichweite nehmen. „Flächen zusammenführen“ kann keine gefaltete Naht vernähen."
+  },
+  "ja": {
+    "ui.scan_wrap_folds": "このサーフェスは自己交差して折り返しています（{trouble}）。剛性を少し上げる（5〜10 %）か、範囲を小さくしてください。「サーフェスを結合」は折り返した継ぎ目を縫えません。"
+  },
+  "ko": {
+    "ui.scan_wrap_folds": "이 곡면이 자기 자신 위로 접힙니다({trouble}). 강성을 조금 올리거나(5~10 %) 범위를 줄이세요. 곡면 병합은 접힌 이음매를 꿰맬 수 없습니다."
+  },
+  "zh": {
+    "ui.scan_wrap_folds": "此曲面自身折叠（{trouble}）：稍微提高刚度（5 到 10 %）或缩小范围。“合并曲面”无法缝合折叠的接缝。"
+  },
+  "ar": {
+    "ui.scan_wrap_folds": "هذا السطح ينطوي على نفسه ({trouble}): ارفع الصلابة قليلًا (5 إلى 10 %) أو قلّل المدى. لا يستطيع دمج الأسطح خياطة درز مطوي."
+  },
+  "he": {
+    "ui.scan_wrap_folds": "המשטח הזה מתקפל על עצמו ({trouble}): העלו מעט את הקשיחות (5 עד 10 %) או הקטינו את הטווח. מיזוג משטחים לא יכול לתפור תפר מקופל."
+  },
+  "vi": {
+    "ui.scan_wrap_folds": "Bề mặt này gập lên chính nó ({trouble}): tăng Độ cứng một chút (5 đến 10 %) hoặc thu nhỏ phạm vi. Gộp mặt không khâu được đường nối bị gập."
+  }
+}

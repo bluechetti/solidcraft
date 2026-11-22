@@ -1,0 +1,60 @@
+{
+ "id": "flange",
+ "class": "turned",
+ "description": "A flange: a disc D60 x 8 with a hub D20 x 30 and four bolt holes D6 on a 44 circle.",
+ "units": "mm",
+ "body": "Part",
+ "commands": [
+  {
+   "command": "solid.cylinder",
+   "params": {
+    "radius": 30,
+    "height": 8,
+    "body_name": "Part"
+   }
+  },
+  {
+   "command": "solid.cylinder",
+   "params": {
+    "radius": 10,
+    "height": 30,
+    "base": [
+     0,
+     0,
+     8
+    ],
+    "operation": "join",
+    "targets": [
+     "Part"
+    ]
+   }
+  },
+  {
+   "command": "solid.cylinder",
+   "params": {
+    "base": [
+     22,
+     0,
+     0
+    ],
+    "radius": 3,
+    "height": 8,
+    "operation": "cut",
+    "targets": [
+     "Part"
+    ],
+    "name": "Bolt"
+   }
+  },
+  {
+   "command": "solid.pattern.circular",
+   "params": {
+    "features": [
+     "Bolt"
+    ],
+    "axis": "Z",
+    "count": 4
+   }
+  }
+ ]
+}

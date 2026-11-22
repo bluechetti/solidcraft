@@ -184,6 +184,13 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             });
         });
         ui_kit::settings_section(ui, "imported_files", app.tr("prefs.design_tools.imported_files"), |ui| {
+            ui.horizontal_wrapped(|ui| {
+                let response = setting::offer_mesh_units(app, ui).backing_on_hover_text(app.tr("prefs.offer_mesh_units_note"));
+                crate::scenario::publish_target("prefs:offer_mesh_units", response.rect);
+                if !crate::ui_kit::settings_search::suppress_chrome(ui) {
+                    ui_kit::help_icon(ui, app.tr("prefs.offer_mesh_units_note"));
+                }
+            });
             ui_kit::settings_form(ui, label_width, |ui| {
                 ui_kit::settings_row_help(ui, app.tr("prefs.stand_up_unknown"), app.tr("prefs.stand_up_unknown_note"), |ui| {
                     let offered = app.preferences.offer_stand_up;

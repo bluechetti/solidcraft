@@ -193,8 +193,15 @@ pub struct Body {
     /// The exact box ([`Body::exact_bounds`]), measured on first use and shared by clones
     /// because they share the record.
     pub(crate) bounds: std::sync::Arc<std::sync::Mutex<Option<Aabb3>>>,
+    /// The exact mass measure ([`crate::measure_mass`]), measured on first use and shared by
+    /// clones because they share the record; a moved copy measures its own, as `bounds`. On a
+    /// G2 round each measure is tens of seconds, and `validity` then `measure` asked twice.
+    pub(crate) mass: std::sync::Arc<std::sync::Mutex<Option<crate::MassMeasure>>>,
     /// Set for mesh bodies (`record` is then empty).
-    pub(crate) mesh: Option<std::sync::Arc<crate::meshbody::TriMesh>>,
+    pub(crate) mesh: Option<std::sync::Arc<Mesh>>,
+    /// A mesh body's shading normals, three per triangle of `mesh` in its order
+    /// ([`Body::triangle_corner_normals`]); `None` when it is lit flat.
+    pub(crate) mesh_normals: Option<std::sync::Arc<[[Vec3; 3]]>>,
     /// Display colour (linear RGB 0..1) from an imported file; operations drop it.
     pub(crate) color: Option<[f32; 3]>,
     /// Opacity and face colours for export (set by the document; operations drop it).
@@ -557,7 +564,7 @@ fn span_of(record: &Brep) -> f64 {
 }
 
 /// Equal shared values: the same allocation (a clone of the body), else equal contents.
-fn same_shared<T: PartialEq>(a: &Option<std::sync::Arc<T>>, b: &Option<std::sync::Arc<T>>) -> bool {
+fn same_shared<T: PartialEq + ?Sized>(a: &Option<std::sync::Arc<T>>, b: &Option<std::sync::Arc<T>>) -> bool {
     match (a, b) {
         (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b) || a == b,
         (None, None) => true,
@@ -730,7 +737,7 @@ impl Body {
     }
 
     /// A body with `record` and nothing else set.
-    fn bare(record: Brep, mesh: Option<std::sync::Arc<crate::meshbody::TriMesh>>) -> Body {
+    fn bare(record: Brep, mesh: Option<std::sync::Arc<Mesh>>) -> Body {
         let size = span_of(&record);
         Body {
             record: std::sync::Arc::new(record).into(),
@@ -741,7 +748,9 @@ impl Body {
             size,
             volume: Some(std::sync::Arc::new(std::sync::Mutex::new(None))),
             bounds: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            mass: std::sync::Arc::new(std::sync::Mutex::new(None)),
             mesh,
+            mesh_normals: None,
             color: None,
             paint: None,
             splits: None,
@@ -780,8 +789,13 @@ impl Body {
     }
 
     /// A mesh body of `mesh`.
-    pub(crate) fn of_mesh(mesh: crate::meshbody::TriMesh) -> Body {
-        Body::bare(empty_record(), Some(std::sync::Arc::new(mesh)))
+    pub(crate) fn of_mesh(mut mesh: crate::meshbody::TriMesh) -> Body {
+        let normals = std::mem::take(&mut mesh.corner_normals);
+        let mut body = Body::bare(empty_record(), Some(std::sync::Arc::new(mesh.into_kept())));
+        if !normals.is_empty() {
+            body.mesh_normals = Some(normals.into());
+        }
+        body
     }
 
     /// The body's record: faces, edges and vertices in the body's own order. Empty for a mesh body.
@@ -884,7 +898,7 @@ impl Body {
     pub fn same_shape(&self, other: &Body) -> bool {
         self.record.same(&other.record)
             && match (&self.mesh, &other.mesh) {
-                (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+                (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b) && same_shared(&self.mesh_normals, &other.mesh_normals),
                 (None, None) => true,
                 _ => false,
             }
@@ -1095,12 +1109,34 @@ impl Body {
     }
 
     /// The face of `self` nearest `p` and its exact distance, or `None` for a mesh body or empty body.
+    /// Every face is solved: on a body of thousands of faces (a wrapped scan) that is seconds a
+    /// point; a caller with a bound on the distance uses [`Body::nearest_face_within`].
     pub fn nearest_face(&self, p: Vec3) -> Option<(f64, usize)> {
+        self.nearest_face_within(p, self.size().max(1.0) * 100.0)
+    }
+
+    /// [`Body::nearest_face`] among the faces within `reach` of `p`: the nearest face and its exact
+    /// distance when that distance is at most `reach`, else `None` (and for a mesh body, an empty
+    /// body or a `reach` that is not finite and at least zero). A face whose box lies farther than
+    /// `reach` is skipped unsolved, so a reach from a bound the caller already has (its distance to
+    /// a mesh of the body, plus the mesh's chord) costs the solves of the few faces near `p`, where
+    /// [`Body::nearest_face`] solves them all. The answer is exact either way: the nearest face is
+    /// within `reach` whenever any face is.
+    pub fn nearest_face_within(&self, p: Vec3, reach: f64) -> Option<(f64, usize)> {
+        if !(reach.is_finite() && reach >= 0.0) {
+            return None;
+        }
         let form = self.ops_body()?;
         let (ops, order) = &*form;
-        let reach = self.size().max(1.0) * 100.0;
         let dists = ops.face_distances_within(order, &[[p.x, p.y, p.z]], reach).ok()?;
-        dists.into_iter().enumerate().filter_map(|(f, row)| Some((row.first().copied().flatten()?, f))).min_by(|a, b| a.0.total_cmp(&b.0))
+        // A face whose box is within reach is solved even when the face itself is not: a distance
+        // past the reach says nothing of the faces skipped, which may be nearer.
+        dists
+            .into_iter()
+            .enumerate()
+            .filter_map(|(f, row)| Some((row.first().copied().flatten()?, f)))
+            .filter(|(d, _)| *d <= reach)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
     /// Certify the two caps of a body built by [`crate::cylinder`]. Its wall stays uncertified.
@@ -1387,7 +1423,9 @@ impl Body {
             size: self.size,
             volume: self.volume.clone(),
             bounds: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            mass: std::sync::Arc::new(std::sync::Mutex::new(None)),
             mesh: None,
+            mesh_normals: None,
             color: self.color,
             paint: self.paint.clone(),
             splits: None,
@@ -1520,6 +1558,19 @@ impl Body {
         Ok(b)
     }
 
+    /// Keep `b` as the exact box when none is kept yet: the box SMLib's mass properties were
+    /// centred on, which is the box [`Body::exact_bounds`] measures (the same call on the same
+    /// record), so it is not measured a second time.
+    pub(crate) fn remember_exact_bounds(&self, b: Aabb3) {
+        if self.is_mesh() {
+            return;
+        }
+        let mut slot = self.bounds.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_none() {
+            *slot = Some(b);
+        }
+    }
+
     /// The body's volume: measured with exact mass properties via SMLib for B-rep bodies,
     /// or from mesh triangles for mesh bodies.
     pub fn volume_at(&self, _tol: f64) -> Option<f64> {
@@ -1564,12 +1615,14 @@ impl Body {
     /// makes a kept timeline snapshot expensive, so it dominates the estimate.
     pub fn retained_bytes(&self) -> usize {
         if let Some(m) = &self.mesh {
+            let normals = self.mesh_normals.as_deref().map_or(0, <[_]>::len);
             return m
                 .positions
                 .len()
                 .saturating_mul(24)
-                .saturating_add(m.triangles.len().saturating_mul(12))
-                .saturating_add(m.corner_normals.len().saturating_mul(72));
+                .saturating_add(m.triangles.len().saturating_mul(16))
+                .saturating_add(m.edges.iter().map(|e| e.len().saturating_mul(24)).sum::<usize>())
+                .saturating_add(normals.saturating_mul(72));
         }
         let uses: usize = self.record.faces.iter().flat_map(|f| &f.loops).map(|l| if let Loop::Edges { edges } = l { edges.len() } else { 1 }).sum();
         self.record.faces.len() * 2048 + uses * (512 + 96)
@@ -1587,8 +1640,15 @@ impl Body {
     }
 
     fn mesh_untimed(&self, t: &MeshTolerance) -> Result<Mesh> {
-        if let Some(m) = &self.mesh {
-            return Ok(m.to_mesh());
+        if let Some(shown) = self.display_mesh() {
+            // A copy, as every mesh asked for is: without the outlines, as before they were kept.
+            return Ok(Mesh {
+                positions: shown.positions.clone(),
+                triangles: shown.triangles.clone(),
+                tri_face: shown.tri_face.clone(),
+                normals: shown.normals.clone(),
+                ..Mesh::default()
+            });
         }
         // A placed copy shows its original's mesh, moved: the part is meshed once for every copy.
         if let Some((shared, m)) = self.display_of.as_deref() {
@@ -1649,8 +1709,11 @@ impl Body {
     /// mesh or evaluate is an error naming it. A mesh body gives its own triangles.
     pub fn export_mesh(&self, spec: &MeshSpec) -> Result<(Mesh, PlanStats)> {
         crate::profile::timed(crate::profile::Kind::Tessellate, "export_mesh", || {
-            if let Some(m) = &self.mesh {
-                return Ok((m.to_mesh(), PlanStats::default()));
+            // A mesh body gives its triangles as it shows them (with its shading normals).
+            if self.mesh.is_some()
+                && let Some(m) = self.display_mesh()
+            {
+                return Ok(((*m).clone(), PlanStats::default()));
             }
             let (plan, stats) = guard("export mesh", || solidcore_tess::mesh(&self.record, spec, self.size(), None).map_err(KernelError::from))?;
             let (mesh, refused) = plan.evaluate();
@@ -1786,17 +1849,10 @@ impl Body {
 
     /// Edges with polylines (index = the record's edge index).
     pub fn edges(&self, tol: f64) -> Result<Vec<EdgeInfo>> {
-        if let Some(mb) = &self.mesh {
-            let m = mb.to_mesh();
-            return Ok(m
-                .edges
-                .into_iter()
-                .enumerate()
-                .map(|(index, points)| {
-                    let (mid, length) = polyline_mid(&points);
-                    EdgeInfo { index, points, mid, length }
-                })
-                .collect());
+        if self.mesh.is_some() {
+            // A mesh body has no edges: its outlines are display lines ([`Body::mesh`] leaves
+            // them out).
+            return Ok(Vec::new());
         }
         let rec = self.record();
         let mut out = Vec::with_capacity(rec.edges.len());
@@ -1996,8 +2052,7 @@ impl Body {
         if !(p.x.is_finite() && p.y.is_finite() && p.z.is_finite()) {
             return Err(KernelError::Invalid(format!("point classification: the point {p:?} is not finite")));
         }
-        if let Some(m) = &self.mesh {
-            let mesh = m.to_mesh();
+        if let Some(mesh) = self.display_mesh() {
             let near = mesh
                 .triangles
                 .iter()
@@ -2152,8 +2207,8 @@ impl Body {
     /// What is wrong with the body as a solid: face shells that aren't closed, faces that don't
     /// mesh, a volume that isn't positive. Empty when it is sound.
     pub fn validity(&self) -> Vec<String> {
-        if let Some(m) = &self.mesh {
-            return if m.closed { Vec::new() } else { vec!["the mesh is not closed".into()] };
+        if self.is_mesh() {
+            return if self.is_closed_mesh() { Vec::new() } else { vec!["the mesh is not closed".into()] };
         }
         let mut out = Vec::new();
         for (i, shell) in self.record.shells.iter().enumerate() {

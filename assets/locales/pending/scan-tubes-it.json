@@ -1,0 +1,18 @@
+{
+  "de": {
+    "cmd.scan_tubes_it": "Rohre ziehen",
+    "help.scan.tubes_it": "Zieht die runden Rohre, die Rekonstruieren im Raum gebogen erkennt, etwa die Kanäle eines Krümmers. Für Teile aus Rohren entlang 3D-Pfaden.",
+    "ui.scan_reconstruct_tubes": "Rohre ziehen: {count} Rohre"
+  },
+  "en": {
+    "cmd.scan_tubes_it": "Tubes It",
+    "help.scan.tubes_it": "Sweeps the round tubes Reconstruct reads bent through space, such as a manifold's runners. Use it when the part is tubes along 3D paths.",
+    "ui.scan_reconstruct_tubes": "Tubes It: {count} tubes"
+  },
+  "ja": {
+    "help.scan.tubes_it": "再構築が読み取った、空間で曲がる丸い管（マニホールドの管路など）をスイープします。部品が3D経路に沿った管でできているときに使います。"
+  },
+  "zh": {
+    "help.scan.tubes_it": "扫掠重建识别出的在空间中弯曲的圆管，例如歧管的流道。零件由沿三维路径的管组成时使用。"
+  }
+}

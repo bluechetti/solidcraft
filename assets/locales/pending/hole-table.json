@@ -1,0 +1,66 @@
+{
+  "en": {
+    "cmd.inspect_hole_table": "Hole Table",
+    "help.inspect.hole_table": "Numbers every round hole of the shown solids with its diameters and whether it goes through. Use it to check a part against its drawing.",
+    "ui.hole_table_tag": "{number} · {sizes} · {kind}",
+    "ui.hole_table_through": "through",
+    "ui.hole_table_blind": "blind",
+    "ui.hole_table_closed": "closed"
+  },
+  "ar": {
+    "cmd.inspect_hole_table": "جدول الثقوب",
+    "help.inspect.hole_table": "يرقّم كل ثقب دائري في المجسمات الظاهرة مع أقطاره وهل هو نافذ. استخدمه لمطابقة القطعة مع رسمها.",
+    "ui.hole_table_tag": "{number} · {sizes} · {kind}",
+    "ui.hole_table_through": "نافذ",
+    "ui.hole_table_blind": "غير نافذ",
+    "ui.hole_table_closed": "مغلق"
+  },
+  "de": {
+    "cmd.inspect_hole_table": "Bohrungstabelle",
+    "help.inspect.hole_table": "Nummeriert jede runde Bohrung der sichtbaren Volumenkörper mit ihren Durchmessern und ob sie durchgeht. Damit lässt sich ein Teil gegen seine Zeichnung prüfen.",
+    "ui.hole_table_tag": "{number} · {sizes} · {kind}",
+    "ui.hole_table_through": "durchgehend",
+    "ui.hole_table_blind": "Sackloch",
+    "ui.hole_table_closed": "geschlossen"
+  },
+  "he": {
+    "cmd.inspect_hole_table": "טבלת חורים",
+    "help.inspect.hole_table": "ממספר כל חור עגול בגופים המוצגים עם הקטרים שלו והאם הוא עובר. השתמשו בזה כדי לבדוק חלק מול השרטוט שלו.",
+    "ui.hole_table_tag": "{number} · {sizes} · {kind}",
+    "ui.hole_table_through": "עובר",
+    "ui.hole_table_blind": "עיוור",
+    "ui.hole_table_closed": "סגור"
+  },
+  "ja": {
+    "cmd.inspect_hole_table": "穴テーブル",
+    "help.inspect.hole_table": "表示中のソリッドの丸穴すべてに、直径と貫通かどうかを付けて番号を振ります。部品を図面と照合するのに使います。",
+    "ui.hole_table_tag": "{number} · {sizes} · {kind}",
+    "ui.hole_table_through": "貫通",
+    "ui.hole_table_blind": "止まり",
+    "ui.hole_table_closed": "閉じた"
+  },
+  "ko": {
+    "cmd.inspect_hole_table": "구멍 표",
+    "help.inspect.hole_table": "보이는 솔리드의 모든 원형 구멍에 지름과 관통 여부를 붙여 번호를 매깁니다. 부품을 도면과 대조할 때 씁니다.",
+    "ui.hole_table_tag": "{number} · {sizes} · {kind}",
+    "ui.hole_table_through": "관통",
+    "ui.hole_table_blind": "막힘",
+    "ui.hole_table_closed": "닫힘"
+  },
+  "vi": {
+    "cmd.inspect_hole_table": "Bảng lỗ",
+    "help.inspect.hole_table": "Đánh số mọi lỗ tròn của các khối đặc đang hiện, kèm đường kính và lỗ có xuyên hay không. Dùng để đối chiếu chi tiết với bản vẽ.",
+    "ui.hole_table_tag": "{number} · {sizes} · {kind}",
+    "ui.hole_table_through": "xuyên",
+    "ui.hole_table_blind": "không xuyên",
+    "ui.hole_table_closed": "kín"
+  },
+  "zh": {
+    "cmd.inspect_hole_table": "孔表",
+    "help.inspect.hole_table": "为显示的实体的每个圆孔编号，并标出直径以及是否通孔。用于对照图纸检查零件。",
+    "ui.hole_table_tag": "{number} · {sizes} · {kind}",
+    "ui.hole_table_through": "通孔",
+    "ui.hole_table_blind": "盲孔",
+    "ui.hole_table_closed": "封闭"
+  }
+}

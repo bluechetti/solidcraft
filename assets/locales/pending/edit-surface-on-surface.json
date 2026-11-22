@@ -1,0 +1,34 @@
+{
+  "en": {
+    "prefs.edit_surface_on_surface": "Edit Surface starts on points on the surface",
+    "prefs.edit_surface_on_surface_note": "Edit Surface opens with its points on the surface (the surface runs through each point you drag) and Snap set to Under the pointer. Off: it opens on the control net with snapping off, as before."
+  },
+  "de": {
+    "prefs.edit_surface_on_surface": "Fläche bearbeiten beginnt mit Punkten auf der Fläche",
+    "prefs.edit_surface_on_surface_note": "Fläche bearbeiten öffnet mit seinen Punkten auf der Fläche (die Fläche verläuft durch jeden gezogenen Punkt) und Fangen auf Unter dem Zeiger. Aus: Es öffnet mit dem Kontrollnetz und ohne Fangen, wie zuvor."
+  },
+  "ja": {
+    "prefs.edit_surface_on_surface": "サーフェスを編集はサーフェス上の点から始める",
+    "prefs.edit_surface_on_surface_note": "サーフェスを編集は、点をサーフェス上に置いて（ドラッグした各点をサーフェスが通ります）、スナップをポインターの下にして開きます。オフ: 以前のように、制御ネットでスナップなしで開きます。"
+  },
+  "ko": {
+    "prefs.edit_surface_on_surface": "표면 편집은 표면 위의 점으로 시작",
+    "prefs.edit_surface_on_surface_note": "표면 편집은 점을 표면 위에 두고(드래그한 각 점을 표면이 지나갑니다) 스냅을 포인터 아래로 설정하여 열립니다. 끔: 이전처럼 제어 네트로, 스냅 없이 열립니다."
+  },
+  "zh": {
+    "prefs.edit_surface_on_surface": "编辑曲面从曲面上的点开始",
+    "prefs.edit_surface_on_surface_note": "编辑曲面打开时点位于曲面上（曲面经过您拖动的每个点），吸附设为指针下方。关闭：像以前一样以控制网打开，不吸附。"
+  },
+  "ar": {
+    "prefs.edit_surface_on_surface": "يبدأ تحرير السطح بنقاط على السطح",
+    "prefs.edit_surface_on_surface_note": "يُفتح تحرير السطح ونقاطه على السطح (يمرّ السطح بكل نقطة تسحبها) والالتقاط على «تحت المؤشر». عند الإيقاف: يُفتح على شبكة التحكم بلا التقاط، كما كان."
+  },
+  "he": {
+    "prefs.edit_surface_on_surface": "עריכת משטח מתחילה בנקודות על המשטח",
+    "prefs.edit_surface_on_surface_note": "עריכת משטח נפתחת עם נקודותיה על המשטח (המשטח עובר דרך כל נקודה שגוררים) והצמדה על \"מתחת לסמן\". כבוי: נפתחת על רשת הבקרה בלי הצמדה, כמו קודם."
+  },
+  "vi": {
+    "prefs.edit_surface_on_surface": "Chỉnh sửa mặt bắt đầu với các điểm trên mặt",
+    "prefs.edit_surface_on_surface_note": "Chỉnh sửa mặt mở với các điểm nằm trên mặt (mặt đi qua từng điểm bạn kéo) và Bắt dính đặt là Dưới con trỏ. Tắt: mở trên lưới điều khiển, không bắt dính, như trước."
+  }
+}

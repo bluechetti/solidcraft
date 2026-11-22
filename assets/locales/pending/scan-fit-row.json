@@ -1,0 +1,34 @@
+{
+  "en": {
+    "ui.scan_fit_result": "Fit",
+    "ui.scan_fit_within": "{within} within"
+  },
+  "ar": {
+    "ui.scan_fit_result": "المطابقة",
+    "ui.scan_fit_within": "{within} ضمن السماحية"
+  },
+  "de": {
+    "ui.scan_fit_result": "Passung",
+    "ui.scan_fit_within": "{within} innerhalb"
+  },
+  "he": {
+    "ui.scan_fit_result": "התאמה",
+    "ui.scan_fit_within": "{within} בתוך הסבולת"
+  },
+  "ja": {
+    "ui.scan_fit_result": "フィット",
+    "ui.scan_fit_within": "{within} が許容差内"
+  },
+  "ko": {
+    "ui.scan_fit_result": "맞춤",
+    "ui.scan_fit_within": "{within} 허용 범위 안"
+  },
+  "vi": {
+    "ui.scan_fit_result": "Độ khớp",
+    "ui.scan_fit_within": "{within} trong dung sai"
+  },
+  "zh": {
+    "ui.scan_fit_result": "拟合",
+    "ui.scan_fit_within": "{within} 在公差内"
+  }
+}

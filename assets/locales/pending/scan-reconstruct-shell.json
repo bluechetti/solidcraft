@@ -1,0 +1,42 @@
+{
+  "ar": {
+    "cmd.scan_shell_it": "تفريغ الجسم",
+    "help.scan.shell_it": "يفرّغ جسم إعادة البناء بسماكة جدران المسح؛ وتبقى الوجوه التي لا شيء خلفها مفتوحة. شغّله بعد بثق المنشور وقبل تدوير الحواف.",
+    "ui.scan_reconstruct_shell": "تفريغ الجسم: جدران بسماكة {thickness}"
+  },
+  "de": {
+    "cmd.scan_shell_it": "Aushöhlen",
+    "help.scan.shell_it": "Höhlt den rekonstruierten Körper auf die Wandstärke des Scans aus; Flächen ohne Gegenfläche bleiben offen. Nach „Prisma extrudieren“ und vor „Kanten verrunden“ ausführen.",
+    "ui.scan_reconstruct_shell": "Aushöhlen: Wände {thickness} stark"
+  },
+  "en": {
+    "cmd.scan_shell_it": "Shell It",
+    "help.scan.shell_it": "Hollows Reconstruct's body to the thickness of the scan's walls; faces with nothing behind them are left open. Run it after Extrude It, before Fillet It.",
+    "ui.scan_reconstruct_shell": "Shell It: walls {thickness} thick"
+  },
+  "he": {
+    "cmd.scan_shell_it": "חלול את הגוף",
+    "help.scan.shell_it": "מחלל את גוף השחזור לעובי קירות הסריקה; פאות שאין מאחוריהן דבר נשארות פתוחות. הריצו אחרי שליפת מנסרה ולפני עיגול קצוות.",
+    "ui.scan_reconstruct_shell": "חלול את הגוף: דפנות בעובי {thickness}"
+  },
+  "ja": {
+    "cmd.scan_shell_it": "シェル化",
+    "help.scan.shell_it": "再構築のボディをスキャンの壁の厚さでくり抜きます。裏に何もない面は開いたままです。「角柱を押し出し」の後、「エッジをフィレット」の前に使います。",
+    "ui.scan_reconstruct_shell": "シェル化: 壁の厚さ {thickness}"
+  },
+  "ko": {
+    "cmd.scan_shell_it": "쉘 만들기",
+    "help.scan.shell_it": "재구성 바디를 스캔 벽 두께로 속을 비웁니다. 뒤에 아무것도 없는 면은 열어 둡니다. 각기둥 돌출 후, 모서리 필렛 전에 실행하세요.",
+    "ui.scan_reconstruct_shell": "쉘 만들기: 벽 두께 {thickness}"
+  },
+  "vi": {
+    "cmd.scan_shell_it": "Làm rỗng",
+    "help.scan.shell_it": "Làm rỗng thân Tái dựng theo độ dày thành của bản quét; mặt không có gì phía sau được để hở. Chạy sau Đùn lăng trụ, trước Bo tròn cạnh.",
+    "ui.scan_reconstruct_shell": "Làm rỗng: thành dày {thickness}"
+  },
+  "zh": {
+    "cmd.scan_shell_it": "抽壳",
+    "help.scan.shell_it": "按扫描壁厚将重建实体抽壳；背后没有对应面的面保持开放。在“拉伸棱柱”之后、“倒圆边”之前运行。",
+    "ui.scan_reconstruct_shell": "抽壳：壁厚 {thickness}"
+  }
+}

@@ -29,10 +29,21 @@ use solidcraft_doc::{Mat, MeshData, mat_mul};
 
 use crate::{IoError, MeshFeature, Result};
 
-/// Most bytes of external and embedded buffers read for one file.
+/// Most bytes of external and embedded buffers read for one file. A scan has no size limit on
+/// the desktop (the Scan workspace fork); the browser keeps 1 GB.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_BUFFER_BYTES: usize = crate::limits::UNLIMITED as usize;
+#[cfg(target_arch = "wasm32")]
 const MAX_BUFFER_BYTES: usize = 1 << 30;
-/// Most vertices and triangles, over all bodies.
+/// Most vertices and triangles, over all bodies: on the desktop as many as a mesh body holds
+/// (as for STL, OBJ and PLY), in the browser 20 million.
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_VERTICES: usize = solidcraft_kernel::MAX_VERTICES;
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_TRIANGLES: usize = solidcraft_kernel::MAX_TRIANGLES;
+#[cfg(target_arch = "wasm32")]
 const MAX_VERTICES: usize = 20_000_000;
+#[cfg(target_arch = "wasm32")]
 const MAX_TRIANGLES: usize = 20_000_000;
 /// Most node placements followed (a node tree that shares or loops is cut off here).
 const MAX_PLACEMENTS: usize = 100_000;
@@ -140,7 +151,8 @@ pub type Loader<'a> = &'a mut dyn FnMut(&str) -> std::result::Result<Vec<u8>, St
 /// file does). External buffers are read through `load`. The file may be as large as the limit for
 /// STEP and import files ([`crate::limits`], #17446).
 pub fn read_gltf(bytes: &[u8], file: &str, load: Loader<'_>) -> Result<GltfImport> {
-    crate::limits::check(crate::limits::Kind::Step, bytes.len() as u64).map_err(|e| IoError::Invalid(format!("glTF {e}")))?;
+    // A scan: no size limit on the desktop; the browser keeps the import limit.
+    crate::limits::check(crate::limits::Kind::Scan, bytes.len() as u64).map_err(|e| IoError::Invalid(format!("glTF {e}")))?;
     let (json, blob) = if bytes.starts_with(b"glTF") { split_glb(bytes)? } else { (bytes, None) };
     let doc = parse_document(json)?;
     let stem = std::path::Path::new(file)

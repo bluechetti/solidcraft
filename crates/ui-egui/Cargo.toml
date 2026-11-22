@@ -4,6 +4,10 @@ description = "SolidCraft user interface (egui + wgpu): the swappable front end"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# The integration tests build as three binaries, not one per file: each binary links the whole
+# UI. tests/integration.rs lists the files; its every_test_file_is_built test fails when a new
+# file is not listed.
+autotests = false
 
 [lints]
 workspace = true
@@ -96,3 +100,16 @@ pollster = { workspace = true }
 
 [build-dependencies]
 serde_json = { workspace = true }
+
+# CI, tests/QUARANTINED_TESTS and .config/nextest.toml name these two binaries.
+[[test]]
+name = "scenarios"
+path = "tests/scenarios.rs"
+
+[[test]]
+name = "icon_audit"
+path = "tests/icon_audit.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

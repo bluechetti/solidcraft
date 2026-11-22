@@ -179,7 +179,8 @@ fn formatted_slider_editor_fits_without_shifting_the_track_during_a_scale_drag()
 #[test]
 fn a_sliders_value_box_takes_typed_numbers_and_clamps_them_to_its_range() {
     use crate::test_support::*;
-    for (typed, expected) in [("1.5", 1.5), ("9", 3.0), ("-4", 0.0), ("0", 0.0)] {
+    // The box shows its unit ("1.00×"): a value typed with the unit kept is read too.
+    for (typed, expected) in [("1.5", 1.5), ("9", 3.0), ("-4", 0.0), ("0", 0.0), ("2.5×", 2.5), ("1.25 ×", 1.25), ("\u{2212}1 ×", 0.0)] {
         let ctx = crate::test_support::context();
         let mut value = 1.0_f32;
         let mut draw = |ui: &mut Ui| {

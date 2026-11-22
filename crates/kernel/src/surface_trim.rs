@@ -5,7 +5,6 @@
 
 use solidcore_record::Vec3;
 use solidcraft_geom::brep::eval::CurveEval;
-use solidcraft_geom::prelude::*;
 
 use crate::body::Body;
 use crate::splitface::{SplitTool, ToolSide};
@@ -116,20 +115,23 @@ fn face_sides(body: &Body, side: &ToolSide) -> Result<Vec<f64>> {
     Ok(sides)
 }
 
-/// For each point, the face of `body` nearest it (over one tessellation).
+/// For each point, the face of `body` nearest it (in its face order): by the exact closest point on
+/// each face, inside its trims. A tessellation's triangle corners and middles are no guide: on a
+/// large face with holes they can all lie farther from a point than a small hole's middle.
 fn nearest_faces(body: &Body, at: &[Vec3]) -> Result<Vec<usize>> {
-    let m = body.mesh(&crate::MeshTolerance::chord(body.size() * 2e-3))?;
-    at.iter()
-        .map(|p| {
-            let mut best: Option<(f64, u32)> = None;
-            for (t, f) in m.triangles.iter().zip(&m.tri_face) {
-                let Some([a, b, c]) = m.tri(t) else { continue };
-                let d = ((a + b + c) / 3.0).dist(*p).min(a.dist(*p)).min(b.dist(*p)).min(c.dist(*p));
-                if best.is_none_or(|(x, _)| d < x) {
-                    best = Some((d, *f));
-                }
+    let (sm, order) = crate::native::smlib_body_ordered(body)?;
+    let order = order.ok_or_else(|| KernelError::Failed("trim: SMLib numbers the pieces' faces differently from their record".into()))?;
+    let points: Vec<[f64; 3]> = at.iter().map(|p| [p.x, p.y, p.z]).collect();
+    let found = sm.nearest_faces(&points).map_err(|e| KernelError::smlib("SMLib trim: the face nearest a point", e))?;
+    found
+        .into_iter()
+        .map(|f| {
+            let i = f.ok_or_else(|| KernelError::Invalid("no face there".into()))?;
+            if order.faces.is_empty() {
+                Ok(i)
+            } else {
+                order.faces.get(i).copied().ok_or_else(|| KernelError::Failed("trim: a piece's face lies outside the body".into()))
             }
-            best.map(|(_, f)| f as usize).ok_or_else(|| KernelError::Invalid("no face there".into()))
         })
         .collect()
 }
@@ -213,6 +215,7 @@ mod tests {
     use crate::history::{Change, FaceOrigin};
     use crate::{extrude_sheet, measure, patch_region, stitch};
     use solidcore_record::{Loop2, Plane, Region2, Seg2, Vec2};
+    use solidcraft_geom::prelude::*;
     use std::f64::consts::PI;
 
     fn rel(a: f64, b: f64) -> f64 {

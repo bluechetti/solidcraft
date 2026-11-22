@@ -242,7 +242,34 @@ fn reply(s: &Session, made: Value) -> Value {
     all.sort_by_key(|(c, _)| c.id);
     let planes: Vec<Value> = all.iter().map(|(c, hidden)| json!({"id": c.id, "origin": c.origin, "normal": c.normal, "hidden": hidden})).collect();
     let made = if s.section.is_empty() && s.section_hidden.is_empty() { Value::Null } else { made };
-    json!({"section": made, "planes": planes, "folder": s.section_folder})
+    let mut out = json!({"section": made, "planes": planes, "folder": s.section_folder});
+    // The Scan workspace fork: how many runs the planes on show cut through the shown scans.
+    let runs = scan_outlines(s).len();
+    if runs > 0 {
+        out["scan_runs"] = json!(runs);
+    }
+    out
+}
+
+/// Where each section plane on show cuts each shown scan (mesh body): runs of points in the
+/// world, each closed or not. Empty with no plane on show. A view: it changes nothing.
+pub fn scan_outlines(s: &Session) -> Vec<(Vec<Vec3>, bool)> {
+    if s.section.is_empty() {
+        return Vec::new();
+    }
+    let state = s.model.state();
+    let mut out = Vec::new();
+    for b in state.bodies.iter().filter(|b| b.body.is_mesh() && !s.visibility.hidden_bodies.contains(&b.name)) {
+        let Some((positions, triangles)) = b.body.triangle_mesh() else { continue };
+        let scan = solidcraft_scan::Scan::new(positions, triangles);
+        for c in &s.section {
+            let Some(plane) = Plane::from_normal(c.origin, c.normal) else { continue };
+            for run in solidcraft_scan::section::section(&scan, &plane) {
+                out.push((run.points.iter().map(|p| plane.to_world(*p)).collect(), run.closed));
+            }
+        }
+    }
+    out
 }
 
 /// The `plane` parameter: a point on it, its unit normal and, for a named plane, the world axis

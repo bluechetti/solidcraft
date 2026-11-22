@@ -1,0 +1,74 @@
+{
+  "en": {
+    "cmd.scan_fillet": "Fillet from Scan",
+    "help.scan.fillet": "Measures each round the scan shows along a model's edges and fillets the edges at it. Use it once the model is built with sharp edges.",
+    "ui.scan_fillet_reach": "Search Width",
+    "ui.scan_fillet_step": "Round To",
+    "ui.scan_fillet_exact": "Exact",
+    "ui.scan_fillet_found": "Radius {radius} mm (fitted {fitted}, along the edges {low}–{high}) · rms {rms} mm, sharp {sharp} mm · {on} of {points} points on the round",
+    "ui.scan_fillet_hint": "Pick the model's edges whose round the scan shows."
+  },
+  "de": {
+    "cmd.scan_fillet": "Verrundung aus Scan",
+    "help.scan.fillet": "Misst jede Rundung, die der Scan entlang der Kanten eines Modells zeigt, und verrundet die Kanten damit. Wenn das Modell gebaut ist und seine Kanten noch scharf sind.",
+    "ui.scan_fillet_reach": "Suchbreite",
+    "ui.scan_fillet_step": "Runden auf",
+    "ui.scan_fillet_exact": "Genau",
+    "ui.scan_fillet_found": "Radius {radius} mm (eingepasst {fitted}, entlang der Kanten {low}–{high}) · RMS {rms} mm, scharf {sharp} mm · {on} von {points} Punkten auf der Rundung",
+    "ui.scan_fillet_hint": "Wählen Sie die Kanten des Modells, deren Rundung der Scan zeigt."
+  },
+  "ja": {
+    "cmd.scan_fillet": "スキャンからフィレット",
+    "help.scan.fillet": "モデルのエッジに沿ってスキャンが示す丸みを測り、その半径でエッジをフィレットします。モデルが完成し、エッジがまだ鋭いときに使います。",
+    "ui.scan_fillet_reach": "探索幅",
+    "ui.scan_fillet_step": "丸め",
+    "ui.scan_fillet_exact": "そのまま",
+    "ui.scan_fillet_found": "半径 {radius} mm (フィット {fitted}、エッジ沿い {low}–{high}) · rms {rms} mm、シャープ {sharp} mm · {points} 点中 {on} 点が丸み上",
+    "ui.scan_fillet_hint": "スキャンに丸みが現れているモデルのエッジを選びます。"
+  },
+  "ko": {
+    "cmd.scan_fillet": "스캔에서 필렛",
+    "help.scan.fillet": "모델 모서리를 따라 스캔이 보여 주는 둥근 정도를 재어 그 반지름으로 모서리를 필렛합니다. 모델을 만든 뒤 모서리가 아직 날카로울 때 사용하세요.",
+    "ui.scan_fillet_reach": "찾을 폭",
+    "ui.scan_fillet_step": "반올림",
+    "ui.scan_fillet_exact": "그대로",
+    "ui.scan_fillet_found": "반지름 {radius} mm (맞춤 {fitted}, 모서리를 따라 {low}–{high}) · rms {rms} mm, 날카로울 때 {sharp} mm · 점 {points}개 중 {on}개가 둥글림 위",
+    "ui.scan_fillet_hint": "스캔에 둥글림이 보이는 모델의 모서리를 고르세요."
+  },
+  "zh": {
+    "cmd.scan_fillet": "由扫描倒圆",
+    "help.scan.fillet": "测量扫描沿模型边显示的每处圆角，并按该半径对边倒圆角。在模型建好且边仍为锐边时使用。",
+    "ui.scan_fillet_reach": "搜索宽度",
+    "ui.scan_fillet_step": "取整到",
+    "ui.scan_fillet_exact": "精确",
+    "ui.scan_fillet_found": "半径 {radius} mm（拟合 {fitted}，沿边 {low}–{high}）· 均方根 {rms} mm，尖角 {sharp} mm · {points} 个点中 {on} 个在圆角上",
+    "ui.scan_fillet_hint": "选取扫描上显示圆角的模型边。"
+  },
+  "ar": {
+    "cmd.scan_fillet": "تدوير من المسح",
+    "help.scan.fillet": "يقيس كل تقوير يظهره المسح على حواف النموذج ويقوّر الحواف به. استخدمه بعد بناء النموذج وحوافه ما زالت حادة.",
+    "ui.scan_fillet_reach": "عرض البحث",
+    "ui.scan_fillet_step": "التقريب إلى",
+    "ui.scan_fillet_exact": "تمامًا",
+    "ui.scan_fillet_found": "نصف القطر {radius} مم (المُلاءَم {fitted}، على طول الحواف {low}–{high}) · جذر متوسط المربعات {rms} مم، الحاد {sharp} مم · {on} من {points} نقطة على الاستدارة",
+    "ui.scan_fillet_hint": "اختر حواف النموذج التي يُظهر المسح استدارتها."
+  },
+  "he": {
+    "cmd.scan_fillet": "עיגול מהסריקה",
+    "help.scan.fillet": "מודד כל עיגול שהסריקה מראה לאורך קצוות המודל ומעגל את הקצוות בהתאם. השתמשו בו כשהמודל בנוי וקצוותיו עדיין חדים.",
+    "ui.scan_fillet_reach": "רוחב חיפוש",
+    "ui.scan_fillet_step": "עיגול ל־",
+    "ui.scan_fillet_exact": "מדויק",
+    "ui.scan_fillet_found": "רדיוס {radius} מ״מ (מותאם {fitted}, לאורך הקצוות {low}–{high}) · שורש ממוצע הריבועים {rms} מ״מ, חד {sharp} מ״מ · {on} מתוך {points} נקודות על העיגול",
+    "ui.scan_fillet_hint": "בחרו את קצוות המודל שהסריקה מראה את העיגול שלהם."
+  },
+  "vi": {
+    "cmd.scan_fillet": "Bo tròn từ bản quét",
+    "help.scan.fillet": "Đo từng góc bo mà bản quét thể hiện dọc các cạnh của mô hình và bo các cạnh theo đó. Dùng khi mô hình đã dựng xong với cạnh còn sắc.",
+    "ui.scan_fillet_reach": "Độ rộng tìm",
+    "ui.scan_fillet_step": "Làm tròn đến",
+    "ui.scan_fillet_exact": "Chính xác",
+    "ui.scan_fillet_found": "Bán kính {radius} mm (khớp {fitted}, dọc các cạnh {low}–{high}) · rms {rms} mm, sắc {sharp} mm · {on} trên {points} điểm nằm trên chỗ bo",
+    "ui.scan_fillet_hint": "Chọn các cạnh của mô hình mà bản quét cho thấy độ bo tròn."
+  }
+}

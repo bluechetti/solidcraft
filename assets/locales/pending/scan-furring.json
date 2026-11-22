@@ -1,0 +1,38 @@
+{
+  "ar": {
+    "cmd.scan.furring": "شرائح التبطين",
+    "cmd.scan.furring_proposals": "مقترحات شرائح التبطين"
+  },
+  "de": {
+    "cmd.scan.furring": "Traglatten",
+    "cmd.scan.furring_proposals": "Traglatten-Vorschläge",
+    "help.scan.furring": "Erzeugt die Traglatten, die die Traglatten-Vorschläge aus einem Wandscan lesen, jede als druckfertigen Netzkörper. Nach dem Prüfen der Vorschläge zum Bauen oder Exportieren der Latten."
+  },
+  "en": {
+    "cmd.scan.furring": "Furring Strips",
+    "cmd.scan.furring_proposals": "Furring Proposals",
+    "help.scan.furring": "Makes the furring strips Furring Proposals reads from a wall scan, each a mesh body ready to print. Use it after checking the proposals, to build or export the strips."
+  },
+  "he": {
+    "cmd.scan.furring": "סרגלי ריפוד",
+    "cmd.scan.furring_proposals": "הצעות לסרגלי ריפוד"
+  },
+  "ja": {
+    "cmd.scan.furring": "胴縁",
+    "cmd.scan.furring_proposals": "胴縁の提案",
+    "help.scan.furring": "胴縁の提案が壁のスキャンから読み取った胴縁を、印刷できるメッシュボディとして作ります。提案を確認した後、胴縁を作るか書き出すときに使います。"
+  },
+  "ko": {
+    "cmd.scan.furring": "띠장",
+    "cmd.scan.furring_proposals": "띠장 제안"
+  },
+  "vi": {
+    "cmd.scan.furring": "Thanh nẹp đệm",
+    "cmd.scan.furring_proposals": "Đề xuất thanh nẹp đệm"
+  },
+  "zh": {
+    "cmd.scan.furring": "垫条",
+    "cmd.scan.furring_proposals": "垫条方案",
+    "help.scan.furring": "按“龙骨条建议”从墙面扫描读出的结果制作龙骨条，每条都是可打印的网格实体。检查建议后，用它生成或导出龙骨条。"
+  }
+}

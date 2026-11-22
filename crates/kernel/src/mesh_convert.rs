@@ -87,7 +87,7 @@ pub fn convert_prismatic_mesh(body: &Body, tolerance: f64) -> Result<Body> {
     })
 }
 
-fn weld(mesh: &crate::meshbody::TriMesh, tolerance: f64) -> Result<Body> {
+fn weld(mesh: &solidcraft_geom::Mesh, tolerance: f64) -> Result<Body> {
     if mesh.triangles.len() > MAX_TRIANGLES {
         return Err(over_budget(mesh.triangles.len()));
     }
@@ -221,7 +221,7 @@ fn resolve_slivers(kept: &mut Vec<[u32; 3]>, slivers: &[(u32, u32, u32)]) {
     }
 }
 
-fn extrusion(mesh: &crate::meshbody::TriMesh, axis: Vec3, tolerance: f64) -> Result<Option<Body>> {
+fn extrusion(mesh: &solidcraft_geom::Mesh, axis: Vec3, tolerance: f64) -> Result<Option<Body>> {
     let (lo, hi) = mesh.positions.iter().map(|p| p.dot(axis)).fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), h| (lo.min(h), hi.max(h)));
     let height = hi - lo;
     let bounds = mesh.positions.iter().fold(solidcraft_geom::Aabb3::EMPTY, |mut b, p| {
@@ -362,7 +362,7 @@ fn extrusion(mesh: &crate::meshbody::TriMesh, axis: Vec3, tolerance: f64) -> Res
         return Err(invalid("reconstructed solid did not pass validity checks"));
     }
     let perimeter: f64 = loops.iter().flat_map(|lp| &lp.segs).map(|s| s.length()).sum();
-    let original = mesh.to_mesh().measure().volume;
+    let original = mesh.measure().volume;
     let rebuilt = body.validated_volume()?;
     if !original.is_finite() || original <= 0. || (rebuilt - original).abs() > perimeter * height * tolerance + epsilon * bounds.size().len().powi(2)
     {
@@ -452,7 +452,7 @@ fn cap_loops(
 /// into a single planar face, every other triangle a face of its own. Every face boundary runs
 /// along mesh edges, so the faces close into the same shell the mesh is and no surface the mesh
 /// does not describe is invented — unlike [`extrusion`], which certifies analytic cylinders.
-fn faceted_solid(mesh: &crate::meshbody::TriMesh) -> Result<Body> {
+fn faceted_solid(mesh: &solidcraft_geom::Mesh) -> Result<Body> {
     let bounds = mesh.positions.iter().fold(solidcraft_geom::Aabb3::EMPTY, |mut b, p| {
         b.add(*p);
         b
@@ -536,7 +536,7 @@ fn faceted_solid(mesh: &crate::meshbody::TriMesh) -> Result<Body> {
     }
     // The sewn solid's faces are the mesh's own facets, so its volume is the mesh's; a seam
     // that does not close the same shell shows up here.
-    let original = mesh.to_mesh().measure().volume;
+    let original = mesh.measure().volume;
     let rebuilt = body.validated_volume()?;
     if !original.is_finite() || original <= 0. || (rebuilt - original).abs() > original.abs() * 1e-6 + COPLANAR * size * size {
         return Err(invalid("reconstructed volume is inconsistent with the source mesh"));
@@ -1081,7 +1081,7 @@ mod tests {
             assert!(convert_prismatic_mesh(&mesh_of(&solid), tolerance).is_err());
         }
         for coordinate in [f64::NAN, f64::INFINITY, f64::MAX, 1e30] {
-            let mesh = crate::meshbody::TriMesh { positions: vec![Vec3::new(coordinate, 0., 0.)], ..Default::default() };
+            let mesh = solidcraft_geom::Mesh { positions: vec![Vec3::new(coordinate, 0., 0.)], ..Default::default() };
             assert!(weld(&mesh, 0.05).is_err());
         }
     }
@@ -1120,7 +1120,7 @@ mod tests {
         assert!(converted.validity().is_empty());
         let exact = solidcore_ops::faceted_volume(converted.record()).unwrap().expect("a faceted solid has an exact volume");
         assert_eq!(converted.validated_volume().unwrap(), exact);
-        let triangles = mesh.mesh.as_ref().unwrap().to_mesh().measure().volume;
+        let triangles = mesh.mesh.as_ref().unwrap().measure().volume;
         assert!((exact - triangles).abs() < 1e-9 * triangles, "{exact} against the mesh's {triangles}");
         let integrated = crate::measure_mass(&converted).unwrap().volume;
         assert!((integrated - exact).abs() < 1e-4 * exact, "{integrated} against {exact}");
@@ -1255,7 +1255,7 @@ mod tests {
         let body = crate::mesh_body(&positions, &triangles).unwrap();
         let err = convert_prismatic_mesh(&body, 0.05).unwrap_err().to_string();
         assert!(err.contains("50001 triangles") && err.contains("50000"), "{err}");
-        let mesh = crate::meshbody::TriMesh { positions: vec![Vec3::ZERO; MAX_TRIANGLES * 3 + 1], ..Default::default() };
+        let mesh = solidcraft_geom::Mesh { positions: vec![Vec3::ZERO; MAX_TRIANGLES * 3 + 1], ..Default::default() };
         let err = weld(&mesh, 0.05).unwrap_err().to_string();
         assert!(err.contains("150001 vertices") && err.contains("150000"), "{err}");
     }

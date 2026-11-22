@@ -216,6 +216,7 @@ fn execute(app: &mut SolveApp, id: &str, params: Value) -> Result<Value, String>
             | "view.visual_style"
             | "view.grid"
             | "view.ground_shadow"
+            | "view.scan_triangles"
             | "view.navigation_bar"
             | "view.ribbon_tabs_only"
             | "view.next_tab"
@@ -983,25 +984,14 @@ fn ui_browser(app: &SolveApp) -> Outcome {
     }))
 }
 
-/// `ui.workspace {workspace?}`: enter the design, render or drawing workspace; returns the one shown.
+/// `ui.workspace {workspace?}`: enter the design, scan, render or drawing workspace; returns the one shown.
 fn ui_workspace(app: &mut SolveApp, q: params::WorkspaceParams) -> Outcome {
     if let Some(w) = q.workspace
         && let Err(e) = crate::workspace::enter(app, w.as_str())
     {
         return err(e);
     }
-    ok(json!({"workspace":current_workspace(app)}))
-}
-
-/// The workspace shown: drawing, render or design.
-fn current_workspace(app: &SolveApp) -> &'static str {
-    if crate::drawing_workspace::active(app) {
-        "drawing"
-    } else if crate::render_workspace::active(app) {
-        "render"
-    } else {
-        "design"
-    }
+    ok(json!({"workspace":crate::scan_workspace::current(app)}))
 }
 
 /// `ui.agent_cursor {show?, speed?, follow_camera?}`: the agent cursor's settings.
@@ -1201,10 +1191,12 @@ fn ui_set(app: &mut SolveApp, p: &Value) -> Outcome {
                 "drawing"
             } else if crate::workspace::render_tab(&u.tab) {
                 "render"
+            } else if u.scan_workspace {
+                "scan"
             } else {
                 "design"
             };
-            if destination != current_workspace(app)
+            if destination != crate::scan_workspace::current(app)
                 && let Err(error) = crate::workspace::enter(app, destination)
             {
                 return err(error);
@@ -1441,7 +1433,7 @@ fn ui_sketch_to_screen(app: &mut SolveApp, q: params::Points<[f64; 2]>) -> Outco
     ok(json!(pts))
 }
 
-/// `ui.scroll {x, y, delta?, ctrl?, unit?}`: mouse-wheel input.
+/// `ui.scroll {x, y, delta?, ctrl?, shift?, unit?}`: mouse-wheel input.
 fn ui_scroll(app: &mut SolveApp, ctx: &egui::Context, q: params::Scroll) -> Outcome {
     // Mouse-wheel semantics (lines): zooms regardless of the trackpad pan
     // preference, so scripts and agents keep working. Trackpads report points.
@@ -1466,8 +1458,10 @@ fn ui_scroll(app: &mut SolveApp, ctx: &egui::Context, q: params::Scroll) -> Outc
     if !delta.is_finite() {
         return err("x, y and delta must fit finite screen coordinates");
     }
-    let modifiers = if ctrl { egui::Modifiers::CTRL } else { Default::default() };
-    let explicit = q.ctrl.is_some();
+    let mut modifiers = if ctrl { egui::Modifiers::CTRL } else { Default::default() };
+    // `shift: true` holds Shift as well (Edit Surface sizes its brush on Ctrl+Shift).
+    modifiers.shift = q.shift.unwrap_or(false);
+    let explicit = q.ctrl.is_some() || q.shift.is_some();
     app.synthetic.push(egui::Event::PointerMoved(at));
     if explicit {
         app.synthetic.push(egui::Event::ModifiersChanged(modifiers));

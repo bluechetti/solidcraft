@@ -58,6 +58,10 @@ pub struct Section {
 #[derive(Serialize, JsonSchema)]
 pub struct SectionResult {
     pub section: Option<Section>,
+    /// How many runs the plane cuts through the shown scans (mesh bodies), drawn over the picture
+    /// beside the model's cut.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scan_runs: Option<usize>,
     /// Every plane of the section, by id.
     pub planes: Vec<SectionPlaneState>,
     /// While the Analysis folder is hidden: the ids that come back with it.

@@ -683,6 +683,8 @@ pub struct ComputedCommands {
     computed: Session,
     steps: Vec<ComputedCommand>,
     editor_original: Option<Arc<Document>>,
+    /// Commands refused and left out ([`Session::compute_commands_apart`]): each one's id and why.
+    left_out: Vec<(String, String)>,
 }
 
 struct ComputedCommand {
@@ -708,6 +710,22 @@ impl ComputedCommands {
             }) || (session.plugin_limits == source.plugin_limits
                 && session.disabled_plugins == source.disabled_plugins
                 && session.plugin_state.same_execution_context(&source.plugin_state)))
+    }
+
+    /// The design as the commands leave it (a dialog's preview reads what OK would make here).
+    pub fn computed(&self) -> &Session {
+        &self.computed
+    }
+
+    /// The commands run, in order, with what each replied.
+    pub fn steps(&self) -> impl Iterator<Item = (&str, &Value, &Value)> {
+        self.steps.iter().map(|step| (step.id.as_str(), &step.params, &step.reply))
+    }
+
+    /// The commands that were refused and left out, in order, each with why: only
+    /// [`Session::compute_commands_apart`] leaves any out.
+    pub fn left_out(&self) -> &[(String, String)] {
+        &self.left_out
     }
 
     /// Whether the resulting document differs in content from its source.
@@ -979,6 +997,28 @@ pub struct Session {
     /// The seams `inspect.continuity` last measured, for the viewport to shade. View state: not
     /// part of the design and not an undo step.
     pub continuity: Vec<ContinuitySeam>,
+    /// The scan deviation map `scan.deviation` last measured, for the viewport to colour. View
+    /// state: not part of the design and not an undo step.
+    pub scan_deviation: Option<std::sync::Arc<cmd::scan::DeviationMap>>,
+    /// The holes `inspect.hole_table` last read, for the viewport to number. View state: not part
+    /// of the design and not an undo step.
+    pub hole_table: Option<std::sync::Arc<cmd::hole_table::HoleTable>>,
+    /// The checks `inspect.check_measure` last measured, for the viewport to label. View state.
+    pub inspection: Option<std::sync::Arc<cmd::inspection_plan::Inspection>>,
+    /// What `scan.find_all` last found on a scan, and what Reconstruct reads off it, for the
+    /// viewport to colour and Reconstruct's tools to build from. View state: not part of the
+    /// design and not an undo step.
+    pub scan_shapes: Option<std::sync::Arc<cmd::scan::reconstruct::ScanShapes>>,
+    /// What `scan.survey` last read off a scan, for the Survey dialog. View state: not part of the
+    /// design and not an undo step.
+    pub scan_survey: Option<std::sync::Arc<cmd::scan::survey::KeptSurvey>>,
+    /// What is selected on a scan (`scan.select`), for the scan tools that work on part of one.
+    /// View state: not part of the design and not an undo step (`scan.keep_selection` keeps it).
+    pub scan_selection: Option<std::sync::Arc<cmd::scan::select::ScanSelected>>,
+    /// The base `scan.stand_on_base` last stood a scan on by number: the scan and which base it
+    /// was. Pressed again with nothing picked while the scan still stands there, it goes on to the
+    /// next. View state: not part of the design.
+    pub scan_base_cycle: Option<(String, usize)>,
     /// The faces Isocurve Analysis shows the isoparametric curves of, for the viewport to draw
     /// ([`Session::isocurve_lines`]). View state: not part of the design and not an undo step.
     pub isocurves: Vec<IsoPick>,
@@ -1429,6 +1469,13 @@ impl Session {
             colored_components: None,
             analysis: None,
             continuity: Vec::new(),
+            scan_deviation: None,
+            hole_table: None,
+            inspection: None,
+            scan_shapes: None,
+            scan_survey: None,
+            scan_selection: None,
+            scan_base_cycle: None,
             isocurves: Vec::new(),
             comb: None,
             status_order: Vec::new(),
@@ -2831,10 +2878,24 @@ impl Session {
         if outermost {
             crash::command_begin(self, spec.id, given);
         }
+        // The scan a scan command works on, so what it makes is noted as made from it.
+        let made_from = if outermost { cmd::scan::made_from::source(self, spec.id, params) } else { None };
+        // Whoever watches this work (an MCP client waiting on it, a control request) hears which
+        // command it is on and how far a scan command's long step is.
+        let watch = if outermost { solidcraft_kernel::watch::current() } else { None };
+        if let Some(w) = &watch {
+            w.progress(spec.label, 0, 1);
+        }
         let scope = crash::Scope::enter();
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match live {
-            Some(run) => run(self, params),
-            None => (spec.run)(self, params).map(|v| (v, None)),
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut run = || match live {
+                Some(run) => run(self, params),
+                None => (spec.run)(self, params).map(|v| (v, None)),
+            };
+            match watch {
+                Some(w) => solidcraft_scan::progress::reporting(std::sync::Arc::new(move |stage, done, total| w.progress(stage, done, total)), run),
+                None => run(),
+            }
         }));
         drop(scope);
         let r = match r {
@@ -2888,6 +2949,11 @@ impl Session {
             Err(EngineError::BadParams { cmd, msg }) if cmd.is_empty() => Err(EngineError::BadParams { cmd: spec.id.to_string(), msg }),
             Err(e) => Err(e),
         };
+        if let (Ok(_), Some(scan)) = (&r, made_from.as_deref())
+            && !Arc::ptr_eq(&self.doc, &before.doc)
+        {
+            cmd::scan::made_from::note(self, &before.doc, scan);
+        }
         // New/open/recover can replace the Session. Device ownership belongs to the host,
         // so its capability metadata survives those document lifecycle commands.
         self.render_viewport = host_viewport;
@@ -3324,6 +3390,18 @@ impl Session {
             colored_components: None,
             analysis: None,
             continuity: Vec::new(),
+            // The scan's view state goes with the copy, so a scan command computed there finds it
+            // as the window has it, and what the command changes of it comes back
+            // ([`Session::accept_commands`]).
+            scan_deviation: self.scan_deviation.clone(),
+            hole_table: None,
+            inspection: None,
+            // What Find All read is kept, so a copy computing a scan tool beside the window
+            // reads it again only when the scan changed (`ScanShapes::current`).
+            scan_shapes: self.scan_shapes.clone(),
+            scan_survey: None,
+            scan_selection: self.scan_selection.clone(),
+            scan_base_cycle: self.scan_base_cycle.clone(),
             isocurves: Vec::new(),
             comb: None,
             status_order: Vec::new(),
@@ -3365,7 +3443,16 @@ impl Session {
     /// `marker` restores an editor's original marker before recording its undo snapshot.
     /// The source remains untouched, including its history and recovery journal.
     pub fn compute_commands(self, commands: &[(String, Value)], marker: Option<Option<usize>>) -> Result<ComputedCommands> {
-        self.compute_commands_inner(commands, marker, None)
+        self.compute_commands_inner(commands, marker, None, None)
+    }
+
+    /// [`Session::compute_commands`] for commands that each stand apart (the steps Reconstruct
+    /// proposes): one that is refused is left out, the design as it was before it, and the rest
+    /// still run ([`ComputedCommands::left_out`] names it and why). `needs[i]` is the earlier
+    /// command that command `i` builds on, left out with it. When every command is refused the
+    /// first refusal is the error, and a cancel ends them all.
+    pub fn compute_commands_apart(self, commands: &[(String, Value)], needs: &[Option<usize>]) -> Result<ComputedCommands> {
+        self.compute_commands_inner(commands, None, None, Some(needs))
     }
 
     /// Start an edit from its pinned original model, so restoring the original marker cannot
@@ -3408,7 +3495,7 @@ impl Session {
         if expected != *source.doc {
             return Err(EngineError::Other("the original editor model does not match its source design".into()));
         }
-        self.compute_commands_inner(commands, Some(original.doc.marker), Some(original))
+        self.compute_commands_inner(commands, Some(original.doc.marker), Some(original), None)
     }
 
     fn compute_commands_inner(
@@ -3416,9 +3503,10 @@ impl Session {
         commands: &[(String, Value)],
         marker: Option<Option<usize>>,
         original: Option<Session>,
+        apart: Option<&[Option<usize>]>,
     ) -> Result<ComputedCommands> {
         let stop = self.stop.clone();
-        stop.within(|| self.compute_commands_under(commands, marker, original))
+        stop.within(|| self.compute_commands_under(commands, marker, original, apart))
     }
 
     fn compute_commands_under(
@@ -3426,6 +3514,7 @@ impl Session {
         commands: &[(String, Value)],
         marker: Option<Option<usize>>,
         original: Option<Session>,
+        apart: Option<&[Option<usize>]>,
     ) -> Result<ComputedCommands> {
         let editor_original = original.as_ref().map(|session| session.doc.clone());
         let mut computed = self.scratch();
@@ -3451,14 +3540,32 @@ impl Session {
             let changed = !Arc::ptr_eq(&before, &computed.doc);
             steps.push(ComputedCommand { id: "timeline.roll_to".into(), params, before, after: computed.doc.clone(), changed, reply });
         }
-        for (id, params) in commands {
+        // Commands left out (their place, why), and the first refusal as it came.
+        let mut left_out: Vec<(usize, String)> = Vec::new();
+        let mut first_refusal = None;
+        let ran_before = steps.len();
+        for (index, (id, params)) in commands.iter().enumerate() {
+            let needed = apart.and_then(|needs| needs.get(index).copied().flatten()).filter(|on| left_out.iter().any(|(k, _)| k == on));
+            if let Some((needed, _)) = needed.and_then(|on| commands.get(on)) {
+                left_out.push((index, format!("it builds on what `{needed}` makes, which was left out")));
+                continue;
+            }
             let before = computed.doc.clone();
             let active_sketch = computed.active_sketch;
             let sketching_view = computed.sketching_view;
             let active_sheet_sketch = computed.active_sheet_sketch.clone();
             let open_drawing = computed.open_drawing;
             let pending_moves = computed.pending_moves.clone();
-            let reply = computed.execute(id, params)?;
+            let reply = match computed.execute(id, params) {
+                Ok(reply) => reply,
+                // A refused command left the copy as it was (`execute`): the next runs on that.
+                Err(refusal) if apart.is_some() && !matches!(refusal, EngineError::Cancelled(_)) => {
+                    left_out.push((index, refusal.to_string()));
+                    first_refusal.get_or_insert(refusal);
+                    continue;
+                }
+                Err(refusal) => return Err(refusal),
+            };
             let changed = !Arc::ptr_eq(&before, &computed.doc)
                 || active_sketch != computed.active_sketch
                 || sketching_view != computed.sketching_view
@@ -3470,7 +3577,11 @@ impl Session {
         }
         // What the source was primed with stays out of the session that is adopted (#6901).
         computed.unprime();
-        Ok(ComputedCommands { source: self, computed, steps, editor_original })
+        if let (true, Some(refusal)) = (steps.len() == ran_before, first_refusal) {
+            return Err(refusal);
+        }
+        let left_out = left_out.into_iter().filter_map(|(index, why)| Some((commands.get(index)?.0.clone(), why))).collect();
+        Ok(ComputedCommands { source: self, computed, steps, editor_original, left_out })
     }
 
     /// Adopt evaluated commands only if their document and authoring context are still current.
@@ -3536,11 +3647,54 @@ impl Session {
             .cloned()
             .collect();
         let replies = prepared.steps.into_iter().map(|step| (step.id, step.reply)).collect();
+        let shapes = prepared.computed.scan_shapes.take();
+        let survey = prepared.computed.scan_survey.take();
+        // What the commands did to the scan's view state on the copy (a deviation map measured or
+        // taken away, a selection made or cleared, the base a scan was stood on) they did here
+        // too; what they left alone stays as the window has it now.
+        let moved = |a: Option<*const ()>, b: Option<*const ()>| a != b;
+        let at = |x: &Option<Arc<cmd::scan::DeviationMap>>| x.as_ref().map(|m| Arc::as_ptr(m).cast::<()>());
+        let deviation =
+            moved(at(&prepared.source.scan_deviation), at(&prepared.computed.scan_deviation)).then(|| prepared.computed.scan_deviation.take());
+        let picked = |x: &Option<Arc<cmd::scan::select::ScanSelected>>| x.as_ref().map(|m| Arc::as_ptr(m).cast::<()>());
+        let selection = moved(picked(&prepared.source.scan_selection), picked(&prepared.computed.scan_selection))
+            .then(|| prepared.computed.scan_selection.take());
+        let base_cycle = (prepared.source.scan_base_cycle != prepared.computed.scan_base_cycle).then(|| prepared.computed.scan_base_cycle.take());
+        // Bodies the computation itself hid (Combine Scans hides the passes it fused) stay hidden;
+        // the live view's own hides are kept as they are now.
+        let newly_hidden: Vec<_> =
+            prepared.computed.visibility.hidden_bodies.iter().filter(|b| !prepared.source.visibility.hidden_bodies.contains(*b)).cloned().collect();
         self.accept_computed(prepared.computed)?;
         for change in observations {
             if self.doc.links.get(&change.component).is_some_and(|link| link.path == change.path) {
                 plugin::record_link_change(self, change.component, change.path, change.digest, change.read);
             }
+        }
+        for body in newly_hidden {
+            if !self.visibility.hidden_bodies.contains(&body) {
+                self.visibility.hidden_bodies.push(body);
+            }
+        }
+        // What Find All read on the copy (Find All or Reconstruct computed beside the window),
+        // when it is of the scan as the design now has it.
+        if let Some(shapes) = shapes
+            && !self.scan_shapes.as_ref().is_some_and(|known| Arc::ptr_eq(known, &shapes))
+            && shapes.current(self)
+        {
+            self.scan_shapes = Some(shapes);
+        }
+        // The survey a copy read (Survey Scan computed beside the window), of the scan as it is.
+        if let Some(survey) = survey.filter(|k| k.current(self)) {
+            self.scan_survey = Some(survey);
+        }
+        if let Some(deviation) = deviation {
+            self.scan_deviation = deviation;
+        }
+        if let Some(selection) = selection {
+            self.scan_selection = selection;
+        }
+        if let Some(base_cycle) = base_cycle {
+            self.scan_base_cycle = base_cycle;
         }
         Ok(replies)
     }
@@ -4155,6 +4309,11 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         favorites,
         canvases,
         point_clouds,
+        scan_selections,
+        free_forms,
+        scan_tolerances,
+        scan_plans,
+        scan_flat_patterns,
         param_comments,
         materials,
         print_faces,
@@ -4167,6 +4326,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         browser_order,
         named_views,
         notes,
+        checks,
         visibility,
         drawings,
         next_component_color_index,
@@ -4195,6 +4355,11 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         && *favorites == b.favorites
         && *canvases == b.canvases
         && *point_clouds == b.point_clouds
+        && *scan_selections == b.scan_selections
+        && *free_forms == b.free_forms
+        && *scan_tolerances == b.scan_tolerances
+        && *scan_plans == b.scan_plans
+        && *scan_flat_patterns == b.scan_flat_patterns
         && *param_comments == b.param_comments
         && *materials == b.materials
         && *print_faces == b.print_faces
@@ -4207,6 +4372,7 @@ fn same_but_features(a: &Document, b: &Document) -> bool {
         && *browser_order == b.browser_order
         && *named_views == b.named_views
         && *notes == b.notes
+        && *checks == b.checks
         && *visibility == b.visibility
         && *drawings == b.drawings
         && *next_component_color_index == b.next_component_color_index

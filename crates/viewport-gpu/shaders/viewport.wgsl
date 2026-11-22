@@ -225,6 +225,11 @@ fn vs_tri_inst(
     @location(6) c: u32,
     @location(9) s: u32,
 ) -> TOut {
+    return inst_vertex(p, n, r0, r1, r2, c);
+}
+
+/// `vs_tri_inst`'s vertex (an entry point cannot be called; this can).
+fn inst_vertex(p: vec3<f32>, n: vec3<f32>, r0: vec4<f32>, r1: vec4<f32>, r2: vec4<f32>, c: u32) -> TOut {
     let q = vec4<f32>(p, 1.0);
     let e = palette_entry(c);
     let m = placement_motion(s, e);
@@ -236,6 +241,29 @@ fn vs_tri_inst(
     o.c = unpack_color(e.x);
     o.h = finish_h(c, e.y & 255u);
     o.wp = wp;
+    return o;
+}
+
+/// The colour a painted vertex takes (`InstancePaint`): `paint` packed as a palette entry, over
+/// the placement's colour `base` where its alpha is not 0 (the placement's alpha stays).
+fn painted(base: vec4<f32>, paint: u32) -> vec4<f32> {
+    let p = unpack_color(paint);
+    return select(base, vec4<f32>(p.rgb, base.a), p.a > 0.0);
+}
+
+/// `vs_tri_inst` with a colour painted on each vertex (vertex buffer 2).
+@vertex
+fn vs_tri_inst_painted(
+    @location(0) p: vec3<f32>,
+    @location(1) n: vec3<f32>,
+    @location(3) r0: vec4<f32>,
+    @location(4) r1: vec4<f32>,
+    @location(5) r2: vec4<f32>,
+    @location(6) c: u32,
+    @location(7) paint: u32,
+) -> TOut {
+    var o = inst_vertex(p, n, r0, r1, r2, c);
+    o.c = painted(o.c, paint);
     return o;
 }
 
@@ -261,6 +289,26 @@ fn vs_tri_inst_flat(
     @location(6) c: u32,
     @location(9) s: u32,
 ) -> FOut {
+    return flat_inst_vertex(p, r0, r1, r2, c);
+}
+
+/// `vs_tri_inst_flat` with a colour painted on each vertex (vertex buffer 2).
+@vertex
+fn vs_tri_inst_flat_painted(
+    @location(0) p: vec3<f32>,
+    @location(3) r0: vec4<f32>,
+    @location(4) r1: vec4<f32>,
+    @location(5) r2: vec4<f32>,
+    @location(6) c: u32,
+    @location(7) paint: u32,
+) -> FOut {
+    var o = flat_inst_vertex(p, r0, r1, r2, c);
+    o.c = painted(o.c, paint);
+    return o;
+}
+
+/// `vs_tri_inst_flat`'s vertex (an entry point cannot be called; this can).
+fn flat_inst_vertex(p: vec3<f32>, r0: vec4<f32>, r1: vec4<f32>, r2: vec4<f32>, c: u32) -> FOut {
     let q = vec4<f32>(p, 1.0);
     let e = palette_entry(c);
     let wp = placed_by(placement_motion(s, e), vec3<f32>(dot(r0, q), dot(r1, q), dot(r2, q)));
@@ -1426,6 +1474,9 @@ fn vs_cloud_triangle(@builtin(vertex_index) vi: u32, i: CIn) -> COut {
     let w = vec3<f32>(f32(vi == 0u), f32(vi == 1u), f32(vi == 2u));
     let wp = i.a * w.x + i.b * w.y + i.c * w.z;
     var n = cross(i.b - i.a, i.c - i.a);
+    // Bit 5: lit by the surface's own way out (in `before`), not its corners': a fine noisy scan's
+    // triangles tilt every way, and each lit by its own normal sparkled.
+    if ((u32(round(i.rgb.a * 255.0)) & 32u) != 0u && length(i.before) > 0.0) { n = i.before; }
     if (length(n) > 0.0) { n = normalize(n); }
     // The true clip-space corner, even behind the eye: the rasteriser clips a triangle exactly.
     return cloud_out(i, w, wp, u.vp * vec4<f32>(wp, 1.0), n);

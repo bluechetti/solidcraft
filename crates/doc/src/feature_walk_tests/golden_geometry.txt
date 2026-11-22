@@ -107,6 +107,12 @@ split_face
   face points: [0, 0, 0]
 scale
   moves: origin[0], origin[1], origin[2]
+deform_bend
+  moves: map.along[0], map.along[1], map.origin[0], map.origin[1], map.origin[2], map.up[0], map.up[2]
+deform_twist
+  moves: map.axis[0], map.axis[2], map.origin[0], map.origin[1], map.origin[2]
+deform_cage
+  moves: map.hi[0], map.hi[1], map.hi[2], map.lo[0], map.lo[1], map.lo[2]
 offset_face
   moves: faces[0][0], faces[0][1], faces[0][2]
   face points: [0, 0, 0]
@@ -231,6 +237,8 @@ surface_trim_mutual
 move
   moves: rotate_axis[1], rotate_axis[2]
 import
+scan_surface
 mesh_convert
+scan_clean
 mesh_import
 repair

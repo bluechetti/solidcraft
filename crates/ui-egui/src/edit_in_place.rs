@@ -171,10 +171,9 @@ fn snapshot(session: &Session, component: u64, placement: &[u64]) -> Option<(usi
         let (mesh, placed) = b.mesh_in_place();
         let m = mat_mul(&frame, &placed);
         bodies += 1;
-        for t in &mesh.triangles {
-            // A triangle with an index out of range is left out whole, so the rest stay in step.
-            let corners: Option<Vec<_>> = t.iter().map(|k| Some((*mesh.positions.get(*k as usize)?, *mesh.normals.get(*k as usize)?))).collect();
-            for (p, n) in corners.into_iter().flatten() {
+        // A triangle with an index out of range is left out whole, so the rest stay in step.
+        for corners in mesh.lit_corners() {
+            for (p, n) in corners {
                 let p = apply_point(&m, p);
                 bounds.add(p);
                 triangles.push((p.to_f32(), apply_vector(&m, n).to_f32()));

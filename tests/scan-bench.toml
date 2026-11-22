@@ -1,0 +1,76 @@
+# The bars a model rebuilt from a scan is held to, by class of part and by the scan's noise.
+#
+# Calibrated once on the first full run (recorded under [calibration]), then only tightened:
+# a bar is never loosened to make a failing case pass. Lengths in mm, angles in degrees, shares
+# 0 to 1. `sigma` is the standard deviation of the noise added along the scan's normals.
+#
+# within / rms / max are held each way: the scan against the model and the model against the scan.
+# The tolerance "within" is read at is tolerance_sigmas x sigma, at least tolerance_least.
+# The built model is also held to the part itself (its fine mesh, no noise), both ways: nowhere
+# farther off than `position`, as far as a feature may be out of place.
+
+[levels]
+sigma = [0.02, 0.1, 0.3]
+seed = 20261118
+# The scan's triangles are about this long each way.
+edge = 0.5
+# A scan cannot hold a sharp edge better than its triangles: one that crosses the edge cuts the
+# corner by up to half its length. This share of `edge` is added to the `max` bar the model's
+# surface is held to against the scan (not to the scan's points against the model, which lie on
+# the part). Set at calibration: the five cases built right at sigma 0.02 read 0.21 to 0.26.
+edge_allowance = 0.5
+
+[prismatic]
+tolerance_sigmas = 3.0
+tolerance_least = 0.1
+bars = [
+  { sigma = 0.02, within = 0.99, rms = 0.03, max = 0.15, radius = 0.05, position = 0.05, angle = 0.1, volume = 0.005, scale = 0.005, features = "exact" },
+  { sigma = 0.1, within = 0.97, rms = 0.12, max = 0.6, radius = 0.15, position = 0.15, angle = 0.3, volume = 0.01, scale = 0.005, features = "exact" },
+  { sigma = 0.3, within = 0.95, rms = 0.35, max = 1.8, radius = 0.4, position = 0.4, angle = 1.0, volume = 0.02, scale = 0.01, features = "pass or refuse" },
+]
+
+[turned]
+tolerance_sigmas = 3.0
+tolerance_least = 0.1
+bars = [
+  { sigma = 0.02, within = 0.99, rms = 0.03, max = 0.15, radius = 0.025, position = 0.05, angle = 0.1, volume = 0.005, scale = 0.005, features = "exact" },
+  { sigma = 0.1, within = 0.97, rms = 0.12, max = 0.6, radius = 0.1, position = 0.15, angle = 0.3, volume = 0.01, scale = 0.005, features = "exact" },
+  { sigma = 0.3, within = 0.95, rms = 0.35, max = 1.8, radius = 0.3, position = 0.4, angle = 1.0, volume = 0.02, scale = 0.01, features = "pass or refuse" },
+]
+
+# The full tier's other scans (`cargo xtask scan-bench --full`), each of every case: `flags` are
+# scan_bench's. Surface missing in patches, the part lying askew and away from the origin, and
+# stray specks off the surface.
+[[variant]]
+name = "missing-10"
+sigma = 0.02
+flags = ["--missing", "0.1"]
+
+[[variant]]
+name = "missing-30"
+sigma = 0.02
+flags = ["--missing", "0.3"]
+
+[[variant]]
+name = "turned-25"
+sigma = 0.02
+flags = ["--turn", "25"]
+
+[[variant]]
+name = "specks"
+sigma = 0.02
+flags = ["--specks", "0.001"]
+
+# The rule above every bar: a case either meets its bars, or its commands refuse or warn. A case
+# that returns ok with `passes: true` and fails the scorer is silently wrong; none is allowed.
+[rules]
+silent_wrong_allowed = 0
+
+[calibration]
+# The one calibration, on the first full run (2026-11-18, branch scan-parity, 18 cases).
+done = true
+changes = [
+  "levels.edge_allowance = 0.5: the five cases built right at sigma 0.02 read 0.21 to 0.26 model-to-scan max, the scan's own corner cutting",
+  "part against model, both ways, held to `position` (added 2026-11-19 with cargo xtask scan-bench; no bar existed). Its first run failed the drilled shaft: its blind holes were cut 0.05 too deep at sigma 0.02 and 0.23 at 0.1. That was SolidCraft's fault, fixed in e7a88c9dc (0.013 and 0.067 after); the bar was not moved",
+  "max at sigma 0.1: 0.5 -> 0.6, at sigma 0.3: 1.5 -> 1.8. A bar of 5 sigma leaves nothing for the model: the scan's noisiest of some 60,000 points is 4.5 sigma off a perfect model (flange at 0.1: 0.42; drilled shaft, its holes 0.06 out of place: 0.52). Six sigma.",
+]

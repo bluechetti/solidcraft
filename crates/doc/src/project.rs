@@ -2327,8 +2327,9 @@ fn surface_facing(m: &Mesh, t: &[u32; 3], flat: Vec3) -> Vec3 {
     /// Least cosine between a corner's normal and the triangle's: about 26 degrees.
     const AGREES: f64 = 0.9;
     let mut sum = Vec3::ZERO;
-    for i in t {
-        match m.normals.get(*i as usize).and_then(|v| v.normalized()) {
+    let Some(corners) = m.corner_normals(t) else { return flat };
+    for n in corners {
+        match n.normalized() {
             Some(v) if v.dot(flat) >= AGREES => sum += v,
             _ => return flat,
         }
@@ -2945,8 +2946,12 @@ fn section_segments(plane: &Plane, m: &Mesh, face: Option<u32>, shaded_flat: boo
         }
     };
     for (t, f) in m.triangles.iter().zip(&m.tri_face) {
-        for k in t {
-            let (Some(p), Some(n)) = (m.positions.get(*k as usize), corner_normal(*k)) else { continue };
+        // A flat mesh (the Scan workspace fork's) has no normals by vertex: its corners are lit
+        // with their triangle's own, unless the round's rim smoothing above gave the vertex one.
+        let lit = m.corner_normals(t);
+        for (c, k) in t.iter().enumerate() {
+            let Some(p) = m.positions.get(*k as usize) else { continue };
+            let Some(n) = corner_normal(*k).or_else(|| lit.map(|l| l[c])) else { continue };
             let Some(n) = n.normalized() else { continue };
             normals.entry(key(*p)).and_modify(|e| merge(e, n)).or_insert(Some(n));
             face_normals.entry((*f, key(*p))).and_modify(|e| merge(e, n)).or_insert(Some(n));

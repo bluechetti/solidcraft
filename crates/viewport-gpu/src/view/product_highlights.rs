@@ -257,14 +257,14 @@ impl Renderer {
         }
         // PBR placements are opaque too: they occlude feedback as the built ones do.
         for draw in model.instanced.iter().filter(|draw| matches!(draw.look, InstanceLook::Opaque | InstanceLook::Pbr)) {
-            draw.draw(pass, &depth.instanced, &depth.instanced, tally);
+            draw.draw(pass, &depth.instanced, &depth.instanced, None, tally);
         }
         // Render's build_highlight emits self-contained mesh triangles/edges, including
         // whole bodies; it intentionally does not reference the Design model's GPU plans.
         let highlight = &self.pic.highlight;
         pass.set_bind_group(0, scene_bind(highlight, &self.bind), &[]);
         for draw in highlight.hover_instanced.iter().chain(&highlight.selected_instanced).filter(|draw| draw.look == InstanceLook::Opaque) {
-            draw.draw(pass, &depth.feedback_smooth, &depth.feedback_flat, tally);
+            draw.draw(pass, &depth.feedback_smooth, &depth.feedback_flat, None, tally);
         }
         for key in &highlight.block_order {
             if let Some(block) = highlight.blocks.get(key).filter(|block| block.class(TriClass::Opaque).is_some()) {

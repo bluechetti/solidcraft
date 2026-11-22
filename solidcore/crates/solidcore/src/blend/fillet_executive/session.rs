@@ -3423,9 +3423,9 @@ impl CornerEdgeAccess<FilletObject> for SessionObjects<'_> {
             let mut live = Live(solvers.as_mut_slice());
             for e in corner.edges.clone() {
                 let edge = pseudo.fillet_edge(e)?;
+                // (one with a curve already, a traced one, only G^n rounds remake)
                 if edge.fillet_edge_type()
                     != crate::blend::fillet_geom::p1::FilletEdgeType::FilletXFillet
-                    || pseudo.brep().edge(e)?.curve.is_some()
                 {
                     continue;
                 }

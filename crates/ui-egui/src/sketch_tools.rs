@@ -306,6 +306,72 @@ fn marks(app: &SolveApp, painter: &egui::Painter, proj: &Proj) {
 /// Commands that start with a step of their own: Canvas and Decal ask for the image first,
 /// Edit Canvas opens the canvas panel. False when the command should not go on.
 pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
+    // Scan Deviation's button takes the map away again while it is shown, and measures against
+    // the tolerance the scan tools start from.
+    if id == "scan.deviation" {
+        if crate::scan_deviation::shown(app) {
+            let _ = app.run(id, json!({"show": false}));
+            return false;
+        }
+        return crate::scan_deviation::start(app);
+    }
+    // Hole Table's button takes the numbers away again while they are shown.
+    if id == "inspect.hole_table" && crate::hole_table::shown(app) {
+        let _ = app.run(id, json!({"show": false}));
+        return false;
+    }
+    // Add Check's button turns its click tool on or off; Measure Checks' takes its results away
+    // again while they are shown.
+    if id == "inspect.check_add" {
+        return crate::inspection_plan::toggle_adding(app);
+    }
+    if id == "inspect.check_measure" && crate::inspection_plan::shown(app) {
+        let _ = app.run(id, json!({"show": false}));
+        return false;
+    }
+    // Remove Markers' button asks for a click on a marker, or ends asking.
+    if id == "scan.remove_markers" {
+        return crate::scan_markers::toggle(app);
+    }
+    // Inspection Report's button asks where to write the report, then writes it.
+    if id == "scan.report" {
+        let body = solidcraft_engine::cmd::scan::mesh_body_name(&app.session, None, id).unwrap_or_default();
+        let name = if body.is_empty() { "report.html".to_owned() } else { format!("{body} report.html") };
+        app.pick_save_command(&name, &["html"], id, serde_json::json!({"body": body}));
+        return false;
+    }
+    // Unseen Surface's button paints what the scanner never saw, or takes the paint away.
+    if id == "scan.unseen" {
+        return crate::scan_unseen::toggle(app);
+    }
+    // Length on Scan's button starts a line of clicks along the scan, or ends it.
+    if id == "scan.measure_line" {
+        return crate::scan_line::toggle(app);
+    }
+    // Radius from Scan's button asks for taps on rounds, or ends asking.
+    if id == "scan.radius" {
+        return crate::scan_radius::toggle(app);
+    }
+    // Pin Deviation's button turns pinning on (showing the map if it is not) or off again.
+    if id == "scan.deviation_pin" {
+        return crate::scan_deviation::toggle_pinning(app);
+    }
+    // Find All's button takes its colouring away again while it is shown.
+    if id == "scan.find_all" && crate::scan_shapes::shown(app) {
+        let _ = app.run(id, json!({"show": false}));
+        return false;
+    }
+    // Reconstruct reads the scan (Reconstruct Selection the part of it selected) before its dialog
+    // lists what to build.
+    if matches!(id, "scan.reconstruct" | "scan.reconstruct_selection")
+        && !crate::dialogs_scan_reconstruct::read_first(app, id == "scan.reconstruct_selection")
+    {
+        return false;
+    }
+    // Survey Scan reads the scan before its dialog shows what it found.
+    if id == "scan.survey" && !crate::dialogs_scan_survey::read_first(app) {
+        return false;
+    }
     if id == "inspect.section" && app.preferences.viewport_section_status && !app.session.section.is_empty() {
         let _ = app.run(id, json!({"clear":true}));
         return false;

@@ -54,15 +54,20 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params("→ clouds: [{cloud, name, file, source (the file's path, read again by pointcloud.reload), points, segments, triangles, source_points, units, visible, point_size, color_by (file, single, height or a property's name), color, colored, properties: [{name, integer, span, names}], filters, color_range (the ramp's now, exact over what the filters keep), height_range (the ramp's own range or the automatic one by height), height_auto, bounds: [[x,y,z], [x,y,z]] in the design, matrix}]"),
 ];
 
-fn units_of(p: &Value, cmd: &str) -> Result<Option<(&'static str, f64)>> {
-    match p.get("units") {
+pub(super) fn units_of(p: &Value, cmd: &str) -> Result<Option<(&'static str, f64)>> {
+    unit_of(p, "units", cmd)
+}
+
+/// A length unit, mm, cm, m, in or ft (any case), and its millimetres, from the parameter `key`.
+pub(super) fn unit_of(p: &Value, key: &str, cmd: &str) -> Result<Option<(&'static str, f64)>> {
+    match p.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(u)) => UNITS
             .iter()
             .find(|(name, _)| name.eq_ignore_ascii_case(u))
             .map(|(name, k)| Some((*name, *k)))
-            .ok_or_else(|| bad(cmd, format!("`units` must be one of mm, cm, m, in, ft (not `{u}`)"))),
-        Some(_) => Err(bad(cmd, "`units` must be one of mm, cm, m, in, ft")),
+            .ok_or_else(|| bad(cmd, format!("`{key}` must be one of mm, cm, m, in, ft (not `{u}`)"))),
+        Some(_) => Err(bad(cmd, format!("`{key}` must be one of mm, cm, m, in, ft"))),
     }
 }
 
@@ -221,7 +226,10 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "pointcloud.insert";
     let path = str_(p, "path").filter(|x| !x.trim().is_empty() && x.len() < 4096).ok_or_else(|| bad(cmd, "`path` is required"))?;
     if !solidcraft_io::is_point_cloud_path(path) {
-        return Err(bad(cmd, "only PLY, PCD, E57, XYZ, PTS and ASC files (.ply, .pcd, .e57, .xyz, .pts, .asc) can be inserted as point clouds"));
+        return Err(bad(
+            cmd,
+            "only PLY, PCD, XYZ, PTS, ASC, PTX, E57 and LAS files (.ply, .pcd, .xyz, .pts, .asc, .ptx, .e57, .las, .laz) can be inserted as point clouds",
+        ));
     }
     // An E57 file is always in metres; the others say nothing, so millimetres unless told.
     let default_units = if path.to_ascii_lowercase().ends_with(".e57") { ("m", 1000.0) } else { ("mm", 1.0) };
@@ -239,7 +247,16 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     let center = bool_(p, "center").unwrap_or(false);
     let bytes = solidcraft_io::limits::read(path, solidcraft_io::limits::Kind::PointCloud).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let read = solidcraft_io::read_point_cloud(&bytes, path, scale, max_points).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    let warnings = read.warnings;
+    let mut warnings = read.warnings;
+    // The cloud draws a PLY's faces, but the Scan workspace's tools work on a mesh body.
+    if solidcraft_io::is_ply_path(path)
+        && let Ok((_, faces)) = solidcraft_io::ply_counts(&bytes)
+        && faces > 0
+    {
+        warnings.push(format!("the file has {faces} faces, drawn with its points: Insert Mesh (file.insert_mesh) reads it as a mesh body"));
+    } else if solidcraft_io::is_ply_path(path) && solidcraft_io::has_range_grid(&bytes) {
+        warnings.push("the file is a range scan: Insert Mesh (file.insert_mesh) makes a mesh from its grid".into());
+    }
     drop(bytes);
     let file = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
     let stem = std::path::Path::new(path).file_stem().map(|n| n.to_string_lossy().trim().to_string()).filter(|n| !n.is_empty());
@@ -378,8 +395,8 @@ fn reload(s: &mut Session, p: &Value) -> Result<Value> {
     let path = c.source.clone();
     let scale = unit_scale(&c.units).unwrap_or(1.0);
     let max_points = reload_limit(&c);
-    // The file is read up to the limit for point cloud files, which the preference raises
-    // (#14548). The path comes from the design, so it is checked before anything is read.
+    // The file is read up to the limit for point cloud files: none on the desktop (the Scan
+    // workspace fork), upstream's in the browser (#14548). The path comes from the design, so it is checked before anything is read.
     let max = usize::try_from(solidcraft_io::limits::Kind::PointCloud.limit()).unwrap_or(usize::MAX);
     let bytes = solidcraft_io::vfs::read_design_path(&path, s.path.as_deref(), max).map_err(|e| {
         let e = solidcraft_io::limits::explain(solidcraft_io::limits::Kind::PointCloud, e);
@@ -552,6 +569,46 @@ mod tests {
         assert_eq!(opened.point_clouds, s.doc.point_clouds);
         s.execute("pointcloud.delete", &json!({"cloud": id})).unwrap();
         assert!(s.doc.point_clouds.is_empty());
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    /// A PTX station (a long-range scanner's export) of 2 × 2 points, one of them no return: its
+    /// three points come in where the station's matrix puts them (10 along x), in metres.
+    #[test]
+    fn a_ptx_station_is_inserted_where_its_matrix_puts_it() {
+        let d = dir("ptx");
+        let path = d.join("station.ptx");
+        let ptx = "2\n2\n0 0 0\n1 0 0\n0 1 0\n0 0 1\n1 0 0 0\n0 1 0 0\n0 0 1 0\n10 0 0 1\n1 2 3 0.5 255 0 0\n0 0 0 0 0 0 0\n4 5 6 0.5 0 255 0\n7 8 9 0.5 0 0 255\n";
+        std::fs::write(&path, ptx).unwrap();
+        let mut s = Session::default();
+        let r = s.execute("pointcloud.insert", &json!({"path": path.to_string_lossy(), "units": "m"})).unwrap();
+        assert_eq!((r["name"].as_str(), r["points"].as_u64()), (Some("station"), Some(3)), "{r}");
+        assert_eq!(r["bounds"], json!([[11000.0, 2000.0, 3000.0], [17000.0, 8000.0, 9000.0]]));
+        assert_eq!(s.doc.point_clouds[0].colors.get(0), Some([255, 0, 0]));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_scan_with_normals_saves_and_opens_with_them() {
+        let d = dir("normals");
+        let mut b = b"ply\nformat binary_little_endian 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nproperty float nx\nproperty float ny\nproperty float nz\nend_header\n".to_vec();
+        for p in [[0.0f32, 0.0, 0.0, 0.0, 0.0, 1.0], [5.0, 0.0, 0.0, 0.0, 0.0, 1.0], [0.0, 5.0, 0.0, 0.0, 0.0, 1.0]] {
+            for v in p {
+                b.extend(v.to_le_bytes());
+            }
+        }
+        let path = d.join("normals.ply");
+        std::fs::write(&path, b).unwrap();
+        let mut s = Session::default();
+        s.execute("pointcloud.insert", &json!({"path": path.to_string_lossy()})).unwrap();
+        assert!(s.doc.point_clouds[0].complex.column("nz", solidcraft_doc::point_cloud::On::Point).is_some());
+        let file = solidcraft_io::write_design_container(&s.doc).unwrap();
+        let opened = solidcraft_io::read_design(&file).unwrap();
+        assert_eq!(
+            opened.point_clouds[0].complex.column("nz", solidcraft_doc::point_cloud::On::Point).map(|c| c.values.0.len()),
+            Some(3),
+            "the normals come back with the points"
+        );
         let _ = std::fs::remove_dir_all(d);
     }
 
@@ -803,9 +860,10 @@ mod tests {
             opened.execute("doc.open", &json!({"path": path})).unwrap();
             assert_eq!(opened.doc.point_clouds.len(), 1, "{}", path.display());
         }
-        // A LAS file is refused by its name, and the message names the files that are read.
-        let refused = s.execute("pointcloud.insert", &json!({"path": d.join("scan.las")})).unwrap_err().to_string();
-        assert!(refused.contains(".pcd") && refused.contains(".e57") && refused.contains(".asc"), "{refused}");
+        // A file of a kind that is not read is refused by its name, and the message names the files
+        // that are read. (Upstream refuses an E57 file here; the Scan workspace fork reads those.)
+        let refused = s.execute("pointcloud.insert", &json!({"path": d.join("scan.rcp")})).unwrap_err().to_string();
+        assert!(refused.contains(".pcd") && refused.contains(".asc"), "{refused}");
         let _ = std::fs::remove_dir_all(d);
     }
 

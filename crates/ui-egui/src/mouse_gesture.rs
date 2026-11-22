@@ -96,7 +96,7 @@ impl Studio {
                 "SURFACE" => Studio::Surface,
                 "SHEET METAL" => Studio::SheetMetal,
                 "PLASTIC" => Studio::Plastic,
-                "MESH" => Studio::Mesh,
+                "MESH" | "SCAN" => Studio::Mesh,
                 _ => Studio::Part,
             }
         }

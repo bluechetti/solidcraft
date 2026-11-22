@@ -3143,6 +3143,147 @@ fn threemf_export_open_insert() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A mesh file saved in metres or inches comes in at its size when its `units` are given; a
+/// raw range scan (a PLY with a scanner grid and no faces) comes in as a mesh of its grid.
+#[test]
+fn a_mesh_in_metres_or_inches_comes_in_at_its_size() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-mesh-units-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = |name: &str| dir.join(name).to_string_lossy().to_string();
+    // A cube 0.01 m on a side.
+    let corner = |i: usize| [(i & 1) as f64 * 0.01, (i >> 1 & 1) as f64 * 0.01, (i >> 2 & 1) as f64 * 0.01];
+    let quads = [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]];
+    let mut stl = String::from("solid cube\n");
+    for q in quads {
+        for t in [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] {
+            stl += "facet normal 0 0 0\nouter loop\n";
+            for v in t {
+                let [x, y, z] = corner(v);
+                stl += &format!("vertex {x} {y} {z}\n");
+            }
+            stl += "endloop\nendfacet\n";
+        }
+    }
+    stl += "endsolid cube\n";
+    std::fs::write(path("cube.stl"), &stl).unwrap();
+    let size = |s: &mut Session, body: usize| {
+        let m = run(s, "inspect.measure", json!({}));
+        let b = &m["bodies"][body]["bbox"];
+        (0..3).map(|k| b["max"][k].as_f64().unwrap() - b["min"][k].as_f64().unwrap()).collect::<Vec<_>>()
+    };
+    let mut s = Session::default();
+    let r = run(&mut s, "file.insert_mesh", json!({"path": path("cube.stl"), "units": "m"}));
+    assert_eq!(r["units"], "m");
+    // (STL holds single precision.)
+    assert!(size(&mut s, 0).iter().all(|d| (d - 10.0).abs() < 1e-5), "{:?}", size(&mut s, 0));
+    assert!(rel(volume(&mut s), 1000.0) < 1e-6, "{}", volume(&mut s));
+    // As before, without `units` the file is read as millimetres.
+    let mut mm = Session::default();
+    run(&mut mm, "file.insert_mesh", json!({"path": path("cube.stl"), "units": "mm"}));
+    assert!(size(&mut mm, 0).iter().all(|d| (d - 0.01).abs() < 1e-8));
+    // doc.open takes it too; the same cube as an OBJ in inches.
+    let mut opened = Session::default();
+    let r = run(&mut opened, "doc.open", json!({"path": path("cube.stl"), "units": "M"}));
+    assert_eq!(r["units"], "m");
+    assert!(size(&mut opened, 0).iter().all(|d| (d - 10.0).abs() < 1e-5));
+    let mut obj: String = (0..8).map(|i| corner(i).map(|v| v * 100.0)).map(|[x, y, z]| format!("v {x} {y} {z}\n")).collect();
+    for q in quads {
+        obj += &format!("f {} {} {} {}\n", q[0] + 1, q[1] + 1, q[2] + 1, q[3] + 1);
+    }
+    std::fs::write(path("cube.obj"), obj).unwrap();
+    run(&mut s, "file.insert_mesh", json!({"path": path("cube.obj"), "units": "in"}));
+    assert!(size(&mut s, 1).iter().all(|d| (d - 25.4).abs() < 1e-9), "{:?}", size(&mut s, 1));
+    // A raw range scan: a 3 x 3 grid of a plane 0.01 m apart, one corner unseen, in metres.
+    let seen: Vec<(usize, usize)> = (0..3).flat_map(|r| (0..3).map(move |c| (c, r))).filter(|cr| *cr != (2, 2)).collect();
+    let mut ply = format!(
+        "ply\nformat ascii 1.0\nobj_info num_cols 3\nobj_info num_rows 3\nelement vertex {}\nproperty float x\nproperty float y\nproperty float z\nelement range_grid 9\nproperty list uchar int vertex_indices\nend_header\n",
+        seen.len()
+    );
+    for (c, r) in &seen {
+        ply += &format!("{} {} 0.5\n", *c as f64 * 0.01, -(*r as f64) * 0.01);
+    }
+    for k in 0..9 {
+        ply += &match seen.iter().position(|cr| *cr == (k % 3, k / 3)) {
+            Some(i) => format!("1 {i}\n"),
+            None => "0\n".into(),
+        };
+    }
+    std::fs::write(path("pass.ply"), &ply).unwrap();
+    let r = run(&mut s, "file.insert_mesh", json!({"path": path("pass.ply"), "units": "m"}));
+    assert_eq!(r["bodies"].as_array().unwrap().len(), 1, "{r}");
+    let m = run(&mut s, "inspect.measure", json!({}));
+    let pass = m["bodies"].as_array().unwrap().iter().find(|b| b["name"] == r["bodies"][0]).unwrap();
+    // Three full squares of 10 x 10 mm and one with a corner missing: 350 mm².
+    assert!(rel(pass["area_mm2"].as_f64().unwrap(), 350.0) < 1e-6, "{pass}");
+    // As a point cloud it says how to get the mesh.
+    let r = run(&mut s, "pointcloud.insert", json!({"path": path("pass.ply"), "units": "m"}));
+    assert!(r["warnings"].to_string().contains("range scan"), "{r}");
+    // 3MF and glTF state their own units; an unknown unit, or one that takes a point out of
+    // reach, is refused and the design is left as it was.
+    let before = s.doc.clone();
+    for (file, units) in [("cube.3mf", json!("m")), ("cube.glb", json!("m")), ("cube.stl", json!("furlong")), ("cube.stl", json!(1000))] {
+        assert!(s.execute("file.insert_mesh", &json!({"path": path(file), "units": units})).is_err(), "{file} {units}");
+    }
+    std::fs::write(path("far.stl"), stl.replace("vertex 0.01 0.01 0.01", "vertex 900000000 0.01 0.01")).unwrap();
+    let e = s.execute("file.insert_mesh", &json!({"path": path("far.stl"), "units": "m"})).unwrap_err().to_string();
+    assert!(e.contains("out of range"), "{e}");
+    assert_eq!(*s.doc, *before);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A mesh read in millimetres whose file was in metres (or inches) is scaled to its own unit in
+/// place by `mesh.units`, as long as nothing follows it in the timeline.
+#[test]
+fn mesh_units_reads_an_import_again_in_its_files_unit() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-mesh-units-again-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = |name: &str| dir.join(name).to_string_lossy().to_string();
+    // Two triangles making a square 0.01 on a side, as an OBJ (read in double precision).
+    std::fs::write(path("square.obj"), "v 0 0 0\nv 0.01 0 0\nv 0.01 0.01 0\nv 0 0.01 0\nf 1 2 3\nf 1 3 4\n").unwrap();
+    let area = |s: &mut Session, body: &str| {
+        let m = run(s, "inspect.measure", json!({}));
+        m["bodies"].as_array().unwrap().iter().find(|b| b["name"] == body).unwrap()["area_mm2"].as_f64().unwrap()
+    };
+    let mut s = Session::default();
+    run(&mut s, "file.insert_mesh", json!({"path": path("square.obj"), "units": "mm"}));
+    assert!(rel(area(&mut s, "square"), 1e-4) < 1e-9);
+    let r = run(&mut s, "mesh.units", json!({"units": "m"}));
+    assert_eq!((r["scale"].as_f64(), r["units"].as_str(), r["from"].as_str()), (Some(1000.0), Some("m"), Some("mm")), "{r}");
+    assert_eq!(r["bodies"], json!(["square"]));
+    assert!(rel(area(&mut s, "square"), 100.0) < 1e-9, "{}", area(&mut s, "square"));
+    // One undo step back to as it was read.
+    run(&mut s, "edit.undo", json!({}));
+    assert!(rel(area(&mut s, "square"), 1e-4) < 1e-9);
+    // By its body, from metres to inches (25.4 / 1000).
+    run(&mut s, "file.insert_mesh", json!({"path": path("square.obj"), "units": "m"}));
+    let r = run(&mut s, "mesh.units", json!({"units": "in", "from": "m", "body": "square (2)"}));
+    assert!(rel(r["scale"].as_f64().unwrap(), 0.0254) < 1e-12, "{r}");
+    assert!(rel(area(&mut s, "square (2)"), 100.0 * 0.0254 * 0.0254) < 1e-9, "{}", area(&mut s, "square (2)"));
+    // Refused, leaving the design as it was: a feature after the import, a body no import made, a
+    // unit it doesn't know, or one that takes a point out of reach.
+    run(&mut s, "solid.box", json!({"length": 5, "width": 5, "height": 5, "body_name": "Block"}));
+    let before = s.doc.clone();
+    for p in [
+        json!({"units": "m", "body": "square"}),
+        json!({"units": "m", "body": "Block"}),
+        json!({"units": "m", "body": "Nothing"}),
+        json!({"units": "furlong"}),
+        json!({}),
+    ] {
+        assert!(s.execute("mesh.units", &p).is_err(), "{p}");
+    }
+    let e = s.execute("mesh.units", &json!({"units": "m", "body": "square"})).unwrap_err().to_string();
+    assert!(e.contains("follows"), "{e}");
+    assert_eq!(*s.doc, *before);
+    let mut far = Session::default();
+    std::fs::write(path("far.obj"), "v 0 0 0\nv 900000000 0 0\nv 0 1 0\nf 1 2 3\n").unwrap();
+    run(&mut far, "file.insert_mesh", json!({"path": path("far.obj")}));
+    let before = far.doc.clone();
+    assert!(far.execute("mesh.units", &json!({"units": "m"})).unwrap_err().to_string().contains("farther"));
+    assert_eq!(*far.doc, *before);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A cube one unit across comes in as that unit in millimetres, for every unit: the sizes are
 /// written out here, not read from the table that scales the file.
 #[test]
@@ -3211,7 +3352,8 @@ fn a_unit_on_import_matches_importing_in_millimetres_then_scaling() {
             let mut with_unit = Session::default();
             run(&mut with_unit, "file.insert_mesh", json!({"path": path.to_string_lossy(), "units": units}));
             let mut scaled = Session::default();
-            let inserted = run(&mut scaled, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+            // In millimetres by name: a file one unit across that states no unit is refused until it is given.
+            let inserted = run(&mut scaled, "file.insert_mesh", json!({"path": path.to_string_lossy(), "units": "mm"}));
             let body = inserted["bodies"][0].as_str().unwrap().to_string();
             run(&mut scaled, "solid.scale", json!({"bodies": [body], "factor": mm.to_string()}));
             let (a, b) = (with_unit.model.state().bodies[0].mesh().bounds(), scaled.model.state().bodies[0].mesh().bounds());
@@ -4119,6 +4261,26 @@ fn chord_and_variable_fillets() {
         )
         .is_err()
     );
+    // Curvature-continuous sections, 2 → 5: each section square to the edge is the G2 section
+    // with the ball's circle's area, (1 − π/4) r², so the round takes off the integral of that,
+    // (1 − π/4) · 20 · (4 + 10 + 25) / 3; and it follows a parameter like the circular one.
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 20, "height": 30, "body_name": "B"}));
+    run(&mut s, "parameters.add", json!({"name": "far", "expression": "5 mm"}));
+    run(
+        &mut s,
+        "solid.fillet",
+        json!({"edges": [[10, 10, 30]], "radius": 2, "type": "variable", "radius2": "far", "start": [10, 0, 30], "curvature": true, "name": "Round"}),
+    );
+    let removed = (1.0 - PI / 4.0) * 20.0 * (4.0 + 10.0 + 25.0) / 3.0;
+    assert!((6000.0 - vol(&s) - removed).abs() < 1e-3, "{} removed vs {removed}", 6000.0 - vol(&s));
+    assert!(matches!(
+        &s.doc.find_feature("Round").unwrap().kind,
+        solidcraft_doc::FeatureKind::Fillet { style: solidcraft_doc::FilletStyle::Variable { curvature: true, .. }, .. }
+    ));
+    run(&mut s, "parameters.change", json!({"name": "far", "expression": "3 mm"}));
+    let removed = (1.0 - PI / 4.0) * 20.0 * (4.0 + 6.0 + 9.0) / 3.0;
+    assert!((6000.0 - vol(&s) - removed).abs() < 1e-3, "{} removed vs {removed}", 6000.0 - vol(&s));
 }
 
 /// Components export as a STEP assembly: products, occurrences, placements.

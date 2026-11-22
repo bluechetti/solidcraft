@@ -74,7 +74,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("SKETCH", "CREATE")
         .icon("fit_section")
         .enabled(in_sketch)
-        .contract(&FIT_SECTION_CONTRACT).output(output_schema_for::<FitSectionResult>).params(concat!("body: name (a mesh or solid body): its section with the sketch plane, fitted with lines and arcs, as normal (unlinked) geometry", created_doc!())),
+        .contract(&FIT_SECTION_CONTRACT).output(output_schema_for::<FitSectionResult>).params(concat!("body: name (a mesh or solid body): its section with the sketch plane, fitted with lines and arcs, as normal (unlinked) geometry; a mesh body (a scan) is cut as scan.section_sketch cuts it: fitted within its noise, smooth joins tangent", created_doc!())),
     CommandSpec::new("sketch.break_link", "Break Link", crate::checked!("sketch.break_link", break_link)).icon("sketch_break")
         .enabled(in_sketch)
         .contract(&BREAK_LINK_CONTRACT).output(output_schema_for::<SketchBreakLinkResult>).params("link?: link id (j1) | entities?: [curve or point ids]: linked geometry becomes normal sketch geometry"),
@@ -819,6 +819,21 @@ fn fit_section(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(cmd, format!("no body `{body}`")));
     }
     let id = sketch_store::active(s).ok_or_else(|| EngineError::Other("no sketch is being edited".into()))?;
+    // A mesh body (a scan, or a model that came as an STL) is cut as Section to Sketch cuts a
+    // scan: lines and arcs fitted within its noise, smooth joins tangent, not a curve for each
+    // few triangles of it.
+    if s.model.state().body(&body).is_some_and(|b| b.body.is_mesh()) {
+        let ids = |s: &Session| {
+            sketch_store::read(&s.doc, id).map(|sk| sk.curves.iter().map(|c| c.id.clone()).collect::<Vec<String>>()).unwrap_or_default()
+        };
+        let before = ids(s);
+        super::find_command("scan.section_sketch")
+            .ok_or_else(|| EngineError::UnknownCommand("scan.section_sketch".into()))?
+            .run_nested(s, &json!({"body": body}))
+            .map_err(|e| bad(cmd, e.to_string().replace("scan.section_sketch", cmd)))?;
+        let curves = ids(s).into_iter().filter(|c| !before.contains(c)).collect();
+        return reply(cmd, FitSectionResult { curves, created: None, param_warnings: Vec::new() });
+    }
     let curves = sketch_store::update(s, id, |s, doc, sk| {
         let l = add_link(s, doc, id, sk, LinkKind::Intersect, LinkSource::Body { body }).map_err(|e| bad(cmd, e.to_string()))?;
         let curves: Vec<String> = sk.link_curves(&l).iter().filter_map(|c| sk.curves.get(*c).map(|c| c.id.clone())).collect();

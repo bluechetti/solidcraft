@@ -1313,6 +1313,13 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<BodyName>,
     },
+    /// Deform: `body` carried through a map of space (a bend, a twist, a cage of points), its
+    /// faces and edges made cubic B-splines that follow the map within 0.001 mm
+    /// (`kernel::deform`); its topology and trims stay its own.
+    Deform {
+        body: BodyName,
+        map: DeformMap,
+    },
     /// A construction plane (sketch placement, split tool).
     ConstructionPlane {
         plane: PlaneRef,
@@ -2474,12 +2481,33 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         records: Option<std::sync::Arc<solidcraft_kernel::ImportRecords>>,
     },
+    /// A smooth surface made on the Scan tab (Fit Surface, New Free Form, Wrap Surface, Merge
+    /// Surfaces, Fit Patches): one B-spline face or a network of them, kept as STEP text in the
+    /// design as an Import keeps it, but a feature kind of its own. Edit Surface rewrites the text.
+    /// Designs from before it kept these in Import features, which build and edit as they did.
+    ScanSurface {
+        /// What the surface was made as (display only).
+        file: String,
+        /// The STEP (ISO 10303-21) text of the surface body, shared by every copy of the design.
+        step: std::sync::Arc<str>,
+        /// How it was made, so `scan.refit` can make it again on the scan as it is now, with the
+        /// hand edits laid on the result. None for a surface made another way.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recipe: Option<crate::scan_recipe::ScanRecipe>,
+    },
     /// Rebuild an upstream mesh as a solid: analytic planar/cylindrical faces for a
     /// constant-section part, planar facets for any other closed mesh.
     MeshConvert {
         body: BodyName,
         #[walk(length = "Tolerance")]
         tolerance: Expr,
+    },
+    /// A clean tool's step on a scan (a mesh body brought in by Insert Mesh): its settings only.
+    /// The scan is made again from the one before the step each time it is evaluated
+    /// (`crate::scan_clean`), so the Mesh Import keeps the scan as it came in.
+    ScanClean {
+        body: BodyName,
+        step: crate::scan_clean::CleanStep,
     },
     /// Mesh bodies imported from a 3MF or STL file, embedded in the design.
     MeshImport {
@@ -2621,6 +2649,51 @@ pub enum ExtendTo {
 }
 
 /// How a fillet's size is given.
+/// How a Deform carries its body through space.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DeformMap {
+    /// The stretch from `origin` along `along` for `length` bent round a circle towards `up`,
+    /// turning by `angle` over it; before it nothing moves, past it the rest goes round rigidly.
+    Bend {
+        origin: Position,
+        along: Dir,
+        up: Dir,
+        #[walk(length = "Length")]
+        length: Expr,
+        #[walk(angle = "Angle")]
+        angle: Expr,
+    },
+    /// A twist about the line through `origin` along `axis` by `angle` over `length`, growing
+    /// evenly; before it nothing turns, past it everything turns by the whole angle.
+    Twist {
+        origin: Position,
+        axis: Dir,
+        #[walk(length = "Length")]
+        length: Expr,
+        #[walk(angle = "Angle")]
+        angle: Expr,
+    },
+    /// A box from `lo` to `hi` with `counts` lattice points each way (2 to 8); `moves` shifts
+    /// some of them (`[i, j, k]` from the box's low corner, by `[dx, dy, dz]` mm), and the box's
+    /// inside follows the moved lattice (free-form deformation); outside it nothing moves.
+    Cage {
+        lo: Position,
+        hi: Position,
+        counts: [usize; 3],
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        moves: Vec<CageMove>,
+    },
+}
+
+/// A Deform cage's lattice point `index` (`[i, j, k]` from the box's low corner) moved `by`
+/// `[dx, dy, dz]` mm.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
+pub struct CageMove {
+    pub index: [usize; 3],
+    pub by: [f64; 3],
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, solidcraft_derive::Walk)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FilletStyle {
@@ -2642,6 +2715,9 @@ pub enum FilletStyle {
         mid: Vec<(f64, Expr)>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         smooth: bool,
+        /// Curvature-continuous (G2) sections, a Curvature fillet's, instead of circular arcs.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        curvature: bool,
     },
     /// The radius along each edge as a clamped B-spline of the position from the end nearest
     /// `start` (0) to the other (1): `radius` is its first control radius and `radii` the rest,
@@ -2651,6 +2727,9 @@ pub enum FilletStyle {
         knots: Vec<f64>,
         #[walk(length = |i: usize, n: usize| if i + 1 == n { "End radius" } else { "Control radius" })]
         radii: Vec<Expr>,
+        /// Curvature-continuous (G2) sections, a Curvature fillet's, instead of circular arcs.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        curvature: bool,
     },
 }
 
@@ -3261,6 +3340,7 @@ impl FeatureKind {
             FeatureKind::Sweep { .. } => "SweepFeature",
             FeatureKind::Shell { .. } => "ShellFeature",
             FeatureKind::Draft { .. } => "DraftFeature",
+            FeatureKind::Deform { .. } => "DeformFeature",
             FeatureKind::Split { .. } => "SplitBodyFeature",
             FeatureKind::SplitFace { .. } => "SplitFaceFeature",
             FeatureKind::ConstructionAxis { .. } => "ConstructionAxis",
@@ -3319,8 +3399,10 @@ impl FeatureKind {
             FeatureKind::ReverseNormal { .. } => "ReverseNormalFeature",
             FeatureKind::SurfaceUntrim { .. } => "UntrimFeature",
             FeatureKind::Import { .. } => "BaseFeature",
+            FeatureKind::ScanSurface { .. } => "ScanSurfaceFeature",
             FeatureKind::MeshImport { .. } => "MeshFeature",
             FeatureKind::MeshConvert { .. } => "MeshConvertFeature",
+            FeatureKind::ScanClean { .. } => "ScanCleanFeature",
             FeatureKind::Repair { .. } => "RepairFeature",
         }
     }
@@ -3349,6 +3431,7 @@ impl FeatureKind {
             FeatureKind::Sweep { .. } => "sweep",
             FeatureKind::Shell { .. } => "shell",
             FeatureKind::Draft { .. } => "draft",
+            FeatureKind::Deform { .. } => "deform",
             FeatureKind::ConstructionPlane { .. } => "construction_plane",
             FeatureKind::Split { .. } => "split",
             FeatureKind::ConstructionAxis { .. } => "construction_axis",
@@ -3406,7 +3489,9 @@ impl FeatureKind {
             FeatureKind::SurfaceTrim { .. } => "surface_trim",
             FeatureKind::Move { .. } => "move",
             FeatureKind::Import { .. } => "import",
+            FeatureKind::ScanSurface { .. } => "scan_surface",
             FeatureKind::MeshConvert { .. } => "mesh_convert",
+            FeatureKind::ScanClean { .. } => "scan_clean",
             FeatureKind::MeshImport { .. } => "mesh_import",
             FeatureKind::Repair { .. } => "repair",
         }
@@ -3492,8 +3577,10 @@ impl FeatureKind {
             "ReverseNormalFeature" => "reverse_normal",
             "UntrimFeature" => "surface_untrim",
             "BaseFeature" => "import",
+            "ScanSurfaceFeature" => "scan_surface",
             "MeshFeature" => "mesh_import",
             "MeshConvertFeature" => "mesh_convert",
+            "ScanCleanFeature" => "scan_clean",
             "RepairFeature" => "repair",
             _ => return None,
         })
@@ -3525,6 +3612,7 @@ impl FeatureKind {
             FeatureKind::Sweep { .. } => "Sweep",
             FeatureKind::Shell { .. } => "Shell",
             FeatureKind::Draft { .. } => "Draft",
+            FeatureKind::Deform { .. } => "Deform",
             FeatureKind::Split { .. } => "Split",
             FeatureKind::SplitFace { .. } => "SplitFace",
             FeatureKind::ConstructionAxis { .. } => "Axis",
@@ -3582,8 +3670,10 @@ impl FeatureKind {
             FeatureKind::ReverseNormal { .. } => "ReverseNormal",
             FeatureKind::SurfaceUntrim { .. } => "Untrim",
             FeatureKind::Import { .. } => "Import",
+            FeatureKind::ScanSurface { .. } => "ScanSurface",
             FeatureKind::MeshImport { .. } => "Mesh",
             FeatureKind::MeshConvert { .. } => "ConvertMesh",
+            FeatureKind::ScanClean { step, .. } => step.base_name(),
             FeatureKind::Repair { .. } => "Repair",
         }
     }
@@ -3666,6 +3756,11 @@ pub struct Feature {
     /// while moves of the sketch's own component still propagate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_frame: Option<crate::Mat>,
+    /// The scans (mesh bodies) this feature was made from: a surface fitted to a scan, a solid
+    /// reconstructed from it, a piece split off it. A Move of the scan moves what was made from
+    /// it too, so the two stay together (`solid.move`, unless it moves the scan `alone`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub made_from: Vec<String>,
     #[serde(flatten)]
     pub kind: FeatureKind,
 }
@@ -3952,6 +4047,24 @@ pub struct Document {
     /// Scanned points kept as a reference (Insert Point Cloud).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub point_clouds: Vec<crate::point_cloud::PointCloud>,
+    /// Selections of a scan's triangles kept to be opened again (Keep Selection).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scan_selections: Vec<crate::scan_selection::ScanSelection>,
+    /// What each Free Form keeps besides its faces: edges creased or smoothed by hand, its
+    /// symmetry plane (Edit Surface).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub free_forms: Vec<crate::free_form::FreeFormKeep>,
+    /// How far off a scan's surface still counts as on it, per scan (mesh body name), in mm: the one
+    /// tolerance every Scan-tab tool colours and reports against. A scan with none uses the default.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub scan_tolerances: std::collections::BTreeMap<String, f64>,
+    /// What each scan is being turned into (how the part was made, the share the model must hold,
+    /// its regions), per scan (mesh body name): what Scan Verdict reads.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub scan_plans: std::collections::BTreeMap<String, crate::scan_plan::ScanPlan>,
+    /// Each Flat Pattern sketch and the flattening that made it, for Roll onto Scan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scan_flat_patterns: Vec<crate::scan_flat_pattern::FlatPatternKeep>,
     /// Comments of feature-input parameters (by name).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub param_comments: std::collections::BTreeMap<String, String>,
@@ -3992,6 +4105,10 @@ pub struct Document {
     /// Notes: text anchored to points in model space, drawn as screen-facing callouts (#1631).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<crate::notes::Note>,
+    /// The inspection plan: checks picked on the model, each with its tolerance, measured against
+    /// a scan when asked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<crate::inspection::Check>,
     /// What was hidden when the design was saved. A session takes it from here when the design
     /// opens and keeps the live state itself (`browser.visibility`: saved, and undone like any
     /// other change), so a document in a session leaves this empty; the session puts it back when
@@ -4251,6 +4368,7 @@ impl Document {
             .chain(self.canvases.iter().map(|c| c.id))
             .chain(self.point_clouds.iter().map(|c| c.id))
             .chain(self.notes.iter().map(|n| n.id))
+            .chain(self.checks.iter().map(|c| c.id))
             .chain(a.joints.iter().map(|j| j.id))
             .chain(a.contact_sets.iter().map(|c| c.id))
             .chain(a.studies.iter().map(|s| s.id))
@@ -4303,12 +4421,18 @@ impl Document {
             favorites: Default::default(),
             canvases: Vec::new(),
             point_clouds: Vec::new(),
+            scan_selections: Vec::new(),
+            free_forms: Vec::new(),
+            scan_tolerances: Default::default(),
+            scan_plans: Default::default(),
+            scan_flat_patterns: Vec::new(),
             param_comments: Default::default(),
             browser_groups: Vec::new(),
             timeline_groups: Vec::new(),
             browser_order: Default::default(),
             named_views: Vec::new(),
             notes: Vec::new(),
+            checks: Vec::new(),
             visibility: Visibility::default(),
             drawings: Vec::new(),
             plugin_data: Default::default(),
@@ -4416,7 +4540,7 @@ impl Document {
             // name (#6287). Keep the full comparison below: geometry, expressions, sketch links
             // and face anchors must still agree before the model may reuse its geometry.
             f.kind.remap_bodies(&bodies);
-            for body in f.participants.iter_mut().filter(|body| **body == old) {
+            for body in f.participants.iter_mut().chain(f.made_from.iter_mut()).filter(|body| **body == old) {
                 body.clone_from(&new);
             }
         }
@@ -4990,6 +5114,7 @@ impl Document {
             link_threads: Vec::new(),
             touching: Touching::Separate,
             profile_frame: None,
+            made_from: Vec::new(),
             kind,
         };
         self.place_feature(f);

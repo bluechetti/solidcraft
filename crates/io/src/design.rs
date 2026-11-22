@@ -51,7 +51,12 @@ const STEP_LEVEL: i64 = 2;
 /// stored Deflate-compressed, so a compressible large import can be saved (#6600). The file
 /// itself stays within the design file limit.
 fn max_mesh_part() -> usize {
-    crate::limits::max_step_bytes()
+    crate::limits::Kind::Scan.bytes()
+}
+/// The size past which a mesh is saved compressed: the configured design file size, so saving
+/// stores meshes as it did before the fork lifted the design file limit.
+fn compress_past() -> usize {
+    crate::limits::configured_design_bytes()
 }
 /// Every other part is bounded by the file size limit.
 fn max_part() -> usize {
@@ -60,8 +65,23 @@ fn max_part() -> usize {
 fn max_expanded() -> usize {
     max_step_part().saturating_add(max_design())
 }
+/// A mesh blob as saved before compact mesh blobs: the magic, the position and corner counts
+/// (u64 each), the positions (f64) and the corners (u32). Still read.
 const MESH_MAGIC: &[u8; 8] = b"SCMESH01";
+/// A mesh blob with shading normals: [`MESH_MAGIC`]'s layout with the normal count (u64) after
+/// the corner count and the normals (f64, x, y, z for each triangle corner) at the end. Written
+/// for a mesh that has normals.
 const SHADED_MESH_MAGIC: &[u8; 8] = b"SCMESH02";
+/// A mesh blob as saved now for a mesh without normals (format change `compact-mesh-blobs`): the
+/// magic, the counts, 1 when the positions are written as f32 (every one is exactly one, as a
+/// scan's from an STL or PLY file are) or 0 for f64, the positions, and each triangle corner as
+/// the zigzag LEB128 of its difference from the corner before. Lucy's 28 million triangles:
+/// 674 MB as the old blob, 294 MB as this, deflated 262 MB and 207 MB. Designs saved by the Scan
+/// workspace before shaded blobs took [`SHADED_MESH_MAGIC`] hold this layout under that magic,
+/// and still read.
+const COMPACT_MESH_MAGIC: &[u8; 8] = b"SCMESH03";
+/// Most bytes a corner takes: its difference from the one before lies within ±2^32.
+const MAX_CORNER_BYTES: usize = 5;
 const POINTS_MAGIC: &[u8; 8] = b"SCPNTS01";
 const COMPLEX_MAGIC: &[u8; 8] = b"SCCPLX01";
 const MAX_PREVIEW_BYTES: usize = 8 << 20;
@@ -123,7 +143,7 @@ const SAVE_LIMITS: Limits = Limits { max_expanded: || usize::MAX, part_limit: |_
 /// limit: level 1 of a large payload leaves more on disk, and that part exists only because
 /// compression is what makes it fit. Everything else is level 1.
 fn part_level(name: &str, length: usize) -> i64 {
-    if name.ends_with(".step") || name.ends_with(".records") || (name.ends_with(".mesh") && length > max_part()) { STEP_LEVEL } else { 1 }
+    if name.ends_with(".step") || name.ends_with(".records") || (name.ends_with(".mesh") && length > compress_past()) { STEP_LEVEL } else { 1 }
 }
 
 /// A design container being written, within [`LIMITS`].
@@ -248,6 +268,11 @@ fn write_container(
     let mut features = Vec::with_capacity(doc.features.len());
     for feature in &doc.features {
         let replacements = match &feature.kind {
+            FeatureKind::ScanSurface { step, .. } => {
+                // A scan surface's STEP, stored as an import's: always compressed.
+                let blob = writer.blob(step.as_bytes(), "step", true)?;
+                fields([("step", Value::String(String::new())), ("step_blob", blob)])
+            }
             FeatureKind::Import { step, records, .. } => {
                 // STEP is text and shrinks several times: always compressed, so an import as large
                 // as MAX_STEP_BYTES still fits in a design file.
@@ -267,7 +292,7 @@ fn write_container(
                     let bytes = encode_mesh(mesh)?;
                     // Fast saves store a mesh that fits. One past the file limit is deflated,
                     // or it could never be saved (#6600). Compact deflates every mesh.
-                    let compress = compression == DesignCompression::Compact || bytes.len() > max_part();
+                    let compress = compression == DesignCompression::Compact || bytes.len() > compress_past();
                     let blob = writer.blob(&bytes, "mesh", compress)?;
                     let mut value = replace(mesh, fields([("positions", json!([])), ("triangles", json!([])), ("corner_normals", json!([]))]))
                         .map_err(invalid)?;
@@ -427,37 +452,90 @@ fn validate_mesh(mesh: &MeshData) -> Result<()> {
     Ok(())
 }
 
-/// Encoded blob length, or `None` when it would pass the mesh part limit or overflow.
-fn mesh_encoded_len(positions: usize, triangles: usize) -> Option<usize> {
-    positions
-        .checked_mul(8)
-        .and_then(|v| triangles.checked_mul(4).and_then(|t| v.checked_add(t)))
-        .and_then(|v| v.checked_add(24))
-        .filter(|&n| n <= max_mesh_part())
+/// A compact blob's length, from its positions' count and width and its corners' bytes, or `None`
+/// when it would pass the mesh part limit or overflow.
+fn mesh_blob_len(positions: usize, width: usize, corner_bytes: usize) -> Option<usize> {
+    positions.checked_mul(width).and_then(|p| p.checked_add(corner_bytes)).and_then(|n| n.checked_add(25)).filter(|&n| n <= max_mesh_part())
+}
+
+fn zigzag(d: i64) -> u64 {
+    ((d << 1) ^ (d >> 63)) as u64
+}
+
+fn unzigzag(z: u64) -> i64 {
+    ((z >> 1) as i64) ^ -((z & 1) as i64)
+}
+
+fn varint_len(mut z: u64) -> usize {
+    let mut n = 1;
+    while z >= 0x80 {
+        z >>= 7;
+        n += 1;
+    }
+    n
+}
+
+/// Each corner's difference from the one before, zigzagged.
+fn corner_steps(triangles: &[u32]) -> impl Iterator<Item = u64> + '_ {
+    triangles.iter().scan(0i64, |before, &i| {
+        let d = i64::from(i) - *before;
+        *before = i64::from(i);
+        Some(zigzag(d))
+    })
 }
 
 fn encode_mesh(mesh: &MeshData) -> Result<Vec<u8>> {
-    let legacy_size = mesh_encoded_len(mesh.positions.len(), mesh.triangles.len()).ok_or_else(|| invalid("mesh too large"))?;
-    let size = if mesh.corner_normals.is_empty() {
-        legacy_size
-    } else {
-        mesh.corner_normals
-            .len()
-            .checked_mul(8)
-            .and_then(|n| n.checked_add(legacy_size))
-            .and_then(|n| n.checked_add(8))
-            .filter(|&n| n <= max_mesh_part())
-            .ok_or_else(|| invalid("mesh shading normals too large"))?
-    };
     validate_mesh(mesh)?;
+    if !mesh.corner_normals.is_empty() {
+        return encode_shaded_mesh(mesh);
+    }
+    let narrow = mesh.positions.iter().all(|v| f64::from(*v as f32).to_bits() == v.to_bits());
+    let width = if narrow { 4 } else { 8 };
+    let corner_bytes = corner_steps(&mesh.triangles).map(varint_len).sum();
+    let size = mesh_blob_len(mesh.positions.len(), width, corner_bytes).ok_or_else(|| invalid("mesh too large"))?;
     let mut bytes = Vec::new();
     bytes.try_reserve_exact(size).map_err(|_| invalid("could not reserve mesh blob"))?;
-    bytes.extend_from_slice(if mesh.corner_normals.is_empty() { MESH_MAGIC } else { SHADED_MESH_MAGIC });
+    bytes.extend_from_slice(COMPACT_MESH_MAGIC);
     bytes.extend_from_slice(&(mesh.positions.len() as u64).to_le_bytes());
     bytes.extend_from_slice(&(mesh.triangles.len() as u64).to_le_bytes());
-    if !mesh.corner_normals.is_empty() {
-        bytes.extend_from_slice(&(mesh.corner_normals.len() as u64).to_le_bytes());
+    bytes.push(u8::from(narrow));
+    for value in mesh.positions.iter() {
+        if narrow {
+            bytes.extend_from_slice(&(*value as f32).to_le_bytes());
+        } else {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
     }
+    for mut z in corner_steps(&mesh.triangles) {
+        while z >= 0x80 {
+            bytes.push((z as u8 & 0x7f) | 0x80);
+            z >>= 7;
+        }
+        bytes.push(z as u8);
+    }
+    for value in mesh.corner_normals.iter() {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    Ok(bytes)
+}
+
+/// [`SHADED_MESH_MAGIC`]'s blob of a mesh with normals.
+fn encode_shaded_mesh(mesh: &MeshData) -> Result<Vec<u8>> {
+    let size = mesh
+        .positions
+        .len()
+        .checked_mul(8)
+        .and_then(|v| mesh.triangles.len().checked_mul(4).and_then(|t| v.checked_add(t)))
+        .and_then(|v| mesh.corner_normals.len().checked_mul(8).and_then(|n| v.checked_add(n)))
+        .and_then(|v| v.checked_add(32))
+        .filter(|&n| n <= max_mesh_part())
+        .ok_or_else(|| invalid("mesh shading normals too large"))?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(size).map_err(|_| invalid("could not reserve mesh blob"))?;
+    bytes.extend_from_slice(SHADED_MESH_MAGIC);
+    bytes.extend_from_slice(&(mesh.positions.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&(mesh.triangles.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(&(mesh.corner_normals.len() as u64).to_le_bytes());
     for value in mesh.positions.iter() {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
@@ -471,8 +549,8 @@ fn encode_mesh(mesh: &MeshData) -> Result<Vec<u8>> {
 }
 
 fn decode_mesh(bytes: &[u8], mesh: &mut MeshData) -> Result<()> {
-    let shaded = bytes.get(..8) == Some(SHADED_MESH_MAGIC.as_slice());
-    if !shaded && bytes.get(..8) != Some(MESH_MAGIC.as_slice()) {
+    let magic = bytes.get(..8);
+    if magic != Some(MESH_MAGIC.as_slice()) && magic != Some(SHADED_MESH_MAGIC.as_slice()) && magic != Some(COMPACT_MESH_MAGIC.as_slice()) {
         return Err(invalid("unsupported mesh blob version"));
     }
     let count = |range: std::ops::Range<usize>| -> Result<usize> {
@@ -481,16 +559,27 @@ fn decode_mesh(bytes: &[u8], mesh: &mut MeshData) -> Result<()> {
     };
     let positions = count(8..16)?;
     let triangles = count(16..24)?;
-    let normals = if shaded { count(24..32)? } else { 0 };
-    let header = if shaded { 32 } else { 24 };
+    if !positions.is_multiple_of(3) || !triangles.is_multiple_of(3) {
+        return Err(invalid("invalid mesh blob lengths"));
+    }
+    if magic == Some(MESH_MAGIC.as_slice()) {
+        return decode_plain_mesh(bytes, 24, positions, triangles, 0, mesh);
+    }
+    if magic == Some(SHADED_MESH_MAGIC.as_slice()) {
+        let shaded = count(24..32).and_then(|normals| decode_plain_mesh(bytes, 32, positions, triangles, normals, mesh));
+        // A compact blob the Scan workspace saved under this magic before shaded blobs took it.
+        return shaded.or_else(|e| decode_compact_mesh(bytes, positions, triangles, mesh).map_err(|_| e));
+    }
+    decode_compact_mesh(bytes, positions, triangles, mesh)
+}
+
+/// [`MESH_MAGIC`]'s blob (`header` 24, no normals) or [`SHADED_MESH_MAGIC`]'s (`header` 32, and
+/// `normals` values after the corners) into `mesh`.
+fn decode_plain_mesh(bytes: &[u8], header: usize, positions: usize, triangles: usize, normals: usize, mesh: &mut MeshData) -> Result<()> {
     let middle = positions.checked_mul(8).and_then(|n| n.checked_add(header)).ok_or_else(|| invalid("mesh size overflow"))?;
     let normal_start = triangles.checked_mul(4).and_then(|n| n.checked_add(middle)).ok_or_else(|| invalid("mesh size overflow"))?;
     let total = normals.checked_mul(8).and_then(|n| n.checked_add(normal_start)).ok_or_else(|| invalid("mesh size overflow"))?;
-    if total != bytes.len()
-        || !positions.is_multiple_of(3)
-        || !triangles.is_multiple_of(3)
-        || (normals != 0 && triangles.checked_mul(3) != Some(normals))
-    {
+    if total != bytes.len() || (normals != 0 && triangles.checked_mul(3) != Some(normals)) {
         return Err(invalid("invalid mesh blob lengths"));
     }
     mesh.positions =
@@ -505,6 +594,53 @@ fn decode_mesh(bytes: &[u8], mesh: &mut MeshData) -> Result<()> {
         .iter()
         .map(|&v| f64::from_le_bytes(v))
         .collect();
+    validate_mesh(mesh)
+}
+
+/// [`COMPACT_MESH_MAGIC`]'s blob into `mesh`.
+fn decode_compact_mesh(bytes: &[u8], positions: usize, triangles: usize, mesh: &mut MeshData) -> Result<()> {
+    let width = match bytes.get(24) {
+        Some(1) => 4,
+        Some(0) => 8,
+        _ => return Err(invalid("invalid mesh blob")),
+    };
+    let middle = positions.checked_mul(width).and_then(|n| n.checked_add(25)).ok_or_else(|| invalid("mesh size overflow"))?;
+    let values = bytes.get(25..middle).ok_or_else(|| invalid("truncated mesh"))?;
+    // Every corner takes a byte at least: no more are made than the blob could hold.
+    let rest = bytes.get(middle..).ok_or_else(|| invalid("truncated mesh"))?;
+    if triangles > rest.len() {
+        return Err(invalid("truncated mesh"));
+    }
+    let mut corners = Vec::with_capacity(triangles);
+    let (mut at, mut before) = (0usize, 0i64);
+    for _ in 0..triangles {
+        let mut z = 0u64;
+        let mut shift = 0;
+        loop {
+            let byte = *rest.get(at).ok_or_else(|| invalid("truncated mesh"))?;
+            at += 1;
+            z |= u64::from(byte & 0x7f) << shift;
+            if byte < 0x80 {
+                break;
+            }
+            shift += 7;
+            if shift >= 7 * MAX_CORNER_BYTES as u32 {
+                return Err(invalid("invalid mesh corner"));
+            }
+        }
+        before = before.checked_add(unzigzag(z)).ok_or_else(|| invalid("invalid mesh corner"))?;
+        corners.push(u32::try_from(before).map_err(|_| invalid("invalid mesh corner"))?);
+    }
+    if at != rest.len() {
+        return Err(invalid("invalid mesh blob lengths"));
+    }
+    mesh.positions = if width == 4 {
+        values.as_chunks::<4>().0.iter().map(|&v| f64::from(f32::from_le_bytes(v))).collect()
+    } else {
+        values.as_chunks::<8>().0.iter().map(|&v| f64::from_le_bytes(v)).collect()
+    };
+    mesh.triangles = corners.into();
+    mesh.corner_normals = std::sync::Arc::from([]);
     validate_mesh(mesh)
 }
 
@@ -1037,6 +1173,7 @@ fn hydrate_newer<R: Read + Seek>(doc: &mut Document, metadata: &Value, container
     for (index, feature) in doc.features.iter_mut().enumerate() {
         let Some(value) = metadata.get("features").and_then(|v| v.get(index)) else { continue };
         let readable = match &mut feature.kind {
+            FeatureKind::ScanSurface { .. } => reader.blob(value, "step_blob", "step").map(|_| ()).map_err(IoError::from),
             // The records must read as this build's records, all of them, or the import is kept as
             // the file has it rather than failing the whole design when it is hydrated, or losing
             // on save what this build does not read of them.
@@ -1232,6 +1369,12 @@ fn read_document<R: Read + Seek>(reader: &mut PackageReader<R>) -> Result<Docume
     for (index, feature) in doc.features.iter_mut().enumerate() {
         let value = metadata.get("features").and_then(|v| v.get(index)).ok_or_else(|| invalid("missing feature metadata"))?;
         match &mut feature.kind {
+            FeatureKind::ScanSurface { step, .. } => {
+                if !step.is_empty() {
+                    return Err(invalid("ambiguous embedded STEP and blob"));
+                }
+                *step = std::str::from_utf8(reader.blob(value, "step_blob", "step")?).map_err(invalid)?.into();
+            }
             FeatureKind::Import { step, records, .. } => {
                 if !step.is_empty() {
                     return Err(invalid("ambiguous embedded STEP and blob"));
@@ -1612,6 +1755,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), ignore = "the Scan workspace fork reads designs and scans whatever their size on the desktop")]
     fn seekable_reader_rejects_oversized_source_before_reading() {
         struct Oversized;
         impl Read for Oversized {
@@ -2249,6 +2393,43 @@ mod tests {
         assert_eq!(states(two.0 + two.1), Some(vec![false, true, false, true]));
         assert_eq!(states(one.0 + one.1), Some(vec![false, false, false, true]));
         assert_eq!(states(one.0 + one.1 - 1), None);
+    }
+
+    /// A scan too large for the room the cache has is not encoded: a 28-million-triangle one
+    /// took 10 s and 3 GB to encode and check on every save, then was left out. The states that
+    /// hold it are not kept, as when it is encoded and found too large; the final state, which
+    /// does not, is.
+    #[test]
+    fn a_scan_too_large_for_the_model_cache_leaves_out_only_the_states_that_hold_it() {
+        use solidcore_record::Vec3;
+        let document = b"{}";
+        let size = |m: &solidcraft_doc::SavedModel| {
+            let (manifest, payload) = native_cache::encode_model(m, document, usize::MAX).unwrap();
+            manifest.len() + payload.len()
+        };
+        let mut model = timeline_model();
+        let space = size(&model);
+        // A grid of 160 x 160 squares (1.2 MB as the cache keeps it) for one of the second
+        // feature's own bodies.
+        let n = 160u32;
+        let positions: Vec<Vec3> = (0..=n).flat_map(|j| (0..=n).map(move |i| Vec3::new(f64::from(i), f64::from(j), 0.))).collect();
+        let at = |i: u32, j: u32| j * (n + 1) + i;
+        let triangles: Vec<[u32; 3]> = (0..n)
+            .flat_map(|j| (0..n).flat_map(move |i| [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]]))
+            .collect();
+        model.bodies[16] = solidcraft_kernel::mesh_body(&positions, &triangles).unwrap();
+        assert!(positions.len() * 24 > space);
+        let (manifest, payload) = native_cache::encode_model(&model, document, space).unwrap();
+        assert!(manifest.len() + payload.len() <= space);
+        let states = kept_states(&serde_json::from_slice::<Value>(&manifest).unwrap()["model"]);
+        assert!(!states[1] && states[3], "{states:?}");
+        // The same scan in every state leaves no state to keep: no cache, and the save goes on.
+        let scan = model.bodies[16].clone();
+        model.bodies.iter_mut().for_each(|b| *b = scan.clone());
+        assert!(native_cache::encode_model(&model, document, space).is_err());
+        // With room for it, it is kept, once.
+        let (manifest, _) = native_cache::encode_model(&model, document, usize::MAX).unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&manifest).unwrap()["slices"].as_array().unwrap().len(), 1);
     }
 
     /// A model whose bodies are all one part stores it once: its records, not its bodies, fill the
@@ -3122,19 +3303,89 @@ mod tests {
             bytes[offset..offset + 8].copy_from_slice(&u64::MAX.to_le_bytes());
             assert!(decode_mesh(&bytes, &mut mesh()).is_err());
         }
+        // The test mesh's positions are not all f32: written as f64, from byte 25.
+        assert_eq!(valid[24], 0);
         let mut bytes = valid.clone();
-        bytes[24..32].copy_from_slice(&f64::NAN.to_le_bytes());
+        bytes[25..33].copy_from_slice(&f64::NAN.to_le_bytes());
         assert!(decode_mesh(&bytes, &mut mesh()).is_err());
+        // A corner that never ends, one past the vertices, one past u32, and a width not 0 or 1.
         let mut bytes = valid.clone();
         let offset = bytes.len() - 4;
         bytes[offset..].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(decode_mesh(&bytes, &mut mesh()).is_err());
+        let corners = valid.len() - 3;
+        for last in [[0, 2, 4], [0, 2, 0xFF]] {
+            let mut bytes = valid.clone();
+            bytes[corners..].copy_from_slice(&last);
+            assert!(decode_mesh(&bytes, &mut mesh()).is_err(), "{last:?}");
+        }
+        let mut bytes = valid.clone();
+        bytes[24] = 2;
         assert!(decode_mesh(&bytes, &mut mesh()).is_err());
         for length in 0..valid.len() {
             assert!(decode_mesh(&valid[..length], &mut mesh()).is_err());
         }
         let mut bytes = valid;
-        bytes[7] = b'2';
+        bytes[7] = b'4';
         assert!(decode_mesh(&bytes, &mut mesh()).is_err());
+    }
+
+    /// A mesh saves its positions as f32 when every one is exactly one (a scan's are), else as
+    /// f64, and its corners as steps from the one before; every coordinate and corner comes back.
+    /// A design saved before (`SCMESH01`) still opens, and so does a compact blob saved under
+    /// `SCMESH02` before shaded blobs took that magic. A mesh with shading normals saves them.
+    #[test]
+    fn mesh_blobs_are_compact_and_exact_and_old_ones_open() {
+        let n = 3000u32;
+        let positions: Vec<f64> = (0..n).flat_map(|i| [f64::from(i) * 0.5, f64::from(i % 7), -0.0]).collect();
+        let triangles: Vec<u32> = (0..n - 2).flat_map(|i| [i, i + 1, i + 2]).collect();
+        let scan = MeshData {
+            name: "Scan".into(),
+            positions: positions.into(),
+            triangles: triangles.into(),
+            corner_normals: Default::default(),
+            color: None,
+        };
+        let blob = encode_mesh(&scan).unwrap();
+        assert_eq!((&blob[..8], blob[24]), (COMPACT_MESH_MAGIC.as_slice(), 1));
+        assert!(blob.len() < 25 + scan.positions.len() * 4 + scan.triangles.len() * 2, "{} bytes", blob.len());
+        let mut back = mesh();
+        decode_mesh(&blob, &mut back).unwrap();
+        assert!(back.positions.iter().zip(scan.positions.iter()).all(|(a, b)| a.to_bits() == b.to_bits()));
+        assert_eq!(back.triangles, scan.triangles);
+        // Not all f32: f64, bit for bit.
+        let precise = mesh();
+        let blob = encode_mesh(&precise).unwrap();
+        assert_eq!(blob[24], 0);
+        let same = |a: &MeshData, b: &MeshData| {
+            a.positions.iter().map(|v| v.to_bits()).eq(b.positions.iter().map(|v| v.to_bits())) && a.triangles == b.triangles
+        };
+        let mut back = scan.clone();
+        decode_mesh(&blob, &mut back).unwrap();
+        assert!(same(&back, &precise));
+        // The old blob: the magic, the counts, f64 positions, u32 corners.
+        let mut old = MESH_MAGIC.to_vec();
+        old.extend_from_slice(&(precise.positions.len() as u64).to_le_bytes());
+        old.extend_from_slice(&(precise.triangles.len() as u64).to_le_bytes());
+        old.extend(precise.positions.iter().flat_map(|v| v.to_le_bytes()));
+        old.extend(precise.triangles.iter().flat_map(|v| v.to_le_bytes()));
+        let mut back = scan.clone();
+        decode_mesh(&old, &mut back).unwrap();
+        assert!(same(&back, &precise));
+        // A compact blob under the shaded magic, as the Scan workspace once saved one.
+        let mut early = encode_mesh(&scan).unwrap();
+        early[..8].copy_from_slice(SHADED_MESH_MAGIC);
+        let mut back = precise.clone();
+        back.corner_normals = std::sync::Arc::from([0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]);
+        decode_mesh(&early, &mut back).unwrap();
+        assert!(same(&back, &scan) && back.corner_normals.is_empty());
+        // Shading normals: the shaded blob, every value back.
+        let shaded = MeshData { corner_normals: std::sync::Arc::from([0.0, 0.0, 1.0, 0.0, 0.6, 0.8, 1.0, 0.0, 0.0]), ..precise.clone() };
+        let blob = encode_mesh(&shaded).unwrap();
+        assert_eq!(&blob[..8], SHADED_MESH_MAGIC.as_slice());
+        let mut back = scan;
+        decode_mesh(&blob, &mut back).unwrap();
+        assert!(same(&back, &shaded) && back.corner_normals == shaded.corner_normals);
     }
 
     #[test]
@@ -3248,18 +3499,17 @@ mod tests {
     /// fail to save (`mesh too large`) before compression was considered.
     #[test]
     fn mesh_larger_than_the_file_saves_compressed_and_reopens() {
-        let positions: Arc<[f64]> = Arc::from([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
-        let overhead = 24 + positions.len() * 8;
-        let min_indices = (crate::MAX_DESIGN_BYTES - overhead) / 4 + 1;
-        let indices = min_indices.div_ceil(3) * 3;
-        let encoded = overhead + indices * 4;
+        // Positions no f32 holds exactly, kept as f64: one triangle and enough of them.
+        let values = (crate::MAX_DESIGN_BYTES / 8 + 1).div_ceil(3) * 3;
+        let positions: Arc<[f64]> = (0..values).map(|i| [0.1, 0.2, 0.3][i % 3] * (1 + i % 2) as f64).collect();
+        let encoded = 25 + values * 8 + 3;
         assert!(encoded > crate::MAX_DESIGN_BYTES && encoded <= max_mesh_part(), "encoded {encoded}");
         let mesh = MeshData {
             name: "Large".into(),
             positions: Arc::clone(&positions),
-            triangles: (0..indices).map(|i| (i % 3) as u32).collect(),
-            color: None,
+            triangles: Arc::from([0, 1, 2]),
             corner_normals: Default::default(),
+            color: None,
         };
         let mut doc = Document::new("Large mesh");
         doc.add_feature(FeatureKind::MeshImport { file: "large.stl".into(), meshes: vec![mesh] }, None).unwrap();
@@ -3282,18 +3532,18 @@ mod tests {
 
     #[test]
     fn mesh_over_the_expanded_cap_is_too_large_before_it_is_encoded() {
-        assert_eq!(mesh_encoded_len(0, 0), Some(24));
-        let at_cap = (max_mesh_part() - 24) / 4;
-        assert_eq!(mesh_encoded_len(0, at_cap), Some(max_mesh_part()));
-        assert!(mesh_encoded_len(0, at_cap + 1).is_none());
-        let indices = (max_mesh_part() / 4 + 3).div_ceil(3) * 3;
-        assert!(mesh_encoded_len(0, indices).is_none());
-        assert!(mesh_encoded_len(usize::MAX, 0).is_none());
-        assert!(mesh_encoded_len(0, usize::MAX).is_none());
-        assert!(mesh_encoded_len(usize::MAX, usize::MAX).is_none());
+        assert_eq!(mesh_blob_len(0, 4, 0), Some(25));
+        let at_cap = (max_mesh_part() - 25) / 8;
+        assert_eq!(mesh_blob_len(at_cap, 8, (max_mesh_part() - 25) % 8), Some(max_mesh_part()));
+        assert!(mesh_blob_len(at_cap + 1, 8, 0).is_none());
+        assert!(mesh_blob_len(0, 4, max_mesh_part()).is_none());
+        assert!(mesh_blob_len(usize::MAX, 8, 0).is_none());
+        assert!(mesh_blob_len(0, 4, usize::MAX).is_none());
+        assert!(mesh_blob_len(usize::MAX, 8, usize::MAX).is_none());
     }
 
     #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), ignore = "the Scan workspace fork reads designs and scans whatever their size on the desktop")]
     fn mesh_archives_keep_expansion_and_repeated_reference_limits() {
         // Change only the declared sizes in a tiny archive: admission must reject these
         // without allocating or decompressing a half-gigabyte payload.

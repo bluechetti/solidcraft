@@ -53,7 +53,7 @@ fn a_meshs_levels_are_made_once_on_a_worker() {
     assert_eq!(levels.len(), 3, "{} triangles", mesh.triangles.len());
     let mut last = (mesh.triangles.len(), 0.0f32);
     for (tris, error) in levels.iter() {
-        let n = tris.indices.len() / 3;
+        let n = tris.indices().len() / 3;
         assert!(n * 3 <= last.0, "{n} after {}", last.0);
         assert!(*error >= last.1 && *error < 6.0, "error {error}");
         assert!(tris.flat);

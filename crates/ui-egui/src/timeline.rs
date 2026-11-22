@@ -242,6 +242,7 @@ impl TimelineKind {
 }
 
 pub(crate) fn icon_of(k: &FeatureKind) -> &'static str {
+    use solidcraft_engine::doc::scan_clean::CleanStep;
     match k {
         FeatureKind::Sketch { .. } => "sketch",
         FeatureKind::Extrude { .. } => "extrude",
@@ -292,9 +293,20 @@ pub(crate) fn icon_of(k: &FeatureKind) -> &'static str {
         FeatureKind::Sweep { .. } => "sweep",
         FeatureKind::Shell { .. } => "shell",
         FeatureKind::Draft { .. } => "draft",
+        FeatureKind::Deform { .. } => "scale",
         FeatureKind::Split { .. } => "split",
         FeatureKind::Move { .. } => "move",
         FeatureKind::Import { .. } | FeatureKind::MeshImport { .. } | FeatureKind::MeshConvert { .. } => "import",
+        FeatureKind::ScanSurface { .. } => "scan_free_form",
+        FeatureKind::ScanClean { step, .. } => match step {
+            CleanStep::RemoveFloating { .. } => "delete",
+            CleanStep::FillHoles { .. } => "surface_patch",
+            CleanStep::Reduce { .. } => "scale",
+            CleanStep::Repair { .. } => "mesh_body",
+            CleanStep::Denoise { .. } => "c_smooth",
+            CleanStep::Remesh { .. } => "grid",
+            CleanStep::RemoveMarkers { .. } | CleanStep::RemoveAndFill { .. } => "delete",
+        },
         FeatureKind::BodyTransfer { .. } => "move",
         FeatureKind::Thread { .. } => "thread",
         FeatureKind::SplitFace { .. } => "split_face",

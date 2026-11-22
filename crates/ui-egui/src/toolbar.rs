@@ -76,7 +76,19 @@ fn running_command(app: &SolveApp) -> Option<String> {
 /// Whether the toolbar shows command `id` pressed: its tool or dialog is open, or it turned on
 /// the view analysis on now (one at a time, `Session::active_analysis`), its tool running or not.
 pub(crate) fn shows_pressed(app: &SolveApp, id: &str) -> bool {
-    running_command(app).as_deref() == Some(id) || app.session.active_analysis() == Some(id)
+    running_command(app).as_deref() == Some(id)
+        || app.session.active_analysis() == Some(id)
+        || (id == "scan.deviation" && crate::scan_deviation::shown(app))
+        || (id == "scan.deviation_pin" && crate::scan_deviation::pinning(app))
+        || (id == "inspect.hole_table" && crate::hole_table::shown(app))
+        || (id == "scan.remove_markers" && crate::scan_markers::active(app))
+        || (id == "scan.radius" && crate::scan_radius::picking(app))
+        || (id == "scan.measure_line" && crate::scan_line::picking(app))
+        || (id == "scan.unseen" && crate::scan_unseen::shown(app))
+        || (id == "inspect.check_add" && crate::inspection_plan::adding(app))
+        || (id == "inspect.check_measure" && crate::inspection_plan::shown(app))
+        || (id == "scan.find_all" && crate::scan_shapes::shown(app))
+        || (id == "view.scan_triangles" && app.ui.scan_triangles)
 }
 
 /// [`shows_pressed`] for a ribbon button: a command with a persistent effect is pressed only while
@@ -1826,10 +1838,13 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
             crate::context_menu::open_for(app, bg.interact_pointer_pos().unwrap_or(r.left_bottom()), crate::context_menu::Target::Toolbar);
         }
         let render = crate::render_workspace::active(app);
+        let scan = crate::scan_workspace::active(app);
         let drawing = crate::drawing_workspace::active(app) || crate::workspace::sheet_scope(app);
         let switcher = app_bar::Switcher {
             name: if render {
                 app.tr("ui.render")
+            } else if scan {
+                app.tr("ui.tab_scan")
             } else if drawing {
                 app.tr_label("Drawing")
             } else {
@@ -1838,6 +1853,8 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
             caption: app.tr("ui.ribbon_workspace"),
             icon: if render {
                 "ws_render"
+            } else if scan {
+                "mesh_body"
             } else if drawing {
                 "ws_drawing"
             } else {
@@ -1849,7 +1866,7 @@ fn ribbon_contents(app: &mut SolveApp, ui: &mut egui::Ui, shape: RibbonShape) ->
             labels,
             folded,
             stage: render,
-            accent: if render { solidcraft_theme::TabAccent::current(ui.ctx()).color } else { t.accent },
+            accent: if render || scan { solidcraft_theme::TabAccent::current(ui.ctx()).color } else { t.accent },
             handle_rect: "workspace_switcher",
             handle_target: "ribbon:workspace",
         };

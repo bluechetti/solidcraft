@@ -92,7 +92,8 @@ pub struct Request {
     /// The chat turn that requested the load. It must still be current when the file lands.
     pub(crate) chat_turn: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// Insert the file as a mesh whatever its extension says: a PLY goes to `pointcloud.insert`
-    /// unless the person chose Insert Mesh for it (then it needs its faces).
+    /// unless the person chose Insert Mesh for it, or a script called `file.insert_mesh` (then its
+    /// faces, or a raw range scan's grid, make the mesh).
     pub mesh: bool,
     /// Insert the board this file (a zip, or any file in its folder) belongs to: its Gerber and
     /// Excellon files as one (`file.insert_gerber` with the file as its `set`).
@@ -165,7 +166,17 @@ impl Request {
                 params.insert("set".into(), json!(self.path));
                 ("file.insert_gerber", Value::Object(params))
             }
-            Kind::Insert if self.mesh || solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", self.params()),
+            Kind::Insert if self.mesh || solidcraft_engine::io::is_mesh_path(&self.path) => {
+                // The window reads a file that states no unit in millimetres and says so in a
+                // note with the other units to try; the command alone refuses a tiny one unasked.
+                let mut params = self.params();
+                let states_its_unit = solidcraft_engine::io::is_gltf_path(&self.path)
+                    || std::path::Path::new(&self.path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("3mf"));
+                if let (false, Some(keys)) = (states_its_unit, params.as_object_mut()) {
+                    keys.entry("units").or_insert(json!("mm"));
+                }
+                ("file.insert_mesh", params)
+            }
             Kind::Insert if solidcraft_engine::io::is_point_cloud_path(&self.path) => ("pointcloud.insert", self.params()),
             Kind::Insert => (insert_command(&self.path), self.params()),
             Kind::InsertDesign => ("component.insert_design", self.params()),
@@ -534,6 +545,13 @@ fn default_reuse_import(app: &SolveApp, request: &mut Request) {
 /// Rhino file is read by cadmpeg straight into records).
 pub(crate) fn preferred_options(app: &SolveApp, path: &str) -> serde_json::Map<String, Value> {
     let mut out = serde_json::Map::new();
+    // An STL or OBJ file states no unit: the window reads it in millimetres and says so in a note
+    // that offers the other units (`mesh_units_note`); the command alone refuses a tiny one unasked.
+    let states_its_unit = solidcraft_engine::io::is_gltf_path(path)
+        || std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("3mf"));
+    if solidcraft_engine::io::is_mesh_path(path) && !states_its_unit {
+        out.insert("units".into(), json!("mm"));
+    }
     let freecad = std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("fcstd"));
     if freecad && !app.preferences.freecad_history {
         out.insert("history".into(), json!("solids"));
@@ -769,7 +787,7 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
         allow_hosts: Vec::new(),
         design: None,
         chat_turn: req.chat_turn,
-        mesh: false,
+        mesh: id == "file.insert_mesh",
         gerber: false,
         param_check,
         note: None,
@@ -1810,6 +1828,10 @@ fn land_now(app: &mut SolveApp, mut running: Running) {
                 if (request.kind == Kind::Open || request.insert()) && !request.options.contains_key("up") {
                     crate::stand_up::offer(app, &request.path, &running.before, Some(&made.result));
                 }
+                // A mesh read in millimetres that came in tiny is offered metres or inches.
+                if request.kind == Kind::Open || request.insert() {
+                    crate::mesh_units_note::offer(app, &request.path, Some(&made.result));
+                }
                 crate::frame_watch::step(app, "stand-up offer");
                 if let Kind::Recover { .. } = request.kind {
                     recovered(app, request);
@@ -2506,6 +2528,40 @@ M30
             h.app.insert_path(&path);
             assert_eq!(h.app.session.doc.sketch(new_id).unwrap().curves.len(), 4);
         }
+    }
+
+    /// Insert Mesh reads a PLY file as a mesh; inserted any other way it is a point cloud.
+    #[test]
+    fn insert_mesh_takes_a_ply_file_as_a_mesh() {
+        let mut request = Request::new("pass.PLY", Kind::Insert);
+        assert_eq!(request.command().0, "pointcloud.insert");
+        request.mesh = true;
+        request.options = json!({"units": "m"}).as_object().unwrap().clone();
+        assert_eq!(request.command(), ("file.insert_mesh", json!({"path": "pass.PLY", "units": "m"})));
+        // Other files go as before.
+        for (path, command) in [("part.step", "file.insert_step"), ("part.stl", "file.insert_mesh"), ("scan.xyz", "pointcloud.insert")] {
+            assert_eq!(Request::new(path, Kind::Insert).command().0, command, "{path}");
+        }
+        // The Scan tab's Insert Mesh, on a raw range scan.
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("pass.ply").to_string_lossy().into_owned();
+        std::fs::write(
+            &path,
+            "ply\nformat ascii 1.0\nobj_info num_cols 2\nobj_info num_rows 2\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\n\
+             element range_grid 4\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 -1 0\n1 -1 0\n1 0\n1 1\n1 2\n1 3\n",
+        )
+        .unwrap();
+        let mut request = Request::new(&path, Kind::Insert);
+        request.mesh = true;
+        let _ = begin_request(&mut h.app, request);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while h.app.file_load.busy() && std::time::Instant::now() < deadline {
+            h.frames(1);
+            std::thread::yield_now();
+        }
+        assert!(!h.app.file_load.busy());
+        assert!(h.app.session.doc.point_clouds.is_empty(), "a mesh, not a point cloud: {:?}", h.app.status);
+        assert_eq!(h.app.session.model.state().bodies.len(), 1, "{:?}", h.app.status);
     }
 
     #[test]

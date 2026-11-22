@@ -19,8 +19,8 @@ use super::check::whole;
 use super::config::NameList;
 use super::motion::require;
 use super::types::{
-    AngleExpr, AxisDir, CoilSectionParam, CoilSectionPositionParam, EmbossFacePoint, EmbossModeParam, FaceRef, FeatureCommon, IdOrName, LengthExpr,
-    NumberExpr, OperationParam, PlaneParam, Point3, PointExpr3, ProfilesParam, RibDirectionParam, SketchRef, StringList, TouchingParam,
+    AngleExpr, AxisDir, AxisLine, CoilSectionParam, CoilSectionPositionParam, EmbossFacePoint, EmbossModeParam, FaceRef, FeatureCommon, IdOrName,
+    LengthExpr, NumberExpr, OperationParam, PlaneParam, Point3, PointExpr3, ProfilesParam, RibDirectionParam, SketchRef, StringList, TouchingParam,
     feature_common, present,
 };
 use crate::params::{self, MAX_STRING_LIST};
@@ -158,6 +158,95 @@ pub struct ReplaceFaceParams {
     /// The body the faces are on. Default: found from the faces.
     #[serde(default)]
     pub body: Option<String>,
+    #[serde(flatten, deserialize_with = "feature_common")]
+    pub common: FeatureCommon,
+}
+
+/// Tilt a planar face about an axis running along it (a hinge) by an angle: kept as a Draft whose
+/// neutral plane is the face's own plane turned a right angle about the axis, so it follows the
+/// face and the axis. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct TiltFaceParams {
+    /// A point on the planar face to tilt.
+    pub face: Point3,
+    /// The hinge: X, Y, Z, a construction axis's name, `{edge: [x, y, z]}` (a straight edge of the
+    /// model) or `{origin, dir}`; it must run along the face.
+    pub axis: AxisLine,
+    /// How far to turn the face, about the axis the right-handed way.
+    pub angle: AngleExpr,
+    /// The body the face is on. Default: found from the face.
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(flatten, deserialize_with = "feature_common")]
+    pub common: FeatureCommon,
+}
+
+/// One ply of a Laminate.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct LaminatePly {
+    /// How thick the ply is.
+    pub thickness: LengthExpr,
+    /// Its material (`material.list`).
+    #[serde(default)]
+    pub material: Option<String>,
+    /// Its body's name. Default: Ply 1, Ply 2, …
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// Lay plies over faces of a body: each ply a body of its own, one over the other. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct LaminateParams {
+    /// Points on the faces to lay up.
+    pub faces: Vec<Point3>,
+    /// The body the faces are on. Default: found from the faces.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The plies, the first against the faces (1 to 50).
+    pub plies: Vec<LaminatePly>,
+    /// `out` (the default): off the faces the way they face; `in`: into the body.
+    #[serde(default)]
+    pub side: Option<String>,
+    /// Take each pick's whole smooth chain of faces.
+    #[serde(default)]
+    pub chain: Option<bool>,
+}
+
+/// A ply laid.
+#[derive(Debug, serde::Serialize, JsonSchema)]
+pub struct LaminateLaid {
+    pub name: String,
+    pub body: String,
+    pub thickness: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+}
+
+/// What `solid.laminate` returns.
+#[derive(Debug, serde::Serialize, JsonSchema)]
+pub struct LaminateResult {
+    pub plies: Vec<LaminateLaid>,
+}
+
+/// Deform a body: bend it along a length, twist it about an axis, or move it with a cage of
+/// points. One undo step.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct DeformParams {
+    /// The body.
+    pub body: String,
+    /// `{origin, along, up, angle, length?}`: bent round a circle towards `up`.
+    #[serde(default)]
+    pub bend: Option<Value>,
+    /// `{origin, axis, angle, length?}`: twisted about the axis.
+    #[serde(default)]
+    pub twist: Option<Value>,
+    /// `{counts?, lo?, hi?, moves: [{index, by}]}`: moved with a cage of points.
+    #[serde(default)]
+    pub cage: Option<Value>,
     #[serde(flatten, deserialize_with = "feature_common")]
     pub common: FeatureCommon,
 }

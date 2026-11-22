@@ -281,6 +281,15 @@ pub fn repair(body: &Body, opts: &RepairOptions) -> Result<(Body, RepairReport)>
     Ok((current, report))
 }
 
+/// The loops of a body's free edges (each an edge one face uses), each as a point halfway along
+/// each of its edges, as Patch's `edges` takes them: the holes and open rims a patch can close.
+/// Nothing is changed, and nothing is sewn first.
+pub fn free_loops(body: &Body) -> Result<Vec<Vec<Vec3>>> {
+    body.require_brep("free edges")?;
+    let r = body.record();
+    Ok(loops_of(r, &free_edges(r)?).iter().map(|l| hole(r, l).edges).collect())
+}
+
 fn largest_tolerance(r: &Brep) -> f64 {
     r.edges.iter().map(|e| e.tolerance).fold(r.tolerance, f64::max)
 }
@@ -663,6 +672,15 @@ mod tests {
         assert!(report.closed && report.modelling, "{report:?}");
         assert_eq!(report.faces, [5, 6]);
         assert!((measure(&fixed).unwrap().volume - 6000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn free_loops_are_found_without_sewing() {
+        let faces = box_faces();
+        let open = open_box(&faces);
+        let loops = free_loops(&open).unwrap();
+        assert_eq!(loops.len(), 1, "{loops:?}");
+        assert_eq!(loops[0].len(), 4, "the missing face's four edges");
     }
 
     #[test]

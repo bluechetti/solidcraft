@@ -69,7 +69,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("import")
         .contract(&INSERT_MESH_CONTRACT)
         .output(output_schema_for::<MeshInserted>)
-        .params("path: .3mf, .stl, .obj, .ply (with faces), .glb or .gltf file (its meshes join the design as mesh bodies in a new component named after the file → component, component_name, occurrence; a glTF file's node tree becomes nested components held as one rigid group until component.unlock, a mesh placed again another occurrence, its materials the bodies' appearances, and its metres millimetres); name?; up?: z|y for a glTF file (default y: glTF has Y up, so the import's component is turned a quarter turn about X, Y becoming Z → stand_up: its occurrence; z: the file's axes are kept); units?: mm|cm|m|in|ft for an STL or OBJ file, or a PLY file with faces (default mm): the unit its coordinates are in, scaled to millimetres as the file is read (a 3MF or glTF file states its own). The design keeps the millimetre mesh and not the unit, so insert the file again to try another; origin?: bool (default false: the mesh keeps its file's coordinates; true: once read, scaled and stood up, the import's occurrence is moved so the box around its bodies is centred on X and Y of the active component with its lowest point on Z = 0 → moved_to_origin: [x, y, z], the shift made); crease_angle_degrees?: 0..180 (0 clears imported shading normals for the previous flat-shading behavior; positive angles regenerate angle-weighted normals across manifold edges below this crease angle; omitted keeps authored OBJ normals/smoothing groups, or flat shading when absent; geometry stays unchanged); geometry?: meshes|exact for an OpenUSD file (default meshes: its meshes as mesh bodies, a B-rep with no mesh left out; exact: its exact B-rep where it has one, a BrepArray's solids and shells, comes in as B-rep bodies of an Import feature, as file.insert_step brings a FreeCAD file read with reader: cadmpeg, its prims a product tree, a mesh that only shows a B-rep not read again, and only its meshes with no B-rep as mesh bodies → geometry: \"exact\"; up and origin work as for its meshes; crease_angle_degrees is refused)"),
+        .params("path: .3mf, .stl, .obj, .ply (with faces, or a raw range scan's grid: its neighbouring cells are joined, never across a jump in depth), .glb or .gltf file (its meshes join the design as mesh bodies in a new component named after the file → component, component_name, occurrence; a glTF file's node tree becomes nested components held as one rigid group until component.unlock, a mesh placed again another occurrence, its materials the bodies' appearances, and its metres millimetres); name?; up?: z|y for a glTF file (default y: glTF has Y up, so the import's component is turned a quarter turn about X, Y becoming Z → stand_up: its occurrence; z: the file's axes are kept); units?: mm|cm|m|in|ft for an STL or OBJ file, or a PLY file with faces or a range grid (default mm): the unit its coordinates are in, scaled to millimetres as the file is read (a 3MF or glTF file states its own) → units. Without it the file is read as millimetres and the reply says so (units_assumed: mm, size: [x, y, z] in mm): check the size is the part's; a file that comes out under 3 across is refused until `units` is given (mm too). The design keeps the millimetre mesh and not the unit: insert the file again, or run mesh.units on the import, to try another; origin?: bool (default false: the mesh keeps its file's coordinates; true: once read, scaled and stood up, the import is moved so the box around its bodies is centred on X and Y of the active component with its lowest point on Z = 0: an STL, OBJ, PLY or 3MF file's points into the design's own frame, else the import's occurrence → moved_to_origin: [x, y, z], the shift made); crease_angle_degrees?: 0..180 (0 clears imported shading normals for the previous flat-shading behavior; positive angles regenerate angle-weighted normals across manifold edges below this crease angle; omitted keeps authored OBJ normals/smoothing groups, or flat shading when absent; geometry stays unchanged); geometry?: meshes|exact for an OpenUSD file (default meshes: its meshes as mesh bodies, a B-rep with no mesh left out; exact: its exact B-rep where it has one, a BrepArray's solids and shells, comes in as B-rep bodies of an Import feature, as file.insert_step brings a FreeCAD file read with reader: cadmpeg, its prims a product tree, a mesh that only shows a B-rep not read again, and only its meshes with no B-rep as mesh bodies → geometry: \"exact\"; up and origin work as for its meshes; crease_angle_degrees is refused)"),
     CommandSpec::new("file.save", "Save", crate::checked!("file.save", save)).any_part()
         .icon("save")
         .key("Ctrl+S")
@@ -686,6 +686,53 @@ fn created_bodies(s: &Session, feature: u64) -> Vec<String> {
     s.model.state().bodies.iter().filter(|b| b.feature == feature).map(|b| b.name.clone()).collect()
 }
 
+/// Moves a MeshImport's meshes so the box round their used points is centred on X and Y with its
+/// lowest point on Z = 0, and gives the shift; `None` for one with no points (or not a mesh).
+fn mesh_to_origin(kind: &mut solidcraft_doc::FeatureKind) -> Option<solidcore_record::Vec3> {
+    let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = kind else { return None };
+    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for mesh in meshes.iter() {
+        for &v in mesh.triangles.iter() {
+            let i = v as usize * 3;
+            let Some(q) = mesh.positions.get(i..i + 3) else { continue };
+            for k in 0..3 {
+                lo[k] = lo[k].min(q[k]);
+                hi[k] = hi[k].max(q[k]);
+            }
+        }
+    }
+    let shift = solidcore_record::Vec3::new(-(lo[0] + hi[0]) / 2.0, -(lo[1] + hi[1]) / 2.0, -lo[2]);
+    if ![shift.x, shift.y, shift.z].iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    for mesh in meshes.iter_mut() {
+        let moved: Vec<f64> =
+            mesh.positions.chunks(3).flat_map(|q| q.iter().zip([shift.x, shift.y, shift.z]).map(|(v, d)| v + d).collect::<Vec<_>>()).collect();
+        mesh.positions = moved.into();
+    }
+    Some(shift)
+}
+
+/// A mesh file that states no unit and comes out smaller than this across, in its own unit, is not
+/// read as millimetres unasked (the same size the window's units note and Survey go by).
+const TINY_UNITS: f64 = 3.0;
+
+/// The size of a mesh import's box, x, y and z; `None` for one with no points (or not a mesh).
+fn mesh_size(kind: &solidcraft_doc::FeatureKind) -> Option<[f64; 3]> {
+    let solidcraft_doc::FeatureKind::MeshImport { meshes, .. } = kind else { return None };
+    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for mesh in meshes.iter() {
+        for q in mesh.positions.as_chunks::<3>().0 {
+            for k in 0..3 {
+                lo[k] = lo[k].min(q[k]);
+                hi[k] = hi[k].max(q[k]);
+            }
+        }
+    }
+    let size = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
+    size.iter().all(|v| v.is_finite()).then_some(size)
+}
+
 /// Add a MeshImport feature for a 3MF, STL, OBJ or glTF file, in a new component named after the
 /// file. A glTF file's nodes become components in it, and its materials the bodies' looks; it is
 /// in metres with Y up, so unless `y_up` is false its component is turned to Z up (#1505).
@@ -703,13 +750,13 @@ fn add_mesh(
     let usd = solidcraft_io::is_usd_path(path);
     // An OpenUSD file says which axis is up (Y when it says nothing).
     let mut file_y_up = gltf;
-    // A mesh file is read up to the limit for STEP and import files, which Preferences raise
-    // (#17446, #14548).
-    let bytes = solidcraft_io::limits::read(path, solidcraft_io::limits::Kind::Step).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    // A scan: no size limit on the desktop (a large scan is gigabytes; the Scan workspace fork);
+    // the browser keeps the limit for import files (#17446, #14548).
+    let bytes = solidcraft_io::limits::read(path, solidcraft_io::limits::Kind::Scan).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     let (mut mf, plan, looks, mut prepared) = if gltf {
         let dir = std::path::Path::new(path).parent().map(std::path::Path::to_path_buf).unwrap_or_default();
         let mut load =
-            |name: &str| solidcraft_io::limits::read(&dir.join(name).to_string_lossy(), solidcraft_io::limits::Kind::Step).map_err(|e| e.to_string());
+            |name: &str| solidcraft_io::limits::read(&dir.join(name).to_string_lossy(), solidcraft_io::limits::Kind::Scan).map_err(|e| e.to_string());
         let mut g = solidcraft_io::read_gltf(&bytes, path, &mut load).map_err(err)?;
         if !import::mesh_plan_fits(&g.plan) {
             g.flatten();
@@ -746,6 +793,31 @@ fn add_mesh(
             }
         }
     }
+    // An STL, OBJ or PLY file states no unit. Read as millimetres because none was given, the
+    // reply says so and how big that made it; one that comes out smaller than a few millimetres
+    // was almost surely saved in metres or inches, and is refused until the caller says.
+    let states_no_unit = !gltf && !std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("3mf"));
+    let size = mesh_size(&mf.kind);
+    if let (true, None, Some(size)) = (states_no_unit, unit, size) {
+        let across = size.iter().copied().fold(0.0, f64::max);
+        if across > 0.0 && across < TINY_UNITS {
+            return Err(bad(
+                "file.insert_mesh",
+                format!(
+                    "the mesh is {across:.3} across in the file's own unit, which the file does not state: give `units` (as m it is {:.1} mm across, as in {:.1} mm, as mm {across:.3} mm)",
+                    across * 1000.0,
+                    across * 25.4
+                ),
+            ));
+        }
+    }
+    // To the origin, in the mesh's own points where the import goes into an unmoved frame (a
+    // file's meshes, not a glTF tree, whose component is turned): the scan tools read a scan's
+    // points as they are, so a scan whose component had been moved there instead was drawn in
+    // one place and clicked, brushed and fitted in another (a bunny's brush stroke landed on its
+    // shoulder, its import shift away).
+    let at_root = s.active_occurrence_path.as_ref().is_none_or(Vec::is_empty) && s.active_component == 0;
+    let baked = if origin && !gltf && at_root { mesh_to_origin(&mut mf.kind) } else { None };
     let fname = name.filter(|n| !n.trim().is_empty()).unwrap_or(&mf.name).to_string();
     let cname = import::component_name(path, name);
     let tree = match &plan {
@@ -765,7 +837,11 @@ fn add_mesh(
     }
     let turned = if (gltf || usd) && y_up.unwrap_or(file_y_up) { turn_up(s, &placed)? } else { None };
     // After the turn, so it is the stood-up mesh that sits on Z = 0.
-    let moved = if origin { import::move_to_origin(s, &placed)? } else { None };
+    let moved = match baked {
+        Some(shift) => Some(shift),
+        None if origin => import::move_to_origin(s, &placed)?,
+        None => None,
+    };
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
     let reply = MeshInserted {
         path: path.to_string(),
@@ -781,6 +857,8 @@ fn add_mesh(
         rigid_members: placed.rigid_group.map(|(_, members)| members),
         moved_to_origin: moved.map(|shift| [shift.x, shift.y, shift.z]),
         units: unit.map(|(name, _)| name.to_string()),
+        units_assumed: (states_no_unit && unit.is_none()).then(|| "mm".to_string()),
+        size: size.filter(|_| states_no_unit),
         stand_up: turned,
         geometry: None,
         param_warnings: Vec::new(),
@@ -924,6 +1002,9 @@ fn insert_mesh(s: &mut Session, p: &Value) -> Result<Value> {
             rigid_members: step.rigid_members,
             moved_to_origin: step.moved_to_origin,
             units: None,
+            // An OpenUSD file states its own units: none is assumed, so no size to check.
+            units_assumed: None,
+            size: None,
             stand_up: step.stand_up,
             geometry: Some("exact".to_string()),
             param_warnings: Vec::new(),
@@ -1535,6 +1616,7 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
             exporter: r.exporter,
             exporter_up: r.exporter_up,
             moved_to_origin: r.moved_to_origin,
+            units: r.units,
             content_sha256: r.content_sha256,
             import_reused: r.import_reused,
             history: r.history,
@@ -1731,6 +1813,8 @@ struct ImportedFile {
     exporter_up: Option<String>,
     #[serde(default)]
     moved_to_origin: Option<Vec<f64>>,
+    #[serde(default)]
+    units: Option<String>,
     #[serde(default)]
     content_sha256: Option<String>,
     #[serde(default)]
@@ -2438,10 +2522,17 @@ fn saved_preview(s: &Session) -> Option<solidcraft_io::DesignPreview> {
     let mut triangles = 0usize;
     for body in &world.bodies {
         let mesh = body.cached_mesh()?;
+        triangles = triangles.saturating_add(mesh.triangles.len());
+        if triangles > 100_000 {
+            return None;
+        }
+        // A mesh body's triangles share their corners and are each drawn flat: given corners of
+        // their own, the picture (which takes each vertex's normal from the triangles at it)
+        // shows them flat too.
+        let mesh = mesh.with_normals();
         bytes =
             bytes.saturating_add(mesh.positions.len().saturating_mul(24)).saturating_add(mesh.triangles.len().saturating_mul(84)).saturating_add(32);
-        triangles = triangles.saturating_add(mesh.triangles.len());
-        if bytes > 8 << 20 || triangles > 100_000 {
+        if bytes > 8 << 20 {
             return None;
         }
         preview.meshes.push(mesh_data(&s.doc, body, &mesh));
@@ -2596,6 +2687,11 @@ fn export_to(
         bytes
     };
     solidcraft_io::vfs::write(path, &bytes).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    // A design rolled back exports the bodies as of the marker: said, so the later features left
+    // out are not taken for built (an agent's fillets left out of its export without a word).
+    if let Some(note) = rolled_back_note(s) {
+        warnings.push(note);
+    }
     let skipped = skipped_from_warnings(&warnings);
     let reply =
         ExportResult { path: path.to_string(), bytes: bytes.len(), format: format!("{format:?}"), skipped, warnings, ..ExportResult::default() };
@@ -2760,6 +2856,19 @@ fn export_step(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "file.export_step";
     let path = path_arg(p, cmd)?;
     export_to(s, cmd, path, Format::Step, &string_list(cmd, p, "bodies")?, &[], solidcraft_io::MeshQuality::default())
+}
+
+/// When the design's history marker is not at its end: how many features after it are not built,
+/// in words, with the way back to the end. `None` at the end.
+pub(crate) fn rolled_back_note(s: &Session) -> Option<String> {
+    let total = s.doc.features.len();
+    let marker = s.doc.marker.unwrap_or(total).min(total);
+    (marker < total).then(|| {
+        format!(
+            "the design is rolled back: {} feature(s) after the history marker are not built, so this is the model as of the marker (timeline.rollback {{\"position\": \"end\"}} builds them)",
+            total - marker
+        )
+    })
 }
 
 fn export_stl(s: &mut Session, p: &Value) -> Result<Value> {
@@ -4568,7 +4677,7 @@ mod tests {
             assert!(result.unwrap_err().to_string().contains("crease_angle_degrees"));
             assert_eq!(session.doc.to_json(), before);
         }
-        session.execute("file.insert_mesh", &json!({"path":path, "crease_angle_degrees":40})).unwrap();
+        session.execute("file.insert_mesh", &json!({"path":path, "units":"mm", "crease_angle_degrees":40})).unwrap();
         let normals = |s: &Session| s.model.state().bodies[0].mesh().normals.clone();
         let expected = normals(&session);
         assert!(expected[0].y > 0.2 && expected[0].z > 0.9);
@@ -4599,7 +4708,7 @@ mod tests {
         let reference_path = dir.join("reference.obj");
         std::fs::write(&reference_path, format!("{vertices}{faces}")).unwrap();
         let mut reference = Session { param_check: crate::schema::ParamCheck::Strict, ..Session::default() };
-        reference.execute("file.insert_mesh", &json!({"path":reference_path})).unwrap();
+        reference.execute("file.insert_mesh", &json!({"path":reference_path, "units":"mm"})).unwrap();
         let display = |s: &Session| {
             let mesh = s.model.state().bodies[0].mesh();
             (mesh.positions.clone(), mesh.triangles.clone(), mesh.normals.clone())
@@ -4611,10 +4720,10 @@ mod tests {
             let path = dir.join(format!("{name}.obj"));
             std::fs::write(&path, source).unwrap();
             let mut annotated = Session { param_check: crate::schema::ParamCheck::Strict, ..Session::default() };
-            annotated.execute("file.insert_mesh", &json!({"path":path})).unwrap();
+            annotated.execute("file.insert_mesh", &json!({"path":path, "units":"mm"})).unwrap();
             assert_ne!(display(&annotated).2, expected.2, "{name} must exercise imported shading");
             let mut session = Session { param_check: crate::schema::ParamCheck::Strict, ..Session::default() };
-            session.execute("file.insert_mesh", &json!({"path":path, "crease_angle_degrees":0})).unwrap();
+            session.execute("file.insert_mesh", &json!({"path":path, "units":"mm", "crease_angle_degrees":0})).unwrap();
             assert_eq!(display(&session), expected, "{name} uses the exact former flat display path");
             let meshes = session
                 .doc

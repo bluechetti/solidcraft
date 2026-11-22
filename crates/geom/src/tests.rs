@@ -632,6 +632,41 @@ fn mass_properties_of_an_inward_facing_box_are_positive() {
     assert!(close(p.volume, 24.0, 1e-12) && p.inertia[0][0] > 0.0, "{p:?}");
 }
 
+/// A flat mesh (shared corners, no normals, as a mesh body's is kept) lights each triangle with
+/// its own normal; given a corner of its own per triangle it is the mesh with normals that a
+/// reader by vertex needs, and appended to a mesh with normals it gets them so.
+#[test]
+fn a_flat_mesh_lights_each_triangle_with_its_own_normal() {
+    let lit = cube_mesh(2.0);
+    let flat = Mesh { normals: Vec::new(), ..lit.clone() };
+    assert!(flat.is_flat() && !lit.is_flat() && !Mesh::default().is_flat());
+    for t in &flat.triangles {
+        let [a, b, c] = flat.tri(t).unwrap();
+        let n = flat_normal(a, b, c);
+        assert!((n.len() - 1.0).abs() < 1e-12 && n.dot((a + b + c) / 3.0 - Vec3::new(1.0, 1.0, 1.0)) > 0.0, "outward: {n:?}");
+        assert_eq!(flat.corner_normals(t), Some([n; 3]));
+        assert_eq!(lit.corner_normals(t), Some([Vec3::Z; 3]), "a mesh with normals keeps its own");
+    }
+    assert_eq!(flat.corner_normals(&[0, 1, 99]), None);
+    assert_eq!(flat_normal(Vec3::ZERO, Vec3::X, Vec3::X * 2.0), Vec3::Z, "no area");
+    let split = flat.with_normals();
+    assert!(matches!(lit.with_normals(), std::borrow::Cow::Borrowed(_)));
+    assert_eq!((split.positions.len(), split.normals.len(), split.triangles.len(), split.tri_face.len()), (36, 36, 12, 12));
+    let corners: Vec<_> = flat.lit_corners().flatten().collect();
+    assert_eq!(corners, split.positions.iter().copied().zip(split.normals.iter().copied()).collect::<Vec<_>>());
+    assert_eq!(split.lit_corners().flatten().collect::<Vec<_>>(), corners);
+    assert!((split.measure().volume - flat.measure().volume).abs() < 1e-12);
+    // Mixed: whichever comes first, the flat one's corners are given normals of their own.
+    for (mut a, b) in [(lit.clone(), flat.clone()), (flat.clone(), lit.clone())] {
+        a.append(&b, 1);
+        assert_eq!((a.positions.len(), a.normals.len(), a.triangles.len()), (44, 44, 24));
+        assert!(a.triangles.iter().flatten().all(|i| (*i as usize) < a.positions.len()));
+    }
+    let mut both = flat.clone();
+    both.append(&flat, 1);
+    assert!(both.is_flat() && both.positions.len() == 16);
+}
+
 #[test]
 fn mass_properties_of_an_open_or_empty_mesh_are_none() {
     let mut open = offset_box(Vec3::ZERO, 20.0, 30.0, 40.0);

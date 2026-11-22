@@ -523,6 +523,81 @@ fn an_extrusion_of_a_cubic_whose_control_points_fold_back_passes_the_check() {
     assert_eq!(origins(&b), want);
 }
 
+/// An `a` x `b` rectangle with corners of radius `r`, centred on the origin.
+fn rounded_rectangle(a: f64, b: f64, r: f64) -> Loop2 {
+    let (x, y) = (a / 2.0, b / 2.0);
+    let line = |a: [f64; 2], b: [f64; 2]| Seg2::Line { a: Vec2::new(a[0], a[1]), b: Vec2::new(b[0], b[1]) };
+    let arc = |cx: f64, cy: f64, start: f64| Seg2::Arc { center: Vec2::new(cx, cy), radius: r, start, sweep: PI / 2.0 };
+    Loop2 {
+        segs: vec![
+            line([-x + r, -y], [x - r, -y]),
+            arc(x - r, -y + r, -PI / 2.0),
+            line([x, -y + r], [x, y - r]),
+            arc(x - r, y - r, 0.0),
+            line([x - r, y], [-x + r, y]),
+            arc(-x + r, y - r, PI / 2.0),
+            line([-x, y - r], [-x, -y + r]),
+            arc(-x + r, -y + r, PI),
+        ],
+    }
+}
+
+/// The kinds of a body's face surfaces, sorted ("plane", "cone", ...).
+fn surface_kinds(b: &Body) -> Vec<String> {
+    let mut k: Vec<String> = b
+        .record()
+        .faces
+        .iter()
+        .map(|f| serde_json::to_value(&f.surface).ok().and_then(|v| v.get("kind").and_then(|k| k.as_str()).map(str::to_owned)).unwrap_or_default())
+        .collect();
+    k.sort();
+    k
+}
+
+/// A rounded rectangle drafted 2 deg (Reconstruct's housing) on a sketch plane a hair off XY, as a
+/// plane fitted to a scan is: its walls are the planes and cones they are on XY, it measures the
+/// same, and it shells. SMLib's draft extrusion fitted B-splines to the walls of a profile not
+/// square to z: 1e-6 to 1e-5 rad off, the shell's trims stalled (SMLib's check refused it), and
+/// from 1e-4 rad the extrusion itself failed the check (vertex gaps of 8.4e-5 against 2e-5).
+#[test]
+fn a_drafted_rounded_rectangle_a_hair_off_xy_has_cone_corners_and_shells() {
+    let r = region(rounded_rectangle(80.0, 60.0, 6.0));
+    let taper = -2f64.to_radians();
+    let xy = Plane { origin: Vec3::ZERO, x: Vec3::new(1.0, 0.0, 0.0), y: Vec3::new(0.0, 1.0, 0.0) };
+    let square = crate::extrude_tapered(&xy, &r, 30.0, 1.0, taper, crate::DraftCorner::PreserveCurvature).unwrap();
+    let kinds = surface_kinds(&square);
+    assert_eq!(kinds.iter().filter(|k| *k == "cone").count(), 4, "{kinds:?}");
+    let shelled = volume(&crate::shell(&square, &[Vec3::ZERO], 2.0).unwrap());
+    for eps in [1e-6, 1e-5, 1e-4, 1e-2] {
+        // Turned eps about x and moved off the origin.
+        let (c, s) = (f64::cos(eps), f64::sin(eps));
+        let plane = Plane { origin: Vec3::new(5.0, -3.0, 2.0), x: Vec3::new(1.0, 0.0, 0.0), y: Vec3::new(0.0, c, s) };
+        let b = crate::extrude_tapered(&plane, &r, 30.0, 1.0, taper, crate::DraftCorner::PreserveCurvature).unwrap();
+        assert_eq!(surface_kinds(&b), kinds, "eps {eps}");
+        close(volume(&b), volume(&square), 1e-9, "drafted housing");
+        // Standing on the sketch plane, 30 up its normal, within the 40 x 30 of the profile.
+        let n = plane.x.cross(plane.y);
+        for v in &b.record().vertices {
+            let d = Vec3::new(v.point[0], v.point[1], v.point[2]) - plane.origin;
+            let (along, x, y) = (d.dot(n), d.dot(plane.x), d.dot(plane.y));
+            assert!((-1e-6..=30.0 + 1e-6).contains(&along) && x.abs() <= 40.0 + 1e-6 && y.abs() <= 30.0 + 1e-6, "eps {eps}: {v:?}");
+        }
+        close(volume(&crate::shell(&b, &[Vec3::new(5.0, -3.0, 2.0)], 2.0).unwrap()), shelled, 1e-6, "shelled housing");
+    }
+    // With a straight foot, and with a hole drafted the other way, on a plane 1e-5 off XY.
+    let plane = Plane { origin: Vec3::ZERO, x: Vec3::new(1.0, 0.0, 0.0), y: Vec3::new(0.0, f64::cos(1e-5), f64::sin(1e-5)) };
+    let corner = crate::DraftCorner::PreserveCurvature;
+    let footed = crate::extrude_tapered_between(&plane, &r, 0.0, 30.0, 4.0, 1.0, taper, corner).unwrap();
+    let footed_xy = crate::extrude_tapered_between(&xy, &r, 0.0, 30.0, 4.0, 1.0, taper, corner).unwrap();
+    assert_eq!(surface_kinds(&footed), surface_kinds(&footed_xy));
+    close(volume(&footed), volume(&footed_xy), 1e-9, "footed housing");
+    let holed = Region2 { outer: rounded_rectangle(80.0, 60.0, 6.0), holes: vec![Loop2::circle(Vec2::ZERO, 8.0)] };
+    let b = crate::extrude_tapered(&plane, &holed, 30.0, 1.0, taper, corner).unwrap();
+    let b_xy = crate::extrude_tapered(&xy, &holed, 30.0, 1.0, taper, corner).unwrap();
+    assert_eq!(surface_kinds(&b), surface_kinds(&b_xy));
+    close(volume(&b), volume(&b_xy), 1e-9, "holed housing");
+}
+
 /// A wedge section of chord c whose trailing edge at (c, 0) is `edge` radians: x = c u²,
 /// y = c a u (1 - u²) with a = tan(edge / 2), from u = 1 round to u = -1, in `n` cubic pieces
 /// which hold that cubic exactly; its area is 8 a c² / 15.

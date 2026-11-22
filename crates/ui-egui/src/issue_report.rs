@@ -386,6 +386,7 @@ fn reportable(feature: &solidcraft_engine::doc::Feature) -> bool {
         feature.kind,
         solidcraft_engine::doc::FeatureKind::Sketch { .. }
             | solidcraft_engine::doc::FeatureKind::Import { .. }
+            | solidcraft_engine::doc::FeatureKind::ScanSurface { .. }
             | solidcraft_engine::doc::FeatureKind::MeshImport { .. }
     )
 }

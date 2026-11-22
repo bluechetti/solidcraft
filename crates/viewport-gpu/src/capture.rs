@@ -916,6 +916,7 @@ mod tests {
                     look: crate::view::InstanceLook::Opaque,
                     levels: Vec::new(),
                     closed: true,
+                    paint: None,
                     edges: None,
                 };
                 let mut sc = GpuScene::default();
@@ -1059,6 +1060,7 @@ mod tests {
                     levels: Vec::new(),
                     closed: true,
                     edges: None,
+                    paint: None,
                 };
                 let mut sc = GpuScene::default();
                 let red = Arc::make_mut(&mut sc.palette).intern_moved([200, 30, 30, 255], slot);
@@ -1107,6 +1109,7 @@ mod tests {
                 levels: Vec::new(),
                 closed: true,
                 edges: None,
+                paint: None,
             };
             let mut sc = GpuScene::default();
             // The entry every copy shares, which names motion 9.

@@ -471,15 +471,17 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
         Target::Timeline { feature } => crate::timeline::feature_items(app, *feature),
         Target::Workspace => {
             let rendering = crate::render_workspace::active(app);
+            let scanning = crate::scan_workspace::active(app);
+            let idle = app.session.active_sketch.is_none() && app.tool.is_none() && app.dialog.is_none() && !app.file_load.busy();
             let drawing = crate::drawing_workspace::active(app) || crate::workspace::sheet_scope(app);
-            // Design, then Drawing (the owner's order), then Render: the workspaces there are. Ones still
-            // to come aren't listed.
+            // Design, then Scan (the Scan workspace fork), then Drawing (the owner's order), then
+            // Render: the workspaces there are. Ones still to come aren't listed.
             vec![
-                act("ui.workspace.design", "Design", "ws_design").with(json!({"workspace":"design"})).key(if rendering || drawing {
-                    ""
-                } else {
-                    "current"
-                }),
+                act("ui.workspace.design", "Design", "ws_design")
+                    .with(json!({"workspace":"design"}))
+                    .key(if rendering || scanning || drawing { "" } else { "current" })
+                    .on(idle || !(rendering || scanning || drawing)),
+                act("ui.workspace.scan", "Scan", "mesh_body").with(json!({"workspace":"scan"})).key(if scanning { "current" } else { "" }).on(idle),
                 act("ui.workspace.drawing", "Drawing", "ws_drawing")
                     .with(json!({"workspace":"drawing"}))
                     .key(if drawing { "current" } else { "" })
@@ -679,12 +681,22 @@ fn picked_face_feature(app: &SolveApp) -> Option<u64> {
 
 /// The feature that made face `index` of this placed body.
 pub(crate) fn face_feature(app: &SolveApp, body: &ModelBody, index: usize) -> Option<u64> {
+    // A mesh body's faces are made by the feature that made it (an import, a scan's clean step):
+    // naming them all to read one hashed every triangle (half a second for a ten-million-triangle
+    // scan, each time one was picked).
+    if body.body.is_mesh() {
+        return app.session.doc.feature(body.feature).filter(|f| f.component == app.session.doc.model_body_component(body)).map(|f| f.id);
+    }
     let names = solidcraft_engine::doc::naming::face_names(body);
     let name = names.get(index)?;
     let id = solidcraft_engine::doc::persistent_name::made_by(name)?;
     let owner = app.session.doc.feature(body.feature)?;
-    if matches!(owner.kind, solidcraft_engine::doc::FeatureKind::Import { .. } | solidcraft_engine::doc::FeatureKind::MeshImport { .. })
-        && id != owner.id
+    if matches!(
+        owner.kind,
+        solidcraft_engine::doc::FeatureKind::Import { .. }
+            | solidcraft_engine::doc::FeatureKind::ScanSurface { .. }
+            | solidcraft_engine::doc::FeatureKind::MeshImport { .. }
+    ) && id != owner.id
     {
         return None;
     }
@@ -1015,6 +1027,10 @@ fn body_items(app: &SolveApp, bodies: &[String], browser: bool) -> Vec<Item> {
     }
     if one {
         let b = bodies.first().cloned().unwrap_or_default();
+        if let Some(feature) = crate::dialogs_scan_surface::editable_feature(app, &b) {
+            v.insert(0, act("ui.editFeature", "Edit Surface", "edit").with(json!({ "feature": feature })));
+            v.insert(1, Item::sep());
+        }
         if let Some(component) = crate::dialogs_part_size::component_for_bodies(app, bodies) {
             v.push(cmd(app, "parts.resize", "Change Part Size").with(json!({"component":component})));
         }
@@ -2229,7 +2245,7 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
             }
         }
         "ui.historyShowHidden" => app.tree.history_show_hidden = p["show"].as_bool().unwrap_or(false),
-        "ui.workspace" | "ui.workspace.design" | "ui.workspace.render" | "ui.workspace.drawing" => {
+        "ui.workspace" | "ui.workspace.design" | "ui.workspace.scan" | "ui.workspace.render" | "ui.workspace.drawing" => {
             let result = p.get("workspace").and_then(Value::as_str).map_or(Ok(()), |workspace| crate::workspace::enter(app, workspace));
             if let Err(error) = result {
                 app.set_status(error, true);
@@ -3436,6 +3452,12 @@ fn workspace_style(item: &Item) -> Option<crate::ui_kit::WorkspaceStyle> {
         "Design" => {
             WorkspaceStyle { slug: "design", description: "ui.workspace_design_description", tabs: Some("ui.workspace_design_tabs"), ramp: None }
         }
+        "Scan" => WorkspaceStyle {
+            slug: "scan",
+            description: "ui.workspace_scan_description",
+            tabs: Some("ui.workspace_scan_tabs"),
+            ramp: Some(AccentRamp::Mesh),
+        },
         "Render" => WorkspaceStyle {
             slug: "render",
             description: "ui.workspace_render_description",
@@ -4474,12 +4496,12 @@ mod workspace_menu_tests {
         h.call("ui.resize", json!({"width":1200,"height":1000}));
         h.step(&json!({"click":{"handle":"ribbon:workspace"}})).unwrap();
         let opener = rect_of("ribbon:workspace").unwrap();
-        // Design, Drawing (the owner's order), Render: no planned workspaces are listed.
-        let rows: Vec<_> = ["design", "drawing", "render"].iter().map(|slug| rect_of(&format!("workspace:menu:{slug}")).unwrap()).collect();
+        // Design, Scan (the fork's), Drawing (the owner's order), Render: no planned workspaces are listed.
+        let rows: Vec<_> = ["design", "scan", "drawing", "render"].iter().map(|slug| rect_of(&format!("workspace:menu:{slug}")).unwrap()).collect();
         assert!(rows.windows(2).all(|pair| pair[0].bottom() <= pair[1].top()));
         assert!(rows[0].top() > opener.bottom());
         assert_eq!(rows[0].width(), 450.0);
-        assert_eq!(items(&h.app, &Target::Workspace).len(), 3, "only the workspaces there are");
+        assert_eq!(items(&h.app, &Target::Workspace).len(), 4, "only the workspaces there are");
         assert!(rect_of("workspace:menu:animation").is_none(), "a planned workspace has no row");
         h.step(&json!({"click":{"handle":"workspace:menu:render"}})).unwrap();
         assert!(crate::render_workspace::active(&h.app));

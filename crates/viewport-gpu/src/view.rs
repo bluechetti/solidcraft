@@ -23,7 +23,7 @@ pub use ao::GroundAo;
 mod clouds;
 mod edges;
 mod indirect;
-pub use clouds::{CELL_SIZE, Cell, CloudFilter, CloudStyle, ColorMode, FILTERS, GpuCloud, cloud_cell};
+pub use clouds::{CELL_SIZE, Cell, CloudFilter, CloudStyle, ColorMode, FILTERS, GpuCloud, LIT_BY_SURFACE, cloud_cell};
 mod motions;
 use motions::MotionTable;
 pub use motions::{MAX_MOTIONS, MOTIONS_PER_ROW, MotionRows, Motions, UNMOVED, UNMOVED_SLOT};
@@ -460,10 +460,13 @@ pub const SHARED_SIZE: usize = 24;
 /// vertex once rather than once per triangle corner.
 #[derive(Default)]
 pub struct SharedTris {
-    /// [`SHARED_SIZE`] bytes per vertex, in the part's own frame.
-    pub vertices: Vec<u8>,
-    /// Three per triangle.
-    pub indices: Vec<u32>,
+    /// [`SHARED_SIZE`] bytes per vertex, in the part's own frame (none when `mesh` has them).
+    vertices: Vec<u8>,
+    /// Three per triangle (none when `mesh` has them).
+    indices: Vec<u32>,
+    /// A flat mesh whose vertices and triangles these are as they stand ([`SharedTris::of`]):
+    /// a scan's, held once and turned into the GPU's bytes only while they are uploaded.
+    mesh: Option<Arc<solidcore_tess::Mesh>>,
     /// Every triangle is flat (its corners share one normal, as an STL's facets do): vertices
     /// are shared by position alone, and each fragment takes its triangle's own normal.
     pub flat: bool,
@@ -476,6 +479,9 @@ impl SharedTris {
     /// `mesh`'s triangles with their vertices shared: by position and normal, or by position
     /// alone when every triangle is flat.
     pub fn new(mesh: &solidcore_tess::Mesh) -> SharedTris {
+        if mesh.is_flat() {
+            return SharedTris::flat_of(&mesh.positions, &mesh.triangles);
+        }
         let corner = |i: u32| Some((mesh.positions.get(i as usize)?.to_f32(), mesh.normals.get(i as usize)?.to_f32()));
         let bits = |v: [f32; 3]| v.map(|x| (x + 0.0).to_bits());
         let flat = mesh.triangles.iter().all(|t| {
@@ -502,16 +508,7 @@ impl SharedTris {
             }
         }
         out.vertices.shrink_to_fit();
-        let mut lo = [f32::INFINITY; 3];
-        let mut hi = [f32::NEG_INFINITY; 3];
-        for v in 0..out.vertices.len() / SHARED_SIZE {
-            let (p, _) = out.vertex(v as u32);
-            for k in 0..3 {
-                lo[k] = lo[k].min(p[k]);
-                hi[k] = hi[k].max(p[k]);
-            }
-        }
-        out.bounds = [lo, hi];
+        out.bounds = bounds_of((0..out.vertex_count()).map(|v| out.vertex(v as u32).0));
         out
     }
 
@@ -556,40 +553,102 @@ impl SharedTris {
         Some(out)
     }
 
+    /// [`SharedTris::new`] of a mesh held in an `Arc`: a flat one ([`solidcore_tess::Mesh::is_flat`],
+    /// a mesh body's, its vertices already shared) is kept as it is, not copied, and turned into
+    /// the GPU's bytes only while it is uploaded. A scan's copy here was as large as its own.
+    pub fn of(mesh: &Arc<solidcore_tess::Mesh>) -> SharedTris {
+        let n = mesh.positions.len();
+        let whole = u32::try_from(n).is_ok() && mesh.triangles.iter().flatten().all(|i| (*i as usize) < n);
+        if !(mesh.is_flat() && whole) {
+            return SharedTris::new(mesh);
+        }
+        SharedTris { mesh: Some(mesh.clone()), flat: true, bounds: bounds_of(mesh.positions.iter().map(|p| p.to_f32())), ..Default::default() }
+    }
+
     /// A simplified copy of a mesh ([`solidcore_tess::simplify::Level`]): its vertices already
     /// shared, its triangles lit flat (each fragment with its triangle's own normal).
     pub fn from_level(level: &solidcore_tess::simplify::Level) -> SharedTris {
-        let mut out = SharedTris { flat: true, ..Default::default() };
-        out.vertices.reserve_exact(level.positions.len() * SHARED_SIZE);
-        let mut lo = [f32::INFINITY; 3];
-        let mut hi = [f32::NEG_INFINITY; 3];
-        for p in &level.positions {
-            let p = p.to_f32();
-            for k in 0..3 {
-                lo[k] = lo[k].min(p[k]);
-                hi[k] = hi[k].max(p[k]);
-            }
-            for v in p.iter().chain(&[0.0f32; 3]) {
-                out.vertices.extend_from_slice(&v.to_le_bytes());
-            }
+        SharedTris::flat_of(&level.positions, &level.triangles)
+    }
+
+    /// Triangles lit flat over `positions`, shared as they are; a triangle with a corner out of
+    /// range is left out.
+    fn flat_of(positions: &[Vec3], triangles: &[[u32; 3]]) -> SharedTris {
+        let n = u32::try_from(positions.len()).unwrap_or(u32::MAX);
+        SharedTris {
+            vertices: flat_vertices(positions),
+            indices: triangles.iter().filter(|t| t.iter().all(|i| *i < n)).flatten().copied().collect(),
+            flat: true,
+            bounds: bounds_of(positions.iter().map(|p| p.to_f32())),
+            mesh: None,
         }
-        let n = u32::try_from(level.positions.len()).unwrap_or(u32::MAX);
-        out.indices = level.triangles.iter().filter(|t| t.iter().all(|i| *i < n)).flatten().copied().collect();
-        out.bounds = [lo, hi];
-        out
+    }
+
+    /// Whether its vertices are its mesh's as they are, in order ([`SharedTris::of`] of a flat
+    /// mesh): a colour for each of the mesh's vertices is then one for each of its own.
+    pub fn shares_mesh_vertices(&self) -> bool {
+        self.mesh.is_some()
+    }
+
+    /// A value given for each vertex of `triangles`' mesh (`per_mesh_vertex`), as one for each of
+    /// its own vertices: the triangles it was made from ([`SharedTris::new`] keeps their corners in
+    /// order). `None` when they are not the triangles it was made from (some were left out, or
+    /// another count), or a corner is out of range.
+    pub fn from_mesh_vertices(&self, triangles: &[[u32; 3]], per_mesh_vertex: &[u32]) -> Option<Vec<u32>> {
+        let indices = self.indices();
+        if indices.len() != triangles.len() * 3 {
+            return None;
+        }
+        let mut out = vec![0u32; self.vertex_count()];
+        for (own, mesh) in indices.iter().zip(triangles.as_flattened()) {
+            *out.get_mut(*own as usize)? = *per_mesh_vertex.get(*mesh as usize)?;
+        }
+        Some(out)
+    }
+
+    /// How many vertices.
+    pub fn vertex_count(&self) -> usize {
+        self.mesh.as_ref().map_or(self.vertices.len() / SHARED_SIZE, |m| m.positions.len())
+    }
+
+    /// The bytes its vertices take on the GPU, [`SHARED_SIZE`] each.
+    pub fn vertex_byte_len(&self) -> usize {
+        self.vertex_count().saturating_mul(SHARED_SIZE)
+    }
+
+    /// The vertex indices, three per triangle.
+    pub fn indices(&self) -> &[u32] {
+        self.mesh.as_ref().map_or(&self.indices, |m| m.triangles.as_flattened())
+    }
+
+    /// The vertices as the GPU takes them, [`SHARED_SIZE`] bytes each: made for the upload when
+    /// they are a mesh's.
+    fn vertex_bytes(&self) -> std::borrow::Cow<'_, [u8]> {
+        match &self.mesh {
+            Some(m) => std::borrow::Cow::Owned(flat_vertices(&m.positions)),
+            None => std::borrow::Cow::Borrowed(&self.vertices),
+        }
     }
 
     /// Vertex `i`: position and normal.
     fn vertex(&self, i: u32) -> ([f32; 3], [f32; 3]) {
+        if let Some(m) = &self.mesh {
+            return (m.positions.get(i as usize).map_or([0.0; 3], |p| p.to_f32()), [0.0; 3]);
+        }
         let at = i as usize * SHARED_SIZE;
         let f = |k: usize| self.vertices.get(at + 4 * k..at + 4 * k + 4).and_then(|x| x.try_into().ok()).map_or(0.0, f32::from_le_bytes);
         ([f(0), f(1), f(2)], [f(3), f(4), f(5)])
     }
 
+    /// Each vertex's position, in order, in the part's frame.
+    pub fn positions(&self) -> impl Iterator<Item = [f32; 3]> + '_ {
+        (0..u32::try_from(self.vertex_count()).unwrap_or(u32::MAX)).map(move |i| self.vertex(i).0)
+    }
+
     /// Each triangle's corners (position, and the normal they are lit with: a flat triangle's
     /// own), in the part's frame.
     pub fn corners(&self) -> impl Iterator<Item = [([f32; 3], [f32; 3]); 3]> + '_ {
-        self.indices.as_chunks::<3>().0.iter().map(move |t| {
+        self.indices().as_chunks::<3>().0.iter().map(move |t| {
             let c = t.map(|i| self.vertex(i));
             if !self.flat {
                 return c;
@@ -606,7 +665,7 @@ impl SharedTris {
     /// The triangles unshared ([`SHARED_SIZE`] bytes per corner, three per triangle): for a mesh
     /// too large for one buffer.
     fn unshared(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.indices.len() * SHARED_SIZE);
+        let mut out = Vec::with_capacity(self.indices().len() * SHARED_SIZE);
         for t in self.corners() {
             for (p, n) in t {
                 for v in p.iter().chain(&n) {
@@ -616,6 +675,31 @@ impl SharedTris {
         }
         out
     }
+}
+
+/// Flat-lit vertices as the GPU takes them: each position, and a zero normal (the fragment takes
+/// its triangle's), [`SHARED_SIZE`] bytes.
+fn flat_vertices(positions: &[Vec3]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(positions.len() * SHARED_SIZE);
+    for p in positions {
+        for v in p.to_f32().iter().chain(&[0.0f32; 3]) {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    out
+}
+
+/// The box (min, max) around `points`.
+fn bounds_of(points: impl Iterator<Item = [f32; 3]>) -> [[f32; 3]; 2] {
+    let mut lo = [f32::INFINITY; 3];
+    let mut hi = [f32::NEG_INFINITY; 3];
+    for p in points {
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    [lo, hi]
 }
 
 /// How an [`InstancedMesh`]'s placements are drawn: opaque, or see-through (their colour's alpha)
@@ -656,6 +740,25 @@ pub struct InstancedMesh {
     /// the renderer draws edges this way, [`GpuTarget::edges`]); `None` when its edges are drawn
     /// from the scene's blocks.
     pub edges: Option<Arc<SharedEdges>>,
+    /// A colour painted on each vertex (a scan's deviation map), over the placement's own colour:
+    /// drawn only where the opaque triangles are.
+    pub paint: Option<Arc<InstancePaint>>,
+}
+
+/// Colours painted on an [`InstancedMesh`]'s vertices, packed as the palette packs its entries
+/// (red in the low byte, then green, blue and alpha; sRGB): one list for its triangles and one for
+/// each of its levels, in order, each a colour for every vertex. A vertex of alpha 0 keeps the
+/// placement's colour; any other alpha paints it (the placement's alpha stays). A level with no
+/// list, or one of the wrong length, is not painted. 4 bytes a vertex on the GPU, so a scan of a
+/// hundred million triangles is painted where a cell for each of its triangles would not fit.
+#[derive(Debug, Default)]
+pub struct InstancePaint {
+    pub levels: Vec<Arc<Vec<u32>>>,
+}
+
+/// A painted vertex's colour, packed as [`InstancePaint`] keeps it.
+pub fn paint_colour(rgb: [u8; 3]) -> u32 {
+    u32::from_le_bytes([rgb[0], rgb[1], rgb[2], 255])
 }
 
 impl InstancedMesh {
@@ -1731,19 +1834,20 @@ enum SharedGpu {
 impl SharedGpu {
     fn new(device: &wgpu::Device, tris: &SharedTris) -> Option<SharedGpu> {
         let limit = device.limits().max_buffer_size;
-        let index_bytes = (tris.indices.len() * 4) as u64;
-        if tris.vertices.is_empty() || tris.indices.is_empty() {
+        let index_bytes = (tris.indices().len() * 4) as u64;
+        if tris.vertex_count() == 0 || tris.indices().is_empty() {
             return None;
         }
-        if tris.vertices.len() as u64 > limit || index_bytes > limit {
+        if (tris.vertex_count() * SHARED_SIZE) as u64 > limit || index_bytes > limit {
             return upload(device, "sc_instanced_unshared", &tris.unshared(), SHARED_SIZE).map(SharedGpu::Unshared);
         }
         let buffer = |label: &str, contents: &[u8], usage: wgpu::BufferUsages| buffer_init(device, label, contents, usage);
-        let indices: Vec<u8> = tris.indices.iter().flat_map(|i| i.to_le_bytes()).collect();
+        let vertices = buffer("sc_instanced_vertices", &tris.vertex_bytes(), wgpu::BufferUsages::VERTEX)?;
+        let indices: Vec<u8> = tris.indices().iter().flat_map(|i| i.to_le_bytes()).collect();
         Some(SharedGpu::Indexed {
-            vertices: buffer("sc_instanced_vertices", &tris.vertices, wgpu::BufferUsages::VERTEX)?,
+            vertices,
             indices: buffer("sc_instanced_indices", &indices, wgpu::BufferUsages::INDEX)?,
-            count: u32::try_from(tris.indices.len()).unwrap_or(u32::MAX),
+            count: u32::try_from(tris.indices().len()).unwrap_or(u32::MAX),
         })
     }
 }
@@ -1901,12 +2005,65 @@ impl<'a> PlacedBox<'a> {
     }
 }
 
+/// The colours painted on a level's vertices on the GPU ([`InstancePaint`]): one buffer beside
+/// shared vertices, or one beside each buffer of unshared ones, a colour for each corner.
+enum PaintGpu {
+    Indexed(wgpu::Buffer),
+    Unshared(Vec<wgpu::Buffer>),
+}
+
+impl PaintGpu {
+    /// `colours` (one a vertex of `tris`) for `gpu`, the triangles as uploaded. `None` for a list
+    /// of the wrong length, or one the device refuses.
+    fn new(device: &wgpu::Device, tris: &SharedTris, gpu: &SharedGpu, colours: &[u32]) -> Option<PaintGpu> {
+        if colours.len() != tris.vertex_count() {
+            return None;
+        }
+        let bytes = |c: &mut dyn Iterator<Item = u32>| c.flat_map(u32::to_le_bytes).collect::<Vec<u8>>();
+        match gpu {
+            SharedGpu::Indexed { .. } => {
+                buffer_init(device, "sc_instanced_paint", &bytes(&mut colours.iter().copied()), wgpu::BufferUsages::VERTEX).map(PaintGpu::Indexed)
+            }
+            SharedGpu::Unshared(batch) => {
+                // A colour for each corner, in the order the corners were unshared, cut as they were.
+                let mut corners = tris.indices().iter().map(|i| colours.get(*i as usize).copied().unwrap_or(0));
+                let mut parts = Vec::with_capacity(batch.parts.len());
+                for (_, count) in &batch.parts {
+                    let part = bytes(&mut corners.by_ref().take(*count as usize));
+                    parts.push(buffer_init(device, "sc_instanced_paint", &part, wgpu::BufferUsages::VERTEX)?);
+                }
+                Some(PaintGpu::Unshared(parts))
+            }
+            // A painted mesh is not put in the arena (`indirect::Indirect::new` draws it alone).
+            SharedGpu::InArena { .. } => None,
+        }
+    }
+
+    fn bytes(&self) -> u64 {
+        match self {
+            PaintGpu::Indexed(b) => b.size(),
+            PaintGpu::Unshared(parts) => parts.iter().map(wgpu::Buffer::size).sum(),
+        }
+    }
+
+    /// Whether it has a buffer for every buffer of `tris`.
+    fn fits(&self, tris: &SharedGpu) -> bool {
+        match (self, tris) {
+            (PaintGpu::Indexed(_), SharedGpu::Indexed { .. }) => true,
+            (PaintGpu::Unshared(parts), SharedGpu::Unshared(batch)) => parts.len() == batch.parts.len(),
+            _ => false,
+        }
+    }
+}
+
 /// One level of an [`InstancedDraw`]: its triangles and the placements drawn from it.
 #[derive(Clone)]
 struct LevelDraw {
     tris: Arc<SharedGpu>,
     /// The triangles `tris` were uploaded from (the indirect arena's, [`indirect`]).
     src: Arc<SharedTris>,
+    /// The colours painted on its vertices, when it is painted ([`InstancedMesh::paint`]).
+    paint: Option<Arc<PaintGpu>>,
     flat: bool,
     /// How far it strays from the full triangles (mm; 0 for them).
     error: f32,
@@ -1937,18 +2094,44 @@ struct InstancedDraw {
 
 impl InstancedDraw {
     /// Draw every placement in view, from its level, with `smooth` or `flat` as the level's
-    /// triangles are lit.
-    pub(crate) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, smooth: &wgpu::RenderPipeline, flat: &wgpu::RenderPipeline, tally: &Tally) {
+    /// triangles are lit; a painted level with `painted` (smooth, flat) when given, else as the
+    /// others.
+    pub(crate) fn draw(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        smooth: &wgpu::RenderPipeline,
+        flat: &wgpu::RenderPipeline,
+        painted: Option<(&wgpu::RenderPipeline, &wgpu::RenderPipeline)>,
+        tally: &Tally,
+    ) {
         for level in &self.levels {
-            pass.set_pipeline(if level.flat { flat } else { smooth });
-            level.draw(pass, tally);
+            // A painted pipeline reads buffer 2 at every vertex: only with a buffer for each.
+            let paint = level.paint.as_deref().filter(|p| p.fits(&level.tris)).zip(painted);
+            let pipeline = match paint {
+                Some((_, (smooth, flat))) => {
+                    if level.flat {
+                        flat
+                    } else {
+                        smooth
+                    }
+                }
+                None => {
+                    if level.flat {
+                        flat
+                    } else {
+                        smooth
+                    }
+                }
+            };
+            pass.set_pipeline(pipeline);
+            level.draw(pass, paint.map(|(p, _)| p), tally);
         }
     }
 }
 
 impl LevelDraw {
-    /// Draw its placements (in vertex buffer 1).
-    fn draw(&self, pass: &mut wgpu::RenderPass<'_>, tally: &Tally) {
+    /// Draw its placements (in vertex buffer 1), with `paint`'s colours (in vertex buffer 2).
+    fn draw(&self, pass: &mut wgpu::RenderPass<'_>, paint: Option<&PaintGpu>, tally: &Tally) {
         if self.count == 0 {
             return;
         }
@@ -1956,6 +2139,9 @@ impl LevelDraw {
         match &*self.tris {
             SharedGpu::Indexed { vertices, indices, count } => {
                 pass.set_vertex_buffer(0, vertices.slice(..));
+                if let Some(PaintGpu::Indexed(colours)) = paint {
+                    pass.set_vertex_buffer(2, colours.slice(..));
+                }
                 pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..*count, 0, 0..self.count);
                 tally.triangles(*count, self.count);
@@ -1967,8 +2153,13 @@ impl LevelDraw {
                 tally.triangles(*count, self.count);
             }
             SharedGpu::Unshared(batch) => {
-                for (buffer, count) in &batch.parts {
+                for (k, (buffer, count)) in batch.parts.iter().enumerate() {
                     pass.set_vertex_buffer(0, buffer.slice(..));
+                    if let Some(PaintGpu::Unshared(parts)) = paint
+                        && let Some(colours) = parts.get(k)
+                    {
+                        pass.set_vertex_buffer(2, colours.slice(..));
+                    }
                     pass.draw(0..*count, 0..self.count);
                     tally.triangles(*count, self.count);
                 }
@@ -2456,6 +2647,9 @@ struct Batches {
     /// The instanced meshes' triangles (and their levels) on the GPU, by the address of the
     /// triangles they were uploaded from (held, so it stays theirs).
     instanced_tris: std::collections::HashMap<usize, (Arc<SharedTris>, Arc<SharedGpu>)>,
+    /// The colours painted on them on the GPU, by the address of the colours they were uploaded
+    /// from and of the triangles they paint (both held, so the addresses stay theirs).
+    instanced_paint: std::collections::HashMap<(usize, usize), (Arc<Vec<u32>>, Arc<SharedGpu>, Arc<PaintGpu>)>,
     /// Evaluated chunks by their plans' addresses, holding the plans so the addresses stay
     /// theirs: a chunk whose plans are unchanged is not evaluated again when the scene is rebuilt.
     resident: std::collections::HashMap<Vec<usize>, (Vec<Arc<solidcore_tess::TessPlan>>, Arc<crate::GpuMesh>)>,
@@ -2727,6 +2921,7 @@ impl Batches {
         arena: Option<&indirect::Arena>,
     ) -> Vec<InstancedDraw> {
         let mut kept = std::mem::take(&mut self.instanced_tris);
+        let mut kept_paint = std::mem::take(&mut self.instanced_paint);
         let mut out = Vec::with_capacity(meshes.len());
         for m in meshes {
             let count = u32::try_from(m.count()).unwrap_or(u32::MAX);
@@ -2754,7 +2949,7 @@ impl Batches {
                             Some(t) => t,
                             None => match SharedGpu::new(device, tris) {
                                 Some(g) => {
-                                    self.uploads.geometry += (tris.vertices.len() + tris.indices.len() * 4) as u64;
+                                    self.uploads.geometry += (tris.vertex_count() * SHARED_SIZE + tris.indices().len() * 4) as u64;
                                     (tris.clone(), Arc::new(g))
                                 }
                                 None => continue,
@@ -2768,8 +2963,26 @@ impl Batches {
                     continue;
                 };
                 self.uploads.placements += placements.len() as u64;
+                // The colours painted on this level, uploaded once while they and its triangles
+                // come back.
+                let paint = m.paint.as_ref().and_then(|p| p.levels.get(i)).and_then(|colours| {
+                    let at = (Arc::as_ptr(colours) as usize, Arc::as_ptr(&gpu.1) as usize);
+                    let same = |(c, g, _): &(Arc<Vec<u32>>, Arc<SharedGpu>, Arc<PaintGpu>)| Arc::ptr_eq(c, colours) && Arc::ptr_eq(g, &gpu.1);
+                    let shared = || donor?.instanced_paint.get(&at).filter(|e| same(e)).cloned();
+                    let entry = match kept_paint.remove(&at).or_else(|| self.instanced_paint.remove(&at)).filter(same).or_else(shared) {
+                        Some(e) => e,
+                        None => {
+                            let made = Arc::new(PaintGpu::new(device, tris, &gpu.1, colours)?);
+                            self.uploads.geometry += made.bytes();
+                            (colours.clone(), gpu.1.clone(), made)
+                        }
+                    };
+                    let made = entry.2.clone();
+                    self.instanced_paint.insert(at, entry);
+                    Some(made)
+                });
                 let count = if i == 0 { count } else { 0 };
-                levels.push(LevelDraw { tris: gpu.1.clone(), src: tris.clone(), flat: tris.flat, error, instances, count });
+                levels.push(LevelDraw { tris: gpu.1.clone(), src: tris.clone(), paint, flat: tris.flat, error, instances, count });
                 // A mesh in the arena is drawn from there: it keeps no buffers of its own.
                 if !matches!(*gpu.1, SharedGpu::InArena { .. }) {
                     self.instanced_tris.insert(key, gpu);
@@ -2919,14 +3132,16 @@ impl Batches {
         closed_only: bool,
         smooth: &wgpu::RenderPipeline,
         flat: &wgpu::RenderPipeline,
+        painted: Option<(&wgpu::RenderPipeline, &wgpu::RenderPipeline)>,
         tally: &Tally,
     ) {
         if let Some(indirect) = &self.indirect {
             indirect.draw(pass, look, closed_only, smooth, flat, tally);
         }
+        // The others on their own: a painted level (a scan's deviation map) with `painted`.
         for (n, d) in self.instanced.iter().enumerate() {
             if d.look == look && (d.closed || !closed_only) && !self.indirect.as_ref().is_some_and(|x| x.batches(n)) {
-                d.draw(pass, smooth, flat, tally);
+                d.draw(pass, smooth, flat, painted, tally);
             }
         }
     }
@@ -3087,10 +3302,21 @@ pub struct Renderer {
     tri_cut_instanced: Option<Cut>,
     /// `tri_instanced` and `tri_cut_instanced` for flat triangles.
     tri_instanced_flat: wgpu::RenderPipeline,
+    /// `tri_instanced` and `tri_instanced_flat` for meshes with colours painted on their vertices
+    /// (smooth, flat).
+    tri_instanced_painted: (wgpu::RenderPipeline, wgpu::RenderPipeline),
+    /// `tri_instanced_painted` for a section's `rest` pass (smooth, flat): a painted scan cut by a
+    /// section keeps its colours on the part left.
+    tri_cut_instanced_painted: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     /// `glass_far`, `glass_near` and `trans` for instanced meshes, smooth and flat.
     glass_far_instanced: (wgpu::RenderPipeline, wgpu::RenderPipeline),
     glass_near_instanced: (wgpu::RenderPipeline, wgpu::RenderPipeline),
     trans_instanced: (wgpu::RenderPipeline, wgpu::RenderPipeline),
+    /// `glass_far_instanced`, `glass_near_instanced` and `trans_instanced` painting a scan's
+    /// vertices (smooth, flat): a see-through or faded scan keeps its colours.
+    glass_far_painted: (wgpu::RenderPipeline, wgpu::RenderPipeline),
+    glass_near_painted: (wgpu::RenderPipeline, wgpu::RenderPipeline),
+    trans_instanced_painted: (wgpu::RenderPipeline, wgpu::RenderPipeline),
     tri_cut_instanced_flat: Option<Cut>,
     /// The tessellation compute pipeline, where the device runs compute shaders.
     tess: Option<crate::TessGpu>,
@@ -3490,6 +3716,10 @@ enum TriSource {
     Instanced,
     /// [`TriSource::Instanced`] for flat triangles: each fragment takes its triangle's normal.
     InstancedFlat,
+    /// [`TriSource::Instanced`] and [`TriSource::InstancedFlat`] with a colour painted on each
+    /// vertex ([`paint_layout`]).
+    InstancedPainted,
+    InstancedFlatPainted,
 }
 
 impl TriSource {
@@ -3498,6 +3728,8 @@ impl TriSource {
         match self {
             TriSource::Instanced => "vs_tri_inst",
             TriSource::InstancedFlat => "vs_tri_inst_flat",
+            TriSource::InstancedPainted => "vs_tri_inst_painted",
+            TriSource::InstancedFlatPainted => "vs_tri_inst_flat_painted",
             TriSource::Built => "vs_tri",
             TriSource::Planned => "vs_tri_planned",
         }
@@ -3506,10 +3738,16 @@ impl TriSource {
     /// The fragment shader entry point standing for `fs` (written for [`TriSource::Built`]).
     fn fragment(self, fs: &str) -> String {
         match self {
-            TriSource::InstancedFlat => format!("{fs}_flat"),
+            TriSource::InstancedFlat | TriSource::InstancedFlatPainted => format!("{fs}_flat"),
             _ => fs.to_string(),
         }
     }
+}
+
+/// The colours painted on an instanced mesh's vertices ([`InstancePaint`]), one per vertex.
+fn paint_layout() -> wgpu::VertexBufferLayout<'static> {
+    const A: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![7 => Uint32];
+    wgpu::VertexBufferLayout { array_stride: 4, step_mode: wgpu::VertexStepMode::Vertex, attributes: &A }
 }
 
 /// A planned body's colours, one per vertex.
@@ -3783,14 +4021,16 @@ impl Renderer {
         };
         // See-through instanced meshes: blended, depth tested, not written; `cull` for glass.
         let placed_see_through = [Some(shared_layout()), Some(instance_layout())];
+        let painted_see_through = [Some(shared_layout()), Some(instance_layout()), Some(paint_layout())];
         let see_through = |label: &str, source: TriSource, cull: Option<wgpu::Face>| {
+            let painted = matches!(source, TriSource::InstancedPainted | TriSource::InstancedFlatPainted);
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&layout),
                 vertex: wgpu::VertexState {
                     module: &module,
                     entry_point: Some(source.entry()),
-                    buffers: &placed_see_through,
+                    buffers: if painted { &painted_see_through } else { &placed_see_through },
                     compilation_options: Default::default(),
                 },
                 primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, cull_mode: cull, ..Default::default() },
@@ -3906,6 +4146,7 @@ impl Renderer {
         let built = [Some(tri_layout())];
         let evaluated = [Some(planned_layout()), Some(color_layout())];
         let placed = [Some(shared_layout()), Some(instance_layout())];
+        let painted = [Some(shared_layout()), Some(instance_layout()), Some(paint_layout())];
         // `colour`: whether the pipeline writes colour (the cap's depth pass writes none).
         let solid_writes = |label: &str, fs: &str, cull: Option<wgpu::Face>, ds: Option<wgpu::DepthStencilState>, source: TriSource, colour: bool| {
             let fs = source.fragment(fs);
@@ -3919,6 +4160,7 @@ impl Renderer {
                         TriSource::Built => &built[..],
                         TriSource::Planned => &evaluated[..],
                         TriSource::Instanced | TriSource::InstancedFlat => &placed[..],
+                        TriSource::InstancedPainted | TriSource::InstancedFlatPainted => &painted[..],
                     },
                     compilation_options: Default::default(),
                 },
@@ -3986,6 +4228,14 @@ impl Renderer {
             cut_states
                 .as_ref()
                 .map(|(_, _, _, cap)| solid_writes("sc_tris_cap", "fs_solid_cut", Some(wgpu::Face::Front), Some(cap.clone()), source, false))
+        };
+        let cut_painted = || {
+            cut_states.as_ref().map(|(_, _, rest, _)| {
+                (
+                    solid("sc_tris_rest_painted", "fs_solid_open", None, rest.clone(), TriSource::InstancedPainted),
+                    solid("sc_tris_rest_flat_painted", "fs_solid_open", None, rest.clone(), TriSource::InstancedFlatPainted),
+                )
+            })
         };
         type Marks = (wgpu::RenderPipeline, wgpu::RenderPipeline, wgpu::RenderPipeline);
         let cut =
@@ -4076,6 +4326,15 @@ impl Renderer {
         };
         let caps = || (cap(TriSource::Built), cap(TriSource::Planned), cap(TriSource::Instanced));
         let flat = || (solid("sc_tris_instanced_flat", "fs_solid", None, opaque(), TriSource::InstancedFlat), marks(TriSource::InstancedFlat));
+        // A scan painted with its deviation lies on the model it is measured from: pushed back
+        // half as far as faces, it is drawn where the two meet, not speckled with the model.
+        let painted_depth = || pushed(wgpu::CompareFunction::Less, true, PAINT_BIAS);
+        let painted = || {
+            (
+                solid("sc_tris_instanced_painted", "fs_solid", None, painted_depth(), TriSource::InstancedPainted),
+                solid("sc_tris_instanced_flat_painted", "fs_solid", None, painted_depth(), TriSource::InstancedFlatPainted),
+            )
+        };
         let flat_cap = || cap(TriSource::InstancedFlat);
         let hover = || {
             (
@@ -4176,6 +4435,7 @@ impl Renderer {
             let tris = jobs.spawn(tris);
             let caps = jobs.spawn(caps);
             let flat = jobs.spawn(flat);
+            let painted = jobs.spawn(painted);
             let flat_cap = jobs.spawn(flat_cap);
             let hover = jobs.spawn(hover);
             let selected = jobs.spawn(selected);
@@ -4196,6 +4456,8 @@ impl Renderer {
             let (tri, tri_marks, tri_planned, planned_marks, tri_instanced, instanced_marks) = tris.join();
             let (tri_cap, planned_cap, instanced_cap) = caps.join();
             let (tri_instanced_flat, flat_marks) = flat.join();
+            let tri_instanced_painted = painted.join();
+            let tri_cut_instanced_painted = cut_painted();
             let (tri_hl_hover, tri_hl_hover_built, tri_hl_hover_instanced, tri_hl_hover_instanced_flat) = hover.join();
             let (tri_hl_selected, tri_hl_selected_built) = selected.join();
             let (
@@ -4210,6 +4472,9 @@ impl Renderer {
                 tri_hl_planned,
             ) = see_through_tris.join();
             let ((glass_far_flat, glass_near_flat, trans_flat), tri_hl_instanced_flat) = see_through_flat.join();
+            let (glass_far_painted, glass_near_painted, trans_painted) = see_through_instanced(TriSource::InstancedPainted, "_painted");
+            let (glass_far_flat_painted, glass_near_flat_painted, trans_flat_painted) =
+                see_through_instanced(TriSource::InstancedFlatPainted, "_flat_painted");
             let (line, line_hidden, line_lit, line_lit_hidden, line_depth) = lines.join();
             // Instanced edges: their own module (the viewport's shaders and the edge shaders,
             // which read a storage buffer in the vertex stage), only where the device can.
@@ -4309,10 +4574,15 @@ impl Renderer {
                 tri_instanced,
                 tri_cut_instanced: cut(instanced_marks, instanced_cap),
                 tri_instanced_flat,
+                tri_instanced_painted,
+                tri_cut_instanced_painted,
                 tri_cut_instanced_flat: cut(flat_marks, flat_cap.join()),
                 glass_far_instanced: (glass_far_smooth, glass_far_flat),
                 glass_near_instanced: (glass_near_smooth, glass_near_flat),
                 trans_instanced: (trans_smooth, trans_flat),
+                glass_far_painted: (glass_far_painted, glass_far_flat_painted),
+                glass_near_painted: (glass_near_painted, glass_near_flat_painted),
+                trans_instanced_painted: (trans_painted, trans_flat_painted),
                 tess,
                 #[cfg(not(target_arch = "wasm32"))]
                 tess_later: None,
@@ -4402,6 +4672,10 @@ pub const FACE_STEPS: i32 = 8;
 /// 3.5 px) may lose its outer edge on one side where it lies on a steep face. The section cap,
 /// which writes its own depth, adds the same in the shader.
 pub const FACE_SLOPE: f32 = 1.0;
+/// A painted scan (coloured by deviation, Scan Deviation's map) is pushed back half as far as
+/// [`FACE_BIAS`]: still behind the lines and edges drawn on it, but in front of a model's face it
+/// coincides with, which it would otherwise tie with pixel by pixel.
+const PAINT_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState { constant: FACE_STEPS / 2, slope_scale: FACE_SLOPE / 2.0, clamp: 0.0 };
 /// The model's edges' depth, written before its see-through faces are drawn (`line_depth`): pushed
 /// back as [`FACE_BIAS`] pushes an opaque face, so a see-through body's own faces at its edges
 /// still pass and tint them, while a face further behind (faded context, another see-through body)
@@ -5247,11 +5521,16 @@ impl Renderer {
                 tally.triangles(d.mesh.index_count, 1);
             }
         };
-        // Instanced meshes, with the pipeline for smooth and for flat triangles.
-        let instanced =
-            |pass: &mut wgpu::RenderPass<'static>, smooth: &wgpu::RenderPipeline, flat: &wgpu::RenderPipeline, b: &Batches, counting: bool| {
-                b.draw_instanced(pass, InstanceLook::Opaque, counting, smooth, flat, tally);
-            };
+        // Instanced meshes, with the pipeline for smooth and for flat triangles; their painted
+        // levels with `painted`'s where given (the shaded pass, and a section's `rest`).
+        let instanced = |pass: &mut wgpu::RenderPass<'static>,
+                         smooth: &wgpu::RenderPipeline,
+                         flat: &wgpu::RenderPipeline,
+                         painted: Option<(&wgpu::RenderPipeline, &wgpu::RenderPipeline)>,
+                         b: &Batches,
+                         counting: bool| {
+            b.draw_instanced(pass, InstanceLook::Opaque, counting, smooth, flat, painted, tally);
+        };
         // Whole highlighted bodies: the model's own evaluated plan triangles, drawn again in a
         // highlight colour (the pipeline adds or replaces the vertex colour).
         let tinted = |pass: &mut wgpu::RenderPass<'static>, p: &wgpu::RenderPipeline, plans: &[Arc<solidcore_tess::TessPlan>]| {
@@ -5286,7 +5565,7 @@ impl Renderer {
         let tinted_instanced =
             |pass: &mut wgpu::RenderPass<'static>, smooth: &wgpu::RenderPipeline, flat: &wgpu::RenderPipeline, list: &[InstancedDraw]| {
                 for d in list.iter().filter(|d| d.look == InstanceLook::Opaque) {
-                    d.draw(pass, smooth, flat, tally);
+                    d.draw(pass, smooth, flat, None, tally);
                 }
             };
         let sectioned = cb.clip[0][..3].iter().map(|c| c * c).sum::<f32>() > 0.25;
@@ -5301,7 +5580,11 @@ impl Renderer {
                 // The model's own triangles, blocks, plans and instances with its palette, then the
                 // preview's with its own.
                 // `counting`: the crossing count, which leaves open bodies out.
-                let all = |pass: &mut wgpu::RenderPass<'static>, pick: fn(&Cut) -> &wgpu::RenderPipeline, counting: bool| {
+                // `painted`: the pipelines that paint a scan's vertices (the `rest` pass alone).
+                let all = |pass: &mut wgpu::RenderPass<'static>,
+                           pick: fn(&Cut) -> &wgpu::RenderPipeline,
+                           counting: bool,
+                           painted: Option<(&wgpu::RenderPipeline, &wgpu::RenderPipeline)>| {
                     pass.set_bind_group(0, scene_bind(m, &res.bind), &[]);
                     tris(pass, pick(cut), &m.tris);
                     if counting {
@@ -5314,7 +5597,7 @@ impl Renderer {
                         block_class(pass, pick(cut), TriClass::Opaque);
                     }
                     planned(pass, pick(cut_planned), m, counting);
-                    instanced(pass, pick(cut_instanced), pick(cut_flat), m, counting);
+                    instanced(pass, pick(cut_instanced), pick(cut_flat), painted, m, counting);
                     in_moving(pass, &|pass, mv| {
                         tris(pass, pick(cut), &mv.tris);
                         if counting {
@@ -5327,7 +5610,7 @@ impl Renderer {
                             blocks_of(pass, pick(cut), TriClass::Opaque, mv);
                         }
                         planned(pass, pick(cut_planned), mv, counting);
-                        instanced(pass, pick(cut_instanced), pick(cut_flat), mv, counting);
+                        instanced(pass, pick(cut_instanced), pick(cut_flat), painted, mv, counting);
                     });
                     pass.set_bind_group(0, scene_bind(pv, &res.bind), &[]);
                     tris(pass, pick(cut), &pv.tris);
@@ -5339,10 +5622,10 @@ impl Renderer {
                 pass.set_pipeline(base);
                 pass.draw(0..3, 0..1);
                 tally.call();
-                all(pass, |c| &c.count, true);
-                all(pass, |c| &c.fill, false);
-                all(pass, |c| &c.cap, false);
-                all(pass, |c| &c.rest, false);
+                all(pass, |c| &c.count, true, None);
+                all(pass, |c| &c.fill, false, None);
+                all(pass, |c| &c.cap, false, None);
+                all(pass, |c| &c.rest, false, res.tri_cut_instanced_painted.as_ref().map(|(s, f)| (s, f)));
             }
             _ => {
                 pass.set_bind_group(0, scene_bind(m, &res.bind), &[]);
@@ -5350,13 +5633,27 @@ impl Renderer {
                 tris(pass, &res.tri, &m.open_tris);
                 block_class(pass, &res.tri, TriClass::Opaque);
                 planned(pass, &res.tri_planned, m, false);
-                instanced(pass, &res.tri_instanced, &res.tri_instanced_flat, m, false);
+                instanced(
+                    pass,
+                    &res.tri_instanced,
+                    &res.tri_instanced_flat,
+                    Some((&res.tri_instanced_painted.0, &res.tri_instanced_painted.1)),
+                    m,
+                    false,
+                );
                 in_moving(pass, &|pass, mv| {
                     tris(pass, &res.tri, &mv.tris);
                     tris(pass, &res.tri, &mv.open_tris);
                     blocks_of(pass, &res.tri, TriClass::Opaque, mv);
                     planned(pass, &res.tri_planned, mv, false);
-                    instanced(pass, &res.tri_instanced, &res.tri_instanced_flat, mv, false);
+                    instanced(
+                        pass,
+                        &res.tri_instanced,
+                        &res.tri_instanced_flat,
+                        Some((&res.tri_instanced_painted.0, &res.tri_instanced_painted.1)),
+                        mv,
+                        false,
+                    );
                 });
                 pass.set_bind_group(0, scene_bind(pv, &res.bind), &[]);
                 tris(pass, &res.tri, &pv.tris);
@@ -5367,10 +5664,15 @@ impl Renderer {
         tris(pass, &res.pbr, &m.pbr);
         if !cb.product {
             res.clouds.paint(pass, &res.cloud_pipes, tally);
+            // A cloud's style takes group 1: the passes after it (the ground's shadow) read the
+            // access group there, as set at the start of the pass. Left as the cloud's, every
+            // frame with a cloud (a point cloud, a scan's deviation map or found shapes) and the
+            // ground's shadow failed validation and was not drawn.
+            pass.set_bind_group(1, &res.access_bind, &[]);
         }
         in_moving(pass, &|pass, mv| tris(pass, &res.pbr, &mv.pbr));
         block_class(pass, &res.pbr_palette, TriClass::Pbr);
-        m.draw_instanced(pass, InstanceLook::Pbr, false, &res.pbr_instanced, &res.pbr_instanced, tally);
+        m.draw_instanced(pass, InstanceLook::Pbr, false, &res.pbr_instanced, &res.pbr_instanced, None, tally);
         // Whole-body tints first, so a face or an edge highlighted over the body (in `h.tris`
         // and `h.lines`) keeps its own colour, as it did when the body's triangles were built
         // into the same list before them.
@@ -5506,28 +5808,33 @@ impl Renderer {
             return;
         }
         // See-through instanced meshes (placements back to front) with the rest of their kind.
-        let see_through =
-            |pass: &mut wgpu::RenderPass<'static>, look: InstanceLook, (smooth, flat): &(wgpu::RenderPipeline, wgpu::RenderPipeline), b: &Batches| {
-                b.draw_instanced(pass, look, false, smooth, flat, tally);
-            };
+        // A see-through or faded scan's painted colours, with its look's own alpha: the painted
+        // pipelines of the same pass (`painted`, smooth and flat).
+        let see_through = |pass: &mut wgpu::RenderPass<'static>,
+                           look: InstanceLook,
+                           (smooth, flat): &(wgpu::RenderPipeline, wgpu::RenderPipeline),
+                           (painted_smooth, painted_flat): &(wgpu::RenderPipeline, wgpu::RenderPipeline),
+                           b: &Batches| {
+            b.draw_instanced(pass, look, false, smooth, flat, Some((painted_smooth, painted_flat)), tally);
+        };
         tris(pass, &res.glass_far, &m.glass);
-        see_through(pass, InstanceLook::Glass, &res.glass_far_instanced, m);
+        see_through(pass, InstanceLook::Glass, &res.glass_far_instanced, &res.glass_far_painted, m);
         in_moving(pass, &|pass, mv| {
             tris(pass, &res.glass_far, &mv.glass);
-            see_through(pass, InstanceLook::Glass, &res.glass_far_instanced, mv);
+            see_through(pass, InstanceLook::Glass, &res.glass_far_instanced, &res.glass_far_painted, mv);
         });
         tris(pass, &res.glass_near, &m.glass);
-        see_through(pass, InstanceLook::Glass, &res.glass_near_instanced, m);
+        see_through(pass, InstanceLook::Glass, &res.glass_near_instanced, &res.glass_near_painted, m);
         in_moving(pass, &|pass, mv| {
             tris(pass, &res.glass_near, &mv.glass);
-            see_through(pass, InstanceLook::Glass, &res.glass_near_instanced, mv);
+            see_through(pass, InstanceLook::Glass, &res.glass_near_instanced, &res.glass_near_painted, mv);
             tris(pass, &res.trans, &mv.trans);
             blocks_of(pass, &res.trans, TriClass::Faded, mv);
-            see_through(pass, InstanceLook::Faded, &res.trans_instanced, mv);
+            see_through(pass, InstanceLook::Faded, &res.trans_instanced, &res.trans_instanced_painted, mv);
         });
         tris(pass, &res.trans, &m.trans);
         block_class(pass, &res.trans, TriClass::Faded);
-        see_through(pass, InstanceLook::Faded, &res.trans_instanced, m);
+        see_through(pass, InstanceLook::Faded, &res.trans_instanced, &res.trans_instanced_painted, m);
         Self::draw_over(res, pass, sk, h, pv, m, moving, &tris, &lines);
     }
 
@@ -5605,7 +5912,7 @@ impl Renderer {
             }
         }
         for look in [InstanceLook::Pbr, InstanceLook::Faded, InstanceLook::Glass] {
-            m.draw_instanced(pass, look, false, &p.instanced, &p.instanced_flat, tally);
+            m.draw_instanced(pass, look, false, &p.instanced, &p.instanced_flat, Some((&p.instanced_painted, &p.instanced_flat_painted)), tally);
         }
     }
 }
@@ -6329,8 +6636,8 @@ mod tests {
         }
         let shared = SharedTris::new(&flat);
         assert!(shared.flat);
-        assert_eq!(shared.vertices.len() / SHARED_SIZE, 4, "the diagonal's ends are shared");
-        assert_eq!(shared.indices.len(), 6);
+        assert_eq!(shared.vertex_count(), 4, "the diagonal's ends are shared");
+        assert_eq!(shared.indices().len(), 6);
         let corners: Vec<_> = shared.corners().flatten().collect();
         for (k, (q, n)) in corners.iter().enumerate() {
             assert_eq!(*q, flat.positions[k].to_f32());
@@ -6351,12 +6658,35 @@ mod tests {
         smooth.normals = vec![Vec3::Z, Vec3::Z, Vec3::new(0.0, 0.6, 0.8), Vec3::Z, Vec3::X, Vec3::new(0.0, 0.6, 0.8)];
         let shared = SharedTris::new(&smooth);
         assert!(!shared.flat);
-        assert_eq!(shared.vertices.len() / SHARED_SIZE, 5, "corner 0 differs in normal only");
+        assert_eq!(shared.vertex_count(), 5, "corner 0 differs in normal only");
         let back: Vec<_> = shared.corners().flatten().map(|(_, n)| n).collect();
         assert_eq!(back, smooth.normals.iter().map(|n| n.to_f32()).collect::<Vec<_>>());
         // Indices past the vertices: the triangle is left out, nothing panics.
         smooth.triangles.push([0, 1, 99]);
-        assert_eq!(SharedTris::new(&smooth).indices.len(), 6);
+        assert_eq!(SharedTris::new(&smooth).indices().len(), 6);
+        // A flat mesh (a mesh body's: corners shared already, no normals) is taken as it is, and
+        // draws the corners the split one did.
+        let mut kept = Mesh { positions: p.to_vec(), triangles: vec![[0, 1, 2], [0, 2, 3]], tri_face: vec![0; 2], ..Default::default() };
+        let shared = SharedTris::new(&kept);
+        assert!(shared.flat);
+        assert_eq!((shared.vertex_count(), shared.indices()), (4, [0, 1, 2, 0, 2, 3].as_slice()));
+        assert_eq!(shared.corners().collect::<Vec<_>>(), SharedTris::new(&flat).corners().collect::<Vec<_>>());
+        assert_eq!(shared.bounds, [[0.0; 3], [1.0, 1.0, 0.0]]);
+        // Held in an `Arc`, it is not copied at all: its bytes are made only for the upload, the
+        // same bytes.
+        let held = std::sync::Arc::new(kept.clone());
+        let lent = SharedTris::of(&held);
+        assert!(lent.vertices.is_empty() && lent.indices.is_empty() && lent.flat);
+        assert!(std::ptr::eq(lent.indices().as_ptr(), held.triangles.as_flattened().as_ptr()));
+        assert_eq!((lent.vertex_count(), lent.bounds), (4, shared.bounds));
+        assert_eq!(lent.vertex_bytes().as_ref(), shared.vertices.as_slice());
+        assert_eq!(lent.corners().collect::<Vec<_>>(), shared.corners().collect::<Vec<_>>());
+        assert_eq!(lent.unshared(), shared.unshared());
+        kept.triangles.push([0, 1, 99]);
+        assert_eq!(SharedTris::new(&kept).indices().len(), 6);
+        // One with a corner out of range is copied without that triangle.
+        let bad = SharedTris::of(&std::sync::Arc::new(kept));
+        assert_eq!((bad.indices().len(), bad.vertices.len() / SHARED_SIZE), (6, 4));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -7571,6 +7901,7 @@ mod glass_tests {
                 levels: Vec::new(),
                 closed: false,
                 edges: None,
+                paint: None,
             };
             let rows = [[1.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]];
             let mut scene = GpuScene::default();
@@ -7723,6 +8054,7 @@ mod glass_tests {
                             look: InstanceLook::Opaque,
                             levels: Vec::new(),
                             closed: false,
+                            paint: None,
                             edges: None,
                         };
                         for (x, z, color) in [(-4.5, 1.0, front), (4.5, -1.0, rear)] {
@@ -7786,6 +8118,116 @@ mod glass_tests {
         }
     }
 
+    /// An instanced mesh painted on its vertices (a scan's deviation map): a painted vertex takes
+    /// its colour, one of alpha 0 keeps the placement's, flat and smooth meshes alike; a list of
+    /// the wrong length paints nothing; the colours uploaded are kept while they come back.
+    #[test]
+    fn an_instanced_mesh_is_painted_on_its_vertices() {
+        use solidcore_record::Vec3;
+        let (_, device, queue) = match crate::open_headless(crate::test_env::policy()) {
+            Ok(opened) => opened,
+            Err(error) if crate::test_env::skip_unless_required(crate::test_env::required(), &error) => return,
+            Err(error) => panic!("required GPU unavailable: {error}"),
+        };
+        let depth = crate::depth_format(&device, true);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mut renderer = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false, edges: false }, None);
+        let has = |img: &[u8], f: &dyn Fn(&[u8; 4]) -> bool| img.as_chunks::<4>().0.iter().any(f);
+        let green = |p: &[u8; 4]| p[1] > 120 && p[0] < 60 && p[2] < 60;
+        let red = |p: &[u8; 4]| p[0] > 120 && p[1] < 60 && p[2] < 60;
+        // A quad, its left two corners painted green and its right two not.
+        let positions = vec![Vec3::new(-8.0, -8.0, 0.0), Vec3::new(8.0, -8.0, 0.0), Vec3::new(8.0, 8.0, 0.0), Vec3::new(-8.0, 8.0, 0.0)];
+        let paint = Arc::new(vec![paint_colour([0, 255, 0]), 0, 0, paint_colour([0, 255, 0])]);
+        for flat in [true, false] {
+            let mesh = Arc::new(solidcore_tess::Mesh {
+                positions: positions.clone(),
+                normals: if flat { Vec::new() } else { vec![Vec3::Z, Vec3::new(0.1, 0.0, 1.0), Vec3::Z, Vec3::new(0.0, 0.1, 1.0)] },
+                triangles: vec![[0, 1, 2], [0, 2, 3]],
+                ..Default::default()
+            });
+            let tris = Arc::new(SharedTris::of(&mesh));
+            assert_eq!(tris.shares_mesh_vertices(), flat);
+            let colours = if tris.shares_mesh_vertices() {
+                paint.clone()
+            } else {
+                Arc::new(tris.from_mesh_vertices(&mesh.triangles, &paint).expect("the triangles it was made from"))
+            };
+            let picture = |renderer: &mut Renderer, colours: Option<Arc<Vec<u32>>>, key: u64| {
+                let mut scene = GpuScene::default();
+                let base = scene.color([255, 0, 0, 255]);
+                let mut m = InstancedMesh {
+                    key: 7,
+                    tris: tris.clone(),
+                    instances: Vec::new(),
+                    look: InstanceLook::Opaque,
+                    levels: Vec::new(),
+                    closed: false,
+                    edges: None,
+                    paint: colours.map(|c| Arc::new(InstancePaint { levels: vec![c] })),
+                };
+                m.place([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]], base);
+                scene.instanced = vec![m];
+                let mut frame = test_frame(scene, 1.0);
+                frame.key = key;
+                render_frame(renderer, &device, &queue, &frame, true)
+            };
+            let plain = picture(&mut renderer, None, 10 + u64::from(flat));
+            assert!(has(&plain, &red) && !has(&plain, &green), "flat {flat}: unpainted, the placement's colour");
+            let painted = picture(&mut renderer, Some(colours.clone()), 20 + u64::from(flat));
+            assert!(has(&painted, &green), "flat {flat}: the painted side");
+            assert!(has(&painted, &red), "flat {flat}: the side left unpainted keeps the placement's colour");
+            let uploaded = renderer.uploads().geometry;
+            let again = picture(&mut renderer, Some(colours.clone()), 30 + u64::from(flat));
+            assert_eq!(painted, again);
+            assert_eq!(renderer.uploads().geometry, uploaded, "flat {flat}: the same colours are not uploaded again");
+            let short = picture(&mut renderer, Some(Arc::new(vec![paint_colour([0, 255, 0])])), 40 + u64::from(flat));
+            assert!(!has(&short, &green), "flat {flat}: a list of the wrong length paints nothing");
+            // With a section shown (its plane clear of the quad), what it leaves is painted too.
+            let mut scene = GpuScene::default();
+            let base = scene.color([255, 0, 0, 255]);
+            let mut m = InstancedMesh {
+                key: 7,
+                tris: tris.clone(),
+                instances: Vec::new(),
+                look: InstanceLook::Opaque,
+                levels: Vec::new(),
+                closed: false,
+                edges: None,
+                paint: Some(Arc::new(InstancePaint { levels: vec![colours.clone()] })),
+            };
+            m.place([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]], base);
+            scene.instanced = vec![m];
+            let mut frame = test_frame(scene, 1.0);
+            frame.key = 50 + u64::from(flat);
+            frame.clip[0] = [0.0, 0.0, 1.0, 100.0];
+            let cut = render_frame(&mut renderer, &device, &queue, &frame, true);
+            assert!(has(&cut, &green) && has(&cut, &red), "flat {flat}: a section keeps the paint on what it leaves");
+            // Faded, or see-through (an opacity given): the paint shows, blended as the look is.
+            for (k, look) in [InstanceLook::Faded, InstanceLook::Glass].into_iter().enumerate() {
+                let mut scene = GpuScene::default();
+                let base = scene.color([255, 0, 0, 128]);
+                let mut m = InstancedMesh {
+                    key: 7,
+                    tris: tris.clone(),
+                    instances: Vec::new(),
+                    look,
+                    levels: Vec::new(),
+                    closed: false,
+                    edges: None,
+                    paint: Some(Arc::new(InstancePaint { levels: vec![colours.clone()] })),
+                };
+                m.place([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]], base);
+                scene.instanced = vec![m];
+                let mut frame = test_frame(scene, 1.0);
+                frame.key = 60 + 2 * k as u64 + u64::from(flat);
+                let shown = render_frame(&mut renderer, &device, &queue, &frame, true);
+                let greener = |p: &[u8; 4]| i32::from(p[1]) > i32::from(p[0]) + 40;
+                let redder = |p: &[u8; 4]| i32::from(p[0]) > i32::from(p[1]) + 40;
+                assert!(has(&shown, &greener) && has(&shown, &redder), "flat {flat}: a {look:?} scan keeps its paint");
+            }
+        }
+    }
+
     #[test]
     fn a_cached_cloud_picture_follows_its_style_without_uploading_again() {
         let Some((_, device, queue)) = crate::open_headless(crate::test_env::policy()).ok() else { return };
@@ -7831,6 +8273,32 @@ mod glass_tests {
         frame.clouds.clear();
         let hidden = render_frame(&mut renderer, &device, &queue, &frame, true);
         assert!(!has(&hidden, &|p| p[0] > 200 && p[1] < 90 && p[2] < 90), "hiding the cloud removes it");
+    }
+
+    /// A cloud drawn with the ground's shadow: the shadow is drawn after the cloud, with the group
+    /// the cloud's style had taken put back. Left as the cloud's, the frame failed validation and
+    /// nothing of it was drawn (a scan's deviation map or found shapes with the ground on).
+    #[test]
+    fn a_cloud_and_the_grounds_shadow_draw_in_one_valid_frame() {
+        use solidcore_record::Vec3;
+        let Ok((_, device, queue)) = crate::open_headless(crate::test_env::policy()) else { return };
+        let depth = crate::depth_format(&device, true);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mut renderer = Renderer::new(&device, GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false, edges: false }, None);
+        let bounds = solidcraft_viewport::vec::Bounds { min: Vec3::new(-5.0, -5.0, 0.0), max: Vec3::new(5.0, 5.0, 2.0) };
+        let mut frame =
+            test_frame(GpuScene { ground_ao: GroundAo::new(bounds, -0.5, solidcraft_viewport::UpAxis::Z, 1.0), ..GpuScene::default() }, 1.0);
+        frame.ao_radius = 1.0;
+        let mut dots = Vec::new();
+        cloud_cell(&mut dots, &Cell { corners: [[0.0, 0.0, 1.0]; 3], rgb: [0, 0, 255], ..Default::default() });
+        let style = CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: 20.0 };
+        let empty = Arc::new(Vec::new());
+        frame.clouds.push(GpuCloud { id: 1, version: 1, dots: Arc::new(dots), segments: empty.clone(), triangles: empty, style });
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let image = render_frame(&mut renderer, &device, &queue, &frame, true);
+        let error = pollster::block_on(scope.pop());
+        assert!(error.is_none(), "{error:?}");
+        assert!(image.as_chunks::<4>().0.iter().any(|p| p[2] > 200 && p[0] < 30), "the dot is drawn");
     }
 
     /// A set of values keeps the part of a bead where its rounded value is kept, as the range
@@ -7920,6 +8388,50 @@ mod glass_tests {
         let img = draw(2, segments, Vec::new());
         assert!(green(&img, ahead.0, ahead.1), "the bead ahead");
         assert!(!green(&img, below.0, below.1), "no wedge of bead below the eye");
+    }
+
+    /// Two painted triangles of one surface, one flat and one tilted as a fine scan's noise tilts
+    /// them: lit each by its own normal they differ (a painted area sparkled), lit by the surface's
+    /// way out given with [`LIT_BY_SURFACE`] they are the same.
+    #[test]
+    fn a_triangle_lit_by_its_surface_ignores_its_own_tilt() {
+        let Some((_, device, queue)) = crate::open_headless(crate::test_env::policy()).ok() else { return };
+        let depth = crate::depth_format(&device, true);
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let target = GpuTarget { format, depth: Some(depth), samples: 1, tess: false, oit: false, edges: false };
+        let mut renderer = Renderer::new(&device, target, None);
+        // Looking along -z from the origin: a point shows at x/d, y/d at distance d = -z.
+        let (near, far) = (0.1f32, 1000.0f32);
+        let (a, b) = (-far / (far - near), -far * near / (far - near));
+        let view_proj = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, a, -1.0], [0.0, 0.0, b, 0.0]];
+        let flat = [[-2.7, -2.0, -3.0], [-0.3, -2.0, -3.0], [-0.3, 2.0, -3.0]];
+        let tilted = [[0.3, -2.0, -3.0], [2.7, -2.0, -1.8], [0.3, 2.0, -3.0]];
+        let mut draw = |version: u64, lit_by_surface: bool| {
+            let mut triangles = Vec::new();
+            for corners in [flat, tilted] {
+                let (neighbours, has) = if lit_by_surface { ([[0.0, 0.0, 1.0], [0.0; 3]], LIT_BY_SURFACE) } else { ([[0.0; 3]; 2], 0) };
+                cloud_cell(&mut triangles, &Cell { corners, neighbours, rgb: [200, 200, 200], has, ..Default::default() });
+            }
+            let mut frame = test_frame(GpuScene::default(), 1.0);
+            frame.view_proj = view_proj;
+            let style = CloudStyle { mode: ColorMode::Own, range: [0.0, 1.0], filters: Default::default(), point_size: 1.0 };
+            frame.clouds.push(GpuCloud {
+                id: 1,
+                version,
+                dots: Arc::new(Vec::new()),
+                segments: Arc::new(Vec::new()),
+                triangles: Arc::new(triangles),
+                style,
+            });
+            render_frame(&mut renderer, &device, &queue, &frame, true)
+        };
+        // Pixel 22 of row 32 is on the flat triangle (x = -0.9 at d = 3), pixel 40 on the tilted one.
+        let at = |img: &[u8], x: usize| img.get((32 * 64 + x) * 4..(32 * 64 + x) * 4 + 3).map(|p| [p[0], p[1], p[2]]).unwrap_or_default();
+        let own = draw(1, false);
+        assert_ne!(at(&own, 22), at(&own, 40), "lit by their own normals the two differ");
+        let surface = draw(2, true);
+        assert!(at(&surface, 22).iter().all(|&c| c > 40), "the flat one is drawn: {:?}", at(&surface, 22));
+        assert_eq!(at(&surface, 22), at(&surface, 40), "lit by the surface's way out they are the same");
     }
 
     /// A still view shows the picture it drew last: a reused frame (whose filtered picture is
@@ -8431,6 +8943,7 @@ mod glass_tests {
             look: InstanceLook::Pbr,
             levels: Vec::new(),
             closed: true,
+            paint: None,
             edges: None,
         };
         instanced.place([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]], PaletteIndex(1));
@@ -8460,6 +8973,7 @@ mod glass_tests {
             levels: Vec::new(),
             closed: true,
             edges: Some(Arc::new(SharedEdges::new(&mesh, |_| true, Vec::new()))),
+            paint: None,
         };
         for x in [0.0, 10.0] {
             m.place_edged([[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]], PaletteIndex(0), PaletteIndex(a), PaletteIndex(b));

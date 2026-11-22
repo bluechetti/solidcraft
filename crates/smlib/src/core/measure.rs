@@ -95,6 +95,14 @@ fn sheet_face(b: &solidcore::Brep, f: FaceId) -> solidcore::Result<bool> {
 /// with no material, and moments about the middle of the box moved to the centroid. A body's area
 /// is every face's: the solid's boundary and its sheet faces (fork 9767916).
 pub(crate) fn mass_properties(body: &Body, relative_accuracy: f64) -> Result<MassProperties> {
+    mass_properties_and_bounds(body, relative_accuracy).map(|(m, _)| m)
+}
+
+/// [`mass_properties`] and the exact box it is centred on: the very box [`bounds`] gives (the
+/// same `brep_bounding_box(k, b, true)` on the same body), when it would give one (finite, least
+/// corner first; else `None`). The box is most of the cost on curved faces (a G2 round's box is
+/// tens of seconds), so a caller that wants both computes it once.
+pub(crate) fn mass_properties_and_bounds(body: &Body, relative_accuracy: f64) -> Result<(MassProperties, Option<([f64; 3], [f64; 3])>)> {
     let accuracy = accuracy(relative_accuracy)?;
     with_body("mass_properties", body, |k, b| {
         let mut material = false;
@@ -111,6 +119,10 @@ pub(crate) fn mass_properties(body: &Body, relative_accuracy: f64) -> Result<Mas
         // the same: an edge on a circle of large radius stretches it a quarter of the circle away
         // (#17361). Its size sets the integration's error scale too.
         let bx = brep_bounding_box(k, b, true)?;
+        // As `bounds` checks it.
+        let (lo, hi) = (bx.min(), bx.max());
+        let (lo, hi) = ([lo.x, lo.y, lo.z], [hi.x, hi.y, hi.z]);
+        let exact = (finite(&lo) && finite(&hi) && lo.iter().zip(&hi).all(|(a, b)| a <= b)).then_some((lo, hi));
         let o = bx.mid();
         if !finite(&[o.x, o.y, o.z]) {
             return Err(invalid("non-finite box"));
@@ -124,7 +136,7 @@ pub(crate) fn mass_properties(body: &Body, relative_accuracy: f64) -> Result<Mas
             if !finite(&[area, c[0], c[1], c[2]]) {
                 return Err(invalid("non-finite result"));
             }
-            return Ok(MassProperties { area, volume: 0.0, centroid: c, moments: [0.0; 3], products: [0.0; 3] });
+            return Ok((MassProperties { area, volume: 0.0, centroid: c, moments: [0.0; 3], products: [0.0; 3] }, exact));
         }
         let p = brep_properties_in_box(k, b, accuracy, o, MassPropertyBehavior { density: 1.0, ..MassPropertyBehavior::default() }, &attrs, &bx)?;
         let (mass, volume) = (p.mass, p.volume);
@@ -150,7 +162,7 @@ pub(crate) fn mass_properties(body: &Body, relative_accuracy: f64) -> Result<Mas
         if !finite(&[r.area, r.volume]) || !finite(&r.centroid) || !finite(&r.moments) || !finite(&r.products) {
             return Err(invalid("non-finite result"));
         }
-        Ok(r)
+        Ok((r, exact))
     })
 }
 

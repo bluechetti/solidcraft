@@ -859,6 +859,10 @@ pub struct FilletParams {
     /// `type: variable`: smooth instead of straight between the radii. Default: false.
     #[serde(default)]
     pub smooth: Option<bool>,
+    /// `type: variable` or `spline`: curvature-continuous (G2) sections, a curvature fillet's,
+    /// whose size follows the radius along the edge, instead of circular arcs. Default: false.
+    #[serde(default)]
+    pub curvature: Option<bool>,
     /// `type: spline`: the control radii after `radius`. At most 100 are read.
     #[serde(default)]
     pub radii: Option<Vec<LengthExpr>>,
@@ -1142,6 +1146,12 @@ pub struct MoveParams {
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "bool")]
     pub copy: Option<bool>,
+    /// Move only the bodies named; default false: a scan moved takes along what was made from it
+    /// (surfaces fitted to it, solids reconstructed from it, its section sketches and fitted
+    /// planes), so they stay on it.
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "bool")]
+    pub alone: Option<bool>,
     #[serde(flatten, deserialize_with = "super::feature_common")]
     pub common: super::FeatureCommon,
 }
@@ -1155,6 +1165,12 @@ pub enum MoveResult {
         feature: FeatureResult,
         #[serde(skip_serializing_if = "Option::is_none")]
         features: Option<Vec<u64>>,
+        /// Bodies made from a scan moved, moved with it (not named in `bodies`).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        carried: Option<Vec<String>>,
+        /// Sketches and construction features made from a scan moved, placed again by the move.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        placed: Option<Vec<String>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         occurrences: Option<Vec<u64>>,
     },

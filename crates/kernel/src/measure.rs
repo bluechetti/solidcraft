@@ -1,6 +1,6 @@
 use serde::Serialize;
 use solidcore_record::Vec3;
-use solidcraft_geom::Aabb3;
+use solidcraft_geom::{Aabb3, MeshGeom};
 
 use crate::Result;
 use crate::body::Body;
@@ -56,11 +56,13 @@ const ACCURACY: f64 = solidcraft_smlib::MEASURE_ACCURACY;
 /// measured from its triangles, exactly.
 pub fn measure(b: &Body) -> Result<BodyMeasure> {
     let _span = solidcraft_profile::span("kernel", "measure");
-    if let Some(mb) = &b.mesh {
-        // Exact for a mesh body; topology counts are facets, sides and vertices.
-        let (mm, bbox) = mb.measure();
-        let edges = mb.edge_count();
-        let (nf, nv) = (mb.face_count(), mb.vertex_count());
+    if let Some((pos, tris)) = b.triangle_mesh() {
+        // Exact for a mesh body; topology counts are facets, sides and vertices. Measured on the
+        // triangles the body keeps, not a copy of them.
+        let m = b.display_mesh().ok_or_else(|| crate::KernelError::Invalid("a mesh body without its mesh".into()))?;
+        let (mm, bbox) = (m.measure(), m.bounds());
+        let edges = crate::meshbody::edge_count(tris);
+        let (nf, nv) = (tris.len(), pos.len());
         let merged = TopoCounts { faces: nf, edges, vertices: nv, face_types: [("mesh".to_string(), nf)].into_iter().collect() };
         return Ok(BodyMeasure {
             volume: mm.volume,
@@ -100,11 +102,28 @@ pub fn measure_mass(b: &Body) -> Result<MassMeasure> {
         let m = measure(b)?;
         return Ok(MassMeasure { volume: m.volume, area: m.area, centroid: m.centroid, bbox: m.bbox, measured_by: m.measured_by, notes: m.notes });
     }
-    let m = crate::guard("SMLib mass properties", || {
-        b.smlib()?.mass_properties(ACCURACY).map_err(|e| crate::KernelError::smlib("SMLib mass properties", e))
+    // Held while measuring, so callers on other threads wait for this measurement.
+    let mut slot = b.mass.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(m) = &*slot {
+        return Ok(m.clone());
+    }
+    let (m, exact) = crate::guard("SMLib mass properties", || {
+        b.smlib()?.mass_properties_and_bounds(ACCURACY).map_err(|e| crate::KernelError::smlib("SMLib mass properties", e))
     })?;
+    if let Some((lo, hi)) = exact {
+        b.remember_exact_bounds(Aabb3 { min: crate::body::v3(lo), max: crate::body::v3(hi) });
+    }
     let [x, y, z] = m.centroid;
-    Ok(MassMeasure { volume: m.volume, area: m.area, centroid: Vec3::new(x, y, z), bbox: b.exact_bounds()?, measured_by: "smlib", notes: Vec::new() })
+    let m = MassMeasure {
+        volume: m.volume,
+        area: m.area,
+        centroid: Vec3::new(x, y, z),
+        bbox: b.exact_bounds()?,
+        measured_by: "smlib",
+        notes: Vec::new(),
+    };
+    *slot = Some(m.clone());
+    Ok(m)
 }
 
 #[cfg(test)]

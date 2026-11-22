@@ -391,6 +391,58 @@ fn oversized_mcp_stdio_line_does_not_poison_the_next_request() {
     assert_eq!(replies[1]["result"], json!({}), "{}", replies[1]);
 }
 
+/// A backend whose `engine.execute` takes a few seconds and says how far it is through the kernel
+/// watch, as Find All does in the engine.
+struct Slow;
+
+impl crate::backend::Backend for Slow {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        if method == "engine.execute" {
+            if let Some(w) = solidcraft_engine::kernel::watch::current() {
+                w.progress("finding shapes", 433, 1000);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2600));
+            return Ok(json!({"ran": params["command"]}));
+        }
+        Ok(json!({}))
+    }
+    fn has_ui(&self) -> bool {
+        false
+    }
+    fn describe(&self) -> String {
+        "slow".into()
+    }
+}
+
+/// A call sent with a `progressToken` hears how far it is while it runs (`notifications/progress`,
+/// its seconds as `progress`, what it is doing as `message`), all before its reply; a call without
+/// one hears nothing.
+#[test]
+fn a_long_call_hears_its_progress_before_its_reply() {
+    let lines = [
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}),
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "execute", "arguments": {"command": "scan.find_all", "params": {}}, "_meta": {"progressToken": "find"}}}),
+        json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "execute", "arguments": {"command": "scan.find_all", "params": {}}}}),
+    ];
+    let input: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    let mut output = Vec::new();
+    Server::new(Box::new(Slow)).serve(std::io::Cursor::new(input), &mut output).unwrap();
+    let text = String::from_utf8(output).unwrap();
+    let messages: Vec<Value> = text.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    let at = |id: i64| messages.iter().position(|m| m["id"] == id).unwrap();
+    let notes: Vec<(usize, &Value)> = messages.iter().enumerate().filter(|(_, m)| m["method"] == "notifications/progress").collect();
+    assert!(!notes.is_empty(), "{text}");
+    for (k, note) in &notes {
+        assert!(*k < at(2), "no progress after the reply: {text}");
+        assert_eq!(note["params"]["progressToken"], "find");
+        assert_eq!(note["params"]["message"], "finding shapes 43 %", "{text}");
+    }
+    let seconds: Vec<f64> = notes.iter().filter_map(|(_, n)| n["params"]["progress"].as_f64()).collect();
+    assert!(seconds.windows(2).all(|w| w[1] > w[0]) && seconds[0] >= 1.0, "{seconds:?}");
+    assert!(messages[at(2)..].iter().all(|m| m["method"] != "notifications/progress"), "the call without a token hears nothing: {text}");
+}
+
 /// Preserve parse-error framing and accept an unterminated final line.
 #[test]
 fn mcp_stdio_recovers_after_invalid_utf8_and_accepts_eof() {
@@ -566,7 +618,8 @@ fn handshake_and_tools_list() {
 
     let cmds = tool(&mut s, "list_commands", json!({"filter": "fillet"}));
     assert!(cmds.as_array().unwrap().iter().any(|c| c["id"] == "solid.fillet"), "{cmds}");
-    assert!(cmds.as_array().unwrap().len() < 5);
+    // The Scan workspace adds Fillet from Scan and Fillet It.
+    assert!(cmds.as_array().unwrap().len() < 7, "{cmds}");
     // Headless, calls run one at a time: none is running while `running` is asked (#3654).
     assert_eq!(tool(&mut s, "running", json!({})), json!({"running": []}));
 
@@ -576,6 +629,47 @@ fn handshake_and_tools_list() {
     assert!(d["result"]["contents"][0]["text"].as_str().unwrap().contains("timeline"));
     assert_eq!(call(&mut s, 7, "resources/read", json!({"uri": "solidcraft://nope"}))["error"]["code"], -32002);
     assert_eq!(call(&mut s, 8, "nope/nope", json!({}))["error"]["code"], -32601);
+}
+
+/// The server offers a ready start for scan to CAD, a new part and a change, which a client shows
+/// as slash commands: each puts the user's words in and points at the skill with the workflow; an
+/// optional argument left out leaves no placeholder behind.
+#[test]
+fn prompts_start_scan_to_cad_modeling_and_editing() {
+    let mut s = server();
+    let init =
+        call(&mut s, 1, "initialize", json!({"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}));
+    assert!(init["result"]["capabilities"]["prompts"].is_object(), "{init}");
+    let listed = call(&mut s, 2, "prompts/list", json!({}));
+    let names: Vec<&str> = listed["result"]["prompts"].as_array().unwrap().iter().filter_map(|p| p["name"].as_str()).collect();
+    assert_eq!(names, ["edit_design", "model_part", "scan_to_cad"]);
+    let text = |reply: &Value| reply["result"]["messages"][0]["content"]["text"].as_str().unwrap_or_default().to_string();
+    let scan = text(&call(
+        &mut s,
+        3,
+        "prompts/get",
+        json!({"name": "scan_to_cad", "arguments": {"path": "/tmp/part.stl", "accuracy": "0.2 mm", "goal": "a part to machine"}}),
+    ));
+    for want in [
+        "`/tmp/part.stl`",
+        "file.insert_mesh",
+        "for a part to machine",
+        "within 0.2 mm:",
+        "\"tolerance\": 0.2}",
+        "solidcraft-scan-to-cad",
+        "scan.deviation",
+    ] {
+        assert!(scan.contains(want), "{want:?} missing from {scan}");
+    }
+    let bare = text(&call(&mut s, 4, "prompts/get", json!({"name": "scan_to_cad", "arguments": {}})));
+    assert!(bare.starts_with("Turn the scan already in the design into CAD in SolidCraft.\n"), "{bare}");
+    assert!(["{path}", "{goal}", "{accuracy}"].iter().all(|p| !bare.contains(p)), "{bare}");
+    let edit = text(&call(&mut s, 5, "prompts/get", json!({"name": "edit_design", "arguments": {"change": "make it 10 mm longer"}})));
+    assert!(edit.starts_with("Change the SolidCraft design: make it 10 mm longer"), "{edit}");
+    let part = text(&call(&mut s, 6, "prompts/get", json!({"name": "model_part", "arguments": {"part": "a 40 mm cube"}})));
+    assert!(part.contains("a 40 mm cube") && part.contains("solidcraft-modeling"), "{part}");
+    // A required argument left out is refused by the shared server.
+    assert_eq!(call(&mut s, 7, "prompts/get", json!({"name": "model_part", "arguments": {}}))["error"]["code"], -32602);
 }
 
 #[test]
@@ -589,6 +683,8 @@ fn skill_reference_returns_bundled_text_without_backend_calls() {
         ("solidcraft-mechanisms", "SKILL.md", include_str!("../../../skills/solidcraft-mechanisms/SKILL.md")),
         ("solidcraft-checking", "SKILL.md", include_str!("../../../skills/solidcraft-checking/SKILL.md")),
         ("solidcraft-editing", "SKILL.md", include_str!("../../../skills/solidcraft-editing/SKILL.md")),
+        ("solidcraft-scan-to-cad", "SKILL.md", include_str!("../../../skills/solidcraft-scan-to-cad/SKILL.md")),
+        ("solidcraft-scan-to-cad", "reference.md", include_str!("../../../skills/solidcraft-scan-to-cad/reference.md")),
         ("solidcraft-sheetmetal", "SKILL.md", include_str!("../../../skills/solidcraft-sheetmetal/SKILL.md")),
         ("solidcraft-sheetmetal", "reference.md", include_str!("../../../skills/solidcraft-sheetmetal/reference.md")),
     ];
@@ -607,7 +703,14 @@ fn skill_reference_returns_bundled_text_without_backend_calls() {
 #[test]
 fn skill_reference_refuses_unknown_names_and_paths_with_available_choices() {
     let mut s = server();
-    let skills = ["solidcraft-checking", "solidcraft-editing", "solidcraft-mechanisms", "solidcraft-modeling", "solidcraft-sheetmetal"];
+    let skills = [
+        "solidcraft-checking",
+        "solidcraft-editing",
+        "solidcraft-mechanisms",
+        "solidcraft-modeling",
+        "solidcraft-scan-to-cad",
+        "solidcraft-sheetmetal",
+    ];
     for skill in ["unknown", "../solidcraft-modeling", "/tmp/solidcraft-modeling"] {
         let r = raw_tool(&mut s, "skill_reference", json!({"skill": skill}));
         assert_eq!(r["result"]["isError"], true, "{r}");
@@ -3423,6 +3526,8 @@ fn skills_name_only_real_tools_and_commands() {
         include_str!("../../../skills/solidcraft-mechanisms/reference.md"),
         include_str!("../../../skills/solidcraft-reporting/SKILL.md"),
         include_str!("../../../skills/solidcraft-reporting/reference/report-template.md"),
+        include_str!("../../../skills/solidcraft-scan-to-cad/SKILL.md"),
+        include_str!("../../../skills/solidcraft-scan-to-cad/reference.md"),
         include_str!("../../../skills/solidcraft-sheetmetal/SKILL.md"),
         include_str!("../../../skills/solidcraft-sheetmetal/reference.md"),
     ];
@@ -3431,7 +3536,8 @@ fn skills_name_only_real_tools_and_commands() {
     let commands: Vec<String> =
         tool(&mut s, "list_commands", json!({})).as_array().unwrap().iter().filter_map(|c| c["id"].as_str()).map(str::to_owned).collect();
     let mut checked = 0;
-    for doc in docs {
+    // The prompts the server serves name tools and commands the same way.
+    for doc in docs.into_iter().chain(crate::prompts::texts()) {
         // A call in backticks is `name {}`, `name {"json":…}` or `name {placeholder}`: a tool when the
         // name is snake_case, a command when it is a dotted id. Field lists such as
         // `sides {bottom,right,top,left}` and `created: {…}` aren't calls. JSON examples name

@@ -43,9 +43,13 @@ fn save_slot(dir: &Path, slot: &mut Option<Autosaver>, session: &Session, due: b
     // Clean tabs need no serialization or entry, even between scheduled saves.
     if !session.is_dirty() {
         if let Some(mut a) = slot.take() {
-            // Rebase the active crash journal before deleting the autosave it may refer to.
-            a.save(session)?;
+            // Rebase the active crash journal before deleting the autosave it may refer to. The
+            // first call reports how the last write ended; one that failed (a design too large
+            // to save, say) must not keep the entry and its lock for the next launch: the second
+            // call, with nothing running, only rebases.
+            let saved = a.save(session).or_else(|_| a.save(session));
             a.discard();
+            saved?;
         }
         return Ok(false);
     }
@@ -529,6 +533,33 @@ mod tests {
         assert!(entries(&dir).is_empty());
         drop(app);
         assert!(recovery::orphans(&dir).is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An autosave that failed (a design too large to save, say) is no reason to keep the entry
+    /// when the design is let go: Don't Save on quit removes the earlier autosave and the lock
+    /// all the same, where the failure used to skip the discard and leave them for the next launch.
+    #[test]
+    fn a_failed_autosave_still_lets_dont_save_discard_the_entry_and_lock() {
+        let (mut app, dir) = app("failed-write", Duration::ZERO);
+        edit(&mut app);
+        // A 1 × 1 PNG.
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+        app.run("canvas.insert", json!({"data": png})).unwrap();
+        app.big_operation = false;
+        tick_and_wait(&mut app);
+        assert_eq!(entries(&dir).len(), 1, "an entry written");
+        // A design no autosave can write: a canvas in a format the design file refuses.
+        if let Some(c) = app.session.doc_mut().canvases.first_mut() {
+            c.format = "gif".into();
+        }
+        tick(&mut app);
+        documents::request_quit(&mut app);
+        documents::answer_prompt(&mut app, documents::Answer::DontSave);
+        assert!(app.quit_requested);
+        close(&mut app);
+        let left: Vec<_> = fs::read_dir(&dir).unwrap().map(|p| p.unwrap().file_name()).collect();
+        assert!(left.is_empty(), "nothing left for the next launch: {left:?}");
         fs::remove_dir_all(dir).unwrap();
     }
 

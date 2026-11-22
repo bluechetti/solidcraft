@@ -297,6 +297,19 @@ impl Brep {
         r
     }
 
+    /// [`Brep::fillet_variable`] with curvature-continuous (G2) sections: the blend curve a
+    /// curvature fillet has, its size following the law.
+    pub fn fillet_variable_g2(&self, edge: [f64; 3], tolerance: f64, start: [f64; 3], degree: usize, knots: &[f64], radii: &[f64]) -> Result<Brep> {
+        let r = core::blend::fillet_variable_with(self.core(), edge, tolerance, start, degree, knots, radii, true).map(Brep::made_core);
+        trace::made(
+            "fillet_variable_g2",
+            &[self],
+            &r,
+            || json!({"edge": trace::picks(self, PickKind::Edge, &[edge], tolerance), "start": start, "degree": degree, "knots": knots, "radii": radii}),
+        );
+        r
+    }
+
     /// The edges nearest to `edges` (each within `tolerance`), exactly those, cut by
     /// a chamfer `distance` back along the face whose outward normal leans most along `first`,
     /// and by `second` on the other, with bevelled corners (setbacks measured at each edge's

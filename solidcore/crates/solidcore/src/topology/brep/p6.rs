@@ -1853,11 +1853,19 @@ struct RayShells {
 impl SplitShells {
     // The shell for a point whose ray fire at the inner shell found `region`:
     // none is the other shell.
+    // Not upstream: the inner shell when the ray met it from its own region's side, else the
+    // other shell. Upstream reads any region but the new one as the old shell's, which is the
+    // other shell's only while every face of the inner shell has one of the split's two
+    // regions behind it (see `nest_shells`).
     fn move_shell(&self, rays: RayShells, region: Option<RegionId>) -> ShellId {
+        let inner_region = if rays.inner == self.new_shell {
+            self.new_region
+        } else {
+            self.old_region
+        };
         match region {
-            None => rays.other,
-            Some(r) if r == self.new_region => self.new_shell,
-            Some(_) => self.old_shell,
+            Some(r) if r == inner_region => rays.inner,
+            _ => rays.other,
         }
     }
 }
@@ -2169,9 +2177,16 @@ fn nest_shells(
 
         // Default to OtherShell: if the ray-fire didn't hit anything, the shell is in
         // the OtherShell region.
+        // Not upstream: the shell is in InnerShell's region only when the ray met InnerShell
+        // from inside, the side of its own region; met from outside it is in OtherShell's,
+        // whatever region the face it met has behind it. Upstream takes that region: where
+        // InnerShell bounds a third region (a union's tool standing on the body, its bottom
+        // face backed by the body's solid), a separate solid's outside shell went into the
+        // body's solid region (SmBrep test #12: an inner shell not inside its outer shell).
+        let inner_region = split_link(brep.shell(rays.inner)?.region)?;
         let found = match attempt.state.region {
-            Some(region) => region,
-            None => split_link(brep.shell(rays.other)?.region)?,
+            Some(region) if region == inner_region => region,
+            _ => split_link(brep.shell(rays.other)?.region)?,
         };
         let old = split_link(brep.shell(shell_id)?.region)?;
         // skip the move when they are the same: it might break 'the region's 1st

@@ -1,0 +1,34 @@
+{
+  "ar": {
+    "cmd.scan_combine": "دمج المسوح",
+    "help.scan.combine": "يجمع عدة مرات مسح لقطعة واحدة في مسح واحد متساوٍ: تُحاذى كما في محاذاة كل المسوح، ثم تُدمج كما في إعادة التشبيك. يبقى المسح الأول مكانه."
+  },
+  "de": {
+    "cmd.scan_combine": "Scans kombinieren",
+    "help.scan.combine": "Vereint mehrere Durchgänge eines Teils zu einem gleichmäßigen Scan: ausgerichtet wie bei „Alle Scans ausrichten“, dann verschmolzen wie bei „Neu vernetzen“. Der erste Scan bleibt, wo er ist."
+  },
+  "en": {
+    "cmd.scan_combine": "Combine Scans",
+    "help.scan.combine": "Combines several passes of one part into one even scan: aligned as Align All Scans does, then fused as Remesh does. The first scan stays put."
+  },
+  "he": {
+    "cmd.scan_combine": "שילוב סריקות",
+    "help.scan.combine": "מאחד כמה מעברים של חלק אחד לסריקה אחידה אחת: מיושרים כמו ביישור כל הסריקות, ואז מותכים כמו בבניית רשת מחדש. הסריקה הראשונה נשארת במקומה."
+  },
+  "ja": {
+    "cmd.scan_combine": "スキャンを結合",
+    "help.scan.combine": "1つの部品の複数パスを1つの均一なスキャンにまとめます。「すべてのスキャンを位置合わせ」と同様に揃え、「リメッシュ」と同様に融合します。最初のスキャンは動きません。"
+  },
+  "ko": {
+    "cmd.scan_combine": "스캔 결합",
+    "help.scan.combine": "한 부품의 여러 패스를 하나의 고른 스캔으로 합칩니다. 모든 스캔 정렬처럼 맞춘 뒤 리메시처럼 융합합니다. 첫 스캔은 그대로 있습니다."
+  },
+  "vi": {
+    "cmd.scan_combine": "Gộp bản quét",
+    "help.scan.combine": "Gộp nhiều lượt quét của một chi tiết thành một bản quét đều: căn như Căn tất cả bản quét, rồi hợp nhất như Chia lưới lại. Bản quét đầu đứng yên."
+  },
+  "zh": {
+    "cmd.scan_combine": "合并扫描",
+    "help.scan.combine": "将同一零件的多次扫描合成为一个均匀扫描：先像“对齐所有扫描”那样对齐，再像“重新网格化”那样融合。第一个扫描保持不动。"
+  }
+}
