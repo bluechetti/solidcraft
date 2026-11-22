@@ -20,8 +20,8 @@
 //! | [`evaluate_definition`]               | `SmProceduralBlend::EvaluateDefinition` (its `bBefore`, c5b6bb7) |
 //!
 //! Deviations:
-//! - **The memo.** The fork's `thread_local` 4-slot memo is a field of
-//!   [`crate::kernel::Kernel`] (`blend_station_memo`), a `RefCell`: the definition is
+//! - **The memo.** The fork's `thread_local` 4-slot memo (64 slots here, [`STATION_MEMO`])
+//!   is a field of [`crate::kernel::Kernel`] (`blend_station_memo`), a `RefCell`: the definition is
 //!   evaluated through `&Kernel`, as every surface is. It is borrowed only to look a
 //!   station up and to store one, never across a solve, so a nested support's own
 //!   evaluations use it meanwhile, as in the fork. A hit returns what a fresh solve from
@@ -38,7 +38,7 @@
 
 use core::cmp::Ordering;
 
-use super::form::{gn_form, gn_form_t, Bern};
+use super::form::{gn_form, gn_form_t, Bern, GnSectionFormT};
 use super::interval::Ivl;
 use super::section::{gn_area_series_at, gn_equal_area_w};
 use super::series::{Ser, Trunc, VSer, MAX_E, MAX_K, MAX_S};
@@ -363,8 +363,14 @@ pub fn bern_taylor(b: &[f64], t0: f64, lj: usize) -> Vec<f64> {
     out
 }
 
-/// `SM_STATION_MEMO`: the stations the memo keeps.
-pub const STATION_MEMO: usize = 4;
+/// `SM_STATION_MEMO`: the stations the memo keeps. Not the fork's 4: the points a boolean
+/// traces, a quadrature integrates and a box searches along a G2 round come back to a station
+/// after more than four others, and a solve (~50 us) is what a miss costs. On the concave G2
+/// round of `crates/kernel`'s carried-on test, 1.7M evaluations solved 298k stations with 4
+/// slots, 159k with 64 (121k are distinct). A hit is what a fresh solve gives (the key is the
+/// definition's identity, s and the truncation), so the size changes no result; a station is
+/// kilobytes, and the lookup's scan is small beside a solve.
+pub const STATION_MEMO: usize = 64;
 
 /// `sm_StationMemo`: one kept station.
 #[derive(Clone, Debug, Default)]
@@ -385,6 +391,10 @@ struct MemoSlot {
     station: Option<GnStation>,
     /// `bW`, `sW`: the station's equal area thumbweight series, once resolved.
     w: Option<Tay<f64>>,
+    /// Not the fork's: the section's form at that thumbweight ([`gn_form_t`]), kept with it.
+    /// It is a function of the order and the thumbweight series only, and was rebuilt on
+    /// every evaluation (82.5% of them hit the memo, 12.4 s of the concave G2 test's 35 s).
+    form: Option<Arc<GnSectionFormT<Tay<f64>>>>,
 }
 
 /// The stations the definitions on a kernel solved last (`t_asMemo`, `t_lMemoNext`): an
@@ -496,6 +506,7 @@ pub fn evaluate_definition(
     let mut slot: Option<usize> = None;
     let mut at: Option<GnStation> = None;
     let mut memo_w: Option<Tay<f64>> = None;
+    let mut memo_form: Option<Arc<GnSectionFormT<Tay<f64>>>> = None;
     {
         let memo = k.blend_station_memo.borrow();
         for (m, e) in memo.slots.iter().enumerate() {
@@ -506,6 +517,7 @@ pub fn evaluate_definition(
             if same && e.s == s && e.ts == ts && e.te == te && (!e.sided || e.before == before) {
                 at = e.station;
                 memo_w = e.w;
+                memo_form.clone_from(&e.form);
                 slot = Some(m);
                 break;
             }
@@ -619,6 +631,7 @@ pub fn evaluate_definition(
             sided,
             station: Some(st),
             w: None,
+            form: None,
         };
         if let Some(e) = memo.slots.get_mut(m) {
             *e = entry;
@@ -676,7 +689,20 @@ pub fn evaluate_definition(
             }
             ws
         };
-        let form = gn_form_t::<Tay<f64>>(n, ws);
+        let form = if let Some(form) = memo_form {
+            form
+        } else {
+            let form = Arc::new(gn_form_t::<Tay<f64>>(n, ws));
+            // (the slot of this station: nothing has evaluated a surface since it was hit or
+            // filled, as for its thumbweight)
+            if let Some(m) = slot {
+                let mut memo = k.blend_station_memo.borrow_mut();
+                if let Some(e) = memo.slots.get_mut(m) {
+                    e.form = Some(Arc::clone(&form));
+                }
+            }
+            form
+        };
         // a row of the form in (sigma, dt): sum_j g_j(sigma) B_j(t0 + dt)
         let deg = form.w.len();
         let basis: Vec<Vec<f64>> = (0..deg)
