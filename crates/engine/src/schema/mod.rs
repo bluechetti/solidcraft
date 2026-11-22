@@ -150,6 +150,7 @@ pub mod scan_patches;
 pub mod scan_plan;
 pub mod scan_reconstruct;
 pub mod scan_refit;
+pub mod scan_section_read;
 pub mod scan_select;
 pub mod scan_split;
 pub mod scan_survey;

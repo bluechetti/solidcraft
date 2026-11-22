@@ -394,7 +394,7 @@ pub(super) fn section_sketch(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad(
             cmd,
             format!(
-                "`{scan}` is a solid, not a scan (a mesh body): its section is drawn by sketch.intersect {{refs: [{{body: \"{scan}\"}}]}} in a sketch on the plane, and sketch.inspect reads it"
+                "`{scan}` is a solid, not a scan (a mesh body): scan.section {{plane, model: \"{scan}\"}} reads its section beside the scan's, and sketch.intersect {{refs: [{{body: \"{scan}\"}}]}} in a sketch on the plane draws it"
             ),
         ));
     }
