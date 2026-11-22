@@ -137,10 +137,8 @@ pub fn planes(faces: &[NurbsSurface], regions: &[PlaneRegion], size: f64) -> (Ve
     let eps = ON_PLANE * size.max(1e-9);
     let units: Vec<Option<(Vec3, Vec3)>> = regions.iter().map(|r| r.normal.normalized().map(|n| (r.point, n))).collect();
     // The plane each patch lies on, if any.
-    let on: Vec<Option<usize>> = nets
-        .iter()
-        .map(|net| units.iter().position(|u| u.is_some_and(|(p, n)| net.iter().all(|q| (*q - p).dot(n).abs() <= eps))))
-        .collect();
+    let on: Vec<Option<usize>> =
+        nets.iter().map(|net| units.iter().position(|u| u.is_some_and(|(p, n)| net.iter().all(|q| (*q - p).dot(n).abs() <= eps)))).collect();
     // Patches sharing a side, by its two corners (either way round).
     let mut by_side: HashMap<([u64; 3], [u64; 3]), Vec<usize>> = HashMap::new();
     for (i, net) in nets.iter().enumerate() {

@@ -109,10 +109,8 @@ pub fn handles(positions: &[Vec3], triangles: &[[u32; 3]]) -> usize {
 /// The median length of the mesh's edges (0 with none): [`DEFAULT_SIZE_EDGES`] of it is the size
 /// to close handles up to when none is given.
 pub fn median_edge(positions: &[Vec3], triangles: &[[u32; 3]]) -> f64 {
-    let mut lengths: Vec<f64> = edge_counts(triangles)
-        .iter()
-        .filter_map(|((a, b), _)| Some(positions.get(*a as usize)?.dist(*positions.get(*b as usize)?)))
-        .collect();
+    let mut lengths: Vec<f64> =
+        edge_counts(triangles).iter().filter_map(|((a, b), _)| Some(positions.get(*a as usize)?.dist(*positions.get(*b as usize)?))).collect();
     if lengths.is_empty() {
         return 0.0;
     }
@@ -272,7 +270,8 @@ impl Candidate {
 fn ball_candidates(positions: &[Vec3], triangles: &[[u32; 3]], topo: &Topo, seed: u32, radius: f64) -> Vec<Candidate> {
     let inside = reach_of(positions, topo, seed, radius);
     let is_in = |v: u32| inside.binary_search_by_key(&v, |x| x.0).is_ok();
-    let mut tris: Vec<u32> = inside.iter().flat_map(|&(v, _)| topo.tri.of(v).iter().copied()).filter(|&t| triangles[t as usize].iter().all(|&v| is_in(v))).collect();
+    let mut tris: Vec<u32> =
+        inside.iter().flat_map(|&(v, _)| topo.tri.of(v).iter().copied()).filter(|&t| triangles[t as usize].iter().all(|&v| is_in(v))).collect();
     tris.sort_unstable();
     tris.dedup();
     // Its connected parts (through shared vertices).
@@ -495,7 +494,8 @@ fn attempt(
     if !near.is_empty() {
         let tree = TriangleTree::of(&filled.positions, &near);
         for (g, c) in cands.iter().enumerate().filter(|(g, _)| live[*g]) {
-            let pts: Vec<Vec3> = c.triangles.iter().flat_map(|&t| samples(triangles[t as usize].map(|v| positions[v as usize]), 2.0 * tolerance)).collect();
+            let pts: Vec<Vec3> =
+                c.triangles.iter().flat_map(|&t| samples(triangles[t as usize].map(|v| positions[v as usize]), 2.0 * tolerance)).collect();
             let d: Vec<f64> = pts.iter().map(|&q| tree.nearest(q).map_or(f64::INFINITY, |(d, _)| d)).collect();
             let far = d.iter().filter(|&&x| x > tolerance).count();
             if far as f64 > FAR_SHARE * pts.len() as f64 || d.iter().any(|&x| x > far_limit) {
@@ -570,7 +570,10 @@ pub fn close(scan: &Scan, settings: &Settings) -> Option<Closed> {
             let topo = Topo::new(positions.len(), &triangles);
             let first = pass * positions.len() / PASSES;
             let centres = seeds(&positions, &topo, 0.25 * scale, first);
-            let found: Vec<Candidate> = crate::par::map(centres.len(), |i| ball_candidates(&positions, &triangles, &topo, centres[i], 0.5 * scale)).into_iter().flatten().collect();
+            let found: Vec<Candidate> = crate::par::map(centres.len(), |i| ball_candidates(&positions, &triangles, &topo, centres[i], 0.5 * scale))
+                .into_iter()
+                .flatten()
+                .collect();
             let cands = pick(&topo, found, positions.len());
             let mut live = vec![true; cands.len()];
             for g in splitting(positions.len(), &triangles, &cands, &live) {
@@ -643,8 +646,18 @@ mod tests {
     fn a_torus_has_one_handle_and_a_cube_none() {
         let (p, t) = torus(24, 12, 20.0, 6.0);
         assert_eq!(handles(&p, &t), 1);
-        let cube = [Vec3::new(0., 0., 0.), Vec3::new(1., 0., 0.), Vec3::new(1., 1., 0.), Vec3::new(0., 1., 0.), Vec3::new(0., 0., 1.), Vec3::new(1., 0., 1.), Vec3::new(1., 1., 1.), Vec3::new(0., 1., 1.)];
-        let faces = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]];
+        let cube = [
+            Vec3::new(0., 0., 0.),
+            Vec3::new(1., 0., 0.),
+            Vec3::new(1., 1., 0.),
+            Vec3::new(0., 1., 0.),
+            Vec3::new(0., 0., 1.),
+            Vec3::new(1., 0., 1.),
+            Vec3::new(1., 1., 1.),
+            Vec3::new(0., 1., 1.),
+        ];
+        let faces =
+            [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]];
         assert_eq!(handles(&cube, &faces), 0);
     }
 
