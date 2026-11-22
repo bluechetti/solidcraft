@@ -219,10 +219,7 @@ fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> 
     };
     // Patches it would lay: three to a triangle, four to each pair laid as one quad (a little
     // margin, as the tidy pass may pair a few triangles differently).
-    let count = |r: &reduce::Reduced| {
-        let paired = pairs(&r.positions, &r.triangles).iter().filter(|p| p.is_some()).count();
-        (3 * r.triangles.len()).saturating_sub(paired) + r.triangles.len() / 32
-    };
+    let count = |r: &reduce::Reduced| patches_laid(&r.positions, &r.triangles);
     let first = at(1.0)?;
     let wanted = count(&first);
     if wanted <= cap {
@@ -257,6 +254,13 @@ fn reduce_once(scan: &Scan, tree: &TriangleTree, budget: &[f64], cap: usize) -> 
             Ok((reduce::reduce(scan, to_cap).ok_or(WrapError::Reduce)?, true, scale, wanted))
         }
     }
+}
+
+/// About how many patches the layout lays on a coarse mesh: three to a triangle, four to each pair
+/// laid as one quad (a little margin, as the tidy pass may pair a few triangles differently).
+fn patches_laid(positions: &[Vec3], triangles: &[[u32; 3]]) -> usize {
+    let paired = pairs(positions, triangles).iter().filter(|p| p.is_some()).count();
+    (3 * triangles.len()).saturating_sub(paired) + triangles.len() / 32
 }
 
 /// Each welded point's neighbours (by its representative).
@@ -1223,9 +1227,13 @@ fn layout_unfair(under: &Under, positions: &[Vec3], triangles: &[[u32; 3]], part
 /// Each is made only when the mesh stays manifold, no point on the open rim moves, no face turns
 /// over, every face it makes lies on the scan within `tolerance` and covers what it replaces, and
 /// the worst patch corner of the faces it changes, as laid ([`unfair`]), becomes fairer than it
-/// was (for the split: no worse): no new corner is worse than the one being mended. Rounds until none is unfair or
-/// [`FAIR_ROUNDS`]; how many triangles are still unfair.
-fn fair_corners(positions: &mut Vec<Vec3>, triangles: &mut Vec<[u32; 3]>, under: &Under, tolerance: f64) -> usize {
+/// was (for the split: no worse): no new corner is worse than the one being mended. Splits add at
+/// most `room` triangles, so the patches stay within the most allowed. Rounds until none is unfair
+/// or [`FAIR_ROUNDS`]; how many triangles are still unfair.
+fn fair_corners(positions: &mut Vec<Vec3>, triangles: &mut Vec<[u32; 3]>, under: &Under, tolerance: f64, room: usize) -> usize {
+    // The triangles splits may add: a split adds one for each face on its side (two, or one on
+    // the rim), about three patches each.
+    let mut room = room;
     let on_scan = |p: Vec3| under.tree.nearest(p).is_some_and(|(d, _)| d <= tolerance);
     let onto_scan =
         |p: Vec3| under.tree.nearest(p).and_then(|(_, s)| under.scan.corners(s as usize)).map(|[a, b, c]| closest_on_triangle(p, a, b, c));
@@ -1418,8 +1426,8 @@ fn fair_corners(positions: &mut Vec<Vec3>, triangles: &mut Vec<[u32; 3]>, under:
                     done = None;
                 }
             }
-            // 4. Split the longest side along the longest-side path.
-            if done.is_none() {
+            // 4. Split the longest side along the longest-side path, while the patches fit.
+            if done.is_none() && room >= 2 {
                 let longest = |f: usize| {
                     let q = corners_of(positions, triangles[f]);
                     (0..3).max_by(|&i, &j| q[(i + 1) % 3].dist(q[i]).total_cmp(&q[(j + 1) % 3].dist(q[j]))).map(|k| {
@@ -1508,6 +1516,7 @@ fn fair_corners(positions: &mut Vec<Vec3>, triangles: &mut Vec<[u32; 3]>, under:
                     }
                 }
             }
+            room = room.saturating_sub(new.len());
             added.extend(new);
             changed = true;
         }
@@ -1748,7 +1757,9 @@ pub fn wrap(scan: &Scan, settings: &Settings) -> Result<Wrap, WrapError> {
         // area, and left in, the mesher splits their long sides without end.
         tidy(&mut r.positions, &mut r.triangles, &under, POOR_SLACK * tol * scale.max(1.0), true);
         // Last, every patch the layout will lay given fair corners, held to the scaled budgets.
-        let unfair = fair_corners(&mut r.positions, &mut r.triangles, &under, tol * scale.max(1.0));
+        // Its splits held to the most patches: none where the coarse mesh already lays as many.
+        let room = cap.saturating_sub(patches_laid(&r.positions, &r.triangles)) / 3;
+        let unfair = fair_corners(&mut r.positions, &mut r.triangles, &under, tol * scale.max(1.0), room);
         let faces = patches(&under, &r.positions, &r.triangles);
         let d = distances(scan, &faces, &sampled);
         let spread = spread(&d, &weight, tol);
@@ -1888,7 +1899,7 @@ mod tests {
         ];
         let mut tris = vec![[a, b, f], [a, f, e], [f, b, e], [b, c, e], [c, d, e], [d, a, e]];
         assert!(unfair(&under, tris[0].map(|i| q[i as usize])) > 0.0, "the cap starts unfair");
-        let left = fair_corners(&mut q, &mut tris, &under, 0.1);
+        let left = fair_corners(&mut q, &mut tris, &under, 0.1, usize::MAX);
         assert_eq!(left, 0, "{tris:?}");
         for tri in &tris {
             let c = tri.map(|i| q[i as usize]);
