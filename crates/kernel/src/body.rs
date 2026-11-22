@@ -1006,11 +1006,33 @@ impl Body {
     }
 
     /// The face of `self` nearest `p` and its exact distance, or `None` for a mesh body or empty body.
+    /// Every face is solved: on a body of thousands of faces (a wrapped scan) that is seconds a
+    /// point; a caller with a bound on the distance uses [`Body::nearest_face_within`].
     pub fn nearest_face(&self, p: Vec3) -> Option<(f64, usize)> {
+        self.nearest_face_within(p, self.size().max(1.0) * 100.0)
+    }
+
+    /// [`Body::nearest_face`] among the faces within `reach` of `p`: the nearest face and its exact
+    /// distance when that distance is at most `reach`, else `None` (and for a mesh body, an empty
+    /// body or a `reach` that is not finite and at least zero). A face whose box lies farther than
+    /// `reach` is skipped unsolved, so a reach from a bound the caller already has (its distance to
+    /// a mesh of the body, plus the mesh's chord) costs the solves of the few faces near `p`, where
+    /// [`Body::nearest_face`] solves them all. The answer is exact either way: the nearest face is
+    /// within `reach` whenever any face is.
+    pub fn nearest_face_within(&self, p: Vec3, reach: f64) -> Option<(f64, usize)> {
+        if !(reach.is_finite() && reach >= 0.0) {
+            return None;
+        }
         let (ops, order) = self.ops_body()?;
-        let reach = self.size().max(1.0) * 100.0;
         let dists = ops.face_distances_within(order, &[[p.x, p.y, p.z]], reach).ok()?;
-        dists.into_iter().enumerate().filter_map(|(f, row)| Some((row.first().copied().flatten()?, f))).min_by(|a, b| a.0.total_cmp(&b.0))
+        // A face whose box is within reach is solved even when the face itself is not: a distance
+        // past the reach says nothing of the faces skipped, which may be nearer.
+        dists
+            .into_iter()
+            .enumerate()
+            .filter_map(|(f, row)| Some((row.first().copied().flatten()?, f)))
+            .filter(|(d, _)| *d <= reach)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
     /// Certify the two caps of a body built by [`crate::cylinder`]. Its wall stays uncertified.

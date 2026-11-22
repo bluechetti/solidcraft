@@ -1253,6 +1253,18 @@ fn scan_beside_its_cad(s: &Session) -> Option<String> {
 }
 
 fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
+    read_deviation(s, p, true)
+}
+
+/// Scan Deviation's reading for [`plan::verdict`]: all of it but `clearance` (whether the scan clears
+/// a solid it sits in, which is no part of whether the model is done, and asks the kernel about
+/// scores of points).
+pub(super) fn deviation_for_verdict(s: &mut Session, p: &Value) -> Result<Value> {
+    read_deviation(s, p, false)
+}
+
+/// Scan Deviation (`scan.deviation`); `clearance` false leaves the reply's `clearance` out.
+fn read_deviation(s: &mut Session, p: &Value, clearance: bool) -> Result<Value> {
     let cmd = "scan.deviation";
     let reply = |r: ScanDeviationResult| serde_json::to_value(r).map_err(|e| EngineError::Other(e.to_string()));
     let empty = ScanDeviationResult {
@@ -1375,13 +1387,11 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
     // A mesh body (the model as an STL) is measured against as it is, its triangles shared. A
     // solid or surface is meshed within a quarter of the tolerance and no coarser than a micron,
     // so the distances read are the surface's to a thousandth of a millimetre.
+    let chord = (tolerance / 4.0).min(FINE_CHORD);
     let surface: std::sync::Arc<solidcraft_geom::Mesh> = match model.body.display_mesh().filter(|_| model.body.is_mesh()) {
         Some(triangles) => triangles,
         None => std::sync::Arc::new(
-            model
-                .body
-                .mesh(&solidcraft_kernel::MeshTolerance::chord((tolerance / 4.0).min(FINE_CHORD)))
-                .map_err(|e| bad(cmd, format!("`{model_name}`: {e}")))?,
+            model.body.mesh(&solidcraft_kernel::MeshTolerance::chord(chord)).map_err(|e| bad(cmd, format!("`{model_name}`: {e}")))?,
         ),
     };
     let d = solidcraft_scan::deviation::measure(&mesh.positions, &surface, tolerance, 4.0 * limit);
@@ -1442,7 +1452,7 @@ fn deviation(s: &mut Session, p: &Value) -> Result<Value> {
             })
         })
         .collect();
-    let clearance = clearance_to(&model.body, &mesh.positions, &d.values, tolerance);
+    let clearance = if clearance { clearance_to(&model.body, &mesh.positions, &d.values, tolerance, chord) } else { None };
     let pins: Vec<(Vec3, f32)> =
         pins.into_iter().filter_map(|q| nearest_point(&mesh.positions, q)).filter_map(|(i, q)| Some((q, *d.values.get(i)?))).collect();
     let shown_pins = pins.iter().copied().map(pin_of).collect();
@@ -1569,9 +1579,10 @@ const CLEARANCE_FAR: usize = 2_000;
 /// 0 inside it, not a number when too far off to be measured) clears the solid `model`: the
 /// points the mesh has nearest outside it and deepest inside it are measured again on the solid's
 /// exact faces and asked exactly which side they are on, and a sample of those too far off to be
-/// measured are asked too (a thing sunk deep in the solid is far from its faces). `None` for a
-/// mesh body, or when the kernel cannot say.
-fn clearance_to(model: &solidcraft_kernel::Body, positions: &[Vec3], values: &[f32], tolerance: f64) -> Option<ScanDeviationClearance> {
+/// measured are asked too (a thing sunk deep in the solid is far from its faces). `chord` is how
+/// far the mesh measured against lies from the solid's faces at most. `None` for a mesh body, or
+/// when the kernel cannot say.
+fn clearance_to(model: &solidcraft_kernel::Body, positions: &[Vec3], values: &[f32], tolerance: f64, chord: f64) -> Option<ScanDeviationClearance> {
     use solidcraft_kernel::PointClass;
     if model.is_mesh() || positions.is_empty() {
         return None;
@@ -1596,7 +1607,14 @@ fn clearance_to(model: &solidcraft_kernel::Body, positions: &[Vec3], values: &[f
         _ => model.classify_points(&points).ok()?,
     };
     let class_of = |k: usize| classes.get(k).copied();
-    let exact = |i: usize| model.nearest_face(positions[i]).map(|(d, _)| d);
+    // A point's exact distance is within the chord of its distance to the mesh, so only the faces
+    // that near it are solved (a wrapped scan's ten thousand faces took 12 s a point solved
+    // every one); the answer is the same, and should the mesh lie farther off than its chord
+    // somewhere, every face is solved for that point.
+    let exact = |i: usize| {
+        let bound = f64::from(values[i].abs()) + 2.0 * chord + 1e-6;
+        model.nearest_face_within(positions[i], bound).or_else(|| model.nearest_face(positions[i])).map(|(d, _)| d)
+    };
     let place = |i: usize| [positions[i].x, positions[i].y, positions[i].z];
     // The least gap: over the nearest points that are outside or on it.
     let gap = outside

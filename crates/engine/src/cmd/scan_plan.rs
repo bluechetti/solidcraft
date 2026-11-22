@@ -238,7 +238,7 @@ pub(crate) fn verdict(s: &mut Session, p: &Value) -> Result<Value> {
     let model = str_(p, "model").filter(|m| !m.trim().is_empty()).map(str::to_owned);
     // Scan Deviation's reading, the map shown left as it was.
     let shown = s.scan_deviation.take();
-    let read = super::deviation(s, &json!({"scan": scan, "body": model}));
+    let read = super::deviation_for_verdict(s, &json!({"scan": scan, "body": model}));
     s.scan_deviation = shown;
     let read = read.map_err(|e| bad(cmd, format!("{e}")))?;
     let num = |k: &str| read.get(k).and_then(Value::as_f64);

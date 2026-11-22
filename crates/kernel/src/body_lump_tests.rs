@@ -296,6 +296,30 @@ fn points_classify_exactly_against_the_body() {
     assert_eq!(hollow.classify_point(Vec3::X * 40.0).unwrap(), OnBoundary, "the cavity's wall");
 }
 
+/// The nearest face within a reach is the nearest face, exactly, whenever it lies within the reach,
+/// and nothing when it does not. A box 10 × 20 × 30 from the origin: 5 above the top's middle the top
+/// is 5 away (the sides 5 and 10, the bottom 35, are farther); 2 above the floor inside, the floor
+/// is 2 away. A reach short of that finds nothing, though faces' boxes lie within it; a reach
+/// that is not a length finds nothing.
+#[test]
+fn the_nearest_face_within_a_reach_is_the_nearest_face() {
+    let b = box_solid(Vec3::ZERO, Vec3::new(10.0, 20.0, 30.0)).unwrap();
+    for (p, distance) in [(Vec3::new(5.0, 10.0, 35.0), 5.0), (Vec3::new(5.0, 10.0, 2.0), 2.0)] {
+        let all = b.nearest_face(p).unwrap();
+        assert!((all.0 - distance).abs() < 1e-9, "{p:?}: {all:?}");
+        for reach in [distance + 1e-6, distance + 0.5, 1e3] {
+            let within = b.nearest_face_within(p, reach).unwrap();
+            assert_eq!(within.1, all.1, "{p:?} within {reach}");
+            assert!((within.0 - distance).abs() < 1e-9, "{p:?} within {reach}");
+        }
+        assert_eq!(b.nearest_face_within(p, distance - 0.1), None, "{p:?}");
+    }
+    let p = Vec3::new(5.0, 10.0, 35.0);
+    for reach in [-1.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(b.nearest_face_within(p, reach), None, "reach {reach}");
+    }
+}
+
 /// A point just inside a cylinder's wall is inside it wherever the cylinder's seam lies (#16748). A
 /// ray from it along +x crosses the wall at a grazing angle near the cylinder's silhouette; where
 /// the seam put the patch boundaries so that one patch held both of the line's roots, the ray
