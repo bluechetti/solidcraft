@@ -286,16 +286,39 @@ fn changed_paths(root: &Path, base: Option<&str>) -> Result<Vec<String>, String>
     };
     let base = match base {
         Some(b) => b.to_string(),
-        None => ["origin/main", "main"]
-            .into_iter()
-            .find(|b| git(&["rev-parse", "--verify", "-q", &format!("{b}^{{commit}}")]).is_ok())
-            .ok_or("no origin/main or main to compare with: pass --base REF")?
-            .to_string(),
+        None => nearest_base(&git)?,
     };
+    println!("fast: changes since {base} (pass --base REF for another)");
     let mut out = git(&["diff", "-z", "--no-renames", "--name-only", &format!("{base}...HEAD")])?;
     out.extend(git(&["diff", "-z", "--no-renames", "--name-only", "HEAD"])?);
     out.extend(git(&["ls-files", "-z", "--others", "--exclude-standard"])?);
     Ok(split_nul(&out))
+}
+
+/// Runs git with these arguments in the repository: its output, or why it failed.
+type Git<'a> = dyn Fn(&[&str]) -> Result<Vec<u8>, String> + 'a;
+
+/// `origin/main` or `main`, whichever this branch left last: the one whose merge base with HEAD
+/// is the newer. A fork that keeps its work on a local `main` ahead of `origin/main` would
+/// otherwise count every commit since the last sync as changed and test the whole workspace
+/// (682 files, 23 packages and 57 minutes of test builds for a branch that changed three crates).
+/// A contributor's stale local `main` is behind `origin/main`, so `origin/main` stays theirs.
+fn nearest_base(git: &Git) -> Result<String, String> {
+    let found: Vec<(&str, String)> = ["origin/main", "main"]
+        .into_iter()
+        .filter_map(|b| {
+            let fork = git(&["merge-base", b, "HEAD"]).ok()?;
+            Some((b, String::from_utf8_lossy(&fork).trim().to_string()))
+        })
+        .collect();
+    match found.as_slice() {
+        [] => Err("no origin/main or main to compare with: pass --base REF".to_string()),
+        [(b, _)] => Ok((*b).to_string()),
+        [(upstream, up_fork), (local, local_fork), ..] => {
+            let local_is_newer = up_fork != local_fork && git(&["merge-base", "--is-ancestor", up_fork, local_fork]).is_ok();
+            Ok(if local_is_newer { (*local).to_string() } else { (*upstream).to_string() })
+        }
+    }
 }
 
 fn split_nul(bytes: &[u8]) -> Vec<String> {
