@@ -79,7 +79,6 @@ const RELAX_ROUNDS: usize = 8;
 const RELAX_STEP: f64 = 0.5;
 const CREASE: f64 = 0.866;
 
-
 /// A budget's factor round a sample that is too far.
 const TIGHTEN: f64 = 0.5;
 /// Rings of scan points tightened round a sample that is too far.
@@ -390,17 +389,6 @@ fn coons(bottom: &[Vec3; 4], top: &[Vec3; 4], left: &[Vec3; 4], right: &[Vec3; 4
     net
 }
 
-/// Does every row and every column of the net run one way (each step along the row's or column's
-/// own direction from end to end)? A net that doubles back makes a folded patch.
-fn monotone(net: &[Vec3; 16]) -> bool {
-    let at = |i: usize, j: usize| net[j * 4 + i];
-    let runs_one_way = |p: [Vec3; 4]| {
-        let way = p[3] - p[0];
-        way.len() > 0.0 && (0..3).all(|k| (p[k + 1] - p[k]).dot(way) > 0.0)
-    };
-    (0..4).all(|j| runs_one_way([at(0, j), at(1, j), at(2, j), at(3, j)])) && (0..4).all(|i| runs_one_way([at(i, 0), at(i, 1), at(i, 2), at(i, 3)]))
-}
-
 fn eval(net: &[Vec3; 16], u: f64, v: f64) -> Vec3 {
     let (bu, bv) = (bern(u), bern(v));
     let mut p = Vec3::ZERO;
@@ -564,7 +552,7 @@ fn patches(under: &Under, positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Nur
             }
         }
     }
-    let placed: Vec<Vec3> = par::map(points.len(), |k| under.under(points[k], facing_of[k]).unwrap_or(points[k]));
+    let mut placed: Vec<Vec3> = par::map(points.len(), |k| under.under(points[k], facing_of[k]).unwrap_or(points[k]));
     // Each side once, from its lower point to its higher one.
     let mut sides: HashMap<(u32, u32), Vec3> = HashMap::new();
     for (q, f) in &quads {
@@ -580,32 +568,135 @@ fn patches(under: &Under, positions: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Nur
     });
     let mut curve: HashMap<(u32, u32), [Vec3; 4]> = keys.into_iter().zip(curves).collect();
     straighten_sharp_corners(&mut curve, &quads, &placed);
+    // Every patch regular: its normal never vanishes, so it does not fold over itself (a folded
+    // patch is no surface a face can lie on, and the tessellator refines one without end). As
+    // the kernel certifies it, from the cheapest mend to the dearest:
+    // - a fitted net that folds is laid as the Coons net of its sides (its own inner points);
+    // - a Coons net that folds has its curved sides made straight (sides are shared: both patches
+    //   on one see the same, and both are laid again);
+    // - a patch that still folds lies on a layout quad that is not convex, its inner point (its
+    //   triangle's or pair's alone) placed past a side: that point goes back to where the
+    //   layout put it, inside the triangle, and its patches are laid again.
+    let mut nets: Vec<[Vec3; 16]> = vec![[Vec3::ZERO; 16]; quads.len()];
+    let mut todo: Vec<usize> = (0..quads.len()).collect();
+    for round in 0..=MEND_ROUNDS {
+        let laid: Vec<([Vec3; 16], [Vec3; 16])> = par::map(todo.len(), |i| lay(under, &quads[todo[i]], &curve, &placed));
+        let fitted: Vec<[Vec3; 16]> = laid.iter().map(|(fitted, _)| *fitted).collect();
+        let fitted_ok = regular_nets(&fitted);
+        let coons_wanted: Vec<usize> = (0..todo.len()).filter(|&i| !fitted_ok[i]).collect();
+        let coons_nets: Vec<[Vec3; 16]> = coons_wanted.iter().map(|&i| laid[i].1).collect();
+        let coons_ok = regular_nets(&coons_nets);
+        let mut folded: Vec<usize> = Vec::new();
+        for (i, (fitted, _)) in laid.iter().enumerate() {
+            nets[todo[i]] = *fitted;
+        }
+        for (k, &i) in coons_wanted.iter().enumerate() {
+            nets[todo[i]] = laid[i].1;
+            if !coons_ok[k] {
+                folded.push(todo[i]);
+            }
+        }
+        if folded.is_empty() || round == MEND_ROUNDS {
+            break;
+        }
+        // Sides first; once a folded patch's sides are all straight, its inner point.
+        let mut moved: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let mut changed: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
+        for &k in &folded {
+            let q = quads[k].0;
+            let mut curved = false;
+            for s in 0..4 {
+                let key = (q[s].min(q[(s + 1) % 4]), q[s].max(q[(s + 1) % 4]));
+                let (a, b) = (placed[key.0 as usize], placed[key.1 as usize]);
+                let line = [a, a + (b - a) / 3.0, a + (b - a) * (2.0 / 3.0), b];
+                if curve.get(&key).is_some_and(|c| *c != line) {
+                    curve.insert(key, line);
+                    changed.insert(key);
+                    curved = true;
+                }
+            }
+            if !curved && placed.get(q[2] as usize).is_some_and(|p| Some(p) != points.get(q[2] as usize)) {
+                moved.insert(q[2]);
+            }
+        }
+        for &v in &moved {
+            if let (Some(p), Some(&at)) = (placed.get_mut(v as usize), points.get(v as usize)) {
+                *p = at;
+            }
+            // Its patches' sides to it run from points that have not moved: laid straight again.
+            for (q, _) in &quads {
+                if q[2] == v {
+                    for key in [(q[1].min(q[2]), q[1].max(q[2])), (q[2].min(q[3]), q[2].max(q[3]))] {
+                        let (a, b) = (placed[key.0 as usize], placed[key.1 as usize]);
+                        curve.insert(key, [a, a + (b - a) / 3.0, a + (b - a) * (2.0 / 3.0), b]);
+                        changed.insert(key);
+                    }
+                }
+            }
+        }
+        if changed.is_empty() {
+            break;
+        }
+        todo = (0..quads.len())
+            .filter(|&k| {
+                let q = quads[k].0;
+                (0..4).any(|s| changed.contains(&(q[s].min(q[(s + 1) % 4]), q[s].max(q[(s + 1) % 4]))))
+            })
+            .collect();
+    }
+    let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+    nets.iter().filter_map(|net| NurbsSurface::new([3, 3], [knots.clone(), knots.clone()], net, &[1.0; 16]).ok()).collect()
+}
+
+/// Rounds of mending folded patches: their sides, then their inner points, with room to spare.
+const MEND_ROUNDS: usize = 4;
+
+/// The quad `q` laid as a patch: its fitted net, and the Coons net of its sides alone.
+fn lay(under: &Under, q: &([u32; 4], Vec3), curve: &HashMap<(u32, u32), [Vec3; 4]>, placed: &[Vec3]) -> ([Vec3; 16], [Vec3; 16]) {
+    let at = |v: u32| placed.get(v as usize).copied().unwrap_or(Vec3::ZERO);
     let along = |x: u32, y: u32| -> [Vec3; 4] {
         match curve.get(&(x.min(y), x.max(y))) {
             Some(c) if x < y => *c,
             Some(c) => [c[3], c[2], c[1], c[0]],
             None => {
-                let (a, b) = (placed[x as usize], placed[y as usize]);
+                let (a, b) = (at(x), at(y));
                 [a, a + (b - a) / 3.0, a + (b - a) * (2.0 / 3.0), b]
             }
         }
     };
-    let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
-    let faces: Vec<Option<NurbsSurface>> = par::map(quads.len(), |k| {
-        let ([q0, q1, q2, q3], facing) = quads[k];
-        let (bottom, top, left, right) = (along(q0, q1), along(q3, q2), along(q0, q3), along(q1, q2));
-        let start = coons(&bottom, &top, &left, &right);
-        let mut net = start;
-        fit_inner(under, &mut net, facing);
-        // A fitted net that doubles back on itself is a folded patch: then the unfitted Coons net
-        // of its sides. Never other sides: the sides are shared with the neighbouring patches,
-        // and a side of its own would leave the body open there.
-        if !monotone(&net) {
-            net = start;
-        }
-        NurbsSurface::new([3, 3], [knots.clone(), knots.clone()], &net, &[1.0; 16]).ok()
+    let ([q0, q1, q2, q3], facing) = *q;
+    let (bottom, top, left, right) = (along(q0, q1), along(q3, q2), along(q0, q3), along(q1, q2));
+    let start = coons(&bottom, &top, &left, &right);
+    let mut net = start;
+    fit_inner(under, &mut net, facing);
+    (net, start)
+}
+
+/// The most subdivided pieces the kernel examines to certify one patch regular here: past it
+/// the patch is mended as one that folds (its normal comes that near vanishing). A patch that
+/// folds took the kernel's whole budget, 20,000, about a second each.
+const REGULAR_BUDGET: usize = 1_000;
+
+/// Whether each net (u fastest) is a regular patch, as the kernel certifies it within
+/// [`REGULAR_BUDGET`] (`solidcore_ops::surface::regular_within`), in batches across the
+/// threads. Where the kernel cannot say, a net counts as regular: sewing asks again with the
+/// kernel's whole budget, and refuses a folded patch by name.
+fn regular_nets(nets: &[[Vec3; 16]]) -> Vec<bool> {
+    const BATCH: usize = 256;
+    let batches = nets.len().div_ceil(BATCH);
+    let answers: Vec<Vec<bool>> = par::map(batches, |b| {
+        let part = nets.get(b * BATCH..((b + 1) * BATCH).min(nets.len())).unwrap_or_default();
+        let surfaces: Vec<solidcore_record::brep::Surface> = part.iter().map(bicubic_record).collect();
+        solidcore_ops::surface::regular_within(&surfaces, REGULAR_BUDGET).unwrap_or_else(|_| vec![true; part.len()])
     });
-    faces.into_iter().flatten().collect()
+    answers.into_iter().flatten().collect()
+}
+
+/// A bicubic net (u fastest) as the record's surface: one Bézier patch on [0, 1]².
+fn bicubic_record(net: &[Vec3; 16]) -> solidcore_record::brep::Surface {
+    let knots = vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0];
+    let points: Vec<Vec<[f64; 3]>> = (0..4).map(|i| (0..4).map(|j| net[j * 4 + i]).map(|p| [p.x, p.y, p.z]).collect()).collect();
+    solidcore_record::brep::Surface::Spline { u_knots: knots.clone(), v_knots: knots, points }
 }
 
 /// Where two fitted sides leave a patch corner at under [`SHARP_CORNER`] and under half the angle
@@ -920,7 +1011,7 @@ fn remove_caps(positions: &[Vec3], triangles: &mut Vec<[u32; 3]>, tolerance: f64
 /// corners `a d b c`, counter-clockwise, `a b` the side they share): worst-shaped triangles first,
 /// each with the neighbour across its longest side, else across another, when the two bend by
 /// less than [`PAIR_BEND`]
-/// and the quad's corners all lie between [`PAIR_CORNER`] and 180° less it. Two long thin
+/// and the quad's corners all lie between [`PAIR_CORNER`] and 180° less it (so it is convex). Two long thin
 /// triangles along a rounded edge make a long rectangle, which four patches follow well, where
 /// three to a triangle would meet at near-zero and near-straight corners.
 fn pairs(cp: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Option<(usize, [u32; 4])>> {
@@ -960,10 +1051,17 @@ fn pairs(cp: &[Vec3], triangles: &[[u32; 3]]) -> Vec<Option<(usize, [u32; 4])>> 
                 return None;
             }
             let q = [at(a), at(d), at(b), at(c)];
-            let fair = (0..4).all(|k| {
-                let x = angle(q[k], q[(k + 1) % 4], q[(k + 3) % 4]);
-                (PAIR_CORNER..std::f64::consts::PI - PAIR_CORNER).contains(&x)
-            });
+            // The quad's corners: at d and c the triangles' own; at a and b, the ends of the side
+            // they share, the sum of the two triangles' angles there. (The angle between the quad's
+            // two sides there reads a reflex corner, 210°, as 150°: a concave quad, whose patches
+            // fold over themselves.)
+            let corners = [
+                angle(q[0], q[3], q[2]) + angle(q[0], q[2], q[1]),
+                angle(q[1], q[2], q[0]),
+                angle(q[2], q[0], q[3]) + angle(q[2], q[1], q[0]),
+                angle(q[3], q[0], q[2]),
+            ];
+            let fair = corners.iter().all(|x| (PAIR_CORNER..std::f64::consts::PI - PAIR_CORNER).contains(x));
             // The four quads it is cut into (round its middle) must have fair corners too: a
             // lopsided quad gives sharp ones at its sides' middles.
             let centre = (q[0] + q[1] + q[2] + q[3]) / 4.0;
@@ -1057,8 +1155,7 @@ fn collapse_degenerate(positions: &[Vec3], triangles: &mut Vec<[u32; 3]>, under:
             continue;
         }
         let side = |k: usize| c[k].dist(c[(k + 1) % 3]);
-        let (Some(long), Some(short)) =
-            ((0..3).max_by(|&i, &j| side(i).total_cmp(&side(j))), (0..3).min_by(|&i, &j| side(i).total_cmp(&side(j))))
+        let (Some(long), Some(short)) = ((0..3).max_by(|&i, &j| side(i).total_cmp(&side(j))), (0..3).min_by(|&i, &j| side(i).total_cmp(&side(j))))
         else {
             continue;
         };
@@ -1423,13 +1520,37 @@ mod tests {
         assert!(edge_faces(&f).values().all(|v| v.len() <= 2));
     }
 
+    /// A flat net on the unit grid is regular, and still is with the second point of row 1 moved
+    /// past the third (x 2.5 where the third is at 2): at any v the surface's row is the rows'
+    /// Bernstein blend, whose second point's x is 1 + 1.5 · 3v(1 − v)² ≤ 1.67 < 2, so S_u keeps
+    /// running +x and S_u × S_v keeps +z (the old row-and-column test refused this patch). The
+    /// bicubic of the bilinear map over the dart (0, 0), (10, 0), (2, 2), (0, 10) folds: S_u × S_v
+    /// is 10 × 10 = +100 along z at (0, 0) and (2, −8) × (−8, 2) = −60 at (1, 1).
     #[test]
-    fn a_net_that_doubles_back_is_not_monotone() {
+    fn a_net_regular_where_its_normal_never_vanishes() {
         let flat: [Vec3; 16] = std::array::from_fn(|k| Vec3::new((k % 4) as f64, (k / 4) as f64, 0.0));
-        assert!(monotone(&flat));
-        let mut folded = flat;
-        folded[5] = Vec3::new(2.5, 1.0, 0.0); // the second point of row 1 past the third
-        assert!(!monotone(&folded));
+        let mut doubled = flat;
+        doubled[5] = Vec3::new(2.5, 1.0, 0.0);
+        let [p00, p10, p11, p01] = [Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0), Vec3::new(2.0, 2.0, 0.0), Vec3::new(0.0, 10.0, 0.0)];
+        let dart: [Vec3; 16] = std::array::from_fn(|k| {
+            let (u, v) = ((k % 4) as f64 / 3.0, (k / 4) as f64 / 3.0);
+            p00 * ((1.0 - u) * (1.0 - v)) + p10 * (u * (1.0 - v)) + p11 * (u * v) + p01 * ((1.0 - u) * v)
+        });
+        assert_eq!(regular_nets(&[flat, doubled, dart]), [true, true, false]);
+    }
+
+    /// Two triangles a (0, 0), b (10, 0), c (-6, -12) and b, a, d (0, 1), sharing a b, make a
+    /// concave quad a d b c: its corner at a is the sum of their angles there, 116.6° + 90° =
+    /// 206.6° (the angle between its sides there reads 153.4°), so they are not paired. With c
+    /// at (5, -6) and d at (5, 6) the quad is a rhombus (corners 100.4° and 79.6°) and they are.
+    #[test]
+    fn two_triangles_making_a_concave_quad_are_not_paired() {
+        let at = |x: f64, y: f64| Vec3::new(x, y, 0.0);
+        let concave = [at(0.0, 0.0), at(10.0, 0.0), at(-6.0, -12.0), at(0.0, 1.0)];
+        let tris = [[0u32, 1, 2], [1, 0, 3]];
+        assert_eq!(pairs(&concave, &tris), [None, None]);
+        let rhombus = [at(0.0, 0.0), at(10.0, 0.0), at(5.0, -6.0), at(5.0, 6.0)];
+        assert!(pairs(&rhombus, &tris).iter().all(Option::is_some));
     }
 
     #[test]
@@ -1441,10 +1562,12 @@ mod tests {
             let (mab, mbc, mca) = ((a + b) / 2.0, (b + c) / 2.0, (c + a) / 2.0);
             [[a, mab, g, mca], [b, mbc, g, mab], [c, mca, g, mbc]]
                 .iter()
-                .flat_map(|q| (0..4).map(move |k| {
-                    let (u, v) = (q[(k + 1) % 4] - q[k], q[(k + 3) % 4] - q[k]);
-                    (u.dot(v) / (u.len() * v.len())).clamp(-1.0, 1.0).acos().to_degrees()
-                }))
+                .flat_map(|q| {
+                    (0..4).map(move |k| {
+                        let (u, v) = (q[(k + 1) % 4] - q[k], q[(k + 3) % 4] - q[k]);
+                        (u.dot(v) / (u.len() * v.len())).clamp(-1.0, 1.0).acos().to_degrees()
+                    })
+                })
                 .fold(0.0, f64::max)
         };
         assert!(worst(g) < worst((a + b + c) / 3.0), "{} against {}", worst(g), worst((a + b + c) / 3.0));
