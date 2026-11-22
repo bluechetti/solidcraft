@@ -12,9 +12,12 @@
 //!    ui-containers, mesh-decisions; shared when a selected package is a shared crate or a
 //!    manifest or the lockfile changed, licences when one of those changed, icons when an icon
 //!    file changed.
-//! 4. `cargo clippy --workspace --all-targets --profile ci -- -D warnings`, as `cargo xtask ci`
-//!    runs it (and reusing its build), so a change that breaks a dependent crate still fails.
-//! 5. The selected packages' tests, with nextest's `ci` profile (no heavy tests).
+//! 4. `cargo clippy --workspace --all-targets --profile fast -- -D warnings`, as `cargo xtask ci`
+//!    runs it but in the incremental `fast` profile (`ci` plus incremental builds; the lints are
+//!    the same), so a change that breaks a dependent crate still fails. With `ci`'s
+//!    non-incremental builds, clippy after a one-line engine edit took 85 s; incremental, 35 s.
+//! 5. The selected packages' tests, built in the `fast` profile, with nextest's `ci` profile (no
+//!    heavy tests).
 //! 6. When solidcore/ code changed, as solidcore/AGENTS.md §4 asks: clippy over the whole
 //!    solidcore workspace; the tests of every solidcore crate except `goldens` and
 //!    `solidcore-ops` (the slow ones), which are tested only when the change touches them (a
@@ -34,7 +37,8 @@ const USAGE: &str = "usage: cargo xtask fast [--base REF] [-p PACKAGE]... [--uni
 /// nextest's options for the workspace tests: CI's for a pull request. The `ci` profile's default
 /// filter leaves out the heavy tests, and `-E` the action matrix sample, which pull requests leave
 /// to the merge queue too (.github/workflows/ci.yml, "Run tests").
-const WORKSPACE_NEXTEST: [&str; 6] = ["--cargo-profile", "ci", "--profile", "ci", "-E", "not (binary(action_matrix) & test(=action_matrix_sample))"];
+const WORKSPACE_NEXTEST: [&str; 6] =
+    ["--cargo-profile", "fast", "--profile", "ci", "-E", "not (binary(action_matrix) & test(=action_matrix_sample))"];
 
 /// solidcore crates whose tests are slow (the goldens crate's own tests are about three quarters of
 /// the suite's time, solidcore-ops' about a tenth): tested only when the change touches them.
@@ -158,8 +162,8 @@ pub fn run(root: &Path, args: &[&str]) -> Result<(), String> {
     let code_changed = sel.full || !sel.packages.is_empty() || !sel.solidcore.is_empty();
     if code_changed {
         let mut c = crate::cargo();
-        c.args(["clippy", "--workspace", "--all-targets", "--profile", "ci", "--", "-D", "warnings"]);
-        step("clippy", crate::run(c, "cargo clippy --workspace --all-targets --profile ci -- -D warnings"));
+        c.args(["clippy", "--workspace", "--all-targets", "--profile", "fast", "--", "-D", "warnings"]);
+        step("clippy", crate::run(c, "cargo clippy --workspace --all-targets --profile fast -- -D warnings"));
     } else {
         println!("fast: no code changed: no clippy or tests");
     }
@@ -168,7 +172,14 @@ pub fn run(root: &Path, args: &[&str]) -> Result<(), String> {
     if o.no_tests {
         println!("fast: --no-tests: tests skipped");
     } else if !sel.packages.is_empty() {
-        step("tests", run_tests(crate::cargo(), "", nextest, &WORKSPACE_NEXTEST, &["--profile", "ci"], &sel.packages, &o.test_args));
+        // With workspace-hack in the build, the third-party crates keep the whole workspace's
+        // features whatever the packages are, so a new mix does not recompile serde, solidcore
+        // and everything above them (7-10 min measured). It has no tests.
+        let mut packages = sel.packages.clone();
+        if root.join("crates/workspace-hack/Cargo.toml").is_file() {
+            packages.insert("workspace-hack".into());
+        }
+        step("tests", run_tests(crate::cargo(), "", nextest, &WORKSPACE_NEXTEST, &["--profile", "fast"], &packages, &o.test_args));
     }
     if sel.full && !o.no_tests {
         println!("fast: the change can also affect packages whose files did not change: CI tests them all; name some with -p");
@@ -522,7 +533,7 @@ mod tests {
 
     #[test]
     fn workspace_tests_leave_out_what_pull_request_ci_leaves_out() {
-        assert_eq!(&WORKSPACE_NEXTEST[..4], ["--cargo-profile", "ci", "--profile", "ci"]);
+        assert_eq!(&WORKSPACE_NEXTEST[..4], ["--cargo-profile", "fast", "--profile", "ci"]);
         let ci = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../.github/workflows/ci.yml")).unwrap();
         // The expression pull requests add to `default()` in ci.yml's "Run tests" step.
         assert!(ci.contains(&format!("base='default() & {}'", WORKSPACE_NEXTEST[5])), "ci.yml no longer filters `{}`", WORKSPACE_NEXTEST[5]);
