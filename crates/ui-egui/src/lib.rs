@@ -421,6 +421,9 @@ mod viewport_status_fixture;
 pub mod vr_browser;
 #[cfg(test)]
 mod vr_browser_tests;
+pub mod vr_params;
+#[cfg(test)]
+mod vr_params_tests;
 pub mod vr_pick;
 #[cfg(test)]
 mod vr_pick_tests;
@@ -593,6 +596,10 @@ pub struct Services {
     /// Whether the running VR session can show the real room around the model (passthrough);
     /// `None` without a session.
     pub vr_passthrough: Option<bool>,
+    /// What each VR hand (left, right) points at on the belt and its window, in plain words
+    /// (`belt:Parameters`, `item:0`, `window:0.412,0.305`), for `ui.inspect`: scripts that drive a
+    /// simulated headset steer by it. Empty without a session.
+    pub vr_pointing: Vec<String>,
     /// HTTPS GET for the update check (`update`); None: never check (browser, tests).
     pub http_get: Option<update::HttpGet>,
     /// HTTPS download to a file, with progress, for one-click updates (`update::install`).

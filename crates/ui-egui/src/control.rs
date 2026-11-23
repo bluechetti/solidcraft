@@ -1036,6 +1036,7 @@ fn ui_inspect(app: &SolveApp) -> Outcome {
         "windows": open_windows(app),
         "status": app.status.as_ref().map(|(text, _, error)| json!({"text": text, "error": error})),
         "hover": app.viewport.hover,
+        "vr_pointing": app.services.vr_pointing,
         "snap_points": crate::snap_wake::inspect(app),
         "renderer": if app.viewport.gpu.is_some() { "gpu" } else { "cpu" },
         "frame_ms": app.frame_ms,

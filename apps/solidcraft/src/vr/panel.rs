@@ -70,6 +70,9 @@ pub struct Panel {
     again_after: f64,
     /// What its pointer lights in the design.
     lit: Vec<String>,
+    /// What it shows, and the Parameters' list between frames.
+    kind: super::belt::Group,
+    params: solidcraft_ui_egui::vr_params::VrParams,
 }
 
 impl Panel {
@@ -87,6 +90,21 @@ impl Panel {
             drawn_at: None,
             again_after: 0.0,
             lit: Vec::new(),
+            kind: super::belt::Group::Browser,
+            params: Default::default(),
+        }
+    }
+
+    /// Show `kind` (the Browser or the Parameters) from the next drawing on. Another kind ends
+    /// what the one before held and draws at once.
+    pub fn show(&mut self, app: &mut SolveApp, kind: super::belt::Group) {
+        if kind != self.kind {
+            if self.kind == super::belt::Group::Browser {
+                solidcraft_ui_egui::vr_pick::light(app, &mut self.lit, Vec::new());
+                solidcraft_ui_egui::vr_browser::close(app);
+            }
+            self.kind = kind;
+            self.drawn_at = None;
         }
     }
 
@@ -169,6 +187,8 @@ impl Panel {
         // The picture's pixels a point, from this pass on (a zoom factor would wait for the next).
         input.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(size.pixels_per_point);
         let lit = &mut self.lit;
+        let (kind, params) = (self.kind, &mut self.params);
+        let title_key = if kind == super::belt::Group::Parameters { "vr.belt_parameters" } else { "vr.belt_browser" };
         let mut out = self.ctx.run_ui(input, |ui| {
             let t = solidcraft_theme::Tokens::get();
             let rect = ui.max_rect();
@@ -179,7 +199,7 @@ impl Panel {
             ui.painter().text(
                 egui::pos2(title.left() + t.space_12, title.center().y),
                 egui::Align2::LEFT_CENTER,
-                solidcraft_ui_text::tr("vr.belt_browser"),
+                solidcraft_ui_text::tr(title_key),
                 egui::FontId::proportional(t.font_label),
                 t.form_ink,
             );
@@ -187,7 +207,11 @@ impl Panel {
             let body = rect.with_min_y(title.bottom() + t.space_4).shrink2(egui::vec2(t.space_4, t.space_4));
             let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
             inner.set_clip_rect(body);
-            solidcraft_ui_egui::vr_browser::show(app, &mut inner, lit);
+            if kind == super::belt::Group::Parameters {
+                solidcraft_ui_egui::vr_params::show(app, &mut inner, params);
+            } else {
+                solidcraft_ui_egui::vr_browser::show(app, &mut inner, lit);
+            }
         });
         self.again_after = out.viewport_output.get(&egui::ViewportId::ROOT).map_or(IDLE, |v| v.repaint_delay.as_secs_f64());
         self.drawn_at = Some(now);

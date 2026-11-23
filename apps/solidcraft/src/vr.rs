@@ -417,6 +417,7 @@ impl Vr {
     fn close(&mut self, app: &mut SolveApp) {
         app.viewport.stereo.on = false;
         app.services.vr_passthrough = None;
+        app.services.vr_pointing.clear();
         self.let_go(app);
         self.panel = None;
         self.gpu = None;
@@ -907,11 +908,22 @@ impl Vr {
             }
         }
         self.window_hover = window_hits;
+        app.services.vr_pointing = (0..2)
+            .map(|i| match (self.belt.hover[i], self.window_hover[i]) {
+                (Some((belt::Spot::Group(g), _)), _) => belt::GROUPS.get(g).map_or_else(String::new, |g| format!("belt:{g:?}")),
+                (Some((belt::Spot::Item(k), _)), _) => format!("item:{k}"),
+                (Some((belt::Spot::Handle, _)), _) => "belt:handle".into(),
+                (None, Some((uv, _))) => format!("window:{:.3},{:.3}", uv[0], uv[1]),
+                (None, None) => String::new(),
+            })
+            .collect();
         // The window's pointer: the hand that pressed on it, else the first on it.
         let window_open = layout.as_ref().is_some_and(|l| l.window.is_some());
         if window_open {
             let device = &rs.device;
+            let kind = self.belt.window_kind.unwrap_or(belt::Group::Browser);
             let panel = self.panel.get_or_insert_with(|| panel::Panel::new(device));
+            panel.show(app, kind);
             let pressing = (0..2).find(|i| self.window_pressed[*i]);
             let at = pressing.and_then(|i| self.window_hover[i]).or(self.window_hover.iter().flatten().next().copied()).map(|(uv, _)| uv);
             panel.point(at, window.points);
@@ -1491,7 +1503,7 @@ fn belt_boards(out: &mut [Option<Board>; BOARDS], layout: &belt::Layout, belt: &
     };
     for (g, (group, at)) in belt::GROUPS.iter().zip(&layout.groups).enumerate() {
         let spot = belt::Spot::Group(g);
-        let open = belt.open == Some(g) || (group.is_window() && belt.window);
+        let open = belt.open == Some(g) || (group.is_window() && belt.window && belt.window_kind.unwrap_or(belt::Group::Browser) == *group);
         out[BELT + 2 + g] = Some(bubble(&belt::group_item(*group), *at, open || hovered(spot), hovered(spot)));
     }
     if let Some(group) = belt.open.and_then(|g| belt::GROUPS.get(g)) {
@@ -1507,8 +1519,15 @@ fn belt_boards(out: &mut [Option<Board>; BOARDS], layout: &belt::Layout, belt: &
 fn belt_act(app: &mut SolveApp, belt: &mut belt::Belt, spot: belt::Spot, state: &belt::State, put_back: &mut bool) -> String {
     let act = match spot {
         belt::Spot::Handle => return String::new(),
-        belt::Spot::Group(g) if belt::GROUPS.get(g).is_some_and(|group| group.is_window()) => {
-            belt.window = !belt.window;
+        belt::Spot::Group(g) if let Some(group) = belt::GROUPS.get(g).filter(|group| group.is_window()) => {
+            // The window's own bubble closes it; the other window bubble shows its kind in it.
+            let showing = belt.window_kind.unwrap_or(belt::Group::Browser);
+            if belt.window && showing == *group {
+                belt.window = false;
+            } else {
+                belt.window = true;
+                belt.window_kind = Some(*group);
+            }
             return String::new();
         }
         belt::Spot::Group(g) => {

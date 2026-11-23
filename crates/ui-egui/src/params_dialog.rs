@@ -132,18 +132,18 @@ impl ParamsDialog {
 
 /// One row as the engine lists it.
 #[derive(Clone, Debug, Default)]
-struct Row {
-    name: String,
-    expression: String,
-    unit: String,
-    value: Option<f64>,
-    error: Option<String>,
+pub(crate) struct Row {
+    pub(crate) name: String,
+    pub(crate) expression: String,
+    pub(crate) unit: String,
+    pub(crate) value: Option<f64>,
+    pub(crate) error: Option<String>,
     comment: String,
-    source: String,
-    group: String,
-    favorite: bool,
+    pub(crate) source: String,
+    pub(crate) group: String,
+    pub(crate) favorite: bool,
     /// A text parameter's text.
-    text: Option<String>,
+    pub(crate) text: Option<String>,
 }
 
 impl Row {
@@ -161,7 +161,7 @@ impl Row {
     }
 }
 
-fn rows(app: &mut SolveApp) -> Vec<Row> {
+pub(crate) fn rows(app: &mut SolveApp) -> Vec<Row> {
     let list = app.session.execute("parameters.list", &json!({})).unwrap_or_default();
     // Sketch dimension parameters: the sketch that owns each.
     let mut owner: std::collections::BTreeMap<String, String> = Default::default();

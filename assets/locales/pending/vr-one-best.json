@@ -1,0 +1,10 @@
+{
+  "en": {
+    "vr.belt_parameters": "Parameters",
+    "vr.params_cancel": "Cancel",
+    "vr.params_fine": "Fine steps",
+    "vr.params_none": "This design has no parameters",
+    "vr.params_set": "Set",
+    "vr.params_user": "User parameters"
+  }
+}

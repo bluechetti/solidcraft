@@ -54,7 +54,7 @@ group's name and icon. The defaults:
 Also available for a slot: Hide (only), and every action above.
 
 **The belt.** Below and in front of you, curved toward you, and left where it is put: Browser,
-Designs (each open design, and New), File (Save, Close), Room (Passthrough, the real room around the model; Put
+Parameters, Designs (each open design, and New), File (Save, Close), Room (Passthrough, the real room around the model; Put
 back) and Edit (Undo, Redo). Point at a group (or touch it with the controller) and Select: its
 items grow out above it; Select on one does it. Save and Close ask nothing in the headset: a
 design that has no file yet, or whose moved parts are not captured, is saved on the desktop
@@ -64,6 +64,13 @@ and nothing changes. Grab the belt (or the bar under it) to move it: it goes and
 hand as a held part does, its long side always level, and the stick pulls it closer or pushes it
 away. Put back puts it in front of you again. The model, the controllers and the menu cover it
 where they are nearer.
+
+**The Parameters.** The Parameters bubble shows the design's parameters in the window beside the
+belt (the Browser's bubble shows the Browser there again; a bubble pressed again closes it). A
+parameter that is a plain number has − and + either side of its value: a unit a step (5° for an
+angle), a tenth with Fine steps on. Select on a value opens a keypad for an exact one: Set changes
+it, Cancel leaves it. A formula is never stepped, only replaced from the keypad. Each change is one
+undo step, and the design follows on the desktop too.
 
 **The Browser.** Select on Browser opens the window's own Browser beside the belt (Select again
 closes it): every row the desktop Browser has, with its folds, eyes and selecting. The ray is its

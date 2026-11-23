@@ -21,9 +21,9 @@ pub enum Act {
 }
 
 impl Group {
-    /// Whether the group opens a window (the Browser) rather than items of its own.
+    /// Whether the group opens a window (the Browser, the Parameters) rather than items of its own.
     pub fn is_window(self) -> bool {
-        self == Group::Browser
+        matches!(self, Group::Browser | Group::Parameters)
     }
 }
 
@@ -36,10 +36,12 @@ pub enum Group {
     Edit,
     /// The design's tree, in a window of its own beside the belt.
     Browser,
+    /// The design's parameters, stepped and typed, in that window.
+    Parameters,
 }
 
 /// The groups, left to right.
-pub const GROUPS: [Group; 5] = [Group::Browser, Group::Designs, Group::File, Group::Room, Group::Edit];
+pub const GROUPS: [Group; 6] = [Group::Browser, Group::Parameters, Group::Designs, Group::File, Group::Room, Group::Edit];
 
 /// The most items a group opens (the open designs past it are left out).
 pub const MAX_ITEMS: usize = 8;
@@ -78,6 +80,7 @@ pub fn group_item(group: Group) -> Item {
         Group::Room => ("vr.belt_room", "eye"),
         Group::Edit => ("vr.group_edit", "edit"),
         Group::Browser => ("vr.belt_browser", "document_browser"),
+        Group::Parameters => ("vr.belt_parameters", "params"),
     };
     Item { act: Act::Group(group), words: tr(words).to_string(), icon: Some(icon), on: true, current: false }
 }
@@ -110,7 +113,7 @@ pub fn items(group: Group, state: &State) -> Vec<Item> {
         Group::Edit => {
             vec![item(Act::Undo, "vr.menu_undo", Some("undo"), state.can_undo), item(Act::Redo, "vr.menu_redo", Some("redo"), state.can_redo)]
         }
-        Group::Browser => Vec::new(),
+        Group::Browser | Group::Parameters => Vec::new(),
     }
 }
 
@@ -125,8 +128,10 @@ pub struct Belt {
     pub held: Option<Held>,
     /// The group open, by its place in [`GROUPS`].
     pub open: Option<usize>,
-    /// The Browser's window is open.
+    /// The window beside the belt is open.
     pub window: bool,
+    /// What the window shows: the Browser (the default) or the Parameters.
+    pub window_kind: Option<Group>,
     /// What each hand points at on the belt, left first: the bubble and how far along the ray.
     pub hover: [Option<(Spot, f64)>; 2],
 }
