@@ -48,7 +48,7 @@ group's name and icon. The defaults:
 | Isolate | Shows only that, the rest hidden. |
 | Show all | Shows every part again: bodies and placements. Sketches, joints, construction geometry and the origin stay as they are. |
 | Section / Section off | A section plane at the tip of that controller: what lies on your side of it is cut away. Select with that hand leaves it in the model. Only the headset is cut. |
-| View ▸ | Put back (the house: the model in front of you, at its first size), Explode / Put together (its first exploded view, or every part moved away from the middle; nothing saved), Passthrough. While parts are moved and their positions not captured, Explode says so and changes nothing: capture or undo the moves first. |
+| View ▸ | Put back (the house: the model in front of you, at its first size), Explode / Put together (its first exploded view, or every part moved away from the middle; nothing saved), Passthrough, Measure (below). While parts are moved and their positions not captured, Explode says so and changes nothing: capture or undo the moves first. |
 | Edit ▸ | Undo, Redo. |
 
 Also available for a slot: Hide (only), and every action above.
@@ -73,6 +73,13 @@ controller says it. Hold the grip of the same hand as well for precision: the ha
 size a tenth as far, in tenths, with no jump when the grip goes down or up. Letting go of Select
 sets it: one undo step. A size that is a user parameter, or a multiple of one (a radius written
 `post_d / 2`), changes that parameter, so everything else using it follows.
+
+**Measure.** View ▸ Measure turns measuring on for the hand that chose it (and off again from the
+ring). Select on a face then picks it instead of selecting the part, and the sign says its own size
+(a round face's diameter, a flat face's area); Select on a second face says the exact distance
+between them, between centres for round faces, and the angle, with a line between the nearest
+points. A third Select starts again. The faces are measured exactly (`inspect.measure`), as the
+desktop's Measure does.
 
 **Moving a part.** Hold Select on a part that is selected and move the hand: a box shows where it
 goes, and the sign at the controller says how far (millimetres along the model's axes, whole ones;

@@ -18,7 +18,7 @@ pub const REACH: f64 = 0.03;
 /// The most handles drawn, and the vertices they take (a shaft and the bar at its tip each), with a
 /// moving part's box (twelve edges).
 pub const MAX_HANDLES: usize = 24;
-pub const VERTICES: usize = MAX_HANDLES * 2 * LINE + 12 * LINE;
+pub const VERTICES: usize = MAX_HANDLES * 2 * LINE + 12 * LINE + 3 * LINE;
 
 /// The vertices one line takes ([`marks::line`]: two sides of a quad).
 const LINE: usize = 12;
@@ -178,6 +178,23 @@ impl PartMove {
             let (a, b) = (corner(a), corner(b));
             let normal = [0, 1, 2].map(|k| head[k] - (a[k] + b[k]) / 2.0);
             marks::line(out, a, b, normal, 0.0012, colour);
+        }
+    }
+}
+
+/// A measurement's line between its two nearest points `a` and `b` (model units), with a bar
+/// across each end.
+pub fn measure_line(out: &mut Vec<Vertex>, t: &Transform, head: [f64; 3], a: [f64; 3], b: [f64; 3], colour: [f32; 3]) {
+    let (a, b) = (t.apply(a), t.apply(b));
+    let normal = [0, 1, 2].map(|k| head[k] - (a[k] + b[k]) / 2.0);
+    marks::line(out, a, b, normal, 0.0012, colour);
+    let d = [0, 1, 2].map(|k| b[k] - a[k]);
+    let across = [d[1] * normal[2] - d[2] * normal[1], d[2] * normal[0] - d[0] * normal[2], d[0] * normal[1] - d[1] * normal[0]];
+    let n = across.iter().map(|v| v * v).sum::<f64>().sqrt();
+    if n > 1e-12 {
+        let c = across.map(|v| v / n * 0.006);
+        for p in [a, b] {
+            marks::line(out, [0, 1, 2].map(|k| p[k] - c[k]), [0, 1, 2].map(|k| p[k] + c[k]), normal, 0.0012, colour);
         }
     }
 }

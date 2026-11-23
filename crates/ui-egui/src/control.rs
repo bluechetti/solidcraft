@@ -1032,6 +1032,11 @@ fn ui_vr_press(app: &mut SolveApp, p: &Value) -> Outcome {
     }
     let press = if let Some(spot) = p.get("belt").and_then(Value::as_str) {
         crate::VrPress::Belt(spot.to_string())
+    } else if let Some(act) = p.get("act").and_then(Value::as_str) {
+        if act != "measure" {
+            return err("ui.vr_press: act takes measure");
+        }
+        crate::VrPress::Act(act.to_string())
     } else if let Some(at) = p.get("window").and_then(Value::as_array) {
         let uv: Vec<f64> = at.iter().filter_map(Value::as_f64).filter(|v| (0.0..=1.0).contains(v)).collect();
         let [u, v] = uv[..] else {
@@ -1039,7 +1044,7 @@ fn ui_vr_press(app: &mut SolveApp, p: &Value) -> Outcome {
         };
         crate::VrPress::Window([u, v])
     } else {
-        return err("ui.vr_press: give belt (a spot as vr_pointing names it) or window ([across, down])");
+        return err("ui.vr_press: give belt (a spot as vr_pointing names it), window ([across, down]) or act (measure)");
     };
     app.services.vr_script.push(press);
     ok(json!({"queued": app.services.vr_script.len()}))
@@ -3024,7 +3029,12 @@ pub(crate) mod tests {
         }
         assert_eq!(h.call("ui.vr_press", json!({"belt": "belt:Parameters"}))["ok"], true);
         assert_eq!(h.call("ui.vr_press", json!({"window": [0.9, 0.25]}))["ok"], true);
-        assert_eq!(h.app.services.vr_script, [crate::VrPress::Belt("belt:Parameters".into()), crate::VrPress::Window([0.9, 0.25])]);
+        assert_eq!(h.call("ui.vr_press", json!({"act": "explode"}))["ok"], false);
+        assert_eq!(h.call("ui.vr_press", json!({"act": "measure"}))["ok"], true);
+        assert_eq!(
+            h.app.services.vr_script,
+            [crate::VrPress::Belt("belt:Parameters".into()), crate::VrPress::Window([0.9, 0.25]), crate::VrPress::Act("measure".into())]
+        );
         assert!(h.call("ui.inspect", json!({}))["result"]["vr_pointing"].is_array());
     }
 

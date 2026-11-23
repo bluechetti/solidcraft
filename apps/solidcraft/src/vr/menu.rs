@@ -19,6 +19,7 @@ pub enum Act {
     ShowAll,
     Explode,
     Section,
+    Measure,
     PutBack,
     Undo,
     Redo,
@@ -48,6 +49,8 @@ pub struct State {
     pub exploded: bool,
     /// The section is on.
     pub section: bool,
+    /// Measuring is on (`Act::Measure`).
+    pub measuring: bool,
     pub can_undo: bool,
     pub can_redo: bool,
     /// The real room can be shown, and whether it is.
@@ -67,6 +70,7 @@ fn item(action: RingAction, set: &VrSettings, state: State) -> Option<Item> {
         RingAction::ShowAll => (Act::ShowAll, words("vr.menu_show_all"), true),
         RingAction::Explode => (Act::Explode, words(if state.exploded { "vr.menu_assemble" } else { "vr.menu_explode" }), true),
         RingAction::Section => (Act::Section, words(if state.section { "vr.menu_section_off" } else { "vr.menu_section" }), true),
+        RingAction::Measure => (Act::Measure, words(if state.measuring { "vr.menu_measure_off" } else { "vr.menu_measure" }), true),
         // The house alone: no words beneath it.
         RingAction::PutBack => (Act::PutBack, String::new(), true),
         RingAction::Undo => (Act::Undo, words("vr.menu_undo"), state.can_undo),
@@ -306,7 +310,7 @@ mod tests {
         assert_eq!(open.moved(slot(&open, 0, 4), 0.0, 0.0), Moved::Ring);
         assert_eq!(open.levels.len(), 2);
         assert_eq!(open.levels[0].marked, Some(4), "the group it came from stays lit");
-        assert_eq!(acts(&open, 1), [Act::PutBack, Act::Explode, Act::Passthrough]);
+        assert_eq!(acts(&open, 1), [Act::PutBack, Act::Explode, Act::Passthrough, Act::Measure]);
         assert_eq!(open.chosen(), None, "a group is not taken");
         let middle = open.levels[1].ring.centre;
         // On the slot: still open, nothing marked.
@@ -319,7 +323,7 @@ mod tests {
             assert_eq!(open.levels.len(), 2);
         }
         // On each of its items: marked, and taken on letting go.
-        for (i, act) in [Act::PutBack, Act::Explode, Act::Passthrough].into_iter().enumerate() {
+        for (i, act) in [Act::PutBack, Act::Explode, Act::Passthrough, Act::Measure].into_iter().enumerate() {
             assert_ne!(open.moved(middle, 0.2, 0.0), Moved::Ring, "back on the slot: still open");
             assert_eq!(open.levels[1].marked, None);
             assert_eq!(open.moved(slot(&open, 1, i), 0.2, 0.0), Moved::Marked);
@@ -350,7 +354,7 @@ mod tests {
         // And back again.
         assert_eq!(open.moved(slot(&open, 0, 4), 0.2, 0.0), Moved::Ring);
         assert_eq!((open.levels.len(), open.levels[0].marked), (2, Some(4)));
-        assert_eq!(acts(&open, 1), [Act::PutBack, Act::Explode, Act::Passthrough]);
+        assert_eq!(acts(&open, 1), [Act::PutBack, Act::Explode, Act::Passthrough, Act::Measure]);
 
         // Off past the group's ring, outside everything: it closes, nothing is marked.
         let mut open = default_menu();

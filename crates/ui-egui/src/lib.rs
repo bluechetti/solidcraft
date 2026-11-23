@@ -424,6 +424,9 @@ mod vr_browser_tests;
 pub mod vr_handles;
 #[cfg(test)]
 mod vr_handles_tests;
+pub mod vr_measure;
+#[cfg(test)]
+mod vr_measure_tests;
 pub mod vr_params;
 #[cfg(test)]
 mod vr_params_tests;
@@ -553,6 +556,8 @@ pub enum VrPress {
     Belt(String),
     /// Select on the belt's window at this place across and down it (0 to 1).
     Window([f64; 2]),
+    /// A ring menu action taken by the right hand, by its settings name (`measure`).
+    Act(String),
 }
 
 /// Host services injected by the app so this crate stays portable.

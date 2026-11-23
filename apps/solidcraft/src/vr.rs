@@ -118,6 +118,8 @@ pub struct Vr {
     handle_marks: Vec<Vertex>,
     /// A selected part being moved by the hand holding Select on it ([`handles::PartMove`]).
     moving: Option<handles::PartMove>,
+    /// Measuring with one hand ([`Measure`]), turned on and off from the ring.
+    measure: Option<Measure>,
     /// The scale was shown last at this time (seconds, [`Vr::clock`]): it fades after.
     scaled_at: Option<f64>,
     /// The frame's time last frame (seconds, [`Vr::clock`]): how far the stick moves a held model.
@@ -186,10 +188,51 @@ const SAID_FOR: std::time::Duration = std::time::Duration::from_millis(1500);
 #[derive(Clone, Debug)]
 struct Pointed {
     part: std::sync::Arc<Part>,
+    /// The body the ray stops at, and where on it (model units): what Measure picks.
+    body: String,
+    point: [f64; 3],
     /// Where the ray stops, in the room (metres).
     at: [f64; 3],
     /// How far the ray goes before it stops (metres).
     reach: f64,
+}
+
+/// Measuring with one hand: the first face picked, and the nearest points of the last two (model
+/// units), drawn as a line. A pick after two starts again.
+#[derive(Clone, Debug, Default)]
+struct Measure {
+    hand: usize,
+    first: Option<solidcraft_ui_egui::vr_measure::Pick>,
+    ends: Option<([f64; 3], [f64; 3])>,
+    /// What the sign said of the last pick.
+    said: String,
+}
+
+impl Measure {
+    /// The face at `pick` picked: what the sign then says.
+    fn pick(&mut self, app: &mut SolveApp, pick: solidcraft_ui_egui::vr_measure::Pick) -> String {
+        use solidcraft_ui_egui::vr_measure;
+        let said = match self.first.take() {
+            Some(first) => match vr_measure::measure(app, &first, Some(&pick)) {
+                Ok(v) => {
+                    self.ends = vr_measure::ends(&v);
+                    vr_measure::words(&v)
+                }
+                Err(error) => error,
+            },
+            None => {
+                self.ends = None;
+                let said = match vr_measure::measure(app, &pick, None) {
+                    Ok(v) => vr_measure::words(&v),
+                    Err(error) => error,
+                };
+                self.first = Some(pick);
+                format!("{said}\n{}", solidcraft_ui_text::tr("vr.measure_first"))
+            }
+        };
+        self.said = said.clone();
+        said
+    }
 }
 
 /// At most this many bodies' parts are kept: past it the list starts again.
@@ -295,7 +338,7 @@ impl Pointer {
             return None;
         }
         let part = self.parts.of(app, &hit.body);
-        Some(Pointed { part, at: transform.apply(hit.point), reach })
+        Some(Pointed { part, at: transform.apply(hit.point), reach, body: hit.body, point: hit.point })
     }
 
     /// No ray points at anything: what they lit goes dark.
@@ -344,6 +387,7 @@ impl Vr {
             drag: None,
             handle_marks: Vec::new(),
             moving: None,
+            measure: None,
             last_frame: 0.0,
             real_size: false,
             design: None,
@@ -758,6 +802,7 @@ impl Vr {
             // goes on to move, a click if not.
             if b[SELECT].pressed
                 && !menu_by_select
+                && self.measure.as_ref().is_none_or(|m| m.hand != i)
                 && self.drag.is_none()
                 && self.moving.is_none()
                 && self.menu.is_none()
@@ -781,7 +826,13 @@ impl Vr {
                     // gone or another, so the actions take the selection as it is now.
                     let unchanged = self.menu_design == (app.session.uid, app.session.revision);
                     let target = open.target.as_deref().filter(|_| unchanged);
-                    let said = act_on(app, act, target, set.acts_on, i, &mut self.section, &mut self.put_back);
+                    let said = if act == Act::Measure {
+                        // On for the hand that chose it, off again from the ring.
+                        self.measure = if self.measure.is_some() { None } else { Some(Measure { hand: i, ..Measure::default() }) };
+                        solidcraft_ui_text::tr(if self.measure.is_some() { "vr.measure_on" } else { "vr.measure_off" }).to_string()
+                    } else {
+                        act_on(app, act, target, set.acts_on, i, &mut self.section, &mut self.put_back)
+                    };
                     self.pointer.say(i, said);
                     buzz(session, hand, Pulse::TICK);
                 }
@@ -809,6 +860,7 @@ impl Vr {
                     hidden: vr_pick::all_hidden(app, &parts),
                     exploded: !app.session.exploded.is_empty(),
                     section: self.section != Section::Off,
+                    measuring: self.measure.is_some(),
                     can_undo: !app.session.undo.is_empty(),
                     can_redo: !app.session.redo.is_empty(),
                     passthrough_offered: app.services.vr_passthrough == Some(true),
@@ -826,9 +878,16 @@ impl Vr {
                 // A script's press on the belt (`ui.vr_press`), as Select there; window presses wait
                 // for the window below.
                 for press in std::mem::take(&mut app.services.vr_script) {
+                    if let solidcraft_ui_egui::VrPress::Act(_) = &press {
+                        // `measure`, the one ring action a script takes: on or off for the right hand.
+                        self.measure = if self.measure.is_some() { None } else { Some(Measure { hand: 1, ..Measure::default() }) };
+                        let said = solidcraft_ui_text::tr(if self.measure.is_some() { "vr.measure_on" } else { "vr.measure_off" });
+                        self.pointer.say(1, said.to_string());
+                        continue;
+                    }
                     let spot = match &press {
                         solidcraft_ui_egui::VrPress::Belt(name) => script_spot(name),
-                        solidcraft_ui_egui::VrPress::Window(_) => None,
+                        solidcraft_ui_egui::VrPress::Window(_) | solidcraft_ui_egui::VrPress::Act(_) => None,
                     };
                     match spot {
                         Some(spot) => {
@@ -846,6 +905,12 @@ impl Vr {
                     self.pointer.say(i, said);
                 } else if self.window_hover[i].is_some() || self.window_pressed[i] {
                     // The window took it as its pointer's click.
+                } else if let Some(m) = self.measure.as_mut().filter(|m| m.hand == i) {
+                    // Measuring: the face pointed at is picked, not selected.
+                    if let Some(p) = self.pointer.pointed[i].as_ref() {
+                        let said = m.pick(app, (p.body.clone(), p.point));
+                        self.pointer.say(i, said);
+                    }
                 } else if self.section == Section::Held(i) {
                     if let Some(placed) = held_plane(&hands, i).zip(self.transform).and_then(|(p, t)| p.to_model(&t)) {
                         self.section = Section::Placed(placed);
@@ -1052,7 +1117,10 @@ impl Vr {
                 .filter(|(_, t)| t.iter().all(|v| v.is_finite()))
                 .map(|(h, t)| serde_json::json!({"label": h.label, "tip": t}))
                 .collect();
-            app.services.vr_scene = serde_json::json!({"rays": rays, "handles": tips_said});
+            let measure = self.measure.as_ref().map(|m| serde_json::json!({"hand": m.hand, "first": m.first, "ends": m.ends, "said": m.said}));
+            // The model's place in the room: a model point p is at translation + scale * (axes[0] p0 + axes[1] p1 + axes[2] p2).
+            let placed = serde_json::json!({"axes": t.axes, "scale": t.scale, "translation": t.translation});
+            app.services.vr_scene = serde_json::json!({"rays": rays, "handles": tips_said, "measure": measure, "transform": placed});
             for i in 0..2 {
                 let on_belt = self.belt.hover[i].is_some() || self.window_hover[i].is_some();
                 self.handle_hover[i] = hands[i]
@@ -1085,6 +1153,9 @@ impl Vr {
                 if let Some(m) = self.moving.as_ref().filter(|m| m.moving()) {
                     let fine = self.buttons[m.hand][GRAB].down;
                     m.draw(&mut self.handle_marks, t, head, m.by(fine), linear(tk.warning));
+                }
+                if let Some((a, b)) = self.measure.as_ref().and_then(|m| m.ends) {
+                    handles::measure_line(&mut self.handle_marks, t, head, a, b, linear(tk.warning));
                 }
             }
         } else {
@@ -1442,6 +1513,8 @@ fn act_on(
                 _ => done(vr_pick::hide(app, &parts), "vr.did_hide"),
             }
         }
+        // Turned on and off by the caller, which keeps the measurement.
+        Act::Measure => String::new(),
         Act::Passthrough if app.services.vr_passthrough != Some(true) => tr("vr.passthrough_missing").to_string(),
         Act::Passthrough => {
             app.preferences.vr.passthrough = !app.preferences.vr.passthrough;

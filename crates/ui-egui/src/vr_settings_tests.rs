@@ -107,7 +107,7 @@ fn the_default_ring_is_the_documented_one() {
         vec![RingAction::ToggleHide, RingAction::Isolate, RingAction::ShowAll, RingAction::Section, RingAction::Group(0), RingAction::Group(1)]
     );
     assert_eq!(d.ring_groups.len(), GROUPS);
-    assert_eq!(d.ring_groups[0].items, vec![RingAction::PutBack, RingAction::Explode, RingAction::Passthrough]);
+    assert_eq!(d.ring_groups[0].items, vec![RingAction::PutBack, RingAction::Explode, RingAction::Passthrough, RingAction::Measure]);
     assert_eq!(d.ring_groups[1].items, vec![RingAction::Undo, RingAction::Redo]);
     for g in d.ring_groups.iter().filter(|g| !g.name.is_empty()) {
         assert!(GROUP_ICONS.contains(&g.icon.as_str()), "{} has icon {}", g.name, g.icon);
