@@ -4,7 +4,7 @@
 //! clicked, so neither a person nor an agent hands over part of a part as finished.
 
 use serde_json::{Value, json};
-use solidcraft_doc::scan_plan::{MAX_REGIONS, MAX_SCANS, MAX_TEXT, Process, Region, RegionState, ScanPlan, valid_target};
+use solidcraft_doc::scan_plan::{MAX_REGIONS, MAX_SCANS, MAX_TEXT, Process, Purpose, Region, RegionState, Role, ScanPlan, valid_target};
 use solidcraft_scan::verdict::{Place, Reading, judge};
 
 use super::{CommandSpec, mesh_name, tolerance};
@@ -92,7 +92,32 @@ fn view(r: &Region) -> ScanPlanRegionView {
         RegionState::Skipped { reason } => ("skipped", None, Some(reason.clone())),
         RegionState::Inferred { reason } => ("inferred", None, Some(reason.clone())),
     };
-    ScanPlanRegionView { name: r.name.clone(), at: r.at, state: state.into(), feature, reason }
+    ScanPlanRegionView {
+        name: r.name.clone(),
+        at: r.at,
+        state: state.into(),
+        feature,
+        reason,
+        role: r.role.map(|x| role_name(x).to_owned()),
+        hold: r.hold,
+        selection: r.selection.clone(),
+    }
+}
+
+fn role_name(r: Role) -> &'static str {
+    match r {
+        Role::Focus => "focus",
+        Role::Hold => "hold",
+        Role::Ignore => "ignore",
+        Role::Keep => "keep",
+    }
+}
+
+fn purpose_name(p: Purpose) -> &'static str {
+    match p {
+        Purpose::Replacement => "replacement",
+        Purpose::Copy => "copy",
+    }
 }
 
 fn plan_reply(s: &Session, scan: String, changed: bool) -> Result<Value> {
@@ -104,6 +129,7 @@ fn plan_reply(s: &Session, scan: String, changed: bool) -> Result<Value> {
         target: plan.target(),
         tolerance: tolerance::of(s, &scan),
         regions: plan.regions.iter().map(view).collect(),
+        purpose: plan.purpose.map(|x| purpose_name(x).to_owned()),
         scan,
         changed,
         param_warnings: Vec::new(),
@@ -133,8 +159,16 @@ fn plan(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(v.as_f64().filter(|t| valid_target(*t)).ok_or_else(|| bad(cmd, "`target` is a share from 0.5 to 1"))?),
         None => None,
     };
+    // Some(None): "none", the purpose taken away.
+    let purpose = match str_(p, "purpose").map(str::trim) {
+        None => None,
+        Some("replacement") => Some(Some(Purpose::Replacement)),
+        Some("copy") => Some(Some(Purpose::Copy)),
+        Some("none") => Some(None),
+        Some(_) => return Err(bad(cmd, "`purpose` is replacement, copy or none")),
+    };
     let given_tolerance = crate::params::expr(p, "tolerance");
-    if reset && (process.is_some() || target.is_some() || given_tolerance.is_some()) {
+    if reset && (process.is_some() || target.is_some() || given_tolerance.is_some() || purpose.is_some()) {
         return Err(bad(cmd, "`reset` is given alone"));
     }
     let mut changed = false;
@@ -158,7 +192,7 @@ fn plan(s: &mut Session, p: &Value) -> Result<Value> {
             s.doc_mut().scan_plans.remove(&scan);
             changed = true;
         }
-    } else if process.is_some() || target.is_some() {
+    } else if process.is_some() || target.is_some() || purpose.is_some() {
         room(s, &scan, cmd)?;
         let mut next = s.doc.scan_plans.get(&scan).cloned().unwrap_or_default();
         let was = s.doc.scan_plans.get(&scan).cloned();
@@ -167,6 +201,9 @@ fn plan(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if target.is_some() {
             next.target = target;
+        }
+        if let Some(purpose) = purpose {
+            next.purpose = purpose;
         }
         if was.as_ref() != Some(&next) {
             s.doc_mut().scan_plans.insert(scan.clone(), next);
@@ -191,6 +228,48 @@ fn plan_region(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => Some(crate::params::vec3(v).filter(|q| q.is_finite()).ok_or_else(|| bad(cmd, "`at` is a point [x, y, z] of numbers"))?),
         None => None,
     };
+    // Some(None): "none", the role taken away.
+    let role = match str_(p, "role").map(str::trim) {
+        None => None,
+        Some("focus") => Some(Some(Role::Focus)),
+        Some("hold") => Some(Some(Role::Hold)),
+        Some("ignore") => Some(Some(Role::Ignore)),
+        Some("keep") => Some(Some(Role::Keep)),
+        Some("none") => Some(None),
+        Some(_) => return Err(bad(cmd, "`role` is focus, hold, ignore, keep or none")),
+    };
+    let hold = match p.get("hold").filter(|v| !v.is_null()) {
+        Some(v) => Some(v.as_f64().filter(|h| h.is_finite() && *h > 0.0).ok_or_else(|| bad(cmd, "`hold` is the size held there, in mm, above 0"))?),
+        None => None,
+    };
+    let role = match (role, hold) {
+        (None, Some(_)) => Some(Some(Role::Hold)),
+        (Some(Some(Role::Hold)), None) => return Err(bad(cmd, "a region that holds a size gives it: `hold`, in mm")),
+        (r, _) => r,
+    };
+    // The part of the scan selected now as the region's extent: kept in the design as a selection.
+    let (selection, at) = if bool_(p, "selected") == Some(true) {
+        let picked = s
+            .scan_selection
+            .clone()
+            .filter(|k| k.scan == scan && k.count > 0 && k.current(s))
+            .ok_or_else(|| bad(cmd, format!("nothing is selected on `{scan}`: select the region first (scan.select)")))?;
+        let kept_name: String = format!("Region {name}").chars().take(200).collect();
+        super::super::find_command("scan.keep_selection")
+            .ok_or_else(|| EngineError::UnknownCommand("scan.keep_selection".into()))?
+            .run_nested(s, &json!({"name": kept_name}))?;
+        // A point in it: the middle of its first triangle, unless `at` was given.
+        let first = super::shown_mesh(s, &scan).and_then(|m| {
+            let t = picked.selected.iter().position(|on| *on)?;
+            let [a, b, c] = *m.triangles.get(t)?;
+            let q = |i: u32| m.positions.get(i as usize).copied();
+            let (a, b, c) = (q(a)?, q(b)?, q(c)?);
+            Some((a + b + c) / 3.0)
+        });
+        (Some(kept_name), at.or(first))
+    } else {
+        (None, at)
+    };
     let mut plan = s.doc.scan_plans.get(&scan).cloned().unwrap_or_default();
     let found = plan.regions.iter().position(|r| r.name == name);
     let state = match str_(p, "state").map(str::trim) {
@@ -214,8 +293,15 @@ fn plan_region(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Some(_) => return Err(bad(cmd, "`state` is open, built, skipped, inferred or removed")),
     };
+    // Ignore says why for itself: the region is skipped, the user's reason or the role's.
+    let state = match (state, role) {
+        (None, Some(Some(Role::Ignore))) => Some(RegionState::Skipped {
+            reason: reason.clone().unwrap_or_else(|| "marked by the user to ignore (worn, damaged or not part of it)".into()),
+        }),
+        (state, _) => state,
+    };
     let before = plan.clone();
-    match found {
+    let k = match found {
         Some(k) => {
             if let Some(at) = at {
                 plan.regions[k].at = [at.x, at.y, at.z];
@@ -223,14 +309,29 @@ fn plan_region(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(state) = state {
                 plan.regions[k].state = state;
             }
+            k
         }
         None => {
-            let at = at.ok_or_else(|| bad(cmd, format!("a new region `{name}` needs `at`, a point on the scan inside it")))?;
+            let at = at.ok_or_else(|| bad(cmd, format!("a new region `{name}` needs `at`, a point on the scan inside it (or `selected: true`)")))?;
             if plan.regions.len() >= MAX_REGIONS {
                 return Err(bad(cmd, format!("a plan holds at most {MAX_REGIONS} regions")));
             }
-            plan.regions.push(Region { name, at: [at.x, at.y, at.z], state: state.unwrap_or_default() });
+            plan.regions.push(Region::new(name, [at.x, at.y, at.z], state.unwrap_or_default()));
+            plan.regions.len() - 1
         }
+    };
+    let region = &mut plan.regions[k];
+    if let Some(role) = role {
+        region.role = role;
+        if role != Some(Role::Hold) {
+            region.hold = None;
+        }
+    }
+    if hold.is_some() {
+        region.hold = hold;
+    }
+    if selection.is_some() {
+        region.selection = selection;
     }
     let changed = !s.doc.scan_plans.contains_key(&scan) || plan != before;
     if changed {
@@ -269,6 +370,7 @@ fn read_verdict(s: &mut Session, p: &Value) -> Result<Value> {
     // Scan Deviation's reading, the map shown left as it was.
     let shown = s.scan_deviation.take();
     let read = super::deviation_for_verdict(s, &json!({"scan": scan, "body": model}));
+    let measured = s.scan_deviation.take();
     s.scan_deviation = shown;
     let read = read.map_err(|e| bad(cmd, format!("{e}")))?;
     let num = |k: &str| read.get(k).and_then(Value::as_f64);
@@ -297,10 +399,16 @@ fn read_verdict(s: &mut Session, p: &Value) -> Result<Value> {
     let reading = Reading {
         target,
         planned: plan.is_some(),
-        scan_within: num("within_all").unwrap_or(0.0),
+        scan_within: within_kept(s, &scan, plan.as_ref(), measured.as_deref(), &read).unwrap_or_else(|| num("within_all").unwrap_or(0.0)),
         model_within: num("model_within").unwrap_or(0.0),
         unseen: num("unseen"),
-        open_regions: plan.iter().flat_map(|p| &p.regions).filter(|r| r.state == RegionState::Open).map(|r| r.name.clone()).collect(),
+        // A region the user keeps as it is (don't touch) is not the model's to build.
+        open_regions: plan
+            .iter()
+            .flat_map(|p| &p.regions)
+            .filter(|r| r.state == RegionState::Open && r.role != Some(Role::Keep))
+            .map(|r| r.name.clone())
+            .collect(),
         failed,
         rolled_back: crate::cmd::file::rolled_back_note(s),
         places,
@@ -457,4 +565,132 @@ pub(crate) fn known_size(s: &mut Session, p: &Value) -> Result<Value> {
         )
     };
     to_value(ScanKnownSizeResult { scan, kind: kind.into(), measured, value, factor, off, applied: apply, note, param_warnings: Vec::new() })
+}
+
+/// The share of the scan within the tolerance of the model, the regions the user marked to ignore
+/// left out (worn, damaged, a fixture: not what the model is to hold); `None` when the plan
+/// ignores no region with an extent, or the reading can't be had.
+fn within_kept(s: &Session, scan: &str, plan: Option<&ScanPlan>, map: Option<&super::DeviationMap>, read: &Value) -> Option<f64> {
+    let mesh = super::shown_mesh(s, scan)?;
+    let mut ignored = vec![false; mesh.triangles.len()];
+    let mut any = false;
+    for name in plan?.regions.iter().filter(|r| r.role == Some(Role::Ignore)).filter_map(|r| r.selection.as_deref()) {
+        let Some(kept) = s.doc.scan_selections.iter().find(|k| k.name == name && k.body == scan && k.triangles as usize == mesh.triangles.len())
+        else {
+            continue;
+        };
+        for (t, on) in kept.flags().into_iter().enumerate() {
+            if on && let Some(flag) = ignored.get_mut(t) {
+                *flag = true;
+                any = true;
+            }
+        }
+    }
+    if !any {
+        return None;
+    }
+    let map = map?;
+    let tolerance = read.get("tolerance").and_then(Value::as_f64)?;
+    let far = read.get("far").and_then(Value::as_f64)?;
+    let kept: Vec<[u32; 3]> = mesh.triangles.iter().zip(&ignored).filter(|(_, off)| !**off).map(|(t, _)| *t).collect();
+    Some(solidcraft_scan::deviation::shares(&mesh.positions, &kept, &map.values, tolerance, far).within_all)
+}
+
+/// Commands that rewrite a scan's mesh (or scale or move it): an agent may not run them on a scan
+/// whose plan keeps a region as it is, unless they work only on a selection away from it.
+const REWRITES_SCAN: &[&str] = &[
+    "mesh.units",
+    "scan.clean_up",
+    "scan.delete_selection",
+    "scan.denoise",
+    "scan.fill_holes",
+    "scan.known_size",
+    "scan.reduce",
+    "scan.remesh",
+    "scan.remove_and_fill",
+    "scan.remove_floating",
+    "scan.remove_markers",
+    "scan.repair",
+    "solid.scale",
+];
+
+/// Why an agent may not run `command` with `params`: it would change what the user marked
+/// "don't touch" (a plan region with role keep): the scan under such a region (a command that
+/// rewrites the scan, unless it works only on a selection apart from every kept region), or the
+/// feature that built it (edited, deleted or suppressed). `None` when it may. The agent chat's
+/// gate asks this of every request the agent sends, so the boundary is the app's, not the agent's.
+pub fn kept_from_agent(s: &Session, command: &str, params: &Value) -> Option<String> {
+    let kept: Vec<(&String, &Region)> = s
+        .doc
+        .scan_plans
+        .iter()
+        .flat_map(|(scan, plan)| plan.regions.iter().map(move |r| (scan, r)))
+        .filter(|(_, r)| r.role == Some(Role::Keep))
+        .collect();
+    if kept.is_empty() {
+        return None;
+    }
+    // A feature a kept region was built by: not edited, deleted or suppressed.
+    if command.starts_with("timeline.") || command.starts_with("feature.") {
+        let named: Vec<String> = ["feature", "features", "id", "ids", "name"]
+            .iter()
+            .filter_map(|k| params.get(*k))
+            .flat_map(|v| match v {
+                Value::Array(a) => a.clone(),
+                v => vec![v.clone()],
+            })
+            .filter_map(|v| v.as_str().map(str::to_owned).or_else(|| v.as_u64().map(|n| n.to_string())))
+            .collect();
+        for (scan, r) in &kept {
+            if let RegionState::Built { feature } = &r.state {
+                let id = s.doc.find_feature(feature).map(|f| f.id.to_string());
+                if named.iter().any(|n| n == feature || Some(n) == id.as_ref()) {
+                    return Some(format!(
+                        "the user marked region `{}` of `{scan}` don't touch: `{feature}`, which built it, may not be changed; ask the user first",
+                        r.name
+                    ));
+                }
+            }
+        }
+        return None;
+    }
+    if !REWRITES_SCAN.contains(&command) {
+        return None;
+    }
+    // Which scans the command changes: `bodies` (Scale), else the one it names or defaults to.
+    let scans: Vec<String> = match params.get("bodies").and_then(Value::as_array) {
+        Some(list) => list.iter().filter_map(Value::as_str).map(str::to_owned).collect(),
+        None => scan_of(s, params, command).ok().into_iter().collect(),
+    };
+    // Known Size changes the scan only when applied.
+    if command == "scan.known_size" && bool_(params, "apply") != Some(true) {
+        return None;
+    }
+    for scan in scans {
+        let regions: Vec<&Region> = kept.iter().filter(|(k, _)| **k == scan).map(|(_, r)| *r).collect();
+        if regions.is_empty() {
+            continue;
+        }
+        // On a selection apart from every kept region's extent: the kept part is not touched.
+        if bool_(params, "selected") == Some(true)
+            && let Some(picked) = s.scan_selection.as_ref().filter(|k| k.scan == scan && k.count > 0 && k.current(s))
+        {
+            let overlaps = regions.iter().any(|r| {
+                let Some(extent) = r.selection.as_deref().and_then(|n| s.doc.scan_selections.iter().find(|k| k.name == n && k.body == scan)) else {
+                    // A kept region with no extent: its place alone is known, so nothing is assumed apart.
+                    return true;
+                };
+                extent.flags().iter().zip(picked.selected.iter()).any(|(a, b)| *a && *b)
+            });
+            if !overlaps {
+                continue;
+            }
+        }
+        let names: Vec<&str> = regions.iter().map(|r| r.name.as_str()).collect();
+        return Some(format!(
+            "the user marked {} of `{scan}` don't touch: `{command}` would change the scan there; work on a selection apart from it, or ask the user first",
+            names.iter().map(|n| format!("`{n}`")).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    None
 }

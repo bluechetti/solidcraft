@@ -30,6 +30,10 @@ pub struct ScanPlanParams {
     /// The scan's tolerance, a length above 0 (the same as `scan.tolerance`).
     #[serde(default)]
     pub tolerance: Option<LengthExpr>,
+    /// What the model is for: replacement (a part that must fit: mating sizes to design values) |
+    /// copy (the part as scanned) | none (not said).
+    #[serde(default)]
+    pub purpose: Option<String>,
     /// True takes the plan away (the tolerance stays). Alone.
     #[serde(default)]
     pub reset: Option<bool>,
@@ -48,6 +52,15 @@ pub struct ScanPlanRegionView {
     /// Why (skipped, inferred).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// What the user marked it as: focus | hold | ignore | keep (don't touch).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// The size held there, mm (hold).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hold: Option<f64>,
+    /// The kept scan selection that is its extent (`scan.select {"saved": name}` selects it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<String>,
 }
 
 /// What `scan.plan` and `scan.plan_region` return.
@@ -62,6 +75,9 @@ pub struct ScanPlanResult {
     /// The scan's tolerance in mm.
     pub tolerance: f64,
     pub regions: Vec<ScanPlanRegionView>,
+    /// What the model is for (replacement or copy), when said.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
     /// Whether this call changed the design.
     pub changed: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -89,6 +105,18 @@ pub struct ScanPlanRegionParams {
     /// The feature that built it, by name or id (built).
     #[serde(default)]
     pub feature: Option<String>,
+    /// True: the part of the scan selected now is the region's extent, kept in the design as a
+    /// selection (`at` then defaults to a point in it).
+    #[serde(default)]
+    pub selected: Option<bool>,
+    /// What the user marked it as: focus (work here first) | hold (a size there, `hold` mm) |
+    /// ignore (left out of the verdict: worn, damaged, a fixture) | keep (don't touch: an agent
+    /// may not change the scan there or the feature that built it) | none.
+    #[serde(default)]
+    pub role: Option<String>,
+    /// The size held there, mm (role hold).
+    #[serde(default)]
+    pub hold: Option<f64>,
     /// Why it was skipped, or what it was inferred from.
     #[serde(default)]
     pub reason: Option<String>,
@@ -167,8 +195,11 @@ mod tests {
 
     #[test]
     fn scan_plan_commands_take_these_keys() {
-        assert_keys(input_schema_for::<ScanPlanParams>(), &["body", "process", "reset", "scan", "target", "tolerance"]);
-        assert_keys(input_schema_for::<ScanPlanRegionParams>(), &["at", "body", "feature", "name", "reason", "scan", "state"]);
+        assert_keys(input_schema_for::<ScanPlanParams>(), &["body", "process", "purpose", "reset", "scan", "target", "tolerance"]);
+        assert_keys(
+            input_schema_for::<ScanPlanRegionParams>(),
+            &["at", "body", "feature", "hold", "name", "reason", "role", "scan", "selected", "state"],
+        );
         assert_keys(input_schema_for::<ScanVerdictParams>(), &["body", "model", "scan"]);
     }
 }

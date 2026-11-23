@@ -60,13 +60,54 @@ pub enum RegionState {
     Inferred { reason: String },
 }
 
-/// A region of the part: a name, a point on the scan inside it, where it stands.
+/// What the user said a region is for (Keep Selection As in the agent chat, or an agent asked to):
+/// work on it first, hold a size there, leave it out, or leave it as it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    /// Work here first, in the plan's order.
+    Focus,
+    /// A size there is known (`hold`, mm): the model keeps it.
+    Hold,
+    /// Not part of what is wanted (worn, damaged, a fixture): left out of the verdict's shares.
+    Ignore,
+    /// Don't touch: an agent may not change the scan there, nor the feature that built it.
+    Keep,
+}
+
+/// What the model of a scan is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Purpose {
+    /// A replacement that must fit: mating sizes to their design values.
+    Replacement,
+    /// A copy of the part as scanned: sizes as measured.
+    Copy,
+}
+
+/// A region of the part: a name, a point on the scan inside it, where it stands, and, when the
+/// user marked it, what it is for and the kept selection that is its extent.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Region {
     pub name: String,
     pub at: [f64; 3],
     #[serde(flatten)]
     pub state: RegionState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<Role>,
+    /// The size held there, mm (role hold).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<f64>,
+    /// The kept scan selection (`scan_selections`) that is its extent, by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<String>,
+}
+
+impl Region {
+    /// A region at `at` with nothing marked on it.
+    pub fn new(name: impl Into<String>, at: [f64; 3], state: RegionState) -> Self {
+        Region { name: name.into(), at, state, role: None, hold: None, selection: None }
+    }
 }
 
 /// A scan's plan.
@@ -80,6 +121,9 @@ pub struct ScanPlan {
     pub target: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub regions: Vec<Region>,
+    /// What the model is for, when the user said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<Purpose>,
 }
 
 impl ScanPlan {
@@ -125,7 +169,9 @@ pub fn check_all(kept: &BTreeMap<String, ScanPlan>) -> Result<()> {
                 RegionState::Built { feature } => feature,
                 RegionState::Skipped { reason } | RegionState::Inferred { reason } => reason,
             };
-            if r.name.trim().is_empty() || long(&r.name) || long(text) || !r.at.iter().all(|x| x.is_finite()) {
+            let hold_ok = r.hold.is_none_or(|h| h.is_finite() && h > 0.0);
+            let selection_ok = r.selection.as_deref().is_none_or(|n| !n.trim().is_empty() && !long(n));
+            if r.name.trim().is_empty() || long(&r.name) || long(text) || !r.at.iter().all(|x| x.is_finite()) || !hold_ok || !selection_ok {
                 return Err(DocError::Invalid(format!("a region of the plan for scan `{scan}` is not well formed")));
             }
         }
@@ -138,11 +184,11 @@ mod tests {
     use super::*;
 
     fn plan(target: Option<f64>, regions: Vec<Region>) -> BTreeMap<String, ScanPlan> {
-        BTreeMap::from([("Scan".to_owned(), ScanPlan { process: Process::Machined, target, regions })])
+        BTreeMap::from([("Scan".to_owned(), ScanPlan { process: Process::Machined, target, regions, purpose: None })])
     }
 
     fn region(name: &str, at: [f64; 3], state: RegionState) -> Region {
-        Region { name: name.into(), at, state }
+        Region::new(name, at, state)
     }
 
     /// A plan with a target share from 0.5 to 1 and named regions at finite points is kept; a

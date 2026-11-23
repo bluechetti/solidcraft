@@ -477,6 +477,53 @@ fn a_size_measured_on_the_part_checks_and_scales_the_scan() {
     assert!(neither.contains("give `between`"), "{neither}");
 }
 
+/// Regions the user marks: a region kept from a selection with its extent; "ignore" leaves its
+/// part of the scan out of the verdict's share (a boss the model does not have, read worn), "keep"
+/// (don't touch) stops an agent rewriting the scan there, and the plan says what the model is for.
+#[test]
+fn regions_marked_by_the_user_steer_the_verdict_and_what_an_agent_may_change() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 40, "width": 30, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.cylinder", json!({"radius": 5, "height": 8, "base": [20, 15, 10], "operation": "join"}));
+    let (mut s, scan) = scanned(&part, &body, 3, "bossed");
+    // The model: the block without its boss.
+    let model = run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 10}))["created_bodies"][0].as_str().unwrap().to_owned();
+    let before = run(&mut s, "scan.verdict", json!({"scan": scan, "model": model}));
+    let w0 = before["scan_within"].as_f64().unwrap();
+
+    // The boss, selected and marked to ignore: the verdict reads the rest.
+    run(&mut s, "scan.select", json!({"body": scan, "brush": {"points": [[20, 15, 18]], "radius": "9 mm"}}));
+    let plan = run(&mut s, "scan.plan_region", json!({"scan": scan, "name": "Boss", "selected": true, "role": "ignore"}));
+    let boss = &plan["regions"][0];
+    assert!(boss["role"] == "ignore" && boss["state"] == "skipped" && boss["selection"] == "Region Boss", "{plan}");
+    let after = run(&mut s, "scan.verdict", json!({"scan": scan, "model": model}));
+    let w1 = after["scan_within"].as_f64().unwrap();
+    assert!(w1 > w0 + 0.02 && w1 > 0.97, "ignoring the boss: {w0} -> {w1}");
+
+    // Don't touch: a corner kept; rewriting the scan is refused to an agent, a selection apart from it is not.
+    run(&mut s, "scan.select", json!({"body": scan, "brush": {"points": [[0, 0, 10]], "radius": "4 mm"}}));
+    run(&mut s, "scan.plan_region", json!({"scan": scan, "name": "Corner", "selected": true, "role": "keep"}));
+    let why = crate::cmd::scan::plan::kept_from_agent(&s, "scan.denoise", &json!({"body": scan})).expect("refused");
+    assert!(why.contains("`Corner`") && why.contains("don't touch"), "{why}");
+    assert!(
+        crate::cmd::scan::plan::kept_from_agent(&s, "scan.denoise", &json!({"body": scan, "selected": true})).is_some(),
+        "the corner is selected"
+    );
+    run(&mut s, "scan.select", json!({"body": scan, "brush": {"points": [[40, 30, 10]], "radius": "4 mm"}}));
+    assert_eq!(crate::cmd::scan::plan::kept_from_agent(&s, "scan.denoise", &json!({"body": scan, "selected": true})), None, "apart from it");
+    assert_eq!(crate::cmd::scan::plan::kept_from_agent(&s, "scan.find_all", &json!({})), None, "reading is not changing");
+
+    // What the model is for, and a size held.
+    let plan = run(&mut s, "scan.plan", json!({"scan": scan, "purpose": "replacement"}));
+    assert_eq!(plan["purpose"], "replacement", "{plan}");
+    let plan = run(&mut s, "scan.plan_region", json!({"scan": scan, "name": "Height", "at": [20, 15, 10], "hold": 10}));
+    let height = plan["regions"].as_array().unwrap().iter().find(|r| r["name"] == "Height").unwrap();
+    assert!(height["role"] == "hold" && height["hold"] == 10.0, "{plan}");
+    assert!(s.execute("scan.plan", &json!({"scan": scan, "purpose": "spare"})).is_err());
+    assert!(s.execute("scan.plan_region", &json!({"scan": scan, "name": "X", "at": [0, 0, 0], "role": "hold"})).is_err(), "hold needs a size");
+}
+
 /// A block 40 × 30 × 10 with two holes Ø 8 through it: the prism's profile holds the holes as
 /// circles inside its outline, and Extrude It extrudes the outline with the holes open, not the
 /// discs inside them as well.
