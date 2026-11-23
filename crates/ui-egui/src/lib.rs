@@ -424,6 +424,9 @@ mod vr_browser_tests;
 pub mod vr_handles;
 #[cfg(test)]
 mod vr_handles_tests;
+pub mod vr_joints;
+#[cfg(test)]
+mod vr_joints_tests;
 pub mod vr_measure;
 #[cfg(test)]
 mod vr_measure_tests;

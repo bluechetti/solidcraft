@@ -2,6 +2,8 @@
   "en": {
     "vr.belt_parameters": "Parameters",
     "vr.handle_fine": "(fine)",
+    "vr.joint_contact": "touching",
+    "vr.joint_limit": "at its limit",
     "vr.measure_angle": "Angle",
     "vr.measure_area": "Area",
     "vr.measure_centres": "Centres",

@@ -199,6 +199,117 @@ pub fn measure_line(out: &mut Vec<Vertex>, t: &Transform, head: [f64; 3], a: [f6
     }
 }
 
+/// A placed part held with Select and moved as its joints allow ([`solidcraft_ui_egui::vr_joints`]).
+/// Once the hand has gone [`MOVE_START`], the axis that the hand's move follows best is taken: a
+/// slide follows the hand along it, a turn follows the angle the hand sweeps about it; a tenth as
+/// far while the same hand's grip is held.
+#[derive(Clone, Debug)]
+pub struct JointDrag {
+    pub hand: usize,
+    pub part: std::sync::Arc<solidcraft_ui_egui::vr_pick::Part>,
+    axes: Vec<solidcraft_ui_egui::vr_joints::Axis>,
+    pub chosen: Option<solidcraft_ui_egui::vr_joints::Axis>,
+    /// Where the hand began and was last frame (model units), and how far it has gone (metres).
+    start: [f64; 3],
+    last: [f64; 3],
+    last_room: [f64; 3],
+    travel: f64,
+    /// The part's motion so far (mm or radians), precision applied.
+    pub amount: f64,
+    /// The undo history's length when the drag began: the drag is one step after it.
+    pub base: usize,
+    /// What held the joint last frame (a limit, contact), to buzz once when it starts holding.
+    pub held: Option<String>,
+}
+
+fn sub3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [0, 1, 2].map(|k| a[k] - b[k])
+}
+fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (0..3).map(|k| a[k] * b[k]).sum()
+}
+fn cross3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+fn unit3(v: [f64; 3]) -> Option<[f64; 3]> {
+    let n = dot3(v, v).sqrt();
+    (n > 1e-12 && n.is_finite()).then(|| v.map(|x| x / n))
+}
+
+/// The angle of `p` about the line through `origin` along unit `axis` (radians).
+fn angle_about(p: [f64; 3], origin: [f64; 3], axis: [f64; 3]) -> Option<f64> {
+    let r = sub3(p, origin);
+    let radial = sub3(r, axis.map(|a| a * dot3(r, axis)));
+    let u = unit3(cross3(axis, if axis[0].abs() < 0.9 { [1.0, 0.0, 0.0] } else { [0.0, 1.0, 0.0] }))?;
+    let v = cross3(axis, u);
+    (dot3(radial, radial) > 1e-12).then(|| dot3(radial, v).atan2(dot3(radial, u)))
+}
+
+impl JointDrag {
+    pub fn new(
+        hand: usize,
+        part: std::sync::Arc<solidcraft_ui_egui::vr_pick::Part>,
+        axes: Vec<solidcraft_ui_egui::vr_joints::Axis>,
+        at_room: [f64; 3],
+        t: &Transform,
+        base: usize,
+    ) -> JointDrag {
+        let at = t.to_model(at_room);
+        JointDrag { hand, part, axes, chosen: None, start: at, last: at, last_room: at_room, travel: 0.0, amount: 0.0, base, held: None }
+    }
+
+    /// How well a move `by` (model units) from `from` follows `axis`: along it for a slide, across
+    /// the radius for a turn (the turn's tangent there).
+    fn response(axis: &solidcraft_ui_egui::vr_joints::Axis, from: [f64; 3], by: [f64; 3]) -> f64 {
+        if axis.angular {
+            let r = sub3(from, axis.origin);
+            unit3(cross3(axis.axis, r)).map_or(0.0, |tangent| dot3(by, tangent).abs())
+        } else {
+            dot3(by, axis.axis).abs()
+        }
+    }
+
+    /// The hand is at `at_room`; `fine` while its grip is held. Whether the motion changed.
+    pub fn follow(&mut self, at_room: [f64; 3], t: &Transform, fine: bool) -> bool {
+        let at = t.to_model(at_room);
+        if !at.iter().all(|v| v.is_finite()) {
+            return false;
+        }
+        self.travel += dot3(sub3(at_room, self.last_room), sub3(at_room, self.last_room)).sqrt();
+        self.last_room = at_room;
+        if self.chosen.is_none() {
+            if self.travel <= MOVE_START {
+                return false;
+            }
+            let by = sub3(at, self.start);
+            self.chosen = self.axes.iter().max_by(|a, b| Self::response(a, self.start, by).total_cmp(&Self::response(b, self.start, by))).cloned();
+            self.last = self.start;
+        }
+        let Some(axis) = &self.chosen else { return false };
+        let rate = if fine { 0.1 } else { 1.0 };
+        let step = if axis.angular {
+            match (angle_about(self.last, axis.origin, axis.axis), angle_about(at, axis.origin, axis.axis)) {
+                (Some(a), Some(b)) => {
+                    let mut d = b - a;
+                    while d > std::f64::consts::PI {
+                        d -= std::f64::consts::TAU;
+                    }
+                    while d < -std::f64::consts::PI {
+                        d += std::f64::consts::TAU;
+                    }
+                    d
+                }
+                _ => 0.0,
+            }
+        } else {
+            dot3(sub3(at, self.last), axis.axis)
+        };
+        self.last = at;
+        self.amount += step * rate;
+        step != 0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,5 +418,45 @@ mod tests {
         let mut out = Vec::new();
         none.draw(&mut out, &t, [0.0, 0.0, 1.0], [5.0, 0.0, 0.0], [1.0; 3]);
         assert!(out.is_empty());
+    }
+
+    fn joint_axis(angular: bool) -> solidcraft_ui_egui::vr_joints::Axis {
+        solidcraft_ui_egui::vr_joints::Axis {
+            joint: 10,
+            name: "Hinge".into(),
+            index: 0,
+            origin: [0.0, 0.0, 0.0],
+            axis: [0.0, 0.0, 1.0],
+            angular,
+            scale: 1.0,
+            value: 0.0,
+            limits: None,
+        }
+    }
+
+    #[test]
+    fn a_hinge_follows_the_angle_the_hand_sweeps_about_it_and_a_tenth_with_the_grip() {
+        let t = room(0.001); // a millimetre of model is a millimetre of room
+        let mut j = JointDrag::new(0, part(), vec![joint_axis(true)], [0.1, 0.0, 0.0], &t, 3);
+        assert!(!j.follow([0.1, 0.005, 0.0], &t, false), "under a centimetre: not yet a drag");
+        let quarter = [0.0, 0.1, 0.0];
+        j.follow(quarter, &t, false);
+        assert!((j.amount - std::f64::consts::FRAC_PI_2).abs() < 1e-9, "{}", j.amount);
+        j.follow([-0.1, 0.0, 0.0], &t, true); // another quarter turn at a tenth
+        assert!((j.amount - std::f64::consts::FRAC_PI_2 * 1.1).abs() < 1e-9, "{}", j.amount);
+    }
+
+    #[test]
+    fn of_a_hinge_and_a_slide_the_hand_takes_the_one_it_moves_along() {
+        let t = room(0.001);
+        let both = vec![joint_axis(true), solidcraft_ui_egui::vr_joints::Axis { axis: [1.0, 0.0, 0.0], ..joint_axis(false) }];
+        // From (0.1, 0, 0) the turn about Z goes along Y; moving along X is the slide.
+        let mut j = JointDrag::new(0, part(), both.clone(), [0.1, 0.0, 0.0], &t, 0);
+        j.follow([0.13, 0.0, 0.0], &t, false);
+        assert_eq!(j.chosen.as_ref().map(|a| a.angular), Some(false));
+        assert!((j.amount - 30.0).abs() < 1e-9, "{}", j.amount);
+        let mut j = JointDrag::new(0, part(), both, [0.1, 0.0, 0.0], &t, 0);
+        j.follow([0.1, 0.03, 0.0], &t, false);
+        assert_eq!(j.chosen.as_ref().map(|a| a.angular), Some(true));
     }
 }

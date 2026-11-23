@@ -120,6 +120,8 @@ pub struct Vr {
     moving: Option<handles::PartMove>,
     /// Measuring with one hand ([`Measure`]), turned on and off from the ring.
     measure: Option<Measure>,
+    /// A placed part being moved as its joints allow ([`handles::JointDrag`]).
+    joint_drag: Option<handles::JointDrag>,
     /// The scale was shown last at this time (seconds, [`Vr::clock`]): it fades after.
     scaled_at: Option<f64>,
     /// The frame's time last frame (seconds, [`Vr::clock`]): how far the stick moves a held model.
@@ -262,6 +264,9 @@ impl Parts {
 /// The light buzz felt when a ray comes onto another part.
 const ONTO_PART: Pulse = Pulse { amplitude: 0.15, seconds: 0.006 };
 
+/// A joint dragged against its limit or into contact: a firmer buzz, once as it starts holding.
+const HELD: Pulse = Pulse { amplitude: 0.7, seconds: 0.05 };
+
 impl Pointer {
     /// Follow each `free` hand's ray to the part it points at, the model placed by `transform` and
     /// cut by `cut`, and light it. A hand holding the model, the section or the menu is not free
@@ -388,6 +393,7 @@ impl Vr {
             handle_marks: Vec::new(),
             moving: None,
             measure: None,
+            joint_drag: None,
             last_frame: 0.0,
             real_size: false,
             design: None,
@@ -655,7 +661,7 @@ impl Vr {
         }
         let belt_hand = self.belt.held.map(|h| h.hand);
         // The hand pulling a dimension handle does not hold the model: its grip is precision.
-        let drag_hand = self.drag.as_ref().map(|d| d.hand).or(self.moving.as_ref().map(|m| m.hand));
+        let drag_hand = self.drag.as_ref().map(|d| d.hand).or(self.moving.as_ref().map(|m| m.hand)).or(self.joint_drag.as_ref().map(|j| j.hand));
         if let Some(current) = &self.transform {
             let grips = Hand::BOTH.map(|hand| {
                 let i = hand.index();
@@ -751,6 +757,55 @@ impl Vr {
                 }
                 continue;
             }
+            // A placed part being moved by this hand as its joints allow: each move drives the
+            // joint (one undo step for the drag); a limit or contact buzzes; let go, it stays; a
+            // hand that hardly moved selects as ever.
+            if self.joint_drag.as_ref().is_some_and(|j| j.hand == i) {
+                let changed = match (self.joint_drag.as_mut(), hands[i].aim.as_ref(), self.transform.as_ref()) {
+                    (Some(j), Some(aim), Some(t)) => j.follow(aim.position, t, holds),
+                    _ => false,
+                };
+                if changed
+                    && let Some(j) = self.joint_drag.as_mut()
+                    && let Some(axis) = j.chosen.clone()
+                {
+                    let value = solidcraft_ui_egui::vr_joints::wanted(&axis, j.amount);
+                    match solidcraft_ui_egui::vr_joints::drive(app, &axis, value, j.base) {
+                        Ok(Some(mut d)) => {
+                            // The drag asks past a limit: held there before the drive, which then
+                            // cannot say so itself.
+                            if d.held.is_none() && solidcraft_ui_egui::vr_joints::past_limit(&axis, j.amount) {
+                                d.held = Some("limit".into());
+                            }
+                            if d.held.is_some() && d.held != j.held {
+                                buzz(session, hand, HELD);
+                            }
+                            j.held = d.held.clone();
+                            let unit = if d.unit == "deg" { "°".to_string() } else { format!(" {}", d.unit) };
+                            let held = match d.held.as_deref() {
+                                Some("limit") => format!("  ({})", solidcraft_ui_text::tr("vr.joint_limit")),
+                                Some("contact") => format!("  ({})", solidcraft_ui_text::tr("vr.joint_contact")),
+                                Some(other) => format!("  ({other})"),
+                                None => String::new(),
+                            };
+                            let said = format!("{} {}{unit}{held}", axis.name, solidcraft_ui_egui::vr_measure::number(d.value));
+                            self.pointer.say(i, said);
+                        }
+                        Ok(None) => {}
+                        Err(error) => self.pointer.say(i, error),
+                    }
+                }
+                if !b[SELECT].down
+                    && let Some(j) = self.joint_drag.take()
+                {
+                    if j.chosen.is_none() {
+                        vr_pick::toggle(app, Some(&j.part));
+                    }
+                    buzz(session, hand, Pulse::TICK);
+                    self.presses[i].next_after(false, now, f64::from(set.hold_time));
+                }
+                continue;
+            }
             // A selected part being moved by this hand: it follows the hand (a tenth as far while
             // the grip is held); let go, it is moved there, or selected as ever when the hand
             // hardly moved (a click).
@@ -798,6 +853,28 @@ impl Vr {
                 buzz(session, hand, Pulse::GRAB);
                 continue;
             }
+            // Select on a placed part that joints let move: it moves as they allow if the hand goes
+            // on to move, a click if not.
+            if b[SELECT].pressed
+                && !menu_by_select
+                && self.measure.as_ref().is_none_or(|m| m.hand != i)
+                && self.drag.is_none()
+                && self.moving.is_none()
+                && self.joint_drag.is_none()
+                && self.menu.is_none()
+                && self.belt.hover[i].is_none()
+                && self.window_hover[i].is_none()
+                && let Some(pointed) = self.pointer.pointed[i].as_ref()
+                && let Some(occurrence) = solidcraft_ui_egui::vr_joints::occurrence_of(&pointed.part)
+                && let (Some(aim), Some(t)) = (hands[i].aim.as_ref(), self.transform.as_ref())
+            {
+                let axes = solidcraft_ui_egui::vr_joints::axes(app, occurrence);
+                if !axes.is_empty() {
+                    let base = app.session.undo.len();
+                    self.joint_drag = Some(handles::JointDrag::new(i, pointed.part.clone(), axes, aim.position, t, base));
+                    continue;
+                }
+            }
             // Select on a selected part (with the ring on a button of its own): a move if the hand
             // goes on to move, a click if not.
             if b[SELECT].pressed
@@ -805,6 +882,7 @@ impl Vr {
                 && self.measure.as_ref().is_none_or(|m| m.hand != i)
                 && self.drag.is_none()
                 && self.moving.is_none()
+                && self.joint_drag.is_none()
                 && self.menu.is_none()
                 && self.belt.hover[i].is_none()
                 && self.window_hover[i].is_none()

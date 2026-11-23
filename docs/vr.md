@@ -81,6 +81,14 @@ between them, between centres for round faces, and the angle, with a line betwee
 points. A third Select starts again. The faces are measured exactly (`inspect.measure`), as the
 desktop's Measure does.
 
+**Moving a part by its joints.** Hold Select on a placed part that joints let move and move the
+hand: once it has gone a centimetre, the joint axis the hand's move follows best is taken, and the
+part slides along it with the hand or turns with the angle the hand sweeps about it (a tenth as far
+with the same hand's grip held). The joint is driven as the desktop's joint handles drive it, the
+whole drag one undo step; its limits hold it, and a limit or contact gives a firmer buzz and the
+sign says so. Letting go leaves it there; a short Select selects it as ever. A part without joints
+that can move it is moved freely instead (below), when it is selected.
+
 **Moving a part.** Hold Select on a part that is selected and move the hand: a box shows where it
 goes, and the sign at the controller says how far (millimetres along the model's axes, whole ones;
 tenths, a tenth as far, with the same hand's grip held). Letting go moves it there: one undo step
