@@ -23,7 +23,7 @@ pub enum Act {
 impl Group {
     /// Whether the group opens a window (the Browser, the Parameters) rather than items of its own.
     pub fn is_window(self) -> bool {
-        matches!(self, Group::Browser | Group::Parameters)
+        matches!(self, Group::Browser | Group::Parameters | Group::Assistant)
     }
 }
 
@@ -38,10 +38,12 @@ pub enum Group {
     Browser,
     /// The design's parameters, stepped and typed, in that window.
     Parameters,
+    /// The Assistant (the agent chat), with Talk, in that window.
+    Assistant,
 }
 
 /// The groups, left to right.
-pub const GROUPS: [Group; 6] = [Group::Browser, Group::Parameters, Group::Designs, Group::File, Group::Room, Group::Edit];
+pub const GROUPS: [Group; 7] = [Group::Browser, Group::Parameters, Group::Assistant, Group::Designs, Group::File, Group::Room, Group::Edit];
 
 /// The most items a group opens (the open designs past it are left out).
 pub const MAX_ITEMS: usize = 8;
@@ -81,6 +83,7 @@ pub fn group_item(group: Group) -> Item {
         Group::Edit => ("vr.group_edit", "edit"),
         Group::Browser => ("vr.belt_browser", "document_browser"),
         Group::Parameters => ("vr.belt_parameters", "params"),
+        Group::Assistant => ("vr.belt_assistant", "assistant"),
     };
     Item { act: Act::Group(group), words: tr(words).to_string(), icon: Some(icon), on: true, current: false }
 }
@@ -113,7 +116,7 @@ pub fn items(group: Group, state: &State) -> Vec<Item> {
         Group::Edit => {
             vec![item(Act::Undo, "vr.menu_undo", Some("undo"), state.can_undo), item(Act::Redo, "vr.menu_redo", Some("redo"), state.can_redo)]
         }
-        Group::Browser | Group::Parameters => Vec::new(),
+        Group::Browser | Group::Parameters | Group::Assistant => Vec::new(),
     }
 }
 

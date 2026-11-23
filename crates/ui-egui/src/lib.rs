@@ -418,6 +418,9 @@ mod viewport_details;
 mod viewport_layout;
 mod viewport_status;
 mod viewport_status_fixture;
+pub mod vr_assistant;
+#[cfg(test)]
+mod vr_assistant_tests;
 pub mod vr_browser;
 #[cfg(test)]
 mod vr_browser_tests;

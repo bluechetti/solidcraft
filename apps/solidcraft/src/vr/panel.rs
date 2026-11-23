@@ -73,6 +73,7 @@ pub struct Panel {
     /// What it shows, and the Parameters' list between frames.
     kind: super::belt::Group,
     params: solidcraft_ui_egui::vr_params::VrParams,
+    assistant: solidcraft_ui_egui::vr_assistant::VrAssistant,
 }
 
 impl Panel {
@@ -92,6 +93,7 @@ impl Panel {
             lit: Vec::new(),
             kind: super::belt::Group::Browser,
             params: Default::default(),
+            assistant: Default::default(),
         }
     }
 
@@ -102,6 +104,9 @@ impl Panel {
             if self.kind == super::belt::Group::Browser {
                 solidcraft_ui_egui::vr_pick::light(app, &mut self.lit, Vec::new());
                 solidcraft_ui_egui::vr_browser::close(app);
+            }
+            if self.kind == super::belt::Group::Assistant {
+                solidcraft_ui_egui::vr_assistant::close(&mut self.assistant);
             }
             self.kind = kind;
             self.drawn_at = None;
@@ -187,8 +192,12 @@ impl Panel {
         // The picture's pixels a point, from this pass on (a zoom factor would wait for the next).
         input.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(size.pixels_per_point);
         let lit = &mut self.lit;
-        let (kind, params) = (self.kind, &mut self.params);
-        let title_key = if kind == super::belt::Group::Parameters { "vr.belt_parameters" } else { "vr.belt_browser" };
+        let (kind, params, assistant) = (self.kind, &mut self.params, &mut self.assistant);
+        let title_key = match kind {
+            super::belt::Group::Parameters => "vr.belt_parameters",
+            super::belt::Group::Assistant => "vr.belt_assistant",
+            _ => "vr.belt_browser",
+        };
         let mut out = self.ctx.run_ui(input, |ui| {
             let t = solidcraft_theme::Tokens::get();
             let rect = ui.max_rect();
@@ -209,6 +218,8 @@ impl Panel {
             inner.set_clip_rect(body);
             if kind == super::belt::Group::Parameters {
                 solidcraft_ui_egui::vr_params::show(app, &mut inner, params);
+            } else if kind == super::belt::Group::Assistant {
+                solidcraft_ui_egui::vr_assistant::show(app, &mut inner, assistant);
             } else {
                 solidcraft_ui_egui::vr_browser::show(app, &mut inner, lit);
             }
@@ -262,6 +273,7 @@ impl Panel {
         self.events.extend(self.pointer.gone());
         solidcraft_ui_egui::vr_pick::light(app, &mut self.lit, Vec::new());
         solidcraft_ui_egui::vr_browser::close(app);
+        solidcraft_ui_egui::vr_assistant::close(&mut self.assistant);
     }
 }
 

@@ -1,5 +1,7 @@
 {
   "en": {
+    "vr.assistant_off": "Turn on AI features in Preferences on the desktop to use the Assistant here.",
+    "vr.belt_assistant": "Assistant",
     "vr.belt_parameters": "Parameters",
     "vr.clashes_none": "No parts overlap",
     "vr.clashes_some": "Parts overlap:",
@@ -25,6 +27,12 @@
     "vr.params_user": "User parameters",
     "vr.sweep_clear": "clear",
     "vr.sweep_none": "No joint moves this part",
-    "vr.sweep_touches": "touches"
+    "vr.sweep_touches": "touches",
+    "vr.talk": "Hold to talk",
+    "vr.talk_hearing": "Working out what was said…",
+    "vr.talk_let_go": "Listening… let go to send",
+    "vr.talk_listening": "Listening",
+    "vr.talk_no_voice": "Talk needs a voice program: SOLIDCRAFT_VR_VOICE",
+    "vr.talk_nothing": "Nothing was heard"
   }
 }

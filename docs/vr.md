@@ -54,7 +54,7 @@ group's name and icon. The defaults:
 Also available for a slot: Hide (only), and every action above.
 
 **The belt.** Below and in front of you, curved toward you, and left where it is put: Browser,
-Parameters, Designs (each open design, and New), File (Save, Close), Room (Passthrough, the real room around the model; Put
+Parameters, Assistant, Designs (each open design, and New), File (Save, Close), Room (Passthrough, the real room around the model; Put
 back) and Edit (Undo, Redo). Point at a group (or touch it with the controller) and Select: its
 items grow out above it; Select on one does it. Save and Close ask nothing in the headset: a
 design that has no file yet, or whose moved parts are not captured, is saved on the desktop
@@ -103,6 +103,14 @@ tenths, a tenth as far, with the same hand's grip held). Letting go moves it the
 (`solid.move` for a body, `occurrence.move` in world space for a placed part). A short Select on it,
 the hand hardly moved, selects or lets go of it as ever. Only with the ring menu on a button of its
 own; where holding Select opens the ring, a selected part is not moved this way.
+
+**The Assistant.** The Assistant bubble shows the desktop's Assistant (the agent chat, with
+AI features turned on in Preferences) in the window beside the belt: its conversation, Allow and
+Deny for what the agent asks to do, and Undo changes on each answer (every answer undoes as one
+step). Hold Talk at its top and speak; let go and what was heard is sent as the next message.
+SolidCraft does not record or transcribe itself: Talk runs the program `SOLIDCRAFT_VR_VOICE` names,
+which records until its input closes and prints what it heard (on Linux, `pw-record` and
+whisper.cpp do). Typing stays on the desktop's Assistant.
 
 **The Parameters.** The Parameters bubble shows the design's parameters in the window beside the
 belt (the Browser's bubble shows the Browser there again; a bubble pressed again closes it). A

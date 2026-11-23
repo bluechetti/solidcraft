@@ -1127,6 +1127,11 @@ pub fn shown(app: &SolveApp) -> bool {
     app.preferences.ai_features && cfg!(not(target_arch = "wasm32"))
 }
 
+/// Send `text` as the user's next message, as the panel's Send does (the VR view's Talk).
+pub(crate) fn send_text(app: &mut SolveApp, text: String) {
+    app.agent_chat.actions.push(panel::PanelAction::Send { text, steer: false });
+}
+
 /// The Assistant button in the application bar is shown (honours the existing preference).
 pub fn app_bar_button_shown(app: &SolveApp) -> bool {
     shown(app) && app.preferences.ai_toolbar_button
