@@ -174,7 +174,8 @@ pub(super) fn open_graphics(
     let wgpu_instance = unsafe { wgpu::Instance::from_hal::<hal::api::Vulkan>(hal_instance) };
     // SAFETY: `exposed` is an adapter of that very instance.
     let adapter = unsafe { wgpu_instance.create_adapter_from_hal(exposed) };
-    let descriptor = describe(&adapter);
+    let mut descriptor = describe(&adapter);
+    fit_indirect_validation(&mut descriptor.required_limits);
     let missing = descriptor.required_features - adapter.features();
     if !missing.is_empty() {
         return Err(Error::Vulkan(format!("the headset's graphics card lacks {missing:?}")));
@@ -308,11 +309,52 @@ pub(super) fn wrap_image(device: &wgpu::Device, image: u64, format: wgpu::Textur
     Some(unsafe { device.create_texture_from_hal::<hal::api::Vulkan>(hal_texture, &descriptor, wgpu::TextureUses::UNINITIALIZED) })
 }
 
+/// A storage binding's size is a multiple of this (wgpu-types' `STORAGE_BINDING_SIZE_ALIGNMENT`,
+/// which `wgpu` does not re-export).
+const STORAGE_BINDING_ALIGNMENT: u64 = 4;
+
+/// The limits a device asks for, brought within what wgpu's indirect draw validation takes: its
+/// offsets are u32, so no buffer or binding over 4 GiB. An adapter wgpu finds itself has its
+/// limits cut so (`adjust_limits_for_indirect_validation` in wgpu-core); one made from the
+/// runtime's Vulkan device (`create_adapter_from_hal`) keeps the card's own, and a window that
+/// asks for buffers as large as the adapter takes (a big scan's) would then stop wgpu at the
+/// device's creation. The same cut here gives the headset's device what a window's own gets.
+fn fit_indirect_validation(limits: &mut wgpu::Limits) {
+    const MAX: u64 = u32::MAX as u64;
+    let aligned = MAX & !(STORAGE_BINDING_ALIGNMENT - 1);
+    limits.max_buffer_size = limits.max_buffer_size.min(MAX);
+    limits.max_uniform_buffer_binding_size = limits.max_uniform_buffer_binding_size.min(MAX);
+    limits.max_storage_buffer_binding_size = limits.max_storage_buffer_binding_size.min(aligned);
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
+    /// A device asked for with a card's own 64 GiB buffers (a scan-sized request) is brought to
+    /// what indirect draw validation takes, as wgpu does for an adapter it finds; limits already
+    /// within it are left as they are.
+    #[test]
+    fn a_device_asks_for_no_buffer_indirect_validation_cannot_take() {
+        let mut big = wgpu::Limits {
+            max_buffer_size: 64 << 30,
+            max_uniform_buffer_binding_size: 64 << 30,
+            max_storage_buffer_binding_size: 64 << 30,
+            ..wgpu::Limits::default()
+        };
+        fit_indirect_validation(&mut big);
+        assert_eq!(big.max_buffer_size, u64::from(u32::MAX));
+        assert_eq!(big.max_uniform_buffer_binding_size, u64::from(u32::MAX));
+        assert_eq!(big.max_storage_buffer_binding_size, u64::from(u32::MAX) - 3, "a multiple of the binding alignment");
+        assert_eq!(big.max_storage_buffer_binding_size % STORAGE_BINDING_ALIGNMENT, 0);
+
+        let mut within = wgpu::Limits::default();
+        let before = within.clone();
+        fit_indirect_validation(&mut within);
+        assert_eq!(within, before);
+    }
 
     /// The device is destroyed exactly once on each way handing it to wgpu-hal can go: wgpu-hal
     /// took it and failed later (its callback, then the error path), wgpu-hal failed before
