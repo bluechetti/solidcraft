@@ -110,6 +110,31 @@ fn mul0(a: Ivl, b: Ivl) -> Ivl {
     }
 }
 
+/// `mul0(x, power_range(j))`, bit for bit, without the general product where `j > 0` and
+/// `x`'s ends are finite: the four end products with `[-1, 1]` are `+-x.lo`, `+-x.hi`
+/// (exact), so their least and greatest are `-+max(|x.lo|, |x.hi|)`; with `[0, 1]` they are
+/// `x.lo`, `x.hi` and two zeros, whose sign the outward rounding drops (`-0` and `0` both
+/// widen to `-+1e-300`). Either way the same ends go through the same [`Ivl::checked`].
+/// Half the time of the general product, which a Taylor model's range and truncation take
+/// once per coefficient.
+#[inline]
+fn times_power_range(x: Ivl, j: usize) -> Ivl {
+    if j == 0 || is_zero(x) || !(x.lo.is_finite() && x.hi.is_finite()) {
+        return mul0(x, power_range(j));
+    }
+    if j % 2 == 1 {
+        let (a, b) = (x.lo.abs(), x.hi.abs());
+        let m = if a < b { b } else { a };
+        Ivl::checked(-m, m)
+    } else {
+        let lo = if x.lo < 0.0 { x.lo } else { 0.0 };
+        let lo = if x.hi < lo { x.hi } else { lo };
+        let hi = if x.lo > 0.0 { x.lo } else { 0.0 };
+        let hi = if x.hi > hi { x.hi } else { hi };
+        Ivl::checked(lo, hi)
+    }
+}
+
 /// A Taylor model in t on `[-1, 1]` with `N` coefficients, `N <= TM_MAX` (see the
 /// [module](self) for what it encloses). Past [`TM_MAX`] a product is the whole line.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -152,7 +177,7 @@ impl<const N: usize> TmN<N> {
         for (j, &x) in coeffs.iter().enumerate() {
             match c.get_mut(j) {
                 Some(cj) => *cj = x,
-                None => rem = add0(rem, mul0(x, power_range(j))),
+                None => rem = add0(rem, times_power_range(x, j)),
             }
         }
         Self { c, rem }
@@ -175,7 +200,7 @@ impl<const N: usize> TmN<N> {
         for (j, &x) in p.iter().enumerate() {
             match c.get_mut(j) {
                 Some(cj) => *cj = Ivl::from(x),
-                None => rem = add0(rem, mul0(Ivl::from(x), power_range(j))),
+                None => rem = add0(rem, times_power_range(Ivl::from(x), j)),
             }
         }
         Self { c, rem }
@@ -226,7 +251,7 @@ impl<const N: usize> TmN<N> {
     pub fn poly_range(&self) -> Ivl {
         let mut r = ZERO;
         for (j, &cj) in self.c.iter().enumerate() {
-            r = add0(r, mul0(cj, power_range(j)));
+            r = add0(r, times_power_range(cj, j));
         }
         r
     }
@@ -392,7 +417,7 @@ impl<const N: usize> Mul for TmN<N> {
         for (n, &fnn) in full.iter().enumerate().take((2 * N).saturating_sub(1)) {
             match c.get_mut(n) {
                 Some(cn) => *cn = fnn,
-                None => rem = add0(rem, mul0(fnn, power_range(n))),
+                None => rem = add0(rem, times_power_range(fnn, n)),
             }
         }
         if !is_zero(self.rem) {
@@ -453,6 +478,70 @@ impl<const N: usize> GnScalar for TmN<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// [`times_power_range`] gives every bit [`mul0`] with [`power_range`] gives: ends that are
+    /// zeros of either sign, subnormal, about the widening's 1e-300 and its 9e-293 edge, huge,
+    /// infinite, NaN, out of order, and narrow intervals about random numbers of every size.
+    #[test]
+    fn a_product_with_a_power_range_is_the_general_products_bit_for_bit() {
+        let mut ends = vec![
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            f64::MIN_POSITIVE,
+            -f64::MIN_POSITIVE,
+            f64::from_bits(1),
+            -f64::from_bits(1),
+            f64::MAX,
+            -f64::MAX,
+            1.0e-300,
+            -1.0e-300,
+            9.0e-293,
+            -9.0e-293,
+            2.0e-8,
+            1.0e-160,
+            1.0e160,
+            -7.25,
+        ];
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..2000 {
+            let bits = next();
+            let e = i32::try_from(next() % 640).unwrap_or(0) - 320;
+            ends.push(f64::from_bits(bits));
+            ends.push((bits >> 11) as f64 / (1_u64 << 53) as f64 * 10f64.powi(e));
+            ends.push(-((bits >> 12) as f64) / (1_u64 << 52) as f64 * 10f64.powi(e));
+        }
+        let bits = |v: Ivl| (v.lo.to_bits(), v.hi.to_bits());
+        let mut pairs: Vec<Ivl> = Vec::new();
+        for (i, &a) in ends.iter().enumerate() {
+            for &b in ends.iter().skip(i % 61).step_by(61) {
+                pairs.push(Ivl::new(a, b));
+            }
+            pairs.push(Ivl::new(
+                super::super::interval::round_down(a),
+                super::super::interval::round_up(a),
+            ));
+        }
+        for x in pairs {
+            for j in 0..6 {
+                assert_eq!(
+                    bits(times_power_range(x, j)),
+                    bits(mul0(x, power_range(j))),
+                    "{x:?} times t^{j}'s range"
+                );
+            }
+        }
+    }
 
     /// A fixed-seed generator in `[0, 1)`.
     fn rng(seed: u64) -> impl FnMut() -> f64 {
