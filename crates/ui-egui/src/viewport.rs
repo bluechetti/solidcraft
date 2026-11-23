@@ -279,6 +279,8 @@ pub struct ViewportState {
     /// greys out with it.
     pub(crate) corner_ok: bool,
     pub gpu: Option<GpuTarget>,
+    /// The design view for a headset's eyes (#2172): off unless a host shows it there.
+    pub stereo: crate::stereo::Stereo,
     /// The view's pipelines could not be built (the thread compiling them at start failed): the
     /// view says so where the model would be, instead of staying empty (#1210).
     pub gpu_unavailable: bool,
@@ -466,6 +468,9 @@ pub struct ViewportState {
     /// A sketch point or curve being dragged (its id, the undo depth when the drag began: the
     /// whole drag is one undo step, and for a curve where it was last under the cursor).
     pub point_drag: Option<(String, usize, Option<Vec2>, Vec2, bool)>,
+    /// The two-finger gesture in progress on the iPad (`navigation::handle`, [`crate::tablet`]),
+    /// kept between frames so a tap can be told from a pan.
+    pub(crate) tablet_touch: Option<crate::navigation::TabletGesture>,
     /// Checkpoint and source for a cancellable whole-text drag.
     pub(crate) text_drag: Option<(u64, String)>,
     /// A part that joints place, being dragged.
@@ -4211,6 +4216,13 @@ pub(crate) fn body_tree(app: &SolveApp, boxes: &BodyBoxes) -> std::sync::Arc<Bod
 }
 
 /// The model's extent: bodies (from the cached boxes) and sketches.
+/// The bounding box of the shown body `name` (model units), or `None` when no body of that name is
+/// shown: for a host that shows one part's size (the iPad's AR view).
+pub fn body_box(app: &SolveApp, name: &str) -> Option<solidcraft_engine::geom::Aabb3> {
+    let st = crate::open_meshing::shown_world(app);
+    body_bounds(app, &st).iter().find(|(n, _)| n == name).map(|(_, b)| *b)
+}
+
 pub fn model_bounds(app: &SolveApp) -> solidcraft_engine::geom::Aabb3 {
     let st = crate::open_meshing::shown_world(app);
     // A joint drag drawn by moving its bodies: its moving parts where the frame draws them.
@@ -7745,6 +7757,14 @@ fn show_view(app: &mut SolveApp, ui: &mut egui::Ui) {
     if !(hover_frozen && inside) {
         app.viewport.hover = cand.as_ref().map(|c| c.0.clone());
     }
+    // A host's own pointer (a headset's controller, the iPad's Pencil in AR) is at a face: it
+    // lights up as under the mouse, in the window and so in the host's view, which draws the
+    // window's scenes (from VR pull request #18712).
+    if app.viewport.stereo.on
+        && let Some(p) = &app.viewport.stereo.pointed
+    {
+        app.viewport.hover = Some(Hit::Face { body: p.body.clone(), index: p.face, point: Vec3::new(p.point[0], p.point[1], p.point[2]) });
+    }
     wake_centre(app, &hits, hover, &proj);
 
     let keep = crate::tool_modifiers::keep_snap_points(crate::tool_modifiers::Held::new(
@@ -7912,6 +7932,7 @@ fn show_view(app: &mut SolveApp, ui: &mut egui::Ui) {
             motions: joint_motions::motions(app),
             ground: joint_motions::ground(app),
         };
+        app.viewport.stereo.publish(&frame, proj.cam, [t.viewport_top, t.viewport_bottom]);
         match app.viewport.scene_slot() {
             // A tile is its own paint callback: it does not go through the blur's source.
             Some(slot) => {
@@ -7950,6 +7971,20 @@ fn show_view(app: &mut SolveApp, ui: &mut egui::Ui) {
         && app.preferences.pencil_mode
     {
         crate::pencil::finger_double_tap(app, &proj, p);
+    }
+    // The iPad (`tablet`): a finger double-tap on a planar face sketches on it, and a pencil
+    // double-tap with no tool in hand selects the whole body or sketch under it.
+    if let Some(p) = app.tablet.finger_double_tap.take() {
+        crate::pencil::finger_double_tap(app, &proj, p);
+    }
+    if let Some(p) = app.tablet.pencil_double_tap.take()
+        && app.tool.is_none()
+        && app.dialog.is_none()
+        && let hits = pick_cached(app, &proj, p)
+        && let Some((hit, _)) = candidate(app, &hits)
+        && let Some(items) = crate::pencil::whole(app, &hit)
+    {
+        let _ = app.run("select.set", json!({ "items": items }));
     }
     // A tool's click that moved on the way (#2448) clicks where the button is let go.
     if app.viewport.tool_click && resp.drag_stopped() {
@@ -18398,6 +18433,164 @@ mod tests {
         h.frames(3);
         assert_eq!(format!("{:?}", h.app.dialog.as_ref().map(|d| &d.kind)), typed, "the box kept its value");
         assert!(h.app.dialog.is_some());
+    }
+
+    #[test]
+    fn a_touch_tap_selects_what_it_landed_on() {
+        // A finger's tap arrives as the mouse a touch screen has none of (egui-winit emulates
+        // it): its press moves the pointer there and presses the left button, and its release
+        // lets the button go and takes the pointer away in the *same* frame. The tap's position
+        // must come from that interaction, not from the hover position, which the take-away has
+        // already cleared - otherwise the tap only lights the face under it up, and selects
+        // nothing when the finger leaves.
+        let mut session = solidcraft_engine::Session::default();
+        session.execute("solid.box", &json!({"length": 40, "width": 30, "height": 20})).unwrap();
+        let (mut app, mut frame) = exact_frames(session);
+        app.ui.pick_mode = solidcraft_engine::PickMode::Bodies;
+        app.fit_view();
+        frame(&mut app, Vec::new());
+        let p = app.viewport.rect.expect("the viewport").center();
+        frame(&mut app, vec![egui::Event::PointerMoved(p)]);
+        assert!(app.viewport.hover.is_some(), "the tap point must be over the model");
+        emulated_finger_tap(&mut frame, &mut app, p);
+        assert!(!app.session.selection.is_empty(), "a touch tap must select what it landed on");
+    }
+
+    /// A headless app driven with exact input events, one frame at a time. The scenario harness
+    /// spends queued events a pointer event per frame, so a touch's release and the take-away of
+    /// the pointer (egui-winit sends both in the same frame) cannot be replayed through it.
+    fn exact_frames(session: solidcraft_engine::Session) -> (SolveApp, impl FnMut(&mut SolveApp, Vec<egui::Event>)) {
+        let ctx = egui::Context::default();
+        crate::fonts::setup_fonts(&ctx);
+        let mut time = 0.0;
+        let app = SolveApp::new(session, crate::Services::default());
+        let frame = move |app: &mut SolveApp, events: Vec<egui::Event>| {
+            time += 1.0 / 60.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1600.0, 1000.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| show(app, ui));
+                    crate::prefs::show(app, ui.ctx());
+                },
+            );
+            output.textures_delta.clear();
+        };
+        (app, frame)
+    }
+
+    /// A finger's press or lift on a touch screen, as egui-winit emulates the mouse a phone has
+    /// none of: the press moves the pointer there and holds its left button.
+    fn finger_press(at: Pos2, down: bool) -> egui::Event {
+        egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: down, modifiers: egui::Modifiers::NONE }
+    }
+
+    /// A full tap of one finger: down, up and the pointer taken away with the finger.
+    fn emulated_finger_tap(frame: &mut impl FnMut(&mut SolveApp, Vec<egui::Event>), app: &mut SolveApp, at: Pos2) {
+        frame(app, vec![egui::Event::PointerMoved(at)]);
+        frame(app, vec![finger_press(at, true)]);
+        frame(app, vec![finger_press(at, false), egui::Event::PointerGone]);
+        frame(app, Vec::new());
+    }
+
+    /// One finger's touch event, for the two-finger gesture tests.
+    fn finger(id: u64, phase: egui::TouchPhase, at: Pos2) -> egui::Event {
+        egui::Event::Touch { device_id: egui::TouchDeviceId(0), id: egui::TouchId::from(id), phase, pos: at, force: None }
+    }
+
+    /// Two fingers down on the viewport, ready to gesture.
+    fn two_fingers(h: &mut crate::scenario::Harness, a: Pos2, b: Pos2) {
+        h.app.tablet.enabled = true;
+        h.call("ui.move", json!({"x": a.x, "y": a.y}));
+        h.app.synthetic.push(finger(0, egui::TouchPhase::Start, a));
+        h.app.synthetic.push(finger(1, egui::TouchPhase::Start, b));
+        h.frame();
+    }
+
+    #[test]
+    fn two_finger_gestures_pan_zoom_and_roll_the_view() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.preferences.zoom_to_cursor = false;
+        h.app.preferences.trackpad_pan = false;
+        two_fingers(&mut h, pos2(760.0, 500.0), pos2(880.0, 500.0));
+        assert!(h.app.viewport.tablet_touch.is_some(), "two fingers start a gesture");
+        let start = h.app.cam;
+        // Both fingers slide together: the view pans with them, no zoom and no roll.
+        h.app.synthetic.push(finger(0, egui::TouchPhase::Move, pos2(790.0, 530.0)));
+        h.app.synthetic.push(finger(1, egui::TouchPhase::Move, pos2(910.0, 530.0)));
+        h.frame();
+        assert_ne!(h.app.cam.target, start.target, "a two-finger slide must pan");
+        assert_eq!(h.app.cam.half_height(), start.half_height(), "a two-finger slide must not zoom");
+        assert_eq!(h.app.cam.roll, start.roll, "a two-finger slide must not roll");
+        assert!(h.app.viewport.hover.is_none(), "hover holds back while the fingers navigate");
+        // Spreading the fingers zooms in, around the anchor the pointer is nearest.
+        let spread = h.app.cam.half_height();
+        h.app.synthetic.push(finger(0, egui::TouchPhase::Move, pos2(700.0, 530.0)));
+        h.app.synthetic.push(finger(1, egui::TouchPhase::Move, pos2(1000.0, 530.0)));
+        h.frame();
+        assert!(h.app.cam.half_height() < spread, "spreading the fingers must zoom in");
+        assert_eq!(h.app.cam.roll, start.roll);
+        // Twisting both fingers a quarter turn clockwise rolls the view the same way.
+        h.app.synthetic.push(finger(0, egui::TouchPhase::Move, pos2(850.0, 380.0)));
+        h.app.synthetic.push(finger(1, egui::TouchPhase::Move, pos2(850.0, 680.0)));
+        h.frame();
+        assert!(h.app.cam.roll > 0.0, "a clockwise twist must roll the view clockwise");
+        // Both fingers leave: the gesture is over, and the camera keeps what it has.
+        let done = h.app.cam;
+        h.app.synthetic.push(finger(0, egui::TouchPhase::End, pos2(850.0, 380.0)));
+        h.app.synthetic.push(finger(1, egui::TouchPhase::End, pos2(850.0, 680.0)));
+        h.frame();
+        assert!(h.app.viewport.tablet_touch.is_none(), "the gesture ends with the fingers");
+        h.frames(4);
+        assert_eq!(h.app.cam, done, "nothing moves after the fingers are gone");
+        assert!(h.app.viewport.context_menu.is_none(), "a moving gesture opens no menu");
+    }
+
+    #[test]
+    fn one_finger_leaves_the_camera_alone() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.tablet.enabled = true;
+        h.call("ui.move", json!({"x": 800, "y": 500}));
+        let start = h.app.cam;
+        h.app.synthetic.push(finger(0, egui::TouchPhase::Start, pos2(760.0, 500.0)));
+        h.frame();
+        assert!(h.app.viewport.tablet_touch.is_none(), "one finger is not a camera gesture");
+        h.app.synthetic.push(finger(0, egui::TouchPhase::Move, pos2(700.0, 400.0)));
+        h.frame();
+        h.app.synthetic.push(finger(0, egui::TouchPhase::End, pos2(700.0, 400.0)));
+        h.frame();
+        assert_eq!(h.app.cam, start, "one finger must not move the camera");
+    }
+
+    #[test]
+    fn two_finger_tap_opens_the_context_menu() {
+        let mut h = crate::scenario::Harness::new();
+        two_fingers(&mut h, pos2(760.0, 500.0), pos2(880.0, 500.0));
+        // Fingers that come and go without moving are the right-click a phone has none of.
+        h.app.synthetic.push(finger(0, egui::TouchPhase::End, pos2(760.0, 500.0)));
+        h.app.synthetic.push(finger(1, egui::TouchPhase::End, pos2(880.0, 500.0)));
+        h.frame();
+        assert!(h.app.viewport.tablet_touch.is_none());
+        h.settle();
+        assert!(h.app.viewport.context_menu.is_some(), "a two-finger tap opens the context menu");
+        assert_eq!(h.app.menu.target, crate::context_menu::Target::Viewport);
+    }
+
+    #[test]
+    fn a_cancelled_two_finger_touch_opens_nothing() {
+        let mut h = crate::scenario::Harness::new();
+        two_fingers(&mut h, pos2(760.0, 500.0), pos2(880.0, 500.0));
+        // The system takes the gesture away (a call, a back swipe): that is not a tap.
+        h.app.synthetic.push(finger(0, egui::TouchPhase::Cancel, pos2(760.0, 500.0)));
+        h.app.synthetic.push(finger(1, egui::TouchPhase::Cancel, pos2(880.0, 500.0)));
+        h.frame();
+        assert!(h.app.viewport.tablet_touch.is_none());
+        h.frames(4);
+        assert!(h.app.viewport.context_menu.is_none(), "a cancelled gesture must not open the menu");
     }
 
     #[test]

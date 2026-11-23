@@ -172,6 +172,7 @@ pub(crate) use sheet::{
     flange_position, flange_type, flat_reply, fold_points, fold_position, fold_stays, material_side, perforation_pattern, sheet_points,
     sheet_rule_name, then_list,
 };
+mod show_hide;
 mod silhouette;
 mod sketch;
 pub use sketch::SNAP_PREFIXES;
@@ -575,6 +576,7 @@ pub fn command_specs() -> Vec<&'static CommandSpec> {
     v.extend(bom::COMMANDS.iter());
     v.extend(mass_properties::COMMANDS.iter());
     v.extend(browser::COMMANDS.iter());
+    v.extend(show_hide::COMMANDS.iter());
     v.extend(notes::COMMANDS.iter());
     v.extend(delete::COMMANDS.iter());
     v.extend(edit::COMMANDS.iter());

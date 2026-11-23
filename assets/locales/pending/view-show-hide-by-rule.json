@@ -1,0 +1,10 @@
+{
+  "en": { "cmd.view_show_hide": "Show/Hide by Rule" },
+  "de": { "cmd.view_show_hide": "Ein-/Ausblenden nach Regel" },
+  "ko": { "cmd.view_show_hide": "규칙으로 표시/숨기기" },
+  "ar": { "cmd.view_show_hide": "إظهار/إخفاء حسب قاعدة" },
+  "he": { "cmd.view_show_hide": "הצג/הסתר לפי כלל" },
+  "ja": { "cmd.view_show_hide": "ルールで表示/非表示" },
+  "vi": { "cmd.view_show_hide": "Hiện/Ẩn theo quy tắc" },
+  "zh": { "cmd.view_show_hide": "按规则显示/隐藏" }
+}

@@ -302,6 +302,9 @@ impl<T: 'static> EventLoop<T> {
             fn _NSGetArgv() -> *mut *mut *mut c_char;
         }
 
+        // SolidCraft: UIKit looks the scene delegate up by name (`Info.plist`).
+        super::scene::register();
+
         unsafe {
             UIApplicationMain(
                 *_NSGetArgc(),

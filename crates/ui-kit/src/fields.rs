@@ -10,6 +10,61 @@ use egui::{Response, RichText, Ui, vec2};
 use solidcraft_theme::Tokens;
 use std::sync::Arc;
 
+/// Context key [`mark_numeric`] writes: the frame a number field had keyboard focus.
+const NUMERIC_FOCUS: &str = "solidcraft_numeric_focus";
+
+/// A number is being typed into `response`: a host with an on-screen keyboard may offer its
+/// number layout ([`numeric_focus`]). Called by the kit's number and expression fields.
+pub fn mark_numeric(ctx: &egui::Context, response: &Response) {
+    // Every number field shown this frame, focused or not: a host may let a pen write into one.
+    // `interact_rect` is clipped to what shows (a scrolled-away field has none).
+    let rect = response.rect.intersect(response.interact_rect);
+    if rect.is_positive() {
+        let frame = ctx.cumulative_frame_nr();
+        let id = response.id;
+        ctx.data_mut(|d| {
+            let shown = d.get_temp_mut_or_default::<NumericFields>(egui::Id::unique(NUMERIC_FIELDS));
+            if shown.frame != frame {
+                shown.previous = std::mem::take(&mut shown.fields);
+                shown.frame = frame;
+            }
+            shown.fields.push((id, rect));
+        });
+    }
+    if response.has_focus() {
+        // Read the frame number first: the context is locked while `data_mut` runs.
+        let frame = ctx.cumulative_frame_nr();
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(NUMERIC_FOCUS), frame));
+    }
+}
+
+/// Context key [`mark_numeric`] writes the number fields shown under.
+const NUMERIC_FIELDS: &str = "solidcraft_numeric_fields";
+
+/// The number fields one frame showed, and the frame before's.
+#[derive(Clone, Default)]
+struct NumericFields {
+    frame: u64,
+    fields: Vec<(egui::Id, egui::Rect)>,
+    previous: Vec<(egui::Id, egui::Rect)>,
+}
+
+/// The number and expression fields shown in the latest whole frame: their ids and screen rects,
+/// for a host that lets a pen write a value into one (the iPad's Scribble). Read it after the
+/// frame's UI has run.
+pub fn numeric_fields(ctx: &egui::Context) -> Vec<(egui::Id, egui::Rect)> {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data(|d| d.get_temp::<NumericFields>(egui::Id::unique(NUMERIC_FIELDS)))
+        .map(|shown| if shown.frame == frame { shown.fields } else { shown.previous })
+        .unwrap_or_default()
+}
+
+/// Whether a number or expression field has keyboard focus in this frame. Read it after the
+/// frame's UI has run.
+pub fn numeric_focus(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<u64>(egui::Id::unique(NUMERIC_FOCUS))) == Some(ctx.cumulative_frame_nr())
+}
+
 /// One alignment policy for every kit text input. Align the galley itself rather than
 /// approximating font metrics with integer margins (Plex Mono and Sans differ).
 pub(super) fn text_input(edit: egui::TextEdit<'_>) -> egui::TextEdit<'_> {
@@ -980,6 +1035,7 @@ fn editor_reserving(ui: &mut Ui, value: &mut String, hint: &str, completion: boo
         });
     }
     solidcraft_theme::TabAccent::number_focus(ui, &response);
+    mark_numeric(ui.ctx(), &response);
     t.input_bevel(ui, &response);
     let label = solidcraft_ui_text::tr_label(label(ui));
     response.widget_info(|| {
@@ -1405,6 +1461,7 @@ fn cell_editor_frame(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str, 
         info
     });
     solidcraft_theme::TabAccent::number_focus(ui, &response);
+    mark_numeric(ui.ctx(), &response);
     t.input_bevel(ui, &response);
     response
 }
@@ -1474,6 +1531,7 @@ pub fn wide_cell_editor(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &st
                 super::text_menu::menu(ui, &mut response, value, super::text_menu::Field::LINE);
                 publish(ui, &response, egui::Role::TextInput);
                 solidcraft_theme::TabAccent::number_focus(ui, &response);
+                mark_numeric(ui.ctx(), &response);
                 t.input_bevel(ui, &response);
                 let (text, error) = note;
                 if !text.is_empty() {
@@ -1527,6 +1585,7 @@ pub fn search_field(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str) -
         super::settings_search::note_key_sink(ui.ctx());
     }
     solidcraft_theme::TabAccent::number_focus(ui, &response);
+    mark_numeric(ui.ctx(), &response);
     t.input_bevel(ui, &response);
     response
 }
@@ -1815,6 +1874,7 @@ fn scalar_field_impl(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusi
     if !plain {
         Tokens::get().input_bevel(ui, &response);
     }
+    mark_numeric(ui.ctx(), &response);
     solidcraft_ui_registry::publish_target(&format!("dialog:scalar:{}", label(ui)), response.rect);
     response
 }
@@ -1827,6 +1887,7 @@ pub fn length_field(ui: &mut Ui, value: &mut f64, units: &str, decimals: u8) -> 
     let typed = typed.take();
     super::note_numeric_edit(ui, &response, typed.as_deref(), typed.is_some(), typed.is_none() && response.changed());
     Tokens::get().input_bevel(ui, &response);
+    mark_numeric(ui.ctx(), &response);
     solidcraft_ui_registry::publish_target(&format!("dialog:length:{}", label(ui)), response.rect);
     response
 }
@@ -1837,6 +1898,7 @@ pub fn bounded_length_field(ui: &mut Ui, value: &mut f64, units: &str, decimals:
     let response = ui.add(length_drag(ui, value, units, decimals, &typed).range(range).speed(speed));
     let typed = typed.take();
     super::note_numeric_edit(ui, &response, typed.as_deref(), typed.is_some(), typed.is_none() && response.changed());
+    mark_numeric(ui.ctx(), &response);
     solidcraft_ui_registry::publish_target(&format!("dialog:length:{}", label(ui)), response.rect);
     response
 }
@@ -1858,6 +1920,7 @@ pub fn angle_field(ui: &mut Ui, value: &mut f64) -> Response {
         ui.data_mut(|d| d.insert_temp(set, shown));
     }
     Tokens::get().input_bevel(ui, &response);
+    mark_numeric(ui.ctx(), &response);
     solidcraft_ui_registry::publish_target(&format!("dialog:angle:{}", label(ui)), response.rect);
     response
 }
@@ -1956,6 +2019,7 @@ fn bounded_number_field<T: egui::emath::Numeric>(
         super::settings_search::note_key_sink(ui.ctx());
     }
     Tokens::get().input_bevel(ui, &response);
+    mark_numeric(ui.ctx(), &response);
     response.widget_info(|| {
         let mut info = egui::WidgetInfo::drag_value(ui.is_enabled(), value.to_f64());
         info.label = Some(solidcraft_ui_text::tr_label(label(ui)).to_string());
@@ -2168,6 +2232,7 @@ pub fn placement_field(ui: &mut Ui, id: egui::Id, value: &mut String, hint: &str
         info
     });
     solidcraft_theme::TabAccent::number_focus(ui, &response);
+    mark_numeric(ui.ctx(), &response);
     t.input_bevel(ui, &response);
     response.backing_on_hover_text(solidcraft_ui_text::tr_label(hint))
 }

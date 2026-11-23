@@ -1395,7 +1395,7 @@ pub fn menu_row(ui: &mut egui::Ui, entry: &MenuEntry, width: f32, revealed: Opti
         solidcraft_ui_registry::publish_handle(&handle(style.hot, entry.id), rect.center());
     }
     let p = ui.painter();
-    if pointer_on || resp.has_focus() {
+    if pointer_on || resp.has_focus() || touch(ui.ctx()) {
         if pin.hovered() {
             p.rect_filled(pr, t.radius_sm.saturating_sub(1), t.border.gamma_multiply(0.6));
         }
@@ -1653,6 +1653,20 @@ pub struct GridOut {
     pub cells: Vec<GridCell>,
 }
 
+/// Context key for [`set_touch`]: the host is a touch screen.
+const TOUCH: &str = "solidcraft_ribbon_touch";
+
+/// The host is a touch screen (the iPad app): no pointer rests on a row, so every drop-down row
+/// and grid icon shows its pin, and a grid icon's pin takes taps without the hover delay.
+pub fn set_touch(ctx: &egui::Context, touch: bool) {
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::unique(TOUCH), touch));
+}
+
+/// Whether the host said it is a touch screen ([`set_touch`]).
+pub fn touch(ctx: &egui::Context) -> bool {
+    ctx.data_mut(|d| d.get_persisted::<bool>(egui::Id::unique(TOUCH))).unwrap_or(false)
+}
+
 /// How long the pointer rests on a grid icon before its corner pin can be clicked (seconds).
 pub const PIN_DELAY: f64 = 2.0;
 
@@ -1745,7 +1759,7 @@ pub fn grid_cell(ui: &mut egui::Ui, entry: &MenuEntry, rect: Rect, style: &MenuS
     // command, so a quick click near the corner never pins or unpins it by accident.
     let pr = Rect::from_min_size(pos2(rect.right() - 15.0, rect.top()), vec2(15.0, 15.0));
     let dragging = egui::DragAndDrop::has_any_payload(ui.ctx());
-    let armed = pin_armed(ui, style.focus.with("grid_pin_hover"), entry.id, ui.rect_contains_pointer(rect) && !dragging);
+    let armed = touch(ui.ctx()) || pin_armed(ui, style.focus.with("grid_pin_hover"), entry.id, ui.rect_contains_pointer(rect) && !dragging);
     let pin = armed.then(|| ui.interact(pr, ui.scope_id().with(("dropdown_pin", entry.id)), Sense::click()));
     let pin_hovered = pin.as_ref().is_some_and(egui::Response::hovered);
     if !entry.app_paints {

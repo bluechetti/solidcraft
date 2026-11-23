@@ -16,6 +16,8 @@ pub mod agent_label;
 pub mod ai_connect;
 pub use solidcraft_ui_kit::app_bar;
 pub use solidcraft_ui_kit::blur;
+pub use solidcraft_ui_kit::ribbon::set_touch as ribbon_touch;
+pub use solidcraft_ui_kit::{numeric_fields, numeric_focus};
 pub mod bom_panel;
 pub mod broken_view_preview;
 pub mod browser;
@@ -298,6 +300,7 @@ pub mod point_clouds;
 pub mod policy;
 pub mod prefs;
 pub mod prefs_notice;
+pub mod tablet;
 pub use solidcraft_ui_kit::prefs_window;
 #[cfg(test)]
 mod preselect_tests;
@@ -412,6 +415,7 @@ pub(crate) mod verify_job;
 pub use solidcraft_ui_kit::start_page;
 pub mod starting;
 mod status_bar;
+pub mod stereo;
 #[cfg(test)]
 mod sweep_dialog_tests;
 pub(crate) mod test_boat;
@@ -463,6 +467,9 @@ mod viewport_details;
 mod viewport_layout;
 mod viewport_status;
 mod viewport_status_fixture;
+pub mod vr_joints;
+#[cfg(test)]
+mod vr_joints_tests;
 pub mod wheel_hint;
 pub use solidcraft_ui_kit::window_chrome;
 mod wireframe_silhouettes;
@@ -1005,6 +1012,8 @@ pub struct SolveApp {
     pub frame_rate: frame_rate::FrameRate,
     /// The operations under way, in the view's corner ([`operations`]).
     pub operations: operations::Panel,
+    /// Apple Pencil and fingers in the iPad app ([`tablet`]); the iPad app turns it on.
+    pub tablet: tablet::Tablet,
     pub synthetic: Vec<egui::Event>,
     /// The modifiers of the synthetic press in progress (a Ctrl-drag keeps Ctrl while it moves).
     pub synthetic_mods: egui::Modifiers,
@@ -1284,6 +1293,7 @@ impl SolveApp {
             frame_ms: 0.0,
             frame_rate: frame_rate::FrameRate::default(),
             operations: operations::Panel::default(),
+            tablet: Default::default(),
             synthetic: Vec::new(),
             synthetic_mods: egui::Modifiers::default(),
             held_click: Vec::new(),
@@ -4439,6 +4449,10 @@ impl SolveApp {
     /// Process a frame with a platform-identified pen-tip release in egui coordinates.
     pub fn raw_input_hook_with_pen(&mut self, raw: &mut egui::RawInput, pen_release: Option<egui::Pos2>) {
         self.pen_release = pen_release;
+        let mut tablet = std::mem::take(&mut self.tablet);
+        let view = self.viewport.rect;
+        tablet.filter(raw, |p| view.is_some_and(|r| r.contains(p)) && !shell::covered(self, p));
+        self.tablet = tablet;
         self.synthetic_input(raw);
         finite_input(raw);
         self.hold_click_after_typing(raw);

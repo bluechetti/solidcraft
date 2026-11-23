@@ -108,6 +108,8 @@ pub const TABLE: &[(&str, Class)] = &[
     // apps and tooling
     ("solidcraft", Class::Exempt),
     ("cli", Class::Exempt),
+    // the iPad and iPhone app: the desktop UI on UIKit through eframe, with its own touch, keyboard and file glue
+    ("ios", Class::Exempt),
     ("web", Class::Exempt),
     // the UI kit's component gallery (docs.solidcraft.io/kit/), desktop and browser
     ("ui-kit-gallery", Class::Exempt),

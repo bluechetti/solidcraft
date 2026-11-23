@@ -1,0 +1,1 @@
+| apps/solidcraft-ios/ios-device/Assets.xcassets/AppIcon.appiconset/icon-1024.png | SolidCraft contributors | the original SolidCraft mark on white at 1024 px, for the iPad app's icon | SolidCraft Brand and Interface Licence (LICENSE-BRAND) |

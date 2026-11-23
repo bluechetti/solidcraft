@@ -938,7 +938,53 @@ fn handle_input(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &egui::
         crate::prefs::TrackpadScroll::ShiftOrbits => (raw.pan, raw.shift_pan),
         crate::prefs::TrackpadScroll::BareOrbits => (raw.shift_pan, raw.pan),
     };
-    let mut pan = if trackpad_pan { pan_points } else { egui::Vec2::ZERO } + raw.mouse_pan;
+    // ---- the iPad's fingers ([`crate::tablet`]) ----
+    // Two fingers pan, pinch and twist at once, also while a tool is in use; two fingers that
+    // land and leave without moving open the menu a right click would.
+    let mut tablet_pan = egui::Vec2::ZERO;
+    let mut tablet_zoom = 1.0_f32;
+    let mut tablet_roll = 0.0_f64;
+    let mut tablet_mode = None;
+    let tablet_info = ui.input(|i| i.multi_touch()).filter(|_| app.tablet.enabled && inside && app.viewport.context_menu.is_none());
+    if let Some(info) = tablet_info {
+        let moved = info.translation_delta.length() > options.max_click_dist
+            || (info.zoom_delta - 1.0).abs() > TOUCH_TAP_ZOOM
+            || info.rotation_delta.abs() > TOUCH_TAP_TURN;
+        match &mut app.viewport.tablet_touch {
+            Some(gesture) => {
+                gesture.moved |= moved;
+                gesture.center = info.center_pos;
+            }
+            None => {
+                // The second finger of a drag already begun on the first (a sketch point): the
+                // drag ends where it is, with the constraint its release would have made.
+                if let Some((_, depth, _, _, _)) = app.viewport.point_drag.clone() {
+                    let _ = app.session.execute("sketch.drag_end", &json!({ "constraint": crate::drag_snap::release() }));
+                    app.session.undo.truncate(depth + 1);
+                    crate::drag_snap::clear();
+                    app.viewport.point_drag = None;
+                    crate::sketch_text_move::end_drag(app);
+                    crate::dim_view::drag_end();
+                    crate::sketch3d::drag_end();
+                }
+                app.viewport.tablet_touch = Some(TabletGesture { at: app.now, center: info.center_pos, moved });
+            }
+        }
+        tablet_pan = info.translation_delta;
+        if info.zoom_delta.is_finite() && info.zoom_delta > 0.0 {
+            tablet_zoom = info.zoom_delta;
+        }
+        if caps.orbit && info.rotation_delta.is_finite() {
+            tablet_roll = f64::from(info.rotation_delta);
+        }
+        tablet_mode = Some(NavMode::Pan);
+    } else if let Some(gesture) = app.viewport.tablet_touch.take() {
+        let cancelled = ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Touch { phase: egui::TouchPhase::Cancel, .. })));
+        if !cancelled && !gesture.moved && app.now - gesture.at <= TOUCH_TAP_SECS {
+            crate::context_menu::open(app, gesture.center, Default::default());
+        }
+    }
+    let mut pan = if trackpad_pan { pan_points } else { egui::Vec2::ZERO } + raw.mouse_pan + tablet_pan;
     pan.x *= crate::prefs::pan_sign_x(app);
     pan.y *= crate::prefs::pan_sign_y(app);
     let scroll = if app.viewport.wheel_zoom_raw_until_idle || (trackpad_pan && app.viewport.trackpad_until_idle) {
@@ -947,7 +993,7 @@ fn handle_input(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &egui::
         scroll
     } + raw.modifier_zoom;
     // Pinch-to-zoom (trackpad): direct manipulation, never smoothed.
-    let pinch = if touch.active { 1.0 } else { ui.input(|i| pinch_factor(i, options, page_height, zoom_modifier)) };
+    let pinch = if touch.active { 1.0 } else { ui.input(|i| pinch_factor(i, options, page_height, zoom_modifier)) * tablet_zoom };
     let h = rect.height().max(1.0) as f64;
     if wheel_inside && pinch != 1.0 {
         app.viewport.orbit_free = None;
@@ -1013,6 +1059,26 @@ fn handle_input(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &egui::
         twist_turn(app, rect, twist, hover);
         app.viewport.twist_last = Some(now);
     }
+    // Once the Apple Pencil draws, one finger orbits and a long press opens the menu (`tablet`).
+    let finger_orbit = std::mem::take(&mut app.tablet.orbit);
+    if caps.orbit && finger_orbit != egui::Vec2::ZERO && finger_orbit.is_finite() {
+        app.cancel_view_animation();
+        app.viewport.orbit_free = None;
+        let at = app.tablet.orbit_at;
+        orbit_drag(app, rect, f64::from(finger_orbit.x), f64::from(finger_orbit.y), at, false, true);
+    }
+    if let Some(at) = app.tablet.menu.take() {
+        crate::context_menu::open(app, at, Default::default());
+    }
+    if app.tablet.busy {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+    }
+    // A twist of two fingers rolls the view the way they turn.
+    if tablet_roll != 0.0 {
+        app.viewport.orbit_free = None;
+        app.cancel_view_animation();
+        app.cam.roll_by(tablet_roll);
+    }
     let zoom_held = (inside || app.viewport.zoom_shortcut_drag)
         && ui.input(|input| crate::keymap::drag_zoom_held(app, input))
         && !view_keys_blocked(app, ui.ctx(), Some(resp.id))
@@ -1052,7 +1118,14 @@ fn handle_input(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &egui::
         // Ctrl+left drag from empty space orbits in every preset (Cmd on macOS). A Ctrl+click
         // still selects, and Ctrl on geometry still drags it without snapping.
         let ctrl_orbit = (mods.ctrl || mods.command) && !mods.shift && !mods.alt && empty_space(app);
-        app.viewport.primary_nav = preset.or(ctrl_orbit.then_some(NavMode::Orbit));
+        // Before the Pencil is used, a finger that lands on empty space orbits (a touch screen has
+        // no modifier keys or other buttons to ask for it); on the model it still selects.
+        let finger_orbit = app.tablet.enabled
+            && ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Touch { phase: egui::TouchPhase::Start, .. })))
+            && app.tool.is_none()
+            && app.dialog.is_none()
+            && empty_space(app);
+        app.viewport.primary_nav = preset.or((ctrl_orbit || finger_orbit).then_some(NavMode::Orbit));
     } else if zoom_drag || (!primary_down && !primary_released) {
         app.viewport.primary_nav = None;
     }
@@ -1149,7 +1222,7 @@ fn handle_input(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &egui::
             }
         })
         .filter(|m| allowed(*m));
-    let mode = if touch.active { touch.mode } else { mode };
+    let mode = if touch.active { touch.mode } else { tablet_mode.or(mode) };
     if touch.active {
         if touch.delta != egui::Vec2::ZERO || touch.zoom != 1.0 && touch.zoom > 0.0 {
             app.cancel_view_animation();
@@ -1195,7 +1268,9 @@ fn handle_input(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &egui::
         if app.viewport.axis_drag.is_none() {
             app.viewport.orbit_free = None;
         }
-        if delta != egui::Vec2::ZERO {
+        // Two fingers already panned by their own deltas: the pointer's movement is the first
+        // finger's, part of that gesture, so it is not applied a second time.
+        if delta != egui::Vec2::ZERO && tablet_mode.is_none() {
             if mode.is_some() {
                 app.cancel_view_animation();
             }
@@ -1829,6 +1904,32 @@ pub(crate) fn orbit_about(app: &mut SolveApp, _rect: egui::Rect, dx: f64, dy: f6
     let coords = app.cam.frame_coords(pivot);
     orbit_camera(app, dx, dy);
     app.cam.place(pivot, coords);
+}
+
+/// How long two fingers may stay on the glass, and how far they may move, and still count as a
+/// tap: two fingers that come and go without moving are a touch screen's right-click.
+const TOUCH_TAP_SECS: f64 = 0.35;
+/// A two-finger gesture may zoom or twist by this much and still count as a tap.
+const TOUCH_TAP_ZOOM: f32 = 0.02;
+const TOUCH_TAP_TURN: f32 = 0.05;
+
+/// A two-finger gesture on the iPad ([`crate::tablet`]), tracked for the frames it lasts.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TabletGesture {
+    /// The app time it began (for the tap's duration).
+    pub at: f64,
+    /// Its midpoint this frame: where a two-finger tap opens the menu.
+    pub center: Pos2,
+    /// It panned, pinched or twisted: no longer a tap.
+    pub moved: bool,
+}
+
+/// Where the pointer is for interaction this frame: its hover position, or, on the frame a touch
+/// screen's finger lifts, where it interacted. egui-winit's touch emulation releases the button
+/// and takes the pointer away in the same frame (a phone has no mouse to hover), which clears the
+/// hover position; egui still keeps where the pointer interacted for that frame.
+pub(crate) fn pointer_pos(i: &egui::InputState) -> Option<egui::Pos2> {
+    i.pointer.hover_pos().or_else(|| (i.pointer.any_down() || i.pointer.any_released()).then(|| i.pointer.interact_pos()).flatten())
 }
 
 /// Touch contacts owned by one camera view, adapted from the touch part of PR #2412.
