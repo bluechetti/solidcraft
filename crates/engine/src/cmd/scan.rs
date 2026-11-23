@@ -301,7 +301,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&DEVIATION_CONTRACT)
         .output(output_schema_for::<ScanDeviationResult>)
-        .params("scan?: mesh body (default: the selected or only one); body?: the model: a solid or surface body, or a mesh body (a CAD model that came as an STL) (default: the selected or only solid or surface body, else with none the only other mesh body); tolerance?: length (default: the scan's, see scan.tolerance, else 0.1 mm); limit?: length (default 0.5 mm, at least five tolerances); auto_limit?: bool (default false: true reads the limit from the scan, the distance 99 % of its measured points lie within; not with limit); bands?: 0 | 2–12 (default 0, a smooth scale: the colours in that many steps each side of within); pins?: [[x, y, z]] (places labelled with their distance, each read at the scan point nearest it); show?: bool (false takes the map away): colours the scan by its distance from the model in the viewport, its largest distance above and below labelled, a view and not an undo step; the model is measured against the scan too, since material the scan does not have (a hole filled, a boss made up) shows only that way round → shown, scan, body, rms, mean, max_above, max_below, max_above_at, max_below_at, within (of the points within reach), within_all (of all the scan's points), measured, unmatched, model_within, model_covered, model_max, model_farthest_at, far (three tolerances, at most the limit), far_off, model_far_off (the shares farther apart than `far`), passes (both ways: 95 % within the tolerance, and no more than 0.1 % far off), why_not?, tolerance, limit, bands, pins"),
+        .params("selected?: bool (true: `region` in the reply, the part of the scan selected read alone: its size, the shapes it lies on, the deviation on it); scan?: mesh body (default: the selected or only one); body?: the model: a solid or surface body, or a mesh body (a CAD model that came as an STL) (default: the selected or only solid or surface body, else with none the only other mesh body); tolerance?: length (default: the scan's, see scan.tolerance, else 0.1 mm); limit?: length (default 0.5 mm, at least five tolerances); auto_limit?: bool (default false: true reads the limit from the scan, the distance 99 % of its measured points lie within; not with limit); bands?: 0 | 2–12 (default 0, a smooth scale: the colours in that many steps each side of within); pins?: [[x, y, z]] (places labelled with their distance, each read at the scan point nearest it); show?: bool (false takes the map away): colours the scan by its distance from the model in the viewport, its largest distance above and below labelled, a view and not an undo step; the model is measured against the scan too, since material the scan does not have (a hole filled, a boss made up) shows only that way round → shown, scan, body, rms, mean, max_above, max_below, max_above_at, max_below_at, within (of the points within reach), within_all (of all the scan's points), measured, unmatched, model_within, model_covered, model_max, model_farthest_at, far (three tolerances, at most the limit), far_off, model_far_off (the shares farther apart than `far`), passes (both ways: 95 % within the tolerance, and no more than 0.1 % far off), why_not?, tolerance, limit, bands, pins"),
     CommandSpec::new("scan.deviation_pin", "Pin Deviation", crate::checked!("scan.deviation_pin", deviation_pin))
         .at("SCAN", "CHECK")
         .icon("curvature_map")
@@ -1304,6 +1304,7 @@ fn read_deviation(s: &mut Session, p: &Value, clearance: bool) -> Result<Value> 
         pins: Vec::new(),
         unseen: None,
         warning: None,
+        region: None,
         param_warnings: Vec::new(),
     };
     if crate::params::bool_(p, "show") == Some(false) {
@@ -1472,6 +1473,8 @@ fn read_deviation(s: &mut Session, p: &Value, clearance: bool) -> Result<Value> 
         max_below: max_below_at,
         pins,
     }));
+    // The part selected, read on the map just measured.
+    let region = (crate::params::bool_(p, "selected") == Some(true)).then(|| select::region_reading(s)).flatten();
     // Measured on surface the scanner never saw: said, with the share of the scan's area.
     let unseen_share = unseen::unseen_of(s, &mesh.body).ok().and_then(|(_, u)| u).map(|u| u.share()).filter(|x| *x > 0.0);
     reply(ScanDeviationResult {
@@ -1511,6 +1514,7 @@ fn read_deviation(s: &mut Session, p: &Value, clearance: bool) -> Result<Value> 
         pins: shown_pins,
         unseen: unseen_share,
         warning: unseen_share.and_then(|share| unseen::warning(share, "of the scan measured")),
+        region,
         ..empty
     })
 }

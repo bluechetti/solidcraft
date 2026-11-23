@@ -393,14 +393,60 @@ pub fn scan_selection(session: &Session) -> Option<Entry> {
         d.x * d.x + d.y * d.y + d.z * d.z
     };
     let at = corners().min_by(|a, b| far(a).total_cmp(&far(b)))?;
-    let detail = format!(
+    let mut detail = format!(
         "selected on the scan, {} mm², around {}; scan commands work on it with `\"selected\": true` (scan.fit_plane, scan.reconstruct_selection, scan.denoise, …), `scan.keep_selection {{}}` keeps it",
         num(picked.area),
         point3(&json!([at.x, at.y, at.z]))
     );
+    // What is known of it already, so the agent starts there: the shapes it lies on and the
+    // deviation on it, from the readings the session holds (nothing is measured here).
+    if let Some(read) = solidcraft_engine::cmd::scan::select::region_reading(session) {
+        detail.push_str(&region_words(&read));
+    }
     let mut entry = Entry::new(Kind::Element, format!("{} triangles · {}", picked.count, picked.scan), detail);
     entry.sels = vec![Sel::Body { name: picked.scan.clone() }];
     Some(entry)
+}
+
+/// A region reading (`region_reading`) in words for the agent: its box, the shapes it lies on and
+/// the deviation on it, each only when the session has read it.
+fn region_words(read: &Value) -> String {
+    let mut out = String::new();
+    if let (Some(low), Some(high)) = (read.get("low"), read.get("high")) {
+        out.push_str(&format!("; box {} to {}", point3(low), point3(high)));
+    }
+    let shapes: Vec<String> = read
+        .get("shapes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(3)
+        .map(|v| {
+            let kind = v.get("kind").and_then(Value::as_str).unwrap_or("?");
+            let share = v.get("share").and_then(Value::as_f64).map_or(String::new(), |x| format!(" {:.0} %", x * 100.0));
+            let radius = v.get("radius").and_then(Value::as_f64).map_or(String::new(), |r| format!(" r {}", num(r)));
+            format!("{kind}{radius}{share}")
+        })
+        .collect();
+    if !shapes.is_empty() {
+        out.push_str(&format!("; Find All reads it as {}", shapes.join(", ")));
+    }
+    match read.get("deviation") {
+        Some(d) if d.get("within").is_some() => {
+            let n = |k: &str| d.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+            out.push_str(&format!(
+                "; against `{}`: {:.0} % within {} mm, from {} to +{} mm",
+                d.get("body").and_then(Value::as_str).unwrap_or("?"),
+                n("within") * 100.0,
+                num(n("tolerance")),
+                num(n("max_below")),
+                num(n("max_above"))
+            ));
+        }
+        Some(d) => out.push_str(&format!("; `{}` does not reach it", d.get("body").and_then(Value::as_str).unwrap_or("?"))),
+        None => out.push_str("; `scan.deviation {\"selected\": true}` measures the model on it alone"),
+    }
+    out
 }
 
 /// The rest of what the user is looking at, as items of their own: the dialog open (and on which

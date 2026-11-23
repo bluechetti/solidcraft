@@ -425,6 +425,10 @@ pub struct ScanDeviationParams {
     /// nearest it (`scan.deviation_pin` adds them by clicking). Default: none.
     #[serde(default)]
     pub pins: Option<Vec<Point3>>,
+    /// True: the reply also reads the part of the scan selected (`region`): its size, the shapes
+    /// it lies on and the deviation on it alone. Default: false.
+    #[serde(default)]
+    pub selected: Option<bool>,
     /// False takes the map away again. Default: true.
     #[serde(default)]
     pub show: Option<bool>,
@@ -704,6 +708,12 @@ pub struct ScanDeviationResult {
     /// The colour steps on each side of within, 0 for a smooth scale.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bands: Option<u32>,
+    /// With `selected`: the part of the scan selected, read on this measurement: `{scan, triangles,
+    /// area, low, high, shapes?: [{kind, share, radius?, ...}], deviation?: {body, tolerance, within,
+    /// rms, max_above, max_below, unmatched}}`; absent when nothing is selected on the scan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<serde_json::Map<String, serde_json::Value>>")]
+    pub region: Option<serde_json::Value>,
     /// The labelled places, each with its distance.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pins: Vec<ScanDeviationPin>,

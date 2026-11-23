@@ -422,6 +422,24 @@ fn scan_to_cad_builds_the_part_in_one_command_and_says_whether_it_is_done() {
     assert!(done["next"].as_str().is_some_and(|n| n.contains(&solid)), "{done}");
     let v = volume(&s, &solid);
     assert!((v - expected).abs() < 0.01 * expected, "{v} against {expected}");
+    // One region of it on its own: a patch brushed on the top face reads as a plane facing up, the
+    // model on it within the tolerance; with the map taken away the reading has no deviation.
+    run(&mut s, "scan.select", json!({"body": scan, "brush": {"points": [[20, 15, 10]], "radius": "6 mm"}}));
+    let read = run(&mut s, "scan.deviation", json!({"scan": scan, "body": solid, "selected": true}));
+    let region = &read["region"];
+    assert!(region["area"].as_f64().is_some_and(|a| (60.0..160.0).contains(&a)), "{region}");
+    let top = &region["shapes"][0];
+    assert!(
+        top["kind"] == "plane" && top["share"].as_f64().is_some_and(|x| x > 0.9) && top["normal"][2].as_f64().is_some_and(|z| z.abs() > 0.99),
+        "{region}"
+    );
+    assert!(region["deviation"]["within"].as_f64().is_some_and(|w| w > 0.95), "{region}");
+    run(&mut s, "scan.deviation", json!({"show": false}));
+    let later = crate::cmd::scan::select::region_reading(&s).expect("still selected");
+    assert!(later.get("deviation").is_none() && later.get("shapes").is_some(), "{later}");
+    run(&mut s, "scan.select", json!({"body": scan, "none": true}));
+    assert!(crate::cmd::scan::select::region_reading(&s).is_none(), "nothing selected");
+
     run(&mut s, "edit.undo", json!({}));
     assert!(s.model.state().body(&solid).is_none(), "one undo step");
 

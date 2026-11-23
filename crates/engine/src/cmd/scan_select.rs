@@ -654,3 +654,86 @@ pub(super) fn curve_from_selection(s: &mut Session, p: &Value) -> Result<Value> 
 #[cfg(test)]
 #[path = "scan_select_tests.rs"]
 mod tests;
+
+/// What is known of the part of the scan selected now, from what the session has already read,
+/// measuring nothing: its size and box, the Find All shapes it lies on (when Find All has read
+/// the scan as it is), and the deviation on it (when a deviation map of the design as it is
+/// stands). For an agent told "this region": it starts there without reading the whole scan
+/// again (agents spent most of their calls finding where things are, 2026-11-22). `None` when
+/// nothing is selected on a scan, or the scan changed since.
+pub fn region_reading(s: &crate::Session) -> Option<Value> {
+    let picked = s.scan_selection.as_ref().filter(|k| k.count > 0 && k.current(s))?;
+    let mesh = super::shown_mesh(s, &picked.scan)?;
+    let chosen: Vec<usize> = picked.selected.iter().enumerate().filter_map(|(t, on)| on.then_some(t)).collect();
+    // The points of the selected triangles, each once.
+    let mut points: Vec<usize> = chosen.iter().filter_map(|&t| mesh.triangles.get(t)).flat_map(|t| t.iter().map(|&i| i as usize)).collect();
+    points.sort_unstable();
+    points.dedup();
+    let (mut low, mut high) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for q in points.iter().filter_map(|&i| mesh.positions.get(i)) {
+        for (k, v) in [q.x, q.y, q.z].into_iter().enumerate() {
+            low[k] = low[k].min(v);
+            high[k] = high[k].max(v);
+        }
+    }
+    let mut out = json!({"scan": picked.scan, "triangles": picked.count, "area": picked.area, "low": low, "high": high});
+    // The shapes it lies on: Find All's regions its triangles fall in, the largest share first.
+    if let Some(found) = s.scan_shapes.as_ref().filter(|k| k.scan == picked.scan && k.current(s)) {
+        let mut count: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
+        for &t in &chosen {
+            if let Some(&r) = found.regions.get(t) {
+                *count.entry(r).or_default() += 1;
+            }
+        }
+        let mut shares: Vec<(u32, usize)> = count.into_iter().collect();
+        shares.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+        let shapes: Vec<Value> = shares
+            .iter()
+            .take(6)
+            .filter_map(|&(r, n)| {
+                let segment = found.outcome.segments.get(r as usize)?;
+                let share = n as f64 / chosen.len().max(1) as f64;
+                Some(match segment.shape {
+                    None => json!({"kind": "freeform", "share": share}),
+                    Some(shape) => {
+                        let mut v = json!({"kind": format!("{:?}", shape.kind()).to_lowercase(), "share": share});
+                        match shape {
+                            solidcraft_scan::fit::Shape::Cylinder { radius, axis, .. } => {
+                                v["radius"] = json!(radius);
+                                v["axis"] = json!([axis.x, axis.y, axis.z]);
+                            }
+                            solidcraft_scan::fit::Shape::Sphere { radius, .. } => v["radius"] = json!(radius),
+                            solidcraft_scan::fit::Shape::Torus { major, minor, .. } => {
+                                v["radius"] = json!(major);
+                                v["minor"] = json!(minor);
+                            }
+                            solidcraft_scan::fit::Shape::Cone { half_angle, .. } => v["half_angle"] = json!(half_angle.to_degrees()),
+                            solidcraft_scan::fit::Shape::Plane { normal, .. } => v["normal"] = json!([normal.x, normal.y, normal.z]),
+                        }
+                        v
+                    }
+                })
+            })
+            .collect();
+        out["shapes"] = json!(shapes);
+    }
+    // The deviation on it, from the map measured on the design as it is.
+    if let Some(map) = s.scan_deviation.as_ref().filter(|d| d.scan == picked.scan && d.current(s)) {
+        let values: Vec<f64> = points.iter().filter_map(|&i| map.values.get(i)).map(|&v| f64::from(v)).collect();
+        let measured: Vec<f64> = values.iter().copied().filter(|v| v.is_finite()).collect();
+        let n = measured.len();
+        if n > 0 {
+            let within = measured.iter().filter(|v| v.abs() <= map.tolerance).count() as f64 / n as f64;
+            let rms = (measured.iter().map(|v| v * v).sum::<f64>() / n as f64).sqrt();
+            let above = measured.iter().copied().fold(0.0_f64, f64::max);
+            let below = measured.iter().copied().fold(0.0_f64, f64::min);
+            out["deviation"] = json!({
+                "body": map.body, "tolerance": map.tolerance, "within": within, "rms": rms,
+                "max_above": above, "max_below": below, "unmatched": (values.len() - n) as f64 / values.len().max(1) as f64,
+            });
+        } else {
+            out["deviation"] = json!({"body": map.body, "unmatched": 1.0});
+        }
+    }
+    Some(out)
+}

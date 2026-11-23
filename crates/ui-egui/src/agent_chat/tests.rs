@@ -3955,6 +3955,8 @@ fn a_scan_selection_and_the_open_dialog_go_with_the_message() {
     let path = dir.join("plate.stl");
     std::fs::write(&path, stl).unwrap();
     let scan = app.run("file.insert_mesh", json!({"path": path})).unwrap()["name"].as_str().unwrap().to_owned();
+    // Find All has read it: the region's reading names the plane it lies on.
+    app.run("scan.find_all", json!({})).unwrap();
     app.run("scan.select", json!({"brush": {"points": [[0, 0, 0]], "radius": 5}})).unwrap();
     assert_eq!(selected_count(&mut app), 1, "the scan's selection counts");
     app.start("scan.fit_plane");
@@ -3962,12 +3964,20 @@ fn a_scan_selection_and_the_open_dialog_go_with_the_message() {
     app.agent_chat.attach_selection = true;
     send(&mut app, &ctx, "fit this".into());
     let prompt = script.calls().pop().expect("a prompt");
-    for want in [format!("triangles · {scan}"), "\"selected\": true".into(), "Fit Plane dialog: open".into()] {
+    for want in [
+        format!("triangles · {scan}"),
+        "\"selected\": true".into(),
+        "Fit Plane dialog: open".into(),
+        "; box ".into(),
+        "Find All reads it as plane".into(),
+        "measures the model on it alone".into(),
+    ] {
         assert!(prompt.contains(&want), "{want:?} missing from {prompt}");
     }
     let Some(Item::User { context, .. }) = app.agent_chat.items.last() else { panic!("a sent message") };
     let kinds: Vec<_> = context.items.iter().map(|i| i.kind).collect();
-    assert_eq!(kinds, [context::Kind::Element, context::Kind::Other], "a chip each");
+    // The selection, the dialog, and Find All's coloured regions: a chip each.
+    assert_eq!(kinds, [context::Kind::Element, context::Kind::Other, context::Kind::Other], "a chip each");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
