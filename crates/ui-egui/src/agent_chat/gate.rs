@@ -287,6 +287,13 @@ pub fn request(method: &str, params: &Value, undo_left: usize) -> Verdict {
     }
 }
 
+/// Why the user's "don't touch" stops this request: the first command in it (one, or each step
+/// of a batch) that would change a region of a scan's plan marked keep, or the feature that built
+/// one (the engine's rule, which the headless MCP server applies too). Checked before anything runs.
+pub fn kept_by_user(session: &solidcraft_engine::Session, method: &str, params: &Value) -> Option<String> {
+    solidcraft_engine::cmd::scan::plan::kept_from_agent_request(session, method, params)
+}
+
 /// What "Always allow" remembers for a request: the command it runs (`batch` for a batch).
 pub fn tool_key(method: &str, params: &Value) -> String {
     match method {

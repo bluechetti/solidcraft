@@ -3981,6 +3981,81 @@ fn a_scan_selection_and_the_open_dialog_go_with_the_message() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A flat plate 40 × 40 of small triangles round the origin, inserted as a scan; its name.
+fn plate_scan(app: &mut SolveApp, tag: &str) -> String {
+    let dir = std::env::temp_dir().join(format!("solidcraft-chat-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut stl = String::from("solid p\n");
+    for i in 0..20 {
+        for j in 0..20 {
+            let (x, y) = (2.0 * f64::from(i) - 20.0, 2.0 * f64::from(j) - 20.0);
+            for tri in [[(x, y), (x + 2.0, y), (x + 2.0, y + 2.0)], [(x, y), (x + 2.0, y + 2.0), (x, y + 2.0)]] {
+                stl += "facet normal 0 0 1\nouter loop\n";
+                for (a, b) in tri {
+                    stl += &format!("vertex {a} {b} 0\n");
+                }
+                stl += "endloop\nendfacet\n";
+            }
+        }
+    }
+    stl += "endsolid p\n";
+    let path = dir.join("plate.stl");
+    std::fs::write(&path, stl).unwrap();
+    let scan = app.run("file.insert_mesh", json!({"path": path})).unwrap()["name"].as_str().unwrap().to_owned();
+    let _ = std::fs::remove_dir_all(&dir);
+    scan
+}
+
+/// "About this part": its buttons keep the process and the purpose in the scan's plan, and the
+/// selection as a region with a role; a region kept "don't touch" stops the agent rewriting the
+/// scan, whatever the permission mode; sizes typed in go with the next message.
+#[test]
+fn about_this_part_sets_the_plan_and_regions_and_dont_touch_holds_for_the_agent() {
+    let (mut app, script, ctx) = app_with_script();
+    let scan = plate_scan(&mut app, "part");
+    let strip = panel::ScanStrip::of(&app.session).expect("a scan");
+    assert_eq!((strip.scan.as_str(), strip.process.as_str(), strip.selected), (scan.as_str(), "unknown", 0));
+    panel::run(&mut app, &ctx, panel::PanelAction::SetPlan { scan: scan.clone(), process: Some("machined".into()), purpose: None });
+    panel::run(&mut app, &ctx, panel::PanelAction::SetPlan { scan: scan.clone(), process: None, purpose: Some("replacement".into()) });
+    let plan = app.session.doc.scan_plans.get(&scan).expect("a plan");
+    assert_eq!(plan.process, solidcraft_engine::doc::scan_plan::Process::Machined);
+    assert_eq!(plan.purpose, Some(solidcraft_engine::doc::scan_plan::Purpose::Replacement));
+
+    app.run("scan.select", json!({"brush": {"points": [[10, 10, 0]], "radius": 4}})).unwrap();
+    assert!(panel::ScanStrip::of(&app.session).is_some_and(|s| s.selected > 0));
+    panel::run(&mut app, &ctx, panel::PanelAction::KeepRegion { scan: scan.clone(), name: "Lip".into(), role: "keep".into(), hold: None });
+    let strip = panel::ScanStrip::of(&app.session).unwrap();
+    assert_eq!(strip.regions, [("Lip".to_owned(), Some("keep".to_owned()), None, Some("Region Lip".to_owned()))]);
+
+    // The agent's request to rewrite the scan is refused, even with every change allowed.
+    app.preferences.ai_permissions = agents::Mode::All;
+    let (tx, rx) = channel();
+    app.agent_chat.tools_rx = Some(rx);
+    app.agent_chat.state = Some(State::Busy);
+    start_turn(&mut app, "smooth it".into(), false, None, Vec::new());
+    let reply = ask(&tx, "engine.execute", json!({"command": "scan.denoise", "params": {"body": scan}}));
+    frame(&mut app);
+    let r = reply.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
+    assert!(r["ok"] == false && r["error"].as_str().is_some_and(|e| e.contains("don't touch") && e.contains("`Lip`")), "{r}");
+    let batch = ask(&tx, "engine.batch", json!({"commands": [{"command": "scan.find_all", "params": {}}, {"command": "scan.remesh", "params": {}}]}));
+    frame(&mut app);
+    let r = batch.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
+    assert!(r["ok"] == false && r["error"].as_str().is_some_and(|e| e.contains("scan.remesh")), "a batch step too: {r}");
+    app.agent_chat.on_event(Event::TurnEnded { reason: String::new() });
+    end_turn(&mut app);
+
+    // Removed from the plan, the region no longer holds.
+    panel::run(&mut app, &ctx, panel::PanelAction::RemoveRegion { scan: scan.clone(), name: "Lip".into() });
+    assert!(panel::ScanStrip::of(&app.session).unwrap().regions.is_empty());
+
+    // Sizes typed in go with the next message.
+    app.agent_chat.part.sizes = "bore 8.00, width 40.0".into();
+    panel::run(&mut app, &ctx, panel::PanelAction::Send { text: "model it".into(), steer: false });
+    let prompt = script.calls().pop().expect("a prompt");
+    assert!(prompt.contains("[Sizes measured on the part: bore 8.00, width 40.0]"), "{prompt}");
+    assert!(app.agent_chat.part.sizes.is_empty(), "sent once");
+}
+
 /// A queued message keeps the selection of the moment it was typed; queued messages go as one
 /// prompt with all their items.
 #[test]

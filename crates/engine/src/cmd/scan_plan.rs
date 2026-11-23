@@ -694,3 +694,23 @@ pub fn kept_from_agent(s: &Session, command: &str, params: &Value) -> Option<Str
     }
     None
 }
+
+/// [`kept_from_agent`] of a control request: one command (`engine.execute`) or each step of a
+/// batch (`engine.batch`), the first refused; command ids as the registry spells them.
+pub fn kept_from_agent_request(s: &Session, method: &str, params: &Value) -> Option<String> {
+    let step = |v: &Value| v.get("command").or_else(|| v.get("id")).and_then(Value::as_str).map(str::to_owned);
+    let check = |id: String, p: &Value| {
+        let id = crate::find_command(&id).map_or(id, |c| c.id.to_owned());
+        kept_from_agent(s, &id, p)
+    };
+    match method {
+        "engine.execute" | "command" => check(step(params)?, params.get("params").unwrap_or(&Value::Null)),
+        "engine.batch" => params
+            .get("commands")
+            .and_then(Value::as_array)?
+            .iter()
+            .take(10_000)
+            .find_map(|v| check(step(v)?, v.get("params").unwrap_or(&Value::Null))),
+        _ => None,
+    }
+}

@@ -458,6 +458,15 @@ struct ModelRevert {
     saved: Option<String>,
 }
 
+/// What the person types into the "About this part" strip.
+#[derive(Clone, Debug, Default)]
+pub struct PartInputs {
+    pub sizes: String,
+    pub region_name: String,
+    pub hold: f64,
+    pub open: bool,
+}
+
 #[derive(Default)]
 pub struct AgentChat {
     /// The panel is shown (View menu, the application bar's chat button, Ctrl+Shift+A).
@@ -466,6 +475,10 @@ pub struct AgentChat {
     /// creating/opening a design may carry the conversation, but a person's tab switch may not.
     pub(crate) following_document: bool,
     pub items: Vec<Item>,
+    /// The "About this part" strip, when the design holds a scan: sizes the person measured (sent
+    /// with the next message), the name and held size for "Keep selection as", and whether the
+    /// strip is open.
+    pub part: PartInputs,
     /// When each item came in, beside it (`times[n]` is `items[n]`'s); shorter when items were
     /// added without one, which then show no time.
     pub(crate) times: Vec<times::Stamp>,
@@ -2391,6 +2404,11 @@ fn pump_tools(app: &mut SolveApp) {
         }
         // What runs after the gate is what the gate decided on: the registered command ids.
         gate::canonicalize(&req.method, &mut req.params);
+        // What the user marked "don't touch" stays as it is, whatever the permission mode.
+        if let Some(why) = gate::kept_by_user(&app.session, &req.method, &req.params) {
+            refuse(req, why);
+            continue;
+        }
         let undo_len = app.session.undo.len();
         let Some(turn) = app.agent_chat.turn.as_mut() else {
             refuse(req, "the agent chat has no message in progress".into());

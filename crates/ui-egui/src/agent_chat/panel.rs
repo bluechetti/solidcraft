@@ -58,6 +58,26 @@ pub enum PanelAction {
     RemovePending(usize),
     /// Undo the changes of the message at this index.
     UndoChanges(usize),
+    /// The scan's plan: how the part was made, what the model is for (the "About this part" strip).
+    SetPlan {
+        scan: String,
+        process: Option<String>,
+        purpose: Option<String>,
+    },
+    /// The part of the scan selected kept as a region of its plan, with a role.
+    KeepRegion {
+        scan: String,
+        name: String,
+        role: String,
+        hold: Option<f64>,
+    },
+    /// Select a region's kept selection again.
+    SelectRegion(String),
+    /// Take a region out of the plan.
+    RemoveRegion {
+        scan: String,
+        name: String,
+    },
     /// Turn the view to a place of a scan verdict (its `{at, depth, area, kind}`).
     LookAtPlace(serde_json::Value),
     /// Put a request to fix a place of a scan verdict in the message box.
@@ -115,6 +135,9 @@ pub fn run(app: &mut SolveApp, ctx: &egui::Context, action: PanelAction) {
             app.agent_chat.agent_id = Some(id);
         }
         PanelAction::Send { text, steer } => {
+            // Sizes measured on the part go with the message, for the agent's scan.known_size.
+            let sizes = std::mem::take(&mut app.agent_chat.part.sizes);
+            let text = if sizes.trim().is_empty() { text } else { format!("{text}\n\n[{}: {}]", tr("ui.agent_chat_part_sizes_sent"), sizes.trim()) };
             send(app, ctx, text);
             if steer {
                 send_now(app, ctx);
@@ -125,6 +148,38 @@ pub fn run(app: &mut SolveApp, ctx: &egui::Context, action: PanelAction) {
         PanelAction::RemovePending(n) => remove_pending(app, n),
         PanelAction::UndoChanges(n) => undo_changes(app, n),
         PanelAction::LookAtPlace(place) => super::look_at_place(app, &place),
+        PanelAction::SetPlan { scan, process, purpose } => {
+            let mut p = serde_json::json!({"scan": scan});
+            if let Some(v) = process {
+                p["process"] = v.into();
+            }
+            if let Some(v) = purpose {
+                p["purpose"] = v.into();
+            }
+            if let Err(e) = app.run("scan.plan", p) {
+                app.agent_chat.notice(e.to_string(), true);
+            }
+        }
+        PanelAction::KeepRegion { scan, name, role, hold } => {
+            let mut p = serde_json::json!({"scan": scan, "name": name, "selected": true, "role": role});
+            if let Some(h) = hold {
+                p["hold"] = h.into();
+            }
+            match app.run("scan.plan_region", p) {
+                Ok(_) => app.agent_chat.part.region_name.clear(),
+                Err(e) => app.agent_chat.notice(e.to_string(), true),
+            }
+        }
+        PanelAction::SelectRegion(selection) => {
+            if let Err(e) = app.run("scan.select", serde_json::json!({"saved": selection})) {
+                app.agent_chat.notice(e.to_string(), true);
+            }
+        }
+        PanelAction::RemoveRegion { scan, name } => {
+            if let Err(e) = app.run("scan.plan_region", serde_json::json!({"scan": scan, "name": name, "state": "removed"})) {
+                app.agent_chat.notice(e.to_string(), true);
+            }
+        }
         PanelAction::FixPlace(place) => {
             let text = super::verdict_fix_text(&place);
             let input = &mut app.agent_chat.input;
@@ -240,7 +295,89 @@ pub struct PanelView {
     pub shared: bool,
     /// The composer's height the shared host measured last time, if it has.
     pub composer_height: Option<f32>,
+    /// The design's scan and its plan, for the "About this part" strip; `None` without a scan.
+    pub scan: Option<ScanStrip>,
 }
+
+/// A scan and what its plan says, for the "About this part" strip.
+#[derive(Clone, Debug, Default)]
+pub struct ScanStrip {
+    pub scan: String,
+    pub process: String,
+    pub purpose: Option<String>,
+    /// Each region: its name, role, held size and kept selection.
+    pub regions: Vec<(String, Option<String>, Option<f64>, Option<String>)>,
+    /// Triangles selected on this scan now.
+    pub selected: usize,
+}
+
+impl ScanStrip {
+    /// The scan the strip is about: the one something is selected on, else the design's only scan.
+    pub fn of(session: &solidcraft_engine::Session) -> Option<Self> {
+        use solidcraft_engine::doc::scan_plan::{Purpose, Role};
+        let picked = session.scan_selection.as_ref().filter(|k| k.count > 0 && k.current(session));
+        let state = session.model.state();
+        let meshes: Vec<String> = state.bodies.iter().filter(|b| b.body.is_mesh()).map(|b| b.name.clone()).collect();
+        let scan = match picked {
+            Some(k) => k.scan.clone(),
+            None if meshes.len() == 1 => meshes.first()?.clone(),
+            None => return None,
+        };
+        let plan = session.doc.scan_plans.get(&scan);
+        let role = |r: &Role| {
+            match r {
+                Role::Focus => "focus",
+                Role::Hold => "hold",
+                Role::Ignore => "ignore",
+                Role::Keep => "keep",
+            }
+            .to_owned()
+        };
+        Some(ScanStrip {
+            process: plan.map_or("unknown", |p| process_key(p.process)).to_owned(),
+            purpose: plan.and_then(|p| p.purpose).map(|p| match p {
+                Purpose::Replacement => "replacement".to_owned(),
+                Purpose::Copy => "copy".to_owned(),
+            }),
+            regions: plan
+                .map(|p| p.regions.iter().map(|r| (r.name.clone(), r.role.as_ref().map(role), r.hold, r.selection.clone())).collect())
+                .unwrap_or_default(),
+            selected: picked.filter(|k| k.scan == scan).map_or(0, |k| k.count),
+            scan,
+        })
+    }
+}
+
+/// The process's word in `scan.plan`.
+fn process_key(p: solidcraft_engine::doc::scan_plan::Process) -> &'static str {
+    use solidcraft_engine::doc::scan_plan::Process;
+    match p {
+        Process::Machined => "machined",
+        Process::MouldedOrDieCast => "moulded_or_die_cast",
+        Process::SandCastForgedOrPrinted => "sand_cast_forged_or_printed",
+        Process::Sheet => "sheet",
+        Process::Worn => "worn",
+        Process::Freeform => "freeform",
+        Process::Unknown => "unknown",
+    }
+}
+
+/// The processes the strip offers, in its order, and their labels' message ids.
+const PROCESSES: [(&str, &str); 6] = [
+    ("machined", "ui.agent_chat_part_machined"),
+    ("moulded_or_die_cast", "ui.agent_chat_part_cast"),
+    ("sand_cast_forged_or_printed", "ui.agent_chat_part_printed"),
+    ("sheet", "ui.agent_chat_part_sheet"),
+    ("worn", "ui.agent_chat_part_worn"),
+    ("freeform", "ui.agent_chat_part_organic"),
+];
+/// The roles "Keep selection as" offers, and their labels' message ids.
+const ROLES: [(&str, &str); 4] = [
+    ("focus", "ui.agent_chat_role_focus"),
+    ("hold", "ui.agent_chat_role_hold"),
+    ("ignore", "ui.agent_chat_role_ignore"),
+    ("keep", "ui.agent_chat_role_keep"),
+];
 
 impl PanelView {
     /// The view of SolidCraft's state the panel draws from now.
@@ -270,6 +407,7 @@ impl PanelView {
             rtl: crate::i18n::panel_direction(&app.preferences.language) == solidcraft_engine::panels::Direction::Rtl,
             shared: crate::panel_runtime::shared_content_measurement(ctx),
             composer_height: crate::panel_runtime::shared_content_composer_height(ctx),
+            scan: ScanStrip::of(&app.session),
         }
     }
 }
@@ -1175,6 +1313,10 @@ fn composer(chat: &mut AgentChat, view: &PanelView, ui: &mut egui::Ui, state: St
     let composer = composer.resizable(false).show_separator_line(false).frame(frame).show(ui, |ui| {
         let footer = ui_kit::assistant_composer_footer(ui, |ui| {
             let boxed = ui_kit::assistant_composer(ui, focused, |ui| {
+                // What the person knows about the scanned part, as buttons.
+                if let Some(strip) = view.scan.as_ref() {
+                    part_strip(chat, strip, ui);
+                }
                 // The files for the next message (#1744), as chips of their own.
                 attachment_chips(chat, ui);
                 // Ctrl/Cmd+V: files and pictures on the clipboard attach; text goes to the box below.
@@ -2421,6 +2563,102 @@ fn conversation(chat: &mut AgentChat, view: &PanelView, ui: &mut egui::Ui) {
     }
 }
 
+/// "About this part": how the part was made and what the model is for (kept in the scan's plan),
+/// sizes measured on it (sent with the next message), and "Keep selection as" a region with a
+/// role (focus, hold a size, ignore, don't touch), the regions kept shown as chips that select
+/// them again. Folded to one line until opened.
+fn part_strip(chat: &mut AgentChat, strip: &ScanStrip, ui: &mut egui::Ui) {
+    let t = Tokens::get();
+    let open = chat.part.open;
+    let fold = ui_kit::strip_toggle(ui, open, &trf("ui.agent_chat_part_title", &[("scan", &strip.scan)]));
+    solidcraft_ui_registry::publish_handle("agent_chat:part", fold.rect.center());
+    if fold.clicked() {
+        chat.part.open = !open;
+    }
+    if !open {
+        return;
+    }
+    let small = |ui: &mut egui::Ui, text: &str| {
+        ui.label(RichText::new(text).color(t.text_dim).size(t.font_caption));
+    };
+    let choices = |ui: &mut egui::Ui, keys: &[(&str, &str)], target: &str, current: Option<&str>| -> Option<String> {
+        let labels: Vec<&str> = keys.iter().map(|(_, id)| tr(id)).collect();
+        let targets: Vec<String> = keys.iter().map(|(k, _)| format!("agent_chat:part:{target}:{k}")).collect();
+        let targets: Vec<&str> = targets.iter().map(String::as_str).collect();
+        let states: Vec<bool> = keys.iter().map(|(k, _)| current == Some(*k)).collect();
+        let mut chosen = usize::MAX;
+        let picked = ui_kit::segmented(
+            ui,
+            &mut chosen,
+            &labels,
+            ui_kit::Segments { targets: &targets, states: &states, dense: true, compact: true, ..Default::default() },
+        );
+        picked.then(|| keys.get(chosen).map(|(k, _)| (*k).to_owned())).flatten()
+    };
+    // How it was made.
+    small(ui, tr("ui.agent_chat_part_made"));
+    if let Some(process) = choices(ui, &PROCESSES, "process", Some(strip.process.as_str())) {
+        chat.actions.push(PanelAction::SetPlan { scan: strip.scan.clone(), process: Some(process), purpose: None });
+    }
+    // What the model is for.
+    small(ui, tr("ui.agent_chat_part_for"));
+    let purposes = [("replacement", "ui.agent_chat_part_replacement"), ("copy", "ui.agent_chat_part_copy")];
+    if let Some(purpose) = choices(ui, &purposes, "purpose", strip.purpose.as_deref()) {
+        chat.actions.push(PanelAction::SetPlan { scan: strip.scan.clone(), process: None, purpose: Some(purpose) });
+    }
+    // Sizes measured on the part, in the person's words: sent with the next message.
+    let _ = ui_kit::text_field(ui, &mut chat.part.sizes, tr("ui.agent_chat_part_sizes_hint"));
+    // The selection kept as a region, with a role.
+    if strip.selected > 0 {
+        small(ui, &trf("ui.agent_chat_part_keep_as", &[("n", &strip.selected.to_string())]));
+        let next = format!("{} {}", tr("ui.agent_chat_part_region"), strip.regions.len() + 1);
+        let _ = ui_kit::text_field(ui, &mut chat.part.region_name, &next);
+        let mut clicked: Option<&str> = None;
+        ui.horizontal_wrapped(|ui| {
+            for (role, id) in ROLES {
+                let b = ui_kit::button(ui, tr(id), ui_kit::Button::Normal);
+                solidcraft_ui_registry::publish_handle(&format!("agent_chat:part:role:{role}"), b.rect.center());
+                if b.clicked() {
+                    clicked = Some(role);
+                }
+            }
+            ui.label(RichText::new(tr("ui.agent_chat_part_hold_size")).color(t.text_dim).size(t.font_caption));
+            ui_kit::number_field(ui, &mut chat.part.hold, 0.0..=100_000.0, 0.05, " mm");
+        });
+        if let Some(role) = clicked {
+            let name = if chat.part.region_name.trim().is_empty() { next } else { chat.part.region_name.trim().to_owned() };
+            let hold = (role == "hold").then_some(chat.part.hold).filter(|h| *h > 0.0);
+            if role == "hold" && hold.is_none() {
+                chat.notice(tr("ui.agent_chat_part_hold_needs").to_string(), true);
+            } else {
+                chat.actions.push(PanelAction::KeepRegion { scan: strip.scan.clone(), name, role: role.into(), hold });
+            }
+        }
+    }
+    // The regions kept, each a chip: a click selects it again, × takes it out.
+    if !strip.regions.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            for (i, (name, role, hold, selection)) in strip.regions.iter().enumerate() {
+                let role_word =
+                    role.as_deref().and_then(|r| ROLES.iter().find(|(k, _)| *k == r)).map_or(String::new(), |(_, id)| format!(" · {}", tr(id)));
+                let size = hold.map_or(String::new(), |h| format!(" {h} mm"));
+                let chip = ui_kit::workspace_chip(ui, &format!("{name}{role_word}{size}")).interact(egui::Sense::click());
+                solidcraft_ui_registry::publish_handle(&format!("agent_chat:part:region:{i}"), chip.rect.center());
+                if chip.clicked()
+                    && let Some(sel) = selection
+                {
+                    chat.actions.push(PanelAction::SelectRegion(sel.clone()));
+                }
+                let x = ui_kit::button(ui, "×", ui_kit::Button::Normal).backing_on_hover_text(tr("ui.agent_chat_part_remove_region"));
+                solidcraft_ui_registry::publish_handle(&format!("agent_chat:part:remove:{i}"), x.rect.center());
+                if x.clicked() {
+                    chat.actions.push(PanelAction::RemoveRegion { scan: strip.scan.clone(), name: name.clone() });
+                }
+            }
+        });
+    }
+}
+
 /// The scan verdict card: done or not, the two shares against the target, what is open, and
 /// each worst place with Show (turn the view to it) and Fix this (ask the agent to fix it).
 #[cfg(not(target_arch = "wasm32"))]
@@ -3160,6 +3398,7 @@ mod tests {
             rtl: false,
             shared,
             composer_height: None,
+            scan: None,
         }
     }
 

@@ -292,6 +292,11 @@ impl Backend for Headless {
         true
     }
     fn call(&mut self, method: &str, p: Value) -> Result<Value, String> {
+        // What the user marked "don't touch" in the scan's plan: refused to the agent, as the app's
+        // agent chat refuses it.
+        if let Some(why) = solidcraft_engine::cmd::scan::plan::kept_from_agent_request(&self.session, method, &p) {
+            return Err(why);
+        }
         let own = self.session.param_check;
         if matches!(method, "engine.execute" | "command" | "engine.batch" | "engine.script")
             && let Some(value) = p.get("param_check")
