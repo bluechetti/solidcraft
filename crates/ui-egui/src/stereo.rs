@@ -85,6 +85,7 @@ pub(crate) fn test_frame() -> Frame {
         turned_depth: None,
         back: [0.0, 0.0, 1.0],
         size_px: [640.0, 480.0],
+        edge_px: solidcraft_viewport_gpu::view::EDGE_PX,
         clip: {
             let mut clip = [[0.0; 4]; solidcraft_viewport_gpu::view::MAX_SECTION_PLANES];
             clip[0] = [1.0, 0.0, 0.0, 5.0];
