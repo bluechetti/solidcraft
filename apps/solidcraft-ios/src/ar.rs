@@ -1042,6 +1042,8 @@ impl State {
                         let selection = app.session.selection.clone();
                         self.check_overlaps(app);
                         app.session.selection = selection;
+                        // The check's own selecting changed the revision: this is the state checked.
+                        self.checking = Some((app.session.uid, app.session.revision));
                         if self.overlaps.len() != before {
                             crate::note(&format!("ar: check: {} overlaps now", self.overlaps.len()));
                         }
@@ -1360,6 +1362,27 @@ impl State {
                     }
                     if let Some(stroke) = self.ink.last().cloned() {
                         self.record(Act::Ink(stroke));
+                    }
+                }
+                Tool::Move => {
+                    // As a Pencil drag: pressed at the start, ten steps to the end, lifted.
+                    self.start_move(app, seen, rect, at(x0, y0));
+                    for k in 1..=10 {
+                        let t = k as f32 / 10.0;
+                        self.drag_move(app, seen, rect, at(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t));
+                    }
+                    if let Some(m) = self.moving.as_mut() {
+                        m.held = false;
+                        if let Some(j) = m.joint.as_ref() {
+                            let moved = app.session.undo.len() > j.base;
+                            let name = j.chosen.as_ref().map(|a| a.name.clone()).unwrap_or_default();
+                            self.moving = None;
+                            if moved {
+                                self.record(Act::Design(format!("move {name}")));
+                            }
+                        } else if !hold {
+                            self.apply_move(app);
+                        }
                     }
                 }
                 _ => {
