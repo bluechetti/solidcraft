@@ -9,13 +9,7 @@ pub struct GridTest {
 
 impl Default for GridTest {
     fn default() -> Self {
-        Self {
-            num_cols: 4,
-            num_rows: 4,
-            min_col_width: 10.0,
-            max_col_width: 200.0,
-            text_length: 10,
-        }
+        Self { num_cols: 4, num_rows: 4, min_col_width: 10.0, max_col_width: 200.0, text_length: 10 }
     }
 }
 
@@ -25,57 +19,43 @@ impl crate::Demo for GridTest {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                use crate::View as _;
-                self.ui(ui);
-            });
+        egui::Window::new(self.name()).open(open).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| {
+            use crate::View as _;
+            self.ui(ui);
+        });
     }
 }
 
 impl crate::View for GridTest {
     fn ui(&mut self, ui: &mut egui::Ui) {
-        ui.add(
-            egui::Slider::new(&mut self.min_col_width, 0.0..=400.0).text("Minimum column width"),
-        );
-        ui.add(
-            egui::Slider::new(&mut self.max_col_width, 0.0..=400.0).text("Maximum column width"),
-        );
+        ui.add(egui::Slider::new(&mut self.min_col_width, 0.0..=400.0).text("Minimum column width"));
+        ui.add(egui::Slider::new(&mut self.max_col_width, 0.0..=400.0).text("Maximum column width"));
         ui.add(egui::Slider::new(&mut self.num_cols, 0..=5).text("Columns"));
         ui.add(egui::Slider::new(&mut self.num_rows, 0..=20).text("Rows"));
 
         ui.separator();
 
-        let words = [
-            "random", "words", "in", "a", "random", "order", "that", "just", "keeps", "going",
-            "with", "some", "more",
-        ];
+        let words = ["random", "words", "in", "a", "random", "order", "that", "just", "keeps", "going", "with", "some", "more"];
 
-        egui::Grid::new("my_grid")
-            .striped(true)
-            .min_col_width(self.min_col_width)
-            .max_col_width(self.max_col_width)
-            .show(ui, |ui| {
-                for row in 0..self.num_rows {
-                    for col in 0..self.num_cols {
-                        if col == 0 {
-                            ui.label(format!("row {row}"));
-                        } else {
-                            let word_idx = row * 3 + col * 5;
-                            let word_count = (row * 5 + col * 75) % 13;
-                            let mut string = String::new();
-                            for word in words.iter().cycle().skip(word_idx).take(word_count) {
-                                string += word;
-                                string += " ";
-                            }
-                            ui.label(string);
+        egui::Grid::new("my_grid").striped(true).min_col_width(self.min_col_width).max_col_width(self.max_col_width).show(ui, |ui| {
+            for row in 0..self.num_rows {
+                for col in 0..self.num_cols {
+                    if col == 0 {
+                        ui.label(format!("row {row}"));
+                    } else {
+                        let word_idx = row * 3 + col * 5;
+                        let word_count = (row * 5 + col * 75) % 13;
+                        let mut string = String::new();
+                        for word in words.iter().cycle().skip(word_idx).take(word_count) {
+                            string += word;
+                            string += " ";
                         }
+                        ui.label(string);
                     }
-                    ui.end_row();
                 }
-            });
+                ui.end_row();
+            }
+        });
 
         ui.separator();
         ui.add(egui::Slider::new(&mut self.text_length, 1..=40).text("Text length"));

@@ -51,10 +51,7 @@ pub fn hit_test(
     let search_radius_sq = search_radius * search_radius;
 
     // Transform the position into the local coordinate space of each layer:
-    let pos_in_layers: HashMap<LayerId, Pos2> = layer_to_global
-        .iter()
-        .map(|(layer_id, to_global)| (*layer_id, to_global.inverse() * pos))
-        .collect();
+    let pos_in_layers: HashMap<LayerId, Pos2> = layer_to_global.iter().map(|(layer_id, to_global)| (*layer_id, to_global.inverse() * pos)).collect();
 
     let mut closest_dist_sq = f32::INFINITY;
     let mut closest_hit = None;
@@ -145,9 +142,7 @@ pub fn hit_test(
     let mut hidden = IdSet::default();
     for (i, current) in close.iter().enumerate().rev() {
         for next in &close[i + 1..] {
-            if next.interact_rect.contains_rect(current.interact_rect)
-                && current.layer_id != next.layer_id
-            {
+            if next.interact_rect.contains_rect(current.interact_rect) && current.layer_id != next.layer_id {
                 hidden.insert(current.id);
             }
         }
@@ -157,11 +152,7 @@ pub fn hit_test(
 
     let mut hits = hit_test_on_close(&close, pos);
 
-    hits.contains_pointer = close
-        .iter()
-        .filter(|widget| widget.interact_rect.contains(pos))
-        .copied()
-        .collect();
+    hits.contains_pointer = close.iter().filter(|widget| widget.interact_rect.contains(pos)).copied().collect();
 
     hits.close = close;
 
@@ -180,17 +171,11 @@ pub fn hit_test(
             restore_widget_rect(wr);
         }
         if let Some(wr) = &mut hits.drag {
-            debug_assert!(
-                wr.sense.senses_drag(),
-                "We should only return drag hits if they sense drag"
-            );
+            debug_assert!(wr.sense.senses_drag(), "We should only return drag hits if they sense drag");
             restore_widget_rect(wr);
         }
         if let Some(wr) = &mut hits.click {
-            debug_assert!(
-                wr.sense.senses_click(),
-                "We should only return click hits if they sense click"
-            );
+            debug_assert!(wr.sense.senses_click(), "We should only return click hits if they sense click");
             restore_widget_rect(wr);
         }
     }
@@ -205,28 +190,14 @@ fn contains_circle(interact_rect: emath::Rect, pos: Pos2, radius: f32) -> bool {
 
 fn hit_test_on_close(close: &[WidgetRect], pos: Pos2) -> WidgetHits {
     // First find the best direct hits:
-    let hit_click = find_closest_within(
-        close.iter().copied().filter(|w| w.sense.senses_click()),
-        pos,
-        0.0,
-    );
-    let hit_drag = find_closest_within(
-        close.iter().copied().filter(|w| w.sense.senses_drag()),
-        pos,
-        0.0,
-    );
+    let hit_click = find_closest_within(close.iter().copied().filter(|w| w.sense.senses_click()), pos, 0.0);
+    let hit_drag = find_closest_within(close.iter().copied().filter(|w| w.sense.senses_drag()), pos, 0.0);
 
     match (hit_click, hit_drag) {
         (None, None) => {
             // No direct hit on anything. Find the closest interactive widget.
 
-            let closest = find_closest(
-                close
-                    .iter()
-                    .copied()
-                    .filter(|w| w.sense.senses_click() || w.sense.senses_drag()),
-                pos,
-            );
+            let closest = find_closest(close.iter().copied().filter(|w| w.sense.senses_click() || w.sense.senses_drag()), pos);
 
             if let Some(closest) = closest {
                 WidgetHits {
@@ -236,11 +207,7 @@ fn hit_test_on_close(close: &[WidgetRect], pos: Pos2) -> WidgetHits {
                 }
             } else {
                 // Found nothing
-                WidgetHits {
-                    click: None,
-                    drag: None,
-                    ..Default::default()
-                }
+                WidgetHits { click: None, drag: None, ..Default::default() }
             }
         }
 
@@ -252,57 +219,32 @@ fn hit_test_on_close(close: &[WidgetRect], pos: Pos2) -> WidgetHits {
             // or a moveable window.
             // It could also be something small, like a slider, or panel resize handle.
 
-            let closest_click = find_closest(
-                close.iter().copied().filter(|w| w.sense.senses_click()),
-                pos,
-            );
+            let closest_click = find_closest(close.iter().copied().filter(|w| w.sense.senses_click()), pos);
             if let Some(closest_click) = closest_click {
                 if closest_click.sense.senses_drag() {
                     // We have something close that sense both clicks and drag.
                     // Should we use it over the direct drag-hit?
-                    if hit_drag
-                        .interact_rect
-                        .contains_rect(closest_click.interact_rect)
-                    {
+                    if hit_drag.interact_rect.contains_rect(closest_click.interact_rect) {
                         // This is a smaller thing on a big background - help the user hit it,
                         // and ignore the big drag background.
-                        WidgetHits {
-                            click: Some(closest_click),
-                            drag: Some(closest_click),
-                            ..Default::default()
-                        }
+                        WidgetHits { click: Some(closest_click), drag: Some(closest_click), ..Default::default() }
                     } else {
                         // The drag-widget is separate from the click-widget,
                         // so return only the drag-widget
-                        WidgetHits {
-                            click: None,
-                            drag: Some(hit_drag),
-                            ..Default::default()
-                        }
+                        WidgetHits { click: None, drag: Some(hit_drag), ..Default::default() }
                     }
                 } else {
                     // This is a close pure-click widget.
                     // However, we should be careful to only return two different widgets
                     // when it is absolutely not going to confuse the user.
-                    if hit_drag
-                        .interact_rect
-                        .contains_rect(closest_click.interact_rect)
-                    {
+                    if hit_drag.interact_rect.contains_rect(closest_click.interact_rect) {
                         // The drag widget is a big background thing (scroll area),
                         // so returning a separate click widget should not be confusing
-                        WidgetHits {
-                            click: Some(closest_click),
-                            drag: Some(hit_drag),
-                            ..Default::default()
-                        }
+                        WidgetHits { click: Some(closest_click), drag: Some(hit_drag), ..Default::default() }
                     } else {
                         // The two widgets are just two normal small widgets close to each other.
                         // Highlighting both would be very confusing.
-                        WidgetHits {
-                            click: None,
-                            drag: Some(hit_drag),
-                            ..Default::default()
-                        }
+                        WidgetHits { click: None, drag: Some(hit_drag), ..Default::default() }
                     }
                 }
             } else {
@@ -310,33 +252,17 @@ fn hit_test_on_close(close: &[WidgetRect], pos: Pos2) -> WidgetHits {
                 // Maybe there is a close drag widget, that is a smaller
                 // widget floating on top of a big background?
                 // If so, it would be nice to help the user click that.
-                let closest_drag = find_closest(
-                    close
-                        .iter()
-                        .copied()
-                        .filter(|w| w.sense.senses_drag() && w.id != hit_drag.id),
-                    pos,
-                );
+                let closest_drag = find_closest(close.iter().copied().filter(|w| w.sense.senses_drag() && w.id != hit_drag.id), pos);
 
                 if let Some(closest_drag) = closest_drag
-                    && hit_drag
-                        .interact_rect
-                        .contains_rect(closest_drag.interact_rect)
+                    && hit_drag.interact_rect.contains_rect(closest_drag.interact_rect)
                 {
                     // `hit_drag` is a big background thing and `closest_drag` is something small on top of it.
                     // Be helpful and return the small things:
-                    return WidgetHits {
-                        click: None,
-                        drag: Some(closest_drag),
-                        ..Default::default()
-                    };
+                    return WidgetHits { click: None, drag: Some(closest_drag), ..Default::default() };
                 }
 
-                WidgetHits {
-                    click: None,
-                    drag: Some(hit_drag),
-                    ..Default::default()
-                }
+                WidgetHits { click: None, drag: Some(hit_drag), ..Default::default() }
             }
         }
 
@@ -353,11 +279,7 @@ fn hit_test_on_close(close: &[WidgetRect], pos: Pos2) -> WidgetHits {
             // Even if they were, I think it would be confusing for a user if clicking
             // a drag-only widget would click something _behind_ it.
 
-            WidgetHits {
-                click: Some(hit_click),
-                drag: None,
-                ..Default::default()
-            }
+            WidgetHits { click: Some(hit_click), drag: None, ..Default::default() }
         }
 
         (Some(hit_click), Some(hit_drag)) => {
@@ -371,38 +293,22 @@ fn hit_test_on_close(close: &[WidgetRect], pos: Pos2) -> WidgetHits {
             if click_is_on_top_of_drag {
                 if hit_click.sense.senses_drag() {
                     // The top thing senses both clicks and drags.
-                    WidgetHits {
-                        click: Some(hit_click),
-                        drag: Some(hit_click),
-                        ..Default::default()
-                    }
+                    WidgetHits { click: Some(hit_click), drag: Some(hit_click), ..Default::default() }
                 } else {
                     // They are interested in different things,
                     // and click is on top. Report both hits,
                     // e.g. the top Button and the ScrollArea behind it.
-                    WidgetHits {
-                        click: Some(hit_click),
-                        drag: Some(hit_drag),
-                        ..Default::default()
-                    }
+                    WidgetHits { click: Some(hit_click), drag: Some(hit_drag), ..Default::default() }
                 }
             } else {
                 if hit_drag.sense.senses_click() {
                     // The top thing senses both clicks and drags.
-                    WidgetHits {
-                        click: Some(hit_drag),
-                        drag: Some(hit_drag),
-                        ..Default::default()
-                    }
+                    WidgetHits { click: Some(hit_drag), drag: Some(hit_drag), ..Default::default() }
                 } else {
                     // The top things senses only drags,
                     // so we ignore the click-widget, because it would be confusing
                     // if clicking a drag-widget would actually click something else below it.
-                    WidgetHits {
-                        click: None,
-                        drag: Some(hit_drag),
-                        ..Default::default()
-                    }
+                    WidgetHits { click: None, drag: Some(hit_drag), ..Default::default() }
                 }
             }
         }
@@ -413,11 +319,7 @@ fn find_closest(widgets: impl Iterator<Item = WidgetRect>, pos: Pos2) -> Option<
     find_closest_within(widgets, pos, f32::INFINITY)
 }
 
-fn find_closest_within(
-    widgets: impl Iterator<Item = WidgetRect>,
-    pos: Pos2,
-    max_dist: f32,
-) -> Option<WidgetRect> {
+fn find_closest_within(widgets: impl Iterator<Item = WidgetRect>, pos: Pos2, max_dist: f32) -> Option<WidgetRect> {
     let mut closest: Option<WidgetRect> = None;
     let mut closest_dist_sq = max_dist * max_dist;
     for widget in widgets {
@@ -448,36 +350,15 @@ mod tests {
     use super::*;
 
     fn wr(id: Id, sense: Sense, rect: Rect) -> WidgetRect {
-        WidgetRect {
-            id,
-            parent_id: Id::NULL,
-            layer_id: LayerId::background(),
-            rect,
-            interact_rect: rect,
-            sense,
-            enabled: true,
-            visible: true,
-        }
+        WidgetRect { id, parent_id: Id::NULL, layer_id: LayerId::background(), rect, interact_rect: rect, sense, enabled: true, visible: true }
     }
 
     #[test]
     fn buttons_on_window() {
         let widgets = vec![
-            wr(
-                Id::unique("bg-area"),
-                Sense::drag(),
-                Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0)),
-            ),
-            wr(
-                Id::unique("click"),
-                Sense::click(),
-                Rect::from_min_size(pos2(10.0, 10.0), vec2(10.0, 10.0)),
-            ),
-            wr(
-                Id::unique("click-and-drag"),
-                Sense::click_and_drag(),
-                Rect::from_min_size(pos2(100.0, 10.0), vec2(10.0, 10.0)),
-            ),
+            wr(Id::unique("bg-area"), Sense::drag(), Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0))),
+            wr(Id::unique("click"), Sense::click(), Rect::from_min_size(pos2(10.0, 10.0), vec2(10.0, 10.0))),
+            wr(Id::unique("click-and-drag"), Sense::click_and_drag(), Rect::from_min_size(pos2(100.0, 10.0), vec2(10.0, 10.0))),
         ];
 
         // Perfect hit:
@@ -504,26 +385,10 @@ mod tests {
     #[test]
     fn thin_resize_handle_next_to_label() {
         let widgets = vec![
-            wr(
-                Id::unique("bg-area"),
-                Sense::drag(),
-                Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0)),
-            ),
-            wr(
-                Id::unique("bg-left-label"),
-                Sense::click_and_drag(),
-                Rect::from_min_size(pos2(0.0, 0.0), vec2(40.0, 100.0)),
-            ),
-            wr(
-                Id::unique("thin-drag-handle"),
-                Sense::drag(),
-                Rect::from_min_size(pos2(30.0, 0.0), vec2(70.0, 100.0)),
-            ),
-            wr(
-                Id::unique("fg-right-label"),
-                Sense::click_and_drag(),
-                Rect::from_min_size(pos2(60.0, 0.0), vec2(50.0, 100.0)),
-            ),
+            wr(Id::unique("bg-area"), Sense::drag(), Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0))),
+            wr(Id::unique("bg-left-label"), Sense::click_and_drag(), Rect::from_min_size(pos2(0.0, 0.0), vec2(40.0, 100.0))),
+            wr(Id::unique("thin-drag-handle"), Sense::drag(), Rect::from_min_size(pos2(30.0, 0.0), vec2(70.0, 100.0))),
+            wr(Id::unique("fg-right-label"), Sense::click_and_drag(), Rect::from_min_size(pos2(60.0, 0.0), vec2(50.0, 100.0))),
         ];
 
         for (i, w) in widgets.iter().enumerate() {

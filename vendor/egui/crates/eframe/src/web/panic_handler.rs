@@ -22,11 +22,7 @@ impl PanicHandler {
             let summary = PanicSummary::new(panic_info);
 
             // Log it using console.error
-            error(format!(
-                "{}\n\nStack:\n\n{}",
-                summary.message(),
-                summary.callstack()
-            ));
+            error(format!("{}\n\nStack:\n\n{}", summary.message(), summary.callstack()));
 
             // Remember the summary:
             handler_clone.0.lock().summary = Some(summary);

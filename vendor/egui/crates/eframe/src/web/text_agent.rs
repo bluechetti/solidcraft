@@ -15,17 +15,12 @@ pub struct TextAgent {
 
 impl TextAgent {
     /// Attach the agent to the document.
-    pub fn attach(
-        runner_ref: &WebRunner,
-        canvas: &web_sys::HtmlCanvasElement,
-    ) -> Result<Self, JsValue> {
+    pub fn attach(runner_ref: &WebRunner, canvas: &web_sys::HtmlCanvasElement) -> Result<Self, JsValue> {
         let window = web_sys::window().unwrap();
         let document = window.document().unwrap();
 
         // create an `<input>` element
-        let input = document
-            .create_element("input")?
-            .dyn_into::<web_sys::HtmlInputElement>()?;
+        let input = document.create_element("input")?.dyn_into::<web_sys::HtmlInputElement>()?;
         input.set_type("text");
         input.set_attribute("autocapitalize", "off")?;
         let input_state = Rc::new(RefCell::new(InputState::new(input.clone())));
@@ -71,16 +66,12 @@ impl TextAgent {
 
         // attach event listeners
 
-        runner_ref.add_event_listener(
-            &input,
-            "compositionstart",
-            move |_: web_sys::CompositionEvent, runner: &mut AppRunner| {
-                // Repaint moves the text agent into place,
-                // see `AppRunner::handle_platform_output`, which calls
-                // `TextAgent::update`.
-                runner.needs_repaint.repaint_asap();
-            },
-        )?;
+        runner_ref.add_event_listener(&input, "compositionstart", move |_: web_sys::CompositionEvent, runner: &mut AppRunner| {
+            // Repaint moves the text agent into place,
+            // see `AppRunner::handle_platform_output`, which calls
+            // `TextAgent::update`.
+            runner.needs_repaint.repaint_asap();
+        })?;
 
         runner_ref.add_event_listener(&input, "input", {
             let input_state = Rc::clone(&input_state);
@@ -91,9 +82,7 @@ impl TextAgent {
         runner_ref.add_event_listener(&input, "compositionend", {
             let input_state = Rc::clone(&input_state);
             move |_event: web_sys::CompositionEvent, runner: &mut AppRunner| {
-                input_state
-                    .borrow_mut()
-                    .handle_composition_end_event(runner);
+                input_state.borrow_mut().handle_composition_end_event(runner);
             }
         })?;
 
@@ -123,15 +112,8 @@ impl TextAgent {
         Ok(Self { input, input_state })
     }
 
-    pub fn update(
-        &self,
-        ime: Option<egui::output::IMEOutput>,
-        canvas: &web_sys::HtmlCanvasElement,
-        zoom_factor: f32,
-    ) -> Result<(), JsValue> {
-        self.input_state
-            .borrow_mut()
-            .update(ime, canvas, zoom_factor)
+    pub fn update(&self, ime: Option<egui::output::IMEOutput>, canvas: &web_sys::HtmlCanvasElement, zoom_factor: f32) -> Result<(), JsValue> {
+        self.input_state.borrow_mut().update(ime, canvas, zoom_factor)
     }
 
     pub fn set_focus(&self, on: bool) {
@@ -220,20 +202,10 @@ enum KeydownSpecialCase {
 
 impl InputState {
     fn new(input: web_sys::HtmlInputElement) -> Self {
-        Self {
-            input,
-            last_text: String::new(),
-            ime_output: None,
-            keydown_special_case: KeydownSpecialCase::None,
-        }
+        Self { input, last_text: String::new(), ime_output: None, keydown_special_case: KeydownSpecialCase::None }
     }
 
-    fn update(
-        &mut self,
-        ime: Option<egui::output::IMEOutput>,
-        canvas: &web_sys::HtmlCanvasElement,
-        zoom_factor: f32,
-    ) -> Result<(), JsValue> {
+    fn update(&mut self, ime: Option<egui::output::IMEOutput>, canvas: &web_sys::HtmlCanvasElement, zoom_factor: f32) -> Result<(), JsValue> {
         // Don't move the text agent unless the position actually changed:
         if self.ime_output == ime {
             return Ok(());
@@ -267,14 +239,8 @@ impl InputState {
         let clamped_y = visible_y.clamp(0.0, logical_canvas_height);
 
         // This is where the IME input will point to:
-        style.set_property(
-            "left",
-            &format!("{}px", canvas.offset_left() as f32 + clamped_x),
-        )?;
-        style.set_property(
-            "top",
-            &format!("{}px", canvas.offset_top() as f32 + clamped_y),
-        )?;
+        style.set_property("left", &format!("{}px", canvas.offset_left() as f32 + clamped_x))?;
+        style.set_property("top", &format!("{}px", canvas.offset_top() as f32 + clamped_y))?;
 
         Ok(())
     }
@@ -285,11 +251,7 @@ impl InputState {
     }
 
     fn handle_input_event(&mut self, event: &web_sys::InputEvent, runner: &mut AppRunner) {
-        if self
-            .ime_output
-            .as_ref()
-            .is_some_and(|ime| ime.purpose == egui::IMEPurpose::Password)
-        {
+        if self.ime_output.as_ref().is_some_and(|ime| ime.purpose == egui::IMEPurpose::Password) {
             self.handle_input_event_password(event, runner);
             return;
         }
@@ -314,10 +276,7 @@ impl InputState {
         let prefix_len = longest_common_prefix_length(&text, &self.last_text);
         let last_text_len = self.last_text.chars().count();
         if prefix_len < last_text_len {
-            let out_event = egui::Event::Ime(egui::ImeEvent::DeleteSurrounding {
-                before_chars: last_text_len - prefix_len,
-                after_chars: 0,
-            });
+            let out_event = egui::Event::Ime(egui::ImeEvent::DeleteSurrounding { before_chars: last_text_len - prefix_len, after_chars: 0 });
             runner.input.raw.events.push(out_event);
         }
 
@@ -327,10 +286,7 @@ impl InputState {
             // `compositionupdate` event because the selection range
             // has not yet been updated when `compositionupdate` fires.
             let active_range_chars = self.active_range_chars(&text, prefix_len);
-            egui::Event::Ime(egui::ImeEvent::Preedit {
-                text: preedit_text,
-                active_range_chars,
-            })
+            egui::Event::Ime(egui::ImeEvent::Preedit { text: preedit_text, active_range_chars })
         } else {
             egui::Event::Text(preedit_text)
         };
@@ -366,11 +322,7 @@ impl InputState {
     /// of the preedit). `selectionStart`/`selectionEnd` are UTF-16 offsets
     /// within the full `input.value()`, so they are adjusted to be relative
     /// to the preedit text.
-    fn active_range_chars(
-        &self,
-        text: &str,
-        prefix_len_chars: usize,
-    ) -> Option<core::ops::Range<usize>> {
+    fn active_range_chars(&self, text: &str, prefix_len_chars: usize) -> Option<core::ops::Range<usize>> {
         let selection_start = self.input.selection_start().unwrap_or(None)? as usize;
         let selection_end = self.input.selection_end().unwrap_or(None)? as usize;
 
@@ -382,8 +334,7 @@ impl InputState {
         }
 
         let text_before_selection = String::from_utf16_lossy(&text_utf16[..selection_start]);
-        let text_in_selection =
-            String::from_utf16_lossy(&text_utf16[selection_start..selection_end]);
+        let text_in_selection = String::from_utf16_lossy(&text_utf16[selection_start..selection_end]);
         let count_before_selection = text_before_selection.chars().count();
         let count_in_selection = text_in_selection.chars().count();
 
@@ -425,11 +376,7 @@ impl InputState {
         if event.is_composing() || !matches!(special_case, KeydownSpecialCase::None) {
             true
         } else {
-            if event.key().chars().count() > 1
-                || event.ctrl_key()
-                || event.alt_key()
-                || event.meta_key()
-            {
+            if event.key().chars().count() > 1 || event.ctrl_key() || event.alt_key() || event.meta_key() {
                 input_state.borrow_mut().clear();
             }
             false
@@ -448,7 +395,5 @@ impl InputState {
 }
 
 fn longest_common_prefix_length(a: &str, b: &str) -> usize {
-    core::iter::zip(a.chars(), b.chars())
-        .take_while(|(a, b)| a == b)
-        .count()
+    core::iter::zip(a.chars(), b.chars()).take_while(|(a, b)| a == b).count()
 }

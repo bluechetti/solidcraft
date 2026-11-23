@@ -1,7 +1,4 @@
-use crate::{
-    CursorIcon, Label, Response, Role, Sense, Stroke, Ui, Widget, WidgetInfo, WidgetText, epaint,
-    text_selection,
-};
+use crate::{CursorIcon, Label, Response, Role, Sense, Stroke, Ui, Widget, WidgetInfo, WidgetText, epaint, text_selection};
 
 use self::text_selection::LabelSelectionState;
 
@@ -46,21 +43,13 @@ impl Widget for Link {
             let color = ui.visuals().hyperlink_color;
             let visuals = ui.style().interact(&response);
 
-            let underline = if response.hovered() || response.has_focus() {
-                Stroke::new(visuals.fg_stroke.width, color)
-            } else {
-                Stroke::NONE
-            };
+            let underline = if response.hovered() || response.has_focus() { Stroke::new(visuals.fg_stroke.width, color) } else { Stroke::NONE };
 
             let selectable = ui.style().interaction.selectable_labels;
             if selectable {
-                LabelSelectionState::label_text_selection(
-                    ui, &response, galley_pos, galley, color, underline,
-                );
+                LabelSelectionState::label_text_selection(ui, &response, galley_pos, galley, color, underline);
             } else {
-                ui.painter().add(
-                    epaint::TextShape::new(galley_pos, galley, color).with_underline(underline),
-                );
+                ui.painter().add(epaint::TextShape::new(galley_pos, galley, color).with_underline(underline));
             }
 
             if response.hovered() {
@@ -98,20 +87,12 @@ impl Hyperlink {
     #[expect(clippy::needless_pass_by_value)]
     pub fn new(url: impl ToString) -> Self {
         let url = url.to_string();
-        Self {
-            url: url.clone(),
-            text: url.into(),
-            new_tab: false,
-        }
+        Self { url: url.clone(), text: url.into(), new_tab: false }
     }
 
     #[expect(clippy::needless_pass_by_value)]
     pub fn from_label_and_url(text: impl Into<WidgetText>, url: impl ToString) -> Self {
-        Self {
-            url: url.to_string(),
-            text: text.into(),
-            new_tab: false,
-        }
+        Self { url: url.to_string(), text: text.into(), new_tab: false }
     }
 
     /// Always open this hyperlink in a new browser tab.
@@ -129,21 +110,11 @@ impl Widget for Hyperlink {
         let response = ui.add(Link::new(text));
 
         if response.clicked_with_open_in_background() {
-            ui.open_url(crate::OpenUrl {
-                url: url.clone(),
-                new_tab: true,
-            });
+            ui.open_url(crate::OpenUrl { url: url.clone(), new_tab: true });
         } else if response.clicked() {
-            ui.open_url(crate::OpenUrl {
-                url: url.clone(),
-                new_tab,
-            });
+            ui.open_url(crate::OpenUrl { url: url.clone(), new_tab });
         }
 
-        if ui.style().url_in_tooltip {
-            response.on_hover_text(url)
-        } else {
-            response
-        }
+        if ui.style().url_in_tooltip { response.on_hover_text(url) } else { response }
     }
 }

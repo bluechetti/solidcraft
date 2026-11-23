@@ -36,8 +36,8 @@ pub use self::{
     drag_value::DragValue,
     hyperlink::{Hyperlink, Link},
     image::{
-        FrameDurations, Image, ImageFit, ImageOptions, ImageSize, ImageSource,
-        decode_animated_image_uri, has_gif_magic_header, has_webp_header, paint_texture_at,
+        FrameDurations, Image, ImageFit, ImageOptions, ImageSize, ImageSource, decode_animated_image_uri, has_gif_magic_header, has_webp_header,
+        paint_texture_at,
     },
     label::Label,
     progress_bar::ProgressBar,
@@ -47,9 +47,7 @@ pub use self::{
     slider::{Slider, SliderClamping, SliderOrientation},
     slider_core::{DragValueSettings, SliderSpec},
     spinner::Spinner,
-    text_edit::{
-        CompletionOutput, CompletionPopup, CompletionQuery, Suggestion, TextBuffer, TextEdit,
-    },
+    text_edit::{CompletionOutput, CompletionPopup, CompletionQuery, Suggestion, TextBuffer, TextEdit},
     value_format::{NumFormatter, NumParser, ValueFormat},
 };
 
@@ -139,10 +137,7 @@ pub fn reset_button<T: Default + PartialEq>(ui: &mut Ui, value: &mut T, text: &s
 ///
 /// The `text` could be something like "Reset foo".
 pub fn reset_button_with<T: PartialEq>(ui: &mut Ui, value: &mut T, text: &str, reset_value: T) {
-    if ui
-        .add_enabled(*value != reset_value, Button::new(text))
-        .clicked()
-    {
+    if ui.add_enabled(*value != reset_value, Button::new(text)).clicked() {
         *value = reset_value;
     }
 }

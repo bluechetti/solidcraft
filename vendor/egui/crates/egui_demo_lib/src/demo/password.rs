@@ -26,19 +26,14 @@ pub fn password_ui(ui: &mut egui::Ui, password: &mut String) -> egui::Response {
     // change direction to right_to_left.
     let result = ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         // Toggle the `show_plaintext` bool with a button:
-        let response = ui
-            .selectable_label(show_plaintext, "👁️")
-            .on_hover_text("Show/hide password");
+        let response = ui.selectable_label(show_plaintext, "👁️").on_hover_text("Show/hide password");
 
         if response.clicked() {
             show_plaintext = !show_plaintext;
         }
 
         // Show the password field:
-        ui.add_sized(
-            ui.available_size(),
-            egui::TextEdit::singleline(password).password(!show_plaintext),
-        );
+        ui.add_sized(ui.available_size(), egui::TextEdit::singleline(password).password(!show_plaintext));
     });
 
     // Store the (possibly changed) state:

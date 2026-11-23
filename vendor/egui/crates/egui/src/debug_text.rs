@@ -4,10 +4,7 @@
 //! The plugin is registered with the [`Context`] using [`Context::add_plugin`]
 //! to get callbacks on certain events ([`Plugin::on_begin_pass`], [`Plugin::on_end_pass`]).
 
-use crate::{
-    Align, Align2, Color32, Context, FontFamily, FontId, Plugin, Rect, Shape, Ui, Vec2, WidgetText,
-    text,
-};
+use crate::{Align, Align2, Color32, Context, FontFamily, FontId, Plugin, Rect, Shape, Ui, Vec2, WidgetText, text};
 
 /// Print this text next to the cursor at the end of the pass.
 ///
@@ -31,10 +28,7 @@ pub fn print(ctx: &Context, text: impl Into<WidgetText>) {
 
     let plugin = ctx.plugin::<DebugTextPlugin>();
     let mut state = plugin.lock();
-    state.entries.push(Entry {
-        location,
-        text: text.into(),
-    });
+    state.entries.push(Entry { location, text: text.into() });
 }
 
 #[derive(Clone)]
@@ -70,10 +64,7 @@ impl DebugTextPlugin {
         }
 
         // Show debug-text next to the cursor.
-        let mut pos = ctx
-            .input(|i| i.pointer.latest_pos())
-            .unwrap_or_else(|| ctx.content_rect().center())
-            + 8.0 * Vec2::Y;
+        let mut pos = ctx.input(|i| i.pointer.latest_pos()).unwrap_or_else(|| ctx.content_rect().center()) + 8.0 * Vec2::Y;
 
         let painter = ctx.debug_painter();
         let where_to_put_background = painter.add(Shape::Noop);
@@ -86,10 +77,8 @@ impl DebugTextPlugin {
         for Entry { location, text } in entries {
             {
                 // Paint location to left of `pos`:
-                let location_galley =
-                    ctx.fonts_mut(|f| f.layout(location, font_id.clone(), color, f32::INFINITY));
-                let location_rect =
-                    Align2::RIGHT_TOP.anchor_size(pos - 4.0 * Vec2::X, location_galley.size());
+                let location_galley = ctx.fonts_mut(|f| f.layout(location, font_id.clone(), color, f32::INFINITY));
+                let location_rect = Align2::RIGHT_TOP.anchor_size(pos - 4.0 * Vec2::X, location_galley.size());
                 painter.galley(location_rect.min, location_galley, color);
                 bounding_rect |= location_rect;
             }
@@ -112,13 +101,6 @@ impl DebugTextPlugin {
             pos.y = bounding_rect.max.y + 4.0;
         }
 
-        painter.set(
-            where_to_put_background,
-            Shape::rect_filled(
-                bounding_rect.expand(4.0),
-                2.0,
-                Color32::from_black_alpha(192),
-            ),
-        );
+        painter.set(where_to_put_background, Shape::rect_filled(bounding_rect.expand(4.0), 2.0, Color32::from_black_alpha(192)));
     }
 }

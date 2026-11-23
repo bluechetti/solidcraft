@@ -20,34 +20,19 @@ pub struct Margin {
 }
 
 impl Margin {
-    pub const ZERO: Self = Self {
-        left: 0,
-        right: 0,
-        top: 0,
-        bottom: 0,
-    };
+    pub const ZERO: Self = Self { left: 0, right: 0, top: 0, bottom: 0 };
 
     /// The same margin on every side.
     #[doc(alias = "symmetric")]
     #[inline]
     pub const fn same(margin: i8) -> Self {
-        Self {
-            left: margin,
-            right: margin,
-            top: margin,
-            bottom: margin,
-        }
+        Self { left: margin, right: margin, top: margin, bottom: margin }
     }
 
     /// Margins with the same size on opposing sides
     #[inline]
     pub const fn symmetric(x: i8, y: i8) -> Self {
-        Self {
-            left: x,
-            right: x,
-            top: y,
-            bottom: y,
-        }
+        Self { left: x, right: x, top: y, bottom: y }
     }
 
     /// Left margin, as `f32`
@@ -243,10 +228,7 @@ impl core::ops::Add<Margin> for Rect {
 
     #[inline]
     fn add(self, margin: Margin) -> Self {
-        Self::from_min_max(
-            self.min - margin.left_top(),
-            self.max + margin.right_bottom(),
-        )
+        Self::from_min_max(self.min - margin.left_top(), self.max + margin.right_bottom())
     }
 }
 
@@ -264,10 +246,7 @@ impl core::ops::Sub<Margin> for Rect {
 
     #[inline]
     fn sub(self, margin: Margin) -> Self {
-        Self::from_min_max(
-            self.min + margin.left_top(),
-            self.max - margin.right_bottom(),
-        )
+        Self::from_min_max(self.min + margin.left_top(), self.max - margin.right_bottom())
     }
 }
 

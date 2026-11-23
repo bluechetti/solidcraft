@@ -18,9 +18,8 @@
 use emath::GuiRounding as _;
 
 use crate::{
-    Align, AsIdSalt, Context, CursorIcon, Frame, Id, IdSalt, InnerResponse, LayerId, Layout,
-    Margin, NumExt as _, Order, Rangef, Rect, Response, Role, Sense, Stroke, Ui, UiBuilder, UiKind,
-    UiStackInfo, Vec2, WidgetInfo, lerp,
+    Align, AsIdSalt, Context, CursorIcon, Frame, Id, IdSalt, InnerResponse, LayerId, Layout, Margin, NumExt as _, Order, Rangef, Rect, Response,
+    Role, Sense, Stroke, Ui, UiBuilder, UiKind, UiStackInfo, Vec2, WidgetInfo, lerp,
 };
 
 fn animate_expansion(ctx: &Context, id: Id, is_expanded: bool) -> f32 {
@@ -371,10 +370,7 @@ impl Panel {
     #[inline]
     pub fn default_size(mut self, default_size: f32) -> Self {
         self.default_outer_size = Some(default_size);
-        self.outer_size_range = Rangef::new(
-            self.outer_size_range.min.at_most(default_size),
-            self.outer_size_range.max.at_least(default_size),
-        );
+        self.outer_size_range = Rangef::new(self.outer_size_range.min.at_most(default_size), self.outer_size_range.max.at_least(default_size));
         self
     }
 
@@ -396,9 +392,7 @@ impl Panel {
     #[inline]
     pub fn size_range(mut self, size_range: impl Into<Rangef>) -> Self {
         let size_range = size_range.into();
-        self.default_outer_size = self
-            .default_outer_size
-            .map(|default_size| clamp_to_range(default_size, size_range));
+        self.default_outer_size = self.default_outer_size.map(|default_size| clamp_to_range(default_size, size_range));
         self.outer_size_range = size_range;
         self
     }
@@ -428,11 +422,7 @@ impl Panel {
 
     /// Renamed to [`Self::show`].
     #[deprecated = "Renamed to `show`"]
-    pub fn show_inside<R>(
-        self,
-        ui: &mut Ui,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<R> {
+    pub fn show_inside<R>(self, ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
         self.show(ui, add_contents)
     }
 
@@ -451,12 +441,7 @@ impl Panel {
     ///
     /// A fully collapsed panel keeps a thin grab handle at its fixed edge, so the
     /// user can drag it back open. See [`Self::drag_to_open`] to opt out.
-    pub fn show_collapsible<R>(
-        self,
-        ui: &mut Ui,
-        is_expanded: &mut bool,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> Option<InnerResponse<R>> {
+    pub fn show_collapsible<R>(self, ui: &mut Ui, is_expanded: &mut bool, add_contents: impl FnOnce(&mut Ui) -> R) -> Option<InnerResponse<R>> {
         let how_expanded = animate_expansion(ui, self.id(ui).with("animation"), *is_expanded);
 
         if how_expanded == 0.0 {
@@ -472,9 +457,7 @@ impl Panel {
         }
 
         // Don't lose the drag during the slide-back-open animation:
-        let drag_in_progress = ui
-            .read_response(self.resize_id(ui))
-            .is_some_and(|r| r.dragged());
+        let drag_in_progress = ui.read_response(self.resize_id(ui)).is_some_and(|r| r.dragged());
 
         let panel = if how_expanded < 1.0 {
             if drag_in_progress {
@@ -497,12 +480,7 @@ impl Panel {
     /// flip it to `false` when the user drags the panel closed. To opt in,
     /// migrate to the new name.
     #[deprecated = "Renamed to `show_collapsible`"]
-    pub fn show_animated_inside<R>(
-        self,
-        ui: &mut Ui,
-        mut is_expanded: bool,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> Option<InnerResponse<R>> {
+    pub fn show_animated_inside<R>(self, ui: &mut Ui, mut is_expanded: bool, add_contents: impl FnOnce(&mut Ui) -> R) -> Option<InnerResponse<R>> {
         self.show_collapsible(ui, &mut is_expanded, add_contents)
     }
 
@@ -585,9 +563,7 @@ impl Panel {
         let collapse_threshold = collapsed_panel.outer_size(ui);
 
         // Is the resize handle currently being dragged?
-        let drag_in_progress = ui
-            .read_response(resize_widget_id(resize_id_source))
-            .is_some_and(|r| r.dragged());
+        let drag_in_progress = ui.read_response(resize_widget_id(resize_id_source)).is_some_and(|r| r.dragged());
 
         let animation_id = expanded_panel.id(ui).with("animation");
         let how_expanded = animate_expansion(ui, animation_id, *is_expanded);
@@ -601,13 +577,7 @@ impl Panel {
             // Fully collapsed. The collapsed panel registers the shared resize
             // widget so drag-to-expand works, and `is_expanded` is flipped to
             // `true` when the user drags past its `max_size`.
-            collapsed_panel
-                .with_resize_id_source(resize_id_source)
-                .show_inside_dyn(
-                    ui,
-                    Some(is_expanded),
-                    Box::new(|ui| add_contents(ui, false)),
-                )
+            collapsed_panel.with_resize_id_source(resize_id_source).show_inside_dyn(ui, Some(is_expanded), Box::new(|ui| add_contents(ui, false)))
         } else {
             let expanded_panel = expanded_panel.with_collapse_threshold(collapse_threshold);
             let panel = if how_expanded < 1.0 {
@@ -619,19 +589,12 @@ impl Panel {
                     // meets the collapsed panel, whether opening or closing. Get it
                     // wrong and the panel jumps the gap between the two sizes in one
                     // frame.
-                    expanded_panel
-                        .outer_size_range
-                        .min
-                        .at_least(collapse_threshold)
+                    expanded_panel.outer_size_range.min.at_least(collapse_threshold)
                 } else {
                     expanded_panel.outer_size(ui)
                 };
                 let visible_size = lerp(collapse_threshold..=expanded_size, how_expanded);
-                let slide_fraction = if 0.0 < expanded_size {
-                    visible_size / expanded_size
-                } else {
-                    1.0
-                };
+                let slide_fraction = if 0.0 < expanded_size { visible_size / expanded_size } else { 1.0 };
                 let panel = expanded_panel.with_slide_fraction(slide_fraction);
                 // Keep the resize handle live during the slide if the drag is
                 // ongoing — otherwise disabling it would kill the gesture.
@@ -645,11 +608,7 @@ impl Panel {
             };
             // Pass `is_expanded` so dragging the resize handle past the
             // collapsed panel's size collapses to `collapsed_panel`.
-            panel.show_inside_dyn(
-                ui,
-                Some(is_expanded),
-                Box::new(|ui| add_contents(ui, show_expanded_contents)),
-            )
+            panel.show_inside_dyn(ui, Some(is_expanded), Box::new(|ui| add_contents(ui, show_expanded_contents)))
         }
     }
 
@@ -668,13 +627,7 @@ impl Panel {
         add_contents: impl FnOnce(&mut Ui, f32) -> R,
     ) -> InnerResponse<R> {
         let mut is_expanded = is_expanded;
-        Self::show_switched(
-            ui,
-            &mut is_expanded,
-            collapsed_panel,
-            expanded_panel,
-            |ui, expanded| add_contents(ui, if expanded { 1.0 } else { 0.0 }),
-        )
+        Self::show_switched(ui, &mut is_expanded, collapsed_panel, expanded_panel, |ui, expanded| add_contents(ui, if expanded { 1.0 } else { 0.0 }))
     }
 }
 
@@ -704,10 +657,7 @@ impl Panel {
         {
             // Never overflow out parent's available width:
             self.outer_size_range = self.outer_size_range.as_positive();
-            self.outer_size_range.max = f32::min(
-                self.outer_size_range.max,
-                available_rect.size_along(side.axis()),
-            );
+            self.outer_size_range.max = f32::min(self.outer_size_range.max, available_rect.size_along(side.axis()));
         }
 
         let frame = self.resolve_frame(parent_ui);
@@ -717,14 +667,11 @@ impl Panel {
         // without reporting that extra size to the parent!
         let max_rect = {
             let mut max_rect = available_rect;
-            self.side
-                .set_rect_size(&mut max_rect, self.outer_size_range.max);
+            self.side.set_rect_size(&mut max_rect, self.outer_size_range.max);
             max_rect
         };
 
-        let mut outer_size = self
-            .outer_size(parent_ui)
-            .at_most(available_rect.size_along(self.side.axis()));
+        let mut outer_size = self.outer_size(parent_ui).at_most(available_rect.size_along(self.side.axis()));
 
         let mut outer_rect = {
             let mut outer_rect = available_rect;
@@ -781,8 +728,7 @@ impl Panel {
 
             if let Some(raw_outer_size) = raw_outer_size {
                 let prev_outer_size = outer_size;
-                outer_size =
-                    clamp_to_range(raw_outer_size, self.outer_size_range).at_most(available_size);
+                outer_size = clamp_to_range(raw_outer_size, self.outer_size_range).at_most(available_size);
                 side.set_rect_size(&mut outer_rect, outer_size);
 
                 if let Some(is_expanded) = is_expanded {
@@ -793,8 +739,7 @@ impl Panel {
                     // the drag visually crosses the collapsed size.
                     // Use `raw_outer_size` (pre-clamp) so a tight `exact_size`
                     // panel can still detect inward overshoot.
-                    let collapse_threshold =
-                        self.collapse_threshold.unwrap_or(self.outer_size_range.min);
+                    let collapse_threshold = self.collapse_threshold.unwrap_or(self.outer_size_range.min);
                     if raw_outer_size < collapse_threshold && raw_outer_size < prev_outer_size {
                         *is_expanded = false;
                     }
@@ -818,13 +763,7 @@ impl Panel {
         // Slide animation: translate the panel off-screen toward its fixed edge.
         // When `slide_fraction == 1.0` this is a no-op.
         let slide_distance = (1.0 - self.slide_fraction) * outer_size;
-        let shifted_outer_rect = if slide_distance == 0.0 {
-            outer_rect
-        } else {
-            outer_rect
-                .translate(slide_distance * side.dir_vec2())
-                .round_ui()
-        };
+        let shifted_outer_rect = if slide_distance == 0.0 { outer_rect } else { outer_rect.translate(slide_distance * side.dir_vec2()).round_ui() };
 
         // The portion of the panel actually visible inside the parent's available area.
         // The parent only allocates this much; neighbors follow the slide.
@@ -844,8 +783,7 @@ impl Panel {
         panel_ui.shrink_clip_rect(visible_outer_rect);
 
         let axis = side.axis();
-        let panel_axis_min =
-            (self.outer_size_range.min - frame.total_margin().sum()[axis]).at_least(0.0);
+        let panel_axis_min = (self.outer_size_range.min - frame.total_margin().sum()[axis]).at_least(0.0);
         let mut inner_response = frame.show(&mut panel_ui, |content_ui| {
             // Make sure the frame fills the cross-axis fully:
             let cross_axis_size = content_ui.max_rect().size_along(side.cross_axis());
@@ -861,8 +799,7 @@ impl Panel {
         });
 
         if self.outer_size_range.max < inner_response.response.rect.size_along(axis) {
-            self.side
-                .set_rect_size(&mut inner_response.response.rect, self.outer_size_range.max);
+            self.side.set_rect_size(&mut inner_response.response.rect, self.outer_size_range.max);
         }
 
         // `Frame::show` returns the panel's (shifted) _outer_ rect, including margin & border.
@@ -888,12 +825,7 @@ impl Panel {
             // Now we do the actual resize interaction, on top of all the contents,
             // otherwise its input could be eaten by the contents, e.g. a
             // `ScrollArea` on either side of the panel boundary.
-            let resize_response = self.resize_panel(
-                shifted_outer_rect,
-                available_rect,
-                is_expanded_now,
-                parent_ui,
-            );
+            let resize_response = self.resize_panel(shifted_outer_rect, available_rect, is_expanded_now, parent_ui);
             (resize_response.hovered(), resize_response.dragged())
         } else {
             (false, false)
@@ -916,10 +848,7 @@ impl Panel {
             // Finally, we always store the state if it's not already stored,
             // so we get a good estimate for the final size when first expanding a panel.
 
-            PanelState {
-                outer_rect: shifted_outer_rect,
-            }
-            .store(parent_ui, id);
+            PanelState { outer_rect: shifted_outer_rect }.store(parent_ui, id);
         }
 
         // The highlight follows the pointer all the way down to zero size, where
@@ -977,9 +906,7 @@ impl Panel {
 
     /// The configured [`Frame`], or the default side/top panel frame for this [`Ui`].
     fn resolve_frame(&self, ui: &Ui) -> Frame {
-        let mut frame = self
-            .frame
-            .unwrap_or_else(|| Frame::side_top_panel(ui.style()));
+        let mut frame = self.frame.unwrap_or_else(|| Frame::side_top_panel(ui.style()));
 
         if self.show_separator_line {
             // Reserve room for the separator line in the frame's _outer_ margin, so the line
@@ -1022,10 +949,7 @@ impl Panel {
         } else {
             Rect::from_x_y_ranges(cross_range, Rangef::point(fixed_edge_pos))
         };
-        side.set_rect_size(
-            &mut resize_rect,
-            ui.style().interaction.resize_grab_radius_side,
-        );
+        side.set_rect_size(&mut resize_rect, ui.style().interaction.resize_grab_radius_side);
 
         let resize_id = self.resize_id(ui);
         let response = ui.interact(resize_rect, resize_id, Sense::click_and_drag());
@@ -1035,15 +959,8 @@ impl Panel {
         // and asking for any positive size opens it.
         // https://github.com/emilk/egui/issues/8557
         let available_size = available_rect.size_along(axis);
-        self.declare_accesskit_resize_handle(
-            ui,
-            &response,
-            0.0,
-            Rangef::new(0.0, self.outer_size_range.max),
-            available_size,
-        );
-        if let Some(requested_size) =
-            self.accesskit_resize_request(ui, resize_id, 0.0, available_size)
+        self.declare_accesskit_resize_handle(ui, &response, 0.0, Rangef::new(0.0, self.outer_size_range.max), available_size);
+        if let Some(requested_size) = self.accesskit_resize_request(ui, resize_id, 0.0, available_size)
             && 0.0 < requested_size
         {
             *is_expanded = true;
@@ -1091,10 +1008,7 @@ impl Panel {
             // go _inside_ the area the following panels use — which means painting
             // in a layer above them, or they would cover it.
             // TODO(emilk): use the panel's own layer once https://github.com/emilk/egui/issues/1516 is done
-            let painter = ui
-                .ctx()
-                .layer_painter(LayerId::new(Order::Middle, resize_id))
-                .with_clip_rect(resize_rect);
+            let painter = ui.ctx().layer_painter(LayerId::new(Order::Middle, resize_id)).with_clip_rect(resize_rect);
 
             // Nudge the line inward so it isn't half-clipped by the edge.
             let line_pos = fixed_edge_pos - 0.5 * side.sign() * stroke.width;
@@ -1127,21 +1041,11 @@ impl Panel {
 
     /// `is_expanded` is the current collapse state for the animated entry points
     /// (`show_collapsible` / `show_switched`), or `None` for a plain panel.
-    fn resize_panel(
-        &self,
-        outer_rect: Rect,
-        available_rect: Rect,
-        is_expanded: Option<bool>,
-        ui: &Ui,
-    ) -> Response {
+    fn resize_panel(&self, outer_rect: Rect, available_rect: Rect, is_expanded: Option<bool>, ui: &Ui) -> Response {
         let resize_pos = self.side.resize_pos(outer_rect);
         let panel_axis_range = Rangef::point(resize_pos);
         let cross_range = outer_rect.range_along(self.side.cross_axis());
-        let (resize_x, resize_y) = if self.side.axis() == 0 {
-            (panel_axis_range, cross_range)
-        } else {
-            (cross_range, panel_axis_range)
-        };
+        let (resize_x, resize_y) = if self.side.axis() == 0 { (panel_axis_range, cross_range) } else { (cross_range, panel_axis_range) };
         let amount = ui.style().interaction.resize_grab_radius_side * self.side.axis_unit();
 
         // Use `resize_id_source` so collapsed/expanded panels in
@@ -1158,24 +1062,10 @@ impl Panel {
         // an expanded panel can be collapsed (size zero), and a collapsed panel
         // can be expanded (drag-to-expand in `show_switched`).
         let reachable = Rangef::new(
-            if is_expanded == Some(true) {
-                0.0
-            } else {
-                self.outer_size_range.min
-            },
-            if is_expanded == Some(false) {
-                available_size
-            } else {
-                self.outer_size_range.max
-            },
+            if is_expanded == Some(true) { 0.0 } else { self.outer_size_range.min },
+            if is_expanded == Some(false) { available_size } else { self.outer_size_range.max },
         );
-        self.declare_accesskit_resize_handle(
-            ui,
-            &response,
-            outer_rect.size_along(axis),
-            reachable,
-            available_size,
-        );
+        self.declare_accesskit_resize_handle(ui, &response, outer_rect.size_along(axis), reachable, available_size);
 
         response
     }
@@ -1186,14 +1076,7 @@ impl Panel {
     /// `reachable` is the range of outer sizes (in points) the user can actually
     /// reach with this handle; `Increment`/`Decrement` are only offered when
     /// there is room to move in that direction.
-    fn declare_accesskit_resize_handle(
-        &self,
-        ui: &Ui,
-        response: &Response,
-        outer_size: f32,
-        reachable: Rangef,
-        available_size: f32,
-    ) {
+    fn declare_accesskit_resize_handle(&self, ui: &Ui, response: &Response, outer_size: f32, reachable: Rangef, available_size: f32) {
         let axis = self.side.axis();
         let available_size = available_size.max(1.0);
         let as_fraction = |size: f32| f64::from((size / available_size).clamp(0.0, 1.0));
@@ -1206,11 +1089,7 @@ impl Panel {
 
         ui.ctx().accesskit_node_builder(response.id, |node| {
             // The divider of a left/right panel is a vertical splitter, and vice versa.
-            node.set_orientation(if axis == 0 {
-                accesskit::Orientation::Vertical
-            } else {
-                accesskit::Orientation::Horizontal
-            });
+            node.set_orientation(if axis == 0 { accesskit::Orientation::Vertical } else { accesskit::Orientation::Horizontal });
             node.set_min_numeric_value(as_fraction(reachable.min));
             node.set_max_numeric_value(as_fraction(reachable.max));
             node.set_numeric_value_step(as_fraction(ui.style().spacing.interact_size[axis]));
@@ -1231,17 +1110,10 @@ impl Panel {
     /// the size by [`crate::style::Spacing::interact_size`].
     /// The result is unclamped, so the caller can detect collapse/expand overshoot
     /// just like for a pointer drag.
-    fn accesskit_resize_request(
-        &self,
-        ui: &Ui,
-        resize_id: Id,
-        outer_size: f32,
-        available_size: f32,
-    ) -> Option<f32> {
+    fn accesskit_resize_request(&self, ui: &Ui, resize_id: Id, outer_size: f32, available_size: f32) -> Option<f32> {
         let steps = ui.input(|input| {
             input.num_accesskit_action_requests(resize_id, accesskit::Action::Increment) as f32
-                - input.num_accesskit_action_requests(resize_id, accesskit::Action::Decrement)
-                    as f32
+                - input.num_accesskit_action_requests(resize_id, accesskit::Action::Decrement) as f32
         });
         let set_fraction = crate::widgets::accesskit_set_value_request(ui, resize_id);
 
@@ -1264,11 +1136,7 @@ impl Panel {
         // as `INFINITY` for cursor purposes, otherwise we'd advertise
         // "can only shrink" while sitting on a drag-to-expand affordance.
         let can_drag_to_expand = self.resize_id_source.is_some();
-        let max_for_cursor = if can_drag_to_expand {
-            f32::INFINITY
-        } else {
-            self.outer_size_range.max
-        };
+        let max_for_cursor = if can_drag_to_expand { f32::INFINITY } else { self.outer_size_range.max };
 
         if outer_size <= self.outer_size_range.min {
             // Can only grow (toward the resizable side):
@@ -1279,11 +1147,7 @@ impl Panel {
                 PanelSide::Bottom => CursorIcon::ResizeNorth,
             }
         } else if outer_size < max_for_cursor {
-            if self.side.axis() == 0 {
-                CursorIcon::ResizeHorizontal
-            } else {
-                CursorIcon::ResizeVertical
-            }
+            if self.side.axis() == 0 { CursorIcon::ResizeHorizontal } else { CursorIcon::ResizeVertical }
         } else {
             // Can only shrink (toward the fixed side):
             match self.side {
@@ -1356,9 +1220,7 @@ pub struct CentralPanel {
 impl CentralPanel {
     /// A central panel with no margin or background color
     pub fn no_frame() -> Self {
-        Self {
-            frame: Some(Frame::NONE),
-        }
+        Self { frame: Some(Frame::NONE) }
     }
 
     /// A central panel with a background color and some inner margins
@@ -1380,28 +1242,17 @@ impl CentralPanel {
 
     /// Renamed to [`Self::show`].
     #[deprecated = "Renamed to `show`"]
-    pub fn show_inside<R>(
-        self,
-        ui: &mut Ui,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<R> {
+    pub fn show_inside<R>(self, ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
         self.show(ui, add_contents)
     }
 
     /// Show the panel inside a [`Ui`].
-    fn show_inside_dyn<'c, R>(
-        self,
-        ui: &mut Ui,
-        add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>,
-    ) -> InnerResponse<R> {
+    fn show_inside_dyn<'c, R>(self, ui: &mut Ui, add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>) -> InnerResponse<R> {
         let Self { frame } = self;
 
         let outer_rect = ui.available_rect_before_wrap();
         let mut panel_ui = ui.new_child(
-            UiBuilder::new()
-                .ui_stack_info(UiStackInfo::new(UiKind::CentralPanel))
-                .max_rect(outer_rect)
-                .layout(Layout::top_down(Align::Min)),
+            UiBuilder::new().ui_stack_info(UiStackInfo::new(UiKind::CentralPanel)).max_rect(outer_rect).layout(Layout::top_down(Align::Min)),
         );
         // If we overflow, don't do so visibly (#4475)
         // Intersected with the parent's clip rect so a tighter clip (for instance, from window

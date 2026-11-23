@@ -5,20 +5,11 @@ use raw_window_handle::RawDisplayHandle;
 /// If the "clipboard" feature is off, or we cannot connect to the OS clipboard,
 /// then a fallback clipboard that just works within the same app is used instead.
 pub struct Clipboard {
-    #[cfg(all(
-        not(any(target_os = "android", target_os = "ios")),
-        feature = "arboard",
-    ))]
+    #[cfg(all(not(any(target_os = "android", target_os = "ios")), feature = "arboard",))]
     arboard: Option<arboard::Clipboard>,
 
     #[cfg(all(
-        any(
-            target_os = "linux",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "netbsd",
-            target_os = "openbsd"
-        ),
+        any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"),
         feature = "smithay-clipboard"
     ))]
     smithay: Option<smithay_clipboard::Clipboard>,
@@ -60,19 +51,10 @@ impl Clipboard {
         }
     }
 
-    #[cfg_attr(
-        not(feature = "clipboard"),
-        expect(clippy::needless_pass_by_ref_mut, clippy::unnecessary_wraps)
-    )]
+    #[cfg_attr(not(feature = "clipboard"), expect(clippy::needless_pass_by_ref_mut, clippy::unnecessary_wraps))]
     pub fn get(&mut self) -> Option<String> {
         #[cfg(all(
-            any(
-                target_os = "linux",
-                target_os = "dragonfly",
-                target_os = "freebsd",
-                target_os = "netbsd",
-                target_os = "openbsd"
-            ),
+            any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"),
             feature = "smithay-clipboard"
         ))]
         if let Some(clipboard) = &mut self.smithay {
@@ -87,10 +69,7 @@ impl Clipboard {
             }
         }
 
-        #[cfg(all(
-            not(any(target_os = "android", target_os = "ios")),
-            feature = "arboard",
-        ))]
+        #[cfg(all(not(any(target_os = "android", target_os = "ios")), feature = "arboard",))]
         if let Some(clipboard) = &mut self.arboard {
             return match clipboard.get_text() {
                 Ok(text) => Some(text),
@@ -112,13 +91,7 @@ impl Clipboard {
 
     pub fn set_text(&mut self, text: String) {
         #[cfg(all(
-            any(
-                target_os = "linux",
-                target_os = "dragonfly",
-                target_os = "freebsd",
-                target_os = "netbsd",
-                target_os = "openbsd"
-            ),
+            any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"),
             feature = "smithay-clipboard"
         ))]
         if let Some(clipboard) = &mut self.smithay {
@@ -126,10 +99,7 @@ impl Clipboard {
             return;
         }
 
-        #[cfg(all(
-            not(any(target_os = "android", target_os = "ios")),
-            feature = "arboard",
-        ))]
+        #[cfg(all(not(any(target_os = "android", target_os = "ios")), feature = "arboard",))]
         if let Some(clipboard) = &mut self.arboard {
             if let Err(err) = clipboard.set_text(text) {
                 log::error!("arboard copy/cut error: {err}");
@@ -145,15 +115,9 @@ impl Clipboard {
     /// This mirrors [`Self::set_image`] for the opposite direction, so that a Ctrl+V/Cmd+V
     /// paste can carry an image (e.g. a screenshot or a copied image) instead of text — see
     /// [`egui::Event::PasteImage`].
-    #[cfg_attr(
-        not(feature = "clipboard"),
-        expect(clippy::needless_pass_by_ref_mut, clippy::unused_self)
-    )]
+    #[cfg_attr(not(feature = "clipboard"), expect(clippy::needless_pass_by_ref_mut, clippy::unused_self))]
     pub fn get_image(&mut self) -> Option<egui::ColorImage> {
-        #[cfg(all(
-            not(any(target_os = "android", target_os = "ios")),
-            feature = "arboard",
-        ))]
+        #[cfg(all(not(any(target_os = "android", target_os = "ios")), feature = "arboard",))]
         if let Some(clipboard) = &mut self.arboard {
             return match clipboard.get_image() {
                 Ok(image) => Some(color_image_from_arboard(&image)),
@@ -172,15 +136,9 @@ impl Clipboard {
         None
     }
 
-    #[cfg_attr(
-        not(feature = "clipboard"),
-        expect(clippy::needless_pass_by_ref_mut, clippy::unused_self)
-    )]
+    #[cfg_attr(not(feature = "clipboard"), expect(clippy::needless_pass_by_ref_mut, clippy::unused_self))]
     pub fn set_image(&mut self, image: &egui::ColorImage) {
-        #[cfg(all(
-            not(any(target_os = "android", target_os = "ios")),
-            feature = "arboard",
-        ))]
+        #[cfg(all(not(any(target_os = "android", target_os = "ios")), feature = "arboard",))]
         if let Some(clipboard) = &mut self.arboard {
             if let Err(err) = clipboard.set_image(arboard_from_color_image(image)) {
                 log::error!("arboard copy/cut error: {err}");
@@ -189,9 +147,7 @@ impl Clipboard {
             return;
         }
 
-        log::error!(
-            "Copying images is not supported. Enable the 'clipboard' feature of `egui-winit` to enable it."
-        );
+        log::error!("Copying images is not supported. Enable the 'clipboard' feature of `egui-winit` to enable it.");
         _ = image;
     }
 }
@@ -289,44 +245,24 @@ cfg_select! {
 ///
 /// Pulled out as its own pure function (rather than inlined in the two `match`es above) so it
 /// can be unit-tested without touching the real OS clipboard, which CI can't rely on.
-#[cfg(all(
-    not(any(target_os = "android", target_os = "ios")),
-    feature = "arboard",
-))]
+#[cfg(all(not(any(target_os = "android", target_os = "ios")), feature = "arboard",))]
 fn is_expected_content_absence(err: &arboard::Error) -> bool {
     matches!(err, arboard::Error::ContentNotAvailable)
 }
 
-#[cfg(all(
-    not(any(target_os = "android", target_os = "ios")),
-    feature = "arboard",
-))]
+#[cfg(all(not(any(target_os = "android", target_os = "ios")), feature = "arboard",))]
 fn color_image_from_arboard(image: &arboard::ImageData<'_>) -> egui::ColorImage {
     egui::ColorImage::from_rgba_unmultiplied([image.width, image.height], &image.bytes)
 }
 
 /// arboard expects unmultiplied alpha, but [`egui::Color32`] is premultiplied.
-#[cfg(all(
-    not(any(target_os = "android", target_os = "ios")),
-    feature = "arboard",
-))]
+#[cfg(all(not(any(target_os = "android", target_os = "ios")), feature = "arboard",))]
 fn arboard_from_color_image(image: &egui::ColorImage) -> arboard::ImageData<'static> {
-    let bytes: Vec<u8> = image
-        .pixels
-        .iter()
-        .flat_map(|color| color.to_srgba_unmultiplied())
-        .collect();
-    arboard::ImageData {
-        width: image.width(),
-        height: image.height(),
-        bytes: bytes.into(),
-    }
+    let bytes: Vec<u8> = image.pixels.iter().flat_map(|color| color.to_srgba_unmultiplied()).collect();
+    arboard::ImageData { width: image.width(), height: image.height(), bytes: bytes.into() }
 }
 
-#[cfg(all(
-    not(any(target_os = "android", target_os = "ios")),
-    feature = "arboard",
-))]
+#[cfg(all(not(any(target_os = "android", target_os = "ios")), feature = "arboard",))]
 fn init_arboard() -> Option<arboard::Clipboard> {
     profiling::function_scope!();
 
@@ -345,19 +281,11 @@ fn init_arboard() -> Option<arboard::Clipboard> {
 /// The display handle in `raw_display_handle` must remain valid for the
 /// lifetime of the returned `Clipboard`.
 #[cfg(all(
-    any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
-    ),
+    any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"),
     feature = "smithay-clipboard"
 ))]
 #[expect(unsafe_code)]
-unsafe fn init_smithay_clipboard(
-    raw_display_handle: Option<RawDisplayHandle>,
-) -> Option<smithay_clipboard::Clipboard> {
+unsafe fn init_smithay_clipboard(raw_display_handle: Option<RawDisplayHandle>) -> Option<smithay_clipboard::Clipboard> {
     profiling::function_scope!();
 
     if let Some(RawDisplayHandle::Wayland(display)) = raw_display_handle {
@@ -368,17 +296,12 @@ unsafe fn init_smithay_clipboard(
         #[cfg(feature = "wayland")]
         log::debug!("Cannot init smithay clipboard without a Wayland display handle");
         #[cfg(not(feature = "wayland"))]
-        log::debug!(
-            "Cannot init smithay clipboard: the 'wayland' feature of 'egui-winit' is not enabled"
-        );
+        log::debug!("Cannot init smithay clipboard: the 'wayland' feature of 'egui-winit' is not enabled");
         None
     }
 }
 
-#[cfg(all(
-    not(any(target_os = "android", target_os = "ios")),
-    feature = "arboard",
-))]
+#[cfg(all(not(any(target_os = "android", target_os = "ios")), feature = "arboard",))]
 #[cfg(test)]
 mod tests {
     use super::{arboard_from_color_image, color_image_from_arboard, is_expected_content_absence};
@@ -390,43 +313,23 @@ mod tests {
     /// and must still be logged.
     #[test]
     fn only_content_not_available_is_treated_as_expected() {
-        assert!(is_expected_content_absence(
-            &arboard::Error::ContentNotAvailable
-        ));
+        assert!(is_expected_content_absence(&arboard::Error::ContentNotAvailable));
 
-        assert!(!is_expected_content_absence(
-            &arboard::Error::ClipboardNotSupported
-        ));
-        assert!(!is_expected_content_absence(
-            &arboard::Error::ClipboardOccupied
-        ));
-        assert!(!is_expected_content_absence(
-            &arboard::Error::ConversionFailure
-        ));
-        assert!(!is_expected_content_absence(&arboard::Error::Unknown {
-            description: "anything".to_owned(),
-        }));
+        assert!(!is_expected_content_absence(&arboard::Error::ClipboardNotSupported));
+        assert!(!is_expected_content_absence(&arboard::Error::ClipboardOccupied));
+        assert!(!is_expected_content_absence(&arboard::Error::ConversionFailure));
+        assert!(!is_expected_content_absence(&arboard::Error::Unknown { description: "anything".to_owned() }));
     }
 
     #[test]
     fn color_image_from_arboard_converts_straight_to_premultiplied_alpha() {
         // 2x1 image: opaque red, then half-transparent white — straight (unmultiplied) alpha,
         // as arboard/the OS clipboard would hand it to us.
-        let image = arboard::ImageData {
-            width: 2,
-            height: 1,
-            bytes: std::borrow::Cow::Borrowed(&[255, 0, 0, 255, 255, 255, 255, 128]),
-        };
+        let image = arboard::ImageData { width: 2, height: 1, bytes: std::borrow::Cow::Borrowed(&[255, 0, 0, 255, 255, 255, 255, 128]) };
         let color_image = color_image_from_arboard(&image);
         assert_eq!(color_image.size, [2, 1]);
-        assert_eq!(
-            color_image.pixels[0],
-            egui::Color32::from_rgba_unmultiplied(255, 0, 0, 255)
-        );
-        assert_eq!(
-            color_image.pixels[1],
-            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 128)
-        );
+        assert_eq!(color_image.pixels[0], egui::Color32::from_rgba_unmultiplied(255, 0, 0, 255));
+        assert_eq!(color_image.pixels[1], egui::Color32::from_rgba_unmultiplied(255, 255, 255, 128));
     }
 
     #[test]
@@ -441,9 +344,6 @@ mod tests {
         );
         let image = arboard_from_color_image(&color_image);
         assert_eq!([image.width, image.height], [3, 1]);
-        assert_eq!(
-            &*image.bytes,
-            &[255, 0, 0, 255, 255, 255, 255, 128, 0, 0, 0, 0]
-        );
+        assert_eq!(&*image.bytes, &[255, 0, 0, 255, 255, 255, 255, 128, 0, 0, 0, 0]);
     }
 }

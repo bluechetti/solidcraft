@@ -145,11 +145,7 @@
 
 // Limitation imposed by `accesskit_winit`:
 // https://github.com/AccessKit/accesskit/tree/accesskit-v0.18.0/platforms/winit#android-activity-compatibility`
-#[cfg(all(
-    target_os = "android",
-    feature = "accesskit",
-    feature = "android-native-activity"
-))]
+#[cfg(all(target_os = "android", feature = "accesskit", feature = "android-native-activity"))]
 compile_error!("`accesskit` feature is only available with `android-game-activity`");
 
 // Re-export all useful libraries:
@@ -223,11 +219,7 @@ pub(crate) fn maybe_attach_inspection_plugin(ctx: &egui::Context, label: Option<
 
 /// Fallback for native builds without the `inspection` feature. Logs warning if inspection env
 /// var was set.
-#[cfg(all(
-    not(feature = "inspection"),
-    not(target_arch = "wasm32"),
-    any(feature = "glow", feature = "wgpu_no_default_features")
-))]
+#[cfg(all(not(feature = "inspection"), not(target_arch = "wasm32"), any(feature = "glow", feature = "wgpu_no_default_features")))]
 pub(crate) fn maybe_attach_inspection_plugin(_ctx: &egui::Context, _label: Option<String>) {
     if let Ok(value) = std::env::var("EGUI_INSPECTION")
         && value != "0"
@@ -285,11 +277,7 @@ pub(crate) fn maybe_attach_inspection_plugin(_ctx: &egui::Context, _label: Optio
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(any(feature = "glow", feature = "wgpu_no_default_features"))]
 #[allow(clippy::allow_attributes, clippy::needless_pass_by_value)]
-pub fn run_native(
-    app_name: &str,
-    native_options: NativeOptions,
-    app_creator: AppCreator<'_>,
-) -> Result {
+pub fn run_native(app_name: &str, native_options: NativeOptions, app_creator: AppCreator<'_>) -> Result {
     run_native_ext(app_name, native_options, None, app_creator)
 }
 
@@ -303,12 +291,7 @@ pub fn run_native(
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(any(feature = "glow", feature = "wgpu_no_default_features"))]
 #[allow(clippy::allow_attributes, clippy::needless_pass_by_value)]
-pub fn run_native_ext(
-    app_name: &str,
-    mut native_options: NativeOptions,
-    egui_ctx: Option<egui::Context>,
-    app_creator: AppCreator<'_>,
-) -> Result {
+pub fn run_native_ext(app_name: &str, mut native_options: NativeOptions, egui_ctx: Option<egui::Context>, app_creator: AppCreator<'_>) -> Result {
     let renderer = init_native(app_name, &mut native_options);
 
     match renderer {
@@ -385,23 +368,13 @@ pub fn create_native<'a>(
         #[cfg(feature = "glow")]
         Renderer::Glow => {
             log::debug!("Using the glow renderer");
-            EframeWinitApplication::new(native::run::create_glow(
-                app_name,
-                native_options,
-                app_creator,
-                event_loop,
-            ))
+            EframeWinitApplication::new(native::run::create_glow(app_name, native_options, app_creator, event_loop))
         }
 
         #[cfg(feature = "wgpu_no_default_features")]
         Renderer::Wgpu => {
             log::debug!("Using the wgpu renderer");
-            EframeWinitApplication::new(native::run::create_wgpu(
-                app_name,
-                native_options,
-                app_creator,
-                event_loop,
-            ))
+            EframeWinitApplication::new(native::run::create_wgpu(app_name, native_options, app_creator, event_loop))
         }
     }
 }
@@ -410,10 +383,7 @@ pub fn create_native<'a>(
 #[cfg(any(feature = "glow", feature = "wgpu_no_default_features"))]
 fn init_native(app_name: &str, native_options: &mut NativeOptions) -> Renderer {
     #[cfg(not(feature = "__screenshot"))]
-    assert!(
-        std::env::var("EFRAME_SCREENSHOT_TO").is_err(),
-        "EFRAME_SCREENSHOT_TO found without compiling with the '__screenshot' feature"
-    );
+    assert!(std::env::var("EFRAME_SCREENSHOT_TO").is_err(), "EFRAME_SCREENSHOT_TO found without compiling with the '__screenshot' feature");
 
     if native_options.viewport.title.is_none() {
         native_options.viewport.title = Some(app_name.to_owned());
@@ -475,11 +445,7 @@ fn init_native(app_name: &str, native_options: &mut NativeOptions) -> Renderer {
 /// This function can fail if we fail to set up a graphics context.
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(any(feature = "glow", feature = "wgpu_no_default_features"))]
-pub fn run_ui_native(
-    app_name: &str,
-    native_options: NativeOptions,
-    ui_fun: impl FnMut(&mut egui::Ui, &mut Frame) + 'static,
-) -> Result {
+pub fn run_ui_native(app_name: &str, native_options: NativeOptions, ui_fun: impl FnMut(&mut egui::Ui, &mut Frame) + 'static) -> Result {
     struct SimpleApp<U> {
         ui_fun: U,
     }
@@ -490,11 +456,7 @@ pub fn run_ui_native(
         }
     }
 
-    run_native(
-        app_name,
-        native_options,
-        Box::new(|_cc| Ok(Box::new(SimpleApp { ui_fun }))),
-    )
+    run_native(app_name, native_options, Box::new(|_cc| Ok(Box::new(SimpleApp { ui_fun }))))
 }
 
 // ----------------------------------------------------------------------------
@@ -594,10 +556,7 @@ impl core::fmt::Display for Error {
 
             #[cfg(all(feature = "glow", not(target_arch = "wasm32")))]
             Self::NoGlutinConfigs(template, err) => {
-                write!(
-                    f,
-                    "Found no glutin configs matching the template: {template:?}. Error: {err}"
-                )
+                write!(f, "Found no glutin configs matching the template: {template:?}. Error: {err}")
             }
 
             #[cfg(feature = "glow")]

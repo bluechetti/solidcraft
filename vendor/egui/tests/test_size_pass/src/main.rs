@@ -14,22 +14,18 @@ fn main() -> eframe::Result {
                 ui.vertical(|ui| {
                     ui.label("Single tooltips:");
                     for i in 0..3 {
-                        ui.label(format!("Hover label {i} for a tooltip"))
-                            .on_hover_text("There is some text here");
+                        ui.label(format!("Hover label {i} for a tooltip")).on_hover_text("There is some text here");
                     }
                 });
                 ui.vertical(|ui| {
                     ui.label("Double tooltips:");
                     for i in 0..3 {
-                        ui.label(format!("Hover label {i} for two tooltips"))
-                            .on_hover_text("First tooltip")
-                            .on_hover_text("Second tooltip");
+                        ui.label(format!("Hover label {i} for two tooltips")).on_hover_text("First tooltip").on_hover_text("Second tooltip");
                     }
                 });
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::BOTTOM), |ui| {
-                ui.label("Hover for tooltip")
-                    .on_hover_text("This is a rather long tooltip that needs careful positioning.");
+                ui.label("Hover for tooltip").on_hover_text("This is a rather long tooltip that needs careful positioning.");
             });
         });
 
@@ -40,9 +36,7 @@ fn main() -> eframe::Result {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::BOTTOM), |ui| {
-                    ui.label("Hover for tooltip").on_hover_text(
-                        "This is a rather long tooltip that needs careful positioning.",
-                    );
+                    ui.label("Hover for tooltip").on_hover_text("This is a rather long tooltip that needs careful positioning.");
                     ui.label("Hover for interactive tooltip").on_hover_ui(|ui| {
                         ui.label("This tooltip has a button:");
                         let _ = ui.button("Clicking me does nothing");
@@ -50,10 +44,7 @@ fn main() -> eframe::Result {
                 });
             });
 
-            let has_tooltip = ui
-                .label("This label has a tooltip at the mouse cursor")
-                .on_hover_text_at_pointer("Told you!")
-                .is_tooltip_open();
+            let has_tooltip = ui.label("This label has a tooltip at the mouse cursor").on_hover_text_at_pointer("Told you!").is_tooltip_open();
 
             let response = ui.label("This label gets a tooltip when the previous label is hovered");
             if has_tooltip {
@@ -76,38 +67,23 @@ fn main() -> eframe::Result {
 
             ui.separator();
 
-            let alternatives = [
-                "Short",
-                "Min",
-                "Very very long text that will extend",
-                "Short",
-            ];
+            let alternatives = ["Short", "Min", "Very very long text that will extend", "Short"];
             let mut selected = 1;
 
-            egui::ComboBox::from_label("ComboBox").show_index(
-                ui,
-                &mut selected,
-                alternatives.len(),
-                |i| alternatives[i],
-            );
+            egui::ComboBox::from_label("ComboBox").show_index(ui, &mut selected, alternatives.len(), |i| alternatives[i]);
 
-            egui::ComboBox::from_id_salt("combo")
-                .selected_text("ComboBox")
-                .width(100.0)
-                .show_ui(ui, |ui| {
-                    ui.debug_painter()
-                        .debug_rect(ui.max_rect(), egui::Color32::RED, "");
+            egui::ComboBox::from_id_salt("combo").selected_text("ComboBox").width(100.0).show_ui(ui, |ui| {
+                ui.debug_painter().debug_rect(ui.max_rect(), egui::Color32::RED, "");
 
-                    ui.label("Hello");
-                    ui.label("World");
-                    ui.label("Hellooooooooooooooooooooooooo");
-                });
+                ui.label("Hello");
+                ui.label("World");
+                ui.label("Hellooooooooooooooooooooooooo");
+            });
 
             ui.separator();
 
             let time = ui.input(|i| i.time);
-            ui.label("Hover for a tooltip with changing content")
-                .on_hover_text(format!("A number: {}", time % 10.0));
+            ui.label("Hover for a tooltip with changing content").on_hover_text(format!("A number: {}", time % 10.0));
         });
     })
 }

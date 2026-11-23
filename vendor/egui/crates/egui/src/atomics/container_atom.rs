@@ -1,7 +1,6 @@
 use crate::{
-    AtomKind, AtomPaintArgs, Atoms, Direction, FontSelection, Frame, IdSalt, Image, IntoAtoms,
-    Response, SizedAtom, SizedAtomKind, Stroke, Ui, WidgetAtom,
-    text_selection::LabelSelectionState,
+    AtomKind, AtomPaintArgs, Atoms, Direction, FontSelection, Frame, IdSalt, Image, IntoAtoms, Response, SizedAtom, SizedAtomKind, Stroke, Ui,
+    WidgetAtom, text_selection::LabelSelectionState,
 };
 use alloc::sync::Arc;
 use core::ops::{Deref, DerefMut};
@@ -20,11 +19,7 @@ fn main_cross_axis(direction: Direction) -> (usize, usize) {
 /// Build a [`Vec2`] from `main`/`cross` components for `direction`.
 #[inline]
 fn main_cross_vec(direction: Direction, main: f32, cross: f32) -> Vec2 {
-    if direction.is_horizontal() {
-        Vec2::new(main, cross)
-    } else {
-        Vec2::new(cross, main)
-    }
+    if direction.is_horizontal() { Vec2::new(main, cross) } else { Vec2::new(cross, main) }
 }
 
 /// Build a cell [`Rect`] spanning `aligned_rect` fully on the cross axis and `[min_main, max_main]`
@@ -108,18 +103,7 @@ impl<'a> ContainerAtom<'a> {
     /// clamped by `max_size`/`min_size`, exactly like [`crate::WidgetAtom::allocate`] does with
     /// [`Ui::available_size`].
     pub fn measure(self, ui: &Ui, available_size: Vec2) -> SizedContainerAtom<'a> {
-        let Self {
-            mut atoms,
-            gap,
-            frame,
-            fallback_text_color,
-            min_size,
-            mut max_size,
-            wrap_mode,
-            align2,
-            fallback_font,
-            direction,
-        } = self;
+        let Self { mut atoms, gap, frame, fallback_text_color, min_size, mut max_size, wrap_mode, align2, fallback_font, direction } = self;
 
         let fallback_font = fallback_font.unwrap_or_default();
 
@@ -130,17 +114,14 @@ impl<'a> ContainerAtom<'a> {
         if wrap_mode != TextWrapMode::Extend {
             let any_shrink = atoms.any_shrink();
             if !any_shrink {
-                let first_text = atoms
-                    .iter_mut()
-                    .find(|a| matches!(a.kind, AtomKind::Text(..)));
+                let first_text = atoms.iter_mut().find(|a| matches!(a.kind, AtomKind::Text(..)));
                 if let Some(atom) = first_text {
                     atom.shrink = true; // Will make the text truncate or shrink depending on wrap_mode
                 }
             }
         }
 
-        let fallback_text_color =
-            fallback_text_color.unwrap_or_else(|| ui.style().visuals.text_color());
+        let fallback_text_color = fallback_text_color.unwrap_or_else(|| ui.style().visuals.text_color());
         let gap = gap.unwrap_or_else(|| ui.spacing().icon_spacing);
 
         // max_size has no effect in justified layouts. If we'd limit the available size here,
@@ -201,21 +182,13 @@ impl<'a> ContainerAtom<'a> {
                 grow_count += 1;
             }
             if item.shrink {
-                debug_assert!(
-                    shrink_item.is_none(),
-                    "Only one atomic may be marked as shrink. {item:?}"
-                );
+                debug_assert!(shrink_item.is_none(), "Only one atomic may be marked as shrink. {item:?}");
                 if shrink_item.is_none() {
                     shrink_item = Some((idx, item));
                     continue;
                 }
             }
-            let sized = item.into_sized(
-                ui,
-                available_inner_size,
-                Some(wrap_mode),
-                fallback_font.clone(),
-            );
+            let sized = item.into_sized(ui, available_inner_size, Some(wrap_mode), fallback_font.clone());
             let size = sized.size;
 
             inner_main += size[main_axis];
@@ -229,18 +202,10 @@ impl<'a> ContainerAtom<'a> {
 
         if let Some((index, item)) = shrink_item {
             // The `shrink` item gets the remaining space along the main axis.
-            let available_size_for_shrink_item = main_cross_vec(
-                direction,
-                available_inner_size[main_axis] - inner_main,
-                available_inner_size[cross_axis],
-            );
+            let available_size_for_shrink_item =
+                main_cross_vec(direction, available_inner_size[main_axis] - inner_main, available_inner_size[cross_axis]);
 
-            let sized = item.into_sized(
-                ui,
-                available_size_for_shrink_item,
-                Some(wrap_mode),
-                fallback_font,
-            );
+            let sized = item.into_sized(ui, available_size_for_shrink_item, Some(wrap_mode), fallback_font);
             let size = sized.size;
 
             inner_main += size[main_axis];
@@ -255,9 +220,7 @@ impl<'a> ContainerAtom<'a> {
         let margin = frame.total_margin();
         let inner_size = main_cross_vec(direction, inner_main, cross_size);
         let outer_size = (inner_size + margin.sum()).at_least(min_size);
-        let intrinsic_size = (main_cross_vec(direction, intrinsic_main, intrinsic_cross)
-            + margin.sum())
-        .at_least(min_size);
+        let intrinsic_size = (main_cross_vec(direction, intrinsic_main, intrinsic_cross) + margin.sum()).at_least(min_size);
 
         SizedContainerAtom {
             sized_atoms: sized_items,
@@ -449,43 +412,19 @@ impl<'atom> SizedContainerAtom<'atom> {
     }
 
     pub fn iter_images(&self) -> impl Iterator<Item = &Image<'atom>> {
-        self.iter_kinds().filter_map(|kind| {
-            if let SizedAtomKind::Image { image, size: _ } = kind {
-                Some(image)
-            } else {
-                None
-            }
-        })
+        self.iter_kinds().filter_map(|kind| if let SizedAtomKind::Image { image, size: _ } = kind { Some(image) } else { None })
     }
 
     pub fn iter_images_mut(&mut self) -> impl Iterator<Item = &mut Image<'atom>> {
-        self.iter_kinds_mut().filter_map(|kind| {
-            if let SizedAtomKind::Image { image, size: _ } = kind {
-                Some(image)
-            } else {
-                None
-            }
-        })
+        self.iter_kinds_mut().filter_map(|kind| if let SizedAtomKind::Image { image, size: _ } = kind { Some(image) } else { None })
     }
 
     pub fn iter_texts(&self) -> impl Iterator<Item = &Arc<Galley>> + use<'atom, '_> {
-        self.iter_kinds().filter_map(|kind| {
-            if let SizedAtomKind::Text(text) = kind {
-                Some(text)
-            } else {
-                None
-            }
-        })
+        self.iter_kinds().filter_map(|kind| if let SizedAtomKind::Text(text) = kind { Some(text) } else { None })
     }
 
     pub fn iter_texts_mut(&mut self) -> impl Iterator<Item = &mut Arc<Galley>> + use<'atom, '_> {
-        self.iter_kinds_mut().filter_map(|kind| {
-            if let SizedAtomKind::Text(text) = kind {
-                Some(text)
-            } else {
-                None
-            }
-        })
+        self.iter_kinds_mut().filter_map(|kind| if let SizedAtomKind::Text(text) = kind { Some(text) } else { None })
     }
 
     pub fn map_kind<F>(&mut self, mut f: F)
@@ -501,16 +440,7 @@ impl<'atom> SizedContainerAtom<'atom> {
     where
         F: FnMut(Image<'atom>) -> Image<'atom>,
     {
-        self.map_kind(|kind| {
-            if let SizedAtomKind::Image { image, size } = kind {
-                SizedAtomKind::Image {
-                    image: f(image),
-                    size,
-                }
-            } else {
-                kind
-            }
-        });
+        self.map_kind(|kind| if let SizedAtomKind::Image { image, size } = kind { SizedAtomKind::Image { image: f(image), size } } else { kind });
     }
 
     /// Paint the [`Frame`] and individual [`crate::Atom`]s within `rect`.
@@ -524,23 +454,8 @@ impl<'atom> SizedContainerAtom<'atom> {
         self.paint_at_with_selection(ui, rect, None)
     }
 
-    pub(crate) fn paint_at_with_selection(
-        self,
-        ui: &Ui,
-        rect: Rect,
-        selection_response: Option<&Response>,
-    ) -> CustomRects {
-        let Self {
-            mut sized_atoms,
-            frame,
-            fallback_text_color,
-            grow_count,
-            inner_size,
-            align2,
-            gap,
-            direction,
-            ..
-        } = self;
+    pub(crate) fn paint_at_with_selection(self, ui: &Ui, rect: Rect, selection_response: Option<&Response>) -> CustomRects {
+        let Self { mut sized_atoms, frame, fallback_text_color, grow_count, inner_size, align2, gap, direction, .. } = self;
 
         let inner_rect = rect - frame.total_margin();
 
@@ -556,11 +471,7 @@ impl<'atom> SizedContainerAtom<'atom> {
 
         // When something grows, the block fills the available main extent; otherwise it's the
         // content's inner size. `align2` then positions the block within `inner_rect`.
-        let block_main = if grow_count > 0 {
-            main_to_fill
-        } else {
-            inner_main
-        };
+        let block_main = if grow_count > 0 { main_to_fill } else { inner_main };
         let block_size = main_cross_vec(direction, block_main, inner_size[cross_axis]);
         let aligned_rect = align2.align_size_within_rect(block_size, inner_rect);
 
@@ -589,10 +500,7 @@ impl<'atom> SizedContainerAtom<'atom> {
             let item_rect = sized.align.align_size_within_rect(size, cell);
 
             if let Some(id) = sized.id {
-                debug_assert!(
-                    !custom_rects.iter().any(|(i, _)| *i == id),
-                    "Duplicate custom id"
-                );
+                debug_assert!(!custom_rects.iter().any(|(i, _)| *i == id), "Duplicate custom id");
                 custom_rects.push((id, item_rect));
             }
 
@@ -602,17 +510,9 @@ impl<'atom> SizedContainerAtom<'atom> {
                         // Route through the label selection machinery, which also
                         // paints the galley. `Stroke::NONE` keeps the rendering
                         // identical to the non-selectable path (no focus underline).
-                        LabelSelectionState::label_text_selection(
-                            ui,
-                            response,
-                            item_rect.min,
-                            galley,
-                            fallback_text_color,
-                            Stroke::NONE,
-                        );
+                        LabelSelectionState::label_text_selection(ui, response, item_rect.min, galley, fallback_text_color, Stroke::NONE);
                     } else {
-                        ui.painter()
-                            .galley(item_rect.min, galley, fallback_text_color);
+                        ui.painter().galley(item_rect.min, galley, fallback_text_color);
                     }
                 }
                 SizedAtomKind::Image { image, size: _ } => {
@@ -620,13 +520,7 @@ impl<'atom> SizedContainerAtom<'atom> {
                 }
                 SizedAtomKind::Empty { .. } => {}
                 SizedAtomKind::Paint { paint, size: _ } => {
-                    paint(
-                        ui,
-                        AtomPaintArgs {
-                            rect: item_rect,
-                            fallback_text_color,
-                        },
-                    );
+                    paint(ui, AtomPaintArgs { rect: item_rect, fallback_text_color });
                 }
                 SizedAtomKind::Widget(widget) => {
                     // TODO(lucasmerlin): Add some kind of justify flag to the layout

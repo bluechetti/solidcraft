@@ -131,9 +131,7 @@ impl<'a> DatePickerButton<'a> {
 impl Widget for DatePickerButton<'_> {
     fn ui(self, ui: &mut Ui) -> egui::Response {
         let id = ui.make_persistent_id(self.id_salt);
-        let mut button_state = ui
-            .data_mut(|data| data.get_persisted::<DatePickerButtonState>(id))
-            .unwrap_or_default();
+        let mut button_state = ui.data_mut(|data| data.get_persisted::<DatePickerButtonState>(id)).unwrap_or_default();
 
         let mut text = if self.show_icon {
             RichText::new(format!("{} 📆", self.selection.strftime(&self.format)))
@@ -157,10 +155,8 @@ impl Widget for DatePickerButton<'_> {
         if button_state.picker_visible {
             let width = 333.0;
             let mut pos = button_response.rect.left_bottom();
-            let width_with_padding = width
-                + ui.style().spacing.item_spacing.x
-                + ui.style().spacing.window_margin.leftf()
-                + ui.style().spacing.window_margin.rightf();
+            let width_with_padding =
+                width + ui.style().spacing.item_spacing.x + ui.style().spacing.window_margin.leftf() + ui.style().spacing.window_margin.rightf();
             if pos.x + width_with_padding > ui.clip_rect().right() {
                 pos.x = button_response.rect.right() - width_with_padding;
             }
@@ -169,10 +165,7 @@ impl Widget for DatePickerButton<'_> {
 
             //TODO(elwerene): Better positioning
 
-            let InnerResponse {
-                inner: saved,
-                response: area_response,
-            } = Area::new(ui.make_persistent_id(self.id_salt))
+            let InnerResponse { inner: saved, response: area_response } = Area::new(ui.make_persistent_id(self.id_salt))
                 .kind(egui::UiKind::Picker)
                 .order(Order::Foreground)
                 .fixed_pos(pos)
@@ -207,10 +200,7 @@ impl Widget for DatePickerButton<'_> {
             // We don't want to close our popup if any other popup is open, since other popups would
             // most likely be the combo boxes in the date picker.
             let any_popup_open = ui.any_popup_open();
-            if !button_response.clicked()
-                && !any_popup_open
-                && (ui.input(|i| i.key_pressed(Key::Escape)) || area_response.clicked_elsewhere())
-            {
+            if !button_response.clicked() && !any_popup_open && (ui.input(|i| i.key_pressed(Key::Escape)) || area_response.clicked_elsewhere()) {
                 button_state.picker_visible = false;
                 ui.data_mut(|data| data.insert_persisted(id, button_state));
             }

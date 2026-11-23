@@ -16,10 +16,7 @@ pub struct KeyboardShortcut {
 
 impl KeyboardShortcut {
     pub const fn new(modifiers: Modifiers, logical_key: Key) -> Self {
-        Self {
-            modifiers,
-            logical_key,
-        }
+        Self { modifiers, logical_key }
     }
 
     pub fn format(&self, names: &ModifierNames<'_>, is_mac: bool) -> String {
@@ -53,30 +50,15 @@ impl KeyboardShortcut {
     /// ```
     pub fn conflicts_with_text_editing(&self) -> bool {
         self.modifiers.is_none()
-            || matches!(
-                self.logical_key,
-                Key::Space
-                    | Key::ArrowLeft
-                    | Key::ArrowRight
-                    | Key::ArrowUp
-                    | Key::ArrowDown
-                    | Key::Home
-                    | Key::End
-            )
+            || matches!(self.logical_key, Key::Space | Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown | Key::Home | Key::End)
     }
 }
 
 #[test]
 fn format_kb_shortcut() {
     let cmd_shift_f = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::F);
-    assert_eq!(
-        cmd_shift_f.format(&ModifierNames::NAMES, false),
-        "Ctrl+Shift+F"
-    );
-    assert_eq!(
-        cmd_shift_f.format(&ModifierNames::NAMES, true),
-        "Shift+Cmd+F"
-    );
+    assert_eq!(cmd_shift_f.format(&ModifierNames::NAMES, false), "Ctrl+Shift+F");
+    assert_eq!(cmd_shift_f.format(&ModifierNames::NAMES, true), "Shift+Cmd+F");
     assert_eq!(cmd_shift_f.format(&ModifierNames::SYMBOLS, false), "⌃⇧F");
     assert_eq!(cmd_shift_f.format(&ModifierNames::SYMBOLS, true), "⇧⌘F");
 }

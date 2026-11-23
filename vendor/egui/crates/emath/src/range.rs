@@ -14,23 +14,14 @@ pub struct Rangef {
 
 impl Rangef {
     /// Infinite range that contains everything, from -∞ to +∞, inclusive.
-    pub const EVERYTHING: Self = Self {
-        min: f32::NEG_INFINITY,
-        max: f32::INFINITY,
-    };
+    pub const EVERYTHING: Self = Self { min: f32::NEG_INFINITY, max: f32::INFINITY };
 
     /// The inverse of [`Self::EVERYTHING`]: stretches from positive infinity to negative infinity.
     /// Contains nothing.
-    pub const NOTHING: Self = Self {
-        min: f32::INFINITY,
-        max: f32::NEG_INFINITY,
-    };
+    pub const NOTHING: Self = Self { min: f32::INFINITY, max: f32::NEG_INFINITY };
 
     /// An invalid [`Rangef`] filled with [`f32::NAN`].
-    pub const NAN: Self = Self {
-        min: f32::NAN,
-        max: f32::NAN,
-    };
+    pub const NAN: Self = Self { min: f32::NAN, max: f32::NAN };
 
     #[inline]
     pub fn new(min: f32, max: f32) -> Self {
@@ -39,10 +30,7 @@ impl Rangef {
 
     #[inline]
     pub fn point(min_and_max: f32) -> Self {
-        Self {
-            min: min_and_max,
-            max: min_and_max,
-        }
+        Self { min: min_and_max, max: min_and_max }
     }
 
     /// The length of the range, i.e. `max - min`.
@@ -73,40 +61,28 @@ impl Rangef {
     /// Flip `min` and `max` if needed, so that `min <= max` after.
     #[inline]
     pub fn as_positive(self) -> Self {
-        Self {
-            min: self.min.min(self.max),
-            max: self.min.max(self.max),
-        }
+        Self { min: self.min.min(self.max), max: self.min.max(self.max) }
     }
 
     /// Shrink by this much on each side, keeping the center
     #[inline]
     #[must_use]
     pub fn shrink(self, amnt: f32) -> Self {
-        Self {
-            min: self.min + amnt,
-            max: self.max - amnt,
-        }
+        Self { min: self.min + amnt, max: self.max - amnt }
     }
 
     /// Expand by this much on each side, keeping the center
     #[inline]
     #[must_use]
     pub fn expand(self, amnt: f32) -> Self {
-        Self {
-            min: self.min - amnt,
-            max: self.max + amnt,
-        }
+        Self { min: self.min - amnt, max: self.max + amnt }
     }
 
     /// Flip the min and the max
     #[inline]
     #[must_use]
     pub fn flipped(self) -> Self {
-        Self {
-            min: self.max,
-            max: self.min,
-        }
+        Self { min: self.max, max: self.min }
     }
 
     /// Flip the min and the max
@@ -130,10 +106,7 @@ impl Rangef {
     #[inline]
     #[must_use]
     pub fn intersection(self, other: Self) -> Self {
-        Self {
-            min: self.min.max(other.min),
-            max: self.max.min(other.max),
-        }
+        Self { min: self.min.max(other.min), max: self.max.min(other.max) }
     }
 
     /// The smallest range that contains both ranges.
@@ -149,10 +122,7 @@ impl Rangef {
     #[inline]
     #[must_use]
     pub fn union(self, other: Self) -> Self {
-        Self {
-            min: self.min.min(other.min),
-            max: self.max.max(other.max),
-        }
+        Self { min: self.min.min(other.min), max: self.max.max(other.max) }
     }
 
     /// Do the two ranges intersect?
@@ -261,10 +231,7 @@ impl Mul<f32> for Rangef {
 
     #[inline]
     fn mul(self, factor: f32) -> Self {
-        Self {
-            min: self.min * factor,
-            max: self.max * factor,
-        }
+        Self { min: self.min * factor, max: self.max * factor }
     }
 }
 
@@ -273,10 +240,7 @@ impl Mul<Rangef> for f32 {
 
     #[inline]
     fn mul(self, range: Rangef) -> Rangef {
-        Rangef {
-            min: self * range.min,
-            max: self * range.max,
-        }
+        Rangef { min: self * range.min, max: self * range.max }
     }
 }
 
@@ -285,9 +249,6 @@ impl Div<f32> for Rangef {
 
     #[inline]
     fn div(self, factor: f32) -> Self {
-        Self {
-            min: self.min / factor,
-            max: self.max / factor,
-        }
+        Self { min: self.min / factor, max: self.max / factor }
     }
 }

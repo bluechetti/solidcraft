@@ -41,33 +41,20 @@ struct Entry {
 fn main() -> eframe::Result {
     env_logger::init();
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([700.0, 500.0]),
-        ..Default::default()
-    };
+    let options = eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([700.0, 500.0]), ..Default::default() };
 
     eframe::run_native(
         "egui_inspection: hidden window",
         options,
         Box::new(|cc| {
             let ctx = &cc.egui_ctx;
-            ctx.add_plugin(InspectionPlugin::new(Some(
-                "hidden window repro".to_owned(),
-            )));
+            ctx.add_plugin(InspectionPlugin::new(Some("hidden window repro".to_owned())));
             egui_inspection::serve(ctx, ADDR)?;
 
             let (tx, rx) = mpsc::channel();
-            std::thread::Builder::new()
-                .name("inspector".into())
-                .spawn(move || run_inspector(&tx))
-                .unwrap();
+            std::thread::Builder::new().name("inspector".into()).spawn(move || run_inspector(&tx)).unwrap();
 
-            Ok(Box::new(App {
-                log: Vec::new(),
-                rx,
-                visible: None,
-                restore_at: None,
-            }))
+            Ok(Box::new(App { log: Vec::new(), rx, visible: None, restore_at: None }))
         }),
     )
 }
@@ -88,12 +75,7 @@ fn run_inspector(tx: &mpsc::Sender<Entry>) -> ! {
     loop {
         round += 1;
         let minimize = round == 3;
-        for request in [
-            Request::GetScreenshot {
-                pixels_per_point: None,
-            },
-            Request::GetTree,
-        ] {
+        for request in [Request::GetScreenshot { pixels_per_point: None }, Request::GetTree] {
             let name = match request {
                 Request::GetScreenshot { .. } => "GetScreenshot",
                 _ => "GetTree",
@@ -110,16 +92,8 @@ fn run_inspector(tx: &mpsc::Sender<Entry>) -> ! {
                 Ok(other) => format!("{other:?}"),
                 Err(err) => format!("connection lost: {err}"),
             };
-            log::info!(
-                "{name} took {:.1} s -> {outcome}",
-                start.elapsed().as_secs_f32()
-            );
-            tx.send(Entry {
-                request: name.to_owned(),
-                outcome,
-                seconds: start.elapsed().as_secs_f32(),
-            })
-            .ok();
+            log::info!("{name} took {:.1} s -> {outcome}", start.elapsed().as_secs_f32());
+            tx.send(Entry { request: name.to_owned(), outcome, seconds: start.elapsed().as_secs_f32() }).ok();
             std::thread::sleep(Duration::from_secs(1));
         }
 
@@ -133,16 +107,8 @@ fn run_inspector(tx: &mpsc::Sender<Entry>) -> ! {
 
 /// The `M` keypress that the app turns into a minimize.
 fn press_m() -> Request {
-    let key = |pressed| egui::Event::Key {
-        key: egui::Key::M,
-        physical_key: None,
-        pressed,
-        repeat: false,
-        modifiers: egui::Modifiers::NONE,
-    };
-    Request::ApplyEvents {
-        events: vec![key(true), key(false)],
-    }
+    let key = |pressed| egui::Event::Key { key: egui::Key::M, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE };
+    Request::ApplyEvents { events: vec![key(true), key(false)] }
 }
 
 struct App {
@@ -187,23 +153,14 @@ impl eframe::App for App {
 
             ui.add_space(8.0);
             let pressed_m = ui.input(|i| i.key_pressed(egui::Key::M));
-            if ui
-                .button(format!("Minimize for {HIDE_SECONDS} s (or press M)"))
-                .clicked()
-                || pressed_m
-            {
+            if ui.button(format!("Minimize for {HIDE_SECONDS} s (or press M)")).clicked() || pressed_m {
                 self.restore_at = Some(Instant::now() + Duration::from_secs(HIDE_SECONDS));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
 
             ui.add_space(8.0);
             let info = ctx.input(|i| i.viewport().clone());
-            ui.label(format!(
-                "minimized: {:?}, occluded: {:?}, visible: {:?}",
-                info.minimized,
-                info.occluded,
-                info.visible()
-            ));
+            ui.label(format!("minimized: {:?}, occluded: {:?}, visible: {:?}", info.minimized, info.occluded, info.visible()));
 
             // Something that moves, so it is obvious in a screenshot which frame it is:
             ui.add_space(8.0);
@@ -212,18 +169,11 @@ impl eframe::App for App {
 
             ui.add_space(8.0);
             ui.separator();
-            egui::ScrollArea::vertical()
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    for Entry {
-                        request,
-                        outcome,
-                        seconds,
-                    } in &self.log
-                    {
-                        ui.label(format!("{request} took {seconds:.1} s → {outcome}"));
-                    }
-                });
+            egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
+                for Entry { request, outcome, seconds } in &self.log {
+                    ui.label(format!("{request} took {seconds:.1} s → {outcome}"));
+                }
+            });
         });
     }
 }

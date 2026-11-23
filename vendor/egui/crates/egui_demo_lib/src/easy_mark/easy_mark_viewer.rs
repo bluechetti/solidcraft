@@ -1,8 +1,5 @@
 use super::easy_mark_parser as easy_mark;
-use egui::{
-    Align, Align2, Hyperlink, Layout, Response, RichText, Sense, Separator, Shape, TextStyle, Ui,
-    vec2,
-};
+use egui::{Align, Align2, Hyperlink, Layout, Response, RichText, Sense, Separator, Shape, TextStyle, Ui, vec2};
 
 /// Parse and display a VERY simple and small subset of Markdown.
 pub fn easy_mark(ui: &mut Ui, easy_mark: &str) {
@@ -71,14 +68,9 @@ pub fn item_ui(ui: &mut Ui, item: easy_mark::Item<'_>) {
             ui.allocate_exact_size(vec2(indent, row_height), Sense::hover());
         }
         easy_mark::Item::QuoteIndent => {
-            let rect = ui
-                .allocate_exact_size(vec2(2.0 * one_indent, row_height), Sense::hover())
-                .0;
+            let rect = ui.allocate_exact_size(vec2(2.0 * one_indent, row_height), Sense::hover()).0;
             let rect = rect.expand2(ui.style().spacing.item_spacing * 0.5);
-            ui.painter().line_segment(
-                [rect.center_top(), rect.center_bottom()],
-                (1.0, ui.visuals().weak_text_color()),
-            );
+            ui.painter().line_segment([rect.center_top(), rect.center_bottom()], (1.0, ui.visuals().weak_text_color()));
         }
         easy_mark::Item::BulletPoint => {
             ui.allocate_exact_size(vec2(one_indent, row_height), Sense::hover());
@@ -96,26 +88,13 @@ pub fn item_ui(ui: &mut Ui, item: easy_mark::Item<'_>) {
             rect = rect.expand(1.0); // looks better
             rect.max.x = ui.max_rect().max.x;
             let code_bg_color = ui.visuals().code_bg_color;
-            ui.painter().set(
-                where_to_put_background,
-                Shape::rect_filled(rect, 1.0, code_bg_color),
-            );
+            ui.painter().set(where_to_put_background, Shape::rect_filled(rect, 1.0, code_bg_color));
         }
     }
 }
 
 fn rich_text_from_style(text: &str, style: &easy_mark::Style) -> RichText {
-    let easy_mark::Style {
-        heading,
-        quoted,
-        code,
-        strong,
-        underline,
-        strikethrough,
-        italics,
-        small,
-        raised,
-    } = *style;
+    let easy_mark::Style { heading, quoted, code, strong, underline, strikethrough, italics, small, raised } = *style;
 
     let small = small || raised; // Raised text is also smaller
 
@@ -152,11 +131,7 @@ fn rich_text_from_style(text: &str, style: &easy_mark::Style) -> RichText {
 fn bullet_point(ui: &mut Ui, width: f32) -> Response {
     let row_height = ui.text_style_height(&TextStyle::Body);
     let (rect, response) = ui.allocate_exact_size(vec2(width, row_height), Sense::hover());
-    ui.painter().circle_filled(
-        rect.center(),
-        rect.height() / 8.0,
-        ui.visuals().strong_text_color(),
-    );
+    ui.painter().circle_filled(rect.center(), rect.height() / 8.0, ui.visuals().strong_text_color());
     response
 }
 
@@ -166,12 +141,6 @@ fn numbered_point(ui: &mut Ui, width: f32, number: &str) -> Response {
     let (rect, response) = ui.allocate_exact_size(vec2(width, row_height), Sense::hover());
     let text = format!("{number}.");
     let text_color = ui.visuals().strong_text_color();
-    ui.painter().text(
-        rect.right_center(),
-        Align2::RIGHT_CENTER,
-        text,
-        font_id,
-        text_color,
-    );
+    ui.painter().text(rect.right_center(), Align2::RIGHT_CENTER, text, font_id, text_color);
     response
 }

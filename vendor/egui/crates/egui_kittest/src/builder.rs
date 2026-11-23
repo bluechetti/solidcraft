@@ -272,11 +272,7 @@ impl<State> HarnessBuilder<State> {
     /// assert_eq!(*harness.state(), true);
     /// ```
     #[track_caller]
-    pub fn build_ui_state<'a>(
-        self,
-        app: impl FnMut(&mut egui::Ui, &mut State) + 'a,
-        state: State,
-    ) -> Harness<'a, State> {
+    pub fn build_ui_state<'a>(self, app: impl FnMut(&mut egui::Ui, &mut State) + 'a, state: State) -> Harness<'a, State> {
         Harness::from_builder(self, AppKind::UiState(Box::new(app)), state, None)
     }
 
@@ -284,10 +280,7 @@ impl<State> HarnessBuilder<State> {
     /// The app can be accessed via the [`Harness::state`] / [`Harness::state_mut`] methods.
     #[cfg(feature = "eframe")]
     #[track_caller]
-    pub fn build_eframe<'a>(
-        mut self,
-        build: impl FnOnce(&mut eframe::CreationContext<'a>) -> State,
-    ) -> Harness<'a, State>
+    pub fn build_eframe<'a>(mut self, build: impl FnOnce(&mut eframe::CreationContext<'a>) -> State) -> Harness<'a, State>
     where
         State: eframe::App + 'static,
     {

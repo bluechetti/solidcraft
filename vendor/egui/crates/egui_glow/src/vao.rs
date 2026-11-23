@@ -28,11 +28,7 @@ pub(crate) struct VertexArrayObject {
 }
 
 impl VertexArrayObject {
-    pub(crate) unsafe fn new(
-        gl: &glow::Context,
-        vbo: glow::Buffer,
-        buffer_infos: Vec<BufferInfo>,
-    ) -> Self {
+    pub(crate) unsafe fn new(gl: &glow::Context, vbo: glow::Buffer, buffer_infos: Vec<BufferInfo>) -> Self {
         let vao = if supports_vao(gl) {
             unsafe {
                 let vao = gl.create_vertex_array().unwrap();
@@ -65,11 +61,7 @@ impl VertexArrayObject {
             None
         };
 
-        Self {
-            vao,
-            vbo,
-            buffer_infos,
-        }
+        Self { vao, vbo, buffer_infos }
     }
 
     pub(crate) unsafe fn bind(&self, gl: &glow::Context) {
@@ -131,8 +123,7 @@ fn supports_vao(gl: &glow::Context) -> bool {
             // need to test OES_vertex_array_object .
             let supported_extensions = gl.supported_extensions();
             log::debug!("Supported OpenGL extensions: {supported_extensions:?}");
-            supported_extensions.contains("OES_vertex_array_object")
-                || supported_extensions.contains("GL_OES_vertex_array_object")
+            supported_extensions.contains("OES_vertex_array_object") || supported_extensions.contains("GL_OES_vertex_array_object")
         } else {
             true
         }
@@ -142,8 +133,7 @@ fn supports_vao(gl: &glow::Context) -> bool {
             // need to test OES_vertex_array_object .
             let supported_extensions = gl.supported_extensions();
             log::debug!("Supported OpenGL extensions: {supported_extensions:?}");
-            supported_extensions.contains("OES_vertex_array_object")
-                || supported_extensions.contains("GL_OES_vertex_array_object")
+            supported_extensions.contains("OES_vertex_array_object") || supported_extensions.contains("GL_OES_vertex_array_object")
         } else {
             true
         }
@@ -154,8 +144,7 @@ fn supports_vao(gl: &glow::Context) -> bool {
             // but APPLE's and ATI's very old extension.
             let supported_extensions = gl.supported_extensions();
             log::debug!("Supported OpenGL extensions: {supported_extensions:?}");
-            supported_extensions.contains("ARB_vertex_array_object")
-                || supported_extensions.contains("GL_ARB_vertex_array_object")
+            supported_extensions.contains("ARB_vertex_array_object") || supported_extensions.contains("GL_ARB_vertex_array_object")
         } else {
             true
         }

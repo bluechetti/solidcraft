@@ -6,15 +6,8 @@ use eframe::epaint::text::{FontInsert, InsertFontFamily};
 
 fn main() -> eframe::Result {
     env_logger::init();
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([600.0, 500.0]),
-        ..Default::default()
-    };
-    eframe::run_native(
-        "egui example: font variations",
-        options,
-        Box::new(|cc| Ok(Box::new(MyApp::new(cc)))),
-    )
+    let options = eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([600.0, 500.0]), ..Default::default() };
+    eframe::run_native("egui example: font variations", options, Box::new(|cc| Ok(Box::new(MyApp::new(cc)))))
 }
 
 struct MyApp {
@@ -48,14 +41,8 @@ impl MyApp {
                 }
             }),
             vec![
-                InsertFontFamily {
-                    family: egui::FontFamily::Proportional,
-                    priority: egui::epaint::text::FontPriority::Highest,
-                },
-                InsertFontFamily {
-                    family: egui::FontFamily::Monospace,
-                    priority: egui::epaint::text::FontPriority::Highest,
-                },
+                InsertFontFamily { family: egui::FontFamily::Proportional, priority: egui::epaint::text::FontPriority::Highest },
+                InsertFontFamily { family: egui::FontFamily::Monospace, priority: egui::epaint::text::FontPriority::Highest },
             ],
         ));
 
@@ -81,34 +68,31 @@ impl eframe::App for MyApp {
             ui.heading("Font Variations (Recursive)");
             ui.add_space(4.0);
 
-            egui::Grid::new("variation_sliders")
-                .num_columns(2)
-                .spacing([16.0, 8.0])
-                .show(ui, |ui| {
-                    ui.label("Weight (wght):");
-                    ui.add(egui::Slider::new(&mut self.weight, 300.0..=1000.0));
-                    ui.end_row();
+            egui::Grid::new("variation_sliders").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
+                ui.label("Weight (wght):");
+                ui.add(egui::Slider::new(&mut self.weight, 300.0..=1000.0));
+                ui.end_row();
 
-                    ui.label("Casual (CASL):");
-                    ui.add(egui::Slider::new(&mut self.casual, 0.0..=1.0));
-                    ui.end_row();
+                ui.label("Casual (CASL):");
+                ui.add(egui::Slider::new(&mut self.casual, 0.0..=1.0));
+                ui.end_row();
 
-                    ui.label("Monospace (MONO):");
-                    ui.add(egui::Slider::new(&mut self.mono, 0.0..=1.0));
-                    ui.end_row();
+                ui.label("Monospace (MONO):");
+                ui.add(egui::Slider::new(&mut self.mono, 0.0..=1.0));
+                ui.end_row();
 
-                    ui.label("Slant (slnt):");
-                    ui.add(egui::Slider::new(&mut self.slant, -15.0..=0.0));
-                    ui.end_row();
+                ui.label("Slant (slnt):");
+                ui.add(egui::Slider::new(&mut self.slant, -15.0..=0.0));
+                ui.end_row();
 
-                    ui.label("Cursive (CRSV):");
-                    ui.add(egui::Slider::new(&mut self.cursive, 0.0..=1.0));
-                    ui.end_row();
+                ui.label("Cursive (CRSV):");
+                ui.add(egui::Slider::new(&mut self.cursive, 0.0..=1.0));
+                ui.end_row();
 
-                    ui.label("Font size:");
-                    ui.add(egui::Slider::new(&mut self.font_size, 8.0..=80.0));
-                    ui.end_row();
-                });
+                ui.label("Font size:");
+                ui.add(egui::Slider::new(&mut self.font_size, 8.0..=80.0));
+                ui.end_row();
+            });
 
             ui.separator();
 

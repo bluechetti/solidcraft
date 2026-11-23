@@ -23,23 +23,21 @@ impl DeduplicatedHistory {
     }
 
     fn ui(&self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical()
-            .auto_shrink(false)
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
-                for HistoryEntry { text, repeated } in self.history.iter().rev() {
-                    ui.horizontal(|ui| {
-                        if text.is_empty() {
-                            ui.weak("(empty)");
-                        } else {
-                            ui.label(text);
-                        }
-                        if 1 < *repeated {
-                            ui.weak(format!(" x{repeated}"));
-                        }
-                    });
-                }
-            });
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            for HistoryEntry { text, repeated } in self.history.iter().rev() {
+                ui.horizontal(|ui| {
+                    if text.is_empty() {
+                        ui.weak("(empty)");
+                    } else {
+                        ui.label(text);
+                    }
+                    if 1 < *repeated {
+                        ui.weak(format!(" x{repeated}"));
+                    }
+                });
+            }
+        });
     }
 }
 
@@ -91,9 +89,11 @@ impl crate::View for InputTest {
 
         ui.checkbox(&mut self.late_interaction, "Use Response::interact");
 
-        ui.label("This tests how egui::Response reports events.\n\
+        ui.label(
+            "This tests how egui::Response reports events.\n\
             The different buttons are sensitive to different things.\n\
-            Try interacting with them with any mouse button by clicking, double-clicking, triple-clicking, or dragging them.");
+            Try interacting with them with any mouse button by clicking, double-clicking, triple-clicking, or dragging them.",
+        );
 
         ui.columns(4, |columns| {
             for (i, (sense_name, sense)) in [
@@ -107,8 +107,7 @@ impl crate::View for InputTest {
             {
                 columns[i].push_id(i, |ui| {
                     let response = if self.late_interaction {
-                        let first_response =
-                            ui.add(egui::Button::new(sense_name).sense(egui::Sense::hover()));
+                        let first_response = ui.add(egui::Button::new(sense_name).sense(egui::Sense::hover()));
                         first_response.interact(sense)
                     } else {
                         ui.add(egui::Button::new(sense_name).sense(sense))

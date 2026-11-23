@@ -57,11 +57,7 @@ impl EguiGlow {
         }
     }
 
-    pub fn on_window_event(
-        &mut self,
-        window: &winit::window::Window,
-        event: &winit::event::WindowEvent,
-    ) -> EventResponse {
+    pub fn on_window_event(&mut self, window: &winit::window::Window, event: &winit::event::WindowEvent) -> EventResponse {
         self.egui_winit.on_window_event(window, event)
     }
 
@@ -69,33 +65,20 @@ impl EguiGlow {
     pub fn run(&mut self, window: &winit::window::Window, run_ui: impl FnMut(&mut egui::Ui)) {
         let raw_input = self.egui_winit.take_egui_input(window);
 
-        let egui::FullOutput {
-            platform_output,
-            textures_delta,
-            shapes,
-            pixels_per_point,
-            viewport_output,
-        } = self.egui_ctx.run_ui(raw_input, run_ui);
+        let egui::FullOutput { platform_output, textures_delta, shapes, pixels_per_point, viewport_output } = self.egui_ctx.run_ui(raw_input, run_ui);
 
         if viewport_output.len() > 1 {
             log::warn!("Multiple viewports not yet supported by EguiGlow");
         }
         for (_, ViewportOutput { commands, .. }) in viewport_output {
             let mut actions_requested = Default::default();
-            egui_winit::process_viewport_commands(
-                &self.egui_ctx,
-                &mut self.viewport_info,
-                commands,
-                window,
-                &mut actions_requested,
-            );
+            egui_winit::process_viewport_commands(&self.egui_ctx, &mut self.viewport_info, commands, window, &mut actions_requested);
             for action in actions_requested {
                 log::warn!("{action:?} not yet supported by EguiGlow");
             }
         }
 
-        self.egui_winit
-            .handle_platform_output(window, platform_output);
+        self.egui_winit.handle_platform_output(window, platform_output);
 
         self.shapes = shapes;
         self.pixels_per_point = pixels_per_point;
@@ -117,8 +100,7 @@ impl EguiGlow {
         let pixels_per_point = self.pixels_per_point;
         let clipped_primitives = self.egui_ctx.tessellate(shapes, pixels_per_point);
         let dimensions: [u32; 2] = window.inner_size().into();
-        self.painter
-            .paint_primitives(dimensions, pixels_per_point, &clipped_primitives);
+        self.painter.paint_primitives(dimensions, pixels_per_point, &clipped_primitives);
 
         #[expect(clippy::iter_over_hash_type)] // Order doesn't matter here
         for id in textures_delta.free.drain() {

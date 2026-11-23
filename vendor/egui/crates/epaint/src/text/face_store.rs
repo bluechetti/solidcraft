@@ -14,9 +14,7 @@ impl FontFaceKey {
 
     fn new() -> Self {
         static KEY_COUNTER: AtomicUsize = AtomicUsize::new(1);
-        Self(crate::util::hash(
-            KEY_COUNTER.fetch_add(1, Ordering::Relaxed),
-        ))
+        Self(crate::util::hash(KEY_COUNTER.fetch_add(1, Ordering::Relaxed)))
     }
 }
 
@@ -37,11 +35,7 @@ pub(crate) struct FaceStore {
 
 impl FaceStore {
     pub fn new(options: TextOptions) -> Self {
-        Self {
-            options,
-            by_key: Default::default(),
-            by_name: Default::default(),
-        }
+        Self { options, by_key: Default::default(), by_name: Default::default() }
     }
 
     /// Apply new [`TextOptions`] (hinting, sub-pixel binning) to every face,
@@ -55,21 +49,11 @@ impl FaceStore {
     }
 
     /// Parse a font and add it, unless a font with the same name is already installed.
-    pub fn install(
-        &mut self,
-        name: &str,
-        font_data: &FontData,
-    ) -> Result<FontFaceKey, Box<dyn core::error::Error>> {
+    pub fn install(&mut self, name: &str, font_data: &FontData) -> Result<FontFaceKey, Box<dyn core::error::Error>> {
         if let Some(key) = self.by_name.get(name) {
             return Ok(*key);
         }
-        let font_face = FontFace::new(
-            self.options,
-            name.to_owned(),
-            Arc::clone(&font_data.font),
-            font_data.index,
-            font_data.tweak.clone(),
-        )?;
+        let font_face = FontFace::new(self.options, name.to_owned(), Arc::clone(&font_data.font), font_data.index, font_data.tweak.clone())?;
         let key = FontFaceKey::new();
         self.by_key.insert(key, font_face);
         self.by_name.insert(name.to_owned(), key);

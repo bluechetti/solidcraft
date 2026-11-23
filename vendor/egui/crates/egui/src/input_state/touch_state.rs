@@ -131,24 +131,14 @@ struct ActiveTouch {
 
 impl TouchState {
     pub fn new(device_id: TouchDeviceId) -> Self {
-        Self {
-            device_id,
-            active_touches: Default::default(),
-            gesture_state: None,
-        }
+        Self { device_id, active_touches: Default::default(), gesture_state: None }
     }
 
     pub fn begin_pass(&mut self, time: f64, new: &RawInput, pointer_pos: Option<Pos2>) {
         let mut added_or_removed_touches = false;
         for event in &new.events {
             match *event {
-                Event::Touch {
-                    device_id,
-                    id,
-                    phase,
-                    pos,
-                    force,
-                } if device_id == self.device_id => match phase {
+                Event::Touch { device_id, id, phase, pos, force } if device_id == self.device_id => match phase {
                     TouchPhase::Start => {
                         self.active_touches.insert(id, ActiveTouch { pos, force });
                         added_or_removed_touches = true;
@@ -196,14 +186,8 @@ impl TouchState {
             let zoom_delta = state.current.avg_distance / state_previous.avg_distance;
 
             let zoom_delta_2d = match state.pinch_type {
-                PinchType::Horizontal => Vec2::new(
-                    state.current.avg_abs_distance2.x / state_previous.avg_abs_distance2.x,
-                    1.0,
-                ),
-                PinchType::Vertical => Vec2::new(
-                    1.0,
-                    state.current.avg_abs_distance2.y / state_previous.avg_abs_distance2.y,
-                ),
+                PinchType::Horizontal => Vec2::new(state.current.avg_abs_distance2.x / state_previous.avg_abs_distance2.x, 1.0),
+                PinchType::Vertical => Vec2::new(1.0, state.current.avg_abs_distance2.y / state_previous.avg_abs_distance2.y),
                 PinchType::Proportional => Vec2::splat(zoom_delta),
             };
 
@@ -251,13 +235,7 @@ impl TouchState {
         if num_touches < 2 {
             None
         } else {
-            let mut state = DynGestureState {
-                avg_distance: 0.0,
-                avg_abs_distance2: Vec2::ZERO,
-                avg_pos: Pos2::ZERO,
-                avg_force: 0.0,
-                heading: 0.0,
-            };
+            let mut state = DynGestureState { avg_distance: 0.0, avg_abs_distance2: Vec2::ZERO, avg_pos: Pos2::ZERO, avg_force: 0.0, heading: 0.0 };
             let num_touches_recip = 1. / num_touches as f32;
 
             // first pass: calculate force and center of touch positions:

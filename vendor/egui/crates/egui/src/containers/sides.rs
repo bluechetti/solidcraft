@@ -142,18 +142,8 @@ impl Sides {
         self
     }
 
-    pub fn show<RetL, RetR>(
-        self,
-        ui: &mut Ui,
-        add_left: impl FnOnce(&mut Ui) -> RetL,
-        add_right: impl FnOnce(&mut Ui) -> RetR,
-    ) -> (RetL, RetR) {
-        let Self {
-            height,
-            spacing,
-            mut kind,
-            mut wrap_mode,
-        } = self;
+    pub fn show<RetL, RetR>(self, ui: &mut Ui, add_left: impl FnOnce(&mut Ui) -> RetL, add_right: impl FnOnce(&mut Ui) -> RetR) -> (RetL, RetR) {
+        let Self { height, spacing, mut kind, mut wrap_mode } = self;
         let height = height.unwrap_or_else(|| ui.spacing().interact_size.y);
         let spacing = spacing.unwrap_or_else(|| ui.spacing().item_spacing.x);
 
@@ -167,63 +157,27 @@ impl Sides {
 
         match kind {
             SidesKind::ShrinkLeft => {
-                let (right_rect, result_right) = Self::create_ui(
-                    ui,
-                    top_rect,
-                    Layout::right_to_left(Align::Center),
-                    add_right,
-                    None,
-                );
+                let (right_rect, result_right) = Self::create_ui(ui, top_rect, Layout::right_to_left(Align::Center), add_right, None);
                 let available_width = top_rect.width() - right_rect.width() - spacing;
-                let left_rect_constraint =
-                    top_rect.with_max_x(top_rect.min.x + available_width.at_least(0.0));
-                let (left_rect, result_left) = Self::create_ui(
-                    ui,
-                    left_rect_constraint,
-                    Layout::left_to_right(Align::Center),
-                    add_left,
-                    wrap_mode,
-                );
+                let left_rect_constraint = top_rect.with_max_x(top_rect.min.x + available_width.at_least(0.0));
+                let (left_rect, result_left) = Self::create_ui(ui, left_rect_constraint, Layout::left_to_right(Align::Center), add_left, wrap_mode);
 
                 ui.advance_cursor_after_rect(left_rect | right_rect);
                 (result_left, result_right)
             }
             SidesKind::ShrinkRight => {
-                let (left_rect, result_left) = Self::create_ui(
-                    ui,
-                    top_rect,
-                    Layout::left_to_right(Align::Center),
-                    add_left,
-                    None,
-                );
+                let (left_rect, result_left) = Self::create_ui(ui, top_rect, Layout::left_to_right(Align::Center), add_left, None);
                 let right_rect_constraint = top_rect.with_min_x(left_rect.max.x + spacing);
-                let (right_rect, result_right) = Self::create_ui(
-                    ui,
-                    right_rect_constraint,
-                    Layout::right_to_left(Align::Center),
-                    add_right,
-                    wrap_mode,
-                );
+                let (right_rect, result_right) =
+                    Self::create_ui(ui, right_rect_constraint, Layout::right_to_left(Align::Center), add_right, wrap_mode);
 
                 ui.advance_cursor_after_rect(left_rect | right_rect);
                 (result_left, result_right)
             }
             SidesKind::Extend => {
-                let (left_rect, result_left) = Self::create_ui(
-                    ui,
-                    top_rect,
-                    Layout::left_to_right(Align::Center),
-                    add_left,
-                    None,
-                );
+                let (left_rect, result_left) = Self::create_ui(ui, top_rect, Layout::left_to_right(Align::Center), add_left, None);
                 let right_max_rect = top_rect.with_min_x(left_rect.max.x);
-                let (right_rect, result_right) = Self::create_ui(
-                    ui,
-                    right_max_rect,
-                    Layout::right_to_left(Align::Center),
-                    add_right,
-                    None,
-                );
+                let (right_rect, result_right) = Self::create_ui(ui, right_max_rect, Layout::right_to_left(Align::Center), add_right, None);
 
                 let mut final_rect = left_rect | right_rect;
                 let min_width = left_rect.width() + spacing + right_rect.width();

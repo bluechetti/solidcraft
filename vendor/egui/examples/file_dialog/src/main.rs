@@ -11,11 +11,7 @@ fn main() -> eframe::Result {
             .with_drag_and_drop(true),
         ..Default::default()
     };
-    eframe::run_native(
-        "Native file dialogs and drag-and-drop files",
-        options,
-        Box::new(|_cc| Ok(Box::<MyApp>::default())),
-    )
+    eframe::run_native("Native file dialogs and drag-and-drop files", options, Box::new(|_cc| Ok(Box::<MyApp>::default())))
 }
 
 #[derive(Default)]
@@ -101,19 +97,10 @@ fn preview_files_being_dropped(ctx: &egui::Context) {
             text
         });
 
-        let painter = ctx.layer_painter(LayerId::new(
-            Order::Foreground,
-            Id::unique("file_drop_target"),
-        ));
+        let painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::unique("file_drop_target")));
 
         let content_rect = ctx.content_rect();
         painter.rect_filled(content_rect, 0.0, Color32::from_black_alpha(192));
-        painter.text(
-            content_rect.center(),
-            Align2::CENTER_CENTER,
-            text,
-            TextStyle::Heading.resolve(&ctx.global_style()),
-            Color32::WHITE,
-        );
+        painter.text(content_rect.center(), Align2::CENTER_CENTER, text, TextStyle::Heading.resolve(&ctx.global_style()), Color32::WHITE);
     }
 }

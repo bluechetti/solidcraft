@@ -9,10 +9,7 @@ use egui_extras::Column;
 
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
-        ..Default::default()
-    };
+    let options = eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]), ..Default::default() };
     eframe::run_native(
         "Stack Frame Demo",
         options,
@@ -64,23 +61,15 @@ impl eframe::App for MyApp {
 
                 // nested frames test
                 ui.add_space(20.0);
-                egui::Frame::new()
-                    .stroke(ui.visuals().noninteractive().bg_stroke)
-                    .inner_margin(4)
-                    .outer_margin(4)
-                    .show(ui, |ui| {
+                egui::Frame::new().stroke(ui.visuals().noninteractive().bg_stroke).inner_margin(4).outer_margin(4).show(ui, |ui| {
+                    full_span_widget(ui, false);
+                    stack_ui(ui);
+
+                    egui::Frame::new().stroke(ui.visuals().noninteractive().bg_stroke).inner_margin(8).outer_margin(6).show(ui, |ui| {
                         full_span_widget(ui, false);
                         stack_ui(ui);
-
-                        egui::Frame::new()
-                            .stroke(ui.visuals().noninteractive().bg_stroke)
-                            .inner_margin(8)
-                            .outer_margin(6)
-                            .show(ui, |ui| {
-                                full_span_widget(ui, false);
-                                stack_ui(ui);
-                            });
                     });
+                });
             });
         });
 
@@ -113,27 +102,22 @@ impl eframe::App for MyApp {
 
                 // combobox test
                 ui.add_space(20.0);
-                egui::ComboBox::from_id_salt("combo_box")
-                    .selected_text("click me")
-                    .show_ui(ui, |ui| {
-                        full_span_widget(ui, true);
-                        ui.add_space(20.0);
-                        stack_ui(ui);
-                    });
+                egui::ComboBox::from_id_salt("combo_box").selected_text("click me").show_ui(ui, |ui| {
+                    full_span_widget(ui, true);
+                    ui.add_space(20.0);
+                    stack_ui(ui);
+                });
 
                 // Ui nesting test
                 ui.add_space(20.0);
                 ui.label("UI nesting test:");
-                egui::Frame::new()
-                    .stroke(ui.visuals().noninteractive().bg_stroke)
-                    .inner_margin(4)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.vertical(|ui| {
-                                ui.scope(stack_ui);
-                            });
+                egui::Frame::new().stroke(ui.visuals().noninteractive().bg_stroke).inner_margin(4).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.vertical(|ui| {
+                            ui.scope(stack_ui);
                         });
                     });
+                });
 
                 // table test
                 let mut cell_stack = None;
@@ -172,49 +156,34 @@ impl eframe::App for MyApp {
             });
         });
 
-        egui::Panel::bottom("bottom_panel")
-            .resizable(true)
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink(false)
-                    .show(ui, |ui| {
-                        stack_ui(ui);
-
-                        // full span test
-                        ui.add_space(20.0);
-                        full_span_widget(ui, false);
-                    });
-            });
-
-        egui::Window::new("Window")
-            .pivot(egui::Align2::RIGHT_TOP)
-            .show(ui.ctx(), |ui| {
-                full_span_widget(ui, false);
-                ui.add_space(20.0);
+        egui::Panel::bottom("bottom_panel").resizable(true).show(ui, |ui| {
+            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                 stack_ui(ui);
+
+                // full span test
+                ui.add_space(20.0);
+                full_span_widget(ui, false);
             });
+        });
+
+        egui::Window::new("Window").pivot(egui::Align2::RIGHT_TOP).show(ui.ctx(), |ui| {
+            full_span_widget(ui, false);
+            ui.add_space(20.0);
+            stack_ui(ui);
+        });
 
         let ctx = ui.ctx().clone();
-        egui::Window::new("🔧 Settings")
-            .open(&mut self.show_settings)
-            .vscroll(true)
-            .show(&ctx, |ui| {
-                ctx.settings_ui(ui);
-            });
+        egui::Window::new("🔧 Settings").open(&mut self.show_settings).vscroll(true).show(&ctx, |ui| {
+            ctx.settings_ui(ui);
+        });
 
-        egui::Window::new("🔍 Inspection")
-            .open(&mut self.show_inspection)
-            .vscroll(true)
-            .show(&ctx, |ui| {
-                ctx.inspection_ui(ui);
-            });
+        egui::Window::new("🔍 Inspection").open(&mut self.show_inspection).vscroll(true).show(&ctx, |ui| {
+            ctx.inspection_ui(ui);
+        });
 
-        egui::Window::new("📝 Memory")
-            .open(&mut self.show_memory)
-            .resizable(false)
-            .show(&ctx, |ui| {
-                ctx.memory_ui(ui);
-            });
+        egui::Window::new("📝 Memory").open(&mut self.show_memory).resizable(false).show(&ctx, |ui| {
+            ctx.memory_ui(ui);
+        });
     }
 }
 
@@ -225,27 +194,17 @@ fn full_span_widget(ui: &mut egui::Ui, permanent: bool) {
     let response = ui.label("Full span test");
     let ui_stack = ui.stack();
 
-    let rect = egui::Rect::from_x_y_ranges(
-        full_span_horizontal_range(ui_stack),
-        response.rect.y_range(),
-    );
+    let rect = egui::Rect::from_x_y_ranges(full_span_horizontal_range(ui_stack), response.rect.y_range());
 
     if permanent || response.hovered() {
-        ui.painter().set(
-            bg_shape_idx,
-            Shape::rect_filled(rect, 0.0, ui.visuals().selection.bg_fill),
-        );
+        ui.painter().set(bg_shape_idx, Shape::rect_filled(rect, 0.0, ui.visuals().selection.bg_fill));
     }
 }
 
 /// Find the horizontal range of the enclosing container.
 fn full_span_horizontal_range(ui_stack: &egui::UiStack) -> Rangef {
     for node in ui_stack.iter() {
-        if node.has_visible_frame()
-            || node.is_panel_ui()
-            || node.is_root_ui()
-            || node.kind() == Some(UiKind::TableCell)
-        {
+        if node.has_visible_frame() || node.is_panel_ui() || node.is_root_ui() || node.kind() == Some(UiKind::TableCell) {
             return (node.max_rect + node.frame().inner_margin).x_range();
         }
     }
@@ -262,120 +221,91 @@ fn stack_ui(ui: &mut egui::Ui) {
 }
 
 fn stack_ui_impl(ui: &mut egui::Ui, stack: &egui::UiStack) {
-    egui::Frame::new()
-        .stroke(ui.style().noninteractive().fg_stroke)
-        .inner_margin(4)
-        .show(ui, |ui| {
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    egui::Frame::new().stroke(ui.style().noninteractive().fg_stroke).inner_margin(4).show(ui, |ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
 
-            egui_extras::TableBuilder::new(ui)
-                .column(Column::auto())
-                .column(Column::auto())
-                .column(Column::auto())
-                .column(Column::auto())
-                .column(Column::auto())
-                .column(Column::auto())
-                .header(20.0, |mut header| {
-                    header.col(|ui| {
-                        ui.strong("id");
-                    });
-                    header.col(|ui| {
-                        ui.strong("kind");
-                    });
-                    header.col(|ui| {
-                        ui.strong("stroke");
-                    });
-                    header.col(|ui| {
-                        ui.strong("inner");
-                    });
-                    header.col(|ui| {
-                        ui.strong("outer");
-                    });
-                    header.col(|ui| {
-                        ui.strong("direction");
-                    });
-                })
-                .body(|mut body| {
-                    for node in stack.iter() {
-                        body.row(20.0, |mut row| {
-                            row.col(|ui| {
-                                if ui.label(format!("{:?}", node.unique_id)).hovered() {
-                                    ui.debug_painter().debug_rect(
-                                        node.max_rect,
-                                        egui::Color32::GREEN,
-                                        "max",
-                                    );
-                                    ui.debug_painter().circle_filled(
-                                        node.min_rect.min,
-                                        2.0,
-                                        egui::Color32::RED,
-                                    );
-                                }
-                            });
-                            row.col(|ui| {
-                                let s = if let Some(kind) = node.kind() {
-                                    format!("{kind:?}")
-                                } else {
-                                    "-".to_owned()
-                                };
-
-                                ui.label(s);
-                            });
-                            row.col(|ui| {
-                                let frame = node.frame();
-                                if frame.stroke == egui::Stroke::NONE {
-                                    ui.label("-");
-                                } else {
-                                    let mut layout_job = egui::text::LayoutJob::default();
-                                    layout_job.append(
-                                        "⬛ ",
-                                        0.0,
-                                        egui::TextFormat::simple(
-                                            egui::TextStyle::Body.resolve(ui.style()),
-                                            frame.stroke.color,
-                                        ),
-                                    );
-                                    layout_job.append(
-                                        format!("{}px", frame.stroke.width).as_str(),
-                                        0.0,
-                                        egui::TextFormat::simple(
-                                            egui::TextStyle::Body.resolve(ui.style()),
-                                            ui.style().visuals.text_color(),
-                                        ),
-                                    );
-                                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                                    ui.label(layout_job);
-                                }
-                            });
-                            row.col(|ui| {
-                                ui.label(print_margin(&node.frame().inner_margin));
-                            });
-                            row.col(|ui| {
-                                ui.label(print_margin(&node.frame().outer_margin));
-                            });
-                            row.col(|ui| {
-                                ui.label(format!("{:?}", node.layout_direction));
-                            });
-                        });
-                    }
+        egui_extras::TableBuilder::new(ui)
+            .column(Column::auto())
+            .column(Column::auto())
+            .column(Column::auto())
+            .column(Column::auto())
+            .column(Column::auto())
+            .column(Column::auto())
+            .header(20.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong("id");
                 });
-        });
+                header.col(|ui| {
+                    ui.strong("kind");
+                });
+                header.col(|ui| {
+                    ui.strong("stroke");
+                });
+                header.col(|ui| {
+                    ui.strong("inner");
+                });
+                header.col(|ui| {
+                    ui.strong("outer");
+                });
+                header.col(|ui| {
+                    ui.strong("direction");
+                });
+            })
+            .body(|mut body| {
+                for node in stack.iter() {
+                    body.row(20.0, |mut row| {
+                        row.col(|ui| {
+                            if ui.label(format!("{:?}", node.unique_id)).hovered() {
+                                ui.debug_painter().debug_rect(node.max_rect, egui::Color32::GREEN, "max");
+                                ui.debug_painter().circle_filled(node.min_rect.min, 2.0, egui::Color32::RED);
+                            }
+                        });
+                        row.col(|ui| {
+                            let s = if let Some(kind) = node.kind() { format!("{kind:?}") } else { "-".to_owned() };
+
+                            ui.label(s);
+                        });
+                        row.col(|ui| {
+                            let frame = node.frame();
+                            if frame.stroke == egui::Stroke::NONE {
+                                ui.label("-");
+                            } else {
+                                let mut layout_job = egui::text::LayoutJob::default();
+                                layout_job.append(
+                                    "⬛ ",
+                                    0.0,
+                                    egui::TextFormat::simple(egui::TextStyle::Body.resolve(ui.style()), frame.stroke.color),
+                                );
+                                layout_job.append(
+                                    format!("{}px", frame.stroke.width).as_str(),
+                                    0.0,
+                                    egui::TextFormat::simple(egui::TextStyle::Body.resolve(ui.style()), ui.style().visuals.text_color()),
+                                );
+                                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                                ui.label(layout_job);
+                            }
+                        });
+                        row.col(|ui| {
+                            ui.label(print_margin(&node.frame().inner_margin));
+                        });
+                        row.col(|ui| {
+                            ui.label(print_margin(&node.frame().outer_margin));
+                        });
+                        row.col(|ui| {
+                            ui.label(format!("{:?}", node.layout_direction));
+                        });
+                    });
+                }
+            });
+    });
 }
 
 fn print_margin(margin: &egui::Margin) -> String {
     if margin.is_same() {
         format!("{}px", margin.left)
     } else {
-        let s1 = if margin.left == margin.right {
-            format!("H: {}px", margin.left)
-        } else {
-            format!("L: {}px R: {}px", margin.left, margin.right)
-        };
-        let s2 = if margin.top == margin.bottom {
-            format!("V: {}px", margin.top)
-        } else {
-            format!("T: {}px B: {}px", margin.top, margin.bottom)
-        };
+        let s1 = if margin.left == margin.right { format!("H: {}px", margin.left) } else { format!("L: {}px R: {}px", margin.left, margin.right) };
+        let s2 = if margin.top == margin.bottom { format!("V: {}px", margin.top) } else { format!("T: {}px B: {}px", margin.top, margin.bottom) };
         format!("{s1} / {s2}")
     }
 }

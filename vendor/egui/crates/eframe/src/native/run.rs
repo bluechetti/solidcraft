@@ -44,12 +44,9 @@ fn create_event_loop(native_options: &mut epi::NativeOptions) -> Result<EventLoo
     let mut builder = winit::event_loop::EventLoop::with_user_event();
 
     #[cfg(target_os = "android")]
-    let mut builder =
-        builder.with_android_app(native_options.android_app.take().ok_or_else(|| {
-            crate::Error::AppCreation(Box::from(
-                "`NativeOptions` is missing required `android_app`",
-            ))
-        })?);
+    let mut builder = builder.with_android_app(
+        native_options.android_app.take().ok_or_else(|| crate::Error::AppCreation(Box::from("`NativeOptions` is missing required `android_app`")))?,
+    );
 
     if let Some(hook) = core::mem::take(&mut native_options.event_loop_builder) {
         hook(&mut builder);
@@ -64,10 +61,7 @@ fn create_event_loop(native_options: &mut epi::NativeOptions) -> Result<EventLoo
 /// We reuse the event-loop so we can support closing and opening an eframe window
 /// multiple times. This is just a limitation of winit.
 #[cfg(not(target_os = "ios"))]
-fn with_event_loop<R>(
-    mut native_options: epi::NativeOptions,
-    f: impl FnOnce(&mut EventLoop<UserEvent>, epi::NativeOptions) -> R,
-) -> Result<R> {
+fn with_event_loop<R>(mut native_options: epi::NativeOptions, f: impl FnOnce(&mut EventLoop<UserEvent>, epi::NativeOptions) -> R) -> Result<R> {
     thread_local!(static EVENT_LOOP: core::cell::RefCell<Option<EventLoop<UserEvent>>> = const { core::cell::RefCell::new(None) });
 
     EVENT_LOOP.with(|event_loop| {
@@ -75,11 +69,8 @@ fn with_event_loop<R>(
         // do that as part of the lazy thread local storage initialization and so we instead
         // create the event loop lazily here
         let mut event_loop_lock = event_loop.borrow_mut();
-        let event_loop = if let Some(event_loop) = &mut *event_loop_lock {
-            event_loop
-        } else {
-            event_loop_lock.insert(create_event_loop(&mut native_options)?)
-        };
+        let event_loop =
+            if let Some(event_loop) = &mut *event_loop_lock { event_loop } else { event_loop_lock.insert(create_event_loop(&mut native_options)?) };
         Ok(f(event_loop, native_options))
     })
 }
@@ -108,11 +99,7 @@ impl<T: WinitApp> WinitAppWrapper<T> {
         }
     }
 
-    fn handle_event_result(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        event_result: Result<EventResult>,
-    ) {
+    fn handle_event_result(&mut self, event_loop: &ActiveEventLoop, event_result: Result<EventResult>) {
         let mut exit = false;
         let mut save = false;
 
@@ -124,13 +111,10 @@ impl<T: WinitApp> WinitAppWrapper<T> {
             && let Ok(EventResult::RepaintNow(window_id)) = event_result
         {
             log::trace!("RepaintNow of {window_id:?}");
-            self.windows_next_repaint_times
-                .insert(window_id, Instant::now());
+            self.windows_next_repaint_times.insert(window_id, Instant::now());
 
             // Fix flickering on Windows, see https://github.com/emilk/egui/pull/2280
-            event_result = self
-                .winit_app
-                .run_ui_and_paint(event_loop, window_id, PassMode::Full);
+            event_result = self.winit_app.run_ui_and_paint(event_loop, window_id, PassMode::Full);
         }
 
         let combined_result = event_result.map(|event_result| match event_result {
@@ -140,23 +124,17 @@ impl<T: WinitApp> WinitAppWrapper<T> {
             }
             EventResult::RepaintNow(window_id) => {
                 log::trace!("RepaintNow of {window_id:?}");
-                self.windows_next_repaint_times
-                    .insert(window_id, Instant::now());
+                self.windows_next_repaint_times.insert(window_id, Instant::now());
                 event_result
             }
             EventResult::RepaintNext(window_id) => {
                 log::trace!("RepaintNext of {window_id:?}");
-                self.windows_next_repaint_times
-                    .insert(window_id, Instant::now());
+                self.windows_next_repaint_times.insert(window_id, Instant::now());
                 event_result
             }
             EventResult::RepaintAt(window_id, repaint_time) => {
-                self.windows_next_repaint_times.insert(
-                    window_id,
-                    self.windows_next_repaint_times
-                        .get(&window_id)
-                        .map_or(repaint_time, |last| (*last).min(repaint_time)),
-                );
+                self.windows_next_repaint_times
+                    .insert(window_id, self.windows_next_repaint_times.get(&window_id).map_or(repaint_time, |last| (*last).min(repaint_time)));
                 event_result
             }
             EventResult::Save => {
@@ -207,46 +185,41 @@ impl<T: WinitApp> WinitAppWrapper<T> {
 
         let mut invisible_window_ids = Vec::new();
 
-        self.windows_next_repaint_times
-            .retain(|window_id, repaint_time| {
-                if now < *repaint_time {
-                    return true; // not yet ready
-                }
+        self.windows_next_repaint_times.retain(|window_id, repaint_time| {
+            if now < *repaint_time {
+                return true; // not yet ready
+            }
 
-                if let Some(window) = self.winit_app.window(*window_id) {
-                    // On Windows, invisible windows don't receive RedrawRequested
-                    // events, so pending viewport commands (e.g. Visible(true)) would
-                    // never be processed. We collect these windows to paint them
-                    // directly below.
-                    // See: https://github.com/emilk/egui/issues/5229
-                    if is_invisible_or_minimized(&window) {
-                        invisible_window_ids.push(*window_id);
-                    } else {
-                        log::trace!("request_redraw for {window_id:?}");
-                        // Don't switch to `ControlFlow::Poll` here. `request_redraw`
-                        // is enough to wake the event loop, and on Wayland the
-                        // `RedrawRequested` event is only delivered once the
-                        // compositor sends a frame callback. Polling in the meantime
-                        // busy-loops a whole CPU core.
-                        // See https://github.com/emilk/egui/issues/8326.
-                        window.request_redraw();
-                        self.windows_redraw_deadlines
-                            .entry(*window_id)
-                            .or_insert(now + MISSED_REDRAW_TIMEOUT);
-                    }
+            if let Some(window) = self.winit_app.window(*window_id) {
+                // On Windows, invisible windows don't receive RedrawRequested
+                // events, so pending viewport commands (e.g. Visible(true)) would
+                // never be processed. We collect these windows to paint them
+                // directly below.
+                // See: https://github.com/emilk/egui/issues/5229
+                if is_invisible_or_minimized(&window) {
+                    invisible_window_ids.push(*window_id);
                 } else {
-                    log::trace!("No window found for {window_id:?}");
+                    log::trace!("request_redraw for {window_id:?}");
+                    // Don't switch to `ControlFlow::Poll` here. `request_redraw`
+                    // is enough to wake the event loop, and on Wayland the
+                    // `RedrawRequested` event is only delivered once the
+                    // compositor sends a frame callback. Polling in the meantime
+                    // busy-loops a whole CPU core.
+                    // See https://github.com/emilk/egui/issues/8326.
+                    window.request_redraw();
+                    self.windows_redraw_deadlines.entry(*window_id).or_insert(now + MISSED_REDRAW_TIMEOUT);
                 }
-                false
-            });
+            } else {
+                log::trace!("No window found for {window_id:?}");
+            }
+            false
+        });
 
         // Paint invisible windows directly, since they won't receive
         // RedrawRequested events on Windows. This ensures that viewport
         // commands like Visible(true) are still processed.
         for window_id in &invisible_window_ids {
-            let event_result =
-                self.winit_app
-                    .run_ui_and_paint(event_loop, *window_id, PassMode::Full);
+            let event_result = self.winit_app.run_ui_and_paint(event_loop, *window_id, PassMode::Full);
             self.handle_event_result(event_loop, event_result);
         }
 
@@ -257,28 +230,20 @@ impl<T: WinitApp> WinitAppWrapper<T> {
         if !invisible_window_ids.is_empty() {
             let next_paint = Instant::now() + INVISIBLE_WINDOW_REPAINT_INTERVAL;
             for window_id in &invisible_window_ids {
-                self.windows_next_repaint_times
-                    .entry(*window_id)
-                    .and_modify(|t| *t = (*t).min(next_paint));
+                self.windows_next_repaint_times.entry(*window_id).and_modify(|t| *t = (*t).min(next_paint));
             }
         }
 
         // Keep the app logic running for windows whose `RedrawRequested` is overdue,
         // e.g. because the compositor withholds frame callbacks from a hidden window.
-        let overdue_window_ids: Vec<WindowId> = self
-            .windows_redraw_deadlines
-            .iter()
-            .filter(|(_, deadline)| **deadline <= now)
-            .map(|(window_id, _)| *window_id)
-            .collect();
+        let overdue_window_ids: Vec<WindowId> =
+            self.windows_redraw_deadlines.iter().filter(|(_, deadline)| **deadline <= now).map(|(window_id, _)| *window_id).collect();
         for window_id in overdue_window_ids {
             // `handle_event_result` re-enters `check_redraw_requests`, which may already
             // have handled this window, so only run it if the deadline is still there:
             if self.windows_redraw_deadlines.remove(&window_id).is_some() {
                 log::trace!("RedrawRequested is overdue for {window_id:?}: running logic only");
-                let event_result =
-                    self.winit_app
-                        .run_ui_and_paint(event_loop, window_id, PassMode::LogicOnly);
+                let event_result = self.winit_app.run_ui_and_paint(event_loop, window_id, PassMode::LogicOnly);
                 self.handle_event_result(event_loop, event_result);
             }
         }
@@ -288,12 +253,7 @@ impl<T: WinitApp> WinitAppWrapper<T> {
         // `ControlFlow::Poll` set earlier was never undone once the last timed
         // repaint had been consumed, leaving the loop spinning.
         // See https://github.com/emilk/egui/issues/8326.
-        let next_repaint_time = core::iter::chain(
-            self.windows_next_repaint_times.values(),
-            self.windows_redraw_deadlines.values(),
-        )
-        .min()
-        .copied();
+        let next_repaint_time = core::iter::chain(self.windows_next_repaint_times.values(), self.windows_redraw_deadlines.values()).min().copied();
         event_loop.set_control_flow(match next_repaint_time {
             Some(next_repaint_time) => ControlFlow::WaitUntil(next_repaint_time),
             None => ControlFlow::Wait,
@@ -330,12 +290,7 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
         });
     }
 
-    fn device_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        device_id: winit::event::DeviceId,
-        event: winit::event::DeviceEvent,
-    ) {
+    fn device_event(&mut self, event_loop: &ActiveEventLoop, device_id: winit::event::DeviceId, event: winit::event::DeviceEvent) {
         profiling::function_scope!(egui_winit::short_device_event_description(&event));
 
         // Nb: Make sure this guard is dropped after this function returns.
@@ -354,22 +309,11 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
 
         event_loop_context::with_event_loop_context(event_loop, move || {
             let event_result = match event {
-                UserEvent::RequestRepaint {
-                    when,
-                    cumulative_pass_nr,
-                    viewport_id,
-                } => {
-                    let current_pass_nr = self
-                        .winit_app
-                        .egui_ctx()
-                        .map_or(0, |ctx| ctx.cumulative_pass_nr_for(viewport_id));
-                    if current_pass_nr == cumulative_pass_nr
-                        || current_pass_nr == cumulative_pass_nr + 1
-                    {
+                UserEvent::RequestRepaint { when, cumulative_pass_nr, viewport_id } => {
+                    let current_pass_nr = self.winit_app.egui_ctx().map_or(0, |ctx| ctx.cumulative_pass_nr_for(viewport_id));
+                    if current_pass_nr == cumulative_pass_nr || current_pass_nr == cumulative_pass_nr + 1 {
                         log::trace!("UserEvent::RequestRepaint scheduling repaint at {when:?}");
-                        if let Some(window_id) =
-                            self.winit_app.window_id_from_viewport_id(viewport_id)
-                        {
+                        if let Some(window_id) = self.winit_app.window_id_from_viewport_id(viewport_id) {
                             // Throttle repaints for invisible windows to prevent
                             // high CPU usage on Windows.
                             // See: https://github.com/emilk/egui/issues/7776
@@ -390,9 +334,7 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
                     }
                 }
                 #[cfg(feature = "accesskit")]
-                UserEvent::AccessKitActionRequest(request) => {
-                    self.winit_app.on_accesskit_event(request)
-                }
+                UserEvent::AccessKitActionRequest(request) => self.winit_app.on_accesskit_event(request),
             };
             self.handle_event_result(event_loop, event_result);
         });
@@ -406,12 +348,7 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
         self.check_redraw_requests(event_loop);
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        event: winit::event::WindowEvent,
-    ) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: winit::event::WindowEvent) {
         profiling::function_scope!(egui_winit::short_window_event_description(&event));
 
         // Nb: Make sure this guard is dropped after this function returns.
@@ -419,8 +356,7 @@ impl<T: WinitApp> ApplicationHandler<UserEvent> for WinitAppWrapper<T> {
             let event_result = match event {
                 winit::event::WindowEvent::RedrawRequested => {
                     self.windows_redraw_deadlines.remove(&window_id);
-                    self.winit_app
-                        .run_ui_and_paint(event_loop, window_id, PassMode::Full)
+                    self.winit_app.run_ui_and_paint(event_loop, window_id, PassMode::Full)
                 }
                 _ => self.winit_app.window_event(event_loop, window_id, event),
             };
@@ -456,26 +392,19 @@ fn run_and_exit(event_loop: EventLoop<UserEvent>, winit_app: impl WinitApp) -> R
 // ----------------------------------------------------------------------------
 
 #[cfg(feature = "glow")]
-pub fn run_glow(
-    app_name: &str,
-    mut native_options: epi::NativeOptions,
-    egui_ctx: Option<egui::Context>,
-    app_creator: epi::AppCreator<'_>,
-) -> Result {
+pub fn run_glow(app_name: &str, mut native_options: epi::NativeOptions, egui_ctx: Option<egui::Context>, app_creator: epi::AppCreator<'_>) -> Result {
     use super::glow_integration::GlowWinitApp;
 
     #[cfg(not(target_os = "ios"))]
     if native_options.run_and_return {
         return with_event_loop(native_options, |event_loop, native_options| {
-            let glow_eframe =
-                GlowWinitApp::new(event_loop, app_name, native_options, egui_ctx, app_creator);
+            let glow_eframe = GlowWinitApp::new(event_loop, app_name, native_options, egui_ctx, app_creator);
             run_and_return(event_loop, glow_eframe)
         })?;
     }
 
     let event_loop = create_event_loop(&mut native_options)?;
-    let glow_eframe =
-        GlowWinitApp::new(&event_loop, app_name, native_options, egui_ctx, app_creator);
+    let glow_eframe = GlowWinitApp::new(&event_loop, app_name, native_options, egui_ctx, app_creator);
     run_and_exit(event_loop, glow_eframe)
 }
 
@@ -495,26 +424,19 @@ pub fn create_glow<'a>(
 // ----------------------------------------------------------------------------
 
 #[cfg(feature = "wgpu_no_default_features")]
-pub fn run_wgpu(
-    app_name: &str,
-    mut native_options: epi::NativeOptions,
-    egui_ctx: Option<egui::Context>,
-    app_creator: epi::AppCreator<'_>,
-) -> Result {
+pub fn run_wgpu(app_name: &str, mut native_options: epi::NativeOptions, egui_ctx: Option<egui::Context>, app_creator: epi::AppCreator<'_>) -> Result {
     use super::wgpu_integration::WgpuWinitApp;
 
     #[cfg(not(target_os = "ios"))]
     if native_options.run_and_return {
         return with_event_loop(native_options, |event_loop, native_options| {
-            let wgpu_eframe =
-                WgpuWinitApp::new(event_loop, app_name, native_options, egui_ctx, app_creator);
+            let wgpu_eframe = WgpuWinitApp::new(event_loop, app_name, native_options, egui_ctx, app_creator);
             run_and_return(event_loop, wgpu_eframe)
         })?;
     }
 
     let event_loop = create_event_loop(&mut native_options)?;
-    let wgpu_eframe =
-        WgpuWinitApp::new(&event_loop, app_name, native_options, egui_ctx, app_creator);
+    let wgpu_eframe = WgpuWinitApp::new(&event_loop, app_name, native_options, egui_ctx, app_creator);
     run_and_exit(event_loop, wgpu_eframe)
 }
 
@@ -547,12 +469,7 @@ impl ApplicationHandler<UserEvent> for EframeWinitApplication<'_> {
         self.wrapper.resumed(event_loop);
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: winit::window::WindowId,
-        event: winit::event::WindowEvent,
-    ) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: winit::window::WindowId, event: winit::event::WindowEvent) {
         self.wrapper.window_event(event_loop, window_id, event);
     }
 
@@ -564,12 +481,7 @@ impl ApplicationHandler<UserEvent> for EframeWinitApplication<'_> {
         self.wrapper.user_event(event_loop, event);
     }
 
-    fn device_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        device_id: winit::event::DeviceId,
-        event: winit::event::DeviceEvent,
-    ) {
+    fn device_event(&mut self, event_loop: &ActiveEventLoop, device_id: winit::event::DeviceId, event: winit::event::DeviceEvent) {
         self.wrapper.device_event(event_loop, device_id, event);
     }
 
@@ -593,10 +505,7 @@ impl ApplicationHandler<UserEvent> for EframeWinitApplication<'_> {
 
 impl<'a> EframeWinitApplication<'a> {
     pub(crate) fn new<T: ApplicationHandler<UserEvent> + 'a>(app: T) -> Self {
-        Self {
-            wrapper: Box::new(app),
-            control_flow: ControlFlow::default(),
-        }
+        Self { wrapper: Box::new(app), control_flow: ControlFlow::default() }
     }
 
     /// Pump the `EventLoop` to check for and dispatch pending events to this application.
@@ -607,11 +516,7 @@ impl<'a> EframeWinitApplication<'a> {
     /// This is useful when your [`EventLoop`] is not the main event loop for your application.
     /// See the `external_eventloop_async` example.
     #[cfg(not(target_os = "ios"))]
-    pub fn pump_eframe_app(
-        &mut self,
-        event_loop: &mut EventLoop<UserEvent>,
-        timeout: Option<core::time::Duration>,
-    ) -> EframePumpStatus {
+    pub fn pump_eframe_app(&mut self, event_loop: &mut EventLoop<UserEvent>, timeout: Option<core::time::Duration>) -> EframePumpStatus {
         use winit::platform::pump_events::{EventLoopExtPumpEvents as _, PumpStatus};
 
         match event_loop.pump_app_events(timeout, self) {

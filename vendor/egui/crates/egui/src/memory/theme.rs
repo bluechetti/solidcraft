@@ -22,10 +22,7 @@ impl Theme {
 
     /// Default style for this theme.
     pub fn default_style(self) -> crate::Style {
-        crate::Style {
-            visuals: self.default_visuals(),
-            ..Default::default()
-        }
+        crate::Style { visuals: self.default_visuals(), ..Default::default() }
     }
 
     /// Chooses between [`Self::Dark`] or [`Self::Light`] based on a boolean value.
@@ -41,19 +38,11 @@ impl Theme {
     pub(crate) fn small_toggle_button(self, ui: &mut crate::Ui) -> Option<Self> {
         #![expect(clippy::collapsible_else_if)]
         if self == Self::Dark {
-            if ui
-                .add(Button::new("☀️").frame(false))
-                .on_hover_text("Switch to light mode")
-                .clicked()
-            {
+            if ui.add(Button::new("☀️").frame(false)).on_hover_text("Switch to light mode").clicked() {
                 return Some(Self::Light);
             }
         } else {
-            if ui
-                .add(Button::new("🌙").frame(false))
-                .on_hover_text("Switch to dark mode")
-                .clicked()
-            {
+            if ui.add(Button::new("🌙").frame(false)).on_hover_text("Switch to dark mode").clicked() {
                 return Some(Self::Dark);
             }
         }
@@ -116,14 +105,11 @@ impl ThemePreference {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
 
-            ui.selectable_value(self, Self::System, Self::System.icon())
-                .on_hover_ui(system_hover_ui);
+            ui.selectable_value(self, Self::System, Self::System.icon()).on_hover_ui(system_hover_ui);
 
-            ui.selectable_value(self, Self::Dark, Self::Dark.icon())
-                .on_hover_text("Use the dark mode theme");
+            ui.selectable_value(self, Self::Dark, Self::Dark.icon()).on_hover_text("Use the dark mode theme");
 
-            ui.selectable_value(self, Self::Light, Self::Light.icon())
-                .on_hover_text("Use the light mode theme");
+            ui.selectable_value(self, Self::Light, Self::Light.icon()).on_hover_text("Use the light mode theme");
         });
     }
 

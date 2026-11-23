@@ -7,13 +7,10 @@ impl crate::Demo for IdTest {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                use crate::View as _;
-                self.ui(ui);
-            });
+        egui::Window::new(self.name()).open(open).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| {
+            use crate::View as _;
+            self.ui(ui);
+        });
     }
 }
 
@@ -24,12 +21,14 @@ impl crate::View for IdTest {
 
         ui.heading("Name collision example");
 
-        ui.label("\
+        ui.label(
+            "\
             Widgets that store state require unique and persisting identifiers so we can track their state between frames.\n\
             For instance, collapsible headers needs to store whether or not they are open. \
             Their Id:s are derived from their names. \
             If you fail to give them unique names then clicking one will open both. \
-            To help you debug this, an error message is printed on screen:");
+            To help you debug this, an error message is printed on screen:",
+        );
 
         ui.collapsing("Collapsing header", |ui| {
             ui.label("Contents of first foldable ui");

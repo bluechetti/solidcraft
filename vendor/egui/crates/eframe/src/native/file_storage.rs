@@ -22,18 +22,10 @@ pub fn storage_dir(app_id: &str) -> Option<PathBuf> {
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
             .or_else(|| std::env::home_dir().map(|p| p.join(".local").join("share")))
-            .map(|p| {
-                p.join(
-                    app_id
-                        .to_lowercase()
-                        .replace(|c: char| c.is_ascii_whitespace(), ""),
-                )
-            }),
-        OS::Mac => std::env::home_dir().map(|p| {
-            p.join("Library")
-                .join("Application Support")
-                .join(app_id.replace(|c: char| c.is_ascii_whitespace(), "-"))
-        }),
+            .map(|p| p.join(app_id.to_lowercase().replace(|c: char| c.is_ascii_whitespace(), ""))),
+        OS::Mac => {
+            std::env::home_dir().map(|p| p.join("Library").join("Application Support").join(app_id.replace(|c: char| c.is_ascii_whitespace(), "-")))
+        }
         OS::Windows => roaming_appdata().map(|p| p.join(app_id).join("data")),
         OS::Unknown | OS::Android | OS::IOS => None,
     }
@@ -51,9 +43,7 @@ fn roaming_appdata() -> Option<PathBuf> {
 
     use windows_sys::Win32::Foundation::S_OK;
     use windows_sys::Win32::System::Com::CoTaskMemFree;
-    use windows_sys::Win32::UI::Shell::{
-        FOLDERID_RoamingAppData, KF_FLAG_DONT_VERIFY, SHGetKnownFolderPath,
-    };
+    use windows_sys::Win32::UI::Shell::{FOLDERID_RoamingAppData, KF_FLAG_DONT_VERIFY, SHGetKnownFolderPath};
 
     unsafe extern "C" {
         fn wcslen(buf: *const u16) -> usize;
@@ -62,14 +52,7 @@ fn roaming_appdata() -> Option<PathBuf> {
 
     // SAFETY: SHGetKnownFolderPath allocates for us, we don't pass any pointers to it.
     // See https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shgetknownfolderpath
-    let result = unsafe {
-        SHGetKnownFolderPath(
-            &FOLDERID_RoamingAppData,
-            KF_FLAG_DONT_VERIFY as u32,
-            core::ptr::null_mut(),
-            &raw mut path_raw,
-        )
-    };
+    let result = unsafe { SHGetKnownFolderPath(&FOLDERID_RoamingAppData, KF_FLAG_DONT_VERIFY as u32, core::ptr::null_mut(), &raw mut path_raw) };
 
     let path = if result == S_OK {
         // SAFETY: SHGetKnownFolderPath indicated success and is supposed to allocate a null-terminated string for us.
@@ -119,12 +102,7 @@ impl FileStorage {
         profiling::function_scope!();
         let ron_filepath: PathBuf = ron_filepath.into();
         log::debug!("Loading app state from {}…", ron_filepath.display());
-        Self {
-            kv: read_ron(&ron_filepath).unwrap_or_default(),
-            ron_filepath,
-            dirty: false,
-            last_save_join_handle: None,
-        }
+        Self { kv: read_ron(&ron_filepath).unwrap_or_default(), ron_filepath, dirty: false, last_save_join_handle: None }
     }
 
     /// Find a good place to put the files that the OS likes.
@@ -132,10 +110,7 @@ impl FileStorage {
         profiling::function_scope!();
         if let Some(data_dir) = storage_dir(app_id) {
             if let Err(err) = std::fs::create_dir_all(&data_dir) {
-                log::warn!(
-                    "Saving disabled: Failed to create app path at {}: {err}",
-                    data_dir.display()
-                );
+                log::warn!("Saving disabled: Failed to create app path at {}: {err}", data_dir.display());
                 None
             } else {
                 Some(Self::from_ron_filepath(data_dir.join("app.ron")))
@@ -177,11 +152,9 @@ impl crate::Storage for FileStorage {
                 join_handle.join().ok();
             }
 
-            let result = std::thread::Builder::new()
-                .name("eframe_persist".to_owned())
-                .spawn(move || {
-                    save_to_disk(&file_path, &kv);
-                });
+            let result = std::thread::Builder::new().name("eframe_persist".to_owned()).spawn(move || {
+                save_to_disk(&file_path, &kv);
+            });
             match result {
                 Ok(join_handle) => {
                     self.last_save_join_handle = Some(join_handle);
@@ -210,9 +183,8 @@ fn save_to_disk(file_path: &PathBuf, kv: &HashMap<String, String>) {
             let config = Default::default();
 
             profiling::scope!("ron::serialize");
-            if let Err(err) = ron::Options::default()
-                .to_io_writer_pretty(&mut writer, &kv, config)
-                .and_then(|()| writer.flush().map_err(|err| err.into()))
+            if let Err(err) =
+                ron::Options::default().to_io_writer_pretty(&mut writer, &kv, config).and_then(|()| writer.flush().map_err(|err| err.into()))
             {
                 log::warn!("Failed to serialize app state: {err}");
             } else {
@@ -255,16 +227,13 @@ mod tests {
     use super::*;
 
     fn directories_storage_dir(app_id: &str) -> Option<PathBuf> {
-        directories::ProjectDirs::from("", "", app_id)
-            .map(|proj_dirs| proj_dirs.data_dir().to_path_buf())
+        directories::ProjectDirs::from("", "", app_id).map(|proj_dirs| proj_dirs.data_dir().to_path_buf())
     }
 
     #[test]
     fn storage_path_matches_directories() {
         use super::storage_dir;
-        for app_id in [
-            "MyApp", "My App", "my_app", "my-app", "My.App", "my/app", "my:app", r"my\app",
-        ] {
+        for app_id in ["MyApp", "My App", "my_app", "my-app", "My.App", "my/app", "my:app", r"my\app"] {
             assert_eq!(directories_storage_dir(app_id), storage_dir(app_id));
         }
     }

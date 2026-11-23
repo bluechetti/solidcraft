@@ -9,12 +9,7 @@ pub struct Panels {
 
 impl Default for Panels {
     fn default() -> Self {
-        Self {
-            left: true,
-            right: true,
-            top: true,
-            bottom: false,
-        }
+        Self { left: true, right: true, top: true, bottom: false }
     }
 }
 
@@ -39,50 +34,34 @@ impl crate::View for Panels {
     fn ui(&mut self, ui: &mut egui::Ui) {
         // Note that the order we add the panels is very important!
 
-        let Self {
-            left,
-            right,
-            top,
-            bottom,
-        } = self;
+        let Self { left, right, top, bottom } = self;
 
-        egui::Panel::top("top_panel")
-            .resizable(true)
-            .min_size(32.0)
-            .show_collapsible(ui, top, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.heading("Expandable Upper Panel");
-                    });
-                    lorem_ipsum(ui);
-                });
-            });
-
-        egui::Panel::left("left_panel")
-            .resizable(true)
-            .default_size(150.0)
-            .size_range(80.0..=200.0)
-            .show_collapsible(ui, left, |ui| {
+        egui::Panel::top("top_panel").resizable(true).min_size(32.0).show_collapsible(ui, top, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.vertical_centered(|ui| {
-                    ui.heading("Left Panel");
+                    ui.heading("Expandable Upper Panel");
                 });
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    lorem_ipsum(ui);
-                });
+                lorem_ipsum(ui);
             });
+        });
 
-        egui::Panel::right("right_panel")
-            .resizable(true)
-            .default_size(150.0)
-            .size_range(80.0..=200.0)
-            .show_collapsible(ui, right, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.heading("Right Panel");
-                });
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    lorem_ipsum(ui);
-                });
+        egui::Panel::left("left_panel").resizable(true).default_size(150.0).size_range(80.0..=200.0).show_collapsible(ui, left, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.heading("Left Panel");
             });
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                lorem_ipsum(ui);
+            });
+        });
+
+        egui::Panel::right("right_panel").resizable(true).default_size(150.0).size_range(80.0..=200.0).show_collapsible(ui, right, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.heading("Right Panel");
+            });
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                lorem_ipsum(ui);
+            });
+        });
 
         // Bottom panel: drag the top edge down past the expanded panel's min size
         // to collapse; drag it back up past the collapsed panel's max size to
@@ -92,12 +71,8 @@ impl crate::View for Panels {
         egui::Panel::show_switched(
             ui,
             bottom,
-            egui::Panel::bottom("bottom_panel_collapsed")
-                .resizable(true)
-                .exact_size(20.0),
-            egui::Panel::bottom("bottom_panel_expanded")
-                .resizable(true)
-                .size_range(64.0..=128.0),
+            egui::Panel::bottom("bottom_panel_collapsed").resizable(true).exact_size(20.0),
+            egui::Panel::bottom("bottom_panel_expanded").resizable(true).size_range(64.0..=128.0),
             |ui, expanded| {
                 if expanded {
                     ui.vertical_centered(|ui| {
@@ -138,12 +113,9 @@ impl crate::View for Panels {
 }
 
 fn lorem_ipsum(ui: &mut egui::Ui) {
-    ui.with_layout(
-        egui::Layout::top_down(egui::Align::LEFT).with_cross_justify(true),
-        |ui| {
-            ui.label(egui::RichText::new(crate::LOREM_IPSUM_LONG).small().weak());
-            ui.add(egui::Separator::default().grow(8.0));
-            ui.label(egui::RichText::new(crate::LOREM_IPSUM_LONG).small().weak());
-        },
-    );
+    ui.with_layout(egui::Layout::top_down(egui::Align::LEFT).with_cross_justify(true), |ui| {
+        ui.label(egui::RichText::new(crate::LOREM_IPSUM_LONG).small().weak());
+        ui.add(egui::Separator::default().grow(8.0));
+        ui.label(egui::RichText::new(crate::LOREM_IPSUM_LONG).small().weak());
+    });
 }

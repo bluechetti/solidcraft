@@ -1,9 +1,6 @@
 use core::ops::RangeInclusive;
 
-use crate::{
-    Color32, IntoAtoms, Label, Rangef, Response, Sense, TextWrapMode, Ui, Widget, WidgetInfo,
-    WidgetText, emath, style::HandleShape,
-};
+use crate::{Color32, IntoAtoms, Label, Rangef, Response, Sense, TextWrapMode, Ui, Widget, WidgetInfo, WidgetText, emath, style::HandleShape};
 
 use super::drag_value::{GetSetValue, get, set};
 use super::slider_core::{self, DragValueSettings, SliderCore, SliderGeometry, SliderSpec};
@@ -74,10 +71,7 @@ impl<'a> Slider<'a> {
     ///
     /// The `value` given will be clamped to the `range`,
     /// unless you change this behavior with [`Self::clamping`].
-    pub fn new<Num: emath::Numeric>(
-        value: &'a mut Num,
-        range: impl Into<RangeInclusive<Num>>,
-    ) -> Self {
+    pub fn new<Num: emath::Numeric>(value: &'a mut Num, range: impl Into<RangeInclusive<Num>>) -> Self {
         let range = range.into();
         let range_f64 = range.start().to_f64()..=range.end().to_f64();
         let slf = Self::from_get_set(range_f64, move |v: Option<f64>| {
@@ -94,15 +88,8 @@ impl<'a> Slider<'a> {
     ///
     /// The closure is called with `None` to read the value and with `Some(new_value)` to write it,
     /// and returns the value either way.
-    pub fn from_get_set(
-        range: RangeInclusive<f64>,
-        get_set_value: impl 'a + FnMut(Option<f64>) -> f64,
-    ) -> Self {
-        Self {
-            get_set_value: Box::new(get_set_value),
-            core: SliderCore::new(range),
-            trailing_fill: None,
-        }
+    pub fn from_get_set(range: RangeInclusive<f64>, get_set_value: impl 'a + FnMut(Option<f64>) -> f64) -> Self {
+        Self { get_set_value: Box::new(get_set_value), core: SliderCore::new(range), trailing_fill: None }
     }
 
     /// Helper: equivalent to `self.precision(0).smallest_positive(1.0)`.
@@ -402,10 +389,7 @@ impl<'a> Slider<'a> {
     ///     }));
     /// # });
     /// ```
-    pub fn custom_formatter(
-        mut self,
-        formatter: impl 'a + Fn(f64, RangeInclusive<usize>) -> String,
-    ) -> Self {
+    pub fn custom_formatter(mut self, formatter: impl 'a + Fn(f64, RangeInclusive<usize>) -> String) -> Self {
         self.core.drag_value.format = self.core.drag_value.format.custom_formatter(formatter);
         self
     }
@@ -461,11 +445,7 @@ impl<'a> Slider<'a> {
     /// ```
     #[inline]
     pub fn binary(mut self, min_width: usize, twos_complement: bool) -> Self {
-        self.core.drag_value.format = self
-            .core
-            .drag_value
-            .format
-            .binary(min_width, twos_complement);
+        self.core.drag_value.format = self.core.drag_value.format.binary(min_width, twos_complement);
         self
     }
 
@@ -479,11 +459,7 @@ impl<'a> Slider<'a> {
     /// ```
     #[inline]
     pub fn octal(mut self, min_width: usize, twos_complement: bool) -> Self {
-        self.core.drag_value.format = self
-            .core
-            .drag_value
-            .format
-            .octal(min_width, twos_complement);
+        self.core.drag_value.format = self.core.drag_value.format.octal(min_width, twos_complement);
         self
     }
 
@@ -497,11 +473,7 @@ impl<'a> Slider<'a> {
     /// ```
     #[inline]
     pub fn hexadecimal(mut self, min_width: usize, twos_complement: bool, upper: bool) -> Self {
-        self.core.drag_value.format =
-            self.core
-                .drag_value
-                .format
-                .hexadecimal(min_width, twos_complement, upper);
+        self.core.drag_value.format = self.core.drag_value.format.hexadecimal(min_width, twos_complement, upper);
         self
     }
 
@@ -530,8 +502,7 @@ impl Slider<'_> {
         let geom = self.core.geometry(response.rect, ui);
 
         if let Some(pointer_position_2d) = response.interact_pointer_pos() {
-            let new_value =
-                slider_core::value_at_pointer(ui, &geom, pointer_position_2d, self.core.smart_aim);
+            let new_value = slider_core::value_at_pointer(ui, &geom, pointer_position_2d, self.core.smart_aim);
             self.set_value(new_value);
         }
 
@@ -554,9 +525,7 @@ impl Slider<'_> {
             let center = geom.marker_center(geom.position_from_value(value), &rail_rect);
 
             // Decide if we should add trailing fill.
-            let trailing_fill = self
-                .trailing_fill
-                .unwrap_or_else(|| ui.visuals().slider_trailing_fill);
+            let trailing_fill = self.trailing_fill.unwrap_or_else(|| ui.visuals().slider_trailing_fill);
 
             if trailing_fill {
                 // The fill runs from the start of the rail to the handle. A range slider hands
@@ -600,24 +569,14 @@ impl Slider<'_> {
         }
         response.widget_info(|| WidgetInfo::slider(ui.is_enabled(), value, self.core.text.text()));
 
-        slider_core::declare_accesskit_slider(
-            ui,
-            response.id,
-            value,
-            &self.core.range,
-            &self.core.editable_range(),
-            self.core.step,
-        );
+        slider_core::declare_accesskit_slider(ui, response.id, value, &self.core.range, &self.core.editable_range(), self.core.step);
 
         let slider_response = response.clone();
 
         let value_response = if self.core.drag_value.show {
             let geom = self.core.geometry(response.rect, ui);
             let value_response = self.value_ui(ui, &geom);
-            if value_response.gained_focus()
-                || value_response.has_focus()
-                || value_response.lost_focus()
-            {
+            if value_response.gained_focus() || value_response.has_focus() || value_response.lost_focus() {
                 // Use the [`DragValue`] id as the id of the whole widget,
                 // so that the focus events work as expected.
                 response = value_response.union(response);
@@ -631,8 +590,7 @@ impl Slider<'_> {
         };
 
         if !self.core.text.is_empty() {
-            let label_response =
-                ui.add(Label::new(self.core.text.clone()).wrap_mode(TextWrapMode::Extend));
+            let label_response = ui.add(Label::new(self.core.text.clone()).wrap_mode(TextWrapMode::Extend));
             // The slider already has an accessibility label via widget info,
             // but sometimes it's useful for a screen reader to know
             // that a piece of text is a label for another widget,

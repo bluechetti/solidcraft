@@ -1,6 +1,4 @@
-use crate::{
-    ContainerAtom, Id, IdSalt, IntoAtoms, Response, Sense, SizedContainerAtom, Ui, Widget,
-};
+use crate::{ContainerAtom, Id, IdSalt, IntoAtoms, Response, Sense, SizedContainerAtom, Ui, Widget};
 use core::ops::{Deref, DerefMut};
 use emath::{Rect, Vec2};
 use smallvec::SmallVec;
@@ -38,12 +36,7 @@ impl Default for WidgetAtom<'_> {
 
 impl<'a> WidgetAtom<'a> {
     pub fn new(atoms: impl IntoAtoms<'a>) -> Self {
-        Self {
-            id: None,
-            sense: Sense::hover(),
-            selectable: false,
-            container: ContainerAtom::new(atoms),
-        }
+        Self { id: None, sense: Sense::hover(), selectable: false, container: ContainerAtom::new(atoms) }
     }
 
     /// Set the [`Id`] used to allocate a [`Response`].
@@ -88,30 +81,16 @@ impl<'a> WidgetAtom<'a> {
     /// clamped by `max_size`/`min_size`, exactly like [`Self::allocate`] does with
     /// [`Ui::available_size`].
     pub fn measure(self, ui: &Ui, available_size: Vec2) -> SizedWidgetAtom<'a> {
-        let Self {
-            id,
-            mut sense,
-            selectable,
-            container,
-        } = self;
+        let Self { id, mut sense, selectable, container } = self;
         if selectable {
             let allow_drag_to_select = ui.input(|i| !i.has_touch_screen());
-            let mut select_sense = if allow_drag_to_select {
-                Sense::click_and_drag()
-            } else {
-                Sense::click()
-            };
+            let mut select_sense = if allow_drag_to_select { Sense::click_and_drag() } else { Sense::click() };
             select_sense -= Sense::FOCUSABLE;
             sense |= select_sense;
         }
         let id = id.unwrap_or_else(|| ui.next_auto_id());
         let container = container.measure(ui, available_size);
-        SizedWidgetAtom {
-            id,
-            sense,
-            selectable,
-            container,
-        }
+        SizedWidgetAtom { id, sense, selectable, container }
     }
 
     /// Calculate sizes, create [`crate::Galley`]s and allocate a [`Response`].
@@ -149,11 +128,7 @@ impl<'a> SizedWidgetAtom<'a> {
         let mut response = ui.interact(rect, self.id, self.sense);
         response.set_intrinsic_size(self.container.intrinsic_size);
 
-        AllocatedWidgetAtom {
-            container: self.container,
-            selectable: self.selectable,
-            response,
-        }
+        AllocatedWidgetAtom { container: self.container, selectable: self.selectable, response }
     }
 
     /// Interact at `rect` and paint the [`crate::Frame`] and atoms there.
@@ -163,13 +138,8 @@ impl<'a> SizedWidgetAtom<'a> {
     /// atom-based widget inside another.
     pub fn paint_at(self, ui: &Ui, rect: Rect) -> WidgetAtomResponse {
         let response = ui.interact(rect, self.id, self.sense);
-        let custom_rects =
-            self.container
-                .paint_at_with_selection(ui, rect, self.selectable.then_some(&response));
-        WidgetAtomResponse {
-            response,
-            custom_rects,
-        }
+        let custom_rects = self.container.paint_at_with_selection(ui, rect, self.selectable.then_some(&response));
+        WidgetAtomResponse { response, custom_rects }
     }
 }
 
@@ -191,15 +161,8 @@ impl AllocatedWidgetAtom<'_> {
     /// Paint the [`crate::Frame`] and individual [`crate::Atom`]s at the allocated [`Response`]'s rect.
     pub fn paint(self, ui: &Ui) -> WidgetAtomResponse {
         let rect = self.response.rect;
-        let custom_rects = self.container.paint_at_with_selection(
-            ui,
-            rect,
-            self.selectable.then_some(&self.response),
-        );
-        WidgetAtomResponse {
-            response: self.response,
-            custom_rects,
-        }
+        let custom_rects = self.container.paint_at_with_selection(ui, rect, self.selectable.then_some(&self.response));
+        WidgetAtomResponse { response: self.response, custom_rects }
     }
 }
 
@@ -215,10 +178,7 @@ pub struct WidgetAtomResponse {
 
 impl WidgetAtomResponse {
     pub fn empty(response: Response) -> Self {
-        Self {
-            response,
-            custom_rects: Default::default(),
-        }
+        Self { response, custom_rects: Default::default() }
     }
 
     pub fn custom_rects(&self) -> impl Iterator<Item = (IdSalt, Rect)> + '_ {
@@ -229,9 +189,7 @@ impl WidgetAtomResponse {
     ///
     /// NOTE: Don't `unwrap` rects, they might be empty when the widget is not visible.
     pub fn rect(&self, id: IdSalt) -> Option<Rect> {
-        self.custom_rects
-            .iter()
-            .find_map(|(i, r)| if *i == id { Some(*r) } else { None })
+        self.custom_rects.iter().find_map(|(i, r)| if *i == id { Some(*r) } else { None })
     }
 }
 

@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
 use egui::{
-    Align2, Color32, FontId, Image, Mesh, Pos2, Rect, Response, Rgba, RichText, Sense, Shape,
-    Stroke, TextureHandle, TextureOptions, Ui, Vec2, emath::GuiRounding as _, epaint, lerp, pos2,
-    vec2, widgets::color_picker::show_color,
+    Align2, Color32, FontId, Image, Mesh, Pos2, Rect, Response, Rgba, RichText, Sense, Shape, Stroke, TextureHandle, TextureOptions, Ui, Vec2,
+    emath::GuiRounding as _, epaint, lerp, pos2, vec2, widgets::color_picker::show_color,
 };
 
 const GRADIENT_SIZE: Vec2 = vec2(256.0, 18.0);
@@ -25,11 +24,7 @@ pub struct ColorTest {
 
 impl Default for ColorTest {
     fn default() -> Self {
-        Self {
-            tex_mngr: Default::default(),
-            vertex_gradients: true,
-            texture_gradients: true,
-        }
+        Self { tex_mngr: Default::default(), vertex_gradients: true, texture_gradients: true }
     }
 }
 
@@ -118,12 +113,8 @@ impl ColorTest {
                 let tex = self.tex_mngr.get(ui.ctx(), &g);
                 let texel_offset = 0.5 / (g.0.len() as f32);
                 let uv = Rect::from_min_max(pos2(texel_offset, 0.0), pos2(1.0 - texel_offset, 1.0));
-                ui.add(
-                    Image::from_texture((tex.id(), GRADIENT_SIZE))
-                        .tint(vertex_color)
-                        .uv(uv),
-                )
-                .on_hover_text(format!("A texture that is {} texels wide", g.0.len()));
+                ui.add(Image::from_texture((tex.id(), GRADIENT_SIZE)).tint(vertex_color).uv(uv))
+                    .on_hover_text(format!("A texture that is {} texels wide", g.0.len()));
                 ui.label("GPU result");
             });
         });
@@ -182,12 +173,7 @@ impl ColorTest {
         ui.separator();
 
         ui.label("Additive blending: add more and more blue to the red background:");
-        self.show_gradients(
-            ui,
-            RED,
-            (TRANSPARENT, Color32::from_rgb_additive(0, 0, 255)),
-            Interpolation::Gamma,
-        );
+        self.show_gradients(ui, RED, (TRANSPARENT, Color32::from_rgb_additive(0, 0, 255)), Interpolation::Gamma);
 
         ui.separator();
 
@@ -195,13 +181,7 @@ impl ColorTest {
         self.show_gradients(ui, WHITE, (RED, GREEN), Interpolation::Gamma);
     }
 
-    fn show_gradients(
-        &mut self,
-        ui: &mut Ui,
-        bg_fill: Color32,
-        (left, right): (Color32, Color32),
-        interpolation: Interpolation,
-    ) {
+    fn show_gradients(&mut self, ui: &mut Ui, bg_fill: Color32, (left, right): (Color32, Color32), interpolation: Interpolation) {
         let is_opaque = left.is_opaque() && right.is_opaque();
 
         ui.horizontal(|ui| {
@@ -223,20 +203,9 @@ impl ColorTest {
                 self.vertex_gradient(ui, "Ground Truth (CPU gradient) - vertices", bg_fill, &g);
                 self.tex_gradient(ui, "Ground Truth (CPU gradient) - texture", bg_fill, &g);
             } else {
-                let g = Gradient::ground_truth_gradient(left, right, interpolation)
-                    .with_bg_fill(bg_fill);
-                self.vertex_gradient(
-                    ui,
-                    "Ground Truth (CPU gradient, CPU blending) - vertices",
-                    bg_fill,
-                    &g,
-                );
-                self.tex_gradient(
-                    ui,
-                    "Ground Truth (CPU gradient, CPU blending) - texture",
-                    bg_fill,
-                    &g,
-                );
+                let g = Gradient::ground_truth_gradient(left, right, interpolation).with_bg_fill(bg_fill);
+                self.vertex_gradient(ui, "Ground Truth (CPU gradient, CPU blending) - vertices", bg_fill, &g);
+                self.tex_gradient(ui, "Ground Truth (CPU gradient, CPU blending) - texture", bg_fill, &g);
                 let g = Gradient::ground_truth_gradient(left, right, interpolation);
                 self.vertex_gradient(ui, "CPU gradient, GPU blending - vertices", bg_fill, &g);
                 self.tex_gradient(ui, "CPU gradient, GPU blending - texture", bg_fill, &g);
@@ -250,12 +219,7 @@ impl ColorTest {
                     self.tex_gradient(ui, "Texture of width 2 (test texture sampler)", bg_fill, &g);
 
                     // vertex shader uses gamma
-                    self.vertex_gradient(
-                        ui,
-                        "Triangle mesh of width 2 (test vertex decode and interpolation)",
-                        bg_fill,
-                        &g,
-                    );
+                    self.vertex_gradient(ui, "Triangle mesh of width 2 (test vertex decode and interpolation)", bg_fill, &g);
                 }
             }
         });
@@ -269,15 +233,8 @@ impl ColorTest {
             let tex = self.tex_mngr.get(ui.ctx(), gradient);
             let texel_offset = 0.5 / (gradient.0.len() as f32);
             let uv = Rect::from_min_max(pos2(texel_offset, 0.0), pos2(1.0 - texel_offset, 1.0));
-            ui.add(
-                Image::from_texture((tex.id(), GRADIENT_SIZE))
-                    .bg_fill(bg_fill)
-                    .uv(uv),
-            )
-            .on_hover_text(format!(
-                "A texture that is {} texels wide",
-                gradient.0.len()
-            ));
+            ui.add(Image::from_texture((tex.id(), GRADIENT_SIZE)).bg_fill(bg_fill).uv(uv))
+                .on_hover_text(format!("A texture that is {} texels wide", gradient.0.len()));
             ui.label(label);
         });
     }
@@ -287,10 +244,7 @@ impl ColorTest {
             return;
         }
         ui.horizontal(|ui| {
-            vertex_gradient(ui, bg_fill, gradient).on_hover_text(format!(
-                "A triangle mesh that is {} vertices wide",
-                gradient.0.len()
-            ));
+            vertex_gradient(ui, bg_fill, gradient).on_hover_text(format!("A triangle mesh that is {} vertices wide", gradient.0.len()));
             ui.label(label);
         });
     }
@@ -306,10 +260,7 @@ fn vertex_gradient(ui: &mut Ui, bg_fill: Color32, gradient: &Gradient) -> Respon
     }
     {
         let n = gradient.0.len();
-        assert!(
-            n >= 2,
-            "A gradient must have at least two colors, but this had {n}"
-        );
+        assert!(n >= 2, "A gradient must have at least two colors, but this had {n}");
         let mut mesh = Mesh::default();
         for (i, &color) in gradient.0.iter().enumerate() {
             let t = i as f32 / (n as f32 - 1.0);
@@ -348,11 +299,7 @@ impl Gradient {
         Self(vec![left, right])
     }
 
-    pub fn ground_truth_gradient(
-        left: Color32,
-        right: Color32,
-        interpolation: Interpolation,
-    ) -> Self {
+    pub fn ground_truth_gradient(left: Color32, right: Color32, interpolation: Interpolation) -> Self {
         match interpolation {
             Interpolation::Linear => Self::ground_truth_linear_gradient(left, right),
             Interpolation::Gamma => Self::ground_truth_gamma_gradient(left, right),
@@ -419,11 +366,7 @@ impl TextureManager {
             let pixels = gradient.to_pixel_row();
             let width = pixels.len();
             let height = 1;
-            ctx.load_texture(
-                "color_test_gradient",
-                epaint::ColorImage::new([width, height], pixels),
-                TextureOptions::LINEAR,
-            )
+            ctx.load_texture("color_test_gradient", epaint::ColorImage::new([width, height], pixels), TextureOptions::LINEAR)
         })
     }
 }
@@ -455,11 +398,7 @@ pub fn pixel_test(ui: &mut Ui) {
 
 fn pixel_test_strokes(ui: &mut Ui) {
     ui.label("The strokes should align to the physical pixel grid.");
-    let color = if ui.style().visuals.dark_mode {
-        egui::Color32::WHITE
-    } else {
-        egui::Color32::BLACK
-    };
+    let color = if ui.style().visuals.dark_mode { egui::Color32::WHITE } else { egui::Color32::BLACK };
 
     let pixels_per_point = ui.pixels_per_point();
 
@@ -471,24 +410,13 @@ fn pixel_test_strokes(ui: &mut Ui) {
         let size_points = size_pixels / pixels_per_point;
         let (response, painter) = ui.allocate_painter(size_points, Sense::hover());
 
-        let mut cursor_pixel = Pos2::new(
-            response.rect.min.x * pixels_per_point + thickness_pixels,
-            response.rect.min.y * pixels_per_point + thickness_pixels,
-        )
-        .ceil();
+        let mut cursor_pixel =
+            Pos2::new(response.rect.min.x * pixels_per_point + thickness_pixels, response.rect.min.y * pixels_per_point + thickness_pixels).ceil();
 
         let stroke = Stroke::new(thickness_points, color);
         for size in 1..=num_squares {
-            let rect_points = Rect::from_min_size(
-                Pos2::new(cursor_pixel.x, cursor_pixel.y),
-                Vec2::splat(size as f32),
-            );
-            painter.rect_stroke(
-                rect_points / pixels_per_point,
-                0.0,
-                stroke,
-                egui::StrokeKind::Outside,
-            );
+            let rect_points = Rect::from_min_size(Pos2::new(cursor_pixel.x, cursor_pixel.y), Vec2::splat(size as f32));
+            painter.rect_stroke(rect_points / pixels_per_point, 0.0, stroke, egui::StrokeKind::Outside);
             cursor_pixel.x += (1 + size) as f32 + thickness_pixels * 2.0;
         }
     }
@@ -500,32 +428,18 @@ fn pixel_test_squares(ui: &mut Ui) {
     ui.label("Each subsequent square should be one physical pixel larger than the previous.");
     ui.label("They should be perfectly aligned to the physical pixel grid.");
 
-    let color = if ui.style().visuals.dark_mode {
-        egui::Color32::WHITE
-    } else {
-        egui::Color32::BLACK
-    };
+    let color = if ui.style().visuals.dark_mode { egui::Color32::WHITE } else { egui::Color32::BLACK };
 
     let pixels_per_point = ui.pixels_per_point();
 
     let num_squares = (pixels_per_point * 10.0).round().max(10.0) as u32;
-    let size_pixels = vec2(
-        ((num_squares + 1) * (num_squares + 2) / 2) as f32,
-        num_squares as f32,
-    );
+    let size_pixels = vec2(((num_squares + 1) * (num_squares + 2) / 2) as f32, num_squares as f32);
     let size_points = size_pixels / pixels_per_point + Vec2::splat(2.0);
     let (response, painter) = ui.allocate_painter(size_points, Sense::hover());
 
-    let mut cursor_pixel = Pos2::new(
-        response.rect.min.x * pixels_per_point,
-        response.rect.min.y * pixels_per_point,
-    )
-    .ceil();
+    let mut cursor_pixel = Pos2::new(response.rect.min.x * pixels_per_point, response.rect.min.y * pixels_per_point).ceil();
     for size in 1..=num_squares {
-        let rect_points = Rect::from_min_size(
-            Pos2::new(cursor_pixel.x, cursor_pixel.y),
-            Vec2::splat(size as f32),
-        );
+        let rect_points = Rect::from_min_size(Pos2::new(cursor_pixel.x, cursor_pixel.y), Vec2::splat(size as f32));
         painter.rect_filled(rect_points / pixels_per_point, 0.0, color);
         cursor_pixel.x += (1 + size) as f32;
     }
@@ -544,18 +458,11 @@ fn pixel_test_lines(ui: &mut Ui) {
     let size_points = size_px / pixels_per_point + Vec2::splat(2.0);
     let (response, painter) = ui.allocate_painter(size_points, Sense::hover());
 
-    let mut cursor_px = Pos2::new(
-        response.rect.min.x * pixels_per_point,
-        response.rect.min.y * pixels_per_point,
-    )
-    .ceil();
+    let mut cursor_px = Pos2::new(response.rect.min.x * pixels_per_point, response.rect.min.y * pixels_per_point).ceil();
 
     // Vertical stripes:
     for x in 0..n / 2 {
-        let rect_px = Rect::from_min_size(
-            Pos2::new(cursor_px.x + 2.0 * x as f32, cursor_px.y),
-            Vec2::new(1.0, n as f32),
-        );
+        let rect_px = Rect::from_min_size(Pos2::new(cursor_px.x + 2.0 * x as f32, cursor_px.y), Vec2::new(1.0, n as f32));
         painter.rect_filled(rect_px / pixels_per_point, 0.0, egui::Color32::WHITE);
         let rect_px = rect_px.translate(vec2(1.0, 0.0));
         painter.rect_filled(rect_px / pixels_per_point, 0.0, egui::Color32::BLACK);
@@ -565,10 +472,7 @@ fn pixel_test_lines(ui: &mut Ui) {
 
     // Horizontal stripes:
     for y in 0..n / 2 {
-        let rect_px = Rect::from_min_size(
-            Pos2::new(cursor_px.x, cursor_px.y + 2.0 * y as f32),
-            Vec2::new(n as f32, 1.0),
-        );
+        let rect_px = Rect::from_min_size(Pos2::new(cursor_px.x, cursor_px.y + 2.0 * y as f32), Vec2::new(n as f32, 1.0));
         painter.rect_filled(rect_px / pixels_per_point, 0.0, egui::Color32::WHITE);
         let rect_px = rect_px.translate(vec2(0.0, 1.0));
         painter.rect_filled(rect_px / pixels_per_point, 0.0, egui::Color32::BLACK);
@@ -596,30 +500,12 @@ fn blending_and_feathering_test(ui: &mut Ui) {
 }
 
 fn text_on_bg(ui: &mut egui::Ui, fg: Color32, bg: Color32) {
-    assert!(
-        fg.is_opaque(),
-        "Foreground color must be opaque, but was: {fg:?}",
-    );
-    assert!(
-        bg.is_opaque(),
-        "Background color must be opaque, but was: {bg:?}",
-    );
+    assert!(fg.is_opaque(), "Foreground color must be opaque, but was: {fg:?}",);
+    assert!(bg.is_opaque(), "Background color must be opaque, but was: {bg:?}",);
 
     ui.horizontal(|ui| {
-        ui.label(
-            RichText::from("▣ The quick brown fox jumps over the lazy dog and runs away.")
-                .background_color(bg)
-                .color(fg),
-        );
-        ui.label(format!(
-            "({} {} {}) on ({} {} {})",
-            fg.r(),
-            fg.g(),
-            fg.b(),
-            bg.r(),
-            bg.g(),
-            bg.b(),
-        ));
+        ui.label(RichText::from("▣ The quick brown fox jumps over the lazy dog and runs away.").background_color(bg).color(fg));
+        ui.label(format!("({} {} {}) on ({} {} {})", fg.r(), fg.g(), fg.b(), bg.r(), bg.g(), bg.b(),));
     });
 }
 
@@ -655,9 +541,7 @@ fn paint_fine_lines_and_text(painter: &egui::Painter, mut rect: Rect, color: Col
             painter.text(
                 rect.center_top() + vec2(0.0, y),
                 Align2::LEFT_TOP,
-                format!(
-                    "{font_size}px - The quick brown fox jumps over the lazy dog and runs away."
-                ),
+                format!("{font_size}px - The quick brown fox jumps over the lazy dog and runs away."),
                 FontId::proportional(font_size),
                 color,
             );
@@ -669,21 +553,10 @@ fn paint_fine_lines_and_text(painter: &egui::Painter, mut rect: Rect, color: Col
 
     rect = rect.shrink(16.0);
     for width in [0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0] {
-        painter.text(
-            rect.left_top(),
-            Align2::CENTER_CENTER,
-            width.to_string(),
-            FontId::monospace(12.0),
-            color,
-        );
+        painter.text(rect.left_top(), Align2::CENTER_CENTER, width.to_string(), FontId::monospace(12.0), color);
 
         painter.add(egui::epaint::CubicBezierShape::from_points_stroke(
-            [
-                rect.left_top() + vec2(16.0, 0.0),
-                rect.right_top(),
-                rect.right_center(),
-                rect.right_bottom(),
-            ],
+            [rect.left_top() + vec2(16.0, 0.0), rect.right_top(), rect.right_center(), rect.right_bottom()],
             false,
             Color32::TRANSPARENT,
             Stroke::new(width, color),
@@ -694,13 +567,7 @@ fn paint_fine_lines_and_text(painter: &egui::Painter, mut rect: Rect, color: Col
     }
 
     rect.min.y += 16.0;
-    painter.text(
-        rect.left_top(),
-        Align2::LEFT_CENTER,
-        "transparent --> opaque",
-        FontId::monospace(10.0),
-        color,
-    );
+    painter.text(rect.left_top(), Align2::LEFT_CENTER, "transparent --> opaque", FontId::monospace(10.0), color);
     rect.min.y += 12.0;
     let mut mesh = Mesh::default();
     mesh.colored_vertex(rect.left_bottom(), Color32::TRANSPARENT);
@@ -732,11 +599,9 @@ mod tests {
         let mut results = SnapshotResults::new();
         for dpi in [1.0, 1.25, 1.5, 1.75, 1.6666667, 2.0] {
             let mut color_test = ColorTest::default();
-            let mut harness = egui_kittest::Harness::builder()
-                .with_pixels_per_point(dpi)
-                .build_ui(|ui| {
-                    color_test.ui(ui);
-                });
+            let mut harness = egui_kittest::Harness::builder().with_pixels_per_point(dpi).build_ui(|ui| {
+                color_test.ui(ui);
+            });
 
             {
                 // Expand color-test collapsing header. We accesskit-click since collapsing header

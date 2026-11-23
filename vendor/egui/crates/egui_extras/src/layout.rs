@@ -55,24 +55,11 @@ pub struct StripLayout<'l> {
 }
 
 impl<'l> StripLayout<'l> {
-    pub(crate) fn new(
-        ui: &'l mut Ui,
-        direction: CellDirection,
-        cell_layout: egui::Layout,
-        sense: Sense,
-    ) -> Self {
+    pub(crate) fn new(ui: &'l mut Ui, direction: CellDirection, cell_layout: egui::Layout, sense: Sense) -> Self {
         let rect = ui.available_rect_before_wrap();
         let pos = rect.left_top();
 
-        Self {
-            ui,
-            direction,
-            rect,
-            cursor: pos,
-            max: pos,
-            cell_layout,
-            sense,
-        }
+        Self { ui, direction, rect, cursor: pos, max: pos, cell_layout, sense }
     }
 
     fn cell_rect(&self, width: &CellSize, height: &CellSize) -> Rect {
@@ -127,27 +114,15 @@ impl<'l> StripLayout<'l> {
         let gapless_rect = max_rect.expand2(0.5 * item_spacing).round_ui();
 
         if flags.striped {
-            self.ui.painter().rect_filled(
-                gapless_rect,
-                egui::CornerRadius::ZERO,
-                self.ui.visuals().faint_bg_color,
-            );
+            self.ui.painter().rect_filled(gapless_rect, egui::CornerRadius::ZERO, self.ui.visuals().faint_bg_color);
         }
 
         if flags.selected {
-            self.ui.painter().rect_filled(
-                gapless_rect,
-                egui::CornerRadius::ZERO,
-                self.ui.visuals().selection.bg_fill,
-            );
+            self.ui.painter().rect_filled(gapless_rect, egui::CornerRadius::ZERO, self.ui.visuals().selection.bg_fill);
         }
 
         if flags.hovered && !flags.selected && self.sense.interactive() {
-            self.ui.painter().rect_filled(
-                gapless_rect,
-                egui::CornerRadius::ZERO,
-                self.ui.visuals().widgets.hovered.bg_fill,
-            );
+            self.ui.painter().rect_filled(gapless_rect, egui::CornerRadius::ZERO, self.ui.visuals().widgets.hovered.bg_fill);
         }
 
         let mut child_ui = self.cell(flags, max_rect, child_ui_id_salt, add_cell_contents);
@@ -202,13 +177,7 @@ impl<'l> StripLayout<'l> {
     }
 
     /// Return the Ui to which the contents where added
-    fn cell(
-        &mut self,
-        flags: StripLayoutFlags,
-        max_rect: Rect,
-        child_ui_id_salt: IdSalt,
-        add_cell_contents: impl FnOnce(&mut Ui),
-    ) -> Ui {
+    fn cell(&mut self, flags: StripLayoutFlags, max_rect: Rect, child_ui_id_salt: IdSalt, add_cell_contents: impl FnOnce(&mut Ui)) -> Ui {
         let child_ui_id = self.ui.scope_id().with(child_ui_id_salt);
         let mut ui_builder = UiBuilder::new()
             .scope_id(child_ui_id)
@@ -237,11 +206,7 @@ impl<'l> StripLayout<'l> {
         }
 
         if flags.overline {
-            child_ui.painter().hline(
-                max_rect.x_range(),
-                max_rect.top(),
-                child_ui.visuals().widgets.noninteractive.bg_stroke,
-            );
+            child_ui.painter().hline(max_rect.x_range(), max_rect.top(), child_ui.visuals().widgets.noninteractive.bg_stroke);
         }
 
         add_cell_contents(&mut child_ui);
@@ -266,12 +231,7 @@ mod tests {
     #[test]
     fn skip_space_expands_ui_without_consuming_widget_id() {
         egui::__run_test_ui(|ui| {
-            let mut layout = StripLayout::new(
-                ui,
-                CellDirection::Horizontal,
-                egui::Layout::left_to_right(egui::Align::Center),
-                egui::Sense::hover(),
-            );
+            let mut layout = StripLayout::new(ui, CellDirection::Horizontal, egui::Layout::left_to_right(egui::Align::Center), egui::Sense::hover());
             let next_auto_id = layout.ui.next_auto_id();
             let expected_bottom = layout.cursor.y + 100.0;
 

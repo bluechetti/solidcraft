@@ -31,14 +31,9 @@ impl crate::Demo for DancingStrings {
 
 impl crate::View for DancingStrings {
     fn ui(&mut self, ui: &mut Ui) {
-        let color = if ui.visuals().dark_mode {
-            Color32::from_additive_luminance(196)
-        } else {
-            Color32::from_black_alpha(240)
-        };
+        let color = if ui.visuals().dark_mode { Color32::from_additive_luminance(196) } else { Color32::from_black_alpha(240) };
 
-        ui.checkbox(&mut self.colors, "Colored")
-            .on_hover_text("Demonstrates how a path can have varying color across its length.");
+        ui.checkbox(&mut self.colors, "Colored").on_hover_text("Demonstrates how a path can have varying color across its length.");
 
         Frame::canvas(ui.style()).show(ui, |ui| {
             ui.request_repaint();
@@ -47,8 +42,7 @@ impl crate::View for DancingStrings {
             let desired_size = ui.available_width() * vec2(1.0, 0.35);
             let (_id, rect) = ui.allocate_space(desired_size);
 
-            let to_screen =
-                emath::RectTransform::from_to(Rect::from_x_y_ranges(0.0..=1.0, -1.0..=1.0), rect);
+            let to_screen = emath::RectTransform::from_to(Rect::from_x_y_ranges(0.0..=1.0, -1.0..=1.0), rect);
 
             let mut shapes = vec![];
 

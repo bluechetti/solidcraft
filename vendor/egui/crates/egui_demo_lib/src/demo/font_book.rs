@@ -15,11 +15,7 @@ pub struct FontBook {
 
 impl Default for FontBook {
     fn default() -> Self {
-        Self {
-            filter: Default::default(),
-            font_id: egui::FontId::proportional(18.0),
-            available_glyphs: Default::default(),
-        }
+        Self { filter: Default::default(), font_id: egui::FontId::proportional(18.0), available_glyphs: Default::default() }
     }
 }
 
@@ -29,13 +25,10 @@ impl crate::Demo for FontBook {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                use crate::View as _;
-                self.ui(ui);
-            });
+        egui::Window::new(self.name()).open(open).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| {
+            use crate::View as _;
+            self.ui(ui);
+        });
     }
 }
 
@@ -62,29 +55,21 @@ impl crate::View for FontBook {
         egui::introspection::font_id_ui(ui, &mut self.font_id);
 
         let font_id = self.font_id.clone();
-        let available_glyphs = self
-            .available_glyphs
-            .entry(font_id.family.clone())
-            .or_insert_with(|| available_characters(ui, &font_id.family));
+        let available_glyphs = self.available_glyphs.entry(font_id.family.clone()).or_insert_with(|| available_characters(ui, &font_id.family));
 
         let fonts_in_family = fonts_in_family(ui, &font_id.family);
 
-        egui::CollapsingHeader::new(format!(
-            "The selected family has {} characters, from {} fonts",
-            available_glyphs.len(),
-            fonts_in_family.len()
-        ))
-        .show(ui, |ui| {
-            ui.label("In fallback order:");
-            for name in fonts_in_family {
-                ui.label(egui::RichText::new(name).text_style(egui::TextStyle::Monospace));
-            }
-        });
+        egui::CollapsingHeader::new(format!("The selected family has {} characters, from {} fonts", available_glyphs.len(), fonts_in_family.len()))
+            .show(ui, |ui| {
+                ui.label("In fallback order:");
+                for name in fonts_in_family {
+                    ui.label(egui::RichText::new(name).text_style(egui::TextStyle::Monospace));
+                }
+            });
 
         ui.horizontal(|ui| {
             let label = ui.label("Filter:");
-            ui.add(egui::TextEdit::singleline(&mut self.filter).desired_width(120.0))
-                .labelled_by(label.id);
+            ui.add(egui::TextEdit::singleline(&mut self.filter).desired_width(120.0)).labelled_by(label.id);
             self.filter = self.filter.to_lowercase();
             if ui.button("ｘ").clicked() {
                 self.filter.clear();
@@ -95,9 +80,7 @@ impl crate::View for FontBook {
 
         let matching_glyphs: Vec<(char, &GlyphInfo)> = available_glyphs
             .iter()
-            .filter(|(chr, glyph_info)| {
-                filter.is_empty() || glyph_info.name.contains(filter) || *filter == chr.to_string()
-            })
+            .filter(|(chr, glyph_info)| filter.is_empty() || glyph_info.name.contains(filter) || *filter == chr.to_string())
             .map(|(&chr, glyph_info)| (chr, glyph_info))
             .collect();
 
@@ -112,57 +95,37 @@ impl crate::View for FontBook {
         let num_columns = (num_columns as usize).max(1);
         let num_rows = matching_glyphs.len().div_ceil(num_columns);
 
-        egui::ScrollArea::vertical().auto_shrink(false).show_rows(
-            ui,
-            cell_size.y + spacing.y,
-            num_rows,
-            |ui, rows| {
-                ui.spacing_mut().item_spacing = spacing;
+        egui::ScrollArea::vertical().auto_shrink(false).show_rows(ui, cell_size.y + spacing.y, num_rows, |ui, rows| {
+            ui.spacing_mut().item_spacing = spacing;
 
-                for row in rows {
-                    ui.horizontal(|ui| {
-                        let start = row * num_columns;
-                        let end = (start + num_columns).min(matching_glyphs.len());
-                        for &(chr, glyph_info) in &matching_glyphs[start..end] {
-                            let button =
-                                egui::Button::new(egui::RichText::new(chr).font(font_id.clone()))
-                                    .frame(false);
+            for row in rows {
+                ui.horizontal(|ui| {
+                    let start = row * num_columns;
+                    let end = (start + num_columns).min(matching_glyphs.len());
+                    for &(chr, glyph_info) in &matching_glyphs[start..end] {
+                        let button = egui::Button::new(egui::RichText::new(chr).font(font_id.clone())).frame(false);
 
-                            let tooltip_ui = |ui: &mut egui::Ui| {
-                                char_info_ui(ui, chr, glyph_info, font_id.clone());
-                            };
+                        let tooltip_ui = |ui: &mut egui::Ui| {
+                            char_info_ui(ui, chr, glyph_info, font_id.clone());
+                        };
 
-                            if ui
-                                .add_sized(cell_size, button)
-                                .on_hover_ui(tooltip_ui)
-                                .clicked()
-                            {
-                                ui.copy_text(chr.to_string());
-                            }
+                        if ui.add_sized(cell_size, button).on_hover_ui(tooltip_ui).clicked() {
+                            ui.copy_text(chr.to_string());
                         }
-                    });
-                }
-            },
-        );
+                    }
+                });
+            }
+        });
     }
 }
 
 fn fonts_in_family(ui: &egui::Ui, family: &egui::FontFamily) -> Vec<String> {
     ui.fonts(|fonts| {
-        let mut names = fonts
-            .definitions()
-            .families
-            .get(family)
-            .cloned()
-            .unwrap_or_default();
+        let mut names = fonts.definitions().families.get(family).cloned().unwrap_or_default();
 
         // Fonts found by a `FontProvider`, e.g. among the system fonts:
         names.extend(
-            fonts
-                .discovered_fonts()
-                .iter()
-                .filter(|font| font.families.iter().any(|insert| &insert.family == family))
-                .map(|font| font.name.clone()),
+            fonts.discovered_fonts().iter().filter(|font| font.families.iter().any(|insert| &insert.family == family)).map(|font| font.name.clone()),
         );
 
         names
@@ -172,30 +135,23 @@ fn fonts_in_family(ui: &egui::Ui, family: &egui::FontFamily) -> Vec<String> {
 fn char_info_ui(ui: &mut egui::Ui, chr: char, glyph_info: &GlyphInfo, font_id: egui::FontId) {
     let resp = ui.label(egui::RichText::new(chr.to_string()).font(font_id));
 
-    egui::Grid::new("char_info")
-        .num_columns(2)
-        .striped(true)
-        .show(ui, |ui| {
-            ui.label("Name");
-            ui.label(glyph_info.name.clone());
-            ui.end_row();
+    egui::Grid::new("char_info").num_columns(2).striped(true).show(ui, |ui| {
+        ui.label("Name");
+        ui.label(glyph_info.name.clone());
+        ui.end_row();
 
-            ui.label("Hex");
-            ui.label(format!("{:X}", chr as u32));
-            ui.end_row();
+        ui.label("Hex");
+        ui.label(format!("{:X}", chr as u32));
+        ui.end_row();
 
-            ui.label("Width");
-            ui.label(format!("{:.1} pts", resp.rect.width()));
-            ui.end_row();
+        ui.label("Width");
+        ui.label(format!("{:.1} pts", resp.rect.width()));
+        ui.end_row();
 
-            ui.label("Fonts");
-            ui.label(
-                format!("{:?}", glyph_info.fonts)
-                    .trim_start_matches('[')
-                    .trim_end_matches(']'),
-            );
-            ui.end_row();
-        });
+        ui.label("Fonts");
+        ui.label(format!("{:?}", glyph_info.fonts).trim_start_matches('[').trim_end_matches(']'));
+        ui.end_row();
+    });
 }
 
 fn available_characters(ui: &egui::Ui, family: &egui::FontFamily) -> BTreeMap<char, GlyphInfo> {
@@ -203,15 +159,7 @@ fn available_characters(ui: &egui::Ui, family: &egui::FontFamily) -> BTreeMap<ch
         f.characters(family)
             .iter()
             .filter(|(chr, _fonts)| !chr.is_whitespace() && !chr.is_ascii_control())
-            .map(|(chr, fonts)| {
-                (
-                    *chr,
-                    GlyphInfo {
-                        name: char_name(*chr),
-                        fonts: fonts.clone(),
-                    },
-                )
-            })
+            .map(|(chr, fonts)| (*chr, GlyphInfo { name: char_name(*chr), fonts: fonts.clone() }))
             .collect()
     })
 }

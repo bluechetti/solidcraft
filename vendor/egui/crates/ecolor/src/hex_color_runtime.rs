@@ -38,9 +38,7 @@ impl FromStr for HexColor {
     type Err = ParseHexColorError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        s.strip_prefix('#')
-            .ok_or(ParseHexColorError::MissingHash)
-            .and_then(Self::from_str_without_hash)
+        s.strip_prefix('#').ok_or(ParseHexColorError::MissingHash).and_then(Self::from_str_without_hash)
     }
 }
 
@@ -87,30 +85,21 @@ impl HexColor {
     pub fn from_str_without_hash(s: &str) -> Result<Self, ParseHexColorError> {
         match s.len() {
             3 => {
-                let [r, gb] = u16::from_str_radix(s, 16)
-                    .map_err(ParseHexColorError::InvalidInt)?
-                    .to_be_bytes();
+                let [r, gb] = u16::from_str_radix(s, 16).map_err(ParseHexColorError::InvalidInt)?.to_be_bytes();
                 let [r, g, b] = [r, gb >> 4, gb & 0x0f].map(|u| (u << 4) | u);
                 Ok(Self::Hex3(Color32::from_rgb(r, g, b)))
             }
             4 => {
-                let [r_g, b_a] = u16::from_str_radix(s, 16)
-                    .map_err(ParseHexColorError::InvalidInt)?
-                    .to_be_bytes();
-                let [r, g, b, a] =
-                    [r_g >> 4, r_g & 0x0f, b_a >> 4, b_a & 0x0f].map(|u| (u << 4) | u);
+                let [r_g, b_a] = u16::from_str_radix(s, 16).map_err(ParseHexColorError::InvalidInt)?.to_be_bytes();
+                let [r, g, b, a] = [r_g >> 4, r_g & 0x0f, b_a >> 4, b_a & 0x0f].map(|u| (u << 4) | u);
                 Ok(Self::Hex4(Color32::from_rgba_unmultiplied(r, g, b, a)))
             }
             6 => {
-                let [_, r, g, b] = u32::from_str_radix(s, 16)
-                    .map_err(ParseHexColorError::InvalidInt)?
-                    .to_be_bytes();
+                let [_, r, g, b] = u32::from_str_radix(s, 16).map_err(ParseHexColorError::InvalidInt)?.to_be_bytes();
                 Ok(Self::Hex6(Color32::from_rgb(r, g, b)))
             }
             8 => {
-                let [r, g, b, a] = u32::from_str_radix(s, 16)
-                    .map_err(ParseHexColorError::InvalidInt)?
-                    .to_be_bytes();
+                let [r, g, b, a] = u32::from_str_radix(s, 16).map_err(ParseHexColorError::InvalidInt)?.to_be_bytes();
                 Ok(Self::Hex8(Color32::from_rgba_unmultiplied(r, g, b, a)))
             }
             _ => Err(ParseHexColorError::InvalidLength)?,
@@ -198,11 +187,7 @@ mod tests {
         ];
         for (color, string) in cases {
             assert_eq!(color.to_string(), string, "{color:?} <=> {string}");
-            assert_eq!(
-                H::from_str(string).unwrap(),
-                color,
-                "{color:?} <=> {string}"
-            );
+            assert_eq!(H::from_str(string).unwrap(), color, "{color:?} <=> {string}");
         }
     }
 

@@ -116,19 +116,9 @@ impl From<HintingTarget> for skrifa::outline::Target {
         use skrifa::outline::SmoothMode;
         match hinting_target {
             HintingTarget::Mono => Self::Mono,
-            HintingTarget::Smooth(SmoothHinting {
-                light,
-                symmetric_rendering,
-                preserve_linear_metrics,
-            }) => Self::Smooth {
-                mode: if light {
-                    SmoothMode::Light
-                } else {
-                    SmoothMode::Normal
-                },
-                symmetric_rendering,
-                preserve_linear_metrics,
-            },
+            HintingTarget::Smooth(SmoothHinting { light, symmetric_rendering, preserve_linear_metrics }) => {
+                Self::Smooth { mode: if light { SmoothMode::Light } else { SmoothMode::Normal }, symmetric_rendering, preserve_linear_metrics }
+            }
         }
     }
 }
@@ -174,10 +164,6 @@ impl Default for SmoothHinting {
     fn default() -> Self {
         // Matches the behavior egui had before the hinting target was configurable.
         // Note this means horizontal grid-fitting is opt-in (see `preserve_linear_metrics`).
-        Self {
-            light: false,
-            symmetric_rendering: true,
-            preserve_linear_metrics: true,
-        }
+        Self { light: false, symmetric_rendering: true, preserve_linear_metrics: true }
     }
 }

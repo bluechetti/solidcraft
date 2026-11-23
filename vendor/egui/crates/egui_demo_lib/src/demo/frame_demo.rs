@@ -11,12 +11,7 @@ impl Default for FrameDemo {
                 .inner_margin(12)
                 .outer_margin(24)
                 .corner_radius(14)
-                .shadow(egui::Shadow {
-                    offset: [8, 12],
-                    blur: 16,
-                    spread: 0,
-                    color: egui::Color32::from_black_alpha(180),
-                })
+                .shadow(egui::Shadow { offset: [8, 12], blur: 16, spread: 0, color: egui::Color32::from_black_alpha(180) })
                 .fill(egui::Color32::from_rgba_unmultiplied(97, 0, 255, 128))
                 .stroke(egui::Stroke::new(1.0, egui::Color32::GRAY)),
         }
@@ -29,14 +24,10 @@ impl crate::Demo for FrameDemo {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .resizable(false)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                use crate::View as _;
-                self.ui(ui);
-            });
+        egui::Window::new(self.name()).open(open).resizable(false).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| {
+            use crate::View as _;
+            self.ui(ui);
+        });
     }
 }
 

@@ -1,6 +1,6 @@
 use egui::{
-    Align, Align2, Color32, DragValue, NumExt as _, Rect, ScrollArea, Sense, Slider, TextStyle,
-    TextWrapMode, Ui, Vec2, Widget as _, pos2, scroll_area::ScrollBarVisibility,
+    Align, Align2, Color32, DragValue, NumExt as _, Rect, ScrollArea, Sense, Slider, TextStyle, TextWrapMode, Ui, Vec2, Widget as _, pos2,
+    scroll_area::ScrollBarVisibility,
 };
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
@@ -31,16 +31,13 @@ impl crate::Demo for Scrolling {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .resizable(true)
-            .hscroll(false)
-            .vscroll(false)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
+        egui::Window::new(self.name()).open(open).resizable(true).hscroll(false).vscroll(false).constrain_to(ui.available_rect_before_wrap()).show(
+            ui,
+            |ui| {
                 use crate::View as _;
                 self.ui(ui);
-            });
+            },
+        );
     }
 }
 
@@ -49,16 +46,8 @@ impl crate::View for Scrolling {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.demo, ScrollDemo::ScrollAppearance, "Appearance");
             ui.selectable_value(&mut self.demo, ScrollDemo::ScrollTo, "Scroll to");
-            ui.selectable_value(
-                &mut self.demo,
-                ScrollDemo::ManyLines,
-                "Scroll a lot of lines",
-            );
-            ui.selectable_value(
-                &mut self.demo,
-                ScrollDemo::LargeCanvas,
-                "Scroll a large canvas",
-            );
+            ui.selectable_value(&mut self.demo, ScrollDemo::ManyLines, "Scroll a lot of lines");
+            ui.selectable_value(&mut self.demo, ScrollDemo::LargeCanvas, "Scroll a large canvas");
             ui.selectable_value(&mut self.demo, ScrollDemo::StickToEnd, "Stick to end");
             ui.selectable_value(&mut self.demo, ScrollDemo::Bidirectional, "Bidirectional");
         });
@@ -101,19 +90,13 @@ struct ScrollAppearance {
 
 impl Default for ScrollAppearance {
     fn default() -> Self {
-        Self {
-            num_lorem_ipsums: 2,
-            visibility: ScrollBarVisibility::default(),
-        }
+        Self { num_lorem_ipsums: 2, visibility: ScrollBarVisibility::default() }
     }
 }
 
 impl ScrollAppearance {
     fn ui(&mut self, ui: &mut egui::Ui) {
-        let Self {
-            num_lorem_ipsums,
-            visibility,
-        } = self;
+        let Self { num_lorem_ipsums, visibility } = self;
 
         let mut scroll = ui.global_style().spacing.scroll;
 
@@ -135,50 +118,33 @@ impl ScrollAppearance {
 
         ui.separator();
 
-        ui.add(
-            egui::Slider::new(num_lorem_ipsums, 1..=100)
-                .text("Content length")
-                .logarithmic(true),
-        );
+        ui.add(egui::Slider::new(num_lorem_ipsums, 1..=100).text("Content length").logarithmic(true));
 
         ui.separator();
 
-        ScrollArea::vertical()
-            .auto_shrink(false)
-            .scroll_bar_visibility(*visibility)
-            .show(ui, |ui| {
-                ui.with_layout(
-                    egui::Layout::top_down(egui::Align::LEFT).with_cross_justify(true),
-                    |ui| {
-                        for _ in 0..*num_lorem_ipsums {
-                            ui.label(crate::LOREM_IPSUM_LONG);
-                        }
-                    },
-                );
+        ScrollArea::vertical().auto_shrink(false).scroll_bar_visibility(*visibility).show(ui, |ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT).with_cross_justify(true), |ui| {
+                for _ in 0..*num_lorem_ipsums {
+                    ui.label(crate::LOREM_IPSUM_LONG);
+                }
             });
+        });
     }
 }
 
 fn huge_content_lines(ui: &mut egui::Ui) {
-    ui.label(
-        "A lot of rows, but only the visible ones are laid out, so performance is still good:",
-    );
+    ui.label("A lot of rows, but only the visible ones are laid out, so performance is still good:");
     ui.add_space(4.0);
 
     let text_style = TextStyle::Body;
     let row_height = ui.text_style_height(&text_style);
     let num_rows = 10_000;
-    ScrollArea::vertical().auto_shrink(false).show_rows(
-        ui,
-        row_height,
-        num_rows,
-        |ui, row_range| {
-            for row in row_range {
-                let text = format!("This is row {}/{}", row + 1, num_rows);
-                ui.label(text);
-            }
-        },
-    );
+    ScrollArea::vertical().auto_shrink(false).show_rows(ui, row_height, num_rows, |ui, row_range| {
+        for row in row_range {
+            let text = format!("This is row {}/{}", row + 1, num_rows);
+            ui.label(text);
+        }
+    });
 }
 
 fn huge_content_painter(ui: &mut egui::Ui) {
@@ -190,39 +156,26 @@ fn huge_content_painter(ui: &mut egui::Ui) {
     let row_height = ui.fonts_mut(|f| f.row_height(&font_id)) + ui.spacing().item_spacing.y;
     let num_rows = 10_000;
 
-    ScrollArea::vertical()
-        .auto_shrink(false)
-        .show_viewport(ui, |ui, viewport| {
-            ui.set_height(row_height * num_rows as f32);
+    ScrollArea::vertical().auto_shrink(false).show_viewport(ui, |ui, viewport| {
+        ui.set_height(row_height * num_rows as f32);
 
-            let first_item = (viewport.min.y / row_height).floor().at_least(0.0) as usize;
-            let last_item = (viewport.max.y / row_height).ceil() as usize + 1;
-            let last_item = last_item.at_most(num_rows);
+        let first_item = (viewport.min.y / row_height).floor().at_least(0.0) as usize;
+        let last_item = (viewport.max.y / row_height).ceil() as usize + 1;
+        let last_item = last_item.at_most(num_rows);
 
-            let mut used_rect = Rect::NOTHING;
+        let mut used_rect = Rect::NOTHING;
 
-            for i in first_item..last_item {
-                let indentation = (i % 100) as f32;
-                let x = ui.min_rect().left() + indentation;
-                let y = ui.min_rect().top() + i as f32 * row_height;
-                let text = format!(
-                    "This is row {}/{}, indented by {} pixels",
-                    i + 1,
-                    num_rows,
-                    indentation
-                );
-                let text_rect = ui.painter().text(
-                    pos2(x, y),
-                    Align2::LEFT_TOP,
-                    text,
-                    font_id.clone(),
-                    ui.visuals().text_color(),
-                );
-                used_rect |= text_rect;
-            }
+        for i in first_item..last_item {
+            let indentation = (i % 100) as f32;
+            let x = ui.min_rect().left() + indentation;
+            let y = ui.min_rect().top() + i as f32 * row_height;
+            let text = format!("This is row {}/{}, indented by {} pixels", i + 1, num_rows, indentation);
+            let text_rect = ui.painter().text(pos2(x, y), Align2::LEFT_TOP, text, font_id.clone(), ui.visuals().text_color());
+            used_rect |= text_rect;
+        }
 
-            ui.allocate_rect(used_rect, Sense::hover()); // make sure it is visible!
-        });
+        ui.allocate_rect(used_rect, Sense::hover()); // make sure it is visible!
+    });
 }
 
 // ----------------------------------------------------------------------------
@@ -239,12 +192,7 @@ struct ScrollTo {
 
 impl Default for ScrollTo {
     fn default() -> Self {
-        Self {
-            track_item: 25,
-            tack_item_align: Some(Align::Center),
-            offset: 0.0,
-            delta: 64.0,
-        }
+        Self { track_item: 25, tack_item_align: Some(Align::Center), offset: 0.0, delta: 64.0 }
     }
 }
 
@@ -262,32 +210,20 @@ impl crate::View for ScrollTo {
 
         ui.horizontal(|ui| {
             ui.label("Scroll to a specific item index:");
-            track_item |= ui
-                .add(Slider::new(&mut self.track_item, 1..=num_items).text("Track Item"))
-                .dragged();
+            track_item |= ui.add(Slider::new(&mut self.track_item, 1..=num_items).text("Track Item")).dragged();
         });
 
         ui.horizontal(|ui| {
             ui.label("Item align:");
-            track_item |= ui
-                .radio_value(&mut self.tack_item_align, Some(Align::Min), "Top")
-                .clicked();
-            track_item |= ui
-                .radio_value(&mut self.tack_item_align, Some(Align::Center), "Center")
-                .clicked();
-            track_item |= ui
-                .radio_value(&mut self.tack_item_align, Some(Align::Max), "Bottom")
-                .clicked();
-            track_item |= ui
-                .radio_value(&mut self.tack_item_align, None, "None (Bring into view)")
-                .clicked();
+            track_item |= ui.radio_value(&mut self.tack_item_align, Some(Align::Min), "Top").clicked();
+            track_item |= ui.radio_value(&mut self.tack_item_align, Some(Align::Center), "Center").clicked();
+            track_item |= ui.radio_value(&mut self.tack_item_align, Some(Align::Max), "Bottom").clicked();
+            track_item |= ui.radio_value(&mut self.tack_item_align, None, "None (Bring into view)").clicked();
         });
 
         ui.horizontal(|ui| {
             ui.label("Scroll to a specific offset:");
-            go_to_scroll_offset |= ui
-                .add(DragValue::new(&mut self.offset).speed(1.0).suffix("px"))
-                .dragged();
+            go_to_scroll_offset |= ui.add(DragValue::new(&mut self.offset).speed(1.0).suffix("px")).dragged();
         });
 
         ui.horizontal(|ui| {
@@ -297,10 +233,7 @@ impl crate::View for ScrollTo {
 
         ui.horizontal(|ui| {
             ui.label("Scroll by");
-            DragValue::new(&mut self.delta)
-                .speed(1.0)
-                .suffix("px")
-                .ui(ui);
+            DragValue::new(&mut self.delta).speed(1.0).suffix("px").ui(ui);
             if ui.button("⬇️").clicked() {
                 scroll_delta = Some(self.delta * Vec2::UP); // scroll down (move contents up)
             }
@@ -327,8 +260,7 @@ impl crate::View for ScrollTo {
                 ui.vertical(|ui| {
                     for item in 1..=num_items {
                         if track_item && item == self.track_item {
-                            let response =
-                                ui.colored_label(Color32::YELLOW, format!("This is item {item}"));
+                            let response = ui.colored_label(Color32::YELLOW, format!("This is item {item}"));
                             response.scroll_to_me(self.tack_item_align);
                         } else {
                             ui.label(format!("This is item {item}"));
@@ -347,9 +279,7 @@ impl crate::View for ScrollTo {
             .inner;
         ui.separator();
 
-        ui.label(format!(
-            "Scroll offset: {current_scroll:.0}/{max_scroll:.0} px"
-        ));
+        ui.label(format!("Scroll offset: {current_scroll:.0}/{max_scroll:.0} px"));
 
         ui.separator();
         ui.vertical_centered(|ui| {
@@ -374,17 +304,12 @@ impl crate::View for ScrollStickTo {
 
         let text_style = TextStyle::Body;
         let row_height = ui.text_style_height(&text_style);
-        ScrollArea::vertical().stick_to_bottom(true).show_rows(
-            ui,
-            row_height,
-            self.n_items,
-            |ui, row_range| {
-                for row in row_range {
-                    let text = format!("This is row {}", row + 1);
-                    ui.label(text);
-                }
-            },
-        );
+        ScrollArea::vertical().stick_to_bottom(true).show_rows(ui, row_height, self.n_items, |ui, row_range| {
+            for row in row_range {
+                let text = format!("This is row {}", row + 1);
+                ui.label(text);
+            }
+        });
 
         self.n_items += 1;
         ui.request_repaint();

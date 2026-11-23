@@ -75,8 +75,7 @@ impl WebRunner {
         {
             // First set up the app runner:
             let text_agent = TextAgent::attach(self, &canvas)?;
-            let app_runner =
-                AppRunner::new(canvas.clone(), web_options, app_creator, text_agent).await?;
+            let app_runner = AppRunner::new(canvas.clone(), web_options, app_creator, text_agent).await?;
             self.app_runner.replace(Some(app_runner));
         }
 
@@ -107,17 +106,13 @@ impl WebRunner {
     }
 
     fn unsubscribe_from_all_events(&self) {
-        let events_to_unsubscribe: Vec<_> =
-            core::mem::take(&mut *self.events_to_unsubscribe.borrow_mut());
+        let events_to_unsubscribe: Vec<_> = core::mem::take(&mut *self.events_to_unsubscribe.borrow_mut());
 
         if !events_to_unsubscribe.is_empty() {
             log::debug!("Unsubscribing from {} events", events_to_unsubscribe.len());
             for x in events_to_unsubscribe {
                 if let Err(err) = x.unsubscribe() {
-                    log::warn!(
-                        "Failed to unsubscribe from event: {}",
-                        super::string_from_js_value(&err)
-                    );
+                    log::warn!("Failed to unsubscribe from event: {}", super::string_from_js_value(&err));
                 }
             }
         }
@@ -148,8 +143,7 @@ impl WebRunner {
             None
         } else {
             let lock = self.app_runner.try_borrow_mut().ok()?;
-            core::cell::RefMut::filter_map(lock, |lock| -> Option<&mut AppRunner> { lock.as_mut() })
-                .ok()
+            core::cell::RefMut::filter_map(lock, |lock| -> Option<&mut AppRunner> { lock.as_mut() }).ok()
         }
     }
 
@@ -157,11 +151,8 @@ impl WebRunner {
     ///
     /// This will panic if your app does not implement [`App::as_any_mut`],
     /// and return `None` if this  runner has panicked.
-    pub fn app_mut<ConcreteApp: 'static + App>(
-        &self,
-    ) -> Option<core::cell::RefMut<'_, ConcreteApp>> {
-        self.try_lock()
-            .map(|lock| core::cell::RefMut::map(lock, |runner| runner.app_mut::<ConcreteApp>()))
+    pub fn app_mut<ConcreteApp: 'static + App>(&self) -> Option<core::cell::RefMut<'_, ConcreteApp>> {
+        self.try_lock().map(|lock| core::cell::RefMut::map(lock, |runner| runner.app_mut::<ConcreteApp>()))
     }
 
     /// Convenience function to reduce boilerplate and ensure that all event handlers
@@ -176,12 +167,7 @@ impl WebRunner {
         mut closure: impl FnMut(E, &mut AppRunner) + 'static,
     ) -> Result<(), wasm_bindgen::JsValue> {
         let options = web_sys::AddEventListenerOptions::default();
-        self.add_event_listener_ex(
-            target,
-            event_name,
-            &options,
-            move |event, app_runner, _web_runner| closure(event, app_runner),
-        )
+        self.add_event_listener_ex(target, event_name, &options, move |event, app_runner, _web_runner| closure(event, app_runner))
     }
 
     /// Convenience function to reduce boilerplate and ensure that all event handlers
@@ -209,23 +195,13 @@ impl WebRunner {
         }) as Box<dyn FnMut(web_sys::Event)>);
 
         // Add the event listener to the target
-        target.add_event_listener_with_callback_and_add_event_listener_options(
-            event_name,
-            closure.as_ref().unchecked_ref(),
-            options,
-        )?;
+        target.add_event_listener_with_callback_and_add_event_listener_options(event_name, closure.as_ref().unchecked_ref(), options)?;
 
-        let handle = TargetEvent {
-            target: target.clone(),
-            event_name: event_name.to_owned(),
-            closure,
-        };
+        let handle = TargetEvent { target: target.clone(), event_name: event_name.to_owned(), closure };
 
         // Remember it so we unsubscribe on panic.
         // Otherwise we get calls into `self.runner` after it has been poisoned by a panic.
-        self.events_to_unsubscribe
-            .borrow_mut()
-            .push(EventToUnsubscribe::TargetEvent(handle));
+        self.events_to_unsubscribe.borrow_mut().push(EventToUnsubscribe::TargetEvent(handle));
 
         Ok(())
     }
@@ -268,18 +244,10 @@ impl WebRunner {
                 // while hidden, but keeps us responsive right after the tab is hidden:
                 10,
             )?;
-            AnimationFrameRequest {
-                id,
-                kind: AnimationFrameKind::Timeout,
-                _closure: closure,
-            }
+            AnimationFrameRequest { id, kind: AnimationFrameKind::Timeout, _closure: closure }
         } else {
             let id = window.request_animation_frame(closure.as_ref().unchecked_ref())?;
-            AnimationFrameRequest {
-                id,
-                kind: AnimationFrameKind::AnimationFrame,
-                _closure: closure,
-            }
+            AnimationFrameRequest { id, kind: AnimationFrameKind::AnimationFrame, _closure: closure }
         };
 
         self.frame.borrow_mut().replace(request);
@@ -362,10 +330,7 @@ impl EventToUnsubscribe {
     pub fn unsubscribe(self) -> Result<(), JsValue> {
         match self {
             Self::TargetEvent(handle) => {
-                handle.target.remove_event_listener_with_callback(
-                    handle.event_name.as_str(),
-                    handle.closure.as_ref().unchecked_ref(),
-                )?;
+                handle.target.remove_event_listener_with_callback(handle.event_name.as_str(), handle.closure.as_ref().unchecked_ref())?;
                 Ok(())
             }
             Self::IntervalHandle(handle) => {

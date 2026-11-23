@@ -100,11 +100,7 @@ pub enum FontPriority {
 
 impl FontInsert {
     pub fn new(name: &str, data: FontData, families: Vec<InsertFontFamily>) -> Self {
-        Self {
-            name: name.to_owned(),
-            data,
-            families,
-        }
+        Self { name: name.to_owned(), data, families }
     }
 }
 
@@ -124,15 +120,9 @@ impl Default for FontDefinitions {
 
         let mut families = BTreeMap::new();
 
-        font_data.insert(
-            "Hack".to_owned(),
-            Arc::new(FontData::from_static(HACK_REGULAR)),
-        );
+        font_data.insert("Hack".to_owned(), Arc::new(FontData::from_static(HACK_REGULAR)));
 
-        font_data.insert(
-            "Ubuntu-Light".to_owned(),
-            Arc::new(FontData::from_static(UBUNTU_LIGHT)),
-        );
+        font_data.insert("Ubuntu-Light".to_owned(), Arc::new(FontData::from_static(UBUNTU_LIGHT)));
 
         // The handful of icons in `egui::special_emojis`, which no platform font has:
         font_data.insert(
@@ -165,16 +155,9 @@ impl Default for FontDefinitions {
         }
 
         // Last resort, after the fonts that cover the text of a script:
-        let fallback_fonts: &[&str] = if cfg!(feature = "monochrome_emoji_fonts") {
-            &["egui-icons", "NotoEmoji-Regular", "emoji-icon-font"]
-        } else {
-            &["egui-icons"]
-        };
-        let family = |fonts: &[&str]| -> Vec<String> {
-            core::iter::chain(fonts, fallback_fonts)
-                .map(|name| (*name).to_owned())
-                .collect()
-        };
+        let fallback_fonts: &[&str] =
+            if cfg!(feature = "monochrome_emoji_fonts") { &["egui-icons", "NotoEmoji-Regular", "emoji-icon-font"] } else { &["egui-icons"] };
+        let family = |fonts: &[&str]| -> Vec<String> { core::iter::chain(fonts, fallback_fonts).map(|name| (*name).to_owned()).collect() };
 
         families.insert(
             FontFamily::Monospace,
@@ -185,10 +168,7 @@ impl Default for FontDefinitions {
         );
         families.insert(FontFamily::Proportional, family(&["Ubuntu-Light"]));
 
-        Self {
-            font_data,
-            families,
-        }
+        Self { font_data, families }
     }
 }
 
@@ -199,23 +179,14 @@ impl FontDefinitions {
         families.insert(FontFamily::Monospace, vec![]);
         families.insert(FontFamily::Proportional, vec![]);
 
-        Self {
-            font_data: Default::default(),
-            families,
-        }
+        Self { font_data: Default::default(), families }
     }
 
     /// List of all the builtin font names used by `epaint`.
     #[cfg(feature = "default_fonts")]
     pub fn builtin_font_names() -> &'static [&'static str] {
         if cfg!(feature = "monochrome_emoji_fonts") {
-            &[
-                "Ubuntu-Light",
-                "egui-icons",
-                "NotoEmoji-Regular",
-                "emoji-icon-font",
-                "Hack",
-            ]
+            &["Ubuntu-Light", "egui-icons", "NotoEmoji-Regular", "emoji-icon-font", "Hack"]
         } else {
             &["Ubuntu-Light", "egui-icons", "Hack"]
         }
@@ -248,11 +219,7 @@ impl FontProvider for FontDefinitions {
                     let available: Vec<&String> = self.font_data.keys().collect();
                     panic!("No font data found for {name:?}. Configured fonts: {available:?}")
                 });
-                FontInsert {
-                    name: name.clone(),
-                    data: (**data).clone(),
-                    families: Vec::new(),
-                }
+                FontInsert { name: name.clone(), data: (**data).clone(), families: Vec::new() }
             })
             .collect()
     }

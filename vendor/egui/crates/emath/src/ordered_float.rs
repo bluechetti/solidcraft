@@ -34,11 +34,7 @@ impl<T: Float> PartialEq<Self> for OrderedFloat<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         // NaNs are considered equal (equivalent) when it comes to ordering
-        if self.0.is_nan() {
-            other.0.is_nan()
-        } else {
-            self.0 == other.0
-        }
+        if self.0.is_nan() { other.0.is_nan() } else { self.0 == other.0 }
     }
 }
 

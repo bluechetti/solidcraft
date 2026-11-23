@@ -2,8 +2,7 @@ use alloc::sync::Arc;
 use core::any::Any;
 
 use crate::{
-    Context, CursorIcon, Id, LayerId, PointerButton, Popup, PopupKind, Sense, SetOpenCommand,
-    Tooltip, Ui, WidgetRect, WidgetText,
+    Context, CursorIcon, Id, LayerId, PointerButton, Popup, PopupKind, Sense, SetOpenCommand, Tooltip, Ui, WidgetRect, WidgetText,
     emath::{Align, Pos2, Rect, Vec2},
     pass_state,
 };
@@ -77,11 +76,7 @@ pub struct Response {
 
 #[test]
 fn test_response_size() {
-    assert_eq!(
-        core::mem::size_of::<Response>(),
-        88,
-        "Keep Response small, because we create them often, and we want to keep it lean and fast"
-    );
+    assert_eq!(core::mem::size_of::<Response>(), 88, "Keep Response small, because we create them often, and we want to keep it lean and fast");
 }
 
 /// A bit set for various boolean properties of `Response`.
@@ -160,14 +155,9 @@ impl Response {
     ///
     /// Looks up the [`WidgetRect`] from the current (or previous) pass.
     pub fn parent_id(&self) -> Id {
-        let id = self.ctx.viewport(|viewport| {
-            viewport
-                .this_pass
-                .widgets
-                .get(self.id)
-                .or_else(|| viewport.prev_pass.widgets.get(self.id))
-                .map(|w| w.parent_id)
-        });
+        let id = self
+            .ctx
+            .viewport(|viewport| viewport.this_pass.widgets.get(self.id).or_else(|| viewport.prev_pass.widgets.get(self.id)).map(|w| w.parent_id));
         debug_assert!(id.is_some(), "WidgetRect for Response not found!");
         id.unwrap_or(Id::NULL)
     }
@@ -251,15 +241,13 @@ impl Response {
     /// Returns true if this widget was double-clicked this frame by the given button.
     #[inline]
     pub fn double_clicked_by(&self, button: PointerButton) -> bool {
-        self.flags.contains(Flags::CLICKED)
-            && self.ctx.input(|i| i.pointer.button_double_clicked(button))
+        self.flags.contains(Flags::CLICKED) && self.ctx.input(|i| i.pointer.button_double_clicked(button))
     }
 
     /// Returns true if this widget was triple-clicked this frame by the given button.
     #[inline]
     pub fn triple_clicked_by(&self, button: PointerButton) -> bool {
-        self.flags.contains(Flags::CLICKED)
-            && self.ctx.input(|i| i.pointer.button_triple_clicked(button))
+        self.flags.contains(Flags::CLICKED) && self.ctx.input(|i| i.pointer.button_triple_clicked(button))
     }
 
     /// Was this widget middle-clicked or clicked while holding down a modifier key?
@@ -277,9 +265,7 @@ impl Response {
     ///
     /// Clicks on other layers above this widget *will* be considered as clicking elsewhere.
     pub fn clicked_elsewhere(&self) -> bool {
-        let (pointer_interact_pos, any_click) = self
-            .ctx
-            .input(|i| (i.pointer.interact_pos(), i.pointer.any_click()));
+        let (pointer_interact_pos, any_click) = self.ctx.input(|i| (i.pointer.interact_pos(), i.pointer.any_click()));
 
         // We do not use self.clicked(), because we want to catch all clicks within our frame,
         // even if we aren't clickable (or even enabled).
@@ -289,11 +275,7 @@ impl Response {
                 false
             } else if let Some(pos) = pointer_interact_pos {
                 let layer_under_pointer = self.ctx.layer_id_at(pos);
-                if layer_under_pointer == Some(self.layer_id) {
-                    !self.interact_rect.contains(pos)
-                } else {
-                    true
-                }
+                if layer_under_pointer == Some(self.layer_id) { !self.interact_rect.contains(pos) } else { true }
             } else {
                 false // clicked without a pointer, weird
             }
@@ -357,8 +339,7 @@ impl Response {
     ///
     /// This calls [`Context::rect_contains_pointer`] with [`Self::interact_rect`].
     pub fn container_contains_pointer(&self) -> bool {
-        self.ctx
-            .rect_contains_pointer(self.layer_id, self.interact_rect)
+        self.ctx.rect_contains_pointer(self.layer_id, self.interact_rect)
     }
 
     /// Is this widget or any widget inside of it hovered?
@@ -542,12 +523,7 @@ impl Response {
     /// This may be useful in certain situations such as draggable values and 3D cameras, where screen position does not matter.
     #[inline]
     pub fn drag_motion(&self) -> Vec2 {
-        if self.dragged() {
-            self.ctx
-                .input(|i| i.pointer.motion().unwrap_or_else(|| i.pointer.delta()))
-        } else {
-            Vec2::ZERO
-        }
+        if self.dragged() { self.ctx.input(|i| i.pointer.motion().unwrap_or_else(|| i.pointer.delta())) } else { Vec2::ZERO }
     }
 
     /// If the user started dragging this widget this frame, store the payload for drag-and-drop.
@@ -572,11 +548,7 @@ impl Response {
     pub fn dnd_hover_payload<Payload: Any + Send + Sync>(&self) -> Option<Arc<Payload>> {
         // NOTE: we use `response.contains_pointer` here instead of `hovered`, because
         // `hovered` is always false when another widget is being dragged.
-        if self.contains_pointer() {
-            crate::DragAndDrop::payload::<Payload>(&self.ctx)
-        } else {
-            None
-        }
+        if self.contains_pointer() { crate::DragAndDrop::payload::<Payload>(&self.ctx) } else { None }
     }
 
     /// Drag-and-Drop: Return what is being dropped onto this widget, if any.
@@ -731,10 +703,7 @@ impl Response {
 
     /// Like `on_hover_ui`, but show the ui next to cursor.
     pub fn on_hover_ui_at_pointer(self, add_contents: impl FnOnce(&mut Ui)) -> Self {
-        Tooltip::for_enabled(&self)
-            .at_pointer()
-            .gap(12.0)
-            .show(add_contents);
+        Tooltip::for_enabled(&self).at_pointer().gap(12.0).show(add_contents);
         self
     }
 
@@ -742,9 +711,7 @@ impl Response {
     ///
     /// This can be used to give attention to a widget during a tutorial.
     pub fn show_tooltip_ui(&self, add_contents: impl FnOnce(&mut Ui)) {
-        Popup::from_response(self)
-            .kind(PopupKind::Tooltip)
-            .show(add_contents);
+        Popup::from_response(self).kind(PopupKind::Tooltip).show(add_contents);
     }
 
     /// Always show this tooltip, even if disabled and the user isn't hovering it.
@@ -805,10 +772,7 @@ impl Response {
                 }
                 // A `Label` is named by its value, and a widget named by
                 // `labelled_by` already has a name, so leave those be.
-                if node.role() != accesskit::Role::Label
-                    && node.labelled_by().is_empty()
-                    && node.label().is_none_or(str::is_empty)
-                {
+                if node.role() != accesskit::Role::Label && node.labelled_by().is_empty() && node.label().is_none_or(str::is_empty) {
                     node.set_label(text);
                 }
             });
@@ -926,22 +890,10 @@ impl Response {
     }
 
     /// Like [`Self::scroll_to_me`], but allows you to specify the [`crate::style::ScrollAnimation`].
-    pub fn scroll_to_me_animation(
-        &self,
-        align: Option<Align>,
-        animation: crate::style::ScrollAnimation,
-    ) {
+    pub fn scroll_to_me_animation(&self, align: Option<Align>, animation: crate::style::ScrollAnimation) {
         self.ctx.pass_state_mut(|state| {
-            state.scroll_target[0] = Some(pass_state::ScrollTarget::new(
-                self.rect.x_range(),
-                align,
-                animation,
-            ));
-            state.scroll_target[1] = Some(pass_state::ScrollTarget::new(
-                self.rect.y_range(),
-                align,
-                animation,
-            ));
+            state.scroll_target[0] = Some(pass_state::ScrollTarget::new(self.rect.x_range(), align, animation));
+            state.scroll_target[1] = Some(pass_state::ScrollTarget::new(self.rect.y_range(), align, animation));
         });
     }
 
@@ -981,8 +933,7 @@ impl Response {
             self.fill_accesskit_node_from_widget_info(builder, event.widget_info().clone());
         });
 
-        self.ctx
-            .register_widget_info(self.id, || event.widget_info().clone());
+        self.ctx.register_widget_info(self.id, || event.widget_info().clone());
 
         self.ctx.output_mut(|o| o.events.push(event));
     }
@@ -1005,11 +956,7 @@ impl Response {
         }
     }
 
-    fn fill_accesskit_node_from_widget_info(
-        &self,
-        builder: &mut accesskit::Node,
-        info: crate::WidgetInfo,
-    ) {
+    fn fill_accesskit_node_from_widget_info(&self, builder: &mut accesskit::Node, info: crate::WidgetInfo) {
         use accesskit::{Role, Toggled};
 
         self.fill_accesskit_node_common(builder);
@@ -1032,11 +979,7 @@ impl Response {
             builder.set_numeric_value(value);
         }
         if let Some(selected) = info.selected {
-            builder.set_toggled(if selected {
-                Toggled::True
-            } else {
-                Toggled::False
-            });
+            builder.set_toggled(if selected { Toggled::True } else { Toggled::False });
         } else if matches!(info.role, Role::CheckBox) {
             // Indeterminate state
             builder.set_toggled(Toggled::Mixed);
@@ -1141,10 +1084,7 @@ impl Response {
     /// ```
     ///
     /// See also [`Self::container_secondary_clicked`].
-    pub fn container_context_menu(
-        &self,
-        add_contents: impl FnOnce(&mut Ui),
-    ) -> Option<InnerResponse<()>> {
+    pub fn container_context_menu(&self, add_contents: impl FnOnce(&mut Ui)) -> Option<InnerResponse<()>> {
         Popup::menu(self)
             .open_memory(if self.container_secondary_clicked() {
                 Some(SetOpenCommand::Bool(true))
@@ -1192,14 +1132,8 @@ impl Response {
     ///
     /// You may not call [`Self::interact`] on the resulting `Response`.
     pub fn union(&self, other: Self) -> Self {
-        assert!(
-            self.ctx == other.ctx,
-            "Responses must be from the same `Context`"
-        );
-        debug_assert!(
-            self.layer_id == other.layer_id,
-            "It makes no sense to combine Responses from two different layers"
-        );
+        assert!(self.ctx == other.ctx, "Responses must be from the same `Context`");
+        debug_assert!(self.layer_id == other.layer_id, "It makes no sense to combine Responses from two different layers");
         Self {
             ctx: other.ctx,
             layer_id: self.layer_id,
@@ -1208,9 +1142,7 @@ impl Response {
             interact_rect: self.interact_rect.union(other.interact_rect),
             sense: self.sense.union(other.sense),
             flags: self.flags | other.flags,
-            interact_pointer_pos_or_nan: self
-                .interact_pointer_pos()
-                .unwrap_or(other.interact_pointer_pos_or_nan),
+            interact_pointer_pos_or_nan: self.interact_pointer_pos().unwrap_or(other.interact_pointer_pos_or_nan),
             intrinsic_size_or_nan: Vec2::NAN,
         }
     }

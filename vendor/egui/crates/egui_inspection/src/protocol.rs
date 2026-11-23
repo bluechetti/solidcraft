@@ -162,13 +162,9 @@ pub fn write_handshake<W: Write>(mut writer: W) -> io::Result<()> {
 pub fn decode_handshake(bytes: [u8; 8]) -> io::Result<u32> {
     let (magic, version) = bytes.split_at(4);
     if magic != PROTOCOL_MAGIC {
-        return Err(invalid_data(
-            "not an egui_inspection peer (bad handshake magic)",
-        ));
+        return Err(invalid_data("not an egui_inspection peer (bad handshake magic)"));
     }
-    Ok(u32::from_be_bytes(
-        version.try_into().expect("split_at(4) leaves 4 bytes"),
-    ))
+    Ok(u32::from_be_bytes(version.try_into().expect("split_at(4) leaves 4 bytes")))
 }
 
 /// Read and validate the connection handshake, returning the peer's protocol version.

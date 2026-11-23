@@ -45,9 +45,8 @@ use wasm_bindgen::prelude::*;
 use web_sys::{Document, MediaQueryList, Node};
 
 use input::{
-    button_from_mouse_event, modifiers_from_kb_event, modifiers_from_mouse_event,
-    modifiers_from_wheel_event, pos_from_mouse_event, primary_touch_pos, push_touches,
-    text_from_keyboard_event, translate_key,
+    button_from_mouse_event, modifiers_from_kb_event, modifiers_from_mouse_event, modifiers_from_wheel_event, pos_from_mouse_event,
+    primary_touch_pos, push_touches, text_from_keyboard_event, translate_key,
 };
 
 // ----------------------------------------------------------------------------
@@ -101,12 +100,7 @@ pub(crate) fn focus_without_scroll(element: &web_sys::HtmlElement) -> Result<(),
 ///
 /// Monotonically increasing.
 pub fn now_sec() -> f64 {
-    web_sys::window()
-        .expect("should have a Window")
-        .performance()
-        .expect("should have a Performance")
-        .now()
-        / 1000.0
+    web_sys::window().expect("should have a Window").performance().expect("should have a Performance").now() / 1000.0
 }
 
 /// The native GUI scale factor, taking into account the browser zoom.
@@ -114,11 +108,7 @@ pub fn now_sec() -> f64 {
 /// Corresponds to [`window.devicePixelRatio`](https://developer.mozilla.org/en-US/docs/Web/API/Window/devicePixelRatio) in JavaScript.
 pub fn native_pixels_per_point() -> f32 {
     let pixels_per_point = web_sys::window().unwrap().device_pixel_ratio() as f32;
-    if pixels_per_point > 0.0 && pixels_per_point.is_finite() {
-        pixels_per_point
-    } else {
-        1.0
-    }
+    if pixels_per_point > 0.0 && pixels_per_point.is_finite() { pixels_per_point } else { 1.0 }
 }
 
 /// Ask the browser about the preferred system theme.
@@ -139,10 +129,7 @@ fn does_prefer_color_scheme(window: &web_sys::Window, theme: Theme) -> Option<bo
     Some(prefers_color_scheme(window, theme).ok()??.matches())
 }
 
-fn prefers_color_scheme(
-    window: &web_sys::Window,
-    theme: Theme,
-) -> Result<Option<MediaQueryList>, JsValue> {
+fn prefers_color_scheme(window: &web_sys::Window, theme: Theme) -> Result<Option<MediaQueryList>, JsValue> {
     let theme = match theme {
         Theme::Dark => "dark",
         Theme::Light => "light",
@@ -182,20 +169,14 @@ fn canvas_size_in_points(canvas: &web_sys::HtmlCanvasElement, ctx: &egui::Contex
 
     let pixels_per_point = ctx.zoom_factor() * native_pixels_per_point();
 
-    egui::vec2(
-        canvas.width() as f32 / pixels_per_point,
-        canvas.height() as f32 / pixels_per_point,
-    )
+    egui::vec2(canvas.width() as f32 / pixels_per_point, canvas.height() as f32 / pixels_per_point)
 }
 
 // ----------------------------------------------------------------------------
 
 /// Set the cursor icon.
 fn set_cursor_icon(canvas: &web_sys::HtmlCanvasElement, cursor: egui::CursorIcon) -> Option<()> {
-    canvas
-        .style()
-        .set_property("cursor", cursor_web_name(cursor))
-        .ok()
+    canvas.style().set_property("cursor", cursor_web_name(cursor)).ok()
 }
 
 /// Set the clipboard text.
@@ -251,10 +232,7 @@ fn set_clipboard_image(image: &egui::ColorImage) {
         let promise = window.navigator().clipboard().write(&items);
         let future = async move {
             if let Err(err) = promise.await {
-                log::error!(
-                    "Copy/cut image action failed: {}",
-                    string_from_js_value(&err)
-                );
+                log::error!("Copy/cut image action failed: {}", string_from_js_value(&err));
             }
         };
         js_sys::futures::spawn_local(future);
@@ -263,23 +241,14 @@ fn set_clipboard_image(image: &egui::ColorImage) {
 
 fn to_image(image: &egui::ColorImage) -> Result<image::RgbaImage, String> {
     profiling::function_scope!();
-    image::RgbaImage::from_raw(
-        image.width() as _,
-        image.height() as _,
-        bytemuck::cast_slice(&image.pixels).to_vec(),
-    )
-    .ok_or_else(|| "Invalid IconData".to_owned())
+    image::RgbaImage::from_raw(image.width() as _, image.height() as _, bytemuck::cast_slice(&image.pixels).to_vec())
+        .ok_or_else(|| "Invalid IconData".to_owned())
 }
 
 fn to_png_bytes(image: &image::RgbaImage) -> Result<Vec<u8>, String> {
     profiling::function_scope!();
     let mut png_bytes: Vec<u8> = Vec::new();
-    image
-        .write_to(
-            &mut std::io::Cursor::new(&mut png_bytes),
-            image::ImageFormat::Png,
-        )
-        .map_err(|err| err.to_string())?;
+    image.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png).map_err(|err| err.to_string())?;
     Ok(png_bytes)
 }
 
@@ -352,9 +321,7 @@ fn cursor_web_name(cursor: egui::CursorIcon) -> &'static str {
 pub fn open_url(url: &str, new_tab: bool) -> Option<()> {
     let name = if new_tab { "_blank" } else { "_self" };
 
-    web_sys::window()?
-        .open_with_url_and_target(url, name)
-        .ok()?;
+    web_sys::window()?.open_with_url_and_target(url, name).ok()?;
     Some(())
 }
 
@@ -362,20 +329,12 @@ pub fn open_url(url: &str, new_tab: bool) -> Option<()> {
 ///
 /// Percent decoded
 pub fn location_hash() -> String {
-    percent_decode(
-        &web_sys::window()
-            .unwrap()
-            .location()
-            .hash()
-            .unwrap_or_default(),
-    )
+    percent_decode(&web_sys::window().unwrap().location().hash().unwrap_or_default())
 }
 
 /// Percent-decodes a string.
 pub fn percent_decode(s: &str) -> String {
-    percent_encoding::percent_decode_str(s)
-        .decode_utf8_lossy()
-        .to_string()
+    percent_encoding::percent_decode_str(s).decode_utf8_lossy().to_string()
 }
 
 /// Are we running inside the Safari browser?

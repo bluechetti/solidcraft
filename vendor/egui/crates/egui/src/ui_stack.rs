@@ -68,36 +68,20 @@ impl UiKind {
     pub fn accesskit_role(self) -> accesskit::Role {
         use accesskit::Role;
         match self {
-            Self::LeftPanel
-            | Self::RightPanel
-            | Self::TopPanel
-            | Self::BottomPanel
-            | Self::CentralPanel => Role::Pane,
+            Self::LeftPanel | Self::RightPanel | Self::TopPanel | Self::BottomPanel | Self::CentralPanel => Role::Pane,
             Self::Modal | Self::Popup => Role::Dialog,
             Self::Menu => Role::Menu,
             Self::Tooltip => Role::Tooltip,
-            Self::Window
-            | Self::Frame
-            | Self::ScrollArea
-            | Self::Resize
-            | Self::Picker
-            | Self::TableCell
-            | Self::GenericArea
-            | Self::Collapsible => Role::GenericContainer,
+            Self::Window | Self::Frame | Self::ScrollArea | Self::Resize | Self::Picker | Self::TableCell | Self::GenericArea | Self::Collapsible => {
+                Role::GenericContainer
+            }
         }
     }
 
     /// Is this any kind of panel?
     #[inline]
     pub fn is_panel(&self) -> bool {
-        matches!(
-            self,
-            Self::CentralPanel
-                | Self::LeftPanel
-                | Self::RightPanel
-                | Self::TopPanel
-                | Self::BottomPanel
-        )
+        matches!(self, Self::CentralPanel | Self::LeftPanel | Self::RightPanel | Self::TopPanel | Self::BottomPanel)
     }
 
     /// Is this any kind of [`crate::Area`]?
@@ -115,13 +99,7 @@ impl UiKind {
             | Self::Collapsible
             | Self::TableCell => false,
 
-            Self::Window
-            | Self::Menu
-            | Self::Modal
-            | Self::Popup
-            | Self::Tooltip
-            | Self::Picker
-            | Self::GenericArea => true,
+            Self::Window | Self::Menu | Self::Modal | Self::Popup | Self::Tooltip | Self::Picker | Self::GenericArea => true,
         }
     }
 }
@@ -140,10 +118,7 @@ impl UiStackInfo {
     /// Create a new [`UiStackInfo`] with the given kind and an empty frame.
     #[inline]
     pub fn new(kind: UiKind) -> Self {
-        Self {
-            kind: Some(kind),
-            ..Default::default()
-        }
+        Self { kind: Some(kind), ..Default::default() }
     }
 
     #[inline]
@@ -161,11 +136,7 @@ impl UiStackInfo {
 
     /// Insert a tag with some value.
     #[inline]
-    pub fn with_tag_value(
-        mut self,
-        key: impl Into<String>,
-        value: impl Any + Send + Sync + 'static,
-    ) -> Self {
+    pub fn with_tag_value(mut self, key: impl Into<String>, value: impl Any + Send + Sync + 'static) -> Self {
         self.tags.insert(key, Some(Arc::new(value)));
         self
     }
@@ -187,11 +158,7 @@ pub struct UiTags(pub ahash::HashMap<String, Option<Arc<dyn Any + Send + Sync + 
 
 impl UiTags {
     #[inline]
-    pub fn insert(
-        &mut self,
-        key: impl Into<String>,
-        value: Option<Arc<dyn Any + Send + Sync + 'static>>,
-    ) {
+    pub fn insert(&mut self, key: impl Into<String>, value: Option<Arc<dyn Any + Send + Sync + 'static>>) {
         self.0.insert(key.into(), value);
     }
 

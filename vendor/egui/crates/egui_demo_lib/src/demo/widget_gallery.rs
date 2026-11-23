@@ -92,31 +92,20 @@ impl crate::View for WidgetGallery {
         ui.scope_builder(ui_builder, |ui| {
             ui.multiply_opacity(self.opacity);
 
-            egui::Grid::new("my_grid")
-                .num_columns(2)
-                .spacing([40.0, 4.0])
-                .striped(true)
-                .show(ui, |ui| {
-                    self.gallery_grid_contents(ui);
-                });
+            egui::Grid::new("my_grid").num_columns(2).spacing([40.0, 4.0]).striped(true).show(ui, |ui| {
+                self.gallery_grid_contents(ui);
+            });
         });
 
         ui.separator();
 
         ui.horizontal(|ui| {
-            ui.checkbox(&mut self.visible, "Visible")
-                .on_hover_text("Uncheck to hide all the widgets.");
+            ui.checkbox(&mut self.visible, "Visible").on_hover_text("Uncheck to hide all the widgets.");
             if self.visible {
-                ui.checkbox(&mut self.enabled, "Interactive")
-                    .on_hover_text("Uncheck to inspect how the widgets look when disabled.");
-                let drag_value = ui.add(
-                    egui::DragValue::new(&mut self.opacity)
-                        .speed(0.01)
-                        .range(0.0..=1.0),
-                );
+                ui.checkbox(&mut self.enabled, "Interactive").on_hover_text("Uncheck to inspect how the widgets look when disabled.");
+                let drag_value = ui.add(egui::DragValue::new(&mut self.opacity).speed(0.01).range(0.0..=1.0));
                 let label = ui.label("Opacity");
-                (drag_value.labelled_by(label.id) | label)
-                    .on_hover_text("Reduce this value to make widgets semi-transparent");
+                (drag_value.labelled_by(label.id) | label).on_hover_text("Reduce this value to make widgets semi-transparent");
             }
         });
 
@@ -125,9 +114,7 @@ impl crate::View for WidgetGallery {
         ui.vertical_centered(|ui| {
             let tooltip_text = "The full egui documentation.\nYou can also click the different widgets names in the left column.";
             ui.hyperlink("https://docs.rs/egui/").on_hover_text(tooltip_text);
-            ui.add(crate::egui_github_link_file!(
-                "Source code of the widget gallery"
-            ));
+            ui.add(crate::egui_github_link_file!("Source code of the widget gallery"));
         });
     }
 }
@@ -157,10 +144,7 @@ impl WidgetGallery {
 
         ui.add(doc_link_label("Hyperlink", "Hyperlink"));
         use egui::special_emojis::GITHUB;
-        ui.hyperlink_to(
-            format!("{GITHUB} egui on GitHub"),
-            "https://github.com/emilk/egui",
-        );
+        ui.hyperlink_to(format!("{GITHUB} egui on GitHub"), "https://github.com/emilk/egui");
         ui.end_row();
 
         ui.add(doc_link_label("TextEdit", "TextEdit"));
@@ -201,39 +185,29 @@ impl WidgetGallery {
 
         ui.add(doc_link_label("ComboBox", "ComboBox"));
 
-        egui::ComboBox::from_label("Take your pick")
-            .selected_text(format!("{radio:?}"))
-            .show_ui(ui, |ui| {
-                ui.selectable_value(radio, Enum::First, "First");
-                ui.selectable_value(radio, Enum::Second, "Second");
-                ui.selectable_value(radio, Enum::Third, "Third");
-            });
+        egui::ComboBox::from_label("Take your pick").selected_text(format!("{radio:?}")).show_ui(ui, |ui| {
+            ui.selectable_value(radio, Enum::First, "First");
+            ui.selectable_value(radio, Enum::Second, "Second");
+            ui.selectable_value(radio, Enum::Third, "Third");
+        });
         ui.end_row();
 
         let label = ui.add(doc_link_label("Slider", "Slider"));
-        ui.add(egui::Slider::new(scalar, 0.0..=360.0).suffix("°"))
-            .labelled_by(label.id);
+        ui.add(egui::Slider::new(scalar, 0.0..=360.0).suffix("°")).labelled_by(label.id);
         ui.end_row();
 
         let label = ui.add(doc_link_label("RangeSlider", "RangeSlider"));
-        ui.add(egui::RangeSlider::new(&mut range.min, &mut range.max, 0.0..=360.0).suffix("°"))
-            .labelled_by(label.id);
+        ui.add(egui::RangeSlider::new(&mut range.min, &mut range.max, 0.0..=360.0).suffix("°")).labelled_by(label.id);
         ui.end_row();
 
         let label = ui.add(doc_link_label("DragValue", "DragValue"));
-        ui.add(egui::DragValue::new(scalar).speed(1.0))
-            .labelled_by(label.id);
+        ui.add(egui::DragValue::new(scalar).speed(1.0)).labelled_by(label.id);
         ui.end_row();
 
         ui.add(doc_link_label("ProgressBar", "ProgressBar"));
         let progress = *scalar / 360.0;
-        let progress_bar = egui::ProgressBar::new(progress)
-            .show_percentage()
-            .animate(*animate_progress_bar);
-        *animate_progress_bar = ui
-            .add(progress_bar)
-            .on_hover_text("The progress bar can be animated!")
-            .hovered();
+        let progress_bar = egui::ProgressBar::new(progress).show_percentage().animate(*animate_progress_bar);
+        *animate_progress_bar = ui.add(progress_bar).on_hover_text("The progress bar can be animated!").hovered();
         ui.end_row();
 
         ui.add(doc_link_label("Color picker", "color_edit"));
@@ -245,10 +219,7 @@ impl WidgetGallery {
         ui.add(egui::Image::new(egui_icon.clone()));
         ui.end_row();
 
-        ui.add(doc_link_label(
-            "Button with image",
-            "Button::image_and_text",
-        ));
+        ui.add(doc_link_label("Button with image", "Button::image_and_text"));
         if ui.button((egui_icon, "Click me!")).clicked() {
             *boolean = !*boolean;
         }
@@ -257,11 +228,7 @@ impl WidgetGallery {
         #[cfg(feature = "jiff")]
         if *with_date_button {
             let date = date.get_or_insert_with(|| jiff::Zoned::now().date());
-            ui.add(doc_link_label_with_crate(
-                "egui_extras",
-                "DatePickerButton",
-                "DatePickerButton",
-            ));
+            ui.add(doc_link_label_with_crate("egui_extras", "DatePickerButton", "DatePickerButton"));
             ui.add(egui_extras::DatePickerButton::new(date));
             ui.end_row();
         }
@@ -282,10 +249,7 @@ impl WidgetGallery {
         });
         ui.end_row();
 
-        ui.hyperlink_to(
-            "Custom widget",
-            super::toggle_switch::url_to_file_source_code(),
-        );
+        ui.hyperlink_to("Custom widget", super::toggle_switch::url_to_file_source_code());
         ui.add(super::toggle_switch::toggle(boolean)).on_hover_text(
             "It's easy to create your own widgets!\n\
             This toggle switch is just 15 lines of code.",
@@ -298,11 +262,7 @@ fn doc_link_label<'a>(title: &'a str, search_term: &'a str) -> impl egui::Widget
     doc_link_label_with_crate("egui", title, search_term)
 }
 
-fn doc_link_label_with_crate<'a>(
-    crate_name: &'a str,
-    title: &'a str,
-    search_term: &'a str,
-) -> impl egui::Widget + 'a {
+fn doc_link_label_with_crate<'a>(crate_name: &'a str, title: &'a str, search_term: &'a str) -> impl egui::Widget + 'a {
     let url = format!("https://docs.rs/{crate_name}?search={search_term}");
     move |ui: &mut egui::Ui| {
         ui.hyperlink_to(title, url).on_hover_ui(|ui| {
@@ -334,14 +294,13 @@ mod tests {
 
         for pixels_per_point in [1, 2] {
             for theme in [egui::Theme::Light, egui::Theme::Dark] {
-                let mut harness = Harness::builder()
-                    .with_pixels_per_point(pixels_per_point as f32)
-                    .with_theme(theme)
-                    .with_size(Vec2::new(380.0, 550.0))
-                    .build_ui(|ui| {
-                        egui_extras::install_image_loaders(ui.ctx());
-                        demo.ui(ui);
-                    });
+                let mut harness =
+                    Harness::builder().with_pixels_per_point(pixels_per_point as f32).with_theme(theme).with_size(Vec2::new(380.0, 550.0)).build_ui(
+                        |ui| {
+                            egui_extras::install_image_loaders(ui.ctx());
+                            demo.ui(ui);
+                        },
+                    );
 
                 harness.fit_contents();
 

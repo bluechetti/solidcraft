@@ -11,10 +11,7 @@ pub struct Stopwatch {
 
 impl Stopwatch {
     pub fn new() -> Self {
-        Self {
-            total_time_ns: 0,
-            start: None,
-        }
+        Self { total_time_ns: 0, start: None }
     }
 
     pub fn start(&mut self) {

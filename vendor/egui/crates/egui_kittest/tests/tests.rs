@@ -24,8 +24,7 @@ fn test_tooltip() {
     let mut harness = Harness::new_ui(|ui| {
         ui.label("Hello, world!");
         ui.separator();
-        ui.label("This is a test")
-            .on_hover_text("This\nis\na\nvery\ntall\ntooltip!");
+        ui.label("This is a test").on_hover_text("This\nis\na\nvery\ntall\ntooltip!");
     });
 
     harness.fit_contents();
@@ -64,9 +63,7 @@ fn test_modifiers() {
         State::default(),
     );
 
-    harness
-        .get_by_label("Click me")
-        .click_modifiers(Modifiers::COMMAND);
+    harness.get_by_label("Click me").click_modifiers(Modifiers::COMMAND);
     harness.run();
 
     harness.key_press_modifiers(Modifiers::COMMAND, egui::Key::Z);
@@ -83,46 +80,39 @@ fn test_modifiers() {
 
 #[test]
 fn should_wait_for_images() {
-    let mut harness = Harness::builder()
-        .with_size(Vec2::new(60.0, 120.0))
-        .build_ui(|ui| {
-            egui_extras::install_image_loaders(ui.ctx());
-            let size = Vec2::splat(30.0);
-            ui.label("Url:");
-            ui.add_sized(
-                size,
-                egui::Image::new(
-                    "https://raw.githubusercontent.com\
+    let mut harness = Harness::builder().with_size(Vec2::new(60.0, 120.0)).build_ui(|ui| {
+        egui_extras::install_image_loaders(ui.ctx());
+        let size = Vec2::splat(30.0);
+        ui.label("Url:");
+        ui.add_sized(
+            size,
+            egui::Image::new(
+                "https://raw.githubusercontent.com\
                     /emilk/egui/refs/heads/main/crates/eframe/data/icon.png",
-                ),
-            );
+            ),
+        );
 
-            ui.label("Include:");
-            ui.add_sized(
-                size,
-                egui::Image::new(include_image!("../../eframe/data/icon.png")),
-            );
-        });
+        ui.label("Include:");
+        ui.add_sized(size, egui::Image::new(include_image!("../../eframe/data/icon.png")));
+    });
 
     harness.snapshot("should_wait_for_images");
 }
 
 fn test_scroll_harness() -> Harness<'static, bool> {
-    Harness::builder()
-        .with_size(Vec2::new(100.0, 200.0))
-        .build_ui_state(
-            |ui, state| {
-                ScrollArea::vertical().show(ui, |ui| {
-                    for i in 0..20 {
-                        ui.label(format!("Item {i}"));
-                    }
-                    if ui.button("Hidden Button").clicked() {
-                        *state = true;
-                    }
-                });
-            },
-            false,
-        )
+    Harness::builder().with_size(Vec2::new(100.0, 200.0)).build_ui_state(
+        |ui, state| {
+            ScrollArea::vertical().show(ui, |ui| {
+                for i in 0..20 {
+                    ui.label(format!("Item {i}"));
+                }
+                if ui.button("Hidden Button").clicked() {
+                    *state = true;
+                }
+            });
+        },
+        false,
+    )
 }
 
 #[cfg(feature = "snapshot")]
@@ -141,10 +131,7 @@ fn test_scroll_to_me() {
     harness.get_by_label("Hidden Button").click();
     harness.run();
 
-    assert!(
-        harness.state(),
-        "The button was not clicked after scrolling."
-    );
+    assert!(harness.state(), "The button was not clicked after scrolling.");
 }
 
 #[test]
@@ -159,19 +146,13 @@ fn test_scroll_down() {
     harness.get_by_label("Hidden Button").click();
     harness.run();
 
-    assert!(
-        harness.state(),
-        "The button was not clicked after scrolling down. (Probably not scrolled enough / at all)"
-    );
+    assert!(harness.state(), "The button was not clicked after scrolling down. (Probably not scrolled enough / at all)");
 }
 
 #[test]
 fn test_masking() {
     let mut harness = Harness::new_ui(|ui| {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
+        let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
 
         ui.label("I should not be masked.");
         ui.label(format!("Timestamp: {timestamp}"));
@@ -207,27 +188,17 @@ fn test_remove_cursor() {
 
     harness.remove_cursor();
     harness.run();
-    assert!(
-        !harness.state(),
-        "The button should not be hovered after removing cursor"
-    );
+    assert!(!harness.state(), "The button should not be hovered after removing cursor");
 
     let non_hovered_button_snapshot = harness.render().expect("Failed to render");
-    assert_ne!(
-        hovered_button_snapshot, non_hovered_button_snapshot,
-        "The button appearance should change"
-    );
+    assert_ne!(hovered_button_snapshot, non_hovered_button_snapshot, "The button appearance should change");
 }
 
 #[test]
 fn test_ime_composition_visuals() {
     let mut harness = Harness::new_ui_state(
         |ui, state| {
-            egui::TextEdit::multiline(state)
-                .hint_text("Type here")
-                .desired_width(120.0)
-                .desired_rows(5)
-                .show(ui);
+            egui::TextEdit::multiline(state).hint_text("Type here").desired_width(120.0).desired_rows(5).show(ui);
         },
         "Hello. Bye.".to_owned(),
     );
@@ -245,21 +216,13 @@ fn test_ime_composition_visuals() {
 
     let text = "Have you ever seen an IME composing English text? You now see it. ";
     let text_index_1 = "Have you ever ".chars().count();
-    let text_index_2 = "Have you ever seen an IME composing English text? "
-        .chars()
-        .count();
+    let text_index_2 = "Have you ever seen an IME composing English text? ".chars().count();
 
-    harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
-        text: text.to_owned(),
-        active_range_chars: Some(text_index_1..text_index_2),
-    }));
+    harness.event(egui::Event::Ime(egui::ImeEvent::Preedit { text: text.to_owned(), active_range_chars: Some(text_index_1..text_index_2) }));
     harness.run();
     harness.snapshot("test_ime_composition_visuals_segment");
 
-    harness.event(egui::Event::Ime(egui::ImeEvent::Preedit {
-        text: text.to_owned(),
-        active_range_chars: Some(text_index_2..text_index_2),
-    }));
+    harness.event(egui::Event::Ime(egui::ImeEvent::Preedit { text: text.to_owned(), active_range_chars: Some(text_index_2..text_index_2) }));
     harness.run();
     harness.snapshot("test_ime_composition_visuals_cursor");
 }
@@ -274,21 +237,18 @@ fn inner_size_viewport_command() {
         observed_size: Option<Vec2>,
     }
 
-    let mut harness = Harness::builder()
-        .with_size(Vec2::new(100.0, 80.0))
-        .build_ui_state(
-            |ui, state: &mut State| {
-                // Request the resize once.
-                if !state.requested {
-                    state.requested = true;
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::InnerSize(new_size));
-                }
+    let mut harness = Harness::builder().with_size(Vec2::new(100.0, 80.0)).build_ui_state(
+        |ui, state: &mut State| {
+            // Request the resize once.
+            if !state.requested {
+                state.requested = true;
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(new_size));
+            }
 
-                state.observed_size = Some(ui.ctx().viewport_rect().size());
-            },
-            State::default(),
-        );
+            state.observed_size = Some(ui.ctx().viewport_rect().size());
+        },
+        State::default(),
+    );
 
     harness.run();
 

@@ -13,22 +13,12 @@ pub struct CircleShape {
 impl CircleShape {
     #[inline]
     pub fn filled(center: Pos2, radius: f32, fill_color: impl Into<Color32>) -> Self {
-        Self {
-            center,
-            radius,
-            fill: fill_color.into(),
-            stroke: Default::default(),
-        }
+        Self { center, radius, fill: fill_color.into(), stroke: Default::default() }
     }
 
     #[inline]
     pub fn stroke(center: Pos2, radius: f32, stroke: impl Into<Stroke>) -> Self {
-        Self {
-            center,
-            radius,
-            fill: Default::default(),
-            stroke: stroke.into(),
-        }
+        Self { center, radius, fill: Default::default(), stroke: stroke.into() }
     }
 
     /// The visual bounding rectangle (includes stroke width)
@@ -36,10 +26,7 @@ impl CircleShape {
         if self.fill == Color32::TRANSPARENT && self.stroke.is_empty() {
             Rect::NOTHING
         } else {
-            Rect::from_center_size(
-                self.center,
-                Vec2::splat(self.radius * 2.0 + self.stroke.width),
-            )
+            Rect::from_center_size(self.center, Vec2::splat(self.radius * 2.0 + self.stroke.width))
         }
     }
 }

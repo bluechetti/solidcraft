@@ -16,37 +16,23 @@ pub enum Size {
 impl Size {
     /// Exactly this big, with no room for resize.
     pub fn exact(points: f32) -> Self {
-        Self::Absolute {
-            initial: points,
-            range: Rangef::new(points, points),
-        }
+        Self::Absolute { initial: points, range: Rangef::new(points, points) }
     }
 
     /// Initially this big, but can resize.
     pub fn initial(points: f32) -> Self {
-        Self::Absolute {
-            initial: points,
-            range: Rangef::new(0.0, f32::INFINITY),
-        }
+        Self::Absolute { initial: points, range: Rangef::new(0.0, f32::INFINITY) }
     }
 
     /// Relative size relative to all available space. Values must be in range `0.0..=1.0`.
     pub fn relative(fraction: f32) -> Self {
-        debug_assert!(
-            0.0 <= fraction && fraction <= 1.0,
-            "fraction should be in the range [0, 1], but was {fraction}"
-        );
-        Self::Relative {
-            fraction,
-            range: Rangef::new(0.0, f32::INFINITY),
-        }
+        debug_assert!(0.0 <= fraction && fraction <= 1.0, "fraction should be in the range [0, 1], but was {fraction}");
+        Self::Relative { fraction, range: Rangef::new(0.0, f32::INFINITY) }
     }
 
     /// Multiple remainders each get the same space.
     pub fn remainder() -> Self {
-        Self::Remainder {
-            range: Rangef::new(0.0, f32::INFINITY),
-        }
+        Self::Remainder { range: Rangef::new(0.0, f32::INFINITY) }
     }
 
     /// Won't shrink below this size (in points).
@@ -72,17 +58,13 @@ impl Size {
     /// Allowed range of movement (in points), if in a resizable [`Table`](crate::table::Table).
     pub fn range(self) -> Rangef {
         match self {
-            Self::Absolute { range, .. }
-            | Self::Relative { range, .. }
-            | Self::Remainder { range, .. } => range,
+            Self::Absolute { range, .. } | Self::Relative { range, .. } | Self::Remainder { range, .. } => range,
         }
     }
 
     pub fn range_mut(&mut self) -> &mut Rangef {
         match self {
-            Self::Absolute { range, .. }
-            | Self::Relative { range, .. }
-            | Self::Remainder { range, .. } => range,
+            Self::Absolute { range, .. } | Self::Relative { range, .. } | Self::Remainder { range, .. } => range,
         }
     }
 
@@ -124,10 +106,7 @@ impl Sizing {
             .map(|&size| match size {
                 Size::Absolute { initial, .. } => initial,
                 Size::Relative { fraction, range } => {
-                    assert!(
-                        0.0 <= fraction && fraction <= 1.0,
-                        "fraction should be in the range [0, 1], but was {fraction}"
-                    );
+                    assert!(0.0 <= fraction && fraction <= 1.0, "fraction should be in the range [0, 1], but was {fraction}");
                     range.clamp(length * fraction)
                 }
                 Size::Remainder { .. } => {
@@ -151,11 +130,7 @@ impl Sizing {
                     num_remainders -= 1;
                 }
             }
-            if num_remainders > 0 {
-                0.0f32.max(remainder_length / num_remainders as f32)
-            } else {
-                0.0
-            }
+            if num_remainders > 0 { 0.0f32.max(remainder_length / num_remainders as f32) } else { 0.0 }
         };
 
         self.sizes

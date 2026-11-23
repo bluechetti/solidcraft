@@ -8,8 +8,8 @@ use epaint::{
 };
 
 use crate::{
-    Color32, Context, CornerRadius, Id, Mesh, Painter, Rect, Response, Role, Sense, Shape, Spinner,
-    TextStyle, TextureOptions, Ui, Vec2, Widget, WidgetInfo,
+    Color32, Context, CornerRadius, Id, Mesh, Painter, Rect, Response, Role, Sense, Shape, Spinner, TextStyle, TextureOptions, Ui, Vec2, Widget,
+    WidgetInfo,
     load::{Bytes, SizeHint, SizedTexture, TextureLoadResult, TexturePoll},
     pos2,
 };
@@ -66,11 +66,7 @@ impl<'a> Image<'a> {
             let size = if let ImageSource::Texture(tex) = &source {
                 // User is probably expecting their texture to have
                 // the exact size of the provided `SizedTexture`.
-                ImageSize {
-                    maintain_aspect_ratio: true,
-                    max_size: Vec2::INFINITY,
-                    fit: ImageFit::Exact(tex.size),
-                }
+                ImageSize { maintain_aspect_ratio: true, max_size: Vec2::INFINITY, fit: ImageFit::Exact(tex.size) }
             } else {
                 Default::default()
             };
@@ -109,10 +105,7 @@ impl<'a> Image<'a> {
     ///
     /// See [`ImageSource::Bytes`].
     pub fn from_bytes(uri: impl Into<Cow<'static, str>>, bytes: impl Into<Bytes>) -> Self {
-        Self::new(ImageSource::Bytes {
-            uri: uri.into(),
-            bytes: bytes.into(),
-        })
+        Self::new(ImageSource::Bytes { uri: uri.into(), bytes: bytes.into() })
     }
 
     /// Texture options used when loading the texture from a uri or bytes.
@@ -323,11 +316,7 @@ impl<'a> Image<'a> {
     pub fn uri(&self) -> Option<&str> {
         let uri = self.source.uri()?;
 
-        if let Ok((gif_uri, _index)) = decode_animated_image_uri(uri) {
-            Some(gif_uri)
-        } else {
-            Some(uri)
-        }
+        if let Ok((gif_uri, _index)) = decode_animated_image_uri(uri) { Some(gif_uri) } else { Some(uri) }
     }
 
     #[inline]
@@ -339,14 +328,12 @@ impl<'a> Image<'a> {
     pub fn source(&'a self, ctx: &Context) -> ImageSource<'a> {
         match &self.source {
             ImageSource::Uri(uri) if is_animated_image_uri(uri) => {
-                let frame_uri =
-                    encode_animated_image_uri(uri, animated_image_frame_index(ctx, uri));
+                let frame_uri = encode_animated_image_uri(uri, animated_image_frame_index(ctx, uri));
                 ImageSource::Uri(Cow::Owned(frame_uri))
             }
 
             ImageSource::Bytes { uri, bytes } if are_animated_image_bytes(bytes) => {
-                let frame_uri =
-                    encode_animated_image_uri(uri, animated_image_frame_index(ctx, uri));
+                let frame_uri = encode_animated_image_uri(uri, animated_image_frame_index(ctx, uri));
                 ctx.include_bytes(uri.clone(), bytes.clone());
                 ImageSource::Uri(Cow::Owned(frame_uri))
             }
@@ -362,9 +349,7 @@ impl<'a> Image<'a> {
     /// May fail if they underlying [`Context::try_load_texture`] call fails.
     pub fn load_for_size(&self, ctx: &Context, available_size: Vec2) -> TextureLoadResult {
         let size_hint = self.size.hint(available_size, ctx.pixels_per_point());
-        self.source(ctx)
-            .clone()
-            .load(ctx, self.texture_options, size_hint)
+        self.source(ctx).clone().load(ctx, self.texture_options, size_hint)
     }
 
     /// Paint the image in the given rectangle.
@@ -398,14 +383,7 @@ impl<'a> Image<'a> {
             },
         );
 
-        paint_texture_load_result(
-            ui,
-            &texture,
-            rect,
-            self.show_loading_spinner,
-            &self.image_options,
-            self.alt_text.as_deref(),
-        );
+        paint_texture_load_result(ui, &texture, rect, self.show_loading_spinner, &self.image_options, self.alt_text.as_deref());
     }
 }
 
@@ -422,14 +400,7 @@ impl Widget for Image<'_> {
             info
         });
         if ui.is_rect_visible(rect) {
-            paint_texture_load_result(
-                ui,
-                &tlr,
-                rect,
-                self.show_loading_spinner,
-                &self.image_options,
-                self.alt_text.as_deref(),
-            );
+            paint_texture_load_result(ui, &tlr, rect, self.show_loading_spinner, &self.image_options, self.alt_text.as_deref());
         }
         texture_load_result_response(&self.source(ui.ctx()), &tlr, response)
     }
@@ -495,11 +466,7 @@ impl ImageFit {
 impl ImageSize {
     /// Size hint for e.g. rasterizing an svg.
     pub fn hint(&self, available_size: Vec2, pixels_per_point: f32) -> SizeHint {
-        let Self {
-            maintain_aspect_ratio,
-            max_size,
-            fit,
-        } = *self;
+        let Self { maintain_aspect_ratio, max_size, fit } = *self;
 
         let point_size = match fit {
             ImageFit::Original { scale } => {
@@ -514,11 +481,7 @@ impl ImageSize {
 
         // `inf` on an axis means "any value"
         match (pixel_size.x.is_finite(), pixel_size.y.is_finite()) {
-            (true, true) => SizeHint::Size {
-                width: pixel_size.x.round() as u32,
-                height: pixel_size.y.round() as u32,
-                maintain_aspect_ratio,
-            },
+            (true, true) => SizeHint::Size { width: pixel_size.x.round() as u32, height: pixel_size.y.round() as u32, maintain_aspect_ratio },
             (true, false) => SizeHint::Width(pixel_size.x.round() as u32),
             (false, true) => SizeHint::Height(pixel_size.y.round() as u32),
             (false, false) => SizeHint::Scale(pixels_per_point.ord()),
@@ -527,11 +490,7 @@ impl ImageSize {
 
     /// Calculate the final on-screen size in points.
     pub fn calc_size(&self, available_size: Vec2, image_source_size: Vec2) -> Vec2 {
-        let Self {
-            maintain_aspect_ratio,
-            max_size,
-            fit,
-        } = *self;
+        let Self { maintain_aspect_ratio, max_size, fit } = *self;
         match fit {
             ImageFit::Original { scale } => {
                 let image_size = scale * image_source_size;
@@ -569,11 +528,7 @@ fn scale_to_fit(image_size: Vec2, available_size: Vec2, maintain_aspect_ratio: b
 impl Default for ImageSize {
     #[inline]
     fn default() -> Self {
-        Self {
-            max_size: Vec2::INFINITY,
-            fit: ImageFit::Fraction(Vec2::new(1.0, 1.0)),
-            maintain_aspect_ratio: true,
-        }
+        Self { max_size: Vec2::INFINITY, fit: ImageFit::Fraction(Vec2::new(1.0, 1.0)), maintain_aspect_ratio: true }
     }
 }
 
@@ -642,12 +597,7 @@ impl ImageSource<'_> {
 
     /// # Errors
     /// Failure to load the texture.
-    pub fn load(
-        self,
-        ctx: &Context,
-        texture_options: TextureOptions,
-        size_hint: SizeHint,
-    ) -> TextureLoadResult {
+    pub fn load(self, ctx: &Context, texture_options: TextureOptions, size_hint: SizeHint) -> TextureLoadResult {
         match self {
             Self::Texture(texture) => Ok(TexturePoll::Ready { texture }),
             Self::Uri(uri) => ctx.try_load_texture(uri.as_ref(), texture_options, size_hint),
@@ -682,47 +632,26 @@ pub fn paint_texture_load_result(
             paint_texture_at(ui.painter(), rect, options, texture);
         }
         Ok(TexturePoll::Pending { .. }) => {
-            let show_loading_spinner =
-                show_loading_spinner.unwrap_or_else(|| ui.visuals().image_loading_spinners);
+            let show_loading_spinner = show_loading_spinner.unwrap_or_else(|| ui.visuals().image_loading_spinners);
             if show_loading_spinner {
                 Spinner::new().paint_at(ui, rect);
             }
         }
         Err(_) => {
             let font_id = TextStyle::Body.resolve(ui.style());
-            let mut job = LayoutJob {
-                wrap: TextWrapping::truncate_at_width(rect.width()),
-                halign: Align::Center,
-                ..Default::default()
-            };
-            job.append(
-                "⚠️",
-                0.0,
-                TextFormat::simple(font_id.clone(), ui.visuals().error_fg_color),
-            );
+            let mut job = LayoutJob { wrap: TextWrapping::truncate_at_width(rect.width()), halign: Align::Center, ..Default::default() };
+            job.append("⚠️", 0.0, TextFormat::simple(font_id.clone(), ui.visuals().error_fg_color));
             if let Some(alt_text) = alt_text {
-                job.append(
-                    alt_text,
-                    ui.spacing().item_spacing.x,
-                    TextFormat::simple(font_id, ui.visuals().text_color()),
-                );
+                job.append(alt_text, ui.spacing().item_spacing.x, TextFormat::simple(font_id, ui.visuals().text_color()));
             }
             let galley = ui.painter().layout_job(job);
-            ui.painter().galley(
-                rect.center() - Vec2::Y * galley.size().y * 0.5,
-                galley,
-                ui.visuals().text_color(),
-            );
+            ui.painter().galley(rect.center() - Vec2::Y * galley.size().y * 0.5, galley, ui.visuals().text_color());
         }
     }
 }
 
 /// Attach tooltips like "Loading…" or "Failed loading: …".
-pub fn texture_load_result_response(
-    source: &ImageSource<'_>,
-    tlr: &TextureLoadResult,
-    response: Response,
-) -> Response {
+pub fn texture_load_result_response(source: &ImageSource<'_>, tlr: &TextureLoadResult, response: Response) -> Response {
     match tlr {
         Ok(TexturePoll::Ready { .. }) => response,
         Ok(TexturePoll::Pending { .. }) => {
@@ -773,30 +702,21 @@ impl<'a> From<Cow<'a, str>> for ImageSource<'a> {
 impl<T: Into<Bytes>> From<(&'static str, T)> for ImageSource<'static> {
     #[inline]
     fn from((uri, bytes): (&'static str, T)) -> Self {
-        Self::Bytes {
-            uri: uri.into(),
-            bytes: bytes.into(),
-        }
+        Self::Bytes { uri: uri.into(), bytes: bytes.into() }
     }
 }
 
 impl<T: Into<Bytes>> From<(Cow<'static, str>, T)> for ImageSource<'static> {
     #[inline]
     fn from((uri, bytes): (Cow<'static, str>, T)) -> Self {
-        Self::Bytes {
-            uri,
-            bytes: bytes.into(),
-        }
+        Self::Bytes { uri, bytes: bytes.into() }
     }
 }
 
 impl<T: Into<Bytes>> From<(String, T)> for ImageSource<'static> {
     #[inline]
     fn from((uri, bytes): (String, T)) -> Self {
-        Self::Bytes {
-            uri: uri.into(),
-            bytes: bytes.into(),
-        }
+        Self::Bytes { uri: uri.into(), bytes: bytes.into() }
     }
 }
 
@@ -850,28 +770,16 @@ impl Default for ImageOptions {
     }
 }
 
-pub fn paint_texture_at(
-    painter: &Painter,
-    rect: Rect,
-    options: &ImageOptions,
-    texture: &SizedTexture,
-) {
+pub fn paint_texture_at(painter: &Painter, rect: Rect, options: &ImageOptions, texture: &SizedTexture) {
     if options.bg_fill != Default::default() {
-        painter.add(RectShape::filled(
-            rect,
-            options.corner_radius,
-            options.bg_fill,
-        ));
+        painter.add(RectShape::filled(rect, options.corner_radius, options.bg_fill));
     }
 
     match options.rotation {
         Some((rot, origin)) => {
             // TODO(emilk): implement this using `PathShape` (add texture support to it).
             // This will also give us anti-aliasing of rotated images.
-            debug_assert!(
-                options.corner_radius == CornerRadius::ZERO,
-                "Image had both rounding and rotation. Please pick only one"
-            );
+            debug_assert!(options.corner_radius == CornerRadius::ZERO, "Image had both rounding and rotation. Please pick only one");
 
             let mut mesh = Mesh::with_texture(texture.id);
             mesh.add_rect_with_uv(rect, options.uv, options.tint);
@@ -879,10 +787,7 @@ pub fn paint_texture_at(
             painter.add(Shape::mesh(mesh));
         }
         None => {
-            painter.add(
-                RectShape::filled(rect, options.corner_radius, options.tint)
-                    .with_texture(texture.id, options.uv),
-            );
+            painter.add(RectShape::filled(rect, options.corner_radius, options.tint).with_texture(texture.id, options.uv));
         }
     }
 }
@@ -910,12 +815,8 @@ fn encode_animated_image_uri(uri: &str, frame_index: usize) -> String {
 /// # Errors
 /// Will return `Err` if `uri` does not match pattern {uri}-{frame_index}
 pub fn decode_animated_image_uri(uri: &str) -> Result<(&str, usize), String> {
-    let (uri, index) = uri
-        .rsplit_once('#')
-        .ok_or("Failed to find index separator '#'")?;
-    let index: usize = index.parse().map_err(|_err| {
-        format!("Failed to parse animated image frame index: {index:?} is not an integer")
-    })?;
+    let (uri, index) = uri.rsplit_once('#').ok_or("Failed to find index separator '#'")?;
+    let index: usize = index.parse().map_err(|_err| format!("Failed to parse animated image frame index: {index:?} is not an integer"))?;
     Ok((uri, index))
 }
 

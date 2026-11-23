@@ -23,11 +23,7 @@ impl Ui {
     /// The types you need to call this are only public with the
     /// `experimental_theme` feature.
     #[cfg_attr(not(feature = "experimental"), doc(hidden))]
-    pub fn widget_style<S: WidgetStyle + Clone + 'static>(
-        &self,
-        id: crate::Id,
-        classes: &Classes,
-    ) -> S {
+    pub fn widget_style<S: WidgetStyle + Clone + 'static>(&self, id: crate::Id, classes: &Classes) -> S {
         // Fetch the state of the widget, as it was in the previous pass
         let state = if let Some(response) = self.read_response(id) {
             response.widget_state()
@@ -38,12 +34,6 @@ impl Ui {
             WidgetState::default()
         };
 
-        self.get_widget_style::<S>(&StyleArgs {
-            classes,
-            state,
-            style: self.style(),
-            stack: self.stack(),
-            ctx: self,
-        })
+        self.get_widget_style::<S>(&StyleArgs { classes, state, style: self.style(), stack: self.stack(), ctx: self })
     }
 }

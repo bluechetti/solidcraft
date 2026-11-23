@@ -19,37 +19,22 @@ fn rotated_rect() {
         let cell_center = Pos2::new(90.0, 90.0);
         let cell_rect = Rect::from_center_size(cell_center, rect_size);
 
-        Grid::new("rotated_rect_grid")
-            .spacing(Vec2::new(30.0, 30.0))
-            .show(ui, |ui| {
-                for (label, angle, pivot) in [
-                    ("0°", 0.0, None),
-                    ("Center 45°", 45.0f32.to_radians(), None),
-                    (
-                        "Top-Left 45°",
-                        45.0f32.to_radians(),
-                        Some(cell_rect.left_top()),
-                    ),
-                ] {
-                    paint_case(ui, label, |offset| {
-                        let rect = cell_rect.translate(offset);
-                        let pivot = pivot.map(|p| p + offset);
-                        let pivot_pos = pivot.unwrap_or_else(|| rect.center());
+        Grid::new("rotated_rect_grid").spacing(Vec2::new(30.0, 30.0)).show(ui, |ui| {
+            for (label, angle, pivot) in
+                [("0°", 0.0, None), ("Center 45°", 45.0f32.to_radians(), None), ("Top-Left 45°", 45.0f32.to_radians(), Some(cell_rect.left_top()))]
+            {
+                paint_case(ui, label, |offset| {
+                    let rect = cell_rect.translate(offset);
+                    let pivot = pivot.map(|p| p + offset);
+                    let pivot_pos = pivot.unwrap_or_else(|| rect.center());
 
-                        let ghost = RectShape::stroke(rect, 0.0, ghost_stroke, StrokeKind::Outside);
-                        let shape = RectShape::new(
-                            rect,
-                            0.0,
-                            SHAPE_COLOR,
-                            shape_stroke,
-                            StrokeKind::Outside,
-                        )
-                        .with_angle_and_pivot(angle, pivot_pos);
+                    let ghost = RectShape::stroke(rect, 0.0, ghost_stroke, StrokeKind::Outside);
+                    let shape = RectShape::new(rect, 0.0, SHAPE_COLOR, shape_stroke, StrokeKind::Outside).with_angle_and_pivot(angle, pivot_pos);
 
-                        (ghost.into(), shape.into(), pivot_pos)
-                    });
-                }
-            });
+                    (ghost.into(), shape.into(), pivot_pos)
+                });
+            }
+        });
     });
 
     harness.fit_contents();
@@ -68,32 +53,24 @@ fn rotated_ellipse() {
         let cell_center = Pos2::new(90.0, 90.0);
         let radius = rect_size * 0.5;
 
-        Grid::new("rotated_ellipse_grid")
-            .spacing(Vec2::new(30.0, 30.0))
-            .show(ui, |ui| {
-                for (label, angle, pivot) in [
-                    ("0°", 0.0, None),
-                    ("Center 45°", 45.0f32.to_radians(), None),
-                    (
-                        "Top-Left 45°",
-                        45.0f32.to_radians(),
-                        Some(cell_center - radius),
-                    ),
-                ] {
-                    paint_case(ui, label, |offset| {
-                        let center = cell_center + offset;
-                        let pivot = pivot.map(|p| p + offset);
-                        let pivot_pos = pivot.unwrap_or(center);
+        Grid::new("rotated_ellipse_grid").spacing(Vec2::new(30.0, 30.0)).show(ui, |ui| {
+            for (label, angle, pivot) in
+                [("0°", 0.0, None), ("Center 45°", 45.0f32.to_radians(), None), ("Top-Left 45°", 45.0f32.to_radians(), Some(cell_center - radius))]
+            {
+                paint_case(ui, label, |offset| {
+                    let center = cell_center + offset;
+                    let pivot = pivot.map(|p| p + offset);
+                    let pivot_pos = pivot.unwrap_or(center);
 
-                        let ghost = EllipseShape::stroke(center, radius, ghost_stroke);
-                        let mut shape = EllipseShape::filled(center, radius, SHAPE_COLOR);
-                        shape.stroke = shape_stroke;
-                        let shape = shape.with_angle_and_pivot(angle, pivot_pos);
+                    let ghost = EllipseShape::stroke(center, radius, ghost_stroke);
+                    let mut shape = EllipseShape::filled(center, radius, SHAPE_COLOR);
+                    shape.stroke = shape_stroke;
+                    let shape = shape.with_angle_and_pivot(angle, pivot_pos);
 
-                        (ghost.into(), shape.into(), pivot_pos)
-                    });
-                }
-            });
+                    (ghost.into(), shape.into(), pivot_pos)
+                });
+            }
+        });
     });
 
     harness.fit_contents();

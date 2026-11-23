@@ -28,21 +28,13 @@ pub enum Order {
 
 impl Order {
     const COUNT: usize = 5;
-    const ALL: [Self; Self::COUNT] = [
-        Self::Background,
-        Self::Middle,
-        Self::Foreground,
-        Self::Tooltip,
-        Self::Debug,
-    ];
+    const ALL: [Self; Self::COUNT] = [Self::Background, Self::Middle, Self::Foreground, Self::Tooltip, Self::Debug];
     pub const TOP: Self = Self::Debug;
 
     #[inline(always)]
     pub fn allow_interaction(&self) -> bool {
         match self {
-            Self::Background | Self::Middle | Self::Foreground | Self::Tooltip | Self::Debug => {
-                true
-            }
+            Self::Background | Self::Middle | Self::Foreground | Self::Tooltip | Self::Debug => true,
         }
     }
 
@@ -73,26 +65,16 @@ impl LayerId {
     }
 
     pub fn debug() -> Self {
-        Self {
-            order: Order::Debug,
-            id: Id::unique("debug"),
-        }
+        Self { order: Order::Debug, id: Id::unique("debug") }
     }
 
     pub fn background() -> Self {
-        Self {
-            order: Order::Background,
-            id: Id::unique("background"),
-        }
+        Self { order: Order::Background, id: Id::unique("background") }
     }
 
     /// Short and readable summary
     pub fn short_debug_format(&self) -> String {
-        format!(
-            "{} {}",
-            self.order.short_debug_format(),
-            self.id.short_debug_format()
-        )
+        format!("{} {}", self.order.short_debug_format(), self.id.short_debug_format())
     }
 }
 
@@ -131,11 +113,7 @@ impl PaintList {
     }
 
     pub fn extend<I: IntoIterator<Item = Shape>>(&mut self, clip_rect: Rect, shapes: I) {
-        self.0.extend(
-            shapes
-                .into_iter()
-                .map(|shape| ClippedShape::new(clip_rect, shape)),
-        );
+        self.0.extend(shapes.into_iter().map(|shape| ClippedShape::new(clip_rect, shape)));
     }
 
     /// Modify an existing [`Shape`].
@@ -192,16 +170,10 @@ impl PaintList {
     /// after the shapes have been tessellated and snapped to the pixel grid.
     ///
     /// See [`ClippedShape::transform_after_tessellation`] for which of the two you want.
-    pub fn transform_after_rounding_range(
-        &mut self,
-        start: ShapeIdx,
-        end: ShapeIdx,
-        transform: TSTransform,
-    ) {
+    pub fn transform_after_rounding_range(&mut self, start: ShapeIdx, end: ShapeIdx, transform: TSTransform) {
         for clipped_shape in &mut self.0[start.0..end.0] {
             clipped_shape.clip_rect = transform.mul_rect(clipped_shape.clip_rect);
-            clipped_shape.transform_after_tessellation =
-                transform * clipped_shape.transform_after_tessellation;
+            clipped_shape.transform_after_tessellation = transform * clipped_shape.transform_after_tessellation;
         }
     }
 
@@ -218,9 +190,7 @@ pub struct GraphicLayers([IdMap<PaintList>; Order::COUNT]);
 impl GraphicLayers {
     /// Get or insert the [`PaintList`] for the given [`LayerId`].
     pub fn entry(&mut self, layer_id: LayerId) -> &mut PaintList {
-        self.0[layer_id.order as usize]
-            .entry(layer_id.id)
-            .or_default()
+        self.0[layer_id.order as usize].entry(layer_id.id).or_default()
     }
 
     /// Get the [`PaintList`] for the given [`LayerId`].
@@ -233,11 +203,7 @@ impl GraphicLayers {
         self.0[layer_id.order as usize].get_mut(&layer_id.id)
     }
 
-    pub fn drain(
-        &mut self,
-        area_order: &[LayerId],
-        to_global: &ahash::HashMap<LayerId, TSTransform>,
-    ) -> Vec<ClippedShape> {
+    pub fn drain(&mut self, area_order: &[LayerId], to_global: &ahash::HashMap<LayerId, TSTransform>) -> Vec<ClippedShape> {
         profiling::function_scope!();
 
         let mut all_shapes: Vec<_> = Default::default();

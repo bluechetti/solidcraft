@@ -36,10 +36,7 @@ impl Drop for AppRunner {
 impl AppRunner {
     /// # Errors
     /// Failure to initialize WebGL renderer, or failure to create app.
-    #[cfg_attr(
-        not(feature = "wgpu_no_default_features"),
-        expect(clippy::unused_async)
-    )]
+    #[cfg_attr(not(feature = "wgpu_no_default_features"), expect(clippy::unused_async))]
     pub async fn new(
         canvas: web_sys::HtmlCanvasElement,
         web_options: crate::WebOptions,
@@ -61,11 +58,7 @@ impl AppRunner {
             #[cfg(feature = "glow")]
             epi::Renderer::Glow => {
                 log::debug!("Using the glow renderer");
-                let painter = super::web_painter_glow::WebPainterGlow::new(
-                    egui_ctx.clone(),
-                    canvas,
-                    &web_options,
-                )?;
+                let painter = super::web_painter_glow::WebPainterGlow::new(egui_ctx.clone(), canvas, &web_options)?;
                 gl = Some(Arc::clone(painter.gl()));
                 Box::new(painter) as Box<dyn WebPainter>
             }
@@ -73,29 +66,19 @@ impl AppRunner {
             #[cfg(feature = "wgpu_no_default_features")]
             epi::Renderer::Wgpu => {
                 log::debug!("Using the wgpu renderer");
-                let painter = super::web_painter_wgpu::WebPainterWgpu::new(
-                    egui_ctx.clone(),
-                    canvas,
-                    &web_options,
-                )
-                .await?;
+                let painter = super::web_painter_wgpu::WebPainterWgpu::new(egui_ctx.clone(), canvas, &web_options).await?;
                 wgpu_render_state = painter.render_state();
                 Box::new(painter) as Box<dyn WebPainter>
             }
         };
 
         let info = epi::IntegrationInfo {
-            web_info: epi::WebInfo {
-                user_agent: super::user_agent().unwrap_or_default(),
-                location: super::web_location(),
-            },
+            web_info: epi::WebInfo { user_agent: super::user_agent().unwrap_or_default(), location: super::web_location() },
             cpu_usage: None,
         };
         let storage = LocalStorage::default();
 
-        egui_ctx.set_os(egui::os::OperatingSystem::from_user_agent(
-            &super::user_agent().unwrap_or_default(),
-        ));
+        egui_ctx.set_os(egui::os::OperatingSystem::from_user_agent(&super::user_agent().unwrap_or_default()));
         super::storage::load_memory(&egui_ctx);
 
         egui_ctx.options_mut(|o| {
@@ -171,13 +154,7 @@ impl AppRunner {
         };
 
         runner.input.raw.max_texture_side = Some(runner.painter.max_texture_side());
-        runner
-            .input
-            .raw
-            .viewports
-            .entry(egui::ViewportId::ROOT)
-            .or_default()
-            .native_pixels_per_point = Some(super::native_pixels_per_point());
+        runner.input.raw.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(super::native_pixels_per_point());
         runner.input.raw.system_theme = super::system_theme();
 
         Ok(runner)
@@ -280,33 +257,19 @@ impl AppRunner {
 
         self.app.raw_input_hook(&self.egui_ctx, &mut raw_input);
 
-        let is_visible = raw_input
-            .viewports
-            .get(&egui::ViewportId::ROOT)
-            .and_then(|v| v.visible())
-            .unwrap_or(true);
+        let is_visible = raw_input.viewports.get(&egui::ViewportId::ROOT).and_then(|v| v.visible()).unwrap_or(true);
 
         if is_visible {
             let full_output = self.egui_ctx.run_ui(raw_input, |ui| {
                 self.app.logic(ui.ctx(), &mut self.frame);
                 self.app.ui(ui, &mut self.frame);
             });
-            let egui::FullOutput {
-                platform_output,
-                textures_delta,
-                shapes,
-                pixels_per_point,
-                viewport_output,
-            } = full_output;
+            let egui::FullOutput { platform_output, textures_delta, shapes, pixels_per_point, viewport_output } = full_output;
 
             if viewport_output.len() > 1 {
                 log::warn!("Multiple viewports not yet supported on the web");
             }
-            self.handle_viewport_commands(
-                viewport_output
-                    .into_values()
-                    .flat_map(|viewport_output| viewport_output.commands),
-            );
+            self.handle_viewport_commands(viewport_output.into_values().flat_map(|viewport_output| viewport_output.commands));
 
             self.handle_platform_output(platform_output);
             self.textures_delta.append(textures_delta);
@@ -316,10 +279,7 @@ impl AppRunner {
             // That way all ui state is left untouched, and is still there
             // when the tab is shown again.
 
-            let egui::LogicOutput {
-                platform_output,
-                viewport_commands,
-            } = self.egui_ctx.run_logic(&raw_input, |ctx| {
+            let egui::LogicOutput { platform_output, viewport_commands } = self.egui_ctx.run_logic(&raw_input, |ctx| {
                 self.app.logic(ctx, &mut self.frame);
             });
 
@@ -335,17 +295,14 @@ impl AppRunner {
         for command in commands {
             match command {
                 ViewportCommand::Screenshot(callback) => {
-                    self.screenshot_commands_with_frame_delay
-                        .push((callback, 1));
+                    self.screenshot_commands_with_frame_delay.push((callback, 1));
                 }
                 ViewportCommand::SetTheme(_) => {
                     // Web has no window decorations to theme, egui visuals follow the configured theme.
                 }
                 _ => {
                     // TODO(emilk): handle some of the commands
-                    log::warn!(
-                        "Unhandled egui viewport command: {command:?} - not implemented in web backend"
-                    );
+                    log::warn!("Unhandled egui viewport command: {command:?} - not implemented in web backend");
                 }
             }
         }
@@ -357,16 +314,15 @@ impl AppRunner {
 
         if let Some(clipped_primitives) = clipped_primitives {
             let mut screenshot_commands = vec![];
-            self.screenshot_commands_with_frame_delay
-                .retain_mut(|(callback, frame_delay)| {
-                    if *frame_delay == 0 {
-                        screenshot_commands.push(callback.clone());
-                        false
-                    } else {
-                        *frame_delay -= 1;
-                        true
-                    }
-                });
+            self.screenshot_commands_with_frame_delay.retain_mut(|(callback, frame_delay)| {
+                if *frame_delay == 0 {
+                    screenshot_commands.push(callback.clone());
+                    false
+                } else {
+                    *frame_delay -= 1;
+                    true
+                }
+            });
             if !self.screenshot_commands_with_frame_delay.is_empty() {
                 self.egui_ctx().request_repaint();
             }
@@ -396,8 +352,8 @@ impl AppRunner {
         let egui::PlatformOutput {
             commands,
             cursor_icon,
-            cursor_image: _, // TODO(alextournai): support custom bitmap cursors on the web (via CSS `url(...)`)
-            events: _,       // already handled
+            cursor_image: _,              // TODO(alextournai): support custom bitmap cursors on the web (via CSS `url(...)`)
+            events: _,                    // already handled
             mutable_text_under_cursor: _, // TODO(#4569): https://github.com/emilk/egui/issues/4569
             ime,
             accesskit_update: _,        // not currently implemented
@@ -437,14 +393,8 @@ impl AppRunner {
             }
         }
 
-        if let Err(err) = self
-            .text_agent
-            .update(ime, self.canvas(), self.egui_ctx.zoom_factor())
-        {
-            log::error!(
-                "failed to update text agent position: {}",
-                super::string_from_js_value(&err)
-            );
+        if let Err(err) = self.text_agent.update(ime, self.canvas(), self.egui_ctx.zoom_factor()) {
+            log::error!("failed to update text agent position: {}", super::string_from_js_value(&err));
         }
     }
 }

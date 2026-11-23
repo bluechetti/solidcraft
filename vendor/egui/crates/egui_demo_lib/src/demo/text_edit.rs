@@ -12,11 +12,7 @@ pub struct TextEditDemo {
 
 impl Default for TextEditDemo {
     fn default() -> Self {
-        Self {
-            text: "Edit this text".to_owned(),
-            halign: egui::Align::LEFT,
-            valign: egui::Align::TOP,
-        }
+        Self { text: "Edit this text".to_owned(), halign: egui::Align::LEFT, valign: egui::Align::TOP }
     }
 }
 
@@ -26,14 +22,10 @@ impl crate::Demo for TextEditDemo {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .resizable(false)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                use crate::View as _;
-                self.ui(ui);
-            });
+        egui::Window::new(self.name()).open(open).resizable(false).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| {
+            use crate::View as _;
+            self.ui(ui);
+        });
     }
 }
 
@@ -43,11 +35,7 @@ impl crate::View for TextEditDemo {
             ui.add(crate::egui_github_link_file!());
         });
 
-        let Self {
-            text,
-            halign,
-            valign,
-        } = self;
+        let Self { text, halign, valign } = self;
 
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
@@ -76,10 +64,7 @@ impl crate::View for TextEditDemo {
             .hint_text("Type something!")
             // Atoms are centered by default, so we need to pass the right align here:
             .prefix("🔎".atom_align(Align2::new(Align::LEFT, *valign)))
-            .suffix(
-                egui::Atom::custom(clear_id, clear_size)
-                    .atom_align(Align2::new(Align::RIGHT, *valign)),
-            )
+            .suffix(egui::Atom::custom(clear_id, clear_size).atom_align(Align2::new(Align::RIGHT, *valign)))
             .align(Align2::new(*halign, *valign))
             .show(ui);
 
@@ -100,10 +85,7 @@ impl crate::View for TextEditDemo {
 
         let anything_selected = output.cursor_range.is_some_and(|cursor| !cursor.is_empty());
 
-        ui.add_enabled(
-            anything_selected,
-            egui::Label::new("Press ctrl+Y to toggle the case of selected text (cmd+Y on Mac)"),
-        );
+        ui.add_enabled(anything_selected, egui::Label::new("Press ctrl+Y to toggle the case of selected text (cmd+Y on Mac)"));
 
         if output.response.has_focus()
             && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Y))
@@ -113,11 +95,7 @@ impl crate::View for TextEditDemo {
             let selected_chars = text_cursor_range.as_sorted_char_range();
             let selected_text = text.char_range(selected_chars.clone());
             let upper_case = selected_text.to_uppercase();
-            let new_text = if selected_text == upper_case {
-                selected_text.to_lowercase()
-            } else {
-                upper_case
-            };
+            let new_text = if selected_text == upper_case { selected_text.to_lowercase() } else { upper_case };
             text.delete_char_range(selected_chars.clone());
             text.insert_text(&new_text, selected_chars.start);
         }
@@ -129,9 +107,7 @@ impl crate::View for TextEditDemo {
                 let text_edit_id = output.response.id;
                 if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), text_edit_id) {
                     let ccursor = egui::text::CCursor::new(0);
-                    state
-                        .cursor
-                        .set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
+                    state.cursor.set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
                     state.store(ui.ctx(), text_edit_id);
                     ui.memory_mut(|mem| mem.request_focus(text_edit_id)); // give focus back to the [`TextEdit`].
                 }
@@ -141,9 +117,7 @@ impl crate::View for TextEditDemo {
                 let text_edit_id = output.response.id;
                 if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), text_edit_id) {
                     let ccursor = egui::text::CCursor::end_of_str(text);
-                    state
-                        .cursor
-                        .set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
+                    state.cursor.set_char_range(Some(egui::text::CCursorRange::one(ccursor)));
                     state.store(ui.ctx(), text_edit_id);
                     ui.memory_mut(|mem| mem.request_focus(text_edit_id)); // give focus back to the [`TextEdit`].
                 }
@@ -181,9 +155,7 @@ mod tests {
         text_edit.type_text("Hi ");
 
         harness.run();
-        harness
-            .get_by_role(accesskit::Role::TextInput)
-            .type_text("there!");
+        harness.get_by_role(accesskit::Role::TextInput).type_text("there!");
 
         harness.run();
         let text_edit = harness.get_by_role(accesskit::Role::TextInput);

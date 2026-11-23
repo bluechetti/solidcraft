@@ -6,8 +6,8 @@ use egui::epaint::Shape;
 use egui::style::ScrollAnimation;
 use egui::text::{LayoutJob, TextWrapping};
 use egui::{
-    Align, Align2, Button, Color32, FontFamily, FontId, Image, Label, Layout, Rect, RichText,
-    Sense, TextBuffer, TextFormat, TextWrapMode, Ui, Vec2, include_image, vec2,
+    Align, Align2, Button, Color32, FontFamily, FontId, Image, Label, Layout, Rect, RichText, Sense, TextBuffer, TextFormat, TextWrapMode, Ui, Vec2,
+    include_image, vec2,
 };
 use egui::{Pos2, ScrollArea};
 use egui_kittest::Harness;
@@ -16,9 +16,7 @@ use egui_kittest::kittest::{NodeT as _, Queryable as _};
 #[test]
 fn image_button_should_have_alt_text() {
     let harness = Harness::new_ui(|ui| {
-        _ = ui.button(
-            Image::new(include_image!("../../../crates/eframe/data/icon.png")).alt_text("Egui"),
-        );
+        _ = ui.button(Image::new(include_image!("../../../crates/eframe/data/icon.png")).alt_text("Egui"));
     });
 
     harness.get_by_label("Egui");
@@ -34,19 +32,9 @@ fn button_selected_should_announce_toggled_state() {
         ui.add(Button::new("On").selected(true));
     });
 
-    assert_eq!(
-        harness.get_by_label("Plain").accesskit_node().toggled(),
-        None,
-        "a plain Button must not be announced as a toggle",
-    );
-    assert_eq!(
-        harness.get_by_label("Off").accesskit_node().toggled(),
-        Some(Toggled::False),
-    );
-    assert_eq!(
-        harness.get_by_label("On").accesskit_node().toggled(),
-        Some(Toggled::True),
-    );
+    assert_eq!(harness.get_by_label("Plain").accesskit_node().toggled(), None, "a plain Button must not be announced as a toggle",);
+    assert_eq!(harness.get_by_label("Off").accesskit_node().toggled(), Some(Toggled::False),);
+    assert_eq!(harness.get_by_label("On").accesskit_node().toggled(), Some(Toggled::True),);
 }
 
 #[test]
@@ -73,20 +61,13 @@ fn hovering_should_preserve_text_format() {
 #[test]
 fn text_edit_rtl() {
     let mut text = "hello ".to_owned();
-    let mut harness = Harness::builder()
-        .with_size((200.0, 50.0))
-        .with_accessibility_check(false)
-        .build_ui(|ui| {
-            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                _ = ui.button("right");
-                ui.add(
-                    egui::TextEdit::singleline(&mut text)
-                        .desired_width(10.0)
-                        .clip_text(false),
-                );
-                _ = ui.button("left");
-            });
+    let mut harness = Harness::builder().with_size((200.0, 50.0)).with_accessibility_check(false).build_ui(|ui| {
+        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+            _ = ui.button("right");
+            ui.add(egui::TextEdit::singleline(&mut text).desired_width(10.0).clip_text(false));
+            _ = ui.button("left");
         });
+    });
 
     harness.get_by_role(Role::TextInput).focus();
     harness.step();
@@ -102,52 +83,31 @@ fn text_edit_rtl() {
 
 #[test]
 fn text_edit_halign() {
-    let mut harness = Harness::builder()
-        .with_size((212.0, 212.0))
-        .with_accessibility_check(false)
-        .build_ui(|ui| {
-            ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
+    let mut harness = Harness::builder().with_size((212.0, 212.0)).with_accessibility_check(false).build_ui(|ui| {
+        ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
 
-            fn layouter(
-                halign: Align,
-            ) -> impl FnMut(&Ui, &dyn TextBuffer, f32) -> Arc<egui::Galley> {
-                move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-                    let mut job = LayoutJob {
-                        wrap: TextWrapping {
-                            max_rows: 4,
-                            max_width: wrap_width,
-                            ..Default::default()
-                        },
-                        halign,
-                        ..Default::default()
-                    };
-                    job.append(
-                        buf.as_str(),
-                        0.0,
-                        TextFormat::simple(
-                            FontId::new(13.0, FontFamily::Proportional),
-                            Color32::GRAY,
-                        ),
-                    );
-                    ui.fonts_mut(|f| f.layout_job(job))
-                }
+        fn layouter(halign: Align) -> impl FnMut(&Ui, &dyn TextBuffer, f32) -> Arc<egui::Galley> {
+            move |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
+                let mut job =
+                    LayoutJob { wrap: TextWrapping { max_rows: 4, max_width: wrap_width, ..Default::default() }, halign, ..Default::default() };
+                job.append(buf.as_str(), 0.0, TextFormat::simple(FontId::new(13.0, FontFamily::Proportional), Color32::GRAY));
+                ui.fonts_mut(|f| f.layout_job(job))
             }
+        }
 
-            for widget_alignment in [Align::Min, Align::Center, Align::Max] {
-                ui.horizontal(|ui| {
-                    for text_alignment in [Align::LEFT, Align::Center, Align::RIGHT] {
-                        ui.add_sized(
-                            vec2(64.0, 64.0),
-                            egui::TextEdit::multiline(&mut format!(
-                                "{widget_alignment:?}\n+\n{text_alignment:?}",
-                            ))
+        for widget_alignment in [Align::Min, Align::Center, Align::Max] {
+            ui.horizontal(|ui| {
+                for text_alignment in [Align::LEFT, Align::Center, Align::RIGHT] {
+                    ui.add_sized(
+                        vec2(64.0, 64.0),
+                        egui::TextEdit::multiline(&mut format!("{widget_alignment:?}\n+\n{text_alignment:?}",))
                             .layouter(&mut layouter(text_alignment))
                             .align(Align2::new(widget_alignment, widget_alignment)),
-                        );
-                    }
-                });
-            }
-        });
+                    );
+                }
+            });
+        }
+    });
 
     harness.get_by_value("Center\n+\nCenter").focus();
     harness.step();
@@ -192,11 +152,7 @@ fn text_edit_scroll() {
     let mut text = "1\n2\n3\n4\n".to_owned();
     let mut harness = Harness::builder().build_ui(|ui| {
         ScrollArea::vertical().max_height(40.0).show(ui, |ui| {
-            ui.add(
-                egui::TextEdit::multiline(&mut text)
-                    .desired_rows(2)
-                    .hint_text("Write something"),
-            );
+            ui.add(egui::TextEdit::multiline(&mut text).desired_rows(2).hint_text("Write something"));
         });
     });
 
@@ -206,9 +162,7 @@ fn text_edit_scroll() {
     harness.step();
     harness.snapshot("text_edit_scroll_0_focus");
 
-    harness
-        .get_by_role(Role::MultilineTextInput)
-        .type_text("5\n");
+    harness.get_by_role(Role::MultilineTextInput).type_text("5\n");
 
     // When the text is empty, and we show the hint text, there is a frame delay.
     harness.run();
@@ -218,15 +172,10 @@ fn text_edit_scroll() {
 #[test]
 fn combobox_should_have_value() {
     let harness = Harness::new_ui(|ui| {
-        egui::ComboBox::from_label("Select an option")
-            .selected_text("Option 1")
-            .show_ui(ui, |_ui| {});
+        egui::ComboBox::from_label("Select an option").selected_text("Option 1").show_ui(ui, |_ui| {});
     });
 
-    assert_eq!(
-        harness.get_by_label("Select an option").value().as_deref(),
-        Some("Option 1")
-    );
+    assert_eq!(harness.get_by_label("Select an option").value().as_deref(), Some("Option 1"));
 }
 
 const CONTAINER_TOOLTIPS: [&str; 2] = ["Container tooltip", "B tooltip"];
@@ -254,14 +203,9 @@ fn assert_shown_tooltip(harness: &Harness<'_>, all_tooltips: &[&str], expected: 
     for &tooltip in all_tooltips {
         // The container itself is also labelled by its tooltip (for accessibility),
         // so we look for the label inside the tooltip:
-        let is_shown = harness
-            .query_by_role_and_label(Role::Label, tooltip)
-            .is_some();
+        let is_shown = harness.query_by_role_and_label(Role::Label, tooltip).is_some();
         let should_be_shown = Some(tooltip) == expected;
-        assert_eq!(
-            is_shown, should_be_shown,
-            "Tooltip {tooltip:?} shown: {is_shown}, expected: {should_be_shown}"
-        );
+        assert_eq!(is_shown, should_be_shown, "Tooltip {tooltip:?} shown: {is_shown}, expected: {should_be_shown}");
     }
 }
 
@@ -333,9 +277,7 @@ fn nested_container_tooltips() {
 
                     ui.horizontal(|ui| {
                         _ = ui.button("Inner button");
-                        _ = ui
-                            .button("Inner button with tooltip")
-                            .on_hover_text("Inner button tooltip");
+                        _ = ui.button("Inner button with tooltip").on_hover_text("Inner button tooltip");
                     })
                     .response
                     .on_hover_text("Inner tooltip");
@@ -391,11 +333,7 @@ fn interact_on_ui_response_should_be_stable() {
         }
 
         // Add a label so we have something to click with kittest
-        ui.add(
-            Label::new("senseless label")
-                .sense(Sense::hover())
-                .selectable(false),
-        );
+        ui.add(Label::new("senseless label").sense(Sense::hover()).selectable(false));
 
         let click_response = ui_response.interact(Sense::click());
         if click_response.clicked() {
@@ -457,19 +395,13 @@ fn warn_if_rect_changes_id() {
 
     // no hover — establishes stable prev_pass
     harness.step();
-    assert!(
-        !has_red_warning_rect(harness.output()),
-        "Should not warn without hover"
-    );
+    assert!(!has_red_warning_rect(harness.output()), "Should not warn without hover");
 
     // Move the pointer over the button
     harness.hover_at(button_rect.center());
 
     harness.step();
-    assert!(
-        has_red_warning_rect(harness.output()),
-        "Should warn when a widget rect changes Id between passes"
-    );
+    assert!(has_red_warning_rect(harness.output()), "Should warn when a widget rect changes Id between passes");
 }
 
 /// When a parent Ui's id changes (e.g. via `push_id` with a dynamic value),
@@ -496,26 +428,17 @@ fn warn_if_rect_changes_id_false_positive_parent_shift() {
 
     // Frame 1: counter=0 — establishes prev_pass
     harness.step();
-    assert!(
-        !has_red_warning_rect(harness.output()),
-        "Should not warn on first frame"
-    );
+    assert!(!has_red_warning_rect(harness.output()), "Should not warn on first frame");
 
     // Frame 2: counter=0 — prev_pass == this_pass
     harness.step();
-    assert!(
-        !has_red_warning_rect(harness.output()),
-        "Should not warn when nothing changed"
-    );
+    assert!(!has_red_warning_rect(harness.output()), "Should not warn when nothing changed");
 
     // Now change the parent id, shifting all child widget ids
     counter.set(1);
     harness.step();
 
-    assert!(
-        !has_red_warning_rect(harness.output()),
-        "Should NOT warn when parent Ui's id shifted (cascading id change)"
-    );
+    assert!(!has_red_warning_rect(harness.output()), "Should NOT warn when parent Ui's id shifted (cascading id change)");
 }
 
 /// When the auto-id of a parent Ui shifts (e.g. a widget is added before a child Ui),
@@ -545,138 +468,119 @@ fn warn_if_rect_changes_id_false_positive_auto_id_shift() {
 
     harness.step();
     harness.step();
-    assert!(
-        !has_red_warning_rect_at(harness.output(), button_rect),
-        "Should not warn when nothing changed"
-    );
+    assert!(!has_red_warning_rect_at(harness.output(), button_rect), "Should not warn when nothing changed");
 
     skip.set(true);
     harness.step();
-    assert!(
-        !has_red_warning_rect_at(harness.output(), button_rect),
-        "Should NOT warn when parent Ui's auto-id shifted (cascading id change)"
-    );
+    assert!(!has_red_warning_rect_at(harness.output(), button_rect), "Should NOT warn when parent Ui's auto-id shifted (cascading id change)");
 }
 
 #[test]
 fn horizontal_wrapped_multiline_row_height() {
-    let mut harness = Harness::builder()
-        .with_size((350.0, 300.0))
-        .with_accessibility_check(false)
-        .build_ui(|ui| {
-            ui.style_mut().interaction.tooltip_delay = 0.0;
-            ui.style_mut().interaction.show_tooltips_only_when_still = false;
+    let mut harness = Harness::builder().with_size((350.0, 300.0)).with_accessibility_check(false).build_ui(|ui| {
+        ui.style_mut().interaction.tooltip_delay = 0.0;
+        ui.style_mut().interaction.show_tooltips_only_when_still = false;
 
-            let mut string = String::new();
+        let mut string = String::new();
 
-            ui.horizontal_wrapped(|ui| {
-                ui.monospace("| ");
-                let _ = ui.button("A");
-                let _ = ui.button("B");
-                ui.end_row();
+        ui.horizontal_wrapped(|ui| {
+            ui.monospace("| ");
+            let _ = ui.button("A");
+            let _ = ui.button("B");
+            ui.end_row();
 
-                ui.monospace("| ");
-                let _ = ui.button("C");
-                let _ = ui.button("D");
-                let _ = ui.button("E");
-                ui.end_row();
+            ui.monospace("| ");
+            let _ = ui.button("C");
+            let _ = ui.button("D");
+            let _ = ui.button("E");
+            ui.end_row();
 
-                ui.monospace("| ");
-                ui.text_edit_multiline(&mut string);
-                ui.end_row();
+            ui.monospace("| ");
+            ui.text_edit_multiline(&mut string);
+            ui.end_row();
 
-                ui.monospace("| ");
-                let _ = ui.button("F");
-                let _ = ui.button("G");
-                ui.end_row();
+            ui.monospace("| ");
+            let _ = ui.button("F");
+            let _ = ui.button("G");
+            ui.end_row();
 
-                ui.monospace("| ");
-                let _ = ui.button("H");
-                let _ = ui.button("I");
-                let _ = ui.button("K");
-                ui.end_row();
-            });
+            ui.monospace("| ");
+            let _ = ui.button("H");
+            let _ = ui.button("I");
+            let _ = ui.button("K");
+            ui.end_row();
         });
+    });
 
     harness.snapshot("horizontal_wrapped_multiline_row_height");
 }
 
 #[test]
 fn horizontal_wrapped_multiline_row_height_reference() {
-    let mut harness = Harness::builder()
-        .with_size((350.0, 300.0))
-        .with_accessibility_check(false)
-        .build_ui(|ui| {
-            ui.style_mut().interaction.tooltip_delay = 0.0;
-            ui.style_mut().interaction.show_tooltips_only_when_still = false;
+    let mut harness = Harness::builder().with_size((350.0, 300.0)).with_accessibility_check(false).build_ui(|ui| {
+        ui.style_mut().interaction.tooltip_delay = 0.0;
+        ui.style_mut().interaction.show_tooltips_only_when_still = false;
 
-            let mut string = String::new();
+        let mut string = String::new();
 
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    ui.monospace("| ");
-                    let _ = ui.button("A");
-                    let _ = ui.button("B");
-                });
+        ui.vertical(|ui| {
+            ui.horizontal(|ui| {
+                ui.monospace("| ");
+                let _ = ui.button("A");
+                let _ = ui.button("B");
+            });
 
-                ui.horizontal(|ui| {
-                    ui.monospace("| ");
-                    let _ = ui.button("C");
-                    let _ = ui.button("D");
-                    let _ = ui.button("E");
-                });
+            ui.horizontal(|ui| {
+                ui.monospace("| ");
+                let _ = ui.button("C");
+                let _ = ui.button("D");
+                let _ = ui.button("E");
+            });
 
-                ui.horizontal(|ui| {
-                    ui.monospace("| ");
-                    ui.text_edit_multiline(&mut string);
-                });
+            ui.horizontal(|ui| {
+                ui.monospace("| ");
+                ui.text_edit_multiline(&mut string);
+            });
 
-                ui.horizontal(|ui| {
-                    ui.monospace("| ");
-                    let _ = ui.button("F");
-                    let _ = ui.button("G");
-                });
+            ui.horizontal(|ui| {
+                ui.monospace("| ");
+                let _ = ui.button("F");
+                let _ = ui.button("G");
+            });
 
-                ui.horizontal(|ui| {
-                    ui.monospace("| ");
-                    let _ = ui.button("H");
-                    let _ = ui.button("I");
-                    let _ = ui.button("K");
-                });
+            ui.horizontal(|ui| {
+                ui.monospace("| ");
+                let _ = ui.button("H");
+                let _ = ui.button("I");
+                let _ = ui.button("K");
             });
         });
+    });
 
     harness.snapshot("horizontal_wrapped_multiline_row_height_reference");
 }
 
 #[test]
 fn animated_scroll_beats_sticky_bottom() {
-    let mut harness = Harness::builder()
-        .with_size((200.0, 120.0))
-        .with_max_steps(8)
-        .build_ui_state(
-            |ui, state: &mut (bool, f32, f32)| {
-                ui.style_mut().scroll_animation = ScrollAnimation::duration(0.5);
+    let mut harness = Harness::builder().with_size((200.0, 120.0)).with_max_steps(8).build_ui_state(
+        |ui, state: &mut (bool, f32, f32)| {
+            ui.style_mut().scroll_animation = ScrollAnimation::duration(0.5);
 
-                let output = ScrollArea::vertical()
-                    .max_height(60.0)
-                    .stick_to_bottom(true)
-                    .animated(true)
-                    .show(ui, |ui| {
-                        for row in 0..40 {
-                            let response = ui.label(format!("Row {row}"));
-                            if state.0 && row == 0 {
-                                response.scroll_to_me(Some(Align::TOP));
-                                state.0 = false;
-                            }
-                        }
-                    });
+            let output = ScrollArea::vertical().max_height(60.0).stick_to_bottom(true).animated(true).show(ui, |ui| {
+                for row in 0..40 {
+                    let response = ui.label(format!("Row {row}"));
+                    if state.0 && row == 0 {
+                        response.scroll_to_me(Some(Align::TOP));
+                        state.0 = false;
+                    }
+                }
+            });
 
-                state.1 = output.state.clamped_offset().y;
-                state.2 = (output.content_size.y - output.inner_rect.height()).max(0.0);
-            },
-            (false, 0.0, 0.0),
-        );
+            state.1 = output.state.clamped_offset().y;
+            state.2 = (output.content_size.y - output.inner_rect.height()).max(0.0);
+        },
+        (false, 0.0, 0.0),
+    );
 
     assert!((harness.state().1 - harness.state().2).abs() <= 1.0);
 
@@ -684,10 +588,7 @@ fn animated_scroll_beats_sticky_bottom() {
     harness.step();
     harness.run();
 
-    assert!(
-        harness.state().1 + 1.0 < harness.state().2,
-        "animated explicit scroll should leave the sticky bottom"
-    );
+    assert!(harness.state().1 + 1.0 < harness.state().2, "animated explicit scroll should leave the sticky bottom");
 }
 
 /// Tests that tooltips are shown correctly for buttons that are only shown on hover.
@@ -699,8 +600,7 @@ fn tooltip_should_work_for_hover_button() {
     let button_rect = Rect::from_min_size(Pos2::new(4.0, 4.0), Vec2::new(80.0, 20.0));
     let mut harness = Harness::builder().with_size((320.0, 80.0)).build_ui(|ui| {
         if ui.rect_contains_pointer(button_rect) {
-            ui.button("A tooltip should be shown")
-                .on_hover_text("My tooltip");
+            ui.button("A tooltip should be shown").on_hover_text("My tooltip");
         }
     });
 
@@ -716,17 +616,10 @@ fn tooltip_should_work_for_hover_button() {
 #[test]
 fn tooltip_covering_button_should_not_cause_feedback_loop() {
     let mut harness = Harness::builder().with_size((200.0, 30.0)).build_ui(|ui| {
-        ui.button("A tooltip should be shown")
-            .on_hover_text("This tooltip is larger than the button");
+        ui.button("A tooltip should be shown").on_hover_text("This tooltip is larger than the button");
     });
 
-    harness.hover_at(
-        harness
-            .get_by_label("A tooltip should be shown")
-            .rect()
-            .left_center()
-            - Vec2::X,
-    );
+    harness.hover_at(harness.get_by_label("A tooltip should be shown").rect().left_center() - Vec2::X);
 
     harness.run();
 
@@ -751,21 +644,12 @@ fn tooltip_should_hand_over_to_neighboring_widget() {
 
     harness.hover_at(a_rect.center_bottom() - Vec2::Y);
     harness.run();
-    assert!(
-        harness.query_by_label("Tooltip A").is_some(),
-        "Tooltip A should be shown when hovering Button A"
-    );
+    assert!(harness.query_by_label("Tooltip A").is_some(), "Tooltip A should be shown when hovering Button A");
 
     harness.hover_at(b_rect.center_top() + Vec2::Y);
     harness.run();
-    assert!(
-        harness.query_by_label("Tooltip B").is_some(),
-        "Tooltip B should be shown when hovering Button B"
-    );
-    assert!(
-        harness.query_by_label("Tooltip A").is_none(),
-        "Tooltip A should be hidden when hovering Button B"
-    );
+    assert!(harness.query_by_label("Tooltip B").is_some(), "Tooltip B should be shown when hovering Button B");
+    assert!(harness.query_by_label("Tooltip A").is_none(), "Tooltip A should be hidden when hovering Button B");
 }
 
 /// When a window is minimized or occluded, the integration runs no pass at all,
@@ -784,25 +668,20 @@ fn run_logic_should_not_disturb_ui_state() {
     let area_id = egui::Id::unique("My area");
     let area_layer = egui::LayerId::new(egui::Order::Middle, area_id);
 
-    let mut harness = Harness::builder()
-        .with_size(Vec2::new(400.0, 300.0))
-        .build_ui(move |ui| {
-            // A backend that can open real windows, like eframe:
-            ui.ctx().set_embed_viewports(false);
+    let mut harness = Harness::builder().with_size(Vec2::new(400.0, 300.0)).build_ui(move |ui| {
+        // A backend that can open real windows, like eframe:
+        ui.ctx().set_embed_viewports(false);
 
-            ui.ctx()
-                .show_viewport_deferred(child_viewport, Default::default(), |_ui, _class| {});
+        ui.ctx().show_viewport_deferred(child_viewport, Default::default(), |_ui, _class| {});
 
-            ui.menu_button(MENU, |ui| {
-                _ = ui.button(MENU_ITEM);
-            });
-
-            egui::Area::new(area_id)
-                .fixed_pos((150.0, 120.0))
-                .show(ui.ctx(), |ui| {
-                    _ = ui.button(FOCUSED_BUTTON);
-                });
+        ui.menu_button(MENU, |ui| {
+            _ = ui.button(MENU_ITEM);
         });
+
+        egui::Area::new(area_id).fixed_pos((150.0, 120.0)).show(ui.ctx(), |ui| {
+            _ = ui.button(FOCUSED_BUTTON);
+        });
+    });
 
     harness.get_by_label(MENU).click();
     harness.run();
@@ -811,25 +690,11 @@ fn run_logic_should_not_disturb_ui_state() {
     harness.run();
 
     let assert_state = |harness: &Harness<'_>| {
-        assert!(
-            harness
-                .get_by_label(FOCUSED_BUTTON)
-                .accesskit_node()
-                .is_focused(),
-            "The button lost focus"
-        );
+        assert!(harness.get_by_label(FOCUSED_BUTTON).accesskit_node().is_focused(), "The button lost focus");
         harness.get_by_label(MENU_ITEM); // Panics if the menu closed
+        assert!(harness.ctx.memory(|m| m.areas().visible_last_frame(&area_layer)), "Area state was reset");
         assert!(
-            harness
-                .ctx
-                .memory(|m| m.areas().visible_last_frame(&area_layer)),
-            "Area state was reset"
-        );
-        assert!(
-            harness
-                .ctx
-                .viewport_for(child_viewport, |viewport| viewport.class)
-                == egui::ViewportClass::Deferred,
+            harness.ctx.viewport_for(child_viewport, |viewport| viewport.class) == egui::ViewportClass::Deferred,
             "The child viewport was closed"
         );
     };
@@ -840,37 +705,19 @@ fn run_logic_should_not_disturb_ui_state() {
     // and only ticks the app logic:
     for i in 0..2 {
         let time = 100.0 + f64::from(i);
-        let mut raw_input = egui::RawInput {
-            time: Some(time),
-            ..Default::default()
-        };
-        raw_input
-            .viewports
-            .entry(egui::ViewportId::ROOT)
-            .or_default()
-            .occluded = Some(true);
+        let mut raw_input = egui::RawInput { time: Some(time), ..Default::default() };
+        raw_input.viewports.entry(egui::ViewportId::ROOT).or_default().occluded = Some(true);
 
         let output = harness.ctx.run_logic(&raw_input, |ctx| {
-            assert_eq!(
-                ctx.input(|i| i.viewport().occluded),
-                Some(true),
-                "App logic should be able to tell that the window is occluded"
-            );
-            assert!(
-                ctx.input(|i| i.time) != time,
-                "The ui input should not be interpreted: it is for the next pass"
-            );
+            assert_eq!(ctx.input(|i| i.viewport().occluded), Some(true), "App logic should be able to tell that the window is occluded");
+            assert!(ctx.input(|i| i.time) != time, "The ui input should not be interpreted: it is for the next pass");
 
             // The app asks to be shown again:
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         });
 
         assert_eq!(
-            output
-                .viewport_commands
-                .into_values()
-                .flatten()
-                .collect::<Vec<_>>(),
+            output.viewport_commands.into_values().flatten().collect::<Vec<_>>(),
             vec![egui::ViewportCommand::Focus],
             "The integration should receive the command, even though there was no pass"
         );
@@ -910,10 +757,7 @@ fn tooltip_stays_open_while_inspecting() {
 
         if inspect {
             harness.event(egui::Event::ModifiersChanged(
-                egui::Modifiers::CTRL
-                    | egui::Modifiers::SHIFT
-                    | egui::Modifiers::ALT
-                    | egui::Modifiers::COMMAND,
+                egui::Modifiers::CTRL | egui::Modifiers::SHIFT | egui::Modifiers::ALT | egui::Modifiers::COMMAND,
             ));
             harness.run();
         }
@@ -928,16 +772,9 @@ fn tooltip_stays_open_while_inspecting() {
 
     for at_pointer in [false, true] {
         let (_, after) = run(false, at_pointer);
-        assert!(
-            after.is_none(),
-            "Tooltip should close when the pointer leaves the widget (at_pointer: {at_pointer})"
-        );
+        assert!(after.is_none(), "Tooltip should close when the pointer leaves the widget (at_pointer: {at_pointer})");
 
         let (before, after) = run(true, at_pointer);
-        assert_eq!(
-            after,
-            Some(before),
-            "Tooltip should stay open and in place while inspecting (at_pointer: {at_pointer})"
-        );
+        assert_eq!(after, Some(before), "Tooltip should stay open and in place while inspecting (at_pointer: {at_pointer})");
     }
 }

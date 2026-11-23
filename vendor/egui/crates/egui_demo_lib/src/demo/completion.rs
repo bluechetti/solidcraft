@@ -29,14 +29,10 @@ impl crate::Demo for CompletionDemo {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .default_width(400.0)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                use crate::View as _;
-                self.ui(ui);
-            });
+        egui::Window::new(self.name()).open(open).default_width(400.0).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| {
+            use crate::View as _;
+            self.ui(ui);
+        });
     }
 }
 
@@ -63,13 +59,7 @@ impl crate::View for CompletionDemo {
         CompletionPopup::new(ui.make_persistent_id("emoji_completion"))
             // A word is `:` plus a name, so an emoji (or any other symbol) ends the word before it:
             .word_boundary(|c| !(c.is_alphanumeric() || c == '_' || c == ':'))
-            .show(
-                ui,
-                TextEdit::multiline(text)
-                    .hint_text("Type :smile: …")
-                    .desired_width(f32::INFINITY),
-                |query| suggest_emojis(emojis, query),
-            );
+            .show(ui, TextEdit::multiline(text).hint_text("Type :smile: …").desired_width(f32::INFINITY), |query| suggest_emojis(emojis, query));
     }
 }
 
@@ -79,18 +69,14 @@ fn suggest_emojis(emojis: &[Emoji], query: &CompletionQuery<'_>) -> Vec<Suggesti
         return vec![];
     };
 
-    let (mut starts_with, contains): (Vec<&Emoji>, Vec<&Emoji>) = emojis
-        .iter()
-        .filter(|emoji| emoji.name.contains(filter))
-        .partition(|emoji| emoji.name.starts_with(filter));
+    let (mut starts_with, contains): (Vec<&Emoji>, Vec<&Emoji>) =
+        emojis.iter().filter(|emoji| emoji.name.contains(filter)).partition(|emoji| emoji.name.starts_with(filter));
     starts_with.extend(contains);
 
     starts_with
         .into_iter()
         .take(MAX_SUGGESTIONS)
-        .map(|Emoji { chr, name }| {
-            Suggestion::new(chr.to_string()).content(format!("{chr}  :{name}:"))
-        })
+        .map(|Emoji { chr, name }| Suggestion::new(chr.to_string()).content(format!("{chr}  :{name}:")))
         .collect()
 }
 
@@ -105,10 +91,7 @@ fn all_emojis() -> Vec<Emoji> {
         .filter_map(char::from_u32)
         .filter(|chr| has_emoji_presentation(&chr.to_string()))
         .filter_map(|chr| {
-            let name = unicode_names2::name(chr)?
-                .to_string()
-                .to_lowercase()
-                .replace(' ', "_");
+            let name = unicode_names2::name(chr)?.to_string().to_lowercase().replace(' ', "_");
             Some(Emoji { chr, name })
         })
         .collect()
@@ -137,9 +120,7 @@ mod tests {
         harness.run();
 
         for _ in 0..2 {
-            harness
-                .get_by_role(Role::MultilineTextInput)
-                .type_text(":grinning_face");
+            harness.get_by_role(Role::MultilineTextInput).type_text(":grinning_face");
             harness.run();
             harness.key_press(Key::Enter);
             harness.run();
@@ -152,11 +133,7 @@ mod tests {
         let emojis = all_emojis();
         assert!(1000 < emojis.len(), "found only {} emoji", emojis.len());
 
-        let query = CompletionQuery {
-            text: ":",
-            word: ":",
-            word_range: egui::text::CharIndex(0)..egui::text::CharIndex(1),
-        };
+        let query = CompletionQuery { text: ":", word: ":", word_range: egui::text::CharIndex(0)..egui::text::CharIndex(1) };
         assert_eq!(suggest_emojis(&emojis, &query).len(), MAX_SUGGESTIONS);
     }
 }

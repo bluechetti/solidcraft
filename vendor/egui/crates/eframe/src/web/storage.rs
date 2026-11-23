@@ -12,10 +12,7 @@ pub fn local_storage_set(key: &str, value: &str) {
     match local_storage() {
         Some(storage) => {
             if let Err(err) = storage.set_item(key, value) {
-                log::warn!(
-                    "local_storage_set failed: key={key}, err={}",
-                    crate::web::string_from_js_value(&err)
-                );
+                log::warn!("local_storage_set failed: key={key}, err={}", crate::web::string_from_js_value(&err));
             }
         }
         None => {
@@ -29,10 +26,7 @@ pub fn local_storage_remove(key: &str) {
     match local_storage() {
         Some(storage) => {
             if let Err(err) = storage.remove_item(key) {
-                log::warn!(
-                    "local_storage_remove failed: key={key}, err={}",
-                    crate::web::string_from_js_value(&err)
-                );
+                log::warn!("local_storage_remove failed: key={key}, err={}", crate::web::string_from_js_value(&err));
             }
         }
         None => {

@@ -21,23 +21,13 @@ impl Resource {
             ctx.include_bytes(response.url.clone(), response.bytes.clone());
             let image = Image::from_uri(response.url.clone());
 
-            Self {
-                response,
-                text: None,
-                colored_text: None,
-                image: Some(image),
-            }
+            Self { response, text: None, colored_text: None, image: Some(image) }
         } else {
             let text = response.text();
             let colored_text = text.and_then(|text| syntax_highlighting(ctx, &response, text));
             let text = text.map(|text| text.to_owned());
 
-            Self {
-                response,
-                text,
-                colored_text,
-                image: None,
-            }
+            Self { response, text, colored_text, image: None }
         }
     }
 }
@@ -52,10 +42,7 @@ pub struct HttpApp {
 
 impl Default for HttpApp {
     fn default() -> Self {
-        Self {
-            url: "https://raw.githubusercontent.com/emilk/egui/main/README.md".to_owned(),
-            promise: Default::default(),
-        }
+        Self { url: "https://raw.githubusercontent.com/emilk/egui/main/README.md".to_owned(), promise: Default::default() }
     }
 }
 
@@ -63,9 +50,7 @@ impl crate::DemoApp for HttpApp {
     fn demo_ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         egui::Panel::bottom("http_bottom").show(ui, |ui| {
             let layout = egui::Layout::top_down(egui::Align::Center).with_main_justify(true);
-            ui.allocate_ui_with_layout(ui.available_size(), layout, |ui| {
-                ui.add(egui_demo_lib::egui_github_link_file!())
-            })
+            ui.allocate_ui_with_layout(ui.available_size(), layout, |ui| ui.add(egui_demo_lib::egui_github_link_file!()))
         });
 
         egui::CentralPanel::default().show(ui, |ui| {
@@ -102,10 +87,7 @@ impl crate::DemoApp for HttpApp {
                         }
                         Err(error) => {
                             // This should only happen if the fetch API isn't available or something similar.
-                            ui.colored_label(
-                                ui.visuals().error_fg_color,
-                                if error.is_empty() { "Error" } else { error },
-                            );
+                            ui.colored_label(ui.visuals().error_fg_color, if error.is_empty() { "Error" } else { error });
                         }
                     }
                 } else {
@@ -121,10 +103,7 @@ fn ui_url(ui: &mut egui::Ui, frame: &eframe::Frame, url: &mut String) -> bool {
 
     ui.horizontal(|ui| {
         let label = ui.label("URL:");
-        trigger_fetch |= ui
-            .add(egui::TextEdit::singleline(url).desired_width(f32::INFINITY))
-            .labelled_by(label.id)
-            .lost_focus();
+        trigger_fetch |= ui.add(egui::TextEdit::singleline(url).desired_width(f32::INFINITY)).labelled_by(label.id).lost_focus();
     });
 
     if frame.is_web() {
@@ -133,10 +112,7 @@ fn ui_url(ui: &mut egui::Ui, frame: &eframe::Frame, url: &mut String) -> bool {
 
     ui.horizontal(|ui| {
         if ui.button("Source code for this example").clicked() {
-            *url = format!(
-                "https://raw.githubusercontent.com/emilk/egui/main/{}",
-                file!()
-            );
+            *url = format!("https://raw.githubusercontent.com/emilk/egui/main/{}", file!());
             trigger_fetch = true;
         }
         if ui.button("Random image").clicked() {
@@ -151,86 +127,56 @@ fn ui_url(ui: &mut egui::Ui, frame: &eframe::Frame, url: &mut String) -> bool {
 }
 
 fn ui_resource(ui: &mut egui::Ui, resource: &Resource) {
-    let Resource {
-        response,
-        text,
-        image,
-        colored_text,
-    } = resource;
+    let Resource { response, text, image, colored_text } = resource;
 
     ui.monospace(format!("url:          {}", response.url));
-    ui.monospace(format!(
-        "status:       {} ({})",
-        response.status, response.status_text
-    ));
-    ui.monospace(format!(
-        "content-type: {}",
-        response.content_type().unwrap_or_default()
-    ));
-    ui.monospace(format!(
-        "size:         {:.1} kB",
-        response.bytes.len() as f32 / 1000.0
-    ));
+    ui.monospace(format!("status:       {} ({})", response.status, response.status_text));
+    ui.monospace(format!("content-type: {}", response.content_type().unwrap_or_default()));
+    ui.monospace(format!("size:         {:.1} kB", response.bytes.len() as f32 / 1000.0));
 
     ui.separator();
 
-    egui::ScrollArea::vertical()
-        .auto_shrink(false)
-        .show(ui, |ui| {
-            egui::CollapsingHeader::new("Response headers")
-                .default_open(false)
-                .show(ui, |ui| {
-                    egui::Grid::new("response_headers")
-                        .spacing(egui::vec2(ui.spacing().item_spacing.x * 2.0, 0.0))
-                        .show(ui, |ui| {
-                            for (k, v) in &response.headers {
-                                ui.label(k);
-                                ui.label(v);
-                                ui.end_row();
-                            }
-                        })
-                });
-
-            ui.separator();
-
-            if let Some(text) = &text {
-                let tooltip = "Click to copy the response body";
-                if ui.button("📋").on_hover_text(tooltip).clicked() {
-                    ui.copy_text(text.clone());
+    egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+        egui::CollapsingHeader::new("Response headers").default_open(false).show(ui, |ui| {
+            egui::Grid::new("response_headers").spacing(egui::vec2(ui.spacing().item_spacing.x * 2.0, 0.0)).show(ui, |ui| {
+                for (k, v) in &response.headers {
+                    ui.label(k);
+                    ui.label(v);
+                    ui.end_row();
                 }
-                ui.separator();
-            }
-
-            if let Some(image) = image {
-                ui.add(image.clone());
-            } else if let Some(colored_text) = colored_text {
-                colored_text.ui(ui);
-            } else if let Some(text) = &text {
-                ui.add(egui::Label::new(text).selectable(true));
-            } else {
-                ui.monospace("[binary]");
-            }
+            })
         });
+
+        ui.separator();
+
+        if let Some(text) = &text {
+            let tooltip = "Click to copy the response body";
+            if ui.button("📋").on_hover_text(tooltip).clicked() {
+                ui.copy_text(text.clone());
+            }
+            ui.separator();
+        }
+
+        if let Some(image) = image {
+            ui.add(image.clone());
+        } else if let Some(colored_text) = colored_text {
+            colored_text.ui(ui);
+        } else if let Some(text) = &text {
+            ui.add(egui::Label::new(text).selectable(true));
+        } else {
+            ui.monospace("[binary]");
+        }
+    });
 }
 
 // ----------------------------------------------------------------------------
 // Syntax highlighting:
 
-fn syntax_highlighting(
-    ctx: &egui::Context,
-    response: &ehttp::Response,
-    text: &str,
-) -> Option<ColoredText> {
+fn syntax_highlighting(ctx: &egui::Context, response: &ehttp::Response, text: &str) -> Option<ColoredText> {
     let extension_and_rest: Vec<&str> = response.url.rsplitn(2, '.').collect();
     let extension = extension_and_rest.first()?;
     let theme = egui_extras::syntax_highlighting::CodeTheme::from_style(&ctx.global_style());
-    Some(ColoredText(egui_extras::syntax_highlighting::highlight(
-        ctx,
-        &ctx.global_style(),
-        &theme,
-        text,
-        extension,
-    )))
+    Some(ColoredText(egui_extras::syntax_highlighting::highlight(ctx, &ctx.global_style(), &theme, text, extension)))
 }
 
 struct ColoredText(egui::text::LayoutJob);

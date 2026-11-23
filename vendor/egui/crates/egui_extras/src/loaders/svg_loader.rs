@@ -41,13 +41,7 @@ impl Default for SvgLoader {
         #[cfg(feature = "svg_text")]
         options.fontdb_mut().load_system_fonts();
 
-        Self {
-            state: Mutex::new(State {
-                pass_index: 0,
-                cache: HashMap::default(),
-                options,
-            }),
-        }
+        Self { state: Mutex::new(State { pass_index: 0, cache: HashMap::default(), options }) }
     }
 }
 
@@ -62,11 +56,7 @@ impl ImageLoader for SvgLoader {
         }
 
         let mut state = self.state.lock();
-        let State {
-            pass_index,
-            cache,
-            options,
-        } = &mut *state;
+        let State { pass_index, cache, options } = &mut *state;
 
         let bucket = cache.entry(uri.to_owned()).or_default();
 
@@ -81,17 +71,10 @@ impl ImageLoader for SvgLoader {
             match ctx.try_load_bytes(uri) {
                 Ok(BytesPoll::Ready { bytes, .. }) => {
                     log::trace!("Started loading {uri:?}");
-                    let result = crate::image::load_svg_bytes_with_size(&bytes, size_hint, options)
-                        .map(Arc::new);
+                    let result = crate::image::load_svg_bytes_with_size(&bytes, size_hint, options).map(Arc::new);
 
                     log::trace!("Finished loading {uri:?}");
-                    bucket.insert(
-                        size_hint,
-                        Entry {
-                            last_used: *pass_index,
-                            result: result.clone(),
-                        },
-                    );
+                    bucket.insert(size_hint, Entry { last_used: *pass_index, result: result.clone() });
                     match result {
                         Ok(image) => Ok(ImagePoll::Ready { image }),
                         Err(err) => Err(LoadError::Loading(err)),

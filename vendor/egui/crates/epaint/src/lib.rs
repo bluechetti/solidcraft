@@ -63,8 +63,8 @@ pub use self::{
     rounded_rect::RoundedRect,
     shadow::Shadow,
     shapes::{
-        BandPoint, BandShape, CircleShape, CubicBezierShape, EllipseShape, PaintCallback,
-        PaintCallbackInfo, PathShape, QuadraticBezierShape, RectShape, Shape, TextShape,
+        BandPoint, BandShape, CircleShape, CubicBezierShape, EllipseShape, PaintCallback, PaintCallbackInfo, PathShape, QuadraticBezierShape,
+        RectShape, Shape, TextShape,
     },
     stats::PaintStats,
     stroke::{PathStroke, Stroke, StrokeKind},
@@ -152,11 +152,7 @@ impl ClippedShape {
     /// A shape with no [`Self::transform_after_tessellation`].
     #[inline]
     pub fn new(clip_rect: emath::Rect, shape: impl Into<Shape>) -> Self {
-        Self {
-            clip_rect,
-            shape: shape.into(),
-            transform_after_tessellation: emath::TSTransform::IDENTITY,
-        }
+        Self { clip_rect, shape: shape.into(), transform_after_tessellation: emath::TSTransform::IDENTITY }
     }
 
     /// Transform (move/scale) the shape in-place.

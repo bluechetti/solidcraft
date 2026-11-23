@@ -20,10 +20,7 @@ pub(crate) struct DecodeCache<T> {
 
 impl<T: Clone + Send + 'static> DecodeCache<T> {
     pub fn new(loader_name: &'static str) -> Self {
-        Self {
-            loader_name,
-            cache: Default::default(),
-        }
+        Self { loader_name, cache: Default::default() }
     }
 
     pub fn get(&self, uri: &str) -> Option<Entry<T>> {

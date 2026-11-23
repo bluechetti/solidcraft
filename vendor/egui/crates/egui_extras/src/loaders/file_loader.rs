@@ -38,9 +38,7 @@ const PROTOCOL: &str = "file://";
 /// See also [`convert_uri_to_decoded_path`].
 fn convert_uri_to_path(uri: &str) -> Result<PathBuf, egui::load::LoadError> {
     // File loader only supports the `file` protocol.
-    let s = uri
-        .strip_prefix(PROTOCOL)
-        .ok_or(egui::load::LoadError::NotSupported)?;
+    let s = uri.strip_prefix(PROTOCOL).ok_or(egui::load::LoadError::NotSupported)?;
     Ok(uri_path_to_path(s))
 }
 
@@ -133,20 +131,15 @@ fn read_file(path: &Path, decoded_path: Option<&Path>) -> Result<File, String> {
     let (path, bytes) = match std::fs::read(path) {
         Ok(bytes) => (path, bytes),
         Err(err) => match decoded_path {
-            Some(decoded_path) if err.kind() == std::io::ErrorKind::NotFound => {
-                match std::fs::read(decoded_path) {
-                    Ok(bytes) => (decoded_path, bytes),
-                    Err(_) => return Err(err.to_string()),
-                }
-            }
+            Some(decoded_path) if err.kind() == std::io::ErrorKind::NotFound => match std::fs::read(decoded_path) {
+                Ok(bytes) => (decoded_path, bytes),
+                Err(_) => return Err(err.to_string()),
+            },
             _ => return Err(err.to_string()),
         },
     };
 
-    Ok(File {
-        bytes: bytes.into(),
-        mime: guess_mime(path),
-    })
+    Ok(File { bytes: bytes.into(), mime: guess_mime(path) })
 }
 
 fn guess_mime(path: &Path) -> Option<String> {
@@ -176,11 +169,7 @@ impl BytesLoader for FileLoader {
         if let Some(entry) = cache.get(uri).cloned() {
             // `path` has either begun loading, is loaded, or has failed to load.
             match entry {
-                Poll::Ready(Ok(file)) => Ok(BytesPoll::Ready {
-                    size: None,
-                    bytes: Bytes::Shared(file.bytes),
-                    mime: file.mime,
-                }),
+                Poll::Ready(Ok(file)) => Ok(BytesPoll::Ready { size: None, bytes: Bytes::Shared(file.bytes), mime: file.mime }),
                 Poll::Ready(Err(err)) => Err(LoadError::Loading(err)),
                 Poll::Pending => Ok(BytesPoll::Pending { size: None }),
             }
@@ -209,7 +198,9 @@ impl BytesLoader for FileLoader {
                                 log::trace!("Finished loading {uri:?}");
                                 true
                             } else {
-                                log::trace!("Canceled loading {uri:?}\nNote: This can happen if `forget_image` is called while the image is still loading.");
+                                log::trace!(
+                                    "Canceled loading {uri:?}\nNote: This can happen if `forget_image` is called while the image is still loading."
+                                );
                                 false
                             }
                         };
@@ -239,9 +230,7 @@ impl BytesLoader for FileLoader {
             .lock()
             .values()
             .map(|entry| match entry {
-                Poll::Ready(Ok(file)) => {
-                    file.bytes.len() + file.mime.as_ref().map_or(0, |m| m.len())
-                }
+                Poll::Ready(Ok(file)) => file.bytes.len() + file.mime.as_ref().map_or(0, |m| m.len()),
                 Poll::Ready(Err(err)) => err.len(),
                 _ => 0,
             })
@@ -260,21 +249,9 @@ mod tests {
     #[test]
     fn check_convert_uri_to_path() {
         let mut checks: Vec<(&str, Result<PathBuf, egui::load::LoadError>, &str)> = vec![
-            (
-                "http://host/path/to/image.jpg",
-                Err(egui::load::LoadError::NotSupported),
-                "Schemas other than file are rejected.",
-            ),
-            (
-                "https://host/path/to/image.jpg",
-                Err(egui::load::LoadError::NotSupported),
-                "Schemas other than file are rejected.",
-            ),
-            (
-                "ftp://host/path/to/image.jpg",
-                Err(egui::load::LoadError::NotSupported),
-                "Schemas other than file are rejected.",
-            ),
+            ("http://host/path/to/image.jpg", Err(egui::load::LoadError::NotSupported), "Schemas other than file are rejected."),
+            ("https://host/path/to/image.jpg", Err(egui::load::LoadError::NotSupported), "Schemas other than file are rejected."),
+            ("ftp://host/path/to/image.jpg", Err(egui::load::LoadError::NotSupported), "Schemas other than file are rejected."),
         ];
         if cfg!(target_os = "windows") {
             let mut windows_checks = vec![
@@ -293,25 +270,13 @@ mod tests {
                     Ok(PathBuf::from("\\\\host\\share\\path\\to\\image.jpg")),
                     "file uris with a host are turned into UNC paths with leading backslashes on windows.",
                 ),
-                (
-                    "file:///c:/path/to/the%20image.jpg",
-                    Ok(PathBuf::from("c:\\path\\to\\the%20image.jpg")),
-                    "the raw path is not percent-decoded.",
-                ),
+                ("file:///c:/path/to/the%20image.jpg", Ok(PathBuf::from("c:\\path\\to\\the%20image.jpg")), "the raw path is not percent-decoded."),
             ];
             checks.append(&mut windows_checks);
         } else {
             let mut more_checks = vec![
-                (
-                    "file://path/to/image.jpg",
-                    Ok(PathBuf::from("path/to/image.jpg")),
-                    "file uris are turned into bare paths.",
-                ),
-                (
-                    "file://path/to/the%20image.jpg",
-                    Ok(PathBuf::from("path/to/the%20image.jpg")),
-                    "the raw path is not percent-decoded.",
-                ),
+                ("file://path/to/image.jpg", Ok(PathBuf::from("path/to/image.jpg")), "file uris are turned into bare paths."),
+                ("file://path/to/the%20image.jpg", Ok(PathBuf::from("path/to/the%20image.jpg")), "the raw path is not percent-decoded."),
             ];
             checks.append(&mut more_checks);
         }
@@ -323,29 +288,11 @@ mod tests {
     #[test]
     fn check_percent_decode() {
         assert_eq!(percent_decode("a/b.png"), None, "nothing to decode");
-        assert_eq!(
-            percent_decode("a%20b.png").as_deref(),
-            Some(&b"a b.png"[..])
-        );
-        assert_eq!(
-            percent_decode("na%C3%AFve.png").as_deref(),
-            Some("naïve.png".as_bytes()),
-            "multi-byte UTF-8"
-        );
-        assert_eq!(
-            percent_decode("na%c3%afve.png").as_deref(),
-            Some("naïve.png".as_bytes()),
-            "lower-case hex"
-        );
-        assert_eq!(
-            percent_decode("100%25.png").as_deref(),
-            Some(&b"100%.png"[..])
-        );
-        assert_eq!(
-            percent_decode("%2520").as_deref(),
-            Some(&b"%20"[..]),
-            "no double-decoding"
-        );
+        assert_eq!(percent_decode("a%20b.png").as_deref(), Some(&b"a b.png"[..]));
+        assert_eq!(percent_decode("na%C3%AFve.png").as_deref(), Some("naïve.png".as_bytes()), "multi-byte UTF-8");
+        assert_eq!(percent_decode("na%c3%afve.png").as_deref(), Some("naïve.png".as_bytes()), "lower-case hex");
+        assert_eq!(percent_decode("100%25.png").as_deref(), Some(&b"100%.png"[..]));
+        assert_eq!(percent_decode("%2520").as_deref(), Some(&b"%20"[..]), "no double-decoding");
 
         // Invalid escapes are left as-is:
         assert_eq!(percent_decode("a%zzb"), None);
@@ -361,29 +308,14 @@ mod tests {
     #[test]
     fn check_convert_uri_to_decoded_path() {
         assert_eq!(convert_uri_to_decoded_path("http://host/a%20b.jpg"), None);
-        assert_eq!(
-            convert_uri_to_decoded_path("file://path/to/image.jpg"),
-            None
-        );
+        assert_eq!(convert_uri_to_decoded_path("file://path/to/image.jpg"), None);
 
         if cfg!(target_os = "windows") {
-            assert_eq!(
-                convert_uri_to_decoded_path("file:///c:/path/to/the%20image.jpg"),
-                Some(PathBuf::from("c:\\path\\to\\the image.jpg")),
-            );
-            assert_eq!(
-                convert_uri_to_decoded_path("file://host/share/na%C3%AFve.jpg"),
-                Some(PathBuf::from("\\\\host\\share\\naïve.jpg")),
-            );
+            assert_eq!(convert_uri_to_decoded_path("file:///c:/path/to/the%20image.jpg"), Some(PathBuf::from("c:\\path\\to\\the image.jpg")),);
+            assert_eq!(convert_uri_to_decoded_path("file://host/share/na%C3%AFve.jpg"), Some(PathBuf::from("\\\\host\\share\\naïve.jpg")),);
         } else {
-            assert_eq!(
-                convert_uri_to_decoded_path("file:///path/to/the%20image.jpg"),
-                Some(PathBuf::from("/path/to/the image.jpg")),
-            );
-            assert_eq!(
-                convert_uri_to_decoded_path("file:///na%C3%AFve/100%25.jpg"),
-                Some(PathBuf::from("/naïve/100%.jpg")),
-            );
+            assert_eq!(convert_uri_to_decoded_path("file:///path/to/the%20image.jpg"), Some(PathBuf::from("/path/to/the image.jpg")),);
+            assert_eq!(convert_uri_to_decoded_path("file:///na%C3%AFve/100%25.jpg"), Some(PathBuf::from("/naïve/100%.jpg")),);
         }
 
         cfg_select! {
@@ -428,11 +360,7 @@ mod tests {
 
         assert_eq!(read("a%20b.txt").unwrap(), b"space", "decoded");
         assert_eq!(read("a b.txt").unwrap(), b"space", "unencoded");
-        assert_eq!(
-            read("My%20Doc.txt").unwrap(),
-            b"literal",
-            "literal %20 in file name"
-        );
+        assert_eq!(read("My%20Doc.txt").unwrap(), b"literal", "literal %20 in file name");
         assert_eq!(read("both%20.txt").unwrap(), b"both raw", "raw wins");
         assert!(read("missing%20.txt").is_err());
     }

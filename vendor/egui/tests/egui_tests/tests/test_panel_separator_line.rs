@@ -50,23 +50,16 @@ fn build_harness(show_separator_line: bool) -> Harness<'static> {
                 .inner_margin(Margin::same(4))
                 .outer_margin(Margin::same(2));
 
-            Panel::top(PANEL_ID)
-                .frame(frame)
-                .resizable(true)
-                .default_size(60.0)
-                .show_separator_line(show_separator_line)
-                .show(ui, |ui| {
-                    // Vertically centered in whatever room the panel gave us.
-                    ui.horizontal_centered(|ui| {
-                        let _ = ui.selectable_label(true, "Centered");
-                    });
+            Panel::top(PANEL_ID).frame(frame).resizable(true).default_size(60.0).show_separator_line(show_separator_line).show(ui, |ui| {
+                // Vertically centered in whatever room the panel gave us.
+                ui.horizontal_centered(|ui| {
+                    let _ = ui.selectable_label(true, "Centered");
                 });
+            });
 
-            egui::CentralPanel::default()
-                .frame(Frame::default().fill(Color32::GRAY))
-                .show(ui, |ui| {
-                    ui.label("CentralPanel");
-                });
+            egui::CentralPanel::default().frame(Frame::default().fill(Color32::GRAY)).show(ui, |ui| {
+                ui.label("CentralPanel");
+            });
         });
     harness.run();
     harness
@@ -99,7 +92,6 @@ fn separator_line_matrix() {
         // and must not shift its contents to make room for it.
         let mut harness = build_harness(show_separator_line);
         hover_resize_handle(&mut harness);
-        results
-            .add(harness.try_snapshot(format!("panel_separator_line/separator_{suffix}_hovered")));
+        results.add(harness.try_snapshot(format!("panel_separator_line/separator_{suffix}_hovered")));
     }
 }

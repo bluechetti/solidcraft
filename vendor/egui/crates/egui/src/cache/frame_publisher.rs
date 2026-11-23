@@ -16,10 +16,7 @@ impl<Key: Eq + Hash, Value> Default for FramePublisher<Key, Value> {
 
 impl<Key: Eq + Hash, Value> FramePublisher<Key, Value> {
     pub fn new() -> Self {
-        Self {
-            generation: 0,
-            cache: Default::default(),
-        }
+        Self { generation: 0, cache: Default::default() }
     }
 
     /// Publish the value. It will be available for the duration of this and the next frame.

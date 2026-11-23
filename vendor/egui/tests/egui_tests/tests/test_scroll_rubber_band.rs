@@ -16,26 +16,20 @@ fn harness() -> (Harness<'static>, Arc<Mutex<Option<State>>>) {
     let state = Arc::new(Mutex::new(None));
     let state_clone = Arc::clone(&state);
 
-    let mut harness = Harness::builder()
-        .with_size(Vec2::new(200.0, 200.0))
-        .with_step_dt(1.0 / 60.0)
-        .build_ui(move |ui| {
-            ui.spacing_mut().item_spacing = Vec2::ZERO;
-            // Selectable labels would steal the drag from the scroll area:
-            ui.style_mut().interaction.selectable_labels = false;
-            let output = ScrollArea::vertical()
-                .auto_shrink(false) // Make the whole viewport draggable, not just the content width.
-                .scroll_source(ScrollSource {
-                    drag: DragScroll::Always,
-                    ..ScrollSource::NONE
-                })
-                .show(ui, |ui| {
-                    for i in 0..100 {
-                        ui.label(format!("Row {i}"));
-                    }
-                });
-            *state_clone.lock() = Some(output.state);
-        });
+    let mut harness = Harness::builder().with_size(Vec2::new(200.0, 200.0)).with_step_dt(1.0 / 60.0).build_ui(move |ui| {
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        // Selectable labels would steal the drag from the scroll area:
+        ui.style_mut().interaction.selectable_labels = false;
+        let output = ScrollArea::vertical()
+            .auto_shrink(false) // Make the whole viewport draggable, not just the content width.
+            .scroll_source(ScrollSource { drag: DragScroll::Always, ..ScrollSource::NONE })
+            .show(ui, |ui| {
+                for i in 0..100 {
+                    ui.label(format!("Row {i}"));
+                }
+            });
+        *state_clone.lock() = Some(output.state);
+    });
 
     harness.run_steps(2); // Let the scroll area measure its content.
     (harness, state)
@@ -63,24 +57,11 @@ fn dragging_past_the_top_rubber_bands_and_springs_back() {
 
     // Drag downwards from the top, i.e. past the start of the content:
     let drag_distance = 100.0;
-    drag(
-        &mut harness,
-        pos2(100.0, 50.0),
-        pos2(100.0, 50.0 + drag_distance),
-        10,
-    );
+    drag(&mut harness, pos2(100.0, 50.0), pos2(100.0, 50.0 + drag_distance), 10);
 
     let dragged = state_of(&state);
-    assert!(
-        dragged.unclamped_offset().y < 0.0,
-        "Should be overscrolled past the top, got {}",
-        dragged.unclamped_offset().y
-    );
-    assert!(
-        -drag_distance < dragged.unclamped_offset().y,
-        "Overscroll should be resisted, got {}",
-        dragged.unclamped_offset().y
-    );
+    assert!(dragged.unclamped_offset().y < 0.0, "Should be overscrolled past the top, got {}", dragged.unclamped_offset().y);
+    assert!(-drag_distance < dragged.unclamped_offset().y, "Overscroll should be resisted, got {}", dragged.unclamped_offset().y);
     assert_eq!(dragged.clamped_offset(), Vec2::ZERO);
     assert_eq!(dragged.overscroll(), dragged.unclamped_offset());
 
@@ -91,8 +72,7 @@ fn dragging_past_the_top_rubber_bands_and_springs_back() {
     harness.step();
     let releasing = state_of(&state);
     assert!(
-        dragged.unclamped_offset().y < releasing.unclamped_offset().y
-            && releasing.unclamped_offset().y < 0.0,
+        dragged.unclamped_offset().y < releasing.unclamped_offset().y && releasing.unclamped_offset().y < 0.0,
         "Should be springing back towards zero, got {} -> {}",
         dragged.unclamped_offset().y,
         releasing.unclamped_offset().y

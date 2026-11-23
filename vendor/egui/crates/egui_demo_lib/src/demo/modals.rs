@@ -13,13 +13,7 @@ pub struct Modals {
 
 impl Default for Modals {
     fn default() -> Self {
-        Self {
-            user_modal_open: false,
-            save_modal_open: false,
-            save_progress: None,
-            role: Self::ROLES[0],
-            name: "John Doe".to_owned(),
-        }
+        Self { user_modal_open: false, save_modal_open: false, save_progress: None, role: Self::ROLES[0], name: "John Doe".to_owned() }
     }
 }
 
@@ -34,24 +28,13 @@ impl crate::Demo for Modals {
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
         use crate::View as _;
-        Window::new(self.name())
-            .open(open)
-            .vscroll(false)
-            .resizable(false)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| self.ui(ui));
+        Window::new(self.name()).open(open).vscroll(false).resizable(false).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| self.ui(ui));
     }
 }
 
 impl crate::View for Modals {
     fn ui(&mut self, ui: &mut Ui) {
-        let Self {
-            user_modal_open,
-            save_modal_open,
-            save_progress,
-            role,
-            name,
-        } = self;
+        let Self { user_modal_open, save_modal_open, save_progress, role, name } = self;
 
         ui.horizontal(|ui| {
             if ui.button("Open User Modal").clicked() {
@@ -79,13 +62,11 @@ impl crate::View for Modals {
                 let label = ui.label("Name:");
                 ui.text_edit_singleline(name).labelled_by(label.id);
 
-                ComboBox::new("role", "Role")
-                    .selected_text(*role)
-                    .show_ui(ui, |ui| {
-                        for r in Self::ROLES {
-                            ui.selectable_value(role, r, r);
-                        }
-                    });
+                ComboBox::new("role", "Role").selected_text(*role).show_ui(ui, |ui| {
+                    for r in Self::ROLES {
+                        ui.selectable_value(role, r, r);
+                    }
+                });
 
                 ui.separator();
 
@@ -172,10 +153,7 @@ mod tests {
 
     #[test]
     fn clicking_escape_when_popup_open_should_not_close_modal() {
-        let initial_state = Modals {
-            user_modal_open: true,
-            ..Modals::default()
-        };
+        let initial_state = Modals { user_modal_open: true, ..Modals::default() };
 
         let mut harness = Harness::new_ui_state(
             |ui, modals| {
@@ -199,11 +177,7 @@ mod tests {
 
     #[test]
     fn escape_should_close_top_modal() {
-        let initial_state = Modals {
-            user_modal_open: true,
-            save_modal_open: true,
-            ..Modals::default()
-        };
+        let initial_state = Modals { user_modal_open: true, save_modal_open: true, ..Modals::default() };
 
         let mut harness = Harness::new_ui_state(
             |ui, modals| {
@@ -224,10 +198,7 @@ mod tests {
 
     #[test]
     fn should_match_snapshot() {
-        let initial_state = Modals {
-            user_modal_open: true,
-            ..Modals::default()
-        };
+        let initial_state = Modals { user_modal_open: true, ..Modals::default() };
 
         let mut harness = Harness::new_ui_state(
             |ui, modals| {
@@ -253,11 +224,7 @@ mod tests {
     // This tests whether the backdrop actually prevents interaction with lower layers.
     #[test]
     fn backdrop_should_prevent_focusing_lower_area() {
-        let initial_state = Modals {
-            save_modal_open: true,
-            save_progress: Some(0.0),
-            ..Modals::default()
-        };
+        let initial_state = Modals { save_modal_open: true, save_progress: Some(0.0), ..Modals::default() };
 
         let mut harness = Harness::new_ui_state(
             |ui, modals| {

@@ -32,18 +32,14 @@ fn window_chrome_metrics(window_handle: &RawWindowHandle) -> Option<WindowChrome
     let ns_view = ns_view_from_handle(appkit_handle)?;
     let ns_window = ns_view.window()?;
 
-    Some(WindowChromeMetrics {
-        traffic_lights_size: traffic_lights_metrics(&ns_window)?,
-    })
+    Some(WindowChromeMetrics { traffic_lights_size: traffic_lights_metrics(&ns_window)? })
 }
 
 fn traffic_lights_metrics(ns_window: &NSWindow) -> Option<Vec2> {
     // Button order is CloseButton, MiniaturizeButton, ZoomButton:
     let close_button = ns_window.standardWindowButton(NSWindowButton::CloseButton)?;
     let close_button_frame = close_button.frame();
-    let zoom_button = ns_window
-        .standardWindowButton(NSWindowButton::ZoomButton)?
-        .frame();
+    let zoom_button = ns_window.standardWindowButton(NSWindowButton::ZoomButton)?.frame();
 
     let left_margin = close_button_frame.origin.x;
     let right_margin = left_margin; // for symmetry
@@ -64,11 +60,7 @@ fn traffic_lights_metrics(ns_window: &NSWindow) -> Option<Vec2> {
 ///
 /// `AppKit` resets the position whenever it lays out the title bar again (e.g. on resize),
 /// so this needs to be called every frame.
-pub(crate) fn position_traffic_lights(
-    window_handle: &RawWindowHandle,
-    title_bar_y: Rangef,
-    left_margin: f32,
-) -> Option<()> {
+pub(crate) fn position_traffic_lights(window_handle: &RawWindowHandle, title_bar_y: Rangef, left_margin: f32) -> Option<()> {
     let RawWindowHandle::AppKit(appkit_handle) = window_handle else {
         return None;
     };
@@ -76,10 +68,7 @@ pub(crate) fn position_traffic_lights(
 
     let ns_window = ns_view_from_handle(appkit_handle)?.window()?;
 
-    if ns_window
-        .styleMask()
-        .contains(NSWindowStyleMask::FullScreen)
-    {
+    if ns_window.styleMask().contains(NSWindowStyleMask::FullScreen) {
         // The traffic lights live in a separate window in fullscreen; leave them alone.
         return Some(());
     }
@@ -110,11 +99,8 @@ pub(crate) fn position_traffic_lights(
     let theme_bounds = theme_frame.bounds();
     let mut container_frame = title_bar_container.frame();
     container_frame.size.height = title_bar_height;
-    container_frame.origin.y = if theme_frame.isFlipped() {
-        theme_bounds.origin.y
-    } else {
-        theme_bounds.origin.y + theme_bounds.size.height - title_bar_height
-    };
+    container_frame.origin.y =
+        if theme_frame.isFlipped() { theme_bounds.origin.y } else { theme_bounds.origin.y + theme_bounds.size.height - title_bar_height };
     // Only touch the frames when they change, to avoid needless re-layouts every frame:
     if title_bar_container.frame() != container_frame {
         title_bar_container.setFrame(container_frame);
@@ -127,21 +113,13 @@ pub(crate) fn position_traffic_lights(
     let bounds = title_bar_view.bounds();
     let flipped = title_bar_view.isFlipped();
 
-    for button_kind in [
-        NSWindowButton::CloseButton,
-        NSWindowButton::MiniaturizeButton,
-        NSWindowButton::ZoomButton,
-    ] {
+    for button_kind in [NSWindowButton::CloseButton, NSWindowButton::MiniaturizeButton, NSWindowButton::ZoomButton] {
         let button = ns_window.standardWindowButton(button_kind)?;
         let frame = button.frame();
         let top_margin = center_y - frame.size.height / 2.0;
         let mut origin = frame.origin;
         origin.x += x_offset;
-        origin.y = if flipped {
-            bounds.origin.y + top_margin
-        } else {
-            bounds.origin.y + bounds.size.height - top_margin - frame.size.height
-        };
+        origin.y = if flipped { bounds.origin.y + top_margin } else { bounds.origin.y + bounds.size.height - top_margin - frame.size.height };
         if origin != frame.origin {
             button.setFrameOrigin(origin);
         }

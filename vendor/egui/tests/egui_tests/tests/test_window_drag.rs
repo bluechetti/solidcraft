@@ -40,9 +40,7 @@ fn build(state: State) -> Harness<'static, State> {
 }
 
 fn window_rect(harness: &Harness<'_, State>) -> egui::Rect {
-    egui::AreaState::load(&harness.ctx, Id::unique("test_win"))
-        .expect("window area should be persisted after the first frame")
-        .rect()
+    egui::AreaState::load(&harness.ctx, Id::unique("test_win")).expect("window area should be persisted after the first frame").rect()
 }
 
 /// Drag the pointer from `from` to `to` over multiple frames; release at the end.
@@ -67,10 +65,7 @@ fn body_pos(rect: egui::Rect) -> Pos2 {
 
 #[test]
 fn title_bar_drag_on_titlebar_moves_window() {
-    let mut harness = build(State {
-        drag_area: WindowDrag::TitleBar,
-        movable: true,
-    });
+    let mut harness = build(State { drag_area: WindowDrag::TitleBar, movable: true });
 
     let before = window_rect(&harness);
     let from = titlebar_pos(before);
@@ -80,18 +75,12 @@ fn title_bar_drag_on_titlebar_moves_window() {
 
     let after = window_rect(&harness);
     let moved = after.min - before.min;
-    assert!(
-        20.0 < moved.x && 20.0 < moved.y,
-        "TitleBar + drag on titlebar should move the window (delta = {moved:?})"
-    );
+    assert!(20.0 < moved.x && 20.0 < moved.y, "TitleBar + drag on titlebar should move the window (delta = {moved:?})");
 }
 
 #[test]
 fn title_bar_drag_outside_titlebar_keeps_window_put() {
-    let mut harness = build(State {
-        drag_area: WindowDrag::TitleBar,
-        movable: true,
-    });
+    let mut harness = build(State { drag_area: WindowDrag::TitleBar, movable: true });
 
     let before = window_rect(&harness);
     let from = body_pos(before);
@@ -101,18 +90,12 @@ fn title_bar_drag_outside_titlebar_keeps_window_put() {
 
     let after = window_rect(&harness);
     let moved = after.min - before.min;
-    assert!(
-        moved.length() < 1.0,
-        "TitleBar + drag in the body should NOT move the window (delta = {moved:?})"
-    );
+    assert!(moved.length() < 1.0, "TitleBar + drag in the body should NOT move the window (delta = {moved:?})");
 }
 
 #[test]
 fn anywhere_drag_in_body_moves_window() {
-    let mut harness = build(State {
-        drag_area: WindowDrag::Anywhere,
-        movable: true,
-    });
+    let mut harness = build(State { drag_area: WindowDrag::Anywhere, movable: true });
 
     let before = window_rect(&harness);
     let from = body_pos(before);
@@ -122,20 +105,14 @@ fn anywhere_drag_in_body_moves_window() {
 
     let after = window_rect(&harness);
     let moved = after.min - before.min;
-    assert!(
-        20.0 < moved.x && moved.y < -20.0,
-        "Anywhere + drag anywhere should move the window (delta = {moved:?})"
-    );
+    assert!(20.0 < moved.x && moved.y < -20.0, "Anywhere + drag anywhere should move the window (delta = {moved:?})");
 }
 
 #[test]
 fn movable_false_keeps_window_put_even_on_titlebar() {
     // Regression: a `movable(false)` window used to still move when the user
     // dragged the title bar in `TitleBar` mode.
-    let mut harness = build(State {
-        drag_area: WindowDrag::TitleBar,
-        movable: false,
-    });
+    let mut harness = build(State { drag_area: WindowDrag::TitleBar, movable: false });
 
     let before = window_rect(&harness);
     let from = titlebar_pos(before);
@@ -145,19 +122,13 @@ fn movable_false_keeps_window_put_even_on_titlebar() {
 
     let after = window_rect(&harness);
     let moved = after.min - before.min;
-    assert!(
-        moved.length() < 1.0,
-        "TitleBar + movable(false) should NOT move the window (delta = {moved:?})"
-    );
+    assert!(moved.length() < 1.0, "TitleBar + movable(false) should NOT move the window (delta = {moved:?})");
 }
 
 #[test]
 fn off_keeps_window_put_on_body_drag() {
     // `WindowDrag::Off` should freeze the window regardless of `movable`.
-    let mut harness = build(State {
-        drag_area: WindowDrag::Off,
-        movable: true,
-    });
+    let mut harness = build(State { drag_area: WindowDrag::Off, movable: true });
 
     let before = window_rect(&harness);
     let from = body_pos(before);
@@ -167,18 +138,12 @@ fn off_keeps_window_put_on_body_drag() {
 
     let after = window_rect(&harness);
     let moved = after.min - before.min;
-    assert!(
-        moved.length() < 1.0,
-        "Off + drag in the body should NOT move the window (delta = {moved:?})"
-    );
+    assert!(moved.length() < 1.0, "Off + drag in the body should NOT move the window (delta = {moved:?})");
 }
 
 #[test]
 fn off_keeps_window_put_on_titlebar_drag() {
-    let mut harness = build(State {
-        drag_area: WindowDrag::Off,
-        movable: true,
-    });
+    let mut harness = build(State { drag_area: WindowDrag::Off, movable: true });
 
     let before = window_rect(&harness);
     let from = titlebar_pos(before);
@@ -188,8 +153,5 @@ fn off_keeps_window_put_on_titlebar_drag() {
 
     let after = window_rect(&harness);
     let moved = after.min - before.min;
-    assert!(
-        moved.length() < 1.0,
-        "Off + drag on titlebar should NOT move the window (delta = {moved:?})"
-    );
+    assert!(moved.length() < 1.0, "Off + drag on titlebar should NOT move the window (delta = {moved:?})");
 }

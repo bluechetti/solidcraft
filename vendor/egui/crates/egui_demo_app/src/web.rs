@@ -16,16 +16,10 @@ impl WebHandle {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         // Redirect [`log`] message to `console.log` and friends:
-        let log_level = if cfg!(debug_assertions) {
-            log::LevelFilter::Trace
-        } else {
-            log::LevelFilter::Debug
-        };
+        let log_level = if cfg!(debug_assertions) { log::LevelFilter::Trace } else { log::LevelFilter::Debug };
         eframe::WebLogger::init(log_level).ok();
 
-        Self {
-            runner: eframe::WebRunner::new(),
-        }
+        Self { runner: eframe::WebRunner::new() }
     }
 
     /// Call this once from JavaScript to start your app.
@@ -33,17 +27,8 @@ impl WebHandle {
     /// # Errors
     /// Returns an error if the app could not start.
     #[wasm_bindgen]
-    pub async fn start(
-        &self,
-        canvas: web_sys::HtmlCanvasElement,
-    ) -> Result<(), wasm_bindgen::JsValue> {
-        self.runner
-            .start(
-                canvas,
-                eframe::WebOptions::default(),
-                Box::new(|cc| Ok(Box::new(WrapApp::new(cc)))),
-            )
-            .await
+    pub async fn start(&self, canvas: web_sys::HtmlCanvasElement) -> Result<(), wasm_bindgen::JsValue> {
+        self.runner.start(canvas, eframe::WebOptions::default(), Box::new(|cc| Ok(Box::new(WrapApp::new(cc))))).await
     }
 
     #[wasm_bindgen]

@@ -1,7 +1,6 @@
 use crate::{
-    Atom, AtomExt as _, AtomKind, Atoms, Color32, CornerRadius, Image, IntoAtoms, NumExt as _,
-    Response, Role, Sense, Stroke, TextStyle, TextWrapMode, Ui, Vec2, Widget, WidgetAtom,
-    WidgetAtomResponse, WidgetInfo, WidgetText,
+    Atom, AtomExt as _, AtomKind, Atoms, Color32, CornerRadius, Image, IntoAtoms, NumExt as _, Response, Role, Sense, Stroke, TextStyle,
+    TextWrapMode, Ui, Vec2, Widget, WidgetAtom, WidgetAtomResponse, WidgetInfo, WidgetText,
     class::{ClassName, Classes, HasClasses},
     widget_style::ButtonStyle,
 };
@@ -50,18 +49,14 @@ impl<'a> Button<'a> {
     pub const CLASS_FRAME: ClassName = ClassName::from_static("egui::frame");
 
     /// Present on a button that should have no frame while it is inactive.
-    pub const CLASS_HIDE_FRAME_WHEN_INACTIVE: ClassName =
-        ClassName::from_static("egui::button::hide_frame_when_inactive");
+    pub const CLASS_HIDE_FRAME_WHEN_INACTIVE: ClassName = ClassName::from_static("egui::button::hide_frame_when_inactive");
 
     /// Present when untinted images should follow the button text color.
-    pub const CLASS_IMAGE_TINT_FOLLOWS_TEXT_COLOR: ClassName =
-        ClassName::from_static("egui::button::image_tint_follows_text_color");
+    pub const CLASS_IMAGE_TINT_FOLLOWS_TEXT_COLOR: ClassName = ClassName::from_static("egui::button::image_tint_follows_text_color");
 
     pub fn new(atoms: impl IntoAtoms<'a>) -> Self {
         Self {
-            layout: WidgetAtom::new(atoms.into_atoms())
-                .sense(Sense::click())
-                .fallback_font(TextStyle::Button),
+            layout: WidgetAtom::new(atoms.into_atoms()).sense(Sense::click()).fallback_font(TextStyle::Button),
             fill: None,
             stroke: None,
             min_size: Vec2::ZERO,
@@ -89,10 +84,7 @@ impl<'a> Button<'a> {
     ///   - [`Ui::selectable_value`]
     ///   - [`Ui::selectable_label`]
     pub fn selectable(selected: bool, atoms: impl IntoAtoms<'a>) -> Self {
-        Self::new(atoms)
-            .selected(selected)
-            .frame_when_inactive(selected)
-            .frame(true)
+        Self::new(atoms).selected(selected).frame_when_inactive(selected).frame(true)
     }
 
     /// Creates a button with an image. The size of the image as displayed is defined by the provided size.
@@ -235,10 +227,7 @@ impl<'a> Button<'a> {
     /// Default: `false`.
     #[inline]
     pub fn image_tint_follows_text_color(mut self, image_tint_follows_text_color: bool) -> Self {
-        self.set_class(
-            Self::CLASS_IMAGE_TINT_FOLLOWS_TEXT_COLOR,
-            image_tint_follows_text_color,
-        );
+        self.set_class(Self::CLASS_IMAGE_TINT_FOLLOWS_TEXT_COLOR, image_tint_follows_text_color);
         self
     }
 
@@ -320,33 +309,16 @@ impl<'a> Button<'a> {
 
     /// Show the button and return a [`WidgetAtomResponse`] for painting custom contents.
     pub fn atom_ui(self, ui: &mut Ui) -> WidgetAtomResponse {
-        let Button {
-            mut layout,
-            fill,
-            stroke,
-            min_size,
-            corner_radius,
-            selected,
-            limit_image_size,
-            classes,
-        } = self;
+        let Button { mut layout, fill, stroke, min_size, corner_radius, selected, limit_image_size, classes } = self;
 
         if limit_image_size {
-            layout.map_atoms(|atom| {
-                if matches!(&atom.kind, AtomKind::Image(_)) {
-                    atom.atom_max_height_font_size(ui)
-                } else {
-                    atom
-                }
-            });
+            layout.map_atoms(|atom| if matches!(&atom.kind, AtomKind::Image(_)) { atom.atom_max_height_font_size(ui) } else { atom });
         }
 
         let text = layout.text().map(String::from);
 
         let id = ui.next_auto_id();
-        let ButtonStyle {
-            atom_layout: mut atom_layout_style,
-        } = ui.widget_style(id, &classes);
+        let ButtonStyle { atom_layout: mut atom_layout_style } = ui.widget_style(id, &classes);
 
         let min_size = min_size.at_least(atom_layout_style.min_size);
 
@@ -361,17 +333,10 @@ impl<'a> Button<'a> {
             atom_layout_style.frame = atom_layout_style.frame.corner_radius(corner_radius);
         }
 
-        let prepared = atom_layout_style
-            .apply(layout)
-            .min_size(min_size)
-            .allocate(ui);
+        let prepared = atom_layout_style.apply(layout).min_size(min_size).allocate(ui);
 
         // Get WidgetAtomResponse, empty if not visible
-        let response = if ui.is_rect_visible(prepared.response.rect) {
-            prepared.paint(ui)
-        } else {
-            WidgetAtomResponse::empty(prepared.response)
-        };
+        let response = if ui.is_rect_visible(prepared.response.rect) { prepared.paint(ui) } else { WidgetAtomResponse::empty(prepared.response) };
 
         if let Some(cursor) = ui.visuals().interact_cursor
             && response.response.hovered()
@@ -380,9 +345,7 @@ impl<'a> Button<'a> {
         }
 
         response.response.widget_info(|| match (selected, &text) {
-            (Some(selected), Some(text)) => {
-                WidgetInfo::selected(Role::Button, ui.is_enabled(), selected, text)
-            }
+            (Some(selected), Some(text)) => WidgetInfo::selected(Role::Button, ui.is_enabled(), selected, text),
             (Some(selected), None) => {
                 let mut info = WidgetInfo::new(Role::Button);
                 info.enabled = ui.is_enabled();

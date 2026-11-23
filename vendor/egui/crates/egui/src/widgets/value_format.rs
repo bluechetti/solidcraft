@@ -115,10 +115,7 @@ impl<'a> ValueFormat<'a> {
     /// the decimal range i.e. minimum and maximum number of decimal places shown.
     ///
     /// See also: [`Self::custom_parser`]
-    pub fn custom_formatter(
-        mut self,
-        formatter: impl 'a + Fn(f64, RangeInclusive<usize>) -> String,
-    ) -> Self {
+    pub fn custom_formatter(mut self, formatter: impl 'a + Fn(f64, RangeInclusive<usize>) -> String) -> Self {
         self.custom_formatter = Some(Arc::new(formatter));
         self
     }
@@ -148,10 +145,7 @@ impl<'a> ValueFormat<'a> {
     ///
     /// Panics if `min_width` is 0.
     pub fn binary(self, min_width: usize, twos_complement: bool) -> Self {
-        assert!(
-            0 < min_width,
-            "ValueFormat::binary: `min_width` must be greater than 0"
-        );
+        assert!(0 < min_width, "ValueFormat::binary: `min_width` must be greater than 0");
         if twos_complement {
             self.custom_formatter(move |n, _| format!("{:0>min_width$b}", n as i64))
         } else {
@@ -176,10 +170,7 @@ impl<'a> ValueFormat<'a> {
     ///
     /// Panics if `min_width` is 0.
     pub fn octal(self, min_width: usize, twos_complement: bool) -> Self {
-        assert!(
-            0 < min_width,
-            "ValueFormat::octal: `min_width` must be greater than 0"
-        );
+        assert!(0 < min_width, "ValueFormat::octal: `min_width` must be greater than 0");
         if twos_complement {
             self.custom_formatter(move |n, _| format!("{:0>min_width$o}", n as i64))
         } else {
@@ -204,17 +195,10 @@ impl<'a> ValueFormat<'a> {
     ///
     /// Panics if `min_width` is 0.
     pub fn hexadecimal(self, min_width: usize, twos_complement: bool, upper: bool) -> Self {
-        assert!(
-            0 < min_width,
-            "ValueFormat::hexadecimal: `min_width` must be greater than 0"
-        );
+        assert!(0 < min_width, "ValueFormat::hexadecimal: `min_width` must be greater than 0");
         match (twos_complement, upper) {
-            (true, true) => {
-                self.custom_formatter(move |n, _| format!("{:0>min_width$X}", n as i64))
-            }
-            (true, false) => {
-                self.custom_formatter(move |n, _| format!("{:0>min_width$x}", n as i64))
-            }
+            (true, true) => self.custom_formatter(move |n, _| format!("{:0>min_width$X}", n as i64)),
+            (true, false) => self.custom_formatter(move |n, _| format!("{:0>min_width$x}", n as i64)),
             (false, true) => self.custom_formatter(move |n, _| {
                 let sign = if n < 0.0 { MINUS_CHAR_STR } else { "" };
                 format!("{sign}{:0>min_width$X}", n.abs() as i64)

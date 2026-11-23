@@ -143,10 +143,7 @@ mod tests {
         let a = IdSalt::new("foo");
         let b = IdSalt::new(a);
         let c = IdSalt::new(b);
-        assert_eq!(
-            format!("{c:?}"),
-            r#"IdSalt::new(IdSalt::new(IdSalt::new("foo")))"#
-        );
+        assert_eq!(format!("{c:?}"), r#"IdSalt::new(IdSalt::new(IdSalt::new("foo")))"#);
     }
 
     #[test]

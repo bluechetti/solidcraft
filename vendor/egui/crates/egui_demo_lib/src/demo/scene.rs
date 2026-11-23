@@ -13,7 +13,7 @@ impl Default for SceneDemo {
     fn default() -> Self {
         Self {
             widget_gallery: widget_gallery::WidgetGallery::default().with_date_button(false), // disable date button so that we don't fail the snapshot test
-            scene_rect: Rect::ZERO, // `egui::Scene` will initialize this to something valid
+            scene_rect: Rect::ZERO,                                                           // `egui::Scene` will initialize this to something valid
             scroll_zooms: false,
         }
     }
@@ -42,10 +42,7 @@ impl crate::View for SceneDemo {
             "You can pan by scrolling, and zoom using cmd-scroll. \
             Double click on the background to reset view.",
         );
-        ui.checkbox(
-            &mut self.scroll_zooms,
-            "Change mousewheel behavior to zoom instead of scroll",
-        );
+        ui.checkbox(&mut self.scroll_zooms, "Change mousewheel behavior to zoom instead of scroll");
         ui.vertical_centered(|ui| {
             ui.add(crate::egui_github_link_file!());
         });
@@ -55,36 +52,31 @@ impl crate::View for SceneDemo {
 
         ui.separator();
 
-        egui::Frame::group(ui.style())
-            .inner_margin(0.0)
-            .show(ui, |ui| {
-                let scene = Scene::new()
-                    .max_inner_size([350.0, 1000.0])
-                    .scroll_zooms(self.scroll_zooms)
-                    .zoom_range(0.1..=2.0);
+        egui::Frame::group(ui.style()).inner_margin(0.0).show(ui, |ui| {
+            let scene = Scene::new().max_inner_size([350.0, 1000.0]).scroll_zooms(self.scroll_zooms).zoom_range(0.1..=2.0);
 
-                let mut reset_view = false;
-                let mut inner_rect = Rect::NAN;
-                let response = scene
-                    .show(ui, &mut self.scene_rect, |ui| {
-                        reset_view = ui.button("Reset view").clicked();
+            let mut reset_view = false;
+            let mut inner_rect = Rect::NAN;
+            let response = scene
+                .show(ui, &mut self.scene_rect, |ui| {
+                    reset_view = ui.button("Reset view").clicked();
 
-                        ui.add_space(16.0);
+                    ui.add_space(16.0);
 
-                        self.widget_gallery.ui(ui);
+                    self.widget_gallery.ui(ui);
 
-                        ui.put(
-                            Rect::from_min_size(Pos2::new(0.0, -64.0), Vec2::new(200.0, 16.0)),
-                            egui::Label::new("You can put a widget anywhere").selectable(false),
-                        );
+                    ui.put(
+                        Rect::from_min_size(Pos2::new(0.0, -64.0), Vec2::new(200.0, 16.0)),
+                        egui::Label::new("You can put a widget anywhere").selectable(false),
+                    );
 
-                        inner_rect = ui.min_rect();
-                    })
-                    .response;
+                    inner_rect = ui.min_rect();
+                })
+                .response;
 
-                if reset_view || response.double_clicked() {
-                    self.scene_rect = inner_rect;
-                }
-            });
+            if reset_view || response.double_clicked() {
+                self.scene_rect = inner_rect;
+            }
+        });
     }
 }

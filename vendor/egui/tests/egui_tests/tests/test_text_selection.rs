@@ -15,22 +15,12 @@ const STEP_DT: f32 = 0.01;
 fn press_with<S>(harness: &mut Harness<'_, S>, pos: Pos2, modifiers: Modifiers) {
     harness.event(Event::ModifiersChanged(modifiers));
     harness.event(Event::PointerMoved(pos));
-    harness.event(Event::PointerButton {
-        pos,
-        button: PointerButton::Primary,
-        pressed: true,
-        modifiers,
-    });
+    harness.event(Event::PointerButton { pos, button: PointerButton::Primary, pressed: true, modifiers });
     harness.step();
 }
 
 fn release_with<S>(harness: &mut Harness<'_, S>, pos: Pos2, modifiers: Modifiers) {
-    harness.event(Event::PointerButton {
-        pos,
-        button: PointerButton::Primary,
-        pressed: false,
-        modifiers,
-    });
+    harness.event(Event::PointerButton { pos, button: PointerButton::Primary, pressed: false, modifiers });
     harness.event(Event::ModifiersChanged(Modifiers::NONE));
     harness.step();
 }
@@ -97,15 +87,10 @@ fn triple_click_drag<S>(harness: &mut Harness<'_, S>, from: Pos2, to: Pos2) {
 fn copied_text<S>(harness: &mut Harness<'_, S>) -> Option<String> {
     harness.event(Event::Copy);
     harness.step();
-    harness
-        .output()
-        .platform_output
-        .commands
-        .iter()
-        .find_map(|cmd| match cmd {
-            OutputCommand::CopyText(text) => Some(text.clone()),
-            _ => None,
-        })
+    harness.output().platform_output.commands.iter().find_map(|cmd| match cmd {
+        OutputCommand::CopyText(text) => Some(text.clone()),
+        _ => None,
+    })
 }
 
 /// A [`TextEdit`] harness, plus the screen position of each character boundary of its text.
@@ -114,36 +99,20 @@ fn text_edit_harness(text: &str) -> (Harness<'static, String>, Rc<RefCell<Vec<Po
 }
 
 /// A [`TextEdit`] harness, plus the screen position of each character boundary of its text.
-fn text_edit_harness_with_width(
-    text: &str,
-    desired_width: f32,
-) -> (Harness<'static, String>, Rc<RefCell<Vec<Pos2>>>) {
+fn text_edit_harness_with_width(text: &str, desired_width: f32) -> (Harness<'static, String>, Rc<RefCell<Vec<Pos2>>>) {
     let char_pos = Rc::new(RefCell::new(Vec::new()));
     let char_pos_clone = Rc::clone(&char_pos);
 
-    let mut harness = HarnessBuilder::default()
-        .with_step_dt(STEP_DT)
-        .with_size(Vec2::new(400.0, 300.0))
-        .build_ui_state(
-            move |ui, text: &mut String| {
-                let label = ui.label("Text:");
-                let output = TextEdit::multiline(text)
-                    .desired_width(desired_width)
-                    .show(ui);
-                output.response.response.clone().labelled_by(label.id);
-                *char_pos_clone.borrow_mut() = (0..text.chars().count())
-                    .map(|i| {
-                        output.galley_pos
-                            + output
-                                .galley
-                                .pos_from_cursor(CCursor::new(i))
-                                .center()
-                                .to_vec2()
-                    })
-                    .collect();
-            },
-            text.to_owned(),
-        );
+    let mut harness = HarnessBuilder::default().with_step_dt(STEP_DT).with_size(Vec2::new(400.0, 300.0)).build_ui_state(
+        move |ui, text: &mut String| {
+            let label = ui.label("Text:");
+            let output = TextEdit::multiline(text).desired_width(desired_width).show(ui);
+            output.response.response.clone().labelled_by(label.id);
+            *char_pos_clone.borrow_mut() =
+                (0..text.chars().count()).map(|i| output.galley_pos + output.galley.pos_from_cursor(CCursor::new(i)).center().to_vec2()).collect();
+        },
+        text.to_owned(),
+    );
     harness.run();
     (harness, char_pos)
 }
@@ -167,10 +136,7 @@ fn double_click_drag_should_select_words_backward() {
     // Double-click on "gamma", drag backward into "alpha":
     double_click_drag(&mut harness, pos(13), pos(2));
 
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("alpha beta gamma")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("alpha beta gamma"));
 }
 
 #[test]
@@ -181,10 +147,7 @@ fn triple_click_drag_should_select_lines() {
     // Triple-click on "carrot", drag down into "delta epsilon":
     triple_click_drag(&mut harness, pos(13), pos(24));
 
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("carrot\ndelta epsilon")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("carrot\ndelta epsilon"));
 }
 
 /// Stacked labels, plus a function mapping (label index, char index) to screen position
@@ -195,25 +158,19 @@ fn labels_harness() -> (Harness<'static>, impl Fn(usize, usize) -> Pos2) {
 
 /// Stacked labels, plus a function mapping (label index, char index) to screen position
 /// (the center of that character).
-fn labels_harness_with(
-    texts: &'static [&'static str],
-) -> (Harness<'static>, impl Fn(usize, usize) -> Pos2) {
+fn labels_harness_with(texts: &'static [&'static str]) -> (Harness<'static>, impl Fn(usize, usize) -> Pos2) {
     let label_info = Rc::new(RefCell::new(Vec::new()));
     let label_info_clone = Rc::clone(&label_info);
 
-    let mut harness = HarnessBuilder::default()
-        .with_step_dt(STEP_DT)
-        .with_size(Vec2::new(400.0, 200.0))
-        .build_ui(move |ui| {
-            let char_width = ui
-                .fonts_mut(|f| f.glyph_width(&egui::TextStyle::Monospace.resolve(ui.style()), 'x'));
-            let mut info = label_info_clone.borrow_mut();
-            info.clear();
-            for text in texts {
-                let rect = ui.label(RichText::new(*text).monospace()).rect;
-                info.push((rect, char_width));
-            }
-        });
+    let mut harness = HarnessBuilder::default().with_step_dt(STEP_DT).with_size(Vec2::new(400.0, 200.0)).build_ui(move |ui| {
+        let char_width = ui.fonts_mut(|f| f.glyph_width(&egui::TextStyle::Monospace.resolve(ui.style()), 'x'));
+        let mut info = label_info_clone.borrow_mut();
+        info.clear();
+        for text in texts {
+            let rect = ui.label(RichText::new(*text).monospace()).rect;
+            info.push((rect, char_width));
+        }
+    });
     harness.run();
 
     let pos = move |label: usize, char_index: usize| {
@@ -230,10 +187,7 @@ fn double_click_drag_should_select_words_across_labels() {
     // Double-click on "beta" in the first label, drag into "epsilon" in the second:
     double_click_drag(&mut harness, pos(0, 8), pos(1, 9));
 
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("beta gamma\ndelta epsilon")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("beta gamma\ndelta epsilon"));
 }
 
 #[test]
@@ -243,10 +197,7 @@ fn double_click_drag_should_select_words_across_labels_backward() {
     // Double-click on "epsilon" in the second label, drag up into "beta" in the first:
     double_click_drag(&mut harness, pos(1, 9), pos(0, 8));
 
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("beta gamma\ndelta epsilon")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("beta gamma\ndelta epsilon"));
 }
 
 const WORDS: &str = "alpha beta gamma delta";
@@ -299,26 +250,19 @@ fn double_click_drag_should_keep_anchor_when_reversing() {
 
     drag_to(&mut harness, pos(19));
     release(&mut harness, pos(19));
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("beta gamma delta")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("beta gamma delta"));
 }
 
 #[test]
 fn double_click_drag_should_select_words_across_wrapped_rows() {
-    let (mut harness, char_pos) =
-        text_edit_harness_with_width("alpha beta gamma delta epsilon zeta eta theta", 80.0);
+    let (mut harness, char_pos) = text_edit_harness_with_width("alpha beta gamma delta epsilon zeta eta theta", 80.0);
     let pos = |i: usize| char_pos.borrow()[i];
     assert!(pos(8).y < pos(25).y, "The text should wrap");
 
     // Double-click on "beta", drag down into "epsilon":
     double_click_drag(&mut harness, pos(8), pos(25));
 
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("beta gamma delta epsilon")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("beta gamma delta epsilon"));
 }
 
 #[test]
@@ -329,10 +273,7 @@ fn triple_click_drag_should_select_lines_upward() {
     // Triple-click on "five six", drag up into "three four":
     triple_click_drag(&mut harness, pos(21), pos(10));
 
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("three four\nfive six")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("three four\nfive six"));
 }
 
 /// A press shortly after a double-click, but too late to be part of it,
@@ -395,10 +336,7 @@ fn shift_double_click_should_extend_by_words() {
     click(&mut harness, pos(6));
     wait(&mut harness, 1.0);
     shift_double_click(&mut harness, pos(19));
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("beta gamma delta")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("beta gamma delta"));
 }
 
 #[test]
@@ -426,10 +364,7 @@ fn shift_double_click_drag_should_extend_by_words() {
     shift_click(&mut harness, pos(13));
     press_with(&mut harness, pos(13), Modifiers::SHIFT);
     drag_to(&mut harness, pos(19));
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("beta gamma delta")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("beta gamma delta"));
 
     // Drag back before the anchor, into "alpha":
     drag_to(&mut harness, pos(2));
@@ -448,10 +383,7 @@ fn shift_triple_click_should_extend_by_lines() {
     shift_click(&mut harness, pos(13));
     shift_click(&mut harness, pos(13));
 
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("pha beta\ncarrot")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("pha beta\ncarrot"));
 }
 
 const THREE_LABELS: &[&str] = &["alpha beta gamma", "delta epsilon zeta", "eta theta iota"];
@@ -473,10 +405,7 @@ fn label_double_click_drag_should_select_words_backward() {
     // Double-click on "gamma", drag back into "alpha":
     double_click_drag(&mut harness, pos(0, 13), pos(0, 2));
 
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("alpha beta gamma")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("alpha beta gamma"));
 }
 
 #[test]
@@ -487,18 +416,12 @@ fn label_double_click_drag_should_keep_anchor_when_reversing() {
     click(&mut harness, pos(1, 9));
     press(&mut harness, pos(1, 9));
     drag_to(&mut harness, pos(2, 6));
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("epsilon zeta\neta theta")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("epsilon zeta\neta theta"));
 
     // Then up into the first label:
     drag_to(&mut harness, pos(0, 8));
     release(&mut harness, pos(0, 8));
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("beta gamma\ndelta epsilon")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("beta gamma\ndelta epsilon"));
 }
 
 #[test]
@@ -507,10 +430,7 @@ fn label_triple_click_drag_should_select_lines_across_labels() {
 
     triple_click_drag(&mut harness, pos(0, 8), pos(1, 3));
 
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("alpha beta gamma\ndelta epsilon zeta")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("alpha beta gamma\ndelta epsilon zeta"));
 }
 
 /// After a word drag, a shift-click should extend the selection by characters,
@@ -527,10 +447,7 @@ fn label_shift_click_after_word_drag_should_extend_by_chars() {
     shift_click(&mut harness, pos(1, 9));
 
     let copied = copied_text(&mut harness).unwrap_or_default();
-    assert!(
-        copied.starts_with("beta gamma\ndelta ep") && !copied.ends_with("epsilon"),
-        "Expected a character-based extension, got {copied:?}"
-    );
+    assert!(copied.starts_with("beta gamma\ndelta ep") && !copied.ends_with("epsilon"), "Expected a character-based extension, got {copied:?}");
 }
 
 #[test]
@@ -552,10 +469,7 @@ fn label_shift_double_click_should_extend_by_words_across_labels() {
     click(&mut harness, pos(0, 6));
     wait(&mut harness, 1.0);
     shift_double_click(&mut harness, pos(1, 9));
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("beta gamma\ndelta epsilon")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("beta gamma\ndelta epsilon"));
 
     // Keep extending by words from the same anchor, with a shift-double-click-and-drag:
     wait(&mut harness, 1.0);
@@ -563,10 +477,7 @@ fn label_shift_double_click_should_extend_by_words_across_labels() {
     press_with(&mut harness, pos(1, 9), Modifiers::SHIFT);
     drag_to(&mut harness, pos(2, 6));
     release_with(&mut harness, pos(2, 6), Modifiers::SHIFT);
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("beta gamma\ndelta epsilon zeta\neta theta")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("beta gamma\ndelta epsilon zeta\neta theta"));
 }
 
 #[test]
@@ -651,10 +562,7 @@ fn shift_click_before_triple_clicked_line_keeps_line() {
     wait(&mut harness, 1.0);
     shift_click(&mut harness, pos(2));
 
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("pha beta\ncarrot")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("pha beta\ncarrot"));
 }
 
 /// A plain click forgets the double-clicked word, so a later shift-click extends from the click.
@@ -688,10 +596,7 @@ fn label_shift_click_before_double_clicked_word_keeps_word() {
     // Shift-double-click in "alpha" extends by words, still keeping "gamma":
     wait(&mut harness, 1.0);
     shift_double_click(&mut harness, pos(0, 2));
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("alpha beta gamma")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("alpha beta gamma"));
 }
 
 #[test]
@@ -703,18 +608,12 @@ fn label_shift_click_before_double_clicked_word_keeps_word_across_labels() {
     click(&mut harness, pos(1, 9));
     wait(&mut harness, 1.0);
     shift_click(&mut harness, pos(0, 8));
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("a gamma\ndelta epsilon")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("a gamma\ndelta epsilon"));
 
     // Shift-double-click in the last label flips the anchor to the start of "epsilon":
     wait(&mut harness, 1.0);
     shift_double_click(&mut harness, pos(2, 6));
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("epsilon zeta\neta theta")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("epsilon zeta\neta theta"));
 }
 
 #[test]
@@ -728,8 +627,5 @@ fn label_shift_click_before_triple_clicked_line_keeps_line() {
     wait(&mut harness, 1.0);
     shift_click(&mut harness, pos(0, 8));
 
-    assert_eq!(
-        copied_text(&mut harness).as_deref(),
-        Some("a gamma\ndelta epsilon zeta")
-    );
+    assert_eq!(copied_text(&mut harness).as_deref(), Some("a gamma\ndelta epsilon zeta"));
 }

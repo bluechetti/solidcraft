@@ -37,10 +37,7 @@ pub fn best_in_range_f64(min: f64, max: f64) -> f64 {
     if !max.is_finite() {
         return min;
     }
-    debug_assert!(
-        min.is_finite() && max.is_finite(),
-        "min: {min:?}, max: {max:?}"
-    );
+    debug_assert!(min.is_finite() && max.is_finite(), "min: {min:?}, max: {max:?}");
 
     let min_exponent = min.log10();
     let max_exponent = max.log10();
@@ -87,10 +84,7 @@ pub fn best_in_range_f64(min: f64, max: f64) -> f64 {
             let mut deciding_digit_min = min_str[i];
             let deciding_digit_max = max_str[i];
 
-            debug_assert!(
-                deciding_digit_min < deciding_digit_max,
-                "Bug in smart aim code"
-            );
+            debug_assert!(deciding_digit_min < deciding_digit_max, "Bug in smart aim code");
 
             let rest_of_min_is_zeroes = min_str[i + 1..].iter().all(|&c| c == 0);
 
@@ -143,10 +137,7 @@ fn from_decimal_string(s: [u8; NUM_DECIMALS]) -> u64 {
 #[expect(clippy::approx_constant)]
 #[test]
 fn test_aim() {
-    assert_eq!(
-        best_in_range_f64(0.0799999999999996, 0.09999999999999995),
-        0.08,
-    );
+    assert_eq!(best_in_range_f64(0.0799999999999996, 0.09999999999999995), 0.08,);
     assert_eq!(best_in_range_f64(-0.2, 0.0), 0.0, "Prefer zero");
     assert_eq!(best_in_range_f64(-10_004.23, 3.14), 0.0, "Prefer zero");
     assert_eq!(best_in_range_f64(-0.2, 100.0), 0.0, "Prefer zero");
@@ -192,18 +183,12 @@ fn test_aim() {
     #[track_caller]
     fn test_f64((min, max): (f64, f64), expected: f64) {
         let aimed = best_in_range_f64(min, max);
-        assert!(
-            aimed == expected,
-            "smart_aim({min} – {max}) => {aimed}, but expected {expected}"
-        );
+        assert!(aimed == expected, "smart_aim({min} – {max}) => {aimed}, but expected {expected}");
     }
     #[track_caller]
     fn test_i64((min, max): (i64, i64), expected: i64) {
         let aimed = best_in_range_f64(min as _, max as _);
-        assert!(
-            aimed == expected as f64,
-            "smart_aim({min} – {max}) => {aimed}, but expected {expected}"
-        );
+        assert!(aimed == expected as f64, "smart_aim({min} – {max}) => {aimed}, but expected {expected}");
     }
 
     test_i64((99, 300), 100);

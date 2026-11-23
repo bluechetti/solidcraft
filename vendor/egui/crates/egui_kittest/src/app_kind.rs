@@ -38,12 +38,7 @@ impl<State> AppKind<'_, State> {
     // `Eframe` variant has no `egui::Response` to return. Without `eframe` the
     // wrap is unnecessary, so we silence `clippy::unnecessary_wraps` for that case.
     #[cfg_attr(not(feature = "eframe"), expect(clippy::unnecessary_wraps))]
-    pub fn run(
-        &mut self,
-        ui: &mut egui::Ui,
-        state: &mut State,
-        sizing_pass: bool,
-    ) -> Option<UiRunOutput> {
+    pub fn run(&mut self, ui: &mut egui::Ui, state: &mut State, sizing_pass: bool) -> Option<UiRunOutput> {
         match self {
             #[cfg(feature = "eframe")]
             AppKind::Eframe(eframe_kind) => {
@@ -62,10 +57,7 @@ impl<State> AppKind<'_, State> {
         if sizing_pass {
             builder.sizing_pass = true;
         }
-        let egui::InnerResponse {
-            inner: ui_id,
-            response,
-        } = ui.scope_builder(builder, |ui| {
+        let egui::InnerResponse { inner: ui_id, response } = ui.scope_builder(builder, |ui| {
             Frame::central_panel(ui.style())
                 // Only set outer margin, so we show no frame for tests with only free-floating windows/popups:
                 .outer_margin(8.0)
@@ -75,9 +67,7 @@ impl<State> AppKind<'_, State> {
                         AppKind::Ui(f) => f(ui),
                         AppKind::UiState(f) => f(ui, state),
                         #[cfg(feature = "eframe")]
-                        AppKind::Eframe(_) => unreachable!(
-                            "run_ui should only be called with AppKind::Ui or AppKind::UiState"
-                        ),
+                        AppKind::Eframe(_) => unreachable!("run_ui should only be called with AppKind::Ui or AppKind::UiState"),
                     }
                     ui.scope_id()
                 })

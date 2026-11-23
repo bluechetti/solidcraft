@@ -108,10 +108,7 @@ impl<'a> Window<'a> {
             area,
             frame: None,
             title_frame: None,
-            resize: Resize::default()
-                .with_stroke(false)
-                .min_size([96.0, 32.0])
-                .default_size([340.0, 420.0]), // Default outer size of a window (includes frame margins, stroke, and title bar)
+            resize: Resize::default().with_stroke(false).min_size([96.0, 32.0]).default_size([340.0, 420.0]), // Default outer size of a window (includes frame margins, stroke, and title bar)
             scroll: ScrollArea::neither().auto_shrink(false).content_margin(0.0),
             collapsible: true,
             default_open: true,
@@ -521,10 +518,7 @@ impl<'a> Window<'a> {
     /// See [`ScrollArea::scroll_source`] and [`DragScroll`] for more.
     #[inline]
     pub fn drag_to_scroll(mut self, drag_to_scroll: DragScroll) -> Self {
-        self.scroll = self.scroll.scroll_source(ScrollSource {
-            drag: drag_to_scroll,
-            ..Default::default()
-        });
+        self.scroll = self.scroll.scroll_source(ScrollSource { drag: drag_to_scroll, ..Default::default() });
         self
     }
 
@@ -540,19 +534,11 @@ impl Window<'_> {
     /// Returns `None` if the window is not open (if [`Window::open`] was called with `&mut false`).
     /// Returns `Some(InnerResponse { inner: None })` if the window is collapsed.
     #[inline]
-    pub fn show<R>(
-        self,
-        ctx: &Context,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> Option<InnerResponse<Option<R>>> {
+    pub fn show<R>(self, ctx: &Context, add_contents: impl FnOnce(&mut Ui) -> R) -> Option<InnerResponse<Option<R>>> {
         self.show_dyn(ctx, Box::new(add_contents))
     }
 
-    fn show_dyn<'c, R>(
-        self,
-        ctx: &Context,
-        add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>,
-    ) -> Option<InnerResponse<Option<R>>> {
+    fn show_dyn<'c, R>(self, ctx: &Context, add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>) -> Option<InnerResponse<Option<R>>> {
         let Window {
             title,
             mut open,
@@ -586,11 +572,7 @@ impl Window<'_> {
         // drag-from-anywhere handling don't disagree with the title-bar
         // path. (Builder order shouldn't matter — `.drag_area(Off)` after
         // `.movable(true)` and vice versa both end up here.)
-        let area = if effective_drag == WindowDrag::Off {
-            area.movable(false)
-        } else {
-            area
-        };
+        let area = if effective_drag == WindowDrag::Off { area.movable(false) } else { area };
 
         // Apply the previous frame's title-bar drag _before_ `Area::begin`
         // loads the state. We can't apply it inside the content closure because
@@ -636,11 +618,7 @@ impl Window<'_> {
 
         let is_explicitly_closed = matches!(open, Some(false));
         let is_open = !is_explicitly_closed || ctx.memory(|mem| mem.everything_is_visible());
-        let opacity = ctx.animate_bool_with_easing(
-            area.id.with("fade-out"),
-            is_open,
-            emath::easing::cubic_out,
-        );
+        let opacity = ctx.animate_bool_with_easing(area.id.with("fade-out"), is_open, emath::easing::cubic_out);
         if opacity <= 0.0 {
             return None;
         }
@@ -648,8 +626,7 @@ impl Window<'_> {
         let area_id = area.id;
         let area_layer_id = area.layer();
         let resize_id = area_id.with("resize");
-        let mut collapsing =
-            CollapsingState::load_with_default_open(ctx, area_id.with("collapsing"), default_open);
+        let mut collapsing = CollapsingState::load_with_default_open(ctx, area_id.with("collapsing"), default_open);
 
         let is_collapsed = with_title_bar && !collapsing.is_open();
         let possible = PossibleInteractions::new(&area, &resize, is_collapsed);
@@ -671,16 +648,12 @@ impl Window<'_> {
             let state = area.state_mut();
             state.pivot_pos = Some(pre_begin_pivot);
             if constrain {
-                state.set_left_top_pos(
-                    Context::constrain_window_rect_to_area(state.rect(), constrain_rect).min,
-                );
+                state.set_left_top_pos(Context::constrain_window_rect_to_area(state.rect(), constrain_rect).min);
             }
             state.set_left_top_pos(area::round_area_position(ctx, state.left_top_pos()));
         }
 
-        area.with_widget_info(|| {
-            WidgetInfo::labeled(Role::Window, true, title.text().as_deref().unwrap_or(""))
-        });
+        area.with_widget_info(|| WidgetInfo::labeled(Role::Window, true, title.text().as_deref().unwrap_or("")));
 
         {
             // Prevent window from becoming larger than the constrain rect.
@@ -732,15 +705,9 @@ impl Window<'_> {
                     collapsing
                         .show_body_unindented(ui, |ui| {
                             if scroll.is_any_scroll_enabled() {
-                                scroll
-                                    .content_margin(window_content_margin)
-                                    .show(ui, add_contents)
-                                    .inner
+                                scroll.content_margin(window_content_margin).show(ui, add_contents).inner
                             } else {
-                                crate::Frame::NONE
-                                    .inner_margin(window_content_margin)
-                                    .show(ui, add_contents)
-                                    .inner
+                                crate::Frame::NONE.inner_margin(window_content_margin).show(ui, add_contents).inner
                             }
                         })
                         .map(|inner| inner.inner)
@@ -750,34 +717,14 @@ impl Window<'_> {
             let outer_rect = outer_response.response.rect;
 
             // Do resize interaction _again_, to move their widget rectangles on TOP of the rest of the window.
-            let resize_interaction = do_resize_interaction(
-                &area_content_ui,
-                possible,
-                area.id(),
-                area_layer_id,
-                outer_rect,
-                window_frame,
-            );
+            let resize_interaction = do_resize_interaction(&area_content_ui, possible, area.id(), area_layer_id, outer_rect, window_frame);
 
-            paint_resize_corner(
-                &area_content_ui,
-                &possible,
-                outer_rect,
-                &window_frame,
-                resize_interaction,
-            );
+            paint_resize_corner(&area_content_ui, &possible, outer_rect, &window_frame, resize_interaction);
 
             {
                 let margins = window_frame.total_margin().sum();
 
-                resize_response(
-                    resize_interaction,
-                    ctx,
-                    margins,
-                    area_layer_id,
-                    &mut area,
-                    resize_id,
-                );
+                resize_response(resize_interaction, ctx, margins, area_layer_id, &mut area, resize_id);
             }
             // END FRAME --------------------------------
 
@@ -796,21 +743,12 @@ impl Window<'_> {
             *open = false;
         }
 
-        let inner_response = InnerResponse {
-            inner: content_inner,
-            response: full_response,
-        };
+        let inner_response = InnerResponse { inner: content_inner, response: full_response };
         Some(inner_response)
     }
 }
 
-fn paint_resize_corner(
-    ui: &Ui,
-    possible: &PossibleInteractions,
-    outer_rect: Rect,
-    window_frame: &Frame,
-    i: ResizeInteraction,
-) {
+fn paint_resize_corner(ui: &Ui, possible: &PossibleInteractions, outer_rect: Rect, window_frame: &Frame, i: ResizeInteraction) {
     let cr = window_frame.corner_radius;
 
     let (corner, radius, corner_response) = if possible.resize_right && possible.resize_bottom {
@@ -840,8 +778,7 @@ fn paint_resize_corner(
 
     // Adjust the corner offset to accommodate for window rounding
     let radius = radius as f32;
-    let offset =
-        ((2.0_f32.sqrt() * (1.0 + radius) - radius) * 45.0_f32.to_radians().cos()).max(2.0);
+    let offset = ((2.0_f32.sqrt() * (1.0 + radius) - radius) * 45.0_f32.to_radians().cos()).max(2.0);
 
     let stroke = if corner_response.drag {
         ui.visuals().widgets.active.fg_stroke
@@ -873,9 +810,7 @@ struct PossibleInteractions {
 impl PossibleInteractions {
     fn new(area: &Area, resize: &Resize, is_collapsed: bool) -> Self {
         let movable = area.is_enabled() && area.is_movable();
-        let resizable = resize
-            .is_resizable()
-            .and(area.is_enabled() && !is_collapsed);
+        let resizable = resize.is_resizable().and(area.is_enabled() && !is_collapsed);
         let pivot = area.get_pivot();
         Self {
             resize_left: resizable.x && (movable || pivot.x() != Align::LEFT),
@@ -921,19 +856,13 @@ impl core::ops::BitAnd for SideResponse {
     type Output = Self;
 
     fn bitand(self, rhs: Self) -> Self::Output {
-        Self {
-            hover: self.hover && rhs.hover,
-            drag: self.drag && rhs.drag,
-        }
+        Self { hover: self.hover && rhs.hover, drag: self.drag && rhs.drag }
     }
 }
 
 impl core::ops::BitOrAssign for SideResponse {
     fn bitor_assign(&mut self, rhs: Self) {
-        *self = Self {
-            hover: self.hover || rhs.hover,
-            drag: self.drag || rhs.drag,
-        };
+        *self = Self { hover: self.hover || rhs.hover, drag: self.drag || rhs.drag };
     }
 }
 
@@ -1008,9 +937,7 @@ fn move_and_resize_window(ctx: &Context, id: Id, interaction: &ResizeInteraction
 
     let total_drag_delta = ctx.input(|i| i.pointer.total_drag_delta())?;
 
-    let rect_at_start_of_drag = ctx.data_mut(|data| {
-        *data.get_temp_mut_or::<Rect>(rect_at_start_of_drag_id, interaction.outer_rect)
-    });
+    let rect_at_start_of_drag = ctx.data_mut(|data| *data.get_temp_mut_or::<Rect>(rect_at_start_of_drag_id, interaction.outer_rect));
 
     let mut rect = rect_at_start_of_drag; // prevent drift
 
@@ -1086,10 +1013,7 @@ fn do_resize_interaction(
         // and so the harness' accessibility check is satisfied:
         response.widget_info(|| WidgetInfo::labeled(Role::Splitter, true, name));
 
-        SideResponse {
-            hover: response.hovered(),
-            drag: response.dragged(),
-        }
+        SideResponse { hover: response.hovered(), drag: response.dragged() }
     };
 
     let id = Id::unique(layer_id).with("edge_drag");
@@ -1099,14 +1023,9 @@ fn do_resize_interaction(
     let side_grab_radius = style.interaction.resize_grab_radius_side;
     let corner_grab_radius = style.interaction.resize_grab_radius_corner;
 
-    let vertical_rect = |a: Pos2, b: Pos2| {
-        Rect::from_min_max(a, b).expand2(vec2(side_grab_radius, -corner_grab_radius))
-    };
-    let horizontal_rect = |a: Pos2, b: Pos2| {
-        Rect::from_min_max(a, b).expand2(vec2(-corner_grab_radius, side_grab_radius))
-    };
-    let corner_rect =
-        |center: Pos2| Rect::from_center_size(center, Vec2::splat(2.0 * corner_grab_radius));
+    let vertical_rect = |a: Pos2, b: Pos2| Rect::from_min_max(a, b).expand2(vec2(side_grab_radius, -corner_grab_radius));
+    let horizontal_rect = |a: Pos2, b: Pos2| Rect::from_min_max(a, b).expand2(vec2(-corner_grab_radius, side_grab_radius));
+    let corner_rect = |center: Pos2| Rect::from_center_size(center, Vec2::splat(2.0 * corner_grab_radius));
 
     // What are we dragging/hovering?
     let [mut left, mut right, mut top, mut bottom] = [SideResponse::default(); 4];
@@ -1115,35 +1034,19 @@ fn do_resize_interaction(
     // Check sides first, so that corners are on top, covering the sides (i.e. corners have priority)
 
     if possible.resize_right {
-        let response = side_response(
-            vertical_rect(rect.right_top(), rect.right_bottom()),
-            id.with("right"),
-            "Resize window right edge",
-        );
+        let response = side_response(vertical_rect(rect.right_top(), rect.right_bottom()), id.with("right"), "Resize window right edge");
         right |= response;
     }
     if possible.resize_left {
-        let response = side_response(
-            vertical_rect(rect.left_top(), rect.left_bottom()),
-            id.with("left"),
-            "Resize window left edge",
-        );
+        let response = side_response(vertical_rect(rect.left_top(), rect.left_bottom()), id.with("left"), "Resize window left edge");
         left |= response;
     }
     if possible.resize_bottom {
-        let response = side_response(
-            horizontal_rect(rect.left_bottom(), rect.right_bottom()),
-            id.with("bottom"),
-            "Resize window bottom edge",
-        );
+        let response = side_response(horizontal_rect(rect.left_bottom(), rect.right_bottom()), id.with("bottom"), "Resize window bottom edge");
         bottom |= response;
     }
     if possible.resize_top {
-        let response = side_response(
-            horizontal_rect(rect.left_top(), rect.right_top()),
-            id.with("top"),
-            "Resize window top edge",
-        );
+        let response = side_response(horizontal_rect(rect.left_top(), rect.right_top()), id.with("top"), "Resize window top edge");
         top |= response;
     }
 
@@ -1156,11 +1059,7 @@ fn do_resize_interaction(
     // the whole corner is grabbable:
 
     if possible.resize_right || possible.resize_bottom {
-        let response = side_response(
-            corner_rect(rect.right_bottom()),
-            id.with("right_bottom"),
-            "Resize window bottom-right corner",
-        );
+        let response = side_response(corner_rect(rect.right_bottom()), id.with("right_bottom"), "Resize window bottom-right corner");
         if possible.resize_right {
             right |= response;
         }
@@ -1170,11 +1069,7 @@ fn do_resize_interaction(
     }
 
     if possible.resize_right || possible.resize_top {
-        let response = side_response(
-            corner_rect(rect.right_top()),
-            id.with("right_top"),
-            "Resize window top-right corner",
-        );
+        let response = side_response(corner_rect(rect.right_top()), id.with("right_top"), "Resize window top-right corner");
         if possible.resize_right {
             right |= response;
         }
@@ -1184,11 +1079,7 @@ fn do_resize_interaction(
     }
 
     if possible.resize_left || possible.resize_bottom {
-        let response = side_response(
-            corner_rect(rect.left_bottom()),
-            id.with("left_bottom"),
-            "Resize window bottom-left corner",
-        );
+        let response = side_response(corner_rect(rect.left_bottom()), id.with("left_bottom"), "Resize window bottom-left corner");
         if possible.resize_left {
             left |= response;
         }
@@ -1198,11 +1089,7 @@ fn do_resize_interaction(
     }
 
     if possible.resize_left || possible.resize_top {
-        let response = side_response(
-            corner_rect(rect.left_top()),
-            id.with("left_top"),
-            "Resize window top-left corner",
-        );
+        let response = side_response(corner_rect(rect.left_top()), id.with("left_top"), "Resize window top-left corner");
         if possible.resize_left {
             left |= response;
         }
@@ -1211,14 +1098,7 @@ fn do_resize_interaction(
         }
     }
 
-    let interaction = ResizeInteraction {
-        outer_rect,
-        window_frame,
-        left,
-        right,
-        top,
-        bottom,
-    };
+    let interaction = ResizeInteraction { outer_rect, window_frame, left, right, top, bottom };
     interaction.set_cursor(ctx);
     interaction
 }
@@ -1257,10 +1137,7 @@ fn paint_frame_interaction(ui: &Ui, rect: Rect, interaction: ResizeInteraction) 
     // Make sure the inner part of the stroke is at a pixel boundary:
     let stroke = visuals.bg_stroke;
     let half_stroke = stroke.width * 0.5;
-    let rect = rect
-        .shrink(half_stroke)
-        .round_to_pixels(ui.pixels_per_point())
-        .expand(half_stroke);
+    let rect = rect.shrink(half_stroke).round_to_pixels(ui.pixels_per_point()).expand(half_stroke);
 
     let Rect { min, max } = rect;
 
@@ -1331,8 +1208,7 @@ fn title_ui(
     // Since the heading height is higher than the button size, we need to allocate the buttons
     // with the headers height as size, otherwise they'd look slightly off-center.
     // The shrink is then used to render the buttons with the right size.
-    let heading_font_height =
-        ui.fonts_mut(|f| f.row_height(&TextStyle::Heading.resolve(ui.style())));
+    let heading_font_height = ui.fonts_mut(|f| f.row_height(&TextStyle::Heading.resolve(ui.style())));
     let button_allocation_size = Vec2::splat(heading_font_height);
     let button_shrink = (button_allocation_size - button_size) * 0.5;
 
@@ -1349,9 +1225,7 @@ fn title_ui(
 
     if !auto_sized
         && !title.any_shrink()
-        && let Some(first_text) = title
-            .iter_mut()
-            .find(|a| matches!(a.kind, AtomKind::Text(..)))
+        && let Some(first_text) = title.iter_mut().find(|a| matches!(a.kind, AtomKind::Text(..)))
     {
         first_text.shrink = true;
     }
@@ -1396,18 +1270,8 @@ fn title_ui(
     if collapsible && let Some(rect) = layout_response.rect(collapse_atom_id) {
         let rect = rect.shrink2(button_shrink);
         title_click_rect = title_click_rect.with_min_x(rect.max.x);
-        let icon_response = child_ui.interact(
-            rect,
-            child_ui.auto_id_with("collapse_button"),
-            Sense::click(),
-        );
-        icon_response.widget_info(|| {
-            WidgetInfo::labeled(
-                Role::Button,
-                child_ui.is_enabled(),
-                if collapsing.is_open() { "Hide" } else { "Show" },
-            )
-        });
+        let icon_response = child_ui.interact(rect, child_ui.auto_id_with("collapse_button"), Sense::click());
+        icon_response.widget_info(|| WidgetInfo::labeled(Role::Button, child_ui.is_enabled(), if collapsing.is_open() { "Hide" } else { "Show" }));
         if icon_response.clicked() {
             collapsing.toggle(&child_ui);
         }
@@ -1431,11 +1295,7 @@ fn title_ui(
         // drag-to-move (in title-bar-drag mode). The move itself is applied in
         // `Window::show_dyn` _before_ `Area::begin` next frame, since
         // `Area::end` overwrites any in-frame mutation of `AreaState`.
-        let sense = if drag_to_move {
-            Sense::click_and_drag()
-        } else {
-            Sense::click()
-        };
+        let sense = if drag_to_move { Sense::click_and_drag() } else { Sense::click() };
         let response = child_ui.interact(title_click_rect, area_id.with("__title_click"), sense);
 
         if collapsible && response.double_clicked() {
@@ -1452,8 +1312,7 @@ fn title_ui(
             header_frame.corner_radius.sw = 0;
             header_frame.corner_radius.se = 0;
         }
-        ui.painter()
-            .set(shape_idx, header_frame.paint(layout_response.rect));
+        ui.painter().set(shape_idx, header_frame.paint(layout_response.rect));
     }
 
     let mut advance_rect = child_ui.min_rect();
@@ -1466,8 +1325,7 @@ fn title_ui(
     if expanded {
         // Account for the margin of the title frame + the margin of the window contents
         // - the default ui spacing egui would add on this call
-        advance_rect.max.y += frame.total_margin().bottom + frame.inner_margin.top as f32
-            - child_ui.spacing().item_spacing.y;
+        advance_rect.max.y += frame.total_margin().bottom + frame.inner_margin.top as f32 - child_ui.spacing().item_spacing.y;
     }
 
     ui.advance_cursor_after_rect(advance_rect);
@@ -1504,26 +1362,15 @@ fn close_button(ui: &mut Ui, rect: Rect) -> Response {
 
 #[cfg(all(test, feature = "persistence"))]
 mod tests {
-    use crate::{
-        Context, Event, Id, Modifiers, PointerButton, Pos2, RawInput, Rect, Window, pos2, vec2,
-    };
+    use crate::{Context, Event, Id, Modifiers, PointerButton, Pos2, RawInput, Rect, Window, pos2, vec2};
 
     fn window_id() -> Id {
         Id::unique("window")
     }
 
     /// Run one frame showing a window, and return the window rect.
-    fn run_frame_with(
-        ctx: &Context,
-        events: Vec<Event>,
-        window: impl Fn(Window<'static>) -> Window<'static>,
-        num_lines: usize,
-    ) -> Rect {
-        let input = RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))),
-            events,
-            ..Default::default()
-        };
+    fn run_frame_with(ctx: &Context, events: Vec<Event>, window: impl Fn(Window<'static>) -> Window<'static>, num_lines: usize) -> Rect {
+        let input = RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0))), events, ..Default::default() };
         let mut rect = None;
         let output = ctx.run_ui(input, |ui| {
             let response = window(Window::new("Window").id(window_id())).show(ui.ctx(), |ui| {
@@ -1544,20 +1391,14 @@ mod tests {
 
     /// Restore the memory into a new context, like `eframe` does when restarting.
     fn restart(ctx: &Context) -> Context {
-        let memory =
-            ron::to_string(&ctx.memory(|mem| mem.clone())).expect("Failed to serialize memory");
+        let memory = ron::to_string(&ctx.memory(|mem| mem.clone())).expect("Failed to serialize memory");
         let ctx = Context::default();
         ctx.memory_mut(|mem| *mem = ron::from_str(&memory).expect("Failed to deserialize memory"));
         ctx
     }
 
     fn drag(ctx: &Context, from: Pos2, to: Pos2) {
-        let button = |pos, pressed| Event::PointerButton {
-            pos,
-            button: PointerButton::Primary,
-            pressed,
-            modifiers: Modifiers::NONE,
-        };
+        let button = |pos, pressed| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
         run_frame(ctx, vec![Event::PointerMoved(from)]);
         run_frame(ctx, vec![button(from, true)]);
         run_frame(ctx, vec![Event::PointerMoved(from.lerp(to, 0.5))]);
@@ -1597,9 +1438,7 @@ mod tests {
             ("auto_sized", |window| window.auto_sized()),
             ("not resizable", |window| window.resizable(false)),
             ("collapsed", |window| window.default_open(false)),
-            ("large default size", |window| {
-                window.default_size([700.0, 500.0])
-            }),
+            ("large default size", |window| window.default_size([700.0, 500.0])),
         ];
 
         for (name, config) in configs {
@@ -1622,10 +1461,7 @@ mod tests {
             }
             let after_restart = run_frame_with(&ctx, vec![], config, 1);
 
-            assert_eq!(
-                after_restart, before_restart,
-                "The {name:?} window moved after a restart"
-            );
+            assert_eq!(after_restart, before_restart, "The {name:?} window moved after a restart");
         }
     }
 }

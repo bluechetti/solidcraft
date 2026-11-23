@@ -9,9 +9,7 @@ use epaint::{
     },
 };
 
-use crate::{
-    Galley, Painter, Rect, Ui, Visuals, pos2, text_selection::text_cursor_state::cursor_rect, vec2,
-};
+use crate::{Galley, Painter, Rect, Ui, Visuals, pos2, text_selection::text_cursor_state::cursor_rect, vec2};
 
 use super::CCursorRange;
 
@@ -47,11 +45,7 @@ pub fn paint_text_selection(
         let placed_row = &mut galley.rows[ri];
         let row = Arc::make_mut(&mut placed_row.row);
 
-        let left = if ri == min.row {
-            row.x_offset(min.column)
-        } else {
-            0.0
-        };
+        let left = if ri == min.row { row.x_offset(min.column) } else { 0.0 };
         let right = if ri == max.row {
             row.x_offset(max.column)
         } else {
@@ -69,20 +63,10 @@ pub fn paint_text_selection(
         if !row.glyphs.is_empty() {
             // Change color of the selected text:
             let first_glyph_index = if ri == min.row { min.column.0 } else { 0 };
-            let last_glyph_index = if ri == max.row {
-                max.column.0
-            } else {
-                row.glyphs.len()
-            };
+            let last_glyph_index = if ri == max.row { max.column.0 } else { row.glyphs.len() };
 
-            let first_vertex_index = row
-                .glyphs
-                .get(first_glyph_index)
-                .map_or(row.visuals.glyph_vertex_range.end, |g| g.first_vertex as _);
-            let last_vertex_index = row
-                .glyphs
-                .get(last_glyph_index)
-                .map_or(row.visuals.glyph_vertex_range.end, |g| g.first_vertex as _);
+            let first_vertex_index = row.glyphs.get(first_glyph_index).map_or(row.visuals.glyph_vertex_range.end, |g| g.first_vertex as _);
+            let last_vertex_index = row.glyphs.get(last_glyph_index).map_or(row.visuals.glyph_vertex_range.end, |g| g.first_vertex as _);
 
             for vi in first_vertex_index..last_vertex_index {
                 mesh.vertices[vi].color = text_color;
@@ -97,11 +81,7 @@ pub fn paint_text_selection(
         // Start by appending the selection rectangle to end of the mesh, as two triangles (= 6 indices):
         let num_indices_before = mesh.indices.len();
         mesh.add_colored_rect(rect, background_color);
-        assert_eq!(
-            num_indices_before + 6,
-            mesh.indices.len(),
-            "We expect exactly 6 new indices"
-        );
+        assert_eq!(num_indices_before + 6, mesh.indices.len(), "We expect exactly 6 new indices");
 
         // Copy out the new triangles:
         let selection_triangles = [
@@ -118,16 +98,12 @@ pub fn paint_text_selection(
             mesh.indices.swap(i, i + 6);
         }
         // Put the new triangle in place:
-        mesh.indices[glyph_index_start..glyph_index_start + 6]
-            .clone_from_slice(&selection_triangles);
+        mesh.indices[glyph_index_start..glyph_index_start + 6].clone_from_slice(&selection_triangles);
 
         row.visuals.mesh_bounds = mesh.calc_bounds();
 
         if let Some(new_vertex_indices) = &mut new_vertex_indices {
-            new_vertex_indices.push(RowVertexIndices {
-                row: ri,
-                vertex_indices: selection_triangles,
-            });
+            new_vertex_indices.push(RowVertexIndices { row: ri, vertex_indices: selection_triangles });
         }
     }
 }
@@ -191,9 +167,7 @@ pub(crate) fn paint_ime_preedit_text_visuals(
             active_underline_stroke,
         );
 
-        if !is_cursor_range_empty(
-            &(relative_active_range.end..(preedit_range.end - preedit_range.start.index)),
-        ) {
+        if !is_cursor_range_empty(&(relative_active_range.end..(preedit_range.end - preedit_range.start.index))) {
             paint_underlines(
                 pos,
                 painter,
@@ -220,44 +194,21 @@ pub(crate) fn paint_ime_preedit_text_visuals(
         let active_cursor = preedit_range.start + relative_active_range.start.index;
         let cursor_rect = cursor_rect(galley, &active_cursor, row_height);
 
-        paint_text_cursor(
-            ui,
-            painter,
-            cursor_rect.translate(pos.to_vec2()),
-            time_since_last_interaction,
-        );
+        paint_text_cursor(ui, painter, cursor_rect.translate(pos.to_vec2()), time_since_last_interaction);
     }
 }
 
-fn paint_underlines(
-    pos: Pos2,
-    painter: &Painter,
-    galley: &Arc<Galley>,
-    min: LayoutCursor,
-    max: LayoutCursor,
-    stroke: Stroke,
-) {
+fn paint_underlines(pos: Pos2, painter: &Painter, galley: &Arc<Galley>, min: LayoutCursor, max: LayoutCursor, stroke: Stroke) {
     for ri in min.row..=max.row {
         let placed_row = &galley.rows[ri];
         let row = &placed_row.row;
 
-        let left = if ri == min.row {
-            row.x_offset(min.column)
-        } else {
-            0.0
-        };
-        let right = if ri == max.row {
-            row.x_offset(max.column)
-        } else {
-            row.size.x
-        };
+        let left = if ri == min.row { row.x_offset(min.column) } else { 0.0 };
+        let right = if ri == max.row { row.x_offset(max.column) } else { row.size.x };
 
         let offset_y = placed_row.pos.y + row.size.y;
 
-        painter.line_segment(
-            [pos + vec2(left, offset_y), pos + vec2(right, offset_y)],
-            stroke,
-        );
+        painter.line_segment([pos + vec2(left, offset_y), pos + vec2(right, offset_y)], stroke);
     }
 }
 
@@ -276,24 +227,13 @@ pub fn paint_cursor_end(painter: &Painter, visuals: &Visuals, cursor_rect: Rect)
         // Roof/floor:
         let extrusion = 3.0;
         let width = 1.0;
-        painter.line_segment(
-            [top - vec2(extrusion, 0.0), top + vec2(extrusion, 0.0)],
-            (width, stroke.color),
-        );
-        painter.line_segment(
-            [bottom - vec2(extrusion, 0.0), bottom + vec2(extrusion, 0.0)],
-            (width, stroke.color),
-        );
+        painter.line_segment([top - vec2(extrusion, 0.0), top + vec2(extrusion, 0.0)], (width, stroke.color));
+        painter.line_segment([bottom - vec2(extrusion, 0.0), bottom + vec2(extrusion, 0.0)], (width, stroke.color));
     }
 }
 
 /// Paint one end of the selection, e.g. the primary cursor, with blinking (if enabled).
-pub fn paint_text_cursor(
-    ui: &Ui,
-    painter: &Painter,
-    primary_cursor_rect: Rect,
-    time_since_last_interaction: f64,
-) {
+pub fn paint_text_cursor(ui: &Ui, painter: &Painter, primary_cursor_rect: Rect, time_since_last_interaction: f64) {
     if ui.visuals().text_cursor.blink {
         let on_duration = ui.visuals().text_cursor.on_duration;
         let off_duration = ui.visuals().text_cursor.off_duration;

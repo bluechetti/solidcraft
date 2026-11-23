@@ -125,16 +125,9 @@ impl LayoutJob {
     #[inline]
     pub fn simple(text: String, font_id: FontId, color: Color32, wrap_width: f32) -> Self {
         Self {
-            sections: vec![LayoutSection {
-                leading_space: 0.0,
-                byte_range: ByteRange::full(&text),
-                format: TextFormat::simple(font_id, color),
-            }],
+            sections: vec![LayoutSection { leading_space: 0.0, byte_range: ByteRange::full(&text), format: TextFormat::simple(font_id, color) }],
             text,
-            wrap: TextWrapping {
-                max_width: wrap_width,
-                ..Default::default()
-            },
+            wrap: TextWrapping { max_width: wrap_width, ..Default::default() },
             break_on_newline: true,
             ..Default::default()
         }
@@ -144,11 +137,7 @@ impl LayoutJob {
     #[inline]
     pub fn simple_format(text: String, format: TextFormat) -> Self {
         Self {
-            sections: vec![LayoutSection {
-                leading_space: 0.0,
-                byte_range: ByteRange::full(&text),
-                format,
-            }],
+            sections: vec![LayoutSection { leading_space: 0.0, byte_range: ByteRange::full(&text), format }],
             text,
             break_on_newline: true,
             ..Default::default()
@@ -159,11 +148,7 @@ impl LayoutJob {
     #[inline]
     pub fn simple_singleline(text: String, font_id: FontId, color: Color32) -> Self {
         Self {
-            sections: vec![LayoutSection {
-                leading_space: 0.0,
-                byte_range: ByteRange::full(&text),
-                format: TextFormat::simple(font_id, color),
-            }],
+            sections: vec![LayoutSection { leading_space: 0.0, byte_range: ByteRange::full(&text), format: TextFormat::simple(font_id, color) }],
             text,
             wrap: Default::default(),
             break_on_newline: false,
@@ -174,11 +159,7 @@ impl LayoutJob {
     #[inline]
     pub fn single_section(text: String, format: TextFormat) -> Self {
         Self {
-            sections: vec![LayoutSection {
-                leading_space: 0.0,
-                byte_range: ByteRange::full(&text),
-                format,
-            }],
+            sections: vec![LayoutSection { leading_space: 0.0, byte_range: ByteRange::full(&text), format }],
             text,
             wrap: Default::default(),
             break_on_newline: true,
@@ -212,11 +193,7 @@ impl LayoutJob {
             return;
         }
 
-        self.sections.push(LayoutSection {
-            leading_space,
-            byte_range,
-            format,
-        });
+        self.sections.push(LayoutSection { leading_space, byte_range, format });
     }
 
     /// The [`TextFormat`] of the section containing the character starting at the given byte index.
@@ -228,9 +205,7 @@ impl LayoutJob {
     pub fn format_at_byte(&self, byte_idx: ByteIndex) -> &TextFormat {
         self.debug_sanity_check();
         let last = self.sections.last().expect("LayoutJob has no sections");
-        let idx = self
-            .sections
-            .partition_point(|section| section.byte_range.end <= byte_idx);
+        let idx = self.sections.partition_point(|section| section.byte_range.end <= byte_idx);
         let section = self.sections.get(idx).unwrap_or(last);
         &section.format
     }
@@ -244,23 +219,11 @@ impl LayoutJob {
         #[cfg(debug_assertions)]
         {
             if self.sections.is_empty() {
-                assert!(
-                    self.text.is_empty(),
-                    "LayoutJob has text but no sections: {:?}",
-                    self.text
-                );
+                assert!(self.text.is_empty(), "LayoutJob has text but no sections: {:?}", self.text);
                 return;
             }
 
-            assert_eq!(
-                self.sections
-                    .first()
-                    .expect("checked above")
-                    .byte_range
-                    .start,
-                ByteIndex::ZERO,
-                "First LayoutSection must start at byte 0"
-            );
+            assert_eq!(self.sections.first().expect("checked above").byte_range.start, ByteIndex::ZERO, "First LayoutSection must start at byte 0");
             assert_eq!(
                 self.sections.last().expect("checked above").byte_range.end,
                 ByteIndex(self.text.len()),
@@ -272,10 +235,7 @@ impl LayoutJob {
                 assert!(start <= end, "LayoutSection has a reversed byte_range");
             }
             for (prev, next) in core::iter::zip(&self.sections, self.sections.iter().skip(1)) {
-                assert_eq!(
-                    prev.byte_range.end, next.byte_range.start,
-                    "LayoutSections must be ordered with no gaps and no overlaps"
-                );
+                assert_eq!(prev.byte_range.end, next.byte_range.start, "LayoutSections must be ordered with no gaps and no overlaps");
             }
         }
     }
@@ -307,17 +267,8 @@ impl LayoutJob {
 impl core::hash::Hash for LayoutJob {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        let Self {
-            text,
-            sections,
-            wrap,
-            first_row_min_height,
-            break_on_newline,
-            halign,
-            justify,
-            round_output_to_gui,
-            keep_trailing_whitespace,
-        } = self;
+        let Self { text, sections, wrap, first_row_min_height, break_on_newline, halign, justify, round_output_to_gui, keep_trailing_whitespace } =
+            self;
 
         text.hash(state);
         sections.hash(state);
@@ -358,11 +309,7 @@ pub struct LayoutSection {
 impl core::hash::Hash for LayoutSection {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        let Self {
-            leading_space,
-            byte_range,
-            format,
-        } = self;
+        let Self { leading_space, byte_range, format } = self;
         OrderedFloat(*leading_space).hash(state);
         byte_range.hash(state);
         format.hash(state);
@@ -555,19 +502,8 @@ impl Default for TextFormat {
 impl core::hash::Hash for TextFormat {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        let Self {
-            font_id,
-            extra_letter_spacing,
-            line_height,
-            color,
-            background,
-            expand_bg,
-            coords,
-            italics,
-            underline,
-            strikethrough,
-            valign,
-        } = self;
+        let Self { font_id, extra_letter_spacing, line_height, color, background, expand_bg, coords, italics, underline, strikethrough, valign } =
+            self;
         font_id.hash(state);
         emath::OrderedFloat(*extra_letter_spacing).hash(state);
         if let Some(line_height) = *line_height {
@@ -587,11 +523,7 @@ impl core::hash::Hash for TextFormat {
 impl TextFormat {
     #[inline]
     pub fn simple(font_id: FontId, color: Color32) -> Self {
-        Self {
-            font_id,
-            color,
-            ..Default::default()
-        }
+        Self { font_id, color, ..Default::default() }
     }
 }
 
@@ -665,12 +597,7 @@ pub struct TextWrapping {
 impl core::hash::Hash for TextWrapping {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        let Self {
-            max_width,
-            max_rows,
-            break_anywhere,
-            overflow_character,
-        } = self;
+        let Self { max_width, max_rows, break_anywhere, overflow_character } = self;
         emath::OrderedFloat(*max_width).hash(state);
         max_rows.hash(state);
         break_anywhere.hash(state);
@@ -680,12 +607,7 @@ impl core::hash::Hash for TextWrapping {
 
 impl Default for TextWrapping {
     fn default() -> Self {
-        Self {
-            max_width: f32::INFINITY,
-            max_rows: usize::MAX,
-            break_anywhere: false,
-            overflow_character: Some('…'),
-        }
+        Self { max_width: f32::INFINITY, max_rows: usize::MAX, break_anywhere: false, overflow_character: Some('…') }
     }
 }
 
@@ -701,28 +623,17 @@ impl TextWrapping {
 
     /// A row can be as long as it need to be.
     pub fn no_max_width() -> Self {
-        Self {
-            max_width: f32::INFINITY,
-            ..Default::default()
-        }
+        Self { max_width: f32::INFINITY, ..Default::default() }
     }
 
     /// A row can be at most `max_width` wide but can wrap in any number of lines.
     pub fn wrap_at_width(max_width: f32) -> Self {
-        Self {
-            max_width,
-            ..Default::default()
-        }
+        Self { max_width, ..Default::default() }
     }
 
     /// Elide text that doesn't fit within the given width, replaced with `…`.
     pub fn truncate_at_width(max_width: f32) -> Self {
-        Self {
-            max_width,
-            max_rows: 1,
-            break_anywhere: true,
-            ..Default::default()
-        }
+        Self { max_width, max_rows: 1, break_anywhere: true, ..Default::default() }
     }
 }
 
@@ -821,10 +732,7 @@ impl PlacedRow {
     pub fn rect_without_leading_space(&self) -> Rect {
         let x = self.pos.x + self.glyphs.first().map_or(0.0, |g| g.pos.x);
         let right = self.pos.x + self.size.x;
-        Rect::from_min_max(
-            Pos2::new(x, self.pos.y),
-            Pos2::new(right, self.pos.y + self.size.y),
-        )
+        Rect::from_min_max(Pos2::new(x, self.pos.y), Pos2::new(right, self.pos.y + self.size.y))
     }
 }
 
@@ -883,12 +791,7 @@ pub struct RowVisuals {
 
 impl Default for RowVisuals {
     fn default() -> Self {
-        Self {
-            mesh: Default::default(),
-            mesh_bounds: Rect::NOTHING,
-            glyph_index_start: 0,
-            glyph_vertex_range: 0..0,
-        }
+        Self { mesh: Default::default(), mesh_bounds: Rect::NOTHING, glyph_index_start: 0, glyph_vertex_range: 0..0 }
     }
 }
 
@@ -984,11 +887,7 @@ impl Row {
     }
 
     pub fn x_offset(&self, column: CharIndex) -> f32 {
-        if let Some(glyph) = self.glyphs.get(column.0) {
-            glyph.pos.x
-        } else {
-            self.size.x
-        }
+        if let Some(glyph) = self.glyphs.get(column.0) { glyph.pos.x } else { self.size.x }
     }
 
     #[inline]
@@ -1040,11 +939,7 @@ impl Galley {
     pub fn intrinsic_size(&self) -> Vec2 {
         // We do the rounding here instead of in `round_output_to_gui` so that rounding
         // errors don't accumulate when concatenating multiple galleys.
-        if self.job.round_output_to_gui {
-            self.intrinsic_size.round_ui()
-        } else {
-            self.intrinsic_size
-        }
+        if self.job.round_output_to_gui { self.intrinsic_size.round_ui() } else { self.intrinsic_size }
     }
 
     pub(crate) fn round_output_to_gui(&mut self) {
@@ -1067,11 +962,7 @@ impl Galley {
             // we should let the user know by reporting that our width is wider than the wrap width.
         } else {
             // Make sure we don't report being wider than the wrap width the user picked:
-            rect.max.x = rect
-                .max
-                .x
-                .at_most(rect.min.x + self.job.wrap.max_width)
-                .floor_ui();
+            rect.max.x = rect.max.x.at_most(rect.min.x + self.job.wrap.max_width).floor_ui();
         }
     }
 
@@ -1095,33 +986,25 @@ impl Galley {
             let current_y_offset = merged_galley.rect.height();
             let is_last_galley = i + 1 == galleys.len();
 
-            merged_galley
-                .rows
-                .extend(galley.rows.iter().enumerate().map(|(row_idx, placed_row)| {
-                    let new_pos = placed_row.pos + current_y_offset * Vec2::Y;
-                    let new_pos = new_pos.round_to_pixels(pixels_per_point);
-                    merged_galley.mesh_bounds |=
-                        placed_row.visuals.mesh_bounds.translate(new_pos.to_vec2());
-                    merged_galley.rect |= Rect::from_min_size(new_pos, placed_row.size);
+            merged_galley.rows.extend(galley.rows.iter().enumerate().map(|(row_idx, placed_row)| {
+                let new_pos = placed_row.pos + current_y_offset * Vec2::Y;
+                let new_pos = new_pos.round_to_pixels(pixels_per_point);
+                merged_galley.mesh_bounds |= placed_row.visuals.mesh_bounds.translate(new_pos.to_vec2());
+                merged_galley.rect |= Rect::from_min_size(new_pos, placed_row.size);
 
-                    let mut ends_with_newline = placed_row.ends_with_newline;
-                    let is_last_row_in_galley = row_idx + 1 == galley.rows.len();
-                    // Since we remove the `\n` when splitting rows, we need to add it back here
-                    ends_with_newline |= !is_last_galley && is_last_row_in_galley;
-                    super::PlacedRow {
-                        pos: new_pos,
-                        row: Arc::clone(&placed_row.row),
-                        ends_with_newline,
-                    }
-                }));
+                let mut ends_with_newline = placed_row.ends_with_newline;
+                let is_last_row_in_galley = row_idx + 1 == galley.rows.len();
+                // Since we remove the `\n` when splitting rows, we need to add it back here
+                ends_with_newline |= !is_last_galley && is_last_row_in_galley;
+                super::PlacedRow { pos: new_pos, row: Arc::clone(&placed_row.row), ends_with_newline }
+            }));
 
             merged_galley.num_vertices += galley.num_vertices;
             merged_galley.num_indices += galley.num_indices;
             // Note that if `galley.elided` is true this will be the last `Galley` in
             // the vector and the loop will end.
             merged_galley.elided |= galley.elided;
-            merged_galley.intrinsic_size.x =
-                f32::max(merged_galley.intrinsic_size.x, galley.intrinsic_size.x);
+            merged_galley.intrinsic_size.x = f32::max(merged_galley.intrinsic_size.x, galley.intrinsic_size.x);
             merged_galley.intrinsic_size.y += galley.intrinsic_size.y;
         }
 
@@ -1223,10 +1106,7 @@ impl Galley {
                 // char_at is `Row` not `PlacedRow` relative which means we have to subtract the pos.
                 let column = row.char_at(pos.x - row.pos.x);
                 let prefer_next_row = column < row.char_count_excluding_newline();
-                cursor = CCursor {
-                    index: ccursor_index + column,
-                    prefer_next_row,
-                };
+                cursor = CCursor { index: ccursor_index + column, prefer_next_row };
 
                 if is_pos_within_row {
                     return cursor;
@@ -1255,10 +1135,7 @@ impl Galley {
         if self.rows.is_empty() {
             return Default::default();
         }
-        let mut ccursor = CCursor {
-            index: CharIndex::ZERO,
-            prefer_next_row: true,
-        };
+        let mut ccursor = CCursor { index: CharIndex::ZERO, prefer_next_row: true };
         for row in &self.rows {
             let row_char_count = row.char_count_including_newline();
             ccursor.index += row_char_count;
@@ -1272,26 +1149,17 @@ impl Galley {
     // The returned cursor is clamped.
     pub fn layout_from_cursor(&self, cursor: CCursor) -> LayoutCursor {
         let prefer_next_row = cursor.prefer_next_row;
-        let mut ccursor_it = CCursor {
-            index: CharIndex::ZERO,
-            prefer_next_row,
-        };
+        let mut ccursor_it = CCursor { index: CharIndex::ZERO, prefer_next_row };
 
         for (row_nr, row) in self.rows.iter().enumerate() {
             let row_char_count = row.char_count_excluding_newline();
 
-            if ccursor_it.index <= cursor.index && cursor.index <= ccursor_it.index + row_char_count
-            {
+            if ccursor_it.index <= cursor.index && cursor.index <= ccursor_it.index + row_char_count {
                 let column = cursor.index - ccursor_it.index;
 
-                let select_next_row_instead = prefer_next_row
-                    && !row.ends_with_newline
-                    && column >= row.char_count_excluding_newline();
+                let select_next_row_instead = prefer_next_row && !row.ends_with_newline && column >= row.char_count_excluding_newline();
                 if !select_next_row_instead {
-                    return LayoutCursor {
-                        row: row_nr,
-                        column,
-                    };
+                    return LayoutCursor { row: row_nr, column };
                 }
             }
             ccursor_it.index += row.char_count_including_newline();
@@ -1299,10 +1167,7 @@ impl Galley {
         debug_assert!(ccursor_it == self.end(), "Cursor out of bounds");
 
         if let Some(last_row) = self.rows.last() {
-            LayoutCursor {
-                row: self.rows.len() - 1,
-                column: last_row.char_count_including_newline(),
-            }
+            LayoutCursor { row: self.rows.len() - 1, column: last_row.char_count_including_newline() }
         } else {
             Default::default()
         }
@@ -1313,12 +1178,8 @@ impl Galley {
             return self.end();
         }
 
-        let prefer_next_row =
-            layout_cursor.column < self.rows[layout_cursor.row].char_count_excluding_newline();
-        let mut cursor_it = CCursor {
-            index: CharIndex::ZERO,
-            prefer_next_row,
-        };
+        let prefer_next_row = layout_cursor.column < self.rows[layout_cursor.row].char_count_excluding_newline();
+        let mut cursor_it = CCursor { index: CharIndex::ZERO, prefer_next_row };
 
         for (row_nr, row) in self.rows.iter().enumerate() {
             if row_nr == layout_cursor.row {
@@ -1357,11 +1218,7 @@ impl Galley {
         self.cursor_from_layout(self.layout_from_cursor(*cursor))
     }
 
-    pub fn cursor_up_one_row(
-        &self,
-        cursor: &CCursor,
-        h_pos: Option<f32>,
-    ) -> (CCursor, Option<f32>) {
+    pub fn cursor_up_one_row(&self, cursor: &CCursor, h_pos: Option<f32>) -> (CCursor, Option<f32>) {
         let layout_cursor = self.layout_from_cursor(*cursor);
         let h_pos = h_pos.unwrap_or_else(|| self.pos_from_layout_cursor(&layout_cursor).center().x);
         if layout_cursor.row == 0 {
@@ -1373,20 +1230,13 @@ impl Galley {
                 // keep same X coord
                 // char_at is Row-relative, so subtract the row's position
                 let column = self.rows[new_row].char_at(h_pos - self.rows[new_row].pos.x);
-                LayoutCursor {
-                    row: new_row,
-                    column,
-                }
+                LayoutCursor { row: new_row, column }
             };
             (self.cursor_from_layout(new_layout_cursor), Some(h_pos))
         }
     }
 
-    pub fn cursor_down_one_row(
-        &self,
-        cursor: &CCursor,
-        h_pos: Option<f32>,
-    ) -> (CCursor, Option<f32>) {
+    pub fn cursor_down_one_row(&self, cursor: &CCursor, h_pos: Option<f32>) -> (CCursor, Option<f32>) {
         let layout_cursor = self.layout_from_cursor(*cursor);
         let h_pos = h_pos.unwrap_or_else(|| self.pos_from_layout_cursor(&layout_cursor).center().x);
         if layout_cursor.row + 1 < self.rows.len() {
@@ -1396,10 +1246,7 @@ impl Galley {
                 // keep same X coord
                 // char_at is Row-relative, so subtract the row's position
                 let column = self.rows[new_row].char_at(h_pos - self.rows[new_row].pos.x);
-                LayoutCursor {
-                    row: new_row,
-                    column,
-                }
+                LayoutCursor { row: new_row, column }
             };
 
             (self.cursor_from_layout(new_layout_cursor), Some(h_pos))
@@ -1410,18 +1257,12 @@ impl Galley {
 
     pub fn cursor_begin_of_row(&self, cursor: &CCursor) -> CCursor {
         let layout_cursor = self.layout_from_cursor(*cursor);
-        self.cursor_from_layout(LayoutCursor {
-            row: layout_cursor.row,
-            column: CharIndex::ZERO,
-        })
+        self.cursor_from_layout(LayoutCursor { row: layout_cursor.row, column: CharIndex::ZERO })
     }
 
     pub fn cursor_end_of_row(&self, cursor: &CCursor) -> CCursor {
         let layout_cursor = self.layout_from_cursor(*cursor);
-        self.cursor_from_layout(LayoutCursor {
-            row: layout_cursor.row,
-            column: self.rows[layout_cursor.row].char_count_excluding_newline(),
-        })
+        self.cursor_from_layout(LayoutCursor { row: layout_cursor.row, column: self.rows[layout_cursor.row].char_count_excluding_newline() })
     }
 
     pub fn cursor_begin_of_paragraph(&self, cursor: &CCursor) -> CCursor {
@@ -1429,10 +1270,7 @@ impl Galley {
         layout_cursor.column = CharIndex::ZERO;
 
         loop {
-            let prev_row = layout_cursor
-                .row
-                .checked_sub(1)
-                .and_then(|row| self.rows.get(row));
+            let prev_row = layout_cursor.row.checked_sub(1).and_then(|row| self.rows.get(row));
 
             let Some(prev_row) = prev_row else {
                 // This is the first row

@@ -47,9 +47,7 @@ pub(super) fn invisible_char(c: char) -> bool {
 
 #[inline]
 pub(super) fn is_cjk_ideograph(c: char) -> bool {
-    ('\u{4E00}' <= c && c <= '\u{9FFF}')
-        || ('\u{3400}' <= c && c <= '\u{4DBF}')
-        || ('\u{2B740}' <= c && c <= '\u{2B81F}')
+    ('\u{4E00}' <= c && c <= '\u{9FFF}') || ('\u{3400}' <= c && c <= '\u{4DBF}') || ('\u{2B740}' <= c && c <= '\u{2B81F}')
 }
 
 #[inline]
@@ -77,10 +75,5 @@ pub(super) fn is_cjk_break_allowed(c: char) -> bool {
 #[inline]
 pub(super) fn is_combining_mark(c: char) -> bool {
     use unicode_general_category::{GeneralCategory, get_general_category};
-    matches!(
-        get_general_category(c),
-        GeneralCategory::NonspacingMark
-            | GeneralCategory::SpacingMark
-            | GeneralCategory::EnclosingMark
-    )
+    matches!(get_general_category(c), GeneralCategory::NonspacingMark | GeneralCategory::SpacingMark | GeneralCategory::EnclosingMark)
 }

@@ -26,12 +26,7 @@ pub struct Separator {
 
 impl Default for Separator {
     fn default() -> Self {
-        Self {
-            spacing: None,
-            grow: 0.0,
-            is_horizontal_line: None,
-            classes: Classes::default(),
-        }
+        Self { spacing: None, grow: 0.0, is_horizontal_line: None, classes: Classes::default() }
     }
 }
 
@@ -94,54 +89,29 @@ impl Separator {
 
 impl Widget for Separator {
     fn ui(self, ui: &mut Ui) -> Response {
-        let Self {
-            spacing,
-            grow,
-            is_horizontal_line,
-            classes,
-        } = self;
+        let Self { spacing, grow, is_horizontal_line, classes } = self;
 
         // Get the widget style by reading the response from the previous pass
         let id = ui.next_auto_id();
-        let SeparatorStyle {
-            spacing: spacing_style,
-            stroke,
-        } = ui.widget_style(id, &classes);
+        let SeparatorStyle { spacing: spacing_style, stroke } = ui.widget_style(id, &classes);
 
         // override the spacing if not set
         let spacing = spacing.unwrap_or(spacing_style);
 
-        let is_horizontal_line = is_horizontal_line
-            .unwrap_or_else(|| ui.is_grid() || !ui.layout().main_dir().is_horizontal());
+        let is_horizontal_line = is_horizontal_line.unwrap_or_else(|| ui.is_grid() || !ui.layout().main_dir().is_horizontal());
 
-        let available_space = if ui.is_sizing_pass() {
-            Vec2::ZERO
-        } else {
-            ui.available_size_before_wrap()
-        };
+        let available_space = if ui.is_sizing_pass() { Vec2::ZERO } else { ui.available_size_before_wrap() };
 
-        let size = if is_horizontal_line {
-            vec2(available_space.x, spacing)
-        } else {
-            vec2(spacing, available_space.y)
-        };
+        let size = if is_horizontal_line { vec2(available_space.x, spacing) } else { vec2(spacing, available_space.y) };
 
         let (rect, response) = ui.allocate_at_least(size, Sense::hover());
 
         if ui.is_rect_visible(response.rect) {
             let painter = ui.painter();
             if is_horizontal_line {
-                painter.hline(
-                    (rect.left() - grow)..=(rect.right() + grow),
-                    rect.center().y,
-                    stroke,
-                );
+                painter.hline((rect.left() - grow)..=(rect.right() + grow), rect.center().y, stroke);
             } else {
-                painter.vline(
-                    rect.center().x,
-                    (rect.top() - grow)..=(rect.bottom() + grow),
-                    stroke,
-                );
+                painter.vline(rect.center().x, (rect.top() - grow)..=(rect.bottom() + grow), stroke);
             }
         }
 

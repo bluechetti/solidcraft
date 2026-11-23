@@ -20,39 +20,20 @@ struct State {
 
 impl State {
     fn new() -> Self {
-        Self {
-            open: false,
-            closable: false,
-            close_on_next_frame: false,
-            start_pos: pos2(100.0, 100.0),
-            focus: None,
-            events: None,
-        }
+        Self { open: false, closable: false, close_on_next_frame: false, start_pos: pos2(100.0, 100.0), focus: None, events: None }
     }
 
     fn queue_char(&mut self, c: char) {
         let events = self.events.get_or_insert(vec![]);
         if let Some(key) = egui::Key::from_name(&c.to_string()) {
-            events.push(egui::Event::Key {
-                key,
-                physical_key: Some(key),
-                pressed: true,
-                repeat: false,
-                modifiers: Default::default(),
-            });
+            events.push(egui::Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers: Default::default() });
         }
         events.push(egui::Event::Text(c.to_string()));
     }
 
     fn queue_key(&mut self, key: egui::Key) {
         let events = self.events.get_or_insert(vec![]);
-        events.push(egui::Event::Key {
-            key,
-            physical_key: Some(key),
-            pressed: true,
-            repeat: false,
-            modifiers: Default::default(),
-        });
+        events.push(egui::Event::Key { key, physical_key: Some(key), pressed: true, repeat: false, modifiers: Default::default() });
     }
 }
 
@@ -69,18 +50,11 @@ pub struct Keypad {
 
 impl Keypad {
     pub fn new() -> Self {
-        Self {
-            id: egui::Id::unique("keypad"),
-        }
+        Self { id: egui::Id::unique("keypad") }
     }
 
     pub fn bump_events(&self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        let events = ctx.memory_mut(|m| {
-            m.data
-                .get_temp_mut_or_default::<State>(self.id)
-                .events
-                .take()
-        });
+        let events = ctx.memory_mut(|m| m.data.get_temp_mut_or_default::<State>(self.id).events.take());
         if let Some(mut events) = events {
             events.append(&mut raw_input.events);
             raw_input.events = events;
@@ -172,22 +146,13 @@ impl Keypad {
     }
 
     pub fn show(&self, ctx: &egui::Context) {
-        let (focus, mut state) = ctx.memory(|m| {
-            (
-                m.focused(),
-                m.data.get_temp::<State>(self.id).unwrap_or_default(),
-            )
-        });
+        let (focus, mut state) = ctx.memory(|m| (m.focused(), m.data.get_temp::<State>(self.id).unwrap_or_default()));
 
         let is_first_show = ctx.egui_wants_keyboard_input() && state.focus != focus;
         if is_first_show {
             let y = ctx.global_style().spacing.interact_size.y * 1.25;
             state.open = true;
-            state.start_pos = ctx.input(|i| {
-                i.pointer
-                    .hover_pos()
-                    .map_or(pos2(100.0, 100.0), |p| p + vec2(0.0, y))
-            });
+            state.start_pos = ctx.input(|i| i.pointer.hover_pos().map_or(pos2(100.0, 100.0), |p| p + vec2(0.0, y)));
             state.focus = focus;
         }
 
@@ -200,16 +165,8 @@ impl Keypad {
         let mut open = state.open;
 
         let win = egui::Window::new("⌨ Keypad");
-        let win = if is_first_show {
-            win.current_pos(state.start_pos)
-        } else {
-            win.default_pos(state.start_pos)
-        };
-        let resp = win
-            .movable(true)
-            .resizable(false)
-            .open(&mut open)
-            .show(ctx, |ui| Self::buttons(ui, &mut state));
+        let win = if is_first_show { win.current_pos(state.start_pos) } else { win.default_pos(state.start_pos) };
+        let resp = win.movable(true).resizable(false).open(&mut open).show(ctx, |ui| Self::buttons(ui, &mut state));
 
         state.open = open;
 

@@ -19,9 +19,7 @@ impl crate::Demo for ExtraViewport {
 
         ui.show_viewport_immediate(
             egui::ViewportId(id),
-            egui::ViewportBuilder::default()
-                .with_title(self.name())
-                .with_inner_size([400.0, 512.0]),
+            egui::ViewportBuilder::default().with_title(self.name()).with_inner_size([400.0, 512.0]),
             |ui, class| {
                 if class == egui::ViewportClass::EmbeddedWindow {
                     // Not a real viewport
@@ -39,20 +37,13 @@ impl crate::Demo for ExtraViewport {
 fn viewport_content(ui: &mut egui::Ui, open: &mut bool) {
     ui.label("egui and eframe supports having multiple native windows like this, which egui calls 'viewports'.");
 
-    ui.label(format!(
-        "This viewport has id: {:?}, child of viewport {:?}",
-        ui.viewport_id(),
-        ui.parent_viewport_id()
-    ));
+    ui.label(format!("This viewport has id: {:?}, child of viewport {:?}", ui.viewport_id(), ui.parent_viewport_id()));
 
     ui.label("Here you can see all the open viewports:");
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         let viewports = ui.input(|i| i.raw.viewports.clone());
-        let ordered_viewports = viewports
-            .iter()
-            .map(|(id, viewport)| (*id, viewport.clone()))
-            .collect::<egui::OrderedViewportIdMap<_>>();
+        let ordered_viewports = viewports.iter().map(|(id, viewport)| (*id, viewport.clone())).collect::<egui::OrderedViewportIdMap<_>>();
         for (id, viewport) in ordered_viewports {
             ui.group(|ui| {
                 ui.label(format!("viewport {id:?}"));

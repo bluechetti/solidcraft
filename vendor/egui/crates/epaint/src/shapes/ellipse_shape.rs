@@ -18,24 +18,12 @@ pub struct EllipseShape {
 impl EllipseShape {
     #[inline]
     pub fn filled(center: Pos2, radius: Vec2, fill_color: impl Into<Color32>) -> Self {
-        Self {
-            center,
-            radius,
-            fill: fill_color.into(),
-            stroke: Default::default(),
-            angle: 0.0,
-        }
+        Self { center, radius, fill: fill_color.into(), stroke: Default::default(), angle: 0.0 }
     }
 
     #[inline]
     pub fn stroke(center: Pos2, radius: Vec2, stroke: impl Into<Stroke>) -> Self {
-        Self {
-            center,
-            radius,
-            fill: Default::default(),
-            stroke: stroke.into(),
-            angle: 0.0,
-        }
+        Self { center, radius, fill: Default::default(), stroke: stroke.into(), angle: 0.0 }
     }
 
     /// Set the rotation of the ellipse (in radians, clockwise).
@@ -60,12 +48,8 @@ impl EllipseShape {
         if self.fill == Color32::TRANSPARENT && self.stroke.is_empty() {
             Rect::NOTHING
         } else {
-            let rect = Rect::from_center_size(
-                Pos2::ZERO,
-                self.radius * 2.0 + Vec2::splat(self.stroke.width),
-            );
-            rect.rotate_bb(emath::Rot2::from_angle(self.angle))
-                .translate(self.center.to_vec2())
+            let rect = Rect::from_center_size(Pos2::ZERO, self.radius * 2.0 + Vec2::splat(self.stroke.width));
+            rect.rotate_bb(emath::Rot2::from_angle(self.angle)).translate(self.center.to_vec2())
         }
     }
 }

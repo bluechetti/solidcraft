@@ -48,14 +48,10 @@ impl crate::Demo for TableDemo {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .default_width(400.0)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                use crate::View as _;
-                self.ui(ui);
-            });
+        egui::Window::new(self.name()).open(open).default_width(400.0).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| {
+            use crate::View as _;
+            self.ui(ui);
+        });
     }
 }
 
@@ -75,37 +71,18 @@ impl crate::View for TableDemo {
 
             ui.label("Table type:");
             ui.radio_value(&mut self.demo, DemoType::Manual, "Few, manual rows");
-            ui.radio_value(
-                &mut self.demo,
-                DemoType::ManyHomogeneous,
-                "Thousands of rows of same height",
-            );
-            ui.radio_value(
-                &mut self.demo,
-                DemoType::ManyHeterogenous,
-                "Thousands of rows of differing heights",
-            );
+            ui.radio_value(&mut self.demo, DemoType::ManyHomogeneous, "Thousands of rows of same height");
+            ui.radio_value(&mut self.demo, DemoType::ManyHeterogenous, "Thousands of rows of differing heights");
 
             if self.demo != DemoType::Manual {
-                ui.add(
-                    egui::Slider::new(&mut self.num_rows, 0..=100_000)
-                        .logarithmic(true)
-                        .text("Num rows"),
-                );
+                ui.add(egui::Slider::new(&mut self.num_rows, 0..=100_000).logarithmic(true).text("Num rows"));
             }
 
             {
-                let max_rows = if self.demo == DemoType::Manual {
-                    NUM_MANUAL_ROWS
-                } else {
-                    self.num_rows
-                };
+                let max_rows = if self.demo == DemoType::Manual { NUM_MANUAL_ROWS } else { self.num_rows };
 
-                let slider_response = ui.add(
-                    egui::Slider::new(&mut self.scroll_to_row_slider, 0..=max_rows)
-                        .logarithmic(true)
-                        .text("Row to scroll to"),
-                );
+                let slider_response =
+                    ui.add(egui::Slider::new(&mut self.scroll_to_row_slider, 0..=max_rows).logarithmic(true).text("Row to scroll to"));
                 if slider_response.changed() {
                     self.scroll_to_row = Some(self.scroll_to_row_slider);
                 }
@@ -141,10 +118,7 @@ impl TableDemo {
     fn table_ui(&mut self, ui: &mut egui::Ui, reset: bool) {
         use egui_extras::{Column, TableBuilder};
 
-        let text_height = egui::TextStyle::Body
-            .resolve(ui.style())
-            .size
-            .max(ui.spacing().interact_size.y);
+        let text_height = egui::TextStyle::Body.resolve(ui.style()).size.max(ui.spacing().interact_size.y);
 
         let available_height = ui.available_height();
         let mut table = TableBuilder::new(ui)
@@ -152,12 +126,7 @@ impl TableDemo {
             .resizable(self.resizable)
             .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .column(Column::auto())
-            .column(
-                Column::remainder()
-                    .at_least(40.0)
-                    .clip(true)
-                    .resizable(true),
-            )
+            .column(Column::remainder().at_least(40.0).clip(true).resizable(true))
             .column(Column::auto())
             .column(Column::remainder())
             .column(Column::remainder())
@@ -185,8 +154,7 @@ impl TableDemo {
                             ui.strong("Row");
                         },
                         |ui| {
-                            self.reversed ^=
-                                ui.button(if self.reversed { "⬆️" } else { "⬇️" }).clicked();
+                            self.reversed ^= ui.button(if self.reversed { "⬆️" } else { "⬇️" }).clicked();
                         },
                     );
                 });
@@ -206,11 +174,7 @@ impl TableDemo {
             .body(|mut body| match self.demo {
                 DemoType::Manual => {
                     for row_index in 0..NUM_MANUAL_ROWS {
-                        let row_index = if self.reversed {
-                            NUM_MANUAL_ROWS - 1 - row_index
-                        } else {
-                            row_index
-                        };
+                        let row_index = if self.reversed { NUM_MANUAL_ROWS - 1 - row_index } else { row_index };
 
                         let is_thick = thick_row(row_index);
                         let row_height = if is_thick { 30.0 } else { 18.0 };
@@ -245,11 +209,7 @@ impl TableDemo {
                 }
                 DemoType::ManyHomogeneous => {
                     body.rows(text_height, self.num_rows, |mut row| {
-                        let row_index = if self.reversed {
-                            self.num_rows - 1 - row.index()
-                        } else {
-                            row.index()
-                        };
+                        let row_index = if self.reversed { self.num_rows - 1 - row.index() } else { row.index() };
 
                         row.set_selected(self.selection.contains(&row_index));
                         row.set_overline(self.overline && row_index % 7 == 3);
@@ -267,10 +227,7 @@ impl TableDemo {
                             ui.checkbox(&mut self.checked, "Click me");
                         });
                         row.col(|ui| {
-                            ui.add(
-                                egui::Label::new("Thousands of rows of even height")
-                                    .wrap_mode(TextWrapMode::Extend),
-                            );
+                            ui.add(egui::Label::new("Thousands of rows of even height").wrap_mode(TextWrapMode::Extend));
                         });
 
                         self.toggle_row_selection(row_index, &row.response());
@@ -279,11 +236,7 @@ impl TableDemo {
                 DemoType::ManyHeterogenous => {
                     let row_height = |i: usize| if thick_row(i) { 30.0 } else { 18.0 };
                     body.heterogeneous_rows((0..self.num_rows).map(row_height), |mut row| {
-                        let row_index = if self.reversed {
-                            self.num_rows - 1 - row.index()
-                        } else {
-                            row.index()
-                        };
+                        let row_index = if self.reversed { self.num_rows - 1 - row.index() } else { row.index() };
 
                         row.set_selected(self.selection.contains(&row_index));
                         row.set_overline(self.overline && row_index % 7 == 3);
@@ -331,9 +284,7 @@ fn expanding_content(ui: &mut egui::Ui) {
 }
 
 fn long_text(row_index: usize) -> String {
-    format!(
-        "Row {row_index} has some long text that you may want to clip, or it will take up too much horizontal space!"
-    )
+    format!("Row {row_index} has some long text that you may want to clip, or it will take up too much horizontal space!")
 }
 
 fn thick_row(row_index: usize) -> bool {

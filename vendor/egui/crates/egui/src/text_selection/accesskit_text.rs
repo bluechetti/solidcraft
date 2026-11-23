@@ -20,10 +20,7 @@ fn text_run_position(parent_id: Id, row: usize, column: CharIndex) -> accesskit:
         column / MAX_CHARS_PER_TEXT_RUN
     };
     let character_index = column - chunk_index * MAX_CHARS_PER_TEXT_RUN;
-    accesskit::TextPosition {
-        node: parent_id.with(row).with(chunk_index).accesskit_id(),
-        character_index,
-    }
+    accesskit::TextPosition { node: parent_id.with(row).with(chunk_index).accesskit_id(), character_index }
 }
 
 /// Update accesskit with the current text state.
@@ -106,12 +103,7 @@ pub fn update_accesskit_for_text_widget(
                 // once AccessKit adapters expose text formatting info.
 
                 let rect = global_from_galley * row.rect_without_leading_space();
-                builder.set_bounds(accesskit::Rect {
-                    x0: rect.min.x.into(),
-                    y0: rect.min.y.into(),
-                    x1: rect.max.x.into(),
-                    y1: rect.max.y.into(),
-                });
+                builder.set_bounds(accesskit::Rect { x0: rect.min.x.into(), y0: rect.min.y.into(), x1: rect.max.x.into(), y1: rect.max.y.into() });
                 builder.set_value(value);
                 builder.set_character_lengths(character_lengths);
 
@@ -134,10 +126,7 @@ pub fn update_accesskit_for_text_widget(
                 let char_end = (char_start + MAX_CHARS_PER_TEXT_RUN).min(total_chars);
 
                 let byte_start = byte_offset;
-                let chunk_byte_len: usize = character_lengths[char_start..char_end]
-                    .iter()
-                    .map(|&l| l as usize)
-                    .sum();
+                let chunk_byte_len: usize = character_lengths[char_start..char_end].iter().map(|&l| l as usize).sum();
                 let byte_end = byte_start + chunk_byte_len;
                 byte_offset = byte_end;
 
@@ -161,13 +150,8 @@ pub fn update_accesskit_for_text_widget(
 
                     let row_rect = row.rect_without_leading_space();
                     let chunk_x0 = row.pos.x + character_positions[char_start];
-                    let chunk_x1 = row.pos.x
-                        + character_positions[char_end - 1]
-                        + character_widths[char_end - 1];
-                    let chunk_rect = emath::Rect::from_min_max(
-                        emath::pos2(chunk_x0, row_rect.min.y),
-                        emath::pos2(chunk_x1, row_rect.max.y),
-                    );
+                    let chunk_x1 = row.pos.x + character_positions[char_end - 1] + character_widths[char_end - 1];
+                    let chunk_rect = emath::Rect::from_min_max(emath::pos2(chunk_x0, row_rect.min.y), emath::pos2(chunk_x1, row_rect.max.y));
                     let rect = global_from_galley * chunk_rect;
                     builder.set_bounds(accesskit::Rect {
                         x0: rect.min.x.into(),
@@ -179,18 +163,12 @@ pub fn update_accesskit_for_text_widget(
                     builder.set_character_lengths(character_lengths[char_start..char_end].to_vec());
 
                     let pos_offset = character_positions[char_start];
-                    let chunk_positions: Vec<f32> = character_positions[char_start..char_end]
-                        .iter()
-                        .map(|&p| p - pos_offset)
-                        .collect();
+                    let chunk_positions: Vec<f32> = character_positions[char_start..char_end].iter().map(|&p| p - pos_offset).collect();
                     builder.set_character_positions(chunk_positions);
                     builder.set_character_widths(character_widths[char_start..char_end].to_vec());
 
-                    let chunk_word_starts: Vec<u8> = word_starts
-                        .iter()
-                        .filter(|&&ws| ws >= char_start && ws < char_end)
-                        .map(|&ws| (ws - char_start) as u8)
-                        .collect();
+                    let chunk_word_starts: Vec<u8> =
+                        word_starts.iter().filter(|&&ws| ws >= char_start && ws < char_end).map(|&ws| (ws - char_start) as u8).collect();
                     builder.set_word_starts(chunk_word_starts);
                 });
             }

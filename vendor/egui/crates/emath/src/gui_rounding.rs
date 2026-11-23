@@ -110,19 +110,13 @@ impl GuiRounding for crate::Vec2 {
 
     #[inline]
     fn round_to_pixels(self, pixels_per_point: f32) -> Self {
-        Self::new(
-            self.x.round_to_pixels(pixels_per_point),
-            self.y.round_to_pixels(pixels_per_point),
-        )
+        Self::new(self.x.round_to_pixels(pixels_per_point), self.y.round_to_pixels(pixels_per_point))
     }
 
     // This doesn't really make sense for a Vec2, but 🤷‍♂️
     #[inline]
     fn round_to_pixel_center(self, pixels_per_point: f32) -> Self {
-        Self::new(
-            self.x.round_to_pixel_center(pixels_per_point),
-            self.y.round_to_pixel_center(pixels_per_point),
-        )
+        Self::new(self.x.round_to_pixel_center(pixels_per_point), self.y.round_to_pixel_center(pixels_per_point))
     }
 }
 
@@ -139,18 +133,12 @@ impl GuiRounding for crate::Pos2 {
 
     #[inline]
     fn round_to_pixels(self, pixels_per_point: f32) -> Self {
-        Self::new(
-            self.x.round_to_pixels(pixels_per_point),
-            self.y.round_to_pixels(pixels_per_point),
-        )
+        Self::new(self.x.round_to_pixels(pixels_per_point), self.y.round_to_pixels(pixels_per_point))
     }
 
     #[inline]
     fn round_to_pixel_center(self, pixels_per_point: f32) -> Self {
-        Self::new(
-            self.x.round_to_pixel_center(pixels_per_point),
-            self.y.round_to_pixel_center(pixels_per_point),
-        )
+        Self::new(self.x.round_to_pixel_center(pixels_per_point), self.y.round_to_pixel_center(pixels_per_point))
     }
 }
 
@@ -173,20 +161,14 @@ impl GuiRounding for crate::Rect {
     /// will continue to tile perfectly.
     #[inline]
     fn round_to_pixels(self, pixels_per_point: f32) -> Self {
-        Self::from_min_max(
-            self.min.round_to_pixels(pixels_per_point),
-            self.max.round_to_pixels(pixels_per_point),
-        )
+        Self::from_min_max(self.min.round_to_pixels(pixels_per_point), self.max.round_to_pixels(pixels_per_point))
     }
 
     /// Rounded so that two adjacent rects that tile perfectly
     /// will continue to tile perfectly.
     #[inline]
     fn round_to_pixel_center(self, pixels_per_point: f32) -> Self {
-        Self::from_min_max(
-            self.min.round_to_pixel_center(pixels_per_point),
-            self.max.round_to_pixel_center(pixels_per_point),
-        )
+        Self::from_min_max(self.min.round_to_pixel_center(pixels_per_point), self.max.round_to_pixel_center(pixels_per_point))
     }
 }
 

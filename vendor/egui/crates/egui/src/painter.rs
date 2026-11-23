@@ -46,14 +46,7 @@ impl Painter {
     /// Create a painter to a specific layer within a certain clip rectangle.
     pub fn new(ctx: Context, layer_id: LayerId, clip_rect: Rect) -> Self {
         let pixels_per_point = ctx.pixels_per_point();
-        Self {
-            ctx,
-            pixels_per_point,
-            layer_id,
-            clip_rect,
-            fade_to_color: None,
-            opacity_factor: 1.0,
-        }
+        Self { ctx, pixels_per_point, layer_id, clip_rect, fade_to_color: None, opacity_factor: 1.0 }
     }
 
     /// Redirect where you are painting.
@@ -264,20 +257,8 @@ impl Painter {
 impl Painter {
     #[expect(clippy::needless_pass_by_value)]
     pub fn debug_rect(&self, rect: Rect, color: Color32, text: impl ToString) {
-        self.rect(
-            rect,
-            0.0,
-            color.additive().linear_multiply(0.015),
-            (1.0, color),
-            StrokeKind::Outside,
-        );
-        self.text(
-            rect.min,
-            Align2::LEFT_TOP,
-            text.to_string(),
-            FontId::monospace(12.0),
-            color,
-        );
+        self.rect(rect, 0.0, color.additive().linear_multiply(0.015), (1.0, color), StrokeKind::Outside);
+        self.text(rect.min, Align2::LEFT_TOP, text.to_string(), FontId::monospace(12.0), color);
     }
 
     pub fn error(&self, pos: Pos2, text: impl core::fmt::Display) -> Rect {
@@ -289,23 +270,13 @@ impl Painter {
     ///
     /// See also [`Context::debug_text`].
     #[expect(clippy::needless_pass_by_value)]
-    pub fn debug_text(
-        &self,
-        pos: Pos2,
-        anchor: Align2,
-        color: Color32,
-        text: impl ToString,
-    ) -> Rect {
+    pub fn debug_text(&self, pos: Pos2, anchor: Align2, color: Color32, text: impl ToString) -> Rect {
         let galley = self.layout_no_wrap(text.to_string(), FontId::monospace(12.0), color);
         let rect = anchor.anchor_size(pos, galley.size());
         let frame_rect = rect.expand(2.0);
 
         let is_text_bright = color.is_additive() || epaint::Rgba::from(color).intensity() > 0.5;
-        let bg_color = if is_text_bright {
-            Color32::from_black_alpha(150)
-        } else {
-            Color32::from_white_alpha(150)
-        };
+        let bg_color = if is_text_bright { Color32::from_black_alpha(150) } else { Color32::from_white_alpha(150) };
         self.add(Shape::rect_filled(frame_rect, 0.0, bg_color));
         self.galley(rect.min, galley, color);
         frame_rect
@@ -316,10 +287,7 @@ impl Painter {
 impl Painter {
     /// Paints a line from the first point to the second.
     pub fn line_segment(&self, points: [Pos2; 2], stroke: impl Into<Stroke>) -> ShapeIdx {
-        self.add(Shape::LineSegment {
-            points,
-            stroke: stroke.into(),
-        })
+        self.add(Shape::LineSegment { points, stroke: stroke.into() })
     }
 
     /// Paints a line connecting the points.
@@ -338,42 +306,16 @@ impl Painter {
         self.add(Shape::vline(x, y, stroke))
     }
 
-    pub fn circle(
-        &self,
-        center: Pos2,
-        radius: f32,
-        fill_color: impl Into<Color32>,
-        stroke: impl Into<Stroke>,
-    ) -> ShapeIdx {
-        self.add(CircleShape {
-            center,
-            radius,
-            fill: fill_color.into(),
-            stroke: stroke.into(),
-        })
+    pub fn circle(&self, center: Pos2, radius: f32, fill_color: impl Into<Color32>, stroke: impl Into<Stroke>) -> ShapeIdx {
+        self.add(CircleShape { center, radius, fill: fill_color.into(), stroke: stroke.into() })
     }
 
-    pub fn circle_filled(
-        &self,
-        center: Pos2,
-        radius: f32,
-        fill_color: impl Into<Color32>,
-    ) -> ShapeIdx {
-        self.add(CircleShape {
-            center,
-            radius,
-            fill: fill_color.into(),
-            stroke: Default::default(),
-        })
+    pub fn circle_filled(&self, center: Pos2, radius: f32, fill_color: impl Into<Color32>) -> ShapeIdx {
+        self.add(CircleShape { center, radius, fill: fill_color.into(), stroke: Default::default() })
     }
 
     pub fn circle_stroke(&self, center: Pos2, radius: f32, stroke: impl Into<Stroke>) -> ShapeIdx {
-        self.add(CircleShape {
-            center,
-            radius,
-            fill: Default::default(),
-            stroke: stroke.into(),
-        })
+        self.add(CircleShape { center, radius, fill: Default::default(), stroke: stroke.into() })
     }
 
     /// See also [`Self::rect_filled`] and [`Self::rect_stroke`].
@@ -385,31 +327,14 @@ impl Painter {
         stroke: impl Into<Stroke>,
         stroke_kind: StrokeKind,
     ) -> ShapeIdx {
-        self.add(RectShape::new(
-            rect,
-            corner_radius,
-            fill_color,
-            stroke,
-            stroke_kind,
-        ))
+        self.add(RectShape::new(rect, corner_radius, fill_color, stroke, stroke_kind))
     }
 
-    pub fn rect_filled(
-        &self,
-        rect: Rect,
-        corner_radius: impl Into<CornerRadius>,
-        fill_color: impl Into<Color32>,
-    ) -> ShapeIdx {
+    pub fn rect_filled(&self, rect: Rect, corner_radius: impl Into<CornerRadius>, fill_color: impl Into<Color32>) -> ShapeIdx {
         self.add(RectShape::filled(rect, corner_radius, fill_color))
     }
 
-    pub fn rect_stroke(
-        &self,
-        rect: Rect,
-        corner_radius: impl Into<CornerRadius>,
-        stroke: impl Into<Stroke>,
-        stroke_kind: StrokeKind,
-    ) -> ShapeIdx {
+    pub fn rect_stroke(&self, rect: Rect, corner_radius: impl Into<CornerRadius>, stroke: impl Into<Stroke>, stroke_kind: StrokeKind) -> ShapeIdx {
         self.add(RectShape::stroke(rect, corner_radius, stroke, stroke_kind))
     }
 
@@ -444,13 +369,7 @@ impl Painter {
     ///     .paint_at(ui, rect);
     /// # });
     /// ```
-    pub fn image(
-        &self,
-        texture_id: epaint::TextureId,
-        rect: Rect,
-        uv: Rect,
-        tint: Color32,
-    ) -> ShapeIdx {
+    pub fn image(&self, texture_id: epaint::TextureId, rect: Rect, uv: Rect, tint: Color32) -> ShapeIdx {
         self.add(Shape::image(texture_id, rect, uv, tint))
     }
 }
@@ -466,14 +385,7 @@ impl Painter {
     ///
     /// Returns where the text ended up.
     #[expect(clippy::needless_pass_by_value)]
-    pub fn text(
-        &self,
-        pos: Pos2,
-        anchor: Align2,
-        text: impl ToString,
-        font_id: FontId,
-        text_color: Color32,
-    ) -> Rect {
+    pub fn text(&self, pos: Pos2, anchor: Align2, text: impl ToString, font_id: FontId, text_color: Color32) -> Rect {
         let galley = self.layout_no_wrap(text.to_string(), font_id, text_color);
         let rect = anchor.anchor_size(pos, galley.size());
         self.galley(rect.min, galley, text_color);
@@ -485,13 +397,7 @@ impl Painter {
     /// Paint the results with [`Self::galley`].
     #[inline]
     #[must_use]
-    pub fn layout(
-        &self,
-        text: String,
-        font_id: FontId,
-        color: crate::Color32,
-        wrap_width: f32,
-    ) -> Arc<Galley> {
+    pub fn layout(&self, text: String, font_id: FontId, color: crate::Color32, wrap_width: f32) -> Arc<Galley> {
         self.fonts_mut(|f| f.layout(text, font_id, color, wrap_width))
     }
 
@@ -500,12 +406,7 @@ impl Painter {
     /// Paint the results with [`Self::galley`].
     #[inline]
     #[must_use]
-    pub fn layout_no_wrap(
-        &self,
-        text: String,
-        font_id: FontId,
-        color: crate::Color32,
-    ) -> Arc<Galley> {
+    pub fn layout_no_wrap(&self, text: String, font_id: FontId, color: crate::Color32) -> Arc<Galley> {
         self.fonts_mut(|f| f.layout(text, font_id, color, f32::INFINITY))
     }
 
@@ -538,16 +439,9 @@ impl Painter {
     ///
     /// All text color in the [`Galley`] will be replaced with the given color.
     #[inline]
-    pub fn galley_with_override_text_color(
-        &self,
-        pos: Pos2,
-        galley: Arc<Galley>,
-        text_color: Color32,
-    ) {
+    pub fn galley_with_override_text_color(&self, pos: Pos2, galley: Arc<Galley>, text_color: Color32) {
         if !galley.is_empty() {
-            self.add(Shape::galley_with_override_text_color(
-                pos, galley, text_color,
-            ));
+            self.add(Shape::galley_with_override_text_color(pos, galley, text_color));
         }
     }
 }

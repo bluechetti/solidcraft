@@ -1,12 +1,9 @@
 use core::fmt::Debug;
 use egui::theme::{DefaultStyle, StyleProvider};
-use egui::widget_style::{
-    AtomLayoutStyle, ButtonStyle, CheckboxStyle, SeparatorStyle, StyleArgs, TextEditStyle,
-    TextVisuals,
-};
+use egui::widget_style::{AtomLayoutStyle, ButtonStyle, CheckboxStyle, SeparatorStyle, StyleArgs, TextEditStyle, TextVisuals};
 use egui::{
-    Align, Align2, Atom, AtomExt as _, Button, Checkbox, Color32, CornerRadius, FontFamily, FontId,
-    Frame, Margin, Separator, Stroke, TextEdit, Ui, Vec2, include_image,
+    Align, Align2, Atom, AtomExt as _, Button, Checkbox, Color32, CornerRadius, FontFamily, FontId, Frame, Margin, Separator, Stroke, TextEdit, Ui,
+    Vec2, include_image,
 };
 use egui_kittest::Harness;
 
@@ -19,16 +16,8 @@ struct VariantHandle {
 impl VariantHandle {
     #[track_caller]
     fn get<I: Debug>(&mut self, a: I, b: I) -> I {
-        assert_ne!(
-            self.fail_for,
-            Some(self.calls),
-            "Switching from {a:?} to {b:?} lead to no meaningful change."
-        );
-        let res = if self.return_b_for == Some(self.calls) {
-            b
-        } else {
-            a
-        };
+        assert_ne!(self.fail_for, Some(self.calls), "Switching from {a:?} to {b:?} lead to no meaningful change.");
+        let res = if self.return_b_for == Some(self.calls) { b } else { a };
         self.calls += 1;
         res
     }
@@ -38,33 +27,21 @@ fn test_variants<Variant: Clone, Comparison: PartialEq>(
     make_variant: impl Fn(&mut VariantHandle) -> Variant,
     mut render_variant: impl FnMut(Variant, bool) -> Comparison,
 ) {
-    let mut init_handle = VariantHandle {
-        calls: 0,
-        return_b_for: None,
-        fail_for: None,
-    };
+    let mut init_handle = VariantHandle { calls: 0, return_b_for: None, fail_for: None };
     let base_variant = make_variant(&mut init_handle);
     let variant_count = init_handle.calls;
 
     let base_image = render_variant(base_variant, false);
 
     for i in 0..variant_count {
-        let mut test_handle = VariantHandle {
-            calls: 0,
-            fail_for: None,
-            return_b_for: Some(i),
-        };
+        let mut test_handle = VariantHandle { calls: 0, fail_for: None, return_b_for: Some(i) };
         let test_variant = make_variant(&mut test_handle);
         let test_image = render_variant(test_variant.clone(), false);
         if test_image == base_image {
             // Open the snapshot so we can see what the variant looks like.
             render_variant(test_variant, true);
 
-            let mut fail_handle = VariantHandle {
-                calls: 0,
-                fail_for: Some(i),
-                return_b_for: None,
-            };
+            let mut fail_handle = VariantHandle { calls: 0, fail_for: Some(i), return_b_for: None };
             make_variant(&mut fail_handle);
         }
     }
@@ -78,12 +55,9 @@ fn test_harness_variants<Variant: Clone>(
     mut contents: impl FnMut(&mut Ui, Variant),
 ) {
     test_variants(make_variant, |variant, failure| {
-        let mut harness = Harness::builder()
-            .with_size(size)
-            .with_accessibility_check(false)
-            .build_ui(|ui| {
-                contents(ui, variant.clone());
-            });
+        let mut harness = Harness::builder().with_size(size).with_accessibility_check(false).build_ui(|ui| {
+            contents(ui, variant.clone());
+        });
         // Run a few frames so images have time to load.
         harness.run();
         if failure {
@@ -140,28 +114,14 @@ impl Default for AtomLayoutFields {
 
 /// `min_size` is deliberately bigger than the content of every widget here, so `align2` has
 /// room to move that content around.
-fn atom_layout_variants(
-    variant: &mut VariantHandle,
-    fields: AtomLayoutFields,
-    frame: Frame,
-) -> AtomLayoutStyle {
+fn atom_layout_variants(variant: &mut VariantHandle, fields: AtomLayoutFields, frame: Frame) -> AtomLayoutStyle {
     AtomLayoutStyle {
-        align2: Some(Align2::new(
-            variant.get(Align::Min, Align::Max),
-            if fields.align_y {
-                variant.get(Align::Min, Align::Max)
-            } else {
-                Align::Min
-            },
-        )),
+        align2: Some(Align2::new(variant.get(Align::Min, Align::Max), if fields.align_y { variant.get(Align::Min, Align::Max) } else { Align::Min })),
         min_size: Vec2::new(variant.get(100.0, 200.0), variant.get(40.0, 80.0)),
         gap: variant.get(0.0, 10.0),
         frame,
         text_style: TextVisuals {
-            font_id: variant.get(
-                FontId::new(10.0, FontFamily::Proportional),
-                FontId::new(12.0, FontFamily::Monospace),
-            ),
+            font_id: variant.get(FontId::new(10.0, FontFamily::Proportional), FontId::new(12.0, FontFamily::Monospace)),
             color: variant.get(Color32::WHITE, Color32::RED),
         },
         image_tint: variant.get(Color32::RED, Color32::GREEN),
@@ -174,9 +134,7 @@ fn ensure_all_button_style_args_used() {
         Vec2::new(300.0, 150.0),
         |variant| {
             let frame = frame_variants(variant);
-            ButtonStyle {
-                atom_layout: atom_layout_variants(variant, AtomLayoutFields::default(), frame),
-            }
+            ButtonStyle { atom_layout: atom_layout_variants(variant, AtomLayoutFields::default(), frame) }
         },
         |ui, variant| {
             egui_extras::install_image_loaders(ui.ctx());
@@ -276,20 +234,11 @@ fn ensure_all_text_edit_style_args_used() {
 
             // An empty field shows the hint text...
             let mut empty = String::new();
-            ui.add(
-                TextEdit::singleline(&mut empty)
-                    .hint_text("Hint")
-                    .prefix((image_atom(), "$"))
-                    .suffix(".00"),
-            );
+            ui.add(TextEdit::singleline(&mut empty).hint_text("Hint").prefix((image_atom(), "$")).suffix(".00"));
 
             // ...and a filled one shows `text_style.color`.
             let mut filled = String::from("Text");
-            ui.add(
-                TextEdit::singleline(&mut filled)
-                    .prefix((image_atom(), "$"))
-                    .suffix(".00"),
-            );
+            ui.add(TextEdit::singleline(&mut filled).prefix((image_atom(), "$")).suffix(".00"));
         },
     );
 }
@@ -315,19 +264,9 @@ fn text_edit_colors() {
 
         ui.label("The text should match the colors:");
 
-        ui.add(
-            TextEdit::singleline(&mut String::new())
-                .prefix("green")
-                .suffix("green")
-                .hint_text("blue"),
-        );
+        ui.add(TextEdit::singleline(&mut String::new()).prefix("green").suffix("green").hint_text("blue"));
 
-        ui.add(
-            TextEdit::singleline(&mut "Red".to_owned())
-                .prefix("green")
-                .suffix("green")
-                .hint_text("blue"),
-        );
+        ui.add(TextEdit::singleline(&mut "Red".to_owned()).prefix("green").suffix("green").hint_text("blue"));
     });
 
     harness.fit_contents();

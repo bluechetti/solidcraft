@@ -31,21 +31,11 @@ impl TextVisuals {
     ///
     /// `style.override_font_id` wins over `font`, if it is set.
     pub fn new(style: &Style, font: impl Into<FontSelection>, color: Color32) -> Self {
-        Self {
-            color,
-            font_id: style
-                .override_font_id
-                .clone()
-                .unwrap_or_else(|| font.into().resolve(style)),
-        }
+        Self { color, font_id: style.override_font_id.clone().unwrap_or_else(|| font.into().resolve(style)) }
     }
 
     /// The text of a widget, colored by the [`WidgetVisuals`] of its current state.
-    pub fn from_widget_visuals(
-        style: &Style,
-        font: impl Into<FontSelection>,
-        widget_visuals: &WidgetVisuals,
-    ) -> Self {
+    pub fn from_widget_visuals(style: &Style, font: impl Into<FontSelection>, widget_visuals: &WidgetVisuals) -> Self {
         Self::new(style, font, widget_visuals.text_color())
     }
 }
@@ -81,10 +71,7 @@ impl Default for AtomLayoutStyle {
             min_size: Vec2::ZERO,
             gap: 0.0,
             frame: Frame::default(),
-            text_style: TextVisuals {
-                font_id: FontId::default(),
-                color: Color32::WHITE,
-            },
+            text_style: TextVisuals { font_id: FontId::default(), color: Color32::WHITE },
             image_tint: Color32::WHITE,
         }
     }
@@ -96,32 +83,16 @@ impl AtomLayoutStyle {
     /// A per-widget [`WidgetAtom::gap`] wins over [`Self::gap`], so widgets like
     /// [`crate::DragValue`] can pack their atoms tighter than the theme does.
     pub fn apply(self, mut layout: WidgetAtom<'_>) -> WidgetAtom<'_> {
-        let Self {
-            align2,
-            min_size,
-            gap,
-            frame,
-            text_style,
-            image_tint,
-        } = self;
+        let Self { align2, min_size, gap, frame, text_style, image_tint } = self;
         layout.map_images(|image| {
             let current_tint = image.image_options().tint;
             // Multiply the tints so they are combined
             image.tint(current_tint * image_tint)
         });
 
-        let layout = layout
-            .min_size(min_size)
-            .fallback_gap(gap)
-            .frame(frame)
-            .fallback_font(text_style.font_id)
-            .fallback_text_color(text_style.color);
+        let layout = layout.min_size(min_size).fallback_gap(gap).frame(frame).fallback_font(text_style.font_id).fallback_text_color(text_style.color);
 
-        if let Some(align2) = align2 {
-            layout.align2(align2)
-        } else {
-            layout
-        }
+        if let Some(align2) = align2 { layout.align2(align2) } else { layout }
     }
 }
 

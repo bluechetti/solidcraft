@@ -7,10 +7,7 @@ use keypad::Keypad;
 
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([640.0, 480.0]),
-        ..Default::default()
-    };
+    let options = eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([640.0, 480.0]), ..Default::default() };
     eframe::run_native(
         "Custom Keypad App",
         options,
@@ -35,30 +32,23 @@ impl MyApp {}
 
 impl Default for MyApp {
     fn default() -> Self {
-        Self {
-            name: "Arthur".to_owned(),
-            age: 42,
-            keypad: Keypad::new(),
-        }
+        Self { name: "Arthur".to_owned(), age: 42, keypad: Keypad::new() }
     }
 }
 
 impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::Window::new("Custom Keypad")
-            .default_pos([100.0, 100.0])
-            .title_bar(true)
-            .show(ui.ctx(), |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Your name: ");
-                    ui.text_edit_singleline(&mut self.name);
-                });
-                ui.add(egui::Slider::new(&mut self.age, 0..=120).text("age"));
-                if ui.button("Increment").clicked() {
-                    self.age += 1;
-                }
-                ui.label(format!("Hello '{}', age {}", self.name, self.age));
+        egui::Window::new("Custom Keypad").default_pos([100.0, 100.0]).title_bar(true).show(ui.ctx(), |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Your name: ");
+                ui.text_edit_singleline(&mut self.name);
             });
+            ui.add(egui::Slider::new(&mut self.age, 0..=120).text("age"));
+            if ui.button("Increment").clicked() {
+                self.age += 1;
+            }
+            ui.label(format!("Hello '{}', age {}", self.name, self.age));
+        });
 
         self.keypad.show(ui.ctx());
     }

@@ -58,26 +58,8 @@ pub struct WidgetRect {
 
 impl WidgetRect {
     pub fn transform(self, transform: emath::TSTransform) -> Self {
-        let Self {
-            id,
-            parent_id,
-            layer_id,
-            rect,
-            interact_rect,
-            sense,
-            enabled,
-            visible,
-        } = self;
-        Self {
-            id,
-            parent_id,
-            layer_id,
-            rect: transform * rect,
-            interact_rect: transform * interact_rect,
-            sense,
-            enabled,
-            visible,
-        }
+        let Self { id, parent_id, layer_id, rect, interact_rect, sense, enabled, visible } = self;
+        Self { id, parent_id, layer_id, rect: transform * rect, interact_rect: transform * interact_rect, sense, enabled, visible }
     }
 }
 
@@ -128,9 +110,7 @@ impl WidgetRects {
     }
 
     pub fn layers(&self) -> impl Iterator<Item = (&LayerId, &[WidgetRect])> + '_ {
-        self.by_layer
-            .iter()
-            .map(|(layer_id, rects)| (layer_id, &rects[..]))
+        self.by_layer.iter().map(|(layer_id, rects)| (layer_id, &rects[..]))
     }
 
     #[inline]
@@ -155,22 +135,13 @@ impl WidgetRects {
     }
 
     /// Enabled widgets in this layer that can take keyboard focus, in the order they were added.
-    pub(crate) fn focusable_widgets_in_layer(
-        &self,
-        layer_id: LayerId,
-    ) -> impl Iterator<Item = Id> + '_ {
-        self.get_layer(layer_id)
-            .filter(|widget| widget.enabled && widget.sense.is_focusable())
-            .map(|widget| widget.id)
+    pub(crate) fn focusable_widgets_in_layer(&self, layer_id: LayerId) -> impl Iterator<Item = Id> + '_ {
+        self.get_layer(layer_id).filter(|widget| widget.enabled && widget.sense.is_focusable()).map(|widget| widget.id)
     }
 
     /// Clear the contents while retaining allocated memory.
     pub fn clear(&mut self) {
-        let Self {
-            by_layer,
-            by_id,
-            infos,
-        } = self;
+        let Self { by_layer, by_id, infos } = self;
 
         #[expect(clippy::iter_over_hash_type)]
         for rects in by_layer.values_mut() {
@@ -184,11 +155,7 @@ impl WidgetRects {
 
     /// Insert the given widget rect in the given layer.
     pub fn insert(&mut self, layer_id: LayerId, widget_rect: WidgetRect, options: InteractOptions) {
-        let Self {
-            by_layer,
-            by_id,
-            infos: _,
-        } = self;
+        let Self { by_layer, by_id, infos: _ } = self;
 
         let InteractOptions { move_to_top } = options;
 

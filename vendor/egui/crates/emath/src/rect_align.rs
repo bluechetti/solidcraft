@@ -43,76 +43,40 @@ impl Default for RectAlign {
 
 impl RectAlign {
     /// Along the top edge, leftmost.
-    pub const TOP_START: Self = Self {
-        parent: Align2::LEFT_TOP,
-        child: Align2::LEFT_BOTTOM,
-    };
+    pub const TOP_START: Self = Self { parent: Align2::LEFT_TOP, child: Align2::LEFT_BOTTOM };
 
     /// Along the top edge, centered.
-    pub const TOP: Self = Self {
-        parent: Align2::CENTER_TOP,
-        child: Align2::CENTER_BOTTOM,
-    };
+    pub const TOP: Self = Self { parent: Align2::CENTER_TOP, child: Align2::CENTER_BOTTOM };
 
     /// Along the top edge, rightmost.
-    pub const TOP_END: Self = Self {
-        parent: Align2::RIGHT_TOP,
-        child: Align2::RIGHT_BOTTOM,
-    };
+    pub const TOP_END: Self = Self { parent: Align2::RIGHT_TOP, child: Align2::RIGHT_BOTTOM };
 
     /// Along the right edge, topmost.
-    pub const RIGHT_START: Self = Self {
-        parent: Align2::RIGHT_TOP,
-        child: Align2::LEFT_TOP,
-    };
+    pub const RIGHT_START: Self = Self { parent: Align2::RIGHT_TOP, child: Align2::LEFT_TOP };
 
     /// Along the right edge, centered.
-    pub const RIGHT: Self = Self {
-        parent: Align2::RIGHT_CENTER,
-        child: Align2::LEFT_CENTER,
-    };
+    pub const RIGHT: Self = Self { parent: Align2::RIGHT_CENTER, child: Align2::LEFT_CENTER };
 
     /// Along the right edge, bottommost.
-    pub const RIGHT_END: Self = Self {
-        parent: Align2::RIGHT_BOTTOM,
-        child: Align2::LEFT_BOTTOM,
-    };
+    pub const RIGHT_END: Self = Self { parent: Align2::RIGHT_BOTTOM, child: Align2::LEFT_BOTTOM };
 
     /// Along the bottom edge, rightmost.
-    pub const BOTTOM_END: Self = Self {
-        parent: Align2::RIGHT_BOTTOM,
-        child: Align2::RIGHT_TOP,
-    };
+    pub const BOTTOM_END: Self = Self { parent: Align2::RIGHT_BOTTOM, child: Align2::RIGHT_TOP };
 
     /// Along the bottom edge, centered.
-    pub const BOTTOM: Self = Self {
-        parent: Align2::CENTER_BOTTOM,
-        child: Align2::CENTER_TOP,
-    };
+    pub const BOTTOM: Self = Self { parent: Align2::CENTER_BOTTOM, child: Align2::CENTER_TOP };
 
     /// Along the bottom edge, leftmost.
-    pub const BOTTOM_START: Self = Self {
-        parent: Align2::LEFT_BOTTOM,
-        child: Align2::LEFT_TOP,
-    };
+    pub const BOTTOM_START: Self = Self { parent: Align2::LEFT_BOTTOM, child: Align2::LEFT_TOP };
 
     /// Along the left edge, bottommost.
-    pub const LEFT_END: Self = Self {
-        parent: Align2::LEFT_BOTTOM,
-        child: Align2::RIGHT_BOTTOM,
-    };
+    pub const LEFT_END: Self = Self { parent: Align2::LEFT_BOTTOM, child: Align2::RIGHT_BOTTOM };
 
     /// Along the left edge, centered.
-    pub const LEFT: Self = Self {
-        parent: Align2::LEFT_CENTER,
-        child: Align2::RIGHT_CENTER,
-    };
+    pub const LEFT: Self = Self { parent: Align2::LEFT_CENTER, child: Align2::RIGHT_CENTER };
 
     /// Along the left edge, topmost.
-    pub const LEFT_START: Self = Self {
-        parent: Align2::LEFT_TOP,
-        child: Align2::RIGHT_TOP,
-    };
+    pub const LEFT_START: Self = Self { parent: Align2::LEFT_TOP, child: Align2::RIGHT_TOP };
 
     /// The 12 most common menu positions as an array, for use with [`RectAlign::find_best_align`].
     pub const MENU_ALIGNS: [Self; 12] = [
@@ -143,26 +107,17 @@ impl RectAlign {
 
     /// Convert an [`Align2`] to an [`RectAlign`], positioning the child rect inside the parent.
     pub fn from_align2(align: Align2) -> Self {
-        Self {
-            parent: align,
-            child: align,
-        }
+        Self { parent: align, child: align }
     }
 
     /// The center of the child rect will be aligned to a corner of the parent rect.
     pub fn over_corner(align: Align2) -> Self {
-        Self {
-            parent: align,
-            child: Align2::CENTER_CENTER,
-        }
+        Self { parent: align, child: Align2::CENTER_CENTER }
     }
 
     /// Position the child rect outside the parent rect.
     pub fn outside(align: Align2) -> Self {
-        Self {
-            parent: align,
-            child: align.flipped(),
-        }
+        Self { parent: align, child: align.flipped() }
     }
 
     /// Calculate the child rect based on a size and some optional gap.
@@ -208,10 +163,7 @@ impl RectAlign {
     /// Flip the alignment on the x-axis.
     #[must_use]
     pub fn flipped_x(self) -> Self {
-        Self {
-            parent: self.parent.flipped_x(),
-            child: self.child.flipped_x(),
-        }
+        Self { parent: self.parent.flipped_x(), child: self.child.flipped_x() }
     }
 
     /// Flip the alignment on the x-axis.
@@ -224,10 +176,7 @@ impl RectAlign {
     /// Flip the alignment on the y-axis.
     #[must_use]
     pub fn flipped_y(self) -> Self {
-        Self {
-            parent: self.parent.flipped_y(),
-            child: self.child.flipped_y(),
-        }
+        Self { parent: self.parent.flipped_y(), child: self.child.flipped_y() }
     }
 
     /// Flip the alignment on the y-axis.
@@ -240,10 +189,7 @@ impl RectAlign {
     /// Flip the alignment on both axes.
     #[must_use]
     pub fn flipped(self) -> Self {
-        Self {
-            parent: self.parent.flipped(),
-            child: self.child.flipped(),
-        }
+        Self { parent: self.parent.flipped(), child: self.child.flipped() }
     }
 
     /// Flip the alignment on both axes.

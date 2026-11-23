@@ -10,10 +10,7 @@ use crate::{
     text::{FontId, FontsView, Galley},
 };
 
-use super::{
-    BandShape, CircleShape, CubicBezierShape, EllipseShape, PaintCallback, PathShape,
-    QuadraticBezierShape, RectShape, TextShape,
-};
+use super::{BandShape, CircleShape, CubicBezierShape, EllipseShape, PaintCallback, PathShape, QuadraticBezierShape, RectShape, TextShape};
 
 /// A paint primitive such as a circle or a piece of text.
 /// Coordinates are all screen space points (not physical pixels).
@@ -84,10 +81,7 @@ fn shape_size() {
         64,
         "Shape changed size! If it shrank - good! Update this test. If it grew - bad! Try to find a way to avoid it."
     );
-    assert!(
-        core::mem::size_of::<Shape>() <= 64,
-        "Shape is getting way too big!"
-    );
+    assert!(core::mem::size_of::<Shape>() <= 64, "Shape is getting way too big!");
 }
 
 // Compile-time check that `Shape` is `Send + Sync` on every target.
@@ -124,28 +118,19 @@ impl Shape {
     /// More efficient than calling [`Self::line`].
     #[inline]
     pub fn line_segment(points: [Pos2; 2], stroke: impl Into<Stroke>) -> Self {
-        Self::LineSegment {
-            points,
-            stroke: stroke.into(),
-        }
+        Self::LineSegment { points, stroke: stroke.into() }
     }
 
     /// A horizontal line.
     pub fn hline(x: impl Into<Rangef>, y: f32, stroke: impl Into<Stroke>) -> Self {
         let x = x.into();
-        Self::LineSegment {
-            points: [pos2(x.min, y), pos2(x.max, y)],
-            stroke: stroke.into(),
-        }
+        Self::LineSegment { points: [pos2(x.min, y), pos2(x.max, y)], stroke: stroke.into() }
     }
 
     /// A vertical line.
     pub fn vline(x: f32, y: impl Into<Rangef>, stroke: impl Into<Stroke>) -> Self {
         let y = y.into();
-        Self::LineSegment {
-            points: [pos2(x, y.min), pos2(x, y.max)],
-            stroke: stroke.into(),
-        }
+        Self::LineSegment { points: [pos2(x, y.min), pos2(x, y.max)], stroke: stroke.into() }
     }
 
     /// A line through many points.
@@ -163,33 +148,16 @@ impl Shape {
     }
 
     /// Turn a line into equally spaced dots.
-    pub fn dotted_line(
-        path: &[Pos2],
-        color: impl Into<Color32>,
-        spacing: f32,
-        radius: f32,
-    ) -> Vec<Self> {
+    pub fn dotted_line(path: &[Pos2], color: impl Into<Color32>, spacing: f32, radius: f32) -> Vec<Self> {
         let mut shapes = Vec::new();
         points_from_line(path, spacing, radius, color.into(), &mut shapes);
         shapes
     }
 
     /// Turn a line into dashes.
-    pub fn dashed_line(
-        path: &[Pos2],
-        stroke: impl Into<Stroke>,
-        dash_length: f32,
-        gap_length: f32,
-    ) -> Vec<Self> {
+    pub fn dashed_line(path: &[Pos2], stroke: impl Into<Stroke>, dash_length: f32, gap_length: f32) -> Vec<Self> {
         let mut shapes = Vec::new();
-        dashes_from_line(
-            path,
-            stroke.into(),
-            &[dash_length],
-            &[gap_length],
-            &mut shapes,
-            0.,
-        );
+        dashes_from_line(path, stroke.into(), &[dash_length], &[gap_length], &mut shapes, 0.);
         shapes
     }
 
@@ -202,34 +170,14 @@ impl Shape {
         dash_offset: f32,
     ) -> Vec<Self> {
         let mut shapes = Vec::new();
-        dashes_from_line(
-            path,
-            stroke.into(),
-            dash_lengths,
-            gap_lengths,
-            &mut shapes,
-            dash_offset,
-        );
+        dashes_from_line(path, stroke.into(), dash_lengths, gap_lengths, &mut shapes, dash_offset);
         shapes
     }
 
     /// Turn a line into dashes. If you need to create many dashed lines use this instead of
     /// [`Self::dashed_line`].
-    pub fn dashed_line_many(
-        points: &[Pos2],
-        stroke: impl Into<Stroke>,
-        dash_length: f32,
-        gap_length: f32,
-        shapes: &mut Vec<Self>,
-    ) {
-        dashes_from_line(
-            points,
-            stroke.into(),
-            &[dash_length],
-            &[gap_length],
-            shapes,
-            0.,
-        );
+    pub fn dashed_line_many(points: &[Pos2], stroke: impl Into<Stroke>, dash_length: f32, gap_length: f32, shapes: &mut Vec<Self>) {
+        dashes_from_line(points, stroke.into(), &[dash_length], &[gap_length], shapes, 0.);
     }
 
     /// Turn a line into dashes with different dash/gap lengths and a start offset. If you need to
@@ -242,25 +190,14 @@ impl Shape {
         dash_offset: f32,
         shapes: &mut Vec<Self>,
     ) {
-        dashes_from_line(
-            points,
-            stroke.into(),
-            dash_lengths,
-            gap_lengths,
-            shapes,
-            dash_offset,
-        );
+        dashes_from_line(points, stroke.into(), dash_lengths, gap_lengths, shapes, dash_offset);
     }
 
     /// A convex polygon with a fill and optional stroke.
     ///
     /// The most performant winding order is clockwise.
     #[inline]
-    pub fn convex_polygon(
-        points: Vec<Pos2>,
-        fill: impl Into<Color32>,
-        stroke: impl Into<PathStroke>,
-    ) -> Self {
+    pub fn convex_polygon(points: Vec<Pos2>, fill: impl Into<Color32>, stroke: impl Into<PathStroke>) -> Self {
         Self::Path(PathShape::convex_polygon(points, fill, stroke))
     }
 
@@ -301,22 +238,13 @@ impl Shape {
 
     /// See also [`Self::rect_stroke`].
     #[inline]
-    pub fn rect_filled(
-        rect: Rect,
-        corner_radius: impl Into<CornerRadius>,
-        fill_color: impl Into<Color32>,
-    ) -> Self {
+    pub fn rect_filled(rect: Rect, corner_radius: impl Into<CornerRadius>, fill_color: impl Into<Color32>) -> Self {
         Self::Rect(RectShape::filled(rect, corner_radius, fill_color))
     }
 
     /// See also [`Self::rect_filled`].
     #[inline]
-    pub fn rect_stroke(
-        rect: Rect,
-        corner_radius: impl Into<CornerRadius>,
-        stroke: impl Into<Stroke>,
-        stroke_kind: StrokeKind,
-    ) -> Self {
+    pub fn rect_stroke(rect: Rect, corner_radius: impl Into<CornerRadius>, stroke: impl Into<Stroke>, stroke_kind: StrokeKind) -> Self {
         Self::Rect(RectShape::stroke(rect, corner_radius, stroke, stroke_kind))
     }
 
@@ -347,14 +275,7 @@ impl Shape {
     }
 
     #[expect(clippy::needless_pass_by_value)]
-    pub fn text(
-        fonts: &mut FontsView<'_>,
-        pos: Pos2,
-        anchor: Align2,
-        text: impl ToString,
-        font_id: FontId,
-        color: Color32,
-    ) -> Self {
+    pub fn text(fonts: &mut FontsView<'_>, pos: Pos2, anchor: Align2, text: impl ToString, font_id: FontId, color: Color32) -> Self {
         let galley = fonts.layout_no_wrap(text.to_string(), font_id, color);
         let rect = anchor.anchor_size(pos, galley.size());
         Self::galley(rect.min, galley, color)
@@ -370,14 +291,8 @@ impl Shape {
 
     /// All text color in the [`Galley`] will be replaced with the given color.
     #[inline]
-    pub fn galley_with_override_text_color(
-        pos: Pos2,
-        galley: Arc<Galley>,
-        text_color: Color32,
-    ) -> Self {
-        TextShape::new(pos, galley, text_color)
-            .with_override_text_color(text_color)
-            .into()
+    pub fn galley_with_override_text_color(pos: Pos2, galley: Arc<Galley>, text_color: Color32) -> Self {
+        TextShape::new(pos, galley, text_color).with_override_text_color(text_color).into()
     }
 
     #[inline]
@@ -529,13 +444,7 @@ impl Shape {
 // ----------------------------------------------------------------------------
 
 /// Creates equally spaced filled circles from a line.
-fn points_from_line(
-    path: &[Pos2],
-    spacing: f32,
-    radius: f32,
-    color: Color32,
-    shapes: &mut Vec<Shape>,
-) {
+fn points_from_line(path: &[Pos2], spacing: f32, radius: f32, color: Color32, shapes: &mut Vec<Shape>) {
     let mut position_on_segment = 0.0;
     for &[start, end] in path.array_windows() {
         let vector = end - start;
@@ -550,14 +459,7 @@ fn points_from_line(
 }
 
 /// Creates dashes from a line.
-fn dashes_from_line(
-    path: &[Pos2],
-    stroke: Stroke,
-    dash_lengths: &[f32],
-    gap_lengths: &[f32],
-    shapes: &mut Vec<Shape>,
-    dash_offset: f32,
-) {
+fn dashes_from_line(path: &[Pos2], stroke: Stroke, dash_lengths: &[f32], gap_lengths: &[f32], shapes: &mut Vec<Shape>, dash_offset: f32) {
     assert_eq!(
         dash_lengths.len(),
         gap_lengths.len(),

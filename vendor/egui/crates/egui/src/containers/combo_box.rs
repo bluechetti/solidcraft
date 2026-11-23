@@ -3,9 +3,8 @@ use core::cell::RefCell;
 use epaint::Shape;
 
 use crate::{
-    Align2, AsIdSalt, Atom, AtomExt as _, Atoms, Context, Id, IdSalt, InnerResponse, IntoAtoms,
-    NumExt as _, Painter, Popup, PopupCloseBehavior, Rect, Response, Role, ScrollArea, Sense,
-    TextStyle, TextWrapMode, Ui, Vec2, WidgetAtom, WidgetInfo,
+    Align2, AsIdSalt, Atom, AtomExt as _, Atoms, Context, Id, IdSalt, InnerResponse, IntoAtoms, NumExt as _, Painter, Popup, PopupCloseBehavior,
+    Rect, Response, Role, ScrollArea, Sense, TextStyle, TextWrapMode, Ui, Vec2, WidgetAtom, WidgetInfo,
     class::{ClassName, Classes, HasClasses},
     epaint,
     style::{StyleModifier, WidgetVisuals},
@@ -234,47 +233,16 @@ impl<'a> ComboBox<'a> {
     /// Show the combo box, with the given ui code for the menu contents.
     ///
     /// Returns `InnerResponse { inner: None }` if the combo box is closed.
-    pub fn show_ui<R>(
-        self,
-        ui: &mut Ui,
-        menu_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<Option<R>> {
+    pub fn show_ui<R>(self, ui: &mut Ui, menu_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<Option<R>> {
         self.show_ui_dyn(ui, Box::new(menu_contents))
     }
 
-    fn show_ui_dyn<'c, R>(
-        self,
-        ui: &mut Ui,
-        menu_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>,
-    ) -> InnerResponse<Option<R>> {
-        let Self {
-            id_salt,
-            label,
-            selected_text,
-            width,
-            height,
-            icon,
-            wrap_mode,
-            close_behavior,
-            popup_style,
-            classes,
-        } = self;
+    fn show_ui_dyn<'c, R>(self, ui: &mut Ui, menu_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>) -> InnerResponse<Option<R>> {
+        let Self { id_salt, label, selected_text, width, height, icon, wrap_mode, close_behavior, popup_style, classes } = self;
 
         let button_id = ui.make_persistent_id(id_salt);
 
-        combo_box_dyn(
-            ui,
-            button_id,
-            label,
-            selected_text,
-            menu_contents,
-            icon,
-            wrap_mode,
-            close_behavior,
-            popup_style,
-            classes,
-            (width, height),
-        )
+        combo_box_dyn(ui, button_id, label, selected_text, menu_contents, icon, wrap_mode, close_behavior, popup_style, classes, (width, height))
     }
 
     /// Show a list of items with the given selected index.
@@ -295,13 +263,7 @@ impl<'a> ComboBox<'a> {
     /// );
     /// # });
     /// ```
-    pub fn show_index<Text: IntoAtoms<'a>>(
-        self,
-        ui: &mut Ui,
-        selected: &mut usize,
-        len: usize,
-        get: impl Fn(usize) -> Text,
-    ) -> Response {
+    pub fn show_index<Text: IntoAtoms<'a>>(self, ui: &mut Ui, selected: &mut usize, len: usize, get: impl Fn(usize) -> Text) -> Response {
         let slf = self.selected_text(get(*selected));
 
         let mut changed = false;
@@ -369,9 +331,7 @@ fn combo_box_dyn<'c, R>(
     classes.add_class_if(ComboBox::CLASS_OPEN, is_popup_open);
 
     // Built from the same atoms and style as a `Button`, so the two line up when put side by side.
-    let ButtonStyle {
-        atom_layout: atom_layout_style,
-    } = ui.widget_style(button_id, &classes);
+    let ButtonStyle { atom_layout: atom_layout_style } = ui.widget_style(button_id, &classes);
 
     // The visuals passed to the icon painter.
     // Like `ui.widget_style`, use the interaction state from the start of this pass:
@@ -403,33 +363,17 @@ fn combo_box_dyn<'c, R>(
 
     let accessible_text = selected_text.text().map(String::from).unwrap_or_default();
     let button = atom_layout_style
-        .apply(
-            WidgetAtom::new((selected_text, icon_atom))
-                .id(button_id)
-                .sense(Sense::click())
-                .fallback_font(TextStyle::Button)
-                .wrap_mode(wrap_mode),
-        )
+        .apply(WidgetAtom::new((selected_text, icon_atom)).id(button_id).sense(Sense::click()).fallback_font(TextStyle::Button).wrap_mode(wrap_mode))
         .min_size(min_size);
 
     let (button_response, label_response) = match label {
         Some(label) => {
             // The label is just another atom, next to the button.
             let label_text = label.text().map(String::from).unwrap_or_default();
-            let outer_response = WidgetAtom::new((Atom::widget(button), label))
-                .gap(ui.spacing().item_spacing.x)
-                .show(ui)
-                .response;
-            outer_response
-                .widget_info(|| WidgetInfo::labeled(Role::Label, ui.is_enabled(), &label_text));
-            let button_response = ui
-                .ctx()
-                .read_response(button_id)
-                .unwrap_or_else(|| outer_response.clone());
-            (
-                button_response,
-                Some((outer_response, !label_text.is_empty())),
-            )
+            let outer_response = WidgetAtom::new((Atom::widget(button), label)).gap(ui.spacing().item_spacing.x).show(ui).response;
+            outer_response.widget_info(|| WidgetInfo::labeled(Role::Label, ui.is_enabled(), &label_text));
+            let button_response = ui.ctx().read_response(button_id).unwrap_or_else(|| outer_response.clone());
+            (button_response, Some((outer_response, !label_text.is_empty())))
         }
         None => (button.show(ui).response, None),
     };
@@ -477,9 +421,7 @@ fn combo_box_dyn<'c, R>(
         response: match label_response {
             // An empty label names nothing, so leave the name to the caller
             // (e.g. `on_hover_text`).
-            Some((label_response, true)) => {
-                button_response.labelled_by(label_response.id) | label_response
-            }
+            Some((label_response, true)) => button_response.labelled_by(label_response.id) | label_response,
             Some((label_response, false)) => button_response | label_response,
             None => button_response,
         },
@@ -487,10 +429,7 @@ fn combo_box_dyn<'c, R>(
 }
 
 fn paint_default_icon(painter: &Painter, rect: Rect, visuals: &WidgetVisuals) {
-    let rect = Rect::from_center_size(
-        rect.center(),
-        vec2(rect.width() * 0.7, rect.height() * 0.45),
-    );
+    let rect = Rect::from_center_size(rect.center(), vec2(rect.width() * 0.7, rect.height() * 0.45));
 
     // Downward pointing triangle
     // Previously, we would show an up arrow when we expected the popup to open upwards

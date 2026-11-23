@@ -31,19 +31,13 @@ impl Vec2b {
     #[inline]
     pub fn and(&self, other: impl Into<Self>) -> Self {
         let other = other.into();
-        Self {
-            x: self.x && other.x,
-            y: self.y && other.y,
-        }
+        Self { x: self.x && other.x, y: self.y && other.y }
     }
 
     #[inline]
     pub fn or(&self, other: impl Into<Self>) -> Self {
         let other = other.into();
-        Self {
-            x: self.x || other.x,
-            y: self.y || other.y,
-        }
+        Self { x: self.x || other.x, y: self.y || other.y }
     }
 
     /// Convert to a float `Vec2` where the components are 1.0 for `true` and 0.0 for `false`.
@@ -96,9 +90,6 @@ impl core::ops::Not for Vec2b {
 
     #[inline]
     fn not(self) -> Self::Output {
-        Self {
-            x: !self.x,
-            y: !self.y,
-        }
+        Self { x: !self.x, y: !self.y }
     }
 }

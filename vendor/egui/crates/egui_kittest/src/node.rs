@@ -31,16 +31,8 @@ impl<'tree> NodeT<'tree> for Node<'tree> {
 
 impl<'tree> Node<'tree> {
     /// Construct a new accesskit node
-    pub fn new(
-        accesskit_node: AccessKitNode<'tree>,
-        queue: &'tree EventQueue,
-        pixels_per_point: f32,
-    ) -> Self {
-        Self {
-            accesskit_node,
-            queue,
-            pixels_per_point,
-        }
+    pub fn new(accesskit_node: AccessKitNode<'tree>, queue: &'tree EventQueue, pixels_per_point: f32) -> Self {
+        Self { accesskit_node, queue, pixels_per_point }
     }
 
     fn event(&self, event: egui::Event) {
@@ -48,9 +40,7 @@ impl<'tree> Node<'tree> {
     }
 
     fn modifiers(&self, modifiers: Modifiers) {
-        self.queue
-            .lock()
-            .push(egui::Event::ModifiersChanged(modifiers));
+        self.queue.lock().push(egui::Event::ModifiersChanged(modifiers));
     }
 
     pub fn hover(&self) {
@@ -69,12 +59,7 @@ impl<'tree> Node<'tree> {
     pub fn click_button(&self, button: PointerButton) {
         self.hover();
         for pressed in [true, false] {
-            self.event(egui::Event::PointerButton {
-                pos: self.rect().center(),
-                button,
-                pressed,
-                modifiers: Modifiers::default(),
-            });
+            self.event(egui::Event::PointerButton { pos: self.rect().center(), button, pressed, modifiers: Modifiers::default() });
         }
     }
 
@@ -86,12 +71,7 @@ impl<'tree> Node<'tree> {
         self.hover();
         self.modifiers(modifiers);
         for pressed in [true, false] {
-            self.event(egui::Event::PointerButton {
-                pos: self.rect().center(),
-                button,
-                pressed,
-                modifiers,
-            });
+            self.event(egui::Event::PointerButton { pos: self.rect().center(), button, pressed, modifiers });
         }
         self.modifiers(Modifiers::default());
     }
@@ -125,10 +105,7 @@ impl<'tree> Node<'tree> {
     /// This is how assistive technologies set the value of widgets
     /// like sliders or panel resize handles.
     pub fn set_value_accesskit(&self, value: f64) {
-        self.do_accesskit_action(
-            accesskit::Action::SetValue,
-            Some(accesskit::ActionData::NumericValue(value)),
-        );
+        self.do_accesskit_action(accesskit::Action::SetValue, Some(accesskit::ActionData::NumericValue(value)));
     }
 
     /// Send an [`accesskit::Action::SetValue`] action with a text value to the node.
@@ -136,56 +113,32 @@ impl<'tree> Node<'tree> {
     /// This is how assistive technologies set the content of text inputs,
     /// e.g. UI Automation's `ValuePattern.SetValue` on Windows.
     pub fn set_text_value_accesskit(&self, value: &str) {
-        self.do_accesskit_action(
-            accesskit::Action::SetValue,
-            Some(accesskit::ActionData::Value(value.into())),
-        );
+        self.do_accesskit_action(accesskit::Action::SetValue, Some(accesskit::ActionData::Value(value.into())));
     }
 
     /// Send an [`accesskit::Action::ReplaceSelectedText`] action to the node.
     ///
     /// This replaces the selection, or inserts at the cursor, in a focused text input.
     pub fn replace_selected_text_accesskit(&self, text: &str) {
-        self.do_accesskit_action(
-            accesskit::Action::ReplaceSelectedText,
-            Some(accesskit::ActionData::Value(text.into())),
-        );
+        self.do_accesskit_action(accesskit::Action::ReplaceSelectedText, Some(accesskit::ActionData::Value(text.into())));
     }
 
     fn do_accesskit_action(&self, action: accesskit::Action, data: Option<accesskit::ActionData>) {
         let (target_node, target_tree) = self.accesskit_node.locate();
-        self.event(egui::Event::AccessKitActionRequest(
-            accesskit::ActionRequest {
-                target_node,
-                target_tree,
-                action,
-                data,
-            },
-        ));
+        self.event(egui::Event::AccessKitActionRequest(accesskit::ActionRequest { target_node, target_tree, action, data }));
     }
 
     /// This returns the rect in logical ui coordinates while the underlying [`accesskit::Node`] has it
     /// in physical screen coordinates.
     pub fn rect(&self) -> egui::Rect {
-        let rect = self
-            .accesskit_node
-            .bounding_box()
-            .expect("Every egui node should have a rect");
+        let rect = self.accesskit_node.bounding_box().expect("Every egui node should have a rect");
         let ppp = self.pixels_per_point;
-        egui::Rect {
-            min: Pos2::new(rect.x0 as f32 / ppp, rect.y0 as f32 / ppp),
-            max: Pos2::new(rect.x1 as f32 / ppp, rect.y1 as f32 / ppp),
-        }
+        egui::Rect { min: Pos2::new(rect.x0 as f32 / ppp, rect.y0 as f32 / ppp), max: Pos2::new(rect.x1 as f32 / ppp, rect.y1 as f32 / ppp) }
     }
 
     pub fn focus(&self) {
         let (target_node, target_tree) = self.accesskit_node.locate();
-        self.event(egui::Event::AccessKitActionRequest(ActionRequest {
-            action: accesskit::Action::Focus,
-            target_node,
-            target_tree,
-            data: None,
-        }));
+        self.event(egui::Event::AccessKitActionRequest(ActionRequest { action: accesskit::Action::Focus, target_node, target_tree, data: None }));
     }
 
     pub fn type_text(&self, text: &str) {
@@ -225,12 +178,7 @@ impl<'tree> Node<'tree> {
     /// Scroll the [`egui::ScrollArea`] containing this node up (100px).
     pub fn scroll_up(&self) {
         let (target_node, target_tree) = self.accesskit_node.locate();
-        self.event(egui::Event::AccessKitActionRequest(ActionRequest {
-            action: accesskit::Action::ScrollUp,
-            target_node,
-            target_tree,
-            data: None,
-        }));
+        self.event(egui::Event::AccessKitActionRequest(ActionRequest { action: accesskit::Action::ScrollUp, target_node, target_tree, data: None }));
     }
 
     /// Scroll the [`egui::ScrollArea`] containing this node left (100px).

@@ -44,13 +44,7 @@ impl FullOutput {
     pub fn append(&mut self, newer: Self) {
         use alloc::collections::btree_map::Entry;
 
-        let Self {
-            platform_output,
-            textures_delta,
-            shapes,
-            pixels_per_point,
-            viewport_output,
-        } = newer;
+        let Self { platform_output, textures_delta, shapes, pixels_per_point, viewport_output } = newer;
 
         self.platform_output.append(platform_output);
         self.textures_delta.append(textures_delta);
@@ -241,8 +235,7 @@ impl PlatformOutput {
         self.mutable_text_under_cursor = mutable_text_under_cursor;
         self.ime = ime.or(self.ime);
         self.num_completed_passes += num_completed_passes;
-        self.request_discard_reasons
-            .append(&mut request_discard_reasons);
+        self.request_discard_reasons.append(&mut request_discard_reasons);
 
         // egui produces a complete AccessKit tree for each frame, so overwrite rather than append:
         self.accesskit_update = accesskit_update;
@@ -280,18 +273,12 @@ pub struct OpenUrl {
 impl OpenUrl {
     #[expect(clippy::needless_pass_by_value)]
     pub fn same_tab(url: impl ToString) -> Self {
-        Self {
-            url: url.to_string(),
-            new_tab: false,
-        }
+        Self { url: url.to_string(), new_tab: false }
     }
 
     #[expect(clippy::needless_pass_by_value)]
     pub fn new_tab(url: impl ToString) -> Self {
-        Self {
-            url: url.to_string(),
-            new_tab: true,
-        }
+        Self { url: url.to_string(), new_tab: true }
     }
 }
 
@@ -338,11 +325,7 @@ pub struct CustomCursorImage {
 
 impl core::fmt::Debug for CustomCursorImage {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("CustomCursorImage")
-            .field("size", &self.size)
-            .field("hotspot", &self.hotspot)
-            .field("rgba_len", &self.rgba.len())
-            .finish()
+        f.debug_struct("CustomCursorImage").field("size", &self.size).field("hotspot", &self.hotspot).field("rgba_len", &self.rgba.len()).finish()
     }
 }
 
@@ -602,17 +585,7 @@ pub struct WidgetInfo {
 
 impl core::fmt::Debug for WidgetInfo {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let Self {
-            role,
-            enabled,
-            label,
-            current_text_value: text_value,
-            prev_text_value,
-            selected,
-            value,
-            text_selection,
-            hint_text,
-        } = self;
+        let Self { role, enabled, label, current_text_value: text_value, prev_text_value, selected, value, text_selection, hint_text } = self;
 
         let mut s = f.debug_struct("WidgetInfo");
 
@@ -692,94 +665,43 @@ impl WidgetInfo {
 
     #[expect(clippy::needless_pass_by_value)]
     pub fn labeled(role: Role, enabled: bool, label: impl ToString) -> Self {
-        Self {
-            enabled,
-            label: Some(label.to_string()),
-            ..Self::new(role)
-        }
+        Self { enabled, label: Some(label.to_string()), ..Self::new(role) }
     }
 
     /// checkboxes, radio-buttons etc
     #[expect(clippy::needless_pass_by_value)]
     pub fn selected(role: Role, enabled: bool, selected: bool, label: impl ToString) -> Self {
-        Self {
-            enabled,
-            label: Some(label.to_string()),
-            selected: Some(selected),
-            ..Self::new(role)
-        }
+        Self { enabled, label: Some(label.to_string()), selected: Some(selected), ..Self::new(role) }
     }
 
     pub fn drag_value(enabled: bool, value: f64) -> Self {
-        Self {
-            enabled,
-            value: Some(value),
-            ..Self::new(Role::SpinButton)
-        }
+        Self { enabled, value: Some(value), ..Self::new(Role::SpinButton) }
     }
 
     #[expect(clippy::needless_pass_by_value)]
     pub fn slider(enabled: bool, value: f64, label: impl ToString) -> Self {
         let label = label.to_string();
-        Self {
-            enabled,
-            label: if label.is_empty() { None } else { Some(label) },
-            value: Some(value),
-            ..Self::new(Role::Slider)
-        }
+        Self { enabled, label: if label.is_empty() { None } else { Some(label) }, value: Some(value), ..Self::new(Role::Slider) }
     }
 
     #[expect(clippy::needless_pass_by_value)]
-    pub fn text_edit(
-        enabled: bool,
-        prev_text_value: impl ToString,
-        text_value: impl ToString,
-        hint_text: impl ToString,
-    ) -> Self {
+    pub fn text_edit(enabled: bool, prev_text_value: impl ToString, text_value: impl ToString, hint_text: impl ToString) -> Self {
         let text_value = text_value.to_string();
         let prev_text_value = prev_text_value.to_string();
         let hint_text = hint_text.to_string();
-        let prev_text_value = if text_value == prev_text_value {
-            None
-        } else {
-            Some(prev_text_value)
-        };
-        Self {
-            enabled,
-            current_text_value: Some(text_value),
-            prev_text_value,
-            hint_text: Some(hint_text),
-            ..Self::new(Role::TextInput)
-        }
+        let prev_text_value = if text_value == prev_text_value { None } else { Some(prev_text_value) };
+        Self { enabled, current_text_value: Some(text_value), prev_text_value, hint_text: Some(hint_text), ..Self::new(Role::TextInput) }
     }
 
     #[expect(clippy::needless_pass_by_value)]
-    pub fn text_selection_changed(
-        enabled: bool,
-        text_selection: Range<CharIndex>,
-        current_text_value: impl ToString,
-    ) -> Self {
-        Self {
-            enabled,
-            text_selection: Some(text_selection),
-            current_text_value: Some(current_text_value.to_string()),
-            ..Self::new(Role::TextInput)
-        }
+    pub fn text_selection_changed(enabled: bool, text_selection: Range<CharIndex>, current_text_value: impl ToString) -> Self {
+        Self { enabled, text_selection: Some(text_selection), current_text_value: Some(current_text_value.to_string()), ..Self::new(Role::TextInput) }
     }
 
     /// This can be used by a text-to-speech system to describe the widget.
     pub fn description(&self) -> String {
-        let Self {
-            role,
-            enabled,
-            label,
-            current_text_value: text_value,
-            prev_text_value: _,
-            selected,
-            value,
-            text_selection: _,
-            hint_text: _,
-        } = self;
+        let Self { role, enabled, label, current_text_value: text_value, prev_text_value: _, selected, value, text_selection: _, hint_text: _ } =
+            self;
 
         let mut description = role_description(*role);
 
@@ -798,11 +720,7 @@ impl WidgetInfo {
 
         if role == &Role::TextInput {
             let text = if let Some(text_value) = text_value {
-                if text_value.is_empty() {
-                    "blank".into()
-                } else {
-                    text_value.clone()
-                }
+                if text_value.is_empty() { "blank".into() } else { text_value.clone() }
             } else {
                 "blank".into()
             };

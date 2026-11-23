@@ -9,11 +9,7 @@ fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
     let options = eframe::NativeOptions::default();
 
-    eframe::run_native(
-        "egui example: global font style",
-        options,
-        Box::new(|cc| Ok(Box::new(MyApp::new(cc)))),
-    )
+    eframe::run_native("egui example: global font style", options, Box::new(|cc| Ok(Box::new(MyApp::new(cc)))))
 }
 
 #[inline]

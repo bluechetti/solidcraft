@@ -8,12 +8,7 @@ use egui::TextStyle;
 use egui::text::LayoutJob;
 
 /// View some code with syntax highlighting and selection.
-pub fn code_view_ui(
-    ui: &mut egui::Ui,
-    theme: &CodeTheme,
-    code: &str,
-    language: &str,
-) -> egui::Response {
+pub fn code_view_ui(ui: &mut egui::Ui, theme: &CodeTheme, code: &str, language: &str) -> egui::Response {
     let layout_job = highlight(ui.ctx(), ui.style(), theme, code, language);
     ui.add(egui::Label::new(layout_job).selectable(true))
 }
@@ -21,13 +16,7 @@ pub fn code_view_ui(
 /// Add syntax highlighting to a code string.
 ///
 /// The results are memoized, so you can call this every frame without performance penalty.
-pub fn highlight(
-    ctx: &egui::Context,
-    style: &egui::Style,
-    theme: &CodeTheme,
-    code: &str,
-    language: &str,
-) -> LayoutJob {
+pub fn highlight(ctx: &egui::Context, style: &egui::Style, theme: &CodeTheme, code: &str, language: &str) -> LayoutJob {
     highlight_inner(ctx, style, theme, code, language, None)
 }
 
@@ -46,14 +35,7 @@ pub fn highlight_with(
     language: &str,
     settings: &SyntectSettings,
 ) -> LayoutJob {
-    highlight_inner(
-        ctx,
-        style,
-        theme,
-        code,
-        language,
-        Some(HighlightSettings(settings)),
-    )
+    highlight_inner(ctx, style, theme, code, language, Some(HighlightSettings(settings)))
 }
 
 fn highlight_inner(
@@ -69,32 +51,15 @@ fn highlight_inner(
     // (ui.ctx(), ui.style()) can be used
 
     #[expect(non_local_definitions)]
-    impl
-        egui::cache::ComputerMut<
-            (&egui::FontId, &CodeTheme, &str, &str, HighlightSettings<'_>),
-            LayoutJob,
-        > for Highlighter
-    {
-        fn compute(
-            &mut self,
-            (font_id, theme, code, lang, settings): (
-                &egui::FontId,
-                &CodeTheme,
-                &str,
-                &str,
-                HighlightSettings<'_>,
-            ),
-        ) -> LayoutJob {
+    impl egui::cache::ComputerMut<(&egui::FontId, &CodeTheme, &str, &str, HighlightSettings<'_>), LayoutJob> for Highlighter {
+        fn compute(&mut self, (font_id, theme, code, lang, settings): (&egui::FontId, &CodeTheme, &str, &str, HighlightSettings<'_>)) -> LayoutJob {
             Self::highlight(font_id.clone(), theme, code, lang, settings)
         }
     }
 
     type HighlightCache = egui::cache::FrameCache<LayoutJob, Highlighter>;
 
-    let font_id = style
-        .override_font_id
-        .clone()
-        .unwrap_or_else(|| TextStyle::Monospace.resolve(style));
+    let font_id = style.override_font_id.clone().unwrap_or_else(|| TextStyle::Monospace.resolve(style));
 
     // Private type, so that users can't interfere with it in the `IdTypeMap`
     #[cfg(feature = "syntect")]
@@ -107,17 +72,8 @@ fn highlight_inner(
     struct PrivateSettings(alloc::sync::Arc<()>);
 
     ctx.memory_mut(|mem| {
-        let settings = settings.unwrap_or_else(|| {
-            HighlightSettings(
-                &mem.data
-                    .get_temp_mut_or_default::<PrivateSettings>(egui::Id::NULL)
-                    .0,
-            )
-        });
-        mem.caches
-            .cache::<HighlightCache>()
-            .get((&font_id, theme, code, language, settings))
-            .clone()
+        let settings = settings.unwrap_or_else(|| HighlightSettings(&mem.data.get_temp_mut_or_default::<PrivateSettings>(egui::Id::NULL).0));
+        mem.caches.cache::<HighlightCache>().get((&font_id, theme, code, language, settings)).clone()
     })
 }
 
@@ -211,10 +167,7 @@ impl SyntectTheme {
 
     pub fn is_dark(&self) -> bool {
         match self {
-            Self::Base16EightiesDark
-            | Self::Base16MochaDark
-            | Self::Base16OceanDark
-            | Self::SolarizedDark => true,
+            Self::Base16EightiesDark | Self::Base16MochaDark | Self::Base16OceanDark | Self::SolarizedDark => true,
 
             Self::Base16OceanLight | Self::InspiredGitHub | Self::SolarizedLight => false,
         }
@@ -223,17 +176,10 @@ impl SyntectTheme {
 
 /// A selected color theme.
 #[derive(Clone, Hash, PartialEq)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Deserialize, serde::Serialize),
-    serde(default)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize), serde(default))]
 #[cfg_attr(
     all(feature = "serde", not(feature = "syntect")),
-    expect(
-        clippy::unsafe_derive_deserialize,
-        reason = "the `enum_map!` macro expands to `unsafe` code"
-    )
+    expect(clippy::unsafe_derive_deserialize, reason = "the `enum_map!` macro expands to `unsafe` code")
 )]
 pub struct CodeTheme {
     dark_mode: bool,
@@ -260,16 +206,9 @@ impl CodeTheme {
 
     /// Selects either dark or light theme based on the given style.
     pub fn from_style(style: &egui::Style) -> Self {
-        let font_id = style
-            .override_font_id
-            .clone()
-            .unwrap_or_else(|| TextStyle::Monospace.resolve(style));
+        let font_id = style.override_font_id.clone().unwrap_or_else(|| TextStyle::Monospace.resolve(style));
 
-        if style.visuals.dark_mode {
-            Self::dark_with_font_id(font_id)
-        } else {
-            Self::light_with_font_id(font_id)
-        }
+        if style.visuals.dark_mode { Self::dark_with_font_id(font_id) } else { Self::light_with_font_id(font_id) }
     }
 
     /// ### Example
@@ -310,18 +249,12 @@ impl CodeTheme {
 
         #[cfg(feature = "serde")]
         {
-            return ctx.data_mut(|d| {
-                d.get_persisted(id)
-                    .unwrap_or_else(|| default(monospace_font_size(style)))
-            });
+            return ctx.data_mut(|d| d.get_persisted(id).unwrap_or_else(|| default(monospace_font_size(style))));
         }
 
         #[cfg(not(feature = "serde"))]
         {
-            return ctx.data_mut(|d| {
-                d.get_temp(id)
-                    .unwrap_or_else(|| default(monospace_font_size(style)))
-            });
+            return ctx.data_mut(|d| d.get_temp(id).unwrap_or_else(|| default(monospace_font_size(style))));
         }
     }
 
@@ -329,11 +262,7 @@ impl CodeTheme {
     ///
     /// There is one dark and one light theme stored at any one time.
     pub fn store_in_memory(self, ctx: &egui::Context) {
-        let id = if ctx.global_style().visuals.dark_mode {
-            egui::Id::unique("dark")
-        } else {
-            egui::Id::unique("light")
-        };
+        let id = if ctx.global_style().visuals.dark_mode { egui::Id::unique("dark") } else { egui::Id::unique("light") };
 
         #[cfg(feature = "serde")]
         ctx.data_mut(|d| d.insert_persisted(id, self));
@@ -347,46 +276,28 @@ impl CodeTheme {
 impl CodeTheme {
     /// Change the font size
     pub fn with_font_size(&self, font_size: f32) -> Self {
-        Self {
-            dark_mode: self.dark_mode,
-            syntect_theme: self.syntect_theme,
-            font_id: egui::FontId::monospace(font_size),
-        }
+        Self { dark_mode: self.dark_mode, syntect_theme: self.syntect_theme, font_id: egui::FontId::monospace(font_size) }
     }
 
     /// Change the `font_id` of the theme
     pub fn with_font_id(&self, font_id: egui::FontId) -> Self {
-        Self {
-            dark_mode: self.dark_mode,
-            syntect_theme: self.syntect_theme,
-            font_id,
-        }
+        Self { dark_mode: self.dark_mode, syntect_theme: self.syntect_theme, font_id }
     }
 
     fn dark_with_font_id(font_id: egui::FontId) -> Self {
-        Self {
-            dark_mode: true,
-            syntect_theme: SyntectTheme::Base16MochaDark,
-            font_id,
-        }
+        Self { dark_mode: true, syntect_theme: SyntectTheme::Base16MochaDark, font_id }
     }
 
     fn light_with_font_id(font_id: egui::FontId) -> Self {
-        Self {
-            dark_mode: false,
-            syntect_theme: SyntectTheme::SolarizedLight,
-            font_id,
-        }
+        Self { dark_mode: false, syntect_theme: SyntectTheme::SolarizedLight, font_id }
     }
 
     /// Show UI for changing the color theme.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.dark_mode, true, "🌙 Dark theme")
-                .on_hover_text("Use the dark mode theme");
+            ui.selectable_value(&mut self.dark_mode, true, "🌙 Dark theme").on_hover_text("Use the dark mode theme");
 
-            ui.selectable_value(&mut self.dark_mode, false, "☀️ Light theme")
-                .on_hover_text("Use the light mode theme");
+            ui.selectable_value(&mut self.dark_mode, false, "☀️ Light theme").on_hover_text("Use the light mode theme");
         });
         let current_theme_is_dark = self.is_dark();
         for theme in SyntectTheme::all().filter(|t| t.is_dark() == current_theme_is_dark) {
@@ -457,21 +368,17 @@ impl CodeTheme {
             let selected_id = egui::Id::NULL;
 
             #[cfg(feature = "serde")]
-            let mut selected_tt: TokenType =
-                ui.data_mut(|d| *d.get_persisted_mut_or(selected_id, TokenType::Comment));
+            let mut selected_tt: TokenType = ui.data_mut(|d| *d.get_persisted_mut_or(selected_id, TokenType::Comment));
 
             #[cfg(not(feature = "serde"))]
-            let mut selected_tt: TokenType =
-                ui.data_mut(|d| *d.get_temp_mut_or(selected_id, TokenType::Comment));
+            let mut selected_tt: TokenType = ui.data_mut(|d| *d.get_temp_mut_or(selected_id, TokenType::Comment));
 
             ui.vertical(|ui| {
                 ui.set_width(150.0);
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.dark_mode, true, "🌙 Dark theme")
-                        .on_hover_text("Use the dark mode theme");
+                    ui.selectable_value(&mut self.dark_mode, true, "🌙 Dark theme").on_hover_text("Use the dark mode theme");
 
-                    ui.selectable_value(&mut self.dark_mode, false, "☀️ Light theme")
-                        .on_hover_text("Use the light mode theme");
+                    ui.selectable_value(&mut self.dark_mode, false, "☀️ Light theme").on_hover_text("Use the light mode theme");
                 });
                 ui.scope(|ui| {
                     for (tt, tt_name) in [
@@ -490,16 +397,10 @@ impl CodeTheme {
                     }
                 });
 
-                let reset_value = if self.dark_mode {
-                    Self::dark(monospace_font_size(ui.style()))
-                } else {
-                    Self::light(monospace_font_size(ui.style()))
-                };
+                let reset_value =
+                    if self.dark_mode { Self::dark(monospace_font_size(ui.style())) } else { Self::light(monospace_font_size(ui.style())) };
 
-                if ui
-                    .add_enabled(*self != reset_value, egui::Button::new("Reset theme"))
-                    .clicked()
-                {
+                if ui.add_enabled(*self != reset_value, egui::Button::new("Reset theme")).clicked() {
                     *self = reset_value;
                 }
             });
@@ -511,18 +412,12 @@ impl CodeTheme {
             #[cfg(not(feature = "serde"))]
             ui.data_mut(|d| d.insert_temp(selected_id, selected_tt));
 
-            egui::Frame::group(ui.style())
-                .inner_margin(egui::Vec2::splat(2.0))
-                .show(ui, |ui| {
-                    // ui.group(|ui| {
-                    ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
-                    ui.spacing_mut().slider_width = 128.0; // Controls color picker size
-                    egui::widgets::color_picker::color_picker_color32(
-                        ui,
-                        &mut self.formats[selected_tt].color,
-                        egui::color_picker::Alpha::Opaque,
-                    );
-                });
+            egui::Frame::group(ui.style()).inner_margin(egui::Vec2::splat(2.0)).show(ui, |ui| {
+                // ui.group(|ui| {
+                ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
+                ui.spacing_mut().slider_width = 128.0; // Controls color picker size
+                egui::widgets::color_picker::color_picker_color32(ui, &mut self.formats[selected_tt].color, egui::color_picker::Alpha::Opaque);
+            });
         });
     }
 }
@@ -540,10 +435,7 @@ pub struct SyntectSettings {
 impl Default for SyntectSettings {
     fn default() -> Self {
         profiling::function_scope!();
-        Self {
-            ps: syntect::parsing::SyntaxSet::load_defaults_newlines(),
-            ts: syntect::highlighting::ThemeSet::load_defaults(),
-        }
+        Self { ps: syntect::parsing::SyntaxSet::load_defaults_newlines(), ts: syntect::highlighting::ThemeSet::load_defaults() }
     }
 }
 
@@ -566,55 +458,28 @@ impl core::hash::Hash for HighlightSettings<'_> {
 struct Highlighter;
 
 impl Highlighter {
-    fn highlight(
-        font_id: egui::FontId,
-        theme: &CodeTheme,
-        code: &str,
-        lang: &str,
-        settings: HighlightSettings<'_>,
-    ) -> LayoutJob {
+    fn highlight(font_id: egui::FontId, theme: &CodeTheme, code: &str, lang: &str, settings: HighlightSettings<'_>) -> LayoutJob {
         Self::highlight_impl(theme, code, lang, settings).unwrap_or_else(|| {
             // Fallback:
-            LayoutJob::simple(
-                code.into(),
-                font_id,
-                if theme.dark_mode {
-                    egui::Color32::LIGHT_GRAY
-                } else {
-                    egui::Color32::DARK_GRAY
-                },
-                f32::INFINITY,
-            )
+            LayoutJob::simple(code.into(), font_id, if theme.dark_mode { egui::Color32::LIGHT_GRAY } else { egui::Color32::DARK_GRAY }, f32::INFINITY)
         })
     }
 
     #[cfg(feature = "syntect")]
-    fn highlight_impl(
-        theme: &CodeTheme,
-        text: &str,
-        language: &str,
-        highlighter: HighlightSettings<'_>,
-    ) -> Option<LayoutJob> {
+    fn highlight_impl(theme: &CodeTheme, text: &str, language: &str, highlighter: HighlightSettings<'_>) -> Option<LayoutJob> {
         profiling::function_scope!();
         use syntect::easy::HighlightLines;
         use syntect::highlighting::FontStyle;
         use syntect::util::LinesWithEndings;
 
-        let syntax = highlighter
-            .0
-            .ps
-            .find_syntax_by_name(language)
-            .or_else(|| highlighter.0.ps.find_syntax_by_extension(language))?;
+        let syntax = highlighter.0.ps.find_syntax_by_name(language).or_else(|| highlighter.0.ps.find_syntax_by_extension(language))?;
 
         let syn_theme = theme.syntect_theme.syntect_key_name();
         let mut h = HighlightLines::new(syntax, &highlighter.0.ts.themes[syn_theme]);
 
         use egui::text::{LayoutSection, TextFormat};
 
-        let mut job = LayoutJob {
-            text: text.into(),
-            ..Default::default()
-        };
+        let mut job = LayoutJob { text: text.into(), ..Default::default() };
 
         for line in LinesWithEndings::from(text) {
             for (style, range) in h.highlight_line(line, &highlighter.0.ps).ok()? {
@@ -622,21 +487,11 @@ impl Highlighter {
                 let text_color = egui::Color32::from_rgb(fg.r, fg.g, fg.b);
                 let italics = style.font_style.contains(FontStyle::ITALIC);
                 let underline = style.font_style.contains(FontStyle::ITALIC);
-                let underline = if underline {
-                    egui::Stroke::new(1.0, text_color)
-                } else {
-                    egui::Stroke::NONE
-                };
+                let underline = if underline { egui::Stroke::new(1.0, text_color) } else { egui::Stroke::NONE };
                 job.sections.push(LayoutSection {
                     leading_space: 0.0,
                     byte_range: as_byte_range(text, range),
-                    format: TextFormat {
-                        font_id: theme.font_id.clone(),
-                        color: text_color,
-                        italics,
-                        underline,
-                        ..Default::default()
-                    },
+                    format: TextFormat { font_id: theme.font_id.clone(), color: text_color, italics, underline, ..Default::default() },
                 });
             }
         }
@@ -650,10 +505,7 @@ fn as_byte_range(whole: &str, range: &str) -> egui::text::ByteRange {
     use egui::text::ByteIndex;
     let whole_start = whole.as_ptr() as usize;
     let range_start = range.as_ptr() as usize;
-    assert!(
-        whole_start <= range_start,
-        "range must be within whole, but was {range}"
-    );
+    assert!(whole_start <= range_start, "range must be within whole, but was {range}");
     assert!(
         range_start + range.len() <= whole_start + whole.len(),
         "range_start + range length must be smaller than whole_start + whole length, but was {}",
@@ -667,12 +519,7 @@ fn as_byte_range(whole: &str, range: &str) -> egui::text::ByteRange {
 
 #[cfg(not(feature = "syntect"))]
 impl Highlighter {
-    fn highlight_impl(
-        theme: &CodeTheme,
-        mut text: &str,
-        language: &str,
-        _settings: HighlightSettings<'_>,
-    ) -> Option<LayoutJob> {
+    fn highlight_impl(theme: &CodeTheme, mut text: &str, language: &str, _settings: HighlightSettings<'_>) -> Option<LayoutJob> {
         profiling::function_scope!();
 
         let language = Language::new(language)?;
@@ -693,28 +540,16 @@ impl Highlighter {
                 let end = text[2..].find("*/").map_or(text.len(), |i| i + 4);
                 job.append(&text[..end], 0.0, theme.formats[TokenType::Comment].clone());
                 text = &text[end..];
-            } else if let Some(delimiter) = language
-                .string_delimiters
-                .iter()
-                .find(|delimiter| text.starts_with(**delimiter))
-            {
+            } else if let Some(delimiter) = language.string_delimiters.iter().find(|delimiter| text.starts_with(**delimiter)) {
                 let end = string_literal_len(text, delimiter);
-                job.append(
-                    &text[..end],
-                    0.0,
-                    theme.formats[TokenType::StringLiteral].clone(),
-                );
+                job.append(&text[..end], 0.0, theme.formats[TokenType::StringLiteral].clone());
                 text = &text[end..];
             } else if text.starts_with(is_word_char) {
-                let end = text[1..]
-                    .find(|c: char| !is_word_char(c))
-                    .map_or_else(|| text.len(), |i| i + 1);
+                let end = text[1..].find(|c: char| !is_word_char(c)).map_or_else(|| text.len(), |i| i + 1);
                 let word = &text[..end];
                 let tt = if language.is_keyword(word) {
                     TokenType::Keyword
-                } else if text[end..].starts_with('(')
-                    && !word.starts_with(|c: char| c.is_ascii_digit())
-                {
+                } else if text[end..].starts_with('(') && !word.starts_with(|c: char| c.is_ascii_digit()) {
                     TokenType::Function
                 } else {
                     TokenType::Literal
@@ -722,24 +557,14 @@ impl Highlighter {
                 job.append(word, 0.0, theme.formats[tt].clone());
                 text = &text[end..];
             } else if text.starts_with(|c: char| c.is_ascii_whitespace()) {
-                let end = text[1..]
-                    .find(|c: char| !c.is_ascii_whitespace())
-                    .map_or_else(|| text.len(), |i| i + 1);
-                job.append(
-                    &text[..end],
-                    0.0,
-                    theme.formats[TokenType::Whitespace].clone(),
-                );
+                let end = text[1..].find(|c: char| !c.is_ascii_whitespace()).map_or_else(|| text.len(), |i| i + 1);
+                job.append(&text[..end], 0.0, theme.formats[TokenType::Whitespace].clone());
                 text = &text[end..];
             } else {
                 let mut it = text.char_indices();
                 it.next();
                 let end = it.next().map_or(text.len(), |(idx, _chr)| idx);
-                job.append(
-                    &text[..end],
-                    0.0,
-                    theme.formats[TokenType::Punctuation].clone(),
-                );
+                job.append(&text[..end], 0.0, theme.formats[TokenType::Punctuation].clone());
                 text = &text[end..];
             }
         }
@@ -802,9 +627,7 @@ impl Language {
     fn new(language: &str) -> Option<Self> {
         match language.to_lowercase().as_str() {
             "c" | "h" | "hpp" | "cpp" | "c++" => Some(Self::cpp()),
-            "js" | "javascript" | "jsx" | "mjs" | "ts" | "typescript" | "tsx" => {
-                Some(Self::javascript())
-            }
+            "js" | "javascript" | "jsx" | "mjs" | "ts" | "typescript" | "tsx" => Some(Self::javascript()),
             "json" | "jsonc" | "json5" => Some(Self::json()),
             "py" | "python" => Some(Self::python()),
             "rs" | "rust" => Some(Self::rust()),
@@ -819,11 +642,7 @@ impl Language {
     }
 
     fn is_keyword(&self, word: &str) -> bool {
-        if self.case_insensitive_keywords {
-            self.keywords.contains(word.to_ascii_lowercase().as_str())
-        } else {
-            self.keywords.contains(word)
-        }
+        if self.case_insensitive_keywords { self.keywords.contains(word.to_ascii_lowercase().as_str()) } else { self.keywords.contains(word) }
     }
 
     fn cpp() -> Self {
@@ -1031,10 +850,9 @@ impl Language {
             string_delimiters: &["\"\"\"", "'''", "\"", "'"],
             case_insensitive_keywords: false,
             keywords: [
-                "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else",
-                "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is",
-                "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True",
-                "try", "while", "with", "yield",
+                "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except", "False", "finally", "for", "from",
+                "global", "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or", "pass", "raise", "return", "True", "try", "while",
+                "with", "yield",
             ]
             .into_iter()
             .collect(),
@@ -1050,10 +868,9 @@ impl Language {
             string_delimiters: &["\""],
             case_insensitive_keywords: false,
             keywords: [
-                "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else",
-                "enum", "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match",
-                "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct",
-                "super", "trait", "true", "type", "unsafe", "use", "where", "while",
+                "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern", "false", "fn", "for", "if", "impl",
+                "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait",
+                "true", "type", "unsafe", "use", "where", "while",
             ]
             .into_iter()
             .collect(),
@@ -1070,8 +887,8 @@ impl Language {
             string_delimiters: &["\"", "'"],
             case_insensitive_keywords: false,
             keywords: [
-                "case", "do", "done", "elif", "else", "esac", "export", "fi", "for", "function",
-                "if", "in", "local", "return", "then", "until", "while",
+                "case", "do", "done", "elif", "else", "esac", "export", "fi", "for", "function", "if", "in", "local", "return", "then", "until",
+                "while",
             ]
             .into_iter()
             .collect(),
@@ -1195,92 +1012,56 @@ mod tests {
     fn json() {
         let theme = CodeTheme::dark(12.0);
         let text = r#"{"on": true, "off": null}"#;
-        let job = Highlighter::highlight_impl(&theme, text, "json", HighlightSettings(&()))
-            .expect("json is supported");
+        let job = Highlighter::highlight_impl(&theme, text, "json", HighlightSettings(&())).expect("json is supported");
 
         let format_of = |token: &str| {
             let start = text.find(token).expect("token is in text");
-            job.sections
-                .iter()
-                .find(|section| section.byte_range.start == egui::text::ByteIndex(start))
-                .map(|section| section.format.clone())
+            job.sections.iter().find(|section| section.byte_range.start == egui::text::ByteIndex(start)).map(|section| section.format.clone())
         };
-        assert_eq!(
-            format_of("\"on\""),
-            Some(theme.formats[TokenType::StringLiteral].clone())
-        );
-        assert_eq!(
-            format_of("true"),
-            Some(theme.formats[TokenType::Keyword].clone())
-        );
-        assert_eq!(
-            format_of("null"),
-            Some(theme.formats[TokenType::Keyword].clone())
-        );
+        assert_eq!(format_of("\"on\""), Some(theme.formats[TokenType::StringLiteral].clone()));
+        assert_eq!(format_of("true"), Some(theme.formats[TokenType::Keyword].clone()));
+        assert_eq!(format_of("null"), Some(theme.formats[TokenType::Keyword].clone()));
     }
 
     #[test]
     fn sql() {
         let theme = CodeTheme::dark(12.0);
         let text = "SELECT order_id FROM t where name = 'bob' -- done";
-        let job = Highlighter::highlight_impl(&theme, text, "sql", HighlightSettings(&()))
-            .expect("sql is supported");
+        let job = Highlighter::highlight_impl(&theme, text, "sql", HighlightSettings(&())).expect("sql is supported");
 
         let format_of = |token: &str| {
             let start = text.find(token).expect("token is in text");
             job.sections
                 .iter()
                 .find(|section| {
-                    section.byte_range.start == egui::text::ByteIndex(start)
-                        && section.byte_range.end == egui::text::ByteIndex(start + token.len())
+                    section.byte_range.start == egui::text::ByteIndex(start) && section.byte_range.end == egui::text::ByteIndex(start + token.len())
                 })
                 .map(|section| section.format.clone())
         };
         let keyword = Some(theme.formats[TokenType::Keyword].clone());
         assert_eq!(format_of("SELECT"), keyword);
         assert_eq!(format_of("where"), keyword);
-        assert_eq!(
-            format_of("order_id"),
-            Some(theme.formats[TokenType::Literal].clone())
-        );
-        assert_eq!(
-            format_of("'bob'"),
-            Some(theme.formats[TokenType::StringLiteral].clone())
-        );
-        assert_eq!(
-            format_of("-- done"),
-            Some(theme.formats[TokenType::Comment].clone())
-        );
+        assert_eq!(format_of("order_id"), Some(theme.formats[TokenType::Literal].clone()));
+        assert_eq!(format_of("'bob'"), Some(theme.formats[TokenType::StringLiteral].clone()));
+        assert_eq!(format_of("-- done"), Some(theme.formats[TokenType::Comment].clone()));
     }
 
     /// The token type of the section that spans exactly `token`, the first time it occurs in `text`.
     fn token_type_of(text: &str, language: &str, token: &str) -> Option<TokenType> {
         let theme = CodeTheme::dark(12.0);
-        let job = Highlighter::highlight_impl(&theme, text, language, HighlightSettings(&()))
-            .expect("language is supported");
+        let job = Highlighter::highlight_impl(&theme, text, language, HighlightSettings(&())).expect("language is supported");
         let start = text.find(token).expect("token is in text");
         let section = job.sections.iter().find(|section| {
-            section.byte_range.start == egui::text::ByteIndex(start)
-                && section.byte_range.end == egui::text::ByteIndex(start + token.len())
+            section.byte_range.start == egui::text::ByteIndex(start) && section.byte_range.end == egui::text::ByteIndex(start + token.len())
         })?;
-        theme
-            .formats
-            .iter()
-            .find(|(_, format)| **format == section.format)
-            .map(|(tt, _)| tt)
+        theme.formats.iter().find(|(_, format)| **format == section.format).map(|(tt, _)| tt)
     }
 
     #[test]
     fn escaped_quotes_stay_inside_the_string() {
         let text = r#"let s = "say \"hi\""; done()"#;
-        assert_eq!(
-            token_type_of(text, "rust", r#""say \"hi\"""#),
-            Some(TokenType::StringLiteral)
-        );
-        assert_eq!(
-            token_type_of(text, "rust", "done"),
-            Some(TokenType::Function)
-        );
+        assert_eq!(token_type_of(text, "rust", r#""say \"hi\"""#), Some(TokenType::StringLiteral));
+        assert_eq!(token_type_of(text, "rust", "done"), Some(TokenType::Function));
     }
 
     #[test]
@@ -1292,60 +1073,38 @@ mod tests {
     #[test]
     fn block_comments() {
         let text = "a /* one\ntwo */ b";
-        assert_eq!(
-            token_type_of(text, "cpp", "/* one\ntwo */"),
-            Some(TokenType::Comment)
-        );
+        assert_eq!(token_type_of(text, "cpp", "/* one\ntwo */"), Some(TokenType::Comment));
         assert_eq!(token_type_of(text, "cpp", "b"), Some(TokenType::Literal));
     }
 
     #[test]
     fn python_strings() {
         let text = "x = 'it' + \"\"\"doc \"quoted\" \"\"\"";
-        assert_eq!(
-            token_type_of(text, "py", "'it'"),
-            Some(TokenType::StringLiteral)
-        );
-        assert_eq!(
-            token_type_of(text, "py", "\"\"\"doc \"quoted\" \"\"\""),
-            Some(TokenType::StringLiteral)
-        );
+        assert_eq!(token_type_of(text, "py", "'it'"), Some(TokenType::StringLiteral));
+        assert_eq!(token_type_of(text, "py", "\"\"\"doc \"quoted\" \"\"\""), Some(TokenType::StringLiteral));
     }
 
     #[test]
     fn javascript() {
         let text = "const s = `x ${y}`; console.log(s)";
         assert_eq!(token_type_of(text, "ts", "const"), Some(TokenType::Keyword));
-        assert_eq!(
-            token_type_of(text, "ts", "`x ${y}`"),
-            Some(TokenType::StringLiteral)
-        );
+        assert_eq!(token_type_of(text, "ts", "`x ${y}`"), Some(TokenType::StringLiteral));
         assert_eq!(token_type_of(text, "ts", "log"), Some(TokenType::Function));
     }
 
     #[test]
     fn shell() {
         let text = "if true; then echo 'hi'; fi # done";
-        assert_eq!(
-            token_type_of(text, "bash", "then"),
-            Some(TokenType::Keyword)
-        );
-        assert_eq!(
-            token_type_of(text, "bash", "'hi'"),
-            Some(TokenType::StringLiteral)
-        );
-        assert_eq!(
-            token_type_of(text, "bash", "# done"),
-            Some(TokenType::Comment)
-        );
+        assert_eq!(token_type_of(text, "bash", "then"), Some(TokenType::Keyword));
+        assert_eq!(token_type_of(text, "bash", "'hi'"), Some(TokenType::StringLiteral));
+        assert_eq!(token_type_of(text, "bash", "# done"), Some(TokenType::Comment));
     }
 
     #[test]
     fn format_mut_changes_the_output() {
         let mut theme = CodeTheme::dark(12.0);
         theme.format_mut(TokenType::Keyword).color = egui::Color32::RED;
-        let job = Highlighter::highlight_impl(&theme, "fn", "rust", HighlightSettings(&()))
-            .expect("rust is supported");
+        let job = Highlighter::highlight_impl(&theme, "fn", "rust", HighlightSettings(&())).expect("rust is supported");
         assert_eq!(job.sections[0].format.color, egui::Color32::RED);
     }
 }

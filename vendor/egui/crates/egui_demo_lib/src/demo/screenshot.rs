@@ -17,15 +17,13 @@ impl crate::Demo for Screenshot {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .resizable(false)
-            .default_width(250.0)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
+        egui::Window::new(self.name()).open(open).resizable(false).default_width(250.0).constrain_to(ui.available_rect_before_wrap()).show(
+            ui,
+            |ui| {
                 use crate::View as _;
                 self.ui(ui);
-            });
+            },
+        );
     }
 }
 
@@ -58,11 +56,7 @@ impl crate::View for Screenshot {
         });
 
         if let Some(image) = self.received.lock().take() {
-            self.texture = Some(ui.ctx().load_texture(
-                "screenshot_demo",
-                image,
-                Default::default(),
-            ));
+            self.texture = Some(ui.ctx().load_texture("screenshot_demo", image, Default::default()));
         }
 
         if let Some(texture) = &self.texture {

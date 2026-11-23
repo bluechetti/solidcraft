@@ -24,10 +24,7 @@ mod renderer;
 mod setup;
 
 pub use renderer::*;
-pub use setup::{
-    EguiDisplayHandle, NativeAdapterSelectorMethod, WgpuSetup, WgpuSetupCreateNew,
-    WgpuSetupExisting,
-};
+pub use setup::{EguiDisplayHandle, NativeAdapterSelectorMethod, WgpuSetup, WgpuSetupCreateNew, WgpuSetupExisting};
 
 /// Helpers for capturing screenshots of the UI.
 #[cfg(feature = "capture")]
@@ -193,9 +190,7 @@ impl DeviceLost {
         if self.is_lost() {
             return true;
         }
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("device lost probe"),
-        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("device lost probe") });
         encoder.insert_debug_marker("device lost probe");
         queue.submit([encoder.finish()]);
         self.is_lost()
@@ -206,12 +201,7 @@ impl DeviceLost {
     /// probe and a queue write (or the present) still be the first call to meet it, which panics
     /// inside wgpu (`PendingWrites::activate` unwraps `Lost`, #10240). After such a panic the
     /// probe meets the loss and marks it. Any other panic carries on unwinding.
-    pub fn survive<R>(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        draw: impl FnOnce() -> R,
-    ) -> Option<R> {
+    pub fn survive<R>(&self, device: &wgpu::Device, queue: &wgpu::Queue, draw: impl FnOnce() -> R) -> Option<R> {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(draw)) {
             Ok(drawn) => Some(drawn),
             Err(_) if self.probe(device, queue) => None,
@@ -244,10 +234,7 @@ pub struct AcquiredFrame<F, T: FreeSurfaceTexture> {
 impl<F, T: FreeSurfaceTexture> AcquiredFrame<F, T> {
     /// `texture` is a second handle to `frame`'s texture.
     pub fn new(frame: F, texture: T) -> Self {
-        Self {
-            frame,
-            texture: FreeOnDrop(texture),
-        }
+        Self { frame, texture: FreeOnDrop(texture) }
     }
 
     /// Present the frame with `present`, then free the texture.
@@ -371,11 +358,7 @@ async fn request_adapter(
         })?;
 
     if 1 < available_adapters.len() {
-        log::info!(
-            "There are {} available wgpu adapters: {}",
-            available_adapters.len(),
-            describe_adapters(available_adapters)
-        );
+        log::info!("There are {} available wgpu adapters: {}", available_adapters.len(), describe_adapters(available_adapters));
     }
 
     Ok(adapter)
@@ -430,13 +413,7 @@ impl RenderState {
                         if let Some(adapter) = selected {
                             Ok(adapter)
                         } else {
-                            request_adapter(
-                                instance,
-                                power_preference,
-                                compatible_surface,
-                                &available_adapters,
-                            )
-                            .await
+                            request_adapter(instance, power_preference, compatible_surface, &available_adapters).await
                         }
                     }
                 }?;
@@ -445,27 +422,17 @@ impl RenderState {
                 let info = adapter.get_info();
                 startup_step(
                     STEP_ADAPTER_CHOSEN,
-                    &format!(
-                        "{:?} {} ({:?}, driver {} {})",
-                        info.backend, info.name, info.device_type, info.driver, info.driver_info
-                    ),
+                    &format!("{:?} {} ({:?}, driver {} {})", info.backend, info.name, info.device_type, info.driver, info.driver_info),
                 );
                 startup_step(STEP_DEVICE, "");
                 let (device, queue) = {
                     profiling::scope!("request_device");
-                    adapter
-                        .request_device(&(*device_descriptor)(&adapter))
-                        .await?
+                    adapter.request_device(&(*device_descriptor)(&adapter)).await?
                 };
 
                 (instance.clone(), adapter, device, queue)
             }
-            WgpuSetup::Existing(WgpuSetupExisting {
-                instance,
-                adapter,
-                device,
-                queue,
-            }) => (instance, adapter, device, queue),
+            WgpuSetup::Existing(WgpuSetupExisting { instance, adapter, device, queue }) => (instance, adapter, device, queue),
         };
         // SolidCraft: a device the driver loses stops the painter, not the app (#4172).
         let device_lost = DeviceLost::watch(&device);
@@ -474,10 +441,7 @@ impl RenderState {
 
         let surface_formats = {
             profiling::scope!("get_capabilities");
-            compatible_surface.map_or_else(
-                || vec![wgpu::TextureFormat::Rgba8Unorm],
-                |s| s.get_capabilities(&adapter).formats,
-            )
+            compatible_surface.map_or_else(|| vec![wgpu::TextureFormat::Rgba8Unorm], |s| s.get_capabilities(&adapter).formats)
         };
         let target_format = crate::preferred_framebuffer_format(&surface_formats)?;
 
@@ -486,29 +450,19 @@ impl RenderState {
         // before creating either pipelines or attachments; no second GPU probe.
         // A sample count the device doesn't support for the target or depth format fails
         // pipeline validation (a panic at start): fall back to the largest supported one.
-        let msaa_supported =
-            supported_msaa_samples(&adapter, &device, target_format, options.depth_stencil_format);
+        let msaa_supported = supported_msaa_samples(&adapter, &device, target_format, options.depth_stencil_format);
         let wanted = effective_msaa_samples(adapter.get_info().backend, options.msaa_samples);
         let msaa_samples = clamp_msaa_samples(&msaa_supported, wanted);
         if msaa_samples != wanted {
-            log::warn!(
-                "MSAA {wanted}x is not supported for {target_format:?} on this device (supported: {msaa_supported:?}); using {msaa_samples}x"
-            );
+            log::warn!("MSAA {wanted}x is not supported for {target_format:?} on this device (supported: {msaa_supported:?}); using {msaa_samples}x");
         }
-        let options = RendererOptions {
-            msaa_samples,
-            ..options
-        };
+        let options = RendererOptions { msaa_samples, ..options };
         startup_step(STEP_RENDERER, ""); // SolidCraft
         // SolidCraft: capture errors on the real surface/device, including driver shader
         // compilation failures, before wgpu's default uncaptured-error handler can panic.
         // Await every scope (also on WebGPU); an invalid renderer is never handed to eframe.
-        let scopes = [
-            wgpu::ErrorFilter::OutOfMemory,
-            wgpu::ErrorFilter::Internal,
-            wgpu::ErrorFilter::Validation,
-        ]
-        .map(|filter| device.push_error_scope(filter));
+        let scopes = [wgpu::ErrorFilter::OutOfMemory, wgpu::ErrorFilter::Internal, wgpu::ErrorFilter::Validation]
+            .map(|filter| device.push_error_scope(filter));
         let renderer = Renderer::new(&device, target_format, options);
         let mut failed = None;
         for scope in scopes.into_iter().rev() {
@@ -545,11 +499,7 @@ fn describe_adapters(adapters: &[wgpu::Adapter]) -> String {
     } else if adapters.len() == 1 {
         adapter_info_summary(&adapters[0].get_info())
     } else {
-        adapters
-            .iter()
-            .map(|a| format!("{{{}}}", adapter_info_summary(&a.get_info())))
-            .collect::<Vec<_>>()
-            .join(", ")
+        adapters.iter().map(|a| format!("{{{}}}", adapter_info_summary(&a.get_info()))).collect::<Vec<_>>().join(", ")
     }
 }
 
@@ -588,21 +538,14 @@ pub struct WgpuConfiguration {
     /// [`wgpu::CurrentSurfaceTexture::Suboptimal`], egui uses the frame as-is and
     /// defers surface reconfiguration to the next frame — the callback is not invoked
     /// in that case either.
-    pub on_surface_status:
-        Arc<dyn Fn(&wgpu::CurrentSurfaceTexture) -> SurfaceErrorAction + Send + Sync>,
+    pub on_surface_status: Arc<dyn Fn(&wgpu::CurrentSurfaceTexture) -> SurfaceErrorAction + Send + Sync>,
 }
 
 // Compile-time check that `WgpuConfiguration` is `Send + Sync`.
 // Deliberately not a `#[test]`: tests never run on wasm, but `cargo check` does.
 // On wasm this only holds with `fragile-send-sync-non-atomic-wasm` and without threads;
 // look at the feature flag for an explanation.
-#[cfg(any(
-    not(target_arch = "wasm32"),
-    all(
-        feature = "fragile-send-sync-non-atomic-wasm",
-        not(target_feature = "atomics")
-    ),
-))]
+#[cfg(any(not(target_arch = "wasm32"), all(feature = "fragile-send-sync-non-atomic-wasm", not(target_feature = "atomics")),))]
 const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<WgpuConfiguration>();
@@ -610,15 +553,8 @@ const _: () = {
 
 impl core::fmt::Debug for WgpuConfiguration {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let Self {
-            surface,
-            wgpu_setup,
-            on_surface_status: _,
-        } = self;
-        f.debug_struct("WgpuConfiguration")
-            .field("surface", &surface)
-            .field("wgpu_setup", &wgpu_setup)
-            .finish_non_exhaustive()
+        let Self { surface, wgpu_setup, on_surface_status: _ } = self;
+        f.debug_struct("WgpuConfiguration").field("surface", &surface).field("wgpu_setup", &wgpu_setup).finish_non_exhaustive()
     }
 }
 
@@ -676,22 +612,14 @@ impl Default for WgpuConfiguration {
 ///
 /// # Errors
 /// Returns [`WgpuError::NoSurfaceFormatsAvailable`] if the given list of formats is empty.
-pub fn preferred_framebuffer_format(
-    formats: &[wgpu::TextureFormat],
-) -> Result<wgpu::TextureFormat, WgpuError> {
+pub fn preferred_framebuffer_format(formats: &[wgpu::TextureFormat]) -> Result<wgpu::TextureFormat, WgpuError> {
     for &format in formats {
-        if matches!(
-            format,
-            wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Bgra8Unorm
-        ) {
+        if matches!(format, wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Bgra8Unorm) {
             return Ok(format);
         }
     }
 
-    formats
-        .first()
-        .copied()
-        .ok_or(WgpuError::NoSurfaceFormatsAvailable)
+    formats.first().copied().ok_or(WgpuError::NoSurfaceFormatsAvailable)
 }
 
 /// Take's epi's depth/stencil bits and returns the corresponding wgpu format.
@@ -759,12 +687,7 @@ pub fn adapter_info_summary(info: &wgpu::AdapterInfo) -> String {
     if *vendor != 0 {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            write!(
-                summary,
-                ", vendor: {} (0x{vendor:04X})",
-                parse_vendor_id(*vendor)
-            )
-            .ok();
+            write!(summary, ", vendor: {} (0x{vendor:04X})", parse_vendor_id(*vendor)).ok();
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -778,17 +701,9 @@ pub fn adapter_info_summary(info: &wgpu::AdapterInfo) -> String {
         write!(summary, ", pci_bus_id: {device_pci_bus_id:?}").ok();
     }
     if *subgroup_min_size != 0 || *subgroup_max_size != 0 {
-        write!(
-            summary,
-            ", subgroup_size: {subgroup_min_size}..={subgroup_max_size}"
-        )
-        .ok();
+        write!(summary, ", subgroup_size: {subgroup_min_size}..={subgroup_max_size}").ok();
     }
-    write!(
-        summary,
-        ", transient_saves_memory: {transient_saves_memory:?}"
-    )
-    .ok();
+    write!(summary, ", transient_saves_memory: {transient_saves_memory:?}").ok();
     write!(summary, ", limit_bucket: {limit_bucket:?}").ok();
 
     summary
@@ -841,31 +756,18 @@ pub fn supported_msaa_samples(
 
 /// The sample counts both the colour target and the depth buffer support. A multisampled colour
 /// target must also resolve into the single-sampled surface.
-fn msaa_counts(
-    target: wgpu::TextureFormatFeatureFlags,
-    depth: Option<wgpu::TextureFormatFeatureFlags>,
-) -> Vec<u32> {
+fn msaa_counts(target: wgpu::TextureFormatFeatureFlags, depth: Option<wgpu::TextureFormatFeatureFlags>) -> Vec<u32> {
     let resolves = target.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE);
     [1, 2, 4, 8, 16]
         .into_iter()
-        .filter(|&n| {
-            n == 1
-                || (resolves
-                    && target.sample_count_supported(n)
-                    && depth.is_none_or(|d| d.sample_count_supported(n)))
-        })
+        .filter(|&n| n == 1 || (resolves && target.sample_count_supported(n) && depth.is_none_or(|d| d.sample_count_supported(n))))
         .collect()
 }
 
 /// SolidCraft: the largest of the `supported` sample counts that is at most `requested` (1 when
 /// none is).
 pub fn clamp_msaa_samples(supported: &[u32], requested: u32) -> u32 {
-    supported
-        .iter()
-        .copied()
-        .filter(|&n| n <= requested.max(1))
-        .max()
-        .unwrap_or(1)
+    supported.iter().copied().filter(|&n| n <= requested.max(1)).max().unwrap_or(1)
 }
 
 #[cfg(test)]
@@ -905,20 +807,14 @@ mod msaa_tests {
 /// reconfigure (D3D12 "Failed to wait for GPU to come idle", #1935) crashed the app. Native error
 /// scopes resolve at once; on the web the scope still keeps the error from the handler.
 pub fn capture_errors<T>(device: &wgpu::Device, f: impl FnOnce() -> T) -> (T, Option<wgpu::Error>) {
-    let scopes = [
-        wgpu::ErrorFilter::OutOfMemory,
-        wgpu::ErrorFilter::Internal,
-        wgpu::ErrorFilter::Validation,
-    ]
-    .map(|filter| device.push_error_scope(filter));
+    let scopes =
+        [wgpu::ErrorFilter::OutOfMemory, wgpu::ErrorFilter::Internal, wgpu::ErrorFilter::Validation].map(|filter| device.push_error_scope(filter));
     let value = f();
     let mut failed = None;
     for scope in scopes.into_iter().rev() {
         let mut popped = std::pin::pin!(scope.pop());
         let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
-        if let std::task::Poll::Ready(Some(error)) =
-            std::future::Future::poll(popped.as_mut(), &mut cx)
-        {
+        if let std::task::Poll::Ready(Some(error)) = std::future::Future::poll(popped.as_mut(), &mut cx) {
             failed.get_or_insert(error);
         }
     }
@@ -954,11 +850,7 @@ impl std::fmt::Display for ConfigureError {
 /// wgpu has dropped the surface's old configuration. Taken as configured, the surface's next
 /// acquire failed with "Surface is not configured for presentation", and the device's default
 /// error handler panicked (#7007). `lost` is the device's [`DeviceLost`], marked by then.
-pub fn configure_captured(
-    device: &wgpu::Device,
-    lost: &DeviceLost,
-    configure: impl FnOnce(),
-) -> Result<(), ConfigureError> {
+pub fn configure_captured(device: &wgpu::Device, lost: &DeviceLost, configure: impl FnOnce()) -> Result<(), ConfigureError> {
     let ((), failed) = capture_errors(device, configure);
     if let Some(error) = failed {
         return Err(ConfigureError::Refused(error));
@@ -1008,9 +900,7 @@ impl ConfigureRetry {
     /// How long until the next try is due at `now`; `None` when a configure may go ahead (no
     /// refusal pending, or its delay has passed).
     pub fn wait(&self, now: web_time::Instant) -> Option<std::time::Duration> {
-        self.due
-            .and_then(|due| due.checked_duration_since(now))
-            .filter(|left| !left.is_zero())
+        self.due.and_then(|due| due.checked_duration_since(now)).filter(|left| !left.is_zero())
     }
 
     /// Whether a configure (or recreate) may go ahead at `now`.
@@ -1042,12 +932,7 @@ impl ConfigureRetry {
         self.due = now.checked_add(delay);
         let recreate = self.failures % SURFACE_RECREATE_AFTER == 0;
         self.recreate |= recreate;
-        RetryPlan {
-            failures: self.failures,
-            first: self.failures == 1,
-            delay,
-            recreate,
-        }
+        RetryPlan { failures: self.failures, first: self.failures == 1, delay, recreate }
     }
 
     /// The device took a configure: the streak ends, and a pending recreate with it. Returns how
@@ -1059,11 +944,7 @@ impl ConfigureRetry {
     /// Runs `configure` at `now` unless a refused one's retry isn't due yet, and keeps the
     /// streak. The surface's configures all go through here, so an early repaint (input, an
     /// animation) can't bring a retry forward.
-    pub fn attempt<E>(
-        &mut self,
-        now: web_time::Instant,
-        configure: impl FnOnce() -> Result<(), E>,
-    ) -> Attempt<E> {
+    pub fn attempt<E>(&mut self, now: web_time::Instant, configure: impl FnOnce() -> Result<(), E>) -> Attempt<E> {
         if let Some(left) = self.wait(now) {
             return Attempt::Waiting(left);
         }
@@ -1094,23 +975,13 @@ pub enum Attempt<E> {
 /// presents without waiting where its surface can (Mailbox, which doesn't tear, before
 /// Immediate); the main window's vsync still paces both. A `configured` mode without vsync is
 /// kept everywhere.
-pub fn viewport_present_mode(
-    root: bool,
-    configured: wgpu::PresentMode,
-    supported: &[wgpu::PresentMode],
-) -> wgpu::PresentMode {
+pub fn viewport_present_mode(root: bool, configured: wgpu::PresentMode, supported: &[wgpu::PresentMode]) -> wgpu::PresentMode {
     use wgpu::PresentMode;
-    let waits = matches!(
-        configured,
-        PresentMode::AutoVsync | PresentMode::Fifo | PresentMode::FifoRelaxed
-    );
+    let waits = matches!(configured, PresentMode::AutoVsync | PresentMode::Fifo | PresentMode::FifoRelaxed);
     if root || !waits {
         return configured;
     }
-    [PresentMode::Mailbox, PresentMode::Immediate]
-        .into_iter()
-        .find(|mode| supported.contains(mode))
-        .unwrap_or(configured)
+    [PresentMode::Mailbox, PresentMode::Immediate].into_iter().find(|mode| supported.contains(mode)).unwrap_or(configured)
 }
 
 /// SolidCraft: the surface size for a window of `width` x `height` pixels on a device whose
@@ -1199,13 +1070,7 @@ mod device_lost_tests {
     /// Acquire a frame from `surface` and end it as `end`.
     fn run_frame(surface: &Surface, end: End) {
         surface.image_held.set(true);
-        let frame = super::AcquiredFrame::new(
-            Frame {
-                surface,
-                presented: false,
-            },
-            Texture(surface),
-        );
+        let frame = super::AcquiredFrame::new(Frame { surface, presented: false }, Texture(surface));
         match end {
             End::Present => frame.present(|mut frame| {
                 frame.presented = true;
@@ -1233,16 +1098,8 @@ mod device_lost_tests {
                 let surface = Surface::default();
                 surface.lost.set(lost);
                 run_frame(&surface, end);
-                let first = if matches!(end, End::Present) {
-                    "present"
-                } else {
-                    "discard"
-                };
-                assert_eq!(
-                    *surface.calls.borrow(),
-                    [first, "free"],
-                    "lost {lost}, {end:?}"
-                );
+                let first = if matches!(end, End::Present) { "present" } else { "discard" };
+                assert_eq!(*surface.calls.borrow(), [first, "free"], "lost {lost}, {end:?}");
                 assert!(!surface.image_held.get(), "lost {lost}, {end:?}");
             }
         }

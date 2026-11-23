@@ -20,11 +20,7 @@ impl AppTitleIconSetter {
             icon_data = None;
         }
 
-        Self {
-            title,
-            icon_data,
-            status: AppIconStatus::NotSetTryAgain,
-        }
+        Self { title, icon_data, status: AppIconStatus::NotSetTryAgain }
     }
 
     /// Call once per frame; we will set the icon when we can.
@@ -82,8 +78,7 @@ fn set_app_icon_windows(icon_data: &IconData) -> AppIconStatus {
     use crate::icon_data::IconDataExt as _;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateIconFromResourceEx, GetSystemMetrics, HICON, ICON_BIG, ICON_SMALL, LR_DEFAULTCOLOR,
-        SM_CXICON, SM_CXSMICON, SendMessageW, WM_SETICON,
+        CreateIconFromResourceEx, GetSystemMetrics, HICON, ICON_BIG, ICON_SMALL, LR_DEFAULTCOLOR, SM_CXICON, SM_CXSMICON, SendMessageW, WM_SETICON,
     };
 
     // We would get fairly far already with winit's `set_window_icon` (which is exposed to eframe) actually!
@@ -103,12 +98,7 @@ fn set_app_icon_windows(icon_data: &IconData) -> AppIconStatus {
     }
 
     fn create_hicon_with_scale(unscaled_image: &image::RgbaImage, target_size: i32) -> HICON {
-        let image_scaled = image::imageops::resize(
-            unscaled_image,
-            target_size as _,
-            target_size as _,
-            image::imageops::Lanczos3,
-        );
+        let image_scaled = image::imageops::resize(unscaled_image, target_size as _, target_size as _, image::imageops::Lanczos3);
 
         // Creating transparent icons with WinApi is a huge mess.
         // We'd need to go through CreateIconIndirect's ICONINFO struct which then
@@ -116,13 +106,7 @@ fn set_app_icon_windows(icon_data: &IconData) -> AppIconStatus {
         // Instead we workaround this by creating a png which CreateIconFromResourceEx magically understands.
         // This is a pretty horrible hack as we spend a lot of time encoding, but at least the code is a lot shorter.
         let mut image_scaled_bytes: Vec<u8> = Vec::new();
-        if image_scaled
-            .write_to(
-                &mut std::io::Cursor::new(&mut image_scaled_bytes),
-                image::ImageFormat::Png,
-            )
-            .is_err()
-        {
+        if image_scaled.write_to(&mut std::io::Cursor::new(&mut image_scaled_bytes), image::ImageFormat::Png).is_err() {
             return core::ptr::null_mut();
         }
 
@@ -165,12 +149,7 @@ fn set_app_icon_windows(icon_data: &IconData) -> AppIconStatus {
 
         // SAFETY: Unsafe WinApi function, takes objects previously created with WinAPI, all checked for null prior.
         unsafe {
-            SendMessageW(
-                window_handle,
-                WM_SETICON,
-                ICON_BIG as usize,
-                icon_big as isize,
-            );
+            SendMessageW(window_handle, WM_SETICON, ICON_BIG as usize, icon_big as isize);
         }
     }
     {
@@ -184,12 +163,7 @@ fn set_app_icon_windows(icon_data: &IconData) -> AppIconStatus {
 
         // SAFETY: Unsafe WinApi function, takes objects previously created with WinAPI, all checked for null prior.
         unsafe {
-            SendMessageW(
-                window_handle,
-                WM_SETICON,
-                ICON_SMALL as usize,
-                icon_small as isize,
-            );
+            SendMessageW(window_handle, WM_SETICON, ICON_SMALL as usize, icon_small as isize);
         }
     }
 
@@ -262,10 +236,7 @@ fn set_title_and_icon_mac(title: &str, icon_data: Option<&IconData>) -> AppIconS
             };
 
             log::trace!("NSImage::initWithSize");
-            let app_icon = NSImage::initWithSize(
-                NSImage::alloc(),
-                NSSize::new(image.width() as f64, image.height() as f64),
-            );
+            let app_icon = NSImage::initWithSize(NSImage::alloc(), NSSize::new(image.width() as f64, image.height() as f64));
             log::trace!("NSImage::addRepresentation");
             app_icon.addRepresentation(&image_rep);
 

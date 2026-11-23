@@ -28,11 +28,7 @@ impl crate::Demo for CodeEditor {
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
         use crate::View as _;
-        egui::Window::new(self.name())
-            .open(open)
-            .default_height(500.0)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| self.ui(ui));
+        egui::Window::new(self.name()).open(open).default_height(500.0).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| self.ui(ui));
     }
 }
 
@@ -68,8 +64,7 @@ impl crate::View for CodeEditor {
             });
         }
 
-        let mut theme =
-            egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
+        let mut theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
         ui.collapsing("Theme", |ui| {
             ui.group(|ui| {
                 theme.ui(ui);
@@ -78,13 +73,7 @@ impl crate::View for CodeEditor {
         });
 
         let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-            let mut layout_job = egui_extras::syntax_highlighting::highlight(
-                ui.ctx(),
-                ui.style(),
-                &theme,
-                buf.as_str(),
-                language,
-            );
+            let mut layout_job = egui_extras::syntax_highlighting::highlight(ui.ctx(), ui.style(), &theme, buf.as_str(), language);
             layout_job.wrap.max_width = wrap_width;
             ui.fonts_mut(|f| f.layout_job(layout_job))
         };
@@ -102,11 +91,7 @@ impl crate::View for CodeEditor {
                 editor
             } else {
                 use egui::Color32;
-                let background_color = if theme.is_dark() {
-                    Color32::BLACK
-                } else {
-                    Color32::WHITE
-                };
+                let background_color = if theme.is_dark() { Color32::BLACK } else { Color32::WHITE };
                 editor.background_color(background_color)
             };
             ui.add(editor);

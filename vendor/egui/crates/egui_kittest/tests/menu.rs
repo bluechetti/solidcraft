@@ -10,10 +10,7 @@ struct TestMenu {
 
 impl TestMenu {
     fn new(config: MenuConfig) -> Self {
-        Self {
-            config,
-            checked: false,
-        }
+        Self { config, checked: false }
     }
 
     fn ui(&mut self, ui: &mut Ui) {
@@ -29,38 +26,24 @@ impl TestMenu {
                                     _ = ui.button(format!("Button {i} in Submenu A"));
                                 }
                             });
-                            ui.menu_image_text_button(
-                                include_image!("../../eframe/data/icon.png"),
-                                "Submenu B with icon",
-                                |ui| {
-                                    _ = ui.button("Button in Submenu B");
-                                },
-                            );
+                            ui.menu_image_text_button(include_image!("../../eframe/data/icon.png"), "Submenu B with icon", |ui| {
+                                _ = ui.button("Button in Submenu B");
+                            });
                             SubMenuButton::new("Submenu C (CloseOnClickOutside)")
-                                .config(
-                                    MenuConfig::new()
-                                        .close_behavior(PopupCloseBehavior::CloseOnClickOutside),
-                                )
+                                .config(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClickOutside))
                                 .ui(ui, |ui| {
                                     _ = ui.button("Button in Submenu C");
                                     ui.checkbox(&mut self.checked, "Checkbox in Submenu C");
                                     ui.menu_button("Submenu D", |ui| {
-                                        if ui
-                                            .button("Button in Submenu D (close on click)")
-                                            .clicked()
-                                        {
+                                        if ui.button("Button in Submenu D (close on click)").clicked() {
                                             ui.close();
                                         }
                                     });
                                 });
                         });
-                        ui.menu_image_text_button(
-                            include_image!("../../eframe/data/icon.png"),
-                            "Menu B with icon",
-                            |ui| {
-                                _ = ui.button("Button in Menu B");
-                            },
-                        );
+                        ui.menu_image_text_button(include_image!("../../eframe/data/icon.png"), "Menu B with icon", |ui| {
+                            _ = ui.button("Button in Menu B");
+                        });
                         _ = ui.button("Menu Button");
                         ui.menu_button("Menu C", |ui| {
                             _ = ui.button("Button in Menu C");
@@ -75,15 +58,13 @@ impl TestMenu {
     }
 
     fn into_harness(self) -> Harness<'static, Self> {
-        Harness::builder()
-            .with_size(egui::Vec2::new(500.0, 300.0))
-            .build_ui_state(
-                |ui, menu| {
-                    egui_extras::install_image_loaders(ui.ctx());
-                    menu.ui(ui);
-                },
-                self,
-            )
+        Harness::builder().with_size(egui::Vec2::new(500.0, 300.0)).build_ui_state(
+            |ui, menu| {
+                egui_extras::install_image_loaders(ui.ctx());
+                menu.ui(ui);
+            },
+            self,
+        )
     }
 }
 
@@ -91,16 +72,12 @@ impl TestMenu {
 fn menu_close_on_click_outside() {
     // We're intentionally setting CloseOnClick here so we can test if a submenu can override the
     // close behavior. (Note how Submenu C has CloseOnClickOutside set)
-    let mut harness =
-        TestMenu::new(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClick))
-            .into_harness();
+    let mut harness = TestMenu::new(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClick)).into_harness();
 
     harness.get_by_label("Menu A").click();
     harness.run();
 
-    harness
-        .get_by_label_contains("Submenu C (CloseOnClickOutside)")
-        .hover();
+    harness.get_by_label_contains("Submenu C (CloseOnClickOutside)").hover();
     harness.run();
 
     // We should be able to check the checkbox without closing the menu
@@ -124,9 +101,7 @@ fn menu_close_on_click_outside() {
 
 #[test]
 fn menu_close_on_click() {
-    let mut harness =
-        TestMenu::new(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClick))
-            .into_harness();
+    let mut harness = TestMenu::new(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClick)).into_harness();
 
     harness.get_by_label("Menu A").click();
     harness.run();
@@ -144,9 +119,7 @@ fn menu_close_on_click() {
 fn clicking_submenu_button_should_never_close_menu() {
     // We test for this since otherwise the menu wouldn't work on touch devices
     // The other tests use .hover to open submenus, but this test explicitly uses .click
-    let mut harness =
-        TestMenu::new(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClick))
-            .into_harness();
+    let mut harness = TestMenu::new(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClick)).into_harness();
 
     harness.get_by_label("Menu A").click();
     harness.run();
@@ -193,26 +166,24 @@ fn hovering_menu_bar_button_switches_open_menu() {
 
 #[test]
 fn hovering_menu_bar_button_ignores_unrelated_popups() {
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(500.0, 300.0))
-        .build_ui(|ui| {
-            MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    _ = ui.button("Button in File");
-                });
-                ui.menu_button("Edit", |ui| {
-                    _ = ui.button("Button in Edit");
-                });
+    let mut harness = Harness::builder().with_size(egui::vec2(500.0, 300.0)).build_ui(|ui| {
+        MenuBar::new().ui(ui, |ui| {
+            ui.menu_button("File", |ui| {
+                _ = ui.button("Button in File");
             });
-            MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("Other bar", |ui| {
-                    _ = ui.button("Button in Other bar");
-                });
-            });
-            ui.menu_button("Standalone", |ui| {
-                _ = ui.button("Button in Standalone");
+            ui.menu_button("Edit", |ui| {
+                _ = ui.button("Button in Edit");
             });
         });
+        MenuBar::new().ui(ui, |ui| {
+            ui.menu_button("Other bar", |ui| {
+                _ = ui.button("Button in Other bar");
+            });
+        });
+        ui.menu_button("Standalone", |ui| {
+            _ = ui.button("Button in Standalone");
+        });
+    });
 
     // A popup that is not part of the menu bar should not make the bar open on hover:
     harness.get_by_label("Standalone").click();
@@ -257,9 +228,7 @@ fn menu_snapshots() {
     harness.run();
     results.add(harness.try_snapshot("menu/opened"));
 
-    harness
-        .get_by_label_contains("Submenu C (CloseOnClickOutside)")
-        .hover();
+    harness.get_by_label_contains("Submenu C (CloseOnClickOutside)").hover();
     harness.run();
     results.add(harness.try_snapshot("menu/submenu"));
 
@@ -272,50 +241,37 @@ fn menu_snapshots() {
 fn submenu_respects_custom_style() {
     const FILL: egui::Color32 = egui::Color32::from_rgb(123, 45, 67);
     const CORNER_RADIUS: egui::CornerRadius = egui::CornerRadius::same(13);
-    const STROKE: egui::Stroke = egui::Stroke {
-        width: 3.0,
-        color: egui::Color32::GREEN,
-    };
+    const STROKE: egui::Stroke = egui::Stroke { width: 3.0, color: egui::Color32::GREEN };
 
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(500.0, 300.0))
-        .build_ui(|ui| {
-            MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("Menu", |ui| {
-                    SubMenuButton::new("Styled submenu")
-                        .config(MenuConfig::new().style(|style: &mut egui::Style| {
-                            style.visuals.window_fill = FILL;
-                            style.visuals.window_stroke = STROKE;
-                            style.visuals.menu_corner_radius = CORNER_RADIUS;
-                        }))
-                        .ui(ui, |ui| {
+    let mut harness = Harness::builder().with_size(egui::vec2(500.0, 300.0)).build_ui(|ui| {
+        MenuBar::new().ui(ui, |ui| {
+            ui.menu_button("Menu", |ui| {
+                SubMenuButton::new("Styled submenu")
+                    .config(MenuConfig::new().style(|style: &mut egui::Style| {
+                        style.visuals.window_fill = FILL;
+                        style.visuals.window_stroke = STROKE;
+                        style.visuals.menu_corner_radius = CORNER_RADIUS;
+                    }))
+                    .ui(ui, |ui| {
+                        assert_eq!(ui.visuals().window_fill(), FILL);
+                        ui.label("I should have a thick green outline and red fill");
+                        ui.menu_button("Sub-submenu", |ui| {
                             assert_eq!(ui.visuals().window_fill(), FILL);
-                            ui.label("I should have a thick green outline and red fill");
-                            ui.menu_button("Sub-submenu", |ui| {
-                                assert_eq!(ui.visuals().window_fill(), FILL);
-                                ui.label("I should inherit the style");
-                            });
+                            ui.label("I should inherit the style");
                         });
-                });
+                    });
             });
         });
+    });
 
     harness.get_by_label("Menu").click();
     harness.run();
     harness.get_by_label_contains("Styled submenu").hover();
     harness.run();
-    assert!(
-        harness
-            .query_by_label("I should have a thick green outline and red fill")
-            .is_some()
-    );
+    assert!(harness.query_by_label("I should have a thick green outline and red fill").is_some());
     harness.get_by_label_contains("Sub-submenu").hover();
     harness.run();
-    assert!(
-        harness
-            .query_by_label("I should inherit the style")
-            .is_some()
-    );
+    assert!(harness.query_by_label("I should inherit the style").is_some());
 
     harness.fit_contents();
 

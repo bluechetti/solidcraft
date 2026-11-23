@@ -1,7 +1,4 @@
-use super::{
-    Bytes, BytesLoadResult, BytesLoader, BytesPoll, Context, Cow, HashMap, LoadError, Mutex,
-    generate_loader_id,
-};
+use super::{Bytes, BytesLoadResult, BytesLoader, BytesPoll, Context, Cow, HashMap, LoadError, Mutex, generate_loader_id};
 
 /// Maps URI:s to [`Bytes`], e.g. found with `include_bytes!`.
 ///
@@ -13,16 +10,13 @@ pub struct DefaultBytesLoader {
 
 impl DefaultBytesLoader {
     pub fn insert(&self, uri: impl Into<Cow<'static, str>>, bytes: impl Into<Bytes>) {
-        self.cache
-            .lock()
-            .entry(uri.into())
-            .or_insert_with_key(|_uri| {
-                let bytes: Bytes = bytes.into();
+        self.cache.lock().entry(uri.into()).or_insert_with_key(|_uri| {
+            let bytes: Bytes = bytes.into();
 
-                log::trace!("loaded {} bytes for uri {_uri:?}", bytes.len());
+            log::trace!("loaded {} bytes for uri {_uri:?}", bytes.len());
 
-                bytes
-            });
+            bytes
+        });
     }
 }
 
@@ -34,16 +28,10 @@ impl BytesLoader for DefaultBytesLoader {
     fn load(&self, _: &Context, uri: &str) -> BytesLoadResult {
         // We accept uri:s that don't start with `bytes://` too… for now.
         match self.cache.lock().get(uri).cloned() {
-            Some(bytes) => Ok(BytesPoll::Ready {
-                size: None,
-                bytes,
-                mime: None,
-            }),
+            Some(bytes) => Ok(BytesPoll::Ready { size: None, bytes, mime: None }),
             None => {
                 if uri.starts_with("bytes://") {
-                    Err(LoadError::Loading(
-                        "Bytes not found. Did you forget to call Context::include_bytes?".into(),
-                    ))
+                    Err(LoadError::Loading("Bytes not found. Did you forget to call Context::include_bytes?".into()))
                 } else {
                     Err(LoadError::NotSupported)
                 }

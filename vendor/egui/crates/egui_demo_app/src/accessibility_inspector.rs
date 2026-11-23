@@ -5,8 +5,8 @@ use accesskit_consumer::{FilterResult, FullNodeId, NodeRef, Tree, TreeChangeHand
 
 use eframe::epaint::text::TextWrapMode;
 use egui::{
-    Button, Color32, Context, Event, Frame, FullOutput, Id, Key, KeyboardShortcut, Label,
-    Modifiers, Panel, RawInput, RichText, ScrollArea, Ui, collapsing_header::CollapsingState,
+    Button, Color32, Context, Event, Frame, FullOutput, Id, Key, KeyboardShortcut, Label, Modifiers, Panel, RawInput, RichText, ScrollArea, Ui,
+    collapsing_header::CollapsingState,
 };
 
 /// This [`egui::Plugin`] adds an inspector panel.
@@ -48,9 +48,7 @@ impl egui::Plugin for AccessibilityInspectorPlugin {
 
     fn input_hook(&mut self, _ctx: &Context, input: &mut RawInput) {
         if let Some(queued_action) = self.queued_action.take() {
-            input
-                .events
-                .push(Event::AccessKitActionRequest(queued_action));
+            input.events.push(Event::AccessKitActionRequest(queued_action));
         }
     }
 
@@ -72,12 +70,7 @@ impl egui::Plugin for AccessibilityInspectorPlugin {
     }
 
     fn on_begin_pass(&mut self, ui: &mut Ui) {
-        if ui.input_mut(|i| {
-            i.consume_shortcut(&KeyboardShortcut::new(
-                Modifiers::COMMAND | Modifiers::ALT,
-                Key::I,
-            ))
-        }) {
+        if ui.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::I))) {
             self.open = !self.open;
         }
 
@@ -90,12 +83,9 @@ impl egui::Plugin for AccessibilityInspectorPlugin {
         Panel::right("accessibility_inspector").show(ui, |ui| {
             ui.heading("🔎 AccessKit Inspector");
             if let Some(selected_node) = self.selected_node {
-                Panel::bottom("details_panel")
-                    .frame(Frame::new())
-                    .show_separator_line(false)
-                    .show(ui, |ui| {
-                        self.selection_ui(ui, selected_node);
-                    });
+                Panel::bottom("details_panel").frame(Frame::new()).show_separator_line(false).show(ui, |ui| {
+                    self.selection_ui(ui, selected_node);
+                });
             }
 
             ui.style_mut().wrap_mode = Some(TextWrapMode::Truncate);
@@ -126,43 +116,31 @@ impl AccessibilityInspectorPlugin {
             let node_response = ui.ctx().read_response(egui_node_id);
 
             if let Some(widget_response) = node_response {
-                ui.debug_painter().debug_rect(
-                    widget_response.rect,
-                    ui.style_mut().visuals.selection.bg_fill,
-                    "",
-                );
+                ui.debug_painter().debug_rect(widget_response.rect, ui.style_mut().visuals.selection.bg_fill, "");
             }
 
-            egui::Grid::new("node_details_grid")
-                .num_columns(2)
-                .show(ui, |ui| {
-                    ui.label("Node ID");
-                    ui.strong(format!("{selected_node:?}"));
-                    ui.end_row();
+            egui::Grid::new("node_details_grid").num_columns(2).show(ui, |ui| {
+                ui.label("Node ID");
+                ui.strong(format!("{selected_node:?}"));
+                ui.end_row();
 
-                    ui.label("Role");
-                    ui.strong(format!("{:?}", node.role()));
-                    ui.end_row();
+                ui.label("Role");
+                ui.strong(format!("{:?}", node.role()));
+                ui.end_row();
 
-                    ui.label("Label");
-                    ui.add(
-                        Label::new(RichText::new(node.label().unwrap_or_default()).strong())
-                            .truncate(),
-                    );
-                    ui.end_row();
+                ui.label("Label");
+                ui.add(Label::new(RichText::new(node.label().unwrap_or_default()).strong()).truncate());
+                ui.end_row();
 
-                    ui.label("Value");
-                    ui.add(
-                        Label::new(RichText::new(node.value().unwrap_or_default()).strong())
-                            .truncate(),
-                    );
-                    ui.end_row();
+                ui.label("Value");
+                ui.add(Label::new(RichText::new(node.value().unwrap_or_default()).strong()).truncate());
+                ui.end_row();
 
-                    ui.label("Children");
-                    ui.label(RichText::new(node.children().len().to_string()).strong());
+                ui.label("Children");
+                ui.label(RichText::new(node.children().len().to_string()).strong());
 
-                    ui.end_row();
-                });
+                ui.end_row();
+            });
 
             ui.label("Actions");
             ui.horizontal_wrapped(|ui| {
@@ -175,16 +153,9 @@ impl AccessibilityInspectorPlugin {
                 });
 
                 for action in all_actions {
-                    if node.supports_action(action, &|_node| FilterResult::Include)
-                        && ui.button(format!("{action:?}")).clicked()
-                    {
+                    if node.supports_action(action, &|_node| FilterResult::Include) && ui.button(format!("{action:?}")).clicked() {
                         let (target_node, target_tree) = node.locate();
-                        let action_request = ActionRequest {
-                            target_node,
-                            target_tree,
-                            action,
-                            data: None,
-                        };
+                        let action_request = ActionRequest { target_node, target_tree, action, data: None };
                         self.queued_action = Some(action_request);
                     }
                 }
@@ -196,17 +167,11 @@ impl AccessibilityInspectorPlugin {
 
     fn node_ui(ui: &mut Ui, node: &NodeRef<'_>, selected_node: &mut Option<FullNodeId>) {
         if node.locate() == (Self::id().value().into(), accesskit::TreeId::ROOT)
-            || node
-                .value()
-                .as_deref()
-                .is_some_and(|l| l.contains("AccessKit Inspector"))
+            || node.value().as_deref().is_some_and(|l| l.contains("AccessKit Inspector"))
         {
             return;
         }
-        let label = node
-            .label()
-            .or_else(|| node.value())
-            .unwrap_or_else(|| node.locate().0.0.to_string());
+        let label = node.label().or_else(|| node.value()).unwrap_or_else(|| node.locate().0.0.to_string());
         let label = format!("({:?}) {}", node.role(), label);
 
         // Safety: This is safe since the `accesskit::NodeId` was created from an `egui::Id`.
@@ -218,29 +183,20 @@ impl AccessibilityInspectorPlugin {
             let has_children = child_count > 0;
             let default_open = child_count == 1 && node.role() != accesskit::Role::Label;
 
-            let mut collapsing = CollapsingState::load_with_default_open(
-                ui.ctx(),
-                egui_node_id.with("ak_collapse"),
-                default_open,
-            );
+            let mut collapsing = CollapsingState::load_with_default_open(ui.ctx(), egui_node_id.with("ak_collapse"), default_open);
 
             let header_response = ui.horizontal(|ui| {
                 let text = if collapsing.is_open() { "⏷" } else { "⏵" };
 
-                if ui
-                    .add_visible(has_children, Button::new(text).frame_when_inactive(false))
-                    .clicked()
-                {
+                if ui.add_visible(has_children, Button::new(text).frame_when_inactive(false)).clicked() {
                     collapsing.set_open(!collapsing.is_open());
                 }
-                let label_response =
-                    ui.selectable_value(selected_node, Some(node.id()), label.clone());
+                let label_response = ui.selectable_value(selected_node, Some(node.id()), label.clone());
                 if label_response.hovered() {
                     let widget_response = ui.ctx().read_response(egui_node_id);
 
                     if let Some(widget_response) = widget_response {
-                        ui.debug_painter()
-                            .debug_rect(widget_response.rect, Color32::RED, "");
+                        ui.debug_painter().debug_rect(widget_response.rect, Color32::RED, "");
                     }
                 }
             });

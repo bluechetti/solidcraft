@@ -3,8 +3,8 @@ use core::ops::Range;
 use emath::RectAlign;
 
 use crate::{
-    Atom, Atoms, Button, Event, EventFilter, Id, InputState, IntoAtoms, Key, LayerId, Popup,
-    PopupKind, ScrollArea, SurrenderFocusOn, TextEdit, Ui, WidgetText,
+    Atom, Atoms, Button, Event, EventFilter, Id, InputState, IntoAtoms, Key, LayerId, Popup, PopupKind, ScrollArea, SurrenderFocusOn, TextEdit, Ui,
+    WidgetText,
     class::{ClassName, HasClasses as _},
     text::{CCursor, CCursorRange, CharIndex},
     vec2,
@@ -26,10 +26,7 @@ impl Suggestion {
     /// A suggestion that inserts `insert`, showing it in the popup as-is.
     pub fn new(insert: impl Into<String>) -> Self {
         let insert = insert.into();
-        Self {
-            content: insert.clone().into_atoms(),
-            insert,
-        }
+        Self { content: insert.clone().into_atoms(), insert }
     }
 
     /// What to show in the popup instead of [`Self::insert`].
@@ -237,19 +234,8 @@ impl<'a> CompletionPopup<'a> {
     /// are also captured while the popup is open.
     ///
     /// `suggest` is called once per frame, after the [`TextEdit`] has handled input.
-    pub fn show(
-        self,
-        ui: &mut Ui,
-        text_edit: TextEdit<'_>,
-        suggest: impl FnOnce(&CompletionQuery<'_>) -> Vec<Suggestion>,
-    ) -> CompletionOutput {
-        let Self {
-            id,
-            is_word_boundary,
-            align,
-            max_height,
-            accept_keys,
-        } = self;
+    pub fn show(self, ui: &mut Ui, text_edit: TextEdit<'_>, suggest: impl FnOnce(&CompletionQuery<'_>) -> Vec<Suggestion>) -> CompletionOutput {
+        let Self { id, is_word_boundary, align, max_height, accept_keys } = self;
 
         let mut state = CompletionState::load(ui, id);
 
@@ -281,29 +267,18 @@ impl<'a> CompletionPopup<'a> {
         // so we disable surrendering while hovering the popup
         let popup_id = id.with("completion_popup");
         let popup_layer = LayerId::new(PopupKind::Popup.order(), popup_id);
-        let pointer_on_popup = state.open
-            && ui
-                .ctx()
-                .pointer_interact_pos()
-                .and_then(|pos| ui.ctx().layer_id_at(pos))
-                == Some(popup_layer);
-        let surrender_focus_on = ui
-            .ctx()
-            .options(|options| options.input_options.surrender_focus_on);
+        let pointer_on_popup = state.open && ui.ctx().pointer_interact_pos().and_then(|pos| ui.ctx().layer_id_at(pos)) == Some(popup_layer);
+        let surrender_focus_on = ui.ctx().options(|options| options.input_options.surrender_focus_on);
         if pointer_on_popup {
             ui.ctx().options_mut(|options| {
                 options.input_options.surrender_focus_on = SurrenderFocusOn::Never;
             });
         }
         let (output, text) = text_edit.show_returning_text(ui);
-        ui.ctx()
-            .options_mut(|options| options.input_options.surrender_focus_on = surrender_focus_on);
+        ui.ctx().options_mut(|options| options.input_options.surrender_focus_on = surrender_focus_on);
         let response = output.response.response.clone();
 
-        let cursor = output.cursor_range.map_or_else(
-            || text.as_str().chars().count(),
-            |range| range.primary.index.0,
-        );
+        let cursor = output.cursor_range.map_or_else(|| text.as_str().chars().count(), |range| range.primary.index.0);
         let word_range = word_range_before_cursor(text.as_str(), cursor, &*is_word_boundary);
         let word = text.char_range(word_range.clone()).to_owned();
 
@@ -314,11 +289,7 @@ impl<'a> CompletionPopup<'a> {
         let mut suggestions = if state.dismissed_word.as_deref() == Some(word.as_str()) {
             vec![]
         } else {
-            suggest(&CompletionQuery {
-                text: text.as_str(),
-                word: &word,
-                word_range: word_range.clone(),
-            })
+            suggest(&CompletionQuery { text: text.as_str(), word: &word, word_range: word_range.clone() })
         };
 
         if state.selected_word != word {
@@ -375,18 +346,14 @@ impl<'a> CompletionPopup<'a> {
             accepted_index = clicked;
         }
 
-        let accepted = accepted_index
-            .filter(|&i| i < suggestions.len())
-            .map(|i| suggestions.swap_remove(i));
+        let accepted = accepted_index.filter(|&i| i < suggestions.len()).map(|i| suggestions.swap_remove(i));
         if let Some(accepted) = &accepted {
             text.delete_char_range(word_range.clone());
             let mut ccursor = CCursor::new(word_range.start);
             text.insert_text_at(&mut ccursor, &accepted.insert, usize::MAX);
 
             let mut text_edit_state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
-            text_edit_state
-                .cursor
-                .set_char_range(Some(CCursorRange::one(ccursor)));
+            text_edit_state.cursor.set_char_range(Some(CCursorRange::one(ccursor)));
             text_edit_state.store(ui.ctx(), id);
 
             state.dismissed_word = None;
@@ -396,11 +363,7 @@ impl<'a> CompletionPopup<'a> {
         state.open = is_open;
         state.store(ui, id);
 
-        CompletionOutput {
-            text_edit: output,
-            accepted,
-            is_open,
-        }
+        CompletionOutput { text_edit: output, accepted, is_open }
     }
 }
 
@@ -427,18 +390,8 @@ fn consume_unmodified_key(input: &mut InputState, key: Key) -> usize {
 }
 
 /// The char range of the word that ends at the cursor (a char index).
-fn word_range_before_cursor(
-    text: &str,
-    cursor: usize,
-    is_word_boundary: &dyn Fn(char) -> bool,
-) -> Range<CharIndex> {
-    let start = text
-        .chars()
-        .take(cursor)
-        .enumerate()
-        .filter(|&(_, c)| is_word_boundary(c))
-        .last()
-        .map_or(0, |(i, _)| i + 1);
+fn word_range_before_cursor(text: &str, cursor: usize, is_word_boundary: &dyn Fn(char) -> bool) -> Range<CharIndex> {
+    let start = text.chars().take(cursor).enumerate().filter(|&(_, c)| is_word_boundary(c)).last().map_or(0, |(i, _)| i + 1);
     CharIndex(start)..CharIndex(cursor)
 }
 

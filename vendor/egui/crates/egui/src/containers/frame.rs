@@ -1,9 +1,6 @@
 //! Frame container
 
-use crate::{
-    InnerResponse, Response, Sense, Style, Ui, UiBuilder, UiKind, UiStackInfo, epaint,
-    layers::ShapeIdx,
-};
+use crate::{InnerResponse, Response, Sense, Style, Ui, UiBuilder, UiKind, UiStackInfo, epaint, layers::ShapeIdx};
 use epaint::{Color32, CornerRadius, Margin, MarginF32, Rect, Shadow, Shape, Stroke};
 
 /// A frame around some content, including margin, colors, etc.
@@ -147,10 +144,7 @@ fn frame_size() {
         32,
         "Frame changed size! If it shrank - good! Update this test. If it grew - bad! Try to find a way to avoid it."
     );
-    assert!(
-        core::mem::size_of::<Frame>() <= 64,
-        "Frame is getting way too big!"
-    );
+    assert!(core::mem::size_of::<Frame>() <= 64, "Frame is getting way too big!");
 }
 
 /// ## Constructors
@@ -183,9 +177,7 @@ impl Frame {
     }
 
     pub fn side_top_panel(style: &Style) -> Self {
-        Self::new()
-            .inner_margin(Margin::symmetric(8, 2))
-            .fill(style.visuals.panel_fill)
+        Self::new().inner_margin(Margin::symmetric(8, 2)).fill(style.visuals.panel_fill)
     }
 
     pub fn central_panel(style: &Style) -> Self {
@@ -310,14 +302,9 @@ impl Frame {
     /// Use this when stroke or expansion might change on hover, and you don't want it to cause
     /// layout shifts.
     #[inline]
-    pub fn apply_stroke_and_expansion_without_layout_shift(
-        mut self,
-        stroke: Stroke,
-        expansion: f32,
-    ) -> Self {
+    pub fn apply_stroke_and_expansion_without_layout_shift(mut self, stroke: Stroke, expansion: f32) -> Self {
         self.outer_margin = self.outer_margin - Margin::from(expansion);
-        self.inner_margin =
-            self.inner_margin + Margin::from(expansion + self.stroke.width - stroke.width);
+        self.inner_margin = self.inner_margin + Margin::from(expansion + self.stroke.width - stroke.width);
         self.stroke = stroke;
         self
     }
@@ -360,9 +347,7 @@ impl Frame {
     /// [`Self::inner_margin`] + [`Self::stroke`]`.width` + [`Self::outer_margin`].
     #[inline]
     pub fn total_margin(&self) -> MarginF32 {
-        MarginF32::from(self.inner_margin)
-            + MarginF32::from(self.stroke.width)
-            + MarginF32::from(self.outer_margin)
+        MarginF32::from(self.inner_margin) + MarginF32::from(self.stroke.width) + MarginF32::from(self.outer_margin)
     }
 
     /// Calculate the `fill_rect` from the `content_rect`.
@@ -420,17 +405,9 @@ impl Frame {
         max_content_rect.max.x = max_content_rect.max.x.max(max_content_rect.min.x);
         max_content_rect.max.y = max_content_rect.max.y.max(max_content_rect.min.y);
 
-        let content_ui = ui.new_child(
-            UiBuilder::new()
-                .ui_stack_info(UiStackInfo::new(UiKind::Frame).with_frame(self))
-                .max_rect(max_content_rect),
-        );
+        let content_ui = ui.new_child(UiBuilder::new().ui_stack_info(UiStackInfo::new(UiKind::Frame).with_frame(self)).max_rect(max_content_rect));
 
-        Prepared {
-            frame: self,
-            where_to_put_background,
-            content_ui,
-        }
+        Prepared { frame: self, where_to_put_background, content_ui }
     }
 
     /// Show the given ui surrounded by this frame.
@@ -443,11 +420,7 @@ impl Frame {
     /// Show using dynamic dispatch.
     ///
     /// The returned [`InnerResponse::response`] will have the rect of the entire frame, including margins.
-    pub fn show_dyn<'c, R>(
-        self,
-        ui: &mut Ui,
-        add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>,
-    ) -> InnerResponse<R> {
+    pub fn show_dyn<'c, R>(self, ui: &mut Ui, add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>) -> InnerResponse<R> {
         let mut prepared = self.begin(ui);
         let ret = add_contents(&mut prepared.content_ui);
         let response = prepared.end(ui);
@@ -456,24 +429,11 @@ impl Frame {
 
     /// Paint this frame as a shape.
     pub fn paint(&self, content_rect: Rect) -> Shape {
-        let Self {
-            inner_margin: _,
-            fill,
-            stroke,
-            corner_radius,
-            outer_margin: _,
-            shadow,
-        } = *self;
+        let Self { inner_margin: _, fill, stroke, corner_radius, outer_margin: _, shadow } = *self;
 
         let widget_rect = self.widget_rect(content_rect);
 
-        let frame_shape = Shape::Rect(epaint::RectShape::new(
-            widget_rect,
-            corner_radius,
-            fill,
-            stroke,
-            epaint::StrokeKind::Inside,
-        ));
+        let frame_shape = Shape::Rect(epaint::RectShape::new(widget_rect, corner_radius, fill, stroke, epaint::StrokeKind::Inside));
 
         if shadow == Default::default() {
             frame_shape
@@ -487,10 +447,7 @@ impl Frame {
 impl Prepared {
     fn outer_rect(&self) -> Rect {
         let content_rect = self.content_ui.min_rect();
-        content_rect
-            + self.frame.inner_margin
-            + MarginF32::from(self.frame.stroke.width)
-            + self.frame.outer_margin
+        content_rect + self.frame.inner_margin + MarginF32::from(self.frame.stroke.width) + self.frame.outer_margin
     }
 
     /// Allocate the space that was used by [`Self::content_ui`].

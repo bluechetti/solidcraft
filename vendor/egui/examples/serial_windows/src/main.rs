@@ -13,29 +13,17 @@ fn main() -> eframe::Result {
     };
 
     log::info!("Starting first window…");
-    eframe::run_native(
-        "First Window",
-        options.clone(),
-        Box::new(|_cc| Ok(Box::new(MyApp { has_next: true }))),
-    )?;
+    eframe::run_native("First Window", options.clone(), Box::new(|_cc| Ok(Box::new(MyApp { has_next: true }))))?;
 
     std::thread::sleep(core::time::Duration::from_secs(2));
 
     log::info!("Starting second window…");
-    eframe::run_native(
-        "Second Window",
-        options.clone(),
-        Box::new(|_cc| Ok(Box::new(MyApp { has_next: true }))),
-    )?;
+    eframe::run_native("Second Window", options.clone(), Box::new(|_cc| Ok(Box::new(MyApp { has_next: true }))))?;
 
     std::thread::sleep(core::time::Duration::from_secs(2));
 
     log::info!("Starting third window…");
-    eframe::run_native(
-        "Third Window",
-        options,
-        Box::new(|_cc| Ok(Box::new(MyApp { has_next: false }))),
-    )
+    eframe::run_native("Third Window", options, Box::new(|_cc| Ok(Box::new(MyApp { has_next: false }))))
 }
 
 struct MyApp {

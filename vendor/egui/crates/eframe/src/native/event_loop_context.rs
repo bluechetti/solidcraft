@@ -10,10 +10,7 @@ struct EventLoopGuard;
 impl EventLoopGuard {
     fn new(event_loop: &ActiveEventLoop) -> Self {
         CURRENT_EVENT_LOOP.with(|cell| {
-            assert!(
-                cell.get().is_none(),
-                "Attempted to set a new event loop while one is already set"
-            );
+            assert!(cell.get().is_none(), "Attempted to set a new event loop while one is already set");
             cell.set(Some(core::ptr::from_ref::<ActiveEventLoop>(event_loop)));
         });
         Self

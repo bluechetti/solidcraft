@@ -206,9 +206,7 @@ impl ViewportInfo {
 
             #[expect(clippy::ref_option)]
             fn opt_rect_as_string(v: &Option<Rect>) -> String {
-                v.as_ref().map_or(String::new(), |r| {
-                    format!("Pos: {:?}, size: {:?}", r.min, r.size())
-                })
+                v.as_ref().map_or(String::new(), |r| format!("Pos: {:?}, size: {:?}", r.min, r.size()))
             }
 
             #[expect(clippy::ref_option)]

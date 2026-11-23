@@ -37,12 +37,7 @@ pub struct EventFilter {
 #[expect(clippy::derivable_impls)] // let's be explicit
 impl Default for EventFilter {
     fn default() -> Self {
-        Self {
-            tab: false,
-            horizontal_arrows: false,
-            vertical_arrows: false,
-            escape: false,
-        }
+        Self { tab: false, horizontal_arrows: false, vertical_arrows: false, escape: false }
     }
 }
 

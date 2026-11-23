@@ -53,13 +53,7 @@ impl<'a> StripBuilder<'a> {
     /// Create new strip builder.
     pub fn new(ui: &'a mut Ui) -> Self {
         let cell_layout = *ui.layout();
-        Self {
-            ui,
-            sizing: Default::default(),
-            clip: false,
-            cell_layout,
-            sense: egui::Sense::hover(),
-        }
+        Self { ui, sizing: Default::default(), clip: false, cell_layout, sense: egui::Sense::hover() }
     }
 
     /// Should we clip the contents of each cell? Default: `false`.
@@ -107,23 +101,9 @@ impl<'a> StripBuilder<'a> {
     where
         F: for<'b> FnOnce(Strip<'a, 'b>),
     {
-        let widths = self.sizing.to_lengths(
-            self.ui.available_rect_before_wrap().width(),
-            self.ui.spacing().item_spacing.x,
-        );
-        let mut layout = StripLayout::new(
-            self.ui,
-            CellDirection::Horizontal,
-            self.cell_layout,
-            self.sense,
-        );
-        strip(Strip {
-            layout: &mut layout,
-            direction: CellDirection::Horizontal,
-            clip: self.clip,
-            sizes: widths,
-            size_index: 0,
-        });
+        let widths = self.sizing.to_lengths(self.ui.available_rect_before_wrap().width(), self.ui.spacing().item_spacing.x);
+        let mut layout = StripLayout::new(self.ui, CellDirection::Horizontal, self.cell_layout, self.sense);
+        strip(Strip { layout: &mut layout, direction: CellDirection::Horizontal, clip: self.clip, sizes: widths, size_index: 0 });
         layout.allocate_rect()
     }
 
@@ -135,23 +115,9 @@ impl<'a> StripBuilder<'a> {
     where
         F: for<'b> FnOnce(Strip<'a, 'b>),
     {
-        let heights = self.sizing.to_lengths(
-            self.ui.available_rect_before_wrap().height(),
-            self.ui.spacing().item_spacing.y,
-        );
-        let mut layout = StripLayout::new(
-            self.ui,
-            CellDirection::Vertical,
-            self.cell_layout,
-            self.sense,
-        );
-        strip(Strip {
-            layout: &mut layout,
-            direction: CellDirection::Vertical,
-            clip: self.clip,
-            sizes: heights,
-            size_index: 0,
-        });
+        let heights = self.sizing.to_lengths(self.ui.available_rect_before_wrap().height(), self.ui.spacing().item_spacing.y);
+        let mut layout = StripLayout::new(self.ui, CellDirection::Vertical, self.cell_layout, self.sense);
+        strip(Strip { layout: &mut layout, direction: CellDirection::Vertical, clip: self.clip, sizes: heights, size_index: 0 });
         layout.allocate_rect()
     }
 }
@@ -173,10 +139,7 @@ impl Strip<'_, '_> {
             self.size_index += 1;
             *size
         } else {
-            crate::log_or_panic!(
-                "Added more `Strip` cells than were pre-allocated ({} pre-allocated)",
-                self.sizes.len()
-            );
+            crate::log_or_panic!("Added more `Strip` cells than were pre-allocated ({} pre-allocated)", self.sizes.len());
             8.0 // anything will look wrong, so pick something that is obviously wrong
         };
 
@@ -190,17 +153,8 @@ impl Strip<'_, '_> {
     #[cfg_attr(debug_assertions, track_caller)]
     pub fn cell(&mut self, add_contents: impl FnOnce(&mut Ui)) {
         let (width, height) = self.next_cell_size();
-        let flags = StripLayoutFlags {
-            clip: self.clip,
-            ..Default::default()
-        };
-        self.layout.add(
-            flags,
-            width,
-            height,
-            egui::IdSalt::new(self.size_index),
-            add_contents,
-        );
+        let flags = StripLayoutFlags { clip: self.clip, ..Default::default() };
+        self.layout.add(flags, width, height, egui::IdSalt::new(self.size_index), add_contents);
     }
 
     /// Add an empty cell.

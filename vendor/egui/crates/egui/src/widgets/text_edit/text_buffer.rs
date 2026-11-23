@@ -3,9 +3,7 @@ use core::ops::Range;
 
 use epaint::{
     Galley,
-    text::{
-        ByteIndex, ByteRangeExt as _, CharIndex, CharRange, CharRangeExt as _, cursor::CCursor,
-    },
+    text::{ByteIndex, ByteRangeExt as _, CharIndex, CharRange, CharRangeExt as _, cursor::CCursor},
 };
 
 /// One `\t` character is this many spaces wide (for indentation purposes).
@@ -14,8 +12,7 @@ const TAB_SIZE: usize = 4;
 use crate::{
     text::CCursorRange,
     text_selection::text_cursor_state::{
-        byte_index_from_char_index, ccursor_next_word, ccursor_previous_word,
-        char_index_from_byte_index, find_line_start, slice_char_range,
+        byte_index_from_char_index, ccursor_next_word, ccursor_previous_word, char_index_from_byte_index, find_line_start, slice_char_range,
     },
 };
 
@@ -98,13 +95,7 @@ pub trait TextBuffer {
 
         let remove_len = if self.as_str().chars().nth(line_start.index.0) == Some('\t') {
             Some(1)
-        } else if self
-            .as_str()
-            .chars()
-            .skip(line_start.index.0)
-            .take(TAB_SIZE)
-            .all(|c| c == ' ')
-        {
+        } else if self.as_str().chars().skip(line_start.index.0).take(TAB_SIZE).all(|c| c == ' ') {
             Some(TAB_SIZE)
         } else {
             None
@@ -125,10 +116,7 @@ pub trait TextBuffer {
 
     fn delete_selected_ccursor_range(&mut self, [min, max]: [CCursor; 2]) -> CCursor {
         self.delete_char_range(min.index..max.index);
-        CCursor {
-            index: min.index,
-            prefer_next_row: true,
-        }
+        CCursor { index: min.index, prefer_next_row: true }
     }
 
     fn delete_previous_char(&mut self, ccursor: CCursor) -> CCursor {
@@ -161,12 +149,7 @@ pub trait TextBuffer {
     /// `after_chars` characters after the selection end.
     /// The returned [`CCursorRange`] is adjusted to account for the removed
     /// characters before the selection.
-    fn delete_surrounding_chars(
-        &mut self,
-        mut cursor_range: CCursorRange,
-        before_chars: usize,
-        after_chars: usize,
-    ) -> CCursorRange {
+    fn delete_surrounding_chars(&mut self, mut cursor_range: CCursorRange, before_chars: usize, after_chars: usize) -> CCursorRange {
         let [min, max] = cursor_range.sorted_cursors();
         if after_chars > 0 {
             self.delete_selected_ccursor_range([max, max + after_chars]);
@@ -179,32 +162,16 @@ pub trait TextBuffer {
         cursor_range
     }
 
-    fn delete_paragraph_before_cursor(
-        &mut self,
-        galley: &Galley,
-        cursor_range: &CCursorRange,
-    ) -> CCursor {
+    fn delete_paragraph_before_cursor(&mut self, galley: &Galley, cursor_range: &CCursorRange) -> CCursor {
         let [min, max] = cursor_range.sorted_cursors();
         let min = galley.cursor_begin_of_paragraph(&min);
-        if min == max {
-            self.delete_previous_char(min)
-        } else {
-            self.delete_selected(&CCursorRange::two(min, max))
-        }
+        if min == max { self.delete_previous_char(min) } else { self.delete_selected(&CCursorRange::two(min, max)) }
     }
 
-    fn delete_paragraph_after_cursor(
-        &mut self,
-        galley: &Galley,
-        cursor_range: &CCursorRange,
-    ) -> CCursor {
+    fn delete_paragraph_after_cursor(&mut self, galley: &Galley, cursor_range: &CCursorRange) -> CCursor {
         let [min, max] = cursor_range.sorted_cursors();
         let max = galley.cursor_end_of_paragraph(&max);
-        if min == max {
-            self.delete_next_char(min)
-        } else {
-            self.delete_selected(&CCursorRange::two(min, max))
-        }
+        if min == max { self.delete_next_char(min) } else { self.delete_selected(&CCursorRange::two(min, max)) }
     }
 
     /// Returns a unique identifier for the implementing type.
@@ -261,10 +228,7 @@ impl TextBuffer for String {
     }
 
     fn delete_char_range(&mut self, char_range: Range<CharIndex>) {
-        assert!(
-            char_range.start <= char_range.end,
-            "start must be <= end, but got {char_range:?}"
-        );
+        assert!(char_range.start <= char_range.end, "start must be <= end, but got {char_range:?}");
 
         // Get both byte indices
         let byte_start = byte_index_from_char_index(self.as_str(), char_range.start);
@@ -363,41 +327,16 @@ mod tests {
         } else {
             secondary_index -= 1;
         }
-        let cursor_range = CCursorRange {
-            primary: CCursor::new(primary_index),
-            secondary: CCursor::new(secondary_index),
-            h_pos: None,
-        };
+        let cursor_range = CCursorRange { primary: CCursor::new(primary_index), secondary: CCursor::new(secondary_index), h_pos: None };
         (text, cursor_range)
     }
 
     #[test]
     fn test_txt_n_sel() {
-        assert_eq!(
-            txt_n_sel("<<L[]R>>"),
-            ("<<LR>>".to_owned(), CCursorRange::one(CCursor::new(3)))
-        );
-        assert_eq!(
-            txt_n_sel("<<L[_]R>>"),
-            (
-                "<<L_R>>".to_owned(),
-                CCursorRange::two(CCursor::new(3), CCursor::new(4))
-            )
-        );
-        assert_eq!(
-            txt_n_sel("<<左[_]右>>"),
-            (
-                "<<左_右>>".to_owned(),
-                CCursorRange::two(CCursor::new(3), CCursor::new(4))
-            )
-        );
-        assert_eq!(
-            txt_n_sel("<<L]_[R>>"),
-            (
-                "<<L_R>>".to_owned(),
-                CCursorRange::two(CCursor::new(4), CCursor::new(3))
-            )
-        );
+        assert_eq!(txt_n_sel("<<L[]R>>"), ("<<LR>>".to_owned(), CCursorRange::one(CCursor::new(3))));
+        assert_eq!(txt_n_sel("<<L[_]R>>"), ("<<L_R>>".to_owned(), CCursorRange::two(CCursor::new(3), CCursor::new(4))));
+        assert_eq!(txt_n_sel("<<左[_]右>>"), ("<<左_右>>".to_owned(), CCursorRange::two(CCursor::new(3), CCursor::new(4))));
+        assert_eq!(txt_n_sel("<<L]_[R>>"), ("<<L_R>>".to_owned(), CCursorRange::two(CCursor::new(4), CCursor::new(3))));
     }
 
     #[test]
@@ -408,8 +347,7 @@ mod tests {
             after_chars: usize,
             (expected_text, expected_cursor_range): (String, CCursorRange),
         ) {
-            let new_cursor_range =
-                input_text.delete_surrounding_chars(input_cursor_range, before_chars, after_chars);
+            let new_cursor_range = input_text.delete_surrounding_chars(input_cursor_range, before_chars, after_chars);
             assert_eq!(input_text, expected_text);
             assert_eq!(new_cursor_range, expected_cursor_range);
         }

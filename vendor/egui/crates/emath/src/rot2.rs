@@ -70,24 +70,15 @@ impl Rot2 {
     #[must_use]
     #[inline]
     pub fn inverse(self) -> Self {
-        Self {
-            s: -self.s,
-            c: self.c,
-        } / self.length_squared()
+        Self { s: -self.s, c: self.c } / self.length_squared()
     }
 
     #[must_use]
     #[inline]
     pub fn normalized(self) -> Self {
         let l = self.length();
-        let ret = Self {
-            c: self.c / l,
-            s: self.s / l,
-        };
-        debug_assert!(
-            ret.is_finite(),
-            "Rot2::normalized produced a non-finite result"
-        );
+        let ret = Self { c: self.c / l, s: self.s / l };
+        debug_assert!(ret.is_finite(), "Rot2::normalized produced a non-finite result");
         ret
     }
 }
@@ -95,20 +86,9 @@ impl Rot2 {
 impl core::fmt::Debug for Rot2 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(precision) = f.precision() {
-            write!(
-                f,
-                "Rot2 {{ angle: {:.2$}°, length: {} }}",
-                self.angle().to_degrees(),
-                self.length(),
-                precision
-            )
+            write!(f, "Rot2 {{ angle: {:.2$}°, length: {} }}", self.angle().to_degrees(), self.length(), precision)
         } else {
-            write!(
-                f,
-                "Rot2 {{ angle: {:.1}°, length: {} }}",
-                self.angle().to_degrees(),
-                self.length(),
-            )
+            write!(f, "Rot2 {{ angle: {:.1}°, length: {} }}", self.angle().to_degrees(), self.length(),)
         }
     }
 }
@@ -122,10 +102,7 @@ impl core::ops::Mul<Self> for Rot2 {
         |lc -ls| * |rc -rs|
         |ls  lc|   |rs  rc|
         */
-        Self {
-            c: self.c * r.c - self.s * r.s,
-            s: self.s * r.c + self.c * r.s,
-        }
+        Self { c: self.c * r.c - self.s * r.s, s: self.s * r.c + self.c * r.s }
     }
 }
 
@@ -135,10 +112,7 @@ impl core::ops::Mul<Vec2> for Rot2 {
 
     #[inline]
     fn mul(self, v: Vec2) -> Vec2 {
-        Vec2 {
-            x: self.c * v.x - self.s * v.y,
-            y: self.s * v.x + self.c * v.y,
-        }
+        Vec2 { x: self.c * v.x - self.s * v.y, y: self.s * v.x + self.c * v.y }
     }
 }
 
@@ -148,10 +122,7 @@ impl core::ops::Mul<Rot2> for f32 {
 
     #[inline]
     fn mul(self, r: Rot2) -> Rot2 {
-        Rot2 {
-            c: self * r.c,
-            s: self * r.s,
-        }
+        Rot2 { c: self * r.c, s: self * r.s }
     }
 }
 
@@ -161,10 +132,7 @@ impl core::ops::Mul<f32> for Rot2 {
 
     #[inline]
     fn mul(self, r: f32) -> Self {
-        Self {
-            c: self.c * r,
-            s: self.s * r,
-        }
+        Self { c: self.c * r, s: self.s * r }
     }
 }
 
@@ -174,10 +142,7 @@ impl core::ops::Div<f32> for Rot2 {
 
     #[inline]
     fn div(self, r: f32) -> Self {
-        Self {
-            c: self.c / r,
-            s: self.s / r,
-        }
+        Self { c: self.c / r, s: self.s / r }
     }
 }
 
@@ -208,10 +173,7 @@ mod test {
             let rot = 3.0 * Rot2::from_angle(angle);
             let rotated = rot * vec2(1.0, 0.0);
             let expected = vec2(0.0, 3.0);
-            assert!(
-                (rotated - expected).length() < 1e-5,
-                "Expected {rotated:?} to equal {expected:?}. rot: {rot:?}",
-            );
+            assert!((rotated - expected).length() < 1e-5, "Expected {rotated:?} to equal {expected:?}. rot: {rot:?}",);
 
             let undone = rot.inverse() * rot;
             assert!(undone.angle().abs() < 1e-5);

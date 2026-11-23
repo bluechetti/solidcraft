@@ -43,11 +43,7 @@ struct MyApp {
 
 impl Default for MyApp {
     fn default() -> Self {
-        Self {
-            keep_repainting: true,
-            show_immediate_viewport: Default::default(),
-            show_deferred_viewport: Default::default(),
-        }
+        Self { keep_repainting: true, show_immediate_viewport: Default::default(), show_deferred_viewport: Default::default() }
     }
 }
 
@@ -79,40 +75,26 @@ impl eframe::App for MyApp {
                 }
             });
 
-            if ui
-                .button(
-                    "Click to sleep a bit. That should be visible as a spike in the profiler view!",
-                )
-                .clicked()
-            {
+            if ui.button("Click to sleep a bit. That should be visible as a spike in the profiler view!").clicked() {
                 puffin::profile_scope!("long_sleep");
                 std::thread::sleep(core::time::Duration::from_millis(50));
             }
 
-            ui.checkbox(
-                &mut self.show_immediate_viewport,
-                "Show immediate child viewport",
-            );
+            ui.checkbox(&mut self.show_immediate_viewport, "Show immediate child viewport");
 
             let mut show_deferred_viewport = self.show_deferred_viewport.load(Ordering::Relaxed);
             ui.checkbox(&mut show_deferred_viewport, "Show deferred child viewport");
-            self.show_deferred_viewport
-                .store(show_deferred_viewport, Ordering::Relaxed);
+            self.show_deferred_viewport.store(show_deferred_viewport, Ordering::Relaxed);
         });
 
         if self.show_immediate_viewport {
             ui.ctx().show_viewport_immediate(
                 egui::ViewportId::from_hash_of("immediate_viewport"),
-                egui::ViewportBuilder::default()
-                    .with_title("Immediate Viewport")
-                    .with_inner_size([200.0, 100.0]),
+                egui::ViewportBuilder::default().with_title("Immediate Viewport").with_inner_size([200.0, 100.0]),
                 |ui, class| {
                     puffin::profile_scope!("immediate_viewport");
 
-                    assert!(
-                        class == egui::ViewportClass::Immediate,
-                        "This egui backend doesn't support multiple viewports"
-                    );
+                    assert!(class == egui::ViewportClass::Immediate, "This egui backend doesn't support multiple viewports");
 
                     egui::CentralPanel::default().show(ui, |ui| {
                         ui.label("Hello from immediate viewport");
@@ -130,16 +112,11 @@ impl eframe::App for MyApp {
             let show_deferred_viewport = Arc::clone(&self.show_deferred_viewport);
             ui.ctx().show_viewport_deferred(
                 egui::ViewportId::from_hash_of("deferred_viewport"),
-                egui::ViewportBuilder::default()
-                    .with_title("Deferred Viewport")
-                    .with_inner_size([200.0, 100.0]),
+                egui::ViewportBuilder::default().with_title("Deferred Viewport").with_inner_size([200.0, 100.0]),
                 move |ui, class| {
                     puffin::profile_scope!("deferred_viewport");
 
-                    assert!(
-                        class == egui::ViewportClass::Deferred,
-                        "This egui backend doesn't support multiple viewports"
-                    );
+                    assert!(class == egui::ViewportClass::Deferred, "This egui backend doesn't support multiple viewports");
 
                     egui::CentralPanel::default().show(ui, |ui| {
                         ui.label("Hello from deferred viewport");
@@ -161,11 +138,7 @@ fn start_puffin_server() {
         Ok(puffin_server) => {
             log::info!("Run:  cargo install puffin_viewer && puffin_viewer --url 127.0.0.1:8585");
 
-            std::process::Command::new("puffin_viewer")
-                .arg("--url")
-                .arg("127.0.0.1:8585")
-                .spawn()
-                .ok();
+            std::process::Command::new("puffin_viewer").arg("--url").arg("127.0.0.1:8585").spawn().ok();
 
             // We can store the server if we want, but in this case we just want
             // it to keep running. Dropping it closes the server, so let's not drop it!

@@ -5,15 +5,11 @@
 
 #![expect(clippy::identity_op)]
 
-use emath::{
-    GuiRounding as _, NumExt as _, Pos2, Rangef, Rect, Rot2, TSTransform, Vec2, fast_midpoint,
-    pos2, remap, vec2,
-};
+use emath::{GuiRounding as _, NumExt as _, Pos2, Rangef, Rect, Rot2, TSTransform, Vec2, fast_midpoint, pos2, remap, vec2};
 
 use crate::{
-    BandPoint, BandShape, CircleShape, ClippedPrimitive, ClippedShape, Color32, CornerRadiusF32,
-    CubicBezierShape, EllipseShape, Mesh, PathShape, Primitive, QuadraticBezierShape, RectShape,
-    RoundedRect, Shape, Stroke, StrokeKind, TextShape, TextureId, Vertex, color::ColorMode, emath,
+    BandPoint, BandShape, CircleShape, ClippedPrimitive, ClippedShape, Color32, CornerRadiusF32, CubicBezierShape, EllipseShape, Mesh, PathShape,
+    Primitive, QuadraticBezierShape, RectShape, RoundedRect, Shape, Stroke, StrokeKind, TextShape, TextureId, Vertex, color::ColorMode, emath,
     stroke::PathStroke, texture_atlas::PreparedDisc,
 };
 
@@ -349,30 +345,15 @@ impl Path {
         // same cutoffs as in add_circle_quadrant
 
         if radius <= 2.0 {
-            self.0.extend(CIRCLE_8.iter().map(|&n| PathPoint {
-                pos: center + radius * n,
-                normal: n,
-            }));
+            self.0.extend(CIRCLE_8.iter().map(|&n| PathPoint { pos: center + radius * n, normal: n }));
         } else if radius <= 5.0 {
-            self.0.extend(CIRCLE_16.iter().map(|&n| PathPoint {
-                pos: center + radius * n,
-                normal: n,
-            }));
+            self.0.extend(CIRCLE_16.iter().map(|&n| PathPoint { pos: center + radius * n, normal: n }));
         } else if radius < 18.0 {
-            self.0.extend(CIRCLE_32.iter().map(|&n| PathPoint {
-                pos: center + radius * n,
-                normal: n,
-            }));
+            self.0.extend(CIRCLE_32.iter().map(|&n| PathPoint { pos: center + radius * n, normal: n }));
         } else if radius < 50.0 {
-            self.0.extend(CIRCLE_64.iter().map(|&n| PathPoint {
-                pos: center + radius * n,
-                normal: n,
-            }));
+            self.0.extend(CIRCLE_64.iter().map(|&n| PathPoint { pos: center + radius * n, normal: n }));
         } else {
-            self.0.extend(CIRCLE_128.iter().map(|&n| PathPoint {
-                pos: center + radius * n,
-                normal: n,
-            }));
+            self.0.extend(CIRCLE_128.iter().map(|&n| PathPoint { pos: center + radius * n, normal: n }));
         }
     }
 
@@ -422,10 +403,7 @@ impl Path {
 
                 n0 = n1;
             }
-            self.add_point(
-                points[n - 1],
-                (points[n - 1] - points[n - 2]).normalized().rot90(),
-            );
+            self.add_point(points[n - 1], (points[n - 1] - points[n - 2]).normalized().rot90());
         }
     }
 
@@ -482,22 +460,8 @@ impl Path {
     ///
     /// Calling this may reverse the vertices in the path if they are wrong winding order.
     /// The preferred winding order is clockwise.
-    pub fn fill_and_stroke(
-        &mut self,
-        feathering: f32,
-        fill: Color32,
-        stroke: &PathStroke,
-        out: &mut Mesh,
-    ) {
-        stroke_and_fill_path(
-            feathering,
-            &mut self.0,
-            PathType::Closed,
-            stroke,
-            fill,
-            &triangulate_convex_path,
-            out,
-        );
+    pub fn fill_and_stroke(&mut self, feathering: f32, fill: Color32, stroke: &PathStroke, out: &mut Mesh) {
+        stroke_and_fill_path(feathering, &mut self.0, PathType::Closed, stroke, fill, &triangulate_convex_path, out);
     }
 
     /// Open-ended.
@@ -510,13 +474,7 @@ impl Path {
         stroke_path(feathering, &mut self.0, PathType::Closed, stroke, out);
     }
 
-    pub fn stroke(
-        &mut self,
-        feathering: f32,
-        path_type: PathType,
-        stroke: &PathStroke,
-        out: &mut Mesh,
-    ) {
+    pub fn stroke(&mut self, feathering: f32, path_type: PathType, stroke: &PathStroke, out: &mut Mesh) {
         stroke_path(feathering, &mut self.0, path_type, stroke, out);
     }
 
@@ -525,26 +483,13 @@ impl Path {
     /// Calling this may reverse the vertices in the path if they are wrong winding order.
     /// The preferred winding order is clockwise.
     pub fn fill(&mut self, feathering: f32, color: Color32, out: &mut Mesh) {
-        fill_closed_path(
-            feathering,
-            &mut self.0,
-            color,
-            &triangulate_convex_path,
-            out,
-        );
+        fill_closed_path(feathering, &mut self.0, color, &triangulate_convex_path, out);
     }
 
     /// Like [`Self::fill`] but with texturing.
     ///
     /// The `uv_from_pos` is called for each vertex position.
-    pub fn fill_with_uv(
-        &mut self,
-        feathering: f32,
-        color: Color32,
-        texture_id: TextureId,
-        uv_from_pos: impl Fn(Pos2) -> Pos2,
-        out: &mut Mesh,
-    ) {
+    pub fn fill_with_uv(&mut self, feathering: f32, color: Color32, texture_id: TextureId, uv_from_pos: impl Fn(Pos2) -> Pos2, out: &mut Mesh) {
         fill_closed_path_with_uv(feathering, &mut self.0, color, texture_id, uv_from_pos, out);
     }
 }
@@ -799,10 +744,7 @@ impl<'a> Iterator for BandRuns<'a> {
             }
 
             let mut end = start;
-            while end + 1 < self.points.len()
-                && self.points[end + 1].is_valid()
-                && self.points[end].x < self.points[end + 1].x
-            {
+            while end + 1 < self.points.len() && self.points[end + 1].is_valid() && self.points[end].x < self.points[end + 1].x {
                 end += 1;
             }
             // The point that broke the run may still start the next one:
@@ -829,14 +771,7 @@ type FillTriangulation<'a> = &'a dyn Fn(&mut Mesh, u32, u32, u32);
 /// Where the band was widened to `min_width` to survive the feathering and its own stroke,
 /// the fill is dimmed by as much as it was widened, so that a band pinching to nothing
 /// fades out instead of bottoming out as a hard, full-opacity line.
-fn triangulate_band_outline(
-    run: &[BandPoint],
-    min_width: f32,
-    out: &mut Mesh,
-    first_index: u32,
-    stride: u32,
-    num_points: u32,
-) {
+fn triangulate_band_outline(run: &[BandPoint], min_width: f32, out: &mut Mesh, first_index: u32, stride: u32, num_points: u32) {
     let vertex = |i: u32| first_index + stride * i;
     let last = num_points - 1;
 
@@ -863,11 +798,7 @@ fn triangulate_band_outline(
 /// Fan-triangulate a convex path.
 fn triangulate_convex_path(out: &mut Mesh, first_index: u32, stride: u32, num_points: u32) {
     for i in 2..num_points {
-        out.add_triangle(
-            first_index,
-            first_index + stride * (i - 1),
-            first_index + stride * i,
-        );
+        out.add_triangle(first_index, first_index + stride * (i - 1), first_index + stride * i);
     }
 }
 
@@ -876,13 +807,7 @@ fn triangulate_convex_path(out: &mut Mesh, first_index: u32, stride: u32, num_po
 /// Calling this may reverse the vertices in the path if they are wrong winding order.
 ///
 /// The preferred winding order is clockwise.
-fn fill_closed_path(
-    feathering: f32,
-    path: &mut [PathPoint],
-    fill_color: Color32,
-    triangulate: FillTriangulation<'_>,
-    out: &mut Mesh,
-) {
+fn fill_closed_path(feathering: f32, path: &mut [PathPoint], fill_color: Color32, triangulate: FillTriangulation<'_>, out: &mut Mesh) {
     if fill_color == Color32::TRANSPARENT {
         return;
     }
@@ -927,8 +852,7 @@ fn fill_closed_path(
     } else {
         out.reserve_triangles(n as usize);
         let idx = out.vertices.len() as u32;
-        out.vertices
-            .extend(path.iter().map(|p| Vertex::untextured(p.pos, fill_color)));
+        out.vertices.extend(path.iter().map(|p| Vertex::untextured(p.pos, fill_color)));
         triangulate(out, idx, 1, n);
     }
 }
@@ -951,10 +875,7 @@ fn fill_closed_path_with_uv(
     if out.is_empty() {
         out.texture_id = texture_id;
     } else {
-        assert_eq!(
-            out.texture_id, texture_id,
-            "Mixing different `texture_id` in the same "
-        );
+        assert_eq!(out.texture_id, texture_id, "Mixing different `texture_id` in the same ");
     }
 
     let n = path.len() as u32;
@@ -985,18 +906,10 @@ fn fill_closed_path_with_uv(
             let dm = 0.5 * feathering * p1.normal;
 
             let pos = p1.pos - dm;
-            out.vertices.push(Vertex {
-                pos,
-                uv: uv_from_pos(pos),
-                color,
-            });
+            out.vertices.push(Vertex { pos, uv: uv_from_pos(pos), color });
 
             let pos = p1.pos + dm;
-            out.vertices.push(Vertex {
-                pos,
-                uv: uv_from_pos(pos),
-                color: color_outer,
-            });
+            out.vertices.push(Vertex { pos, uv: uv_from_pos(pos), color: color_outer });
 
             out.add_triangle(idx_inner + i1 * 2, idx_inner + i0 * 2, idx_outer + 2 * i0);
             out.add_triangle(idx_outer + i0 * 2, idx_outer + i1 * 2, idx_inner + 2 * i1);
@@ -1005,11 +918,7 @@ fn fill_closed_path_with_uv(
     } else {
         out.reserve_triangles(n as usize);
         let idx = out.vertices.len() as u32;
-        out.vertices.extend(path.iter().map(|p| Vertex {
-            pos: p.pos,
-            uv: uv_from_pos(p.pos),
-            color,
-        }));
+        out.vertices.extend(path.iter().map(|p| Vertex { pos: p.pos, uv: uv_from_pos(p.pos), color }));
         for i in 2..n {
             out.add_triangle(idx, idx + i - 1, idx + i);
         }
@@ -1017,23 +926,9 @@ fn fill_closed_path_with_uv(
 }
 
 /// Tessellate the given path as a stroke with thickness.
-fn stroke_path(
-    feathering: f32,
-    path: &mut [PathPoint],
-    path_type: PathType,
-    stroke: &PathStroke,
-    out: &mut Mesh,
-) {
+fn stroke_path(feathering: f32, path: &mut [PathPoint], path_type: PathType, stroke: &PathStroke, out: &mut Mesh) {
     let fill = Color32::TRANSPARENT;
-    stroke_and_fill_path(
-        feathering,
-        path,
-        path_type,
-        stroke,
-        fill,
-        &triangulate_convex_path,
-        out,
-    );
+    stroke_and_fill_path(feathering, path, path_type, stroke, fill, &triangulate_convex_path, out);
 }
 
 /// Tessellate the given path as a stroke with thickness, with optional fill color.
@@ -1110,8 +1005,7 @@ fn stroke_and_fill_path(
 
     // Expand the bounding box to include the thickness of the path
     let uv_bbox = if matches!(stroke.color, ColorMode::UV(_)) {
-        Rect::from_points(&path.iter().map(|p| p.pos).collect::<Vec<Pos2>>())
-            .expand((stroke.width * 0.5) + feathering)
+        Rect::from_points(&path.iter().map(|p| p.pos).collect::<Vec<Pos2>>()).expand((stroke.width * 0.5) + feathering)
     } else {
         Rect::NAN
     };
@@ -1209,14 +1103,8 @@ fn stroke_and_fill_path(
                         let p = p1.pos;
                         let n = p1.normal;
                         out.colored_vertex(p + n * outer_rad, color_outer);
-                        out.colored_vertex(
-                            p + n * inner_rad,
-                            get_color(color_middle, p + n * inner_rad),
-                        );
-                        out.colored_vertex(
-                            p - n * inner_rad,
-                            get_color(color_middle, p - n * inner_rad),
-                        );
+                        out.colored_vertex(p + n * inner_rad, get_color(color_middle, p + n * inner_rad));
+                        out.colored_vertex(p - n * inner_rad, get_color(color_middle, p - n * inner_rad));
                         out.colored_vertex(p - n * outer_rad, color_fill);
 
                         out.add_triangle(idx + 4 * i0 + 0, idx + 4 * i0 + 1, idx + 4 * i1 + 0);
@@ -1264,14 +1152,8 @@ fn stroke_and_fill_path(
                         let n = end.normal;
                         let back_extrude = n.rot90() * feathering;
                         out.colored_vertex(p + n * outer_rad + back_extrude, color_outer);
-                        out.colored_vertex(
-                            p + n * inner_rad,
-                            get_color(color_middle, p + n * inner_rad),
-                        );
-                        out.colored_vertex(
-                            p - n * inner_rad,
-                            get_color(color_middle, p - n * inner_rad),
-                        );
+                        out.colored_vertex(p + n * inner_rad, get_color(color_middle, p + n * inner_rad));
+                        out.colored_vertex(p - n * inner_rad, get_color(color_middle, p - n * inner_rad));
                         out.colored_vertex(p - n * outer_rad + back_extrude, color_outer);
 
                         out.add_triangle(idx + 0, idx + 1, idx + 2);
@@ -1284,14 +1166,8 @@ fn stroke_and_fill_path(
                         let p = point.pos;
                         let n = point.normal;
                         out.colored_vertex(p + n * outer_rad, color_outer);
-                        out.colored_vertex(
-                            p + n * inner_rad,
-                            get_color(color_middle, p + n * inner_rad),
-                        );
-                        out.colored_vertex(
-                            p - n * inner_rad,
-                            get_color(color_middle, p - n * inner_rad),
-                        );
+                        out.colored_vertex(p + n * inner_rad, get_color(color_middle, p + n * inner_rad));
+                        out.colored_vertex(p - n * inner_rad, get_color(color_middle, p - n * inner_rad));
                         out.colored_vertex(p - n * outer_rad, color_outer);
 
                         out.add_triangle(idx + 4 * i0 + 0, idx + 4 * i0 + 1, idx + 4 * i1 + 0);
@@ -1313,14 +1189,8 @@ fn stroke_and_fill_path(
                         let n = end.normal;
                         let back_extrude = -n.rot90() * feathering;
                         out.colored_vertex(p + n * outer_rad + back_extrude, color_outer);
-                        out.colored_vertex(
-                            p + n * inner_rad,
-                            get_color(color_middle, p + n * inner_rad),
-                        );
-                        out.colored_vertex(
-                            p - n * inner_rad,
-                            get_color(color_middle, p - n * inner_rad),
-                        );
+                        out.colored_vertex(p + n * inner_rad, get_color(color_middle, p + n * inner_rad));
+                        out.colored_vertex(p - n * inner_rad, get_color(color_middle, p - n * inner_rad));
                         out.colored_vertex(p - n * outer_rad + back_extrude, color_outer);
 
                         out.add_triangle(idx + 4 * i0 + 0, idx + 4 * i0 + 1, idx + 4 * i1 + 0);
@@ -1344,22 +1214,10 @@ fn stroke_and_fill_path(
         out.reserve_triangles(2 * n as usize);
         out.reserve_vertices(2 * n as usize);
 
-        let last_index = if path_type == PathType::Closed {
-            n
-        } else {
-            n - 1
-        };
+        let last_index = if path_type == PathType::Closed { n } else { n - 1 };
         for i in 0..last_index {
-            out.add_triangle(
-                idx + (2 * i + 0) % (2 * n),
-                idx + (2 * i + 1) % (2 * n),
-                idx + (2 * i + 2) % (2 * n),
-            );
-            out.add_triangle(
-                idx + (2 * i + 2) % (2 * n),
-                idx + (2 * i + 1) % (2 * n),
-                idx + (2 * i + 3) % (2 * n),
-            );
+            out.add_triangle(idx + (2 * i + 0) % (2 * n), idx + (2 * i + 1) % (2 * n), idx + (2 * i + 2) % (2 * n));
+            out.add_triangle(idx + (2 * i + 2) % (2 * n), idx + (2 * i + 1) % (2 * n), idx + (2 * i + 3) % (2 * n));
         }
 
         let thin_line = stroke.width <= feathering;
@@ -1368,26 +1226,14 @@ fn stroke_and_fill_path(
             let opacity = stroke.width / feathering;
             let radius = feathering * 0.5;
             for p in path.iter_mut() {
-                out.colored_vertex(
-                    p.pos + radius * p.normal,
-                    mul_color(get_color(&stroke.color, p.pos + radius * p.normal), opacity),
-                );
-                out.colored_vertex(
-                    p.pos - radius * p.normal,
-                    mul_color(get_color(&stroke.color, p.pos - radius * p.normal), opacity),
-                );
+                out.colored_vertex(p.pos + radius * p.normal, mul_color(get_color(&stroke.color, p.pos + radius * p.normal), opacity));
+                out.colored_vertex(p.pos - radius * p.normal, mul_color(get_color(&stroke.color, p.pos - radius * p.normal), opacity));
             }
         } else {
             let radius = stroke.width * 0.5;
             for p in path.iter_mut() {
-                out.colored_vertex(
-                    p.pos + radius * p.normal,
-                    get_color(&stroke.color, p.pos + radius * p.normal),
-                );
-                out.colored_vertex(
-                    p.pos - radius * p.normal,
-                    get_color(&stroke.color, p.pos - radius * p.normal),
-                );
+                out.colored_vertex(p.pos + radius * p.normal, get_color(&stroke.color, p.pos + radius * p.normal));
+                out.colored_vertex(p.pos - radius * p.normal, get_color(&stroke.color, p.pos - radius * p.normal));
             }
         }
 
@@ -1443,12 +1289,7 @@ impl Tessellator {
     /// * `shapes`: what to tessellate
     /// * `font_tex_size`: size of the font texture. Required to normalize glyph uv rectangles when tessellating text.
     /// * `prepared_discs`: What [`crate::TextureAtlas::prepared_discs`] returns. Can safely be set to an empty vec.
-    pub fn new(
-        pixels_per_point: f32,
-        options: TessellationOptions,
-        font_tex_size: [usize; 2],
-        prepared_discs: Vec<PreparedDisc>,
-    ) -> Self {
+    pub fn new(pixels_per_point: f32, options: TessellationOptions, font_tex_size: [usize; 2], prepared_discs: Vec<PreparedDisc>) -> Self {
         let feathering = if options.feathering {
             let pixel_size = 1.0 / pixels_per_point;
             options.feathering_size_in_pixels * pixel_size
@@ -1473,16 +1314,8 @@ impl Tessellator {
     }
 
     /// Tessellate a clipped shape into a list of primitives.
-    pub fn tessellate_clipped_shape(
-        &mut self,
-        clipped_shape: ClippedShape,
-        out_primitives: &mut Vec<ClippedPrimitive>,
-    ) {
-        let ClippedShape {
-            clip_rect,
-            shape,
-            transform_after_tessellation: transform,
-        } = clipped_shape;
+    pub fn tessellate_clipped_shape(&mut self, clipped_shape: ClippedShape, out_primitives: &mut Vec<ClippedPrimitive>) {
+        let ClippedShape { clip_rect, shape, transform_after_tessellation: transform } = clipped_shape;
 
         if !clip_rect.is_positive() {
             return; // skip empty clip rectangles
@@ -1494,24 +1327,14 @@ impl Tessellator {
 
         if let Shape::Vec(shapes) = shape {
             for shape in shapes {
-                self.tessellate_clipped_shape(
-                    ClippedShape {
-                        clip_rect,
-                        shape,
-                        transform_after_tessellation: transform,
-                    },
-                    out_primitives,
-                );
+                self.tessellate_clipped_shape(ClippedShape { clip_rect, shape, transform_after_tessellation: transform }, out_primitives);
             }
             return;
         }
 
         if let Shape::Callback(mut callback) = shape {
             callback.rect = transform * callback.rect;
-            out_primitives.push(ClippedPrimitive {
-                clip_rect,
-                primitive: Primitive::Callback(callback),
-            });
+            out_primitives.push(ClippedPrimitive { clip_rect, primitive: Primitive::Callback(callback) });
             return;
         }
 
@@ -1520,19 +1343,14 @@ impl Tessellator {
             Some(output_clipped_primitive) => {
                 output_clipped_primitive.clip_rect != clip_rect
                     || match &output_clipped_primitive.primitive {
-                        Primitive::Mesh(output_mesh) => {
-                            output_mesh.texture_id != shape.texture_id()
-                        }
+                        Primitive::Mesh(output_mesh) => output_mesh.texture_id != shape.texture_id(),
                         Primitive::Callback(_) => true,
                     }
             }
         };
 
         if start_new_mesh {
-            out_primitives.push(ClippedPrimitive {
-                clip_rect,
-                primitive: Primitive::Mesh(Mesh::default()),
-            });
+            out_primitives.push(ClippedPrimitive { clip_rect, primitive: Primitive::Mesh(Mesh::default()) });
         }
 
         #[expect(clippy::unwrap_used)] // it's never empty
@@ -1588,9 +1406,7 @@ impl Tessellator {
                 }
                 // note: `append` still checks if the mesh is valid if extra asserts are enabled.
 
-                if self.options.coarse_tessellation_culling
-                    && !self.clip_rect.intersects(mesh.calc_bounds())
-                {
+                if self.options.coarse_tessellation_culling && !self.clip_rect.intersects(mesh.calc_bounds()) {
                     return;
                 }
 
@@ -1611,10 +1427,7 @@ impl Tessellator {
             Shape::Text(text_shape) => {
                 if self.options.debug_paint_text_rects {
                     let rect = text_shape.galley.rect.translate(text_shape.pos.to_vec2());
-                    self.tessellate_rect(
-                        &RectShape::stroke(rect, 2.0, (0.5, Color32::GREEN), StrokeKind::Outside),
-                        out,
-                    );
+                    self.tessellate_rect(&RectShape::stroke(rect, 2.0, (0.5, Color32::GREEN), StrokeKind::Outside), out);
                 }
                 self.tessellate_text(&text_shape, out);
             }
@@ -1633,23 +1446,13 @@ impl Tessellator {
     /// * `shape`: the circle to tessellate.
     /// * `out`: triangles are appended to this.
     pub fn tessellate_circle(&mut self, shape: CircleShape, out: &mut Mesh) {
-        let CircleShape {
-            center,
-            radius,
-            mut fill,
-            stroke,
-        } = shape;
+        let CircleShape { center, radius, mut fill, stroke } = shape;
 
         if radius <= 0.0 {
             return;
         }
 
-        if self.options.coarse_tessellation_culling
-            && !self
-                .clip_rect
-                .expand(radius + stroke.width)
-                .contains(center)
-        {
+        if self.options.coarse_tessellation_culling && !self.clip_rect.expand(radius + stroke.width).contains(center) {
             return;
         }
 
@@ -1680,8 +1483,7 @@ impl Tessellator {
         let path_stroke = PathStroke::from(stroke).outside();
         self.scratchpad_path.clear();
         self.scratchpad_path.add_circle(center, radius);
-        self.scratchpad_path
-            .fill_and_stroke(self.feathering, fill, &path_stroke, out);
+        self.scratchpad_path.fill_and_stroke(self.feathering, fill, &path_stroke, out);
     }
 
     /// Tessellate a single [`EllipseShape`] into a [`Mesh`].
@@ -1689,24 +1491,13 @@ impl Tessellator {
     /// * `shape`: the ellipse to tessellate.
     /// * `out`: triangles are appended to this.
     pub fn tessellate_ellipse(&mut self, shape: EllipseShape, out: &mut Mesh) {
-        let EllipseShape {
-            center,
-            radius,
-            fill,
-            stroke,
-            angle,
-        } = shape;
+        let EllipseShape { center, radius, fill, stroke, angle } = shape;
 
         if radius.x <= 0.0 || radius.y <= 0.0 {
             return;
         }
 
-        if self.options.coarse_tessellation_culling
-            && !self
-                .clip_rect
-                .expand2(radius + Vec2::splat(stroke.width))
-                .contains(center)
-        {
+        if self.options.coarse_tessellation_culling && !self.clip_rect.expand2(radius + Vec2::splat(stroke.width)).contains(center) {
             return;
         }
 
@@ -1756,8 +1547,7 @@ impl Tessellator {
         let path_stroke = PathStroke::from(stroke).outside();
         self.scratchpad_path.clear();
         self.scratchpad_path.add_line_loop(&points);
-        self.scratchpad_path
-            .fill_and_stroke(self.feathering, fill, &path_stroke, out);
+        self.scratchpad_path.fill_and_stroke(self.feathering, fill, &path_stroke, out);
     }
 
     /// Tessellate a single [`Mesh`] into a [`Mesh`].
@@ -1770,9 +1560,7 @@ impl Tessellator {
             return;
         }
 
-        if self.options.coarse_tessellation_culling
-            && !self.clip_rect.intersects(mesh.calc_bounds())
-        {
+        if self.options.coarse_tessellation_culling && !self.clip_rect.intersects(mesh.calc_bounds()) {
             return;
         }
 
@@ -1783,22 +1571,13 @@ impl Tessellator {
     ///
     /// * `shape`: the mesh to tessellate.
     /// * `out`: triangles are appended to this.
-    pub fn tessellate_line_segment(
-        &mut self,
-        mut points: [Pos2; 2],
-        stroke: impl Into<Stroke>,
-        out: &mut Mesh,
-    ) {
+    pub fn tessellate_line_segment(&mut self, mut points: [Pos2; 2], stroke: impl Into<Stroke>, out: &mut Mesh) {
         let stroke = stroke.into();
         if stroke.is_empty() {
             return;
         }
 
-        if self.options.coarse_tessellation_culling
-            && !self
-                .clip_rect
-                .intersects(Rect::from_two_pos(points[0], points[1]).expand(stroke.width))
-        {
+        if self.options.coarse_tessellation_culling && !self.clip_rect.intersects(Rect::from_two_pos(points[0], points[1]).expand(stroke.width)) {
             return;
         }
 
@@ -1850,8 +1629,7 @@ impl Tessellator {
 
         self.scratchpad_path.clear();
         self.scratchpad_path.add_line_segment(points);
-        self.scratchpad_path
-            .stroke_open(self.feathering, &stroke.into(), out);
+        self.scratchpad_path.stroke_open(self.feathering, &stroke.into(), out);
     }
 
     /// Tessellate a single [`PathShape`] into a [`Mesh`].
@@ -1863,57 +1641,36 @@ impl Tessellator {
             return;
         }
 
-        if self.options.coarse_tessellation_culling
-            && !path_shape.visual_bounding_rect().intersects(self.clip_rect)
-        {
+        if self.options.coarse_tessellation_culling && !path_shape.visual_bounding_rect().intersects(self.clip_rect) {
             return;
         }
 
         profiling::function_scope!();
 
-        let PathShape {
-            points,
-            closed,
-            fill,
-            stroke,
-        } = path_shape;
+        let PathShape { points, closed, fill, stroke } = path_shape;
 
         self.scratchpad_path.clear();
 
         if *closed {
             self.scratchpad_path.add_line_loop(points);
 
-            self.scratchpad_path
-                .fill_and_stroke(self.feathering, *fill, stroke, out);
+            self.scratchpad_path.fill_and_stroke(self.feathering, *fill, stroke, out);
         } else {
-            debug_assert_eq!(
-                *fill,
-                Color32::TRANSPARENT,
-                "You asked to fill a path that is not closed. That makes no sense."
-            );
+            debug_assert_eq!(*fill, Color32::TRANSPARENT, "You asked to fill a path that is not closed. That makes no sense.");
 
             self.scratchpad_path.add_open_points(points);
 
-            self.scratchpad_path
-                .stroke(self.feathering, PathType::Open, stroke, out);
+            self.scratchpad_path.stroke(self.feathering, PathType::Open, stroke, out);
         }
     }
 
     /// Tessellate a single [`BandShape`] into a [`Mesh`].
     pub fn tessellate_band(&mut self, band_shape: &BandShape, out: &mut Mesh) {
-        if self.options.coarse_tessellation_culling
-            && !band_shape.visual_bounding_rect().intersects(self.clip_rect)
-        {
+        if self.options.coarse_tessellation_culling && !band_shape.visual_bounding_rect().intersects(self.clip_rect) {
             return;
         }
 
-        let BandShape {
-            points,
-            fill,
-            stroke,
-            stroke_kind,
-            angle,
-        } = band_shape;
+        let BandShape { points, fill, stroke, stroke_kind, angle } = band_shape;
         if !angle.is_finite() {
             return;
         }
@@ -1940,23 +1697,12 @@ impl Tessellator {
             // then the upper boundary backwards.
             self.scratchpad_points.clear();
             self.scratchpad_points.reserve(2 * num_samples);
-            self.scratchpad_points.extend(
-                run.iter()
-                    .map(|point| rotate_band_point(rotation, point.x, shrink(point.y).min)),
-            );
-            self.scratchpad_points.extend(
-                run.iter()
-                    .rev()
-                    .map(|point| rotate_band_point(rotation, point.x, shrink(point.y).max)),
-            );
+            self.scratchpad_points.extend(run.iter().map(|point| rotate_band_point(rotation, point.x, shrink(point.y).min)));
+            self.scratchpad_points.extend(run.iter().rev().map(|point| rotate_band_point(rotation, point.x, shrink(point.y).max)));
 
             self.scratchpad_path.clear();
             self.scratchpad_path.add_line_loop(&self.scratchpad_points);
-            debug_assert_eq!(
-                self.scratchpad_path.0.len(),
-                2 * num_samples,
-                "`add_line_loop` must emit exactly one point per outline point"
-            );
+            debug_assert_eq!(self.scratchpad_path.0.len(), 2 * num_samples, "`add_line_loop` must emit exactly one point per outline point");
 
             // A band is rarely convex, so it brings its own triangulation.
             // Everything else - the feathering, and letting the stroke cover the edge
@@ -1968,14 +1714,7 @@ impl Tessellator {
                 &stroke,
                 *fill,
                 &|out: &mut Mesh, first_index, stride, num_points| {
-                    triangulate_band_outline(
-                        run,
-                        self.feathering,
-                        out,
-                        first_index,
-                        stride,
-                        num_points,
-                    );
+                    triangulate_band_outline(run, self.feathering, out, first_index, stride, num_points);
                 },
                 out,
             );
@@ -1987,9 +1726,7 @@ impl Tessellator {
     /// * `rect`: the rectangle to tessellate.
     /// * `out`: triangles are appended to this.
     pub fn tessellate_rect(&mut self, rect_shape: &RectShape, out: &mut Mesh) {
-        if self.options.coarse_tessellation_culling
-            && !rect_shape.visual_bounding_rect().intersects(self.clip_rect)
-        {
+        if self.options.coarse_tessellation_culling && !rect_shape.visual_bounding_rect().intersects(self.clip_rect) {
             return;
         }
 
@@ -2043,18 +1780,10 @@ impl Tessellator {
             // Approximate thin rectangles with line segments.
             // This is important so that thin rectangles look good.
             if rect.width() <= 2.0 * self.feathering {
-                return self.tessellate_line_segment(
-                    [rect.center_top(), rect.center_bottom()],
-                    (rect.width(), fill),
-                    out,
-                );
+                return self.tessellate_line_segment([rect.center_top(), rect.center_bottom()], (rect.width(), fill), out);
             }
             if rect.height() <= 2.0 * self.feathering {
-                return self.tessellate_line_segment(
-                    [rect.left_center(), rect.right_center()],
-                    (rect.height(), fill),
-                    out,
-                );
+                return self.tessellate_line_segment([rect.left_center(), rect.right_center()], (rect.height(), fill), out);
             }
         }
 
@@ -2101,9 +1830,7 @@ impl Tessellator {
 
             // The tessellator can't handle blurring/feathering larger than the smallest side of the rect.
             let eps = 0.1; // avoid numerical problems
-            blur_width = blur_width
-                .at_most(rect.size().min_elem() - eps - 2.0 * stroke.width)
-                .at_least(0.0);
+            blur_width = blur_width.at_most(rect.size().min_elem() - eps - 2.0 * stroke.width).at_least(0.0);
 
             corner_radius += 0.5 * blur_width;
 
@@ -2170,10 +1897,7 @@ impl Tessellator {
 
         let path = &mut self.scratchpad_path;
         path.clear();
-        path::rounded_rectangle(
-            &mut self.scratchpad_points,
-            RoundedRect::new(rect, corner_radius),
-        );
+        path::rounded_rectangle(&mut self.scratchpad_points, RoundedRect::new(rect, corner_radius));
 
         // Apply rotation if angle is non-zero
         if angle != 0.0 {
@@ -2198,16 +1922,8 @@ impl Tessellator {
             };
 
             if fill_rect.is_positive() {
-                let crate::Brush {
-                    fill_texture_id,
-                    uv,
-                } = **brush;
-                let uv_from_pos = |p: Pos2| {
-                    pos2(
-                        remap(p.x, rect.x_range(), uv.x_range()),
-                        remap(p.y, rect.y_range(), uv.y_range()),
-                    )
-                };
+                let crate::Brush { fill_texture_id, uv } = **brush;
+                let uv_from_pos = |p: Pos2| pos2(remap(p.x, rect.x_range(), uv.x_range()), remap(p.y, rect.y_range(), uv.y_range()));
                 path.fill_with_uv(self.feathering, fill, fill_texture_id, uv_from_pos, out);
             }
 
@@ -2226,15 +1942,7 @@ impl Tessellator {
     /// * `text_shape`: the text to tessellate.
     /// * `out`: triangles are appended to this.
     pub fn tessellate_text(&mut self, text_shape: &TextShape, out: &mut Mesh) {
-        let TextShape {
-            pos: galley_pos,
-            galley,
-            underline,
-            override_text_color,
-            fallback_color,
-            opacity_factor,
-            angle,
-        } = text_shape;
+        let TextShape { pos: galley_pos, galley, underline, override_text_color, fallback_color, opacity_factor, angle } = text_shape;
 
         if galley.is_empty() {
             return;
@@ -2256,16 +1964,9 @@ impl Tessellator {
 
         // The contents of the galley are already snapped to pixel coordinates,
         // but we need to make sure the galley ends up on the start of a physical pixel:
-        let galley_pos = if self.options.round_text_to_pixels {
-            galley_pos.round_to_pixels(self.pixels_per_point)
-        } else {
-            *galley_pos
-        };
+        let galley_pos = if self.options.round_text_to_pixels { galley_pos.round_to_pixels(self.pixels_per_point) } else { *galley_pos };
 
-        let uv_normalizer = vec2(
-            1.0 / self.font_tex_size[0] as f32,
-            1.0 / self.font_tex_size[1] as f32,
-        );
+        let uv_normalizer = vec2(1.0 / self.font_tex_size[0] as f32, 1.0 / self.font_tex_size[1] as f32);
 
         let rotator = Rot2::from_angle(*angle);
 
@@ -2294,79 +1995,51 @@ impl Tessellator {
             // Rows rarely have any, so check once per row before searching per vertex.
             let row_has_color_glyphs = row.glyphs.iter().any(|glyph| glyph.is_color);
             let is_color_glyph_vertex = |vertex_index: usize| {
-                if !row_has_color_glyphs || !row.visuals.glyph_vertex_range.contains(&vertex_index)
-                {
+                if !row_has_color_glyphs || !row.visuals.glyph_vertex_range.contains(&vertex_index) {
                     return false;
                 }
                 // `first_vertex` is non-decreasing along `glyphs`, so binary search for
                 // the glyph owning this vertex. Glyphs without pixels emit no vertices
                 // and share `first_vertex` with the next glyph, so take the last match.
-                let glyph_index = row
-                    .glyphs
-                    .partition_point(|glyph| glyph.first_vertex as usize <= vertex_index);
+                let glyph_index = row.glyphs.partition_point(|glyph| glyph.first_vertex as usize <= vertex_index);
                 glyph_index
                     .checked_sub(1)
                     .and_then(|glyph_index| row.glyphs.get(glyph_index))
                     .is_some_and(|glyph| glyph.is_color && !glyph.uv_rect.is_nothing())
             };
 
-            out.indices.extend(
-                row.visuals
-                    .mesh
-                    .indices
-                    .iter()
-                    .map(|index| index + index_offset),
-            );
+            out.indices.extend(row.visuals.mesh.indices.iter().map(|index| index + index_offset));
 
-            out.vertices.extend(
-                row.visuals
-                    .mesh
-                    .vertices
-                    .iter()
-                    .enumerate()
-                    .map(|(i, vertex)| {
-                        let Vertex { pos, uv, mut color } = *vertex;
+            out.vertices.extend(row.visuals.mesh.vertices.iter().enumerate().map(|(i, vertex)| {
+                let Vertex { pos, uv, mut color } = *vertex;
 
-                        if let Some(override_text_color) = override_text_color {
-                            // Only override the glyph color (not background color, strike-through color, etc)
-                            if row.visuals.glyph_vertex_range.contains(&i) {
-                                color = *override_text_color;
-                            }
-                        } else if color == Color32::PLACEHOLDER {
-                            color = *fallback_color;
-                        }
+                if let Some(override_text_color) = override_text_color {
+                    // Only override the glyph color (not background color, strike-through color, etc)
+                    if row.visuals.glyph_vertex_range.contains(&i) {
+                        color = *override_text_color;
+                    }
+                } else if color == Color32::PLACEHOLDER {
+                    color = *fallback_color;
+                }
 
-                        if is_color_glyph_vertex(i) {
-                            // Don't tint: keep the glyph's own color, but respect the text alpha.
-                            color = Color32::from_white_alpha(color.a());
-                        }
+                if is_color_glyph_vertex(i) {
+                    // Don't tint: keep the glyph's own color, but respect the text alpha.
+                    color = Color32::from_white_alpha(color.a());
+                }
 
-                        if *opacity_factor < 1.0 {
-                            color = color.gamma_multiply(*opacity_factor);
-                        }
+                if *opacity_factor < 1.0 {
+                    color = color.gamma_multiply(*opacity_factor);
+                }
 
-                        debug_assert!(color != Color32::PLACEHOLDER, "A placeholder color made it to the tessellator. You forgot to set a fallback color.");
+                debug_assert!(color != Color32::PLACEHOLDER, "A placeholder color made it to the tessellator. You forgot to set a fallback color.");
 
-                        let offset = if *angle == 0.0 {
-                            pos.to_vec2()
-                        } else {
-                            rotator * pos.to_vec2()
-                        };
+                let offset = if *angle == 0.0 { pos.to_vec2() } else { rotator * pos.to_vec2() };
 
-                        Vertex {
-                            pos: final_row_pos + offset,
-                            uv: (uv.to_vec2() * uv_normalizer).to_pos2(),
-                            color,
-                        }
-                    }),
-            );
+                Vertex { pos: final_row_pos + offset, uv: (uv.to_vec2() * uv_normalizer).to_pos2(), color }
+            }));
 
             if *underline != Stroke::NONE {
-                self.tessellate_line_segment(
-                    [row_rect.left_bottom(), row_rect.right_bottom()],
-                    *underline,
-                    out,
-                );
+                self.tessellate_line_segment([row_rect.left_bottom(), row_rect.right_bottom()], *underline, out);
             }
         }
     }
@@ -2375,29 +2048,17 @@ impl Tessellator {
     ///
     /// * `quadratic_shape`: the shape to tessellate.
     /// * `out`: triangles are appended to this.
-    pub fn tessellate_quadratic_bezier(
-        &mut self,
-        quadratic_shape: &QuadraticBezierShape,
-        out: &mut Mesh,
-    ) {
+    pub fn tessellate_quadratic_bezier(&mut self, quadratic_shape: &QuadraticBezierShape, out: &mut Mesh) {
         let options = &self.options;
         let clip_rect = self.clip_rect;
 
-        if options.coarse_tessellation_culling
-            && !quadratic_shape.visual_bounding_rect().intersects(clip_rect)
-        {
+        if options.coarse_tessellation_culling && !quadratic_shape.visual_bounding_rect().intersects(clip_rect) {
             return;
         }
 
         let points = quadratic_shape.flatten(Some(options.bezier_tolerance));
 
-        self.tessellate_bezier_complete(
-            &points,
-            quadratic_shape.fill,
-            quadratic_shape.closed,
-            &quadratic_shape.stroke,
-            out,
-        );
+        self.tessellate_bezier_complete(&points, quadratic_shape.fill, quadratic_shape.closed, &quadratic_shape.stroke, out);
     }
 
     /// Tessellate a single [`CubicBezierShape`] into a [`Mesh`].
@@ -2407,34 +2068,18 @@ impl Tessellator {
     pub fn tessellate_cubic_bezier(&mut self, cubic_shape: &CubicBezierShape, out: &mut Mesh) {
         let options = &self.options;
         let clip_rect = self.clip_rect;
-        if options.coarse_tessellation_culling
-            && !cubic_shape.visual_bounding_rect().intersects(clip_rect)
-        {
+        if options.coarse_tessellation_culling && !cubic_shape.visual_bounding_rect().intersects(clip_rect) {
             return;
         }
 
-        let points_vec =
-            cubic_shape.flatten_closed(Some(options.bezier_tolerance), Some(options.epsilon));
+        let points_vec = cubic_shape.flatten_closed(Some(options.bezier_tolerance), Some(options.epsilon));
 
         for points in points_vec {
-            self.tessellate_bezier_complete(
-                &points,
-                cubic_shape.fill,
-                cubic_shape.closed,
-                &cubic_shape.stroke,
-                out,
-            );
+            self.tessellate_bezier_complete(&points, cubic_shape.fill, cubic_shape.closed, &cubic_shape.stroke, out);
         }
     }
 
-    fn tessellate_bezier_complete(
-        &mut self,
-        points: &[Pos2],
-        fill: Color32,
-        closed: bool,
-        stroke: &PathStroke,
-        out: &mut Mesh,
-    ) {
+    fn tessellate_bezier_complete(&mut self, points: &[Pos2], fill: Color32, closed: bool, stroke: &PathStroke, out: &mut Mesh) {
         if points.len() < 2 {
             return;
         }
@@ -2443,19 +2088,13 @@ impl Tessellator {
         if closed {
             self.scratchpad_path.add_line_loop(points);
 
-            self.scratchpad_path
-                .fill_and_stroke(self.feathering, fill, stroke, out);
+            self.scratchpad_path.fill_and_stroke(self.feathering, fill, stroke, out);
         } else {
-            debug_assert_eq!(
-                fill,
-                Color32::TRANSPARENT,
-                "You asked to fill a bezier path that is not closed. That makes no sense."
-            );
+            debug_assert_eq!(fill, Color32::TRANSPARENT, "You asked to fill a bezier path that is not closed. That makes no sense.");
 
             self.scratchpad_path.add_open_points(points);
 
-            self.scratchpad_path
-                .stroke(self.feathering, PathType::Open, stroke, out);
+            self.scratchpad_path.stroke(self.feathering, PathType::Open, stroke, out);
         }
     }
 }
@@ -2572,10 +2211,7 @@ impl Tessellator {
         }
     }
 
-    fn add_clip_rects(
-        &mut self,
-        clipped_primitives: Vec<ClippedPrimitive>,
-    ) -> Vec<ClippedPrimitive> {
+    fn add_clip_rects(&mut self, clipped_primitives: Vec<ClippedPrimitive>) -> Vec<ClippedPrimitive> {
         self.clip_rect = Rect::EVERYTHING;
         let stroke = Stroke::new(2.0, Color32::from_rgb(150, 255, 150));
 
@@ -2583,15 +2219,7 @@ impl Tessellator {
             .into_iter()
             .flat_map(|clipped_primitive| {
                 let mut clip_rect_mesh = Mesh::default();
-                self.tessellate_shape(
-                    Shape::rect_stroke(
-                        clipped_primitive.clip_rect,
-                        0.0,
-                        stroke,
-                        StrokeKind::Outside,
-                    ),
-                    &mut clip_rect_mesh,
-                );
+                self.tessellate_shape(Shape::rect_stroke(clipped_primitive.clip_rect, 0.0, stroke, StrokeKind::Outside), &mut clip_rect_mesh);
 
                 [
                     clipped_primitive,
@@ -2628,8 +2256,7 @@ fn test_tessellator() {
     let font_tex_size = [1024, 1024]; // unused
     let prepared_discs = vec![]; // unused
 
-    let primitives = Tessellator::new(1.0, Default::default(), font_tex_size, prepared_discs)
-        .tessellate_shapes(clipped_shapes);
+    let primitives = Tessellator::new(1.0, Default::default(), font_tex_size, prepared_discs).tessellate_shapes(clipped_shapes);
 
     assert_eq!(primitives.len(), 2);
 }
@@ -2639,12 +2266,8 @@ fn transform_before_and_after_rounding() {
     use crate::*;
 
     fn tessellated_bounds(clipped_shape: ClippedShape) -> Rect {
-        let options = TessellationOptions {
-            feathering: false,
-            ..Default::default()
-        };
-        let primitives = Tessellator::new(1.0, options, [1024, 1024], vec![])
-            .tessellate_shapes(vec![clipped_shape]);
+        let options = TessellationOptions { feathering: false, ..Default::default() };
+        let primitives = Tessellator::new(1.0, options, [1024, 1024], vec![]).tessellate_shapes(vec![clipped_shape]);
         assert_eq!(primitives.len(), 1);
         let Primitive::Mesh(mesh) = &primitives[0].primitive else {
             panic!("expected a mesh");
@@ -2660,18 +2283,12 @@ fn transform_before_and_after_rounding() {
     // Transform first, then round: [1.5, 31.5] rounds to [2, 32].
     let mut immediate = ClippedShape::new(Rect::EVERYTHING, shape.clone());
     immediate.transform(transform);
-    assert_eq!(
-        tessellated_bounds(immediate),
-        Rect::from_min_max(pos2(2.0, 2.0), pos2(32.0, 32.0))
-    );
+    assert_eq!(tessellated_bounds(immediate), Rect::from_min_max(pos2(2.0, 2.0), pos2(32.0, 32.0)));
 
     // Round first, then transform: [0.5, 10.5] rounds to [1, 11], which scales to [3, 33].
     let mut after_rounding = ClippedShape::new(Rect::EVERYTHING, shape);
     after_rounding.transform_after_tessellation = transform;
-    assert_eq!(
-        tessellated_bounds(after_rounding),
-        Rect::from_min_max(pos2(3.0, 3.0), pos2(33.0, 33.0))
-    );
+    assert_eq!(tessellated_bounds(after_rounding), Rect::from_min_max(pos2(3.0, 3.0), pos2(33.0, 33.0)));
 }
 
 #[test]
@@ -2687,14 +2304,7 @@ fn path_bounding_box() {
         let mut mesh = Mesh::default();
 
         let mut path = Path::default();
-        path.add_open_points(&[
-            pos2(0.0, 0.0),
-            pos2(2.0, 0.0),
-            pos2(5.0, 5.0),
-            pos2(0.0, 5.0),
-            pos2(0.0, 7.0),
-            pos2(10.0, 10.0),
-        ]);
+        path.add_open_points(&[pos2(0.0, 0.0), pos2(2.0, 0.0), pos2(5.0, 5.0), pos2(0.0, 5.0), pos2(0.0, 7.0), pos2(10.0, 10.0)]);
 
         path.stroke(
             1.5,
@@ -2703,15 +2313,8 @@ fn path_bounding_box() {
                 assert_eq!(r, expected_rect);
                 // see https://github.com/emilk/egui/pull/4353#discussion_r1573879940 for why .contains() isn't used here.
                 // TL;DR rounding errors.
-                assert!(
-                    r.distance_to_pos(p) <= 0.55,
-                    "passed rect {r:?} didn't contain point {p:?} (distance: {})",
-                    r.distance_to_pos(p)
-                );
-                assert!(
-                    expected_rect.distance_to_pos(p) <= 0.55,
-                    "expected rect {expected_rect:?} didn't contain point {p:?}"
-                );
+                assert!(r.distance_to_pos(p) <= 0.55, "passed rect {r:?} didn't contain point {p:?} (distance: {})", r.distance_to_pos(p));
+                assert!(expected_rect.distance_to_pos(p) <= 0.55, "expected rect {expected_rect:?} didn't contain point {p:?}");
                 Color32::WHITE
             }),
             &mut mesh,
@@ -2721,10 +2324,7 @@ fn path_bounding_box() {
 
 #[cfg(test)]
 fn tessellate_band_without_feathering(band: BandShape) -> Mesh {
-    let options = TessellationOptions {
-        feathering: false,
-        ..Default::default()
-    };
+    let options = TessellationOptions { feathering: false, ..Default::default() };
     let mut mesh = Mesh::default();
     Tessellator::new(1.0, options, [1, 1], vec![]).tessellate_shape(band.into(), &mut mesh);
     mesh
@@ -2734,27 +2334,11 @@ fn tessellate_band_without_feathering(band: BandShape) -> Mesh {
 fn tessellate_band_fill() {
     use crate::*;
 
-    let mesh = tessellate_band_without_feathering(BandShape::filled(
-        vec![
-            BandPoint::new(0.0, 1.0..=3.0),
-            BandPoint::new(2.0, 2.0..=4.0),
-        ],
-        Color32::WHITE,
-    ));
+    let mesh =
+        tessellate_band_without_feathering(BandShape::filled(vec![BandPoint::new(0.0, 1.0..=3.0), BandPoint::new(2.0, 2.0..=4.0)], Color32::WHITE));
 
     // The lower boundary, then the upper boundary backwards:
-    assert_eq!(
-        mesh.vertices
-            .iter()
-            .map(|vertex| vertex.pos)
-            .collect::<Vec<_>>(),
-        [
-            pos2(0.0, 1.0),
-            pos2(2.0, 2.0),
-            pos2(2.0, 4.0),
-            pos2(0.0, 3.0)
-        ]
-    );
+    assert_eq!(mesh.vertices.iter().map(|vertex| vertex.pos).collect::<Vec<_>>(), [pos2(0.0, 1.0), pos2(2.0, 2.0), pos2(2.0, 4.0), pos2(0.0, 3.0)]);
     assert_eq!(mesh.indices, [0, 1, 2, 0, 2, 3]);
 }
 
@@ -2763,11 +2347,7 @@ fn tessellate_band_connects_spans() {
     use crate::*;
 
     let mesh = tessellate_band_without_feathering(BandShape::filled(
-        vec![
-            BandPoint::new(0.0, 1.0..=3.0),
-            BandPoint::new(2.0, 2.0..=4.0),
-            BandPoint::new(4.0, 3.0..=5.0),
-        ],
+        vec![BandPoint::new(0.0, 1.0..=3.0), BandPoint::new(2.0, 2.0..=4.0), BandPoint::new(4.0, 3.0..=5.0)],
         Color32::WHITE,
     ));
 
@@ -2800,28 +2380,14 @@ fn tessellate_band_splits_at_invalid_points() {
 fn tessellate_band_fill_is_feathered() {
     use crate::*;
 
-    let band = BandShape::filled(
-        vec![
-            BandPoint::new(0.0, 0.0..=10.0),
-            BandPoint::new(10.0, 0.0..=10.0),
-        ],
-        Color32::WHITE,
-    );
+    let band = BandShape::filled(vec![BandPoint::new(0.0, 0.0..=10.0), BandPoint::new(10.0, 0.0..=10.0)], Color32::WHITE);
     let mut mesh = Mesh::default();
-    Tessellator::new(1.0, Default::default(), [1, 1], vec![])
-        .tessellate_shape(band.into(), &mut mesh);
+    Tessellator::new(1.0, Default::default(), [1, 1], vec![]).tessellate_shape(band.into(), &mut mesh);
 
     // The fill is inset by half a feather and faded out over the other half,
     // so the band keeps its size but gains a soft edge:
-    assert_eq!(
-        mesh.calc_bounds(),
-        Rect::from_min_max(pos2(-0.5, -0.5), pos2(10.5, 10.5))
-    );
-    assert!(
-        mesh.vertices
-            .iter()
-            .any(|vertex| vertex.color == Color32::TRANSPARENT)
-    );
+    assert_eq!(mesh.calc_bounds(), Rect::from_min_max(pos2(-0.5, -0.5), pos2(10.5, 10.5)));
+    assert!(mesh.vertices.iter().any(|vertex| vertex.color == Color32::TRANSPARENT));
 }
 
 #[test]
@@ -2829,17 +2395,11 @@ fn tessellate_band_skips_invalid_spans() {
     use crate::*;
 
     let band = BandShape::filled(
-        vec![
-            BandPoint::new(0.0, 1.0..=3.0),
-            BandPoint::new(0.0, 2.0..=4.0),
-            BandPoint::new(2.0, 5.0..=4.0),
-            BandPoint::new(f32::NAN, 2.0..=4.0),
-        ],
+        vec![BandPoint::new(0.0, 1.0..=3.0), BandPoint::new(0.0, 2.0..=4.0), BandPoint::new(2.0, 5.0..=4.0), BandPoint::new(f32::NAN, 2.0..=4.0)],
         Color32::WHITE,
     );
     let mut mesh = Mesh::default();
-    Tessellator::new(1.0, Default::default(), [1, 1], vec![])
-        .tessellate_shape(band.into(), &mut mesh);
+    Tessellator::new(1.0, Default::default(), [1, 1], vec![]).tessellate_shape(band.into(), &mut mesh);
 
     assert!(mesh.is_empty());
 }
@@ -2850,51 +2410,25 @@ fn tessellate_band_fades_out_at_a_pinch() {
 
     // A band thinner than the feathering is widened so that it cannot turn inside out,
     // then dimmed by as much as it was widened, so that it still fades away:
-    let band = BandShape::filled(
-        vec![
-            BandPoint::new(0.0, -2.0..=2.0),
-            BandPoint::new(10.0, 0.0..=0.0),
-        ],
-        Color32::WHITE,
-    );
+    let band = BandShape::filled(vec![BandPoint::new(0.0, -2.0..=2.0), BandPoint::new(10.0, 0.0..=0.0)], Color32::WHITE);
     let mut mesh = Mesh::default();
-    Tessellator::new(1.0, Default::default(), [1, 1], vec![])
-        .tessellate_shape(band.into(), &mut mesh);
+    Tessellator::new(1.0, Default::default(), [1, 1], vec![]).tessellate_shape(band.into(), &mut mesh);
 
     // The lower boundary's fill vertices, at stride two:
-    assert_eq!(
-        mesh.vertices[0].color,
-        Color32::WHITE,
-        "the wide end is opaque"
-    );
-    assert_eq!(
-        mesh.vertices[2].color,
-        Color32::TRANSPARENT,
-        "the pinched end has faded away"
-    );
+    assert_eq!(mesh.vertices[0].color, Color32::WHITE, "the wide end is opaque");
+    assert_eq!(mesh.vertices[2].color, Color32::TRANSPARENT, "the pinched end has faded away");
 }
 
 #[test]
 fn tessellate_band_stroke_only() {
     use crate::*;
 
-    let band = BandShape::stroke(
-        vec![
-            BandPoint::new(0.0, 1.0..=3.0),
-            BandPoint::new(2.0, 2.0..=4.0),
-        ],
-        (1.0, Color32::WHITE),
-    );
+    let band = BandShape::stroke(vec![BandPoint::new(0.0, 1.0..=3.0), BandPoint::new(2.0, 2.0..=4.0)], (1.0, Color32::WHITE));
     let mut mesh = Mesh::default();
-    Tessellator::new(1.0, Default::default(), [1, 1], vec![])
-        .tessellate_shape(band.into(), &mut mesh);
+    Tessellator::new(1.0, Default::default(), [1, 1], vec![]).tessellate_shape(band.into(), &mut mesh);
 
     assert!(!mesh.indices.is_empty());
-    assert!(
-        mesh.vertices
-            .iter()
-            .any(|vertex| vertex.color == Color32::WHITE)
-    );
+    assert!(mesh.vertices.iter().any(|vertex| vertex.color == Color32::WHITE));
 }
 
 #[test]
@@ -2902,14 +2436,8 @@ fn tessellate_band_rotates_around_the_origin() {
     use crate::*;
 
     let mesh = tessellate_band_without_feathering(
-        BandShape::filled(
-            vec![
-                BandPoint::new(0.0, 1.0..=3.0),
-                BandPoint::new(2.0, 2.0..=4.0),
-            ],
-            Color32::WHITE,
-        )
-        .with_angle_and_pivot(core::f32::consts::FRAC_PI_2, Pos2::ZERO),
+        BandShape::filled(vec![BandPoint::new(0.0, 1.0..=3.0), BandPoint::new(2.0, 2.0..=4.0)], Color32::WHITE)
+            .with_angle_and_pivot(core::f32::consts::FRAC_PI_2, Pos2::ZERO),
     );
 
     assert!((mesh.vertices[0].pos - pos2(-1.0, 0.0)).length_sq() < 1e-10);
@@ -2921,30 +2449,15 @@ fn tessellate_band_stroke_kind() {
     use crate::*;
 
     fn tessellate(stroke_kind: StrokeKind) -> Mesh {
-        let mut band = BandShape::stroke(
-            vec![
-                BandPoint::new(0.0, 0.0..=10.0),
-                BandPoint::new(10.0, 0.0..=10.0),
-            ],
-            (2.0, Color32::WHITE),
-        );
+        let mut band = BandShape::stroke(vec![BandPoint::new(0.0, 0.0..=10.0), BandPoint::new(10.0, 0.0..=10.0)], (2.0, Color32::WHITE));
         band.stroke_kind = stroke_kind;
 
         let mut mesh = Mesh::default();
-        let options = TessellationOptions {
-            feathering: false,
-            ..Default::default()
-        };
+        let options = TessellationOptions { feathering: false, ..Default::default() };
         Tessellator::new(1.0, options, [1, 1], vec![]).tessellate_shape(band.into(), &mut mesh);
         mesh
     }
 
-    assert_eq!(
-        tessellate(StrokeKind::Inside).calc_bounds().y_range(),
-        0.0..=10.0
-    );
-    assert_eq!(
-        tessellate(StrokeKind::Outside).calc_bounds().y_range(),
-        -2.0..=12.0
-    );
+    assert_eq!(tessellate(StrokeKind::Inside).calc_bounds().y_range(), 0.0..=10.0);
+    assert_eq!(tessellate(StrokeKind::Outside).calc_bounds().y_range(), -2.0..=12.0);
 }

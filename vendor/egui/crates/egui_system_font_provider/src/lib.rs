@@ -11,14 +11,10 @@
 
 use epaint::{
     mutex::Mutex,
-    text::{
-        FallbackRequest, FontData, FontFamily, FontInsert, FontPriority, FontProvider,
-        InsertFontFamily,
-    },
+    text::{FallbackRequest, FontData, FontFamily, FontInsert, FontPriority, FontProvider, InsertFontFamily},
 };
 use fontique::{
-    Collection, CollectionOptions, FallbackKey, GenericFamily, Language, QueryFamily, QueryFont,
-    QueryStatus, Script, SourceCache, SourceCacheOptions,
+    Collection, CollectionOptions, FallbackKey, GenericFamily, Language, QueryFamily, QueryFont, QueryStatus, Script, SourceCache, SourceCacheOptions,
 };
 use poll_promise::Promise;
 
@@ -54,10 +50,7 @@ impl SystemFontProvider {
     /// Uses the system locale to pick between fonts (see [`Self::with_locale`]).
     pub fn new() -> Self {
         Self {
-            fonts: Mutex::new(Promise::spawn_thread(
-                "egui_system_font_provider",
-                load_system_fonts,
-            )),
+            fonts: Mutex::new(Promise::spawn_thread("egui_system_font_provider", load_system_fonts)),
             locale: sys_locale::get_locale().and_then(|locale| parse_locale(&locale)),
         }
     }
@@ -87,15 +80,9 @@ fn parse_locale(locale: &str) -> Option<Language> {
 
 fn load_system_fonts() -> SystemFonts {
     let start = std::time::Instant::now();
-    let collection = Collection::new(CollectionOptions {
-        shared: false,
-        system_fonts: true,
-    });
+    let collection = Collection::new(CollectionOptions { shared: false, system_fonts: true });
     log::debug!("Enumerated system fonts in {:?}", start.elapsed());
-    SystemFonts {
-        collection,
-        source_cache: SourceCache::new(SourceCacheOptions::default()),
-    }
+    SystemFonts { collection, source_cache: SourceCache::new(SourceCacheOptions::default()) }
 }
 
 impl FontProvider for SystemFontProvider {
@@ -105,10 +92,7 @@ impl FontProvider for SystemFontProvider {
 
         // Blocks if the background thread is not done enumerating the system fonts yet:
         let mut fonts = self.fonts.lock();
-        let SystemFonts {
-            collection,
-            source_cache,
-        } = fonts.block_until_ready_mut();
+        let SystemFonts { collection, source_cache } = fonts.block_until_ready_mut();
 
         let generic = match family {
             FontFamily::Monospace => GenericFamily::Monospace,
@@ -121,11 +105,7 @@ impl FontProvider for SystemFontProvider {
             // So if it can't render the char, try the other locales of the script:
             // TODO(https://github.com/linebender/parley/issues/644): remove `other_locales`
             // once fontique falls back per char (https://github.com/linebender/parley/pull/689).
-            core::iter::chain(
-                [self.locale.as_ref()],
-                other_locales(script).iter().map(Some),
-            )
-            .find_map(|locale| {
+            core::iter::chain([self.locale.as_ref()], other_locales(script).iter().map(Some)).find_map(|locale| {
                 let mut query = collection.query(source_cache);
                 query.set_families([QueryFamily::Generic(generic)]);
                 query.set_fallbacks(fallback_key(script, locale));
@@ -136,15 +116,8 @@ impl FontProvider for SystemFontProvider {
             // Try the generic families instead.
             let mut query = collection.query(source_cache);
             query.set_families(
-                [
-                    generic,
-                    GenericFamily::SystemUi,
-                    GenericFamily::Emoji,
-                    GenericFamily::Math,
-                    GenericFamily::Serif,
-                    GenericFamily::Monospace,
-                ]
-                .map(QueryFamily::Generic),
+                [generic, GenericFamily::SystemUi, GenericFamily::Emoji, GenericFamily::Math, GenericFamily::Serif, GenericFamily::Monospace]
+                    .map(QueryFamily::Generic),
             );
             find_font(&mut query, base_char)
         }?;
@@ -157,10 +130,7 @@ impl FontProvider for SystemFontProvider {
         Some(FontInsert {
             name,
             data: FontData::from_blob(blob, font.index),
-            families: vec![InsertFontFamily {
-                family: (*family).clone(),
-                priority: FontPriority::Lowest,
-            }],
+            families: vec![InsertFontFamily { family: (*family).clone(), priority: FontPriority::Lowest }],
         })
     }
 }
@@ -186,12 +156,8 @@ const HAN: Script = Script::from_bytes(*b"Hani");
 /// Simplified Chinese is `zh-SG` rather than `zh-CN`, because fontique treats `zh-CN`
 /// as the default Han locale. Its font is whatever the first locale-less Han lookup returned,
 /// which every `Query::set_fallbacks` does, so it is often the Japanese font.
-static HAN_LOCALES: std::sync::LazyLock<Vec<Language>> = std::sync::LazyLock::new(|| {
-    ["zh-SG", "zh-TW", "ja", "ko"]
-        .iter()
-        .filter_map(|locale| Language::parse(locale).ok())
-        .collect()
-});
+static HAN_LOCALES: std::sync::LazyLock<Vec<Language>> =
+    std::sync::LazyLock::new(|| ["zh-SG", "zh-TW", "ja", "ko"].iter().filter_map(|locale| Language::parse(locale).ok()).collect());
 
 /// The fallback key for a script and locale, avoiding fontique's default Han locale (see [`HAN_LOCALES`]).
 fn fallback_key(script: Script, locale: Option<&Language>) -> FallbackKey {
@@ -206,9 +172,7 @@ fn fallback_key(script: Script, locale: Option<&Language>) -> FallbackKey {
 ///
 /// Mirrors how fontique picks between Simplified and Traditional Chinese.
 fn is_simplified_chinese(locale: &Language) -> bool {
-    locale.language() == "zh"
-        && locale.script() != Some("Hant")
-        && !matches!(locale.region(), Some("HK" | "TW" | "MO"))
+    locale.language() == "zh" && locale.script() != Some("Hant") && !matches!(locale.region(), Some("HK" | "TW" | "MO"))
 }
 
 /// Locales to try for a script when the fallback for the preferred locale lacks a char.
@@ -223,9 +187,7 @@ fn script_of(c: char) -> Option<Script> {
     use unicode_script::UnicodeScript as _;
 
     match c.script() {
-        unicode_script::Script::Common
-        | unicode_script::Script::Inherited
-        | unicode_script::Script::Unknown => None,
+        unicode_script::Script::Common | unicode_script::Script::Inherited | unicode_script::Script::Unknown => None,
         script => Script::parse(script.short_name()).ok(),
     }
 }
@@ -248,10 +210,7 @@ fn can_render(font: &QueryFont, c: char) -> bool {
     };
     font_ref.outline_glyphs().get(glyph_id).is_some()
         || font_ref.color_glyphs().get(glyph_id).is_some()
-        || font_ref
-            .bitmap_strikes()
-            .glyph_for_size(skrifa::instance::Size::unscaled(), glyph_id)
-            .is_some()
+        || font_ref.bitmap_strikes().glyph_for_size(skrifa::instance::Size::unscaled(), glyph_id).is_some()
 }
 
 #[cfg(test)]
@@ -275,19 +234,9 @@ mod tests {
     #[expect(clippy::print_stdout)]
     fn finds_system_fonts() {
         let provider = SystemFontProvider::new();
-        for (c, script) in [
-            ('日', "CJK"),
-            ('ع', "Arabic"),
-            ('א', "Hebrew"),
-            ('क', "Devanagari"),
-            ('ก', "Thai"),
-            ('⌥', "Symbol"),
-        ] {
+        for (c, script) in [('日', "CJK"), ('ع', "Arabic"), ('א', "Hebrew"), ('क', "Devanagari"), ('ก', "Thai"), ('⌥', "Symbol")] {
             let cluster = c.to_string();
-            let request = FallbackRequest {
-                cluster: &cluster,
-                family: &FontFamily::Proportional,
-            };
+            let request = FallbackRequest { cluster: &cluster, family: &FontFamily::Proportional };
             let Some(insert) = provider.font_for(&request) else {
                 panic!("No system font for {script} {c:?}");
             };
@@ -317,10 +266,7 @@ mod tests {
         let ja_provider = SystemFontProvider::new().with_locale(Some("ja"));
         let font_name = |provider: &SystemFontProvider, c: char| {
             let cluster = c.to_string();
-            let request = FallbackRequest {
-                cluster: &cluster,
-                family: &FontFamily::Proportional,
-            };
+            let request = FallbackRequest { cluster: &cluster, family: &FontFamily::Proportional };
             provider.font_for(&request).unwrap().name
         };
 
@@ -345,10 +291,7 @@ mod tests {
         let provider = SystemFontProvider::new().with_locale(Some("de-DE"));
         for c in ['ไ', '한', 'م', 'न', '这', '还', '測', '個'] {
             let cluster = c.to_string();
-            let request = FallbackRequest {
-                cluster: &cluster,
-                family: &FontFamily::Proportional,
-            };
+            let request = FallbackRequest { cluster: &cluster, family: &FontFamily::Proportional };
             let Some(insert) = provider.font_for(&request) else {
                 panic!("No system font for {c:?}");
             };

@@ -24,10 +24,7 @@ fn month_data(year: i16, month: i8) -> Vec<Week> {
         week.push(start);
 
         if start.weekday() == Weekday::Sunday {
-            weeks.push(Week {
-                number: ISOWeekDate::from(start).week() as u8,
-                days: core::mem::take(&mut week),
-            });
+            weeks.push(Week { number: ISOWeekDate::from(start).week() as u8, days: core::mem::take(&mut week) });
         }
         start = start.tomorrow().unwrap();
     }

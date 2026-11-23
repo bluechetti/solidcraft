@@ -19,18 +19,8 @@ struct Rectu {
 }
 
 impl Rectu {
-    const NOTHING: Self = Self {
-        min_x: usize::MAX,
-        min_y: usize::MAX,
-        max_x: 0,
-        max_y: 0,
-    };
-    const EVERYTHING: Self = Self {
-        min_x: 0,
-        min_y: 0,
-        max_x: usize::MAX,
-        max_y: usize::MAX,
-    };
+    const NOTHING: Self = Self { min_x: usize::MAX, min_y: usize::MAX, max_x: 0, max_y: 0 };
+    const EVERYTHING: Self = Self { min_x: 0, min_y: 0, max_x: usize::MAX, max_y: usize::MAX };
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -93,11 +83,7 @@ impl TextureAtlas {
 
         // Make the top left pixel fully white for `WHITE_UV`, i.e. painting something with solid color:
         let (pos, image) = atlas.allocate((1, 1));
-        assert_eq!(
-            pos,
-            (0, 0),
-            "Expected the first allocation to be at (0, 0), but was at {pos:?}"
-        );
+        assert_eq!(pos, (0, 0), "Expected the first allocation to be at (0, 0), but was at {pos:?}");
         image[pos] = Color32::WHITE;
 
         // Allocate a series of anti-aliased discs used to render small filled circles:
@@ -118,22 +104,12 @@ impl TextureAtlas {
             for dx in -hw..=hw {
                 for dy in -hw..=hw {
                     let distance_to_center = ((dx * dx + dy * dy) as f32).sqrt();
-                    let coverage =
-                        remap_clamp(distance_to_center, (r - 0.5)..=(r + 0.5), 1.0..=0.0);
-                    image[((x as i32 + hw + dx) as usize, (y as i32 + hw + dy) as usize)] = options
-                        .color_transfer_function
-                        .color_from_coverage(coverage);
+                    let coverage = remap_clamp(distance_to_center, (r - 0.5)..=(r + 0.5), 1.0..=0.0);
+                    image[((x as i32 + hw + dx) as usize, (y as i32 + hw + dy) as usize)] =
+                        options.color_transfer_function.color_from_coverage(coverage);
                 }
             }
-            atlas.discs.push(PrerasterizedDisc {
-                r,
-                uv: Rectu {
-                    min_x: x,
-                    min_y: y,
-                    max_x: x + w,
-                    max_y: y + w,
-                },
-            });
+            atlas.discs.push(PrerasterizedDisc { r, uv: Rectu { min_x: x, min_y: y, max_x: x + w, max_y: y + w } });
         }
 
         atlas
@@ -156,12 +132,7 @@ impl TextureAtlas {
             .iter()
             .map(|disc| {
                 let r = disc.r;
-                let Rectu {
-                    min_x,
-                    min_y,
-                    max_x,
-                    max_y,
-                } = disc.uv;
+                let Rectu { min_x, min_y, max_x, max_y } = disc.uv;
                 let w = max_x - min_x;
                 let uv = Rect::from_min_max(
                     emath::pos2(min_x as f32 * inv_w, min_y as f32 * inv_h),
@@ -179,11 +150,7 @@ impl TextureAtlas {
 
     /// When this get high, it might be time to clear and start over!
     pub fn fill_ratio(&self) -> f32 {
-        if self.overflowed {
-            1.0
-        } else {
-            (self.cursor.1 + self.row_height) as f32 / self.max_height() as f32
-        }
+        if self.overflowed { 1.0 } else { (self.cursor.1 + self.row_height) as f32 / self.max_height() as f32 }
     }
 
     /// The texture options suitable for a font texture
@@ -223,12 +190,7 @@ impl TextureAtlas {
         /// On modern high-precision GPUs this is not needed.
         const PADDING: usize = 1;
 
-        assert!(
-            w <= self.image.width(),
-            "Tried to allocate a {} wide glyph in a {} wide texture atlas",
-            w,
-            self.image.width()
-        );
+        assert!(w <= self.image.width(), "Tried to allocate a {} wide glyph in a {} wide texture atlas", w, self.image.width());
         if self.cursor.0 + w > self.image.width() {
             // New row:
             self.cursor.0 = 0;
@@ -269,9 +231,7 @@ fn resize_to_min_height(image: &mut ColorImage, required_height: usize) -> bool 
     }
 
     if image.width() * image.height() > image.pixels.len() {
-        image
-            .pixels
-            .resize(image.width() * image.height(), Color32::TRANSPARENT);
+        image.pixels.resize(image.width() * image.height(), Color32::TRANSPARENT);
         true
     } else {
         false

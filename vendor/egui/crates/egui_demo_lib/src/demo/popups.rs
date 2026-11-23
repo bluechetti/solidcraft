@@ -2,8 +2,7 @@ use crate::rust_view_ui;
 use egui::color_picker::{Alpha, color_picker_color32};
 use egui::containers::menu::{MenuConfig, SubMenuButton};
 use egui::{
-    Align, Align2, Atom, Button, ComboBox, Frame, Id, Layout, Popup, PopupCloseBehavior, RectAlign,
-    RichText, Tooltip, Ui, UiBuilder, include_image,
+    Align, Align2, Atom, Button, ComboBox, Frame, Id, Layout, Popup, PopupCloseBehavior, RectAlign, RichText, Tooltip, Ui, UiBuilder, include_image,
 };
 
 /// Showcase [`Popup`].
@@ -35,10 +34,7 @@ impl Default for PopupsDemo {
 
 impl PopupsDemo {
     fn apply_options<'a>(&self, popup: Popup<'a>) -> Popup<'a> {
-        popup
-            .align(self.align4)
-            .gap(self.gap)
-            .close_behavior(self.close_behavior)
+        popup.align(self.align4).gap(self.gap).close_behavior(self.close_behavior)
     }
 
     fn nested_menus(&mut self, ui: &mut Ui) {
@@ -69,39 +65,27 @@ impl PopupsDemo {
         ui.add_enabled_ui(false, |ui| {
             ui.menu_button("SubMenus can be disabled", |_| {});
         });
-        ui.menu_image_text_button(
-            include_image!("../../data/icon.png"),
-            "I have an icon!",
-            |ui| {
-                let _ = ui.button("Item1");
-                let _ = ui.button("Item2");
-                let _ = ui.button("Item3");
-                let _ = ui.button("Item4");
-                if ui.button("Open…").clicked() {
-                    ui.close();
-                }
-            },
-        );
+        ui.menu_image_text_button(include_image!("../../data/icon.png"), "I have an icon!", |ui| {
+            let _ = ui.button("Item1");
+            let _ = ui.button("Item2");
+            let _ = ui.button("Item3");
+            let _ = ui.button("Item4");
+            if ui.button("Open…").clicked() {
+                ui.close();
+            }
+        });
         let _ = ui.button("Very long text for this item that should be wrapped");
-        SubMenuButton::new("Always CloseOnClickOutside")
-            .config(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClickOutside))
-            .ui(ui, |ui| {
+        SubMenuButton::new("Always CloseOnClickOutside").config(MenuConfig::new().close_behavior(PopupCloseBehavior::CloseOnClickOutside)).ui(
+            ui,
+            |ui| {
                 ui.checkbox(&mut self.checked, "Checkbox");
 
                 // Customized color SubMenuButton
                 let is_bright = self.color.intensity() > 0.5;
-                let text_color = if is_bright {
-                    egui::Color32::BLACK
-                } else {
-                    egui::Color32::WHITE
-                };
+                let text_color = if is_bright { egui::Color32::BLACK } else { egui::Color32::WHITE };
 
-                let button = Button::new((
-                    RichText::new("Background").color(text_color),
-                    Atom::grow(),
-                    SubMenuButton::arrow_atom(Some(text_color)),
-                ))
-                .fill(self.color);
+                let button = Button::new((RichText::new("Background").color(text_color), Atom::grow(), SubMenuButton::arrow_atom(Some(text_color))))
+                    .fill(self.color);
 
                 SubMenuButton::from_button(button).ui(ui, |ui| {
                     ui.spacing_mut().slider_width = 200.0;
@@ -119,7 +103,8 @@ impl PopupsDemo {
                 if ui.button("Open…").clicked() {
                     ui.close();
                 }
-            });
+            },
+        );
     }
 }
 
@@ -147,22 +132,18 @@ impl crate::View for PopupsDemo {
         let response = Frame::group(ui.style())
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.vertical_centered(|ui| ui.button("Click, right-click and hover me!"))
-                    .inner
+                ui.vertical_centered(|ui| ui.button("Click, right-click and hover me!")).inner
             })
             .inner;
 
-        self.apply_options(Popup::menu(&response).id(Id::unique("menu")))
-            .show(|ui| self.nested_menus(ui));
+        self.apply_options(Popup::menu(&response).id(Id::unique("menu"))).show(|ui| self.nested_menus(ui));
 
-        self.apply_options(Popup::context_menu(&response).id(Id::unique("context_menu")))
-            .show(|ui| self.nested_menus(ui));
+        self.apply_options(Popup::context_menu(&response).id(Id::unique("context_menu"))).show(|ui| self.nested_menus(ui));
 
         if self.popup_open {
-            self.apply_options(Popup::from_response(&response).id(Id::unique("popup")))
-                .show(|ui| {
-                    ui.label("Popup contents");
-                });
+            self.apply_options(Popup::from_response(&response).id(Id::unique("popup"))).show(|ui| {
+                ui.label("Popup contents");
+            });
         }
 
         let mut tooltip = Tooltip::for_enabled(&response);
@@ -172,16 +153,8 @@ impl crate::View for PopupsDemo {
         });
 
         Frame::canvas(ui.style()).show(ui, |ui| {
-            let mut reset_btn_ui = ui.new_child(
-                UiBuilder::new()
-                    .max_rect(ui.max_rect())
-                    .layout(Layout::right_to_left(Align::Min)),
-            );
-            if reset_btn_ui
-                .button("⟲")
-                .on_hover_text("Reset to defaults")
-                .clicked()
-            {
+            let mut reset_btn_ui = ui.new_child(UiBuilder::new().max_rect(ui.max_rect()).layout(Layout::right_to_left(Align::Min)));
+            if reset_btn_ui.button("⟲").on_hover_text("Reset to defaults").clicked() {
                 *self = Self::default();
             }
 
@@ -244,12 +217,7 @@ impl crate::View for PopupsDemo {
                 ];
 
                 ComboBox::new("Preset", "")
-                    .selected_text(
-                        presets
-                            .iter()
-                            .find(|(a, _)| a == &self.align4)
-                            .map_or("<Select Preset>", |(_, name)| *name),
-                    )
+                    .selected_text(presets.iter().find(|(a, _)| a == &self.align4).map_or("<Select Preset>", |(_, name)| *name))
                     .show_ui(ui, |ui| {
                         for (align4, name) in &presets {
                             ui.selectable_value(&mut self.align4, *align4, *name);
@@ -262,8 +230,7 @@ impl crate::View for PopupsDemo {
 
             ui.horizontal(|ui| {
                 rust_view_ui(ui, "let gap = ");
-                ui.add(egui::DragValue::new(&mut self.gap))
-                    .on_hover_text("gap");
+                ui.add(egui::DragValue::new(&mut self.gap)).on_hover_text("gap");
                 rust_view_ui(ui, ";");
             });
 
@@ -271,35 +238,17 @@ impl crate::View for PopupsDemo {
             ui.horizontal(|ui| {
                 rust_view_ui(ui, "    = PopupCloseBehavior::");
                 let close_behaviors = [
-                    (
-                        PopupCloseBehavior::CloseOnClick,
-                        "CloseOnClick",
-                        "Closes when the user clicks anywhere (inside or outside)",
-                    ),
-                    (
-                        PopupCloseBehavior::CloseOnClickOutside,
-                        "CloseOnClickOutside",
-                        "Closes when the user clicks outside the popup",
-                    ),
-                    (
-                        PopupCloseBehavior::IgnoreClicks,
-                        "IgnoreClicks",
-                        "Close only when the button is clicked again",
-                    ),
+                    (PopupCloseBehavior::CloseOnClick, "CloseOnClick", "Closes when the user clicks anywhere (inside or outside)"),
+                    (PopupCloseBehavior::CloseOnClickOutside, "CloseOnClickOutside", "Closes when the user clicks outside the popup"),
+                    (PopupCloseBehavior::IgnoreClicks, "IgnoreClicks", "Close only when the button is clicked again"),
                 ];
                 ComboBox::new("Close behavior", "")
                     .selected_text(
-                        close_behaviors
-                            .iter()
-                            .find_map(|(behavior, text, _)| {
-                                (behavior == &self.close_behavior).then_some(*text)
-                            })
-                            .unwrap(),
+                        close_behaviors.iter().find_map(|(behavior, text, _)| (behavior == &self.close_behavior).then_some(*text)).unwrap(),
                     )
                     .show_ui(ui, |ui| {
                         for (close_behavior, name, tooltip) in &close_behaviors {
-                            ui.selectable_value(&mut self.close_behavior, *close_behavior, *name)
-                                .on_hover_text(*tooltip);
+                            ui.selectable_value(&mut self.close_behavior, *close_behavior, *name).on_hover_text(*tooltip);
                         }
                     })
                     .response
@@ -309,8 +258,7 @@ impl crate::View for PopupsDemo {
 
             ui.horizontal(|ui| {
                 rust_view_ui(ui, "let popup_open = ");
-                ui.checkbox(&mut self.popup_open, "")
-                    .on_hover_text("popup_open");
+                ui.checkbox(&mut self.popup_open, "").on_hover_text("popup_open");
                 rust_view_ui(ui, ";");
             });
             ui.monospace("");

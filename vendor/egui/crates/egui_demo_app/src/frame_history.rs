@@ -8,9 +8,7 @@ impl Default for FrameHistory {
     fn default() -> Self {
         let max_age: f32 = 1.0;
         let max_len = (max_age * 300.0).round() as usize;
-        Self {
-            frame_times: History::new(0..max_len, max_age),
-        }
+        Self { frame_times: History::new(0..max_len, max_age) }
     }
 }
 
@@ -33,22 +31,16 @@ impl FrameHistory {
     }
 
     pub fn ui(&self, ui: &mut egui::Ui) {
-        ui.label(format!(
-            "Mean CPU usage: {:.2} ms / frame",
-            1e3 * self.mean_frame_time()
-        ))
-        .on_hover_text(
+        ui.label(format!("Mean CPU usage: {:.2} ms / frame", 1e3 * self.mean_frame_time())).on_hover_text(
             "Includes all app logic, egui layout, tessellation, and rendering.\n\
             Does not include waiting for vsync.",
         );
         egui::warn_if_debug_build(ui);
 
         if !cfg!(target_arch = "wasm32") {
-            egui::CollapsingHeader::new("📊 CPU usage history")
-                .default_open(false)
-                .show(ui, |ui| {
-                    self.graph(ui);
-                });
+            egui::CollapsingHeader::new("📊 CPU usage history").default_open(false).show(ui, |ui| {
+                self.graph(ui);
+            });
         }
     }
 
@@ -84,21 +76,11 @@ impl FrameHistory {
 
         if let Some(pointer_pos) = response.hover_pos() {
             let y = pointer_pos.y;
-            shapes.push(Shape::line_segment(
-                [pos2(rect.left(), y), pos2(rect.right(), y)],
-                line_stroke,
-            ));
+            shapes.push(Shape::line_segment([pos2(rect.left(), y), pos2(rect.right(), y)], line_stroke));
             let cpu_usage = to_screen.inverse().transform_pos(pointer_pos).y;
             let text = format!("{:.1} ms", 1e3 * cpu_usage);
             shapes.push(ui.fonts_mut(|f| {
-                Shape::text(
-                    f,
-                    pos2(rect.left(), y),
-                    egui::Align2::LEFT_BOTTOM,
-                    text,
-                    TextStyle::Monospace.resolve(ui.style()),
-                    color,
-                )
+                Shape::text(f, pos2(rect.left(), y), egui::Align2::LEFT_BOTTOM, text, TextStyle::Monospace.resolve(ui.style()), color)
             }));
         }
 
@@ -110,10 +92,7 @@ impl FrameHistory {
             let age = (right_side_time - time) as f32;
             let pos = to_screen.transform_pos_clamped(Pos2::new(age, cpu_usage));
 
-            shapes.push(Shape::line_segment(
-                [pos2(pos.x, rect.bottom()), pos],
-                line_stroke,
-            ));
+            shapes.push(Shape::line_segment([pos2(pos.x, rect.bottom()), pos], line_stroke));
 
             if cpu_usage < graph_top_cpu_usage {
                 shapes.push(Shape::circle_filled(pos, radius, circle_color));

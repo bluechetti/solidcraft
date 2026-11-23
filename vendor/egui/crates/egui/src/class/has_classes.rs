@@ -9,9 +9,7 @@ pub trait HasClasses {
     /// True if the class is present.
     #[inline]
     fn has_class(&self, class: &str) -> bool {
-        self.classes()
-            .iter()
-            .any(|existing| existing.as_str() == class)
+        self.classes().iter().any(|existing| existing.as_str() == class)
     }
 
     /// Add the given class in-place.

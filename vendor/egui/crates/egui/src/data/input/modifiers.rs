@@ -43,13 +43,7 @@ impl core::fmt::Debug for Modifiers {
             return write!(f, "Modifiers::NONE");
         }
 
-        let Self {
-            alt,
-            ctrl,
-            shift,
-            mac_cmd,
-            command,
-        } = *self;
+        let Self { alt, ctrl, shift, mac_cmd, command } = *self;
 
         let mut debug = f.debug_struct("Modifiers");
         if alt {
@@ -72,53 +66,17 @@ impl core::fmt::Debug for Modifiers {
 }
 
 impl Modifiers {
-    pub const NONE: Self = Self {
-        alt: false,
-        ctrl: false,
-        shift: false,
-        mac_cmd: false,
-        command: false,
-    };
+    pub const NONE: Self = Self { alt: false, ctrl: false, shift: false, mac_cmd: false, command: false };
 
-    pub const ALT: Self = Self {
-        alt: true,
-        ctrl: false,
-        shift: false,
-        mac_cmd: false,
-        command: false,
-    };
-    pub const CTRL: Self = Self {
-        alt: false,
-        ctrl: true,
-        shift: false,
-        mac_cmd: false,
-        command: false,
-    };
-    pub const SHIFT: Self = Self {
-        alt: false,
-        ctrl: false,
-        shift: true,
-        mac_cmd: false,
-        command: false,
-    };
+    pub const ALT: Self = Self { alt: true, ctrl: false, shift: false, mac_cmd: false, command: false };
+    pub const CTRL: Self = Self { alt: false, ctrl: true, shift: false, mac_cmd: false, command: false };
+    pub const SHIFT: Self = Self { alt: false, ctrl: false, shift: true, mac_cmd: false, command: false };
 
     /// The Mac ⌘ Command key
-    pub const MAC_CMD: Self = Self {
-        alt: false,
-        ctrl: false,
-        shift: false,
-        mac_cmd: true,
-        command: false,
-    };
+    pub const MAC_CMD: Self = Self { alt: false, ctrl: false, shift: false, mac_cmd: true, command: false };
 
     /// On Mac: ⌘ Command key, elsewhere: Ctrl key
-    pub const COMMAND: Self = Self {
-        alt: false,
-        ctrl: false,
-        shift: false,
-        mac_cmd: false,
-        command: true,
-    };
+    pub const COMMAND: Self = Self { alt: false, ctrl: false, shift: false, mac_cmd: false, command: true };
 
     /// ```
     /// # use egui::Modifiers;
@@ -347,40 +305,20 @@ impl Modifiers {
             return true;
         }
 
-        let Self {
-            alt,
-            ctrl,
-            shift,
-            mac_cmd,
-            command,
-        } = *self;
+        let Self { alt, ctrl, shift, mac_cmd, command } = *self;
 
         if alt && query.alt {
-            return self.contains(Self {
-                alt: false,
-                ..query
-            });
+            return self.contains(Self { alt: false, ..query });
         }
         if shift && query.shift {
-            return self.contains(Self {
-                shift: false,
-                ..query
-            });
+            return self.contains(Self { shift: false, ..query });
         }
 
         if (ctrl || command) && (query.ctrl || query.command) {
-            return self.contains(Self {
-                command: false,
-                ctrl: false,
-                ..query
-            });
+            return self.contains(Self { command: false, ctrl: false, ..query });
         }
         if (mac_cmd || command) && (query.mac_cmd || query.command) {
-            return self.contains(Self {
-                mac_cmd: false,
-                command: false,
-                ..query
-            });
+            return self.contains(Self { mac_cmd: false, command: false, ..query });
         }
 
         false

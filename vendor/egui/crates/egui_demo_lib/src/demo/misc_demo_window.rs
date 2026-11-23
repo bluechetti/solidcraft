@@ -3,8 +3,8 @@ use std::sync::Arc;
 use super::{Demo, View};
 
 use egui::{
-    Align, Align2, Checkbox, CollapsingHeader, Color32, ComboBox, FontId, Resize, RichText, Sense,
-    Slider, Stroke, TextFormat, TextStyle, Ui, Vec2, Window, vec2,
+    Align, Align2, Checkbox, CollapsingHeader, Color32, ComboBox, FontId, Resize, RichText, Sense, Slider, Stroke, TextFormat, TextStyle, Ui, Vec2,
+    Window, vec2,
 };
 
 /// Showcase some ui code
@@ -52,12 +52,7 @@ impl Demo for MiscDemoWindow {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        Window::new(self.name())
-            .open(open)
-            .vscroll(true)
-            .hscroll(true)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| self.ui(ui));
+        Window::new(self.name()).open(open).vscroll(true).hscroll(true).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| self.ui(ui));
     }
 
     fn logic(&mut self, ctx: &egui::Context) {
@@ -69,95 +64,69 @@ impl View for MiscDemoWindow {
     fn ui(&mut self, ui: &mut Ui) {
         ui.set_min_width(250.0);
 
-        CollapsingHeader::new("Label")
-            .default_open(true)
-            .show(ui, |ui| {
-                label_ui(ui);
+        CollapsingHeader::new("Label").default_open(true).show(ui, |ui| {
+            label_ui(ui);
+        });
+
+        CollapsingHeader::new("Misc widgets").default_open(false).show(ui, |ui| {
+            self.widgets.ui(ui);
+        });
+
+        CollapsingHeader::new("Text layout").default_open(false).show(ui, |ui| {
+            text_layout_demo(ui);
+            ui.vertical_centered(|ui| {
+                ui.add(crate::egui_github_link_file_line!());
             });
+        });
 
-        CollapsingHeader::new("Misc widgets")
-            .default_open(false)
-            .show(ui, |ui| {
-                self.widgets.ui(ui);
+        CollapsingHeader::new("System font fallback").default_open(false).show(ui, |ui| {
+            system_font_fallback_demo(ui);
+            ui.vertical_centered(|ui| {
+                ui.add(crate::egui_github_link_file_line!());
             });
+        });
 
-        CollapsingHeader::new("Text layout")
-            .default_open(false)
-            .show(ui, |ui| {
-                text_layout_demo(ui);
-                ui.vertical_centered(|ui| {
-                    ui.add(crate::egui_github_link_file_line!());
-                });
-            });
+        CollapsingHeader::new("Text rotation").default_open(false).show(ui, |ui| self.text_rotation.ui(ui));
 
-        CollapsingHeader::new("System font fallback")
-            .default_open(false)
-            .show(ui, |ui| {
-                system_font_fallback_demo(ui);
-                ui.vertical_centered(|ui| {
-                    ui.add(crate::egui_github_link_file_line!());
-                });
-            });
+        CollapsingHeader::new("Colors").default_open(false).show(ui, |ui| {
+            self.colors.ui(ui);
+        });
 
-        CollapsingHeader::new("Text rotation")
-            .default_open(false)
-            .show(ui, |ui| self.text_rotation.ui(ui));
+        CollapsingHeader::new("Custom Collapsing Header").default_open(false).show(ui, |ui| self.custom_collapsing_header.ui(ui));
 
-        CollapsingHeader::new("Colors")
-            .default_open(false)
-            .show(ui, |ui| {
-                self.colors.ui(ui);
-            });
+        CollapsingHeader::new("Tree").default_open(false).show(ui, |ui| self.tree.ui(ui));
 
-        CollapsingHeader::new("Custom Collapsing Header")
-            .default_open(false)
-            .show(ui, |ui| self.custom_collapsing_header.ui(ui));
+        CollapsingHeader::new("Repaint").default_open(false).show(ui, |ui| self.repaint.ui(ui));
 
-        CollapsingHeader::new("Tree")
-            .default_open(false)
-            .show(ui, |ui| self.tree.ui(ui));
-
-        CollapsingHeader::new("Repaint")
-            .default_open(false)
-            .show(ui, |ui| self.repaint.ui(ui));
-
-        CollapsingHeader::new("Checkboxes")
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.label("Checkboxes with empty labels take up very little space:");
-                ui.spacing_mut().item_spacing = Vec2::ZERO;
-                ui.horizontal_wrapped(|ui| {
-                    for _ in 0..64 {
-                        ui.checkbox(&mut self.dummy_bool, "");
-                    }
-                });
-                ui.checkbox(&mut self.dummy_bool, "checkbox");
-
-                ui.label("Radiobuttons are similar:");
-                ui.spacing_mut().item_spacing = Vec2::ZERO;
-                ui.horizontal_wrapped(|ui| {
-                    for i in 0..64 {
-                        ui.radio_value(&mut self.dummy_usize, i, "");
-                    }
-                });
-                ui.radio_value(&mut self.dummy_usize, 64, "radio_value");
-                ui.label("Checkboxes can be in an indeterminate state:");
-                let mut all_checked = self.checklist.iter().all(|item| *item);
-                let any_checked = self.checklist.iter().any(|item| *item);
-                let indeterminate = any_checked && !all_checked;
-                if ui
-                    .add(
-                        Checkbox::new(&mut all_checked, "Check/uncheck all")
-                            .indeterminate(indeterminate),
-                    )
-                    .changed()
-                {
-                    self.checklist.fill(all_checked);
-                }
-                for (i, checked) in self.checklist.iter_mut().enumerate() {
-                    ui.checkbox(checked, format!("Item {}", i + 1));
+        CollapsingHeader::new("Checkboxes").default_open(false).show(ui, |ui| {
+            ui.label("Checkboxes with empty labels take up very little space:");
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            ui.horizontal_wrapped(|ui| {
+                for _ in 0..64 {
+                    ui.checkbox(&mut self.dummy_bool, "");
                 }
             });
+            ui.checkbox(&mut self.dummy_bool, "checkbox");
+
+            ui.label("Radiobuttons are similar:");
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            ui.horizontal_wrapped(|ui| {
+                for i in 0..64 {
+                    ui.radio_value(&mut self.dummy_usize, i, "");
+                }
+            });
+            ui.radio_value(&mut self.dummy_usize, 64, "radio_value");
+            ui.label("Checkboxes can be in an indeterminate state:");
+            let mut all_checked = self.checklist.iter().all(|item| *item);
+            let any_checked = self.checklist.iter().any(|item| *item);
+            let indeterminate = any_checked && !all_checked;
+            if ui.add(Checkbox::new(&mut all_checked, "Check/uncheck all").indeterminate(indeterminate)).changed() {
+                self.checklist.fill(all_checked);
+            }
+            for (i, checked) in self.checklist.iter_mut().enumerate() {
+                ui.checkbox(checked, format!("Item {}", i + 1));
+            }
+        });
 
         ui.collapsing("Columns", |ui| {
             ui.add(Slider::new(&mut self.num_columns, 1..=10).text("Columns"));
@@ -171,56 +140,45 @@ impl View for MiscDemoWindow {
             });
         });
 
-        CollapsingHeader::new("Test box rendering")
-            .default_open(false)
-            .show(ui, |ui| self.box_painting.ui(ui));
+        CollapsingHeader::new("Test box rendering").default_open(false).show(ui, |ui| self.box_painting.ui(ui));
 
-        CollapsingHeader::new("Resize")
-            .default_open(false)
-            .show(ui, |ui| {
-                Resize::default().default_height(100.0).show(ui, |ui| {
-                    ui.label("This ui can be resized!");
-                    ui.label("Just pull the handle on the bottom right");
-                });
+        CollapsingHeader::new("Resize").default_open(false).show(ui, |ui| {
+            Resize::default().default_height(100.0).show(ui, |ui| {
+                ui.label("This ui can be resized!");
+                ui.label("Just pull the handle on the bottom right");
             });
+        });
 
-        CollapsingHeader::new("Ui Stack")
-            .default_open(false)
-            .show(ui, ui_stack_demo);
+        CollapsingHeader::new("Ui Stack").default_open(false).show(ui, ui_stack_demo);
 
-        CollapsingHeader::new("Misc")
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("You can pretty easily paint your own small icons:");
-                    use core::f32::consts::TAU;
-                    let size = Vec2::splat(16.0);
-                    let (response, painter) = ui.allocate_painter(size, Sense::hover());
-                    let rect = response.rect;
-                    let c = rect.center();
-                    let r = rect.width() * 0.5 - 1.0;
-                    let color = Color32::from_gray(128);
-                    let stroke = Stroke::new(1.0, color);
-                    painter.circle_stroke(c, r, stroke);
-                    painter.line_segment([c - vec2(0.0, r), c + vec2(0.0, r)], stroke);
-                    painter.line_segment([c, c + r * Vec2::angled(TAU * 1.0 / 8.0)], stroke);
-                    painter.line_segment([c, c + r * Vec2::angled(TAU * 3.0 / 8.0)], stroke);
-                });
+        CollapsingHeader::new("Misc").default_open(false).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("You can pretty easily paint your own small icons:");
+                use core::f32::consts::TAU;
+                let size = Vec2::splat(16.0);
+                let (response, painter) = ui.allocate_painter(size, Sense::hover());
+                let rect = response.rect;
+                let c = rect.center();
+                let r = rect.width() * 0.5 - 1.0;
+                let color = Color32::from_gray(128);
+                let stroke = Stroke::new(1.0, color);
+                painter.circle_stroke(c, r, stroke);
+                painter.line_segment([c - vec2(0.0, r), c + vec2(0.0, r)], stroke);
+                painter.line_segment([c, c + r * Vec2::angled(TAU * 1.0 / 8.0)], stroke);
+                painter.line_segment([c, c + r * Vec2::angled(TAU * 3.0 / 8.0)], stroke);
             });
+        });
 
-        CollapsingHeader::new("Many circles of different sizes")
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    for i in 0..100 {
-                        let r = i as f32 * 0.5;
-                        let size = Vec2::splat(2.0 * r + 5.0);
-                        let (rect, _response) = ui.allocate_at_least(size, Sense::hover());
-                        ui.painter()
-                            .circle_filled(rect.center(), r, ui.visuals().text_color());
-                    }
-                });
+        CollapsingHeader::new("Many circles of different sizes").default_open(false).show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for i in 0..100 {
+                    let r = i as f32 * 0.5;
+                    let size = Vec2::splat(2.0 * r + 5.0);
+                    let (rect, _response) = ui.allocate_at_least(size, Sense::hover());
+                    ui.painter().circle_filled(rect.center(), r, ui.visuals().text_color());
+                }
             });
+        });
     }
 }
 
@@ -272,10 +230,7 @@ pub struct Widgets {
 
 impl Default for Widgets {
     fn default() -> Self {
-        Self {
-            angle: core::f32::consts::TAU / 3.0,
-            password: "hunter2".to_owned(),
-        }
+        Self { angle: core::f32::consts::TAU / 3.0, password: "hunter2".to_owned() }
     }
 }
 
@@ -291,8 +246,7 @@ impl Widgets {
         ui.horizontal(|ui| {
             ui.label("An angle:");
             ui.drag_angle(angle);
-            ui.label(format!("≈ {:.3}τ", *angle / core::f32::consts::TAU))
-                .on_hover_text("Each τ represents one turn (τ = 2π)");
+            ui.label(format!("≈ {:.3}τ", *angle / core::f32::consts::TAU)).on_hover_text("Each τ represents one turn (τ = 2π)");
         })
         .response
         .on_hover_text("The angle is stored in radians, but presented in degrees");
@@ -367,11 +321,7 @@ impl Repaint {
                 self.ui_count = 0;
                 self.logic_count = 0;
             }
-            ui.label(format!(
-                "`ui`: {}, `logic`: {}",
-                self.ui_count, self.logic_count
-            ))
-            .on_hover_text(
+            ui.label(format!("`ui`: {}, `logic`: {}", self.ui_count, self.logic_count)).on_hover_text(
                 "`ui` is incremented in `App::ui` (only runs while visible), \
                      `logic` in `App::logic` (runs even while hidden).",
             );
@@ -379,31 +329,21 @@ impl Repaint {
 
         ui.separator();
 
-        ui.checkbox(
-            &mut self.repaint_continuously,
-            "Repaint continuously (every frame)",
-        );
+        ui.checkbox(&mut self.repaint_continuously, "Repaint continuously (every frame)");
 
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.repaint_after_delay, "Repaint after");
-            ui.add_enabled(
-                self.repaint_after_delay,
-                Slider::new(&mut self.delay, 0.0..=5.0)
-                    .suffix(" s")
-                    .text("delay"),
-            );
+            ui.add_enabled(self.repaint_after_delay, Slider::new(&mut self.delay, 0.0..=5.0).suffix(" s").text("delay"));
         });
 
-        ui.checkbox(&mut self.in_background, "In the background (during logic)")
-            .on_hover_text(
-                "Issue the repaint requests from `App::logic` (which runs even while hidden) \
+        ui.checkbox(&mut self.in_background, "In the background (during logic)").on_hover_text(
+            "Issue the repaint requests from `App::logic` (which runs even while hidden) \
                  instead of `App::ui` (which is skipped while hidden).\n\n\
                  With this enabled, hide this tab for a while, then come back: \
                  the `logic` count will have kept climbing.",
-            );
+        );
 
-        ui.checkbox(&mut self.log_each_frame, "Log each frame")
-            .on_hover_text("Log each `ui` and `logic` frame to the console.");
+        ui.checkbox(&mut self.log_each_frame, "Log each frame").on_hover_text("Log each `ui` and `logic` frame to the console.");
 
         // When not in background mode, drive the repaints from here (`ui`), which only
         // runs while visible. Otherwise they are driven from `logic` (see below).
@@ -465,35 +405,21 @@ impl ColorWidgets {
 
         ui.label("egui lets you edit colors stored as either sRGBA or linear RGBA and with or without premultiplied alpha");
 
-        let Self {
-            srgba_unmul,
-            srgba_premul,
-            rgba_unmul,
-            rgba_premul,
-        } = self;
+        let Self { srgba_unmul, srgba_premul, rgba_unmul, rgba_premul } = self;
 
         ui.horizontal(|ui| {
             ui.color_edit_button_srgba_unmultiplied(srgba_unmul);
-            ui.label(format!(
-                "sRGBA: {} {} {} {}",
-                srgba_unmul[0], srgba_unmul[1], srgba_unmul[2], srgba_unmul[3],
-            ));
+            ui.label(format!("sRGBA: {} {} {} {}", srgba_unmul[0], srgba_unmul[1], srgba_unmul[2], srgba_unmul[3],));
         });
 
         ui.horizontal(|ui| {
             ui.color_edit_button_srgba_premultiplied(srgba_premul);
-            ui.label(format!(
-                "sRGBA with premultiplied alpha: {} {} {} {}",
-                srgba_premul[0], srgba_premul[1], srgba_premul[2], srgba_premul[3],
-            ));
+            ui.label(format!("sRGBA with premultiplied alpha: {} {} {} {}", srgba_premul[0], srgba_premul[1], srgba_premul[2], srgba_premul[3],));
         });
 
         ui.horizontal(|ui| {
             ui.color_edit_button_rgba_unmultiplied(rgba_unmul);
-            ui.label(format!(
-                "Linear RGBA: {:.02} {:.02} {:.02} {:.02}",
-                rgba_unmul[0], rgba_unmul[1], rgba_unmul[2], rgba_unmul[3],
-            ));
+            ui.label(format!("Linear RGBA: {:.02} {:.02} {:.02} {:.02}", rgba_unmul[0], rgba_unmul[1], rgba_unmul[2], rgba_unmul[3],));
         });
 
         ui.horizontal(|ui| {
@@ -519,12 +445,7 @@ struct BoxPainting {
 
 impl Default for BoxPainting {
     fn default() -> Self {
-        Self {
-            size: vec2(64.0, 32.0),
-            corner_radius: 5.0,
-            stroke_width: 2.0,
-            num_boxes: 1,
-        }
+        Self { size: vec2(64.0, 32.0), corner_radius: 5.0, stroke_width: 2.0, num_boxes: 1 }
     }
 }
 
@@ -561,10 +482,7 @@ struct CustomCollapsingHeader {
 
 impl Default for CustomCollapsingHeader {
     fn default() -> Self {
-        Self {
-            selected: true,
-            radio_value: false,
-        }
+        Self { selected: true, radio_value: false }
     }
 }
 
@@ -605,10 +523,7 @@ struct Tree(Vec<Self>);
 
 impl Tree {
     pub fn demo() -> Self {
-        Self(vec![
-            Self(vec![Self::default(); 4]),
-            Self(vec![Self(vec![Self::default(); 2]); 3]),
-        ])
+        Self(vec![Self(vec![Self::default(); 4]), Self(vec![Self(vec![Self::default(); 2]); 3])])
     }
 
     pub fn ui(&mut self, ui: &mut Ui) -> Action {
@@ -618,19 +533,11 @@ impl Tree {
 
 impl Tree {
     fn ui_impl(&mut self, ui: &mut Ui, depth: usize, name: &str) -> Action {
-        CollapsingHeader::new(name)
-            .default_open(depth < 1)
-            .show(ui, |ui| self.children_ui(ui, depth))
-            .body_returned
-            .unwrap_or(Action::Keep)
+        CollapsingHeader::new(name).default_open(depth < 1).show(ui, |ui| self.children_ui(ui, depth)).body_returned.unwrap_or(Action::Keep)
     }
 
     fn children_ui(&mut self, ui: &mut Ui, depth: usize) -> Action {
-        if depth > 0
-            && ui
-                .button(RichText::new("delete").color(ui.visuals().warn_fg_color))
-                .clicked()
-        {
+        if depth > 0 && ui.button(RichText::new("delete").color(ui.visuals().warn_fg_color)).clicked() {
             return Action::Delete;
         }
 
@@ -638,13 +545,7 @@ impl Tree {
             .0
             .into_iter()
             .enumerate()
-            .filter_map(|(i, mut tree)| {
-                if tree.ui_impl(ui, depth + 1, &format!("child #{i}")) == Action::Keep {
-                    Some(tree)
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(i, mut tree)| if tree.ui_impl(ui, depth + 1, &format!("child #{i}")) == Action::Keep { Some(tree) } else { None })
             .collect();
 
         if ui.button("+").clicked() {
@@ -669,52 +570,37 @@ fn ui_stack_demo(ui: &mut Ui) {
         );
     });
     let stack = Arc::clone(ui.stack());
-    egui::Frame::new()
-        .inner_margin(ui.spacing().menu_margin)
-        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
-        .show(ui, |ui| {
-            egui_extras::TableBuilder::new(ui)
-                .column(egui_extras::Column::auto())
-                .column(egui_extras::Column::auto())
-                .header(18.0, |mut header| {
-                    header.col(|ui| {
-                        ui.strong("id");
-                    });
-                    header.col(|ui| {
-                        ui.strong("kind");
-                    });
-                })
-                .body(|mut body| {
-                    for node in stack.iter() {
-                        body.row(18.0, |mut row| {
-                            row.col(|ui| {
-                                let response = ui.label(format!("{:?}", node.unique_id));
-
-                                if response.hovered() {
-                                    ui.debug_painter().debug_rect(
-                                        node.max_rect,
-                                        Color32::GREEN,
-                                        "max_rect",
-                                    );
-                                    ui.debug_painter().circle_filled(
-                                        node.min_rect.min,
-                                        2.0,
-                                        Color32::RED,
-                                    );
-                                }
-                            });
-
-                            row.col(|ui| {
-                                ui.label(if let Some(kind) = node.kind() {
-                                    format!("{kind:?}")
-                                } else {
-                                    "-".to_owned()
-                                });
-                            });
-                        });
-                    }
+    egui::Frame::new().inner_margin(ui.spacing().menu_margin).stroke(ui.visuals().widgets.noninteractive.bg_stroke).show(ui, |ui| {
+        egui_extras::TableBuilder::new(ui)
+            .column(egui_extras::Column::auto())
+            .column(egui_extras::Column::auto())
+            .header(18.0, |mut header| {
+                header.col(|ui| {
+                    ui.strong("id");
                 });
-        });
+                header.col(|ui| {
+                    ui.strong("kind");
+                });
+            })
+            .body(|mut body| {
+                for node in stack.iter() {
+                    body.row(18.0, |mut row| {
+                        row.col(|ui| {
+                            let response = ui.label(format!("{:?}", node.unique_id));
+
+                            if response.hovered() {
+                                ui.debug_painter().debug_rect(node.max_rect, Color32::GREEN, "max_rect");
+                                ui.debug_painter().circle_filled(node.min_rect.min, 2.0, Color32::RED);
+                            }
+                        });
+
+                        row.col(|ui| {
+                            ui.label(if let Some(kind) = node.kind() { format!("{kind:?}") } else { "-".to_owned() });
+                        });
+                    });
+                }
+            });
+    });
 
     ui.small("Hover on UI's ids to display their origin and max rect.");
 }
@@ -727,25 +613,23 @@ fn ui_stack_demo(ui: &mut Ui) {
 /// On web, the browser draws them.
 fn system_font_fallback_demo(ui: &mut Ui) {
     ui.label("Some non-latin chars to test font fallback:");
-    egui::Grid::new("system_font_fallback")
-        .num_columns(2)
-        .show(ui, |ui| {
-            for (language, sample) in [
-                ("Arabic", "مرحبا"),
-                ("Chinese (simplified)", "这些字体还能显示吗？"),
-                ("Chinese (traditional)", "這些字體還能顯示嗎？"),
-                ("Devanagari", "नमस्ते"),
-                ("Emoji", "🦀 🚀 ✨ 🎞️"),
-                ("Hebrew", "שלום"),
-                ("Japanese", "ひらがな、カタカナ、漢字"),
-                ("Korean", "안녕하세요"),
-                ("Thai", "สวัสดี"),
-            ] {
-                ui.label(language);
-                ui.label(sample);
-                ui.end_row();
-            }
-        });
+    egui::Grid::new("system_font_fallback").num_columns(2).show(ui, |ui| {
+        for (language, sample) in [
+            ("Arabic", "مرحبا"),
+            ("Chinese (simplified)", "这些字体还能显示吗？"),
+            ("Chinese (traditional)", "這些字體還能顯示嗎？"),
+            ("Devanagari", "नमस्ते"),
+            ("Emoji", "🦀 🚀 ✨ 🎞️"),
+            ("Hebrew", "שלום"),
+            ("Japanese", "ひらがな、カタカナ、漢字"),
+            ("Korean", "안녕하세요"),
+            ("Thai", "สวัสดี"),
+        ] {
+            ui.label(language);
+            ui.label(sample);
+            ui.end_row();
+        }
+    });
 }
 
 fn text_layout_demo(ui: &mut Ui) {
@@ -755,149 +639,33 @@ fn text_layout_demo(ui: &mut Ui) {
 
     let first_row_indentation = 10.0;
 
-    let (default_color, strong_color) = if ui.visuals().dark_mode {
-        (Color32::LIGHT_GRAY, Color32::WHITE)
-    } else {
-        (Color32::DARK_GRAY, Color32::BLACK)
-    };
+    let (default_color, strong_color) =
+        if ui.visuals().dark_mode { (Color32::LIGHT_GRAY, Color32::WHITE) } else { (Color32::DARK_GRAY, Color32::BLACK) };
 
-    job.append(
-        "This",
-        first_row_indentation,
-        TextFormat {
-            color: default_color,
-            font_id: FontId::proportional(20.0),
-            ..Default::default()
-        },
-    );
-    job.append(
-        " is a demonstration of ",
-        0.0,
-        TextFormat {
-            color: default_color,
-            ..Default::default()
-        },
-    );
-    job.append(
-        "the egui text layout engine. ",
-        0.0,
-        TextFormat {
-            color: strong_color,
-            ..Default::default()
-        },
-    );
-    job.append(
-        "It supports ",
-        0.0,
-        TextFormat {
-            color: default_color,
-            ..Default::default()
-        },
-    );
-    job.append(
-        "different ",
-        0.0,
-        TextFormat {
-            color: Color32::from_rgb(110, 255, 110),
-            ..Default::default()
-        },
-    );
-    job.append(
-        "colors, ",
-        0.0,
-        TextFormat {
-            color: Color32::from_rgb(128, 140, 255),
-            ..Default::default()
-        },
-    );
-    job.append(
-        "backgrounds, ",
-        0.0,
-        TextFormat {
-            color: default_color,
-            background: Color32::from_rgb(128, 32, 32),
-            ..Default::default()
-        },
-    );
-    job.append(
-        "mixing ",
-        0.0,
-        TextFormat {
-            font_id: FontId::proportional(20.0),
-            color: default_color,
-            ..Default::default()
-        },
-    );
-    job.append(
-        "fonts, ",
-        0.0,
-        TextFormat {
-            font_id: FontId::monospace(12.0),
-            color: default_color,
-            ..Default::default()
-        },
-    );
+    job.append("This", first_row_indentation, TextFormat { color: default_color, font_id: FontId::proportional(20.0), ..Default::default() });
+    job.append(" is a demonstration of ", 0.0, TextFormat { color: default_color, ..Default::default() });
+    job.append("the egui text layout engine. ", 0.0, TextFormat { color: strong_color, ..Default::default() });
+    job.append("It supports ", 0.0, TextFormat { color: default_color, ..Default::default() });
+    job.append("different ", 0.0, TextFormat { color: Color32::from_rgb(110, 255, 110), ..Default::default() });
+    job.append("colors, ", 0.0, TextFormat { color: Color32::from_rgb(128, 140, 255), ..Default::default() });
+    job.append("backgrounds, ", 0.0, TextFormat { color: default_color, background: Color32::from_rgb(128, 32, 32), ..Default::default() });
+    job.append("mixing ", 0.0, TextFormat { font_id: FontId::proportional(20.0), color: default_color, ..Default::default() });
+    job.append("fonts, ", 0.0, TextFormat { font_id: FontId::monospace(12.0), color: default_color, ..Default::default() });
     job.append(
         "raised text, ",
         0.0,
-        TextFormat {
-            font_id: FontId::proportional(7.0),
-            color: default_color,
-            valign: Align::TOP,
-            ..Default::default()
-        },
+        TextFormat { font_id: FontId::proportional(7.0), color: default_color, valign: Align::TOP, ..Default::default() },
     );
-    job.append(
-        "with ",
-        0.0,
-        TextFormat {
-            color: default_color,
-            ..Default::default()
-        },
-    );
-    job.append(
-        "underlining",
-        0.0,
-        TextFormat {
-            color: default_color,
-            underline: Stroke::new(1.0, Color32::LIGHT_BLUE),
-            ..Default::default()
-        },
-    );
-    job.append(
-        " and ",
-        0.0,
-        TextFormat {
-            color: default_color,
-            ..Default::default()
-        },
-    );
+    job.append("with ", 0.0, TextFormat { color: default_color, ..Default::default() });
+    job.append("underlining", 0.0, TextFormat { color: default_color, underline: Stroke::new(1.0, Color32::LIGHT_BLUE), ..Default::default() });
+    job.append(" and ", 0.0, TextFormat { color: default_color, ..Default::default() });
     job.append(
         "strikethrough",
         0.0,
-        TextFormat {
-            color: default_color,
-            strikethrough: Stroke::new(2.0, Color32::RED.linear_multiply(0.5)),
-            ..Default::default()
-        },
+        TextFormat { color: default_color, strikethrough: Stroke::new(2.0, Color32::RED.linear_multiply(0.5)), ..Default::default() },
     );
-    job.append(
-        ". Of course, ",
-        0.0,
-        TextFormat {
-            color: default_color,
-            ..Default::default()
-        },
-    );
-    job.append(
-        "you can",
-        0.0,
-        TextFormat {
-            color: default_color,
-            strikethrough: Stroke::new(1.0, strong_color),
-            ..Default::default()
-        },
-    );
+    job.append(". Of course, ", 0.0, TextFormat { color: default_color, ..Default::default() });
+    job.append("you can", 0.0, TextFormat { color: default_color, strikethrough: Stroke::new(1.0, strong_color), ..Default::default() });
     job.append(
         " mix these!",
         0.0,
@@ -925,11 +693,7 @@ struct TextRotation {
 
 impl Default for TextRotation {
     fn default() -> Self {
-        Self {
-            size: vec2(200.0, 200.0),
-            angle: 0.0,
-            align: egui::Align2::LEFT_TOP,
-        }
+        Self { size: vec2(200.0, 200.0), angle: 0.0, align: egui::Align2::LEFT_TOP }
     }
 }
 
@@ -937,11 +701,7 @@ impl TextRotation {
     pub fn ui(&mut self, ui: &mut Ui) {
         ui.add(Slider::new(&mut self.angle, 0.0..=2.0 * core::f32::consts::PI).text("angle"));
 
-        let default_color = if ui.visuals().dark_mode {
-            Color32::LIGHT_GRAY
-        } else {
-            Color32::DARK_GRAY
-        };
+        let default_color = if ui.visuals().dark_mode { Color32::LIGHT_GRAY } else { Color32::DARK_GRAY };
 
         let aligns = [
             (Align2::LEFT_TOP, "LEFT_TOP"),
@@ -955,13 +715,11 @@ impl TextRotation {
             (Align2::RIGHT_BOTTOM, "RIGHT_BOTTOM"),
         ];
 
-        ComboBox::new("anchor", "Anchor")
-            .selected_text(aligns.iter().find(|(a, _)| *a == self.align).unwrap().1)
-            .show_ui(ui, |ui| {
-                for (align2, name) in &aligns {
-                    ui.selectable_value(&mut self.align, *align2, *name);
-                }
-            });
+        ComboBox::new("anchor", "Anchor").selected_text(aligns.iter().find(|(a, _)| *a == self.align).unwrap().1).show_ui(ui, |ui| {
+            for (align2, name) in &aligns {
+                ui.selectable_value(&mut self.align, *align2, *name);
+            }
+        });
 
         ui.horizontal_wrapped(|ui| {
             let (response, painter) = ui.allocate_painter(self.size, Sense::empty());
@@ -988,18 +746,11 @@ impl TextRotation {
             });
 
             if let egui::epaint::Shape::Text(ts) = &s {
-                let align_pt =
-                    rect.min + start_pos + self.align.pos_in_rect(&ts.galley.rect).to_vec2();
+                let align_pt = rect.min + start_pos + self.align.pos_in_rect(&ts.galley.rect).to_vec2();
                 painter.circle(align_pt, 2.0, Color32::RED, (0.0, Color32::RED));
             }
 
-            painter.rect(
-                rect,
-                0.0,
-                default_color.gamma_multiply(0.3),
-                (0.0, Color32::BLACK),
-                egui::StrokeKind::Middle,
-            );
+            painter.rect(rect, 0.0, default_color.gamma_multiply(0.3), (0.0, Color32::BLACK), egui::StrokeKind::Middle);
             painter.add(s);
         });
     }

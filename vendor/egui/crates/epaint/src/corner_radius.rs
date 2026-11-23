@@ -47,22 +47,12 @@ impl From<f32> for CornerRadius {
 
 impl CornerRadius {
     /// No rounding on any corner.
-    pub const ZERO: Self = Self {
-        nw: 0,
-        ne: 0,
-        sw: 0,
-        se: 0,
-    };
+    pub const ZERO: Self = Self { nw: 0, ne: 0, sw: 0, se: 0 };
 
     /// Same rounding on all four corners.
     #[inline]
     pub const fn same(radius: u8) -> Self {
-        Self {
-            nw: radius,
-            ne: radius,
-            sw: radius,
-            se: radius,
-        }
+        Self { nw: radius, ne: radius, sw: radius, se: radius }
     }
 
     /// Do all corners have the same rounding?
@@ -74,23 +64,13 @@ impl CornerRadius {
     /// Make sure each corner has a rounding of at least this.
     #[inline]
     pub fn at_least(self, min: u8) -> Self {
-        Self {
-            nw: self.nw.max(min),
-            ne: self.ne.max(min),
-            sw: self.sw.max(min),
-            se: self.se.max(min),
-        }
+        Self { nw: self.nw.max(min), ne: self.ne.max(min), sw: self.sw.max(min), se: self.se.max(min) }
     }
 
     /// Make sure each corner has a rounding of at most this.
     #[inline]
     pub fn at_most(self, max: u8) -> Self {
-        Self {
-            nw: self.nw.min(max),
-            ne: self.ne.min(max),
-            sw: self.sw.min(max),
-            se: self.se.min(max),
-        }
+        Self { nw: self.nw.min(max), ne: self.ne.min(max), sw: self.sw.min(max), se: self.se.min(max) }
     }
 
     /// Average rounding of the corners.
@@ -116,12 +96,7 @@ impl core::ops::Add<u8> for CornerRadius {
     type Output = Self;
     #[inline]
     fn add(self, rhs: u8) -> Self {
-        Self {
-            nw: self.nw.saturating_add(rhs),
-            ne: self.ne.saturating_add(rhs),
-            sw: self.sw.saturating_add(rhs),
-            se: self.se.saturating_add(rhs),
-        }
+        Self { nw: self.nw.saturating_add(rhs), ne: self.ne.saturating_add(rhs), sw: self.sw.saturating_add(rhs), se: self.se.saturating_add(rhs) }
     }
 }
 
@@ -166,12 +141,7 @@ impl core::ops::Sub<u8> for CornerRadius {
     type Output = Self;
     #[inline]
     fn sub(self, rhs: u8) -> Self {
-        Self {
-            nw: self.nw.saturating_sub(rhs),
-            ne: self.ne.saturating_sub(rhs),
-            sw: self.sw.saturating_sub(rhs),
-            se: self.se.saturating_sub(rhs),
-        }
+        Self { nw: self.nw.saturating_sub(rhs), ne: self.ne.saturating_sub(rhs), sw: self.sw.saturating_sub(rhs), se: self.se.saturating_sub(rhs) }
     }
 }
 

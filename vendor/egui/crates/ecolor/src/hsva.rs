@@ -1,6 +1,4 @@
-use crate::{
-    Color32, Rgba, gamma_u8_from_linear_f32, linear_f32_from_gamma_u8, linear_u8_from_linear_f32,
-};
+use crate::{Color32, Rgba, gamma_u8_from_linear_f32, linear_f32_from_gamma_u8, linear_u8_from_linear_f32};
 
 /// Hue, saturation, value, alpha. All in the range [0, 1].
 /// No premultiplied alpha.
@@ -42,11 +40,7 @@ impl Hsva {
     #[inline]
     pub fn from_rgba_premultiplied(r: f32, g: f32, b: f32, a: f32) -> Self {
         if a <= 0.0 {
-            if r == 0.0 && b == 0.0 && a == 0.0 {
-                Self::default()
-            } else {
-                Self::from_additive_rgb([r, g, b])
-            }
+            if r == 0.0 && b == 0.0 && a == 0.0 { Self::default() } else { Self::from_additive_rgb([r, g, b]) }
         } else {
             let (h, s, v) = hsv_from_rgb([r / a, g / a, b / a]);
             Self { h, s, v, a }
@@ -73,11 +67,7 @@ impl Hsva {
 
     #[inline]
     pub fn from_additive_srgb([r, g, b]: [u8; 3]) -> Self {
-        Self::from_additive_rgb([
-            linear_f32_from_gamma_u8(r),
-            linear_f32_from_gamma_u8(g),
-            linear_f32_from_gamma_u8(b),
-        ])
+        Self::from_additive_rgb([linear_f32_from_gamma_u8(r), linear_f32_from_gamma_u8(g), linear_f32_from_gamma_u8(b)])
     }
 
     #[inline]
@@ -88,11 +78,7 @@ impl Hsva {
 
     #[inline]
     pub fn from_srgb([r, g, b]: [u8; 3]) -> Self {
-        Self::from_rgb([
-            linear_f32_from_gamma_u8(r),
-            linear_f32_from_gamma_u8(g),
-            linear_f32_from_gamma_u8(b),
-        ])
+        Self::from_rgb([linear_f32_from_gamma_u8(r), linear_f32_from_gamma_u8(g), linear_f32_from_gamma_u8(b)])
     }
 
     // ------------------------------------------------------------------------
@@ -110,22 +96,14 @@ impl Hsva {
     #[inline]
     pub fn to_srgb(&self) -> [u8; 3] {
         let [r, g, b] = self.to_rgb();
-        [
-            gamma_u8_from_linear_f32(r),
-            gamma_u8_from_linear_f32(g),
-            gamma_u8_from_linear_f32(b),
-        ]
+        [gamma_u8_from_linear_f32(r), gamma_u8_from_linear_f32(g), gamma_u8_from_linear_f32(b)]
     }
 
     #[inline]
     pub fn to_rgba_premultiplied(&self) -> [f32; 4] {
         let [r, g, b, a] = self.to_rgba_unmultiplied();
         let additive = a < 0.0;
-        if additive {
-            [r, g, b, 0.0]
-        } else {
-            [a * r, a * g, a * b, a]
-        }
+        if additive { [r, g, b, 0.0] } else { [a * r, a * g, a * b, a] }
     }
 
     /// To linear space rgba in 0-1 range.
@@ -147,12 +125,7 @@ impl Hsva {
     #[inline]
     pub fn to_srgba_unmultiplied(&self) -> [u8; 4] {
         let [r, g, b, a] = self.to_rgba_unmultiplied();
-        [
-            gamma_u8_from_linear_f32(r),
-            gamma_u8_from_linear_f32(g),
-            gamma_u8_from_linear_f32(b),
-            linear_u8_from_linear_f32(a.abs()),
-        ]
+        [gamma_u8_from_linear_f32(r), gamma_u8_from_linear_f32(g), gamma_u8_from_linear_f32(b), linear_u8_from_linear_f32(a.abs())]
     }
 }
 

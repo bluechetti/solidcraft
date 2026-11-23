@@ -450,18 +450,13 @@ pub use epaint::emath;
 #[cfg(feature = "color-hex")]
 pub use ecolor::hex_color;
 pub use ecolor::{Color32, Rgba};
-pub use emath::{
-    Align, Align2, NumExt, Pos2, Rangef, Rect, RectAlign, Vec2, Vec2b, lerp, pos2, remap,
-    remap_clamp, vec2,
-};
+pub use emath::{Align, Align2, NumExt, Pos2, Rangef, Rect, RectAlign, Vec2, Vec2b, lerp, pos2, remap, remap_clamp, vec2};
 pub use epaint::{
-    ClippedPrimitive, ColorImage, CornerRadius, Direction, ImageData, Margin, Mesh, PaintCallback,
-    PaintCallbackInfo, Shadow, Shape, Stroke, StrokeKind, TextureHandle, TextureId, mutex,
+    ClippedPrimitive, ColorImage, CornerRadius, Direction, ImageData, Margin, Mesh, PaintCallback, PaintCallbackInfo, Shadow, Shape, Stroke,
+    StrokeKind, TextureHandle, TextureId, mutex,
     text::{
-        FallbackRequest, FontData, FontDefinitions, FontFamily, FontId, FontInsert, FontPriority,
-        FontProvider, FontTweak, GlyphBitmap, GlyphRasterizer, GlyphRasterizerRequest,
-        InsertFontFamily, MAX_GLYPH_SIZE, MissingGlyphPolicy, RasterizedGlyph,
-        has_emoji_presentation,
+        FallbackRequest, FontData, FontDefinitions, FontFamily, FontId, FontInsert, FontPriority, FontProvider, FontTweak, GlyphBitmap,
+        GlyphRasterizer, GlyphRasterizerRequest, InsertFontFamily, MAX_GLYPH_SIZE, MissingGlyphPolicy, RasterizedGlyph, has_emoji_presentation,
     },
     textures::{TextureFilter, TextureOptions, TextureWrapMode, TexturesDelta},
 };
@@ -469,44 +464,41 @@ pub use epaint::{
 pub mod text {
     pub use crate::text_selection::CCursorRange;
     pub use epaint::text::{
-        ByteIndex, ByteRange, CharIndex, CharRange, FontData, FontDefinitions, FontFamily, Fonts,
-        Galley, LayoutJob, LayoutSection, TextFormat, TextWrapping, cursor::CCursor,
+        ByteIndex, ByteRange, CharIndex, CharRange, FontData, FontDefinitions, FontFamily, Fonts, Galley, LayoutJob, LayoutSection, TextFormat,
+        TextWrapping, cursor::CCursor,
     };
 }
 
 pub use self::{
     atomics::{
-        AllocatedWidgetAtom, Atom, AtomClosure, AtomExt, AtomKind, AtomPaint, AtomPaintArgs, Atoms,
-        ContainerAtom, CustomRects, IntoAtoms, IntoSizedArgs, IntoSizedResult, SizedAtom,
-        SizedAtomKind, SizedContainerAtom, SizedWidgetAtom, WidgetAtom, WidgetAtomResponse,
+        AllocatedWidgetAtom, Atom, AtomClosure, AtomExt, AtomKind, AtomPaint, AtomPaintArgs, Atoms, ContainerAtom, CustomRects, IntoAtoms,
+        IntoSizedArgs, IntoSizedResult, SizedAtom, SizedAtomKind, SizedContainerAtom, SizedWidgetAtom, WidgetAtom, WidgetAtomResponse,
     },
     containers::{
-        Aligned, Area, AreaState, CentralPanel, ClosableTag, CollapsingHeader, CollapsingResponse,
-        ComboBox, DragPanButtons, Frame, IconPainter, Modal, ModalResponse, Panel, PanelState,
-        Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Resize, Scene, ScrollArea,
-        SetOpenCommand, Sides, Tooltip, Window, WindowDrag, collapsing_header, frame,
+        Aligned, Area, AreaState, CentralPanel, ClosableTag, CollapsingHeader, CollapsingResponse, ComboBox, DragPanButtons, Frame, IconPainter,
+        Modal, ModalResponse, Panel, PanelState, Popup, PopupAnchor, PopupCloseBehavior, PopupKind, Resize, Scene, ScrollArea, SetOpenCommand, Sides,
+        Tooltip, Window, WindowDrag, collapsing_header, frame,
         menu::{self, MenuBar},
         modal, panel, scroll_area,
     },
     context::{Context, RepaintCause, RequestRepaintInfo},
-    // SolidCraft: the result of `Context::widget_hits_at`.
-    hit_test::WidgetHits,
     data::{
         Key, ScreenshotCallback,
         input::{
-            DroppedFile, DroppedFileHandle, Event, EventFilter, HoveredFile, ImeEvent,
-            KeyboardShortcut, ModifierNames, Modifiers, MouseWheelSource, MouseWheelUnit,
-            NUM_POINTER_BUTTONS, PointerButton, RawInput, SafeAreaInsets, TouchDeviceId, TouchId,
-            TouchPhase, ViewportEvent, ViewportInfo,
+            DroppedFile, DroppedFileHandle, Event, EventFilter, HoveredFile, ImeEvent, KeyboardShortcut, ModifierNames, Modifiers, MouseWheelSource,
+            MouseWheelUnit, NUM_POINTER_BUTTONS, PointerButton, RawInput, SafeAreaInsets, TouchDeviceId, TouchId, TouchPhase, ViewportEvent,
+            ViewportInfo,
         },
         output::{
-            self, CursorIcon, CustomCursorImage, FullOutput, LogicOutput, OpenUrl, OutputCommand,
-            PlatformOutput, UserAttentionType, WidgetInfo, role_description,
+            self, CursorIcon, CustomCursorImage, FullOutput, LogicOutput, OpenUrl, OutputCommand, PlatformOutput, UserAttentionType, WidgetInfo,
+            role_description,
         },
     },
     drag_and_drop::DragAndDrop,
     epaint::text::TextWrapMode,
     grid::Grid,
+    // SolidCraft: the result of `Context::widget_hits_at`.
+    hit_test::WidgetHits,
     id::{Id, IdMap, IdSet},
     id_salt::{AsIdSalt, IdSalt, IdSaltMap, IdSaltSet},
     input_state::{InputOptions, InputState, MultiTouchInfo, PointerState, SurrenderFocusOn},
@@ -524,21 +516,18 @@ pub use self::{
     ui_builder::{IdSource, UiBuilder},
     ui_stack::{UiKind, UiStack, UiStackInfo, UiStackIterator, UiTags},
     viewport::{
-        CursorGrab, DeferredViewportUiCallback, IMEPurpose, IconData, ImmediateViewport,
-        ImmediateViewportRendererCallback, OrderedViewportIdMap, ResizeDirection, SystemTheme,
-        ViewportBuilder, ViewportClass, ViewportCommand, ViewportId, ViewportIdMap, ViewportIdPair,
-        ViewportIdSet, ViewportOutput, WindowLevel, X11WindowType,
+        CursorGrab, DeferredViewportUiCallback, IMEPurpose, IconData, ImmediateViewport, ImmediateViewportRendererCallback, OrderedViewportIdMap,
+        ResizeDirection, SystemTheme, ViewportBuilder, ViewportClass, ViewportCommand, ViewportId, ViewportIdMap, ViewportIdPair, ViewportIdSet,
+        ViewportOutput, WindowLevel, X11WindowType,
     },
     widget_rect::{InteractOptions, WidgetRect, WidgetRects},
     widget_text::{RichText, WidgetText},
     widgets::{
-        BoxedWidget, Button, Checkbox, CompletionOutput, CompletionPopup, CompletionQuery,
-        DragValue, DragValueSettings, FrameDurations, Hyperlink, Image, ImageFit, ImageOptions,
-        ImageSize, ImageSource, Label, Link, NumFormatter, NumParser, ProgressBar, RadioButton,
-        RangeSlider, Separator, Slider, SliderClamping, SliderOrientation, SliderSpec, Spinner,
-        Suggestion, TextBuffer, TextEdit, ValueFormat, Widget, WidgetWithState, color_picker,
-        decode_animated_image_uri, global_theme_preference_buttons, has_gif_magic_header,
-        has_webp_header, paint_texture_at, reset_button, reset_button_with, text_edit,
+        BoxedWidget, Button, Checkbox, CompletionOutput, CompletionPopup, CompletionQuery, DragValue, DragValueSettings, FrameDurations, Hyperlink,
+        Image, ImageFit, ImageOptions, ImageSize, ImageSource, Label, Link, NumFormatter, NumParser, ProgressBar, RadioButton, RangeSlider,
+        Separator, Slider, SliderClamping, SliderOrientation, SliderSpec, Spinner, Suggestion, TextBuffer, TextEdit, ValueFormat, Widget,
+        WidgetWithState, color_picker, decode_animated_image_uri, global_theme_preference_buttons, has_gif_magic_header, has_webp_header,
+        paint_texture_at, reset_button, reset_button_with, text_edit,
     },
 };
 
@@ -561,12 +550,8 @@ pub(crate) use self::{
 /// Helper function that adds a label when compiling with debug assertions enabled.
 pub fn warn_if_debug_build(ui: &mut crate::Ui) {
     if cfg!(debug_assertions) {
-        ui.label(
-            RichText::new("⚠️ Debug build ⚠️")
-                .small()
-                .color(ui.visuals().warn_fg_color),
-        )
-        .on_hover_text("egui was compiled with debug assertions enabled.");
+        ui.label(RichText::new("⚠️ Debug build ⚠️").small().color(ui.visuals().warn_fg_color))
+            .on_hover_text("egui was compiled with debug assertions enabled.");
     }
 }
 

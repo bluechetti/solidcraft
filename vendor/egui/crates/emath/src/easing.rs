@@ -39,11 +39,7 @@ pub fn quadratic_out(t: f32) -> f32 {
 /// <https://easings.net/#easeInOutQuad>
 #[inline]
 pub fn quadratic_in_out(t: f32) -> f32 {
-    if t < 0.5 {
-        2. * t * t
-    } else {
-        (-2. * t * t) + (4. * t) - 1.
-    }
+    if t < 0.5 { 2. * t * t } else { (-2. * t * t) + (4. * t) - 1. }
 }
 
 /// <https://easings.net/#easeInCubic>
@@ -115,11 +111,7 @@ pub fn circular_out(t: f32) -> f32 {
 /// <https://easings.net/#easeInOutCirc>
 #[inline]
 pub fn circular_in_out(t: f32) -> f32 {
-    if t < 0.5 {
-        0.5 * (1. - (1. - 4. * t * t).sqrt())
-    } else {
-        fast_midpoint((-(2. * t - 3.) * (2. * t - 1.)).sqrt(), 1.)
-    }
+    if t < 0.5 { 0.5 * (1. - (1. - 4. * t * t).sqrt()) } else { fast_midpoint((-(2. * t - 3.) * (2. * t - 1.)).sqrt(), 1.) }
 }
 
 /// <https://easings.net/#easeInExpo>
@@ -127,11 +119,7 @@ pub fn circular_in_out(t: f32) -> f32 {
 /// There is a small discontinuity at 0.
 #[inline]
 pub fn exponential_in(t: f32) -> f32 {
-    if t == 0. {
-        t
-    } else {
-        powf(2.0, 10. * (t - 1.))
-    }
+    if t == 0. { t } else { powf(2.0, 10. * (t - 1.)) }
 }
 
 /// <https://easings.net/#easeOutExpo>
@@ -220,9 +208,5 @@ pub fn bounce_out(t: f32) -> f32 {
 /// Each bounce is modelled as a parabola.
 #[inline]
 pub fn bounce_in_out(t: f32) -> f32 {
-    if t < 0.5 {
-        0.5 * bounce_in(t * 2.)
-    } else {
-        0.5 * bounce_out(t * 2. - 1.) + 0.5
-    }
+    if t < 0.5 { 0.5 * bounce_in(t * 2.) } else { 0.5 * bounce_out(t * 2. - 1.) + 0.5 }
 }

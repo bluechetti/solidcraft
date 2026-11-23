@@ -8,33 +8,18 @@ use eframe::{
 
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
-        ..Default::default()
-    };
-    eframe::run_native(
-        "egui example: custom font",
-        options,
-        Box::new(|cc| Ok(Box::new(MyApp::new(cc)))),
-    )
+    let options = eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]), ..Default::default() };
+    eframe::run_native("egui example: custom font", options, Box::new(|cc| Ok(Box::new(MyApp::new(cc)))))
 }
 
 // Demonstrates how to add a font to the existing ones
 fn add_font(ctx: &egui::Context) {
     ctx.add_font(FontInsert::new(
         "my_font",
-        egui::FontData::from_static(include_bytes!(
-            "../../../crates/epaint_default_fonts/fonts/Hack-Regular.ttf"
-        )),
+        egui::FontData::from_static(include_bytes!("../../../crates/epaint_default_fonts/fonts/Hack-Regular.ttf")),
         vec![
-            InsertFontFamily {
-                family: egui::FontFamily::Proportional,
-                priority: egui::epaint::text::FontPriority::Highest,
-            },
-            InsertFontFamily {
-                family: egui::FontFamily::Monospace,
-                priority: egui::epaint::text::FontPriority::Lowest,
-            },
+            InsertFontFamily { family: egui::FontFamily::Proportional, priority: egui::epaint::text::FontPriority::Highest },
+            InsertFontFamily { family: egui::FontFamily::Monospace, priority: egui::epaint::text::FontPriority::Lowest },
         ],
     ));
 }
@@ -48,24 +33,14 @@ fn replace_fonts(ctx: &egui::Context) {
     // .ttf and .otf files supported.
     fonts.font_data.insert(
         "my_font".to_owned(),
-        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
-            "../../../crates/epaint_default_fonts/fonts/Hack-Regular.ttf"
-        ))),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../../../crates/epaint_default_fonts/fonts/Hack-Regular.ttf"))),
     );
 
     // Put my font first (highest priority) for proportional text:
-    fonts
-        .families
-        .entry(egui::FontFamily::Proportional)
-        .or_default()
-        .insert(0, "my_font".to_owned());
+    fonts.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "my_font".to_owned());
 
     // Put my font as last fallback for monospace:
-    fonts
-        .families
-        .entry(egui::FontFamily::Monospace)
-        .or_default()
-        .push("my_font".to_owned());
+    fonts.families.entry(egui::FontFamily::Monospace).or_default().push("my_font".to_owned());
 
     // Tell egui to use these fonts:
     ctx.set_fonts(fonts);
@@ -79,9 +54,7 @@ impl MyApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         replace_fonts(&cc.egui_ctx);
         add_font(&cc.egui_ctx);
-        Self {
-            text: "Edit this text field if you want".to_owned(),
-        }
+        Self { text: "Edit this text field if you want".to_owned() }
     }
 }
 

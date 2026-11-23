@@ -6,32 +6,18 @@ use egui_kittest::{Harness, kittest::Queryable as _};
 #[test]
 fn test_nearest_texture_filtering() {
     let mut texture: Option<egui::TextureHandle> = None;
-    let mut harness = Harness::builder()
-        .with_size(egui::Vec2::new(80.0, 48.0))
-        .build_ui(move |ui| {
-            let texture = texture.get_or_insert_with(|| {
-                let pixels = [
-                    Color32::BLACK,
-                    Color32::WHITE,
-                    Color32::BLACK,
-                    Color32::WHITE,
-                    Color32::WHITE,
-                    Color32::BLACK,
-                    Color32::WHITE,
-                    Color32::BLACK,
-                ];
-                let image = egui::ColorImage::new([4, 2], pixels.to_vec());
-                ui.ctx()
-                    .load_texture("checkerboard", image, egui::TextureOptions::NEAREST)
-            });
-
-            let rect = egui::Rect::from_min_size(egui::pos2(8.0, 8.0), egui::vec2(64.0, 32.0));
-            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-            ui.painter().add(
-                egui::epaint::RectShape::filled(rect, 0, Color32::WHITE)
-                    .with_texture(texture.id(), uv),
-            );
+    let mut harness = Harness::builder().with_size(egui::Vec2::new(80.0, 48.0)).build_ui(move |ui| {
+        let texture = texture.get_or_insert_with(|| {
+            let pixels =
+                [Color32::BLACK, Color32::WHITE, Color32::BLACK, Color32::WHITE, Color32::WHITE, Color32::BLACK, Color32::WHITE, Color32::BLACK];
+            let image = egui::ColorImage::new([4, 2], pixels.to_vec());
+            ui.ctx().load_texture("checkerboard", image, egui::TextureOptions::NEAREST)
         });
+
+        let rect = egui::Rect::from_min_size(egui::pos2(8.0, 8.0), egui::vec2(64.0, 32.0));
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        ui.painter().add(egui::epaint::RectShape::filled(rect, 0, Color32::WHITE).with_texture(texture.id(), uv));
+    });
     harness.run();
     harness.snapshot("nearest_texture_filtering");
 }
@@ -41,17 +27,14 @@ fn test_kerning() {
     let mut results = egui_kittest::SnapshotResults::new();
     for pixels_per_point in [1.0, 2.0] {
         for theme in [egui::Theme::Dark, egui::Theme::Light] {
-            let mut harness = Harness::builder()
-                .with_pixels_per_point(pixels_per_point)
-                .with_theme(theme)
-                .build_ui(|ui| {
-                    ui.label("Hello world!");
-                    ui.label("Repeated characters: iiiiiiiiiiiii lllllllll mmmmmmmmmmmmmmmm");
-                    ui.label("Thin spaces: −123 456 789");
-                    ui.label("Ligature: fi fl ffi ffl");
-                    ui.label("Kerning: AVATAR");
-                    ui.label("\ttabbed\ttext");
-                });
+            let mut harness = Harness::builder().with_pixels_per_point(pixels_per_point).with_theme(theme).build_ui(|ui| {
+                ui.label("Hello world!");
+                ui.label("Repeated characters: iiiiiiiiiiiii lllllllll mmmmmmmmmmmmmmmm");
+                ui.label("Thin spaces: −123 456 789");
+                ui.label("Ligature: fi fl ffi ffl");
+                ui.label("Kerning: AVATAR");
+                ui.label("\ttabbed\ttext");
+            });
             harness.run();
             harness.fit_contents();
             harness.snapshot(format!(
@@ -71,14 +54,11 @@ fn test_italics() {
     let mut results = egui_kittest::SnapshotResults::new();
     for pixels_per_point in [1.0, 2.0_f32.sqrt(), 2.0] {
         for theme in [egui::Theme::Dark, egui::Theme::Light] {
-            let mut harness = Harness::builder()
-                .with_pixels_per_point(pixels_per_point)
-                .with_theme(theme)
-                .build_ui(|ui| {
-                    ui.label(egui::RichText::new("Small italics").italics().small());
-                    ui.label(egui::RichText::new("Normal italics").italics());
-                    ui.label(egui::RichText::new("Large italics").italics().size(22.0));
-                });
+            let mut harness = Harness::builder().with_pixels_per_point(pixels_per_point).with_theme(theme).build_ui(|ui| {
+                ui.label(egui::RichText::new("Small italics").italics().small());
+                ui.label(egui::RichText::new("Normal italics").italics());
+                ui.label(egui::RichText::new("Large italics").italics().size(22.0));
+            });
             harness.run();
             harness.fit_contents();
             harness.snapshot(format!(
@@ -136,11 +116,7 @@ ORDER BY total DESC
 LIMIT 10;";
 
     // The simple fallback highlighter is only used without `syntect`:
-    let backend = if cfg!(feature = "syntect") {
-        "syntect"
-    } else {
-        "fallback"
-    };
+    let backend = if cfg!(feature = "syntect") { "syntect" } else { "fallback" };
 
     let mut results = egui_kittest::SnapshotResults::new();
     for theme in [egui::Theme::Dark, egui::Theme::Light] {

@@ -21,10 +21,7 @@ pub fn default_wgpu_setup() -> egui_wgpu::WgpuSetup {
     let mut setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
 
     // WebGPU not supported yet since we rely on blocking screenshots.
-    setup
-        .instance_descriptor
-        .backends
-        .remove(wgpu::Backends::BROWSER_WEBGPU);
+    setup.instance_descriptor.backends.remove(wgpu::Backends::BROWSER_WEBGPU);
 
     // Prefer software rasterizers.
     setup.native_adapter_selector = Some(Arc::new(|adapters, _surface| {
@@ -44,32 +41,21 @@ pub fn default_wgpu_setup() -> egui_wgpu::WgpuSetup {
         adapters.sort_by_key(|a| match a.get_info().device_type {
             wgpu::DeviceType::Cpu => 0, // CPU is the best for our purposes!
             wgpu::DeviceType::DiscreteGpu => 1,
-            wgpu::DeviceType::Other
-            | wgpu::DeviceType::IntegratedGpu
-            | wgpu::DeviceType::VirtualGpu => 2,
+            wgpu::DeviceType::Other | wgpu::DeviceType::IntegratedGpu | wgpu::DeviceType::VirtualGpu => 2,
         });
 
-        adapters
-            .first()
-            .map(|a| (*a).clone())
-            .ok_or_else(|| "No adapter found".to_owned())
+        adapters.first().map(|a| (*a).clone()).ok_or_else(|| "No adapter found".to_owned())
     }));
 
     egui_wgpu::WgpuSetup::CreateNew(setup)
 }
 
-pub fn create_render_state(
-    setup: WgpuSetup,
-    options: egui_wgpu::RendererOptions,
-) -> egui_wgpu::RenderState {
+pub fn create_render_state(setup: WgpuSetup, options: egui_wgpu::RendererOptions) -> egui_wgpu::RenderState {
     // No display handle needed for headless testing — we don't present to a window.
     let instance = pollster::block_on(setup.new_instance());
 
     pollster::block_on(egui_wgpu::RenderState::create(
-        &egui_wgpu::WgpuConfiguration {
-            wgpu_setup: setup,
-            ..Default::default()
-        },
+        &egui_wgpu::WgpuConfiguration { wgpu_setup: setup, ..Default::default() },
         &instance,
         None,
         options,
@@ -91,19 +77,12 @@ impl Default for WgpuTestRenderer {
 impl WgpuTestRenderer {
     /// Create a new [`WgpuTestRenderer`] with the default setup.
     pub fn new() -> Self {
-        Self {
-            render_state: create_render_state(
-                default_wgpu_setup(),
-                egui_wgpu::RendererOptions::PREDICTABLE,
-            ),
-        }
+        Self { render_state: create_render_state(default_wgpu_setup(), egui_wgpu::RendererOptions::PREDICTABLE) }
     }
 
     /// Create a new [`WgpuTestRenderer`] with the given setup.
     pub fn from_setup(setup: WgpuSetup) -> Self {
-        Self {
-            render_state: create_render_state(setup, egui_wgpu::RendererOptions::PREDICTABLE),
-        }
+        Self { render_state: create_render_state(setup, egui_wgpu::RendererOptions::PREDICTABLE) }
     }
 
     /// Create a new [`WgpuTestRenderer`] from an existing [`RenderState`].
@@ -112,11 +91,7 @@ impl WgpuTestRenderer {
     /// Panics if the [`RenderState`] has been used before.
     pub fn from_render_state(render_state: RenderState) -> Self {
         assert!(
-            render_state
-                .renderer
-                .read()
-                .texture(&egui::epaint::TextureId::Managed(0))
-                .is_none(),
+            render_state.renderer.read().texture(&egui::epaint::TextureId::Managed(0)).is_none(),
             "The RenderState passed in has been used before, pass in a fresh RenderState instead."
         );
         Self { render_state }
@@ -124,9 +99,7 @@ impl WgpuTestRenderer {
 
     /// Create a new [`WgpuTestRenderer`] with custom render options.
     pub fn with_render_options(options: egui_wgpu::RendererOptions) -> Self {
-        Self {
-            render_state: create_render_state(default_wgpu_setup(), options),
-        }
+        Self { render_state: create_render_state(default_wgpu_setup(), options) }
     }
 }
 
@@ -142,12 +115,7 @@ impl crate::TestRenderer for WgpuTestRenderer {
         #[expect(clippy::iter_over_hash_type)] // Order doesn't matter here
         for (id, images) in delta.set.drain() {
             for image in images {
-                renderer.update_texture(
-                    &self.render_state.device,
-                    &self.render_state.queue,
-                    id,
-                    &image,
-                );
+                renderer.update_texture(&self.render_state.device, &self.render_state.queue, id, &image);
             }
         }
 
@@ -158,53 +126,28 @@ impl crate::TestRenderer for WgpuTestRenderer {
     }
 
     /// Render the [`crate::Harness`] and return the resulting image.
-    fn render(
-        &mut self,
-        ctx: &egui::Context,
-        output: &egui::FullOutput,
-    ) -> Result<RgbaImage, String> {
+    fn render(&mut self, ctx: &egui::Context, output: &egui::FullOutput) -> Result<RgbaImage, String> {
         let mut renderer = self.render_state.renderer.write();
 
-        let mut encoder =
-            self.render_state
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Egui Command Encoder"),
-                });
+        let mut encoder = self.render_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Egui Command Encoder") });
 
         let size = ctx.content_rect().size() * ctx.pixels_per_point();
-        let screen = ScreenDescriptor {
-            pixels_per_point: ctx.pixels_per_point(),
-            size_in_pixels: [size.x.round() as u32, size.y.round() as u32],
-        };
+        let screen = ScreenDescriptor { pixels_per_point: ctx.pixels_per_point(), size_in_pixels: [size.x.round() as u32, size.y.round() as u32] };
 
         let tessellated = ctx.tessellate(output.shapes.clone(), ctx.pixels_per_point());
 
-        let user_buffers = renderer.update_buffers(
-            &self.render_state.device,
-            &self.render_state.queue,
-            &mut encoder,
-            &tessellated,
-            &screen,
-        );
+        let user_buffers = renderer.update_buffers(&self.render_state.device, &self.render_state.queue, &mut encoder, &tessellated, &screen);
 
-        let texture = self
-            .render_state
-            .device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("Egui Texture"),
-                size: wgpu::Extent3d {
-                    width: screen.size_in_pixels[0],
-                    height: screen.size_in_pixels[1],
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: self.render_state.target_format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            });
+        let texture = self.render_state.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Egui Texture"),
+            size: wgpu::Extent3d { width: screen.size_in_pixels[0], height: screen.size_in_pixels[1], depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.render_state.target_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
 
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -215,10 +158,7 @@ impl crate::TestRenderer for WgpuTestRenderer {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &texture_view,
                         resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
                         depth_slice: None,
                     })],
                     ..Default::default()
@@ -228,22 +168,13 @@ impl crate::TestRenderer for WgpuTestRenderer {
             renderer.render(&mut pass, &tessellated, &screen);
         }
 
-        self.render_state
-            .queue
-            .submit(core::iter::chain(user_buffers, once(encoder.finish())));
+        self.render_state.queue.submit(core::iter::chain(user_buffers, once(encoder.finish())));
 
         self.render_state
             .device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(WAIT_TIMEOUT),
-            })
+            .poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(WAIT_TIMEOUT) })
             .map_err(|err| format!("PollError: {err}"))?;
 
-        Ok(texture_to_image(
-            &self.render_state.device,
-            &self.render_state.queue,
-            &texture,
-        ))
+        Ok(texture_to_image(&self.render_state.device, &self.render_state.queue, &texture))
     }
 }

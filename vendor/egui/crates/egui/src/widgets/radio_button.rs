@@ -1,7 +1,4 @@
-use crate::{
-    Atom, Atoms, IdSalt, IntoAtoms, NumExt as _, Response, Role, Sense, Ui, Vec2, Widget,
-    WidgetAtom, WidgetInfo, epaint,
-};
+use crate::{Atom, Atoms, IdSalt, IntoAtoms, NumExt as _, Response, Role, Sense, Ui, Vec2, Widget, WidgetAtom, WidgetInfo, epaint};
 
 /// One out of several alternatives, either selected or not.
 ///
@@ -30,10 +27,7 @@ pub struct RadioButton<'a> {
 
 impl<'a> RadioButton<'a> {
     pub fn new(checked: bool, atoms: impl IntoAtoms<'a>) -> Self {
-        Self {
-            checked,
-            atoms: atoms.into_atoms(),
-        }
+        Self { checked, atoms: atoms.into_atoms() }
     }
 
     /// Output the [`RadioButton`]'s [`Atoms`].
@@ -62,19 +56,9 @@ impl Widget for RadioButton<'_> {
 
         let text = atoms.text().map(String::from);
 
-        let mut prepared = WidgetAtom::new(atoms)
-            .sense(Sense::click())
-            .min_size(min_size)
-            .allocate(ui);
+        let mut prepared = WidgetAtom::new(atoms).sense(Sense::click()).min_size(min_size).allocate(ui);
 
-        prepared.response.widget_info(|| {
-            WidgetInfo::selected(
-                Role::RadioButton,
-                ui.is_enabled(),
-                checked,
-                text.as_deref().unwrap_or(""),
-            )
-        });
+        prepared.response.widget_info(|| WidgetInfo::selected(Role::RadioButton, ui.is_enabled(), checked, text.as_deref().unwrap_or("")));
 
         if ui.is_rect_visible(prepared.response.rect) {
             // let visuals = ui.style().interact_selectable(&response, checked); // too colorful

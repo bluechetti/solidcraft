@@ -1,7 +1,7 @@
 //! Showing UI:s for egui/epaint types.
 use crate::{
-    Color32, CursorIcon, FontFamily, FontId, Label, Mesh, NumExt as _, Rect, Response, Sense,
-    Shape, Slider, TextStyle, TextWrapMode, Ui, Widget, epaint, memory, pos2, remap_clamp, vec2,
+    Color32, CursorIcon, FontFamily, FontId, Label, Mesh, NumExt as _, Rect, Response, Sense, Shape, Slider, TextStyle, TextWrapMode, Ui, Widget,
+    epaint, memory, pos2, remap_clamp, vec2,
 };
 
 pub fn font_family_ui(ui: &mut Ui, font_family: &mut FontFamily) {
@@ -17,8 +17,7 @@ pub fn font_family_ui(ui: &mut Ui, font_family: &mut FontFamily) {
 pub fn font_id_ui(ui: &mut Ui, font_id: &mut FontId) {
     let families = ui.fonts(|f| f.families());
     ui.horizontal(|ui| {
-        ui.add(Slider::new(&mut font_id.size, 4.0..=40.0).max_decimals(1))
-            .on_hover_text("Font size");
+        ui.add(Slider::new(&mut font_id.size, 4.0..=40.0).max_decimals(1)).on_hover_text("Font size");
         for alternative in families {
             let text = alternative.to_string();
             ui.radio_value(&mut font_id.family, alternative, text);
@@ -29,11 +28,7 @@ pub fn font_id_ui(ui: &mut Ui, font_id: &mut FontId) {
 // Show font texture in demo Ui
 pub(crate) fn font_texture_ui(ui: &mut Ui, [width, height]: [usize; 2]) -> Response {
     ui.vertical(|ui| {
-        let color = if ui.visuals().dark_mode {
-            Color32::WHITE
-        } else {
-            Color32::BLACK
-        };
+        let color = if ui.visuals().dark_mode { Color32::WHITE } else { Color32::BLACK };
 
         ui.label(format!("Texture size: {width} x {height} (hover to zoom)"));
         if width <= 1 || height <= 1 {
@@ -50,27 +45,25 @@ pub(crate) fn font_texture_ui(ui: &mut Ui, [width, height]: [usize; 2]) -> Respo
 
         let (tex_w, tex_h) = (width as f32, height as f32);
 
-        response
-            .on_hover_cursor(CursorIcon::ZoomIn)
-            .on_hover_ui_at_pointer(|ui| {
-                if let Some(pos) = ui.ctx().pointer_latest_pos() {
-                    let (_id, zoom_rect) = ui.allocate_space(vec2(128.0, 128.0));
-                    let u = remap_clamp(pos.x, rect.x_range(), 0.0..=tex_w);
-                    let v = remap_clamp(pos.y, rect.y_range(), 0.0..=tex_h);
+        response.on_hover_cursor(CursorIcon::ZoomIn).on_hover_ui_at_pointer(|ui| {
+            if let Some(pos) = ui.ctx().pointer_latest_pos() {
+                let (_id, zoom_rect) = ui.allocate_space(vec2(128.0, 128.0));
+                let u = remap_clamp(pos.x, rect.x_range(), 0.0..=tex_w);
+                let v = remap_clamp(pos.y, rect.y_range(), 0.0..=tex_h);
 
-                    let texel_radius = 32.0;
-                    let u = u.at_least(texel_radius).at_most(tex_w - texel_radius);
-                    let v = v.at_least(texel_radius).at_most(tex_h - texel_radius);
+                let texel_radius = 32.0;
+                let u = u.at_least(texel_radius).at_most(tex_w - texel_radius);
+                let v = v.at_least(texel_radius).at_most(tex_h - texel_radius);
 
-                    let uv_rect = Rect::from_min_max(
-                        pos2((u - texel_radius) / tex_w, (v - texel_radius) / tex_h),
-                        pos2((u + texel_radius) / tex_w, (v + texel_radius) / tex_h),
-                    );
-                    let mut mesh = Mesh::default();
-                    mesh.add_rect_with_uv(zoom_rect, uv_rect, color);
-                    ui.painter().add(Shape::mesh(mesh));
-                }
-            });
+                let uv_rect = Rect::from_min_max(
+                    pos2((u - texel_radius) / tex_w, (v - texel_radius) / tex_h),
+                    pos2((u + texel_radius) / tex_w, (v + texel_radius) / tex_h),
+                );
+                let mut mesh = Mesh::default();
+                mesh.add_rect_with_uv(zoom_rect, uv_rect, color);
+                ui.painter().add(Shape::mesh(mesh));
+            }
+        });
     })
     .response
 }
@@ -116,13 +109,11 @@ impl Widget for &epaint::stats::PaintStats {
 
             ui.label("Text shapes:");
             label(ui, text_shape_vertices, "vertices");
-            label(ui, text_shape_indices, "indices")
-                .on_hover_text("Three 32-bit indices per triangles");
+            label(ui, text_shape_indices, "indices").on_hover_text("Three 32-bit indices per triangles");
             ui.add_space(10.0);
 
             ui.label("Tessellated (and culled):");
-            label(ui, clipped_primitives, "primitives lists")
-                .on_hover_text("Number of separate clip rectangles");
+            label(ui, clipped_primitives, "primitives lists").on_hover_text("Number of separate clip rectangles");
             label(ui, vertices, "vertices");
             label(ui, indices, "indices").on_hover_text("Three 32-bit indices per triangles");
             ui.add_space(10.0);
@@ -172,34 +163,26 @@ impl Widget for &mut epaint::TessellationOptions {
             ui.horizontal(|ui| {
                 ui.label("Spline tolerance");
                 let speed = 0.01 * *bezier_tolerance;
-                ui.add(
-                    crate::DragValue::new(bezier_tolerance).range(0.0001..=10.0)
-                        .speed(speed)
-                );
+                ui.add(crate::DragValue::new(bezier_tolerance).range(0.0001..=10.0).speed(speed));
             });
 
-            ui.add_enabled(epaint::HAS_RAYON, crate::Checkbox::new(parallel_tessellation, "Parallelize tessellation")
-                ).on_hover_text("Only available if epaint was compiled with the rayon feature")
+            ui.add_enabled(epaint::HAS_RAYON, crate::Checkbox::new(parallel_tessellation, "Parallelize tessellation"))
+                .on_hover_text("Only available if epaint was compiled with the rayon feature")
                 .on_disabled_hover_text("epaint was not compiled with the rayon feature");
 
-            ui.checkbox(validate_meshes, "Validate meshes").on_hover_text("Check that incoming meshes are valid, i.e. that all indices are in range, etc.");
+            ui.checkbox(validate_meshes, "Validate meshes")
+                .on_hover_text("Check that incoming meshes are valid, i.e. that all indices are in range, etc.");
 
             ui.collapsing("Align to pixel grid", |ui| {
-                ui.checkbox(round_text_to_pixels, "Text")
-                    .on_hover_text("Most text already is, so don't expect to see a large change.");
+                ui.checkbox(round_text_to_pixels, "Text").on_hover_text("Most text already is, so don't expect to see a large change.");
 
-                ui.checkbox(round_line_segments_to_pixels, "Line segments")
-                    .on_hover_text("Makes line segments appear crisp on any display.");
+                ui.checkbox(round_line_segments_to_pixels, "Line segments").on_hover_text("Makes line segments appear crisp on any display.");
 
-                ui.checkbox(round_rects_to_pixels, "Rectangles")
-                    .on_hover_text("Makes line segments appear crisp on any display.");
+                ui.checkbox(round_rects_to_pixels, "Rectangles").on_hover_text("Makes line segments appear crisp on any display.");
             });
 
             ui.collapsing("Debug", |ui| {
-                ui.checkbox(
-                    coarse_tessellation_culling,
-                    "Do coarse culling in the tessellator",
-                );
+                ui.checkbox(coarse_tessellation_culling, "Do coarse culling in the tessellator");
 
                 ui.checkbox(debug_ignore_clip_rects, "Ignore clip rectangles");
                 ui.checkbox(debug_paint_clip_rects, "Paint clip rectangles");
@@ -212,10 +195,7 @@ impl Widget for &mut epaint::TessellationOptions {
 
 impl Widget for &memory::InteractionState {
     fn ui(self, ui: &mut Ui) -> Response {
-        let memory::InteractionState {
-            potential_click_id,
-            potential_drag_id,
-        } = self;
+        let memory::InteractionState { potential_click_id, potential_drag_id } = self;
 
         ui.vertical(|ui| {
             ui.label(format!("potential_click_id: {potential_click_id:?}"));
