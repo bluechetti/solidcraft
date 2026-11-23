@@ -559,7 +559,7 @@ pub struct ScanRestResult {
 
 /// Scan to CAD: the whole automatic route in one command, as the scripted benchmark runs it:
 /// Survey's clean steps, Find All, Reconstruct and each step it proposes (a step that leaves the
-/// body further from the scan, or is refused, taken back), optionally Reconstruct the Rest, then
+/// body further from the scan, or is refused, taken back), six rounds of Reconstruct the Rest, then
 /// the verdict. One undo step. An agent or a person starts from its result and its verdict.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -577,7 +577,7 @@ pub struct ScanToCadParams {
     /// The scan's tolerance in mm, set before Find All (instead of the one Survey suggests).
     #[serde(default)]
     pub tolerance: Option<f64>,
-    /// Rounds of Reconstruct the Rest after the proposed steps, 0 to 20. Default: 0.
+    /// Rounds of Reconstruct the Rest after the proposed steps, 0 to 20 (0: none). Default: 6.
     #[serde(default)]
     pub rest: Option<u64>,
 }

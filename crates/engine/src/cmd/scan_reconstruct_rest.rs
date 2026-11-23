@@ -100,7 +100,7 @@ fn record(command: &str, kept: bool, why: Option<String>) -> ScanToCadStep {
 const CLEAN: [&str; 5] = ["scan.repair", "scan.remove_floating", "scan.fill_holes", "scan.tolerance", "scan.denoise"];
 
 /// Scan to CAD: the automatic route in one command (Survey's clean steps, Find All, Reconstruct,
-/// its proposals, optionally the rest, the verdict), one undo step. The scripted benchmark that
+/// its proposals, the rest rounds, the verdict), one undo step. The scripted benchmark that
 /// runs this route matched a real agent on 7 of 8 shape-family parts at 5 to 10 times its speed
 /// (2026-11-18); an agent then starts from the body and its verdict instead of from the scan.
 pub(super) fn to_cad(s: &mut Session, p: &Value) -> Result<Value> {
@@ -110,7 +110,9 @@ pub(super) fn to_cad(s: &mut Session, p: &Value) -> Result<Value> {
     let solid = built_name(&scan);
     let rest = match p.get("rest").filter(|v| !v.is_null()) {
         Some(v) => v.as_u64().filter(|n| *n <= MOST_ROUNDS).ok_or_else(|| bad(cmd, format!("`rest` is 0 to {MOST_ROUNDS} rounds")))?,
-        None => 0,
+        // Default 6: on the fast scorecard (2026-11-23) the rest rounds raised T-LESS-like 18 from
+        // 0.21 to 0.84 and 27 from 0.49 to 0.60, lowered no task, and cost 3 to 17 s.
+        None => ROUNDS,
     };
     let tolerance = match p.get("tolerance").filter(|v| !v.is_null()) {
         Some(v) => Some(v.as_f64().filter(|t| t.is_finite() && *t > 0.0).ok_or_else(|| bad(cmd, "`tolerance` must be a length in mm above 0"))?),
