@@ -543,6 +543,15 @@ impl Default for UiState {
     }
 }
 
+/// A press a script asks of the VR view through the control port (`ui.vr_press`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum VrPress {
+    /// Select on the belt's spot named as `vr_pointing` names it (`belt:Parameters`, `item:0`).
+    Belt(String),
+    /// Select on the belt's window at this place across and down it (0 to 1).
+    Window([f64; 2]),
+}
+
 /// Host services injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
@@ -600,6 +609,9 @@ pub struct Services {
     /// (`belt:Parameters`, `item:0`, `window:0.412,0.305`), for `ui.inspect`: scripts that drive a
     /// simulated headset steer by it. Empty without a session.
     pub vr_pointing: Vec<String>,
+    /// Presses a script asked of the VR view (`ui.vr_press`), done by the host at its next frame
+    /// as a Select there would be: what drives a simulated headset whose hands cannot aim finely.
+    pub vr_script: Vec<VrPress>,
     /// HTTPS GET for the update check (`update`); None: never check (browser, tests).
     pub http_get: Option<update::HttpGet>,
     /// HTTPS download to a file, with progress, for one-click updates (`update::install`).

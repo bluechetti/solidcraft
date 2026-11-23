@@ -706,6 +706,24 @@ impl Vr {
                     }
                 }
             }
+            if i == 0 {
+                // A script's press on the belt (`ui.vr_press`), as Select there; window presses wait
+                // for the window below.
+                for press in std::mem::take(&mut app.services.vr_script) {
+                    let spot = match &press {
+                        solidcraft_ui_egui::VrPress::Belt(name) => script_spot(name),
+                        solidcraft_ui_egui::VrPress::Window(_) => None,
+                    };
+                    match spot {
+                        Some(spot) => {
+                            let said = belt_act(app, &mut self.belt, spot, &belt_state, &mut self.put_back);
+                            self.pointer.say(1, said);
+                        }
+                        None if matches!(press, solidcraft_ui_egui::VrPress::Window(_)) => app.services.vr_script.push(press),
+                        None => log::warn!("VR: ui.vr_press: no belt spot {press:?}"),
+                    }
+                }
+            }
             if click && !holds && self.menu.as_ref().is_none_or(|m| m.hand != i) {
                 if let Some((spot, _)) = self.belt.hover[i] {
                     let said = belt_act(app, &mut self.belt, spot, &belt_state, &mut self.put_back);
@@ -927,6 +945,17 @@ impl Vr {
             let pressing = (0..2).find(|i| self.window_pressed[*i]);
             let at = pressing.and_then(|i| self.window_hover[i]).or(self.window_hover.iter().flatten().next().copied()).map(|(uv, _)| uv);
             panel.point(at, window.points);
+            // A script's press on the window (`ui.vr_press`): the pointer there, Select down and up.
+            for press in std::mem::take(&mut app.services.vr_script) {
+                match press {
+                    solidcraft_ui_egui::VrPress::Window(uv) => {
+                        panel.point(Some(uv), window.points);
+                        panel.press(true);
+                        panel.press(false);
+                    }
+                    other => app.services.vr_script.push(other),
+                }
+            }
         } else if let Some(panel) = self.panel.as_mut() {
             panel.close(app);
         }
@@ -1512,6 +1541,17 @@ fn belt_boards(out: &mut [Option<Board>; BOARDS], layout: &belt::Layout, belt: &
             out[BELT + 2 + belt::GROUPS.len() + k] = Some(bubble(item, *at, item.current || hovered(spot), hovered(spot)));
         }
     }
+}
+
+/// The belt spot a script names as `vr_pointing` does (`belt:Parameters`, `item:2`, `belt:handle`).
+fn script_spot(name: &str) -> Option<belt::Spot> {
+    if let Some(group) = name.strip_prefix("belt:") {
+        if group == "handle" {
+            return Some(belt::Spot::Handle);
+        }
+        return belt::GROUPS.iter().position(|g| format!("{g:?}") == group).map(belt::Spot::Group);
+    }
+    name.strip_prefix("item:").and_then(|k| k.parse().ok()).map(belt::Spot::Item)
 }
 
 /// Select on the belt's `spot`: a group opens (or closes, when open), an item is done and its
@@ -2667,6 +2707,18 @@ impl Reason {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_script_names_belt_spots_as_vr_pointing_reports_them() {
+        for (g, group) in belt::GROUPS.iter().enumerate() {
+            assert_eq!(script_spot(&format!("belt:{group:?}")), Some(belt::Spot::Group(g)));
+        }
+        assert_eq!(script_spot("belt:handle"), Some(belt::Spot::Handle));
+        assert_eq!(script_spot("item:3"), Some(belt::Spot::Item(3)));
+        for bad in ["belt:Nothing", "item:x", "window:0.1,0.2", ""] {
+            assert_eq!(script_spot(bad), None, "{bad}");
+        }
+    }
     use super::*;
     use serde_json::json;
 
