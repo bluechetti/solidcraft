@@ -2587,12 +2587,18 @@ fn part_strip(chat: &mut AgentChat, strip: &ScanStrip, ui: &mut egui::Ui) {
         let targets: Vec<&str> = targets.iter().map(String::as_str).collect();
         let states: Vec<bool> = keys.iter().map(|(k, _)| current == Some(*k)).collect();
         let mut chosen = usize::MAX;
-        let picked = ui_kit::segmented(
-            ui,
-            &mut chosen,
-            &labels,
-            ui_kit::Segments { targets: &targets, states: &states, dense: true, compact: true, ..Default::default() },
-        );
+        // Each row its own id scope: two rows in one parent share segment ids, and a click on one
+        // row's first segment was also the other's (the clip showed Machined set by "A replacement").
+        let picked = ui
+            .push_id(target, |ui| {
+                ui_kit::segmented(
+                    ui,
+                    &mut chosen,
+                    &labels,
+                    ui_kit::Segments { targets: &targets, states: &states, dense: true, compact: true, ..Default::default() },
+                )
+            })
+            .inner;
         picked.then(|| keys.get(chosen).map(|(k, _)| (*k).to_owned())).flatten()
     };
     // How it was made.

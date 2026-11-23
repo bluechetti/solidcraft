@@ -3108,6 +3108,55 @@ def tour_curve(d):
     tour_ok(d, "OK: a 3D curve on the scan")
 
 
+# -- the agent chat: what the person knows about a scanned part --------------------------------
+
+
+def chat_on_scan(path):
+    """A setup: the scan open in the Scan workspace and the agent chat open beside it (no agent
+    connected: "About this part" works on the design itself)."""
+    open_scan = scan_open(path)
+
+    def setup(d):
+        open_scan(d)
+        d.ui("ui.agent_chat", {"features": True, "open": True, "picker": False})
+        d.wait(1.0)
+        d.settle_camera()
+
+    return setup
+
+
+@shot("agent-chat/about-this-part", "clip", setup=chat_on_scan(HOUSING))
+def agent_chat_about_this_part(d):
+    """About this part on a scanned housing: how it was made and what the model is for, kept in the
+    scan's plan; two patches kept as regions, one "don't touch" and one to ignore."""
+    d.caption("With a scan open, the chat has About this part")
+    d.click(d.at(handle="agent_chat:part"), dur=0.6, settle=0.6)
+    d.wait(1.2)
+    d.caption("How it was made: moulded or cast (drafts and rounds)")
+    d.click(d.at(handle="agent_chat:part:process:moulded_or_die_cast"), dur=0.6, settle=0.6)
+    d.wait(1.2)
+    d.caption("What the model is for: a replacement that fits")
+    d.click(d.at(handle="agent_chat:part:purpose:replacement"), dur=0.6, settle=0.6)
+    d.wait(1.2)
+    d.caption("A patch selected on the rim: Keep the selection as...")
+    d.execute("scan.select", {"body": d.scan, "brush": {"points": [[0, -30, 30]], "radius": "8 mm"}})
+    d.settle_camera()
+    d.wait(1.5)
+    d.caption("Don't touch: an agent may not change the scan there")
+    d.click(d.at(handle="agent_chat:part:role:keep"), dur=0.6, settle=0.6)
+    d.wait(1.5)
+    d.caption("A second patch, on a wall: Ignore (left out of the verdict)")
+    d.execute("scan.select", {"body": d.scan, "brush": {"points": [[40, 0, 15]], "radius": "6 mm"}})
+    d.settle_camera()
+    d.wait(1.2)
+    d.click(d.at(handle="agent_chat:part:role:ignore"), dur=0.6, settle=0.6)
+    d.wait(1.5)
+    d.caption("The regions kept, as chips: a click selects one again")
+    d.click(d.at(handle="agent_chat:part:region:0"), dur=0.6, settle=0.6)
+    d.settle_camera()
+    d.wait(2.5)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("shots", nargs="*", help="shot names, or a page (ui-tour); default every shot")

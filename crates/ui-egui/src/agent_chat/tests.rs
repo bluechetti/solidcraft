@@ -4056,6 +4056,25 @@ fn about_this_part_sets_the_plan_and_regions_and_dont_touch_holds_for_the_agent(
     assert!(app.agent_chat.part.sizes.is_empty(), "sent once");
 }
 
+/// About this part's two rows of buttons, clicked as a person clicks them: each sets its own part
+/// of the plan (the purpose's first button once set the process too: the rows shared ids).
+#[test]
+fn about_this_parts_rows_each_set_their_own_choice() {
+    let mut h = crate::scenario::Harness::new();
+    let scan = plate_scan(&mut h.app, "rows");
+    h.call("ui.agent_chat", json!({"features": true, "open": true, "picker": false}));
+    h.frames(4);
+    h.step(&json!({"click": {"handle": "agent_chat:part"}})).unwrap();
+    h.frames(4);
+    h.step(&json!({"click": {"handle": "agent_chat:part:process:moulded_or_die_cast"}})).unwrap();
+    h.frames(4);
+    h.step(&json!({"click": {"handle": "agent_chat:part:purpose:replacement"}})).unwrap();
+    h.frames(4);
+    let plan = h.app.session.doc.scan_plans.get(&scan).expect("a plan");
+    assert_eq!(plan.process, solidcraft_engine::doc::scan_plan::Process::MouldedOrDieCast, "the purpose's button left the process as it was");
+    assert_eq!(plan.purpose, Some(solidcraft_engine::doc::scan_plan::Purpose::Replacement));
+}
+
 /// A queued message keeps the selection of the moment it was typed; queued messages go as one
 /// prompt with all their items.
 #[test]
