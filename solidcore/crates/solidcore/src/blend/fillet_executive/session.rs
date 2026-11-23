@@ -7216,6 +7216,15 @@ impl SessionObjects<'_> {
 
         // set FilletSideEdge->Curves
         for edge in [gaps.edge1, gaps.edge2] {
+            // Not upstream (#19089): an edge whose end the corner's vertex geometry could not
+            // place yet, a rail's crossing of the extended edge (`RailXExtendedEdgeuse`, which
+            // needs the rail the solver traces later), gets its curve with the corner's other
+            // edges (`calculate_corner_edges`), whose failure is the corner's. Upstream ignored
+            // this status, so such an edge was left to that stage too; passing it on here
+            // (WR-661) refused every round ending at such a corner, at any radius.
+            if !self.pseudo_edge_ends_processed(edge)? {
+                continue;
+            }
             let SessionObjects {
                 target,
                 pseudo,
@@ -8056,6 +8065,20 @@ impl SessionObjects<'_> {
             id,
             rolled_end,
         )
+    }
+
+    /// Whether both fillet vertices at the ends of pseudo edge `edge` have their geometry (an
+    /// edge without both ends has nothing to place yet).
+    fn pseudo_edge_ends_processed(&self, edge: EdgeId) -> Result<bool> {
+        let brep = self.pseudo.brep();
+        let Some(start) = crate::topology::edge::vertex(brep, edge)? else {
+            return Ok(false);
+        };
+        let Some(end) = crate::topology::edge::other_vertex(brep, edge, Some(start))? else {
+            return Ok(false);
+        };
+        Ok(self.pseudo.fillet_vertex(start)?.is_processed()
+            && self.pseudo.fillet_vertex(end)?.is_processed())
     }
 
     fn corner_object(&self, object: FilletObject) -> Result<&FilletCorner> {

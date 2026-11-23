@@ -1,0 +1,472 @@
+{
+  "area": "fillets",
+  "bodies": {
+    "b26": {
+      "keeping_splines": false,
+      "trusted": true
+    },
+    "b27": {
+      "keeping_splines": false,
+      "trusted": true
+    },
+    "b35": {
+      "keeping_splines": false,
+      "trusted": true
+    },
+    "b40": {
+      "keeping_splines": false,
+      "trusted": true
+    }
+  },
+  "calls": [
+    {
+      "inputs": [],
+      "op": "extrude",
+      "outputs": [
+        "b24"
+      ],
+      "params": {
+        "cap": true,
+        "corner": "curvature",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "distance": 20.0,
+        "draft": 0.0,
+        "profile": [
+          {
+            "line": {
+              "end": [
+                10.0,
+                -10.0,
+                0.0
+              ],
+              "start": [
+                -10.0,
+                -10.0,
+                0.0
+              ]
+            }
+          },
+          {
+            "line": {
+              "end": [
+                10.0,
+                10.0,
+                0.0
+              ],
+              "start": [
+                10.0,
+                -10.0,
+                0.0
+              ]
+            }
+          },
+          {
+            "line": {
+              "end": [
+                -10.0,
+                10.0,
+                0.0
+              ],
+              "start": [
+                10.0,
+                10.0,
+                0.0
+              ]
+            }
+          },
+          {
+            "line": {
+              "end": [
+                -10.0,
+                -10.0,
+                0.0
+              ],
+              "start": [
+                -10.0,
+                10.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "inputs": [],
+      "op": "extrude",
+      "outputs": [
+        "b25"
+      ],
+      "params": {
+        "cap": true,
+        "corner": "curvature",
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "distance": 10.0,
+        "draft": 0.0,
+        "profile": [
+          {
+            "line": {
+              "end": [
+                0.0,
+                0.0,
+                0.0
+              ],
+              "start": [
+                -10.0,
+                0.0,
+                0.0
+              ]
+            }
+          },
+          {
+            "line": {
+              "end": [
+                0.0,
+                10.0,
+                0.0
+              ],
+              "start": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          },
+          {
+            "line": {
+              "end": [
+                -10.0,
+                10.0,
+                0.0
+              ],
+              "start": [
+                0.0,
+                10.0,
+                0.0
+              ]
+            }
+          },
+          {
+            "line": {
+              "end": [
+                -10.0,
+                0.0,
+                0.0
+              ],
+              "start": [
+                -10.0,
+                10.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "inputs": [
+        "b27"
+      ],
+      "op": "copy",
+      "outputs": [
+        "b28"
+      ],
+      "params": {}
+    },
+    {
+      "inputs": [
+        "b28"
+      ],
+      "op": "copy",
+      "outputs": [
+        "b29"
+      ],
+      "params": {}
+    },
+    {
+      "inputs": [
+        "b26"
+      ],
+      "op": "copy",
+      "outputs": [
+        "b30"
+      ],
+      "params": {}
+    },
+    {
+      "inputs": [
+        "b30"
+      ],
+      "op": "copy",
+      "outputs": [
+        "b31"
+      ],
+      "params": {}
+    },
+    {
+      "inputs": [
+        "b29"
+      ],
+      "op": "tagged",
+      "outputs": [
+        "b32"
+      ],
+      "params": {
+        "operand": 0
+      }
+    },
+    {
+      "inputs": [
+        "b31"
+      ],
+      "op": "tagged",
+      "outputs": [
+        "b33"
+      ],
+      "params": {
+        "operand": 1
+      }
+    },
+    {
+      "inputs": [
+        "b32",
+        "b33"
+      ],
+      "op": "boolean",
+      "outputs": [
+        "b34"
+      ],
+      "params": {
+        "op": "subtract"
+      }
+    },
+    {
+      "inputs": [
+        "b35"
+      ],
+      "op": "copy",
+      "outputs": [
+        "b36"
+      ],
+      "params": {}
+    },
+    {
+      "inputs": [
+        "b36"
+      ],
+      "op": "copy",
+      "outputs": [
+        "b37"
+      ],
+      "params": {}
+    },
+    {
+      "inputs": [
+        "b37"
+      ],
+      "op": "tagged",
+      "outputs": [
+        "b38"
+      ],
+      "params": {
+        "operand": 0
+      }
+    },
+    {
+      "inputs": [
+        "b38"
+      ],
+      "op": "blend_dropping",
+      "outputs": [
+        "b39"
+      ],
+      "params": {
+        "edges": {
+          "kind": "edge",
+          "picked": [
+            {
+              "at": [
+                [
+                  10.0,
+                  10.0,
+                  0.0
+                ],
+                [
+                  0.0,
+                  10.0,
+                  0.0
+                ]
+              ],
+              "index": 8
+            }
+          ],
+          "points": [
+            [
+              5.0,
+              10.0,
+              0.0
+            ]
+          ],
+          "tolerance": 1.7330508075688775
+        },
+        "kind": "chamfer",
+        "sizes": [
+          10.0
+        ],
+        "turn": "mitre"
+      }
+    },
+    {
+      "inputs": [
+        "b40"
+      ],
+      "op": "copy",
+      "outputs": [
+        "b41"
+      ],
+      "params": {}
+    },
+    {
+      "inputs": [
+        "b41"
+      ],
+      "op": "copy",
+      "outputs": [
+        "b42"
+      ],
+      "params": {}
+    },
+    {
+      "inputs": [
+        "b42"
+      ],
+      "op": "tagged",
+      "outputs": [
+        "b43"
+      ],
+      "params": {
+        "operand": 0
+      }
+    },
+    {
+      "inputs": [
+        "b43"
+      ],
+      "op": "blend_dropping",
+      "outputs": [
+        "b44"
+      ],
+      "params": {
+        "edges": {
+          "kind": "edge",
+          "picked": [
+            {
+              "at": [
+                [
+                  -8.881784197001252e-16,
+                  8.881784197001252e-16,
+                  0.0
+                ],
+                [
+                  0.0,
+                  10.000000000000002,
+                  10.000000000000002
+                ]
+              ],
+              "index": 1
+            }
+          ],
+          "points": [
+            [
+              -4.440892098500626e-16,
+              5.000000000000001,
+              5.000000000000001
+            ]
+          ],
+          "tolerance": 1.7330508075688775
+        },
+        "kind": "round",
+        "sizes": [
+          2.0
+        ],
+        "turn": "mitre"
+      }
+    }
+  ],
+  "case": "round-chamfer-to-notch-ends-on-ceiling-and-wall-mirrored",
+  "expected": {
+    "body_count": 1,
+    "method": "Box 20x20x20 minus the 10x10x10 notch minus the chamfer's prism (legs 10, 10 over a 10 mm edge, 500): V0 = 8000 - 1000 - 500 = 6500. The round's edge runs from (0,0,0) to (0,10,10) between the chamfer z = y and the wall x = 0, square to each other. In the edge's frame (s along the edge, u and w the in-face depths) the round removes the corner of the square [0,2]^2 outside the quarter disc of radius 2 about (2,2): area 4 - pi, first moment in w 20/3 - 2 pi. It is capped by y >= 0 (s >= w, the notch's back wall continued) and z <= 10 (s <= 10 sqrt 2 - w, the ceiling continued), so its length at depth w is 10 sqrt 2 - 2w. Removed = 10 sqrt 2 (4 - pi) - 2 (20/3 - 2 pi) = 11.3727503944; V = 6500 - that = 6488.6272496056 mm3. The same in the mirror image.",
+    "outcome": "solid",
+    "source": "analytic",
+    "sources": [
+      "tangency-labs/solidcraft#19089"
+    ],
+    "volume_mm3": 6488.6272496056,
+    "what": "an R2 round on the 90-degree edge where a 45-degree chamfer meets a notch's wall, from the notch's floor corner up to its ceiling: at each end one side edge is the chamfer's (convex, square to the round) and the other the notch's (concave, at 45 degrees), so the rail on the wall reaches the notch's face first and the round ends against that face continued (the ceiling at the top, the notch's back wall at the bottom) (mirror image)"
+  },
+  "expressible": true,
+  "operation_expressible": true,
+  "outcome": {
+    "ran": true,
+    "raw_counts": {
+      "edges": 25,
+      "faces": 11,
+      "vertices": 16
+    }
+  },
+  "records": "round-chamfer-to-notch-ends-on-ceiling-and-wall-mirrored.bodies.json.gz",
+  "result": [
+    {
+      "body": "Body1",
+      "made": "b44"
+    }
+  ],
+  "rig": {
+    "error": null,
+    "known_failing": null,
+    "measured": {
+      "area_mm2": 2231.1432151322783,
+      "body_count": 1,
+      "edges": 25,
+      "faces": 11,
+      "vertices": 16,
+      "volume_mm3": 6488.6272496056345
+    },
+    "refused_with": null,
+    "status": "pass"
+  },
+  "sources": [
+    "tangency-labs/solidcraft#19089"
+  ],
+  "traced_ops": [
+    "extrude",
+    "extrude",
+    "copy",
+    "copy",
+    "copy",
+    "copy",
+    "tagged",
+    "tagged",
+    "boolean",
+    "copy",
+    "copy",
+    "tagged",
+    "blend_dropping",
+    "copy",
+    "copy",
+    "tagged",
+    "blend_dropping"
+  ],
+  "ungraded": [],
+  "what": "an R2 round on the 90-degree edge where a 45-degree chamfer meets a notch's wall, from the notch's floor corner up to its ceiling: at each end one side edge is the chamfer's (convex, square to the round) and the other the notch's (concave, at 45 degrees), so the rail on the wall reaches the notch's face first and the round ends against that face continued (the ceiling at the top, the notch's back wall at the bottom) (mirror image)",
+  "why_not": []
+}

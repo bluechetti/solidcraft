@@ -863,6 +863,73 @@ pub(crate) fn tangent_leaving(
     }
 }
 
+/// Whether the rail beside side edge use `first` reaches it before the rail beside `second`
+/// reaches that one, for a round of like offsets on the filleted edge use `filleted` at
+/// `vertex`: the side edge leaving the vertex at the smaller angle to the filleted edge's
+/// own leaving tangent is met `d cot(angle)` back along the edge, the farther back the
+/// sooner. That holds exactly where the round's two faces are planes and the side edges
+/// straight lines (each rail then a line at the same offset); elsewhere the angles at the
+/// vertex say nothing sure of where the rails meet them (a cone's rail curves away), and
+/// the answer is false. False too where an angle is not sharply defined (a side edge along
+/// or against the filleted edge) or the two are within a small margin of each other, where
+/// upstream's choice stands.
+fn reaches_first(
+    k: &Kernel,
+    target: &mut Brep,
+    filleted: EdgeuseId,
+    first: EdgeuseId,
+    second: EdgeuseId,
+    vertex: VertexId,
+) -> Result<bool> {
+    super::or_false((|| {
+        let tol = target.tolerance();
+        let plane = |face: Option<FaceId>| -> Result<bool> {
+            let Some(face) = face else {
+                return Ok(false);
+            };
+            match target.face(face)?.surface.as_ref() {
+                Some(s) => Ok(s.is_planar(k, tol)?.is_planar),
+                None => Ok(false),
+            }
+        };
+        let line = |eu: EdgeuseId| -> Result<bool> {
+            let Some(e) = eu1::edge(target, eu)? else {
+                return Ok(false);
+            };
+            match edge::curve(target, e)? {
+                Some(c) => Ok(c.is_linear(k, tol, false)?.linear),
+                None => Ok(false),
+            }
+        };
+        let mate = eu1::radial(target, filleted)?;
+        let beside = [
+            eu1::face(target, filleted)?,
+            mate.map(|m| eu1::face(target, m)).transpose()?.flatten(),
+        ];
+        if !(plane(beside[0])? && plane(beside[1])? && line(first)? && line(second)?) {
+            return Ok(false);
+        }
+        let leaving = |eu: EdgeuseId| -> Result<Option<Vec3>> {
+            let edge = need(eu1::edge(target, eu)?, "edge use without edge")?;
+            Ok(tangent_leaving(k, target, edge, vertex)?.and_then(|t| t.unitize().ok()))
+        };
+        let (Some(along), Some(a), Some(b)) =
+            (leaving(filleted)?, leaving(first)?, leaving(second)?)
+        else {
+            return Ok(false);
+        };
+        let cot = |side: Vec3| -> Option<f64> {
+            let cos = along.dot(side);
+            let sin = along.cross(side).length();
+            (sin > 1e-6).then_some(cos / sin)
+        };
+        let (Some(ca), Some(cb)) = (cot(a), cot(b)) else {
+            return Ok(false);
+        };
+        Ok(ca > cb + 1e-6)
+    })())
+}
+
 /// A fillet vertex on the original vertex `tb.far` (`SM_FV_ON_VERTEX`), for a [`TurnedBack`]
 /// cap edge.
 fn turned_back_vertex(
@@ -1128,7 +1195,45 @@ impl FilletCorner {
                             (first, second)
                         }
                     };
-                    end_face = eu1::face(target, pick)?;
+                    // The round ends against the side edge its rails reach first. Its rails
+                    // run a like distance off the filleted edge in its two faces (a constant
+                    // radius), so the one whose side edge leaves the vertex nearer the
+                    // filleted edge's line reaches it first, `d cot(angle)` before the
+                    // vertex. Upstream always ends on the cliff edge's side; where the rail
+                    // against the other side edge reaches it first (a round along a chamfer
+                    // up to a notch's ceiling, the chamfer's edge with the side square to the
+                    // round and the notch's wall at 45 degrees: #19089), the round has run
+                    // into that face before it gets to the cliff, so the end face is the
+                    // one across that edge, continued.
+                    let end_side = if matches!(solver, SolverObject::ConstantRadius(_))
+                        && reaches_first(k, target, filleted, other, pick, vertex)?
+                    {
+                        other
+                    } else {
+                        pick
+                    };
+                    // The end face lies across that side edge from the round: of its two
+                    // faces, the one not beside the filleted edge. The face of the side edge
+                    // use itself is that face on one side round the vertex and the round's
+                    // own side face on the other, so taken as it was, a round whose end side
+                    // edge preceded it ended on its own rail's face, which the rail never
+                    // crosses, and the corner was refused at any radius (#19089, whose
+                    // mirror image took the other branch).
+                    let own = eu1::face(target, end_side)?;
+                    end_face = if super::is_fillet_side_face(target, filleted, own)? {
+                        let radial = need(
+                            eu1::radial(target, end_side)?,
+                            "side edge use without radial",
+                        )?;
+                        let across = eu1::face(target, radial)?;
+                        if super::is_fillet_side_face(target, filleted, across)? {
+                            own
+                        } else {
+                            across
+                        }
+                    } else {
+                        own
+                    };
                     extend_edge = eu1::edge(target, pick)?;
                     other_side_edgeuse = Some(other);
                 } else {
