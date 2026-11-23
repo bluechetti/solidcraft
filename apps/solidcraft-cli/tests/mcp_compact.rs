@@ -1,5 +1,5 @@
-//! `mcp --compact` and `SOLIDCRAFT_MCP_COMPACT` turn on compact tool output; without them the
-//! server's tools are as they always were.
+//! `mcp --compact` and `SOLIDCRAFT_MCP_COMPACT` turn on compact tool output; without them
+//! `inspect_design` returns every sketch in full by default.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -33,17 +33,21 @@ fn inspect_schema(args: &[&str], env: Option<&str>) -> Result<Value, String> {
 
 #[test]
 fn compact_output_is_off_unless_asked() {
+    // Both forms take lists of sketch and body names; they differ in `sketches`' default:
+    // every sketch in full without compact output, summaries with it.
+    let sketches_default = |schema: &Value| schema["properties"]["sketches"]["description"].as_str().unwrap_or_default().to_string();
     let plain = inspect_schema(&[], None).unwrap();
-    assert_eq!(plain["properties"]["sketches"]["type"], "boolean", "{plain}");
-    assert_eq!(plain["properties"]["bodies"]["anyOf"], json!([{"type": "boolean"}, {"type": "string"}]), "no list of names: {plain}");
+    assert!(sketches_default(&plain).contains("true (every sketch, the default)"), "{plain}");
+    assert!(
+        plain["properties"]["bodies"]["anyOf"].as_array().is_some_and(|t| t.contains(&json!({"type": "array", "items": {"type": "string"}}))),
+        "a list of names: {plain}"
+    );
     assert_eq!(inspect_schema(&[], Some("0")).unwrap(), plain);
 
     for (args, env) in [(&["--compact"][..], None), (&[][..], Some("1")), (&[][..], Some("true"))] {
         let compact = inspect_schema(args, env).unwrap();
-        assert!(
-            compact["properties"]["bodies"]["anyOf"].as_array().is_some_and(|t| t.contains(&json!({"type": "array", "items": {"type": "string"}}))),
-            "{args:?} {env:?}: {compact}"
-        );
+        assert!(sketches_default(&compact).contains("summaries only, the default"), "{args:?} {env:?}: {compact}");
+        assert_ne!(compact, plain);
     }
 
     let e = inspect_schema(&[], Some("maybe")).unwrap_err();
