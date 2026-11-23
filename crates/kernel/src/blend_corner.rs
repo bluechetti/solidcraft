@@ -437,11 +437,15 @@ mod tests {
         // using the reported picks, with and without the open cavity visible in the screenshot.
         let picks = [Vec3::new(-5.0, 87.2, 12.5), Vec3::new(-4.283446394180081, 86.48344639418008, -1.5001085324947512)];
         for (base, want) in [(b.clone(), solid), (crate::shell(&b, &[Vec3::new(15.0, 47.2, 25.0)], 1.0).unwrap(), solid - cavity)] {
-            // Each fillet with its tangent chain, as the Fillet feature asks for it by default
-            // (tangent propagation).
+            // Each bottom fillet takes exactly its own edge, as the report's build made them (its
+            // second pick lies on the back-left mitre's plane x + y = 82.2), so the rounds mitre
+            // at the bottom corners and the uprights stay sharp. With each edge's tangent chain
+            // the second to fourth fillets run on round the earlier rounds' end arcs and up the
+            // uprights, and the four of them already round the whole box (86106.631181, no mitre
+            // and no sharp upright left to pick).
             let mut rounded = base;
             for edge in bottom {
-                rounded = fillet(&rounded, &crate::tangent_chain(&rounded, &[edge]).unwrap(), 2.0).unwrap();
+                rounded = fillet(&rounded, &[edge], 2.0).unwrap();
             }
             for selection in [&picks[..1], &picks[..], &[picks[1], picks[0]][..]] {
                 let result = fillet(&rounded, &crate::tangent_chain(&rounded, selection).unwrap(), 2.0).unwrap();
