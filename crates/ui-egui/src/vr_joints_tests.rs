@@ -39,3 +39,15 @@ fn the_reply_says_the_value_and_what_held_it() {
     assert_eq!(driven(&free, &hinge()).and_then(|d| d.held), None);
     assert!(driven(&json!({}), &hinge()).is_none());
 }
+
+#[test]
+fn clearances_overlaps_are_read_with_their_boxes() {
+    use crate::vr_joints::clashes_of;
+    let reply = json!({"overlaps": [
+        {"a": "Body1", "b": "Body3", "bbox": {"max": [55.0, 35.0, 20.0], "min": [45.0, 25.0, 16.0]}, "volume_mm3": 314.16},
+        {"a": "Body2", "b": "Body3", "bbox": {"max": [55.0, 35.0], "min": [45.0, 25.0, 20.0]}, "volume_mm3": 471.2}]});
+    let c = clashes_of(&reply);
+    assert_eq!(c.len(), 1, "a box without three coordinates is left out");
+    assert_eq!((c[0].a.as_str(), c[0].b.as_str(), c[0].bbox, c[0].volume), ("Body1", "Body3", [[45.0, 25.0, 16.0], [55.0, 35.0, 20.0]], 314.16));
+    assert!(clashes_of(&json!({})).is_empty());
+}

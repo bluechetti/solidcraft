@@ -1,6 +1,8 @@
 {
   "en": {
     "vr.belt_parameters": "Parameters",
+    "vr.clashes_none": "No parts overlap",
+    "vr.clashes_some": "Parts overlap:",
     "vr.handle_fine": "(fine)",
     "vr.joint_contact": "touching",
     "vr.joint_limit": "at its limit",
@@ -11,12 +13,18 @@
     "vr.measure_first": "Now Select a second face (or Measure off)",
     "vr.measure_off": "Measure off",
     "vr.measure_on": "Measure: Select a face, then another",
+    "vr.menu_clashes": "Clashes",
+    "vr.menu_clashes_off": "Clashes off",
     "vr.menu_measure": "Measure",
     "vr.menu_measure_off": "Measure off",
+    "vr.menu_sweep": "Sweep joint",
     "vr.params_cancel": "Cancel",
     "vr.params_fine": "Fine steps",
     "vr.params_none": "This design has no parameters",
     "vr.params_set": "Set",
-    "vr.params_user": "User parameters"
+    "vr.params_user": "User parameters",
+    "vr.sweep_clear": "clear",
+    "vr.sweep_none": "No joint moves this part",
+    "vr.sweep_touches": "touches"
   }
 }

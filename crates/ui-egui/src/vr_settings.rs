@@ -132,6 +132,10 @@ pub enum RingAction {
     Section,
     /// Measure: Select a face, then another (docs/vr.md).
     Measure,
+    /// Where parts overlap, kept up to date while on (docs/vr.md).
+    Clashes,
+    /// The pointed or selected part's joint swept through its travel to the first contact.
+    Sweep,
     PutBack,
     Undo,
     Redo,
@@ -153,6 +157,8 @@ impl RingAction {
             RingAction::Explode,
             RingAction::Section,
             RingAction::Measure,
+            RingAction::Clashes,
+            RingAction::Sweep,
             RingAction::PutBack,
             RingAction::Undo,
             RingAction::Redo,
@@ -173,6 +179,8 @@ impl RingAction {
             RingAction::Explode => "vr.menu_explode",
             RingAction::Section => "vr.menu_section",
             RingAction::Measure => "vr.menu_measure",
+            RingAction::Clashes => "vr.menu_clashes",
+            RingAction::Sweep => "vr.menu_sweep",
             RingAction::PutBack => "vr.menu_put_back",
             RingAction::Undo => "vr.menu_undo",
             RingAction::Redo => "vr.menu_redo",
@@ -192,6 +200,7 @@ impl RingAction {
             RingAction::Explode => "explode",
             RingAction::Section => "section",
             RingAction::Measure => "measure",
+            RingAction::Clashes | RingAction::Sweep => "interference",
             RingAction::PutBack => "home",
             RingAction::Undo => "undo",
             RingAction::Redo => "redo",
@@ -486,7 +495,14 @@ impl Default for VrSettings {
                 RingGroup {
                     name: "vr.group_view".into(),
                     icon: "camera".into(),
-                    items: vec![RingAction::PutBack, RingAction::Explode, RingAction::Passthrough, RingAction::Measure],
+                    items: vec![
+                        RingAction::PutBack,
+                        RingAction::Explode,
+                        RingAction::Passthrough,
+                        RingAction::Measure,
+                        RingAction::Clashes,
+                        RingAction::Sweep,
+                    ],
                 },
                 RingGroup { name: "vr.group_edit".into(), icon: "edit".into(), items: vec![RingAction::Undo, RingAction::Redo] },
                 RingGroup::default(),

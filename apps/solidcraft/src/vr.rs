@@ -122,6 +122,11 @@ pub struct Vr {
     measure: Option<Measure>,
     /// A placed part being moved as its joints allow ([`handles::JointDrag`]).
     joint_drag: Option<handles::JointDrag>,
+    /// The clashes shown (View ▸ Clashes): the hand that turned them on, the design they were
+    /// found in, and the overlaps, drawn as red boxes.
+    clashes: Option<(usize, (u64, u64), Vec<solidcraft_ui_egui::vr_joints::Clash>)>,
+    /// Where the last joint sweep first touched (model units), until the design changes.
+    swept: Option<((u64, u64), [f64; 3])>,
     /// The scale was shown last at this time (seconds, [`Vr::clock`]): it fades after.
     scaled_at: Option<f64>,
     /// The frame's time last frame (seconds, [`Vr::clock`]): how far the stick moves a held model.
@@ -186,6 +191,10 @@ const SAID_AHEAD: f64 = 0.06;
 /// How long a sign at the controller says what the hand did.
 const SAID_FOR: std::time::Duration = std::time::Duration::from_millis(1500);
 
+/// How long a result stays at the controller (a measurement, a sweep, the clashes): long enough to
+/// read.
+const TOLD_FOR: std::time::Duration = std::time::Duration::from_secs(6);
+
 /// What one controller's ray points at.
 #[derive(Clone, Debug)]
 struct Pointed {
@@ -235,6 +244,72 @@ impl Measure {
         self.said = said.clone();
         said
     }
+}
+
+/// The ring's actions that keep something with the VR view (Measure, Clashes, Sweep joint),
+/// taken by hand `i` on `target` (else the selection): what the sign says, or none for the
+/// others ([`act_on`]).
+#[allow(clippy::type_complexity)]
+fn own_act(
+    app: &mut SolveApp,
+    act: Act,
+    target: Option<&Part>,
+    i: usize,
+    measure: &mut Option<Measure>,
+    clashes: &mut Option<(usize, (u64, u64), Vec<solidcraft_ui_egui::vr_joints::Clash>)>,
+    swept_at: &mut Option<((u64, u64), [f64; 3])>,
+) -> Option<String> {
+    let said = if act == Act::Clashes {
+        *clashes = if clashes.is_some() { None } else { Some((i, (0, 0), Vec::new())) };
+        match clashes {
+            Some(c) => {
+                c.1 = (app.session.uid, app.session.revision);
+                c.2 = solidcraft_ui_egui::vr_joints::clashes(app).unwrap_or_default();
+                clash_words(&c.2)
+            }
+            None => solidcraft_ui_text::tr("vr.menu_clashes_off").to_string(),
+        }
+    } else if act == Act::Sweep {
+        let part =
+            target.map(|p| std::sync::Arc::new(p.clone())).or_else(|| vr_pick::selected_parts(app).into_iter().next().map(std::sync::Arc::new));
+        let axis = part
+            .and_then(|p| solidcraft_ui_egui::vr_joints::occurrence_of(&p))
+            .and_then(|o| solidcraft_ui_egui::vr_joints::axes(app, o).into_iter().next());
+        match axis {
+            None => solidcraft_ui_text::tr("vr.sweep_none").to_string(),
+            Some(axis) => match solidcraft_ui_egui::vr_joints::sweep(app, &axis) {
+                Ok(swept) => {
+                    let unit = if axis.angular { "°" } else { " mm" };
+                    let n = solidcraft_ui_egui::vr_measure::number;
+                    let range = format!("{} {}..{}{unit}", axis.name, n(swept.reached[0]), n(swept.reached[1]));
+                    *swept_at = swept.touches.as_ref().map(|(_, at)| ((app.session.uid, app.session.revision), *at));
+                    match swept.touches {
+                        Some((names, _)) => format!("{range}  {} {names}", solidcraft_ui_text::tr("vr.sweep_touches")),
+                        None => format!("{range}  {}", solidcraft_ui_text::tr("vr.sweep_clear")),
+                    }
+                }
+                Err(error) => error,
+            },
+        }
+    } else if act == Act::Measure {
+        // On for the hand that chose it, off again from the ring.
+        *measure = if measure.is_some() { None } else { Some(Measure { hand: i, ..Measure::default() }) };
+        solidcraft_ui_text::tr(if measure.is_some() { "vr.measure_on" } else { "vr.measure_off" }).to_string()
+    } else {
+        return None;
+    };
+    Some(said)
+}
+
+/// What the sign says of the clashes found: none, or each pair and how much overlaps.
+fn clash_words(list: &[solidcraft_ui_egui::vr_joints::Clash]) -> String {
+    use solidcraft_ui_text::tr;
+    if list.is_empty() {
+        return tr("vr.clashes_none").to_string();
+    }
+    let pairs: Vec<String> =
+        list.iter().take(4).map(|c| format!("{} – {} {} mm³", c.a, c.b, solidcraft_ui_egui::vr_measure::number(c.volume))).collect();
+    format!("{} {}", tr("vr.clashes_some"), pairs.join(", "))
 }
 
 /// At most this many bodies' parts are kept: past it the list starts again.
@@ -323,11 +398,20 @@ impl Pointer {
 
     /// Show `words` at hand `i`'s controller for a moment (nothing for no words).
     fn say(&mut self, i: usize, words: String) {
+        self.say_for(i, words, SAID_FOR);
+    }
+
+    /// A result at the controller of hand `i`, for [`TOLD_FOR`].
+    fn tell(&mut self, i: usize, words: String) {
+        self.say_for(i, words, TOLD_FOR);
+    }
+
+    fn say_for(&mut self, i: usize, words: String, how_long: std::time::Duration) {
         if words.is_empty() {
             return;
         }
         if let Some(slot) = self.said.get_mut(i) {
-            *slot = Some((words, std::time::Instant::now() + SAID_FOR));
+            *slot = Some((words, std::time::Instant::now() + how_long));
         }
     }
 
@@ -394,6 +478,8 @@ impl Vr {
             moving: None,
             measure: None,
             joint_drag: None,
+            clashes: None,
+            swept: None,
             last_frame: 0.0,
             real_size: false,
             design: None,
@@ -904,14 +990,13 @@ impl Vr {
                     // gone or another, so the actions take the selection as it is now.
                     let unchanged = self.menu_design == (app.session.uid, app.session.revision);
                     let target = open.target.as_deref().filter(|_| unchanged);
-                    let said = if act == Act::Measure {
-                        // On for the hand that chose it, off again from the ring.
-                        self.measure = if self.measure.is_some() { None } else { Some(Measure { hand: i, ..Measure::default() }) };
-                        solidcraft_ui_text::tr(if self.measure.is_some() { "vr.measure_on" } else { "vr.measure_off" }).to_string()
-                    } else {
-                        act_on(app, act, target, set.acts_on, i, &mut self.section, &mut self.put_back)
-                    };
-                    self.pointer.say(i, said);
+                    match own_act(app, act, target, i, &mut self.measure, &mut self.clashes, &mut self.swept) {
+                        Some(said) => self.pointer.tell(i, said),
+                        None => {
+                            let said = act_on(app, act, target, set.acts_on, i, &mut self.section, &mut self.put_back);
+                            self.pointer.say(i, said);
+                        }
+                    }
                     buzz(session, hand, Pulse::TICK);
                 }
                 if menu_by_select {
@@ -939,6 +1024,7 @@ impl Vr {
                     exploded: !app.session.exploded.is_empty(),
                     section: self.section != Section::Off,
                     measuring: self.measure.is_some(),
+                    clashes: self.clashes.is_some(),
                     can_undo: !app.session.undo.is_empty(),
                     can_redo: !app.session.redo.is_empty(),
                     passthrough_offered: app.services.vr_passthrough == Some(true),
@@ -956,11 +1042,17 @@ impl Vr {
                 // A script's press on the belt (`ui.vr_press`), as Select there; window presses wait
                 // for the window below.
                 for press in std::mem::take(&mut app.services.vr_script) {
-                    if let solidcraft_ui_egui::VrPress::Act(_) = &press {
-                        // `measure`, the one ring action a script takes: on or off for the right hand.
-                        self.measure = if self.measure.is_some() { None } else { Some(Measure { hand: 1, ..Measure::default() }) };
-                        let said = solidcraft_ui_text::tr(if self.measure.is_some() { "vr.measure_on" } else { "vr.measure_off" });
-                        self.pointer.say(1, said.to_string());
+                    if let solidcraft_ui_egui::VrPress::Act(name) = &press {
+                        // A ring action a script takes, by the right hand, on the selection.
+                        let act = match name.as_str() {
+                            "measure" => Some(Act::Measure),
+                            "clashes" => Some(Act::Clashes),
+                            "sweep" => Some(Act::Sweep),
+                            _ => None,
+                        };
+                        if let Some(said) = act.and_then(|act| own_act(app, act, None, 1, &mut self.measure, &mut self.clashes, &mut self.swept)) {
+                            self.pointer.tell(1, said);
+                        }
                         continue;
                     }
                     let spot = match &press {
@@ -987,7 +1079,7 @@ impl Vr {
                     // Measuring: the face pointed at is picked, not selected.
                     if let Some(p) = self.pointer.pointed[i].as_ref() {
                         let said = m.pick(app, (p.body.clone(), p.point));
-                        self.pointer.say(i, said);
+                        self.pointer.tell(i, said);
                     }
                 } else if self.section == Section::Held(i) {
                     if let Some(placed) = held_plane(&hands, i).zip(self.transform).and_then(|(p, t)| p.to_model(&t)) {
@@ -1198,7 +1290,9 @@ impl Vr {
             let measure = self.measure.as_ref().map(|m| serde_json::json!({"hand": m.hand, "first": m.first, "ends": m.ends, "said": m.said}));
             // The model's place in the room: a model point p is at translation + scale * (axes[0] p0 + axes[1] p1 + axes[2] p2).
             let placed = serde_json::json!({"axes": t.axes, "scale": t.scale, "translation": t.translation});
-            app.services.vr_scene = serde_json::json!({"rays": rays, "handles": tips_said, "measure": measure, "transform": placed});
+            // What each hand's sign says now.
+            let said: Vec<Option<&str>> = self.pointer.said.iter().map(|s| s.as_ref().map(|(text, _)| text.as_str())).collect();
+            app.services.vr_scene = serde_json::json!({"rays": rays, "handles": tips_said, "measure": measure, "transform": placed, "said": said});
             for i in 0..2 {
                 let on_belt = self.belt.hover[i].is_some() || self.window_hover[i].is_some();
                 self.handle_hover[i] = hands[i]
@@ -1231,6 +1325,30 @@ impl Vr {
                 if let Some(m) = self.moving.as_ref().filter(|m| m.moving()) {
                     let fine = self.buttons[m.hand][GRAB].down;
                     m.draw(&mut self.handle_marks, t, head, m.by(fine), linear(tk.warning));
+                }
+                // The clashes, found again when the design changed and nothing is being dragged.
+                let key = (app.session.uid, app.session.revision);
+                let dragging = self.joint_drag.is_some() || self.moving.is_some() || self.drag.is_some();
+                if let Some((hand, at, list)) = self.clashes.as_mut()
+                    && *at != key
+                    && !dragging
+                {
+                    *at = key;
+                    let found = solidcraft_ui_egui::vr_joints::clashes(app).unwrap_or_default();
+                    if found.len() != list.len() {
+                        self.pointer.tell(*hand, clash_words(&found));
+                    }
+                    *list = found;
+                }
+                for c in self.clashes.iter().flat_map(|(_, _, list)| list.iter()).take(handles::MAX_BOXES) {
+                    handles::draw_box(&mut self.handle_marks, t, head, c.bbox, linear(tk.error));
+                }
+                if self.swept.is_some_and(|(at, _)| at != key) {
+                    self.swept = None;
+                }
+                if let Some((_, p)) = self.swept {
+                    let s = 2.0;
+                    handles::draw_box(&mut self.handle_marks, t, head, [p.map(|v| v - s), p.map(|v| v + s)], linear(tk.error));
                 }
                 if let Some((a, b)) = self.measure.as_ref().and_then(|m| m.ends) {
                     handles::measure_line(&mut self.handle_marks, t, head, a, b, linear(tk.warning));
@@ -1591,8 +1709,8 @@ fn act_on(
                 _ => done(vr_pick::hide(app, &parts), "vr.did_hide"),
             }
         }
-        // Turned on and off by the caller, which keeps the measurement.
-        Act::Measure => String::new(),
+        // Turned on and off by the caller, which keeps the measurement, the clashes and the sweep.
+        Act::Measure | Act::Clashes | Act::Sweep => String::new(),
         Act::Passthrough if app.services.vr_passthrough != Some(true) => tr("vr.passthrough_missing").to_string(),
         Act::Passthrough => {
             app.preferences.vr.passthrough = !app.preferences.vr.passthrough;

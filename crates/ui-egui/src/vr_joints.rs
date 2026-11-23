@@ -100,3 +100,84 @@ pub fn drive(app: &mut SolveApp, axis: &Axis, value: f64, base: usize) -> Result
     }
     Ok(driven(&reply, axis))
 }
+
+/// Two bodies that overlap: their names, the overlap's box (model units) and its volume (mm³).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Clash {
+    pub a: String,
+    pub b: String,
+    pub bbox: [[f64; 3]; 2],
+    pub volume: f64,
+}
+
+/// The overlaps `inspect.clearance` finds, from its reply.
+pub fn clashes_of(reply: &Value) -> Vec<Clash> {
+    let p = |v: &Value| -> Option<[f64; 3]> {
+        let x: Vec<f64> = v.as_array()?.iter().filter_map(Value::as_f64).collect();
+        (x.len() == 3).then(|| [x[0], x[1], x[2]])
+    };
+    reply["overlaps"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|o| {
+            Some(Clash {
+                a: o["a"].as_str()?.to_string(),
+                b: o["b"].as_str()?.to_string(),
+                bbox: [p(&o["bbox"]["min"])?, p(&o["bbox"]["max"])?],
+                volume: o["volume_mm3"].as_f64().unwrap_or(0.0),
+            })
+        })
+        .collect()
+}
+
+/// Every overlap between the design's solid bodies now.
+pub fn clashes(app: &mut SolveApp) -> Result<Vec<Clash>, String> {
+    let reply = app.session.execute("inspect.clearance", &json!({})).map_err(|e| e.to_string())?;
+    Ok(clashes_of(&reply))
+}
+
+/// What a joint's sweep found: how far it goes clear each way (the joint's units, degrees or mm)
+/// and where it first touches, if it does (world point).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Swept {
+    pub reached: [f64; 2],
+    pub touches: Option<(String, [f64; 3])>,
+}
+
+/// `axis`'s joint swept from its value to each end of its travel (its limits, else a turn or
+/// 100 mm each way), stopping at the first contact; the design is left as it was.
+pub fn sweep(app: &mut SolveApp, axis: &Axis) -> Result<Swept, String> {
+    let to_user = |v: f64| if axis.angular { v.to_degrees() } else { v };
+    let now = to_user(axis.value);
+    let (lo, hi) = match axis.limits {
+        Some((lo, hi)) => (to_user(lo), to_user(hi)),
+        None if axis.angular => (now - 360.0, now + 360.0),
+        None => (now - 100.0, now + 100.0),
+    };
+    let mut reached = [lo, hi];
+    let mut touches = None;
+    for (k, end) in [lo, hi].into_iter().enumerate() {
+        if (end - now).abs() < 1e-9 {
+            reached[k] = now;
+            continue;
+        }
+        let reply = app
+            .session
+            .execute("joint.sweep", &json!({"joint": axis.joint, "index": axis.index, "from": now, "to": end}))
+            .map_err(|e| e.to_string())?;
+        if let Some(stop) = reply["stopped_at"].as_f64() {
+            reached[k] = stop;
+            if touches.is_none()
+                && let Some(by) = reply["stopped_by"].as_object()
+            {
+                let at: Vec<f64> = by.get("at").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_f64).collect();
+                let names = [by.get("a"), by.get("b")].into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join(" – ");
+                if at.len() == 3 {
+                    touches = Some((names, [at[0], at[1], at[2]]));
+                }
+            }
+        }
+    }
+    Ok(Swept { reached, touches })
+}

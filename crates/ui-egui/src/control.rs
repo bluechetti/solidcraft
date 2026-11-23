@@ -1033,8 +1033,8 @@ fn ui_vr_press(app: &mut SolveApp, p: &Value) -> Outcome {
     let press = if let Some(spot) = p.get("belt").and_then(Value::as_str) {
         crate::VrPress::Belt(spot.to_string())
     } else if let Some(act) = p.get("act").and_then(Value::as_str) {
-        if act != "measure" {
-            return err("ui.vr_press: act takes measure");
+        if !["measure", "clashes", "sweep"].contains(&act) {
+            return err("ui.vr_press: act takes measure, clashes or sweep");
         }
         crate::VrPress::Act(act.to_string())
     } else if let Some(at) = p.get("window").and_then(Value::as_array) {
@@ -1044,7 +1044,7 @@ fn ui_vr_press(app: &mut SolveApp, p: &Value) -> Outcome {
         };
         crate::VrPress::Window([u, v])
     } else {
-        return err("ui.vr_press: give belt (a spot as vr_pointing names it), window ([across, down]) or act (measure)");
+        return err("ui.vr_press: give belt (a spot as vr_pointing names it), window ([across, down]) or act (measure, clashes, sweep)");
     };
     app.services.vr_script.push(press);
     ok(json!({"queued": app.services.vr_script.len()}))

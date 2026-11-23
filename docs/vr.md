@@ -48,7 +48,7 @@ group's name and icon. The defaults:
 | Isolate | Shows only that, the rest hidden. |
 | Show all | Shows every part again: bodies and placements. Sketches, joints, construction geometry and the origin stay as they are. |
 | Section / Section off | A section plane at the tip of that controller: what lies on your side of it is cut away. Select with that hand leaves it in the model. Only the headset is cut. |
-| View ▸ | Put back (the house: the model in front of you, at its first size), Explode / Put together (its first exploded view, or every part moved away from the middle; nothing saved), Passthrough, Measure (below). While parts are moved and their positions not captured, Explode says so and changes nothing: capture or undo the moves first. |
+| View ▸ | Put back (the house: the model in front of you, at its first size), Explode / Put together (its first exploded view, or every part moved away from the middle; nothing saved), Passthrough, Measure, Clashes, Sweep joint (below). While parts are moved and their positions not captured, Explode says so and changes nothing: capture or undo the moves first. |
 | Edit ▸ | Undo, Redo. |
 
 Also available for a slot: Hide (only), and every action above.
@@ -80,6 +80,14 @@ ring). Select on a face then picks it instead of selecting the part, and the sig
 between them, between centres for round faces, and the angle, with a line between the nearest
 points. A third Select starts again. The faces are measured exactly (`inspect.measure`), as the
 desktop's Measure does.
+
+**Clashes and sweeps.** View ▸ Clashes shows where parts overlap, as red boxes, and the sign
+names each pair and how much overlaps (`inspect.clearance` on the solid bodies); while it is on, it
+is worked out again whenever the design changes and nothing is being dragged, and the sign says
+when the overlaps change. View ▸ Sweep joint runs the pointed (or selected) part's joint through its
+travel each way, its limits or a turn or 100 mm, stopping at the first contact (`joint.sweep`, the
+design left as it was): the sign says how far it goes clear and what it touches, and a red mark
+shows where. Results stay at the controller for six seconds.
 
 **Moving a part by its joints.** Hold Select on a placed part that joints let move and move the
 hand: once it has gone a centimetre, the joint axis the hand's move follows best is taken, and the

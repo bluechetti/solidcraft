@@ -18,7 +18,7 @@ pub const REACH: f64 = 0.03;
 /// The most handles drawn, and the vertices they take (a shaft and the bar at its tip each), with a
 /// moving part's box (twelve edges).
 pub const MAX_HANDLES: usize = 24;
-pub const VERTICES: usize = MAX_HANDLES * 2 * LINE + 12 * LINE + 3 * LINE;
+pub const VERTICES: usize = MAX_HANDLES * 2 * LINE + 12 * LINE + 3 * LINE + (MAX_BOXES + 1) * 12 * LINE;
 
 /// The vertices one line takes ([`marks::line`]: two sides of a quad).
 const LINE: usize = 12;
@@ -309,6 +309,19 @@ impl JointDrag {
         step != 0.0
     }
 }
+
+/// A box (model units) as twelve edges in the room: an overlap, a sweep's contact.
+pub fn draw_box(out: &mut Vec<Vertex>, t: &Transform, head: [f64; 3], [lo, hi]: [[f64; 3]; 2], colour: [f32; 3]) {
+    let corner = |c: usize| t.apply([0, 1, 2].map(|k| if c >> k & 1 == 1 { hi[k] } else { lo[k] }));
+    for (a, b) in [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)] {
+        let (a, b) = (corner(a), corner(b));
+        let normal = [0, 1, 2].map(|k| head[k] - (a[k] + b[k]) / 2.0);
+        marks::line(out, a, b, normal, 0.0012, colour);
+    }
+}
+
+/// The most clash boxes drawn (and the sweep's mark).
+pub const MAX_BOXES: usize = 8;
 
 #[cfg(test)]
 mod tests {
