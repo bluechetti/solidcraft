@@ -116,6 +116,8 @@ pub struct Vr {
     handle_hover: [Option<String>; 2],
     drag: Option<handles::Drag>,
     handle_marks: Vec<Vertex>,
+    /// A selected part being moved by the hand holding Select on it ([`handles::PartMove`]).
+    moving: Option<handles::PartMove>,
     /// The scale was shown last at this time (seconds, [`Vr::clock`]): it fades after.
     scaled_at: Option<f64>,
     /// The frame's time last frame (seconds, [`Vr::clock`]): how far the stick moves a held model.
@@ -341,6 +343,7 @@ impl Vr {
             handle_hover: [None, None],
             drag: None,
             handle_marks: Vec::new(),
+            moving: None,
             last_frame: 0.0,
             real_size: false,
             design: None,
@@ -608,7 +611,7 @@ impl Vr {
         }
         let belt_hand = self.belt.held.map(|h| h.hand);
         // The hand pulling a dimension handle does not hold the model: its grip is precision.
-        let drag_hand = self.drag.as_ref().map(|d| d.hand);
+        let drag_hand = self.drag.as_ref().map(|d| d.hand).or(self.moving.as_ref().map(|m| m.hand));
         if let Some(current) = &self.transform {
             let grips = Hand::BOTH.map(|hand| {
                 let i = hand.index();
@@ -704,6 +707,41 @@ impl Vr {
                 }
                 continue;
             }
+            // A selected part being moved by this hand: it follows the hand (a tenth as far while
+            // the grip is held); let go, it is moved there, or selected as ever when the hand
+            // hardly moved (a click).
+            if self.moving.as_ref().is_some_and(|m| m.hand == i) {
+                if let Some(m) = self.moving.as_mut()
+                    && let (Some(aim), Some(t)) = (hands[i].aim.as_ref(), self.transform.as_ref())
+                {
+                    m.follow(aim.position, t, holds);
+                }
+                if b[SELECT].down {
+                    if let Some(m) = self.moving.as_ref().filter(|m| m.moving()) {
+                        let [x, y, z] = m.by(holds);
+                        self.pointer.say(i, format!("{}  {x}, {y}, {z} mm", m.part.name));
+                    }
+                } else if let Some(m) = self.moving.take() {
+                    let said = if !m.moving() {
+                        vr_pick::toggle(app, Some(&m.part));
+                        String::new()
+                    } else {
+                        let by = m.by(holds);
+                        match solidcraft_ui_egui::vr_handles::move_command(&m.part, by) {
+                            Some(_) if by == [0.0; 3] => String::new(),
+                            Some((command, params)) => match app.run_heavy(command, params) {
+                                Ok(_) => format!("{}  {}, {}, {} mm", m.part.name, by[0], by[1], by[2]),
+                                Err(error) => error,
+                            },
+                            None => String::new(),
+                        }
+                    };
+                    self.pointer.say(i, said);
+                    buzz(session, hand, Pulse::TICK);
+                    self.presses[i].next_after(false, now, f64::from(set.hold_time));
+                }
+                continue;
+            }
             // Select on a handle's tip starts pulling it, instead of a click or the ring.
             if b[SELECT].pressed
                 && self.drag.is_none()
@@ -714,6 +752,23 @@ impl Vr {
             {
                 self.drag = handles::Drag::new(i, handle, t, aim.position);
                 buzz(session, hand, Pulse::GRAB);
+                continue;
+            }
+            // Select on a selected part (with the ring on a button of its own): a move if the hand
+            // goes on to move, a click if not.
+            if b[SELECT].pressed
+                && !menu_by_select
+                && self.drag.is_none()
+                && self.moving.is_none()
+                && self.menu.is_none()
+                && self.belt.hover[i].is_none()
+                && self.window_hover[i].is_none()
+                && let Some(pointed) = self.pointer.pointed[i].as_ref()
+                && vr_pick::is_selected(app, &pointed.part)
+                && let Some(aim) = hands[i].aim.as_ref()
+            {
+                let from = solidcraft_ui_egui::vr_handles::part_box(app, &pointed.part.bodies);
+                self.moving = Some(handles::PartMove::new(i, pointed.part.clone(), from, aim.position));
                 continue;
             }
             // Letting go of what holds the menu open takes the item under the hand.
@@ -1027,6 +1082,10 @@ impl Vr {
                     pulled,
                     [ray, ray.map(|c| c + (1.0 - c) * 0.7), linear(tk.warning)],
                 );
+                if let Some(m) = self.moving.as_ref().filter(|m| m.moving()) {
+                    let fine = self.buttons[m.hand][GRAB].down;
+                    m.draw(&mut self.handle_marks, t, head, m.by(fine), linear(tk.warning));
+                }
             }
         } else {
             self.handle_hover = [None, None];

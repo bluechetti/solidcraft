@@ -74,6 +74,13 @@ size a tenth as far, in tenths, with no jump when the grip goes down or up. Lett
 sets it: one undo step. A size that is a user parameter, or a multiple of one (a radius written
 `post_d / 2`), changes that parameter, so everything else using it follows.
 
+**Moving a part.** Hold Select on a part that is selected and move the hand: a box shows where it
+goes, and the sign at the controller says how far (millimetres along the model's axes, whole ones;
+tenths, a tenth as far, with the same hand's grip held). Letting go moves it there: one undo step
+(`solid.move` for a body, `occurrence.move` in world space for a placed part). A short Select on it,
+the hand hardly moved, selects or lets go of it as ever. Only with the ring menu on a button of its
+own; where holding Select opens the ring, a selected part is not moved this way.
+
 **The Parameters.** The Parameters bubble shows the design's parameters in the window beside the
 belt (the Browser's bubble shows the Browser there again; a bubble pressed again closes it). A
 parameter that is a plain number has − and + either side of its value: a unit a step (5° for an

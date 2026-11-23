@@ -93,3 +93,27 @@ fn only_length_units_have_handles() {
     assert_eq!(mm_per("deg"), None);
     assert_eq!(mm_per(""), None);
 }
+
+#[test]
+fn a_move_snaps_to_whole_millimetres_or_tenths() {
+    use crate::vr_handles::snapped;
+    assert_eq!(snapped([12.4, -0.6, 0.2], false), [12.0, -1.0, 0.0]);
+    assert_eq!(snapped([12.44, -0.06, 0.26], true), [12.4, -0.1, 0.3]);
+    assert_eq!(snapped([f64::NAN, f64::INFINITY, -0.04], true), [0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn a_body_moves_by_solid_move_and_a_placed_part_by_occurrence_move() {
+    use crate::vr_handles::move_command;
+    use crate::vr_pick::Part;
+    use solidcraft_engine::Sel;
+    let body = Part { sel: Sel::Body { name: "Base".into() }, name: "Base".into(), bodies: vec!["Base".into()] };
+    let (c, p) = move_command(&body, [1.0, 0.0, -2.0]).expect("body");
+    assert_eq!((c, p), ("solid.move", json!({"bodies": ["Base"], "translate": [1.0, 0.0, -2.0]})));
+    let placed = Part { sel: Sel::Occurrence { path: vec![4, 9] }, name: "Post1:1".into(), bodies: vec!["Post1".into()] };
+    let (c, p) = move_command(&placed, [0.0, 5.0, 0.0]).expect("occurrence");
+    assert_eq!(c, "occurrence.move");
+    assert_eq!(p, json!({"occurrence": 9, "path": [4, 9], "space": "world", "translate": [0.0, 5.0, 0.0]}));
+    let empty = Part { sel: Sel::Occurrence { path: vec![] }, name: String::new(), bodies: vec![] };
+    assert!(move_command(&empty, [0.0; 3]).is_none());
+}

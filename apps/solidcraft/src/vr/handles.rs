@@ -15,9 +15,13 @@ pub const ARROW: f64 = 0.05;
 /// How near a ray must pass an arrow's tip to point at it (metres).
 pub const REACH: f64 = 0.03;
 
-/// The most handles drawn, and the vertices each takes (its shaft and the bar at its tip).
+/// The most handles drawn, and the vertices they take (a shaft and the bar at its tip each), with a
+/// moving part's box (twelve edges).
 pub const MAX_HANDLES: usize = 24;
-pub const VERTICES: usize = MAX_HANDLES * 12;
+pub const VERTICES: usize = MAX_HANDLES * 2 * LINE + 12 * LINE;
+
+/// The vertices one line takes ([`marks::line`]: two sides of a quad).
+const LINE: usize = 12;
 
 /// A handle being pulled: by which hand, which one (its label), and how far it has gone.
 #[derive(Clone, Debug, PartialEq)]
@@ -121,6 +125,63 @@ pub fn draw(out: &mut Vec<Vertex>, t: &Transform, handles: &[Handle], head: [f64
     }
 }
 
+/// How far (metres) the hand must go with Select held on a selected part before the part moves:
+/// less is a click, which selects as ever.
+pub const MOVE_START: f64 = 0.01;
+
+/// A selected part being moved by the hand holding Select on it.
+#[derive(Clone, Debug)]
+pub struct PartMove {
+    pub hand: usize,
+    pub part: std::sync::Arc<solidcraft_ui_egui::vr_pick::Part>,
+    /// The part's box where it was (model units), drawn moved.
+    pub from: Option<[[f64; 3]; 2]>,
+    last: [f64; 3],
+    /// How far the hand has gone (metres, any way): past [`MOVE_START`] it is a move.
+    travel: f64,
+    /// How far the part has gone (model millimetres, world axes), precision applied.
+    moved: [f64; 3],
+}
+
+impl PartMove {
+    pub fn new(hand: usize, part: std::sync::Arc<solidcraft_ui_egui::vr_pick::Part>, from: Option<[[f64; 3]; 2]>, at: [f64; 3]) -> PartMove {
+        PartMove { hand, part, from, last: at, travel: 0.0, moved: [0.0; 3] }
+    }
+
+    /// The hand is at `at`; `fine` while its grip is held (a tenth as far, no jump).
+    pub fn follow(&mut self, at: [f64; 3], t: &Transform, fine: bool) {
+        let d = [0, 1, 2].map(|k| at[k] - self.last[k]);
+        if d.iter().all(|v| v.is_finite()) && t.scale > 0.0 {
+            self.travel += d.iter().map(|v| v * v).sum::<f64>().sqrt();
+            let m = t.direction_to_model(d);
+            let rate = if fine { 0.1 } else { 1.0 } / t.scale;
+            self.moved = [0, 1, 2].map(|k| self.moved[k] + m[k] * rate);
+        }
+        self.last = at;
+    }
+
+    /// Whether it is a move yet, not a click.
+    pub fn moving(&self) -> bool {
+        self.travel > MOVE_START
+    }
+
+    /// The move so far, snapped (a tenth with `fine`).
+    pub fn by(&self, fine: bool) -> [f64; 3] {
+        solidcraft_ui_egui::vr_handles::snapped(self.moved, fine)
+    }
+
+    /// The part's box moved by `by`, as twelve edges in the room.
+    pub fn draw(&self, out: &mut Vec<Vertex>, t: &Transform, head: [f64; 3], by: [f64; 3], colour: [f32; 3]) {
+        let Some([lo, hi]) = self.from else { return };
+        let corner = |c: usize| t.apply([0, 1, 2].map(|k| if c >> k & 1 == 1 { hi[k] } else { lo[k] } + by[k]));
+        for (a, b) in [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)] {
+            let (a, b) = (corner(a), corner(b));
+            let normal = [0, 1, 2].map(|k| head[k] - (a[k] + b[k]) / 2.0);
+            marks::line(out, a, b, normal, 0.0012, colour);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,5 +256,39 @@ mod tests {
             let len = (0..3).map(|k| (b[k] - a[k]).powi(2)).sum::<f64>().sqrt();
             assert!((len - ARROW).abs() < 1e-12, "{scale}");
         }
+    }
+
+    fn part() -> std::sync::Arc<solidcraft_ui_egui::vr_pick::Part> {
+        std::sync::Arc::new(solidcraft_ui_egui::vr_pick::Part {
+            sel: solidcraft_engine::Sel::Body { name: "Post1".into() },
+            name: "Post1".into(),
+            bodies: vec!["Post1".into()],
+        })
+    }
+
+    #[test]
+    fn a_short_shake_is_a_click_and_a_longer_move_moves_the_part_in_model_millimetres() {
+        let t = room(0.004);
+        let mut m = PartMove::new(0, part(), Some([[0.0; 3], [10.0; 3]]), [0.0; 3]);
+        m.follow([0.003, 0.0, 0.0], &t, false);
+        assert!(!m.moving());
+        m.follow([0.04, 0.0, 0.0], &t, false); // 4 cm in the room: 10 mm of model along X
+        assert!(m.moving());
+        assert_eq!(m.by(false), [10.0, 0.0, 0.0]);
+        m.follow([0.04, 0.0, 0.004], &t, true); // grip: 1 mm of model a tenth as far
+        assert_eq!(m.by(true), [10.0, 0.0, 0.1]);
+    }
+
+    #[test]
+    fn the_moving_box_is_twelve_edges_moved_by_the_move() {
+        let t = room(0.001);
+        let m = PartMove::new(0, part(), Some([[0.0; 3], [10.0; 3]]), [0.0; 3]);
+        let mut out = Vec::new();
+        m.draw(&mut out, &t, [0.0, 0.0, 1.0], [5.0, 0.0, 0.0], [1.0; 3]);
+        assert_eq!(out.len(), 12 * LINE);
+        let none = PartMove::new(0, part(), None, [0.0; 3]);
+        let mut out = Vec::new();
+        none.draw(&mut out, &t, [0.0, 0.0, 1.0], [5.0, 0.0, 0.0], [1.0; 3]);
+        assert!(out.is_empty());
     }
 }

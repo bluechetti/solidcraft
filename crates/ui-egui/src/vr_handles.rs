@@ -205,3 +205,39 @@ fn handles(app: &mut SolveApp) -> Vec<Handle> {
     }
     out
 }
+
+/// The box of `bodies` together (model units), as the view has them: where a part moved in the
+/// headset is drawn as a box while it moves. None when none of them is shown.
+pub fn part_box(app: &SolveApp, bodies: &[String]) -> Option<[[f64; 3]; 2]> {
+    let st = crate::open_meshing::shown_world(app);
+    let all = crate::viewport::body_bounds(app, &st);
+    let mut out: Option<[[f64; 3]; 2]> = None;
+    for (_, b) in all.iter().filter(|(name, b)| bodies.contains(name) && !b.is_empty()) {
+        let (lo, hi) = ([b.min.x, b.min.y, b.min.z], [b.max.x, b.max.y, b.max.z]);
+        out = Some(match out {
+            None => [lo, hi],
+            Some([l, h]) => [std::array::from_fn(|k| l[k].min(lo[k])), std::array::from_fn(|k| h[k].max(hi[k]))],
+        });
+    }
+    out
+}
+
+/// A move of `by` (model millimetres) snapped along each axis to a whole millimetre, or a tenth
+/// with `fine`; a coordinate that is not a number is no move along it.
+pub fn snapped(by: [f64; 3], fine: bool) -> [f64; 3] {
+    let step = if fine { 0.1 } else { 1.0 };
+    by.map(|v| if v.is_finite() { ((v / step).round() * step * 1e6).round() / 1e6 } else { 0.0 }).map(|v| if v == 0.0 { 0.0 } else { v })
+}
+
+/// The command and parameters that move `part` by `by` (model millimetres, world axes): a body of
+/// its own by `solid.move`, a placed part by `occurrence.move` in world space.
+pub fn move_command(part: &crate::vr_pick::Part, by: [f64; 3]) -> Option<(&'static str, Value)> {
+    match &part.sel {
+        solidcraft_engine::Sel::Body { name } => Some(("solid.move", json!({"bodies": [name], "translate": by}))),
+        solidcraft_engine::Sel::Occurrence { path } => {
+            let id = path.last()?;
+            Some(("occurrence.move", json!({"occurrence": id, "path": path, "space": "world", "translate": by})))
+        }
+        _ => None,
+    }
+}
