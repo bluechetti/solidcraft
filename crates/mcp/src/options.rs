@@ -15,9 +15,8 @@ pub const COMPACT_FLAG: &str = "--compact";
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Options {
     /// Compact output for agents that pay for every byte: `inspect_design` summarises sketches
-    /// (full contents only for the sketches named in `sketches`) and takes a `bodies` filter, and
-    /// tool results that are JSON are not pretty-printed. Off: `inspect_design` returns every
-    /// sketch in full, and JSON is pretty-printed.
+    /// (full contents only for the sketches named in `sketches`). Off: `inspect_design` returns
+    /// every sketch in full unless `sketches` names some. Tool JSON is never pretty-printed.
     pub compact: bool,
 }
 
@@ -48,11 +47,6 @@ impl Options {
     /// Each option on when it is on in `self` or in `other`.
     pub fn or(self, other: Self) -> Self {
         Self { compact: self.compact || other.compact }
-    }
-
-    /// Tool JSON as text: compact, or pretty-printed (the default).
-    pub(crate) fn json_text(self, v: &serde_json::Value) -> String {
-        if self.compact { v.to_string() } else { serde_json::to_string_pretty(v).unwrap_or_default() }
     }
 }
 

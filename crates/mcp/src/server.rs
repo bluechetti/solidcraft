@@ -33,7 +33,7 @@ and names the commands to run next.\n\n\
 Plan: work the numbers out first (the parameters, the expected volume and bounding box after each stage, the world point you \
 will use for each edge or face pick). Then build in a few `batch` calls (all-or-nothing; the reply names the failing step; \
 `save`, `measure` and `set_parameter` can be steps). Use `verbose: false`. Name every feature. `list_commands {\"filter\": word}` \
-gives ids and one-line parameter docs (never unfiltered: it also takes prefix, panel, compact: true and limit); `describe_command` gives one command's docs and schemas.\n\n\
+gives ids and one-line parameter docs (never unfiltered: it also takes prefix, panel, compact: true and limit); `describe_command` gives one command's docs (`schema: true` adds its JSON Schemas).\n\n\
 Routes: a plate, block, boss, standoff or hole is cheapest as a primitive with expression fields (`solid.box`, `solid.cylinder`, \
 `solid.hole`, `solid.fillet`, `solid.shell`, patterns and mirror), no sketch. Sketch when the profile is not a box or a circle. \
 Fillet outside edges before shelling, build inside features after the shell, then the holes and cuts through walls. Give a blind \

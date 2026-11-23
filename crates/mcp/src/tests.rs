@@ -4161,7 +4161,8 @@ fn running_during_a_held_batch(back_to_back: bool) -> (Vec<Value>, bool) {
         assert_ne!(r["result"]["isError"], true, "{r}");
     }
     let batch = if first["id"] == 1 { &first } else { &second };
-    let held = batch["result"]["content"][0]["text"].as_str().unwrap_or_default().contains("\"running_seen_while_held\": true");
+    let text = batch["result"]["content"][0]["text"].as_str().unwrap_or_default();
+    let held = text.contains("\"running_seen_while_held\":true") || text.contains("\"running_seen_while_held\": true");
     (vec![first["id"].clone(), second["id"].clone()], held)
 }
 
@@ -4508,14 +4509,18 @@ fn unknown_arguments_list_the_real_ones() {
     }
 }
 
-/// `describe_command` serves a converted command's schemas, and a headless session set to strict
+/// `describe_command` serves a converted command's docs, and its schemas when asked, and a headless session set to strict
 /// refuses a misspelt key through `execute` without touching the design.
 #[test]
 fn describe_command_and_strict_parameter_checking() {
     let mut s = server();
     let d = tool(&mut s, "describe_command", json!({"id": "solid.box"}));
+    assert!(d["params"].as_str().is_some_and(|p| p.contains("operation")) && d.get("input").is_none() && d.get("output").is_none(), "{d}");
+    assert!(d["schemas"].as_str().is_some_and(|w| w.contains("\"schema\": true")), "the reply says how to get them: {d}");
+    let d = tool(&mut s, "describe_command", json!({"id": "solid.box", "schema": true}));
     assert!(d["input"]["properties"].get("operation").is_some(), "{d}");
     assert!(d["output"]["properties"].get("created_bodies").is_some(), "{d}");
+    assert!(d.get("schemas").is_none(), "{d}");
 
     let mut headless = Headless::default();
     headless.session.param_check = solidcraft_engine::schema::ParamCheck::Strict;
@@ -4775,20 +4780,20 @@ fn no_tool_schema_has_a_list_of_types() {
     }
 }
 
-/// Off by default: `inspect_design` has its old arguments and returns every sketch in full,
-/// pretty-printed; `document.inspect` adds no sketch counts unless asked.
+/// Off by default: `inspect_design` returns every sketch in full; `sketches: false` is
+/// `document.inspect`'s own summary. Its JSON is compact, as every tool's is. The compact
+/// arguments (sketches by name, a list of bodies) work here too, so an agent that learnt them
+/// from a compact server is not refused (the 2026-11-22 replay of agent calls hit that).
 #[test]
-fn inspect_design_is_unchanged_without_compact_output() {
+fn inspect_design_without_compact_output_keeps_its_defaults_and_takes_names() {
     let mut s = server_with_big_sketch(crate::Options::default());
     let defs = tool_definitions();
     let def = defs.iter().find(|d| d["name"] == "inspect_design").unwrap();
-    assert_eq!(def["inputSchema"]["properties"]["sketches"]["type"], "boolean", "{def}");
-    assert_eq!(def["inputSchema"]["properties"]["bodies"]["anyOf"], json!([{"type": "boolean"}, {"type": "string"}]), "no list of names: {def}");
     let listed = call(&mut s, 1, "tools/list", json!({}));
     assert!(listed["result"]["tools"].as_array().unwrap().iter().any(|t| t == def), "tools/list serves the default definition");
 
     let (err, full) = inspect_text(&mut s, json!({"measure": false}));
-    assert!(!err && full.contains("\n  "), "pretty-printed");
+    assert!(!err && !full.contains("\n "), "not pretty-printed");
     let d: Value = serde_json::from_str(&full).unwrap();
     assert_eq!(d["sketches"][0]["curves"].as_array().map(Vec::len), Some(720), "full sketch contents by default");
     let (_, summary) = inspect_text(&mut s, json!({"measure": false, "sketches": false}));
@@ -4796,11 +4801,65 @@ fn inspect_design_is_unchanged_without_compact_output() {
     assert_eq!(d["sketches"][0]["curves"], 720, "{d}");
     assert!(d["sketches"][0].get("points").is_none() && d["sketches"][0].get("plane").is_none(), "{d}");
 
-    // The compact arguments are not there.
-    let r = raw_tool(&mut s, "inspect_design", json!({"bodies": ["Body1"]}));
-    assert_eq!(r["error"]["code"], -32602, "{r}");
-    let r = raw_tool(&mut s, "inspect_design", json!({"sketches": ["Sketch1"]}));
-    assert_eq!(r["error"]["code"], -32602, "{r}");
+    // The compact arguments are checked against the tool as listed, and work.
+    for args in [json!({"bodies": ["Body1"]}), json!({"sketches": ["Sketch1"]}), json!({"sketches": "summary"})] {
+        assert!(solidcraft_mcp_server::check_arguments(&defs, "inspect_design", &args).is_ok(), "{args}");
+    }
+    let name = d["sketches"][0]["name"].as_str().unwrap().to_string();
+    let (err, named) = inspect_text(&mut s, json!({"measure": false, "sketches": [name]}));
+    let named: Value = serde_json::from_str(&named).unwrap();
+    assert!(!err && named["sketches"][0]["curves"].as_array().map(Vec::len) == Some(720), "{named}");
+    let (err, one) = inspect_text(&mut s, json!({"bodies": ["Body1"]}));
+    let one: Value = serde_json::from_str(&one).unwrap();
+    assert!(!err && one["bodies"].as_array().map(Vec::len) == Some(1), "{one}");
+    let (err, e) = inspect_text(&mut s, json!({"sketches": ["Nope"]}));
+    assert!(err && e.contains("no sketch") && e.contains(&name), "{e}");
+}
+
+/// An error naming a body, sketch or feature the design does not have lists the ones it has,
+/// nearest first, and says when a body name is a feature's: the commonest error in the
+/// 2026-11-22 replay of 845 agent calls ("no body `Housing`" for the feature `Housing`).
+#[test]
+fn unknown_names_list_what_the_design_has() {
+    let mut s = server();
+    tool(
+        &mut s,
+        "batch",
+        json!({"commands": [
+            {"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "name": "Blk"}},
+            {"command": "sketch.create", "params": {"plane": "XY", "name": "Prof"}},
+            {"command": "sketch.circle.center", "params": {"center": [0, 0], "radius": 2}},
+            {"command": "sketch.finish"},
+        ]}),
+    );
+    let error = |s: &mut Server, name: &str, args: Value| {
+        let r = raw_tool(s, name, args);
+        assert_eq!(r["result"]["isError"], json!(true), "{r}");
+        r["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string()
+    };
+    let e = error(&mut s, "execute", json!({"command": "inspect.measure", "params": {"bodies": ["Nope"]}}));
+    assert!(e.contains("unknown body name") && e.contains("(the design has bodies: Body1)"), "{e}");
+    let e = error(&mut s, "execute", json!({"command": "sketch.inspect", "params": {"sketch": 14}}));
+    assert!(e.contains("no sketch `14`") && e.contains("Prof (id 2)"), "{e}");
+    let e = error(&mut s, "execute", json!({"command": "timeline.edit", "params": {"feature": "Blkk", "params": {}}}));
+    assert!(e.contains("did you mean `Blk`?") && e.contains("features: Blk, Prof"), "{e}");
+    let e = error(&mut s, "body_topology", json!({"body": "Blk"}));
+    assert!(e.contains("`Blk` is the name of a feature, not of a body") && e.contains("Body1"), "{e}");
+    // In a batch, the failing step's error; the earlier steps were undone, and the names say so.
+    let r = raw_tool(
+        &mut s,
+        "batch",
+        json!({"commands": [
+            {"command": "solid.box", "params": {"length": 5, "width": 5, "height": 5}},
+            {"command": "sketch.inspect", "params": {"sketch": "Nope"}},
+        ]}),
+    );
+    let reply: Value = serde_json::from_str(r["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    let e = reply["failed"]["error"].as_str().unwrap();
+    assert!(e.contains("after the rollback, the design has sketches: Prof (id 2)"), "{e}");
+    // An error about something else is left as it was.
+    let e = error(&mut s, "execute", json!({"command": "solid.fillet", "params": {"edges": [[0, 0, 0]], "radius": 1}}));
+    assert!(!e.contains("the design has"), "{e}");
 }
 
 /// With compact output (#15): sketch summaries, compact JSON; full sketch contents only for the
@@ -4812,11 +4871,10 @@ fn compact_inspect_design_summarises_sketches_unless_asked() {
     let def = listed["result"]["tools"].as_array().unwrap().iter().find(|d| d["name"] == "inspect_design").cloned().unwrap();
     assert!(def["inputSchema"]["properties"]["bodies"].is_object(), "{def}");
     assert_eq!(def, crate::tool_definitions_with(crate::Options { compact: true }).into_iter().find(|d| d["name"] == "inspect_design").unwrap());
-    // Arguments are checked against the tools as listed: `bodies` only with compact output.
     let bodies = json!({"bodies": ["Body1"]});
-    let check = |options| solidcraft_mcp_server::check_arguments(&crate::tool_definitions_with(options), "inspect_design", &bodies);
-    assert!(check(crate::Options { compact: true }).is_ok());
-    assert!(check(crate::Options::default()).is_err_and(|e| e.contains("bodies")));
+    assert!(
+        solidcraft_mcp_server::check_arguments(&crate::tool_definitions_with(crate::Options { compact: true }), "inspect_design", &bodies).is_ok()
+    );
 
     let (_, summary) = inspect_text(&mut s, json!({"measure": false}));
     assert!(summary.len() < 4000, "{} bytes: {summary}", summary.len());
@@ -4878,7 +4936,8 @@ impl crate::Backend for AppWithPrefs {
 fn inspect_design_is_compact(s: &mut Server) -> bool {
     let listed = call(s, 1, "tools/list", json!({}));
     let def = listed["result"]["tools"].as_array().and_then(|t| t.iter().find(|d| d["name"] == "inspect_design")).cloned().unwrap_or_default();
-    def["inputSchema"]["properties"]["bodies"]["anyOf"].as_array().is_some_and(|t| t.iter().any(|alt| alt["type"] == "array"))
+    // Both forms take lists of sketches and bodies; the compact one summarises sketches by default.
+    def["description"].as_str().is_some_and(|d| d.contains("Sketches are summarised by default"))
 }
 
 /// The app's Preferences turn compact output on for a bridged server; it asks until the app
@@ -4896,7 +4955,7 @@ fn compact_output_follows_the_apps_preference() {
     assert!(inspect_design_is_compact(&mut s), "the app answered: compact");
     assert!(inspect_design_is_compact(&mut s), "kept for the session");
     let r = raw_tool(&mut s, "measure", json!({}));
-    assert!(!r["result"]["content"][0]["text"].as_str().unwrap_or("\n").contains('\n'), "tool calls follow it too: {r}");
+    assert!(!r["result"]["content"][0]["text"].as_str().unwrap_or("\n").contains('\n'), "tool JSON is compact either way: {r}");
     assert_eq!(asked.get(), 2, "not asked again once answered");
 
     // An app from before the setting, or with it off: off.

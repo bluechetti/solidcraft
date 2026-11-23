@@ -25,7 +25,7 @@ A scan is a mesh body. Read it with `scan.survey {}`, clean and place it, choose
    - 0.3 to 0.6: reconstruct, then `scan.fit_patches {}` over the freeform rest.
    - under 0.3: `scan.fit_patches {}` or `scan.free_form {}`.
    - `sheet_like`: `scan.flat_template {"outline":"scan"}`.
-   - Reconstruct misreads: fit by hand with `scan.fit_plane {}`, `scan.fit_cylinder {}` and `scan.section_sketch {}`, then model.
+   - Reconstruct misreads: fit by hand with `scan.fit_plane {}` and `scan.fit_cylinder {}`, read sizes off cuts with `scan.section {"plane":"XY","offset":12}` (outlines as data, nothing made, no undo), then model. `scan.section_sketch {}` only for a cut you will build from.
 7. **Verify** each stage with `scan.deviation {"body": "<model>"}`: `passes` (both ways; `why_not` says what failed), `max_above` (material missing), `max_below` (extra), `model_farthest_at` (made up). Compare `measure {}` with `own_size`.
 8. **Model by hand or edit:** `reference.md`, "Scans and native features together".
 
@@ -38,4 +38,5 @@ A scan is a mesh body. Read it with `scan.survey {}`, clean and place it, choose
 | "Fill the holes, it's cleaner" | Read `sheet_like` first. |
 | "The scan is tiny" | `units_hint`: saved in metres or inches. |
 | "Guess a point on the scan" | Use a `point` from `scan.find_all {}` shapes. |
+| "Section sketch, inspect it, undo" to read a size | `scan.section {}`: the cut as data in one call. |
 | "`measure` matches" | `scan.deviation {}` too. |

@@ -107,9 +107,17 @@ pub fn tool_definitions_with(opts: Options) -> Vec<Value> {
         tool(
             "describe_command",
             "Describe a command",
-            "One command's parameter docs and, for commands with a typed contract (every new command, and more of the older ones as they are converted), the \
-             JSON Schemas (2020-12) of its parameters (`input`) and of a successful result (`output`); null for the others.",
-            object(json!({"id": string("Command id, e.g. \"solid.extrude\"")}), &["id"]),
+            "One command's parameter docs (`params`: every parameter, its type, default and meaning, and what it returns). With \
+             `schema: true`, for commands with a typed contract (every new command, and more of the older ones as they are converted), \
+             also the JSON Schemas (2020-12) of its parameters (`input`) and of a successful result (`output`): several KB each, so \
+             ask for them only when the docs leave a shape unclear.",
+            object(
+                json!({
+                    "id": string("Command id, e.g. \"solid.extrude\""),
+                    "schema": {"type": "boolean", "description": "Also the JSON Schemas of its parameters (`input`) and of a successful result (`output`), several KB each (default false)"},
+                }),
+                &["id"],
+            ),
             Effect::ReadOnly,
         ),
         tool(
@@ -484,14 +492,23 @@ fn inspect_design_tool(opts: Options) -> Value {
          `joints: \"summary\"` the rigid joints holding an imported assembly's contents are only counted, per component, in \
          `joint_summary`), \
          the active sketch, selection and undo depth. On a large design keep the reply small with `timeline: \"summary\"` \
-         (each feature as id, name, type, and error or warning only when it has one) or false, and `bodies: \"names\"` or false.",
+         (each feature as id, name, type, and error or warning only when it has one) or false, and `bodies: \"names\"` or false; \
+         `sketches` as a list of names or ids gives only those sketches in full and the others summarised, and `bodies` as a \
+         list of names only those bodies.",
             object(
                 json!({
                     "measure": {"type": "boolean", "description": "Measure bodies (default true)"},
-                    "sketches": {"type": "boolean", "description": "Full sketch contents (default true; false = summary only)"},
+                    "sketches": {
+                        "anyOf": [
+                            {"type": "boolean"},
+                            {"type": "string"},
+                            {"type": "array", "items": {"anyOf": [{"type": "string"}, {"type": "integer"}]}},
+                        ],
+                        "description": "Full sketch contents: true (every sketch, the default), false (summary only), or a list of sketch names or ids (those in full, the others summarised)",
+                    },
                     "joints": {"anyOf": [{"type": "boolean"}, {"type": "string"}], "description": JOINTS_ARG},
                     "timeline": timeline_arg(),
-                    "bodies": {"anyOf": [{"type": "boolean"}, {"type": "string"}], "description": BODIES_ARG},
+                    "bodies": {"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "boolean"}, {"type": "string"}], "description": BODIES_ARG},
                 }),
                 &[],
             ),
@@ -558,14 +575,15 @@ fn inspect_words(a: &Map<String, Value>, bodies_word: bool) -> Result<(), String
 }
 
 /// `inspect_design`'s `bodies` argument without compact output.
-const BODIES_ARG: &str = "true (default): every body as `measure` says; \"names\": only the body names, nothing measured; false: no bodies";
+const BODIES_ARG: &str = "true (default): every body as `measure` says; a list of body names: only those; \"names\": only the body names, nothing measured; false: no bodies";
 
-/// A tool result: content blocks plus the error flag. JSON is pretty-printed, or compact with
-/// compact output.
-fn text_result(v: &Value, is_error: bool, opts: Options) -> Value {
+/// A tool result: content blocks plus the error flag. JSON is never pretty-printed, whatever
+/// the options: an agent pays for every byte, and the whitespace was a third of what agents read
+/// (845 replayed agent calls, 2026-11-22). A client that shows JSON to a person formats it.
+fn text_result(v: &Value, is_error: bool) -> Value {
     let text = match v {
         Value::String(s) => s.clone(),
-        v => opts.json_text(v),
+        v => v.to_string(),
     };
     let mut r = solidcraft_mcp_server::text_result(text, is_error);
     if is_error
@@ -598,28 +616,30 @@ pub fn call_tool_with(b: &mut dyn Backend, name: &str, args: &Value, opts: Optio
             None => Err(format!("`{name}`: arguments must be an object")),
         },
         "screenshot" => return screenshot(b, a),
-        "compare_picture" => return compare_picture(b, a, opts),
-        "batch" => return batch(b, a, opts),
-        "check_parameters" => return check_parameters(b, a, opts),
-        "execute" => return execute(b, a, opts),
-        "inspect_design" if opts.compact => inspect_design_compact(b, a),
+        "compare_picture" => return compare_picture(b, a),
+        "batch" => return batch(b, a),
+        "check_parameters" => return check_parameters(b, a),
+        "execute" => return execute(b, a),
+        // Without compact output, the compact arguments (sketches by name, a list of bodies) still
+        // work: an agent that learnt them from a compact server is not refused here.
+        "inspect_design" if opts.compact || names_parts(a) => inspect_design_compact(b, a),
         _ => dispatch(b, name, a),
     };
     match r {
-        Ok(v) => text_result(&v, false, opts),
-        Err(e) => text_result(&Value::String(e), true, opts),
+        Ok(v) => text_result(&v, false),
+        Err(e) => text_result(&Value::String(with_names(b, e, false)), true),
     }
 }
 
 /// `execute`: one command, then its `expect` checked against the design.
-fn execute(b: &mut dyn Backend, a: &Map<String, Value>, opts: Options) -> Value {
+fn execute(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     let expect = match Expect::parse(a) {
         Ok(e) => e,
-        Err(e) => return text_result(&Value::String(e), true, opts),
+        Err(e) => return text_result(&Value::String(e), true),
     };
     match dispatch(b, "execute", a) {
-        Ok(v) => with_expectation(b, v, expect, opts),
-        Err(e) => text_result(&Value::String(e), true, opts),
+        Ok(v) => with_expectation(b, v, expect),
+        Err(e) => text_result(&Value::String(with_names(b, e, false)), true),
     }
 }
 
@@ -793,8 +813,8 @@ fn xyz_text(c: [f64; 3]) -> String {
 
 /// A reply that went through, with its `expectation` when `expect` was given. A mismatch is a
 /// tool error that names it first; the design stays as built (the agent decides what to do).
-fn with_expectation(b: &mut dyn Backend, mut reply: Value, expect: Option<Expect>, opts: Options) -> Value {
-    let Some(expect) = expect else { return text_result(&reply, false, opts) };
+fn with_expectation(b: &mut dyn Backend, mut reply: Value, expect: Option<Expect>) -> Value {
+    let Some(expect) = expect else { return text_result(&reply, false) };
     let expectation = match expect.check(b) {
         Ok(e) => e,
         Err(e) => json!({"ok": false, "expected": expect.expected(), "mismatch": [format!("the design could not be measured: {e}")]}),
@@ -810,8 +830,8 @@ fn with_expectation(b: &mut dyn Backend, mut reply: Value, expect: Option<Expect
         reply = json!({"result": reply});
     }
     reply["expectation"] = expectation;
-    let Some(note) = note else { return text_result(&reply, false, opts) };
-    let mut r = text_result(&reply, true, opts);
+    let Some(note) = note else { return text_result(&reply, false) };
+    let mut r = text_result(&reply, true);
     if let Some(content) = r["content"].as_array_mut() {
         content.insert(0, json!({"type": "text", "text": note}));
     }
@@ -963,7 +983,11 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
             let id = str_arg(a, "id").ok_or("`id` is required")?;
             // The engine rejects the requested id inside its own error, so the tool-name
             // hint must inspect the `id`, not the outer `engine.describe` command `exec` sees.
-            exec(b, "engine.describe", json!({"command": id})).map_err(|e| describe_error(id, e))
+            let mut v = exec(b, "engine.describe", json!({"command": id})).map_err(|e| describe_error(id, e))?;
+            if !a.get("schema").and_then(Value::as_bool).unwrap_or(false) {
+                docs_only(&mut v, id);
+            }
+            Ok(v)
         }
         "execute" => {
             let id = str_arg(a, "command").ok_or("`command` is required")?;
@@ -1275,6 +1299,97 @@ const TOOL_STEPS: &[&str] = &[
     "version",
 ];
 
+/// `describe_command` without `schema`: the docs, and the JSON Schemas left out with a word on
+/// how to get them. The schemas were 87 % of what `describe_command` returned to agents (replay
+/// of 845 agent calls, 2026-11-22), and the one-line docs are what they read.
+fn docs_only(v: &mut Value, id: &str) {
+    let Some(o) = v.as_object_mut() else { return };
+    let had = ["input", "output"].iter().any(|k| o.get(*k).is_some_and(|x| !x.is_null()));
+    o.remove("input");
+    o.remove("output");
+    if had {
+        let id: String = id.chars().take(128).collect();
+        o.insert(
+            "schemas".into(),
+            json!(format!("left out: describe_command {{\"id\": \"{id}\", \"schema\": true}} gives the JSON Schemas of its parameters and result")),
+        );
+    }
+}
+
+/// An error that names a body, sketch or feature the design does not have, with the ones it
+/// has and the nearest as "did you mean": "no body `Model`" alone sends an agent to list the design, and the
+/// replay of 845 agent calls (2026-11-22) found these the commonest error. A body name that is
+/// a feature's name says so (a box feature `Blk` makes the body `Body1`). An error that lists
+/// names already, or a design that cannot be read, is left as it was. `rolled_back`: a batch
+/// that failed and was undone, so the names are the design's as it is now, before the batch.
+fn with_names(b: &mut dyn Backend, error: String, rolled_back: bool) -> String {
+    const MARKS: [(&str, &str); 6] = [
+        ("there is no body `", "bodies"),
+        ("no body `", "bodies"),
+        ("unknown body name", "bodies"),
+        ("no sketch `", "sketches"),
+        ("no feature `", "features"),
+        ("unknown feature `", "features"),
+    ];
+    let Some(&(mark, kind)) = MARKS.iter().find(|(m, _)| error.contains(m)) else { return error };
+    if ["(bodies:", "(sketches:", "(features:", "the design has "].iter().any(|t| error.contains(t)) {
+        return error;
+    }
+    // The name asked for, when the error quotes it: what follows the mark up to the next backquote.
+    let missing: Option<String> = error.find(mark).and_then(|at| {
+        let rest = &error[at + mark.len()..];
+        // A mark without its backquote ("unknown body name") quotes the name only right after it.
+        let rest = if mark.ends_with('`') { rest } else { rest.strip_prefix(" `")? };
+        rest.find('`').map(|end| rest[..end].chars().take(200).collect())
+    });
+    let Ok(d) = b.call("document.inspect", json!({"measure": false, "sketches": false, "timeline": "summary", "bodies": "names"})) else {
+        return error;
+    };
+    let named = |list: &Value| -> Vec<String> {
+        list.as_array().into_iter().flatten().filter_map(|x| x.as_str().or_else(|| x["name"].as_str()).map(str::to_owned)).collect()
+    };
+    let features = named(&d["timeline"]);
+    let names: Vec<String> = match kind {
+        "bodies" => named(&d["bodies"]),
+        "sketches" => d["sketches"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|x| match (x["name"].as_str(), x["id"].as_u64()) {
+                (Some(n), Some(id)) => format!("{n} (id {id})"),
+                (Some(n), None) => n.to_owned(),
+                (None, Some(id)) => format!("id {id}"),
+                (None, None) => "?".to_owned(),
+            })
+            .collect(),
+        _ => features.clone(),
+    };
+    let mut out = error;
+    if let Some(m) = missing.as_deref().filter(|m| !m.is_empty()) {
+        let key = |s: &str| s.chars().filter(char::is_ascii_alphanumeric).map(|c| c.to_ascii_lowercase()).collect::<String>();
+        let want = key(m);
+        let nearest = names
+            .iter()
+            .map(|n| (command_distance(&want, &key(n.split(" (id ").next().unwrap_or(n))), n))
+            .filter(|(d, _)| *d <= (want.len() / 3).max(2))
+            .min_by_key(|(d, _)| *d)
+            .map(|(_, n)| n.clone());
+        if let Some(n) = nearest {
+            out.push_str(&format!("; did you mean `{n}`?"));
+        }
+        if kind == "bodies" && features.iter().any(|f| f == m) {
+            out.push_str(&format!("; `{m}` is the name of a feature, not of a body"));
+        }
+    }
+    let when = if rolled_back { "after the rollback, the design has" } else { "the design has" };
+    if names.is_empty() {
+        out.push_str(&format!(" ({when} no {kind})"));
+    } else {
+        out.push_str(&format!(" ({when} {kind}: {})", name_list(&names)));
+    }
+    out
+}
+
 /// Names for an error message: at most 40 of them.
 fn name_list(names: &[String]) -> String {
     let mut out = names.iter().take(40).cloned().collect::<Vec<_>>().join(", ");
@@ -1282,6 +1397,12 @@ fn name_list(names: &[String]) -> String {
         out.push_str(&format!(", … ({} in all)", names.len()));
     }
     if out.is_empty() { "none".into() } else { out }
+}
+
+/// Whether `inspect_design`'s arguments name sketches or bodies (a list, or a word for the
+/// sketches), which only the compact form of the tool reads.
+fn names_parts(a: &Map<String, Value>) -> bool {
+    matches!(a.get("sketches"), Some(Value::Array(_) | Value::String(_))) || matches!(a.get("bodies"), Some(Value::Array(_)))
 }
 
 /// `inspect_design` with compact output: `document.inspect`, with sketch summaries unless
@@ -1528,14 +1649,20 @@ impl Undo {
 /// `batch`: run steps in order, stop at the first failure and (by default) go back to the
 /// design as it was before the batch. A batch that went through is then checked against its
 /// `expect`.
-fn batch(b: &mut dyn Backend, a: &Map<String, Value>, opts: Options) -> Value {
+fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     let expect = match Expect::parse(a) {
         Ok(e) => e,
-        Err(e) => return text_result(&Value::String(e), true, opts),
+        Err(e) => return text_result(&Value::String(e), true),
     };
     match batch_run(b, a) {
-        (reply, true) => text_result(&reply, true, opts),
-        (reply, false) => with_expectation(b, reply, expect, opts),
+        (mut reply, true) => {
+            let rolled_back = reply["rolled_back"] == true;
+            if let Some(e) = reply.pointer("/failed/error").and_then(Value::as_str).map(str::to_owned) {
+                reply["failed"]["error"] = json!(with_names(b, e, rolled_back));
+            }
+            text_result(&reply, true)
+        }
+        (reply, false) => with_expectation(b, reply, expect),
     }
 }
 
@@ -2080,28 +2207,28 @@ fn compact_moved_points(o: &mut Map<String, Value>) {
 /// restore that fails is an error saying the values are still in. Every agent session that
 /// changed a parameter to see its effect spent three to five calls on this loop, and one saved
 /// the design with the test values still in it.
-fn check_parameters(b: &mut dyn Backend, a: &Map<String, Value>, opts: Options) -> Value {
+fn check_parameters(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     let (changes, reports, narrow) = match check_parameters_args(a) {
         Ok(x) => x,
-        Err(e) => return text_result(&Value::String(e), true, opts),
+        Err(e) => return text_result(&Value::String(e), true),
     };
     // A name the design has no parameter of is refused before the checkpoint, so nothing
     // changes: `parameters.change` would make one.
     if let Err(e) = known_parameters(b, &changes) {
-        return text_result(&Value::String(e), true, opts);
+        return text_result(&Value::String(e), true);
     }
     let Some(id) = exec(b, "edit.checkpoint", json!({})).ok().and_then(|v| v["checkpoint"].as_u64()) else {
         let e = "check_parameters: this app has no edit.checkpoint to put the design back with; use set_parameter and measure, and set the values back yourself";
-        return text_result(&json!(e), true, opts);
+        return text_result(&json!(e), true);
     };
     let outcome = try_parameters(b, &changes, &reports, &narrow);
     let restore = exec(b, "edit.restore_checkpoint", json!({"checkpoint": id}));
     match (outcome, restore) {
         (Ok(mut reply), Ok(_)) => {
             reply["restored"] = json!(true);
-            text_result(&reply, false, opts)
+            text_result(&reply, false)
         }
-        (Err(e), Ok(_)) => text_result(&json!({"error": e, "restored": true, "note": "the design is back as it was"}), true, opts),
+        (Err(e), Ok(_)) => text_result(&json!({"error": e, "restored": true, "note": "the design is back as it was"}), true),
         (outcome, Err(restore_error)) => {
             let mut reply = match outcome {
                 Ok(r) => r,
@@ -2112,7 +2239,7 @@ fn check_parameters(b: &mut dyn Backend, a: &Map<String, Value>, opts: Options) 
             reply["note"] = json!(
                 "THE DESIGN STILL HOLDS THE TRIED VALUES: the checkpoint could not be restored. Set them back with set_parameter (or undo) before saving"
             );
-            text_result(&reply, true, opts)
+            text_result(&reply, true)
         }
     }
 }
@@ -2354,13 +2481,13 @@ static SHOT: AtomicU64 = AtomicU64::new(0);
 fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     match capture(b, a) {
         Ok((png, info)) => solidcraft_mcp_server::image_result(&png, "image/png", info.to_string()),
-        Err(e) => text_result(&Value::String(e), true, Options::default()),
+        Err(e) => text_result(&Value::String(e), true),
     }
 }
 
 /// `compare_picture`: run the engine comparison and hand the overlay PNG back as an MCP
 /// image block, the numbers as text — an agent sees the picture, not a base64 blob.
-fn compare_picture(b: &mut dyn Backend, a: &Map<String, Value>, opts: Options) -> Value {
+fn compare_picture(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     let mut params = pick(a, &["reference", "view", "camera", "bodies", "crop_px", "crop_fraction", "fit", "rows"]);
     params["overlay"] = json!(true);
     match exec(b, "inspect.compare_picture", params) {
@@ -2376,7 +2503,7 @@ fn compare_picture(b: &mut dyn Backend, a: &Map<String, Value>, opts: Options) -
             }
             json!({"content": content})
         }
-        Err(e) => text_result(&Value::String(e), true, opts),
+        Err(e) => text_result(&Value::String(e), true),
     }
 }
 
