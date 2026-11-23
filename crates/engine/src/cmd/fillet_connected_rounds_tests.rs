@@ -100,11 +100,22 @@ fn a_round_on_an_edge_a_boss_stands_across_ends_at_the_boss() {
 }
 
 /// A 6 mm round on the circle where a 120 mm tube stands on its 180 mm flange, picked across
-/// from a 22 mm pipe that straddles the tube's wall: with the tangent chain on it is the same
-/// round as with it off, since the base circle meets the pipe's at sharp corners and has no
-/// tangent neighbour to add. Today the chain makes it "larger than the faces beside its edges
-/// allow" at every radius, while `tangent_chain: false` builds
-/// ([T-96](https://tickets.solidcraft.io/t/96), #17591).
+/// from a 22 mm pipe that straddles the tube's wall and stands as high as the tube: with the
+/// tangent chain on it is the same round as with it off. The pipe cuts the tube's wall its
+/// whole height, so the wall no longer wraps and is two faces, and the base circle is two
+/// edges that meet where the tube's seam was (0.6131 rad from +x). The chain has one neighbour
+/// to add, the rest of that circle past the old seam (the pipe's base circle crosses it at
+/// sharp corners), and the pick alone takes it too: a seam is no feature, so a round does not
+/// end at one. With the chain off the round used to stop there in a flat step, 216.78 mm^3
+/// short ([T-96](https://tickets.solidcraft.io/t/96), #17591).
+///
+/// Both are the closed form. Before the round V0 = pi 90^2 6 + pi 60^2 74 + 74 (pi 11^2 - L)
+/// = 1013225.9372995526, where L = 60.8860702902 is the lens of the circles R 60 and r 11
+/// with centres d = 66 apart, r^2 acos((d^2 + r^2 - R^2)/(2 d r)) + R^2 acos((d^2 + R^2 -
+/// r^2)/(2 d R)) - sqrt((-d + r + R)(d + r - R)(d - r + R)(d + r + R))/2. The round adds the
+/// torus's spandrel about the tube's axis outside the pipe: at radius rho in [60, 66] it is
+/// 6 - sqrt(36 - (rho - 66)^2) high over the angle 2 pi - 2 acos((rho^2 + d^2 - r^2)/(2 d
+/// rho)), which integrates (Gauss-Legendre) to 2830.0441510422. V = 1016055.9814505948.
 #[test]
 fn a_tube_to_flange_round_beside_a_crossing_pipe_is_the_same_with_the_tangent_chain() {
     let part = |s: &mut Session| {
@@ -121,6 +132,44 @@ fn a_tube_to_flange_round_beside_a_crossing_pipe_is_the_same_with_the_tangent_ch
     run(&mut with, "solid.fillet", json!({"edges": [[-60, 0, 6]], "radius": 6}));
     let got = valid_volume(&mut with, "Flange");
     assert!((got - want).abs() < 1e-6 * want, "{got} vs {want}");
+    let whole = 1_016_055.981_450_594_8;
+    assert!((want - whole).abs() < 1e-9 * whole, "chain off: {want} vs the closed form {whole}");
+    assert!((got - whole).abs() < 1e-9 * whole, "chain on: {got} vs the closed form {whole}");
+}
+
+/// The same foot chamfered: 3 mm; 3 mm on the flange and 1.5 mm up the tube's wall; and, with
+/// `flip`, 1.5 mm on the flange and 3 mm up the wall. Each is picked on the long piece of the
+/// circle alone and with the tangent chain, and both are the whole circle's chamfer, with no
+/// note of an edge left sharp. The flipped one's first face is the tube's wall, and past the
+/// old seam the wall is another face: the size runs on along that one. (Taking the picked
+/// piece's own face there would refuse a chamfer that built before, #17591.)
+///
+/// The closed forms: a chamfer a on the flange by h up the wall adds its triangle swept about
+/// the tube's axis outside the pipe. At radius rho in [60, 60 + a] it is h (1 - (rho - 60)/a)
+/// high over the angle 2 pi - 2 acos((rho^2 + 66^2 - 11^2)/(132 rho)); added to V0 =
+/// 1013225.9372995526 (the round's test above) that is 1640.1332462736, 820.0666231368 and
+/// 814.2514378335 (Gauss-Legendre).
+#[test]
+fn a_tube_to_flange_chamfer_beside_a_crossing_pipe_is_the_same_with_the_tangent_chain() {
+    for (sizes, whole) in [
+        (json!({"distance": 3}), 1_014_866.070_545_826_2),
+        (json!({"distance": 3, "distance2": 1.5}), 1_014_046.003_922_689_4),
+        (json!({"distance": 3, "distance2": 1.5, "flip": true}), 1_014_040.188_737_386_1),
+    ] {
+        for chain in [false, true] {
+            let mut s = Session::default();
+            run(&mut s, "solid.cylinder", json!({"diameter": 180, "height": 6, "body_name": "Flange"}));
+            run(&mut s, "solid.cylinder", json!({"diameter": 120, "height": 80, "operation": "join", "targets": ["Flange"]}));
+            run(&mut s, "solid.cylinder", json!({"diameter": 22, "height": 74, "base": [66, 0, 6], "operation": "join", "targets": ["Flange"]}));
+            let mut params = sizes.clone();
+            params["edges"] = json!([[-60, 0, 6]]);
+            params["tangent_chain"] = json!(chain);
+            let out = run(&mut s, "solid.chamfer", params);
+            assert!(out["warning"].is_null(), "{sizes}, chain {chain}: {out}");
+            let got = valid_volume(&mut s, "Flange");
+            assert!((got - whole).abs() < 1e-9 * whole, "{sizes}, chain {chain}: {got} vs the closed form {whole}");
+        }
+    }
 }
 
 /// A 1.5 mm round on the vertical edge of a shallow (about 176°) outline corner where a pocket's

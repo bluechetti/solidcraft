@@ -7464,10 +7464,47 @@ impl FilletParametersAccess<FilletObject> for SessionObjects<'_> {
     }
 }
 
+/// An edge a picked edge runs on into across a seam's vertex ([`runs_on_across_seams`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SeamRunOn {
+    /// The index of the picked edge it continues, among the picked edges.
+    pub(crate) source: usize,
+    /// The edge.
+    pub(crate) edge: EdgeId,
+    /// Whether its blend edge use is on the other face of the two than the picked edge's,
+    /// each of its faces taken as the picked edge's face it continues (`faces`).
+    pub(crate) flipped: bool,
+    /// The picked edge's two faces, each with this edge's face that continues it: the same
+    /// face, or the face across a seam's line between two faces of one surface
+    /// (`blend_corner::end::edgeuse_continued_across_seam_vertex`, SolidCraft #17591).
+    pub(crate) faces: [(FaceId, FaceId); 2],
+}
+
+impl SeamRunOn {
+    /// This edge's face that continues `face` of the picked edge: where a size is along a face
+    /// of the picked edge, the run-on's is along this one. `face` itself where it is neither
+    /// of the picked edge's.
+    pub(crate) fn continues(&self, face: FaceId) -> FaceId {
+        continued(&self.faces, face)
+    }
+}
+
+/// The face `pairs` continue `face` into (the second of the pair that starts with it), `face`
+/// itself where no pair starts with it.
+fn continued(pairs: &[(FaceId, FaceId); 2], face: FaceId) -> FaceId {
+    pairs
+        .iter()
+        .find(|(from, _)| *from == face)
+        .map_or(face, |&(_, to)| to)
+}
+
 /// The edges of `target` that continue `edges` across seams' vertices
 /// ([`FilletParametersAccess::parameters_runs_on_across_seams`]): from each end of each
-/// picked edge, each next piece of its curve while a seam's vertex splits it, up to
-/// `SIDE_EDGE_CHAIN_STEPS` pieces, each named once and none of them picked.
+/// picked edge, each next piece of its curve while a seam's vertex splits it
+/// (`blend_corner::end::edgeuse_continued_across_seam_vertex`: a seam with one face on both
+/// its sides, or the seam's line between two faces of one surface, SolidCraft #17591), up to
+/// `SIDE_EDGE_CHAIN_STEPS` pieces, each named once and none of them picked. Each comes with
+/// the picked edge's two faces as its own continue them, carried along the walk.
 ///
 /// # Errors
 /// Those of the topology walks and the seam and tangency tests.
@@ -7476,8 +7513,10 @@ pub(crate) fn runs_on_across_seams(
     target: &mut Brep,
     edges: &[EdgeId],
     ang_tol_deg: f64,
-) -> Result<Vec<RunOn<EdgeId>>> {
-    use crate::blend::blend_corner::end::{side_edgeuse_across_seam_vertex, SIDE_EDGE_CHAIN_STEPS};
+) -> Result<Vec<SeamRunOn>> {
+    use crate::blend::blend_corner::end::{
+        edgeuse_continued_across_seam_vertex, SIDE_EDGE_CHAIN_STEPS,
+    };
     use crate::topology::edgeuse::p1 as eu1;
     let mut taken: BTreeSet<EdgeId> = edges.iter().copied().collect();
     let mut run_ons = Vec::new();
@@ -7492,16 +7531,30 @@ pub(crate) fn runs_on_across_seams(
         for at in [start, end].into_iter().flatten() {
             // along the curve from `at`: each next piece while a seam's vertex splits it
             let (mut curr, mut at) = (eu, at);
+            // the picked edge's two faces, each with the face of the piece reached that
+            // continues it
+            let mut reached: Option<[(FaceId, FaceId); 2]> = None;
             for _ in 0..SIDE_EDGE_CHAIN_STEPS {
-                let Some(next) = side_edgeuse_across_seam_vertex(k, target, curr, at, ang_tol_deg)?
+                let Some(step) =
+                    edgeuse_continued_across_seam_vertex(k, target, curr, at, ang_tol_deg)?
                 else {
                     break;
                 };
+                let next = step.edgeuse;
                 let next_edge =
                     eu1::edge(target, next)?.ok_or_else(|| invalid("edge use without edge"))?;
                 if !taken.insert(next_edge) {
                     break;
                 }
+                // the picked edge's faces through this step: the step's pairs start with the
+                // faces of the piece it left
+                let faces = match reached {
+                    None => step.faces,
+                    Some(so_far) => {
+                        so_far.map(|(picked, was)| (picked, continued(&step.faces, was)))
+                    }
+                };
+                reached = Some(faces);
                 // the faces each blend edge use lies on; an edge with none is refused when
                 // its solver is made
                 if face.is_none() {
@@ -7512,13 +7565,14 @@ pub(crate) fn runs_on_across_seams(
                 }
                 let blended = crate::topology::edge::blend_edgeuse(k, target, next_edge)?;
                 let flipped = match (blended, face.flatten()) {
-                    (Some(u), Some(f)) => eu1::face(target, u)? != Some(f),
+                    (Some(u), Some(f)) => eu1::face(target, u)? != Some(continued(&faces, f)),
                     _ => false,
                 };
-                run_ons.push(RunOn {
+                run_ons.push(SeamRunOn {
                     source,
                     edge: next_edge,
                     flipped,
+                    faces,
                 });
                 let (s, e) = crate::topology::vertex::edge_vertex_pair(target, next_edge)?;
                 let Some(far) = (if s == Some(at) { e } else { s }) else {

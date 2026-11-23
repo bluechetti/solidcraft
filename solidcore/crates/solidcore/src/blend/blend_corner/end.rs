@@ -16,6 +16,7 @@
 //! | [`describe_end_past_side_edge`]   | `SmBlendCorner::DescribeEndPastSideEdge`  |
 //! | `refuse_end_overflowing_side_edge` (private), [`describe_end_overflowing_side_edge`] | `SmBlendCorner::RefuseEndOverflowingSideEdge` (54a4ee7, 63c7962) |
 //! | [`side_edgeuse_across_seam_vertex`] | `sm_SideEdgeuseAcrossSeamVertex` (`SmBlendCorner.cpp`, 63c7962) |
+//! | [`edgeuse_continued_across_seam_vertex`], [`AcrossSeam`], `seam_line_between`, `on_one_surface` (private) | none (SolidCraft #17591: for the blend's run-on, a seam's vertex is also one where the seam's line lies between two faces of one surface, as a face cut right across leaves it) |
 //! | [`side_edge_chain_to`]            | `SmBlendCorner::SideEdgeChainTo` (63c7962) |
 //! | [`fit_of_end_past_side_edges`]    | `SmBlendCorner::FitOfEndPastSideEdges`    |
 //! | [`create_end_cap_patch`]          | `SmBlendCorner::CreateEndPatchOfEnd`'s `SM_BEND_AT_SMOOTH` branch |
@@ -55,7 +56,7 @@ use crate::geom::global_solver::SolverOperation;
 use crate::geom::tol::zone_tol3d;
 use crate::intersect::point_class::{PointClassType, PointClassification};
 use crate::kernel::Kernel;
-use crate::math::{rad_to_deg, Point3, Vec3, BIG_DOUBLE, EFF_ZERO, PI};
+use crate::math::{rad_to_deg, Point2, Point3, Vec3, BIG_DOUBLE, EFF_ZERO, PI};
 use crate::nurbs::knots::Side;
 use crate::query::brep::{BrepFaceServices, FaceCaches};
 use crate::query::face::p1::{point_3d_classify, Point3dClassifyOptions};
@@ -837,6 +838,235 @@ pub fn side_edgeuse_across_seam_vertex(
         ang_tol_deg,
     )?;
     Ok(g1.then_some(next))
+}
+
+/// A blended edge continued across a seam's vertex
+/// ([`edgeuse_continued_across_seam_vertex`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AcrossSeam {
+    /// The continuing edge's use that stands for the given one: on the given edge use's face
+    /// or the face that continues it, its radial on the given radial's face or the face that
+    /// continues that.
+    pub edgeuse: EdgeuseId,
+    /// The given edge use's face and its radial's, each with the continuing edge's face that
+    /// continues it: itself, or the face across the seam's line on their one surface.
+    pub faces: [(FaceId, FaceId); 2],
+}
+
+/// Not the fork's (SolidCraft #17591): the blended edge of `eu` (between F, `eu`'s face, and
+/// G, its radial's) continued across its end `at` into the rest of its own curve, for the
+/// blend's run-on (`fillet_executive::session::runs_on_across_seams`, #2864). Two kinds of
+/// vertex are a seam's:
+///
+/// - `at` is split only by a seam with F or G on both its sides: the side edge's rule
+///   ([`side_edgeuse_across_seam_vertex`]). The continuation N lies between F and G.
+/// - `at`'s only other edges are N and an edge along the seam's line of F's surface, between
+///   F and another face F' on that one surface (`seam_line_between`), or of G's between G and
+///   G'. That is what a seam leaves where its face is cut right across (a pipe standing
+///   through a tube's wall the tube's whole height): the face no longer wraps, so it is two
+///   faces and the seam an edge between them. N then lies between F' and G (or F and G') and
+///   continues the edge G1 at `at` (within `ang_tol_deg`).
+///
+/// A seam is the surface's parameterisation, not a feature, whichever way the body holds it,
+/// so a blend of constant size runs on across both. Only the run-on asks the second: a rail
+/// that follows a side edge stays on its own face, so the side edge's walks, and the End's
+/// refusal of a variable round, keep [`side_edgeuse_across_seam_vertex`].
+///
+/// The edge use returned stands for `eu` (the walk goes on from it), and each of F and G comes
+/// with N's face that continues it, for a size given along one of them. `None` otherwise, and
+/// for a closed edge or an `at` that is not its end.
+///
+/// # Errors
+/// Those of [`side_edgeuse_across_seam_vertex`], the topology walks, the seam's line tests
+/// and the tangent test.
+pub fn edgeuse_continued_across_seam_vertex(
+    k: &Kernel,
+    target: &mut Brep,
+    eu: EdgeuseId,
+    at: VertexId,
+    ang_tol_deg: f64,
+) -> Result<Option<AcrossSeam>> {
+    let Some(radial) = eu1::radial(target, eu)? else {
+        return Ok(None);
+    };
+    let (Some(f), Some(g)) = (eu1::face(target, eu)?, eu1::face(target, radial)?) else {
+        return Ok(None);
+    };
+    // a seam with one face on both its sides: N lies between the same two faces
+    if let Some(next) = side_edgeuse_across_seam_vertex(k, target, eu, at, ang_tol_deg)? {
+        return Ok(Some(AcrossSeam {
+            edgeuse: next,
+            faces: [(f, f), (g, g)],
+        }));
+    }
+    let Some(e) = eu1::edge(target, eu)? else {
+        return Ok(None);
+    };
+    if f == g
+        || edge::is_closed(target, e)?
+        || (edge::start_vertex(target, e)? != Some(at) && edge::end_vertex(target, e)? != Some(at))
+    {
+        return Ok(None);
+    }
+    let edges = vertex::edges(target, at, None)?;
+    if edges.len() != 3 {
+        return Ok(None);
+    }
+    // the edge along a seam's line between F (or G) and another face of that surface, and N
+    let mut next_edge = None;
+    let mut between = None;
+    for &x in &edges {
+        if x == e {
+            continue;
+        }
+        match seam_line_between(k, target, x, [f, g])? {
+            Some(faces) => between = Some(faces),
+            None => next_edge = Some(x),
+        }
+    }
+    let (Some(n), Some((near, far))) = (next_edge, between) else {
+        return Ok(None);
+    };
+    if edge::is_closed(target, n)? {
+        return Ok(None);
+    }
+    // N's use that stands for `eu`: found through the face use of the face N shares with the
+    // edge, which names the side of the faces `eu` is on
+    let (Some(faceuse), Some(radial_faceuse)) =
+        (eu1::faceuse(target, eu)?, eu1::faceuse(target, radial)?)
+    else {
+        return Ok(None);
+    };
+    let mut next = None;
+    for x in edge::edgeuses(target, n, None, None)? {
+        let Some(r) = eu1::radial(target, x)? else {
+            continue;
+        };
+        let stands_for_eu = if near == f {
+            eu1::face(target, x)? == Some(far) && eu1::faceuse(target, r)? == Some(radial_faceuse)
+        } else {
+            eu1::faceuse(target, x)? == Some(faceuse) && eu1::face(target, r)? == Some(far)
+        };
+        if stands_for_eu {
+            next = Some(x);
+            break;
+        }
+    }
+    let Some(next) = next else {
+        return Ok(None);
+    };
+    let (g1, _) = crate::blend::fillet_corner::p1::test_g1_continuity(
+        k,
+        target,
+        Some(at),
+        Some(e),
+        Some(n),
+        ang_tol_deg,
+    )?;
+    let faces = if near == f {
+        [(f, far), (g, g)]
+    } else {
+        [(f, f), (g, far)]
+    };
+    Ok(g1.then_some(AcrossSeam {
+        edgeuse: next,
+        faces,
+    }))
+}
+
+/// Whether edge `x` runs along a seam's line between one of `faces` and another face on that
+/// one surface (SolidCraft #17591): `x` lies between exactly two faces, one of `faces`
+/// (returned first) and one that is neither (returned second); the two lie on one surface
+/// (`on_one_surface`); and `x` runs along that surface's seam on each of them
+/// ([`edge::runs_along_seam`]: the iso line at an end of the surface's natural domain, in a
+/// direction the surface closes in). The surface is asked before the UV trims, so an edge
+/// between faces on two surfaces is read and nothing of it is evaluated.
+///
+/// # Errors
+/// Those of the topology walks, `on_one_surface` and [`edge::runs_along_seam`].
+fn seam_line_between(
+    k: &Kernel,
+    target: &mut Brep,
+    x: EdgeId,
+    faces: [FaceId; 2],
+) -> Result<Option<(FaceId, FaceId)>> {
+    let sides = edge::faces(target, x, None)?;
+    let &[a, b] = sides.as_slice() else {
+        return Ok(None);
+    };
+    let (near, far) = match (faces.contains(&a), faces.contains(&b)) {
+        (true, false) => (a, b),
+        (false, true) => (b, a),
+        _ => return Ok(None),
+    };
+    if !on_one_surface(k, target, near, far)? {
+        return Ok(None);
+    }
+    for face in [near, far] {
+        let Some(on_face) = edge::edgeuse_of_face(target, x, Some(face))? else {
+            return Ok(None);
+        };
+        if !edge::runs_along_seam(k, target, on_face)? {
+            return Ok(None);
+        }
+    }
+    Ok(Some((near, far)))
+}
+
+/// Where `on_one_surface` compares two surfaces, as fractions of their natural domain in
+/// `[u, v]`: its two far corners and three points off its middle lines, where a surface turned
+/// or mirrored in its own parameters differs.
+const ONE_SURFACE_STATIONS: [[f64; 2]; 5] = [
+    [0.0, 0.0],
+    [1.0, 1.0],
+    [0.37, 0.57],
+    [0.57, 0.82],
+    [0.82, 0.37],
+];
+
+/// Whether faces `a` and `b` lie on one surface: each holds the same definition, as the two
+/// pieces of a face cut in two do. A port face owns its surface, so two faces never hold one
+/// surface object; this is decided as the trace decides that a surface stands for its base
+/// (`fillet_solver::trace_reach`): the surfaces share a cache slot, or are of one kind, with
+/// one natural domain and, bit for bit, the same points at [`ONE_SURFACE_STATIONS`] of it.
+/// Surfaces that only coincide within a tolerance are two surfaces here, and so is a face
+/// without one.
+///
+/// # Errors
+/// [`SolidError::Unported`] and a cancel from the surfaces' domains and evaluations.
+fn on_one_surface(k: &Kernel, target: &Brep, a: FaceId, b: FaceId) -> Result<bool> {
+    let (Some(sa), Some(sb)) = (
+        target.face(a)?.surface.as_ref(),
+        target.face(b)?.surface.as_ref(),
+    ) else {
+        return Ok(false);
+    };
+    if sa.shares_cache_slot_with(sb) {
+        return Ok(true);
+    }
+    if std::mem::discriminant(sa.kind()) != std::mem::discriminant(sb.kind()) {
+        return Ok(false);
+    }
+    let domain = match (
+        sa.natural_uv_domain_with_nurb(k),
+        sb.natural_uv_domain_with_nurb(k),
+    ) {
+        (Ok(da), Ok(db)) if da.min == db.min && da.max == db.max => da,
+        (Err(err), _) | (_, Err(err)) if err.is_unported_or_cancelled() => return Err(err),
+        _ => return Ok(false),
+    };
+    for [s, t] in ONE_SURFACE_STATIONS {
+        let uv = Point2::new(
+            domain.min.x + s * (domain.max.x - domain.min.x),
+            domain.min.y + t * (domain.max.y - domain.min.y),
+        );
+        match (sa.evaluate_point(k, uv), sb.evaluate_point(k, uv)) {
+            (Ok(pa), Ok(pb)) if pa == pb => {}
+            (Err(err), _) | (_, Err(err)) if err.is_unported_or_cancelled() => return Err(err),
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
 }
 
 /// Not the fork's (solidcore-native, [`crate::blend::fillet_tangent_rollover`]): the side edge of `eu` continued across
@@ -1724,14 +1954,14 @@ pub(crate) fn rail_end_on_surfaces(
     let tol = (1e-9 * (1.0 + offsets)
         + 64.0 * f64::EPSILON * (origin.length() + start.length() + offsets))
         .min(zone / 1000.0);
-    let in_domain = |uv: crate::math::Point2| {
+    let in_domain = |uv: Point2| {
         uv.x >= f_domain.min.x
             && uv.x <= f_domain.max.x
             && uv.y >= f_domain.min.y
             && uv.y <= f_domain.max.y
     };
     // the plane's and the ball's equations at (u, v), and the point
-    let residual = |uv: crate::math::Point2| -> Result<Option<(f64, f64, Point3)>> {
+    let residual = |uv: Point2| -> Result<Option<(f64, f64, Point3)>> {
         if !in_domain(uv) {
             return Ok(None);
         }
@@ -1761,8 +1991,8 @@ pub(crate) fn rail_end_on_surfaces(
             return Ok(None);
         };
         let (Some((u1, u2, _)), Some((v1, v2, _))) = (
-            residual(crate::math::Point2::new(uv.x + hu, uv.y))?,
-            residual(crate::math::Point2::new(uv.x, uv.y + hv))?,
+            residual(Point2::new(uv.x + hu, uv.y))?,
+            residual(Point2::new(uv.x, uv.y + hv))?,
         ) else {
             return Ok(None);
         };
@@ -1773,7 +2003,7 @@ pub(crate) fn rail_end_on_surfaces(
         if det.abs().partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             return Ok(None);
         }
-        let next = crate::math::Point2::new(
+        let next = Point2::new(
             uv.x - (d * r1 - b * r2) / det,
             uv.y - (a * r2 - c * r1) / det,
         );

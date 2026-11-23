@@ -289,7 +289,9 @@ impl FilletSession<'_> {
     /// `edges`, `sizes` and the support each edge's first size is along, with the edges the
     /// chamfers run on into across seams' vertices (`super::runs_on_across_seams`): each
     /// takes its picked edge's size along the same face, so a chamfer never ends at a seam
-    /// (#2864). Where `along` is empty a picked edge's size is along its support 1, and a
+    /// (#2864). Where the seam's line lies between two faces of one surface, the same face is
+    /// the one across it that continues the picked edge's (`SeamRunOn::continues`, SolidCraft
+    /// #17591). Where `along` is empty a picked edge's size is along its support 1, and a
     /// run-on edge's along its support 1 or, where its blend edge use lies on the picked
     /// edge's other face, its support 2.
     fn chamfers_run_on(
@@ -317,7 +319,7 @@ impl FilletSession<'_> {
                 sizes.push(value(&sizes, run_on.source)?);
             }
             supports.push(match value(&supports, run_on.source)? {
-                Along::Face(face) => Along::Face(face),
+                Along::Face(face) => Along::Face(run_on.continues(face)),
                 Along::Support { second } => Along::Support {
                     second: second != run_on.flipped,
                 },

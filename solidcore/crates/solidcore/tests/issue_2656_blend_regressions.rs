@@ -597,6 +597,100 @@ fn block_cylinder_both_pieces_round_through_do_fillet() {
     assert_rel(v, 19_091.962_003_483_477, 1e-9, "do_fillet");
 }
 
+/// SolidCraft #17591's part: a flange R 90, z 0..6, and a tube R 60, z 0..80, about the z
+/// axis, and a pipe R 11 about x = 0, y = 66 from z = 6 to the tube's top, joined. The pipe
+/// straddles the tube's wall the tube's whole height, so the wall no longer wraps: it is two
+/// faces, and the tube's seam (on +x) an edge between them. The tube's foot outside the pipe,
+/// the concave circle rho = 60, z = 6, is two pieces that meet at the old seam's vertex
+/// (60, 0, 6). V0 = pi 90^2 6 + pi 60^2 74 + 74 (pi 11^2 - L) = 1013225.9372995526, where
+/// L = 60.8860702902 is the lens of the circles R 60 and r 11 with centres d = 66 apart,
+/// r^2 acos((d^2 + r^2 - R^2)/(2 d r)) + R^2 acos((d^2 + R^2 - r^2)/(2 d R))
+/// - sqrt((-d + r + R)(d + r - R)(d - r + R)(d + r + R))/2.
+fn tube_on_flange_beside_a_pipe(k: &mut Kernel) -> Brep {
+    let flange = create_cylinder(k, Point3::new(0.0, 0.0, 0.0), 90.0, 6.0).unwrap();
+    let tube = create_cylinder(k, Point3::new(0.0, 0.0, 0.0), 60.0, 80.0).unwrap();
+    let pipe = create_cylinder(k, Point3::new(0.0, 66.0, 6.0), 11.0, 74.0).unwrap();
+    let stood = boolean_union(k, flange, tube).unwrap();
+    let mut b = boolean_union(k, stood, pipe).unwrap();
+    b.refresh_cached_topology();
+    b
+}
+
+/// Points on the foot's two pieces: across from the old seam (the long piece, from the pipe
+/// round by -x and -y to (60, 0, 6)) and between the old seam and the pipe.
+const FOOT_PIECES: [[f64; 3]; 2] = [
+    [-60.0, 0.0, 6.0],
+    [42.426_406_871_192_85, 42.426_406_871_192_85, 6.0],
+];
+
+/// The foot rounded r 6, whole: the torus about the z axis (centre circle rho 66, z 12) cut
+/// by the pipe's wall. At radius rho in [60, 66] it adds the spandrel height
+/// 6 - sqrt(36 - (rho - 66)^2) over the angle 2 pi - 2 acos((rho^2 + 66^2 - 11^2)/(132 rho))
+/// outside the pipe, 2830.0441510422 (Gauss-Legendre), so V = 1016055.9814505948.
+const FOOT_ROUNDED: f64 = 1_016_055.981_450_594_8;
+
+/// The part is the closed form, and the old seam splits the foot in two between two faces:
+/// both pieces end at (60, 0, 6), and the edge up the wall from there has a face on each
+/// side, so it is no seam ([`edge::is_seam`]), though it runs along the cylinder's.
+#[test]
+fn tube_foot_beside_a_pipe_is_two_pieces_at_the_old_seam() {
+    let mut k = solidcraft_kernel();
+    let mut b = tube_on_flange_beside_a_pipe(&mut k);
+    let (_, v) = measured(&mut k, &mut b);
+    assert_rel(v, 1_013_225.937_299_552_6, 1e-9, "part");
+    let pieces = FOOT_PIECES.map(|p| pick(&k, &b, p));
+    assert_ne!(pieces[0], pieces[1]);
+    for piece in pieces {
+        let at_old_seam = edge::vertices(&b, piece, None)
+            .unwrap()
+            .into_iter()
+            .any(|v| {
+                b.vertex(v.unwrap())
+                    .unwrap()
+                    .point
+                    .distance(Point3::new(60.0, 0.0, 6.0))
+                    < 1e-9
+            });
+        assert!(at_old_seam, "a piece does not end at the old seam");
+    }
+    let old_seam = pick(&k, &b, [60.0, 0.0, 43.0]);
+    assert_eq!(edge::faces(&b, old_seam, None).unwrap().len(), 2);
+    assert!(!edge::is_seam(&k, &mut b, old_seam).unwrap());
+    for face in edge::faces(&b, old_seam, None).unwrap() {
+        let on_face = edge::edgeuse_of_face(&b, old_seam, Some(face))
+            .unwrap()
+            .unwrap();
+        assert!(edge::runs_along_seam(&k, &mut b, on_face).unwrap());
+    }
+}
+
+/// One piece rounded alone (the long one, then the short one): the round reaches the old
+/// seam's vertex, where the foot runs on along the same plane and the same cylinder, on its
+/// other face. A seam is the cylinder's parameterisation, not a feature, whether one face
+/// lies on both its sides or the wall is cut right across and two do: the round runs on
+/// across it into the rest of the circle, the whole foot's round (SolidCraft #17591). It
+/// stopped there in a flat step, the piece between the old seam and the pipe left sharp.
+#[test]
+fn tube_foot_piece_runs_on_across_the_old_seam_between_two_faces() {
+    let mut k = solidcraft_kernel();
+    for at_pick in FOOT_PIECES {
+        let mut b = tube_on_flange_beside_a_pipe(&mut k);
+        blend(&mut k, &mut b, Kind::Round, &[at_pick], 6.0).unwrap();
+        let (_, v) = measured(&mut k, &mut b);
+        assert_rel(v, FOOT_ROUNDED, 1e-9, "one piece");
+    }
+}
+
+/// Both pieces rounded r 6: the same torus, joined on one section at the old seam's vertex.
+#[test]
+fn tube_foot_both_pieces_round_the_whole_circle() {
+    let mut k = solidcraft_kernel();
+    let mut b = tube_on_flange_beside_a_pipe(&mut k);
+    blend(&mut k, &mut b, Kind::Round, &FOOT_PIECES, 6.0).unwrap();
+    let (_, v) = measured(&mut k, &mut b);
+    assert_rel(v, FOOT_ROUNDED, 1e-9, "both pieces");
+}
+
 /// tangency-labs/solidcore#2679 (the blend corner): fillets/1207 with the r3 round's end
 /// arc on the end face (the edge the r1 round runs on into at y = 17) carrying a tangent
 /// field (`SmTangentField`) as its curve. The field passes the smooth vertex's tests (its

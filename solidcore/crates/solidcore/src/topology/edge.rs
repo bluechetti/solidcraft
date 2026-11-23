@@ -39,6 +39,7 @@
 //! | [`is_embedded`]                         | `SmEdge::IsEmbedded`                              |
 //! | `cover_other_coincident_face` (private) | `sm_CoverOtherCoincidentFace` (static)            |
 //! | [`is_topological`], [`Topological`]     | `SmEdge::IsTopological`                           |
+//! | [`runs_along_seam`], `uv_samples_along_seam` (private) | `SmEdge::IsTopological`'s cheap test 4 (an edge use along a seam of its face's surface), named so the blend asks it of one side of an edge (SolidCraft #17591) |
 //! | [`is_tangent_edge`]                     | `SmEdge::IsTangentEdge`                           |
 //! | [`is_connected_to_face`], [`is_connected_to`] | `SmEdge::IsConnectedToFace`, `IsConnectedTo` |
 //! | [`set_tolerance`]                       | `SmEdge::SetTolerance` (`SM_USE_OLDTOL`)          |
@@ -2028,7 +2029,7 @@ fn is_topological_with(
     ];
     let same_surf = face1 == face2_;
 
-    let samples: [f64; 3] = [0.37, 0.57, 0.82];
+    let samples: [f64; 3] = TOPOLOGICAL_STATIONS;
     let mut uv = [[Point2::new(0.0, 0.0); 3]; 2];
 
     // normalized sample values
@@ -2111,52 +2112,13 @@ fn is_topological_with(
             let (Some(pts), Some(dom)) = (uv.get(ii), uv_domain.get(ii)) else {
                 continue;
             };
-            let [p0, p1, p2] = *pts;
             let cu = closed_u.get(ii).copied().unwrap_or(false);
             let cv = closed_v.get(ii).copied().unwrap_or(false);
-            let mut on_seam = true;
-            let mut iso_u = true;
-            let mut iso_v = true;
-
-            // pick a tolerance
-            let scaled_zero = 10000.0 * scaled_zero2(&p0, &p2);
-
-            // for every sample point pair - see if the curve is Iso
-            for (a, c) in [(p0, p1), (p1, p2)] {
-                if !are_same_to_tol(a.x, c.x, scaled_zero) {
-                    iso_u = false;
-                }
-                if !are_same_to_tol(a.y, c.y, scaled_zero) {
-                    iso_v = false;
-                }
-                // nonIsoCurves can't be on seams
-                if !iso_u && !iso_v {
-                    on_seam = false;
-                    break;
-                }
-            }
-            if !on_seam {
-                continue;
-            }
-
-            // when the curve is Iso in a nonClosed direction - it's not on a seam
-            if (iso_u && !cu) || (iso_v && !cv) {
-                continue;
-            }
-
-            // when IsoCurve is not on UVDomain boundary - it's not on a seam
-            let (tu, tv) = dom.classify_point(p1, scaled_zero, Some(scaled_zero));
-            let at_end =
-                |t: ExtentPointType| matches!(t, ExtentPointType::Start | ExtentPointType::End);
-            if iso_u && !at_end(tu) {
-                continue;
-            }
-            if iso_v && !at_end(tv) {
-                continue;
-            }
 
             // cheap test 4: can't delete edges that run along a seam on any surface
-            return Ok(out);
+            if uv_samples_along_seam(*pts, dom, cu, cv) {
+                return Ok(out);
+            }
         }
     }
 
@@ -2203,6 +2165,106 @@ fn is_topological_with(
 
     out.is_topological = true;
     Ok(out)
+}
+
+/// The normalised parameters along an edge use at which `IsTopological` samples its UV trim
+/// (upstream's), and [`runs_along_seam`] with it.
+const TOPOLOGICAL_STATIONS: [f64; 3] = [0.37, 0.57, 0.82];
+
+/// `IsTopological`'s cheap test 4 on one side of an edge (upstream's, its body unchanged):
+/// whether three UV samples of an edge use, in order along it, run along a seam of its face's
+/// surface. They do where they are an iso line of a direction the surface closes in
+/// (`closed_u`, `closed_v`) and that line is an end of the surface's natural domain `domain`
+/// in that direction.
+fn uv_samples_along_seam(
+    samples: [Point2; 3],
+    domain: &Extent2d,
+    closed_u: bool,
+    closed_v: bool,
+) -> bool {
+    let [p0, p1, p2] = samples;
+    let mut iso_u = true;
+    let mut iso_v = true;
+
+    // pick a tolerance
+    let scaled_zero = 10000.0 * scaled_zero2(&p0, &p2);
+
+    // for every sample point pair - see if the curve is Iso
+    for (a, c) in [(p0, p1), (p1, p2)] {
+        if !are_same_to_tol(a.x, c.x, scaled_zero) {
+            iso_u = false;
+        }
+        if !are_same_to_tol(a.y, c.y, scaled_zero) {
+            iso_v = false;
+        }
+        // nonIsoCurves can't be on seams
+        if !iso_u && !iso_v {
+            return false;
+        }
+    }
+
+    // when the curve is Iso in a nonClosed direction - it's not on a seam
+    if (iso_u && !closed_u) || (iso_v && !closed_v) {
+        return false;
+    }
+
+    // when IsoCurve is not on UVDomain boundary - it's not on a seam
+    let (tu, tv) = domain.classify_point(p1, scaled_zero, Some(scaled_zero));
+    let at_end = |t: ExtentPointType| matches!(t, ExtentPointType::Start | ExtentPointType::End);
+    if iso_u && !at_end(tu) {
+        return false;
+    }
+    if iso_v && !at_end(tv) {
+        return false;
+    }
+    true
+}
+
+/// Not upstream (SolidCraft #17591): whether the edge use `eu` runs along a seam of its
+/// face's surface: the surface closes in a parameter direction, and the edge use's UV trim is
+/// the iso line at an end of the surface's natural domain in that direction
+/// (`IsTopological`'s cheap test 4, `uv_samples_along_seam`, at its own three stations).
+///
+/// [`is_seam`] asks that both sides of the edge lie on one face. This asks one side only, so
+/// it holds on each side of a seam and also on each side of the edge a seam leaves behind
+/// where its face is cut right across: the face no longer wraps, and the seam's line then
+/// lies between the two faces the cut leaves of that one surface.
+///
+/// `false` for an edge use without a face, a face without a surface, a surface closed in
+/// neither direction, and a UV trim that cannot be evaluated.
+///
+/// # Errors
+///
+/// Those of the surface's natural domain and closure tests; [`SolidError::Unported`] and a
+/// cancel from the UV trim's evaluation.
+pub fn runs_along_seam(k: &Kernel, b: &mut Brep, eu: EdgeuseId) -> Result<bool> {
+    let Some(face) = eu1::face(b, eu)? else {
+        return Ok(false);
+    };
+    let Some(surface) = b.face(face)?.surface.as_ref() else {
+        return Ok(false);
+    };
+    let domain = surface.natural_uv_domain_with_nurb(k)?;
+    let closed_u = surface
+        .is_closed(k, &domain, SurfParamType::U, None, false)?
+        .0;
+    let closed_v = surface
+        .is_closed(k, &domain, SurfParamType::V, None, false)?
+        .0;
+    if !closed_u && !closed_v {
+        return Ok(false);
+    }
+    let mut samples = [Point2::new(0.0, 0.0); 3];
+    for (slot, t) in samples.iter_mut().zip(TOPOLOGICAL_STATIONS) {
+        match normalized_evaluate_uv(k, b, eu, t) {
+            Ok(p) => *slot = Point2::new(p.x, p.y),
+            Err(err) => {
+                failed(err)?;
+                return Ok(false);
+            }
+        }
+    }
+    Ok(uv_samples_along_seam(samples, &domain, closed_u, closed_v))
 }
 
 /// `IsTangentEdge`: a manifold edge whose primary edge use's sector is tangent
