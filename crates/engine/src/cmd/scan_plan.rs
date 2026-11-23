@@ -232,7 +232,29 @@ fn plan_region(s: &mut Session, p: &Value) -> Result<Value> {
     plan_reply(s, scan, changed)
 }
 
+/// The verdict `scan.verdict` last gave, with the design it was read on: the agent chat shows it
+/// as a card when a message's work read one (one card, no second reading of the scan).
+#[derive(Debug)]
+pub struct KeptVerdict {
+    pub doc: std::sync::Arc<solidcraft_doc::Document>,
+    pub reply: Value,
+}
+
+impl KeptVerdict {
+    /// Whether it was read on the design as it is now: the same design, or an equal one (a
+    /// command that ends leaves the design in a new copy even when nothing in it changed).
+    pub fn current(&self, s: &Session) -> bool {
+        std::sync::Arc::ptr_eq(&self.doc, &s.doc) || *self.doc == *s.doc
+    }
+}
+
 pub(crate) fn verdict(s: &mut Session, p: &Value) -> Result<Value> {
+    let reply = read_verdict(s, p)?;
+    s.scan_verdict = Some(std::sync::Arc::new(KeptVerdict { doc: s.doc.clone(), reply: reply.clone() }));
+    Ok(reply)
+}
+
+fn read_verdict(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.verdict";
     let scan = scan_of(s, p, cmd)?;
     let model = str_(p, "model").filter(|m| !m.trim().is_empty()).map(str::to_owned);

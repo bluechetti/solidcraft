@@ -509,6 +509,40 @@ fn a_messages_changes_undo_as_one_step() {
     assert!(matches!(app.agent_chat.items[n], Item::Changes { undone: true, .. }));
 }
 
+/// A message whose work read a scan verdict ends with its card; a later message that read none
+/// adds no second one. The card's Fix this writes the place into the message box with its world
+/// point, and Show turns the view to it.
+#[test]
+fn a_verdict_read_during_a_message_ends_it_as_a_card() {
+    let (mut app, _tx) = app_in_a_turn();
+    let place = json!({"at": [12.5, -3.0, 4.0], "depth": 0.8, "area": 36.0, "kind": "missing"});
+    let reply = json!({"verdict": "not_done", "scan_within": 0.91, "model_within": 0.88, "target": 0.9, "tolerance": 0.2,
+        "issues": [{"code": "below_target", "detail": "the model covers 88 % of the scan"}], "places": [place.clone()]});
+    app.session.scan_verdict = Some(Arc::new(solidcraft_engine::cmd::scan::plan::KeptVerdict { doc: app.session.doc.clone(), reply: reply.clone() }));
+    app.agent_chat.on_event(Event::TurnEnded { reason: String::new() });
+    end_turn(&mut app);
+    let cards: Vec<_> = app.agent_chat.items.iter().filter(|i| matches!(i, Item::Verdict { .. })).collect();
+    assert!(matches!(cards.as_slice(), [Item::Verdict { current: true, reply: r }] if *r == reply), "{cards:?}");
+
+    // Fix this: the place, in words and as a world point, for the agent to act on.
+    let text = verdict_fix_text(&place);
+    assert!(text.contains("(12.50, -3.00, 4.00)") && text.contains("0.80 mm") && text.contains("36 mm²"), "{text}");
+    app.agent_chat.input = "and keep the rim".into();
+    panel::run(&mut app, &crate::fonts::test_context(), panel::PanelAction::FixPlace(place.clone()));
+    assert_eq!(app.agent_chat.input, format!("and keep the rim\n{text}"));
+    // Show: the view turns to the place.
+    panel::run(&mut app, &crate::fonts::test_context(), panel::PanelAction::LookAtPlace(place));
+    let to = app.cam_anim.as_ref().map_or(app.cam, |a| a.to);
+    assert_eq!([to.target.x, to.target.y, to.target.z], [12.5, -3.0, 4.0]);
+
+    // The next message reads no verdict: no second card.
+    app.agent_chat.state = Some(State::Busy);
+    start_turn(&mut app, "thanks".into(), false, None, Vec::new());
+    app.agent_chat.on_event(Event::TurnEnded { reason: String::new() });
+    end_turn(&mut app);
+    assert_eq!(app.agent_chat.items.iter().filter(|i| matches!(i, Item::Verdict { .. })).count(), 1);
+}
+
 /// The conversation knows a design by its revision: the very design the host gave it, never an
 /// equal copy, and only the host's own type gets the design back (#13438).
 #[test]

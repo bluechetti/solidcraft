@@ -58,11 +58,17 @@ pub(crate) fn note(s: &mut Session, before: &Document, scan: &str) {
     if added.is_empty() {
         return;
     }
+    // A verdict the command read on the design just before this note stays current: the note is
+    // bookkeeping, not a change to what the verdict measured (Scan to CAD ends with one).
+    let verdict_was_current = s.scan_verdict.as_ref().is_some_and(|k| k.current(s));
     let doc = s.doc_mut();
     for id in added {
         if let Some(f) = doc.feature_mut(id) {
             f.made_from.push(scan.to_owned());
         }
+    }
+    if verdict_was_current && let Some(kept) = s.scan_verdict.take() {
+        s.scan_verdict = Some(std::sync::Arc::new(super::plan::KeptVerdict { doc: s.doc.clone(), reply: kept.reply.clone() }));
     }
 }
 

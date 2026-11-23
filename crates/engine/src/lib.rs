@@ -821,6 +821,10 @@ pub struct Session {
     /// What `scan.survey` last read off a scan, for the Survey dialog. View state: not part of the
     /// design and not an undo step.
     pub scan_survey: Option<std::sync::Arc<cmd::scan::survey::KeptSurvey>>,
+    /// The verdict `scan.verdict` last gave (Scan to CAD and Reconstruct the Rest run it too),
+    /// with the design it was read on, for the agent chat's verdict card. View state: not part
+    /// of the design and not an undo step.
+    pub scan_verdict: Option<std::sync::Arc<cmd::scan::plan::KeptVerdict>>,
     /// What is selected on a scan (`scan.select`), for the scan tools that work on part of one.
     /// View state: not part of the design and not an undo step (`scan.keep_selection` keeps it).
     pub scan_selection: Option<std::sync::Arc<cmd::scan::select::ScanSelected>>,
@@ -1202,6 +1206,7 @@ impl Session {
             inspection: None,
             scan_shapes: None,
             scan_survey: None,
+            scan_verdict: None,
             scan_selection: None,
             scan_base_cycle: None,
             isocurves: Vec::new(),
@@ -2868,6 +2873,7 @@ impl Session {
             // reads it again only when the scan changed (`ScanShapes::current`).
             scan_shapes: self.scan_shapes.clone(),
             scan_survey: None,
+            scan_verdict: None,
             scan_selection: self.scan_selection.clone(),
             scan_base_cycle: self.scan_base_cycle.clone(),
             isocurves: Vec::new(),

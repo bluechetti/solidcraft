@@ -415,6 +415,10 @@ fn scan_to_cad_builds_the_part_in_one_command_and_says_whether_it_is_done() {
     let steps = done["steps"].as_array().unwrap();
     assert!(steps.iter().any(|st| st["command"] == "scan.extrude_it" && st["kept"] == true && st["verdict"].is_string()), "{done}");
     assert!(done["verdict"]["verdict"].is_string(), "{done}");
+    // The verdict is kept for the agent chat's card, read on the design as it is now.
+    let kept = s.scan_verdict.clone().expect("a verdict is kept");
+    assert!(kept.current(&s), "read on the design as it is now");
+    assert_eq!(kept.reply, done["verdict"]);
     assert!(done["next"].as_str().is_some_and(|n| n.contains(&solid)), "{done}");
     let v = volume(&s, &solid);
     assert!((v - expected).abs() < 0.01 * expected, "{v} against {expected}");

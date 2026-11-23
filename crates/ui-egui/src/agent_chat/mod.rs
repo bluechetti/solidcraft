@@ -309,6 +309,14 @@ pub enum Item {
         text: String,
         error: bool,
     },
+    /// The scan verdict a message's work read last (`scan.verdict`, also run by Scan to CAD and
+    /// Reconstruct the Rest): done or not, the two shares, what is open and the worst places,
+    /// each with a button that turns the view to it and one that asks the agent to fix it.
+    /// `current`: read on the design as the message left it.
+    Verdict {
+        reply: Value,
+        current: bool,
+    },
 }
 
 /// Which undo step is the last one done: the history's depth and its top step. The chat keeps it
@@ -381,6 +389,8 @@ struct Turn {
     /// When it was sent, and when the agent last said or did something (ms since the epoch).
     began: f64,
     heard: f64,
+    /// The scan verdict kept before it, so a verdict read during it shows as a card.
+    verdict_before: Option<Revision>,
 }
 
 /// A message typed while the agent works: shown in the transcript as "Queued" until it is sent.
@@ -1988,6 +1998,7 @@ fn start_turn_with(app: &mut SolveApp, text: String, image: bool, at: Option<usi
         edit_requested: requests_edit(&text),
         began: now,
         heard: now,
+        verdict_before: app.session.scan_verdict.as_ref().map(Revision::of),
     });
     app.agent_chat.last = Some((text, image, at, files));
     app.agent_chat.state = Some(State::Busy);
@@ -2255,6 +2266,12 @@ fn finish_turn(chat: &mut AgentChat, session: &mut solidcraft_engine::Session) {
     if steps > 0 {
         chat.push(Item::Changes { steps, revision: Revision::of(&session.doc), history: UndoMark::revision(&session.undo), undone: false });
     }
+    // A verdict read during the message: the card that ends it.
+    if let Some(kept) = session.scan_verdict.as_ref()
+        && !turn.verdict_before.as_ref().is_some_and(|before| before.is(kept))
+    {
+        chat.push(Item::Verdict { reply: kept.reply.clone(), current: kept.current(session) });
+    }
     // How long the answer took, under its last item ("Answered in 23 min").
     let answered = chat.ended.as_deref().is_some_and(|r| !matches!(r, "cancelled" | "error" | "auth")) && !chat.stopped;
     let took = (crate::now_ms() - turn.began).max(0.0);
@@ -2324,6 +2341,39 @@ pub fn undo_changes(app: &mut SolveApp, index: usize) {
     {
         *undone = true;
     }
+}
+
+/// A place of a scan verdict (`{at, depth, area, kind}`) in words, for its button.
+pub(crate) fn verdict_place(place: &Value) -> String {
+    let depth = place.get("depth").and_then(Value::as_f64).unwrap_or(0.0);
+    let area = place.get("area").and_then(Value::as_f64).unwrap_or(0.0);
+    let key =
+        if place.get("kind").and_then(Value::as_str) == Some("extra") { "ui.agent_chat_verdict_extra" } else { "ui.agent_chat_verdict_missing" };
+    trf(key, &[("depth", &format!("{depth:.2} mm")), ("area", &format!("{area:.0} mm²"))])
+}
+
+/// What "Fix this" puts in the message box for a place of the verdict: where it is (world mm, as
+/// the agent's tools take points), what is wrong there, and to check again.
+pub(crate) fn verdict_fix_text(place: &Value) -> String {
+    let at = place.get("at").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_f64).collect::<Vec<_>>()).unwrap_or_default();
+    let [x, y, z] = [0, 1, 2].map(|i| format!("{:.2}", at.get(i).copied().unwrap_or(0.0)));
+    trf("ui.agent_chat_verdict_fix_text", &[("x", &x), ("y", &y), ("z", &z), ("what", &verdict_place(place))])
+}
+
+/// Turn the view to a place of the verdict: the same direction, centred on it, close enough to
+/// see a patch the size of the place (animated as Look At is).
+pub(crate) fn look_at_place(app: &mut SolveApp, place: &Value) {
+    let Some(at) = place.get("at").and_then(Value::as_array).filter(|a| a.len() == 3) else { return };
+    let [Some(x), Some(y), Some(z)] = [0, 1, 2].map(|i| at.get(i).and_then(Value::as_f64)) else { return };
+    if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+        return;
+    }
+    let area = place.get("area").and_then(Value::as_f64).filter(|a| a.is_finite() && *a > 0.0).unwrap_or(25.0);
+    let mut to = app.cam;
+    to.target = solidcore_record::Vec3::new(x, y, z);
+    // About eight times the place's size away, never further than the view already is.
+    to.distance = (area.sqrt() * 8.0).clamp(10.0, app.cam.distance.max(10.0));
+    app.animate_to(to);
 }
 
 /// The requests the agent's tools sent through the chat's endpoint: each one passes the gate.
@@ -3059,6 +3109,7 @@ pub fn status(app: &SolveApp) -> Value {
             Item::Approval { title, answer, .. } => json!({"approval": title, "answer": answer}),
             Item::Changes { steps, undone, .. } => json!({"changes": steps, "undone": undone}),
             Item::Notice { text, error } => json!({"notice": text, "error": error}),
+            Item::Verdict { reply, current } => json!({"verdict": reply, "current": current}),
         })
         .collect();
     #[cfg(not(target_arch = "wasm32"))]

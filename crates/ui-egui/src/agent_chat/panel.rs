@@ -58,6 +58,10 @@ pub enum PanelAction {
     RemovePending(usize),
     /// Undo the changes of the message at this index.
     UndoChanges(usize),
+    /// Turn the view to a place of a scan verdict (its `{at, depth, area, kind}`).
+    LookAtPlace(serde_json::Value),
+    /// Put a request to fix a place of a scan verdict in the message box.
+    FixPlace(serde_json::Value),
     SetMode(String),
     SetModel(String),
     SetCustomModel(String),
@@ -120,6 +124,15 @@ pub fn run(app: &mut SolveApp, ctx: &egui::Context, action: PanelAction) {
         PanelAction::Cancel => cancel(app),
         PanelAction::RemovePending(n) => remove_pending(app, n),
         PanelAction::UndoChanges(n) => undo_changes(app, n),
+        PanelAction::LookAtPlace(place) => super::look_at_place(app, &place),
+        PanelAction::FixPlace(place) => {
+            let text = super::verdict_fix_text(&place);
+            let input = &mut app.agent_chat.input;
+            if !input.trim().is_empty() && !input.ends_with('\n') {
+                input.push('\n');
+            }
+            input.push_str(&text);
+        }
         PanelAction::SetMode(m) => set_mode(app, &m),
         PanelAction::SetModel(m) => set_model(app, &m),
         PanelAction::SetCustomModel(m) => {
@@ -2016,6 +2029,8 @@ fn conversation(chat: &mut AgentChat, view: &PanelView, ui: &mut egui::Ui) {
     // Allow (true), Deny (false), Always allow (None).
     let mut approval: Option<(u64, Option<bool>)> = None;
     let mut undo: Option<usize> = None;
+    // A verdict place's buttons: turn the view to it, or ask the agent to fix it.
+    let mut place_action: Option<PanelAction> = None;
     let mut open_gallery: Option<Gallery> = None;
     // The pill or chip under the pointer, for the host to light.
     let mut hovered: Option<Hovered> = None;
@@ -2245,6 +2260,11 @@ fn conversation(chat: &mut AgentChat, view: &PanelView, ui: &mut egui::Ui) {
                     ui.add(egui::Label::new(RichText::new(text).color(if *error { t.error } else { t.text_dim })).wrap());
                 });
             }
+            Item::Verdict { reply, current } => {
+                if let Some(action) = verdict_card(ui, n, reply, *current) {
+                    place_action = Some(action);
+                }
+            }
         }
         took_line(ui, &stamp);
     }
@@ -2396,6 +2416,58 @@ fn conversation(chat: &mut AgentChat, view: &PanelView, ui: &mut egui::Ui) {
     if let Some(n) = undo {
         chat.actions.push(PanelAction::UndoChanges(n));
     }
+    if let Some(action) = place_action {
+        chat.actions.push(action);
+    }
+}
+
+/// The scan verdict card: done or not, the two shares against the target, what is open, and
+/// each worst place with Show (turn the view to it) and Fix this (ask the agent to fix it).
+#[cfg(not(target_arch = "wasm32"))]
+fn verdict_card(ui: &mut egui::Ui, n: usize, reply: &serde_json::Value, current: bool) -> Option<PanelAction> {
+    let t = Tokens::get();
+    let met = reply.get("verdict").and_then(serde_json::Value::as_str) == Some("met");
+    let share = |k: &str| reply.get(k).and_then(serde_json::Value::as_f64).map_or_else(|| "?".to_owned(), |v| format!("{:.0} %", v * 100.0));
+    let tolerance = reply.get("tolerance").and_then(serde_json::Value::as_f64).map_or_else(|| "?".to_owned(), |v| format!("{v} mm"));
+    let mut action = None;
+    let tone = if met { ui_kit::AssistantTone::Success } else { ui_kit::AssistantTone::Warning };
+    ui_kit::assistant_banner(ui, tone, |ui| {
+        let title = if met { tr("ui.agent_chat_verdict_met") } else { tr("ui.agent_chat_verdict_not_done") };
+        ui.label(RichText::new(title).strong().color(t.text));
+        let shares = trf(
+            "ui.agent_chat_verdict_shares",
+            &[("scan", &share("scan_within")), ("model", &share("model_within")), ("tolerance", &tolerance), ("target", &share("target"))],
+        );
+        ui.add(egui::Label::new(RichText::new(shares).color(t.text_dim).size(t.font_caption)).wrap());
+        if !current {
+            ui.label(RichText::new(tr("ui.agent_chat_verdict_stale")).color(t.text_dim).size(t.font_caption));
+        }
+        for issue in reply.get("issues").and_then(serde_json::Value::as_array).into_iter().flatten().take(3) {
+            if let Some(detail) = issue.get("detail").and_then(serde_json::Value::as_str) {
+                ui.add(egui::Label::new(RichText::new(format!("• {detail}")).color(t.text_dim).size(t.font_caption)).wrap());
+            }
+        }
+        for (i, place) in reply.get("places").and_then(serde_json::Value::as_array).into_iter().flatten().take(3).enumerate() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(super::verdict_place(place)).color(t.text).size(t.font_caption));
+                let show = ui_kit::button(ui, tr("ui.agent_chat_verdict_show"), ui_kit::Button::Normal)
+                    .backing_on_hover_text(tr("ui.agent_chat_verdict_show_tip"));
+                solidcraft_ui_registry::publish_handle(&format!("agent_chat:verdict:{n}:show:{i}"), show.rect.center());
+                if show.clicked() {
+                    action = Some(PanelAction::LookAtPlace(place.clone()));
+                }
+                if current {
+                    let fix = ui_kit::button(ui, tr("ui.agent_chat_verdict_fix"), ui_kit::Button::Normal)
+                        .backing_on_hover_text(tr("ui.agent_chat_verdict_fix_tip"));
+                    solidcraft_ui_registry::publish_handle(&format!("agent_chat:verdict:{n}:fix:{i}"), fix.rect.center());
+                    if fix.clicked() {
+                        action = Some(PanelAction::FixPlace(place.clone()));
+                    }
+                }
+            });
+        }
+    });
+    action
 }
 
 /// The files that went (or will go) with a message, by name.
