@@ -467,9 +467,30 @@ mod viewport_details;
 mod viewport_layout;
 mod viewport_status;
 mod viewport_status_fixture;
+pub mod vr_assistant;
+#[cfg(test)]
+mod vr_assistant_tests;
+pub mod vr_browser;
+#[cfg(test)]
+mod vr_browser_tests;
+pub mod vr_handles;
+#[cfg(test)]
+mod vr_handles_tests;
 pub mod vr_joints;
 #[cfg(test)]
 mod vr_joints_tests;
+pub mod vr_measure;
+#[cfg(test)]
+mod vr_measure_tests;
+pub mod vr_params;
+#[cfg(test)]
+mod vr_params_tests;
+pub mod vr_pick;
+#[cfg(test)]
+mod vr_pick_tests;
+pub mod vr_settings;
+#[cfg(test)]
+mod vr_settings_tests;
 pub mod wheel_hint;
 pub use solidcraft_ui_kit::window_chrome;
 mod wireframe_silhouettes;
@@ -591,6 +612,20 @@ impl Default for UiState {
     }
 }
 
+/// A press a script asks of the VR view through the control port (`ui.vr_press`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum VrPress {
+    /// Select on the belt's spot named as `vr_pointing` names it (`belt:Parameters`, `item:0`).
+    Belt(String),
+    /// Select on the belt's window at this place across and down it (0 to 1).
+    Window([f64; 2]),
+    /// A ring menu action taken by the right hand, by its settings name (`measure`).
+    Act(String),
+    /// Select pressed (`true`) or let go on the belt's window at this place: a press held over
+    /// frames, as Talk needs.
+    WindowHold([f64; 2], bool),
+}
+
 /// Host services injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
@@ -632,6 +667,30 @@ pub struct Services {
     pub graphics_restart: Option<(std::path::PathBuf, Vec<String>)>,
     /// Adapter names and descriptive labels from the desktop renderer's chosen backends.
     pub graphics_adapters: Vec<(String, String)>,
+    /// The host can show the design in a VR headset (#2172): what this run is doing about it, in
+    /// words for Preferences › XR, where the setting for the next start is then offered.
+    /// `None`: this host has no VR (the browser, macOS), and the page says what VR needs.
+    pub vr_status: Option<String>,
+    /// A VR session is open in this run (it may still wait for the headset): Preferences › XR
+    /// offers to disconnect rather than to connect.
+    pub vr_connected: bool,
+    /// Preferences › XR asked to end the VR session: the host ends it and clears this.
+    pub vr_disconnect: bool,
+    /// Whether the running VR session can show the real room around the model (passthrough);
+    /// `None` without a session.
+    pub vr_passthrough: Option<bool>,
+    /// What each VR hand (left, right) points at on the belt and its window, in plain words
+    /// (`belt:Parameters`, `item:0`, `window:0.412,0.305`, `handle:Post1 Height (post_h)`,
+    /// `part:Post1`), for `ui.inspect`: scripts that drive a
+    /// simulated headset steer by it. Empty without a session.
+    pub vr_pointing: Vec<String>,
+    /// Presses a script asked of the VR view (`ui.vr_press`), done by the host at its next frame
+    /// as a Select there would be: what drives a simulated headset whose hands cannot aim finely.
+    pub vr_script: Vec<VrPress>,
+    /// Where the VR view's rays and handle tips are in the room (`{"rays": [{"at", "dir"}, ...],
+    /// "handles": [{"label", "tip"}, ...]}`, metres), for `ui.inspect`: a script steering a
+    /// simulated hand onto a handle aims by it. Null without a session.
+    pub vr_scene: serde_json::Value,
     /// HTTPS GET for the update check (`update`); None: never check (browser, tests).
     pub http_get: Option<update::HttpGet>,
     /// HTTPS download to a file, with progress, for one-click updates (`update::install`).

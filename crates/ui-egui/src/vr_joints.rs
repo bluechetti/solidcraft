@@ -1,5 +1,5 @@
 //! Joints for the headset and AR views (docs/vr.md, the iPad's docs/ar.md): a placed part held moves
-//! as its joints allow.
+//! as its joints allow (with Select in the headset, with the Pencil on the iPad).
 //! Its axes are the ones the desktop's Move shows ([`solidcraft_engine::doc::joints::motion_axes`]),
 //! and each frame of the drag drives the joint (`joint.drive`, continuous) as the desktop's joint
 //! handles do: the whole drag is one undo step, the limits clamp it, and what held a value back (a
@@ -27,7 +27,16 @@ pub struct Axis {
     pub limits: Option<(f64, f64)>,
 }
 
-/// The placed part `body` is in (its occurrence), when it is in one.
+/// The placed part an occurrence path ends in.
+pub fn occurrence_of(part: &crate::vr_pick::Part) -> Option<u64> {
+    match &part.sel {
+        solidcraft_engine::Sel::Occurrence { path } => path.last().copied(),
+        _ => None,
+    }
+}
+
+/// The placed part `body` is in (its occurrence), when it is in one: the iPad's way in, from a
+/// body under the Pencil.
 pub fn placed_part(app: &SolveApp, body: &str) -> Option<u64> {
     match crate::viewport::component_selection(app, body) {
         solidcraft_engine::Sel::Occurrence { path } => path.last().copied(),

@@ -7932,6 +7932,7 @@ fn show_view(app: &mut SolveApp, ui: &mut egui::Ui) {
             motions: joint_motions::motions(app),
             ground: joint_motions::ground(app),
         };
+        // The headset's second view draws this frame's scene too (`stereo`, docs/vr.md).
         app.viewport.stereo.publish(&frame, proj.cam, [t.viewport_top, t.viewport_bottom]);
         match app.viewport.scene_slot() {
             // A tile is its own paint callback: it does not go through the blur's source.

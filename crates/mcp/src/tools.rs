@@ -634,7 +634,7 @@ pub fn call_tool_with(b: &mut dyn Backend, name: &str, args: &Value, opts: Optio
             None => Err(format!("`{name}`: arguments must be an object")),
         },
         "screenshot" => return screenshot(b, a),
-        "compare_picture" => return compare_picture(b, a, opts),
+        "compare_picture" => return compare_picture(b, a),
         "batch" => return batch(b, a),
         "check_parameters" => return check_parameters(b, a),
         "execute" => return execute(b, a),
@@ -2839,7 +2839,7 @@ fn capture_views(b: &mut dyn Backend, a: &Map<String, Value>, views: &Value) -> 
 /// `compare_picture`: run the engine comparison, which writes the overlay PNG to a scratch file
 /// (as a screenshot is), and hand the picture back as an MCP image block, the numbers as text: an
 /// agent sees the picture, and no command reply carries it as text.
-fn compare_picture(b: &mut dyn Backend, a: &Map<String, Value>, opts: Options) -> Value {
+fn compare_picture(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     let n = SHOT.fetch_add(1, Ordering::Relaxed);
     let dir = crate::scratch_dir().unwrap_or_else(vfs::temp_dir);
     let path = dir.join(format!("compare-{n}.png")).to_string_lossy().to_string();

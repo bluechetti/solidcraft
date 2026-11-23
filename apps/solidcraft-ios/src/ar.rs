@@ -1193,15 +1193,17 @@ impl State {
     fn bind(&mut self, rs: &egui_wgpu::RenderState, model: bool) {
         let mut renderer = rs.renderer.write();
         let picture = self.target.as_ref().filter(|_| model).map(ViewTarget::picture).cloned();
-        // The model's depth, as its own depth-only view (the renderer's buffer may carry a
-        // stencil too), only when its sample count is the one the pipeline reads.
+        // The model's depth, the second view's own depth-only view of it (the renderer's buffer
+        // may carry a stencil too; the headset reads the same one), only when its sample count is
+        // the one the pipeline reads and it runs reversed, as the AR shader reads it.
         let samples = renderer.callback_resources.get::<Gpu>().map(|g| g.samples);
         let depth = self
             .target
             .as_ref()
-            .filter(|t| model && Some(t.samples()) == samples)
+            .filter(|_| model)
             .and_then(ViewTarget::depth)
-            .map(|v| v.texture().create_view(&wgpu::TextureViewDescriptor { aspect: wgpu::TextureAspect::DepthOnly, ..Default::default() }));
+            .filter(|(n, reversed, _)| Some(*n) == samples && *reversed)
+            .map(|(_, _, v)| v.clone());
         let Some(gpu) = renderer.callback_resources.get_mut::<Gpu>() else { return };
         let (Some((_, luma, _)), Some((_, chroma, _))) = (&gpu.luma, &gpu.chroma) else {
             gpu.bind = None;

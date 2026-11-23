@@ -13,6 +13,8 @@ pub struct ViewTarget {
     /// failed is replaced by a one-sample one (`check_msaa`), whose pipelines cannot draw into
     /// them.
     samples: u32,
+    /// Its depth runs reversed (the renderer's depth format).
+    reversed: bool,
     /// The see-through surfaces' targets, made when a scene first has such surfaces.
     oit: Option<oit::Targets>,
 }
@@ -29,12 +31,10 @@ impl ViewTarget {
         self.frame.resolve.as_ref().unwrap_or(&self.frame.color)
     }
 
-    /// The model's depth, as the renderer keeps it (reversed: 1 at the near plane, 0 at the far
-    /// one and where nothing was drawn), multisampled with [`ViewTarget::samples`]. A host can
-    /// read it in a shader, to compare the model's depth with another (AR: the room's, from the
-    /// device's depth sensor). `None` for a renderer without a depth buffer.
-    pub fn depth(&self) -> Option<&wgpu::TextureView> {
-        self.frame.depth.as_ref()
+    /// The picture's depth for a later pass to read: its sample count, whether it runs reversed
+    /// (1 near, 0 far: [`reversed_depth`]), and its depth aspect. Kept from the last draw.
+    pub fn depth(&self) -> Option<(u32, bool, &wgpu::TextureView)> {
+        self.frame.depth_read.as_ref().map(|view| (self.samples, self.reversed, view))
     }
 
     /// The picture bound for the renderer's own copy pipeline (tests read it back through that).
@@ -43,8 +43,9 @@ impl ViewTarget {
         &self.frame.bind
     }
 
-    /// The sample count the textures were made with (the depth picture's too).
-    pub fn samples(&self) -> u32 {
+    /// The sample count the textures were made with.
+    #[cfg(test)]
+    pub(super) fn samples(&self) -> u32 {
         self.samples
     }
 }
@@ -78,13 +79,13 @@ impl Renderer {
         let size = [size[0].clamp(1, max), size[1].clamp(1, max)];
         let samples = self.target.samples;
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("sc_second_view") });
-        if target.as_ref().is_none_or(|t| t.frame.size != size || t.samples != samples) {
+        if target.as_ref().is_none_or(|t| t.frame.size != size || t.samples != samples || t.reversed != self.target.reversed_depth()) {
             // The old picture goes before the new one is asked for.
             *target = None;
-            match allocated(device, || self.supersampled_with(device, size, true)) {
+            match allocated(device, || self.supersampled(device, size, true)) {
                 Ok(made) => {
                     clear_resolve_targets(&mut encoder, made.resolve.as_ref());
-                    *target = Some(ViewTarget { frame: made, samples, oit: None });
+                    *target = Some(ViewTarget { frame: made, samples, reversed: self.target.reversed_depth(), oit: None });
                 }
                 Err(e) => {
                     log::warn!("the second view is not drawn: the GPU refused a {} × {} picture: {e}", size[0], size[1]);
@@ -124,6 +125,9 @@ impl Renderer {
             }
             queue.write_buffer(&self.moving_uniform, 0, &uniform_bytes_placing(frame, w, h, self.linear_out, reversed, mv.transform));
         }
+        // Bodies drawn moved (a joint drag) are drawn and culled where the frame moves them, as in
+        // the window; the table is written only when the motions changed since the window's.
+        self.motions.set(queue, &frame.motions);
         self.pic.model.cull(device, queue, &frame.view_proj, [w, h], &frame.motions, frame.edge_px);
         queue.write_buffer(&self.uniform, 0, &uniform_bytes(frame, w, h, self.linear_out, reversed));
 
@@ -131,7 +135,8 @@ impl Renderer {
         let [sw, sh] = [scissor[2].min(size[0] - sx), scissor[3].min(size[1] - sy)];
         let visible = sw > 0 && sh > 0;
         let stencil = self.target.depth.is_some_and(|f| f.has_stencil_aspect());
-        let keep = if see_through { wgpu::StoreOp::Store } else { wgpu::StoreOp::Discard };
+        // Kept: the headset hides its controllers and signs behind the model by it.
+        let keep = wgpu::StoreOp::Store;
         let far = far_depth(reversed);
         let ss = &view.frame;
         let pass = |encoder: &mut wgpu::CommandEncoder, first: bool| {
@@ -175,6 +180,7 @@ impl Renderer {
                     let mut first = pass(&mut encoder, true);
                     self.draw(frame, &mut first, Phase::BeforeSeeThrough, &tally);
                 }
+                // Not timed: the frame-rate readout's times are the window's.
                 p.accumulate(&mut encoder, t, ss.depth.as_ref(), stencil, None, |pass| {
                     pass.set_scissor_rect(sx, sy, sw, sh);
                     self.draw_see_through(pass, p, &tally);

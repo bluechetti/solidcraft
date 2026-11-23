@@ -702,6 +702,7 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
         "mcp.options" => ok(json!({"compact": app.preferences.mcp_compact})),
         "ui.messages" => ok(crate::messages::control(app, p)),
         "ui.inspect" => ui_inspect(app),
+        "ui.vr_press" => ui_vr_press(app, p),
         "ui.file" => with(p, |q| ui_file(app, q)),
         "ui.documents" => ok(crate::documents::control(app, p)),
         "ui.operations" => wrap(crate::operations::control(app, p)),
@@ -1018,6 +1019,36 @@ fn ui_agent_cursor(app: &mut SolveApp, p: &Value) -> Outcome {
     ok(json!(app.ui.agent_cursor))
 }
 
+/// `ui.vr_press`: Select on a spot of the VR view's belt (`{"belt": "belt:Parameters"}`, as
+/// `vr_pointing` names it) or on its window (`{"window": [across, down]}`, 0 to 1), done at the VR
+/// view's next frame. For scripts driving a simulated headset; refused without a VR session.
+fn ui_vr_press(app: &mut SolveApp, p: &Value) -> Outcome {
+    if !app.services.vr_connected {
+        return err("ui.vr_press: no VR session is open");
+    }
+    let press = if let Some(spot) = p.get("belt").and_then(Value::as_str) {
+        crate::VrPress::Belt(spot.to_string())
+    } else if let Some(act) = p.get("act").and_then(Value::as_str) {
+        if !["measure", "clashes", "sweep"].contains(&act) {
+            return err("ui.vr_press: act takes measure, clashes or sweep");
+        }
+        crate::VrPress::Act(act.to_string())
+    } else if let Some(at) = p.get("window").and_then(Value::as_array) {
+        let uv: Vec<f64> = at.iter().filter_map(Value::as_f64).filter(|v| (0.0..=1.0).contains(v)).collect();
+        let [u, v] = uv[..] else {
+            return err("ui.vr_press: window takes [across, down], each from 0 to 1");
+        };
+        match p.get("hold").and_then(Value::as_bool) {
+            Some(down) => crate::VrPress::WindowHold([u, v], down),
+            None => crate::VrPress::Window([u, v]),
+        }
+    } else {
+        return err("ui.vr_press: give belt (a spot as vr_pointing names it), window ([across, down]) or act (measure, clashes, sweep)");
+    };
+    app.services.vr_script.push(press);
+    ok(json!({"queued": app.services.vr_script.len()}))
+}
+
 /// `ui.inspect`: UI state, viewport rect, camera, tool and dialog.
 fn ui_inspect(app: &SolveApp) -> Outcome {
     ok(json!({
@@ -1032,6 +1063,8 @@ fn ui_inspect(app: &SolveApp) -> Outcome {
         "windows": open_windows(app),
         "status": app.status.as_ref().map(|(text, _, error)| json!({"text": text, "error": error})),
         "hover": app.viewport.hover,
+        "vr_pointing": app.services.vr_pointing,
+        "vr_scene": app.services.vr_scene,
         "snap_points": crate::snap_wake::inspect(app),
         "renderer": if app.viewport.gpu.is_some() { "gpu" } else { "cpu" },
         "frame_ms": app.frame_ms,
@@ -2985,6 +3018,29 @@ pub(crate) mod tests {
         assert!(now().is_some_and(|(other, _)| other != id), "{:?}", now());
         drop(counted);
         assert!(!WATCH.subscribed());
+    }
+
+    /// `ui.vr_press` queues a press only while a VR session is open, and only a belt spot or a
+    /// place on the window inside it.
+    #[test]
+    fn vr_press_needs_a_session_and_a_place_on_the_window() {
+        let mut h = crate::scenario::Harness::new();
+        assert_eq!(h.call("ui.vr_press", json!({"belt": "belt:Parameters"}))["ok"], false);
+        h.app.services.vr_connected = true;
+        for bad in [json!({}), json!({"window": [0.5]}), json!({"window": [1.5, 0.2]}), json!({"window": "x"})] {
+            assert_eq!(h.call("ui.vr_press", bad.clone())["ok"], false, "{bad}");
+        }
+        assert_eq!(h.call("ui.vr_press", json!({"belt": "belt:Parameters"}))["ok"], true);
+        assert_eq!(h.call("ui.vr_press", json!({"window": [0.9, 0.25]}))["ok"], true);
+        assert_eq!(h.call("ui.vr_press", json!({"act": "explode"}))["ok"], false);
+        assert_eq!(h.call("ui.vr_press", json!({"act": "measure"}))["ok"], true);
+        assert_eq!(h.call("ui.vr_press", json!({"window": [0.5, 0.1], "hold": true}))["ok"], true);
+        h.app.services.vr_script.pop();
+        assert_eq!(
+            h.app.services.vr_script,
+            [crate::VrPress::Belt("belt:Parameters".into()), crate::VrPress::Window([0.9, 0.25]), crate::VrPress::Act("measure".into())]
+        );
+        assert!(h.call("ui.inspect", json!({}))["result"]["vr_pointing"].is_array());
     }
 
     /// #3750: the "Recover unsaved design?" prompt is `ui.inspect`'s `dialog`, and `ui.recover`
