@@ -122,6 +122,8 @@ pub struct Vr {
     measure: Option<Measure>,
     /// A placed part being moved as its joints allow ([`handles::JointDrag`]).
     joint_drag: Option<handles::JointDrag>,
+    /// Where a script holds Select on the belt's window (`ui.vr_press` with hold).
+    script_held: Option<[f64; 2]>,
     /// The clashes shown (View ▸ Clashes): the hand that turned them on, the design they were
     /// found in, and the overlaps, drawn as red boxes.
     clashes: Option<(usize, (u64, u64), Vec<solidcraft_ui_egui::vr_joints::Clash>)>,
@@ -478,6 +480,7 @@ impl Vr {
             moving: None,
             measure: None,
             joint_drag: None,
+            script_held: None,
             clashes: None,
             swept: None,
             last_frame: 0.0,
@@ -1057,14 +1060,18 @@ impl Vr {
                     }
                     let spot = match &press {
                         solidcraft_ui_egui::VrPress::Belt(name) => script_spot(name),
-                        solidcraft_ui_egui::VrPress::Window(_) | solidcraft_ui_egui::VrPress::Act(_) => None,
+                        solidcraft_ui_egui::VrPress::Window(_)
+                        | solidcraft_ui_egui::VrPress::WindowHold(..)
+                        | solidcraft_ui_egui::VrPress::Act(_) => None,
                     };
                     match spot {
                         Some(spot) => {
                             let said = belt_act(app, &mut self.belt, spot, &belt_state, &mut self.put_back);
                             self.pointer.say(1, said);
                         }
-                        None if matches!(press, solidcraft_ui_egui::VrPress::Window(_)) => app.services.vr_script.push(press),
+                        None if matches!(press, solidcraft_ui_egui::VrPress::Window(_) | solidcraft_ui_egui::VrPress::WindowHold(..)) => {
+                            app.services.vr_script.push(press)
+                        }
                         None => log::warn!("VR: ui.vr_press: no belt spot {press:?}"),
                     }
                 }
@@ -1391,7 +1398,7 @@ impl Vr {
             panel.show(app, kind);
             let pressing = (0..2).find(|i| self.window_pressed[*i]);
             let at = pressing.and_then(|i| self.window_hover[i]).or(self.window_hover.iter().flatten().next().copied()).map(|(uv, _)| uv);
-            panel.point(at, window.points);
+            panel.point(self.script_held.or(at), window.points);
             // A script's press on the window (`ui.vr_press`): the pointer there, Select down and up.
             for press in std::mem::take(&mut app.services.vr_script) {
                 match press {
@@ -1399,6 +1406,11 @@ impl Vr {
                         panel.point(Some(uv), window.points);
                         panel.press(true);
                         panel.press(false);
+                    }
+                    solidcraft_ui_egui::VrPress::WindowHold(uv, down) => {
+                        panel.point(Some(uv), window.points);
+                        panel.press(down);
+                        self.script_held = down.then_some(uv);
                     }
                     other => app.services.vr_script.push(other),
                 }

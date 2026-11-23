@@ -1042,7 +1042,10 @@ fn ui_vr_press(app: &mut SolveApp, p: &Value) -> Outcome {
         let [u, v] = uv[..] else {
             return err("ui.vr_press: window takes [across, down], each from 0 to 1");
         };
-        crate::VrPress::Window([u, v])
+        match p.get("hold").and_then(Value::as_bool) {
+            Some(down) => crate::VrPress::WindowHold([u, v], down),
+            None => crate::VrPress::Window([u, v]),
+        }
     } else {
         return err("ui.vr_press: give belt (a spot as vr_pointing names it), window ([across, down]) or act (measure, clashes, sweep)");
     };
@@ -3031,6 +3034,8 @@ pub(crate) mod tests {
         assert_eq!(h.call("ui.vr_press", json!({"window": [0.9, 0.25]}))["ok"], true);
         assert_eq!(h.call("ui.vr_press", json!({"act": "explode"}))["ok"], false);
         assert_eq!(h.call("ui.vr_press", json!({"act": "measure"}))["ok"], true);
+        assert_eq!(h.call("ui.vr_press", json!({"window": [0.5, 0.1], "hold": true}))["ok"], true);
+        h.app.services.vr_script.pop();
         assert_eq!(
             h.app.services.vr_script,
             [crate::VrPress::Belt("belt:Parameters".into()), crate::VrPress::Window([0.9, 0.25]), crate::VrPress::Act("measure".into())]

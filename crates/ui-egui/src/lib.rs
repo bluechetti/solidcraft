@@ -564,6 +564,9 @@ pub enum VrPress {
     Window([f64; 2]),
     /// A ring menu action taken by the right hand, by its settings name (`measure`).
     Act(String),
+    /// Select pressed (`true`) or let go on the belt's window at this place: a press held over
+    /// frames, as Talk needs.
+    WindowHold([f64; 2], bool),
 }
 
 /// Host services injected by the app so this crate stays portable.
