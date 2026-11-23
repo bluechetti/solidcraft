@@ -19,6 +19,7 @@
 
 mod belt;
 mod controllers;
+mod handles;
 mod menu;
 mod model_depth;
 mod panel;
@@ -108,6 +109,13 @@ pub struct Vr {
     window_hover: [Option<([f64; 2], f64)>; 2],
     /// Each hand's Select was pressed on the window and is not let go yet.
     window_pressed: [bool; 2],
+    /// The design's dimension handles ([`handles`]), those of the selected parts shown this frame,
+    /// what each hand's ray points at among them (by label), the one being pulled, and the arrows.
+    handles: solidcraft_ui_egui::vr_handles::VrHandles,
+    shown_handles: Vec<solidcraft_ui_egui::vr_handles::Handle>,
+    handle_hover: [Option<String>; 2],
+    drag: Option<handles::Drag>,
+    handle_marks: Vec<Vertex>,
     /// The scale was shown last at this time (seconds, [`Vr::clock`]): it fades after.
     scaled_at: Option<f64>,
     /// The frame's time last frame (seconds, [`Vr::clock`]): how far the stick moves a held model.
@@ -328,6 +336,11 @@ impl Vr {
             panel: None,
             window_hover: [None, None],
             window_pressed: [false, false],
+            handles: Default::default(),
+            shown_handles: Vec::new(),
+            handle_hover: [None, None],
+            drag: None,
+            handle_marks: Vec::new(),
             last_frame: 0.0,
             real_size: false,
             design: None,
@@ -418,6 +431,7 @@ impl Vr {
         app.viewport.stereo.on = false;
         app.services.vr_passthrough = None;
         app.services.vr_pointing.clear();
+        app.services.vr_scene = serde_json::Value::Null;
         self.let_go(app);
         self.panel = None;
         self.gpu = None;
@@ -593,10 +607,12 @@ impl Vr {
             }
         }
         let belt_hand = self.belt.held.map(|h| h.hand);
+        // The hand pulling a dimension handle does not hold the model: its grip is precision.
+        let drag_hand = self.drag.as_ref().map(|d| d.hand);
         if let Some(current) = &self.transform {
             let grips = Hand::BOTH.map(|hand| {
                 let i = hand.index();
-                hands[i].grip.filter(|_| self.buttons[i][GRAB].down && belt_hand != Some(i))
+                hands[i].grip.filter(|_| self.buttons[i][GRAB].down && belt_hand != Some(i) && drag_hand != Some(i))
             });
             self.transform = Some(self.grab.update_with(current, grips, mode));
         }
@@ -655,6 +671,51 @@ impl Vr {
             let i = hand.index();
             let b = self.buttons[i];
             let holds = b[GRAB].down;
+            // A dimension handle being pulled by this hand: it follows the hand (a tenth as far
+            // while the grip is held) until Select is let go, which sets the size.
+            if self.drag.as_ref().is_some_and(|d| d.hand == i) {
+                if let Some(drag) = self.drag.as_mut()
+                    && let (Some(aim), Some(t)) = (hands[i].aim.as_ref(), self.transform.as_ref())
+                {
+                    drag.follow(aim.position, t.scale, holds);
+                }
+                if b[SELECT].down {
+                    if let Some(drag) = &self.drag {
+                        let v = drag.value(holds);
+                        let fine = if holds { format!("  {}", solidcraft_ui_text::tr("vr.handle_fine")) } else { String::new() };
+                        self.pointer.say(i, format!("{} = {} {}{fine}", drag.handle.label, v, drag.handle.unit));
+                    }
+                } else if let Some(drag) = self.drag.take() {
+                    let v = drag.value(holds);
+                    let said = if (v - drag.handle.value).abs() < 1e-9 {
+                        String::new()
+                    } else {
+                        match drag.expression(v) {
+                            Some(e) => match app.run_heavy("parameters.change", serde_json::json!({"name": drag.handle.param, "expression": e})) {
+                                Ok(_) => format!("{} = {e}", drag.handle.param),
+                                Err(error) => error,
+                            },
+                            None => String::new(),
+                        }
+                    };
+                    self.pointer.say(i, said);
+                    buzz(session, hand, Pulse::TICK);
+                    self.presses[i].next_after(false, now, f64::from(set.hold_time));
+                }
+                continue;
+            }
+            // Select on a handle's tip starts pulling it, instead of a click or the ring.
+            if b[SELECT].pressed
+                && self.drag.is_none()
+                && self.menu.is_none()
+                && let Some(label) = self.handle_hover[i].clone()
+                && let Some(handle) = self.shown_handles.iter().find(|h| h.label == label).cloned()
+                && let (Some(aim), Some(t)) = (hands[i].aim.as_ref(), self.transform.as_ref())
+            {
+                self.drag = handles::Drag::new(i, handle, t, aim.position);
+                buzz(session, hand, Pulse::GRAB);
+                continue;
+            }
             // Letting go of what holds the menu open takes the item under the hand.
             let closes = if menu_by_select { b[SELECT].released } else { b[MENU].released };
             if closes && self.menu.as_ref().is_some_and(|m| m.hand == i) {
@@ -914,6 +975,62 @@ impl Vr {
             on.map_or(f64::from(set.ray_length), |t| t.min(f64::from(set.ray_length)))
         });
         let pulses = self.pointer.point(app, &hands, free, self.transform.as_ref(), cut.as_ref(), ray_length);
+        // The selected parts' dimension handles: which tip each ray points at (not one on the belt
+        // or its window), and their arrows.
+        let selected = vr_pick::bodies_of(&vr_pick::selected_parts(app));
+        let all = self.handles.get(app);
+        self.shown_handles = all.iter().filter(|h| selected.contains(&h.body)).take(handles::MAX_HANDLES).cloned().collect();
+        self.handle_marks.clear();
+        if let Some(t) = self.transform.as_ref() {
+            let tips: Vec<[f64; 3]> = self.shown_handles.iter().map(|h| handles::arrow(t, h).map_or([f64::NAN; 3], |(_, tip)| tip)).collect();
+            let rays: Vec<serde_json::Value> = hands
+                .iter()
+                .map(|h| match h.aim.as_ref().and_then(|aim| Some((aim.position, aim.axes()?))) {
+                    Some((at, [_, _, back])) => serde_json::json!({"at": at, "dir": back.map(|v| -v)}),
+                    None => serde_json::Value::Null,
+                })
+                .collect();
+            let tips_said: Vec<serde_json::Value> = self
+                .shown_handles
+                .iter()
+                .zip(&tips)
+                .filter(|(_, t)| t.iter().all(|v| v.is_finite()))
+                .map(|(h, t)| serde_json::json!({"label": h.label, "tip": t}))
+                .collect();
+            app.services.vr_scene = serde_json::json!({"rays": rays, "handles": tips_said});
+            for i in 0..2 {
+                let on_belt = self.belt.hover[i].is_some() || self.window_hover[i].is_some();
+                self.handle_hover[i] = hands[i]
+                    .aim
+                    .as_ref()
+                    .filter(|_| !on_belt && free[i])
+                    .and_then(|aim| Some((aim.position, aim.axes()?)))
+                    .and_then(|(at, [_, _, back])| handles::pointed(at, back.map(|v| -v), &tips))
+                    .and_then(|k| self.shown_handles.get(k))
+                    .map(|h| h.label.clone());
+            }
+            if let Some(head) = head {
+                let tk = solidcraft_theme::Tokens::get();
+                let linear = |c: egui::Color32| {
+                    let l = egui::Rgba::from(c);
+                    [l.r(), l.g(), l.b()]
+                };
+                let ray = linear(tk.form_primary);
+                let lit: Vec<String> = self.handle_hover.iter().flatten().cloned().collect();
+                let pulled = self.drag.as_ref().map(|d| d.handle.label.as_str());
+                handles::draw(
+                    &mut self.handle_marks,
+                    t,
+                    &self.shown_handles,
+                    head,
+                    &lit,
+                    pulled,
+                    [ray, ray.map(|c| c + (1.0 - c) * 0.7), linear(tk.warning)],
+                );
+            }
+        } else {
+            self.handle_hover = [None, None];
+        }
         for (i, hit) in belt_hits.iter().enumerate() {
             if hit.is_some() && self.belt.hover[i].map(|h| h.0) != hit.map(|h| h.0) {
                 buzz(session, Hand::BOTH[i], ONTO_PART);
@@ -932,7 +1049,11 @@ impl Vr {
                 (Some((belt::Spot::Item(k), _)), _) => format!("item:{k}"),
                 (Some((belt::Spot::Handle, _)), _) => "belt:handle".into(),
                 (None, Some((uv, _))) => format!("window:{:.3},{:.3}", uv[0], uv[1]),
-                (None, None) => String::new(),
+                (None, None) => match (&self.handle_hover[i], &self.pointer.pointed[i]) {
+                    (Some(label), _) => format!("handle:{label}"),
+                    (None, Some(p)) => format!("part:{}", vr_pick::bodies_of([&*p.part]).join(",")),
+                    (None, None) => String::new(),
+                },
             })
             .collect();
         // The window's pointer: the hand that pressed on it, else the first on it.
@@ -1095,6 +1216,7 @@ impl Vr {
             ray_length,
             boards,
             head,
+            handles: &self.handle_marks,
             ctx,
             language,
             fonts,
@@ -1703,6 +1825,8 @@ struct Scene<'a> {
     boards: [Option<Board>; BOARDS],
     /// The middle of the eyes in the room, while the head is tracked.
     head: Option<[f64; 3]>,
+    /// The dimension handles' arrows ([`handles::draw`]).
+    handles: &'a [Vertex],
     /// The real room shows where nothing is drawn: no backdrop, no floor.
     passthrough: bool,
     /// The section the headset cuts the model with (model units), in place of the window's.
@@ -1938,8 +2062,8 @@ const MARK_UNIFORM_SIZE: u64 = 64;
 /// A mark vertex: its place (3 × f32), then its colour (4 × f32).
 const MARK_VERTEX: u64 = 28;
 
-/// The most mark vertices drawn: the controllers' and the section's outline.
-const MARK_VERTICES: usize = marks::MAX_VERTICES + section::OUTLINE_VERTICES;
+/// The most mark vertices drawn: the controllers', the section's outline and the handles' arrows.
+const MARK_VERTICES: usize = marks::MAX_VERTICES + section::OUTLINE_VERTICES + handles::VERTICES;
 
 /// A sign vertex: its place (3 × f32), then where it is on the sign's picture (2 × f32).
 const SIGN_VERTEX: u64 = 20;
@@ -2279,6 +2403,7 @@ impl Gpu {
         if let Some(plane) = &scene.outline {
             vertices.extend(section::outline(plane, style.ray));
         }
+        vertices.extend_from_slice(scene.handles);
         let count = vertices.len().min(MARK_VERTICES);
         if count > 0 {
             rs.queue.write_buffer(&self.mark_vertices, 0, &mark_bytes(&vertices[..count]));

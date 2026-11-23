@@ -1,6 +1,7 @@
 {
   "en": {
     "vr.belt_parameters": "Parameters",
+    "vr.handle_fine": "(fine)",
     "vr.params_cancel": "Cancel",
     "vr.params_fine": "Fine steps",
     "vr.params_none": "This design has no parameters",

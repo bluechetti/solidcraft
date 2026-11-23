@@ -65,6 +65,15 @@ hand as a held part does, its long side always level, and the stick pulls it clo
 away. Put back puts it in front of you again. The model, the controllers and the menu cover it
 where they are nearer.
 
+**Dimension handles.** A selected part shows an arrow for each of its sizes that has a place on
+the model: a box's length, width and height, a cylinder's height and radius, a hole's diameter, a
+sketch extruded into a body of its own. Point at an arrow's tip (it turns white) and hold Select:
+the size follows the hand along the arrow, a whole millimetre at a time, and the sign at the
+controller says it. Hold the grip of the same hand as well for precision: the hand then moves the
+size a tenth as far, in tenths, with no jump when the grip goes down or up. Letting go of Select
+sets it: one undo step. A size that is a user parameter, or a multiple of one (a radius written
+`post_d / 2`), changes that parameter, so everything else using it follows.
+
 **The Parameters.** The Parameters bubble shows the design's parameters in the window beside the
 belt (the Browser's bubble shows the Browser there again; a bubble pressed again closes it). A
 parameter that is a plain number has − and + either side of its value: a unit a step (5° for an

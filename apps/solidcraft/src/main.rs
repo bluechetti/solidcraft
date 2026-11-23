@@ -945,6 +945,7 @@ fn services(cc: &eframe::CreationContext<'_>, folder: &DialogFolder) -> Services
         vr_passthrough: None,
         vr_pointing: Vec::new(),
         vr_script: Vec::new(),
+        vr_scene: serde_json::Value::Null,
         window_system: window_system_now(),
         // Linux: the desktop's dark or light setting, which the window is not told on every
         // desktop (#7944). Windows and macOS: the window's own theme.

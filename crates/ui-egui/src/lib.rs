@@ -421,6 +421,9 @@ mod viewport_status_fixture;
 pub mod vr_browser;
 #[cfg(test)]
 mod vr_browser_tests;
+pub mod vr_handles;
+#[cfg(test)]
+mod vr_handles_tests;
 pub mod vr_params;
 #[cfg(test)]
 mod vr_params_tests;
@@ -606,12 +609,17 @@ pub struct Services {
     /// `None` without a session.
     pub vr_passthrough: Option<bool>,
     /// What each VR hand (left, right) points at on the belt and its window, in plain words
-    /// (`belt:Parameters`, `item:0`, `window:0.412,0.305`), for `ui.inspect`: scripts that drive a
+    /// (`belt:Parameters`, `item:0`, `window:0.412,0.305`, `handle:Post1 Height (post_h)`,
+    /// `part:Post1`), for `ui.inspect`: scripts that drive a
     /// simulated headset steer by it. Empty without a session.
     pub vr_pointing: Vec<String>,
     /// Presses a script asked of the VR view (`ui.vr_press`), done by the host at its next frame
     /// as a Select there would be: what drives a simulated headset whose hands cannot aim finely.
     pub vr_script: Vec<VrPress>,
+    /// Where the VR view's rays and handle tips are in the room (`{"rays": [{"at", "dir"}, ...],
+    /// "handles": [{"label", "tip"}, ...]}`, metres), for `ui.inspect`: a script steering a
+    /// simulated hand onto a handle aims by it. Null without a session.
+    pub vr_scene: serde_json::Value,
     /// HTTPS GET for the update check (`update`); None: never check (browser, tests).
     pub http_get: Option<update::HttpGet>,
     /// HTTPS download to a file, with progress, for one-click updates (`update::install`).
