@@ -481,7 +481,10 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
                     .with(json!({"workspace":"design"}))
                     .key(if rendering || scanning || drawing { "" } else { "current" })
                     .on(idle || !(rendering || scanning || drawing)),
-                act("ui.workspace.scan", "Scan", "mesh_body").with(json!({"workspace":"scan"})).key(if scanning { "current" } else { "" }).on(idle),
+                act("ui.workspace.scan", "Scan", "mesh_body")
+                    .with(json!({"workspace":"scan"}))
+                    .key(if scanning { "current" } else { "" })
+                    .on(idle || scanning),
                 act("ui.workspace.drawing", "Drawing", "ws_drawing")
                     .with(json!({"workspace":"drawing"}))
                     .key(if drawing { "current" } else { "" })

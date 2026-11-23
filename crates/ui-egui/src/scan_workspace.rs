@@ -11,7 +11,7 @@ pub const TABS: &[&str] = &["SCAN", "VIEW"];
 pub const HOME: &str = "SCAN";
 
 pub fn active(app: &SolveApp) -> bool {
-    app.ui.scan_workspace && !crate::render_workspace::active(app)
+    app.ui.scan_workspace && !crate::render_workspace::active(app) && !crate::drawing_workspace::active(app) && !crate::workspace::sheet_scope(app)
 }
 
 /// Open the Scan workspace (`true`) or go back to Design (`false`). Like Render, it waits for
@@ -217,5 +217,61 @@ mod tests {
             assert_eq!(c.planned, Some("8615"), "{}", c.id);
             assert!(h.app.run(c.id, json!({})).is_err(), "{} refuses until it is built", c.id);
         }
+    }
+
+    #[test]
+    fn scan_workspace_switches_through_menu_and_views_with_workspace_follows_view() {
+        let mut h = crate::scenario::Harness::new();
+        assert!(h.app.preferences.workspace_follows_view, "tests the default mode");
+        h.call("ui.resize", json!({"width": 1200, "height": 1000}));
+        h.app.run("solid.box", json!({"body_name":"Block", "operation":"new", "length":10, "width":10, "height":10})).unwrap();
+        h.frames(2);
+
+        // Open Scan from the workspace switcher menu.
+        h.step(&json!({"click":{"handle":"ribbon:workspace"}})).unwrap();
+        h.step(&json!({"click":{"handle":"workspace:menu:scan"}})).unwrap();
+        h.frames(2);
+        assert!(super::active(&h.app), "status: {:?}", h.app.status);
+        assert_eq!(super::current(&h.app), "scan");
+        assert_eq!(h.app.ui.tab, "SCAN");
+        assert_eq!(crate::workspace::visible_tabs(&h.app), ["SCAN", "VIEW"]);
+
+        // Empty Drawing page (no sheets yet) leaves Scan inactive, and Scan returns cleanly.
+        assert_eq!(h.call("ui.workspace", json!({"workspace":"drawing"}))["result"]["workspace"], "drawing");
+        assert!(!super::active(&h.app));
+        assert_eq!(h.call("ui.workspace", json!({"workspace":"scan"}))["result"]["workspace"], "scan");
+        assert!(super::active(&h.app));
+        assert_eq!(h.app.ui.tab, "SCAN");
+
+        // Render and a real Drawing sheet view leave Scan inactive and return cleanly.
+        assert_eq!(h.call("ui.workspace", json!({"workspace":"render"}))["result"]["workspace"], "render");
+        assert!(!super::active(&h.app));
+        assert_eq!(h.call("ui.workspace", json!({"workspace":"scan"}))["result"]["workspace"], "scan");
+        assert!(super::active(&h.app));
+        assert_eq!(h.app.ui.tab, "SCAN");
+
+        h.app.run("drawing.create", json!({})).unwrap();
+        assert_eq!(h.call("ui.workspace", json!({"workspace":"drawing"}))["result"]["workspace"], "drawing");
+        assert!(!super::active(&h.app));
+        assert_eq!(h.call("ui.workspace", json!({"workspace":"scan"}))["result"]["workspace"], "scan");
+        assert!(super::active(&h.app));
+        assert_eq!(h.app.ui.tab, "SCAN");
+
+        // A sketch inside Scan refuses switching to Design until finished, then returns to SCAN.
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        assert_eq!(h.app.ui.tab, "SKETCH");
+        assert!(crate::workspace::enter(&mut h.app, "design").is_err());
+        h.app.run("sketch.finish", json!({})).unwrap();
+        assert_eq!(h.app.ui.tab, "SCAN");
+
+        // Switch back to Design from the workspace switcher menu.
+        h.frames(2);
+        h.step(&json!({"click":{"handle":"ribbon:workspace"}})).unwrap();
+        h.step(&json!({"click":{"handle":"workspace:menu:design"}})).unwrap();
+        h.frames(2);
+        assert!(!super::active(&h.app));
+        assert_eq!(super::current(&h.app), "design");
+        assert_eq!(h.app.ui.tab, "MODEL");
+        assert!(!crate::workspace::visible_tabs(&h.app).contains(&"SCAN"));
     }
 }

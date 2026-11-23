@@ -135,11 +135,14 @@ pub(crate) fn apply_focused_view(app: &mut crate::SolveApp, view: &solidcraft_vi
     } else if view.kind == ViewKind::Render {
         crate::render_workspace::focus_view_framing(app, view.id);
     }
-    let home = crate::documents::view_workspace(view.kind);
+    let home =
+        if view.kind == ViewKind::Model && app.ui.scan_workspace { crate::scan_workspace::HOME } else { crate::documents::view_workspace(view.kind) };
     let current_workspace = if drawing_tab(&app.ui.tab) {
         "DRAWING LAYOUT"
     } else if render_tab(&app.ui.tab) {
         "RENDER"
+    } else if crate::scan_workspace::active(app) {
+        crate::scan_workspace::HOME
     } else {
         "MODEL"
     };
@@ -147,7 +150,8 @@ pub(crate) fn apply_focused_view(app: &mut crate::SolveApp, view: &solidcraft_vi
     if let Some((tab, context, back)) = remembered.filter(|(tab, _, _)| match view.kind {
         ViewKind::Sheet => drawing_tab(tab),
         ViewKind::Render => render_tab(tab),
-        _ => !drawing_tab(tab) && !render_tab(tab),
+        _ if app.ui.scan_workspace => crate::scan_workspace::TABS.contains(&tab.as_str()) || tab == "SKETCH",
+        _ => !drawing_tab(tab) && !render_tab(tab) && tab != crate::scan_workspace::HOME,
     }) {
         app.ui.tab = tab;
         app.ui.ribbon_context = context;
@@ -219,17 +223,37 @@ pub(crate) fn switcher_available(app: &crate::SolveApp) -> bool {
         && !app.file_load_holds()
 }
 
+fn apply_model_workspace(app: &mut crate::SolveApp, scan: bool) {
+    if app.ui.scan_workspace == scan {
+        return;
+    }
+    app.ui.scan_workspace = scan;
+    app.ui.sketch_return_tab = None;
+    app.ui.ribbon_context = None;
+    app.ui.tab = if scan { crate::scan_workspace::HOME } else { "MODEL" }.into();
+    crate::drawing_workspace::swap_selection(app);
+    sync_history(app);
+    sync_context(app);
+}
+
 fn focus_workspace(app: &mut crate::SolveApp, workspace: &str) -> Result<(), String> {
     use solidcraft_views::ViewKind;
     if !switcher_available(app) {
         return Err(solidcraft_ui_text::tr("workspace_focus.finish_operation").into());
     }
+    let scan = workspace == "scan";
     let kind = match workspace {
-        "design" => ViewKind::Model,
+        "design" | "scan" => ViewKind::Model,
         "render" => ViewKind::Render,
         "drawing" => ViewKind::Sheet,
-        _ => return Err("workspace must be design, render or drawing".into()),
+        _ => return Err("workspace must be design, scan, render or drawing".into()),
     };
+    if kind == ViewKind::Model
+        && scan != app.ui.scan_workspace
+        && (app.session.active_sketch.is_some() || app.tool.is_some() || app.dialog.is_some() || app.file_load.busy())
+    {
+        return Err(solidcraft_ui_text::tr("ui.workspace_finish_operation").into());
+    }
     crate::sketch_view::sync(app)?;
     let origin = app.view_windows.current_window();
     let open = app.session.view_context.descriptors();
@@ -248,12 +272,16 @@ fn focus_workspace(app: &mut crate::SolveApp, workspace: &str) -> Result<(), Str
         .map(|view| (view.id, view.window));
     if let Some((id, window)) = candidate {
         crate::view_windows::focus_view(app, id, u32::try_from(window).ok())?;
+        if kind == ViewKind::Model {
+            apply_model_workspace(app, scan);
+        }
         if window == u64::from(origin) && app.docs.views.active().id == id {
             let view = app.docs.views.active().clone();
             let matches = match kind {
                 ViewKind::Sheet => drawing_tab(&app.ui.tab),
                 ViewKind::Render => render_tab(&app.ui.tab),
-                _ => !drawing_tab(&app.ui.tab) && !render_tab(&app.ui.tab),
+                _ if scan => crate::scan_workspace::active(app),
+                _ => !drawing_tab(&app.ui.tab) && !render_tab(&app.ui.tab) && !crate::scan_workspace::active(app),
             };
             if !matches {
                 apply_focused_view(app, &view)?;
@@ -290,7 +318,11 @@ fn focus_workspace(app: &mut crate::SolveApp, workspace: &str) -> Result<(), Str
             views.activate(id);
         });
     }
-    crate::view_windows::focus_view(app, id, Some(origin))
+    crate::view_windows::focus_view(app, id, Some(origin))?;
+    if kind == ViewKind::Model {
+        apply_model_workspace(app, scan);
+    }
+    Ok(())
 }
 
 /// Every tab's exact registry name with its accent: the contextual and specialty tabs, and the
@@ -1365,7 +1397,7 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
     }
     if crate::scan_workspace::active(app) {
         let mut tabs = crate::scan_workspace::TABS.to_vec();
-        if app.session.active_sketch.is_some() {
+        if focused_sketch(app).is_some() {
             tabs.push("SKETCH");
         }
         return tabs;
