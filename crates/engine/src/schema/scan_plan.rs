@@ -172,3 +172,47 @@ mod tests {
         assert_keys(input_schema_for::<ScanVerdictParams>(), &["body", "model", "scan"]);
     }
 }
+
+/// Known Size: a size the user measured on the part (callipers across two faces, or a bore's
+/// diameter) against the scan's. It says how far the scan is off; with `apply`, it scales the scan
+/// to agree, when it is a scanner's scale error (within 5 %), not a wrong pick or unit.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanKnownSizeParams {
+    #[serde(default)]
+    pub scan: Option<String>,
+    /// The same as `scan`.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Two points on the scan, one on each of two parallel faces: the size is between them.
+    #[serde(default)]
+    pub between: Option<Vec<[f64; 3]>>,
+    /// A point on a round face (a bore or a boss): the size is its diameter.
+    #[serde(default)]
+    pub diameter: Option<[f64; 3]>,
+    /// The size measured on the part, in mm.
+    pub value: f64,
+    /// Scale the scan so it measures `value` there. Default: false (only say how far off it is).
+    #[serde(default)]
+    pub apply: Option<bool>,
+}
+
+/// What Known Size read.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanKnownSizeResult {
+    pub scan: String,
+    /// between or diameter.
+    pub kind: String,
+    /// The size on the scan and the size given, in mm.
+    pub measured: f64,
+    pub value: f64,
+    /// What the scan would be scaled by to agree (value / measured), and how far off it is as a
+    /// share (measured / value - 1: above 0 the scan is large).
+    pub factor: f64,
+    pub off: f64,
+    /// Whether the scan was scaled.
+    pub applied: bool,
+    pub note: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}

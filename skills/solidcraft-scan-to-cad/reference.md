@@ -116,6 +116,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 ## Check
 | Command | Reply |
 |---|---|
+| `scan.known_size {"between": [[x,y,z],[x,y,z]], "value": 40}` (or `"diameter": [x,y,z]`) | a size the user measured against the scan's (planes or a cylinder fitted at the points, nothing kept): `measured`, `factor`, `off` (above 0: the scan is large); `"apply": true` scales the scan about its middle to agree, refused beyond 5 % (a wrong pick or unit) |
 | `scan.tolerance {"tolerance": 0.2}` | the scan's tolerance, kept in the design (`scan` or `body` names the scan); Section to Sketch then fits cuts at it |
 | `scan.deviation {"body": "<model>"}` (not `inspect.compare`, which compares two closed bodies and warns on a scan) | `rms`, `mean`, `max_above` (material the model lacks), `max_below` (material it should not have), `within`, `passes` (95% within the tolerance), `measured`, `unmatched`; against a solid also `clearance {fits, gap, gap_at, inside, deepest}`: whether the scanned thing clears it (a tool in its foam pocket), measured on the solid's exact faces |
 | `inspect.surface_check {}` | folds, pinches and crossings of a surface |

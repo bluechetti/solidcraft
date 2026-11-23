@@ -10,8 +10,8 @@ use solidcraft_scan::verdict::{Place, Reading, judge};
 use super::{CommandSpec, mesh_name, tolerance};
 use crate::params::{bad, bool_, str_};
 use crate::schema::scan_plan::{
-    ScanPlanParams, ScanPlanRegionParams, ScanPlanRegionView, ScanPlanResult, ScanVerdictIssue, ScanVerdictParams, ScanVerdictPlace,
-    ScanVerdictResult, ScanVerdictStep,
+    ScanKnownSizeParams, ScanKnownSizeResult, ScanPlanParams, ScanPlanRegionParams, ScanPlanRegionView, ScanPlanResult, ScanVerdictIssue,
+    ScanVerdictParams, ScanVerdictPlace, ScanVerdictResult, ScanVerdictStep,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -19,6 +19,9 @@ use crate::{EngineError, Result, Session};
 const PLAN: TypedContract<ScanPlanParams> = TypedContract::new();
 const REGION: TypedContract<ScanPlanRegionParams> = TypedContract::new();
 const VERDICT: TypedContract<ScanVerdictParams> = TypedContract::new();
+const KNOWN_SIZE: TypedContract<ScanKnownSizeParams> = TypedContract::new();
+/// The most a scan is scaled to a known size: a scanner's scale error, not a wrong pick or unit.
+const MOST_SCALE: f64 = 0.05;
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("scan.plan", "Scan Plan", crate::checked!("scan.plan", plan))
@@ -31,6 +34,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&REGION)
         .output(output_schema_for::<ScanPlanResult>)
         .params("scan? (or body?): mesh body; name: the region's name; at?: [x,y,z] a point on the scan inside it (needed to add one); state?: open|built|skipped|inferred|removed (default open for a new one); feature?: the feature that built it (built); reason?: why it was skipped, or what it was inferred from (skipped, inferred): a region of the part in the scan's plan, which scan.verdict wants built, skipped or inferred before it says met; a scan with no plan gets one; one undo step → as scan.plan"),
+    CommandSpec::new("scan.known_size", "Known Size", crate::checked!("scan.known_size", known_size))
+        .icon("measure")
+        .contract(&KNOWN_SIZE)
+        .output(output_schema_for::<ScanKnownSizeResult>)
+        .params("scan? (or body?): mesh body; between?: [[x,y,z], [x,y,z]] two points on the scan, one on each of two parallel faces; diameter?: [x,y,z] a point on a round face; value: mm, the size measured on the part (callipers); apply?: bool (default false): the scan's size there (planes or a cylinder fitted at the points, nothing kept) against the size measured, how far off the scan is, and with `apply` the scan scaled about its middle to agree, refused when it is more than 5 % off (a wrong pick, or the wrong unit: mesh.units); one undo step when applied → scan, kind, measured, value, factor, off, applied, note"),
     CommandSpec::new("scan.verdict", "Scan Verdict", crate::checked!("scan.verdict", verdict))
         .icon("curvature_map")
         .contract(&VERDICT)
@@ -362,4 +370,91 @@ fn read_verdict(s: &mut Session, p: &Value) -> Result<Value> {
         model,
         param_warnings: Vec::new(),
     })
+}
+
+/// Known Size (`scan.known_size`): the scan's size at the points given against the size the user
+/// measured, and with `apply` the scan scaled to agree. A calliper reading is the cheapest truth
+/// there is: one fixes a scanner's scale and names the design value a tolerance snap cannot.
+pub(crate) fn known_size(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.known_size";
+    let scan = scan_of(s, p, cmd)?;
+    let value = p
+        .get("value")
+        .and_then(Value::as_f64)
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .ok_or_else(|| bad(cmd, "`value` is the size measured on the part, in mm, above 0"))?;
+    let fit = |s: &mut Session, id: &str, at: &Value| -> Result<Value> {
+        super::super::find_command(id)
+            .ok_or_else(|| EngineError::UnknownCommand(id.into()))?
+            .run_nested(s, &json!({"body": scan, "point": at, "keep": false}))
+    };
+    let vec = |v: &Value| -> Option<[f64; 3]> {
+        let a = v.as_array()?;
+        Some([a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2)?.as_f64()?])
+    };
+    let (kind, measured) = match (p.get("between").filter(|v| !v.is_null()), p.get("diameter").filter(|v| !v.is_null())) {
+        (Some(Value::Array(points)), None) if points.len() == 2 => {
+            let (a, b) = (fit(s, "scan.fit_plane", &points[0])?, fit(s, "scan.fit_plane", &points[1])?);
+            let plane = |r: &Value| Some((vec(r.pointer("/plane/point")?)?, vec(r.pointer("/plane/normal")?)?));
+            let (Some((pa, na)), Some((pb, nb))) = (plane(&a), plane(&b)) else { return Err(bad(cmd, "no face was fitted at one of the points")) };
+            let dot = na[0] * nb[0] + na[1] * nb[1] + na[2] * nb[2];
+            if dot.abs() < 2.0_f64.to_radians().cos() {
+                return Err(bad(
+                    cmd,
+                    format!(
+                        "the two faces are {:.1}° from parallel: pick two faces that face apart, the size is between them",
+                        dot.abs().clamp(-1.0, 1.0).acos().to_degrees()
+                    ),
+                ));
+            }
+            let d = (0..3).map(|k| (pb[k] - pa[k]) * na[k]).sum::<f64>().abs();
+            ("between", d)
+        }
+        (None, Some(at)) => {
+            let c = fit(s, "scan.fit_cylinder", at)?;
+            ("diameter", c.pointer("/cylinder/diameter").and_then(Value::as_f64).ok_or_else(|| bad(cmd, "no round face was fitted at the point"))?)
+        }
+        _ => return Err(bad(cmd, "give `between` (two points, on two parallel faces) or `diameter` (a point on a round face), not both")),
+    };
+    if !(measured.is_finite() && measured > 1e-6) {
+        return Err(bad(cmd, "the size on the scan there is 0: the points are on the same face"));
+    }
+    let factor = value / measured;
+    let off = measured / value - 1.0;
+    let apply = bool_(p, "apply") == Some(true);
+    let note = if apply {
+        if (factor - 1.0).abs() > MOST_SCALE {
+            return Err(bad(
+                cmd,
+                format!(
+                    "the scan measures {measured:.3} mm there, {:.1} % off the {value} mm given: more than a scanner's scale error; check the points, or the scan's unit (mesh.units)",
+                    off.abs() * 100.0
+                ),
+            ));
+        }
+        let mesh = super::shown_mesh(s, &scan).ok_or_else(|| bad(cmd, format!("`{scan}` is not a scan")))?;
+        let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        for q in mesh.positions.iter() {
+            for (k, v) in [q.x, q.y, q.z].into_iter().enumerate() {
+                lo[k] = lo[k].min(v);
+                hi[k] = hi[k].max(v);
+            }
+        }
+        let middle: Vec<f64> = (0..3).map(|k| 0.5 * (lo[k] + hi[k])).collect();
+        super::super::find_command("solid.scale")
+            .ok_or_else(|| EngineError::UnknownCommand("solid.scale".into()))?
+            .run_nested(s, &json!({"bodies": [scan], "factor": factor, "origin": middle}))
+            .map_err(|e| bad(cmd, format!("the scan could not be scaled: {e}")))?;
+        format!("the scan was scaled by {factor:.5} about its middle; read it again (scan.find_all, scan.to_cad) before building on it")
+    } else if off.abs() <= 0.001 {
+        format!("the scan agrees with the size measured ({:.2} %)", off * 100.0)
+    } else {
+        format!(
+            "the scan is {:.2} % {} here; `\"apply\": true` scales it to agree (only within {:.0} %)",
+            off.abs() * 100.0,
+            if off > 0.0 { "large" } else { "small" },
+            MOST_SCALE * 100.0
+        )
+    };
+    to_value(ScanKnownSizeResult { scan, kind: kind.into(), measured, value, factor, off, applied: apply, note, param_warnings: Vec::new() })
 }

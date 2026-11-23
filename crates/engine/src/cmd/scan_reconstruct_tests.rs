@@ -447,6 +447,36 @@ fn scan_to_cad_builds_the_part_in_one_command_and_says_whether_it_is_done() {
     assert!(s.execute("scan.to_cad", &json!({"tolerance": -1})).is_err_and(|e| e.to_string().contains("`tolerance`")));
 }
 
+/// Known Size: a size measured on the part against the scan's. The block's 10 mm thickness
+/// given as 10.1 reads the scan 1 % small; applied, the scan is scaled and then agrees. A size
+/// far off is refused (a wrong pick or unit, not a scale error), and a rounded corner's diameter
+/// reads as a round's.
+#[test]
+fn a_size_measured_on_the_part_checks_and_scales_the_scan() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 40, "width": 30, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.fillet", json!({"edges": [[0, 0, 5], [40, 0, 5], [40, 30, 5], [0, 30, 5]], "radius": 5}));
+    let (mut s, scan) = scanned(&part, &body, 3, "block");
+    let between = json!([[20, 15, 10], [20, 15, 0]]);
+    let read = run(&mut s, "scan.known_size", json!({"scan": scan, "between": between, "value": 10.1}));
+    assert!((read["measured"].as_f64().unwrap() - 10.0).abs() < 0.02, "{read}");
+    assert!((read["off"].as_f64().unwrap() + 0.0099).abs() < 0.002 && read["applied"] == false, "{read}");
+    let applied = run(&mut s, "scan.known_size", json!({"scan": scan, "between": between, "value": 10.1, "apply": true}));
+    assert_eq!(applied["applied"], true, "{applied}");
+    let again = run(&mut s, "scan.known_size", json!({"scan": scan, "between": between, "value": 10.1}));
+    assert!(again["off"].as_f64().unwrap().abs() < 0.001, "the scan agrees now: {again}");
+    // Twice the size: not a scale error; nothing changes.
+    let far = s.execute("scan.known_size", &json!({"scan": scan, "between": between, "value": 20.2, "apply": true})).unwrap_err().to_string();
+    assert!(far.contains("more than a scanner's scale error"), "{far}");
+    // A rounded corner, R 5: Ø 10 (scaled 1 % with the scan).
+    let corner = 5.0 - 5.0 * std::f64::consts::FRAC_1_SQRT_2;
+    let round = run(&mut s, "scan.known_size", json!({"scan": scan, "diameter": [corner, corner, 5], "value": 10.1}));
+    assert!((round["measured"].as_f64().unwrap() - 10.1).abs() < 0.15, "{round}");
+    let neither = s.execute("scan.known_size", &json!({"scan": scan, "value": 10})).unwrap_err().to_string();
+    assert!(neither.contains("give `between`"), "{neither}");
+}
+
 /// A block 40 × 30 × 10 with two holes Ø 8 through it: the prism's profile holds the holes as
 /// circles inside its outline, and Extrude It extrudes the outline with the holes open, not the
 /// discs inside them as well.

@@ -1,0 +1,26 @@
+{
+  "ar": {
+    "cmd.scan_known_size": "مقاس معروف"
+  },
+  "de": {
+    "cmd.scan_known_size": "Bekanntes Maß"
+  },
+  "en": {
+    "cmd.scan_known_size": "Known Size"
+  },
+  "he": {
+    "cmd.scan_known_size": "מידה ידועה"
+  },
+  "ja": {
+    "cmd.scan_known_size": "既知の寸法"
+  },
+  "ko": {
+    "cmd.scan_known_size": "알려진 치수"
+  },
+  "vi": {
+    "cmd.scan_known_size": "Kích thước đã biết"
+  },
+  "zh": {
+    "cmd.scan_known_size": "已知尺寸"
+  }
+}
