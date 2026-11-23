@@ -37,6 +37,7 @@ pub mod math;
 pub mod n_sided;
 pub mod nurbs_crv;
 pub mod nurbs_srf;
+pub mod quad_cage;
 pub mod spiral;
 pub mod srf_adv;
 pub mod srf_basic;
